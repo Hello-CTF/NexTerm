@@ -14,13 +14,21 @@ const mocks = vi.hoisted(() => ({
   vaultStatus: vi.fn(),
   vaultUnlock: vi.fn(),
   promptText: vi.fn(),
+  ask: vi.fn(),
+  askChoiceRemember: vi.fn(),
+  closeTab: vi.fn(),
   toast: vi.fn(),
   setConnectProgress: vi.fn(),
 }));
 
 vi.mock("../../ui/dialogs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ui/dialogs")>();
-  return { ...actual, promptText: mocks.promptText };
+  return {
+    ...actual,
+    promptText: mocks.promptText,
+    ask: mocks.ask,
+    askChoiceRemember: mocks.askChoiceRemember,
+  };
 });
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
@@ -34,6 +42,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       list: mocks.sessionList,
       probeHostKey: mocks.probeHostKey,
     },
+    terminalApi: { ...actual.terminalApi, closeTab: mocks.closeTab },
     dbApi: { connect: mocks.dbConnect, disconnect: mocks.dbDisconnect },
     vaultApi: { status: mocks.vaultStatus, unlock: mocks.vaultUnlock },
   };
@@ -71,6 +80,9 @@ beforeEach(() => {
   });
   mocks.sessionConnect.mockResolvedValue(SESSION);
   mocks.sessionList.mockResolvedValue([]);
+  mocks.ask.mockResolvedValue(true);
+  mocks.askChoiceRemember.mockResolvedValue({ key: "detach", remember: false });
+  mocks.closeTab.mockResolvedValue(undefined);
   mocks.dbDisconnect.mockResolvedValue(undefined);
   mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
 });
@@ -243,7 +255,35 @@ describe("connectAsset asset workspace deduplication", () => {
     expect(activeWorkspaceId).toBe("ws-1");
   });
 
-  it("cleans up the stale workspace and starts a fresh connection when reconnecting fails because the session was deleted", async () => {
+  it("preserves the restored workspace without an empty-frame transition when reconnecting fails", async () => {
+    seedSessionWorkspace("disconnected", true);
+    useUi.getState().updateTab("t1", { tabId: "kernel-t1", retainable: true });
+    mocks.probeHostKey.mockResolvedValue({ state: "known" });
+    mocks.sessionReconnect.mockRejectedValue(new Error("首次连接需要确认主机指纹"));
+    const tabStates: string[][] = [];
+    const unsubscribe = useUi.subscribe((state) => {
+      const workspace = state.workspaces.find((candidate) => candidate.id === "ws-1");
+      tabStates.push(
+        workspace?.panes.flatMap((pane) => pane.tabs).map((tab) => tab.id) ?? [],
+      );
+    });
+
+    const outcome = (await connectAsset(SSH_ASSET)) as ConnectOutcome;
+    unsubscribe();
+
+    expect(outcome).toEqual({ ok: false, error: "首次连接需要确认主机指纹" });
+    expect(mocks.sessionConnect).not.toHaveBeenCalled();
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
+    expect(tabStates.every((ids) => ids.length === 1 && ids[0] === "t1")).toBe(true);
+    expect(useUi.getState().workspaces[0]?.id).toBe("ws-1");
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]).toMatchObject({
+      id: "t1",
+      tabId: "kernel-t1",
+    });
+  });
+
+  it("rebinds the existing workspace when the previous session was deleted", async () => {
     seedSessionWorkspace("disconnected");
     mocks.probeHostKey.mockResolvedValue({ state: "known" });
     mocks.sessionReconnect.mockRejectedValue({ code: "not_found", message: "Session not found" });
@@ -253,7 +293,32 @@ describe("connectAsset asset workspace deduplication", () => {
     expect(mocks.sessionConnect).toHaveBeenCalledTimes(1);
     const { workspaces } = useUi.getState();
     expect(workspaces).toHaveLength(1);
-    expect(workspaces[0]?.id).not.toBe("ws-1");
+    expect(workspaces[0]?.id).toBe("ws-1");
+  });
+
+  it.each(["missing", "deleted"] as const)("preserves all restored SSH panes and shell identities with a %s session", async (state) => {
+    seedSessionWorkspace("disconnected", true);
+    const workspace = useUi.getState().workspaces[0];
+    useUi.setState({
+      sessions: state === "missing" ? [] : useUi.getState().sessions,
+      workspaces: [{ ...workspace, activePaneId: "p2", splitRatio: 0.37, panes: [
+        { id: "p1", activeTabId: "t1", tabs: [{ id: "t1", kind: "terminal", title: "one", sessionId: "s1", tabId: "shell-one", closable: true }] },
+        { id: "p2", activeTabId: "t2", tabs: [{ id: "t2", kind: "terminal", title: "two", sessionId: "s1", tabId: "shell-two", closable: true }] },
+      ] }],
+    });
+    mocks.sessionReconnect.mockRejectedValue({ code: "not_found", message: "Session not found" });
+    mocks.sessionConnect.mockResolvedValue({ ...SESSION, id: "s-new" });
+
+    expect(await connectAsset(SSH_ASSET)).toEqual({ ok: true });
+
+    const restored = useUi.getState().workspaces[0];
+    expect(restored).toMatchObject({ id: "ws-1", sessionId: "s-new", activePaneId: "p2", splitRatio: 0.37 });
+    expect(restored.panes.map((pane) => ({ id: pane.id, activeTabId: pane.activeTabId, tabs: pane.tabs.map((tab) => [tab.id, tab.tabId, tab.sessionId]) }))).toEqual([
+      { id: "p1", activeTabId: "t1", tabs: [["t1", "shell-one", "s-new"]] },
+      { id: "p2", activeTabId: "t2", tabs: [["t2", "shell-two", "s-new"]] },
+    ]);
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
   });
 
   function seedDatabaseWorkspace(draft?: SqlDraft): void {

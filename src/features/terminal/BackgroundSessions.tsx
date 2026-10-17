@@ -15,16 +15,20 @@ import {
 
 const POLL_MS = 5000;
 
+type BackgroundTab = Omit<LiveTabInfo, "lastOutputMsAgo"> & {
+  lastOutputMsAgo?: number;
+  remote?: boolean;
+};
+
 function persistenceFootnote(): string {
   if (TRANSPORT === "web") {
-    return "终端进程在服务端运行，关闭页面或更换设备后仍会保留。「接管」将恢复原终端并回放离开期间的输出，不会新建 shell";
+    return "SSH 持久终端在目标主机运行，关闭页面或更换客户端后仍可发现。「接管」将恢复原终端并回放离开期间的输出，不会新建 shell";
   }
-  return "SSH 持久终端由本机后台服务、设备终端由设备上的后台服务保持运行，退出应用后仍可接管；本机（local）等其他分离终端会随应用退出而结束。「接管」将恢复原终端并回放离开期间的输出，不会新建 shell";
+  return "SSH 持久终端由目标主机上的后台服务保持运行，退出应用或更换客户端后仍可发现；本机（local）等其他分离终端会随应用退出而结束。「接管」将恢复原终端并回放离开期间的输出，不会新建 shell";
 }
 
 function runningCopy(count: number): string {
-  if (TRANSPORT === "web") return `${count} 个终端在服务端运行 · 5 秒自动刷新`;
-  return `${count} 个终端在后台运行 · 5 秒自动刷新`;
+  return `${count} 个可接管终端 · 5 秒自动刷新`;
 }
 
 function ago(ms: number): string {
@@ -62,7 +66,7 @@ export function BackgroundSessions({
   const hostName = hostSessionId
     ? (sessions.find((s) => s.id === hostSessionId)?.name ?? ownerWorkspace?.title ?? hostSessionId)
     : null;
-  const [items, setItems] = useState<LiveTabInfo[] | null>(null);
+  const [items, setItems] = useState<BackgroundTab[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<Record<string, "takeover" | "kill">>({});
@@ -79,16 +83,60 @@ export function BackgroundSessions({
     }
     setLoading(true);
     try {
-      const list = await terminalApi.listLive();
+      const targets = sessions.filter((session) =>
+        (showAll || session.id === hostSessionId) &&
+        session.status === "connected" &&
+        session.kind === "ssh",
+      );
+      const [live, ...remote] = await Promise.allSettled([
+        terminalApi.listLive(),
+        ...targets.map((session) => terminalApi.listDurable(session.id)),
+      ]);
       if (generation !== loadGenerationRef.current) return;
-      setItems(list.filter((t) => t.subscribers === 0 && !t.exited));
-      setError(null);
+      const list: BackgroundTab[] = [];
+      const known = new Set<string>();
+      const errors: string[] = [];
+      if (live.status === "fulfilled") {
+        for (const tab of live.value as LiveTabInfo[]) {
+          known.add(tab.tabId);
+          if (tab.subscribers === 0 && !tab.exited) list.push(tab);
+        }
+      } else {
+        errors.push(describeError(live.reason));
+      }
+      for (const [index, result] of remote.entries()) {
+        const session = targets[index];
+        if (result.status === "rejected") {
+          errors.push(`${session.name}: ${describeError(result.reason)}`);
+          continue;
+        }
+        for (const tab of result.value as Awaited<ReturnType<typeof terminalApi.listDurable>>) {
+          if (tab.dead || known.has(tab.id)) continue;
+          known.add(tab.id);
+          list.push({
+            tabId: tab.id,
+            sessionId: session.id,
+            sessionName: session.name,
+            sessionKind: session.kind,
+            cols: tab.cols,
+            rows: tab.rows,
+            controller: null,
+            subscribers: 0,
+            viewers: 0,
+            exited: false,
+            title: tab.title,
+            remote: true,
+          });
+        }
+      }
+      setItems(list);
+      setError(errors.length > 0 ? errors.join("; ") : null);
     } catch (e) {
       if (generation === loadGenerationRef.current) setError(describeError(e));
     } finally {
       if (generation === loadGenerationRef.current) setLoading(false);
     }
-  }, [hostSessionId, showAll]);
+  }, [hostSessionId, showAll, sessions]);
 
   useEffect(() => {
     ownerGenerationRef.current += 1;
@@ -110,7 +158,7 @@ export function BackgroundSessions({
     };
   }, [visible, hostSessionId, showAll, load]);
 
-  const takeOver = async (info: LiveTabInfo) => {
+  const takeOver = async (info: BackgroundTab) => {
     const ownerGeneration = ownerGenerationRef.current;
     setBusy((b) => ({ ...b, [info.tabId]: "takeover" }));
     try {
@@ -145,7 +193,7 @@ export function BackgroundSessions({
     }
   };
 
-  const kill = async (info: LiveTabInfo) => {
+  const kill = async (info: BackgroundTab) => {
     const ownerGeneration = ownerGenerationRef.current;
     const ok = await ask(
       `结束「${info.sessionName}」的后台终端？\n\n其中的进程将终止，且无法恢复`,
@@ -155,7 +203,8 @@ export function BackgroundSessions({
     setBusy((b) => ({ ...b, [info.tabId]: "kill" }));
     setItems((prev) => (prev ? prev.filter((t) => t.tabId !== info.tabId) : prev));
     try {
-      await terminalApi.closeTab(info.tabId, "kill");
+      if (info.remote) await terminalApi.closeTab(info.tabId, "kill", info.sessionId);
+      else await terminalApi.closeTab(info.tabId, "kill");
       if (ownerGeneration === ownerGenerationRef.current) pushToast("success", "已结束进程");
     } catch (e) {
       if (ownerGeneration === ownerGenerationRef.current) {
@@ -258,7 +307,7 @@ export function BackgroundSessions({
                   <td className="nx-mono text-neutral-400" title={t.title}>
                     {t.title ?? `${t.cols}×${t.rows}`}
                   </td>
-                  <td className="text-neutral-400">{ago(t.lastOutputMsAgo)}</td>
+                  <td className="text-neutral-400">{t.remote ? "远端持久终端" : ago(t.lastOutputMsAgo ?? 0)}</td>
                   <td className="nx-right">
                     <div className="flex items-center justify-end gap-1.5">
                       <button

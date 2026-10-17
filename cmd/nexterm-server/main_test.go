@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -597,14 +598,36 @@ func TestServerProcessWarnsOnNonLoopbackExposure(t *testing.T) {
 	}
 }
 
+var serverBinaryBuild sync.Once
+var serverBinaryPath string
+var serverBinaryBuildErr error
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if serverBinaryPath != "" {
+		_ = os.RemoveAll(filepath.Dir(serverBinaryPath))
+	}
+	os.Exit(code)
+}
+
 func buildServerBinary(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "nexterm-server")
-	cmd := exec.Command("go", "build", "-mod=readonly", "-o", path, ".")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build server: %v\n%s", err, output)
+	serverBinaryBuild.Do(func() {
+		directory, err := os.MkdirTemp("", "nexterm-server-test-")
+		if err != nil {
+			serverBinaryBuildErr = err
+			return
+		}
+		serverBinaryPath = filepath.Join(directory, "nexterm-server")
+		cmd := exec.Command("go", "build", "-mod=readonly", "-o", serverBinaryPath, ".")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			serverBinaryBuildErr = fmt.Errorf("build server: %w\n%s", err, output)
+		}
+	})
+	if serverBinaryBuildErr != nil {
+		t.Fatal(serverBinaryBuildErr)
 	}
-	return path
+	return serverBinaryPath
 }
 
 func serverProcessEnv(t *testing.T, extra ...string) []string {

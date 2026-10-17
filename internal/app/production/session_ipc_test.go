@@ -240,13 +240,16 @@ func TestProductionTerminalCloseFailureRetainsTabForRetry(t *testing.T) {
 }
 
 func TestProductionLocalExplicitDetachRetainsAndListsBackgroundTab(t *testing.T) {
+	t.Setenv("SHELL", "")
+	t.Setenv("ENV", "")
 	factory := &bridgeTestFactory{}
 	production := newTerminalTestProduction(t, durableTestDataDir(t), factory, nil)
 	connected := connectLocalTerminalTest(t, production)
 	channelID := "local-background-channel"
 	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, channelID, "client-a")
 	tabID := requireAttachedTabID(t, attachResponse)
-	waitForProductionOutput(t, factory.at(channelID, 0), "$ ")
+	writeDurableTestCommand(t, production, tabID, "local-background-ready", "client-a")
+	waitForProductionOutput(t, factory.at(channelID, 0), "local-background-ready")
 
 	unattached := dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","mode":"detach"}`, channelID, "client-b")
 	if unattached.OK || unattached.Error == nil || unattached.Error.Code != ipc.CodeDisconnected {

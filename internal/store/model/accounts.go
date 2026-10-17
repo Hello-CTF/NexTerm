@@ -16,7 +16,7 @@ type AppUser struct {
 func (AppUser) TableName() string { return "app_user" }
 
 type UserDEK struct {
-	UserID           string  `gorm:"column:user_id;primaryKey" json:"userId"`
+	UserID           string  `gorm:"size:191;column:user_id;primaryKey" json:"userId"`
 	DEKEnvelope      []byte  `gorm:"column:dek_envelope;not null" json:"dekEnvelope"`
 	KDFSalt          []byte  `gorm:"column:kdf_salt;not null" json:"kdfSalt"`
 	KDFParams        string  `gorm:"column:kdf_params;not null" json:"kdfParams"`
@@ -31,7 +31,7 @@ func (UserDEK) TableName() string { return "user_dek" }
 
 type UserDevice struct {
 	ID         string  `gorm:"column:id;primaryKey" json:"id"`
-	UserID     string  `gorm:"column:user_id;not null;index:idx_user_device_user" json:"userId"`
+	UserID     string  `gorm:"size:191;column:user_id;not null;index:idx_user_device_user" json:"userId"`
 	Name       string  `gorm:"column:name;not null" json:"name"`
 	Kind       string  `gorm:"column:kind;not null;default:'desktop'" json:"kind"`
 	CreatedAt  int64   `gorm:"column:created_at;not null" json:"createdAt"`
@@ -44,9 +44,9 @@ func (UserDevice) TableName() string { return "user_device" }
 
 type UserSession struct {
 	ID        string      `gorm:"column:id;primaryKey" json:"id"`
-	UserID    string      `gorm:"column:user_id;not null;index:idx_user_session_user" json:"userId"`
-	DeviceID  *string     `gorm:"column:device_id;index:idx_user_session_device" json:"deviceId"`
-	TokenHash string      `gorm:"column:token_hash;not null;uniqueIndex:idx_user_session_token_hash" json:"tokenHash"`
+	UserID    string      `gorm:"size:191;column:user_id;not null;index:idx_user_session_user" json:"userId"`
+	DeviceID  *string     `gorm:"size:191;column:device_id;index:idx_user_session_device" json:"deviceId"`
+	TokenHash string      `gorm:"column:token_hash;not null;size:191;uniqueIndex:idx_user_session_token_hash" json:"tokenHash"`
 	CreatedAt int64       `gorm:"column:created_at;not null" json:"createdAt"`
 	TouchedAt int64       `gorm:"column:touched_at;not null" json:"touchedAt"`
 	ExpiresAt int64       `gorm:"column:expires_at;not null" json:"expiresAt"`
@@ -59,10 +59,10 @@ func (UserSession) TableName() string { return "user_session" }
 
 type SyncCredential struct {
 	ID         string     `gorm:"column:id;primaryKey" json:"id"`
-	UserID     string     `gorm:"column:user_id;not null;index:idx_sync_credential_user" json:"userId"`
-	DeviceID   string     `gorm:"column:device_id;not null;index:idx_sync_credential_device" json:"deviceId"`
+	UserID     string     `gorm:"size:191;column:user_id;not null;index:idx_sync_credential_user" json:"userId"`
+	DeviceID   string     `gorm:"size:191;column:device_id;not null;index:idx_sync_credential_device" json:"deviceId"`
 	Purpose    string     `gorm:"column:purpose;not null" json:"purpose"`
-	SecretHash string     `gorm:"column:secret_hash;not null;uniqueIndex:idx_sync_credential_secret_hash" json:"secretHash"`
+	SecretHash string     `gorm:"column:secret_hash;not null;size:191;uniqueIndex:idx_sync_credential_secret_hash" json:"secretHash"`
 	CreatedAt  int64      `gorm:"column:created_at;not null" json:"createdAt"`
 	ExpiresAt  int64      `gorm:"column:expires_at;not null;default:0" json:"expiresAt"`
 	RevokedAt  *int64     `gorm:"column:revoked_at" json:"revokedAt"`
@@ -74,7 +74,7 @@ type SyncCredential struct {
 func (SyncCredential) TableName() string { return "sync_credential" }
 
 type UserSetting struct {
-	UserID    string  `gorm:"column:user_id;primaryKey" json:"userId"`
+	UserID    string  `gorm:"size:191;column:user_id;primaryKey" json:"userId"`
 	Key       string  `gorm:"column:key;primaryKey" json:"key"`
 	Value     string  `gorm:"column:value;not null" json:"value"`
 	UpdatedAt int64   `gorm:"column:updated_at;not null" json:"updatedAt"`
@@ -85,8 +85,8 @@ func (UserSetting) TableName() string { return "user_setting" }
 
 type DeviceEnrollCode struct {
 	ID         string  `gorm:"column:id;primaryKey" json:"id"`
-	UserID     string  `gorm:"column:user_id;not null;index:idx_device_enroll_code_user" json:"userId"`
-	CodeHash   string  `gorm:"column:code_hash;not null;uniqueIndex:idx_device_enroll_code_hash" json:"codeHash"`
+	UserID     string  `gorm:"size:191;column:user_id;not null;index:idx_device_enroll_code_user" json:"userId"`
+	CodeHash   string  `gorm:"column:code_hash;not null;size:191;uniqueIndex:idx_device_enroll_code_hash" json:"codeHash"`
 	CreatedAt  int64   `gorm:"column:created_at;not null" json:"createdAt"`
 	ExpiresAt  int64   `gorm:"column:expires_at;not null" json:"expiresAt"`
 	ConsumedAt *int64  `gorm:"column:consumed_at" json:"consumedAt"`
@@ -96,7 +96,7 @@ type DeviceEnrollCode struct {
 func (DeviceEnrollCode) TableName() string { return "device_enroll_code" }
 
 type UserSyncObject struct {
-	UserID   string  `gorm:"column:user_id;primaryKey;index:idx_user_sync_object_seq,priority:1" json:"userId"`
+	UserID   string  `gorm:"size:191;column:user_id;primaryKey;index:idx_user_sync_object_seq,priority:1" json:"userId"`
 	ID       string  `gorm:"column:id;primaryKey" json:"id"`
 	Seq      int64   `gorm:"column:seq;not null;index:idx_user_sync_object_seq,priority:2" json:"seq"`
 	Blob     []byte  `gorm:"column:blob;not null" json:"blob"`
@@ -107,7 +107,7 @@ type UserSyncObject struct {
 func (UserSyncObject) TableName() string { return "user_sync_object" }
 
 type UserSyncHead struct {
-	UserID   string  `gorm:"column:user_id;primaryKey" json:"userId"`
+	UserID   string  `gorm:"size:191;column:user_id;primaryKey" json:"userId"`
 	HeadHash string  `gorm:"column:head_hash;not null" json:"headHash"`
 	User     AppUser `gorm:"foreignKey:UserID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 }
@@ -115,8 +115,8 @@ type UserSyncHead struct {
 func (UserSyncHead) TableName() string { return "user_sync_head" }
 
 type DeviceAgent struct {
-	DeviceID         string         `gorm:"column:device_id;primaryKey" json:"deviceId"`
-	CredentialID     string         `gorm:"column:credential_id;not null" json:"credentialId"`
+	DeviceID         string         `gorm:"size:191;column:device_id;primaryKey" json:"deviceId"`
+	CredentialID     string         `gorm:"column:credential_id;not null;size:191" json:"credentialId"`
 	Platform         string         `gorm:"column:platform;not null;default:''" json:"platform"`
 	AppVersion       string         `gorm:"column:app_version;not null;default:''" json:"appVersion"`
 	DesiredAutostart bool           `gorm:"column:desired_autostart;not null;default:1" json:"desiredAutostart"`
@@ -133,7 +133,7 @@ func (DeviceAgent) TableName() string { return "device_agent" }
 
 type DeviceMetrics struct {
 	ID        string     `gorm:"column:id;primaryKey" json:"id"`
-	DeviceID  string     `gorm:"column:device_id;not null;index:idx_device_metrics_device_ts,priority:1" json:"deviceId"`
+	DeviceID  string     `gorm:"size:191;column:device_id;not null;index:idx_device_metrics_device_ts,priority:1" json:"deviceId"`
 	TS        int64      `gorm:"column:ts;not null;index:idx_device_metrics_device_ts,priority:2" json:"ts"`
 	CPUPct    *float64   `gorm:"column:cpu_pct" json:"cpuPct"`
 	MemUsed   *int64     `gorm:"column:mem_used" json:"memUsed"`
@@ -147,7 +147,7 @@ type DeviceMetrics struct {
 func (DeviceMetrics) TableName() string { return "device_metrics" }
 
 type DeviceMetricsHourly struct {
-	DeviceID    string     `gorm:"column:device_id;primaryKey" json:"deviceId"`
+	DeviceID    string     `gorm:"size:191;column:device_id;primaryKey" json:"deviceId"`
 	BucketTS    int64      `gorm:"column:bucket_ts;primaryKey" json:"bucketTs"`
 	CPUPct      *float64   `gorm:"column:cpu_pct" json:"cpuPct"`
 	MemUsed     *int64     `gorm:"column:mem_used" json:"memUsed"`
@@ -162,7 +162,7 @@ type DeviceMetricsHourly struct {
 func (DeviceMetricsHourly) TableName() string { return "device_metrics_hourly" }
 
 type UserTOTP struct {
-	UserID                string  `gorm:"column:user_id;primaryKey" json:"userId"`
+	UserID                string  `gorm:"size:191;column:user_id;primaryKey" json:"userId"`
 	SecretEnvelope        []byte  `gorm:"column:secret_envelope" json:"secretEnvelope"`
 	PendingSecretEnvelope []byte  `gorm:"column:pending_secret_envelope" json:"pendingSecretEnvelope"`
 	CreatedAt             int64   `gorm:"column:created_at;not null" json:"createdAt"`
@@ -174,7 +174,7 @@ func (UserTOTP) TableName() string { return "user_totp" }
 
 type UserTOTPRecoveryCode struct {
 	ID        string  `gorm:"column:id;primaryKey" json:"id"`
-	UserID    string  `gorm:"column:user_id;not null;index:idx_user_totp_recovery_code_user" json:"userId"`
+	UserID    string  `gorm:"size:191;column:user_id;not null;index:idx_user_totp_recovery_code_user" json:"userId"`
 	CodeHash  string  `gorm:"column:code_hash;not null" json:"codeHash"`
 	CreatedAt int64   `gorm:"column:created_at;not null" json:"createdAt"`
 	UsedAt    *int64  `gorm:"column:used_at" json:"usedAt"`

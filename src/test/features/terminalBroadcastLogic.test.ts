@@ -18,7 +18,7 @@ vi.mock("../../ipc/commands", () => ({
   assetApi: {},
   dbApi: {},
   vaultApi: {},
-  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn(), list: vi.fn() },
+  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn(), list: vi.fn().mockResolvedValue([]) },
   terminalApi: {
     listLive: vi.fn().mockResolvedValue([]),
     write: vi.fn().mockResolvedValue(undefined),

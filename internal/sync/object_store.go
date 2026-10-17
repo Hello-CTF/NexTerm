@@ -63,8 +63,7 @@ func hashBlobHex(blob []byte) string {
 }
 
 type objectStore struct {
-	db      *gorm.DB
-	backend store.Backend
+	db *gorm.DB
 }
 
 func validObjectID(id string) bool {
@@ -125,9 +124,6 @@ func (o *objectStore) push(ctx context.Context, userID, knownHead string, object
 			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 		}
 		q := headModel.WithContext(ctx).Where(headModel.UserID.Eq(userID))
-		if o.backend == store.BackendPostgres {
-			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
-		}
 		row, err := q.First()
 		if err != nil {
 			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)

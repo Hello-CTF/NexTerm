@@ -19,15 +19,19 @@ func TestOpenProductionStoreBackendSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = openProductionStore(t.Context(), ProductionConfig{
-		DataDir: t.TempDir(),
-		DB: store.BackendConfig{
-			Backend:        store.BackendPostgres,
-			DSN:            "postgres://nexterm@127.0.0.1:1/nexterm?sslmode=disable&connect_timeout=2",
-			ConnectTimeout: 3 * time.Second,
-		},
-	})
-	if err == nil {
-		t.Fatal("unreachable postgres backend was accepted")
+	for _, backend := range []store.Backend{store.BackendPostgres, store.BackendMySQL, store.BackendMariaDB} {
+		t.Run(string(backend), func(t *testing.T) {
+			dsn := "nexterm@tcp(127.0.0.1:1)/nexterm?timeout=2s"
+			if backend == store.BackendPostgres {
+				dsn = "postgres://nexterm@127.0.0.1:1/nexterm?sslmode=disable&connect_timeout=2"
+			}
+			_, err := openProductionStore(t.Context(), ProductionConfig{
+				DataDir: t.TempDir(),
+				DB:      store.BackendConfig{Backend: backend, DSN: dsn, ConnectTimeout: 3 * time.Second},
+			})
+			if err == nil {
+				t.Fatal("unreachable remote backend was accepted")
+			}
+		})
 	}
 }

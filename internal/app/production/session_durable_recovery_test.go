@@ -241,6 +241,96 @@ func TestProductionAttachTabRemoteEnumerationMissReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestProductionCloseDiscoveredSSHTabRequiresAuthorizedOwningSession(t *testing.T) {
+	for _, mode := range []string{"detach", "kill"} {
+		t.Run(mode, func(t *testing.T) {
+			fixture := newRemoteDaemonFixture(t)
+			other := newRemoteDaemonFixture(t)
+			resolver := &transportDurableResolver{providers: make(map[base.Transport]base.DurableProvider)}
+			production, factory := newRemoteRecoveryHarness(t, resolver)
+			connected := connectRemoteSSHAsset(t, production)
+			wrong := connectRemoteSSHAsset(t, production)
+			for id, provider := range map[string]base.DurableProvider{connected.ID: fixture.provider, wrong.ID: other.provider} {
+				transport, err := production.Services.Sessions.Transport(t.Context(), id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				resolver.providers[transport] = provider
+			}
+			tabID := ids.New()
+			directory := t.TempDir()
+			beforePath := filepath.Join(directory, "before.pid")
+			afterPath := filepath.Join(directory, "after.pid")
+			attachment, err := fixture.provider.Create(t.Context(), base.DurableCreateOptions{ID: tabID, Command: []string{"sh"}, Cols: 80, Rows: 24})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := attachment.Write([]byte("printf '%s' \"$$\" > '" + beforePath + "'; printf 'discovered-''ready\\n'\n")); err != nil {
+				t.Fatal(err)
+			}
+			readUntilDurableOutput(t, attachment, "discovered-ready")
+			if err := attachment.Close(); err != nil {
+				t.Fatal(err)
+			}
+			beforePID, err := os.ReadFile(beforePath)
+			if err != nil || len(beforePID) == 0 {
+				t.Fatalf("original shell PID = %q, %v", beforePID, err)
+			}
+			args := `{"tabId":"` + tabID + `","sessionId":"` + connected.ID + `","mode":"` + mode + `"}`
+			denied := production.Dispatcher.Dispatch(ipc.WithUserID(t.Context(), "another-account"), ipc.Request{
+				Command: "terminal_close_tab", Args: []byte(args), ClientID: "client-other",
+			}, production.Environment("client-other"))
+			if denied.OK || denied.Error == nil || denied.Error.Code != ipc.CodeForbidden {
+				t.Fatalf("unauthorized remote kill = %+v, want forbidden", denied)
+			}
+			missing := dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","sessionId":"`+wrong.ID+`","mode":"`+mode+`"}`, "", "client-a")
+			if missing.OK || missing.Error == nil || missing.Error.Code != ipc.CodeNotFound {
+				t.Fatalf("wrong daemon kill = %+v, want not_found", missing)
+			}
+			infos, err := fixture.client.List(t.Context())
+			if err != nil || len(infos) != 1 || infos[0].Dead {
+				t.Fatalf("rejected kill disturbed original shell: %+v, %v", infos, err)
+			}
+			requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", args, "", "client-a"))
+			if mode == "detach" {
+				descriptors, err := production.Services.Sessions.ListRemoteDurable(t.Context(), connected.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				found := false
+				for _, descriptor := range descriptors {
+					if descriptor.ID == tabID && !descriptor.Dead {
+						found = true
+					}
+				}
+				if !found {
+					t.Fatal("detached original shell cannot be discovered")
+				}
+				channel := "discovered-detach-recover"
+				response := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+tabID+`","sessionId":"`+connected.ID+`","replayBytes":262144}`, channel, "client-a")
+				requireAttachedTabID(t, response)
+				writeDurableTestInput(t, production, tabID, "printf '%s' \"$$\" > '"+afterPath+"'; printf 'discovered-''continued\\n'", "client-a")
+				waitForProductionOutput(t, factory.at(channel, 0), "discovered-continued")
+				afterPID, err := os.ReadFile(afterPath)
+				if err != nil || !bytes.Equal(beforePID, afterPID) {
+					t.Fatalf("detached shell PID = %q, %v; want %q", afterPID, err, beforePID)
+				}
+				requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","sessionId":"`+connected.ID+`","mode":"kill"}`, "", "client-a"))
+			}
+
+			infos, err = fixture.client.List(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, info := range infos {
+				if info.ID == tabID && !info.Dead {
+					t.Fatalf("explicit remote kill kept shell alive: %+v", info)
+				}
+			}
+		})
+	}
+}
+
 func TestProductionAttachTabRemoteResolverFailurePropagatesMapping(t *testing.T) {
 	resolver := &recordingDurableResolver{err: durable.ErrUnavailable}
 	production, _ := newRemoteRecoveryHarness(t, resolver)
@@ -319,22 +409,115 @@ func TestProductionTerminalAttachDurableFailureDoesNotFallBackToPTY(t *testing.T
 	production, _ := newRemoteRecoveryHarness(t, resolver)
 	connected := connectRemoteSSHAsset(t, production)
 
-	plainResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, "plain-ssh-channel", "client-a")
+	plainResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24,"durable":false}`, "plain-ssh-channel", "client-a")
 	plainTabID := requireAttachedTabID(t, plainResponse)
 	plainTab, err := production.Services.Sessions.Tab(plainTabID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if plainTab.Info().Durable {
-		t.Fatal("ordinary SSH attach became durable")
+		t.Fatal("explicit volatile SSH attach became durable")
 	}
 
-	durableResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24,"durable":true}`, "durable-ssh-channel", "client-a")
-	if durableResponse.OK || durableResponse.Error == nil || durableResponse.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("explicit durable attach with unavailable helper = %+v, want unsupported without a PTY fallback", durableResponse)
+	for _, flag := range []string{"", `,"durable":true`} {
+		durableResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24`+flag+`}`, "durable-ssh-channel", "client-a")
+		if durableResponse.OK || durableResponse.Error == nil || durableResponse.Error.Code != ipc.CodeUnsupported {
+			t.Fatalf("durable attach %q with unavailable helper = %+v, want unsupported without a PTY fallback", flag, durableResponse)
+		}
 	}
 	if tabs := production.Services.Sessions.ListTabs(); len(tabs) != 1 || tabs[0].ID != plainTabID || tabs[0].Durable {
 		t.Fatalf("tabs after failed durable attach = %+v, want only the ordinary tab", tabs)
+	}
+}
+
+func TestProductionDefaultSSHTabsSurviveAppRestartWithOriginalProcesses(t *testing.T) {
+	t.Setenv("SHELL", "")
+	t.Setenv("ENV", "")
+	fixture := newRemoteDaemonFixture(t)
+	connect := func(production *Production) sessionInfoDTO {
+		host, user, port := "127.0.0.1", "root", int32(22)
+		asset, err := production.Services.Store.AssetCreate(t.Context(), store.AssetInput{
+			Kind: "ssh", Name: "restart-env-startup", Host: &host, Username: &user, Port: &port,
+			OptionsJSON: `{"env":{"NEXTERM_ASSET_ENV":"preserved"},"encoding":"gbk","startupCommand":"NEXTERM_STARTUP_COUNT=$(( ${NEXTERM_STARTUP_COUNT:-0} + 1 ))"}`,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var connected sessionInfoDTO
+		requireStoreTestResponse(t, dispatchDurableTest(t, production, "session_connect", `{"args":{"assetId":"`+asset.ID+`"}}`, "", "client-a"), &connected)
+		return connected
+	}
+	first, firstFactory := newRemoteRecoveryHarness(t, &recordingDurableResolver{provider: fixture.provider})
+	connected := connect(first)
+	directory := t.TempDir()
+	tabIDs := make([]string, 0, 2)
+	pids := make([]string, 0, 2)
+	for _, name := range []string{"one", "two"} {
+		response := dispatchDurableTest(t, first, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, "restart-first-"+name, "client-a")
+		tabID := requireAttachedTabID(t, response)
+		tabIDs = append(tabIDs, tabID)
+		pidPath := filepath.Join(directory, name+"-before.pid")
+		writeDurableTestInput(t, first, tabID, "NEXTERM_RESTART_STATE="+name+"; printf '%s' \"$$\" > '"+pidPath+"'; printf 'restart-''ready-"+name+"\\n'", "client-a")
+		waitForProductionOutput(t, firstFactory.at("restart-first-"+name, 0), "restart-ready-"+name)
+		pid, err := os.ReadFile(pidPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(pid) == 0 {
+			t.Fatal("shell did not report its PID")
+		}
+		pids = append(pids, string(pid))
+	}
+	before, err := fixture.client.List(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	second, secondFactory := newRemoteRecoveryHarness(t, &recordingDurableResolver{provider: fixture.provider})
+	reconnected := connect(second)
+	response := dispatchDurableTest(t, second, "terminal_list", `{"sessionId":"`+reconnected.ID+`","durable":true}`, "", "client-b")
+	var descriptors []durableDescriptorDTO
+	requireStoreTestResponse(t, response, &descriptors)
+	for index, name := range []string{"one", "two"} {
+		tabID := tabIDs[index]
+		found := false
+		for _, descriptor := range descriptors {
+			if descriptor.ID == tabID && !descriptor.Dead {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("original tab %s missing after app shutdown: %+v", tabID, descriptors)
+		}
+		channelID := "restart-second-" + name
+		attached := dispatchDurableTest(t, second, "terminal_attach_tab", `{"sessionId":"`+reconnected.ID+`","tabId":"`+tabID+`","replayBytes":262144}`, channelID, "client-b")
+		var info attachedTabDTO
+		requireStoreTestResponse(t, attached, &info)
+		if info.TabID != tabID || info.Encoding != "gbk" {
+			t.Fatalf("restored tab = %+v, want original tab with gbk encoding", info)
+		}
+		stream := secondFactory.at(channelID, 0)
+		waitForProductionOutput(t, stream, "restart-ready-"+name)
+		pidPath := filepath.Join(directory, name+"-after.pid")
+		writeDurableTestInput(t, second, tabID, "printf '%s' \"$$\" > '"+pidPath+"'; printf 'restart-''continued:%s:%s:%s\\n' \"$NEXTERM_RESTART_STATE\" \"$NEXTERM_ASSET_ENV\" \"$NEXTERM_STARTUP_COUNT\"", "client-b")
+		waitForProductionOutput(t, stream, "restart-continued:"+name+":preserved:1")
+		pid, err := os.ReadFile(pidPath)
+		if err != nil || string(pid) != pids[index] {
+			t.Fatalf("restored shell PID = %q, %v; want original %s", pid, err, pids[index])
+		}
+	}
+	after, err := fixture.client.List(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, original := range before {
+		for _, restored := range after {
+			if original.ID == restored.ID && original.Incarnation != restored.Incarnation {
+				t.Fatalf("restored tab changed incarnation: before=%+v after=%+v", original, restored)
+			}
+		}
 	}
 }
 
@@ -408,7 +591,9 @@ func TestProductionListDurableEnumerationFailureIsNotAnEmptyList(t *testing.T) {
 	}
 }
 
-func TestProductionTwoManagersDiscoverAndShareExplicitDurableSSH(t *testing.T) {
+func TestProductionTwoManagersDiscoverAndShareDefaultDurableSSH(t *testing.T) {
+	t.Setenv("SHELL", "")
+	t.Setenv("ENV", "")
 	fixture := newRemoteDaemonFixture(t)
 	resolverA := &recordingDurableResolver{provider: fixture.provider}
 	resolverC := &recordingDurableResolver{provider: fixture.provider}
@@ -421,7 +606,7 @@ func TestProductionTwoManagersDiscoverAndShareExplicitDurableSSH(t *testing.T) {
 	}
 
 	channelA := "production-shared-a-1"
-	createResponse := dispatchDurableTest(t, productionA, "terminal_attach", `{"sessionId":"`+connectedA.ID+`","cols":80,"rows":24,"durable":true}`, channelA, "client-a")
+	createResponse := dispatchDurableTest(t, productionA, "terminal_attach", `{"sessionId":"`+connectedA.ID+`","cols":80,"rows":24}`, channelA, "client-a")
 	tabID := requireAttachedTabID(t, createResponse)
 	tabA, err := productionA.Services.Sessions.Tab(tabID)
 	if err != nil {

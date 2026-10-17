@@ -490,7 +490,10 @@ func newProductionAuthorizationFixture(t *testing.T, open bool) *productionAutho
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
 		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
 	})
-	manager := session.NewManager(session.Config{Connector: connector, OpenAccess: open})
+	manager := session.NewManager(session.Config{
+		Connector: connector, OpenAccess: open,
+		DurableResolver: &recordingDurableResolver{provider: newRemoteDaemonFixture(t).provider},
+	})
 	factory := &bridgeTestFactory{}
 	production, err := NewProductionWithServices(Config{
 		Streams: ipc.StreamFactoryFuncs{Binary: factory.open},

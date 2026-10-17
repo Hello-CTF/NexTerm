@@ -44,7 +44,7 @@ func TestParseCLIRejectsInvalidInput(t *testing.T) {
 		{"--listen", "missing-port"},
 		{"--listen", "127.0.0.1:70000"},
 		{"--sync-only=perhaps"},
-		{"--db", "mysql"},
+		{"--db", "unsupported"},
 		{"--db-dsn", "postgres://u@h/db"},
 		{"--db", "postgres"},
 		{"--db", "postgres", "--db-password-file", "/tmp/pw"},
@@ -58,6 +58,21 @@ func TestParseCLIRejectsInvalidInput(t *testing.T) {
 }
 
 func TestParseCLIDatabaseBackend(t *testing.T) {
+	for _, backend := range []string{"mysql", "mariadb"} {
+		t.Run(backend, func(t *testing.T) {
+			dsn := "nexterm@tcp(127.0.0.1:3306)/nexterm?parseTime=true"
+			invocation, err := ParseCLI([]string{"--db", backend, "--db-dsn", dsn, "--db-password-file", "/run/secrets/database"}, CommandServe, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if invocation.DB != backend || invocation.DBDSN != dsn || invocation.DBPasswordFile != "/run/secrets/database" {
+				t.Fatalf("invocation = %+v", invocation)
+			}
+			if _, err := ParseCLI([]string{"--db", backend}, CommandServe, nil); err == nil {
+				t.Fatal("missing remote database DSN was accepted")
+			}
+		})
+	}
 	invocation, err := ParseCLI([]string{"--db", "postgres", "--db-dsn", "postgres://u@h:5432/db", "--db-max-open-conns", "32"}, CommandServe, nil)
 	if err != nil {
 		t.Fatal(err)

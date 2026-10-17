@@ -22,7 +22,7 @@ func TestObjectHandlerRequiresUserIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	handler := NewObjectHandler(db.GORM(), db.Backend(), nil)
+	handler := NewObjectHandler(db.GORM(), nil)
 	for _, path := range []string{"/sync/v2/push", "/sync/v2/pull", "/sync/v2/ids"} {
 		request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader([]byte(`{"protocol":2}`)))
 		recorder := httptest.NewRecorder()
@@ -46,7 +46,7 @@ func TestObjectHandlerProtocolGateAndConflict(t *testing.T) {
 	}
 	userID := user.ID
 	ctx = WithUserID(ctx, userID)
-	handler := NewObjectHandler(db.GORM(), db.Backend(), nil)
+	handler := NewObjectHandler(db.GORM(), nil)
 
 	post := func(path string, payload any) *httptest.ResponseRecorder {
 		body, err := json.Marshal(payload)
@@ -134,7 +134,7 @@ func TestObjectHandlerGzipRequestAndResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx = WithUserID(ctx, user.ID)
-	handler := NewObjectHandler(db.GORM(), db.Backend(), nil)
+	handler := NewObjectHandler(db.GORM(), nil)
 	payload, err := json.Marshal(PushRequest{Protocol: ProtocolVersion, KnownHead: genesisHead(user.ID), Objects: []WireObject{{ID: "obj-1", Blob: make([]byte, 2048)}}})
 	if err != nil {
 		t.Fatal(err)
@@ -228,7 +228,7 @@ func TestObjectHandlerPushEmitsSyncStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx = WithUserID(ctx, user.ID)
-	handler := NewObjectHandler(db.GORM(), db.Backend(), nil)
+	handler := NewObjectHandler(db.GORM(), nil)
 	var events []ipc.Event
 	handler.events = ipc.EmitterFunc(func(_ context.Context, event ipc.Event) error {
 		events = append(events, event)

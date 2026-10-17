@@ -334,8 +334,8 @@ export const terminalApi = {
     call<RecordingStatus>("terminal_record_status", { tabId }),
   exportLog: (tabId: string, path: string, maxBytes?: number) =>
     call<number>("terminal_export_log", { tabId, path, maxBytes }),
-  closeTab: (tabId: string, mode?: "kill" | "detach") =>
-    call<void>("terminal_close_tab", { tabId, mode, clientId: clientId() }),
+  closeTab: (tabId: string, mode?: "kill" | "detach", sessionId?: string) =>
+    call<void>("terminal_close_tab", { tabId, mode, clientId: clientId(), ...(sessionId === undefined ? {} : { sessionId }) }),
   renameTab: (tabId: string, title: string) =>
     call<AttachedTabInfo>("terminal_rename_tab", { tabId, title }),
   createTab: (sessionId: string, options?: { title?: string; command?: string }) =>

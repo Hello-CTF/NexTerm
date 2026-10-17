@@ -1093,16 +1093,20 @@ func (s *Service) RollupMetrics(ctx context.Context) error {
 	rawCutoff := now - rawMetricsRetention.Milliseconds()
 	rollupCutoff := (rawCutoff / metricsHourMS) * metricsHourMS
 	hourlyCutoff := now - hourlyMetricsRetention.Milliseconds()
-	// The aggregation INSERT...SELECT and the conditional DELETE cannot be expressed with gen query, so they execute directly inside the transaction.
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		upsert := &gorm.Statement{DB: tx, Clauses: make(map[string]clause.Clause)}
+		upsert.AddClause(clause.OnConflict{
+			Columns: []clause.Column{{Name: "device_id"}, {Name: "bucket_ts"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"cpu_pct", "mem_used", "mem_total", "disk_used", "disk_total", "uptime_s", "sample_count",
+			}),
+		})
+		upsert.Build("ON CONFLICT")
 		if err := tx.Exec(`INSERT INTO device_metrics_hourly(device_id, bucket_ts, cpu_pct, mem_used, mem_total, disk_used, disk_total, uptime_s, sample_count)
-SELECT device_id, (ts/3600000)*3600000, avg(cpu_pct), avg(mem_used), max(mem_total), avg(disk_used), max(disk_total), max(uptime_s), count(*)
+SELECT device_id, (ts - ts % 3600000), avg(cpu_pct), avg(mem_used), max(mem_total), avg(disk_used), max(disk_total), max(uptime_s), count(*)
 FROM device_metrics WHERE ts < ?
-GROUP BY device_id, (ts/3600000)*3600000
-ON CONFLICT(device_id, bucket_ts) DO UPDATE SET
-cpu_pct = excluded.cpu_pct, mem_used = excluded.mem_used, mem_total = excluded.mem_total,
-disk_used = excluded.disk_used, disk_total = excluded.disk_total, uptime_s = excluded.uptime_s,
-sample_count = excluded.sample_count`,
+GROUP BY device_id, (ts - ts % 3600000)
+`+upsert.SQL.String(),
 			rollupCutoff).Error; err != nil {
 			return dbError(err)
 		}

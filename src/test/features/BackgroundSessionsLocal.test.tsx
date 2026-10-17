@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
   askChoiceRemember: vi.fn(),
   listLive: vi.fn(),
+  listDurable: vi.fn(),
   listSessions: vi.fn(),
   closeTab: vi.fn(),
   resyncSessions: vi.fn(),
@@ -19,7 +20,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     dbApi: {},
     sessionApi: { list: mocks.listSessions },
     vaultApi: {},
-    terminalApi: { listLive: mocks.listLive, closeTab: mocks.closeTab },
+    terminalApi: { listLive: mocks.listLive, listDurable: mocks.listDurable, closeTab: mocks.closeTab },
   };
 });
 
@@ -94,6 +95,7 @@ describe("BackgroundSessions host-scoped view", () => {
     vi.resetAllMocks();
     mocks.ask.mockResolvedValue(true);
     mocks.listLive.mockResolvedValue([]);
+    mocks.listDurable.mockResolvedValue([]);
     mocks.listSessions.mockResolvedValue([s1, s2]);
     mocks.closeTab.mockResolvedValue(undefined);
     mocks.resyncSessions.mockResolvedValue(undefined);
@@ -161,6 +163,102 @@ describe("BackgroundSessions host-scoped view", () => {
       expect(view.container.querySelector('select[aria-label="选择会话"]')).toBeNull();
       expect(view.container.querySelector('[data-testid="background-host"]')?.textContent).toContain("主机一");
       expect(view.container.querySelector('[data-background-view="local"]')).not.toBeNull();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("keeps device background tabs without requesting unsupported remote discovery", async () => {
+    seedScope();
+    useUi.setState({ sessions: [{ ...s1, kind: "device" }, s2] });
+    mocks.listLive.mockResolvedValue([liveTab({ tabId: "device-tab", sessionId: "s1", sessionKind: "device", title: "设备任务" })]);
+    const view = mountHost();
+    try {
+      await flush();
+      expect(view.container.textContent).toContain("设备任务");
+      expect(mocks.listDurable).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("discovers remote shells from another client and takes over the original identity", async () => {
+    mocks.listDurable.mockResolvedValue([{
+      id: "remote-shell", incarnation: "i1", createdAt: 10, metadataRevision: 1,
+      cols: 100, rows: 30, dead: false, exitCode: null, finishedAt: null, title: "远端训练",
+    }]);
+    seedScope();
+    const view = mountHost();
+    try {
+      await flush();
+      await waitFor(() => expect(view.container.textContent).toContain("远端训练"));
+      expect(mocks.listDurable).toHaveBeenCalledWith("s1");
+      await act(async () => {
+        actionButton(view, "接管").click();
+        await flush();
+      });
+      const tab = useUi.getState().workspaces.flatMap((workspace) => workspace.panes)
+        .flatMap((pane) => pane.tabs).find((candidate) => candidate.tabId === "remote-shell");
+      expect(tab).toMatchObject({ sessionId: "s1", tabId: "remote-shell", kind: "terminal", title: "远端训练" });
+      expect(mocks.closeTab).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("does not duplicate local tabs or advertise attached and exited shells as remote background rows", async () => {
+    mocks.listLive.mockResolvedValue([
+      liveTab({ tabId: "known", sessionId: "s1", title: "已有后台" }),
+      liveTab({ tabId: "attached", sessionId: "s1", subscribers: 1, title: "正在观看" }),
+    ]);
+    mocks.listDurable.mockResolvedValue([
+      { id: "known", cols: 80, rows: 24, dead: false, title: "重复远端" },
+      { id: "attached", cols: 80, rows: 24, dead: false, title: "重复观看" },
+      { id: "finished", cols: 80, rows: 24, dead: true, title: "已退出远端" },
+    ]);
+    seedScope();
+    const view = mountHost();
+    try {
+      await flush();
+      await waitFor(() => expect(view.container.textContent).toContain("已有后台"));
+      expect(view.container.textContent).not.toContain("重复远端");
+      expect(view.container.textContent).not.toContain("重复观看");
+      expect(view.container.textContent).not.toContain("已退出远端");
+      expect(view.container.querySelectorAll("tbody tr")).toHaveLength(1);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("passes the owning SSH connection when ending a discovered remote shell", async () => {
+    mocks.listDurable.mockResolvedValue([{ id: "remote-kill", cols: 80, rows: 24, dead: false, title: "远端任务" }]);
+    seedScope();
+    const view = mountHost();
+    try {
+      await flush();
+      await waitFor(() => expect(view.container.textContent).toContain("远端任务"));
+      await act(async () => {
+        actionButton(view, "结束进程").click();
+        await flush();
+      });
+      expect(mocks.ask).toHaveBeenCalled();
+      expect(mocks.closeTab).toHaveBeenCalledWith("remote-kill", "kill", "s1");
+      expect(mocks.resyncSessions).toHaveBeenCalledWith({ silent: true });
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("retains local results while reporting remote discovery failure", async () => {
+    mocks.listLive.mockResolvedValue([liveTab({ tabId: "known", sessionId: "s1", title: "已有后台" })]);
+    mocks.listDurable.mockRejectedValue(new Error("SSH disconnected"));
+    seedScope();
+    const view = mountHost();
+    try {
+      await flush();
+      await waitFor(() => expect(view.container.textContent).toContain("SSH disconnected"));
+      expect(view.container.textContent).toContain("已有后台");
+      expect(view.container.textContent).not.toContain("当前主机没有在后台运行的终端");
     } finally {
       view.unmount();
     }
@@ -538,6 +636,7 @@ describe("closing a local terminal follows explicit capability and preference", 
     setTerminalCloseAction("detach");
     mocks.ask.mockResolvedValue(true);
     mocks.listSessions.mockResolvedValue([]);
+    mocks.listLive.mockResolvedValue([liveTab({ tabId: "kernel-terminal" })]);
     mocks.closeTab.mockResolvedValue(undefined);
     mocks.resyncSessions.mockResolvedValue(undefined);
   });

@@ -2,6 +2,7 @@ package production
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -84,7 +85,7 @@ type openTerminalRequest struct {
 	SessionID string `json:"sessionId"`
 	Cols      uint32 `json:"cols"`
 	Rows      uint32 `json:"rows"`
-	Durable   bool   `json:"durable,omitempty"`
+	Durable   *bool  `json:"durable,omitempty"`
 }
 
 type durableDescriptorDTO struct {
@@ -157,6 +158,7 @@ type terminalResizeRequest struct {
 
 type terminalIDRequest struct {
 	TabID     string `json:"tabId"`
+	SessionID string `json:"sessionId,omitempty"`
 	ChannelID string `json:"channelId"`
 	Mode      string `json:"mode"`
 	N         int    `json:"n"`
@@ -368,9 +370,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				ephemeral := kind == session.KindLocal
 				retainable := ephemeral
 				var durable *session.DurableTabOptions
-				// Device channels have no raw PTY: terminal tabs always land on the device daemon's durable
-				// sessions, restored by id on reconnect/reopen.
-				if kind == session.KindDevice || kind == session.KindSSH && input.Durable {
+				if kind == session.KindDevice || kind == session.KindSSH && (input.Durable == nil || *input.Durable) {
 					durable = &session.DurableTabOptions{}
 				}
 				if err := s.bridge.Bridge(call.Channel.ID); err != nil {
@@ -662,6 +662,20 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				} else {
 					err = s.sessions.CloseTabFor(ctx, input.TabID)
 				}
+				if errors.Is(err, session.ErrTabNotFound) && input.SessionID != "" {
+					if _, err = s.sessions.SessionFor(ctx, input.SessionID); err == nil {
+						_, err = s.sessions.RecoverRemoteDurable(ctx, input.TabID, session.OpenTabOptions{
+							SessionID: input.SessionID, ClientID: call.ClientID, Detached: true, Cols: 80, Rows: 24,
+						})
+						if err == nil {
+							if input.Mode == "detach" {
+								err = s.sessions.BackgroundTab(ctx, input.TabID, call.ClientID)
+							} else {
+								err = s.sessions.CloseTabFor(ctx, input.TabID)
+							}
+						}
+					}
+				}
 				if errors.Is(err, session.ErrTabNotFound) && s.docker != nil {
 					if authErr := s.authorizeDockerTab(ctx, input.TabID); authErr != nil {
 						err = authErr
@@ -799,7 +813,14 @@ func productionSessionAsset(row store.AssetRow, acceptHostKey bool) (session.Ass
 	}
 	encoding, _ := options["encoding"].(string)
 	startupCommand, _ := options["startupCommand"].(string)
-	return session.Asset{ID: row.ID, Name: row.Name, Kind: row.Kind, Encoding: encoding, StartupCommand: startupCommand, Options: options}, nil
+	var environment map[string]string
+	if value, ok := options["env"]; ok {
+		raw, _ := json.Marshal(value)
+		if err := json.Unmarshal(raw, &environment); err != nil {
+			return session.Asset{}, ipc.BadParam(fmt.Errorf("资产环境变量无效: %w", err))
+		}
+	}
+	return session.Asset{ID: row.ID, Name: row.Name, Kind: row.Kind, Encoding: encoding, StartupCommand: startupCommand, Env: environment, Options: options}, nil
 }
 
 func productionSessionInfo(info session.SessionInfo) sessionInfoDTO {

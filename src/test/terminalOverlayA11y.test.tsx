@@ -226,7 +226,7 @@ describe("terminal overlay accessibility", () => {
 
     clickButton(mounted.container, "关闭标签");
 
-    await waitFor(() => expect(harness.closeTab).toHaveBeenCalledWith("kernel-1", undefined));
+    await waitFor(() => expect(harness.closeTab).toHaveBeenCalledWith("kernel-1", undefined, "s1"));
     const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
     expect(tabs.find((candidate) => candidate.id === "t1")).toBeUndefined();
   });

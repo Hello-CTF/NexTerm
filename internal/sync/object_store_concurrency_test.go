@@ -91,7 +91,7 @@ func TestObjectStoreConcurrentPushSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	objectStore := &objectStore{db: db.GORM(), backend: db.Backend()}
+	objectStore := &objectStore{db: db.GORM()}
 
 	head := pushAllConcurrently(t, ctx, objectStore, user.ID, 8, 4)
 	if head == genesisHead(user.ID) {

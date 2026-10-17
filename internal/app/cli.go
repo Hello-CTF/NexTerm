@@ -175,11 +175,11 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 			}
 			invocation.DBMaxOpenConns = parsed
 		}
-		if backend == store.BackendPostgres && invocation.DBDSN == "" {
-			return Invocation{}, fmt.Errorf("postgres backend requires --db-dsn (env NEXTERM_DB_DSN)")
+		if backend != store.BackendSQLite && invocation.DBDSN == "" {
+			return Invocation{}, fmt.Errorf("%s backend requires --db-dsn (env NEXTERM_DB_DSN)", backend)
 		}
 		if backend == store.BackendSQLite && (invocation.DBDSN != "" || invocation.DBPasswordFile != "") {
-			return Invocation{}, fmt.Errorf("--db-dsn and --db-password-file require --db=postgres")
+			return Invocation{}, fmt.Errorf("--db-dsn and --db-password-file require a remote database backend")
 		}
 	}
 	return invocation, nil
@@ -217,15 +217,14 @@ Flags:
                       request becomes the platform owner account (no init code);
                       off = local shared workspace only: account/admin/device routes stay
                       closed (no implicit superadmin) and startup refuses if any user exists
-  --db BACKEND        Server database backend: sqlite or postgres (env NEXTERM_DB, default sqlite);
-                      postgres uses the same auto-migrated schema and, in this first
-                      version, supports a single writer instance only
-  --db-dsn DSN        Postgres connection string (env NEXTERM_DB_DSN), e.g.
-                      postgres://user@host:5432/nexterm?sslmode=verify-full&sslrootcert=/path/ca.crt;
-                      requires --db=postgres; the password may come from --db-password-file instead
-  --db-password-file PATH  Read the postgres password from a 0600 file
-                      (env NEXTERM_DB_PASSWORD_FILE); rejected when the DSN already has a password
-  --db-max-open-conns N  Postgres pool size (env NEXTERM_DB_MAX_OPEN_CONNS, default 16)
+  --db BACKEND        Server storage: sqlite, postgres, mysql, or mariadb
+                      (env NEXTERM_DB, default sqlite); one writer instance per database
+  --db-dsn DSN        Database connection string (env NEXTERM_DB_DSN); required for remote backends
+                      postgres: postgres://user@host:5432/nexterm?sslmode=verify-full
+                      mysql/mariadb: user@tcp(host:3306)/nexterm?parseTime=true&tls=true
+  --db-password-file PATH  Read the database password from a 0600 file
+                      (env NEXTERM_DB_PASSWORD_FILE); rejected if DSN already contains a password
+  --db-max-open-conns N  Remote database pool size (env NEXTERM_DB_MAX_OPEN_CONNS, default 16)
   --require-vault     Fail startup unless the credential vault unlocks
   --sync-only         Restrict the server to sync routes
   --pprof-addr ADDR   Serve pprof debug endpoints on ADDR (env NEXTERM_PPROF_ADDR);

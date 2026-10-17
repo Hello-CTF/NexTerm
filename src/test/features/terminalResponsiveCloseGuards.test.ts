@@ -88,7 +88,7 @@ describe("close = detach (M111)", () => {
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.askChoice).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledTimes(1);
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "detach", "s");
     expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
     expect(toastText()).toContain("已转入后台");
   });
@@ -100,7 +100,7 @@ describe("close = detach (M111)", () => {
     await requestCloseTab(tab.id);
 
     expect(mocks.ask).not.toHaveBeenCalled();
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill", "s");
     expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
   });
 
@@ -160,8 +160,8 @@ describe("close = detach (M111)", () => {
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.askChoice).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledTimes(2);
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach");
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "detach", "s");
     expect(useUi.getState().workspaces).toEqual([]);
     expect(toastText()).toContain("2 个终端转入后台");
   });
@@ -185,7 +185,7 @@ describe("close = detach (M111)", () => {
     mocks.ask.mockResolvedValueOnce(true);
     await useUi.getState().closeWorkspace("ws");
 
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-e1", "kill");
     expect(useUi.getState().workspaces).toEqual([]);
     expect(toastText()).toContain("1 个进程已结束");
@@ -210,7 +210,7 @@ describe("close = detach (M111)", () => {
     mocks.ask.mockResolvedValueOnce(true);
     await useUi.getState().unsplitWorkspace("p2", "ws");
 
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-gone", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-gone", "detach", "s");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-e1", "kill");
     expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
   });
@@ -226,7 +226,7 @@ describe("close = detach (M111)", () => {
 
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledTimes(1);
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-gone", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-gone", "detach", "s");
     expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
   });
 
@@ -237,8 +237,8 @@ describe("close = detach (M111)", () => {
     await useUi.getState().closeWorkspace("ws");
 
     expect(mocks.ask).not.toHaveBeenCalled();
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach");
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "kill", "s");
     expect(useUi.getState().workspaces).toEqual([]);
   });
 
@@ -252,7 +252,7 @@ describe("close = detach (M111)", () => {
     await useUi.getState().unsplitWorkspace("p2", "ws");
 
     expect(mocks.ask).not.toHaveBeenCalled();
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "kill", "s");
     expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
   });
 
@@ -274,9 +274,9 @@ describe("close = detach (M111)", () => {
     await useUi.getState().closeWorkspace("ws");
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-e1", "kill");
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "kill", "s");
     expect(useUi.getState().workspaces).toEqual([]);
   });
 });
@@ -430,7 +430,7 @@ describe("kill danger actions", () => {
     const [message, options] = mocks.ask.mock.calls[0];
     expect(message).toContain("结束");
     expect(options.kind).toBe("warning");
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill", "s");
     expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
     expect(toastText()).toContain("已结束");
   });
@@ -456,8 +456,8 @@ describe("kill danger actions", () => {
     const [message] = mocks.ask.mock.calls[0];
     expect(message).toContain("2 个终端");
     expect(mocks.closeTab).toHaveBeenCalledTimes(2);
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill");
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill", "s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "kill", "s");
     const remaining = useUi.getState().workspaces[0].panes[0].tabs;
     expect(remaining).toHaveLength(3);
     expect(remaining.every((t) => t.exited === true)).toBe(true);
@@ -545,7 +545,7 @@ describe("winrm ephemeral line tabs share the no-detach path", () => {
     mocks.ask.mockResolvedValueOnce(true);
     await useUi.getState().closeWorkspace("ws");
 
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s1");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-w1", "kill");
     expect(useUi.getState().workspaces).toEqual([]);
   });
@@ -617,7 +617,7 @@ describe("detach capability without session metadata", () => {
     mocks.ask.mockResolvedValueOnce(true);
     await useUi.getState().closeWorkspace("ws");
 
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s1");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-w1", "kill");
     expect(useUi.getState().workspaces).toEqual([]);
   });

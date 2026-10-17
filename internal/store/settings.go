@@ -140,8 +140,12 @@ func escapeLikePrefix(prefix string) string {
 
 func (s *Store) SettingContainsValue(ctx context.Context, substring string) (bool, error) {
 	setting := query.Use(s.db).Setting
+	like := "value LIKE ? ESCAPE '\\'"
+	if s.db.Dialector.Name() == "mysql" {
+		like = "value LIKE ? ESCAPE '\\\\'"
+	}
 	count, err := setting.WithContext(ctx).
-		Where(field.NewUnsafeFieldRaw(`value LIKE ? ESCAPE '\'`, "%"+escapeLikePrefix(substring)+"%")).
+		Where(field.NewUnsafeFieldRaw(like, "%"+escapeLikePrefix(substring)+"%")).
 		Count()
 	if err != nil {
 		return false, dbError(err)
@@ -217,9 +221,6 @@ func (s *Store) LayoutSave(ctx context.Context, expected int64, dataJSON string)
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		setting := query.Use(tx).Setting
 		q := setting.WithContext(ctx).Where(setting.Key.Eq(LayoutSettingKeyForUser(ipc.OwnerID(ctx))))
-		if s.dialect.backend == BackendPostgres {
-			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
-		}
 		row, err := q.First()
 		if err != nil && !isNoRows(err) {
 			return err

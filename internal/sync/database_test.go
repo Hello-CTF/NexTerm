@@ -10,29 +10,24 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
-// All tests in this file run against real PostgreSQL, gated by NEXTERM_TEST_PG_DSN;
-// without a configured DSN each test SKIPs and must not be counted as verified.
-
-func newPostgresSyncStore(t *testing.T) *store.Store {
+func newDatabaseSyncStore(t *testing.T) *store.Store {
 	t.Helper()
 	return dbtest.NewFixture(t).OpenStore(t)
 }
 
-// createPostgresSyncUser inserts an app_user row to satisfy the user_sync_object/user_sync_head foreign keys.
-func createPostgresSyncUser(t *testing.T, ctx context.Context, db *store.Store) string {
+func createDatabaseSyncUser(t *testing.T, ctx context.Context, db *store.Store) string {
 	t.Helper()
 	userID := "pg-user-" + ids.New()
-	if _, err := db.DB().ExecContext(ctx, `INSERT INTO app_user(id, username, display_name, role, password_hash, state, must_change_password, created_at, updated_at)
-VALUES(?,?,?,?,'x','active',false,?,?)`, userID, userID, "", "user", 1, 1); err != nil {
+	if err := db.GORM().WithContext(ctx).Create(&store.AppUser{ID: userID, Username: userID, Role: "user", PasswordHash: "x", State: "active", CreatedAt: 1, UpdatedAt: 1}).Error; err != nil {
 		t.Fatal(err)
 	}
 	return userID
 }
 
-func newPostgresTestInstance(t *testing.T, unlocked bool) *testInstance {
+func newDatabaseTestInstance(t *testing.T, unlocked bool) *testInstance {
 	t.Helper()
 	ctx := context.Background()
-	db := newPostgresSyncStore(t)
+	db := newDatabaseSyncStore(t)
 	if _, err := db.AssetEnsureBuiltinLocal(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -46,11 +41,11 @@ func newPostgresTestInstance(t *testing.T, unlocked bool) *testInstance {
 	return &testInstance{db: db, vault: credentialVault, service: New(db, credentialVault, WithMetadata("test", true))}
 }
 
-func TestPostgresObjectStorePushPullAndHeadConflict(t *testing.T) {
-	db := newPostgresSyncStore(t)
+func TestDatabaseObjectStorePushPullAndHeadConflict(t *testing.T) {
+	db := newDatabaseSyncStore(t)
 	ctx := context.Background()
-	userID := createPostgresSyncUser(t, ctx, db)
-	objectStore := &objectStore{db: db.GORM(), backend: db.Backend()}
+	userID := createDatabaseSyncUser(t, ctx, db)
+	objectStore := &objectStore{db: db.GORM()}
 
 	if head, err := objectStore.currentHead(ctx, userID); err != nil || head != genesisHead(userID) {
 		t.Fatalf("genesis head=%q err=%v", head, err)
@@ -60,39 +55,34 @@ func TestPostgresObjectStorePushPullAndHeadConflict(t *testing.T) {
 	if err != nil || applied != 2 || skipped != 0 || maxSeq != 2 {
 		t.Fatalf("push applied=%d skipped=%d maxSeq=%d err=%v", applied, skipped, maxSeq, err)
 	}
-	// A push with a stale head must be rejected as a whole (head conflict).
 	if _, _, _, _, err := objectStore.push(ctx, userID, genesisHead(userID), []WireObject{{ID: "obj-c", Blob: []byte("v2")}}); err != errHeadMismatch {
 		t.Fatalf("stale head push err=%v, want errHeadMismatch", err)
 	}
-	// Re-pushing the same content: idempotent skip, head and seq unchanged.
 	applied, skipped, head2, maxSeq2, err := objectStore.push(ctx, userID, head, objects)
 	if err != nil || applied != 0 || skipped != 2 || head2 != head || maxSeq2 != maxSeq {
 		t.Fatalf("idempotent push applied=%d skipped=%d headSame=%v maxSeq=%d err=%v", applied, skipped, head2 == head, maxSeq2, err)
 	}
-	// Pull is ascending by seq with the cursor complete.
 	pulled, _, pulledMaxSeq, nextSeq, done, err := objectStore.pull(ctx, userID, 0, nil, 0)
 	if err != nil || len(pulled) != 2 || pulled[0].ID != "obj-a" || pulled[1].ID != "obj-b" || !done || pulledMaxSeq != 2 || nextSeq != 2 {
 		t.Fatalf("pulled=%+v done=%v maxSeq=%d nextSeq=%d err=%v", pulled, done, pulledMaxSeq, nextSeq, err)
 	}
-	// The reconciliation list carries blob hashes.
 	entries, _, _, err := objectStore.idList(ctx, userID)
 	if err != nil || len(entries) != 2 || entries[0].BlobHash != hashBlobHex([]byte("blob-a")) || entries[1].BlobHash != hashBlobHex([]byte("blob-b")) {
 		t.Fatalf("entries=%+v err=%v", entries, err)
 	}
 }
 
-func TestPostgresObjectStoreConcurrentPush(t *testing.T) {
-	db := newPostgresSyncStore(t)
+func TestDatabaseObjectStoreConcurrentPush(t *testing.T) {
+	db := newDatabaseSyncStore(t)
 	ctx := context.Background()
-	userID := createPostgresSyncUser(t, ctx, db)
-	objectStore := &objectStore{db: db.GORM(), backend: db.Backend()}
+	userID := createDatabaseSyncUser(t, ctx, db)
+	objectStore := &objectStore{db: db.GORM()}
 
 	head := pushAllConcurrently(t, ctx, objectStore, userID, 8, 4)
 	if head == genesisHead(userID) {
 		t.Fatal("head did not advance")
 	}
 	assertSeqContiguous(t, ctx, objectStore, userID, 32)
-	// Full pull: object contents correspond one-to-one, nothing lost or misordered.
 	pulled, _, maxSeq, nextSeq, done, err := objectStore.pull(ctx, userID, 0, nil, 0)
 	if err != nil || len(pulled) != 32 || !done || maxSeq != 32 || nextSeq != 32 {
 		t.Fatalf("pulled=%d done=%v maxSeq=%d nextSeq=%d err=%v", len(pulled), done, maxSeq, nextSeq, err)
@@ -104,8 +94,8 @@ func TestPostgresObjectStoreConcurrentPush(t *testing.T) {
 	}
 }
 
-func TestPostgresSyncTombstoneKeepsMaxDeletedAt(t *testing.T) {
-	db := newPostgresSyncStore(t)
+func TestDatabaseSyncTombstoneKeepsMaxDeletedAt(t *testing.T) {
+	db := newDatabaseSyncStore(t)
 	ctx := context.Background()
 	engine := NewEngine(db, nil, nil)
 	id := ids.New()
@@ -129,8 +119,8 @@ func TestPostgresSyncTombstoneKeepsMaxDeletedAt(t *testing.T) {
 	}
 }
 
-func TestPostgresEngineCanonicalApply(t *testing.T) {
-	instance := newPostgresTestInstance(t, true)
+func TestDatabaseEngineCanonicalApply(t *testing.T) {
+	instance := newDatabaseTestInstance(t, true)
 	ctx := context.Background()
 
 	groupID := ids.New()
@@ -171,8 +161,8 @@ func TestPostgresEngineCanonicalApply(t *testing.T) {
 	assertDeviceTombstone(t, &testDevice{db: instance.db}, groupID, KindGroup)
 }
 
-func TestPostgresEngineSyncE2E(t *testing.T) {
-	db := newPostgresSyncStore(t)
+func TestDatabaseEngineSyncE2E(t *testing.T) {
+	db := newDatabaseSyncStore(t)
 	server := newTestSyncServerOn(t, db)
 	ctx := context.Background()
 
@@ -184,7 +174,6 @@ func TestPostgresEngineSyncE2E(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server.authBypassUserID = user.ID
 
 	deviceA := newTestDevice(t)
 	deviceB := newTestDevice(t)
@@ -201,7 +190,7 @@ func TestPostgresEngineSyncE2E(t *testing.T) {
 		t.Fatalf("deviceA pushed=%d want 3: %+v", reportA.Pushed, reportA)
 	}
 	var serverObjects int
-	if err := db.DB().QueryRowContext(ctx, "SELECT count(*) FROM user_sync_object WHERE user_id = ?", user.ID).Scan(&serverObjects); err != nil || serverObjects != 3 {
+	if err := db.GORM().WithContext(ctx).Raw("SELECT count(*) FROM user_sync_object WHERE user_id = ?", user.ID).Row().Scan(&serverObjects); err != nil || serverObjects != 3 {
 		t.Fatalf("server objects=%d err=%v", serverObjects, err)
 	}
 
@@ -223,7 +212,6 @@ func TestPostgresEngineSyncE2E(t *testing.T) {
 		t.Fatalf("deviceB secret=%q err=%v", secret, err)
 	}
 
-	// A deletes the snippet: the tombstone reaches B via the server (PG trigger writes sync_tombstone), and B's copy is cleared.
 	if err := deviceA.db.SnippetDelete(ctx, snippetID); err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +220,6 @@ func TestPostgresEngineSyncE2E(t *testing.T) {
 	if _, err := deviceB.db.SnippetGet(ctx, snippetID); !isNotFound(err) {
 		t.Fatalf("snippet must be tombstoned on B: %v", err)
 	}
-	// After both sides converge, idle sync pushes nothing.
 	if report := syncDevice(t, deviceA, server, "alice", "alice-pw-123"); report.Pulled+report.Applied+report.Pushed != 0 {
 		t.Fatalf("deviceA must be quiescent: %+v", report)
 	}

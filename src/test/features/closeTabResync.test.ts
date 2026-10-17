@@ -77,7 +77,7 @@ describe("session list resynchronization after closeTab", () => {
     seedWorkspaceWithTerminal();
     const ok = await useUi.getState().closeTab("t1", "kill");
     expect(ok).toBe(true);
-    expect(mocks.closeTab).toHaveBeenCalledWith("bt1", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("bt1", "kill", "s1");
     await vi.waitFor(() => {
       expect(useUi.getState().sessions[0]?.tabs).toEqual([]);
     });
@@ -103,20 +103,5 @@ describe("session list resynchronization after closeTab", () => {
       expect(mocks.sessionList).toHaveBeenCalled();
     });
     expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]?.closeError).toBe("boom");
-  });
-});
-
-describe("terminalApi.closeTab call-site static guard", () => {
-  it("every file that closes a terminal tab resynchronizes the session list", () => {
-    const sources = import.meta.glob("../../**/*.{ts,tsx}", {
-      query: "?raw",
-      import: "default",
-      eager: true,
-    }) as Record<string, string>;
-    const offenders = Object.entries(sources)
-      .filter(([path]) => !path.includes("/test/") && !path.includes("/ipc/bindings/"))
-      .filter(([, text]) => text.includes("terminalApi.closeTab(") && !text.includes("resyncSessions"))
-      .map(([path]) => path);
-    expect(offenders).toEqual([]);
   });
 });

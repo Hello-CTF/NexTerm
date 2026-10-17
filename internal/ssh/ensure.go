@@ -266,10 +266,12 @@ func probeDaemon(ctx context.Context, daemon *Daemon, timeout time.Duration) err
 
 func spawnDaemon(ctx context.Context, host Host, binary, stateDir string) error {
 	command := "mkdir -p -- " + quoteShell(stateDir) + " && chmod 700 " + quoteShell(stateDir) +
-		" && setsid " + quoteShell(binary) + " " + supervisor.HelperCommand + " --state-dir " + quoteShell(stateDir) +
-		" >>" + quoteShell(stateDir+"/helper.log") + " 2>&1 </dev/null &"
-	if _, _, err := host.Run(ctx, command, probeTimeout); err != nil {
+		" && { setsid " + quoteShell(binary) + " " + supervisor.HelperCommand + " --state-dir " + quoteShell(stateDir) +
+		" >>" + quoteShell(stateDir+"/helper.log") + " 2>&1 </dev/null & }"
+	if _, exitCode, err := host.Run(ctx, command, probeTimeout); err != nil {
 		return fmt.Errorf("%w: spawn supervisor daemon: %v", durable.ErrUnavailable, err)
+	} else if exitCode != 0 {
+		return fmt.Errorf("%w: prepare supervisor daemon exited with %d", durable.ErrUnavailable, exitCode)
 	}
 	return nil
 }

@@ -11,11 +11,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
-// All tests in this file run against real PostgreSQL, gated by NEXTERM_TEST_PG_DSN;
-// without a configured DSN each test SKIPs and must not be counted as verified.
-
-func TestPostgresApplyKnownHostAndAIProfile(t *testing.T) {
-	instance := newPostgresTestInstance(t, true)
+func TestDatabaseApplyKnownHostAndAIProfile(t *testing.T) {
+	instance := newDatabaseTestInstance(t, true)
 	ctx := context.Background()
 
 	hostID := ids.New()
@@ -54,8 +51,8 @@ func TestPostgresApplyKnownHostAndAIProfile(t *testing.T) {
 	}
 }
 
-func TestPostgresEngineSettingsSyncE2E(t *testing.T) {
-	db := newPostgresSyncStore(t)
+func TestDatabaseEngineSettingsSyncE2E(t *testing.T) {
+	db := newDatabaseSyncStore(t)
 	server := newTestSyncServerOn(t, db)
 	ctx := context.Background()
 
@@ -67,7 +64,6 @@ func TestPostgresEngineSettingsSyncE2E(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server.authBypassUserID = user.ID
 
 	deviceA := newTestDevice(t)
 	deviceB := newTestDevice(t)
@@ -84,7 +80,7 @@ func TestPostgresEngineSettingsSyncE2E(t *testing.T) {
 		t.Fatalf("deviceA pushed=%d want 2: %+v", reportA.Pushed, reportA)
 	}
 	var serverObjects int
-	if err := db.DB().QueryRowContext(ctx, "SELECT count(*) FROM user_sync_object WHERE user_id = ?", user.ID).Scan(&serverObjects); err != nil || serverObjects != 2 {
+	if err := db.GORM().WithContext(ctx).Raw("SELECT count(*) FROM user_sync_object WHERE user_id = ?", user.ID).Row().Scan(&serverObjects); err != nil || serverObjects != 2 {
 		t.Fatalf("server objects=%d err=%v", serverObjects, err)
 	}
 
@@ -102,7 +98,6 @@ func TestPostgresEngineSettingsSyncE2E(t *testing.T) {
 		t.Fatalf("deviceB key=%q err=%v", key, err)
 	}
 
-	// A deletes the known host and profile: tombstones are pushed to B via the server (PG), and B's copies are cleared without revival.
 	deleteDeviceKnownHost(t, deviceA, hostID, ids.NowMS())
 	deleteDeviceAIProfile(t, deviceA, profileID, ids.NowMS())
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
@@ -118,8 +113,8 @@ func TestPostgresEngineSettingsSyncE2E(t *testing.T) {
 	requireDeviceQuiescent(t, deviceB, server, "alice", "alice-pw-123")
 }
 
-func TestPostgresApplyAIGrant(t *testing.T) {
-	instance := newPostgresTestInstance(t, true)
+func TestDatabaseApplyAIGrant(t *testing.T) {
+	instance := newDatabaseTestInstance(t, true)
 	ctx := context.Background()
 
 	deviceObject := ApplyObject{ID: "device/dev-1", Kind: KindAIGrant, Payload: applyPayload(t, aiGrantDeviceObject{

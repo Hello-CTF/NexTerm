@@ -470,6 +470,8 @@ func TestRenameTabEmitsEventAndValidatesTitle(t *testing.T) {
 
 func TestCreateTabDetachedRouting(t *testing.T) {
 	manager, connector, terminals, connected := openTestSession(t, KindSSH)
+	provider := newFakeDurableProvider()
+	manager.resolver = DurableResolverFunc(func(context.Context, base.Transport) (base.DurableProvider, error) { return provider, nil })
 	info, err := manager.CreateTab(context.Background(), CreateTabOptions{
 		SessionID: connected.ID, Title: "构建机", Command: "make -j4",
 	})
@@ -483,10 +485,10 @@ func TestCreateTabDetachedRouting(t *testing.T) {
 		t.Fatalf("default size = %dx%d", info.Cols, info.Rows)
 	}
 	transport := connector.transport(0)
-	if transport.channelCount() != 1 {
+	if transport.channelCount() != 0 || !info.Durable {
 		t.Fatalf("pty channels = %d", transport.channelCount())
 	}
-	if got := transport.channel(0).written(); !bytes.Equal(got, []byte("make -j4\n")) {
+	if got := provider.attachment(info.ID, 0).written(); !bytes.Equal(got, []byte("make -j4\n")) {
 		t.Fatalf("startup command written = %q", got)
 	}
 	if terminals.terminal(info.ID) == nil {

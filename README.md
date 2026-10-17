@@ -14,6 +14,10 @@
 
 </div>
 
+NexTerm 解决的是一个很具体的问题：远程终端不应该随着窗口消失。SSH shell 会在后台持续运行，App 重启或换一台已登录的设备后仍可发现并接管；同一个工作区还可以继续处理文件、容器、数据库和排障记录。
+
+桌面端适合本机使用，服务端适合团队或多设备访问。两种模式共享同一套会话和资产模型，按需自托管，数据可以留在自己的机器或数据库中。
+
 ## 功能
 
 - **终端与文件**：SSH、WinRM 和本机终端，支持多标签、分屏、SFTP 文件管理与在线编辑。SSH 会话关闭标签或断开后转入「后台会话」继续运行，可重新接管；本机、WinRM 非交互与容器 exec 终端随关闭结束。
@@ -53,7 +57,7 @@ macOS 首次打开提示无法验证开发者时，在「系统设置 → 隐私
 
 ## 服务端与设备接入
 
-- **Linux 服务器**：解压 server 包后按包内 `README.md` 安装。首次启动会在控制台打印一次性初始化码（systemd 下用 `journalctl -u nexterm-server` 查看）；在浏览器输入初始化码并设置超管用户名和密码。访问控制默认开启（`--auth on`），无论监听地址如何均要求登录；公网部署请只监听回环地址，并前置带 TLS 的反向代理。完整选项见 `nexterm-server --help`。
+- **Linux 服务器**：解压 server 包后按包内 `README.md` 安装。首次启动会在控制台打印一次性初始化码（systemd 下用 `journalctl -u nexterm-server` 查看）；在浏览器输入初始化码并设置超管用户名和密码。访问控制默认开启（`--auth on`），无论监听地址如何均要求登录；公网部署请只监听回环地址，并前置带 TLS 的反向代理。自身数据默认存入 SQLite，也可通过 `--db postgres|mysql|mariadb` 和 `--db-dsn` 使用 PostgreSQL、MySQL 或 MariaDB，同一个数据库仅运行一个服务端实例。备份时保留完整数据目录；使用外部数据库时还需备份该数据库。完整选项见 `nexterm-server --help`。
 - **懒猫微服**：应用中心安装后直接使用，终端进程和数据保存在微服上；NexTerm 内置端口转发不可用，对外提供远端端口请使用平台转发。
 - **设备接入**：接入地址由超管在「设备管理」配置；接入码也在此处（浏览器模式，或桌面端登录服务端账号后）签发，一次性、限时有效。Linux/macOS 用普通用户执行面板的一行命令，Windows 执行 PowerShell 命令，自动下载并安装 nexterm-agent，并配置随用户登录启动（systemd --user / launchd / Windows 计划任务）。设备凭证原文仅保存在设备本地，服务端只存散列；接入后，设备在线时可远程打开终端，吊销后凭证立即失效且不可恢复。
 
@@ -72,6 +76,14 @@ go build ./...
 ```bash
 task check
 ```
+
+外部数据库使用同一套集成测试，测试库必须独立于业务库：
+
+```bash
+NEXTERM_TEST_DB_BACKEND=postgres NEXTERM_TEST_DB_DSN='postgres://nexterm:password@127.0.0.1:5432/nexterm_test?sslmode=disable' task test:database
+```
+
+`NEXTERM_TEST_DB_BACKEND` 也可设为 `mysql` 或 `mariadb`，DSN 使用对应驱动格式。未设置时运行 SQLite；显式选择外部数据库必须提供可用 DSN。
 
 ## 贡献与提交规范
 

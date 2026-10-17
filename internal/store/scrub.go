@@ -12,12 +12,6 @@ func IsBusy(err error) bool {
 }
 
 func (s *Store) ScrubFreeSpace(ctx context.Context) error {
-	if s.dialect.backend == BackendPostgres {
-		if err := s.db.WithContext(ctx).Exec("VACUUM").Error; err != nil {
-			return dbError(err)
-		}
-		return nil
-	}
 	if err := s.truncateWAL(ctx); err != nil {
 		return err
 	}

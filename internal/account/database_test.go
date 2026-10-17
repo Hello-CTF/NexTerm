@@ -13,15 +13,15 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
-func testPostgresAccounts(t *testing.T) (*Accounts, *int64) {
+func testDatabaseAccounts(t *testing.T) (*Accounts, *int64) {
 	t.Helper()
 	db := dbtest.NewFixture(t).OpenStore(t)
 	now := int64(1_700_000_000_000)
 	return New(db.GORM(), WithNow(func() int64 { return now })), &now
 }
 
-func TestPostgresAccountCoreFlows(t *testing.T) {
-	a, _ := testPostgresAccounts(t)
+func TestDatabaseAccountCoreFlows(t *testing.T) {
+	a, _ := testDatabaseAccounts(t)
 	ctx := context.Background()
 
 	alice, err := a.CreateUser(ctx, "Alice", "Alice A", "synthetic-password-1")
@@ -152,8 +152,8 @@ func TestPostgresAccountCoreFlows(t *testing.T) {
 	requireCode(t, validateErr(a, ctx, token), ipc.CodeForbidden)
 }
 
-func TestPostgresInitSuperadminSingleUse(t *testing.T) {
-	a, _ := testPostgresAccounts(t)
+func TestDatabaseInitSuperadminSingleUse(t *testing.T) {
+	a, _ := testDatabaseAccounts(t)
 	ctx := context.Background()
 	code, err := a.GenerateInitCode(ctx)
 	if err != nil {
@@ -175,8 +175,8 @@ func TestPostgresInitSuperadminSingleUse(t *testing.T) {
 	}
 }
 
-func TestPostgresConcurrentSessionIssueRevoke(t *testing.T) {
-	a, _ := testPostgresAccounts(t)
+func TestDatabaseConcurrentSessionIssueRevoke(t *testing.T) {
+	a, _ := testDatabaseAccounts(t)
 	ctx := context.Background()
 	user, err := a.CreateUser(ctx, "uma", "", "synthetic-password-1")
 	if err != nil {
@@ -234,8 +234,8 @@ func TestPostgresConcurrentSessionIssueRevoke(t *testing.T) {
 	}
 }
 
-func TestPostgresConcurrentChangePasswordSameOld(t *testing.T) {
-	a, _ := testPostgresAccounts(t)
+func TestDatabaseConcurrentChangePasswordSameOld(t *testing.T) {
+	a, _ := testDatabaseAccounts(t)
 	ctx := context.Background()
 	user, err := a.CreateUser(ctx, "wendy", "", "old-password-1")
 	if err != nil {
@@ -298,8 +298,8 @@ func TestPostgresConcurrentChangePasswordSameOld(t *testing.T) {
 	}
 }
 
-func TestPostgresConcurrentRecoveryReset(t *testing.T) {
-	a, _ := testPostgresAccounts(t)
+func TestDatabaseConcurrentRecoveryReset(t *testing.T) {
+	a, _ := testDatabaseAccounts(t)
 	ctx := context.Background()
 	user, err := a.CreateUser(ctx, "xavier", "", "old-password-1")
 	if err != nil {
@@ -356,8 +356,8 @@ func TestPostgresConcurrentRecoveryReset(t *testing.T) {
 	}
 }
 
-func TestPostgresConcurrentDeviceRevoke(t *testing.T) {
-	a, _ := testPostgresAccounts(t)
+func TestDatabaseConcurrentDeviceRevoke(t *testing.T) {
+	a, _ := testDatabaseAccounts(t)
 	ctx := context.Background()
 	owner, err := a.CreateUser(ctx, "kate", "", "synthetic-password-1")
 	if err != nil {

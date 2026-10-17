@@ -64,7 +64,7 @@ func (c *fakePTYChannel) CloseWrite() error                            { return 
 func (c *fakePTYChannel) ID() string                                   { return c.id }
 func (c *fakePTYChannel) Generation() uint64                           { return c.generation }
 
-func TestProductionTerminalAttachStaysVolatile(t *testing.T) {
+func TestProductionTerminalAttachExplicitlyDisablesSSHDurability(t *testing.T) {
 	factory := &bridgeTestFactory{}
 	production, err := NewProduction(t.Context(), ProductionConfig{
 		Config: Config{
@@ -96,7 +96,7 @@ func TestProductionTerminalAttachStaysVolatile(t *testing.T) {
 	var connected sessionInfoDTO
 	requireStoreTestResponse(t, connectedResponse, &connected)
 
-	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, "ssh-channel", "client-a")
+	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24,"durable":false}`, "ssh-channel", "client-a")
 	tabID := requireAttachedTabID(t, attachResponse)
 	if tabID == "" {
 		t.Fatal("ssh terminal_attach returned no tab")

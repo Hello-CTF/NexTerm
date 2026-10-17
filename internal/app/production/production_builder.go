@@ -362,7 +362,7 @@ func (f *channelOwnerStreamFactory) OpenJSON(ctx context.Context, channel ipc.Ch
 }
 
 func openProductionStore(ctx context.Context, config ProductionConfig) (*store.Store, error) {
-	if config.DB.Backend == store.BackendPostgres {
+	if config.DB.Backend != "" && config.DB.Backend != store.BackendSQLite {
 		return store.OpenBackend(ctx, config.DB, store.OpenOptions{Logger: config.Config.Logger})
 	}
 	return store.OpenWithOptions(ctx, filepath.Join(config.DataDir, "data.db"), store.OpenOptions{Logger: config.Config.Logger})

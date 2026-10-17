@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"sort"
 	"sync"
 	"time"
 
@@ -215,6 +216,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	kind := session.asset.Kind
 	encoding := session.asset.Encoding
 	startupCommand := session.asset.StartupCommand
+	environment := session.asset.Env
 	session.mu.Unlock()
 	m.mu.Unlock()
 	if options.Retainable && (kind != KindLocal || !options.Ephemeral || options.Durable != nil) {
@@ -258,8 +260,14 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		if options.Durable.Recover {
 			opened, err = attachRecoveredDurable(ctx, provider, tabID, options.Durable.Identity)
 		} else {
+			env := make([]string, 0, len(environment)+len(options.Durable.Env))
+			for key, value := range environment {
+				env = append(env, key+"="+value)
+			}
+			sort.Strings(env)
+			env = append(env, options.Durable.Env...)
 			opened, err = provider.Create(ctx, base.DurableCreateOptions{
-				ID: tabID, Command: options.Durable.Command, Dir: options.Durable.Dir, Env: options.Durable.Env,
+				ID: tabID, Command: options.Durable.Command, Dir: options.Durable.Dir, Env: env,
 				Cols: options.Cols, Rows: options.Rows,
 			})
 		}
@@ -421,7 +429,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	} else if !m.startPump(tab, channel, generation) {
 		return TabInfo{}, errors.Join(ErrSessionClosed, m.closeTab(tab, destroyOnFailure))
 	}
-	if options.Durable == nil && startupCommand != "" && startupCommandSupported(kind) {
+	if (options.Durable == nil || !options.Durable.Recover) && startupCommand != "" && startupCommandSupported(kind) {
 		_ = writeAll(channel, []byte(startupCommand+"\n"))
 	}
 	return info, nil
@@ -439,10 +447,6 @@ type CreateTabOptions struct {
 	Command string
 }
 
-// CreateTab opens a detached terminal tab on the session with the same
-// durable/PTY routing the attach flow uses: local sessions get an ephemeral
-// tab, device sessions a daemon-durable tab, everything else a plain PTY tab.
-// The tab starts with no subscribers; clients attach via AttachTab.
 func (m *Manager) CreateTab(ctx context.Context, options CreateTabOptions) (TabInfo, error) {
 	session, err := m.Session(options.SessionID)
 	if err != nil {
@@ -472,7 +476,7 @@ func (m *Manager) CreateTab(ctx context.Context, options CreateTabOptions) (TabI
 		SessionID: options.SessionID, Cols: cols, Rows: rows,
 		Ephemeral: kind == KindLocal, Detached: true,
 	}
-	if kind == KindDevice {
+	if kind == KindDevice || kind == KindSSH {
 		open.Durable = &DurableTabOptions{}
 	}
 	info, err := m.OpenTab(ctx, open)

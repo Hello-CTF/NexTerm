@@ -3,7 +3,6 @@ name: CI
 on:
   push:
     branches: [master]
-    tags: ["v*"]
     paths-ignore:
       - "website/**"
       - ".github/workflows/pages.yml"
@@ -22,10 +21,9 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -38,7 +36,21 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.resolve.outputs.version }}
+      native-matrix: ${{ steps.matrix.outputs.value }}
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - id: matrix
+        env:
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+        run: |
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const entries = JSON.parse(fs.readFileSync(".github/native-matrix.json", "utf8"));
+            const include = entries.filter((entry) => process.env.IS_PR !== "true" || entry.smoke);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `value=${JSON.stringify({ include })}\n`);
+          '
       - id: resolve
         env:
           INPUT_VERSION: ${{ inputs.release_version }}
@@ -54,27 +66,6 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-  quality-source:
-    name: Resolve reusable master quality evidence
-    needs: version
-    runs-on: ubuntu-latest
-    outputs:
-      reused: ${{ steps.resolve.outputs.reused }}
-    steps:
-      - uses: actions/checkout@v7
-        if: github.ref_type == 'tag'
-      - name: Resolve reusable quality evidence
-        id: resolve
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CI_REUSE_EXPECTED_REF: master
-        run: |
-          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
-            echo "reused=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          bash .github/scripts/resolve-ci-reuse.sh >> "$GITHUB_OUTPUT"
-
   frontend:
     name: Reproducible frontend
     needs: version
@@ -83,6 +74,8 @@ jobs:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@v6
         with:
           version: 11
@@ -92,6 +85,10 @@ jobs:
           cache: pnpm
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+      - name: Frontend lint
+        run: pnpm lint
+      - name: Frontend tests
+        run: pnpm test
       - name: Reproducible real frontend
         run: node scripts/build.mjs frontend --repro-check
       - name: Upload the verified frontend dist and manifest
@@ -105,13 +102,14 @@ jobs:
 
   quality:
     name: Go/Wails quality gates
-    needs: [version, quality-source]
-    if: needs.quality-source.outputs.reused != 'true'
+    needs: [version, frontend]
     runs-on: ubuntu-latest
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -135,137 +133,105 @@ jobs:
             go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27
           fi
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          export PATH="$(go env GOPATH)/bin:$PATH"
           wails3 version
-      - name: Verify the selected toolchain and modules
-        run: |
-          test "$(go env GOVERSION)" = "go1.26.8"
-          go mod verify
-      - name: Go formatting
-        shell: bash
-        run: |
-          files="$(gofmt -l ./cmd ./internal ./scripts)"
-          if [ -n "$files" ]; then printf 'gofmt required:\n%s\n' "$files"; exit 1; fi
-      - name: Go vet
-        run: go vet -mod=readonly ./...
+      - name: Go quality gates
+        run: wails3 task check:go
+      - name: Race detector
+        run: wails3 task test:race
+      - name: Release script and artifact behavior
+        run: wails3 task check:scripts
       - name: Wails bindings drift
         run: node scripts/build.mjs bindings
-      - name: LazyCat manifest injects
-        run: go run ./scripts/verify-manifest-injects
-      - name: Upsert conflict column check
-        run: go run ./scripts/check-conflict-columns
-      - name: Release behavior checks
-        env:
-          SOURCE_DATE_EPOCH: "1"
-        run: go run ./scripts/check-reuse-wiring
-      - name: Mobile release evidence behavior
-        run: node --test .github/scripts/mobile-evidence.test.mjs
-
-  frontend-quality:
-    name: Frontend lint and tests
-    needs: [version, quality-source]
-    if: needs.quality-source.outputs.reused != 'true'
-    runs-on: ubuntu-latest
-    env:
-      NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 11
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: pnpm
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Frontend lint
-        run: pnpm lint
-      - name: Frontend tests
-        run: pnpm test
-
-  postgres:
-    name: Real PostgreSQL 16 gated tests
-    needs: quality-source
-    if: needs.quality-source.outputs.reused != 'true'
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: nexterm
-          POSTGRES_PASSWORD: nexterm
-          POSTGRES_DB: nexterm_test
-        ports:
-          - 55432:5432
-        options: >-
-          --health-cmd "pg_isready -U nexterm -d nexterm_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      NEXTERM_TEST_PG_DSN: postgres://nexterm:nexterm@127.0.0.1:55432/nexterm_test?sslmode=disable
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: 1.26.8
-          cache: true
-      - name: Mask the PostgreSQL service DSN
-        run: |
-          echo "::add-mask::$NEXTERM_TEST_PG_DSN"
-          echo "::add-mask::nexterm:nexterm"
-      - name: Run the PostgreSQL-gated dbtest, store, account, sync and cron suites
-        run: |
-          set -o pipefail
-          go test -mod=readonly -count=1 -v ./internal/dbtest ./internal/store ./internal/account ./internal/sync ./internal/ai/cron ./internal/fleet/server | tee "$RUNNER_TEMP/pg-gated.log"
-      - name: Reject skipped PostgreSQL tests
-        run: |
-          if grep -E '^(--- SKIP: .*Postgres|.*set NEXTERM_TEST_PG_DSN)' "$RUNNER_TEMP/pg-gated.log"; then
-            echo "PostgreSQL tests must run for real in CI; SKIP is not a pass" >&2
-            exit 1
-          fi
-
-  pr-linux-smoke:
-    name: PR Linux amd64 production smoke
-    needs: [frontend, version]
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    env:
-      NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-      - uses: actions/setup-go@v7
-        with:
-          go-version: 1.26.8
-          cache: true
       - name: Download the verified frontend dist
         uses: actions/download-artifact@v8
         with:
           name: frontend-dist
           path: verified-dist
-      - name: Install Linux WebView prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
-      - name: Build the Linux desktop production smoke
-        run: node scripts/build.mjs desktop --release --repro-check --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json --os=linux --arch=amd64
-      - name: Build the Linux server production smoke
-        run: node scripts/build.mjs server --release --repro-check --os=linux --arch=amd64
-      - name: Run Go two-process server acceptance
-        run: go run ./scripts/e2e-harness sync --bin target/go-build/nexterm-server-linux-amd64 --no-build
+      - name: Restore the verified frontend
+        run: node scripts/build.mjs frontend --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json
+      - name: Production-tagged Go tests
+        run: wails3 task test:production
 
-  pr-windows-smoke:
-    name: PR Windows amd64 real tests and production smoke
-    needs: [frontend, version]
-    if: github.event_name == 'pull_request'
-    runs-on: windows-latest
+  database:
+    name: Database contracts (${{ matrix.backend }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: postgres
+            image: postgres:16
+            port: 5432
+            health: pg_isready -U nexterm -d nexterm_test
+            dsn: postgres://nexterm:nexterm@127.0.0.1:5432/nexterm_test?sslmode=disable
+          - backend: mysql
+            image: mysql:8.4
+            port: 3306
+            health: mysqladmin ping --silent -h 127.0.0.1
+            dsn: root:nexterm_root@tcp(127.0.0.1:3306)/nexterm_test?parseTime=true
+          - backend: mariadb
+            image: mariadb:11.4
+            port: 3306
+            health: healthcheck.sh --connect --innodb_initialized
+            dsn: root:nexterm_root@tcp(127.0.0.1:3306)/nexterm_test?parseTime=true
+    services:
+      database:
+        image: ${{ matrix.image }}
+        env:
+          POSTGRES_USER: nexterm
+          POSTGRES_PASSWORD: nexterm
+          POSTGRES_DB: nexterm_test
+          MYSQL_ROOT_HOST: "%"
+          MYSQL_ROOT_PASSWORD: nexterm_root
+          MYSQL_USER: nexterm
+          MYSQL_PASSWORD: nexterm
+          MYSQL_DATABASE: nexterm_test
+          MARIADB_ROOT_HOST: "%"
+          MARIADB_ROOT_PASSWORD: nexterm_root
+          MARIADB_USER: nexterm
+          MARIADB_PASSWORD: nexterm
+          MARIADB_DATABASE: nexterm_test
+        ports:
+          - ${{ matrix.port }}:${{ matrix.port }}
+        options: >-
+          --health-cmd "${{ matrix.health }}"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
-      NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      NEXTERM_TEST_DB_BACKEND: ${{ matrix.backend }}
+      NEXTERM_TEST_DB_DSN: ${{ matrix.dsn }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.26.8
+          cache: true
+      - name: Install the pinned task runner
+        run: |
+          go install github.com/go-task/task/v3/cmd/task@v3.45.5
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Run the shared database contracts
+        run: |
+          echo "::add-mask::$NEXTERM_TEST_DB_DSN"
+          task test:database
+
+  native:
+    name: ${{ matrix.os }}/${{ matrix.arch }} ${{ matrix.kind }}
+    needs: [frontend, version]
+    env:
+      NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.version.outputs.native-matrix) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -274,6 +240,7 @@ jobs:
           go-version: 1.26.8
           cache: true
       - name: Verify Windows PowerShell runtimes
+        if: matrix.os == 'windows' && matrix.arch == 'amd64' && matrix.kind == 'desktop'
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
@@ -282,134 +249,12 @@ jobs:
           & pwsh.exe -NoLogo -NoProfile -NonInteractive -Command 'Write-Output ("pwsh.exe " + $PSVersionTable.PSVersion.ToString())'
           if ($LASTEXITCODE -ne 0) { throw "pwsh.exe version check failed" }
       - name: Run real Windows Go and loopback tests
+        if: matrix.os == 'windows' && matrix.arch == 'amd64' && matrix.kind == 'desktop'
         shell: powershell
         timeout-minutes: 45
         run: |
           $ErrorActionPreference = 'Stop'
           & ./.github/scripts/windows-real-tests.ps1
-      - name: Download the verified frontend dist
-        uses: actions/download-artifact@v8
-        with:
-          name: frontend-dist
-          path: verified-dist
-      - name: Build the Windows desktop production smoke
-        run: node scripts/build.mjs desktop --release --repro-check --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json --os=windows --arch=amd64
-
-  native:
-    name: ${{ matrix.os }}/${{ matrix.arch }} ${{ matrix.kind }}
-    needs: [frontend, version]
-    if: github.event_name != 'pull_request'
-    env:
-      NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: windows-latest
-            os: windows
-            arch: amd64
-            kind: desktop
-          - runner: windows-11-arm
-            os: windows
-            arch: arm64
-            kind: desktop
-          - runner: macos-15
-            os: darwin
-            arch: arm64
-            kind: desktop
-          - runner: macos-15-intel
-            os: darwin
-            arch: amd64
-            kind: desktop
-          - runner: ubuntu-latest
-            os: linux
-            arch: amd64
-            kind: desktop
-          - runner: ubuntu-24.04-arm
-            os: linux
-            arch: arm64
-            kind: desktop
-          - runner: ubuntu-latest
-            os: linux
-            arch: amd64
-            kind: server
-          - runner: ubuntu-24.04-arm
-            os: linux
-            arch: arm64
-            kind: server
-          - runner: ubuntu-latest
-            os: linux
-            arch: amd64
-            kind: agent
-          - runner: ubuntu-24.04-arm
-            os: linux
-            arch: arm64
-            kind: agent
-          - runner: macos-15
-            os: darwin
-            arch: arm64
-            kind: agent
-          - runner: macos-15-intel
-            os: darwin
-            arch: amd64
-            kind: agent
-          - runner: windows-latest
-            os: windows
-            arch: amd64
-            kind: agent
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-      - name: Restore the pinned Wails CLI
-        if: github.ref == 'refs/heads/master' && matrix.os == 'windows' && matrix.kind == 'desktop'
-        id: wails-cache
-        uses: actions/cache@v6
-        with:
-          path: ~/go/bin
-          key: wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.26.8
-      - name: Restore the pinned NSIS
-        if: github.ref == 'refs/heads/master' && matrix.os == 'windows' && matrix.kind == 'desktop'
-        id: nsis-cache
-        uses: actions/cache@v6
-        with:
-          path: C:/Program Files (x86)/NSIS
-          key: nsis-3.12-${{ runner.os }}-${{ runner.arch }}
-      - uses: actions/setup-go@v7
-        with:
-          go-version: 1.26.8
-          cache: false
-      - name: Resolve the Go cache paths
-        id: go-cache-paths
-        shell: bash
-        run: |
-          echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
-          echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
-      - name: Restore the per-arch Go build and module cache
-        uses: actions/cache@v6
-        with:
-          path: |
-            ${{ steps.go-cache-paths.outputs.gocache }}
-            ${{ steps.go-cache-paths.outputs.gomodcache }}
-          key: gocache-v1-${{ matrix.os }}-${{ matrix.arch }}-${{ hashFiles('go.sum') }}
-          restore-keys: |
-            gocache-v1-${{ matrix.os }}-${{ matrix.arch }}-
-      - name: Install and verify the Windows release tools
-        if: github.ref == 'refs/heads/master' && matrix.os == 'windows' && matrix.kind == 'desktop'
-        shell: bash
-        run: |
-          if [ "${{ steps.wails-cache.outputs.cache-hit }}" != "true" ]; then
-            go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27
-          fi
-          if [ "${{ steps.nsis-cache.outputs.cache-hit }}" != "true" ]; then
-            choco install nsis --version=3.12 --yes --no-progress
-          fi
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          export PATH="$(go env GOPATH)/bin:$PATH"
-          wails3 version
-          MSYS_NO_PATHCONV=1 "/c/Program Files (x86)/NSIS/makensis.exe" /VERSION
       - name: Download the verified frontend dist
         if: matrix.kind == 'desktop'
         uses: actions/download-artifact@v8
@@ -456,28 +301,15 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: 24
       - uses: actions/setup-go@v7
         with:
           go-version: 1.26.8
-          cache: false
-      - name: Resolve the Go cache paths
-        id: go-cache-paths
-        shell: bash
-        run: |
-          echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
-          echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
-      - name: Restore the per-platform Go build and module cache
-        uses: actions/cache@v6
-        with:
-          path: |
-            ${{ steps.go-cache-paths.outputs.gocache }}
-            ${{ steps.go-cache-paths.outputs.gomodcache }}
-          key: gocache-v1-mobile-${{ matrix.platform }}-${{ hashFiles('go.sum') }}
-          restore-keys: |
-            gocache-v1-mobile-${{ matrix.platform }}-
+          cache: true
       - name: Download the verified frontend dist
         uses: actions/download-artifact@v8
         with:
@@ -531,6 +363,7 @@ jobs:
             go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27
           fi
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          export PATH="$(go env GOPATH)/bin:$PATH"
           wails3 version
       - name: Stamp the mobile version
         run: |
@@ -556,14 +389,16 @@ jobs:
           if-no-files-found: error
 
   ios-dist:
-    name: iOS TestFlight distribution
-    needs: [quality-source, quality, frontend-quality, frontend, version]
+    name: iOS App Store signed IPA
+    needs: [quality, frontend, version]
     if: ${{ !failure() && !cancelled() && github.event_name == 'push' && vars.NEXTERM_IOS_SIGNING == 'true' }}
     runs-on: macos-15
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -590,6 +425,7 @@ jobs:
             go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27
           fi
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          export PATH="$(go env GOPATH)/bin:$PATH"
           wails3 version
       - name: Import and validate iOS App Store signing
         env:
@@ -637,6 +473,17 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security find-identity -v -p codesigning "$KEYCHAIN" | grep -F "Apple Distribution"
+      - name: Stamp the mobile version
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const version = process.env.NEXTERM_RELEASE_VERSION;
+            if (version) {
+              const path = "build/config.yml";
+              const text = fs.readFileSync(path, "utf8");
+              fs.writeFileSync(path, text.replace(/version: "0\.0\.0"/g, `version: "${version}"`));
+            }
+          '
       - name: Build the signed iOS distribution IPA
         env:
           DIST_SOURCE: verified-dist/dist

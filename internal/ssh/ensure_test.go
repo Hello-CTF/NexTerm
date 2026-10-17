@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -47,6 +48,90 @@ type fakeHost struct {
 	localUploads []string
 	renames      [][2]string
 	deletions    []deleteCall
+}
+
+type spawnProcessHost struct {
+	*fakeHost
+	path string
+}
+
+func (h spawnProcessHost) Run(ctx context.Context, command string, _ time.Duration) (string, int, error) {
+	process := exec.CommandContext(ctx, "/bin/sh", "-c", command)
+	process.Env = append(os.Environ(), "PATH="+h.path+string(os.PathListSeparator)+os.Getenv("PATH"))
+	process.WaitDelay = 100 * time.Millisecond
+	output, err := process.CombinedOutput()
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) {
+		return string(output), exitError.ExitCode(), nil
+	}
+	return string(output), 0, err
+}
+
+func TestSpawnDaemonClosesExecOutputWhileHelperKeepsRunning(t *testing.T) {
+	directory := t.TempDir()
+	pidPath := filepath.Join(directory, "helper.pid")
+	if err := os.WriteFile(filepath.Join(directory, "setsid"), []byte("#!/bin/sh\nexec \"$@\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(directory, "helper")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\nprintf '%s' \"$$\" > "+quoteShell(pidPath)+"\nexec sleep 30\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		raw, err := os.ReadFile(pidPath)
+		if err == nil {
+			pid, err := strconv.Atoi(string(raw))
+			if err == nil {
+				process, err := os.FindProcess(pid)
+				if err == nil {
+					_ = process.Kill()
+				}
+			}
+		}
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if err := spawnDaemon(ctx, spawnProcessHost{fakeHost: &fakeHost{}, path: directory}, helper, filepath.Join(directory, "state")); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if raw, err := os.ReadFile(pidPath); err == nil && len(raw) > 0 {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("detached helper did not start")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+func TestSpawnDaemonReportsPreparationFailure(t *testing.T) {
+	for _, operation := range []string{"mkdir", "chmod"} {
+		t.Run(operation, func(t *testing.T) {
+			directory := t.TempDir()
+			if err := os.WriteFile(filepath.Join(directory, operation), []byte("#!/bin/sh\nexit 73\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			err := spawnDaemon(t.Context(), spawnProcessHost{fakeHost: &fakeHost{}, path: directory}, "/missing-helper", filepath.Join(directory, "state"))
+			if !errors.Is(err, durable.ErrUnavailable) || !strings.Contains(err.Error(), "exited with 73") {
+				t.Fatalf("spawnDaemon = %v; want preparation failure", err)
+			}
+		})
+	}
+}
+
+func TestEnsureDaemonReportsFailedHelperStartup(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "setsid"), []byte("#!/bin/sh\nexec \"$@\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	host := spawnProcessHost{fakeHost: &fakeHost{}, path: directory}
+	resolver := Resolver{StartTimeout: time.Millisecond}
+	_, err := resolver.startOrConnect(t.Context(), host, filepath.Join(directory, "missing-helper"), filepath.Join(directory, "state"), "digest")
+	if !errors.Is(err, durable.ErrUnavailable) || !strings.Contains(err.Error(), "did not become ready") {
+		t.Fatalf("startOrConnect = %v; want startup readiness failure", err)
+	}
 }
 
 type deleteCall struct {

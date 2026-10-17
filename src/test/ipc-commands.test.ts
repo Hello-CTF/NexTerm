@@ -65,6 +65,17 @@ describe("desktop command envelopes", () => {
     });
   });
 
+  it("passes the host connection when closing a discovered remote terminal", async () => {
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: null });
+    const { terminalApi } = await import("../ipc/commands");
+
+    await terminalApi.closeTab("remote-shell", "kill", "host-b");
+    expect(requestAt()).toMatchObject({
+      cmd: "terminal_close_tab",
+      args: { tabId: "remote-shell", mode: "kill", sessionId: "host-b" },
+    });
+  });
+
   it("uses the same stable client identity when opening and executing a line tab", async () => {
     runtime.Call.ByName.mockResolvedValueOnce({ ok: true, data: "tab-1" });
     runtime.Call.ByName.mockResolvedValueOnce({ ok: true, data: null });

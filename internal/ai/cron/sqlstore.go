@@ -20,15 +20,9 @@ type SQLStore struct {
 
 var _ Store = (*SQLStore)(nil)
 
-func NewSQLiteStore(ctx context.Context, db *gorm.DB) (*SQLStore, error) {
-	return newSQLStore(ctx, db)
-}
+func NewSQLiteStore(ctx context.Context, db *gorm.DB) (*SQLStore, error) { return NewSQLStore(ctx, db) }
 
-func NewPostgresStore(ctx context.Context, db *gorm.DB) (*SQLStore, error) {
-	return newSQLStore(ctx, db)
-}
-
-func newSQLStore(ctx context.Context, db *gorm.DB) (*SQLStore, error) {
+func NewSQLStore(ctx context.Context, db *gorm.DB) (*SQLStore, error) {
 	if db == nil {
 		return nil, errors.New("cron: sql store requires a database handle")
 	}

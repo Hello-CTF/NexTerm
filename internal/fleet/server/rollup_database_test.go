@@ -12,7 +12,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
 )
 
-func TestRollupMetricsPostgres(t *testing.T) {
+func TestRollupMetricsDatabase(t *testing.T) {
 	ctx := context.Background()
 	database := dbtest.NewFixture(t).OpenStore(t)
 	accounts := account.New(database.GORM())
@@ -20,27 +20,38 @@ func TestRollupMetricsPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, err := accounts.CreateUser(ctx, "pg-rollup-owner", "", "pw-123456")
+	user, err := accounts.CreateUser(ctx, "db-rollup-owner", "", "pw-123456")
 	if err != nil {
 		t.Fatal(err)
 	}
-	device, err := accounts.RegisterDevice(ctx, user.ID, "pg-rollup-box", "agent")
+	device, err := accounts.RegisterDevice(ctx, user.ID, "db-rollup-box", "agent")
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := time.Now().Add(-49 * time.Hour).UnixMilli()
+	now := (time.Now().UnixMilli() / metricsHourMS) * metricsHourMS
+	old := now - 49*metricsHourMS + time.Minute.Milliseconds()
 	if err := service.RecordMetrics(ctx, device.ID, MetricsSample{TS: old, CPUPct: 20, MemUsed: 1, MemTotal: 2, DiskUsed: 3, DiskTotal: 4, UptimeS: 5}); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.RollupMetrics(ctx); err != nil {
+	if err := service.RecordMetrics(ctx, device.ID, MetricsSample{TS: old + time.Minute.Milliseconds(), CPUPct: 40, MemUsed: 3, MemTotal: 4, DiskUsed: 5, DiskTotal: 6, UptimeS: 7}); err != nil {
 		t.Fatal(err)
+	}
+	if err := query.Use(database.GORM()).DeviceMetricsHourly.WithContext(ctx).Create(&store.DeviceMetricsHourly{
+		DeviceID: device.ID, BucketTS: (old / metricsHourMS) * metricsHourMS, SampleCount: 99,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := service.RollupMetrics(ctx); err != nil {
+			t.Fatal(err)
+		}
 	}
 	hourly := query.Use(database.GORM()).DeviceMetricsHourly
 	hourlyRows, err := hourly.WithContext(ctx).Where(hourly.DeviceID.Eq(device.ID)).Find()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(hourlyRows) != 1 || hourlyRows[0].SampleCount != 1 || hourlyRows[0].BucketTS != (old/3600000)*3600000 {
+	if len(hourlyRows) != 1 || hourlyRows[0].SampleCount != 2 || hourlyRows[0].BucketTS != (old/3600000)*3600000 {
 		t.Fatalf("hourly = %+v", hourlyRows)
 	}
 	raw := query.Use(database.GORM()).DeviceMetrics
@@ -51,9 +62,13 @@ func TestRollupMetricsPostgres(t *testing.T) {
 	if rawCount != 0 {
 		t.Fatalf("raw left = %d", rawCount)
 	}
+	bucket := hourlyRows[0]
+	if bucket.CPUPct == nil || *bucket.CPUPct != 30 || bucket.MemUsed == nil || *bucket.MemUsed != 2 || bucket.UptimeS == nil || *bucket.UptimeS != 7 {
+		t.Fatalf("aggregated bucket = %+v", bucket)
+	}
 }
 
-func TestDeviceMetricsPostgres(t *testing.T) {
+func TestDeviceMetricsDatabase(t *testing.T) {
 	ctx := context.Background()
 	database := dbtest.NewFixture(t).OpenStore(t)
 	accounts := account.New(database.GORM())
@@ -62,11 +77,11 @@ func TestDeviceMetricsPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, err := accounts.CreateUser(ctx, "pg-metrics-owner", "", "pw-123456")
+	user, err := accounts.CreateUser(ctx, "db-metrics-owner", "", "pw-123456")
 	if err != nil {
 		t.Fatal(err)
 	}
-	device, err := accounts.RegisterDevice(ctx, user.ID, "pg-metrics-box", "agent")
+	device, err := accounts.RegisterDevice(ctx, user.ID, "db-metrics-box", "agent")
 	if err != nil {
 		t.Fatal(err)
 	}

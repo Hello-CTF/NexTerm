@@ -8,13 +8,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
 
 func TestProductionHostKeyRemoveKeepsIndentedFileFormat(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	database, err := openProductionStore(ctx, ProductionConfig{DataDir: dir})
+	database, err := store.Open(ctx, filepath.Join(dir, "data.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

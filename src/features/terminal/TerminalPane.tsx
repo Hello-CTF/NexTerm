@@ -649,6 +649,17 @@ export function TerminalPane({
     return () => pane.removeEventListener("keydown", onKey, true);
   }, []);
 
+  const previousSessionStatus = useRef(sessionStatus);
+  useEffect(() => {
+    const previous = previousSessionStatus.current;
+    previousSessionStatus.current = sessionStatus;
+    if (previous === "connected" || sessionStatus !== "connected" || !attachDead || !resumeRef.current) return;
+    useUi.getState().updateTab(storeTabId, { dead: false });
+    setAttachDead(false);
+    setKernelTabId(null);
+    setEpoch((value) => value + 1);
+  }, [sessionStatus, attachDead, storeTabId]);
+
   const handleAttachDead = useCallback(
     (code: string) => {
       if (code !== "not_found") return;
@@ -658,7 +669,7 @@ export function TerminalPane({
         .flatMap((p) => p.tabs)
         .find((t) => t.id === storeTabId);
       const session = st.sessions.find((x) => x.id === tab?.sessionId);
-      if (!containerId && !effectiveWinrm && tab?.tabId !== undefined && session?.status === "connected") {
+      if (!containerId && !effectiveWinrm && session?.kind !== "ssh" && session?.kind !== "device" && tab?.tabId !== undefined && session?.status === "connected") {
         resumeAttemptedRef.current = false;
         resumeRef.current = undefined;
         st.updateTab(storeTabId, { tabId: undefined });
@@ -698,7 +709,9 @@ export function TerminalPane({
         .workspaces.flatMap((w) => w.panes)
         .flatMap((p) => p.tabs)
         .find((t) => t.id === storeTabId);
-      const resumeId = resumeAttemptedRef.current ? undefined : current?.tabId;
+      const resumeId = ws.assetKind === "ssh" || ws.assetKind === "device"
+        ? current?.tabId
+        : resumeAttemptedRef.current ? undefined : current?.tabId;
       resumeAttemptedRef.current = resumeId !== undefined;
       useUi.getState().updateTab(storeTabId, { sessionId: s.id, tabId: resumeId, dead: false, exited: false });
       resumeRef.current = resumeId;
@@ -775,7 +788,9 @@ export function TerminalPane({
         .workspaces.flatMap((w) => w.panes)
         .flatMap((p) => p.tabs)
         .find((t) => t.id === storeTabId);
-      const resumeId = resumeAttemptedRef.current ? undefined : current?.tabId;
+      const resumeId = session.kind === "ssh" || session.kind === "device"
+        ? current?.tabId
+        : resumeAttemptedRef.current ? undefined : current?.tabId;
       resumeAttemptedRef.current = resumeId !== undefined;
       useUi.getState().updateTab(storeTabId, { tabId: resumeId, dead: false, exited: false });
       resumeRef.current = resumeId;

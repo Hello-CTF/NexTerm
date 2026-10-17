@@ -158,7 +158,7 @@ describe("Database tab closing", () => {
 
     await expect(useUi.getState().closeTab(tab.id, "detach")).resolves.toBe(true);
 
-    expect(mocks.closeTerminalTab).toHaveBeenCalledWith("kernel-terminal", "detach");
+    expect(mocks.closeTerminalTab).toHaveBeenCalledWith("kernel-terminal", "detach", "s");
     expect(mocks.disconnect).not.toHaveBeenCalled();
   });
 });
@@ -211,7 +211,7 @@ describe("Workspace closing", () => {
 
     await useUi.getState().closeWorkspace("ws");
 
-    expect(mocks.closeTerminalTab).toHaveBeenCalledWith("kernel-terminal", "detach");
+    expect(mocks.closeTerminalTab).toHaveBeenCalledWith("kernel-terminal", "detach", "s");
     expect(mocks.disconnect).not.toHaveBeenCalled();
     expect(workspaceExists("ws")).toBe(false);
   });

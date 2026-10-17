@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NexTerm - 让服务器管理更顺手</title>
-    <meta name="description" content="NexTerm 支持终端、文件、Docker、数据库和 AI 助手，可安装在桌面或自行部署。" />
-    <meta property="og:title" content="NexTerm - 让服务器管理更顺手" />
-    <meta property="og:description" content="支持终端、文件、Docker、数据库和 AI 助手，可安装在桌面或自行部署。" />
+    <title>NexTerm - 让远程终端，随时跟着你走</title>
+    <meta name="description" content="NexTerm 是开源的远程终端工作台，支持持久 SSH 会话、文件、容器、数据库和 AI 辅助排障。" />
+    <meta property="og:title" content="NexTerm - 让远程终端，随时跟着你走" />
+    <meta property="og:description" content="持久 SSH 会话、文件、容器、数据库和 AI 辅助排障，集中在一个开源工作台。" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://nexterm.work/" />
     <meta property="og:image" content="https://nexterm.work/images/shell-dark.jpg" />
@@ -14,6 +14,13 @@
     <link rel="icon" type="image/png" href="/brand/nexterm-mark-128.png" />
     <script>
       (function () {
+        var language = localStorage.getItem("nexterm.site.language");
+        if (!language) language = navigator.language && navigator.language.toLowerCase().startsWith("en") ? "en" : "zh";
+        document.documentElement.lang = language === "en" ? "en" : "zh-CN";
+        if (language === "en") {
+          document.title = "NexTerm - Your remote terminals, wherever you are";
+          document.querySelector('meta[name="description"]')?.setAttribute("content", "NexTerm is an open source workbench for persistent SSH terminals, files, containers, databases, and AI-assisted troubleshooting.");
+        }
         var saved = localStorage.getItem("nexterm.site.theme");
         var system = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
         document.documentElement.dataset.theme = saved === "light" || saved === "dark" ? saved : system;

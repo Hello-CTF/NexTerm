@@ -11,44 +11,42 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/dbtest"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-func openPostgresStore(t *testing.T) *SQLStore {
+func openDatabaseStore(t *testing.T) *SQLStore {
 	t.Helper()
 	fixture := dbtest.NewFixture(t)
 	backend := fixture.OpenStore(t)
-	store, err := NewPostgresStore(context.Background(), backend.GORM())
+	store, err := NewSQLStore(context.Background(), backend.GORM())
 	if err != nil {
-		t.Fatalf("open postgres cron store: %v", err)
+		t.Fatalf("open database cron store: %v", err)
 	}
 	return store
 }
 
-func TestPostgresStoreStartupProbe(t *testing.T) {
+func TestDatabaseStoreStartupProbe(t *testing.T) {
 	fixture := dbtest.NewFixture(t)
 	backend := fixture.OpenStore(t)
-	if _, err := NewPostgresStore(context.Background(), backend.GORM()); err != nil {
+	if _, err := NewSQLStore(context.Background(), backend.GORM()); err != nil {
 		t.Fatalf("startup probe on migrated schema: %v", err)
 	}
 }
 
-func TestPostgresStoreStartupProbeFailsWithoutCronTable(t *testing.T) {
+func TestDatabaseStoreStartupProbeFailsWithoutCronTable(t *testing.T) {
 	fixture := dbtest.NewFixture(t)
-	raw := fixture.OpenRaw(t)
-	db, err := gorm.Open(postgres.New(postgres.Config{Conn: raw}), &gorm.Config{})
-	if err != nil {
+	db := fixture.OpenStore(t).GORM()
+	if err := db.Migrator().DropTable(&store.CronJob{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewPostgresStore(context.Background(), db); err == nil {
+	if _, err := NewSQLStore(context.Background(), db); err == nil {
 		t.Fatal("startup probe succeeded without cron_job table")
 	}
 }
 
-func TestPostgresStoreRoundTripPreservesEveryField(t *testing.T) {
+func TestDatabaseStoreRoundTripPreservesEveryField(t *testing.T) {
 	ctx := context.Background()
-	store := openPostgresStore(t)
+	store := openDatabaseStore(t)
 	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
 	job := fullTestJob("job-1", "session-a", now)
 	created, err := store.Create(ctx, job, 4)
@@ -81,9 +79,9 @@ func TestPostgresStoreRoundTripPreservesEveryField(t *testing.T) {
 	}
 }
 
-func TestPostgresStoreCreateEnforcesBoundAndUniqueness(t *testing.T) {
+func TestDatabaseStoreCreateEnforcesBoundAndUniqueness(t *testing.T) {
 	ctx := context.Background()
-	store := openPostgresStore(t)
+	store := openDatabaseStore(t)
 	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
 	for _, id := range []string{"a-1", "a-2"} {
 		if _, err := store.Create(ctx, fullTestJob(id, "session-a", now), 2); err != nil {
@@ -98,9 +96,9 @@ func TestPostgresStoreCreateEnforcesBoundAndUniqueness(t *testing.T) {
 	}
 }
 
-func TestPostgresStoreCompareAndSwapGuards(t *testing.T) {
+func TestDatabaseStoreCompareAndSwapGuards(t *testing.T) {
 	ctx := context.Background()
-	store := openPostgresStore(t)
+	store := openDatabaseStore(t)
 	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
 	created, err := store.Create(ctx, fullTestJob("job", "session-a", now), 4)
 	if err != nil {
@@ -121,9 +119,9 @@ func TestPostgresStoreCompareAndSwapGuards(t *testing.T) {
 	}
 }
 
-func TestPostgresStoreDeleteGuardsOtherSessions(t *testing.T) {
+func TestDatabaseStoreDeleteGuardsOtherSessions(t *testing.T) {
 	ctx := context.Background()
-	store := openPostgresStore(t)
+	store := openDatabaseStore(t)
 	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
 	a, err := store.Create(ctx, fullTestJob("a", "session-a", now), 4)
 	if err != nil {
@@ -146,9 +144,9 @@ func TestPostgresStoreDeleteGuardsOtherSessions(t *testing.T) {
 	}
 }
 
-func TestPostgresStoreConcurrentCompareAndSwapHasSingleWinner(t *testing.T) {
+func TestDatabaseStoreConcurrentCompareAndSwapHasSingleWinner(t *testing.T) {
 	ctx := context.Background()
-	store := openPostgresStore(t)
+	store := openDatabaseStore(t)
 	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
 	created, err := store.Create(ctx, fullTestJob("job", "session-a", now), 4)
 	if err != nil {
@@ -179,9 +177,9 @@ func TestPostgresStoreConcurrentCompareAndSwapHasSingleWinner(t *testing.T) {
 	}
 }
 
-func TestPostgresSchedulerClaimCompleteAndReschedule(t *testing.T) {
+func TestDatabaseSchedulerClaimCompleteAndReschedule(t *testing.T) {
 	ctx := context.Background()
-	store := openPostgresStore(t)
+	store := openDatabaseStore(t)
 	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
 	triggers := make(chan Trigger, 1)
 	scheduler := testScheduler(t, store, executorFunc(func(_ context.Context, trigger Trigger) error {
@@ -221,9 +219,9 @@ func TestPostgresSchedulerClaimCompleteAndReschedule(t *testing.T) {
 	}
 }
 
-func TestPostgresSchedulerFailureSchedulesRetry(t *testing.T) {
+func TestDatabaseSchedulerFailureSchedulesRetry(t *testing.T) {
 	ctx := context.Background()
-	store := openPostgresStore(t)
+	store := openDatabaseStore(t)
 	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
 	scheduler := testScheduler(t, store, executorFunc(func(context.Context, Trigger) error {
 		return errors.New("injected executor failure")
@@ -251,9 +249,9 @@ func TestPostgresSchedulerFailureSchedulesRetry(t *testing.T) {
 	}
 }
 
-func TestPostgresSchedulerConcurrentClaimHasSingleWinner(t *testing.T) {
+func TestDatabaseSchedulerConcurrentClaimHasSingleWinner(t *testing.T) {
 	ctx := context.Background()
-	store := openPostgresStore(t)
+	store := openDatabaseStore(t)
 	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
 	var calls atomic.Int32
 	executor := executorFunc(func(context.Context, Trigger) error {

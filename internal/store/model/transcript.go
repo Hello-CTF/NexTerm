@@ -14,7 +14,7 @@ type TranscriptRow struct {
 	Truncated      bool   `gorm:"column:truncated;not null;default:0" json:"truncated"`
 	SyncOptIn      bool   `gorm:"column:sync_opt_in;not null;default:0" json:"syncOptIn"`
 	ContentOmitted bool   `gorm:"column:content_omitted;not null;default:0" json:"contentOmitted"`
-	OwnerID        string `gorm:"column:owner_id;not null;default:'';index:idx_transcript_owner" json:"owner_id"`
+	OwnerID        string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_transcript_owner" json:"owner_id"`
 }
 
 func (TranscriptRow) TableName() string { return "transcript" }
@@ -26,7 +26,7 @@ type TranscriptChunkRow struct {
 	TS           int64         `gorm:"column:ts;not null" json:"ts"`
 	Data         []byte        `gorm:"column:data;not null" json:"data"`
 	Kind         int           `gorm:"column:kind;not null;default:0" json:"kind"`
-	OwnerID      string        `gorm:"column:owner_id;not null;default:'';index:idx_transcript_chunk_owner" json:"owner_id"`
+	OwnerID      string        `gorm:"size:191;column:owner_id;not null;default:'';index:idx_transcript_chunk_owner" json:"owner_id"`
 	Transcript   TranscriptRow `gorm:"foreignKey:TranscriptID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
@@ -36,7 +36,7 @@ type DurableTranscriptOffset struct {
 	DurableID string `gorm:"column:durable_id;primaryKey" json:"durableId"`
 	Offset    int64  `gorm:"column:offset;not null" json:"offset"`
 	UpdatedAt int64  `gorm:"column:updated_at;not null" json:"updatedAt"`
-	OwnerID   string `gorm:"column:owner_id;not null;default:'';index:idx_durable_transcript_offset_owner" json:"owner_id"`
+	OwnerID   string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_durable_transcript_offset_owner" json:"owner_id"`
 }
 
 func (DurableTranscriptOffset) TableName() string { return "durable_transcript_offset" }
@@ -45,7 +45,7 @@ type DurableTabTitle struct {
 	DurableID string `gorm:"column:durable_id;primaryKey" json:"durableId"`
 	Title     string `gorm:"column:title;not null" json:"title"`
 	UpdatedAt int64  `gorm:"column:updated_at;not null" json:"updatedAt"`
-	OwnerID   string `gorm:"column:owner_id;not null;default:'';index:idx_durable_tab_title_owner" json:"owner_id"`
+	OwnerID   string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_durable_tab_title_owner" json:"owner_id"`
 }
 
 func (DurableTabTitle) TableName() string { return "durable_tab_title" }
@@ -53,7 +53,7 @@ func (DurableTabTitle) TableName() string { return "durable_tab_title" }
 type CredentialTombstone struct {
 	ID        string `gorm:"column:id;primaryKey" json:"id"`
 	DeletedAt int64  `gorm:"column:deleted_at;not null" json:"deletedAt"`
-	OwnerID   string `gorm:"column:owner_id;primaryKey;default:'';index:idx_credential_tombstone_owner" json:"owner_id"`
+	OwnerID   string `gorm:"size:191;column:owner_id;primaryKey;default:'';index:idx_credential_tombstone_owner" json:"owner_id"`
 }
 
 func (CredentialTombstone) TableName() string { return "credential_tombstone" }
@@ -62,13 +62,13 @@ type SyncTombstone struct {
 	ID        string `gorm:"column:id;primaryKey" json:"id"`
 	Kind      string `gorm:"column:kind;not null" json:"kind"`
 	DeletedAt int64  `gorm:"column:deleted_at;not null" json:"deletedAt"`
-	OwnerID   string `gorm:"column:owner_id;primaryKey;default:'';index:idx_sync_tombstone_owner" json:"owner_id"`
+	OwnerID   string `gorm:"size:191;column:owner_id;primaryKey;default:'';index:idx_sync_tombstone_owner" json:"owner_id"`
 }
 
 func (SyncTombstone) TableName() string { return "sync_tombstone" }
 
 type SyncState struct {
-	UserID      string `gorm:"column:user_id;primaryKey" json:"userId"`
+	UserID      string `gorm:"size:191;column:user_id;primaryKey" json:"userId"`
 	ObjectID    string `gorm:"column:object_id;primaryKey" json:"objectId"`
 	PayloadHash []byte `gorm:"column:payload_hash" json:"payloadHash"`
 	BlobHash    []byte `gorm:"column:blob_hash;not null" json:"blobHash"`

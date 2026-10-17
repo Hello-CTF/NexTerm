@@ -294,6 +294,25 @@ describe("terminal dead-tab overlay", () => {
     expect(toastTexts()).toContain("已重新连接");
   });
 
+  it("retries a restored tab when the initial session list arrives after the layout", async () => {
+    seedTab();
+    useUi.setState({ sessions: [] });
+    mounted = mountPane();
+    await flush();
+    failAttach("not_found");
+    await waitFor(() => expect(overlay()).not.toBeNull());
+    act(() => {
+      useUi.getState().setSessions([{
+        id: "s1", assetId: "asset-1", name: "web-01", kind: "ssh",
+        status: "connected", tabs: [], createdAt: 1,
+      }]);
+    });
+    await waitFor(() => expect(overlay()).toBeNull());
+    expect(harness.props?.resumeTabId).toBe("kernel-1");
+    expect(storeTab()?.tabId).toBe("kernel-1");
+    expect(mocks.connect).not.toHaveBeenCalled();
+  });
+
   it("follows a second backend tab id across a layout identity change without creating a third id", async () => {
     seedTab();
     mounted = mountPane();
@@ -368,7 +387,7 @@ describe("terminal dead-tab overlay", () => {
     expect(toastTexts()).toContain("已重新连接");
   });
 
-  it("opens a fresh terminal in one click when the resumed id is still not found", async () => {
+  it("keeps the original remote terminal identity when recovery still reports not found", async () => {
     seedTab();
     mounted = mountPane();
     await flush();
@@ -381,12 +400,17 @@ describe("terminal dead-tab overlay", () => {
 
     failAttach("not_found");
 
-    await waitFor(() => expect(harness.props?.resumeTabId).toBeUndefined());
+    await waitFor(() => expect(overlay()).not.toBeNull());
+    expect(harness.props?.resumeTabId).toBe("kernel-1");
     expect(mocks.connect).toHaveBeenCalledTimes(1);
-    expect(overlay()).toBeNull();
-    expect(storeTab()?.dead).toBe(false);
-    expect(storeTab()?.tabId).toBeUndefined();
+    expect(storeTab()?.dead).toBe(true);
+    expect(storeTab()?.tabId).toBe("kernel-1");
     expect(toastTexts()).not.toContain("正在恢复原终端");
+
+    clickButton(mounted.container, "重新连接这台主机");
+    await flush();
+    expect(harness.props?.resumeTabId).toBe("kernel-1");
+    expect(storeTab()?.tabId).toBe("kernel-1");
   });
 
   it("keeps the overlay for a container exec tab even when the session is connected", async () => {
@@ -563,9 +587,9 @@ describe("terminal dead-tab context menu reconnect", () => {
 
     failAttach("not_found");
 
-    await waitFor(() => expect(harness.props?.resumeTabId).toBeUndefined());
-    expect(storeTab()?.tabId).toBeUndefined();
-    expect(overlay()).toBeNull();
+    await waitFor(() => expect(overlay()).not.toBeNull());
+    expect(harness.props?.resumeTabId).toBe("kernel-1");
+    expect(storeTab()?.tabId).toBe("kernel-1");
   });
 
   it("cancelling the changed host key confirmation neither trusts nor retries", async () => {

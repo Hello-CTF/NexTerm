@@ -19,16 +19,15 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store/model"
 	"github.com/glebarez/sqlite"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
 type Store struct {
+	backend   Backend
 	db        *gorm.DB
 	sqlDB     *sql.DB
 	keepAlive *sql.Conn
-	dialect   Dialect
 	logger    *slog.Logger
 	retention retentionState
 
@@ -61,7 +60,7 @@ func OpenWithOptions(ctx context.Context, path string, options OpenOptions) (*St
 	for attempt := 0; ; attempt++ {
 		db, err := openDB(sqliteDSN(path), 8)
 		if err == nil {
-			s = newStore(db, options.Logger, Dialect{backend: BackendSQLite})
+			s = newStore(db, options.Logger)
 			legacy, lerr := hasLegacySchemaMarker(ctx, s)
 			if lerr != nil {
 				_ = s.Close()
@@ -115,7 +114,7 @@ func OpenInMemoryWithOptions(ctx context.Context, options OpenOptions) (*Store, 
 	if err != nil {
 		return nil, err
 	}
-	s := newStore(db, options.Logger, Dialect{backend: BackendSQLite})
+	s := newStore(db, options.Logger)
 	if err := s.migrate(ctx); err != nil {
 		_ = s.Close()
 		return nil, err
@@ -129,23 +128,18 @@ func OpenInMemoryWithOptions(ctx context.Context, options OpenOptions) (*Store, 
 	return s, nil
 }
 
-func newStore(db *gorm.DB, logger *slog.Logger, dialect Dialect) *Store {
+func newStore(db *gorm.DB, logger *slog.Logger) *Store {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	_ = db.Callback().Create().Before("gorm:create").Register("nexterm:conflict_conditions", preserveConflictConditions)
 	sqlDB, _ := db.DB()
-	return &Store{db: db, sqlDB: sqlDB, dialect: dialect, logger: logger}
+	return &Store{db: db, sqlDB: sqlDB, logger: logger, backend: BackendSQLite}
 }
 
 func openDB(dsn string, maxConnections int) (*gorm.DB, error) {
-	var db *gorm.DB
-	var err error
 	config := &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)}
-	if strings.HasPrefix(dsn, "postgres") {
-		db, err = gorm.Open(postgres.Open(dsn), config)
-	} else {
-		db, err = gorm.Open(sqlite.Open(dsn), config)
-	}
+	db, err := gorm.Open(sqlite.Open(dsn), config)
 	if err != nil {
 		return nil, dbError(err)
 	}
@@ -216,9 +210,7 @@ func (s *Store) GORM() *gorm.DB {
 	return s.db
 }
 
-func (s *Store) Backend() Backend {
-	return s.dialect.backend
-}
+func (s *Store) Backend() Backend { return s.backend }
 
 func (s *Store) Close() error {
 	if s.keepAlive != nil {
@@ -271,15 +263,33 @@ var migrateMu sync.Mutex
 func (s *Store) migrate(ctx context.Context) error {
 	migrateMu.Lock()
 	defer migrateMu.Unlock()
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	migrate := func(tx *gorm.DB) error {
 		if err := tx.AutoMigrate(model.AllModels...); err != nil {
 			return err
 		}
-		if s.dialect.backend == BackendPostgres {
+		switch s.backend {
+		case BackendSQLite:
+			return tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_app_user_username ON app_user(username COLLATE NOCASE)`).Error
+		case BackendPostgres:
 			return tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_app_user_username ON app_user(lower(username))`).Error
+		default:
+			if tx.Migrator().HasIndex(&model.AppUser{}, "idx_app_user_username") {
+				return nil
+			}
+			if !tx.Migrator().HasColumn(&model.AppUser{}, "username_folded") {
+				if err := tx.Exec("ALTER TABLE app_user ADD COLUMN username_folded varchar(191) GENERATED ALWAYS AS (lower(username)) STORED").Error; err != nil {
+					return err
+				}
+			}
+			return tx.Exec("CREATE UNIQUE INDEX idx_app_user_username ON app_user(username_folded)").Error
 		}
-		return tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_app_user_username ON app_user(username COLLATE NOCASE)`).Error
-	})
+	}
+	var err error
+	if s.backend == BackendMySQL || s.backend == BackendMariaDB {
+		err = migrate(s.db.WithContext(ctx).Set("gorm:table_options", "CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"))
+	} else {
+		err = s.db.WithContext(ctx).Transaction(migrate)
+	}
 	if err != nil {
 		return migrateError(err)
 	}

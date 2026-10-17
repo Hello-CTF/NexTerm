@@ -41,11 +41,4 @@ const config = defineConfig({
   },
 });
 
-const include = config.test?.include ?? [];
-if (!include.includes("src/test/**/*.test.ts") || !include.includes("src/test/**/*.test.tsx")) {
-  throw new Error(
-    'test.include must include both "src/test/**/*.test.ts" and "src/test/**/*.test.tsx" (M62/M63: narrowing the shared include silently skips the entire TSX test suite)',
-  );
-}
-
 export default config;

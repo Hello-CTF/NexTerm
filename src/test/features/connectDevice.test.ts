@@ -170,7 +170,42 @@ describe("connectDevice workspace deduplication", () => {
     expect(useUi.getState().activeWorkspaceId).toBe("ws-dev");
   });
 
-  it("cleans up the stale workspace and starts a fresh connection when reconnecting fails because the session was deleted", async () => {
+  it("preserves the original terminal when reconnect fails", async () => {
+    seedDeviceWorkspace("disconnected", true);
+    useUi.getState().updateTab("t1", { tabId: "original-shell" });
+    mocks.sessionReconnect.mockRejectedValue(new Error("device unavailable"));
+
+    const outcome = await connectDevice(DEVICE);
+
+    expect(outcome).toEqual({ ok: false, error: "device unavailable" });
+    expect(mocks.sessionConnectDevice).not.toHaveBeenCalled();
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]).toMatchObject({ id: "t1", tabId: "original-shell" });
+  });
+
+  it.each(["missing", "deleted"] as const)("preserves restored device panes and shell identities with a %s session", async (state) => {
+    seedDeviceWorkspace("disconnected", true);
+    const workspace = useUi.getState().workspaces[0];
+    useUi.setState({
+      sessions: state === "missing" ? [] : useUi.getState().sessions,
+      workspaces: [{ ...workspace, activePaneId: "p2", splitRatio: 0.4, panes: [
+        { id: "p1", activeTabId: "t1", tabs: [{ id: "t1", kind: "terminal", title: "one", sessionId: "s-dev-1", tabId: "shell-one", closable: true }] },
+        { id: "p2", activeTabId: "t2", tabs: [{ id: "t2", kind: "terminal", title: "two", sessionId: "s-dev-1", tabId: "shell-two", closable: true }] },
+      ] }],
+    });
+    mocks.sessionReconnect.mockRejectedValue({ code: "not_found", message: "Session not found" });
+    mocks.sessionConnectDevice.mockResolvedValue({ ...DEVICE_SESSION, id: "s-new" });
+
+    expect(await connectDevice(DEVICE)).toEqual({ ok: true });
+
+    const restored = useUi.getState().workspaces[0];
+    expect(restored).toMatchObject({ id: "ws-dev", sessionId: "s-new", activePaneId: "p2", splitRatio: 0.4 });
+    expect(restored.panes.map((pane) => ({ id: pane.id, activeTabId: pane.activeTabId, tabs: pane.tabs.map((tab) => [tab.id, tab.tabId, tab.sessionId]) }))).toEqual([
+      { id: "p1", activeTabId: "t1", tabs: [["t1", "shell-one", "s-new"]] },
+      { id: "p2", activeTabId: "t2", tabs: [["t2", "shell-two", "s-new"]] },
+    ]);
+  });
+
+  it("rebinds the existing workspace when the previous session was deleted", async () => {
     seedDeviceWorkspace("disconnected");
     mocks.sessionReconnect.mockRejectedValue({ code: "not_found", message: "Session not found" });
 
@@ -179,7 +214,7 @@ describe("connectDevice workspace deduplication", () => {
     expect(mocks.sessionConnectDevice).toHaveBeenCalledTimes(1);
     const { workspaces } = useUi.getState();
     expect(workspaces).toHaveLength(1);
-    expect(workspaces[0]?.id).not.toBe("ws-dev");
+    expect(workspaces[0]?.id).toBe("ws-dev");
     expect(workspaces[0]?.assetId).toBe("device/d-1");
   });
 });

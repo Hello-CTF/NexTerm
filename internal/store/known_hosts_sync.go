@@ -32,9 +32,9 @@ func (s *Store) syncTombstonePut(ctx context.Context, db *gorm.DB, id, kind stri
 	return db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "owner_id"}, {Name: "id"}},
 		DoUpdates: clause.Assignments(map[string]any{
-			"deleted_at": gorm.Expr(s.dialect.ScalarMax() + "(sync_tombstone.deleted_at, excluded.deleted_at)"),
+			"deleted_at": MaxExpression(db, "sync_tombstone", "deleted_at", nil),
 		}),
-		Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: s.dialect.conflictTargetColumn("sync_tombstone", "owner_id"), Value: ipc.OwnerID(ctx)}}},
+		Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
 	}).Create(&SyncTombstone{ID: id, Kind: kind, DeletedAt: deletedAt, OwnerID: ipc.OwnerID(ctx)}).Error
 }
 

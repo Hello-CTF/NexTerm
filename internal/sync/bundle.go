@@ -619,9 +619,9 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			if err := tx.Clauses(clause.OnConflict{
 				Columns: []clause.Column{{Name: "owner_id"}, {Name: "id"}},
 				DoUpdates: clause.Assignments(map[string]any{
-					"deleted_at": gorm.Expr(scalarMax(s.store.Backend()) + "(credential_tombstone.deleted_at, excluded.deleted_at)"),
+					"deleted_at": store.MaxExpression(tx, "credential_tombstone", "deleted_at", nil),
 				}),
-				Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: conflictOwnerColumn(s.store.Backend(), "credential_tombstone"), Value: ipc.OwnerID(ctx)}}},
+				Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
 			}).Create(&store.CredentialTombstone{ID: tombstone.id, DeletedAt: tombstone.deletedAt, OwnerID: ipc.OwnerID(ctx)}).Error; err != nil {
 				return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 			}

@@ -14,6 +14,10 @@
 
 </div>
 
+NexTerm solves a concrete problem: a remote terminal should not disappear when its window does. SSH shells keep running in the background, then show up for re-attachment after an app restart or on another signed-in device. The same workspace also handles files, containers, databases, and troubleshooting history.
+
+Use the desktop app for local work or run the server for teams and multi-device access. Both modes share the same session and asset model, can be self-hosted, and keep data on infrastructure you control.
+
 ## Features
 
 - **Terminals and files**: SSH, WinRM, and local terminals with multiple tabs, split panes, SFTP file management, and in-place editing. SSH sessions continue running as background sessions after a tab closes or disconnects, ready for re-attachment; local, WinRM non-interactive, and container exec terminals end when closed.
@@ -53,7 +57,7 @@ The desktop app checks for updates once at startup and shows an update banner wh
 
 ## Server and Device Enrollment
 
-- **Linux server**: after extracting the server package, follow its `README.md` to install. On first startup, the server prints a one-time initialization code to the console (with systemd, view it using `journalctl -u nexterm-server`). Open the UI in a browser, enter the code, and set the super-admin username and password. Access control is enabled by default (`--auth on`), and login is required regardless of the listen address. For public deployments, listen only on loopback and put a TLS reverse proxy in front. See `nexterm-server --help` for all CLI options.
+- **Linux server**: after extracting the server package, follow its `README.md` to install. On first startup, the server prints a one-time initialization code to the console (with systemd, view it using `journalctl -u nexterm-server`). Open the UI in a browser, enter the code, and set the super-admin username and password. Access control is enabled by default (`--auth on`), and login is required regardless of the listen address. For public deployments, listen only on loopback and put a TLS reverse proxy in front. NexTerm defaults to SQLite and also supports PostgreSQL, MySQL, and MariaDB through `--db postgres|mysql|mariadb` and `--db-dsn`. Run one server instance per database. Preserve the entire data directory when backing up, together with the external database when configured. See `nexterm-server --help` for all CLI options.
 - **Lazycat**: after installing from the app center, open and use directly; terminal processes and data stay on your Lazycat. NexTerm's built-in port forwarding is unavailable there; use the platform's own forwarding for externally reachable ports.
 - **Device enrollment**: a super admin configures the access address in Device Management. You can issue an enrollment code for yourself or, as a super admin, for another user. Each code is single-use and time-limited. On Linux/macOS, run the panel's one-line install command as a regular user; on Windows, run the corresponding PowerShell command. It downloads and installs nexterm-agent and configures auto-start on login (systemd --user / launchd / Windows Task Scheduler). Device credentials are stored only on the device; the server stores only their hashes. After enrollment, remote terminals can be opened while the device is online; revoked credentials become invalid immediately and cannot be recovered.
 
@@ -72,6 +76,14 @@ Routine quality checks (with task installed):
 ```bash
 task check
 ```
+
+External databases share one integration suite. Always use a database dedicated to testing:
+
+```bash
+NEXTERM_TEST_DB_BACKEND=postgres NEXTERM_TEST_DB_DSN='postgres://nexterm:password@127.0.0.1:5432/nexterm_test?sslmode=disable' task test:database
+```
+
+`NEXTERM_TEST_DB_BACKEND` also accepts `mysql` or `mariadb`, with the corresponding driver DSN format. The suite defaults to SQLite; an explicitly selected external backend requires a working DSN.
 
 ## Contributing
 

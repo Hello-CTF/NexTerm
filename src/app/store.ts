@@ -1143,7 +1143,13 @@ export const useUi = create<UiState>((set, get) => ({
     if (!target || !wsId || !paneId) return false;
     if (target.tabId) {
       try {
-        await terminalApi.closeTab(target.tabId, mode);
+        const kind = st.sessions.find((session) => session.id === target.sessionId)?.kind
+          ?? st.workspaces.find((workspace) => workspace.id === wsId)?.assetKind;
+        if (!target.containerId && (kind === "ssh" || kind === "device")) {
+          await terminalApi.closeTab(target.tabId, mode, target.sessionId);
+        } else {
+          await terminalApi.closeTab(target.tabId, mode);
+        }
       } catch (e) {
         get().updateTab(id, { closeError: describeError(e) });
         if (!suppressErrorToast) get().pushToast("error", `终端操作失败：${describeError(e)}`);
@@ -2373,11 +2379,60 @@ async function requestCloseTabWithAction(
   }
 }
 
+async function reconcileTerminalCloseState(ids: string[]): Promise<void> {
+  const candidates = ids
+    .map((id) => findTab(id)?.tab)
+    .filter((tab): tab is AppTab => tab !== undefined && isRunningTerminal(tab));
+  if (candidates.length === 0) return;
+  let live: Awaited<ReturnType<typeof terminalApi.listLive>>;
+  try {
+    live = await terminalApi.listLive();
+  } catch {
+    return;
+  }
+  const byId = new Map(live.map((tab) => [tab.tabId, tab]));
+  const remoteSessions = [...new Set(candidates.filter((tab) => {
+    const kind = useUi.getState().sessions.find((session) => session.id === tab.sessionId)?.kind
+      ?? findTab(tab.id)?.ws.assetKind;
+    return !byId.has(tab.tabId as string) && !tab.containerId && kind === "ssh" && tab.sessionId;
+  }).map((tab) => tab.sessionId as string))];
+  const results = await Promise.allSettled(remoteSessions.map((id) => terminalApi.listDurable(id)));
+  const remote = new Map(remoteSessions.map((id, index) => {
+    const result = results[index];
+    return [id, result.status === "fulfilled" ? new Map(result.value.map((tab) => [tab.id, tab])) : null] as const;
+  }));
+  for (const candidate of candidates) {
+    const current = findTab(candidate.id)?.tab;
+    if (!current || current.tabId !== candidate.tabId || current.sessionId !== candidate.sessionId || !isRunningTerminal(current)) continue;
+    const hit = byId.get(candidate.tabId as string);
+    if (hit) {
+      if (hit.exited) useUi.getState().updateTab(candidate.id, { exited: true });
+      continue;
+    }
+    const found = findTab(candidate.id);
+    const kind = useUi.getState().sessions.find((session) => session.id === candidate.sessionId)?.kind
+      ?? found?.ws.assetKind;
+    if (!candidate.containerId && kind === "device") continue;
+    if (!candidate.containerId && kind === "ssh") {
+      const descriptors = remote.get(candidate.sessionId as string);
+      if (!descriptors) continue;
+      const descriptor = descriptors.get(candidate.tabId as string);
+      if (descriptor) {
+        if (descriptor.dead) useUi.getState().updateTab(candidate.id, { exited: true });
+        continue;
+      }
+    }
+    useUi.getState().updateTab(candidate.id, { dead: true });
+  }
+}
+
 export async function requestCloseTab(id: string): Promise<void> {
+  await reconcileTerminalCloseState([id]);
   await requestCloseTabWithAction(id, undefined);
 }
 
 export async function requestCloseTabs(ids: string[]): Promise<void> {
+  await reconcileTerminalCloseState(ids);
   const st = useUi.getState();
   for (const id of ids) {
     if (findTab(id)?.tab.closeError) st.updateTab(id, { closeError: undefined });
@@ -2454,7 +2509,12 @@ export async function requestKillWorkspaceTerminals(workspaceId: string): Promis
   });
   if (!ok) return;
   const results = await Promise.allSettled(
-    live.map((t) => terminalApi.closeTab(t.tabId as string, "kill")),
+    live.map((tab) => {
+      const kind = st.sessions.find((session) => session.id === tab.sessionId)?.kind ?? ws.assetKind;
+      return !tab.containerId && (kind === "ssh" || kind === "device")
+        ? terminalApi.closeTab(tab.tabId as string, "kill", tab.sessionId)
+        : terminalApi.closeTab(tab.tabId as string, "kill");
+    }),
   );
   const failed = results.filter((r) => r.status === "rejected").length;
   if (failed) {
@@ -2622,6 +2682,18 @@ async function openConnectedAssetSession(
     bumpConnectFocusRevision,
   } = useUi.getState();
   setSessions([...sessions.filter((s) => s.id !== info.id), info]);
+  const restored = asset.id && (asset.kind === "ssh" || asset.kind === "device")
+    ? workspaces.find((workspace) => workspace.kind === "session" && workspace.assetId === asset.id)
+    : undefined;
+  if (restored) {
+    useUi.getState().updateWorkspaceSession(restored.id, info.id);
+    if (options?.preserveUserFocus) return;
+    useUi.getState().setActiveWorkspace(restored.id);
+    if (!restored.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "terminal"))) {
+      await openTerminalTab(info);
+    }
+    return;
+  }
   if (options?.preserveUserFocus && workspaces.length > 0) return;
   ensureWorkspace({
     kind: "session",
@@ -2820,11 +2892,15 @@ async function runConnectAsset(
         useUi.getState().setActiveWorkspace(existing.id);
         useConnectHistory.getState().record(asset.id);
         return { ok: true };
-      } catch {
-        // Session deleted on the server or reconnect failed: fall through to clean up the leftover workspace below and make a fresh connection
+      } catch (error) {
+        if ((error as { code?: string } | null)?.code !== "not_found") {
+          const message = describeError(error);
+          pushToast("error", `连接失败：${message}`);
+          return { ok: false, error: message };
+        }
       }
     }
-    if (!restoreDatabaseWorkspace) {
+    if (!restoreDatabaseWorkspace && asset.kind !== "ssh" && asset.kind !== "device") {
       await useUi.getState().closeWorkspace(existing.id);
       if (useUi.getState().workspaces.some((w) => w.id === existing.id)) {
         return { ok: false, canceled: true };
@@ -2953,13 +3029,13 @@ async function runConnectDevice(
         setSessions([...sessions.filter((s) => s.id !== fresh.id), fresh]);
         useUi.getState().setActiveWorkspace(existing.id);
         return { ok: true };
-      } catch {
-        // Session deleted on the server or reconnect failed: fall through to clean up the leftover workspace below and make a fresh connection
+      } catch (error) {
+        if ((error as { code?: string } | null)?.code !== "not_found") {
+          const message = describeError(error);
+          pushToast("error", `连接失败：${message}`);
+          return { ok: false, error: message };
+        }
       }
-    }
-    await useUi.getState().closeWorkspace(existing.id);
-    if (useUi.getState().workspaces.some((w) => w.id === existing.id)) {
-      return { ok: false, canceled: true };
     }
   }
 

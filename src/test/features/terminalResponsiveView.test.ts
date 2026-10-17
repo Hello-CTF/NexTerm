@@ -343,7 +343,7 @@ describe("XtermView production grid lifecycle", () => {
 
   it("applies authoritative observer grids without submitting local resize", async () => {
     await show(props({ resumeTabId: "tab-existing", canResize: false }));
-    expect(harness.attachTab).toHaveBeenCalledWith("tab-existing", expect.anything(), -1);
+    expect(harness.attachTab).toHaveBeenCalledWith("tab-existing", expect.anything(), -1, undefined, "session");
     const term = harness.terminals[0];
     term.resize.mockClear();
     harness.resize.mockClear();
@@ -376,8 +376,31 @@ describe("XtermView production grid lifecycle", () => {
     harness.reopen?.();
     await flushWork();
 
-    expect(harness.attachTab).toHaveBeenCalledWith("tab-new", expect.anything(), -1);
+    expect(harness.attachTab).toHaveBeenCalledWith("tab-new", expect.anything(), -1, undefined, "session");
     expect(harness.resize).toHaveBeenCalledWith("tab-new", { cols: 36, rows: 20 });
+    expect(harness.attach).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps Docker resume scoped to its existing backend tab", async () => {
+    await show(props({ containerId: "container", resumeTabId: "tab-existing" }));
+    expect(harness.attachTab).toHaveBeenCalledWith("tab-existing", expect.anything(), -1, undefined, undefined);
+    expect(harness.execAttach).not.toHaveBeenCalled();
+    harness.reopen?.();
+    await flushWork();
+    expect(harness.attachTab).toHaveBeenLastCalledWith("tab-existing", expect.anything(), -1, undefined, undefined);
+  });
+
+  it("detaches a reopened channel that finishes after unmount", async () => {
+    await show(props());
+    let finish: ((value: unknown) => void) | undefined;
+    harness.attachTab.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    harness.reopen?.();
+    await act(async () => root?.unmount());
+    root = null;
+    harness.detach.mockClear();
+    finish?.({ tabId: "tab-new", cols: 90, rows: 30, controller: "me", subscribers: 1, viewers: 1, exited: false });
+    await flushWork();
+    expect(harness.detach).toHaveBeenCalledWith("tab-new", "channel-1");
     expect(harness.attach).toHaveBeenCalledTimes(1);
   });
 
@@ -614,7 +637,7 @@ describe("XtermView stream anchors", () => {
     expect(harness.attachTab).toHaveBeenCalledWith("tab-new", expect.anything(), -1, {
       seq: 150,
       epoch: "e1",
-    });
+    }, "session");
   });
 
   it("does not duplicate in-flight bytes rendered before the resumed stream arrives", async () => {
@@ -671,6 +694,6 @@ describe("XtermView stream anchors", () => {
     harness.reopen?.();
     await flushWork();
 
-    expect(harness.attachTab).toHaveBeenCalledWith("tab-new", expect.anything(), -1);
+    expect(harness.attachTab).toHaveBeenCalledWith("tab-new", expect.anything(), -1, undefined, "session");
   });
 });

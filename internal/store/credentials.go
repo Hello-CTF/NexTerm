@@ -70,7 +70,7 @@ func (s *Store) CredentialDelete(ctx context.Context, id string) error {
 		return tombstone.WithContext(ctx).
 			Clauses(clause.OnConflict{
 				Columns: []clause.Column{{Name: "owner_id"}, {Name: "id"}}, DoUpdates: clause.AssignmentColumns([]string{"deleted_at"}),
-				Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: s.dialect.conflictTargetColumn("credential_tombstone", "owner_id"), Value: ipc.OwnerID(ctx)}}},
+				Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
 			}).
 			Create(&CredentialTombstone{ID: id, DeletedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)})
 	})

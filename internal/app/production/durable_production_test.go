@@ -17,6 +17,8 @@ import (
 )
 
 func TestProductionLocalAttachIsVolatileAndEndsOnDetach(t *testing.T) {
+	t.Setenv("SHELL", "")
+	t.Setenv("ENV", "")
 	factory := &bridgeTestFactory{}
 	production, err := NewProduction(t.Context(), ProductionConfig{
 		Config: Config{
@@ -41,7 +43,6 @@ func TestProductionLocalAttachIsVolatileAndEndsOnDetach(t *testing.T) {
 		t.Fatal("volatile attach returned an empty tab id")
 	}
 	stream := factory.at(channelID, 0)
-	waitForProductionOutput(t, stream, "$ ")
 	writeDurableTestCommand(t, production, tabID, "volatile-local-marker", "client-a")
 	waitForProductionOutput(t, stream, "volatile-local-marker")
 	tabs := production.Services.Sessions.ListTabs()
@@ -69,7 +70,7 @@ func TestProductionSSHStartupCommandEnvAndEncodingEndToEnd(t *testing.T) {
 	var connected sessionInfoDTO
 	requireStoreTestResponse(t, connectedResponse, &connected)
 
-	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, "startup-e2e-channel", "client-a")
+	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24,"durable":false}`, "startup-e2e-channel", "client-a")
 	tabID := requireAttachedTabID(t, attachResponse)
 	if tabID == "" {
 		t.Fatal("terminal_attach returned no tab")

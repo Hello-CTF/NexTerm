@@ -6,13 +6,15 @@ const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
   askChoiceRemember: vi.fn(),
   closeTab: vi.fn(),
+  listLive: vi.fn(),
+  listDurable: vi.fn(),
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, askChoiceRemember: mocks.askChoiceRemember }));
 vi.mock("../../ipc/commands", () => ({
   dbApi: {},
   sessionApi: {},
   vaultApi: {},
-  terminalApi: { closeTab: mocks.closeTab },
+  terminalApi: { closeTab: mocks.closeTab, listLive: mocks.listLive, listDurable: mocks.listDurable },
 }));
 
 import { getTerminalPrefs, setTerminalCloseAction } from "../../app/preferences";
@@ -26,7 +28,7 @@ import {
   type Pane,
   type Workspace,
 } from "../../app/store";
-import type { SessionInfo } from "../../ipc/commands";
+import type { LiveTabInfo, SessionInfo } from "../../ipc/commands";
 
 function terminal(id = "terminal", sessionId = "s"): AppTab {
   return { id, kind: "terminal", title: id, sessionId, tabId: `kernel-${id}`, closable: true, retainable: true };
@@ -70,6 +72,33 @@ function toastText(): string {
 function tabsRemaining(): AppTab[] {
   return useUi.getState().workspaces[0].panes[0].tabs;
 }
+function backendLiveTabs(): LiveTabInfo[] {
+  return useUi.getState().workspaces.flatMap((workspace) =>
+    workspace.panes.flatMap((pane) =>
+      pane.tabs
+        .filter((tab) => tab.kind === "terminal" && tab.tabId)
+        .map((tab) => ({
+          tabId: tab.tabId as string,
+          sessionId: tab.sessionId ?? "s",
+          sessionName: "session",
+          sessionKind: "ssh",
+          cols: 80,
+          rows: 24,
+          controller: null,
+          subscribers: 1,
+          viewers: 1,
+          exited: tab.exited === true,
+          lastOutputMsAgo: 0,
+        })),
+    ),
+  );
+}
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  mocks.listLive.mockImplementation(async () => backendLiveTabs());
+  mocks.listDurable.mockResolvedValue([]);
+});
 
 describe("terminal close preference dispatch", () => {
   beforeEach(() => {
@@ -93,7 +122,7 @@ describe("terminal close preference dispatch", () => {
     expect(options.choices.map((c: { key: string }) => c.key)).toEqual(["detach", "kill"]);
     expect(options.choices[0].primary).toBe(true);
     expect(options.choices[1].danger).toBe(true);
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "detach", "s");
     expect(tabsRemaining()).toEqual([]);
     expect(toastText()).toContain("已转入后台");
     expect(getTerminalPrefs().closeAction).toBe("ask");
@@ -109,7 +138,7 @@ describe("terminal close preference dispatch", () => {
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mocks.ask.mock.calls[0][0]).toContain("「terminal」");
     expect(mocks.ask.mock.calls[0][0]).toContain("无法恢复");
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill", "s");
     expect(tabsRemaining()).toEqual([]);
     expect(toastText()).not.toContain("已转入后台");
   });
@@ -145,7 +174,7 @@ describe("terminal close preference dispatch", () => {
 
     await requestCloseTab(tab.id);
 
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill", "s");
     expect(getTerminalPrefs().closeAction).toBe("kill");
     expect(localStorage.getItem("nexterm.terminalClose.v1")).toBe('{"closeAction":"kill"}');
 
@@ -154,7 +183,7 @@ describe("terminal close preference dispatch", () => {
     await requestCloseTab(next.id);
 
     expect(mocks.askChoiceRemember).toHaveBeenCalledTimes(1);
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "kill", "s");
   });
 
   it("ends the process directly without dialogs for the kill preference", async () => {
@@ -166,7 +195,7 @@ describe("terminal close preference dispatch", () => {
 
     expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
     expect(mocks.ask).not.toHaveBeenCalled();
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill", "s");
     expect(tabsRemaining()).toEqual([]);
   });
 
@@ -178,7 +207,7 @@ describe("terminal close preference dispatch", () => {
     await requestCloseTab(tab.id);
 
     expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "detach", "s");
     expect(toastText()).toContain("已转入后台");
   });
 
@@ -221,6 +250,105 @@ describe("terminal close preference dispatch", () => {
     expect(mocks.closeTab).not.toHaveBeenCalled();
     expect(tabsRemaining()).toEqual([tab]);
   });
+
+  it("closes a restored tab without a process choice when the backend no longer lists it", async () => {
+    const tab = terminal();
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    mocks.listLive.mockResolvedValueOnce([]);
+    mocks.askChoiceRemember.mockResolvedValueOnce({ key: "detach", remember: false });
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", undefined, "s");
+    expect(tabsRemaining()).toEqual([]);
+  });
+
+  it("keeps the destructive choice for a remote shell not yet attached after restart", async () => {
+    const tab = terminal();
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    mocks.listLive.mockResolvedValueOnce([]);
+    mocks.listDurable.mockResolvedValueOnce([{ id: "kernel-terminal", dead: false }]);
+    mocks.askChoiceRemember.mockResolvedValueOnce({ key: "kill", remember: false });
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.listDurable).toHaveBeenCalledWith("s");
+    expect(mocks.askChoiceRemember).toHaveBeenCalledTimes(1);
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill", "s");
+    expect(tabsRemaining()).toEqual([]);
+  });
+
+  it("retains the process choice when remote discovery fails", async () => {
+    const tab = terminal();
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    mocks.listLive.mockResolvedValueOnce([]);
+    mocks.listDurable.mockRejectedValueOnce(new Error("SSH disconnected"));
+    mocks.askChoiceRemember.mockResolvedValueOnce(null);
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.askChoiceRemember).toHaveBeenCalledTimes(1);
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(tabsRemaining()).toEqual([tab]);
+  });
+
+  it("retains device choices when the current backend has not attached the shell", async () => {
+    const tab = terminal();
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }], "device");
+    mocks.listLive.mockResolvedValueOnce([]);
+    mocks.askChoiceRemember.mockResolvedValueOnce({ key: "detach", remember: false });
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.listDurable).not.toHaveBeenCalled();
+    expect(mocks.askChoiceRemember).toHaveBeenCalledTimes(1);
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "detach", "s");
+  });
+
+  it("discovers remote shells once per SSH connection for a batch close", async () => {
+    seed([{ id: "p", tabs: [terminal("t1"), terminal("t2")], activeTabId: "t1" }]);
+    mocks.listLive.mockResolvedValueOnce([]);
+    mocks.listDurable.mockResolvedValueOnce([{ id: "kernel-t1", dead: false }, { id: "kernel-t2", dead: false }]);
+    mocks.askChoiceRemember.mockResolvedValueOnce({ key: "detach", remember: false });
+
+    await requestCloseTabs(["t1", "t2"]);
+
+    expect(mocks.listDurable).toHaveBeenCalledTimes(1);
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "detach", "s");
+  });
+
+  it("cleans up an exited backend tab without a process choice", async () => {
+    const tab = terminal();
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    const live = backendLiveTabs()[0] as LiveTabInfo;
+    mocks.listLive.mockResolvedValueOnce([{ ...live, exited: true }]);
+    mocks.askChoiceRemember.mockResolvedValueOnce({ key: "detach", remember: false });
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill", "s");
+    expect(tabsRemaining()).toEqual([]);
+  });
+
+  it("keeps the original confirmation behavior when backend liveness is unavailable", async () => {
+    const tab = terminal();
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    mocks.listLive.mockRejectedValueOnce(new Error("offline"));
+    mocks.askChoiceRemember.mockResolvedValueOnce(null);
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.listLive).toHaveBeenCalledTimes(1);
+    expect(mocks.askChoiceRemember).toHaveBeenCalledTimes(1);
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(tabsRemaining()).toEqual([tab]);
+  });
 });
 
 describe("consolidated batch close dialog", () => {
@@ -245,9 +373,9 @@ describe("consolidated batch close dialog", () => {
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mocks.ask.mock.calls[0][0]).toContain("3 个终端");
     expect(mocks.closeTab).toHaveBeenCalledTimes(3);
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill");
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "kill");
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t3", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill", "s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "kill", "s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t3", "kill", "s");
     expect(tabsRemaining()).toEqual([]);
     expect(getTerminalPrefs().closeAction).toBe("ask");
   });
@@ -298,7 +426,7 @@ describe("consolidated batch close dialog", () => {
     expect(mocks.askChoiceRemember.mock.calls[0][0]).toContain("1 个终端");
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mocks.ask.mock.calls[0][0]).toContain("容器 exec");
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-e1", "kill");
     expect(tabsRemaining()).toEqual([]);
   });
@@ -313,7 +441,7 @@ describe("consolidated batch close dialog", () => {
     expect(mocks.ask).toHaveBeenCalledTimes(2);
     expect(mocks.ask.mock.calls[0][0]).toContain("1 个终端");
     expect(mocks.ask.mock.calls[1][0]).toContain("容器 exec");
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill", "s");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-e1", "kill");
   });
 
@@ -337,8 +465,8 @@ describe("consolidated batch close dialog", () => {
 
     expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledTimes(2);
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill");
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill", "s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "kill", "s");
     expect(tabsRemaining()).toEqual([]);
   });
 });

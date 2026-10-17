@@ -8,7 +8,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-func TestTranscriptAppendChunksDurableOffsetPostgres(t *testing.T) {
+func TestTranscriptAppendChunksDurableOffsetDatabase(t *testing.T) {
 	ctx := context.Background()
 	db := dbtest.NewFixture(t).OpenStore(t)
 
@@ -34,7 +34,7 @@ func TestTranscriptAppendChunksDurableOffsetPostgres(t *testing.T) {
 	}
 }
 
-func TestDurableTabTitleRoundtripPostgres(t *testing.T) {
+func TestDurableTabTitleRoundtripDatabase(t *testing.T) {
 	ctx := context.Background()
 	db := dbtest.NewFixture(t).OpenStore(t)
 
@@ -58,7 +58,7 @@ func TestDurableTabTitleRoundtripPostgres(t *testing.T) {
 	}
 }
 
-func TestTranscriptHostsGroupByPostgres(t *testing.T) {
+func TestTranscriptHostsGroupByDatabase(t *testing.T) {
 	ctx := context.Background()
 	db := dbtest.NewFixture(t).OpenStore(t)
 
@@ -96,7 +96,7 @@ func TestTranscriptHostsGroupByPostgres(t *testing.T) {
 	}
 }
 
-func TestTranscriptInsertSyncedConflictBranchPostgres(t *testing.T) {
+func TestTranscriptInsertSyncedConflictBranchDatabase(t *testing.T) {
 	ctx := context.Background()
 	db := dbtest.NewFixture(t).OpenStore(t)
 

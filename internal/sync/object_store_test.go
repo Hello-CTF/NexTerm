@@ -24,7 +24,7 @@ func newObjectStoreUser(t *testing.T) (context.Context, *objectStore, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return ctx, &objectStore{db: db.GORM(), backend: db.Backend()}, user.ID
+	return ctx, &objectStore{db: db.GORM()}, user.ID
 }
 
 func TestObjectStoreGenesisHeadAndIdempotentPush(t *testing.T) {

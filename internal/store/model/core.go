@@ -2,12 +2,12 @@ package model
 
 type AssetGroupRow struct {
 	ID        string         `gorm:"column:id;primaryKey" json:"id"`
-	ParentID  *string        `gorm:"column:parent_id" json:"parent_id"`
+	ParentID  *string        `gorm:"column:parent_id;size:191" json:"parent_id"`
 	Name      string         `gorm:"column:name;not null" json:"name"`
 	Sort      int64          `gorm:"column:sort;not null" json:"sort"`
 	CreatedAt int64          `gorm:"column:created_at;not null" json:"created_at"`
 	UpdatedAt int64          `gorm:"column:updated_at;not null" json:"updated_at"`
-	OwnerID   string         `gorm:"column:owner_id;not null;default:'';index:idx_asset_group_owner" json:"owner_id"`
+	OwnerID   string         `gorm:"size:191;column:owner_id;not null;default:'';index:idx_asset_group_owner" json:"owner_id"`
 	Parent    *AssetGroupRow `gorm:"foreignKey:ParentID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
@@ -15,7 +15,7 @@ func (AssetGroupRow) TableName() string { return "asset_group" }
 
 type AssetRow struct {
 	ID          string         `gorm:"column:id;primaryKey" json:"id"`
-	GroupID     *string        `gorm:"column:group_id;index:idx_asset_group" json:"groupId"`
+	GroupID     *string        `gorm:"size:191;column:group_id;index:idx_asset_group" json:"groupId"`
 	Kind        string         `gorm:"column:kind;not null;index:idx_asset_kind" json:"kind"`
 	Name        string         `gorm:"column:name;not null" json:"name"`
 	Host        *string        `gorm:"column:host" json:"host"`
@@ -23,7 +23,7 @@ type AssetRow struct {
 	Username    *string        `gorm:"column:username" json:"username"`
 	AuthKind    *string        `gorm:"column:auth_kind" json:"authKind"`
 	KeyPath     *string        `gorm:"column:key_path" json:"keyPath"`
-	CredID      *string        `gorm:"column:cred_id" json:"credId"`
+	CredID      *string        `gorm:"column:cred_id;size:191" json:"credId"`
 	OptionsJSON string         `gorm:"column:options_json;not null;default:'{}'" json:"optionsJson"`
 	Tags        string         `gorm:"column:tags;not null;default:''" json:"tags"`
 	Note        string         `gorm:"column:note;not null;default:''" json:"note"`
@@ -32,7 +32,7 @@ type AssetRow struct {
 	UpdatedAt   int64          `gorm:"column:updated_at;not null" json:"updatedAt"`
 	DeletedAt   *int64         `gorm:"column:deleted_at" json:"deletedAt"`
 	Builtin     bool           `gorm:"column:builtin;not null;default:0" json:"builtin"`
-	OwnerID     string         `gorm:"column:owner_id;not null;default:'';index:idx_asset_owner" json:"owner_id"`
+	OwnerID     string         `gorm:"size:191;column:owner_id;not null;default:'';index:idx_asset_owner" json:"owner_id"`
 	Group       *AssetGroupRow `gorm:"foreignKey:GroupID;references:ID;constraint:OnDelete:SET NULL" json:"-"`
 	Credential  *CredentialRow `gorm:"foreignKey:CredID;references:ID;constraint:OnDelete:SET NULL" json:"-"`
 }
@@ -49,7 +49,7 @@ type CredentialRow struct {
 	KEKHint   string `gorm:"column:kek_hint;not null" json:"kekHint"`
 	CreatedAt int64  `gorm:"column:created_at;not null" json:"createdAt"`
 	UpdatedAt int64  `gorm:"column:updated_at;not null" json:"updatedAt"`
-	OwnerID   string `gorm:"column:owner_id;not null;default:'';index:idx_credential_owner" json:"owner_id"`
+	OwnerID   string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_credential_owner" json:"owner_id"`
 }
 
 func (CredentialRow) TableName() string { return "credential" }
@@ -89,7 +89,7 @@ type AuditRow struct {
 	PayloadJSON string  `gorm:"column:payload_json;not null" json:"payloadJson"`
 	ExitCode    *int32  `gorm:"column:exit_code" json:"exitCode"`
 	DurationMS  *int64  `gorm:"column:duration_ms" json:"durationMs"`
-	OwnerID     string  `gorm:"column:owner_id;not null;default:'';index:idx_audit_log_owner" json:"owner_id"`
+	OwnerID     string  `gorm:"size:191;column:owner_id;not null;default:'';index:idx_audit_log_owner" json:"owner_id"`
 }
 
 func (AuditRow) TableName() string { return "audit_log" }
@@ -100,21 +100,21 @@ type ConversationRow struct {
 	ScopeJSON string `gorm:"column:scope_json;not null;default:'{}'" json:"scopeJson"`
 	CreatedAt int64  `gorm:"column:created_at;not null" json:"createdAt"`
 	UpdatedAt int64  `gorm:"column:updated_at;not null" json:"updatedAt"`
-	OwnerID   string `gorm:"column:owner_id;not null;default:'';index:idx_ai_conversation_owner" json:"owner_id"`
+	OwnerID   string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_ai_conversation_owner" json:"owner_id"`
 }
 
 func (ConversationRow) TableName() string { return "ai_conversation" }
 
 type MessageRow struct {
 	ID             string          `gorm:"column:id;primaryKey" json:"id"`
-	ConversationID string          `gorm:"column:conversation_id;not null;uniqueIndex:idx_ai_msg_conv_seq,priority:1" json:"conversationId"`
+	ConversationID string          `gorm:"column:conversation_id;not null;size:191;uniqueIndex:idx_ai_msg_conv_seq,priority:1" json:"conversationId"`
 	Role           string          `gorm:"column:role;not null" json:"role"`
 	ContentJSON    string          `gorm:"column:content_json;not null" json:"contentJson"`
 	TokensIn       *int64          `gorm:"column:tokens_in" json:"tokensIn"`
 	TokensOut      *int64          `gorm:"column:tokens_out" json:"tokensOut"`
 	CreatedAt      int64           `gorm:"column:created_at;not null" json:"createdAt"`
 	Seq            int64           `gorm:"column:seq;not null;default:0;uniqueIndex:idx_ai_msg_conv_seq,priority:2" json:"seq"`
-	OwnerID        string          `gorm:"column:owner_id;not null;default:'';index:idx_ai_message_owner" json:"owner_id"`
+	OwnerID        string          `gorm:"size:191;column:owner_id;not null;default:'';index:idx_ai_message_owner" json:"owner_id"`
 	Conversation   ConversationRow `gorm:"foreignKey:ConversationID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
@@ -122,25 +122,25 @@ func (MessageRow) TableName() string { return "ai_message" }
 
 type SnippetRow struct {
 	ID        string  `gorm:"column:id;primaryKey" json:"id"`
-	GroupID   *string `gorm:"column:group_id" json:"group_id"`
+	GroupID   *string `gorm:"size:191;column:group_id" json:"group_id"`
 	Name      string  `gorm:"column:name;not null" json:"name"`
 	Body      string  `gorm:"column:body;not null" json:"body"`
 	Sort      int64   `gorm:"column:sort;not null" json:"sort"`
 	CreatedAt int64   `gorm:"column:created_at;not null" json:"created_at"`
 	UpdatedAt int64   `gorm:"column:updated_at;not null" json:"updated_at"`
-	OwnerID   string  `gorm:"column:owner_id;not null;default:'';index:idx_snippet_owner" json:"owner_id"`
+	OwnerID   string  `gorm:"size:191;column:owner_id;not null;default:'';index:idx_snippet_owner" json:"owner_id"`
 }
 
 func (SnippetRow) TableName() string { return "snippet" }
 
 type KnownHostRow struct {
 	ID          string `gorm:"column:id;primaryKey" json:"id"`
-	Host        string `gorm:"column:host;not null;uniqueIndex:known_host_owner_endpoint_unique,priority:2" json:"host"`
+	Host        string `gorm:"column:host;not null;size:191;uniqueIndex:known_host_owner_endpoint_unique,priority:2" json:"host"`
 	Port        int32  `gorm:"column:port;not null;uniqueIndex:known_host_owner_endpoint_unique,priority:3" json:"port"`
-	KeyType     string `gorm:"column:key_type;not null;uniqueIndex:known_host_owner_endpoint_unique,priority:4" json:"keyType"`
+	KeyType     string `gorm:"column:key_type;not null;size:191;uniqueIndex:known_host_owner_endpoint_unique,priority:4" json:"keyType"`
 	Fingerprint string `gorm:"column:fingerprint;not null" json:"fingerprint"`
 	AddedAt     int64  `gorm:"column:added_at;not null" json:"addedAt"`
-	OwnerID     string `gorm:"column:owner_id;not null;default:'';index:idx_known_host_owner;uniqueIndex:known_host_owner_endpoint_unique,priority:1" json:"owner_id"`
+	OwnerID     string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_known_host_owner;uniqueIndex:known_host_owner_endpoint_unique,priority:1" json:"owner_id"`
 }
 
 func (KnownHostRow) TableName() string { return "known_host" }
@@ -153,7 +153,7 @@ type RecordingRow struct {
 	Bytes     int64  `gorm:"column:bytes;not null;default:0" json:"bytes"`
 	StartedAt int64  `gorm:"column:started_at;not null" json:"startedAt"`
 	EndedAt   *int64 `gorm:"column:ended_at;index:idx_terminal_recording_retention,priority:1,sort:desc,where:ended_at IS NOT NULL" json:"endedAt"`
-	OwnerID   string `gorm:"column:owner_id;not null;default:'';index:idx_terminal_recording_owner" json:"owner_id"`
+	OwnerID   string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_terminal_recording_owner" json:"owner_id"`
 }
 
 func (RecordingRow) TableName() string { return "terminal_recording" }
@@ -174,7 +174,7 @@ type OutcomeRecord struct {
 	CreatedAt        int64  `gorm:"column:created_at;not null" json:"createdAt"`
 	StartedAt        *int64 `gorm:"column:started_at" json:"startedAt"`
 	FinishedAt       *int64 `gorm:"column:finished_at" json:"finishedAt"`
-	OwnerID          string `gorm:"column:owner_id;primaryKey;default:'';index:idx_outcome_record_owner" json:"owner_id"`
+	OwnerID          string `gorm:"size:191;column:owner_id;primaryKey;default:'';index:idx_outcome_record_owner" json:"owner_id"`
 }
 
 func (OutcomeRecord) TableName() string { return "outcome_record" }
@@ -202,19 +202,19 @@ type CronJob struct {
 	LastError           string `gorm:"column:last_error;not null;default:''" json:"lastError"`
 	LeaseOwner          string `gorm:"column:lease_owner;not null;default:''" json:"leaseOwner"`
 	LeaseExpiresAt      *int64 `gorm:"column:lease_expires_at" json:"leaseExpiresAt"`
-	RunID               string `gorm:"column:run_id;not null;default:''" json:"runId"`
+	RunID               string `gorm:"size:191;column:run_id;not null;default:''" json:"runId"`
 	RunScheduledFor     *int64 `gorm:"column:run_scheduled_for" json:"runScheduledFor"`
 	RunStartedAt        *int64 `gorm:"column:run_started_at" json:"runStartedAt"`
 	RunDeadline         *int64 `gorm:"column:run_deadline" json:"runDeadline"`
 	RunCoalesced        bool   `gorm:"column:run_coalesced;not null;default:0;check:chk_cron_run_coalesced,run_coalesced IN (false,true)" json:"runCoalesced"`
-	OwnerID             string `gorm:"column:owner_id;not null;default:'';index:idx_cron_job_owner" json:"owner_id"`
+	OwnerID             string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_cron_job_owner" json:"owner_id"`
 }
 
 func (CronJob) TableName() string { return "cron_job" }
 
 type RunRow struct {
 	ID                  string          `gorm:"column:id;primaryKey" json:"id"`
-	ConversationID      string          `gorm:"column:conversation_id;not null;index:idx_ai_run_conv,priority:1" json:"conversationId"`
+	ConversationID      string          `gorm:"column:conversation_id;not null;size:191;index:idx_ai_run_conv,priority:1" json:"conversationId"`
 	Status              string          `gorm:"column:status;not null;index:idx_ai_run_status" json:"status"`
 	Attempt             int64           `gorm:"column:attempt;not null;default:1" json:"attempt"`
 	Seq                 uint64          `gorm:"column:seq;not null;default:0" json:"seq"`
@@ -231,19 +231,19 @@ type RunRow struct {
 	CreatedAt           int64           `gorm:"column:created_at;not null;index:idx_ai_run_conv,priority:2;index:idx_ai_run_profile,priority:2" json:"createdAt"`
 	UpdatedAt           int64           `gorm:"column:updated_at;not null" json:"updatedAt"`
 	FinishedAt          *int64          `gorm:"column:finished_at" json:"finishedAt"`
-	OwnerID             string          `gorm:"column:owner_id;not null;default:'';index:idx_ai_run_owner" json:"owner_id"`
+	OwnerID             string          `gorm:"size:191;column:owner_id;not null;default:'';index:idx_ai_run_owner" json:"owner_id"`
 	Conversation        ConversationRow `gorm:"foreignKey:ConversationID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
 func (RunRow) TableName() string { return "ai_run" }
 
 type RunEventRow struct {
-	RunID       string `gorm:"column:run_id;primaryKey" json:"runId"`
+	RunID       string `gorm:"column:run_id;primaryKey;size:191" json:"runId"`
 	Seq         uint64 `gorm:"column:seq;primaryKey" json:"seq"`
 	Type        string `gorm:"column:type;not null" json:"type"`
 	PayloadJSON string `gorm:"column:payload_json;not null" json:"payloadJson"`
 	CreatedAt   int64  `gorm:"column:created_at;not null" json:"createdAt"`
-	OwnerID     string `gorm:"column:owner_id;not null;default:'';index:idx_ai_run_event_owner" json:"owner_id"`
+	OwnerID     string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_ai_run_event_owner" json:"owner_id"`
 	Run         RunRow `gorm:"foreignKey:RunID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
@@ -253,7 +253,7 @@ type HitlRunRow struct {
 	ID        string `gorm:"column:id;primaryKey" json:"id"`
 	Data      []byte `gorm:"column:data;not null" json:"data"`
 	UpdatedAt int64  `gorm:"column:updated_at;not null" json:"updatedAt"`
-	OwnerID   string `gorm:"column:owner_id;not null;default:'';index:idx_ai_hitl_run_owner" json:"owner_id"`
+	OwnerID   string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_ai_hitl_run_owner" json:"owner_id"`
 }
 
 func (HitlRunRow) TableName() string { return "ai_hitl_run" }
@@ -262,7 +262,7 @@ type CheckpointRow struct {
 	ID        string `gorm:"column:id;primaryKey" json:"id"`
 	Data      []byte `gorm:"column:data;not null" json:"data"`
 	UpdatedAt int64  `gorm:"column:updated_at;not null" json:"updatedAt"`
-	OwnerID   string `gorm:"column:owner_id;not null;default:'';index:idx_ai_checkpoint_owner" json:"owner_id"`
+	OwnerID   string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_ai_checkpoint_owner" json:"owner_id"`
 }
 
 func (CheckpointRow) TableName() string { return "ai_checkpoint" }

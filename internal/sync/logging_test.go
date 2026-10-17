@@ -31,7 +31,7 @@ func newLogTestHandler(t *testing.T, buf *bytes.Buffer) (*ObjectHandler, context
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewObjectHandler(db.GORM(), db.Backend(), captureLogger(buf)), WithUserID(ctx, user.ID), user.ID
+	return NewObjectHandler(db.GORM(), captureLogger(buf)), WithUserID(ctx, user.ID), user.ID
 }
 
 func postSync(t *testing.T, handler *ObjectHandler, ctx context.Context, path string, payload any) *httptest.ResponseRecorder {

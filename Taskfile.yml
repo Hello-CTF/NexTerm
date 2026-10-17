@@ -41,36 +41,67 @@ tasks:
     cmds:
       - go test ./...
 
-  test:pg:
-    summary: Run the PostgreSQL-gated suites against a real server (requires NEXTERM_TEST_PG_DSN)
+  test:database:
+    summary: Run the shared storage contracts against SQLite or the selected real database
+    env:
+      GOFLAGS: '{{.GOFLAGS}}'
+    cmds:
+      - go test -count=1 -run Database ./internal/dbtest ./internal/store ./internal/account ./internal/sync ./internal/ai/cron ./internal/fleet/server
+
+  test:race:
+    summary: Run Go tests with the race detector
+    env:
+      GOFLAGS: '{{.GOFLAGS}}'
+    cmds:
+      - go test -race ./...
+
+  test:production:
+    summary: Test production desktop assets using verified frontend output
     env:
       GOFLAGS: '{{.GOFLAGS}}'
     cmds:
       - |
-        if [ -z "$NEXTERM_TEST_PG_DSN" ]; then
-          echo "NEXTERM_TEST_PG_DSN is not set; refusing to count SKIP as a pass" >&2
-          exit 1
+        if [ ! -f dist/index.html ] || [ ! -f target/dist-manifest.json ]; then
+          node scripts/build.mjs frontend --repro-check
         fi
-      - go test -count=1 ./internal/dbtest ./internal/store ./internal/account ./internal/sync ./internal/ai/cron ./internal/fleet/server
+      - node scripts/build.mjs frontend --consume-dist=dist --dist-manifest=target/dist-manifest.json
+      - |
+        node -e 'const fs = require("node:fs"); fs.rmSync("cmd/nexterm-desktop/dist", { recursive: true, force: true }); fs.cpSync("dist", "cmd/nexterm-desktop/dist", { recursive: true });'
+      - go test -tags production ./cmd/nexterm-desktop
 
-  check:
-    summary: Run Go, frontend, generated-bindings and reproducibility quality gates
+  check:go:
+    summary: Run Go formatting, vet, module, test and static contract checks
     deps: [fmt:check, vet, test]
+    env:
+      GOFLAGS: '{{.GOFLAGS}}'
     cmds:
       - go mod verify
-      - pnpm typecheck
+      - go run ./scripts/verify-manifest-injects
+
+  check:frontend:
+    summary: Lint, test, typecheck and reproducibly build the frontend
+    cmds:
       - pnpm lint
       - pnpm test
-      - node scripts/build.mjs bindings
-      - node scripts/build.mjs frontend --repro-check
-      - go run ./scripts/verify-manifest-injects
-      - go run ./scripts/check-conflict-columns
+      - task: frontend
 
-  verify:wiring:
-    summary: Run resolver, release upload/notes and desktop/mobile evidence behavior checks
+  check:scripts:
+    summary: Test release scripts and artifact evidence behavior
+    env:
+      GOFLAGS: '{{.GOFLAGS}}'
+      SOURCE_DATE_EPOCH: '1'
     cmds:
-      - go run ./scripts/check-reuse-wiring
-      - node --test .github/scripts/mobile-evidence.test.mjs
+      - node --test .github/scripts/*.test.mjs
+      - python3 scripts/test-install-device.py
+      - go run ./scripts/check-release-evidence
+
+  check:
+    summary: Run Go, frontend, bindings and release script quality checks once
+    cmds:
+      - task: check:go
+      - task: check:frontend
+      - task: bindings:check
+      - task: check:scripts
 
   bindings:
     summary: Regenerate Wails TypeScript bindings intentionally
@@ -122,13 +153,25 @@ tasks:
     cmds:
       - bash scripts/pack-linux-server.sh --arch={{.GOARCH | default "amd64"}}
 
+  device:e2e:
+    summary: Exercise device enrollment, bridge transport and remote file operations
+    cmds:
+      - go run ./scripts/e2e-harness device
+
+  sharing:e2e:
+    summary: Exercise host sharing and public preview HTTP boundaries
+    cmds:
+      - go run ./scripts/e2e-harness sharing
+
   sync:e2e:
     summary: Exercise Go-only two-instance sync and sync-only HTTP boundaries
     cmds:
       - go run ./scripts/e2e-harness sync
 
   verify:
-    summary: Run quality gates, then a reproducible host desktop production build consuming the verified dist
-    deps: [check]
+    summary: Run all checks, race and production tests, then reproducibly build the host desktop
     cmds:
+      - task: check
+      - task: test:race
+      - task: test:production
       - node scripts/build.mjs desktop --release --repro-check --consume-dist=dist --dist-manifest=target/dist-manifest.json

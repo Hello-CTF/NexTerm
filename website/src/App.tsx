@@ -1,196 +1,41 @@
 import { useState } from "react";
-import { ArrowRight, Download, Monitor, Moon, Server, Smartphone, Sun } from "lucide-react";
+import { ArrowRight, Check, Download, Monitor, Moon, Server, Smartphone, Sun } from "lucide-react";
 
 const repository = "https://github.com/Hello-CTF/NexTerm";
 const releases = `${repository}/releases/latest`;
-
-function GithubIcon({ size = 19 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55 0-.27-.01-1.17-.02-2.12-3.2.7-3.88-1.36-3.88-1.36-.52-1.33-1.28-1.68-1.28-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.76 2.7 1.25 3.35.96.1-.75.4-1.25.72-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.7 5.4-5.27 5.68.41.36.78 1.06.78 2.14 0 1.55-.01 2.79-.01 3.17 0 .31.21.67.8.55A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z" />
-    </svg>
-  );
-}
-
+type Language = "zh" | "en";
 type Theme = "dark" | "light";
 
-const views = [
-  {
-    name: "shell",
-    title: "Shell 工作区",
-    text: "命令块展示命令、输出和耗时，后台会话可随时接管。",
-    alt: "NexTerm 的 Shell 终端与命令块界面",
+const copy = {
+  zh: {
+    nav: ["功能", "界面", "下载"], home: "NexTerm 首页", themeDark: "切换到浅色主题", themeLight: "切换到深色主题", language: "English",
+    eyebrow: "开源 · 跨平台 · 可自托管", hero: "让远程终端，随时跟着你走", intro: "连接 SSH、WinRM 和本机，在一个工作台里管理服务器、文件、容器和数据库。App 关了，后台 shell 仍然在；换一台设备，也能继续接管。", download: "下载 NexTerm", source: "查看源码", platforms: "支持 Windows、macOS、Linux、浏览器和移动端预览",
+    featuresTitle: "一次连接，持续工作", features: [["终端不丢", "SSH 会话自动进入后台，App 关闭或浏览器断开后仍可重新接管。"], ["跨设备接管", "A 设备打开的后台 shell，B 设备登录同一服务后即可发现并继续使用。"], ["从命令到文件", "SFTP 浏览和编辑文件，管理 Docker 容器与镜像，减少工具切换。"], ["AI 辅助排障", "接入 OpenAI 兼容模型，先查看命令和文件变更，再执行敏感操作。"]], showcase: "工作区长什么样", views: [["shell", "Shell 工作区", "命令、输出和耗时集中展示，后台会话随时可接管", "NexTerm 的 Shell 终端与命令块界面"], ["ai", "AI 助手", "针对当前主机排障，执行前检查命令和文件改动", "NexTerm 的 AI 助手对话与命令确认界面"], ["files", "远程文件", "直接浏览、编辑和传输远程文件", "NexTerm 的 SFTP 文件树与远程编辑界面"], ["replay", "终端回放", "沿时间轴复现输出，定位故障前后发生了什么", "NexTerm 的终端历史时间轴回放界面"]], downloadTitle: "把下一次连接留在手边", downloadText: "桌面安装包和 Linux 服务端在 GitHub Releases 提供，源代码采用 MIT 协议。", install: "查看安装说明", footerIssue: "问题反馈", license: "MIT License"
   },
-  {
-    name: "ai",
-    title: "AI 助手",
-    text: "针对当前主机排障，执行前可检查命令和文件改动。",
-    alt: "NexTerm 的 AI 助手对话与命令确认界面",
-  },
-  {
-    name: "files",
-    title: "远程文件",
-    text: "直接浏览、编辑和传输远程文件。",
-    alt: "NexTerm 的 SFTP 文件树与远程编辑界面",
-  },
-  {
-    name: "replay",
-    title: "终端回放",
-    text: "沿时间轴复现终端输出，看清故障前后执行了什么、系统返回了什么。",
-    alt: "NexTerm 的终端历史时间轴回放界面",
-  },
-];
+  en: {
+    nav: ["Features", "Screens", "Download"], home: "NexTerm home", themeDark: "Switch to light theme", themeLight: "Switch to dark theme", language: "中文",
+    eyebrow: "Open source · Cross-platform · Self-hostable", hero: "Your remote terminals, wherever you are", intro: "Connect to SSH, WinRM, and local hosts. Manage servers, files, containers, and databases in one workbench. Close the app and your shell keeps running. Switch devices and take it over.", download: "Download NexTerm", source: "View source", platforms: "Windows, macOS, Linux, browser, and mobile previews",
+    featuresTitle: "Connect once. Keep working.", features: [["Terminals that stay", "SSH sessions move to the background automatically and can be re-attached after the app or browser closes."], ["Take over anywhere", "Open a background shell on device A, sign in on device B, and discover it ready to continue."], ["Commands to files", "Browse and edit files over SFTP, and manage Docker containers and images without changing tools."], ["AI troubleshooting", "Connect an OpenAI-compatible model and review commands and file changes before sensitive actions run."]], showcase: "Inside the workspace", views: [["shell", "Shell workspace", "Commands, output, and duration in one view, with background sessions ready to claim", "NexTerm shell terminal and command blocks"], ["ai", "AI assistant", "Diagnose the current host and review commands and file changes before running them", "NexTerm AI assistant and command confirmation"], ["files", "Remote files", "Browse, edit, and transfer remote files directly", "NexTerm SFTP file tree and remote editor"], ["replay", "Terminal replay", "Replay output on a timeline to understand what happened around an incident", "NexTerm terminal history timeline"]], downloadTitle: "Keep your next connection close", downloadText: "Desktop packages and the Linux server are available on GitHub Releases. The source code is MIT licensed.", install: "Read installation guide", footerIssue: "Issues", license: "MIT License"
+  }
+} as const;
 
-function Picture({ name, alt, eager = false }: { name: string; alt: string; eager?: boolean }) {
-  return (
-    <>
-      <img
-        className="shot shot-dark"
-        src={`/images/${name}-dark.jpg`}
-        alt={alt}
-        loading={eager ? "eager" : "lazy"}
-      />
-      <img
-        className="shot shot-light"
-        src={`/images/${name}-light.jpg`}
-        alt={alt}
-        loading={eager ? "eager" : "lazy"}
-      />
-    </>
-  );
-}
+function GithubIcon({ size = 19 }: { size?: number }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55 0-.27-.01-1.17-.02-2.12-3.2.7-3.88-1.36-3.88-1.36-.52-1.33-1.28-1.68-1.28-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.76 2.7 1.25 3.35.96.1-.75.4-1.25.72-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.7 5.4-5.27 5.68.41.36.78 1.06.78 2.14 0 1.55-.01 2.79-.01 3.17 0 .31.21.67.8.55A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z" /></svg>; }
+function Picture({ name, alt, eager = false }: { name: string; alt: string; eager?: boolean }) { return <><img className="shot shot-dark" src={`/images/${name}-dark.jpg`} alt={alt} loading={eager ? "eager" : "lazy"} /><img className="shot shot-light" src={`/images/${name}-light.jpg`} alt={alt} loading={eager ? "eager" : "lazy"} /></>; }
 
 function App() {
-  const [theme, setTheme] = useState<Theme>(
-    document.documentElement.dataset.theme === "light" ? "light" : "dark",
-  );
-
-  const toggleTheme = () => {
-    const next = theme === "dark" ? "light" : "dark";
-    document.documentElement.dataset.theme = next;
-    localStorage.setItem("nexterm.site.theme", next);
-    setTheme(next);
-  };
-
-  return (
-    <>
-      <header className="site-header">
-        <div className="container header-inner">
-          <a className="brand" href="#top" aria-label="NexTerm 首页">
-            <img src="/brand/nexterm-mark-128.png" alt="" />
-            <span>NexTerm</span>
-          </a>
-          <nav className="nav-links" aria-label="页面导航">
-            <a href="#showcase">界面</a>
-            <a href="#download">下载</a>
-          </nav>
-          <div className="header-actions">
-            <a className="icon-link" href={repository} target="_blank" rel="noreferrer" aria-label="GitHub 仓库">
-              <GithubIcon size={19} />
-            </a>
-            <button className="icon-link" type="button" onClick={toggleTheme} aria-label={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"}>
-              {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main id="top">
-        <section className="hero">
-          <div className="hero-glow" aria-hidden="true" />
-          <div className="container hero-inner">
-            <h1>开源的服务器管理工作台</h1>
-            <p className="hero-copy">
-              用 NexTerm 执行命令、编辑远程文件，让 AI 协助排障。
-              <br />
-              既可安装桌面版，也可自行部署后用浏览器访问。
-            </p>
-            <div className="hero-actions">
-              <a className="button button-primary" href={releases} target="_blank" rel="noreferrer">
-                <Download size={17} />
-                下载 NexTerm
-              </a>
-              <a className="button button-secondary" href={repository} target="_blank" rel="noreferrer">
-                <GithubIcon size={17} />
-                查看源码
-              </a>
-            </div>
-            <div className="platforms" aria-label="支持的平台">
-              <span><Monitor size={15} /> Windows</span>
-              <span><Monitor size={15} /> macOS</span>
-              <span><Monitor size={15} /> Linux</span>
-              <span><Server size={15} /> 浏览器版</span>
-              <span><Smartphone size={15} /> Android（预览）</span>
-              <span><Smartphone size={15} /> iOS / iPadOS（预览）</span>
-            </div>
-            <div className="window hero-window">
-              <div className="window-bar" aria-hidden="true">
-                <span /><span /><span />
-                <div>web-01 - NexTerm</div>
-              </div>
-              <Picture name="shell" alt="NexTerm 的 Shell 终端与命令块界面" eager />
-            </div>
-          </div>
-        </section>
-
-        <section className="section section-muted" id="showcase">
-          <div className="container">
-            <div className="section-heading">
-              <h2>产品界面</h2>
-            </div>
-            <div className="showcase-grid">
-              {views.map((view) => (
-                <article className="showcase-card" key={view.name}>
-                  <div className="showcase-copy">
-                    <h3>{view.title}</h3>
-                    <p>{view.text}</p>
-                  </div>
-                  <div className="showcase-image">
-                    <Picture name={view.name} alt={view.alt} />
-                  </div>
-                </article>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="section download-section" id="download">
-          <div className="container">
-            <div className="download-panel">
-              <div>
-                <h2>下载 NexTerm</h2>
-                <p>桌面安装包和 Linux 服务端都在 GitHub Releases 提供；Android 与 iOS/iPadOS 移动端处于构建预览阶段。源代码采用 MIT 协议。</p>
-              </div>
-              <div className="download-actions">
-                <a className="button button-primary" href={releases} target="_blank" rel="noreferrer">
-                  <Download size={17} /> 前往下载
-                </a>
-                <a className="button button-secondary" href={`${repository}#下载与安装`} target="_blank" rel="noreferrer">
-                  查看安装说明 <ArrowRight size={16} />
-                </a>
-              </div>
-            </div>
-          </div>
-        </section>
-      </main>
-
-      <footer className="site-footer">
-        <div className="container footer-inner">
-          <a className="brand" href="#top">
-            <img src="/brand/nexterm-mark-128.png" alt="" />
-            <span>NexTerm</span>
-          </a>
-          <div className="footer-links">
-            <a href={repository} target="_blank" rel="noreferrer">GitHub</a>
-            <a href={releases} target="_blank" rel="noreferrer">Releases</a>
-            <a href={`${repository}/issues`} target="_blank" rel="noreferrer">问题反馈</a>
-            <a href={`${repository}/blob/master/LICENSE`} target="_blank" rel="noreferrer">MIT License</a>
-          </div>
-          <span className="copyright">© 2026 Hello-CTF</span>
-        </div>
-      </footer>
-    </>
-  );
+  const browserLanguage = typeof navigator !== "undefined" && navigator.language.toLowerCase().startsWith("en") ? "en" : "zh";
+  const [language, setLanguage] = useState<Language>(() => (localStorage.getItem("nexterm.site.language") as Language) || browserLanguage);
+  const [theme, setTheme] = useState<Theme>(document.documentElement.dataset.theme === "light" ? "light" : "dark");
+  const t = copy[language];
+  const toggleTheme = () => { const next = theme === "dark" ? "light" : "dark"; document.documentElement.dataset.theme = next; localStorage.setItem("nexterm.site.theme", next); setTheme(next); };
+  const toggleLanguage = () => { const next = language === "zh" ? "en" : "zh"; localStorage.setItem("nexterm.site.language", next); document.documentElement.lang = next === "zh" ? "zh-CN" : "en"; setLanguage(next); };
+  return <>
+    <header className="site-header"><div className="container header-inner"><a className="brand" href="#top" aria-label={t.home}><img src="/brand/nexterm-mark-128.png" alt="" /><span>NexTerm</span></a><nav className="nav-links" aria-label="Site navigation"><a href="#features">{t.nav[0]}</a><a href="#showcase">{t.nav[1]}</a><a href="#download">{t.nav[2]}</a></nav><div className="header-actions"><a className="icon-link" href={repository} target="_blank" rel="noreferrer" aria-label="GitHub"><GithubIcon size={19} /></a><button className="icon-link language-button" type="button" onClick={toggleLanguage} aria-label={t.language}>{t.language}</button><button className="icon-link" type="button" onClick={toggleTheme} aria-label={theme === "dark" ? t.themeDark : t.themeLight}>{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</button></div></div></header>
+    <main id="top"><section className="hero"><div className="hero-glow" aria-hidden="true" /><div className="container hero-inner"><span className="eyebrow">{t.eyebrow}</span><h1>{t.hero}</h1><p className="hero-copy">{t.intro}</p><div className="hero-actions"><a className="button button-primary" href={releases} target="_blank" rel="noreferrer"><Download size={17} />{t.download}</a><a className="button button-secondary" href={repository} target="_blank" rel="noreferrer"><GithubIcon size={17} />{t.source}</a></div><div className="platforms" aria-label={t.platforms}><span><Monitor size={15} /> Windows</span><span><Monitor size={15} /> macOS</span><span><Monitor size={15} /> Linux</span><span><Server size={15} /> Browser</span><span><Smartphone size={15} /> Mobile preview</span></div><div className="window hero-window"><div className="window-bar" aria-hidden="true"><span /><span /><span /><div>web-01 - NexTerm</div></div><Picture name="shell" alt={t.views[0][3]} eager /></div></div></section>
+    <section className="section feature-section" id="features"><div className="container"><div className="section-heading"><span className="eyebrow">NexTerm</span><h2>{t.featuresTitle}</h2></div><div className="feature-grid">{t.features.map(([title, text]) => <article className="feature-card" key={title}><span className="feature-icon"><Check size={17} /></span><h3>{title}</h3><p>{text}</p></article>)}</div></div></section>
+    <section className="section section-muted" id="showcase"><div className="container"><div className="section-heading"><h2>{t.showcase}</h2></div><div className="showcase-grid">{t.views.map(([name, title, text, alt]) => <article className="showcase-card" key={name}><div className="showcase-copy"><h3>{title}</h3><p>{text}</p></div><div className="showcase-image"><Picture name={name} alt={alt} /></div></article>)}</div></div></section>
+    <section className="section download-section" id="download"><div className="container"><div className="download-panel"><div><h2>{t.downloadTitle}</h2><p>{t.downloadText}</p></div><div className="download-actions"><a className="button button-primary" href={releases} target="_blank" rel="noreferrer"><Download size={17} />{t.download}</a><a className="button button-secondary" href={`${repository}#${language === "zh" ? "下载与安装" : "download-and-install"}`} target="_blank" rel="noreferrer">{t.install} <ArrowRight size={16} /></a></div></div></div></section></main>
+    <footer className="site-footer"><div className="container footer-inner"><a className="brand" href="#top"><img src="/brand/nexterm-mark-128.png" alt="" /><span>NexTerm</span></a><div className="footer-links"><a href={repository} target="_blank" rel="noreferrer">GitHub</a><a href={releases} target="_blank" rel="noreferrer">Releases</a><a href={`${repository}/issues`} target="_blank" rel="noreferrer">{t.footerIssue}</a><a href={`${repository}/blob/master/LICENSE`} target="_blank" rel="noreferrer">{t.license}</a></div><span className="copyright">© 2026 Hello-CTF</span></div></footer>
+  </>;
 }
-
 export default App;

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { releaseArtifacts } from "./release-artifacts.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -7,36 +8,8 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const directory = path.resolve(ROOT, process.argv[2] || "candidate");
 const version = process.env.NEXTERM_RELEASE_VERSION || JSON.parse(fs.readFileSync(path.join(ROOT, "wails.json"), "utf8")).info.version;
-const expected = [
-  `NexTerm_${version}_x64-setup.exe`,
-  `NexTerm_${version}_arm64-setup.exe`,
-  `NexTerm_${version}_aarch64.dmg`,
-  `NexTerm_${version}_x86_64.dmg`,
-  `NexTerm_${version}_android.apk`,
-  `NexTerm_${version}_ios.ipa`,
-  `NexTerm-agent_${version}_windows_amd64.zip`,
-  ...["amd64", "arm64"].flatMap((arch) => [
-    `NexTerm-desktop_${version}_linux_${arch}.deb`,
-    `NexTerm-server_${version}_linux_${arch}.tar.gz`,
-    `NexTerm-agent_${version}_linux_${arch}.tar.gz`,
-    `NexTerm-agent_${version}_darwin_${arch}.tar.gz`,
-  ]),
-];
-const reportIDs = new Map([
-  [`NexTerm_${version}_x64-setup.exe`, "desktop-nsis-windows-amd64"],
-  [`NexTerm_${version}_arm64-setup.exe`, "desktop-nsis-windows-arm64"],
-  [`NexTerm_${version}_aarch64.dmg`, "desktop-dmg-darwin-arm64"],
-  [`NexTerm_${version}_x86_64.dmg`, "desktop-dmg-darwin-amd64"],
-  [`NexTerm_${version}_android.apk`, "mobile-android"],
-  [`NexTerm_${version}_ios.ipa`, "mobile-ios"],
-  [`NexTerm-agent_${version}_windows_amd64.zip`, "agent-zip-windows-amd64"],
-  ...["amd64", "arm64"].flatMap((arch) => [
-    [`NexTerm-desktop_${version}_linux_${arch}.deb`, `desktop-linux-deb-linux-${arch}`],
-    [`NexTerm-server_${version}_linux_${arch}.tar.gz`, `server-archive-linux-${arch}`],
-    [`NexTerm-agent_${version}_linux_${arch}.tar.gz`, `agent-archive-linux-${arch}`],
-    [`NexTerm-agent_${version}_darwin_${arch}.tar.gz`, `agent-archive-darwin-${arch}`],
-  ]),
-]);
+const reportIDs = releaseArtifacts(version);
+const expected = [...reportIDs.keys()];
 function gatesPassed(report) {
   return report.status === "passed"
     && Array.isArray(report.assertions)

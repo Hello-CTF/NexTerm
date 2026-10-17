@@ -289,7 +289,7 @@ export function XtermView(props: XtermViewProps) {
         let initialGrid = dimensions;
         let id: string;
         if (resume) {
-          const info = await terminalApi.attachTab(resume, channel, -1);
+          const info = await terminalApi.attachTab(resume, channel, -1, undefined, props.containerId ? undefined : props.sessionId);
           id = info.tabId;
           if (disposed) {
             void terminalApi.detach(id, channelIdOf(channel)).catch(() => undefined);
@@ -390,9 +390,12 @@ export function XtermView(props: XtermViewProps) {
       void (async () => {
         try {
           const info = resume
-            ? await terminalApi.attachTab(id, channel, -1, resume)
-            : await terminalApi.attachTab(id, channel, -1);
-          if (disposed) return;
+            ? await terminalApi.attachTab(id, channel, -1, resume, props.containerId ? undefined : props.sessionId)
+            : await terminalApi.attachTab(id, channel, -1, undefined, props.containerId ? undefined : props.sessionId);
+          if (disposed) {
+            void terminalApi.detach(info.tabId, channelIdOf(channel)).catch(() => undefined);
+            return;
+          }
           kernelTabIdRef.current = info.tabId;
           applyRemoteDimensions(info.cols, info.rows);
           coordinator.attach(info.tabId, { cols: info.cols, rows: info.rows }, true);

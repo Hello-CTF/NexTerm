@@ -7,7 +7,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/dbtest"
 )
 
-func TestCredentialTombstonePutPostgres(t *testing.T) {
+func TestCredentialTombstonePutDatabase(t *testing.T) {
 	ctx := context.Background()
 	db := dbtest.NewFixture(t).OpenStore(t)
 

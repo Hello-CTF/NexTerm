@@ -5,8 +5,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
-  actions: read
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -17,14 +16,13 @@ env:
   GOFLAGS: -mod=readonly
 
 jobs:
-  ci-source:
-    name: Validate the tag and resolve a green same-SHA CI run
+  version:
+    name: Validate the release tag
     runs-on: ubuntu-latest
-    outputs:
-      artifact-run-id: ${{ steps.resolve.outputs.artifact-run-id }}
-      reused: ${{ steps.resolve.outputs.reused }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: The tag drives the release version; version files stay 0.0.0 placeholders
         run: |
           tag="$GITHUB_REF_NAME"
@@ -39,26 +37,16 @@ jobs:
             if (wails !== "0.0.0" || pkg !== "0.0.0" || lazycat !== "0.0.0") {
               throw new Error(`version files must stay 0.0.0 placeholders (wails.json=${wails}, package.json=${pkg}, lazycat/package.yml=${lazycat}); the release version comes from the tag`);
             }'
-      - name: Find a completed green CI run with reusable artifacts
-        id: resolve
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CI_REUSE_EXPECTED_REF: ${{ github.ref_name }}
-          CI_REUSE_WAIT_TIMEOUT: "2700"
-          CI_REUSE_POLL_INTERVAL: "10"
-        run: bash .github/scripts/resolve-ci-reuse.sh >> "$GITHUB_OUTPUT"
-
   ci:
-    needs: ci-source
-    if: needs.ci-source.outputs.reused != 'true'
+    needs: version
     uses: ./.github/workflows/ci.yml
+    secrets: inherit
     with:
       release_version: ${{ github.ref_name }}
 
   desktop:
     name: ${{ matrix.os }}/${{ matrix.arch }} native package
-    needs: [ci-source, ci]
-    if: ${{ !failure() && !cancelled() }}
+    needs: ci
     strategy:
       fail-fast: false
       matrix:
@@ -84,6 +72,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Resolve the release version from the tag
         shell: bash
         run: echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
@@ -115,7 +105,8 @@ jobs:
           if [ "${{ steps.wails-cache.outputs.cache-hit }}" != "true" ]; then
             go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27
           fi
-          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          export PATH="$(go env GOPATH)/bin:$PATH"
           wails3 version
       - name: Install NSIS
         if: matrix.os == 'windows'
@@ -130,15 +121,11 @@ jobs:
         with:
           name: frontend-dist
           path: verified-dist
-          run-id: ${{ needs.ci-source.outputs.artifact-run-id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Download the CI production desktop binary
         uses: actions/download-artifact@v8
         with:
           name: native-${{ matrix.os }}-${{ matrix.arch }}-desktop
           path: reused-native
-          run-id: ${{ needs.ci-source.outputs.artifact-run-id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Stage the reused production binary
         shell: bash
         run: |
@@ -149,10 +136,6 @@ jobs:
           if [ "${{ matrix.os }}" != "windows" ]; then
             chmod +x "target/go-build/${binary}"
           fi
-      # Optional signing: enabled automatically once the repo variables/secrets
-      # are configured (either a self-signed fixed identity or Developer ID);
-      # notarization only passes with Developer ID + App Store Connect API key,
-      # staying ad-hoc when unconfigured.
       - name: Import the macOS signing identity (optional)
         if: matrix.os == 'darwin' && vars.NEXTERM_MACOS_SIGNING == 'true'
         shell: bash
@@ -203,8 +186,7 @@ jobs:
 
   server:
     name: Linux ${{ matrix.arch }} full package with optional restricted runtime
-    needs: [ci-source, ci]
-    if: ${{ !failure() && !cancelled() }}
+    needs: ci
     strategy:
       fail-fast: false
       matrix:
@@ -216,6 +198,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Resolve the release version from the tag
         shell: bash
         run: echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
@@ -231,15 +215,11 @@ jobs:
         with:
           name: frontend-dist
           path: verified-dist
-          run-id: ${{ needs.ci-source.outputs.artifact-run-id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Download the CI production server binary
         uses: actions/download-artifact@v8
         with:
           name: native-linux-${{ matrix.arch }}-server
           path: reused-native
-          run-id: ${{ needs.ci-source.outputs.artifact-run-id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Stage the reused production server binary
         shell: bash
         run: |
@@ -254,19 +234,8 @@ jobs:
         run: node scripts/build.mjs frontend --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json
       - name: Re-assert the reused binary evidence
         run: node scripts/build.mjs report --kind=server --os=linux --arch=${{ matrix.arch }} --file=target/go-build/nexterm-server-linux-${{ matrix.arch }}
-      - name: Stage and verify the reused CI e2e report
-        shell: bash
-        run: |
-          set -euo pipefail
-          binary="target/go-build/nexterm-server-linux-${{ matrix.arch }}"
-          report="reused-native/e2e-sync/report.json"
-          [ -f "$report" ] || { echo "reused CI artifact has no e2e report: $report" >&2; exit 1; }
-          jq -e '.status == "passed" and .failed == 0' "$report" >/dev/null || { echo "reused CI e2e report is not a clean pass: $report" >&2; exit 1; }
-          if command -v sha256sum >/dev/null 2>&1; then actual="$(sha256sum "$binary" | cut -d' ' -f1)"; else actual="$(shasum -a 256 "$binary" | cut -d' ' -f1)"; fi
-          expected="$(jq -r '.artifact.sha256' "${binary}.manifest.json")"
-          [ "$actual" = "$expected" ] || { echo "staged server binary sha256 $actual does not match the CI manifest $expected that produced the e2e report" >&2; exit 1; }
-          mkdir -p target/e2e-sync
-          cp -R reused-native/e2e-sync/. target/e2e-sync/
+      - name: Stage and verify the CI e2e report
+        run: node .github/scripts/stage-server-evidence.mjs reused-native target/go-build/nexterm-server-linux-${{ matrix.arch }}
       - name: Produce and validate the full archive with final evidence gates
         run: bash scripts/pack-linux-server.sh --arch=${{ matrix.arch }} --require-evidence
       - name: Upload candidates and raw/final reports
@@ -288,11 +257,12 @@ jobs:
 
   agent:
     name: Device agent archives (linux/darwin tar.gz, windows zip)
-    needs: [ci-source, ci]
-    if: ${{ !failure() && !cancelled() }}
+    needs: ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Resolve the release version from the tag
         shell: bash
         run: echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
@@ -305,8 +275,6 @@ jobs:
           pattern: native-*-agent
           path: agent-native
           merge-multiple: true
-          run-id: ${{ needs.ci-source.outputs.artifact-run-id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Stage and verify the reused production agent binaries
         shell: bash
         run: |
@@ -334,8 +302,7 @@ jobs:
 
   mobile:
     name: ${{ matrix.platform }} mobile package
-    needs: [ci-source, ci]
-    if: ${{ !failure() && !cancelled() }}
+    needs: ci
     strategy:
       fail-fast: false
       matrix:
@@ -347,6 +314,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Resolve the release version from the tag
         shell: bash
         run: echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
@@ -358,8 +327,6 @@ jobs:
         with:
           name: mobile-${{ matrix.platform }}
           path: mobile-input
-          run-id: ${{ needs.ci-source.outputs.artifact-run-id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Package and verify the mobile artifact
         shell: bash
         env:
@@ -395,11 +362,14 @@ jobs:
   publish:
     name: Verify complete release evidence and upload a draft
     needs: [desktop, server, mobile, agent]
+    permissions:
+      contents: write
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Resolve the release version from the tag
         shell: bash

@@ -8,7 +8,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-func TestAuditCountAndQueryOptionalFilterTypesPostgres(t *testing.T) {
+func TestAuditCountAndQueryOptionalFilterTypesDatabase(t *testing.T) {
 	ctx := context.Background()
 	db := dbtest.NewFixture(t).OpenStore(t)
 

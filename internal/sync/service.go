@@ -309,7 +309,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 // ObjectHandler exposes the server-side blind-store entry, mounted by the server after the session middleware.
 // It carries the service emitter so a successful push wakes the pusher's other sessions without a poll round.
 func (s *Service) ObjectHandler() *ObjectHandler {
-	handler := NewObjectHandler(s.store.GORM(), s.store.Backend(), s.engine.logger)
+	handler := NewObjectHandler(s.store.GORM(), s.engine.logger)
 	handler.events = s.events
 	return handler
 }

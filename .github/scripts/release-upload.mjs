@@ -1,25 +1,12 @@
 #!/usr/bin/env node
+import { releaseArtifacts } from "./release-artifacts.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const version = process.env.NEXTERM_RELEASE_VERSION || JSON.parse(fs.readFileSync(path.join(ROOT, "wails.json"), "utf8")).info.version;
-const packageNames = [
-  `NexTerm_${version}_x64-setup.exe`,
-  `NexTerm_${version}_arm64-setup.exe`,
-  `NexTerm_${version}_aarch64.dmg`,
-  `NexTerm_${version}_x86_64.dmg`,
-  `NexTerm_${version}_android.apk`,
-  `NexTerm_${version}_ios.ipa`,
-  `NexTerm-agent_${version}_windows_amd64.zip`,
-  ...["amd64", "arm64"].flatMap((arch) => [
-    `NexTerm-desktop_${version}_linux_${arch}.deb`,
-    `NexTerm-server_${version}_linux_${arch}.tar.gz`,
-    `NexTerm-agent_${version}_linux_${arch}.tar.gz`,
-    `NexTerm-agent_${version}_darwin_${arch}.tar.gz`,
-  ]),
-];
+const packageNames = [...releaseArtifacts(version).keys()];
 const evidenceNames = ["SHA256SUMS"];
 const expectedNames = [...packageNames, ...evidenceNames];
 const retriableStatuses = new Set([429, 500, 502, 503, 504]);

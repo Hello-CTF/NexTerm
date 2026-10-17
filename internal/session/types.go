@@ -63,6 +63,7 @@ type Asset struct {
 	Kind           string
 	Encoding       string
 	StartupCommand string
+	Env            map[string]string
 	Options        any
 }
 

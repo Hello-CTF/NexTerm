@@ -228,16 +228,16 @@ func knownHostTombstoneMetaKeyForUser(ctx context.Context, id string) string {
 }
 
 // knownHostTombstoneRecordTx writes/merges a known_host tombstone in a transaction: sync_tombstone merges revisions via
-// scalarMax; conflict triple metadata is written only when this revision is not behind the existing tombstone (user deletion
+// max; conflict triple metadata is written only when this revision is not behind the existing tombstone (user deletion
 // passes nil, meaning clear metadata). The gate is evaluated after the tombstone merge, so it equals "new revision >= old revision";
 // when conflict tombstones of two different triples land concurrently, the metadata deterministically follows the highest revision, never mixing tombstones.
 func (e *Engine) knownHostTombstoneRecordTx(ctx context.Context, tx *gorm.DB, id string, deletedAt int64, conflict *knownHostTombstoneMeta) error {
 	if err := tx.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "owner_id"}, {Name: "id"}},
 		DoUpdates: clause.Assignments(map[string]any{
-			"deleted_at": gorm.Expr(scalarMax(e.store.Backend()) + "(sync_tombstone.deleted_at, excluded.deleted_at)"),
+			"deleted_at": store.MaxExpression(tx, "sync_tombstone", "deleted_at", nil),
 		}),
-		Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: conflictOwnerColumn(e.store.Backend(), "sync_tombstone"), Value: ipc.OwnerID(ctx)}}},
+		Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
 	}).Create(&store.SyncTombstone{ID: id, Kind: KindKnownHost, DeletedAt: deletedAt, OwnerID: ipc.OwnerID(ctx)}).Error; err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
@@ -364,7 +364,7 @@ func (e *Engine) knownHostUpsert(ctx context.Context, payload knownHostObject, d
 		if err := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "id"}},
 			DoUpdates: clause.AssignmentColumns([]string{"host", "port", "key_type", "fingerprint", "added_at"}),
-			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: conflictOwnerColumn(e.store.Backend(), "known_host"), Value: ipc.OwnerID(ctx)}}},
+			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
 		}).Create(&store.KnownHostRow{ID: payload.ID, Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType, Fingerprint: payload.Fingerprint, AddedAt: payload.AddedAt, OwnerID: ipc.OwnerID(ctx)}).Error; err != nil {
 			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 		}

@@ -143,7 +143,7 @@ describe("remote layout preserves exited terminal state", () => {
     await requestCloseTab(exitedTab.id);
 
     expect(mocks.closeTab).toHaveBeenCalledTimes(1);
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill", "s");
     expect(toastText()).not.toContain("已转入后台");
   });
 
@@ -163,8 +163,8 @@ describe("remote layout preserves exited terminal state", () => {
     await useUi.getState().closeWorkspace("ws");
 
     expect(mocks.ask).not.toHaveBeenCalled();
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach");
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "kill", "s");
     expect(useUi.getState().workspaces).toEqual([]);
   });
 
@@ -184,7 +184,7 @@ describe("remote layout preserves exited terminal state", () => {
     await useUi.getState().unsplitWorkspace("p2", "ws");
 
     expect(mocks.ask).not.toHaveBeenCalled();
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "kill", "s");
     expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
   });
 
@@ -214,10 +214,11 @@ describe("remote layout preserves exited terminal state", () => {
     expect(after.tabId).toBe("kernel-new");
     expect(after.exited).not.toBe(true);
 
+    mocks.listLive.mockResolvedValue([{ tabId: "kernel-new", exited: false }]);
     await requestCloseTab("shared");
 
     expect(mocks.closeTab).toHaveBeenCalledTimes(1);
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-new", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-new", "detach", "s");
     expect(toastText()).toContain("已转入后台");
   });
 
@@ -252,8 +253,8 @@ describe("remote layout preserves exited terminal state", () => {
     await useUi.getState().closeWorkspace("ws");
 
     expect(mocks.ask).not.toHaveBeenCalled();
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach");
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-new", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-new", "detach", "s");
     expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-new", "kill");
     expect(useUi.getState().workspaces).toEqual([]);
   });
@@ -289,7 +290,7 @@ describe("remote layout preserves exited terminal state", () => {
     await useUi.getState().unsplitWorkspace("p2", "ws");
 
     expect(mocks.ask).not.toHaveBeenCalled();
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-new", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-new", "detach", "s");
     expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-new", "kill");
     expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
   });

@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
-	"github.com/Hello-CTF/NexTerm/internal/store"
 	"gorm.io/gorm"
 )
 
@@ -76,11 +75,11 @@ type ObjectHandler struct {
 	events ipc.Emitter
 }
 
-func NewObjectHandler(db *gorm.DB, backend store.Backend, logger *slog.Logger) *ObjectHandler {
+func NewObjectHandler(db *gorm.DB, logger *slog.Logger) *ObjectHandler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &ObjectHandler{store: &objectStore{db: db, backend: backend}, logger: logger}
+	return &ObjectHandler{store: &objectStore{db: db}, logger: logger}
 }
 
 func (h *ObjectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

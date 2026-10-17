@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 func TestCoreTerminalRawReplayAndResponseIntegration(t *testing.T) {
@@ -225,7 +226,11 @@ func newRequestTerminalFixture(t *testing.T, kind string) *requestTerminalFixtur
 	t.Helper()
 	recordingPath := filepath.Join(t.TempDir(), "recording.log")
 	connector := newFakeConnector()
-	manager := NewManager(Config{Connector: connector, ReconnectBackoff: []time.Duration{0}})
+	provider := newFakeDurableProvider()
+	manager := NewManager(Config{
+		Connector: connector, ReconnectBackoff: []time.Duration{0},
+		DurableResolver: DurableResolverFunc(func(context.Context, base.Transport) (base.DurableProvider, error) { return provider, nil }),
+	})
 	t.Cleanup(func() { _ = manager.Close() })
 	connected, err := manager.Connect(requestTestUser("owner-a"), Asset{ID: "request-asset", Kind: kind})
 	if err != nil {

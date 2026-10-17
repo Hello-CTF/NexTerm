@@ -124,10 +124,10 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 				if err := tx.Clauses(clause.OnConflict{
 					Columns: []clause.Column{{Name: "durable_id"}},
 					DoUpdates: clause.Assignments(map[string]any{
-						s.dialect.offsetColumn(): gorm.Expr("durable_transcript_offset."+s.dialect.offsetColumn()+" + ?", count),
-						"updated_at":             now,
+						"offset":     gorm.Expr("? + ?", clause.Column{Table: "durable_transcript_offset", Name: "offset"}, count),
+						"updated_at": now,
 					}),
-					Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: s.dialect.conflictTargetColumn("durable_transcript_offset", "owner_id"), Value: ipc.OwnerID(ctx)}}},
+					Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
 				}).Create(&DurableTranscriptOffset{DurableID: durableID, Offset: count, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}).Error; err != nil {
 					return err
 				}
@@ -148,7 +148,7 @@ func (s *Store) TranscriptEnd(ctx context.Context, transcriptID string, endedAt 
 		Where(ownerConditions(ctx, transcript.TableName())...).
 		UpdateColumns(map[string]any{
 			"ended_at":  endedAt,
-			"truncated": gorm.Expr(s.dialect.ScalarMax()+"(truncated, ?)", truncated),
+			"truncated": MaxExpression(s.db, "", "truncated", truncated),
 		})
 	if err != nil {
 		return dbError(err)
@@ -489,7 +489,7 @@ func (s *Store) TranscriptInsertSynced(ctx context.Context, row TranscriptRow, c
 		if err := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "id"}},
 			DoUpdates: clause.AssignmentColumns([]string{"ended_at", "bytes", "stored_bytes", "chunks", "truncated", "content_omitted"}),
-			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: s.dialect.conflictTargetColumn("transcript", "owner_id"), Value: ipc.OwnerID(ctx)}}},
+			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
 		}).Create(&row).Error; err != nil {
 			return err
 		}
@@ -531,8 +531,8 @@ func (s *Store) DurableTranscriptOffsetSet(ctx context.Context, durableID string
 	now := ids.NowMS()
 	err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "durable_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{s.dialect.offsetColumn(), "updated_at"}),
-		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: s.dialect.conflictTargetColumn("durable_transcript_offset", "owner_id"), Value: ipc.OwnerID(ctx)}}},
+		DoUpdates: clause.AssignmentColumns([]string{"offset", "updated_at"}),
+		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
 	}).Create(&DurableTranscriptOffset{DurableID: durableID, Offset: value, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}).Error
 	if err != nil {
 		return dbError(err)
@@ -572,7 +572,7 @@ func (s *Store) DurableTabTitleSet(ctx context.Context, durableID, value string)
 	err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "durable_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"title", "updated_at"}),
-		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: s.dialect.conflictTargetColumn("durable_tab_title", "owner_id"), Value: ipc.OwnerID(ctx)}}},
+		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
 	}).Create(&DurableTabTitle{DurableID: durableID, Title: value, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}).Error
 	if err != nil {
 		return dbError(err)

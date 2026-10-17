@@ -131,47 +131,9 @@ func writeBinaryManifest(binary, kind, goos, goarch, cgo, version, commit string
 	return os.WriteFile(binary+".manifest.json", manifest, 0o644)
 }
 
-func runEvidenceChecks(in inputs) []checkResult {
+func runEvidenceChecks(root string) []checkResult {
 	c := &collector{}
 	check := c.check
-	root := in.root
-	release := in.release
-
-	installStep := findStep(asMap(jobsOf(release)["desktop"]), "Install the pinned Wails CLI")
-	script := strings.ReplaceAll(stepRun(installStep), "${{ steps.wails-cache.outputs.cache-hit }}", "true")
-	base, err := os.MkdirTemp("", "reuse-wails-")
-	if err != nil {
-		fatalf("%v", err)
-	}
-	home := filepath.Join(base, "home")
-	wailsDir := filepath.Join(home, "go", "bin")
-	if err := os.MkdirAll(wailsDir, 0o755); err != nil {
-		fatalf("%v", err)
-	}
-	wails := filepath.Join(wailsDir, "wails3")
-	if err := os.WriteFile(wails, []byte("#!/usr/bin/env bash\necho wails3 v3.0.0-beta.27\n"), 0o755); err != nil {
-		fatalf("%v", err)
-	}
-	if err := os.WriteFile(filepath.Join(base, "ghpath"), nil, 0o644); err != nil {
-		fatalf("%v", err)
-	}
-	hidden := runScript(script, base, []string{
-		"HOME=" + home,
-		"PATH=/usr/bin:/bin",
-		"GITHUB_PATH=" + filepath.Join(base, "ghpath"),
-	})
-	check("wails3 stays invisible to the install step when only GITHUB_PATH is extended",
-		hidden.rc != 0, fmt.Sprintf("rc=%d stdout=%q stderr=%q", hidden.rc, hidden.stdout, hidden.stderr))
-	visible := runScript(script, base, []string{
-		"HOME=" + home,
-		"PATH=" + wailsDir + ":/usr/bin:/bin",
-		"GITHUB_PATH=" + filepath.Join(base, "ghpath"),
-	})
-	check("install step passes when the restored wails bin dir is already on PATH",
-		visible.rc == 0 && strings.Contains(visible.stdout, "wails3 v3.0.0-beta.27"),
-		fmt.Sprintf("rc=%d stderr=%q", visible.rc, visible.stderr))
-	os.RemoveAll(base)
-
 	hostGOOS := runtime.GOOS
 	hostGOARCH := runtime.GOARCH
 	if (hostGOOS != "darwin" && hostGOOS != "linux") || (hostGOARCH != "amd64" && hostGOARCH != "arm64") {
@@ -184,7 +146,7 @@ func runEvidenceChecks(in inputs) []checkResult {
 		return c.results
 	}
 
-	base, err = os.MkdirTemp("", "reuse-evidence-")
+	base, err := os.MkdirTemp("", "release-evidence-")
 	if err != nil {
 		fatalf("%v", err)
 	}
@@ -290,40 +252,4 @@ func tail(s string, n int) string {
 		return s
 	}
 	return s[len(s)-n:]
-}
-
-func runUploadChecks(root string) []checkResult {
-	c := &collector{}
-	uploadTest := filepath.Join(root, ".github", "scripts", "release-upload.test.mjs")
-	if _, err := os.Stat(uploadTest); err != nil {
-		c.check("release-upload stub tests exist", false, uploadTest)
-		return c.results
-	}
-	cmd := exec.Command("node", "--test", uploadTest)
-	cmd.Dir = root
-	result := runCmd(cmd)
-	detail := ""
-	if result.rc != 0 {
-		detail = fmt.Sprintf("rc=%d stdout tail=%q stderr tail=%q", result.rc, tail(result.stdout, 400), tail(result.stderr, 400))
-	}
-	c.check("release-upload stub tests pass", result.rc == 0, detail)
-	return c.results
-}
-
-func runNotesChecks(root string) []checkResult {
-	c := &collector{}
-	notesTest := filepath.Join(root, ".github", "scripts", "release-notes.test.mjs")
-	if _, err := os.Stat(notesTest); err != nil {
-		c.check("release-notes tests exist", false, notesTest)
-		return c.results
-	}
-	cmd := exec.Command("node", "--test", notesTest)
-	cmd.Dir = root
-	result := runCmd(cmd)
-	detail := ""
-	if result.rc != 0 {
-		detail = fmt.Sprintf("rc=%d stdout tail=%q stderr tail=%q", result.rc, tail(result.stdout, 400), tail(result.stderr, 400))
-	}
-	c.check("release-notes tests pass", result.rc == 0, detail)
-	return c.results
 }

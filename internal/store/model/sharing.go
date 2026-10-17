@@ -2,10 +2,10 @@ package model
 
 type ShareLink struct {
 	ID             string     `gorm:"column:id;primaryKey" json:"id"`
-	OwnerID        string     `gorm:"column:owner_id;not null;index:idx_share_link_owner" json:"ownerId"`
-	DeviceID       string     `gorm:"column:device_id;not null;index:idx_share_link_device" json:"deviceId"`
+	OwnerID        string     `gorm:"size:191;column:owner_id;not null;index:idx_share_link_owner" json:"ownerId"`
+	DeviceID       string     `gorm:"size:191;column:device_id;not null;index:idx_share_link_device" json:"deviceId"`
 	SessionID      string     `gorm:"column:session_id;not null" json:"sessionId"`
-	TokenHash      string     `gorm:"column:token_hash;not null;uniqueIndex:idx_share_link_token_hash" json:"tokenHash"`
+	TokenHash      string     `gorm:"column:token_hash;not null;size:191;uniqueIndex:idx_share_link_token_hash" json:"tokenHash"`
 	Permission     string     `gorm:"column:permission;not null;default:'read'" json:"permission"`
 	CreatedAt      int64      `gorm:"column:created_at;not null" json:"createdAt"`
 	ExpiresAt      int64      `gorm:"column:expires_at;not null" json:"expiresAt"`
@@ -19,9 +19,9 @@ func (ShareLink) TableName() string { return "share_link" }
 
 type SharePreviewLink struct {
 	ID             string  `gorm:"column:id;primaryKey" json:"id"`
-	OwnerID        string  `gorm:"column:owner_id;not null;index:idx_share_preview_link_owner" json:"ownerId"`
+	OwnerID        string  `gorm:"size:191;column:owner_id;not null;index:idx_share_preview_link_owner" json:"ownerId"`
 	SessionID      string  `gorm:"column:session_id;not null" json:"sessionId"`
-	TokenHash      string  `gorm:"column:token_hash;not null;uniqueIndex:idx_share_preview_token_hash" json:"tokenHash"`
+	TokenHash      string  `gorm:"column:token_hash;not null;size:191;uniqueIndex:idx_share_preview_token_hash" json:"tokenHash"`
 	Permission     string  `gorm:"column:permission;not null;default:'read'" json:"permission"`
 	CreatedAt      int64   `gorm:"column:created_at;not null" json:"createdAt"`
 	ExpiresAt      int64   `gorm:"column:expires_at;not null" json:"expiresAt"`
@@ -34,9 +34,9 @@ func (SharePreviewLink) TableName() string { return "share_preview_link" }
 
 type HostShare struct {
 	ID          string     `gorm:"column:id;primaryKey" json:"id"`
-	OwnerID     string     `gorm:"column:owner_id;not null;uniqueIndex:host_share_owner_device_recipient_unique,priority:1" json:"ownerId"`
-	DeviceID    string     `gorm:"column:device_id;not null;index:idx_host_share_device;uniqueIndex:host_share_owner_device_recipient_unique,priority:2" json:"deviceId"`
-	RecipientID string     `gorm:"column:recipient_id;not null;index:idx_host_share_recipient;uniqueIndex:host_share_owner_device_recipient_unique,priority:3" json:"recipientId"`
+	OwnerID     string     `gorm:"size:191;column:owner_id;not null;uniqueIndex:host_share_owner_device_recipient_unique,priority:1" json:"ownerId"`
+	DeviceID    string     `gorm:"size:191;column:device_id;not null;index:idx_host_share_device;uniqueIndex:host_share_owner_device_recipient_unique,priority:2" json:"deviceId"`
+	RecipientID string     `gorm:"size:191;column:recipient_id;not null;index:idx_host_share_recipient;uniqueIndex:host_share_owner_device_recipient_unique,priority:3" json:"recipientId"`
 	Permission  string     `gorm:"column:permission;not null;default:'read_write'" json:"permission"`
 	CreatedAt   int64      `gorm:"column:created_at;not null" json:"createdAt"`
 	ExpiresAt   int64      `gorm:"column:expires_at;not null" json:"expiresAt"`
@@ -53,7 +53,7 @@ type CommandLog struct {
 	SessionID  string  `gorm:"column:session_id;not null;index:idx_command_log_session" json:"sessionId"`
 	TabID      string  `gorm:"column:tab_id;not null" json:"tabId"`
 	AssetID    string  `gorm:"column:asset_id;not null;index:idx_command_log_asset" json:"assetId"`
-	UserID     *string `gorm:"column:user_id;index:idx_command_log_user" json:"userId"`
+	UserID     *string `gorm:"size:191;column:user_id;index:idx_command_log_user" json:"userId"`
 	Command    string  `gorm:"column:command;not null" json:"command"`
 	Source     string  `gorm:"column:source;not null" json:"source"`
 	ExitCode   *int32  `gorm:"column:exit_code" json:"exitCode"`
@@ -65,9 +65,9 @@ func (CommandLog) TableName() string { return "command_log" }
 
 type DeviceShareLink struct {
 	ID             string     `gorm:"column:id;primaryKey" json:"id"`
-	OwnerID        string     `gorm:"column:owner_id;not null;index:idx_device_share_link_owner" json:"ownerId"`
-	DeviceID       string     `gorm:"column:device_id;not null;index:idx_device_share_link_device" json:"deviceId"`
-	TokenHash      string     `gorm:"column:token_hash;not null;uniqueIndex:idx_device_share_token_hash" json:"tokenHash"`
+	OwnerID        string     `gorm:"size:191;column:owner_id;not null;index:idx_device_share_link_owner" json:"ownerId"`
+	DeviceID       string     `gorm:"size:191;column:device_id;not null;index:idx_device_share_link_device" json:"deviceId"`
+	TokenHash      string     `gorm:"column:token_hash;not null;size:191;uniqueIndex:idx_device_share_token_hash" json:"tokenHash"`
 	Permission     string     `gorm:"column:permission;not null;default:'read'" json:"permission"`
 	CreatedAt      int64      `gorm:"column:created_at;not null" json:"createdAt"`
 	NotBefore      int64      `gorm:"column:not_before;not null;default:0" json:"notBefore"`
