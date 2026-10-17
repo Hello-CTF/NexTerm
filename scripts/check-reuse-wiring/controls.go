@@ -109,8 +109,10 @@ var negativeControls = []negativeControl{
 	{"duplicate bounded Go suite is caught",
 		"quality runs the bounded Go suite once",
 		func(ci, release map[string]interface{}, packText string) string {
-			insertStepBefore(asMap(jobsOf(ci)["quality"]), "Wails bindings drift",
-				map[string]interface{}{"name": "Duplicate Go tests", "run": "go test -mod=readonly -timeout=5m -json ./..."})
+			qualityJob := asMap(jobsOf(ci)["quality"])
+			goTest := findStep(qualityJob, "Go tests")
+			insertStepBefore(qualityJob, "Wails bindings drift",
+				map[string]interface{}{"name": "Duplicate Go tests", "run": stepRun(goTest)})
 			return packText
 		}},
 	{"frontend dist download removal is caught",

@@ -33,7 +33,8 @@ export async function copyText(text: string): Promise<void> {
   if (clipboard && typeof clipboard.writeText === "function") {
     try {
       await clipboard.writeText(text);
-      return;
+      if (WEB || (await clipboard.readText()) === text) return;
+      throw new Error("剪贴板写入失败");
     } catch (e) {
       firstError = e;
     }
@@ -42,12 +43,22 @@ export async function copyText(text: string): Promise<void> {
     try {
       const { Clipboard } = await runtime();
       await Clipboard.SetText(text);
-      return;
+      if (await Clipboard.Text() === text) return;
+      throw new Error("剪贴板写入失败");
     } catch (e) {
       firstError ??= e;
     }
   }
-  if (copyViaExecCommand(text)) return;
+  if (copyViaExecCommand(text)) {
+    if (WEB) return;
+    try {
+      const { Clipboard } = await runtime();
+      if ((await Clipboard.Text()) === text) return;
+      throw new Error("剪贴板写入失败");
+    } catch (e) {
+      firstError ??= e;
+    }
+  }
   throw firstError ?? new Error("剪贴板不可用");
 }
 

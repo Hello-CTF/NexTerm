@@ -151,7 +151,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          go test -mod=readonly -timeout=5m -json ./... | tee "$RUNNER_TEMP/go-tests.json"
+          go test -mod=readonly -timeout=5m -p=2 -json ./... | tee "$RUNNER_TEMP/go-tests.json"
       - name: Upload Go test diagnostics
         if: ${{ failure() && steps.go-tests.outcome == 'failure' }}
         uses: actions/upload-artifact@v7

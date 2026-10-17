@@ -7,6 +7,7 @@ import { click, flushUntil, mount, type MountedView } from "./features/reactTest
 const h = vi.hoisted(() => ({
   web: true,
   setText: vi.fn(),
+  text: vi.fn(),
 }));
 
 vi.mock("../ipc/env", async (importOriginal) => ({
@@ -17,7 +18,7 @@ vi.mock("../ipc/env", async (importOriginal) => ({
 }));
 
 vi.mock("@wailsio/runtime", () => ({
-  Clipboard: { SetText: h.setText },
+  Clipboard: { SetText: h.setText, Text: h.text },
 }));
 
 import { Cwd, shortenCwd } from "../features/terminal/Cwd";
@@ -28,6 +29,7 @@ const mounted: MountedView[] = [];
 beforeEach(() => {
   h.web = true;
   h.setText.mockReset().mockResolvedValue(undefined);
+  h.text.mockReset().mockResolvedValue("/srv/www/app");
 });
 
 afterEach(() => {

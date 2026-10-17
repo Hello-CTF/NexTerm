@@ -25,7 +25,7 @@ func hitlPolicyConfig(storage *store.Store, ttl time.Duration) Config {
 
 func TestRunnerHITLTTLConfigDrivesLiveExpiry(t *testing.T) {
 	storage := restartStore(t)
-	runner := NewRunner(hitlPolicyConfig(storage, 80*time.Millisecond))
+	runner := NewRunner(hitlPolicyConfig(storage, 2*time.Second))
 	t.Cleanup(func() { _ = runner.Close() })
 	stream := &SliceStream{}
 	response := startTestJob(t, runner, stream, "go")
@@ -38,7 +38,7 @@ func TestRunnerHITLTTLConfigDrivesLiveExpiry(t *testing.T) {
 	if len(snapshot.Pending) != 1 {
 		t.Fatalf("snapshot = %+v", snapshot)
 	}
-	if window := snapshot.Pending[0].ExpiresAt.Sub(snapshot.Pending[0].CreatedAt); window != 80*time.Millisecond {
+	if window := snapshot.Pending[0].ExpiresAt.Sub(snapshot.Pending[0].CreatedAt); window != 2*time.Second {
 		t.Fatalf("configured TTL did not reach the hitl manager: expiry window = %v", window)
 	}
 

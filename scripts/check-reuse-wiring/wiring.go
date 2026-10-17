@@ -288,7 +288,7 @@ func runWiringChecks(in inputs) []checkResult {
 		qualityRuns = append(qualityRuns, stepRun(asMap(rawStep)))
 	}
 	qualityRun := strings.Join(qualityRuns, "\n")
-	goTestCommand := "go test -mod=readonly -timeout=5m -json ./..."
+	goTestCommand := "go test -mod=readonly -timeout=5m -p=2 -json ./..."
 	exactGoTests := strings.Count(qualityRun, goTestCommand)
 	check("quality runs the bounded Go suite once while allowing additional targeted suites",
 		exactGoTests == 1, fmt.Sprintf("exact=%d", exactGoTests))
