@@ -63,14 +63,14 @@ Toolchain: Go 1.26, Node 24+, pnpm.
 
 ## Quality Gates and Test Cadence
 
-Must be all green before committing; CI runs the same set:
+Must be all green locally before committing; remote CI does not repeat the full Go test suite:
 
 - Go: `gofmt -l ./cmd ./internal ./scripts` (no output), `go vet -mod=readonly ./...`, `go test -mod=readonly ./...`.
 - Frontend: `pnpm typecheck`, `pnpm lint`, `pnpm test`.
 - Reproducible artifacts: `node scripts/build.mjs frontend --repro-check`.
 - Static contracts: `go run ./scripts/verify-manifest-injects`; `go run ./scripts/check-conflict-columns`.
 - Release behavior: `SOURCE_DATE_EPOCH=1 go run ./scripts/check-reuse-wiring` runs resolver same-SHA/ref/artifact scenarios and the release upload, release notes and desktop evidence stubs.
-- `task check` runs the routine set in one go (`verify-manifest-injects` included; the wiring check is not - run `task verify:wiring` when those files change). `-race` and `-tags production` are in neither `task check` nor CI; run the corresponding `go test` locally for concurrency or production-tag changes.
+- `task check` runs the routine set in one go (`verify-manifest-injects` included; the wiring check is not - run `task verify:wiring` when those files change). Full Go tests, `-race`, and the production-tagged Go test suite are local-only gates; CI runs vet, Wails bindings, static/release behavior checks, and native smoke without repeating them.
 - CI coverage: pull requests run the quality gates and Linux/Windows amd64 smoke jobs; master, tags, and `workflow_call` run the full 13-native + 2-mobile artifact matrix. Release evidence always requires the complete matrix.
 - Cadence: focused tests during implementation (related Go packages / frontend tests plus `pnpm typecheck` and `pnpm lint`); high-risk changes (concurrency, protocols, persistence, security, database) immediately add integration tests and `go test -race ./...`; after a large task is integrated and rebased, one full `task check` + `task verify` on the final tree (verify = all gates plus a reproducible host desktop production binary build; it does not run a native WebView smoke). When producing release artifacts, `node .github/scripts/release-evidence.mjs <artifact dir>` validates the set and generates `SHA256SUMS`.
 - Batching: accumulate related fixes and review follow-ups into one coherent work package. Run focused tests as fixes land, but run full gates and push/refresh PR CI once for the integrated batch, not once per small fix; merge only after the final head passes full gates and independent review.

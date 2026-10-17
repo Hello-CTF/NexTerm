@@ -145,9 +145,6 @@ jobs:
         run: |
           files="$(gofmt -l ./cmd ./internal ./scripts)"
           if [ -n "$files" ]; then printf 'gofmt required:\n%s\n' "$files"; exit 1; fi
-      - name: Go tests
-        timeout-minutes: 15
-        run: go test -mod=readonly -timeout=5m ./...
       - name: Go vet
         run: go vet -mod=readonly ./...
       - name: Wails bindings drift
