@@ -226,42 +226,50 @@ export function BackgroundSessions({
       if (generation !== loadGenerationRef.current) return;
       const list: BackgroundTab[] = [];
       const known = new Set<string>();
+      const knownTabsByHost = new Map<string, Map<string, KnownDurableTab>>();
+      const incompleteHosts = new Set<string>();
       const errors: string[] = [];
+      const hostKeyForSession = (session: (typeof sessions)[number]) => {
+        const matchingWorkspace = useUi.getState().workspaces.find((workspace) =>
+          workspace.kind === "session" && workspace.sessionId === session.id && workspaceSessionMatches(workspace, session, verifiedQuickSessions));
+        return matchingWorkspace
+          ? workspaceHostKey(matchingWorkspace)
+          : durableHostKey(session.kind, session.assetId ?? undefined);
+      };
+      const keyForTab = (sessionId: string, tabId: string) => {
+        const session = sessions.find((item) => item.id === sessionId && item.status === "connected");
+        const hostKey = session ? hostKeyForSession(session) : null;
+        return hostKey ? JSON.stringify([hostKey, tabId]) : backgroundTabKey({ sessionId, tabId });
+      };
       if (live.status === "fulfilled") {
         for (const tab of live.value as LiveTabInfo[]) {
-          const key = backgroundTabKey(tab);
+          if (tab.exited) continue;
+          const key = keyForTab(tab.sessionId, tab.tabId);
           if (known.has(key)) continue;
           known.add(key);
-          if (tab.subscribers === 0 && !tab.exited) list.push(tab);
+          if (tab.subscribers === 0) list.push(tab);
         }
       } else {
         errors.push(describeError(live.reason));
       }
       for (const [index, result] of remote.entries()) {
         const session = targets[index];
+        const hostKey = hostKeyForSession(session);
         if (result.status === "rejected") {
+          if (hostKey) incompleteHosts.add(hostKey);
           errors.push(`${session.name}: ${describeError(result.reason)}`);
           continue;
         }
         const descriptors = result.value as Awaited<ReturnType<typeof terminalApi.listDurable>>;
-        const matchingWorkspace = useUi.getState().workspaces.find((workspace) =>
-          workspace.kind === "session" && workspace.sessionId === session.id && workspaceSessionMatches(workspace, session, verifiedQuickSessions));
-        const hostKey = matchingWorkspace
-          ? workspaceHostKey(matchingWorkspace)
-          : durableHostKey(session.kind, session.assetId ?? undefined);
         if (hostKey) {
-          const knownTabs = descriptors.filter((tab) => !tab.dead).map((tab) => ({ id: tab.id, title: tab.title }));
-          setKnownState((previous) => ({
-            scope: accountScope,
-            epoch: runtimeEpoch,
-            tabs: {
-              ...(previous.scope === accountScope && previous.epoch === runtimeEpoch ? previous.tabs : {}),
-              [hostKey]: knownTabs,
-            },
-          }));
+          const knownTabs = knownTabsByHost.get(hostKey) ?? new Map<string, KnownDurableTab>();
+          for (const tab of descriptors) {
+            if (!tab.dead) knownTabs.set(tab.id, { id: tab.id, title: tab.title });
+          }
+          knownTabsByHost.set(hostKey, knownTabs);
         }
         for (const tab of descriptors) {
-          const key = backgroundTabKey({ sessionId: session.id, tabId: tab.id });
+          const key = hostKey ? JSON.stringify([hostKey, tab.id]) : backgroundTabKey({ sessionId: session.id, tabId: tab.id });
           if (tab.dead || known.has(key)) continue;
           known.add(key);
           list.push({
@@ -279,6 +287,21 @@ export function BackgroundSessions({
             remote: true,
           });
         }
+      }
+      if (knownTabsByHost.size > 0) {
+        setKnownState((previous) => {
+          const previousTabs = previous.scope === accountScope && previous.epoch === runtimeEpoch ? previous.tabs : {};
+          const updatedTabs: Record<string, KnownDurableTab[]> = {};
+          for (const [hostKey, tabs] of knownTabsByHost) {
+            const merged = new Map<string, KnownDurableTab>();
+            if (incompleteHosts.has(hostKey)) {
+              for (const tab of previousTabs[hostKey] ?? []) merged.set(tab.id, tab);
+            }
+            for (const tab of tabs.values()) merged.set(tab.id, tab);
+            updatedTabs[hostKey] = [...merged.values()];
+          }
+          return { scope: accountScope, epoch: runtimeEpoch, tabs: { ...previousTabs, ...updatedTabs } };
+        });
       }
       setItems(list);
       setError(errors.length > 0 ? errors.join("; ") : null);
@@ -305,21 +328,33 @@ export function BackgroundSessions({
       ? workspaces.filter((workspace) => workspace.kind === "session")
       : ownerWorkspace ? [ownerWorkspace] : [];
     const rows: PendingTab[] = [];
-    const seenHosts = new Set<string>();
+    const hostWorkspaces = new Map<string, Workspace[]>();
     for (const workspace of selected) {
       const hostKey = workspaceHostKey(workspace);
-      if (!hostKey || seenHosts.has(hostKey) || workspace.deletedTarget) continue;
-      seenHosts.add(hostKey);
-      const session = sessions.find((item) => item.id === workspace.sessionId);
-      if (session && workspaceSessionMatches(workspace, session, verifiedQuickSessions) && session.status === "connected") continue;
+      if (!hostKey || workspace.deletedTarget) continue;
+      const group = hostWorkspaces.get(hostKey) ?? [];
+      group.push(workspace);
+      hostWorkspaces.set(hostKey, group);
+    }
+    for (const [hostKey, group] of hostWorkspaces) {
+      const sessionFor = (workspace: Workspace) => sessions.find((item) =>
+        item.id === workspace.sessionId && workspaceSessionMatches(workspace, item, verifiedQuickSessions));
+      if (group.some((workspace) => sessionFor(workspace)?.status === "connected")) continue;
+      const workspace = group.find((candidate) => {
+        const status = sessionFor(candidate)?.status;
+        return status === "connecting" || status === "reconnecting";
+      }) ?? group[0];
+      const session = sessionFor(workspace);
       const known = new Map<string, string>();
       for (const tab of memoryKnown[hostKey] ?? []) {
         known.set(tab.id, tab.title || "持久终端");
       }
-      for (const pane of workspace.panes) {
-        for (const tab of pane.tabs) {
-          if (tab.kind !== "terminal" || tab.containerId || tab.dead || tab.exited || (!tab.tabId && !tab.restorePending)) continue;
-          known.set(tab.tabId ?? `layout:${tab.id}`, tab.title);
+      for (const candidate of group) {
+        for (const pane of candidate.panes) {
+          for (const tab of pane.tabs) {
+            if (tab.kind !== "terminal" || tab.containerId || tab.dead || tab.exited || (!tab.tabId && !tab.restorePending)) continue;
+            known.set(tab.tabId ?? `layout:${tab.id}`, tab.title);
+          }
         }
       }
       if (known.size === 0) known.set("undiscovered", "待查找持久终端");
