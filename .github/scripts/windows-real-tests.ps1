@@ -13,8 +13,15 @@ function Invoke-TargetedGoTest {
     }
     $logName = ($Package -replace '[^A-Za-z0-9]+', '-') + '-' + $Test + '.log'
     $log = Join-Path $env:RUNNER_TEMP $logName
-    & go.exe test -mod=readonly -count=1 -v -run $RunExpression $Package 2>&1 | Tee-Object -FilePath $log
-    $exitCode = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell 5.1 treats Go's normal stderr progress as a terminating error.
+        $ErrorActionPreference = 'Continue'
+        & go.exe test -mod=readonly -count=1 -v -run $RunExpression $Package 2>&1 | Tee-Object -FilePath $log
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     if ($exitCode -ne 0) {
         throw "$Test failed with exit code $exitCode"
     }
