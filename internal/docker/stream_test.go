@@ -181,6 +181,12 @@ func TestAttachExecLifecycleDetachResumeResize(t *testing.T) {
 	if !exec.closed.Load() {
 		t.Fatal("session close did not close exec")
 	}
+	if err := service.WriteExec(t.Context(), id, []byte("must not replay")); !errors.Is(err, ErrStreamClosed) {
+		t.Fatalf("write after host disconnect = %v", err)
+	}
+	if err := service.ResumeExec(id, newCollectSink()); !errors.Is(err, ErrStreamClosed) {
+		t.Fatalf("resume after host disconnect = %v", err)
+	}
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
@@ -328,6 +334,51 @@ func TestAttachLogsDistinguishesOmittedAndZeroTail(t *testing.T) {
 	}
 	if got := <-tails; got != 0 {
 		t.Fatalf("explicit zero tail = %d", got)
+	}
+}
+
+func TestCloseSessionStopsOnlyItsDockerLogs(t *testing.T) {
+	firstReader, firstWriter := io.Pipe()
+	secondReader, secondWriter := io.Pipe()
+	defer firstWriter.Close()
+	defer secondWriter.Close()
+	backend := &stubBackend{openLogs: func(_ context.Context, options LogsOptions) (LogStream, error) {
+		switch options.Container {
+		case "first":
+			return LogStream{Reader: firstReader, TTY: true}, nil
+		case "second":
+			return LogStream{Reader: secondReader, TTY: true}, nil
+		default:
+			return LogStream{}, errors.New("unexpected container")
+		}
+	}}
+	service := NewService(&stubProvider{sdk: backend})
+	firstID, err := service.AttachLogs(t.Context(), LogsAttachRequest{SessionID: "host-1", Container: "first", Sink: newCollectSink()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSink := newCollectSink()
+	secondID, err := service.AttachLogs(t.Context(), LogsAttachRequest{SessionID: "host-2", Container: "second", Sink: secondSink})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.CloseStream(secondID)
+	firstDone, err := service.StreamDone(firstID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.CloseSession("host-1"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-firstDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first host logs did not close")
+	}
+	go func() { _, _ = io.WriteString(secondWriter, "still live\n") }()
+	secondSink.waitFrame(t)
+	if got := secondSink.String(); got != "still live\n" {
+		t.Fatalf("other host logs = %q", got)
 	}
 }
 

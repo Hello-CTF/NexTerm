@@ -652,8 +652,11 @@ func TestListRemoteDurableRejectsUnavailableSessionScopes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.ListRemoteDurable(ctx, device.ID); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("device ListRemoteDurable error = %v, want ErrUnsupported", err)
+	if err := manager.Disconnect(device.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.ListRemoteDurable(ctx, device.ID); !errors.Is(err, ErrDisconnected) {
+		t.Fatalf("disconnected device ListRemoteDurable error = %v, want ErrDisconnected", err)
 	}
 	ssh, err := manager.Connect(ctx, Asset{ID: "scope-ssh", Kind: KindSSH})
 	if err != nil {

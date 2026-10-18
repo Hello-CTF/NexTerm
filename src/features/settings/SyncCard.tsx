@@ -715,7 +715,7 @@ interface RemoteObject {
 
 interface RemoteState {
   objects: RemoteObject[];
-  warnings: string[];
+  undecryptableIds: string[];
   head: string;
   maxSeq: number;
 }
@@ -972,6 +972,7 @@ function remoteKindVisible(kind: SyncObjectKind, plaintext: string, optIn: SyncK
 interface RemoteCache {
   head: string;
   objects: Map<string, RemoteObject>;
+  undecryptableIds: string[];
 }
 
 const remoteCaches = new WeakMap<Uint8Array, RemoteCache>();
@@ -1022,10 +1023,12 @@ type SyncIds = Awaited<ReturnType<typeof syncV2Api.ids>>;
 async function loadRemoteObjects(dek: Uint8Array, optIn: SyncKindOptIn, idsOverride?: SyncIds): Promise<RemoteState> {
   const cache = remoteCaches.get(dek);
   const previous = cache?.objects ?? new Map<string, RemoteObject>();
-  const ids = idsOverride ?? await syncV2Api.ids(cache?.head || undefined);
+  let ids = idsOverride ?? await syncV2Api.ids(cache?.head || undefined);
+  // A failed object has no cached plaintext. Fetch the full index so it can be retried on refresh.
+  if (ids.unchanged && cache?.undecryptableIds.length) ids = await syncV2Api.ids();
   if (ids.unchanged && cache) {
     const objects = [...cache.objects.values()].filter((object) => remoteKindVisible(object.kind, object.plaintext, optIn));
-    return { objects, warnings: [], head: ids.head, maxSeq: ids.max_seq };
+    return { objects, undecryptableIds: cache.undecryptableIds, head: ids.head, maxSeq: ids.max_seq };
   }
 
   const next = new Map<string, RemoteObject>();
@@ -1039,7 +1042,7 @@ async function loadRemoteObjects(dek: Uint8Array, optIn: SyncKindOptIn, idsOverr
     }
   }
 
-  const warnings: string[] = [];
+  const undecryptableIds: string[] = [];
   for (let offset = 0; offset < pending.length; offset += 256) {
     const batch = pending.slice(offset, offset + 256);
     const page = await syncV2Api.pull(0, batch.map((entry) => entry.id));
@@ -1051,21 +1054,21 @@ async function loadRemoteObjects(dek: Uint8Array, optIn: SyncKindOptIn, idsOverr
         next.set(entry.id, object);
       } catch (e) {
         if (e instanceof CryptoError && e.code !== "decrypt") throw e;
-        warnings.push(`云端对象 ${entry.id} 解密失败，已跳过；本机同 ID 对象可推送覆盖`);
+        undecryptableIds.push(entry.id);
       }
     }
   }
-  remoteCaches.set(dek, { head: ids.head, objects: next });
+  remoteCaches.set(dek, { head: ids.head, objects: next, undecryptableIds });
   const objects = [...next.values()].filter((object) => remoteKindVisible(object.kind, object.plaintext, optIn));
-  return { objects, warnings, head: ids.head, maxSeq: ids.max_seq };
+  return { objects, undecryptableIds, head: ids.head, maxSeq: ids.max_seq };
 }
 
-type RowState = "local-only" | "remote-only" | "same" | "local-newer" | "remote-newer" | "local-deleted" | "remote-deleted";
+type RowState = "local-only" | "remote-only" | "same" | "local-newer" | "remote-newer" | "local-deleted" | "remote-deleted" | "remote-undecryptable";
 
 interface Row {
   id: string;
   name: string;
-  kind: SyncObjectKind;
+  kind: SyncObjectKind | "";
   state: RowState;
   local?: LocalEntity;
   remote?: RemoteObject;
@@ -1133,10 +1136,16 @@ function transcriptLocalWins(l: LocalEntity, r: RemoteObject): boolean {
   return l.payloadHash > r.payloadHash;
 }
 
-function buildRows(local: LocalEntity[], remote: RemoteObject[]): Row[] {
+function buildRows(local: LocalEntity[], remote: RemoteObject[], undecryptableIds: string[]): Row[] {
   const remoteById = new Map(remote.map((r) => [r.id, r]));
+  const undecryptable = new Set(undecryptableIds);
   const rows: Row[] = [];
   for (const l of local) {
+    if (undecryptable.has(l.id)) {
+      rows.push({ id: l.id, name: l.name, kind: l.kind, state: "remote-undecryptable", local: l });
+      undecryptable.delete(l.id);
+      continue;
+    }
     const r = remoteById.get(l.id);
     if (!r) {
       rows.push({ id: l.id, name: l.name, kind: l.kind, state: l.deletedAt !== null ? "local-deleted" : "local-only", local: l });
@@ -1159,6 +1168,9 @@ function buildRows(local: LocalEntity[], remote: RemoteObject[]): Row[] {
   for (const r of remoteById.values()) {
     rows.push({ id: r.id, name: r.name, kind: r.kind, state: r.kind === "tombstone" || r.deletedAt !== null ? "remote-deleted" : "remote-only", remote: r });
   }
+  for (const id of undecryptable) {
+    rows.push({ id, name: id, kind: "", state: "remote-undecryptable" });
+  }
   const rank = (s: RowState) => (s === "same" ? 1 : 0);
   return rows.sort((a, b) => rank(a.state) - rank(b.state) || a.name.localeCompare(b.name));
 }
@@ -1170,6 +1182,7 @@ export const WEB_SYNC_ERROR_EVENT = "nexterm:web-sync-error";
 interface Snapshot {
   local: LocalEntity[];
   remote: RemoteObject[];
+  undecryptableIds: string[];
   warnings: string[];
   head: string;
   maxSeq: number;
@@ -1186,7 +1199,11 @@ async function loadSnapshot(dek: Uint8Array, optIn: SyncKindOptIn, idsOverride?:
   return {
     local: local.entities,
     remote: remote.objects,
-    warnings: [...local.warnings, ...remote.warnings],
+    undecryptableIds: remote.undecryptableIds,
+    warnings: [...local.warnings, ...remote.undecryptableIds.map((id) =>
+      `云端对象 ${id} 解密失败，已跳过；${local.entities.some((entity) => entity.id === id)
+        ? "本机同 ID 对象可推送覆盖"
+        : "本机无同 ID 对象，请从持有正确数据密钥的设备重新同步，或联系管理员"}`)],
     head: remote.head,
     maxSeq: remote.maxSeq,
   };
@@ -1213,11 +1230,9 @@ export async function runWebSync(
   shouldContinue: () => boolean = () => true,
 ): Promise<WebSyncResult | null> {
   let snapshot = await loadSnapshot(dek, optIn);
-  let operationWarnings = [...snapshot.warnings];
+  const operationWarnings: string[] = [];
   const reload = async (idsOverride?: SyncIds) => {
     snapshot = await loadSnapshot(dek, optIn, idsOverride);
-    operationWarnings = [...new Set([...operationWarnings, ...snapshot.warnings])];
-    snapshot = { ...snapshot, warnings: [...operationWarnings] };
   };
   if (!(await optInMatches(optIn, shouldContinue))) return null;
 
@@ -1355,6 +1370,7 @@ function CompareConsole() {
   const dek = useAuth((s) => s.dek)!;
   const [local, setLocal] = useState<LocalEntity[] | null>(null);
   const [remote, setRemote] = useState<RemoteObject[] | null>(null);
+  const [undecryptableIds, setUndecryptableIds] = useState<string[]>([]);
   const [collectWarnings, setCollectWarnings] = useState<string[]>([]);
   const [refreshBusy, setRefreshBusy] = useState(false);
   const [optInBusy, setOptInBusy] = useState(false);
@@ -1374,6 +1390,7 @@ function CompareConsole() {
         if (seq !== loadSeqRef.current || epoch !== optInEpochRef.current) return;
         setLocal(snapshot.local);
         setRemote(snapshot.remote);
+        setUndecryptableIds(snapshot.undecryptableIds);
         setCollectWarnings(snapshot.warnings);
       })
       .catch((e: unknown) => {
@@ -1404,6 +1421,7 @@ function CompareConsole() {
       const result = (event as CustomEvent<WebSyncResult>).detail;
       setLocal(result.local);
       setRemote(result.remote);
+      setUndecryptableIds(result.undecryptableIds);
       setCollectWarnings(result.warnings);
       setLastSuccessAt(result.lastSuccessAt);
       setError(null);
@@ -1421,7 +1439,7 @@ function CompareConsole() {
     };
   }, [load]);
 
-  const rows = useMemo(() => (local && remote ? buildRows(local, remote) : null), [local, remote]);
+  const rows = useMemo(() => (local && remote ? buildRows(local, remote, undecryptableIds) : null), [local, remote, undecryptableIds]);
 
   const updateKindOptIn = async (patch: Partial<SyncKindOptIn>) => {
     const epoch = ++optInEpochRef.current;
@@ -1429,6 +1447,7 @@ function CompareConsole() {
     setRefreshBusy(true);
     setLocal(null);
     setRemote(null);
+    setUndecryptableIds([]);
     setCollectWarnings([]);
     setError(null);
     try {
@@ -1468,7 +1487,7 @@ function CompareConsole() {
         <IconServer size={15} className="text-neutral-400" />
         <span className="nx-card-title">{SYNC_CONSOLE_TITLE}</span>
         <span className="nx-badge nx-badge-green">{SYNC_AUTO_BADGE}</span>
-        <span className="nx-hint">云端 {remote?.length ?? "…"} 个对象</span>
+        <span className="nx-hint">云端 {remote ? remote.length + undecryptableIds.length : "…"} 个对象</span>
         <div className="nx-spacer" />
         <span className="nx-hint">{SYNC_INTERVAL_LABEL}</span>
       </div>

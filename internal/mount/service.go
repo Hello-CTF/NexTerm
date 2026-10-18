@@ -7,21 +7,31 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 type Service struct {
-	goos    string
-	auditor Auditor
-	runner  commandRunner
-	newID   func() string
-	now     func() time.Time
-	onError func(error)
+	goos        string
+	auditor     Auditor
+	runner      commandRunner
+	newID       func() string
+	now         func() time.Time
+	onError     func(error)
+	sessionHost func(context.Context, string) (string, error)
+	mu          sync.Mutex
+	owned       map[string]ownedMount
+}
+
+type ownedMount struct {
+	entry  Entry
+	hostID string
 }
 
 func NewService(config Config) *Service {
@@ -35,12 +45,14 @@ func NewService(config Config) *Service {
 		config.Now = time.Now
 	}
 	return &Service{
-		goos:    runtime.GOOS,
-		auditor: config.Auditor,
-		runner:  execRunner{timeout: config.CommandTimeout},
-		newID:   config.NewID,
-		now:     config.Now,
-		onError: config.OnError,
+		goos:        runtime.GOOS,
+		auditor:     config.Auditor,
+		runner:      execRunner{timeout: config.CommandTimeout},
+		newID:       config.NewID,
+		now:         config.Now,
+		onError:     config.OnError,
+		sessionHost: config.SessionHost,
+		owned:       make(map[string]ownedMount),
 	}
 }
 
@@ -68,8 +80,22 @@ func (s *Service) Create(ctx context.Context, args CreateArgs) (Entry, error) {
 	if err := validateCreate(s.goos, args); err != nil {
 		return Entry{}, ipc.BadParam(err)
 	}
+	hostID, err := s.authorizeSession(ctx, args.SessionID)
+	if err != nil {
+		return Entry{}, err
+	}
 	start := time.Now()
+	s.mu.Lock()
+	if _, exists := s.owned[s.mountKey(args.LocalPoint)]; exists {
+		s.mu.Unlock()
+		return Entry{}, ipc.NewError(ipc.CodeBadParam, "该挂载点已有本应用管理的挂载；请先断开原挂载")
+	}
 	entry, err := s.create(ctx, args)
+	if err == nil {
+		entry.Managed = true
+		s.owned[s.mountKey(entry.LocalPoint)] = ownedMount{entry: entry, hostID: hostID}
+	}
+	s.mu.Unlock()
 	s.audit(ctx, args.SessionID, "create", args.RemotePath, args.LocalPoint, start, err)
 	return entry, err
 }
@@ -133,10 +159,126 @@ func (s *Service) Remove(ctx context.Context, args RemoveArgs) error {
 	if err := validateRemove(s.goos, args); err != nil {
 		return ipc.BadParam(err)
 	}
+	hostID, err := s.authorizeSession(ctx, args.SessionID)
+	if err != nil {
+		return err
+	}
 	start := time.Now()
-	err := s.remove(ctx, args.LocalPoint)
+	if reason := s.Capability(); reason != nil {
+		err := ipc.NewError(ipc.CodeUnsupported, *reason)
+		s.audit(ctx, args.SessionID, "remove", "", args.LocalPoint, start, err)
+		return err
+	}
+	s.mu.Lock()
+	owned, exists := s.owned[s.mountKey(args.LocalPoint)]
+	if !exists {
+		s.mu.Unlock()
+		return ipc.NewError(ipc.CodeNotFound, "无法确认挂载归属；应用重启后请使用系统工具卸载")
+	}
+	if owned.entry.SessionID == nil || *owned.entry.SessionID != args.SessionID || owned.hostID != hostID {
+		s.mu.Unlock()
+		return ipc.NewError(ipc.CodeForbidden, "只能断开当前会话创建的挂载")
+	}
+	if s.sessionHost != nil {
+		entries, listErr := s.List(ctx, true)
+		if listErr != nil {
+			s.mu.Unlock()
+			return listErr
+		}
+		if !s.mountPresent(entries, owned.entry) {
+			delete(s.owned, s.mountKey(args.LocalPoint))
+			s.mu.Unlock()
+			return ipc.NewError(ipc.CodeNotFound, "原挂载已不存在或挂载点已被其他挂载占用；未执行卸载")
+		}
+	}
+	err = s.remove(ctx, args.LocalPoint)
+	if err == nil {
+		delete(s.owned, s.mountKey(args.LocalPoint))
+	}
+	s.mu.Unlock()
 	s.audit(ctx, args.SessionID, "remove", "", args.LocalPoint, start, err)
 	return err
+}
+
+func (s *Service) authorizeSession(ctx context.Context, sessionID string) (string, error) {
+	if s.sessionHost == nil {
+		return "", nil
+	}
+	if sessionID == "" {
+		return "", ipc.NewError(ipc.CodeBadParam, "缺少会话 ID")
+	}
+	hostID, err := s.sessionHost(ctx, sessionID)
+	if err == nil {
+		return hostID, nil
+	}
+	code := ipc.CodeInternal
+	switch {
+	case errors.Is(err, session.ErrForbidden):
+		code = ipc.CodeForbidden
+	case errors.Is(err, session.ErrSessionNotFound):
+		code = ipc.CodeNotFound
+	}
+	return "", ipc.WrapError(code, "无法访问当前会话", err)
+}
+
+func (s *Service) mountKey(point string) string {
+	if s.goos == "windows" {
+		return strings.ToLower(point)
+	}
+	return point
+}
+
+func (s *Service) mountPresent(entries []Entry, owned Entry) bool {
+	for _, entry := range entries {
+		if s.mountKey(entry.LocalPoint) != s.mountKey(owned.LocalPoint) {
+			continue
+		}
+		if s.goos == "windows" {
+			return strings.EqualFold(entry.Remote, owned.Remote)
+		}
+		return entry.Remote == owned.Remote
+	}
+	return false
+}
+
+func (s *Service) ListFor(ctx context.Context, args listRequest) ([]Entry, error) {
+	if args.Global == (args.SessionID != "") {
+		return nil, ipc.NewError(ipc.CodeBadParam, "请指定当前会话，或显式选择全局挂载表")
+	}
+	hostID := ""
+	if !args.Global {
+		var err error
+		hostID, err = s.authorizeSession(ctx, args.SessionID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	entries, err := s.List(ctx, args.ForceRefresh)
+	if err != nil {
+		return nil, err
+	}
+	if args.Global {
+		return entries, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for point, owned := range s.owned {
+		if !s.mountPresent(entries, owned.entry) {
+			delete(s.owned, point)
+		}
+	}
+	filtered := make([]Entry, 0)
+	for _, entry := range entries {
+		owned, ok := s.owned[s.mountKey(entry.LocalPoint)]
+		if !ok || !s.mountPresent([]Entry{entry}, owned.entry) {
+			continue
+		}
+		if owned.entry.SessionID == nil || *owned.entry.SessionID != args.SessionID || owned.hostID != hostID {
+			continue
+		}
+		filtered = append(filtered, owned.entry)
+	}
+	return filtered, nil
 }
 
 func (s *Service) remove(ctx context.Context, localPoint string) error {

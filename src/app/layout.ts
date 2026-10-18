@@ -1,7 +1,10 @@
-import { layoutApi, terminalApi } from "../ipc/commands";
+import { assetApi, layoutApi, terminalApi } from "../ipc/commands";
+import { WEB } from "../ipc/env";
 import { listenEvent } from "../ipc/events";
+import { askChoice } from "../ui/dialogs";
 import { describeError } from "../ui/errorText";
 import { isDirtyFileEditor } from "../features/files/editorGuards";
+import { useAuth } from "../features/auth/store";
 import {
   GLOBAL_AI_BOARD_KEY,
   LEFT_WIDTH_RANGE,
@@ -20,6 +23,7 @@ import {
   type Workspace,
   type WorkspaceKind,
   type WorkspaceRuntime,
+  type QuickWorkspaceTarget,
 } from "./store";
 
 const LAYOUT_CHANGED = "layout://changed";
@@ -29,7 +33,7 @@ const SAVE_DEBOUNCE_MS = 600;
 const RETRY_MS = 3000;
 const MAX_RETRY = 3;
 
-const LAYOUT_VERSION = 2;
+const LAYOUT_VERSION = 3;
 
 export interface PersistedLayout {
   v: number;
@@ -83,7 +87,7 @@ function sanitizeTab(raw: unknown): AppTab | null {
   const kind = raw.kind;
   if (!id || typeof kind !== "string" || !PANE_KINDS.has(kind as PaneKind)) return null;
   const tabId = optStr(raw.tabId);
-  if (kind === "terminal" && !tabId) return null;
+  if (kind === "terminal" && !tabId && raw.restorePending !== true) return null;
   return {
     id,
     kind: kind as PaneKind,
@@ -99,6 +103,7 @@ function sanitizeTab(raw: unknown): AppTab | null {
     closable: boolOr(raw.closable, true),
     exited: raw.exited === true ? true : undefined,
     renamedByUser: raw.renamedByUser === true ? true : undefined,
+    restorePending: raw.restorePending === true ? true : undefined,
   };
 }
 
@@ -113,6 +118,19 @@ function sanitizePane(raw: unknown): Pane | null {
   const activeTabId =
     active && tabs.some((t) => t.id === active) ? active : (tabs[tabs.length - 1]?.id ?? null);
   return { id, tabs, activeTabId };
+}
+
+function sanitizeQuickTarget(raw: unknown): QuickWorkspaceTarget | undefined {
+  if (!isObj(raw)) return undefined;
+  const id = optStr(raw.id);
+  const host = optStr(raw.host)?.trim();
+  const port = raw.port;
+  const username = raw.username;
+  const authKind = raw.authKind;
+  if (!id || !host || typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) return undefined;
+  if (username !== null && typeof username !== "string") return undefined;
+  if (authKind !== "agent" && authKind !== "password") return undefined;
+  return { id, host, port, username, authKind };
 }
 
 function sanitizeWorkspace(raw: unknown): Workspace | null {
@@ -139,6 +157,9 @@ function sanitizeWorkspace(raw: unknown): Workspace | null {
     connId: optStr(raw.connId),
     dbKind: dbKindOf(typeof raw.dbKind === "string" ? raw.dbKind : "") ?? undefined,
     assetKind: optStr(raw.assetKind),
+    quickTarget: sanitizeQuickTarget(raw.quickTarget),
+    deletedTarget: raw.deletedTarget === true ? true : undefined,
+    restorePending: raw.restorePending === true ? true : undefined,
     panes,
     activePaneId,
     splitRatio: clampFraction(raw.splitRatio, 0.15, 0.85, 0.5),
@@ -363,7 +384,7 @@ const notifiedInvalidBackgrounds = new Set<string>();
 
 export function sanitizeLayout(raw: unknown): PersistedLayout | null {
   if (!isObj(raw)) return null;
-  if (raw.v !== LAYOUT_VERSION) return null;
+  if (raw.v !== 2 && raw.v !== LAYOUT_VERSION) return null;
   if (!Array.isArray(raw.workspaces)) return null;
   if (!isObj(raw.aiBoards)) return null;
   const sanitized = raw.workspaces
@@ -451,7 +472,17 @@ export function serializeLayout(s: LayoutSource): PersistedLayout | null {
     rightOpen: s.rightOpen,
     leftWidth: s.leftWidth,
     rightWidth: s.rightWidth,
-    workspaces: s.workspaces,
+    workspaces: s.workspaces.map((workspace) => ({
+      ...workspace,
+      panes: workspace.panes.map((pane) => ({
+        ...pane,
+        tabs: pane.tabs.map((tab) =>
+          tab.kind === "terminal" && tab.sessionId && !tab.tabId
+            ? { ...tab, restorePending: true }
+            : tab,
+        ),
+      })),
+    })),
     activeWorkspaceId: s.activeWorkspaceId,
     aiBoards: s.aiBoards ?? {},
   });
@@ -476,6 +507,235 @@ let writing = false;
 let dirty = false;
 let remoteEventDuringWrite = false;
 let pendingRemoteRev: number | null = null;
+let pendingRestore: PersistedLayout | null = null;
+let previewRestore: { before: PersistedLayout; remote: PersistedLayout; revision: number } | null = null;
+let restorePaused = false;
+let accountTransitionHold = false;
+let restoreReviewInFlight = false;
+let restoreReviewToken = 0;
+let restoreDismissed = false;
+let restoreCommitInFlight = false;
+let restoreCommitToken = 0;
+
+const RESTORE_CHANGED = "nexterm:layout-restore-changed";
+const RESTORE_KEY_PREFIX = "nexterm:layout-restored-v1:";
+
+export function layoutRestoreStatus(): { pending: boolean; preview: boolean; count: number } {
+  return {
+    pending: pendingRestore !== null,
+    preview: previewRestore !== null,
+    count: (previewRestore?.remote ?? pendingRestore)?.workspaces.length ?? 0,
+  };
+}
+
+function notifyRestoreChanged(): void {
+  window.dispatchEvent(new Event(RESTORE_CHANGED));
+}
+
+export function subscribeLayoutRestore(listener: () => void): () => void {
+  window.addEventListener(RESTORE_CHANGED, listener);
+  return () => window.removeEventListener(RESTORE_CHANGED, listener);
+}
+
+function restoreDecisionKey(): string | null {
+  const userId = WEB ? useAuth.getState().user?.id : null;
+  return userId ? `${RESTORE_KEY_PREFIX}${userId}` : null;
+}
+
+function restoreAccepted(key: string): boolean {
+  try {
+    return window.localStorage.getItem(key) === "accepted";
+  } catch {
+    return false;
+  }
+}
+
+function setRestoreAccepted(accepted: boolean): void {
+  const key = restoreDecisionKey();
+  if (!key) return;
+  try {
+    if (accepted) window.localStorage.setItem(key, "accepted");
+    else window.localStorage.removeItem(key);
+  } catch {
+    // The running tab can still use the confirmed decision when storage is unavailable.
+  }
+}
+
+function requiresRestoreReview(layout: PersistedLayout): boolean {
+  const key = restoreDecisionKey();
+  return key !== null && layout.workspaces.length > 0 && !restoreAccepted(key);
+}
+
+async function restoreSummary(layout: PersistedLayout): Promise<{ text: string; assets: Set<string> | null }> {
+  let assets: Set<string> | null = null;
+  try {
+    assets = new Set((await assetApi.list()).map((asset) => asset.id));
+  } catch {
+    // Show an unverified target rather than guessing whether an asset still exists.
+  }
+  const lines = layout.workspaces.slice(0, 12).map((workspace) => {
+    let status = "工具标签";
+    if (workspace.quickTarget) status = "临时 SSH 目标，重连时需要重新提供凭据";
+    else if (workspace.assetId?.startsWith("device/")) status = "受管设备，使用前需确认在线状态";
+    else if (workspace.assetId && assets === null) status = "资产状态未核实";
+    else if (workspace.assetId && !assets?.has(workspace.assetId)) status = "原资产已不存在，旧连接将跳过";
+    else if (workspace.kind === "db") status = "数据库目标，连接状态需重新确认";
+    else if (workspace.kind === "session") status = "资产目标，连接状态需重新确认";
+    return `• ${workspace.title}：${status}`;
+  });
+  if (layout.workspaces.length > lines.length) lines.push(`• 另有 ${layout.workspaces.length - lines.length} 个工作区`);
+  return {
+    text: `账号中有 ${layout.workspaces.length} 个工作区。恢复前请核对目标：\n\n${lines.join("\n")}\n\n恢复保留工作区与标签，但不会启动旧连接。请在每个工作区确认目标后手动重新连接。`,
+    assets,
+  };
+}
+
+function prepareRestoredLayout(layout: PersistedLayout, assets: Set<string> | null): PersistedLayout {
+  return {
+    ...layout,
+    workspaces: layout.workspaces.map((workspace) => {
+      if (workspace.kind === "tools") return workspace;
+      const missingAsset = Boolean(
+        assets && workspace.assetId && !workspace.assetId.startsWith("device/") && !assets.has(workspace.assetId),
+      );
+      return {
+        ...workspace,
+        deletedTarget: missingAsset || workspace.deletedTarget,
+        restorePending: true,
+        sessionId: undefined,
+        connId: undefined,
+        panes: workspace.panes.map((pane) => ({
+          ...pane,
+          tabs: pane.tabs.map((tab) => ({
+            ...tab,
+            sessionId: undefined,
+            tabId: undefined,
+            connId: undefined,
+            restorePending: true,
+          })),
+        })),
+      };
+    }),
+  };
+}
+
+export async function reviewPendingLayoutRestore(): Promise<void> {
+  if (restoreReviewInFlight || !pendingRestore) return;
+  restoreReviewInFlight = true;
+  const token = ++restoreReviewToken;
+  const candidate = pendingRestore;
+  const epoch = accountEpoch;
+  try {
+    const summary = await restoreSummary(candidate);
+    if (epoch !== accountEpoch || pendingRestore !== candidate) return;
+    const choice = await askChoice(summary.text, {
+      title: "恢复账号工作区",
+      choices: [
+        { key: "restore", label: "恢复并预览", primary: true },
+        { key: "later", label: "稍后再说", hint: "云端布局保留，本设备暂不写入账号布局" },
+      ],
+    });
+    if (epoch !== accountEpoch || pendingRestore !== candidate) return;
+    if (choice !== "restore") {
+      restoreDismissed = true;
+      return;
+    }
+    restoreDismissed = false;
+    const before = serializeLayout(useUi.getState());
+    if (!before) return;
+    previewRestore = { before, remote: candidate, revision };
+    pendingRestore = null;
+    applyToStore(prepareRestoredLayout(candidate, summary.assets));
+    notifyRestoreChanged();
+  } finally {
+    if (token === restoreReviewToken) restoreReviewInFlight = false;
+    if (token === restoreReviewToken && epoch === accountEpoch && pendingRestore && pendingRestore !== candidate && !restoreDismissed) {
+      void reviewPendingLayoutRestore();
+    }
+  }
+}
+
+function rejectStaleRestore(latest: PersistedLayout | null): void {
+  if (!previewRestore) return;
+  const before = previewRestore.before;
+  previewRestore = null;
+  pendingRestore = latest?.workspaces.length ? latest : null;
+  if (pendingRestore) {
+    applyToStore(before);
+  } else {
+    restorePaused = false;
+    if (latest) {
+      lastSynced = JSON.stringify(latest);
+      applyToStore(latest);
+    } else {
+      applyToStore(before);
+    }
+  }
+  notifyRestoreChanged();
+  useUi.getState().pushToast("info", "账号布局已在其他设备更新，请重新核对后再恢复");
+  if (pendingRestore) void reviewPendingLayoutRestore();
+}
+
+export async function finishLayoutRestore(): Promise<void> {
+  if (!previewRestore || restoreCommitInFlight) return;
+  const preview = previewRestore;
+  const epoch = accountEpoch;
+  const token = ++restoreCommitToken;
+  restoreCommitInFlight = true;
+  try {
+    if (preview.revision !== revision || pendingRestore) {
+      rejectStaleRestore(pendingRestore ?? preview.remote);
+      return;
+    }
+    // Check the server again before accepting; events can arrive after the user clicks Finish.
+    const latest = await layoutApi.get();
+    if (epoch !== accountEpoch || previewRestore !== preview) return;
+    revision = latest.revision;
+    if (latest.revision !== preview.revision || pendingRestore) {
+      rejectStaleRestore(pendingRestore ?? sanitizeLayout(latest.data));
+      return;
+    }
+    const current = serializeLayout(useUi.getState());
+    if (!current) return;
+    const json = JSON.stringify(current);
+    const saved = await layoutApi.put(json, preview.revision);
+    if (epoch !== accountEpoch || previewRestore !== preview) return;
+    if (saved.conflict) {
+      const fresh = await layoutApi.get();
+      if (epoch !== accountEpoch || previewRestore !== preview) return;
+      revision = fresh.revision;
+      rejectStaleRestore(sanitizeLayout(fresh.data));
+      return;
+    }
+    if (revision > saved.revision) {
+      rejectStaleRestore(pendingRestore);
+      return;
+    }
+    revision = saved.revision;
+    lastSynced = json;
+    previewRestore = null;
+    pendingRestore = null;
+    setRestoreAccepted(true);
+    restorePaused = false;
+    notifyRestoreChanged();
+    await flushLayout();
+  } catch (e) {
+    if (epoch === accountEpoch && previewRestore === preview) {
+      useUi.getState().pushToast("error", `完成布局恢复失败：${describeError(e)}`);
+    }
+  } finally {
+    if (token === restoreCommitToken) restoreCommitInFlight = false;
+  }
+}
+
+export function undoLayoutRestore(): void {
+  if (!previewRestore) return;
+  const { before, remote } = previewRestore;
+  previewRestore = null;
+  pendingRestore = pendingRestore ?? remote;
+  applyToStore(before);
+  notifyRestoreChanged();
+}
 
 function clearSaveTimer() {
   if (saveTimer !== null) {
@@ -609,7 +869,10 @@ export function mergeExitedTabs(next: PersistedLayout, current: Workspace[]): Wo
   return changed ? workspaces : next.workspaces;
 }
 
-function mergeTerminalRuntimeTabs(next: PersistedLayout, current: Workspace[]): Workspace[] {
+function mergeTerminalRuntimeTabs(
+  next: PersistedLayout,
+  current: Workspace[],
+): { workspaces: Workspace[]; recoveredAttachment: boolean } {
   const currentById = new Map<string, AppTab>();
   for (const w of current) {
     for (const p of w.panes) {
@@ -618,18 +881,23 @@ function mergeTerminalRuntimeTabs(next: PersistedLayout, current: Workspace[]): 
       }
     }
   }
-  if (currentById.size === 0) return next.workspaces;
+  if (currentById.size === 0) return { workspaces: next.workspaces, recoveredAttachment: false };
   let changed = false;
+  let recoveredAttachment = false;
   const workspaces = next.workspaces.map((w) => ({
     ...w,
     panes: w.panes.map((p) => ({
       ...p,
       tabs: p.tabs.map((t) => {
-        const existing = t.kind === "terminal" && t.tabId ? currentById.get(t.id) : undefined;
-        if (!existing || existing.tabId !== t.tabId) return t;
+        const existing = t.kind === "terminal" ? currentById.get(t.id) : undefined;
+        if (!existing || existing.sessionId !== t.sessionId) return t;
+        const recover = !t.tabId && t.restorePending && existing.tabId && existing.sessionId;
+        if (!recover && existing.tabId !== t.tabId) return t;
         changed = true;
+        if (recover) recoveredAttachment = true;
         return {
           ...t,
+          ...(recover ? { tabId: existing.tabId, restorePending: undefined } : {}),
           shell: existing.shell,
           pendingDirectory: existing.pendingDirectory,
           dead: existing.dead,
@@ -640,7 +908,7 @@ function mergeTerminalRuntimeTabs(next: PersistedLayout, current: Workspace[]): 
       }),
     })),
   }));
-  return changed ? workspaces : next.workspaces;
+  return { workspaces: changed ? workspaces : next.workspaces, recoveredAttachment };
 }
 
 function mergeSqlDraftWorkspaces(
@@ -686,13 +954,15 @@ function preserveAiDrafts(
 function applyToStore(l: PersistedLayout) {
   applyingRemote = true;
   clearSaveTimer();
+  let recoveredAttachment = false;
   try {
     const state = useUi.getState();
     const current = state.workspaces;
     const withDead = mergeDeadTabs(l, current);
     const withExited = mergeExitedTabs({ ...l, workspaces: withDead }, current);
     const withTabRuntime = mergeTerminalRuntimeTabs({ ...l, workspaces: withExited }, current);
-    const merged = mergeDirtyEditorTabs({ ...l, workspaces: withTabRuntime }, current);
+    recoveredAttachment = withTabRuntime.recoveredAttachment;
+    const merged = mergeDirtyEditorTabs({ ...l, workspaces: withTabRuntime.workspaces }, current);
     const withRuntime = mergeSqlDraftWorkspaces(
       { ...l, workspaces: merged },
       current,
@@ -718,6 +988,12 @@ function applyToStore(l: PersistedLayout) {
     if (droppedBackgrounds.length === 0) notifiedInvalidBackgrounds.clear();
   } finally {
     applyingRemote = false;
+    if (recoveredAttachment && !restorePaused) {
+      saveTimer = window.setTimeout(() => {
+        saveTimer = null;
+        void flushLayout();
+      }, SAVE_DEBOUNCE_MS);
+    }
   }
 }
 
@@ -735,18 +1011,30 @@ async function pullLatest(
     if (epoch === accountEpoch) {
       revision = dto.revision;
       const parsed = sanitizeLayout(dto.data);
+      if (accountTransitionHold) {
+        accountTransitionHold = false;
+        if (!parsed || !requiresRestoreReview(parsed)) restorePaused = false;
+      }
       if (parsed) {
         result = parsed;
         if (apply) {
-          const removed = reason === "remote" ? collectRemovedTerminals(parsed) : [];
           lastSynced = JSON.stringify(parsed);
-          applyToStore(parsed);
-          if (reason === "conflict") {
-            useUi.getState().pushToast("info", "布局已在其他设备上更新，已刷新为最新版本");
+          if (restorePaused || requiresRestoreReview(parsed)) {
+            restorePaused = true;
+            pendingRestore = parsed;
+            notifyRestoreChanged();
+            if (!previewRestore && !restoreDismissed) void reviewPendingLayoutRestore();
+          } else {
+            const removed = reason === "remote" ? collectRemovedTerminals(parsed) : [];
+            applyToStore(parsed);
+            if (reason === "conflict") {
+              useUi.getState().pushToast("info", "布局已在其他设备上更新，已刷新为最新版本");
+            }
+            if (removed.length > 0) void notifyBackgroundedTerminals(removed);
           }
-          if (removed.length > 0) void notifyBackgroundedTerminals(removed);
         }
       }
+      if (!parsed) lastSynced = "";
     }
   } catch (e) {
     failed = true;
@@ -809,6 +1097,7 @@ async function putLayout(json: string, allowTakeover = true, epoch = accountEpoc
 }
 
 export async function flushLayout(): Promise<void> {
+  if (restorePaused) return;
   if (writing) {
     dirty = true;
     return;
@@ -883,6 +1172,8 @@ export async function notifyBackgroundedTerminals(
 
 export function advanceLayoutAccount(): void {
   accountEpoch += 1;
+  const pendingDialog = useUi.getState().appChoice;
+  if (pendingDialog?.title === "恢复账号工作区") useUi.getState().closeAppChoice(null);
   revision = 0;
   lastSynced = "";
   dirty = false;
@@ -890,6 +1181,16 @@ export function advanceLayoutAccount(): void {
   pendingRemoteRev = null;
   retryCount = 0;
   saveErrorNotified = false;
+  pendingRestore = null;
+  previewRestore = null;
+  accountTransitionHold = restoreDecisionKey() !== null;
+  restorePaused = accountTransitionHold;
+  restoreReviewInFlight = false;
+  restoreReviewToken += 1;
+  restoreDismissed = false;
+  restoreCommitInFlight = false;
+  restoreCommitToken += 1;
+  notifyRestoreChanged();
   clearSaveTimer();
   clearRetryTimer();
 }
@@ -906,13 +1207,22 @@ export function resetLayoutSyncForTest(): void {
   dirty = false;
   remoteEventDuringWrite = false;
   pendingRemoteRev = null;
+  pendingRestore = null;
+  previewRestore = null;
+  restorePaused = false;
+  accountTransitionHold = false;
+  restoreReviewInFlight = false;
+  restoreReviewToken = 0;
+  restoreDismissed = false;
+  restoreCommitInFlight = false;
+  restoreCommitToken += 1;
   notifiedInvalidBackgrounds.clear();
   clearSaveTimer();
   clearRetryTimer();
 }
 
 function onStoreChange() {
-  if (applyingRemote) return;
+  if (applyingRemote || restorePaused) return;
   clearSaveTimer();
   saveTimer = window.setTimeout(() => {
     saveTimer = null;

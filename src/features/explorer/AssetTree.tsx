@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
-import { ask, pickKeyFile, promptText } from "../../ui/dialogs";
+import { ask, askChoice, pickKeyFile, promptText } from "../../ui/dialogs";
 import { assetApi, sessionApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
 import { browserFilesAvailable } from "../../ipc/webFiles";
@@ -137,9 +137,102 @@ function AssetTreeSkeleton() {
 }
 
 type AssetTreeItem =
-  | { key: string; kind: "asset"; asset: Asset }
+  | { key: string; kind: "asset"; asset: Asset; orphaned?: boolean }
   | { key: string; kind: "devices" }
-  | { key: string; kind: "group"; group: AssetGroup; assets: Asset[] };
+  | { key: string; kind: "group"; node: GroupTreeNode };
+
+interface GroupTreeNode {
+  group: AssetGroup;
+  assets: Asset[];
+  children: GroupTreeNode[];
+  totalAssets: number;
+  path: string;
+  issue: "missing-parent" | "cycle" | null;
+}
+
+function groupHierarchy(groups: AssetGroup[], assetsByGroup: Map<string | null, Asset[]>): GroupTreeNode[] {
+  const groupsById = new Map(groups.map((group) => [group.id, group]));
+  const issues = new Map<string, GroupTreeNode["issue"]>();
+  for (const group of groups) {
+    if (group.parentId && !groupsById.has(group.parentId)) issues.set(group.id, "missing-parent");
+  }
+  const done = new Set<string>();
+  for (const group of groups) {
+    const chain: AssetGroup[] = [];
+    const seen = new Map<string, number>();
+    let cursor: AssetGroup | undefined = group;
+    while (cursor && !done.has(cursor.id)) {
+      const previous = seen.get(cursor.id);
+      if (previous !== undefined) {
+        const cycle = chain.slice(previous).map((item) => item.id).sort();
+        issues.set(cycle[0], "cycle");
+        break;
+      }
+      seen.set(cursor.id, chain.length);
+      chain.push(cursor);
+      cursor = cursor.parentId ? groupsById.get(cursor.parentId) : undefined;
+    }
+    for (const item of chain) done.add(item.id);
+  }
+  const nodes = new Map<string, GroupTreeNode>(groups.map((group) => [group.id, {
+    group, assets: assetsByGroup.get(group.id) ?? [], children: [], totalAssets: 0,
+    path: group.name, issue: issues.get(group.id) ?? null,
+  }]));
+  const roots: GroupTreeNode[] = [];
+  for (const group of groups) {
+    const node = nodes.get(group.id)!;
+    const parent = node.issue ? null : (group.parentId ? nodes.get(group.parentId) : null);
+    if (parent) parent.children.push(node);
+    else roots.push(node);
+  }
+  const decorate = (node: GroupTreeNode, parentPath = "") => {
+    node.path = parentPath ? `${parentPath} / ${node.group.name}` : node.group.name;
+    node.totalAssets = node.assets.length;
+    for (const child of node.children) {
+      decorate(child, node.path);
+      node.totalAssets += child.totalAssets;
+    }
+  };
+  for (const root of roots) decorate(root);
+  return roots;
+}
+
+function groupContainsAsset(node: GroupTreeNode, assetId: string): boolean {
+  return node.assets.some((asset) => asset.id === assetId) || node.children.some((child) => groupContainsAsset(child, assetId));
+}
+
+function groupRowEstimate(node: GroupTreeNode): number {
+  return 32 + node.assets.length * 30 + node.children.reduce((height, child) => height + groupRowEstimate(child), 0);
+}
+
+function groupPathOptions(groups: AssetGroup[]): { id: string; path: string }[] {
+  const options: { id: string; path: string }[] = [];
+  const visit = (node: GroupTreeNode) => {
+    options.push({ id: node.group.id, path: node.path });
+    node.children.forEach(visit);
+  };
+  groupHierarchy(groups, new Map()).forEach(visit);
+  return options;
+}
+
+function groupIsDescendant(groups: AssetGroup[], candidateId: string, ancestorId: string): boolean {
+  const byId = new Map(groups.map((group) => [group.id, group]));
+  const seen = new Set<string>();
+  let current: AssetGroup | undefined = byId.get(candidateId);
+  while (current?.parentId && !seen.has(current.id)) {
+    if (current.parentId === ancestorId) return true;
+    seen.add(current.id);
+    current = byId.get(current.parentId);
+  }
+  return false;
+}
+
+type AssetMoveError = {
+  targetGroupId: string | null;
+  sourceName: string;
+  targetName: string;
+  message: string;
+};
 
 export function AssetTree() {
   const qc = useQueryClient();
@@ -150,8 +243,11 @@ export function AssetTree() {
   const [presetGroup, setPresetGroup] = useState<string | null>(null);
   const [renamingGroup, setRenamingGroup] = useState<AssetGroup | null>(null);
   const [groupBusyId, setGroupBusyId] = useState<string | null>(null);
-  const [groupError, setGroupError] = useState<{ id: string; message: string } | null>(null);
-  const [assetError, setAssetError] = useState<{ id: string; message: string } | null>(null);
+  const [groupError, setGroupError] = useState<{ id: string; message: string; action: "删除" | "修复" } | null>(null);
+  const [assetError, setAssetError] = useState<{ id: string; message: string; mode?: "keep" | "close" } | null>(null);
+  const [moveErrors, setMoveErrors] = useState<Record<string, AssetMoveError>>({});
+  const [movingTargets, setMovingTargets] = useState<Record<string, string>>({});
+  const pendingMovesRef = useRef(new Set<string>());
   const [snippetsOpen, setSnippetsOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [rowMenu, setRowMenu] = useState<{ x: number; y: number; asset: Asset; full?: boolean } | null>(null);
@@ -200,6 +296,25 @@ export function AssetTree() {
     () => filtered.filter((a) => showHidden || !hiddenIds.includes(a.id)),
     [filtered, hiddenIds, showHidden],
   );
+  const duplicateNames = useMemo(() => {
+    const seen = new Set<string>();
+    const duplicates = new Set<string>();
+    for (const asset of assets.data ?? []) {
+      const name = asset.name.trim();
+      if (seen.has(name)) duplicates.add(name);
+      else seen.add(name);
+    }
+    return duplicates;
+  }, [assets.data]);
+  const duplicateGroupNames = useMemo(() => {
+    const seen = new Set<string>();
+    const duplicates = new Set<string>();
+    for (const group of groups.data ?? []) {
+      if (seen.has(group.name)) duplicates.add(group.name);
+      else seen.add(group.name);
+    }
+    return duplicates;
+  }, [groups.data]);
 
   const byGroup = useMemo(() => {
     const map = new Map<string | null, Asset[]>();
@@ -210,25 +325,39 @@ export function AssetTree() {
     }
     return map;
   }, [visible]);
+  const groupRoots = useMemo(() => groupHierarchy(groups.data ?? [], byGroup), [groups.data, byGroup]);
+  const groupPaths = useMemo(() => {
+    const paths = new Map<string, string>();
+    const visit = (node: GroupTreeNode) => {
+      paths.set(node.group.id, node.path);
+      node.children.forEach(visit);
+    };
+    groupRoots.forEach(visit);
+    return paths;
+  }, [groupRoots]);
 
   // The device section is anchored after "current device/local terminal" (the builtin local asset) and before other assets/groups;
   // devices are excluded from asset search, so the section is not rendered while searching. Falls back to rendering first when the builtin asset is missing.
   const treeItems = useMemo(() => {
     const items: AssetTreeItem[] = [];
-    const ungrouped = byGroup.get(null) ?? [];
+    const orphaned = groups.data
+      ? visible.filter((asset) => asset.groupId !== null && !groupPaths.has(asset.groupId))
+      : [];
+    const orphanedIds = new Set(orphaned.map((asset) => asset.id));
+    const ungrouped = [...(byGroup.get(null) ?? []), ...orphaned];
     const localIndex = ungrouped.findIndex((a) => a.builtin && a.kind === "local");
     const headAssets = localIndex >= 0 ? ungrouped.slice(0, localIndex + 1) : [];
     const restAssets = localIndex >= 0 ? ungrouped.slice(localIndex + 1) : ungrouped;
-    for (const asset of headAssets) items.push({ key: `asset:${asset.id}`, kind: "asset", asset });
+    for (const asset of headAssets) items.push({ key: `asset:${asset.id}`, kind: "asset", asset, orphaned: orphanedIds.has(asset.id) });
     if (!query.trim()) items.push({ key: "devices", kind: "devices" });
-    for (const asset of restAssets) items.push({ key: `asset:${asset.id}`, kind: "asset", asset });
-    for (const group of groups.data ?? []) {
-      items.push({ key: `group:${group.id}`, kind: "group", group, assets: byGroup.get(group.id) ?? [] });
+    for (const asset of restAssets) items.push({ key: `asset:${asset.id}`, kind: "asset", asset, orphaned: orphanedIds.has(asset.id) });
+    for (const node of groupRoots) {
+      items.push({ key: `group:${node.group.id}`, kind: "group", node });
     }
     return items;
-  }, [byGroup, groups.data, query]);
+  }, [byGroup, groupRoots, groupPaths, groups.data, query, visible]);
   const treeWindowCount = treeItems.reduce(
-    (count, item) => count + (item.kind === "group" ? item.assets.length + 1 : 1),
+    (count, item) => count + (item.kind === "group" ? 1 + item.node.totalAssets + item.node.children.length : 1),
     0,
   );
   const treeVirtualized = treeWindowCount > 40;
@@ -237,8 +366,8 @@ export function AssetTree() {
     getScrollElement: () => treeRef.current,
     estimateSize: (index) => {
       const item = treeItems[index];
-      if (item.kind === "group") return 32 + item.assets.length * 30;
-      return item.kind === "devices" ? 160 : 30;
+      if (item.kind === "group") return groupRowEstimate(item.node);
+      return item.kind === "devices" ? 160 : item.kind === "asset" && item.orphaned ? 58 : 30;
     },
     overscan: 6,
     rangeExtractor: (range) => {
@@ -246,7 +375,7 @@ export function AssetTree() {
       if (!query.trim()) return indexes;
       const matched = new Set(indexes);
       treeItems.forEach((item, index) => {
-        if (item.kind === "asset" || (item.kind === "group" && item.assets.length > 0)) matched.add(index);
+        if (item.kind === "asset" || (item.kind === "group" && item.node.totalAssets > 0)) matched.add(index);
       });
       return [...matched].sort((a, b) => a - b);
     },
@@ -260,7 +389,7 @@ export function AssetTree() {
     const index = treeItems.findIndex((item) =>
       item.kind === "asset"
         ? item.asset.id === restoreFocusId
-        : item.kind === "group" && item.assets.some((asset) => asset.id === restoreFocusId),
+        : item.kind === "group" && groupContainsAsset(item.node, restoreFocusId),
     );
     if (index < 0) {
       setRestoreFocusId(null);
@@ -314,36 +443,109 @@ export function AssetTree() {
     void connectQuickTarget({ host, port: a.port ?? 22, username });
   };
 
-  const runDeleteAsset = async (a: Asset) => {
+  const runDeleteAsset = async (a: Asset, openWorkspaces: "keep" | "close" = "keep") => {
     setAssetError(null);
+    let closedWorkspaceCount = 0;
     try {
+      if (openWorkspaces === "close") {
+        const workspaceIds = useUi.getState().workspaces.filter((w) => w.assetId === a.id).map((w) => w.id);
+        for (const id of workspaceIds) {
+          if (!useUi.getState().workspaces.some((w) => w.id === id)) continue;
+          if (!(await useUi.getState().closeWorkspace(id))) return;
+          closedWorkspaceCount++;
+        }
+      }
       await assetApi.delete(a.id);
+      if (openWorkspaces === "keep") useUi.getState().markDeletedAssetWorkspaces(a.id);
       unhide(a.id);
       void qc.invalidateQueries({ queryKey: ["assets"] });
       void qc.invalidateQueries({ queryKey: ["credentials"] });
       pushToast("info", "已删除");
     } catch (e) {
-      setAssetError({ id: a.id, message: describeError(e) });
+      const detail = closedWorkspaceCount > 0
+        ? `${describeError(e)}；已关闭的工作区可从资产列表重新打开`
+        : describeError(e);
+      setAssetError({ id: a.id, message: detail, mode: openWorkspaces });
     }
   };
 
   const onDelete = async (a: Asset) => {
-    const ok = await ask(`删除资产「${a.name}」？\n\n资产会从列表移除；关联的凭据会保留，已产生的终端历史仍可查看。`, {
-      kind: "warning",
-    });
-    if (!ok) return;
-    await runDeleteAsset(a);
+    const workspaces = useUi.getState().workspaces.filter((w) => w.assetId === a.id);
+    if (workspaces.length > 0) {
+      const action = await askChoice(
+        `删除资产「${a.name}」？\n\n当前有 ${workspaces.length} 个工作区使用此资产。资产会从列表移除；关联的凭据会保留，已产生的终端历史仍可查看。`,
+        {
+          title: "删除资产及打开的工作区",
+          level: "warning",
+          choices: [
+            { key: "keep", label: "保留工作区并删除资产", hint: "工作区会显示目标已删除，可继续查看或关闭。", primary: true },
+            { key: "close", label: "关闭工作区并删除资产", hint: "先关闭关联工作区，再删除资产；取消关闭时不会删除。", danger: true },
+          ],
+        },
+      );
+      if (action !== "keep" && action !== "close") return;
+      await runDeleteAsset(a, action);
+      return;
+    }
+    const ok = await ask(`删除资产「${a.name}」？\n\n资产会从列表移除；关联的凭据会保留，已产生的终端历史仍可查看。`, { kind: "warning" });
+    if (ok) await runDeleteAsset(a);
   };
 
   const moveAsset = async (assetId: string, groupId: string | null) => {
+    if (pendingMovesRef.current.has(assetId)) return;
+    const asset = (assets.data ?? []).find((item) => item.id === assetId) ?? filtered.find((item) => item.id === assetId);
+    if (!asset) {
+      pushToast("error", "移动失败：资产已不在当前列表，请刷新后重试");
+      return;
+    }
+    const groupName = (id: string | null) =>
+      id === null ? "根目录" : groupPaths.get(id) ?? "未知分组";
+    pendingMovesRef.current.add(assetId);
+    setMovingTargets((prev) => ({ ...prev, [assetId]: groupName(groupId) }));
+    setMoveErrors((prev) => {
+      const next = { ...prev };
+      delete next[assetId];
+      return next;
+    });
     try {
       await assetApi.update({ id: assetId, groupId });
+      const updateCachedGroup = (rows: Asset[] | undefined) =>
+        rows?.map((row) => row.id === assetId ? { ...row, groupId } : row);
+      qc.setQueryData<Asset[]>(["assets"], updateCachedGroup);
+      qc.setQueriesData<Asset[]>({ queryKey: ["asset-search"] }, updateCachedGroup);
       void qc.invalidateQueries({ queryKey: ["assets"] });
+      void qc.invalidateQueries({ queryKey: ["asset-search"] });
       pushToast("info", groupId ? "已移入分组" : "已移出分组");
     } catch (e) {
-      pushToast("error", `移动失败：${describeError(e)}`);
+      const message = describeError(e);
+      setMoveErrors((prev) => ({
+        ...prev,
+        [assetId]: {
+          targetGroupId: groupId,
+          sourceName: groupName(asset.groupId),
+          targetName: groupName(groupId),
+          message,
+        },
+      }));
+      if (asset.groupId && useGroupCollapse.getState().collapsedIds.includes(asset.groupId)) {
+        useGroupCollapse.getState().toggle(asset.groupId);
+      }
+      pushToast("error", `移动失败：${message}；「${asset.name}」仍在原位置，可在资产行重试`);
+    } finally {
+      pendingMovesRef.current.delete(assetId);
+      setMovingTargets((prev) => {
+        const next = { ...prev };
+        delete next[assetId];
+        return next;
+      });
     }
   };
+
+  const dismissMoveError = (assetId: string) => setMoveErrors((prev) => {
+    const next = { ...prev };
+    delete next[assetId];
+    return next;
+  });
 
   const runDeleteGroup = async (g: AssetGroup) => {
     setGroupBusyId(g.id);
@@ -354,7 +556,7 @@ export function AssetTree() {
       void qc.invalidateQueries({ queryKey: ["assets"] });
       pushToast("info", "已删除分组");
     } catch (e) {
-      setGroupError({ id: g.id, message: describeError(e) });
+      setGroupError({ id: g.id, message: describeError(e), action: "删除" });
     } finally {
       setGroupBusyId(null);
     }
@@ -367,6 +569,21 @@ export function AssetTree() {
     });
     if (!ok) return;
     await runDeleteGroup(g);
+  };
+
+  const repairGroup = async (g: AssetGroup) => {
+    if (groupBusyId) return;
+    setGroupBusyId(g.id);
+    setGroupError(null);
+    try {
+      await assetApi.groupUpdate(g.id, undefined, null);
+      await qc.invalidateQueries({ queryKey: ["groups"] });
+      pushToast("success", `已将「${g.name}」移到根目录`);
+    } catch (e) {
+      setGroupError({ id: g.id, message: describeError(e), action: "修复" });
+    } finally {
+      setGroupBusyId(null);
+    }
   };
 
   const buildRowMenu = (asset: Asset, full: boolean): MenuItem[] => {
@@ -464,30 +681,46 @@ export function AssetTree() {
       rowRef={(node) => registerAssetRow(asset, node)}
       onFocus={() => onAssetFocus(asset)}
       hidden={isHidden(asset.id)}
+      showIdentity={duplicateNames.has(asset.name.trim())}
       onDelete={() => void onDelete(asset)}
       onEdit={() => setEditingAsset(asset)}
       onMore={(x, y, full) => setRowMenu({ x, y, asset, full })}
       error={assetError?.id === asset.id ? assetError.message : null}
-      onRetry={() => void runDeleteAsset(asset)}
+      onRetry={() => void runDeleteAsset(asset, assetError?.mode)}
       onDismissError={() => setAssetError(null)}
+      moveError={moveErrors[asset.id]}
+      movingTarget={movingTargets[asset.id]}
+      onRetryMove={() => {
+        const failure = moveErrors[asset.id];
+        if (failure) void moveAsset(asset.id, failure.targetGroupId);
+      }}
+      onCancelMove={() => dismissMoveError(asset.id)}
     />
   );
 
-  const renderTreeItem = (item: AssetTreeItem) => {
-    if (item.kind === "asset") return renderAssetRow(item.asset, 1);
-    if (item.kind === "devices") return <DeviceTreeSection />;
-    const group = item.group;
+  const renderGroupNode = (node: GroupTreeNode, level: number): React.ReactNode => {
+    const group = node.group;
     return (
       <GroupNode
+        key={group.id}
         group={group}
-        assets={item.assets}
-        virtualizeAssets={treeVirtualized && item.assets.length > 40}
+        path={node.path}
+        contextPath={group.parentId ? groupPaths.get(group.parentId) ?? "父分组缺失" : "根目录"}
+        showPath={duplicateGroupNames.has(group.name)}
+        issue={node.issue}
+        level={level}
+        assets={node.assets}
+        totalAssets={node.totalAssets}
+        children={node.children}
+        renderChildGroup={(child) => renderGroupNode(child, level + 1)}
+        virtualizeAssets={treeVirtualized && node.assets.length > 40}
         searching={Boolean(query.trim())}
         restoreFocusId={restoreFocusId}
         getTreeScrollElement={() => treeRef.current}
         registerAssetRow={registerAssetRow}
         onAssetFocus={onAssetFocus}
         hiddenIds={hiddenIds}
+        duplicateNames={duplicateNames}
         onDelete={(asset) => void onDelete(asset)}
         onEdit={(asset) => setEditingAsset(asset)}
         onMore={(asset, x, y, full) => setRowMenu({ x, y, asset, full })}
@@ -496,17 +729,43 @@ export function AssetTree() {
           setPresetGroup(group.id);
           setEditing("asset");
         }}
+        onCreateChild={() => {
+          setPresetGroup(group.id);
+          setEditing("group");
+        }}
         busy={groupBusyId === group.id}
         error={groupError?.id === group.id ? groupError.message : null}
+        errorAction={groupError?.id === group.id ? groupError.action : "删除"}
         onRename={() => setRenamingGroup(group)}
         onDeleteGroup={() => void deleteGroup(group)}
-        onRetry={() => void runDeleteGroup(group)}
+        onRepair={() => void repairGroup(group)}
+        onRetry={() => void (groupError?.id === group.id && groupError.action === "修复" ? repairGroup(group) : runDeleteGroup(group))}
         onDismissError={() => setGroupError(null)}
         assetError={assetError}
-        onRetryAssetDelete={(asset) => void runDeleteAsset(asset)}
+        onRetryAssetDelete={(asset) => void runDeleteAsset(asset, assetError?.mode)}
         onDismissAssetError={() => setAssetError(null)}
+        moveErrors={moveErrors}
+        movingTargets={movingTargets}
+        onRetryMove={(asset) => {
+          const failure = moveErrors[asset.id];
+          if (failure) void moveAsset(asset.id, failure.targetGroupId);
+        }}
+        onCancelMove={(asset) => dismissMoveError(asset.id)}
       />
     );
+  };
+  const renderTreeItem = (item: AssetTreeItem) => {
+    if (item.kind === "asset") return item.orphaned ? (
+      <div>
+        {renderAssetRow(item.asset, 1)}
+        <div className="mx-1 mb-1 flex items-center gap-2 rounded bg-amber-500/10 px-2 py-1.5 text-[11.5px] text-amber-300">
+          <span className="min-w-0 flex-1">所属分组不存在，已暂列根目录。</span>
+          <button className="nx-link shrink-0" onClick={() => void moveAsset(item.asset.id, null)}>移到根目录</button>
+        </div>
+      </div>
+    ) : renderAssetRow(item.asset, 1);
+    if (item.kind === "devices") return <DeviceTreeSection />;
+    return renderGroupNode(item.node, 1);
   };
 
   if (!leftOpen) return null;
@@ -686,6 +945,7 @@ export function AssetTree() {
       {renamingGroup && (
         <GroupRenameDialog
           group={renamingGroup}
+          groups={groups.data ?? []}
           onClose={() => setRenamingGroup(null)}
           onRenamed={() => {
             setRenamingGroup(null);
@@ -737,30 +997,41 @@ function AssetRow({
   rowRef,
   onFocus,
   hidden,
+  showIdentity,
   onDelete,
   onEdit,
   onMore,
   error,
   onRetry,
   onDismissError,
+  moveError,
+  movingTarget,
+  onRetryMove,
+  onCancelMove,
 }: {
   asset: Asset;
   level: number;
   rowRef?: (node: HTMLDivElement | null) => void;
   onFocus?: () => void;
   hidden?: boolean;
+  showIdentity?: boolean;
   onDelete: () => void;
   onEdit: () => void;
   onMore: (x: number, y: number, full?: boolean) => void;
   error?: string | null;
   onRetry?: () => void;
   onDismissError?: () => void;
+  moveError?: AssetMoveError;
+  movingTarget?: string;
+  onRetryMove?: () => void;
+  onCancelMove?: () => void;
 }) {
   const coarse = useCoarsePointer();
   const Icon = assetIcon(asset.kind, typeof asset.options?.icon === "string" ? asset.options.icon : undefined);
   const connecting = useUi((s) => s.connectingAssetIds.includes(asset.id));
   const label = asset.name;
   const target = asset.host ? `${asset.host}${asset.port ? `:${asset.port}` : ""}` : "";
+  const identity = target ? `${asset.username?.trim() ? `${asset.username.trim()}@` : ""}${target}` : asset.builtin ? "本机" : "";
   const tip = [
     asset.name,
     target || (asset.builtin ? "本机" : ""),
@@ -779,7 +1050,7 @@ function AssetRow({
       tabIndex={0}
       className={`nx-row nx-row-oneline nx-row-reserve-actions ${hidden ? "opacity-55" : ""}`}
       onFocusCapture={onFocus}
-      draggable
+      draggable={!movingTarget}
       onDragStart={(e) => {
         e.dataTransfer.setData(DRAG_ASSET, asset.id);
         e.dataTransfer.effectAllowed = "move";
@@ -801,7 +1072,14 @@ function AssetRow({
       title={tip}
     >
       <Icon size={14} className="shrink-0 text-neutral-500" />
-      <span className="nx-row-name nx-asset-row-name min-w-0 flex-auto">{label}</span>
+      {showIdentity && identity ? (
+        <span className="nx-row-name min-w-0 flex-auto">
+          <span className="block truncate">{label}</span>
+          <span className="block break-all text-[11px] leading-tight text-neutral-400">{identity}</span>
+        </span>
+      ) : (
+        <span className="nx-row-name nx-asset-row-name min-w-0 flex-auto">{label}</span>
+      )}
       {hidden && <span className="nx-badge">已隐藏</span>}
       {asset.builtin && <span className="nx-badge nx-badge-blue">本机</span>}
       {coarse ? (
@@ -894,13 +1172,36 @@ function AssetRow({
         </button>
       </div>
     )}
+    {moveError && (
+      <div role="alert" className="mx-1 mb-1 flex items-center gap-2 rounded bg-red-500/10 px-2 py-1.5 text-[11.5px] text-red-400">
+        <IconXCircle size={12} className="shrink-0" />
+        <span className="min-w-0 flex-1" title={moveError.message}>
+          移动失败：{moveError.message}。仍在「{moveError.sourceName}」，目标「{moveError.targetName}」。
+        </span>
+        <button className="nx-link shrink-0" onClick={onRetryMove}>重试移动</button>
+        <button className="nx-link shrink-0" onClick={onCancelMove}>取消移动</button>
+      </div>
+    )}
+    {movingTarget && (
+      <div role="status" className="mx-1 mb-1 rounded bg-sky-500/10 px-2 py-1.5 text-[11.5px] text-sky-300">
+        正在移至「{movingTarget}」…
+      </div>
+    )}
     </>
   );
 }
 
 function GroupNode({
   group,
+  path,
+  contextPath,
+  showPath,
+  issue,
+  level,
   assets,
+  totalAssets,
+  children,
+  renderChildGroup,
   virtualizeAssets,
   searching,
   restoreFocusId,
@@ -908,23 +1209,39 @@ function GroupNode({
   registerAssetRow,
   onAssetFocus,
   hiddenIds,
+  duplicateNames,
   onDelete,
   onEdit,
   onMore,
   onMoveAsset,
   onCreateIn,
+  onCreateChild,
   busy,
   error,
+  errorAction,
   onRename,
   onDeleteGroup,
+  onRepair,
   onRetry,
   onDismissError,
   assetError,
   onRetryAssetDelete,
   onDismissAssetError,
+  moveErrors,
+  movingTargets,
+  onRetryMove,
+  onCancelMove,
 }: {
   group: AssetGroup;
+  path: string;
+  contextPath: string;
+  showPath: boolean;
+  issue: GroupTreeNode["issue"];
+  level: number;
   assets: Asset[];
+  totalAssets: number;
+  children: GroupTreeNode[];
+  renderChildGroup: (child: GroupTreeNode) => React.ReactNode;
   virtualizeAssets: boolean;
   searching: boolean;
   restoreFocusId: string | null;
@@ -932,20 +1249,28 @@ function GroupNode({
   registerAssetRow: (asset: Asset, node: HTMLDivElement | null) => void;
   onAssetFocus: (asset: Asset) => void;
   hiddenIds: string[];
+  duplicateNames: Set<string>;
   onDelete: (a: Asset) => void;
   onEdit: (a: Asset) => void;
   onMore: (a: Asset, x: number, y: number, full?: boolean) => void;
   onMoveAsset: (assetId: string, groupId: string | null) => void;
   onCreateIn: () => void;
+  onCreateChild: () => void;
   busy: boolean;
   error: string | null;
+  errorAction: "删除" | "修复";
   onRename: () => void;
   onDeleteGroup: () => void;
+  onRepair: () => void;
   onRetry: () => void;
   onDismissError: () => void;
   assetError: { id: string; message: string } | null;
   onRetryAssetDelete: (a: Asset) => void;
   onDismissAssetError: () => void;
+  moveErrors: Record<string, AssetMoveError>;
+  movingTargets: Record<string, string>;
+  onRetryMove: (a: Asset) => void;
+  onCancelMove: (a: Asset) => void;
 }) {
   const collapsed = useGroupCollapse((s) => s.collapsedIds.includes(group.id));
   const toggleCollapsed = useGroupCollapse((s) => s.toggle);
@@ -993,26 +1318,31 @@ function GroupNode({
     <AssetRow
       key={a.id}
       asset={a}
-      level={2}
+      level={level + 1}
       rowRef={(node) => registerAssetRow(a, node)}
       onFocus={() => {
         focusedGroupAssetIdRef.current = a.id;
         onAssetFocus(a);
       }}
       hidden={hiddenIds.includes(a.id)}
+      showIdentity={duplicateNames.has(a.name.trim())}
       onDelete={() => onDelete(a)}
       onEdit={() => onEdit(a)}
       onMore={(x, y, full) => onMore(a, x, y, full)}
       error={assetError?.id === a.id ? assetError.message : null}
       onRetry={() => onRetryAssetDelete(a)}
       onDismissError={onDismissAssetError}
+      moveError={moveErrors[a.id]}
+      movingTarget={movingTargets[a.id]}
+      onRetryMove={() => onRetryMove(a)}
+      onCancelMove={() => onCancelMove(a)}
     />
   );
   return (
     <div
       role="treeitem"
       aria-expanded={open}
-      aria-level={1}
+      aria-level={level}
       tabIndex={0}
       className={`mb-0.5 rounded ${over ? "bg-sky-500/10 ring-1 ring-inset ring-sky-500/40" : ""}`}
       onKeyDown={(e) => {
@@ -1072,9 +1402,10 @@ function GroupNode({
             <IconChevronRight size={12} className="shrink-0" />
           )}
           <IconFolder size={13} className="shrink-0 text-neutral-500" />
-          <span className="nx-row-name min-w-0 flex-1 truncate text-xs font-medium">{group.name}</span>
+          <span className="nx-row-name min-w-0 flex-1 truncate text-xs font-medium" title={path}>{group.name}</span>
+          {showPath && <span className="nx-hint max-w-[90px] shrink truncate text-[10px]" title={contextPath}>{contextPath}</span>}
         </button>
-        <span className="nx-count">{assets.length}</span>
+        <span className="nx-count">{totalAssets}</span>
         {coarse ? (
           <button
             className="nx-icon-btn nx-icon-btn-sm nx-row-more"
@@ -1131,11 +1462,18 @@ function GroupNode({
           </span>
         )}
       </div>
+      {issue && (
+        <div className="mx-1 mb-1 flex items-center gap-2 rounded bg-amber-500/10 px-2 py-1.5 text-[11.5px] text-amber-300">
+          <IconXCircle size={12} className="shrink-0" />
+          <span className="min-w-0 flex-1">{issue === "cycle" ? "分组父子关系形成循环，已暂列根目录。" : "父分组不存在，已暂列根目录。"}</span>
+          <button className="nx-link shrink-0" disabled={busy} onClick={onRepair}>移到根目录</button>
+        </div>
+      )}
       {error && (
         <div className="mx-1 mb-1 flex items-center gap-2 rounded bg-red-500/10 px-2 py-1.5 text-[11.5px] text-red-400">
           <IconXCircle size={12} className="shrink-0" />
           <span className="min-w-0 flex-1 truncate" title={error}>
-            删除失败：{error}
+            {errorAction}失败：{error}
           </span>
           <button className="nx-link shrink-0" onClick={onRetry}>
             重试
@@ -1145,11 +1483,10 @@ function GroupNode({
           </button>
         </div>
       )}
-      {open && (virtualizeAssets ? (
+      {open && <div role="group" className="ml-3.5">{virtualizeAssets ? (
         <div
           ref={assetsRef}
-          role="group"
-          className="relative ml-3.5"
+          className="relative"
           style={{ height: assetVirtualizer.getTotalSize() }}
         >
           {assetVirtualizer.getVirtualItems().map((virtualItem) => (
@@ -1165,20 +1502,20 @@ function GroupNode({
           ))}
         </div>
       ) : (
-        <div role="group" className="ml-3.5">
+        <div>
           {assets.map(renderGroupAsset)}
-          {assets.length === 0 && (
+          {assets.length === 0 && children.length === 0 && (
             <div className="px-2 py-1.5 text-[11px] text-neutral-500">（空分组 · 可拖资产进来）</div>
           )}
         </div>
-      ))}
+      )}{children.map(renderChildGroup)}</div>}
       <ContextMenu
         state={
           menu
             ? {
                 x: menu.x,
                 y: menu.y,
-                title: group.name,
+                title: path,
                 items: [
                   {
                     kind: "item",
@@ -1186,6 +1523,13 @@ function GroupNode({
                     icon: <IconPlus size={13} />,
                     disabled: busy,
                     onSelect: onCreateIn,
+                  },
+                  {
+                    kind: "item",
+                    label: "新建子分组",
+                    icon: <IconFolder size={13} />,
+                    disabled: busy,
+                    onSelect: onCreateChild,
                   },
                   {
                     kind: "item",
@@ -1214,15 +1558,20 @@ function GroupNode({
 
 function GroupRenameDialog({
   group,
+  groups,
   onClose,
   onRenamed,
 }: {
   group: AssetGroup;
+  groups: AssetGroup[];
   onClose: () => void;
   onRenamed: () => void;
 }) {
   const pushToast = useUi((s) => s.pushToast);
   const [name, setName] = useState(group.name);
+  const [parentId, setParentId] = useState<string | null>(group.parentId);
+  const parentOptions = groupPathOptions(groups).filter((option) =>
+    option.id !== group.id && !groupIsDescendant(groups, option.id, group.id));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
@@ -1235,7 +1584,7 @@ function GroupRenameDialog({
 
   const requestClose = async () => {
     if (saving) return;
-    if (name === group.name) {
+    if (name === group.name && parentId === group.parentId) {
       onClose();
       return;
     }
@@ -1250,15 +1599,16 @@ function GroupRenameDialog({
       setError("分组名不能为空");
       return;
     }
-    if (next === group.name) {
+    if (next === group.name && parentId === group.parentId) {
       onClose();
       return;
     }
     setSaving(true);
     setError(null);
     try {
-      await assetApi.groupUpdate(group.id, next);
-      pushToast("success", "已重命名");
+      if (parentId !== group.parentId) await assetApi.groupUpdate(group.id, next !== group.name ? next : undefined, parentId);
+      else await assetApi.groupUpdate(group.id, next);
+      pushToast("success", parentId !== group.parentId ? "已更新分组位置" : "已重命名");
       onRenamed();
     } catch (e) {
       setError(describeError(e));
@@ -1305,6 +1655,13 @@ function GroupRenameDialog({
                 if (e.key === "Enter" && !isImeKeyEvent(e)) void save();
               }}
             />
+          </div>
+          <div className="nx-form-row">
+            <label className="nx-label">父分组</label>
+            <select className="nx-select" value={parentId ?? ""} onChange={(e) => setParentId(e.target.value || null)}>
+              <option value="">（根目录）</option>
+              {parentOptions.map((option) => <option key={option.id} value={option.id}>{option.path}</option>)}
+            </select>
           </div>
           {error && (
             <div className="mb-2 flex items-center gap-1.5 text-[12px] text-red-400">
@@ -1383,6 +1740,9 @@ export function AssetEditor({
   const [startupCommand, setStartupCommand] = useState(
     typeof initial?.options?.startupCommand === "string" ? (initial.options.startupCommand as string) : "",
   );
+  const [terminalMode, setTerminalMode] = useState<"auto" | "regular">(
+    initial?.options?.terminalMode === "regular" ? "regular" : "auto",
+  );
   const [encoding, setEncoding] = useState(() => {
     const raw = typeof initial?.options?.encoding === "string" ? (initial.options.encoding as string) : "";
     const normalized = raw.trim().toLowerCase() === "utf8" ? "utf-8" : raw.trim().toLowerCase() === "iso-8859-1" ? "latin1" : raw.trim().toLowerCase();
@@ -1415,6 +1775,7 @@ export function AssetEditor({
   }, [host, port, groupKind]);
 
   const advancedPanelId = useId();
+  const terminalModeId = useId();
   const IconPreview = assetIcon(groupKind, icon);
   const hostInputId = useId();
   const portInputId = useId();
@@ -1505,6 +1866,7 @@ export function AssetEditor({
     queryFn: () => assetApi.groupList(),
     refetchOnWindowFocus: false,
   });
+  const groupOptions = useMemo(() => groupPathOptions(groups.data ?? []), [groups.data]);
   const assets = useQuery({
     queryKey: ["assets"],
     queryFn: () => assetApi.list(),
@@ -1518,7 +1880,7 @@ export function AssetEditor({
     const name = (await promptText("新建分组", ""))?.trim();
     if (!name) return;
     try {
-      const group = await assetApi.groupCreate(name);
+      const group = groupId ? await assetApi.groupCreate(name, groupId) : await assetApi.groupCreate(name);
       await qc.invalidateQueries({ queryKey: ["groups"] });
       setGroupId(group.id);
     } catch (e) {
@@ -1619,6 +1981,8 @@ export function AssetEditor({
     setOrDelete("agentSocket", agentSocket);
     setOrDelete("certPath", certPath);
     setOrDelete("startupCommand", startupCommand);
+    if (groupKind === "ssh" && terminalMode === "regular") options.terminalMode = "regular";
+    else delete options.terminalMode;
     if (encoding !== "utf-8") options.encoding = encoding;
     else delete options.encoding;
     const parsedEnv = parseEnvText(envText);
@@ -1650,7 +2014,8 @@ export function AssetEditor({
     setSaveError(null);
     try {
       if (kind === "group") {
-        await assetApi.groupCreate(name);
+        if (groupId) await assetApi.groupCreate(name, groupId);
+        else await assetApi.groupCreate(name);
         onSaved();
         return;
       }
@@ -2017,30 +2382,30 @@ export function AssetEditor({
             </div>
           )}
 
-          {kind === "asset" && (
+          {(kind === "asset" || kind === "group") && (
             <div className="nx-form-row">
-              <label className="nx-label">分组</label>
+              <label className="nx-label">{kind === "group" ? "父分组" : "分组"}</label>
               <div className="flex min-w-0 items-center gap-2">
                 <select
                   className="nx-select"
                   value={groupId ?? ""}
                   onChange={(e) => setGroupId(e.target.value || null)}
                 >
-                  <option value="">（不分组）</option>
-                  {(groups.data ?? []).map((g) => (
+                  <option value="">{kind === "group" ? "（根目录）" : "（不分组）"}</option>
+                  {groupOptions.map((g) => (
                     <option key={g.id} value={g.id}>
-                      {g.name}
+                      {g.path}
                     </option>
                   ))}
                 </select>
-                <button
+                {kind === "asset" && <button
                   type="button"
                   className="nx-btn nx-btn-outline shrink-0"
                   onClick={() => void createGroupInline()}
                 >
                   <IconPlus size={11} />
                   新建分组
-                </button>
+                </button>}
               </div>
             </div>
           )}
@@ -2478,6 +2843,23 @@ export function AssetEditor({
                       )}
 
                       <div className="mt-3 border-t border-neutral-800/60 pt-2.5">
+                        {groupKind === "ssh" && (
+                          <div className="nx-form-row">
+                            <label className="nx-label" htmlFor={terminalModeId}>终端模式</label>
+                            <select
+                              id={terminalModeId}
+                              className="nx-select"
+                              value={terminalMode}
+                              onChange={(e) => setTerminalMode(e.target.value as "auto" | "regular")}
+                            >
+                              <option value="auto">自动（持久功能不可用时回退）</option>
+                              <option value="regular">普通终端（不使用持久终端）</option>
+                            </select>
+                            <div className="nx-hint mt-1.5">
+                              ↳ 自动模式优先打开持久终端；远端不支持或持久服务无法启动时会提示并切换普通终端。普通终端关闭后不能从「后台会话」接管。切换为普通终端不会删除已有持久会话；切回「自动」后可在「后台会话」查看并接管。
+                            </div>
+                          </div>
+                        )}
                         <div className="nx-form-row">
                           <label className="nx-label">启动命令</label>
                           <input

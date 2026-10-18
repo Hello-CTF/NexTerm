@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { sessionApi, terminalApi, type LiveTabInfo } from "../../ipc/commands";
-import { nextTabId, useUi } from "../../app/store";
+import { nextTabId, reconnectDeadHost, reconnectSessionAndWait, useUi } from "../../app/store";
 import { TRANSPORT } from "../../ipc/env";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
@@ -20,11 +20,15 @@ type BackgroundTab = Omit<LiveTabInfo, "lastOutputMsAgo"> & {
   remote?: boolean;
 };
 
+function backgroundTabKey(tab: Pick<BackgroundTab, "sessionId" | "tabId">): string {
+  return JSON.stringify([tab.sessionId, tab.tabId]);
+}
+
 function persistenceFootnote(): string {
   if (TRANSPORT === "web") {
-    return "SSH 持久终端在目标主机运行，关闭页面或更换客户端后仍可发现。「接管」将恢复原终端并回放离开期间的输出，不会新建 shell";
+    return "SSH 和受管设备的持久终端在目标主机运行，关闭页面或更换客户端后仍可发现。「接管」将恢复原终端并回放离开期间的输出，不会新建 shell";
   }
-  return "SSH 持久终端由目标主机上的后台服务保持运行，退出应用或更换客户端后仍可发现；本机（local）等其他分离终端会随应用退出而结束。「接管」将恢复原终端并回放离开期间的输出，不会新建 shell";
+  return "SSH 和受管设备的持久终端由目标主机上的后台服务保持运行，退出应用或更换客户端后仍可发现；本机（local）等其他分离终端会随应用退出而结束。「接管」将恢复原终端并回放离开期间的输出，不会新建 shell";
 }
 
 function runningCopy(count: number): string {
@@ -60,15 +64,24 @@ export function BackgroundSessions({
   const workspaceSessionId =
     ownerWorkspace?.kind === "session" ? (ownerWorkspace.sessionId ?? null) : null;
   const hostSessionId = workspaceSessionId ?? sessionId ?? null;
-  const missingOwner =
-    workspaceId !== undefined && ownerWorkspace === undefined && sessionId === undefined;
-  const showAll = hostSessionId === null && !missingOwner;
+  const showAll = hostSessionId === null && ownerWorkspace?.kind === "tools";
+  const hostSession = sessions.find((session) => session.id === hostSessionId);
+  const remoteOwner =
+    ownerWorkspace?.kind === "session" &&
+    (ownerWorkspace.assetKind === "ssh" || ownerWorkspace.assetKind === "device") &&
+    Boolean(ownerWorkspace.assetId);
+  const hostIdentityMismatch =
+    remoteOwner && Boolean(hostSession && (hostSession.assetId !== ownerWorkspace.assetId || hostSession.kind !== ownerWorkspace.assetKind));
+  const needsReconnect =
+    remoteOwner &&
+    (!hostSession || hostIdentityMismatch || hostSession.status === "disconnected" || hostSession.status === "failed");
   const hostName = hostSessionId
-    ? (sessions.find((s) => s.id === hostSessionId)?.name ?? ownerWorkspace?.title ?? hostSessionId)
-    : null;
+    ? (hostSession?.name ?? ownerWorkspace?.title ?? hostSessionId)
+    : (ownerWorkspace?.title ?? null);
   const [items, setItems] = useState<BackgroundTab[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
   const [busy, setBusy] = useState<Record<string, "takeover" | "kill">>({});
   const loadGenerationRef = useRef(0);
   const ownerGenerationRef = useRef(0);
@@ -85,8 +98,9 @@ export function BackgroundSessions({
     try {
       const targets = sessions.filter((session) =>
         (showAll || session.id === hostSessionId) &&
+        (!remoteOwner || showAll || (session.assetId === ownerWorkspace?.assetId && session.kind === ownerWorkspace.assetKind)) &&
         session.status === "connected" &&
-        session.kind === "ssh",
+        (session.kind === "ssh" || session.kind === "device"),
       );
       const [live, ...remote] = await Promise.allSettled([
         terminalApi.listLive(),
@@ -98,7 +112,9 @@ export function BackgroundSessions({
       const errors: string[] = [];
       if (live.status === "fulfilled") {
         for (const tab of live.value as LiveTabInfo[]) {
-          known.add(tab.tabId);
+          const key = backgroundTabKey(tab);
+          if (known.has(key)) continue;
+          known.add(key);
           if (tab.subscribers === 0 && !tab.exited) list.push(tab);
         }
       } else {
@@ -111,8 +127,9 @@ export function BackgroundSessions({
           continue;
         }
         for (const tab of result.value as Awaited<ReturnType<typeof terminalApi.listDurable>>) {
-          if (tab.dead || known.has(tab.id)) continue;
-          known.add(tab.id);
+          const key = backgroundTabKey({ sessionId: session.id, tabId: tab.id });
+          if (tab.dead || known.has(key)) continue;
+          known.add(key);
           list.push({
             tabId: tab.id,
             sessionId: session.id,
@@ -136,17 +153,18 @@ export function BackgroundSessions({
     } finally {
       if (generation === loadGenerationRef.current) setLoading(false);
     }
-  }, [hostSessionId, showAll, sessions]);
+  }, [hostSessionId, showAll, sessions, remoteOwner, ownerWorkspace?.assetId, ownerWorkspace?.assetKind]);
 
   useEffect(() => {
     ownerGenerationRef.current += 1;
     setItems(null);
     setError(null);
     setBusy({});
+    setReconnecting(false);
     return () => {
       ownerGenerationRef.current += 1;
     };
-  }, [workspaceId, hostSessionId, showAll]);
+  }, [workspaceId, hostSessionId, showAll, ownerWorkspace?.assetId, ownerWorkspace?.assetKind]);
 
   useEffect(() => {
     if (!visible || (!hostSessionId && !showAll)) return;
@@ -160,13 +178,20 @@ export function BackgroundSessions({
 
   const takeOver = async (info: BackgroundTab) => {
     const ownerGeneration = ownerGenerationRef.current;
-    setBusy((b) => ({ ...b, [info.tabId]: "takeover" }));
+    const key = backgroundTabKey(info);
+    setBusy((b) => ({ ...b, [key]: "takeover" }));
     try {
       const list = await sessionApi.list();
       if (ownerGeneration !== ownerGenerationRef.current) return;
+      const session = list.find((s) => s.id === info.sessionId);
+      if (!session || session.status !== "connected") {
+        throw new Error("目标主机会话未连接，请先重连后再接管");
+      }
+      if (remoteOwner && (session.assetId !== ownerWorkspace?.assetId || session.kind !== ownerWorkspace.assetKind)) {
+        throw new Error("目标会话不属于当前主机，请重新连接后再接管");
+      }
       const st = useUi.getState();
       st.setSessions(list);
-      const session = list.find((s) => s.id === info.sessionId);
       st.addTab({
         id: nextTabId(`term-${info.sessionId}`),
         kind: "terminal",
@@ -176,7 +201,7 @@ export function BackgroundSessions({
         tabId: info.tabId,
         closable: true,
       });
-      setItems((prev) => (prev ? prev.filter((t) => t.tabId !== info.tabId) : prev));
+      setItems((prev) => (prev ? prev.filter((t) => backgroundTabKey(t) !== key) : prev));
       pushToast("info", `已接管「${session?.name ?? info.sessionName}」的终端`);
     } catch (e) {
       if (ownerGeneration === ownerGenerationRef.current) {
@@ -186,30 +211,60 @@ export function BackgroundSessions({
       if (ownerGeneration === ownerGenerationRef.current) {
         setBusy((b) => {
           const next = { ...b };
-          delete next[info.tabId];
+          delete next[key];
           return next;
         });
       }
     }
   };
 
+  const reconnectHost = async () => {
+    if (!needsReconnect || !ownerWorkspace?.assetId || reconnecting) return;
+    const ownerGeneration = ownerGenerationRef.current;
+    setReconnecting(true);
+    setError(null);
+    try {
+      const fresh = hostSession && !hostIdentityMismatch
+        ? await reconnectSessionAndWait(hostSession)
+        : await reconnectDeadHost(ownerWorkspace);
+      if (ownerGeneration !== ownerGenerationRef.current) return;
+      if (!fresh) {
+        pushToast("info", "已取消重连");
+        return;
+      }
+      if (fresh.kind !== ownerWorkspace.assetKind || fresh.assetId !== ownerWorkspace.assetId) {
+        throw new Error("重连结果与当前主机不匹配");
+      }
+      const st = useUi.getState();
+      st.setSessions([...st.sessions.filter((session) => session.id !== fresh.id), fresh]);
+      if (ownerWorkspace.sessionId !== fresh.id) st.updateWorkspaceSession(ownerWorkspace.id, fresh.id);
+      pushToast("success", `已连接「${fresh.name}」，正在查找持久终端`);
+    } catch (cause) {
+      if (ownerGeneration === ownerGenerationRef.current) {
+        pushToast("error", `重连主机失败：${describeError(cause)}`);
+      }
+    } finally {
+      if (ownerGeneration === ownerGenerationRef.current) setReconnecting(false);
+    }
+  };
+
   const kill = async (info: BackgroundTab) => {
     const ownerGeneration = ownerGenerationRef.current;
+    const key = backgroundTabKey(info);
     const ok = await ask(
       `结束「${info.sessionName}」的后台终端？\n\n其中的进程将终止，且无法恢复`,
       { title: "结束进程", kind: "warning" },
     );
     if (!ok || ownerGeneration !== ownerGenerationRef.current) return;
-    setBusy((b) => ({ ...b, [info.tabId]: "kill" }));
-    setItems((prev) => (prev ? prev.filter((t) => t.tabId !== info.tabId) : prev));
+    setBusy((b) => ({ ...b, [key]: "kill" }));
+    setItems((prev) => (prev ? prev.filter((t) => backgroundTabKey(t) !== key) : prev));
     try {
-      if (info.remote) await terminalApi.closeTab(info.tabId, "kill", info.sessionId);
-      else await terminalApi.closeTab(info.tabId, "kill");
+      await terminalApi.closeTab(info.tabId, "kill", info.sessionId);
       if (ownerGeneration === ownerGenerationRef.current) pushToast("success", "已结束进程");
     } catch (e) {
       if (ownerGeneration === ownerGenerationRef.current) {
         setItems((prev) => {
-          if (prev?.some((t) => t.tabId === info.tabId)) return prev;
+          if (prev?.some((t) => backgroundTabKey(t) === key)) return prev;
           return [...(prev ?? []), info];
         });
         pushToast("error", `结束进程失败：${describeError(e)}`);
@@ -219,14 +274,14 @@ export function BackgroundSessions({
       if (ownerGeneration === ownerGenerationRef.current) {
         setBusy((b) => {
           const next = { ...b };
-          delete next[info.tabId];
+          delete next[key];
           return next;
         });
       }
     }
   };
 
-  if (!hostSessionId && !showAll) {
+  if (!hostSessionId && !showAll && !needsReconnect) {
     return (
       <div className="nx-pane" data-background-view="local">
         <div className="nx-toolbar">
@@ -242,8 +297,30 @@ export function BackgroundSessions({
 
   const effectiveScope = hostSessionId ?? "";
   const all = items ?? [];
-  const list = effectiveScope ? all.filter((t) => t.sessionId === effectiveScope) : all;
+  const list = effectiveScope && !hostIdentityMismatch
+    ? all.filter((t) => t.sessionId === effectiveScope)
+    : effectiveScope
+      ? []
+      : all;
   const count = list.length;
+
+  if (!hostSessionId && needsReconnect) {
+    return (
+      <div className="nx-pane" data-background-view="local">
+        <div className="nx-toolbar">
+          <IconActivity size={14} className="text-neutral-500" />
+          <span className="nx-toolbar-title">后台会话</span>
+          <span className="nx-hint">主机：{hostName}</span>
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-[12px] text-neutral-400">
+          <span>这台主机尚未连接，重连后才能查找持久终端</span>
+          <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={reconnecting} onClick={() => void reconnectHost()}>
+            {reconnecting ? "正在重连…" : "重连并查找"}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="nx-pane" data-background-view="local">
@@ -259,6 +336,11 @@ export function BackgroundSessions({
           {items === null ? (error ? "读取失败" : "加载中…") : runningCopy(count)}
         </span>
         <div className="nx-spacer" />
+        {needsReconnect && (
+          <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={reconnecting} onClick={() => void reconnectHost()}>
+            {reconnecting ? "正在重连…" : "重连并查找"}
+          </button>
+        )}
         <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={loading} onClick={() => void load()}>
           <IconRefresh size={13} className={loading ? "animate-spin" : ""} />
           刷新
@@ -297,10 +379,11 @@ export function BackgroundSessions({
               </>
             )}
             {list.map((t) => {
-              const action = busy[t.tabId];
+              const key = backgroundTabKey(t);
+              const action = busy[key];
               const rowBusy = action !== undefined;
               return (
-                <tr key={t.tabId}>
+                <tr key={key}>
                   <td className="truncate font-medium text-neutral-200" title={t.sessionName}>
                     {t.sessionName}
                   </td>
@@ -351,9 +434,17 @@ export function BackgroundSessions({
             {!error && items !== null && list.length === 0 && (
               <tr>
                 <td colSpan={4} className="nx-table-empty">
-                  当前主机没有在后台运行的终端
+                  {needsReconnect
+                    ? "主机未连接，重连后才能查找远端持久终端"
+                    : remoteOwner
+                      ? "当前没有可查看的后台终端"
+                      : "当前主机没有在后台运行的终端"}
                   <div className="mt-1.5 text-[11px] text-neutral-500">
-                    关闭运行中的 SSH 终端标签不会终止进程；AI 以后台方式创建的终端（含本机）也会列在这里，之后可在此接管
+                    {needsReconnect
+                      ? "持久终端仍可能在目标主机运行，重连成功后会自动刷新列表"
+                      : ownerWorkspace?.assetKind === "ssh" && remoteOwner
+                        ? "如果该 SSH 资产已切换为普通终端，已有持久会话不会被删除；切回「自动」后可在这里查看并接管"
+                        : "关闭运行中的 SSH 或受管设备终端标签不会终止进程；AI 以后台方式创建的终端（含本机）也会列在这里，之后可在此接管"}
                   </div>
                 </td>
               </tr>

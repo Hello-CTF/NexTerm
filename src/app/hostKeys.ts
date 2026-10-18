@@ -49,24 +49,47 @@ export function confirmHostKey(detail: HostKeyDetail | undefined): Promise<boole
   return promise;
 }
 
-export async function trustPresentedHostKey(detail: HostKeyDetail | undefined): Promise<boolean> {
+function ensureCurrent(isCurrent?: () => boolean): void {
+  if (isCurrent && !isCurrent()) {
+    throw { code: "account_changed", message: "账号已切换，旧连接已取消" };
+  }
+}
+
+export async function trustPresentedHostKey(detail: HostKeyDetail | undefined, isCurrent?: () => boolean): Promise<boolean> {
   if (!detail?.host || !detail?.port || !detail?.keyType || !detail?.fingerprint) return false;
+  ensureCurrent(isCurrent);
   await assetApi.knownHostAccept(detail.host, detail.port, detail.keyType, detail.fingerprint);
   return true;
 }
 
-export async function connectWithHostKeyConfirm<T>(connect: () => Promise<T>): Promise<T | null> {
+export async function connectWithHostKeyConfirm<T>(connect: () => Promise<T>, isCurrent?: () => boolean): Promise<T | null> {
   try {
+    ensureCurrent(isCurrent);
     return await connect();
   } catch (e) {
+    ensureCurrent(isCurrent);
     const pending = hostKeyPendingError(e);
     if (!pending) throw e;
-    if (!(await confirmHostKey(pending.detail))) return null;
-    if (!(await trustPresentedHostKey(pending.detail))) throw e;
+    const confirmed = await confirmHostKey(pending.detail);
+    ensureCurrent(isCurrent);
+    if (!confirmed) return null;
+    if (!(await trustPresentedHostKey(pending.detail, isCurrent))) throw e;
     try {
+      ensureCurrent(isCurrent);
       return await connect();
     } catch (retryError) {
-      if (hostKeyPendingError(retryError) !== null) return null;
+      const retryPending = hostKeyPendingError(retryError);
+      if (retryPending) {
+        const detail = retryPending.detail;
+        if (!detail?.host || !detail.port || !detail.fingerprint) throw retryPending;
+        const previous = (detail?.known ?? []).map((key) => key.fingerprint).filter(Boolean).join("、");
+        throw {
+          ...retryPending,
+          message: detail?.changed
+            ? `主机密钥确认后仍发生变更：${detail.host}:${detail.port}，原指纹 ${previous}，当前指纹 ${detail.fingerprint}。请核对主机后重试。`
+            : `主机密钥确认后仍待验证：${detail?.host}:${detail?.port}，当前指纹 ${detail?.fingerprint}。请核对主机后重试。`,
+        };
+      }
       throw retryError;
     }
   }
@@ -86,19 +109,27 @@ export function hostKeyDetailFromProbe(probe: SshHostKeyProbeDto): HostKeyDetail
 export async function confirmHostKeyIfNeeded(
   assetId: string,
   kind: string | undefined,
+  isCurrent?: () => boolean,
 ): Promise<boolean> {
   if (kind !== "ssh" && kind !== "docker") return true;
+  ensureCurrent(isCurrent);
   let probe: SshHostKeyProbeDto;
   try {
     probe = await sessionApi.probeHostKey(assetId);
   } catch (e) {
+    ensureCurrent(isCurrent);
     const pending = hostKeyPendingError(e);
     if (!pending) return true;
-    if (!(await confirmHostKey(pending.detail))) return false;
-    return trustPresentedHostKey(pending.detail);
+    const confirmed = await confirmHostKey(pending.detail);
+    ensureCurrent(isCurrent);
+    if (!confirmed) return false;
+    return trustPresentedHostKey(pending.detail, isCurrent);
   }
+  ensureCurrent(isCurrent);
   if (probe.state === "known") return true;
   const detail = hostKeyDetailFromProbe(probe);
-  if (!(await confirmHostKey(detail))) return false;
-  return trustPresentedHostKey(detail);
+  const confirmed = await confirmHostKey(detail);
+  ensureCurrent(isCurrent);
+  if (!confirmed) return false;
+  return trustPresentedHostKey(detail, isCurrent);
 }

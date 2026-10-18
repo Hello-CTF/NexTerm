@@ -36,7 +36,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   mocks.list.mockResolvedValue([
-    { id: "m1", localPoint: "Z:", remote: "\\\\nas\\share", sessionId: "s1", createdAt: 1 },
+    { id: "m1", localPoint: "Z:", remote: "\\\\nas\\share", sessionId: "s1", managed: true, createdAt: 1 },
   ]);
   mocks.remove.mockResolvedValue(undefined);
   useUi.setState({ pushToast: mocks.toast, sessions: [], appDialog: null });

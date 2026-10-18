@@ -25,13 +25,14 @@ const mocks = vi.hoisted(() => ({
   probe: vi.fn(),
   assetDelete: vi.fn(),
   ask: vi.fn(),
+  choice: vi.fn(),
   pickKeyFile: vi.fn(),
   toast: vi.fn(),
 }));
 
 vi.mock("../../ui/dialogs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ui/dialogs")>();
-  return { ...actual, ask: mocks.ask, pickKeyFile: mocks.pickKeyFile };
+  return { ...actual, ask: mocks.ask, askChoice: mocks.choice, pickKeyFile: mocks.pickKeyFile };
 });
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
@@ -64,6 +65,8 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 
 import { AssetTree, AssetEditor } from "../../features/explorer/AssetTree";
 import { useUi } from "../../app/store";
+
+const originalCloseWorkspace = useUi.getState().closeWorkspace;
 
 const GROUP = {
   id: "g1",
@@ -127,11 +130,13 @@ beforeEach(() => {
   mocks.listCredentials.mockResolvedValue([]);
   mocks.snippetList.mockResolvedValue([]);
   mocks.ask.mockResolvedValue(true);
+  mocks.choice.mockResolvedValue(null);
   useUi.setState({ leftOpen: true, pushToast: mocks.toast, workspaces: [], sessions: [] });
 });
 afterEach(() => {
   mounted?.unmount();
   mounted = undefined;
+  useUi.setState({ closeWorkspace: originalCloseWorkspace });
   document.body.style.overflow = "";
 });
 
@@ -445,6 +450,89 @@ describe("asset delete failure", () => {
     clickButton(mounted!.container, "知道了");
     await flush();
     expect(mounted!.container.textContent).not.toContain("disk on fire");
+  });
+});
+
+describe("asset deletion with an open workspace", () => {
+  function openAssetWorkspace() {
+    useUi.setState({
+      workspaces: [{
+        id: "ws-a1",
+        kind: "session",
+        title: "web-1",
+        assetId: "a1",
+        panes: [{ id: "p1", tabs: [], activeTabId: null }],
+        activePaneId: "p1",
+        splitRatio: 0.5,
+        closable: true,
+      }],
+    });
+  }
+
+  async function showAsset() {
+    mocks.list.mockResolvedValue([{ ...WEB }]);
+    openAssetWorkspace();
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+  }
+
+  it("offers an explicit choice and leaves the asset untouched when cancelled", async () => {
+    await showAsset();
+    click(buttonByTitle(mounted!.container, "删除"));
+    await waitFor(() => expect(mocks.choice).toHaveBeenCalledOnce());
+    expect(mocks.choice).toHaveBeenCalledWith(
+      expect.stringContaining("当前有 1 个工作区"),
+      expect.objectContaining({
+        level: "warning",
+        choices: expect.arrayContaining([
+          expect.objectContaining({ key: "keep" }),
+          expect.objectContaining({ key: "close" }),
+        ]),
+      }),
+    );
+    expect(mocks.assetDelete).not.toHaveBeenCalled();
+    expect(useUi.getState().workspaces).toHaveLength(1);
+  });
+
+  it("keeps the open workspace when that option is chosen", async () => {
+    mocks.choice.mockResolvedValueOnce("keep");
+    const close = vi.fn(async () => true);
+    useUi.setState({ closeWorkspace: close });
+    await showAsset();
+    click(buttonByTitle(mounted!.container, "删除"));
+    await waitFor(() => expect(mocks.assetDelete).toHaveBeenCalledWith("a1"));
+    expect(close).not.toHaveBeenCalled();
+    await waitFor(() => expect(useUi.getState().workspaces[0]).toMatchObject({ id: "ws-a1", deletedTarget: true }));
+  });
+
+  it("does not delete when closing the workspace is cancelled", async () => {
+    mocks.choice.mockResolvedValueOnce("close");
+    const close = vi.fn(async () => false);
+    useUi.setState({ closeWorkspace: close });
+    await showAsset();
+    click(buttonByTitle(mounted!.container, "删除"));
+    await waitFor(() => expect(close).toHaveBeenCalledWith("ws-a1"));
+    expect(mocks.assetDelete).not.toHaveBeenCalled();
+    expect(useUi.getState().workspaces).toHaveLength(1);
+  });
+
+  it("reports deletion failure after closing and retries without another choice", async () => {
+    mocks.choice.mockResolvedValueOnce("close");
+    mocks.assetDelete.mockRejectedValueOnce({ code: "internal", message: "disk on fire" });
+    const close = vi.fn(async () => {
+      useUi.setState({ workspaces: [] });
+      return true;
+    });
+    useUi.setState({ closeWorkspace: close });
+    await showAsset();
+    click(buttonByTitle(mounted!.container, "删除"));
+    await waitFor(() => expect(mocks.assetDelete).toHaveBeenCalledTimes(1));
+    await flush();
+    expect(mounted!.container.textContent).toContain("已关闭的工作区可从资产列表重新打开");
+    clickButton(mounted!.container, "重试");
+    await waitFor(() => expect(mocks.assetDelete).toHaveBeenCalledTimes(2));
+    expect(mocks.choice).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
   });
 });
 

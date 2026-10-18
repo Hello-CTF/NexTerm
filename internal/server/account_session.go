@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -66,30 +67,50 @@ func sessionCookie(r *http.Request) (string, bool) {
 	return cookie.Value, true
 }
 
-func requestTLS(r *http.Request) bool {
-	return r.TLS != nil
+func (s *Server) requestTLS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	forwardedProto := r.Header.Values("X-Forwarded-Proto")
+	if len(forwardedProto) != 1 || forwardedProto[0] != "https" {
+		return false
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	for _, proxy := range s.trustedProxyCIDRs {
+		if proxy.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
-func setSessionCookie(w http.ResponseWriter, r *http.Request, token string) {
+func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, token string) {
 	cookie := &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   requestTLS(r),
+		Secure:   s.requestTLS(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(account.SessionAbsoluteTTL / time.Second),
 	}
 	http.SetCookie(w, cookie)
 }
 
-func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+func (s *Server) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   requestTLS(r),
+		Secure:   s.requestTLS(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
@@ -101,6 +122,34 @@ func clientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+func sessionClientName(r *http.Request) string {
+	switch strings.ToLower(strings.TrimSpace(r.Header.Get("X-NexTerm-Client"))) {
+	case "desktop":
+		return "NexTerm 桌面端"
+	case "browser":
+		return "浏览器"
+	case "mobile":
+		return "NexTerm 移动端"
+	}
+	userAgent := strings.ToLower(r.UserAgent())
+	switch {
+	case strings.Contains(userAgent, "nexterm") || strings.Contains(userAgent, "wails"):
+		return "NexTerm 桌面端"
+	case strings.Contains(userAgent, "edg/"):
+		return "Microsoft Edge"
+	case strings.Contains(userAgent, "chrome/") || strings.Contains(userAgent, "chromium/"):
+		return "Chrome 浏览器"
+	case strings.Contains(userAgent, "firefox/"):
+		return "Firefox 浏览器"
+	case strings.Contains(userAgent, "safari/"):
+		return "Safari 浏览器"
+	case userAgent != "":
+		return "浏览器或客户端"
+	default:
+		return "未识别会话"
+	}
 }
 
 func loginThrottleKey(r *http.Request, username string) string {

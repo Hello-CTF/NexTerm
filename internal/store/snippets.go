@@ -24,6 +24,11 @@ func (s *Store) SnippetList(ctx context.Context) ([]SnippetRow, error) {
 }
 
 func (s *Store) SnippetCreate(ctx context.Context, name, body string, groupID *string, sort int64) (SnippetRow, error) {
+	if groupID != nil {
+		if _, err := s.groupReference(ctx, s.db, *groupID); err != nil {
+			return SnippetRow{}, err
+		}
+	}
 	id := ids.New()
 	now := ids.NowMS()
 	row := SnippetRow{ID: id, GroupID: groupID, Name: name, Body: body, Sort: sort, CreatedAt: now, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}
@@ -71,6 +76,11 @@ func (s *Store) SnippetUpdateFields(ctx context.Context, id string, patch Snippe
 	row, err := s.SnippetGet(ctx, id)
 	if err != nil {
 		return err
+	}
+	if patch.GroupID.Set && patch.GroupID.Value != nil {
+		if _, err := s.groupReference(ctx, s.db, *patch.GroupID.Value); err != nil {
+			return err
+		}
 	}
 	row.Name = patch.Name
 	row.Body = patch.Body

@@ -41,6 +41,10 @@ func IPCError(err error) *ipc.Error {
 		return ipc.WrapError(ipc.CodeNotFound, userMessage(err), err)
 	case errors.Is(err, ErrDisconnected), errors.Is(err, base.ErrDisconnected), errors.Is(err, ErrSessionClosed), errors.Is(err, ErrTabClosed):
 		return ipc.WrapError(ipc.CodeDisconnected, userMessage(err), err)
+	case errors.Is(err, ErrDurableDisabled):
+		return ipc.WrapError(ipc.CodeUnsupported, userMessage(err), err)
+	case errors.Is(err, ErrAmbiguousDurable):
+		return ipc.WrapError(ipc.CodeBadParam, userMessage(err), err)
 	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported), errors.Is(err, durable.ErrUnavailable):
 		return ipc.WrapError(ipc.CodeUnsupported, userMessage(err), err)
 	case errors.Is(err, ErrInvalidSize), errors.Is(err, ErrHidden), errors.Is(err, ErrInvalidOptions), errors.Is(err, ErrInvalidTitle), errors.Is(err, ErrTabExists), errors.Is(err, durable.ErrInvalidInput), errors.Is(err, durable.ErrAlreadyExists), errors.Is(err, hub.ErrInvalidChannel):
@@ -72,6 +76,10 @@ func userMessage(err error) string {
 		return "终端标签页已关闭，请重新打开"
 	case errors.Is(err, ErrDisconnected), errors.Is(err, base.ErrDisconnected):
 		return "会话已断开，请重新连接"
+	case errors.Is(err, ErrDurableDisabled):
+		return "该 SSH 资产已设置为普通终端；要恢复旧持久终端，请在资产高级选项中改回自动模式"
+	case errors.Is(err, ErrAmbiguousDurable):
+		return "多个已连接主机存在同一持久终端，请指定会话后重试"
 	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported), errors.Is(err, durable.ErrUnavailable):
 		return "当前会话不支持此操作"
 	case errors.Is(err, ErrInvalidSize):

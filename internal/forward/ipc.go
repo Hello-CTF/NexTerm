@@ -37,9 +37,19 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 	}); err != nil {
 		return err
 	}
+	if err := ipc.Register(dispatcher, "forward_retry", func(ctx context.Context, _ *ipc.Call, input retryRequest) (Spec, error) {
+		return s.RetryFor(forwardRequestContext(ctx), input.ID, input.SessionID)
+	}); err != nil {
+		return err
+	}
 	return ipc.Register(dispatcher, "forward_remove", func(ctx context.Context, _ *ipc.Call, input removeRequest) (any, error) {
 		return nil, s.RemoveFor(forwardRequestContext(ctx), input.ID)
 	})
+}
+
+type retryRequest struct {
+	ID        string `json:"id"`
+	SessionID string `json:"sessionId,omitempty"`
 }
 
 func forwardRequestContext(ctx context.Context) context.Context {

@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
   listLive: vi.fn(),
   listSessions: vi.fn(),
+  closeTab: vi.fn(),
+  write: vi.fn(),
 }));
 
 vi.mock("../../app/platform", () => ({
@@ -38,7 +40,8 @@ vi.mock("../../ipc/commands", () => ({
   },
   terminalApi: {
     listLive: mocks.listLive,
-    write: vi.fn().mockResolvedValue(undefined),
+    write: mocks.write,
+    closeTab: mocks.closeTab,
     detach: vi.fn().mockResolvedValue(undefined),
     setVisible: vi.fn().mockResolvedValue(undefined),
   },
@@ -150,13 +153,14 @@ function storeTab(): AppTab | undefined {
     .workspaces[0]?.panes[0]?.tabs.find((candidate) => candidate.id === "t1");
 }
 
-function mountPane(): MountedView {
+function mountPane(containerId?: string): MountedView {
   return mount(
     createElement(TerminalPane, {
       sessionId: "s1",
       title: "web-01",
       storeTabId: "t1",
       resumeTabId: "kernel-1",
+      containerId,
     }),
   );
 }
@@ -224,6 +228,8 @@ describe("terminal dead-tab overlay", () => {
     document.body.replaceChildren();
     harness.props = null;
     mocks.listLive.mockResolvedValue([]);
+    mocks.write.mockResolvedValue(undefined);
+    mocks.closeTab.mockResolvedValue(undefined);
     mocks.connect.mockResolvedValue({
       id: "s2",
       assetId: "asset-1",
@@ -413,7 +419,7 @@ describe("terminal dead-tab overlay", () => {
     expect(storeTab()?.tabId).toBe("kernel-1");
   });
 
-  it("keeps the overlay for a container exec tab even when the session is connected", async () => {
+  it("marks a missing container exec as ended and offers an explicit new process", async () => {
     seedTab({ containerId: "c1" });
     useUi.setState({
       sessions: [
@@ -441,8 +447,9 @@ describe("terminal dead-tab overlay", () => {
 
     failAttach("not_found");
 
-    await waitFor(() => expect(overlay()).not.toBeNull());
-    expect(storeTab()?.dead).toBe(true);
+    await waitFor(() => expect(mounted?.container.textContent).toContain("容器 exec 已中断"));
+    expect(storeTab()?.dead).not.toBe(true);
+    expect(storeTab()?.exited).toBe(true);
     expect(storeTab()?.tabId).toBe("kernel-1");
   });
 
@@ -667,5 +674,50 @@ describe("terminal dead-tab context menu reconnect", () => {
     expect(mocks.reconnect).not.toHaveBeenCalled();
     await waitFor(() => expect(storeTab()?.sessionId).toBe("s2"));
     expect(storeTab()?.dead).not.toBe(true);
+  });
+
+  it("ends container exec on host reconnect and only starts a new process after an explicit retry", async () => {
+    seedTab({ containerId: "container-1", tabId: undefined }, { assetId: "asset-1", assetKind: "docker" });
+    useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, status: "connected" as const })) }));
+    mounted = mountPane("container-1");
+    await flush();
+    act(() => {
+      (harness.props?.onAttach as ((id: string) => void) | undefined)?.("exec-1");
+    });
+    await waitFor(() => expect(storeTab()?.tabId).toBe("exec-1"));
+
+    act(() => {
+      useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, status: "reconnecting" as const })) }));
+    });
+    await waitFor(() => expect(mounted?.container.textContent).toContain("容器 exec 已中断"));
+    expect(storeTab()?.exited).toBe(true);
+    expect(mocks.closeTab).toHaveBeenCalledWith("exec-1", "kill", "s1");
+    act(() => {
+      (harness.props?.onData as ((text: string) => void) | undefined)?.("unsafe-input\n");
+    });
+    expect(mocks.write).not.toHaveBeenCalled();
+
+    act(() => {
+      useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, status: "connected" as const })) }));
+    });
+    expect(mounted.container.textContent).toContain("原进程和输入不能恢复");
+    expect(storeTab()?.tabId).toBe("exec-1");
+    clickButton(mounted.container, "重新打开 exec");
+    await waitFor(() => expect(storeTab()?.exited).toBe(false));
+    expect(storeTab()?.tabId).toBeUndefined();
+  });
+
+  it("does not restart a container exec against a changed asset", async () => {
+    seedTab({ containerId: "container-1", tabId: undefined }, { assetId: "asset-1", assetKind: "docker" });
+    useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, status: "connected" as const })) }));
+    mounted = mountPane("container-1");
+    await flush();
+    failAttach("interrupted");
+    act(() => {
+      useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, assetId: "asset-2" })) }));
+    });
+    await waitFor(() => expect(mounted?.container.textContent).toContain("原主机已改变"));
+    const retry = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent?.includes("重新打开 exec"));
+    expect(retry?.disabled).toBe(true);
   });
 });

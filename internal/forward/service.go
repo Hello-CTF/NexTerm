@@ -20,6 +20,7 @@ import (
 
 type Service struct {
 	provider         DialerProvider
+	sessionHost      func(context.Context, string) (string, error)
 	env              Environment
 	reconnect        ReconnectPolicy
 	dialTimeout      time.Duration
@@ -63,6 +64,7 @@ func NewService(config Config) *Service {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Service{
 		provider:         config.Provider,
+		sessionHost:      config.SessionHost,
 		env:              config.Policy.Environment(),
 		reconnect:        reconnect,
 		dialTimeout:      config.DialTimeout,
@@ -111,9 +113,13 @@ func (s *Service) CreateLocal(ctx context.Context, args CreateLocalArgs) (Spec, 
 	if _, err := s.validateSession(ctx, args.SessionID); err != nil {
 		return Spec{}, err
 	}
+	hostID, err := s.hostFor(ctx, args.SessionID)
+	if err != nil {
+		return Spec{}, err
+	}
 	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
 	target := net.JoinHostPort(host, strconv.Itoa(int(args.TargetPort)))
-	return s.create(ctx, args.SessionID, KindLocal, args.ListenPort, target, &host, &args.TargetPort)
+	return s.create(ctx, args.SessionID, hostID, KindLocal, args.ListenPort, target, &host, &args.TargetPort)
 }
 
 func (s *Service) CreateSocks(ctx context.Context, args CreateSocksArgs) (Spec, error) {
@@ -133,7 +139,11 @@ func (s *Service) CreateSocks(ctx context.Context, args CreateSocksArgs) (Spec, 
 	if _, err := s.validateSession(ctx, args.SessionID); err != nil {
 		return Spec{}, err
 	}
-	return s.create(ctx, args.SessionID, KindSOCKS, args.ListenPort, "", nil, nil)
+	hostID, err := s.hostFor(ctx, args.SessionID)
+	if err != nil {
+		return Spec{}, err
+	}
+	return s.create(ctx, args.SessionID, hostID, KindSOCKS, args.ListenPort, "", nil, nil)
 }
 
 func (s *Service) CreateRemote(ctx context.Context, args CreateRemoteArgs) (Spec, error) {
@@ -166,12 +176,27 @@ func (s *Service) CreateRemote(ctx context.Context, args CreateRemoteArgs) (Spec
 	if err != nil {
 		return Spec{}, err
 	}
+	hostID, err := s.hostFor(ctx, args.SessionID)
+	if err != nil {
+		return Spec{}, err
+	}
 	if _, ok := dialer.(RemoteListener); !ok {
 		return Spec{}, ipc.NewError(ipc.CodeUnsupported, "当前会话类型不支持远程监听")
 	}
 	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
 	target := net.JoinHostPort(host, strconv.Itoa(int(args.TargetPort)))
-	return s.createRemote(ctx, dialer, args.SessionID, bindHost, args.BindPort, target, &host, &args.TargetPort)
+	return s.createRemote(ctx, dialer, args.SessionID, hostID, bindHost, args.BindPort, target, &host, &args.TargetPort)
+}
+
+func (s *Service) hostFor(ctx context.Context, sessionID string) (string, error) {
+	if s.sessionHost == nil {
+		return "", nil
+	}
+	hostID, err := s.sessionHost(ctx, sessionID)
+	if err != nil {
+		return "", session.IPCError(err)
+	}
+	return hostID, nil
 }
 
 func (s *Service) available() error {
@@ -210,7 +235,7 @@ func (s *Service) currentDialer(ctx context.Context, sessionID string) (base.Dia
 	return s.provider.CurrentDialer(ctx, sessionID)
 }
 
-func (s *Service) createRemote(ctx context.Context, dialer base.Dialer, sessionID, bindHost string, bindPort uint16, target string, targetHost *string, targetPort *uint16) (Spec, error) {
+func (s *Service) createRemote(ctx context.Context, dialer base.Dialer, sessionID, hostID, bindHost string, bindPort uint16, target string, targetHost *string, targetPort *uint16) (Spec, error) {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -222,10 +247,10 @@ func (s *Service) createRemote(ctx context.Context, dialer base.Dialer, sessionI
 	if err != nil {
 		return Spec{}, ipc.WrapError(ipc.CodeIO, "远端监听端口失败: "+err.Error(), err)
 	}
-	return s.start(ctx, sessionID, KindRemote, listener, bindHost, target, targetHost, targetPort)
+	return s.start(ctx, sessionID, hostID, KindRemote, listener, bindHost, target, targetHost, targetPort)
 }
 
-func (s *Service) create(ctx context.Context, sessionID, kind string, listenPort uint16, target string, targetHost *string, targetPort *uint16) (Spec, error) {
+func (s *Service) create(ctx context.Context, sessionID, hostID, kind string, listenPort uint16, target string, targetHost *string, targetPort *uint16) (Spec, error) {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -238,10 +263,10 @@ func (s *Service) create(ctx context.Context, sessionID, kind string, listenPort
 	if err != nil {
 		return Spec{}, ipc.WrapError(ipc.CodeIO, "监听转发端口失败: "+err.Error(), err)
 	}
-	return s.start(ctx, sessionID, kind, listener, s.env.ListenHost, target, targetHost, targetPort)
+	return s.start(ctx, sessionID, hostID, kind, listener, s.env.ListenHost, target, targetHost, targetPort)
 }
 
-func (s *Service) start(requestCtx context.Context, sessionID, kind string, listener net.Listener, listenHost, target string, targetHost *string, targetPort *uint16) (Spec, error) {
+func (s *Service) start(requestCtx context.Context, sessionID, hostID, kind string, listener net.Listener, listenHost, target string, targetHost *string, targetPort *uint16) (Spec, error) {
 	_, portText, err := net.SplitHostPort(listener.Addr().String())
 	if err != nil {
 		_ = listener.Close()
@@ -254,26 +279,11 @@ func (s *Service) start(requestCtx context.Context, sessionID, kind string, list
 	}
 
 	id := ids.New()
-	ctx, cancel := context.WithCancel(context.WithoutCancel(requestCtx))
-	stopServiceCancel := context.AfterFunc(s.ctx, cancel)
-	f := &forwarder{
-		id:        id,
-		sessionID: sessionID,
-		owner:     ipc.OwnerID(requestCtx),
-		kind:      kind,
-		target:    target,
-		service:   s,
-		listener:  listener,
-		ctx:       ctx,
-		cancel: func() {
-			stopServiceCancel()
-			cancel()
-		},
-		conns: make(map[net.Conn]struct{}),
-	}
-	f.spec = Spec{
+	spec := Spec{
 		ID:         id,
 		SessionID:  sessionID,
+		HostID:     hostID,
+		Status:     StatusActive,
 		ListenHost: listenHost,
 		ListenPort: uint16(port),
 		TargetHost: targetHost,
@@ -281,6 +291,7 @@ func (s *Service) start(requestCtx context.Context, sessionID, kind string, list
 		Kind:       kind,
 		CreatedAt:  s.now().UnixMilli(),
 	}
+	f := s.newForwarder(requestCtx, spec, ipc.OwnerID(requestCtx), target, listener)
 
 	f.wg.Add(1)
 	s.mu.Lock()
@@ -294,7 +305,40 @@ func (s *Service) start(requestCtx context.Context, sessionID, kind string, list
 	s.mu.Unlock()
 
 	go f.acceptLoop()
-	return f.spec, nil
+	if _, err := s.validateSession(requestCtx, sessionID); err != nil {
+		s.discard(f)
+		return Spec{}, err
+	}
+	s.mu.Lock()
+	current := s.forwards[id] == f && f.spec.Status == StatusActive
+	s.mu.Unlock()
+	if !current {
+		s.discard(f)
+		return Spec{}, ipc.NewError(ipc.CodeIO, "会话已断开，转发监听未启动")
+	}
+	return spec, nil
+}
+
+func (s *Service) discard(f *forwarder) {
+	s.mu.Lock()
+	if s.forwards[f.id] == f {
+		delete(s.forwards, f.id)
+	}
+	s.mu.Unlock()
+	if err := f.stopAndWait(); err != nil {
+		s.report(fmt.Errorf("转发 %s 监听关闭失败: %w", f.id, err))
+	}
+}
+
+func (s *Service) newForwarder(requestCtx context.Context, spec Spec, owner, target string, listener net.Listener) *forwarder {
+	ctx, cancel := context.WithCancel(context.WithoutCancel(requestCtx))
+	stopServiceCancel := context.AfterFunc(s.ctx, cancel)
+	return &forwarder{
+		id: spec.ID, sessionID: spec.SessionID, owner: owner, kind: spec.Kind, target: target,
+		service: s, listener: listener, ctx: ctx,
+		cancel: func() { stopServiceCancel(); cancel() },
+		conns:  make(map[net.Conn]struct{}), spec: spec,
+	}
 }
 
 func (s *Service) List() []Spec {
@@ -324,6 +368,173 @@ func (s *Service) Remove(id string) error {
 
 func (s *Service) RemoveFor(ctx context.Context, id string) error {
 	return s.remove(ipc.OwnerID(ctx), id)
+}
+
+func (s *Service) RetryFor(ctx context.Context, id, sessionID string) (Spec, error) {
+	return s.retry(ctx, ipc.OwnerID(ctx), id, sessionID)
+}
+
+func (s *Service) retry(ctx context.Context, owner, id, requestedSessionID string) (Spec, error) {
+	s.mu.Lock()
+	previous := s.forwards[id]
+	if previous == nil {
+		s.mu.Unlock()
+		return Spec{}, ipc.NewError(ipc.CodeNotFound, "转发不存在或已移除")
+	}
+	if owner != "" && previous.owner != owner {
+		s.mu.Unlock()
+		return Spec{}, session.IPCError(session.ErrForbidden)
+	}
+	oldSpec := previous.spec
+	if requestedSessionID == "" {
+		requestedSessionID = oldSpec.SessionID
+	}
+	if previous.retrying {
+		s.mu.Unlock()
+		return Spec{}, ipc.NewError(ipc.CodeBadParam, "转发正在重连，请稍候")
+	}
+	if oldSpec.Status == StatusActive && requestedSessionID == oldSpec.SessionID {
+		s.mu.Unlock()
+		return oldSpec, nil
+	}
+	s.mu.Unlock()
+	dialer, err := s.validateSession(ctx, requestedSessionID)
+	if err != nil {
+		if oldSpec.Status != StatusActive && requestedSessionID == oldSpec.SessionID {
+			s.setFailed(previous, "转发重连失败: "+err.Error())
+		}
+		return Spec{}, err
+	}
+	hostID, err := s.hostFor(ctx, requestedSessionID)
+	if err != nil {
+		if oldSpec.Status != StatusActive && requestedSessionID == oldSpec.SessionID {
+			s.setFailed(previous, "转发重连失败: "+err.Error())
+		}
+		return Spec{}, err
+	}
+	if oldSpec.HostID != hostID {
+		return Spec{}, session.IPCError(session.ErrForbidden)
+	}
+	if oldSpec.Kind == KindRemote {
+		if _, ok := dialer.(RemoteListener); !ok {
+			return Spec{}, ipc.NewError(ipc.CodeUnsupported, "当前会话类型不支持远程监听")
+		}
+	}
+	s.mu.Lock()
+	if s.closed || s.forwards[id] != previous || previous.retrying {
+		s.mu.Unlock()
+		return Spec{}, ipc.NewError(ipc.CodeNotFound, "转发已改变，请刷新后重试")
+	}
+	previous.retrying = true
+	previous.spec.Status = StatusReconnecting
+	previous.spec.Error = ""
+	s.mu.Unlock()
+	if err := previous.stopAndWait(); err != nil {
+		s.report(fmt.Errorf("转发 %s 旧监听关闭失败: %w", id, err))
+	}
+	address := net.JoinHostPort(oldSpec.ListenHost, strconv.Itoa(int(oldSpec.ListenPort)))
+	var listener net.Listener
+	if oldSpec.Kind == KindRemote {
+		listener, err = dialer.(RemoteListener).ListenRemote(ctx, "tcp", address)
+	} else {
+		listener, err = s.listen("tcp", address)
+	}
+	if err != nil {
+		s.setFailed(previous, "重新监听转发端口失败: "+err.Error())
+		return Spec{}, ipc.WrapError(ipc.CodeIO, "重新监听转发端口失败: "+err.Error(), err)
+	}
+	spec := oldSpec
+	spec.SessionID = requestedSessionID
+	spec.Status = StatusActive
+	spec.Error = ""
+	replacement := s.newForwarder(ctx, spec, previous.owner, previous.target, listener)
+	replacement.wg.Add(1)
+	s.mu.Lock()
+	if s.closed || s.forwards[id] != previous || previous.spec.Status != StatusReconnecting {
+		s.mu.Unlock()
+		replacement.wg.Done()
+		replacement.initiateStop()
+		return Spec{}, ipc.NewError(ipc.CodeIO, "转发重连期间会话已断开或转发已移除")
+	}
+	s.forwards[id] = replacement
+	s.mu.Unlock()
+	go replacement.acceptLoop()
+	if _, err := s.validateSession(ctx, requestedSessionID); err != nil {
+		s.setFailed(replacement, "会话已断开，转发重连未完成: "+err.Error())
+		if closeErr := replacement.stopAndWait(); closeErr != nil {
+			s.report(fmt.Errorf("转发 %s 监听关闭失败: %w", id, closeErr))
+		}
+		return Spec{}, err
+	}
+	s.mu.Lock()
+	active := s.forwards[id] == replacement && replacement.spec.Status == StatusActive
+	s.mu.Unlock()
+	if !active {
+		return Spec{}, ipc.NewError(ipc.CodeIO, "转发重连期间会话已断开或监听失败")
+	}
+	return spec, nil
+}
+
+func (s *Service) setFailed(f *forwarder, message string) {
+	s.mu.Lock()
+	if s.forwards[f.id] == f {
+		f.spec.Status = StatusFailed
+		f.spec.Error = message
+		f.retrying = false
+	}
+	s.mu.Unlock()
+}
+
+func (s *Service) SuspendRemote(sessionID string) {
+	s.mu.Lock()
+	forwards := make([]*forwarder, 0)
+	for _, f := range s.forwards {
+		if f.sessionID == sessionID && f.kind == KindRemote && f.spec.Status == StatusActive {
+			f.spec.Status = StatusReconnecting
+			f.spec.Error = ""
+			forwards = append(forwards, f)
+		}
+	}
+	s.mu.Unlock()
+	for _, f := range forwards {
+		if err := f.stopAndWait(); err != nil {
+			s.report(fmt.Errorf("转发 %s 旧监听关闭失败: %w", f.id, err))
+		}
+	}
+}
+
+func (s *Service) RestoreRemote(ctx context.Context, sessionID string) {
+	s.mu.Lock()
+	ids := make([]string, 0)
+	for id, f := range s.forwards {
+		if f.sessionID == sessionID && f.kind == KindRemote && f.spec.Status == StatusReconnecting {
+			ids = append(ids, id)
+		}
+	}
+	s.mu.Unlock()
+	for _, id := range ids {
+		if _, err := s.retry(ctx, "", id, sessionID); err != nil {
+			s.report(fmt.Errorf("远程转发 %s 自动重连失败: %w", id, err))
+		}
+	}
+}
+
+func (s *Service) FailSession(sessionID, reason string) {
+	s.mu.Lock()
+	forwards := make([]*forwarder, 0)
+	for _, f := range s.forwards {
+		if f.sessionID == sessionID {
+			f.spec.Status = StatusFailed
+			f.spec.Error = reason
+			forwards = append(forwards, f)
+		}
+	}
+	s.mu.Unlock()
+	for _, f := range forwards {
+		if err := f.stopAndWait(); err != nil {
+			s.report(fmt.Errorf("转发 %s 监听关闭失败: %w", f.id, err))
+		}
+	}
 }
 
 func (s *Service) remove(owner, id string) error {
@@ -381,14 +592,6 @@ func (s *Service) Close() error {
 	return nil
 }
 
-func (s *Service) evict(f *forwarder) {
-	s.mu.Lock()
-	if s.forwards[f.id] == f {
-		delete(s.forwards, f.id)
-	}
-	s.mu.Unlock()
-}
-
 func (s *Service) report(err error) {
 	if err != nil && s.onError != nil {
 		s.onError(err)
@@ -444,6 +647,7 @@ type forwarder struct {
 	cancel    context.CancelFunc
 
 	stopOnce sync.Once
+	retrying bool
 	wg       sync.WaitGroup
 	mu       sync.Mutex
 	stopped  bool
@@ -470,7 +674,7 @@ func (f *forwarder) acceptLoop() {
 				}
 				continue
 			}
-			f.service.evict(f)
+			f.service.setFailed(f, "转发监听失败: "+err.Error())
 			f.initiateStop()
 			f.service.report(fmt.Errorf("转发 %s 监听失败: %w", f.id, err))
 			return

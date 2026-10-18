@@ -73,6 +73,19 @@ describe("web /rpc CSRF transport", () => {
     expect(calls[0].headers["X-NexTerm-CSRF"]).toBe("csrf-1");
   });
 
+  it("does not send an RPC started before the browser login session changed", async () => {
+    useWebTransport();
+    const calls = captureFetch(() => ({ status: 200, body: JSON.stringify({ ok: true, data: [] }) }));
+    const { commands, authApi } = await importWeb();
+    authApi.setCsrfToken("csrf-before");
+
+    const pending = commands.assetApi.list();
+    authApi.setCsrfToken("csrf-after");
+
+    await expect(pending).rejects.toMatchObject({ code: "account_changed" });
+    expect(calls.filter((call) => call.url === "/rpc")).toHaveLength(0);
+  });
+
   it("without a session (loopback/auth=off): sends /rpc without a CSRF header after the shared /auth/me prefetch fails", async () => {
     useWebTransport();
     const calls = captureFetch((url) => {
@@ -186,7 +199,7 @@ describe("web /rpc CSRF transport", () => {
     expect(calls.filter((call) => call.url === "/rpc")).toHaveLength(2);
   });
 
-  it("refreshes through /auth/me on CSRF 403 and retries the same request once with the new token", async () => {
+  it("does not replay an old RPC after /auth/me reveals a different login session", async () => {
     useWebTransport();
     let rpcAttempts = 0;
     const calls = captureFetch((url) => {
@@ -203,15 +216,12 @@ describe("web /rpc CSRF transport", () => {
     const { commands, authApi } = await importWeb();
     authApi.setCsrfToken("csrf-1");
 
-    await expect(commands.assetApi.list()).resolves.toEqual([{ id: "a-1" }]);
+    await expect(commands.assetApi.list()).rejects.toMatchObject({ code: "account_changed" });
 
     const rpcCalls = calls.filter((call) => call.url === "/rpc");
-    expect(rpcCalls).toHaveLength(2);
+    expect(rpcCalls).toHaveLength(1);
     expect(calls.filter((call) => call.url.includes("/auth/me"))).toHaveLength(1);
     expect(rpcCalls[0].headers["X-NexTerm-CSRF"]).toBe("csrf-1");
-    expect(rpcCalls[1].headers["X-NexTerm-CSRF"]).toBe("csrf-2");
-    expect(rpcCalls[1].method).toBe("POST");
-    expect(rpcCalls[1].body).toEqual(rpcCalls[0].body);
     expect(authApi.getCsrfToken()).toBe("csrf-2");
   });
 
@@ -221,7 +231,7 @@ describe("web /rpc CSRF transport", () => {
       if (url.includes("/auth/me")) {
         return {
           status: 200,
-          body: JSON.stringify({ user: { id: "u-1", username: "alice" }, csrf_token: "csrf-2" }),
+          body: JSON.stringify({ user: { id: "u-1", username: "alice" }, csrf_token: "csrf-1" }),
         };
       }
       return { status: 403, body: RPC_CSRF_FAILURE };

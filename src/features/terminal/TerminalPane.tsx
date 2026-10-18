@@ -196,6 +196,7 @@ export function TerminalPane({
   const [, setThrottleTick] = useState(0);
   const [claiming, setClaiming] = useState(false);
   const [attachDead, setAttachDead] = useState(false);
+  const [execInterrupted, setExecInterrupted] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [epoch, setEpoch] = useState(0);
   const [cwd, setCwd] = useState<string | null>(null);
@@ -236,6 +237,13 @@ export function TerminalPane({
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
   const sessionAssetId = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.assetId);
   const sessionStatus = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.status);
+  const execTabAssetId = useUi((s) => s.workspaces.flatMap((w) => w.panes).flatMap((p) => p.tabs).find((tab) => tab.id === storeTabId)?.assetId);
+  const execAttachedSessionRef = useRef(sessionId);
+  const execTargetAssetRef = useRef(execTabAssetId ?? sessionAssetId);
+  if (execTargetAssetRef.current === undefined && sessionAssetId !== undefined) {
+    execTargetAssetRef.current = sessionAssetId;
+  }
+  const execTargetMatches = sessionAssetId !== undefined && sessionAssetId === execTargetAssetRef.current;
   const connectProgress = useUi((s) =>
     sessionAssetId ? s.connectProgress[sessionAssetId] : undefined,
   );
@@ -393,6 +401,9 @@ export function TerminalPane({
 
   const sendData = useCallback(
     async (text: string, opts?: { fromCommand?: boolean }): Promise<"sent" | "observer" | "failed"> => {
+      if (containerId && (execInterrupted || useUi.getState().sessions.find((x) => x.id === sessionId)?.status !== "connected")) {
+        return "failed";
+      }
       if (!kernelTabId) return "failed";
       const hintObserver = () => {
         const now = Date.now();
@@ -457,7 +468,7 @@ export function TerminalPane({
         return "failed";
       }
     },
-    [kernelTabId, isObserver, me, pushToast, refreshControl, broadcastContext],
+    [kernelTabId, isObserver, me, pushToast, refreshControl, broadcastContext, containerId, execInterrupted, sessionId],
   );
 
   const takeControl = useCallback(async () => {
@@ -660,8 +671,44 @@ export function TerminalPane({
     setEpoch((value) => value + 1);
   }, [sessionStatus, attachDead, storeTabId]);
 
+  const markExecInterrupted = useCallback(() => {
+    if (!containerId) return;
+    const id = kernelTabIdRef.current;
+    kernelTabIdRef.current = null;
+    setKernelTabId(null);
+    setExecInterrupted(true);
+    useUi.getState().updateTab(storeTabId, { exited: true });
+    if (id) void terminalApi.closeTab(id, "kill", execAttachedSessionRef.current).catch(() => undefined);
+  }, [containerId, storeTabId]);
+
+  const execWasConnected = useRef(sessionStatus === "connected");
+  useEffect(() => {
+    if (!containerId) return;
+    if (sessionStatus === "connected") {
+      execWasConnected.current = true;
+      return;
+    }
+    if (!execInterrupted && kernelTabId && (execAttachedSessionRef.current !== sessionId || sessionStatus !== undefined || execWasConnected.current)) {
+      markExecInterrupted();
+    }
+  }, [containerId, execInterrupted, kernelTabId, markExecInterrupted, sessionId, sessionStatus]);
+
+  const restartExec = useCallback(() => {
+    if (!containerId || sessionStatus !== "connected" || !execTargetMatches) return;
+    resumeRef.current = undefined;
+    resumeAttemptedRef.current = false;
+    useUi.getState().updateTab(storeTabId, { tabId: undefined, exited: false, dead: false });
+    setControl(null);
+    setExecInterrupted(false);
+    setEpoch((value) => value + 1);
+  }, [containerId, execTargetMatches, sessionStatus, storeTabId]);
+
   const handleAttachDead = useCallback(
     (code: string) => {
+      if (containerId && (code === "interrupted" || code === "not_found")) {
+        markExecInterrupted();
+        return;
+      }
       if (code !== "not_found") return;
       const st = useUi.getState();
       const tab = st.workspaces
@@ -682,7 +729,7 @@ export function TerminalPane({
       setKernelTabId(null);
       setAttachDead(true);
     },
-    [storeTabId, containerId, effectiveWinrm],
+    [storeTabId, containerId, effectiveWinrm, markExecInterrupted],
   );
 
   const reconnectNow = useCallback(async () => {
@@ -1202,10 +1249,10 @@ export function TerminalPane({
         )}
         {containerId && (
           <span
-            className="nx-badge nx-badge-purple"
+            className={`nx-badge ${execInterrupted ? "nx-badge-amber" : "nx-badge-purple"}`}
             title="在容器里执行命令的终端（docker exec）：关闭标签会结束这个进程，不能转入后台"
           >
-            容器内 exec
+            {execInterrupted ? "容器 exec 已结束" : "容器内 exec"}
           </span>
         )}
         {throttleNow?.active && (
@@ -1306,6 +1353,21 @@ export function TerminalPane({
           ⋯
         </button>
       </div>
+
+      {containerId && execInterrupted && (
+        <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-800/50 bg-amber-950/30 px-2.5 py-1.5 text-xs text-amber-300">
+          <span>容器 exec 已中断，原进程和输入不能恢复；重新打开会启动新的 exec。</span>
+          <button
+            type="button"
+            className="nx-btn nx-btn-ghost nx-btn-sm"
+            disabled={sessionStatus !== "connected" || !execTargetMatches}
+            onClick={restartExec}
+          >
+            {sessionStatus === "connected" ? "重新打开 exec" : "等待主机重连"}
+          </button>
+          {!execTargetMatches && <span>原主机已改变，请从容器列表重新打开。</span>}
+        </div>
+      )}
 
       {recording?.state === "failed" && (
         <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-red-900/50 bg-red-950/30 px-2.5 py-1.5 text-xs text-red-200">
@@ -1412,6 +1474,7 @@ export function TerminalPane({
                 if (info.title) applyBackendTabTitle(storeTabId, info.title);
               }}
               onAttach={(id) => {
+                if (containerId) execAttachedSessionRef.current = sessionId;
                 setKernelTabId(id);
                 setAttachDead(false);
                 setThrottle(null);

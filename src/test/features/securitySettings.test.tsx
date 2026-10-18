@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => {
     authMe: vi.fn(),
     authDekGet: vi.fn(),
     authDevices: vi.fn(),
+    authSessions: vi.fn(),
+    authSessionRevoke: vi.fn(),
     adminUsers: vi.fn(),
     adminSettingsGet: vi.fn(),
     transcriptHosts: vi.fn(),
@@ -91,6 +93,8 @@ vi.mock("../../ipc/authApi", async (importOriginal) => {
       me: mocks.authMe,
       dekGet: mocks.authDekGet,
       devices: mocks.authDevices,
+      sessions: mocks.authSessions,
+      sessionRevoke: mocks.authSessionRevoke,
       logout: vi.fn().mockResolvedValue({ ok: true }),
       logoutAll: vi.fn().mockResolvedValue({ revoked: 1 }),
       deviceRevoke: vi.fn().mockResolvedValue({ ok: true }),
@@ -126,6 +130,7 @@ vi.mock("../../features/auth/crypto", async (importOriginal) => {
 });
 
 import { KnownHostsCard } from "../../features/settings/KnownHostsCard";
+import { AuthCard } from "../../features/settings/AuthCard";
 import { SyncCard } from "../../features/settings/SyncCard";
 import { useAuth } from "../../features/auth/store";
 import { connectAsset, useUi } from "../../app/store";
@@ -150,6 +155,11 @@ const KH2: KnownHostDto = {
 function mountSyncCard(): MountedView {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return mount(createElement(QueryClientProvider, { client }, createElement(SyncCard)));
+}
+
+function mountAuthCard(): MountedView {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return mount(createElement(QueryClientProvider, { client }, createElement(AuthCard)));
 }
 
 async function runAutoSync() {
@@ -226,6 +236,8 @@ beforeEach(() => {
     recovery_hash: "",
   });
   mocks.authDevices.mockResolvedValue({ devices: [] });
+  mocks.authSessions.mockResolvedValue({ sessions: [] });
+  mocks.authSessionRevoke.mockResolvedValue({ ok: true });
   mocks.adminUsers.mockResolvedValue({ users: [DEMO_USER] });
   mocks.adminSettingsGet.mockResolvedValue({ registration_open: false, mfa_required: false });
 });
@@ -369,6 +381,83 @@ describe("SyncCard (web account sync)", () => {
   afterEach(() => {
     mounted?.unmount();
     mounted = undefined;
+  });
+
+  it("hides the previous account's devices and sessions and ignores late list responses", async () => {
+    seedAuthed(true);
+    const oldDevice = { id: "device-a", name: "A 的设备", kind: "agent", created_at: 1, last_seen_at: 2, revoked_at: 0 };
+    const newDevice = { id: "device-b", name: "B 的设备", kind: "agent", created_at: 1, last_seen_at: 2, revoked_at: 0 };
+    const oldSession = { id: "session-a", name: "A 的会话", origin: "A", created_at: 1, last_seen_at: 2, expires_at: 3, current: false };
+    const newSession = { id: "session-b", name: "B 的会话", origin: "B", created_at: 1, last_seen_at: 2, expires_at: 3, current: false };
+    const lateDevices = deferred<{ devices: typeof oldDevice[] }>();
+    const lateSessions = deferred<{ sessions: typeof oldSession[] }>();
+    const nextDevices = deferred<{ devices: typeof newDevice[] }>();
+    const nextSessions = deferred<{ sessions: typeof newSession[] }>();
+    mocks.authDevices.mockResolvedValueOnce({ devices: [oldDevice] })
+      .mockReturnValueOnce(lateDevices.promise)
+      .mockReturnValueOnce(nextDevices.promise);
+    mocks.authSessions.mockResolvedValueOnce({ sessions: [oldSession] })
+      .mockReturnValueOnce(lateSessions.promise)
+      .mockReturnValueOnce(nextSessions.promise);
+    mounted = mountAuthCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("A 的设备") ?? false);
+    const section = (title: string) => [...mounted!.container.querySelectorAll("section")]
+      .find((item) => item.textContent?.includes(title))!;
+    clickButton(section("已登记设备"), "刷新");
+    clickButton(section("登录会话"), "刷新");
+
+    act(() => useAuth.setState({ user: { ...DEMO_USER, id: "u-2", username: "bob", display_name: "Bob" } }));
+    await flush();
+    expect(mounted.container.textContent).not.toContain("A 的设备");
+    expect(mounted.container.textContent).not.toContain("A 的会话");
+
+    nextDevices.resolve({ devices: [newDevice] });
+    nextSessions.resolve({ sessions: [newSession] });
+    await flushUntil(() => mounted!.container.textContent?.includes("B 的设备") ?? false);
+    expect(mounted.container.textContent).toContain("B 的会话");
+    lateDevices.resolve({ devices: [oldDevice] });
+    lateSessions.resolve({ sessions: [oldSession] });
+    await flush();
+    expect(mounted.container.textContent).toContain("B 的设备");
+    expect(mounted.container.textContent).toContain("B 的会话");
+    expect(mounted.container.textContent).not.toContain("A 的设备");
+    expect(mounted.container.textContent).not.toContain("A 的会话");
+  });
+
+  it("lists login sessions separately from registered devices and revokes only the selected session", async () => {
+    seedAuthed(true);
+    mocks.authSessions
+      .mockResolvedValueOnce({ sessions: [
+        { id: "s-current", name: "此浏览器", origin: "203.0.113.1", created_at: 1000, last_seen_at: 2000, expires_at: 3000, current: true },
+        { id: "s-other", name: "未识别会话", origin: "未知来源", created_at: 1000, last_seen_at: 2000, expires_at: 3000, current: false },
+      ] })
+      .mockResolvedValue({ sessions: [{ id: "s-current", name: "此浏览器", origin: "203.0.113.1", created_at: 1000, last_seen_at: 2000, expires_at: 3000, current: true }] });
+    mocks.authDevices.mockResolvedValue({ devices: [{ id: "d-1", name: "受管主机", kind: "agent", created_at: 1, last_seen_at: 2, revoked_at: 0 }] });
+    mocks.ask.mockResolvedValue(true);
+    mounted = mountSyncCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("未识别会话") ?? false);
+    expect(mounted.container.textContent).toContain("登录会话");
+    expect(mounted.container.textContent).toContain("已登记设备");
+    const row = [...mounted.container.querySelectorAll("div")].find((element) =>
+      element.textContent?.includes("未识别会话") && element.querySelectorAll("button").length === 1);
+    expect(row).toBeTruthy();
+    clickButton(row!, "退出会话");
+    await flushUntil(() => mocks.authSessionRevoke.mock.calls.length === 1);
+    expect(mocks.authSessionRevoke).toHaveBeenCalledWith("s-other");
+    expect(mounted.container.textContent).toContain("受管主机");
+  });
+
+  it("clears the local login when the current session is revoked", async () => {
+    seedAuthed(true);
+    mocks.authSessions.mockResolvedValue({ sessions: [
+      { id: "s-current", name: "此浏览器", origin: "203.0.113.1", created_at: 1000, last_seen_at: 2000, expires_at: 3000, current: true },
+    ] });
+    mocks.ask.mockResolvedValue(true);
+    mounted = mountSyncCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("当前会话") ?? false);
+    clickButton(mounted.container, "退出会话");
+    await flushUntil(() => useAuth.getState().user === null);
+    expect(mocks.authSessionRevoke).toHaveBeenCalledWith("s-current");
   });
 
   it("renders only the account-card login entry when logged out, without a duplicate sync console", async () => {
@@ -894,7 +983,7 @@ describe("connectAsset host-key confirmation", () => {
     expect(useUi.getState().sessions.some((s) => s.id === "s1")).toBe(true);
   });
 
-  it("does not show a duplicate error when the retry remains pending after confirmation", async () => {
+  it("explains when the retry remains pending after confirmation", async () => {
     mocks.sessionConnect.mockRejectedValue({
       code: "host_key_pending",
       message: "unknown SSH host key for 10.0.0.8:22",
@@ -907,8 +996,8 @@ describe("connectAsset host-key confirmation", () => {
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mocks.sessionConnect).toHaveBeenCalledTimes(2);
-    expect(mocks.toast).toHaveBeenCalledWith("info", "已取消连接");
-    expect(mocks.toast).not.toHaveBeenCalledWith("error", expect.any(String));
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("主机密钥确认后仍待验证"));
+    expect(mocks.toast).not.toHaveBeenCalledWith("info", "已取消连接");
   });
 
   it("shows a changed-key warning with the old and new fingerprints", async () => {

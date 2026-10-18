@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { deferred, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
@@ -80,6 +80,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
 });
 
 import { TerminalPane } from "../../features/terminal/TerminalPane";
+import { connectWithHostKeyConfirm } from "../../app/hostKeys";
 import { useUi } from "../../app/store";
 
 const PENDING_DETAIL = {
@@ -177,6 +178,37 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   mocks.attachDead = false;
+});
+
+describe("Host key retry stays actionable", () => {
+  it("reports a changed fingerprint after approval instead of treating the retry as cancellation", async () => {
+    mocks.ask.mockResolvedValue(true);
+    mocks.connect
+      .mockRejectedValueOnce({ code: "host_key_pending", message: "approval required", detail: PENDING_DETAIL })
+      .mockRejectedValueOnce({ code: "host_key_pending", message: "fingerprint changed", detail: CHANGED_DETAIL });
+
+    await expect(connectWithHostKeyConfirm(() => mocks.connect())).rejects.toMatchObject({
+      code: "host_key_pending",
+      message: expect.stringContaining("SHA256:oldfp"),
+    });
+    expect(mocks.connect).toHaveBeenCalledTimes(2);
+    expect(mocks.knownHostAccept).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not accept a fingerprint or retry after the account changes during confirmation", async () => {
+    const confirmation = deferred<boolean>();
+    mocks.ask.mockReturnValueOnce(confirmation.promise);
+    mocks.connect.mockRejectedValueOnce({ code: "host_key_pending", message: "approval required", detail: PENDING_DETAIL });
+    let current = true;
+    const connection = connectWithHostKeyConfirm(() => mocks.connect(), () => current);
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
+
+    current = false;
+    confirmation.resolve(true);
+    await expect(connection).rejects.toMatchObject({ code: "account_changed" });
+    expect(mocks.knownHostAccept).not.toHaveBeenCalled();
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
+  });
 });
 
 afterEach(() => {

@@ -5,12 +5,14 @@
 import { act, createElement, Fragment } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, flush, flushUntil, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
+import { clickButton, deferred, flush, flushUntil, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
   return {
     status: vi.fn(),
+    linkGet: vi.fn(),
+    me: vi.fn(),
     devices: vi.fn(),
     deviceRevoke: vi.fn(),
     adminUsers: vi.fn(),
@@ -26,7 +28,7 @@ vi.mock("../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../ipc/commands")>();
   return {
     ...actual,
-    syncApi: { ...actual.syncApi, status: mocks.status },
+    syncApi: { ...actual.syncApi, status: mocks.status, linkGet: mocks.linkGet },
   };
 });
 
@@ -35,6 +37,7 @@ vi.mock("../ipc/remoteApi", async (importOriginal) => {
   return {
     ...actual,
     remoteAccountApi: {
+      me: mocks.me,
       devices: mocks.devices,
       deviceRevoke: mocks.deviceRevoke,
       adminUsers: mocks.adminUsers,
@@ -92,11 +95,15 @@ function syncStatus(loggedIn: boolean, username = "", userId = "") {
 // Regular user: the adminUsers probe is rejected by the server (403), identity falls back to the minimal view.
 function seedUser() {
   mocks.status.mockResolvedValue(syncStatus(true, "alice", "u-alice"));
+  mocks.me.mockResolvedValue({ user: ALICE });
+  mocks.linkGet.mockResolvedValue({ url: "https://server-a.example", username: "alice", insecure: false, hasPassword: true, verifiedAt: 1, lastError: "" });
   mocks.adminUsers.mockRejectedValue({ code: "forbidden", message: "Super administrator access required" });
 }
 
 function seedAdmin() {
   mocks.status.mockResolvedValue(syncStatus(true, "root", "u-admin"));
+  mocks.me.mockResolvedValue({ user: ADMIN });
+  mocks.linkGet.mockResolvedValue({ url: "https://server-a.example", username: "root", insecure: false, hasPassword: true, verifiedAt: 1, lastError: "" });
   mocks.adminUsers.mockResolvedValue({ users: [ADMIN, ALICE] });
 }
 
@@ -197,6 +204,37 @@ describe("desktop account card regular user", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "密码已修改，其他设备上的会话已退出");
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("AAAA-BBBB-CCCC-DDDD"));
     expect(mounted!.container.textContent ?? "").toContain("新的恢复密钥（仅显示一次）");
+    clickButton(mounted!.container, "我已保存");
+  });
+
+  it("keeps a late one-time recovery key with the account that changed its password", async () => {
+    seedUser();
+    const changed = deferred<{ ok: boolean; recoveryKey: string }>();
+    mocks.changePassword.mockReturnValueOnce(changed.promise);
+    const { client } = mountCards("auth");
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("修改密码"));
+
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="当前密码"]')!, "old-pass-123");
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="新密码（至少 8 位）"]')!, "new-pass-456");
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="确认新密码"]')!, "new-pass-456");
+    await flush();
+    clickButton(mounted!.container, "修改密码");
+    await flushUntil(() => mocks.changePassword.mock.calls.length === 1);
+
+    const bob = { ...ALICE, id: "u-bob", username: "bob" };
+    mocks.status.mockResolvedValue(syncStatus(true, bob.username, bob.id));
+    mocks.me.mockResolvedValue({ user: bob });
+    mocks.linkGet.mockResolvedValue({ url: "https://server-b.example", username: bob.username, insecure: false, hasPassword: true, verifiedAt: 2, lastError: "" });
+    await act(async () => { await client.invalidateQueries({ queryKey: ["sync-link"] }); });
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("bob"));
+
+    await act(async () => { changed.resolve({ ok: true, recoveryKey: "LATE-KEY-FOR-ALICE" }); });
+    expect(mounted!.container.textContent).not.toContain("LATE-KEY-FOR-ALICE");
+
+    seedUser();
+    await act(async () => { await client.invalidateQueries({ queryKey: ["sync-link"] }); });
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("LATE-KEY-FOR-ALICE"));
+    clickButton(mounted!.container, "我已保存");
   });
 
   it("shows password-change failures as-is", async () => {
@@ -239,6 +277,80 @@ describe("desktop account card regular user", () => {
 });
 
 describe("desktop account card superadmin", () => {
+  it("hides the old same-named account while the new server link arrives before identity", async () => {
+    seedAdmin();
+    const { client } = mountCards("account");
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("alice"));
+
+    const nextIdentity = deferred<{ user: typeof ADMIN }>();
+    const nextAdmin = { ...ADMIN, id: "u-admin-on-server-b" };
+    mocks.me.mockImplementationOnce(() => nextIdentity.promise);
+    mocks.linkGet.mockResolvedValue({ url: "https://server-b.example", username: "root", insecure: false, hasPassword: true, verifiedAt: 2, lastError: "" });
+    mocks.adminUsers.mockResolvedValue({ users: [nextAdmin, { ...ALICE, id: "u-bob", username: "bob" }] });
+
+    let invalidation: Promise<unknown> = Promise.resolve();
+    act(() => { invalidation = client.invalidateQueries({ queryKey: ["sync-link"] }); });
+    await flushUntil(() => mocks.me.mock.calls.length >= 2 && mocks.linkGet.mock.calls.length >= 2);
+    await flush();
+    expect(mounted!.container.textContent).not.toContain("用户管理");
+    expect(mounted!.container.textContent).not.toContain("alice");
+
+    await act(async () => {
+      nextIdentity.resolve({ user: nextAdmin });
+      await invalidation;
+    });
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("bob"));
+    expect(mounted!.container.textContent).not.toContain("alice");
+  });
+
+  it("separates identical admin identities across servers and ignores an old list response", async () => {
+    seedAdmin();
+    const { client } = mountCards("account");
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("alice"));
+    clickButton(mounted!.container, "添加用户");
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="用户名"]')!, "draft-user");
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="初始密码（至少 8 位）"]')!, "private-draft-123");
+
+    const oldList = deferred<{ users: (typeof ADMIN | typeof ALICE)[] }>();
+    mocks.adminUsers.mockImplementationOnce(() => oldList.promise);
+    mocks.adminUsers.mockResolvedValue({ users: [ADMIN, { ...ALICE, id: "u-bob", username: "bob" }] });
+    clickButton(mounted!.container, "刷新");
+    await flushUntil(() => mocks.adminUsers.mock.calls.length === 2);
+
+    mocks.linkGet.mockResolvedValue({ url: "https://server-b.example", username: "root", insecure: false, hasPassword: true, verifiedAt: 2, lastError: "" });
+    await act(async () => { await client.invalidateQueries({ queryKey: ["sync-link"] }); });
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("bob"));
+    expect(mounted!.container.textContent).not.toContain("alice");
+    expect(mounted!.container.querySelector('input[placeholder="初始密码（至少 8 位）"]')).toBeNull();
+
+    await act(async () => { oldList.resolve({ users: [ADMIN, ALICE] }); });
+    expect(mounted!.container.textContent).toContain("bob");
+    expect(mounted!.container.textContent).not.toContain("alice");
+  });
+
+  it("does not execute an old admin confirmation after the account switches", async () => {
+    seedAdmin();
+    const { client } = mountCards("account");
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("alice"));
+    const confirmation = deferred<boolean>();
+    mocks.ask.mockImplementationOnce(() => confirmation.promise);
+    const disable = [...rowOf(mounted!.container, "alice").querySelectorAll("button")].find((button) => button.textContent?.trim() === "禁用")!;
+    act(() => { disable.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await flushUntil(() => mocks.ask.mock.calls.length === 1);
+
+    const nextAdmin = { ...ADMIN, id: "u-admin-b", username: "second-admin" };
+    mocks.status.mockResolvedValue(syncStatus(true, nextAdmin.username, nextAdmin.id));
+    mocks.me.mockResolvedValue({ user: nextAdmin });
+    mocks.linkGet.mockResolvedValue({ url: "https://server-a.example", username: nextAdmin.username, insecure: false, hasPassword: true, verifiedAt: 2, lastError: "" });
+    mocks.adminUsers.mockResolvedValue({ users: [nextAdmin] });
+    await act(async () => { await client.invalidateQueries({ queryKey: ["sync-link"] }); });
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes(nextAdmin.username));
+
+    await act(async () => { confirmation.resolve(true); });
+    expect(mocks.adminSetUserState).not.toHaveBeenCalled();
+    expect(mounted!.container.textContent).not.toContain("alice");
+  });
+
   it("shows the superadmin badge and latest login after the identity probe finds the user list", async () => {
     seedAdmin();
     mountCards("auth");
@@ -257,7 +369,7 @@ describe("desktop account card superadmin", () => {
     const text = mounted!.container.textContent ?? "";
     expect(text).toContain("root");
     expect(text).toContain("（我）");
-    expect(text).toContain("开放注册与两步验证（MFA）策略暂未接入桌面端");
+    expect(text).toContain("开放注册与两步验证（MFA）策略在服务端 Web 界面管理");
     expect(mounted!.container.querySelector('input[type="checkbox"]')).toBeNull();
     const labels = [...rowOf(mounted!.container, "alice").querySelectorAll("button")].map((b) => b.textContent?.trim());
     expect(labels).toEqual(["禁用", "重置"]);

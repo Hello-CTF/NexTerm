@@ -1185,7 +1185,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
         )}
       </div>
 
-      <TransferPanel />
+      <TransferPanel key={sessionId} sessionId={sessionId} />
 
       <div className="flex shrink-0 items-center gap-2 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
         <span>{list.length} 项</span>

@@ -24,6 +24,12 @@ SetCompressor /SOLID lzma
 !ifndef NEXTERM_EXE_NAME
   !error "NEXTERM_EXE_NAME is required"
 !endif
+!ifndef NEXTERM_HELPER_AMD64
+  !error "NEXTERM_HELPER_AMD64 is required"
+!endif
+!ifndef NEXTERM_HELPER_ARM64
+  !error "NEXTERM_HELPER_ARM64 is required"
+!endif
 
 Name "NexTerm ${NEXTERM_VERSION}"
 OutFile "${NEXTERM_OUT}"
@@ -51,6 +57,8 @@ Section "NexTerm" SEC01
   SetOutPath "$INSTDIR"
   SetOverwrite on
   File "${NEXTERM_BINARY}"
+  File /oname=nexterm-helper-linux-amd64 "${NEXTERM_HELPER_AMD64}"
+  File /oname=nexterm-helper-linux-arm64 "${NEXTERM_HELPER_ARM64}"
   File /oname=MicrosoftEdgeWebview2Setup.exe "${NEXTERM_WEBVIEW2}"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "Software\NexTerm" "InstallDir" "$INSTDIR"
@@ -88,6 +96,8 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\NexTerm\NexTerm.lnk"
   RMDir "$SMPROGRAMS\NexTerm"
   Delete "$INSTDIR\${NEXTERM_EXE_NAME}"
+  Delete "$INSTDIR\nexterm-helper-linux-amd64"
+  Delete "$INSTDIR\nexterm-helper-linux-arm64"
   Delete "$INSTDIR\MicrosoftEdgeWebview2Setup.exe"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"

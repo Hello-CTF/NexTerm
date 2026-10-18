@@ -331,7 +331,7 @@ describe("workspace and pane reclaim follow terminal close preferences", () => {
     expect(toastText()).toContain("2 个终端转入后台");
   });
 
-  it("confirms the destructive ask choice before killing workspace terminals", async () => {
+  it("kills workspace terminals after one direct-close choice", async () => {
     const tab = { ...terminal("t1"), retainable: true };
     seed([{ id: "p", tabs: [tab], activeTabId: "t1" }], "local");
     setTerminalCloseAction("ask");
@@ -340,7 +340,7 @@ describe("workspace and pane reclaim follow terminal close preferences", () => {
     await useUi.getState().closeWorkspace("ws");
 
     expect(mocks.askChoiceRemember).toHaveBeenCalledTimes(1);
-    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill");
     expect(toastText()).not.toContain("转入后台");
   });

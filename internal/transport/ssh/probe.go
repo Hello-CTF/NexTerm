@@ -86,7 +86,11 @@ func ProbeHostKey(ctx context.Context, cfg Config) (*HostKeyProbeResult, error) 
 			return result, nil
 		}
 	}
-	if matchesApprovedKey(loadApprovedHostKeys(ctx, cfg.HostKeys, cfg.Host, cfg.Port), key) {
+	approved, err := loadApprovedHostKeys(ctx, cfg.HostKeys, cfg.Host, cfg.Port)
+	if err != nil {
+		return nil, fmt.Errorf("load approved SSH host keys: %w", err)
+	}
+	if matchesApprovedKey(approved, key) {
 		result.State = HostKeyProbeKnown
 		return result, nil
 	}

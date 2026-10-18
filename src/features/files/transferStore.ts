@@ -8,6 +8,16 @@ import { bytesToBase64 } from "./fileCodec";
 import { baseName } from "./pathUtils";
 import type { TransferDirection, TransferTask } from "./transferQueue";
 
+export interface ScopedTransferTask extends TransferTask {
+  hostId: string | null;
+  targetName: string;
+}
+
+interface TransferTarget {
+  hostId: string | null;
+  targetName: string;
+}
+
 export interface UploadItem {
   localPath: string;
   remotePath: string;
@@ -22,7 +32,7 @@ export interface DownloadItem {
 }
 
 interface TransferStoreState {
-  tasks: TransferTask[];
+  tasks: ScopedTransferTask[];
   runningId: string | null;
 }
 
@@ -35,8 +45,9 @@ let seq = 0;
 let batchSeq = 0;
 let pumping = false;
 let progressSubscribed = false;
+let transferEpoch = 0;
 
-type SettleHandler = (task: TransferTask) => void;
+type SettleHandler = (task: ScopedTransferTask) => void;
 const settleHandlers = new Set<SettleHandler>();
 
 export function subscribeTransferSettled(fn: SettleHandler): () => void {
@@ -63,16 +74,18 @@ function ensureProgressSubscription(): void {
 function newTask(
   batchId: string,
   sessionId: string,
+  target: TransferTarget,
   direction: TransferDirection,
   item: UploadItem | DownloadItem,
   status: TransferTask["status"],
   refreshDir?: string,
-): TransferTask {
+): ScopedTransferTask {
   seq += 1;
   return {
     id: `t${seq}`,
     batchId,
     sessionId,
+    ...target,
     direction,
     remotePath: item.remotePath,
     localPath: item.localPath,
@@ -82,6 +95,24 @@ function newTask(
     total: 0,
     refreshDir,
   };
+}
+
+function resolveTransferTarget(sessionId: string): TransferTarget {
+  const { sessions, workspaces } = useUi.getState();
+  const session = sessions?.find((item) => item.id === sessionId);
+  const workspace = workspaces?.find((item) => item.sessionId === sessionId);
+  return {
+    hostId: session?.assetId ?? workspace?.assetId ?? null,
+    targetName: session?.name?.trim() || workspace?.title?.trim() || `会话 ${sessionId}`,
+  };
+}
+
+export function transferMatchesScope(
+  task: ScopedTransferTask,
+  sessionId: string,
+  hostId: string | null,
+): boolean {
+  return task.sessionId === sessionId || Boolean(hostId && task.hostId === hostId);
 }
 
 function enqueueBatch(
@@ -94,10 +125,11 @@ function enqueueBatch(
   ensureProgressSubscription();
   batchSeq += 1;
   const batchId = `b${batchSeq}`;
+  const target = resolveTransferTarget(sessionId);
   const tasks = [
-    ...ready.map((item) => newTask(batchId, sessionId, direction, item, "queued", refreshDir)),
+    ...ready.map((item) => newTask(batchId, sessionId, target, direction, item, "queued", refreshDir)),
     ...skipped.map((item) => ({
-      ...newTask(batchId, sessionId, "upload", item, "skipped", refreshDir),
+      ...newTask(batchId, sessionId, target, "upload", item, "skipped", refreshDir),
       resultText: `已跳过：${item.remotePath}`,
     })),
   ];
@@ -139,10 +171,28 @@ export function cancelTransferTask(id: string): void {
   batchSettleCheck(task.batchId);
 }
 
-export function clearFinishedTransfers(): void {
+export function clearFinishedTransfers(scope: { sessionId: string; hostId: string | null } | "global"): void {
   useTransferStore.setState((s) => ({
-    tasks: s.tasks.filter((t) => t.status === "queued" || t.status === "running"),
+    tasks: s.tasks.filter(
+      (t) =>
+        (scope !== "global" && !transferMatchesScope(t, scope.sessionId, scope.hostId)) ||
+        t.status === "queued" ||
+        t.status === "running",
+    ),
   }));
+}
+
+export function resetTransferQueue(): void {
+  transferEpoch += 1;
+  const { tasks } = useTransferStore.getState();
+  useTransferStore.setState({ tasks: [], runningId: null });
+  for (const task of tasks) {
+    // An active download can still write its reserved target. Its execute()
+    // finally block drops the staging reference after that write settles.
+    if (task.localPath && task.status !== "running" && (task.direction === "download" || task.direction === "upload")) {
+      void discardStaged(task.localPath).catch(() => undefined);
+    }
+  }
 }
 
 async function pump(): Promise<void> {
@@ -166,7 +216,9 @@ async function pump(): Promise<void> {
 }
 
 async function execute(id: string): Promise<void> {
+  const epoch = transferEpoch;
   const current = () => useTransferStore.getState().tasks.find((t) => t.id === id);
+  const active = () => epoch === transferEpoch && current() !== undefined;
   const task = current();
   if (!task) return;
   let status: TransferTask["status"] = "done";
@@ -176,6 +228,7 @@ async function execute(id: string): Promise<void> {
     if (task.direction === "upload") {
       if (task.file) {
         const data = new Uint8Array(await task.file.arrayBuffer());
+        if (!active()) return;
         await fsApi.write(task.sessionId, task.remotePath, bytesToBase64(data), false);
       } else {
         await fsApi.upload(task.sessionId, task.localPath, task.remotePath, false);
@@ -183,6 +236,7 @@ async function execute(id: string): Promise<void> {
       resultText = `已上传到 ${task.remotePath}`;
     } else {
       await fsApi.download(task.sessionId, task.remotePath, task.localPath);
+      if (!active()) return;
       const where = await finishSave(task.localPath, baseName(task.remotePath));
       if (where) {
         resultText = `已下载到 ${where}`;
@@ -196,13 +250,13 @@ async function execute(id: string): Promise<void> {
     error = describeError(e);
     resultText = `${task.direction === "upload" ? "上传" : "下载"}失败：${task.remotePath}：${error}`;
   } finally {
-    if (task.direction === "upload") {
+    if (task.direction === "upload" || !active()) {
       await discardStaged(task.localPath).catch(() => undefined);
     }
   }
   const latest = current();
   if (!latest) return;
-  const settled: TransferTask = { ...latest, status, error, resultText };
+  const settled: ScopedTransferTask = { ...latest, status, error, resultText };
   useTransferStore.setState((s) => ({ tasks: s.tasks.map((t) => (t.id === id ? settled : t)) }));
   for (const fn of settleHandlers) fn(settled);
   batchSettleCheck(latest.batchId);

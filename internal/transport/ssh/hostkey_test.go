@@ -225,9 +225,13 @@ func TestHostKeyApprovalStoreLedgerApprovesExplicitlyAcceptedKeys(t *testing.T) 
 type ledgerHostKeyStore struct {
 	*MemoryHostKeyStore
 	approved []HostKey
+	err      error
 }
 
 func (s *ledgerHostKeyStore) ApprovedHostKeys(ctx context.Context, host string, port int) ([]HostKey, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
 	var result []HostKey
 	for _, key := range s.approved {
 		if key.Host == host && key.Port == port {
@@ -235,6 +239,15 @@ func (s *ledgerHostKeyStore) ApprovedHostKeys(ctx context.Context, host string, 
 		}
 	}
 	return result, nil
+}
+
+func TestHostKeyApprovalReadFailureIsNotReportedAsPending(t *testing.T) {
+	readErr := errors.New("approval ledger unavailable")
+	store := &ledgerHostKeyStore{MemoryHostKeyStore: NewMemoryHostKeyStore(), err: readErr}
+	err := verifyHostKey(t.Context(), store, "example.test", 22, false, nil, hostKeyForTest(t))
+	if !errors.Is(err, readErr) || errors.Is(err, ErrHostKeyPending) {
+		t.Fatalf("approval read error = %v", err)
+	}
 }
 
 func TestNormalizeEndpoint(t *testing.T) {

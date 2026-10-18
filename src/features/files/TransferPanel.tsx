@@ -1,11 +1,19 @@
+import { useState } from "react";
+import { useUi } from "../../app/store";
 import { describeTarget } from "../../ui/dialogs";
 import { IconClose, IconDownload, IconUpload } from "../../ui/icons";
 import { progressPercent } from "./fileProgress";
 import { baseName } from "./pathUtils";
-import { TRANSFER_STATUS_LABEL, type TransferTask } from "./transferQueue";
-import { cancelTransferTask, clearFinishedTransfers, useTransferStore } from "./transferStore";
+import { TRANSFER_STATUS_LABEL } from "./transferQueue";
+import {
+  cancelTransferTask,
+  clearFinishedTransfers,
+  transferMatchesScope,
+  useTransferStore,
+  type ScopedTransferTask,
+} from "./transferStore";
 
-function TransferRow({ task }: { task: TransferTask }) {
+function TransferRow({ task }: { task: ScopedTransferTask }) {
   const name = baseName(task.remotePath);
   const localPath = task.file ? task.file.name : describeTarget(task.localPath, name);
   const pathText =
@@ -56,6 +64,12 @@ function TransferRow({ task }: { task: TransferTask }) {
           </button>
         )}
       </div>
+      <div
+        className="truncate pl-5 text-[10px] text-neutral-500"
+        title={`目标：${task.targetName} · 会话 ${task.sessionId}`}
+      >
+        目标：{task.targetName} · 会话 {task.sessionId.slice(0, 8)}
+      </div>
       {task.error && (
         <div className="truncate pl-5 text-[11px] text-red-300" title={task.error}>
           {task.error}
@@ -65,9 +79,19 @@ function TransferRow({ task }: { task: TransferTask }) {
   );
 }
 
-export function TransferPanel() {
-  const tasks = useTransferStore((s) => s.tasks);
-  if (tasks.length === 0) return null;
+export function TransferPanel({ sessionId }: { sessionId: string }) {
+  const [showAll, setShowAll] = useState(false);
+  const hostId = useUi(
+    (s) =>
+      s.sessions.find((item) => item.id === sessionId)?.assetId ??
+      s.workspaces.find((item) => item.sessionId === sessionId)?.assetId ??
+      null,
+  );
+  const allTasks = useTransferStore((s) => s.tasks);
+  if (allTasks.length === 0) return null;
+  const tasks = showAll
+    ? allTasks
+    : allTasks.filter((task) => transferMatchesScope(task, sessionId, hostId));
   const active = tasks.filter((t) => t.status === "queued" || t.status === "running").length;
   return (
     <div
@@ -76,18 +100,39 @@ export function TransferPanel() {
     >
       <div className="flex items-center gap-2 px-3 pt-1.5 text-[11px] text-neutral-500">
         <span className="font-semibold text-neutral-300">传输队列</span>
-        <span>{active > 0 ? `${active} 个未结束` : "已全部结束"}</span>
+        <span>
+          {tasks.length === 0
+            ? "当前主机无任务"
+            : active > 0
+              ? `${active} 个未结束`
+              : "已全部结束"}
+        </span>
         <span className="nx-spacer" />
+        <button
+          type="button"
+          className="nx-link"
+          aria-pressed={!showAll}
+          title={showAll ? "显示当前主机的传输任务" : "显示全部主机的传输任务"}
+          onClick={() => setShowAll((current) => !current)}
+        >
+          {showAll ? "全部主机" : "当前主机"}
+        </button>
         {active < tasks.length && (
-          <button type="button" className="nx-link" onClick={clearFinishedTransfers}>
+          <button
+            type="button"
+            className="nx-link"
+            onClick={() => clearFinishedTransfers(showAll ? "global" : { sessionId, hostId })}
+          >
             清除已结束
           </button>
         )}
       </div>
       <div className="max-h-36 overflow-y-auto pb-1.5">
-        {tasks.map((t) => (
-          <TransferRow key={t.id} task={t} />
-        ))}
+        {tasks.length === 0 ? (
+          <div className="px-3 py-2 text-[11px] text-neutral-500">当前主机没有传输任务</div>
+        ) : (
+          tasks.map((t) => <TransferRow key={t.id} task={t} />)
+        )}
       </div>
     </div>
   );

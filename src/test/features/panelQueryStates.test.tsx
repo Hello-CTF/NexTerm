@@ -196,7 +196,7 @@ describe("MountPanel query states", () => {
     mocks.mountList.mockRejectedValue(new Error("mount service failure"));
     mounted = withClient(createElement(MountPanel, { sessionId: "s1" }));
     await flushUntil(() => text().includes("挂载列表加载失败 · mount service failure"));
-    expect(text()).not.toContain("本机当前没有挂载点");
+    expect(text()).not.toContain("当前会话没有挂载点");
   });
 
   it("retry recovers into the true empty state", async () => {
@@ -204,7 +204,7 @@ describe("MountPanel query states", () => {
     mounted = withClient(createElement(MountPanel, { sessionId: "s1" }));
     await flushUntil(() => text().includes("挂载列表加载失败"));
     clickButton(mounted!.container, "重试");
-    await flushUntil(() => text().includes("本机当前没有挂载点"));
+    await flushUntil(() => text().includes("当前会话没有挂载点"));
     expect(text()).toContain("新建挂载");
   });
 });

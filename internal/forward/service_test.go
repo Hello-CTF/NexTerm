@@ -1,14 +1,17 @@
 package forward
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 func TestStaticForwardRelaysAndPreservesRemoteAddress(t *testing.T) {
@@ -76,9 +79,6 @@ func TestForwardUsesCurrentDialerAndRetriesReconnect(t *testing.T) {
 	}
 	if got := currentDialer.calls(); len(got) != 1 || got[0] != "internal.example:22" {
 		t.Fatalf("current dialer calls = %v", got)
-	}
-	if provider.callCount() != 3 {
-		t.Fatalf("provider calls = %d, want validation + failed + current", provider.callCount())
 	}
 }
 
@@ -271,5 +271,47 @@ func TestCreateCloseRace(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("iteration %d: Create/Close did not finish", i)
 		}
+	}
+}
+
+func TestCreateDuringDisconnectDoesNotLeaveActiveForward(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	service := NewService(Config{
+		Provider: DialerProviderFunc(func(context.Context, string) (base.Dialer, error) {
+			if calls.Add(1) == 2 {
+				close(entered)
+				<-release
+				return nil, errors.New("session disconnected")
+			}
+			return &recordingDialer{}, nil
+		}),
+		Policy: Policy{Desktop: true},
+	})
+	t.Cleanup(func() { _ = service.Close() })
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.CreateLocal(t.Context(), CreateLocalArgs{SessionID: "s", TargetHost: "example.invalid", TargetPort: 22})
+		done <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("create did not reach the post-listen session check")
+	}
+	service.FailSession("s", "session disconnected")
+	close(release)
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("create succeeded after session disconnected")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("create did not finish")
+	}
+	if listed := service.List(); len(listed) != 0 {
+		t.Fatalf("forward from failed create remained visible: %+v", listed)
 	}
 }

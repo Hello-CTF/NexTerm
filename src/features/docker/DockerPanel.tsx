@@ -26,6 +26,10 @@ import { ContainerInsight } from "./ContainerInsight";
 interface LogAttach {
   container: string;
   containerId: string;
+  sessionId: string;
+  assetId: string | null;
+  sessionKnown: boolean;
+  hostName: string;
   tabId: string;
   channel: ReturnType<typeof createBinaryChannel>;
   sink: { onBytes: ((bytes: Uint8Array) => void) | null };
@@ -149,15 +153,46 @@ export function createLogLineDecoder() {
 export function DockerPanel({ sessionId, visible = true }: { sessionId: string; visible?: boolean }) {
   const qc = useQueryClient();
   const { addTab, pushToast } = useUi();
+  const session = useUi((state) => state.sessions.find((entry) => entry.id === sessionId));
+  const sessionStatus = session?.status;
+  const sessionAssetId = session?.assetId ?? null;
   const [tab, setTab] = useState<"containers" | "images">("containers");
   const [attached, setAttached] = useState<LogAttach | null>(null);
   const [logsIssue, setLogsIssue] = useState<LogIssue | null>(null);
+  const [logsResumeNote, setLogsResumeNote] = useState<string | null>(null);
   const [insight, setInsight] = useState<ContainerSummary | null>(null);
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
   const [pending, setPending] = useState<Set<string>>(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [refreshMs, setRefreshMs] = useState(loadRefreshIntervalMs);
-  const attachInFlight = useRef(false);
+  const attachInFlight = useRef<number | null>(null);
+  const nextAttachId = useRef(0);
+  const pendingReconnect = useRef(false);
+  const attachGeneration = useRef(0);
+  const currentSessionId = useRef(sessionId);
+  const previousIdentity = useRef({ sessionId, assetId: sessionAssetId });
+  currentSessionId.current = sessionId;
+  const attachedMatchesSession = attached?.sessionId === sessionId && attached.assetId === sessionAssetId &&
+    (!attached.sessionKnown || Boolean(session));
+
+  useEffect(() => {
+    if (previousIdentity.current.sessionId !== sessionId || previousIdentity.current.assetId !== sessionAssetId) {
+      attachGeneration.current++;
+      attachInFlight.current = null;
+      pendingReconnect.current = false;
+    }
+    previousIdentity.current = { sessionId, assetId: sessionAssetId };
+  }, [sessionId, sessionAssetId]);
+
+  useEffect(() => useUi.subscribe((next, previous) => {
+    const before = previous.sessions.find((entry) => entry.id === sessionId);
+    const after = next.sessions.find((entry) => entry.id === sessionId);
+    if (!before) return;
+    if (before.assetId !== after?.assetId || (before.status === "connected" && after?.status !== "connected")) {
+      attachGeneration.current++;
+      if (before.assetId !== after?.assetId) attachInFlight.current = null;
+    }
+  }), [sessionId]);
 
   const changeRefreshMs = (ms: number) => {
     setRefreshMs(ms);
@@ -227,6 +262,16 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     let cancelled = false;
     const off = onChannelReopen(channel, () => {
       if (cancelled) return;
+      const current = useUi.getState().sessions.find((entry) => entry.id === attached.sessionId);
+      if (attached.sessionId !== currentSessionId.current || attached.assetId !== (current?.assetId ?? null) ||
+          (attached.sessionKnown && !current)) {
+        return;
+      }
+      if (current && current.status !== "connected") {
+        pendingReconnect.current = true;
+        setLogsIssue({ text: "主机连接中断，连接恢复后将重新读取最近 500 行日志" });
+        return;
+      }
       const state = qc.getQueryData<ContainerSummary[]>(["docker-ps", sessionId])?.find(
         (c) => c.id === containerId,
       )?.state;
@@ -241,6 +286,28 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
       off();
     };
   }, [attached]);
+
+  useEffect(() => {
+    if (!attached) return;
+    if (!attachedMatchesSession) {
+      pendingReconnect.current = false;
+      attachGeneration.current++;
+      attachInFlight.current = null;
+      setAttached(null);
+      setLogsIssue(null);
+      setLogsResumeNote(null);
+      return;
+    }
+    if (!sessionStatus || sessionStatus === "connected") {
+      if (sessionStatus === "connected" && pendingReconnect.current && attachInFlight.current === null) {
+        pendingReconnect.current = false;
+        void openLogs(attached.containerId, attached.container, true);
+      }
+      return;
+    }
+    pendingReconnect.current = true;
+    setLogsIssue({ text: "主机连接中断，连接恢复后将重新读取最近 500 行日志" });
+  }, [attached, attachedMatchesSession, sessionStatus]);
 
   const markPending = (key: string, on: boolean) =>
     setPending((prev) => {
@@ -391,23 +458,66 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
   };
 
   const openLogs = async (containerId: string, containerName: string, reattach = false) => {
-    if (attachInFlight.current) return;
-    attachInFlight.current = true;
+    if (attachInFlight.current !== null) return;
+    const attachId = ++nextAttachId.current;
+    attachInFlight.current = attachId;
+    const generation = attachGeneration.current;
+    const target = useUi.getState().sessions.find((entry) => entry.id === sessionId);
+    const targetAssetId = target?.assetId ?? null;
+    const stillOnTarget = () => {
+      const current = useUi.getState().sessions.find((entry) => entry.id === sessionId);
+      return currentSessionId.current === sessionId && generation === attachGeneration.current &&
+        (target
+          ? Boolean(current && current.assetId === targetAssetId && current.status === "connected")
+          : !current);
+    };
+    if (reattach && attached && (attached.sessionId !== sessionId || (attached.sessionKnown && (!target || target.assetId !== attached.assetId)))) {
+      attachInFlight.current = null;
+      setLogsIssue({ text: "原主机已改变，请返回后重新选择容器", ended: true });
+      return;
+    }
+    if (target && target.status !== "connected") {
+      attachInFlight.current = null;
+      setLogsIssue({ text: "主机连接中断，连接恢复后将重新读取最近 500 行日志" });
+      pendingReconnect.current = true;
+      return;
+    }
     const sink: LogAttach["sink"] = { onBytes: null };
     const channel = createBinaryChannel((bytes) => sink.onBytes?.(bytes));
     try {
       const kernelTab = await dockerApi.logsAttach(sessionId, containerId, 500, channel);
-      setAttached({ container: containerName, containerId, tabId: kernelTab, channel, sink });
+      if (!stillOnTarget()) {
+        void terminalApi.closeTab(kernelTab, "kill", sessionId).catch(() => undefined);
+        disposeChannel(channel);
+        if (currentSessionId.current !== sessionId) return;
+        const current = useUi.getState().sessions.find((entry) => entry.id === sessionId);
+        if (reattach) {
+          setLogsIssue({
+            text: current?.assetId === targetAssetId
+              ? "主机连接发生变化，日志跟随已中断；请重新跟随"
+              : "原主机已改变，请返回后重新选择容器",
+            ended: current?.assetId !== targetAssetId,
+          });
+        } else {
+          pushToast("info", "打开日志时主机连接发生变化，请重新打开日志");
+        }
+        return;
+      }
+      setAttached({ container: containerName, containerId, sessionId, assetId: targetAssetId, sessionKnown: Boolean(target), hostName: target?.name ?? sessionId, tabId: kernelTab, channel, sink });
       setLogsIssue(null);
+      setLogsResumeNote(reattach
+        ? "已重新读取此主机最近 500 行日志；先前画面已替换，断线期间超过 500 行的内容可能缺失。"
+        : null);
     } catch (e) {
       disposeChannel(channel);
+      if (!stillOnTarget()) return;
       if (reattach) {
-        setLogsIssue({ text: describeError(e) });
+        setLogsIssue({ text: `重新跟随失败：${describeError(e)}` });
       } else {
         pushToast("error", `读取日志失败：${describeError(e)}`);
       }
     } finally {
-      attachInFlight.current = false;
+      if (attachInFlight.current === attachId) attachInFlight.current = null;
     }
   };
 
@@ -417,12 +527,13 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
       kind: "terminal",
       title: c.name,
       sessionId,
+      assetId: sessionAssetId ?? undefined,
       containerId: c.id,
       closable: true,
     });
   };
 
-  if (attached) {
+  if (attached && attachedMatchesSession) {
     return (
       <div className="nx-pane bg-term">
         <div className="nx-toolbar">
@@ -431,6 +542,9 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
             onClick={() => {
               setAttached(null);
               setLogsIssue(null);
+              setLogsResumeNote(null);
+              pendingReconnect.current = false;
+              attachGeneration.current++;
             }}
           >
             <IconArrowLeft size={13} />
@@ -446,23 +560,30 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
             <span className="nx-dot nx-dot-pulse bg-green-400" />
           )}
           <div className="nx-spacer" />
-          {logsIssue ? (
-            <>
-              <span className="nx-hint">{logsIssue.text}</span>
-              {!logsIssue.ended && (
-                <button
-                  className="nx-btn nx-btn-ghost nx-btn-sm"
-                  onClick={() => void openLogs(attached.containerId, attached.container, true)}
-                >
-                  <IconRefresh size={12} />
-                  重新跟随
-                </button>
-              )}
-            </>
-          ) : (
+          {!logsIssue && (
             <span className="nx-hint">跟随中 · 关闭此标签或返回即停止</span>
           )}
         </div>
+        {logsIssue && (
+          <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-800/50 bg-amber-950/30 px-2.5 py-1.5 text-xs text-amber-300">
+            <span>{attached.hostName}：{logsIssue.text}</span>
+            {!logsIssue.ended && (
+              <button
+                className="nx-btn nx-btn-ghost nx-btn-sm"
+                disabled={sessionStatus !== undefined && sessionStatus !== "connected"}
+                onClick={() => void openLogs(attached.containerId, attached.container, true)}
+              >
+                <IconRefresh size={12} />
+                重新跟随
+              </button>
+            )}
+          </div>
+        )}
+        {logsResumeNote && !logsIssue && (
+          <div role="status" className="border-b border-amber-800/50 bg-amber-950/30 px-2.5 py-1.5 text-xs text-amber-300">
+            {logsResumeNote}
+          </div>
+        )}
         <div className="min-h-0 flex-1">
           <LogStream key={attached.tabId} sink={attached.sink} />
         </div>

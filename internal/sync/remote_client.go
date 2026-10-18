@@ -84,6 +84,7 @@ func (c *remoteClient) login(ctx context.Context, username, password string) (*l
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
+	request.Header.Set("X-NexTerm-Client", "desktop")
 	response, err := syncHTTPClient(c.insecure).Do(request)
 	if err != nil {
 		return nil, ipc.WrapError(ipc.CodeDisconnected, "无法连接远端同步服务: "+err.Error(), err)
@@ -124,6 +125,7 @@ func (c *remoteClient) loginTOTP(ctx context.Context, ticket, code string) error
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
+	request.Header.Set("X-NexTerm-Client", "desktop")
 	response, err := syncHTTPClient(c.insecure).Do(request)
 	if err != nil {
 		return ipc.WrapError(ipc.CodeDisconnected, "无法连接远端同步服务: "+err.Error(), err)

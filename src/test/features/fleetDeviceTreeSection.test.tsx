@@ -1,8 +1,8 @@
 /** @vitest-environment jsdom */
 // Asset tree device rows tests: row position (after the built-in local terminal, before other assets/groups), rows-only contract
-// (no header/count/refresh button, no loading/error/empty/all-offline hints - the component renders null in those states), no rows
-// and zero requests when logged out, click/Enter opens the device terminal (no separate "Terminal" button), only online devices are
-// listed (offline/agent-less rows hidden, terminal-closed rows stay but disabled), revoked not shown, revoke double-confirm and
+// (no header/count/refresh button, no loading/error/empty hints), no rows
+// and zero requests when logged out, click/Enter/play opens the device terminal, offline/agent-less rows stay visible but disabled,
+// terminal-closed and revoked rows stay visible but disabled, revoke double-confirm and
 // cancel, context-menu revoke danger style, DevicesView reusing MetricsPanel regression.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
@@ -127,6 +127,8 @@ const TERMINAL_DISABLED_DEVICE = {
   last_seen_at: NOW - 30_000,
   agent: { ...OFFLINE_DEVICE.agent, terminal_enabled: false, last_seen_at: NOW - 30_000 },
 };
+
+const NO_AGENT_DEVICE = { ...ONLINE_DEVICE, id: "d-7", name: "bare-01", agent: undefined };
 
 const REVOKED_DEVICE = { ...ONLINE_DEVICE, id: "d-4", name: "old-laptop", revoked_at: NOW - 3600_000 };
 
@@ -270,6 +272,20 @@ function deviceRow(name: string): HTMLElement {
   const row = [...tree().querySelectorAll<HTMLElement>('[role="treeitem"]')].find((r) => r.textContent?.includes(name));
   if (!row) throw new Error(`设备行未找到: ${name}`);
   return row;
+}
+
+function openDeviceMenu(name: string): void {
+  act(() => {
+    deviceRow(name).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 40, clientY: 40 }));
+  });
+}
+
+function clickDeviceMenuItem(label: string): void {
+  const item = [...document.querySelectorAll<HTMLButtonElement>(".nx-menu-item")].find((button) =>
+    button.textContent?.includes(label),
+  );
+  if (!item) throw new Error(`设备菜单项未找到: ${label}`);
+  click(item);
 }
 
 function deviceWorkspace() {
@@ -423,7 +439,7 @@ describe("Asset tree device rows - rows only", () => {
     expect(document.querySelector('[role="group"][aria-label="设备"]')).toBeNull();
   });
 
-  it("renders no all-offline hint or offline device rows when every device is offline", async () => {
+  it("keeps an all-offline device visible and disabled without an empty-state hint", async () => {
     const calls = route({ devices: [OFFLINE_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
@@ -431,14 +447,16 @@ describe("Asset tree device rows - rows only", () => {
     await flushUntil(() => calls.some((c) => c.url === "/fleet/devices" && c.method === "GET"));
     await flush();
 
-    expect(tree().textContent ?? "").not.toContain("db-02");
+    expect(tree().textContent ?? "").toContain("db-02");
+    expect(deviceRow("db-02").getAttribute("aria-disabled")).toBe("true");
+    expect(deviceRow("db-02").textContent).toContain("离线");
     expect(tree().textContent ?? "").not.toContain("设备都不在线");
     expect(document.querySelector('[role="group"][aria-label="设备"]')).toBeNull();
   });
 });
 
 describe("Asset tree device rows - row behavior", () => {
-  it("opens the device terminal workspace on click and Enter without a separate terminal button", async () => {
+  it("opens the device workspace from the play button and Enter", async () => {
     route({ devices: [ONLINE_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
@@ -446,9 +464,11 @@ describe("Asset tree device rows - row behavior", () => {
 
     const row = deviceRow("web-01");
     expect(row.getAttribute("role")).toBe("treeitem");
-    expect([...row.querySelectorAll("button")].some((b) => b.textContent?.trim() === "终端")).toBe(false);
+    const actions = [...row.querySelectorAll<HTMLButtonElement>(".nx-row-actions button")];
+    expect(actions.map((button) => button.getAttribute("aria-label"))).toEqual(["打开工作区 web-01"]);
+    expect(row.querySelector(".nx-row-more")).toBeNull();
 
-    click(row);
+    click(actions[0]);
     await flushUntil(() => deviceWorkspace() !== undefined);
     expect(mocks.sessionConnectDevice).toHaveBeenCalledTimes(1);
     expect(mocks.sessionConnectDevice).toHaveBeenCalledWith("d-1", "web-01");
@@ -463,52 +483,119 @@ describe("Asset tree device rows - row behavior", () => {
     expect(deviceTerminalTabs()).toHaveLength(1);
   });
 
-  it("hides offline devices and disables online devices with terminal disabled, showing a hint and not opening a terminal on click", async () => {
-    route({ devices: [OFFLINE_DEVICE, TERMINAL_DISABLED_DEVICE] });
+  it("disables offline, agent-less, and terminal-disabled devices without hiding them", async () => {
+    route({ devices: [OFFLINE_DEVICE, NO_AGENT_DEVICE, TERMINAL_DISABLED_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
     await flushUntil(() => document.body.textContent?.includes("noterm-01") ?? false);
 
-    expect(tree().textContent).not.toContain("db-02");
-    expect(tree().textContent).not.toContain("离线");
+    const offline = deviceRow("db-02");
+    const noAgent = deviceRow("bare-01");
+    expect(offline.getAttribute("aria-disabled")).toBe("true");
+    expect(offline.textContent).toContain("离线");
+    expect(offline.querySelector<HTMLButtonElement>(".nx-row-actions button")?.disabled).toBe(true);
+    expect(noAgent.getAttribute("aria-disabled")).toBe("true");
+    expect(noAgent.textContent).toContain("未接入 Agent");
+    expect(noAgent.querySelector<HTMLButtonElement>(".nx-row-actions button")?.disabled).toBe(true);
 
     const noTerm = deviceRow("noterm-01");
     expect(noTerm.getAttribute("aria-disabled")).toBe("true");
     expect(noTerm.getAttribute("title")).toContain("该设备已关闭远程终端");
 
+    click(offline);
+    keydown(offline, "Enter");
+    click(noAgent);
+    keydown(noAgent, "Enter");
     click(noTerm);
     keydown(noTerm, "Enter");
+    openDeviceMenu("db-02");
+    await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
+    const menuConnect = [...document.querySelectorAll<HTMLButtonElement>(".nx-menu-item")].find((button) =>
+      button.textContent?.includes("打开终端"),
+    );
+    expect(menuConnect?.disabled).toBe(true);
     await flush();
     expect(mocks.sessionConnectDevice).not.toHaveBeenCalled();
     expect(deviceWorkspace()).toBeUndefined();
   });
 
-  it("omits revoked devices from the tree rather than dimming them", async () => {
-    route({ devices: [ONLINE_DEVICE, REVOKED_DEVICE] });
+  it("keeps a revoked device visible for details while preventing connections and duplicate revoke", async () => {
+    const calls = route({ devices: [ONLINE_DEVICE, REVOKED_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
-    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("old-laptop") ?? false);
 
-    expect(tree().textContent).not.toContain("old-laptop");
+    const revoked = deviceRow("old-laptop");
+    expect(revoked.textContent).toContain("已吊销");
+    expect(revoked.getAttribute("aria-disabled")).toBe("true");
+    expect(revoked.querySelector<HTMLButtonElement>(".nx-row-actions button")?.disabled).toBe(true);
+    click(revoked);
+    keydown(revoked, "Enter");
+    expect(mocks.sessionConnectDevice).not.toHaveBeenCalled();
+    openDeviceMenu("old-laptop");
+    await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
+    const items = [...document.querySelectorAll<HTMLButtonElement>(".nx-menu-item")];
+    expect(items.find((item) => item.textContent?.includes("打开终端"))?.disabled).toBe(true);
+    expect(items.some((item) => item.textContent?.includes("详情"))).toBe(true);
+    expect(items.some((item) => item.querySelector(".nx-menu-label")?.textContent === "吊销")).toBe(false);
+    clickDeviceMenuItem("详情");
+    expect(useUi.getState().workspaces.some((workspace) => workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "devices")))).toBe(true);
+    expect(calls.some((call) => call.url.includes("/revoke"))).toBe(false);
   });
 
-  it("uses danger styling for the context-menu revoke item and is-danger for the inline revoke button", async () => {
+  it("keeps device management actions in the context menu", async () => {
     route({ devices: [ONLINE_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
-    const inlineRevoke = tree().querySelector<HTMLButtonElement>('button[aria-label="吊销 web-01"]');
-    expect(inlineRevoke?.classList.contains("is-danger")).toBe(true);
-
-    act(() => {
-      deviceRow("web-01").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 40, clientY: 40 }));
-    });
+    expect(deviceRow("web-01").querySelectorAll(".nx-row-actions button")).toHaveLength(1);
+    openDeviceMenu("web-01");
     await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
+    expect(document.body.textContent).toContain("详情");
     const revokeItem = [...document.querySelectorAll<HTMLButtonElement>(".nx-menu-item")].find((b) =>
       b.textContent?.includes("吊销"),
     );
     expect(revokeItem?.classList.contains("is-danger")).toBe(true);
+  });
+
+  it("opens the management menu on touch long press without connecting", async () => {
+    route({ devices: [ONLINE_DEVICE] });
+    seedUser(SUPERADMIN);
+    mountTree();
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+    vi.useFakeTimers();
+
+    const row = deviceRow("web-01");
+    const pointer = (type: string) => {
+      const event = new Event(type, { bubbles: true });
+      Object.defineProperties(event, {
+        pointerType: { value: "touch" },
+        clientX: { value: 40 },
+        clientY: { value: 40 },
+      });
+      return event;
+    };
+    act(() => {
+      row.dispatchEvent(pointer("pointerdown"));
+      vi.advanceTimersByTime(500);
+      row.dispatchEvent(pointer("pointerup"));
+    });
+    act(() => {
+      vi.advanceTimersByTime(100);
+      row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(document.body.textContent).toContain("吊销");
+    expect(mocks.sessionConnectDevice).not.toHaveBeenCalled();
+
+    act(() => {
+      row.dispatchEvent(pointer("pointerdown"));
+      row.dispatchEvent(pointer("pointerup"));
+      row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    vi.useRealTimers();
+    await flushUntil(() => deviceWorkspace() !== undefined);
+    expect(mocks.sessionConnectDevice).toHaveBeenCalledTimes(1);
   });
 
   it("moves focus between device rows and adjacent tree rows with arrow keys", async () => {
@@ -540,7 +627,7 @@ describe("Asset tree device rows - row behavior", () => {
 });
 
 describe("Asset tree device rows - automatic convergence", () => {
-  it("polls every 60 seconds on WEB and removes devices revoked elsewhere after refresh", async () => {
+  it("polls every 60 seconds on WEB and shows devices revoked elsewhere as disabled", async () => {
     vi.useFakeTimers();
     let devices: unknown[] = [ONLINE_DEVICE];
     const calls: RecordedCall[] = [];
@@ -560,16 +647,17 @@ describe("Asset tree device rows - automatic convergence", () => {
     const deviceFetches = () => calls.filter((c) => c.url === "/fleet/devices" && c.method === "GET").length;
     const before = deviceFetches();
 
-    // After a revoke elsewhere, the next 60s poll removes the device row.
+    // After a revoke elsewhere, the next 60s poll preserves the row and disables its terminal action.
     devices = [{ ...ONLINE_DEVICE, revoked_at: NOW - 60_000 }];
     await act(async () => {
       await vi.advanceTimersByTimeAsync(61_000);
     });
-    await flushUntil(() => !(tree().textContent ?? "").includes("web-01"));
+    await flushUntil(() => deviceRow("web-01").textContent?.includes("已吊销") ?? false);
+    expect(deviceRow("web-01").getAttribute("aria-disabled")).toBe("true");
     expect(deviceFetches()).toBeGreaterThan(before);
   });
 
-  it("moves device rows online and offline in real time with device://status without refetching and ignores unknown device IDs", async () => {
+  it("updates the visible device row's disabled state in real time without refetching", async () => {
     const calls = route({ devices: [ONLINE_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
@@ -585,12 +673,15 @@ describe("Asset tree device rows - automatic convergence", () => {
 
     act(() => handler({ deviceId: "d-1", online: false }));
     await flush();
-    expect(tree().textContent ?? "").not.toContain("web-01");
+    expect(tree().textContent ?? "").toContain("web-01");
+    expect(deviceRow("web-01").getAttribute("aria-disabled")).toBe("true");
+    expect(deviceRow("web-01").textContent).toContain("离线");
     expect(calls.length).toBe(fetchesBefore);
 
     act(() => handler({ deviceId: "d-1", online: true }));
     await flush();
     expect(tree().textContent).toContain("web-01");
+    expect(deviceRow("web-01").getAttribute("aria-disabled")).toBe("false");
     expect(calls.length).toBe(fetchesBefore);
   });
 
@@ -615,22 +706,28 @@ describe("Asset tree device rows - automatic convergence", () => {
 });
 
 describe("Asset tree device rows - two-step revoke confirmation", () => {
-  it("revokes only after both warnings are confirmed and removes the device immediately on success", async () => {
+  it("revokes only after both warnings are confirmed and leaves the disabled device visible", async () => {
     const calls = route({ devices: [ONLINE_DEVICE, SECOND_ONLINE] });
     mocks.ask.mockResolvedValue(true);
     seedUser(SUPERADMIN);
     mountTree();
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
-    click(tree().querySelector('button[aria-label="吊销 web-01"]') as HTMLButtonElement);
+    openDeviceMenu("web-01");
+    await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
+    clickDeviceMenuItem("吊销");
     await flushUntil(() => calls.some((c) => c.url === "/fleet/devices/d-1/revoke" && c.method === "POST"));
-    await flushUntil(() => !(tree().textContent ?? "").includes("web-01"));
+    await flushUntil(() => deviceRow("web-01").textContent?.includes("已吊销") ?? false);
 
     expect(mocks.ask).toHaveBeenCalledTimes(2);
     expect(String(mocks.ask.mock.calls[0]?.[1]?.kind)).toBe("warning");
     expect(String(mocks.ask.mock.calls[1]?.[1]?.kind)).toBe("warning");
     expect(String(mocks.ask.mock.calls[1]?.[0])).toContain("凭证立即失效");
-    expect(String(mocks.ask.mock.calls[1]?.[0])).toContain("从资产中移除且不可恢复");
+    expect(String(mocks.ask.mock.calls[1]?.[0])).toContain("设备仍显示为已吊销但无法连接");
+    expect(deviceRow("web-01").querySelector<HTMLButtonElement>(".nx-row-actions button")?.disabled).toBe(true);
+    openDeviceMenu("web-01");
+    await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
+    expect([...document.querySelectorAll<HTMLButtonElement>(".nx-menu-item")].some((item) => item.querySelector(".nx-menu-label")?.textContent === "吊销")).toBe(false);
     expect(tree().textContent).toContain("nas-01");
   });
 
@@ -641,7 +738,9 @@ describe("Asset tree device rows - two-step revoke confirmation", () => {
     mountTree();
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
-    click(tree().querySelector('button[aria-label="吊销 web-01"]') as HTMLButtonElement);
+    openDeviceMenu("web-01");
+    await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
+    clickDeviceMenuItem("吊销");
     await flushUntil(() => mocks.ask.mock.calls.length === 1);
     await flush();
     expect(mocks.ask).toHaveBeenCalledTimes(1);
@@ -656,7 +755,9 @@ describe("Asset tree device rows - two-step revoke confirmation", () => {
     mountTree();
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
-    click(tree().querySelector('button[aria-label="吊销 web-01"]') as HTMLButtonElement);
+    openDeviceMenu("web-01");
+    await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
+    clickDeviceMenuItem("吊销");
     await flushUntil(() => mocks.ask.mock.calls.length === 2);
     await flush();
     expect(calls.some((c) => c.url.includes("/revoke"))).toBe(false);

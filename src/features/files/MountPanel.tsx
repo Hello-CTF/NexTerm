@@ -167,13 +167,14 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
   };
 
   const mounts = useQuery({
-    queryKey: ["mounts"],
-    queryFn: () => mountApi.list(true),
-    enabled: visible,
-    refetchInterval: visible ? 15000 : false,
+    queryKey: ["mounts", sessionId],
+    queryFn: () =>
+      sessionId ? mountApi.list({ sessionId, forceRefresh: true }) : Promise.resolve([]),
+    enabled: visible && Boolean(sessionId),
+    refetchInterval: visible && sessionId ? 15000 : false,
   });
 
-  const refresh = () => void qc.invalidateQueries({ queryKey: ["mounts"] });
+  const refresh = () => void qc.invalidateQueries({ queryKey: ["mounts", sessionId] });
 
   const create = async () => {
     if (!sessionId || localSession) {
@@ -223,7 +224,10 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
     }
   };
 
-  const list = mounts.data ?? [];
+  const list = (mounts.data ?? []).filter(
+    (mount) =>
+      mount.sessionId === sessionId && "managed" in mount && mount.managed === true,
+  );
   const mountsFailed = mounts.isError && !mounts.data;
 
   return (
@@ -231,7 +235,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
       <div className="nx-toolbar">
         <IconDrive size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">磁盘挂载</span>
-        <span className="nx-hint">显示本机实际挂载状态，每 15 秒自动刷新</span>
+        <span className="nx-hint">当前会话管理的挂载，每 15 秒自动刷新</span>
         <div className="nx-spacer" />
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={refresh}>
           <IconRefresh size={13} />
@@ -249,7 +253,13 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             </tr>
           </thead>
           <tbody>
-            {mounts.isPending ? (
+            {!sessionId ? (
+              <tr>
+                <td colSpan={3} className="nx-table-empty">
+                  请先连接 SSH 资产后查看挂载
+                </td>
+              </tr>
+            ) : mounts.isPending ? (
               <tr>
                 <td colSpan={3} className="nx-table-empty">
                   挂载列表加载中…
@@ -271,7 +281,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             ) : list.length === 0 ? (
               <tr>
                 <td colSpan={3} className="nx-table-empty">
-                  本机当前没有挂载点
+                  当前会话没有挂载点
                 </td>
               </tr>
             ) : (

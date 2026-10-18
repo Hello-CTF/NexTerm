@@ -38,7 +38,17 @@ vi.mock("../features/settings/useWebAutoSync", () => ({
   useWebAutoSync: () => {},
 }));
 vi.mock("../features/terminal/TerminalPane", () => ({ TerminalPane: () => null }));
-vi.mock("../app/layout", () => ({ layoutBootstrapped: Promise.resolve(), startLayoutSync: () => {} }));
+vi.mock("../app/layout", () => ({
+  layoutBootstrapped: Promise.resolve(),
+  startLayoutSync: () => {},
+  advanceLayoutAccount: () => {},
+  finishLayoutRestore: vi.fn(),
+  layoutRestoreStatus: () => ({ pending: false, preview: false, count: 0 }),
+  onRemoteChange: () => {},
+  reviewPendingLayoutRestore: vi.fn(),
+  subscribeLayoutRestore: () => () => {},
+  undoLayoutRestore: vi.fn(),
+}));
 vi.mock("../features/terminal/BackgroundSessions", () => ({ BackgroundSessions: () => null }));
 vi.mock("../features/files/FileBrowser", () => ({ FileBrowser: () => null }));
 vi.mock("../features/files/FileTree", () => ({ FileTree: () => null }));

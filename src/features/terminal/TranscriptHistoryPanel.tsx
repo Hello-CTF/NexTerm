@@ -153,12 +153,6 @@ export function TranscriptHistoryPanel({
   }, [loadHosts]);
 
   useEffect(() => {
-    if (hosts === null || assetId !== null) return;
-    const first = hosts[0];
-    if (first) setAssetId(first.assetId);
-  }, [hosts, assetId]);
-
-  useEffect(() => {
     if (sourceAssetId === undefined || sourceAssetId === appliedSourceAssetIdRef.current) return;
     appliedSourceAssetIdRef.current = sourceAssetId;
     sessionsGenerationRef.current += 1;
@@ -432,7 +426,9 @@ export function TranscriptHistoryPanel({
             useUi.getState().updateTab("history", { assetId: nextAssetId ?? undefined });
           }}
         >
-          {hostOptions.length === 0 && <option value="">无可用主机</option>}
+          <option value="" disabled>
+            {hostOptions.length === 0 ? "无可用主机" : "请选择主机"}
+          </option>
           {hostOptions.map((host) => (
             <option key={host.assetId} value={host.assetId}>
               {hostLabel(host)}
@@ -580,9 +576,11 @@ export function TranscriptHistoryPanel({
                 {!sessionsError && !assetId && hosts !== null && (
                   <tr>
                     <td colSpan={2} className="nx-table-empty">
-                      还没有可查看的主机
+                      {hostOptions.length === 0 ? "还没有可查看的主机" : "请选择主机查看终端历史"}
                       <div className="mt-1.5 text-[11px] text-neutral-500">
-                        先在资产里添加一台主机并连接终端。
+                        {hostOptions.length === 0
+                          ? "先在资产里添加一台主机并连接终端。"
+                          : "从上方列表选择要查看的主机，避免误看其他主机的记录。"}
                       </div>
                     </td>
                   </tr>

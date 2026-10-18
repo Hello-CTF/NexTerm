@@ -87,7 +87,12 @@ import type { FileEntryDto } from "../../ipc/types";
 import { FileBrowser } from "../../features/files/FileBrowser";
 import { FileTree } from "../../features/files/FileTree";
 import { resetNativeDropDedupeForTest } from "../../features/files/nativeDrop";
-import { useTransferStore } from "../../features/files/transferStore";
+import {
+  enqueueDownload,
+  resetTransferQueue,
+  useTransferStore,
+  type ScopedTransferTask,
+} from "../../features/files/transferStore";
 
 const SID = "s1";
 const LOCAL_FILE = "/local/nginx-access.log";
@@ -235,6 +240,28 @@ function panelRows(container: HTMLElement): HTMLElement[] {
   return [...container.querySelectorAll<HTMLElement>("[data-task-key]")];
 }
 
+function transferTask(
+  id: string,
+  sessionId: string,
+  hostId: string,
+  targetName: string,
+  status: ScopedTransferTask["status"],
+): ScopedTransferTask {
+  return {
+    id,
+    batchId: id,
+    sessionId,
+    hostId,
+    targetName,
+    direction: "upload",
+    remotePath: `~/${id}.txt`,
+    localPath: `/local/${id}.txt`,
+    status,
+    transferred: 0,
+    total: 0,
+  };
+}
+
 let mounted: MountedView | undefined;
 
 function remountBrowser(): void {
@@ -300,6 +327,7 @@ describe("unified transfer queue panel (FileBrowser)", () => {
   });
 
   it("queues uploads with direction, remote path, and in-progress status, then shows a clear completion toast", async () => {
+    useUi.setState({ sessions: [{ ...sessionOfKind("ssh"), assetId: "asset-a", name: "Alpha" }] });
     let resolveUpload!: (v: number) => void;
     mocks.upload.mockReturnValueOnce(new Promise<number>((r) => (resolveUpload = r)));
 
@@ -310,6 +338,7 @@ describe("unified transfer queue panel (FileBrowser)", () => {
     expect(panel).not.toBeNull();
     expect(panel!.textContent).toContain("~/nginx-access.log");
     expect(panel!.textContent).toContain(LOCAL_FILE);
+    expect(panel!.textContent).toContain("目标：Alpha · 会话 s1");
     expect((panel!.textContent ?? "").indexOf(LOCAL_FILE)).toBeLessThan(
       (panel!.textContent ?? "").indexOf("~/nginx-access.log"),
     );
@@ -467,6 +496,99 @@ describe("unified transfer queue panel (FileBrowser)", () => {
     await waitFor(() =>
       expect(mounted!.container.querySelector('[data-testid="transfer-panel"]')).toBeNull(),
     );
+  });
+
+  it("defaults to the current host, including an earlier session of that host, and keeps other hosts when clearing", async () => {
+    useUi.setState({ sessions: [{ ...sessionOfKind("ssh"), assetId: "asset-a", name: "Alpha" }] });
+    act(() => {
+      useTransferStore.setState({
+        tasks: [
+          transferTask("current", SID, "asset-a", "Alpha", "done"),
+          transferTask("previous", "s-previous", "asset-a", "Alpha", "failed"),
+          transferTask("other", "s-other", "asset-b", "Beta", "done"),
+        ],
+      });
+    });
+
+    expect(panelRows(mounted!.container).map((row) => row.dataset.taskKey)).toEqual([
+      "current",
+      "previous",
+    ]);
+    expect(mounted!.container.textContent).toContain("目标：Alpha · 会话 s1");
+    expect(mounted!.container.textContent).not.toContain("Beta");
+
+    click(buttonByTitle(mounted!.container, "清除已结束"));
+    expect(useTransferStore.getState().tasks.map((task) => task.id)).toEqual(["other"]);
+    expect(panelRows(mounted!.container)).toHaveLength(0);
+    expect(mounted!.container.textContent).toContain("当前主机没有传输任务");
+
+    click(buttonByTitle(mounted!.container, "当前主机"));
+    expect(panelRows(mounted!.container).map((row) => row.dataset.taskKey)).toEqual(["other"]);
+    expect(mounted!.container.textContent).toContain("目标：Beta · 会话 s-other");
+  });
+
+  it("global view cancels only the selected queued task and clears finished tasks in that view", async () => {
+    useUi.setState({ sessions: [{ ...sessionOfKind("ssh"), assetId: "asset-a", name: "Alpha" }] });
+    act(() => {
+      useTransferStore.setState({
+        tasks: [
+          transferTask("current", SID, "asset-a", "Alpha", "queued"),
+          transferTask("other", "s-other", "asset-b", "Beta", "queued"),
+          transferTask("finished", "s-third", "asset-c", "Gamma", "done"),
+        ],
+      });
+    });
+    click(buttonByTitle(mounted!.container, "当前主机"));
+    expect(panelRows(mounted!.container)).toHaveLength(3);
+    const otherRow = mounted!.container.querySelector<HTMLElement>('[data-task-key="other"]');
+    expect(otherRow).not.toBeNull();
+    click(buttonByTitle(otherRow!, "取消这个排队任务"));
+    expect(useTransferStore.getState().tasks.find((task) => task.id === "other")?.status).toBe("cancelled");
+    expect(useTransferStore.getState().tasks.find((task) => task.id === "current")?.status).toBe("queued");
+
+    click(buttonByTitle(mounted!.container, "清除已结束"));
+    expect(useTransferStore.getState().tasks.map((task) => task.id)).toEqual(["current"]);
+  });
+
+  it("account reset hides old paths, discards queued staging, and ignores late completion", async () => {
+    let resolveUpload!: (bytes: number) => void;
+    mocks.upload.mockReturnValueOnce(new Promise<number>((resolve) => (resolveUpload = resolve)));
+    click(buttonByTitle(mounted!.container, "上传"));
+    await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
+
+    mocks.pickLocalFile.mockResolvedValueOnce("/local/queued.txt");
+    click(buttonByTitle(mounted!.container, "上传"));
+    await waitFor(() => expect(panelRows(mounted!.container)).toHaveLength(2));
+
+    act(() => resetTransferQueue());
+    expect(useTransferStore.getState().tasks).toEqual([]);
+    expect(mounted!.container.querySelector('[data-testid="transfer-panel"]')).toBeNull();
+    await waitFor(() => expect(mocks.discardStaged).toHaveBeenCalledWith("/local/queued.txt"));
+
+    resolveUpload(100);
+    await flush();
+    expect(useTransferStore.getState().tasks).toEqual([]);
+    expect(mocks.upload).toHaveBeenCalledTimes(1);
+    expect(mocks.toast).not.toHaveBeenCalledWith("success", expect.anything());
+  });
+
+  it("account reset discards an in-flight download before it can be saved in the next account", async () => {
+    let resolveOldDownload!: (bytes: number) => void;
+    mocks.download.mockReturnValueOnce(new Promise<number>((resolve) => (resolveOldDownload = resolve)));
+    enqueueDownload(SID, { remotePath: "~/old-account.txt", localPath: "/staged/old-account.txt" });
+    await waitFor(() => expect(mocks.download).toHaveBeenCalledTimes(1));
+
+    act(() => resetTransferQueue());
+    expect(useTransferStore.getState().tasks).toEqual([]);
+    expect(mocks.discardStaged).not.toHaveBeenCalledWith("/staged/old-account.txt");
+
+    enqueueDownload(SID, { remotePath: "~/new-account.txt", localPath: "/staged/new-account.txt" });
+    resolveOldDownload(100);
+    await waitFor(() => expect(mocks.finishSave).toHaveBeenCalledWith("/staged/new-account.txt", "new-account.txt"));
+    expect(mocks.finishSave).not.toHaveBeenCalledWith("/staged/old-account.txt", "old-account.txt");
+    expect(mocks.discardStaged).toHaveBeenCalledWith("/staged/old-account.txt");
+    expect(useTransferStore.getState().tasks.every((task) => task.remotePath !== "~/old-account.txt")).toBe(true);
+    expect(mocks.toast).not.toHaveBeenCalledWith("success", expect.stringContaining("old-account.txt"));
   });
 });
 

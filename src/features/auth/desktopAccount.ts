@@ -47,5 +47,18 @@ export function useDesktopAccount(): AccountUser | null {
 		enabled: DESKTOP,
 		staleTime: 30_000,
 	});
-	return DESKTOP ? (query.data ?? null) : null;
+	return DESKTOP && !query.isFetching ? (query.data ?? null) : null;
+}
+
+// Account data is scoped to both the remote server and user. An invalidated link is treated as
+// unknown until its refetch completes, so data from the prior server is never shown during a switch.
+export function useDesktopAccountScope(user: AccountUser | null): string | null {
+	const link = useQuery({
+		queryKey: ["sync-link", "account-scope-link"],
+		queryFn: syncApi.linkGet,
+		enabled: DESKTOP && Boolean(user),
+		staleTime: 30_000,
+	});
+	if (!DESKTOP || !user || !link.isSuccess || link.isFetching || link.data.username !== user.username) return null;
+	return JSON.stringify([link.data.url, user.id, user.username]);
 }

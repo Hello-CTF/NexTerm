@@ -211,6 +211,35 @@ afterEach(() => {
 });
 
 describe("history tab in the layout pane contract", () => {
+  it("keeps an attaching SSH terminal through an earlier layout save and its readback", async () => {
+    const { layout, store } = await openTab();
+    const pending: AppTab = {
+      id: "connecting-terminal", kind: "terminal", title: "终端 1", sessionId: "s1", closable: true,
+    };
+    const host = hostWorkspace("host", "s1", "asset-1", [pending]);
+    store.setState({ workspaces: [host], activeWorkspaceId: host.id });
+
+    const beforeAttach = layout.serializeLayout(store.getState());
+    expect(beforeAttach?.workspaces[0]?.panes[0].tabs[0]).toMatchObject({
+      id: pending.id, restorePending: true,
+    });
+    await layout.flushLayout();
+    expect(JSON.parse(server.data ?? "null").workspaces[0].panes[0].tabs).toHaveLength(1);
+
+    const attached = { ...pending, tabId: "kernel-terminal" };
+    store.setState({ workspaces: [hostWorkspace("host", "s1", "asset-1", [attached])] });
+    const beforeReadback = server.getCalls;
+    layout.onRemoteChange(null);
+    await waitForPull(beforeReadback);
+
+    expect(findTab(store.getState(), pending.id)).toMatchObject({
+      tabId: "kernel-terminal", restorePending: undefined,
+    });
+    await vi.waitFor(() => {
+      expect(JSON.parse(server.data ?? "null").workspaces[0].panes[0].tabs[0].tabId).toBe("kernel-terminal");
+    }, { timeout: 2000 });
+  });
+
   it("serialize → JSON → sanitize keeps account tools together and background in its host", async () => {
     const { layout, store } = await openTab();
     store.setState({

@@ -23,10 +23,12 @@ type managedConnection interface {
 type Service struct {
 	resolver AssetResolver
 
-	mu     sync.RWMutex
-	conns  map[string]managedConnection
-	owners map[string]string
-	closed bool
+	mu                   sync.RWMutex
+	conns                map[string]managedConnection
+	owners               map[string]string
+	loginSessions        map[string]map[string]struct{}
+	revokedLoginSessions map[string]struct{}
+	closed               bool
 
 	openMySQL    func(context.Context, MySQLConfig) (*mysqlConnection, error)
 	openPostgres func(context.Context, PostgresConfig) (*postgresConnection, error)
@@ -36,13 +38,15 @@ type Service struct {
 
 func NewService(resolver AssetResolver) *Service {
 	return &Service{
-		resolver:     resolver,
-		conns:        make(map[string]managedConnection),
-		owners:       make(map[string]string),
-		openMySQL:    connectMySQL,
-		openPostgres: connectPostgres,
-		openRedis:    connectRedis,
-		newID:        randomID,
+		resolver:             resolver,
+		conns:                make(map[string]managedConnection),
+		owners:               make(map[string]string),
+		loginSessions:        make(map[string]map[string]struct{}),
+		revokedLoginSessions: make(map[string]struct{}),
+		openMySQL:            connectMySQL,
+		openPostgres:         connectPostgres,
+		openRedis:            connectRedis,
+		newID:                randomID,
 	}
 }
 
@@ -66,6 +70,7 @@ func (s *Service) Close() error {
 		connections = append(connections, connection)
 		delete(s.conns, id)
 		delete(s.owners, id)
+		delete(s.loginSessions, id)
 	}
 	s.mu.Unlock()
 
@@ -148,7 +153,15 @@ func (s *Service) Connect(ctx context.Context, args ConnectArgs) (ConnectResult,
 		_ = connection.Close()
 		return ConnectResult{}, internalError("生成数据库连接 ID", err)
 	}
+	if err := ipc.CheckAccountSession(ctx); err != nil {
+		return ConnectResult{}, errors.Join(err, connection.Close())
+	}
 	s.mu.Lock()
+	loginSessionID := ipc.AccountSessionID(ctx)
+	if _, revoked := s.revokedLoginSessions[loginSessionID]; loginSessionID != "" && revoked {
+		s.mu.Unlock()
+		return ConnectResult{}, errors.Join(ipc.NewError(ipc.CodeForbidden, "登录会话已失效"), connection.Close())
+	}
 	if s.closed {
 		s.mu.Unlock()
 		_ = connection.Close()
@@ -156,6 +169,9 @@ func (s *Service) Connect(ctx context.Context, args ConnectArgs) (ConnectResult,
 	}
 	s.conns[id] = connection
 	s.owners[id] = ipc.OwnerID(ctx)
+	if loginSessionID != "" {
+		s.loginSessions[id] = map[string]struct{}{loginSessionID: {}}
+	}
 	s.mu.Unlock()
 	return ConnectResult{ConnID: id}, nil
 }
@@ -174,11 +190,41 @@ func (s *Service) Disconnect(ctx context.Context, id string) error {
 	}
 	delete(s.conns, id)
 	delete(s.owners, id)
+	delete(s.loginSessions, id)
 	s.mu.Unlock()
 	if err := connection.Close(); err != nil {
 		return internalError("关闭数据库连接", err)
 	}
 	return nil
+}
+
+// CloseAccountSession releases only database handles not adopted by another login session.
+// A revoked session is remembered so a dial that finishes after logout cannot register a handle.
+func (s *Service) CloseAccountSession(sessionID string) error {
+	if sessionID == "" {
+		return nil
+	}
+	s.mu.Lock()
+	s.revokedLoginSessions[sessionID] = struct{}{}
+	var connections []managedConnection
+	for id, sessions := range s.loginSessions {
+		delete(sessions, sessionID)
+		if len(sessions) != 0 {
+			continue
+		}
+		connections = append(connections, s.conns[id])
+		delete(s.conns, id)
+		delete(s.owners, id)
+		delete(s.loginSessions, id)
+	}
+	s.mu.Unlock()
+	var errs []error
+	for _, connection := range connections {
+		if err := connection.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (s *Service) connectionArgs(ctx context.Context, args ConnectArgs) (InlineConnection, error) {
@@ -253,16 +299,28 @@ func forbiddenConnection() *ipc.Error {
 }
 
 func (s *Service) connOf(ctx context.Context, id string) (managedConnection, error) {
-	s.mu.RLock()
+	s.mu.Lock()
 	connection := s.conns[id]
 	owner := s.owners[id]
-	s.mu.RUnlock()
 	if connection == nil {
+		s.mu.Unlock()
 		return nil, notFound(id)
 	}
 	if !connectionRequestAllowed(ctx, owner) {
+		s.mu.Unlock()
 		return nil, forbiddenConnection()
 	}
+	if sessionID := ipc.AccountSessionID(ctx); sessionID != "" {
+		if _, revoked := s.revokedLoginSessions[sessionID]; revoked {
+			s.mu.Unlock()
+			return nil, ipc.NewError(ipc.CodeForbidden, "登录会话已失效")
+		}
+		if s.loginSessions[id] == nil {
+			s.loginSessions[id] = make(map[string]struct{})
+		}
+		s.loginSessions[id][sessionID] = struct{}{}
+	}
+	s.mu.Unlock()
 	return connection, nil
 }
 

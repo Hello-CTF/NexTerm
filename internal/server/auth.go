@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
@@ -66,6 +68,19 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 					// Per-account-user isolated device-side state such as sync opt-in reads the session identity via ipc.UserIDFromContext; client-reported values are not accepted.
 					ctx = ipc.WithUserID(ctx, identity.UserID)
 					ctx = ipc.WithRole(ctx, string(identity.Role))
+					ctx = ipc.WithAccountSessionID(ctx, identity.SessionID)
+					ctx = ipc.WithAccountSessionCheck(ctx, func(checkCtx context.Context) error {
+						validationCtx, cancel := context.WithTimeout(context.WithoutCancel(checkCtx), 5*time.Second)
+						defer cancel()
+						current, err := s.accounts.ValidateSession(validationCtx, cookieToken)
+						if err != nil {
+							return err
+						}
+						if current.SessionID != identity.SessionID || current.UserID != identity.UserID {
+							return ipc.NewError(ipc.CodeForbidden, sessionReloginMessage)
+						}
+						return nil
+					})
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}

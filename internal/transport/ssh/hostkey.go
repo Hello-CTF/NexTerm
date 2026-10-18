@@ -101,7 +101,10 @@ func verifyHostKey(ctx context.Context, store HostKeyStore, host string, port in
 			return nil
 		}
 	}
-	approved := loadApprovedHostKeys(ctx, store, host, port)
+	approved, err := loadApprovedHostKeys(ctx, store, host, port)
+	if err != nil {
+		return fmt.Errorf("load approved SSH host keys: %w", err)
+	}
 
 	if len(knownSameType) == 0 {
 		if !autoAcceptUnknown && !approvalApproves(approval, key) && !matchesApprovedKey(approved, key) {
@@ -122,16 +125,12 @@ func verifyHostKey(ctx context.Context, store HostKeyStore, host string, port in
 	return nil
 }
 
-func loadApprovedHostKeys(ctx context.Context, store HostKeyStore, host string, port int) []HostKey {
+func loadApprovedHostKeys(ctx context.Context, store HostKeyStore, host string, port int) ([]HostKey, error) {
 	approvals, ok := store.(HostKeyApprovalStore)
 	if !ok {
-		return nil
+		return nil, nil
 	}
-	keys, err := approvals.ApprovedHostKeys(ctx, host, port)
-	if err != nil {
-		return nil
-	}
-	return keys
+	return approvals.ApprovedHostKeys(ctx, host, port)
 }
 
 func approvalApproves(approval *HostKeyApproval, key HostKey) bool {

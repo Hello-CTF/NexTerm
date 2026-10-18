@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   forwardList: vi.fn(),
   forwardCreate: vi.fn(),
   forwardCreateSocks: vi.fn(),
+  forwardRetry: vi.fn(),
   mountList: vi.fn(),
   mountCreate: vi.fn(),
   platform: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       list: mocks.forwardList,
       create: mocks.forwardCreate,
       createSocks: mocks.forwardCreateSocks,
+      retry: mocks.forwardRetry,
       remove: vi.fn(),
     },
     mountApi: {
@@ -729,7 +731,7 @@ describe("ForwardPanel env status, polling, and browser wording", () => {
   });
 });
 
-describe("ForwardPanel filters the list by current session; MountPanel lists all system mounts", () => {
+describe("ForwardPanel and MountPanel session scope", () => {
   function forwardRow(id: string, sessionId: string, targetHost: string) {
     return {
       id,
@@ -770,6 +772,24 @@ describe("ForwardPanel filters the list by current session; MountPanel lists all
     ).toBe(true);
   });
 
+  it("keeps a failed forward visible and retries it only through a connected session for the same asset", async () => {
+    useUi.setState({ sessions: [{ id: "s", assetId: "asset-1", name: "owner", kind: "ssh", status: "connected", tabs: [], createdAt: 1 }] });
+    mocks.forwardList.mockResolvedValue([{
+      ...forwardRow("f1", "old-session", "10.0.0.8"),
+      hostId: "asset-1",
+      status: "failed",
+      error: "远端监听已断开",
+    }]);
+    mocks.forwardRetry.mockResolvedValue({ id: "f1" });
+    mountForward();
+    await flush();
+
+    expect(mounted!.container.textContent).toContain("远端监听已断开");
+    clickButton(mounted!.container, "重试");
+    await flushUntil(() => mocks.forwardRetry.mock.calls.some(([id, connectedSession]) => id === "f1" && connectedSession === "s"));
+    expect(mocks.toast).toHaveBeenCalledWith("success", "转发已恢复");
+  });
+
   it("a sessionless forward tab shows all and renders no scope toggle button", async () => {
     mocks.forwardList.mockResolvedValue([
       forwardRow("f1", "s", "10.0.0.8"),
@@ -788,21 +808,29 @@ describe("ForwardPanel filters the list by current session; MountPanel lists all
     }
   });
 
-  it("mount list comes from the system mount table (sessionId null), lists all entries without session filtering, and renders no scope toggle button", async () => {
+  it("mount list requests the current session and excludes unmanaged and other-session entries", async () => {
     mocks.mountList.mockResolvedValue([
-      { id: "m1", localPoint: "Z:", remote: "root@h1:/data", sessionId: null, createdAt: 1 },
-      { id: "m2", localPoint: "Y:", remote: "root@h2:/data", sessionId: null, createdAt: 1 },
+      { id: "m1", localPoint: "Z:", remote: "owner@host:/data", sessionId: "s1", managed: true, createdAt: 1 },
+      { id: "m2", localPoint: "Y:", remote: "system@host:/data", sessionId: null, managed: false, createdAt: null },
+      { id: "m3", localPoint: "X:", remote: "other@host:/data", sessionId: "s2", managed: true, createdAt: 1 },
     ]);
     mountMountPanel("s1");
     await flush();
-    expect(mounted!.container.textContent).toContain("root@h1:/data");
-    expect(mounted!.container.textContent).toContain("root@h2:/data");
-    for (const label of ["仅当前会话", "全部会话"]) {
-      expect(
-        [...mounted!.container.querySelectorAll("button")].some(
-          (b) => b.textContent?.trim() === label,
-        ),
-      ).toBe(false);
-    }
+    expect(mocks.mountList).toHaveBeenCalledWith({ sessionId: "s1", forceRefresh: true });
+    expect(mounted!.container.textContent).toContain("owner@host:/data");
+    expect(mounted!.container.textContent).not.toContain("system@host:/data");
+    expect(mounted!.container.textContent).not.toContain("other@host:/data");
+    expect(
+      [...mounted!.container.querySelectorAll("button")].filter(
+        (button) => button.textContent?.trim() === "断开",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("sessionless mount panel shows a connection prompt without requesting a global mount list", async () => {
+    mountMountPanel(null);
+    await flush();
+    expect(mocks.mountList).not.toHaveBeenCalled();
+    expect(mounted!.container.textContent).toContain("请先连接 SSH 资产后查看挂载");
   });
 });

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -44,6 +45,10 @@ type DBHealthSource interface {
 	DB() *sql.DB
 }
 
+type AccountConnectionCloser interface {
+	CloseAccountSession(sessionID string) error
+}
+
 type Config struct {
 	Options    Options
 	Dispatcher *ipc.Dispatcher
@@ -69,49 +74,52 @@ type Config struct {
 	// are mounted under the account routes, and the public data plane is GET /share/preview/{token}. If Spectator also
 	// implements RemoteSessionRegistry (the *session.Manager injected in production does), the
 	// /share/remote-sessions remote session shell management surface is additionally mounted.
-	Previews    *sharing.Service
-	Spectator   PreviewSpectator
-	DB          DBHealthSource
-	Version     string
-	MaxRPCBytes int64
-	Logger      *slog.Logger
-	WebSocket   WebSocketConfig
+	Previews           *sharing.Service
+	Spectator          PreviewSpectator
+	DB                 DBHealthSource
+	AccountConnections AccountConnectionCloser
+	Version            string
+	MaxRPCBytes        int64
+	Logger             *slog.Logger
+	WebSocket          WebSocketConfig
 }
 
 type Server struct {
-	options         Options
-	dispatcher      *ipc.Dispatcher
-	peerDispatcher  *ipc.Dispatcher
-	environment     ipc.Environment
-	accounts        *account.Accounts
-	accountThrottle accountThrottles
-	mfaTickets      *mfaTicketStore
-	gatewayAuthKey  string
-	authRequired    bool
-	events          *EventBroker
-	channels        ChannelBinder
-	channelStats    ChannelStatsFunc
-	version         string
-	vaultStatus     func(context.Context) (any, error)
-	retention       *RetentionConfig
-	handler         http.Handler
-	logger          *slog.Logger
-	sockets         socketTracker
-	closeOnce       sync.Once
-	closeErr        error
-	webSocket       WebSocketConfig
-	preferences     *account.Preferences
-	audit           AuditFunc
-	assetOwner      AssetOwnerFunc
-	fleet           *fleetserver.Service
-	previews        *sharing.Service
-	spectator       PreviewSpectator
+	options           Options
+	trustedProxyCIDRs []netip.Prefix
+	dispatcher        *ipc.Dispatcher
+	peerDispatcher    *ipc.Dispatcher
+	environment       ipc.Environment
+	accounts          *account.Accounts
+	accountThrottle   accountThrottles
+	mfaTickets        *mfaTicketStore
+	gatewayAuthKey    string
+	authRequired      bool
+	events            *EventBroker
+	channels          ChannelBinder
+	channelStats      ChannelStatsFunc
+	version           string
+	vaultStatus       func(context.Context) (any, error)
+	retention         *RetentionConfig
+	handler           http.Handler
+	logger            *slog.Logger
+	sockets           socketTracker
+	closeOnce         sync.Once
+	closeErr          error
+	webSocket         WebSocketConfig
+	preferences       *account.Preferences
+	audit             AuditFunc
+	assetOwner        AssetOwnerFunc
+	fleet             *fleetserver.Service
+	previews          *sharing.Service
+	spectator         PreviewSpectator
 	// remoteSessions is obtained by asserting Spectator (the same instance); when non-nil, remote session shell endpoints are mounted.
 	remoteSessions RemoteSessionRegistry
 	previewResolve *account.LoginThrottle
 	// previewRevalidateInterval is the authorization recheck interval for preview connections; tests may lower it.
 	previewRevalidateInterval time.Duration
 	db                        DBHealthSource
+	accountConnections        AccountConnectionCloser
 
 	readGate func()
 }
@@ -155,6 +163,14 @@ type DBPoolStats struct {
 }
 
 func New(config Config) (*Server, error) {
+	trustedProxyCIDRs := make([]netip.Prefix, 0, len(config.Options.TrustedProxyCIDRs))
+	for _, raw := range config.Options.TrustedProxyCIDRs {
+		prefix, err := netip.ParsePrefix(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trusted proxy CIDR %q: %w", raw, err)
+		}
+		trustedProxyCIDRs = append(trustedProxyCIDRs, prefix.Masked())
+	}
 	if config.Dispatcher == nil {
 		return nil, fmt.Errorf("RPC dispatcher is required")
 	}
@@ -235,7 +251,7 @@ func New(config Config) (*Server, error) {
 	config.Options.AllowedOrigins = append([]string(nil), allowedOrigins...)
 
 	s := &Server{
-		options: config.Options, dispatcher: config.Dispatcher, peerDispatcher: config.PeerDispatcher, environment: config.Environment,
+		options: config.Options, trustedProxyCIDRs: trustedProxyCIDRs, dispatcher: config.Dispatcher, peerDispatcher: config.PeerDispatcher, environment: config.Environment,
 		accounts: config.Accounts,
 		accountThrottle: accountThrottles{
 			login: account.NewLoginThrottle(), recovery: account.NewLoginThrottle(),
@@ -252,6 +268,7 @@ func New(config Config) (*Server, error) {
 		previewResolve:            account.NewLoginThrottle(),
 		previewRevalidateInterval: defaultPreviewRevalidateInterval,
 		db:                        config.DB,
+		accountConnections:        config.AccountConnections,
 	}
 	if s.environment.Events == nil {
 		s.environment.Events = s.events

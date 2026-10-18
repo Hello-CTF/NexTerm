@@ -6,6 +6,7 @@ OUT="$ROOT/target/release-assets"
 BIN=""
 WEB="$ROOT/dist"
 ARCH="amd64"
+HELPERS_DIR="$ROOT/target/go-build"
 REQUIRE_EVIDENCE=0
 
 while [ $# -gt 0 ]; do
@@ -18,6 +19,8 @@ while [ $# -gt 0 ]; do
     --web=*) WEB="${1#*=}"; shift ;;
     --arch) ARCH="$2"; shift 2 ;;
     --arch=*) ARCH="${1#*=}"; shift ;;
+    --helpers-dir) HELPERS_DIR="$2"; shift 2 ;;
+    --helpers-dir=*) HELPERS_DIR="${1#*=}"; shift ;;
     --require-evidence) REQUIRE_EVIDENCE=1; shift ;;
     -h|--help)
       cat <<'PACK_HELP_EOF'
@@ -32,6 +35,7 @@ Options:
   --bin PATH          server binary (default target/go-build/nexterm-server-linux-<arch>)
   --web DIR           frontend dist directory (default dist)
   --arch ARCH         Linux server architecture: amd64 or arm64 (default amd64)
+  --helpers-dir DIR    verified Linux helper binaries and manifests
   --require-evidence  fail unless the artifact report passes every assertion
   -h, --help          show this help
 PACK_HELP_EOF
@@ -53,6 +57,11 @@ VERSION="${NEXTERM_RELEASE_VERSION:-$(node -e 'const fs=require("fs"); const c=J
 }
 [ -f "$WEB/index.html" ] || { echo "missing real frontend: $WEB/index.html" >&2; exit 1; }
 [ -x "$BIN" ] || { echo "server binary is not executable: $BIN" >&2; exit 1; }
+for helper_arch in amd64 arm64; do
+  helper="$HELPERS_DIR/nexterm-helper-linux-$helper_arch"
+  [ -x "$helper" ] || { echo "missing executable Linux helper: $helper" >&2; exit 1; }
+  node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$helper" "helper-linux-$helper_arch" linux "$helper_arch" 0
+done
 
 FILE_INFO="$(file -b "$BIN")"
 case "$FILE_INFO" in *ELF*64-bit*) ;; *) echo "not a 64-bit ELF binary: $FILE_INFO" >&2; exit 1 ;; esac
@@ -102,6 +111,9 @@ write_env() {
 #   install -m 0600 -o nexterm -g nexterm /dev/null /etc/nexterm/master.key
 #   printf '%s' '<root-key>' > /etc/nexterm/master.key
 NEXTERM_MASTER_KEY_FILE=/etc/nexterm/master.key
+# If a TLS reverse proxy forwards to this server, make it overwrite
+# X-Forwarded-Proto and list its source IP ranges here (comma separated).
+# NEXTERM_TRUSTED_PROXY_CIDRS=127.0.0.1/32
 ENVEOF
 }
 
@@ -111,18 +123,36 @@ write_readme() {
 # NexTerm Linux Server $VERSION (linux/$ARCH)
 
 This is the only Linux server archive. It contains the stripped, static Go
-server, the real Vite frontend, systemd units and environment-file examples.
+server, Linux amd64/arm64 SSH helpers, the real Vite frontend, systemd units
+and environment-file examples.
 Its version comes from the release tag (NEXTERM_RELEASE_VERSION).
 
 ## Install
 
-Install nexterm-server as /opt/nexterm/nexterm-server, then enable
-nexterm-server.service with nexterm.env. It serves the browser UI with a
+From the extracted archive, install the server, both helpers and web assets:
+
+    install -d -m 0755 /opt/nexterm
+    install -m 0755 nexterm-server nexterm-helper-linux-amd64 nexterm-helper-linux-arm64 /opt/nexterm/
+    cp -R web /opt/nexterm/
+
+Keep both helpers executable in the same directory as nexterm-server. On the
+server's own architecture, verify the installed helper before enabling the
+service:
+
+    /opt/nexterm/nexterm-helper-linux-amd64 --metadata  # x86_64 host
+    /opt/nexterm/nexterm-helper-linux-arm64 --metadata  # aarch64 host
+
+Run only the matching command; it must print JSON with a protocol version and
+exit successfully. Then enable nexterm-server.service with nexterm.env. It
+serves the browser UI with a
 built-in init/login page: on first start with no account, the server prints a
 one-time init code to the console (journalctl -u nexterm-server under
 systemd); open the UI and finish superadmin setup. /rpc, /ws and /files/blob
 always require an account session with --auth on. Public deployments still
 belong behind a TLS-terminating reverse proxy.
+Configure the proxy to overwrite X-Forwarded-Proto and set
+NEXTERM_TRUSTED_PROXY_CIDRS to its source IP ranges so HTTPS session cookies
+carry Secure. The server ignores forwarding headers from other addresses.
 
 The env examples point NEXTERM_MASTER_KEY_FILE at /etc/nexterm/master.key;
 create that root-key file owned by the nexterm service user with chmod 0600,
@@ -147,6 +177,9 @@ package_full() {
   local unit env_file member
   mkdir -p "$dir"
   install -m 0755 "$BIN" "$dir/nexterm-server"
+  for helper_arch in amd64 arm64; do
+    install -m 0755 "$HELPERS_DIR/nexterm-helper-linux-$helper_arch" "$dir/nexterm-helper-linux-$helper_arch"
+  done
   for unit in nexterm-server.service nexterm-onlyserver.service; do
     install -m 0644 "$ROOT/deploy/systemd/$unit" "$dir/$unit"
   done
@@ -165,6 +198,8 @@ package_full() {
   archive_members="$(tar -tzf "$OUT/$name.tar.gz")"
   for member in \
     nexterm-server \
+    nexterm-helper-linux-amd64 \
+    nexterm-helper-linux-arm64 \
     nexterm-server.service \
     nexterm-onlyserver.service \
     nexterm.env.example \

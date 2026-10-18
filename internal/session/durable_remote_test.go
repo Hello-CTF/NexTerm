@@ -6,11 +6,28 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 type listingDurableProvider struct {
 	*fakeDurableProvider
+}
+
+type descriptorListingDurableProvider struct {
+	*listingDurableProvider
+}
+
+func (p *descriptorListingDurableProvider) ListDurableDescriptors(ctx context.Context) ([]base.DurableDescriptor, error) {
+	ids, err := p.ListDurable(ctx)
+	if err != nil {
+		return nil, err
+	}
+	descriptors := make([]base.DurableDescriptor, len(ids))
+	for index, id := range ids {
+		descriptors[index].ID = id
+	}
+	return descriptors, nil
 }
 
 func (p *listingDurableProvider) ListDurable(context.Context) ([]string, error) {
@@ -99,6 +116,247 @@ func TestOpenTabSSHUsesRemoteDurableProvider(t *testing.T) {
 	}
 }
 
+func TestCreateTabSSHHelperFallbackPreservesNoticeAfterRename(t *testing.T) {
+	resolver := &countingResolver{err: base.ErrUnsupported}
+	connector := newFakeConnector()
+	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-fallback", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := manager.CreateTab(t.Context(), CreateTabOptions{SessionID: connected.ID, Title: "regular shell"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Durable || first.Title != "regular shell" || first.FallbackNotice == "" {
+		t.Fatalf("first tab = %+v; want titled ordinary PTY and fallback notice", first)
+	}
+	second, err := manager.CreateTab(t.Context(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Durable || second.FallbackNotice != "" || resolver.callCount() != 1 || connector.transport(0).channelCount() != 2 {
+		t.Fatalf("second tab = %+v, resolver calls = %d, PTY channels = %d", second, resolver.callCount(), connector.transport(0).channelCount())
+	}
+}
+
+func TestOpenTabSSHExplicitRetryAfterHelperBecomesAvailable(t *testing.T) {
+	provider := newFakeDurableProvider()
+	attempts := 0
+	resolver := DurableResolverFunc(func(context.Context, base.Transport) (base.DurableProvider, error) {
+		attempts++
+		if attempts == 1 {
+			return nil, durable.ErrUnavailable
+		}
+		return provider, nil
+	})
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-helper-retry", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	open := func(channel string, fallback bool) TabInfo {
+		t.Helper()
+		info, err := manager.OpenTab(t.Context(), OpenTabOptions{
+			SessionID: connected.ID, ClientID: "client", ChannelID: channel, Cols: 80, Rows: 24,
+			Durable: &DurableTabOptions{}, DurableFallback: fallback,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info
+	}
+	if first := open("auto-first", true); first.Durable || first.FallbackNotice == "" {
+		t.Fatalf("first tab = %+v; want ordinary PTY with fallback notice", first)
+	}
+	if second := open("auto-second", true); second.Durable || attempts != 1 {
+		t.Fatalf("second tab = %+v, attempts = %d; automatic startup should use short failure cache", second, attempts)
+	}
+	if retried := open("explicit-retry", false); !retried.Durable || attempts != 2 {
+		t.Fatalf("retried tab = %+v, attempts = %d; explicit request must probe helper again", retried, attempts)
+	}
+}
+
+func TestCreateTabSSHFailedCommandDoesNotConsumeFallbackNotice(t *testing.T) {
+	resolver := &countingResolver{err: base.ErrUnsupported}
+	connector := newFakeConnector()
+	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-fallback-command", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector.transport(0).writeErr = errors.New("PTY write failed")
+	if _, err := manager.CreateTab(t.Context(), CreateTabOptions{SessionID: connected.ID, Command: "echo ready"}); err == nil {
+		t.Fatal("failed startup command unexpectedly created a tab")
+	}
+	connector.transport(0).writeErr = nil
+	info, err := manager.CreateTab(t.Context(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.FallbackNotice == "" || info.Durable || resolver.callCount() != 1 {
+		t.Fatalf("successful retry = %+v, helper attempts = %d", info, resolver.callCount())
+	}
+}
+
+func TestOpenTabSSHDoesNotFallbackAfterUnclassifiedHelperError(t *testing.T) {
+	resolver := &countingResolver{err: errors.New("helper request rejected")}
+	connector := newFakeConnector()
+	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-helper-rejected", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.OpenTab(t.Context(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client", ChannelID: "channel", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{}, DurableFallback: true,
+	})
+	if err == nil || connector.transport(0).channelCount() != 0 {
+		t.Fatalf("OpenTab = %v, PTY channels = %d; unexpected fallback", err, connector.transport(0).channelCount())
+	}
+}
+
+func TestOpenTabSSHCreateUnavailableFallsBackAndCachesFailure(t *testing.T) {
+	provider := &fakeDurableProvider{records: make(map[string]*fakeDurableRecord), createErr: durable.ErrUnavailable}
+	resolver := &countingResolver{provider: provider}
+	connector := newFakeConnector()
+	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-create-fallback", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range 2 {
+		info, err := manager.OpenTab(t.Context(), OpenTabOptions{
+			SessionID: connected.ID, ClientID: "client", ChannelID: []string{"first", "second"}[index], Cols: 80, Rows: 24,
+			Durable: &DurableTabOptions{}, DurableFallback: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Durable || (info.FallbackNotice != "") != (index == 0) {
+			t.Fatalf("attempt %d tab = %+v; want ordinary PTY and first notice only", index, info)
+		}
+	}
+	if provider.createCalls != 1 || resolver.callCount() != 1 || connector.transport(0).channelCount() != 2 {
+		t.Fatalf("create calls = %d, resolver calls = %d, PTY channels = %d", provider.createCalls, resolver.callCount(), connector.transport(0).channelCount())
+	}
+	_, err = manager.OpenTab(t.Context(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client", ChannelID: "strict", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{},
+	})
+	if !errors.Is(err, durable.ErrUnavailable) || connector.transport(0).channelCount() != 2 {
+		t.Fatalf("strict durable error = %v, PTY channels = %d", err, connector.transport(0).channelCount())
+	}
+	if provider.createCalls != 2 {
+		t.Fatalf("strict durable Create calls = %d; explicit request must retry after automatic fallback", provider.createCalls)
+	}
+}
+
+func TestOpenTabSSHCreateFailureKeepsExistingDurableTabsUsable(t *testing.T) {
+	provider := &descriptorListingDurableProvider{listingDurableProvider: &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}}
+	resolver := &countingResolver{provider: provider}
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver, OpenAccess: true})
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-existing-durable", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := manager.OpenTab(t.Context(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client", ChannelID: "existing", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.createErr = durable.ErrUnavailable
+	provider.mu.Unlock()
+	fallback, err := manager.OpenTab(t.Context(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client", ChannelID: "fallback", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{}, DurableFallback: true,
+	})
+	if err != nil || fallback.Durable || fallback.FallbackNotice == "" {
+		t.Fatalf("fallback = %+v, %v; want ordinary PTY with notice", fallback, err)
+	}
+	renamed, err := manager.RenameTab(t.Context(), old.ID, "still available")
+	if err != nil || renamed.Title != "still available" {
+		t.Fatalf("rename existing durable = %+v, %v", renamed, err)
+	}
+	descriptors, err := manager.ListRemoteDurable(t.Context(), connected.ID)
+	if err != nil || len(descriptors) != 1 || descriptors[0].ID != old.ID {
+		t.Fatalf("listed existing durable tabs = %+v, %v", descriptors, err)
+	}
+	owners, err := manager.RemoteDurableOwners(t.Context(), old.ID, []string{connected.ID})
+	if err != nil || len(owners) != 1 || owners[0] != connected.ID {
+		t.Fatalf("existing durable owners = %v, %v", owners, err)
+	}
+	if resolver.callCount() != 1 {
+		t.Fatalf("resolver calls = %d; existing provider should stay cached", resolver.callCount())
+	}
+	provider.mu.Lock()
+	provider.createErr = nil
+	provider.mu.Unlock()
+	strict, err := manager.OpenTab(t.Context(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client", ChannelID: "strict-retry", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{},
+	})
+	if err != nil || !strict.Durable {
+		t.Fatalf("explicit durable retry = %+v, %v", strict, err)
+	}
+	resumed, err := manager.OpenTab(t.Context(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client", ChannelID: "auto-resumed", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{}, DurableFallback: true,
+	})
+	if err != nil || !resumed.Durable {
+		t.Fatalf("automatic durable after successful retry = %+v, %v", resumed, err)
+	}
+}
+
+func TestOpenTabSSHFallbackNoticeRepeatsAfterReconnect(t *testing.T) {
+	resolver := &countingResolver{err: durable.ErrUnavailable}
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-notice-reconnect", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	open := func(channel string) TabInfo {
+		t.Helper()
+		info, err := manager.OpenTab(t.Context(), OpenTabOptions{
+			SessionID: connected.ID, ClientID: "client", ChannelID: channel, Cols: 80, Rows: 24,
+			Durable: &DurableTabOptions{}, DurableFallback: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info
+	}
+	if info := open("before"); info.FallbackNotice == "" {
+		t.Fatal("first fallback omitted notice")
+	}
+	if err := manager.Reconnect(t.Context(), connected.ID); err != nil {
+		t.Fatal(err)
+	}
+	if info := open("after"); info.FallbackNotice == "" {
+		t.Fatal("fallback after reconnect omitted notice")
+	}
+}
+
+func TestOpenTabSSHCreateUnclassifiedErrorDoesNotFallback(t *testing.T) {
+	provider := &fakeDurableProvider{records: make(map[string]*fakeDurableRecord), createErr: errors.New("create rejected")}
+	connector := newFakeConnector()
+	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), DurableResolver: &countingResolver{provider: provider}})
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-create-rejected", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.OpenTab(t.Context(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client", ChannelID: "channel", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{}, DurableFallback: true,
+	})
+	if err == nil || connector.transport(0).channelCount() != 0 {
+		t.Fatalf("create error = %v, PTY channels = %d; unexpected fallback", err, connector.transport(0).channelCount())
+	}
+}
+
 func TestOpenTabSSHDurableUnsupported(t *testing.T) {
 	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory()})
 	ctx := context.Background()
@@ -116,7 +374,7 @@ func TestOpenTabSSHDurableUnsupported(t *testing.T) {
 }
 
 func TestOpenTabDeviceUsesRemoteDurableProvider(t *testing.T) {
-	provider := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
+	provider := &descriptorListingDurableProvider{listingDurableProvider: &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}}
 	resolver := &countingResolver{provider: provider}
 	manager := NewManager(Config{
 		Connector:       newFakeConnector(),
@@ -137,6 +395,10 @@ func TestOpenTabDeviceUsesRemoteDurableProvider(t *testing.T) {
 	}
 	if !first.Durable {
 		t.Fatalf("tab = %+v; want durable", first)
+	}
+	descriptors, err := manager.ListRemoteDurable(ctx, connected.ID)
+	if err != nil || len(descriptors) != 1 || descriptors[0].ID != first.ID {
+		t.Fatalf("device durable discovery = %+v, %v; want the opened tab", descriptors, err)
 	}
 	if provider.createCalls != 1 {
 		t.Fatalf("provider create calls = %d; want 1", provider.createCalls)
@@ -165,6 +427,10 @@ func TestOpenTabDeviceUsesRemoteDurableProvider(t *testing.T) {
 	}
 	if resolver.callCount() != 2 {
 		t.Fatalf("resolver calls = %d; want 2 after reconnect", resolver.callCount())
+	}
+	descriptors, err = manager.ListRemoteDurable(ctx, reconnected.ID)
+	if err != nil || len(descriptors) != 3 {
+		t.Fatalf("device durable discovery after reconnect = %+v, %v; want existing tabs", descriptors, err)
 	}
 }
 
@@ -205,9 +471,6 @@ func TestRecoverRemoteDurable(t *testing.T) {
 	if _, err := manager.Connect(ctx, Asset{ID: "ssh-a", Kind: KindSSH}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.Connect(ctx, Asset{ID: "ssh-b", Kind: KindSSH}); err != nil {
-		t.Fatal(err)
-	}
 	info, err := manager.RecoverRemoteDurable(ctx, tabID, OpenTabOptions{ClientID: "client-a", ChannelID: "recover-1", Cols: 80, Rows: 24})
 	if err != nil {
 		t.Fatal(err)
@@ -220,6 +483,98 @@ func TestRecoverRemoteDurable(t *testing.T) {
 	}
 	if _, err := manager.RecoverRemoteDurable(ctx, "ffffffffffffffffffffffffffffffff", OpenTabOptions{ClientID: "client-a", ChannelID: "recover-2", Cols: 80, Rows: 24}); !errors.Is(err, ErrTabNotFound) {
 		t.Fatalf("RecoverRemoteDurable error = %v; want ErrTabNotFound", err)
+	}
+}
+
+func TestRecoverRemoteDurableRequiresScopeWhenHostsShareID(t *testing.T) {
+	provider := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
+	tabID := "0123456789abcdef0123456789abcdef"
+	if _, err := provider.Create(t.Context(), base.DurableCreateOptions{ID: tabID, Cols: 80, Rows: 24}); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(Config{
+		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
+		DurableResolver: &countingResolver{provider: provider},
+	})
+	first, err := manager.Connect(t.Context(), Asset{ID: "ssh-a", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Connect(t.Context(), Asset{ID: "ssh-b", Kind: KindSSH}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.RecoverRemoteDurable(t.Context(), tabID, OpenTabOptions{ClientID: "client-a", ChannelID: "ambiguous", Cols: 80, Rows: 24})
+	if !errors.Is(err, ErrAmbiguousDurable) || provider.attachCalls != 0 {
+		t.Fatalf("unscoped recovery = %v, attach calls = %d", err, provider.attachCalls)
+	}
+	info, err := manager.RecoverRemoteDurable(t.Context(), tabID, OpenTabOptions{
+		SessionID: first.ID, ClientID: "client-a", ChannelID: "scoped", Cols: 80, Rows: 24,
+	})
+	if err != nil || info.SessionID != first.ID {
+		t.Fatalf("scoped recovery = %+v, %v", info, err)
+	}
+}
+
+func TestRecoverRemoteDurableUsesUniqueReachableOwner(t *testing.T) {
+	provider := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
+	tabID := "0123456789abcdef0123456789abcdef"
+	if _, err := provider.Create(t.Context(), base.DurableCreateOptions{ID: tabID, Cols: 80, Rows: 24}); err != nil {
+		t.Fatal(err)
+	}
+	connector := newFakeConnector()
+	resolver := DurableResolverFunc(func(_ context.Context, transport base.Transport) (base.DurableProvider, error) {
+		if transport == connector.transport(0) {
+			return provider, nil
+		}
+		return nil, durable.ErrUnavailable
+	})
+	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), DurableResolver: resolver, OpenAccess: true})
+	owner, err := manager.Connect(t.Context(), Asset{ID: "ssh-owner", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unavailable, err := manager.Connect(t.Context(), Asset{ID: "ssh-unavailable", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owners, err := manager.RemoteDurableOwners(t.Context(), tabID, []string{owner.ID, unavailable.ID})
+	if err != nil || len(owners) != 1 || owners[0] != owner.ID {
+		t.Fatalf("owners = %v, %v; want reachable owner", owners, err)
+	}
+	info, err := manager.RecoverRemoteDurable(t.Context(), tabID, OpenTabOptions{ClientID: "client", ChannelID: "reachable-owner", Cols: 80, Rows: 24})
+	if err != nil || info.ID != tabID || info.SessionID != owner.ID {
+		t.Fatalf("recovered tab = %+v, %v; want reachable owner", info, err)
+	}
+}
+
+func TestRecoverRemoteDurableDoesNotHideUnrelatedSearchError(t *testing.T) {
+	provider := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
+	tabID := "0123456789abcdef0123456789abcdef"
+	if _, err := provider.Create(t.Context(), base.DurableCreateOptions{ID: tabID, Cols: 80, Rows: 24}); err != nil {
+		t.Fatal(err)
+	}
+	connector := newFakeConnector()
+	listErr := errors.New("daemon enumeration failed")
+	resolver := DurableResolverFunc(func(_ context.Context, transport base.Transport) (base.DurableProvider, error) {
+		if transport == connector.transport(0) {
+			return provider, nil
+		}
+		return nil, listErr
+	})
+	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), DurableResolver: resolver, OpenAccess: true})
+	owner, err := manager.Connect(t.Context(), Asset{ID: "ssh-owner", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unavailable, err := manager.Connect(t.Context(), Asset{ID: "ssh-search-error", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.RemoteDurableOwners(t.Context(), tabID, []string{owner.ID, unavailable.ID}); !errors.Is(err, listErr) {
+		t.Fatalf("owner search error = %v; want enumeration failure", err)
+	}
+	if _, err := manager.RecoverRemoteDurable(t.Context(), tabID, OpenTabOptions{ClientID: "client", ChannelID: "search-error", Cols: 80, Rows: 24}); !errors.Is(err, listErr) {
+		t.Fatalf("recovery error = %v; want enumeration failure", err)
 	}
 }
 

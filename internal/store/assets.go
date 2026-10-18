@@ -56,6 +56,11 @@ func (s *Store) AssetCreate(ctx context.Context, input AssetInput) (AssetRow, er
 	if strings.TrimSpace(input.Name) == "" {
 		return AssetRow{}, badParam(errString("资产名称不能为空"))
 	}
+	if input.GroupID != nil {
+		if _, err := s.groupReference(ctx, s.db, *input.GroupID); err != nil {
+			return AssetRow{}, err
+		}
+	}
 	id := ids.New()
 	now := ids.NowMS()
 	row := AssetRow{
@@ -75,6 +80,11 @@ func (s *Store) AssetUpdate(ctx context.Context, id string, patch AssetPatch) (A
 	}
 	values := map[string]any{}
 	if patch.GroupID.Set {
+		if patch.GroupID.Value != nil {
+			if _, err := s.groupReference(ctx, s.db, *patch.GroupID.Value); err != nil {
+				return AssetRow{}, err
+			}
+		}
 		values["group_id"] = patch.GroupID.Value
 	}
 	if patch.Host.Set {
@@ -220,6 +230,11 @@ func (s *Store) assetUpsert(ctx context.Context, db *gorm.DB, row AssetRow) (boo
 	}
 	if strings.TrimSpace(row.Name) == "" {
 		return false, badParam(errString("资产名称不能为空"))
+	}
+	if row.GroupID != nil {
+		if _, err := s.groupReference(ctx, db, *row.GroupID); err != nil {
+			return false, err
+		}
 	}
 	asset := query.Use(db).AssetRow
 	_, err := asset.WithContext(ctx).

@@ -70,6 +70,18 @@ type accountDeviceView struct {
 	RevokedAt  int64  `json:"revoked_at"`
 }
 
+type accountSessionInfoView struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Origin     string `json:"origin"`
+	DeviceID   string `json:"device_id,omitempty"`
+	DeviceName string `json:"device_name,omitempty"`
+	CreatedAt  int64  `json:"created_at"`
+	LastSeenAt int64  `json:"last_seen_at"`
+	ExpiresAt  int64  `json:"expires_at"`
+	Current    bool   `json:"current"`
+}
+
 func writeAccountJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
@@ -139,10 +151,12 @@ func (s *Server) mountAccountRoutes(mux *http.ServeMux) {
 
 	session("GET /auth/me", s.serveAccountMe)
 	session("GET /auth/dek", s.serveAccountDEKGet)
+	session("GET /auth/sessions", s.serveAccountSessionList)
 	session("GET /auth/devices", s.serveAccountDeviceList)
 	session("GET /auth/totp", s.serveAccountTOTPStatus)
 	sessionCSRF("POST /auth/logout", s.serveAccountLogout)
 	sessionCSRF("POST /auth/logout-all", s.serveAccountLogoutAll)
+	sessionCSRF("DELETE /auth/sessions/{id}", s.serveAccountSessionRevoke)
 	sessionCSRF("POST /auth/password", s.serveAccountPasswordChange)
 	sessionCSRF("POST /auth/dek", s.serveAccountDEKUpload)
 	sessionCSRF("POST /auth/totp/setup", s.serveAccountTOTPSetup)
@@ -230,7 +244,9 @@ func (s *Server) newAccountSessionView(r *http.Request, user *account.User, sess
 }
 
 func (s *Server) writeAccountSession(w http.ResponseWriter, r *http.Request, user *account.User, deviceID string) {
-	token, session, err := s.accounts.IssueSession(r.Context(), user.ID, deviceID)
+	token, session, err := s.accounts.IssueSessionWithMetadata(r.Context(), user.ID, deviceID, account.SessionMetadata{
+		ClientName: sessionClientName(r), Origin: clientIP(r),
+	})
 	if err != nil {
 		writeAccountFailure(w, err)
 		return
@@ -240,7 +256,7 @@ func (s *Server) writeAccountSession(w http.ResponseWriter, r *http.Request, use
 		writeAccountFailure(w, err)
 		return
 	}
-	setSessionCookie(w, r, token)
+	s.setSessionCookie(w, r, token)
 	writeAccountJSON(w, http.StatusOK, view)
 }
 
@@ -447,19 +463,85 @@ func (s *Server) serveAccountLogout(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
-	clearSessionCookie(w, r)
+	s.closeAccountConnections(identity.SessionID)
+	s.clearSessionCookie(w, r)
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) serveAccountLogoutAll(w http.ResponseWriter, r *http.Request) {
 	identity := accountIdentityFrom(r.Context())
+	var sessions []account.SessionInfo
+	if s.accountConnections != nil {
+		var err error
+		sessions, err = s.accounts.ListUserSessions(r.Context(), identity.UserID)
+		if err != nil {
+			writeAccountFailure(w, err)
+			return
+		}
+	}
 	revoked, err := s.accounts.RevokeUserSessions(r.Context(), identity.UserID, "")
 	if err != nil {
 		writeAccountFailure(w, err)
 		return
 	}
-	clearSessionCookie(w, r)
+	for _, session := range sessions {
+		s.closeAccountConnections(session.ID)
+	}
+	s.clearSessionCookie(w, r)
 	writeAccountJSON(w, http.StatusOK, map[string]int64{"revoked": revoked})
+}
+
+func (s *Server) serveAccountSessionList(w http.ResponseWriter, r *http.Request) {
+	identity := accountIdentityFrom(r.Context())
+	sessions, err := s.accounts.ListUserSessions(r.Context(), identity.UserID)
+	if err != nil {
+		writeAccountFailure(w, err)
+		return
+	}
+	views := make([]accountSessionInfoView, 0, len(sessions))
+	for _, session := range sessions {
+		name := session.ClientName
+		if name == "" {
+			name = session.DeviceName
+		}
+		if name == "" {
+			name = "未识别会话"
+		}
+		origin := session.Origin
+		if origin == "" {
+			origin = "未知来源"
+		}
+		views = append(views, accountSessionInfoView{
+			ID: session.ID, Name: name, Origin: origin,
+			DeviceID: session.DeviceID, DeviceName: session.DeviceName,
+			CreatedAt: session.CreatedAt, LastSeenAt: session.LastSeenAt, ExpiresAt: session.ExpiresAt,
+			Current: session.ID == identity.SessionID,
+		})
+	}
+	writeAccountJSON(w, http.StatusOK, map[string][]accountSessionInfoView{"sessions": views})
+}
+
+func (s *Server) serveAccountSessionRevoke(w http.ResponseWriter, r *http.Request) {
+	identity := accountIdentityFrom(r.Context())
+	sessionID := r.PathValue("id")
+	if err := s.accounts.RevokeUserSession(r.Context(), identity.UserID, sessionID); err != nil {
+		writeAccountFailure(w, err)
+		return
+	}
+	s.closeAccountConnections(sessionID)
+	if sessionID == identity.SessionID {
+		s.clearSessionCookie(w, r)
+	}
+	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) closeAccountConnections(sessionID string) {
+	if s.accountConnections == nil {
+		return
+	}
+	if err := s.accountConnections.CloseAccountSession(sessionID); err != nil {
+		s.logger.Warn("close revoked account database connections", "error", err)
+	}
 }
 
 type accountPasswordChangeRequest struct {

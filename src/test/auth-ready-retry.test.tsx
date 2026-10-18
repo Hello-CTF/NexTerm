@@ -79,6 +79,11 @@ vi.mock("../app/layout", () => ({
   startLayoutSync: vi.fn(),
   onRemoteChange: mocks.onRemoteChange,
   advanceLayoutAccount: mocks.advanceLayoutAccount,
+  layoutRestoreStatus: () => ({ pending: false, preview: false, count: 0 }),
+  subscribeLayoutRestore: () => () => {},
+  reviewPendingLayoutRestore: vi.fn(),
+  finishLayoutRestore: vi.fn(),
+  undoLayoutRestore: vi.fn(),
 }));
 
 vi.mock("../features/terminal/TerminalPane", () => ({ TerminalPane: () => null }));
@@ -101,6 +106,7 @@ vi.mock("../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 import App from "../app/App";
 import { useUi } from "../app/store";
 import { useAuth } from "../features/auth/store";
+import { SESSION_IDENTITY_CHANGED_EVENT } from "../ipc/authApi";
 import type { Asset } from "../ipc/commands";
 
 const ADMIN = {
@@ -145,8 +151,7 @@ let authed = false;
 
 let mounted: MountedView | undefined;
 
-function mountApp(): MountedView {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function mountApp(client = new QueryClient({ defaultOptions: { queries: { retry: false } } })): MountedView {
   return mount(
     createElement(
       QueryClientProvider,
@@ -353,6 +358,35 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
     await flush();
     expect(mocks.advanceLayoutAccount).toHaveBeenCalledTimes(2);
     expect(mocks.onRemoteChange).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears forward overview cache when the user changes without leaving the ready gate", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mounted = mountApp(client);
+    await flushUntil(() => useAuth.getState().gate === "login");
+    authed = true;
+    await login();
+    await flushUntil(() => text().includes("web-01"));
+    client.setQueryData(["forwards"], [{ id: "old-account-forward" }]);
+    client.setQueryData(["forwardEnv"], { available: true, listenHost: "old-account" });
+
+    act(() => useAuth.setState({ user: { ...ADMIN, id: "u-b", username: "account-b" } }));
+    await flush();
+    expect(client.getQueryData(["forwards"])).toBeUndefined();
+    expect(client.getQueryData(["forwardEnv"])).toBeUndefined();
+  });
+
+  it("synchronizes a cross-tab session identity response into the auth store", async () => {
+    useAuth.setState({ user: { ...ADMIN, id: "u-a", username: "account-a" }, gate: "ready", dek: new Uint8Array([1, 2, 3]) });
+    const next = { ...ADMIN, id: "u-b", username: "account-b" };
+    act(() => {
+      window.dispatchEvent(new CustomEvent(SESSION_IDENTITY_CHANGED_EVENT, {
+        detail: { user: next, csrf_token: "csrf-b", mfa_required: false },
+      }));
+    });
+    expect(useAuth.getState().user?.id).toBe("u-b");
+    expect(useAuth.getState().dek).toBeNull();
+    expect(useAuth.getState().gate).toBe("ready");
   });
 
   it("clears AI transient state on logout and direct user identity changes", async () => {

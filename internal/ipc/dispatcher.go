@@ -80,7 +80,10 @@ func (d *Dispatcher) Commands() []string {
 }
 
 func (d *Dispatcher) Dispatch(ctx context.Context, request Request, environment Environment) (response Response) {
-	response = Failure(NormalizeError(fmt.Errorf("command dispatch did not run")))
+	// Keep a non-logging sentinel until the handler has a chance to return. The
+	// default response is replaced on every normal path; normalizing it here
+	// would log an error for every successful IPC call.
+	response = Failure(NewError(CodeInternal, "command dispatch did not run"))
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			response = Failure(WrapError(CodeInternal, "处理请求时发生内部异常，请重试", fmt.Errorf("command %s panicked: %v", request.Command, recovered)))

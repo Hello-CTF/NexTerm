@@ -45,6 +45,8 @@ var (
 	ErrTabExists            = errors.New("terminal tab already exists")
 	ErrInvalidOptions       = errors.New("invalid terminal options")
 	ErrInvalidTitle         = errors.New("invalid terminal tab title")
+	ErrDurableDisabled      = errors.New("SSH durable terminals disabled for this asset")
+	ErrAmbiguousDurable     = errors.New("durable terminal ID exists on multiple sessions")
 )
 
 type Status string
@@ -63,9 +65,15 @@ type Asset struct {
 	Kind           string
 	Encoding       string
 	StartupCommand string
+	TerminalMode   string
 	Env            map[string]string
 	Options        any
 }
+
+const (
+	TerminalModeAuto    = "auto"
+	TerminalModeRegular = "regular"
+)
 
 type Connector interface {
 	Connect(context.Context, Asset, uint64) (base.Transport, error)
@@ -139,24 +147,25 @@ func (f EmitterFunc) EmitSessionEvent(ctx context.Context, event Event) error {
 }
 
 type Config struct {
-	Connector         Connector
-	Terminals         TerminalFactory
-	Durable           base.DurableProvider
-	DurableResolver   DurableResolver
-	TranscriptOffsets DurableTranscriptOffsetStore
-	TabTitles         DurableTabTitleStore
-	Hub               *hub.Hub
-	Emitter           Emitter
-	Transcripts       TranscriptSink
-	Commands          CommandSink
-	Logger            *slog.Logger
-	IdleTimeout       time.Duration
-	SweepInterval     time.Duration
-	ReconnectMax      int
-	ReconnectBackoff  []time.Duration
-	DefaultReplay     int
-	SlowConsumerGrace time.Duration
-	OpenAccess        bool
+	Connector            Connector
+	Terminals            TerminalFactory
+	Durable              base.DurableProvider
+	DurableResolver      DurableResolver
+	TerminalModeResolver func(context.Context, string) (string, error)
+	TranscriptOffsets    DurableTranscriptOffsetStore
+	TabTitles            DurableTabTitleStore
+	Hub                  *hub.Hub
+	Emitter              Emitter
+	Transcripts          TranscriptSink
+	Commands             CommandSink
+	Logger               *slog.Logger
+	IdleTimeout          time.Duration
+	SweepInterval        time.Duration
+	ReconnectMax         int
+	ReconnectBackoff     []time.Duration
+	DefaultReplay        int
+	SlowConsumerGrace    time.Duration
+	OpenAccess           bool
 }
 
 type SessionInfo struct {
@@ -180,22 +189,23 @@ const (
 )
 
 type TabInfo struct {
-	ID           string `json:"id"`
-	SessionID    string `json:"sessionId"`
-	Cols         uint32 `json:"cols"`
-	Rows         uint32 `json:"rows"`
-	GridRevision uint64 `json:"gridRevision"`
-	Controller   string `json:"controller,omitempty"`
-	Subscribers  int    `json:"subscribers"`
-	Viewers      int    `json:"viewers"`
-	Exited       bool   `json:"exited"`
-	Retainable   bool   `json:"retainable"`
-	Ephemeral    bool   `json:"ephemeral,omitempty"`
-	Durable      bool   `json:"durable,omitempty"`
-	Cwd          string `json:"cwd,omitempty"`
-	Encoding     string `json:"encoding,omitempty"`
-	Title        string `json:"title,omitempty"`
-	Shell        Shell  `json:"shell"`
+	ID             string `json:"id"`
+	SessionID      string `json:"sessionId"`
+	Cols           uint32 `json:"cols"`
+	Rows           uint32 `json:"rows"`
+	GridRevision   uint64 `json:"gridRevision"`
+	Controller     string `json:"controller,omitempty"`
+	Subscribers    int    `json:"subscribers"`
+	Viewers        int    `json:"viewers"`
+	Exited         bool   `json:"exited"`
+	Retainable     bool   `json:"retainable"`
+	Ephemeral      bool   `json:"ephemeral,omitempty"`
+	Durable        bool   `json:"durable,omitempty"`
+	Cwd            string `json:"cwd,omitempty"`
+	Encoding       string `json:"encoding,omitempty"`
+	Title          string `json:"title,omitempty"`
+	Shell          Shell  `json:"shell"`
+	FallbackNotice string `json:"-"`
 }
 
 func (t TabInfo) MarshalJSON() ([]byte, error) {
@@ -264,28 +274,34 @@ type Session struct {
 	asset  Asset
 	userID string
 
-	mu              sync.Mutex
-	status          Status
-	transport       *transportHandle
-	generation      uint64
-	eventVersion    uint64
-	ctx             context.Context
-	cancel          context.CancelFunc
-	tabs            map[string]*Tab
-	idleSince       time.Time
-	closed          bool
-	reapRetry       bool
-	connectDone     chan struct{}
-	connectErr      error
-	connectFinished bool
-	reconnecting    bool
-	reconnectDone   chan struct{}
-	reconnectErr    error
+	mu                  sync.Mutex
+	status              Status
+	transport           *transportHandle
+	generation          uint64
+	eventVersion        uint64
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	tabs                map[string]*Tab
+	idleSince           time.Time
+	closed              bool
+	reapRetry           bool
+	connectDone         chan struct{}
+	connectErr          error
+	connectOwnerExpired bool
+	connectFinished     bool
+	reconnecting        bool
+	reconnectDone       chan struct{}
+	reconnectErr        error
 
-	durableMu        sync.Mutex
-	durableProvider  base.DurableProvider
-	durableGen       uint64
-	durableTransport *transportHandle
+	durableMu            sync.Mutex
+	durableProvider      base.DurableProvider
+	durableGen           uint64
+	durableTransport     *transportHandle
+	durableFailure       error
+	durableFailureAt     time.Time
+	durableCreateFailure error
+	fallbackNotified     bool
+	fallbackNoticeGen    uint64
 
 	// Idle-reap state for remote session shells (KindRemote): remoteActivity is the last feed/management
 	// operation time, remoteFeeds is the active feed connection count (reaping suspends while >0); unused by normal sessions.
@@ -340,6 +356,9 @@ type OpenTabOptions struct {
 	Ephemeral  bool
 	Retainable bool
 	Durable    *DurableTabOptions
+	// DurableFallback permits a new SSH tab to use a regular PTY when the remote
+	// helper cannot be initialized. Recovered tabs never use this path.
+	DurableFallback bool
 	// Detached opens the tab without attaching a channel: ChannelID must be
 	// empty, the tab starts with no subscribers, and clients attach later via
 	// AttachTab. Used by CreateTab.

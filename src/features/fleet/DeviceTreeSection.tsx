@@ -1,27 +1,24 @@
 // Asset tree device rows: mounts server-enrolled devices into the asset tree as plain rows, with no section chrome of any kind -
 // no header row, no count, no refresh button, and no placeholder hints. While the device list is loading, when it failed to load,
-// when no devices are enrolled, and when every device is offline, the component renders null and leaves no visual trace in the
-// tree; management (enrollment, manual refresh, error/offline details) lives in the device management view.
+// when no devices are enrolled, the component renders null. Offline and agent-less enrolled devices remain visible but disabled;
+// management (enrollment, manual refresh, error details) lives in the device management view.
 // Devices are not asset table records: they are excluded from asset search/CRUD/sync, cannot be edited or deleted,
 // cannot be dragged into groups, and there is no cross-device drag; row visuals and keyboard/click behavior match regular assets
-// (role=treeitem, single/double click/Enter opens a remote terminal, no separate "terminal" button).
-// Renders nothing and issues no requests when logged out; revoked devices are not shown (not even grayed out), and neither are
-// offline or agent-less devices: only online devices appear, so no online badge is rendered. Revocation requires two
-// warning confirmations (the second explicitly states "credentials become invalid immediately, removed from assets and unrecoverable"),
-// and the device is removed from the rows immediately on success.
+// (role=treeitem, single/double click/Enter or the play button opens a remote terminal).
+// Renders nothing and issues no requests when logged out. Revoked, offline, and agent-less devices remain visible
+// with a status badge; all are disabled for terminal access. Revocation requires two warning confirmations.
 // Convergence cadence matches the device management view: WEB polls every 60s / desktop every 30s as fallback (coming online/newly enrolled/
 // revoked elsewhere converge on refresh), WEB additionally subscribes to device://status for realtime online flips
 // (events win within the event threshold, otherwise heartbeat determination), and refetches immediately on event WS reconnect resync;
 // the desktop has no event channel and relies on polling alone.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { connectDevice, useUi } from "../../app/store";
-import { useCoarsePointer } from "../../app/platform";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
-import { IconInfo, IconMonitor, IconTerminal, IconTrash } from "../../ui/icons";
+import { IconInfo, IconMonitor, IconPlay, IconTerminal, IconTrash } from "../../ui/icons";
 import type { FleetDevice } from "../../ipc/fleetApi";
 import { WEB } from "../../ipc/env";
 import { EVENTS, listenEvent, type DeviceStatusEvent } from "../../ipc/events";
@@ -108,26 +105,27 @@ export function DeviceTreeSection() {
 
   // Effective online = realtime event first (within the heartbeat threshold), otherwise fall back to the heartbeat determination; non-agent devices are always offline.
   const onlineOf = (d: FleetDevice): boolean => {
-    if (!d.agent) return false;
+    if (d.revoked_at !== 0 || !d.agent) return false;
     const p = presence[d.id];
     if (p && now - p.at <= ONLINE_THRESHOLD_MS) return p.online;
     return isOnline(d.agent.last_seen_at || d.last_seen_at, now);
   };
 
-  const removeDevice = (id: string) => {
+  const markRevoked = (id: string) => {
     qc.setQueryData<{ devices: FleetDevice[] }>(["fleet-devices", userId], (old) =>
-      old ? { devices: old.devices.filter((d) => d.id !== id) } : old,
+      old ? { devices: old.devices.map((device) => device.id === id ? { ...device, revoked_at: Date.now() } : device) } : old,
     );
   };
 
   const revoke = async (device: FleetDevice) => {
+    if (device.revoked_at !== 0 || busyId === device.id) return;
     const first = await ask(`吊销设备「${device.name}」？\n\n吊销后设备凭证立即失效、控制通道断开。`, {
       title: "吊销设备",
       kind: "warning",
     });
     if (!first) return;
     const second = await ask(
-      `再次确认吊销「${device.name}」？\n\n吊销后设备凭证立即失效，设备会从资产中移除且不可恢复。`,
+      `再次确认吊销「${device.name}」？\n\n吊销后设备凭证立即失效，设备仍显示为已吊销但无法连接，凭证不可恢复。`,
       { title: "确认吊销", kind: "warning" },
     );
     if (!second) return;
@@ -135,7 +133,7 @@ export function DeviceTreeSection() {
     try {
       await fleetClient().revoke(device.id);
       pushToast("success", `已吊销「${device.name}」`);
-      removeDevice(device.id);
+      markRevoked(device.id);
     } catch (e) {
       pushToast("error", describeError(e));
     } finally {
@@ -143,33 +141,36 @@ export function DeviceTreeSection() {
     }
   };
 
-  const buildMenu = (device: FleetDevice, connectable: boolean, disabledReason: string | null): MenuItem[] => {
+  const buildMenu = (device: FleetDevice, disabledReason: string | null): MenuItem[] => {
     const items: MenuItem[] = [];
     items.push({
       kind: "item",
       label: "打开终端",
       icon: <IconTerminal size={13} />,
-      disabled: !connectable,
+      disabled: disabledReason !== null,
       hint: disabledReason ?? undefined,
-      onSelect: () => void connectDevice(device),
+      onSelect: () => {
+        if (disabledReason === null) void connectDevice(device);
+      },
     });
-    items.push(
-      { kind: "item", label: "详情", icon: <IconInfo size={13} />, hint: "打开设备管理视图", onSelect: openDevicesTab },
+    items.push({ kind: "item", label: "详情", icon: <IconInfo size={13} />, hint: "打开设备管理视图", onSelect: openDevicesTab });
+    if (device.revoked_at === 0) items.push(
       { kind: "separator" },
       {
         kind: "item",
         label: "吊销",
         icon: <IconTrash size={13} />,
         danger: true,
-        hint: "凭证立即失效，从资产中移除且不可恢复",
+        disabled: busyId === device.id,
+        hint: "凭证立即失效，设备保留为已吊销状态",
         onSelect: () => void revoke(device),
       },
     );
     return items;
   };
 
-  const enrolled = (devicesQuery.data?.devices ?? []).filter((d) => d.revoked_at === 0);
-  const devices = enrolled.filter((d) => onlineOf(d));
+  const devices = devicesQuery.data?.devices ?? [];
+  const menuDevice = menu ? devices.find((device) => device.id === menu.device.id) : undefined;
   if (devices.length === 0) return null;
 
   return (
@@ -178,24 +179,20 @@ export function DeviceTreeSection() {
         <DeviceTreeRow
           key={device.id}
           device={device}
+          online={onlineOf(device)}
           busy={busyId === device.id}
           onMenu={(x, y) => setMenu({ x, y, device })}
-          onRevoke={() => void revoke(device)}
         />
       ))}
 
       <ContextMenu
         state={
-          menu
+          menu && menuDevice
             ? {
                 x: menu.x,
                 y: menu.y,
-                title: menu.device.name,
-                items: buildMenu(
-                  menu.device,
-                  disabledReasonOf(menu.device) === null,
-                  disabledReasonOf(menu.device),
-                ),
+                title: menuDevice.name,
+                items: buildMenu(menuDevice, disabledReasonOf(menuDevice, onlineOf(menuDevice))),
               }
             : null
         }
@@ -205,26 +202,40 @@ export function DeviceTreeSection() {
   );
 }
 
-function disabledReasonOf(device: FleetDevice): string | null {
-  if (!device.agent?.terminal_enabled) return "该设备已关闭远程终端";
+function disabledReasonOf(device: FleetDevice, online: boolean): string | null {
+  if (device.revoked_at !== 0) return "设备已吊销，无法打开终端";
+  if (!device.agent) return "该设备尚未接入 Agent";
+  if (!online) return "设备离线，无法打开终端";
+  if (!device.agent.terminal_enabled) return "该设备已关闭远程终端";
   return null;
 }
 
 function DeviceTreeRow({
   device,
+  online,
   busy,
   onMenu,
-  onRevoke,
 }: {
   device: FleetDevice;
+  online: boolean;
   busy: boolean;
   onMenu: (x: number, y: number) => void;
-  onRevoke: () => void;
 }) {
-  const coarse = useCoarsePointer();
   const agent = device.agent;
-  const disabledReason = disabledReasonOf(device);
+  const disabledReason = disabledReasonOf(device, online);
   const connectable = disabledReason === null;
+  const status = device.revoked_at !== 0 ? "已吊销" : !agent ? "未接入 Agent" : !online ? "离线" : null;
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressStart = useRef<{ x: number; y: number } | null>(null);
+  const suppressClick = useRef(false);
+
+  const cancelLongPress = () => {
+    if (longPressTimer.current !== null) clearTimeout(longPressTimer.current);
+    longPressTimer.current = null;
+    longPressStart.current = null;
+  };
+
+  useEffect(() => cancelLongPress, []);
 
   const open = () => {
     if (!connectable || busy) return;
@@ -247,10 +258,39 @@ function DeviceTreeRow({
         aria-disabled={!connectable}
         tabIndex={0}
         className={`nx-row nx-row-oneline nx-row-reserve-actions ${connectable ? "" : "cursor-not-allowed opacity-55"}`}
-        onClick={open}
+        onClick={(e) => {
+          if (suppressClick.current) {
+            e.preventDefault();
+            suppressClick.current = false;
+            return;
+          }
+          open();
+        }}
         onDoubleClick={open}
+        onPointerDown={(e) => {
+          suppressClick.current = false;
+          if ((e.pointerType !== "touch" && e.pointerType !== "pen") || (e.target as HTMLElement).closest("button")) return;
+          cancelLongPress();
+          longPressStart.current = { x: e.clientX, y: e.clientY };
+          longPressTimer.current = setTimeout(() => {
+            longPressTimer.current = null;
+            suppressClick.current = true;
+            onMenu(e.clientX, e.clientY);
+          }, 500);
+        }}
+        onPointerMove={(e) => {
+          const start = longPressStart.current;
+          if (start && (Math.abs(e.clientX - start.x) > 10 || Math.abs(e.clientY - start.y) > 10)) cancelLongPress();
+        }}
+        onPointerUp={cancelLongPress}
+        onPointerCancel={cancelLongPress}
+        onPointerLeave={cancelLongPress}
         onContextMenu={(e) => {
           e.preventDefault();
+          const touchPress = longPressStart.current !== null;
+          cancelLongPress();
+          if (suppressClick.current) return;
+          if (touchPress) suppressClick.current = true;
           onMenu(e.clientX, e.clientY);
         }}
         onKeyDown={(e) => {
@@ -260,59 +300,31 @@ function DeviceTreeRow({
             open();
             return;
           }
+          if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
+            e.preventDefault();
+            const rect = e.currentTarget.getBoundingClientRect();
+            onMenu(rect.left, rect.bottom);
+            return;
+          }
           deviceRowKeyDown(e);
         }}
         title={tip}
       >
         <IconMonitor size={14} className="shrink-0 text-neutral-500" />
         <span className="nx-row-name min-w-0 flex-auto truncate">{device.name}</span>
+        {status && <span className="nx-badge shrink-0">{status}</span>}
         {agent?.platform && <span className="nx-row-target min-w-0 truncate text-[11px] text-neutral-500">{agent.platform}</span>}
-        {coarse ? (
+        <span className="nx-row-actions" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
           <button
-            className="nx-icon-btn nx-icon-btn-sm nx-row-more"
-            title="更多操作"
-            aria-label={`更多操作 ${device.name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              const r = e.currentTarget.getBoundingClientRect();
-              onMenu(r.left, r.bottom);
-            }}
-            onDoubleClick={(e) => e.stopPropagation()}
+            className="nx-icon-btn nx-icon-btn-sm"
+            title={disabledReason ?? "打开工作区"}
+            aria-label={`打开工作区 ${device.name}`}
+            disabled={!connectable || busy}
+            onClick={open}
           >
-            ⋯
+            <IconPlay size={12} />
           </button>
-        ) : (
-          <span className="nx-row-actions" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
-            <button
-              className="nx-icon-btn nx-icon-btn-sm"
-              title="详情（打开设备管理）"
-              aria-label={`详情 ${device.name}`}
-              onClick={openDevicesTab}
-            >
-              <IconInfo size={12} />
-            </button>
-            <button
-              className="nx-icon-btn nx-icon-btn-sm is-danger"
-              title="吊销"
-              aria-label={`吊销 ${device.name}`}
-              disabled={busy}
-              onClick={onRevoke}
-            >
-              <IconTrash size={12} />
-            </button>
-            <button
-              className="nx-icon-btn nx-icon-btn-sm"
-              title="更多操作"
-              aria-label={`更多操作 ${device.name}`}
-              onClick={(e) => {
-                const r = e.currentTarget.getBoundingClientRect();
-                onMenu(r.left, r.bottom);
-              }}
-            >
-              ⋯
-            </button>
-          </span>
-        )}
+        </span>
       </div>
     </>
   );

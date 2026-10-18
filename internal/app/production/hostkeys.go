@@ -36,6 +36,8 @@ func newProductionHostKeyStore(path string, database *store.Store) (*productionH
 }
 
 func (s *productionHostKeyStore) HostKeys(ctx context.Context, host string, port int) ([]ssh.HostKey, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.files.HostKeys(ctx, host, port)
 }
 
@@ -56,10 +58,45 @@ func (s *productionHostKeyStore) ApprovedHostKeys(ctx context.Context, host stri
 func (s *productionHostKeyStore) PutHostKey(ctx context.Context, key ssh.HostKey, replace bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	previous, existed, err := readProductionHostKeyFile(s.path)
+	if err != nil {
+		return err
+	}
 	if err := s.files.PutHostKey(ctx, key, replace); err != nil {
 		return err
 	}
-	return s.database.KnownHostAccept(ctx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint)
+	if err := s.database.KnownHostAccept(ctx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint); err != nil {
+		if rollbackErr := restoreProductionHostKeyFile(s.path, previous, existed); rollbackErr != nil {
+			return errors.Join(err, fmt.Errorf("restore SSH host key file: %w", rollbackErr))
+		}
+		return err
+	}
+	return nil
+}
+
+func readProductionHostKeyFile(path string) ([]byte, bool, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return data, true, nil
+}
+
+func restoreProductionHostKeyFile(path string, data []byte, existed bool) error {
+	if !existed {
+		err := os.Remove(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	return atomicfile.Write(path, 0o600, func(writer io.Writer) error {
+		_, err := writer.Write(data)
+		return err
+	})
 }
 
 func (s *productionHostKeyStore) Remove(ctx context.Context, id string) error {
@@ -79,10 +116,11 @@ func (s *productionHostKeyStore) Remove(ctx context.Context, id string) error {
 	if selected == nil {
 		return s.database.KnownHostRemove(ctx, id)
 	}
-	data, err := os.ReadFile(s.path)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	data, existed, err := readProductionHostKeyFile(s.path)
+	if err != nil {
 		return err
 	}
+	fileChanged := false
 	if len(data) != 0 {
 		var file productionHostKeyFile
 		if err := json.Unmarshal(data, &file); err != nil {
@@ -100,8 +138,17 @@ func (s *productionHostKeyStore) Remove(ctx context.Context, id string) error {
 		if err := writeProductionHostKeyFile(s.path, file); err != nil {
 			return err
 		}
+		fileChanged = true
 	}
-	return s.database.KnownHostRemove(ctx, id)
+	if err := s.database.KnownHostRemove(ctx, id); err != nil {
+		if fileChanged {
+			if rollbackErr := restoreProductionHostKeyFile(s.path, data, existed); rollbackErr != nil {
+				return errors.Join(err, fmt.Errorf("restore SSH host key file: %w", rollbackErr))
+			}
+		}
+		return err
+	}
+	return nil
 }
 
 func writeProductionHostKeyFile(path string, file productionHostKeyFile) error {

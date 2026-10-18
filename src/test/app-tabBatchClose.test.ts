@@ -158,21 +158,20 @@ describe("partial failures during batch close", () => {
     );
   });
 
-  it("keeps terminals without counting a failure when direct close is selected but the second confirmation is canceled", async () => {
+  it("closes all terminals after one direct-close batch choice", async () => {
     useUi.setState({
       workspaces: [ws([{ id: "p", tabs: [terminal("t1"), terminal("t2")], activeTabId: "t1" }])],
       activeWorkspaceId: "ws",
     });
     setTerminalCloseAction("ask");
     mocks.askChoiceRemember.mockResolvedValueOnce({ key: "kill", remember: false });
-    mocks.ask.mockResolvedValueOnce(false);
-
     await requestCloseTabs(["t1", "t2"]);
 
-    expect(mocks.closeTab).not.toHaveBeenCalled();
-    expect(tabById("t1")).toBeDefined();
-    expect(tabById("t2")).toBeDefined();
-    expect(tabById("t1")?.closeError).toBeUndefined();
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill", "s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "kill", "s");
+    expect(tabById("t1")).toBeUndefined();
+    expect(tabById("t2")).toBeUndefined();
     expect(useUi.getState().toasts.map((t) => t.text)).not.toContain(
       "2 个标签未能关闭，已保留并在标签上标出原因",
     );

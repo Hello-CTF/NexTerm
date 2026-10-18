@@ -69,6 +69,16 @@ func allowedOrigins() []string {
 	return origins
 }
 
+func trustedProxyCIDRs() []string {
+	var cidrs []string
+	for _, item := range strings.Split(os.Getenv("NEXTERM_TRUSTED_PROXY_CIDRS"), ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			cidrs = append(cidrs, item)
+		}
+	}
+	return cidrs
+}
+
 func run(args []string) int {
 	if len(args) > 0 && args[0] == supervisor.HelperCommand {
 		return supervisor.RunHelperCLI(args[1:])
@@ -286,34 +296,36 @@ func run(args []string) int {
 	}
 	transport, err := server.New(server.Config{
 		Options: server.Options{
-			Listen:         invocation.Listen,
-			DataDir:        paths.DataDir,
-			WebRoot:        invocation.WebRoot,
-			SyncOnly:       invocation.SyncOnly,
-			Auth:           invocation.Auth,
-			AllowedOrigins: allowedOrigins(),
+			Listen:            invocation.Listen,
+			DataDir:           paths.DataDir,
+			WebRoot:           invocation.WebRoot,
+			SyncOnly:          invocation.SyncOnly,
+			Auth:              invocation.Auth,
+			AllowedOrigins:    allowedOrigins(),
+			TrustedProxyCIDRs: trustedProxyCIDRs(),
 		},
-		Blobs:          blobs,
-		Dispatcher:     application.Dispatcher,
-		PeerDispatcher: peerDispatcher,
-		Environment:    application.Environment(""),
-		SyncObjects:    application.SyncObjectHandler(),
-		GatewayAuthKey: application.Services.Sync.GatewayAuthKey(),
-		Accounts:       accounts,
-		Events:         broker,
-		Channels:       hubAdapter,
-		ChannelStats:   hubAdapter.Stats,
-		Vault:          application.Services.Vault,
-		Retention:      serverRetentionConfig(application.Services.Retention),
-		Fleet:          fleetService,
-		Previews:       previewService,
-		Spectator:      application.Services.Sessions,
-		DB:             healthDB,
-		Settings:       settings,
-		AuditFunc:      audit,
-		AssetOwnerFunc: assetOwner,
-		Logger:         logger.Logger,
-		WebSocket:      webSocket,
+		Blobs:              blobs,
+		Dispatcher:         application.Dispatcher,
+		PeerDispatcher:     peerDispatcher,
+		Environment:        application.Environment(""),
+		SyncObjects:        application.SyncObjectHandler(),
+		GatewayAuthKey:     application.Services.Sync.GatewayAuthKey(),
+		Accounts:           accounts,
+		Events:             broker,
+		Channels:           hubAdapter,
+		ChannelStats:       hubAdapter.Stats,
+		Vault:              application.Services.Vault,
+		Retention:          serverRetentionConfig(application.Services.Retention),
+		Fleet:              fleetService,
+		Previews:           previewService,
+		Spectator:          application.Services.Sessions,
+		DB:                 healthDB,
+		AccountConnections: application.Services.Database,
+		Settings:           settings,
+		AuditFunc:          audit,
+		AssetOwnerFunc:     assetOwner,
+		Logger:             logger.Logger,
+		WebSocket:          webSocket,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", err)

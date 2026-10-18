@@ -358,6 +358,79 @@ func TestAccountHTTPCookieSecurityAttributes(t *testing.T) {
 	if !secure {
 		t.Fatal("session cookie must have Secure under TLS")
 	}
+
+	proxyConfig := testConfig(t, false)
+	proxyConfig.Options.Auth = AuthOn
+	proxyConfig.Options.TrustedProxyCIDRs = []string{"127.0.0.1/32"}
+	proxyConfig.Accounts = fixture.accounts
+	proxyServer, err := New(proxyConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyHTTP := httptest.NewServer(proxyServer.Handler())
+	defer proxyHTTP.Close()
+	request, err = http.NewRequest(http.MethodPost, proxyHTTP.URL+"/auth/login", strings.NewReader(`{"username":"root","password":"password-b1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Forwarded-Proto", "https")
+	proxyResponse, err := fixture.client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxyResponse.Body.Close()
+	if proxyResponse.StatusCode != http.StatusOK {
+		t.Fatalf("proxy login status=%d", proxyResponse.StatusCode)
+	}
+	if len(proxyResponse.Cookies()) != 1 || !proxyResponse.Cookies()[0].Secure {
+		t.Fatalf("trusted HTTPS proxy login cookie = %+v", proxyResponse.Cookies())
+	}
+}
+
+func TestAccountCookieTrustsOnlyConfiguredProxyHTTPS(t *testing.T) {
+	config := testConfig(t, false)
+	config.Options.TrustedProxyCIDRs = []string{"127.0.0.1/32"}
+	server, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, testCase := range []struct {
+		name       string
+		remoteAddr string
+		proto      string
+		secure     bool
+	}{
+		{name: "trusted HTTPS proxy", remoteAddr: "127.0.0.1:4321", proto: "https", secure: true},
+		{name: "trusted HTTP proxy", remoteAddr: "127.0.0.1:4321", proto: "http"},
+		{name: "untrusted spoofed header", remoteAddr: "192.0.2.10:4321", proto: "https"},
+		{name: "ambiguous forwarded chain", remoteAddr: "127.0.0.1:4321", proto: "https,http"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+			request.RemoteAddr = testCase.remoteAddr
+			request.Header.Set("X-Forwarded-Proto", testCase.proto)
+			for _, clearing := range []bool{false, true} {
+				response := httptest.NewRecorder()
+				if clearing {
+					server.clearSessionCookie(response, request)
+				} else {
+					server.setSessionCookie(response, request, "session-token")
+				}
+				cookies := response.Result().Cookies()
+				if len(cookies) != 1 || cookies[0].Secure != testCase.secure || !cookies[0].HttpOnly || cookies[0].Path != "/" || cookies[0].SameSite != http.SameSiteLaxMode {
+					t.Fatalf("clearing=%v cookies=%+v, want secure=%v", clearing, cookies, testCase.secure)
+				}
+				if clearing && cookies[0].MaxAge >= 0 {
+					t.Fatalf("cleared cookie max age = %d", cookies[0].MaxAge)
+				}
+			}
+		})
+	}
+	config.Options.TrustedProxyCIDRs = []string{"not-a-cidr"}
+	if _, err := New(config); err == nil {
+		t.Fatal("invalid trusted proxy CIDR was accepted")
+	}
 }
 
 func TestAccountHTTPCSRFAndOriginRules(t *testing.T) {
@@ -573,6 +646,87 @@ func TestAccountHTTPDeviceListRevoke(t *testing.T) {
 	}
 	if call := fixture.call(t, http.MethodDelete, "/auth/devices/"+device.ID, nil, session, session.csrf, nil); call.status != http.StatusForbidden {
 		t.Fatalf("double revoke status=%d", call.status)
+	}
+}
+
+func TestAccountHTTPSessionsListAndRevoke(t *testing.T) {
+	fixture := newAccountFixture(t, AuthOn)
+	createUserViaCore(t, fixture, "session-user", "synthetic-password-1")
+	desktopCall := fixture.call(t, http.MethodPost, "/auth/login", map[string]any{
+		"username": "session-user", "password": "synthetic-password-1",
+	}, nil, "", map[string]string{"X-NexTerm-Client": "desktop"})
+	if desktopCall.status != http.StatusOK {
+		t.Fatalf("desktop login = %d %v", desktopCall.status, desktopCall.body)
+	}
+	desktop := captureSession(t, desktopCall)
+	browserCall := fixture.call(t, http.MethodPost, "/auth/login", map[string]any{
+		"username": "session-user", "password": "synthetic-password-1",
+	}, nil, "", map[string]string{"User-Agent": "Mozilla/5.0 Chrome/120.0"})
+	if browserCall.status != http.StatusOK {
+		t.Fatalf("browser login = %d %v", browserCall.status, browserCall.body)
+	}
+	browser := captureSession(t, browserCall)
+	userID := desktop.user["id"].(string)
+	if _, _, err := fixture.accounts.IssueSession(context.Background(), userID, ""); err != nil {
+		t.Fatal(err)
+	}
+	listed := fixture.call(t, http.MethodGet, "/auth/sessions", nil, desktop, "", nil)
+	if listed.status != http.StatusOK {
+		t.Fatalf("session list = %d %v", listed.status, listed.body)
+	}
+	rows, ok := listed.body["sessions"].([]any)
+	if !ok || len(rows) != 3 {
+		t.Fatalf("session rows = %v", listed.body["sessions"])
+	}
+	var desktopID, browserID string
+	unknownFound := false
+	for _, value := range rows {
+		row := value.(map[string]any)
+		if row["last_seen_at"].(float64) <= 0 || row["created_at"].(float64) <= 0 {
+			t.Fatalf("missing activity timestamp: %v", row)
+		}
+		switch row["name"] {
+		case "NexTerm 桌面端":
+			desktopID = row["id"].(string)
+			if row["current"] != true || row["origin"] == "未知来源" {
+				t.Fatalf("desktop metadata = %v", row)
+			}
+		case "Chrome 浏览器":
+			browserID = row["id"].(string)
+			if row["current"] != false {
+				t.Fatalf("browser marked current: %v", row)
+			}
+		case "未识别会话":
+			unknownFound = row["origin"] == "未知来源"
+		}
+	}
+	if desktopID == "" || browserID == "" || !unknownFound {
+		t.Fatalf("expected desktop, browser and legacy sessions: %v", rows)
+	}
+	if call := fixture.call(t, http.MethodDelete, "/auth/sessions/"+browserID, nil, desktop, "", nil); call.status != http.StatusForbidden {
+		t.Fatalf("session revoke without CSRF = %d", call.status)
+	}
+	if call := fixture.call(t, http.MethodDelete, "/auth/sessions/"+browserID, nil, desktop, desktop.csrf, nil); call.status != http.StatusOK {
+		t.Fatalf("browser session revoke = %d %v", call.status, call.body)
+	}
+	if call := fixture.call(t, http.MethodGet, "/auth/me", nil, browser, "", nil); call.status != http.StatusUnauthorized {
+		t.Fatalf("revoked browser cookie remained valid: %d", call.status)
+	}
+	self := fixture.call(t, http.MethodDelete, "/auth/sessions/"+desktopID, nil, desktop, desktop.csrf, nil)
+	if self.status != http.StatusOK {
+		t.Fatalf("self revoke = %d %v", self.status, self.body)
+	}
+	cleared := false
+	for _, cookie := range self.cookies {
+		if cookie.Name == sessionCookieName && cookie.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatalf("self revoke did not clear cookie: %+v", self.cookies)
+	}
+	if call := fixture.call(t, http.MethodGet, "/auth/me", nil, desktop, "", nil); call.status != http.StatusUnauthorized {
+		t.Fatalf("self-revoked cookie remained valid: %d", call.status)
 	}
 }
 

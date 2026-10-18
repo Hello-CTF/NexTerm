@@ -19,6 +19,26 @@ type fakeRemoteDialer struct {
 	addresses []string
 }
 
+type blockedRebindDialer struct {
+	*fakeRemoteDialer
+	mu      sync.Mutex
+	calls   int
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (d *blockedRebindDialer) ListenRemote(ctx context.Context, network, address string) (net.Listener, error) {
+	d.mu.Lock()
+	d.calls++
+	call := d.calls
+	d.mu.Unlock()
+	if call == 2 {
+		close(d.entered)
+		<-d.release
+	}
+	return d.fakeRemoteDialer.ListenRemote(ctx, network, address)
+}
+
 func (d *fakeRemoteDialer) ListenRemote(_ context.Context, network, address string) (net.Listener, error) {
 	listener, err := net.Listen(network, address)
 	if err != nil {
@@ -197,7 +217,7 @@ func TestRemoteForwardRemoveReleasesRemotePort(t *testing.T) {
 	}
 }
 
-func TestRemoteForwardListenerFailureEvictsAndReports(t *testing.T) {
+func TestRemoteForwardListenerFailureRemainsRetryable(t *testing.T) {
 	dialer := &fakeRemoteDialer{recordingDialer: &recordingDialer{}}
 	reported := make(chan error, 4)
 	service := NewService(Config{
@@ -207,11 +227,12 @@ func TestRemoteForwardListenerFailureEvictsAndReports(t *testing.T) {
 		OnError:     func(err error) { reported <- err },
 	})
 	t.Cleanup(func() { _ = service.Close() })
-	if _, err := service.CreateRemote(t.Context(), CreateRemoteArgs{
+	spec, err := service.CreateRemote(t.Context(), CreateRemoteArgs{
 		SessionID:  "s",
 		TargetHost: "127.0.0.1",
 		TargetPort: echoTargetPort(t),
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	dialer.closeListeners()
@@ -224,11 +245,65 @@ func TestRemoteForwardListenerFailureEvictsAndReports(t *testing.T) {
 		t.Fatal("remote listener failure was not reported")
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for len(service.List()) != 0 {
+	for {
+		listed := service.List()
+		if len(listed) == 1 && listed[0].ID == spec.ID && listed[0].Status == StatusFailed && listed[0].Error != "" {
+			break
+		}
 		if time.Now().After(deadline) {
-			t.Fatal("failed remote listener was not evicted")
+			t.Fatalf("failed remote listener not visible: %+v", listed)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	retried, err := service.RetryFor(t.Context(), spec.ID, "")
+	if err != nil || retried.ID != spec.ID || retried.ListenPort != spec.ListenPort || retried.Status != StatusActive {
+		t.Fatalf("retry = %+v, %v", retried, err)
+	}
+	assertEcho(t, dialForward(t, retried), "after-retry")
+}
+
+func TestRemoteRetryDoesNotResurrectDisconnectedSession(t *testing.T) {
+	dialer := &blockedRebindDialer{
+		fakeRemoteDialer: &fakeRemoteDialer{recordingDialer: &recordingDialer{}},
+		entered:          make(chan struct{}),
+		release:          make(chan struct{}),
+	}
+	service := newLoopbackService(t, &switchProvider{dialer: dialer})
+	spec, err := service.CreateRemote(t.Context(), CreateRemoteArgs{
+		SessionID: "s", TargetHost: "127.0.0.1", TargetPort: echoTargetPort(t),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.SuspendRemote("s")
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.RetryFor(t.Context(), spec.ID, "")
+		done <- err
+	}()
+	select {
+	case <-dialer.entered:
+	case <-time.After(2 * time.Second):
+		close(dialer.release)
+		t.Fatal("retry did not reach remote listener rebind")
+	}
+	service.FailSession("s", "session disconnected")
+	close(dialer.release)
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("retry succeeded after session disconnected")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("retry did not finish")
+	}
+	listed := service.List()
+	if len(listed) != 1 || listed[0].ID != spec.ID || listed[0].Status != StatusFailed || listed[0].Error != "session disconnected" {
+		t.Fatalf("disconnected forward state = %+v", listed)
+	}
+	if conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(spec.ListenPort))), 100*time.Millisecond); err == nil {
+		_ = conn.Close()
+		t.Fatal("remote listener remained open after disconnection")
 	}
 }
 

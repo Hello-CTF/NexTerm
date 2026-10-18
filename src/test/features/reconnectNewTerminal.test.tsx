@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, mount, type MountedView } from "./reactTestUtils";
 import type { SessionInfo } from "../../ipc/commands";
 
 const mocks = vi.hoisted(() => ({
@@ -222,6 +222,22 @@ describe("New terminal after disconnect: one-click reconnect", () => {
 });
 
 describe("reconnectSessionAndWait", () => {
+  it("stops a previous account's reconnect poll and lets the next account reconnect the same session ID", async () => {
+    const oldList = deferred<SessionInfo[]>();
+    mocks.sessionList.mockReturnValueOnce(oldList.promise).mockResolvedValue([session("connected")]);
+
+    const first = reconnectSessionAndWait(session("disconnected"), { intervalMs: 10 });
+    await vi.waitFor(() => expect(mocks.sessionList).toHaveBeenCalledTimes(1));
+    useUi.getState().resetAccountWorkspaces();
+    expect(isSessionReconnectPending("s1")).toBe(false);
+    expect(await reconnectSessionAndWait(session("disconnected"), { intervalMs: 10 })).toMatchObject({ status: "connected" });
+
+    oldList.resolve([session("reconnecting")]);
+    expect(await first).toBeNull();
+    expect(mocks.sessionReconnect).toHaveBeenCalledTimes(2);
+    expect(mocks.sessionList).toHaveBeenCalledTimes(2);
+  });
+
   it("covers the backend reconnect lifecycle with the default wait limit: 10 attempts and 181 seconds of backoff", () => {
     expect(SESSION_RECONNECT_WAIT_MS).toBeGreaterThanOrEqual(181_000);
   });

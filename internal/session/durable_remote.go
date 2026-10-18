@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -14,7 +15,8 @@ import (
 // the given session. Local sessions use the manager's provider; SSH and device
 // sessions resolve through the configured resolver and cache the result per
 // session generation, so a reconnect re-resolves against the new transport.
-func (m *Manager) durableProviderFor(ctx context.Context, session *Session, transport *transportHandle, kind string, generation uint64) (base.DurableProvider, error) {
+// Automatic startup briefly caches helper failures; an explicit durable request retries immediately.
+func (m *Manager) durableProviderFor(ctx context.Context, session *Session, transport *transportHandle, kind string, generation uint64, retryFailure bool) (base.DurableProvider, error) {
 	if kind == KindLocal {
 		if m.durable == nil {
 			return nil, ErrUnsupported
@@ -29,25 +31,83 @@ func (m *Manager) durableProviderFor(ctx context.Context, session *Session, tran
 	if session.durableProvider != nil && session.durableGen == generation && session.durableTransport == transport {
 		return session.durableProvider, nil
 	}
+	if session.durableFailure != nil && session.durableGen == generation && session.durableTransport == transport &&
+		!retryFailure && time.Since(session.durableFailureAt) < 30*time.Second {
+		return nil, session.durableFailure
+	}
+	session.durableFailure = nil
+	session.durableFailureAt = time.Time{}
 	provider, err := m.resolver.ResolveDurable(ctx, transport.Transport)
 	if err != nil {
+		if kind == KindSSH && sshHelperUnavailable(err) && ctx.Err() == nil {
+			session.durableProvider = nil
+			session.durableFailure = err
+			session.durableFailureAt = time.Now()
+			session.durableGen = generation
+			session.durableTransport = transport
+		}
 		return nil, err
 	}
 	session.durableProvider = provider
+	session.durableFailure = nil
+	session.durableFailureAt = time.Time{}
+	session.durableCreateFailure = nil
 	session.durableGen = generation
 	session.durableTransport = transport
 	return provider, nil
 }
 
+func sshHelperUnavailable(err error) bool {
+	return errors.Is(err, ErrUnsupported) || errors.Is(err, base.ErrUnsupported) || errors.Is(err, durable.ErrUnavailable)
+}
+
+func (s *Session) cacheDurableCreateFailure(transport *transportHandle, generation uint64, err error) {
+	s.durableMu.Lock()
+	defer s.durableMu.Unlock()
+	if s.durableProvider == nil || s.durableGen != generation || s.durableTransport != transport {
+		return
+	}
+	s.durableCreateFailure = err
+}
+
+func (s *Session) cachedDurableCreateFailure(transport *transportHandle, generation uint64) error {
+	s.durableMu.Lock()
+	defer s.durableMu.Unlock()
+	if s.durableGen != generation || s.durableTransport != transport {
+		return nil
+	}
+	return s.durableCreateFailure
+}
+
+func (s *Session) clearDurableCreateFailure(transport *transportHandle, generation uint64) {
+	s.durableMu.Lock()
+	defer s.durableMu.Unlock()
+	if s.durableGen == generation && s.durableTransport == transport {
+		s.durableCreateFailure = nil
+	}
+}
+
+func (s *Session) claimDurableFallbackNotice(generation uint64) bool {
+	s.durableMu.Lock()
+	defer s.durableMu.Unlock()
+	if s.fallbackNotified && s.fallbackNoticeGen == generation {
+		return false
+	}
+	s.fallbackNotified = true
+	s.fallbackNoticeGen = generation
+	return true
+}
+
 // ListRemoteDurable lists durable descriptors on one explicitly selected,
-// connected SSH session. It never searches another session or creates a tab.
+// connected SSH or managed device session. It never searches another session or creates a tab.
 func (m *Manager) ListRemoteDurable(ctx context.Context, sessionID string) ([]base.DurableDescriptor, error) {
 	session, err := m.Session(sessionID)
 	if err != nil {
 		return nil, err
 	}
 	session.mu.Lock()
-	if session.asset.Kind != KindSSH {
+	kind := session.asset.Kind
+	if kind != KindSSH && kind != KindDevice {
 		session.mu.Unlock()
 		return nil, ErrUnsupported
 	}
@@ -62,8 +122,15 @@ func (m *Manager) ListRemoteDurable(ctx context.Context, sessionID string) ([]ba
 	transport := session.transport
 	generation := session.generation
 	session.mu.Unlock()
+	mode, err := m.terminalModeFor(ctx, session)
+	if err != nil {
+		return nil, err
+	}
+	if mode == TerminalModeRegular {
+		return []base.DurableDescriptor{}, nil
+	}
 
-	provider, err := m.durableProviderFor(ctx, session, transport, KindSSH, generation)
+	provider, err := m.durableProviderFor(ctx, session, transport, kind, generation, false)
 	if err != nil {
 		return nil, err
 	}
@@ -81,15 +148,32 @@ func (m *Manager) ListRemoteDurable(ctx context.Context, sessionID string) ([]ba
 	return descriptors, nil
 }
 
-// RecoverRemoteDurable searches the durable providers of connected SSH and
-// device sessions for a tab ID and reopens the first match with the given
-// attach options. When options.SessionID is set, only that session is searched.
+// RecoverRemoteDurable searches connected SSH and device sessions for a tab ID.
+// When options.SessionID is set, only that session is searched.
 // It returns ErrTabNotFound only when the search completes with no owning daemon;
-// resolver and enumeration failures are joined and returned after exhausting
-// the connected sessions so callers can classify them.
+// resolver and enumeration failures are joined when no owner is found, or if
+// an error other than helper unavailability prevents a reliable search.
 func (m *Manager) RecoverRemoteDurable(ctx context.Context, tabID string, options OpenTabOptions) (TabInfo, error) {
+	return m.RecoverRemoteDurableInSessions(ctx, tabID, options, nil)
+}
+
+// RecoverRemoteDurableInSessions restricts discovery to session IDs already
+// authorized by the caller. A nil list searches all manager sessions.
+func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID string, options OpenTabOptions, sessionIDs []string) (TabInfo, error) {
 	infos := m.ListSessions()
 	if options.SessionID != "" {
+		if sessionIDs != nil {
+			allowed := false
+			for _, id := range sessionIDs {
+				if id == options.SessionID {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				return TabInfo{}, ErrForbidden
+			}
+		}
 		selected, err := m.Session(options.SessionID)
 		if err != nil {
 			return TabInfo{}, err
@@ -101,10 +185,35 @@ func (m *Manager) RecoverRemoteDurable(ctx context.Context, tabID string, option
 		if info.Status != StatusConnected {
 			return TabInfo{}, ErrDisconnected
 		}
+		mode, err := m.terminalModeFor(ctx, selected)
+		if err != nil {
+			return TabInfo{}, err
+		}
+		if mode == TerminalModeRegular {
+			return TabInfo{}, ErrDurableDisabled
+		}
 		infos = []SessionInfo{info}
+	} else if sessionIDs != nil {
+		allowed := make(map[string]bool, len(sessionIDs))
+		for _, id := range sessionIDs {
+			allowed[id] = true
+		}
+		filtered := make([]SessionInfo, 0, len(sessionIDs))
+		for _, info := range infos {
+			if allowed[info.ID] {
+				filtered = append(filtered, info)
+			}
+		}
+		infos = filtered
 	}
 
 	var searchErrs []error
+	type match struct {
+		sessionID  string
+		descriptor base.DurableDescriptor
+		canonical  bool
+	}
+	var matches []match
 	for _, info := range infos {
 		if (info.Kind != KindSSH && info.Kind != KindDevice) || info.Status != StatusConnected {
 			continue
@@ -113,11 +222,19 @@ func (m *Manager) RecoverRemoteDurable(ctx context.Context, tabID string, option
 		if err != nil {
 			continue
 		}
+		mode, err := m.terminalModeFor(ctx, session)
+		if err != nil {
+			searchErrs = append(searchErrs, err)
+			continue
+		}
+		if mode == TerminalModeRegular {
+			continue
+		}
 		session.mu.Lock()
 		transport := session.transport
 		generation := session.generation
 		session.mu.Unlock()
-		provider, err := m.durableProviderFor(ctx, session, transport, info.Kind, generation)
+		provider, err := m.durableProviderFor(ctx, session, transport, info.Kind, generation, false)
 		if err != nil {
 			searchErrs = append(searchErrs, err)
 			continue
@@ -135,21 +252,87 @@ func (m *Manager) RecoverRemoteDurable(ctx context.Context, tabID string, option
 			searchErrs = append(searchErrs, err)
 			continue
 		}
-		options.TabID = tabID
-		options.SessionID = session.ID
-		options.Durable = &DurableTabOptions{
-			Recover: true, Title: descriptor.Title, MetadataRevision: descriptor.MetadataRevision, CanonicalMetadata: canonical,
-		}
-		if descriptor.Incarnation != "" {
-			identity := base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation}
-			options.Durable.Identity = &identity
-		}
-		return m.OpenTab(ctx, options)
+		matches = append(matches, match{sessionID: session.ID, descriptor: descriptor, canonical: canonical})
 	}
-	if len(searchErrs) > 0 {
+	if len(matches) > 1 {
+		return TabInfo{}, ErrAmbiguousDurable
+	}
+	if len(matches) == 1 && !onlyHelperUnavailable(searchErrs) {
 		return TabInfo{}, errors.Join(searchErrs...)
 	}
-	return TabInfo{}, ErrTabNotFound
+	if len(matches) == 0 {
+		if len(searchErrs) > 0 {
+			return TabInfo{}, errors.Join(searchErrs...)
+		}
+		return TabInfo{}, ErrTabNotFound
+	}
+	selected := matches[0]
+	options.TabID = tabID
+	options.SessionID = selected.sessionID
+	options.Durable = &DurableTabOptions{
+		Recover: true, Title: selected.descriptor.Title, MetadataRevision: selected.descriptor.MetadataRevision, CanonicalMetadata: selected.canonical,
+	}
+	if selected.descriptor.Incarnation != "" {
+		identity := base.DurableIdentity{CreatedAt: selected.descriptor.CreatedAt, Incarnation: selected.descriptor.Incarnation}
+		options.Durable.Identity = &identity
+	}
+	return m.OpenTab(ctx, options)
+}
+
+// RemoteDurableOwners enumerates the selected connected hosts without attaching.
+// The caller must supply session IDs authorized for the requesting user.
+func (m *Manager) RemoteDurableOwners(ctx context.Context, tabID string, sessionIDs []string) ([]string, error) {
+	owners := make([]string, 0)
+	var searchErrs []error
+	for _, id := range sessionIDs {
+		session, err := m.SessionFor(ctx, id)
+		if err != nil {
+			searchErrs = append(searchErrs, err)
+			continue
+		}
+		info := session.Info()
+		if (info.Kind != KindSSH && info.Kind != KindDevice) || info.Status != StatusConnected {
+			continue
+		}
+		mode, err := m.terminalModeFor(ctx, session)
+		if err != nil {
+			searchErrs = append(searchErrs, err)
+			continue
+		}
+		if mode == TerminalModeRegular {
+			continue
+		}
+		session.mu.Lock()
+		transport := session.transport
+		generation := session.generation
+		session.mu.Unlock()
+		provider, err := m.durableProviderFor(ctx, session, transport, info.Kind, generation, false)
+		if err != nil {
+			searchErrs = append(searchErrs, err)
+			continue
+		}
+		_, found, err := findDurableDescriptor(ctx, provider, tabID)
+		if err != nil {
+			searchErrs = append(searchErrs, err)
+			continue
+		}
+		if found {
+			owners = append(owners, id)
+		}
+	}
+	if len(searchErrs) > 0 && (len(owners) == 0 || !onlyHelperUnavailable(searchErrs)) {
+		return nil, errors.Join(searchErrs...)
+	}
+	return owners, nil
+}
+
+func onlyHelperUnavailable(errs []error) bool {
+	for _, err := range errs {
+		if !sshHelperUnavailable(err) {
+			return false
+		}
+	}
+	return true
 }
 
 func findDurableDescriptor(ctx context.Context, provider base.DurableProvider, tabID string) (base.DurableDescriptor, bool, error) {

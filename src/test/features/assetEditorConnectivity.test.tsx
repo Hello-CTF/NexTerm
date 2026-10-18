@@ -288,6 +288,51 @@ describe("AssetEditor SSH connectivity", () => {
       proxyCommand: "nc %h %p",
     });
   });
+
+  it("saves ordinary terminal mode for one SSH asset", async () => {
+    mountEditor();
+    expandAdvanced();
+    const mode = findSelect("普通终端（不使用持久终端）");
+    expect(mode.value).toBe("auto");
+    setSelectValue(mode, "regular");
+    expect(mounted?.container.textContent).toContain("切换为普通终端不会删除已有持久会话；切回「自动」后可在「后台会话」查看并接管");
+    fillName("ordinary-ssh");
+    fillHost("10.0.0.8");
+    click(saveButton());
+    await flushUntil(() => mocks.create.mock.calls.length > 0);
+    expect(createdPayload().options).toEqual({ terminalMode: "regular" });
+  });
+
+  it("loads an SSH asset's ordinary terminal mode and clears it when switched to automatic", async () => {
+    const initial = {
+      id: "a-regular",
+      kind: "ssh",
+      name: "ordinary-ssh",
+      host: "10.0.0.8",
+      port: 22,
+      username: "root",
+      authKind: "password",
+      credId: null,
+      keyPath: null,
+      groupId: null,
+      options: { terminalMode: "regular" },
+      tags: "",
+      note: "",
+      sort: 0,
+      createdAt: 0,
+      updatedAt: 0,
+      deletedAt: null,
+      builtin: false,
+    } as Asset;
+    mountEditor(initial);
+    expandAdvanced();
+    const mode = findSelect("普通终端（不使用持久终端）");
+    expect(mode.value).toBe("regular");
+    setSelectValue(mode, "auto");
+    click(saveButton());
+    await flushUntil(() => mocks.update.mock.calls.length > 0);
+    expect(updatedPayload().options).toEqual({});
+  });
 });
 
 describe("AssetEditor SSH advanced options collapsing", () => {

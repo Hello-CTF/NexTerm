@@ -42,18 +42,19 @@ type Manager struct {
 	started                bool
 	openAccess             bool
 
-	connector   Connector
-	terminals   TerminalFactory
-	durable     base.DurableProvider
-	resolver    DurableResolver
-	offsets     DurableTranscriptOffsetStore
-	titles      DurableTabTitleStore
-	bus         *hub.Hub
-	ownsBus     bool
-	emitter     Emitter
-	transcripts TranscriptSink
-	commands    CommandSink
-	logger      *slog.Logger
+	connector            Connector
+	terminals            TerminalFactory
+	durable              base.DurableProvider
+	resolver             DurableResolver
+	terminalModeResolver func(context.Context, string) (string, error)
+	offsets              DurableTranscriptOffsetStore
+	titles               DurableTabTitleStore
+	bus                  *hub.Hub
+	ownsBus              bool
+	emitter              Emitter
+	transcripts          TranscriptSink
+	commands             CommandSink
+	logger               *slog.Logger
 
 	hookMu        sync.RWMutex
 	userInputHook func(string)
@@ -77,34 +78,35 @@ type Manager struct {
 func NewManager(config Config) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	manager := &Manager{
-		sessions:            make(map[string]*Session),
-		byAsset:             make(map[assetOwnerKey]string),
-		tabs:                make(map[string]*Tab),
-		channelTabs:         make(map[string]string),
-		channelIncarnations: make(map[string]uint64),
-		channelOwners:       make(map[string]channelOwnerRegistration),
-		sessionOwners:       make(map[string]string),
-		tabOwners:           make(map[string]string),
-		controlOwners:       make(map[*recordingControlQueue]string),
-		throttleVersions:    make(map[string]uint64),
-		throttleChannels:    make(map[string]map[string]bool),
-		slowKicks:           make(map[string]*time.Timer),
-		connector:           config.Connector,
-		terminals:           config.Terminals,
-		durable:             config.Durable,
-		resolver:            config.DurableResolver,
-		emitter:             config.Emitter,
-		transcripts:         config.Transcripts,
-		commands:            config.Commands,
-		idleTimeout:         config.IdleTimeout,
-		sweepInterval:       config.SweepInterval,
-		reconnectMax:        config.ReconnectMax,
-		reconnectBackoff:    append([]time.Duration(nil), config.ReconnectBackoff...),
-		defaultReplay:       config.DefaultReplay,
-		openAccess:          config.OpenAccess,
-		ctx:                 ctx,
-		cancel:              cancel,
-		closeDone:           make(chan struct{}),
+		sessions:             make(map[string]*Session),
+		byAsset:              make(map[assetOwnerKey]string),
+		tabs:                 make(map[string]*Tab),
+		channelTabs:          make(map[string]string),
+		channelIncarnations:  make(map[string]uint64),
+		channelOwners:        make(map[string]channelOwnerRegistration),
+		sessionOwners:        make(map[string]string),
+		tabOwners:            make(map[string]string),
+		controlOwners:        make(map[*recordingControlQueue]string),
+		throttleVersions:     make(map[string]uint64),
+		throttleChannels:     make(map[string]map[string]bool),
+		slowKicks:            make(map[string]*time.Timer),
+		connector:            config.Connector,
+		terminals:            config.Terminals,
+		durable:              config.Durable,
+		resolver:             config.DurableResolver,
+		terminalModeResolver: config.TerminalModeResolver,
+		emitter:              config.Emitter,
+		transcripts:          config.Transcripts,
+		commands:             config.Commands,
+		idleTimeout:          config.IdleTimeout,
+		sweepInterval:        config.SweepInterval,
+		reconnectMax:         config.ReconnectMax,
+		reconnectBackoff:     append([]time.Duration(nil), config.ReconnectBackoff...),
+		defaultReplay:        config.DefaultReplay,
+		openAccess:           config.OpenAccess,
+		ctx:                  ctx,
+		cancel:               cancel,
+		closeDone:            make(chan struct{}),
 	}
 	if manager.terminals == nil {
 		manager.terminals = terminalFactory{}
@@ -332,6 +334,9 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 			return nil, ErrForbidden
 		}
 		if status != StatusConnecting {
+			if err := ipc.CheckAccountSession(ctx); err != nil {
+				return nil, err
+			}
 			return existing, nil
 		}
 		select {
@@ -340,12 +345,24 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 		case <-done:
 		}
 		existing.mu.Lock()
-		defer existing.mu.Unlock()
-		if existing.status == StatusConnected || existing.status == StatusReconnecting {
+		status = existing.status
+		connectErr := existing.connectErr
+		ownerExpired := existing.connectOwnerExpired
+		existing.mu.Unlock()
+		if status == StatusConnected || status == StatusReconnecting {
+			if err := ipc.CheckAccountSession(ctx); err != nil {
+				return nil, err
+			}
 			return existing, nil
 		}
-		if existing.connectErr != nil {
-			return nil, existing.connectErr
+		if connectErr != nil {
+			if ownerExpired {
+				if err := ipc.CheckAccountSession(ctx); err != nil {
+					return nil, err
+				}
+				return m.Connect(ctx, asset)
+			}
+			return nil, connectErr
 		}
 		return nil, ErrDisconnected
 	}
@@ -384,9 +401,17 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 	} else if connectErr == nil {
 		connectErr = errors.New("connector returned a nil transport")
 	}
+	var accountErr error
+	if connectErr == nil {
+		accountErr = ipc.CheckAccountSession(ctx)
+	}
 
 	m.mu.Lock()
 	session.mu.Lock()
+	if accountErr != nil && connectErr == nil {
+		session.connectOwnerExpired = true
+		connectErr = accountErr
+	}
 	current := !m.closed && !session.closed && m.sessions[session.ID] == session && session.generation == generation && session.status == StatusConnecting
 	if !current {
 		if session.connectErr != nil {
@@ -460,6 +485,35 @@ func (m *Manager) SessionFor(ctx context.Context, id string) (*Session, error) {
 		return nil, ErrForbidden
 	}
 	return m.session(id, requester, m.requestOpenAccess(ctx))
+}
+
+func (m *Manager) TerminalModeFor(ctx context.Context, sessionID string) (string, error) {
+	session, err := m.SessionFor(ctx, sessionID)
+	if err != nil {
+		return "", err
+	}
+	return m.terminalModeFor(ctx, session)
+}
+
+func (m *Manager) terminalModeFor(ctx context.Context, session *Session) (string, error) {
+	asset := session.Asset()
+	if asset.Kind != KindSSH {
+		return TerminalModeAuto, nil
+	}
+	mode := asset.TerminalMode
+	if m.terminalModeResolver != nil {
+		latest, err := m.terminalModeResolver(ctx, asset.ID)
+		if err != nil {
+			return "", err
+		}
+		if latest != "" {
+			mode = latest
+		}
+	}
+	if mode == TerminalModeRegular {
+		return TerminalModeRegular, nil
+	}
+	return TerminalModeAuto, nil
 }
 
 func (m *Manager) session(id, requester string, openAccess bool) (*Session, error) {

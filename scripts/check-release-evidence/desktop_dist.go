@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -18,6 +19,26 @@ var files embed.FS
 
 func main() {
 	_, _ = files.ReadFile("index.html")
+}
+`
+
+const helperMetadataMain = `package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+)
+
+func main() {
+	if len(os.Args) != 2 || os.Args[1] != "--metadata" {
+		fmt.Fprintln(os.Stderr, "fixture helper: expected --metadata")
+		os.Exit(2)
+	}
+	_ = json.NewEncoder(os.Stdout).Encode(struct {
+		Protocol int      ` + "`json:\"protocol\"`" + `
+		Features []string ` + "`json:\"features\"`" + `
+	}{Protocol: %d, Features: []string{%s}})
 }
 `
 
@@ -84,6 +105,62 @@ func prepareDesktopPackageRepo(root, base, version string) error {
 	if err := os.MkdirAll(filepath.Join(base, "target"), 0o755); err != nil {
 		return err
 	}
+	// The package-only path validates the helper protocol before packaging. Keep
+	// this temporary repository self-contained so the evidence check does not
+	// depend on production build leftovers in the caller's target directory.
+	metadataCmd := exec.Command("go", "run", "-mod=readonly", "./cmd/nexterm-helper", "--metadata")
+	metadataCmd.Dir = root
+	metadataRaw := runCmd(metadataCmd)
+	if metadataRaw.rc != 0 {
+		return fmt.Errorf("read helper metadata: %s", metadataRaw.stderr)
+	}
+	var metadata struct {
+		Protocol int      `json:"protocol"`
+		Features []string `json:"features"`
+	}
+	if err := json.Unmarshal([]byte(metadataRaw.stdout), &metadata); err != nil {
+		return fmt.Errorf("parse helper metadata: %w", err)
+	}
+	if metadata.Protocol <= 0 || len(metadata.Features) == 0 {
+		return fmt.Errorf("helper metadata is incomplete: %s", metadataRaw.stdout)
+	}
+	if err := os.WriteFile(filepath.Join(base, "go.mod"), []byte("module desktop-evidence-fixture\n\ngo 1.26\n"), 0o644); err != nil {
+		return err
+	}
+	helperCommand := filepath.Join(base, "cmd", "nexterm-helper")
+	if err := os.MkdirAll(helperCommand, 0o755); err != nil {
+		return err
+	}
+	featuresJSON, err := json.Marshal(metadata.Features)
+	if err != nil {
+		return err
+	}
+	featuresLiteral := strings.TrimSuffix(strings.TrimPrefix(string(featuresJSON), "["), "]")
+	mainSource := fmt.Sprintf(helperMetadataMain, metadata.Protocol, featuresLiteral)
+	if err := os.WriteFile(filepath.Join(helperCommand, "main.go"), []byte(mainSource), 0o644); err != nil {
+		return err
+	}
+	helperRoot := filepath.Join(base, "target", "go-build")
+	for _, arch := range []string{"amd64", "arm64"} {
+		buildDir := filepath.Join(base, "helper-build", arch)
+		if err := os.MkdirAll(buildDir, 0o755); err != nil {
+			return err
+		}
+		helper, err := buildStubBinary(buildDir, "package main\n\nfunc main() {}\n", "linux", arch, "0")
+		if err != nil {
+			return fmt.Errorf("build fixture helper %s: %w", arch, err)
+		}
+		destination := filepath.Join(helperRoot, "nexterm-helper-linux-"+arch)
+		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+			return err
+		}
+		if err := copyFile(helper, destination, 0o755); err != nil {
+			return err
+		}
+		if err := writeHelperFixtureManifest(destination, arch, version, metadata.Protocol, metadata.Features); err != nil {
+			return err
+		}
+	}
 	manifestScript := `import fs from "node:fs";
 import { createDistManifest } from "./scripts/lib/build-manifest.mjs";
 const manifest = createDistManifest(process.env.DIST_ROOT, { version: process.env.DIST_VERSION, commit: process.env.DIST_COMMIT });
@@ -101,6 +178,37 @@ fs.writeFileSync(process.env.DIST_MANIFEST, JSON.stringify(manifest));`
 		return fmt.Errorf("create desktop dist manifest: %s", result.stderr)
 	}
 	return nil
+}
+
+func copyFile(source, destination string, mode os.FileMode) error {
+	contents, err := os.ReadFile(source)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(destination, contents, mode)
+}
+
+func writeHelperFixtureManifest(file, arch, version string, protocol int, features []string) error {
+	if err := writeBinaryManifest(file, "helper", "linux", arch, "0", version, "unknown"); err != nil {
+		return err
+	}
+	manifestPath := file + ".manifest.json"
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return err
+	}
+	var manifest map[string]interface{}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return err
+	}
+	manifest["protocol"] = protocol
+	manifest["features"] = features
+	manifest["binary_metadata_verified"] = true
+	updated, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(manifestPath, append(updated, '\n'), 0o644)
 }
 
 func runDesktopPackage(base, binary, version, goos, goarch string) cmdResult {

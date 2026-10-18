@@ -195,7 +195,7 @@ beforeEach(() => {
     Promise.resolve(dir === "~" ? HOME_ENTRIES : []),
   );
   mocks.mountList.mockResolvedValue([
-    { id: "m1", localPoint: "Z:", remote: "\\\\nas\\share", sessionId: "s1", createdAt: 1 },
+    { id: "m1", localPoint: "Z:", remote: "\\\\nas\\share", sessionId: "s1", managed: true, createdAt: 1 },
   ]);
   mocks.mountCreate.mockResolvedValue(undefined);
   mocks.platform.mockResolvedValue("windows");

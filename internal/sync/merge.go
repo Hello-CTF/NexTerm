@@ -382,6 +382,29 @@ func (e *Engine) applyGroupObject(ctx context.Context, plaintext []byte, report 
 	} else if found && tombstone.DeletedAt >= payload.UpdatedAt {
 		return false, false
 	}
+	parentID := payload.ParentID
+	unresolvedParent := false
+	if parentID != nil {
+		if *parentID == "" {
+			parentID = nil
+		} else if _, err := e.store.GroupGet(ctx, *parentID); isNotFound(err) {
+			parentID = nil
+			deleted, found, tombstoneErr := e.syncTombstoneGet(ctx, *payload.ParentID)
+			if tombstoneErr != nil {
+				report.warnf("无法检查分组 %s 的父级删除标记: %v", payload.ID, tombstoneErr)
+				return false, false
+			}
+			unresolvedParent = !found || deleted.Kind != KindGroup || deleted.DeletedAt < payload.UpdatedAt
+			if unresolvedParent {
+				report.warnf("分组 %s 的父级 %s 尚未同步，暂时按顶级分组导入，父级到达后自动恢复", payload.ID, *payload.ParentID)
+			} else {
+				report.warnf("分组 %s 的父级 %s 已删除，按顶级分组导入", payload.ID, *payload.ParentID)
+			}
+		} else if err != nil {
+			report.warnf("无法检查分组 %s 的父级: %v", payload.ID, err)
+			return false, false
+		}
+	}
 	if exists {
 		localPayload, err := marshalObject(groupObject{
 			ID: local.ID, ParentID: local.ParentID, Name: local.Name, Sort: local.Sort,
@@ -392,21 +415,19 @@ func (e *Engine) applyGroupObject(ctx context.Context, plaintext []byte, report 
 			return false, false
 		}
 		if bytes.Equal(plaintext, localPayload) {
+			if unresolvedParent {
+				report.markUnresolvedRef(payload.ID)
+			}
 			return false, true
 		}
-		if !remoteWins(payload.UpdatedAt, local.UpdatedAt, plaintext, localPayload) {
+		degraded := payload
+		degraded.ParentID = nil
+		degradedPayload, err := marshalObject(degraded)
+		if err != nil {
+			report.warnf("分组 %s 的兼容格式编码失败：%v", payload.ID, err)
 			return false, false
 		}
-	}
-	parentID := payload.ParentID
-	if parentID != nil {
-		if *parentID == "" {
-			parentID = nil
-		} else if _, err := e.store.GroupGet(ctx, *parentID); isNotFound(err) {
-			report.warnf("分组 %s 的父级 %s 不存在，已按顶级分组导入", payload.ID, *parentID)
-			parentID = nil
-		} else if err != nil {
-			report.warnf("无法检查分组 %s 的父级: %v", payload.ID, err)
+		if !bytes.Equal(degradedPayload, localPayload) && !remoteWins(payload.UpdatedAt, local.UpdatedAt, plaintext, localPayload) {
 			return false, false
 		}
 	}
@@ -428,6 +449,9 @@ func (e *Engine) applyGroupObject(ctx context.Context, plaintext []byte, report 
 	if err := e.groupUpsert(ctx, payload, parentID); err != nil {
 		report.warnf("分组 %s 应用失败: %v", payload.ID, err)
 		return false, false
+	}
+	if unresolvedParent {
+		report.markUnresolvedRef(payload.ID)
 	}
 	return true, false
 }
@@ -750,15 +774,14 @@ func (e *Engine) applyGroupTombstone(ctx context.Context, objectID string, delet
 	if exists && local.UpdatedAt > deletedAt {
 		return false, false
 	}
-	if err := e.syncTombstonePut(ctx, objectID, KindGroup, deletedAt); err != nil {
-		report.warnf("分组 %s 的删除标记记录失败：%v", objectID, err)
-		return false, false
-	}
 	if exists {
-		if err := e.store.GroupDelete(ctx, objectID); err != nil {
+		if err := e.store.GroupDeleteAt(ctx, objectID, deletedAt); err != nil {
 			report.warnf("应用分组 %s 的删除标记失败：%v", objectID, err)
 			return false, false
 		}
+	} else if err := e.syncTombstonePut(ctx, objectID, KindGroup, deletedAt); err != nil {
+		report.warnf("分组 %s 的删除标记记录失败：%v", objectID, err)
+		return false, false
 	}
 	return true, false
 }
@@ -1141,7 +1164,7 @@ func (e *Engine) requireVault(ctx context.Context) error {
 	return nil
 }
 
-// objectKindRank ensures that within one push batch, depended-on objects precede their dependents: the pull side applies in seq order, so references must exist before they are applied.
+// objectKindRank orders kinds by dependency; group ancestry is sorted separately within the group kind.
 // Plain tombstones rank after content objects but before session records, matching the browser push order.
 func objectKindRank(kind string) int {
 	switch kind {
@@ -1184,5 +1207,28 @@ func sortObjectsForPush(objects map[string]localObject) []string {
 		}
 		return ids[i] < ids[j]
 	})
-	return ids
+	ordered := make([]string, 0, len(ids))
+	state := make(map[string]uint8, len(ids))
+	var visit func(string)
+	visit = func(id string) {
+		if state[id] != 0 {
+			return
+		}
+		state[id] = 1
+		object := objects[id]
+		if object.kind == KindGroup {
+			var group groupObject
+			if json.Unmarshal(object.plaintext, &group) == nil && group.ParentID != nil {
+				if parent, ok := objects[*group.ParentID]; ok && parent.kind == KindGroup {
+					visit(*group.ParentID)
+				}
+			}
+		}
+		state[id] = 2
+		ordered = append(ordered, id)
+	}
+	for _, id := range ids {
+		visit(id)
+	}
+	return ordered
 }

@@ -1322,6 +1322,57 @@ describe("DbPanel SQL execution locking", () => {
     });
   }
 
+  it("runs two panels on the same connection independently", async () => {
+    const first = deferred<unknown>();
+    const second = deferred<unknown>();
+    mocks.query.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    mounted = mount(createElement("div", null,
+      createElement("section", { "data-testid": "first-panel" },
+        createElement(DbPanel, { connId: "shared", kind: "mysql" })),
+      createElement("section", { "data-testid": "second-panel" },
+        createElement(DbPanel, { connId: "shared", kind: "mysql" })),
+    ));
+    const panel = (id: string) => mounted!.container.querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
+    const sqlEditor = (id: string) => {
+      const element = panel(id).querySelector<HTMLElement>(".cm-editor");
+      const view = element ? EditorView.findFromDOM(element) : null;
+      if (!view) throw new Error(`SQL editor missing in ${id}`);
+      return view;
+    };
+    const button = (id: string) => {
+      const found = [...panel(id).querySelectorAll<HTMLButtonElement>("button")].find(
+        (candidate) => candidate.textContent?.includes("运行"),
+      );
+      if (!found) throw new Error(`Run button missing in ${id}`);
+      return found;
+    };
+    await flushUntil(() => panel("first-panel").querySelector(".cm-editor") !== null &&
+      panel("second-panel").querySelector(".cm-editor") !== null);
+    act(() => {
+      sqlEditor("first-panel").dispatch({ changes: { from: 0, insert: "SELECT 1;" } });
+      sqlEditor("second-panel").dispatch({ changes: { from: 0, insert: "SELECT 2;" } });
+      button("first-panel").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      button("second-panel").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(mocks.query.mock.calls).toEqual([
+      ["shared", "SELECT 1;"],
+      ["shared", "SELECT 2;"],
+    ]);
+    expect(button("first-panel").disabled).toBe(true);
+    expect(button("second-panel").disabled).toBe(true);
+
+    second.resolve({ ...successfulResult, rowsAffected: 2 });
+    await flushUntil(() => !button("second-panel").disabled);
+    expect(button("first-panel").disabled).toBe(true);
+    expect(panel("second-panel").textContent).toContain("2 行受影响");
+    expect(panel("first-panel").textContent).not.toContain("2 行受影响");
+
+    first.resolve({ ...successfulResult, rowsAffected: 1 });
+    await flushUntil(() => !button("first-panel").disabled);
+    expect(panel("first-panel").textContent).toContain("1 行受影响");
+    expect(panel("second-panel").textContent).not.toContain("1 行受影响");
+  });
+
   it("claims synchronously across Ctrl, Meta, and button triggers while preserving selection priority", async () => {
     const pending = deferred<unknown>();
     mocks.query.mockReturnValue(pending.promise);

@@ -291,7 +291,7 @@ describe("MountPanel disconnect confirmation", () => {
   it("uses a warning confirmation when disconnecting a mount", async () => {
     useUi.setState({ sessions: [session(SID, "ssh")] });
     mocks.mountList.mockResolvedValue([
-      { localPoint: "Z:", remote: "user@host:/data", createdAt: 1 },
+      { id: "m1", localPoint: "Z:", remote: "user@host:/data", sessionId: SID, managed: true, createdAt: 1 },
     ]);
     mounted = mountWithClient(createElement(MountPanel, { sessionId: SID }));
     await waitFor(() =>
