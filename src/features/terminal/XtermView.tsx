@@ -39,6 +39,13 @@ function accentColor(): string {
   return v || "#516cd6";
 }
 
+function sameGrid(
+  a: { cols: number; rows: number } | null,
+  b: { cols: number; rows: number } | null,
+): boolean {
+  return a === b || (!!a && !!b && a.cols === b.cols && a.rows === b.rows);
+}
+
 export interface TerminalHandle {
   copyBlock: (index: number) => string;
   scrollToBlock: (index: number) => void;
@@ -47,7 +54,7 @@ export interface TerminalHandle {
   clear: () => void;
   getSelection: () => string;
   focus: () => void;
-  fit: () => void;
+  fit: () => boolean;
   paste: (text: string) => void;
   dimensions: () => { cols: number; rows: number };
 }
@@ -117,17 +124,22 @@ export function XtermView(props: XtermViewProps) {
   onPasteImagesRef.current = props.onPasteImages;
   onRequestPasteRef.current = props.onRequestPaste;
 
-  const fitIfSized = (afterClaim = false, final = false) => {
+  const fitIfSized = (afterClaim = false, final = false): boolean => {
     const host = hostRef.current;
     const term = termRef.current;
     const coordinator = gridRef.current;
-    if (!host || !term || !coordinator) return;
+    if (!host || !term || !coordinator) return false;
     if (afterClaim) coordinator.setCanResize(true);
     const geometry = measureTerminalGeometry(term, host);
-    if (!geometry) return;
+    if (!geometry) return false;
+    const snapshot = coordinator.snapshot();
+    const localChanged = term.cols !== geometry.grid.cols || term.rows !== geometry.grid.rows;
+    const remoteChanged =
+      !sameGrid(snapshot.desired, geometry.grid) || !sameGrid(snapshot.committed, geometry.grid);
     coordinator.update(geometry.viewport, geometry.metrics);
     if (final) coordinator.flush();
     onGeometryRef.current?.();
+    return localChanged || remoteChanged;
   };
 
   useEffect(() => {
