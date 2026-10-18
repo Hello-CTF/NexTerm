@@ -272,7 +272,7 @@ describe("docker log stream follow", () => {
       useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, assetId: "host-b", status: "reconnecting" as const })) }));
     });
     await waitFor(() => expect(mounted?.container.querySelector('[role="log"]')).toBeNull());
-    await waitFor(() => expect(mocks.closeTab).toHaveBeenCalledWith("tab-1", "kill"));
+    await waitFor(() => expect(mocks.closeTab).toHaveBeenCalledWith("tab-1", "kill", "s1"));
     act(() => {
       useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, status: "connected" as const })) }));
     });
@@ -294,7 +294,7 @@ describe("docker log stream follow", () => {
     panel.switchTo("s2");
     expect(mounted.container.querySelector('[role="log"]')).toBeNull();
     expect(mounted.container.textContent).not.toContain("host A secret line");
-    await waitFor(() => expect(mocks.closeTab).toHaveBeenCalledWith("tab-1", "kill"));
+    await waitFor(() => expect(mocks.closeTab).toHaveBeenCalledWith("tab-1", "kill", "s1"));
   });
 
   it("discards a delayed old attach after switching sessions and opens only the new host", async () => {

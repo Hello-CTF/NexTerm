@@ -249,7 +249,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     const { tabId, channel } = attached;
     return () => {
       void terminalApi
-        .closeTab(tabId, "kill")
+        .closeTab(tabId, "kill", attached.sessionId)
         .then(() => useUi.getState().resyncSessions({ silent: true }))
         .catch(() => undefined);
       disposeChannel(channel);
