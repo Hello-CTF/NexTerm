@@ -18,6 +18,10 @@ import (
 // the close hook lets the window close instead of hiding it.
 var trayQuitting atomic.Bool
 
+// closeConfirmEvent asks the frontend to show the first-close dialog when no
+// close-to-tray preference has been saved yet; mirrors EVENTS.closeConfirm.
+const closeConfirmEvent = "desktop://close-confirm"
+
 // setupTray shows the NexTerm icon in the notification area with a minimal
 // menu, and hides the window instead of closing it when close-to-tray is
 // enabled (the default).
@@ -56,9 +60,16 @@ func setupTray(app *application.App, window *application.WebviewWindow, icon []b
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 		defer cancel()
-		enabled, _, err := production.DesktopCloseToTray(ctx, database)
+		enabled, configured, err := production.DesktopCloseToTray(ctx, database)
 		if err != nil {
 			logger.Warn("close-to-tray setting unreadable; allowing close", "error", err)
+			return
+		}
+		if !configured {
+			// First close ever: ask the user instead of hiding; the dialog
+			// saves the choice and re-closes the window.
+			event.Cancel()
+			app.Event.Emit(closeConfirmEvent, nil)
 			return
 		}
 		if !enabled {
