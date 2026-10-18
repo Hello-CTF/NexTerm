@@ -3,9 +3,11 @@
 package ssh
 
 import (
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"os"
@@ -103,6 +105,67 @@ func TestSpawnDaemonClosesExecOutputWhileHelperKeepsRunning(t *testing.T) {
 			t.Fatal("detached helper did not start")
 		case <-time.After(5 * time.Millisecond):
 		}
+	}
+}
+
+func TestParseSHA256Output(t *testing.T) {
+	want := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	for _, test := range []struct {
+		name string
+		out  string
+		ok   bool
+	}{
+		{name: "coreutils", out: want + "  /tmp/helper\n", ok: true},
+		{name: "uppercase", out: strings.ToUpper(want) + "  /tmp/helper\n", ok: true},
+		{name: "malformed", out: "not-a-digest  /tmp/helper\n"},
+		{name: "empty", out: ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := parseSHA256Output(test.out)
+			if ok != test.ok {
+				t.Fatalf("parseSHA256Output(%q) ok = %v, want %v", test.out, ok, test.ok)
+			}
+			if test.ok && got != want {
+				t.Fatalf("parseSHA256Output(%q) = %q, want %q", test.out, got, want)
+			}
+		})
+	}
+}
+
+func TestCompressedHelperSourceRoundTrips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "helper")
+	want := strings.Repeat("helper-payload-", 32*1024)
+	if err := os.WriteFile(path, []byte(want), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	compressedPath, compressed, err := compressedHelperSource(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !compressed {
+		t.Fatal("compressedHelperSource did not compress a compressible helper")
+	}
+	defer os.Remove(compressedPath)
+	compressedFile, err := os.Open(compressedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := gzip.NewReader(compressedFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := compressedFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("compressed helper round trip changed payload")
 	}
 }
 
