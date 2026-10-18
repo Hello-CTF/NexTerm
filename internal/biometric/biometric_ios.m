@@ -49,7 +49,7 @@ bool nx_biometric_evaluate(const char *creason, char **err_msg) {
 }
 
 static NSString *nxKeychainService(void) {
-    return [NSBundle mainBundle].bundleIdentifier ?: @"com.nexterm.desktop";
+    return [NSBundle mainBundle].bundleIdentifier ?: @"work.nexterm.app";
 }
 
 static NSMutableDictionary *nxKeychainQuery(NSString *account) {

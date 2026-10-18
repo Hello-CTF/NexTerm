@@ -385,7 +385,7 @@ jobs:
   ios-dist:
     name: iOS App Store signed IPA
     needs: [quality, frontend, version]
-    if: ${{ !failure() && !cancelled() && github.event_name == 'push' && vars.NEXTERM_IOS_SIGNING == 'true' }}
+    if: ${{ !failure() && !cancelled() && vars.NEXTERM_IOS_SIGNING == 'true' && (github.event_name == 'push' || inputs.release_version != '') }}
     runs-on: macos-15
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
@@ -454,8 +454,8 @@ jobs:
           fi
           TEAM_ID="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$PROFILE_PLIST")"
           APPLICATION_IDENTIFIER="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$PROFILE_PLIST")"
-          if [ "$APPLICATION_IDENTIFIER" != "$TEAM_ID.com.nexterm.desktop" ]; then
-            echo "the provisioning profile application identifier must be $TEAM_ID.com.nexterm.desktop" >&2
+          if [ "$APPLICATION_IDENTIFIER" != "$TEAM_ID.work.nexterm.app" ]; then
+            echo "the provisioning profile application identifier must be $TEAM_ID.work.nexterm.app" >&2
             exit 1
           fi
           /usr/libexec/PlistBuddy -x -c 'Print :Entitlements' "$PROFILE_PLIST" > "$RUNNER_TEMP/nexterm-distribution-entitlements.plist"
@@ -505,6 +505,23 @@ jobs:
           name: mobile-ios-dist
           path: bin/nexterm.ipa
           if-no-files-found: error
+      - name: Upload the signed IPA to TestFlight on releases
+        if: ${{ inputs.release_version != '' }}
+        env:
+          ASC_KEY_BASE64: ${{ secrets.NEXTERM_IOS_ASC_KEY_BASE64 }}
+          ASC_KEY_ID: ${{ vars.NEXTERM_IOS_ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ vars.NEXTERM_IOS_ASC_ISSUER }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ASC_KEY_BASE64" ]; then
+            echo "NEXTERM_IOS_ASC_KEY_BASE64 is not set; skipping the TestFlight upload" >&2
+            exit 0
+          fi
+          umask 077
+          mkdir -p private_keys
+          trap 'rm -f private_keys/AuthKey_*.p8' EXIT
+          echo "$ASC_KEY_BASE64" | base64 --decode > "private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          xcrun altool --upload-app --type ios -f bin/nexterm.ipa --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
       - name: Remove iOS signing material
         if: always()
         run: |
