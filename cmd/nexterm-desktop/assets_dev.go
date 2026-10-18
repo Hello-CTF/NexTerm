@@ -19,3 +19,16 @@ func newDesktopAssets(root string) (http.Handler, error) {
 	}
 	return &desktopAssets{root: root}, nil
 }
+
+// desktopBrandIcon reads the brand icon shipped in the web assets so the
+// system tray can reuse it. A missing icon is not fatal.
+func desktopBrandIcon(root string) []byte {
+	if root == "" {
+		root = "dist"
+	}
+	data, err := os.ReadFile(filepath.Join(root, "brand", "icon.ico"))
+	if err != nil {
+		return nil
+	}
+	return data
+}
