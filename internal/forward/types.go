@@ -11,9 +11,12 @@ import (
 )
 
 const (
-	KindLocal  = "local"
-	KindSOCKS  = "socks"
-	KindRemote = "remote"
+	KindLocal          = "local"
+	KindSOCKS          = "socks"
+	KindRemote         = "remote"
+	StatusActive       = "active"
+	StatusReconnecting = "reconnecting"
+	StatusFailed       = "failed"
 )
 
 var ErrClosed = errors.New("forward service closed")
@@ -69,6 +72,7 @@ type ReconnectPolicy struct {
 
 type Config struct {
 	Provider         DialerProvider
+	SessionHost      func(context.Context, string) (string, error)
 	Policy           Policy
 	Reconnect        ReconnectPolicy
 	DialTimeout      time.Duration
@@ -81,6 +85,9 @@ type Config struct {
 type Spec struct {
 	ID         string  `json:"id"`
 	SessionID  string  `json:"sessionId"`
+	HostID     string  `json:"hostId,omitempty"`
+	Status     string  `json:"status"`
+	Error      string  `json:"error,omitempty"`
 	ListenHost string  `json:"listenHost"`
 	ListenPort uint16  `json:"listenPort"`
 	TargetHost *string `json:"targetHost"`

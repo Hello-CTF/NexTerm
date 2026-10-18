@@ -58,7 +58,15 @@ afterEach(() => {
 
 describe("connectDevice opens device workspaces", () => {
   it("a fresh connection creates a session and a separate workspace with a terminal tab", async () => {
+    const visibleStates: boolean[] = [];
+    const unsubscribe = useUi.subscribe((state) => {
+      const active = state.workspaces.find((workspace) => workspace.id === state.activeWorkspaceId);
+      if (active?.assetId === "device/d-1") {
+        visibleStates.push(active.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "terminal")));
+      }
+    });
     const outcome = (await connectDevice(DEVICE)) as ConnectOutcome;
+    unsubscribe();
     expect(outcome).toEqual({ ok: true });
     expect(mocks.sessionConnectDevice).toHaveBeenCalledTimes(1);
     expect(mocks.sessionConnectDevice).toHaveBeenCalledWith("d-1", "build-box");
@@ -73,6 +81,8 @@ describe("connectDevice opens device workspaces", () => {
     expect(sessions.some((s) => s.id === "s-dev-1" && s.kind === "device")).toBe(true);
     const tabs = ws?.panes.flatMap((p) => p.tabs) ?? [];
     expect(tabs.some((t) => t.kind === "terminal" && t.sessionId === "s-dev-1")).toBe(true);
+    expect(visibleStates.length).toBeGreaterThan(0);
+    expect(visibleStates.every(Boolean)).toBe(true);
   });
 
   it("automatically switches to the files panel after connecting a device workspace, consistent with SSH sessions", async () => {

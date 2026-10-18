@@ -140,6 +140,12 @@ export function SettingsView() {
     jumpToSection(id);
   };
 
+  useEffect(() => {
+    if (DESKTOP || window.location.hash !== "#settings-account") return;
+    const frame = requestAnimationFrame(() => jump("settings-account"));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
   // The TOC highlight follows the right-side content scroll: the current section is the last one whose top crossed the threshold inside the scroll container.
   // The optimistic highlight from click-to-jump and the scroll settle on the same section; jump and collapse behavior is unchanged.
   const contentRef = useRef<HTMLDivElement>(null);

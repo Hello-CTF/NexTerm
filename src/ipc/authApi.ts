@@ -5,6 +5,7 @@
 import { WEB } from "./env";
 import { httpUrl } from "./env";
 import type { AppError } from "./commands";
+import { advanceAuthSessionEpoch } from "./authSessionEpoch";
 
 export type AccountRole = "superadmin" | "user";
 export type AccountState = "active" | "disabled" | "reset_required";
@@ -75,6 +76,18 @@ export interface AccountDevice {
   revoked_at: number;
 }
 
+export interface AccountLoginSession {
+  id: string;
+  name: string;
+  origin: string;
+  device_id?: string;
+  device_name?: string;
+  created_at: number;
+  last_seen_at: number;
+  expires_at: number;
+  current: boolean;
+}
+
 export interface AdminSettings {
   registration_open: boolean;
   mfa_required: boolean;
@@ -119,13 +132,20 @@ export interface SyncPushResponse {
 
 export const SYNC_PROTOCOL_VERSION = 2;
 export const SESSION_EXPIRED_EVENT = "nexterm:session-expired";
+export const SESSION_IDENTITY_CHANGED_EVENT = "nexterm:auth-session-changed";
 // Broadcast when the server rejects an unenrolled session under the mfa_required policy; the gate switches to the forced enrollment page (covers the policy being enabled mid-session).
 export const MFA_ENROLLMENT_REQUIRED_EVENT = "nexterm:mfa-enrollment-required";
 
 let csrfToken: string | null = null;
+let hasHeldCsrfToken = false;
+let sessionResponseSequence = 0;
 
 export function setCsrfToken(token: string | null): void {
+  // The CSRF token derives from the login session ID. A changed nonempty token is a new
+  // cookie session even when its user ID is the same.
+  if (csrfToken !== token && (csrfToken !== null || hasHeldCsrfToken)) advanceAuthSessionEpoch();
   csrfToken = token;
+  if (token !== null) hasHeldCsrfToken = true;
 }
 
 export function getCsrfToken(): string | null {
@@ -149,10 +169,15 @@ export function toAuthError(e: unknown): AppError {
   return { code: "internal", message: e instanceof Error ? e.message : String(e) };
 }
 
-export async function request<T>(method: string, path: string, body?: unknown, options: { csrf?: boolean } = {}): Promise<T> {
+function browserClientKind(): "browser" | "mobile" {
+  return typeof navigator !== "undefined" && /iPhone|iPad|Android/i.test(navigator.userAgent) ? "mobile" : "browser";
+}
+
+export async function request<T>(method: string, path: string, body?: unknown, options: { csrf?: boolean; client?: boolean } = {}): Promise<T> {
   const headers: Record<string, string> = { accept: "application/json" };
   if (body !== undefined) headers["content-type"] = "application/json";
   if (options.csrf && csrfToken) headers["X-NexTerm-CSRF"] = csrfToken;
+  if (options.client) headers["X-NexTerm-Client"] = browserClientKind();
   let response: Response;
   try {
     response = await fetch(httpUrl(path), {
@@ -209,27 +234,38 @@ function b64(data: Uint8Array): string {
   return btoa(binary);
 }
 
-function rememberSession(session: AccountSession): AccountSession {
+function rememberSession(session: AccountSession, sequence: number): AccountSession {
+  if (sequence !== sessionResponseSequence) return session;
   setCsrfToken(session.csrf_token);
+  if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+    window.dispatchEvent(new CustomEvent(SESSION_IDENTITY_CHANGED_EVENT, { detail: session }));
+  }
   return session;
+}
+
+function rememberedSessionRequest(
+  requestPromise: Promise<AccountSession>,
+): Promise<AccountSession> {
+  const sequence = ++sessionResponseSequence;
+  return requestPromise.then((session) => rememberSession(session, sequence));
 }
 
 export const authApi = {
   status: () => request<AccountStatus>("GET", "/auth/status"),
 
   init: (input: { code: string; username: string; password: string } & Parameters<typeof envelopesBody>[0]) =>
-    request<AccountSession>("POST", "/auth/init", { code: input.code, username: input.username, password: input.password, ...envelopesBody(input) }).then(rememberSession),
+    rememberedSessionRequest(request<AccountSession>("POST", "/auth/init", { code: input.code, username: input.username, password: input.password, ...envelopesBody(input) }, { client: true })),
 
   login: (username: string, password: string, deviceId?: string) =>
     request<AccountSession | MfaChallenge>("POST", "/auth/login", {
       username,
       password,
       ...(deviceId ? { device_id: deviceId } : {}),
-    }),
+    }, { client: true }),
 
   // totpLogin exchanges the login ticket + dynamic code (or a one-time recovery code) for a session; establishes a cookie session like login.
   totpLogin: (ticket: string, code: string) =>
-    request<AccountSession>("POST", "/auth/totp/login", { ticket, code }).then(rememberSession),
+    rememberedSessionRequest(request<AccountSession>("POST", "/auth/totp/login", { ticket, code }, { client: true })),
 
   totpStatus: () => request<TotpStatus>("GET", "/auth/totp"),
 
@@ -244,18 +280,18 @@ export const authApi = {
     request<{ ok: boolean }>("DELETE", "/auth/totp", { code }, { csrf: true }),
 
   register: (input: { username: string; password: string; displayName: string } & Parameters<typeof envelopesBody>[0]) =>
-    request<AccountSession>("POST", "/auth/register", {
+    rememberedSessionRequest(request<AccountSession>("POST", "/auth/register", {
       username: input.username,
       password: input.password,
       display_name: input.displayName,
       ...envelopesBody(input),
-    }).then(rememberSession),
+    })),
 
-  me: () => request<AccountSession>("GET", "/auth/me").then(rememberSession),
+  me: () => rememberedSessionRequest(request<AccountSession>("GET", "/auth/me")),
 
   // Handshake under platform-hosted mode (--auth=platform). The front gateway has already authenticated; only the
   // "platform owner" session needs to be exchanged here. Without this, users would see the init/login screens, neither of which should appear on Lazycat.
-  platformSession: () => request<AccountSession>("POST", "/auth/platform-session").then(rememberSession),
+  platformSession: () => rememberedSessionRequest(request<AccountSession>("POST", "/auth/platform-session", undefined, { client: true })),
 
   logout: () => request<{ ok: boolean }>("POST", "/auth/logout", {}, { csrf: true }),
 
@@ -284,6 +320,10 @@ export const authApi = {
   devices: () => request<{ devices: AccountDevice[] }>("GET", "/auth/devices"),
 
   deviceRevoke: (id: string) => request<{ ok: boolean }>("DELETE", `/auth/devices/${encodeURIComponent(id)}`, undefined, { csrf: true }),
+
+  sessions: () => request<{ sessions: AccountLoginSession[] }>("GET", "/auth/sessions"),
+
+  sessionRevoke: (id: string) => request<{ ok: boolean }>("DELETE", `/auth/sessions/${encodeURIComponent(id)}`, undefined, { csrf: true }),
 };
 
 export const adminApi = {

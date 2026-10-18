@@ -20,13 +20,14 @@ const (
 )
 
 type Options struct {
-	Listen         string
-	DataDir        string
-	WebRoot        string
-	MasterKey      string
-	SyncOnly       bool
-	Auth           string
-	AllowedOrigins []string
+	Listen            string
+	DataDir           string
+	WebRoot           string
+	MasterKey         string
+	SyncOnly          bool
+	Auth              string
+	AllowedOrigins    []string
+	TrustedProxyCIDRs []string
 }
 
 func ResolveMasterKey(masterKeyFile string) (string, error) {

@@ -136,12 +136,17 @@ afterEach(() => {
 });
 
 describe("TranscriptHistoryPanel", () => {
-  it("does not infer an ordinary open's filter from the active or owning workspace", async () => {
+  it("requires an explicit host choice for a generic history open", async () => {
     const other = { ...ASSET, id: "01J0OTHERHOST0000000001", name: "other-host", builtin: false };
     mocks.assetList.mockResolvedValue([other, ASSET]);
     mocks.uiState.workspaces = [{ id: "ws-1", assetId: ASSET.id }];
     mocks.uiState.activeWorkspaceId = "ws-1";
     mounted = mount(createElement(TranscriptHistoryPanel, { workspaceId: "ws-1" }));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("请选择主机查看终端历史"));
+    expect(mocks.transcriptList).not.toHaveBeenCalled();
+    const hostSelect = mounted.container.querySelector<HTMLSelectElement>('select[aria-label="选择主机"]')!;
+    expect(hostSelect.value).toBe("");
+    setSelectValue(hostSelect, other.id);
     await flushUntil(() => mocks.transcriptList.mock.calls.length > 0);
     expect(mocks.transcriptList).toHaveBeenCalledWith(other.id);
     expect(mocks.transcriptList).not.toHaveBeenCalledWith(ASSET.id);
@@ -171,7 +176,7 @@ describe("TranscriptHistoryPanel", () => {
     );
     const hostSelect = () =>
       mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="选择主机"]')!;
-    await flushUntil(() => hostSelect().options.length === 3);
+    await flushUntil(() => hostSelect().options.length === 4);
     expect(mocks.transcriptList).toHaveBeenLastCalledWith(hostA.id);
 
     const rerender = (visible: boolean, assetId?: string) =>
@@ -199,7 +204,7 @@ describe("TranscriptHistoryPanel", () => {
   });
 
   it("shows empty state when the host has no transcripts", async () => {
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => mocks.transcriptList.mock.calls.length > 0);
     await flush();
     expect(mounted.container.textContent).toContain("该主机还没有终端历史");
@@ -208,13 +213,13 @@ describe("TranscriptHistoryPanel", () => {
 
   it("shows host error state when asset list fails", async () => {
     mocks.assetList.mockRejectedValue(new Error("boom"));
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("读取主机列表失败"));
   });
 
   it("shows session error state when transcript list fails", async () => {
     mocks.transcriptList.mockRejectedValue(new Error("db down"));
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("读取终端历史失败"));
   });
 
@@ -224,7 +229,7 @@ describe("TranscriptHistoryPanel", () => {
       summary({ id: "01JTRANSCRIPTSEED000000003", endedAt: null, active: false }),
       summary({ id: "01JTRANSCRIPTSEED000000004", truncated: true }),
     ]);
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => mounted!.container.querySelectorAll("tbody tr").length >= 3);
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("进行中");
@@ -235,7 +240,7 @@ describe("TranscriptHistoryPanel", () => {
 
   it("marks deleted hosts on session rows", async () => {
     mocks.transcriptList.mockResolvedValue([summary({ assetDeleted: true })]);
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("主机已删除"));
   });
 
@@ -247,7 +252,7 @@ describe("TranscriptHistoryPanel", () => {
         { seq: 1, dataBase64: b64("plain\r\n") },
       ]),
     );
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
     const row = mounted.container.querySelector("tbody tr");
     expect(row).not.toBeNull();
@@ -269,7 +274,7 @@ describe("TranscriptHistoryPanel", () => {
           { seq: 2, dataBase64: b64("three\r\n") },
         ]),
       );
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
     click(mounted.container.querySelector("tbody tr")!);
     await flushUntil(() => (mounted!.container.querySelector("pre")?.textContent ?? "").includes("one"));
@@ -287,7 +292,7 @@ describe("TranscriptHistoryPanel", () => {
     mocks.transcriptList.mockResolvedValue([summary()]);
     mocks.transcriptRead.mockResolvedValue(readResult([{ seq: 0, dataBase64: b64("needle here\r\n") }]));
     mocks.transcriptSearch.mockResolvedValue([{ seq: 0, ts: 1700000000000, preview: "needle here" }]);
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
     click(mounted.container.querySelector("tbody tr")!);
     await flushUntil(() => mounted!.container.querySelector("pre") !== null);
@@ -305,7 +310,7 @@ describe("TranscriptHistoryPanel", () => {
     mocks.transcriptList.mockResolvedValue([summary()]);
     mocks.transcriptRead.mockResolvedValue(readResult([{ seq: 0, dataBase64: b64("data\r\n") }]));
     mocks.transcriptSearch.mockRejectedValue(new Error("search exploded"));
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
     click(mounted.container.querySelector("tbody tr")!);
     await flushUntil(() => mounted!.container.querySelector("pre") !== null);
@@ -319,7 +324,7 @@ describe("TranscriptHistoryPanel", () => {
   it("deletes a transcript after confirmation and reloads", async () => {
     mocks.transcriptList.mockResolvedValue([summary()]);
     mocks.transcriptRemove.mockResolvedValue(undefined);
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
     const deleteButton = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="删除这条记录"]');
     expect(deleteButton).not.toBeNull();
@@ -332,7 +337,7 @@ describe("TranscriptHistoryPanel", () => {
   it("keeps the transcript when deletion is not confirmed", async () => {
     mocks.ask.mockResolvedValue(false);
     mocks.transcriptList.mockResolvedValue([summary()]);
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
     click(mounted.container.querySelector<HTMLButtonElement>('button[aria-label="删除这条记录"]')!);
     await flush();
@@ -343,7 +348,7 @@ describe("TranscriptHistoryPanel", () => {
     const synced = summary({ syncOptIn: true });
     mocks.transcriptList.mockResolvedValue([synced]);
     mocks.ask.mockResolvedValue(false);
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("已开启同步"));
     const listCalls = mocks.transcriptList.mock.calls.length;
     const syncButton = mounted.container.querySelector<HTMLButtonElement>(
@@ -377,7 +382,7 @@ describe("TranscriptHistoryPanel", () => {
       .mockResolvedValue([summary({ syncOptIn: false })]);
     mocks.transcriptSyncOptIn.mockResolvedValue(undefined);
     mocks.ask.mockReturnValue(confirmation.promise);
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("已开启同步"));
     const syncButton = mounted.container.querySelector<HTMLButtonElement>(
       'button[aria-label="关闭这条记录的同步"]',
@@ -411,7 +416,7 @@ describe("TranscriptHistoryPanel", () => {
       },
     ]);
     mocks.transcriptList.mockResolvedValue([summary({ assetDeleted: true })]);
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("主机已删除"));
     const select = mounted.container.querySelector<HTMLSelectElement>('select[aria-label="选择主机"]');
     expect(select?.value).toBe(ASSET.id);
@@ -439,7 +444,7 @@ describe("TranscriptHistoryPanel", () => {
         true,
       ),
     );
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
     click(mounted.container.querySelector("tbody tr")!);
     await flushUntil(() => {
@@ -466,7 +471,7 @@ describe("TranscriptHistoryPanel", () => {
       done: true,
       totalBytes: 42,
     });
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
     click(mounted.container.querySelector("tbody tr")!);
     await flushUntil(() => (mounted!.container.querySelector("pre")?.textContent ?? "").includes("1mafter"));
@@ -492,7 +497,7 @@ describe("TranscriptHistoryPanel", () => {
       totalBytes: 42,
     });
     mocks.transcriptSearch.mockResolvedValue([{ seq: 1, ts: 1700000000001, preview: "needle here" }]);
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
     click(mounted.container.querySelector("tbody tr")!);
     await flushUntil(() => mounted!.container.querySelector("pre") !== null);
@@ -516,7 +521,7 @@ describe("TranscriptHistoryPanel", () => {
     const first = deferred<ReturnType<typeof summary>[]>();
     const second = deferred<ReturnType<typeof summary>[]>();
     mocks.transcriptList.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => mocks.transcriptList.mock.calls.length === 1);
     const refresh = [...mounted.container.querySelectorAll("button")].find(
       (button) => button.textContent?.trim() === "刷新",
@@ -535,7 +540,7 @@ describe("TranscriptHistoryPanel", () => {
 
   it("displays compressed storage size when available", async () => {
     mocks.transcriptList.mockResolvedValue([summary({ bytes: 2048, storedBytes: 512 })]);
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("512 B"));
     expect(mounted.container.textContent).not.toContain("2.0 KB");
   });
@@ -549,7 +554,7 @@ describe("TranscriptHistoryPanel", () => {
     mocks.transcriptRead.mockImplementation((id: string) =>
       id === first.id ? firstRead.promise : secondRead.promise,
     );
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => mounted!.container.querySelectorAll("tbody tr").length === 2);
     const rows = mounted.container.querySelectorAll("tbody tr");
     click(rows[0]);
@@ -573,7 +578,7 @@ describe("TranscriptHistoryPanel", () => {
     mocks.transcriptSearch
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
     click(mounted.container.querySelector("tbody tr")!);
     await flushUntil(() => mounted!.container.querySelector("pre") !== null);
@@ -606,7 +611,7 @@ describe("TranscriptHistoryPanel", () => {
     mocks.transcriptRead
       .mockResolvedValueOnce(readResult([{ seq: 0, dataBase64: b64("old output") }]))
       .mockResolvedValueOnce(readResult([{ seq: 0, dataBase64: b64("new output") }]));
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
     click(mounted.container.querySelector("tbody tr")!);
     await flushUntil(() => (mounted!.container.querySelector("pre")?.textContent ?? "").includes("old output"));
@@ -625,7 +630,7 @@ describe("TranscriptHistoryPanel", () => {
     mocks.transcriptList.mockResolvedValue([
       summary({ contentOmitted: true, syncOptIn: true }),
     ]);
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("已开启同步"));
     click(mounted.container.querySelector("tbody tr")!);
     await flush();

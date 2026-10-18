@@ -30,6 +30,8 @@ func newUserSession(db *gorm.DB, opts ...gen.DOOption) userSession {
 	_userSession.ID = field.NewString(tableName, "id")
 	_userSession.UserID = field.NewString(tableName, "user_id")
 	_userSession.DeviceID = field.NewString(tableName, "device_id")
+	_userSession.ClientName = field.NewString(tableName, "client_name")
+	_userSession.Origin = field.NewString(tableName, "origin")
 	_userSession.TokenHash = field.NewString(tableName, "token_hash")
 	_userSession.CreatedAt = field.NewInt64(tableName, "created_at")
 	_userSession.TouchedAt = field.NewInt64(tableName, "touched_at")
@@ -60,16 +62,18 @@ func newUserSession(db *gorm.DB, opts ...gen.DOOption) userSession {
 type userSession struct {
 	userSessionDo userSessionDo
 
-	ALL       field.Asterisk
-	ID        field.String
-	UserID    field.String
-	DeviceID  field.String
-	TokenHash field.String
-	CreatedAt field.Int64
-	TouchedAt field.Int64
-	ExpiresAt field.Int64
-	RevokedAt field.Int64
-	User      userSessionBelongsToUser
+	ALL        field.Asterisk
+	ID         field.String
+	UserID     field.String
+	DeviceID   field.String
+	ClientName field.String
+	Origin     field.String
+	TokenHash  field.String
+	CreatedAt  field.Int64
+	TouchedAt  field.Int64
+	ExpiresAt  field.Int64
+	RevokedAt  field.Int64
+	User       userSessionBelongsToUser
 
 	Device userSessionBelongsToDevice
 
@@ -91,6 +95,8 @@ func (u *userSession) updateTableName(table string) *userSession {
 	u.ID = field.NewString(table, "id")
 	u.UserID = field.NewString(table, "user_id")
 	u.DeviceID = field.NewString(table, "device_id")
+	u.ClientName = field.NewString(table, "client_name")
+	u.Origin = field.NewString(table, "origin")
 	u.TokenHash = field.NewString(table, "token_hash")
 	u.CreatedAt = field.NewInt64(table, "created_at")
 	u.TouchedAt = field.NewInt64(table, "touched_at")
@@ -122,10 +128,12 @@ func (u *userSession) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (u *userSession) fillFieldMap() {
-	u.fieldMap = make(map[string]field.Expr, 10)
+	u.fieldMap = make(map[string]field.Expr, 12)
 	u.fieldMap["id"] = u.ID
 	u.fieldMap["user_id"] = u.UserID
 	u.fieldMap["device_id"] = u.DeviceID
+	u.fieldMap["client_name"] = u.ClientName
+	u.fieldMap["origin"] = u.Origin
 	u.fieldMap["token_hash"] = u.TokenHash
 	u.fieldMap["created_at"] = u.CreatedAt
 	u.fieldMap["touched_at"] = u.TouchedAt

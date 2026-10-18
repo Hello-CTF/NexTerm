@@ -28,7 +28,7 @@ func TestApplicationModuleContract(t *testing.T) {
 	}
 	response := application.Dispatcher.Dispatch(t.Context(), ipc.Request{
 		Command: "mount_list",
-		Args:    json.RawMessage(`{"forceRefresh":true}`),
+		Args:    json.RawMessage(`{"global":true,"forceRefresh":true}`),
 	}, ipc.Environment{})
 	if !response.OK {
 		t.Fatalf("mount_list through app.Module = %+v", response.Error)

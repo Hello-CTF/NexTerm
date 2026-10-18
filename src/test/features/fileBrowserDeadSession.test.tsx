@@ -188,7 +188,7 @@ function seedWorkspace(options: { assetId?: string; assetKind?: string; title?: 
         title,
         sessionId: SID,
         assetId: options.assetId,
-        assetKind: options.assetId ? kind : undefined,
+        assetKind: kind,
         panes: [{ id: "p1", tabs: [tab], activeTabId: tab.id }],
         activePaneId: "p1",
         splitRatio: 0.5,

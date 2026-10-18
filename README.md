@@ -57,7 +57,7 @@ macOS 首次打开提示无法验证开发者时，在「系统设置 → 隐私
 
 ## 服务端与设备接入
 
-- **Linux 服务器**：解压 server 包后按包内 `README.md` 安装。首次启动会在控制台打印一次性初始化码（systemd 下用 `journalctl -u nexterm-server` 查看）；在浏览器输入初始化码并设置超管用户名和密码。访问控制默认开启（`--auth on`），无论监听地址如何均要求登录；公网部署请只监听回环地址，并前置带 TLS 的反向代理。自身数据默认存入 SQLite，也可通过 `--db postgres|mysql|mariadb` 和 `--db-dsn` 使用 PostgreSQL、MySQL 或 MariaDB，同一个数据库仅运行一个服务端实例。备份时保留完整数据目录；使用外部数据库时还需备份该数据库。完整选项见 `nexterm-server --help`。
+- **Linux 服务器**：解压 server 包后按包内 `README.md` 安装。首次启动会在控制台打印一次性初始化码（systemd 下用 `journalctl -u nexterm-server` 查看）；在浏览器输入初始化码并设置超管用户名和密码。访问控制默认开启（`--auth on`），无论监听地址如何均要求登录；公网部署请只监听回环地址，并前置带 TLS 的反向代理。代理应覆盖设置 `X-Forwarded-Proto`；将代理的来源 IP 段写入 `NEXTERM_TRUSTED_PROXY_CIDRS`（逗号分隔，例如 `127.0.0.1/32`），登录 Cookie 才会在代理 HTTPS 请求上设置 `Secure`，其他来源的转发头不会被信任。自身数据默认存入 SQLite，也可通过 `--db postgres|mysql|mariadb` 和 `--db-dsn` 使用 PostgreSQL、MySQL 或 MariaDB，同一个数据库仅运行一个服务端实例。备份时保留完整数据目录；使用外部数据库时还需备份该数据库。完整选项见 `nexterm-server --help`。
 - **懒猫微服**：应用中心安装后直接使用，终端进程和数据保存在微服上；NexTerm 内置端口转发不可用，对外提供远端端口请使用平台转发。
 - **设备接入**：接入地址由超管在「设备管理」配置；接入码也在此处（浏览器模式，或桌面端登录服务端账号后）签发，一次性、限时有效。Linux/macOS 用普通用户执行面板的一行命令，Windows 执行 PowerShell 命令，自动下载并安装 nexterm-agent，并配置随用户登录启动（systemd --user / launchd / Windows 计划任务）。设备凭证原文仅保存在设备本地，服务端只存散列；接入后，设备在线时可远程打开终端，吊销后凭证立即失效且不可恢复。
 

@@ -44,7 +44,7 @@ const argv = process.argv.slice(2);
 const command = argv[0] && !argv[0].startsWith("-") ? argv.shift() : "debug";
 const KNOWN_OPTIONS = new Set([
   "arch", "assets-dir", "base", "binary-manifest", "cgo", "consume-dist",
-  "dist-manifest", "file", "id", "kind", "os", "out", "output", "package",
+  "dist-manifest", "file", "helpers-dir", "id", "kind", "os", "out", "output", "package",
   "package-only", "release", "repro-check", "require-evidence",
   "skip-frontend",
 ]);
@@ -294,6 +294,7 @@ function defaultBinaryPath(kind, goos, goarch) {
 }
 
 let cachedHelperProtocolMetadata;
+const cachedHelperBinaryMetadata = new Map();
 
 function helperProtocolMetadata() {
   if (cachedHelperProtocolMetadata) return cachedHelperProtocolMetadata;
@@ -314,6 +315,33 @@ function helperProtocolMetadata() {
   return cachedHelperProtocolMetadata;
 }
 
+function helperBinaryMetadata(file, goarch) {
+  if (cachedHelperBinaryMetadata.has(file)) return cachedHelperBinaryMetadata.get(file);
+  const native = HOST_OS === "linux" && HOST_ARCH === goarch;
+  const raw = native
+    ? output(file, ["--metadata"], { allowFailure: true, timeout: 30000 })
+    : output("docker", ["run", "--rm", "--platform", `linux/${goarch}`,
+      "--mount", `type=bind,source=${path.resolve(file)},target=/nexterm-helper,readonly`,
+      "alpine:3.21", "/nexterm-helper", "--metadata"], { allowFailure: true, timeout: 60000 });
+  if (raw === null) throw new Error(`cannot execute final Linux/${goarch} helper --metadata; build on a matching Linux host or start Docker`);
+  let metadata;
+  try {
+    metadata = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`final Linux/${goarch} helper --metadata is not JSON: ${error.message}`);
+  }
+  const expected = helperProtocolMetadata();
+  const features = Array.isArray(metadata.features) ? [...metadata.features].sort() : null;
+  if (metadata.version !== VERSION || metadata.commit !== COMMIT || metadata.protocol !== expected.protocol ||
+      features === null || features.some((feature) => typeof feature !== "string" || feature === "") ||
+      JSON.stringify(features) !== JSON.stringify(expected.features)) {
+    throw new Error(`final Linux/${goarch} helper metadata does not match this build: ${JSON.stringify(metadata)}`);
+  }
+  const verified = { protocol: metadata.protocol, features, binary_metadata_verified: true };
+  cachedHelperBinaryMetadata.set(file, verified);
+  return verified;
+}
+
 function writeBinaryManifest(file, { id, kind, goos, goarch, tags, cgo, stripped }) {
   const manifest = createBinaryManifest({
     file,
@@ -328,7 +356,14 @@ function writeBinaryManifest(file, { id, kind, goos, goarch, tags, cgo, stripped
     commit: COMMIT,
     source_date_epoch: Number(SOURCE_DATE_EPOCH),
   });
-  if (kind === "helper") Object.assign(manifest, helperProtocolMetadata());
+  if (kind === "helper") {
+    try {
+      Object.assign(manifest, helperBinaryMetadata(file, goarch));
+    } catch (error) {
+      Object.assign(manifest, helperProtocolMetadata(), { binary_metadata_verified: false });
+      log(`helper binary metadata verification failed: ${error.message}`);
+    }
+  }
   const destination = path.resolve(ROOT, option("binary-manifest", `${file}.manifest.json`));
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   fs.writeFileSync(destination, `${JSON.stringify(manifest, null, 2)}\n`);
@@ -362,6 +397,13 @@ function validateBinaryForPackaging(outputPath, kind, goos, goarch) {
     },
   });
   if (problems.length) die(`--package-only binary manifest validation failed:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`);
+  if (kind === "helper") {
+    const expected = helperProtocolMetadata();
+    if (manifest.binary_metadata_verified !== true || manifest.protocol !== expected.protocol ||
+        JSON.stringify(manifest.features) !== JSON.stringify(expected.features)) {
+      die(`--package-only helper manifest lacks matching final-binary --metadata evidence: ${manifestPath}`);
+    }
+  }
   log(`${kind}-${goos}-${goarch}: reusing verified production binary sha256:${manifest.artifact.sha256}`);
 }
 
@@ -508,6 +550,7 @@ function assertion(id, passed, detail) {
 function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbedded }) {
   const result = [];
   let inspected;
+  let helperMetadata;
   try {
     inspected = inspectBinary(file);
     result.push(assertion("binary-format", inspected.format === ({ windows: "pe", darwin: "mach-o", linux: "elf" })[goos], JSON.stringify(inspected)));
@@ -517,6 +560,15 @@ function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbe
     if (kind === "helper" && goos === "linux") result.push(assertion("static-linux-helper", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
   } catch (error) {
     result.push(assertion("binary-format", false, String(error)));
+  }
+  if (kind === "helper" && goos === "linux") {
+    try {
+      helperMetadata = helperBinaryMetadata(file, goarch);
+      result.push(assertion("helper-binary-metadata", true,
+          `executed final Linux/${goarch} helper --metadata: protocol=${helperMetadata.protocol}; features=${helperMetadata.features.join(",")}`));
+    } catch (error) {
+      result.push(assertion("helper-binary-metadata", false, String(error)));
+    }
   }
   const moduleInfo = output("go", ["version", "-m", file], { allowFailure: true });
   result.push(assertion("cgo-boundary", Boolean(moduleInfo?.includes(`CGO_ENABLED=${cgo}`)), `expected CGO_ENABLED=${cgo} in go version -m`));
@@ -533,12 +585,69 @@ function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbe
       result.push(assertion("embedded-script", binary.includes(fs.readFileSync(path.join(ROOT, "dist", asset))), asset));
     }
   }
-  return { assertions: result, inspected };
+  return { assertions: result, inspected, helperMetadata };
+}
+
+function packagedHelperAssertions(directory, relativeDirectory, checkMode) {
+  const checks = [];
+  for (const arch of ["amd64", "arm64"]) {
+    const name = `nexterm-helper-linux-${arch}`;
+    const packaged = path.join(directory, relativeDirectory, name);
+    const input = path.resolve(ROOT, option("helpers-dir", "target/go-build"), name);
+    const label = `packaged-helper-${arch}`;
+    try {
+      const packagedStat = fs.lstatSync(packaged);
+      if (!packagedStat.isFile()) throw new Error(`${name} is not a regular file`);
+      const inputStat = fs.statSync(input);
+      if (!inputStat.isFile()) throw new Error(`packaging input ${name} is not a regular file`);
+      const inspected = inspectBinary(packaged);
+      const packagedDigest = sha256(packaged);
+      const inputDigest = sha256(input);
+      checks.push(assertion(`${label}-elf`, inspected.format === "elf" && inspected.architecture === arch && inspected.static === true,
+          `expected static Linux ELF/${arch}; actual ${JSON.stringify(inspected)}`));
+      checks.push(assertion(`${label}-sha256`, packagedDigest === inputDigest,
+          `package SHA256=${packagedDigest}; input SHA256=${inputDigest}`));
+      if (checkMode) checks.push(assertion(`${label}-executable`, (packagedStat.mode & 0o111) !== 0,
+          `package mode=${(packagedStat.mode & 0o777).toString(8)}; executable bit required`));
+    } catch (error) {
+      checks.push(assertion(`${label}-inspect`, false, String(error)));
+    }
+  }
+  return checks;
+}
+
+function sevenZipCommand() {
+  const roots = [process.env.ProgramFiles, process.env.ProgramW6432, process.env["ProgramFiles(x86)"],
+    "C:\\Program Files", "C:\\Program Files (x86)"].filter(Boolean);
+  for (const root of roots) {
+    const candidate = path.join(root, "7-Zip", "7z.exe");
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  for (const command of ["7z", "7zz"]) {
+    if (output(command, ["i"], { allowFailure: true }) !== null) return command;
+  }
+  return null;
 }
 
 function packageAssertions(kind, file, goos, goarch) {
   const data = fs.readFileSync(file);
-  if (kind === "desktop-nsis") return [assertion("nsis-container", data[0] === 0x4d && data[1] === 0x5a, "NSIS output is not a PE executable")];
+  if (kind === "desktop-nsis") {
+    const checks = [assertion("nsis-container", data[0] === 0x4d && data[1] === 0x5a, "NSIS output is not a PE executable")];
+    const sevenZip = sevenZipCommand();
+    if (!sevenZip) {
+      checks.push(assertion("nsis-extract", false, "7-Zip CLI is required to inspect installed NSIS contents"));
+      return checks;
+    }
+    const work = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-nsis-assert-"));
+    try {
+      const extracted = output(sevenZip, ["x", "-y", `-o${work}`, path.resolve(file)], { allowFailure: true });
+      checks.push(assertion("nsis-extract", extracted !== null, "7-Zip must extract the NSIS installer"));
+      if (extracted !== null) checks.push(...packagedHelperAssertions(work, "", false));
+    } finally {
+      fs.rmSync(work, { recursive: true, force: true });
+    }
+    return checks;
+  }
   if (kind === "desktop-linux-deb") {
     const checks = [assertion("deb-container", data.subarray(0, 8).toString("ascii") === "!<arch>\n", "Linux desktop package is not an ar archive")];
     const work = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-deb-assert-"));
@@ -556,8 +665,12 @@ function packageAssertions(kind, file, goos, goarch) {
       ));
       const listing = output("tar", ["-tzf", path.join(work, "data.tar.gz")], { allowFailure: true });
       const members = new Set(listing?.split(/\r?\n/) || []);
-      const required = ["usr/bin/nexterm-desktop", "usr/share/applications/nexterm.desktop", "usr/share/icons/hicolor/256x256/apps/nexterm.png", "usr/share/doc/nexterm/copyright"];
+      const required = ["usr/bin/nexterm-desktop", "usr/bin/nexterm-helper-linux-amd64", "usr/bin/nexterm-helper-linux-arm64", "usr/share/applications/nexterm.desktop", "usr/share/icons/hicolor/256x256/apps/nexterm.png", "usr/share/doc/nexterm/copyright"];
       checks.push(assertion("linux-desktop-deb-members", goos === "linux" && listing !== null && required.every((member) => members.has(member)), `required members: ${required.join(", ")}`));
+      const unpacked = output("tar", ["-xzf", path.join(work, "data.tar.gz"), "-C", work,
+        "usr/bin/nexterm-helper-linux-amd64", "usr/bin/nexterm-helper-linux-arm64"], { allowFailure: true });
+      checks.push(assertion("linux-desktop-deb-helper-extract", unpacked !== null, "both helpers must extract from data.tar.gz"));
+      if (unpacked !== null) checks.push(...packagedHelperAssertions(work, "usr/bin", true));
     } finally {
       fs.rmSync(work, { recursive: true, force: true });
     }
@@ -567,7 +680,7 @@ function packageAssertions(kind, file, goos, goarch) {
     const checks = [assertion("gzip-container", data[0] === 0x1f && data[1] === 0x8b, "server archive is not gzip compressed")];
     const root = `NexTerm-server_${VERSION}_linux_${goarch}`;
     const required = [
-      "nexterm-server", "nexterm-server.service", "nexterm-onlyserver.service",
+      "nexterm-server", "nexterm-helper-linux-amd64", "nexterm-helper-linux-arm64", "nexterm-server.service", "nexterm-onlyserver.service",
       "nexterm.env.example", "onlyserver.env.example", "LICENSE", "README.md", "web/index.html",
     ].map((member) => `${root}/${member}`);
     const listing = output("tar", ["-tzf", file], { allowFailure: true });
@@ -577,9 +690,37 @@ function packageAssertions(kind, file, goos, goarch) {
         goos === "linux" && listing !== null && required.every((member) => members.has(member)),
         `required members: ${required.join(", ")}`,
     ));
+    const work = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-server-assert-"));
+    try {
+      const extracted = output("tar", ["-xzf", path.resolve(file), "-C", work,
+        `${root}/nexterm-helper-linux-amd64`, `${root}/nexterm-helper-linux-arm64`], { allowFailure: true });
+      checks.push(assertion("server-archive-helper-extract", extracted !== null, "both helpers must extract from the server archive"));
+      if (extracted !== null) checks.push(...packagedHelperAssertions(work, root, true));
+    } finally {
+      fs.rmSync(work, { recursive: true, force: true });
+    }
     return checks;
   }
-  if (kind === "desktop-dmg") return [assertion("dmg-container", data.length > 512, "DMG was already validated with hdiutil")];
+  if (kind === "desktop-dmg") {
+    const checks = [assertion("dmg-container", data.length > 512, "DMG was already validated with hdiutil")];
+    const work = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-dmg-assert-"));
+    const mountpoint = path.join(work, "mounted");
+    fs.mkdirSync(mountpoint);
+    let mounted = false;
+    let detached = false;
+    try {
+      mounted = output("hdiutil", ["attach", "-readonly", "-nobrowse", "-quiet", "-mountpoint", mountpoint, path.resolve(file)], { allowFailure: true }) !== null;
+      checks.push(assertion("dmg-mount", mounted, "hdiutil must mount the generated DMG"));
+      if (mounted) checks.push(...packagedHelperAssertions(mountpoint, "NexTerm.app/Contents/MacOS", true));
+    } finally {
+      if (mounted) {
+        detached = output("hdiutil", ["detach", "-quiet", mountpoint], { allowFailure: true }) !== null;
+        checks.push(assertion("dmg-detach", detached, "hdiutil must detach the inspected DMG"));
+      }
+      if (!mounted || detached) fs.rmSync(work, { recursive: true, force: true });
+    }
+    return checks;
+  }
   if (kind === "agent-archive") {
     const checks = [assertion("gzip-container", data[0] === 0x1f && data[1] === 0x8b, "agent archive is not gzip compressed")];
     const listing = output("tar", ["-tzf", file], { allowFailure: true });
@@ -668,7 +809,7 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
     assertions: inspected.assertions,
     status: assertionsFailed ? "failed" : "passed",
   };
-  if (kind === "helper") Object.assign(report, helperProtocolMetadata());
+  if (kind === "helper" && inspected.helperMetadata) Object.assign(report, inspected.helperMetadata);
   const destination = path.resolve(ROOT, option("output", `${file}.artifact.json`));
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   fs.writeFileSync(destination, `${JSON.stringify(report, null, 2)}\n`);
@@ -688,10 +829,25 @@ function requireReportPassed(report) {
 
 function packageDesktop(binary, goos, goarch) {
   if (goos !== HOST_OS) die(`native ${goos} packaging cannot run on ${HOST_OS}`);
+  for (const arch of ["amd64", "arm64"]) verifiedHelper(arch);
   if (goos === "darwin") return packageDarwin(binary, goarch);
   if (goos === "windows") return packageWindows(binary, goarch);
   if (goos === "linux") return packageLinuxDesktop(binary, goarch);
   die(`no desktop package is contracted for ${goos}`);
+}
+
+function verifiedHelper(arch) {
+  const file = path.resolve(ROOT, option("helpers-dir", "target/go-build"), `nexterm-helper-linux-${arch}`);
+  validateBinaryForPackaging(file, "helper", "linux", arch);
+  return file;
+}
+
+function copyHelpers(directory) {
+  for (const arch of ["amd64", "arm64"]) {
+    const target = path.join(directory, `nexterm-helper-linux-${arch}`);
+    fs.copyFileSync(verifiedHelper(arch), target);
+    fs.chmodSync(target, 0o755);
+  }
 }
 
 function debVersion(version) {
@@ -711,6 +867,7 @@ function packageLinuxDesktop(binary, goarch) {
   fs.mkdirSync(path.join(work, "control"), { recursive: true });
   fs.mkdirSync(assets, { recursive: true });
   fs.copyFileSync(binary, path.join(dataDir, "usr/bin/nexterm-desktop"));
+  copyHelpers(path.join(dataDir, "usr/bin"));
   fs.copyFileSync(path.join(ROOT, "public/brand/nexterm-mark-256.png"), path.join(dataDir, "usr/share/icons/hicolor/256x256/apps/nexterm.png"));
   fs.copyFileSync(path.join(ROOT, "LICENSE"), path.join(dataDir, "usr/share/doc/nexterm/copyright"));
   fs.writeFileSync(path.join(dataDir, "usr/share/applications/nexterm.desktop"), "[Desktop Entry]\nType=Application\nName=NexTerm\nComment=SSH / SFTP / Docker / database operations terminal\nExec=nexterm-desktop %u\nIcon=nexterm\nTerminal=false\nCategories=System;TerminalEmulator;\nMimeType=x-scheme-handler/nexterm;\n");
@@ -728,6 +885,7 @@ function packageLinuxDesktop(binary, goarch) {
   };
   normalizeModes(dataDir);
   fs.chmodSync(path.join(dataDir, "usr/bin/nexterm-desktop"), 0o755);
+  for (const arch of ["amd64", "arm64"]) fs.chmodSync(path.join(dataDir, "usr/bin", `nexterm-helper-linux-${arch}`), 0o755);
   const tarFlags = ["--sort=name", `--mtime=@${SOURCE_DATE_EPOCH}`, "--owner=0", "--group=0", "--numeric-owner"];
   run("tar", [...tarFlags, "-czf", path.join(work, "control.tar.gz"), "-C", path.join(work, "control"), "control"]);
   run("tar", [...tarFlags, "-czf", path.join(work, "data.tar.gz"), "-C", dataDir, "usr"]);
@@ -747,6 +905,7 @@ function packageDarwin(binary, goarch) {
   fs.mkdirSync(path.join(app, "Contents/Resources"), { recursive: true });
   fs.copyFileSync(binary, path.join(app, "Contents/MacOS/NexTerm"));
   fs.chmodSync(path.join(app, "Contents/MacOS/NexTerm"), 0o755);
+  copyHelpers(path.join(app, "Contents/MacOS"));
   const icon = path.join(ROOT, "public/brand/icon.icns");
   if (!fs.existsSync(icon)) die("macOS icon.icns asset is missing");
   fs.copyFileSync(icon, path.join(app, "Contents/Resources/icon.icns"));
@@ -802,6 +961,8 @@ function packageWindows(binary, goarch) {
     `NEXTERM_ICON=${icon}`,
     `NEXTERM_WEBVIEW2=${bootstrapper}`,
     `NEXTERM_EXE_NAME=${path.basename(binary)}`,
+    `NEXTERM_HELPER_AMD64=${verifiedHelper("amd64")}`,
+    `NEXTERM_HELPER_ARM64=${verifiedHelper("arm64")}`,
   ];
   const makensis = resolveMakensis({ env: process.env });
   log(`makensis: ${makensis.command} (${makensis.source})`);
@@ -856,12 +1017,22 @@ switch (command) {
     buildFrontend({ repro: true });
     verifyBindings();
     options.release = "true";
-    options.package = "true";
     options["repro-check"] = "true";
     options["require-evidence"] = "true";
+    options["skip-frontend"] = "true";
+    const requestedOutput = options.out;
+    delete options.out;
+    for (const arch of ["amd64", "arm64"]) {
+      options.os = "linux";
+      options.arch = arch;
+      options.out = path.join(option("helpers-dir", "target/go-build"), `nexterm-helper-linux-${arch}`);
+      buildBinary("helper");
+    }
+    if (requestedOutput === undefined) delete options.out;
+    else options.out = requestedOutput;
+    options.package = "true";
     options.os = HOST_OS;
     options.arch = HOST_ARCH;
-    options["skip-frontend"] = "true";
     buildBinary("desktop");
     break;
   }

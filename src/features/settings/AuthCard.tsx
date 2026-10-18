@@ -3,18 +3,19 @@
 // (see ../auth/desktopAccount.ts); after login it renders account info/password change/device management (all via the remoteAccountApi proxy);
 // TOTP is not covered by the proxy, so it is honestly hidden with a browser-management note; renders nothing when logged out - the login entry is in SyncCard.
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { authApi, authAvailable, type AccountDevice, type TotpSetup, type TotpStatus } from "../../ipc/authApi";
+import { authApi, authAvailable, type AccountDevice, type AccountLoginSession, type TotpSetup, type TotpStatus } from "../../ipc/authApi";
 import { remoteAccountApi } from "../../ipc/remoteApi";
 import { DESKTOP } from "../../ipc/env";
 import { useAuth } from "../auth/store";
-import { useDesktopAccount } from "../auth/desktopAccount";
+import { useDesktopAccount, useDesktopAccountScope } from "../auth/desktopAccount";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { copyText as copyToClipboard } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
 import { formatTime } from "../../ui/format";
+import { ServerSecurityLink } from "./ServerSecurityLink";
 import {
   IconCheckCircle,
   IconCopy,
@@ -27,6 +28,8 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 
+const desktopPendingRecoveryKeys = new Map<string, { formatted: string; canonical: string }>();
+
 export function AuthCard() {
   const { pushToast } = useUi();
   const qc = useQueryClient();
@@ -34,6 +37,13 @@ export function AuthCard() {
   // The desktop identity comes from the "account sync" link server session (useAuth holds no user on desktop).
   const desktopAccount = useDesktopAccount();
   const user = DESKTOP ? desktopAccount : sessionUser;
+  const desktopScope = useDesktopAccountScope(user);
+  const accountKey = DESKTOP ? desktopScope : user ? `${user.id}:${user.username}` : null;
+  const accountKeyRef = useRef(accountKey);
+  accountKeyRef.current = accountKey;
+  const devicesRequest = useRef(0);
+  const sessionsRequest = useRef(0);
+  const passwordRequest = useRef(0);
   const status = useAuth((s) => s.status);
   const changePassword = useAuth((s) => s.changePassword);
   const logout = useAuth((s) => s.logout);
@@ -44,8 +54,25 @@ export function AuthCard() {
   // The next refresh after logout would be taken over by the platform session again; keeping the button only makes people think "logout" worked.
   const platformManaged = status?.auth === "platform";
 
-  const [devices, setDevices] = useState<AccountDevice[] | null>(null);
-  const [devicesError, setDevicesError] = useState<string | null>(null);
+  const [deviceResult, setDeviceResult] = useState<{ accountKey: string; devices: AccountDevice[] } | null>(null);
+  const [deviceFailure, setDeviceFailure] = useState<{ accountKey: string; error: string } | null>(null);
+  const [sessionResult, setSessionResult] = useState<{ accountKey: string; sessions: AccountLoginSession[] } | null>(null);
+  const [sessionFailure, setSessionFailure] = useState<{ accountKey: string; error: string } | null>(null);
+  const [desktopRecoveryState, setDesktopRecoveryState] = useState<{
+    accountKey: string;
+    recovery: { formatted: string; canonical: string };
+  } | null>(null);
+  const devices = deviceResult?.accountKey === accountKey ? deviceResult.devices : null;
+  const devicesError = deviceFailure?.accountKey === accountKey ? deviceFailure.error : null;
+  const sessions = sessionResult?.accountKey === accountKey ? sessionResult.sessions : null;
+  const sessionsError = sessionFailure?.accountKey === accountKey ? sessionFailure.error : null;
+  const visibleRecoveryKey = DESKTOP
+    ? accountKey
+      ? desktopRecoveryState?.accountKey === accountKey
+        ? desktopRecoveryState.recovery
+        : desktopPendingRecoveryKeys.get(accountKey) ?? null
+      : null
+    : pendingRecoveryKey;
 
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -53,21 +80,69 @@ export function AuthCard() {
   const [pwdBusy, setPwdBusy] = useState(false);
   const [pwdError, setPwdError] = useState<string | null>(null);
 
+  useEffect(() => {
+    passwordRequest.current += 1;
+    setOldPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setPwdBusy(false);
+    setPwdError(null);
+  }, [accountKey]);
+
   const loadDevices = useCallback(() => {
-    if (!user) return Promise.resolve();
-    setDevicesError(null);
+    if (!accountKey) return Promise.resolve();
+    const request = ++devicesRequest.current;
+    setDeviceFailure(null);
     const fetchDevices = DESKTOP ? remoteAccountApi.devices : authApi.devices;
     return fetchDevices()
-      .then((r) => setDevices(r.devices))
-      .catch((e: unknown) => setDevicesError(describeError(e)));
-  }, [user]);
+      .then((r) => {
+        if (accountKeyRef.current === accountKey && devicesRequest.current === request) {
+          setDeviceResult({ accountKey, devices: r.devices });
+        }
+      })
+      .catch((e: unknown) => {
+        if (accountKeyRef.current === accountKey && devicesRequest.current === request) {
+          setDeviceFailure({ accountKey, error: describeError(e) });
+        }
+      });
+  }, [accountKey]);
 
   useEffect(() => {
+    devicesRequest.current += 1;
+    setDeviceResult(null);
+    setDeviceFailure(null);
     void loadDevices();
   }, [loadDevices]);
 
+  const loadSessions = useCallback(async () => {
+    if (!accountKey || DESKTOP) return;
+    const request = ++sessionsRequest.current;
+    setSessionFailure(null);
+    try {
+      const result = await authApi.sessions();
+      if (accountKeyRef.current === accountKey && sessionsRequest.current === request) {
+        setSessionResult({ accountKey, sessions: result.sessions });
+      }
+    } catch (e) {
+      if (accountKeyRef.current === accountKey && sessionsRequest.current === request) {
+        setSessionFailure({ accountKey, error: describeError(e) });
+      }
+    }
+  }, [accountKey]);
+
+  useEffect(() => {
+    sessionsRequest.current += 1;
+    setSessionResult(null);
+    setSessionFailure(null);
+    void loadSessions();
+  }, [loadSessions]);
+
   const submitPassword = async (e: FormEvent) => {
     e.preventDefault();
+    if (!accountKey) return;
+    const actionAccount = accountKey;
+    const request = ++passwordRequest.current;
+    const stillCurrent = () => accountKeyRef.current === actionAccount && passwordRequest.current === request;
     setPwdError(null);
     if (newPassword.length < 8) {
       setPwdError("新密码至少 8 位");
@@ -83,42 +158,71 @@ export function AuthCard() {
         // Desktop: the DEK re-wrap happens inside the Go engine session; the recovery key is issued only in this response, so show it immediately.
         const r = await remoteAccountApi.changePassword(oldPassword, newPassword);
         if (r.recoveryKey) {
-          useAuth.setState({ pendingRecoveryKey: { formatted: r.recoveryKey, canonical: r.recoveryKey } });
+          const recovery = { formatted: r.recoveryKey, canonical: r.recoveryKey };
+          desktopPendingRecoveryKeys.set(actionAccount, recovery);
+          if (stillCurrent()) setDesktopRecoveryState({ accountKey: actionAccount, recovery });
         }
       } else {
         await changePassword(oldPassword, newPassword);
       }
+      if (!stillCurrent()) return;
       setOldPassword("");
       setNewPassword("");
       setConfirmPassword("");
       pushToast("success", "密码已修改，其他设备上的会话已退出");
     } catch (err) {
-      setPwdError(describeError(err));
+      if (stillCurrent()) setPwdError(describeError(err));
     } finally {
-      setPwdBusy(false);
+      if (stillCurrent()) setPwdBusy(false);
     }
   };
 
   const revokeDevice = async (device: AccountDevice) => {
+    const actionAccount = accountKey;
     const ok = await ask(`吊销设备「${device.name}」？\n\n吊销后该设备立即退出登录，不可恢复。`, {
       title: "吊销设备",
       kind: "warning",
     });
-    if (!ok) return;
+    if (!ok || !actionAccount || accountKeyRef.current !== actionAccount) return;
     try {
       if (DESKTOP) {
         await remoteAccountApi.deviceRevoke(device.id);
       } else {
         await authApi.deviceRevoke(device.id);
       }
+      if (accountKeyRef.current !== actionAccount) return;
       pushToast("success", `已吊销「${device.name}」`);
       void loadDevices();
     } catch (e) {
-      pushToast("error", describeError(e));
+      if (accountKeyRef.current === actionAccount) pushToast("error", describeError(e));
     }
   };
 
-  if (!user) {
+  const revokeSession = async (session: AccountLoginSession) => {
+    const actionAccount = accountKey;
+    const ok = await ask(
+      `退出登录会话「${session.name}」？${session.current ? "\n\n当前浏览器将立即退出登录。" : "\n\n该会话将立即失效。"}`,
+      { title: "退出登录会话", kind: "warning" },
+    );
+    if (!ok || !actionAccount || accountKeyRef.current !== actionAccount) return;
+    try {
+      await authApi.sessionRevoke(session.id);
+      if (accountKeyRef.current !== actionAccount) return;
+      if (session.current) {
+        await logout();
+        void qc.invalidateQueries();
+      } else {
+        setSessionResult((current) => current?.accountKey === actionAccount
+          ? { accountKey: actionAccount, sessions: current.sessions.filter((item) => item.id !== session.id) }
+          : current);
+        pushToast("success", `已退出「${session.name}」`);
+      }
+    } catch (e) {
+      if (accountKeyRef.current === actionAccount) pushToast("error", describeError(e));
+    }
+  };
+
+  if (!user || (DESKTOP && !desktopScope)) {
     // The desktop has no account gate; a login button would only open a gate that does not exist: the whole card does not render, and the login entry is in SyncCard.
     if (!authAvailable()) return null;
     if (status?.auth === "platform") {
@@ -327,26 +431,27 @@ export function AuthCard() {
           <p className="nx-hint">
             两步验证的绑定、换绑与关闭暂未接入桌面端，请在浏览器中打开服务端 Web 界面管理；开启后对桌面端登录同样生效。
           </p>
+          <ServerSecurityLink />
         </section>
       ) : (
         <TotpCard />
       )}
 
-      {pendingRecoveryKey && (
+      {visibleRecoveryKey && (
         <section className="nx-card">
           <div className="mb-1 flex items-center gap-2">
             <IconShield size={15} className="text-amber-300" />
             <span className="nx-card-title">新的恢复密钥（仅显示一次）</span>
           </div>
           <div className="nx-alert nx-alert-danger flex flex-col gap-2">
-            <code className="nx-code break-all font-mono text-[12.5px]">{pendingRecoveryKey.formatted}</code>
+            <code className="nx-code break-all font-mono text-[12.5px]">{visibleRecoveryKey.formatted}</code>
             <div className="flex flex-wrap items-center gap-2">
               <button
                 className="nx-btn nx-btn-outline nx-btn-sm"
                 onClick={() =>
                   void (async () => {
                     try {
-                      await copyToClipboard(pendingRecoveryKey.formatted);
+                      await copyToClipboard(visibleRecoveryKey.formatted);
                       pushToast("success", "恢复密钥已复制");
                     } catch {
                       pushToast("error", "复制失败，请手动复制");
@@ -357,7 +462,14 @@ export function AuthCard() {
                 <IconCopy size={12} />
                 复制
               </button>
-              <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={clearPendingRecoveryKey}>
+              <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => {
+                if (DESKTOP && accountKey) {
+                  desktopPendingRecoveryKeys.delete(accountKey);
+                  setDesktopRecoveryState(null);
+                } else {
+                  clearPendingRecoveryKey();
+                }
+              }}>
                 我已保存
               </button>
             </div>
@@ -365,10 +477,55 @@ export function AuthCard() {
         </section>
       )}
 
+      {!DESKTOP && (
+        <section className="nx-card">
+          <div className="mb-1 flex flex-wrap items-center gap-2">
+            <IconShield size={15} className="text-neutral-400" />
+            <span className="nx-card-title">登录会话</span>
+            <div className="nx-spacer" />
+            <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void loadSessions()}>
+              <IconRefresh size={12} />
+              刷新
+            </button>
+          </div>
+          <p className="nx-hint mb-3">这里列出当前有效的服务端登录会话，包含浏览器和桌面客户端。退出其他会话后，对方需重新登录。</p>
+          {sessionsError && (
+            <div className="nx-alert nx-alert-danger flex items-start gap-2">
+              <IconXCircle size={13} className="mt-0.5 shrink-0" />
+              <span className="min-w-0 flex-1 break-words">会话列表读取失败 · {sessionsError}</span>
+              <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void loadSessions()}>
+                <IconRefresh size={12} />重试
+              </button>
+            </div>
+          )}
+          {sessions && sessions.length === 0 && <div className="nx-hint py-1 text-[12px]">当前没有有效登录会话。</div>}
+          {sessions && sessions.length > 0 && (
+            <div className="max-h-[240px] overflow-y-auto rounded border border-neutral-800/60">
+              {sessions.map((session) => (
+                <div key={session.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-neutral-800/40 px-2.5 py-1.5 last:border-b-0">
+                  <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-200" title={session.name}>{session.name}</span>
+                  <span className="nx-hint text-[11px]">{session.origin}</span>
+                  {session.current && <span className="nx-badge nx-badge-green">当前会话</span>}
+                  <span className="nx-hint text-[11px]">最近活动 {formatTime(session.last_seen_at)}</span>
+                  <span className="nx-hint text-[11px]">到期 {formatTime(session.expires_at)}</span>
+                  <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void revokeSession(session)}>
+                    <IconTrash size={11} />退出会话
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="nx-hint mt-2 border-t border-neutral-800/60 pt-2 text-[11px]">
+            <IconCheckCircle size={11} className="mr-1 inline align-[-1px]" />
+            会话有效期 12 小时（滑动续期），最长 7 天；修改密码或管理员重置会使会话立即失效。
+          </p>
+        </section>
+      )}
+
       <section className="nx-card">
         <div className="mb-1 flex flex-wrap items-center gap-2">
           <IconShield size={15} className="text-neutral-400" />
-          <span className="nx-card-title">登录设备</span>
+          <span className="nx-card-title">已登记设备</span>
           <div className="nx-spacer" />
           <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void loadDevices()}>
             <IconRefresh size={12} />
@@ -376,7 +533,7 @@ export function AuthCard() {
           </button>
         </div>
         <p className="nx-hint mb-3">
-          已登录的设备可以随时吊销，吊销后该设备立即退出登录。
+          这里列出已登记的受管设备。吊销设备会使关联的登录会话失效。
         </p>
 
         {devicesError && (
@@ -426,10 +583,6 @@ export function AuthCard() {
           </div>
         )}
 
-        <p className="nx-hint mt-2 border-t border-neutral-800/60 pt-2 text-[11px]">
-          <IconCheckCircle size={11} className="mr-1 inline align-[-1px]" />
-          会话有效期 12 小时（滑动续期），最长 7 天；修改密码、吊销设备或管理员重置会使会话立即失效。
-        </p>
       </section>
     </>
   );

@@ -10,7 +10,10 @@ import (
 )
 
 func TestIPCCommandsUseNestedCreateAndSafeCredentials(t *testing.T) {
-	runner := &fakeRunner{lookups: map[string]string{"net": "net"}}
+	runner := &fakeRunner{
+		lookups: map[string]string{"net": "net"},
+		runs:    []fakeRun{{}, {result: commandResult{stdout: "OK  Z:  " + `\\server\share` + "        Microsoft Windows Network\r\n"}}},
+	}
 	service := newTestService("windows", runner, nil)
 	dispatcher := ipc.NewDispatcher()
 	if err := service.RegisterCommands(dispatcher); err != nil {
@@ -34,7 +37,7 @@ func TestIPCCommandsUseNestedCreateAndSafeCredentials(t *testing.T) {
 	if strings.Contains(strings.Join(commands[0].args, " "), "ipc-secret") || string(commands[0].stdin) != "ipc-secret\r\n" {
 		t.Fatalf("command = %+v", commands[0])
 	}
-	if response := dispatch("mount_list", `{"forceRefresh":true}`); !response.OK || string(response.Data) != "[]" {
+	if response := dispatch("mount_list", `{"sessionId":"s","forceRefresh":true}`); !response.OK || !strings.Contains(string(response.Data), `"managed":true`) {
 		t.Fatalf("list = %+v", response)
 	}
 	if response := dispatch("mount_remove", `{"localPoint":"Z:","sessionId":"s"}`); !response.OK || string(response.Data) != "null" {

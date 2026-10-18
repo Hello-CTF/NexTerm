@@ -20,6 +20,37 @@ func testDatabaseAccounts(t *testing.T) (*Accounts, *int64) {
 	return New(db.GORM(), WithNow(func() int64 { return now })), &now
 }
 
+func TestDatabaseSessionMetadataListAndRevoke(t *testing.T) {
+	a, now := testDatabaseAccounts(t)
+	ctx := context.Background()
+	user, err := a.CreateUser(ctx, "session-db-user", "", "synthetic-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, issued, err := a.IssueSessionWithMetadata(ctx, user.ID, "", SessionMetadata{
+		ClientName: "NexTerm 桌面端", Origin: "192.0.2.10",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	*now += sessionSlidePersist.Milliseconds()
+	if _, err := a.ValidateSession(ctx, token); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := a.ListUserSessions(ctx, user.ID)
+	if err != nil || len(listed) != 1 || listed[0].ID != issued.ID || listed[0].ClientName != "NexTerm 桌面端" || listed[0].Origin != "192.0.2.10" || listed[0].LastSeenAt != *now {
+		t.Fatalf("session metadata after validated activity = %+v, %v", listed, err)
+	}
+	if err := a.RevokeUserSession(ctx, user.ID, issued.ID); err != nil {
+		t.Fatal(err)
+	}
+	requireCode(t, validateErr(a, ctx, token), ipc.CodeForbidden)
+	listed, err = a.ListUserSessions(ctx, user.ID)
+	if err != nil || len(listed) != 0 {
+		t.Fatalf("revoked session still listed: %+v, %v", listed, err)
+	}
+}
+
 func TestDatabaseAccountCoreFlows(t *testing.T) {
 	a, _ := testDatabaseAccounts(t)
 	ctx := context.Background()

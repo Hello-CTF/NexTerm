@@ -5,10 +5,12 @@ package production
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,6 +29,17 @@ type recordingDurableResolver struct {
 	transports []base.Transport
 	provider   base.DurableProvider
 	err        error
+}
+
+type unavailableCreateProvider struct{ calls int }
+
+func (p *unavailableCreateProvider) Create(context.Context, base.DurableCreateOptions) (base.DurableAttachment, error) {
+	p.calls++
+	return nil, durable.ErrUnavailable
+}
+
+func (p *unavailableCreateProvider) Attach(context.Context, string) (base.DurableAttachment, error) {
+	return nil, durable.ErrNotFound
 }
 
 func (r *recordingDurableResolver) ResolveDurable(_ context.Context, transport base.Transport) (base.DurableProvider, error) {
@@ -83,8 +96,9 @@ func newRemoteRecoveryHarness(t *testing.T, resolver session.DurableResolver) (*
 		t.Fatal(err)
 	}
 	manager := session.NewManager(session.Config{
-		Connector:       fakeSSHConnector{},
-		DurableResolver: resolver,
+		Connector:            fakeSSHConnector{},
+		DurableResolver:      resolver,
+		TerminalModeResolver: newProductionTerminalModeResolver(database),
 	})
 	production, err := NewProductionWithServices(Config{
 		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -404,7 +418,7 @@ func TestProductionAttachTabIgnoresUnregisteredLocalDaemon(t *testing.T) {
 	}
 }
 
-func TestProductionTerminalAttachDurableFailureDoesNotFallBackToPTY(t *testing.T) {
+func TestProductionTerminalAttachFallsBackOnceWhenHelperUnavailable(t *testing.T) {
 	resolver := &recordingDurableResolver{err: durable.ErrUnavailable}
 	production, _ := newRemoteRecoveryHarness(t, resolver)
 	connected := connectRemoteSSHAsset(t, production)
@@ -419,14 +433,112 @@ func TestProductionTerminalAttachDurableFailureDoesNotFallBackToPTY(t *testing.T
 		t.Fatal("explicit volatile SSH attach became durable")
 	}
 
-	for _, flag := range []string{"", `,"durable":true`} {
-		durableResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24`+flag+`}`, "durable-ssh-channel", "client-a")
-		if durableResponse.OK || durableResponse.Error == nil || durableResponse.Error.Code != ipc.CodeUnsupported {
-			t.Fatalf("durable attach %q with unavailable helper = %+v, want unsupported without a PTY fallback", flag, durableResponse)
+	for index := range 2 {
+		response := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, fmt.Sprintf("fallback-ssh-channel-%d", index), "client-a")
+		var attached attachedTabDTO
+		requireStoreTestResponse(t, response, &attached)
+		if attached.FallbackNotice == "" && index == 0 || attached.FallbackNotice != "" && index == 1 {
+			t.Fatalf("fallback notice on attempt %d = %q", index, attached.FallbackNotice)
+		}
+		tab, err := production.Services.Sessions.Tab(attached.TabID)
+		if err != nil || tab.Info().Durable {
+			t.Fatalf("fallback tab = %+v, %v; want ordinary PTY", tab, err)
 		}
 	}
-	if tabs := production.Services.Sessions.ListTabs(); len(tabs) != 1 || tabs[0].ID != plainTabID || tabs[0].Durable {
-		t.Fatalf("tabs after failed durable attach = %+v, want only the ordinary tab", tabs)
+	if calls := len(resolver.recorded()); calls != 1 {
+		t.Fatalf("helper resolution calls = %d; want one per session", calls)
+	}
+	strict := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24,"durable":true}`, "strict-ssh-channel", "client-a")
+	if strict.OK || strict.Error == nil || strict.Error.Code != ipc.CodeUnsupported {
+		t.Fatalf("explicit durable attach = %+v; want unsupported", strict)
+	}
+	if tabs := production.Services.Sessions.ListTabs(); len(tabs) != 3 {
+		t.Fatalf("tabs after fallback and strict failure = %+v", tabs)
+	}
+}
+
+func TestProductionTerminalAttachFallsBackWhenDurableCreateBecomesUnavailable(t *testing.T) {
+	provider := &unavailableCreateProvider{}
+	resolver := &recordingDurableResolver{provider: provider}
+	production, _ := newRemoteRecoveryHarness(t, resolver)
+	connected := connectRemoteSSHAsset(t, production)
+
+	for index := range 2 {
+		response := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, fmt.Sprintf("create-fallback-%d", index), "client-a")
+		var attached attachedTabDTO
+		requireStoreTestResponse(t, response, &attached)
+		if (attached.FallbackNotice != "") != (index == 0) {
+			t.Fatalf("attempt %d fallback notice = %q", index, attached.FallbackNotice)
+		}
+		tab, err := production.Services.Sessions.Tab(attached.TabID)
+		if err != nil || tab.Info().Durable {
+			t.Fatalf("attempt %d tab = %+v, %v; want ordinary PTY", index, tab, err)
+		}
+	}
+	if provider.calls != 1 || len(resolver.recorded()) != 1 {
+		t.Fatalf("durable Create calls = %d, resolver calls = %d; want one each", provider.calls, len(resolver.recorded()))
+	}
+	strict := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24,"durable":true}`, "create-strict", "client-a")
+	if strict.OK || strict.Error == nil || strict.Error.Code != ipc.CodeUnsupported {
+		t.Fatalf("explicit durable attach = %+v; want unsupported", strict)
+	}
+	if provider.calls != 2 {
+		t.Fatalf("explicit durable Create calls = %d; want a retry after automatic fallback", provider.calls)
+	}
+}
+
+func TestProductionRegularSSHModeSkipsHelperForBothTabEntries(t *testing.T) {
+	resolver := &recordingDurableResolver{err: durable.ErrUnavailable}
+	production, _ := newRemoteRecoveryHarness(t, resolver)
+	host, username, port := "127.0.0.1", "tester", int32(22)
+	asset, err := production.Services.Store.AssetCreate(t.Context(), store.AssetInput{
+		Kind: "ssh", Name: "regular-terminal", Host: &host, Username: &username, Port: &port,
+		OptionsJSON: `{}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var connected sessionInfoDTO
+	requireStoreTestResponse(t, dispatchDurableTest(t, production, "session_connect", `{"args":{"assetId":"`+asset.ID+`"}}`, "", "client-a"), &connected)
+	regularOptions := `{"terminalMode":"regular"}`
+	if _, err := production.Services.Store.AssetUpdate(t.Context(), asset.ID, store.AssetPatch{OptionsJSON: &regularOptions}); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"terminal_attach", "terminal_create_tab"} {
+		channel := ""
+		if command == "terminal_attach" {
+			channel = "regular-ssh-channel"
+		}
+		response := dispatchDurableTest(t, production, command, `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, channel, "client-a")
+		var attached attachedTabDTO
+		requireStoreTestResponse(t, response, &attached)
+		tab, err := production.Services.Sessions.Tab(attached.TabID)
+		if err != nil || tab.Info().Durable || attached.FallbackNotice != "" {
+			t.Fatalf("%s tab = %+v, response = %+v, err = %v; want ordinary PTY without fallback", command, tab, attached, err)
+		}
+	}
+	if calls := len(resolver.recorded()); calls != 0 {
+		t.Fatalf("helper resolution calls = %d; regular mode must not start helper", calls)
+	}
+	forced := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24,"durable":true}`, "regular-forced-channel", "client-a")
+	if forced.OK || forced.Error == nil || forced.Error.Code != ipc.CodeUnsupported || !strings.Contains(forced.Error.Message, "普通终端") {
+		t.Fatalf("explicit durable attach in regular mode = %+v", forced)
+	}
+	if len(resolver.recorded()) != 0 {
+		t.Fatal("explicit durable attach started helper despite regular mode")
+	}
+	listResponse := dispatchDurableTest(t, production, "terminal_list", `{"sessionId":"`+connected.ID+`","durable":true}`, "", "client-a")
+	var descriptors []durableDescriptorDTO
+	requireStoreTestResponse(t, listResponse, &descriptors)
+	if len(descriptors) != 0 || len(resolver.recorded()) != 0 {
+		t.Fatalf("regular mode listed durable tabs or started helper: %+v", descriptors)
+	}
+	recovery := dispatchDurableTest(t, production, "terminal_attach_tab", `{"sessionId":"`+connected.ID+`","tabId":"`+ids.New()+`"}`, "old-durable-channel", "client-a")
+	if recovery.OK || recovery.Error == nil || recovery.Error.Code != ipc.CodeUnsupported || !strings.Contains(recovery.Error.Message, "普通终端") {
+		t.Fatalf("old durable tab recovery in regular mode = %+v", recovery)
+	}
+	if len(resolver.recorded()) != 0 {
+		t.Fatal("regular mode attempted helper during old tab recovery")
 	}
 }
 
@@ -743,6 +855,10 @@ func TestProductionAttachTabHonorsDiscoveredSessionScope(t *testing.T) {
 	if len(descriptors) != 1 || descriptors[0].ID != tabID {
 		t.Fatalf("requested host descriptors = %+v, want shared id %s", descriptors, tabID)
 	}
+	unscoped := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+tabID+`","replayBytes":262144}`, "ambiguous-durable-channel", "client-a")
+	if unscoped.OK || unscoped.Error == nil || unscoped.Error.Code != ipc.CodeBadParam || !strings.Contains(unscoped.Error.Message, "指定会话") {
+		t.Fatalf("unscoped duplicate attach = %+v", unscoped)
+	}
 
 	channelID := "scoped-durable-channel"
 	attachResponse := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+descriptors[0].ID+`","sessionId":"`+requested.ID+`","replayBytes":262144}`, channelID, "client-a")
@@ -755,6 +871,10 @@ func TestProductionAttachTabHonorsDiscoveredSessionScope(t *testing.T) {
 	waitForProductionOutput(t, stream, "scope-requested")
 	if bytes.Contains(stream.output(), []byte("scope-other")) {
 		t.Fatalf("scoped attach replayed the other daemon: %q", stream.output())
+	}
+	unscopedInMemory := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+tabID+`","replayBytes":1024}`, "ambiguous-in-memory-channel", "client-b")
+	if unscopedInMemory.OK || unscopedInMemory.Error == nil || unscopedInMemory.Error.Code != ipc.CodeBadParam || !strings.Contains(unscopedInMemory.Error.Message, "指定会话") {
+		t.Fatalf("unscoped in-memory duplicate attach = %+v", unscopedInMemory)
 	}
 	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","clientId":"client-a"}`, "", "client-a"))
 }

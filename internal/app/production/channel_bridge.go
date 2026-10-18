@@ -48,50 +48,57 @@ func (b *terminalBridge) Start(ctx context.Context) error {
 }
 
 func (b *terminalBridge) Bridge(channelID string) error {
+	_, err := b.bridge(channelID)
+	return err
+}
+
+// bridge reports whether this call opened the channel, so a failed attach can
+// close only its own bridge without disrupting an earlier attachment.
+func (b *terminalBridge) bridge(channelID string) (bool, error) {
 	if !b.enabled {
-		return nil
+		return false, nil
 	}
 	if channelID == "" {
-		return ipc.BadParam(errors.New("通道 ID 不能为空"))
+		return false, ipc.BadParam(errors.New("通道 ID 不能为空"))
 	}
 	b.mu.Lock()
 	if b.ctx == nil {
 		b.mu.Unlock()
-		return ipc.ErrStreamsUnavailable
+		return false, ipc.ErrStreamsUnavailable
 	}
 	if _, exists := b.channels[channelID]; exists {
 		b.mu.Unlock()
-		return nil
+		return false, nil
 	}
 	ctx := b.ctx
 	b.mu.Unlock()
 
 	receiver, err := b.sessions.Bind(channelID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	stream, err := b.factory.OpenBinary(ctx, ipc.ChannelRef{ID: channelID})
 	if err != nil {
 		_ = receiver.Close()
-		return err
+		return false, err
 	}
 	channel := &terminalBridgeChannel{receiver: receiver, stream: stream}
 	b.mu.Lock()
 	if b.ctx == nil || b.ctx.Err() != nil {
 		b.mu.Unlock()
 		channel.close()
-		return context.Canceled
+		return false, context.Canceled
 	}
 	if _, exists := b.channels[channelID]; exists {
 		b.mu.Unlock()
 		channel.close()
-		return nil
+		return false, nil
 	}
 	b.channels[channelID] = channel
 	b.wg.Add(1)
 	b.mu.Unlock()
 	go b.run(ctx, channelID, channel)
-	return nil
+	return true, nil
 }
 
 func (b *terminalBridge) Unbridge(channelID string) {

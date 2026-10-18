@@ -116,6 +116,19 @@ jobs:
             choco install nsis --version=3.12 --yes --no-progress
           fi
           MSYS_NO_PATHCONV=1 "/c/Program Files (x86)/NSIS/makensis.exe" /VERSION
+      - name: Ensure 7-Zip can inspect the finished installer
+        if: matrix.os == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -x "/c/Program Files/7-Zip/7z.exe" ] && ! command -v 7z >/dev/null 2>&1; then
+            choco install 7zip --version=25.01 --yes --no-progress
+          fi
+          if [ -x "/c/Program Files/7-Zip/7z.exe" ]; then
+            "/c/Program Files/7-Zip/7z.exe" i >/dev/null
+          else
+            7z i >/dev/null
+          fi
       - name: Download the verified frontend dist
         uses: actions/download-artifact@v8
         with:
@@ -126,6 +139,12 @@ jobs:
         with:
           name: native-${{ matrix.os }}-${{ matrix.arch }}-desktop
           path: reused-native
+      - name: Download both verified Linux SSH helpers
+        uses: actions/download-artifact@v8
+        with:
+          pattern: native-linux-*-helper
+          merge-multiple: true
+          path: verified-helpers
       - name: Stage the reused production binary
         shell: bash
         run: |
@@ -133,6 +152,11 @@ jobs:
           binary="nexterm-desktop-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.os == 'windows' && '.exe' || '' }}"
           mkdir -p target/go-build
           cp "reused-native/go-build/${binary}" "reused-native/go-build/${binary}.manifest.json" target/go-build/
+          for helper_arch in amd64 arm64; do
+            helper="nexterm-helper-linux-$helper_arch"
+            cp "verified-helpers/go-build/$helper" "verified-helpers/go-build/$helper.manifest.json" target/go-build/
+            chmod +x "target/go-build/$helper"
+          done
           if [ "${{ matrix.os }}" != "windows" ]; then
             chmod +x "target/go-build/${binary}"
           fi
@@ -220,6 +244,12 @@ jobs:
         with:
           name: native-linux-${{ matrix.arch }}-server
           path: reused-native
+      - name: Download both verified Linux SSH helpers
+        uses: actions/download-artifact@v8
+        with:
+          pattern: native-linux-*-helper
+          merge-multiple: true
+          path: verified-helpers
       - name: Stage the reused production server binary
         shell: bash
         run: |
@@ -228,6 +258,11 @@ jobs:
           mkdir -p target/go-build
           cp "reused-native/go-build/${binary}" "reused-native/go-build/${binary}.manifest.json" target/go-build/
           chmod +x "target/go-build/${binary}"
+          for helper_arch in amd64 arm64; do
+            helper="nexterm-helper-linux-$helper_arch"
+            cp "verified-helpers/go-build/$helper" "verified-helpers/go-build/$helper.manifest.json" target/go-build/
+            chmod +x "target/go-build/$helper"
+          done
       - name: Verify the reused production server binary against its manifest
         run: node .github/scripts/verify-reused-binary.mjs "target/go-build/nexterm-server-linux-${{ matrix.arch }}" "server-linux-${{ matrix.arch }}" linux "${{ matrix.arch }}" 0
       - name: Restore the verified frontend for packaging

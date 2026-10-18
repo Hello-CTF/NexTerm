@@ -35,6 +35,75 @@ func TestSessionIssueValidateRevoke(t *testing.T) {
 	requireCode(t, a.RevokeSession(ctx, session.ID), ipc.CodeNotFound)
 }
 
+func TestSessionListLastSeenAndScopedRevoke(t *testing.T) {
+	a, now := testAccounts(t)
+	ctx := context.Background()
+	owner, err := a.CreateUser(ctx, "session-owner", "", "synthetic-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := a.CreateUser(ctx, "other-owner", "", "synthetic-password-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, current, err := a.IssueSessionWithMetadata(ctx, owner.ID, "", SessionMetadata{ClientName: "NexTerm 桌面端", Origin: "192.0.2.10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyToken, legacy, err := a.IssueSession(ctx, owner.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherToken, otherSession, err := a.IssueSession(ctx, other.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed, err := a.ListUserSessions(ctx, owner.ID)
+	if err != nil || len(listed) != 2 {
+		t.Fatalf("owner sessions = %+v, %v", listed, err)
+	}
+	for _, info := range listed {
+		if info.ID == current.ID && (info.ClientName != "NexTerm 桌面端" || info.Origin != "192.0.2.10" || info.LastSeenAt != current.TouchedAt) {
+			t.Fatalf("current session metadata = %+v", info)
+		}
+		if info.ID == legacy.ID && (info.ClientName != "" || info.Origin != "") {
+			t.Fatalf("legacy session metadata = %+v", info)
+		}
+		if info.ID == otherSession.ID {
+			t.Fatal("other user's session was listed")
+		}
+	}
+	*now += sessionSlidePersist.Milliseconds() - 1
+	if _, err := a.ValidateSession(ctx, token); err != nil {
+		t.Fatal(err)
+	}
+	*now += 1
+	if _, err := a.ValidateSession(ctx, token); err != nil {
+		t.Fatal(err)
+	}
+	listed, err = a.ListUserSessions(ctx, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, info := range listed {
+		if info.ID == current.ID && info.LastSeenAt != *now {
+			t.Fatalf("last seen did not advance after validated activity: %+v", info)
+		}
+	}
+	requireCode(t, a.RevokeUserSession(ctx, owner.ID, otherSession.ID), ipc.CodeNotFound)
+	if _, err := a.ValidateSession(ctx, otherToken); err != nil {
+		t.Fatalf("another user's session was revoked: %v", err)
+	}
+	if err := a.RevokeUserSession(ctx, owner.ID, legacy.ID); err != nil {
+		t.Fatal(err)
+	}
+	requireCode(t, validateErr(a, ctx, legacyToken), ipc.CodeForbidden)
+	listed, err = a.ListUserSessions(ctx, owner.ID)
+	if err != nil || len(listed) != 1 || listed[0].ID != current.ID {
+		t.Fatalf("sessions after revoke = %+v, %v", listed, err)
+	}
+}
+
 func TestSessionSlidingAndAbsoluteExpiry(t *testing.T) {
 	a, now := testAccounts(t)
 	ctx := context.Background()

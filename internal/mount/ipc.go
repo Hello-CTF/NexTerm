@@ -7,7 +7,9 @@ import (
 )
 
 type listRequest struct {
-	ForceRefresh bool `json:"forceRefresh,omitempty"`
+	SessionID    string `json:"sessionId,omitempty"`
+	ForceRefresh bool   `json:"forceRefresh,omitempty"`
+	Global       bool   `json:"global,omitempty"`
 }
 
 func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
@@ -17,7 +19,7 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 		return err
 	}
 	if err := ipc.Register(dispatcher, "mount_list", func(ctx context.Context, _ *ipc.Call, input listRequest) ([]Entry, error) {
-		return s.List(ctx, input.ForceRefresh)
+		return s.ListFor(ctx, input)
 	}); err != nil {
 		return err
 	}

@@ -128,6 +128,46 @@ func TestProductionTerminalBridgeStreamsDetachAndReplayOnReopen(t *testing.T) {
 	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","clientId":"client-a"}`, "", "client-a"))
 }
 
+func TestProductionFailedAttachReleasesNewBridge(t *testing.T) {
+	fixture := newRemoteDaemonFixture(t)
+	production, factory := newRemoteRecoveryHarness(t, &recordingDurableResolver{provider: fixture.provider})
+	connectRemoteSSHAsset(t, production)
+	firstID := createDaemonTab(t, fixture.provider, "first-bridge-tab")
+	secondID := createDaemonTab(t, fixture.provider, "second-bridge-tab")
+	channelID := "failed-attach-bridge"
+	first := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+firstID+`"}`, channelID, "client-a")
+	var attached attachedTabDTO
+	requireStoreTestResponse(t, first, &attached)
+	occupied := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+secondID+`"}`, channelID, "client-a")
+	if occupied.OK {
+		t.Fatalf("second tab unexpectedly took the first tab's channel: %+v", occupied)
+	}
+	firstStream := factory.at(channelID, 0)
+	firstStream.mu.Lock()
+	closed := firstStream.closed
+	firstStream.mu.Unlock()
+	if closed {
+		t.Fatal("failed attach closed an earlier tab's bridge")
+	}
+	production.Services.channelBridge.Unbridge(channelID)
+	waitForStreamClose(t, factory.at(channelID, 0))
+
+	failed := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+secondID+`"}`, channelID, "client-a")
+	if failed.OK {
+		t.Fatalf("second tab unexpectedly attached to occupied channel: %+v", failed)
+	}
+	if len(factory.streams[channelID]) != 2 {
+		t.Fatalf("bridge streams = %d; want failed attempt to open a new stream", len(factory.streams[channelID]))
+	}
+	waitForStreamClose(t, factory.at(channelID, 1))
+	production.Services.channelBridge.mu.Lock()
+	_, retained := production.Services.channelBridge.channels[channelID]
+	production.Services.channelBridge.mu.Unlock()
+	if retained {
+		t.Fatal("failed attach retained its bridge")
+	}
+}
+
 type gatedBridgeStream struct {
 	*bridgeTestStream
 	gate    chan struct{}

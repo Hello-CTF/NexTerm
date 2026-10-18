@@ -63,6 +63,8 @@ vi.mock("../ipc/authApi", async (importOriginal) => {
       logout: vi.fn().mockResolvedValue({ ok: true }),
       logoutAll: vi.fn().mockResolvedValue({ revoked: 1 }),
       devices: vi.fn().mockResolvedValue({ devices: [] }),
+      sessions: vi.fn().mockResolvedValue({ sessions: [] }),
+      sessionRevoke: vi.fn().mockResolvedValue({ ok: true }),
       deviceRevoke: vi.fn().mockResolvedValue({ ok: true }),
       totpStatus: vi.fn().mockResolvedValue({ enabled: false, pending: false, mfa_required: false, recovery_codes_left: 0 }),
       totpSetup: vi.fn(),
@@ -314,13 +316,27 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
       seq: 1,
       blob: bytesToBase64(await sealSyncObject(new Uint8Array(32).fill(8), utf8Bytes('{"id":"a-1","name":"stale","updatedAt":1}'), "a-1", "asset")),
     };
-    mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "a-1", seq: 1, blob_hash: "stale" }], head: "head-1", max_seq: 1 });
-    mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [staleWire], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
-    mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-2", max_seq: 2, applied: 1, skipped: 0 });
+    let repairedBlob: string | null = null;
+    mocks.syncIds.mockImplementation(async (knownHead?: string) => {
+      const head = repairedBlob ? "head-2" : "head-1";
+      if (knownHead === head) return { protocol: 2, unchanged: true, head, max_seq: repairedBlob ? 2 : 1 };
+      return { protocol: 2, entries: [{ id: "a-1", seq: repairedBlob ? 2 : 1, blob_hash: repairedBlob ? "repaired" : "stale" }], head, max_seq: repairedBlob ? 2 : 1 };
+    });
+    mocks.syncPull.mockImplementation(async () => ({
+      protocol: 2, objects: [repairedBlob ? { id: "a-1", seq: 2, blob: repairedBlob } : staleWire],
+      head: repairedBlob ? "head-2" : "head-1", max_seq: repairedBlob ? 2 : 1, next_seq: repairedBlob ? 2 : 1, cursor_done: true,
+    }));
+    mocks.syncPush.mockImplementation(async (_head: string, objects: { id: string; blob: string }[]) => {
+      repairedBlob = objects[0].blob;
+      return { protocol: 2, head: "head-2", max_seq: 2, applied: 1, skipped: 0 };
+    });
 
     mounted = mountSyncCard();
+    openDetails();
     await flushUntil(() => text().includes("云端对象 a-1 解密失败"));
     expect(text()).toContain("本机同 ID 对象可推送覆盖");
+    expect(text()).toContain("无法解密");
+    expect(text()).toContain("云端 1 个对象");
     await runAutoSync();
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
 
@@ -328,6 +344,33 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     expect(objects.map((object) => object.id)).toEqual(["a-1"]);
     const payload = await openPushed(objects[0], "asset");
     expect(payload.name).toBe("web-01");
+    await flushUntil(() => text().includes("已一致"));
+    expect(text()).not.toContain("云端对象 a-1 解密失败");
+    expect(text()).not.toContain("无法解密");
+  });
+
+  it("keeps a cloud-only undecryptable object visible after a cached refresh with no local repair copy", async () => {
+    const { sealSyncObject, bytesToBase64, utf8Bytes } = await import("../features/auth/crypto");
+    const staleWire = {
+      id: "cloud-only", seq: 1,
+      blob: bytesToBase64(await sealSyncObject(new Uint8Array(32).fill(8), utf8Bytes('{"id":"cloud-only"}'), "cloud-only", "asset")),
+    };
+    mocks.syncIds.mockImplementation(async (knownHead?: string) => knownHead === "head-1"
+      ? { protocol: 2, unchanged: true, head: "head-1", max_seq: 1 }
+      : { protocol: 2, entries: [{ id: "cloud-only", seq: 1, blob_hash: "stale" }], head: "head-1", max_seq: 1 });
+    mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [staleWire], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
+
+    mounted = mountSyncCard();
+    openDetails();
+    await flushUntil(() => text().includes("云端对象 cloud-only 解密失败"));
+    expect(text()).toContain("本机无同 ID 对象，请从持有正确数据密钥的设备重新同步，或联系管理员");
+    expect(text()).toContain("无法解密");
+    expect(text()).toContain("云端 1 个对象");
+    await runAutoSync();
+    await flushUntil(() => mocks.syncIds.mock.calls.some(([head]) => head === "head-1"));
+    expect(text()).toContain("云端对象 cloud-only 解密失败");
+    expect(text()).toContain("无法解密");
+    expect(mocks.syncPush).not.toHaveBeenCalled();
   });
 });
 

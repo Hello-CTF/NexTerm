@@ -59,7 +59,7 @@ available: boolean,
 platform: string, 
 listenHost: string, };
 
-export type ForwardSpecDto = { id: string, sessionId: string, listenPort: number, 
+export type ForwardSpecDto = { id: string, sessionId: string, hostId?: string, status: "active" | "reconnecting" | "failed", error?: string, listenPort: number,
 targetHost: string | null, targetPort: number | null, 
 kind: string, createdAt: number, };
 
@@ -108,7 +108,7 @@ export type AiUsageSummaryRow = { source: string, profileId: string, runs: numbe
 
 export type AiCircuitStatusDto = { consecutiveFailures: number, openUntil: number | null, };
 
-export type MountEntryDto = { id: string, localPoint: string, remote: string, sessionId: string | null, createdAt: number | null, };
+export type MountEntryDto = { id: string, localPoint: string, remote: string, sessionId: string | null, createdAt: number | null, managed: boolean };
 
 export type ProviderConfigDto = { baseUrl: string, apiKey: string, model: string, temperature?: number, reasoningEffort?: string, contextWindow: number, proxy: string | null, stream: boolean,
 fallbackModel?: string | null,

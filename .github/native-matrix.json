@@ -54,6 +54,18 @@
     "runner": "ubuntu-latest",
     "os": "linux",
     "arch": "amd64",
+    "kind": "helper"
+  },
+  {
+    "runner": "ubuntu-24.04-arm",
+    "os": "linux",
+    "arch": "arm64",
+    "kind": "helper"
+  },
+  {
+    "runner": "ubuntu-latest",
+    "os": "linux",
+    "arch": "amd64",
     "kind": "agent"
   },
   {

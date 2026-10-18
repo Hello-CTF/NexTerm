@@ -27,6 +27,7 @@ import {
   countBlockedTerminals,
   isSessionReconnectPending,
   reconnectSessionAndWait,
+  reconnectRestoredWorkspace,
   sanitizeRemoteTabTitle,
   sessionStatusText,
   LEFT_WIDTH_RANGE,
@@ -47,7 +48,17 @@ import {
   RESIZE_END_EVENT,
   type FrameCoalescer,
 } from "../ui/ResizeHandle";
-import { advanceLayoutAccount, layoutBootstrapped, onRemoteChange, startLayoutSync } from "./layout";
+import {
+  advanceLayoutAccount,
+  finishLayoutRestore,
+  layoutBootstrapped,
+  layoutRestoreStatus,
+  onRemoteChange,
+  reviewPendingLayoutRestore,
+  startLayoutSync,
+  subscribeLayoutRestore,
+  undoLayoutRestore,
+} from "./layout";
 import { startUnreadTracking } from "./unread";
 import { useEdgeGestures } from "./edgeGestures";
 import {
@@ -81,6 +92,7 @@ import { TerminalPane } from "../features/terminal/TerminalPane";
 import { BackgroundSessions } from "../features/terminal/BackgroundSessions";
 import { TranscriptHistoryPanel } from "../features/terminal/TranscriptHistoryPanel";
 import { FileBrowser } from "../features/files/FileBrowser";
+import { resetTransferQueue } from "../features/files/transferStore";
 import { FileTree } from "../features/files/FileTree";
 import { fileVisual } from "../features/files/fileTypes";
 import { MountPanel } from "../features/files/MountPanel";
@@ -483,7 +495,7 @@ function LazyDevicesView() {
 }
 
 // Account-level query keys, aligned with the queryKeys of AssetTree/CredentialsSidebar/CredentialsPanel
-// (assets/groups/credentials/snippets/search/vault status). Reset together on auth transitions: before login
+// (assets/groups/credentials/snippets/search/vault status/forwards). Reset together on auth transitions: before login
 // these requests all hit 401 (grouped assets hidden), and on account switch the previous session's cache must not leak into the next.
 const ACCOUNT_QUERY_KEYS = [
   ["assets"],
@@ -492,6 +504,8 @@ const ACCOUNT_QUERY_KEYS = [
   ["snippets"],
   ["asset-search"],
   ["vault-status"],
+  ["forwards"],
+  ["forwardEnv"],
 ] as const;
 
 export default function App() {
@@ -537,7 +551,11 @@ function AppShell() {
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteEditingAsset, setPaletteEditingAsset] = useState<Asset | null>(null);
-  const [quickConnectOpen, setQuickConnectOpen] = useState(false);
+  const [quickConnectMode, setQuickConnectMode] = useState<"all" | "database" | null>(null);
+  const [layoutRestore, setLayoutRestore] = useState(layoutRestoreStatus);
+  const [restoringWorkspaceId, setRestoringWorkspaceId] = useState<string | null>(null);
+
+  useEffect(() => subscribeLayoutRestore(() => setLayoutRestore(layoutRestoreStatus())), []);
   const queryClient = useQueryClient();
   // The status bar vault state subscribes directly to the shared ["vault-status"] query, same source as the settings page;
   // no more forked copy maintained via local state + sequence guards.
@@ -680,8 +698,10 @@ function AppShell() {
       pushToast("info", "移动端不支持本地终端，请双击资产连接远程主机");
       return;
     }
+    const epoch = useUi.getState().workspaceRuntimeEpoch;
     try {
       const s = await sessionApi.connectLocal();
+      if (useUi.getState().workspaceRuntimeEpoch !== epoch) return;
       const list = useUi.getState().sessions;
       setSessions([...list.filter((x) => x.id !== s.id), s]);
       await openTerminalTab(s);
@@ -736,8 +756,10 @@ function AppShell() {
   }, [activeSessionId, needSession]);
 
   const openDatabase = useCallback(async () => {
+    const epoch = useUi.getState().workspaceRuntimeEpoch;
     try {
       const assets = (await assetApi.list()).filter((asset) => dbKindOf(asset.kind) !== null);
+      if (useUi.getState().workspaceRuntimeEpoch !== epoch) return;
       if (assets.length === 0) {
         pushToast("info", "还没有数据库资产，先在资产树里新建一个");
         return;
@@ -746,9 +768,9 @@ function AppShell() {
         await connectAsset(assets[0]);
         return;
       }
-      setQuickConnectOpen(true);
+      setQuickConnectMode("database");
     } catch (e) {
-      pushToast("error", describeError(e));
+      if (useUi.getState().workspaceRuntimeEpoch === epoch) pushToast("error", describeError(e));
     }
   }, [pushToast]);
 
@@ -773,6 +795,10 @@ function AppShell() {
   const openSettings = useCallback(() => {
     useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
   }, []);
+
+  useEffect(() => {
+    if (window.location.hash === "#settings-account") openSettings();
+  }, [openSettings]);
 
   // The session list auth guard (drop late responses / clear on logout) lives in the store's resyncSessions/resetSessions.
   // Vault state is cleared and refetched by resetQueries on the shared vault-status query above; nothing extra is maintained here.
@@ -815,6 +841,14 @@ function AppShell() {
   }, []);
 
   const openNewTerminal = useCallback(async () => {
+    const epoch = useUi.getState().workspaceRuntimeEpoch;
+    const workspaceId = ws?.id;
+    const workspaceAssetId = ws?.assetId;
+    const isCurrent = () => {
+      const state = useUi.getState();
+      return state.workspaceRuntimeEpoch === epoch &&
+        (!workspaceId || state.workspaces.some((workspace) => workspace.id === workspaceId && workspace.assetId === workspaceAssetId));
+    };
     const sid = ws?.sessionId;
     const s = sid ? sessions.find((x) => x.id === sid) : undefined;
     if (s) {
@@ -829,6 +863,7 @@ function AppShell() {
       pushToast("info", "正在重连，连接成功后自动新建终端");
       try {
         const fresh = await reconnectSessionAndWait(s);
+        if (!isCurrent()) return;
         if (!fresh) {
           pushToast("info", "已取消重连");
           return;
@@ -837,7 +872,7 @@ function AppShell() {
         setSessions([...list.filter((x) => x.id !== fresh.id), fresh]);
         await openTerminalTab(fresh);
       } catch (e) {
-        pushToast("error", `重新连接失败：${describeError(e)}`);
+        if (isCurrent()) pushToast("error", `重新连接失败：${describeError(e)}`);
       }
       return;
     }
@@ -848,13 +883,15 @@ function AppShell() {
           id: ws.assetId.slice("device/".length),
           name: ws.title,
         });
+        if (!isCurrent()) return;
         if (!outcome.ok && !outcome.canceled) {
           pushToast("error", outcome.error ?? "重新连接失败");
         }
         return;
       }
       try {
-        const fresh = await connectWithHostKeyConfirm(() => sessionApi.connect(ws.assetId as string));
+        const fresh = await connectWithHostKeyConfirm(() => sessionApi.connect(ws.assetId as string), isCurrent);
+        if (!isCurrent()) return;
         if (!fresh) {
           pushToast("info", "已取消重连");
           return;
@@ -863,7 +900,7 @@ function AppShell() {
         setSessions([...list.filter((x) => x.id !== fresh.id), fresh]);
         await openTerminalTab(fresh);
       } catch (e) {
-        pushToast("error", `重新连接失败：${describeError(e)}`);
+        if (isCurrent()) pushToast("error", `重新连接失败：${describeError(e)}`);
       }
       return;
     }
@@ -938,7 +975,7 @@ function AppShell() {
           return;
         case "quickConnect":
           e.preventDefault();
-          setQuickConnectOpen(true);
+          setQuickConnectMode("all");
           return;
         case "toggleSidebar":
           e.preventDefault();
@@ -1089,16 +1126,19 @@ function AppShell() {
         if (accountChanged) {
           useUi.getState().resetAiAccount();
           advanceLayoutAccount();
+          useUi.getState().resetAccountWorkspaces();
           if (s.gate === "ready") onRemoteChange(null);
+          for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
         }
+        if (accountChanged || (prev.gate === "ready" && s.gate === "login")) resetTransferQueue();
         if (s.gate === prev.gate) return;
         if (s.gate === "ready" && prev.gate !== "loading") {
           onRemoteChange(null);
-          for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
+          if (!accountChanged) for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
           void useUi.getState().resyncSessions({ silent: true });
         } else if (prev.gate === "ready" && s.gate === "login") {
-          for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
-          useUi.getState().resetSessions({ clearWorkspaceRuntime: true });
+          if (!accountChanged) for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
+          if (!accountChanged) useUi.getState().resetSessions({ clearWorkspaceRuntime: true });
         }
       });
     });
@@ -1114,6 +1154,7 @@ function AppShell() {
     void (async () => {
       try {
         await layoutBootstrapped;
+        if (layoutRestoreStatus().pending || layoutRestoreStatus().preview) return;
         const list = await assetApi.list();
         if (list.some((a) => !a.builtin)) return;
         const builtin = list.find((a) => a.builtin && a.kind === "local");
@@ -1423,6 +1464,55 @@ function AppShell() {
           <TakeoverBanner />
           <UpdateBanner onOpenSettings={openSettings} />
           <DekUnlockBanner />
+          {(layoutRestore.pending || layoutRestore.preview) && (
+            <div role="status" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-blue-500/30 bg-blue-950/30 px-4 py-2 text-xs text-blue-100">
+              <span>
+                {layoutRestore.preview
+                  ? `已预览账号中的 ${layoutRestore.count} 个工作区。请确认目标与标签，然后完成恢复或撤销。`
+                  : `账号中有 ${layoutRestore.count} 个工作区待确认恢复；本设备暂不覆盖云端布局。`}
+              </span>
+              {layoutRestore.preview ? (
+                <>
+                  <button type="button" className="nx-btn-ghost" onClick={() => void finishLayoutRestore()}>完成恢复</button>
+                  <button type="button" className="nx-btn-ghost" onClick={undoLayoutRestore}>撤销恢复</button>
+                </>
+              ) : (
+                <button type="button" className="nx-btn-ghost" onClick={() => void reviewPendingLayoutRestore()}>
+                  查看并恢复
+                </button>
+              )}
+            </div>
+          )}
+          {ws?.deletedTarget && (
+            <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-500/30 bg-amber-950/30 px-4 py-2 text-xs text-amber-300">
+              <span>「{ws.title}」的资产已删除。现有标签可继续查看，但此工作区无法重新连接。</span>
+              <button type="button" className="nx-btn-ghost" onClick={() => { setLeftMode("assets"); setLeftOpen(true); }}>
+                选择其他资产
+              </button>
+              <button type="button" className="nx-btn-ghost" onClick={() => void closeWorkspace(ws.id)}>
+                关闭工作区
+              </button>
+            </div>
+          )}
+          {ws?.restorePending && (
+            <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-500/30 bg-amber-950/30 px-4 py-2 text-xs text-amber-300">
+              <span>「{ws.title}」的标签已恢复，连接尚未启动。请核对目标后手动连接。</span>
+              <button
+                type="button"
+                className="nx-btn-ghost"
+                disabled={ws.deletedTarget || restoringWorkspaceId === ws.id}
+                onClick={() => {
+                  const workspaceId = ws.id;
+                  setRestoringWorkspaceId(workspaceId);
+                  void reconnectRestoredWorkspace(workspaceId).then((result) => {
+                    if (!result.ok && result.error) pushToast("error", result.error);
+                  }).finally(() => setRestoringWorkspaceId(null));
+                }}
+              >
+                {restoringWorkspaceId === ws.id ? "连接中…" : "重新连接"}
+              </button>
+            </div>
+          )}
 
         <div className="nx-workspace-body flex min-h-0 flex-1 bg-neutral-900">
           {overlaySidebars && (leftDockOpen || rightDockOpen) && (
@@ -1603,10 +1693,15 @@ function AppShell() {
           onClose={() => setPaletteOpen(false)}
           onOpenFiles={openFiles}
           onEditAsset={(asset) => setPaletteEditingAsset(asset)}
-          onQuickConnect={() => setQuickConnectOpen(true)}
+          onQuickConnect={() => setQuickConnectMode("all")}
         />
       )}
-      {quickConnectOpen && <QuickConnect onClose={() => setQuickConnectOpen(false)} />}
+      {quickConnectMode && (
+        <QuickConnect
+          kindFilter={quickConnectMode === "database" ? "database" : undefined}
+          onClose={() => setQuickConnectMode(null)}
+        />
+      )}
       {paletteEditingAsset && (
         <AssetEditor
           kind="asset"
@@ -2071,6 +2166,22 @@ function PaneForTab({
   onClose: () => void;
 }) {
   const workspaceRuntimeEpoch = useUi((state) => state.workspaceRuntimeEpoch);
+  const restorePending = useUi((state) => state.workspaces.find((workspace) => workspace.id === workspaceId)?.restorePending);
+  if (restorePending) {
+    return (
+      <div className="flex h-full items-center justify-center px-6 text-center text-sm text-neutral-400">
+        此标签的旧连接未启动。请核对工作区目标，然后点击上方“重新连接”。
+      </div>
+    );
+  }
+  if (tab.kind === "terminal" && tab.containerId && tab.restorePending) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-neutral-400">
+        <span>旧容器终端不会自动重新执行。请在 Docker 容器列表中重新打开。</span>
+        <button type="button" className="nx-btn nx-btn-outline" onClick={onClose}>关闭旧标签</button>
+      </div>
+    );
+  }
   switch (tab.kind) {
     case "terminal":
       return tab.sessionId ? (

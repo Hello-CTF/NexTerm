@@ -286,7 +286,7 @@ func TestRemoteForwardEndToEndOverSSH(t *testing.T) {
 	}
 }
 
-func TestRemoteForwardEvictedWhenSSHConnectionDrops(t *testing.T) {
+func TestRemoteForwardFailureRemainsVisibleWhenSSHConnectionDrops(t *testing.T) {
 	server := newRemoteForwardSSHServer(t)
 	client := connectRemoteForwardClient(t, server)
 	targetPort := echoTargetPort(t)
@@ -333,9 +333,13 @@ func TestRemoteForwardEvictedWhenSSHConnectionDrops(t *testing.T) {
 		t.Fatal("established forwarded connection survived SSH drop")
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for len(service.List()) != 0 {
+	for {
+		listed := service.List()
+		if len(listed) == 1 && listed[0].ID == spec.ID && listed[0].Status == StatusFailed && listed[0].Error != "" {
+			break
+		}
 		if time.Now().After(deadline) {
-			t.Fatal("forward not evicted after SSH drop")
+			t.Fatalf("forward failure not visible after SSH drop: %+v", listed)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -350,6 +354,41 @@ func TestRemoteForwardEvictedWhenSSHConnectionDrops(t *testing.T) {
 			t.Fatal("server-side remote port survived SSH drop")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestRemoteForwardRebindsAfterSSHReconnect(t *testing.T) {
+	server := newRemoteForwardSSHServer(t)
+	firstClient := connectRemoteForwardClient(t, server)
+	provider := &switchProvider{dialer: firstClient}
+	service := NewService(Config{Provider: provider, Policy: Policy{Desktop: true}, DialTimeout: 2 * time.Second})
+	t.Cleanup(func() { _ = service.Close() })
+	spec, err := service.CreateRemote(t.Context(), CreateRemoteArgs{
+		SessionID: "ssh-session", BindHost: "127.0.0.1", TargetHost: "127.0.0.1", TargetPort: echoTargetPort(t),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEcho(t, dialForward(t, spec), "before-reconnect")
+	service.SuspendRemote("ssh-session")
+	listed := service.List()
+	if len(listed) != 1 || listed[0].ID != spec.ID || listed[0].Status != StatusReconnecting {
+		t.Fatalf("suspended forwards = %+v", listed)
+	}
+	if err := firstClient.Close(); err != nil {
+		t.Fatal(err)
+	}
+	secondClient := connectRemoteForwardClient(t, server)
+	provider.set(secondClient)
+	service.RestoreRemote(t.Context(), "ssh-session")
+	listed = service.List()
+	if len(listed) != 1 || listed[0].ID != spec.ID || listed[0].ListenPort != spec.ListenPort || listed[0].Status != StatusActive {
+		t.Fatalf("restored forwards = %+v", listed)
+	}
+	assertEcho(t, dialForward(t, listed[0]), "after-reconnect")
+	service.RestoreRemote(t.Context(), "ssh-session")
+	if got := len(service.List()); got != 1 {
+		t.Fatalf("duplicate forward after repeated restore: %d", got)
 	}
 }
 

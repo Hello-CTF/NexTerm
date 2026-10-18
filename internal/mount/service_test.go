@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/session"
 )
 
 func TestWindowsMountCredentialsUseStdinAndAudit(t *testing.T) {
@@ -65,6 +66,7 @@ func TestLinuxSSHFSAndFusermountCommands(t *testing.T) {
 	service := newTestService("linux", runner, &fakeAuditor{})
 	const password = "sshfs-secret"
 	entry, err := service.Create(t.Context(), CreateArgs{
+		SessionID:  "session-1",
 		RemotePath: "[2001:db8::1]:/srv",
 		LocalPoint: "/mnt/remote dir",
 		Username:   "alice",
@@ -76,7 +78,7 @@ func TestLinuxSSHFSAndFusermountCommands(t *testing.T) {
 	if entry.Remote != "alice@[2001:db8::1]:/srv" {
 		t.Fatalf("remote = %q", entry.Remote)
 	}
-	if err := service.Remove(t.Context(), RemoveArgs{LocalPoint: "/mnt/remote dir"}); err != nil {
+	if err := service.Remove(t.Context(), RemoveArgs{LocalPoint: "/mnt/remote dir", SessionID: "session-1"}); err != nil {
 		t.Fatal(err)
 	}
 	commands := requireCommandCount(t, runner, 2)
@@ -95,7 +97,8 @@ func TestLinuxSSHFSAndFusermountCommands(t *testing.T) {
 func TestLinuxFallsBackToFusermount(t *testing.T) {
 	runner := &fakeRunner{lookups: map[string]string{"fusermount": "fusermount"}}
 	service := newTestService("linux", runner, nil)
-	if err := service.Remove(t.Context(), RemoveArgs{LocalPoint: "/mnt/remote"}); err != nil {
+	service.owned["/mnt/remote"] = ownedMount{entry: Entry{LocalPoint: "/mnt/remote", SessionID: stringPointer("session-1")}}
+	if err := service.Remove(t.Context(), RemoveArgs{LocalPoint: "/mnt/remote", SessionID: "session-1"}); err != nil {
 		t.Fatal(err)
 	}
 	commands := requireCommandCount(t, runner, 1)
@@ -227,6 +230,80 @@ func TestIncompleteOrInjectedCredentialsAreRejected(t *testing.T) {
 			requireCommandCount(t, runner, 0)
 		})
 	}
+}
+
+func TestSessionMountScopeAndUnknownRemoval(t *testing.T) {
+	const table = "host:/srv on /mnt/shared type fuse.sshfs (rw)\n"
+	runner := &fakeRunner{
+		lookups: map[string]string{"sshfs": "sshfs", "mount": "mount", "fusermount3": "fusermount3"},
+		runs: []fakeRun{
+			{},
+			{result: commandResult{stdout: table}},
+			{result: commandResult{stdout: table}},
+			{result: commandResult{stdout: table}},
+			{result: commandResult{stdout: table}},
+			{},
+		},
+	}
+	service := newTestService("linux", runner, nil)
+	service.sessionHost = func(_ context.Context, sessionID string) (string, error) {
+		switch sessionID {
+		case "first":
+			return "asset-one", nil
+		case "second":
+			return "asset-two", nil
+		default:
+			return "", session.ErrSessionNotFound
+		}
+	}
+	created, err := service.Create(t.Context(), CreateArgs{SessionID: "first", RemotePath: "host:/srv", LocalPoint: "/mnt/shared"})
+	if err != nil || !created.Managed {
+		t.Fatalf("created = %+v, %v", created, err)
+	}
+	first, err := service.ListFor(t.Context(), listRequest{SessionID: "first"})
+	if err != nil || len(first) != 1 || first[0].ID != created.ID || !first[0].Managed {
+		t.Fatalf("first list = %+v, %v", first, err)
+	}
+	second, err := service.ListFor(t.Context(), listRequest{SessionID: "second"})
+	if err != nil || len(second) != 0 {
+		t.Fatalf("second list = %+v, %v", second, err)
+	}
+	global, err := service.ListFor(t.Context(), listRequest{Global: true})
+	if err != nil || len(global) != 1 || global[0].Managed || global[0].SessionID != nil {
+		t.Fatalf("global list = %+v, %v", global, err)
+	}
+	if err := service.Remove(t.Context(), RemoveArgs{SessionID: "second", LocalPoint: "/mnt/shared"}); err == nil {
+		t.Fatal("another session removed the mount")
+	}
+	if err := service.Remove(t.Context(), RemoveArgs{SessionID: "first", LocalPoint: "/mnt/shared"}); err != nil {
+		t.Fatal(err)
+	}
+	commands := requireCommandCount(t, runner, 6)
+	if commands[5].name != "fusermount3" {
+		t.Fatalf("last command = %+v", commands[5])
+	}
+	restarted := newTestService("linux", runner, nil)
+	restarted.sessionHost = service.sessionHost
+	if err := restarted.Remove(t.Context(), RemoveArgs{SessionID: "first", LocalPoint: "/mnt/shared"}); err == nil || !strings.Contains(err.Error(), "应用重启") {
+		t.Fatalf("removal after restart = %v", err)
+	}
+	requireCommandCount(t, runner, 6)
+}
+
+func TestMountPointReplacementIsNotUnmounted(t *testing.T) {
+	runner := &fakeRunner{
+		lookups: map[string]string{"sshfs": "sshfs", "mount": "mount", "fusermount3": "fusermount3"},
+		runs:    []fakeRun{{}, {result: commandResult{stdout: "other:/srv on /mnt/shared type fuse.sshfs (rw)\n"}}},
+	}
+	service := newTestService("linux", runner, nil)
+	service.sessionHost = func(context.Context, string) (string, error) { return "asset-one", nil }
+	if _, err := service.Create(t.Context(), CreateArgs{SessionID: "first", RemotePath: "host:/srv", LocalPoint: "/mnt/shared"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Remove(t.Context(), RemoveArgs{SessionID: "first", LocalPoint: "/mnt/shared"}); err == nil || !strings.Contains(err.Error(), "未执行卸载") {
+		t.Fatalf("replacement removal = %v", err)
+	}
+	requireCommandCount(t, runner, 2)
 }
 
 func assertUnsupported(t *testing.T, err error) {

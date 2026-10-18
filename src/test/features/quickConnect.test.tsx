@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => {
     listCredentials: vi.fn(),
     probeBatch: vi.fn(),
     sessionConnect: vi.fn(),
+    dbConnect: vi.fn(),
     sessionConnectQuick: vi.fn(),
     quickConnectDefaultUser: vi.fn(),
     assetCreate: vi.fn(),
@@ -53,7 +54,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       connectQuick: mocks.sessionConnectQuick,
       quickConnectDefaultUser: mocks.quickConnectDefaultUser,
     },
-    dbApi: {},
+    dbApi: { connect: mocks.dbConnect },
     vaultApi: {
       status: mocks.vaultStatus,
       listCredentials: mocks.listCredentials,
@@ -75,7 +76,8 @@ vi.mock("../../app/platform", async (importOriginal) => {
 });
 
 import { QuickConnect } from "../../app/QuickConnect";
-import { useUi } from "../../app/store";
+import { reconnectDeadHost, useUi } from "../../app/store";
+import { sanitizeLayout } from "../../app/layout";
 import { useAssetVisibility } from "../../features/explorer/assetVisibility";
 import { useConnectHistory } from "../../features/explorer/connectHistory";
 import { useAssetReachability } from "../../features/explorer/assetReachability";
@@ -106,6 +108,8 @@ function assetOf(extra: Partial<Asset> & { id: string; name: string }): Asset {
 const WEB = assetOf({ id: "a-web", name: "web-01" });
 const WEB2 = assetOf({ id: "a-web2", name: "web-02", host: "10.0.0.18" });
 const DB = assetOf({ id: "a-db", name: "db-01", kind: "mysql", host: "10.0.0.9", port: 3306 });
+const POSTGRES = assetOf({ id: "a-postgres", name: "postgres-01", kind: "postgres", host: "10.0.0.10", port: 5432 });
+const REDIS = assetOf({ id: "a-redis", name: "redis-01", kind: "redis", host: "10.0.0.11", port: 6379 });
 const LOCAL = assetOf({
   id: "a-local",
   name: "Current device",
@@ -148,7 +152,7 @@ const CREATED_ASSET = assetOf({
 let mounted: MountedView | undefined;
 const mountedViews: MountedView[] = [];
 
-function mountOverlay(props: { onClose: () => void }): MountedView {
+function mountOverlay(props: { onClose: () => void; kindFilter?: "database" }): MountedView {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   mounted = mount(
     createElement(QueryClientProvider, { client }, createElement(QuickConnect, props)),
@@ -157,7 +161,7 @@ function mountOverlay(props: { onClose: () => void }): MountedView {
   return mounted;
 }
 
-async function mountSettled(props: { onClose: () => void }): Promise<MountedView> {
+async function mountSettled(props: { onClose: () => void; kindFilter?: "database" }): Promise<MountedView> {
   const view = mountOverlay(props);
   await waitFor(() => {
     if (
@@ -219,6 +223,7 @@ beforeEach(() => {
   mocks.list.mockResolvedValue([{ ...WEB }, { ...DB }, { ...LOCAL }]);
   mocks.probeBatch.mockResolvedValue({ results: [] });
   mocks.sessionConnect.mockResolvedValue(SESSION);
+  mocks.dbConnect.mockResolvedValue({ connId: "db-1" });
   mocks.sessionConnectQuick.mockResolvedValue(QUICK_SESSION);
   mocks.quickConnectDefaultUser.mockResolvedValue("ubuntu");
   mocks.assetCreate.mockResolvedValue({ ...CREATED_ASSET });
@@ -272,6 +277,22 @@ describe("QuickConnect rendering and recency/frequency ordering", () => {
 });
 
 describe("QuickConnect asset search", () => {
+  it("shows host identities for same-name assets even while one is connecting", async () => {
+    mocks.list.mockResolvedValue([
+      { ...WEB, name: "shared" },
+      { ...WEB2, name: "shared", username: "deploy" },
+    ]);
+    useUi.setState({ connectingAssetIds: [WEB2.id] });
+    const view = await mountSettled({ onClose: vi.fn() });
+    const rows = options(view.container).filter((row) => row.textContent?.includes("shared"));
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining("root@10.0.0.8:22"),
+      expect.stringContaining("deploy@10.0.0.18:22"),
+    ]);
+    expect(rows[1]?.textContent).toContain("连接中");
+  });
+
   it("filters by name", async () => {
     const view = await mountSettled({ onClose: vi.fn() });
     setInputValue(searchInput(view.container), "db-01");
@@ -296,6 +317,78 @@ describe("QuickConnect asset search", () => {
     await flush();
     expect(options(view.container)).toHaveLength(0);
     expect(view.container.textContent).toContain("没有匹配的资产");
+  });
+});
+
+describe("QuickConnect database entry scope", () => {
+  it("shows a database-specific empty state and no SSH actions when there are no database assets", async () => {
+    mocks.list.mockResolvedValue([{ ...WEB }, { ...LOCAL }]);
+    const view = mountOverlay({ onClose: vi.fn(), kindFilter: "database" });
+    await waitFor(() => expect(view.container.textContent).toContain("还没有数据库资产"));
+    expect(options(view.container)).toHaveLength(0);
+    expect(view.container.textContent).not.toContain("导入 SSH 配置");
+    expect(view.container.textContent).not.toContain("打开本机终端");
+
+    setInputValue(searchInput(view.container), "admin@example.com:22");
+    await flush();
+    expect(options(view.container)).toHaveLength(0);
+    expect(view.container.textContent).toContain("没有匹配的数据库资产");
+    expect(view.container.textContent).not.toContain("保存为资产并连接");
+  });
+
+  it("offers hidden database assets from the empty filtered result", async () => {
+    useAssetVisibility.getState().hide(DB.id);
+    const view = mountOverlay({ onClose: vi.fn(), kindFilter: "database" });
+    await waitFor(() => expect(view.container.textContent).toContain("数据库资产已隐藏"));
+    expect(options(view.container)).toHaveLength(0);
+
+    const reveal = [...view.container.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes("显示隐藏资产"),
+    );
+    expect(reveal).toBeTruthy();
+    click(reveal!);
+    await waitFor(() => expect(options(view.container)).toHaveLength(1));
+    expect(options(view.container)[0]?.textContent).toContain("db-01");
+  });
+
+  it("shows and connects the sole database asset while hiding SSH and local assets", async () => {
+    const onClose = vi.fn();
+    const view = await mountSettled({ onClose, kindFilter: "database" });
+    expect(options(view.container)).toHaveLength(1);
+    expect(options(view.container)[0]?.textContent).toContain("db-01");
+    expect(view.container.textContent).not.toContain("web-01");
+    expect(view.container.textContent).not.toContain("Current device");
+
+    click(options(view.container)[0]);
+    await waitFor(() => expect(mocks.dbConnect).toHaveBeenCalledWith(DB.id));
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(mocks.sessionConnect).not.toHaveBeenCalled();
+  });
+
+  it("lists all supported database kinds and never offers an ad-hoc SSH row", async () => {
+    mocks.list.mockResolvedValue([{ ...WEB }, { ...DB }, { ...POSTGRES }, { ...REDIS }]);
+    const view = await mountSettled({ onClose: vi.fn(), kindFilter: "database" });
+    expect(options(view.container).map((row) => row.textContent)).toEqual([
+      expect.stringContaining("db-01"),
+      expect.stringContaining("postgres-01"),
+      expect.stringContaining("redis-01"),
+    ]);
+    setInputValue(searchInput(view.container), "admin@example.com:22");
+    await flush();
+    expect(options(view.container)).toHaveLength(0);
+    expect(view.container.textContent).toContain("没有匹配的数据库资产");
+  });
+
+  it("rechecks the kind when activating a row whose asset changed after loading", async () => {
+    const changed = { ...DB };
+    mocks.list.mockResolvedValue([changed]);
+    const view = await mountSettled({ onClose: vi.fn(), kindFilter: "database" });
+    changed.kind = "ssh";
+
+    click(options(view.container)[0]);
+    expect(mocks.dbConnect).not.toHaveBeenCalled();
+    expect(mocks.sessionConnect).not.toHaveBeenCalled();
+    expect(mocks.toast).toHaveBeenCalledWith("info", "这里只能连接数据库资产");
   });
 });
 
@@ -555,6 +648,33 @@ describe("QuickConnect screen reader and responsive contracts", () => {
 });
 
 describe("QuickConnect ad-hoc connections", () => {
+  it("keeps a non-secret target for dead-session recovery and never changes a remote target to local", async () => {
+    const view = await mountSettled({ onClose: vi.fn() });
+    const input = searchInput(view.container);
+    setInputValue(input, "deploy@example.com:2222");
+    await flush();
+    pressKey(input, "Enter");
+    await waitFor(() => expect(useUi.getState().workspaces.length).toBe(1));
+    const workspace = useUi.getState().workspaces[0];
+    expect(workspace.quickTarget).toMatchObject({
+      host: "example.com", port: 2222, username: "deploy", authKind: "password",
+    });
+    expect(JSON.stringify(workspace)).not.toContain("secret");
+
+    const persisted = sanitizeLayout({
+      v: 3, leftOpen: true, leftMode: "assets", rightOpen: false,
+      leftWidth: 300, rightWidth: 400, workspaces: [workspace],
+      activeWorkspaceId: workspace.id, aiBoards: {},
+    });
+    expect(persisted?.workspaces[0].quickTarget).toEqual(workspace.quickTarget);
+    mocks.sessionConnectQuick.mockClear();
+    await reconnectDeadHost(persisted!.workspaces[0]);
+    expect(mocks.sessionConnectQuick).toHaveBeenCalledWith({
+      host: "example.com", port: 2222, username: "deploy", authKind: "password", password: "secret",
+    });
+    await expect(reconnectDeadHost({ title: "legacy remote", assetKind: "ssh" })).rejects.toThrow("缺少可恢复的主机目标");
+  });
+
   it("shows ad-hoc and save-as-asset rows for user@host:port, defaulting Enter to the ad-hoc connection", async () => {
     const onClose = vi.fn();
     const view = await mountSettled({ onClose });

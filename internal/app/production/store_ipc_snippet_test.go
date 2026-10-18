@@ -91,6 +91,12 @@ func TestSnippetIPCGroupPlacementAndOrdering(t *testing.T) {
 	if err := registerStoreCommands(dispatcher, database, nil, t.TempDir(), true); err != nil {
 		t.Fatal(err)
 	}
+	const groupA, groupB = "00000000000000000000000001", "00000000000000000000000002"
+	for _, id := range []string{groupA, groupB} {
+		if _, err := database.GroupUpsert(ctx, id, nil, id, 0, 1, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	create := func(args string) string {
 		t.Helper()
@@ -126,12 +132,12 @@ func TestSnippetIPCGroupPlacementAndOrdering(t *testing.T) {
 	}
 
 	loose := create(`{"name":"loose","body":"echo loose","sort":9}`)
-	beta := create(`{"name":"beta","body":"echo beta","groupId":"g-a","sort":1}`)
-	create(`{"name":"zeta","body":"echo zeta","groupId":"g-b","sort":1}`)
-	alpha := create(`{"name":"alpha","body":"echo alpha","groupId":"g-b","sort":2}`)
-	create(`{"name":"eta","body":"echo eta","groupId":"g-b","sort":3}`)
-	tie1 := create(`{"name":"twin","body":"echo twin1","groupId":"g-b","sort":4}`)
-	tie2 := create(`{"name":"twin","body":"echo twin2","groupId":"g-b","sort":4}`)
+	beta := create(`{"name":"beta","body":"echo beta","groupId":"` + groupA + `","sort":1}`)
+	create(`{"name":"zeta","body":"echo zeta","groupId":"` + groupB + `","sort":1}`)
+	alpha := create(`{"name":"alpha","body":"echo alpha","groupId":"` + groupB + `","sort":2}`)
+	create(`{"name":"eta","body":"echo eta","groupId":"` + groupB + `","sort":3}`)
+	tie1 := create(`{"name":"twin","body":"echo twin1","groupId":"` + groupB + `","sort":4}`)
+	tie2 := create(`{"name":"twin","body":"echo twin2","groupId":"` + groupB + `","sort":4}`)
 
 	rows := listSnippets()
 	if len(rows) != 7 {
@@ -140,30 +146,30 @@ func TestSnippetIPCGroupPlacementAndOrdering(t *testing.T) {
 	if rows[0].ID != loose || rows[0].GroupID != nil {
 		t.Fatalf("ungrouped snippet must sort first: %+v", rows[0])
 	}
-	if rows[1].ID != beta || *rows[1].GroupID != "g-a" {
+	if rows[1].ID != beta || *rows[1].GroupID != groupA {
 		t.Fatalf("group g-a must follow: %+v", rows[1])
 	}
-	groupB := []snippetDTO{rows[2], rows[3], rows[4], rows[5], rows[6]}
-	for _, row := range groupB {
-		if row.GroupID == nil || *row.GroupID != "g-b" {
+	groupBRows := []snippetDTO{rows[2], rows[3], rows[4], rows[5], rows[6]}
+	for _, row := range groupBRows {
+		if row.GroupID == nil || *row.GroupID != groupB {
 			t.Fatalf("group g-b rows not adjacent: %+v", rows)
 		}
 	}
 	wantOrder := []string{"zeta", "alpha", "eta", "twin", "twin"}
-	if got := names(groupB); !slices.Equal(got, wantOrder) {
+	if got := names(groupBRows); !slices.Equal(got, wantOrder) {
 		t.Fatalf("group order = %v, want %v", got, wantOrder)
 	}
 	tieFirst, tieSecond := tie1, tie2
 	if tie2 < tie1 {
 		tieFirst, tieSecond = tie2, tie1
 	}
-	if groupB[3].ID != tieFirst || groupB[4].ID != tieSecond {
-		t.Fatalf("id tiebreak = %v then %v, want %v then %v", groupB[3].ID, groupB[4].ID, tieFirst, tieSecond)
+	if groupBRows[3].ID != tieFirst || groupBRows[4].ID != tieSecond {
+		t.Fatalf("id tiebreak = %v then %v, want %v then %v", groupBRows[3].ID, groupBRows[4].ID, tieFirst, tieSecond)
 	}
 
-	update(`{"id":"` + alpha + `","name":"alpha","body":"echo alpha","groupId":"g-a","sort":7}`)
+	update(`{"id":"` + alpha + `","name":"alpha","body":"echo alpha","groupId":"` + groupA + `","sort":7}`)
 	rows = listSnippets()
-	if rows[1].ID != beta || rows[2].ID != alpha || *rows[2].GroupID != "g-a" || rows[2].Sort != 7 {
+	if rows[1].ID != beta || rows[2].ID != alpha || *rows[2].GroupID != groupA || rows[2].Sort != 7 {
 		t.Fatalf("moved snippet = %+v", rows)
 	}
 
@@ -175,7 +181,7 @@ func TestSnippetIPCGroupPlacementAndOrdering(t *testing.T) {
 
 	update(`{"id":"` + beta + `","name":"beta","body":"echo beta","sort":5}`)
 	rows = listSnippets()
-	if rows[2].ID != beta || *rows[2].GroupID != "g-a" || rows[2].Sort != 5 {
+	if rows[2].ID != beta || *rows[2].GroupID != groupA || rows[2].Sort != 5 {
 		t.Fatalf("omitted groupId must keep placement: %+v", rows)
 	}
 

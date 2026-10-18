@@ -71,6 +71,16 @@ func TestProbeHostKeyStates(t *testing.T) {
 	}
 }
 
+func TestProbeHostKeyApprovalReadFailure(t *testing.T) {
+	server := newTestSSHServer(t, nil)
+	readErr := errors.New("approval ledger unavailable")
+	store := &ledgerHostKeyStore{MemoryHostKeyStore: NewMemoryHostKeyStore(), err: readErr}
+	result, err := ProbeHostKey(t.Context(), probeConfig(t, server, store))
+	if result != nil || !errors.Is(err, readErr) {
+		t.Fatalf("probe = %+v, %v", result, err)
+	}
+}
+
 func TestProbeHostKeyClassifiedFailures(t *testing.T) {
 	store := NewMemoryHostKeyStore()
 

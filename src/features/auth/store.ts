@@ -10,6 +10,7 @@ import {
   setCsrfToken,
   MFA_ENROLLMENT_REQUIRED_EVENT,
   SESSION_EXPIRED_EVENT,
+  SESSION_IDENTITY_CHANGED_EVENT,
   type AccountSession,
   type AccountStatus,
   type AccountUser,
@@ -26,6 +27,7 @@ import {
   type DekEnvelopes,
 } from "./crypto";
 import { DESKTOP, WEB } from "../../ipc/env";
+import { currentAuthSessionEpoch } from "../../ipc/authSessionEpoch";
 import { createHttpPreferenceStore, registerAccountPreferenceStore } from "../../app/preferences";
 import type { AppError } from "../../ipc/commands";
 
@@ -231,7 +233,9 @@ export const useAuth = create<AuthState>((set, get) => ({
         return;
       }
       try {
+        const sessionEpoch = currentAuthSessionEpoch();
         const session = await authApi.me();
+        if (currentAuthSessionEpoch() !== sessionEpoch) return;
         set({ user: session.user });
         if (session.user.state === "reset_required") {
           set({ gate: "reset_required" });
@@ -247,7 +251,9 @@ export const useAuth = create<AuthState>((set, get) => ({
         // Users see neither login nor the init code - opening the app means being the owner.
         if (status.auth === "platform") {
           try {
+            const sessionEpoch = currentAuthSessionEpoch();
             const session = await authApi.platformSession();
+            if (currentAuthSessionEpoch() !== sessionEpoch) return;
             set({
               user: session.user,
               gate: session.user.state === "reset_required" ? "reset_required" : "ready",
@@ -468,6 +474,27 @@ export const useAuth = create<AuthState>((set, get) => ({
 
 // On session expiry (401), notify the gate to re-login; mounted and listened to by AuthGate in main.tsx.
 if (typeof window !== "undefined") {
+  window.addEventListener(SESSION_IDENTITY_CHANGED_EVENT, (event) => {
+    const session = (event as CustomEvent<AccountSession>).detail;
+    if (!session?.user) return;
+    const state = useAuth.getState();
+    if (!state.user || state.user.id === session.user.id) return;
+    clearPersistedDek(state.user.id);
+    zeroize(state.dek);
+    const nextGate = session.user.state === "reset_required"
+      ? "reset_required"
+      : (!session.user.mfa_enabled && session.mfa_required ? "mfa_enroll" : "ready");
+    useAuth.setState({
+      user: session.user,
+      dek: restoreDek(session.user.id),
+      gate: nextGate,
+      pendingRecoveryKey: null,
+      pendingMfa: null,
+      mfaEnrollmentPassword: null,
+      error: null,
+    });
+    syncPreferenceStore(true);
+  });
   window.addEventListener(SESSION_EXPIRED_EVENT, () => {
     const state = useAuth.getState();
     if (state.user) {

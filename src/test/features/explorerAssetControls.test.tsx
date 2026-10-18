@@ -169,6 +169,70 @@ afterEach(() => {
 });
 
 describe("asset group controls", () => {
+  it("renders parent, child, and grandchild groups at their actual tree levels", async () => {
+    mocks.groupList.mockResolvedValue([
+      { ...GROUP },
+      { ...GROUP, id: "g2", parentId: "g1", name: "应用" },
+      { ...GROUP, id: "g3", parentId: "g2", name: "生产" },
+    ]);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.querySelectorAll('[role="treeitem"][aria-expanded]').length).toBe(3));
+    const rows = [...mounted.container.querySelectorAll<HTMLElement>('[role="treeitem"][aria-expanded]')];
+    expect(rows.map((row) => row.getAttribute("aria-level"))).toEqual(["1", "2", "3"]);
+    expect(rows[2].querySelector("button span[title='生产 / 应用 / 生产']")).not.toBeNull();
+    expect(rows[2].querySelector("span[title='生产 / 应用']")).not.toBeNull();
+    click(rows[0].querySelector("button")!);
+    await flush();
+    expect(mounted.container.querySelectorAll('[role="treeitem"][aria-expanded]').length).toBe(1);
+  });
+
+  it("creates a child group under the selected parent", async () => {
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("生产"));
+    const row = mounted.container.querySelector<HTMLElement>('[role="treeitem"][aria-expanded]')!;
+    act(() => row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
+    const childAction = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((item) => item.textContent?.includes("新建子分组"));
+    expect(childAction).toBeTruthy();
+    click(childAction!);
+    const modal = mounted.container.querySelector(".nx-modal")!;
+    const name = modal.querySelector<HTMLInputElement>('input[placeholder="生产环境"]')!;
+    setInputValue(name, "应用");
+    expect(modal.querySelector<HTMLSelectElement>("select.nx-select")?.value).toBe("g1");
+    clickButton(modal, "保存");
+    await waitFor(() => expect(mocks.groupCreate).toHaveBeenCalledWith("应用", "g1"));
+  });
+
+  it("moves a group to a parent using path labels and excludes its own descendants", async () => {
+    mocks.groupList.mockResolvedValue([
+      { ...GROUP },
+      { ...GROUP, id: "g2", parentId: "g1", name: "应用" },
+      { ...GROUP, id: "g3", parentId: null, name: "生产" },
+    ]);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.querySelectorAll('[role="treeitem"][aria-expanded]').length).toBe(3));
+    click(buttonByTitle(mounted.container, "重命名分组"));
+    const select = mounted.container.querySelector<HTMLSelectElement>(".nx-modal select.nx-select")!;
+    expect([...select.options].map((option) => option.textContent)).toContain("生产");
+    expect([...select.options].some((option) => option.value === "g2")).toBe(false);
+    setSelectValue(select, "g3");
+    clickButton(mounted.container, "保存");
+    await waitFor(() => expect(mocks.groupUpdate).toHaveBeenCalledWith("g1", undefined, "g3"));
+  });
+
+  it("keeps orphan and cyclic groups visible with an explicit repair action", async () => {
+    mocks.groupList.mockResolvedValue([
+      { ...GROUP, id: "orphan", parentId: "missing", name: "孤儿" },
+      { ...GROUP, id: "a", parentId: "b", name: "循环 A" },
+      { ...GROUP, id: "b", parentId: "a", name: "循环 B" },
+    ]);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("父分组不存在"));
+    expect(mounted.container.textContent).toContain("父子关系形成循环");
+    expect(mounted.container.querySelectorAll('[role="treeitem"][aria-expanded]').length).toBe(3);
+    clickButton(mounted.container, "移到根目录");
+    await waitFor(() => expect(mocks.groupUpdate).toHaveBeenCalledWith("orphan", undefined, null));
+  });
+
   it("renames only through the explicit dialog — never on row selection", async () => {
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() => expect(mounted!.container.textContent).toContain("生产"));
@@ -315,6 +379,98 @@ describe("asset group controls", () => {
     deletedAt: null,
     builtin: false,
   };
+
+  it("shows an asset whose group is missing and lets the user restore it to the root", async () => {
+    mocks.list.mockResolvedValue([{ ...ASSET_IN_GROUP, groupId: "missing" }]);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("所属分组不存在"));
+    expect(mounted.container.textContent).toContain("web-1");
+    clickButton(mounted.container, "移到根目录");
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledWith({ id: "a1", groupId: null }));
+  });
+
+  function dropAsset(target: Element, assetId = "a1") {
+    const drop = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, "dataTransfer", {
+      value: { types: ["application/x-nexterm-asset"], getData: () => assetId },
+    });
+    act(() => target.dispatchEvent(drop));
+  }
+
+  it("keeps a failed move in its original group and retries the same target", async () => {
+    let current = [{ ...ASSET_IN_GROUP, groupId: "g1" as string | null }];
+    mocks.list.mockImplementation(async () => current);
+    mocks.update
+      .mockRejectedValueOnce({ code: "internal", message: "disk on fire" })
+      .mockImplementationOnce(async () => {
+        current = [{ ...ASSET_IN_GROUP, groupId: null }];
+      });
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+
+    const tree = mounted!.container.querySelector("[role='tree']");
+    if (!tree) throw new Error("Tree not found");
+    dropAsset(tree);
+    await flush();
+    await waitFor(() => expect(mounted!.container.textContent).toContain("移动失败：内部错误：disk on fire"));
+    expect(mounted!.container.textContent).toContain("仍在「生产」，目标「根目录」");
+    expect(mounted!.container.querySelector('[role="treeitem"][aria-expanded]')?.textContent).toContain("web-1");
+    expect(mocks.toast).not.toHaveBeenCalledWith("info", "已移出分组");
+
+    clickButton(mounted!.container, "重试移动");
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(2));
+    expect(mocks.update).toHaveBeenNthCalledWith(2, { id: "a1", groupId: null });
+    await waitFor(() => expect(mounted!.container.textContent).not.toContain("disk on fire"));
+    expect(mocks.toast).toHaveBeenCalledWith("info", "已移出分组");
+    await waitFor(() => expect(mounted!.container.querySelector('[role="treeitem"][aria-expanded]')?.textContent).not.toContain("web-1"));
+    expect(mounted!.container.textContent).toContain("web-1");
+  });
+
+  it("keeps a failed move to a group at the root until the user cancels retry", async () => {
+    mocks.list.mockResolvedValue([{ ...ASSET_IN_GROUP, groupId: null }]);
+    mocks.update.mockRejectedValue({ code: "internal", message: "group unavailable" });
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+
+    const group = mounted!.container.querySelector('[role="treeitem"][aria-expanded]');
+    if (!group) throw new Error("Group not found");
+    dropAsset(group);
+    await flush();
+    await waitFor(() => expect(mounted!.container.textContent).toContain("移动失败：内部错误：group unavailable"));
+    expect(mounted!.container.textContent).toContain("仍在「根目录」，目标「生产」");
+    expect(group.textContent).not.toContain("web-1");
+    clickButton(mounted!.container, "取消移动");
+    await flush();
+    expect(mounted!.container.textContent).not.toContain("group unavailable");
+    expect(mocks.update).toHaveBeenCalledTimes(1);
+    expect(mounted!.container.textContent).toContain("web-1");
+  });
+
+  it("reopens the source group to show a move failure that completed after collapse", async () => {
+    const pending = deferred<unknown>();
+    mocks.list.mockResolvedValue([{ ...ASSET_IN_GROUP }]);
+    mocks.update.mockReturnValueOnce(pending.promise);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+
+    const tree = mounted!.container.querySelector("[role='tree']");
+    if (!tree) throw new Error("Tree not found");
+    dropAsset(tree);
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1));
+    await flush();
+    expect(mounted!.container.textContent).toContain("正在移至「根目录」");
+    click(groupToggle(mounted!.container));
+    await flush();
+    expect(mounted!.container.querySelector('[role="treeitem"][aria-expanded]')?.getAttribute("aria-expanded")).toBe("false");
+
+    await act(async () => {
+      pending.reject({ code: "internal", message: "network down" });
+      await pending.promise.catch(() => undefined);
+    });
+    await waitFor(() => expect(mounted!.container.textContent).toContain("移动失败：内部错误：network down"));
+    expect(mounted!.container.textContent).not.toContain("正在移至");
+    expect(mounted!.container.querySelector('[role="treeitem"][aria-expanded]')?.getAttribute("aria-expanded")).toBe("true");
+  });
 
   function groupToggle(container: ParentNode): HTMLButtonElement {
     const toggle = [...container.querySelectorAll("button")].find((b) =>

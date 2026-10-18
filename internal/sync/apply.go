@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -105,8 +106,9 @@ func (e *Engine) applyPlainObjects(ctx context.Context, request ApplyObjectsRequ
 		return ApplyObjectsResult{}, ipc.NewError(ipc.CodeBadParam,
 			fmt.Sprintf("单次应用对象数超过上限 %d", maxApplyObjectsPerCall))
 	}
-	result := ApplyObjectsResult{Objects: make([]ApplyObjectResult, 0, len(request.Objects))}
-	for _, object := range request.Objects {
+	result := ApplyObjectsResult{Objects: make([]ApplyObjectResult, len(request.Objects))}
+	for _, index := range applyObjectOrder(request.Objects) {
+		object := request.Objects[index]
 		entry := e.applyPlainObject(ctx, object, userIDs...)
 		switch entry.Result {
 		case ApplyResultApplied:
@@ -116,9 +118,47 @@ func (e *Engine) applyPlainObjects(ctx context.Context, request ApplyObjectsRequ
 		default:
 			result.Skipped++
 		}
-		result.Objects = append(result.Objects, entry)
+		result.Objects[index] = entry
 	}
 	return result, nil
+}
+
+func applyObjectOrder(objects []ApplyObject) []int {
+	indices := make([]int, len(objects))
+	groups := make(map[string]int)
+	for index, object := range objects {
+		indices[index] = index
+		if object.Kind == KindGroup {
+			if _, exists := groups[object.ID]; !exists {
+				groups[object.ID] = index
+			}
+		}
+	}
+	sort.SliceStable(indices, func(left, right int) bool {
+		return objectKindRank(objects[indices[left]].Kind) < objectKindRank(objects[indices[right]].Kind)
+	})
+	ordered := make([]int, 0, len(indices))
+	visited := make(map[int]bool)
+	var visit func(int)
+	visit = func(index int) {
+		if visited[index] {
+			return
+		}
+		visited[index] = true
+		if objects[index].Kind == KindGroup {
+			var group groupObject
+			if json.Unmarshal(objects[index].Payload, &group) == nil && group.ParentID != nil {
+				if parent, found := groups[*group.ParentID]; found {
+					visit(parent)
+				}
+			}
+		}
+		ordered = append(ordered, index)
+	}
+	for _, index := range indices {
+		visit(index)
+	}
+	return ordered
 }
 
 // applyPlainObject validates and applies a single plaintext object; validation failures are isolated as that object's skipped + warning and do not block the whole batch.
@@ -149,6 +189,28 @@ func (e *Engine) applyPlainObject(ctx context.Context, object ApplyObject, userI
 	canonical, err := canonicalApplyPayload(object)
 	if err != nil {
 		return reject("%v", err)
+	}
+	if object.Kind == KindGroup {
+		var group groupObject
+		if err := json.Unmarshal(canonical, &group); err != nil {
+			return reject("%v", err)
+		}
+		if group.ParentID != nil && *group.ParentID != "" {
+			if *group.ParentID == group.ID {
+				return reject("分组不能将自身设为父级")
+			}
+			if _, err := e.store.GroupGet(ctx, *group.ParentID); isNotFound(err) {
+				tombstone, found, tombstoneErr := e.syncTombstoneGet(ctx, *group.ParentID)
+				if tombstoneErr != nil {
+					return reject("无法检查父级删除标记：%v", tombstoneErr)
+				}
+				if !found || tombstone.Kind != KindGroup || tombstone.DeletedAt < group.UpdatedAt {
+					return reject("父级分组 %s 尚未同步，稍后重试", *group.ParentID)
+				}
+			} else if err != nil {
+				return reject("无法检查父级分组：%v", err)
+			}
+		}
 	}
 	report := &SyncReport{}
 	applied, identical := e.applyDecryptedObject(ctx, object.ID, object.Kind, canonical, report, userIDs...)

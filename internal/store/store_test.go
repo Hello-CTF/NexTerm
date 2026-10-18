@@ -142,7 +142,10 @@ func TestMigrationConcurrentFirstOpen(t *testing.T) {
 func TestForeignKeysAreEnforced(t *testing.T) {
 	db := testStore(t)
 	_, err := db.AssetCreate(context.Background(), AssetInput{GroupID: ptr("missing"), Kind: "ssh", Name: "bad", OptionsJSON: "{}"})
-	requireCode(t, err, ipc.CodeDB)
+	requireCode(t, err, ipc.CodeBadParam)
+	if err := db.GORM().Create(&AssetRow{ID: "invalid-foreign-key", GroupID: ptr("missing"), Kind: "ssh", Name: "bad", OptionsJSON: "{}"}).Error; err == nil {
+		t.Fatal("database accepted a missing group reference")
+	}
 }
 
 func TestLayoutOptimisticLockingAndCorruptionFallback(t *testing.T) {

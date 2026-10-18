@@ -99,6 +99,7 @@ export interface AppTab {
   renamedByUser?: boolean;
   unread?: boolean;
   closeError?: string;
+  restorePending?: boolean;
 }
 
 export type WorkspaceKind = "session" | "db" | "tools";
@@ -118,6 +119,9 @@ export interface Workspace {
   connId?: string;
   dbKind?: DbKind;
   assetKind?: string;
+  quickTarget?: QuickWorkspaceTarget;
+  deletedTarget?: boolean;
+  restorePending?: boolean;
   panes: Pane[];
   activePaneId: string;
   splitRatio: number;
@@ -132,6 +136,12 @@ export interface WorkspaceSpec {
   connId?: string;
   dbKind?: DbKind;
   assetKind?: string;
+  quickTarget?: QuickWorkspaceTarget;
+}
+
+export interface QuickWorkspaceTarget extends QuickConnectTarget {
+  id: string;
+  authKind: "agent" | "password";
 }
 
 export interface SqlDraft {
@@ -350,7 +360,8 @@ interface UiState {
 
   ensureWorkspace: (spec: WorkspaceSpec) => string;
   setActiveWorkspace: (id: string) => void;
-  closeWorkspace: (id: string) => Promise<void>;
+  closeWorkspace: (id: string) => Promise<boolean>;
+  markDeletedAssetWorkspaces: (assetId: string) => void;
 
   splitWorkspace: (workspaceId?: string) => void;
   openInLowerPane: (tab: AppTab, workspaceId?: string) => void;
@@ -373,6 +384,7 @@ interface UiState {
   setSessions: (s: SessionInfo[]) => void;
   resyncSessions: (options?: { silent?: boolean }) => Promise<void>;
   resetSessions: (options?: { clearWorkspaceRuntime?: boolean }) => void;
+  resetAccountWorkspaces: () => void;
   sessionResyncFailed: boolean;
   setAiBusy: (v: boolean) => void;
   pushToast: (kind: ToastItem["kind"], text: string) => void;
@@ -604,8 +616,8 @@ const PLACEHOLDER_WS_TITLES = new Set(["工作区", "会话", "标签"]);
 function workspaceFieldPatch(
   w: Workspace,
   spec: WorkspaceSpec,
-): Partial<Pick<Workspace, "title" | "assetId" | "assetKind">> | null {
-  const patch: Partial<Pick<Workspace, "title" | "assetId" | "assetKind">> = {};
+): Partial<Pick<Workspace, "title" | "assetId" | "assetKind" | "quickTarget">> | null {
+  const patch: Partial<Pick<Workspace, "title" | "assetId" | "assetKind" | "quickTarget">> = {};
   let changed = false;
   if (!w.assetId && spec.assetId) {
     patch.assetId = spec.assetId;
@@ -613,6 +625,10 @@ function workspaceFieldPatch(
   }
   if (!w.assetKind && spec.assetKind) {
     patch.assetKind = spec.assetKind;
+    changed = true;
+  }
+  if (!w.quickTarget && spec.quickTarget) {
+    patch.quickTarget = spec.quickTarget;
     changed = true;
   }
   if (spec.title && spec.title !== w.title && (!w.title || PLACEHOLDER_WS_TITLES.has(w.title))) {
@@ -774,6 +790,11 @@ export const useUi = create<UiState>((set, get) => ({
   },
 
   setActiveWorkspace: (id) => set({ activeWorkspaceId: id }),
+  markDeletedAssetWorkspaces: (assetId) => set((st) => ({
+    workspaces: st.workspaces.map((w) =>
+      w.assetId === assetId ? { ...w, deletedTarget: true } : w,
+    ),
+  })),
 
   closeWorkspace: async (id) => {
     const sameSqlDraft = (left: SqlDraft | undefined, right: SqlDraft | undefined): boolean => {
@@ -789,23 +810,27 @@ export const useUi = create<UiState>((set, get) => ({
     };
     const { workspaces } = get();
     const target = workspaces.find((w) => w.id === id);
-    if (!target) return;
+    if (!target) return false;
+    const epoch = get().workspaceRuntimeEpoch;
     const tabs = target.panes.flatMap((p) => p.tabs);
     const summary = collectWorkspaceClose(tabs, target.assetKind, target.kind, id);
-    if (!(await confirmWorkspaceClose(summary, target.title))) return;
+    if (!(await confirmWorkspaceClose(summary, target.title))) return false;
+    if (get().workspaceRuntimeEpoch !== epoch) return false;
     for (const tab of summary.runningAiTabs) {
       const cancelAndConfirm = aiTabRunControls.get(tab.id);
       if (!cancelAndConfirm) {
         get().pushToast("error", "停止未确认：运行状态不可用，标签已保留");
-        return;
+        return false;
       }
-      if (!(await confirmAiRunCancellation(cancelAndConfirm))) return;
+      if (!(await confirmAiRunCancellation(cancelAndConfirm))) return false;
+      if (get().workspaceRuntimeEpoch !== epoch) return false;
     }
 
     const outcome = await executeWorkspaceClose(summary);
+    if (get().workspaceRuntimeEpoch !== epoch) return false;
     if (outcome.failed > 0) {
       pushWorkspaceCloseToast(target.title, outcome, false);
-      return;
+      return false;
     }
     if (outcome.dbFailed > 0) {
       get().pushToast(
@@ -816,7 +841,7 @@ export const useUi = create<UiState>((set, get) => ({
 
     const latest = get();
     const latestTarget = latest.workspaces.find((w) => w.id === id);
-    if (!latestTarget) return;
+    if (!latestTarget) return false;
     const originalTabIds = new Set(summary.tabs.map((tab) => tab.id));
     const originalDirtyIds = new Set(summary.dirty.map((tab) => tab.id));
     const addedTabs = latestTarget.panes
@@ -897,6 +922,7 @@ export const useUi = create<UiState>((set, get) => ({
       if (board) clearAiTabRuns(board.tabs.map((tab) => tab.id));
     }
     if (outcome.failed === 0) pushWorkspaceCloseToast(target.title, outcome, deleteWorkspace);
+    return deleteWorkspace;
   },
 
   splitWorkspace: (workspaceId) => {
@@ -1231,7 +1257,12 @@ export const useUi = create<UiState>((set, get) => ({
           ...w,
           panes: w.panes.map((p) =>
             p.tabs.some((t) => t.id === id)
-              ? { ...p, tabs: p.tabs.map((t) => (t.id === id ? { ...t, ...patch } : t)) }
+              ? {
+                  ...p,
+                  tabs: p.tabs.map((t) => t.id === id
+                    ? { ...t, ...patch, restorePending: patch.tabId ? undefined : (patch.restorePending ?? t.restorePending) }
+                    : t),
+                }
               : p,
           ),
         })),
@@ -1343,6 +1374,22 @@ export const useUi = create<UiState>((set, get) => ({
             : { ...runtime, problems: undefined },
         ]),
       ) as Record<string, WorkspaceRuntime>,
+    }));
+  },
+  resetAccountWorkspaces: () => {
+    sessionsEpoch += 1;
+    workspaceProblemResetGeneration += 1;
+    recordingsEpoch += 1;
+    set((state) => ({
+      sessions: [],
+      recordings: {},
+      sessionResyncFailed: false,
+      workspaces: [],
+      activeWorkspaceId: null,
+      connectingAssetIds: [],
+      connectProgress: {},
+      workspaceRuntimeEpoch: state.workspaceRuntimeEpoch + 1,
+      workspaceRuntime: {},
     }));
   },
   setAiBusy: (v) => set({ aiBusy: v }),
@@ -2016,15 +2063,11 @@ async function reclaimTerminals(
   const plan: ClosePreferencePlan = {
     detachable: live.filter((t) => detachBlockOf(t, st.sessions, assetKind) === null),
     preferredKills: [],
-    confirmKill: false,
     confirmBlocked: false,
   };
   if (!(await applyClosePreference(plan, title))) return false;
-  if ((blocked.length > 0 && plan.confirmBlocked) || plan.confirmKill) {
+  if (blocked.length > 0 && plan.confirmBlocked) {
     const lines: string[] = [];
-    if (plan.confirmKill) {
-      lines.push(`${scope}里有 ${plan.preferredKills.length} 个运行中的终端将结束进程，无法恢复。`);
-    }
     if (blocked.length > 0 && plan.confirmBlocked) {
       const kinds = [
         ...new Set(
@@ -2091,7 +2134,6 @@ async function disconnectDbTabs(tabs: AppTab[]): Promise<boolean> {
 interface ClosePreferencePlan {
   detachable: AppTab[];
   preferredKills: AppTab[];
-  confirmKill: boolean;
   confirmBlocked: boolean;
 }
 
@@ -2138,7 +2180,6 @@ async function applyClosePreference(plan: ClosePreferencePlan, title: string): P
   if (result.key === "kill") {
     plan.preferredKills = plan.detachable;
     plan.detachable = [];
-    plan.confirmKill = true;
   }
   return true;
 }
@@ -2168,7 +2209,6 @@ function collectWorkspaceClose(
     dirty: dirtyFileEditors(tabs, sessions),
     detachable: live.filter((t) => detachBlockOf(t, sessions, assetKind) === null),
     preferredKills: [],
-    confirmKill: false,
     confirmBlocked: false,
     blocked,
     blockedKinds,
@@ -2192,7 +2232,7 @@ async function confirmWorkspaceClose(
 ): Promise<boolean> {
   if (!(await applyClosePreference(summary, `关闭「${title}」`))) return false;
   const confirmBlocked = summary.blocked.length > 0 && summary.confirmBlocked;
-  if (summary.dirty.length === 0 && !confirmBlocked && !summary.confirmKill && !summary.hasSqlDraft && summary.runningAiTabs.length === 0) return true;
+  if (summary.dirty.length === 0 && !confirmBlocked && !summary.hasSqlDraft && summary.runningAiTabs.length === 0) return true;
   const lines: string[] = [];
   if (summary.dirty.length > 0) {
     lines.push(
@@ -2359,14 +2399,6 @@ async function requestCloseTabWithAction(
       );
       if (!result) return;
       action = result.key === "kill" ? "kill" : "detach";
-      if (action === "kill") {
-        const { ask } = await import("../ui/dialogs");
-        const ok = await ask(`直接关闭「${target.title}」？\n\n进程会被终止，无法恢复。`, {
-          title: `关闭「${target.title}」`,
-          kind: "warning",
-        });
-        if (!ok) return;
-      }
       if (result.remember) setTerminalCloseAction(action);
     }
   }
@@ -2454,14 +2486,6 @@ export async function requestCloseTabs(ids: string[]): Promise<void> {
         { title: "关闭终端标签", choices: CLOSE_CHOICE_OPTIONS },
       );
       decided = result ? (result.key === "kill" ? "kill" : "detach") : null;
-      if (decided === "kill") {
-        const { ask } = await import("../ui/dialogs");
-        const ok = await ask(`直接关闭 ${pending.length} 个终端？\n\n进程会被终止，无法恢复。`, {
-          title: "关闭终端标签",
-          kind: "warning",
-        });
-        if (!ok) decided = null;
-      }
     }
   }
   for (const id of ids) {
@@ -2627,38 +2651,42 @@ export function useCredentialsTabId(): string | undefined {
   });
 }
 
-async function ensureVaultUnlocked(reason: string): Promise<boolean> {
+async function ensureVaultUnlocked(reason: string, epoch?: number): Promise<boolean> {
   let st: VaultStatus;
   try {
     st = await vaultApi.status();
   } catch {
-    return true;
+    return epoch === undefined || currentConnectionEpoch(epoch);
   }
+  if (epoch !== undefined && !currentConnectionEpoch(epoch)) return false;
   if (!st.initialized || st.unlocked) return true;
   if (st.passwordless) {
     try {
       await vaultApi.unlock("");
+      if (epoch !== undefined && !currentConnectionEpoch(epoch)) return false;
       return true;
     } catch (e) {
-      useUi.getState().pushToast("error", `解锁失败：${describeError(e)}`);
+      if (epoch === undefined || currentConnectionEpoch(epoch)) useUi.getState().pushToast("error", `解锁失败：${describeError(e)}`);
       return false;
     }
   }
   const { promptText } = await import("../ui/dialogs");
+  if (epoch !== undefined && !currentConnectionEpoch(epoch)) return false;
   const pwd = await promptText(reason, "", { secret: true });
-  if (pwd === null) return false;
+  if (pwd === null || (epoch !== undefined && !currentConnectionEpoch(epoch))) return false;
   try {
     await vaultApi.unlock(pwd);
+    if (epoch !== undefined && !currentConnectionEpoch(epoch)) return false;
     return true;
   } catch (e) {
-    useUi.getState().pushToast("error", `解锁失败：${describeError(e)}`);
+    if (epoch === undefined || currentConnectionEpoch(epoch)) useUi.getState().pushToast("error", `解锁失败：${describeError(e)}`);
     return false;
   }
 }
 
-async function ensureVaultReadyFor(asset: { name: string; credId?: string | null }): Promise<boolean> {
+async function ensureVaultReadyFor(asset: { name: string; credId?: string | null }, epoch?: number): Promise<boolean> {
   if (!asset.credId) return true;
-  return ensureVaultUnlocked(`连接「${asset.name}」需要使用凭据，请先输入保护密码：`);
+  return ensureVaultUnlocked(`连接「${asset.name}」需要使用凭据，请先输入保护密码：`, epoch);
 }
 
 function sidebarsOverlayWorkspace(): boolean {
@@ -2670,54 +2698,58 @@ async function openConnectedAssetSession(
   info: SessionInfo,
   asset: { id: string; name: string; kind: string },
   options?: ConnectAssetOptions,
+  quickTarget?: QuickWorkspaceTarget,
 ): Promise<void> {
-  const {
-    setSessions,
-    sessions,
-    workspaces,
-    addTab,
-    ensureWorkspace,
-    setLeftMode,
-    setLeftOpen,
-    bumpConnectFocusRevision,
-  } = useUi.getState();
+  const { setSessions, sessions, workspaces } = useUi.getState();
   setSessions([...sessions.filter((s) => s.id !== info.id), info]);
   const restored = asset.id && (asset.kind === "ssh" || asset.kind === "device")
     ? workspaces.find((workspace) => workspace.kind === "session" && workspace.assetId === asset.id)
     : undefined;
   if (restored) {
-    useUi.getState().updateWorkspaceSession(restored.id, info.id);
-    if (options?.preserveUserFocus) return;
-    useUi.getState().setActiveWorkspace(restored.id);
-    if (!restored.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "terminal"))) {
-      await openTerminalTab(info);
-    }
-    return;
-  }
-  if (options?.preserveUserFocus && workspaces.length > 0) return;
-  ensureWorkspace({
-    kind: "session",
-    sessionId: info.id,
-    title: info.name,
-    assetId: asset.id,
-    assetKind: asset.kind,
-  });
-  if (!sidebarsOverlayWorkspace()) {
-    setLeftMode("files");
-    setLeftOpen(true);
-  }
-  bumpConnectFocusRevision();
-  if (asset.kind === "docker") {
-    addTab({
-      id: nextTabId(`docker-${info.id}`),
-      kind: "docker",
-      title: "容器",
-      sessionId: info.id,
-      closable: true,
+    useUi.setState((state) => {
+      const rebound = rebindWorkspaceSession(state.workspaces, restored.id, restored.sessionId, info.id);
+      if (options?.preserveUserFocus) return { workspaces: rebound };
+      return {
+        activeWorkspaceId: restored.id,
+        workspaces: rebound.map((workspace) => {
+          if (workspace.id !== restored.id || workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "terminal"))) return workspace;
+          const panes = workspace.panes.length > 0 ? workspace.panes : [makePane()];
+          const activePane = panes.find((pane) => pane.id === workspace.activePaneId) ?? panes[0];
+          const tab: AppTab = {
+            id: nextTabId(`term-${info.id}`), kind: "terminal", title: "终端 1", sessionId: info.id, closable: true,
+          };
+          return {
+            ...workspace,
+            activePaneId: activePane.id,
+            panes: panes.map((pane) => pane.id === activePane.id
+              ? { ...pane, tabs: [...pane.tabs, tab], activeTabId: tab.id }
+              : pane),
+          };
+        }),
+      };
     });
     return;
   }
-  await openTerminalTab(info);
+  if (options?.preserveUserFocus && workspaces.length > 0) return;
+  const pane = makePane();
+  const tab: AppTab = asset.kind === "docker"
+    ? { id: nextTabId(`docker-${info.id}`), kind: "docker", title: "容器", sessionId: info.id, closable: true }
+    : { id: nextTabId(`term-${info.id}`), kind: "terminal", title: "终端 1", sessionId: info.id, closable: true };
+  pane.tabs = [tab];
+  pane.activeTabId = tab.id;
+  const workspace: Workspace = {
+    id: nextTabId("ws-session"), kind: "session", sessionId: info.id,
+    title: info.name, assetId: asset.id, assetKind: asset.kind, quickTarget,
+    panes: [pane], activePaneId: pane.id, splitRatio: 0.5, closable: true,
+  };
+  const overlaySidebars = sidebarsOverlayWorkspace();
+  useUi.setState((state) => ({
+    workspaces: [...state.workspaces, workspace],
+    activeWorkspaceId: workspace.id,
+    leftMode: overlaySidebars ? state.leftMode : "files",
+    leftOpen: overlaySidebars ? state.leftOpen : true,
+    connectFocusRevision: state.connectFocusRevision + 1,
+  }));
 }
 
 export interface ConnectAssetInput {
@@ -2738,20 +2770,51 @@ export type ConnectOutcome =
 
 const inflightConnects = new Map<string, Promise<ConnectOutcome>>();
 const connectingAssetCounts = new Map<string, number>();
+const restoreWorkspaceIds = new WeakMap<Workspace, number>();
+let restoreWorkspaceIdSeq = 0;
 
-function inflightAssetKey(assetId: string, options?: ConnectAssetOptions): string {
+function currentConnectionEpoch(epoch: number): boolean {
+  return useUi.getState().workspaceRuntimeEpoch === epoch;
+}
+
+async function discardStaleSession(session: SessionInfo): Promise<ConnectOutcome> {
+  await sessionApi.disconnect(session.id).catch(() => undefined);
+  return { ok: false, canceled: true };
+}
+
+async function discardStaleDatabase(connId: string): Promise<ConnectOutcome> {
+  await dbApi.disconnect(connId).catch(() => undefined);
+  return { ok: false, canceled: true };
+}
+
+function pendingWorkspaceKey(assetId: string): number | null {
+  const workspace = useUi.getState().workspaces.find((item) => item.assetId === assetId && item.restorePending);
+  if (!workspace) return null;
+  let id = restoreWorkspaceIds.get(workspace);
+  if (id === undefined) {
+    id = ++restoreWorkspaceIdSeq;
+    restoreWorkspaceIds.set(workspace, id);
+  }
+  return id;
+}
+
+function inflightAssetKey(assetId: string, epoch: number, options?: ConnectAssetOptions): string {
   return JSON.stringify([
     assetId,
+    epoch,
+    pendingWorkspaceKey(assetId),
     options?.silent === true,
     options?.preserveUserFocus === true,
   ]);
 }
 
-function setAssetConnecting(assetId: string, connecting: boolean): void {
-  const current = connectingAssetCounts.get(assetId) ?? 0;
+function setAssetConnecting(assetId: string, connecting: boolean, epoch: number): void {
+  const key = JSON.stringify([epoch, assetId]);
+  const current = connectingAssetCounts.get(key) ?? 0;
   const next = connecting ? current + 1 : Math.max(0, current - 1);
-  if (next === 0) connectingAssetCounts.delete(assetId);
-  else connectingAssetCounts.set(assetId, next);
+  if (next === 0) connectingAssetCounts.delete(key);
+  else connectingAssetCounts.set(key, next);
+  if (!currentConnectionEpoch(epoch)) return;
   useUi.setState((s) => ({
     connectingAssetIds:
       next > 0
@@ -2836,19 +2899,20 @@ export async function connectAsset(
   asset: ConnectAssetInput,
   options?: ConnectAssetOptions,
 ): Promise<ConnectOutcome> {
-  const key = inflightAssetKey(asset.id, options);
+  const epoch = useUi.getState().workspaceRuntimeEpoch;
+  const key = inflightAssetKey(asset.id, epoch, options);
   const inflight = inflightConnects.get(key);
   if (inflight) return inflight;
   const context = captureConnectionWorkspace();
-  const promise = runConnectAsset(asset, options).finally(() => {
-    inflightConnects.delete(key);
-    setAssetConnecting(asset.id, false);
-    if (!isAssetConnecting(asset.id)) useUi.getState().setConnectProgress(asset.id, null);
+  const promise = runConnectAsset(asset, options, epoch).finally(() => {
+    if (inflightConnects.get(key) === promise) inflightConnects.delete(key);
+    setAssetConnecting(asset.id, false, epoch);
+    if (currentConnectionEpoch(epoch) && !isAssetConnecting(asset.id)) useUi.getState().setConnectProgress(asset.id, null);
   });
   inflightConnects.set(key, promise);
-  setAssetConnecting(asset.id, true);
+  setAssetConnecting(asset.id, true, epoch);
   const outcome = await promise;
-  if (!outcome.ok && !outcome.canceled) recordAssetConnectionProblem(context, asset, outcome.error);
+  if (currentConnectionEpoch(epoch) && !outcome.ok && !outcome.canceled) recordAssetConnectionProblem(context, asset, outcome.error);
   return outcome;
 }
 
@@ -2857,10 +2921,13 @@ const LIVE_SESSION_STATUSES = new Set(["connecting", "connected", "reconnecting"
 async function runConnectAsset(
   asset: ConnectAssetInput,
   options?: ConnectAssetOptions,
+  epoch = useUi.getState().workspaceRuntimeEpoch,
 ): Promise<ConnectOutcome> {
+  if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
   const { pushToast } = useUi.getState();
 
   const existing = useUi.getState().workspaces.find((w) => w.assetId === asset.id);
+  if (existing?.restorePending) return reconnectRestoredWorkspace(existing.id);
   const restoreDatabaseWorkspace =
     existing?.kind === "db" &&
     !existing.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "db"));
@@ -2880,9 +2947,10 @@ async function runConnectAsset(
       return { ok: true };
     }
     if (session) {
-      if (!(await ensureVaultReadyFor(asset))) return { ok: false, canceled: true };
+      if (!(await ensureVaultReadyFor(asset, epoch)) || !currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
       try {
         const fresh = await reconnectSessionAndWait(session);
+        if (!currentConnectionEpoch(epoch)) return fresh ? discardStaleSession(fresh) : { ok: false, canceled: true };
         if (!fresh) {
           pushToast("info", "已取消连接");
           return { ok: false, canceled: true };
@@ -2893,6 +2961,7 @@ async function runConnectAsset(
         useConnectHistory.getState().record(asset.id);
         return { ok: true };
       } catch (error) {
+        if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
         if ((error as { code?: string } | null)?.code !== "not_found") {
           const message = describeError(error);
           pushToast("error", `连接失败：${message}`);
@@ -2902,6 +2971,7 @@ async function runConnectAsset(
     }
     if (!restoreDatabaseWorkspace && asset.kind !== "ssh" && asset.kind !== "device") {
       await useUi.getState().closeWorkspace(existing.id);
+      if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
       if (useUi.getState().workspaces.some((w) => w.id === existing.id)) {
         return { ok: false, canceled: true };
       }
@@ -2911,8 +2981,9 @@ async function runConnectAsset(
   const dbKind = dbKindOf(asset.kind);
   if (dbKind) {
     try {
-      if (!(await ensureVaultReadyFor(asset))) return { ok: false, canceled: true };
+      if (!(await ensureVaultReadyFor(asset, epoch)) || !currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
       const { connId } = await dbApi.connect(asset.id);
+      if (!currentConnectionEpoch(epoch)) return discardStaleDatabase(connId);
       const title = `${asset.name} · ${DB_KIND_LABEL[dbKind]}`;
       const tab: AppTab = {
         id: nextTabId(`db-${connId}`),
@@ -2950,14 +3021,16 @@ async function runConnectAsset(
       useConnectHistory.getState().record(asset.id);
       return { ok: true };
     } catch (e) {
+      if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
       if (!options?.silent) pushToast("error", describeError(e));
       return { ok: false, error: describeError(e) };
     }
   }
 
   try {
-    if (!(await ensureVaultReadyFor(asset))) return { ok: false, canceled: true };
-    const info = await connectWithHostKeyConfirm(() => sessionApi.connect(asset.id));
+    if (!(await ensureVaultReadyFor(asset, epoch)) || !currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
+    const info = await connectWithHostKeyConfirm(() => sessionApi.connect(asset.id), () => currentConnectionEpoch(epoch));
+    if (!currentConnectionEpoch(epoch)) return info ? discardStaleSession(info) : { ok: false, canceled: true };
     if (!info) {
       pushToast("info", "已取消连接");
       return { ok: false, canceled: true };
@@ -2966,6 +3039,7 @@ async function runConnectAsset(
     useConnectHistory.getState().record(asset.id);
     return { ok: true };
   } catch (e) {
+    if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
     const err = e as { message?: string };
     const message = err.message || describeError(e);
     if (!options?.silent) pushToast("error", message);
@@ -2986,26 +3060,31 @@ export async function connectDevice(
   device: { id: string; name: string },
   options?: ConnectAssetOptions,
 ): Promise<ConnectOutcome> {
-  const key = deviceAssetId(device.id);
+  const epoch = useUi.getState().workspaceRuntimeEpoch;
+  const assetId = deviceAssetId(device.id);
+  const key = inflightAssetKey(assetId, epoch, options);
   const inflight = inflightConnects.get(key);
   if (inflight) return inflight;
-  const promise = runConnectDevice(device, options).finally(() => {
-    inflightConnects.delete(key);
-    setAssetConnecting(key, false);
+  const promise = runConnectDevice(device, options, epoch).finally(() => {
+    if (inflightConnects.get(key) === promise) inflightConnects.delete(key);
+    setAssetConnecting(assetId, false, epoch);
   });
   inflightConnects.set(key, promise);
-  setAssetConnecting(key, true);
+  setAssetConnecting(assetId, true, epoch);
   return promise;
 }
 
 async function runConnectDevice(
   device: { id: string; name: string },
   options?: ConnectAssetOptions,
+  epoch = useUi.getState().workspaceRuntimeEpoch,
 ): Promise<ConnectOutcome> {
+  if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
   const { pushToast } = useUi.getState();
   const assetId = deviceAssetId(device.id);
 
   const existing = useUi.getState().workspaces.find((w) => w.assetId === assetId);
+  if (existing?.restorePending) return reconnectRestoredWorkspace(existing.id);
   if (existing) {
     const session = useUi.getState().sessions.find((s) => s.id === existing.sessionId);
     const live = session !== undefined && LIVE_SESSION_STATUSES.has(session.status);
@@ -3021,6 +3100,7 @@ async function runConnectDevice(
     if (session) {
       try {
         const fresh = await reconnectSessionAndWait(session);
+        if (!currentConnectionEpoch(epoch)) return fresh ? discardStaleSession(fresh) : { ok: false, canceled: true };
         if (!fresh) {
           pushToast("info", "已取消连接");
           return { ok: false, canceled: true };
@@ -3030,6 +3110,7 @@ async function runConnectDevice(
         useUi.getState().setActiveWorkspace(existing.id);
         return { ok: true };
       } catch (error) {
+        if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
         if ((error as { code?: string } | null)?.code !== "not_found") {
           const message = describeError(error);
           pushToast("error", `连接失败：${message}`);
@@ -3041,9 +3122,11 @@ async function runConnectDevice(
 
   try {
     const info = await sessionApi.connectDevice(device.id, device.name);
+    if (!currentConnectionEpoch(epoch)) return discardStaleSession(info);
     await openConnectedAssetSession(info, { id: assetId, name: device.name, kind: "device" });
     return { ok: true };
   } catch (e) {
+    if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
     const err = e as { message?: string };
     const message = err.message || describeError(e);
     if (!options?.silent) pushToast("error", message);
@@ -3054,16 +3137,149 @@ async function runConnectDevice(
 // reconnectDeadHost establishes a fresh session for a workspace whose session was deleted on the server (the
 // dead-session reconnect of the file panels and the terminal dead-tab overlay). A device workspace's assetId is the
 // pseudo device/<deviceId> with no asset table record, so it reconnects through the same fleet device connect as the
-// original open; other kinds keep the asset connect with host-key confirmation, local workspaces reconnect locally.
+// original open. Quick connections retain their non-secret target and request fresh credentials.
 export async function reconnectDeadHost(
-  ws: Pick<Workspace, "assetId" | "assetKind" | "title">,
+  ws: Pick<Workspace, "assetId" | "assetKind" | "title" | "quickTarget" | "deletedTarget">,
+  options?: { isCurrent?: () => boolean },
 ): Promise<SessionInfo | null> {
+  const epoch = useUi.getState().workspaceRuntimeEpoch;
+  const isCurrent = () => currentConnectionEpoch(epoch) && (options?.isCurrent?.() ?? true);
+  const finish = async (pending: Promise<SessionInfo | null>): Promise<SessionInfo | null> => {
+    try {
+      const session = await pending;
+      if (isCurrent()) return session;
+      if (session) await discardStaleSession(session);
+      return null;
+    } catch (error) {
+      if (!isCurrent()) return null;
+      throw error;
+    }
+  };
+  if (!isCurrent()) return null;
+  if (ws.deletedTarget) throw new Error(`「${ws.title}」的资产已删除，请重新绑定或关闭工作区`);
   if (ws.assetKind === "device" && ws.assetId) {
-    return sessionApi.connectDevice(ws.assetId.slice("device/".length), ws.title);
+    return finish(sessionApi.connectDevice(ws.assetId.slice("device/".length), ws.title));
   }
-  return connectWithHostKeyConfirm(() =>
-    ws.assetId ? sessionApi.connect(ws.assetId) : sessionApi.connectLocal(),
-  );
+  if (ws.assetId) return finish(connectWithHostKeyConfirm(() => sessionApi.connect(ws.assetId as string), isCurrent));
+  if (ws.quickTarget) {
+    const target = ws.quickTarget;
+    const password = target.authKind === "password"
+      ? await promptQuickConnectPassword(formatQuickConnectTarget(target))
+      : "";
+    if (!isCurrent()) return null;
+    if (password === null) return null;
+    if (target.authKind === "password" && !password) throw new Error("此快速连接需要重新输入密码");
+    return finish(connectWithHostKeyConfirm(() => sessionApi.connectQuick({
+      host: target.host,
+      port: target.port,
+      ...(target.username ? { username: target.username } : {}),
+      authKind: target.authKind,
+      ...(password ? { password } : {}),
+    }), isCurrent));
+  }
+  if (ws.assetKind === "local") return finish(sessionApi.connectLocal());
+  throw new Error(`「${ws.title}」缺少可恢复的主机目标，请从资产树重新连接`);
+}
+
+const inflightRestoreConnects = new Map<string, {
+  workspace: Workspace;
+  epoch: number;
+  promise: Promise<ConnectOutcome>;
+}>();
+
+export function reconnectRestoredWorkspace(workspaceId: string): Promise<ConnectOutcome> {
+  const state = useUi.getState();
+  const workspace = state.workspaces.find((item) => item.id === workspaceId);
+  const inflight = inflightRestoreConnects.get(workspaceId);
+  if (inflight && workspace === inflight.workspace && state.workspaceRuntimeEpoch === inflight.epoch) return inflight.promise;
+  const attempt = connectRestoredWorkspace(workspaceId).finally(() => {
+    if (inflightRestoreConnects.get(workspaceId)?.promise === attempt) inflightRestoreConnects.delete(workspaceId);
+  });
+  if (workspace) inflightRestoreConnects.set(workspaceId, { workspace, epoch: state.workspaceRuntimeEpoch, promise: attempt });
+  return attempt;
+}
+
+async function connectRestoredWorkspace(workspaceId: string): Promise<ConnectOutcome> {
+  const state = useUi.getState();
+  const workspace = state.workspaces.find((item) => item.id === workspaceId);
+  if (!workspace?.restorePending) return { ok: false, error: "工作区无需重新连接" };
+  if (workspace.deletedTarget) return { ok: false, error: "原资产已删除，请从资产树选择其他目标" };
+  const epoch = state.workspaceRuntimeEpoch;
+  const stillPending = () => {
+    const current = useUi.getState();
+    return current.workspaceRuntimeEpoch === epoch &&
+      current.workspaces.some((item) => item === workspace && item.restorePending &&
+        item.assetId === workspace.assetId && item.quickTarget?.id === workspace.quickTarget?.id);
+  };
+
+  try {
+    if (workspace.kind === "db") {
+      if (!workspace.assetId) return { ok: false, error: "数据库目标已丢失，请从资产树重新连接" };
+      const asset = await assetApi.get(workspace.assetId);
+      if (!stillPending()) return { ok: false, canceled: true };
+      if (!(await ensureVaultReadyFor(asset, epoch))) return { ok: false, canceled: true };
+      if (!stillPending()) return { ok: false, canceled: true };
+      const { connId } = await dbApi.connect(workspace.assetId);
+      if (!stillPending()) {
+        await dbApi.disconnect(connId).catch(() => undefined);
+        return { ok: false, canceled: true };
+      }
+      useUi.setState((current) => ({
+        activeWorkspaceId: workspaceId,
+        workspaces: current.workspaces.map((item) => item.id === workspaceId ? {
+          ...item,
+          connId,
+          restorePending: undefined,
+          panes: item.panes.map((pane) => ({
+            ...pane,
+            tabs: pane.tabs.map((tab) => ({
+              ...tab,
+              connId: tab.kind === "db" ? connId : tab.connId,
+              restorePending: undefined,
+            })),
+          })),
+        } : item),
+      }));
+      return { ok: true };
+    }
+
+    if (workspace.assetId && !workspace.assetId.startsWith("device/")) {
+      const asset = await assetApi.get(workspace.assetId);
+      if (!stillPending()) return { ok: false, canceled: true };
+      if (!(await ensureVaultReadyFor(asset, epoch))) return { ok: false, canceled: true };
+    }
+    if (!stillPending()) return { ok: false, canceled: true };
+    const session = await reconnectDeadHost(workspace, { isCurrent: stillPending });
+    if (!session) return { ok: false, canceled: true };
+    if (!stillPending()) {
+      await sessionApi.disconnect(session.id).catch(() => undefined);
+      return { ok: false, canceled: true };
+    }
+    useUi.setState((current) => ({
+      activeWorkspaceId: workspaceId,
+      sessions: [...current.sessions.filter((item) => item.id !== session.id), session],
+      workspaces: current.workspaces.map((item) => item.id === workspaceId ? {
+        ...item,
+        sessionId: session.id,
+        restorePending: undefined,
+        panes: item.panes.map((pane) => ({
+          ...pane,
+          tabs: pane.tabs.map((tab) => ({
+            ...tab,
+            sessionId: session.id,
+            restorePending: tab.kind === "terminal" ? true : undefined,
+          })),
+        })),
+      } : item),
+    }));
+    if (!workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "terminal"))) {
+      await openTerminalTab(session);
+    }
+    return { ok: true };
+  } catch (error) {
+    if (!stillPending()) return { ok: false, canceled: true };
+    return { ok: false, error: describeError(error) };
+  }
 }
 
 const inflightQuickConnects = new Map<string, Promise<ConnectOutcome>>();
@@ -3079,26 +3295,30 @@ export async function connectQuickTarget(
   target: QuickConnectTarget,
   options?: ConnectAssetOptions,
 ): Promise<ConnectOutcome> {
-  const key = formatQuickConnectTarget(target);
+  const epoch = useUi.getState().workspaceRuntimeEpoch;
+  const key = JSON.stringify([epoch, formatQuickConnectTarget(target)]);
   const inflight = inflightQuickConnects.get(key);
   if (inflight) return inflight;
   const context = captureConnectionWorkspace();
-  const promise = runQuickConnectTarget(target, options).finally(() => {
-    inflightQuickConnects.delete(key);
+  const promise = runQuickConnectTarget(target, options, epoch).finally(() => {
+    if (inflightQuickConnects.get(key) === promise) inflightQuickConnects.delete(key);
   });
   inflightQuickConnects.set(key, promise);
   const outcome = await promise;
-  if (!outcome.ok && !outcome.canceled) recordQuickConnectionProblem(context, target, outcome.error);
+  if (currentConnectionEpoch(epoch) && !outcome.ok && !outcome.canceled) recordQuickConnectionProblem(context, target, outcome.error);
   return outcome;
 }
 
 async function runQuickConnectTarget(
   target: QuickConnectTarget,
   options?: ConnectAssetOptions,
+  epoch = useUi.getState().workspaceRuntimeEpoch,
 ): Promise<ConnectOutcome> {
+  if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
   const { pushToast } = useUi.getState();
   const display = formatQuickConnectTarget(target);
   const password = await promptQuickConnectPassword(display);
+  if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
   if (password === null) return { ok: false, canceled: true };
   try {
     const info = await connectWithHostKeyConfirm(() =>
@@ -3109,14 +3329,23 @@ async function runQuickConnectTarget(
         authKind: password ? "password" : "agent",
         ...(password ? { password } : {}),
       }),
+      () => currentConnectionEpoch(epoch),
     );
+    if (!currentConnectionEpoch(epoch)) return info ? discardStaleSession(info) : { ok: false, canceled: true };
     if (!info) {
       pushToast("info", "已取消连接");
       return { ok: false, canceled: true };
     }
-    await openConnectedAssetSession(info, { id: "", name: info.name, kind: "ssh" });
+    await openConnectedAssetSession(info, { id: "", name: info.name, kind: "ssh" }, options, {
+      id: nextTabId("quick-target"),
+      host: target.host,
+      port: target.port,
+      username: target.username,
+      authKind: password ? "password" : "agent",
+    });
     return { ok: true };
   } catch (e) {
+    if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
     const err = e as { message?: string };
     const message = err.message || describeError(e);
     if (!options?.silent) pushToast("error", message);
@@ -3128,20 +3357,24 @@ export async function saveQuickConnectAsset(
   target: QuickConnectTarget,
   options?: ConnectAssetOptions,
 ): Promise<ConnectOutcome> {
+  const epoch = useUi.getState().workspaceRuntimeEpoch;
   const { pushToast } = useUi.getState();
   const display = formatQuickConnectTarget(target);
   const password = await promptQuickConnectPassword(display);
+  if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
   if (password === null) return { ok: false, canceled: true };
   try {
     // The server assembly disabled session_quick_connect_user: in web mode, do not backfill the server OS user.
     const username = target.username ?? (DESKTOP ? await sessionApi.quickConnectDefaultUser() : "");
+    if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
     let credId: string | null = null;
     if (password) {
-      if (!(await ensureVaultUnlocked("保存凭据前需要解锁凭据库"))) {
+      if (!(await ensureVaultUnlocked("保存凭据前需要解锁凭据库", epoch)) || !currentConnectionEpoch(epoch)) {
         return { ok: false, canceled: true };
       }
       const res = await vaultApi.setCredential(display, "password", password);
       credId = res.id;
+      if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
     }
     let created: Awaited<ReturnType<typeof assetApi.create>>;
     try {
@@ -3155,12 +3388,14 @@ export async function saveQuickConnectAsset(
         keyPath: null,
         credId,
       });
+      if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
     } catch (e) {
-      if (credId) await vaultApi.deleteCredential(credId).catch(() => undefined);
+      if (credId && currentConnectionEpoch(epoch)) await vaultApi.deleteCredential(credId).catch(() => undefined);
       throw e;
     }
     return await connectAsset(created, options);
   } catch (e) {
+    if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
     const err = e as { message?: string };
     const message = err.message || describeError(e);
     if (!options?.silent) pushToast("error", message);
@@ -3176,23 +3411,27 @@ const inflightReconnects = new Map<string, Promise<SessionInfo | null>>();
 export const SESSION_RECONNECT_WAIT_MS = 360_000;
 
 export function isSessionReconnectPending(sessionId: string): boolean {
-  return inflightReconnects.has(sessionId);
+  return inflightReconnects.has(JSON.stringify([useUi.getState().workspaceRuntimeEpoch, sessionId]));
 }
 
 export function reconnectSessionAndWait(
   session: SessionInfo,
-  options?: { timeoutMs?: number; intervalMs?: number },
+  options?: { timeoutMs?: number; intervalMs?: number; isCurrent?: () => boolean },
 ): Promise<SessionInfo | null> {
-  const inflight = inflightReconnects.get(session.id);
+  const epoch = useUi.getState().workspaceRuntimeEpoch;
+  const key = JSON.stringify([epoch, session.id]);
+  const inflight = inflightReconnects.get(key);
   if (inflight) return inflight;
+  const isCurrent = () => currentConnectionEpoch(epoch) && (options?.isCurrent?.() ?? true);
   const promise = runReconnectAndWait(
     session,
     options?.timeoutMs ?? SESSION_RECONNECT_WAIT_MS,
     options?.intervalMs ?? 600,
+    isCurrent,
   ).finally(() => {
-    inflightReconnects.delete(session.id);
+    if (inflightReconnects.get(key) === promise) inflightReconnects.delete(key);
   });
-  inflightReconnects.set(session.id, promise);
+  inflightReconnects.set(key, promise);
   return promise;
 }
 
@@ -3200,16 +3439,39 @@ async function runReconnectAndWait(
   session: SessionInfo,
   timeoutMs: number,
   intervalMs: number,
+  isCurrent: () => boolean,
 ): Promise<SessionInfo | null> {
-  if (!(await confirmHostKeyIfNeeded(session.assetId ?? "", session.kind))) return null;
-  const started = await sessionApi.reconnect(session.id);
+  if (!isCurrent()) return null;
+  try {
+    if (!(await confirmHostKeyIfNeeded(session.assetId ?? "", session.kind, isCurrent))) return null;
+  } catch (error) {
+    if (!isCurrent()) return null;
+    throw error;
+  }
+  if (!isCurrent()) return null;
+  let started: boolean;
+  try {
+    started = await sessionApi.reconnect(session.id);
+  } catch (error) {
+    if (!isCurrent()) return null;
+    throw error;
+  }
+  if (!isCurrent()) return null;
   if (!started) throw new Error("重连未能启动");
   const deadline = Date.now() + timeoutMs;
   // session_reconnect returns first and the backend goroutine sets reconnecting afterwards, so the first list may read the pre-start
   // stale disconnected/failed; only a terminal state seen after connecting/reconnecting counts as failure.
   let enteredReconnect = false;
   for (;;) {
-    const list = await sessionApi.list();
+    if (!isCurrent()) return null;
+    let list: SessionInfo[];
+    try {
+      list = await sessionApi.list();
+    } catch (error) {
+      if (!isCurrent()) return null;
+      throw error;
+    }
+    if (!isCurrent()) return null;
     const current = list.find((s) => s.id === session.id);
     if (current?.status === "connected") return current;
     if (current?.status === "connecting" || current?.status === "reconnecting") {
@@ -3219,5 +3481,6 @@ async function runReconnectAndWait(
     }
     if (Date.now() >= deadline) throw new Error("重连超时，请检查网络后重试");
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    if (!isCurrent()) return null;
   }
 }

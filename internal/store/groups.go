@@ -8,7 +8,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type rowScanner interface {
@@ -44,6 +43,11 @@ func (s *Store) GroupGet(ctx context.Context, id string) (AssetGroupRow, error) 
 }
 
 func (s *Store) GroupCreate(ctx context.Context, input GroupInput) (AssetGroupRow, error) {
+	if input.ParentID != nil {
+		if _, err := s.groupReference(ctx, s.db, *input.ParentID); err != nil {
+			return AssetGroupRow{}, err
+		}
+	}
 	id := ids.New()
 	now := ids.NowMS()
 	row := AssetGroupRow{ID: id, ParentID: input.ParentID, Name: input.Name, Sort: input.Sort, CreatedAt: now, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}
@@ -73,16 +77,9 @@ func (s *Store) GroupUpdate(ctx context.Context, id string, patch GroupPatch) (A
 	if row.ParentID != nil {
 		cursor := *row.ParentID
 		for depth := 0; depth <= 32; depth++ {
-			group := query.Use(s.db).AssetGroupRow
-			parent, err := group.WithContext(ctx).
-				Where(group.ID.Eq(cursor)).
-				Where(ownerConditions(ctx, group.TableName())...).
-				First()
-			if isNoRows(err) {
-				break
-			}
+			parent, err := s.groupReference(ctx, s.db, cursor)
 			if err != nil {
-				return AssetGroupRow{}, dbError(err)
+				return AssetGroupRow{}, err
 			}
 			if parent.ParentID == nil {
 				break
@@ -105,19 +102,80 @@ func (s *Store) GroupUpdate(ctx context.Context, id string, patch GroupPatch) (A
 }
 
 func (s *Store) GroupDelete(ctx context.Context, id string) error {
+	return s.GroupDeleteAt(ctx, id, ids.NowMS())
+}
+
+// GroupDeleteAt removes a group and records deletion revisions for every group
+// removed by the parent cascade, so their sync objects cannot reappear later.
+func (s *Store) GroupDeleteAt(ctx context.Context, id string, deletedAt int64) error {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		queries := query.Use(tx)
 		group := queries.AssetGroupRow
+		rows := []AssetGroupRow{}
+		if err := group.WithContext(ctx).
+			Where(ownerConditions(ctx, group.TableName())...).
+			Scan(&rows); err != nil {
+			return err
+		}
+		children := make(map[string][]string, len(rows))
+		revisions := make(map[string]int64, len(rows))
+		for _, row := range rows {
+			revisions[row.ID] = row.UpdatedAt
+			if row.ParentID != nil {
+				children[*row.ParentID] = append(children[*row.ParentID], row.ID)
+			}
+		}
+		if _, owned := revisions[id]; !owned {
+			return notFound("分组")
+		}
+		stack := []string{id}
+		seen := make(map[string]bool)
+		removed := make([]string, 0)
+		for len(stack) > 0 {
+			last := len(stack) - 1
+			groupID := stack[last]
+			stack = stack[:last]
+			if seen[groupID] {
+				continue
+			}
+			seen[groupID] = true
+			removed = append(removed, groupID)
+			stack = append(stack, children[groupID]...)
+		}
+		if _, err := group.WithContext(ctx).
+			Where(group.ParentID.In(removed...)).
+			Where(group.OwnerID.Neq(ipc.OwnerID(ctx))).
+			UpdateColumns(map[string]any{"parent_id": nil, "updated_at": MaxExpression(tx, "", "updated_at", deletedAt)}); err != nil {
+			return err
+		}
+		asset := queries.AssetRow
+		if _, err := asset.WithContext(ctx).
+			Where(asset.GroupID.In(removed...)).
+			UpdateColumns(map[string]any{"group_id": nil, "updated_at": MaxExpression(tx, "", "updated_at", deletedAt)}); err != nil {
+			return err
+		}
+		snippet := queries.SnippetRow
+		if _, err := snippet.WithContext(ctx).
+			Where(snippet.GroupID.In(removed...)).
+			UpdateColumns(map[string]any{"group_id": nil, "updated_at": MaxExpression(tx, "", "updated_at", deletedAt)}); err != nil {
+			return err
+		}
 		if _, err := group.WithContext(ctx).
 			Where(group.ID.Eq(id)).
 			Where(ownerConditions(ctx, group.TableName())...).
 			Delete(); err != nil {
 			return err
 		}
-		tombstone := queries.SyncTombstone
-		return tombstone.WithContext(ctx).
-			Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "owner_id"}, {Name: "id"}}, DoNothing: true}).
-			Create(&SyncTombstone{ID: id, Kind: "group", DeletedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)})
+		for _, groupID := range removed {
+			revision := deletedAt
+			if revisions[groupID] > revision {
+				revision = revisions[groupID]
+			}
+			if err := s.syncTombstonePut(ctx, tx, groupID, "group", revision); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return dbError(err)
@@ -131,6 +189,11 @@ func (s *Store) GroupUpsert(ctx context.Context, id string, parentID *string, na
 	}
 	if strings.TrimSpace(name) == "" {
 		return false, badParam(errString("分组名称不能为空"))
+	}
+	if parentID != nil {
+		if _, err := s.groupReference(ctx, s.db, *parentID); err != nil {
+			return false, err
+		}
 	}
 	group := query.Use(s.db).AssetGroupRow
 	_, err := group.WithContext(ctx).
@@ -146,6 +209,24 @@ func (s *Store) GroupUpsert(ctx context.Context, id string, parentID *string, na
 		return false, err
 	}
 	return !exists, nil
+}
+
+func (s *Store) groupReference(ctx context.Context, db *gorm.DB, id string) (AssetGroupRow, error) {
+	if id == "" {
+		return AssetGroupRow{}, badParam(errString("分组 ID 不能为空"))
+	}
+	group := query.Use(db).AssetGroupRow
+	row, err := group.WithContext(ctx).Where(group.ID.Eq(id)).First()
+	if isNoRows(err) {
+		return AssetGroupRow{}, badParam(errString("分组不存在"))
+	}
+	if err != nil {
+		return AssetGroupRow{}, dbError(err)
+	}
+	if row.OwnerID != ipc.OwnerID(ctx) {
+		return AssetGroupRow{}, ipc.NewError(ipc.CodeForbidden, "分组不属于当前用户")
+	}
+	return *row, nil
 }
 
 type errString string

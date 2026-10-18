@@ -2,16 +2,17 @@
 // The desktop identity comes from the "account sync" link session (../auth/desktopAccount.ts); user management goes through the
 // remoteAccountApi proxy; the registration switch and MFA policy are not covered by the proxy, so they are honestly hidden with a browser-management note.
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { adminApi, authApi, type AccountUser, type AdminSettings } from "../../ipc/authApi";
 import { remoteAccountApi } from "../../ipc/remoteApi";
 import { DESKTOP } from "../../ipc/env";
 import { useAuth } from "../auth/store";
-import { useDesktopAccount } from "../auth/desktopAccount";
+import { useDesktopAccount, useDesktopAccountScope } from "../auth/desktopAccount";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { formatTime } from "../../ui/format";
+import { ServerSecurityLink } from "./ServerSecurityLink";
 import {
   IconCheckCircle,
   IconInfo,
@@ -33,6 +34,15 @@ export function AccountCard() {
   // The desktop identity comes from the "account sync" link server session (useAuth holds no user on desktop).
   const desktopAccount = useDesktopAccount();
   const user = DESKTOP ? desktopAccount : sessionUser;
+  const desktopScope = useDesktopAccountScope(desktopAccount);
+  const identity = user?.role === "superadmin" && (!DESKTOP || desktopScope)
+    ? (DESKTOP ? desktopScope : JSON.stringify(["web", user.id, user.username]))
+    : null;
+  const currentIdentity = useRef(identity);
+  currentIdentity.current = identity;
+  const identityEpoch = useRef(0);
+  const loadGeneration = useRef(0);
+  const [contentIdentity, setContentIdentity] = useState<string | null>(null);
 
   const [users, setUsers] = useState<AccountUser[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
@@ -49,33 +59,56 @@ export function AccountCard() {
   const [createError, setCreateError] = useState<string | null>(null);
 
   const load = useCallback(() => {
+    if (!identity || currentIdentity.current !== identity) return Promise.resolve();
+    const generation = ++loadGeneration.current;
+    const stillCurrent = () => currentIdentity.current === identity && loadGeneration.current === generation;
     setListError(null);
     // Desktop: the registration switch and MFA policy have no proxy channel; only the user list is fetched.
     if (DESKTOP) {
       return remoteAccountApi
         .adminUsers()
-        .then((r) => setUsers(r.users))
-        .catch((e: unknown) => setListError(describeError(e)));
+        .then((r) => { if (stillCurrent()) setUsers(r.users); })
+        .catch((e: unknown) => { if (stillCurrent()) setListError(describeError(e)); });
     }
     return Promise.all([
-      adminApi.users().then((r) => setUsers(r.users)),
-      adminApi.settingsGet().then((s) => {
+      adminApi.users(),
+      adminApi.settingsGet(),
+    ]).then(([r, s]) => {
+      if (stillCurrent()) {
+        setUsers(r.users);
         setSettings(s);
         setRegistrationDraft(s.registration_open);
         setMfaDraft(s.mfa_required);
-      }),
-    ]).catch((e: unknown) => setListError(describeError(e)));
-  }, []);
+      }
+    }).catch((e: unknown) => { if (stillCurrent()) setListError(describeError(e)); });
+  }, [identity]);
 
   useEffect(() => {
-    if (user?.role !== "superadmin") return;
-    void load();
-  }, [load, user?.role]);
+    identityEpoch.current++;
+    loadGeneration.current++;
+    setUsers(null);
+    setListError(null);
+    setSettings(null);
+    setRegistrationDraft(false);
+    setMfaDraft(false);
+    setSettingsBusy(false);
+    setCreateOpen(false);
+    setUsername("");
+    setDisplayName("");
+    setPassword("");
+    setCreateBusy(false);
+    setCreateError(null);
+    setContentIdentity(identity);
+    if (identity) void load();
+  }, [identity, load]);
 
-  if (!user || user.role !== "superadmin") return null;
+  if (!user || user.role !== "superadmin" || !identity || contentIdentity !== identity) return null;
 
   const submitCreate = async (e: FormEvent) => {
     e.preventDefault();
+    const actionIdentity = identity;
+    const actionEpoch = identityEpoch.current;
+    const stillCurrent = () => currentIdentity.current === actionIdentity && identityEpoch.current === actionEpoch;
     setCreateError(null);
     if (password.length < 8) {
       setCreateError("密码至少 8 位");
@@ -88,6 +121,7 @@ export function AccountCard() {
       } else {
         await adminApi.createUser(username.trim(), password, displayName.trim());
       }
+      if (!stillCurrent()) return;
       pushToast("success", `已创建用户「${username.trim()}」，请将初始密码告知对方`);
       setUsername("");
       setDisplayName("");
@@ -95,67 +129,83 @@ export function AccountCard() {
       setCreateOpen(false);
       await load();
     } catch (err) {
-      setCreateError(describeError(err));
+      if (stillCurrent()) setCreateError(describeError(err));
     } finally {
-      setCreateBusy(false);
+      if (stillCurrent()) setCreateBusy(false);
     }
   };
 
   const disableUser = async (target: AccountUser) => {
+    const actionIdentity = identity;
+    const actionEpoch = identityEpoch.current;
+    const stillCurrent = () => currentIdentity.current === actionIdentity && identityEpoch.current === actionEpoch;
     const ok = await ask(
       `禁用用户「${target.username}」？\n\n禁用后其所有会话立即失效，且无法再登录（可随后重置）。`,
       { title: "禁用用户", kind: "warning" },
     );
-    if (!ok) return;
+    if (!ok || !stillCurrent()) return;
     try {
       if (DESKTOP) {
         await remoteAccountApi.adminSetUserState(target.id, "disabled");
       } else {
         await adminApi.disableUser(target.id);
       }
+      if (!stillCurrent()) return;
       pushToast("success", `已禁用「${target.username}」`);
       await load();
     } catch (e) {
-      pushToast("error", describeError(e));
+      if (stillCurrent()) pushToast("error", describeError(e));
     }
   };
 
   const resetUser = async (target: AccountUser) => {
+    const actionIdentity = identity;
+    const actionEpoch = identityEpoch.current;
+    const stillCurrent = () => currentIdentity.current === actionIdentity && identityEpoch.current === actionEpoch;
     const ok = await ask(
       `重置用户「${target.username}」？\n\n对方的数据密钥、所有会话和两步验证绑定将被清除；\n对方下次登录须设置新密码，云端密文需从仍持有数据的设备重新同步。`,
       { title: "重置用户", kind: "warning" },
     );
-    if (!ok) return;
+    if (!ok || !stillCurrent()) return;
     try {
       if (DESKTOP) {
         await remoteAccountApi.adminSetUserState(target.id, "reset_required");
       } else {
         await adminApi.resetUser(target.id);
       }
+      if (!stillCurrent()) return;
       pushToast("success", `已重置「${target.username}」`);
       await load();
     } catch (e) {
-      pushToast("error", describeError(e));
+      if (stillCurrent()) pushToast("error", describeError(e));
     }
   };
 
   const saveSettings = async () => {
     if (!settings) return;
+    const actionIdentity = identity;
+    const actionEpoch = identityEpoch.current;
+    const stillCurrent = () => currentIdentity.current === actionIdentity && identityEpoch.current === actionEpoch;
     setSettingsBusy(true);
     try {
       const next = await adminApi.settingsPut({ registrationOpen: registrationDraft, mfaRequired: mfaDraft });
+      if (!stillCurrent()) return;
       setSettings(next);
       setRegistrationDraft(next.registration_open);
       setMfaDraft(next.mfa_required);
       pushToast("success", "设置已保存");
       // The registration switch in /auth/status changed; refresh the gate status cache
-      void authApi.status().then((s) => useAuth.setState({ status: s })).catch(() => undefined);
+      void authApi.status().then((s) => {
+        if (stillCurrent()) useAuth.setState({ status: s });
+      }).catch(() => undefined);
     } catch (e) {
-      pushToast("error", describeError(e));
-      setRegistrationDraft(settings.registration_open);
-      setMfaDraft(settings.mfa_required);
+      if (stillCurrent()) {
+        pushToast("error", describeError(e));
+        setRegistrationDraft(settings.registration_open);
+        setMfaDraft(settings.mfa_required);
+      }
     } finally {
-      setSettingsBusy(false);
+      if (stillCurrent()) setSettingsBusy(false);
     }
   };
 
@@ -316,9 +366,10 @@ export function AccountCard() {
       )}
 
       {DESKTOP && (
-        <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-3">
-          开放注册与两步验证（MFA）策略暂未接入桌面端，请在浏览器中打开服务端 Web 界面管理。
-        </p>
+        <div className="mt-3 border-t border-neutral-800/60 pt-3">
+          <p className="nx-hint">开放注册与两步验证（MFA）策略在服务端 Web 界面管理。</p>
+          <ServerSecurityLink />
+        </div>
       )}
 
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">

@@ -72,6 +72,100 @@ func TestConnectSingleFlightAndConnectionReuse(t *testing.T) {
 	}
 }
 
+func TestConnectDropsNewSSHSessionAfterAccountRevocation(t *testing.T) {
+	connector := newFakeConnector()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	connector.connect = func(_ context.Context, asset Asset, _ uint64, _ int) (base.Transport, error) {
+		close(started)
+		<-release
+		return newFakeTransport(asset.Kind, 1), nil
+	}
+	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory()})
+	t.Cleanup(func() { _ = manager.Close() })
+	revoked := make(chan struct{})
+	ctx := ipc.WithUserID(t.Context(), "account-a")
+	ctx = ipc.WithAccountSessionCheck(ctx, func(context.Context) error {
+		select {
+		case <-revoked:
+			return ErrForbidden
+		default:
+			return nil
+		}
+	})
+	result := make(chan error, 1)
+	go func() {
+		_, err := manager.ConnectFor(ctx, Asset{ID: "host-a", Kind: KindSSH})
+		result <- err
+	}()
+	<-started
+	close(revoked)
+	close(release)
+	if err := <-result; !errors.Is(err, ErrForbidden) {
+		t.Fatalf("late SSH connect error = %v; want revoked account session", err)
+	}
+	if connector.transport(0).IsAlive() || len(manager.ListSessions()) != 0 {
+		t.Fatal("late SSH connect retained a transport or session")
+	}
+}
+
+func TestConnectRetriesForValidClientAfterDialingClientWasRevoked(t *testing.T) {
+	connector := newFakeConnector()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	connector.connect = func(_ context.Context, asset Asset, _ uint64, call int) (base.Transport, error) {
+		if call == 1 {
+			close(started)
+			<-release
+		}
+		return newFakeTransport(asset.Kind, uint64(call)), nil
+	}
+	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory()})
+	t.Cleanup(func() { _ = manager.Close() })
+	revoked := make(chan struct{})
+	oldCtx := ipc.WithUserID(t.Context(), "account-a")
+	oldCtx = ipc.WithAccountSessionCheck(oldCtx, func(context.Context) error {
+		select {
+		case <-revoked:
+			return ErrForbidden
+		default:
+			return nil
+		}
+	})
+	newCtx := ipc.WithUserID(t.Context(), "account-a")
+	newCtx = ipc.WithAccountSessionCheck(newCtx, func(context.Context) error { return nil })
+	asset := Asset{ID: "shared-host", Kind: KindSSH}
+	oldResult := make(chan error, 1)
+	go func() {
+		_, err := manager.ConnectFor(oldCtx, asset)
+		oldResult <- err
+	}()
+	<-started
+	newResult := make(chan struct {
+		session *Session
+		err     error
+	}, 1)
+	go func() {
+		session, err := manager.ConnectFor(newCtx, asset)
+		newResult <- struct {
+			session *Session
+			err     error
+		}{session, err}
+	}()
+	close(revoked)
+	close(release)
+	if err := <-oldResult; !errors.Is(err, ErrForbidden) {
+		t.Fatalf("old client's late connect error = %v", err)
+	}
+	newConnection := <-newResult
+	if newConnection.err != nil || newConnection.session == nil || connector.callCount() != 2 {
+		t.Fatalf("valid client did not establish a fresh SSH connection: %+v", newConnection)
+	}
+	if connector.transport(0).IsAlive() || !connector.transport(1).IsAlive() {
+		t.Fatal("revoked client's SSH transport remained alive or valid client's new transport closed")
+	}
+}
+
 func TestMultiClientReplayControlAndMultipleChannels(t *testing.T) {
 	manager, connector, terminals, session := openTestSession(t, KindSSH)
 	transport := connector.transport(0)

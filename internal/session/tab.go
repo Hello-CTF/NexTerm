@@ -21,6 +21,8 @@ var winRMBanner = []byte("[NexTerm] WinRM line mode; each command runs in a new 
 var reconnectBanner = []byte("\r\n\x1b[33m[NexTerm] reconnected\x1b[0m\r\n")
 var replayClear = []byte("\x1b[2J\x1b[3J\x1b[H")
 
+const sshFallbackNotice = "持久终端不可用，已切换为普通 SSH 终端；关闭或断开后无法恢复此终端"
+
 type subscriber struct {
 	client   string
 	producer *hub.Producer
@@ -223,11 +225,19 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		return TabInfo{}, ErrInvalidOptions
 	}
 	var provider base.DurableProvider
+	var fallbackCause error
 	if options.Durable != nil {
 		var err error
-		provider, err = m.durableProviderFor(ctx, session, transport, kind, generation)
+		provider, err = m.durableProviderFor(ctx, session, transport, kind, generation, !options.DurableFallback)
+		if err == nil && kind == KindSSH && options.DurableFallback && !options.Durable.Recover {
+			err = session.cachedDurableCreateFailure(transport, generation)
+		}
 		if err != nil {
-			return TabInfo{}, err
+			if kind != KindSSH || !options.DurableFallback || options.Durable.Recover || !sshHelperUnavailable(err) || ctx.Err() != nil || !transport.Transport.IsAlive() {
+				return TabInfo{}, err
+			}
+			fallbackCause = err
+			options.Durable = nil
 		}
 	}
 	if err := validateEncoding(encoding); err != nil {
@@ -276,10 +286,30 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 			channel = newChannelHandle(opened)
 		}
 		if err != nil {
-			return TabInfo{}, errors.Join(err, cleanup())
+			cleanupErr := cleanup()
+			if cleanupErr == nil && opened == nil && kind == KindSSH && options.DurableFallback && !options.Durable.Recover &&
+				sshHelperUnavailable(err) && ctx.Err() == nil && transport.Transport.IsAlive() {
+				session.cacheDurableCreateFailure(transport, generation, err)
+				options.Durable = nil
+				fallback, fallbackErr := m.OpenTab(ctx, options)
+				if fallbackErr != nil {
+					return TabInfo{}, fallbackErr
+				}
+				if options.Detached {
+					fallback.FallbackNotice = sshFallbackNotice
+				} else if session.claimDurableFallbackNotice(generation) {
+					m.logger.Warn("SSH durable terminal unavailable; using regular PTY", "session", session.ID, "error", err)
+					fallback.FallbackNotice = sshFallbackNotice
+				}
+				return fallback, nil
+			}
+			return TabInfo{}, errors.Join(err, cleanupErr)
 		}
 		if channel == nil {
 			return TabInfo{}, errors.Join(errors.New("durable provider returned a nil attachment"), cleanup())
+		}
+		if !options.Durable.Recover {
+			session.clearDurableCreateFailure(transport, generation)
 		}
 		if options.Durable.Recover {
 			if grid, ok := durableAttachment.(durableGridSource); ok {
@@ -432,6 +462,14 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	if (options.Durable == nil || !options.Durable.Recover) && startupCommand != "" && startupCommandSupported(kind) {
 		_ = writeAll(channel, []byte(startupCommand+"\n"))
 	}
+	if fallbackCause != nil {
+		if options.Detached {
+			info.FallbackNotice = sshFallbackNotice
+		} else if session.claimDurableFallbackNotice(generation) {
+			m.logger.Warn("SSH durable terminal unavailable; using regular PTY", "session", session.ID, "error", fallbackCause)
+			info.FallbackNotice = sshFallbackNotice
+		}
+	}
 	return info, nil
 }
 
@@ -476,13 +514,22 @@ func (m *Manager) CreateTab(ctx context.Context, options CreateTabOptions) (TabI
 		SessionID: options.SessionID, Cols: cols, Rows: rows,
 		Ephemeral: kind == KindLocal, Detached: true,
 	}
-	if kind == KindDevice || kind == KindSSH {
-		open.Durable = &DurableTabOptions{}
+	mode, err := m.terminalModeFor(ctx, session)
+	if err != nil {
+		return TabInfo{}, err
 	}
+	if kind == KindDevice || kind == KindSSH && mode != TerminalModeRegular {
+		open.Durable = &DurableTabOptions{}
+		open.DurableFallback = kind == KindSSH
+	}
+	session.mu.Lock()
+	openGeneration := session.generation
+	session.mu.Unlock()
 	info, err := m.OpenTab(ctx, open)
 	if err != nil {
 		return TabInfo{}, err
 	}
+	fallbackNotice := info.FallbackNotice
 	if title != "" {
 		info, err = m.RenameTab(ctx, info.ID, title)
 		if err != nil {
@@ -504,6 +551,11 @@ func (m *Manager) CreateTab(ctx context.Context, options CreateTabOptions) (TabI
 		if err := writeAll(channel, []byte(options.Command+"\n")); err != nil {
 			return TabInfo{}, errors.Join(err, m.CloseTab(info.ID))
 		}
+	}
+	info.FallbackNotice = ""
+	if fallbackNotice != "" && session.claimDurableFallbackNotice(openGeneration) {
+		m.logger.Warn("SSH durable terminal unavailable; using regular PTY", "session", session.ID)
+		info.FallbackNotice = fallbackNotice
 	}
 	return info, nil
 }
@@ -548,7 +600,7 @@ func (m *Manager) RenameTab(ctx context.Context, tabID, title string) (TabInfo, 
 		return TabInfo{}, ErrDisconnected
 	}
 	if durable {
-		provider, err := m.durableProviderFor(ctx, tab.session, transport, kind, generation)
+		provider, err := m.durableProviderFor(ctx, tab.session, transport, kind, generation, false)
 		if err != nil {
 			return TabInfo{}, err
 		}
@@ -605,6 +657,12 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 		return TabInfo{}, err
 	}
 	defer tab.unlockFeed()
+	m.mu.Lock()
+	occupied := m.channelTabs[options.ChannelID] != "" && m.channelTabs[options.ChannelID] != tab.ID
+	m.mu.Unlock()
+	if occupied {
+		return TabInfo{}, errors.New("channel already attached to another tab")
+	}
 
 	var incarnation uint64
 	reserved := false

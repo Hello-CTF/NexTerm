@@ -13,6 +13,7 @@ import { describeError } from "../../ui/errorText";
 import { IconArrowDown } from "../../ui/icons";
 import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
 import { matchAppKeybinding } from "../../app/keybindings";
+import { useUi } from "../../app/store";
 import {
   getAppearancePrefs,
   getInputPrefs,
@@ -169,6 +170,7 @@ export function XtermView(props: XtermViewProps) {
 
     let kernelTabId = "";
     let disposed = false;
+    const attachedAssetId = useUi.getState().sessions.find((session) => session.id === props.sessionId)?.assetId;
     const applyGrid = (grid: TerminalGrid) => resizeTerminalToGridPreservingSelection(term, grid);
     const coordinator = new TerminalGridCoordinator(
       productionGridRuntime,
@@ -288,6 +290,7 @@ export function XtermView(props: XtermViewProps) {
       try {
         let initialGrid = dimensions;
         let id: string;
+        let fallbackNotice: string | undefined;
         if (resume) {
           const info = await terminalApi.attachTab(resume, channel, -1, undefined, props.containerId ? undefined : props.sessionId);
           id = info.tabId;
@@ -344,6 +347,7 @@ export function XtermView(props: XtermViewProps) {
           if (!dimensions) return;
           const info = await terminalApi.attach(props.sessionId, dimensions.cols, dimensions.rows, channel);
           id = info.tabId;
+          fallbackNotice = info.fallbackNotice;
           onAttachInfoRef.current?.({
             tabId: info.tabId,
             controller: info.controller,
@@ -360,9 +364,18 @@ export function XtermView(props: XtermViewProps) {
           void terminalApi.detach(id, channelIdOf(channel)).catch(() => undefined);
           return;
         }
+        if (props.containerId) {
+          const current = useUi.getState().sessions.find((session) => session.id === props.sessionId);
+          if ((attachedAssetId !== undefined && (!current || current.assetId !== attachedAssetId)) || (current && current.status !== "connected")) {
+            void terminalApi.closeTab(id, "kill", props.sessionId).catch(() => undefined);
+            onAttachFailedRef.current?.("interrupted");
+            return;
+          }
+        }
         coordinator.attach(id, initialGrid, false);
         kernelTabId = id;
         kernelTabIdRef.current = id;
+        if (fallbackNotice) useUi.getState().pushToast("info", fallbackNotice);
         props.onAttach?.(id);
       } catch (e) {
         const code = (e as { code?: string } | null)?.code;
@@ -381,6 +394,11 @@ export function XtermView(props: XtermViewProps) {
     const reattachOnReopen = () => {
       const id = kernelTabId;
       if (!id) return;
+      if (props.containerId) {
+        kernelTabId = "";
+        onAttachFailedRef.current?.("interrupted");
+        return;
+      }
       const resume = streamAnchor
         ? {
             seq: streamAnchor.seq + Math.max(0, streamBytes - streamAnchor.control),

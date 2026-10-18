@@ -23,13 +23,31 @@ const (
 )
 
 type Session struct {
-	ID        string
-	UserID    string
-	DeviceID  string
-	CreatedAt int64
-	TouchedAt int64
-	ExpiresAt int64
-	RevokedAt int64
+	ID         string
+	UserID     string
+	DeviceID   string
+	ClientName string
+	Origin     string
+	CreatedAt  int64
+	TouchedAt  int64
+	ExpiresAt  int64
+	RevokedAt  int64
+}
+
+type SessionMetadata struct {
+	ClientName string
+	Origin     string
+}
+
+type SessionInfo struct {
+	ID         string
+	DeviceID   string
+	DeviceName string
+	ClientName string
+	Origin     string
+	CreatedAt  int64
+	LastSeenAt int64
+	ExpiresAt  int64
 }
 
 type Identity struct {
@@ -47,6 +65,10 @@ func sessionTokenHash(token string) string {
 }
 
 func (a *Accounts) IssueSession(ctx context.Context, userID, deviceID string) (string, *Session, error) {
+	return a.IssueSessionWithMetadata(ctx, userID, deviceID, SessionMetadata{})
+}
+
+func (a *Accounts) IssueSessionWithMetadata(ctx context.Context, userID, deviceID string, metadata SessionMetadata) (string, *Session, error) {
 	raw := make([]byte, sessionTokenBytes)
 	if _, err := rand.Read(raw); err != nil {
 		return "", nil, ipc.WrapError(ipc.CodeCrypto, "加密错误: 会话令牌生成失败", err)
@@ -54,7 +76,7 @@ func (a *Accounts) IssueSession(ctx context.Context, userID, deviceID string) (s
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	now := a.now()
 	session := &Session{
-		ID: ids.New(), UserID: userID, DeviceID: deviceID, CreatedAt: now, TouchedAt: now,
+		ID: ids.New(), UserID: userID, DeviceID: deviceID, ClientName: metadata.ClientName, Origin: metadata.Origin, CreatedAt: now, TouchedAt: now,
 		ExpiresAt: now + SessionSlidingTTL.Milliseconds(),
 	}
 	err := a.withBusyRetry(ctx, func() error {
@@ -88,6 +110,7 @@ func (a *Accounts) IssueSession(ctx context.Context, userID, deviceID string) (s
 			}
 			row := store.UserSession{
 				ID: session.ID, UserID: session.UserID, TokenHash: sessionTokenHash(token),
+				ClientName: session.ClientName, Origin: session.Origin,
 				CreatedAt: session.CreatedAt, TouchedAt: session.TouchedAt, ExpiresAt: session.ExpiresAt,
 			}
 			if session.DeviceID != "" {
@@ -100,6 +123,40 @@ func (a *Accounts) IssueSession(ctx context.Context, userID, deviceID string) (s
 		return "", nil, dbError(err)
 	}
 	return token, session, nil
+}
+
+func (a *Accounts) ListUserSessions(ctx context.Context, userID string) ([]SessionInfo, error) {
+	now := a.now()
+	userSession := query.Use(a.db).UserSession
+	rows := []store.UserSession{}
+	if err := userSession.WithContext(ctx).
+		Where(userSession.UserID.Eq(userID), userSession.RevokedAt.IsNull(),
+			userSession.ExpiresAt.Gt(now), userSession.CreatedAt.Gt(now-SessionAbsoluteTTL.Milliseconds())).
+		Order(userSession.TouchedAt.Desc(), userSession.ID).
+		Scan(&rows); err != nil {
+		return nil, dbError(err)
+	}
+	devices, err := a.ListDevices(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	deviceNames := make(map[string]string, len(devices))
+	for _, device := range devices {
+		deviceNames[device.ID] = device.Name
+	}
+	result := make([]SessionInfo, 0, len(rows))
+	for _, row := range rows {
+		info := SessionInfo{
+			ID: row.ID, ClientName: row.ClientName, Origin: row.Origin,
+			CreatedAt: row.CreatedAt, LastSeenAt: row.TouchedAt, ExpiresAt: row.ExpiresAt,
+		}
+		if row.DeviceID != nil {
+			info.DeviceID = *row.DeviceID
+			info.DeviceName = deviceNames[info.DeviceID]
+		}
+		result = append(result, info)
+	}
+	return result, nil
 }
 
 func (a *Accounts) ValidateSession(ctx context.Context, token string) (*Identity, error) {
@@ -181,6 +238,20 @@ func (a *Accounts) RevokeSession(ctx context.Context, sessionID string) error {
 	}
 	if info.RowsAffected == 0 {
 		return ipc.NewError(ipc.CodeNotFound, "会话不存在")
+	}
+	return nil
+}
+
+func (a *Accounts) RevokeUserSession(ctx context.Context, userID, sessionID string) error {
+	userSession := query.Use(a.db).UserSession
+	info, err := userSession.WithContext(ctx).
+		Where(userSession.ID.Eq(sessionID), userSession.UserID.Eq(userID), userSession.RevokedAt.IsNull()).
+		UpdateColumns(map[string]any{"revoked_at": a.now()})
+	if err != nil {
+		return dbError(err)
+	}
+	if info.RowsAffected == 0 {
+		return ipc.NewError(ipc.CodeNotFound, "会话不存在或已撤销")
 	}
 	return nil
 }

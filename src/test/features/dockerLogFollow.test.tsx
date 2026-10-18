@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   ps: vi.fn(),
   images: vi.fn(),
   logsAttach: vi.fn(),
+  closeTab: vi.fn(),
   bytesCb: null as null | ((bytes: Uint8Array) => void),
 }));
 
@@ -35,7 +36,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       logsAttach: mocks.logsAttach,
       execAttach: vi.fn(),
     },
-    terminalApi: { closeTab: vi.fn(() => Promise.resolve()) },
+    terminalApi: { closeTab: mocks.closeTab },
   };
 });
 vi.mock("../../ipc/events", async (importOriginal) => {
@@ -108,14 +109,31 @@ function mountPanel(): MountedView {
   );
 }
 
+function mountSwitchablePanel(initialSessionId: string) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const renderPanel = (sessionId: string) => createElement(
+    QueryClientProvider,
+    { client },
+    createElement(DockerPanel, { sessionId, visible: true }),
+  );
+  const view = mount(renderPanel(initialSessionId));
+  return {
+    view,
+    switchTo(sessionId: string) {
+      act(() => view.root.render(renderPanel(sessionId)));
+    },
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
-  useUi.setState({ pushToast: vi.fn() });
+  useUi.setState({ pushToast: vi.fn(), resyncSessions: vi.fn().mockResolvedValue(undefined), sessions: [] });
   mocks.bytesCb = null;
   mocks.ps.mockResolvedValue([containerA]);
   mocks.images.mockResolvedValue([]);
   mocks.logsAttach.mockResolvedValue("tab-1");
+  mocks.closeTab.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -222,5 +240,124 @@ describe("docker log stream follow", () => {
     emitLog("second line\n");
     expect(sc.metrics.scrollTop).toBe(1200);
     expect(mounted.container.textContent).not.toContain("↓ 新输出");
+  });
+
+  it("reopens logs on the same host after reconnect and exposes the discontinuity", async () => {
+    useUi.setState({ sessions: [{ id: "s1", assetId: "host-a", name: "host A", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }] });
+    mocks.logsAttach.mockResolvedValueOnce("tab-1").mockResolvedValueOnce("tab-2");
+    mounted = mountPanel();
+    await openLogView(mounted);
+    emitLog("before reconnect\n");
+    expect(mounted.container.textContent).toContain("before reconnect");
+
+    act(() => {
+      useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, status: "reconnecting" as const })) }));
+    });
+    await waitFor(() => expect(mounted?.container.textContent).toContain("连接恢复后将重新读取最近 500 行"));
+    expect(mounted.container.querySelector<HTMLButtonElement>("button:disabled")?.textContent).toBeTruthy();
+    act(() => {
+      useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, status: "connected" as const })) }));
+    });
+    await waitFor(() => expect(mocks.logsAttach).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mounted?.container.textContent).toContain("断线期间超过 500 行的内容可能缺失"));
+    expect(mocks.logsAttach.mock.calls[1]?.slice(0, 3)).toEqual(["s1", "aaaa11112222", 500]);
+    expect(mounted.container.textContent).not.toContain("before reconnect");
+  });
+
+  it("does not reopen logs when the same session ID points to another asset", async () => {
+    useUi.setState({ sessions: [{ id: "s1", assetId: "host-a", name: "host A", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }] });
+    mounted = mountPanel();
+    await openLogView(mounted);
+    act(() => {
+      useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, assetId: "host-b", status: "reconnecting" as const })) }));
+    });
+    await waitFor(() => expect(mounted?.container.querySelector('[role="log"]')).toBeNull());
+    await waitFor(() => expect(mocks.closeTab).toHaveBeenCalledWith("tab-1", "kill", "s1"));
+    act(() => {
+      useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, status: "connected" as const })) }));
+    });
+    await flush();
+    expect(mocks.logsAttach).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes an active old stream when the panel switches sessions", async () => {
+    useUi.setState({ sessions: [
+      { id: "s1", assetId: "host-a", name: "host A", kind: "ssh", status: "connected", tabs: [], createdAt: 0 },
+      { id: "s2", assetId: "host-b", name: "host B", kind: "ssh", status: "connected", tabs: [], createdAt: 0 },
+    ] });
+    const panel = mountSwitchablePanel("s1");
+    mounted = panel.view;
+    await openLogView(mounted);
+    emitLog("host A secret line\n");
+    expect(mounted.container.textContent).toContain("host A secret line");
+
+    panel.switchTo("s2");
+    expect(mounted.container.querySelector('[role="log"]')).toBeNull();
+    expect(mounted.container.textContent).not.toContain("host A secret line");
+    await waitFor(() => expect(mocks.closeTab).toHaveBeenCalledWith("tab-1", "kill", "s1"));
+  });
+
+  it("discards a delayed old attach after switching sessions and opens only the new host", async () => {
+    useUi.setState({ sessions: [
+      { id: "s1", assetId: "host-a", name: "host A", kind: "ssh", status: "connected", tabs: [], createdAt: 0 },
+      { id: "s2", assetId: "host-b", name: "host B", kind: "ssh", status: "connected", tabs: [], createdAt: 0 },
+    ] });
+    let completeOldAttach: (id: string) => void = () => {};
+    mocks.logsAttach.mockImplementationOnce(() => new Promise<string>((resolve) => { completeOldAttach = resolve; }))
+      .mockResolvedValueOnce("new-tab");
+    const panel = mountSwitchablePanel("s1");
+    mounted = panel.view;
+    await waitFor(() => expect(mounted?.container.querySelector('button[title="查看日志"]')).not.toBeNull());
+    click(mounted.container.querySelector('button[title="查看日志"]')!);
+    await waitFor(() => expect(mocks.logsAttach).toHaveBeenCalledTimes(1));
+
+    panel.switchTo("s2");
+    expect(mounted.container.querySelector('[role="log"]')).toBeNull();
+    await waitFor(() => expect(mounted?.container.querySelector('button[title="查看日志"]')).not.toBeNull());
+    click(mounted.container.querySelector('button[title="查看日志"]')!);
+    await waitFor(() => expect(mocks.logsAttach).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mounted?.container.querySelector('[role="log"]')).not.toBeNull());
+    expect(mocks.logsAttach.mock.calls[1]?.[0]).toBe("s2");
+    emitLog("host B line\n");
+    expect(mounted.container.textContent).toContain("host B line");
+
+    await act(async () => { completeOldAttach("old-tab"); });
+    await waitFor(() => expect(mocks.closeTab).toHaveBeenCalledWith("old-tab", "kill", "s1"));
+    expect(mounted.container.textContent).toContain("host B line");
+    expect(mounted.container.textContent).not.toContain("host A secret line");
+  });
+
+  it("discards a delayed log attach if the target host changes before it completes", async () => {
+    useUi.setState({ sessions: [{ id: "s1", assetId: "host-a", name: "host A", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }] });
+    let completeAttach: (id: string) => void = () => {};
+    mocks.logsAttach.mockImplementationOnce(() => new Promise<string>((resolve) => { completeAttach = resolve; }));
+    mounted = mountPanel();
+    await waitFor(() => expect(mounted?.container.querySelector('button[title="查看日志"]')).not.toBeNull());
+    click(mounted.container.querySelector('button[title="查看日志"]')!);
+    await waitFor(() => expect(mocks.logsAttach).toHaveBeenCalledTimes(1));
+    act(() => {
+      useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, assetId: "host-b" })) }));
+    });
+    await act(async () => { completeAttach("late-tab"); });
+    await waitFor(() => expect(mocks.closeTab).toHaveBeenCalledWith("late-tab", "kill", "s1"));
+    expect(mounted.container.querySelector('[role="log"]')).toBeNull();
+  });
+
+  it("discards an old stream even when reconnect finishes before attach returns", async () => {
+    useUi.setState({ sessions: [{ id: "s1", assetId: "host-a", name: "host A", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }] });
+    let completeAttach: (id: string) => void = () => {};
+    mocks.logsAttach.mockImplementationOnce(() => new Promise<string>((resolve) => { completeAttach = resolve; }));
+    mounted = mountPanel();
+    await waitFor(() => expect(mounted?.container.querySelector('button[title="查看日志"]')).not.toBeNull());
+    click(mounted.container.querySelector('button[title="查看日志"]')!);
+    await waitFor(() => expect(mocks.logsAttach).toHaveBeenCalledTimes(1));
+    act(() => {
+      useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, status: "reconnecting" as const })) }));
+      useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, status: "connected" as const })) }));
+    });
+    await act(async () => { completeAttach("stale-tab"); });
+    await waitFor(() => expect(mocks.closeTab).toHaveBeenCalledWith("stale-tab", "kill", "s1"));
+    expect(mounted.container.querySelector('[role="log"]')).toBeNull();
+    expect(useUi.getState().pushToast).toHaveBeenCalledWith("info", "打开日志时主机连接发生变化，请重新打开日志");
   });
 });

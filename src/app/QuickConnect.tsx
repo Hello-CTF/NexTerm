@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { connectAsset, connectQuickTarget, saveQuickConnectAsset, useUi, type ConnectAssetInput, type WorkspaceProblem } from "./store";
+import { connectAsset, connectQuickTarget, dbKindOf, saveQuickConnectAsset, useUi, type ConnectAssetInput, type WorkspaceProblem } from "./store";
 import { WorkspaceProblems } from "../features/problems/WorkspaceProblems";
 import { assetApi, type Asset } from "../ipc/commands";
 import { WEB } from "../ipc/env";
@@ -27,14 +27,20 @@ type QuickConnectRow =
   | { kind: "quick"; mode: "temporary" | "save"; target: QuickConnectTarget; label: string }
   | { kind: "asset"; asset: Asset };
 
-export function QuickConnect({ onClose }: { onClose: () => void }) {
+export function QuickConnect({
+  onClose,
+  kindFilter,
+}: {
+  onClose: () => void;
+  kindFilter?: "database";
+}) {
   const assetsQuery = useQuery({
     queryKey: ["assets"],
     queryFn: () => assetApi.list(),
     refetchOnWindowFocus: false,
     retry: false,
   });
-  const { hiddenIds, showHidden } = useAssetVisibility();
+  const { hiddenIds, showHidden, setShowHidden } = useAssetVisibility();
   const historyEntries = useConnectHistory((s) => s.entries);
   const connectingIds = useUi((s) => s.connectingAssetIds);
   const reachEntries = useAssetReachability((s) => s.entries);
@@ -64,6 +70,19 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
   const layer = useOverlayFocus(true, modalRef, { initialFocus: () => inputRef.current });
 
   const assets = assetsQuery.data ?? [];
+  const duplicateNames = useMemo(() => {
+    const seen = new Set<string>();
+    const duplicates = new Set<string>();
+    for (const asset of assets) {
+      const name = asset.name.trim();
+      if (seen.has(name)) duplicates.add(name);
+      else seen.add(name);
+    }
+    return duplicates;
+  }, [assets]);
+  const hiddenDatabaseCount = assets.filter(
+    (asset) => dbKindOf(asset.kind) !== null && hiddenIds.includes(asset.id),
+  ).length;
   const workspaceProblems = useUi((state) =>
     problemWorkspaceId ? state.workspaceRuntime[problemWorkspaceId]?.problems : undefined,
   );
@@ -72,12 +91,15 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
     () =>
       orderQuickConnectAssets(
         assets.filter(
-          (a) => (!mobile || a.kind !== "local") && (showHidden || !hiddenIds.includes(a.id)),
+          (a) =>
+            (kindFilter !== "database" || dbKindOf(a.kind) !== null) &&
+            (!mobile || a.kind !== "local") &&
+            (showHidden || !hiddenIds.includes(a.id)),
         ),
         historyEntries,
         query,
       ),
-    [assets, hiddenIds, showHidden, historyEntries, query, mobile],
+    [assets, hiddenIds, showHidden, historyEntries, query, mobile, kindFilter],
   );
 
   const probeTargets = useMemo(
@@ -98,12 +120,18 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
     return () => window.clearTimeout(timer);
   }, [probeTargets]);
 
-  const quickTarget = useMemo(() => parseQuickConnectTarget(query), [query]);
+  const quickTarget = useMemo(
+    () => (kindFilter === "database" ? null : parseQuickConnectTarget(query)),
+    [query, kindFilter],
+  );
   useEffect(() => {
     setCursor(0);
   }, [quickTarget]);
   const firstConnect =
-    assetsQuery.isSuccess && !query.trim() && !assets.some((asset) => asset.kind !== "local");
+    kindFilter !== "database" &&
+    assetsQuery.isSuccess &&
+    !query.trim() &&
+    !assets.some((asset) => asset.kind !== "local");
   const rows = useMemo<QuickConnectRow[]>(() => {
     const list: QuickConnectRow[] = [];
     if (!firstConnect) {
@@ -152,6 +180,10 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
   };
 
   const connect = async (asset: ConnectAssetInput) => {
+    if (kindFilter === "database" && dbKindOf(asset.kind) === null) {
+      useUi.getState().pushToast("info", "这里只能连接数据库资产");
+      return;
+    }
     if (mobile && asset.kind === "local") {
       useUi.getState().pushToast("info", "移动端不支持本地终端，请双击资产连接远程主机");
       return;
@@ -185,6 +217,7 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
   };
 
   const runQuick = async (row: QuickConnectRow & { kind: "quick" }) => {
+    if (kindFilter === "database") return;
     if (quickPendingRef.current) return;
     quickPendingRef.current = true;
     setProblemWorkspaceId(useUi.getState().activeWorkspaceId);
@@ -291,14 +324,16 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
         onClick={(event) => event.stopPropagation()}
         onKeyDown={onOverlayKeyDown}
       >
-        <h2 id={titleId} className="nx-sr-only">快速连接</h2>
+        <h2 id={titleId} className="nx-sr-only">
+          {kindFilter === "database" ? "选择数据库" : "快速连接"}
+        </h2>
         <div className="flex items-center gap-2.5 border-b border-neutral-800/70 px-4">
           <IconSearch size={15} className="shrink-0 text-neutral-400" />
           <input
             ref={inputRef}
             className="nx-command-input border-none px-0"
-            placeholder="搜索资产，或输入 user@host:port 快速连接"
-            aria-label="资产搜索"
+            placeholder={kindFilter === "database" ? "搜索数据库资产" : "搜索资产，或输入 user@host:port 快速连接"}
+            aria-label={kindFilter === "database" ? "数据库资产搜索" : "资产搜索"}
             role="combobox"
             aria-autocomplete="list"
             aria-expanded="true"
@@ -311,7 +346,7 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
             }}
           />
         </div>
-        <div id={listId} className="max-h-[340px] overflow-y-auto p-1.5" role="listbox" aria-label="资产连接" tabIndex={-1}>
+        <div id={listId} className="max-h-[340px] overflow-y-auto p-1.5" role="listbox" aria-label={kindFilter === "database" ? "数据库资产连接" : "资产连接"} tabIndex={-1}>
           {rows.map((row, index) => {
             const optionId = `${listId}-option-${index}`;
             if (row.kind === "quick") {
@@ -350,6 +385,10 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
             const asset = row.asset;
             const connecting = connectingIds.includes(asset.id);
             const target = asset.host ? `${asset.host}${asset.port ? `:${asset.port}` : ""}` : "";
+            const showIdentity = duplicateNames.has(asset.name.trim()) && Boolean(target);
+            const identity = showIdentity
+              ? `${asset.username?.trim() ? `${asset.username.trim()}@` : ""}${target}`
+              : "";
             const Icon = assetIcon(asset.kind, typeof asset.options?.icon === "string" ? asset.options.icon : undefined);
             return (
               <button
@@ -365,7 +404,10 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
                 onClick={() => activate(row)}
               >
                 <Icon size={15} className="shrink-0 text-neutral-400" />
-                <span className="min-w-0 flex-1 truncate">{asset.name}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{asset.name}</span>
+                  {showIdentity && <span className="block break-all text-[11px] leading-tight text-neutral-400">{identity}</span>}
+                </span>
                 {asset.kind === "local" || asset.builtin ? (
                   <span className="nx-badge nx-badge-blue shrink-0">本机</span>
                 ) : (
@@ -376,9 +418,9 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
                     <IconLoader size={11} className="animate-spin" />
                     连接中…
                   </span>
-                ) : (
-                  target && <span className="nx-command-hint shrink-0 text-[11px]">{target}</span>
-                )}
+                ) : !showIdentity && target ? (
+                  <span className="nx-command-hint shrink-0 text-[11px]">{target}</span>
+                ) : null}
               </button>
             );
           })}
@@ -387,10 +429,26 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
               <div role="status">
                 {firstConnect
                   ? "还没有远程资产，选择一种方式开始"
+                  : kindFilter === "database"
+                    ? query.trim()
+                      ? "没有匹配的数据库资产"
+                      : hiddenDatabaseCount > 0 && !showHidden
+                        ? "数据库资产已隐藏"
+                        : "还没有数据库资产，请先在资产树中新建一个"
                   : query.trim()
                     ? "没有匹配的资产"
                     : "还没有可连接的资产"}
               </div>
+              {kindFilter === "database" && hiddenDatabaseCount > 0 && (
+                <button
+                  type="button"
+                  className="nx-btn nx-btn-outline nx-btn-sm mt-4"
+                  onClick={() => setShowHidden(!showHidden)}
+                >
+                  {showHidden ? "隐藏已隐藏资产" : `显示隐藏资产（${hiddenDatabaseCount}）`}
+                </button>
+              )}
+              {kindFilter !== "database" && (
               <div className="mt-4 flex flex-wrap items-center justify-center gap-2" role="group" aria-label="连接操作">
                 <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" onClick={() => setCreating(true)}>
                   <IconPlus size={13} />
@@ -416,6 +474,7 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
                   </button>
                 )}
               </div>
+              )}
             </div>
           )}
         </div>
@@ -433,7 +492,7 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
             </button>
           </div>
         )}
-        {problemWorkspaceId && workspaceProblems && workspaceProblems.length > 0 && (
+        {kindFilter !== "database" && problemWorkspaceId && workspaceProblems && workspaceProblems.length > 0 && (
           <WorkspaceProblems
             workspaceId={problemWorkspaceId}
             onReconnect={reconnectProblem}

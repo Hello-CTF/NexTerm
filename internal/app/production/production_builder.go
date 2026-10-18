@@ -141,25 +141,37 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	}
 	durableResolver = productionDurableResolver{ssh: sshResolver}
 	sessionManager = session.NewManager(session.Config{
-		Connector:         connector,
-		Terminals:         config.Terminals,
-		DurableResolver:   durableResolver,
-		TranscriptOffsets: durableTranscriptOffsets{database: database},
-		TabTitles:         durableTabTitles{database: database},
-		Transcripts:       transcriptWriter,
-		Commands:          commandLogSink{database: database, logger: config.Config.Logger},
-		Logger:            config.Config.Logger,
-		OpenAccess:        config.Desktop,
+		Connector:            connector,
+		Terminals:            config.Terminals,
+		DurableResolver:      durableResolver,
+		TerminalModeResolver: newProductionTerminalModeResolver(database),
+		TranscriptOffsets:    durableTranscriptOffsets{database: database},
+		TabTitles:            durableTabTitles{database: database},
+		Transcripts:          transcriptWriter,
+		Commands:             commandLogSink{database: database, logger: config.Config.Logger},
+		Logger:               config.Config.Logger,
+		OpenAccess:           config.Desktop,
 		Emitter: session.EmitterFunc(func(ctx context.Context, event session.Event) error {
 			if event.Topic == session.TopicSessionStatus {
-				if status, ok := event.Payload.(session.StatusEvent); ok && status.Status != session.StatusConnected && status.Status != session.StatusConnecting {
-					if dockerService != nil {
+				if status, ok := event.Payload.(session.StatusEvent); ok {
+					if dockerService != nil && status.Status != session.StatusConnected && status.Status != session.StatusConnecting {
 						if err := dockerService.CloseSession(status.SessionID); err != nil {
 							config.Config.Logger.Warn("close docker session on status change failed", "session", status.SessionID, "error", err)
 						}
 					}
-					if forwardService != nil && status.Status != session.StatusReconnecting {
-						forwardService.CloseSession(status.SessionID)
+					if forwardService != nil {
+						switch status.Status {
+						case session.StatusReconnecting:
+							forwardService.SuspendRemote(status.SessionID)
+						case session.StatusConnected:
+							go forwardService.RestoreRemote(productionSessionRequestContext(context.WithoutCancel(ctx)), status.SessionID)
+						case session.StatusDisconnected, session.StatusFailed:
+							reason := status.Error
+							if reason == "" {
+								reason = "会话已断开，请连接后重试转发"
+							}
+							forwardService.FailSession(status.SessionID, reason)
+						}
 					}
 				}
 			}
@@ -215,12 +227,29 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	if err != nil {
 		return nil, err
 	}
-	forwardService = forward.NewService(forward.Config{Provider: forward.DialerProviderFunc(sessionManager.CurrentDialerFor), Policy: forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform}})
+	forwardService = forward.NewService(forward.Config{
+		Provider: forward.DialerProviderFunc(sessionManager.CurrentDialerFor),
+		SessionHost: func(ctx context.Context, sessionID string) (string, error) {
+			connected, err := sessionManager.SessionFor(productionSessionRequestContext(ctx), sessionID)
+			if err != nil {
+				return "", err
+			}
+			return connected.Asset().ID, nil
+		},
+		Policy:  forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform},
+		OnError: func(err error) { config.Config.Logger.Warn("forward lifecycle error", "error", err) },
+	})
 	services = ProductionServices{
 		Store: database, Vault: credentialVault, Sync: syncService, Profiles: profileManager,
 		Tasks:    taskManager,
 		Database: db.NewService(db.NewStoreAssetResolver(database, credentialVault)),
-		Mount:    mount.NewService(mount.Config{Auditor: database}),
+		Mount: mount.NewService(mount.Config{Auditor: database, SessionHost: func(ctx context.Context, sessionID string) (string, error) {
+			connected, err := sessionManager.SessionFor(productionSessionRequestContext(ctx), sessionID)
+			if err != nil {
+				return "", err
+			}
+			return connected.Asset().ID, nil
+		}}),
 		Sessions: sessionManager,
 		Forward:  forwardService,
 		Docker:   dockerService, Retention: retention, hostKeys: hostKeys, sshConnector: sshConnector, dataDir: config.DataDir,

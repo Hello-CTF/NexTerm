@@ -116,18 +116,19 @@ type attachTerminalRequest struct {
 }
 
 type attachedTabDTO struct {
-	TabID       string  `json:"tabId"`
-	SessionID   string  `json:"sessionId"`
-	Cols        uint32  `json:"cols"`
-	Rows        uint32  `json:"rows"`
-	Controller  *string `json:"controller"`
-	Subscribers int     `json:"subscribers"`
-	Viewers     int     `json:"viewers"`
-	Exited      bool    `json:"exited"`
-	Retainable  bool    `json:"retainable"`
-	Encoding    string  `json:"encoding,omitempty"`
-	Title       string  `json:"title,omitempty"`
-	Shell       string  `json:"shell"`
+	TabID          string  `json:"tabId"`
+	SessionID      string  `json:"sessionId"`
+	Cols           uint32  `json:"cols"`
+	Rows           uint32  `json:"rows"`
+	Controller     *string `json:"controller"`
+	Subscribers    int     `json:"subscribers"`
+	Viewers        int     `json:"viewers"`
+	Exited         bool    `json:"exited"`
+	Retainable     bool    `json:"retainable"`
+	Encoding       string  `json:"encoding,omitempty"`
+	Title          string  `json:"title,omitempty"`
+	Shell          string  `json:"shell"`
+	FallbackNotice string  `json:"fallbackNotice,omitempty"`
 }
 
 type renameTerminalRequest struct {
@@ -324,7 +325,8 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		func() error {
 			return ipc.Register(dispatcher, "session_open_line_tab", func(ctx context.Context, call *ipc.Call, input openTerminalRequest) (string, error) {
 				ctx = productionSessionRequestContext(ctx)
-				if err := s.bridge.Bridge(call.Channel.ID); err != nil {
+				bridged, err := s.bridge.bridge(call.Channel.ID)
+				if err != nil {
 					return "", terminalIPCError(err)
 				}
 				info, err := s.sessions.OpenTabFor(context.WithoutCancel(ctx), session.OpenTabOptions{
@@ -332,7 +334,9 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					Cols: input.Cols, Rows: input.Rows, Ephemeral: true,
 				})
 				if err != nil {
-					s.bridge.Unbridge(call.Channel.ID)
+					if bridged {
+						s.bridge.Unbridge(call.Channel.ID)
+					}
 				}
 				return info.ID, terminalIPCError(err)
 			})
@@ -366,22 +370,39 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				if err != nil {
 					return attachedTabDTO{}, terminalIPCError(err)
 				}
-				kind := connected.Asset().Kind
+				asset := connected.Asset()
+				kind := asset.Kind
+				mode, err := s.sessions.TerminalModeFor(ctx, input.SessionID)
+				if err != nil {
+					return attachedTabDTO{}, terminalIPCError(err)
+				}
 				ephemeral := kind == session.KindLocal
 				retainable := ephemeral
 				var durable *session.DurableTabOptions
-				if kind == session.KindDevice || kind == session.KindSSH && (input.Durable == nil || *input.Durable) {
-					durable = &session.DurableTabOptions{}
+				fallback := false
+				useDurable := kind == session.KindDevice || kind == session.KindSSH && mode != session.TerminalModeRegular
+				if kind == session.KindSSH && input.Durable != nil {
+					if mode == session.TerminalModeRegular && *input.Durable {
+						return attachedTabDTO{}, terminalIPCError(session.ErrDurableDisabled)
+					}
+					useDurable = *input.Durable
 				}
-				if err := s.bridge.Bridge(call.Channel.ID); err != nil {
+				if useDurable {
+					durable = &session.DurableTabOptions{}
+					fallback = kind == session.KindSSH && input.Durable == nil
+				}
+				bridged, err := s.bridge.bridge(call.Channel.ID)
+				if err != nil {
 					return attachedTabDTO{}, terminalIPCError(err)
 				}
 				info, err := s.sessions.OpenTabFor(context.WithoutCancel(ctx), session.OpenTabOptions{
 					SessionID: input.SessionID, ClientID: call.ClientID, ChannelID: call.Channel.ID, Cols: input.Cols, Rows: input.Rows,
-					Ephemeral: ephemeral, Retainable: retainable, Durable: durable,
+					Ephemeral: ephemeral, Retainable: retainable, Durable: durable, DurableFallback: fallback,
 				})
 				if err != nil {
-					s.bridge.Unbridge(call.Channel.ID)
+					if bridged {
+						s.bridge.Unbridge(call.Channel.ID)
+					}
 					return attachedTabDTO{}, terminalIPCError(err)
 				}
 				return attachedSessionTab(info), nil
@@ -395,7 +416,32 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					return attachedTabDTO{}, terminalIPCError(lookupErr)
 				}
 				if lookupErr == nil && (input.SessionID == "" || tab.SessionID == input.SessionID) {
-					if err := s.bridge.Bridge(call.Channel.ID); err != nil {
+					if input.SessionID == "" && tab.Info().Durable {
+						infos, err := s.sessions.ListSessionsFor(ctx)
+						if err != nil {
+							return attachedTabDTO{}, terminalIPCError(err)
+						}
+						remoteIDs := make([]string, 0, len(infos))
+						for _, info := range infos {
+							if (info.Kind == session.KindSSH || info.Kind == session.KindDevice) && info.Status == session.StatusConnected {
+								remoteIDs = append(remoteIDs, info.ID)
+							}
+						}
+						if len(remoteIDs) > 1 {
+							owners, err := s.sessions.RemoteDurableOwners(ctx, input.TabID, remoteIDs)
+							if err != nil {
+								return attachedTabDTO{}, terminalIPCError(err)
+							}
+							if len(owners) > 1 {
+								return attachedTabDTO{}, terminalIPCError(session.ErrAmbiguousDurable)
+							}
+							if len(owners) == 1 && owners[0] != tab.SessionID {
+								return attachedTabDTO{}, terminalIPCError(session.ErrTabNotFound)
+							}
+						}
+					}
+					bridged, err := s.bridge.bridge(call.Channel.ID)
+					if err != nil {
 						return attachedTabDTO{}, terminalIPCError(err)
 					}
 					replayBytes := input.ReplayBytes
@@ -408,6 +454,9 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					})
 					if err == nil {
 						return attachedSessionTab(info), nil
+					}
+					if bridged {
+						s.bridge.Unbridge(call.Channel.ID)
 					}
 					if !errors.Is(err, session.ErrTabNotFound) {
 						return attachedTabDTO{}, terminalIPCError(err)
@@ -748,29 +797,23 @@ func (s *terminalCommandService) recoverRemoteDurable(ctx context.Context, call 
 		}
 	}
 
-	var searchErrs []error
-	for _, currentSessionID := range sessionIDs {
-		if err := s.bridge.Bridge(call.Channel.ID); err != nil {
-			return attachedTabDTO{}, err
-		}
-		info, err := s.sessions.RecoverRemoteDurable(context.WithoutCancel(ctx), tabID, session.OpenTabOptions{
-			SessionID: currentSessionID, ClientID: call.ClientID, ChannelID: call.Channel.ID, Cols: 80, Rows: 24,
-		})
-		if err == nil {
-			return attachedSessionTab(info), nil
-		}
-		s.bridge.Unbridge(call.Channel.ID)
-		if errors.Is(err, session.ErrForbidden) {
-			return attachedTabDTO{}, err
-		}
-		if !errors.Is(err, session.ErrTabNotFound) {
-			searchErrs = append(searchErrs, err)
-		}
+	if len(sessionIDs) == 0 {
+		return attachedTabDTO{}, session.ErrTabNotFound
 	}
-	if len(searchErrs) > 0 {
-		return attachedTabDTO{}, errors.Join(searchErrs...)
+	bridged, err := s.bridge.bridge(call.Channel.ID)
+	if err != nil {
+		return attachedTabDTO{}, err
 	}
-	return attachedTabDTO{}, session.ErrTabNotFound
+	info, err := s.sessions.RecoverRemoteDurableInSessions(context.WithoutCancel(ctx), tabID, session.OpenTabOptions{
+		SessionID: sessionID, ClientID: call.ClientID, ChannelID: call.Channel.ID, Cols: 80, Rows: 24,
+	}, sessionIDs)
+	if err != nil {
+		if bridged {
+			s.bridge.Unbridge(call.Channel.ID)
+		}
+		return attachedTabDTO{}, err
+	}
+	return attachedSessionTab(info), nil
 }
 
 func (s *terminalCommandService) connectLocal(ctx context.Context) (*session.Session, error) {
@@ -813,6 +856,10 @@ func productionSessionAsset(row store.AssetRow, acceptHostKey bool) (session.Ass
 	}
 	encoding, _ := options["encoding"].(string)
 	startupCommand, _ := options["startupCommand"].(string)
+	terminalMode, err := productionTerminalMode(options)
+	if err != nil {
+		return session.Asset{}, err
+	}
 	var environment map[string]string
 	if value, ok := options["env"]; ok {
 		raw, _ := json.Marshal(value)
@@ -820,7 +867,37 @@ func productionSessionAsset(row store.AssetRow, acceptHostKey bool) (session.Ass
 			return session.Asset{}, ipc.BadParam(fmt.Errorf("资产环境变量无效: %w", err))
 		}
 	}
-	return session.Asset{ID: row.ID, Name: row.Name, Kind: row.Kind, Encoding: encoding, StartupCommand: startupCommand, Env: environment, Options: options}, nil
+	return session.Asset{ID: row.ID, Name: row.Name, Kind: row.Kind, Encoding: encoding, StartupCommand: startupCommand, TerminalMode: terminalMode, Env: environment, Options: options}, nil
+}
+
+func productionTerminalMode(options map[string]any) (string, error) {
+	configured, ok := options["terminalMode"]
+	if !ok {
+		return session.TerminalModeAuto, nil
+	}
+	mode, ok := configured.(string)
+	if !ok || mode != session.TerminalModeAuto && mode != session.TerminalModeRegular {
+		return "", ipc.BadParam(errors.New("终端模式无效"))
+	}
+	return mode, nil
+}
+
+func newProductionTerminalModeResolver(database *store.Store) func(context.Context, string) (string, error) {
+	return func(ctx context.Context, assetID string) (string, error) {
+		row, err := database.AssetGet(ctx, assetID)
+		if err != nil {
+			var appErr *ipc.Error
+			if errors.As(err, &appErr) && appErr.Code == ipc.CodeNotFound {
+				return "", nil
+			}
+			return "", err
+		}
+		options, err := productionAssetOptionMap(row)
+		if err != nil {
+			return "", ipc.BadParam(err)
+		}
+		return productionTerminalMode(options)
+	}
 }
 
 func productionSessionInfo(info session.SessionInfo) sessionInfoDTO {
@@ -838,7 +915,7 @@ func attachedSessionTab(info session.TabInfo) attachedTabDTO {
 	return attachedTabDTO{
 		TabID: info.ID, SessionID: info.SessionID, Cols: info.Cols, Rows: info.Rows,
 		Controller: nullableProductionString(info.Controller), Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
-		Retainable: info.Retainable, Encoding: info.Encoding, Title: info.Title, Shell: string(info.Shell),
+		Retainable: info.Retainable, Encoding: info.Encoding, Title: info.Title, Shell: string(info.Shell), FallbackNotice: info.FallbackNotice,
 	}
 }
 

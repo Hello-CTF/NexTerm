@@ -202,6 +202,23 @@ describe("asset row actions on fine pointers", () => {
 });
 
 describe("asset name priority in narrow sidebars", () => {
+  it("shows host identities for same-name assets without hovering, including grouped rows", async () => {
+    stubPointer(false);
+    mocks.assetList.mockResolvedValue([
+      { ...WEB, name: "shared" },
+      { ...GROUPED, name: "shared", host: "10.0.0.18", username: "deploy" },
+    ]);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.querySelectorAll('[role="treeitem"][title^="shared"]')).toHaveLength(2));
+
+    const rows = [...mounted!.container.querySelectorAll<HTMLElement>('[role="treeitem"][title^="shared"]')];
+    expect(rows.map((row) => row.querySelector(".nx-row-name")?.textContent)).toEqual([
+      "sharedroot@10.0.0.8:22",
+      "shareddeploy@10.0.0.18:22",
+    ]);
+    expect(rows.every((row) => row.querySelector(".nx-row-target") === null)).toBe(true);
+  });
+
   it.each([
     "生产环境华东核心交易集群主数据库不可中断管理员入口与灾备切换专用节点",
     "ProductionPrimaryPostgreSQLClusterWithAnExceptionallyLongUnbrokenAssetName0123456789",
@@ -343,7 +360,7 @@ describe("asset row actions on coarse pointers", () => {
     expect(groupRow.querySelector(".nx-row-actions")).toBeNull();
     openOverflow(groupRow);
     await flush();
-    expect(menuLabels()).toEqual(["在分组内新建资产", "重命名分组", "删除分组"]);
+    expect(menuLabels()).toEqual(["在分组内新建资产", "新建子分组", "重命名分组", "删除分组"]);
 
     const rename = [...document.querySelectorAll('[role="menuitem"]')].find((b) =>
       b.textContent?.includes("重命名分组"),

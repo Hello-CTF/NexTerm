@@ -227,7 +227,7 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 		if durableTab {
 			if provider == nil {
 				var err error
-				provider, err = m.durableProviderFor(ctx, session, transport, kind, generation)
+				provider, err = m.durableProviderFor(ctx, session, transport, kind, generation, false)
 				if err != nil {
 					return opened, gone, err
 				}

@@ -3,6 +3,7 @@ import { clientId, httpUrl } from "./env";
 import { describeError } from "../ui/errorText";
 import { authedFetch } from "./serverAuth";
 import { callDesktop } from "./wails";
+import { currentAuthSessionEpoch } from "./authSessionEpoch";
 
 export interface AppError {
   code: string;
@@ -85,6 +86,12 @@ function bootstrapCsrfToken(): Promise<unknown> {
 }
 
 async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const startedEpoch = currentAuthSessionEpoch();
+  const ensureCurrent = () => {
+    if (currentAuthSessionEpoch() !== startedEpoch) {
+      throw { code: "account_changed", message: "账号已切换，旧请求已取消" } satisfies AppError;
+    }
+  };
   const { channel, clientId: stableClientId, ...requestBody } = args ?? {};
   const requestPayload = JSON.stringify({
     cmd,
@@ -97,12 +104,14 @@ async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<
   if (getCsrfToken() === null) {
     await bootstrapCsrfToken();
   }
+  ensureCurrent();
   let res = await postRpc(requestPayload, getCsrfToken());
   let text = await webTransport(res.text());
   if (isCsrfRejection(res.status, text)) {
     // The session may have rotated and invalidated the old token: refresh via /auth/me and retry the same request, only once.
     // CSRF rejection happens in middleware before the command handler, so retrying has no duplicate side effects.
     await authApi.me();
+    ensureCurrent();
     res = await postRpc(requestPayload, getCsrfToken());
     text = await webTransport(res.text());
   }
@@ -223,6 +232,7 @@ export interface AttachedTabInfo {
   encoding?: string;
   title?: string;
   shell?: TerminalShell;
+  fallbackNotice?: string;
 }
 
 export interface LiveTabInfo {
@@ -608,8 +618,8 @@ export const localFileApi = {
 
 export const mountApi = {
   capability: () => call<string | null>("mount_capability"),
-  list: (forceRefresh?: boolean) =>
-    call<import("./types").MountEntryDto[]>("mount_list", { forceRefresh }),
+  list: (options: { sessionId?: string; forceRefresh?: boolean; global?: boolean }) =>
+    call<import("./types").MountEntryDto[]>("mount_list", options),
   create: (args: {
     sessionId: string;
     remotePath: string;
@@ -996,6 +1006,10 @@ export const forwardApi = {
       ...(acknowledgeRisk ? { acknowledgeRisk: true } : {}),
     }),
   list: () => call<ForwardSpec[]>("forward_list"),
+  retry: (id: string, sessionId?: string) => call<ForwardSpec>("forward_retry", {
+    id,
+    ...(sessionId ? { sessionId } : {}),
+  }),
   remove: (id: string) => call<void>("forward_remove", { id }),
 };
 

@@ -27,4 +27,11 @@ const problems = binaryManifestProblems({
   expect: { id, goos, goarch, tags: ["production"], cgo, stripped: true, version, commit },
 });
 if (problems.length) die(`reused binary manifest validation failed:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`);
+if (id.startsWith("helper-linux-")) {
+  if (manifest.binary_metadata_verified !== true || !Number.isInteger(manifest.protocol) || manifest.protocol <= 0 ||
+      !Array.isArray(manifest.features) || manifest.features.length === 0 ||
+      manifest.features.some((feature) => typeof feature !== "string" || feature === "")) {
+    die("reused helper manifest lacks final-binary --metadata evidence");
+  }
+}
 console.warn(`${id}: verified reused production binary sha256:${manifest.artifact.sha256}`);

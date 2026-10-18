@@ -123,12 +123,19 @@ func TestForwardStoppedOnSessionDisconnect(t *testing.T) {
 	if err := production.Services.Sessions.Disconnect(sessionID); err != nil {
 		t.Fatal(err)
 	}
-	if got := production.Services.Forward.List(); len(got) != 0 {
-		t.Fatalf("forwards after disconnect = %+v", got)
+	if got := production.Services.Forward.List(); len(got) != 1 || got[0].ID != spec.ID || got[0].HostID != "ssh-asset" || got[0].Status != forward.StatusFailed || got[0].Error == "" {
+		t.Fatalf("failed forward after disconnect = %+v", got)
 	}
 	if _, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(spec.ListenPort))), 100*time.Millisecond); err == nil {
 		t.Fatal("forward listener still accepts after session disconnect")
 	}
+	newSessionID := connectForwardSession(t, production)
+	retried, err := production.Services.Forward.RetryFor(t.Context(), spec.ID, newSessionID)
+	if err != nil || retried.ID != spec.ID || retried.SessionID != newSessionID || retried.Status != forward.StatusActive {
+		t.Fatalf("forward retry after reconnect = %+v, %v", retried, err)
+	}
+	conn = assertForwardEcho(t, retried, "after-retry")
+	_ = conn.Close()
 }
 
 func TestForwardSurvivesSessionReconnect(t *testing.T) {

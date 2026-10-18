@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
-import { forwardApi } from "../../ipc/commands";
+import { forwardApi, type ForwardSpec } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
@@ -82,6 +82,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
   const [targetHost, setTargetHost] = useState("127.0.0.1");
   const [targetPort, setTargetPort] = useState("3306");
   const [busy, setBusy] = useState(false);
+  const [busyForwardId, setBusyForwardId] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const listenPortId = useId();
   const bindHostId = useId();
@@ -310,22 +311,52 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
     }
   };
 
-  const remove = async (id: string, label: string) => {
-    if (!(await ask(`停止转发 ${label}？\n\n已经建立的连接会被断开。`, { kind: "warning" }))) return;
+  const remove = async (forward: ForwardSpec, label: string) => {
+    if ((forward.status ?? "active") === "active" && !(await ask(`停止转发 ${label}？\n\n已经建立的连接会被断开。`, { kind: "warning" }))) return;
+    setBusyForwardId(forward.id);
     try {
-      await forwardApi.remove(id);
+      await forwardApi.remove(forward.id);
       refresh();
-      pushToast("success", "已停止");
+      pushToast("success", (forward.status ?? "active") === "active" ? "已停止" : "已移除转发记录");
     } catch (e) {
       refresh();
       pushToast("error", `停止失败：${describeError(e)}`);
+    } finally {
+      setBusyForwardId(null);
+    }
+  };
+
+  const retry = async (forward: ForwardSpec) => {
+    const exactSession = sessions.find((s) => s.id === forward.sessionId && s.status === "connected");
+    const candidates = sessions.filter((s) =>
+      s.status === "connected" && Boolean(forward.hostId) && s.assetId === forward.hostId,
+    );
+    const current = candidates.find((s) => s.id === sessionId);
+    const selected = exactSession ?? current ?? (candidates.length === 1 ? candidates[0] : undefined);
+    if (!selected) {
+      pushToast("info", candidates.length > 1
+        ? "同一资产有多个连接，请打开所属主机工作区后重试"
+        : "所属主机尚未连接，请先重新连接该 SSH 资产");
+      return;
+    }
+    setBusyForwardId(forward.id);
+    try {
+      await forwardApi.retry(forward.id, selected.id);
+      refresh();
+      pushToast("success", "转发已恢复");
+    } catch (e) {
+      refresh();
+      pushToast("error", `重试失败：${describeError(e)}`);
+    } finally {
+      setBusyForwardId(null);
     }
   };
 
   const sessionName = (id: string) => sessions.find((s) => s.id === id)?.name ?? id.slice(0, 8);
   const scoped = Boolean(sessionId) && !showAll;
   const all = forwards.data ?? [];
-  const list = scoped ? all.filter((f) => f.sessionId === sessionId) : all;
+  const currentHostId = sessions.find((s) => s.id === sessionId)?.assetId;
+  const list = scoped ? all.filter((f) => f.sessionId === sessionId || Boolean(currentHostId && f.hostId === currentHostId)) : all;
   const localCount = list.filter((f) => f.kind === "local").length;
   const remoteCount = list.filter((f) => f.kind === "remote").length;
   const socksCount = list.length - localCount - remoteCount;
@@ -380,19 +411,20 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
               <th style={{ width: 130 }}>监听地址</th>
               <th>目标</th>
               <th style={{ width: 150 }}>所属会话</th>
-              <th style={{ width: 96 }} className="right-0 shadow-[inset_1px_0_0_var(--nx-border)]" />
+              <th style={{ width: 110 }}>状态</th>
+              <th style={{ width: 150 }} className="right-0 shadow-[inset_1px_0_0_var(--nx-border)]" />
             </tr>
           </thead>
           <tbody>
             {forwards.isPending ? (
               <tr>
-                <td colSpan={5} className="nx-table-empty">
+                <td colSpan={6} className="nx-table-empty">
                   转发列表加载中…
                 </td>
               </tr>
             ) : forwardsFailed ? (
               <tr>
-                <td colSpan={5} className="nx-table-empty">
+                <td colSpan={6} className="nx-table-empty">
                   <span className="text-red-300">转发列表加载失败 · {describeError(forwards.error)}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm ml-2"
@@ -405,7 +437,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
               </tr>
             ) : list.length === 0 ? (
               <tr>
-                <td colSpan={5} className="nx-table-empty">
+                <td colSpan={6} className="nx-table-empty">
                   {scoped && all.length > 0 ? "当前会话还没有转发" : "还没有任何转发"}
                 </td>
               </tr>
@@ -455,14 +487,29 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                   <td className="truncate text-neutral-400" title={f.sessionId}>
                     {sessionName(f.sessionId)}
                   </td>
+                  <td>
+                    <span className={f.status === "failed" ? "text-red-300" : f.status === "reconnecting" ? "text-amber-300" : "text-green-300"}>
+                      {f.status === "failed" ? "失败" : f.status === "reconnecting" ? "重连中" : "运行中"}
+                    </span>
+                    {f.error && <div className="max-w-56 break-words text-[11px] text-red-300" role="alert">{f.error}</div>}
+                  </td>
                   <td className="nx-right sticky right-0 bg-[var(--nx-bg-pane)] shadow-[inset_1px_0_0_var(--nx-border)]">
-                    <button
-                      className="nx-btn nx-btn-danger nx-btn-xs pointer-coarse:h-6"
-                      onClick={() => void remove(f.id, label)}
-                    >
-                      <IconTrash size={11} />
-                      停止
-                    </button>
+                    <div className="flex justify-end gap-1">
+                      {f.status && f.status !== "active" && (
+                        <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busyForwardId === f.id} onClick={() => void retry(f)}>
+                          <IconRefresh size={11} />
+                          重试
+                        </button>
+                      )}
+                      <button
+                        className="nx-btn nx-btn-danger nx-btn-xs pointer-coarse:h-6"
+                        disabled={busyForwardId === f.id}
+                        onClick={() => void remove(f, label)}
+                      >
+                        <IconTrash size={11} />
+                        {f.status === "active" || !f.status ? "停止" : "移除"}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );

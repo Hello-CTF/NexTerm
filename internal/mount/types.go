@@ -15,6 +15,7 @@ type Entry struct {
 	Remote     string  `json:"remote"`
 	SessionID  *string `json:"sessionId"`
 	CreatedAt  *int64  `json:"createdAt"`
+	Managed    bool    `json:"managed"`
 }
 
 type CreateArgs struct {
@@ -36,6 +37,7 @@ type Auditor interface {
 
 type Config struct {
 	Auditor        Auditor
+	SessionHost    func(context.Context, string) (string, error)
 	CommandTimeout time.Duration
 	NewID          func() string
 	Now            func() time.Time

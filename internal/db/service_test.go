@@ -53,6 +53,89 @@ func TestInlineConnectDisconnectAndTLS(t *testing.T) {
 	}
 }
 
+func TestConnectClosesNewDatabaseHandleWhenAccountSessionWasRevoked(t *testing.T) {
+	service := NewService(nil)
+	service.newID = func() (string, error) { return "late-db", nil }
+	closed := false
+	service.openRedis = func(context.Context, RedisConfig) (*redisConnection, error) {
+		return &redisConnection{closeFn: func() error { closed = true; return nil }}, nil
+	}
+	ctx := ipc.WithUserID(t.Context(), "account-a")
+	ctx = ipc.WithAccountSessionCheck(ctx, func(context.Context) error {
+		return ipc.NewError(ipc.CodeForbidden, "会话已吊销")
+	})
+	_, err := service.Connect(ctx, ConnectArgs{Inline: &InlineConnection{Kind: "redis", Host: "db.example"}})
+	var accessErr *ipc.Error
+	if !errors.As(err, &accessErr) || accessErr.Code != ipc.CodeForbidden {
+		t.Fatalf("late connect error = %v; want revoked account session", err)
+	}
+	if !closed {
+		t.Fatal("new database handle remained open after account revocation")
+	}
+	if _, err := service.connOf(ctx, "late-db"); err == nil {
+		t.Fatal("revoked account database handle entered the registry")
+	}
+}
+
+func TestRevokedLoginSessionClosesOnlyItsDatabaseConnections(t *testing.T) {
+	service := NewService(nil)
+	service.newID = func() (string, error) { return "shared-db", nil }
+	closed := false
+	service.openRedis = func(context.Context, RedisConfig) (*redisConnection, error) {
+		return &redisConnection{closeFn: func() error { closed = true; return nil }}, nil
+	}
+	owner := ipc.WithUserID(t.Context(), "account-a")
+	first := ipc.WithAccountSessionID(owner, "login-a")
+	second := ipc.WithAccountSessionID(owner, "login-b")
+	result, err := service.Connect(first, ConnectArgs{Inline: &InlineConnection{Kind: "redis", Host: "db.example"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.connOf(second, result.ConnID); err != nil {
+		t.Fatalf("second login could not use the shared connection: %v", err)
+	}
+	if err := service.CloseAccountSession("login-a"); err != nil || closed {
+		t.Fatalf("revoking first login closed a connection still used by another login: err=%v closed=%v", err, closed)
+	}
+	if _, err := service.connOf(second, result.ConnID); err != nil {
+		t.Fatalf("second login lost the shared connection: %v", err)
+	}
+	if err := service.CloseAccountSession("login-b"); err != nil || !closed {
+		t.Fatalf("last login revocation did not close its connection: err=%v closed=%v", err, closed)
+	}
+}
+
+func TestRevokedLoginSessionRejectsConnectionRegisteredAfterLogout(t *testing.T) {
+	service := NewService(nil)
+	service.newID = func() (string, error) { return "late-db", nil }
+	started := make(chan struct{})
+	release := make(chan struct{})
+	closed := make(chan struct{})
+	service.openRedis = func(context.Context, RedisConfig) (*redisConnection, error) {
+		close(started)
+		<-release
+		return &redisConnection{closeFn: func() error { close(closed); return nil }}, nil
+	}
+	ctx := ipc.WithAccountSessionID(ipc.WithUserID(t.Context(), "account-a"), "login-a")
+	result := make(chan error, 1)
+	go func() {
+		_, err := service.Connect(ctx, ConnectArgs{Inline: &InlineConnection{Kind: "redis", Host: "db.example"}})
+		result <- err
+	}()
+	<-started
+	if err := service.CloseAccountSession("login-a"); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-result; err == nil {
+		t.Fatal("connection registered after its login session was revoked")
+	}
+	<-closed
+	if _, err := service.connOf(ctx, "late-db"); err == nil {
+		t.Fatal("revoked login connection remained in the registry")
+	}
+}
+
 func TestAssetConnectUsesResolvedCredentialAndOptions(t *testing.T) {
 	host, username := "redis.internal", "acl-user"
 	port := 6380

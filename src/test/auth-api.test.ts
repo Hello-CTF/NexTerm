@@ -56,6 +56,7 @@ describe("authApi production contract", () => {
 
     expect(calls[0]).toMatchObject({ url: "/auth/status", method: "GET" });
     expect(calls[1]).toMatchObject({ url: "/auth/login", method: "POST", body: { username: "alice", password: "secret" } });
+    expect(calls[1]?.headers["X-NexTerm-Client"]).toBe("browser");
   });
 
   it("uses /auth/totp/login for totpLogin and remembers the CSRF token", async () => {
@@ -65,6 +66,7 @@ describe("authApi production contract", () => {
     await authApi.totpLogin("ticket-1", "123456");
     expect(getCsrfToken()).toBe("csrf-1");
     expect(calls[0]).toMatchObject({ url: "/auth/totp/login", method: "POST", body: { ticket: "ticket-1", code: "123456" } });
+    expect(calls[0]?.headers["X-NexTerm-Client"]).toBe("browser");
   });
 
   it("sends the initialization code, account, and five DEK envelope fields in init", async () => {
@@ -92,6 +94,7 @@ describe("authApi production contract", () => {
       recovery_envelope: "BwgJ",
       recovery_hash: "hash-1",
     });
+    expect(calls[0]?.headers["X-NexTerm-Client"]).toBe("browser");
   });
 
   it("sends the CSRF header on mutations but not queries", async () => {
@@ -125,6 +128,18 @@ describe("authApi production contract", () => {
     await authApi.deviceRevoke("d/1");
     expect(calls[0]).toMatchObject({ url: "/auth/devices/d%2F1", method: "DELETE" });
     expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBe("csrf-9");
+  });
+
+  it("lists active login sessions and revokes one session with CSRF protection", async () => {
+    const calls = capture();
+    vi.stubGlobal("fetch", mocks.fetch);
+    setCsrfToken("csrf-9");
+
+    await authApi.sessions();
+    await authApi.sessionRevoke("s/1");
+    expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual(["GET /auth/sessions", "DELETE /auth/sessions/s%2F1"]);
+    expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBeUndefined();
+    expect(calls[1]?.headers["X-NexTerm-CSRF"]).toBe("csrf-9");
   });
 
   it("binds a device when login receives device_id and omits the field otherwise", async () => {
