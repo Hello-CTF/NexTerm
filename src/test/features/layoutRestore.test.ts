@@ -96,6 +96,18 @@ afterEach(() => {
 });
 
 describe("new-device layout restore", () => {
+  it("keeps the locally closed AI panel closed across boot and remote layout updates", async () => {
+    window.localStorage.setItem("nexterm.layout.v1", JSON.stringify({ rightOpen: false }));
+    const cloud = { ...remoteLayout("known-asset"), rightOpen: true, workspaces: [], activeWorkspaceId: null };
+    const { layout, useUi } = await boot("known-asset", cloud);
+    expect(useUi.getState().rightOpen).toBe(false);
+
+    mocks.get.mockResolvedValue({ revision: 2, updatedAt: 2, data: { ...cloud, leftWidth: 260 } });
+    layout.onRemoteChange(null);
+    await flushUntil(() => useUi.getState().leftWidth === 260);
+    expect(useUi.getState().rightOpen).toBe(false);
+  });
+
   it("holds cloud layout until confirmation, previews it, and supports undo", async () => {
     const { layout, useUi } = await boot("known-asset");
     await flushUntil(() => mocks.choice.mock.calls.length === 1);
@@ -248,7 +260,7 @@ describe("new-device layout restore", () => {
   });
 
   it("applies an empty cloud layout without showing a restore prompt", async () => {
-    const empty = { ...remoteLayout("known-asset"), activeWorkspaceId: null, workspaces: [] };
+    const empty = { ...remoteLayout("known-asset"), rightOpen: true, activeWorkspaceId: null, workspaces: [] };
     const { layout, useUi } = await boot("known-asset", empty);
     expect(layout.layoutRestoreStatus()).toEqual({ pending: false, preview: false, count: 0 });
     expect(useUi.getState().workspaces).toEqual([]);

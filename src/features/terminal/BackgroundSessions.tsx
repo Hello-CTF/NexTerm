@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { sessionApi, terminalApi, type LiveTabInfo } from "../../ipc/commands";
-import { nextTabId, reconnectDeadHost, reconnectSessionAndWait, useUi } from "../../app/store";
-import { TRANSPORT } from "../../ipc/env";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { sessionApi, syncApi, terminalApi, type LiveTabInfo } from "../../ipc/commands";
+import { nextTabId, reconnectDeadHost, reconnectSessionAndWait, useUi, type Workspace } from "../../app/store";
+import { apiBase, TRANSPORT } from "../../ipc/env";
+import { listenEvent } from "../../ipc/events";
+import { useAuth } from "../auth/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import "../../ui/skeleton.css";
@@ -19,6 +21,41 @@ type BackgroundTab = Omit<LiveTabInfo, "lastOutputMsAgo"> & {
   lastOutputMsAgo?: number;
   remote?: boolean;
 };
+
+interface PendingTab {
+  key: string;
+  workspaceId?: string;
+  hostName: string;
+  title: string;
+  waitingForConnection?: boolean;
+}
+
+interface KnownDurableTab {
+  id: string;
+  title?: string;
+}
+
+function durableHostKey(kind: string, assetId?: string, quickTargetId?: string): string | null {
+  if (kind !== "ssh" && kind !== "device") return null;
+  const target = assetId || (kind === "ssh" ? quickTargetId : undefined);
+  return target ? JSON.stringify([kind, target]) : null;
+}
+
+function workspaceHostKey(workspace: Workspace): string | null {
+  return durableHostKey(workspace.assetKind ?? "", workspace.assetId, workspace.quickTarget?.id);
+}
+
+function workspaceSessionMatches(
+  workspace: Workspace,
+  session: { id: string; assetId: string | null; kind: string },
+  verifiedQuickSessions: Record<string, string>,
+): boolean {
+  if (session.kind !== workspace.assetKind) return false;
+  if (workspace.assetId) return session.assetId === workspace.assetId;
+  const key = workspaceHostKey(workspace);
+  return Boolean(key && workspace.quickTarget && !session.assetId &&
+    (workspace.sessionId === session.id || verifiedQuickSessions[key] === session.id));
+}
 
 function backgroundTabKey(tab: Pick<BackgroundTab, "sessionId" | "tabId">): string {
   return JSON.stringify([tab.sessionId, tab.tabId]);
@@ -57,6 +94,61 @@ export function BackgroundSessions({
 }) {
   const pushToast = useUi((s) => s.pushToast);
   const sessions = useUi((s) => s.sessions);
+  const workspaces = useUi((s) => s.workspaces);
+  const runtimeEpoch = useUi((s) => s.workspaceRuntimeEpoch);
+  const webUserId = useAuth((s) => s.user?.id ?? null);
+  const [desktopScope, setDesktopScope] = useState<{ epoch: number; value: string | null } | null>(null);
+  const [desktopChecking, setDesktopChecking] = useState(false);
+  const [knownState, setKnownState] = useState<{
+    scope: string | null;
+    epoch: number;
+    tabs: Record<string, KnownDurableTab[]>;
+  }>({ scope: null, epoch: runtimeEpoch, tabs: {} });
+  const [quickState, setQuickState] = useState<{
+    scope: string | null;
+    epoch: number;
+    sessions: Record<string, string>;
+  }>({ scope: null, epoch: runtimeEpoch, sessions: {} });
+  const [itemsScope, setItemsScope] = useState<string | null>(null);
+  const accountScope = TRANSPORT === "web"
+    ? (webUserId ? JSON.stringify([apiBase() || window.location.origin, webUserId]) : null)
+    : desktopScope?.epoch === runtimeEpoch ? desktopScope.value : null;
+  const memoryKnown = !desktopChecking && knownState.scope === accountScope && knownState.epoch === runtimeEpoch ? knownState.tabs : {};
+  const verifiedQuickSessions = quickState.scope === accountScope && quickState.epoch === runtimeEpoch ? quickState.sessions : {};
+  useEffect(() => {
+    if (TRANSPORT !== "desktop") return;
+    let current = true;
+    let request = 0;
+    let unlisten: (() => void) | undefined;
+    const refresh = (maskOldScope: boolean) => {
+      const generation = ++request;
+      if (maskOldScope) {
+        loadGenerationRef.current += 1;
+        ownerGenerationRef.current += 1;
+        setDesktopChecking(true);
+      }
+      void Promise.all([syncApi.status(), syncApi.linkGet()]).then(([status, link]) => {
+        if (current && generation === request) {
+          setDesktopScope({ epoch: runtimeEpoch,
+            value: status.loggedIn && status.userId && status.username && link.url && link.username === status.username
+              ? JSON.stringify([link.url, status.userId, status.username]) : null });
+          setDesktopChecking(false);
+        }
+      }).catch(() => {
+        if (current && generation === request) {
+          setDesktopScope({ epoch: runtimeEpoch, value: null });
+          setDesktopChecking(false);
+        }
+      });
+    };
+    void listenEvent("sync://status", () => refresh(true)).then((off) => {
+      if (!current) { off(); return; }
+      unlisten = off;
+      refresh(false);
+    }).catch(() => { if (current) refresh(false); });
+    const poll = window.setInterval(() => refresh(false), 5_000);
+    return () => { current = false; request += 1; window.clearInterval(poll); unlisten?.(); };
+  }, [runtimeEpoch]);
   const ownerWorkspace = useUi((s) => {
     const id = workspaceId ?? (sessionId === undefined ? s.activeWorkspaceId : undefined);
     return id === undefined ? undefined : s.workspaces.find((workspace) => workspace.id === id);
@@ -69,12 +161,12 @@ export function BackgroundSessions({
   const remoteOwner =
     ownerWorkspace?.kind === "session" &&
     (ownerWorkspace.assetKind === "ssh" || ownerWorkspace.assetKind === "device") &&
-    Boolean(ownerWorkspace.assetId);
+    Boolean(ownerWorkspace.assetId || ownerWorkspace.quickTarget);
   const hostIdentityMismatch =
-    remoteOwner && Boolean(hostSession && (hostSession.assetId !== ownerWorkspace.assetId || hostSession.kind !== ownerWorkspace.assetKind));
+    remoteOwner && Boolean(ownerWorkspace && hostSession && !workspaceSessionMatches(ownerWorkspace, hostSession, verifiedQuickSessions));
   const needsReconnect =
     remoteOwner &&
-    (!hostSession || hostIdentityMismatch || hostSession.status === "disconnected" || hostSession.status === "failed");
+    (!hostSession || hostIdentityMismatch || hostSession.status !== "connected");
   const hostName = hostSessionId
     ? (hostSession?.name ?? ownerWorkspace?.title ?? hostSessionId)
     : (ownerWorkspace?.title ?? null);
@@ -85,9 +177,30 @@ export function BackgroundSessions({
   const [busy, setBusy] = useState<Record<string, "takeover" | "kill">>({});
   const loadGenerationRef = useRef(0);
   const ownerGenerationRef = useRef(0);
+  const scopedItems = !desktopChecking && itemsScope === accountScope ? items : null;
+  const scopedError = !desktopChecking && itemsScope === accountScope ? error : null;
+
+  useEffect(() => {
+    loadGenerationRef.current += 1;
+    ownerGenerationRef.current += 1;
+    setItems(null);
+    setError(null);
+    setBusy({});
+    setReconnecting(false);
+    setKnownState((previous) => previous.scope === accountScope && previous.epoch === runtimeEpoch
+      ? previous : { scope: accountScope, epoch: runtimeEpoch, tabs: {} });
+    setQuickState((previous) => previous.scope === accountScope && previous.epoch === runtimeEpoch
+      ? previous : { scope: accountScope, epoch: runtimeEpoch, sessions: {} });
+  }, [runtimeEpoch, accountScope]);
 
   const load = useCallback(async () => {
     const generation = ++loadGenerationRef.current;
+    if (desktopChecking) {
+      setItems(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     if (!hostSessionId && !showAll) {
       setItems(null);
       setError(null);
@@ -95,12 +208,16 @@ export function BackgroundSessions({
       return;
     }
     setLoading(true);
+    setItemsScope(accountScope);
     try {
       const targets = sessions.filter((session) =>
         (showAll || session.id === hostSessionId) &&
-        (!remoteOwner || showAll || (session.assetId === ownerWorkspace?.assetId && session.kind === ownerWorkspace.assetKind)) &&
+        (!remoteOwner || showAll || (ownerWorkspace && workspaceSessionMatches(ownerWorkspace, session, verifiedQuickSessions))) &&
         session.status === "connected" &&
-        (session.kind === "ssh" || session.kind === "device"),
+        (session.kind === "ssh" || session.kind === "device") &&
+        (Boolean(session.assetId) || useUi.getState().workspaces.some((workspace) =>
+          workspace.kind === "session" && workspace.sessionId === session.id &&
+          workspaceSessionMatches(workspace, session, verifiedQuickSessions))),
       );
       const [live, ...remote] = await Promise.allSettled([
         terminalApi.listLive(),
@@ -126,7 +243,24 @@ export function BackgroundSessions({
           errors.push(`${session.name}: ${describeError(result.reason)}`);
           continue;
         }
-        for (const tab of result.value as Awaited<ReturnType<typeof terminalApi.listDurable>>) {
+        const descriptors = result.value as Awaited<ReturnType<typeof terminalApi.listDurable>>;
+        const matchingWorkspace = useUi.getState().workspaces.find((workspace) =>
+          workspace.kind === "session" && workspace.sessionId === session.id && workspaceSessionMatches(workspace, session, verifiedQuickSessions));
+        const hostKey = matchingWorkspace
+          ? workspaceHostKey(matchingWorkspace)
+          : durableHostKey(session.kind, session.assetId ?? undefined);
+        if (hostKey) {
+          const knownTabs = descriptors.filter((tab) => !tab.dead).map((tab) => ({ id: tab.id, title: tab.title }));
+          setKnownState((previous) => ({
+            scope: accountScope,
+            epoch: runtimeEpoch,
+            tabs: {
+              ...(previous.scope === accountScope && previous.epoch === runtimeEpoch ? previous.tabs : {}),
+              [hostKey]: knownTabs,
+            },
+          }));
+        }
+        for (const tab of descriptors) {
           const key = backgroundTabKey({ sessionId: session.id, tabId: tab.id });
           if (tab.dead || known.has(key)) continue;
           known.add(key);
@@ -153,7 +287,7 @@ export function BackgroundSessions({
     } finally {
       if (generation === loadGenerationRef.current) setLoading(false);
     }
-  }, [hostSessionId, showAll, sessions, remoteOwner, ownerWorkspace?.assetId, ownerWorkspace?.assetKind]);
+  }, [hostSessionId, showAll, sessions, remoteOwner, ownerWorkspace?.assetId, ownerWorkspace?.assetKind, accountScope, runtimeEpoch, desktopChecking, verifiedQuickSessions]);
 
   useEffect(() => {
     ownerGenerationRef.current += 1;
@@ -164,7 +298,40 @@ export function BackgroundSessions({
     return () => {
       ownerGenerationRef.current += 1;
     };
-  }, [workspaceId, hostSessionId, showAll, ownerWorkspace?.assetId, ownerWorkspace?.assetKind]);
+  }, [workspaceId, showAll, ownerWorkspace?.assetId, ownerWorkspace?.assetKind, ownerWorkspace?.quickTarget?.id]);
+
+  const pendingTabs = useMemo(() => {
+    const selected = showAll
+      ? workspaces.filter((workspace) => workspace.kind === "session")
+      : ownerWorkspace ? [ownerWorkspace] : [];
+    const rows: PendingTab[] = [];
+    const seenHosts = new Set<string>();
+    for (const workspace of selected) {
+      const hostKey = workspaceHostKey(workspace);
+      if (!hostKey || seenHosts.has(hostKey) || workspace.deletedTarget) continue;
+      seenHosts.add(hostKey);
+      const session = sessions.find((item) => item.id === workspace.sessionId);
+      if (session && workspaceSessionMatches(workspace, session, verifiedQuickSessions) && session.status === "connected") continue;
+      const known = new Map<string, string>();
+      for (const tab of memoryKnown[hostKey] ?? []) {
+        known.set(tab.id, tab.title || "持久终端");
+      }
+      for (const pane of workspace.panes) {
+        for (const tab of pane.tabs) {
+          if (tab.kind !== "terminal" || tab.containerId || tab.dead || tab.exited || (!tab.tabId && !tab.restorePending)) continue;
+          known.set(tab.tabId ?? `layout:${tab.id}`, tab.title);
+        }
+      }
+      if (known.size === 0) known.set("undiscovered", "待查找持久终端");
+      for (const [id, title] of known) {
+        rows.push({
+          key: JSON.stringify([hostKey, id]), workspaceId: workspace.id, hostName: workspace.title, title,
+          waitingForConnection: session?.status === "connecting" || session?.status === "reconnecting",
+        });
+      }
+    }
+    return rows;
+  }, [showAll, workspaces, ownerWorkspace, sessions, memoryKnown, verifiedQuickSessions]);
 
   useEffect(() => {
     if (!visible || (!hostSessionId && !showAll)) return;
@@ -187,7 +354,7 @@ export function BackgroundSessions({
       if (!session || session.status !== "connected") {
         throw new Error("目标主机会话未连接，请先重连后再接管");
       }
-      if (remoteOwner && (session.assetId !== ownerWorkspace?.assetId || session.kind !== ownerWorkspace.assetKind)) {
+      if (remoteOwner && (!ownerWorkspace || !workspaceSessionMatches(ownerWorkspace, session, verifiedQuickSessions))) {
         throw new Error("目标会话不属于当前主机，请重新连接后再接管");
       }
       const st = useUi.getState();
@@ -218,26 +385,46 @@ export function BackgroundSessions({
     }
   };
 
-  const reconnectHost = async () => {
-    if (!needsReconnect || !ownerWorkspace?.assetId || reconnecting) return;
+  const reconnectHost = async (workspaceIdToReconnect: string) => {
+    const target = useUi.getState().workspaces.find((workspace) => workspace.id === workspaceIdToReconnect);
+    if (!target || !workspaceHostKey(target) || target.deletedTarget || reconnecting || desktopChecking) return;
+    const identity = workspaceHostKey(target);
+    const currentSession = sessions.find((session) => session.id === target.sessionId);
+    if (currentSession && workspaceSessionMatches(target, currentSession, verifiedQuickSessions) && currentSession.status === "connected") return;
+    if (currentSession?.status === "connecting" || currentSession?.status === "reconnecting") return;
     const ownerGeneration = ownerGenerationRef.current;
+    const connectionEpoch = runtimeEpoch;
     setReconnecting(true);
     setError(null);
     try {
-      const fresh = hostSession && !hostIdentityMismatch
-        ? await reconnectSessionAndWait(hostSession)
-        : await reconnectDeadHost(ownerWorkspace);
-      if (ownerGeneration !== ownerGenerationRef.current) return;
+      const fresh = currentSession && workspaceSessionMatches(target, currentSession, verifiedQuickSessions)
+        ? await reconnectSessionAndWait(currentSession)
+        : await reconnectDeadHost(target);
+      if (ownerGeneration !== ownerGenerationRef.current || connectionEpoch !== useUi.getState().workspaceRuntimeEpoch) return;
       if (!fresh) {
         pushToast("info", "已取消重连");
         return;
       }
-      if (fresh.kind !== ownerWorkspace.assetKind || fresh.assetId !== ownerWorkspace.assetId) {
+      const currentTarget = useUi.getState().workspaces.find((workspace) => workspace.id === workspaceIdToReconnect);
+      const verifiedFresh = currentTarget?.quickTarget && !currentTarget.assetId
+        ? fresh.kind === "ssh" && !fresh.assetId
+        : Boolean(currentTarget && workspaceSessionMatches(currentTarget, fresh, verifiedQuickSessions));
+      if (!currentTarget || workspaceHostKey(currentTarget) !== identity || !verifiedFresh) {
         throw new Error("重连结果与当前主机不匹配");
+      }
+      if (currentTarget.quickTarget && identity) {
+        setQuickState((previous) => ({
+          scope: accountScope,
+          epoch: runtimeEpoch,
+          sessions: {
+            ...(previous.scope === accountScope && previous.epoch === runtimeEpoch ? previous.sessions : {}),
+            [identity]: fresh.id,
+          },
+        }));
       }
       const st = useUi.getState();
       st.setSessions([...st.sessions.filter((session) => session.id !== fresh.id), fresh]);
-      if (ownerWorkspace.sessionId !== fresh.id) st.updateWorkspaceSession(ownerWorkspace.id, fresh.id);
+      if (currentTarget.sessionId !== fresh.id) st.updateWorkspaceSession(currentTarget.id, fresh.id);
       pushToast("success", `已连接「${fresh.name}」，正在查找持久终端`);
     } catch (cause) {
       if (ownerGeneration === ownerGenerationRef.current) {
@@ -296,52 +483,40 @@ export function BackgroundSessions({
   }
 
   const effectiveScope = hostSessionId ?? "";
-  const all = items ?? [];
-  const list = effectiveScope && !hostIdentityMismatch
+  const all = scopedItems ?? [];
+  const list = effectiveScope && !hostIdentityMismatch && !(remoteOwner && needsReconnect)
     ? all.filter((t) => t.sessionId === effectiveScope)
-    : effectiveScope
+    : !showAll
       ? []
-      : all;
+      : all.filter((tab) => {
+        if (tab.sessionKind !== "ssh" && tab.sessionKind !== "device") return true;
+        const session = sessions.find((candidate) => candidate.id === tab.sessionId);
+        if (!session || session.status !== "connected") return false;
+        return Boolean(session.assetId || workspaces.some((workspace) =>
+          workspace.sessionId === session.id && workspaceSessionMatches(workspace, session, verifiedQuickSessions)));
+      });
   const count = list.length;
-
-  if (!hostSessionId && needsReconnect) {
-    return (
-      <div className="nx-pane" data-background-view="local">
-        <div className="nx-toolbar">
-          <IconActivity size={14} className="text-neutral-500" />
-          <span className="nx-toolbar-title">后台会话</span>
-          <span className="nx-hint">主机：{hostName}</span>
-        </div>
-        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-[12px] text-neutral-400">
-          <span>这台主机尚未连接，重连后才能查找持久终端</span>
-          <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={reconnecting} onClick={() => void reconnectHost()}>
-            {reconnecting ? "正在重连…" : "重连并查找"}
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="nx-pane" data-background-view="local">
       <div className="nx-toolbar">
         <IconActivity size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">后台会话</span>
-        {hostSessionId && (
+        {(hostSessionId || remoteOwner) && (
           <span className="nx-hint" data-testid="background-host">
             主机：{hostName}
           </span>
         )}
         <span className="nx-hint">
-          {items === null ? (error ? "读取失败" : "加载中…") : runningCopy(count)}
+          {scopedItems === null && pendingTabs.length === 0 ? (scopedError ? "读取失败" : "加载中…") : runningCopy(count)}
         </span>
         <div className="nx-spacer" />
-        {needsReconnect && (
-          <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={reconnecting} onClick={() => void reconnectHost()}>
+        {needsReconnect && ownerWorkspace && (
+          <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={desktopChecking || reconnecting || hostSession?.status === "connecting" || hostSession?.status === "reconnecting"} onClick={() => void reconnectHost(ownerWorkspace.id)}>
             {reconnecting ? "正在重连…" : "重连并查找"}
           </button>
         )}
-        <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={loading} onClick={() => void load()}>
+        <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={loading || (!hostSessionId && !showAll)} onClick={() => void load()}>
           <IconRefresh size={13} className={loading ? "animate-spin" : ""} />
           刷新
         </button>
@@ -358,7 +533,7 @@ export function BackgroundSessions({
             </tr>
           </thead>
           <tbody>
-            {items === null && !error && (
+            {scopedItems === null && !scopedError && pendingTabs.length === 0 && (
               <>
                 {Array.from({ length: 4 }, (_, i) => (
                   <tr key={`skeleton-${i}`} aria-hidden="true">
@@ -424,18 +599,35 @@ export function BackgroundSessions({
                 </tr>
               );
             })}
-            {error && (
+            {pendingTabs.map((tab) => (
+              <tr key={`pending-${tab.key}`}>
+                <td className="truncate font-medium text-neutral-200" title={tab.hostName}>{tab.hostName}</td>
+                <td className="nx-mono text-neutral-400" title={tab.title}>{tab.title}</td>
+                <td className="text-amber-300">待核实 · 重连后才能查找远端持久终端</td>
+                <td className="nx-right">
+                  {tab.workspaceId ? (
+                    <button className="nx-btn nx-btn-primary nx-btn-xs" disabled={desktopChecking || reconnecting || tab.waitingForConnection} onClick={() => void reconnectHost(tab.workspaceId as string)}>
+                      <IconRefresh size={11} className={reconnecting ? "animate-spin" : ""} />
+                      {reconnecting || tab.waitingForConnection ? "正在重连…" : "重连并查找"}
+                    </button>
+                  ) : <span className="text-[11px] text-neutral-400">从资产树打开主机后查找</span>}
+                </td>
+              </tr>
+            ))}
+            {scopedError && (
               <tr>
                 <td colSpan={4} className="nx-table-empty text-red-300">
-                  读取后台会话失败：{error}
+                  读取后台会话失败：{scopedError}
                 </td>
               </tr>
             )}
-            {!error && items !== null && list.length === 0 && (
+            {!scopedError && scopedItems !== null && list.length === 0 && pendingTabs.length === 0 && (
               <tr>
                 <td colSpan={4} className="nx-table-empty">
                   {needsReconnect
                     ? "主机未连接，重连后才能查找远端持久终端"
+                    : showAll
+                      ? "当前没有可接管的后台终端；请从资产树打开目标主机后查找持久终端"
                     : remoteOwner
                       ? "当前没有可查看的后台终端"
                       : "当前主机没有在后台运行的终端"}

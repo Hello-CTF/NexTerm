@@ -590,6 +590,8 @@ function AiChatTab({
   const stopRef = useRef<(closeTab: boolean) => Promise<boolean>>(() => Promise.resolve(false));
   const runControl = useCallback(() => stopRef.current(true), []);
   const catchupChains = useRef(new Map<number, Promise<{ applied: number; failed: boolean }>>());
+  const terminalPollRef = useRef<(generation: number, jobId: string) => Promise<void>>(async () => undefined);
+  const terminalPollFailuresRef = useRef(0);
   const runChannelRef = useRef<{
     channel: IpcChannel<unknown>;
     dispose: () => void;
@@ -1026,9 +1028,6 @@ function AiChatTab({
     if (!confirmed && isCurrentAiRun(current, generation) && current.cancellation !== "idle") return;
     if (isCurrentAiRun(current, generation)) {
       const next = confirmed ? confirmAiRunTerminal(current) : settleAiRun(current);
-      if (confirmed && current.cancellation === "unconfirmed" && !hasCloseWaiter(generation)) {
-        next.cancellation = "unconfirmed";
-      }
       setActiveRun(next);
       if (!current.spawnPending) setBusy(false);
     }
@@ -1149,6 +1148,50 @@ function AiChatTab({
     });
     void replayHitl(generation, jobId);
   };
+
+  terminalPollRef.current = async (generation, jobId) => {
+    const current = activeRunRef.current;
+    const id = conversationIdRef.current;
+    if (!isCurrentAiRun(current, generation) || current.settled || current.jobId !== jobId || !id) return;
+    try {
+      const run = await aiApi.run(jobId);
+      terminalPollFailuresRef.current = 0;
+      if (run.conversationId !== id || !isRunTerminal(run)) return;
+      await catchUpRunEvents(generation, jobId);
+      const latest = activeRunRef.current;
+      if (!isCurrentAiRun(latest, generation) || latest.settled || latest.jobId !== jobId) return;
+      const hasOutcome = stream.getState().attempts.some(
+        (attempt) => attempt.generation === generation && attempt.outcome,
+      );
+      if (!hasOutcome) {
+        const event = terminalEventOf(run);
+        if (event) {
+          stream.pushEvent(generation, event);
+          stream.flush();
+        }
+      }
+      settleRestoredRun(generation);
+    } catch {
+      terminalPollFailuresRef.current += 1;
+      if (terminalPollFailuresRef.current === 3) {
+        pushToast("error", "AI 任务状态检查失败，正在重试；可刷新会话确认结果");
+      }
+    }
+  };
+
+  useEffect(() => {
+    const generation = activeRun?.generation;
+    const jobId = activeRun?.jobId;
+    if (generation === undefined || !jobId || activeRun?.settled) return;
+    terminalPollFailuresRef.current = 0;
+    let inFlight = false;
+    const timer = window.setInterval(() => {
+      if (inFlight) return;
+      inFlight = true;
+      void terminalPollRef.current(generation, jobId).finally(() => { inFlight = false; });
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [activeRun?.generation, activeRun?.jobId, activeRun?.settled]);
 
   const replayRestoredIfBound = (jobId: string) => {
     const restored = restoredChannelRef.current;

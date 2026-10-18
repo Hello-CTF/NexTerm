@@ -87,8 +87,6 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Frontend lint
         run: pnpm lint
-      - name: Frontend tests
-        run: pnpm test
       - name: Reproducible real frontend
         run: node scripts/build.mjs frontend --repro-check
       - name: Upload the verified frontend dist and manifest

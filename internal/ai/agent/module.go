@@ -140,6 +140,13 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			})
 		},
 		func() error {
+			return ipc.Register(dispatcher, "ai_run_get", func(ctx context.Context, _ *ipc.Call, args struct {
+				JobID string `json:"jobId"`
+			}) (RunDTO, error) {
+				return r.RunGet(ctx, args.JobID)
+			})
+		},
+		func() error {
 			return ipc.Register(dispatcher, "ai_run_list", func(ctx context.Context, _ *ipc.Call, args struct {
 				ConversationID string `json:"conversationId"`
 				Limit          int    `json:"limit"`

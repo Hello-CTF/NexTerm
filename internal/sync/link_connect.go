@@ -126,7 +126,9 @@ func (e *Engine) CompleteResetPassword(ctx context.Context, config RemoteConfig,
 		}
 		return LinkConnectResult{}, err
 	}
-	if _, err := e.establishSession(ctx, config, pending.client, newPassword); err != nil {
+	connectedConfig := config
+	connectedConfig.Password = newPassword
+	if _, err := e.establishSession(ctx, connectedConfig, pending.client, newPassword); err != nil {
 		return LinkConnectResult{}, err
 	}
 	e.clearPending(key)

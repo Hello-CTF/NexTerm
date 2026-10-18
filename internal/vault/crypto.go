@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"runtime"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -28,14 +29,25 @@ type secretKey struct {
 	bytes [DEKLength]byte
 }
 
-func randomBytes(buffer []byte) {
-	_, _ = rand.Read(buffer)
+func readRandom(reader io.Reader, buffer []byte) error {
+	if _, err := io.ReadFull(reader, buffer); err != nil {
+		clear(buffer)
+		return ipc.WrapError(ipc.CodeCrypto, "加密错误: 生成安全随机数失败", err)
+	}
+	return nil
 }
 
-func generateKey() *secretKey {
+func randomBytes(buffer []byte) error {
+	return readRandom(rand.Reader, buffer)
+}
+
+func generateKey() (*secretKey, error) {
 	key := &secretKey{}
-	randomBytes(key.bytes[:])
-	return key
+	if err := randomBytes(key.bytes[:]); err != nil {
+		key.destroy()
+		return nil, err
+	}
+	return key, nil
 }
 
 func (k *secretKey) clone() *secretKey {
@@ -87,7 +99,9 @@ func seal(key *secretKey, plaintext, aad []byte) ([]byte, []byte, error) {
 		return nil, nil, err
 	}
 	nonce := make([]byte, nonceLength)
-	_, _ = rand.Read(nonce)
+	if err := randomBytes(nonce); err != nil {
+		return nil, nil, err
+	}
 	return nonce, aead.Seal(nil, nonce, plaintext, aad), nil
 }
 

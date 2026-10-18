@@ -1307,6 +1307,28 @@
     visibility: visible;
   }
 
+  .nx-row.nx-asset-row {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  .nx-asset-row > .nx-row-name {
+    flex: 1 1 0%;
+  }
+  .nx-asset-row .nx-row-actions {
+    position: static;
+    display: none;
+    flex: 0 0 100%;
+    justify-content: flex-end;
+    padding-left: 0;
+    transform: none;
+    background: none;
+  }
+  .nx-asset-row:hover .nx-row-actions,
+  .nx-asset-row.is-selected .nx-row-actions,
+  .nx-asset-row:focus-within .nx-row-actions {
+    display: flex;
+  }
+
   .nx-card {
     border: 1px solid color-mix(in srgb, var(--color-neutral-800) 90%, transparent);
     border-radius: var(--radius-lg);

@@ -40,13 +40,26 @@ type UserDEKEnvelopes struct {
 }
 
 func GenerateUserDEK() []byte {
-	dek := make([]byte, DEKLength)
-	randomBytes(dek)
+	dek, err := generateUserDEK()
+	if err != nil {
+		panic(err)
+	}
 	return dek
 }
 
+func generateUserDEK() ([]byte, error) {
+	dek := make([]byte, DEKLength)
+	if err := randomBytes(dek); err != nil {
+		return nil, err
+	}
+	return dek, nil
+}
+
 func GenerateUserDEKEnvelopes(password string) (dek []byte, envelopes *UserDEKEnvelopes, recoveryKey string, returnErr error) {
-	dek = GenerateUserDEK()
+	dek, err := generateUserDEK()
+	if err != nil {
+		return nil, nil, "", err
+	}
 	envelope, salt, params, err := WrapUserDEK(password, dek)
 	if err != nil {
 		return nil, nil, "", err
@@ -73,7 +86,9 @@ func WrapUserDEK(password string, dek []byte) (envelope, salt []byte, params str
 		return nil, nil, "", ipc.NewError(ipc.CodeCrypto, "加密错误: 密钥长度不合法")
 	}
 	salt = make([]byte, 16)
-	randomBytes(salt)
+	if err := randomBytes(salt); err != nil {
+		return nil, nil, "", err
+	}
 	kek, err := deriveUserKEK(password, salt, userDEKKDFDefaults)
 	if err != nil {
 		return nil, nil, "", err

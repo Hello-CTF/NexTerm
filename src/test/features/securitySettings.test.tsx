@@ -695,17 +695,24 @@ describe("SyncCard (web account sync)", () => {
       ],
       hasMore: false,
     });
-    mocks.syncIds
-      .mockResolvedValueOnce({ protocol: 2, entries: [{ id: "a1", seq: 1, blob_hash: "h1" }], head: "head-0", max_seq: 1 })
-      .mockResolvedValueOnce({ protocol: 2, entries: [{ id: "a1", seq: 2, blob_hash: "h2" }], head: "head-1", max_seq: 2 });
+    let idsCalls = 0;
+    mocks.syncIds.mockImplementation(async () => {
+      idsCalls += 1;
+      return idsCalls === 1
+        ? { protocol: 2, entries: [{ id: "a1", seq: 1, blob_hash: "h1" }], head: "head-0", max_seq: 1 }
+        : { protocol: 2, entries: [{ id: "a1", seq: 2, blob_hash: "h2" }], head: "head-1", max_seq: 2 };
+    });
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [{ id: "a1", seq: 2, blob: bytesToBase64(blob) }], head: "head-1", max_seq: 2, next_seq: 2, cursor_done: true });
     mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-2", max_seq: 2, applied: 0, skipped: 1 });
 
     mounted = mountSyncCard();
     clickButton(mounted.container, "对比详情");
+    await flushUntil(() => mounted!.container.textContent?.includes("云端对象在读取期间发生变化") ?? false);
+    clickButton(mounted.container, "刷新对比");
     await flushUntil(() => mounted!.container.textContent?.includes("云端较新"));
     // Cloud is newer, the winner set is empty, no push should happen
     expect(mounted.container.textContent).toContain("待推送 0 项");
+    expect(mocks.syncPush).not.toHaveBeenCalled();
   });
 
   it("collects and pushes per-record opted-in transcripts, which are disabled by default", async () => {

@@ -318,18 +318,17 @@ func (e *Engine) transcriptChunksAll(ctx context.Context, transcriptID string) (
 // applyRemoteObject decrypts and LWW-applies one remote object; apply failures are isolated as warnings and do not block the whole sync round.
 // identical means remote and local content match, counted as reconciled; when local wins, payload_hash is left empty so the blob hash difference drives the re-push.
 // known_host/AI profiles (including their tombstones) with opt-in hard-off are only counted and skipped: not applied and not reconciled, staying unreconciled for a later re-pull once enabled.
-func (e *Engine) applyRemoteObject(ctx context.Context, userID string, object WireObjectSeq, dek []byte, report *SyncReport, optIn kindOptIn) {
+func (e *Engine) applyRemoteObject(ctx context.Context, userID string, object WireObjectSeq, dek []byte, report *SyncReport, optIn kindOptIn) error {
 	report.Pulled++
 	kind, plaintext, err := tryOpenObject(dek, object.Blob, object.ID)
 	if err != nil {
 		report.DecryptFailed++
 		report.warnf("对象 %s 解密失败（密钥不匹配或数据损坏），已隔离", object.ID)
-		e.quarantineObject(ctx, userID, object.ID, hashBlob(object.Blob))
-		return
+		return e.quarantineObject(ctx, userID, object.ID, hashBlob(object.Blob))
 	}
 	if !optIn.allowsRemote(kind, plaintext) {
 		report.PullSkipped++
-		return
+		return nil
 	}
 	// Applying credentials requires an unlocked vault: while locked, neither apply nor reconcile (same semantics as opt-in hard-off),
 	// staying unreconciled so the next round after unlock re-pulls and applies automatically; recording the blob hash would be mistaken for convergence and skip forever.
@@ -337,7 +336,7 @@ func (e *Engine) applyRemoteObject(ctx context.Context, userID string, object Wi
 		if err := e.requireVault(ctx); err != nil {
 			report.PullSkipped++
 			report.warnf("凭据 %s 暂缓应用：凭据库未解锁，解锁后下一轮同步自动重试", object.ID)
-			return
+			return nil
 		}
 	}
 	payloadHash := objectPayloadHash(plaintext)
@@ -355,13 +354,17 @@ func (e *Engine) applyRemoteObject(ctx context.Context, userID string, object Wi
 	default:
 		e.syncStatePut(ctx, userID, object.ID, nil, hashBlob(object.Blob))
 	}
+	return nil
 }
 
-// quarantineObject records the blob hash of an undecryptable object to avoid re-pulling it every round; a push from local content naturally overwrites it.
-func (e *Engine) quarantineObject(ctx context.Context, userID, objectID string, blobHash [32]byte) {
-	if err := e.syncStatePut(ctx, userID, objectID, nil, blobHash); err != nil {
+// quarantineObject records the blob hash of an undecryptable object to avoid re-pulling it every round and prevent an automatic local push from overwriting it.
+func (e *Engine) quarantineObject(ctx context.Context, userID, objectID string, blobHash [32]byte) error {
+	payloadHash := quarantinedPayloadHash
+	if err := e.syncStatePut(ctx, userID, objectID, &payloadHash, blobHash); err != nil {
 		e.logger.Warn("sync quarantine record failed", "error", err)
+		return err
 	}
+	return nil
 }
 
 func (e *Engine) applyGroupObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {

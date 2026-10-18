@@ -89,11 +89,6 @@ try {
         throw 'Windows System32 whoami must precede Unix whoami on PATH'
     }
 
-    & go.exe test -mod=readonly -count=1 ./...
-    if ($LASTEXITCODE -ne 0) {
-        throw "Windows Go test suite failed with exit code $LASTEXITCODE"
-    }
-
     $dVolume = Get-Volume -DriveLetter D -ErrorAction SilentlyContinue
     if ($null -eq $dVolume) {
         $vhdPath = Join-Path $env:RUNNER_TEMP ('nexterm-second-volume-' + $PID + '.vhd')

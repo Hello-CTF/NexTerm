@@ -341,7 +341,7 @@ func mustDEK(t *testing.T, server *testSyncServer, username, password string) []
 	return dek
 }
 
-func TestEngineWrongDEKQuarantineAndHeal(t *testing.T) {
+func TestEngineWrongDEKQuarantineBlocksAutomaticOverwrite(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
 	deviceA := newTestDevice(t)
@@ -350,7 +350,19 @@ func TestEngineWrongDEKQuarantineAndHeal(t *testing.T) {
 
 	assetID := ids.New()
 	putDeviceAsset(t, deviceA, store.AssetRow{ID: assetID, Kind: "ssh", Name: "旧密钥资产", CreatedAt: 100, UpdatedAt: 100})
+	localID := ids.New()
+	putDeviceAsset(t, deviceA, store.AssetRow{ID: localID, Kind: "ssh", Name: "旧密钥下的云端资产", CreatedAt: 100, UpdatedAt: 100})
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
+	putDeviceAsset(t, deviceB, store.AssetRow{ID: localID, Kind: "ssh", Name: "本机已有副本", CreatedAt: 100, UpdatedAt: 200})
+	serverBlobHash := func(id string) string {
+		t.Helper()
+		var blob []byte
+		if err := server.db.DB().QueryRowContext(ctx, "SELECT blob FROM user_sync_object WHERE id = ?", id).Scan(&blob); err != nil {
+			t.Fatal(err)
+		}
+		return hashBlobHex(blob)
+	}
+	oldAssetHash, oldLocalHash := serverBlobHash(assetID), serverBlobHash(localID)
 
 	// The account DEK was reset (admin reset, user logged in with a new envelope): old objects cannot be decrypted and are quarantined with a warning.
 	resetDEK(t, server, "alice", "alice-pw-123")
@@ -364,15 +376,57 @@ func TestEngineWrongDEKQuarantineAndHeal(t *testing.T) {
 	if len(report.Warnings) == 0 {
 		t.Fatal("expected quarantine warnings")
 	}
+	if report.Pushed != 0 || serverBlobHash(assetID) != oldAssetHash || serverBlobHash(localID) != oldLocalHash {
+		t.Fatalf("initial quarantine overwrote cloud ciphertext: report=%+v", report)
+	}
 
-	// Local objects under the new DEK are pushed and overwrite the old ciphertext; sync heals itself.
+	// Creating a same-ID local object later must not turn the quarantine into an automatic repair.
 	putDeviceAsset(t, deviceB, store.AssetRow{ID: assetID, Kind: "ssh", Name: "新密钥资产", CreatedAt: 100, UpdatedAt: 200})
-	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
-	deviceC := newTestDevice(t)
-	syncDevice(t, deviceC, server, "alice", "alice-pw-123")
-	asset, err := deviceC.db.AssetGet(ctx, assetID)
-	if err != nil || asset.Name != "新密钥资产" {
-		t.Fatalf("deviceC asset=%+v err=%v", asset, err)
+	report = syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+	if report.Pushed != 0 || serverBlobHash(assetID) != oldAssetHash || serverBlobHash(localID) != oldLocalHash {
+		t.Fatalf("later local copy overwrote cloud ciphertext: report=%+v", report)
+	}
+	deviceB.engine = NewEngine(deviceB.db, deviceB.vault, nil)
+	report = syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+	if report.Pushed != 0 || serverBlobHash(assetID) != oldAssetHash {
+		t.Fatalf("quarantine did not survive engine restart: report=%+v", report)
+	}
+
+	// A changed cloud blob is pulled again. If it remains unreadable, the new blob is quarantined too.
+	session, err := deviceB.engine.ensureSession(ctx, deviceB.config(server, "alice", "alice-pw-123"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pushRemote := func(blob []byte) {
+		t.Helper()
+		idsResponse, err := session.client.ids(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := session.client.push(ctx, idsResponse.Head, []WireObject{{ID: assetID, Blob: blob}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pushRemote([]byte("changed-unreadable-ciphertext"))
+	report = syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+	if report.DecryptFailed == 0 || report.Pushed != 0 || serverBlobHash(assetID) != hashBlobHex([]byte("changed-unreadable-ciphertext")) {
+		t.Fatalf("changed unreadable cloud blob was not re-quarantined: report=%+v", report)
+	}
+
+	// Once another client explicitly repairs the cloud blob under the new DEK, normal merge resumes.
+	plaintext, err := marshalObject(assetObject{ID: assetID, Kind: "ssh", Name: "云端已修复", CreatedAt: 100, UpdatedAt: 300})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, err := sealObject(mustDEK(t, server, "alice", "alice-pw-123"), plaintext, assetID, KindAsset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pushRemote(blob)
+	report = syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+	asset, err := deviceB.db.AssetGet(ctx, assetID)
+	if err != nil || asset.Name != "云端已修复" || report.Applied == 0 {
+		t.Fatalf("repaired cloud object was not applied: asset=%+v report=%+v err=%v", asset, report, err)
 	}
 }
 

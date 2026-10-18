@@ -36,15 +36,40 @@ export interface SyncCompareRow {
   id: string;
   kind: string;
   name: string;
-  state: string;
+  state: "local-only" | "remote-only" | "same" | "local-newer" | "remote-newer" |
+    "local-deleted" | "remote-deleted" | "remote-undecryptable";
   updatedAtLocal?: number;
   updatedAtRemote?: number;
+  remoteSeq?: number;
+  remoteBlobHash?: string;
+  localPayloadHash?: string;
+}
+
+export interface SyncCompareResult {
+  rows: SyncCompareRow[];
+  warnings?: string[];
+  remote: number;
+  userId: string;
+  compareToken: string;
+}
+
+export interface SyncRepairUndecryptableRequest {
+  id: string;
+  action: "restore-local" | "clear-cloud";
+  userId: string;
+  compareToken: string;
+  remoteSeq: number;
+  remoteBlobHash: string;
+  localKind?: string;
+  localPayloadHash?: string;
 }
 
 // syncCompareApi is the desktop account sync per-row comparison entry: the Go side decrypts cloud objects with the engine session DEK,
 // then judges states against the local collection using the same LWW rules as the web (see internal/sync/compare.go).
 export const syncCompareApi = {
-  compare: () => call<{ rows: SyncCompareRow[]; warnings?: string[]; remote: number }>("sync_compare"),
+  compare: () => call<SyncCompareResult>("sync_compare"),
+  repairUndecryptable: (args: SyncRepairUndecryptableRequest) =>
+    call<{ repaired: boolean }>("sync_repair_undecryptable", { args }),
 };
 
 // RemotePreviewLinkView mirrors PreviewLinkView in src/features/sharing/previewApi.ts

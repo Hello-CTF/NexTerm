@@ -75,6 +75,12 @@ func (s *Service) kindOptInUserID(ctx context.Context) (string, bool) {
 
 // KindOptInGet returns the owning user's opt-in; with no identity (anonymous and desktop engine not logged in) it returns all false (default off) without error.
 func (s *Service) KindOptInGet(ctx context.Context) (KindOptIn, error) {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+	return s.kindOptInGetLocked(ctx)
+}
+
+func (s *Service) kindOptInGetLocked(ctx context.Context) (KindOptIn, error) {
 	userID, ok := s.kindOptInUserID(ctx)
 	if !ok {
 		return KindOptIn{}, nil
@@ -104,6 +110,8 @@ func (s *Service) KindOptInGet(ctx context.Context) (KindOptIn, error) {
 
 // KindOptInSet only writes the owning user's own opt-in; with no identity (anonymous and desktop engine not logged in) it is always forbidden, and client-reported userIDs are not accepted (cross-user writes cannot happen).
 func (s *Service) KindOptInSet(ctx context.Context, patch KindOptInPatch) (KindOptIn, error) {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
 	userID, ok := s.kindOptInUserID(ctx)
 	if !ok {
 		return KindOptIn{}, ipc.NewError(ipc.CodeForbidden, "需要账号会话才能修改同步内容开关")
@@ -133,7 +141,7 @@ func (s *Service) KindOptInSet(ctx context.Context, patch KindOptInPatch) (KindO
 			return KindOptIn{}, err
 		}
 	}
-	return s.KindOptInGet(ctx)
+	return s.kindOptInGetLocked(ctx)
 }
 
 func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -543,8 +544,15 @@ func (r *Runner) complete(current *job, answer string, turns int, total usage.Us
 		if terminal.Reason == hitl.TerminalCanceled && !isCancellation(terminalErr) {
 			terminalErr = errors.Join(context.Canceled, terminalErr)
 		}
-		r.finishRun(current, answer, turns, total, terminalErr, terminal)
-		current.finish(answer, turns, total, terminalErr)
+		var statusErr error
+		if err := current.finish(answer, turns, total, terminalErr, func() {
+			statusErr = r.finishRun(current, answer, turns, total, terminalErr, terminal)
+		}); err != nil {
+			slog.Warn("AI 终止事件处理失败", "job", current.id, "error", err)
+		}
+		if statusErr != nil {
+			slog.Warn("AI 运行完成状态写入失败", "job", current.id, "error", statusErr)
+		}
 		r.maybeGenerateConversationTitle(current)
 		r.cleanup(current)
 	})
@@ -579,9 +587,9 @@ func isCancellation(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &cancelErr) || errors.As(err, &streamCanceled)
 }
 
-func (r *Runner) finishRun(current *job, answer string, turns int, total usage.Usage, terminalErr error, terminal hitl.Event) {
+func (r *Runner) finishRun(current *job, answer string, turns int, total usage.Usage, terminalErr error, terminal hitl.Event) error {
 	if r.runs == nil {
-		return
+		return nil
 	}
 	status := store.RunStatusCompleted
 	message := ""
@@ -608,7 +616,7 @@ func (r *Runner) finishRun(current *job, answer string, turns int, total usage.U
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(current.ctx), 5*time.Second)
 	defer cancel()
-	_ = r.runs.RunFinishUsage(ctx, current.id, status, answer, message, turns,
+	return r.runs.RunFinishUsage(ctx, current.id, status, answer, message, turns,
 		usage.SaturatingInt64(total.PromptTokens), usage.SaturatingInt64(total.CompletionTokens),
 		usage.SaturatingInt64(total.CacheCreationTokens), usage.SaturatingInt64(uint64(max(total.LatencyMS, 0))))
 }

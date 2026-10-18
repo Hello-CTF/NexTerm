@@ -727,7 +727,11 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				}
 				if errors.Is(err, session.ErrTabNotFound) && s.docker != nil {
 					if authErr := s.authorizeDockerTab(ctx, input.TabID); authErr != nil {
-						err = authErr
+						if errors.Is(authErr, docker.ErrStreamClosed) {
+							err = session.ErrTabNotFound
+						} else {
+							err = authErr
+						}
 					} else if input.Mode == "detach" {
 						err = s.detachDocker(input.TabID, call.Channel.ID)
 					} else {

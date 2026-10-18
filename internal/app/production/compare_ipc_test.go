@@ -52,4 +52,8 @@ func TestSyncCompareCommandNonDesktopRejected(t *testing.T) {
 	if response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
 		t.Fatalf("error=%+v", response.Error)
 	}
+	response = dispatcher.Dispatch(context.Background(), ipc.Request{Command: syncservice.CommandRepairUndecryptable}, ipc.Environment{})
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
+		t.Fatalf("non-desktop repair error=%+v", response.Error)
+	}
 }

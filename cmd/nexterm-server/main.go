@@ -16,6 +16,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	core "github.com/Hello-CTF/NexTerm/internal/app"
 	production "github.com/Hello-CTF/NexTerm/internal/app/production"
+	"github.com/Hello-CTF/NexTerm/internal/applog"
 	"github.com/Hello-CTF/NexTerm/internal/deviceproto"
 	fleetagent "github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent/purpose"
@@ -88,7 +89,7 @@ func run(args []string) int {
 	}
 	invocation, err := core.ParseCLI(args, core.CommandServe, os.Getenv)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 		return 2
 	}
 	if invocation.Help {
@@ -106,31 +107,34 @@ func run(args []string) int {
 		return 2
 	case core.CommandServe:
 	default:
-		fmt.Fprintln(os.Stderr, "nexterm-server: unsupported command", invocation.Command)
+		fmt.Fprintln(os.Stderr, "nexterm-server: unsupported command", applog.RedactText(string(invocation.Command)))
 		return 2
 	}
 
 	paths, err := platform.ServerPaths(invocation.DataDir)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 		return 1
 	}
 	if err := paths.Prepare(); err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 		return 1
 	}
-	logger, logErr := platform.NewLogger(paths, os.Stderr)
+	logger, logErr := applog.NewLogger(paths, os.Stderr)
 	if logErr != nil {
 		logger.Warn("file logging is unavailable; using console only", "error", logErr)
 	}
 	defer func() {
 		if err := logger.Close(); err != nil {
-			fmt.Fprintln(os.Stderr, "nexterm-server: close log:", err)
+			fmt.Fprintln(os.Stderr, "nexterm-server: close log:", applog.RedactText(err.Error()))
 		}
 	}()
+	previousLogger := slog.Default()
+	slog.SetDefault(logger.Logger)
+	defer slog.SetDefault(previousLogger)
 	pprofServer, err := pprof.Start(logger.Logger, invocation.PprofAddr)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 		return 1
 	}
 	defer func() {
@@ -143,24 +147,24 @@ func run(args []string) int {
 	}
 	masterKey, err := server.ResolveMasterKey(invocation.MasterKeyFile)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 		return 2
 	}
 	if masterKey == "" {
 		masterKey, err = ensureVaultMasterKey(paths.DataDir, logger.Logger)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+			fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 			return 2
 		}
 	}
 	dbBackend, err := store.ParseBackend(invocation.DB)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 		return 2
 	}
 	dbPassword, err := server.ResolveDBPassword(invocation.DBPasswordFile)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 		return 2
 	}
 
@@ -168,17 +172,17 @@ func run(args []string) int {
 	defer stop()
 	webSocket, err := server.ParseWebSocketEnv(os.Getenv)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 		return 2
 	}
 	queueSize, err := server.ParseEventQueueEnv(os.Getenv)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 		return 2
 	}
 	bufferSize, err := server.ParseEventBufferEnv(os.Getenv)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 		return 2
 	}
 	broker := server.NewEventBroker()
@@ -217,7 +221,7 @@ func run(args []string) int {
 		StagedBlobs: blobs,
 	})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 		return 1
 	}
 	var accounts *account.Accounts
@@ -226,7 +230,7 @@ func run(args []string) int {
 	}
 	if invocation.Auth == core.AuthOff && accounts != nil {
 		if err := server.ValidateAuthOffBounds(ctx, accounts); err != nil {
-			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+			fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 			return 1
 		}
 	}
@@ -234,7 +238,7 @@ func run(args []string) int {
 	// login, so there is no one-time init code to copy down.
 	if accounts != nil && invocation.Auth != core.AuthOff && invocation.Auth != core.AuthPlatform {
 		if err := printAccountInitCode(ctx, accounts, os.Stderr, logger.Logger); err != nil {
-			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+			fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 			return 1
 		}
 	}
@@ -248,7 +252,7 @@ func run(args []string) int {
 			Events:   broker,
 		})
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+			fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 			return 1
 		}
 		previewService, err = sharing.New(sharing.Config{
@@ -256,7 +260,7 @@ func run(args []string) int {
 			Accounts: accounts,
 		})
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+			fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 			return 1
 		}
 		// Device sessions join the session system through the fleet authorization
@@ -291,7 +295,7 @@ func run(args []string) int {
 	}
 	peerDispatcher, err := application.Services.Sync.PeerDispatcher()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 		return 1
 	}
 	transport, err := server.New(server.Config{
@@ -328,13 +332,13 @@ func run(args []string) int {
 		WebSocket:          webSocket,
 	})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 		return 1
 	}
 	if fleetService != nil {
 		rollupRunner := fleetserver.NewRollupRunner(fleetService, 0, logger.Logger)
 		if err := rollupRunner.Start(ctx); err != nil {
-			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+			fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 			return 1
 		}
 		defer func() {

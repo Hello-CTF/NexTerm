@@ -65,6 +65,53 @@ func TestServiceBackgroundSync(t *testing.T) {
 	}
 }
 
+func TestLinkSetBroadcastsCurrentIdentityAfterLoginSwitchAndDisconnect(t *testing.T) {
+	instance := newTestInstance(t, true)
+	server := newTestSyncServer(t)
+	server.createUser(t, "alice", "alice-password")
+	server.createUser(t, "bob", "bob-password")
+	ctx := context.Background()
+	var observed []Status
+	instance.service.events = ipc.EmitterFunc(func(ctx context.Context, event ipc.Event) error {
+		if event.Event != ipc.TopicSyncStatus {
+			return nil
+		}
+		status, err := instance.service.Status(ctx)
+		if err == nil {
+			observed = append(observed, status)
+		}
+		return err
+	})
+
+	for _, attempt := range []struct {
+		username string
+		password string
+		loggedIn bool
+	}{
+		{"alice", "alice-password", true},
+		{"bob", "wrong-password", false},
+		{"bob", "bob-password", true},
+		{"", "", false},
+	} {
+		if _, err := instance.service.LinkSet(ctx, LinkPatch{
+			URL: testPtr(server.URL), Username: testPtr(attempt.username), Password: testPtr(attempt.password),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if len(observed) == 0 {
+			t.Fatal("link write did not broadcast sync status")
+		}
+		status := observed[len(observed)-1]
+		if status.Username != attempt.username || status.LoggedIn != attempt.loggedIn ||
+			(status.LoggedIn && status.UserID == "") || (!status.LoggedIn && status.UserID != "") {
+			t.Fatalf("status after link write = %+v, want username %q loggedIn %v", status, attempt.username, attempt.loggedIn)
+		}
+	}
+	if len(observed) != 4 {
+		t.Fatalf("sync status events = %d, want 4", len(observed))
+	}
+}
+
 func TestServiceAutomaticSlowRoundEmitsCompletionAfterLastSuccessAt(t *testing.T) {
 	instance := newTestInstance(t, true)
 	server := newTestSyncServer(t)
@@ -286,6 +333,7 @@ func TestServiceSyncEmitsChangedStatus(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	events = nil
 	if _, err := instance.service.Sync(ctx); err != nil {
 		t.Fatal(err)
 	}

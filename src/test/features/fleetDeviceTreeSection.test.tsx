@@ -644,6 +644,9 @@ describe("Asset tree device rows - automatic convergence", () => {
     vi.stubGlobal("fetch", mocks.fetch);
     seedUser(SUPERADMIN);
     mountTree();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const deviceFetches = () => calls.filter((c) => c.url === "/fleet/devices" && c.method === "GET").length;
@@ -692,6 +695,9 @@ describe("Asset tree device rows - automatic convergence", () => {
     const calls = route({ devices: [ONLINE_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const resync = mocks.resyncHandlers.at(-1);

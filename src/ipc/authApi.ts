@@ -130,6 +130,13 @@ export interface SyncPushResponse {
   skipped: number;
 }
 
+export interface SyncDeleteResponse {
+  protocol: number;
+  head: string;
+  max_seq: number;
+  deleted: boolean;
+}
+
 export const SYNC_PROTOCOL_VERSION = 2;
 export const SESSION_EXPIRED_EVENT = "nexterm:session-expired";
 export const SESSION_IDENTITY_CHANGED_EVENT = "nexterm:auth-session-changed";
@@ -367,6 +374,14 @@ export const syncV2Api = {
       protocol: SYNC_PROTOCOL_VERSION,
       known_head: knownHead,
       objects,
+    }, { csrf: true }),
+
+  deleteObject: (knownHead: string, id: string, blobHash: string) =>
+    request<SyncDeleteResponse>("POST", "/sync/v2/delete", {
+      protocol: SYNC_PROTOCOL_VERSION,
+      known_head: knownHead,
+      id,
+      blob_hash: blobHash,
     }, { csrf: true }),
 };
 

@@ -2,6 +2,9 @@ package sync
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"errors"
 	"testing"
 
@@ -16,7 +19,73 @@ type testInstance struct {
 	service *Service
 }
 
+// syncTestProtector stands in for platform key storage while the vault still
+// encrypts credentials and settings with its production DEK implementation.
+type syncTestProtector struct {
+	key [32]byte
+}
+
+func (p *syncTestProtector) Protect(data []byte) ([]byte, error) {
+	block, err := aes.NewCipher(p.key[:])
+	if err != nil {
+		return nil, err
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	return aead.Seal(nonce, nonce, data, nil), nil
+}
+
+func (p *syncTestProtector) Unprotect(envelope []byte) ([]byte, error) {
+	block, err := aes.NewCipher(p.key[:])
+	if err != nil {
+		return nil, err
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	if len(envelope) < aead.NonceSize() {
+		return nil, errors.New("invalid test envelope")
+	}
+	return aead.Open(nil, envelope[:aead.NonceSize()], envelope[aead.NonceSize():], nil)
+}
+
+func newSyncTestVault(t *testing.T, db *store.Store, masterPassword string) *vault.Vault {
+	t.Helper()
+	ctx := context.Background()
+	protector := &syncTestProtector{}
+	if _, err := rand.Read(protector.key[:]); err != nil {
+		t.Fatal(err)
+	}
+	credentialVault := vault.Load(ctx, db, vault.WithProtector(protector))
+	var err error
+	if masterPassword != "" {
+		err = credentialVault.InitMaster(ctx, masterPassword)
+	} else {
+		err = credentialVault.InitDPAPI(ctx, "")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(credentialVault.Lock)
+	return credentialVault
+}
+
 func newTestInstance(t *testing.T, unlocked bool, options ...Option) *testInstance {
+	return newTestInstanceWithMaster(t, unlocked, false, options...)
+}
+
+func newMasterTestInstance(t *testing.T, options ...Option) *testInstance {
+	return newTestInstanceWithMaster(t, true, true, options...)
+}
+
+func newTestInstanceWithMaster(t *testing.T, unlocked, master bool, options ...Option) *testInstance {
 	t.Helper()
 	ctx := context.Background()
 	db, err := store.OpenInMemory(ctx)
@@ -27,12 +96,15 @@ func newTestInstance(t *testing.T, unlocked bool, options ...Option) *testInstan
 	if _, err := db.AssetEnsureBuiltinLocal(ctx); err != nil {
 		t.Fatal(err)
 	}
-	credentialVault := vault.Load(ctx, db)
+	var credentialVault *vault.Vault
 	if unlocked {
-		if err := credentialVault.InitMaster(ctx, "sync-test-master"); err != nil {
-			t.Fatal(err)
+		password := ""
+		if master {
+			password = "sync-test-master"
 		}
-		t.Cleanup(credentialVault.Lock)
+		credentialVault = newSyncTestVault(t, db, password)
+	} else {
+		credentialVault = vault.Load(ctx, db)
 	}
 	return &testInstance{db: db, vault: credentialVault, service: New(db, credentialVault, append([]Option{WithMetadata("test", true)}, options...)...)}
 }

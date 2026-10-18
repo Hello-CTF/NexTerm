@@ -204,6 +204,75 @@ func (o *objectStore) push(ctx context.Context, userID, knownHead string, object
 	return applied, skipped, head, maxSeq, nil
 }
 
+// deleteObject clears one opaque remote blob while retaining its sequence as a
+// marker. A later push must never reuse a sequence already seen by a client.
+func (o *objectStore) deleteObject(ctx context.Context, userID, id, knownHead, blobHash string) (head string, maxSeq int64, returnErr error) {
+	if !validObjectID(id) || len(knownHead) != 64 || len(blobHash) != 64 {
+		return "", 0, ipc.NewError(ipc.CodeBadParam, "同步对象删除参数不合法")
+	}
+	if _, err := hex.DecodeString(knownHead); err != nil {
+		return "", 0, ipc.NewError(ipc.CodeBadParam, "同步状态摘要不合法")
+	}
+	expectedHash, err := hex.DecodeString(blobHash)
+	if err != nil {
+		return "", 0, ipc.NewError(ipc.CodeBadParam, "同步对象摘要不合法")
+	}
+	err = o.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		headModel := query.Use(tx).UserSyncHead
+		row, err := headModel.WithContext(ctx).
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where(headModel.UserID.Eq(userID)).First()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errHeadMismatch
+		}
+		if err != nil {
+			return err
+		}
+		if row.HeadHash != knownHead {
+			return errHeadMismatch
+		}
+		objectModel := query.Use(tx).UserSyncObject
+		object, err := objectModel.WithContext(ctx).
+			Where(objectModel.UserID.Eq(userID), objectModel.ID.Eq(id)).First()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errHeadMismatch
+		}
+		if err != nil {
+			return err
+		}
+		if len(object.Blob) == 0 || !bytes.Equal(object.BlobHash, expectedHash) {
+			return errHeadMismatch
+		}
+		var previousMax int64
+		if err := objectModel.WithContext(ctx).
+			Where(objectModel.UserID.Eq(userID)).UnderlyingDB().
+			Select("COALESCE(MAX(seq), 0)").Scan(&previousMax).Error; err != nil {
+			return err
+		}
+		maxSeq = previousMax + 1
+		emptyHash := hashBlob(nil)
+		if _, err := objectModel.WithContext(ctx).
+			Where(objectModel.UserID.Eq(userID), objectModel.ID.Eq(id)).
+			UpdateColumns(map[string]any{"seq": maxSeq, "blob": []byte{}, "blob_hash": emptyHash[:]}); err != nil {
+			return err
+		}
+		batch := sha256.New()
+		fmt.Fprintf(batch, "%d\x00%s\x00%s\n", maxSeq, id, hex.EncodeToString(emptyHash[:]))
+		sum := sha256.Sum256(append([]byte(knownHead+"\x00"), batch.Sum(nil)...))
+		head = hex.EncodeToString(sum[:])
+		_, err = headModel.WithContext(ctx).Where(headModel.UserID.Eq(userID)).
+			UpdateColumns(map[string]any{"head_hash": head})
+		return err
+	})
+	if errors.Is(err, errHeadMismatch) {
+		return "", 0, errHeadMismatch
+	}
+	if err != nil {
+		return "", 0, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	return head, maxSeq, nil
+}
+
 func (o *objectStore) pull(ctx context.Context, userID string, sinceSeq int64, ids []string, maxBytes int64) (objects []WireObjectSeq, head string, maxSeq, nextSeq int64, cursorDone bool, returnErr error) {
 	if len(ids) > maxPullIDLookup {
 		return nil, "", 0, 0, false, ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("按 ID 拉取的对象数超过 %d", maxPullIDLookup))
@@ -231,6 +300,12 @@ func (o *objectStore) pull(ctx context.Context, userID string, sinceSeq int64, i
 		return nil, "", 0, 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	for _, row := range rows {
+		if len(row.Blob) == 0 {
+			if row.Seq > nextSeq {
+				nextSeq = row.Seq
+			}
+			continue
+		}
 		object := WireObjectSeq{ID: row.ID, Seq: row.Seq, Blob: row.Blob}
 		if cost := wireObjectCost(object.Blob); len(objects) > 0 && cost > budget {
 			break
@@ -256,6 +331,9 @@ func (o *objectStore) pull(ctx context.Context, userID string, sinceSeq int64, i
 		if err != nil {
 			return nil, "", 0, 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 		}
+		if len(row.Blob) == 0 {
+			continue
+		}
 		object := WireObjectSeq{ID: row.ID, Seq: row.Seq, Blob: row.Blob}
 		if cost := wireObjectCost(object.Blob); len(objects) > 0 && cost > budget {
 			continue
@@ -279,7 +357,7 @@ func (o *objectStore) idList(ctx context.Context, userID string) (entries []IDEn
 	objectModel := query.Use(o.db).UserSyncObject
 	rows := []store.UserSyncObject{}
 	if err := objectModel.WithContext(ctx).
-		Where(objectModel.UserID.Eq(userID)).
+		Where(objectModel.UserID.Eq(userID), objectModel.Blob.Neq([]byte{})).
 		Order(objectModel.Seq).
 		Limit(maxIDListEntries + 1).
 		Scan(&rows); err != nil {

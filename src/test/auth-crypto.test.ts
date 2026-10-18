@@ -1,6 +1,9 @@
 /** @vitest-environment jsdom */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { argon2idKey, blake2b } from "../features/auth/argon2";
+import { tryOpenSyncObject } from "../features/auth/crypto";
+
+afterEach(() => vi.unstubAllGlobals());
 
 function hex(data: Uint8Array): string {
   return [...data].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -76,5 +79,14 @@ describe("blake2b basic vectors", () => {
     expect(hex(blake2b(bytes("abc"), 32))).toBe(
       "bddd813c634239723171ef3fee98579b94964e3bb1cb3e427262c8c068d52319",
     );
+  });
+});
+
+describe("sync object decryption failures", () => {
+  it("reports unavailable Web Crypto as a runtime error instead of damaged cloud data", async () => {
+    vi.stubGlobal("crypto", { subtle: undefined });
+
+    await expect(tryOpenSyncObject(new Uint8Array(32), new Uint8Array(29), "a-1"))
+      .rejects.toMatchObject({ code: "crypto" });
   });
 });

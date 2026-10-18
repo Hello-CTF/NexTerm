@@ -3212,7 +3212,7 @@ export async function reconnectDeadHost(
     }
   };
   if (!isCurrent()) return null;
-  if (ws.deletedTarget) throw new Error(`「${ws.title}」的资产已删除，请重新绑定或关闭工作区`);
+  if (ws.deletedTarget) throw new Error(`「${ws.title}」的资产已删除，请选择其他资产或关闭工作区`);
   if (ws.assetKind === "device" && ws.assetId) {
     return finish(sessionApi.connectDevice(ws.assetId.slice("device/".length), ws.title));
   }

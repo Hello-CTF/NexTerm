@@ -823,6 +823,8 @@ export const aiApi = {
     call<import("./types").AiHitlEventDto[]>("ai_hitl_events", { jobId, afterSeq }),
   runs: (conversationId: string, limit?: number) =>
     call<import("./types").AiRunDto[]>("ai_run_list", { conversationId, limit }),
+  run: (jobId: string) =>
+    call<import("./types").AiRunDto>("ai_run_get", { jobId }),
   runEvents: (jobId: string, afterSeq: number, limit?: number) =>
     call<import("./types").AiRunEventDto[]>("ai_run_events", { jobId, afterSeq, limit }),
   models: () => call<string[]>("ai_models"),

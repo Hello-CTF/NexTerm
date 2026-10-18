@@ -207,6 +207,7 @@ let mounted: MountedView | undefined;
 beforeEach(() => {
   vi.resetAllMocks();
   document.body.replaceChildren();
+  localStorage.clear();
   mocks.assetList.mockResolvedValue([{ ...ASSET_UNGROUPED }, { ...ASSET_GROUPED }]);
   mocks.assetSearch.mockResolvedValue([]);
   mocks.groupList.mockResolvedValue([{ ...GROUP }]);
@@ -439,8 +440,9 @@ describe("AssetTree keyboard navigation", () => {
     const target = itemByText(mounted!.container, targetName);
     expect(target.getAttribute("aria-level")).toBe("2");
     expect(target.closest("[role='group']")).not.toBeNull();
-    expect(target.querySelector(".nx-row-name")?.textContent).toBe(targetName);
-    expect(target.querySelector(".nx-row-name")?.className).not.toContain("truncate");
+    expect(target.querySelector(".nx-asset-row-name")?.textContent).toBe(targetName);
+    expect(target.querySelector(".nx-asset-row-name")?.className).not.toContain("truncate");
+    expect(target.querySelector(".nx-asset-row-identity")?.textContent).toBe("root@10.0.0.8:22");
     expect(target.querySelectorAll(".nx-row-actions button")).toHaveLength(4);
   });
 

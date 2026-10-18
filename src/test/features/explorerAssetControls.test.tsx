@@ -169,6 +169,26 @@ afterEach(() => {
 });
 
 describe("asset group controls", () => {
+  it("shows each host identity and remembers compact asset rows", async () => {
+    mocks.list.mockResolvedValue([{
+      id: "a1", groupId: null, kind: "ssh", name: "unique-host", host: "10.0.0.8",
+      port: 22, username: "root", options: {}, builtin: false,
+    }]);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("unique-host"));
+    expect(mounted!.container.textContent).toContain("root@10.0.0.8:22");
+
+    click(buttonByTitle(mounted!.container, "紧凑显示资产"));
+    expect(mounted!.container.textContent).not.toContain("root@10.0.0.8:22");
+    mounted!.unmount();
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("unique-host"));
+    expect(mounted!.container.textContent).not.toContain("root@10.0.0.8:22");
+
+    click(buttonByTitle(mounted!.container, "显示资产主机身份"));
+    expect(mounted!.container.textContent).toContain("root@10.0.0.8:22");
+  });
+
   it("renders parent, child, and grandchild groups at their actual tree levels", async () => {
     mocks.groupList.mockResolvedValue([
       { ...GROUP },

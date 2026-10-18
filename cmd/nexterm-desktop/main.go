@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
 
 	core "github.com/Hello-CTF/NexTerm/internal/app"
 	production "github.com/Hello-CTF/NexTerm/internal/app/production"
+	"github.com/Hello-CTF/NexTerm/internal/applog"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/platform"
 	"github.com/Hello-CTF/NexTerm/internal/pprof"
@@ -30,7 +32,7 @@ func run(args []string) int {
 	args, launchLink := extractDeepLink(args)
 	invocation, err := core.ParseCLI(args, core.CommandDesktop, os.Getenv)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-desktop:", err)
+		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))
 		return 2
 	}
 	if invocation.Help {
@@ -42,31 +44,34 @@ func run(args []string) int {
 		return 0
 	}
 	if invocation.Command != core.CommandDesktop {
-		fmt.Fprintln(os.Stderr, "nexterm-desktop: use the nexterm-server binary for", invocation.Command)
+		fmt.Fprintln(os.Stderr, "nexterm-desktop: use the nexterm-server binary for", applog.RedactText(string(invocation.Command)))
 		return 2
 	}
 
 	paths, err := platform.DesktopPaths(invocation.DataDir)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-desktop:", err)
+		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))
 		return 1
 	}
 	if err := paths.Prepare(); err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-desktop:", err)
+		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))
 		return 1
 	}
-	logger, logErr := platform.NewLogger(paths, os.Stderr)
+	logger, logErr := applog.NewLogger(paths, os.Stderr)
 	if logErr != nil {
 		logger.Warn("file logging is unavailable; using console only", "error", logErr)
 	}
 	defer func() {
 		if err := logger.Close(); err != nil {
-			fmt.Fprintln(os.Stderr, "nexterm-desktop: close log:", err)
+			fmt.Fprintln(os.Stderr, "nexterm-desktop: close log:", applog.RedactText(err.Error()))
 		}
 	}()
+	previousLogger := slog.Default()
+	slog.SetDefault(logger.Logger)
+	defer slog.SetDefault(previousLogger)
 	assets, err := newDesktopAssets(invocation.WebRoot)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-desktop:", err)
+		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))
 		return 1
 	}
 	streams := newDesktopStreamFactory()
@@ -103,7 +108,7 @@ func run(args []string) int {
 		},
 	})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-desktop:", err)
+		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))
 		return showStartupError(paths, err, logger.Logger)
 	}
 	service := &Service{app: production.Application, streams: streams}
@@ -139,7 +144,7 @@ func run(args []string) int {
 	})
 	pprofServer, err := pprof.Start(logger.Logger, invocation.PprofAddr)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-desktop:", err)
+		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))
 		return 1
 	}
 	defer func() {

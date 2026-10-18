@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   hitlSnapshot: vi.fn(),
   hitlEvents: vi.fn(),
   runs: vi.fn(),
+  run: vi.fn(),
   runEvents: vi.fn(),
   getPermission: vi.fn(),
   setPermission: vi.fn(),
@@ -45,6 +46,7 @@ vi.mock("../../ipc/commands", () => ({
     hitlSnapshot: mocks.hitlSnapshot,
     hitlEvents: mocks.hitlEvents,
     runs: mocks.runs,
+    run: mocks.run,
     runEvents: mocks.runEvents,
     getPermission: mocks.getPermission,
     setPermission: mocks.setPermission,
@@ -149,6 +151,7 @@ describe("AiSidebar stuck busy-state fixes", () => {
     });
     mocks.hitlEvents.mockResolvedValue([]);
     mocks.runs.mockResolvedValue([]);
+    mocks.run.mockResolvedValue({ id: "job-1", conversationId: "conv-1", status: "running", finishedAt: null });
     mocks.runEvents.mockResolvedValue([]);
     mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
     mocks.setPermission.mockResolvedValue(undefined);
@@ -175,6 +178,47 @@ describe("AiSidebar stuck busy-state fixes", () => {
     vi.useRealTimers();
     view?.unmount();
     view = null;
+  });
+
+  it("recovers the final outcome when the run completed but its terminal event never reached the channel", async () => {
+    vi.useFakeTimers();
+    await flush();
+    await send(view!, "Hello");
+    expect(useUi.getState().aiBusy).toBe(true);
+    mocks.run.mockResolvedValue({
+      id: "job-1", conversationId: "conv-1", status: "completed", source: "chat",
+      answer: "已完成的回答", turns: 1, tokensIn: 2, tokensOut: 3,
+      cacheCreationTokens: 0, latencyMs: 100, finishedAt: 2, createdAt: 1, updatedAt: 2,
+    });
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    await flushReplay();
+
+    expect(mocks.run).toHaveBeenCalledWith("job-1");
+    expect(textOf(view!)).toContain("已完成的回答");
+    expect(useUi.getState().aiBusy).toBe(false);
+  });
+
+  it("confirms a cancellation from persisted run status after its terminal event is lost", async () => {
+    vi.useFakeTimers();
+    await flush();
+    await send(view!, "Long-running task");
+    click(view!.container.querySelector('button[title^="停止当前任务"]')!);
+    await flush();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    await flushReplay();
+    expect(useUi.getState().aiBusy).toBe(true);
+    expect(textOf(view!)).toContain("停止未确认");
+
+    mocks.run.mockResolvedValue({ id: "job-1", conversationId: "conv-1", status: "canceled", finishedAt: 2 });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    await flushReplay();
+
+    expect(mocks.run).toHaveBeenCalledWith("job-1");
+    expect(textOf(view!)).toContain("已停止本轮");
+    expect(textOf(view!)).not.toContain("停止未确认");
+    expect(useUi.getState().aiBusy).toBe(false);
   });
 
   it("settles the busy state after a permanent replay failure so the tab can be closed directly", async () => {
@@ -624,12 +668,12 @@ describe("AiSidebar stuck busy-state fixes", () => {
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id).toBe(before);
     expect(textOf(view!)).toContain("停止未确认");
 
-    cancelRequest.resolve();
+    await act(async () => { cancelRequest.resolve(); });
     await flushReplay();
     expect(mocks.runEvents).toHaveBeenCalledWith("job-1", 0, 200);
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id).toBe(before);
     expect(textOf(view!)).toContain(expected);
-    expect(textOf(view!)).toContain("停止未确认");
+    expect(textOf(view!)).not.toContain("停止未确认");
     expect(useUi.getState().aiBusy).toBe(false);
     expect(mocks.cancel).toHaveBeenCalledTimes(1);
   });
