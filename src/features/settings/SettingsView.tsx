@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { aiApi, biometricApi, vaultApi, type AiPermissionConfig } from "../../ipc/commands";
+import { aiApi, biometricApi, desktopTrayApi, vaultApi, type AiPermissionConfig } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import {
   setTerminalCloseAction,
@@ -9,7 +9,7 @@ import {
 } from "../../app/preferences";
 import { ask, promptText } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
-import { isMobile } from "../../app/platform";
+import { isMobile, isWindows } from "../../app/platform";
 import { ModelManager } from "../ai/ModelPanel";
 import { AppearanceCard } from "./AppearanceCard";
 import { KnownHostsCard } from "./KnownHostsCard";
@@ -97,6 +97,38 @@ export function SettingsView() {
   const terminalOsc52 = useUi((s) => s.terminalOsc52);
   const setTerminalOsc52 = useUi((s) => s.setTerminalOsc52);
   const terminalPrefs = useTerminalPrefs();
+  const showCloseToTray = DESKTOP && isWindows();
+  const [closeToTray, setCloseToTray] = useState(false);
+  const [closeToTrayLoading, setCloseToTrayLoading] = useState(showCloseToTray);
+  const [closeToTraySaving, setCloseToTraySaving] = useState(false);
+  useEffect(() => {
+    if (!showCloseToTray) return;
+    let cancelled = false;
+    desktopTrayApi
+      .get()
+      .then((dto) => {
+        if (!cancelled) setCloseToTray(dto.enabled);
+      })
+      .catch((error) => {
+        if (!cancelled) pushToast("error", describeError(error));
+      })
+      .finally(() => {
+        if (!cancelled) setCloseToTrayLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showCloseToTray, pushToast]);
+  const changeCloseToTray = (enabled: boolean) => {
+    if (closeToTraySaving) return;
+    const previous = closeToTray;
+    setCloseToTray(enabled);
+    setCloseToTraySaving(true);
+    desktopTrayApi.set(enabled).catch((e) => {
+      setCloseToTray(previous);
+      pushToast("error", describeError(e));
+    }).finally(() => setCloseToTraySaving(false));
+  };
 
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{
@@ -487,6 +519,25 @@ export function SettingsView() {
               以上策略适用于支持后台的交互终端；本机后台终端仅在宿主应用运行期间保留，不是 durable SSH。
             </p>
           </div>
+          {showCloseToTray && (
+            <label className="mt-3.5 flex cursor-pointer items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-[12.5px] text-neutral-200">关闭时保留后台运行（最小化到托盘）</div>
+                <p className="nx-hint mt-0.5">
+                  {closeToTray
+                    ? "关闭窗口后 NexTerm 保留在系统托盘中，终端会话保持连接；右键托盘图标可彻底退出。"
+                    : "关闭窗口后直接退出 NexTerm，所有本机会话随之结束。"}
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 shrink-0"
+                checked={closeToTray}
+                disabled={closeToTrayLoading || closeToTraySaving}
+                onChange={(e) => changeCloseToTray(e.target.checked)}
+              />
+            </label>
+          )}
         </section>
 
         <section id="settings-ai-model" className="nx-card scroll-mt-12">

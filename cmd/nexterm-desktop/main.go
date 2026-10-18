@@ -133,8 +133,7 @@ func run(args []string) int {
 			UniqueID: "com.nexterm.desktop",
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
 				if window != nil {
-					window.Restore()
-					window.Focus()
+					showWindow(window)
 				}
 				if url := findDeepLink(data.Args); url != "" {
 					service.links.deliver(url)
@@ -161,8 +160,7 @@ func run(args []string) int {
 			return
 		}
 		if window != nil {
-			window.Restore()
-			window.Focus()
+			showWindow(window)
 		}
 		service.links.deliver(url)
 	})
@@ -180,6 +178,7 @@ func run(args []string) int {
 		emitFilesDropped(wailsApp, event)
 	})
 	streams.SetWindow(window)
+	setupTray(wailsApp, window, desktopBrandIcon(invocation.WebRoot), production.Services.Store, logger.Logger)
 	if launchLink != "" {
 		service.links.deliver(launchLink)
 	}

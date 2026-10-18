@@ -17,6 +17,16 @@ import (
 //go:embed all:dist
 var desktopDist embed.FS
 
+// desktopBrandIcon reads the brand icon from the embedded web assets so the
+// system tray can reuse it. A missing icon is not fatal.
+func desktopBrandIcon(string) []byte {
+	data, err := desktopDist.ReadFile("dist/brand/icon.ico")
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
 type embeddedDesktopAssets struct {
 	files     fs.FS
 	fallback  http.Handler
