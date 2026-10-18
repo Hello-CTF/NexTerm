@@ -86,8 +86,8 @@ async function waitUntil(assertion: () => void, timeout = 5000): Promise<void> {
 }
 
 function newTerminalButton(): HTMLButtonElement {
-  const btn = document.querySelector<HTMLButtonElement>('button[aria-label="新建终端"]');
-  if (!btn) throw new Error("rail new terminal button not found");
+  const btn = document.querySelector<HTMLButtonElement>('button[aria-label="新建终端标签"]');
+  if (!btn) throw new Error("workspace new terminal button not found");
   return btn;
 }
 

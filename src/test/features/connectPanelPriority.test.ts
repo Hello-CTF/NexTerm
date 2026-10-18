@@ -123,7 +123,7 @@ describe("Layout preferences after reloading", () => {
 
     await connectAsset(ASSET);
     expect(localStorage.getItem("nexterm.layout.v1")).toBe(
-      JSON.stringify({ leftWidth: 300, rightWidth: 352 }),
+      JSON.stringify({ leftWidth: 300, rightWidth: 352, rightOpen: true }),
     );
 
     vi.resetModules();

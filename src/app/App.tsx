@@ -21,10 +21,8 @@ import {
   requestCloseTab,
   requestCloseTabs,
   requestKillTab,
-  requestKillWorkspaceTerminals,
   closeTabHint,
   closeActionHint,
-  countBlockedTerminals,
   isSessionReconnectPending,
   reconnectSessionAndWait,
   reconnectRestoredWorkspace,
@@ -911,6 +909,19 @@ function AppShell() {
     void openLocalTerminal();
   }, [ws?.sessionId, ws?.assetId, sessions, setSessions, openLocalTerminal, pushToast]);
 
+  const closeAllWorkspaces = useCallback(async () => {
+    const state = useUi.getState();
+    const activeId = state.activeWorkspaceId;
+    const ids = state.workspaces
+      .filter((workspace) => workspace.closable && workspace.id !== activeId)
+      .map((workspace) => workspace.id);
+    const active = state.workspaces.find((workspace) => workspace.id === activeId);
+    if (active?.closable) ids.push(active.id);
+    for (const id of ids) {
+      if (!(await useUi.getState().closeWorkspace(id))) break;
+    }
+  }, []);
+
   const openWorkspaceSwitcher = useCallback(
     (anchor: HTMLElement) => {
       const rect = anchor.getBoundingClientRect();
@@ -931,37 +942,29 @@ function AppShell() {
             .filter(Boolean)
             .join(" · "),
           onSelect: () => setActiveWorkspace(w.id),
+          trailingAction: {
+            label: `关闭工作区 ${w.title}`,
+            icon: <IconClose size={12} />,
+            disabled: !w.closable,
+            onSelect: () => void closeWorkspace(w.id),
+          },
         };
       });
       if (workspaces.length > 0) items.push({ kind: "separator" });
-      if (ws) {
-        const tabs = ws.panes.flatMap((p) => p.tabs);
-        const running = tabs.filter((t) => t.kind === "terminal" && t.tabId && !t.dead && !t.exited).length;
-        const blocked = countBlockedTerminals(tabs, ws.assetKind);
+      if (workspaces.length > 0) {
         items.push({
           kind: "item",
-          label: `关闭「${ws.title}」`,
+          label: "关闭所有工作区",
           icon: <IconClose size={12} />,
-          hint:
-            blocked > 0
-              ? `${running} 个运行中 · ${blocked} 个将结束进程`
-              : "运行中的终端转入后台",
-          disabled: !ws.closable,
-          onSelect: () => void closeWorkspace(ws.id),
-        });
-        items.push({
-          kind: "item",
-          label: "结束全部终端进程…",
-          icon: <IconStop size={12} />,
-          hint: running > 0 ? `${running} 个正在运行` : "没有运行中的终端",
+          hint: `${workspaces.filter((workspace) => workspace.closable).length} 个可关闭`,
           danger: true,
-          disabled: running === 0,
-          onSelect: () => void requestKillWorkspaceTerminals(ws.id),
+          disabled: !workspaces.some((workspace) => workspace.closable),
+          onSelect: () => void closeAllWorkspaces(),
         });
       }
       setWsMenu({ x: rect.left, y: rect.bottom + 4, title: "工作区", items });
     },
-    [workspaces, sessions, ws, setActiveWorkspace, closeWorkspace],
+    [workspaces, sessions, setActiveWorkspace, closeWorkspace, closeAllWorkspaces],
   );
 
   useEffect(() => {
@@ -1221,13 +1224,6 @@ function AppShell() {
     onClick: () => void;
     unavailableReason?: string;
   }[  ] = [
-    {
-      key: "terminal",
-      label: "新建终端",
-      hint: "新建终端标签：已连接就直接打开，断线会先重连；没有远程工作区时打开本机终端",
-      icon: IconTerminal,
-      onClick: openNewTerminal,
-    },
     {
       key: "background",
       label: "后台会话",

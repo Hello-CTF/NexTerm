@@ -9,9 +9,14 @@ import (
 	"github.com/coder/websocket"
 )
 
-// BridgeSpawner starts a local supervisor helper bridge whose stdin/stdout
-// carry the supervisor protocol for one state directory.
+// BridgeSpawner opens a local byte stream carrying the supervisor protocol
+// for one state directory.
 type BridgeSpawner func(ctx context.Context, stateDir string) (io.ReadWriteCloser, error)
+
+// DirectHelperBridge uses the helper's local socket or Windows named pipe.
+func DirectHelperBridge(ctx context.Context, stateDir string) (io.ReadWriteCloser, error) {
+	return supervisor.DialHelperBridge(ctx, stateDir)
+}
 
 // SubprocessBridge spawns the same binary's supervisor-helper in bridge mode,
 // mirroring how the SSH transport reaches remote helpers; no inbound listener

@@ -185,7 +185,7 @@ describe("closeWorkspace batch close", () => {
     });
     useUi.getState().ensureAiBoard("ws");
     mocks.closeTab.mockImplementation(async (id: string) => {
-      if (id === failed.tabId) throw { code: "not_found", message: "tab not found" };
+      if (id === failed.tabId) throw { code: "disconnected", message: "network unavailable" };
     });
 
     await useUi.getState().closeWorkspace("ws");
@@ -193,10 +193,10 @@ describe("closeWorkspace batch close", () => {
     const toasts = useUi.getState().toasts;
     expect(toasts).toHaveLength(1);
     expect(toasts[0].kind).toBe("error");
-    expect(toasts[0].text).toContain("1 个终端操作失败：资源不存在：tab not found");
+    expect(toasts[0].text).toContain("1 个终端操作失败：已断开：network unavailable");
     expect(useUi.getState().workspaces).toHaveLength(1);
     expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([
-      { ...failed, closeError: "资源不存在：tab not found" },
+      { ...failed, closeError: "已断开：network unavailable" },
     ]);
     expect(useUi.getState().getWorkspaceRuntime("ws")?.sqlDraft?.text).toBe("SELECT 1");
     expect(useUi.getState().aiBoards["ws"]).toBeDefined();

@@ -177,7 +177,7 @@ describe("workspace switcher", () => {
     await flush();
 
     click(switcherButton());
-    const close = menuItems().find((i) => i.textContent?.includes("关闭「ws-1」"));
+    const close = menuItems().find((i) => i.getAttribute("aria-label") === "关闭工作区 ws-1");
     expect(close).toBeTruthy();
     click(close as HTMLButtonElement);
     await waitFor(() => expect(useUi.getState().workspaces).toHaveLength(1));

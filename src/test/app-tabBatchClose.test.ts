@@ -6,13 +6,14 @@ const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
   askChoiceRemember: vi.fn(),
   closeTab: vi.fn(),
+  sessionList: vi.fn(),
   dbDisconnect: vi.fn(),
 }));
 vi.mock("../ui/dialogs", () => ({ ask: mocks.ask, askChoiceRemember: mocks.askChoiceRemember }));
 vi.mock("../ipc/commands", () => ({
   assetApi: {},
   dbApi: { disconnect: mocks.dbDisconnect },
-  sessionApi: {},
+  sessionApi: { list: mocks.sessionList },
   terminalApi: { closeTab: mocks.closeTab },
   vaultApi: {},
 }));
@@ -62,6 +63,7 @@ beforeEach(() => {
   setTerminalCloseAction("detach");
   mocks.ask.mockResolvedValue(true);
   mocks.dbDisconnect.mockResolvedValue(undefined);
+  mocks.sessionList.mockImplementation(async () => useUi.getState().sessions);
   useUi.setState({ workspaces: [], activeWorkspaceId: null, sessions: [sessionInfo()], toasts: [] });
 });
 
@@ -72,16 +74,16 @@ describe("partial failures during batch close", () => {
       activeWorkspaceId: "ws",
     });
     mocks.closeTab.mockImplementation((tabId: string) =>
-      tabId === "kernel-t2" ? Promise.reject({ code: "not_found", message: "tab not found" }) : Promise.resolve(),
+      tabId === "kernel-t2" ? Promise.reject({ code: "disconnected", message: "network unavailable" }) : Promise.resolve(),
     );
 
     await requestCloseTabs(["t1", "t2", "t3"]);
 
     expect(tabById("t1")).toBeUndefined();
     expect(tabById("t3")).toBeUndefined();
-    expect(tabById("t2")?.closeError).toBe("资源不存在：tab not found");
+    expect(tabById("t2")?.closeError).toBe("已断开：network unavailable");
     const texts = useUi.getState().toasts.map((t) => t.text);
-    expect(texts.some((t) => t.includes("终端操作失败：资源不存在：tab not found"))).toBe(true);
+    expect(texts.some((t) => t.includes("终端操作失败：已断开：network unavailable"))).toBe(true);
     expect(texts).toContain("1 个标签未能关闭，已保留并在标签上标出原因");
   });
 

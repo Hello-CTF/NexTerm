@@ -10,15 +10,25 @@ import (
 )
 
 func runBridge(ctx context.Context, config HelperConfig) error {
-	endpoint, err := helperEndpoint(config.StateDir)
+	conn, err := DialHelperBridge(ctx, config.StateDir)
 	if err != nil {
-		return fmt.Errorf("resolve supervisor helper endpoint: %w", err)
+		return err
+	}
+	return bridgeIO(os.Stdin, os.Stdout, conn)
+}
+
+// DialHelperBridge opens a byte-transparent connection to the existing helper.
+// The caller ensures helper availability before opening a bridge.
+func DialHelperBridge(ctx context.Context, stateDir string) (net.Conn, error) {
+	endpoint, err := HelperEndpoint(stateDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve supervisor helper endpoint: %w", err)
 	}
 	conn, err := dialSocket(ctx, endpoint)
 	if err != nil {
-		return fmt.Errorf("%w: dial supervisor helper: %v", ErrUnavailable, err)
+		return nil, fmt.Errorf("%w: dial supervisor helper: %v", ErrUnavailable, err)
 	}
-	return bridgeIO(os.Stdin, os.Stdout, conn)
+	return conn, nil
 }
 
 func bridgeIO(stdin io.Reader, stdout io.Writer, conn net.Conn) error {

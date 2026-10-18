@@ -119,7 +119,7 @@ func New(options Options) (*Runtime, error) {
 	}
 	bridge := options.Bridge
 	if bridge == nil {
-		bridge = SubprocessBridge(executable)
+		bridge = DirectHelperBridge
 	}
 	// Embedded distributions (nexterm-server agent, non-empty cliServicePrefix) do not self-upgrade:
 	// replacing would overwrite the server binary with the agent asset. This path keeps ErrProtocolMismatch.

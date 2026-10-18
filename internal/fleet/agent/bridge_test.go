@@ -32,7 +32,7 @@ func TestBridgeHelperProcess(t *testing.T) {
 	os.Exit(supervisor.RunHelperCLI([]string{"--bridge", "--state-dir", directory}))
 }
 
-func testBridgeSpawner(t *testing.T) BridgeSpawner {
+func testBridgeSpawner(t testing.TB) BridgeSpawner {
 	t.Helper()
 	return func(ctx context.Context, stateDir string) (io.ReadWriteCloser, error) {
 		command := exec.CommandContext(ctx, os.Args[0], "-test.run=TestBridgeHelperProcess", "--")
@@ -100,7 +100,7 @@ type wsAddr struct{}
 func (wsAddr) Network() string { return "ws" }
 func (wsAddr) String() string  { return "ws" }
 
-func testStateDir(t *testing.T) string {
+func testStateDir(t testing.TB) string {
 	t.Helper()
 	stateDir := filepath.Join(t.TempDir(), "state")
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
@@ -112,7 +112,7 @@ func testStateDir(t *testing.T) string {
 	return stateDir
 }
 
-func testSupervisorServer(t *testing.T, stateDir string) (*supervisor.Server, string) {
+func testSupervisorServer(t testing.TB, stateDir string) (*supervisor.Server, string) {
 	t.Helper()
 	instance, err := supervisor.New(supervisor.Config{StateDir: stateDir, CommandTimeout: 5 * time.Second})
 	if err != nil {
@@ -450,7 +450,6 @@ func TestRuntimeBridgeEndToEnd(t *testing.T) {
 		Manager:      &fakeManager{},
 		Collector:    fakeCollector{},
 		EnsureHelper: func(context.Context) error { return nil },
-		Bridge:       testBridgeSpawner(t),
 		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {

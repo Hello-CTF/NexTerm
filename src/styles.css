@@ -1422,9 +1422,10 @@
 
   .nx-menu-item {
     display: flex;
+    flex: 1;
     align-items: center;
     gap: 8px;
-    width: 100%;
+    min-width: 0;
     padding: 6px 10px;
     border: none;
     border-radius: var(--radius-xs);
@@ -1491,6 +1492,31 @@
 
   .nx-menu-row {
     position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .nx-menu-trailing {
+    display: flex;
+    flex: 0 0 30px;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    margin-right: 2px;
+    border: 0;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    color: var(--nx-fg-tertiary);
+    cursor: default;
+  }
+
+  .nx-menu-trailing:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-red-500) 20%, transparent);
+    color: var(--color-red-300);
+  }
+
+  .nx-menu-trailing:disabled {
+    color: var(--color-neutral-600);
   }
 
   .nx-menu-accel {

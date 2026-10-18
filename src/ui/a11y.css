@@ -28,7 +28,8 @@
   outline: none;
 }
 
-.nx-menu-item:focus-visible {
+.nx-menu-item:focus-visible,
+.nx-menu-trailing:focus-visible {
   background: color-mix(in srgb, var(--color-accent) 24%, transparent);
   color: var(--nx-fg-strong);
 }
