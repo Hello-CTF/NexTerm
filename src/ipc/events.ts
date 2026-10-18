@@ -35,6 +35,7 @@ export const EVENTS = {
   deepLink: "app://deep-link",
   deviceStatus: "device://status",
   filesDropped: "files://dropped",
+  closeConfirm: "desktop://close-confirm",
 } as const;
 
 export type { SessionStatusEvent, TerminalExitEvent } from "./types";

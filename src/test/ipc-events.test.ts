@@ -55,6 +55,7 @@ describe("Wails events and channels", () => {
       "app://deep-link",
       "device://status",
       "files://dropped",
+      "desktop://close-confirm",
     ]);
     expect(layoutSource).toContain('"layout://changed"');
   });
