@@ -43,6 +43,27 @@ function defaultAction(action: string): SshImportItemAction {
   return action === "add" ? "import" : "skip";
 }
 
+// A Go nil slice marshals as JSON null, so list fields can decode as null
+// (observed on the ~/.ssh import path, where entries without warnings took the
+// whole UI down via warnings.length). Normalize at the boundary so rendering
+// never sees a non-array.
+function normalizeSshImportPreview(preview: SshImportPreviewDto): SshImportPreviewDto {
+  return {
+    ...preview,
+    hosts: (preview.hosts ?? []).map((host) => ({
+      ...host,
+      identityFiles: host.identityFiles ?? [],
+      warnings: host.warnings ?? [],
+    })),
+    keys: (preview.keys ?? []).map((key) => ({
+      ...key,
+      aliases: key.aliases ?? [],
+      warnings: key.warnings ?? [],
+    })),
+    diagnostics: preview.diagnostics ?? [],
+  };
+}
+
 export function SshImportDialog({ onClose }: { onClose: () => void }) {
   const { pushToast } = useUi();
   const qc = useQueryClient();
@@ -74,11 +95,13 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
     setPhase("loading");
     setError(null);
     try {
-      const result = await sshImportApi.preview({
-        source,
-        path: effectivePath,
-        ...(termius ? { confirmed } : {}),
-      });
+      const result = normalizeSshImportPreview(
+        await sshImportApi.preview({
+          source,
+          path: effectivePath,
+          ...(termius ? { confirmed } : {}),
+        }),
+      );
       const hosts: Record<string, SshImportItemAction> = {};
       for (const host of result.hosts) hosts[host.id] = defaultAction(host.action);
       const keys: Record<string, SshImportItemAction> = {};
@@ -123,13 +146,14 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
     setPhase("applying");
     setError(null);
     try {
-      const result = await sshImportApi.apply({
+      const applied = await sshImportApi.apply({
         source,
         path: effectivePath,
         ...(termius ? { confirmed } : {}),
         hosts,
         keys,
       });
+      const result = { ...applied, warnings: applied.warnings ?? [] };
       setApplyResult(result);
       setPhase("done");
       void qc.invalidateQueries({ queryKey: ["assets"] });
@@ -500,7 +524,7 @@ function ActionBadge({ action }: { action: string }) {
 }
 
 function Warnings({ warnings }: { warnings: string[] }) {
-  if (warnings.length === 0) return null;
+  if (!warnings || warnings.length === 0) return null;
   return (
     <div className="mt-1 text-[11px] text-amber-300">
       {warnings.map((warning, index) => (
@@ -577,7 +601,7 @@ function KeyRow({
 }) {
   const selectable = item.action === "add";
   const conflict = item.action === "conflict-alias";
-  const name = item.aliases[0] ?? item.fingerprint;
+  const name = item.aliases?.[0] ?? item.fingerprint;
   return (
     <div className="rounded-md border border-neutral-800/70 bg-neutral-950/40 px-3 py-2">
       <div className="flex items-center gap-2">

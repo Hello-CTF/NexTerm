@@ -364,3 +364,48 @@ describe("quick import from the SSH ~/.ssh directory", () => {
     expect(mounted.container.textContent).toContain("导入选中项");
   });
 });
+
+// Regression: a Go nil slice marshals as JSON null, and the dialog used to read
+// .length on warnings, crashing the whole app UI when importing ~/.ssh on
+// Windows ("Cannot read properties of null (reading 'length')").
+describe("SSH import dialog tolerates null list fields", () => {
+  it("renders the preview when hosts and keys carry null warnings/aliases", async () => {
+    const nulled: SshImportPreviewDto = {
+      ...PREVIEW,
+      hosts: PREVIEW.hosts.map((host) => ({ ...host, warnings: null as unknown as string[] })),
+      keys: PREVIEW.keys.map((key) => ({
+        ...key,
+        aliases: null as unknown as string[],
+        warnings: null as unknown as string[],
+      })),
+      diagnostics: null as unknown as SshImportPreviewDto["diagnostics"],
+    };
+    mocks.preview.mockResolvedValue(nulled);
+    mounted = mountDialog();
+    clickButton(mounted.container, "预览");
+    await waitFor(() => expect(mocks.preview).toHaveBeenCalled());
+    await flush();
+
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("3 台主机（1 台可新增）");
+    expect(text).toContain("2 个密钥（2 个可新增）");
+    // key rows fall back to the fingerprint when aliases is null
+    expect(text).toContain("SHA256:abc123");
+  });
+
+  it("renders the empty state when hosts and keys are null", async () => {
+    const nulled = {
+      ...PREVIEW,
+      hosts: null as unknown as SshImportPreviewDto["hosts"],
+      keys: null as unknown as SshImportPreviewDto["keys"],
+      diagnostics: null as unknown as SshImportPreviewDto["diagnostics"],
+    };
+    mocks.preview.mockResolvedValue(nulled);
+    mounted = mountDialog();
+    clickButton(mounted.container, "预览");
+    await waitFor(() => expect(mocks.preview).toHaveBeenCalled());
+    await flush();
+
+    expect(mounted.container.textContent).toContain("没有发现可导入的主机或密钥");
+  });
+});

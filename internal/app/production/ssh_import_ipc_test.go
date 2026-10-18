@@ -1342,6 +1342,46 @@ func TestSSHImportHomePreviewAndApply(t *testing.T) {
 	}
 }
 
+// Regression: Go nil slices serialize as JSON null, and the import UI read
+// .length on warnings/aliases, which crashed the whole app when importing the
+// ~/.ssh directory (reported on Windows). List fields must always be arrays.
+func TestSSHImportPreviewNeverEmitsNullLists(t *testing.T) {
+	dispatcher, _, _, _ := sshImportTestRig(t)
+	dir := t.TempDir()
+	keyPath, _ := sshImportTestKeyFile(t, dir)
+	sshImportTestConfig(t, dir, keyPath)
+
+	body := `{"args":{"source":"ssh-home","path":` + strconvQuote(dir) + `}}`
+	response := dispatchStoreTest(dispatcher, "ssh_import_preview", body)
+	if !response.OK {
+		t.Fatalf("dispatch failed: %+v", response)
+	}
+	raw := string(response.Data)
+	for _, field := range []string{"hosts", "keys", "diagnostics", "warnings", "aliases", "identityFiles"} {
+		if strings.Contains(raw, `"`+field+`":null`) {
+			t.Fatalf("preview JSON contains null %s: %s", field, raw)
+		}
+	}
+
+	preview := sshImportPreview(t, dispatcher, body)
+	for _, host := range preview.Hosts {
+		if host.Warnings == nil {
+			t.Fatalf("host %q warnings = nil, want []", host.Alias)
+		}
+		if host.IdentityFiles == nil {
+			t.Fatalf("host %q identityFiles = nil, want []", host.Alias)
+		}
+	}
+	for _, key := range preview.Keys {
+		if key.Warnings == nil {
+			t.Fatalf("key %q warnings = nil, want []", key.Aliases)
+		}
+		if key.Aliases == nil {
+			t.Fatalf("key %q aliases = nil, want []", key.Fingerprint)
+		}
+	}
+}
+
 func TestSSHImportHomeSymlinkAliasBinding(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation requires privileges on windows")

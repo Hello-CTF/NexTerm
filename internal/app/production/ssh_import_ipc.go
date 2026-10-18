@@ -178,26 +178,26 @@ func sshImportPreviewDTOFromPlan(plan *sshImportPlan) sshImportPreviewDTO {
 			Hostname:       host.Hostname,
 			Port:           host.Port,
 			Username:       host.Username,
-			IdentityFiles:  host.IdentityFiles,
+			IdentityFiles:  nonNilStrings(host.IdentityFiles),
 			KeyName:        host.KeyName,
 			KeyFingerprint: host.KeyFingerprint,
 			ProxyJump:      host.ProxyJump,
 			AuthMethod:     host.AuthMethod,
 			Source:         host.Source,
 			Action:         string(host.Action),
-			Warnings:       host.Warnings,
+			Warnings:       nonNilStrings(host.Warnings),
 		})
 	}
 	for i, key := range plan.preview.Keys {
 		dto.Keys = append(dto.Keys, sshImportKeyDTO{
 			ID:          keyIDs[i],
-			Aliases:     key.Aliases,
+			Aliases:     nonNilStrings(key.Aliases),
 			Fingerprint: key.Fingerprint,
 			KeyType:     key.KeyType,
 			Path:        key.Path,
 			Source:      key.Source,
 			Action:      string(key.Action),
-			Warnings:    key.Warnings,
+			Warnings:    nonNilStrings(key.Warnings),
 		})
 	}
 	for _, diagnostic := range plan.preview.Diagnostics {
@@ -208,6 +208,16 @@ func sshImportPreviewDTOFromPlan(plan *sshImportPlan) sshImportPreviewDTO {
 		})
 	}
 	return dto
+}
+
+// nonNilStrings keeps list fields from serializing as JSON null: a Go nil
+// slice marshals to null, and frontend consumers read .length on the decoded
+// arrays, which crashed the import UI whenever an entry had no warnings.
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
 
 func sshImportHostIdentity(item *sshconfig.HostPreview, occurrence int) string {
