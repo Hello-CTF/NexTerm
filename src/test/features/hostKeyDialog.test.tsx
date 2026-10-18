@@ -123,11 +123,11 @@ function dialog(): HTMLElement | null {
   return document.querySelector<HTMLElement>('[role="alertdialog"]');
 }
 
-function clickRail(label: string): void {
+function clickWorkspaceNewTerminal(): void {
   const button = document.querySelector<HTMLButtonElement>(
-    `.nx-rail button[aria-label="${label}"]`,
+    'button[aria-label="新建终端标签"]',
   );
-  if (!button) throw new Error(`Rail button not found: ${label}`);
+  if (!button) throw new Error("Workspace new terminal button not found");
   click(button);
 }
 
@@ -168,7 +168,7 @@ describe("Host key confirmation when creating a terminal (App openNewTerminal)",
     mounted = mountApp();
     await flush();
 
-    clickRail("新建终端");
+    clickWorkspaceNewTerminal();
     await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
 
@@ -199,7 +199,7 @@ describe("Host key confirmation when creating a terminal (App openNewTerminal)",
     mounted = mountApp();
     await flush();
 
-    clickRail("新建终端");
+    clickWorkspaceNewTerminal();
     await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
 
@@ -232,7 +232,7 @@ describe("Host key confirmation when creating a terminal (App openNewTerminal)",
     mounted = mountApp();
     await flush();
 
-    clickRail("新建终端");
+    clickWorkspaceNewTerminal();
     await flush();
     await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
     expect(dialog()).toBeNull();
@@ -255,7 +255,7 @@ describe("Host key confirmation when creating a terminal (App openNewTerminal)",
     mounted = mountApp();
     await flush();
 
-    clickRail("新建终端");
+    clickWorkspaceNewTerminal();
     await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
 
@@ -290,7 +290,7 @@ describe("Host key confirmation when creating a terminal (App openNewTerminal)",
     mounted = mountApp();
     await flush();
 
-    clickRail("新建终端");
+    clickWorkspaceNewTerminal();
     await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
 
@@ -317,7 +317,7 @@ describe("Host key confirmation when creating a terminal (App openNewTerminal)",
     mounted = mountApp();
     await flush();
 
-    clickRail("新建终端");
+    clickWorkspaceNewTerminal();
     await flush();
     await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
     expect(dialog()).toBeNull();
@@ -334,7 +334,7 @@ describe("Host key confirmation when creating a terminal (App openNewTerminal)",
     mounted = mountApp();
     await flush();
 
-    clickRail("新建终端");
+    clickWorkspaceNewTerminal();
     await flush();
     await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
     expect(mocks.probeHostKey).not.toHaveBeenCalled();
@@ -359,7 +359,7 @@ describe("Host key confirmation when creating a terminal (App openNewTerminal)",
     mounted = mountApp();
     await flush();
 
-    clickRail("新建终端");
+    clickWorkspaceNewTerminal();
     await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
     expect(dialog()?.textContent).toContain("首次连接 10.0.0.8:22");
@@ -371,7 +371,7 @@ describe("Host key confirmation when creating a terminal (App openNewTerminal)",
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
     expect(toastTexts()).toContain("已取消重连");
 
-    clickRail("新建终端");
+    clickWorkspaceNewTerminal();
     await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
     clickButton(dialog() as HTMLElement, "确定");
@@ -410,7 +410,7 @@ describe("Host key confirmation dialog deduplication", () => {
     mounted = mountApp();
     await flush();
 
-    clickRail("新建终端");
+    clickWorkspaceNewTerminal();
     await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
 
@@ -450,7 +450,7 @@ describe("Host key confirmation dialog deduplication", () => {
     mounted = mountApp();
     await flush();
 
-    clickRail("新建终端");
+    clickWorkspaceNewTerminal();
     await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
 

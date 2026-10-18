@@ -25,6 +25,7 @@ export type MenuItem =
       disabled?: boolean;
       submenu?: MenuItem[];
       onSelect?: () => void;
+      trailingAction?: { label: string; icon: ReactNode; disabled?: boolean; onSelect: () => void };
     };
 
 export interface ContextMenuState {
@@ -56,7 +57,7 @@ function useCoarsePointer(): boolean {
 
 function menuButtons(menu: ParentNode | null): HTMLButtonElement[] {
   if (!menu) return [];
-  return [...menu.querySelectorAll<HTMLButtonElement>(":scope > .nx-menu-row > .nx-menu-item")].filter(
+  return [...menu.querySelectorAll<HTMLButtonElement>(":scope > .nx-menu-row > .nx-menu-item, :scope > .nx-menu-row > .nx-menu-trailing")].filter(
     (button) => !button.disabled,
   );
 }
@@ -163,7 +164,7 @@ function FloatingContextMenu({
       close();
       return;
     }
-    const target = event.target instanceof Element ? event.target.closest<HTMLButtonElement>(".nx-menu-item") : null;
+    const target = event.target instanceof Element ? event.target.closest<HTMLButtonElement>(".nx-menu-item, .nx-menu-trailing") : null;
     if (!target || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
     const items = menuButtons(target.closest("[role='menu']"));
     if (items.length === 0) return;
@@ -309,6 +310,22 @@ function MenuList({
               {item.accel && <span className="nx-menu-accel">{item.accel}</span>}
               {hasSubmenu && <span className="nx-menu-arrow" aria-hidden="true">›</span>}
             </button>
+            {item.trailingAction && (
+              <button
+                type="button"
+                role="menuitem"
+                tabIndex={-1}
+                className="nx-menu-trailing"
+                aria-label={item.trailingAction.label}
+                title={item.trailingAction.label}
+                disabled={item.trailingAction.disabled}
+                onClick={() => {
+                  if (onClose()) item.trailingAction?.onSelect();
+                }}
+              >
+                {item.trailingAction.icon}
+              </button>
+            )}
             {expanded && submenu && (
               <SubMenu
                 id={submenuId}
@@ -508,7 +525,7 @@ function ContextMenuSheet({
       close();
       return;
     }
-    const target = event.target instanceof Element ? event.target.closest<HTMLButtonElement>(".nx-menu-item") : null;
+    const target = event.target instanceof Element ? event.target.closest<HTMLButtonElement>(".nx-menu-item, .nx-menu-trailing") : null;
     if (!target || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
     const buttons = menuButtons(listRef.current);
     if (buttons.length === 0) return;

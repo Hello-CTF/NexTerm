@@ -314,7 +314,11 @@ func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
 		}
 	}
 	conn := &clientConn{conn: netConn}
-	kind, payload, err := conn.request(ctx, frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, Features: []string{featureExec, featureMetadata}})
+	features := []string{featureExec, featureMetadata}
+	if c.dial != nil {
+		features = append(features, featureReplayGzip)
+	}
+	kind, payload, err := conn.request(ctx, frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, Features: features})
 	if err != nil {
 		_ = netConn.Close()
 		return nil, err
@@ -673,8 +677,18 @@ func (s *Stream) readLoop() {
 			return
 		}
 		switch kind {
-		case frameOutput:
-			seq, data, err := parseOutput(payload)
+		case frameOutput, frameReplayGzip:
+			var seq uint64
+			var data []byte
+			if kind == frameReplayGzip {
+				if !slices.Contains(s.conn.features, featureReplayGzip) {
+					s.fail(fmt.Errorf("%w: unnegotiated compressed replay", ErrProtocol))
+					return
+				}
+				seq, data, err = parseReplayGzip(payload)
+			} else {
+				seq, data, err = parseOutput(payload)
+			}
 			if err != nil {
 				s.fail(err)
 				return

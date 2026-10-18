@@ -28,7 +28,10 @@ vi.mock("../../ipc/commands", () => ({
   assetApi: {},
   dbApi: {},
   vaultApi: {},
-  sessionApi: { probeHostKey: vi.fn().mockResolvedValue({ state: "known" }) },
+  sessionApi: {
+    probeHostKey: vi.fn().mockResolvedValue({ state: "known" }),
+    list: vi.fn().mockResolvedValue([]),
+  },
   terminalApi: {
     listLive: mocks.listLive,
     write: vi.fn().mockResolvedValue(undefined),
@@ -151,6 +154,22 @@ async function pasteImages(files: File[]): Promise<void> {
   });
 }
 
+async function pasteFromMenu(): Promise<void> {
+  const body = mounted?.container.querySelector<HTMLElement>(".nx-terminal-body .relative");
+  if (!body) throw new Error("terminal body not found");
+  act(() => {
+    body.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 20 }));
+  });
+  await flush();
+  const item = [...document.querySelectorAll<HTMLElement>(".nx-menu .nx-menu-item")].find(
+    (candidate) => candidate.textContent?.includes("粘贴图片"),
+  );
+  if (!item) throw new Error("paste image menu item not found");
+  await act(async () => {
+    item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
 function statusText(): string {
   const close = mounted?.container.querySelector('[aria-label="关闭图片粘贴提示"]');
   return close?.parentElement?.textContent ?? "";
@@ -170,6 +189,7 @@ describe("TerminalPane image paste orchestration", () => {
   afterEach(() => {
     mounted?.unmount();
     mounted = undefined;
+    vi.unstubAllGlobals();
   });
 
   it("writes through the file channel to /tmp on the current session host, inserts a plain Markdown link, and shows success", async () => {
@@ -252,5 +272,55 @@ describe("TerminalPane image paste orchestration", () => {
     await waitFor(() => expect(statusText()).toContain("磁盘只读"));
     expect(statusText()).toContain("/tmp");
     expect(mocks.paste).not.toHaveBeenCalled();
+  });
+
+  it.each(["NotAllowedError", "SecurityError"])("offers direct paste and drag when image clipboard reading fails with %s", async (name) => {
+    seedTab();
+    vi.stubGlobal("navigator", {
+      clipboard: { read: vi.fn().mockRejectedValue(new DOMException("platform technical details", name)) },
+    });
+    mounted = mount(createElement(TerminalPane, {
+      sessionId: "s1", title: "web-01", storeTabId: "t1", resumeTabId: "kernel-1",
+    }));
+    await flush();
+
+    await pasteFromMenu();
+
+    const toast = useUi.getState().toasts.at(-1);
+    expect(toast?.kind).toBe("info");
+    expect(toast?.text).toContain("Ctrl+V");
+    expect(toast?.text).toContain("拖入");
+    expect(toast?.text).not.toContain("platform technical details");
+    expect(mocks.fsWrite).not.toHaveBeenCalled();
+  });
+
+  it("offers direct paste when the image clipboard API is unavailable", async () => {
+    seedTab();
+    vi.stubGlobal("navigator", { clipboard: undefined });
+    mounted = mount(createElement(TerminalPane, {
+      sessionId: "s1", title: "web-01", storeTabId: "t1", resumeTabId: "kernel-1",
+    }));
+    await flush();
+
+    await pasteFromMenu();
+
+    expect(useUi.getState().toasts.at(-1)?.text).toContain("当前环境不支持直接读取");
+    expect(mocks.fsWrite).not.toHaveBeenCalled();
+  });
+
+  it("keeps unexpected clipboard read failures visible", async () => {
+    seedTab();
+    vi.stubGlobal("navigator", {
+      clipboard: { read: vi.fn().mockRejectedValue(new Error("read failed")) },
+    });
+    mounted = mount(createElement(TerminalPane, {
+      sessionId: "s1", title: "web-01", storeTabId: "t1", resumeTabId: "kernel-1",
+    }));
+    await flush();
+
+    await pasteFromMenu();
+
+    expect(useUi.getState().toasts.at(-1)?.text).toContain("读取剪贴板图片失败：read failed");
+    expect(mocks.fsWrite).not.toHaveBeenCalled();
   });
 });

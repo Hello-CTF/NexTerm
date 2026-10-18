@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 // Asset tree device rows tests: row position (after the built-in local terminal, before other assets/groups), rows-only contract
 // (no header/count/refresh button, no loading/error/empty hints), no rows
-// and zero requests when logged out, click/Enter/play opens the device terminal, offline/agent-less rows stay visible but disabled,
+// and zero requests when logged out, click/Enter/play opens the device workspace, offline/agent-less rows stay visible but disabled,
 // terminal-closed and revoked rows stay visible but disabled, revoke double-confirm and
 // cancel, context-menu revoke danger style, DevicesView reusing MetricsPanel regression.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -474,13 +474,15 @@ describe("Asset tree device rows - row behavior", () => {
     expect(mocks.sessionConnectDevice).toHaveBeenCalledWith("d-1", "web-01");
     expect(deviceWorkspace()?.assetKind).toBe("device");
     expect(deviceWorkspace()?.sessionId).toBe("s-dev-1");
-    await flushUntil(() => deviceTerminalTabs().length === 1);
+    expect(useUi.getState().activeWorkspaceId).toBe(deviceWorkspace()?.id);
+    expect(useUi.getState().leftMode).toBe("files");
+    expect(deviceTerminalTabs()).toHaveLength(0);
 
     // Enter on the same device again focuses the existing workspace, no new session is created.
     keydown(row, "Enter");
     await flush();
     expect(mocks.sessionConnectDevice).toHaveBeenCalledTimes(1);
-    expect(deviceTerminalTabs()).toHaveLength(1);
+    expect(deviceTerminalTabs()).toHaveLength(0);
   });
 
   it("disables offline, agent-less, and terminal-disabled devices without hiding them", async () => {
@@ -511,7 +513,7 @@ describe("Asset tree device rows - row behavior", () => {
     openDeviceMenu("db-02");
     await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
     const menuConnect = [...document.querySelectorAll<HTMLButtonElement>(".nx-menu-item")].find((button) =>
-      button.textContent?.includes("打开终端"),
+      button.textContent?.includes("打开工作区"),
     );
     expect(menuConnect?.disabled).toBe(true);
     await flush();
@@ -535,7 +537,7 @@ describe("Asset tree device rows - row behavior", () => {
     openDeviceMenu("old-laptop");
     await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
     const items = [...document.querySelectorAll<HTMLButtonElement>(".nx-menu-item")];
-    expect(items.find((item) => item.textContent?.includes("打开终端"))?.disabled).toBe(true);
+    expect(items.find((item) => item.textContent?.includes("打开工作区"))?.disabled).toBe(true);
     expect(items.some((item) => item.textContent?.includes("详情"))).toBe(true);
     expect(items.some((item) => item.querySelector(".nx-menu-label")?.textContent === "吊销")).toBe(false);
     clickDeviceMenuItem("详情");

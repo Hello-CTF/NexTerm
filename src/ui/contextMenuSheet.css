@@ -86,6 +86,12 @@
   font-size: calc(13.5px * var(--nx-ui-text-factor));
 }
 
+.nx-menu-sheet .nx-menu-trailing {
+  flex-basis: 40px;
+  height: 40px;
+  margin-right: 6px;
+}
+
 .nx-menu-sheet .nx-menu-sep {
   margin: 6px 8px;
 }

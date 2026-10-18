@@ -517,22 +517,29 @@ function clampWidth(w: number, min: number, max: number): number {
 export const LEFT_WIDTH_RANGE = { min: LEFT_MIN, max: LEFT_MAX, default: LEFT_DEFAULT };
 export const RIGHT_WIDTH_RANGE = { min: RIGHT_MIN, max: RIGHT_MAX, default: RIGHT_DEFAULT };
 
-function loadLayout(): { leftWidth: number; rightWidth: number } {
-  const fallback = { leftWidth: LEFT_DEFAULT, rightWidth: RIGHT_DEFAULT };
+interface LocalLayout {
+  leftWidth: number;
+  rightWidth: number;
+  rightOpen: boolean;
+}
+
+function loadLayout(): LocalLayout {
+  const fallback = { leftWidth: LEFT_DEFAULT, rightWidth: RIGHT_DEFAULT, rightOpen: true };
   try {
     const raw = localStorage.getItem(LAYOUT_KEY);
     if (!raw) return fallback;
-    const o = JSON.parse(raw) as { leftWidth?: number; rightWidth?: number };
+    const o = JSON.parse(raw) as Partial<LocalLayout>;
     return {
       leftWidth: clampWidth(o.leftWidth ?? LEFT_DEFAULT, LEFT_MIN, LEFT_MAX),
       rightWidth: clampWidth(o.rightWidth ?? RIGHT_DEFAULT, RIGHT_MIN, RIGHT_MAX),
+      rightOpen: typeof o.rightOpen === "boolean" ? o.rightOpen : true,
     };
   } catch {
     return fallback;
   }
 }
 
-function saveLayout(w: { leftWidth: number; rightWidth: number }): void {
+function saveLayout(w: LocalLayout): void {
   try {
     localStorage.setItem(LAYOUT_KEY, JSON.stringify(w));
   } catch {
@@ -680,7 +687,7 @@ function migrateWorkspaceFileLocators(
 export const useUi = create<UiState>((set, get) => ({
   leftOpen: true,
   leftMode: "assets",
-  rightOpen: true,
+  rightOpen: initialLayout.rightOpen,
   themeMode: getThemeMode(),
   resolvedTheme: getResolvedTheme(),
   setThemeMode: (m) => {
@@ -738,12 +745,10 @@ export const useUi = create<UiState>((set, get) => ({
   setLeftWidth: (w) => {
     const next = clampWidth(w, LEFT_MIN, LEFT_MAX);
     set({ leftWidth: next });
-    saveLayout({ leftWidth: next, rightWidth: get().rightWidth });
   },
   setRightWidth: (w) => {
     const next = clampWidth(w, RIGHT_MIN, RIGHT_MAX);
     set({ rightWidth: next });
-    saveLayout({ leftWidth: get().leftWidth, rightWidth: next });
   },
 
   terminalOsc52: initialTerminalPrefs.osc52,
@@ -1179,10 +1184,16 @@ export const useUi = create<UiState>((set, get) => ({
           await terminalApi.closeTab(target.tabId, mode);
         }
       } catch (e) {
-        get().updateTab(id, { closeError: describeError(e) });
-        if (!suppressErrorToast) get().pushToast("error", `终端操作失败：${describeError(e)}`);
-        void get().resyncSessions({ silent: true });
-        return false;
+        const code = (e as { code?: string } | null)?.code;
+        const endedTab = target.kind === "terminal" && (
+          code === "not_found" || (code === "disconnected" && (target.dead || target.exited))
+        );
+        if (!endedTab) {
+          get().updateTab(id, { closeError: describeError(e) });
+          if (!suppressErrorToast) get().pushToast("error", `终端操作失败：${describeError(e)}`);
+          void get().resyncSessions({ silent: true });
+          return false;
+        }
       }
     } else if (target.kind === "db" && target.connId) {
       try {
@@ -1647,6 +1658,21 @@ export const useUi = create<UiState>((set, get) => ({
   dismissToast: (id) =>
     set((st) => ({ toasts: st.toasts.filter((t) => t.id !== id) })),
 }));
+
+useUi.subscribe((state, previous) => {
+  if (
+    state.rightOpen !== previous.rightOpen ||
+    state.leftWidth !== previous.leftWidth ||
+    state.rightWidth !== previous.rightWidth
+  ) {
+    // Cache remote changes too, so startup matches the last visible layout before sync finishes.
+    saveLayout({
+      leftWidth: state.leftWidth,
+      rightWidth: state.rightWidth,
+      rightOpen: state.rightOpen,
+    });
+  }
+});
 
 initTheme();
 subscribeTheme((m, resolved) => {
@@ -2729,7 +2755,7 @@ async function openConnectedAssetSession(
       return {
         activeWorkspaceId: restored.id,
         workspaces: rebound.map((workspace) => {
-          if (workspace.id !== restored.id || workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "terminal"))) return workspace;
+          if (workspace.id !== restored.id || asset.kind === "device" || workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "terminal"))) return workspace;
           const panes = workspace.panes.length > 0 ? workspace.panes : [makePane()];
           const activePane = panes.find((pane) => pane.id === workspace.activePaneId) ?? panes[0];
           const tab: AppTab = {
@@ -2749,11 +2775,13 @@ async function openConnectedAssetSession(
   }
   if (options?.preserveUserFocus && workspaces.length > 0) return;
   const pane = makePane();
-  const tab: AppTab = asset.kind === "docker"
-    ? { id: nextTabId(`docker-${info.id}`), kind: "docker", title: "容器", sessionId: info.id, closable: true }
-    : { id: nextTabId(`term-${info.id}`), kind: "terminal", title: "终端 1", sessionId: info.id, closable: true };
-  pane.tabs = [tab];
-  pane.activeTabId = tab.id;
+  if (asset.kind !== "device") {
+    const tab: AppTab = asset.kind === "docker"
+      ? { id: nextTabId(`docker-${info.id}`), kind: "docker", title: "容器", sessionId: info.id, closable: true }
+      : { id: nextTabId(`term-${info.id}`), kind: "terminal", title: "终端 1", sessionId: info.id, closable: true };
+    pane.tabs = [tab];
+    pane.activeTabId = tab.id;
+  }
   const workspace: Workspace = {
     id: nextTabId("ws-session"), kind: "session", sessionId: info.id,
     title: info.name, assetId: asset.id, assetKind: asset.kind, quickTarget,
@@ -3071,8 +3099,8 @@ export function deviceAssetId(deviceId: string): string {
 }
 
 // connectDevice opens the full workspace of a fleet device: the session is established via session_connect_device
-// (the server enforces owner/revocation/terminal-switch authorization), terminal tabs enter the session system, reusing
-// reconnect and durable restore semantics. Workspace dedup/reconnect mirrors connectAsset.
+// (the server enforces owner/revocation/terminal-switch authorization). Opening the workspace preserves its panes;
+// a shell is created only when requested through the terminal action. Workspace dedup/reconnect mirrors connectAsset.
 export async function connectDevice(
   device: { id: string; name: string },
   options?: ConnectAssetOptions,
@@ -3091,6 +3119,17 @@ export async function connectDevice(
   return promise;
 }
 
+function activateDeviceWorkspace(workspaceId: string, options?: ConnectAssetOptions): void {
+  if (options?.preserveUserFocus) return;
+  const overlaySidebars = sidebarsOverlayWorkspace();
+  useUi.setState((state) => ({
+    activeWorkspaceId: workspaceId,
+    leftMode: overlaySidebars ? state.leftMode : "files",
+    leftOpen: overlaySidebars ? state.leftOpen : true,
+    connectFocusRevision: state.connectFocusRevision + 1,
+  }));
+}
+
 async function runConnectDevice(
   device: { id: string; name: string },
   options?: ConnectAssetOptions,
@@ -3101,17 +3140,16 @@ async function runConnectDevice(
   const assetId = deviceAssetId(device.id);
 
   const existing = useUi.getState().workspaces.find((w) => w.assetId === assetId);
-  if (existing?.restorePending) return reconnectRestoredWorkspace(existing.id);
+  if (existing?.restorePending) {
+    const outcome = await reconnectRestoredWorkspace(existing.id);
+    if (outcome.ok && currentConnectionEpoch(epoch)) activateDeviceWorkspace(existing.id, options);
+    return outcome;
+  }
   if (existing) {
     const session = useUi.getState().sessions.find((s) => s.id === existing.sessionId);
     const live = session !== undefined && LIVE_SESSION_STATUSES.has(session.status);
     if (live) {
-      const hasTerminal = existing.panes.some((p) => p.tabs.some((t) => t.kind === "terminal"));
-      if (session && !hasTerminal) {
-        void openTerminalTab(session);
-      } else {
-        useUi.getState().setActiveWorkspace(existing.id);
-      }
+      activateDeviceWorkspace(existing.id, options);
       return { ok: true };
     }
     if (session) {
@@ -3124,7 +3162,7 @@ async function runConnectDevice(
         }
         const { sessions, setSessions } = useUi.getState();
         setSessions([...sessions.filter((s) => s.id !== fresh.id), fresh]);
-        useUi.getState().setActiveWorkspace(existing.id);
+        activateDeviceWorkspace(existing.id, options);
         return { ok: true };
       } catch (error) {
         if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
@@ -3140,7 +3178,8 @@ async function runConnectDevice(
   try {
     const info = await sessionApi.connectDevice(device.id, device.name);
     if (!currentConnectionEpoch(epoch)) return discardStaleSession(info);
-    await openConnectedAssetSession(info, { id: assetId, name: device.name, kind: "device" });
+    await openConnectedAssetSession(info, { id: assetId, name: device.name, kind: "device" }, options);
+    if (existing) activateDeviceWorkspace(existing.id, options);
     return { ok: true };
   } catch (e) {
     if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
@@ -3289,7 +3328,7 @@ async function connectRestoredWorkspace(workspaceId: string): Promise<ConnectOut
         })),
       } : item),
     }));
-    if (!workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "terminal"))) {
+    if (workspace.assetKind !== "device" && !workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "terminal"))) {
       await openTerminalTab(session);
     }
     return { ok: true };

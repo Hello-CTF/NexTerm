@@ -525,10 +525,10 @@ describe("App workspace actions", () => {
 });
 
 describe("App workspace scope", () => {
-  it("does not offer a new-workspace action in the workspace switcher", async () => {
+  it("closes a workspace from its row and offers a bulk close action", async () => {
     useUi.setState({
       sessions: [sessionOf("s1")],
-      workspaces: [workspaceOf("s1")],
+      workspaces: [workspaceOf("s1"), { ...workspaceOf(), id: "ws-2", title: "second" }],
       activeWorkspaceId: "ws",
     });
     mounted = mountApp();
@@ -538,8 +538,26 @@ describe("App workspace scope", () => {
     click(switcher);
     await flush();
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("关闭「workspace」");
+    expect(text).toContain("关闭所有工作区");
+    expect(text).not.toContain("结束全部终端进程");
     expect(text).not.toContain("新建工作区");
+    const rowClose = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="关闭工作区 workspace"]');
+    if (!rowClose) throw new Error("Workspace row close action not found");
+    click(rowClose);
+    await flush();
+    expect(useUi.getState().workspaces.map((workspace) => workspace.id)).toEqual(["ws-2"]);
+
+    const nextSwitcher = mounted.container.querySelector('button[aria-label^="切换工作区"]');
+    if (!nextSwitcher) throw new Error("Workspace switcher not found after close");
+    click(nextSwitcher);
+    await flush();
+    const closeAll = [...mounted.container.querySelectorAll<HTMLButtonElement>(".nx-menu-item")].find(
+      (button) => button.querySelector(".nx-menu-label")?.textContent === "关闭所有工作区",
+    );
+    if (!closeAll) throw new Error("Bulk workspace close action not found");
+    click(closeAll);
+    await flush();
+    expect(useUi.getState().workspaces).toEqual([]);
   });
 
   it("passes stored source ids after the source workspace closes", async () => {

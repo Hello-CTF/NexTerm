@@ -181,7 +181,7 @@ func (c *serverConn) serve() {
 		return
 	}
 	c.clientFeatures = hello.Features
-	if err := c.reply(frameHelloAck, helloMsg{Version: ProtocolVersion, Features: []string{featureExec, featureMetadata}}); err != nil {
+	if err := c.reply(frameHelloAck, helloMsg{Version: ProtocolVersion, Features: []string{featureExec, featureMetadata, featureReplayGzip}}); err != nil {
 		return
 	}
 	for {
@@ -496,13 +496,37 @@ func (c *serverConn) execKill(ctx context.Context, session *Session) error {
 }
 
 func (c *serverConn) streamOutput(attachment *Attachment) {
+	var replayEnd uint64
+	if slices.Contains(c.clientFeatures, featureReplayGzip) {
+		attachment.replayMu.Lock()
+		if attachment.replay != nil {
+			if info, err := attachment.replay.Stat(); err == nil {
+				replayEnd = uint64(info.Size())
+			}
+		}
+		attachment.replayMu.Unlock()
+	}
+	var compressor replayCompressor
+	buffer := make([]byte, replayChunkSize)
 	for {
-		buffer := make([]byte, outputChunkSize)
-		count, err := attachment.Read(buffer)
+		seq := attachment.NextSeq()
+		size := outputChunkSize
+		if seq < replayEnd {
+			size = int(min(uint64(replayChunkSize), replayEnd-seq))
+		}
+		count, err := attachment.Read(buffer[:size])
 		if count > 0 {
-			seq := attachment.NextSeq() - uint64(count)
-			if writeErr := c.replyRaw(frameOutput, outputPayload(seq, buffer[:count])); writeErr != nil {
+			kind, payload := frameOutput, outputPayload(seq, buffer[:count])
+			if seq < replayEnd && count >= 1024 {
+				if compressed, compressErr := compressor.encode(seq, buffer[:count]); compressErr == nil && len(compressed) < len(payload) {
+					kind, payload = frameReplayGzip, compressed
+				}
+			}
+			if writeErr := c.replyRaw(kind, payload); writeErr != nil {
 				return
+			}
+			if seq+uint64(count) >= replayEnd {
+				compressor = replayCompressor{}
 			}
 		}
 		if err != nil {

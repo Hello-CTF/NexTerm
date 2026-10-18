@@ -4,7 +4,7 @@
 // management (enrollment, manual refresh, error details) lives in the device management view.
 // Devices are not asset table records: they are excluded from asset search/CRUD/sync, cannot be edited or deleted,
 // cannot be dragged into groups, and there is no cross-device drag; row visuals and keyboard/click behavior match regular assets
-// (role=treeitem, single/double click/Enter or the play button opens a remote terminal).
+// (role=treeitem, single/double click/Enter or the play button opens the device workspace).
 // Renders nothing and issues no requests when logged out. Revoked, offline, and agent-less devices remain visible
 // with a status badge; all are disabled for terminal access. Revocation requires two warning confirmations.
 // Convergence cadence matches the device management view: WEB polls every 60s / desktop every 30s as fallback (coming online/newly enrolled/
@@ -145,7 +145,7 @@ export function DeviceTreeSection() {
     const items: MenuItem[] = [];
     items.push({
       kind: "item",
-      label: "打开终端",
+      label: "打开工作区",
       icon: <IconTerminal size={13} />,
       disabled: disabledReason !== null,
       hint: disabledReason ?? undefined,
@@ -203,9 +203,9 @@ export function DeviceTreeSection() {
 }
 
 function disabledReasonOf(device: FleetDevice, online: boolean): string | null {
-  if (device.revoked_at !== 0) return "设备已吊销，无法打开终端";
+  if (device.revoked_at !== 0) return "设备已吊销，无法打开工作区";
   if (!device.agent) return "该设备尚未接入 Agent";
-  if (!online) return "设备离线，无法打开终端";
+  if (!online) return "设备离线，无法打开工作区";
   if (!device.agent.terminal_enabled) return "该设备已关闭远程终端";
   return null;
 }
@@ -245,7 +245,7 @@ function DeviceTreeRow({
   const tip = [
     device.name,
     agent?.platform || "",
-    disabledReason ?? "单击打开远程终端 · 右键管理",
+    disabledReason ?? "单击打开工作区 · 右键管理",
   ]
     .filter(Boolean)
     .join(" · ");

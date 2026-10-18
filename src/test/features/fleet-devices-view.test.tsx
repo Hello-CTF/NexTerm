@@ -634,7 +634,7 @@ describe("Device management view - device list and metrics", () => {
     const target = cardOf("needle-device");
     expect(target?.textContent).toContain("owner-59");
     expect([...(target?.querySelectorAll("button") ?? [])].map((button) => button.textContent?.trim())).toEqual(
-      expect.arrayContaining(["终端", "指标", "吊销"]),
+      expect.arrayContaining(["工作区", "指标", "吊销"]),
     );
     expect(document.activeElement).toBe(search);
 
@@ -1183,7 +1183,7 @@ describe("Device management view - real-time online/offline events", () => {
     const webCard = cardOf("web-01");
     expect(webCard?.textContent).toContain("离线");
     const terminalButton = [...(webCard?.querySelectorAll("button") ?? [])].find(
-      (b) => b.textContent?.trim() === "终端",
+      (b) => b.textContent?.trim() === "工作区",
     );
     expect(terminalButton?.disabled).toBe(true);
     expect(calls.length).toBe(fetchesBefore);

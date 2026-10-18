@@ -67,7 +67,7 @@ function seedWorkspaceWithTerminal() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useUi.setState({ sessions: [], workspaces: [], activeWorkspaceId: null });
+  useUi.setState({ sessions: [], workspaces: [], activeWorkspaceId: null, toasts: [] });
   mocks.closeTab.mockResolvedValue(undefined);
   mocks.sessionList.mockResolvedValue([{ ...SESSION, tabs: [] }]);
 });
@@ -103,5 +103,74 @@ describe("session list resynchronization after closeTab", () => {
       expect(mocks.sessionList).toHaveBeenCalled();
     });
     expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]?.closeError).toBe("boom");
+  });
+
+  it.each(["dead", "exited"] as const)("removes an already %s container exec when its stream has disconnected", async (state) => {
+    seedWorkspaceWithTerminal();
+    useUi.getState().updateTab("t1", { containerId: "container-1", [state]: true });
+    mocks.closeTab.mockRejectedValueOnce({ code: "disconnected", message: "docker stream closed" });
+
+    await expect(useUi.getState().closeTab("t1", "kill")).resolves.toBe(true);
+
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toEqual([]);
+    expect(useUi.getState().toasts).toEqual([]);
+  });
+
+  it("removes a container exec that no longer exists on the server", async () => {
+    seedWorkspaceWithTerminal();
+    useUi.getState().updateTab("t1", { containerId: "container-1" });
+    mocks.closeTab.mockRejectedValueOnce({ code: "not_found", message: "tab not found" });
+
+    await expect(useUi.getState().closeTab("t1", "kill")).resolves.toBe(true);
+
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toEqual([]);
+    expect(useUi.getState().toasts).toEqual([]);
+  });
+
+  it.each(["ssh", "device"] as const)("closes a dead %s tab after its session has disconnected", async (kind) => {
+    seedWorkspaceWithTerminal();
+    useUi.setState((state) => ({
+      sessions: [{ ...SESSION, kind }],
+      workspaces: state.workspaces.map((workspace) => ({ ...workspace, assetKind: kind })),
+    }));
+    useUi.getState().updateTab("t1", { dead: true });
+    mocks.closeTab.mockRejectedValueOnce({ code: "disconnected", message: "session unavailable" });
+
+    await expect(useUi.getState().closeTab("t1")).resolves.toBe(true);
+
+    expect(mocks.closeTab).toHaveBeenCalledWith("bt1", undefined, "s1");
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toEqual([]);
+    expect(useUi.getState().toasts).toEqual([]);
+  });
+
+  it("closes an SSH tab that the server no longer knows", async () => {
+    seedWorkspaceWithTerminal();
+    mocks.closeTab.mockRejectedValueOnce({ code: "not_found", message: "tab not found" });
+
+    await expect(useUi.getState().closeTab("t1", "kill")).resolves.toBe(true);
+
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toEqual([]);
+    expect(useUi.getState().toasts).toEqual([]);
+  });
+
+  it("preserves a running SSH tab when the close request only loses its connection", async () => {
+    seedWorkspaceWithTerminal();
+    mocks.closeTab.mockRejectedValueOnce({ code: "disconnected", message: "network unavailable" });
+
+    await expect(useUi.getState().closeTab("t1", "kill")).resolves.toBe(false);
+
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]?.id).toBe("t1");
+    expect(useUi.getState().toasts[0]?.text).toContain("network unavailable");
+  });
+
+  it("preserves a running container exec and reports a failed close when the transport is unavailable", async () => {
+    seedWorkspaceWithTerminal();
+    useUi.getState().updateTab("t1", { containerId: "container-1" });
+    mocks.closeTab.mockRejectedValueOnce({ code: "disconnected", message: "network unavailable" });
+
+    await expect(useUi.getState().closeTab("t1", "kill")).resolves.toBe(false);
+
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]?.id).toBe("t1");
+    expect(useUi.getState().toasts[0]?.text).toContain("network unavailable");
   });
 });

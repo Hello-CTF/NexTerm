@@ -24,6 +24,7 @@ import { clientId, WEB } from "../../ipc/env";
 import { takePendingDirectory, sessionStatusText, connectProgressText, applyRemoteTabTitle, reconnectSessionAndWait, reconnectDeadHost, isSessionReconnectPending, useUi, type Workspace } from "../../app/store";
 import { directoryCommandFor } from "../files/pathUtils";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
+import { modHint } from "../../app/platform";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
 import { createOsc9Notifier, createOsc52Handler } from "./oscHandlers";
 import { bytesToBase64, markdownFileLink, pasteFileExtension } from "./imagePaste";
@@ -1020,6 +1021,12 @@ export function TerminalPane({
 
   const pasteImagesFromClipboard = async () => {
     if (!kernelTabId) return;
+    const pasteHint = `请在终端内按 ${modHint()}+V 粘贴图片，或将图片拖入终端`;
+    if (typeof navigator.clipboard?.read !== "function") {
+      handleRef.current?.focus();
+      pushToast("info", `当前环境不支持直接读取剪贴板图片；${pasteHint}`);
+      return;
+    }
     const files: File[] = [];
     try {
       const items = await navigator.clipboard.read();
@@ -1030,7 +1037,13 @@ export function TerminalPane({
         files.push(new File([blob], `pasted-image.${type.slice("image/".length) || "png"}`, { type }));
       }
     } catch (e) {
-      pushToast("error", `读取剪贴板图片失败：${describeError(e)}`);
+      const name = (e as { name?: string } | null)?.name;
+      if (name === "NotAllowedError" || name === "SecurityError") {
+        handleRef.current?.focus();
+        pushToast("info", `当前环境未允许直接读取剪贴板图片；${pasteHint}`);
+      } else {
+        pushToast("error", `读取剪贴板图片失败：${describeError(e)}`);
+      }
       return;
     }
     if (files.length === 0) {

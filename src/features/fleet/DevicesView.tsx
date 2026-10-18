@@ -202,11 +202,11 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: Device
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
             disabled={!online}
-            title={online ? "在这台设备上打开远程终端" : "设备离线，无法打开终端"}
+            title={online ? "打开这台设备的工作区" : "设备离线，无法打开工作区"}
             onClick={() => void connectDevice(device)}
           >
             <IconTerminal size={11} />
-            终端
+            工作区
           </button>
         )}
         {!revoked && agent && (

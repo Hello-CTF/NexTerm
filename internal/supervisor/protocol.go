@@ -43,13 +43,15 @@ const (
 	frameExecOutput
 	frameRename
 	frameRenamed
+	frameReplayGzip
 )
 
 const (
 	// featureExec is advertised in the hello handshake by peers that support
 	// non-PTY exec sessions (createMsg.Pty == false and frameExecOutput).
-	featureExec     = "exec"
-	featureMetadata = "metadata"
+	featureExec       = "exec"
+	featureMetadata   = "metadata"
+	featureReplayGzip = "replay_gzip"
 )
 
 // Exec output stream discriminators, the first byte of a frameExecOutput

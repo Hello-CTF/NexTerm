@@ -138,15 +138,24 @@ describe("main navigation tooltips", () => {
     }
   });
 
-  it("distinguishes connected, reconnecting, and local-terminal cases in the new-terminal tooltip", async () => {
+  it("keeps terminal creation in the workspace instead of the global rail", async () => {
+    useUi.setState({
+      workspaces: [{
+        id: "ws",
+        kind: "session",
+        title: "host",
+        closable: true,
+        panes: [{ id: "pane", tabs: [], activeTabId: null }],
+        activePaneId: "pane",
+        splitRatio: 0.5,
+      }],
+      activeWorkspaceId: "ws",
+    });
     mounted = mountApp();
     await flush();
 
-    const button = document.querySelector<HTMLButtonElement>('.nx-rail button[aria-label="新建终端"]');
-    const title = button?.getAttribute("data-tip") ?? "";
-    expect(title).toContain("已连接");
-    expect(title).toContain("重连");
-    expect(title).toContain("本机终端");
+    expect(document.querySelector('.nx-rail button[aria-label="新建终端"]')).toBeNull();
+    expect(document.querySelector('button[aria-label="新建终端标签"]')).not.toBeNull();
   });
 });
 
