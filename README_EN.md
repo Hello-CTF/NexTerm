@@ -1,10 +1,15 @@
 <div align="center">
 
+<img src="website/public/brand/nexterm-mark-128.png" width="88" alt="NexTerm" />
+
 # NexTerm
 
-**SSH, WinRM, files, Docker, databases, and AI in one workbench.**
+**One self-hostable workbench for every server you run.**
 
-[![Website](https://img.shields.io/badge/website-online-516cd6)](https://nexterm.work/)
+Terminals that never drop · an AI assistant that actually does the work · files, Docker, databases, device fleet, and sharing
+
+[![Website](https://img.shields.io/badge/website-nexterm.work-516cd6)](https://nexterm.work/)
+[![Release](https://img.shields.io/github/v/release/Hello-CTF/NexTerm?color=516cd6)](https://github.com/Hello-CTF/NexTerm/releases/latest)
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8)
 ![Wails](https://img.shields.io/badge/Wails-v3-CC0000)
 ![React](https://img.shields.io/badge/React-19-61DAFB)
@@ -12,21 +17,65 @@
 
 **English** | [中文](README.md)
 
+[Website](https://nexterm.work/) · [Download](https://github.com/Hello-CTF/NexTerm/releases/latest) · [Deploy the server](#server-and-device-enrollment)
+
 </div>
 
-NexTerm solves a concrete problem: a remote terminal should not disappear when its window does. SSH shells keep running in the background, then show up for re-attachment after an app restart or on another signed-in device. The same workspace also handles files, containers, databases, and troubleshooting history.
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="website/public/images/shell-light.jpg" />
+  <img src="website/public/images/shell-dark.jpg" alt="NexTerm terminal with command blocks" />
+</picture>
 
-Use the desktop app for local work or run the server for teams and multi-device access. Both modes share the same session and asset model, can be self-hosted, and keep data on infrastructure you control.
+NexTerm puts the whole remote-ops loop in one place. Connect over SSH, WinRM, or the NexTerm device agent; let an AI assistant investigate and fix with your approval; then browse files, manage containers, query databases, watch device metrics, and share a terminal, all without switching tools. SSH and device shells keep running in the background, so closing the window or switching devices never loses your work.
 
-## Features
+Use the desktop app locally, or deploy the server for multi-user, browser-based access. Both modes can be self-hosted and keep data on infrastructure you control.
 
-- **Terminals and files**: SSH, WinRM, and local terminals with multiple tabs, split panes, SFTP file management, and in-place editing. SSH sessions continue running as background sessions after a tab closes or disconnects, ready for re-attachment; local, WinRM non-interactive, and container exec terminals end when closed.
-- **Terminal history**: records every terminal session's output, keystrokes, and window resizes for text viewing, searching, and timeline replay. **Keystrokes are recorded verbatim, including passwords and tokens.** Records stay local and are not synced by default; end-to-end encrypted sync and deletion are available per record.
-- **Daily ops**: manage Docker containers and images, and use PostgreSQL, MySQL, Redis, and SSH port forwarding. PostgreSQL and plain SSH/SFTP need no remote agent; the agent is only for device management.
-- **AI assistant**: supports OpenAI-compatible endpoints, terminal takeover, and scheduled tasks. Command output and file changes are visible, and sensitive operations require confirmation.
-- **Accounts and sync**: the server provides multi-user accounts, with user creation or open registration managed by the super admin. Sync data is isolated per account and end-to-end encrypted. On desktop, signing in automatically syncs assets, groups, snippets, credentials, and optional settings.
-- **Device management and sharing**: install the device agent on a host to open remote terminals. Enrolled hosts can be shared with other registered users or through public links. Anyone with a link can access it without signing in while it remains valid. Links are read-only by default, writable only when explicitly granted, and can be revoked at any time. Write access lets the visitor type in the terminal, so grant it only to people you trust. Sharing does not require the host password or private key.
-- **Desktop and browser**: use the desktop app locally; in browser mode, workspaces and terminal processes stay on the server and keep running after the page closes.
+## Highlights
+
+### 🤖 An AI assistant that does the work
+
+- **20+ built-in tools**: run commands, read, write, and edit files, inspect Docker containers and logs, query MySQL, PostgreSQL, and Redis, and spawn sub-tasks.
+- **You stay in control**: read-only or execute modes, plan mode before execution, and command/diff previews with allow once, allow for this turn, or deny. High-risk actions always ask.
+- **Per-host grants**: allow command execution, file writes, or keystrokes per asset, scoped to paths such as `/etc/nginx/**`, with expiry from 1 hour to 30 days.
+- **Terminal takeover**: the assistant can type into your live terminal; press Esc to take control back.
+- **Scheduled jobs and memory**: cron-scheduled AI tasks, plus long-term memory that rejects secrets.
+- **Any model**: OpenAI-compatible endpoints with presets for DeepSeek, Kimi, GLM, and Ollama, fallback models, proxies, and usage tracking.
+
+### 🖥️ Terminals that stay
+
+- **Background sessions**: SSH and managed-device sessions keep running after a tab closes, the app restarts, or the network drops, and can be taken over from any signed-in device with missed output replayed. Local, WinRM non-interactive, and container exec terminals end when closed.
+- **Multi-device**: several devices can watch one terminal while one types.
+- **Command blocks, history, and replay**: every command folds into a block; every session's output, keystrokes, and resizes are recorded for search and timeline replay. **Keystrokes are recorded verbatim, including passwords and tokens.** Records stay local and are not synced by default; end-to-end encrypted sync and deletion are available per record.
+- **Productivity**: tabs, split panes, broadcast input, quick connect, a command palette, snippets, and rebindable shortcuts.
+
+### 🧰 Everyday ops in one window
+
+- **Files**: SFTP, WinRM, and device file browsers with upload/download, an in-place editor that backs up before saving, a paged log viewer, and directory follow.
+- **Docker**: containers, logs, stats, images, and one-click exec terminals.
+- **Databases**: SQL editor and schema browser for MySQL/MariaDB and PostgreSQL, plus a Redis key browser.
+- **Port forwarding**: local forwards and SOCKS5 proxies with automatic reconnect.
+- **Import**: hosts and keys from `~/.ssh/config` or Termius, with groups, tags, jump hosts, and SSH certificates.
+
+PostgreSQL and plain SSH/SFTP need no remote agent; the agent is only for device management.
+
+### 🛰️ Device fleet and sharing
+
+- **Device agent**: enroll a host with one command; it connects out to your server, reports CPU, memory, and disk metrics, and opens remote terminals and files without exposing SSH.
+- **Sharing**: share enrolled hosts with registered users or through public links. Anyone with a link can access it without signing in while it remains valid. Links are read-only by default, writable only when explicitly granted, and can be revoked at any time. Write access lets the visitor type in the terminal, so grant it only to people you trust. Sharing does not require the host password or private key.
+
+### 🔐 Self-hosted and secure
+
+- **Accounts and sync**: the server provides multi-user accounts with TOTP two-factor authentication; user creation or open registration is managed by the super admin. Sync data is isolated per account and end-to-end encrypted. On desktop, signing in syncs assets, groups, snippets, credentials, and optional settings.
+- **Credential vault**: master password or OS-level protection (DPAPI / Keychain), biometric unlock on mobile, and idle auto-lock.
+- **Audit log**: commands, file writes, and device events from both users and the AI.
+- **Your database**: SQLite by default; the server also supports PostgreSQL, MySQL, and MariaDB.
+- **Desktop and browser**: in browser mode, workspaces and terminal processes stay on the server and keep running after the page closes.
+
+## Screenshots
+
+| AI assistant | Remote files | Terminal replay |
+| --- | --- | --- |
+| <img src="website/public/images/ai-dark.jpg" alt="AI assistant with command confirmation" /> | <img src="website/public/images/files-dark.jpg" alt="SFTP file tree and remote editor" /> | <img src="website/public/images/replay-dark.jpg" alt="Terminal history timeline replay" /> |
 
 ## Download and Install
 

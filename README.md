@@ -1,10 +1,15 @@
 <div align="center">
 
+<img src="website/public/brand/nexterm-mark-128.png" width="88" alt="NexTerm" />
+
 # NexTerm
 
-**SSH、WinRM、文件、Docker、数据库和 AI，集中在一个工作台。**
+**一个可自托管的工作台，管好每一台服务器。**
 
-[![Website](https://img.shields.io/badge/%E5%AE%98%E7%BD%91-online-516cd6)](https://nexterm.work/)
+永不掉线的终端 · 会动手的 AI 助手 · 文件、Docker、数据库、设备管理与终端分享
+
+[![Website](https://img.shields.io/badge/%E5%AE%98%E7%BD%91-nexterm.work-516cd6)](https://nexterm.work/)
+[![Release](https://img.shields.io/github/v/release/Hello-CTF/NexTerm?color=516cd6)](https://github.com/Hello-CTF/NexTerm/releases/latest)
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8)
 ![Wails](https://img.shields.io/badge/Wails-v3-CC0000)
 ![React](https://img.shields.io/badge/React-19-61DAFB)
@@ -12,21 +17,65 @@
 
 **中文** | [English](README_EN.md)
 
+[官网](https://nexterm.work/) · [下载](https://github.com/Hello-CTF/NexTerm/releases/latest) · [部署服务端](#服务端与设备接入)
+
 </div>
 
-NexTerm 解决的是一个很具体的问题：远程终端不应该随着窗口消失。SSH shell 会在后台持续运行，App 重启或换一台已登录的设备后仍可发现并接管；同一个工作区还可以继续处理文件、容器、数据库和排障记录。
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="website/public/images/shell-light.jpg" />
+  <img src="website/public/images/shell-dark.jpg" alt="NexTerm 的 Shell 终端与命令块界面" />
+</picture>
 
-桌面端适合本机使用，服务端适合团队或多设备访问。两种模式共享同一套会话和资产模型，按需自托管，数据可以留在自己的机器或数据库中。
+NexTerm 把远程运维的完整流程放进一个工作台：通过 SSH、WinRM 或 NexTerm 设备 agent 连接主机；让 AI 助手在你确认后排查和修复问题；再浏览文件、管理容器、查询数据库、查看设备监控、分享终端，全程不用切换工具。SSH 和设备 shell 在后台持续运行，关闭窗口或换一台设备都不会丢失进度。
 
-## 功能
+桌面端适合本机使用，服务端提供多用户的浏览器访问。两种模式都可自托管，数据留在你自己的机器或数据库中。
 
-- **终端与文件**：SSH、WinRM 和本机终端，支持多标签、分屏、SFTP 文件管理与在线编辑。SSH 会话关闭标签或断开后转入「后台会话」继续运行，可重新接管；本机、WinRM 非交互与容器 exec 终端随关闭结束。
-- **终端历史**：自动录制每条终端会话的输出、键盘输入和窗口尺寸变化，支持文本查看、搜索和时间轴回放。**注意：键盘输入会原样记录，包括密码和令牌。**记录默认仅本地保存、不参与同步；可逐条开启端到端加密同步，也可逐条删除。
-- **日常运维**：管理 Docker 容器与镜像，使用 PostgreSQL、MySQL、Redis 和 SSH 端口转发；PostgreSQL 与普通 SSH/SFTP 无需远端 agent，agent 仅用于设备管理。
-- **AI 助手**：支持 OpenAI 兼容接口、终端接管和定时任务；命令输出与文件变更可见，敏感操作需要确认。
-- **账号与同步**：服务端内置多用户账号，超管可创建用户或开放注册；同步数据按账号隔离并端到端加密。桌面端登录后自动同步资产、分组、片段、凭据及可选配置。
-- **设备管理与分享**：安装设备 agent 后可远程打开设备终端；接入的设备可分享给注册用户，也可创建公开链接。获得链接的人在有效期内无需登录即可访问；链接默认只读，只有显式授权才允许读写，且可随时吊销。读写权限允许对方在终端中输入，请仅授予可信对象。分享无需提供主机密码或私钥。
-- **桌面与浏览器**：桌面端用于本机；服务端的终端进程和工作区保存在服务器上，关闭网页后仍可继续。
+## 亮点
+
+### 🤖 会动手的 AI 助手
+
+- **20+ 内置工具**：执行命令，读写和编辑文件，查看 Docker 容器与日志，查询 MySQL、PostgreSQL 和 Redis，并可派生子任务。
+- **控制权在你手里**：只读或可执行模式，计划模式先出方案；执行前展示命令或文件 diff，可允许一次、本轮允许或拒绝，高危操作始终询问。
+- **按主机授权**：按资产授予执行命令、写文件、发送按键等权限，可限定路径（如 `/etc/nginx/**`），有效期 1 小时到 30 天。
+- **终端接管**：AI 可以在你正在使用的终端里直接输入，按 Esc 随时收回控制。
+- **定时任务与长期记忆**：按 cron 表达式定时运行 AI 任务；长期记忆拒绝写入密钥类内容。
+- **任意模型**：OpenAI 兼容接口，内置 DeepSeek、Kimi、GLM、Ollama 预设，支持回退模型、代理和用量统计。
+
+### 🖥️ 不会掉线的终端
+
+- **后台会话**：SSH 和受管设备会话在关闭标签、App 重启或网络中断后继续运行，可从任意已登录设备接管并补回错过的输出。本机、WinRM 非交互与容器 exec 终端随关闭结束。
+- **多设备协同**：多台设备可同时观看同一终端，同一时间一台输入。
+- **命令块、历史与回放**：每条命令折叠成块；自动录制每条会话的输出、键盘输入和窗口尺寸变化，支持搜索和时间轴回放。**注意：键盘输入会原样记录，包括密码和令牌。**记录默认仅本地保存、不参与同步；可逐条开启端到端加密同步，也可逐条删除。
+- **效率**：多标签、分屏、命令广播、快速连接、命令面板、片段和可自定义快捷键。
+
+### 🧰 日常运维，一个窗口搞定
+
+- **文件**：SFTP、WinRM 与设备文件浏览，上传下载，在线编辑（保存前自动备份），大日志分页查看，跟随终端目录。
+- **Docker**：容器、日志、资源统计、镜像管理，一键 exec 进入容器。
+- **数据库**：MySQL/MariaDB 与 PostgreSQL 的 SQL 编辑器和表结构浏览，Redis 键浏览。
+- **端口转发**：本地转发与 SOCKS5 代理，断线自动重连。
+- **导入**：从 `~/.ssh/config` 或 Termius 导入主机和密钥，支持分组、标签、跳板机和 SSH 证书。
+
+PostgreSQL 与普通 SSH/SFTP 无需远端 agent，agent 仅用于设备管理。
+
+### 🛰️ 设备管理与分享
+
+- **设备 agent**：一行命令接入主机，设备主动连回服务端，上报 CPU、内存和磁盘指标，无需暴露 SSH 即可打开远程终端和文件。
+- **分享**：接入的设备可分享给注册用户，也可创建公开链接。获得链接的人在有效期内无需登录即可访问；链接默认只读，只有显式授权才允许读写，且可随时吊销。读写权限允许对方在终端中输入，请仅授予可信对象。分享无需提供主机密码或私钥。
+
+### 🔐 自托管，安全默认
+
+- **账号与同步**：服务端内置多用户账号与 TOTP 双因素认证，超管可创建用户或开放注册；同步数据按账号隔离并端到端加密。桌面端登录后自动同步资产、分组、片段、凭据及可选配置。
+- **凭据保险库**：主密码或系统级保护（DPAPI / 钥匙串），移动端支持生物识别解锁，可闲置自动锁定。
+- **审计日志**：用户与 AI 的命令、文件写入和设备事件都有记录。
+- **选择你的数据库**：默认 SQLite，服务端也支持 PostgreSQL、MySQL 和 MariaDB。
+- **桌面与浏览器**：浏览器模式下，终端进程和工作区保存在服务器上，关闭网页后仍可继续。
+
+## 截图
+
+| AI 助手 | 远程文件 | 终端回放 |
+| --- | --- | --- |
+| <img src="website/public/images/ai-dark.jpg" alt="AI 助手对话与命令确认" /> | <img src="website/public/images/files-dark.jpg" alt="SFTP 文件树与远程编辑" /> | <img src="website/public/images/replay-dark.jpg" alt="终端历史时间轴回放" /> |
 
 ## 下载与安装
 
