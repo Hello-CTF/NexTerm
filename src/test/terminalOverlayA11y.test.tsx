@@ -9,6 +9,7 @@ const harness = vi.hoisted(() => ({
   resyncSubs: new Set<() => void>(),
   xtermProps: null as Record<string, unknown> | null,
   closeTab: vi.fn(),
+  fitChanged: true,
 }));
 
 vi.mock("../app/platform", () => ({
@@ -89,7 +90,7 @@ vi.mock("../features/terminal/XtermView", async () => {
           clear: () => {},
           getSelection: () => "",
           focus: () => {},
-          fit: () => {},
+          fit: () => harness.fitChanged,
           dimensions: () => ({ cols: 80, rows: 24 }),
         });
         (props.onAttach as ((id: string) => void) | undefined)?.("kernel-1");
@@ -142,6 +143,7 @@ beforeEach(() => {
   harness.resyncSubs.clear();
   document.body.replaceChildren();
   harness.closeTab.mockResolvedValue(undefined);
+  harness.fitChanged = true;
   useUi.setState({
     sessions: [
       {
@@ -445,5 +447,33 @@ describe("terminal overlay accessibility", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("does not show a switch overlay when fitting keeps the same size", async () => {
+    harness.fitChanged = false;
+    mounted = mount(
+      createElement(TerminalPane, {
+        sessionId: "s1",
+        title: "term",
+        storeTabId: "t1",
+        visible: false,
+      }),
+    );
+    await act(async () => {
+      await flush();
+    });
+
+    act(() => {
+      mounted!.root.render(
+        createElement(TerminalPane, {
+          sessionId: "s1",
+          title: "term",
+          storeTabId: "t1",
+          visible: true,
+        }),
+      );
+    });
+
+    expect(status("正在切换终端窗口…")).toBeNull();
   });
 });

@@ -558,7 +558,8 @@ export function TerminalPane({
       return;
     }
     if (wasVisible || !kernelTabId || attachDead || control?.exited) return;
-    handleRef.current?.fit();
+    const sizeChanged = handleRef.current?.fit() ?? false;
+    if (!sizeChanged) return;
     setSwitching(true);
     if (switchingTimerRef.current !== null) window.clearTimeout(switchingTimerRef.current);
     switchingTimerRef.current = window.setTimeout(() => {
