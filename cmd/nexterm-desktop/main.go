@@ -175,6 +175,7 @@ func run(args []string) int {
 		emitFilesDropped(wailsApp, event)
 	})
 	streams.SetWindow(window)
+	setupTray(wailsApp, desktopBrandIcon(invocation.WebRoot))
 	if launchLink != "" {
 		service.links.deliver(launchLink)
 	}
