@@ -22,6 +22,7 @@ export interface IpcChannel<T = unknown> {
 export const EVENTS = {
   sessionStatus: "session://status",
   connectProgress: "session://connect-progress",
+  helperProgress: "session://helper-progress",
   terminalExit: "terminal://exit",
   terminalThrottled: "terminal://throttled",
   terminalControl: "terminal://control",
@@ -81,6 +82,21 @@ export interface ConnectProgressEvent {
   hops: number;
   host: string;
   port: number;
+}
+
+// Progress emitted while the remote persistent-terminal helper is inspected, uploaded, or started.
+// sessionId and assetId are both included so a late event cannot update another terminal view.
+export interface HelperProgressEvent {
+  sessionId: string;
+  assetId: string;
+  step: number;
+  steps: number;
+  stage: string;
+  transferred: number;
+  total: number;
+  percent: number;
+  done: boolean;
+  error?: string;
 }
 
 // Aligned with Go update.Progress; phase distinguishes the download and install stages.

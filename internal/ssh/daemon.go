@@ -77,9 +77,23 @@ type Resolver struct {
 	StartTimeout time.Duration
 	// UploadTimeout bounds the SFTP upload of the selected helper.
 	UploadTimeout time.Duration
+	// Progress receives helper installation and cache progress. It is optional;
+	// callers that do not subscribe retain the existing behavior.
+	Progress func(context.Context, HelperProgress)
 
 	hostFor func(ctx context.Context, client *transportssh.Client) (Host, error)
 	inspect func(path string) (UploadSource, error)
+}
+
+type HelperProgress struct {
+	Step        int
+	Steps       int
+	Stage       string
+	Transferred int64
+	Total       int64
+	Percent     int
+	Done        bool
+	Error       string
 }
 
 func (r *Resolver) ResolveDurable(ctx context.Context, transport base.Transport) (base.DurableProvider, error) {

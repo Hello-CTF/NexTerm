@@ -73,6 +73,14 @@ func (h *clientHost) Upload(ctx context.Context, localPath, remotePath string) (
 	return filesystem.Upload(ctx, localPath, remotePath, sshfs.TransferOptions{})
 }
 
+func (h *clientHost) UploadWithProgress(ctx context.Context, localPath, remotePath string, options sshfs.TransferOptions) (int64, error) {
+	filesystem, err := h.filesystem(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return filesystem.Upload(ctx, localPath, remotePath, options)
+}
+
 func (h *clientHost) Rename(ctx context.Context, from, to string) error {
 	filesystem, err := h.filesystem(ctx)
 	if err != nil {

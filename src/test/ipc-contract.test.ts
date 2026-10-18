@@ -170,6 +170,7 @@ describe("IPC facade static contract", () => {
       expect.arrayContaining([
         ["sessionStatus", "session://status"],
         ["connectProgress", "session://connect-progress"],
+        ["helperProgress", "session://helper-progress"],
         ["terminalExit", "terminal://exit"],
         ["terminalThrottled", "terminal://throttled"],
         ["terminalControl", "terminal://control"],

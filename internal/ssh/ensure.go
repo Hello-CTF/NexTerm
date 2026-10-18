@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
+	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
@@ -26,6 +27,42 @@ type targetInfo struct {
 }
 
 func (r *Resolver) ensureOnHost(ctx context.Context, host Host) (*Daemon, error) {
+	return r.ensureOnHostWithProgress(ctx, host)
+}
+
+const helperProgressSteps = 6
+
+func (r *Resolver) reportProgress(ctx context.Context, progress HelperProgress) {
+	if r.Progress == nil {
+		return
+	}
+	if progress.Steps <= 0 {
+		progress.Steps = helperProgressSteps
+	}
+	progress.Percent = -1
+	if progress.Total > 0 {
+		progress.Percent = int(progress.Transferred * 100 / progress.Total)
+		if progress.Percent < 0 {
+			progress.Percent = 0
+		} else if progress.Percent > 100 {
+			progress.Percent = 100
+		}
+	}
+	if progress.Done && progress.Error == "" {
+		progress.Percent = 100
+	}
+	r.Progress(ctx, progress)
+}
+
+func (r *Resolver) ensureOnHostWithProgress(ctx context.Context, host Host) (daemon *Daemon, retErr error) {
+	r.reportProgress(ctx, HelperProgress{Step: 1, Steps: helperProgressSteps, Stage: "discover"})
+	defer func() {
+		if retErr != nil {
+			r.reportProgress(ctx, HelperProgress{Step: helperProgressSteps, Steps: helperProgressSteps, Stage: "failed", Done: true, Error: retErr.Error()})
+		} else {
+			r.reportProgress(ctx, HelperProgress{Step: helperProgressSteps, Steps: helperProgressSteps, Stage: "ready", Done: true})
+		}
+	}()
 	info, err := discoverTarget(ctx, host)
 	if err != nil {
 		return nil, err
@@ -38,6 +75,7 @@ func (r *Resolver) ensureOnHost(ctx context.Context, host Host) (*Daemon, error)
 		return nil, err
 	}
 	for _, binary := range lookupPathBinaries(ctx, host) {
+		r.reportProgress(ctx, HelperProgress{Step: 2, Steps: helperProgressSteps, Stage: "probe"})
 		if !compatible(ctx, host, binary) {
 			continue
 		}
@@ -48,6 +86,7 @@ func (r *Resolver) ensureOnHost(ctx context.Context, host Host) (*Daemon, error)
 		}
 	}
 	upload, standalone, sourceErr := r.uploadSource(info)
+	r.reportProgress(ctx, HelperProgress{Step: 3, Steps: helperProgressSteps, Stage: "cache"})
 	if sourceErr != nil && !r.DisableAutoInstall {
 		return nil, sourceErr
 	}
@@ -85,10 +124,13 @@ func (r *Resolver) ensureOnHost(ctx context.Context, host Host) (*Daemon, error)
 	if r.DisableAutoInstall {
 		return nil, fmt.Errorf("%w: no compatible helper is installed and automatic helper installation is disabled", durable.ErrUnavailable)
 	}
+	r.reportProgress(ctx, HelperProgress{Step: 4, Steps: helperProgressSteps, Stage: "upload"})
 	binary, err := r.install(ctx, host, binDir, upload, standalone)
 	if err != nil {
 		return nil, err
 	}
+	r.reportProgress(ctx, HelperProgress{Step: 5, Steps: helperProgressSteps, Stage: "verify"})
+	r.reportProgress(ctx, HelperProgress{Step: 6, Steps: helperProgressSteps, Stage: "start"})
 	return r.startOrConnect(ctx, host, binary, stateDir, digest)
 }
 
@@ -343,7 +385,7 @@ func (r *Resolver) install(ctx context.Context, host Host, binDir string, upload
 	} else if ready {
 		return target, nil
 	}
-	return uploadStaged(uploadCtx, host, binDir, target, upload, standalone)
+	return uploadStaged(uploadCtx, host, binDir, target, upload, standalone, r.Progress, helperProgressSteps, 4)
 }
 
 func (r *Resolver) uploadTimeout() time.Duration {
@@ -367,7 +409,7 @@ func cachedBinary(ctx context.Context, host Host, target, digest string) (bool, 
 	return true, nil
 }
 
-func uploadStaged(ctx context.Context, host Host, binDir, target string, upload *UploadSource, probe bool) (result string, retErr error) {
+func uploadStaged(ctx context.Context, host Host, binDir, target string, upload *UploadSource, probe bool, progress func(context.Context, HelperProgress), steps, step int) (result string, retErr error) {
 	name := path.Base(target)
 	var nonce [4]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
@@ -385,7 +427,26 @@ func uploadStaged(ctx context.Context, host Host, binDir, target string, upload 
 			retErr = errors.Join(retErr, fmt.Errorf("%w: remove partial helper upload %s: %v", durable.ErrUnavailable, staging, err))
 		}
 	}()
-	if _, err := host.Upload(ctx, upload.Path, staging); err != nil {
+	progressFn := func(p sshfs.Progress) {
+		if progress != nil {
+			r := Resolver{Progress: progress}
+			r.reportProgress(ctx, HelperProgress{Step: step, Steps: steps, Stage: "upload", Transferred: p.Transferred, Total: p.Total, Done: p.Done})
+		}
+	}
+	var uploaded int64
+	var err error
+	if progressHost, ok := host.(interface {
+		UploadWithProgress(context.Context, string, string, sshfs.TransferOptions) (int64, error)
+	}); ok {
+		uploaded, err = progressHost.UploadWithProgress(ctx, upload.Path, staging, sshfs.TransferOptions{Progress: progressFn})
+	} else {
+		uploaded, err = host.Upload(ctx, upload.Path, staging)
+		if progress != nil {
+			r := Resolver{Progress: progress}
+			r.reportProgress(ctx, HelperProgress{Step: step, Steps: steps, Stage: "upload", Transferred: uploaded, Total: uploaded, Done: err == nil})
+		}
+	}
+	if err != nil {
 		return "", fmt.Errorf("%w: upload helper binary: %w", durable.ErrUnavailable, err)
 	}
 	if err := host.Chmod(ctx, staging, 0o700); err != nil {

@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./app/App";
 import "./styles.css";
-import { listenEvent, EVENTS, EventVersionGate, type AINotificationEvent, type AppErrorEvent, type ConnectProgressEvent, type SessionStatusEvent, type TerminalExitEvent } from "./ipc/events";
+import { listenEvent, EVENTS, EventVersionGate, type AINotificationEvent, type AppErrorEvent, type ConnectProgressEvent, type HelperProgressEvent, type SessionStatusEvent, type TerminalExitEvent } from "./ipc/events";
 import { onEventsResync } from "./ipc/webTransport";
 import { mountApi, systemApi } from "./ipc/commands";
 import { WEB } from "./ipc/env";
@@ -72,6 +72,10 @@ function wireDesktopShell(): void {
 
   void listenEvent<ConnectProgressEvent>(EVENTS.connectProgress, (p) => {
     useUi.getState().setConnectProgress(p.assetId, p);
+  });
+
+  void listenEvent<HelperProgressEvent>(EVENTS.helperProgress, (p) => {
+    useUi.getState().setHelperProgress(p);
   });
 
   void listenEvent<TerminalExitEvent>(EVENTS.terminalExit, (p) => {

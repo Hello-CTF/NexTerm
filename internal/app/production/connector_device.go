@@ -75,7 +75,8 @@ func (c *productionConnector) connectDevice(ctx context.Context, options product
 // productionDurableResolver routes durable providers by transport: device transports connect directly to the device
 // supervisor helper, SSH transports go through the target machine's supervisor daemon.
 type productionDurableResolver struct {
-	ssh *sshdaemon.Resolver
+	ssh    *sshdaemon.Resolver
+	events ipc.Emitter
 }
 
 func (r productionDurableResolver) ResolveDurable(ctx context.Context, transport base.Transport) (base.DurableProvider, error) {
@@ -83,7 +84,28 @@ func (r productionDurableResolver) ResolveDurable(ctx context.Context, transport
 		return deviceTransport.Provider(), nil
 	}
 	if r.ssh != nil {
-		return r.ssh.ResolveDurable(ctx, transport)
+		// Resolver instances are shared by all sessions. Clone the small
+		// configuration value so a concurrent connection cannot overwrite the
+		// progress callback for another session.
+		resolver := *r.ssh
+		scope := ipc.HelperProgressScopeFromContext(ctx)
+		if r.events != nil && scope.AssetID != "" {
+			resolver.Progress = func(progressCtx context.Context, progress sshdaemon.HelperProgress) {
+				_ = ipc.Emit(progressCtx, r.events, ipc.TopicHelperProgress, ipc.HelperProgressEvent{
+					SessionID:   scope.SessionID,
+					AssetID:     scope.AssetID,
+					Step:        progress.Step,
+					Steps:       progress.Steps,
+					Stage:       progress.Stage,
+					Transferred: progress.Transferred,
+					Total:       progress.Total,
+					Percent:     progress.Percent,
+					Done:        progress.Done,
+					Error:       progress.Error,
+				})
+			}
+		}
+		return resolver.ResolveDurable(ctx, transport)
 	}
 	return nil, fmt.Errorf("%w: remote durable tabs need an SSH transport", base.ErrUnsupported)
 }

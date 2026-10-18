@@ -139,7 +139,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	} else {
 		config.Config.Logger.Warn("resolve executable for the remote session daemon; SSH durable tabs are disabled", "error", executableErr)
 	}
-	durableResolver = productionDurableResolver{ssh: sshResolver}
+	durableResolver = productionDurableResolver{ssh: sshResolver, events: config.Config.Events}
 	sessionManager = session.NewManager(session.Config{
 		Connector:            connector,
 		Terminals:            config.Terminals,

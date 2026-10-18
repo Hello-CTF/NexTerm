@@ -36,6 +36,7 @@ import {
 } from "./terminalThrottle";
 import { ask, askChoice, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { formatBytes } from "../../ui/format";
 import { copyText, readText } from "../../ui/clipboard";
 import { hasActiveOverlay, isEditableTarget, isImeKeyEvent } from "../../ui/DialogHost";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
@@ -103,6 +104,38 @@ function applyBackendTabTitle(storeTabId: string, title: string): void {
       return;
     }
   }
+}
+
+function helperStageText(stage: string): string {
+  switch (stage) {
+    case "discover":
+      return "检测远端环境";
+    case "probe":
+      return "查找已有持久终端助手";
+    case "cache":
+      return "检查助手缓存";
+    case "upload":
+      return "上传持久终端助手";
+    case "verify":
+      return "校验持久终端助手";
+    case "start":
+      return "启动持久终端助手";
+    case "ready":
+      return "持久终端助手已就绪";
+    case "failed":
+      return "持久终端助手启动失败";
+    default:
+      return stage || "准备持久终端";
+  }
+}
+
+function helperProgressPercent(progress: { percent: number; transferred: number; total: number }): number | null {
+  const raw = Number.isFinite(progress.percent) && progress.percent >= 0
+    ? progress.percent
+    : progress.total > 0
+      ? (progress.transferred / progress.total) * 100
+      : null;
+  return raw === null ? null : Math.min(100, Math.max(0, Math.round(raw)));
 }
 
 function canPlaceOverlayFocus(pane: HTMLElement | null): boolean {
@@ -195,6 +228,8 @@ export function TerminalPane({
   const [throttle, setThrottle] = useState<ThrottleState | null>(null);
   const [, setThrottleTick] = useState(0);
   const [claiming, setClaiming] = useState(false);
+  const [handoffSyncing, setHandoffSyncing] = useState(false);
+  const [switching, setSwitching] = useState(false);
   const [attachDead, setAttachDead] = useState(false);
   const [execInterrupted, setExecInterrupted] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
@@ -233,6 +268,9 @@ export function TerminalPane({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const exitedCloseBtnRef = useRef<HTMLButtonElement>(null);
   const reconnectBtnRef = useRef<HTMLButtonElement>(null);
+  const handoffTimerRef = useRef<number | null>(null);
+  const switchingTimerRef = useRef<number | null>(null);
+  const wasVisibleRef = useRef(visible !== false);
   const pushToast = useUi((s) => s.pushToast);
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
   const sessionAssetId = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.assetId);
@@ -247,6 +285,10 @@ export function TerminalPane({
   const connectProgress = useUi((s) =>
     sessionAssetId ? s.connectProgress[sessionAssetId] : undefined,
   );
+  const helperProgress = useUi((s) => {
+    if (!sessionAssetId) return undefined;
+    return s.helperProgress[JSON.stringify([sessionId, sessionAssetId])];
+  });
   const sessionName = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.name) ?? title;
   const recording = useUi((s) => (kernelTabId ? s.recordings[kernelTabId] : undefined));
   const workspaceId = useUi(
@@ -474,6 +516,8 @@ export function TerminalPane({
   const takeControl = useCallback(async () => {
     if (!kernelTabId || claiming) return;
     setClaiming(true);
+    setHandoffSyncing(true);
+    if (handoffTimerRef.current !== null) window.clearTimeout(handoffTimerRef.current);
     try {
       const prev = await terminalApi.claim(kernelTabId);
       setControl((c) =>
@@ -481,12 +525,47 @@ export function TerminalPane({
       );
       handleRef.current?.fit();
       pushToast("success", prev && prev !== me ? "已接管控制权（对方转为只读观看）" : "已取得控制权");
+      handoffTimerRef.current = window.setTimeout(() => {
+        handoffTimerRef.current = null;
+        setHandoffSyncing(false);
+      }, 900);
     } catch (e) {
+      setHandoffSyncing(false);
       pushToast("error", `接管失败：${describeError(e)}`);
     } finally {
       setClaiming(false);
     }
   }, [kernelTabId, claiming, me, pushToast]);
+
+  useEffect(() => () => {
+    if (handoffTimerRef.current !== null) window.clearTimeout(handoffTimerRef.current);
+    if (switchingTimerRef.current !== null) window.clearTimeout(switchingTimerRef.current);
+  }, []);
+
+  // Keep tab switches visually stable while xterm is made visible and fitted to the new pane.
+  // The terminal remains mounted while its tab is hidden, so this only runs on a hidden -> visible
+  // transition and never flashes during the initial mount of the active tab.
+  useEffect(() => {
+    const nextVisible = visible !== false;
+    const wasVisible = wasVisibleRef.current;
+    wasVisibleRef.current = nextVisible;
+    if (!nextVisible) {
+      if (switchingTimerRef.current !== null) {
+        window.clearTimeout(switchingTimerRef.current);
+        switchingTimerRef.current = null;
+      }
+      setSwitching(false);
+      return;
+    }
+    if (wasVisible || !kernelTabId || attachDead || control?.exited) return;
+    handleRef.current?.fit();
+    setSwitching(true);
+    if (switchingTimerRef.current !== null) window.clearTimeout(switchingTimerRef.current);
+    switchingTimerRef.current = window.setTimeout(() => {
+      switchingTimerRef.current = null;
+      setSwitching(false);
+    }, 650);
+  }, [visible, kernelTabId, attachDead, control?.exited]);
 
   const enableBroadcastScope = useCallback(
     async (scope: "pane" | "workspace") => {
@@ -1354,6 +1433,54 @@ export function TerminalPane({
         </button>
       </div>
 
+      {helperProgress && (
+        <div
+          role={helperProgress.error ? "alert" : "status"}
+          className={`flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b px-2.5 py-1.5 text-xs ${
+            helperProgress.error
+              ? "border-red-900/50 bg-red-950/30 text-red-200"
+              : "border-blue-900/50 bg-blue-950/20 text-blue-300"
+          }`}
+        >
+          <span className="font-medium">{helperStageText(helperProgress.stage)}</span>
+          <span className="text-[11px] opacity-80">步骤 {helperProgress.step}/{helperProgress.steps}</span>
+          {helperProgress.error ? (
+            <span className="min-w-0 break-all">失败：{helperProgress.error}</span>
+          ) : (
+            <>
+              <div
+                className="nx-progress min-w-[100px] flex-1"
+                role="progressbar"
+                aria-label="持久终端助手安装进度"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                {...(() => {
+                  const percent = helperProgressPercent(helperProgress);
+                  return percent === null ? {} : { "aria-valuenow": percent };
+                })()}
+              >
+                <span
+                  className={`nx-progress-bar ${helperProgressPercent(helperProgress) === null ? "w-1/3 animate-pulse motion-reduce:animate-none" : ""}`}
+                  style={
+                    helperProgressPercent(helperProgress) === null
+                      ? undefined
+                      : { width: `${helperProgressPercent(helperProgress)}%` }
+                  }
+                />
+              </div>
+              <span className="shrink-0">
+                {helperProgressPercent(helperProgress) === null
+                  ? "处理中"
+                  : `${helperProgressPercent(helperProgress)}%`}
+                {helperProgress.total > 0 && (
+                  <> · {formatBytes(helperProgress.transferred)} / {formatBytes(helperProgress.total)}</>
+                )}
+              </span>
+            </>
+          )}
+        </div>
+      )}
+
       {containerId && execInterrupted && (
         <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-800/50 bg-amber-950/30 px-2.5 py-1.5 text-xs text-amber-300">
           <span>容器 exec 已中断，原进程和输入不能恢复；重新打开会启动新的 exec。</span>
@@ -1535,6 +1662,28 @@ export function TerminalPane({
               }}
             />
           </div>
+
+          {controlSupported && handoffSyncing && !control?.exited && (
+            <div
+              role="status"
+              className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-neutral-950/45 px-6 text-center backdrop-blur-[1px]"
+            >
+              <span className="rounded-md border border-blue-400/30 bg-neutral-950/75 px-3 py-2 text-xs text-blue-100 shadow-lg">
+                正在同步终端窗口大小…
+              </span>
+            </div>
+          )}
+
+          {switching && !handoffSyncing && !attachDead && !control?.exited && (
+            <div
+              role="status"
+              className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-neutral-950/45 px-6 text-center backdrop-blur-[1px]"
+            >
+              <span className="rounded-md border border-blue-400/30 bg-neutral-950/75 px-3 py-2 text-xs text-blue-100 shadow-lg">
+                正在切换终端窗口…
+              </span>
+            </div>
+          )}
 
           {controlSupported && control && (control.exited || isObserver) && (
             <div

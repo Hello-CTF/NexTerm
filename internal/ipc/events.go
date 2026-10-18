@@ -10,6 +10,7 @@ type Topic string
 const (
 	TopicSessionStatus     Topic = "session://status"
 	TopicConnectProgress   Topic = "session://connect-progress"
+	TopicHelperProgress    Topic = "session://helper-progress"
 	TopicTerminalExit      Topic = "terminal://exit"
 	TopicTerminalThrottled Topic = "terminal://throttled"
 	TopicTerminalControl   Topic = "terminal://control"
@@ -55,6 +56,19 @@ type ConnectProgressEvent struct {
 	Hops    int    `json:"hops"`
 	Host    string `json:"host"`
 	Port    int    `json:"port"`
+}
+
+type HelperProgressEvent struct {
+	SessionID   string `json:"sessionId"`
+	AssetID     string `json:"assetId"`
+	Step        int    `json:"step"`
+	Steps       int    `json:"steps"`
+	Stage       string `json:"stage"`
+	Transferred int64  `json:"transferred"`
+	Total       int64  `json:"total"`
+	Percent     int    `json:"percent"`
+	Done        bool   `json:"done"`
+	Error       string `json:"error,omitempty"`
 }
 
 // DeviceStatusEvent is the device control channel's online/offline notification; it carries only the device ID and online state,

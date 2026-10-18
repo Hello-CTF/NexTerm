@@ -42,6 +42,7 @@ describe("Wails events and channels", () => {
     expect(Object.values(EVENTS)).toEqual([
       "session://status",
       "session://connect-progress",
+      "session://helper-progress",
       "terminal://exit",
       "terminal://throttled",
       "terminal://control",

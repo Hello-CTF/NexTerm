@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { assetApi, dbApi, sessionApi, terminalApi, vaultApi, type RecordingStatus, type SessionInfo, type VaultStatus } from "../ipc/commands";
 import { DESKTOP } from "../ipc/env";
-import type { ConnectProgressEvent } from "../ipc/events";
+import type { ConnectProgressEvent, HelperProgressEvent } from "../ipc/events";
 import { describeError } from "../ui/errorText";
 import type { ChoiceOption } from "../ui/dialogs";
 import { connectWithHostKeyConfirm, confirmHostKeyIfNeeded } from "./hostKeys";
@@ -394,6 +394,8 @@ interface UiState {
 
   connectProgress: Record<string, ConnectProgressEvent>;
   setConnectProgress: (assetId: string, progress: ConnectProgressEvent | null) => void;
+  helperProgress: Record<string, HelperProgressEvent>;
+  setHelperProgress: (progress: HelperProgressEvent | null) => void;
 }
 
 let toastSeq = 1;
@@ -1364,6 +1366,7 @@ export const useUi = create<UiState>((set, get) => ({
     set((state) => ({
       sessions: [],
       recordings: {},
+      helperProgress: {},
       sessionResyncFailed: false,
       workspaceRuntimeEpoch: state.workspaceRuntimeEpoch + (clearWorkspaceRuntime ? 1 : 0),
       workspaceRuntime: Object.fromEntries(
@@ -1388,6 +1391,7 @@ export const useUi = create<UiState>((set, get) => ({
       activeWorkspaceId: null,
       connectingAssetIds: [],
       connectProgress: {},
+      helperProgress: {},
       workspaceRuntimeEpoch: state.workspaceRuntimeEpoch + 1,
       workspaceRuntime: {},
     }));
@@ -1618,6 +1622,19 @@ export const useUi = create<UiState>((set, get) => ({
       if (progress) next[assetId] = progress;
       else delete next[assetId];
       return { connectProgress: next };
+    }),
+  helperProgress: {},
+  setHelperProgress: (progress) =>
+    set((st) => {
+      if (!progress?.sessionId || !progress.assetId) return st;
+      const key = JSON.stringify([progress.sessionId, progress.assetId]);
+      const next = { ...st.helperProgress };
+      if (progress.done && !progress.error) {
+        delete next[key];
+      } else {
+        next[key] = progress;
+      }
+      return { helperProgress: next };
     }),
 
   pushToast: (kind, text) => {

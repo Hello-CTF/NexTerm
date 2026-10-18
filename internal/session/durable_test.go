@@ -24,6 +24,7 @@ type fakeDurableProvider struct {
 	attachCalls   int
 	createErr     error
 	attachErr     error
+	killErr       error
 }
 
 type fakeDurableRecord struct {
@@ -145,6 +146,9 @@ func (p *fakeDurableProvider) newAttachmentLocked(id string, record *fakeDurable
 func (a *fakeDurableAttachment) Kill(context.Context) error {
 	a.provider.mu.Lock()
 	defer a.provider.mu.Unlock()
+	if a.provider.killErr != nil {
+		return a.provider.killErr
+	}
 	record := a.provider.records[a.tabID]
 	if record == nil || record.identity != a.identity {
 		return errFakeDurableIdentity
@@ -486,6 +490,20 @@ func TestDurableCloseIdentityFailureRetainsTabAndExitedAttachment(t *testing.T) 
 	}
 	if _, _, killed := provider.counts(); killed != 1 {
 		t.Fatalf("exited durable close killed %d processes", killed)
+	}
+}
+
+func TestDurableCloseRemoteAlreadyEndedStillRemovesLocalTab(t *testing.T) {
+	provider := newFakeDurableProvider()
+	provider.killErr = durable.ErrNotFound
+	manager, _, _, connected := newDurableTestManager(t, provider)
+	info := openDurableTestTab(t, manager, connected, "already-ended", "a-1", false)
+
+	if err := manager.CloseTab(info.ID); err != nil {
+		t.Fatalf("close already-ended durable tab = %v, want nil", err)
+	}
+	if _, err := manager.Tab(info.ID); !errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("already-ended durable tab remains registered: %v", err)
 	}
 }
 

@@ -5,6 +5,22 @@ import "context"
 type accountSessionCheckKey struct{}
 type accountSessionIDKey struct{}
 
+type helperProgressScopeKey struct{}
+
+type HelperProgressScope struct {
+	SessionID string
+	AssetID   string
+}
+
+func WithHelperProgressScope(ctx context.Context, scope HelperProgressScope) context.Context {
+	return context.WithValue(ctx, helperProgressScopeKey{}, scope)
+}
+
+func HelperProgressScopeFromContext(ctx context.Context) HelperProgressScope {
+	scope, _ := ctx.Value(helperProgressScopeKey{}).(HelperProgressScope)
+	return scope
+}
+
 func WithAccountSessionID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, accountSessionIDKey{}, id)
 }

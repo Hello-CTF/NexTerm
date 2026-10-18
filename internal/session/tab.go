@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
@@ -1336,7 +1337,10 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 		tab.destroying = true
 		tab.mu.Unlock()
 		m.mu.Unlock()
-		if err := tab.durable.Kill(context.Background()); err != nil {
+		// A different client may have already ended the durable process. The
+		// remote not-found result means there is nothing left to kill, so the
+		// local attachment can still be closed normally.
+		if err := tab.durable.Kill(context.Background()); err != nil && !errors.Is(err, durable.ErrNotFound) {
 			tab.mu.Lock()
 			tab.destroying = false
 			tab.mu.Unlock()

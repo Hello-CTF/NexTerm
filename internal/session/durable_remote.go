@@ -7,6 +7,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
@@ -37,7 +38,9 @@ func (m *Manager) durableProviderFor(ctx context.Context, session *Session, tran
 	}
 	session.durableFailure = nil
 	session.durableFailureAt = time.Time{}
-	provider, err := m.resolver.ResolveDurable(ctx, transport.Transport)
+	assetID := session.Asset().ID
+	resolveCtx := ipc.WithHelperProgressScope(ctx, ipc.HelperProgressScope{SessionID: session.ID, AssetID: assetID})
+	provider, err := m.resolver.ResolveDurable(resolveCtx, transport.Transport)
 	if err != nil {
 		if kind == KindSSH && sshHelperUnavailable(err) && ctx.Err() == nil {
 			session.durableProvider = nil

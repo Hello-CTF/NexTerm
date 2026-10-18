@@ -53,6 +53,7 @@ func TestEventTopicsRemainStable(t *testing.T) {
 	topics := []Topic{
 		TopicSessionStatus,
 		TopicConnectProgress,
+		TopicHelperProgress,
 		TopicTerminalExit,
 		TopicTerminalThrottled,
 		TopicTerminalControl,
@@ -69,6 +70,7 @@ func TestEventTopicsRemainStable(t *testing.T) {
 	want := []string{
 		"session://status",
 		"session://connect-progress",
+		"session://helper-progress",
 		"terminal://exit",
 		"terminal://throttled",
 		"terminal://control",

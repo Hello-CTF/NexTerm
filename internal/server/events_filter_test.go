@@ -183,6 +183,10 @@ func TestEventFilterConnectProgressScopedToAssetOwner(t *testing.T) {
 		{"other asset", ipc.Event{Event: ipc.TopicConnectProgress, Payload: ipc.ConnectProgressEvent{AssetID: "asset-2", Stage: "dial", Host: "bastion.internal", Port: 22}}, false},
 		{"unknown asset", ipc.Event{Event: ipc.TopicConnectProgress, Payload: ipc.ConnectProgressEvent{AssetID: "missing", Stage: "dial"}}, false},
 		{"foreign payload", ipc.Event{Event: ipc.TopicConnectProgress, Payload: map[string]any{"assetId": "asset-1"}}, false},
+		{"own helper", ipc.Event{Event: ipc.TopicHelperProgress, Payload: ipc.HelperProgressEvent{SessionID: "s-1", AssetID: "asset-1", Stage: "upload", Percent: 40}}, true},
+		{"other helper", ipc.Event{Event: ipc.TopicHelperProgress, Payload: ipc.HelperProgressEvent{SessionID: "s-2", AssetID: "asset-2", Stage: "upload"}}, false},
+		{"unknown helper", ipc.Event{Event: ipc.TopicHelperProgress, Payload: ipc.HelperProgressEvent{AssetID: "missing"}}, false},
+		{"malformed helper", ipc.Event{Event: ipc.TopicHelperProgress, Payload: map[string]any{"assetId": "asset-1"}}, false},
 		{"ownerless session status", ipc.Event{Event: ipc.TopicSessionStatus, Payload: map[string]any{"sessionId": "s-1"}}, false},
 	}
 	for _, tc := range cases {

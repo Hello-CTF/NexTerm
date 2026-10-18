@@ -120,6 +120,14 @@ function alertButton(text: string): HTMLButtonElement | undefined {
   );
 }
 
+function status(text: string): HTMLElement | null {
+  return (
+    [...(mounted?.container.querySelectorAll<HTMLElement>('[role="status"]') ?? [])].find(
+      (candidate) => candidate.textContent?.trim() === text,
+    ) ?? null
+  );
+}
+
 function deliverControl(payload: Record<string, unknown>): void {
   const handler = harness.handlers.get("terminal://control");
   expect(handler).toBeDefined();
@@ -401,5 +409,41 @@ describe("terminal overlay accessibility", () => {
 
     expect(alert()?.textContent).toContain("终端进程已结束");
     expect(document.activeElement).toBe(input);
+  });
+
+  it("shows a brief sync overlay when a hidden terminal becomes visible", async () => {
+    mounted = mount(
+      createElement(TerminalPane, {
+        sessionId: "s1",
+        title: "term",
+        storeTabId: "t1",
+        visible: false,
+      }),
+    );
+    await act(async () => {
+      await flush();
+    });
+
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        mounted!.root.render(
+          createElement(TerminalPane, {
+            sessionId: "s1",
+            title: "term",
+            storeTabId: "t1",
+            visible: true,
+          }),
+        );
+      });
+      expect(status("正在切换终端窗口…")).not.toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(650);
+      });
+      expect(status("正在切换终端窗口…")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

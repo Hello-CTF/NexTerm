@@ -159,6 +159,16 @@ func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
 			}
 			ownerID, err := s.assetOwner(context.Background(), progress.AssetID)
 			return err == nil && ownerID == userID
+		case ipc.TopicHelperProgress:
+			if s.assetOwner == nil {
+				return false
+			}
+			progress, ok := event.Payload.(ipc.HelperProgressEvent)
+			if !ok {
+				return false
+			}
+			ownerID, err := s.assetOwner(context.Background(), progress.AssetID)
+			return err == nil && ownerID == userID
 		case ipc.TopicAINotification:
 			notification, ok := event.Payload.(ipc.AINotificationEvent)
 			return ok && notification.OwnerID != "" && notification.OwnerID == userID
