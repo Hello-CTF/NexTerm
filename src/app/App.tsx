@@ -114,6 +114,7 @@ import { DeviceSessionBoundary } from "../features/fleet/DeviceSessionBoundary";
 import { getUpdateState } from "./useUpdate";
 import { promptUpdateIfNeeded } from "./updatePrompt";
 import { PromptModal } from "../ui/PromptModal";
+import { CloseConfirmDialog } from "./CloseConfirmDialog";
 import { DialogHost, isEditableTarget } from "../ui/DialogHost";
 import { ResizeHandle } from "../ui/ResizeHandle";
 import { ErrorBoundary } from "../ui/ErrorBoundary";
@@ -1713,6 +1714,7 @@ function AppShell() {
       <ContextMenu state={wsMenu} onClose={() => setWsMenu(null)} />
       <LazyAuthGate />
       <PromptModal />
+      <CloseConfirmDialog />
       <DialogHost />
     </div>
   );
