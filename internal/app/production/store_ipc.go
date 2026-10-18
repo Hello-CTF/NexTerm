@@ -219,6 +219,32 @@ type keyFileContentRequest struct {
 	Content string `json:"content"`
 }
 
+type desktopTrayDTO struct {
+	Enabled    bool `json:"enabled"`
+	Configured bool `json:"configured"`
+}
+
+type desktopTraySetRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+// DesktopCloseToTraySettingKey is a device-level setting ("1"/"0", vault-style)
+// controlling whether closing the desktop window hides it to the system tray.
+const DesktopCloseToTraySettingKey = "desktop.close_to_tray"
+
+// DesktopCloseToTray reads the close-to-tray preference. Absent key, unreadable
+// or malformed values all fall back to enabled=true (keep running in background).
+func DesktopCloseToTray(ctx context.Context, database *store.Store) (enabled, configured bool, err error) {
+	raw, found, err := database.SettingGet(ctx, DesktopCloseToTraySettingKey)
+	if err != nil {
+		return false, false, err
+	}
+	if !found {
+		return true, false, nil
+	}
+	return raw != "0", true, nil
+}
+
 func registerStoreCommands(dispatcher *ipc.Dispatcher, database *store.Store, hostKeys *productionHostKeyStore, dataDir string, desktop bool) error {
 	assetFromRow := func(row store.AssetRow) assetDTO { return productionAssetDTO(row) }
 	assetsFromRows := func(rows []store.AssetRow) []assetDTO {
@@ -464,6 +490,30 @@ func registerStoreCommands(dispatcher *ipc.Dispatcher, database *store.Store, ho
 					return nil, hostKeys.Remove(ctx, input.ID)
 				}
 				return nil, database.KnownHostRemove(ctx, input.ID)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "desktop_tray_get", func(ctx context.Context, _ *ipc.Call, _ struct{}) (desktopTrayDTO, error) {
+				if !desktop {
+					return desktopTrayDTO{}, ipc.NewError(ipc.CodeUnsupported, "托盘设置只在桌面端可用")
+				}
+				enabled, configured, err := DesktopCloseToTray(ctx, database)
+				return desktopTrayDTO{Enabled: enabled, Configured: configured}, err
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "desktop_tray_set", func(ctx context.Context, _ *ipc.Call, input desktopTraySetRequest) (desktopTrayDTO, error) {
+				if !desktop {
+					return desktopTrayDTO{}, ipc.NewError(ipc.CodeUnsupported, "托盘设置只在桌面端可用")
+				}
+				value := "0"
+				if input.Enabled {
+					value = "1"
+				}
+				if err := database.SettingSet(ctx, DesktopCloseToTraySettingKey, value); err != nil {
+					return desktopTrayDTO{}, err
+				}
+				return desktopTrayDTO{Enabled: input.Enabled, Configured: true}, nil
 			})
 		},
 	}
