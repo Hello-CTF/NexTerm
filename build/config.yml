@@ -10,7 +10,7 @@ info:
   version: "0.0.0"
 
 ios:
-  bundleID: "com.nexterm.desktop"
+  bundleID: "work.nexterm.app"
   displayName: "NexTerm"
   version: "0.0.0"
   company: "NexTerm contributors"

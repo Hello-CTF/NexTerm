@@ -5,7 +5,7 @@
     <key>CFBundleExecutable</key>
     <string>nexterm</string>
     <key>CFBundleIdentifier</key>
-    <string>com.nexterm.desktop</string>
+    <string>work.nexterm.app</string>
     <key>CFBundleName</key>
     <string>NexTerm</string>
     <key>CFBundleDisplayName</key>
@@ -70,6 +70,8 @@
     </dict>
     <key>NSFaceIDUsageDescription</key>
     <string>使用面容 ID 快速解锁 NexTerm 数据密钥</string>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <true/>
 
 
     <key>NSHumanReadableCopyright</key>
