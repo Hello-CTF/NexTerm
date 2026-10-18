@@ -2,14 +2,18 @@ package ssh
 
 import (
 	"context"
+	"encoding/hex"
 	"io/fs"
 	"net"
+	"strings"
 	"time"
 
 	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	transportssh "github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
+
+const sha256HexLength = 64
 
 type clientHost struct {
 	client *transportssh.Client
@@ -90,11 +94,31 @@ func (h *clientHost) Rename(ctx context.Context, from, to string) error {
 }
 
 func (h *clientHost) ChecksumSHA256(ctx context.Context, path string) (string, error) {
+	// Hashing through the remote shell avoids downloading the whole helper over
+	// SFTP just to validate a cache entry. Keep the SFTP implementation as a
+	// fallback for minimal targets without sha256sum.
+	stdout, exitCode, err := h.Run(ctx, "sha256sum -- "+quoteShell(path), probeTimeout)
+	if err == nil && exitCode == 0 {
+		if digest, ok := parseSHA256Output(stdout); ok {
+			return digest, nil
+		}
+	}
 	filesystem, err := h.filesystem(ctx)
 	if err != nil {
 		return "", err
 	}
 	return filesystem.Checksum(ctx, path, "sha256")
+}
+
+func parseSHA256Output(stdout string) (string, bool) {
+	fields := strings.Fields(stdout)
+	if len(fields) == 0 || len(fields[0]) != sha256HexLength {
+		return "", false
+	}
+	if _, err := hex.DecodeString(fields[0]); err != nil {
+		return "", false
+	}
+	return strings.ToLower(fields[0]), true
 }
 
 func (h *clientHost) DialExec(ctx context.Context, command string) (net.Conn, error) {

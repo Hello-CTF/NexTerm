@@ -106,6 +106,30 @@ func TestSpawnDaemonClosesExecOutputWhileHelperKeepsRunning(t *testing.T) {
 	}
 }
 
+func TestParseSHA256Output(t *testing.T) {
+	want := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	for _, test := range []struct {
+		name string
+		out  string
+		ok   bool
+	}{
+		{name: "coreutils", out: want + "  /tmp/helper\n", ok: true},
+		{name: "uppercase", out: strings.ToUpper(want) + "  /tmp/helper\n", ok: true},
+		{name: "malformed", out: "not-a-digest  /tmp/helper\n"},
+		{name: "empty", out: ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := parseSHA256Output(test.out)
+			if ok != test.ok {
+				t.Fatalf("parseSHA256Output(%q) ok = %v, want %v", test.out, ok, test.ok)
+			}
+			if test.ok && got != want {
+				t.Fatalf("parseSHA256Output(%q) = %q, want %q", test.out, got, want)
+			}
+		})
+	}
+}
+
 func TestSpawnDaemonReportsPreparationFailure(t *testing.T) {
 	for _, operation := range []string{"mkdir", "chmod"} {
 		t.Run(operation, func(t *testing.T) {
