@@ -135,6 +135,18 @@ export const systemApi = {
   insets: () => call<{ top: number; right: number; bottom: number; left: number }>("system_insets"),
 };
 
+export interface DesktopTrayDto {
+  enabled: boolean;
+  configured: boolean;
+}
+
+// Desktop tray preference (desktop builds only; the server assembly answers
+// CodeUnsupported): enabled=false means closing the window quits the app.
+export const desktopTrayApi = {
+  get: () => call<DesktopTrayDto>("desktop_tray_get"),
+  set: (enabled: boolean) => call<DesktopTrayDto>("desktop_tray_set", { enabled }),
+};
+
 export interface BiometricStatus {
   available: boolean;
   canEvaluate: boolean;
