@@ -2,6 +2,10 @@ package sync
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -21,6 +25,8 @@ const (
 	maxPushBatchBytes = 32 << 20
 	maxSyncAttempts   = 3
 	maxPullPages      = 10000
+	// Payload hashes are SHA-256 hex strings; this distinct value persists an undecryptable remote object's quarantine across sync rounds.
+	quarantinedPayloadHash = "undecryptable"
 )
 
 // maxPullBytes is the client-side per-page pull budget; tests may lower it temporarily to construct pagination scenarios.
@@ -56,10 +62,12 @@ func (report *SyncReport) hasUnresolvedRef(id string) bool {
 }
 
 type remoteSession struct {
-	key    string
-	userID string
-	client *remoteClient
-	dek    []byte
+	key            string
+	userID         string
+	client         *remoteClient
+	dek            []byte
+	envelopeHash   string
+	credentialHash string
 }
 
 // persistedSession is the persisted account sync session envelope (setting sync.link.session, enc:v1:
@@ -67,12 +75,63 @@ type remoteSession struct {
 // Security posture change: the user DEK is persisted for the first time (previously memory-only); these fields never go into logs
 // (aligned with the logSyncRound convention of logging counts only, never payloads).
 type persistedSession struct {
-	URL         string `json:"url"`
-	Username    string `json:"username"`
-	CookieToken string `json:"cookieToken"`
-	CSRFToken   string `json:"csrfToken"`
-	UserID      string `json:"userId"`
-	DEK         []byte `json:"dek"`
+	URL            string `json:"url"`
+	Username       string `json:"username"`
+	CookieToken    string `json:"cookieToken"`
+	CSRFToken      string `json:"csrfToken"`
+	UserID         string `json:"userId"`
+	DEK            []byte `json:"dek"`
+	EnvelopeHash   string `json:"envelopeHash,omitempty"`
+	CredentialHash string `json:"credentialHash,omitempty"`
+}
+
+func linkCredentialHash(config RemoteConfig, dek []byte) string {
+	mac := hmac.New(sha256.New, dek)
+	for _, field := range []string{config.URL, config.Username, config.Password} {
+		_, _ = mac.Write(binary.AppendUvarint(nil, uint64(len(field))))
+		_, _ = mac.Write([]byte(field))
+	}
+	if config.Insecure {
+		_, _ = mac.Write([]byte{1})
+	} else {
+		_, _ = mac.Write([]byte{0})
+	}
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func dekEnvelopeHash(envelopes *vault.UserDEKEnvelopes) string {
+	buf := make([]byte, 0, len(envelopes.DEKEnvelope)+len(envelopes.KDFSalt)+len(envelopes.KDFParams)+24)
+	for _, field := range [][]byte{envelopes.DEKEnvelope, envelopes.KDFSalt, []byte(envelopes.KDFParams)} {
+		buf = binary.AppendUvarint(buf, uint64(len(field)))
+		buf = append(buf, field...)
+	}
+	digest := sha256.Sum256(buf)
+	return hex.EncodeToString(digest[:])
+}
+
+// verifySessionDEK prevents an old in-memory or persisted DEK from writing new cloud state
+// after the account envelope changes. Unwrapping is needed only for a changed envelope.
+func (e *Engine) verifySessionDEK(ctx context.Context, config RemoteConfig, session *remoteSession) error {
+	envelopes, err := session.client.dekEnvelopes(ctx)
+	if err != nil {
+		return err
+	}
+	currentHash := dekEnvelopeHash(envelopes)
+	if session.envelopeHash == currentHash {
+		return nil
+	}
+	currentDEK, err := vault.UnwrapUserDEK(config.Password, envelopes.DEKEnvelope, envelopes.KDFSalt, envelopes.KDFParams)
+	if err != nil {
+		return err
+	}
+	matches := subtle.ConstantTimeCompare(currentDEK, session.dek) == 1
+	clear(currentDEK)
+	if !matches {
+		return ipc.NewError(ipc.CodeForbidden, "账号数据密钥已变化，请重新连接同步账号")
+	}
+	session.envelopeHash = currentHash
+	e.persistSession(ctx, config, session)
+	return nil
 }
 
 // Engine is the client engine of the v2 full-payload object protocol: the same local replica stays identical before and after login,
@@ -180,6 +239,14 @@ func (e *Engine) Sync(ctx context.Context, config RemoteConfig) (SyncReport, err
 			return report, err
 		}
 		userID = session.userID
+		if err := e.verifySessionDEK(ctx, config, session); err != nil {
+			if errors.Is(err, errSessionExpired) {
+				e.dropSession(session.key)
+				continue
+			}
+			e.logSyncRound(userID, report, err)
+			return report, err
+		}
 		conflict, err := e.syncOnce(ctx, session, &report)
 		if errors.Is(err, errSessionExpired) {
 			e.dropSession(session.key)
@@ -226,8 +293,12 @@ func (e *Engine) ensureSession(ctx context.Context, config RemoteConfig) (*remot
 	e.sessionMu.Lock()
 	cached := e.session
 	e.sessionMu.Unlock()
-	if cached != nil && cached.key == key {
+	if cached != nil && cached.key == key && subtle.ConstantTimeCompare(
+		[]byte(cached.credentialHash), []byte(linkCredentialHash(config, cached.dek))) == 1 {
 		return cached, nil
+	}
+	if cached != nil {
+		e.dropSession(cached.key)
 	}
 	client, err := newRemoteClient(config)
 	if err != nil {
@@ -262,7 +333,8 @@ func (e *Engine) establishSession(ctx context.Context, config RemoteConfig, clie
 		return nil, err
 	}
 	e.sessionMu.Lock()
-	e.session = &remoteSession{key: remoteConfigKey(config), userID: userID, client: client, dek: dek}
+	e.session = &remoteSession{key: remoteConfigKey(config), userID: userID, client: client, dek: dek,
+		envelopeHash: dekEnvelopeHash(envelopes), credentialHash: linkCredentialHash(config, dek)}
 	session := e.session
 	e.sessionMu.Unlock()
 	e.persistSession(ctx, config, session)
@@ -278,7 +350,7 @@ func (e *Engine) persistSession(ctx context.Context, config RemoteConfig, sessio
 	encoded, err := json.Marshal(persistedSession{
 		URL: config.URL, Username: config.Username,
 		CookieToken: session.client.cookieToken, CSRFToken: session.client.csrfToken,
-		UserID: session.userID, DEK: session.dek,
+		UserID: session.userID, DEK: session.dek, EnvelopeHash: session.envelopeHash, CredentialHash: session.credentialHash,
 	})
 	if err != nil {
 		e.logger.Warn("sync session persist failed", "error", err)
@@ -336,6 +408,10 @@ func (e *Engine) clearPersistedSession(ctx context.Context) {
 // restoreSession rebuilds the remote session from a persisted session: me() verifies the cookie is still valid and the identity matches the saved one,
 // caching the session on success (no re-login, no DEK envelope unwrap); on failure the caller decides whether to clear it or fall back to password re-login.
 func (e *Engine) restoreSession(ctx context.Context, config RemoteConfig, persisted *persistedSession) (*remoteSession, error) {
+	if persisted.CredentialHash == "" || subtle.ConstantTimeCompare(
+		[]byte(persisted.CredentialHash), []byte(linkCredentialHash(config, persisted.DEK))) != 1 {
+		return nil, errSessionExpired
+	}
 	client, err := newRemoteClient(config)
 	if err != nil {
 		return nil, err
@@ -352,7 +428,8 @@ func (e *Engine) restoreSession(ctx context.Context, config RemoteConfig, persis
 	dek := make([]byte, len(persisted.DEK))
 	copy(dek, persisted.DEK)
 	e.sessionMu.Lock()
-	e.session = &remoteSession{key: remoteConfigKey(config), userID: userID, client: client, dek: dek}
+	e.session = &remoteSession{key: remoteConfigKey(config), userID: userID, client: client, dek: dek,
+		envelopeHash: persisted.EnvelopeHash, credentialHash: persisted.CredentialHash}
 	session := e.session
 	e.sessionMu.Unlock()
 	return session, nil
@@ -365,6 +442,18 @@ func (e *Engine) dropSession(key string) {
 		clear(e.session.dek)
 		e.session = nil
 	}
+}
+
+func (e *Engine) resetSession() {
+	e.opMu.Lock()
+	defer e.opMu.Unlock()
+	e.sessionMu.Lock()
+	defer e.sessionMu.Unlock()
+	if e.session != nil {
+		clear(e.session.dek)
+		e.session = nil
+	}
+	e.pending = map[string]*pendingLinkLogin{}
 }
 
 func (e *Engine) hasSession() bool {
@@ -433,6 +522,10 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 			return false, err
 		}
 		serverEntry, onServer := server[id]
+		if found && statePayloadHash == quarantinedPayloadHash && onServer && stateBlobHash == serverEntry.BlobHash {
+			// A matching undecryptable cloud object needs an explicit repair decision. A changed blob is pulled and evaluated above.
+			continue
+		}
 		if found && statePayloadHash == payloadHash && onServer && stateBlobHash == serverEntry.BlobHash {
 			continue
 		}
@@ -501,7 +594,9 @@ func (e *Engine) pullAllAndApply(ctx context.Context, session *remoteSession, cu
 		}
 		returned := 0
 		for _, object := range pullResponse.Objects {
-			e.applyRemoteObject(ctx, session.userID, object, session.dek, report, optIn)
+			if err := e.applyRemoteObject(ctx, session.userID, object, session.dek, report, optIn); err != nil {
+				return false, err
+			}
 			delete(remaining, object.ID)
 			returned++
 		}

@@ -21,7 +21,10 @@ export interface CompareRowView {
   kind: string;
   name: string;
   state: CompareRowState;
+  hasLocalRepairCopy?: boolean;
 }
+
+export type UndecryptableAction = "retry" | "restore-local" | "clear-cloud";
 
 export const COMPARE_KIND_LABELS: Record<string, string> = {
   group: "分组",
@@ -54,7 +57,7 @@ export function compareRowLabel(state: CompareRowState): { text: string; tone: s
     case "remote-deleted":
       return { text: "云端已删", tone: "nx-badge-amber", hint: "这条在云端已被删除。" };
     case "remote-undecryptable":
-      return { text: "无法解密", tone: "nx-badge-amber", hint: "云端对象与本机数据密钥不匹配或已损坏；本机同 ID 对象可在下次同步覆盖修复。" };
+      return { text: "无法解密", tone: "nx-badge-amber", hint: "云端对象与当前数据密钥不匹配或已损坏；自动同步已跳过此对象，修复需要手动确认。" };
   }
 }
 
@@ -71,7 +74,12 @@ export function compareSummary(rows: CompareRowView[] | null): string {
 
 // CompareDetails is the "compare details" collapsible block: title button + summary + row list (diffs first, guaranteed by the data side).
 // rows null means no data yet (reading); error true hides the reading placeholder (the error is already presented in the alert area).
-export function CompareDetails({ rows, error }: { rows: CompareRowView[] | null; error?: boolean }) {
+export function CompareDetails({ rows, error, onUndecryptableAction, actionsBusy }: {
+  rows: CompareRowView[] | null;
+  error?: boolean;
+  onUndecryptableAction?: (id: string, action: UndecryptableAction) => void;
+  actionsBusy?: boolean;
+}) {
   const panelId = useId();
   const [open, setOpen] = useState(false);
   return (
@@ -113,6 +121,16 @@ export function CompareDetails({ rows, error }: { rows: CompareRowView[] | null;
                       <span className="nx-hint shrink-0 text-[11px]">{COMPARE_KIND_LABELS[r.kind] ?? r.kind}</span>
                     )}
                     <span className={`nx-badge shrink-0 ${label.tone}`}>{label.text}</span>
+                    {r.state === "remote-undecryptable" && onUndecryptableAction && (
+                      <span className="flex shrink-0 flex-wrap items-center gap-1.5">
+                        <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" disabled={actionsBusy}
+                          onClick={() => onUndecryptableAction(r.id, "retry")}>重试读取</button>
+                        <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" disabled={actionsBusy}
+                          onClick={() => onUndecryptableAction(r.id, r.hasLocalRepairCopy ? "restore-local" : "clear-cloud")}>
+                          {r.hasLocalRepairCopy ? "用本机副本修复" : "清除云端副本"}
+                        </button>
+                      </span>
+                    )}
                   </div>
                 );
               })}

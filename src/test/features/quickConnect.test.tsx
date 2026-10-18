@@ -277,6 +277,12 @@ describe("QuickConnect rendering and recency/frequency ordering", () => {
 });
 
 describe("QuickConnect asset search", () => {
+  it("shows the username and target for a uniquely named host", async () => {
+    const view = await mountSettled({ onClose: vi.fn() });
+    const row = options(view.container).find((option) => option.textContent?.includes("web-01"));
+    expect(row?.textContent).toContain("root@10.0.0.8:22");
+  });
+
   it("shows host identities for same-name assets even while one is connecting", async () => {
     mocks.list.mockResolvedValue([
       { ...WEB, name: "shared" },

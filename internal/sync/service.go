@@ -371,7 +371,13 @@ func (s *Service) LinkGet(ctx context.Context) (Link, error) {
 
 func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (LinkResult, error) {
 	s.settingsMu.Lock()
-	defer s.settingsMu.Unlock()
+	notifyStatus := false
+	defer func() {
+		s.settingsMu.Unlock()
+		if notifyStatus {
+			_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+		}
+	}()
 	if initialized, _ := s.vaultStatus(); !initialized {
 		return LinkResult{}, ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化，无法安全保存同步链接设置；请先完成凭据保护初始化")
 	}
@@ -388,7 +394,7 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (LinkResult, err
 			return LinkResult{}, ipc.WrapError(ipc.CodeInternal, "同步链接设置损坏", err)
 		}
 	}
-	prevURL, prevUsername := secret.URL, secret.Username
+	previous := secret
 	if patch.URL != nil {
 		secret.URL = strings.TrimSpace(*patch.URL)
 	}
@@ -401,10 +407,8 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (LinkResult, err
 	if patch.Insecure != nil {
 		secret.Insecure = *patch.Insecure
 	}
-	// A link identity change logs the old account out: the persisted session belongs to the old identity and is cleared immediately (a successful reconnect rewrites it).
-	if secret.URL != prevURL || secret.Username != prevUsername {
-		s.engine.clearPersistedSession(ctx)
-	}
+	changed := secret.URL != previous.URL || secret.Username != previous.Username ||
+		secret.Password != previous.Password || secret.Insecure != previous.Insecure
 	encoded, err := json.Marshal(secret)
 	if err != nil {
 		return LinkResult{}, ipc.WrapError(ipc.CodeInternal, "无法编码同步链接设置", err)
@@ -416,6 +420,13 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (LinkResult, err
 	if err := s.store.SettingSet(ctx, settingLink, protected); err != nil {
 		return LinkResult{}, err
 	}
+	if changed {
+		// The new link is already saved. A failed login must not leave the old
+		// account or old password's cookie available to desktop commands.
+		s.engine.resetSession()
+		s.engine.clearPersistedSession(ctx)
+	}
+	notifyStatus = true
 	s.wake()
 	result := LinkResult{Link: s.linkView(secret)}
 	if !result.Link.IsConfigured() {
@@ -469,7 +480,13 @@ func remoteConfigFromSecret(secret linkSecret) RemoteConfig {
 // LinkMFA submits a TOTP code to complete two-step login onboarding; the ticket is issued by the previous LinkSet's mfa_required return.
 func (s *Service) LinkMFA(ctx context.Context, code string) (LinkResult, error) {
 	s.settingsMu.Lock()
-	defer s.settingsMu.Unlock()
+	notifyStatus := false
+	defer func() {
+		s.settingsMu.Unlock()
+		if notifyStatus {
+			_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+		}
+	}()
 	secret, err := s.linkSecret(ctx)
 	if err != nil {
 		return LinkResult{}, err
@@ -483,6 +500,7 @@ func (s *Service) LinkMFA(ctx context.Context, code string) (LinkResult, error) 
 	}
 	s.recordProbe(ctx, nil)
 	s.wake()
+	notifyStatus = true
 	result := LinkResult{Link: s.linkView(secret)}
 	result.applyConnect(connect)
 	return result, nil
@@ -491,7 +509,13 @@ func (s *Service) LinkMFA(ctx context.Context, code string) (LinkResult, error) 
 // LinkResetPassword submits a new password to complete forced-password-change onboarding; on success the saved link password is updated to the new password.
 func (s *Service) LinkResetPassword(ctx context.Context, newPassword string) (LinkResult, error) {
 	s.settingsMu.Lock()
-	defer s.settingsMu.Unlock()
+	notifyStatus := false
+	defer func() {
+		s.settingsMu.Unlock()
+		if notifyStatus {
+			_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+		}
+	}()
 	secret, err := s.linkSecret(ctx)
 	if err != nil {
 		return LinkResult{}, err
@@ -509,6 +533,7 @@ func (s *Service) LinkResetPassword(ctx context.Context, newPassword string) (Li
 	}
 	s.recordProbe(ctx, nil)
 	s.wake()
+	notifyStatus = true
 	result := LinkResult{Link: s.linkView(secret)}
 	result.applyConnect(connect)
 	return result, nil
@@ -669,7 +694,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	s.engine.sessionMu.Lock()
 	session := s.engine.session
 	s.engine.sessionMu.Unlock()
-	if session != nil {
+	if session != nil && link.IsConfigured() && session.key == link.URL+"\x00"+link.Username {
 		status.LoggedIn = true
 		status.UserID = session.userID
 		cursor, err := s.engine.loadCursor(ctx, session.userID)

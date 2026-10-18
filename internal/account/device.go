@@ -8,6 +8,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gen/field"
 	"gorm.io/gorm"
 )
 
@@ -73,10 +74,15 @@ func (a *Accounts) ListDevices(ctx context.Context, userID string) ([]*Device, e
 }
 
 func (a *Accounts) TouchDevice(ctx context.Context, deviceID string) error {
-	userDevice := query.Use(a.db).UserDevice
+	return touchDeviceAt(ctx, a.db, deviceID, a.now())
+}
+
+func touchDeviceAt(ctx context.Context, db *gorm.DB, deviceID string, now int64) error {
+	userDevice := query.Use(db).UserDevice
 	_, err := userDevice.WithContext(ctx).
 		Where(userDevice.ID.Eq(deviceID), userDevice.RevokedAt.IsNull()).
-		UpdateColumns(map[string]any{"last_seen_at": a.now()})
+		Where(field.Or(userDevice.LastSeenAt.IsNull(), userDevice.LastSeenAt.Lt(now))).
+		UpdateColumns(map[string]any{"last_seen_at": now})
 	if err != nil {
 		return dbError(err)
 	}

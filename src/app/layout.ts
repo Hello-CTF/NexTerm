@@ -971,7 +971,8 @@ function applyToStore(l: PersistedLayout) {
     useUi.setState({
       leftOpen: l.leftOpen,
       leftMode: l.leftMode,
-      rightOpen: l.rightOpen,
+      // Panel visibility is a device-local preference; a cloud layout must not reopen a panel the user closed here.
+      rightOpen: state.rightOpen,
       leftWidth: l.leftWidth,
       rightWidth: l.rightWidth,
       workspaces: withRuntime.workspaces,

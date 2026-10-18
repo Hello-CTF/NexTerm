@@ -3,10 +3,13 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/hitl"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
@@ -51,6 +54,7 @@ func (b hitlStoreBridge) ListRuns(ctx context.Context) ([]hitl.RunBlob, error) {
 const (
 	journalFlushWindow = 150 * time.Millisecond
 	journalFlushBytes  = 32 << 10
+	journalRetryMax    = 3 * time.Second
 )
 
 func journalBatchable(eventType string) bool {
@@ -66,9 +70,14 @@ type journalStream struct {
 	stream       Stream
 	journal      RunStore
 	runID        string
+	flushContext context.Context
 	pending      []Event
 	pendingBytes int
 	timer        *time.Timer
+	retryDelay   time.Duration
+	flushWarned  bool
+	closed       bool
+	prepared     bool
 }
 
 func WithRunJournal(stream Stream, journal RunStore, runID string) Stream {
@@ -76,8 +85,27 @@ func WithRunJournal(stream Stream, journal RunStore, runID string) Stream {
 }
 
 func (s *journalStream) Send(ctx context.Context, event Event) error {
+	return s.send(ctx, nil, event, nil)
+}
+
+// SendTerminal persists the terminal event before updating the run, then
+// delivers it to the live stream after the status update.
+func (s *journalStream) SendTerminal(ctx, deliveryParent context.Context, event Event, beforeDeliver func()) error {
+	return s.send(ctx, deliveryParent, event, beforeDeliver)
+}
+
+func (s *journalStream) send(ctx, deliveryParent context.Context, event Event, beforeDeliver func()) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return errors.New("AI 事件流已关闭")
+	}
+	if s.flushContext == nil {
+		// Keep the run's owner scope after the request or job is canceled.
+		s.flushContext = context.WithoutCancel(ctx)
+	} else if ipc.OwnerID(ctx) != ipc.OwnerID(s.flushContext) {
+		return errors.New("AI 事件流账号上下文不一致")
+	}
 	if journalBatchable(event.Type) {
 		s.bufferLocked(event)
 		if s.pendingBytes >= journalFlushBytes {
@@ -86,17 +114,55 @@ func (s *journalStream) Send(ctx context.Context, event Event) error {
 		return nil
 	}
 	if err := s.flushLocked(ctx); err != nil {
-		return err
+		s.bufferLocked(event)
+		if beforeDeliver != nil {
+			beforeDeliver()
+		}
+		return s.sendTerminalFallbackLocked(ctx, deliveryParent, event, err)
 	}
-	return s.sendLocked(ctx, event)
+	journaled, err := s.sendLocked(ctx, deliveryParent, event, beforeDeliver)
+	if err != nil && !journaled {
+		s.bufferLocked(event)
+		if beforeDeliver != nil {
+			beforeDeliver()
+		}
+		return s.sendTerminalFallbackLocked(ctx, deliveryParent, event, err)
+	}
+	return err
 }
 
 func (s *journalStream) bufferLocked(event Event) {
-	if s.timer == nil {
-		s.timer = time.AfterFunc(journalFlushWindow, s.flushTimeout)
-	}
 	s.pending = append(s.pending, event)
 	s.pendingBytes += journalEventBytes(event)
+	s.scheduleFlushLocked()
+}
+
+func (s *journalStream) scheduleFlushLocked() {
+	if s.closed || s.timer != nil || len(s.pending) == 0 {
+		return
+	}
+	delay := journalFlushWindow
+	if s.retryDelay > 0 {
+		delay = s.retryDelay
+	}
+	s.timer = time.AfterFunc(delay, s.flushTimeout)
+}
+
+type terminalFallbackError struct{ cause error }
+
+func (e *terminalFallbackError) Error() string { return e.cause.Error() }
+func (e *terminalFallbackError) Unwrap() error { return e.cause }
+
+func (s *journalStream) sendTerminalFallbackLocked(ctx, deliveryParent context.Context, event Event, journalErr error) error {
+	if event.Type != "done" && event.Type != "error" && event.Type != "canceled" {
+		return journalErr
+	}
+	// An unsequenced terminal event can settle the live UI while the journal retries.
+	event.Seq = 0
+	if err := s.deliverLocked(ctx, deliveryParent, event); err != nil {
+		return errors.Join(journalErr, err)
+	}
+	return &terminalFallbackError{cause: journalErr}
 }
 
 func journalEventBytes(event Event) int {
@@ -111,7 +177,20 @@ func journalEventBytes(event Event) int {
 func (s *journalStream) flushTimeout() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_ = s.flushLocked(context.Background())
+	if s.closed {
+		return
+	}
+	ctx, cancel := s.flushContextLocked()
+	defer cancel()
+	_ = s.flushLocked(ctx)
+}
+
+func (s *journalStream) flushContextLocked() (context.Context, context.CancelFunc) {
+	base := s.flushContext
+	if base == nil {
+		base = context.Background()
+	}
+	return context.WithTimeout(base, 5*time.Second)
 }
 
 // flushLocked persists every buffered event to the journal first, then delivers each to
@@ -135,6 +214,16 @@ func (s *journalStream) flushLocked(ctx context.Context) error {
 		})
 		if err != nil {
 			s.retainLocked(merged[index:])
+			if s.retryDelay == 0 {
+				s.retryDelay = 2 * journalFlushWindow
+			} else {
+				s.retryDelay = min(2*s.retryDelay, journalRetryMax)
+			}
+			if !s.flushWarned {
+				slog.Warn("AI 事件日志写入失败", "job", s.runID, "error", err)
+				s.flushWarned = true
+			}
+			s.scheduleFlushLocked()
 			return err
 		}
 		event.Seq = seq
@@ -142,6 +231,8 @@ func (s *journalStream) flushLocked(ctx context.Context) error {
 	}
 	s.pending = nil
 	s.pendingBytes = 0
+	s.retryDelay = 0
+	s.flushWarned = false
 	return nil
 }
 
@@ -153,16 +244,28 @@ func (s *journalStream) retainLocked(events []Event) {
 	}
 }
 
-func (s *journalStream) sendLocked(ctx context.Context, event Event) error {
+func (s *journalStream) sendLocked(ctx, deliveryParent context.Context, event Event, beforeDeliver func()) (bool, error) {
 	seq, err := s.journal.RunAppendEvent(ctx, s.runID, event.Type, func(seq uint64) ([]byte, error) {
 		event.Seq = seq
 		return json.Marshal(event)
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
 	event.Seq = seq
-	return s.stream.Send(ctx, event)
+	if beforeDeliver != nil {
+		beforeDeliver()
+	}
+	return true, s.deliverLocked(ctx, deliveryParent, event)
+}
+
+func (s *journalStream) deliverLocked(ctx, deliveryParent context.Context, event Event) error {
+	if deliveryParent == nil {
+		return s.stream.Send(ctx, event)
+	}
+	liveCtx, cancel := context.WithTimeout(deliveryParent, 5*time.Second)
+	defer cancel()
+	return s.stream.Send(liveCtx, event)
 }
 
 func mergeJournalEvents(events []Event) []Event {
@@ -191,28 +294,64 @@ func mergeJournalEvents(events []Event) []Event {
 func (s *journalStream) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	flushErr := s.flushLocked(context.Background())
+	s.closed = true
+	flushErr := s.flushAtCloseLocked()
 	closeErr := s.stream.Close()
-	if flushErr != nil {
-		return flushErr
-	}
-	return closeErr
+	return errors.Join(flushErr, closeErr)
 }
 
 func (s *journalStream) CloseGracefully() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	flushErr := s.flushLocked(context.Background())
+	s.closed = true
+	flushErr := s.flushAtCloseLocked()
 	var closeErr error
 	if graceful, ok := s.stream.(interface{ CloseGracefully() error }); ok {
 		closeErr = graceful.CloseGracefully()
 	} else {
 		closeErr = s.stream.Close()
 	}
-	if flushErr != nil {
-		return flushErr
+	return errors.Join(flushErr, closeErr)
+}
+
+// FlushPending finishes the journal before a run's status is marked terminal.
+// The downstream stream stays open until the status update has completed.
+func (s *journalStream) FlushPending() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	s.prepared = true
+	return s.flushForCloseLocked()
+}
+
+func (s *journalStream) flushAtCloseLocked() error {
+	if !s.prepared {
+		return s.flushForCloseLocked()
 	}
-	return closeErr
+	ctx, cancel := s.flushContextLocked()
+	defer cancel()
+	return s.flushLocked(ctx)
+}
+
+func (s *journalStream) flushForCloseLocked() error {
+	ctx, cancel := s.flushContextLocked()
+	defer cancel()
+	for {
+		err := s.flushLocked(ctx)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return errors.Join(err, ctx.Err())
+		}
+		timer := time.NewTimer(s.retryDelay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return errors.Join(err, ctx.Err())
+		}
+	}
 }
 
 type RunDTO struct {

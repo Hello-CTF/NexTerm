@@ -204,6 +204,26 @@ func (c *remoteClient) push(ctx context.Context, knownHead string, objects []Wir
 	}
 }
 
+func (c *remoteClient) deleteObject(ctx context.Context, knownHead, id, blobHash string) (*DeleteResponse, error) {
+	var response DeleteResponse
+	status, rpcErr, err := c.post(ctx, "/sync/v2/delete", DeleteRequest{
+		Protocol: ProtocolVersion, KnownHead: knownHead, ID: id, BlobHash: blobHash,
+	}, &response, true)
+	if err != nil {
+		return nil, err
+	}
+	switch status {
+	case http.StatusOK:
+		return &response, nil
+	case http.StatusUnauthorized:
+		return nil, errSessionExpired
+	case http.StatusConflict:
+		return nil, errHeadMismatch
+	default:
+		return nil, remoteStatusError(status, rpcErr)
+	}
+}
+
 func (c *remoteClient) pull(ctx context.Context, sinceSeq int64, ids []string, maxBytes int64) (*PullResponse, error) {
 	var response PullResponse
 	status, rpcErr, err := c.post(ctx, "/sync/v2/pull", PullRequest{

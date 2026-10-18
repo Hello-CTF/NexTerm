@@ -23,7 +23,7 @@ func TestObjectHandlerRequiresUserIdentity(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	handler := NewObjectHandler(db.GORM(), nil)
-	for _, path := range []string{"/sync/v2/push", "/sync/v2/pull", "/sync/v2/ids"} {
+	for _, path := range []string{"/sync/v2/push", "/sync/v2/delete", "/sync/v2/pull", "/sync/v2/ids"} {
 		request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader([]byte(`{"protocol":2}`)))
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, request)
@@ -119,6 +119,35 @@ func TestObjectHandlerProtocolGateAndConflict(t *testing.T) {
 	}
 	if ids.Unchanged || len(ids.Entries) != 1 {
 		t.Fatalf("stale known_head response=%+v", ids)
+	}
+
+	deleteRequest := DeleteRequest{Protocol: ProtocolVersion, KnownHead: pushed.Head, ID: "obj-1", BlobHash: hashBlobHex([]byte("x"))}
+	response = post("/sync/v2/delete", DeleteRequest{Protocol: 1, KnownHead: pushed.Head, ID: "obj-1", BlobHash: deleteRequest.BlobHash})
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unsupported delete protocol status=%d", response.Code)
+	}
+	response = post("/sync/v2/delete", DeleteRequest{Protocol: ProtocolVersion, KnownHead: pushed.Head, ID: "obj-1", BlobHash: hashBlobHex([]byte("different"))})
+	if response.Code != http.StatusConflict {
+		t.Fatalf("stale delete hash status=%d", response.Code)
+	}
+	response = post("/sync/v2/delete", deleteRequest)
+	if response.Code != http.StatusOK {
+		t.Fatalf("delete status=%d body=%s", response.Code, response.Body.String())
+	}
+	var deleted DeleteResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &deleted); err != nil {
+		t.Fatal(err)
+	}
+	if !deleted.Deleted || deleted.Head == pushed.Head || deleted.MaxSeq != 2 {
+		t.Fatalf("delete response=%+v", deleted)
+	}
+	response = post("/sync/v2/ids", IDsRequest{Protocol: ProtocolVersion})
+	ids = IDsResponse{}
+	if err := json.Unmarshal(response.Body.Bytes(), &ids); err != nil {
+		t.Fatal(err)
+	}
+	if len(ids.Entries) != 0 || ids.Head != deleted.Head || ids.MaxSeq != 2 {
+		t.Fatalf("ids after delete=%+v", ids)
 	}
 }
 

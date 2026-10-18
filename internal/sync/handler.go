@@ -68,6 +68,20 @@ type IDsResponse struct {
 	Unchanged bool      `json:"unchanged,omitempty"`
 }
 
+type DeleteRequest struct {
+	Protocol  int    `json:"protocol"`
+	KnownHead string `json:"known_head"`
+	ID        string `json:"id"`
+	BlobHash  string `json:"blob_hash"`
+}
+
+type DeleteResponse struct {
+	Protocol int    `json:"protocol"`
+	Head     string `json:"head"`
+	MaxSeq   int64  `json:"max_seq"`
+	Deleted  bool   `json:"deleted"`
+}
+
 // ObjectHandler is the HTTP entry of the server-side blind store: it only recognizes the session identity, never interprets object content, and never records object details.
 type ObjectHandler struct {
 	store  *objectStore
@@ -100,9 +114,37 @@ func (h *ObjectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.servePull(w, r, userID)
 	case "/sync/v2/ids":
 		h.serveIDs(w, r, userID)
+	case "/sync/v2/delete":
+		h.serveDelete(w, r, userID)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (h *ObjectHandler) serveDelete(w http.ResponseWriter, r *http.Request, userID string) {
+	var request DeleteRequest
+	if !decodeSyncRequest(w, r, &request) {
+		return
+	}
+	if request.Protocol != ProtocolVersion {
+		writeSyncError(w, http.StatusBadRequest, ipc.NewError(ipc.CodeUnsupported,
+			fmt.Sprintf("不支持的同步协议版本 %d（当前支持 %d）", request.Protocol, ProtocolVersion)))
+		return
+	}
+	head, maxSeq, err := h.store.deleteObject(r.Context(), userID, request.ID, request.KnownHead, request.BlobHash)
+	if errors.Is(err, errHeadMismatch) {
+		writeSyncError(w, http.StatusConflict, ipc.NewError(ipc.CodeForbidden,
+			"云端对象已变化，请重新获取同步清单后再确认清除"))
+		return
+	}
+	if err != nil {
+		h.logger.Warn("sync delete failed", "user", userID, "error", err)
+		writeSyncError(w, syncErrorStatus(err), err)
+		return
+	}
+	h.logger.Info("sync delete", "user", userID, "max_seq", maxSeq)
+	_ = ipc.Emit(r.Context(), h.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: userID})
+	writeSyncJSON(w, http.StatusOK, DeleteResponse{Protocol: ProtocolVersion, Head: head, MaxSeq: maxSeq, Deleted: true})
 }
 
 func (h *ObjectHandler) servePush(w http.ResponseWriter, r *http.Request, userID string) {

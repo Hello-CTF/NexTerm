@@ -31,12 +31,11 @@ func newDatabaseTestInstance(t *testing.T, unlocked bool) *testInstance {
 	if _, err := db.AssetEnsureBuiltinLocal(ctx); err != nil {
 		t.Fatal(err)
 	}
-	credentialVault := vault.Load(ctx, db)
+	var credentialVault *vault.Vault
 	if unlocked {
-		if err := credentialVault.InitMaster(ctx, "sync-test-master"); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(credentialVault.Lock)
+		credentialVault = newSyncTestVault(t, db, "")
+	} else {
+		credentialVault = vault.Load(ctx, db)
 	}
 	return &testInstance{db: db, vault: credentialVault, service: New(db, credentialVault, WithMetadata("test", true))}
 }
@@ -69,6 +68,33 @@ func TestDatabaseObjectStorePushPullAndHeadConflict(t *testing.T) {
 	entries, _, _, err := objectStore.idList(ctx, userID)
 	if err != nil || len(entries) != 2 || entries[0].BlobHash != hashBlobHex([]byte("blob-a")) || entries[1].BlobHash != hashBlobHex([]byte("blob-b")) {
 		t.Fatalf("entries=%+v err=%v", entries, err)
+	}
+}
+
+func TestDatabaseObjectStoreClearKeepsSequenceWatermark(t *testing.T) {
+	db := newDatabaseSyncStore(t)
+	ctx := context.Background()
+	userID := createDatabaseSyncUser(t, ctx, db)
+	objectStore := &objectStore{db: db.GORM()}
+	_, _, head, _, err := objectStore.push(ctx, userID, genesisHead(userID), []WireObject{{ID: "opaque", Blob: []byte("opaque-data")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deletedHead, maxSeq, err := objectStore.deleteObject(ctx, userID, "opaque", head, hashBlobHex([]byte("opaque-data")))
+	if err != nil || maxSeq != 2 {
+		t.Fatalf("clear maxSeq=%d err=%v", maxSeq, err)
+	}
+	entries, listedHead, listedMax, err := objectStore.idList(ctx, userID)
+	if err != nil || len(entries) != 0 || listedHead != deletedHead || listedMax != 2 {
+		t.Fatalf("cleared blob listed: entries=%+v maxSeq=%d err=%v", entries, listedMax, err)
+	}
+	pulled, observedHead, pulledMax, nextSeq, done, err := objectStore.pull(ctx, userID, 1, []string{"opaque"}, 0)
+	if err != nil || len(pulled) != 0 || observedHead != deletedHead || pulledMax != 2 || nextSeq != 2 || !done {
+		t.Fatalf("cursor after clear: objects=%+v maxSeq=%d nextSeq=%d done=%v err=%v", pulled, pulledMax, nextSeq, done, err)
+	}
+	_, _, _, pushedSeq, err := objectStore.push(ctx, userID, deletedHead, []WireObject{{ID: "new", Blob: []byte("new-data")}})
+	if err != nil || pushedSeq != 3 {
+		t.Fatalf("push reused cleared seq: maxSeq=%d err=%v", pushedSeq, err)
 	}
 }
 

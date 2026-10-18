@@ -19,12 +19,17 @@ const mocks = vi.hoisted(() => {
     collectCredentials: vi.fn(),
     collectKnownHosts: vi.fn(),
     collectAIProfiles: vi.fn(),
+    collectAIPermission: vi.fn(),
+    collectAIGrants: vi.fn(),
+    collectPreferences: vi.fn(),
     kindOptInGet: vi.fn(),
     kindOptInSet: vi.fn(),
     applyObjects: vi.fn(),
     syncIds: vi.fn(),
     syncPull: vi.fn(),
     syncPush: vi.fn(),
+    syncDelete: vi.fn(),
+    ask: vi.fn(),
     toast: vi.fn(),
   };
 });
@@ -43,6 +48,9 @@ vi.mock("../ipc/commands", () => ({
     collectCredentials: mocks.collectCredentials,
     collectKnownHosts: mocks.collectKnownHosts,
     collectAIProfiles: mocks.collectAIProfiles,
+    collectAIPermission: mocks.collectAIPermission,
+    collectAIGrants: mocks.collectAIGrants,
+    collectPreferences: mocks.collectPreferences,
     kindOptInGet: mocks.kindOptInGet,
     kindOptInSet: mocks.kindOptInSet,
   },
@@ -51,7 +59,7 @@ vi.mock("../ipc/commands", () => ({
   terminalApi: {},
   vaultApi: {},
 }));
-vi.mock("../ui/dialogs", () => ({ ask: vi.fn() }));
+vi.mock("../ui/dialogs", () => ({ ask: mocks.ask }));
 
 vi.mock("../ipc/authApi", async (importOriginal) => {
   const original = await importOriginal<typeof import("../ipc/authApi")>();
@@ -84,6 +92,7 @@ vi.mock("../ipc/authApi", async (importOriginal) => {
       ids: mocks.syncIds,
       pull: mocks.syncPull,
       push: mocks.syncPush,
+      deleteObject: mocks.syncDelete,
     },
   };
 });
@@ -132,6 +141,15 @@ async function remoteFixtureWire(id: string, kind: import("../features/auth/cryp
   return { id, seq, blob: bytesToBase64(await sealSyncObject(DEK, base64ToBytes(fixture), id, kind)) };
 }
 
+async function seedUndecryptableCloudOnly(id: string): Promise<void> {
+  const { sealSyncObject, bytesToBase64, utf8Bytes } = await import("../features/auth/crypto");
+  const blob = bytesToBase64(await sealSyncObject(new Uint8Array(32).fill(8), utf8Bytes(JSON.stringify({ id })), id, "asset"));
+  mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id, seq: 1, blob_hash: "hash-1" }], head: "head-1", max_seq: 1 });
+  mocks.syncPull.mockResolvedValue({
+    protocol: 2, objects: [{ id, seq: 1, blob }], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true,
+  });
+}
+
 async function openPushed(object: { id: string; blob: string }, kind: import("../features/auth/crypto").SyncObjectKind): Promise<Record<string, unknown>> {
   const { openSyncObject, base64ToBytes } = await import("../features/auth/crypto");
   const plaintext = await openSyncObject(DEK, base64ToBytes(object.blob), object.id, kind);
@@ -172,10 +190,14 @@ beforeEach(() => {
   mocks.collectCredentials.mockResolvedValue({ credentials: [], hasMore: false });
   mocks.collectKnownHosts.mockResolvedValue({ knownHosts: [], hasMore: false });
   mocks.collectAIProfiles.mockResolvedValue({ profiles: [], hasMore: false });
+  mocks.collectAIPermission.mockResolvedValue({ id: "", mode: "", dangerRules: [], updatedAt: 0, found: false });
+  mocks.collectAIGrants.mockResolvedValue({ grants: [], rules: [], modes: [] });
+  mocks.collectPreferences.mockResolvedValue([]);
   mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
   mocks.applyObjects.mockResolvedValue({ applied: 0, identical: 0, skipped: 0, objects: [] });
   mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-0", max_seq: 0 });
   mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [], head: "head-0", max_seq: 0, next_seq: 0, cursor_done: true });
+  mocks.ask.mockResolvedValue(true);
   seedAuthed();
 });
 
@@ -183,6 +205,7 @@ afterEach(() => {
   mounted?.unmount();
   mounted = undefined;
   useAuth.setState({ user: null, dek: null, gate: "ready", pendingRecoveryKey: null, error: null, status: null });
+  vi.unstubAllGlobals();
 });
 
 describe("M141 collect consumption: complete local copies enter the push set (P1-1)", () => {
@@ -300,7 +323,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
 
-  it("allows the local object with the same ID to overwrite after isolating a cloud object encrypted with an old key", async () => {
+  it("keeps a same-ID local copy out of automatic sync when the cloud object cannot be decrypted", async () => {
     mocks.collectAssets.mockResolvedValue({
       assets: [
         {
@@ -316,37 +339,52 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
       seq: 1,
       blob: bytesToBase64(await sealSyncObject(new Uint8Array(32).fill(8), utf8Bytes('{"id":"a-1","name":"stale","updatedAt":1}'), "a-1", "asset")),
     };
-    let repairedBlob: string | null = null;
     mocks.syncIds.mockImplementation(async (knownHead?: string) => {
-      const head = repairedBlob ? "head-2" : "head-1";
-      if (knownHead === head) return { protocol: 2, unchanged: true, head, max_seq: repairedBlob ? 2 : 1 };
-      return { protocol: 2, entries: [{ id: "a-1", seq: repairedBlob ? 2 : 1, blob_hash: repairedBlob ? "repaired" : "stale" }], head, max_seq: repairedBlob ? 2 : 1 };
+      if (knownHead === "head-1") return { protocol: 2, unchanged: true, head: "head-1", max_seq: 1 };
+      return { protocol: 2, entries: [{ id: "a-1", seq: 1, blob_hash: "stale" }], head: "head-1", max_seq: 1 };
     });
-    mocks.syncPull.mockImplementation(async () => ({
-      protocol: 2, objects: [repairedBlob ? { id: "a-1", seq: 2, blob: repairedBlob } : staleWire],
-      head: repairedBlob ? "head-2" : "head-1", max_seq: repairedBlob ? 2 : 1, next_seq: repairedBlob ? 2 : 1, cursor_done: true,
-    }));
-    mocks.syncPush.mockImplementation(async (_head: string, objects: { id: string; blob: string }[]) => {
-      repairedBlob = objects[0].blob;
-      return { protocol: 2, head: "head-2", max_seq: 2, applied: 1, skipped: 0 };
+    mocks.syncPull.mockResolvedValue({
+      protocol: 2, objects: [staleWire],
+      head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true,
     });
 
     mounted = mountSyncCard();
     openDetails();
     await flushUntil(() => text().includes("云端对象 a-1 解密失败"));
-    expect(text()).toContain("本机同 ID 对象可推送覆盖");
+    expect(text()).toContain("已跳过自动覆盖；可在对比详情中手动确认用本机同 ID 副本修复");
     expect(text()).toContain("无法解密");
     expect(text()).toContain("云端 1 个对象");
+    expect(text()).toContain("待推送 0 项");
     await runAutoSync();
-    await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
+    expect(mocks.syncPush).not.toHaveBeenCalled();
+    expect(text()).toContain("云端对象 a-1 解密失败");
+    expect(text()).toContain("无法解密");
+  });
 
-    const objects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
-    expect(objects.map((object) => object.id)).toEqual(["a-1"]);
-    const payload = await openPushed(objects[0], "asset");
-    expect(payload.name).toBe("web-01");
-    await flushUntil(() => text().includes("已一致"));
-    expect(text()).not.toContain("云端对象 a-1 解密失败");
-    expect(text()).not.toContain("无法解密");
+  it("does not auto-push a local winner when a fresh cloud head reveals an unreadable same-ID object", async () => {
+    mocks.collectAssets.mockResolvedValue({
+      assets: [{ id: "a-1", kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200 }],
+      hasMore: false,
+    });
+    const { sealSyncObject, bytesToBase64, utf8Bytes } = await import("../features/auth/crypto");
+    const blob = bytesToBase64(await sealSyncObject(new Uint8Array(32).fill(8), utf8Bytes('{"id":"a-1"}'), "a-1", "asset"));
+    let readCount = 0;
+    mocks.syncIds.mockImplementation(async () => {
+      readCount += 1;
+      return readCount === 1
+        ? { protocol: 2, entries: [], head: "head-0", max_seq: 0 }
+        : { protocol: 2, entries: [{ id: "a-1", seq: 1, blob_hash: "corrupt" }], head: "head-1", max_seq: 1 };
+    });
+    mocks.syncPull.mockResolvedValue({
+      protocol: 2, objects: [{ id: "a-1", seq: 1, blob }], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true,
+    });
+
+    const { runWebSync } = await import("../features/settings/SyncCard");
+    const result = await runWebSync(new Uint8Array(DEK), { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
+
+    expect(result?.warnings).toContain("云端对象 a-1 解密失败，已跳过自动覆盖；可在对比详情中手动确认用本机同 ID 副本修复");
+    expect(result?.pushed).toBe(0);
+    expect(mocks.syncPush).not.toHaveBeenCalled();
   });
 
   it("keeps a cloud-only undecryptable object visible after a cached refresh with no local repair copy", async () => {
@@ -363,7 +401,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     mounted = mountSyncCard();
     openDetails();
     await flushUntil(() => text().includes("云端对象 cloud-only 解密失败"));
-    expect(text()).toContain("本机无同 ID 对象，请从持有正确数据密钥的设备重新同步，或联系管理员");
+    expect(text()).toContain("本次对比没有可用的同 ID 本机副本，可在对比详情中重试读取或确认清除云端副本");
     expect(text()).toContain("无法解密");
     expect(text()).toContain("云端 1 个对象");
     await runAutoSync();
@@ -371,6 +409,412 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     expect(text()).toContain("云端对象 cloud-only 解密失败");
     expect(text()).toContain("无法解密");
     expect(mocks.syncPush).not.toHaveBeenCalled();
+  });
+
+  it("recovers an object omitted from a byte-limited ID batch and keeps its failure visible", async () => {
+    const { sealSyncObject, bytesToBase64, utf8Bytes } = await import("../features/auth/crypto");
+    const wrongKey = new Uint8Array(32).fill(8);
+    const first = { id: "budget-a", seq: 7, blob: bytesToBase64(await sealSyncObject(wrongKey, utf8Bytes('{"id":"budget-a"}'), "budget-a", "asset")) };
+    const second = { id: "budget-b", seq: 8, blob: bytesToBase64(await sealSyncObject(wrongKey, utf8Bytes('{"id":"budget-b"}'), "budget-b", "asset")) };
+    mocks.syncIds.mockResolvedValue({
+      protocol: 2, head: "budget-head", max_seq: 88,
+      entries: [{ id: first.id, seq: first.seq, blob_hash: "hash-a" }, { id: second.id, seq: second.seq, blob_hash: "hash-b" }],
+    });
+    mocks.syncPull.mockImplementation(async (_since: number, ids: string[]) => ({
+      protocol: 2, objects: ids.length > 1 ? [first] : [second],
+      head: "budget-head", max_seq: 88, next_seq: 88, cursor_done: true,
+    }));
+
+    mounted = mountSyncCard();
+    openDetails();
+    await flushUntil(() => text().includes("云端对象 budget-b 解密失败"));
+
+    expect(text()).toContain("云端对象 budget-a 解密失败");
+    expect(mocks.syncPull).toHaveBeenCalledWith(88, ["budget-a", "budget-b"]);
+    expect(mocks.syncPull).toHaveBeenCalledWith(88, ["budget-b"]);
+    expect(text()).toContain("云端 2 个对象");
+  });
+
+  it("reports an index/pull head change instead of silently omitting a cloud row", async () => {
+    mocks.syncIds.mockResolvedValue({
+      protocol: 2, head: "before", max_seq: 5,
+      entries: [{ id: "changing", seq: 5, blob_hash: "hash-1" }],
+    });
+    mocks.syncPull.mockResolvedValue({
+      protocol: 2, objects: [], head: "after", max_seq: 6, next_seq: 6, cursor_done: true,
+    });
+
+    mounted = mountSyncCard();
+    await flushUntil(() => text().includes("云端对象在读取期间发生变化"));
+
+    expect(mocks.syncPull).toHaveBeenCalledWith(5, ["changing"]);
+    expect(text()).not.toContain("本机与云端都还没有可同步的内容");
+  });
+
+  it.each([
+    { id: "invalid-json", payload: "{" },
+    { id: "invalid-type", payload: "null" },
+  ])("does not offer cloud deletion for an authenticated but invalid payload: $id", async ({ id, payload }) => {
+    const { sealSyncObject, bytesToBase64, utf8Bytes } = await import("../features/auth/crypto");
+    const blob = bytesToBase64(await sealSyncObject(DEK, utf8Bytes(payload), id, "asset"));
+    mocks.syncIds.mockResolvedValue({
+      protocol: 2, entries: [{ id, seq: 1, blob_hash: `hash-${id}` }], head: `head-${id}`, max_seq: 1,
+    });
+    mocks.syncPull.mockResolvedValue({
+      protocol: 2, objects: [{ id, seq: 1, blob }], head: `head-${id}`, max_seq: 1, next_seq: 1, cursor_done: true,
+    });
+
+    mounted = mountSyncCard();
+    openDetails();
+    await flushUntil(() => text().includes("同步失败："));
+
+    expect(text()).not.toContain(`云端对象 ${id} 解密失败`);
+    expect(text()).not.toContain("清除云端副本");
+    expect(mocks.syncDelete).not.toHaveBeenCalled();
+  });
+
+  it("does not offer cloud deletion when Web Crypto becomes unavailable", async () => {
+    const { sealSyncObject, bytesToBase64, utf8Bytes } = await import("../features/auth/crypto");
+    const blob = bytesToBase64(await sealSyncObject(DEK, utf8Bytes('{"id":"crypto-outage"}'), "crypto-outage", "asset"));
+    mocks.syncIds.mockResolvedValue({
+      protocol: 2, entries: [{ id: "crypto-outage", seq: 1, blob_hash: "hash-crypto-outage" }], head: "head-crypto-outage", max_seq: 1,
+    });
+    mocks.syncPull.mockResolvedValue({
+      protocol: 2, objects: [{ id: "crypto-outage", seq: 1, blob }], head: "head-crypto-outage", max_seq: 1, next_seq: 1, cursor_done: true,
+    });
+    vi.stubGlobal("crypto", { subtle: undefined });
+
+    mounted = mountSyncCard();
+    openDetails();
+    await flushUntil(() => text().includes("当前环境不支持 Web Crypto"));
+
+    expect(text()).not.toContain("解密失败，已跳过");
+    expect(text()).not.toContain("清除云端副本");
+    expect(mocks.syncDelete).not.toHaveBeenCalled();
+  });
+
+  it("repairs an undecryptable row from a fresh same-ID local copy after confirmation", async () => {
+    mocks.collectAssets.mockResolvedValue({
+      assets: [{ id: "a-1", kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200 }],
+      hasMore: false,
+    });
+    const { sealSyncObject, bytesToBase64, utf8Bytes } = await import("../features/auth/crypto");
+    const corruptBlob = bytesToBase64(await sealSyncObject(new Uint8Array(32).fill(8), utf8Bytes('{"id":"a-1"}'), "a-1", "asset"));
+    let repairedBlob: string | null = null;
+    mocks.syncIds.mockImplementation(async (knownHead?: string) => {
+      const head = repairedBlob ? "head-2" : "head-1";
+      if (knownHead === head) return { protocol: 2, unchanged: true, head, max_seq: repairedBlob ? 2 : 1 };
+      return { protocol: 2, entries: [{ id: "a-1", seq: repairedBlob ? 2 : 1, blob_hash: repairedBlob ? "repaired" : "corrupt" }], head, max_seq: repairedBlob ? 2 : 1 };
+    });
+    mocks.syncPull.mockImplementation(async () => ({
+      protocol: 2, objects: [{ id: "a-1", seq: repairedBlob ? 2 : 1, blob: repairedBlob ?? corruptBlob }],
+      head: repairedBlob ? "head-2" : "head-1", max_seq: repairedBlob ? 2 : 1,
+      next_seq: repairedBlob ? 2 : 1, cursor_done: true,
+    }));
+    mocks.syncPush.mockImplementation(async (_head: string, objects: { id: string; blob: string }[]) => {
+      repairedBlob = objects[0].blob;
+      return { protocol: 2, head: "head-2", max_seq: 2, applied: 1, skipped: 0 };
+    });
+
+    mounted = mountSyncCard();
+    openDetails();
+    await flushUntil(() => text().includes("用本机副本修复"));
+    clickButton(mounted.container, "用本机副本修复");
+    await flushUntil(() => mocks.syncPush.mock.calls.length === 1);
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.syncPush.mock.calls[0][0]).toBe("head-1");
+    expect(await openPushed(mocks.syncPush.mock.calls[0][1][0], "asset")).toMatchObject({ id: "a-1", name: "web-01" });
+    await flushUntil(() => text().includes("已一致"));
+    expect(text()).not.toContain("无法解密");
+  });
+
+  it.each(["content", "deletion", "kind"] as const)("does not repair from a local copy whose %s changed after confirmation", async (change) => {
+    const original = { id: "a-1", kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200 };
+    let changed = false;
+    mocks.collectAssets.mockImplementation(async () => ({
+      assets: changed && change === "kind" ? [] : [{
+        ...original,
+        ...(changed && change === "content" ? { name: "web-02" } : {}),
+        ...(changed && change === "deletion" ? { deletedAt: 300 } : {}),
+      }],
+      hasMore: false,
+    }));
+    mocks.collectTombstones.mockImplementation(async () => ({
+      tombstones: changed && change === "kind" ? [{ id: "a-1", targetKind: "asset", deletedAt: 300 }] : [],
+      hasMore: false,
+    }));
+    mocks.ask.mockImplementationOnce(async () => {
+      changed = true;
+      return true;
+    });
+    const { sealSyncObject, bytesToBase64, utf8Bytes } = await import("../features/auth/crypto");
+    const corruptBlob = bytesToBase64(await sealSyncObject(new Uint8Array(32).fill(8), utf8Bytes('{"id":"a-1"}'), "a-1", "asset"));
+    mocks.syncIds.mockResolvedValue({
+      protocol: 2, entries: [{ id: "a-1", seq: 1, blob_hash: "corrupt" }], head: "head-1", max_seq: 1,
+    });
+    mocks.syncPull.mockResolvedValue({
+      protocol: 2, objects: [{ id: "a-1", seq: 1, blob: corruptBlob }], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true,
+    });
+
+    mounted = mountSyncCard();
+    openDetails();
+    await flushUntil(() => text().includes("用本机副本修复"));
+    clickButton(mounted.container, "用本机副本修复");
+    await flushUntil(() => text().includes("本机副本在对比后发生变化"));
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.syncPush).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite a cloud row that becomes readable before a manual repair", async () => {
+    mocks.collectAssets.mockResolvedValue({
+      assets: [{ id: "a-1", kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200 }],
+      hasMore: false,
+    });
+    const { sealSyncObject, bytesToBase64, utf8Bytes } = await import("../features/auth/crypto");
+    const corruptBlob = bytesToBase64(await sealSyncObject(new Uint8Array(32).fill(8), utf8Bytes('{"id":"a-1"}'), "a-1", "asset"));
+    const readableBlob = bytesToBase64(await sealSyncObject(DEK, utf8Bytes('{"id":"a-1","name":"remote-repaired","updatedAt":300}'), "a-1", "asset"));
+    let currentBlob = corruptBlob;
+    let currentHead = "head-1";
+    mocks.syncIds.mockImplementation(async (knownHead?: string) => knownHead === currentHead
+      ? { protocol: 2, unchanged: true, head: currentHead, max_seq: 1 }
+      : { protocol: 2, entries: [{ id: "a-1", seq: currentHead === "head-1" ? 1 : 2, blob_hash: currentHead === "head-1" ? "corrupt" : "repaired" }], head: currentHead, max_seq: 1 });
+    mocks.syncPull.mockImplementation(async () => ({
+      protocol: 2, objects: [{ id: "a-1", seq: currentHead === "head-1" ? 1 : 2, blob: currentBlob }],
+      head: currentHead, max_seq: 1, next_seq: 1, cursor_done: true,
+    }));
+
+    mounted = mountSyncCard();
+    openDetails();
+    await flushUntil(() => text().includes("用本机副本修复"));
+    currentBlob = readableBlob;
+    currentHead = "head-2";
+    clickButton(mounted.container, "用本机副本修复");
+    await flushUntil(() => text().includes("云端对象在对比后发生变化"));
+
+    expect(mocks.syncPush).not.toHaveBeenCalled();
+  });
+
+  it("does not delete a cloud row that decrypts but has invalid payload during a fresh check", async () => {
+    const { sealSyncObject, bytesToBase64, utf8Bytes } = await import("../features/auth/crypto");
+    const corruptBlob = bytesToBase64(await sealSyncObject(new Uint8Array(32).fill(8), utf8Bytes('{"id":"cloud-only"}'), "cloud-only", "asset"));
+    const invalidBlob = bytesToBase64(await sealSyncObject(DEK, utf8Bytes("{"), "cloud-only", "asset"));
+    let currentBlob = corruptBlob;
+    const currentHead = "head-1";
+    mocks.syncIds.mockImplementation(async (knownHead?: string) => knownHead === currentHead
+      ? { protocol: 2, unchanged: true, head: currentHead, max_seq: 1 }
+      : { protocol: 2, entries: [{ id: "cloud-only", seq: currentHead === "head-1" ? 1 : 2, blob_hash: currentHead }], head: currentHead, max_seq: 1 });
+    mocks.syncPull.mockImplementation(async () => ({
+      protocol: 2, objects: [{ id: "cloud-only", seq: currentHead === "head-1" ? 1 : 2, blob: currentBlob }],
+      head: currentHead, max_seq: 1, next_seq: 1, cursor_done: true,
+    }));
+
+    mounted = mountSyncCard();
+    openDetails();
+    await flushUntil(() => text().includes("清除云端副本"));
+    currentBlob = invalidBlob;
+    clickButton(mounted.container, "清除云端副本");
+    await flushUntil(() => text().includes("操作失败："));
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.syncDelete).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { action: "用本机副本修复", id: "a-1", hasLocalCopy: true },
+    { action: "清除云端副本", id: "cloud-only", hasLocalCopy: false },
+  ])("rejects $action when another device replaces the same ID with another undecryptable blob", async ({ action, id, hasLocalCopy }) => {
+    if (hasLocalCopy) mocks.collectAssets.mockResolvedValue({
+      assets: [{ id, kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200 }],
+      hasMore: false,
+    });
+    const { sealSyncObject, bytesToBase64, utf8Bytes } = await import("../features/auth/crypto");
+    const initialBlob = bytesToBase64(await sealSyncObject(new Uint8Array(32).fill(8), utf8Bytes(`{"id":"${id}"}`), id, "asset"));
+    const replacementBlob = bytesToBase64(await sealSyncObject(new Uint8Array(32).fill(9), utf8Bytes(`{"id":"${id}"}`), id, "asset"));
+    let replaced = false;
+    mocks.syncIds.mockImplementation(async () => ({
+      protocol: 2,
+      entries: [{ id, seq: replaced ? 2 : 1, blob_hash: replaced ? `hash-${id}-replacement` : `hash-${id}-initial` }],
+      head: replaced ? "head-replacement" : "head-initial",
+      max_seq: replaced ? 2 : 1,
+    }));
+    mocks.syncPull.mockImplementation(async () => ({
+      protocol: 2, objects: [{ id, seq: replaced ? 2 : 1, blob: replaced ? replacementBlob : initialBlob }],
+      head: replaced ? "head-replacement" : "head-initial", max_seq: replaced ? 2 : 1,
+      next_seq: replaced ? 2 : 1, cursor_done: true,
+    }));
+
+    mounted = mountSyncCard();
+    openDetails();
+    await flushUntil(() => text().includes(action));
+    replaced = true;
+    clickButton(mounted.container, action);
+    await flushUntil(() => text().includes("云端对象在对比后发生变化"));
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.syncPush).not.toHaveBeenCalled();
+    expect(mocks.syncDelete).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { action: "用本机副本修复", id: "a-1", hasLocalCopy: true },
+    { action: "清除云端副本", id: "cloud-only", hasLocalCopy: false },
+  ])("rejects $action when sync kind settings change after confirmation", async ({ action, id, hasLocalCopy }) => {
+    if (hasLocalCopy) mocks.collectAssets.mockResolvedValue({
+      assets: [{ id, kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200 }],
+      hasMore: false,
+    });
+    let changed = false;
+    mocks.kindOptInGet.mockImplementation(async () => ({
+      knownHost: changed, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false,
+    }));
+    mocks.ask.mockImplementationOnce(async () => {
+      changed = true;
+      return true;
+    });
+    const { sealSyncObject, bytesToBase64, utf8Bytes } = await import("../features/auth/crypto");
+    const blob = bytesToBase64(await sealSyncObject(new Uint8Array(32).fill(8), utf8Bytes(`{"id":"${id}"}`), id, "asset"));
+    mocks.syncIds.mockResolvedValue({
+      protocol: 2, entries: [{ id, seq: 1, blob_hash: "corrupt" }], head: "head-1", max_seq: 1,
+    });
+    mocks.syncPull.mockResolvedValue({
+      protocol: 2, objects: [{ id, seq: 1, blob }], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true,
+    });
+
+    mounted = mountSyncCard();
+    openDetails();
+    await flushUntil(() => text().includes(action));
+    clickButton(mounted.container, action);
+    await flushUntil(() => text().includes("内容类型设置已变化"));
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.syncPush).not.toHaveBeenCalled();
+    expect(mocks.syncDelete).not.toHaveBeenCalled();
+  });
+
+  it("retries only the undecryptable row and shows it as readable after another device repairs it", async () => {
+    const { sealSyncObject, bytesToBase64, utf8Bytes } = await import("../features/auth/crypto");
+    let blob = bytesToBase64(await sealSyncObject(new Uint8Array(32).fill(8), utf8Bytes('{"id":"cloud-only"}'), "cloud-only", "asset"));
+    let head = "head-1";
+    mocks.syncIds.mockImplementation(async (knownHead?: string) => knownHead === head
+      ? { protocol: 2, unchanged: true, head, max_seq: 1 }
+      : { protocol: 2, entries: [{ id: "cloud-only", seq: head === "head-1" ? 1 : 2, blob_hash: head }], head, max_seq: 1 });
+    mocks.syncPull.mockImplementation(async () => ({
+      protocol: 2, objects: [{ id: "cloud-only", seq: head === "head-1" ? 1 : 2, blob }],
+      head, max_seq: 1, next_seq: 1, cursor_done: true,
+    }));
+    mounted = mountSyncCard();
+    openDetails();
+    await flushUntil(() => text().includes("清除云端副本"));
+
+    blob = bytesToBase64(await sealSyncObject(DEK, utf8Bytes('{"id":"cloud-only","name":"recovered","updatedAt":2}'), "cloud-only", "asset"));
+    head = "head-2";
+    clickButton(mounted.container, "重试读取");
+    await flushUntil(() => text().includes("recovered"));
+
+    expect(text()).not.toContain("无法解密");
+    expect(mocks.syncPush).not.toHaveBeenCalled();
+    expect(mocks.syncDelete).not.toHaveBeenCalled();
+  });
+
+  it("clears a cloud-only corrupt object only after confirmation and with head and blob hash preconditions", async () => {
+    const { sealSyncObject, bytesToBase64, utf8Bytes } = await import("../features/auth/crypto");
+    const blob = bytesToBase64(await sealSyncObject(new Uint8Array(32).fill(8), utf8Bytes('{"id":"cloud-only"}'), "cloud-only", "asset"));
+    let exists = true;
+    mocks.syncIds.mockImplementation(async (knownHead?: string) => {
+      const head = exists ? "head-1" : "head-2";
+      if (knownHead === head) return { protocol: 2, unchanged: true, head, max_seq: exists ? 1 : 2 };
+      return { protocol: 2, entries: exists ? [{ id: "cloud-only", seq: 1, blob_hash: "hash-1" }] : [], head, max_seq: exists ? 1 : 2 };
+    });
+    mocks.syncPull.mockImplementation(async (since: number) => {
+      if (since !== (exists ? 1 : 2)) throw new Error("pull scanned unrelated history");
+      return {
+        protocol: 2, objects: exists ? [{ id: "cloud-only", seq: 1, blob }] : [],
+        head: exists ? "head-1" : "head-2", max_seq: exists ? 1 : 2, next_seq: exists ? 1 : 2, cursor_done: true,
+      };
+    });
+    mocks.syncDelete.mockImplementation(async () => {
+      exists = false;
+      return { head: "head-2", max_seq: 2, deleted: true };
+    });
+    mounted = mountSyncCard();
+    openDetails();
+    await flushUntil(() => text().includes("清除云端副本"));
+
+    mocks.ask.mockResolvedValueOnce(false);
+    clickButton(mounted.container, "清除云端副本");
+    await flushUntil(() => mocks.ask.mock.calls.length === 1);
+    expect(mocks.syncDelete).not.toHaveBeenCalled();
+
+    clickButton(mounted.container, "清除云端副本");
+    await flushUntil(() => mocks.syncDelete.mock.calls.length === 1);
+    expect(mocks.syncDelete).toHaveBeenCalledWith("head-1", "cloud-only", "hash-1");
+    await flushUntil(() => text().includes("本机与云端都还没有可同步的内容"));
+  });
+
+  it("refuses cloud deletion when a locked local credential makes collection incomplete", async () => {
+    await seedUndecryptableCloudOnly("cloud-only");
+    mocks.collectCredentials.mockResolvedValue({
+      credentials: [{ id: "cloud-only", name: "locked", kind: "password", updatedAt: 1, secretState: "locked" }],
+      hasMore: false,
+    });
+    mounted = mountSyncCard();
+    openDetails();
+    await flushUntil(() => text().includes("清除云端副本"));
+    clickButton(mounted.container, "清除云端副本");
+    await flushUntil(() => text().includes("本机内容读取不完整"));
+
+    expect(mocks.syncDelete).not.toHaveBeenCalled();
+  });
+
+  it("refuses cloud deletion when an excluded local kind has the same ID", async () => {
+    await seedUndecryptableCloudOnly("cloud-only");
+    mocks.collectKnownHosts.mockResolvedValue({
+      knownHosts: [{ id: "cloud-only", host: "example.test", port: 22, keyType: "ssh-ed25519", fingerprint: "test", addedAt: 1 }],
+      hasMore: false,
+    });
+    mounted = mountSyncCard();
+    openDetails();
+    await flushUntil(() => text().includes("清除云端副本"));
+    clickButton(mounted.container, "清除云端副本");
+    await flushUntil(() => text().includes("本机现在已有同 ID 副本"));
+
+    expect(mocks.syncDelete).not.toHaveBeenCalled();
+  });
+
+  it("refuses cloud deletion when a local transcript with sync disabled has the same ID", async () => {
+    await seedUndecryptableCloudOnly("cloud-only");
+    mocks.transcriptHosts.mockResolvedValue([{ assetId: "asset-1" }]);
+    mocks.transcriptList.mockResolvedValue([{
+      id: "cloud-only", assetName: "device", syncOptIn: false, active: false, endedAt: 2, startedAt: 1,
+      contentOmitted: false, bytes: 0,
+    }]);
+    mounted = mountSyncCard();
+    openDetails();
+    await flushUntil(() => text().includes("清除云端副本"));
+    clickButton(mounted.container, "清除云端副本");
+    await flushUntil(() => text().includes("本机现在已有同 ID 会话记录"));
+
+    expect(mocks.syncDelete).not.toHaveBeenCalled();
+  });
+
+  it("keeps an undecryptable row visible when conditional cloud deletion conflicts", async () => {
+    const { sealSyncObject, bytesToBase64, utf8Bytes } = await import("../features/auth/crypto");
+    const { AuthApiError } = await import("../ipc/authApi");
+    const blob = bytesToBase64(await sealSyncObject(new Uint8Array(32).fill(8), utf8Bytes('{"id":"cloud-only"}'), "cloud-only", "asset"));
+    mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "cloud-only", seq: 1, blob_hash: "hash-1" }], head: "head-1", max_seq: 1 });
+    mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [{ id: "cloud-only", seq: 1, blob }], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
+    mocks.syncDelete.mockRejectedValue(new AuthApiError("forbidden", "conflict", 409));
+
+    mounted = mountSyncCard();
+    openDetails();
+    await flushUntil(() => text().includes("清除云端副本"));
+    clickButton(mounted.container, "清除云端副本");
+    await flushUntil(() => text().includes("云端数据已变化，请重试读取后再次操作"));
+
+    expect(text()).toContain("无法解密");
+    expect(mocks.syncDelete).toHaveBeenCalledWith("head-1", "cloud-only", "hash-1");
   });
 });
 

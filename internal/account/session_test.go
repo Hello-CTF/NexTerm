@@ -104,6 +104,60 @@ func TestSessionListLastSeenAndScopedRevoke(t *testing.T) {
 	}
 }
 
+func TestRegisteredDeviceLastSeenFollowsValidatedSession(t *testing.T) {
+	a, now := testAccounts(t)
+	ctx := context.Background()
+	user, err := a.CreateUser(ctx, "device-activity", "", "synthetic-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := a.RegisterDevice(ctx, user.ID, "active laptop", "desktop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idle, err := a.RegisterDevice(ctx, user.ID, "idle laptop", "desktop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, session, err := a.IssueSession(ctx, user.ID, active.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkLastSeen := func(deviceID string, want int64) {
+		t.Helper()
+		device, err := a.GetDevice(ctx, deviceID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if device.LastSeenAt != want {
+			t.Fatalf("device %s last seen = %d, want %d", deviceID, device.LastSeenAt, want)
+		}
+	}
+	issuedAt := *now
+	checkLastSeen(active.ID, issuedAt)
+	checkLastSeen(idle.ID, 0)
+
+	*now += sessionSlidePersist.Milliseconds() - 1
+	if _, err := a.ValidateSession(ctx, token); err != nil {
+		t.Fatal(err)
+	}
+	checkLastSeen(active.ID, issuedAt)
+	*now++
+	if _, err := a.ValidateSession(ctx, token); err != nil {
+		t.Fatal(err)
+	}
+	checkLastSeen(active.ID, *now)
+	checkLastSeen(idle.ID, 0)
+
+	if err := a.RevokeSession(ctx, session.ID); err != nil {
+		t.Fatal(err)
+	}
+	lastValidAt := *now
+	*now += sessionSlidePersist.Milliseconds()
+	requireCode(t, validateErr(a, ctx, token), ipc.CodeForbidden)
+	checkLastSeen(active.ID, lastValidAt)
+}
+
 func TestSessionSlidingAndAbsoluteExpiry(t *testing.T) {
 	a, now := testAccounts(t)
 	ctx := context.Background()

@@ -284,7 +284,10 @@ func TestCryptoRoundTripAndTamper(t *testing.T) {
 	for i := range key.bytes {
 		key.bytes[i] = byte(i)
 	}
-	dek := generateKey()
+	dek, err := generateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
 	envelope, err := sealDEK(key, dek)
 	if err != nil {
 		t.Fatal(err)
@@ -293,7 +296,10 @@ func TestCryptoRoundTripAndTamper(t *testing.T) {
 	if err != nil || !bytes.Equal(opened.bytes[:], dek.bytes[:]) {
 		t.Fatalf("DEK round trip failed: %v", err)
 	}
-	other := generateKey()
+	other, err := generateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, err = openDEK(other, envelope)
 	requireVaultCode(t, err, ipc.CodeBadMasterPass)
 

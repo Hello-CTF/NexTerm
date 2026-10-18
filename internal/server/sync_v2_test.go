@@ -49,7 +49,7 @@ func TestSyncV2RoutesRequireSessionAndCSRF(t *testing.T) {
 	fixture := newSyncV2Fixture(t)
 	fixture.initSuperadmin(t, "alice", "alice-pw-123")
 
-	for _, path := range []string{"/sync/v2/push", "/sync/v2/pull", "/sync/v2/ids"} {
+	for _, path := range []string{"/sync/v2/push", "/sync/v2/delete", "/sync/v2/pull", "/sync/v2/ids"} {
 		call := fixture.call(t, http.MethodPost, path, map[string]any{"protocol": 2}, nil, "", nil)
 		if call.status != http.StatusUnauthorized {
 			t.Fatalf("%s without session status=%d body=%v", path, call.status, call.body)
@@ -64,6 +64,14 @@ func TestSyncV2RoutesRequireSessionAndCSRF(t *testing.T) {
 	call = fixture.call(t, http.MethodPost, "/sync/v2/push", map[string]any{"protocol": 2}, session, session.csrf, nil)
 	if call.status != http.StatusOK {
 		t.Fatalf("push with session status=%d body=%v", call.status, call.body)
+	}
+	call = fixture.call(t, http.MethodPost, "/sync/v2/delete", map[string]any{"protocol": 2}, session, "", nil)
+	if call.status != http.StatusForbidden {
+		t.Fatalf("delete without CSRF status=%d body=%v", call.status, call.body)
+	}
+	call = fixture.call(t, http.MethodPost, "/sync/v2/delete", map[string]any{"protocol": 2}, session, session.csrf, nil)
+	if call.status != http.StatusOK {
+		t.Fatalf("delete with session status=%d body=%v", call.status, call.body)
 	}
 	for _, path := range []string{"/sync/v2/pull", "/sync/v2/ids"} {
 		call = fixture.call(t, http.MethodPost, path, map[string]any{"protocol": 2}, session, "", nil)

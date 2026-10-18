@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 )
 
 // When the remote new revisions of two large snippets span two pages, the engine must drain pagination and complete LWW before pushing,
@@ -17,7 +18,7 @@ func TestEngineDrainsPaginationBeforePush(t *testing.T) {
 	deviceB := newTestDevice(t)
 	ctx := context.Background()
 
-	bigBody := strings.Repeat("x", 50<<20)
+	bigBody := strings.Repeat("x", 600<<10)
 	snippet1 := ids.New()
 	snippet2 := ids.New()
 	putDeviceSnippet(t, deviceA, snippet1, "大片段一", bigBody, 100)
@@ -30,8 +31,26 @@ func TestEngineDrainsPaginationBeforePush(t *testing.T) {
 	putDeviceSnippet(t, deviceB, snippet1, "大片段一-新版", "new-"+bigBody, future)
 	putDeviceSnippet(t, deviceB, snippet2, "大片段二-新版", "new-"+bigBody, future)
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+	objects := query.Use(server.db.GORM()).UserSyncObject
+	first, err := objects.WithContext(ctx).Where(objects.ID.Eq(snippet1)).First()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := objects.WithContext(ctx).Where(objects.ID.Eq(snippet2)).First()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const testPullBytes int64 = 1 << 20
+	cost1, cost2 := wireObjectCost(first.Blob), wireObjectCost(second.Blob)
+	if cost1 > testPullBytes || cost2 > testPullBytes || cost1+cost2 <= testPullBytes {
+		t.Fatalf("test objects must each fit one page but span two: costs=%d,%d budget=%d", cost1, cost2, testPullBytes)
+	}
 
-	// A syncs: it must drain both pages and complete LWW, never overwriting the remote new revision with stale local objects.
+	// A syncs with a smaller page budget: each object fits, but both cannot fit
+	// in one page. It must drain both pages before reconciling stale local data.
+	previousPullBytes := maxPullBytes
+	maxPullBytes = testPullBytes
+	defer func() { maxPullBytes = previousPullBytes }()
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	snippetRows, err := deviceA.db.SnippetList(ctx)
 	if err != nil {

@@ -276,7 +276,7 @@ func (j *job) drainAllEmits() []Event {
 	return events
 }
 
-func (j *job) finish(answer string, turns int, total usage.Usage, terminalErr error) {
+func (j *job) finish(answer string, turns int, total usage.Usage, terminalErr error, beforeClose ...func()) (finishErr error) {
 	j.finalOnce.Do(func() {
 		j.eventMu.Lock()
 		j.finished = true
@@ -301,17 +301,46 @@ func (j *job) finish(answer string, turns int, total usage.Usage, terminalErr er
 		} else {
 			event = doneEvent(answer, turns, total.PromptTokens, total.CompletionTokens)
 		}
-		sendErr := j.stream.Send(ctx, event)
-		if sendErr == nil && parent.Err() == nil {
-			_ = CloseStreamGracefully(j.stream)
-		} else {
-			_ = j.stream.Close()
+		statusRecorded := false
+		beforeDeliver := func() {
+			if statusRecorded {
+				return
+			}
+			statusRecorded = true
+			if len(beforeClose) > 0 && beforeClose[0] != nil {
+				beforeClose[0]()
+			}
 		}
+		var sendErr error
+		if terminal, ok := j.stream.(interface {
+			SendTerminal(context.Context, context.Context, Event, func()) error
+		}); ok {
+			sendErr = terminal.SendTerminal(ctx, parent, event, beforeDeliver)
+		} else {
+			beforeDeliver()
+			liveCtx, liveCancel := context.WithTimeout(parent, 5*time.Second)
+			sendErr = j.stream.Send(liveCtx, event)
+			liveCancel()
+		}
+		beforeDeliver()
+		var flushErr error
+		if flusher, ok := j.stream.(interface{ FlushPending() error }); ok {
+			flushErr = flusher.FlushPending()
+		}
+		var closeErr error
+		var fallback *terminalFallbackError
+		if (sendErr == nil && parent.Err() == nil) || errors.As(sendErr, &fallback) {
+			closeErr = CloseStreamGracefully(j.stream)
+		} else {
+			closeErr = j.stream.Close()
+		}
+		finishErr = errors.Join(sendErr, flushErr, closeErr)
 		j.eventMu.Unlock()
 		j.pendingMu.Lock()
 		j.resumeIterator = nil
 		j.pendingMu.Unlock()
 	})
+	return finishErr
 }
 
 func (j *job) state() (bool, adk.AgentCancelFunc) {

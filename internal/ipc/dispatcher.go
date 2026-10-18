@@ -17,6 +17,7 @@ var syncObjectWriteCommands = map[string]bool{
 	"ai_model_save": true, "ai_model_delete": true, "ai_set_permission": true, "sync_preferences_set": true,
 	"terminal_record_stop": true, "transcript_delete": true, "transcript_sync_opt_in": true,
 	"sync_link_set": true, "sync_kind_opt_in_set": true, "sync_import": true, "ssh_import_apply": true,
+	"sync_repair_undecryptable": true,
 }
 
 type Environment struct {

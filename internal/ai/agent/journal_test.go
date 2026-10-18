@@ -9,8 +9,83 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/steer"
+	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
+
+type failingAppendRunStore struct {
+	RunStore
+	mu        sync.Mutex
+	remaining int
+	attempts  int
+	err       error
+}
+
+func (s *failingAppendRunStore) RunAppendEvent(ctx context.Context, runID, eventType string, payload func(uint64) ([]byte, error)) (uint64, error) {
+	s.mu.Lock()
+	s.attempts++
+	fail := s.remaining > 0
+	if fail {
+		s.remaining--
+	}
+	s.mu.Unlock()
+	if fail {
+		return 0, s.err
+	}
+	return s.RunStore.RunAppendEvent(ctx, runID, eventType, payload)
+}
+
+func (s *failingAppendRunStore) attemptCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.attempts
+}
+
+type finishOrderRunStore struct {
+	RunStore
+	terminalBeforeFinish bool
+	statusBeforeClose    bool
+	live                 *SliceStream
+}
+
+type terminalStatusStream struct {
+	*SliceStream
+	runs                 RunStore
+	runID                string
+	terminalObserved     bool
+	terminalBeforeStatus bool
+}
+
+func (s *terminalStatusStream) Send(ctx context.Context, event Event) error {
+	if event.Type == "done" || event.Type == "error" || event.Type == "canceled" {
+		s.terminalObserved = true
+		row, err := s.runs.RunGet(ctx, s.runID)
+		if err != nil || row.Status != store.RunStatusCompleted {
+			s.terminalBeforeStatus = true
+		}
+	}
+	return s.SliceStream.Send(ctx, event)
+}
+
+func (s *finishOrderRunStore) RunFinishUsage(ctx context.Context, runID, status, answer, errMsg string, turns int, tokensIn, tokensOut, cacheCreationTokens, latencyMS int64) error {
+	events, err := s.RunStore.RunEventsAfter(ctx, runID, 0)
+	if err != nil {
+		return err
+	}
+	for _, event := range events {
+		if event.Type == "done" || event.Type == "error" || event.Type == "canceled" {
+			s.terminalBeforeFinish = true
+			break
+		}
+	}
+	if s.live != nil {
+		_, closed := s.live.Snapshot()
+		s.statusBeforeClose = !closed
+	}
+	return s.RunStore.RunFinishUsage(ctx, runID, status, answer, errMsg, turns, tokensIn, tokensOut, cacheCreationTokens, latencyMS)
+}
 
 func journalTestStore(t *testing.T) (*store.Store, string) {
 	t.Helper()
@@ -27,6 +102,25 @@ func journalTestStore(t *testing.T) (*store.Store, string) {
 		t.Fatal(err)
 	}
 	return storage, "run-journal"
+}
+
+func journalOwnedTestStore(t *testing.T) (*store.Store, string, context.Context) {
+	t.Helper()
+	storage, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	ctx := ipc.WithUserID(context.Background(), "journal-owner")
+	conversation, err := storage.ConvCreate(ctx, "journal", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "run-owned-journal"
+	if err := storage.RunInsert(ctx, store.RunRow{ID: runID, ConversationID: conversation.ID, Status: store.RunStatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	return storage, runID, ctx
 }
 
 func journalEventsOf(t *testing.T, storage *store.Store, runID string) []store.RunEventRow {
@@ -91,6 +185,320 @@ func TestJournalBatchesDeltasWithinWindow(t *testing.T) {
 	liveEvents, _ := live.Snapshot()
 	if len(liveEvents) != 1 || liveEvents[0].Seq != 1 || liveEvents[0].Text != "你好啊" {
 		t.Fatalf("live events = %+v", liveEvents)
+	}
+}
+
+func TestJournalRetriesTimedFlushWithoutAnotherEvent(t *testing.T) {
+	storage, runID := journalTestStore(t)
+	journal := &failingAppendRunStore{RunStore: storage, remaining: 1, err: errors.New("temporary journal failure")}
+	live := &SliceStream{}
+	stream := WithRunJournal(live, journal, runID)
+	if err := stream.Send(context.Background(), Event{Type: "delta", Text: "retained"}); err != nil {
+		t.Fatal(err)
+	}
+	events := waitJournalEventCount(t, storage, runID, 1)
+	if got := journalDeltaText(events); got != "retained" {
+		t.Fatalf("retried journal text = %q", got)
+	}
+	if attempts := journal.attemptCount(); attempts < 2 {
+		t.Fatalf("journal append attempts = %d, want retry", attempts)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestJournalTimedFlushKeepsOwnerScopeForReplay(t *testing.T) {
+	storage, runID, ownerCtx := journalOwnedTestStore(t)
+	requestCtx, cancel := context.WithCancel(ownerCtx)
+	live := &SliceStream{}
+	stream := WithRunJournal(live, storage, runID)
+	if err := stream.Send(requestCtx, Event{Type: "delta", Text: "owned"}); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	deadline := time.Now().Add(3 * time.Second)
+	var events []store.RunEventRow
+	for time.Now().Before(deadline) {
+		var err error
+		events, err = storage.RunEventsAfter(ownerCtx, runID, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(events) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(events) != 1 || events[0].Seq != 1 || journalDeltaText(events) != "owned" {
+		t.Fatalf("owner-visible timed events = %+v", events)
+	}
+	if err := stream.Send(ownerCtx, doneEvent("answer", 1, 2, 3)); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	events, err := storage.RunEventsAfter(ownerCtx, runID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0].Seq != 1 || events[1].Seq != 2 || events[1].Type != "done" {
+		t.Fatalf("owner-visible contiguous replay = %+v", events)
+	}
+}
+
+func TestJournalCloseKeepsOwnerScopeAfterRequestCancellation(t *testing.T) {
+	storage, runID, ownerCtx := journalOwnedTestStore(t)
+	requestCtx, cancel := context.WithCancel(ownerCtx)
+	stream := WithRunJournal(&SliceStream{}, storage, runID)
+	if err := stream.Send(requestCtx, Event{Type: "delta", Text: "tail"}); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	events, err := storage.RunEventsAfter(ownerCtx, runID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Seq != 1 || journalDeltaText(events) != "tail" {
+		t.Fatalf("owner-visible close events = %+v", events)
+	}
+}
+
+func TestJournalRejectsDifferentOwnerContext(t *testing.T) {
+	storage, runID, ownerCtx := journalOwnedTestStore(t)
+	stream := WithRunJournal(&SliceStream{}, storage, runID)
+	if err := stream.Send(ownerCtx, statusEvent("thinking", 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(ipc.WithUserID(context.Background(), "different-owner"), doneEvent("answer", 1, 2, 3)); err == nil {
+		t.Fatal("different owner was allowed to send on an existing journal")
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	events, err := storage.RunEventsAfter(ownerCtx, runID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Type != "status" {
+		t.Fatalf("owner-visible events after rejected send = %+v", events)
+	}
+}
+
+func TestJournalFailureStillDeliversLiveTerminal(t *testing.T) {
+	storage, runID := journalTestStore(t)
+	failure := errors.New("journal unavailable")
+	journal := &failingAppendRunStore{RunStore: storage, remaining: 1, err: failure}
+	live := &SliceStream{}
+	stream := WithRunJournal(live, journal, runID)
+	if err := stream.Send(context.Background(), doneEvent("answer", 1, 2, 3)); !errors.Is(err, failure) {
+		t.Fatalf("send error = %v, want journal failure", err)
+	}
+	liveEvents, _ := live.Snapshot()
+	if len(liveEvents) != 1 || liveEvents[0].Type != "done" || liveEvents[0].Seq != 0 {
+		t.Fatalf("live fallback = %+v", liveEvents)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if events := journalEventsOf(t, storage, runID); len(events) != 1 || events[0].Type != "done" {
+		t.Fatalf("recovered journal events = %+v", events)
+	}
+}
+
+func TestJournalPendingFlushFailureStillDeliversLiveTerminal(t *testing.T) {
+	storage, runID := journalTestStore(t)
+	failure := errors.New("journal unavailable")
+	journal := &failingAppendRunStore{RunStore: storage, remaining: 1, err: failure}
+	live := &SliceStream{}
+	stream := WithRunJournal(live, journal, runID)
+	if err := stream.Send(context.Background(), Event{Type: "delta", Text: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(context.Background(), doneEvent("answer", 1, 2, 3)); !errors.Is(err, failure) {
+		t.Fatalf("send error = %v, want journal failure", err)
+	}
+	liveEvents, _ := live.Snapshot()
+	if len(liveEvents) != 1 || liveEvents[0].Type != "done" || liveEvents[0].Seq != 0 {
+		t.Fatalf("live terminal after pending flush failure = %+v", liveEvents)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	events := journalEventsOf(t, storage, runID)
+	if len(events) != 2 || events[0].Type != "delta" || events[1].Type != "done" {
+		t.Fatalf("recovered pending journal events = %+v", events)
+	}
+}
+
+func TestJournalCloseRetriesTransientFailureWithOwnerAndTerminal(t *testing.T) {
+	storage, runID, ownerCtx := journalOwnedTestStore(t)
+	failure := errors.New("temporary journal failure")
+	journal := &failingAppendRunStore{RunStore: storage, remaining: 2, err: failure}
+	live := &SliceStream{}
+	stream := WithRunJournal(live, journal, runID)
+	requestCtx, cancel := context.WithCancel(ownerCtx)
+	if err := stream.Send(requestCtx, Event{Type: "delta", Text: "tail"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(requestCtx, doneEvent("answer", 1, 2, 3)); !errors.Is(err, failure) {
+		t.Fatalf("terminal send error = %v, want temporary failure", err)
+	}
+	cancel()
+	if err := stream.Close(); err != nil {
+		t.Fatalf("close did not recover temporary journal failure: %v", err)
+	}
+	events, err := storage.RunEventsAfter(ownerCtx, runID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0].Seq != 1 || events[1].Seq != 2 || events[0].Type != "delta" || events[1].Type != "done" {
+		t.Fatalf("owner-visible replay after close retry = %+v", events)
+	}
+	if got := journalDeltaText(events); got != "tail" {
+		t.Fatalf("recovered delta text = %q", got)
+	}
+}
+
+func TestJournalCloseReportsPersistentFailure(t *testing.T) {
+	storage, runID := journalTestStore(t)
+	failure := errors.New("persistent journal failure")
+	journal := &failingAppendRunStore{RunStore: storage, remaining: 100, err: failure}
+	live := &SliceStream{}
+	stream := WithRunJournal(live, journal, runID)
+	if err := stream.Send(context.Background(), Event{Type: "delta", Text: "tail"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Close(); !errors.Is(err, failure) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("persistent close error = %v, want journal failure and timeout", err)
+	}
+	if _, closed := live.Snapshot(); !closed {
+		t.Fatal("downstream remained open after persistent journal failure")
+	}
+}
+
+func TestRunnerPersistsTerminalBeforeCompletedStatus(t *testing.T) {
+	storage, runID := journalTestStore(t)
+	live := &SliceStream{}
+	checkedLive := &terminalStatusStream{SliceStream: live, runs: storage, runID: runID}
+	journal := &finishOrderRunStore{RunStore: storage, live: live}
+	runner := NewRunner(Config{Store: storage, Runs: journal})
+	t.Cleanup(func() { _ = runner.Close() })
+	current := &job{
+		id: runID, ctx: context.Background(), cancel: func() {},
+		deliveryCtx: context.Background(), stream: runner.wrapStream(checkedLive, runID),
+		steer: steer.NewQueue(1), cancelSync: newCancelSync(),
+	}
+	if _, err := runner.hitl.RegisterRun(context.Background(), runID, runID); err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	runner.jobs[runID] = current
+	runner.wg.Add(1)
+	runner.mu.Unlock()
+	runner.complete(current, "answer", 1, usage.Usage{}, nil)
+	if !journal.terminalBeforeFinish {
+		t.Fatal("run status completed before terminal event was journaled")
+	}
+	if !journal.statusBeforeClose {
+		t.Fatal("live stream closed before run status was updated")
+	}
+	if !checkedLive.terminalObserved || checkedLive.terminalBeforeStatus {
+		t.Fatal("terminal event reached the live stream before run status was updated")
+	}
+	run, err := storage.RunGet(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != store.RunStatusCompleted {
+		t.Fatalf("run status = %q", run.Status)
+	}
+}
+
+func TestRunnerUpdatesStatusBeforeTerminalFallback(t *testing.T) {
+	storage, runID := journalTestStore(t)
+	journal := &failingAppendRunStore{RunStore: storage, remaining: 1, err: errors.New("temporary journal failure")}
+	live := &terminalStatusStream{SliceStream: &SliceStream{}, runs: storage, runID: runID}
+	runner := NewRunner(Config{Store: storage, Runs: journal})
+	t.Cleanup(func() { _ = runner.Close() })
+	current := &job{
+		id: runID, ctx: context.Background(), cancel: func() {},
+		deliveryCtx: context.Background(), stream: runner.wrapStream(live, runID),
+		steer: steer.NewQueue(1), cancelSync: newCancelSync(),
+	}
+	if _, err := runner.hitl.RegisterRun(context.Background(), runID, runID); err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	runner.jobs[runID] = current
+	runner.wg.Add(1)
+	runner.mu.Unlock()
+	runner.complete(current, "answer", 1, usage.Usage{}, nil)
+	if !live.terminalObserved || live.terminalBeforeStatus {
+		t.Fatal("fallback terminal reached the live stream before run status was updated")
+	}
+	events, closed := live.Snapshot()
+	if !closed || len(events) == 0 || events[0].Type != "done" || events[0].Seq != 0 {
+		t.Fatalf("expected unsequenced terminal fallback, got events=%+v closed=%v", events, closed)
+	}
+}
+
+type failingFinishStream struct {
+	sendErr  error
+	closeErr error
+}
+
+func (s failingFinishStream) Send(context.Context, Event) error { return s.sendErr }
+func (s failingFinishStream) Close() error                      { return s.closeErr }
+
+type gracefulTrackingStream struct {
+	SliceStream
+	graceful bool
+}
+
+func (s *gracefulTrackingStream) CloseGracefully() error {
+	s.graceful = true
+	return s.SliceStream.Close()
+}
+
+func TestJobFinishReportsSendAndCloseFailures(t *testing.T) {
+	sendErr := errors.New("send failed")
+	closeErr := errors.New("close failed")
+	current := &job{
+		ctx: context.Background(), deliveryCtx: context.Background(),
+		stream: failingFinishStream{sendErr: sendErr, closeErr: closeErr},
+	}
+	err := current.finish("answer", 1, usage.Usage{}, nil)
+	if !errors.Is(err, sendErr) || !errors.Is(err, closeErr) {
+		t.Fatalf("finish error = %v, want send and close failures", err)
+	}
+}
+
+func TestJobFinishGracefullyClosesDeliveredFallback(t *testing.T) {
+	storage, runID := journalTestStore(t)
+	failure := errors.New("journal unavailable")
+	journal := &failingAppendRunStore{RunStore: storage, remaining: 2, err: failure}
+	live := &gracefulTrackingStream{}
+	current := &job{
+		ctx: context.Background(), deliveryCtx: context.Background(),
+		stream: WithRunJournal(live, journal, runID),
+	}
+	if err := current.finish("answer", 1, usage.Usage{}, nil); !errors.Is(err, failure) {
+		t.Fatalf("finish error = %v, want journal failure", err)
+	}
+	if !live.graceful {
+		t.Fatal("delivered fallback was closed without draining the live stream")
+	}
+	events, closed := live.Snapshot()
+	if !closed || len(events) != 2 || events[0].Type != "done" || events[1].Type != "done" || events[1].Seq != 1 {
+		t.Fatalf("live fallback events = %+v, closed = %v", events, closed)
+	}
+	if journaled := journalEventsOf(t, storage, runID); len(journaled) != 1 || journaled[0].Type != "done" {
+		t.Fatalf("graceful close failed to persist terminal: %+v", journaled)
 	}
 }
 

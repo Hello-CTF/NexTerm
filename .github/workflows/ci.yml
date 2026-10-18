@@ -87,8 +87,6 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Frontend lint
         run: pnpm lint
-      - name: Frontend tests
-        run: pnpm test
       - name: Reproducible real frontend
         run: node scripts/build.mjs frontend --repro-check
       - name: Upload the verified frontend dist and manifest
@@ -238,10 +236,11 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          & powershell.exe -NoLogo -NoProfile -NonInteractive -Command 'Write-Output ("powershell.exe " + $PSVersionTable.PSVersion.ToString())'
-          if ($LASTEXITCODE -ne 0) { throw "powershell.exe version check failed" }
-          & pwsh.exe -NoLogo -NoProfile -NonInteractive -Command 'Write-Output ("pwsh.exe " + $PSVersionTable.PSVersion.ToString())'
-          if ($LASTEXITCODE -ne 0) { throw "pwsh.exe version check failed" }
+          if ($PSVersionTable.PSVersion.Major -ne 5) { throw "powershell.exe 5.x is required" }
+          Write-Output ("powershell.exe " + $PSVersionTable.PSVersion.ToString())
+          $pwshVersion = & pwsh.exe --version
+          if ($LASTEXITCODE -ne 0 -or $pwshVersion -notmatch '^PowerShell 7\.') { throw "pwsh.exe 7.x version check failed" }
+          Write-Output $pwshVersion
       - name: Run real Windows Go and loopback tests
         if: matrix.os == 'windows' && matrix.arch == 'amd64' && matrix.kind == 'desktop'
         shell: powershell

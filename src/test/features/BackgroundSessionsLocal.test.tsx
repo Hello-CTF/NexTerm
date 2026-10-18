@@ -35,6 +35,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 });
 
 import { BackgroundSessions } from "../../features/terminal/BackgroundSessions";
+import { useAuth } from "../../features/auth/store";
 import { setTerminalCloseAction } from "../../app/preferences";
 import {
   closeActionHint,
@@ -47,6 +48,7 @@ import {
 } from "../../app/store";
 import { deferred, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
 import type { LiveTabInfo, SessionInfo } from "../../ipc/commands";
+import type { AccountUser } from "../../ipc/authApi";
 
 function liveTab(extra: Partial<LiveTabInfo> & { tabId: string }): LiveTabInfo {
   return {
@@ -98,12 +100,21 @@ function toastText(): string {
   return useUi.getState().toasts.map((t) => t.text).join("\n");
 }
 
+function storageContents(): string {
+  return Array.from({ length: window.localStorage.length }, (_, index) => {
+    const key = window.localStorage.key(index) ?? "";
+    return `${key} ${window.localStorage.getItem(key) ?? ""}`;
+  }).join("\n");
+}
+
 describe("BackgroundSessions host-scoped view", () => {
   const s1 = { ...sessionInfo("ssh", "s1"), name: "主机一" };
   const s2 = { ...sessionInfo("ssh", "s2"), name: "主机二" };
 
   beforeEach(() => {
     vi.resetAllMocks();
+    window.localStorage.clear();
+    useAuth.setState({ user: null });
     mocks.ask.mockResolvedValue(true);
     mocks.listLive.mockResolvedValue([]);
     mocks.listDurable.mockResolvedValue([]);
@@ -348,6 +359,236 @@ describe("BackgroundSessions host-scoped view", () => {
       expect(mocks.listDurable).not.toHaveBeenCalledWith("s2");
     } finally {
       view.unmount();
+    }
+  });
+
+  it("keeps a known durable tab visible but inactive after a host disconnects", async () => {
+    seedScope();
+    useUi.setState((state) => ({
+      sessions: [{ ...s1, assetId: "asset-host-one" }, s2],
+      workspaces: state.workspaces.map((workspace) => workspace.id === "ws-host"
+        ? { ...workspace, assetId: "asset-host-one", assetKind: "ssh" }
+        : workspace),
+    }));
+    mocks.listDurable.mockResolvedValue([{ id: "known-shell", cols: 80, rows: 24, dead: false, title: "持续编译" }]);
+    const view = mountHost();
+    try {
+      await flush();
+      await waitFor(() => expect(view.container.textContent).toContain("持续编译"));
+      await act(async () => {
+        useUi.setState((state) => ({ sessions: state.sessions.map((session) => session.id === "s1"
+          ? { ...session, status: "disconnected" as const } : session) }));
+        await flush();
+      });
+      const row = [...view.container.querySelectorAll("tbody tr")].find((candidate) => candidate.textContent?.includes("持续编译"));
+      expect(row?.textContent).toContain("待核实");
+      expect(row?.textContent).toContain("重连并查找");
+      expect(row?.textContent).not.toContain("接管");
+      expect(row?.textContent).not.toContain("结束进程");
+      expect(mocks.closeTab).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("uses the initial quick workspace session binding without reconnecting by name", async () => {
+    seedScope();
+    useUi.setState((state) => ({
+      sessions: [{ ...s1, assetId: null, name: "与工作区名称不同" }, s2],
+      workspaces: state.workspaces.map((workspace) => workspace.id === "ws-host"
+        ? {
+          ...workspace,
+          assetId: "",
+          assetKind: "ssh",
+          quickTarget: { id: "quick-one", host: "example.invalid", port: 22, username: "tester", authKind: "agent" as const },
+        }
+        : workspace),
+    }));
+    mocks.listDurable.mockResolvedValue([{ id: "quick-shell", cols: 80, rows: 24, dead: false, title: "快速连接的终端" }]);
+    const view = mountHost();
+    try {
+      await flush();
+      await waitFor(() => expect(view.container.textContent).toContain("快速连接的终端"));
+      expect(mocks.listDurable).toHaveBeenCalledWith("s1");
+      expect(view.container.textContent).not.toContain("重连并查找");
+      expect(mocks.connectSession).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("shows a restorable layout terminal before the old host session exists", async () => {
+    seedScope();
+    useUi.setState((state) => ({
+      sessions: [s2],
+      workspaces: state.workspaces.map((workspace) => workspace.id === "ws-host"
+        ? {
+          ...workspace, sessionId: undefined, assetId: "asset-host-one", assetKind: "ssh",
+          panes: [{ id: "host-pane", tabs: [{ ...terminal("layout-task", "s1"), title: "布局里的任务", restorePending: true }], activeTabId: "layout-task" }],
+        }
+        : workspace),
+    }));
+    const view = mount(createElement(BackgroundSessions, { workspaceId: "ws-host" }));
+    try {
+      await flush();
+      const row = [...view.container.querySelectorAll("tbody tr")].find((candidate) => candidate.textContent?.includes("布局里的任务"));
+      expect(row?.textContent).toContain("待核实");
+      expect(row?.textContent).toContain("重连并查找");
+      expect(row?.textContent).not.toContain("接管");
+      expect(mocks.listDurable).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("shows a generic restore hint after restart and verifies the terminal on its owning host", async () => {
+    useAuth.setState({ user: { id: "account-a" } as AccountUser });
+    seedScope();
+    useUi.setState((state) => ({
+      sessions: [{ ...s1, assetId: "asset-host-one" }, s2],
+      workspaces: state.workspaces.map((workspace) => workspace.id === "ws-host"
+        ? { ...workspace, assetId: "asset-host-one", assetKind: "ssh" }
+        : workspace),
+    }));
+    mocks.listDurable.mockResolvedValue([{ id: "saved-shell", cols: 80, rows: 24, dead: false, title: "远端任务" }]);
+    const first = mountHost();
+    try {
+      await flush();
+      await waitFor(() => expect(first.container.textContent).toContain("远端任务"));
+    } finally {
+      first.unmount();
+    }
+    expect(storageContents()).not.toContain("远端任务");
+    expect(storageContents()).not.toContain("saved-shell");
+
+    useUi.setState((state) => ({ sessions: [s2], workspaces: state.workspaces.map((workspace) =>
+      workspace.id === "ws-host" ? { ...workspace, sessionId: undefined } : workspace) }));
+    mocks.listDurable.mockClear();
+    const second = mountHost();
+    try {
+      const row = [...second.container.querySelectorAll("tbody tr")].find((candidate) => candidate.textContent?.includes("待查找持久终端"));
+      expect(row?.textContent).toContain("待核实");
+      expect(row?.textContent).not.toContain("接管");
+      expect(second.container.textContent).not.toContain("远端任务");
+      expect(mocks.listDurable).not.toHaveBeenCalled();
+
+      mocks.connectSession.mockResolvedValue({ ...s1, id: "fresh-host", assetId: "asset-host-one" });
+      mocks.listDurable.mockResolvedValue([{ id: "saved-shell", cols: 80, rows: 24, dead: false, title: "远端任务" }]);
+      await act(async () => {
+        actionButton(second, "重连并查找").click();
+        await flush();
+      });
+      await waitFor(() => expect(mocks.listDurable).toHaveBeenCalledWith("fresh-host"));
+      expect(mocks.listDurable).not.toHaveBeenCalledWith("s1");
+      expect(second.container.textContent).toContain("接管");
+    } finally {
+      second.unmount();
+    }
+  });
+
+  it("does not expose another account's in-memory terminal or enumerate a mismatched session", async () => {
+    useAuth.setState({ user: { id: "account-a" } as AccountUser });
+    seedScope();
+    useUi.setState((state) => ({
+      sessions: [{ ...s1, assetId: "asset-host-one" }, s2],
+      workspaces: state.workspaces.map((workspace) => workspace.id === "ws-host"
+        ? { ...workspace, assetId: "asset-host-one", assetKind: "ssh" }
+        : workspace),
+    }));
+    mocks.listDurable.mockResolvedValue([{ id: "private-shell", cols: 80, rows: 24, dead: false, title: "仅账号 A 可见" }]);
+    const first = mountHost();
+    try {
+      await flush();
+      await waitFor(() => expect(first.container.textContent).toContain("仅账号 A 可见"));
+    } finally {
+      first.unmount();
+    }
+
+    useAuth.setState({ user: { id: "account-b" } as AccountUser });
+    useUi.setState((state) => ({ sessions: [{ ...s1, assetId: "another-asset" }, s2], workspaces: state.workspaces.map((workspace) =>
+      workspace.id === "ws-host" ? { ...workspace, sessionId: "s1" } : workspace) }));
+    mocks.listDurable.mockClear();
+    const second = mountHost();
+    try {
+      await flush();
+      expect(second.container.textContent).not.toContain("仅账号 A 可见");
+      expect(second.container.textContent).toContain("重连并查找");
+      expect(mocks.listDurable).not.toHaveBeenCalled();
+      mocks.connectSession.mockResolvedValue({ ...s1, id: "fresh-a", assetId: "asset-host-one" });
+      mocks.listDurable.mockResolvedValue([]);
+      await act(async () => {
+        actionButton(second, "重连并查找").click();
+        await flush();
+      });
+      await waitFor(() => expect(mocks.listDurable).toHaveBeenCalledWith("fresh-a"));
+      expect(mocks.listDurable).not.toHaveBeenCalledWith("s1");
+    } finally {
+      second.unmount();
+    }
+  });
+
+  it("hides previously discovered terminal names immediately when the account changes", async () => {
+    useAuth.setState({ user: { id: "account-a" } as AccountUser });
+    seedScope();
+    useUi.setState((state) => ({
+      sessions: [{ ...s1, assetId: "asset-host-one" }, s2],
+      workspaces: state.workspaces.map((workspace) => workspace.id === "ws-host"
+        ? { ...workspace, assetId: "asset-host-one", assetKind: "ssh" }
+        : workspace),
+    }));
+    mocks.listDurable.mockResolvedValue([{ id: "private-shell", cols: 80, rows: 24, dead: false, title: "账号 A 的任务" }]);
+    const view = mountHost();
+    try {
+      await flush();
+      await waitFor(() => expect(view.container.textContent).toContain("账号 A 的任务"));
+      act(() => {
+        useAuth.setState({ user: { id: "account-b" } as AccountUser });
+        useUi.setState((state) => ({ sessions: state.sessions.map((session) => session.id === "s1"
+          ? { ...session, status: "disconnected" as const } : session) }));
+      });
+      expect(view.container.textContent).not.toContain("账号 A 的任务");
+      expect(view.container.textContent).toContain("待查找持久终端");
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("does not retain host or tab titles without a restored workspace after account switch and restart", async () => {
+    useAuth.setState({ user: { id: "account-a" } as AccountUser });
+    seedScope();
+    useUi.setState((state) => ({
+      sessions: [{ ...s1, assetId: "asset-host-one" }, s2],
+      workspaces: state.workspaces.map((workspace) => workspace.id === "ws-host"
+        ? { ...workspace, title: "缓存主机", assetId: "asset-host-one", assetKind: "ssh" }
+        : workspace),
+    }));
+    mocks.listDurable.mockResolvedValue([{ id: "saved-only", cols: 80, rows: 24, dead: false, title: "私有任务" }]);
+    const first = mountHost();
+    try {
+      await flush();
+      await waitFor(() => expect(first.container.textContent).toContain("私有任务"));
+    } finally {
+      first.unmount();
+    }
+
+    useAuth.setState({ user: { id: "account-b" } as AccountUser });
+
+    useUi.setState({
+      sessions: [],
+      workspaces: [{ id: "tools", kind: "tools", title: "工具", panes: [{ id: "p", tabs: [], activeTabId: null }], activePaneId: "p", splitRatio: 0.5, closable: true }],
+      activeWorkspaceId: "tools",
+    });
+    mocks.listDurable.mockClear();
+    const second = mount(createElement(BackgroundSessions, { workspaceId: "tools" }));
+    try {
+      await flush();
+      expect(second.container.textContent).not.toContain("私有任务");
+      expect(second.container.textContent).not.toContain("缓存主机");
+      expect(storageContents()).not.toContain("私有任务");
+      expect(storageContents()).not.toContain("saved-only");
+      expect(mocks.listDurable).not.toHaveBeenCalled();
+    } finally {
+      second.unmount();
     }
   });
 
@@ -705,7 +946,200 @@ describe("BackgroundSessions host-scoped view", () => {
     }
   });
 
+  function seedSharedHostWorkspaces(firstStatus: SessionInfo["status"], secondStatus: SessionInfo["status"]) {
+    seedWorkspaceScope({ kind: "tools" }, []);
+    const first: Workspace = {
+      ...ws([{ id: "first-pane", tabs: [{ ...terminal("first-task", "s1"), title: "第一个工作区的任务", restorePending: true }], activeTabId: "first-task" }]),
+      id: "first-host", title: "同一主机", sessionId: "s1", assetId: "shared-asset", assetKind: "ssh",
+    };
+    const second: Workspace = {
+      ...ws([{ id: "second-pane", tabs: [
+        { ...terminal("second-task", "s2"), title: "第二个工作区的任务", restorePending: true },
+        { ...terminal("duplicate-first", "s2"), tabId: "kernel-first-task", title: "第一个工作区的任务", restorePending: true },
+      ], activeTabId: "second-task" }]),
+      id: "second-host", title: "同一主机", sessionId: "s2", assetId: "shared-asset", assetKind: "ssh",
+    };
+    useUi.setState((state) => ({
+      workspaces: [...state.workspaces, first, second],
+      sessions: [{ ...s1, assetId: "shared-asset", status: firstStatus }, { ...s2, assetId: "shared-asset", status: secondStatus }],
+    }));
+  }
+
+  it("shows pending terminals from every workspace of the same host", async () => {
+    seedSharedHostWorkspaces("disconnected", "disconnected");
+    const view = mount(createElement(BackgroundSessions));
+    try {
+      await flush();
+      expect(view.container.textContent).toContain("第一个工作区的任务");
+      expect(view.container.textContent).toContain("第二个工作区的任务");
+      expect(view.container.querySelectorAll("tbody tr")).toHaveLength(2);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("does not show a pending host when its second workspace is connected", async () => {
+    seedSharedHostWorkspaces("disconnected", "connected");
+    const view = mount(createElement(BackgroundSessions));
+    try {
+      await flush();
+      expect(view.container.textContent).not.toContain("待查找持久终端");
+      expect(view.container.textContent).not.toContain("第一个工作区的任务");
+      expect(view.container.textContent).not.toContain("重连并查找");
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("lists one takeable terminal when two sessions discover the same host tab", async () => {
+    seedSharedHostWorkspaces("connected", "connected");
+    mocks.listSessions.mockResolvedValue(useUi.getState().sessions);
+    mocks.listDurable.mockResolvedValue([{ id: "shared-tab", cols: 80, rows: 24, dead: false, title: "共享任务" }]);
+    const view = mount(createElement(BackgroundSessions));
+    try {
+      await flush();
+      await waitFor(() => expect(mocks.listDurable).toHaveBeenCalledWith("s2"));
+      expect(view.container.querySelectorAll("tbody tr")).toHaveLength(1);
+      expect(view.container.textContent).toContain("共享任务");
+      await act(async () => {
+        actionButton(view, "接管").click();
+        await flush();
+      });
+      expect(useUi.getState().workspaces.flatMap((workspace) => workspace.panes)
+        .flatMap((pane) => pane.tabs)).toContainEqual(expect.objectContaining({ sessionId: "s1", tabId: "shared-tab" }));
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("deduplicates a live tab against another session's durable inventory", async () => {
+    seedSharedHostWorkspaces("connected", "connected");
+    mocks.listLive.mockResolvedValue([liveTab({ tabId: "shared-tab", sessionId: "s1", sessionName: "主机一", title: "现场任务" })]);
+    mocks.listDurable.mockResolvedValue([{ id: "shared-tab", cols: 80, rows: 24, dead: false, title: "持久任务" }]);
+    const view = mount(createElement(BackgroundSessions));
+    try {
+      await flush();
+      expect(view.container.querySelectorAll("tbody tr")).toHaveLength(1);
+      expect(view.container.textContent).toContain("现场任务");
+      expect(view.container.textContent).not.toContain("持久任务");
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("does not let an exited live tab hide another session's durable tab", async () => {
+    seedSharedHostWorkspaces("connected", "connected");
+    mocks.listLive.mockResolvedValue([liveTab({
+      tabId: "shared-tab", sessionId: "s1", sessionName: "主机一", title: "已退出任务", exited: true,
+    })]);
+    mocks.listDurable.mockImplementation(async (sessionId: string) => sessionId === "s2"
+      ? [{ id: "shared-tab", cols: 80, rows: 24, dead: false, title: "仍在运行的任务" }]
+      : []);
+    const view = mount(createElement(BackgroundSessions));
+    try {
+      await flush();
+      expect(view.container.querySelectorAll("tbody tr")).toHaveLength(1);
+      expect(view.container.textContent).toContain("仍在运行的任务");
+      expect(view.container.textContent).not.toContain("已退出任务");
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("remembers the union of durable tabs discovered by sessions on one host", async () => {
+    seedSharedHostWorkspaces("connected", "connected");
+    useUi.setState((state) => ({ workspaces: state.workspaces.map((workspace) => workspace.kind === "session"
+      ? { ...workspace, panes: workspace.panes.map((pane) => ({ ...pane, tabs: [], activeTabId: null })) }
+      : workspace) }));
+    mocks.listDurable.mockImplementation(async (sessionId: string) => [{
+      id: sessionId === "s1" ? "first-durable" : "second-durable",
+      cols: 80, rows: 24, dead: false,
+      title: sessionId === "s1" ? "第一个持久任务" : "第二个持久任务",
+    }]);
+    const view = mount(createElement(BackgroundSessions));
+    try {
+      await flush();
+      expect(view.container.textContent).toContain("第一个持久任务");
+      expect(view.container.textContent).toContain("第二个持久任务");
+      await act(async () => {
+        useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, status: "disconnected" as const })) }));
+        await flush();
+      });
+      expect(view.container.textContent).toContain("第一个持久任务");
+      expect(view.container.textContent).toContain("第二个持久任务");
+      expect(view.container.querySelectorAll("tbody tr")).toHaveLength(2);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("keeps prior host inventory when one session's refresh fails", async () => {
+    seedSharedHostWorkspaces("connected", "connected");
+    useUi.setState((state) => ({ workspaces: state.workspaces.map((workspace) => workspace.kind === "session"
+      ? { ...workspace, panes: workspace.panes.map((pane) => ({ ...pane, tabs: [], activeTabId: null })) }
+      : workspace) }));
+    let inventory: "initial" | "partial" | "complete" | "empty" = "initial";
+    mocks.listDurable.mockImplementation(async (sessionId: string) => {
+      if (inventory === "partial" && sessionId === "s1") throw new Error("inventory unavailable");
+      if (inventory === "empty" || (inventory === "complete" && sessionId === "s1")) return [];
+      const id = inventory === "initial" ? sessionId === "s1" ? "first-durable" : "second-durable" : "new-durable";
+      const title = inventory === "initial" ? sessionId === "s1" ? "第一个持久任务" : "第二个持久任务" : "新发现任务";
+      return [{ id, cols: 80, rows: 24, dead: false, title }];
+    });
+    const view = mount(createElement(BackgroundSessions));
+    try {
+      await flush();
+      expect(view.container.textContent).toContain("第一个持久任务");
+      expect(view.container.textContent).toContain("第二个持久任务");
+      inventory = "partial";
+      await act(async () => {
+        actionButton(view, "刷新").click();
+        await flush();
+      });
+      expect(view.container.textContent).toContain("新发现任务");
+      await act(async () => {
+        useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, status: "disconnected" as const })) }));
+        await flush();
+      });
+      expect(view.container.textContent).toContain("第一个持久任务");
+      expect(view.container.textContent).toContain("第二个持久任务");
+      expect(view.container.textContent).toContain("新发现任务");
+      expect(view.container.querySelectorAll("tbody tr")).toHaveLength(3);
+
+      inventory = "complete";
+      await act(async () => {
+        useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, status: "connected" as const })) }));
+        await flush();
+      });
+      await act(async () => {
+        useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, status: "disconnected" as const })) }));
+        await flush();
+      });
+      expect(view.container.textContent).not.toContain("第一个持久任务");
+      expect(view.container.textContent).not.toContain("第二个持久任务");
+      expect(view.container.textContent).toContain("新发现任务");
+      expect(view.container.querySelectorAll("tbody tr")).toHaveLength(1);
+
+      inventory = "empty";
+      await act(async () => {
+        useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, status: "connected" as const })) }));
+        await flush();
+      });
+      await act(async () => {
+        useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, status: "disconnected" as const })) }));
+        await flush();
+      });
+      expect(view.container.textContent).not.toContain("新发现任务");
+      expect(view.container.textContent).toContain("待查找持久终端");
+      expect(view.container.querySelectorAll("tbody tr")).toHaveLength(1);
+    } finally {
+      view.unmount();
+    }
+  });
+
   it("keeps matching terminal IDs from different hosts separate", async () => {
+    const firstHost = { ...s1, assetId: "first-asset" };
+    const secondHost = { ...s2, assetId: "second-asset" };
     mocks.listLive.mockResolvedValue([
       liveTab({ tabId: "shared", sessionId: "s1", sessionName: "主机一", title: "主机一任务" }),
     ]);
@@ -714,7 +1148,8 @@ describe("BackgroundSessions host-scoped view", () => {
         ? [{ id: "shared", cols: 80, rows: 24, dead: false, title: "主机二任务" }]
         : [],
     );
-    seedWorkspaceScope({ kind: "tools" }, [s1, s2]);
+    seedWorkspaceScope({ kind: "tools" }, [firstHost, secondHost]);
+    mocks.listSessions.mockResolvedValue([firstHost, secondHost]);
     useUi.setState({ resyncSessions: mocks.resyncSessions });
     const view = mount(createElement(BackgroundSessions));
     try {

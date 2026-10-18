@@ -70,16 +70,6 @@ export function QuickConnect({
   const layer = useOverlayFocus(true, modalRef, { initialFocus: () => inputRef.current });
 
   const assets = assetsQuery.data ?? [];
-  const duplicateNames = useMemo(() => {
-    const seen = new Set<string>();
-    const duplicates = new Set<string>();
-    for (const asset of assets) {
-      const name = asset.name.trim();
-      if (seen.has(name)) duplicates.add(name);
-      else seen.add(name);
-    }
-    return duplicates;
-  }, [assets]);
   const hiddenDatabaseCount = assets.filter(
     (asset) => dbKindOf(asset.kind) !== null && hiddenIds.includes(asset.id),
   ).length;
@@ -385,8 +375,7 @@ export function QuickConnect({
             const asset = row.asset;
             const connecting = connectingIds.includes(asset.id);
             const target = asset.host ? `${asset.host}${asset.port ? `:${asset.port}` : ""}` : "";
-            const showIdentity = duplicateNames.has(asset.name.trim()) && Boolean(target);
-            const identity = showIdentity
+            const identity = target
               ? `${asset.username?.trim() ? `${asset.username.trim()}@` : ""}${target}`
               : "";
             const Icon = assetIcon(asset.kind, typeof asset.options?.icon === "string" ? asset.options.icon : undefined);
@@ -406,7 +395,7 @@ export function QuickConnect({
                 <Icon size={15} className="shrink-0 text-neutral-400" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate">{asset.name}</span>
-                  {showIdentity && <span className="block break-all text-[11px] leading-tight text-neutral-400">{identity}</span>}
+                  {identity && <span className="block break-all text-[11px] leading-tight text-neutral-400">{identity}</span>}
                 </span>
                 {asset.kind === "local" || asset.builtin ? (
                   <span className="nx-badge nx-badge-blue shrink-0">本机</span>
@@ -418,8 +407,6 @@ export function QuickConnect({
                     <IconLoader size={11} className="animate-spin" />
                     连接中…
                   </span>
-                ) : !showIdentity && target ? (
-                  <span className="nx-command-hint shrink-0 text-[11px]">{target}</span>
                 ) : null}
               </button>
             );

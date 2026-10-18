@@ -27,20 +27,25 @@ const (
 
 // CompareRow is one local-vs-remote object comparison; the revision is the LWW clock value, 0 means that side does not exist or is unreadable.
 type CompareRow struct {
-	ID            string `json:"id"`
-	Kind          string `json:"kind"`
-	Name          string `json:"name"`
-	State         string `json:"state"`
-	UpdatedLocal  int64  `json:"updatedAtLocal,omitempty"`
-	UpdatedRemote int64  `json:"updatedAtRemote,omitempty"`
+	ID               string `json:"id"`
+	Kind             string `json:"kind"`
+	Name             string `json:"name"`
+	State            string `json:"state"`
+	UpdatedLocal     int64  `json:"updatedAtLocal,omitempty"`
+	UpdatedRemote    int64  `json:"updatedAtRemote,omitempty"`
+	RemoteSeq        int64  `json:"remoteSeq,omitempty"`
+	RemoteBlobHash   string `json:"remoteBlobHash,omitempty"`
+	LocalPayloadHash string `json:"localPayloadHash,omitempty"`
 }
 
 // CompareResult is the sync_compare return: rows are sorted "differences first, then by name" (same as the browser),
 // warnings carry local collection and remote pull alerts, remote is the number of cloud objects compared this round.
 type CompareResult struct {
-	Rows     []CompareRow `json:"rows"`
-	Warnings []string     `json:"warnings,omitempty"`
-	Remote   int          `json:"remote"`
+	Rows         []CompareRow `json:"rows"`
+	Warnings     []string     `json:"warnings,omitempty"`
+	Remote       int          `json:"remote"`
+	UserID       string       `json:"userId"`
+	CompareToken string       `json:"compareToken"`
 }
 
 // compareEntity is the decision view of one side's entity: plaintext is used only for hash/revision/name and never leaves this process.
@@ -241,6 +246,10 @@ func (s *Service) Compare(ctx context.Context) (CompareResult, error) {
 	if err := s.requireDesktop(); err != nil {
 		return CompareResult{}, err
 	}
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+	s.engine.opMu.Lock()
+	defer s.engine.opMu.Unlock()
 	secret, err := s.linkSecret(ctx)
 	if err != nil {
 		return CompareResult{}, err
@@ -252,6 +261,13 @@ func (s *Service) Compare(ctx context.Context) (CompareResult, error) {
 	for attempt := 0; ; attempt++ {
 		session, err := s.engine.ensureSession(ctx, config)
 		if err != nil {
+			return CompareResult{}, err
+		}
+		if err := s.engine.verifySessionDEK(ctx, config, session); err != nil {
+			if errors.Is(err, errSessionExpired) && attempt == 0 {
+				s.engine.dropSession(session.key)
+				continue
+			}
 			return CompareResult{}, err
 		}
 		result, compareErr := s.compareWithSession(ctx, session)
@@ -290,10 +306,28 @@ func (s *Service) compareWithSession(ctx context.Context, session *remoteSession
 	}
 	// buildCompareRows shrinks remote/undecryptable as it matches, so the cloud object count must be taken first.
 	remoteCount := len(remote) + len(undecryptable)
+	rows := buildCompareRows(local, remote, undecryptable)
+	entries := make(map[string]IDEntry, len(idsResponse.Entries))
+	for _, entry := range idsResponse.Entries {
+		entries[entry.ID] = entry
+	}
+	for i := range rows {
+		if rows[i].State != CompareStateRemoteUndecryptable {
+			continue
+		}
+		entry := entries[rows[i].ID]
+		rows[i].RemoteSeq = entry.Seq
+		rows[i].RemoteBlobHash = entry.BlobHash
+		if localObject, found := local[rows[i].ID]; found {
+			rows[i].LocalPayloadHash = localObject.payloadHash
+		}
+	}
 	return CompareResult{
-		Rows:     buildCompareRows(local, remote, undecryptable),
-		Warnings: report.Warnings,
-		Remote:   remoteCount,
+		Rows:         rows,
+		Warnings:     report.Warnings,
+		Remote:       remoteCount,
+		UserID:       session.userID,
+		CompareToken: syncCompareToken(session, optIn),
 	}, nil
 }
 

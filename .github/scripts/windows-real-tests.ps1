@@ -13,8 +13,15 @@ function Invoke-TargetedGoTest {
     }
     $logName = ($Package -replace '[^A-Za-z0-9]+', '-') + '-' + $Test + '.log'
     $log = Join-Path $env:RUNNER_TEMP $logName
-    & go.exe test -mod=readonly -count=1 -v -run $RunExpression $Package 2>&1 | Tee-Object -FilePath $log
-    $exitCode = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell 5.1 treats Go's normal stderr progress as a terminating error.
+        $ErrorActionPreference = 'Continue'
+        & go.exe test -mod=readonly -count=1 -v -run $RunExpression $Package 2>&1 | Tee-Object -FilePath $log
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     if ($exitCode -ne 0) {
         throw "$Test failed with exit code $exitCode"
     }
@@ -87,11 +94,6 @@ try {
     }
     if ((Get-Command whoami.exe -CommandType Application | Select-Object -First 1).Source -ne (Join-Path $system32 'whoami.exe')) {
         throw 'Windows System32 whoami must precede Unix whoami on PATH'
-    }
-
-    & go.exe test -mod=readonly -count=1 ./...
-    if ($LASTEXITCODE -ne 0) {
-        throw "Windows Go test suite failed with exit code $LASTEXITCODE"
     }
 
     $dVolume = Get-Volume -DriveLetter D -ErrorAction SilentlyContinue

@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => {
     kindOptInGet: vi.fn(),
     kindOptInSet: vi.fn(),
     compare: vi.fn(),
+    repair: vi.fn(),
+    ask: vi.fn(),
     roundCompleteHandlers: [] as Array<(payload: unknown) => void>,
     toast: vi.fn(),
   };
@@ -39,9 +41,13 @@ vi.mock("../../ipc/remoteApi", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/remoteApi")>();
   return {
     ...actual,
-    syncCompareApi: { ...actual.syncCompareApi, compare: mocks.compare },
+    syncCompareApi: { ...actual.syncCompareApi, compare: mocks.compare, repairUndecryptable: mocks.repair },
   };
 });
+vi.mock("../../ui/dialogs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../ui/dialogs")>()),
+  ask: mocks.ask,
+}));
 vi.mock("../../ipc/events", () => ({
   listenEvent: vi.fn((event: string, handler: (payload: unknown) => void) => {
     if (event === "sync://round-complete") mocks.roundCompleteHandlers.push(handler);
@@ -95,7 +101,9 @@ beforeEach(() => {
   document.body.replaceChildren();
   useUi.setState({ pushToast: mocks.toast });
   mocks.wake.mockResolvedValue(undefined);
-  mocks.compare.mockResolvedValue({ rows: [], remote: 0, warnings: [] });
+  mocks.compare.mockResolvedValue({ rows: [], remote: 0, warnings: [], userId: "u-1", compareToken: "compare-1" });
+  mocks.repair.mockResolvedValue({ repaired: true });
+  mocks.ask.mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -105,6 +113,43 @@ afterEach(() => {
 });
 
 describe("Desktop account sync console", () => {
+  it("requires confirmation and uses the compared remote and local versions to repair an undecryptable object", async () => {
+    seedLoggedIn();
+    mocks.compare.mockResolvedValue({
+      userId: "u-1", compareToken: "compare-1", remote: 1, warnings: [],
+      rows: [{ id: "asset-1", kind: "asset", name: "我的主机", state: "remote-undecryptable",
+        remoteSeq: 7, remoteBlobHash: "blob-hash", localPayloadHash: "payload-hash" }],
+    });
+    mounted = withClient(createElement(SyncCard));
+    await flushUntil(() => (document.body.textContent ?? "").includes("差异 1 条"));
+    click([...document.querySelectorAll("button")].find((button) => button.textContent?.includes("对比详情")) as HTMLButtonElement);
+    click([...document.querySelectorAll("button")].find((button) => button.textContent?.includes("用本机副本修复")) as HTMLButtonElement);
+    await flushUntil(() => mocks.ask.mock.calls.length === 1);
+    expect(mocks.ask.mock.calls[0][0]).toContain("我的主机");
+    await flushUntil(() => mocks.repair.mock.calls.length === 1);
+    expect(mocks.repair).toHaveBeenCalledWith({
+      id: "asset-1", action: "restore-local", userId: "u-1", compareToken: "compare-1",
+      remoteSeq: 7, remoteBlobHash: "blob-hash", localKind: "asset", localPayloadHash: "payload-hash",
+    });
+    expect(mocks.toast).toHaveBeenCalledWith("success", "云端对象已用本机副本修复");
+  });
+
+  it("does not modify the cloud when the user cancels clearing a cloud-only object", async () => {
+    seedLoggedIn();
+    mocks.ask.mockResolvedValue(false);
+    mocks.compare.mockResolvedValue({
+      userId: "u-1", compareToken: "compare-1", remote: 1, warnings: [],
+      rows: [{ id: "cloud-1", kind: "", name: "cloud-1", state: "remote-undecryptable",
+        remoteSeq: 8, remoteBlobHash: "blob-hash" }],
+    });
+    mounted = withClient(createElement(SyncCard));
+    await flushUntil(() => (document.body.textContent ?? "").includes("差异 1 条"));
+    click([...document.querySelectorAll("button")].find((button) => button.textContent?.includes("对比详情")) as HTMLButtonElement);
+    click([...document.querySelectorAll("button")].find((button) => button.textContent?.includes("清除云端副本")) as HTMLButtonElement);
+    await flushUntil(() => mocks.ask.mock.calls.length === 1);
+    expect(mocks.repair).not.toHaveBeenCalled();
+  });
+
   it("renders only the login card when logged out, without the sync console or opt-in reads", async () => {
     mocks.linkGet.mockResolvedValue({ url: "", username: "", insecure: false, hasPassword: false, verifiedAt: 0, lastError: "" });
     mocks.status.mockResolvedValue({ configured: false, loggedIn: false, seq: 0, verifiedAt: 0, lastError: "" });

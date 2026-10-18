@@ -34,6 +34,7 @@ import {
   IconFolder,
   IconGlobe,
   IconLoader,
+  IconList,
   IconPlay,
   IconPlug,
   IconPlus,
@@ -45,6 +46,52 @@ import {
 import { SnippetsPanel } from "./SnippetsPanel";
 import { SshImportDialog } from "./SshImportDialog";
 import { DeviceTreeSection } from "../fleet/DeviceTreeSection";
+
+const ASSET_IDENTITY_KEY = "nexterm.assetIdentity.v1";
+
+function loadDetailedAssetIdentity(): boolean {
+  try {
+    return localStorage.getItem(ASSET_IDENTITY_KEY) !== "compact";
+  } catch {
+    return true;
+  }
+}
+
+const assetIdentityMeasurements = new Map<Element, () => void>();
+let assetIdentityObserver: ResizeObserver | null = null;
+
+function remeasureAssetIdentities(): void {
+  for (const measure of new Set(assetIdentityMeasurements.values())) measure();
+}
+
+function watchAssetIdentityWidth(nodes: Element[], measure: () => void): () => void {
+  if (assetIdentityMeasurements.size === 0) window.addEventListener("resize", remeasureAssetIdentities);
+  if (!assetIdentityObserver && typeof ResizeObserver !== "undefined") {
+    assetIdentityObserver = new ResizeObserver((entries) => {
+      const callbacks = new Set<() => void>();
+      for (const entry of entries) {
+        const callback = assetIdentityMeasurements.get(entry.target);
+        if (callback) callbacks.add(callback);
+      }
+      for (const callback of callbacks) callback();
+    });
+  }
+  for (const node of nodes) {
+    assetIdentityMeasurements.set(node, measure);
+    assetIdentityObserver?.observe(node);
+  }
+  return () => {
+    for (const node of nodes) {
+      assetIdentityObserver?.unobserve(node);
+      assetIdentityMeasurements.delete(node);
+    }
+    if (assetIdentityMeasurements.size === 0) {
+      assetIdentityObserver?.disconnect();
+      assetIdentityObserver = null;
+      window.removeEventListener("resize", remeasureAssetIdentities);
+    }
+  };
+}
 
 const KIND_LABEL: Record<string, string> = {
   ssh: "SSH",
@@ -238,6 +285,7 @@ export function AssetTree() {
   const qc = useQueryClient();
   const { pushToast, leftOpen, leftWidth } = useUi();
   const [query, setQuery] = useState("");
+  const [detailedIdentity, setDetailedIdentity] = useState(loadDetailedAssetIdentity);
   const [editing, setEditing] = useState<"none" | "asset" | "group">("none");
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
   const [presetGroup, setPresetGroup] = useState<string | null>(null);
@@ -681,7 +729,7 @@ export function AssetTree() {
       rowRef={(node) => registerAssetRow(asset, node)}
       onFocus={() => onAssetFocus(asset)}
       hidden={isHidden(asset.id)}
-      showIdentity={duplicateNames.has(asset.name.trim())}
+      showIdentity={detailedIdentity || duplicateNames.has(asset.name.trim())}
       onDelete={() => void onDelete(asset)}
       onEdit={() => setEditingAsset(asset)}
       onMore={(x, y, full) => setRowMenu({ x, y, asset, full })}
@@ -721,6 +769,7 @@ export function AssetTree() {
         onAssetFocus={onAssetFocus}
         hiddenIds={hiddenIds}
         duplicateNames={duplicateNames}
+        detailedIdentity={detailedIdentity}
         onDelete={(asset) => void onDelete(asset)}
         onEdit={(asset) => setEditingAsset(asset)}
         onMore={(asset, x, y, full) => setRowMenu({ x, y, asset, full })}
@@ -788,6 +837,23 @@ export function AssetTree() {
             {showHidden ? <IconEyeOff size={14} /> : <IconEye size={14} />}
           </button>
         )}
+        <button
+          className={`nx-icon-btn nx-icon-btn-sm ${detailedIdentity ? "is-active" : ""}`}
+          title={detailedIdentity ? "紧凑显示资产" : "显示资产主机身份"}
+          aria-label={detailedIdentity ? "紧凑显示资产" : "显示资产主机身份"}
+          aria-pressed={detailedIdentity}
+          onClick={() => {
+            const next = !detailedIdentity;
+            setDetailedIdentity(next);
+            try {
+              localStorage.setItem(ASSET_IDENTITY_KEY, next ? "detailed" : "compact");
+            } catch {
+              // Keep the current display choice for this session when storage is unavailable.
+            }
+          }}
+        >
+          <IconList size={14} />
+        </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="新建资产"
@@ -1032,6 +1098,28 @@ function AssetRow({
   const label = asset.name;
   const target = asset.host ? `${asset.host}${asset.port ? `:${asset.port}` : ""}` : "";
   const identity = target ? `${asset.username?.trim() ? `${asset.username.trim()}@` : ""}${target}` : asset.builtin ? "本机" : "";
+  const identityAreaRef = useRef<HTMLSpanElement>(null);
+  const nameMeasureRef = useRef<HTMLSpanElement>(null);
+  const identityMeasureRef = useRef<HTMLSpanElement>(null);
+  const [identityFits, setIdentityFits] = useState(false);
+  useLayoutEffect(() => {
+    const area = identityAreaRef.current;
+    const nameNode = nameMeasureRef.current;
+    const measureNode = identityMeasureRef.current;
+    if (!showIdentity || !identity || !area || !nameNode || !measureNode) {
+      setIdentityFits(false);
+      return;
+    }
+    const measure = () => {
+      const available = area.clientWidth;
+      const required = nameNode.getBoundingClientRect().width
+        + measureNode.getBoundingClientRect().width
+        + 8;
+      setIdentityFits(available === 0 || required <= available);
+    };
+    measure();
+    return watchAssetIdentityWidth([area, nameNode, measureNode], measure);
+  }, [showIdentity, identity, label]);
   const tip = [
     asset.name,
     target || (asset.builtin ? "本机" : ""),
@@ -1048,7 +1136,7 @@ function AssetRow({
       role="treeitem"
       aria-level={level}
       tabIndex={0}
-      className={`nx-row nx-row-oneline nx-row-reserve-actions ${hidden ? "opacity-55" : ""}`}
+      className={`nx-row nx-row-oneline nx-row-reserve-actions nx-asset-row ${hidden ? "opacity-55" : ""}`}
       onFocusCapture={onFocus}
       draggable={!movingTarget}
       onDragStart={(e) => {
@@ -1072,13 +1160,17 @@ function AssetRow({
       title={tip}
     >
       <Icon size={14} className="shrink-0 text-neutral-500" />
-      {showIdentity && identity ? (
-        <span className="nx-row-name min-w-0 flex-auto">
-          <span className="block truncate">{label}</span>
-          <span className="block break-all text-[11px] leading-tight text-neutral-400">{identity}</span>
+      <span ref={identityAreaRef} className="nx-row-name min-w-0 flex-1 overflow-hidden whitespace-normal">
+        <span className="nx-asset-row-name break-all" style={{ whiteSpace: "normal", overflowX: "visible" }}>{label}</span>
+        {showIdentity && identity && identityFits && (
+          <span className="nx-asset-row-identity ml-1.5 text-[11px] text-neutral-400">{identity}</span>
+        )}
+      </span>
+      {showIdentity && identity && (
+        <span aria-hidden="true" className="nx-asset-row-measures pointer-events-none invisible whitespace-nowrap" style={{ position: "absolute", width: 0, height: 0, overflow: "hidden" }}>
+          <span ref={nameMeasureRef} className="nx-asset-row-name-measure inline-block whitespace-nowrap">{label}</span>
+          <span ref={identityMeasureRef} className="nx-asset-row-identity-measure inline-block whitespace-nowrap text-[11px]">{identity}</span>
         </span>
-      ) : (
-        <span className="nx-row-name nx-asset-row-name min-w-0 flex-auto">{label}</span>
       )}
       {hidden && <span className="nx-badge">已隐藏</span>}
       {asset.builtin && <span className="nx-badge nx-badge-blue">本机</span>}
@@ -1210,6 +1302,7 @@ function GroupNode({
   onAssetFocus,
   hiddenIds,
   duplicateNames,
+  detailedIdentity,
   onDelete,
   onEdit,
   onMore,
@@ -1250,6 +1343,7 @@ function GroupNode({
   onAssetFocus: (asset: Asset) => void;
   hiddenIds: string[];
   duplicateNames: Set<string>;
+  detailedIdentity: boolean;
   onDelete: (a: Asset) => void;
   onEdit: (a: Asset) => void;
   onMore: (a: Asset, x: number, y: number, full?: boolean) => void;
@@ -1325,7 +1419,7 @@ function GroupNode({
         onAssetFocus(a);
       }}
       hidden={hiddenIds.includes(a.id)}
-      showIdentity={duplicateNames.has(a.name.trim())}
+      showIdentity={detailedIdentity || duplicateNames.has(a.name.trim())}
       onDelete={() => onDelete(a)}
       onEdit={() => onEdit(a)}
       onMore={(x, y, full) => onMore(a, x, y, full)}

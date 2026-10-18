@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { assetApi, syncApi, transcriptApi, type TranscriptChunk } from "../../ipc/commands";
 import type { AccountLink, SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone, SyncKindOptIn, SyncStatus } from "../../ipc/types";
 import { AuthApiError, syncV2Api } from "../../ipc/authApi";
-import { remoteLinkApi, syncCompareApi } from "../../ipc/remoteApi";
+import { remoteLinkApi, syncCompareApi, type SyncCompareRow } from "../../ipc/remoteApi";
 import { useAuth } from "../auth/store";
 import {
   base64ToBytes,
@@ -39,7 +39,7 @@ import { formatTime } from "../../ui/format";
 import { AuthCard } from "./AuthCard";
 import { AccountCard } from "./AccountCard";
 import { SYNC_AUTO_BADGE, SYNC_CONSOLE_TITLE, SYNC_INTERVAL_LABEL, SYNC_MERGE_GUIDE, SyncOptInSection } from "./syncOptIns";
-import { COMPARE_KIND_LABELS, CompareDetails, type CompareRowView } from "./syncCompareRows";
+import { COMPARE_KIND_LABELS, CompareDetails, type UndecryptableAction } from "./syncCompareRows";
 import {
   IconChevronDown,
   IconChevronRight,
@@ -523,11 +523,15 @@ function DesktopSyncConsole() {
   const [optInBusy, setOptInBusy] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [compareRows, setCompareRows] = useState<CompareRowView[] | null>(null);
+  const [compareRows, setCompareRows] = useState<SyncCompareRow[] | null>(null);
   const [compareRemote, setCompareRemote] = useState<number | null>(null);
   const [compareWarnings, setCompareWarnings] = useState<string[]>([]);
   const [compareBusy, setCompareBusy] = useState(false);
   const [compareError, setCompareError] = useState<string | null>(null);
+  const [compareContext, setCompareContext] = useState<{ userId: string; compareToken: string } | null>(null);
+  const [repairBusy, setRepairBusy] = useState(false);
+  const [repairError, setRepairError] = useState<string | null>(null);
+  const repairBusyRef = useRef(false);
   const compareSeqRef = useRef(0);
 
   const load = useCallback(() => {
@@ -541,13 +545,18 @@ function DesktopSyncConsole() {
     const seq = ++compareSeqRef.current;
     setCompareBusy(true);
     setCompareError(null);
+    setCompareContext(null);
     return syncCompareApi
       .compare()
       .then((result) => {
         if (seq !== compareSeqRef.current) return;
-        setCompareRows(result.rows as CompareRowView[]);
+        setCompareRows(result.rows.map((row) => ({
+          ...row,
+          hasLocalRepairCopy: Boolean(row.localPayloadHash && row.kind),
+        })));
         setCompareRemote(result.remote);
         setCompareWarnings(result.warnings ?? []);
+        setCompareContext({ userId: result.userId, compareToken: result.compareToken });
       })
       .catch((e: unknown) => {
         if (seq === compareSeqRef.current) setCompareError(describeError(e));
@@ -601,6 +610,56 @@ function DesktopSyncConsole() {
       setError(describeError(e));
     } finally {
       setSyncBusy(false);
+    }
+  };
+
+  const repairUndecryptable = async (id: string, action: UndecryptableAction) => {
+    if (repairBusyRef.current || compareBusy) return;
+    if (action === "retry") {
+      await loadCompare();
+      return;
+    }
+    const row = compareRows?.find((candidate) => candidate.id === id && candidate.state === "remote-undecryptable");
+    const context = compareContext;
+    if (!row || !context || !row.remoteSeq || !row.remoteBlobHash) {
+      setRepairError("对比结果已变化，请刷新后再操作");
+      return;
+    }
+    const hasLocal = Boolean(row.localPayloadHash && row.kind);
+    if ((action === "restore-local") !== hasLocal) {
+      setRepairError("本机副本状态已变化，请刷新对比结果");
+      return;
+    }
+    repairBusyRef.current = true;
+    setRepairBusy(true);
+    setRepairError(null);
+    const seq = compareSeqRef.current;
+    try {
+      const { ask } = await import("../../ui/dialogs");
+      const confirmed = action === "restore-local"
+        ? await ask(`将本机「${row.name}」覆盖云端无法解密的对象？此操作会替换云端原有密文。`, {
+          title: "用本机副本修复云端对象", kind: "warning",
+        })
+        : await ask(`本次对比没有可用的本机对象 ${id}。确认清除这条无法解密、类型未知的云端副本？`, {
+          title: "清除无法解密的云端副本", kind: "warning",
+        });
+      if (!confirmed) return;
+      if (seq !== compareSeqRef.current) throw new Error("对比结果已变化，请刷新后再操作");
+      const response = await syncCompareApi.repairUndecryptable({
+        id, action, ...context,
+        remoteSeq: row.remoteSeq,
+        remoteBlobHash: row.remoteBlobHash,
+        ...(hasLocal ? { localKind: row.kind, localPayloadHash: row.localPayloadHash } : {}),
+      });
+      if (!response.repaired) throw new Error("云端未确认操作，请刷新对比结果");
+      pushToast("success", action === "restore-local" ? "云端对象已用本机副本修复" : "云端副本已清除");
+      await loadCompare();
+      await load();
+    } catch (cause) {
+      setRepairError(describeError(cause));
+    } finally {
+      repairBusyRef.current = false;
+      setRepairBusy(false);
     }
   };
 
@@ -664,6 +723,13 @@ function DesktopSyncConsole() {
         </div>
       )}
 
+      {repairError && (
+        <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
+          <IconXCircle size={13} className="mt-0.5 shrink-0" />
+          <span className="min-w-0 flex-1 break-words">操作失败：{repairError}</span>
+        </div>
+      )}
+
       {compareWarnings.length > 0 && (
         <div className="nx-alert nx-alert-info mb-3 flex items-start gap-2">
           <IconInfo size={13} className="mt-0.5 shrink-0" />
@@ -677,7 +743,9 @@ function DesktopSyncConsole() {
         </div>
       )}
 
-      <CompareDetails rows={compareRows} error={compareError !== null} />
+      <CompareDetails rows={compareRows} error={compareError !== null}
+        onUndecryptableAction={compareContext ? (id, action) => void repairUndecryptable(id, action) : undefined}
+        actionsBusy={repairBusy || compareBusy} />
 
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
@@ -716,8 +784,15 @@ interface RemoteObject {
 interface RemoteState {
   objects: RemoteObject[];
   undecryptableIds: string[];
+  undecryptableEntries: UndecryptableEntry[];
   head: string;
   maxSeq: number;
+}
+
+interface UndecryptableEntry {
+  id: string;
+  seq: number;
+  blobHash: string;
 }
 
 const TRANSCRIPT_MAX_CONTENT_BYTES = 64 << 20;
@@ -765,6 +840,14 @@ async function loadOptedInTranscripts(): Promise<LocalEntity[]> {
     }
   }
   return out;
+}
+
+async function localTranscriptExists(id: string): Promise<boolean> {
+  const hosts = await transcriptApi.hosts();
+  for (const host of hosts) {
+    if ((await transcriptApi.list(host.assetId)).some((transcript) => transcript.id === id)) return true;
+  }
+  return false;
 }
 
 interface LocalCollection {
@@ -973,6 +1056,7 @@ interface RemoteCache {
   head: string;
   objects: Map<string, RemoteObject>;
   undecryptableIds: string[];
+  undecryptableEntries: UndecryptableEntry[];
 }
 
 const remoteCaches = new WeakMap<Uint8Array, RemoteCache>();
@@ -1028,7 +1112,7 @@ async function loadRemoteObjects(dek: Uint8Array, optIn: SyncKindOptIn, idsOverr
   if (ids.unchanged && cache?.undecryptableIds.length) ids = await syncV2Api.ids();
   if (ids.unchanged && cache) {
     const objects = [...cache.objects.values()].filter((object) => remoteKindVisible(object.kind, object.plaintext, optIn));
-    return { objects, undecryptableIds: cache.undecryptableIds, head: ids.head, maxSeq: ids.max_seq };
+    return { objects, undecryptableIds: cache.undecryptableIds, undecryptableEntries: cache.undecryptableEntries, head: ids.head, maxSeq: ids.max_seq };
   }
 
   const next = new Map<string, RemoteObject>();
@@ -1043,24 +1127,37 @@ async function loadRemoteObjects(dek: Uint8Array, optIn: SyncKindOptIn, idsOverr
   }
 
   const undecryptableIds: string[] = [];
+  const undecryptableEntries: UndecryptableEntry[] = [];
   for (let offset = 0; offset < pending.length; offset += 256) {
     const batch = pending.slice(offset, offset + 256);
-    const page = await syncV2Api.pull(0, batch.map((entry) => entry.id));
+    const page = await syncV2Api.pull(ids.max_seq, batch.map((entry) => entry.id));
+    if (page.head !== ids.head) throw new Error("云端对象在读取期间发生变化，请重试读取对比结果");
+    const pulled = new Map(page.objects.map((object) => [object.id, object]));
     for (const entry of batch) {
-      const wire = page.objects.find((object) => object.id === entry.id);
-      if (!wire) continue;
+      let wire = pulled.get(entry.id);
+      if (!wire) {
+        // A batch may exceed the response byte budget. A single ID is always
+        // returned even when its blob is larger than that budget.
+        const single = await syncV2Api.pull(ids.max_seq, [entry.id]);
+        if (single.head !== ids.head) throw new Error("云端对象在读取期间发生变化，请重试读取对比结果");
+        wire = single.objects.find((object) => object.id === entry.id);
+      }
+      if (!wire || wire.seq !== entry.seq) {
+        throw new Error(`云端对象 ${entry.id} 未按同步清单返回，请重试读取对比结果`);
+      }
       try {
         const object = await decodeRemoteObject(entry, wire.blob, dek);
         next.set(entry.id, object);
       } catch (e) {
-        if (e instanceof CryptoError && e.code !== "decrypt") throw e;
+        if (!(e instanceof CryptoError && e.code === "decrypt")) throw e;
         undecryptableIds.push(entry.id);
+        undecryptableEntries.push({ id: entry.id, seq: entry.seq, blobHash: entry.blob_hash });
       }
     }
   }
-  remoteCaches.set(dek, { head: ids.head, objects: next, undecryptableIds });
+  remoteCaches.set(dek, { head: ids.head, objects: next, undecryptableIds, undecryptableEntries });
   const objects = [...next.values()].filter((object) => remoteKindVisible(object.kind, object.plaintext, optIn));
-  return { objects, undecryptableIds, head: ids.head, maxSeq: ids.max_seq };
+  return { objects, undecryptableIds, undecryptableEntries, head: ids.head, maxSeq: ids.max_seq };
 }
 
 type RowState = "local-only" | "remote-only" | "same" | "local-newer" | "remote-newer" | "local-deleted" | "remote-deleted" | "remote-undecryptable";
@@ -1070,14 +1167,19 @@ interface Row {
   name: string;
   kind: SyncObjectKind | "";
   state: RowState;
+  hasLocalRepairCopy?: boolean;
+  undecryptableEntry?: UndecryptableEntry;
   local?: LocalEntity;
   remote?: RemoteObject;
 }
 
-// computeWinners returns the set of local objects that need pushing: local-only, or local wins (including revision ties broken by payload hash).
-function computeWinners(local: LocalEntity[], remote: RemoteObject[]): LocalEntity[] {
+// An unreadable cloud object needs explicit user confirmation; automatic sync must not treat it as absent.
+// Other local-only objects and local winners (including revision ties broken by payload hash) can be pushed.
+function computeWinners(local: LocalEntity[], remote: RemoteObject[], undecryptableIds: string[]): LocalEntity[] {
   const remoteById = new Map(remote.map((r) => [r.id, r]));
+  const protectedIds = new Set(undecryptableIds);
   return local.filter((e) => {
+    if (protectedIds.has(e.id)) return false;
     const r = remoteById.get(e.id);
     return r === undefined || localWins(e, r);
   });
@@ -1136,13 +1238,14 @@ function transcriptLocalWins(l: LocalEntity, r: RemoteObject): boolean {
   return l.payloadHash > r.payloadHash;
 }
 
-function buildRows(local: LocalEntity[], remote: RemoteObject[], undecryptableIds: string[]): Row[] {
+function buildRows(local: LocalEntity[], remote: RemoteObject[], undecryptableIds: string[], undecryptableEntries: UndecryptableEntry[]): Row[] {
   const remoteById = new Map(remote.map((r) => [r.id, r]));
   const undecryptable = new Set(undecryptableIds);
+  const undecryptableById = new Map(undecryptableEntries.map((entry) => [entry.id, entry]));
   const rows: Row[] = [];
   for (const l of local) {
     if (undecryptable.has(l.id)) {
-      rows.push({ id: l.id, name: l.name, kind: l.kind, state: "remote-undecryptable", local: l });
+      rows.push({ id: l.id, name: l.name, kind: l.kind, state: "remote-undecryptable", local: l, hasLocalRepairCopy: true, undecryptableEntry: undecryptableById.get(l.id) });
       undecryptable.delete(l.id);
       continue;
     }
@@ -1169,7 +1272,7 @@ function buildRows(local: LocalEntity[], remote: RemoteObject[], undecryptableId
     rows.push({ id: r.id, name: r.name, kind: r.kind, state: r.kind === "tombstone" || r.deletedAt !== null ? "remote-deleted" : "remote-only", remote: r });
   }
   for (const id of undecryptable) {
-    rows.push({ id, name: id, kind: "", state: "remote-undecryptable" });
+    rows.push({ id, name: id, kind: "", state: "remote-undecryptable", undecryptableEntry: undecryptableById.get(id) });
   }
   const rank = (s: RowState) => (s === "same" ? 1 : 0);
   return rows.sort((a, b) => rank(a.state) - rank(b.state) || a.name.localeCompare(b.name));
@@ -1183,9 +1286,33 @@ interface Snapshot {
   local: LocalEntity[];
   remote: RemoteObject[];
   undecryptableIds: string[];
+  undecryptableEntries: UndecryptableEntry[];
   warnings: string[];
   head: string;
   maxSeq: number;
+}
+
+// Re-read the current cloud object before a manual repair. A stale compare row must never
+// overwrite an object that another device has since repaired or replaced.
+async function currentUndecryptableObject(expected: UndecryptableEntry, dek: Uint8Array): Promise<{ head: string; blobHash: string }> {
+  const ids = await syncV2Api.ids();
+  const entry = ids.entries?.find((candidate) => candidate.id === expected.id);
+  if (!entry) throw new Error("云端对象已不存在，请重试读取对比结果");
+  if (entry.seq !== expected.seq || entry.blob_hash !== expected.blobHash) {
+    throw new Error("云端对象在对比后发生变化，请刷新对比结果");
+  }
+  const pulled = await syncV2Api.pull(ids.max_seq, [expected.id]);
+  const wire = pulled.objects.find((candidate) => candidate.id === expected.id);
+  if (pulled.head !== ids.head || !wire || wire.seq !== entry.seq) {
+    throw new Error("云端对象在检查期间发生变化，请重试读取对比结果");
+  }
+  try {
+    await decodeRemoteObject(entry, wire.blob, dek);
+  } catch (error) {
+    if (!(error instanceof CryptoError && error.code === "decrypt")) throw error;
+    return { head: ids.head, blobHash: entry.blob_hash };
+  }
+  throw new Error("云端对象现已可读取，请刷新对比结果后再操作");
 }
 
 export interface WebSyncResult extends Snapshot {
@@ -1200,10 +1327,11 @@ async function loadSnapshot(dek: Uint8Array, optIn: SyncKindOptIn, idsOverride?:
     local: local.entities,
     remote: remote.objects,
     undecryptableIds: remote.undecryptableIds,
+    undecryptableEntries: remote.undecryptableEntries,
     warnings: [...local.warnings, ...remote.undecryptableIds.map((id) =>
-      `云端对象 ${id} 解密失败，已跳过；${local.entities.some((entity) => entity.id === id)
-        ? "本机同 ID 对象可推送覆盖"
-        : "本机无同 ID 对象，请从持有正确数据密钥的设备重新同步，或联系管理员"}`)],
+      local.entities.some((entity) => entity.id === id)
+        ? `云端对象 ${id} 解密失败，已跳过自动覆盖；可在对比详情中手动确认用本机同 ID 副本修复`
+        : `云端对象 ${id} 解密失败，已跳过；本次对比没有可用的同 ID 本机副本，可在对比详情中重试读取或确认清除云端副本；也可从持有正确数据密钥的设备重新同步`)],
     head: remote.head,
     maxSeq: remote.maxSeq,
   };
@@ -1255,14 +1383,14 @@ export async function runWebSync(
   if (applySet.length > 0) await reload();
   if (!(await optInMatches(optIn, shouldContinue))) return null;
 
-  let winners = computeWinners(snapshot.local, snapshot.remote);
+  let winners = computeWinners(snapshot.local, snapshot.remote, snapshot.undecryptableIds);
   let pushed = 0;
   if (winners.length > 0) {
     const fresh = await syncV2Api.ids();
     if (!(await optInMatches(optIn, shouldContinue))) return null;
     if (fresh.head !== snapshot.head) {
       await reload(fresh);
-      winners = computeWinners(snapshot.local, snapshot.remote);
+      winners = computeWinners(snapshot.local, snapshot.remote, snapshot.undecryptableIds);
     }
     if (winners.length > 0) {
       let response: Awaited<ReturnType<typeof syncV2Api.push>>;
@@ -1272,7 +1400,7 @@ export async function runWebSync(
         if (!(e instanceof AuthApiError && e.status === 409)) throw e;
         const latest = await syncV2Api.ids();
         await reload(latest);
-        winners = computeWinners(snapshot.local, snapshot.remote);
+        winners = computeWinners(snapshot.local, snapshot.remote, snapshot.undecryptableIds);
         if (winners.length === 0) return { ...snapshot, applied, pushed: 0, lastSuccessAt: Date.now() };
         if (!(await optInMatches(optIn, shouldContinue))) return null;
         response = await syncV2Api.push(snapshot.head, await sealAll(dek, winners));
@@ -1280,7 +1408,7 @@ export async function runWebSync(
       if (response.applied === 0 && response.skipped === 0) {
         const latest = await syncV2Api.ids();
         await reload(latest);
-        winners = computeWinners(snapshot.local, snapshot.remote);
+        winners = computeWinners(snapshot.local, snapshot.remote, snapshot.undecryptableIds);
         if (winners.length > 0) {
           if (!(await optInMatches(optIn, shouldContinue))) return null;
           response = await syncV2Api.push(snapshot.head, await sealAll(dek, winners));
@@ -1371,14 +1499,18 @@ function CompareConsole() {
   const [local, setLocal] = useState<LocalEntity[] | null>(null);
   const [remote, setRemote] = useState<RemoteObject[] | null>(null);
   const [undecryptableIds, setUndecryptableIds] = useState<string[]>([]);
+  const [undecryptableEntries, setUndecryptableEntries] = useState<UndecryptableEntry[]>([]);
   const [collectWarnings, setCollectWarnings] = useState<string[]>([]);
   const [refreshBusy, setRefreshBusy] = useState(false);
+  const [repairBusyId, setRepairBusyId] = useState<string | null>(null);
   const [optInBusy, setOptInBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [repairError, setRepairError] = useState<string | null>(null);
   const [kindOptIn, setKindOptIn] = useState<SyncKindOptIn | null>(null);
   const [lastSuccessAt, setLastSuccessAt] = useState<number | null>(null);
   const optInEpochRef = useRef(0);
   const loadSeqRef = useRef(0);
+  const repairBusyRef = useRef(false);
   const kindOptInRef = useRef<SyncKindOptIn | null>(null);
 
   const load = useCallback((view: SyncKindOptIn, epoch: number) => {
@@ -1391,6 +1523,7 @@ function CompareConsole() {
         setLocal(snapshot.local);
         setRemote(snapshot.remote);
         setUndecryptableIds(snapshot.undecryptableIds);
+        setUndecryptableEntries(snapshot.undecryptableEntries);
         setCollectWarnings(snapshot.warnings);
       })
       .catch((e: unknown) => {
@@ -1422,9 +1555,11 @@ function CompareConsole() {
       setLocal(result.local);
       setRemote(result.remote);
       setUndecryptableIds(result.undecryptableIds);
+      setUndecryptableEntries(result.undecryptableEntries);
       setCollectWarnings(result.warnings);
       setLastSuccessAt(result.lastSuccessAt);
       setError(null);
+      setRepairError(null);
     };
     const onError = (event: Event) => {
       setError(describeError((event as CustomEvent<unknown>).detail));
@@ -1439,7 +1574,87 @@ function CompareConsole() {
     };
   }, [load]);
 
-  const rows = useMemo(() => (local && remote ? buildRows(local, remote, undecryptableIds) : null), [local, remote, undecryptableIds]);
+  const rows = useMemo(() => (local && remote ? buildRows(local, remote, undecryptableIds, undecryptableEntries) : null), [local, remote, undecryptableIds, undecryptableEntries]);
+
+  const repairUndecryptable = async (id: string, action: UndecryptableAction) => {
+    if (repairBusyRef.current || refreshBusy) return;
+    const view = kindOptInRef.current;
+    if (!view) return;
+    const epoch = optInEpochRef.current;
+    const userID = useAuth.getState().user?.id;
+    const stillCurrent = () => epoch === optInEpochRef.current &&
+      useAuth.getState().user?.id === userID && useAuth.getState().dek === dek;
+    repairBusyRef.current = true;
+    setRepairBusyId(id);
+    setRepairError(null);
+    try {
+      if (action === "retry") {
+        await load(view, epoch);
+        return;
+      }
+      const row = rows?.find((candidate) => candidate.id === id && candidate.state === "remote-undecryptable");
+      if (!row) throw new Error("对比结果已变化，请重试读取");
+      if (!row.undecryptableEntry) throw new Error("对比结果缺少云端版本，请刷新对比结果");
+      if (action === "restore-local") {
+        if (!row.local) throw new Error("本机已没有同 ID 副本，请重试读取");
+        const { ask } = await import("../../ui/dialogs");
+        if (!(await ask(`将本机「${row.name}」覆盖云端无法解密的对象？此操作会替换云端原有密文。`, {
+          title: "用本机副本修复云端对象", kind: "warning",
+        }))) return;
+        if (!stillCurrent()) return;
+        const localNow = await loadLocalEntities(view);
+        const replacement = localNow.entities.find((entity) => entity.id === id);
+        if (!replacement) throw new Error("本机同 ID 副本已不存在，请重试读取");
+        if (replacement.id !== row.local.id || replacement.kind !== row.local.kind ||
+          replacement.payloadHash !== row.local.payloadHash || replacement.deletedAt !== row.local.deletedAt ||
+          replacement.updatedAt !== row.local.updatedAt) {
+          throw new Error("本机副本在对比后发生变化，请刷新对比结果");
+        }
+        const cloud = await currentUndecryptableObject(row.undecryptableEntry, dek);
+        if (!stillCurrent()) return;
+        const objects = await sealAll(dek, [replacement]);
+        if (!stillCurrent()) return;
+        if (!(await optInMatches(view, stillCurrent))) throw new Error("内容类型设置已变化，请刷新对比结果");
+        const response = await syncV2Api.push(cloud.head, objects);
+        if (response.applied !== 1) throw new Error("云端未确认修复，请重试读取对比结果");
+        remoteCaches.delete(dek);
+        await load(view, epoch);
+        return;
+      }
+      if (row.local) throw new Error("本机有同 ID 副本，请先重试读取并选择本机修复");
+      const { ask } = await import("../../ui/dialogs");
+      if (!(await ask(`本次对比没有可用的本机对象 ${id}。确认清除这条无法解密、类型未知的云端副本？其他设备若仍保存旧的本地副本，之后同步可能重新上传。`, {
+        title: "清除无法解密的云端副本", kind: "warning",
+      }))) return;
+      if (!stillCurrent()) return;
+      const localNow = await loadLocalEntities({ knownHost: true, aiProfile: true, aiPermission: true, aiGrant: true, preferences: true });
+      if (localNow.warnings.length > 0) {
+        throw new Error("本机内容读取不完整，请先解锁凭据库或修复读取错误，再刷新对比结果");
+      }
+      if (localNow.entities.some((entity) => entity.id === id)) {
+        throw new Error("本机现在已有同 ID 副本，请重试读取并选择本机修复");
+      }
+      if (await localTranscriptExists(id)) {
+        throw new Error("本机现在已有同 ID 会话记录，请先核查该记录的同步设置");
+      }
+      const cloud = await currentUndecryptableObject(row.undecryptableEntry, dek);
+      if (!stillCurrent()) return;
+      if (!(await optInMatches(view, stillCurrent))) throw new Error("内容类型设置已变化，请刷新对比结果");
+      const response = await syncV2Api.deleteObject(cloud.head, id, cloud.blobHash);
+      if (!response.deleted) throw new Error("云端未确认清除，请重试读取对比结果");
+      remoteCaches.delete(dek);
+      await load(view, epoch);
+    } catch (cause) {
+      if (stillCurrent()) {
+        setRepairError(cause instanceof AuthApiError && cause.status === 409
+          ? "云端数据已变化，请重试读取后再次操作"
+          : describeError(cause));
+      }
+    } finally {
+      repairBusyRef.current = false;
+      setRepairBusyId(null);
+    }
+  };
 
   const updateKindOptIn = async (patch: Partial<SyncKindOptIn>) => {
     const epoch = ++optInEpochRef.current;
@@ -1448,8 +1663,10 @@ function CompareConsole() {
     setLocal(null);
     setRemote(null);
     setUndecryptableIds([]);
+    setUndecryptableEntries([]);
     setCollectWarnings([]);
     setError(null);
+    setRepairError(null);
     try {
       const next = await syncApi.kindOptInSet(patch);
       if (epoch !== optInEpochRef.current) return;
@@ -1470,8 +1687,8 @@ function CompareConsole() {
 
   const winners = useMemo(() => {
     if (!local || !remote) return [];
-    return computeWinners(local, remote);
-  }, [local, remote]);
+    return computeWinners(local, remote, undecryptableIds);
+  }, [local, remote, undecryptableIds]);
 
   const applySet = useMemo(() => {
     if (!local || !remote) return [];
@@ -1490,6 +1707,14 @@ function CompareConsole() {
         <span className="nx-hint">云端 {remote ? remote.length + undecryptableIds.length : "…"} 个对象</span>
         <div className="nx-spacer" />
         <span className="nx-hint">{SYNC_INTERVAL_LABEL}</span>
+        <button className="nx-btn nx-btn-outline nx-btn-sm" disabled={refreshBusy || repairBusyId !== null || !kindOptIn}
+          onClick={() => {
+            const view = kindOptInRef.current;
+            if (view) void load(view, optInEpochRef.current);
+          }}>
+          <IconRefresh size={12} className={refreshBusy ? "animate-spin" : ""} />
+          刷新对比
+        </button>
       </div>
 
       <p className="nx-hint mb-3">
@@ -1507,6 +1732,13 @@ function CompareConsole() {
         </div>
       )}
 
+      {repairError && (
+        <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
+          <IconXCircle size={13} className="mt-0.5 shrink-0" />
+          <span className="min-w-0 flex-1 break-words">操作失败：{repairError}</span>
+        </div>
+      )}
+
       {collectWarnings.length > 0 && (
         <div className="nx-alert nx-alert-info mb-3 flex items-start gap-2">
           <IconInfo size={13} className="mt-0.5 shrink-0" />
@@ -1520,7 +1752,8 @@ function CompareConsole() {
         </div>
       )}
 
-      <CompareDetails rows={rows} error={error !== null} />
+      <CompareDetails rows={rows} error={error !== null} actionsBusy={repairBusyId !== null || refreshBusy}
+        onUndecryptableAction={(id, action) => void repairUndecryptable(id, action)} />
 
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />

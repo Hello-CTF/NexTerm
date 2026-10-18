@@ -1,11 +1,17 @@
 package sync
 
 import (
+	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,7 +22,10 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
+	"golang.org/x/crypto/argon2"
+	"gorm.io/gorm"
 )
 
 // testSyncServer is a minimal faithful replica of the M116 account routes + v2 sync routes, for end-to-end tests.
@@ -56,6 +65,7 @@ func newTestSyncServerOn(t *testing.T, db *store.Store) *testSyncServer {
 	mux.Handle("GET /auth/me", server.requireSession(http.HandlerFunc(server.serveMe)))
 	mux.Handle("GET /auth/dek", server.requireSession(http.HandlerFunc(server.serveDEK)))
 	mux.Handle("POST /sync/v2/push", server.requireSession(server.requireCSRF(server.maybeFailPush(NewObjectHandler(db.GORM(), nil)))))
+	mux.Handle("POST /sync/v2/delete", server.requireSession(server.requireCSRF(NewObjectHandler(db.GORM(), nil))))
 	mux.Handle("POST /sync/v2/pull", server.requireSession(NewObjectHandler(db.GORM(), nil)))
 	mux.Handle("POST /sync/v2/ids", server.requireSession(server.maybePostIDs(NewObjectHandler(db.GORM(), nil))))
 	server.Server = httptest.NewServer(mux)
@@ -177,15 +187,87 @@ func (s *testSyncServer) serveDEK(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *testSyncServer) createUser(t *testing.T, username, password string) []byte {
+	_, dek := seedTestSyncUser(t, s.db, username, password)
+	return dek
+}
+
+func seedTestSyncUser(t *testing.T, db *store.Store, username, password string) (string, []byte) {
 	t.Helper()
-	dek, envelopes, _, err := vault.GenerateUserDEKEnvelopes(password)
+	// Sync tests exercise login and DEK unwrapping; account creation is covered
+	// in the account package, so seed the same rows with a valid cheaper hash.
+	dek, envelopes := newTestUserDEKEnvelopes(t, password)
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		t.Fatal(err)
+	}
+	key := argon2.IDKey([]byte(password), salt, 1, 8*1024, 1, 32)
+	hash := fmt.Sprintf("$argon2id$v=19$m=8192,t=1,p=1$%s$%s",
+		base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(key))
+	clear(key)
+	ctx := context.Background()
+	userID, now := ids.New(), ids.NowMS()
+	err := db.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		q := query.Use(tx)
+		if err := q.AppUser.WithContext(ctx).Create(&store.AppUser{
+			ID: userID, Username: username, DisplayName: username, Role: string(account.RoleUser),
+			PasswordHash: hash, State: string(account.StateActive), CreatedAt: now, UpdatedAt: now,
+		}); err != nil {
+			return err
+		}
+		return q.UserDEK.WithContext(ctx).Create(&store.UserDEK{
+			UserID: userID, DEKEnvelope: envelopes.DEKEnvelope, KDFSalt: envelopes.KDFSalt,
+			KDFParams: envelopes.KDFParams, RecoveryEnvelope: envelopes.RecoveryEnvelope,
+			RecoveryHash: envelopes.RecoveryHash, CreatedAt: now, UpdatedAt: now,
+		})
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.accounts.CreateUserWithEnvelopes(context.Background(), username, username, password, envelopes); err != nil {
+	return userID, dek
+}
+
+func newTestUserDEKEnvelopes(t *testing.T, password string) ([]byte, *vault.UserDEKEnvelopes) {
+	t.Helper()
+	dek := vault.GenerateUserDEK()
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
 		t.Fatal(err)
 	}
-	return dek
+	key := argon2.IDKey([]byte(password), salt, 1, 8*1024, 1, 32)
+	defer clear(key)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		t.Fatal(err)
+	}
+	recoveryKey, err := vault.GenerateRecoveryKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveryEnvelope, err := vault.WrapUserDEKWithRecovery(recoveryKey, dek)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelopes := &vault.UserDEKEnvelopes{
+		DEKEnvelope:      aead.Seal(nonce, nonce, dek, []byte("nexterm/go/user-dek/v1")),
+		KDFSalt:          salt,
+		KDFParams:        `{"t":1,"m":8192,"p":1}`,
+		RecoveryEnvelope: recoveryEnvelope,
+		RecoveryHash:     vault.RecoveryKeyHash(recoveryKey),
+	}
+	opened, err := vault.UnwrapUserDEK(password, envelopes.DEKEnvelope, envelopes.KDFSalt, envelopes.KDFParams)
+	if err != nil || !bytes.Equal(opened, dek) {
+		t.Fatalf("test DEK envelope roundtrip: %v", err)
+	}
+	clear(opened)
+	return dek, envelopes
 }
 
 type testDevice struct {
@@ -195,6 +277,14 @@ type testDevice struct {
 }
 
 func newTestDevice(t *testing.T) *testDevice {
+	return newTestDeviceWithMaster(t, false)
+}
+
+func newMasterTestDevice(t *testing.T) *testDevice {
+	return newTestDeviceWithMaster(t, true)
+}
+
+func newTestDeviceWithMaster(t *testing.T, master bool) *testDevice {
 	t.Helper()
 	ctx := context.Background()
 	db, err := store.OpenInMemory(ctx)
@@ -205,11 +295,11 @@ func newTestDevice(t *testing.T) *testDevice {
 	if _, err := db.AssetEnsureBuiltinLocal(ctx); err != nil {
 		t.Fatal(err)
 	}
-	credentialVault := vault.Load(ctx, db)
-	if err := credentialVault.InitMaster(ctx, "device-master-pw"); err != nil {
-		t.Fatal(err)
+	password := ""
+	if master {
+		password = "device-master-pw"
 	}
-	t.Cleanup(credentialVault.Lock)
+	credentialVault := newSyncTestVault(t, db, password)
 	return &testDevice{db: db, vault: credentialVault, engine: NewEngine(db, credentialVault, nil)}
 }
 

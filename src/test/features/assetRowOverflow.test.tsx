@@ -144,10 +144,22 @@ function openOverflow(row: HTMLElement): void {
   click(more);
 }
 
+function setRowWidths(row: HTMLElement, available: number, nameWidth: number, identityWidth: number): void {
+  const area = row.querySelector<HTMLElement>(".nx-row-name");
+  const name = row.querySelector<HTMLElement>(".nx-asset-row-name-measure");
+  const identity = row.querySelector<HTMLElement>(".nx-asset-row-identity-measure");
+  if (!area || !name || !identity) throw new Error("Asset identity layout nodes not found");
+  Object.defineProperty(area, "clientWidth", { configurable: true, value: available });
+  name.getBoundingClientRect = () => ({ width: nameWidth }) as DOMRect;
+  identity.getBoundingClientRect = () => ({ width: identityWidth }) as DOMRect;
+  act(() => window.dispatchEvent(new Event("resize")));
+}
+
 let mounted: MountedView | undefined;
 beforeEach(() => {
   vi.resetAllMocks();
   document.body.replaceChildren();
+  localStorage.clear();
   mocks.assetList.mockResolvedValue([{ ...WEB }, { ...LOCAL }, { ...GROUPED }]);
   mocks.groupList.mockResolvedValue([{ ...GROUP }]);
   mocks.listCredentials.mockResolvedValue([]);
@@ -167,6 +179,7 @@ beforeEach(() => {
 afterEach(() => {
   mounted?.unmount();
   mounted = undefined;
+  vi.unstubAllGlobals();
 });
 
 describe("asset row actions on fine pointers", () => {
@@ -181,7 +194,8 @@ describe("asset row actions on fine pointers", () => {
     );
     expect(labels).toEqual(["连接 web-1", "编辑 web-1", "删除 web-1", "更多操作 web-1"]);
     expect(row.querySelector(".nx-row-more")).toBeNull();
-    expect(row.querySelector(".nx-row-name")?.textContent).toBe("web-1");
+    expect(row.querySelector(".nx-asset-row-name")?.textContent).toBe("web-1");
+    expect(row.querySelector(".nx-asset-row-identity")?.textContent).toBe("root@10.0.0.8:22");
     expect(row.querySelector(".nx-row-target")).toBeNull();
     expect(row.getAttribute("title")).toContain("10.0.0.8:22");
   });
@@ -202,6 +216,26 @@ describe("asset row actions on fine pointers", () => {
 });
 
 describe("asset name priority in narrow sidebars", () => {
+  it("updates root and grouped asset identities as available row width changes", async () => {
+    stubPointer(false);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("db-1"));
+
+    const root = rowByName(mounted!.container, "web-1");
+    const grouped = rowByName(mounted!.container, "db-1");
+    setRowWidths(root, 180, 75, 110);
+    setRowWidths(grouped, 320, 75, 110);
+    expect(root.querySelector(".nx-asset-row-name")?.textContent).toBe("web-1");
+    expect(root.querySelector(".nx-asset-row-identity")).toBeNull();
+    expect(grouped.querySelector(".nx-asset-row-name")?.textContent).toBe("db-1");
+    expect(grouped.querySelector(".nx-asset-row-identity")?.textContent).toBe("root@10.0.0.8:22");
+
+    setRowWidths(root, 320, 75, 110);
+    setRowWidths(grouped, 180, 75, 110);
+    expect(root.querySelector(".nx-asset-row-identity")?.textContent).toBe("root@10.0.0.8:22");
+    expect(grouped.querySelector(".nx-asset-row-identity")).toBeNull();
+  });
+
   it("shows host identities for same-name assets without hovering, including grouped rows", async () => {
     stubPointer(false);
     mocks.assetList.mockResolvedValue([
@@ -212,11 +246,37 @@ describe("asset name priority in narrow sidebars", () => {
     await waitFor(() => expect(mounted!.container.querySelectorAll('[role="treeitem"][title^="shared"]')).toHaveLength(2));
 
     const rows = [...mounted!.container.querySelectorAll<HTMLElement>('[role="treeitem"][title^="shared"]')];
-    expect(rows.map((row) => row.querySelector(".nx-row-name")?.textContent)).toEqual([
-      "sharedroot@10.0.0.8:22",
-      "shareddeploy@10.0.0.18:22",
+    expect(rows.map((row) => row.querySelector(".nx-asset-row-name")?.textContent)).toEqual(["shared", "shared"]);
+    expect(rows.map((row) => row.querySelector(".nx-asset-row-identity")?.textContent)).toEqual([
+      "root@10.0.0.8:22",
+      "deploy@10.0.0.18:22",
     ]);
     expect(rows.every((row) => row.querySelector(".nx-row-target") === null)).toBe(true);
+  });
+
+  it("shows identities after names only when space remains, and allows compact rows", async () => {
+    stubPointer(false);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+
+    const row = rowByName(mounted!.container, "web-1");
+    expect(row.querySelector(".nx-asset-row-identity")?.textContent).toBe("root@10.0.0.8:22");
+    setRowWidths(row, 131, 36, 89);
+    expect(row.querySelector(".nx-asset-row-name")?.textContent).toBe("web-1");
+    expect(row.querySelector(".nx-asset-row-identity")).toBeNull();
+    setRowWidths(row, 199, 36, 89);
+    expect(row.querySelector(".nx-asset-row-identity")?.textContent).toBe("root@10.0.0.8:22");
+    const compact = mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="紧凑显示资产"]');
+    if (!compact) throw new Error("Compact display button not found");
+    click(compact);
+    expect(row.querySelector(".nx-asset-row-name")?.textContent).toBe("web-1");
+    expect(row.querySelector(".nx-asset-row-identity")).toBeNull();
+
+    const detailed = mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="显示资产主机身份"]');
+    if (!detailed) throw new Error("Detailed display button not found");
+    click(detailed);
+    setRowWidths(row, 199, 36, 89);
+    expect(row.querySelector(".nx-asset-row-identity")?.textContent).toBe("root@10.0.0.8:22");
   });
 
   it.each([
@@ -230,11 +290,13 @@ describe("asset name priority in narrow sidebars", () => {
     await waitFor(() => expect(mounted!.container.textContent).toContain(name));
 
     const row = rowByName(mounted!.container, name);
-    const label = row.querySelector(".nx-row-name");
+    const label = row.querySelector(".nx-asset-row-name");
     expect(label?.textContent).toBe(name);
     expect(label?.className).toContain("nx-asset-row-name");
-    expect(label?.className).toContain("flex-auto");
     expect(label?.className).not.toContain("truncate");
+    expect(label?.parentElement?.className).toContain("flex-1");
+    setRowWidths(row, 131, 220, 89);
+    expect(row.querySelector(".nx-asset-row-identity")).toBeNull();
     expect(row.querySelector(".nx-row-target")).toBeNull();
     expect(row.querySelectorAll(".nx-row-actions button")).toHaveLength(4);
     expect((mounted!.container.firstElementChild as HTMLElement).style.width).toBe("180px");
@@ -251,7 +313,8 @@ describe("asset row actions on coarse pointers", () => {
     expect(row.querySelector(".nx-row-actions")).toBeNull();
     const more = row.querySelector<HTMLButtonElement>(".nx-row-more");
     expect(more?.getAttribute("aria-label")).toBe("更多操作 web-1");
-    expect(row.querySelector(".nx-row-name")?.textContent).toBe("web-1");
+    expect(row.querySelector(".nx-asset-row-name")?.textContent).toBe("web-1");
+    expect(row.querySelector(".nx-asset-row-identity")?.textContent).toBe("root@10.0.0.8:22");
     expect(row.querySelector(".nx-row-target")).toBeNull();
     expect(row.getAttribute("title")).toContain("10.0.0.8:22");
     expect(mocks.connect).not.toHaveBeenCalled();

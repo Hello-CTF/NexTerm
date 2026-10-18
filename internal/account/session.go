@@ -116,7 +116,13 @@ func (a *Accounts) IssueSessionWithMetadata(ctx context.Context, userID, deviceI
 			if session.DeviceID != "" {
 				row.DeviceID = &session.DeviceID
 			}
-			return query.Use(tx).UserSession.WithContext(ctx).Create(&row)
+			if err := query.Use(tx).UserSession.WithContext(ctx).Create(&row); err != nil {
+				return err
+			}
+			if session.DeviceID != "" {
+				return touchDeviceAt(ctx, tx, session.DeviceID, now)
+			}
+			return nil
 		})
 	})
 	if err != nil {
@@ -209,10 +215,19 @@ func (a *Accounts) ValidateSession(ctx context.Context, token string) (*Identity
 		if absolute := session.CreatedAt + SessionAbsoluteTTL.Milliseconds(); expiresAt > absolute {
 			expiresAt = absolute
 		}
-		if _, err := userSession.WithContext(ctx).Where(userSession.ID.Eq(session.ID)).UpdateColumns(map[string]any{
-			"touched_at": now, "expires_at": expiresAt,
-		}); err != nil {
+		updated, err := userSession.WithContext(ctx).
+			Where(userSession.ID.Eq(session.ID), userSession.RevokedAt.IsNull(),
+				userSession.TouchedAt.Lte(now-sessionSlidePersist.Milliseconds())).
+			UpdateColumns(map[string]any{
+				"touched_at": now, "expires_at": expiresAt,
+			})
+		if err != nil {
 			return nil, dbError(err)
+		}
+		if updated.RowsAffected > 0 && session.DeviceID != "" {
+			if err := touchDeviceAt(ctx, a.db, session.DeviceID, now); err != nil {
+				return nil, err
+			}
 		}
 	}
 	mfaEnabled := false

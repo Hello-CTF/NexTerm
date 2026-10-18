@@ -681,7 +681,7 @@ func TestEngineAIProfileEqualRevisionConverges(t *testing.T) {
 func TestEngineAIProfileKeyedDeferredWhileVaultLocked(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
-	deviceA := newTestDevice(t)
+	deviceA := newMasterTestDevice(t)
 	deviceB := newTestDevice(t)
 	userID := serverUserID(t, server, "alice", "alice-pw-123")
 	enableDeviceKindOptIn(t, deviceA, userID)

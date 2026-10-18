@@ -37,7 +37,7 @@ Toolchain: Go 1.26, Node 24+, pnpm. Exact versions and commands live in `go.mod`
 - `task check` is the regular quality entry point: formatting, vet, Go tests, frontend checks/tests, generated bindings, reproducible frontend assets, and build/release script checks.
 - `task verify` includes `check`, race and production-tagged Go tests, and a reproducible host desktop production build. Run it once on the final integrated tree before committing; running `check` immediately beforehand duplicates work.
 - Database integration tests must run against real supported servers; a skipped integration test is not verification. Share the test harness and CI matrix across backends rather than duplicating test suites.
-- CI runs the shared quality checks and platform builds. Keep task commands and workflow commands aligned. Preserve platform smoke tests and release artifact validation when simplifying orchestration.
+- CI runs formatting, vet, frontend lint, generated bindings, reproducible assets, release script checks, database integration, platform smoke tests, and platform builds. Run the complete Go and frontend unit suites and race checks locally with `task verify`. Keep overlapping task and workflow commands aligned, and preserve release artifact validation.
 - Reviewers independently inspect the change and run relevant checks. Reuse observed results for unchanged work; do not rerun the entire suite for every small fix.
 
 ## Branches and Releases

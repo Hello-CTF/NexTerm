@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/applog"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/pprof"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
@@ -66,7 +67,7 @@ func RunCLI(args []string, getenv func(string) string, stdout, stderr io.Writer)
 		fmt.Fprintln(stdout, version.Version)
 		return 0
 	default:
-		fmt.Fprintf(stderr, "agent: 未知子命令 %q\n", command)
+		fmt.Fprintf(stderr, "agent: 未知子命令 %q\n", applog.RedactText(command))
 		printCLIUsage(stderr)
 		return ExitUsage
 	}
@@ -89,8 +90,22 @@ func printCLIUsage(stderr io.Writer) {
 
 func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
 	set := flag.NewFlagSet(name, flag.ContinueOnError)
-	set.SetOutput(stderr)
+	set.SetOutput(redactingCLIWriter{next: stderr})
 	return set
+}
+
+type redactingCLIWriter struct{ next io.Writer }
+
+func (writer redactingCLIWriter) Write(input []byte) (int, error) {
+	output := applog.RedactText(string(input))
+	written, err := io.WriteString(writer.next, output)
+	if err != nil {
+		return 0, err
+	}
+	if written != len(output) {
+		return 0, io.ErrShortWrite
+	}
+	return len(input), nil
 }
 
 func resolveDataDir(flagValue string, getenv func(string) string) (string, error) {
@@ -119,7 +134,7 @@ func cliEnroll(args []string, getenv func(string) string, stdout, stderr io.Writ
 	}
 	dir, err := resolveDataDir(*dataDir, getenv)
 	if err != nil {
-		fmt.Fprintln(stderr, "agent enroll:", err)
+		printCLIError(stderr, "agent enroll:", err)
 		return ExitUsage
 	}
 	deviceName := *name
@@ -130,7 +145,7 @@ func cliEnroll(args []string, getenv func(string) string, stdout, stderr io.Writ
 	}
 	client, err := NewEndpointClient(BaseURLEntry{URL: *server, Insecure: *insecure})
 	if err != nil {
-		fmt.Fprintln(stderr, "agent enroll:", err)
+		printCLIError(stderr, "agent enroll:", err)
 		return ExitError
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), cliTimeout)
@@ -164,7 +179,7 @@ func cliEnroll(args []string, getenv func(string) string, stdout, stderr io.Writ
 	}
 	store := StoreAt(dir)
 	if err := store.Save(config); err != nil {
-		fmt.Fprintln(stderr, "agent enroll:", err)
+		printCLIError(stderr, "agent enroll:", err)
 		return ExitError
 	}
 	fmt.Fprintf(stdout, "注册成功: device_id=%s name=%s base_urls=%d metrics_interval=%ds desired_autostart=%t terminal=%s\n",
@@ -182,15 +197,15 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 	}
 	dir, err := resolveDataDir(*dataDir, getenv)
 	if err != nil {
-		fmt.Fprintln(stderr, "agent run:", err)
+		printCLIError(stderr, "agent run:", err)
 		return ExitUsage
 	}
 	if _, err := pprof.NormalizeAddr(pprof.ResolveAddr(*pprofAddr, getenv)); err != nil {
-		fmt.Fprintln(stderr, "agent run:", err)
+		printCLIError(stderr, "agent run:", err)
 		return ExitUsage
 	}
 	if err := os.MkdirAll(filepath.Join(dir, "fleet"), 0o700); err != nil {
-		fmt.Fprintln(stderr, "agent run:", err)
+		printCLIError(stderr, "agent run:", err)
 		return ExitError
 	}
 	unlock, err := acquireLock(filepath.Join(dir, "fleet", "agent.lock"))
@@ -199,13 +214,17 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 		return ExitOK
 	}
 	if err != nil {
-		fmt.Fprintln(stderr, "agent run:", err)
+		printCLIError(stderr, "agent run:", err)
 		return ExitError
 	}
 	defer unlock()
-	pprofServer, err := pprof.Start(slog.New(slog.NewTextHandler(stderr, nil)), pprof.ResolveAddr(*pprofAddr, getenv))
+	logger := slog.New(applog.NewRedactingHandler(slog.NewTextHandler(stderr, nil)))
+	previousLogger := slog.Default()
+	slog.SetDefault(logger)
+	defer slog.SetDefault(previousLogger)
+	pprofServer, err := pprof.Start(logger, pprof.ResolveAddr(*pprofAddr, getenv))
 	if err != nil {
-		fmt.Fprintln(stderr, "agent run:", err)
+		printCLIError(stderr, "agent run:", err)
 		return ExitError
 	}
 	defer func() {
@@ -220,17 +239,17 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 		return ExitError
 	}
 	if err != nil {
-		fmt.Fprintln(stderr, "agent run:", err)
+		printCLIError(stderr, "agent run:", err)
 		return ExitError
 	}
 	prober, err := NewProber(config.BaseURLs)
 	if err != nil {
-		fmt.Fprintln(stderr, "agent run:", err)
+		printCLIError(stderr, "agent run:", err)
 		return ExitError
 	}
 	agentRuntime, err := cliRuntimeFactory(store, dir, prober, cliNewManager(getenv))
 	if err != nil {
-		fmt.Fprintln(stderr, "agent run:", err)
+		printCLIError(stderr, "agent run:", err)
 		return ExitError
 	}
 	if PurposeHandlerWirer != nil {
@@ -253,7 +272,7 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 		fmt.Fprintln(stderr, "agent: 控制通道协议版本不兼容，自动升级不可用或已失败，请使用 install-device.sh 重新安装")
 		return ExitProtocol
 	default:
-		fmt.Fprintln(stderr, "agent run:", err)
+		printCLIError(stderr, "agent run:", err)
 		return ExitError
 	}
 }
@@ -278,25 +297,25 @@ func cliServiceChange(command string, args []string, getenv func(string) string,
 	}
 	dir, err := resolveDataDir(*dataDir, getenv)
 	if err != nil {
-		fmt.Fprintln(stderr, "agent "+command+":", err)
+		printCLIError(stderr, "agent "+command+":", err)
 		return ExitUsage
 	}
 	executable, err := os.Executable()
 	if err != nil {
-		fmt.Fprintln(stderr, "agent "+command+":", err)
+		printCLIError(stderr, "agent "+command+":", err)
 		return ExitError
 	}
 	manager := cliNewManager(getenv)
 	ctx, cancel := context.WithTimeout(context.Background(), cliTimeout)
 	defer cancel()
 	if err := action(ctx, manager, executable, dir); err != nil {
-		fmt.Fprintln(stderr, "agent "+command+":", err)
+		printCLIError(stderr, "agent "+command+":", err)
 		return ExitError
 	}
 	status := manager.Status(ctx)
 	fmt.Fprintf(stdout, "%s 完成: installed=%t enabled=%t active=%t\n", command, status.Installed, status.Enabled, status.Active)
 	if status.LastError != "" {
-		fmt.Fprintf(stdout, "注意: %s\n", status.LastError)
+		fmt.Fprintf(stdout, "注意: %s\n", applog.RedactText(status.LastError))
 	}
 	return ExitOK
 }
@@ -309,7 +328,7 @@ func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writ
 	}
 	dir, err := resolveDataDir(*dataDir, getenv)
 	if err != nil {
-		fmt.Fprintln(stderr, "agent status:", err)
+		printCLIError(stderr, "agent status:", err)
 		return ExitUsage
 	}
 	store := StoreAt(dir)
@@ -317,11 +336,11 @@ func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writ
 	if errors.Is(err, ErrNotEnrolled) {
 		fmt.Fprintf(stdout, "配置: 未注册 (配置路径 %s)\n", store.Path())
 	} else if err != nil {
-		fmt.Fprintf(stdout, "配置: 读取失败: %v\n", err)
+		fmt.Fprintf(stdout, "配置: 读取失败: %s\n", applog.RedactText(err.Error()))
 	} else {
 		fmt.Fprintf(stdout, "配置: device_id=%s name=%s platform=%s app_version=%s\n", config.DeviceID, config.Name, config.Platform, config.AppVersion)
 		fmt.Fprintf(stdout, "接入地址: 当前=%s 已配置=%d metrics_interval=%ds desired_autostart=%t terminal=%s\n",
-			orNone(config.CurrentURL), len(config.BaseURLs), config.MetricsIntervalMS/1000, config.DesiredAutostart, enabledText(config.TerminalEnabled))
+			applog.RedactText(orNone(config.CurrentURL)), len(config.BaseURLs), config.MetricsIntervalMS/1000, config.DesiredAutostart, enabledText(config.TerminalEnabled))
 	}
 	manager := cliNewManager(getenv)
 	ctx, cancel := context.WithTimeout(context.Background(), cliTimeout)
@@ -329,7 +348,7 @@ func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writ
 	status := manager.Status(ctx)
 	fmt.Fprintf(stdout, "服务: installed=%t enabled=%t active=%t\n", status.Installed, status.Enabled, status.Active)
 	if status.LastError != "" {
-		fmt.Fprintf(stdout, "服务错误: %s\n", status.LastError)
+		fmt.Fprintf(stdout, "服务错误: %s\n", applog.RedactText(status.LastError))
 	}
 	stateDir := filepath.Join(dir, "durable", "supervisor")
 	if endpoint, err := supervisor.HelperEndpoint(stateDir); err == nil {
@@ -337,14 +356,14 @@ func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writ
 		_, probeErr := supervisor.NewClient(endpoint, stateDir).List(probeCtx)
 		probeCancel()
 		if probeErr != nil {
-			fmt.Fprintf(stdout, "supervisor helper: 未运行 (%v)\n", probeErr)
+			fmt.Fprintf(stdout, "supervisor helper: 未运行 (%s)\n", applog.RedactText(probeErr.Error()))
 		} else {
 			fmt.Fprintf(stdout, "supervisor helper: 正常 (%s)\n", endpoint)
 		}
 	}
 	collector := NewCollector(dir, time.Now)
 	if _, err := collector.Collect(); err != nil {
-		fmt.Fprintf(stdout, "指标采集: 不可用 (%v)\n", err)
+		fmt.Fprintf(stdout, "指标采集: 不可用 (%s)\n", applog.RedactText(err.Error()))
 	} else {
 		fmt.Fprintln(stdout, "指标采集: 正常")
 	}
@@ -354,10 +373,14 @@ func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writ
 func printServerError(stderr io.Writer, prefix string, err error) {
 	var serverError *ServerError
 	if errors.As(err, &serverError) {
-		fmt.Fprintf(stderr, "agent: %s: %s\n", prefix, serverError.Message)
+		fmt.Fprintf(stderr, "agent: %s: %s\n", prefix, applog.RedactText(serverError.Message))
 		return
 	}
-	fmt.Fprintf(stderr, "agent: %s: %v\n", prefix, err)
+	fmt.Fprintf(stderr, "agent: %s: %s\n", prefix, applog.RedactText(err.Error()))
+}
+
+func printCLIError(stderr io.Writer, prefix string, err error) {
+	fmt.Fprintln(stderr, prefix, applog.RedactText(err.Error()))
 }
 
 func mustHomeDir() string {

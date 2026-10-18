@@ -235,12 +235,18 @@ func (v *Vault) initMasterLocked(ctx context.Context, password string) error {
 		return ipc.NewError(ipc.CodeCrypto, "加密错误：库内仍有密文，已拒绝重新初始化，以免替换密钥后无法解密")
 	}
 	salt := make([]byte, 16)
-	randomBytes(salt)
+	if err := randomBytes(salt); err != nil {
+		return err
+	}
 	kek, err := v.derive(password, salt)
 	if err != nil {
 		return err
 	}
-	dek := generateKey()
+	dek, err := generateKey()
+	if err != nil {
+		kek.destroy()
+		return err
+	}
 	envelope, err := sealDEK(kek, dek)
 	if err != nil {
 		kek.destroy()
@@ -345,7 +351,10 @@ func (v *Vault) unlockDPAPILocked(ctx context.Context) error {
 		if hasSecrets {
 			return ipc.NewError(ipc.CodeCrypto, "加密错误：密钥信封已丢失且库内仍有密文，已拒绝重建密钥")
 		}
-		dek = generateKey()
+		dek, err = generateKey()
+		if err != nil {
+			return err
+		}
 		protected, err := v.protector.Protect(dek.bytes[:])
 		if err != nil {
 			dek.destroy()
@@ -580,7 +589,9 @@ func (v *Vault) ChangeMasterPassword(ctx context.Context, oldPassword, newPasswo
 	}
 	defer dek.destroy()
 	newSalt := make([]byte, 16)
-	randomBytes(newSalt)
+	if err := randomBytes(newSalt); err != nil {
+		return err
+	}
 	newKEK, err := v.derive(newPassword, newSalt)
 	if err != nil {
 		return err

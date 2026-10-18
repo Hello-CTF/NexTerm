@@ -144,6 +144,64 @@ func TestObjectStoreMultiUserIsolation(t *testing.T) {
 	}
 }
 
+func TestObjectStoreConditionalDeletePreservesCursorAndIsolation(t *testing.T) {
+	ctx, objectStore, userID := newObjectStoreUser(t)
+	other, err := account.New(objectStore.db).CreateUser(ctx, "sync-other-"+ids.New(), "test", "store-pw-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, head, _, err := objectStore.push(ctx, userID, genesisHead(userID), []WireObject{
+		{ID: "keep", Blob: []byte("keep-data")}, {ID: "broken", Blob: []byte("opaque-data")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := hashBlobHex([]byte("opaque-data"))
+	for _, attempt := range []struct {
+		user, knownHead, blobHash string
+	}{
+		{userID, genesisHead(userID), hash},
+		{userID, head, hashBlobHex([]byte("different"))},
+		{other.ID, head, hash},
+	} {
+		if _, _, err := objectStore.deleteObject(ctx, attempt.user, "broken", attempt.knownHead, attempt.blobHash); err != errHeadMismatch {
+			t.Fatalf("conditional delete err = %v, want conflict", err)
+		}
+	}
+	entries, unchangedHead, unchangedSeq, err := objectStore.idList(ctx, userID)
+	if err != nil || len(entries) != 2 || unchangedHead != head || unchangedSeq != 2 {
+		t.Fatalf("conflicting delete changed store: entries=%+v head=%q maxSeq=%d err=%v", entries, unchangedHead, unchangedSeq, err)
+	}
+
+	newHead, maxSeq, err := objectStore.deleteObject(ctx, userID, "broken", head, hash)
+	if err != nil || newHead == head || maxSeq != 3 {
+		t.Fatalf("delete head=%q maxSeq=%d err=%v", newHead, maxSeq, err)
+	}
+	entries, listedHead, listedMax, err := objectStore.idList(ctx, userID)
+	if err != nil || len(entries) != 1 || entries[0].ID != "keep" || listedHead != newHead || listedMax != 3 {
+		t.Fatalf("deleted object remains in ids: entries=%+v head=%q maxSeq=%d err=%v", entries, listedHead, listedMax, err)
+	}
+	pulled, _, pulledMax, nextSeq, done, err := objectStore.pull(ctx, userID, 0, []string{"broken"}, 0)
+	if err != nil || len(pulled) != 1 || pulled[0].ID != "keep" || pulledMax != 3 || nextSeq != 3 || !done {
+		t.Fatalf("deleted object remains in pull: objects=%+v maxSeq=%d nextSeq=%d done=%v err=%v", pulled, pulledMax, nextSeq, done, err)
+	}
+	pulled, observedHead, pulledMax, nextSeq, done, err := objectStore.pull(ctx, userID, 2, nil, 0)
+	if err != nil || len(pulled) != 0 || observedHead != newHead || pulledMax != 3 || nextSeq != 3 || !done {
+		t.Fatalf("old cursor did not observe clear: objects=%+v head=%q maxSeq=%d nextSeq=%d done=%v err=%v", pulled, observedHead, pulledMax, nextSeq, done, err)
+	}
+	if _, _, err := objectStore.deleteObject(ctx, userID, "broken", newHead, hash); err != errHeadMismatch {
+		t.Fatalf("repeat delete err=%v, want conflict", err)
+	}
+	_, _, pushedHead, pushedSeq, err := objectStore.push(ctx, userID, newHead, []WireObject{{ID: "new", Blob: []byte("new-data")}})
+	if err != nil || pushedSeq != 4 || pushedHead == newHead {
+		t.Fatalf("push after delete head=%q maxSeq=%d err=%v", pushedHead, pushedSeq, err)
+	}
+	pulled, _, _, nextSeq, done, err = objectStore.pull(ctx, userID, 3, nil, 0)
+	if err != nil || len(pulled) != 1 || pulled[0].ID != "new" || nextSeq != 4 || !done {
+		t.Fatalf("old cursor missed new push: objects=%+v nextSeq=%d done=%v err=%v", pulled, nextSeq, done, err)
+	}
+}
+
 // Two near-64MiB transcripts (ciphertext about 87MiB) must be paginated by the wire-cost budget, with no single response over the limit.
 func TestObjectStorePullWireBudgetPaginatesLargeObjects(t *testing.T) {
 	ctx, store, userID := newObjectStoreUser(t)

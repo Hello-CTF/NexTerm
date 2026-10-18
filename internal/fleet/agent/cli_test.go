@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -117,6 +118,65 @@ func TestCLIUsageErrors(t *testing.T) {
 	if code := RunCLI([]string{"run", "-data-dir", t.TempDir(), "-pprof-addr", "192.168.1.10:6060"}, noEnv, &stdout, &stderr); code != ExitUsage {
 		t.Fatal("run with a non-loopback pprof address must be usage error")
 	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := RunCLI([]string{"enroll", "--insecure=https://user:synthetic-password@example.invalid"}, noEnv, &stdout, &stderr); code != ExitUsage {
+		t.Fatalf("invalid boolean flag = %d", code)
+	}
+	if strings.Contains(stderr.String(), "synthetic-password") || !strings.Contains(stderr.String(), "user:***@example.invalid") {
+		t.Fatalf("flag parser exposed URL credentials: %q", stderr.String())
+	}
+}
+
+func TestCLIConfigErrorsRedactURLCredentials(t *testing.T) {
+	dataDir := t.TempDir()
+	store := StoreAt(dataDir)
+	if err := os.MkdirAll(filepath.Dir(store.Path()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config := Config{
+		Version: configVersion, DeviceID: "synthetic-device", Secret: "synthetic-device-secret",
+		BaseURLs: []BaseURLEntry{{URL: "http://user:synthetic-password@example.invalid"}},
+	}
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.Path(), encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := RunCLI([]string{"run", "--data-dir", dataDir}, nil, &stdout, &stderr); code != ExitError {
+		t.Fatalf("run with invalid URL = %d", code)
+	}
+	if strings.Contains(stderr.String(), "synthetic-password") || !strings.Contains(stderr.String(), "user:***@example.invalid") {
+		t.Fatalf("run exposed URL credentials: %q", stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := RunCLI([]string{"status", "--data-dir", dataDir}, nil, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("status with invalid URL = %d", code)
+	}
+	if strings.Contains(stdout.String(), "synthetic-password") || !strings.Contains(stdout.String(), "user:***@example.invalid") {
+		t.Fatalf("status exposed URL credentials: %q", stdout.String())
+	}
+	config.BaseURLs = []BaseURLEntry{{URL: "https://example.invalid"}}
+	config.CurrentURL = "https://user:synthetic-password@example.invalid"
+	encoded, err = json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.Path(), encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := RunCLI([]string{"status", "--data-dir", dataDir}, nil, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("status with configured URL = %d", code)
+	}
+	if strings.Contains(stdout.String(), "synthetic-password") || !strings.Contains(stdout.String(), "user:***@example.invalid") {
+		t.Fatalf("status exposed current URL credentials: %q", stdout.String())
+	}
 }
 
 func TestCLIRunLockBusyExitsCleanly(t *testing.T) {
@@ -164,6 +224,7 @@ func TestCLIRunRevokedExitCode(t *testing.T) {
 	}
 	restoreFactory := cliRuntimeFactory
 	cliRuntimeFactory = func(store *Store, dataDir string, prober *Prober, manager ServiceManager) (*Runtime, error) {
+		slog.Warn("agent logger redaction", "token", "synthetic-secret")
 		return New(Options{
 			Store: store, DataDir: dataDir, Prober: prober, Manager: manager,
 			Collector:    fakeCollector{},
@@ -185,6 +246,9 @@ func TestCLIRunRevokedExitCode(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "吊销") {
 		t.Fatalf("run stderr = %q", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "synthetic-secret") || !strings.Contains(stderr.String(), "token=***") {
+		t.Fatalf("agent logger did not redact structured credential: %q", stderr.String())
 	}
 }
 

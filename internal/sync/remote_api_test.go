@@ -88,15 +88,8 @@ func newRemoteAPIFixture(t *testing.T) *remoteAPIFixture {
 
 func (f *remoteAPIFixture) createUser(t *testing.T, username, password string) string {
 	t.Helper()
-	_, envelopes, _, err := vault.GenerateUserDEKEnvelopes(password)
-	if err != nil {
-		t.Fatal(err)
-	}
-	user, err := f.accounts.CreateUserWithEnvelopes(context.Background(), username, username, password, envelopes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return user.ID
+	userID, _ := seedTestSyncUser(t, f.db, username, password)
+	return userID
 }
 
 // bindTOTP completes a real TOTP binding for the user and returns the base32 secret (the test side generates TOTP codes from it).

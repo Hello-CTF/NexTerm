@@ -295,8 +295,8 @@ export async function tryOpenSyncObject(
     try {
       const plaintext = await openSyncObject(dek, blob, id, kind);
       return { kind, plaintext };
-    } catch {
-      // Try the next kind
+    } catch (error) {
+      if (!(error instanceof CryptoError && error.code === "decrypt")) throw error;
     }
   }
   throw new CryptoError("decrypt", "解密失败（密钥不匹配或数据损坏）");

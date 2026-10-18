@@ -62,7 +62,7 @@ func warningsContain(warnings []string, substr string) bool {
 func TestEngineCredentialDeferredWhileVaultLocked(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
-	deviceA := newTestDevice(t)
+	deviceA := newMasterTestDevice(t)
 	deviceB := newTestDevice(t)
 	ctx := context.Background()
 
@@ -144,7 +144,7 @@ func TestEngineCredentialPullDeferredWhileVaultLocked(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
 	deviceA := newTestDevice(t)
-	deviceB := newTestDevice(t)
+	deviceB := newMasterTestDevice(t)
 	ctx := context.Background()
 
 	credentialID := ids.New()
@@ -278,7 +278,7 @@ func (h *recordCountingHandler) count(message string) int {
 // and re-locking after an unlock-recovery logs a fresh line.
 func TestSyncBackgroundNotesVaultBlocked(t *testing.T) {
 	handler := &recordCountingHandler{}
-	instance := newTestInstance(t, true, WithLogger(slog.New(handler)))
+	instance := newMasterTestInstance(t, WithLogger(slog.New(handler)))
 	ctx := context.Background()
 	url, username, password := "http://127.0.0.1:1", "alice", "alice-pw-123"
 	if _, err := instance.service.LinkSet(ctx, LinkPatch{URL: &url, Username: &username, Password: &password}); err != nil {

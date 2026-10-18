@@ -290,6 +290,43 @@ func TestProductionDockerExecDetachReattach(t *testing.T) {
 	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+streamID+`","clientId":"client-a"}`, "", "client-a"))
 }
 
+func TestProductionDockerExecClosedElsewhereCanBeRemoved(t *testing.T) {
+	factory := &bridgeTestFactory{}
+	execSession := newFakeStreamExecSession()
+	dockerService := docker.NewService(docker.StaticBackends{
+		SDKBackend:     fakeExecDockerBackend{session: execSession},
+		CommandBackend: fakeExecDockerBackend{session: execSession},
+	})
+	production, err := NewProduction(t.Context(), ProductionConfig{
+		Config: Config{
+			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+			Streams: ipc.StreamFactoryFuncs{Binary: factory.open},
+		},
+		DataDir: t.TempDir(), Desktop: true,
+		Docker: dockerService,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
+	connected := connectLocalTerminalTest(t, production)
+
+	execResponse := dispatchDurableTest(t, production, "docker_exec_attach", `{"args":{"sessionId":"`+connected.ID+`","containerId":"container-1","cols":80,"rows":24}}`, "docker-closed-elsewhere", "client-a")
+	var streamID string
+	requireStoreTestResponse(t, execResponse, &streamID)
+	if err := dockerService.CloseStream(streamID); err != nil {
+		t.Fatal(err)
+	}
+
+	response := dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+streamID+`"}`, "", "client-a")
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNotFound {
+		t.Fatalf("closing a stream already ended elsewhere = %+v, want not_found", response)
+	}
+}
+
 func TestProductionTerminalWriteIsolatesTabsForBroadcast(t *testing.T) {
 	dataDir := durableTestDataDir(t)
 	factory := &bridgeTestFactory{}
