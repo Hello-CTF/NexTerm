@@ -174,7 +174,7 @@ beforeEach(() => {
     tabs: [],
     createdAt: 0,
   });
-  useUi.setState({ leftOpen: true, pushToast: mocks.toast, workspaces: [], sessions: [] });
+  useUi.setState({ leftOpen: true, leftWidth: 248, pushToast: mocks.toast, workspaces: [], sessions: [] });
 });
 afterEach(() => {
   mounted?.unmount();
@@ -212,6 +212,24 @@ describe("asset row actions on fine pointers", () => {
     click(more);
     await flush();
     expect(menuLabels()).toEqual(["克隆", "复制 SSH 命令", "复制链接", "隐藏"]);
+  });
+
+  it("uses the full overflow menu when the sidebar becomes too narrow for the action strip", async () => {
+    stubPointer(false);
+    useUi.setState({ leftWidth: 180 });
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+
+    const row = rowByName(mounted!.container, "web-1");
+    expect(row.querySelector(".nx-row-actions")).toBeNull();
+    openOverflow(row);
+    await flush();
+    expect(menuLabels()).toEqual(["连接", "编辑", "删除", "克隆", "复制 SSH 命令", "复制链接", "隐藏"]);
+
+    act(() => useUi.setState({ leftWidth: 248 }));
+    expect([...row.querySelectorAll<HTMLButtonElement>(".nx-row-actions button")].map((button) => button.getAttribute("aria-label"))).toEqual([
+      "连接 web-1", "编辑 web-1", "删除 web-1", "更多操作 web-1",
+    ]);
   });
 });
 
@@ -298,7 +316,7 @@ describe("asset name priority in narrow sidebars", () => {
     setRowWidths(row, 131, 220, 89);
     expect(row.querySelector(".nx-asset-row-identity")).toBeNull();
     expect(row.querySelector(".nx-row-target")).toBeNull();
-    expect(row.querySelectorAll(".nx-row-actions button")).toHaveLength(4);
+    expect(row.querySelector(".nx-row-more")).not.toBeNull();
     expect((mounted!.container.firstElementChild as HTMLElement).style.width).toBe("180px");
   });
 });

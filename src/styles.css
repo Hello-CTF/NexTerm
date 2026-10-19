@@ -1308,25 +1308,10 @@
   }
 
   .nx-row.nx-asset-row {
-    flex-wrap: wrap;
-    align-items: flex-start;
+    flex-wrap: nowrap;
   }
   .nx-asset-row > .nx-row-name {
     flex: 1 1 0%;
-  }
-  .nx-asset-row .nx-row-actions {
-    position: static;
-    display: none;
-    flex: 0 0 100%;
-    justify-content: flex-end;
-    padding-left: 0;
-    transform: none;
-    background: none;
-  }
-  .nx-asset-row:hover .nx-row-actions,
-  .nx-asset-row.is-selected .nx-row-actions,
-  .nx-asset-row:focus-within .nx-row-actions {
-    display: flex;
   }
 
   .nx-card {
@@ -2034,6 +2019,12 @@
   --nx-kb-inset: 0px;
   --nx-keys-h: 46px;
   --nx-header-stack: 36px;
+  /* Native bridges provide explicit insets on Android and desktop. iOS also
+     exposes env() values, so use the larger value when both are available. */
+  --nx-safe-top: max(var(--nx-inset-top, 0px), env(safe-area-inset-top, 0px));
+  --nx-safe-right: max(var(--nx-inset-right, 0px), env(safe-area-inset-right, 0px));
+  --nx-safe-bottom: max(var(--nx-inset-bottom, 0px), env(safe-area-inset-bottom, 0px));
+  --nx-safe-left: max(var(--nx-inset-left, 0px), env(safe-area-inset-left, 0px));
 }
 
 .nx-statusbar {
@@ -2082,7 +2073,7 @@
 }
 
 .nx-overlay {
-  padding-bottom: calc(24px + var(--nx-kb-inset, 0px));
+  padding-bottom: calc(24px + var(--nx-kb-inset, 0px) + var(--nx-safe-bottom));
 }
 
 .nx-app,
@@ -2133,8 +2124,8 @@
   width: min(380px, calc(100vw - 32px));
   max-width: calc(100vw - 32px);
   z-index: 60;
-  bottom: calc(36px + var(--nx-kb-inset, 0px));
-  max-height: calc(100dvh - 120px - var(--nx-kb-inset, 0px));
+  bottom: calc(36px + var(--nx-kb-inset, 0px) + var(--nx-safe-bottom));
+  max-height: calc(100dvh - 120px - var(--nx-kb-inset, 0px) - var(--nx-safe-bottom));
   overflow: hidden;
   justify-content: flex-end;
 }
@@ -2151,7 +2142,7 @@
 
 .nx-app[data-nx-keys="true"] .nx-toasts {
   bottom: calc(
-    25px + var(--nx-keys-h, 46px) + 8px + var(--nx-kb-inset, 0px) + env(safe-area-inset-bottom, 0px)
+    25px + var(--nx-keys-h, 46px) + 8px + var(--nx-kb-inset, 0px) + var(--nx-safe-bottom)
   );
 }
 
@@ -2163,12 +2154,12 @@
 .nx-app[data-nx-ai="left"] .nx-toasts {
   right: auto;
   left: 8px;
-  top: calc(var(--nx-header-stack) + 8px);
+  top: calc(var(--nx-header-stack) + 8px + var(--nx-safe-top));
   bottom: auto;
   width: min(380px, calc(100vw - 16px));
   max-height: min(
-    calc(100dvh - 160px - var(--nx-kb-inset, 0px)),
-    var(--nx-ai-toast-max, calc(100dvh - 160px - var(--nx-kb-inset, 0px)))
+    calc(100dvh - 160px - var(--nx-kb-inset, 0px) - var(--nx-safe-top) - var(--nx-safe-bottom)),
+    var(--nx-ai-toast-max, calc(100dvh - 160px - var(--nx-kb-inset, 0px) - var(--nx-safe-top) - var(--nx-safe-bottom)))
   );
 }
 
@@ -2284,17 +2275,21 @@
   .nx-app[data-nx-ai] .nx-toasts {
     right: auto;
     left: 8px;
-    top: calc(var(--nx-header-stack) + 8px);
+    top: calc(var(--nx-header-stack) + 8px + var(--nx-safe-top));
     bottom: auto;
     width: min(380px, calc(100vw - 16px));
     max-height: min(
-      calc(100dvh - 160px - var(--nx-kb-inset, 0px)),
-      var(--nx-ai-toast-max, calc(100dvh - 160px - var(--nx-kb-inset, 0px)))
+      calc(100dvh - 160px - var(--nx-kb-inset, 0px) - var(--nx-safe-top) - var(--nx-safe-bottom)),
+      var(--nx-ai-toast-max, calc(100dvh - 160px - var(--nx-kb-inset, 0px) - var(--nx-safe-top) - var(--nx-safe-bottom)))
     );
   }
 }
 
 @media (max-width: 560px) {
+  .nx-header-hint {
+    display: none;
+  }
+
   .nx-toolbar {
     gap: 4px;
     padding: 0 6px;
@@ -2346,6 +2341,16 @@
   }
 }
 
+@media (max-width: 430px) {
+  /* Keep the session and connection counters readable on very narrow phones.
+     Vault and server details remain available in Settings and the connection
+     panels, so they should not push the primary status out of the viewport. */
+  .nx-statusbar .nx-statusbar-info > .nx-statusbar-truncate,
+  .nx-statusbar .nx-statusbar-side {
+    display: none;
+  }
+}
+
 @container term (max-width: 560px) {
   .nx-toolbar {
     gap: 4px;
@@ -2384,11 +2389,11 @@
 @media (max-height: 560px) {
   .nx-overlay {
     padding: 12px;
-    padding-bottom: calc(12px + var(--nx-kb-inset, 0px));
+    padding-bottom: calc(12px + var(--nx-kb-inset, 0px) + var(--nx-safe-bottom));
   }
 
   .nx-command-modal {
-    max-height: min(100%, calc(100dvh - 24px - var(--nx-kb-inset, 0px)));
+    max-height: min(100%, calc(100dvh - 24px - var(--nx-kb-inset, 0px) - var(--nx-safe-bottom)));
   }
 }
 
@@ -2691,25 +2696,34 @@
   display: none;
 }
 
+.nx-app[data-nx-landscape-full="true"] .nx-workspace-body {
+  padding-left: var(--nx-safe-left);
+  padding-right: var(--nx-safe-right);
+}
+
 /* Rounded screen/notch adaptation: the background extends into the curved areas, interactive content avoids the status bar and gesture bar.
    --nx-inset-* is injected by the native side (Android env() does not include the gesture bar); falls back to iOS env() values when not injected */
 .nx-app-header {
   height: auto;
   min-height: 36px;
-  padding-top: var(--nx-inset-top, env(safe-area-inset-top));
-  padding-right: var(--nx-inset-right, env(safe-area-inset-right));
+  padding-top: var(--nx-safe-top);
+  padding-right: var(--nx-safe-right);
 }
 
 .nx-rail {
-  width: calc(48px + var(--nx-inset-left, env(safe-area-inset-left)));
-  padding-top: calc(9px + var(--nx-inset-top, env(safe-area-inset-top)));
-  padding-left: var(--nx-inset-left, env(safe-area-inset-left));
+  width: calc(48px + var(--nx-safe-left));
+  padding-top: calc(9px + var(--nx-safe-top));
+  padding-left: var(--nx-safe-left);
 }
 
 .nx-statusbar {
-  padding-right: var(--nx-inset-right, env(safe-area-inset-right));
+  height: auto;
+  min-height: 25px;
+  align-items: flex-start;
+  padding-right: calc(12px + var(--nx-safe-right));
+  padding-bottom: var(--nx-safe-bottom);
 }
 
 .nx-app[data-nx-landscape-full="true"] .nx-statusbar {
-  padding-left: var(--nx-inset-left, env(safe-area-inset-left));
+  padding-left: calc(12px + var(--nx-safe-left));
 }
