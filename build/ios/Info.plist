@@ -4,6 +4,16 @@
 <dict>
     <key>CFBundleExecutable</key>
     <string>nexterm</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh_CN</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>CFBundleSupportedPlatforms</key>
+    <array>
+        <string>iPhoneOS</string>
+    </array>
     <key>CFBundleIdentifier</key>
     <string>work.nexterm.app</string>
     <key>CFBundleName</key>
