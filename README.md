@@ -26,6 +26,8 @@
   <img src="website/public/images/shell-dark.jpg" alt="NexTerm 的 Shell 终端与命令块界面" />
 </picture>
 
+图片使用示例数据。可在[官网](https://nexterm.work/)点击体验终端、AI、文件和回放演示。
+
 NexTerm 把远程运维的完整流程放进一个窗口：通过 SSH、WinRM 或 NexTerm 设备 agent 连接主机，让 AI 助手在你确认后排查和修复问题，再处理文件、容器、数据库、设备监控和终端分享，全程不用切换工具。shell 在后台持续运行，关闭窗口或换一台设备都不会丢失进度。
 
 <table>
