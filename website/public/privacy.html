@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>隐私政策 · NexTerm</title>
+<meta name="robots" content="noindex">
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; line-height: 1.75; color: #1d1d1f; background: #fff; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 48px 24px 80px; }
+  h1 { font-size: 28px; margin: 0 0 8px; }
+  h2 { font-size: 19px; margin: 36px 0 8px; }
+  p, li { font-size: 15px; color: #333; }
+  ul { padding-left: 22px; }
+  .meta { color: #777; font-size: 13px; margin-bottom: 32px; }
+  .lang { margin-top: 56px; padding-top: 32px; border-top: 1px solid #e5e5e5; }
+  a { color: #516cd6; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #111; color: #eee; }
+    p, li { color: #ccc; }
+    .meta { color: #888; }
+    .lang { border-top-color: #333; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>NexTerm 隐私政策</h1>
+  <p class="meta">生效日期：2026 年 10 月 19 日 · 适用版本：NexTerm 全平台（桌面端、iOS、Android、服务端）</p>
+
+  <p>NexTerm 是一个以"本地优先、自托管"为原则的远程终端与运维工具。本政策说明 App 会处理哪些数据、存在哪里。简短版：<strong>你的服务器凭据和终端数据默认只保存在你自己的设备上；我们运营方无法读取你的任何凭据或会话内容。</strong></p>
+
+  <h2>1. 我们处理的数据及用途</h2>
+  <ul>
+    <li><strong>账号信息</strong>（服务端模式）：用户名、加密后的凭据。用于登录与多设备同步。</li>
+    <li><strong>资产与凭据</strong>：你添加的 SSH/WinRM 主机、保存的密码与私钥。仅用于建立你发起的连接。</li>
+    <li><strong>终端历史</strong>：会话的输出与键盘输入记录，用于回放与搜索功能。注意：其中可能包含你输入过的密码或令牌。</li>
+    <li><strong>设备信息</strong>（设备管理功能）：设备名、系统版本、在线状态，用于远程打开设备终端。</li>
+  </ul>
+
+  <h2>2. 数据存储位置</h2>
+  <ul>
+    <li><strong>本地优先</strong>：资产、凭据、终端历史默认只存储在你当前使用的设备上，受系统钥匙串（macOS/iOS）或 DPAPI（Windows）或你设置的保护密码加密保护。</li>
+    <li><strong>端到端加密同步</strong>：只有你主动登录账号并开启同步后，资产、分组、片段、凭据和可选配置才会同步；同步内容端到端加密，服务端只存密文，无法解密。</li>
+    <li><strong>终端历史不同步</strong>：终端历史默认仅本地保存，不参与同步；你可以对单条记录单独开启端到端加密同步，也可以随时逐条删除。</li>
+    <li><strong>自托管</strong>：服务端由你或你的团队自行部署，数据保存在你自己的机器或数据库（SQLite / PostgreSQL / MySQL / MariaDB）中。</li>
+  </ul>
+
+  <h2>3. 生物识别</h2>
+  <p>Face ID / 指纹仅用于在本机解锁凭据库，验证结果不会离开设备，我们也不会收集任何生物特征数据。</p>
+
+  <h2>4. AI 助手功能</h2>
+  <p>AI 功能由你自行配置 OpenAI 兼容接口（可以是本地模型或任何第三方端点）。你发送给 AI 的终端内容、文件内容会直接传输到你所配置的端点，其隐私由该端点的运营方负责，我们不中转、不存储这些内容。</p>
+
+  <h2>5. 分享链接</h2>
+  <p>你可以主动把设备或会话生成限时公开链接。链接默认只读，只有显式授权才允许读写，可随时吊销。获得链接的人在有效期内无需登录即可访问，请仅授予可信对象。</p>
+
+  <h2>6. 第三方共享</h2>
+  <p>我们不嵌入任何第三方分析、广告或追踪 SDK，不向任何第三方出售或共享你的数据。除你自建的 AI 端点和自托管服务端外，数据不会离开你的设备。</p>
+
+  <h2>7. 数据删除</h2>
+  <p>你可以随时在 App 内删除单条终端历史、资产或凭据；卸载 App 会删除本地数据；自托管服务端的数据由你自行管理，删除数据目录即可完全清除。</p>
+
+  <h2>8. 政策更新与联系</h2>
+  <p>政策更新会在本页面发布。问题反馈请到 <a href="https://github.com/Hello-CTF/NexTerm/issues">GitHub Issues</a>。</p>
+
+  <div class="lang">
+    <h1>NexTerm Privacy Policy</h1>
+    <p class="meta">Effective date: October 19, 2026 · Applies to NexTerm on all platforms (desktop, iOS, Android, server)</p>
+
+    <p>NexTerm is a remote terminal and operations tool built on local-first, self-hosted principles. Short version: <strong>your server credentials and terminal data stay on your own devices by default, and we, the operator, cannot read any of your credentials or session content.</strong></p>
+
+    <h2>1. Data We Process and Why</h2>
+    <ul>
+      <li><strong>Account data</strong> (server mode): username and encrypted credentials, used for sign-in and multi-device sync.</li>
+      <li><strong>Assets and credentials</strong>: SSH/WinRM hosts you add, saved passwords and private keys, used only to establish connections you initiate.</li>
+      <li><strong>Terminal history</strong>: recordings of session output and keystrokes, used for replay and search. Note: these may include passwords or tokens you typed.</li>
+      <li><strong>Device information</strong> (device management): device name, OS version, and online status, used to open remote terminals on enrolled devices.</li>
+    </ul>
+
+    <h2>2. Where Data Is Stored</h2>
+    <ul>
+      <li><strong>Local-first</strong>: assets, credentials, and terminal history are stored only on the device you use, protected by the OS keychain (macOS/iOS), DPAPI (Windows), or a protection password you set.</li>
+      <li><strong>End-to-end encrypted sync</strong>: only after you sign in and enable sync are assets, groups, snippets, credentials, and optional settings synchronized. Synced content is end-to-end encrypted; the server stores ciphertext only and cannot decrypt it.</li>
+      <li><strong>Terminal history is not synced</strong>: it stays on your device by default; you may enable end-to-end encrypted sync per entry or delete any entry at any time.</li>
+      <li><strong>Self-hosted</strong>: the server is deployed by you or your team; data lives on your own machines or databases (SQLite / PostgreSQL / MySQL / MariaDB).</li>
+    </ul>
+
+    <h2>3. Biometrics</h2>
+    <p>Face ID / Touch ID is used solely to unlock the local credential vault. Biometric data never leaves your device, and we collect none.</p>
+
+    <h2>4. AI Assistant</h2>
+    <p>AI features run against an OpenAI-compatible endpoint you configure yourself (a local model or any third-party endpoint). Terminal and file content you send to the AI goes directly to that endpoint; its privacy is governed by that endpoint's operator. We do not relay or store this content.</p>
+
+    <h2>5. Sharing Links</h2>
+    <p>You may create time-limited public links to devices or sessions. Links are read-only by default; read-write access requires explicit authorization and links can be revoked at any time. Anyone with the link can access it within its validity period without signing in — share only with trusted parties.</p>
+
+    <h2>6. Third Parties</h2>
+    <p>We embed no third-party analytics, advertising, or tracking SDKs, and we never sell or share your data. Apart from the AI endpoint you configure and your self-hosted server, your data does not leave your devices.</p>
+
+    <h2>7. Deleting Your Data</h2>
+    <p>You can delete individual terminal history entries, assets, or credentials in the app at any time. Uninstalling the app removes local data. Self-hosted server data is managed by you; deleting its data directory erases it completely.</p>
+
+    <h2>8. Updates and Contact</h2>
+    <p>Updates to this policy are posted on this page. Questions and feedback: <a href="https://github.com/Hello-CTF/NexTerm/issues">GitHub Issues</a>.</p>
+  </div>
+</div>
+</body>
+</html>
