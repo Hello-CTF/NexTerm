@@ -290,7 +290,7 @@ jobs:
           - platform: android
             runner: ubuntu-latest
           - platform: ios
-            runner: macos-15
+            runner: macos-26
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
@@ -385,7 +385,7 @@ jobs:
     name: iOS App Store signed IPA
     needs: [quality, frontend, version]
     if: ${{ !failure() && !cancelled() && vars.NEXTERM_IOS_SIGNING == 'true' && (github.event_name == 'push' || inputs.release_version != '') }}
-    runs-on: macos-15
+    runs-on: macos-26
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
     steps:

@@ -345,7 +345,7 @@ jobs:
           - platform: android
             runner: ubuntu-latest
           - platform: ios
-            runner: macos-15
+            runner: macos-26
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
