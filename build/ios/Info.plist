@@ -80,6 +80,8 @@
     </dict>
     <key>NSFaceIDUsageDescription</key>
     <string>使用面容 ID 快速解锁 NexTerm 数据密钥</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>内置网页组件可能请求定位权限；NexTerm 不会主动获取您的位置信息</string>
     <key>ITSAppUsesNonExemptEncryption</key>
     <false/>
     <key>DTPlatformName</key>
