@@ -26,6 +26,8 @@ Terminals that never drop · an AI assistant that actually does the work · file
   <img src="website/public/images/shell-dark.jpg" alt="NexTerm terminal with command blocks" />
 </picture>
 
+The images use sample data. Try the interactive terminal, AI, file, and replay demos on the [website](https://nexterm.work/).
+
 NexTerm puts the whole remote-ops loop in one window. Connect over SSH, WinRM, or the NexTerm device agent, let an AI assistant investigate and fix with your approval, and handle files, containers, databases, device metrics, and terminal sharing without switching tools. Shells keep running in the background, so closing the window or switching devices never loses your work.
 
 <table>

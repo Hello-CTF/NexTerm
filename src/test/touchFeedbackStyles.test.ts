@@ -156,7 +156,7 @@ describe("toast placement rules", () => {
       rule(css, '.nx-app[data-nx-ai="left"] .nx-toasts'),
       rule(narrow, ".nx-app[data-nx-ai] .nx-toasts"),
     ]) {
-      expect(body).toMatch(/top:\s*calc\(var\(--nx-header-stack\) \+ 8px\)/);
+      expect(body).toMatch(/top:\s*calc\(var\(--nx-header-stack\) \+ 8px \+ var\(--nx-safe-top\)\)/);
     }
   });
 
@@ -165,7 +165,7 @@ describe("toast placement rules", () => {
     expect(body).toMatch(/left:\s*8px/);
     expect(body).toMatch(/right:\s*auto/);
     expect(body).toMatch(/bottom:\s*auto/);
-    expect(body).toMatch(/top:\s*calc\(var\(--nx-header-stack\) \+ 8px\)/);
+    expect(body).toMatch(/top:\s*calc\(var\(--nx-header-stack\) \+ 8px \+ var\(--nx-safe-top\)\)/);
   });
 
   it("toast stack is constrained in height and keeps the newest toasts", () => {

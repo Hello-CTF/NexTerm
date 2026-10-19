@@ -4,6 +4,7 @@ import {
   KeyRound, Laptop, Layers, Link, Lock, Monitor, Moon, Network, Radio, ScrollText, Server, ShieldCheck, Smartphone,
   SquareTerminal, Sun, Users, Workflow,
 } from "lucide-react";
+import { FeatureDemo, type DemoMode } from "./Demos";
 
 const repository = "https://github.com/Hello-CTF/NexTerm";
 const releases = `${repository}/releases/latest`;
@@ -14,7 +15,7 @@ const deployDocs = {
 type Language = "zh" | "en";
 type Theme = "dark" | "light";
 type Item = [title: string, text: string];
-type View = [name: string, label: string, title: string, alt: string];
+type View = [name: DemoMode, label: string, title: string, alt: string];
 
 const integrations = ["SSH", "WinRM", "SFTP", "Docker", "MySQL", "MariaDB", "PostgreSQL", "Redis", "SOCKS5", "OpenAI API", "DeepSeek", "Kimi", "GLM", "Ollama"];
 const toolboxIcons = [FolderTree, Container, Database, Network, Activity, Link, Layers, SquareTerminal];
@@ -40,7 +41,7 @@ const copy = {
     trust: [["端到端加密同步", "资产、片段、凭据跨设备同步，服务端只保存密文。"], ["凭据保险库", "主密码或系统级保护（DPAPI / Keychain），移动端支持生物识别解锁，空闲自动锁定。"], ["多用户与双因素", "服务端多账号、TOTP 双因素认证、登录设备管理。"], ["审计日志", "用户与 AI 的命令、文件写入、设备上下线都有记录。"], ["AI 护栏", "命令与 SQL 分级、输出脱敏、只读或可执行模式。"], ["选择你的数据库", "默认 SQLite，服务端支持 PostgreSQL、MySQL 和 MariaDB。"]] as Item[],
     platformKicker: "下载", platformTitle: "装在桌面，部署到服务器，或在手机上接着用",
     platforms: [["Windows", "10 / 11 · x64 / ARM64"], ["macOS", "Apple Silicon / Intel"], ["Linux 桌面", "deb · amd64 / arm64"], ["Linux 服务端", "浏览器访问 · 多用户"], ["移动端预览", "Android · iOS / iPadOS"], ["懒猫微服", "应用商店一键安装"]] as Item[],
-    install: "部署服务端", footerIssue: "问题反馈", license: "MIT License",
+    install: "部署服务端", footerIssue: "问题反馈", privacy: "隐私政策", license: "MIT License",
   },
   en: {
     nav: ["AI", "Sessions", "Toolbox", "Security", "Download"], home: "NexTerm home", themeDark: "Switch to light theme", themeLight: "Switch to dark theme", language: "中",
@@ -60,20 +61,12 @@ const copy = {
     trust: [["End-to-end encrypted sync", "Assets, snippets, and credentials sync across devices; the server only stores ciphertext."], ["Credential vault", "Master password or OS-level protection (DPAPI / Keychain), biometric unlock on mobile, and idle auto-lock."], ["Multi-user and 2FA", "Server accounts, TOTP two-factor authentication, and signed-in device management."], ["Audit log", "Commands, file writes, and device online events from both users and the AI are recorded."], ["AI guardrails", "Command and SQL risk classification, output redaction, and read-only or execute modes."], ["Your database", "SQLite by default; the server also supports PostgreSQL, MySQL, and MariaDB."]] as Item[],
     platformKicker: "Download", platformTitle: "On your desktop, on your server, or on your phone",
     platforms: [["Windows", "10 / 11 · x64 / ARM64"], ["macOS", "Apple Silicon / Intel"], ["Linux desktop", "deb · amd64 / arm64"], ["Linux server", "Browser access · multi-user"], ["Mobile preview", "Android · iOS / iPadOS"], ["Lazycat", "Install from the app center"]] as Item[],
-    install: "Deploy the server", footerIssue: "Issues", license: "MIT License",
+    install: "Deploy the server", footerIssue: "Issues", privacy: "Privacy Policy", license: "MIT License",
   },
 };
 
 function GithubIcon({ size = 19 }: { size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55 0-.27-.01-1.17-.02-2.12-3.2.7-3.88-1.36-3.88-1.36-.52-1.33-1.28-1.68-1.28-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.76 2.7 1.25 3.35.96.1-.75.4-1.25.72-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.7 5.4-5.27 5.68.41.36.78 1.06.78 2.14 0 1.55-.01 2.79-.01 3.17 0 .31.21.67.8.55A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z" /></svg>;
-}
-
-function Picture({ name, alt, eager = false }: { name: string; alt: string; eager?: boolean }) {
-  const loading = eager ? "eager" : "lazy";
-  return <>
-    <img className="shot shot-dark" src={`/images/${name}-dark.jpg`} alt={alt} loading={loading} />
-    <img className="shot shot-light" src={`/images/${name}-light.jpg`} alt={alt} loading={loading} />
-  </>;
 }
 
 function Window({ title, children, className = "" }: { title: string; children: ReactNode; className?: string }) {
@@ -142,7 +135,7 @@ function App() {
             {t.views.map(([name, label], index) => <button key={name} type="button" role="tab" aria-selected={index === view} className={index === view ? "active" : ""} onClick={() => setView(index)}>{label}</button>)}
           </div>
           <Window title={current[2]} className="hero-window">
-            <div role="tabpanel"><Picture key={current[0]} name={current[0]} alt={current[3]} eager={view === 0} /></div>
+            <div role="tabpanel" aria-label={current[3]}><FeatureDemo mode={current[0]} language={language} /></div>
           </Window>
         </div>
       </section>
@@ -165,7 +158,7 @@ function App() {
               })}
             </div>
           </div>
-          <Window title={t.views[1][2]} className="split-window"><Picture name="ai" alt={t.views[1][3]} /></Window>
+          <Window title={t.views[1][2]} className="split-window"><FeatureDemo mode="ai" language={language} /></Window>
         </div>
       </section>
 
@@ -180,7 +173,7 @@ function App() {
               })}
             </div>
           </div>
-          <Window title={t.views[3][2]} className="split-window"><Picture name="replay" alt={t.views[3][3]} /></Window>
+          <Window title={t.views[3][2]} className="split-window"><FeatureDemo mode="replay" language={language} /></Window>
         </div>
       </section>
 
@@ -232,6 +225,7 @@ function App() {
           <a href={repository} target="_blank" rel="noreferrer">GitHub</a>
           <a href={releases} target="_blank" rel="noreferrer">Releases</a>
           <a href={`${repository}/issues`} target="_blank" rel="noreferrer">{t.footerIssue}</a>
+          <a href={language === "en" ? "/privacy.html#en" : "/privacy.html#zh"}>{t.privacy}</a>
           <a href={`${repository}/blob/master/LICENSE`} target="_blank" rel="noreferrer">{t.license}</a>
         </div>
         <span className="copyright">© 2026 Hello-CTF</span>

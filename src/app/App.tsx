@@ -1403,7 +1403,7 @@ function AppShell() {
               </>
             ) : (
               <span
-                className="text-xs text-neutral-500"
+                className="nx-header-hint text-xs text-neutral-500"
                 data-wails-drag-region style={wailsDragRegionStyle}
               >
                 还没有工作区，双击左侧资产连接一台主机

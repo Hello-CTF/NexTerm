@@ -61,12 +61,32 @@
 }
 
 .nx-command-error {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 8px;
   padding: 8px 16px;
   border-top: 1px solid var(--color-red-500);
   background: var(--color-red-950);
   color: var(--color-red-300);
   font-size: calc(12px * var(--nx-ui-text-factor));
   line-height: 1.5;
+}
+
+.nx-command-error > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .nx-command-error > span {
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+  }
 }
 
 .nx-menu-title,

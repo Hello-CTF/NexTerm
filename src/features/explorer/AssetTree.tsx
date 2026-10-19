@@ -1093,6 +1093,8 @@ function AssetRow({
   onCancelMove?: () => void;
 }) {
   const coarse = useCoarsePointer();
+  const leftWidth = useUi((s) => s.leftWidth);
+  const compactActions = coarse || leftWidth - (level - 1) * 14 <= 225;
   const Icon = assetIcon(asset.kind, typeof asset.options?.icon === "string" ? asset.options.icon : undefined);
   const connecting = useUi((s) => s.connectingAssetIds.includes(asset.id));
   const label = asset.name;
@@ -1174,7 +1176,7 @@ function AssetRow({
       )}
       {hidden && <span className="nx-badge">已隐藏</span>}
       {asset.builtin && <span className="nx-badge nx-badge-blue">本机</span>}
-      {coarse ? (
+      {compactActions ? (
         <button
           className="nx-icon-btn nx-icon-btn-sm nx-row-more"
           title="更多操作"
@@ -1189,7 +1191,7 @@ function AssetRow({
           ⋯
         </button>
       ) : (
-        <span className="nx-row-actions">
+        <span className="nx-row-actions" onDoubleClick={(e) => e.stopPropagation()}>
           {connecting ? (
             <span
               className="nx-icon-btn nx-icon-btn-sm"
