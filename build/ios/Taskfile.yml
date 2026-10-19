@@ -131,6 +131,31 @@ tasks:
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build_number" "{{.BIN_DIR}}/{{.APP_NAME}}.app/Info.plist"
         fi
       - |
+        # Inject the toolchain stamp that Xcode would normally add to
+        # Info.plist; App Store Connect rejects device uploads without it
+        # (altool error 90534).
+        if [ "{{.IOS_PLATFORM}}" = "device" ]; then
+          APP_PLIST="{{.BIN_DIR}}/{{.APP_NAME}}.app/Info.plist"
+          SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
+          SDK_BUILD="$(xcrun --sdk iphoneos --show-sdk-build-version)"
+          PLATFORM_VERSION="$(xcrun --sdk iphoneos --show-sdk-platform-version)"
+          XCODE_VERSION="$(xcodebuild -version | awk '/^Xcode/{print $2}')"
+          XCODE_BUILD="$(xcodebuild -version | awk '/Build version/{print $3}')"
+          DTXCODE="$(echo "$XCODE_VERSION" | awk -F. '{printf "%d\n", $1*100 + $2*10}')"
+          for pair in \
+            "DTSDKName:iphoneos$SDK_VERSION" \
+            "DTSDKBuild:$SDK_BUILD" \
+            "DTPlatformVersion:$PLATFORM_VERSION" \
+            "DTPlatformBuild:$SDK_BUILD" \
+            "DTXcode:$DTXCODE" \
+            "DTXcodeBuild:$XCODE_BUILD" \
+            "BuildMachineOSBuild:$(sw_vers -buildVersion)"; do
+            key="${pair%%:*}"; value="${pair#*:}"
+            /usr/libexec/PlistBuddy -c "Set :$key $value" "$APP_PLIST" 2>/dev/null \
+              || /usr/libexec/PlistBuddy -c "Add :$key string $value" "$APP_PLIST"
+          done
+        fi
+      - |
         # Embed the provisioning profile for device builds when provided
         if [ "{{.IOS_PLATFORM}}" = "device" ] && [ -n "{{.PROVISIONING_PROFILE}}" ]; then
           cp "{{.PROVISIONING_PROFILE}}" "{{.BIN_DIR}}/{{.APP_NAME}}.app/embedded.mobileprovision"
