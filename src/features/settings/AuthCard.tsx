@@ -800,14 +800,14 @@ function TotpCard() {
           <div className="nx-alert nx-alert-info mb-3 flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <code className="nx-code break-all font-mono text-[12.5px]">{setup.otpauth_uri}</code>
-              <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => copyText(setup.otpauth_uri, "绑定链接")}>
+              <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void copyText(setup.otpauth_uri, "绑定链接")}>
                 <IconCopy size={12} />
                 复制
               </button>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <code className="nx-code font-mono text-[12.5px]">{setup.secret.replace(/(.{4})/g, "$1 ").trim()}</code>
-              <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => copyText(setup.secret, "密钥")}>
+              <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void copyText(setup.secret, "密钥")}>
                 <IconCopy size={12} />
                 复制
               </button>

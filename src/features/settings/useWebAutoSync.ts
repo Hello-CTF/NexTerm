@@ -57,7 +57,7 @@ export function useWebAutoSync() {
         running = false;
         if (queued && !cancelled) {
           queued = false;
-          queueMicrotask(run);
+          queueMicrotask(() => void run());
         }
       }
     };
