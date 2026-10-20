@@ -642,3 +642,67 @@ func decodeExecBatchTestErr[T any](response ipc.Response) (T, error) {
 	}
 	return value, nil
 }
+
+func TestRunbookIPCProductionShutdownCancelsLiveRuns(t *testing.T) {
+	started := make(chan context.Context, 1)
+	transport := newExecBatchTestTransport(func(ctx context.Context, _ string, _ base.ExecOptions) (base.ExecResult, error) {
+		started <- ctx
+		<-ctx.Done()
+		return base.ExecResult{}, ctx.Err()
+	})
+	manager := newExecBatchTestManager(t, transport)
+	storage, err := store.OpenInMemory(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	application, err := NewProductionWithServices(Config{}, ProductionServices{Sessions: manager, Store: storage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := application.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	owner := ipc.WithUserID(t.Context(), "owner-a")
+	asset, err := storage.AssetCreate(owner, store.AssetInput{Kind: session.KindSSH, Name: "asset-live"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connected, err := manager.ConnectFor(owner, session.Asset{ID: asset.ID, Name: "asset-live", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatcher := application.Dispatcher
+	start := dispatchExecBatchTest(dispatcher, owner, "runbook_run_start", runbook.StartRequest{
+		RunID: "run-shutdown", RunbookID: "rb-shutdown", RunbookName: "shutdown",
+		Steps:      []runbook.Step{{ID: "s1", Name: "S1", Command: "do"}},
+		SessionIDs: []string{connected.ID},
+	})
+	decodeExecBatchTest[runbook.RunState](t, start)
+	prepare := dispatchExecBatchTest(dispatcher, owner, "runbook_run_prepare", runbook.PrepareRequest{
+		RunID: "run-shutdown", StepNumber: 1,
+		Commands: []runbook.RenderedCommand{{SessionID: connected.ID, Command: "do"}},
+	})
+	decodeExecBatchTest[runbook.RunState](t, prepare)
+	advance := make(chan ipc.Response, 1)
+	go func() {
+		advance <- dispatchExecBatchTest(dispatcher, owner, "runbook_run_advance", runbook.AdvanceRequest{RunID: "run-shutdown", StepNumber: 1, Confirmed: true})
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("live run did not start executing")
+	}
+
+	if err := application.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case response := <-advance:
+		if state := decodeExecBatchTest[runbook.RunState](t, response); state.Status != runbook.RunCanceled {
+			t.Fatalf("live run state after production shutdown = %+v", state)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("production shutdown did not cancel the live run")
+	}
+}

@@ -219,6 +219,7 @@ func productionModules(services ProductionServices) []Module {
 	}
 	if services.Sessions != nil {
 		logTails := newLogTailIPCService(services.Sessions, services.desktop)
+		runbookIPC := newProductionRunbookIPC(services.ExecBatches, services.Store)
 		modules = append(modules, Module{
 			Name: "session",
 			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
@@ -234,12 +235,16 @@ func productionModules(services ProductionServices) []Module {
 				if err := registerExecBatchHealthCommands(dispatcher, services.ExecBatches, services.terminalCommands, services.Store); err != nil {
 					return err
 				}
-				if err := registerRunbookCommands(dispatcher, services.ExecBatches, services.Store); err != nil {
+				if err := runbookIPC.register(dispatcher); err != nil {
 					return err
 				}
 				return registerAssetMaintenanceCommands(dispatcher, services.Store, services.ExecBatches, services.terminalCommands)
 			},
 			Component: services.Sessions,
+		})
+		modules = append(modules, Module{
+			Name:      "runbook-runs",
+			Component: ComponentFuncs{ShutdownFunc: runbookIPC.Shutdown},
 		})
 		modules = append(modules, Module{
 			Name:             "log-tail",

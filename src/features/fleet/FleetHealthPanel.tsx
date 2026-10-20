@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useUi } from "../../app/store";
-import { filterAssetsForProject, projectFocusLabel, type ProjectFocus } from "../../app/projectFocus";
+import { filterAssetsForProject, projectFocusLabel } from "../../app/projectFocus";
 import { assetApi, type Asset, type SessionInfo } from "../../ipc/commands";
+import { WEB } from "../../ipc/env";
+import { useAuth } from "../auth/store";
 import {
   createExecBatchId,
   execBatchApi,
@@ -106,13 +108,15 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
   const probeHosts = useMemo(() => hosts.slice(0, MAX_TARGETS), [hosts]);
   const targetSignature = probeHosts.map((host) => `${host.target.assetId}:${host.target.sessionId ?? ""}`).join("|");
 
+  const accountID = useAuth((state) => state.user?.id) ?? (WEB ? "anonymous" : "desktop");
+  const settingsScope = `${accountID}:${activeProject}`;
   const [settingsState, setSettingsState] = useState<{
-    project: ProjectFocus;
+    scope: string;
     settings: FleetHealthProjectSettings;
-  }>(() => ({ project: activeProject, settings: readFleetHealthSettings(activeProject) }));
-  const settings = settingsState.project === activeProject
+  }>(() => ({ scope: settingsScope, settings: readFleetHealthSettings(activeProject, accountID) }));
+  const settings = settingsState.scope === settingsScope
     ? settingsState.settings
-    : readFleetHealthSettings(activeProject);
+    : readFleetHealthSettings(activeProject, accountID);
   const [results, setResults] = useState<Record<string, ExecBatchHealthResult>>({});
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -194,8 +198,8 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
       ...patch,
       intervalMs: normalizeFleetHealthInterval(patch.intervalMs ?? settings.intervalMs),
     };
-    writeFleetHealthSettings(activeProject, next);
-    setSettingsState({ project: activeProject, settings: next });
+    writeFleetHealthSettings(activeProject, next, accountID);
+    setSettingsState({ scope: settingsScope, settings: next });
   };
 
   const resultFor = (assetID: string) => results[assetID];

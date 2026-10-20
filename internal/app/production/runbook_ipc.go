@@ -67,7 +67,7 @@ func newRunbookIPCService(executor runbook.Executor, history ...runbookHistoryRe
 	}
 }
 
-func registerRunbookCommands(dispatcher *ipc.Dispatcher, batches *execbatch.Service, history *store.Store) error {
+func newProductionRunbookIPC(batches *execbatch.Service, history *store.Store) *runbookIPCService {
 	var executor runbook.Executor
 	if batches != nil {
 		executor = batches
@@ -76,7 +76,7 @@ func registerRunbookCommands(dispatcher *ipc.Dispatcher, batches *execbatch.Serv
 	if history != nil {
 		reader = history
 	}
-	return newRunbookIPCService(executor, reader).register(dispatcher)
+	return newRunbookIPCService(executor, reader)
 }
 
 func (s *runbookIPCService) register(dispatcher *ipc.Dispatcher) error {

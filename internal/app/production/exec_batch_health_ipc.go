@@ -36,13 +36,13 @@ type execBatchHealthIPCService struct {
 	latestHistory func(context.Context, []string) ([]store.ExecBatchAssetHistory, error)
 
 	mu             sync.Mutex
-	runs           map[string]*execBatchHealthRun
+	runs           map[execBatchHealthCancelKey]*execBatchHealthRun
 	pendingCancels map[execBatchHealthCancelKey]time.Time
 }
 
 func newExecBatchHealthIPCService(batches *execbatch.Service, probes *terminalCommandService, history *store.Store) *execBatchHealthIPCService {
 	service := &execBatchHealthIPCService{
-		batches: batches, runs: make(map[string]*execBatchHealthRun),
+		batches: batches, runs: make(map[execBatchHealthCancelKey]*execBatchHealthRun),
 		pendingCancels: make(map[execBatchHealthCancelKey]time.Time),
 	}
 	if probes != nil {
@@ -101,10 +101,10 @@ func (s *execBatchHealthIPCService) startRun(ownerID, batchID string, cancel con
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.purgePendingCancelsLocked(time.Now())
-	if _, exists := s.runs[batchID]; exists {
+	if _, exists := s.runs[key]; exists {
 		return nil, fmt.Errorf("%w: %s", execbatch.ErrBatchConflict, batchID)
 	}
-	s.runs[batchID] = run
+	s.runs[key] = run
 	if _, exists := s.pendingCancels[key]; exists {
 		delete(s.pendingCancels, key)
 		cancel()
@@ -113,9 +113,10 @@ func (s *execBatchHealthIPCService) startRun(ownerID, batchID string, cancel con
 }
 
 func (s *execBatchHealthIPCService) finishRun(run *execBatchHealthRun) {
+	key := execBatchHealthCancelKey{ownerID: run.ownerID, batchID: run.batchID}
 	s.mu.Lock()
-	if s.runs[run.batchID] == run {
-		delete(s.runs, run.batchID)
+	if s.runs[key] == run {
+		delete(s.runs, key)
 	}
 	s.mu.Unlock()
 	run.cancel()
@@ -158,11 +159,7 @@ func (s *execBatchHealthIPCService) cancel(ctx context.Context, _ *ipc.Call, inp
 	key := execBatchHealthCancelKey{ownerID: ownerID, batchID: input.BatchID}
 	s.mu.Lock()
 	s.purgePendingCancelsLocked(time.Now())
-	run := s.runs[input.BatchID]
-	if run != nil && run.ownerID != ownerID {
-		s.mu.Unlock()
-		return execbatch.CancelResult{}, execBatchIPCError(fmt.Errorf("%w: %s", execbatch.ErrForbidden, input.BatchID))
-	}
+	run := s.runs[key]
 	if run == nil {
 		if err := s.recordPendingCancelLocked(key); err != nil {
 			s.mu.Unlock()
