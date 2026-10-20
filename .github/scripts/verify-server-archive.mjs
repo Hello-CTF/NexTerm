@@ -25,11 +25,17 @@ def fail(message):
     print(message, file=sys.stderr)
     sys.exit(1)
 
-def canonical(name):
+def canonical(member):
+    name = member.name
     if name.startswith("/"):
         fail(f"server archive member has an unsafe path: {name}")
     parts = name.split("/")
     if parts and parts[-1] == "":
+        # Only a directory member may carry the trailing-slash form: on a
+        # regular file or link, libarchive extracts a directory at the same
+        # path, so the unpack result would diverge from the evidenced member.
+        if not member.isdir():
+            fail(f"server archive member has a trailing slash but is not a directory: {name}")
         parts = parts[:-1]
     if not parts:
         fail(f"server archive member has an empty path: {name}")
@@ -55,7 +61,7 @@ with tar:
     # segment would address a different header string than the path a real
     # extractor writes to, letting a second member overwrite the evidenced
     # bytes. Duplicates are judged by that canonical extraction path.
-    canonical_names = [canonical(member.name) for member in members]
+    canonical_names = [canonical(member) for member in members]
     if len(set(canonical_names)) != len(canonical_names):
         fail("server archive contains duplicate member names")
     roots = {name.split("/")[0] for name in canonical_names}

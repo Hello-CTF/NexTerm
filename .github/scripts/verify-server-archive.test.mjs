@@ -177,6 +177,22 @@ with tarfile.open(archive, "w:gz") as tar:
   assert.notEqual(emptySegment.status, 0);
   assert.match(emptySegment.stderr, /empty path segment/);
 
+  // A regular member named with a trailing slash is verified as a file but
+  // extracts as a directory (or not at all), so the unpack would lack the
+  // main binary even though the archived bytes match the staged binary.
+  const trailingSlash = build(`import io, sys, tarfile
+archive, root, payload_path = sys.argv[1], sys.argv[2], sys.argv[3]
+payload = open(payload_path, "rb").read()
+with tarfile.open(archive, "w:gz") as tar:
+    info = tarfile.TarInfo(f"{root}/nexterm-server/")
+    info.size = len(payload)
+    info.mode = 0o755
+    tar.addfile(info, io.BytesIO(payload))
+`, "trailing-slash", binary);
+  const trailing = run(trailingSlash);
+  assert.notEqual(trailing.status, 0);
+  assert.match(trailing.stderr, /trailing slash/);
+
   // The intact archive from the same fixture still passes.
   const intact = writeArchive(directory, "NexTerm-server_1.2.3_linux_amd64", mainBytes);
   assert.equal(run(intact).status, 0);
