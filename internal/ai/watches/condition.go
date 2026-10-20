@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"regexp"
+	"regexp/syntax"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -107,14 +109,18 @@ func (c Condition) maxCarry(capacity int) int {
 // byte range within data plus a bounded excerpt of the containing line.
 // minStart is the first byte position eligible to start a match (the engine
 // passes the length of the prepended left context): earlier starts belong to
-// already-settled history. The excerpt is untrusted output data and is
-// capped for the event envelope.
+// already-settled history, and — unlike filtering a non-overlapping match
+// list — a filtered context match can never consume the eligible region,
+// because the search itself is anchored at or after minStart with the full
+// left context visible. The excerpt is untrusted output data and is capped
+// for the event envelope.
 //
-// Evaluation treats data as the whole input: assertions see the true left
-// context prepended by the engine, and end-of-input assertions at the
-// buffer end are honest stream-so-far semantics, so results are identical
-// under any chunking and restarts.
-func (c Condition) Evaluate(data []byte, minStart, maxExcerptBytes int) (matched bool, from, to int64, excerpt string) {
+// A match that ends exactly at the end of data is only reported when it
+// cannot depend on what follows, or when eof marks the true stream end:
+// regular expressions with a trailing end-of-text/end-of-line or
+// word-boundary assertion are deferred, because the next bytes (or EOF)
+// must ground them first and an outbox event can never be retracted.
+func (c Condition) Evaluate(data []byte, minStart, maxExcerptBytes int, eof bool) (matched bool, from, to int64, excerpt string) {
 	if maxExcerptBytes <= 0 {
 		maxExcerptBytes = DefaultMaxExcerptBytes
 	}
@@ -133,16 +139,35 @@ func (c Condition) Evaluate(data []byte, minStart, maxExcerptBytes int) (matched
 		start := minStart + index
 		return true, int64(start), int64(start + len(c.Pattern)), excerptLine(data, start, maxExcerptBytes)
 	case ConditionRegex:
-		for _, match := range regexp.MustCompile(c.Pattern).FindAllIndex(data, -1) {
-			if match[0] < minStart {
-				continue
-			}
-			return true, int64(match[0]), int64(match[1]), excerptLine(data, match[0], maxExcerptBytes)
+		// The lazy prefix anchors the search at or after minStart while the
+		// whole buffer stays visible, so ^/\b assertions at the match start
+		// see the true preceding bytes. The prefix counts runes, and minStart
+		// is a rune boundary, so the rune count of the prefix is exact.
+		wrapper := regexp.MustCompile("^(?:[\\s\\S]{" + strconv.Itoa(utf8.RuneCount(data[:minStart])) + ",}?)(" + c.Pattern + ")")
+		loc := wrapper.FindStringSubmatchIndex(string(data))
+		if loc == nil {
+			return false, 0, 0, ""
 		}
-		return false, 0, 0, ""
+		start, end := loc[2], loc[3]
+		if end == len(data) && !eof && regexTrailingRightContextDependent(c.Pattern) {
+			// The right edge of the match is unverifiable until the next
+			// bytes (or EOF) ground it; the carry keeps it for re-evaluation.
+			return false, 0, 0, ""
+		}
+		return true, int64(start), int64(end), excerptLine(data, start, maxExcerptBytes)
 	default:
 		return false, 0, 0, ""
 	}
+}
+
+// regexTrailingRightContextDependent reports whether matches of the pattern
+// can depend on bytes beyond the match end.
+func regexTrailingRightContextDependent(pattern string) bool {
+	re, err := syntax.Parse(pattern, syntax.Perl)
+	if err != nil {
+		return false
+	}
+	return trailingRightContextDependent(re)
 }
 
 // excerptLine extracts the line around the match start and truncates it to

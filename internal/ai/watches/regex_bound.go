@@ -207,19 +207,21 @@ func runeWidth(re *syntax.Regexp, r rune) int {
 // the live suffix length from the previous round and added the number of new
 // complete bytes, so the scan starts from the longest possible extension;
 // the result may exceed capacity, which the caller reports as overflow.
-// Only rune-aligned suffixes are considered: valid matches never start
-// inside a rune.
-func scanLiveSuffix(data []byte, previousLive, added, capacity int, prefixRe *regexp.Regexp) int {
+//
+// The prefix regex is anchored at the end only, and the true left context is
+// prepended to every candidate, so assertions inside the pattern evaluate
+// against the real preceding bytes instead of a fabricated candidate start.
+// A candidate counts as live when a non-empty suffix of (context + candidate)
+// is a proper prefix; the reported length may over-approximate the true live
+// suffix, which is always safe: the carry then covers every possible match.
+func scanLiveSuffix(contextTail, data []byte, previousLive, added, capacity int, prefixRe *regexp.Regexp) int {
 	limit := min(len(data), capacity+1)
 	candidate := min(previousLive+added, limit)
-	if candidate > 0 && isRuneAlignedStart(data, len(data)-candidate) && prefixRe.MatchString(string(data[len(data)-candidate:])) {
-		return candidate
-	}
-	for length := candidate - 1; length >= 1; length-- {
-		if !isRuneAlignedStart(data, len(data)-length) {
-			continue
-		}
-		if prefixRe.MatchString(string(data[len(data)-length:])) {
+	for length := candidate; length >= 1; length-- {
+		input := make([]byte, 0, len(contextTail)+length)
+		input = append(input, contextTail...)
+		input = append(input, data[len(data)-length:]...)
+		if loc := prefixRe.FindStringIndex(string(input)); loc != nil && loc[0] < len(input) {
 			return length
 		}
 	}
@@ -233,6 +235,11 @@ func isRuneAlignedStart(data []byte, index int) bool {
 // neverMatch is a regex that matches nothing; it represents an empty prefix
 // language when building prefix regexes.
 const neverMatch = `\b\B`
+
+// emptyPrefix is a regex matching only the empty string; it represents the
+// empty proper prefix that every subexpression has, which keeps node-boundary
+// prefixes expressible in concatenations.
+const emptyPrefix = `(?:)`
 
 // regexPrefixPattern builds a regular expression matching the proper
 // prefixes of pattern's language (including the empty prefix), or false when
@@ -252,7 +259,7 @@ func prefixPattern(re *syntax.Regexp) (string, bool) {
 	case syntax.OpLiteral:
 		runes := []rune(string(re.Rune))
 		if len(runes) <= 1 {
-			return neverMatch, true
+			return emptyPrefix, true
 		}
 		var b strings.Builder
 		if re.Flags&syntax.FoldCase != 0 {
@@ -271,7 +278,7 @@ func prefixPattern(re *syntax.Regexp) (string, bool) {
 		}
 		return b.String(), true
 	case syntax.OpCharClass, syntax.OpAnyCharNotNL, syntax.OpAnyChar:
-		return neverMatch, true
+		return emptyPrefix, true
 	case syntax.OpCapture:
 		return prefixPattern(re.Sub[0])
 	case syntax.OpConcat:
@@ -282,13 +289,8 @@ func prefixPattern(re *syntax.Regexp) (string, bool) {
 			if !ok {
 				return "", false
 			}
-			if branch != neverMatch {
-				branches = append(branches, "(?:"+prefix+")(?:"+branch+")")
-			}
+			branches = append(branches, "(?:"+prefix+")(?:"+branch+")")
 			prefix += "(?:" + sub.String() + ")"
-		}
-		if len(branches) == 0 {
-			return neverMatch, true
 		}
 		return "(?:" + strings.Join(branches, "|") + ")", true
 	case syntax.OpAlternate:
@@ -298,12 +300,7 @@ func prefixPattern(re *syntax.Regexp) (string, bool) {
 			if !ok {
 				return "", false
 			}
-			if branch != neverMatch {
-				branches = append(branches, branch)
-			}
-		}
-		if len(branches) == 0 {
-			return neverMatch, true
+			branches = append(branches, branch)
 		}
 		return "(?:" + strings.Join(branches, "|") + ")", true
 	case syntax.OpStar, syntax.OpPlus:
@@ -311,8 +308,9 @@ func prefixPattern(re *syntax.Regexp) (string, bool) {
 		if !ok {
 			return "", false
 		}
-		full := re.Sub[0].String()
-		return "(?:(?:" + branch + ")(?:" + full + ")*|(?:" + full + ")+)", true
+		// Proper prefixes of rⁿ are complete repetitions followed by a
+		// partial one: full(r)* · prefix(r).
+		return "(?:" + re.Sub[0].String() + ")*(?:" + branch + ")", true
 	case syntax.OpQuest:
 		return prefixPattern(re.Sub[0])
 	case syntax.OpRepeat:
@@ -320,19 +318,45 @@ func prefixPattern(re *syntax.Regexp) (string, bool) {
 		if !ok {
 			return "", false
 		}
-		full := re.Sub[0].String()
 		if re.Max < 0 {
-			return "(?:(?:" + branch + ")(?:" + full + ")*|(?:" + full + ")+)", true
+			return "(?:" + re.Sub[0].String() + ")*(?:" + branch + ")", true
 		}
 		if re.Max <= 1 {
 			return branch, true
 		}
-		return "(?:(?:" + branch + ")(?:" + full + "){0," + strconv.Itoa(re.Max-1) + "}|(?:" + full + "){1," + strconv.Itoa(re.Max-1) + "})", true
+		return "(?:" + re.Sub[0].String() + "){0," + strconv.Itoa(re.Max-1) + "}(?:" + branch + ")", true
 	case syntax.OpEmptyMatch, syntax.OpBeginLine, syntax.OpEndLine,
 		syntax.OpBeginText, syntax.OpEndText, syntax.OpWordBoundary, syntax.OpNoWordBoundary:
-		return neverMatch, true
+		return emptyPrefix, true
 	default:
 		return "", false
+	}
+}
+
+// trailingRightContextDependent reports whether the pattern's matches can
+// depend on bytes beyond the match end: end-of-text/end-of-line assertions
+// or a word-boundary assertion at the trailing edge. Such matches may not
+// fire at the current chunk end — the following bytes (or an explicit EOF)
+// must ground them first.
+func trailingRightContextDependent(re *syntax.Regexp) bool {
+	switch re.Op {
+	case syntax.OpEndText, syntax.OpEndLine, syntax.OpWordBoundary, syntax.OpNoWordBoundary:
+		return true
+	case syntax.OpCapture:
+		return trailingRightContextDependent(re.Sub[0])
+	case syntax.OpConcat:
+		return trailingRightContextDependent(re.Sub[len(re.Sub)-1])
+	case syntax.OpAlternate:
+		for _, sub := range re.Sub {
+			if trailingRightContextDependent(sub) {
+				return true
+			}
+		}
+		return false
+	case syntax.OpStar, syntax.OpPlus, syntax.OpRepeat:
+		return trailingRightContextDependent(re.Sub[0])
+	default:
+		return false
 	}
 }
 

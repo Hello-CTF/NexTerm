@@ -177,14 +177,17 @@ func TestAssertionResultsAreChunkInvariant(t *testing.T) {
 		stream  string
 		from    int64
 		to      int64
+		// eof marks matches that may only fire at the explicit stream end:
+		// right-edge assertions are deferred until following bytes or EOF.
+		eof bool
 	}{
-		{"caret no false start", `^ready`, "xxready", -1, -1},
-		{"caret real start", `^ready`, "ready", 0, 5},
-		{"word boundary none", `\b[0-9]`, "a1", -1, -1},
-		{"word boundary real", `\b[0-9]`, " 1", 1, 2},
-		{"line caret split", `(?m)^ready`, "ab\nready", 3, 8},
-		{"trailing boundary", `ready\b`, "x ready y", 2, 7},
-		{"end text", `ready$`, "ab ready", 3, 8},
+		{"caret no false start", `^ready`, "xxready", -1, -1, false},
+		{"caret real start", `^ready`, "ready", 0, 5, false},
+		{"word boundary none", `\b[0-9]`, "a1", -1, -1, false},
+		{"word boundary real", `\b[0-9]`, " 1", 1, 2, true},
+		{"line caret split", `(?m)^ready`, "ab\nready", 3, 8, false},
+		{"trailing boundary", `ready\b`, "x ready y", 2, 7, false},
+		{"end text", `ready$`, "ab ready", 3, 8, true},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -232,6 +235,13 @@ func TestAssertionResultsAreChunkInvariant(t *testing.T) {
 					}
 					events = append(events, fired...)
 					position += int64(len(chunk))
+				}
+				if testCase.eof {
+					fired, err := engine.ObserveEOF(ctx, "target-1", "identity-1", position)
+					if err != nil {
+						t.Fatalf("observe EOF: %v", err)
+					}
+					events = append(events, fired...)
 				}
 				return events
 			}

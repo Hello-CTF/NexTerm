@@ -352,6 +352,54 @@ func (e *Engine) Observe(ctx context.Context, targetID, identity string, fromSeq
 	return fired, nil
 }
 
+// ObserveEOF marks the target stream as ended at fromSeq. Armed watches
+// evaluate their final buffered bytes with end-of-input semantics, so
+// right-edge assertions (ready$, ready\b) fire when they hold at the true
+// stream end instead of waiting for bytes that will never arrive; a
+// deferred match that the stream end refutes stays unfired, and the final
+// incomplete UTF-8 sequence, if any, is evaluated as the data it is.
+func (e *Engine) ObserveEOF(ctx context.Context, targetID, identity string, fromSeq int64) ([]Event, error) {
+	binding, ok := e.binding(targetKey{owner: ipc.OwnerID(ctx), target: targetID})
+	if !ok || !binding.attached {
+		return nil, ErrDetached
+	}
+	if binding.identity != identity {
+		return nil, ErrIdentityMismatch
+	}
+	rows, err := e.store.AgentWatchListByTarget(ctx, targetID)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		if row.Generation > binding.generation {
+			return nil, ErrDetached
+		}
+	}
+	now := e.opts.Now()
+	var fired []Event
+	for _, row := range rows {
+		if row.Generation < binding.generation {
+			if Status(row.Status) == StatusArmed {
+				if err := e.markUnverifiable(ctx, row, "superseded by a newer target generation"); err != nil {
+					return fired, err
+				}
+			}
+			continue
+		}
+		if Status(row.Status) != StatusArmed {
+			continue
+		}
+		event, err := e.observeWatch(ctx, row, identity, fromSeq, fromSeq, nil, now, true)
+		if err != nil {
+			return fired, err
+		}
+		if event != nil {
+			fired = append(fired, *event)
+		}
+	}
+	return fired, nil
+}
+
 // processWatch evaluates one watch row, reloading and re-evaluating the same
 // chunk when a CAS race moved the watch between the listing and its
 // transition; only genuine store failures and a persistently conflicting
@@ -368,7 +416,7 @@ func (e *Engine) processWatch(ctx context.Context, row model.AgentWatchRow, curr
 		switch Status(row.Status) {
 		case StatusArmed:
 			var event *Event
-			event, err = e.observeWatch(ctx, row, identity, fromSeq, toSeq, data, now)
+			event, err = e.observeWatch(ctx, row, identity, fromSeq, toSeq, data, now, false)
 			if err == nil {
 				return event, nil
 			}
@@ -420,7 +468,7 @@ func (e *Engine) prefixRegex(pattern string) (*regexp.Regexp, bool) {
 		e.prefixCache.Store(pattern, nil)
 		return nil, false
 	}
-	compiled, err := regexp.Compile("^(?:" + body + ")$")
+	compiled, err := regexp.Compile("(?:" + body + ")$")
 	if err != nil {
 		e.prefixCache.Store(pattern, nil)
 		return nil, false
@@ -452,7 +500,7 @@ func (e *Engine) liveCarryPlan(condition Condition, valid []byte, contextLen int
 			return 0, true, nil
 		}
 		added := avail - len(row.CarryBlob)
-		live := scanLiveSuffix(valid[contextLen:], int(row.CarryLive), added, e.opts.MaxCarryBytes, prefixRe)
+		live := scanLiveSuffix(row.ContextBlob, valid[contextLen:], int(row.CarryLive), added, e.opts.MaxCarryBytes, prefixRe)
 		if live > e.opts.MaxCarryBytes {
 			return 0, true, nil
 		}
@@ -462,12 +510,12 @@ func (e *Engine) liveCarryPlan(condition Condition, valid []byte, contextLen int
 	}
 }
 
-func (e *Engine) observeWatch(ctx context.Context, row model.AgentWatchRow, identity string, fromSeq, toSeq int64, data []byte, now time.Time) (*Event, error) {
+func (e *Engine) observeWatch(ctx context.Context, row model.AgentWatchRow, identity string, fromSeq, toSeq int64, data []byte, now time.Time, eof bool) (*Event, error) {
 	lastEvaluated := row.AnchorSeq + int64(len(row.CarryBlob))
 	if fromSeq > lastEvaluated {
 		return nil, e.markUnverifiable(ctx, row, fmt.Sprintf("output gap: evaluated %d, chunk starts %d", lastEvaluated, fromSeq))
 	}
-	if toSeq <= lastEvaluated {
+	if toSeq <= lastEvaluated && !eof {
 		return nil, nil
 	}
 	var condition Condition
@@ -488,10 +536,13 @@ func (e *Engine) observeWatch(ctx context.Context, row model.AgentWatchRow, iden
 	// An incomplete trailing UTF-8 sequence is not data yet: it is excluded
 	// from evaluation so patterns cannot fire on a partial rune, and it is
 	// always carried into the next chunk regardless of the condition's
-	// participation bound.
-	tail := incompleteUTF8Tail(buffer)
+	// participation bound. At EOF the final bytes are data as they are.
+	tail := 0
+	if !eof {
+		tail = incompleteUTF8Tail(buffer)
+	}
 	valid := buffer[:len(buffer)-tail]
-	matched, relFrom, relTo, excerpt := condition.Evaluate(valid, contextLen, e.opts.MaxExcerptBytes)
+	matched, relFrom, relTo, excerpt := condition.Evaluate(valid, contextLen, e.opts.MaxExcerptBytes, eof)
 	if matched {
 		// relFrom is relative to the buffer start, which sits contextLen
 		// bytes before the anchor. The fired match consumed the evaluated
