@@ -27,7 +27,7 @@ type RecheckFunc func(ctx context.Context, grant *Grant) (*Grant, error)
 // WithRevalidateTTL to converge revalidation into a short TTL cache); once the grant becomes invalid both directions stop immediately,
 // and blocks read during invalidity or cancellation are discarded. A blocked Read is woken by the integration layer closing the source on cancellation.
 type Gate struct {
-	refreshMu  sync.Mutex
+	refreshMu  refreshLock
 	mu         sync.Mutex
 	grant      *Grant
 	now        func() int64
@@ -38,6 +38,18 @@ type Gate struct {
 	recheckCache  refreshCache
 	inputCache    refreshCache
 }
+
+// refreshLock serializes grant refreshes. It is an instance field (never a
+// package global) so tests can instrument attempt ordering.
+type refreshLock interface {
+	Lock()
+	Unlock()
+}
+
+type mutexRefreshLock struct{ mu sync.Mutex }
+
+func (m *mutexRefreshLock) Lock()   { m.mu.Lock() }
+func (m *mutexRefreshLock) Unlock() { m.mu.Unlock() }
 
 // refreshCache is an entry of the revalidate short-TTL cache: grant is the snapshot from the last successful refresh,
 // and at is its refresh time (milliseconds).
@@ -80,7 +92,7 @@ func WithRevalidateTTL(ttl time.Duration) GateOption {
 }
 
 func NewGate(grant *Grant, options ...GateOption) *Gate {
-	g := &Gate{grant: grant, now: ids.NowMS}
+	g := &Gate{grant: grant, now: ids.NowMS, refreshMu: &mutexRefreshLock{}}
 	for _, option := range options {
 		option(g)
 	}

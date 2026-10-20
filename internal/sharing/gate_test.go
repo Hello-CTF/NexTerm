@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -416,13 +415,30 @@ func TestGateRevalidateTTLConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
+// attemptLock counts Lock calls so a test can prove a refresh attempt reached
+// the serialization point before an earlier refresh was released.
+type attemptLock struct {
+	inner    sync.Mutex
+	attempts int32
+	second   chan struct{}
+	once     sync.Once
+}
+
+func (l *attemptLock) Lock() {
+	if atomic.AddInt32(&l.attempts, 1) == 2 {
+		l.once.Do(func() { close(l.second) })
+	}
+	l.inner.Lock()
+}
+
+func (l *attemptLock) Unlock() { l.inner.Unlock() }
+
 func TestGateRefreshSerializationPreventsStaleOverwrite(t *testing.T) {
 	expiresAt := time.Now().Add(time.Hour).UnixMilli()
 	stale := testGrant(PermissionReadWrite, expiresAt)
 	current := testGrant(PermissionRead, expiresAt)
 	firstStarted := make(chan struct{})
 	releaseFirst := make(chan struct{})
-	secondStarted := make(chan struct{})
 	secondRecheckStarted := make(chan struct{})
 	var calls atomic.Int32
 	gate := NewGate(testGrant(PermissionReadWrite, expiresAt), WithRecheck(func(ctx context.Context, grant *Grant) (*Grant, error) {
@@ -434,6 +450,8 @@ func TestGateRefreshSerializationPreventsStaleOverwrite(t *testing.T) {
 		close(secondRecheckStarted)
 		return current, nil
 	}))
+	lock := &attemptLock{second: make(chan struct{})}
+	gate.refreshMu = lock
 	defer func() {
 		select {
 		case <-releaseFirst:
@@ -446,17 +464,17 @@ func TestGateRefreshSerializationPreventsStaleOverwrite(t *testing.T) {
 	go func() { firstDone <- gate.Check(context.Background()) }()
 	<-firstStarted
 	secondDone := make(chan error, 1)
-	go func() { close(secondStarted); secondDone <- gate.CheckFresh(context.Background()) }()
-	<-secondStarted
-	// A Go mutex does not expose its wait queue, so "the second check is
-	// blocked on the refresh critical section" cannot be observed directly.
-	// What the serialization contract does guarantee is observable: while the
-	// first recheck holds refreshMu, the second check cannot make progress.
-	// Yield so the second goroutine reaches the critical section, then prove
-	// its recheck has not run before releasing the first one; without
-	// refreshMu serialization it would have fired by now and the gate would
-	// be one refresh behind.
-	runtime.Gosched()
+	go func() { secondDone <- gate.CheckFresh(context.Background()) }()
+	// The second refresh attempt must reach the serialization point (the
+	// instrumented refresh lock) before the first refresh is released; a
+	// recheck that runs before that point means serialization is gone.
+	select {
+	case <-lock.second:
+	case <-secondRecheckStarted:
+		t.Fatal("second refresh ran before reaching the serialization point")
+	}
+	// With serialization active, the second recheck cannot start while the
+	// first recheck holds the lock.
 	select {
 	case <-secondRecheckStarted:
 		t.Fatal("second refresh ran while the first refresh was still in flight")
