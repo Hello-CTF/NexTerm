@@ -26,9 +26,11 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
   const onInputRef = useRef(props.onInput);
   const onSelectionCopyRef = useRef(props.onSelectionCopy);
   const onHandleRef = useRef(props.onHandle);
+  const readOnlyRef = useRef(props.readOnly);
   onInputRef.current = props.onInput;
   onSelectionCopyRef.current = props.onSelectionCopy;
   onHandleRef.current = props.onHandle;
+  readOnlyRef.current = props.readOnly;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -38,7 +40,7 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
       fontFamily: "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
       fontSize: 14,
       cursorBlink: true,
-      disableStdin: props.readOnly ?? false,
+      disableStdin: readOnlyRef.current ?? false,
       theme: XTERM_DARK_THEME,
     });
     const fit = new FitAddon();
