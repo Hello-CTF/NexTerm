@@ -53,7 +53,7 @@ func TestRestartResumesAnchorWithoutSkippingOrRefiring(t *testing.T) {
 		t.Fatal(err)
 	}
 	reloaded, err := engine.Get(ctx, watch.ID)
-	if err != nil || reloaded.Status != StatusArmed || reloaded.AnchorSeq != 0 || string(reloaded.Carry) != "ab" {
+	if err != nil || reloaded.Status != StatusArmed || reloaded.AnchorSeq != 2 || len(reloaded.Carry) != 0 {
 		t.Fatalf("reloaded watch = %+v, %v", reloaded, err)
 	}
 	events, err := engine.Observe(ctx, "target-1", "identity-1", 2, []byte("ready"))

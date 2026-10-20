@@ -32,6 +32,19 @@ func (c Condition) Validate() error {
 	}
 }
 
+// exactLiveSuffix returns the length of the longest suffix of data that is
+// a proper prefix of pattern, i.e. the exact number of trailing bytes that
+// may still participate in a future literal match.
+func exactLiveSuffix(data []byte, pattern string) int {
+	limit := min(len(pattern)-1, len(data))
+	for length := limit; length >= 1; length-- {
+		if string(data[len(data)-length:]) == pattern[:length] {
+			return length
+		}
+	}
+	return 0
+}
+
 // incompleteUTF8Tail returns the length of the trailing bytes that form a
 // proper prefix of a UTF-8 encoding split by a chunk boundary (0-3 bytes).
 // Genuinely invalid bytes are not an incomplete tail: they are complete

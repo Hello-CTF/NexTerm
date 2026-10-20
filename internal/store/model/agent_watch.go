@@ -22,6 +22,7 @@ type AgentWatchRow struct {
 	AnchorSeq     int64  `gorm:"column:anchor_seq;not null;default:0" json:"anchor_seq"`
 	ContextBlob   []byte `gorm:"column:context_blob" json:"context_blob"`
 	CarryBlob     []byte `gorm:"column:carry_blob" json:"carry_blob"`
+	CarryLive     int64  `gorm:"column:carry_live;not null;default:0" json:"carry_live"`
 	FireSeq       int64  `gorm:"column:fire_seq;not null;default:0" json:"fire_seq"`
 	Revision      uint64 `gorm:"column:revision;not null;default:1" json:"revision"`
 	DeliveryID    string `gorm:"size:191;column:delivery_id;not null;default:''" json:"delivery_id"`

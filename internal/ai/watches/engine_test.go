@@ -118,7 +118,7 @@ func TestObserveFiresWithFixedIDsAndAdvancesAnchor(t *testing.T) {
 		t.Fatalf("miss observe = %+v, %v", events, err)
 	}
 	afterMiss, err := engine.Get(ctx, watch.ID)
-	if err != nil || afterMiss.AnchorSeq != 4 || afterMiss.Revision != 2 || string(afterMiss.Carry) != "yet\n" {
+	if err != nil || afterMiss.AnchorSeq != 8 || afterMiss.Revision != 2 || len(afterMiss.Carry) != 0 {
 		t.Fatalf("after miss = %+v, %v", afterMiss, err)
 	}
 
@@ -448,7 +448,7 @@ func TestObserveEvaluatesWatchesIndependently(t *testing.T) {
 		t.Fatalf("observe = %+v, %v", events, err)
 	}
 	afterMissing, err := engine.Get(ctx, missing.ID)
-	if err != nil || afterMissing.Status != StatusArmed || afterMissing.AnchorSeq != 5 {
+	if err != nil || afterMissing.Status != StatusArmed || afterMissing.AnchorSeq != 9 {
 		t.Fatalf("non-matching watch = %+v, %v", afterMissing, err)
 	}
 }

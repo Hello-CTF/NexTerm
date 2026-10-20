@@ -278,10 +278,11 @@ func agentWatchContext(context []byte) ([]byte, error) {
 }
 
 // AgentWatchAdvance persists the new anchor, the bounded overlap that
-// preserves partial matches across chunk boundaries, and the true left
-// context that grounds assertions at the seam. The anchor never regresses;
-// identity and armed state must still match.
-func (s *Store) AgentWatchAdvance(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq int64, carry, context []byte, now int64) (model.AgentWatchRow, error) {
+// preserves partial matches across chunk boundaries, the true left context
+// that grounds assertions at the seam, and the live-suffix length that lets
+// the next round extend the participation scan incrementally. The anchor
+// never regresses; identity and armed state must still match.
+func (s *Store) AgentWatchAdvance(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq int64, carry, context []byte, carryLive, now int64) (model.AgentWatchRow, error) {
 	carry, err := agentWatchCarry(carry)
 	if err != nil {
 		return model.AgentWatchRow{}, err
@@ -289,6 +290,9 @@ func (s *Store) AgentWatchAdvance(ctx context.Context, watchID string, expectedR
 	context, err = agentWatchContext(context)
 	if err != nil {
 		return model.AgentWatchRow{}, err
+	}
+	if carryLive < 0 || carryLive > int64(len(carry)) {
+		return model.AgentWatchRow{}, badParam(fmt.Errorf("agent watch 活后缀长度无效"))
 	}
 	var updated model.AgentWatchRow
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -310,7 +314,7 @@ func (s *Store) AgentWatchAdvance(ctx context.Context, watchID string, expectedR
 		}
 		info := tx.Model(&model.AgentWatchRow{}).
 			Where("id = ? AND owner_id = ? AND revision = ?", watch.ID, watch.OwnerID, expectedRevision).
-			Updates(map[string]any{"anchor_seq": anchorSeq, "carry_blob": carry, "context_blob": context, "revision": expectedRevision + 1, "updated_at": now})
+			Updates(map[string]any{"anchor_seq": anchorSeq, "carry_blob": carry, "context_blob": context, "carry_live": carryLive, "revision": expectedRevision + 1, "updated_at": now})
 		if info.Error != nil {
 			return dbError(info.Error)
 		}
@@ -326,10 +330,23 @@ func (s *Store) AgentWatchAdvance(ctx context.Context, watchID string, expectedR
 // AgentWatchConsume slides the anchor of a matched repeat watch over output
 // that arrived while the fire was awaiting acknowledgement; the suspended
 // watch intentionally skips matching, but consuming the stream keeps its
-// anchor current so re-arming never sees a false output gap.
-func (s *Store) AgentWatchConsume(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq, now int64) (model.AgentWatchRow, error) {
+// anchor current so re-arming never sees a false output gap. The persisted
+// overlap, left context and live length follow the same rules as Advance, so
+// a rune split across the consumption boundary survives the re-arm.
+func (s *Store) AgentWatchConsume(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq int64, carry, context []byte, carryLive, now int64) (model.AgentWatchRow, error) {
+	carry, err := agentWatchCarry(carry)
+	if err != nil {
+		return model.AgentWatchRow{}, err
+	}
+	context, err = agentWatchContext(context)
+	if err != nil {
+		return model.AgentWatchRow{}, err
+	}
+	if carryLive < 0 || carryLive > int64(len(carry)) {
+		return model.AgentWatchRow{}, badParam(fmt.Errorf("agent watch 活后缀长度无效"))
+	}
 	var updated model.AgentWatchRow
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		watch, err := s.agentWatchByID(ctx, tx, watchID)
 		if err != nil {
 			return err
@@ -348,7 +365,7 @@ func (s *Store) AgentWatchConsume(ctx context.Context, watchID string, expectedR
 		}
 		info := tx.Model(&model.AgentWatchRow{}).
 			Where("id = ? AND owner_id = ? AND revision = ?", watch.ID, watch.OwnerID, expectedRevision).
-			Updates(map[string]any{"anchor_seq": anchorSeq, "carry_blob": nil, "context_blob": nil, "revision": expectedRevision + 1, "updated_at": now})
+			Updates(map[string]any{"anchor_seq": anchorSeq, "carry_blob": carry, "context_blob": context, "carry_live": carryLive, "revision": expectedRevision + 1, "updated_at": now})
 		if info.Error != nil {
 			return dbError(info.Error)
 		}
@@ -372,6 +389,9 @@ type AgentWatchFireParams struct {
 	DeliveryID       string
 	RunID            string
 	AnchorSeq        int64
+	Carry            []byte
+	Context          []byte
+	CarryLive        int64
 	MatchedFrom      int64
 	MatchedTo        int64
 	Excerpt          string
@@ -381,10 +401,14 @@ type AgentWatchFireParams struct {
 }
 
 // AgentWatchFire transitions an armed watch to matched and inserts the outbox
-// event in one transaction; the persisted overlap is cleared because the
-// fired match can no longer participate in a future one. The outbox primary
-// key and the unique (watch_id, fire_seq) pair make the same logical fire
-// idempotent and reject double fires with fresh IDs.
+// event in one transaction. The persisted overlap, left context and live
+// length follow the same rules as Advance — the fired match consumed the
+// evaluated region, so only an incomplete trailing rune and the true
+// pre-anchor context carry over — so a repeat watch re-armed by the
+// acknowledgement resumes with the real stream context instead of treating
+// the new anchor as a fresh text start. The outbox primary key and the
+// unique (watch_id, fire_seq) pair make the same logical fire idempotent and
+// reject double fires with fresh IDs.
 func (s *Store) AgentWatchFire(ctx context.Context, params AgentWatchFireParams) (model.AgentWatchOutboxRow, error) {
 	if params.DeliveryID == "" || params.RunID == "" {
 		return model.AgentWatchOutboxRow{}, badParam(fmt.Errorf("agent watch 触发缺少固定的 DeliveryID/RunID"))
@@ -392,8 +416,19 @@ func (s *Store) AgentWatchFire(ctx context.Context, params AgentWatchFireParams)
 	if !json.Valid([]byte(params.EventJSON)) {
 		return model.AgentWatchOutboxRow{}, badParam(fmt.Errorf("agent watch 事件不是有效 JSON"))
 	}
+	carry, err := agentWatchCarry(params.Carry)
+	if err != nil {
+		return model.AgentWatchOutboxRow{}, err
+	}
+	context, err := agentWatchContext(params.Context)
+	if err != nil {
+		return model.AgentWatchOutboxRow{}, err
+	}
+	if params.CarryLive < 0 || params.CarryLive > int64(len(carry)) {
+		return model.AgentWatchOutboxRow{}, badParam(fmt.Errorf("agent watch 活后缀长度无效"))
+	}
 	var out model.AgentWatchOutboxRow
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if existing, err := s.agentWatchEventByID(ctx, tx, params.DeliveryID); err == nil {
 			if existing.WatchID != params.WatchID {
 				return fmt.Errorf("delivery %s belongs to watch %s: %w", params.DeliveryID, existing.WatchID, ErrAgentWatchConflict)
@@ -425,8 +460,9 @@ func (s *Store) AgentWatchFire(ctx context.Context, params AgentWatchFireParams)
 			Updates(map[string]any{
 				"status":       AgentWatchStatusMatched,
 				"anchor_seq":   params.AnchorSeq,
-				"carry_blob":   nil,
-				"context_blob": nil,
+				"carry_blob":   carry,
+				"context_blob": context,
+				"carry_live":   params.CarryLive,
 				"fire_seq":     fireSeq,
 				"delivery_id":  params.DeliveryID,
 				"run_id":       params.RunID,

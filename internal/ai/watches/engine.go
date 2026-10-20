@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -21,8 +22,8 @@ type Store interface {
 	AgentWatchCreate(ctx context.Context, row model.AgentWatchRow, generation uint64) (model.AgentWatchRow, error)
 	AgentWatchGet(ctx context.Context, watchID string) (model.AgentWatchRow, error)
 	AgentWatchListByTarget(ctx context.Context, targetID string) ([]model.AgentWatchRow, error)
-	AgentWatchAdvance(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq int64, carry, context []byte, now int64) (model.AgentWatchRow, error)
-	AgentWatchConsume(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq, now int64) (model.AgentWatchRow, error)
+	AgentWatchAdvance(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq int64, carry, context []byte, carryLive, now int64) (model.AgentWatchRow, error)
+	AgentWatchConsume(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq int64, carry, context []byte, carryLive, now int64) (model.AgentWatchRow, error)
 	AgentWatchFire(ctx context.Context, params store.AgentWatchFireParams) (model.AgentWatchOutboxRow, error)
 	AgentWatchCancel(ctx context.Context, watchID string, expectedRevision uint64, now int64) (model.AgentWatchRow, error)
 	AgentWatchMarkUnverifiable(ctx context.Context, watchID string, expectedRevision uint64, cause string, now int64) (model.AgentWatchRow, error)
@@ -104,6 +105,10 @@ type Engine struct {
 
 	mu      sync.Mutex
 	targets map[targetKey]targetBinding
+
+	// prefixCache maps a condition pattern to its compiled prefix regex, or
+	// to nil when the prefix language is not finitely expressible.
+	prefixCache sync.Map
 }
 
 func New(store Store, options Options) (*Engine, error) {
@@ -373,7 +378,7 @@ func (e *Engine) processWatch(ctx context.Context, row model.AgentWatchRow, curr
 			if !row.Repeat {
 				return nil, nil
 			}
-			err = e.consumeWatch(ctx, row, identity, fromSeq, toSeq, now)
+			err = e.consumeWatch(ctx, row, identity, fromSeq, toSeq, data, now)
 			if err == nil {
 				return nil, nil
 			}
@@ -399,6 +404,62 @@ func (e *Engine) processWatch(ctx context.Context, row model.AgentWatchRow, curr
 		row = fresh
 	}
 	return nil, fmt.Errorf("watch %s keeps conflicting after %d attempts: %w", row.ID, maxWatchTransitionAttempts, store.ErrAgentWatchConflict)
+}
+
+// prefixRegex returns the compiled prefix regex for a condition pattern, or
+// false when the prefix language is not finitely expressible.
+func (e *Engine) prefixRegex(pattern string) (*regexp.Regexp, bool) {
+	if cached, ok := e.prefixCache.Load(pattern); ok {
+		if cached == nil {
+			return nil, false
+		}
+		return cached.(*regexp.Regexp), true
+	}
+	body, ok := regexPrefixPattern(pattern)
+	if !ok {
+		e.prefixCache.Store(pattern, nil)
+		return nil, false
+	}
+	compiled, err := regexp.Compile("^(?:" + body + ")$")
+	if err != nil {
+		e.prefixCache.Store(pattern, nil)
+		return nil, false
+	}
+	e.prefixCache.Store(pattern, compiled)
+	return compiled, true
+}
+
+// liveCarryPlan returns the live-suffix length to persist for the next
+// round, reporting overflow when the condition's partial participation
+// exceeds the configured carry capacity: an over-capacity condition is
+// settled as unverifiable instead of silently dropping possible matches.
+func (e *Engine) liveCarryPlan(condition Condition, valid []byte, contextLen int, row model.AgentWatchRow) (int, bool, error) {
+	avail := len(valid) - contextLen
+	switch condition.Type {
+	case ConditionContains:
+		live := exactLiveSuffix(valid[contextLen:], condition.Pattern)
+		if live > e.opts.MaxCarryBytes {
+			return 0, true, nil
+		}
+		return live, false, nil
+	case ConditionRegex:
+		static, finite := regexPrefixParticipation(condition.Pattern, int64(e.opts.MaxCarryBytes)+1)
+		if finite && static <= int64(e.opts.MaxCarryBytes) {
+			return condition.carryBound(e.opts.MaxCarryBytes, avail), false, nil
+		}
+		prefixRe, ok := e.prefixRegex(condition.Pattern)
+		if !ok {
+			return 0, true, nil
+		}
+		added := avail - len(row.CarryBlob)
+		live := scanLiveSuffix(valid[contextLen:], int(row.CarryLive), added, e.opts.MaxCarryBytes, prefixRe)
+		if live > e.opts.MaxCarryBytes {
+			return 0, true, nil
+		}
+		return live, false, nil
+	default:
+		return 0, false, fmt.Errorf("unknown condition type %q", condition.Type)
+	}
 }
 
 func (e *Engine) observeWatch(ctx context.Context, row model.AgentWatchRow, identity string, fromSeq, toSeq int64, data []byte, now time.Time) (*Event, error) {
@@ -433,7 +494,10 @@ func (e *Engine) observeWatch(ctx context.Context, row model.AgentWatchRow, iden
 	matched, relFrom, relTo, excerpt := condition.Evaluate(valid, contextLen, e.opts.MaxExcerptBytes)
 	if matched {
 		// relFrom is relative to the buffer start, which sits contextLen
-		// bytes before the anchor.
+		// bytes before the anchor. The fired match consumed the evaluated
+		// region; only an incomplete trailing rune and the true pre-anchor
+		// context carry over, so a repeat watch re-armed later resumes with
+		// the real stream context.
 		deliveryID := e.opts.NewID()
 		runID := e.opts.NewID()
 		event := Event{
@@ -449,10 +513,16 @@ func (e *Engine) observeWatch(ctx context.Context, row model.AgentWatchRow, iden
 		if err != nil {
 			return nil, fmt.Errorf("encode watch event: %w", err)
 		}
+		streamStart := row.AnchorSeq - int64(contextLen)
+		newAnchor := toSeq - int64(tail)
+		carry := append([]byte(nil), buffer[len(buffer)-tail:]...)
+		contextEnd := int(newAnchor - streamStart)
+		newContext := buffer[max(0, contextEnd-watchContextSize):contextEnd]
 		if _, err := e.store.AgentWatchFire(ctx, store.AgentWatchFireParams{
 			WatchID: row.ID, ExpectedRevision: row.Revision, Identity: identity,
 			DeliveryID: deliveryID, RunID: runID,
-			AnchorSeq: toSeq, MatchedFrom: event.MatchedFrom, MatchedTo: event.MatchedTo,
+			AnchorSeq: newAnchor, Carry: carry, Context: newContext, CarryLive: 0,
+			MatchedFrom: event.MatchedFrom, MatchedTo: event.MatchedTo,
 			Excerpt: excerpt, EventKind: EventKind, EventJSON: string(eventJSON),
 			Now: now.UnixMilli(),
 		}); err != nil {
@@ -460,9 +530,22 @@ func (e *Engine) observeWatch(ctx context.Context, row model.AgentWatchRow, iden
 		}
 		return &event, nil
 	}
-	carryLen := condition.carryBound(e.opts.MaxCarryBytes, len(valid)-contextLen)
-	carry := make([]byte, 0, carryLen+tail)
-	carry = append(carry, valid[len(valid)-carryLen:]...)
+	live, overflow, err := e.liveCarryPlan(condition, valid, contextLen, row)
+	if err != nil {
+		return nil, e.markUnverifiable(ctx, row, "carry analysis failed")
+	}
+	if overflow {
+		return nil, e.markUnverifiable(ctx, row, "condition participation exceeds carry capacity")
+	}
+	// Align the carry start to a rune boundary: matches never start inside a
+	// rune, so trimming continuation bytes loses nothing and keeps the next
+	// buffer from decoding a partial rune as RuneError data.
+	start := len(valid) - live
+	for start < len(valid) && valid[start] >= 0x80 && valid[start] <= 0xBF {
+		start++
+	}
+	carry := make([]byte, 0, len(valid)-start+tail)
+	carry = append(carry, valid[start:]...)
 	carry = append(carry, buffer[len(buffer)-tail:]...)
 	newAnchor := toSeq - int64(len(carry))
 	// The new left context is the true stream window immediately before the
@@ -470,13 +553,13 @@ func (e *Engine) observeWatch(ctx context.Context, row model.AgentWatchRow, iden
 	streamStart := row.AnchorSeq - int64(contextLen)
 	contextEnd := int(newAnchor - streamStart)
 	newContext := buffer[max(0, contextEnd-watchContextSize):contextEnd]
-	if _, err := e.store.AgentWatchAdvance(ctx, row.ID, row.Revision, identity, newAnchor, carry, newContext, now.UnixMilli()); err != nil {
+	if _, err := e.store.AgentWatchAdvance(ctx, row.ID, row.Revision, identity, newAnchor, carry, newContext, int64(len(valid)-start), now.UnixMilli()); err != nil {
 		return nil, err
 	}
 	return nil, nil
 }
 
-func (e *Engine) consumeWatch(ctx context.Context, row model.AgentWatchRow, identity string, fromSeq, toSeq int64, now time.Time) error {
+func (e *Engine) consumeWatch(ctx context.Context, row model.AgentWatchRow, identity string, fromSeq, toSeq int64, data []byte, now time.Time) error {
 	lastEvaluated := row.AnchorSeq + int64(len(row.CarryBlob))
 	if fromSeq > lastEvaluated {
 		return e.markUnverifiable(ctx, row, fmt.Sprintf("output gap: evaluated %d, chunk starts %d", lastEvaluated, fromSeq))
@@ -484,7 +567,21 @@ func (e *Engine) consumeWatch(ctx context.Context, row model.AgentWatchRow, iden
 	if toSeq <= lastEvaluated {
 		return nil
 	}
-	if _, err := e.store.AgentWatchConsume(ctx, row.ID, row.Revision, identity, toSeq, now.UnixMilli()); err != nil {
+	// The suspended watch skips matching but not stream bookkeeping: an
+	// incomplete trailing rune is preserved with the anchor retreating to
+	// the rune start, and the true pre-anchor context is kept, so the
+	// re-armed watch neither misses the completed rune nor fires on
+	// continuation bytes misread as RuneError.
+	newBytes := data[lastEvaluated-fromSeq:]
+	tail := incompleteUTF8Tail(newBytes)
+	newAnchor := toSeq - int64(tail)
+	carry := append([]byte(nil), newBytes[len(newBytes)-tail:]...)
+	combined := make([]byte, 0, len(row.ContextBlob)+len(newBytes))
+	combined = append(combined, row.ContextBlob...)
+	combined = append(combined, newBytes...)
+	contextEnd := len(combined) - tail
+	newContext := combined[max(0, contextEnd-watchContextSize):contextEnd]
+	if _, err := e.store.AgentWatchConsume(ctx, row.ID, row.Revision, identity, newAnchor, carry, newContext, 0, now.UnixMilli()); err != nil {
 		return err
 	}
 	return nil

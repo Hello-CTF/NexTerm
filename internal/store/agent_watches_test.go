@@ -179,7 +179,7 @@ func TestAgentWatchOwnerIsolation(t *testing.T) {
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("cross-owner list = %+v, %v; want empty", rows, err)
 	}
-	if _, err := backend.AgentWatchAdvance(ctxB, created.ID, created.Revision, "identity-1", 10, nil, nil, 2000); !errors.Is(err, store.ErrAgentWatchNotFound) {
+	if _, err := backend.AgentWatchAdvance(ctxB, created.ID, created.Revision, "identity-1", 10, nil, nil, 0, 2000); !errors.Is(err, store.ErrAgentWatchNotFound) {
 		t.Fatalf("cross-owner advance = %v; want ErrAgentWatchNotFound", err)
 	}
 	if _, err := backend.AgentWatchFire(ctxB, store.AgentWatchFireParams{
@@ -207,23 +207,23 @@ func TestAgentWatchAdvanceGuards(t *testing.T) {
 	backend := openAgentWatchStore(t)
 	ctx := watchOwnerCtx("owner-a")
 	created := createTestWatch(t, backend, ctx, "watch-adv", "target-1", "identity-1")
-	advanced, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, []byte("tail"), []byte("history"), 2000)
+	advanced, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, []byte("tail"), []byte("history"), 4, 2000)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if advanced.AnchorSeq != 10 || advanced.Revision != 2 || string(advanced.CarryBlob) != "tail" || string(advanced.ContextBlob) != "history" {
 		t.Fatalf("advanced = %+v", advanced)
 	}
-	if _, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 20, nil, nil, 2000); !errors.Is(err, store.ErrAgentWatchConflict) {
+	if _, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 20, nil, nil, 0, 2000); !errors.Is(err, store.ErrAgentWatchConflict) {
 		t.Fatalf("stale revision advance = %v; want conflict", err)
 	}
-	if _, err := backend.AgentWatchAdvance(ctx, advanced.ID, advanced.Revision, "identity-1", 5, nil, nil, 2000); !errors.Is(err, store.ErrAgentWatchConflict) {
+	if _, err := backend.AgentWatchAdvance(ctx, advanced.ID, advanced.Revision, "identity-1", 5, nil, nil, 0, 2000); !errors.Is(err, store.ErrAgentWatchConflict) {
 		t.Fatalf("anchor regression = %v; want conflict", err)
 	}
-	if _, err := backend.AgentWatchAdvance(ctx, advanced.ID, advanced.Revision, "identity-2", 20, nil, nil, 2000); !errors.Is(err, store.ErrAgentWatchIdentity) {
+	if _, err := backend.AgentWatchAdvance(ctx, advanced.ID, advanced.Revision, "identity-2", 20, nil, nil, 0, 2000); !errors.Is(err, store.ErrAgentWatchIdentity) {
 		t.Fatalf("identity mismatch = %v; want ErrAgentWatchIdentity", err)
 	}
-	if _, err := backend.AgentWatchAdvance(ctx, "missing", 1, "identity-1", 20, nil, nil, 2000); !errors.Is(err, store.ErrAgentWatchNotFound) {
+	if _, err := backend.AgentWatchAdvance(ctx, "missing", 1, "identity-1", 20, nil, nil, 0, 2000); !errors.Is(err, store.ErrAgentWatchNotFound) {
 		t.Fatalf("missing advance = %v; want not found", err)
 	}
 }
@@ -232,10 +232,10 @@ func TestAgentWatchAdvanceCarryBound(t *testing.T) {
 	backend := openAgentWatchStore(t)
 	ctx := watchOwnerCtx("owner-a")
 	created := createTestWatch(t, backend, ctx, "watch-carry-bound", "target-1", "identity-1")
-	if _, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, make([]byte, store.AgentWatchMaxCarryBytes+1), nil, 2000); err == nil {
+	if _, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, make([]byte, store.AgentWatchMaxCarryBytes+1), nil, 0, 2000); err == nil {
 		t.Fatal("advance with oversized carry succeeded")
 	}
-	advanced, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, make([]byte, store.AgentWatchMaxCarryBytes), nil, 2000)
+	advanced, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, make([]byte, store.AgentWatchMaxCarryBytes), nil, 0, 2000)
 	if err != nil || len(advanced.CarryBlob) != store.AgentWatchMaxCarryBytes {
 		t.Fatalf("advance with hard-bound carry = %+v, %v", advanced, err)
 	}
@@ -245,14 +245,14 @@ func TestAgentWatchConsumeGuards(t *testing.T) {
 	backend := openAgentWatchStore(t)
 	ctx := watchOwnerCtx("owner-a")
 	armed := createTestWatch(t, backend, ctx, "watch-consume-armed", "target-1", "identity-1")
-	if _, err := backend.AgentWatchConsume(ctx, armed.ID, armed.Revision, "identity-1", 10, 2000); !errors.Is(err, store.ErrAgentWatchState) {
+	if _, err := backend.AgentWatchConsume(ctx, armed.ID, armed.Revision, "identity-1", 10, nil, nil, 0, 2000); !errors.Is(err, store.ErrAgentWatchState) {
 		t.Fatalf("consume armed = %v; want state error", err)
 	}
 	oneShot := createTestWatch(t, backend, ctx, "watch-consume-oneshot", "target-1", "identity-1")
 	if _, err := backend.AgentWatchFire(ctx, fireParams(oneShot, "delivery-consume-1", 10)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := backend.AgentWatchConsume(ctx, oneShot.ID, 2, "identity-1", 20, 2000); !errors.Is(err, store.ErrAgentWatchState) {
+	if _, err := backend.AgentWatchConsume(ctx, oneShot.ID, 2, "identity-1", 20, nil, nil, 0, 2000); !errors.Is(err, store.ErrAgentWatchState) {
 		t.Fatalf("consume one-shot matched = %v; want state error", err)
 	}
 	target := attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
@@ -262,7 +262,7 @@ func TestAgentWatchConsumeGuards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := backend.AgentWatchAdvance(ctx, repeatRow.ID, repeatRow.Revision, "identity-1", 10, []byte("tail"), []byte("history"), 2000); err != nil {
+	if _, err := backend.AgentWatchAdvance(ctx, repeatRow.ID, repeatRow.Revision, "identity-1", 10, []byte("tail"), []byte("history"), 4, 2000); err != nil {
 		t.Fatal(err)
 	}
 	fire := fireParams(repeatRow, "delivery-consume-2", 10)
@@ -270,14 +270,15 @@ func TestAgentWatchConsumeGuards(t *testing.T) {
 	if _, err := backend.AgentWatchFire(ctx, fire); err != nil {
 		t.Fatal(err)
 	}
-	consumed, err := backend.AgentWatchConsume(ctx, repeatRow.ID, 3, "identity-1", 20, 2000)
-	if err != nil || consumed.AnchorSeq != 20 || len(consumed.CarryBlob) != 0 || len(consumed.ContextBlob) != 0 {
+	consumed, err := backend.AgentWatchConsume(ctx, repeatRow.ID, 3, "identity-1", 20, []byte("tail"), []byte("history"), 4, 2000)
+	if err != nil || consumed.AnchorSeq != 20 || string(consumed.CarryBlob) != "tail" ||
+		string(consumed.ContextBlob) != "history" || consumed.CarryLive != 4 {
 		t.Fatalf("consumed = %+v, %v", consumed, err)
 	}
-	if _, err := backend.AgentWatchConsume(ctx, repeatRow.ID, 3, "identity-1", 30, 2000); !errors.Is(err, store.ErrAgentWatchConflict) {
+	if _, err := backend.AgentWatchConsume(ctx, repeatRow.ID, 3, "identity-1", 30, nil, nil, 0, 2000); !errors.Is(err, store.ErrAgentWatchConflict) {
 		t.Fatalf("stale consume = %v; want conflict", err)
 	}
-	if _, err := backend.AgentWatchConsume(ctx, repeatRow.ID, 4, "identity-2", 30, 2000); !errors.Is(err, store.ErrAgentWatchIdentity) {
+	if _, err := backend.AgentWatchConsume(ctx, repeatRow.ID, 4, "identity-2", 30, nil, nil, 0, 2000); !errors.Is(err, store.ErrAgentWatchIdentity) {
 		t.Fatalf("identity consume = %v; want identity error", err)
 	}
 }
@@ -286,7 +287,7 @@ func TestAgentWatchFireWritesWatchAndOutboxTogether(t *testing.T) {
 	backend := openAgentWatchStore(t)
 	ctx := watchOwnerCtx("owner-a")
 	created := createTestWatch(t, backend, ctx, "watch-fire", "target-1", "identity-1")
-	if _, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 8, []byte("tail"), []byte("history"), 2000); err != nil {
+	if _, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 8, []byte("tail"), []byte("history"), 4, 2000); err != nil {
 		t.Fatal(err)
 	}
 	created.Revision = 2
@@ -341,7 +342,7 @@ func TestAgentWatchFireGuards(t *testing.T) {
 	if _, err := backend.AgentWatchFire(ctx, wrongIdentity); !errors.Is(err, store.ErrAgentWatchIdentity) {
 		t.Fatalf("identity fire = %v; want ErrAgentWatchIdentity", err)
 	}
-	if _, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, nil, nil, 2000); err != nil {
+	if _, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, nil, nil, 0, 2000); err != nil {
 		t.Fatal(err)
 	}
 	regression := fireParams(created, "delivery-r", 10)

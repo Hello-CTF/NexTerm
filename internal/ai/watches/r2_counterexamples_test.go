@@ -24,10 +24,10 @@ func newGateStore(backend Store) *gateStore {
 	return &gateStore{Store: backend, consumeEntered: make(chan struct{}), consumeRelease: make(chan struct{})}
 }
 
-func (s *gateStore) AgentWatchConsume(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq, now int64) (model.AgentWatchRow, error) {
+func (s *gateStore) AgentWatchConsume(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq int64, carry, context []byte, carryLive, now int64) (model.AgentWatchRow, error) {
 	s.once.Do(func() { close(s.consumeEntered) })
 	<-s.consumeRelease
-	return s.Store.AgentWatchConsume(ctx, watchID, expectedRevision, identity, anchorSeq, now)
+	return s.Store.AgentWatchConsume(ctx, watchID, expectedRevision, identity, anchorSeq, carry, context, carryLive, now)
 }
 
 func TestObserveSplitRuneCharClassAcrossChunks(t *testing.T) {
