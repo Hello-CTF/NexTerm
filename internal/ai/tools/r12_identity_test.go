@@ -59,7 +59,7 @@ func TestExecCommandsRequiresIdentityForEveryTarget(t *testing.T) {
 	}{
 		"missing":    {sessionIDs: []string{"s1", "s2"}, identities: []AssetIdentity{identityA}, bound: []AssetIdentity{identityA, identityB}, want: "数量不一致"},
 		"extra":      {sessionIDs: []string{"s1"}, identities: []AssetIdentity{identityA, identityB}, bound: []AssetIdentity{identityA}, want: "数量不一致"},
-		"duplicate":  {sessionIDs: []string{"s1", "s2"}, identities: []AssetIdentity{identityA, identityA}, bound: []AssetIdentity{identityA, identityB}, want: "被替换"},
+		"duplicate":  {sessionIDs: []string{"s1", "s2"}, identities: []AssetIdentity{identityA, identityA}, bound: []AssetIdentity{identityA, identityB}, want: "重复"},
 		"empty":      {sessionIDs: []string{"s1"}, identities: []AssetIdentity{{}}, bound: []AssetIdentity{{}}, want: "身份为空"},
 		"order":      {sessionIDs: []string{"s1", "s2"}, identities: []AssetIdentity{identityB, identityA}, bound: []AssetIdentity{identityA, identityB}, want: "被替换"},
 		"multisetOK": {sessionIDs: []string{"s1", "s2"}, identities: []AssetIdentity{identityA, identityB}, bound: []AssetIdentity{identityB, identityA}, want: "被替换"},
@@ -120,22 +120,25 @@ func TestTerminalCreateRejectsConnectedSessionForDifferentAsset(t *testing.T) {
 	}
 }
 
-// The connected identity is bound into the operation: a same-identity retry
-// replays, and the connected session's own identity is what gets validated.
+// The connected identity is bound into the operation before the outcome key
+// is computed: the explicit no-live→connect→create flow records under the
+// connected identity, a same-identity retry replays without reconnecting,
+// and the connector runs exactly once.
 func TestTerminalCreateConnectedIdentityBoundIntoOperation(t *testing.T) {
 	_, ledger, _ := outcomeFixture(t)
-	sequence := &identitySequenceResolver{values: []AssetIdentity{identityB, identityB, identityB, identityB}}
+	connected := false
 	fake := &identityFakeTerminal{tabFakeTerminal: newTabFake(fakeTab("t1", "s1", "$ ", 0))}
 	fake.setIdentity(identityB)
 	registry := p1Registry(fake)
 	registry.deps.Outcome = ledger
-	registry.deps.ResolveAssetSession = func(context.Context, string) (string, error) {
-		return "", ErrNoLiveSession
+	registry.deps.ResolveAssetSessionIdentity = func(context.Context, string) (string, AssetIdentity, error) {
+		if !connected {
+			return "", AssetIdentity{}, ErrNoLiveSession
+		}
+		return "s9", identityB, nil
 	}
-	registry.deps.ResolveAssetSessionIdentity = func(_ context.Context, _ string) (string, AssetIdentity, error) {
-		return "s9", sequence.next(), nil
-	}
-	registry.deps.AssetConnector = &residualConnector{sessionID: "s9"}
+	connector := &r13Connector{sessionIDs: []string{"s9"}, onConnect: func(string) { connected = true }}
+	registry.deps.AssetConnector = connector
 	scope := Scope{SessionID: "s1", TabID: "t1"}
 	call := p1Call("c", "terminal_create", `{"asset_id":"a1","connect":true}`)
 	call.AuthorizationID = "guard:test"
@@ -144,9 +147,15 @@ func TestTerminalCreateConnectedIdentityBoundIntoOperation(t *testing.T) {
 	if !first.OK {
 		t.Fatalf("connected create = %+v", first)
 	}
+	if connector.callCount() != 1 {
+		t.Fatalf("connector calls = %d, want 1", connector.callCount())
+	}
 	second := registry.Execute(context.Background(), "job", scope, call, nil)
 	if !strings.Contains(second.Text, "调用已执行过") {
 		t.Fatalf("connected create retry did not replay: %+v", second)
+	}
+	if connector.callCount() != 1 {
+		t.Fatalf("retry reconnected: %d calls", connector.callCount())
 	}
 	if len(fake.created) != 1 {
 		t.Fatalf("connected create retry re-created: %d tabs", len(fake.created))

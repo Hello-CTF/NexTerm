@@ -77,12 +77,17 @@ func TestTerminalCreateFailureKeepsResidualAndOperationID(t *testing.T) {
 	fake := &identityFakeTerminal{tabFakeTerminal: newTabFake(fakeTab("t1", "s1", "$ ", 0))}
 	fake.setIdentity(identityA)
 	fake.createErr = errors.New("shell 启动失败")
+	liveSession := ""
 	registry := p1Registry(fake)
 	registry.deps.Outcome = ledger
 	registry.deps.ResolveAssetSession = func(context.Context, string) (string, error) {
-		return "", ErrNoLiveSession
+		if liveSession == "" {
+			return "", ErrNoLiveSession
+		}
+		return liveSession, nil
 	}
-	registry.deps.AssetConnector = &residualConnector{sessionID: "s9"}
+	connector := &r13Connector{sessionIDs: []string{"s9"}, onConnect: func(sessionID string) { liveSession = sessionID }}
+	registry.deps.AssetConnector = connector
 	scope := Scope{SessionID: "s1", TabID: "t1"}
 	call := p1Call("c", "terminal_create", `{"asset_id":"a1","connect":true}`)
 	call.AuthorizationID = "guard:test"
@@ -93,6 +98,9 @@ func TestTerminalCreateFailureKeepsResidualAndOperationID(t *testing.T) {
 	}
 	if result.OperationID == "" {
 		t.Fatalf("failed connected create lost the operation ID: %+v", result)
+	}
+	if connector.callCount() != 1 {
+		t.Fatalf("connector calls = %d, want 1", connector.callCount())
 	}
 }
 

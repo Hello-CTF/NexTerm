@@ -86,6 +86,10 @@ type Call struct {
 	// resolution is unavailable — the result then marks the operation as
 	// identity-unverifiable instead of claiming a binding that does not exist.
 	AssetIdentities []AssetIdentity `json:"-"`
+	// ConnectedSessionID names the session this call's explicit connect=true
+	// opt-in established before the outcome key was computed, so a later
+	// create failure still names the residual session.
+	ConnectedSessionID string `json:"-"`
 }
 
 type Output struct {

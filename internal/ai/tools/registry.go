@@ -189,13 +189,9 @@ func (r *Registry) Execute(ctx context.Context, jobID string, scope Scope, call 
 		return Fail(ctx.Err())
 	}
 	if r.deps.Outcome != nil && call.AuthorizationID != "" && sideEffectKind(call.Name) != "" {
-		identities, err := r.resolveCallAssetIdentities(ctx, call)
-		if err != nil {
-			// A configured identity resolver that fails must fail visibly:
-			// never write or replay an identity-less record.
-			return Fail(fmt.Errorf("身份解析失败: %w", err))
+		if failure := r.bindCallAssetIdentities(ctx, jobID, &call); failure != nil {
+			return *failure
 		}
-		call.AssetIdentities = identities
 		result = r.executeRecorded(ctx, jobID, scope, call, preparation)
 	} else {
 		result = r.execute(ctx, jobID, scope, call, preparation)
@@ -243,38 +239,108 @@ func OutcomeKeyWithIdentity(jobID, callID string, identities []AssetIdentity) st
 	return OutcomeKey(jobID, callID) + "|" + strings.Join(fingerprints, ",")
 }
 
-// resolveCallAssetIdentities pre-resolves the immutable asset identities for
-// asset-targeted mutations so the outcome key binds to them and the tool
-// re-validates the same identities at execution time instead of resolving
-// again. It returns an error when a configured resolver fails — the call
-// then fails visibly instead of writing or replaying an identity-less
-// record.
-func (r *Registry) resolveCallAssetIdentities(ctx context.Context, call Call) ([]AssetIdentity, error) {
+// bindCallAssetIdentities resolves and validates the immutable asset
+// identities for asset-targeted mutations before any ledger reserve/replay,
+// storing them on the call. A configured resolver that fails or returns an
+// invalid empty identity set fails the call visibly — an identity-less
+// record is never written or replayed; only the path without a configured
+// resolver stays visibly identity-unverifiable. For terminal_create with
+// connect=true, an ErrNoLiveSession verdict runs the explicit connect flow
+// here so the connected, verified identity is what the outcome key binds to.
+func (r *Registry) bindCallAssetIdentities(ctx context.Context, jobID string, call *Call) *Output {
 	switch call.Name {
 	case "terminal_create":
 		var args struct {
 			AssetID string `json:"asset_id"`
+			Connect bool   `json:"connect"`
 		}
-		if json.Unmarshal(call.Args, &args) != nil || args.AssetID == "" || r.deps.ResolveAssetSessionIdentity == nil {
-			return nil, nil
+		if json.Unmarshal(call.Args, &args) != nil || args.AssetID == "" {
+			return nil
 		}
-		_, identity, err := r.deps.ResolveAssetSessionIdentity(ctx, args.AssetID)
-		if err != nil {
-			return nil, err
-		}
-		return []AssetIdentity{identity}, nil
+		return r.bindTerminalCreateIdentity(ctx, jobID, call, args.AssetID, args.Connect)
 	case "exec_commands":
 		var args ExecCommandsArgs
-		if json.Unmarshal(call.Args, &args) != nil || len(args.AssetIDs) == 0 && len(args.Tags) == 0 || r.deps.ResolveExecTargetIdentities == nil {
-			return nil, nil
+		if json.Unmarshal(call.Args, &args) != nil {
+			return nil
 		}
-		_, identities, err := r.deps.ResolveExecTargetIdentities(ctx, args.AssetIDs, args.Tags)
+		assetIDs, tags, err := normalizeExecTargetFilters(args.AssetIDs, args.Tags)
 		if err != nil {
-			return nil, err
+			failure := Fail(err)
+			return &failure
 		}
-		return identities, nil
+		if len(assetIDs) == 0 && len(tags) == 0 || r.deps.ResolveExecTargetIdentities == nil {
+			return nil
+		}
+		targets, identities, err := r.deps.ResolveExecTargetIdentities(ctx, assetIDs, tags)
+		if err != nil {
+			failure := Fail(fmt.Errorf("身份解析失败: %w", err))
+			return &failure
+		}
+		if err := validateTargetIdentitySet(targets.SessionIDs, identities); err != nil {
+			failure := Fail(fmt.Errorf("身份解析失败: %w", err))
+			return &failure
+		}
+		call.AssetIdentities = identities
+		return nil
 	}
-	return nil, nil
+	return nil
+}
+
+// bindTerminalCreateIdentity determines the asset identity a terminal_create
+// call binds to before the outcome key is computed. With an identity
+// resolver configured, a valid resolution binds directly and an
+// ErrNoLiveSession verdict with connect=true is explicit connect control
+// flow: the session is established and its verified identity bound here. The
+// legacy plain-resolver path binds the live session's reported identity when
+// the terminal can provide one — so a connect-established binding and a
+// later live retry share one key — and stays visibly unverifiable
+// otherwise.
+func (r *Registry) bindTerminalCreateIdentity(ctx context.Context, jobID string, call *Call, assetID string, connect bool) *Output {
+	if r.deps.ResolveAssetSessionIdentity != nil {
+		_, identity, err := r.deps.ResolveAssetSessionIdentity(ctx, assetID)
+		if err == nil {
+			if identity.AssetID == "" || identity.ConfigFingerprint == "" {
+				failure := Fail(fmt.Errorf("身份解析失败: 资产 %s 的身份为空: %w", assetID, ErrAssetIdentityChanged))
+				return &failure
+			}
+			call.AssetIdentities = []AssetIdentity{identity}
+			return nil
+		}
+		if !errors.Is(err, ErrNoLiveSession) || !connect {
+			failure := Fail(fmt.Errorf("身份解析失败: %w", err))
+			return &failure
+		}
+		sessionID, identity, failure := r.connectAssetSession(ctx, jobID, *call, assetID, err, AssetIdentity{}, false)
+		if failure != nil {
+			return failure
+		}
+		call.ConnectedSessionID = sessionID
+		call.AssetIdentities = []AssetIdentity{identity}
+		return nil
+	}
+	if r.deps.ResolveAssetSession == nil {
+		return nil
+	}
+	sessionID, err := r.deps.ResolveAssetSession(ctx, assetID)
+	if err == nil {
+		if checker, ok := r.deps.Terminal.(SessionAssetIdentityResolver); ok {
+			if identity, cerr := checker.SessionAssetIdentity(ctx, sessionID); cerr == nil && identity.AssetID != "" && identity.ConfigFingerprint != "" {
+				call.AssetIdentities = []AssetIdentity{identity}
+			}
+		}
+		return nil
+	}
+	if !errors.Is(err, ErrNoLiveSession) || !connect {
+		failure := Fail(err)
+		return &failure
+	}
+	connectedID, identity, failure := r.connectAssetSession(ctx, jobID, *call, assetID, err, AssetIdentity{}, false)
+	if failure != nil {
+		return failure
+	}
+	call.ConnectedSessionID = connectedID
+	call.AssetIdentities = []AssetIdentity{identity}
+	return nil
 }
 
 func GuardAuthorizationID(decision guard.Decision) string {
