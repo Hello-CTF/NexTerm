@@ -223,16 +223,31 @@ func (s *managedStream) run() {
 					return
 				}
 				// The replay buffer is full: stall the read until a resume
-				// drains it instead of dropping the exec's output.
-				select {
-				case <-s.replay.roomAvail:
-				case <-s.ctx.Done():
-					_ = s.close(s.ctx.Err())
-					return
-				}
-				if sendErr := s.dispatch(frame); sendErr != nil {
-					_ = s.close(sendErr)
-					return
+				// drains it instead of dropping the exec's output. The full
+				// state and the wake channel are snapshotted under the same
+				// lock, so a drain that lands between the snapshot and the
+				// wait closes the captured channel and the loop rechecks.
+				for {
+					s.mu.Lock()
+					full := s.replay.full()
+					wait := s.replay.roomAvail
+					s.mu.Unlock()
+					if !full {
+						if sendErr := s.dispatch(frame); sendErr == nil {
+							break
+						} else if !errors.Is(sendErr, errReplayFull) {
+							_ = s.close(sendErr)
+							return
+						}
+						// Lost the race for the drained room: wait again.
+						continue
+					}
+					select {
+					case <-wait:
+					case <-s.ctx.Done():
+						_ = s.close(s.ctx.Err())
+						return
+					}
 				}
 			}
 		}

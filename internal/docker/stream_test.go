@@ -332,6 +332,44 @@ func TestExecResumeBackpressureCanBeClosed(t *testing.T) {
 	}
 }
 
+func TestExecReplayRepeatedStallResumeKeepsOrder(t *testing.T) {
+	exec := newPipeExecSession(true)
+	backend := &stubBackend{openExec: func(context.Context, ExecOptions) (ExecSession, error) { return exec, nil }}
+	service := NewService(&stubProvider{sdk: backend}, WithConfig(Config{ExecReplayBytes: 8}))
+	id, err := service.AttachExec(t.Context(), ExecAttachRequest{SessionID: "s1", Container: "c1", Sink: newCollectSink()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.CloseStream(id)
+	if err := service.DetachStream(id); err != nil {
+		t.Fatal(err)
+	}
+	const rounds = 4
+	var want bytes.Buffer
+	for round := 0; round < rounds; round++ {
+		chunk := bytes.Repeat([]byte{byte('a' + round)}, 8)
+		want.Write(chunk)
+		exec.emit(t, string(chunk))
+		waitExecReplay(t, service, id, 8)
+		resumed := newCollectSink()
+		if err := service.ResumeExec(id, resumed); err != nil {
+			t.Fatal(err)
+		}
+		resumed.waitFrame(t)
+		if got := resumed.String(); got != string(chunk) {
+			t.Fatalf("round %d replay = %q, want %q", round, got, string(chunk))
+		}
+		if round+1 < rounds {
+			if err := service.DetachStream(id); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if got, want := want.String(), "aaaaaaaabbbbbbbbccccccccdddddddd"; got != want {
+		t.Fatalf("unexpected build: %q", got)
+	}
+}
+
 func TestAttachLogsDistinguishesOmittedAndZeroTail(t *testing.T) {
 	tails := make(chan int, 2)
 	backend := &stubBackend{openLogs: func(_ context.Context, options LogsOptions) (LogStream, error) {
