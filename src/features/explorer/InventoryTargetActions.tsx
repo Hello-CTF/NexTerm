@@ -44,12 +44,26 @@ export function targetExecutable(kind: string, target: Record<string, unknown>):
   return kind === "docker-context" || (kind === "kubernetes" && target.type === "pod");
 }
 
+function targetIdentity(kind: string, target: Record<string, unknown>): string {
+  return [
+    kind,
+    String(target.type ?? ""),
+    stringField(target, "name"),
+    stringField(target, "context"),
+    stringField(target, "namespace"),
+    stringField(target, "pod"),
+  ].join("/");
+}
+
 export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], requireSession = false }: InventoryTargetActionsProps) {
   const executable = targetExecutable(kind, target);
   const isPod = kind === "kubernetes" && target.type === "pod";
   const containers = isPod && Array.isArray(target.containers)
     ? target.containers.filter((item): item is string => typeof item === "string")
     : [];
+  const identity = targetIdentity(kind, target);
+  const targetRef = useRef(target);
+  targetRef.current = target;
   const [command, setCommand] = useState("");
   const [container, setContainer] = useState(isPod ? stringField(target, "container") : "");
   const [sessionId, setSessionId] = useState("");
@@ -57,15 +71,21 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
   const [result, setResult] = useState<InventoryTargetExecResponse | null>(null);
   const [failure, setFailure] = useState<{ message: string; exitCode?: number; output?: string } | null>(null);
   const [production, setProduction] = useState<{ challenge: DockerConfirmationChallenge; command: string } | null>(null);
+  const [ignoredNotice, setIgnoredNotice] = useState<"running" | "done" | null>(null);
   const generationRef = useRef(0);
+  const ignoredGenRef = useRef<number | null>(null);
 
   useEffect(() => {
     generationRef.current++;
+    ignoredGenRef.current = null;
     setBusy(false);
     setResult(null);
     setFailure(null);
     setProduction(null);
-  }, [ownerKey]);
+    setIgnoredNotice(null);
+    setContainer(targetRef.current.type === "pod" ? stringField(targetRef.current, "container") : "");
+    setSessionId("");
+  }, [ownerKey, identity]);
 
   const run = async (confirmation?: DockerProductionConfirmation) => {
     if (busy) return;
@@ -84,6 +104,8 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
       return;
     }
     const generation = generationRef.current;
+    ignoredGenRef.current = null;
+    setIgnoredNotice(null);
     setBusy(true);
     setResult(null);
     setFailure(null);
@@ -97,10 +119,16 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
         sessionId: sessionId === "" ? undefined : sessionId,
         confirmation,
       });
-      if (generation !== generationRef.current) return;
+      if (generation !== generationRef.current) {
+        if (generation === ignoredGenRef.current) setIgnoredNotice("done");
+        return;
+      }
       setResult(response);
     } catch (cause) {
-      if (generation !== generationRef.current) return;
+      if (generation !== generationRef.current) {
+        if (generation === ignoredGenRef.current) setIgnoredNotice("done");
+        return;
+      }
       const challenge = getDockerConfirmationChallenge(cause);
       if (challenge) {
         setProduction({ challenge, command: command.trim() });
@@ -121,9 +149,21 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
     }
   };
 
-  const cancel = () => {
+  // The typed IPC has no abort handle, so an in-flight command cannot be
+  // cancelled here; ignoring only discards its result while the command
+  // keeps running on the target.
+  const ignoreResults = () => {
+    ignoredGenRef.current = generationRef.current;
     generationRef.current++;
+    setIgnoredNotice("running");
     setBusy(false);
+    setResult(null);
+    setFailure(null);
+  };
+
+  const clearSettled = () => {
+    ignoredGenRef.current = null;
+    setIgnoredNotice(null);
     setResult(null);
     setFailure(null);
     setProduction(null);
@@ -196,13 +236,25 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
             <button type="button" className="nx-btn nx-btn-primary nx-btn-xs" disabled={busy} onClick={() => void run()}>
               执行
             </button>
-            {(busy || result || failure) && (
-              <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={cancel}>
-                取消
+            {busy && (
+              <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={ignoreResults}>
+                忽略结果
+              </button>
+            )}
+            {(result || failure || ignoredNotice) && (
+              <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={clearSettled}>
+                清除
               </button>
             )}
           </div>
           {busy && <div className="text-[11px] text-neutral-400">执行中…</div>}
+          {ignoredNotice && (
+            <div role="note" className="text-[11px] text-amber-300">
+              {ignoredNotice === "running"
+                ? "命令仍在目标上执行；结果已忽略，不代表命令已停止"
+                : "命令已结束；结果已忽略"}
+            </div>
+          )}
           {result && (
             <div role="status" className="text-[11px] text-neutral-300">
               <div>退出码 {result.exitCode}</div>

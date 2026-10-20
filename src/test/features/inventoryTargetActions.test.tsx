@@ -202,7 +202,7 @@ describe("inventory target actions", () => {
     expect(alert?.textContent).toContain("boom");
   });
 
-  it("clears the result on cancel", async () => {
+  it("clears the result with the settled clear action", async () => {
     mocks.call.mockResolvedValue({ output: "ok\n", exitCode: 0 });
     const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
     setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
@@ -211,10 +211,72 @@ describe("inventory target actions", () => {
     await flush();
     await waitFor(() => expect(m.container.textContent).toContain("ok"));
 
-    clickButton(m.container, "取消");
+    clickButton(m.container, "清除");
     await flush();
     expect(m.container.querySelector('[role="status"]')).toBeNull();
     expect(m.container.textContent).not.toContain("ok");
+  });
+
+  it("ignores an in-flight result and keeps the command visible as still running", async () => {
+    let resolveExec: (value: { output: string; exitCode: number }) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveExec = resolve; }));
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+    expect(m.container.textContent).toContain("执行中");
+
+    clickButton(m.container, "忽略结果");
+    await flush();
+    const note = m.container.querySelector('[role="note"]');
+    expect(note?.textContent).toContain("命令仍在目标上执行");
+    expect(note?.textContent).toContain("不代表命令已停止");
+    expect(m.container.textContent).not.toContain("执行中");
+
+    await act(async () => { resolveExec({ output: "ignored secret\n", exitCode: 0 }); });
+    await flush();
+    expect(m.container.textContent).not.toContain("ignored secret");
+    expect(m.container.querySelector('[role="status"]')).toBeNull();
+    expect(m.container.querySelector('[role="note"]')?.textContent).toContain("命令已结束");
+
+    clickButton(m.container, "清除");
+    await flush();
+    expect(m.container.querySelector('[role="note"]')).toBeNull();
+  });
+
+  it("invalidates the in-flight request and resets target state on a same-owner target switch", async () => {
+    let resolveExec: (value: { output: string; exitCode: number }) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveExec = resolve; }));
+    const m = (mounted = render({
+      kind: "docker-context",
+      target: dockerTarget,
+      requireSession: true,
+      sessions: [{ id: "sess-1", name: "prod-host" }],
+    }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    setSelectValue(m.container.querySelector('select[aria-label="受管会话"]')!, "sess-1");
+    clickButton(m.container, "执行");
+    await flush();
+    expect(m.container.textContent).toContain("执行中");
+
+    const otherTarget = { type: "context", name: "other", dockerEndpoint: "ssh://ops@other.example" };
+    act(() => m.root.render(createElement(InventoryTargetActions, {
+      kind: "docker-context",
+      target: otherTarget,
+      ownerKey: "owner-a",
+      requireSession: true,
+      sessions: [{ id: "sess-1", name: "prod-host" }],
+    })));
+    await act(async () => { resolveExec({ output: "stale prod output\n", exitCode: 0 }); });
+    await flush();
+
+    expect(m.container.textContent).toContain("context/other");
+    expect(m.container.textContent).not.toContain("stale prod output");
+    expect(m.container.querySelector('[role="status"]')).toBeNull();
+    expect(m.container.querySelector<HTMLInputElement>('input[aria-label="容器"]')?.value).toBe("");
+    expect(m.container.querySelector<HTMLSelectElement>('select[aria-label="受管会话"]')?.value).toBe("");
   });
 
   it("discards a stale response after the owner switches", async () => {
