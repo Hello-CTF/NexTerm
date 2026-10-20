@@ -24,6 +24,35 @@ func kubernetesPodCandidate(contextName, namespace, pod, container string) Candi
 	}
 }
 
+func TestParseDockerEndpoint(t *testing.T) {
+	endpoint, err := ParseDockerEndpoint("ssh://ops@prod.example:2222")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint.Scheme != "ssh" || endpoint.Host != "prod.example" || endpoint.Port != "2222" || endpoint.Username != "ops" {
+		t.Fatalf("endpoint = %+v", endpoint)
+	}
+	endpoint, err = ParseDockerEndpoint("tcp://10.0.0.5:2375")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint.Scheme != "tcp" || endpoint.Host != "10.0.0.5" || endpoint.Port != "2375" || endpoint.Username != "" {
+		t.Fatalf("endpoint = %+v", endpoint)
+	}
+	endpoint, err = ParseDockerEndpoint("unix:///var/run/docker.sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint.Scheme != "unix" || endpoint.Host != "" {
+		t.Fatalf("endpoint = %+v", endpoint)
+	}
+	for _, invalid := range []string{"", "prod.example", "ftp://host", "ssh://"} {
+		if _, err := ParseDockerEndpoint(invalid); err == nil {
+			t.Fatalf("invalid endpoint %q was accepted", invalid)
+		}
+	}
+}
+
 func TestResolveTargetKinds(t *testing.T) {
 	dockerTarget, err := ResolveTarget(dockerContextCandidate("prod"))
 	if err != nil {

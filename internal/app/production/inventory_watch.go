@@ -8,8 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/docker"
 	fleetinventory "github.com/Hello-CTF/NexTerm/internal/fleet/inventory"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/sshconfig"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
@@ -30,6 +32,17 @@ func inventoryOwnerID(ctx context.Context) string {
 	return inventoryDefaultOwnerID
 }
 
+// inventorySessionResolver resolves owner-scoped managed sessions.
+type inventorySessionResolver interface {
+	SessionFor(ctx context.Context, sessionID string) (*session.Session, error)
+}
+
+// inventoryDockerExecutor runs container exec through an authorized
+// session's Docker backend.
+type inventoryDockerExecutor interface {
+	Exec(ctx context.Context, request docker.ExecRequest) (docker.ExecResult, error)
+}
+
 type inventoryServiceOption func(*inventoryService)
 
 func withInventoryWatchInterval(interval time.Duration) inventoryServiceOption {
@@ -37,6 +50,13 @@ func withInventoryWatchInterval(interval time.Duration) inventoryServiceOption {
 		if interval > 0 {
 			service.watchInterval = interval
 		}
+	}
+}
+
+func withInventoryDockerAccess(sessions inventorySessionResolver, docker inventoryDockerExecutor) inventoryServiceOption {
+	return func(service *inventoryService) {
+		service.sessions = sessions
+		service.docker = docker
 	}
 }
 
@@ -48,6 +68,8 @@ type inventoryService struct {
 	watchInterval  time.Duration
 	sshLimits      sshconfig.Limits
 	kubeconfigGate fleetinventory.KubeconfigAuthorizer
+	sessions       inventorySessionResolver
+	docker         inventoryDockerExecutor
 
 	configureMu   sync.Mutex
 	mu            sync.Mutex

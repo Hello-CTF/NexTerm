@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/docker"
 	fleetinventory "github.com/Hello-CTF/NexTerm/internal/fleet/inventory"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
@@ -60,10 +62,40 @@ func newInventoryExecDispatcher(t *testing.T, service *inventoryService) *ipc.Di
 	return dispatcher
 }
 
+type fakeInventoryDockerExecutor struct {
+	calls  []docker.ExecRequest
+	result docker.ExecResult
+	err    error
+}
+
+func (f *fakeInventoryDockerExecutor) Exec(_ context.Context, request docker.ExecRequest) (docker.ExecResult, error) {
+	f.calls = append(f.calls, request)
+	return f.result, f.err
+}
+
+func newInventorySessionManager(t *testing.T) *session.Manager {
+	t.Helper()
+	manager := session.NewManager(session.Config{Connector: fakeSSHConnector{}})
+	t.Cleanup(func() { _ = manager.Close() })
+	return manager
+}
+
+func connectInventoryTestSession(t *testing.T, manager *session.Manager, ownerID, assetID string) *session.Session {
+	t.Helper()
+	ctx := ipc.WithUserID(context.Background(), ownerID)
+	connected, err := manager.ConnectFor(ctx, session.Asset{ID: assetID, Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return connected
+}
+
 func inventoryDockerExecRequest() inventoryTargetExecRequest {
 	return inventoryTargetExecRequest{
-		Kind:      "docker-context",
-		Target:    map[string]any{"type": "context", "name": "prod"},
+		Kind: "docker-context",
+		Target: map[string]any{
+			"type": "context", "name": "prod", "dockerEndpoint": "ssh://ops@prod.example",
+		},
 		Action:    "exec",
 		Container: "web",
 		Command:   []string{"uname", "-a"},
@@ -155,35 +187,99 @@ func TestInventoryTargetExecDockerDesktopRunsAllowlistedExec(t *testing.T) {
 	}
 }
 
-func TestInventoryTargetExecDockerServerRequiresOwnedImport(t *testing.T) {
+func TestInventoryTargetExecDockerServerRequiresManagedSession(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	service, _ := newInventoryTestService(t, false)
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	manager := newInventorySessionManager(t)
+	executor := &fakeInventoryDockerExecutor{result: docker.ExecResult{Output: "Linux\n"}}
+	service := newInventoryService(database, nil, false, t.TempDir(),
+		withInventoryWatchInterval(20*time.Millisecond), withInventoryDockerAccess(manager, executor))
+	t.Cleanup(func() { _ = service.Shutdown(context.Background()) })
 	runner := &recordingInventoryRunner{outputs: map[string][]byte{}}
 	service.runner = runner
 	dispatcher := newInventoryExecDispatcher(t, service)
 	ctxA := ipc.WithUserID(context.Background(), "owner-a")
 	ctxB := ipc.WithUserID(context.Background(), "owner-b")
 
-	response := dispatchInventoryTest(t, dispatcher, ctxA, "inventory_target_exec", inventoryDockerExecRequest(), nil)
-	requireInventoryIPCError(t, response, ipc.CodeForbidden)
-	if len(runner.calls) != 0 {
-		t.Fatalf("unauthorized exec ran commands: %+v", runner.calls)
+	assetA, err := database.AssetCreate(ctxA, store.AssetInput{Kind: "ssh", Name: "prod-a", Host: stringPointerForInventory("prod.example"), Username: optionalString("ops")})
+	if err != nil {
+		t.Fatal(err)
 	}
+	assetB, err := database.AssetCreate(ctxB, store.AssetInput{Kind: "ssh", Name: "prod-b", Host: stringPointerForInventory("prod.example"), Username: optionalString("ops")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherAsset, err := database.AssetCreate(ctxA, store.AssetInput{Kind: "ssh", Name: "other", Host: stringPointerForInventory("other.example"), Username: optionalString("ops")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionA := connectInventoryTestSession(t, manager, "owner-a", assetA.ID)
+	sessionB := connectInventoryTestSession(t, manager, "owner-b", assetB.ID)
+	sessionOther := connectInventoryTestSession(t, manager, "owner-a", otherAsset.ID)
 
+	// Import stays available for target resolution but grants no exec rights.
 	importDockerContext(t, dispatcher, ctxA, runner)
-	runner.outputs["docker --context prod exec web uname -a"] = []byte("Linux\n")
-	var result inventoryTargetExecResponse
-	dispatchInventoryTest(t, dispatcher, ctxA, "inventory_target_exec", inventoryDockerExecRequest(), &result)
-	if result.Output != "Linux\n" {
-		t.Fatalf("owner exec output = %q", result.Output)
+	response := dispatchInventoryTest(t, dispatcher, ctxA, "inventory_target_exec", inventoryDockerExecRequest(), nil)
+	requireInventoryIPCError(t, response, ipc.CodeBadParam)
+	if len(executor.calls) != 0 {
+		t.Fatalf("exec without a managed session reached the docker backend: %+v", executor.calls)
 	}
 
-	before := len(runner.calls)
-	response = dispatchInventoryTest(t, dispatcher, ctxB, "inventory_target_exec", inventoryDockerExecRequest(), nil)
+	crossOwner := inventoryDockerExecRequest()
+	crossOwner.SessionID = sessionB.ID
+	response = dispatchInventoryTest(t, dispatcher, ctxA, "inventory_target_exec", crossOwner, nil)
 	requireInventoryIPCError(t, response, ipc.CodeForbidden)
-	if len(runner.calls) != before {
-		t.Fatalf("cross-owner exec ran commands: %+v", runner.calls[before:])
+	if len(executor.calls) != 0 {
+		t.Fatalf("cross-owner exec reached the docker backend: %+v", executor.calls)
+	}
+
+	mismapped := inventoryDockerExecRequest()
+	mismapped.SessionID = sessionOther.ID
+	response = dispatchInventoryTest(t, dispatcher, ctxA, "inventory_target_exec", mismapped, nil)
+	requireInventoryIPCError(t, response, ipc.CodeForbidden)
+	if len(executor.calls) != 0 {
+		t.Fatalf("endpoint-mismatched exec reached the docker backend: %+v", executor.calls)
+	}
+
+	noBackend := inventoryDockerExecRequest()
+	noBackend.SessionID = sessionA.ID
+	executor.err = docker.ErrNoBackend
+	response = dispatchInventoryTest(t, dispatcher, ctxA, "inventory_target_exec", noBackend, nil)
+	requireInventoryIPCError(t, response, ipc.CodeUnsupported)
+	executor.err = nil
+	executor.calls = nil
+
+	allowed := inventoryDockerExecRequest()
+	allowed.SessionID = sessionA.ID
+	var result inventoryTargetExecResponse
+	dispatchInventoryTest(t, dispatcher, ctxA, "inventory_target_exec", allowed, &result)
+	if result.Output != "Linux\n" {
+		t.Fatalf("exec output = %q", result.Output)
+	}
+	if len(executor.calls) != 1 {
+		t.Fatalf("docker backend calls = %+v", executor.calls)
+	}
+	call := executor.calls[0]
+	if call.SessionID != sessionA.ID || call.Container != "web" || call.Command != "'uname' '-a'" {
+		t.Fatalf("docker exec request = %+v", call)
+	}
+	rows, err := database.AuditQuery(ctxA, store.AuditQuery{Limit: 10})
+	if err != nil || len(rows) == 0 || rows[0].Kind != "inventory_target_exec" {
+		t.Fatalf("exec audit rows = %+v, err=%v", rows, err)
+	}
+
+	// The same host reached through the other owner's own session is legitimate.
+	executor.calls = nil
+	ownSession := inventoryDockerExecRequest()
+	ownSession.SessionID = sessionB.ID
+	dispatchInventoryTest(t, dispatcher, ctxB, "inventory_target_exec", ownSession, &result)
+	if len(executor.calls) != 1 || executor.calls[0].SessionID != sessionB.ID {
+		t.Fatalf("owner-b own-session exec = %+v", executor.calls)
 	}
 }
 
@@ -218,54 +314,93 @@ func TestInventoryTargetExecRejectsHighRiskAndInvalidRequests(t *testing.T) {
 func TestInventoryTargetExecDockerServerProductionConfirmation(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	service, database := newInventoryTestService(t, false)
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	manager := newInventorySessionManager(t)
+	executor := &fakeInventoryDockerExecutor{result: docker.ExecResult{Output: "Linux\n"}}
+	service := newInventoryService(database, nil, false, t.TempDir(),
+		withInventoryWatchInterval(20*time.Millisecond), withInventoryDockerAccess(manager, executor))
+	t.Cleanup(func() { _ = service.Shutdown(context.Background()) })
 	runner := &recordingInventoryRunner{outputs: map[string][]byte{}}
 	service.runner = runner
 	dispatcher := newInventoryExecDispatcher(t, service)
 	ctx := ipc.WithUserID(context.Background(), "owner-a")
 	importDockerContext(t, dispatcher, ctx, runner)
 
-	asset, found, err := inventoryAssetByName(database, ctx, "prod")
-	if err != nil || !found {
-		t.Fatalf("imported asset = %+v, found=%v, err=%v", asset, found, err)
+	asset, err := database.AssetCreate(ctx, store.AssetInput{Kind: "ssh", Name: "prod-host", Host: stringPointerForInventory("prod.example"), Username: optionalString("ops")})
+	if err != nil {
+		t.Fatal(err)
 	}
 	tags := "env:production"
 	if _, err := database.AssetUpdate(ctx, asset.ID, store.AssetPatch{Tags: &tags}); err != nil {
 		t.Fatal(err)
 	}
+	connected := connectInventoryTestSession(t, manager, "owner-a", asset.ID)
+	request := inventoryDockerExecRequest()
+	request.SessionID = connected.ID
 
-	response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryDockerExecRequest(), nil)
+	challengeFor := func(request inventoryTargetExecRequest) dockerConfirmationRequiredDetail {
+		t.Helper()
+		response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", request, nil)
+		requireInventoryIPCError(t, response, ipc.CodeNeedsConfirm)
+		if response.Error.Detail == nil {
+			t.Fatal("confirmation detail missing")
+		}
+		detailJSON, err := json.Marshal(response.Error.Detail)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var detail dockerConfirmationRequiredDetail
+		if err := json.Unmarshal(detailJSON, &detail); err != nil {
+			t.Fatal(err)
+		}
+		if detail.Kind != dockerProductionConfirmationKind || detail.TargetSetHash == "" || detail.CommandHash == "" {
+			t.Fatalf("confirmation detail = %+v", detail)
+		}
+		return detail
+	}
+
+	detail := challengeFor(request)
+	if len(executor.calls) != 0 {
+		t.Fatalf("unconfirmed exec reached the docker backend: %+v", executor.calls)
+	}
+	// Identical operations produce identical challenge hashes.
+	if again := challengeFor(request); again.TargetSetHash != detail.TargetSetHash || again.CommandHash != detail.CommandHash {
+		t.Fatalf("challenge hashes are not deterministic: %+v vs %+v", again, detail)
+	}
+
+	otherContainer := request
+	otherContainer.Container = "other"
+	replayed := otherContainer
+	replayed.Confirmation = &dockerProductionConfirmation{Confirmed: true, TargetSetHash: detail.TargetSetHash, CommandHash: detail.CommandHash}
+	response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", replayed, nil)
 	requireInventoryIPCError(t, response, ipc.CodeNeedsConfirm)
-	if response.Error.Detail == nil {
-		t.Fatal("confirmation detail missing")
-	}
-	detailJSON, err := json.Marshal(response.Error.Detail)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var detail dockerConfirmationRequiredDetail
-	if err := json.Unmarshal(detailJSON, &detail); err != nil {
-		t.Fatal(err)
-	}
-	if detail.Kind != dockerProductionConfirmationKind || detail.TargetSetHash == "" || detail.CommandHash == "" {
-		t.Fatalf("confirmation detail = %+v", detail)
-	}
-	if len(runner.calls) != 1 {
-		t.Fatalf("unconfirmed exec ran commands: %+v", runner.calls)
+	if len(executor.calls) != 0 {
+		t.Fatalf("container-swapped replay reached the docker backend: %+v", executor.calls)
 	}
 
-	wrong := inventoryDockerExecRequest()
-	wrong.Confirmation = &dockerProductionConfirmation{Confirmed: true, TargetSetHash: "wrong", CommandHash: "wrong"}
-	response = dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", wrong, nil)
+	otherCommand := request
+	otherCommand.Command = []string{"sh", "-c", "id"}
+	replayed = otherCommand
+	replayed.Confirmation = &dockerProductionConfirmation{Confirmed: true, TargetSetHash: detail.TargetSetHash, CommandHash: detail.CommandHash}
+	response = dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", replayed, nil)
 	requireInventoryIPCError(t, response, ipc.CodeNeedsConfirm)
+	if len(executor.calls) != 0 {
+		t.Fatalf("command-swapped replay reached the docker backend: %+v", executor.calls)
+	}
 
-	runner.outputs["docker --context prod exec web uname -a"] = []byte("Linux\n")
-	confirmed := inventoryDockerExecRequest()
+	confirmed := request
 	confirmed.Confirmation = &dockerProductionConfirmation{Confirmed: true, TargetSetHash: detail.TargetSetHash, CommandHash: detail.CommandHash}
 	var result inventoryTargetExecResponse
 	dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", confirmed, &result)
 	if result.Output != "Linux\n" {
 		t.Fatalf("confirmed exec output = %q", result.Output)
+	}
+	if len(executor.calls) != 1 {
+		t.Fatalf("confirmed exec backend calls = %+v", executor.calls)
 	}
 
 	rows, err := database.AuditQuery(ctx, store.AuditQuery{Limit: 10})

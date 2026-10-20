@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -18,7 +19,46 @@ var (
 
 // DockerContextTarget addresses a Docker CLI context.
 type DockerContextTarget struct {
-	Name string
+	Name     string
+	Endpoint string
+}
+
+// DockerEndpoint is the parsed address a Docker context points at.
+type DockerEndpoint struct {
+	Scheme   string // "ssh", "tcp", "unix", "npipe"
+	Host     string
+	Port     string
+	Username string
+}
+
+// ParseDockerEndpoint parses a Docker context endpoint. Only ssh and tcp
+// endpoints carry a remote host that can be authorized against a managed
+// session; unix and npipe sockets stay host-less.
+func ParseDockerEndpoint(raw string) (DockerEndpoint, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return DockerEndpoint{}, errors.New("docker context endpoint is empty")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return DockerEndpoint{}, fmt.Errorf("docker context endpoint: %w", err)
+	}
+	endpoint := DockerEndpoint{Scheme: strings.ToLower(parsed.Scheme)}
+	switch endpoint.Scheme {
+	case "ssh", "tcp":
+		endpoint.Host = parsed.Hostname()
+		endpoint.Port = parsed.Port()
+		if endpoint.Scheme == "ssh" && parsed.User != nil {
+			endpoint.Username = parsed.User.Username()
+		}
+		if endpoint.Host == "" {
+			return DockerEndpoint{}, fmt.Errorf("docker context endpoint %q has no host", raw)
+		}
+	case "unix", "npipe":
+	default:
+		return DockerEndpoint{}, fmt.Errorf("docker context endpoint %q has unsupported scheme %q", raw, endpoint.Scheme)
+	}
+	return endpoint, nil
 }
 
 // KubernetesTarget addresses a pod inside a Kubernetes context. Pod is empty
@@ -85,7 +125,9 @@ func ResolveTarget(candidate Candidate) (Target, error) {
 		if typeName != "context" {
 			return Target{}, fmt.Errorf("%w: docker candidate %q has unsupported target type %q", ErrInvalidTarget, candidate.Key, typeName)
 		}
-		return Target{Kind: candidate.Kind, Docker: &DockerContextTarget{Name: targetString(fields, "name")}}, nil
+		return Target{Kind: candidate.Kind, Docker: &DockerContextTarget{
+			Name: targetString(fields, "name"), Endpoint: targetString(fields, "dockerEndpoint"),
+		}}, nil
 	case KubernetesKind:
 		switch typeName {
 		case "context":

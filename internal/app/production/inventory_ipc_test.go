@@ -52,10 +52,24 @@ func inventoryAssetByName(database *store.Store, ctx context.Context, name strin
 	if err != nil {
 		return store.AssetRow{}, false, err
 	}
-	for _, row := range rows {
-		if row.Name == name {
-			return row, true, nil
+	// A watch can delete and recreate an asset under the same name (for
+	// example when a tick reads a config file mid-rewrite); the live row is
+	// the current state, deleted rows are only the fallback.
+	var deleted *store.AssetRow
+	for index := range rows {
+		row := &rows[index]
+		if row.Name != name {
+			continue
 		}
+		if row.DeletedAt == nil {
+			return *row, true, nil
+		}
+		if deleted == nil {
+			deleted = row
+		}
+	}
+	if deleted != nil {
+		return *deleted, true, nil
 	}
 	return store.AssetRow{}, false, nil
 }
@@ -448,6 +462,32 @@ func TestInventorySSHWatchIncludedFileTooLargeRecovers(t *testing.T) {
 	waitForInventory(t, func() (bool, error) {
 		current, _, err := inventoryAssetByName(database, ctx, "alpha")
 		return err == nil && current.Host != nil && *current.Host == "10.0.0.9" && service.watchStatus(ctx).LastError == "", err
+	})
+}
+
+// TestInventoryWatchDeleteRecreateKeepsLiveRowReadable covers the
+// delete+recreate path a tick can take when it reads a config file
+// mid-rewrite: the asset is removed and recreated as a new row, and status
+// assertions must observe the live row rather than the deleted one.
+func TestInventoryWatchDeleteRecreateKeepsLiveRowReadable(t *testing.T) {
+	service, database := newInventoryTestService(t, true)
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "config")
+	writeInventoryTestFile(t, path, "Host alpha\n  HostName 10.0.0.1\n")
+	if _, err := service.startWatch(ctx, path, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	waitForInventory(t, func() (bool, error) {
+		current, _, err := inventoryAssetByName(database, ctx, "alpha")
+		return err == nil && current.DeletedAt != nil, err
+	})
+	writeInventoryTestFile(t, path, "Host alpha\n  HostName 10.0.0.9\n")
+	waitForInventory(t, func() (bool, error) {
+		current, _, err := inventoryAssetByName(database, ctx, "alpha")
+		return err == nil && current.DeletedAt == nil && current.Host != nil && *current.Host == "10.0.0.9" && service.watchStatus(ctx).LastError == "", err
 	})
 }
 

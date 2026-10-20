@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/docker"
 	fleetinventory "github.com/Hello-CTF/NexTerm/internal/fleet/inventory"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/sshconfig"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
@@ -83,8 +86,12 @@ type inventoryTargetExecRequest struct {
 	Action    string         `json:"action"`
 	Container string         `json:"container,omitempty"`
 	Command   []string       `json:"command"`
+	// SessionID selects the caller's managed session to the Docker host for
+	// server-side docker-context exec; the context endpoint must map to the
+	// session's asset.
+	SessionID string `json:"sessionId,omitempty"`
 	// Confirmation carries the production confirmation hashes when the
-	// imported docker-context asset is tagged as a production environment.
+	// session asset is tagged as a production environment.
 	Confirmation *dockerProductionConfirmation `json:"confirmation,omitempty"`
 }
 
@@ -367,72 +374,125 @@ func (s *inventoryService) execTarget(ctx context.Context, input inventoryTarget
 		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeBadParam, err.Error())
 	}
 	if !s.desktop && target.Docker != nil {
-		asset, err := s.ownedDockerContextAsset(ctx, target.Docker.Name)
-		if err != nil {
-			return inventoryTargetExecResponse{}, err
-		}
-		if err := s.confirmInventoryDockerExec(ctx, asset, target.Docker.Name, input.Confirmation); err != nil {
-			return inventoryTargetExecResponse{}, err
-		}
+		return s.execDockerTargetViaSession(ctx, input, target)
 	}
 	execCtx, cancel := context.WithTimeout(ctx, inventoryTargetExecTimeout)
 	defer cancel()
 	output, execErr := fleetinventory.RunTargetGated(execCtx, s.runner, s.kubeconfigGate, target, fleetinventory.TargetExecAction{
 		Container: input.Container, Command: input.Command,
 	})
-	s.auditTargetExec(ctx, input, target, execErr)
+	s.auditTargetExec(ctx, input, target, "", execErr)
 	if execErr != nil {
-		switch {
-		case errors.Is(execErr, fleetinventory.ErrKubeconfigNotAuthorized):
-			return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeForbidden, execErr.Error())
-		case errors.Is(execErr, fleetinventory.ErrEmptyAction),
-			errors.Is(execErr, fleetinventory.ErrNotExecutable),
-			errors.Is(execErr, fleetinventory.ErrInvalidTarget):
-			return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeBadParam, execErr.Error())
-		default:
-			return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeIO, execErr.Error())
-		}
+		return inventoryTargetExecResponse{}, inventoryTargetExecError(execErr)
 	}
 	return inventoryTargetExecResponse{Output: string(output)}, nil
 }
 
-// ownedDockerContextAsset resolves the caller's imported docker-context
-// asset; acting on a context the caller did not import is cross-owner access.
-func (s *inventoryService) ownedDockerContextAsset(ctx context.Context, contextName string) (store.AssetRow, error) {
-	assets, err := s.database.AssetList(ctx, false)
+// execDockerTargetViaSession runs the exec through the caller's own managed
+// session and its Docker backend. Inventory import records are target
+// resolution only: without an owner-scoped session whose asset matches the
+// context endpoint, or without an available backend, the exec fails closed.
+func (s *inventoryService) execDockerTargetViaSession(ctx context.Context, input inventoryTargetExecRequest, target fleetinventory.Target) (inventoryTargetExecResponse, error) {
+	sessionID := strings.TrimSpace(input.SessionID)
+	if sessionID == "" {
+		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeBadParam, "服务端 Docker target exec 需要指定受管会话 sessionId")
+	}
+	if s.sessions == nil || s.docker == nil {
+		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeUnsupported, "服务端 Docker target exec 不可用：缺少会话或 Docker 后端")
+	}
+	connected, err := s.sessions.SessionFor(productionSessionRequestContext(ctx), sessionID)
 	if err != nil {
-		return store.AssetRow{}, err
+		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeForbidden, "受管会话不存在或不属于当前账号")
 	}
-	wantKey := "context/" + contextName
-	for _, asset := range assets {
-		if asset.Kind != fleetinventory.DockerContextKind {
-			continue
-		}
-		var options struct {
-			Inventory *struct {
-				Source string `json:"source"`
-				Key    string `json:"key"`
-			} `json:"inventory"`
-		}
-		if err := json.Unmarshal([]byte(asset.OptionsJSON), &options); err != nil {
-			continue
-		}
-		if options.Inventory != nil && options.Inventory.Source == store.InventorySourceDockerContext && options.Inventory.Key == wantKey {
-			return asset, nil
-		}
+	container := strings.TrimSpace(input.Container)
+	if container == "" {
+		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeBadParam, fleetinventory.ErrInvalidTarget.Error()+": docker exec 需要指定容器")
 	}
-	return store.AssetRow{}, ipc.NewError(ipc.CodeForbidden, fmt.Sprintf("Docker context %q 未导入为当前账号的清单资产", contextName))
+	if strings.HasPrefix(container, "-") {
+		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeBadParam, fleetinventory.ErrInvalidTarget.Error()+": 容器名不能以 flag 前缀开头")
+	}
+	if len(input.Command) == 0 {
+		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeBadParam, fleetinventory.ErrEmptyAction.Error())
+	}
+	assetRow, err := s.database.AssetGetLive(productionSessionRequestContext(ctx), connected.Info().AssetID)
+	if err != nil {
+		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeForbidden, "受管会话资产不可用")
+	}
+	endpoint, err := fleetinventory.ParseDockerEndpoint(target.Docker.Endpoint)
+	if err != nil || !dockerEndpointMatchesAsset(endpoint, assetRow) {
+		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeForbidden, fmt.Sprintf("Docker context %q 的端点与受管会话资产不匹配", target.Docker.Name))
+	}
+	if err := s.confirmInventoryDockerExec(ctx, connected, assetRow, target.Docker.Name, container, input.Command, input.Confirmation); err != nil {
+		return inventoryTargetExecResponse{}, err
+	}
+	result, execErr := s.docker.Exec(ctx, docker.ExecRequest{
+		SessionID: sessionID, Container: container, Command: inventoryShellJoin(input.Command),
+	})
+	s.auditTargetExec(ctx, input, target, sessionID, execErr)
+	if execErr != nil {
+		return inventoryTargetExecResponse{}, terminalIPCError(execErr)
+	}
+	return inventoryTargetExecResponse{Output: result.Output}, nil
+}
+
+// dockerEndpointMatchesAsset reports whether the context endpoint addresses
+// the session asset's host; local socket endpoints never match.
+func dockerEndpointMatchesAsset(endpoint fleetinventory.DockerEndpoint, asset store.AssetRow) bool {
+	if endpoint.Host == "" || asset.Host == nil {
+		return false
+	}
+	if !strings.EqualFold(endpoint.Host, *asset.Host) {
+		return false
+	}
+	if endpoint.Username != "" && (asset.Username == nil || *asset.Username != endpoint.Username) {
+		return false
+	}
+	if endpoint.Port != "" && (asset.Port == nil || strconv.Itoa(int(*asset.Port)) != endpoint.Port) {
+		return false
+	}
+	return true
+}
+
+func inventoryShellJoin(argv []string) string {
+	parts := make([]string, len(argv))
+	for index, arg := range argv {
+		parts[index] = "'" + strings.ReplaceAll(arg, "'", `'"'"'`) + "'"
+	}
+	return strings.Join(parts, " ")
+}
+
+func inventoryTargetExecError(execErr error) error {
+	switch {
+	case errors.Is(execErr, fleetinventory.ErrKubeconfigNotAuthorized):
+		return ipc.NewError(ipc.CodeForbidden, execErr.Error())
+	case errors.Is(execErr, fleetinventory.ErrEmptyAction),
+		errors.Is(execErr, fleetinventory.ErrNotExecutable),
+		errors.Is(execErr, fleetinventory.ErrInvalidTarget):
+		return ipc.NewError(ipc.CodeBadParam, execErr.Error())
+	default:
+		return ipc.NewError(ipc.CodeIO, execErr.Error())
+	}
 }
 
 // confirmInventoryDockerExec reuses the docker production confirmation flow:
-// assets tagged as production require explicit confirmation, and the
+// session assets tagged as production require explicit confirmation bound to
+// the canonical context, container, and full command argv, and the
 // confirmation is audited before the exec runs.
-func (s *inventoryService) confirmInventoryDockerExec(ctx context.Context, asset store.AssetRow, contextName string, confirmation *dockerProductionConfirmation) error {
-	target := dockerConfirmationTarget{AssetID: asset.ID, Environment: store.AssetEnvironment(asset)}
+func (s *inventoryService) confirmInventoryDockerExec(ctx context.Context, connected *session.Session, asset store.AssetRow, contextName, container string, command []string, confirmation *dockerProductionConfirmation) error {
+	info := connected.Info()
+	target := dockerConfirmationTarget{
+		SessionID: info.ID, SessionName: info.Name, AssetID: asset.ID,
+		Environment: store.AssetEnvironment(asset),
+	}
 	if asset.Host != nil {
 		target.Hostname = *asset.Host
 	}
-	operation := dockerMutationOperation{Kind: "inventory_target_exec", Project: contextName}
+	operation := dockerMutationOperation{
+		Kind:        "inventory_target_exec",
+		Project:     contextName,
+		Path:        container,
+		ContentHash: dockerConfirmationDigest("command-v1", canonicalInventoryCommand(command)),
+	}
 	challenge := newDockerProductionChallenge(target, operation)
 	if err := validateDockerProductionConfirmation(confirmation, challenge); err != nil {
 		return dockerMutationIPCError(err)
@@ -445,9 +505,20 @@ func (s *inventoryService) confirmInventoryDockerExec(ctx context.Context, asset
 	return s.database.AuditInsert(auditCtx, newDockerConfirmationAuditInput(ctx, target, challenge, operation, time.Now().UnixMilli()))
 }
 
-func (s *inventoryService) auditTargetExec(ctx context.Context, input inventoryTargetExecRequest, target fleetinventory.Target, execErr error) {
+func canonicalInventoryCommand(command []string) []byte {
+	encoded, err := json.Marshal(command)
+	if err != nil {
+		return []byte("null")
+	}
+	return encoded
+}
+
+func (s *inventoryService) auditTargetExec(ctx context.Context, input inventoryTargetExecRequest, target fleetinventory.Target, sessionID string, execErr error) {
 	payload := map[string]any{
 		"kind": input.Kind, "action": input.Action, "container": input.Container, "command": input.Command,
+	}
+	if sessionID != "" {
+		payload["sessionId"] = sessionID
 	}
 	switch {
 	case target.Docker != nil:
