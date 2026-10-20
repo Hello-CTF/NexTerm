@@ -3,6 +3,7 @@ package sync
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -575,6 +576,8 @@ func TestImportBundleDuplicateSnippetChainsSnapshotDatabase(t *testing.T) {
 // SQLite hits SQLITE_BUSY inside the import transaction's write lock, and MySQL/MariaDB
 // gap locks plus repeatable-read snapshots cannot construct this window at all, so the
 // test only runs on PostgreSQL.
+//
+//dbtest:backend postgres
 func TestImportBundleConcurrentNewCredentialInsertInTxDatabase(t *testing.T) {
 	if !strings.EqualFold(os.Getenv("NEXTERM_TEST_DB_BACKEND"), "postgres") {
 		t.Skip("the in-transaction concurrent-insert window is only constructible on PostgreSQL")
@@ -652,4 +655,87 @@ func TestImportBundleConcurrentNewCredentialInsertInTxDatabase(t *testing.T) {
 	if err != nil || asset.Host == nil || *asset.Host != "later-host" {
 		t.Fatalf("interleaved asset edit overwritten: %+v err=%v", asset, err)
 	}
+}
+
+// The reviewer's r9 counterexample, reproducible only where the import transaction does
+// not lock the absent row's gap and reads the latest commit (PostgreSQL): a concurrent
+// same-ID insert of a row byte-identical to the import's target (including created_at)
+// between the must-not-exist probe and the INSERT must surface as a credential conflict
+// — never as this import's success — and the asset-conflict compensation must not delete
+// the concurrently created identical credential.
+//
+//dbtest:backend postgres
+func TestImportBundleIdenticalConcurrentCredentialCompensatedDatabase(t *testing.T) {
+	if !strings.EqualFold(os.Getenv("NEXTERM_TEST_DB_BACKEND"), "postgres") {
+		t.Skip("the in-transaction identical-insert window is only constructible on PostgreSQL")
+	}
+	instance := newDatabaseTestInstance(t, true)
+	ctx := context.Background()
+	assetID := ids.New()
+	putTestAsset(t, instance, store.AssetRow{ID: assetID, Kind: "ssh", Name: "web", OptionsJSON: "{}", CreatedAt: 1, UpdatedAt: 100})
+	credID := ids.New()
+	interleaveAssetEdit(t, instance, "credential_tombstone", "later-asset", 101, assetID)
+
+	// Make the import's encryption deterministic so the concurrent row can be
+	// byte-identical to the import's target (same nonce, same blob).
+	oldRandom := rand.Reader
+	rand.Reader = zeroReader{}
+	nonce, blob, err := instance.vault.EncryptCredential(ctx, "import-secret")
+	rand.Reader = oldRandom
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fired := false
+	if err := instance.db.GORM().Callback().Query().After("gorm:query").Register("test:import-identical-cred-insert", func(tx *gorm.DB) {
+		if fired || tx.Statement.Table != "credential" || !strings.Contains(strings.ToLower(tx.Statement.SQL.String()), "count(") {
+			return
+		}
+		fired = true
+		row := store.CredentialRow{
+			ID: credID, Name: "imported", Kind: "password", Cipher: store.CipherAES256GCM,
+			Nonce: nonce, Blob: blob, KEKHint: instance.vault.KEKHint(),
+			CreatedAt: 200, UpdatedAt: 200,
+		}
+		if err := instance.db.GORM().WithContext(context.Background()).Create(&row).Error; err != nil {
+			t.Errorf("concurrent identical insert: %v", err)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = instance.db.GORM().Callback().Query().Remove("test:import-identical-cred-insert") })
+
+	rand.Reader = zeroReader{}
+	report, err := instance.service.ImportBundle(ctx, ImportBundleRequest{Bundle: SyncBundle{
+		Protocol: BundleProtocolVersion,
+		Creds:    []SyncBundleCredential{{ID: credID, Name: "imported", Kind: "password", Secret: "import-secret", UpdatedAt: 200}},
+		Assets:   []SyncBundleAsset{{ID: assetID, Kind: "ssh", Name: "web", CredID: &credID, OptionsJSON: "{}", CreatedAt: 1, UpdatedAt: 200}},
+	}})
+	rand.Reader = oldRandom
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fired {
+		t.Fatal("identical concurrent insert did not fire")
+	}
+	row, err := instance.db.CredentialGetRow(ctx, credID)
+	if err != nil {
+		t.Fatalf("concurrent identical credential was compensated away: %v; report=%+v", err, report)
+	}
+	secret, err := instance.vault.DecryptCredentialString(ctx, row)
+	if err != nil || secret != "import-secret" {
+		t.Fatalf("concurrent identical credential changed: secret=%q err=%v report=%+v", secret, err, report)
+	}
+	if report.Conflicts != 2 || report.CredsCreated != 0 || report.CredsUpdated != 0 {
+		t.Fatalf("concurrent identical insert was not reported as a conflict: %+v", report)
+	}
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 0
+	}
+	return len(p), nil
 }

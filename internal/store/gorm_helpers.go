@@ -198,10 +198,15 @@ func ownerRowMatchesAssignments(ctx context.Context, tx *gorm.DB, values any, gu
 	return true, nil
 }
 
-// ownerRowMatchesContent reports whether the stored row carries exactly the given row's
-// full content (every column except the primary key and owner_id); a missing row reports
-// false.
-func ownerRowMatchesContent(ctx context.Context, tx *gorm.DB, values any, guard map[string]any, statement *gorm.Statement) (bool, error) {
+// ownerRowMatchesAtRevision reports whether the stored row carries exactly the given
+// assignment values and its revision still equals expectedRevision; a missing row reports
+// false. Binding the revision makes an identical row at any other revision a conflict
+// instead of a no-op success: content equality alone cannot prove ownership.
+func ownerRowMatchesAtRevision(ctx context.Context, tx *gorm.DB, values any, guard map[string]any, assignments map[string]any, revisionColumn string, expectedRevision int64) (bool, error) {
+	statement := &gorm.Statement{DB: tx}
+	if err := statement.Parse(values); err != nil {
+		return false, dbError(err)
+	}
 	elem := reflect.ValueOf(values)
 	for elem.Kind() == reflect.Pointer {
 		elem = elem.Elem()
@@ -214,17 +219,54 @@ func ownerRowMatchesContent(ctx context.Context, tx *gorm.DB, values any, guard 
 		return false, dbError(err)
 	}
 	rowElem := reflect.ValueOf(row).Elem()
-	for _, f := range statement.Schema.Fields {
-		if f.PrimaryKey || f.DBName == "" || f.DBName == "owner_id" {
+	for column, want := range assignments {
+		field := statement.Schema.LookUpField(column)
+		if field == nil {
 			continue
 		}
-		want, _ := f.ValueOf(ctx, elem)
-		got, _ := f.ValueOf(ctx, rowElem)
+		got, _ := field.ValueOf(ctx, rowElem)
 		if !reflect.DeepEqual(got, want) {
 			return false, nil
 		}
 	}
+	revisionField := statement.Schema.LookUpField(revisionColumn)
+	if revisionField == nil {
+		return false, dbError(fmt.Errorf("owner-guarded upsert revision column %s not found in schema", revisionColumn))
+	}
+	revision, _ := revisionField.ValueOf(ctx, rowElem)
+	revisionValue, ok := revision.(int64)
+	if !ok || revisionValue != expectedRevision {
+		return false, nil
+	}
 	return true, nil
+}
+
+// insertOwnerRowMustNotExist inserts values as a new row, proving ownership from the
+// INSERT result itself: a plain INSERT that lands is this call's write, while a unique
+// violation means a concurrent writer created the row first and surfaces
+// ErrWriteConflict — never a readback content-equality success, which cannot prove
+// ownership. The savepoint (when inside a transaction) keeps the surrounding transaction
+// usable on PostgreSQL, where a unique violation aborts it.
+func insertOwnerRowMustNotExist(ctx context.Context, tx *gorm.DB, values any) error {
+	const savepoint = "owner_guarded_must_not_exist"
+	_, inTx := tx.Statement.ConnPool.(gorm.TxCommitter)
+	if inTx {
+		if err := tx.SavePoint(savepoint).Error; err != nil {
+			return dbError(err)
+		}
+	}
+	if err := tx.Create(values).Error; err != nil {
+		if inTx {
+			if rollbackErr := tx.RollbackTo(savepoint).Error; rollbackErr != nil {
+				return dbError(rollbackErr)
+			}
+		}
+		if IsUniqueErr(err) {
+			return ErrWriteConflict
+		}
+		return dbError(err)
+	}
+	return nil
 }
 
 // UpsertOwnerGuardedExpected writes values by primary key with an owner guard and an
@@ -267,10 +309,11 @@ func UpsertOwnerGuardedExpected(ctx context.Context, db *gorm.DB, values any, co
 	if updated.RowsAffected == 1 {
 		return nil
 	}
-	// The guarded UPDATE landed nothing: either the row changed since the snapshot (a
-	// later local write wins and is never overwritten) or it is absent. Compare content to
-	// tell an identical no-op apart from a genuine conflict.
-	matches, err := ownerRowMatchesAssignments(ctx, tx, values, guard, assignments)
+	// The guarded UPDATE landed nothing: accept only a genuine no-op — the stored row
+	// carries this call's assignments at the expected revision (this call's own prior
+	// write). Content equality at any other revision cannot prove ownership and surfaces
+	// ErrWriteConflict.
+	matches, err := ownerRowMatchesAtRevision(ctx, tx, values, guard, assignments, "updated_at", expectedRevision)
 	if err != nil {
 		return err
 	}
@@ -284,21 +327,7 @@ func UpsertOwnerGuardedExpected(ctx context.Context, db *gorm.DB, values any, co
 	if count > 0 {
 		return ErrWriteConflict
 	}
-	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: primary.DBName}}, DoNothing: true}).Create(values).Error; err != nil {
-		return dbError(err)
-	}
-	// The INSERT is a no-op when a concurrent writer created the same ID first, so the
-	// insert alone cannot prove this call landed: accept only when the stored row carries
-	// exactly this call's content — a concurrent same-ID insert with different content
-	// surfaces ErrWriteConflict instead of being mistaken for this call's success.
-	matches, err = ownerRowMatchesContent(ctx, tx, values, guard, statement)
-	if err != nil {
-		return err
-	}
-	if matches {
-		return nil
-	}
-	return ErrWriteConflict
+	return insertOwnerRowMustNotExist(ctx, tx, values)
 }
 
 // UpsertOwnerGuardedExpectedContent writes values by primary key with an owner guard and
@@ -369,21 +398,7 @@ func UpsertOwnerGuardedExpectedContent(ctx context.Context, db *gorm.DB, values 
 	if count > 0 {
 		return ErrWriteConflict
 	}
-	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: primary.DBName}}, DoNothing: true}).Create(values).Error; err != nil {
-		return dbError(err)
-	}
-	// The INSERT is a no-op when a concurrent writer created the same ID first, so the
-	// insert alone cannot prove this call landed: accept only when the stored row carries
-	// exactly this call's content — a concurrent same-ID insert with different content
-	// surfaces ErrWriteConflict instead of being mistaken for this call's success.
-	matches, err = ownerRowMatchesContent(ctx, tx, values, guard, statement)
-	if err != nil {
-		return err
-	}
-	if matches {
-		return nil
-	}
-	return ErrWriteConflict
+	return insertOwnerRowMustNotExist(ctx, tx, values)
 }
 
 // snapshotContentConditions builds dialect-quoted equality conditions binding every
