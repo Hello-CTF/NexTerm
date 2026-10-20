@@ -200,11 +200,11 @@ func TestAgentWatchAdvanceCarryBound(t *testing.T) {
 	backend := openAgentWatchStore(t)
 	ctx := watchOwnerCtx("owner-a")
 	created := createTestWatch(t, backend, ctx, "watch-carry-bound", "target-1", "identity-1")
-	if _, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, make([]byte, 65537), 2000); err == nil {
+	if _, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, make([]byte, store.AgentWatchMaxCarryBytes+1), 2000); err == nil {
 		t.Fatal("advance with oversized carry succeeded")
 	}
-	advanced, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, make([]byte, 65536), 2000)
-	if err != nil || len(advanced.CarryBlob) != 65536 {
+	advanced, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, make([]byte, store.AgentWatchMaxCarryBytes), 2000)
+	if err != nil || len(advanced.CarryBlob) != store.AgentWatchMaxCarryBytes {
 		t.Fatalf("advance with hard-bound carry = %+v, %v", advanced, err)
 	}
 }

@@ -29,9 +29,9 @@ const (
 	AgentWatchEventAcked     = "acked"
 	AgentWatchEventCancelled = "cancelled"
 
-	// agentWatchMaxCarryBytes hard-bounds the persisted partial-match overlap
+	// AgentWatchMaxCarryBytes hard-bounds the persisted partial-match overlap
 	// so a hostile or buggy writer cannot grow watch rows without limit.
-	agentWatchMaxCarryBytes = 65536
+	AgentWatchMaxCarryBytes = 65536
 )
 
 var (
@@ -247,8 +247,8 @@ func (s *Store) AgentWatchListByTarget(ctx context.Context, targetID string) ([]
 }
 
 func agentWatchCarry(carry []byte) ([]byte, error) {
-	if len(carry) > agentWatchMaxCarryBytes {
-		return nil, badParam(fmt.Errorf("agent watch overlap 超过 %d 字节", agentWatchMaxCarryBytes))
+	if len(carry) > AgentWatchMaxCarryBytes {
+		return nil, badParam(fmt.Errorf("agent watch overlap 超过 %d 字节", AgentWatchMaxCarryBytes))
 	}
 	if len(carry) == 0 {
 		return nil, nil

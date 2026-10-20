@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 const maxConditionPatternBytes = 1024
@@ -29,6 +30,29 @@ func (c Condition) Validate() error {
 	default:
 		return fmt.Errorf("%w: 未知条件类型 %q", ErrInvalidCondition, c.Type)
 	}
+}
+
+// incompleteUTF8Tail returns the length of the trailing bytes that form a
+// proper prefix of a UTF-8 encoding split by a chunk boundary (0-3 bytes).
+// Genuinely invalid bytes are not an incomplete tail: they are complete
+// RuneError data and stay in evaluation.
+func incompleteUTF8Tail(buffer []byte) int {
+	n := len(buffer)
+	if n == 0 || buffer[n-1] < utf8.RuneSelf {
+		return 0
+	}
+	start := n - 1
+	for start > 0 && buffer[start] >= 0x80 && buffer[start] <= 0xBF {
+		start--
+	}
+	lead := buffer[start]
+	if lead < 0xC2 || lead > 0xF4 {
+		return 0
+	}
+	if !utf8.FullRune(buffer[start:]) {
+		return n - start
+	}
+	return 0
 }
 
 // carryBound returns how many trailing bytes of an evaluated buffer must be

@@ -285,6 +285,43 @@ func TestRestartIdentityReplacementSettlesImmediately(t *testing.T) {
 	}
 }
 
+func TestRestartSplitRuneSurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "watch.db")
+	clock := newTestClock()
+	ctx := ownerCtx("owner-a")
+
+	backend := openRestartStore(t, path)
+	engine := newRestartEngine(t, backend, clock)
+	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1",
+		Condition: Condition{Type: ConditionRegex, Pattern: `[界x]`}}); err != nil {
+		t.Fatal(err)
+	}
+	// The incomplete rune is durable carry across the restart.
+	if _, err := engine.Observe(ctx, "target-1", "identity-1", 0, []byte{0xE7}); err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	backend = openRestartStore(t, path)
+	defer backend.Close()
+	engine = newRestartEngine(t, backend, clock)
+	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
+		t.Fatal(err)
+	}
+	events, err := engine.Observe(ctx, "target-1", "identity-1", 1, []byte{0x95, 0x8C})
+	if err != nil || len(events) != 1 {
+		t.Fatalf("split rune after restart = %+v, %v; want one fire", events, err)
+	}
+	if events[0].MatchedFrom != 0 || events[0].MatchedTo != 3 {
+		t.Fatalf("match = %d..%d; want 0..3", events[0].MatchedFrom, events[0].MatchedTo)
+	}
+}
+
 func TestRestartKeepsUnverifiableTerminal(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "watch.db")
 	clock := newTestClock()

@@ -413,6 +413,12 @@ func TestEngineOwnerIsolation(t *testing.T) {
 	if err != nil || len(watches) != 0 {
 		t.Fatalf("cross-owner list = %+v, %v", watches, err)
 	}
+	// B has its own mirror and durable row for the shared target ID: its
+	// observe is evaluated only against B's watches and never fires or
+	// settles owner A's watch.
+	if err := engine.Attach(ctxB, "target-1", "identity-1"); err != nil {
+		t.Fatal(err)
+	}
 	events, err := engine.Observe(ctxB, "target-1", "identity-1", 0, []byte("ready"))
 	if err != nil || len(events) != 0 {
 		t.Fatalf("cross-owner observe fired owner-a watch: %+v, %v", events, err)
