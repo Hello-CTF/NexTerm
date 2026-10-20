@@ -11,7 +11,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ai/subagent"
 	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
-	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/cloudwego/eino/components/tool"
@@ -736,14 +735,7 @@ func (e *Execution) runInner(ctx context.Context, name string, input any) (Outpu
 		if state.ProductionChallenge != nil {
 			call.OriginID = state.Info.CallID
 			call.ID += ":production"
-			// The approved production challenge supplies the typed environment names;
-			// until the confirmation UI collects them from the user, the names from
-			// the challenge detail the user approved are echoed back.
-			confirmations := append([]execbatch.ProductionConfirmation(nil), state.ProductionChallenge.Confirmations...)
-			for index := range confirmations {
-				confirmations[index].EnvironmentNames = append([]string(nil), state.ProductionChallenge.Detail.RequiredEnvironmentNames...)
-			}
-			call.ProductionConfirmations = append(call.ProductionConfirmations, confirmations...)
+			call.ProductionConfirmations = append(call.ProductionConfirmations, state.ProductionChallenge.Confirmations...)
 		}
 		if call.Name == ReminderTool {
 			return e.executeReminder(ctx, call), nil

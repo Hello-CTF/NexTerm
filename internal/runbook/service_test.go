@@ -3,7 +3,6 @@ package runbook
 import (
 	"context"
 	"errors"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -289,17 +288,9 @@ func TestProductionOnlyPolicyStillPausesForBackendChallengeAndRetriesSameCommand
 	}
 	requests := executor.Requests()
 	if len(requests) != 2 || requests[0].BatchID != requests[1].BatchID || requests[0].Command != requests[1].Command ||
-		!productionConfirmationMatches(requests[1].ProductionConfirmation, confirmation) {
+		requests[1].ProductionConfirmation == nil || *requests[1].ProductionConfirmation != *confirmation {
 		t.Fatalf("production retry = %+v", requests)
 	}
-}
-
-func productionConfirmationMatches(got, want *execbatch.ProductionConfirmation) bool {
-	if got == nil || want == nil {
-		return got == want
-	}
-	return got.Confirmed == want.Confirmed && got.TargetSetHash == want.TargetSetHash &&
-		got.CommandHash == want.CommandHash && slices.Equal(got.EnvironmentNames, want.EnvironmentNames)
 }
 
 func TestCancelStopsCurrentBatchAndAllLaterWork(t *testing.T) {
