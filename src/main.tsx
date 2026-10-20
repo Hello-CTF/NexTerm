@@ -106,7 +106,7 @@ function wireDesktopShell(): void {
 
 async function bootstrapApp(): Promise<void> {
   wireDesktopShell();
-  wireMobileInsets();
+  void wireMobileInsets();
   try {
     const [os, mountReason] = await Promise.all([
       systemApi.platform(),
