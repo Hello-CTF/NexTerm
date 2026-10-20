@@ -883,3 +883,99 @@ func TestTranscriptRetentionCountRefreshedRowSkipsDeleteAndTombstoneDatabase(t *
 		t.Fatalf("keeper transcript must survive count retention: %v", err)
 	}
 }
+
+// A two-row keep-window reorder: with MaxCount=1, K is the window and V is
+// selected; after selection, a same-owner sync demotes K below V and promotes
+// V into the window with new content. The count keep set is evaluated inside
+// each DELETE statement against the current committed ordering, so V must
+// survive without a tombstone and the demoted K — never selected — must not
+// cause V's deletion either. A separately read boundary would go stale here
+// and delete the newest row with a sync-winning tombstone. SQLite cannot
+// express the select-then-refresh window with two concurrent writers.
+//
+//dbtest:backend postgres,mysql,mariadb
+func TestTranscriptRetentionCountReorderSkipsDeleteAndTombstoneDatabase(t *testing.T) {
+	switch strings.ToLower(os.Getenv("NEXTERM_TEST_DB_BACKEND")) {
+	case "postgres", "mysql", "mariadb":
+	default:
+		t.Skip("the select-then-refresh window is not constructible on SQLite")
+	}
+	ctx := context.Background()
+	ctxA := ipc.WithUserID(ctx, "owner-a")
+	db := dbtest.NewFixture(t).OpenStore(t)
+
+	now := time.Now().UnixMilli()
+	keeper := now - 30*time.Minute.Milliseconds()
+	victim := now - 2*time.Hour.Milliseconds()
+	demoted := now - 3*time.Hour.Milliseconds()
+	promoted := now - time.Hour.Milliseconds()
+	insertSynced := func(id string, endedAt int64, content string) {
+		t.Helper()
+		row := store.TranscriptRow{ID: id, SessionID: "sess-" + id, AssetID: "asset-1", StartedAt: endedAt - 10, EndedAt: &endedAt, Bytes: int64(len(content)), Chunks: 1}
+		chunks := []store.TranscriptChunkRow{{Seq: 0, TabID: "tab-1", TS: endedAt, Data: []byte(content)}}
+		if err := db.TranscriptInsertSynced(ctxA, row, chunks); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insertSynced("retention-reorder-k", keeper, "keeper content")
+	insertSynced("retention-reorder-v", victim, "stale content")
+
+	reached := make(chan struct{})
+	resume := make(chan struct{})
+	var resumeOnce sync.Once
+	resumeNow := func() { resumeOnce.Do(func() { close(resume) }) }
+	defer resumeNow()
+	var reachedOnce sync.Once
+	if err := db.GORM().Callback().Delete().Before("gorm:delete").Register("test:pause-transcript-reorder-retention", func(tx *gorm.DB) {
+		if tx.Statement.Table != "transcript" {
+			return
+		}
+		reachedOnce.Do(func() { close(reached) })
+		<-resume
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	type retentionOutcome struct {
+		result store.TranscriptRetentionResult
+		err    error
+	}
+	done := make(chan retentionOutcome, 1)
+	go func() {
+		result, err := db.EnforceTranscriptRetention(ctx, store.TranscriptRetentionPolicy{MaxCount: 1})
+		done <- retentionOutcome{result: result, err: err}
+	}()
+
+	<-reached
+	insertSynced("retention-reorder-k", demoted, "keeper demoted content")
+	insertSynced("retention-reorder-v", promoted, "victim promoted content")
+	resumeNow()
+
+	got := <-done
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	if got.result.Deleted != 0 {
+		t.Fatalf("retention deleted = %d, want the reordered window to spare both rows", got.result.Deleted)
+	}
+	row, err := db.TranscriptGet(ctx, "retention-reorder-v")
+	if err != nil {
+		t.Fatalf("promoted transcript must survive count retention: %v", err)
+	}
+	if row.EndedAt == nil || *row.EndedAt != promoted {
+		t.Fatalf("promoted transcript ended_at = %v, want %d", row.EndedAt, promoted)
+	}
+	requireTranscriptTombstoneDatabase(t, db, "retention-reorder-v", false)
+	matches, err := db.TranscriptSearch(ctx, "retention-reorder-v", []byte("victim promoted content"), 0, 0)
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("promoted content must be searchable: matches=%v err=%v", matches, err)
+	}
+	demotedRow, err := db.TranscriptGet(ctx, "retention-reorder-k")
+	if err != nil {
+		t.Fatalf("demoted transcript must survive this retention run: %v", err)
+	}
+	if demotedRow.EndedAt == nil || *demotedRow.EndedAt != demoted {
+		t.Fatalf("demoted transcript ended_at = %v, want %d", demotedRow.EndedAt, demoted)
+	}
+	requireTranscriptTombstoneDatabase(t, db, "retention-reorder-k", false)
+}

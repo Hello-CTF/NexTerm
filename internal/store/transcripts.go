@@ -9,7 +9,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store/model"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
-	"gorm.io/gen"
 	"gorm.io/gen/field"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -774,8 +773,9 @@ func (s *Store) EnforceTranscriptRetention(ctx context.Context, policy Transcrip
 				return rows, err
 			},
 			func(tx *gorm.DB, rows []TranscriptRow) (int64, error) {
-				transcript := query.Use(tx).TranscriptRow
-				return s.transcriptRetentionDeleteRows(ctx, tx, rows, []gen.Condition{transcript.EndedAt.Lt(cutoff)})
+				return s.transcriptRetentionDeleteRows(ctx, tx, rows, func(query *gorm.DB, _ TranscriptRow) *gorm.DB {
+					return query.Where("ended_at < ?", cutoff)
+				})
 			},
 		)
 		result.Deleted += deleted
@@ -798,11 +798,22 @@ func (s *Store) EnforceTranscriptRetention(ctx context.Context, policy Transcrip
 				return rows, err
 			},
 			func(tx *gorm.DB, rows []TranscriptRow) (int64, error) {
-				boundary, err := loadTranscriptRetentionBoundary(ctx, tx, policy.MaxCount)
-				if err != nil {
-					return 0, err
+				// The keep set is evaluated inside each DELETE statement, so
+				// eligibility is judged against the current committed ordering
+				// instead of a separately read boundary a concurrent refresh
+				// can stale. The derived-table wrapper keeps MySQL and MariaDB
+				// from rejecting the same-table LIMIT subquery.
+				keepSet := tx.WithContext(ctx).Model(&TranscriptRow{}).
+					Select("id").
+					Where("ended_at IS NOT NULL").
+					Order("ended_at DESC, id DESC").
+					Limit(int(policy.MaxCount))
+				for _, condition := range ownerConditions(ctx, "transcript") {
+					keepSet = keepSet.Where(condition)
 				}
-				return s.transcriptRetentionDeleteRows(ctx, tx, rows, boundary.conditions())
+				return s.transcriptRetentionDeleteRows(ctx, tx, rows, func(query *gorm.DB, _ TranscriptRow) *gorm.DB {
+					return query.Where("id NOT IN (SELECT id FROM (?) AS keep_set)", keepSet)
+				})
 			},
 		)
 		result.Deleted += deleted
@@ -813,31 +824,32 @@ func (s *Store) EnforceTranscriptRetention(ctx context.Context, policy Transcrip
 	return result, nil
 }
 
+// transcriptRetentionRowGuard narrows a selected row's delete to rows that are
+// still retention-eligible when the delete statement executes, re-checked
+// against the latest committed row on every backend.
+type transcriptRetentionRowGuard func(query *gorm.DB, row TranscriptRow) *gorm.DB
+
 // transcriptRetentionDeleteRows deletes the selected rows one guarded delete
 // at a time and tombstones only the rows that delete actually removed, under
 // each row's own owner and in the same transaction, so a background run
 // without an owner in the context still attributes deletions to the correct
-// sync scope. The guard re-checks retention eligibility against the
-// latest committed row on every backend: a concurrent same-owner refresh that
-// lands between selection and delete either makes the row ineligible — the
-// guard skips it and no tombstone is written, so sync never pushes a deletion
-// for live content — or keeps it eligible, in which case the row is deleted
-// and tombstoned together, never one without the other.
-func (s *Store) transcriptRetentionDeleteRows(ctx context.Context, tx *gorm.DB, rows []TranscriptRow, guard []gen.Condition) (int64, error) {
+// sync scope. A concurrent same-owner refresh that lands between selection and
+// delete either makes the row ineligible — the guard skips it and no tombstone
+// is written, so sync never pushes a deletion for live content — or keeps it
+// eligible, in which case the row is deleted and tombstoned together, never
+// one without the other.
+func (s *Store) transcriptRetentionDeleteRows(ctx context.Context, tx *gorm.DB, rows []TranscriptRow, guard transcriptRetentionRowGuard) (int64, error) {
 	if len(rows) == 0 {
 		return 0, nil
 	}
-	transcript := query.Use(tx).TranscriptRow
 	deletedAt := ids.NowMS()
 	tombstones := make([]*SyncTombstone, 0, len(rows))
 	var deleted int64
 	for _, row := range rows {
-		info, err := transcript.WithContext(ctx).
-			Where(transcript.ID.Eq(row.ID), transcript.OwnerID.Eq(row.OwnerID), transcript.EndedAt.IsNotNull()).
-			Where(guard...).
-			Delete()
-		if err != nil {
-			return 0, err
+		info := guard(tx.WithContext(ctx).Where("id = ? AND owner_id = ? AND ended_at IS NOT NULL", row.ID, row.OwnerID), row).
+			Delete(&TranscriptRow{})
+		if info.Error != nil {
+			return 0, info.Error
 		}
 		if info.RowsAffected == 0 {
 			continue
@@ -856,43 +868,4 @@ func (s *Store) transcriptRetentionDeleteRows(ctx context.Context, tx *gorm.DB, 
 		}
 	}
 	return deleted, nil
-}
-
-// transcriptRetentionBoundary is the newest (ended_at, id) identity still
-// inside the count keep window when the delete executes; only rows ranked
-// after it remain eligible. A missing boundary means the window covers every
-// row, so nothing may be deleted.
-type transcriptRetentionBoundary struct {
-	endedAt int64
-	id      string
-	valid   bool
-}
-
-func loadTranscriptRetentionBoundary(ctx context.Context, tx *gorm.DB, maxCount int64) (transcriptRetentionBoundary, error) {
-	transcript := query.Use(tx).TranscriptRow
-	var row TranscriptRow
-	err := transcript.WithContext(ctx).
-		Select(transcript.EndedAt, transcript.ID).
-		Where(transcript.EndedAt.IsNotNull()).
-		Where(ownerConditions(ctx, transcript.TableName())...).
-		Order(transcript.EndedAt.Desc(), transcript.ID.Desc()).
-		Limit(1).
-		Offset(int(maxCount - 1)).
-		Scan(&row)
-	if err != nil {
-		return transcriptRetentionBoundary{}, err
-	}
-	if row.EndedAt == nil {
-		return transcriptRetentionBoundary{}, nil
-	}
-	return transcriptRetentionBoundary{endedAt: *row.EndedAt, id: row.ID, valid: true}, nil
-}
-
-func (b transcriptRetentionBoundary) conditions() []gen.Condition {
-	if !b.valid {
-		return []gen.Condition{field.NewUnsafeFieldRaw("1 = 0")}
-	}
-	return []gen.Condition{field.NewUnsafeFieldRaw(
-		"(ended_at < ? OR (ended_at = ? AND id < ?))", b.endedAt, b.endedAt, b.id,
-	)}
 }
