@@ -5,12 +5,23 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { acceptanceWatchIgnored } from "./lib/vite-watch-ignores.mjs";
 import { flattenDownloadedReleaseAssets, flattenReleaseAssets } from "./flatten-release-assets.mjs";
 import { stampVersion } from "./stamp-version.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BUILD = path.join(ROOT, "scripts", "build.mjs");
 const MINISIGN_PUBLIC_KEY = "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3";
+
+test("vite watch ignores anchor every artifact directory to the resolved root", () => {
+  const root = path.join(path.sep, "work", "nexterm");
+  const patterns = acceptanceWatchIgnored(root);
+  for (const dir of [".tower", "target", "target-alt", ".tmp"]) {
+    assert.ok(patterns.includes(`${root}/${dir}`), `missing anchored ignore for ${dir}`);
+    assert.ok(patterns.includes(`${root}/${dir}/**`), `missing anchored recursive ignore for ${dir}`);
+  }
+  assert.equal(patterns.some((pattern) => !pattern.startsWith(`${root}/`)), false);
+});
 
 function fixture() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-tooling-test-"));

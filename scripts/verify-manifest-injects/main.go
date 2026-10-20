@@ -26,7 +26,24 @@ const (
 	masterKeyTransportEnv = masterKeyTransport + `={{ stable_secret "vault_master" }}`
 )
 
-var expectedPublicPath = []string{"/device/enroll", "/agent/sync", "/agent/current-url", "/ws/device", "/share/public", "/share/preview"}
+var expectedPublicPath = []string{"/device/enroll", "/agent/sync", "/agent/current-url", "/ws/device", "/share/public", "/share/preview/"}
+
+// accountRoutePrefixes are session/account routes that must stay behind the
+// platform login. The gateway matches public_path entries as plain string
+// prefixes, so an entry that prefixes one of these routes would expose it
+// without a platform session (and hand the gateway header to anonymous
+// callers). The public data-plane entries therefore carry a trailing slash:
+// /share/preview/ matches /share/preview/{token} but not the preview-link
+// management routes /share/previews and /share/previews/{id}/revoke.
+var accountRoutePrefixes = []string{
+	"/account",
+	"/auth",
+	"/share/host-shares",
+	"/share/links",
+	"/share/previews",
+	"/share/remote-sessions",
+	"/sync/v2",
+}
 
 var (
 	directiveRe  = regexp.MustCompile(`^\s*#@build\s+(.*?)\s*$`)
@@ -154,6 +171,27 @@ func equalStringList(v interface{}, want []string) bool {
 	return true
 }
 
+// publicPathAdminExposure reports the first account route that a public_path
+// entry would expose through plain prefix matching, if any.
+func publicPathAdminExposure(paths []string) string {
+	for _, entry := range paths {
+		for _, account := range accountRoutePrefixes {
+			if strings.HasPrefix(account, entry) {
+				return fmt.Sprintf("public_path entry %q also covers the account route %q; trailing-slash the public data-plane prefixes so account routes stay behind platform auth", entry, account)
+			}
+		}
+	}
+	return ""
+}
+
+func publicPathEntries(v interface{}) []string {
+	var entries []string
+	for _, item := range asList(v) {
+		entries = append(entries, str(item))
+	}
+	return entries
+}
+
 func checkJS(src, label string) error {
 	encoded, err := json.Marshal(src)
 	if err != nil {
@@ -209,6 +247,9 @@ func assertProfile(doc map[string]interface{}, wantSubdomain string) (string, er
 	if !equalStringList(app["public_path"], expectedPublicPath) {
 		return "", fmt.Errorf("public_path must contain exactly the %d device-agent contract paths (widening grants the gateway header to anonymous requests; "+
 			"narrowing prevents the device agent from reaching the server): %v", len(expectedPublicPath), app["public_path"])
+	}
+	if exposure := publicPathAdminExposure(publicPathEntries(app["public_path"])); exposure != "" {
+		return "", fmt.Errorf("%s", exposure)
 	}
 	fmt.Printf("    public_path = %v\n", expectedPublicPath)
 
@@ -429,6 +470,19 @@ func selftest(raw []byte) {
 		{"public_path removed", func(doc map[string]interface{}) {
 			asMap(doc["application"])["public_path"] = []interface{}{}
 		}},
+		{"public_path reverts to the admin-covering preview prefix", func(doc map[string]interface{}) {
+			entries := publicPathEntries(asMap(doc["application"])["public_path"])
+			for i, entry := range entries {
+				if entry == "/share/preview/" {
+					entries[i] = "/share/preview"
+				}
+			}
+			mutated := make([]interface{}, 0, len(entries))
+			for _, entry := range entries {
+				mutated = append(mutated, entry)
+			}
+			asMap(doc["application"])["public_path"] = mutated
+		}},
 		{"auth_required: false", func(doc map[string]interface{}) {
 			injects := asList(asMap(doc["application"])["injects"])
 			asMap(injects[gatewayIndex])["auth_required"] = false
@@ -477,6 +531,13 @@ func selftest(raw []byte) {
 		}
 		fatalf("negative case was not detected: %s should have failed the assertion", negative.name)
 	}
+	if exposure := publicPathAdminExposure([]string{"/share/preview"}); exposure == "" {
+		fatalf("admin-prefix guard does not detect the bare preview prefix covering /share/previews")
+	}
+	if exposure := publicPathAdminExposure(expectedPublicPath); exposure != "" {
+		fatalf("expectedPublicPath exposes an account route: %s", exposure)
+	}
+	fmt.Println("    admin-prefix guard rejects the bare preview prefix and accepts the contracted public_path")
 
 	wrapperNegatives := []struct {
 		name       string

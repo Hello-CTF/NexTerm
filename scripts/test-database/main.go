@@ -371,6 +371,14 @@ func runFixtureTests(packages []fixturePackage) error {
 			return err
 		}
 	}
+	// Suite-level audit: runPackage only returns nil after the executed tests
+	// match the discovered selection exactly (no skips, no missing fixture
+	// uses), so these totals reconcile discovery with execution for the leg.
+	totalTests := 0
+	for _, pkg := range packages {
+		totalTests += len(pkg.Tests)
+	}
+	fmt.Fprintf(os.Stderr, "database suite audit: %d packages, %d fixture tests executed and fixture-audited on backend %s\n", len(packages), totalTests, backend)
 	return nil
 }
 

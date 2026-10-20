@@ -29,7 +29,11 @@ application:
     # /ws/device) relies on public_path to bypass the platform session; device
     # identity is gated by device credentials, not platform gateway auth.
     # /share/public/{token} and /share/preview/{token} are public data planes
-    # (the token is the credential, no platform session needed). Preview routes
+    # (the token is the credential, no platform session needed). The trailing
+    # slash on /share/preview/ is load-bearing: the gateway matches public_path
+    # as a plain prefix, so a bare /share/preview entry would also expose the
+    # preview-link management routes (/share/previews and
+    # /share/previews/{id}/revoke) without a platform session. Preview routes
     # do not treat the gateway header as an account session. All other routes
     # (including share management /share/links, /share/host-shares and
     # /sync/v2/* which needs an account session) stay behind platform auth.
@@ -38,7 +42,7 @@ application:
     - /agent/current-url
     - /ws/device
     - /share/public
-    - /share/preview
+    - /share/preview/
 
   injects:
     - id: gateway-auth

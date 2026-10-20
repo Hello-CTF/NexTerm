@@ -366,7 +366,7 @@ test("times out a hanging central-directory reader before invoking content tools
   const ipa = makeIPA(t, "1.1.0", "1.1.0");
   const result = runPackageEvidence(ipa, "mobile-ios", {
     PATH: `${tools}${path.delimiter}${process.env.PATH || ""}`,
-    NEXTERM_MOBILE_EVIDENCE_TOOL_TIMEOUT_MS: "100",
+    NEXTERM_MOBILE_EVIDENCE_PYTHON3_TIMEOUT_MS: "100",
   });
   assert.equal(result.status, 1);
   const report = JSON.parse(fs.readFileSync(`${ipa}.artifact.json`, "utf8"));
@@ -377,9 +377,11 @@ test("times out a hanging central-directory reader before invoking content tools
 test("times out a hanging OpenSSL process and fails the profile assertion", (t) => {
   const tools = makeHangingTools(t, ["openssl"]);
   const ipa = makeIPA(t, "1.1.0", "1.1.0");
+  // Only OpenSSL gets the small budget; the real python3 stages keep the
+  // global default, so the timeout cannot race their startup on loaded hosts.
   const result = runPackageEvidence(ipa, "mobile-ios", {
     PATH: `${tools}${path.delimiter}${process.env.PATH || ""}`,
-    NEXTERM_MOBILE_EVIDENCE_TOOL_TIMEOUT_MS: "250",
+    NEXTERM_MOBILE_EVIDENCE_OPENSSL_TIMEOUT_MS: "250",
   });
   assert.equal(result.status, 1);
   const report = JSON.parse(fs.readFileSync(`${ipa}.artifact.json`, "utf8"));
@@ -390,11 +392,29 @@ test("times out a hanging OpenSSL process and fails the profile assertion", (t) 
 test("times out hanging apksigner and aapt2 processes", (t) => {
   const apk = makeAndroidAPK(t);
   const tools = makeFakeAndroidTools(t, { hang: true });
-  const result = runAndroidEvidence(apk, { ...androidEnvironment(tools), NEXTERM_MOBILE_EVIDENCE_TOOL_TIMEOUT_MS: "250" });
+  const result = runAndroidEvidence(apk, {
+    ...androidEnvironment(tools),
+    NEXTERM_MOBILE_EVIDENCE_APKSIGNER_TIMEOUT_MS: "250",
+    NEXTERM_MOBILE_EVIDENCE_AAPT2_TIMEOUT_MS: "250",
+  });
   assert.equal(result.status, 1);
   const report = JSON.parse(fs.readFileSync(`${apk}.artifact.json`, "utf8"));
   for (const id of ["android-signature", "android-version"]) {
     assert.ok(report.assertions.some((item) => item.id === id && item.status === "failed" && item.detail.includes("ETIMEDOUT")));
+  }
+});
+
+test("per-tool timeout overrides must be integers within the global ceiling", (t) => {
+  const ipa = makeIPA(t, "1.1.0", "1.1.0");
+  for (const environment of [
+    { NEXTERM_MOBILE_EVIDENCE_OPENSSL_TIMEOUT_MS: "0" },
+    { NEXTERM_MOBILE_EVIDENCE_OPENSSL_TIMEOUT_MS: "not-a-number" },
+    { NEXTERM_MOBILE_EVIDENCE_TOOL_TIMEOUT_MS: "1000", NEXTERM_MOBILE_EVIDENCE_OPENSSL_TIMEOUT_MS: "2000" },
+  ]) {
+    const result = runPackageEvidence(ipa, "mobile-ios", environment);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /NEXTERM_MOBILE_EVIDENCE_OPENSSL_TIMEOUT_MS must be an integer in 1\.\.\d+/);
+    assert.equal(fs.existsSync(`${ipa}.artifact.json`), false);
   }
 });
 

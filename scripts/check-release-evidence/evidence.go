@@ -261,6 +261,7 @@ func runEvidenceChecks(root string) []checkResult {
 	if os.Getenv("NEXTERM_RELEASE_VERSION") == "" {
 		desktopVersion = "1.2.3"
 	}
+	c.results = append(c.results, runProductionDependencyChecks(root)...)
 	c.results = append(c.results, runDesktopDistChecks(root, desktopVersion, hostGOOS, hostGOARCH)...)
 	return c.results
 }

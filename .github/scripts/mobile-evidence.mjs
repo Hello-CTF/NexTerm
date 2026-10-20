@@ -44,6 +44,29 @@ const MAX_TOTAL_UNCOMPRESSED_BYTES = environmentCeiling("NEXTERM_MOBILE_EVIDENCE
 const MAX_ZIP_ENTRY_BYTES = environmentCeiling("NEXTERM_MOBILE_EVIDENCE_MAX_ENTRY_BYTES", 512 * MIB);
 const TOOL_TIMEOUT_MS = environmentCeiling("NEXTERM_MOBILE_EVIDENCE_TOOL_TIMEOUT_MS", 60000);
 
+// Per-tool budget overrides: a deliberately hanging tool under test must not
+// share a small budget with the real tools around it. Each tool keeps the
+// global budget unless NEXTERM_MOBILE_EVIDENCE_<TOOL>_TIMEOUT_MS lowers it for
+// that tool alone; values are validated eagerly so a bad override fails before
+// any tool runs.
+const TOOL_TIMEOUT_OVERRIDES = new Map();
+for (const tool of ["openssl", "python3", "apksigner", "aapt2"]) {
+  const name = `NEXTERM_MOBILE_EVIDENCE_${tool.toUpperCase()}_TIMEOUT_MS`;
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") continue;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1 || value > TOOL_TIMEOUT_MS) {
+    console.error(`${name} must be an integer in 1..${TOOL_TIMEOUT_MS}`);
+    process.exit(1);
+  }
+  TOOL_TIMEOUT_OVERRIDES.set(tool, value);
+}
+
+function toolTimeoutMs(command) {
+  const base = String(command).split(/[\\/]/).pop().replace(/\.[^.]*$/, "").toLowerCase();
+  return TOOL_TIMEOUT_OVERRIDES.get(base) ?? TOOL_TIMEOUT_MS;
+}
+
 const PLIST_READER = `import json, plistlib, sys
 document = plistlib.loads(sys.stdin.buffer.read())
 result = {}
@@ -172,7 +195,7 @@ with zipfile.ZipFile(sys.argv[1]) as package:
 let zipManifest = null;
 
 function runTool(command, args, options = {}) {
-  return spawnSync(command, args, { maxBuffer: MAX_TOOL_OUTPUT_BYTES, timeout: TOOL_TIMEOUT_MS, ...options });
+  return spawnSync(command, args, { maxBuffer: MAX_TOOL_OUTPUT_BYTES, timeout: toolTimeoutMs(command), ...options });
 }
 
 function inspectZip(file) {
