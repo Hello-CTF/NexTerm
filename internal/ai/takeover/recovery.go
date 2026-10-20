@@ -72,6 +72,8 @@ func (m *Manager) awaitCheckpoint(state *runState) bool {
 		select {
 		case <-ctx.Done():
 			return false
+		case <-state.ctx.Done():
+			return false
 		case <-time.After(2 * time.Millisecond):
 		}
 	}

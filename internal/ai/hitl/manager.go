@@ -60,6 +60,7 @@ type Manager struct {
 	now               func() time.Time
 	afterFunc         func(time.Duration, func()) Timer
 	newNonce          func() (string, error)
+	assetResolver     func(context.Context, string) (string, error)
 
 	mu     sync.RWMutex
 	runs   map[string]*runState
@@ -96,6 +97,7 @@ func NewManager(config Config) (*Manager, error) {
 		now:               config.Now,
 		afterFunc:         config.AfterFunc,
 		newNonce:          config.NewNonce,
+		assetResolver:     config.AssetResolver,
 		runs:              make(map[string]*runState),
 		nonces:            make(map[string]string),
 	}, nil
@@ -189,6 +191,10 @@ func (m *Manager) Interrupt(ctx context.Context, target *adk.InterruptCtx, input
 	if !ok {
 		return Interrupt{}, ErrCheckpointNotFound
 	}
+	asset, err := m.resolveAsset(ctx, run.id)
+	if err != nil {
+		return Interrupt{}, err
+	}
 	checkpointHash := digest("checkpoint", checkpoint)
 	requestID := stableID("itr_", run.id, run.checkpointID, checkpointHash, target.ID, input.CallID, input.Tool, string(input.Kind), parameterHash, string(questionJSON))
 	if question != nil {
@@ -197,7 +203,14 @@ func (m *Manager) Interrupt(ctx context.Context, target *adk.InterruptCtx, input
 	if existing := run.requests[requestID]; existing != nil {
 		switch existing.status {
 		case requestPending:
-			return cloneInterrupt(existing.interrupt), nil
+			if existing.interrupt.AssetID == asset {
+				return cloneInterrupt(existing.interrupt), nil
+			}
+			// The asset identity behind the evidence changed; the pending
+			// request is stale and a fresh one is issued below.
+			existing.status = requestStale
+			existing.timer.Stop()
+			m.releaseNonces(existing.interrupt.Nonce)
 		case requestConsumed:
 			return Interrupt{}, ErrRequestConsumed
 		default:
@@ -232,11 +245,12 @@ func (m *Manager) Interrupt(ctx context.Context, target *adk.InterruptCtx, input
 		CreatedAt:      now,
 		ExpiresAt:      now.Add(m.ttl),
 		Attempt:        run.attempt,
+		AssetID:        asset,
 	}
 	request := &requestState{interrupt: interrupt, status: requestPending}
 	run.requests[requestID] = request
 	run.status = RunStatusInterrupted
-	event := run.appendEventLocked(EventInterrupted, TerminalInterrupted, requestID, "")
+	event := run.appendEventLocked(EventInterrupted, TerminalInterrupted, requestID, "", asset)
 	interrupt.Sequence = event.Sequence
 	request.interrupt.Sequence = event.Sequence
 	request.timer = m.afterFunc(m.ttl, func() { m.expire(run.id, requestID) })
@@ -276,6 +290,10 @@ func (m *Manager) Resume(ctx context.Context, resumer Resumer, answer Answer, op
 	if interrupt.TargetID != answer.TargetID || interrupt.CallID != answer.CallID || interrupt.CheckpointID != answer.CheckpointID {
 		run.mu.Unlock()
 		return Resume{}, nil, ErrRequestStale
+	}
+	if answer.AssetID != "" && answer.AssetID != interrupt.AssetID {
+		run.mu.Unlock()
+		return Resume{}, nil, ErrAssetMismatch
 	}
 	if parameterHash != interrupt.ParameterHash {
 		run.mu.Unlock()
@@ -335,6 +353,29 @@ func (m *Manager) Resume(ctx context.Context, resumer Resumer, answer Answer, op
 		m.releaseNonces(nonce)
 		return Resume{}, nil, ErrCheckpointChanged
 	}
+	resumeAsset := ""
+	if m.assetResolver != nil {
+		// A request without asset evidence cannot be bound to the real asset
+		// identity; an unknown current identity is not a match either.
+		if interrupt.AssetID == "" {
+			run.mu.Unlock()
+			return Resume{}, nil, ErrAssetUnknown
+		}
+		current, err := m.assetResolver(ctx, run.id)
+		if err != nil {
+			run.mu.Unlock()
+			return Resume{}, nil, fmt.Errorf("hitl: resolve asset evidence: %w", err)
+		}
+		if strings.TrimSpace(current) == "" {
+			run.mu.Unlock()
+			return Resume{}, nil, ErrAssetUnknown
+		}
+		if current != interrupt.AssetID {
+			run.mu.Unlock()
+			return Resume{}, nil, ErrAssetMismatch
+		}
+		resumeAsset = interrupt.AssetID
+	}
 	request.status = requestConsumed
 	request.timer.Stop()
 	m.releaseNonces(request.interrupt.Nonce)
@@ -349,8 +390,9 @@ func (m *Manager) Resume(ctx context.Context, resumer Resumer, answer Answer, op
 		CheckpointID: run.checkpointID,
 		TargetID:     request.interrupt.TargetID,
 		Attempt:      run.attempt,
+		AssetID:      resumeAsset,
 	}
-	event := run.appendEventLocked(EventResumed, "", request.interrupt.ID, "")
+	event := run.appendEventLocked(EventResumed, "", request.interrupt.ID, "", resumeAsset)
 	resume.Sequence = event.Sequence
 	cancelOption, cancelFn := adk.WithCancel()
 	run.cancelFn = cancelFn
@@ -485,7 +527,7 @@ func (m *Manager) finish(run *runState, reason TerminalReason, message string, c
 		request.timer.Stop()
 	}
 	run.finishedAt = m.now()
-	event := run.appendEventLocked(EventTerminal, reason, "", message)
+	event := run.appendEventLocked(EventTerminal, reason, "", message, "")
 	run.terminal = &event
 	cancelFn := run.cancelFn
 	run.cancelFn = nil
@@ -670,7 +712,7 @@ func (m *Manager) Done(runID string) (<-chan struct{}, error) {
 	return run.ctx.Done(), nil
 }
 
-func (run *runState) appendEventLocked(kind EventKind, reason TerminalReason, requestID, message string) Event {
+func (run *runState) appendEventLocked(kind EventKind, reason TerminalReason, requestID, message, assetID string) Event {
 	run.sequence++
 	event := Event{
 		RunID:        run.id,
@@ -681,6 +723,7 @@ func (run *runState) appendEventLocked(kind EventKind, reason TerminalReason, re
 		Message:      message,
 		Attempt:      run.attempt,
 		Sequence:     run.sequence,
+		AssetID:      assetID,
 	}
 	run.events = append(run.events, event)
 	return event
@@ -704,6 +747,22 @@ func (m *Manager) uniqueNonce(runID string) (string, error) {
 		m.mu.Unlock()
 	}
 	return "", errors.New("nonce generator repeatedly returned a duplicate")
+}
+
+// resolveAsset returns the run's current asset evidence from the configured
+// resolver; with no resolver configured, asset identity stays unknown.
+func (m *Manager) resolveAsset(ctx context.Context, runID string) (string, error) {
+	if m.assetResolver == nil {
+		return "", nil
+	}
+	asset, err := m.assetResolver(ctx, runID)
+	if err != nil {
+		return "", fmt.Errorf("hitl: resolve asset evidence: %w", err)
+	}
+	if strings.TrimSpace(asset) == "" {
+		return "", ErrAssetUnknown
+	}
+	return asset, nil
 }
 
 func (m *Manager) run(runID string) (*runState, error) {

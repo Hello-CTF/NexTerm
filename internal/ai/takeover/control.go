@@ -87,6 +87,24 @@ func (m *Manager) authorizeJob(ctx context.Context, jobID string) (*runState, er
 	return state, nil
 }
 
+// verifyJobAsset re-resolves the tab's current asset and requires it to match
+// the identity the job was bound to; an unresolvable or changed asset fails
+// closed. Jobs without asset evidence (or without a resolver) stay unknown and
+// keep their previous behavior.
+func (m *Manager) verifyJobAsset(ctx context.Context, state *runState) error {
+	if state.assetID == "" || m.deps.TabAsset == nil {
+		return nil
+	}
+	current, err := m.deps.TabAsset(ctx, state.args.TabID)
+	if err != nil {
+		return err
+	}
+	if current == "" || current != state.assetID {
+		return ErrResumeMismatch
+	}
+	return nil
+}
+
 func (m *Manager) ConfirmContext(ctx context.Context, confirmation agent.Confirmation) error {
 	if confirmation.JobID == "" {
 		return agent.ErrInvalidConfirmation
@@ -94,7 +112,7 @@ func (m *Manager) ConfirmContext(ctx context.Context, confirmation agent.Confirm
 	if _, err := m.authorizeJob(ctx, confirmation.JobID); err != nil {
 		return err
 	}
-	return m.Confirm(confirmation)
+	return m.confirm(ctx, confirmation)
 }
 
 func (m *Manager) CancelContext(ctx context.Context, jobID string) error {

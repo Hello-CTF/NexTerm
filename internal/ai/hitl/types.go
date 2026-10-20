@@ -70,6 +70,8 @@ var (
 	ErrInvalidNonce       = errors.New("hitl: nonce does not match the interrupt request")
 	ErrParametersChanged  = errors.New("hitl: tool parameters changed")
 	ErrAnswerReused       = errors.New("hitl: answer ID belongs to another request")
+	ErrAssetMismatch      = errors.New("hitl: asset identity does not match the request evidence")
+	ErrAssetUnknown       = errors.New("hitl: asset identity evidence is unavailable")
 )
 
 type Question struct {
@@ -105,6 +107,9 @@ type Interrupt struct {
 	ExpiresAt      time.Time       `json:"expiresAt"`
 	Attempt        uint64          `json:"attempt"`
 	Sequence       uint64          `json:"seq"`
+	// AssetID is the real asset identity the request evidence was produced on,
+	// resolved server-side; empty means unknown.
+	AssetID string `json:"assetId,omitempty"`
 }
 
 type Answer struct {
@@ -118,6 +123,10 @@ type Answer struct {
 	Parameters   json.RawMessage `json:"parameters"`
 	Decision     Decision        `json:"decision,omitempty"`
 	Text         string          `json:"text,omitempty"`
+	// AssetID is the answerer's echo of the asset identity the confirmation was
+	// presented for; it is a claim checked against the request evidence, never
+	// trusted as the source of truth.
+	AssetID string `json:"assetId,omitempty"`
 }
 
 type Resume struct {
@@ -129,6 +138,8 @@ type Resume struct {
 	TargetID     string `json:"targetId"`
 	Attempt      uint64 `json:"attempt"`
 	Sequence     uint64 `json:"seq"`
+	// AssetID is the verified asset evidence the resume was authorized against.
+	AssetID string `json:"assetId,omitempty"`
 }
 
 type Event struct {
@@ -140,6 +151,7 @@ type Event struct {
 	Message      string         `json:"message,omitempty"`
 	Attempt      uint64         `json:"attempt"`
 	Sequence     uint64         `json:"seq"`
+	AssetID      string         `json:"assetId,omitempty"`
 }
 
 type Snapshot struct {
@@ -169,6 +181,11 @@ type Config struct {
 	Now               func() time.Time
 	AfterFunc         func(time.Duration, func()) Timer
 	NewNonce          func() (string, error)
+	// AssetResolver resolves the run's current real asset identity from
+	// server-side state; it is the only source of asset evidence. When nil,
+	// asset binding is disabled and all asset identities remain unknown.
+	// It is called with the run lock held and must not call back into the Manager.
+	AssetResolver func(context.Context, string) (string, error)
 }
 
 type Resumer interface {

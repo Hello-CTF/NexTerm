@@ -300,7 +300,11 @@ func (m *Manager) pauseState(state *runState) {
 func (m *Manager) pauseWatchdog(state *runState) {
 	timer := time.NewTimer(m.deps.PauseEscalationTimeout + 3*time.Second)
 	defer timer.Stop()
-	<-timer.C
+	select {
+	case <-timer.C:
+	case <-state.ctx.Done():
+		return
+	}
 	state.finalizeMu.Lock()
 	defer state.finalizeMu.Unlock()
 	if state.completed {
@@ -333,7 +337,12 @@ func (m *Manager) cancelIteration(cancelFn adk.AgentCancelFunc, state *runState,
 		iterCancel := state.iterCancel
 		state.pendingMu.Unlock()
 		if outcomeCh != nil {
-			outcomeCh <- outcome
+			// The run only drains one outcome per pause; once the run ends
+			// nobody reads, so drop the outcome instead of blocking forever.
+			select {
+			case outcomeCh <- outcome:
+			case <-state.ctx.Done():
+			}
 		}
 		if iterCancel != nil {
 			iterCancel()
@@ -379,6 +388,14 @@ func (m *Manager) resumePaused(ctx context.Context, owner *ownership, state *run
 	}
 	state.pauseReady = false
 	state.pendingMu.Unlock()
+	if err := m.verifyJobAsset(ctx, state); err != nil {
+		state.pendingMu.Lock()
+		if state.ctx.Err() == nil {
+			state.pauseReady = true
+		}
+		state.pendingMu.Unlock()
+		return RunResponse{}, err
+	}
 	stream, err := factory(ctx, args.ChannelID, state.id)
 	if err != nil || stream == nil {
 		state.pendingMu.Lock()
@@ -496,6 +513,10 @@ func (m *Manager) cancelState(state *runState, reason string) {
 }
 
 func (m *Manager) Confirm(confirmation agent.Confirmation) error {
+	return m.confirm(context.Background(), confirmation)
+}
+
+func (m *Manager) confirm(ctx context.Context, confirmation agent.Confirmation) error {
 	if confirmation.JobID == "" || confirmation.CallID == "" || confirmation.Nonce == "" {
 		return agent.ErrInvalidConfirmation
 	}
@@ -509,6 +530,9 @@ func (m *Manager) Confirm(confirmation agent.Confirmation) error {
 	m.mu.Unlock()
 	if state == nil || state.ctx.Err() != nil {
 		return ErrNotFound
+	}
+	if err := m.verifyJobAsset(ctx, state); err != nil {
+		return err
 	}
 	state.pendingMu.Lock()
 	if state.ctx.Err() != nil {

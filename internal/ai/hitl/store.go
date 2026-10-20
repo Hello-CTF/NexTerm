@@ -146,13 +146,13 @@ func (m *Manager) Restore(blob RunBlob) error {
 		run.status = RunStatusInterrupted
 	case run.status == RunStatusInterrupted:
 		run.status = RunStatusExpired
-		event := run.appendEventLocked(EventTerminal, TerminalExpired, "", "")
+		event := run.appendEventLocked(EventTerminal, TerminalExpired, "", "", "")
 		run.terminal = &event
 		run.finishedAt = now
 		run.cancel()
 	default:
 		run.status = RunStatusFailed
-		event := run.appendEventLocked(EventTerminal, TerminalFailed, "", "run interrupted by application restart")
+		event := run.appendEventLocked(EventTerminal, TerminalFailed, "", "run interrupted by application restart", "")
 		run.terminal = &event
 		run.finishedAt = now
 		run.cancel()

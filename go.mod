@@ -23,6 +23,7 @@ require (
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
 	github.com/wailsapp/wails/v3 v3.0.0-beta.27
+	go.uber.org/goleak v1.3.0
 	golang.org/x/crypto v0.57.0
 	golang.org/x/net v0.59.0
 	golang.org/x/text v0.42.0
