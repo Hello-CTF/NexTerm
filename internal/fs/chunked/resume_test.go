@@ -5,11 +5,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/fs/chunked"
 	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 func stagingGlob(t *testing.T, remote, uploadID string) []string {
@@ -356,5 +358,135 @@ func TestParseStagingName(t *testing.T) {
 		if ok != test.ok || uploadID != test.uploadID || kind != test.kind {
 			t.Fatalf("ParseStagingName(%q) = %q, %q, %v; want %q, %q, %v", test.name, uploadID, kind, ok, test.uploadID, test.kind, test.ok)
 		}
+	}
+}
+
+type openReadErrorFS struct {
+	*fslocal.FileSystem
+	err error
+}
+
+func (f *openReadErrorFS) OpenRead(ctx context.Context, path string) (base.RemoteReader, error) {
+	if strings.Contains(path, ".part-") {
+		return nil, f.err
+	}
+	return f.FileSystem.OpenRead(ctx, path)
+}
+
+type deleteErrorFS struct {
+	*fslocal.FileSystem
+	err error
+}
+
+func (f *deleteErrorFS) Delete(ctx context.Context, path string, isDir bool) error {
+	if strings.Contains(path, ".part-") {
+		return f.err
+	}
+	return f.FileSystem.Delete(ctx, path, isDir)
+}
+
+func corruptStagedPart(t *testing.T, remote, uploadID string) string {
+	t.Helper()
+	var partPath string
+	for _, match := range stagingGlob(t, remote, uploadID) {
+		if filepath.Ext(match) != ".manifest" {
+			partPath = match
+		}
+	}
+	if partPath == "" {
+		t.Fatalf("staged part not found for %s", remote)
+	}
+	data, err := os.ReadFile(partPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data[len(data)-1] ^= 0xff
+	if err := os.WriteFile(partPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return partPath
+}
+
+func TestResumeDropsCorruptOrphanPartAndAllowsRetry(t *testing.T) {
+	remote := filepath.Join(t.TempDir(), "remote.bin")
+	destination := fslocal.New()
+	first, err := chunked.New(testUploadID, remote, 8, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeChunk(t, first, destination, 0, "abcd")
+	for _, match := range stagingGlob(t, remote, testUploadID) {
+		if filepath.Ext(match) == ".manifest" {
+			if err := os.Remove(match); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	partPath := corruptStagedPart(t, remote, testUploadID)
+
+	second, err := chunked.New(testUploadID, remote, 8, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := second.Resume(context.Background(), destination)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if status.Received != 0 || len(status.Chunks) != 0 {
+		t.Fatalf("resume status = %+v, want empty", status)
+	}
+	if _, err := os.Stat(partPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("corrupt orphan part survived resume: %v", err)
+	}
+	writeChunk(t, second, destination, 0, "abcd")
+	writeChunk(t, second, destination, 1, "efgh")
+	committed, err := second.Commit(context.Background(), destination)
+	if err != nil || committed != 8 {
+		t.Fatalf("Commit = %d, %v", committed, err)
+	}
+	data, err := os.ReadFile(remote)
+	if err != nil || string(data) != "abcdefgh" {
+		t.Fatalf("committed target = %q, %v", data, err)
+	}
+}
+
+func TestResumePropagatesPartReadErrors(t *testing.T) {
+	remote := filepath.Join(t.TempDir(), "remote.bin")
+	destination := fslocal.New()
+	first, err := chunked.New(testUploadID, remote, 8, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeChunk(t, first, destination, 0, "abcd")
+
+	readErr := errors.New("backend read failed")
+	resume := &openReadErrorFS{FileSystem: destination, err: readErr}
+	second, err := chunked.New(testUploadID, remote, 8, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Resume(context.Background(), resume); !errors.Is(err, readErr) {
+		t.Fatalf("Resume error = %v, want %v", err, readErr)
+	}
+}
+
+func TestResumeFailsWhenCorruptPartCannotBeRemoved(t *testing.T) {
+	remote := filepath.Join(t.TempDir(), "remote.bin")
+	destination := fslocal.New()
+	first, err := chunked.New(testUploadID, remote, 8, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeChunk(t, first, destination, 0, "abcd")
+	corruptStagedPart(t, remote, testUploadID)
+
+	removeErr := errors.New("backend delete failed")
+	resume := &deleteErrorFS{FileSystem: destination, err: removeErr}
+	second, err := chunked.New(testUploadID, remote, 8, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Resume(context.Background(), resume); !errors.Is(err, removeErr) {
+		t.Fatalf("Resume error = %v, want %v", err, removeErr)
 	}
 }

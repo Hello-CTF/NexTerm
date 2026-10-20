@@ -42,7 +42,9 @@ func (u *Upload) Resume(ctx context.Context, destination base.FileSystem) (Resum
 	for index := range manifested {
 		if err := u.validateStaged(ctx, destination, index, buffer); err != nil {
 			if errors.Is(err, fs.ErrNotExist) || errors.Is(err, errPartMismatch) {
-				cleanupPath(u.partPath(index), destination.Delete)
+				if removeErr := u.removeStaged(ctx, destination, index); removeErr != nil {
+					return ResumeStatus{}, removeErr
+				}
 				delete(manifested, index)
 				continue
 			}
@@ -54,8 +56,17 @@ func (u *Upload) Resume(ctx context.Context, destination base.FileSystem) (Resum
 		if _, ok := manifested[index]; ok {
 			continue
 		}
-		if err := u.validateStaged(ctx, destination, index, buffer); err != nil {
+		err := u.validateStaged(ctx, destination, index, buffer)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
 			continue
+		case errors.Is(err, errPartMismatch):
+			if removeErr := u.removeStaged(ctx, destination, index); removeErr != nil {
+				return ResumeStatus{}, removeErr
+			}
+			continue
+		case err != nil:
+			return ResumeStatus{}, err
 		}
 		if err := appendManifest(ctx, destination, u.manifestPath(), index); err != nil {
 			return ResumeStatus{}, err
@@ -80,6 +91,13 @@ func (u *Upload) validateStaged(ctx context.Context, destination base.FileSystem
 		return fmt.Errorf("chunk index %d out of range", index)
 	}
 	return readPart(ctx, destination, u.partPath(index), u.expectedChunkSize(index), "", nil, buffer)
+}
+
+func (u *Upload) removeStaged(ctx context.Context, destination base.FileSystem, index int64) error {
+	if err := destination.Delete(ctx, u.partPath(index), false); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove staged chunk %d: %w", index, err)
+	}
+	return nil
 }
 
 func (u *Upload) readManifest(ctx context.Context, destination base.FileSystem, into map[int64]struct{}) error {
