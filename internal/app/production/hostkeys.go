@@ -165,12 +165,10 @@ func (s *productionHostKeyStore) fileFor(ctx context.Context) (*ssh.FileHostKeyS
 	return files, path, nil
 }
 
-// HostKeys returns the mirror entries that the owner-scoped ledger trusts: verification reads trust from the
-// database while the file only supplies complete key material. Mirror-only leftovers — for example from an
-// interrupted write — are never returned and cannot silently extend trust.
+// HostKeys answers from the owner-scoped ledger: the database holds the complete public key and metadata, so
+// verification does not depend on the mirror file. Ledger rows without recorded key material are omitted —
+// they still verify through ApprovedHostKeys and regain material on the next direct connect.
 func (s *productionHostKeyStore) HostKeys(ctx context.Context, host string, port int) ([]ssh.HostKey, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if _, err := s.requestOwner(ctx); err != nil {
 		return nil, err
 	}
@@ -178,24 +176,10 @@ func (s *productionHostKeyStore) HostKeys(ctx context.Context, host string, port
 	if err != nil {
 		return nil, err
 	}
-	trusted := make(map[string]struct{}, len(rows))
-	for _, row := range rows {
-		if row.Host == host && int(row.Port) == port {
-			trusted[row.KeyType+"\x00"+row.Fingerprint] = struct{}{}
-		}
-	}
-	files, _, err := s.fileFor(ctx)
-	if err != nil {
-		return nil, err
-	}
-	mirrored, err := files.HostKeys(ctx, host, port)
-	if err != nil {
-		return nil, err
-	}
 	var known []ssh.HostKey
-	for _, key := range mirrored {
-		if _, ok := trusted[key.KeyType+"\x00"+key.Fingerprint]; ok {
-			known = append(known, key)
+	for _, row := range rows {
+		if row.Host == host && int(row.Port) == port && row.Key != "" {
+			known = append(known, ssh.HostKey{Host: row.Host, Port: int(row.Port), KeyType: row.KeyType, Fingerprint: row.Fingerprint, Key: row.Key})
 		}
 	}
 	return known, nil
@@ -212,7 +196,7 @@ func (s *productionHostKeyStore) ApprovedHostKeys(ctx context.Context, host stri
 	var approved []ssh.HostKey
 	for _, row := range rows {
 		if row.Host == host && int(row.Port) == port {
-			approved = append(approved, ssh.HostKey{Host: row.Host, Port: int(row.Port), KeyType: row.KeyType, Fingerprint: row.Fingerprint})
+			approved = append(approved, ssh.HostKey{Host: row.Host, Port: int(row.Port), KeyType: row.KeyType, Fingerprint: row.Fingerprint, Key: row.Key})
 		}
 	}
 	return approved, nil
@@ -237,7 +221,7 @@ func (s *productionHostKeyStore) PutHostKey(ctx context.Context, key ssh.HostKey
 	if err != nil {
 		return err
 	}
-	if err := s.database.KnownHostAccept(ctx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint); err != nil {
+	if err := s.database.KnownHostAcceptWithKey(ctx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint, key.Key); err != nil {
 		return err
 	}
 	mirrorReplace := replace
@@ -343,11 +327,16 @@ func (s *productionHostKeyStore) migrateSharedLegacy(ctx context.Context) (produ
 		}
 		switch {
 		case ledgerExists && ledger.Fingerprint == key.Fingerprint:
+			if ledger.Key == "" && key.Key != "" {
+				if err := s.database.KnownHostFillKeyMaterial(ctx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint, key.Key); err != nil {
+					return report, err
+				}
+			}
 			report.Existing++
 		case ledgerExists:
 			report.Conflicts++
 		default:
-			if err := s.database.KnownHostAccept(ctx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint); err != nil {
+			if err := s.database.KnownHostAcceptWithKey(ctx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint, key.Key); err != nil {
 				return report, err
 			}
 			report.Copied++
@@ -405,6 +394,11 @@ func (s *productionHostKeyStore) importLegacyKey(ctx context.Context, ownerID st
 	if ledgerExists && ledger.Fingerprint != key.Fingerprint {
 		return productionHostKeyMigrationConflict, nil
 	}
+	if ledgerExists && ledger.Key == "" && key.Key != "" {
+		if err := s.database.KnownHostFillKeyMaterial(ownerCtx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint, key.Key); err != nil {
+			return productionHostKeyMigrationConflict, err
+		}
+	}
 	files, path, err := s.fileFor(ownerCtx)
 	if err != nil {
 		return productionHostKeyMigrationConflict, err
@@ -432,7 +426,7 @@ func (s *productionHostKeyStore) importLegacyKey(ctx context.Context, ownerID st
 		}
 	}
 	if !ledgerExists {
-		if err := s.database.KnownHostAccept(ownerCtx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint); err != nil {
+		if err := s.database.KnownHostAcceptWithKey(ownerCtx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint, key.Key); err != nil {
 			if !alreadyPresent {
 				if rollbackErr := restoreProductionHostKeyFile(path, previous, fileExisted); rollbackErr != nil {
 					return productionHostKeyMigrationConflict, errors.Join(err, fmt.Errorf("restore SSH host key file: %w", rollbackErr))

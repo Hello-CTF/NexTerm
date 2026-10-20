@@ -32,6 +32,7 @@ func newKnownHostRow(db *gorm.DB, opts ...gen.DOOption) knownHostRow {
 	_knownHostRow.Port = field.NewInt32(tableName, "port")
 	_knownHostRow.KeyType = field.NewString(tableName, "key_type")
 	_knownHostRow.Fingerprint = field.NewString(tableName, "fingerprint")
+	_knownHostRow.Key = field.NewString(tableName, "key")
 	_knownHostRow.AddedAt = field.NewInt64(tableName, "added_at")
 	_knownHostRow.OwnerID = field.NewString(tableName, "owner_id")
 
@@ -49,6 +50,7 @@ type knownHostRow struct {
 	Port        field.Int32
 	KeyType     field.String
 	Fingerprint field.String
+	Key         field.String
 	AddedAt     field.Int64
 	OwnerID     field.String
 
@@ -72,6 +74,7 @@ func (k *knownHostRow) updateTableName(table string) *knownHostRow {
 	k.Port = field.NewInt32(table, "port")
 	k.KeyType = field.NewString(table, "key_type")
 	k.Fingerprint = field.NewString(table, "fingerprint")
+	k.Key = field.NewString(table, "key")
 	k.AddedAt = field.NewInt64(table, "added_at")
 	k.OwnerID = field.NewString(table, "owner_id")
 
@@ -102,12 +105,13 @@ func (k *knownHostRow) GetFieldByName(fieldName string) (field.OrderExpr, bool) 
 }
 
 func (k *knownHostRow) fillFieldMap() {
-	k.fieldMap = make(map[string]field.Expr, 7)
+	k.fieldMap = make(map[string]field.Expr, 8)
 	k.fieldMap["id"] = k.ID
 	k.fieldMap["host"] = k.Host
 	k.fieldMap["port"] = k.Port
 	k.fieldMap["key_type"] = k.KeyType
 	k.fieldMap["fingerprint"] = k.Fingerprint
+	k.fieldMap["key"] = k.Key
 	k.fieldMap["added_at"] = k.AddedAt
 	k.fieldMap["owner_id"] = k.OwnerID
 }

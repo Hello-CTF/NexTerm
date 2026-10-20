@@ -25,13 +25,73 @@ func (s *Store) KnownHostGet(ctx context.Context, host string, port int32, keyTy
 	return *row, true, nil
 }
 
+// knownHostKeyAssignment keeps recorded key material when a fingerprint-only accept re-confirms the same
+// fingerprint and clears it when the fingerprint changes, so stale material never verifies under a new one.
+// The key assignment must precede the fingerprint assignment: MySQL-family upserts evaluate assignments left
+// to right against the partially updated row.
+type knownHostKeyAssignment struct{}
+
+func (knownHostKeyAssignment) Build(builder clause.Builder) {
+	// PostgreSQL and SQLite read the current row through the table-qualified name; MySQL-family upserts
+	// resolve the table-qualified name to the proposed row, so they need the unqualified reference.
+	table := "known_host"
+	if statement, ok := builder.(*gorm.Statement); ok && statement.Dialector.Name() == "mysql" {
+		table = ""
+	}
+	builder.WriteString("CASE WHEN ")
+	incomingValue{name: "fingerprint"}.Build(builder)
+	builder.WriteString(" <> ")
+	builder.WriteQuoted(clause.Column{Table: table, Name: "fingerprint"})
+	builder.WriteString(" THEN '' ELSE ")
+	builder.WriteQuoted(clause.Column{Table: table, Name: "key"})
+	builder.WriteString(" END")
+}
+
+// KnownHostAccept records a fingerprint-only trust decision. Any key material recorded for the endpoint is
+// kept while the fingerprint is unchanged and cleared when the fingerprint changes; the material is filled
+// in by the next acceptance that carries the complete public key.
 func (s *Store) KnownHostAccept(ctx context.Context, host string, port int32, keyType, fingerprint string) error {
 	knownHost := query.Use(s.db).KnownHostRow
 	row := KnownHostRow{ID: ids.New(), Host: host, Port: port, KeyType: keyType, Fingerprint: fingerprint, AddedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)}
 	err := knownHost.WithContext(ctx).
 		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "owner_id"}, {Name: "host"}, {Name: "port"}, {Name: "key_type"}},
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "key"}, Value: knownHostKeyAssignment{}},
+				{Column: clause.Column{Name: "fingerprint"}, Value: incomingValue{name: "fingerprint"}},
+				{Column: clause.Column{Name: "added_at"}, Value: incomingValue{name: "added_at"}},
+			},
+			Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+		}).
+		Create(&row)
+	if err != nil {
+		return dbError(err)
+	}
+	return nil
+}
+
+// KnownHostFillKeyMaterial completes recorded key material for an already trusted endpoint without touching
+// the trust revision. The empty-material guard keeps it idempotent.
+func (s *Store) KnownHostFillKeyMaterial(ctx context.Context, host string, port int32, keyType, fingerprint, key string) error {
+	knownHost := query.Use(s.db).KnownHostRow
+	if _, err := knownHost.WithContext(ctx).
+		Where(knownHost.Host.Eq(host), knownHost.Port.Eq(port), knownHost.KeyType.Eq(keyType), knownHost.Fingerprint.Eq(fingerprint), knownHost.Key.Eq("")).
+		Where(ownerConditions(ctx, knownHost.TableName())...).
+		Updates(map[string]any{"key": key}); err != nil {
+		return dbError(err)
+	}
+	return nil
+}
+
+// KnownHostAcceptWithKey records trust together with the complete public key, so verification can exact-match
+// from the ledger without consulting a mirror file.
+func (s *Store) KnownHostAcceptWithKey(ctx context.Context, host string, port int32, keyType, fingerprint, key string) error {
+	knownHost := query.Use(s.db).KnownHostRow
+	row := KnownHostRow{ID: ids.New(), Host: host, Port: port, KeyType: keyType, Fingerprint: fingerprint, Key: key, AddedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)}
+	err := knownHost.WithContext(ctx).
+		Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "owner_id"}, {Name: "host"}, {Name: "port"}, {Name: "key_type"}},
-			DoUpdates: clause.AssignmentColumns([]string{"fingerprint", "added_at"}),
+			DoUpdates: clause.AssignmentColumns([]string{"fingerprint", "key", "added_at"}),
 			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
 		}).
 		Create(&row)
@@ -120,7 +180,7 @@ func (s *Store) KnownHostCompensateAccept(ctx context.Context, host string, port
 		}
 		return nil
 	}
-	if _, err := scoped.Updates(map[string]any{"fingerprint": previous.Fingerprint, "added_at": previous.AddedAt}); err != nil {
+	if _, err := scoped.Updates(map[string]any{"fingerprint": previous.Fingerprint, "key": previous.Key, "added_at": previous.AddedAt}); err != nil {
 		return dbError(err)
 	}
 	return nil

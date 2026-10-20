@@ -293,6 +293,55 @@ func TestProductionHostKeySharedLegacyMigrationConflictKeepsLedger(t *testing.T)
 	}
 }
 
+func TestProductionHostKeyVerificationWithoutMirror(t *testing.T) {
+	server := newHostKeyTestServer(t)
+	signer := *server.signer.Load()
+	publicKey := signer.PublicKey()
+	material := base64.StdEncoding.EncodeToString(publicKey.Marshal())
+	ctx := context.Background()
+	ownerA := ipc.WithUserID(ctx, "no-mirror-owner-a")
+	database := newKnownHostOwnerTestDB(t)
+	path := filepath.Join(t.TempDir(), "known_hosts.json")
+	// The ledger alone holds the complete public key and metadata; the mirror file does not exist.
+	if err := database.KnownHostAcceptWithKey(ownerA, "127.0.0.1", int32(server.port()), publicKey.Type(), gossh.FingerprintSHA256(publicKey), material); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := newProductionHostKeyStore(ctx, path, database, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if known, err := keys.HostKeys(ownerA, "127.0.0.1", server.port()); err != nil || len(known) != 1 || known[0].Key != material {
+		t.Fatalf("ledger-backed host keys = %+v, %v", known, err)
+	}
+	connection, err := ssh.Connect(ownerA, ssh.Config{
+		Host: "127.0.0.1", Port: server.port(), User: "test", HostKeys: keys,
+		Auth: ssh.AuthConfig{Method: ssh.AuthPassword, Password: "host-key-test"},
+	})
+	if connection != nil {
+		_ = connection.Close()
+	}
+	if err != nil {
+		t.Fatalf("verification without a mirror failed: %v", err)
+	}
+	// Exact-match verification succeeded without any mirror write.
+	keys.mu.Lock()
+	_, mirrorPath, err := keys.fileFor(ownerA)
+	keys.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(mirrorPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("mirrorless verification created a mirror file: %v", err)
+	}
+	// The explicit acceptance path still maintains the mirror for desktop interop.
+	if err := keys.PutHostKey(ownerA, ssh.HostKey{Host: "127.0.0.1", Port: server.port(), KeyType: publicKey.Type(), Fingerprint: gossh.FingerprintSHA256(publicKey), Key: material}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(mirrorPath); err != nil {
+		t.Fatalf("explicit acceptance did not rebuild the mirror: %v", err)
+	}
+}
+
 func breakKnownHostMirror(t *testing.T, keys *productionHostKeyStore, ctx context.Context) string {
 	t.Helper()
 	keys.mu.Lock()

@@ -116,14 +116,17 @@ func TestKnownHostCompensateAcceptDatabase(t *testing.T) {
 		t.Fatalf("compensated insert left a ledger row: found=%v err=%v", found, err)
 	}
 	// A failed mirror write after a replacement restores the prior fingerprint and revision.
-	if err := database.KnownHostAccept(ownerA, "replace.test", 22, "ssh-ed25519", "SHA256:old"); err != nil {
+	if err := database.KnownHostAcceptWithKey(ownerA, "replace.test", 22, "ssh-ed25519", "SHA256:old", "b2xkLWtleQ=="); err != nil {
 		t.Fatal(err)
 	}
 	previous, found, err := database.KnownHostGet(ownerA, "replace.test", 22, "ssh-ed25519")
 	if err != nil || !found {
 		t.Fatalf("previous row = %+v, %v, %v", previous, found, err)
 	}
-	if err := database.KnownHostAccept(ownerA, "replace.test", 22, "ssh-ed25519", "SHA256:new"); err != nil {
+	if previous.Key != "b2xkLWtleQ==" {
+		t.Fatalf("previous row lost its key material: %+v", previous)
+	}
+	if err := database.KnownHostAcceptWithKey(ownerA, "replace.test", 22, "ssh-ed25519", "SHA256:new", "bmV3LWtleQ=="); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.KnownHostCompensateAccept(ownerA, "replace.test", 22, "ssh-ed25519", &previous); err != nil {
@@ -133,7 +136,7 @@ func TestKnownHostCompensateAcceptDatabase(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("restored row = %+v, %v, %v", restored, found, err)
 	}
-	if restored.ID != previous.ID || restored.Fingerprint != previous.Fingerprint || restored.AddedAt != previous.AddedAt {
+	if restored.ID != previous.ID || restored.Fingerprint != previous.Fingerprint || restored.Key != previous.Key || restored.AddedAt != previous.AddedAt {
 		t.Fatalf("compensated replacement = %+v, want %+v", restored, previous)
 	}
 	// Compensation is owner-scoped: another owner cannot roll back someone else's accept.
@@ -210,5 +213,50 @@ func TestKnownHostRemoveForMirrorRestoreDatabase(t *testing.T) {
 	}
 	if restored, found, err := database.KnownHostGet(ownerA, "mirror.test", 22, "ssh-ed25519"); err != nil || !found || restored != row {
 		t.Fatalf("opt-out restored row = %+v, %v, %v", restored, found, err)
+	}
+}
+
+func TestKnownHostKeyMaterialDatabase(t *testing.T) {
+	database := dbtest.NewFixture(t).OpenStore(t)
+	ctx := context.Background()
+	ownerA := ipc.WithUserID(ctx, "material-owner-a")
+	ownerB := ipc.WithUserID(ctx, "material-owner-b")
+	// Accepting with complete key material stores it on the ledger row.
+	if err := database.KnownHostAcceptWithKey(ownerA, "material.test", 22, "ssh-ed25519", "SHA256:material", "bWF0ZXJpYWwta2V5"); err != nil {
+		t.Fatal(err)
+	}
+	row, found, err := database.KnownHostGet(ownerA, "material.test", 22, "ssh-ed25519")
+	if err != nil || !found || row.Key != "bWF0ZXJpYWwta2V5" {
+		t.Fatalf("key material row = %+v, %v, %v", row, found, err)
+	}
+	// A fingerprint-only re-accept keeps the recorded material.
+	if err := database.KnownHostAccept(ownerA, "material.test", 22, "ssh-ed25519", "SHA256:material"); err != nil {
+		t.Fatal(err)
+	}
+	if row, _, _ = database.KnownHostGet(ownerA, "material.test", 22, "ssh-ed25519"); row.Key != "bWF0ZXJpYWwta2V5" {
+		t.Fatalf("fingerprint-only re-accept lost material: %+v", row)
+	}
+	// A replacement with new material updates fingerprint and key together.
+	if err := database.KnownHostAcceptWithKey(ownerA, "material.test", 22, "ssh-ed25519", "SHA256:rotated", "cm90YXRlZC1rZXk="); err != nil {
+		t.Fatal(err)
+	}
+	if row, _, _ = database.KnownHostGet(ownerA, "material.test", 22, "ssh-ed25519"); row.Fingerprint != "SHA256:rotated" || row.Key != "cm90YXRlZC1rZXk=" {
+		t.Fatalf("material replacement = %+v", row)
+	}
+	// A fingerprint-only replacement clears stale material: the old key must not verify under the new fingerprint.
+	if err := database.KnownHostAccept(ownerA, "material.test", 22, "ssh-ed25519", "SHA256:cleared"); err != nil {
+		t.Fatal(err)
+	}
+	if row, _, _ = database.KnownHostGet(ownerA, "material.test", 22, "ssh-ed25519"); row.Fingerprint != "SHA256:cleared" || row.Key != "" {
+		t.Fatalf("fingerprint-only replacement kept stale material: %+v", row)
+	}
+	// Key material is owner-scoped: owners hold independent material for the same endpoint.
+	if err := database.KnownHostAcceptWithKey(ownerB, "material.test", 22, "ssh-ed25519", "SHA256:material-b", "b3duZXItYi1rZXk="); err != nil {
+		t.Fatal(err)
+	}
+	rowA, _, _ := database.KnownHostGet(ownerA, "material.test", 22, "ssh-ed25519")
+	rowB, _, _ := database.KnownHostGet(ownerB, "material.test", 22, "ssh-ed25519")
+	if rowA.Fingerprint != "SHA256:cleared" || rowA.Key != "" || rowB.Fingerprint != "SHA256:material-b" || rowB.Key != "b3duZXItYi1rZXk=" {
+		t.Fatalf("owner materials crossed: A=%+v B=%+v", rowA, rowB)
 	}
 }
