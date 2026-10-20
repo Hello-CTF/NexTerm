@@ -14,7 +14,7 @@ import { useAssetVisibility } from "../features/explorer/assetVisibility";
 import { useAssetReachability, type ReachabilityEntry } from "../features/explorer/assetReachability";
 import { ReachabilityDot } from "../features/explorer/ReachabilityDot";
 import { createMultiHostLogTabId, MULTI_HOST_LOG_TAB_ID } from "../features/logs/logTailTab";
-import { FLEET_HEALTH_TAB_ID } from "../features/fleet/fleetHealthTab";
+import { createFleetHealthTabId, FLEET_HEALTH_TAB_ID } from "../features/fleet/fleetHealthTab";
 import {
   IconActivity,
   IconClock,
@@ -264,7 +264,7 @@ export function CommandPalette({
         label: "主机概览",
         hint: "当前项目 · 只读健康网格 · 默认手动刷新",
         icon: IconActivity,
-        run: () => addTab({ id: FLEET_HEALTH_TAB_ID, kind: "log", title: "主机概览", closable: true }),
+        run: () => addTab({ id: createFleetHealthTabId(), kind: "log", title: "主机概览", closable: true }),
       },
       {
         id: "settings",

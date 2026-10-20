@@ -21,6 +21,7 @@ import { baseName } from "../features/files/pathUtils";
 import { aiTabRunControls, confirmAiRunCancellation, runningAiTabs as getRunningAiTabs, clearAiTabRun, clearAiTabRuns, type AiCloseTab } from "../features/ai/runOwnership";
 import { splitAllowedForHeight, workspaceViewport } from "../features/terminal/workspaceLayout";
 import { useConnectHistory } from "../features/explorer/connectHistory";
+import { isFleetHealthTabId } from "../features/fleet/fleetHealthTab";
 import {
   getResolvedTheme,
   getThemeMode,
@@ -1381,26 +1382,22 @@ export const useUi = create<UiState>((set, get) => ({
   setActiveTab: (id) => {
     clearTabUnread(id);
     set((st) => {
-      for (const w of st.workspaces) {
-        for (const p of w.panes) {
-          if (!p.tabs.some((t) => t.id === id)) continue;
-          return {
-            activeWorkspaceId: w.id,
-            workspaces: st.workspaces.map((x) =>
-              x.id === w.id
-                ? {
-                    ...x,
-                    activePaneId: p.id,
-                    panes: x.panes.map((q) =>
-                      q.id === p.id ? { ...q, activeTabId: id } : q,
-                    ),
-                  }
-                : x,
-            ),
-          };
-        }
-      }
-      return {};
+      const hit = findTabLocation(st.workspaces, st.activeWorkspaceId, id);
+      if (!hit) return {};
+      return {
+        activeWorkspaceId: hit.workspace.id,
+        workspaces: st.workspaces.map((x) =>
+          x.id === hit.workspace.id
+            ? {
+                ...x,
+                activePaneId: hit.pane.id,
+                panes: x.panes.map((q) =>
+                  q.id === hit.pane.id ? { ...q, activeTabId: id } : q,
+                ),
+              }
+            : x,
+        ),
+      };
     });
   },
 
@@ -1504,22 +1501,11 @@ export const useUi = create<UiState>((set, get) => ({
 
   closeTab: async (id, mode, suppressErrorToast) => {
     const st = get();
-    let target: AppTab | undefined;
-    let wsId: string | undefined;
-    let paneId: string | undefined;
-    for (const w of st.workspaces) {
-      for (const p of w.panes) {
-        const t = p.tabs.find((x) => x.id === id);
-        if (t) {
-          target = t;
-          wsId = w.id;
-          paneId = p.id;
-          break;
-        }
-      }
-      if (target) break;
-    }
-    if (!target || !wsId || !paneId) return false;
+    const hit = findTabLocation(st.workspaces, st.activeWorkspaceId, id);
+    if (!hit) return false;
+    const target = hit.tab;
+    const wsId = hit.workspace.id;
+    const paneId = hit.pane.id;
     if (target.tabId) {
       try {
         const kind = st.sessions.find((session) => session.id === target.sessionId)?.kind
@@ -2410,6 +2396,23 @@ export function migrateToolTabs(
   return next;
 }
 
+function findTabLocation(
+  workspaces: Workspace[],
+  preferredWorkspaceId: string | null,
+  id: string,
+): { workspace: Workspace; pane: Pane; tab: AppTab } | null {
+  let first: { workspace: Workspace; pane: Pane; tab: AppTab } | null = null;
+  for (const workspace of workspaces) {
+    for (const pane of workspace.panes) {
+      const tab = pane.tabs.find((t) => t.id === id);
+      if (!tab) continue;
+      if (workspace.id === preferredWorkspaceId) return { workspace, pane, tab };
+      if (!first) first = { workspace, pane, tab };
+    }
+  }
+  return first;
+}
+
 function sameTab(t: AppTab, tab: AppTab, caseInsensitive = false): boolean {
   if (t.id === tab.id) return true;
   if (t.tabId && tab.tabId && t.tabId === tab.tabId) return true;
@@ -2429,7 +2432,9 @@ function sameTab(t: AppTab, tab: AppTab, caseInsensitive = false): boolean {
     t.connId === tab.connId &&
     !t.tabId &&
     !tab.tabId &&
-    t.path === tab.path
+    t.path === tab.path &&
+    !isFleetHealthTabId(t.id) &&
+    !isFleetHealthTabId(tab.id)
   );
 }
 
