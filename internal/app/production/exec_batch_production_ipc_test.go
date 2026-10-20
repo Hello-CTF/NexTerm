@@ -3,11 +3,15 @@ package production
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
@@ -96,6 +100,7 @@ func TestExecBatchIPCProductionConfirmationUsesServerAssetMetadata(t *testing.T)
 
 	request.ProductionConfirmation = &execbatch.ProductionConfirmation{
 		Confirmed: true, TargetSetHash: detail.TargetSetHash, CommandHash: detail.CommandHash,
+		EnvironmentNames: detail.RequiredEnvironmentNames,
 	}
 	confirmed := dispatchExecBatchTest(dispatcher, owner, "exec_batch_execute", request)
 	batch := decodeExecBatchTest[execbatch.Batch](t, confirmed)
@@ -106,5 +111,80 @@ func TestExecBatchIPCProductionConfirmationUsesServerAssetMetadata(t *testing.T)
 	defer auditor.mu.Unlock()
 	if len(auditor.records) != 2 || auditor.records[0].Kind != "exec_batch_production_confirmation" {
 		t.Fatalf("production IPC audit records = %+v", auditor.records)
+	}
+}
+
+func TestProductionConstructionWiresRunbookAndProductionSettings(t *testing.T) {
+	owner := ipc.WithUserID(t.Context(), "owner-a")
+	database, err := store.OpenInMemory(owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	var execCalls atomic.Int32
+	transport := newExecBatchTestTransport(func(context.Context, string, base.ExecOptions) (base.ExecResult, error) {
+		execCalls.Add(1)
+		code := 0
+		return base.ExecResult{ExitCode: &code}, nil
+	})
+	manager := newExecBatchTestManager(t, transport)
+	production, err := NewProductionWithServices(Config{
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}, ProductionServices{Store: database, Sessions: manager})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if production.Services.Runbook == nil {
+		t.Fatal("runbook IPC service is not exposed on ProductionServices")
+	}
+	if production.Services.ExecBatches == nil {
+		t.Fatal("exec batch service was not constructed")
+	}
+
+	// The wired exec batch service classifies production through the store-backed
+	// per-owner configuration, requires the typed environment name, and executes
+	// only with the correct name.
+	if err := guard.SetProductionEnvironments(owner, database, []string{"live"}); err != nil {
+		t.Fatal(err)
+	}
+	hostname := "api.live.example"
+	asset, err := database.AssetCreate(owner, store.AssetInput{Kind: session.KindSSH, Name: "Live API", Host: &hostname, Tags: "env:live"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connected, err := manager.ConnectFor(owner, session.Asset{ID: asset.ID, Name: asset.Name, Kind: session.KindSSH, StoreBacked: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := execbatch.Request{BatchID: "batch-wired-live", SessionIDs: []string{connected.ID}, Command: "hostname"}
+	_, err = production.Services.ExecBatches.Execute(owner, "owner-a", request)
+	var required *execbatch.ConfirmationRequiredError
+	if !errors.As(err, &required) || !errors.Is(err, execbatch.ErrConfirmationRequired) {
+		t.Fatalf("wired live execute error = %v, want confirmation required", err)
+	}
+	detail := required.IPCDetail()
+	if len(detail.RequiredEnvironmentNames) != 1 || detail.RequiredEnvironmentNames[0] != "live" {
+		t.Fatalf("wired required environment names = %v", detail.RequiredEnvironmentNames)
+	}
+	if execCalls.Load() != 0 {
+		t.Fatalf("unconfirmed wired execute ran %d commands", execCalls.Load())
+	}
+	request.ProductionConfirmation = &execbatch.ProductionConfirmation{
+		Confirmed: true, TargetSetHash: detail.TargetSetHash, CommandHash: detail.CommandHash,
+		EnvironmentNames: []string{"production"},
+	}
+	if _, err := production.Services.ExecBatches.Execute(owner, "owner-a", request); !errors.Is(err, execbatch.ErrConfirmationRequired) {
+		t.Fatalf("wrong typed name error = %v, want confirmation required", err)
+	}
+	if execCalls.Load() != 0 {
+		t.Fatalf("wrong typed name executed %d commands", execCalls.Load())
+	}
+	request.ProductionConfirmation.EnvironmentNames = []string{"live"}
+	batch, err := production.Services.ExecBatches.Execute(owner, "owner-a", request)
+	if err != nil {
+		t.Fatalf("wired live confirmation failed: %v", err)
+	}
+	if len(batch.Results) != 1 || batch.Results[0].Status != execbatch.StatusSuccess || execCalls.Load() != 1 {
+		t.Fatalf("wired live batch = %+v, exec calls = %d", batch.Results, execCalls.Load())
 	}
 }

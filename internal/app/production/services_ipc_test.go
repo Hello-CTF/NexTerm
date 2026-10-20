@@ -62,6 +62,7 @@ func TestServicesIPCProductionGuardBindsConfirmedSystemctlCommand(t *testing.T) 
 	}
 	request.ProductionConfirmation = &execbatch.ProductionConfirmation{
 		Confirmed: true, TargetSetHash: detail.TargetSetHash, CommandHash: detail.CommandHash,
+		EnvironmentNames: detail.RequiredEnvironmentNames,
 	}
 	confirmed := dispatchExecBatchTest(dispatcher, owner, "services_action", request)
 	batch := decodeExecBatchTest[hostservices.ServiceOperationBatch](t, confirmed)

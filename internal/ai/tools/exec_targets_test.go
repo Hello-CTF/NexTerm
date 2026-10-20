@@ -90,6 +90,16 @@ func TestExecCommandsByAssetsAndTagsUsesBatchForEveryCommand(t *testing.T) {
 	}
 }
 
+// productionConfirmationsWithEnvironmentNames simulates the HITL approval
+// supplying the typed environment names the production confirmation requires.
+func productionConfirmationsWithEnvironmentNames(challenge *ExecBatchProductionChallenge) []execbatch.ProductionConfirmation {
+	confirmations := append([]execbatch.ProductionConfirmation(nil), challenge.Confirmations...)
+	for index := range confirmations {
+		confirmations[index].EnvironmentNames = append([]string(nil), challenge.Detail.RequiredEnvironmentNames...)
+	}
+	return confirmations
+}
+
 func TestExecCommandsProductionChallengeThenConfirmedExecutesOnce(t *testing.T) {
 	transport := successfulBatchTransport()
 	auditor := &batchAuditRecorder{}
@@ -115,7 +125,7 @@ func TestExecCommandsProductionChallengeThenConfirmedExecutesOnce(t *testing.T) 
 	confirmed := call
 	confirmed.ID += ":production"
 	confirmed.OriginID = call.ID
-	confirmed.ProductionConfirmations = challenged.ProductionChallenge.Confirmations
+	confirmed.ProductionConfirmations = productionConfirmationsWithEnvironmentNames(challenged.ProductionChallenge)
 	result := registry.Execute(context.Background(), "job", Scope{}, confirmed, nil)
 	if !result.OK {
 		t.Fatalf("confirmed production exec = %+v", result)

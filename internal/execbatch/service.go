@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
@@ -31,15 +32,19 @@ type Config struct {
 	Now         func() time.Time
 	OnError     func(error)
 	OutputLimit int64
+	// ProductionSettings reads the per-owner production environment
+	// configuration; nil classifies with the built-in production names only.
+	ProductionSettings guard.Settings
 }
 
 type Service struct {
-	resolver    Resolver
-	auditor     Auditor
-	history     History
-	now         func() time.Time
-	onError     func(error)
-	outputLimit int64
+	resolver           Resolver
+	auditor            Auditor
+	history            History
+	now                func() time.Time
+	onError            func(error)
+	outputLimit        int64
+	productionSettings guard.Settings
 
 	beforeCleanupCommit   func(accountCleanupKey) error
 	mu                    sync.Mutex
@@ -105,6 +110,7 @@ func New(config Config) *Service {
 		pendingCancels:        make(map[pendingCancelKey]time.Time),
 		accountCleanups:       make(map[accountCleanupKey]*accountCleanupEvent),
 		accountCleanupAliases: make(map[accountCleanupKey]accountCleanupKey),
+		productionSettings:    config.ProductionSettings,
 	}
 }
 
@@ -162,7 +168,10 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 		}
 		return Batch{}, preflightErr
 	}
-	challenge := newProductionChallenge(request.BatchID, request.Command, targets)
+	challenge, err := s.newProductionChallenge(ctx, ownerID, request.BatchID, request.Command, targets)
+	if err != nil {
+		return Batch{}, err
+	}
 	if err := validateProductionConfirmation(request.ProductionConfirmation, challenge); err != nil {
 		return Batch{}, err
 	}

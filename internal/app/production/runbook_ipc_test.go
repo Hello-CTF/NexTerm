@@ -81,6 +81,7 @@ func TestRunbookIPCProductionChallengeAndHistoryReadback(t *testing.T) {
 		RunID: "run-ipc", StepNumber: 1,
 		ProductionConfirmation: &execbatch.ProductionConfirmation{
 			Confirmed: true, TargetSetHash: state.ProductionChallenge.TargetSetHash, CommandHash: state.ProductionChallenge.CommandHash,
+			EnvironmentNames: state.ProductionChallenge.RequiredEnvironmentNames,
 		},
 	})
 	state = decodeExecBatchTest[runbook.RunState](t, confirmed)

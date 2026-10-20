@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
@@ -35,14 +36,22 @@ type execBatchHistoryReader interface {
 }
 
 func newExecBatchService(sessions *session.Manager, assets execBatchAssetReader, auditor execbatch.Auditor, history ...execbatch.History) *execbatch.Service {
+	return newExecBatchServiceWithSettings(sessions, assets, auditor, nil, history...)
+}
+
+// newExecBatchServiceWithSettings wires the per-owner production environment
+// configuration into the exec batch production confirmation; a nil settings
+// reader classifies with the built-in production names only.
+func newExecBatchServiceWithSettings(sessions *session.Manager, assets execBatchAssetReader, auditor execbatch.Auditor, productionSettings guard.Settings, history ...execbatch.History) *execbatch.Service {
 	var historyStore execbatch.History
 	if len(history) > 0 {
 		historyStore = history[0]
 	}
 	return execbatch.New(execbatch.Config{
-		Resolver: execBatchResolver{sessions: sessions, assets: assets},
-		Auditor:  auditor,
-		History:  historyStore,
+		Resolver:           execBatchResolver{sessions: sessions, assets: assets},
+		Auditor:            auditor,
+		History:            historyStore,
+		ProductionSettings: productionSettings,
 	})
 }
 

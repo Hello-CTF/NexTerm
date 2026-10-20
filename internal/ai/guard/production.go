@@ -3,6 +3,7 @@ package guard
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -108,4 +109,49 @@ func IsProductionEnvironment(ctx context.Context, settings Settings, environment
 
 func environmentMatches(name, environment string) bool {
 	return strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(environment))
+}
+
+// ProductionEnvironmentNames returns the sorted distinct non-empty environment
+// names of the production-classified targets; these are the names a production
+// confirmation must type back.
+func ProductionEnvironmentNames(environments []string) []string {
+	seen := make(map[string]struct{}, len(environments))
+	names := make([]string, 0, len(environments))
+	for _, environment := range environments {
+		name := strings.TrimSpace(environment)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// EnvironmentNamesMatch reports whether the typed names equal the required set,
+// ignoring order, surrounding space, and letter case.
+func EnvironmentNamesMatch(typed, required []string) bool {
+	if len(typed) != len(required) {
+		return false
+	}
+	remaining := append([]string(nil), required...)
+	for _, name := range typed {
+		matched := false
+		for index, candidate := range remaining {
+			if environmentMatches(name, candidate) {
+				remaining = append(remaining[:index], remaining[index+1:]...)
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return len(remaining) == 0
 }

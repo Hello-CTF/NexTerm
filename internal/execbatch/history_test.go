@@ -200,6 +200,7 @@ func TestExecuteHistoryProductionMarkerAndRejectedConfirmation(t *testing.T) {
 	}
 	request.ProductionConfirmation = &ProductionConfirmation{
 		Confirmed: true, TargetSetHash: detail.TargetSetHash, CommandHash: detail.CommandHash,
+		EnvironmentNames: detail.RequiredEnvironmentNames,
 	}
 	if _, err := service.Execute(t.Context(), "owner-a", request); err != nil {
 		t.Fatal(err)
