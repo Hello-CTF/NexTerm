@@ -388,6 +388,20 @@ func (p *transcriptDurableProvider) DeleteDurableTranscriptOffset(tabID string) 
 	}
 }
 
+// Owner-scoped variants: the in-memory fake has no owner column, so they
+// delegate to the legacy methods and keep every store path exercised.
+func (p *transcriptDurableProvider) DurableTranscriptCatchUpBytesContext(ctx context.Context, tabID string) int64 {
+	return p.DurableTranscriptCatchUpBytes(tabID)
+}
+
+func (p *transcriptDurableProvider) PersistDurableTranscriptOffsetContext(ctx context.Context, tabID string, offset int64) {
+	p.PersistDurableTranscriptOffset(tabID, offset)
+}
+
+func (p *transcriptDurableProvider) DeleteDurableTranscriptOffsetContext(ctx context.Context, tabID string) {
+	p.DeleteDurableTranscriptOffset(tabID)
+}
+
 func (p *transcriptDurableProvider) channel(id string) *fakeChannel {
 	p.mu.Lock()
 	defer p.mu.Unlock()

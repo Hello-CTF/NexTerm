@@ -155,7 +155,7 @@ func (m *Manager) reconnect(ctx context.Context, id string, expectedGeneration u
 	oldTransport := session.transport
 	session.transport = nil
 	session.generation = generation
-	session.ctx, session.cancel = context.WithCancel(m.ctx)
+	session.ctx, session.cancel = context.WithCancel(ownerCtx(m.ctx, session.userID))
 	session.status = StatusReconnecting
 	session.reconnecting = true
 	session.reconnectDone = make(chan struct{})
@@ -540,7 +540,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		_ = attachment.Close()
 	}
 	for _, tabID := range goneOffsets {
-		m.deleteDurableTranscriptOffset(tabID)
+		m.deleteDurableTranscriptOffset(ownerCtx(context.Background(), session.userID), tabID)
 	}
 	m.transcriptStarted(reconnectCtx, session)
 	for _, resize := range resizes {
