@@ -181,6 +181,31 @@ func TestTestLoginAcceptsApprovedLedgerKeyWithoutPersisting(t *testing.T) {
 	waitForTestServerIdle(t, server)
 }
 
+func TestTestLoginReportsChangedAgainstApprovedLedgerKey(t *testing.T) {
+	server := newTestSSHServer(t, nil)
+	store := &ledgerHostKeyStore{MemoryHostKeyStore: NewMemoryHostKeyStore()}
+	cfg := testLoginConfig(t, server, store)
+	store.approved = []HostKey{newHostKey(cfg.Host, cfg.Port, hostKeyForTest(t))}
+
+	err := TestLogin(context.Background(), cfg)
+	requireConnectError(t, err, ErrorKindHostKeyChanged)
+	if !errors.Is(err, ErrHostKeyChanged) {
+		t.Fatalf("ledger mismatch lost the changed sentinel: %v", err)
+	}
+	var keyErr *HostKeyError
+	if !errors.As(err, &keyErr) || keyErr.Pending || keyErr.Presented.Fingerprint != gossh.FingerprintSHA256(server.hostKey) {
+		t.Fatalf("ledger mismatch details = %#v", err)
+	}
+	if len(keyErr.Known) != 1 || keyErr.Known[0].Fingerprint != store.approved[0].Fingerprint {
+		t.Fatalf("ledger mismatch known keys = %+v", keyErr.Known)
+	}
+	if got := ClassifyLoginFailure(err); got != LoginFailureHostKey {
+		t.Fatalf("ledger mismatch class = %q", got)
+	}
+	requireStoreHostKeys(t, store, cfg, 0)
+	waitForTestServerIdle(t, server)
+}
+
 func TestTestLoginAuthFailure(t *testing.T) {
 	server := newTestSSHServer(t, nil)
 	store := NewMemoryHostKeyStore()

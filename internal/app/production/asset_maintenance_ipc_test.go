@@ -256,22 +256,15 @@ func TestAssetBulkEditIPCPerTargetResultsWithoutSecret(t *testing.T) {
 
 func TestTestLoginIPCResultOwnershipWithoutReconnect(t *testing.T) {
 	production := newHostKeyTestProduction(t)
-	port := int32(closedProbePort(t))
-	host := "127.0.0.1"
-	asset, err := production.Services.Store.AssetCreate(context.Background(), store.AssetInput{
-		Kind: "ssh", Name: "refused", Host: &host, Port: &port, OptionsJSON: "{}",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload, err := json.Marshal(map[string]any{"assetIds": []string{asset.ID, "missing", asset.ID}, "timeoutMs": 500})
+	assetID := createProbeTestAsset(t, production, `"host":"127.0.0.1","port":`+itoa(closedProbePort(t))+`,"username":"test","authKind":"password","options":{"password":"probe-test-secret"}`)
+	payload, err := json.Marshal(map[string]any{"assetIds": []string{assetID, "missing", assetID}, "timeoutMs": 500})
 	if err != nil {
 		t.Fatal(err)
 	}
 	response := dispatchHostKeyTest(t, production, "exec_batch_test_login", `{"args":`+string(payload)+`}`)
 	var batch assetProbeBatchDTO
 	requireStoreTestResponse(t, response, &batch)
-	if len(batch.Results) != 2 || batch.Results[0].AssetID != asset.ID || batch.Results[1].AssetID != "missing" {
+	if len(batch.Results) != 2 || batch.Results[0].AssetID != assetID || batch.Results[1].AssetID != "missing" {
 		t.Fatalf("test login result ownership = %+v", batch)
 	}
 	if batch.Results[0].Reachable || batch.Results[0].Kind != "refused" || batch.Results[1].Kind != "not_found" {
@@ -281,5 +274,214 @@ func TestTestLoginIPCResultOwnershipWithoutReconnect(t *testing.T) {
 	requireStoreTestResponse(t, dispatchHostKeyTest(t, production, "session_list", `null`), &sessions)
 	if len(sessions) != 0 {
 		t.Fatalf("test login created or reconnected sessions: %+v", sessions)
+	}
+}
+
+func dispatchTestLoginBatch(t *testing.T, production *Production, timeoutMS int64, assetIDs ...string) assetProbeBatchDTO {
+	t.Helper()
+	payload, err := json.Marshal(map[string]any{"assetIds": assetIDs, "timeoutMs": timeoutMS})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := dispatchHostKeyTest(t, production, "exec_batch_test_login", `{"args":`+string(payload)+`}`)
+	var batch assetProbeBatchDTO
+	requireStoreTestResponse(t, response, &batch)
+	return batch
+}
+
+func testLoginResultsByID(t *testing.T, batch assetProbeBatchDTO) map[string]assetProbeResultDTO {
+	t.Helper()
+	byID := make(map[string]assetProbeResultDTO, len(batch.Results))
+	for _, result := range batch.Results {
+		byID[result.AssetID] = result
+	}
+	return byID
+}
+
+func requireNoManagedSessions(t *testing.T, production *Production) {
+	t.Helper()
+	var sessions []sessionInfoDTO
+	requireStoreTestResponse(t, dispatchHostKeyTest(t, production, "session_list", `null`), &sessions)
+	if len(sessions) != 0 {
+		t.Fatalf("test login registered managed sessions: %+v", sessions)
+	}
+}
+
+func TestTestLoginIPCRealHandshakeFailureClasses(t *testing.T) {
+	server := newSSHConnectorServer(t, nil)
+	pendingServer := newSSHConnectorServer(t, nil)
+	production := newHostKeyTestProduction(t)
+	initConnectorTestVault(t, production)
+	ctx := context.Background()
+
+	goodCredID := createConnectorTestCredential(t, production, "login-good", "secret")
+	badCredID := createConnectorTestCredential(t, production, "login-bad", "wrong")
+	corruptCredID, err := production.Services.Store.CredentialPut(ctx, store.CredentialInput{
+		Name: "login-corrupt", Kind: "password", Nonce: []byte{1}, Blob: []byte("not-an-envelope"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	okAssetID := createConnectorTestAsset(t, production, "login-ok", "127.0.0.1", server.port(), "password", goodCredID, "")
+	authAssetID := createConnectorTestAsset(t, production, "login-auth", "127.0.0.1", server.port(), "password", badCredID, "")
+	pendingAssetID := createConnectorTestAsset(t, production, "login-pending", "127.0.0.1", pendingServer.port(), "password", goodCredID, "")
+	vaultAssetID := createConnectorTestAsset(t, production, "login-vault", "127.0.0.1", server.port(), "password", corruptCredID, "")
+	configAssetID := createConnectorTestAsset(t, production, "login-config", "127.0.0.1", server.port(), "password", goodCredID,
+		`{"jumpAssetId":"missing-jump"}`)
+	refusedAssetID := createConnectorTestAsset(t, production, "login-refused", "127.0.0.1", closedProbePort(t), "password", goodCredID, "")
+	winrmResponse := dispatchHostKeyTest(t, production, "asset_create",
+		`{"args":{"kind":"winrm","name":"login-winrm","host":"127.0.0.1","port":`+itoa(closedProbePort(t))+`,"username":"test"}}`)
+	var winrmAsset assetDTO
+	requireStoreTestResponse(t, winrmResponse, &winrmAsset)
+
+	byID := testLoginResultsByID(t, dispatchTestLoginBatch(t, production, 5000, okAssetID, pendingAssetID))
+	if result := byID[okAssetID]; result.Reachable || result.Kind != "host_key_pending" {
+		t.Fatalf("unconfirmed key test login = %+v", result)
+	}
+	if result := byID[pendingAssetID]; result.Reachable || result.Kind != "host_key_pending" {
+		t.Fatalf("unconfirmed pending asset test login = %+v", result)
+	}
+	if listed := knownHostTestFingerprints(t, production); len(listed) != 0 {
+		t.Fatalf("test login persisted trust for unknown keys: %+v", listed)
+	}
+
+	var okPending hostKeyProbeDTO
+	requireStoreTestResponse(t, dispatchHostKeyTest(t, production, "session_probe_host_key", `{"args":{"assetId":"`+okAssetID+`"}}`), &okPending)
+	if okPending.State != "pending" {
+		t.Fatalf("unknown key probe state = %q", okPending.State)
+	}
+	acceptHostKeyTest(t, production, hostKeyDetailDTO{
+		Host: okPending.Host, Port: okPending.Port, KeyType: okPending.KeyType, Fingerprint: okPending.Fingerprint,
+	})
+
+	byID = testLoginResultsByID(t, dispatchTestLoginBatch(t, production, 5000,
+		okAssetID, authAssetID, pendingAssetID, vaultAssetID, configAssetID, refusedAssetID, winrmAsset.ID, "missing-asset"))
+	if result := byID[okAssetID]; !result.Reachable || result.Kind != "" {
+		t.Fatalf("real handshake test login = %+v", result)
+	}
+	if result := byID[authAssetID]; result.Reachable || result.Kind != "auth" || !strings.Contains(result.Error, "认证失败") {
+		t.Fatalf("auth failure test login = %+v", result)
+	}
+	if result := byID[pendingAssetID]; result.Reachable || result.Kind != "host_key_pending" {
+		t.Fatalf("still-unconfirmed asset test login = %+v", result)
+	}
+	if result := byID[vaultAssetID]; result.Reachable || result.Kind != "vault" || result.Error == "" {
+		t.Fatalf("vault failure test login = %+v", result)
+	}
+	if result := byID[configAssetID]; result.Reachable || result.Kind != "config" {
+		t.Fatalf("config failure test login = %+v", result)
+	}
+	if result := byID[refusedAssetID]; result.Reachable || result.Kind != "refused" {
+		t.Fatalf("refused test login = %+v", result)
+	}
+	if result := byID[winrmAsset.ID]; result.Reachable || result.Kind != "refused" {
+		t.Fatalf("winrm TCP fallback test login = %+v", result)
+	}
+	if result := byID["missing-asset"]; result.Reachable || result.Kind != "not_found" {
+		t.Fatalf("missing asset test login = %+v", result)
+	}
+	requireNoManagedSessions(t, production)
+}
+
+func TestTestLoginIPCHostKeyChanged(t *testing.T) {
+	server := newHostKeyTestServer(t)
+	firstKey := *server.signer.Load()
+	production := newHostKeyTestProduction(t)
+	assetID := createHostKeyTestAsset(t, production, server.port())
+
+	batch := dispatchTestLoginBatch(t, production, 5000, assetID)
+	if len(batch.Results) != 1 || batch.Results[0].Reachable || batch.Results[0].Kind != "host_key_pending" {
+		t.Fatalf("unknown key test login = %+v", batch.Results)
+	}
+	acceptHostKeyTest(t, production, hostKeyDetailDTO{
+		Host: "127.0.0.1", Port: server.port(),
+		KeyType: firstKey.PublicKey().Type(), Fingerprint: gossh.FingerprintSHA256(firstKey.PublicKey()),
+	})
+	batch = dispatchTestLoginBatch(t, production, 5000, assetID)
+	if len(batch.Results) != 1 || !batch.Results[0].Reachable || batch.Results[0].Kind != "" {
+		t.Fatalf("trusted key test login = %+v", batch.Results)
+	}
+
+	server.rotateHostKey(t)
+	batch = dispatchTestLoginBatch(t, production, 5000, assetID)
+	if len(batch.Results) != 1 || batch.Results[0].Reachable || batch.Results[0].Kind != "host_key_changed" {
+		t.Fatalf("rotated key test login = %+v", batch.Results)
+	}
+	if !strings.Contains(batch.Results[0].Error, "不一致") {
+		t.Fatalf("changed key error lacks mismatch guidance: %q", batch.Results[0].Error)
+	}
+	if listed := knownHostTestFingerprints(t, production); len(listed) != 1 || listed[0] != gossh.FingerprintSHA256(firstKey.PublicKey()) {
+		t.Fatalf("test login overwrote the confirmed ledger: %+v", listed)
+	}
+	requireNoManagedSessions(t, production)
+}
+
+func TestTestLoginIPCThroughJump(t *testing.T) {
+	jump := newSSHConnectorServer(t, nil)
+	target := newSSHConnectorServer(t, nil)
+	production := newHostKeyTestProduction(t)
+	initConnectorTestVault(t, production)
+	credID := createConnectorTestCredential(t, production, "login-jump-password", "secret")
+
+	jumpAssetID := createConnectorTestAsset(t, production, "login-jump", "127.0.0.1", jump.port(), "password", credID, "")
+	targetAssetID := createConnectorTestAsset(t, production, "login-target", "127.0.0.1", target.port(), "password", credID,
+		`{"jumpAssetId":"`+jumpAssetID+`"}`)
+
+	batch := dispatchTestLoginBatch(t, production, 5000, targetAssetID)
+	if len(batch.Results) != 1 || batch.Results[0].Reachable || batch.Results[0].Kind != "host_key_pending" {
+		t.Fatalf("unconfirmed jump test login = %+v", batch.Results)
+	}
+	acceptHostKeyTest(t, production, requireHostKeyPending(t,
+		dispatchHostKeyTest(t, production, "session_probe_host_key", `{"args":{"assetId":"`+targetAssetID+`"}}`), false))
+	var targetPending hostKeyProbeDTO
+	requireStoreTestResponse(t, dispatchHostKeyTest(t, production, "session_probe_host_key", `{"args":{"assetId":"`+targetAssetID+`"}}`), &targetPending)
+	if targetPending.State != "pending" || targetPending.Port != target.port() {
+		t.Fatalf("target host key probe = %+v, want the target pending state", targetPending)
+	}
+	acceptHostKeyTest(t, production, hostKeyDetailDTO{
+		Host: targetPending.Host, Port: targetPending.Port,
+		KeyType: targetPending.KeyType, Fingerprint: targetPending.Fingerprint,
+	})
+
+	batch = dispatchTestLoginBatch(t, production, 5000, targetAssetID)
+	if len(batch.Results) != 1 || !batch.Results[0].Reachable || batch.Results[0].Kind != "" {
+		t.Fatalf("test login through jump = %+v", batch.Results)
+	}
+	requireNoManagedSessions(t, production)
+}
+
+func TestTestLoginIPCTimeout(t *testing.T) {
+	production := newHostKeyTestProduction(t)
+	initConnectorTestVault(t, production)
+	credID := createConnectorTestCredential(t, production, "login-timeout", "secret")
+	stalling := stallingProxyListener(t)
+	slowAssetID := createConnectorTestAsset(t, production, "login-slow", "127.0.0.1", 22, "password", credID,
+		`{"proxy":"socks5://`+stalling.Addr().String()+`"}`)
+
+	batch := dispatchTestLoginBatch(t, production, 500, slowAssetID)
+	if len(batch.Results) != 1 || batch.Results[0].Reachable || batch.Results[0].Kind != "timeout" {
+		t.Fatalf("stalling proxy test login = %+v", batch.Results)
+	}
+	requireNoManagedSessions(t, production)
+}
+
+func TestTestLoginIPCValidation(t *testing.T) {
+	production := newHostKeyTestProduction(t)
+	response := dispatchHostKeyTest(t, production, "exec_batch_test_login", `{"args":{"assetIds":[]}}`)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("empty batch response = %+v", response)
+	}
+	oversized := make([]string, maxAssetProbeBatch+1)
+	for index := range oversized {
+		oversized[index] = "asset"
+	}
+	payload, err := json.Marshal(map[string]any{"assetIds": oversized})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = dispatchHostKeyTest(t, production, "exec_batch_test_login", `{"args":`+string(payload)+`}`)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("oversized batch response = %+v", response)
 	}
 }

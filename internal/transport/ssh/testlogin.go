@@ -184,6 +184,9 @@ func (c *loginJumpClient) Close() error {
 
 // checkLoginHostKey verifies the presented host key against recorded and
 // approved keys without persisting anything. Unknown keys are never accepted.
+// A presented key that contradicts a recorded or approved key of the same
+// type is reported as changed; the approved ledger counts as recorded trust
+// because this read-only check never persists approved keys itself.
 func checkLoginHostKey(ctx context.Context, store HostKeyStore, host string, port int, presented gossh.PublicKey) error {
 	key := newHostKey(host, port, presented)
 	known, err := store.HostKeys(ctx, host, port)
@@ -191,11 +194,13 @@ func checkLoginHostKey(ctx context.Context, store HostKeyStore, host string, por
 		return fmt.Errorf("load SSH host keys: %w", err)
 	}
 	var knownSameType []HostKey
+	recorded := make(map[string]struct{})
 	for _, candidate := range known {
 		if candidate.KeyType != key.KeyType {
 			continue
 		}
 		knownSameType = append(knownSameType, candidate)
+		recorded[candidate.Fingerprint] = struct{}{}
 		if candidate.Key == key.Key {
 			return nil
 		}
@@ -204,8 +209,17 @@ func checkLoginHostKey(ctx context.Context, store HostKeyStore, host string, por
 	if err != nil {
 		return fmt.Errorf("load approved SSH host keys: %w", err)
 	}
-	if matchesApprovedKey(approved, key) {
-		return nil
+	for _, candidate := range approved {
+		if candidate.KeyType != key.KeyType {
+			continue
+		}
+		if candidate.Fingerprint == key.Fingerprint {
+			return nil
+		}
+		if _, exists := recorded[candidate.Fingerprint]; !exists {
+			knownSameType = append(knownSameType, candidate)
+			recorded[candidate.Fingerprint] = struct{}{}
+		}
 	}
 	if len(knownSameType) == 0 {
 		return &HostKeyError{Pending: true, Presented: key}
