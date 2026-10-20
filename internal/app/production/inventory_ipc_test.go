@@ -318,6 +318,140 @@ func TestInventorySSHWatchTruncatedSnapshotPreservesLastGood(t *testing.T) {
 	})
 }
 
+func TestInventoryServerWatchIncludeEscapeKeepsLastGood(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	service, database := newInventoryTestService(t, false)
+	sshDir := filepath.Join(home, ".ssh")
+	outside := t.TempDir()
+	mainPath := filepath.Join(sshDir, "config")
+	writeInventoryTestFile(t, mainPath, "Host alpha\n  HostName 10.0.0.1\n")
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	if _, err := service.startWatch(ctx, mainPath, ""); err != nil {
+		t.Fatal(err)
+	}
+	writeInventoryTestFile(t, filepath.Join(outside, "secret.conf"), "Host secret\n  HostName secret.example\n")
+	writeInventoryTestFile(t, filepath.Join(home, "escape.conf"), "Host escaped\n  HostName escaped.example\n")
+	writeInventoryTestFile(t, mainPath, "Include "+filepath.Join(outside, "secret.conf")+"\nInclude ../escape.conf\nHost alpha\n  HostName 10.0.0.1\n")
+	waitForInventory(t, func() (bool, error) {
+		return strings.Contains(service.watchStatus(ctx).LastError, "快照不完整"), nil
+	})
+	alpha, _, err := inventoryAssetByName(database, ctx, "alpha")
+	if err != nil || alpha.DeletedAt != nil || alpha.Host == nil || *alpha.Host != "10.0.0.1" {
+		t.Fatalf("escaping include changed last good snapshot: %+v, err=%v", alpha, err)
+	}
+	if rows, err := database.AssetList(ctx, false); err != nil || len(rows) != 1 || rows[0].Name != "alpha" {
+		t.Fatalf("escaping include reconciled partial hosts: %+v, err=%v", rows, err)
+	}
+
+	writeInventoryTestFile(t, mainPath, "Host alpha\n  HostName 10.0.0.9\n")
+	waitForInventory(t, func() (bool, error) {
+		current, _, err := inventoryAssetByName(database, ctx, "alpha")
+		return err == nil && current.Host != nil && *current.Host == "10.0.0.9" && service.watchStatus(ctx).LastError == "", err
+	})
+}
+
+func TestInventoryDesktopIncludeEscapeStillParsed(t *testing.T) {
+	service, database := newInventoryTestService(t, true)
+	base := t.TempDir()
+	dir := filepath.Join(base, "ssh")
+	outside := t.TempDir()
+	mainPath := filepath.Join(dir, "config")
+	writeInventoryTestFile(t, mainPath, "Include "+filepath.Join(outside, "extra.conf")+"\nInclude ../escape.conf\nHost alpha\n  HostName 10.0.0.1\n")
+	writeInventoryTestFile(t, filepath.Join(outside, "extra.conf"), "Host beta\n  HostName 10.0.0.2\n")
+	writeInventoryTestFile(t, filepath.Join(base, "escape.conf"), "Host gamma\n  HostName 10.0.0.3\n")
+	ctx := context.Background()
+	result, err := service.sync(ctx, inventorySyncRequest{Source: store.InventorySourceSSHConfig, Path: mainPath})
+	if err != nil {
+		t.Fatalf("desktop sync rejected includes: %v", err)
+	}
+	if result.Created != 3 {
+		t.Fatalf("desktop sync = %+v, want 3 created", result)
+	}
+	for _, name := range []string{"alpha", "beta", "gamma"} {
+		row, found, err := inventoryAssetByName(database, ctx, name)
+		if err != nil || !found || row.DeletedAt != nil {
+			t.Fatalf("desktop asset %s = %+v, found=%v, err=%v", name, row, found, err)
+		}
+	}
+}
+
+func TestInventorySSHWatchIncludeDepthExceededRecovers(t *testing.T) {
+	service, database := newInventoryTestService(t, true)
+	service.sshLimits = sshconfig.Limits{MaxIncludeDepth: 2}
+	ctx := context.Background()
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "config")
+	writeInventoryTestFile(t, mainPath, "Host alpha\n  HostName 10.0.0.1\n")
+	if _, err := service.startWatch(ctx, mainPath, ""); err != nil {
+		t.Fatal(err)
+	}
+	before, _, err := inventoryAssetByName(database, ctx, "alpha")
+	if err != nil || before.DeletedAt != nil {
+		t.Fatalf("initial managed asset = %+v, err=%v", before, err)
+	}
+
+	writeInventoryTestFile(t, filepath.Join(dir, "a.conf"), "Include b.conf\nHost a\n  HostName 192.0.2.1\n")
+	writeInventoryTestFile(t, filepath.Join(dir, "b.conf"), "Include c.conf\nHost b\n  HostName 192.0.2.2\n")
+	writeInventoryTestFile(t, filepath.Join(dir, "c.conf"), "Host c\n  HostName 192.0.2.3\n")
+	writeInventoryTestFile(t, mainPath, "Include a.conf\nHost alpha\n  HostName 10.0.0.1\n")
+	waitForInventory(t, func() (bool, error) {
+		return strings.Contains(service.watchStatus(ctx).LastError, "快照不完整"), nil
+	})
+	after, _, err := inventoryAssetByName(database, ctx, "alpha")
+	if err != nil || after.DeletedAt != nil || after.UpdatedAt != before.UpdatedAt || after.Host == nil || *after.Host != "10.0.0.1" {
+		t.Fatalf("depth-exceeded snapshot changed last good asset: %+v, err=%v", after, err)
+	}
+	if rows, err := database.AssetList(ctx, false); err != nil || len(rows) != 1 || rows[0].Name != "alpha" {
+		t.Fatalf("depth-exceeded snapshot reconciled partial hosts: %+v, err=%v", rows, err)
+	}
+
+	writeInventoryTestFile(t, mainPath, "Host alpha\n  HostName 10.0.0.9\n")
+	waitForInventory(t, func() (bool, error) {
+		current, _, err := inventoryAssetByName(database, ctx, "alpha")
+		return err == nil && current.Host != nil && *current.Host == "10.0.0.9" && service.watchStatus(ctx).LastError == "", err
+	})
+}
+
+func TestInventorySSHWatchIncludedFileTooLargeRecovers(t *testing.T) {
+	service, database := newInventoryTestService(t, true)
+	service.sshLimits = sshconfig.Limits{MaxFileBytes: 64}
+	ctx := context.Background()
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "config")
+	writeInventoryTestFile(t, mainPath, "Host alpha\n  HostName 10.0.0.1\n")
+	if _, err := service.startWatch(ctx, mainPath, ""); err != nil {
+		t.Fatal(err)
+	}
+	before, _, err := inventoryAssetByName(database, ctx, "alpha")
+	if err != nil || before.DeletedAt != nil {
+		t.Fatalf("initial managed asset = %+v, err=%v", before, err)
+	}
+
+	var oversized strings.Builder
+	for index := 0; index < 8; index++ {
+		fmt.Fprintf(&oversized, "Host h%d\n  HostName 192.0.2.%d\n", index, index+1)
+	}
+	writeInventoryTestFile(t, filepath.Join(dir, "big.conf"), oversized.String())
+	writeInventoryTestFile(t, mainPath, "Include big.conf\nHost alpha\n  HostName 10.0.0.1\n")
+	waitForInventory(t, func() (bool, error) {
+		return strings.Contains(service.watchStatus(ctx).LastError, "快照不完整"), nil
+	})
+	after, _, err := inventoryAssetByName(database, ctx, "alpha")
+	if err != nil || after.DeletedAt != nil || after.UpdatedAt != before.UpdatedAt || after.Host == nil || *after.Host != "10.0.0.1" {
+		t.Fatalf("oversized include changed last good asset: %+v, err=%v", after, err)
+	}
+	if rows, err := database.AssetList(ctx, false); err != nil || len(rows) != 1 || rows[0].Name != "alpha" {
+		t.Fatalf("oversized include reconciled partial hosts: %+v, err=%v", rows, err)
+	}
+
+	writeInventoryTestFile(t, mainPath, "Host alpha\n  HostName 10.0.0.9\n")
+	waitForInventory(t, func() (bool, error) {
+		current, _, err := inventoryAssetByName(database, ctx, "alpha")
+		return err == nil && current.Host != nil && *current.Host == "10.0.0.9" && service.watchStatus(ctx).LastError == "", err
+	})
+}
+
 var _ fleetinventory.CommandRunner = inventoryRunnerFunc(nil)
 
 func stringPointerForInventory(value string) *string { return &value }
