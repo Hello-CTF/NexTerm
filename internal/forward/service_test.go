@@ -217,6 +217,47 @@ func TestExposedSOCKSRequiresExplicitRiskAcknowledgement(t *testing.T) {
 	}
 }
 
+func TestExposedSOCKSCancelCreatesNoListenerNorRuntime(t *testing.T) {
+	provider := &switchProvider{dialer: &recordingDialer{upstream: startEchoServer(t)}}
+	service := NewService(Config{Provider: provider, Policy: Policy{}})
+	var listens atomic.Int32
+	service.listen = func(_, _ string) (net.Listener, error) {
+		listens.Add(1)
+		return net.Listen("tcp", "127.0.0.1:0")
+	}
+	t.Cleanup(func() { _ = service.Close() })
+	_, err := service.CreateSocks(t.Context(), CreateSocksArgs{SessionID: "s"})
+	var appErr *ipc.Error
+	if !errors.As(err, &appErr) || appErr.Code != ipc.CodeNeedsConfirm {
+		t.Fatalf("unacknowledged error = %v", err)
+	}
+	risk, ok := appErr.Detail.(ExposureRisk)
+	if !ok || risk.Risk != "unauthenticated_exposed_socks" || risk.Authentication != "none" {
+		t.Fatalf("risk detail = %#v", appErr.Detail)
+	}
+	if listens.Load() != 0 {
+		t.Fatal("cancelled SOCKS creation opened a listener")
+	}
+	if provider.callCount() != 0 {
+		t.Fatal("cancelled SOCKS creation accessed the session")
+	}
+	if runtimes := service.List(); len(runtimes) != 0 {
+		t.Fatalf("cancelled SOCKS creation left a runtime: %+v", runtimes)
+	}
+}
+
+func TestExposedSOCKSLoopbackNeedsNoAcknowledgement(t *testing.T) {
+	provider := &switchProvider{dialer: &recordingDialer{upstream: startEchoServer(t)}}
+	service := newLoopbackService(t, provider)
+	spec, err := service.CreateSocks(t.Context(), CreateSocksArgs{SessionID: "s"})
+	if err != nil {
+		t.Fatalf("loopback SOCKS demanded acknowledgement: %v", err)
+	}
+	if spec.ListenHost != "127.0.0.1" {
+		t.Fatalf("listen host = %q, want loopback", spec.ListenHost)
+	}
+}
+
 func TestLazyCatFailsClosedBeforeSessionLookup(t *testing.T) {
 	provider := &switchProvider{err: errors.New("must not be called")}
 	service := NewService(Config{Provider: provider, Policy: Policy{Platform: "LAZYCAT"}})
