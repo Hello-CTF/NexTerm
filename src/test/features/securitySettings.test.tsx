@@ -332,6 +332,41 @@ describe("KnownHostsCard", () => {
     expect(text).not.toContain("10.0.0.8:22");
   });
 
+  it("supersedes an in-flight list when a sync event arrives and drops the stale response", async () => {
+    const stale = deferred<KnownHostDto[]>();
+    mocks.knownHostList.mockReturnValueOnce(stale.promise).mockResolvedValueOnce([KH2]);
+    mounted = mount(createElement(KnownHostsCard));
+
+    await act(async () => {
+      for (const handler of mocks.syncStatusHandlers) handler({});
+    });
+    await flush();
+    expect(mounted.container.textContent).toContain("db.internal:2222");
+
+    stale.resolve([KH1]);
+    await flush();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("db.internal:2222");
+    expect(text).not.toContain("10.0.0.8:22");
+    expect(mocks.knownHostList).toHaveBeenCalledTimes(2);
+  });
+
+  it("removes the sync listener on unmount and drops a late list response", async () => {
+    const slow = deferred<KnownHostDto[]>();
+    mocks.knownHostList.mockReturnValue(slow.promise);
+    mounted = mount(createElement(KnownHostsCard));
+    await flush();
+    expect(mocks.syncStatusHandlers.length).toBe(1);
+
+    mounted.unmount();
+    mounted = undefined;
+    expect(mocks.syncStatusHandlers.length).toBe(0);
+
+    slow.resolve([KH1]);
+    await flush();
+    expect(mocks.knownHostList).toHaveBeenCalledTimes(1);
+  });
+
   it("asks before revoking and does nothing when the confirmation is declined", async () => {
     mocks.knownHostList.mockResolvedValue([KH1]);
     mocks.ask.mockResolvedValue(false);
