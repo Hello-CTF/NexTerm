@@ -89,7 +89,7 @@ func TestRestartKeepsPendingEventWithFixedIDs(t *testing.T) {
 		t.Fatalf("dispatch after restart = %d, %v", delivered, err)
 	}
 	got := sink.delivered()
-	if len(got) != 1 || got[0].DeliveryID != event.DeliveryID || got[0].RunID != event.RunID {
+	if len(got) != 1 || got[0].Event.DeliveryID != event.DeliveryID || got[0].Event.RunID != event.RunID {
 		t.Fatalf("delivered after restart = %+v; want fixed IDs %s/%s", got, event.DeliveryID, event.RunID)
 	}
 }
@@ -125,8 +125,8 @@ func TestRestartAfterLostAckDeliversDuplicateWithSameIDs(t *testing.T) {
 		t.Fatalf("dispatch after restart = %d, %v", delivered, err)
 	}
 	got := sink.delivered()
-	if len(got) != 2 || got[0].DeliveryID != event.DeliveryID || got[1].DeliveryID != event.DeliveryID ||
-		got[0].RunID != event.RunID || got[1].RunID != event.RunID {
+	if len(got) != 2 || got[0].Event.DeliveryID != event.DeliveryID || got[1].Event.DeliveryID != event.DeliveryID ||
+		got[0].Event.RunID != event.RunID || got[1].Event.RunID != event.RunID {
 		t.Fatalf("duplicate across restart drifted: %+v", got)
 	}
 }

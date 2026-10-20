@@ -11,25 +11,25 @@ import (
 )
 
 type recordingSink struct {
-	mu     sync.Mutex
-	events []Event
-	err    error
+	mu         sync.Mutex
+	deliveries []ToolData
+	err        error
 }
 
-func (s *recordingSink) DeliverWatchEvent(_ context.Context, event Event) error {
+func (s *recordingSink) DeliverWatchToolData(_ context.Context, data ToolData) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.err != nil {
 		return s.err
 	}
-	s.events = append(s.events, event)
+	s.deliveries = append(s.deliveries, data)
 	return nil
 }
 
-func (s *recordingSink) delivered() []Event {
+func (s *recordingSink) delivered() []ToolData {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]Event(nil), s.events...)
+	return append([]ToolData(nil), s.deliveries...)
 }
 
 // ackFailStore injects acknowledgement failures after a successful delivery,
@@ -76,8 +76,11 @@ func TestDispatchDeliversAndAcks(t *testing.T) {
 		t.Fatalf("dispatch = %d, %v", delivered, err)
 	}
 	got := sink.delivered()
-	if len(got) != 1 || got[0].DeliveryID != event.DeliveryID || got[0].Kind != EventKind {
+	if len(got) != 1 || got[0].Event.DeliveryID != event.DeliveryID || got[0].Event.Kind != EventKind {
 		t.Fatalf("delivered = %+v", got)
+	}
+	if got[0].Channel != "tool" || !got[0].Untrusted {
+		t.Fatalf("watch event must travel as untrusted tool data: %+v", got[0])
 	}
 	stored, err := backend.AgentWatchEventGet(ctx, event.DeliveryID)
 	if err != nil || stored.Status != store.AgentWatchEventAcked || stored.DeliveredAt == nil {
@@ -136,9 +139,9 @@ func TestDispatchDuplicateDeliveryKeepsFixedIDs(t *testing.T) {
 	}
 	// CAS is not exactly-once: the duplicate carries the same fixed
 	// DeliveryID/RunID so the receiver can dedupe the logical fire.
-	if got[0].DeliveryID != event.DeliveryID || got[1].DeliveryID != event.DeliveryID ||
-		got[0].RunID != event.RunID || got[1].RunID != event.RunID ||
-		got[0].Excerpt != got[1].Excerpt || got[0].MatchedFrom != got[1].MatchedFrom {
+	if got[0].Event.DeliveryID != event.DeliveryID || got[1].Event.DeliveryID != event.DeliveryID ||
+		got[0].Event.RunID != event.RunID || got[1].Event.RunID != event.RunID ||
+		got[0].Event.Excerpt != got[1].Event.Excerpt || got[0].Event.MatchedFrom != got[1].Event.MatchedFrom {
 		t.Fatalf("duplicate drifted: %+v vs %+v", got[0], got[1])
 	}
 }

@@ -75,6 +75,21 @@ type Event struct {
 	FiredAt     int64     `json:"firedAt"`
 }
 
+// ToolData is the delivery envelope for watch events: they travel as
+// untrusted tool data, never as user messages. Channel is always "tool" and
+// Untrusted is always true, so the agent runtime injects the event into the
+// tool-result stream instead of the user-message stream.
+type ToolData struct {
+	Channel   string `json:"channel"`
+	Untrusted bool   `json:"untrusted"`
+	Event     Event  `json:"event"`
+}
+
+// NewToolData wraps a watch event into its untrusted tool-data envelope.
+func NewToolData(event Event) ToolData {
+	return ToolData{Channel: "tool", Untrusted: true, Event: event}
+}
+
 // Watch is the engine-level view of a persisted watch condition.
 type Watch struct {
 	ID          string

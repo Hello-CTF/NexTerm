@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -454,27 +453,22 @@ func (e *Engine) processWatch(ctx context.Context, row model.AgentWatchRow, curr
 	return nil, fmt.Errorf("watch %s keeps conflicting after %d attempts: %w", row.ID, maxWatchTransitionAttempts, store.ErrAgentWatchConflict)
 }
 
-// prefixRegex returns the compiled prefix regex for a condition pattern, or
-// false when the prefix language is not finitely expressible.
-func (e *Engine) prefixRegex(pattern string) (*regexp.Regexp, bool) {
+// prefixBody returns the prefix-regex body for a condition pattern, or false
+// when the prefix language is not finitely expressible.
+func (e *Engine) prefixBody(pattern string) (string, bool) {
 	if cached, ok := e.prefixCache.Load(pattern); ok {
 		if cached == nil {
-			return nil, false
+			return "", false
 		}
-		return cached.(*regexp.Regexp), true
+		return cached.(string), true
 	}
 	body, ok := regexPrefixPattern(pattern)
 	if !ok {
 		e.prefixCache.Store(pattern, nil)
-		return nil, false
+		return "", false
 	}
-	compiled, err := regexp.Compile("(?:" + body + ")$")
-	if err != nil {
-		e.prefixCache.Store(pattern, nil)
-		return nil, false
-	}
-	e.prefixCache.Store(pattern, compiled)
-	return compiled, true
+	e.prefixCache.Store(pattern, body)
+	return body, true
 }
 
 // liveCarryPlan returns the live-suffix length to persist for the next
@@ -495,12 +489,11 @@ func (e *Engine) liveCarryPlan(condition Condition, valid []byte, contextLen int
 		if finite && static <= int64(e.opts.MaxCarryBytes) {
 			return condition.carryBound(e.opts.MaxCarryBytes, avail), false, nil
 		}
-		prefixRe, ok := e.prefixRegex(condition.Pattern)
+		prefixBody, ok := e.prefixBody(condition.Pattern)
 		if !ok {
 			return 0, true, nil
 		}
-		added := avail - len(row.CarryBlob)
-		live := scanLiveSuffix(row.ContextBlob, valid[contextLen:], int(row.CarryLive), added, e.opts.MaxCarryBytes, prefixRe)
+		live := scanLiveSuffix(row.ContextBlob, valid[contextLen:], e.opts.MaxCarryBytes, prefixBody)
 		if live > e.opts.MaxCarryBytes {
 			return 0, true, nil
 		}
@@ -618,20 +611,23 @@ func (e *Engine) consumeWatch(ctx context.Context, row model.AgentWatchRow, iden
 	if toSeq <= lastEvaluated {
 		return nil
 	}
-	// The suspended watch skips matching but not stream bookkeeping: an
-	// incomplete trailing rune is preserved with the anchor retreating to
-	// the rune start, and the true pre-anchor context is kept, so the
-	// re-armed watch neither misses the completed rune nor fires on
-	// continuation bytes misread as RuneError.
+	// The suspended watch skips matching but not stream bookkeeping: the
+	// still-incomplete rune is preserved with the anchor retreating to the
+	// rune start, and the true pre-anchor context is kept, so the re-armed
+	// watch neither misses the completed rune nor fires on continuation
+	// bytes misread as RuneError.
 	newBytes := data[lastEvaluated-fromSeq:]
-	tail := incompleteUTF8Tail(newBytes)
-	newAnchor := toSeq - int64(tail)
-	carry := append([]byte(nil), newBytes[len(newBytes)-tail:]...)
-	combined := make([]byte, 0, len(row.ContextBlob)+len(newBytes))
-	combined = append(combined, row.ContextBlob...)
+	combined := make([]byte, 0, len(row.CarryBlob)+len(newBytes))
+	combined = append(combined, row.CarryBlob...)
 	combined = append(combined, newBytes...)
-	contextEnd := len(combined) - tail
-	newContext := combined[max(0, contextEnd-watchContextSize):contextEnd]
+	tail := incompleteUTF8Tail(combined)
+	newAnchor := toSeq - int64(tail)
+	carry := append([]byte(nil), combined[len(combined)-tail:]...)
+	stream := make([]byte, 0, len(row.ContextBlob)+len(combined))
+	stream = append(stream, row.ContextBlob...)
+	stream = append(stream, combined...)
+	contextEnd := len(stream) - tail
+	newContext := stream[max(0, contextEnd-watchContextSize):contextEnd]
 	if _, err := e.store.AgentWatchConsume(ctx, row.ID, row.Revision, identity, newAnchor, carry, newContext, 0, now.UnixMilli()); err != nil {
 		return err
 	}

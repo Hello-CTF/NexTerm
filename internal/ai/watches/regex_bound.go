@@ -203,29 +203,21 @@ func runeWidth(re *syntax.Regexp, r rune) int {
 }
 
 // scanLiveSuffix returns the length of the longest suffix of data that is a
-// proper prefix of a potential match, bounded by capacity+1. previousLive is
-// the live suffix length from the previous round and added the number of new
-// complete bytes, so the scan starts from the longest possible extension;
-// the result may exceed capacity, which the caller reports as overflow.
-//
-// The prefix regex is anchored at the end only, and the true left context is
-// prepended to every candidate, so assertions inside the pattern evaluate
-// against the real preceding bytes instead of a fabricated candidate start.
-// A candidate counts as live when a non-empty suffix of (context + candidate)
-// is a proper prefix; the reported length may over-approximate the true live
-// suffix, which is always safe: the carry then covers every possible match.
-func scanLiveSuffix(contextTail, data []byte, previousLive, added, capacity int, prefixRe *regexp.Regexp) int {
-	limit := min(len(data), capacity+1)
-	candidate := min(previousLive+added, limit)
-	for length := candidate; length >= 1; length-- {
-		input := make([]byte, 0, len(contextTail)+length)
-		input = append(input, contextTail...)
-		input = append(input, data[len(data)-length:]...)
-		if loc := prefixRe.FindStringIndex(string(input)); loc != nil && loc[0] < len(input) {
-			return length
-		}
+// proper prefix of a potential match, bounded by capacity+1. The search runs
+// on the whole buffer with a lazy rune-counted prefix: the leftmost match of
+// the prefix regex at or after the anchor, so the true left context grounds
+// assertions while a match can never start before the anchor — context bytes
+// are not eligible live prefixes.
+func scanLiveSuffix(contextTail, data []byte, capacity int, prefixBody string) int {
+	wrapper := regexp.MustCompile("^(?:[\\s\\S]{" + strconv.Itoa(utf8.RuneCount(contextTail)) + ",}?)(" + prefixBody + ")$")
+	input := make([]byte, 0, len(contextTail)+len(data))
+	input = append(input, contextTail...)
+	input = append(input, data...)
+	loc := wrapper.FindStringSubmatchIndex(string(input))
+	if loc == nil {
+		return 0
 	}
-	return 0
+	return len(input) - loc[2]
 }
 
 func isRuneAlignedStart(data []byte, index int) bool {
@@ -345,7 +337,18 @@ func trailingRightContextDependent(re *syntax.Regexp) bool {
 	case syntax.OpCapture:
 		return trailingRightContextDependent(re.Sub[0])
 	case syntax.OpConcat:
-		return trailingRightContextDependent(re.Sub[len(re.Sub)-1])
+		// A trailing empty group hides nothing: walk from the end and judge
+		// the last input-consuming subexpression.
+		for i := len(re.Sub) - 1; i >= 0; i-- {
+			sub := re.Sub[i]
+			if isRightContextAssertion(sub) {
+				return true
+			}
+			if !alwaysEmpty(sub) {
+				return false
+			}
+		}
+		return false
 	case syntax.OpAlternate:
 		for _, sub := range re.Sub {
 			if trailingRightContextDependent(sub) {
@@ -355,6 +358,44 @@ func trailingRightContextDependent(re *syntax.Regexp) bool {
 		return false
 	case syntax.OpStar, syntax.OpPlus, syntax.OpRepeat:
 		return trailingRightContextDependent(re.Sub[0])
+	default:
+		return false
+	}
+}
+
+func isRightContextAssertion(re *syntax.Regexp) bool {
+	switch re.Op {
+	case syntax.OpEndText, syntax.OpEndLine, syntax.OpWordBoundary, syntax.OpNoWordBoundary:
+		return true
+	default:
+		return false
+	}
+}
+
+// alwaysEmpty reports whether the subexpression can only match the empty
+// string (it never consumes input).
+func alwaysEmpty(re *syntax.Regexp) bool {
+	switch re.Op {
+	case syntax.OpEmptyMatch:
+		return true
+	case syntax.OpCapture:
+		return alwaysEmpty(re.Sub[0])
+	case syntax.OpConcat:
+		for _, sub := range re.Sub {
+			if !alwaysEmpty(sub) {
+				return false
+			}
+		}
+		return true
+	case syntax.OpAlternate:
+		for _, sub := range re.Sub {
+			if !alwaysEmpty(sub) {
+				return false
+			}
+		}
+		return true
+	case syntax.OpQuest, syntax.OpStar, syntax.OpPlus, syntax.OpRepeat:
+		return alwaysEmpty(re.Sub[0])
 	default:
 		return false
 	}

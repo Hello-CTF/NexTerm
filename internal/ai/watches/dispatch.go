@@ -9,11 +9,11 @@ import (
 )
 
 // Sink receives watchEvent envelopes as untrusted tool data. Implementations
-// must dedupe by Event.DeliveryID: delivery is at-least-once, and a crash
-// between DeliverWatchEvent and the acknowledgement produces a redelivery
-// with the same DeliveryID and RunID.
+// must dedupe by Data.Event.DeliveryID: delivery is at-least-once, and a
+// crash between DeliverWatchToolData and the acknowledgement produces a
+// redelivery with the same DeliveryID and RunID.
 type Sink interface {
-	DeliverWatchEvent(ctx context.Context, event Event) error
+	DeliverWatchToolData(ctx context.Context, data ToolData) error
 }
 
 // Dispatcher moves pending outbox rows to the sink. Rows are only read while
@@ -54,7 +54,7 @@ func (d *Dispatcher) DispatchOnce(ctx context.Context, limit int) (int, error) {
 		if event.Kind != EventKind || event.DeliveryID != row.DeliveryID || event.WatchID != row.WatchID {
 			return delivered, fmt.Errorf("%w: delivery %s envelope mismatch", ErrEventCorrupt, row.DeliveryID)
 		}
-		if err := d.sink.DeliverWatchEvent(ctx, event); err != nil {
+		if err := d.sink.DeliverWatchToolData(ctx, NewToolData(event)); err != nil {
 			return delivered, err
 		}
 		if _, err := d.store.AgentWatchEventAck(ctx, row.DeliveryID, row.Revision, d.now().UnixMilli()); err != nil {
