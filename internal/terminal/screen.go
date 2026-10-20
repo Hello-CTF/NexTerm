@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -208,7 +209,13 @@ type screen struct {
 
 	history   *lineHistory
 	responses []byte
+	title     string
 }
+
+// maxOSCTitleBytes bounds a tracked window title; longer payloads are
+// rejected whole so the previous title stays. The parser's data buffer is
+// bounded separately so oversized OSC floods cannot grow memory.
+const maxOSCTitleBytes = 4096
 
 func newScreen(cols, rows, history int) *screen {
 	s := &screen{
@@ -220,13 +227,29 @@ func newScreen(cols, rows, history int) *screen {
 		history:   newLineHistory(history),
 	}
 	s.parser = ansi.NewParser()
+	s.parser.SetDataSize(64 * 1024)
 	s.parser.SetHandler(ansi.Handler{
 		Print:     s.print,
 		Execute:   s.execute,
 		HandleCsi: s.csi,
 		HandleEsc: s.esc,
+		HandleOsc: s.osc,
 	})
 	return s
+}
+
+// osc tracks dynamic window titles. OSC 0 sets the icon name and window
+// title; OSC 2 sets the window title. The data still carries the "N;"
+// command prefix.
+func (s *screen) osc(cmd int, data []byte) {
+	if cmd != 0 && cmd != 2 {
+		return
+	}
+	_, rest, found := bytes.Cut(data, []byte(";"))
+	if !found || len(rest) > maxOSCTitleBytes {
+		return
+	}
+	s.title = strings.ToValidUTF8(string(rest), "�")
 }
 
 func (s *screen) write(p []byte) {

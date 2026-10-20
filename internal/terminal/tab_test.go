@@ -184,9 +184,7 @@ func TestRecordingLifecycle(t *testing.T) {
 	if err := o.Chunk(ctx, []byte("def")); err != nil {
 		t.Fatal(err)
 	}
-	if tab.RecordingBytes() != 6 {
-		t.Fatalf("recorded = %d", tab.RecordingBytes())
-	}
+	waitFor(t, "recorded bytes", func() bool { return tab.RecordingBytes() == 6 })
 	if n, err := tab.StopRecording(); n != 6 || err != nil {
 		t.Fatalf("stop = (%d, %v)", n, err)
 	}
@@ -246,7 +244,7 @@ func TestRecordingShortWriteStopsRecordingWithoutStoppingOutput(t *testing.T) {
 	tab := newTestTab(t)
 	o := newTestOutput(t, tab)
 	writer := &fakeRecordingWriteCloser{results: []recordingWriteResult{{n: 2}}}
-	tab.rec = &recording{file: writer}
+	tab.rec = newRecording(tab, writer, "", 0, defaultRecordingQueueChunks, defaultRecordingQueueBytes)
 	sink := &memSink{}
 	o.Attach("sink", sink)
 	if err := o.Chunk(context.Background(), []byte("abcd")); err != nil {
@@ -263,6 +261,10 @@ func TestRecordingShortWriteStopsRecordingWithoutStoppingOutput(t *testing.T) {
 	if recorded != 2 || !errors.Is(stopErr, io.ErrShortWrite) {
 		t.Fatalf("repeated stop = (%d, %v), want retained short write", recorded, stopErr)
 	}
+	waitFor(t, "asynchronous close", func() bool {
+		_, closes := writer.counts()
+		return closes == 1
+	})
 	if writes, closes := writer.counts(); writes != 1 || closes != 1 {
 		t.Fatalf("write/close calls = %d/%d, want 1/1", writes, closes)
 	}
@@ -278,7 +280,7 @@ func TestRecordingWriteFailureKeepsActualBytesAndFirstError(t *testing.T) {
 		results:  []recordingWriteResult{{n: 3}, {n: 2, err: writeErr}, {n: 7}},
 		closeErr: closeErr,
 	}
-	tab.rec = &recording{file: writer}
+	tab.rec = newRecording(tab, writer, "", 0, defaultRecordingQueueChunks, defaultRecordingQueueBytes)
 	for _, chunk := range [][]byte{[]byte("abc"), []byte("defgh"), []byte("ignored")} {
 		if err := o.Chunk(context.Background(), chunk); err != nil {
 			t.Fatal(err)
@@ -291,6 +293,10 @@ func TestRecordingWriteFailureKeepsActualBytesAndFirstError(t *testing.T) {
 	if errors.Is(stopErr, closeErr) {
 		t.Fatalf("close error replaced first write error: %v", stopErr)
 	}
+	waitFor(t, "asynchronous close", func() bool {
+		_, closes := writer.counts()
+		return closes == 1
+	})
 	if writes, closes := writer.counts(); writes != 2 || closes != 1 {
 		t.Fatalf("write/close calls = %d/%d, want 2/1", writes, closes)
 	}
@@ -304,7 +310,7 @@ func TestRecordingCloseFailureIsIdempotentAndStopsWrites(t *testing.T) {
 	o := newTestOutput(t, tab)
 	closeErr := errors.New("close failed")
 	writer := &fakeRecordingWriteCloser{closeErr: closeErr}
-	tab.rec = &recording{file: writer}
+	tab.rec = newRecording(tab, writer, "", 0, defaultRecordingQueueChunks, defaultRecordingQueueBytes)
 	if err := o.Chunk(context.Background(), []byte("abc")); err != nil {
 		t.Fatal(err)
 	}
@@ -332,10 +338,13 @@ func TestRecordingStartAfterFailureClearsOldGeneration(t *testing.T) {
 	o := newTestOutput(t, tab)
 	writeErr := errors.New("old generation failed")
 	oldWriter := &fakeRecordingWriteCloser{results: []recordingWriteResult{{err: writeErr}}}
-	tab.rec = &recording{file: oldWriter}
+	tab.rec = newRecording(tab, oldWriter, "", 0, defaultRecordingQueueChunks, defaultRecordingQueueBytes)
 	if err := o.Chunk(context.Background(), []byte("old")); err != nil {
 		t.Fatal(err)
 	}
+	// The writer fails asynchronously; wait until the failure landed so the
+	// replacement start sees a failed generation, not a draining one.
+	waitFor(t, "old generation failure", func() bool { return tab.RecordingStatus().State == RecordingFailed })
 	path := filepath.Join(t.TempDir(), "new-generation.log")
 	if err := tab.StartRecording(path); err != nil {
 		t.Fatal(err)
@@ -354,6 +363,12 @@ func TestRecordingStartAfterFailureClearsOldGeneration(t *testing.T) {
 	if err != nil || !bytes.Equal(data, []byte("new")) {
 		t.Fatalf("new generation file = %q, err = %v", data, err)
 	}
+	// The failed generation's close was initiated asynchronously during the
+	// replacement start; wait for it to land before counting.
+	waitFor(t, "old generation asynchronous close", func() bool {
+		_, closes := oldWriter.counts()
+		return closes == 1
+	})
 	if writes, closes := oldWriter.counts(); writes != 1 || closes != 1 {
 		t.Fatalf("old generation write/close calls = %d/%d, want 1/1", writes, closes)
 	}
@@ -363,7 +378,7 @@ func TestRecordingStartDoesNotHidePreviousCloseFailure(t *testing.T) {
 	tab := newTestTab(t)
 	closeErr := errors.New("previous close failed")
 	oldWriter := &fakeRecordingWriteCloser{closeErr: closeErr}
-	tab.rec = &recording{file: oldWriter}
+	tab.rec = newRecording(tab, oldWriter, "", 0, defaultRecordingQueueChunks, defaultRecordingQueueBytes)
 	path := filepath.Join(t.TempDir(), "replacement.log")
 	if err := tab.StartRecording(path); !errors.Is(err, closeErr) {
 		t.Fatalf("start error = %v, want previous close failure", err)
