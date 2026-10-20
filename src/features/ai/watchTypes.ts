@@ -8,13 +8,15 @@ export interface WatchCondition {
 export type WatchStatus = "armed" | "matched" | "cancelled" | "expired" | "unverifiable";
 
 // WatchTargetStateKind is the durable lifecycle state of a watched target.
-// "unverifiable" and "nonpersistent" are evidence-bearing states: they are
-// only shown when the runtime supplies a reason, never inferred.
+// "gone", "replaced", "exited", "unverifiable" and "nonpersistent" are
+// evidence-bearing states: without evidence they render as unknown, never as
+// the definitive state.
 export type WatchTargetStateKind =
   | "attached"
   | "disconnected"
   | "gone"
   | "replaced"
+  | "exited"
   | "unverifiable"
   | "nonpersistent";
 
@@ -27,6 +29,9 @@ export interface WatchSummary {
   repeat: boolean;
   anchorSeq: number;
   generation: number;
+  // revision is the watch row's durable CAS revision; cancellation must
+  // present it as expectedRevision, never the target-incarnation generation.
+  revision: number;
   lastError?: string;
   updatedAt: number;
 }

@@ -31,8 +31,21 @@ const targetStateLabels: Record<WatchTargetStateKind, string> = {
   disconnected: "已断连",
   gone: "已消失",
   replaced: "已被替换",
+  exited: "已退出",
   unverifiable: "不可验证",
   nonpersistent: "非持久",
+};
+
+// evidenceBearing states are only shown as definitive when the runtime
+// supplies evidence; without it they render as unknown.
+const evidenceBearing: Record<WatchTargetStateKind, boolean> = {
+  attached: false,
+  disconnected: false,
+  gone: true,
+  replaced: true,
+  exited: true,
+  unverifiable: true,
+  nonpersistent: true,
 };
 
 interface EventEntry {
@@ -40,11 +53,23 @@ interface EventEntry {
   duplicate: boolean;
 }
 
-// WatchPanel is the watch surface: it lists the owner's watches with their
-// condition, status and output anchor, the targets' lifecycle states with
-// their evidence, and the watchEvent stream as untrusted tool data — never
-// as user messages. Duplicate deliveries stay visible but never count twice.
+// WatchPanel is the watch surface. The panel remounts its content by owner,
+// so the first committed frame of a switch can never show the previous
+// owner's rows, events or unread count, and every operation, subscription
+// and load generation is scoped to its own incarnation.
 export function WatchPanel({
+  api,
+  owner,
+  onClose,
+}: {
+  api: WatchApi;
+  owner: string;
+  onClose?: () => void;
+}) {
+  return <WatchPanelContent key={owner} api={api} owner={owner} onClose={onClose} />;
+}
+
+function WatchPanelContent({
   api,
   owner,
   onClose,
@@ -58,6 +83,7 @@ export function WatchPanel({
   const [events, setEvents] = useState<EventEntry[]>([]);
   const [unread, setUnread] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const loadGenRef = useRef(0);
   const seenDeliveriesRef = useRef<Set<string>>(new Set());
   const aliveRef = useRef(true);
@@ -78,15 +104,12 @@ export function WatchPanel({
 
   useEffect(() => {
     aliveRef.current = true;
-    // Owner switch: clear everything so the previous owner's rows, events
-    // and unread count never leak into the new owner.
-    setWatches(null);
-    setTargets(null);
-    setEvents([]);
-    setUnread(0);
     setError(null);
-    seenDeliveriesRef.current = new Set();
+    setActionError(null);
     void load();
+    // The subscription callback is scoped to this effect's incarnation: a
+    // queued delivery from a previous owner is rejected by the alive guard
+    // even after unsubscribe, because the old content is unmounted.
     const unsubscribe = api.subscribeWatchToolData(owner, (data: WatchToolData) => {
       if (!aliveRef.current) return;
       const duplicate = seenDeliveriesRef.current.has(data.event.deliveryId);
@@ -106,7 +129,14 @@ export function WatchPanel({
 
   const cancel = useCallback(
     async (watch: WatchSummary) => {
-      await api.cancelWatch(owner, watch.id, watch.generation);
+      setActionError(null);
+      try {
+        await api.cancelWatch(owner, watch.id, watch.revision);
+      } catch (err) {
+        if (!aliveRef.current) return;
+        setActionError(err instanceof Error ? err.message : String(err));
+        return;
+      }
       void load();
     },
     [api, owner, load],
@@ -133,6 +163,11 @@ export function WatchPanel({
           {error}
         </div>
       )}
+      {actionError && (
+        <div role="alert" className="nx-badge nx-badge-red">
+          {actionError}
+        </div>
+      )}
       <section>
         <h4 className="mb-1 text-xs font-semibold text-neutral-500">目标</h4>
         <div className="flex flex-col gap-1">
@@ -140,11 +175,17 @@ export function WatchPanel({
             <div key={target.targetId} className="flex items-center gap-2 text-xs">
               <span className="font-medium">{target.targetId}</span>
               <span className="text-neutral-500">{target.identity}</span>
-              <span className="nx-badge">{targetStateLabels[target.state]}</span>
-              {target.evidence ? (
-                <span className="text-neutral-500">{target.evidence}</span>
+              {evidenceBearing[target.state] && !target.evidence ? (
+                <span className="nx-badge">未知</span>
               ) : (
-                <span className="nx-badge">无证据</span>
+                <>
+                  <span className="nx-badge">{targetStateLabels[target.state]}</span>
+                  {target.evidence ? (
+                    <span className="text-neutral-500">{target.evidence}</span>
+                  ) : (
+                    <span className="nx-badge">无证据</span>
+                  )}
+                </>
               )}
             </div>
           ))}
