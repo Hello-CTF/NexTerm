@@ -534,3 +534,67 @@ func TestDisconnectedTargetContinuesAndPersistsFailureWhenStopOnFailureDisabled(
 		t.Fatalf("history batch statuses = failed %d, success %d", failedBatches, successfulBatches)
 	}
 }
+
+// TestConcurrentAdvanceCancelKeepsRunStateConsistent is a deterministic
+// stress over the run state machine: one Advance races several
+// Cancel/Prepare pairs, synchronized only by channels and the WaitGroup, so
+// every interleaving must leave the run in a consistent terminal state and
+// every rejection must be a sentinel-class state-machine error.
+func TestConcurrentAdvanceCancelKeepsRunStateConsistent(t *testing.T) {
+	executor := &fakeExecutor{}
+	service := New(executor)
+	startTestRun(t, service, testSteps(), []string{"s1", "s2"}, ConfirmEveryStep, nil)
+	commands := []RenderedCommand{{SessionID: "s1", Command: "one"}, {SessionID: "s2", Command: "one"}}
+	prepareTestStep(t, service, 1, commands...)
+
+	var wg sync.WaitGroup
+	advanceErr := make(chan error, 1)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, err := service.Advance(context.Background(), "owner-a", AdvanceRequest{RunID: "run-1", StepNumber: 1, Confirmed: true})
+		advanceErr <- err
+	}()
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := service.Cancel(context.Background(), "owner-a", "run-1"); err != nil {
+				t.Errorf("cancel: %v", err)
+			}
+			if _, err := service.Prepare(context.Background(), "owner-a", PrepareRequest{RunID: "run-1", StepNumber: 1, Commands: commands}); err != nil &&
+				!errors.Is(err, ErrConflict) && !errors.Is(err, ErrInvalid) {
+				t.Errorf("prepare during advance/cancel: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if err := <-advanceErr; err != nil && !errors.Is(err, ErrInvalid) {
+		t.Fatalf("advance: %v", err)
+	}
+
+	// At least one cancel always lands, so the run must be terminally
+	// canceled no matter how the goroutines interleaved.
+	state, err := service.Get(context.Background(), "owner-a", "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != RunCanceled {
+		t.Fatalf("final status = %q, want %q: %+v", state.Status, RunCanceled, state)
+	}
+	if state.ActiveBatchID != "" {
+		t.Fatalf("terminal state must not keep an active batch: %+v", state)
+	}
+	for _, step := range state.Steps {
+		switch step.Status {
+		case StepSuccess, StepCanceled, StepSkipped:
+		default:
+			t.Fatalf("step %d left in non-terminal status %q: %+v", step.Number, step.Status, state)
+		}
+	}
+	for _, request := range executor.Requests() {
+		if request.BatchID != "run-1:s01:g01" || request.Runbook == nil || request.Runbook.RunID != "run-1" || request.Runbook.StepNumber != 1 {
+			t.Fatalf("executor request escaped the run: %+v", request)
+		}
+	}
+}

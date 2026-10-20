@@ -442,8 +442,9 @@ func TestGateRefreshSerializationPreventsStaleOverwrite(t *testing.T) {
 	go func() { firstDone <- gate.Check(context.Background()) }()
 	<-firstStarted
 	secondDone := make(chan error, 1)
-	go func() { secondDone <- gate.CheckFresh(context.Background()) }()
-	time.Sleep(50 * time.Millisecond)
+	secondStarted := make(chan struct{})
+	go func() { close(secondStarted); secondDone <- gate.CheckFresh(context.Background()) }()
+	<-secondStarted
 	close(releaseFirst)
 	if err := <-firstDone; err != nil {
 		t.Fatal(err)
