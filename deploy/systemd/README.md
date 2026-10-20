@@ -4,6 +4,27 @@ Use these steps from the extracted Linux server archive. The full server and
 sync-only peer share their listen address and data directory; enable only one
 of their units.
 
+## Supported platforms
+
+`install.sh` requires a Linux distribution with systemd and fails with a
+visible error before changing anything on any other system. Detection uses
+explicit evidence only: the kernel must report `Linux`, and systemd must be
+the init system (`/run/systemd/system` present, or `/sbin/init` linked to
+systemd). macOS, Windows and non-systemd init systems (SysV init, OpenRC,
+runit) are not supported.
+
+The distribution is identified from `/etc/os-release` (falling back to
+`/usr/lib/os-release`). The supported IDs are `debian`, `ubuntu`, `raspbian`,
+`rhel`, `fedora`, `centos`, `rocky`, `almalinux`, `ol`, `amzn`, `arch`,
+`manjaro`, `sles`, `opensuse-leap` and `opensuse-tumbleweed`, matched against
+both `ID` and `ID_LIKE`. An unrecognized or missing os-release prints a
+warning and continues: the installed layout is identical across systemd
+distributions.
+
+The automated suite (`scripts/test-systemd-install.py`) exercises detection
+against staged roots with stubbed `uname` and `systemctl`; live systemd and
+live distribution runs are outside it.
+
 ## Install or upgrade
 
 `install.sh` separates first install from upgrade and is safe to re-run:
@@ -15,8 +36,11 @@ sudo ./install.sh
 First install creates the `nexterm` system user, `/opt/nexterm`,
 `/etc/nexterm` and `/var/lib/nexterm`, installs the binaries, web assets,
 units and environment files, generates `/etc/nexterm/master.key`, then runs
-`systemctl enable --now nexterm-server`. Use `--no-enable` to install
-without starting the service.
+`systemctl enable --now nexterm-server` and verifies the unit reports active
+(a unit that does not start produces a warning with a `journalctl` hint, not
+a failed install). Use `--no-enable` to install without starting the service.
+On a completed first install the script prints where to finish super-admin
+setup; it never prints anything account-related on upgrades or re-runs.
 
 An upgrade (detected from an existing `/opt/nexterm/nexterm-server`,
 `/etc/nexterm/*.env` or unit) replaces binaries, web assets and units, and:
