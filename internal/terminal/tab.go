@@ -133,9 +133,12 @@ func newRecording(tab *Tab, file io.WriteCloser, path string, generation uint64,
 // run owns the file: it drains the queue in FIFO order and closes the file
 // once, when no chunks remain or the recording has failed. The close itself
 // runs on a dedicated goroutine: run waits for it without holding r.mu, so a
-// stuck external Close can never take the recording mutex with it.
+// stuck external Close can never take the recording mutex with it. A failure
+// status is enqueued before done closes, so a stop that observes the
+// finalized recording also observes the queued failure; handlers run
+// asynchronously afterwards, so a stop waiting on done never waits for a
+// handler and a handler may reenter stop or start freely.
 func (r *recording) run() {
-	defer close(r.done)
 	for {
 		chunk, ok := r.next()
 		if !ok {
@@ -151,8 +154,10 @@ func (r *recording) run() {
 	}
 	failed := r.err != nil
 	r.mu.Unlock()
-	if failed && r.claimFailureNotify() && r.onFailure != nil {
-		r.onFailure()
+	notified := failed && r.claimFailureNotify()
+	close(r.done)
+	if notified && r.onFailure != nil {
+		go r.onFailure()
 	}
 }
 
@@ -398,6 +403,10 @@ type Tab struct {
 	recQueueChunks  int
 	recQueueBytes   int
 	recDrainTimeout time.Duration
+
+	// beforeRunningEnqueue, when non-nil, runs immediately before the
+	// Running status of a new recording generation is enqueued.
+	beforeRunningEnqueue func(*recording)
 
 	resizeMu         sync.Mutex
 	responseHandler  atomic.Value
@@ -807,14 +816,21 @@ func (t *Tab) StartRecording(path string) error {
 	t.recMu.Lock()
 	t.recGeneration++
 	rec := newRecording(t, file, path, t.recGeneration, t.recQueueChunks, t.recQueueBytes)
+	// The Running status joins the ordered queue inside the migration
+	// section — before the new recording is visible to the output path and
+	// before a concurrent stop can enter — so a stop or failure of this
+	// generation can never be enqueued ahead of it. Handlers still run only
+	// after the operation lock is released.
+	if t.beforeRunningEnqueue != nil {
+		t.beforeRunningEnqueue(rec)
+	}
+	t.enqueueRecordingNotification(rec.status(t.id))
 	t.rec = rec
-	status := t.recordingStatusLocked()
 	t.recMu.Unlock()
 	// Handlers run after the operation lock is released so a callback can
 	// synchronously reenter Start/Stop without deadlocking; notifications
 	// are delivered in transition order from the shared queue.
 	t.recOpMu.Unlock()
-	t.enqueueRecordingNotification(status)
 	t.drainRecordingNotifications()
 	return nil
 }
