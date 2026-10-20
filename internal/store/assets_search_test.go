@@ -104,7 +104,7 @@ func TestAssetSearchReportsTotalAndTruncation(t *testing.T) {
 	}
 }
 
-func TestAssetSyncPreservesLegacyTagsAndNote(t *testing.T) {
+func TestAssetSyncNormalizesTagsAndPreservesNote(t *testing.T) {
 	ctx := context.Background()
 	db := testStore(t)
 	row := AssetRow{
@@ -119,8 +119,10 @@ func TestAssetSyncPreservesLegacyTagsAndNote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Tags != row.Tags || got.Note != row.Note {
-		t.Fatalf("sync changed legacy fields: tags %q / note %q", got.Tags, got.Note)
+	// Sync writes share the storage tag conventions (trim, case-insensitive dedup,
+	// comma normalization); free-form fields stay byte-identical.
+	if got.Tags != "legacy, mixed separators" || got.Note != row.Note {
+		t.Fatalf("sync changed fields: tags %q / note %q", got.Tags, got.Note)
 	}
 }
 

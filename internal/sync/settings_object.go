@@ -373,12 +373,9 @@ func (e *Engine) knownHostUpsert(ctx context.Context, payload knownHostObject, d
 				return err
 			}
 		}
-		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "id"}},
-			DoUpdates: clause.AssignmentColumns([]string{"host", "port", "key_type", "fingerprint", "added_at", "op_token"}),
-			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
-		}).Create(&store.KnownHostRow{ID: payload.ID, Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType, Fingerprint: payload.Fingerprint, AddedAt: payload.AddedAt, OwnerID: ipc.OwnerID(ctx)}).Error; err != nil {
-			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		row := &store.KnownHostRow{ID: payload.ID, Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType, Fingerprint: payload.Fingerprint, AddedAt: payload.AddedAt, OwnerID: ipc.OwnerID(ctx)}
+		if err := store.UpsertOwnerGuarded(ctx, tx, row, []string{"host", "port", "key_type", "fingerprint", "added_at", "op_token"}); err != nil {
+			return err
 		}
 		tombstone := query.Use(tx).SyncTombstone
 		if _, err := tombstone.WithContext(ctx).

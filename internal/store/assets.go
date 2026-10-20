@@ -185,7 +185,10 @@ func (s *Store) assetUpdate(ctx context.Context, db *gorm.DB, id string, patch A
 	if err := validateInventoryPatch(current, patch); err != nil {
 		return AssetRow{}, err
 	}
-	values, err := s.assetUpdateValues(ctx, db, id, patch, ids.NowMS())
+	// Local edits advance the revision strictly monotonically so an equal
+	// updated_at always means "unchanged" for CAS consumers, even when two
+	// writes land within the same millisecond.
+	values, err := s.assetUpdateValues(ctx, db, id, patch, nextWriteVersion(current.UpdatedAt))
 	if err != nil {
 		return AssetRow{}, err
 	}
@@ -254,10 +257,13 @@ func (s *Store) AssetDelete(ctx context.Context, id string) error {
 		return badParam(errString("\"当前设备\"是内置资产，不能删除"))
 	}
 	asset := query.Use(s.db).AssetRow
+	// The deletion advances the effective revision strictly past the last update
+	// (same-millisecond deletes included) so LWW comparisons always observe it.
+	revision := nextWriteVersion(row.UpdatedAt)
 	_, err = asset.WithContext(ctx).
 		Where(asset.ID.Eq(id)).
 		Where(ownerConditions(ctx, asset.TableName())...).
-		UpdateColumns(map[string]any{"deleted_at": ids.NowMS()})
+		UpdateColumns(map[string]any{"deleted_at": revision, "updated_at": revision})
 	if err != nil {
 		return dbError(err)
 	}
@@ -578,6 +584,7 @@ func (s *Store) assetUpsert(ctx context.Context, db *gorm.DB, row AssetRow) (boo
 	}
 	row.OwnerID = ipc.OwnerID(ctx)
 	row.Name = strings.TrimSpace(row.Name)
+	row.Tags = NormalizeAssetTags(row.Tags)
 	row.Builtin = false
 	if err := s.upsertWithDB(ctx, db, &row, []string{
 		"group_id", "kind", "name", "host", "port", "username", "auth_kind", "key_path", "cred_id",
@@ -586,4 +593,143 @@ func (s *Store) assetUpsert(ctx context.Context, db *gorm.DB, row AssetRow) (boo
 		return false, err
 	}
 	return !exists, nil
+}
+
+// AssetUpsertGuarded is the expected-revision variant of AssetUpsert: the write lands only
+// when the stored row still matches the base snapshot the caller's decision was made
+// against (nil base means "must not exist yet"). Sync apply and bundle import decide on a
+// snapshot and write later; without this guard a concurrent reconciler or sync write in
+// between is silently overwritten. A stale snapshot or a cross-owner collision surfaces as
+// ErrWriteConflict and the row is left untouched.
+func (s *Store) AssetUpsertGuarded(ctx context.Context, row AssetRow, base *AssetRow) (bool, error) {
+	created := false
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var err error
+		created, err = s.AssetUpsertGuardedTx(ctx, tx, row, base)
+		return err
+	})
+	if err != nil {
+		return false, err
+	}
+	return created, nil
+}
+
+// AssetUpsertGuardedTx is the in-transaction version of AssetUpsertGuarded.
+func (s *Store) AssetUpsertGuardedTx(ctx context.Context, tx *gorm.DB, row AssetRow, base *AssetRow) (bool, error) {
+	if row.ID == BuiltinLocalAssetID {
+		return false, badParam(errString("内置资产\"当前设备\"不接受同步写入（各设备身份相互独立）"))
+	}
+	if err := EnsureID(row.ID); err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(row.Name) == "" {
+		return false, badParam(errString("资产名称不能为空"))
+	}
+	if row.GroupID != nil {
+		if _, err := s.groupReference(ctx, tx, *row.GroupID); err != nil {
+			return false, err
+		}
+	}
+	row.OwnerID = ipc.OwnerID(ctx)
+	row.Name = strings.TrimSpace(row.Name)
+	row.Tags = NormalizeAssetTags(row.Tags)
+	row.Builtin = false
+	if base == nil {
+		if err := validateInventoryCreateOptions(row.OptionsJSON); err != nil {
+			return false, err
+		}
+		if err := tx.WithContext(ctx).Create(&row).Error; err != nil {
+			if IsUniqueErr(err) {
+				return false, ErrWriteConflict
+			}
+			return false, dbError(err)
+		}
+		return true, nil
+	}
+	if err := validateInventoryUpsert(*base, row); err != nil {
+		return false, err
+	}
+	values := map[string]any{
+		"group_id": row.GroupID, "kind": row.Kind, "name": row.Name,
+		"host": row.Host, "port": row.Port, "username": row.Username, "auth_kind": row.AuthKind,
+		"key_path": row.KeyPath, "cred_id": row.CredID, "options_json": row.OptionsJSON,
+		"tags": row.Tags, "note": row.Note, "sort": row.Sort,
+		"updated_at": row.UpdatedAt, "deleted_at": row.DeletedAt,
+	}
+	asset := query.Use(tx).AssetRow
+	statement := asset.WithContext(ctx).
+		Where(asset.ID.Eq(row.ID), asset.UpdatedAt.Eq(base.UpdatedAt)).
+		Where(ownerConditions(ctx, asset.TableName())...)
+	if base.DeletedAt == nil {
+		statement = statement.Where(asset.DeletedAt.IsNull())
+	} else {
+		statement = statement.Where(asset.DeletedAt.Eq(*base.DeletedAt))
+	}
+	info, err := statement.UpdateColumns(values)
+	if err != nil {
+		return false, dbError(err)
+	}
+	if info.RowsAffected == 1 {
+		return false, nil
+	}
+	// MySQL/MariaDB report 0 affected rows when the guarded UPDATE sets identical
+	// values: accept the write only when the stored row already equals the desired
+	// state; anything else means the snapshot is stale.
+	matches, err := s.assetRowMatches(ctx, tx, row)
+	if err != nil {
+		return false, err
+	}
+	if matches {
+		return false, nil
+	}
+	return false, ErrWriteConflict
+}
+
+// assetRowMatches reports whether the stored row already carries exactly the given
+// sync-visible state (same revision, deletion state, and content).
+func (s *Store) assetRowMatches(ctx context.Context, tx *gorm.DB, row AssetRow) (bool, error) {
+	asset := query.Use(tx).AssetRow
+	stored, err := asset.WithContext(ctx).
+		Where(asset.ID.Eq(row.ID)).
+		Where(ownerConditions(ctx, asset.TableName())...).
+		First()
+	if isNoRows(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, dbError(err)
+	}
+	return stored.UpdatedAt == row.UpdatedAt &&
+		optionalInt64Equal(stored.DeletedAt, row.DeletedAt) &&
+		stored.GroupID == nil == (row.GroupID == nil) && (stored.GroupID == nil || *stored.GroupID == *row.GroupID) &&
+		stored.Kind == row.Kind && stored.Name == row.Name &&
+		optionalStringEqual(stored.Host, row.Host) &&
+		optionalInt32Equal(stored.Port, row.Port) &&
+		optionalStringEqual(stored.Username, row.Username) &&
+		optionalStringEqual(stored.AuthKind, row.AuthKind) &&
+		optionalStringEqual(stored.KeyPath, row.KeyPath) &&
+		optionalStringEqual(stored.CredID, row.CredID) &&
+		stored.OptionsJSON == row.OptionsJSON && stored.Tags == row.Tags &&
+		stored.Note == row.Note && stored.Sort == row.Sort, nil
+}
+
+func optionalStringEqual(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func optionalInt32Equal(left, right *int32) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func optionalInt64Equal(left, right *int64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }

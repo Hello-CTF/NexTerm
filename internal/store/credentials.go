@@ -144,6 +144,20 @@ func (s *Store) CredentialDeleteRow(ctx context.Context, id string) error {
 	return nil
 }
 
+// CredentialDeleteIfUnreferenced removes a credential only when no asset references it.
+// Soft-deleted assets still hold their binding for a potential restore, so they count as
+// references too. The check runs inside the DELETE statement itself, so a concurrent asset
+// binding the credential cannot be silently cleared by OnDelete:SET NULL.
+func (s *Store) CredentialDeleteIfUnreferenced(ctx context.Context, id string) (bool, error) {
+	result := s.db.WithContext(ctx).Exec(
+		"DELETE FROM credential WHERE id = ? AND owner_id = ? AND NOT EXISTS (SELECT 1 FROM asset WHERE asset.cred_id = credential.id)",
+		id, ipc.OwnerID(ctx))
+	if result.Error != nil {
+		return false, dbError(result.Error)
+	}
+	return result.RowsAffected == 1, nil
+}
+
 func (s *Store) CredentialUsage(ctx context.Context, credID string) ([]AssetRef, error) {
 	asset := query.Use(s.db).AssetRow
 	result := []AssetRef{}

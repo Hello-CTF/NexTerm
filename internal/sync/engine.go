@@ -819,12 +819,8 @@ func (e *Engine) snippetUpsert(ctx context.Context, row store.SnippetRow) error 
 // snippetUpsertTx is the in-transaction version of snippetUpsert, letting ImportBundle merge multiple writes of one object class into the same transaction.
 func (e *Engine) snippetUpsertTx(ctx context.Context, tx *gorm.DB, row store.SnippetRow) error {
 	row.OwnerID = ipc.OwnerID(ctx)
-	if err := tx.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"group_id", "name", "body", "sort", "updated_at"}),
-		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
-	}).Create(&row).Error; err != nil {
-		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	if err := store.UpsertOwnerGuarded(ctx, tx, &row, []string{"group_id", "name", "body", "sort", "updated_at"}); err != nil {
+		return err
 	}
 	tombstone := query.Use(tx).SyncTombstone
 	if _, err := tombstone.WithContext(ctx).

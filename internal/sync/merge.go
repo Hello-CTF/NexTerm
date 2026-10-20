@@ -13,7 +13,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 const (
@@ -524,12 +523,9 @@ func (e *Engine) groupUpsert(ctx context.Context, payload groupObject, parentID 
 
 // groupUpsertTx is the in-transaction version of groupUpsert, letting ImportBundle merge multiple writes of one object class into the same transaction.
 func (e *Engine) groupUpsertTx(ctx context.Context, tx *gorm.DB, payload groupObject, parentID *string) error {
-	if err := tx.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"parent_id", "name", "sort", "updated_at"}),
-		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
-	}).Create(&store.AssetGroupRow{ID: payload.ID, ParentID: parentID, Name: strings.TrimSpace(payload.Name), Sort: payload.Sort, CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt, OwnerID: ipc.OwnerID(ctx)}).Error; err != nil {
-		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	row := &store.AssetGroupRow{ID: payload.ID, ParentID: parentID, Name: strings.TrimSpace(payload.Name), Sort: payload.Sort, CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt, OwnerID: ipc.OwnerID(ctx)}
+	if err := store.UpsertOwnerGuarded(ctx, tx, row, []string{"parent_id", "name", "sort", "updated_at"}); err != nil {
+		return err
 	}
 	tombstone := query.Use(tx).SyncTombstone
 	if _, err := tombstone.WithContext(ctx).
@@ -640,7 +636,19 @@ func (e *Engine) applyAssetObject(ctx context.Context, plaintext []byte, report 
 			return false, false
 		}
 	}
-	if _, err := e.store.AssetUpsert(ctx, row); err != nil {
+	// The LWW decision above was made against the local snapshot; the guarded upsert
+	// lands only when that snapshot is still current, so a concurrent reconciler or
+	// user write is never silently overwritten. A conflict leaves the object
+	// unreconciled: the next round re-pulls and re-decides on the fresh state.
+	var base *store.AssetRow
+	if exists {
+		base = &local
+	}
+	if _, err := e.store.AssetUpsertGuarded(ctx, row, base); err != nil {
+		if errors.Is(err, store.ErrWriteConflict) {
+			report.warnf("资产 %s 在本机已被更新，本次未覆盖，将在下一轮同步重新合并", payload.ID)
+			return false, false
+		}
 		report.warnf("资产 %s 应用失败: %v", payload.ID, err)
 		return false, false
 	}
@@ -712,12 +720,9 @@ func (e *Engine) credentialUpsert(ctx context.Context, payload credentialObject,
 
 // credentialUpsertTx is the in-transaction version of credentialUpsert, letting ImportBundle merge multiple writes of one object class into the same transaction.
 func (e *Engine) credentialUpsertTx(ctx context.Context, tx *gorm.DB, payload credentialObject, nonce, blob []byte) error {
-	if err := tx.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"name", "kind", "cipher", "nonce", "blob", "kek_hint", "updated_at"}),
-		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
-	}).Create(&store.CredentialRow{ID: payload.ID, Name: payload.Name, Kind: payload.Kind, Cipher: store.CipherAES256GCM, Nonce: nonce, Blob: blob, KEKHint: e.vault.KEKHint(), CreatedAt: payload.UpdatedAt, UpdatedAt: payload.UpdatedAt, OwnerID: ipc.OwnerID(ctx)}).Error; err != nil {
-		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	row := &store.CredentialRow{ID: payload.ID, Name: payload.Name, Kind: payload.Kind, Cipher: store.CipherAES256GCM, Nonce: nonce, Blob: blob, KEKHint: e.vault.KEKHint(), CreatedAt: payload.UpdatedAt, UpdatedAt: payload.UpdatedAt, OwnerID: ipc.OwnerID(ctx)}
+	if err := store.UpsertOwnerGuarded(ctx, tx, row, []string{"name", "kind", "cipher", "nonce", "blob", "kek_hint", "updated_at"}); err != nil {
+		return err
 	}
 	tombstone := query.Use(tx).CredentialTombstone
 	if _, err := tombstone.WithContext(ctx).
