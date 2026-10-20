@@ -540,8 +540,9 @@ export function XtermView(props: XtermViewProps) {
         if (recoverTarget !== null) maybeResume();
         // Keep the server's retention floor current with the accepted offset
         // through the ordered write path, without waiting for a pause/recover
-        // RPC: report at most once per MiB accepted.
-        if (streamBytes - lastStreamAckOffset >= 1 << 20) {
+        // RPC: report at most once per MiB accepted, in absolute stream
+        // coordinates so a new anchor never stalls the periodic ACK.
+        if (acceptedOffsetNow() - lastStreamAckOffset >= 1 << 20) {
           sendStreamAck();
         }
         if (expiredNoticePending && streamBytes >= (streamAnchor?.control ?? 0)) {
