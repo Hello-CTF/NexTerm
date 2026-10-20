@@ -133,10 +133,12 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
   const locatorRef = useRef({ sessionId, path });
   const loadLocksRef = useRef(new Map<string, { token: number; users: number }>());
   const onCloseRef = useRef(onClose);
+  const caseInsensitiveRef = useRef(caseInsensitive);
   const language = useRef(new Compartment()).current;
   locatorRef.current = { sessionId, path };
   dirtyRef.current = dirty;
   onCloseRef.current = onClose;
+  caseInsensitiveRef.current = caseInsensitive;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -162,15 +164,16 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
 
   useEffect(() => {
     let cancelled = false;
+    const ci = caseInsensitiveRef.current;
     const initialLocator = locatorRef.current;
     const lockKey = fileEditorLocatorKey(
       initialLocator.sessionId,
       initialLocator.path,
-      caseInsensitive,
+      ci,
     );
     let lock = loadLocksRef.current.get(lockKey);
     if (!lock) {
-      const token = beginFileEditorLoad(initialLocator.sessionId, initialLocator.path, caseInsensitive);
+      const token = beginFileEditorLoad(initialLocator.sessionId, initialLocator.path, ci);
       if (token === null) {
         pushToast("info", "文件读取或重命名进行中，完成后请重新读取");
         onCloseRef.current?.();
@@ -240,7 +243,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         setEol(text.includes("\r\n") ? "CRLF" : "LF");
         dirtyRef.current = false;
         const current = locatorRef.current;
-        setFileEditorDirty(current.sessionId, current.path, false, caseInsensitive);
+        setFileEditorDirty(current.sessionId, current.path, false, ci);
         setDirty(false);
         if (hostRef.current) {
           viewRef.current?.destroy();
@@ -260,7 +263,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
                     editVersionRef.current += 1;
                     dirtyRef.current = true;
                     const latest = locatorRef.current;
-                    setFileEditorDirty(latest.sessionId, latest.path, true, caseInsensitive);
+                    setFileEditorDirty(latest.sessionId, latest.path, true, ci);
                     setDirty(true);
                     const s = u.state.doc.toString();
                     setEol(s.includes("\r\n") ? "CRLF" : "LF");
@@ -292,7 +295,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-  }, [sessionId, reloadEnc, reloadKey, language, caseInsensitive, pushToast]);
+  }, [sessionId, reloadEnc, reloadKey, language, pushToast]);
 
   useEffect(() => {
     const view = viewRef.current;
