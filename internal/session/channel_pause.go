@@ -13,10 +13,27 @@ import (
 // in stream order. Unlike DetachChannel, pausing never reaps the tab, so
 // ephemeral local/WinRM tabs and their PTYs stay alive across the episode.
 
-func (m *Manager) tabIDForChannel(channelID string) string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.channelTabs[channelID]
+// streamControlBindLocked resolves the channel's current subscriber for a
+// stream-control command (pause, resume, recover, and the accepted-offset
+// ACK) and binds it to the trusted caller and the attachment incarnation:
+// the attached client must match the caller, and the report's attachmentId
+// must match the current incarnation. Callers hold tab.mu, and the state
+// write that follows runs in the same critical section, so a late frame from
+// a previous incarnation of the same channel — or from another client — is
+// rejected instead of touching the new subscriber's floor, high-water, or
+// paused state.
+func streamControlBindLocked(tab *Tab, channelID, client string, attachmentID uint64) (subscriber, error) {
+	subscriber, ok := tab.subscribers[channelID]
+	if !ok {
+		return subscriber, ErrTabNotFound
+	}
+	if subscriber.client != clientID(client) {
+		return subscriber, ErrForbidden
+	}
+	if subscriber.attachmentId != attachmentID {
+		return subscriber, ErrForbidden
+	}
+	return subscriber, nil
 }
 
 // PauseChannelFor stops feeding output to one channel without touching the
@@ -24,60 +41,53 @@ func (m *Manager) tabIDForChannel(channelID string) string {
 // accepted offset opens a retention floor: the recovery ring keeps everything
 // at or after it until the episode resolves, stalling the producer instead of
 // evicting the refused suffix. A negative acceptedBytes leaves the floor
-// unchanged.
-func (m *Manager) PauseChannelFor(ctx context.Context, channelID string, acceptedBytes int64) error {
-	tabID := m.tabIDForChannel(channelID)
-	if tabID == "" {
-		return ErrTabNotFound
-	}
-	if _, err := m.TabFor(ctx, tabID); err != nil {
-		return err
-	}
-	tab, err := m.Tab(tabID)
+// unchanged. The caller must be the channel's attached client and the report
+// must carry the channel's current attachment incarnation.
+func (m *Manager) PauseChannelFor(ctx context.Context, tabID, channelID, client string, attachmentID uint64, acceptedBytes int64) error {
+	tab, err := m.TabFor(ctx, tabID)
 	if err != nil {
 		return err
 	}
 	tab.mu.Lock()
-	subscriber, ok := tab.subscribers[channelID]
-	if ok {
-		if !subscriber.paused {
-			subscriber.paused = true
-			tab.subscribers[channelID] = subscriber
-		}
-		if acceptedBytes >= 0 {
-			floor := min(max(acceptedBytes, 0), subscriber.flushedOffset)
-			tab.setEpisodeFloorLocked(channelID, floor)
-		}
+	defer tab.mu.Unlock()
+	subscriber, err := streamControlBindLocked(tab, channelID, client, attachmentID)
+	if err != nil {
+		return err
+	}
+	if !subscriber.paused {
+		subscriber.paused = true
+		tab.subscribers[channelID] = subscriber
+	}
+	if acceptedBytes >= 0 {
+		floor := min(max(acceptedBytes, 0), subscriber.flushedOffset)
+		tab.setEpisodeFloorLocked(channelID, floor)
 	}
 	tab.signalOutputWakeLocked()
-	tab.mu.Unlock()
 	return nil
 }
 
 // ResumeChannelFor releases a paused channel and flushes whatever the
 // coalescer held, restoring stream order behind already-delivered bytes. The
-// client only resumes once it caught up, so its retention floor closes.
-func (m *Manager) ResumeChannelFor(ctx context.Context, channelID string) error {
-	tabID := m.tabIDForChannel(channelID)
-	if tabID == "" {
-		return ErrTabNotFound
-	}
-	if _, err := m.TabFor(ctx, tabID); err != nil {
-		return err
-	}
-	tab, err := m.Tab(tabID)
+// client only resumes once it caught up, so its retention floor closes. The
+// caller must be the channel's attached client and the report must carry the
+// channel's current attachment incarnation, so a late resume from a previous
+// incarnation cannot clear the new attachment's floor.
+func (m *Manager) ResumeChannelFor(ctx context.Context, tabID, channelID, client string, attachmentID uint64) error {
+	tab, err := m.TabFor(ctx, tabID)
 	if err != nil {
 		return err
 	}
 	tab.mu.Lock()
-	subscriber, ok := tab.subscribers[channelID]
-	if ok && subscriber.paused {
+	subscriber, err := streamControlBindLocked(tab, channelID, client, attachmentID)
+	if err != nil {
+		tab.mu.Unlock()
+		return err
+	}
+	if subscriber.paused {
 		subscriber.paused = false
 		tab.subscribers[channelID] = subscriber
 	}
-	if ok {
-		tab.setEpisodeFloorLocked(channelID, -1)
-	}
+	tab.setEpisodeFloorLocked(channelID, -1)
 	tab.signalOutputWakeLocked()
 	tab.mu.Unlock()
 	m.flushSubscriberOutput(tabID, channelID)
@@ -172,6 +182,12 @@ func (m *Manager) noteChannelFlushed(tab *Tab, channelID string, bytes int64) {
 // resume flush delivers them behind the replay in stream order, so nothing
 // is sent twice and nothing is skipped.
 //
+// The caller must be the channel's attached client and the report must carry
+// the channel's current attachment incarnation: a late recover from a
+// previous incarnation is rejected instead of forging a replay on the new
+// attachment. The anchor names that incarnation so the client can realign
+// even if it missed the attach response.
+//
 // The anchor and the replay travel the same ordered fanout queue as live
 // output, so frames already queued for the subscriber deliver first and the
 // refused suffix arrives exactly once. The reported offset also advances the
@@ -186,15 +202,8 @@ func (m *Manager) noteChannelFlushed(tab *Tab, channelID string, bytes int64) {
 //
 // It returns the server's flushed offset, so the client knows when it has
 // caught up.
-func (m *Manager) RecoverChannelFor(ctx context.Context, channelID string, acceptedBytes int64) (int64, error) {
-	tabID := m.tabIDForChannel(channelID)
-	if tabID == "" {
-		return 0, ErrTabNotFound
-	}
-	if _, err := m.TabFor(ctx, tabID); err != nil {
-		return 0, err
-	}
-	tab, err := m.Tab(tabID)
+func (m *Manager) RecoverChannelFor(ctx context.Context, tabID, channelID, client string, attachmentID uint64, acceptedBytes int64) (int64, error) {
+	tab, err := m.TabFor(ctx, tabID)
 	if err != nil {
 		return 0, err
 	}
@@ -203,11 +212,14 @@ func (m *Manager) RecoverChannelFor(ctx context.Context, channelID string, accep
 	}
 	defer tab.unlockFeed()
 	tab.mu.Lock()
-	subscriber, ok := tab.subscribers[channelID]
+	subscriber, bindErr := streamControlBindLocked(tab, channelID, client, attachmentID)
 	recovery := tab.recovery
 	fanout := tab.fanout
 	tab.mu.Unlock()
-	if !ok || recovery == nil || fanout == nil {
+	if bindErr != nil {
+		return 0, bindErr
+	}
+	if recovery == nil || fanout == nil {
 		return 0, ErrUnsupported
 	}
 	if acceptedBytes < 0 || acceptedBytes > subscriber.flushedOffset {
@@ -243,9 +255,10 @@ func (m *Manager) RecoverChannelFor(ctx context.Context, channelID string, accep
 	}
 	tab.mu.Unlock()
 	anchor, err := json.Marshal(streamAnchor{
-		Type:      streamAnchorType,
-		Epoch:     "recovery-" + tabID,
-		StreamSeq: uint64(acceptedBytes),
+		Type:         streamAnchorType,
+		Epoch:        "recovery-" + tabID,
+		StreamSeq:    uint64(acceptedBytes),
+		AttachmentID: subscriber.attachmentId,
 	})
 	if err != nil {
 		return 0, err

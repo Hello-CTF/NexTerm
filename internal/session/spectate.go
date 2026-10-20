@@ -137,8 +137,10 @@ func (m *Manager) AttachSpectator(ctx context.Context, tabID string, options Spe
 		return TabInfo{}, ErrTabClosed
 	}
 	co := newOutCoalescer(func() { m.flushSubscriberOutput(tab.ID, options.ChannelID) })
+	m.nextAttachmentId++
 	tab.subscribers[options.ChannelID] = subscriber{
-		client: clientID(options.ClientID), producer: producer, co: co,
+		client: clientID(options.ClientID), producer: producer, co: co, attachmentId: m.nextAttachmentId,
+		episodeFloor: -1, floorHighWater: -1,
 	}
 	m.attachSubscriberOutput(tab, options.ChannelID, incarnation, producer, co)
 	info := tab.infoLocked()

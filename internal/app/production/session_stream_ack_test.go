@@ -52,10 +52,10 @@ func TestProductionStreamAckBindsTrustedCaller(t *testing.T) {
 	}
 	dispatch := func(environmentCaller, payloadClient string) ipc.Response {
 		args, _ := json.Marshal(map[string]any{
-			"tabId":        info.ID,
-			"channelId":    "channel-a",
-			"clientId":     payloadClient,
-			"attachmentId": info.AttachmentID,
+			"tabId":         info.ID,
+			"channelId":     "channel-a",
+			"clientId":      payloadClient,
+			"attachmentId":  info.AttachmentID,
 			"acceptedBytes": 0,
 		})
 		return application.Dispatcher.Dispatch(t.Context(), ipc.Request{
@@ -78,5 +78,90 @@ func TestProductionStreamAckBindsTrustedCaller(t *testing.T) {
 	// Both empty: rejected.
 	if response := dispatch("", ""); response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
 		t.Fatalf("empty caller = %+v, want forbidden", response)
+	}
+}
+
+// The stream-control commands share the ACK's trusted-caller and incarnation
+// contract at the IPC boundary: pause, resume, and recover resolve the caller
+// from the environment and the payload with the same consistency rules, and
+// bind it to the attachment — a cross-client or stale-incarnation report is
+// forbidden, never OK.
+func TestProductionStreamControlBindsTrustedCaller(t *testing.T) {
+	application, err := NewProduction(context.Background(), ProductionConfig{
+		Config: Config{
+			Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+		DataDir: t.TempDir(),
+		Desktop: true,
+		Connector: session.ConnectorFunc(func(_ context.Context, asset session.Asset, generation uint64) (base.Transport, error) {
+			return newAccountCleanupTransport(asset.Kind, generation), nil
+		}),
+		Terminals: session.TerminalFactoryFunc(func(config session.TerminalConfig) (session.TerminalState, error) {
+			return terminal.NewTab(config.TabID, config.SessionID, int(config.Cols), int(config.Rows), terminal.UTF8), nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := application.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = application.Shutdown(context.Background()) })
+
+	connected, err := application.Services.Sessions.ConnectFor(owner.WithOpenAccess(t.Context()), session.Asset{ID: "asset-local", Name: "local", Kind: session.KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := application.Services.Sessions.OpenTabFor(owner.WithOpenAccess(t.Context()), session.OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client-a", ChannelID: "channel-a", Cols: 80, Rows: 24, Ephemeral: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	infoB, err := application.Services.Sessions.AttachTabFor(owner.WithOpenAccess(t.Context()), info.ID, session.AttachOptions{
+		ClientID: "client-b", ChannelID: "channel-b",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dispatch := func(command, environmentCaller, payloadClient string, attachmentID uint64, acceptedBytes int64) ipc.Response {
+		args, _ := json.Marshal(map[string]any{
+			"tabId":         info.ID,
+			"channelId":     "channel-b",
+			"clientId":      payloadClient,
+			"attachmentId":  attachmentID,
+			"acceptedBytes": acceptedBytes,
+		})
+		return application.Dispatcher.Dispatch(t.Context(), ipc.Request{
+			Command: command, Args: args,
+		}, application.Environment(environmentCaller))
+	}
+
+	for _, command := range []string{"terminal_pause", "terminal_resume", "terminal_recover"} {
+		// Environment caller and payload client disagree: rejected.
+		if response := dispatch(command, "client-a", "client-b", infoB.AttachmentID, 0); response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
+			t.Fatalf("%s mismatched caller = %+v, want forbidden", command, response)
+		}
+		// Environment-only caller: a legitimate single-source fallback.
+		if response := dispatch(command, "client-b", "", infoB.AttachmentID, 0); !response.OK {
+			t.Fatalf("%s environment-only caller = %+v, want OK", command, response)
+		}
+		// Payload-only client: a legitimate single-source fallback.
+		if response := dispatch(command, "", "client-b", infoB.AttachmentID, 0); !response.OK {
+			t.Fatalf("%s payload-only caller = %+v, want OK", command, response)
+		}
+		// Both empty: rejected.
+		if response := dispatch(command, "", "", infoB.AttachmentID, 0); response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
+			t.Fatalf("%s empty caller = %+v, want forbidden", command, response)
+		}
+		// Cross-client: client A presenting client B's incarnation is forbidden.
+		if response := dispatch(command, "client-a", "client-a", infoB.AttachmentID, 0); response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
+			t.Fatalf("%s cross-client = %+v, want forbidden", command, response)
+		}
+		// Stale incarnation: the previous attachment id is forbidden.
+		if response := dispatch(command, "client-b", "client-b", infoB.AttachmentID-1, 0); response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
+			t.Fatalf("%s stale incarnation = %+v, want forbidden", command, response)
+		}
 	}
 }

@@ -56,12 +56,15 @@ const streamAnchorType = "nexterm.stream-anchor"
 // control bytes at the stream head that do not count toward the sequence (clear-screen escape); expired means the client
 // anchor was not adopted and this attach fell back to a full clear-screen replay. The client computes the consumed
 // sequence as streamSeq + max(0, bytes received - controlBytes) and brings it back via AttachOptions.FromSeq/FromEpoch on reconnect.
+// attachmentId is the incarnation this frame was sent for: the client adopts it as its current attachment identity, so
+// the ordered stream itself carries the incarnation even when the attach RPC response has not arrived yet.
 type streamAnchor struct {
 	Type         string `json:"type"`
 	Epoch        string `json:"epoch"`
 	StreamSeq    uint64 `json:"streamSeq"`
 	ControlBytes int    `json:"controlBytes,omitempty"`
 	Expired      bool   `json:"expired,omitempty"`
+	AttachmentID uint64 `json:"attachmentId,omitempty"`
 }
 
 type Tab struct {
@@ -760,8 +763,26 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 		_ = old.producer.Close()
 	}
 	attached := false
+	registered := false
+	var co *outCoalescer
 	defer func() {
 		if !attached {
+			if registered {
+				// The attach failed after the incarnation was registered but
+				// before it committed: roll the subscriber back so the channel
+				// never keeps a half-attached incarnation. The identity guard
+				// leaves a newer attachment in place.
+				m.mu.Lock()
+				tab.mu.Lock()
+				if current, ok := tab.subscribers[options.ChannelID]; ok && current.co == co {
+					delete(tab.subscribers, options.ChannelID)
+					tab.syncRecoveryFloorLocked()
+					tab.releaseOrphanControllerLocked()
+				}
+				tab.mu.Unlock()
+				m.mu.Unlock()
+				co.teardown()
+			}
 			_ = producer.Close()
 			m.releaseChannelReservation(tab.ID, options.ChannelID, incarnation)
 		}
@@ -769,8 +790,42 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	if err := m.bus.DiscardPending(options.ChannelID); err != nil {
 		return TabInfo{}, err
 	}
+
+	// Register the subscriber before the anchor and replay are sent: the
+	// anchor carries the new incarnation, and the client's first ACK must
+	// land on a live subscriber even when it arrives ahead of the attach
+	// response. Live output cannot interleave with the replay — the feed gate
+	// is held for the whole attach — and the fanout wiring and the controller
+	// claim still commit only after the sends succeed.
+	m.mu.Lock()
+	if m.closed || m.tabs[tab.ID] != tab || m.channelTabs[options.ChannelID] != tab.ID || m.channelIncarnations[options.ChannelID] != incarnation {
+		m.mu.Unlock()
+		return TabInfo{}, hub.ErrDetached
+	}
+	tab.mu.Lock()
+	if tab.closed || tab.destroying {
+		tab.mu.Unlock()
+		m.mu.Unlock()
+		return TabInfo{}, ErrTabClosed
+	}
+	client := clientID(options.ClientID)
+	co = newOutCoalescer(func() { m.flushSubscriberOutput(tab.ID, options.ChannelID) })
+	flushedOffset := int64(0)
+	if tab.recovery != nil {
+		flushedOffset = tab.recovery.currentOffset()
+	}
+	m.nextAttachmentId++
+	attachmentId := m.nextAttachmentId
+	tab.subscribers[options.ChannelID] = subscriber{
+		client: client, producer: producer, co: co, attachmentId: attachmentId, flushedOffset: flushedOffset, episodeFloor: -1, floorHighWater: -1,
+	}
+	tab.mu.Unlock()
+	m.mu.Unlock()
+	registered = true
+
 	anchor, control, replay := m.planAttachReplay(tab, options, clear)
 	if anchor != nil {
+		anchor.AttachmentID = attachmentId
 		frame, _ := json.Marshal(anchor)
 		if err := producer.SendJSON(attachCtx, frame); err != nil {
 			return TabInfo{}, err
@@ -799,17 +854,6 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 		tab.mu.Unlock()
 		m.mu.Unlock()
 		return TabInfo{}, ErrTabClosed
-	}
-	client := clientID(options.ClientID)
-	co := newOutCoalescer(func() { m.flushSubscriberOutput(tab.ID, options.ChannelID) })
-	flushedOffset := int64(0)
-	if tab.recovery != nil {
-		flushedOffset = tab.recovery.currentOffset()
-	}
-	m.nextAttachmentId++
-	attachmentId := m.nextAttachmentId
-	tab.subscribers[options.ChannelID] = subscriber{
-		client: client, producer: producer, co: co, attachmentId: attachmentId, flushedOffset: flushedOffset, episodeFloor: -1, floorHighWater: -1,
 	}
 	if tab.controller == "" {
 		if tab.controlled && tab.grid != nil {

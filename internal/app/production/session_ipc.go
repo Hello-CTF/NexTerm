@@ -183,14 +183,24 @@ type terminalIDRequest struct {
 }
 
 type terminalRecoverRequest struct {
-	TabID         string `json:"tabId"`
-	ChannelID     string `json:"channelId"`
-	AcceptedBytes int64  `json:"acceptedBytes"`
+	TabID     string `json:"tabId"`
+	ChannelID string `json:"channelId"`
+	ClientID  string `json:"clientId"`
+	// AttachmentID is the unique incarnation of this attachment, established
+	// at attach time; a stale report from a previous incarnation is rejected.
+	AttachmentID uint64 `json:"attachmentId"`
+	// AcceptedBytes is the client's absolute accepted stream offset for this
+	// channel; the recovery ring replays everything flushed after it.
+	AcceptedBytes int64 `json:"acceptedBytes"`
 }
 
 type terminalPauseRequest struct {
 	TabID     string `json:"tabId"`
 	ChannelID string `json:"channelId"`
+	ClientID  string `json:"clientId"`
+	// AttachmentID is the unique incarnation of this attachment, established
+	// at attach time; a stale report from a previous incarnation is rejected.
+	AttachmentID uint64 `json:"attachmentId"`
 	// AcceptedBytes is the client's absolute accepted stream offset when
 	// pausing; it opens the recovery ring's retention floor. Negative leaves
 	// the floor unchanged.
@@ -200,6 +210,10 @@ type terminalPauseRequest struct {
 type terminalResumeRequest struct {
 	TabID     string `json:"tabId"`
 	ChannelID string `json:"channelId"`
+	ClientID  string `json:"clientId"`
+	// AttachmentID is the unique incarnation of this attachment, established
+	// at attach time; a stale report from a previous incarnation is rejected.
+	AttachmentID uint64 `json:"attachmentId"`
 }
 
 type terminalStreamAckRequest struct {
@@ -213,6 +227,26 @@ type terminalStreamAckRequest struct {
 	// channel; it opens the recovery ring's retention floor. The floor only
 	// advances.
 	AcceptedBytes int64 `json:"acceptedBytes"`
+}
+
+// streamControlCaller resolves the trusted caller for a stream-control
+// command (pause, resume, recover, and the accepted-offset ACK). The caller
+// is bound to the attachment: when both the environment and the payload name
+// a caller, they must agree — a payload cannot override the environment
+// caller; a single source (environment-only or payload-only) is a legitimate
+// fallback; an empty caller is rejected.
+func streamControlCaller(call *ipc.Call, payloadClient string) (string, error) {
+	if call.ClientID != "" && payloadClient != "" && call.ClientID != payloadClient {
+		return "", session.ErrForbidden
+	}
+	client := call.ClientID
+	if client == "" {
+		client = payloadClient
+	}
+	if client == "" {
+		return "", session.ErrForbidden
+	}
+	return client, nil
 }
 
 type liveTabDTO struct {
@@ -619,23 +653,39 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		func() error {
 			// Client-driven producer backpressure: pause/resume one channel's
 			// output feed without detaching (ephemeral local/WinRM tabs stay alive).
-			return ipc.Register(dispatcher, "terminal_pause", func(ctx context.Context, _ *ipc.Call, input terminalPauseRequest) (any, error) {
+			// Both carry the trusted caller and the attachment incarnation, bound
+			// to the attached subscriber like the accepted-offset ACK.
+			return ipc.Register(dispatcher, "terminal_pause", func(ctx context.Context, call *ipc.Call, input terminalPauseRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
-				return nil, terminalIPCError(s.sessions.PauseChannelFor(ctx, input.ChannelID, input.AcceptedBytes))
+				client, err := streamControlCaller(call, input.ClientID)
+				if err != nil {
+					return nil, terminalIPCError(err)
+				}
+				return nil, terminalIPCError(s.sessions.PauseChannelFor(ctx, input.TabID, input.ChannelID, client, input.AttachmentID, input.AcceptedBytes))
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "terminal_resume", func(ctx context.Context, _ *ipc.Call, input terminalResumeRequest) (any, error) {
+			return ipc.Register(dispatcher, "terminal_resume", func(ctx context.Context, call *ipc.Call, input terminalResumeRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
-				return nil, terminalIPCError(s.sessions.ResumeChannelFor(ctx, input.ChannelID))
+				client, err := streamControlCaller(call, input.ClientID)
+				if err != nil {
+					return nil, terminalIPCError(err)
+				}
+				return nil, terminalIPCError(s.sessions.ResumeChannelFor(ctx, input.TabID, input.ChannelID, client, input.AttachmentID))
 			})
 		},
 		func() error {
 			// Redeliver the suffix a saturated client refused, from the tab's
-			// bounded recovery ring, without reaping an ephemeral tab.
-			return ipc.Register(dispatcher, "terminal_recover", func(ctx context.Context, _ *ipc.Call, input terminalRecoverRequest) (any, error) {
+			// bounded recovery ring, without reaping an ephemeral tab. The
+			// trusted caller and attachment incarnation are bound to the
+			// attached subscriber like the accepted-offset ACK.
+			return ipc.Register(dispatcher, "terminal_recover", func(ctx context.Context, call *ipc.Call, input terminalRecoverRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
-				flushed, err := s.sessions.RecoverChannelFor(ctx, input.ChannelID, input.AcceptedBytes)
+				client, err := streamControlCaller(call, input.ClientID)
+				if err != nil {
+					return nil, terminalIPCError(err)
+				}
+				flushed, err := s.sessions.RecoverChannelFor(ctx, input.TabID, input.ChannelID, client, input.AttachmentID, input.AcceptedBytes)
 				if err != nil {
 					return nil, terminalIPCError(err)
 				}
@@ -648,18 +698,9 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			// RPC. The caller must own the tab and be its controller.
 			return ipc.Register(dispatcher, "terminal_stream_ack", func(ctx context.Context, call *ipc.Call, input terminalStreamAckRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
-				// The trusted caller is bound to the attachment: when both the
-				// environment and the payload name a caller, they must agree; a
-				// payload cannot override the environment caller.
-				if call.ClientID != "" && input.ClientID != "" && call.ClientID != input.ClientID {
-					return nil, terminalIPCError(session.ErrForbidden)
-				}
-				client := call.ClientID
-				if client == "" {
-					client = input.ClientID
-				}
-				if client == "" {
-					return nil, terminalIPCError(session.ErrForbidden)
+				client, err := streamControlCaller(call, input.ClientID)
+				if err != nil {
+					return nil, terminalIPCError(err)
 				}
 				return nil, terminalIPCError(s.sessions.StreamAckFor(ctx, input.TabID, input.ChannelID, client, input.AttachmentID, input.AcceptedBytes))
 			})
