@@ -14,6 +14,8 @@ import { ModelManager } from "../ai/ModelPanel";
 import { AppearanceCard } from "./AppearanceCard";
 import { KnownHostsCard } from "./KnownHostsCard";
 import { MemoryCard } from "./MemoryCard";
+import { SkillsCard } from "./SkillsCard";
+import { skillsApi } from "./skillsApi";
 import { ShortcutsCard } from "./ShortcutsCard";
 import { SyncCard } from "./SyncCard";
 import { SyncBundleCard } from "./SyncBundleCard";
@@ -718,6 +720,10 @@ export function SettingsView() {
 
         <div id="settings-memory" className="scroll-mt-12">
           <MemoryCard />
+        </div>
+
+        <div id="settings-skills" className="scroll-mt-12">
+          <SkillsCard api={skillsApi} />
         </div>
 
         <section id="settings-vault" className="nx-card scroll-mt-12">
