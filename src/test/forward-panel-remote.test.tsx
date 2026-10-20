@@ -185,6 +185,31 @@ describe("ForwardPanel remote forwarding (-R)", () => {
     );
   });
 
+  it("does not retry or claim success when the remote exposure confirmation is rejected", async () => {
+    mocks.forwardCreateRemote.mockRejectedValueOnce(
+      Object.assign(new Error("Confirmation required"), { code: "needs_confirm", detail: { listenHost: "0.0.0.0" } }),
+    );
+    mocks.ask.mockResolvedValue(false);
+    mountForward();
+    await flush();
+    switchToRemote();
+    setInputValue(inputBy('input[aria-label="远端监听地址"]'), "0.0.0.0");
+    setInputValue(inputBy('input[placeholder="18080"]'), "18080");
+    setInputValue(inputBy('input[aria-label="目标主机"]'), "127.0.0.1");
+    setInputValue(inputBy('input[aria-label="目标端口"]'), "3306");
+    clickButton(mounted!.container, "创建");
+    await flush();
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining("远端监听 0.0.0.0:18080"),
+      expect.objectContaining({ title: "确认远程转发风险" }),
+    );
+    expect(mocks.forwardCreateRemote).toHaveBeenCalledTimes(1);
+    expect(mocks.forwardCreateRemote).toHaveBeenCalledWith("s", "0.0.0.0", 18080, "127.0.0.1", 3306);
+    expect(mocks.toast).not.toHaveBeenCalledWith("success", expect.any(String));
+    await flush();
+    expect(mocks.forwardCreateRemote).toHaveBeenCalledTimes(1);
+  });
+
   it("renders remote forwarding entries with type badges and remote listen addresses", async () => {
     mocks.forwardList.mockResolvedValue([
       {
