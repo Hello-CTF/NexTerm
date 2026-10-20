@@ -679,6 +679,63 @@ describe("Device management view - device list and metrics", () => {
     }
   });
 
+  it("measures the virtualized list offset when the async list arrives and re-measures on layout change", async () => {
+    const devices = Array.from({ length: 41 }, (_, index) => ({
+      ...AGENT_DEVICE,
+      id: `offset-${index}`,
+      name: `offset-${index}`,
+      agent: {
+        ...AGENT_DEVICE.agent,
+        service_state: { ...AGENT_DEVICE.agent.service_state },
+      },
+    }));
+    route(fleetHandler({ devices: { devices } }));
+    seedUser(SUPERADMIN);
+
+    // Deterministic geometry: scroller top 100, list top 140 → 40px scroll margin. The list
+    // element only mounts once the asynchronous device response arrives, so a mount-only
+    // effect never sees it and the margin stays 0.
+    let listTop = 140;
+    const rectSpy = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      const top = this.classList.contains("overflow-auto")
+        ? 100
+        : this.classList.contains("shrink-0")
+          ? listTop
+          : 0;
+      return {
+        top,
+        bottom: top + 100,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 100,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+    try {
+      mounted = mountWithClient(createElement(DevicesView));
+      await flushUntil(() => document.body.textContent?.includes("offset-0") ?? false);
+
+      const firstItem = document.querySelector<HTMLElement>('[data-index="0"]');
+      expect(firstItem).not.toBeNull();
+      expect(firstItem?.style.transform).toBe("translateY(-40px)");
+
+      // Layout change: the list moves down and a resize re-measures the margin.
+      act(() => {
+        listTop = 180;
+        window.dispatchEvent(new Event("resize"));
+      });
+      await flush();
+      expect(firstItem?.style.transform).toBe("translateY(-80px)");
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
   it("shows offline badges and offline autostart hints for offline devices", async () => {
     route(fleetHandler());
     seedUser(SUPERADMIN);

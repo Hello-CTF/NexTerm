@@ -692,16 +692,21 @@ export function AssetTree() {
     return next;
   });
 
-  const runDeleteGroup = async (g: AssetGroup) => {
+  const runDeleteGroup = async (g: AssetGroup, epoch: number) => {
+    // The confirmed group delete is account-scoped: a late resolution after a switch must not
+    // settle UI or invalidations in the new account.
+    const stale = () => useUi.getState().accountEpoch !== epoch;
     setGroupBusyId(g.id);
     setGroupError(null);
     try {
       await assetApi.groupDelete(g.id);
+      if (stale()) return;
       void qc.invalidateQueries({ queryKey: ["groups"] });
       void qc.invalidateQueries({ queryKey: ["assets"] });
       void qc.invalidateQueries({ queryKey: ["asset-search"] });
       pushToast("info", "已删除分组");
     } catch (e) {
+      if (stale()) return;
       setGroupError({ id: g.id, message: describeError(e), action: "删除" });
     } finally {
       setGroupBusyId(null);
@@ -710,23 +715,29 @@ export function AssetTree() {
 
   const deleteGroup = async (g: AssetGroup) => {
     if (groupBusyId) return;
+    const epoch = useUi.getState().accountEpoch;
     const ok = await ask(`删除分组「${g.name}」？\n组内资产会移到「未分组」；子分组会被一并删除。`, {
       kind: "warning",
     });
-    if (!ok) return;
-    await runDeleteGroup(g);
+    if (!ok || useUi.getState().accountEpoch !== epoch) return;
+    await runDeleteGroup(g, epoch);
   };
 
   const repairGroup = async (g: AssetGroup) => {
     if (groupBusyId) return;
+    const epoch = useUi.getState().accountEpoch;
+    const stale = () => useUi.getState().accountEpoch !== epoch;
     setGroupBusyId(g.id);
     setGroupError(null);
     try {
       await assetApi.groupUpdate(g.id, undefined, null);
+      if (stale()) return;
       await qc.invalidateQueries({ queryKey: ["groups"] });
+      if (stale()) return;
       void qc.invalidateQueries({ queryKey: ["asset-search"] });
       pushToast("success", `已将「${g.name}」移到根目录`);
     } catch (e) {
+      if (stale()) return;
       setGroupError({ id: g.id, message: describeError(e), action: "修复" });
     } finally {
       setGroupBusyId(null);
@@ -887,7 +898,7 @@ export function AssetTree() {
         onRename={() => setRenamingGroup(group)}
         onDeleteGroup={() => void deleteGroup(group)}
         onRepair={() => void repairGroup(group)}
-        onRetry={() => void (groupError?.id === group.id && groupError.action === "修复" ? repairGroup(group) : runDeleteGroup(group))}
+        onRetry={() => void (groupError?.id === group.id && groupError.action === "修复" ? repairGroup(group) : runDeleteGroup(group, useUi.getState().accountEpoch))}
         onDismissError={() => setGroupError(null)}
         assetError={assetError}
         onRetryAssetDelete={(asset) => void runDeleteAsset(asset, useUi.getState().accountEpoch, assetError?.mode)}
@@ -2266,6 +2277,11 @@ export function AssetEditor({
 
   const save = async () => {
     if (savingRef.current) return;
+    // The save is account-scoped: after every await, a changed epoch aborts the flow before
+    // the next RPC/cache/UI side effect — a credential or asset written after a switch would
+    // otherwise land in the new account.
+    const epoch = useUi.getState().accountEpoch;
+    const stale = () => useUi.getState().accountEpoch !== epoch;
     if (kind === "asset" && groupKind !== "local" && !inventoryOnly) {
       const nextHostError = validateAssetHost(hostRef.current);
       const nextPortError = validateAssetPort(portRef.current);
@@ -2287,6 +2303,7 @@ export function AssetEditor({
       if (kind === "group") {
         if (groupId) await assetApi.groupCreate(name, groupId);
         else await assetApi.groupCreate(name);
+        if (stale()) return;
         onSaved();
         return;
       }
@@ -2296,6 +2313,7 @@ export function AssetEditor({
         (keyAuth && keyOrigin === "vault" && vaultMode === "new")
       );
       if (willWriteVault && !(await ensureVaultReady("保存凭据前需要解锁凭据库"))) return;
+      if (stale()) return;
       let finalKeyPath: string | null = null;
       let credId: string | null = null;
       const reuseCredId = boundIsVaultKey ? (initial?.credId ?? undefined) : undefined;
@@ -2316,6 +2334,7 @@ export function AssetEditor({
               source: "file",
               ...(passphrase ? { passphrase } : {}),
             });
+            if (stale()) return;
             credId = res.id;
             finalKeyPath = null;
           } else {
@@ -2346,11 +2365,13 @@ export function AssetEditor({
                   { path: keyPath.trim(), content: inlineKeyContent },
                   assetApi.readKeyFile,
                 );
+          if (stale()) return;
           const res = await vaultApi.setCredential(credLabel, "private_key", content, {
             id: reuseCredId,
             source: "inline",
             ...(passphrase ? { passphrase } : {}),
           });
+          if (stale()) return;
           credId = res.id;
           finalKeyPath = null;
         }
@@ -2361,6 +2382,7 @@ export function AssetEditor({
             credKind,
             password,
           );
+          if (stale()) return;
           credId = res.id;
         }
       } else if (credChoice !== "none") {
@@ -2397,12 +2419,14 @@ export function AssetEditor({
       const saved = initial
         ? await assetApi.update({ id: initial.id, ...fields })
         : await assetApi.create(fields);
+      if (stale()) return;
       onSaved(saved);
     } catch (e) {
+      if (stale()) return;
       setSaveError(describeError(e));
     } finally {
       savingRef.current = false;
-      setSaving(false);
+      if (!stale()) setSaving(false);
     }
   };
 

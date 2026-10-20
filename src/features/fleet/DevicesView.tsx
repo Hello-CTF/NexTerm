@@ -519,13 +519,33 @@ export function DevicesView() {
     initialRect: { width: 800, height: 600 },
   });
 
-  useLayoutEffect(() => {
+  const measureDeviceListScrollMargin = useCallback(() => {
     const list = deviceListRef.current;
     const scroller = deviceScrollRef.current;
     if (!list || !scroller) return;
     const next = list.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
     setDeviceListScrollMargin((current) => (Math.abs(current - next) < 1 ? current : next));
   }, []);
+
+  // The list only renders once the asynchronous device response arrives, so a mount-only
+  // effect misses it: measure via a callback ref when the element mounts, re-measure when
+  // the list's length/virtualization/loading state changes, and follow window resizes.
+  const deviceListCallbackRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      deviceListRef.current = node;
+      if (node) measureDeviceListScrollMargin();
+    },
+    [measureDeviceListScrollMargin],
+  );
+
+  useLayoutEffect(() => {
+    measureDeviceListScrollMargin();
+  }, [measureDeviceListScrollMargin, devicesVirtualized, visibleDevices?.length, account.loading]);
+
+  useEffect(() => {
+    window.addEventListener("resize", measureDeviceListScrollMargin);
+    return () => window.removeEventListener("resize", measureDeviceListScrollMargin);
+  }, [measureDeviceListScrollMargin]);
 
   if (account.loading) {
     return (
@@ -866,7 +886,7 @@ export function DevicesView() {
 
         {visibleDevices && visibleDevices.length > 0 && (devicesVirtualized ? (
           <div
-            ref={deviceListRef}
+            ref={deviceListCallbackRef}
             className="relative shrink-0"
             style={{ height: deviceVirtualizer.getTotalSize() }}
           >
