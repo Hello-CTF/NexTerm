@@ -428,6 +428,7 @@ func TestKnownHostCompensateAcceptTokenABADatabase(t *testing.T) {
 	}
 }
 
+//dbtest:backend postgres
 func TestKnownHostAcceptForMirrorRetryResetsPreviousDatabase(t *testing.T) {
 	fixture := dbtest.NewFixture(t)
 	if fixture.Backend != store.BackendPostgres {
@@ -497,6 +498,7 @@ func TestKnownHostAcceptForMirrorRetryResetsPreviousDatabase(t *testing.T) {
 	}
 }
 
+//dbtest:backend postgres
 func TestKnownHostRemoveForMirrorRetryResetsSnapshotDatabase(t *testing.T) {
 	fixture := dbtest.NewFixture(t)
 	if fixture.Backend != store.BackendPostgres {

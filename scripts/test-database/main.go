@@ -32,7 +32,16 @@ type listedPackage struct {
 
 type fixturePackage struct {
 	ImportPath string
-	Tests      []string
+	Tests      []fixtureTest
+}
+
+// fixtureTest is a discovered top-level test that reaches dbtest.NewFixture.
+// An empty Backends list means the test runs against every backend; otherwise
+// the test is a backend-specific contract that only legs for the listed
+// backends select, and the test body is expected to skip itself elsewhere.
+type fixtureTest struct {
+	Name     string
+	Backends []string
 }
 
 type functionCalls struct {
@@ -65,10 +74,19 @@ func main() {
 	}
 	if *check {
 		total := 0
+		var specific []string
 		for _, pkg := range packages {
-			total += len(pkg.Tests)
+			for _, test := range pkg.Tests {
+				total++
+				if len(test.Backends) > 0 {
+					specific = append(specific, fmt.Sprintf("./%s: %s requires %s", pkg.ImportPath, test.Name, strings.Join(test.Backends, " or ")))
+				}
+			}
 		}
 		fmt.Printf("dbtest fixture discovery: %d packages, %d tests; every dbtest test importer has selected tests\n", len(packages), total)
+		if len(specific) > 0 {
+			fmt.Printf("dbtest backend-specific tests: %s\n", strings.Join(specific, ", "))
+		}
 		return
 	}
 	if err := runFixtureTests(packages); err != nil {
@@ -148,8 +166,8 @@ func discoverFixturePackages() ([]fixturePackage, error) {
 	return packages, nil
 }
 
-func fixtureTests(pkg listedPackage, dbtestImport string) ([]string, error) {
-	var tests []string
+func fixtureTests(pkg listedPackage, dbtestImport string) ([]fixtureTest, error) {
+	var tests []fixtureTest
 	for _, group := range []struct {
 		files    []string
 		external bool
@@ -158,17 +176,28 @@ func fixtureTests(pkg listedPackage, dbtestImport string) ([]string, error) {
 		{files: pkg.XTestGoFiles, external: true},
 	} {
 		functions := make(map[string]functionCalls)
+		directives := make(map[string][]string)
 		var candidates []string
 		for _, name := range group.files {
 			path := filepath.Join(pkg.Dir, name)
-			file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+			file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ParseComments)
 			if err != nil {
 				return nil, fmt.Errorf("parse %s: %w", path, err)
 			}
 			aliases := dbtestAliases(file, dbtestImport)
 			for _, declaration := range file.Decls {
 				function, ok := declaration.(*ast.FuncDecl)
-				if !ok || function.Body == nil {
+				if !ok {
+					continue
+				}
+				backends, err := parseBackendDirective(pkg.ImportPath, function)
+				if err != nil {
+					return nil, err
+				}
+				if len(backends) > 0 {
+					directives[functionKey(function)] = backends
+				}
+				if function.Body == nil {
 					continue
 				}
 				calls := inspectFunction(function, aliases)
@@ -178,14 +207,72 @@ func fixtureTests(pkg listedPackage, dbtestImport string) ([]string, error) {
 				}
 			}
 		}
+		for name := range directives {
+			if !slices.Contains(candidates, name) {
+				return nil, fmt.Errorf("%s: %s directive on non-test function %s", pkg.ImportPath, backendDirectivePrefix, name)
+			}
+		}
 		for _, name := range candidates {
-			if reachesFixture(name, functions, make(map[string]bool)) {
-				tests = append(tests, name)
+			reaches := reachesFixture(name, functions, make(map[string]bool))
+			backends := directives[name]
+			if len(backends) > 0 && !reaches {
+				return nil, fmt.Errorf("%s: %s directive on test %s that never reaches dbtest.NewFixture", pkg.ImportPath, backendDirectivePrefix, name)
+			}
+			if reaches {
+				tests = append(tests, fixtureTest{Name: name, Backends: backends})
 			}
 		}
 	}
-	sort.Strings(tests)
-	return slices.Compact(tests), nil
+	sort.Slice(tests, func(i, j int) bool { return tests[i].Name < tests[j].Name })
+	return tests, nil
+}
+
+// backendDirectivePrefix marks a fixture test as backend-specific:
+//
+//	//dbtest:backend postgres
+//
+// Discovery excludes the test from legs running other backends, and the test
+// body keeps a runtime guard that skips it there. On the declared backends the
+// test is selected and the no-skip audit applies in full: a selected test that
+// skips still fails the leg, so the directive classifies a test as
+// backend-specific without legitimizing any unexpected skip.
+const backendDirectivePrefix = "//dbtest:backend"
+
+func parseBackendDirective(pkg string, function *ast.FuncDecl) ([]string, error) {
+	if function.Doc == nil {
+		return nil, nil
+	}
+	var backends []string
+	for _, comment := range function.Doc.List {
+		rest, ok := strings.CutPrefix(comment.Text, backendDirectivePrefix)
+		if !ok {
+			continue
+		}
+		if rest != "" && rest[0] != ' ' && rest[0] != '\t' {
+			continue // a different directive, e.g. //dbtest:backends
+		}
+		if backends != nil {
+			return nil, fmt.Errorf("%s: duplicate %s directives on %s", pkg, backendDirectivePrefix, functionKey(function))
+		}
+		list := strings.TrimSpace(rest)
+		if list == "" {
+			return nil, fmt.Errorf("%s: %s directive on %s is missing a backend list", pkg, backendDirectivePrefix, functionKey(function))
+		}
+		if strings.ContainsAny(list, " \t") {
+			return nil, fmt.Errorf("%s: %s directive on %s must be a comma-separated backend list without spaces", pkg, backendDirectivePrefix, functionKey(function))
+		}
+		for _, raw := range strings.Split(list, ",") {
+			backend, ok := normalizeBackend(raw)
+			if !ok {
+				return nil, fmt.Errorf("%s: %s directive on %s lists unknown backend %q (want sqlite, postgres, mysql or mariadb)", pkg, backendDirectivePrefix, functionKey(function), raw)
+			}
+			if slices.Contains(backends, backend) {
+				return nil, fmt.Errorf("%s: %s directive on %s lists backend %s twice", pkg, backendDirectivePrefix, functionKey(function), backend)
+			}
+			backends = append(backends, backend)
+		}
+	}
+	return backends, nil
 }
 
 func dbtestAliases(file *ast.File, dbtestImport string) map[string]bool {
@@ -365,21 +452,60 @@ func runFixtureTests(packages []fixturePackage) error {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "database backend: %s\n", backend)
+	totalTests := 0
+	var exclusions []string
 	for _, pkg := range packages {
-		fmt.Fprintf(os.Stderr, "database package: ./%s (%d fixture tests)\n", pkg.ImportPath, len(pkg.Tests))
-		if err := runPackage(pkg, backend); err != nil {
+		selected, excluded := selectBackendTests(pkg, backend)
+		totalTests += len(selected)
+		if len(excluded) > 0 {
+			fmt.Fprintf(os.Stderr, "database package: ./%s (%d fixture tests, %d backend-specific exclusions: %s)\n", pkg.ImportPath, len(selected), len(excluded), formatBackendExclusions(excluded))
+			for _, test := range excluded {
+				exclusions = append(exclusions, fmt.Sprintf("./%s: %s requires %s", pkg.ImportPath, test.Name, strings.Join(test.Backends, " or ")))
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "database package: ./%s (%d fixture tests)\n", pkg.ImportPath, len(selected))
+		}
+		if len(selected) == 0 {
+			continue
+		}
+		if err := runPackage(fixturePackage{ImportPath: pkg.ImportPath, Tests: selected}, backend); err != nil {
 			return err
 		}
 	}
 	// Suite-level audit: runPackage only returns nil after the executed tests
-	// match the discovered selection exactly (no skips, no missing fixture
-	// uses), so these totals reconcile discovery with execution for the leg.
-	totalTests := 0
-	for _, pkg := range packages {
-		totalTests += len(pkg.Tests)
+	// match the discovered selection for this backend exactly (no skips, no
+	// missing fixture uses), so these totals reconcile discovery with execution
+	// for the leg. Backend-specific exclusions are discovered contracts that
+	// this backend cannot run; they are reported, never silently dropped.
+	if len(exclusions) == 0 {
+		fmt.Fprintf(os.Stderr, "database suite audit: %d packages, %d fixture tests executed and fixture-audited on backend %s\n", len(packages), totalTests, backend)
+	} else {
+		fmt.Fprintf(os.Stderr, "database suite audit: %d packages, %d fixture tests executed and fixture-audited on backend %s; %d backend-specific exclusions: %s\n", len(packages), totalTests, backend, len(exclusions), strings.Join(exclusions, ", "))
 	}
-	fmt.Fprintf(os.Stderr, "database suite audit: %d packages, %d fixture tests executed and fixture-audited on backend %s\n", len(packages), totalTests, backend)
 	return nil
+}
+
+// selectBackendTests splits a package's discovered fixture tests into the
+// tests a leg for the given backend selects and the backend-specific tests it
+// must exclude. Only tests carrying an explicit backend directive are ever
+// excluded; everything else stays selected and fully audited.
+func selectBackendTests(pkg fixturePackage, backend string) (selected, excluded []fixtureTest) {
+	for _, test := range pkg.Tests {
+		if len(test.Backends) == 0 || slices.Contains(test.Backends, backend) {
+			selected = append(selected, test)
+		} else {
+			excluded = append(excluded, test)
+		}
+	}
+	return selected, excluded
+}
+
+func formatBackendExclusions(excluded []fixtureTest) string {
+	parts := make([]string, len(excluded))
+	for i, test := range excluded {
+		parts[i] = fmt.Sprintf("%s requires %s", test.Name, strings.Join(test.Backends, " or "))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func selectedBackend() (string, error) {
@@ -388,23 +514,28 @@ func selectedBackend() (string, error) {
 		fmt.Fprintln(os.Stderr, "WARNING: NEXTERM_TEST_DB_BACKEND is empty; explicitly falling back to SQLite")
 		raw = "sqlite"
 	}
-	var backend string
-	switch strings.ToLower(raw) {
-	case "sqlite":
-		backend = "sqlite"
-	case "postgres", "postgresql":
-		backend = "postgres"
-	case "mysql":
-		backend = "mysql"
-	case "mariadb":
-		backend = "mariadb"
-	default:
+	backend, ok := normalizeBackend(raw)
+	if !ok {
 		return "", fmt.Errorf("invalid NEXTERM_TEST_DB_BACKEND %q (want sqlite, postgres, mysql or mariadb)", raw)
 	}
 	if backend != "sqlite" && strings.TrimSpace(os.Getenv("NEXTERM_TEST_DB_DSN")) == "" {
 		return "", fmt.Errorf("NEXTERM_TEST_DB_DSN is required for the selected %s backend", backend)
 	}
 	return backend, nil
+}
+
+func normalizeBackend(raw string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "sqlite":
+		return "sqlite", true
+	case "postgres", "postgresql":
+		return "postgres", true
+	case "mysql":
+		return "mysql", true
+	case "mariadb":
+		return "mariadb", true
+	}
+	return "", false
 }
 
 func runPackage(pkg fixturePackage, backend string) error {
@@ -421,9 +552,9 @@ func runPackage(pkg fixturePackage, backend string) error {
 
 	quoted := make([]string, len(pkg.Tests))
 	selected := make(map[string]bool, len(pkg.Tests))
-	for i, name := range pkg.Tests {
-		quoted[i] = regexp.QuoteMeta(name)
-		selected[name] = true
+	for i, test := range pkg.Tests {
+		quoted[i] = regexp.QuoteMeta(test.Name)
+		selected[test.Name] = true
 	}
 	args := []string{"test", "-json", "-count=1", "-run", "^(" + strings.Join(quoted, "|") + ")$", "./" + pkg.ImportPath}
 	cmd := exec.Command("go", args...)
@@ -482,8 +613,8 @@ func runPackage(pkg fixturePackage, backend string) error {
 
 func validateSkippedTests(pkg fixturePackage, skipped map[string]bool) error {
 	selected := make(map[string]bool, len(pkg.Tests))
-	for _, name := range pkg.Tests {
-		selected[name] = true
+	for _, test := range pkg.Tests {
+		selected[test.Name] = true
 	}
 	var names []string
 	for name := range skipped {
@@ -500,9 +631,9 @@ func validateSkippedTests(pkg fixturePackage, skipped map[string]bool) error {
 
 func validateExecutedTests(pkg fixturePackage, executed map[string]bool) error {
 	var missing []string
-	for _, name := range pkg.Tests {
-		if !executed[name] {
-			missing = append(missing, name)
+	for _, test := range pkg.Tests {
+		if !executed[test.Name] {
+			missing = append(missing, test.Name)
 		}
 	}
 	if len(executed) == 0 || len(missing) > 0 {
@@ -553,14 +684,14 @@ func topLevelTestName(name string) string {
 func validateFixtureUse(pkg fixturePackage, uses map[string]string, backend string) error {
 	var missing []string
 	var wrongBackend []string
-	for _, name := range pkg.Tests {
-		actual, ok := uses[name]
+	for _, test := range pkg.Tests {
+		actual, ok := uses[test.Name]
 		if !ok {
-			missing = append(missing, name)
+			missing = append(missing, test.Name)
 			continue
 		}
 		if actual != backend {
-			wrongBackend = append(wrongBackend, fmt.Sprintf("%s (got %s)", name, actual))
+			wrongBackend = append(wrongBackend, fmt.Sprintf("%s (got %s)", test.Name, actual))
 		}
 	}
 	if len(missing) > 0 {
