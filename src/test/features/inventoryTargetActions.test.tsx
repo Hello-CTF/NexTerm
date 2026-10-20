@@ -36,16 +36,20 @@ function render(props: Partial<Parameters<typeof InventoryTargetActions>[0]> & {
   );
 }
 
-function challenge() {
+function challengeFor(sessionName: string) {
   return {
     code: "needs_confirm",
     detail: {
       kind: "docker_production_confirmation",
       targetSetHash: "a".repeat(64),
       commandHash: "b".repeat(64),
-      productionTargets: [{ sessionId: "s1", sessionName: "production", environment: "production" }],
+      productionTargets: [{ sessionId: "s1", sessionName, environment: "production" }],
     },
   };
+}
+
+function challenge() {
+  return challengeFor("production");
 }
 
 beforeEach(() => {
@@ -779,7 +783,7 @@ describe("inventory target actions", () => {
     setInputValue(m33.container.querySelector('input[aria-label="容器"]')!, "web");
     clickButton(m33.container, "执行");
     await flush();
-    expect(m33.container.textContent).toContain("在途操作已达上限");
+    expect(m33.container.textContent).toContain("操作记录已达上限");
     expect(mocks.call).toHaveBeenCalledTimes(32);
   });
 
@@ -1127,8 +1131,8 @@ describe("inventory target actions", () => {
     expect(cancelButton()?.disabled).toBe(false);
   });
 
-  it("recycles a settled operation when the owner is at capacity", async () => {
-    mocks.call.mockResolvedValueOnce({ output: "done\n", exitCode: 0 });
+  it("rejects at capacity without evicting an unconsumed outcome", async () => {
+    mocks.call.mockResolvedValueOnce({ output: "KEPT-RESULT\n", exitCode: 0 });
     mocks.call.mockImplementation(() => new Promise(() => {}));
     // 31 never-settling operations plus one that settles and stays retained.
     for (let index = 0; index < 32; index++) {
@@ -1147,7 +1151,282 @@ describe("inventory target actions", () => {
     setInputValue(m33.container.querySelector('input[aria-label="容器"]')!, "web");
     clickButton(m33.container, "执行");
     await flush();
-    expect(m33.container.textContent).not.toContain("在途操作已达上限");
-    expect(mocks.call).toHaveBeenCalledTimes(33);
+    expect(m33.container.textContent).toContain("操作记录已达上限");
+    expect(mocks.call).toHaveBeenCalledTimes(32);
+
+    // The retained outcome was not evicted: its target still replays it.
+    const keptTarget = { type: "context", name: "ctx-0", dockerEndpoint: "ssh://ops@prod.example" };
+    const m0 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: keptTarget, ownerKey: "owner-a" }));
+    mounted = m0;
+    await flush();
+    expect(m0.container.textContent).toContain("KEPT-RESULT");
+  });
+
+  it("does not open the production dialog for a stale owner-only challenge", async () => {
+    let rejectA: (reason: unknown) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { rejectA = reject; }));
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "uname -a");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+
+    // The challenge lands after an owner-only switch: it only ends the
+    // original operation and never opens B's dialog.
+    act(() => m.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-b" })));
+    await act(async () => { rejectA(challengeFor("A-PRODUCTION-SECRET")); });
+    await flush();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.body.textContent).not.toContain("A-PRODUCTION-SECRET");
+    expect(document.body.textContent).not.toContain("uname -a");
+
+    // Switching back to owner A shows no dialog and no retained record.
+    act(() => m.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" })));
+    await flush();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.body.textContent).not.toContain("A-PRODUCTION-SECRET");
+  });
+
+  it("does not open the production dialog for a stale target-switch challenge", async () => {
+    let rejectA: (reason: unknown) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { rejectA = reject; }));
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "uname -a");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+
+    // The challenge lands after switching target: it ends the original
+    // operation without opening the dialog on the new target's page.
+    const otherTarget = { type: "context", name: "other", dockerEndpoint: "ssh://ops@other.example" };
+    act(() => m.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: otherTarget, ownerKey: "owner-a" })));
+    await act(async () => { rejectA(challengeFor("A-TARGET-SECRET")); });
+    await flush();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(m.container.textContent).not.toContain("A-TARGET-SECRET");
+  });
+
+  it("binds the dialog and its retry to the original launch snapshot", async () => {
+    let rejectA: (reason: unknown) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { rejectA = reject; }));
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "uname -a");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+
+    // Edit both inputs while the exec is in flight; the challenge binds the
+    // dialog to the frozen launch, not to the page's current inputs.
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "rm -rf /");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "other");
+    await act(async () => { rejectA(challenge()); });
+    await flush();
+
+    const dialog = document.body.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.textContent).toContain("uname -a");
+    expect(dialog?.textContent).not.toContain("rm -rf");
+
+    const input = document.body.querySelector<HTMLInputElement>('input[aria-label="输入生产环境确认文字"]');
+    setInputValue(input!, "production");
+    const confirm = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("确认执行"));
+    act(() => confirm!.click());
+    await flush();
+
+    expect(mocks.call).toHaveBeenCalledTimes(2);
+    const retry = mocks.call.mock.calls[1][1].args;
+    expect(retry.command).toEqual(["uname", "-a"]);
+    expect(retry.container).toBe("web");
+    expect(retry.confirmation).toEqual({
+      confirmed: true,
+      targetSetHash: "a".repeat(64),
+      commandHash: "b".repeat(64),
+    });
+    expect(retry.operationId).not.toBe(mocks.call.mock.calls[0][1].args.operationId);
+  });
+
+  it("visibly rejects a second exec on the same owner/target while one is unsettled", async () => {
+    mocks.call.mockImplementation(() => new Promise(() => {}));
+    const viewA = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    const viewB = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    mounted = viewB;
+    await flush();
+    setInputValue(viewA.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(viewA.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(viewA.container, "执行");
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(1);
+
+    // B was mounted before the launch and holds no local operation; its
+    // replacement attempt is rejected visibly before any call.
+    setInputValue(viewB.container.querySelector('input[aria-label="命令"]')!, "false");
+    setInputValue(viewB.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(viewB.container, "执行");
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(1);
+    expect(viewB.container.textContent).toContain("该目标已有在途操作");
+    expect(viewA.container.textContent).toContain("执行中");
+  });
+
+  it("tracks two operations on different targets through out-of-order settle and unmount", async () => {
+    let resolveA: (value: { output: string; exitCode: number }) => void = () => {};
+    let resolveB: (value: { output: string; exitCode: number }) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveA = resolve; }));
+    const m1 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    setInputValue(m1.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m1.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m1.container, "执行");
+    await flush();
+    act(() => m1.unmount());
+
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveB = resolve; }));
+    const otherTarget = { type: "context", name: "other", dockerEndpoint: "ssh://ops@other.example" };
+    const m2 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: otherTarget, ownerKey: "owner-a" }));
+    setInputValue(m2.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m2.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m2.container, "执行");
+    await flush();
+    act(() => m2.unmount());
+
+    // B settles first, then A; both outcomes are retained per identity.
+    await act(async () => { resolveB({ output: "B-OUT\n", exitCode: 0 }); });
+    await flush();
+    await act(async () => { resolveA({ output: "A-OUT\n", exitCode: 0 }); });
+    await flush();
+
+    // Remount in reverse order: each target replays only its own outcome.
+    const m2b = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: otherTarget, ownerKey: "owner-a" }));
+    mounted = m2b;
+    await flush();
+    expect(m2b.container.textContent).toContain("B-OUT");
+    expect(m2b.container.textContent).not.toContain("A-OUT");
+    act(() => m2b.unmount());
+    const m1b = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    mounted = m1b;
+    await flush();
+    expect(m1b.container.textContent).toContain("A-OUT");
+    expect(m1b.container.textContent).not.toContain("B-OUT");
+  });
+
+  it("replays a settled outcome to sequential remounts until cleared", async () => {
+    let resolveA: (value: { output: string; exitCode: number }) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveA = resolve; }));
+    const m1 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    setInputValue(m1.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m1.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m1.container, "执行");
+    await flush();
+    clickButton(m1.container, "忽略结果");
+    await flush();
+    act(() => m1.unmount());
+
+    // A settles naturally with no mounted view; every remount replays the
+    // done notice until a user explicitly clears it.
+    await act(async () => { resolveA({ output: "ignored secret\n", exitCode: 0 }); });
+    await flush();
+    const view1 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    await flush();
+    expect(view1.container.textContent).toContain("命令已结束；结果已忽略");
+    act(() => view1.unmount());
+
+    const view2 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    mounted = view2;
+    await flush();
+    expect(view2.container.textContent).toContain("命令已结束；结果已忽略");
+    expect(view2.container.textContent).not.toContain("ignored secret");
+    const execButton = () => [...view2.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "执行");
+    expect(execButton()?.disabled).toBe(true);
+
+    clickButton(view2.container, "清除");
+    await flush();
+    expect(view2.container.textContent).not.toContain("命令已结束");
+    expect(execButton()?.disabled).toBe(false);
+    act(() => view2.unmount());
+
+    const view3 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    mounted = view3;
+    await flush();
+    expect(view3.container.textContent).not.toContain("命令已结束");
+  });
+
+  it("keeps the done notice across a StrictMode remount", async () => {
+    let resolveA: (value: { output: string; exitCode: number }) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveA = resolve; }));
+    const m1 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    setInputValue(m1.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m1.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m1.container, "执行");
+    await flush();
+    clickButton(m1.container, "忽略结果");
+    await flush();
+    act(() => m1.unmount());
+
+    // The StrictMode effect replay must not consume the retained outcome.
+    await act(async () => { resolveA({ output: "ignored secret\n", exitCode: 0 }); });
+    await flush();
+    const m = mount(createElement(StrictMode, null, createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" })));
+    mounted = m;
+    await flush();
+    expect(m.container.textContent).toContain("命令已结束；结果已忽略");
+    const execButton = () => [...m.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "执行");
+    expect(execButton()?.disabled).toBe(true);
+  });
+
+  it("does not revive a cleared outcome after switch-back", async () => {
+    mocks.call.mockResolvedValue({ output: "CLEARED-SECRET\n", exitCode: 0 });
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+    await waitFor(() => expect(m.container.textContent).toContain("CLEARED-SECRET"));
+
+    clickButton(m.container, "清除");
+    await flush();
+    expect(m.container.textContent).not.toContain("CLEARED-SECRET");
+
+    act(() => m.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-b" })));
+    await flush();
+    act(() => m.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" })));
+    await flush();
+    expect(m.container.textContent).not.toContain("CLEARED-SECRET");
+    expect(m.container.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it("notifies every view when the operation is ignored", async () => {
+    let resolveA: (value: { output: string; exitCode: number }) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveA = resolve; }));
+    const m1 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    setInputValue(m1.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m1.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m1.container, "执行");
+    await flush();
+    act(() => m1.unmount());
+
+    const viewA = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    const viewB = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    mounted = viewB;
+    await flush();
+    expect(viewA.container.textContent).toContain("执行中");
+    expect(viewB.container.textContent).toContain("执行中");
+
+    // Ignore is operation-level: both views show the ignored state and the
+    // ignore entry is gone from both.
+    clickButton(viewA.container, "忽略结果");
+    await flush();
+    const note = (container: HTMLElement) => container.querySelector('[role="note"]')?.textContent;
+    expect(note(viewA.container)).toContain("命令仍在目标上执行");
+    expect(note(viewB.container)).toContain("命令仍在目标上执行");
+    const ignoreButton = (container: HTMLElement) => [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "忽略结果");
+    expect(ignoreButton(viewA.container)).toBeUndefined();
+    expect(ignoreButton(viewB.container)).toBeUndefined();
+
+    // The settle is ignored for both views: done without output.
+    await act(async () => { resolveA({ output: "IGNORED-SECRET\n", exitCode: 0 }); });
+    await flush();
+    expect(viewA.container.textContent).not.toContain("IGNORED-SECRET");
+    expect(viewB.container.textContent).not.toContain("IGNORED-SECRET");
+    expect(note(viewA.container)).toContain("命令已结束");
+    expect(note(viewB.container)).toContain("命令已结束");
   });
 });

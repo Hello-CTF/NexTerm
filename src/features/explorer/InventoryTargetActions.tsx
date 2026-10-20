@@ -4,7 +4,7 @@ import { describeError } from "../../ui/errorText";
 import { dockerConfirmation, getDockerConfirmationChallenge, type DockerConfirmationChallenge } from "../docker/productionGuard";
 import { inventoryExecCancelled, inventoryExecFailure, inventoryTargetApi } from "./inventoryTargetApi";
 import type { DockerProductionConfirmation } from "../../ipc/commands";
-import type { InventoryTargetExecRequest, InventoryTargetExecResponse } from "../../ipc/generated/types";
+import type { InventoryTargetExecRequest } from "../../ipc/generated/types";
 import type { LiveOperation } from "./inventoryLiveOperationStore";
 import { liveOperationStore } from "./inventoryLiveOperationStore";
 
@@ -88,11 +88,8 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
   const [container, setContainer] = useState(isPod ? stringField(target, "container") : "");
   const [sessionId, setSessionId] = useState("");
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<InventoryTargetExecResponse | null>(null);
-  const [failure, setFailure] = useState<{ message: string; exitCode?: number; output?: string } | null>(null);
-  const [production, setProduction] = useState<{ challenge: DockerConfirmationChallenge; command: string } | null>(null);
-  const [cancelled, setCancelled] = useState(false);
-  const [ignoredDone, setIgnoredDone] = useState(false);
+  const [inputError, setInputError] = useState<string | null>(null);
+  const [production, setProduction] = useState<{ challenge: DockerConfirmationChallenge; command: string; snapshot: InventoryTargetExecRequest; generation: number } | null>(null);
   const generationRef = useRef(0);
   // The live operation lives in a ref so its identity stays stable across
   // renders, mutations, and the store; a version counter drives renders.
@@ -100,86 +97,51 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
   const [, setLiveOpVersion] = useState(0);
   const bumpLiveOp = () => setLiveOpVersion((version) => version + 1);
 
+  // The outcome display is derived from the store's retained outcome for
+  // the current owner and target, so it can never leak across contexts and
+  // every view of the same owner and target stays consistent. An ignored
+  // operation shows only its done notice, never its output.
+  const outcome = liveOperationStore.getOutcome(ownerKey, identity);
+  const derivedOutcomeRef = useRef<LiveOperation | null>(null);
+  derivedOutcomeRef.current = outcome;
+  const ignoredDone = outcome !== null && outcome.status === "ignored";
+  const result = !ignoredDone && outcome?.outcome === "result" ? outcome.result ?? null : null;
+  const failure = !ignoredDone && outcome?.outcome === "failure" ? outcome.failure ?? null : null;
+  const cancelled = !ignoredDone && outcome?.outcome === "cancelled";
+
   // On mount and on owner/target switch, reset the target-scoped form
-  // state, restore a live operation for the current owner and target from
-  // the store, and replay a settled outcome kept for this owner and target.
-  // A live operation stays tracked across switches with its cancel control.
+  // state and restore the owner+target's single unsettled operation, which
+  // the store guarantees is unique per identity. A tracked operation stays
+  // tracked across switches with its cancel control.
   useEffect(() => {
     generationRef.current++;
-    setResult(null);
-    setFailure(null);
-    setCancelled(false);
-    setIgnoredDone(false);
+    setInputError(null);
     setProduction(null);
     setContainer(targetRef.current.type === "pod" ? stringField(targetRef.current, "container") : "");
     setSessionId("");
-    const ownerOps = liveOperationStore.getOwnerLive(ownerKey);
-    if (ownerOps === null) return;
-    for (const [, candidate] of ownerOps) {
-      if (candidate.settled || candidate.identity !== identityRef.current) continue;
-      liveOpRef.current = candidate;
+    const unsettled = liveOperationStore.getUnsettled(ownerKey, identity);
+    if (unsettled !== null && unsettled !== liveOpRef.current) {
+      liveOpRef.current = unsettled;
       bumpLiveOp();
-      break;
-    }
-    for (const [, candidate] of ownerOps) {
-      if (!candidate.settled || candidate.identity !== identityRef.current) continue;
-      if (candidate.status === "ignored") {
-        setIgnoredDone(true);
-      } else if (candidate.outcome === "cancelled") {
-        setCancelled(true);
-      } else if (candidate.outcome === "result" && candidate.result) {
-        setResult(candidate.result);
-      } else if (candidate.outcome === "failure" && candidate.failure) {
-        setFailure(candidate.failure);
-      }
-      liveOperationStore.consumeSettled(candidate.ownerKey, candidate.snapshot.operationId);
-      break;
     }
   }, [ownerKey, identity]);
 
-  // Subscribe to the tracked operation's notifications. Settle and
-  // cancel-state changes go to every subscriber; each subscriber filters
-  // them by its current owner and target identity at emit time, so a
-  // switched view never renders another owner's outcome. The subscribe read
-  // is atomic with the registration, and an operation that settled or was
-  // consumed between the restore scan and this subscription is reconciled
-  // on the spot instead of leaving a stuck running notice.
+  // Subscribe to the tracked operation's lifecycle: settle and clear end
+  // its tracking, cancel and ignore re-render the shared status. The
+  // subscribe read is atomic with the registration, so an operation that
+  // settled or was removed between the restore scan and this subscription
+  // is reconciled on the spot instead of leaving a stuck running notice.
   useEffect(() => {
     const op = liveOpRef.current;
     if (op === null) return;
-    const deliverSettle = (settled: LiveOperation) => {
-      liveOpRef.current = null;
-      if (settled.status === "ignored") {
-        setIgnoredDone(true);
-      } else if (settled.outcome === "cancelled") {
-        setCancelled(true);
-      } else if (settled.outcome === "result" && settled.result) {
-        setResult(settled.result);
-      } else if (settled.outcome === "failure" && settled.failure) {
-        setFailure(settled.failure);
-      }
-    };
-    const { operation, unsubscribe } = liveOperationStore.subscribe(op.ownerKey, op.snapshot.operationId, (event) => {
-      if (liveOpRef.current !== event.operation) return;
-      if (ownerRef.current !== event.operation.ownerKey || identityRef.current !== event.operation.identity) {
-        liveOpRef.current = null;
-        bumpLiveOp();
-        return;
-      }
-      if (event.type === "settle") {
-        deliverSettle(event.operation);
+    const { operation, unsubscribe } = liveOperationStore.subscribeOp(op.ownerKey, op.snapshot.operationId, (event) => {
+      if (event.type === "settle" || event.type === "clear") {
+        if (liveOpRef.current === event.operation) liveOpRef.current = null;
       }
       bumpLiveOp();
     });
-    if (operation === null) {
+    if (liveOpRef.current === op && (operation === null || operation.settled)) {
       liveOpRef.current = null;
-      bumpLiveOp();
-    } else if (operation.settled) {
-      if (ownerRef.current === operation.ownerKey && identityRef.current === operation.identity) {
-        deliverSettle(operation);
-      } else {
-        liveOpRef.current = null;
-      }
       bumpLiveOp();
     }
     return () => {
@@ -187,50 +149,35 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
     };
   }, [liveOpRef.current?.snapshot.operationId, ownerKey, identity]);
 
-  const run = async (confirmation?: DockerProductionConfirmation) => {
-    // A live operation blocks a replacement until it settles; an ignored
-    // operation that already settled blocks until its done notice is
-    // cleared, so a retry is never blind.
-    if (busy || liveOpRef.current !== null || ignoredDone) return;
-    const argv = command.trim() ? command.trim().split(/\s+/) : [];
-    if (argv.length === 0) {
-      setFailure({ message: "请输入要执行的命令" });
-      return;
+  // Subscribe to the owner+target's outcome channel: a settle or clear
+  // anywhere re-renders the derived outcome. The atomic read reconciles an
+  // outcome that settled or was cleared between the render and this
+  // subscription.
+  useEffect(() => {
+    const { outcome: current, unsubscribe } = liveOperationStore.subscribeOutcome(ownerKey, identity, () => {
+      bumpLiveOp();
+    });
+    if (derivedOutcomeRef.current !== current) {
+      bumpLiveOp();
     }
-    const resolvedContainer = container.trim();
-    if (kind === "docker-context" && resolvedContainer === "") {
-      setFailure({ message: "请输入容器名" });
-      return;
-    }
-    if (requireSession && sessionId === "") {
-      setFailure({ message: "请选择受管会话" });
-      return;
-    }
-    const generation = generationRef.current;
-    setCancelled(false);
-    setIgnoredDone(false);
-    setBusy(true);
-    setResult(null);
-    setFailure(null);
-    // Each launch freezes an immutable snapshot of the full request
-    // identity bound to the launching owner and target; cancel addresses
-    // exactly that instance.
-    const operationId = globalThis.crypto.randomUUID();
-    const snapshot: InventoryTargetExecRequest = {
-      kind,
-      target,
-      action: "exec",
-      container: resolvedContainer === "" ? undefined : resolvedContainer,
-      command: argv,
-      sessionId: sessionId === "" ? undefined : sessionId,
-      operationId,
-      confirmation,
+    return () => {
+      unsubscribe();
     };
+  }, [ownerKey, identity]);
+
+  // launch freezes the given snapshot as a live operation bound to the
+  // current owner and target and runs it. The store rejects a replacement
+  // for an identity that already has an unsettled operation, and rejects
+  // at capacity, both visibly before any call is made.
+  const launch = async (snapshot: InventoryTargetExecRequest) => {
+    if (busy || liveOpRef.current !== null || ignoredDone) return;
+    const generation = generationRef.current;
+    setBusy(true);
+    setInputError(null);
     const op: LiveOperation = { snapshot, ownerKey, identity, status: "running" };
-    // At capacity the new exec is rejected visibly before any call is made.
-    const capacityError = liveOperationStore.store(op);
-    if (capacityError !== null) {
-      setFailure({ message: capacityError.message });
+    const storeError = liveOperationStore.store(op);
+    if (storeError !== null) {
+      setInputError(storeError.message);
       setBusy(false);
       return;
     }
@@ -240,21 +187,22 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
       const response = await inventoryTargetApi.execTarget(snapshot);
       op.result = response;
       op.outcome = "result";
-      if (generation !== generationRef.current) return;
-      setResult(response);
     } catch (cause) {
       if (inventoryExecCancelled(cause)) {
         op.outcome = "cancelled";
-        if (generation !== generationRef.current) return;
-        setCancelled(true);
         return;
       }
       const challenge = getDockerConfirmationChallenge(cause);
       if (challenge) {
-        // The challenge ends this operation's lifecycle without an exec
-        // outcome; drop its registry entry so no stale record is replayed.
-        liveOperationStore.delete(op.ownerKey, op.snapshot.operationId);
-        setProduction({ challenge, command: command.trim() });
+        // The challenge ends this operation without an outcome; remove its
+        // registry entry so no stale record is kept. A challenge that
+        // arrives after the launch generation, owner, or target moved on
+        // only ends the original operation and never opens the dialog in
+        // the new context.
+        liveOperationStore.remove(op.ownerKey, op.snapshot.operationId);
+        if (generation === generationRef.current && ownerRef.current === op.ownerKey && identityRef.current === op.identity) {
+          setProduction({ challenge, command: op.snapshot.command.join(" "), snapshot: op.snapshot, generation });
+        }
         return;
       }
       const exitFailure = inventoryExecFailure(cause);
@@ -265,41 +213,67 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
           exitCode: exitFailure.exitCode,
           output: exitFailure.output,
         };
-        if (generation !== generationRef.current) return;
-        setFailure(op.failure);
         return;
       }
       op.outcome = "failure";
       op.failure = { message: describeError(cause) };
-      if (generation !== generationRef.current) return;
-      setFailure(op.failure);
     } finally {
       // The operation's lifecycle ends only when the exec itself settles;
       // until then its snapshot and cancel control are retained. Settling
       // notifies every subscriber, and the registry keeps the settled
-      // operation until a subscriber consumes it, so no outcome is lost
-      // between an unmount and a remount. The busy display clears on
-      // settle regardless of generation; only the outcome display is
-      // generation-gated.
+      // outcome until a user explicitly clears it, so no outcome is lost
+      // between an unmount and a remount.
       liveOperationStore.markSettled(op);
-      if (liveOpRef.current === op) {
-        liveOpRef.current = null;
-        if (op.status === "ignored") setIgnoredDone(true);
-      }
+      if (liveOpRef.current === op) liveOpRef.current = null;
       setBusy(false);
     }
   };
 
+  const run = async (confirmation?: DockerProductionConfirmation) => {
+    // A live operation blocks a replacement until it settles; an ignored
+    // operation that already settled blocks until its done notice is
+    // cleared, so a retry is never blind.
+    if (busy || liveOpRef.current !== null || ignoredDone) return;
+    const argv = command.trim() ? command.trim().split(/\s+/) : [];
+    if (argv.length === 0) {
+      setInputError("请输入要执行的命令");
+      return;
+    }
+    const resolvedContainer = container.trim();
+    if (kind === "docker-context" && resolvedContainer === "") {
+      setInputError("请输入容器名");
+      return;
+    }
+    if (requireSession && sessionId === "") {
+      setInputError("请选择受管会话");
+      return;
+    }
+    // Each launch freezes an immutable snapshot of the full request
+    // identity bound to the launching owner and target; cancel addresses
+    // exactly that instance.
+    await launch({
+      kind,
+      target,
+      action: "exec",
+      container: resolvedContainer === "" ? undefined : resolvedContainer,
+      command: argv,
+      sessionId: sessionId === "" ? undefined : sessionId,
+      operationId: globalThis.crypto.randomUUID(),
+      confirmation,
+    });
+  };
+
   // Ignoring discards the response while the command keeps running on the
-  // target; the operation stays live and tracked until it settles.
+  // target; the operation stays live and tracked until it settles. Ignore
+  // is an operation-level behavior, so every subscribed view is notified
+  // and shows the same ignored state.
   const ignoreResults = () => {
     const op = liveOpRef.current;
     if (op === null || op.status !== "running") return;
     generationRef.current++;
     op.status = "ignored";
+    liveOperationStore.notifyIgnore(op);
     setBusy(false);
-    setResult(null);
-    setFailure(null);
     bumpLiveOp();
   };
 
@@ -333,12 +307,15 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
     }
   };
 
+  // Clearing dismisses the dialog and any pre-IPC error and clears the
+  // retained outcome through the store, so every view of the owner and
+  // target drops it together and it does not revive on a later remount.
   const clearSettled = () => {
-    setResult(null);
-    setFailure(null);
     setProduction(null);
-    setCancelled(false);
-    setIgnoredDone(false);
+    setInputError(null);
+    if (outcome !== null) {
+      liveOperationStore.remove(outcome.ownerKey, outcome.snapshot.operationId);
+    }
   };
 
   const liveOp = liveOpRef.current;
@@ -428,7 +405,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
                 忽略结果
               </button>
             )}
-            {(result || failure || cancelled || ignoredDone) && (
+            {(result || failure || cancelled || ignoredDone || inputError) && (
               <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={clearSettled}>
                 清除
               </button>
@@ -467,6 +444,9 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
               <pre className="nx-pre max-h-56 overflow-auto whitespace-pre-wrap break-all text-[11px]">{result.output}</pre>
             </div>
           )}
+          {inputError !== null && (
+            <div role="alert" className="text-[11px] text-red-300">{inputError}</div>
+          )}
           {failure && (
             <div role="alert" className="text-[11px] text-red-300">
               <div>{failure.message}</div>
@@ -488,7 +468,15 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
           onConfirm={() => {
             const current = production;
             setProduction(null);
-            void run(dockerConfirmation(current.challenge));
+            if (current === null || current.generation !== generationRef.current) return;
+            // The confirmation is bound to the original launch snapshot:
+            // the retry re-issues exactly that request with a fresh
+            // operationId, never the page's current inputs.
+            void launch({
+              ...current.snapshot,
+              operationId: globalThis.crypto.randomUUID(),
+              confirmation: dockerConfirmation(current.challenge),
+            });
           }}
         />
       )}

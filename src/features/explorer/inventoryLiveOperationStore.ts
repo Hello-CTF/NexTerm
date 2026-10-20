@@ -23,7 +23,7 @@ export interface LiveOperation {
   failure?: { message: string; exitCode?: number; output?: string };
 }
 
-export type LiveOperationEventType = "settle" | "cancel";
+export type LiveOperationEventType = "settle" | "cancel" | "ignore" | "clear";
 
 export interface LiveOperationEvent {
   type: LiveOperationEventType;
@@ -34,98 +34,156 @@ export type Unsubscribe = () => void;
 
 const LIVE_REGISTRY_LIMIT = 32;
 
-// LiveOperationStore keeps live operations in a per-owner
-// {ownerKey, operationId} namespace and notifies every current subscriber
-// of settle and cancel-state changes. Settled outcomes are retained in the
-// registry until a subscriber consumes them, so a notification is never
-// lost between an unmount and a remount.
+// LiveOperationStore keeps operations in a per-owner {ownerKey,
+// operationId} namespace and notifies subscribers of settle, cancel,
+// ignore, and clear events. Per owner and target identity at most one
+// unsettled operation exists: a second exec is rejected visibly before any
+// call. Settled outcomes are retained in the namespace until a user
+// explicitly clears them and are replayed idempotently to every current and
+// future view of that owner and target. At capacity new operations are
+// rejected visibly — live operations and retained outcomes are never
+// silently evicted.
 class LiveOperationStore {
   private registry = new Map<string, Map<string, LiveOperation>>();
-  private subscribers = new Map<string, Map<number, (event: LiveOperationEvent) => void>>();
+  private opSubscribers = new Map<string, Map<number, (event: LiveOperationEvent) => void>>();
+  private outcomeSubscribers = new Map<string, Map<number, (event: LiveOperationEvent) => void>>();
   private nextSubscriberId = 0;
 
-  private key(ownerKey: string, operationId: string): string {
+  private opKey(ownerKey: string, operationId: string): string {
     return `${ownerKey}/${operationId}`;
   }
 
-  // store registers an operation in its owner's namespace. At capacity
-  // only settled entries are recycled; a new exec beyond capacity is
-  // rejected with a visible error before any call is made.
+  private identityKey(ownerKey: string, identity: string): string {
+    return `${ownerKey}/${identity}`;
+  }
+
+  // store registers an operation. An unsettled operation with the same
+  // owner and target identity blocks a replacement with a visible error
+  // before any call is made; at capacity the same happens. Entries leave
+  // the registry only through an explicit removal, never through eviction.
   store(op: LiveOperation): Error | null {
     let ownerOps = this.registry.get(op.ownerKey);
     if (!ownerOps) {
       ownerOps = new Map();
       this.registry.set(op.ownerKey, ownerOps);
     }
+    for (const existing of ownerOps.values()) {
+      if (!existing.settled && existing.identity === op.identity) {
+        return new Error("该目标已有在途操作，请等待其结束");
+      }
+    }
     if (ownerOps.size >= LIVE_REGISTRY_LIMIT && !ownerOps.has(op.snapshot.operationId)) {
-      for (const [id, existing] of ownerOps) {
-        if (existing.settled) {
-          ownerOps.delete(id);
-          break;
-        }
-      }
-      if (ownerOps.size >= LIVE_REGISTRY_LIMIT) {
-        return new Error("该所有者的在途操作已达上限，请等待现有操作结束");
-      }
+      return new Error("该所有者的操作记录已达上限，请清除已完成的结果");
     }
     ownerOps.set(op.snapshot.operationId, op);
     return null;
   }
 
-  delete(ownerKey: string, operationId: string): void {
+  // remove deletes an operation and notifies the subscribers of both
+  // channels. It ends a lifecycle without an outcome (production
+  // challenge) or clears a retained outcome (user action); either way the
+  // record is gone for every current and future view.
+  remove(ownerKey: string, operationId: string): void {
     const ownerOps = this.registry.get(ownerKey);
-    if (ownerOps) {
-      ownerOps.delete(operationId);
-      if (ownerOps.size === 0) this.registry.delete(ownerKey);
+    const existing = ownerOps?.get(operationId);
+    if (!ownerOps || !existing) return;
+    ownerOps.delete(operationId);
+    if (ownerOps.size === 0) this.registry.delete(ownerKey);
+    const event: LiveOperationEvent = { type: "clear", operation: existing };
+    this.emitOp(ownerKey, operationId, event);
+    this.emitOutcome(existing.ownerKey, existing.identity, event);
+  }
+
+  // getUnsettled returns the owner's single unsettled operation for the
+  // identity; the store invariant guarantees there is at most one.
+  getUnsettled(ownerKey: string, identity: string): LiveOperation | null {
+    const ownerOps = this.registry.get(ownerKey);
+    if (!ownerOps) return null;
+    for (const op of ownerOps.values()) {
+      if (!op.settled && op.identity === identity) return op;
     }
+    return null;
   }
 
-  get(ownerKey: string, operationId: string): LiveOperation | null {
-    return this.registry.get(ownerKey)?.get(operationId) ?? null;
+  // getOutcome returns the latest settled outcome retained for the owner
+  // and identity; outcomes stay until a user explicitly clears them.
+  getOutcome(ownerKey: string, identity: string): LiveOperation | null {
+    const ownerOps = this.registry.get(ownerKey);
+    if (!ownerOps) return null;
+    let latest: LiveOperation | null = null;
+    for (const op of ownerOps.values()) {
+      if (op.settled && op.identity === identity) latest = op;
+    }
+    return latest;
   }
 
-  // getOwnerLive exposes the owner's operation namespace for restore and
-  // replay scans; callers only read it.
-  getOwnerLive(ownerKey: string): Map<string, LiveOperation> | null {
-    return this.registry.get(ownerKey) ?? null;
-  }
-
-  // subscribe reads the current operation state and atomically registers
-  // the listener, so no notification is lost between the read and the
-  // subscription. The returned operation may already be settled, in which
-  // case the subscriber replays its outcome immediately.
-  subscribe(
+  // subscribeOp reads the operation and atomically registers the listener,
+  // so no notification is lost between the read and the subscription.
+  subscribeOp(
     ownerKey: string,
     operationId: string,
     listener: (event: LiveOperationEvent) => void,
   ): { operation: LiveOperation | null; unsubscribe: Unsubscribe } {
-    const operation = this.get(ownerKey, operationId);
-    if (!operation) {
-      return { operation: null, unsubscribe: () => {} };
-    }
-    const key = this.key(ownerKey, operationId);
-    let listeners = this.subscribers.get(key);
+    const operation = this.registry.get(ownerKey)?.get(operationId) ?? null;
+    const key = this.opKey(ownerKey, operationId);
+    let listeners = this.opSubscribers.get(key);
     if (!listeners) {
       listeners = new Map();
-      this.subscribers.set(key, listeners);
+      this.opSubscribers.set(key, listeners);
     }
     const id = ++this.nextSubscriberId;
     listeners.set(id, listener);
     return {
       operation,
       unsubscribe: () => {
-        const current = this.subscribers.get(key);
+        const current = this.opSubscribers.get(key);
         if (current) {
           current.delete(id);
-          if (current.size === 0) this.subscribers.delete(key);
+          if (current.size === 0) this.opSubscribers.delete(key);
         }
       },
     };
   }
 
-  // emit delivers an event to every current subscriber of the operation.
-  private emit(ownerKey: string, operationId: string, event: LiveOperationEvent): void {
-    const listeners = this.subscribers.get(this.key(ownerKey, operationId));
+  // subscribeOutcome reads the identity's current unsettled operation and
+  // retained outcome and atomically registers the listener for settle and
+  // clear notifications of that identity.
+  subscribeOutcome(
+    ownerKey: string,
+    identity: string,
+    listener: (event: LiveOperationEvent) => void,
+  ): { operation: LiveOperation | null; outcome: LiveOperation | null; unsubscribe: Unsubscribe } {
+    const key = this.identityKey(ownerKey, identity);
+    let listeners = this.outcomeSubscribers.get(key);
+    if (!listeners) {
+      listeners = new Map();
+      this.outcomeSubscribers.set(key, listeners);
+    }
+    const id = ++this.nextSubscriberId;
+    listeners.set(id, listener);
+    return {
+      operation: this.getUnsettled(ownerKey, identity),
+      outcome: this.getOutcome(ownerKey, identity),
+      unsubscribe: () => {
+        const current = this.outcomeSubscribers.get(key);
+        if (current) {
+          current.delete(id);
+          if (current.size === 0) this.outcomeSubscribers.delete(key);
+        }
+      },
+    };
+  }
+
+  private emitOp(ownerKey: string, operationId: string, event: LiveOperationEvent): void {
+    const listeners = this.opSubscribers.get(this.opKey(ownerKey, operationId));
+    if (!listeners) return;
+    for (const listener of [...listeners.values()]) {
+      listener(event);
+    }
+  }
+
+  private emitOutcome(ownerKey: string, identity: string, event: LiveOperationEvent): void {
+    const listeners = this.outcomeSubscribers.get(this.identityKey(ownerKey, identity));
     if (!listeners) return;
     for (const listener of [...listeners.values()]) {
       listener(event);
@@ -134,30 +192,32 @@ class LiveOperationStore {
 
   // markSettled records the operation's outcome and notifies every
   // subscriber. The settled operation is retained in the registry until a
-  // subscriber consumes it, so a notification is never lost while no view
-  // is mounted.
+  // user explicitly clears it, so the outcome is replayed idempotently to
+  // every current and future view of the owner and target.
   markSettled(op: LiveOperation): void {
     op.settled = true;
-    this.emit(op.ownerKey, op.snapshot.operationId, { type: "settle", operation: op });
+    const event: LiveOperationEvent = { type: "settle", operation: op };
+    this.emitOp(op.ownerKey, op.snapshot.operationId, event);
+    this.emitOutcome(op.ownerKey, op.identity, event);
   }
 
   // notifyCancel delivers a cancel-state change (pending, timeout, or
-  // failure) to every current subscriber, not just the instance that
-  // initiated the cancel.
+  // failure) to every current subscriber of the operation.
   notifyCancel(op: LiveOperation): void {
-    this.emit(op.ownerKey, op.snapshot.operationId, { type: "cancel", operation: op });
+    this.emitOp(op.ownerKey, op.snapshot.operationId, { type: "cancel", operation: op });
   }
 
-  // consumeSettled removes a settled operation once a subscriber has
-  // consumed its outcome.
-  consumeSettled(ownerKey: string, operationId: string): void {
-    this.delete(ownerKey, operationId);
+  // notifyIgnore delivers the operation-level ignore to every current
+  // subscriber, so all views show the same ignored state.
+  notifyIgnore(op: LiveOperation): void {
+    this.emitOp(op.ownerKey, op.snapshot.operationId, { type: "ignore", operation: op });
   }
 
   // reset clears the registry and all subscribers; it exists for tests.
   reset(): void {
     this.registry.clear();
-    this.subscribers.clear();
+    this.opSubscribers.clear();
+    this.outcomeSubscribers.clear();
   }
 }
 
