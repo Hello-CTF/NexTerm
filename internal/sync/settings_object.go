@@ -376,12 +376,20 @@ func (e *Engine) knownHostUpsert(ctx context.Context, payload knownHostObject, d
 			}
 		}
 		row := &store.KnownHostRow{ID: payload.ID, Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType, Fingerprint: payload.Fingerprint, AddedAt: payload.AddedAt, OwnerID: ipc.OwnerID(ctx)}
+		columns := []string{"host", "port", "key_type", "fingerprint", "added_at", "op_token"}
+		if snapshot != nil && snapshot.Fingerprint != payload.Fingerprint {
+			// Rotation: the stored key material belongs to the old fingerprint. The
+			// fingerprint-only payload cannot transport the new key, so clear the stale
+			// material instead of pairing the new fingerprint with the old public key;
+			// the next verified accept refills it (KnownHostFillKeyMaterial / PutHostKey).
+			columns = append(columns, "key")
+		}
 		if snapshot == nil {
-			if err := store.UpsertOwnerGuardedExpected(ctx, tx, row, []string{"host", "port", "key_type", "fingerprint", "added_at", "op_token"}, 0); err != nil {
+			if err := store.UpsertOwnerGuardedExpected(ctx, tx, row, columns, 0); err != nil {
 				return err
 			}
 		} else {
-			if _, err := store.UpsertOwnerGuardedExpectedContent(ctx, tx, row, []string{"host", "port", "key_type", "fingerprint", "added_at", "op_token"}, snapshot); err != nil {
+			if _, err := store.UpsertOwnerGuardedExpectedContent(ctx, tx, row, columns, snapshot); err != nil {
 				return err
 			}
 		}

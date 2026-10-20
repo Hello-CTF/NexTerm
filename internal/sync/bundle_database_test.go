@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -1073,5 +1074,111 @@ func TestApplyKnownHostDeleteInterleaveKeepsDeleteDatabase(t *testing.T) {
 	}
 	if _, found, err := instance.service.engine.syncTombstoneGet(ctx, id); err != nil || !found {
 		t.Fatalf("known-host tombstone must survive the conflicted apply: found=%v err=%v", found, err)
+	}
+}
+
+// A same-ID rotation through the fingerprint-only sync payload must never pair the new
+// fingerprint with the old public key: the sync apply clears the stored key material on
+// a fingerprint change (the row degrades to fingerprint-only until the next verified
+// accept refills it), and still invalidates the accept token. Old peers sending the
+// legacy fingerprint-only payload take exactly this path by contract — the payload
+// carries no key material, so a rotation can never transport it.
+func TestApplyKnownHostRotationClearsKeyMaterialDatabase(t *testing.T) {
+	instance := newDatabaseTestInstance(t, false)
+	ctx := context.Background()
+	if _, err := instance.db.KnownHostAcceptWithKey(ctx, "rotation.example.com", 22, "ssh-ed25519", "SHA256:old", "b2xkLWtleS1tYXRlcmlhbA=="); err != nil {
+		t.Fatal(err)
+	}
+	row, found, err := instance.db.KnownHostGet(ctx, "rotation.example.com", 22, "ssh-ed25519")
+	if err != nil || !found {
+		t.Fatalf("seed known host not found: found=%v err=%v", found, err)
+	}
+	if row.Key == "" {
+		t.Fatal("seed row must carry key material")
+	}
+	remoteRev := time.Now().Add(24 * time.Hour).UnixMilli()
+	remote := applyKnownHost(t, row.ID, "rotation.example.com", 22, "ssh-ed25519", "SHA256:new", remoteRev)
+	requireApplyResult(t, mustApplyObjects(t, instance, remote).Objects[0], ApplyResultApplied)
+	row = requireKnownHost(t, instance, row.ID, "SHA256:new", remoteRev)
+	if row.Key != "" {
+		t.Fatalf("rotation kept the old key material: %q", row.Key)
+	}
+	if row.OpToken != "" {
+		t.Fatalf("sync apply must invalidate the accept token: %q", row.OpToken)
+	}
+}
+
+// A same-fingerprint sync update preserves the stored key material: only a rotation
+// clears it.
+func TestApplyKnownHostSameFingerprintKeepsKeyMaterialDatabase(t *testing.T) {
+	instance := newDatabaseTestInstance(t, false)
+	ctx := context.Background()
+	if _, err := instance.db.KnownHostAcceptWithKey(ctx, "same-fp.example.com", 22, "ssh-ed25519", "SHA256:same", "c2FtZS1rZXktbWF0ZXJpYWw="); err != nil {
+		t.Fatal(err)
+	}
+	row, found, err := instance.db.KnownHostGet(ctx, "same-fp.example.com", 22, "ssh-ed25519")
+	if err != nil || !found {
+		t.Fatalf("seed known host not found: found=%v err=%v", found, err)
+	}
+	remoteRev := time.Now().Add(24 * time.Hour).UnixMilli()
+	remote := applyKnownHost(t, row.ID, "same-fp.example.com", 22, "ssh-ed25519", "SHA256:same", remoteRev)
+	requireApplyResult(t, mustApplyObjects(t, instance, remote).Objects[0], ApplyResultApplied)
+	row = requireKnownHost(t, instance, row.ID, "SHA256:same", remoteRev)
+	if row.Key != "c2FtZS1rZXktbWF0ZXJpYWw=" {
+		t.Fatalf("same-fingerprint update dropped key material: %q", row.Key)
+	}
+}
+
+// After a rotation clears the key material, a verify presenting the stale fingerprint
+// cannot refill the rotated row, and a verify with the new key refills it.
+func TestApplyKnownHostRotationThenReverifyFillsKeyDatabase(t *testing.T) {
+	instance := newDatabaseTestInstance(t, false)
+	ctx := context.Background()
+	if _, err := instance.db.KnownHostAcceptWithKey(ctx, "reverify.example.com", 22, "ssh-ed25519", "SHA256:old", "b2xkLWtleS1tYXRlcmlhbA=="); err != nil {
+		t.Fatal(err)
+	}
+	row, found, err := instance.db.KnownHostGet(ctx, "reverify.example.com", 22, "ssh-ed25519")
+	if err != nil || !found {
+		t.Fatalf("seed known host not found: found=%v err=%v", found, err)
+	}
+	remoteRev := time.Now().Add(24 * time.Hour).UnixMilli()
+	remote := applyKnownHost(t, row.ID, "reverify.example.com", 22, "ssh-ed25519", "SHA256:new", remoteRev)
+	requireApplyResult(t, mustApplyObjects(t, instance, remote).Objects[0], ApplyResultApplied)
+
+	if err := instance.db.KnownHostFillKeyMaterial(ctx, "reverify.example.com", 22, "ssh-ed25519", "SHA256:old", "b2xkLWtleS1tYXRlcmlhbA=="); err != nil {
+		t.Fatal(err)
+	}
+	row = requireKnownHost(t, instance, row.ID, "SHA256:new", remoteRev)
+	if row.Key != "" {
+		t.Fatalf("stale fingerprint refilled the rotated row: %q", row.Key)
+	}
+	if err := instance.db.KnownHostFillKeyMaterial(ctx, "reverify.example.com", 22, "ssh-ed25519", "SHA256:new", "bmV3LWtleS1tYXRlcmlhbA=="); err != nil {
+		t.Fatal(err)
+	}
+	row = requireKnownHost(t, instance, row.ID, "SHA256:new", remoteRev)
+	if row.Key != "bmV3LWtleS1tYXRlcmlhbA==" {
+		t.Fatalf("re-verify did not refill the rotated row: %q", row.Key)
+	}
+}
+
+// A row already carrying a mismatched key/fingerprint pair (the state M12's HostKeys
+// exit excludes) is healed by the next sync rotation: the stale material is cleared, not
+// carried into the new fingerprint.
+func TestApplyKnownHostMismatchedKeyMaterialHealedDatabase(t *testing.T) {
+	instance := newDatabaseTestInstance(t, false)
+	ctx := context.Background()
+	if _, err := instance.db.KnownHostAcceptWithKey(ctx, "mismatch.example.com", 22, "ssh-ed25519", "SHA256:fp-a", "a2V5LW9mLWEtZGlmZmVyZW50LWtleQ=="); err != nil {
+		t.Fatal(err)
+	}
+	row, found, err := instance.db.KnownHostGet(ctx, "mismatch.example.com", 22, "ssh-ed25519")
+	if err != nil || !found {
+		t.Fatalf("seed known host not found: found=%v err=%v", found, err)
+	}
+	remoteRev := time.Now().Add(24 * time.Hour).UnixMilli()
+	remote := applyKnownHost(t, row.ID, "mismatch.example.com", 22, "ssh-ed25519", "SHA256:fp-b", remoteRev)
+	requireApplyResult(t, mustApplyObjects(t, instance, remote).Objects[0], ApplyResultApplied)
+	row = requireKnownHost(t, instance, row.ID, "SHA256:fp-b", remoteRev)
+	if row.Key != "" {
+		t.Fatalf("mismatched key material carried into the rotation: %q", row.Key)
 	}
 }
