@@ -361,10 +361,20 @@ func resolveProductionExecTargets(ctx context.Context, services *ProductionServi
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].ID < candidates[j].ID })
 	targets := tools.ExecTargetSet{SessionIDs: make([]string, 0, len(candidates))}
 	resolver := productionScopeValidator(services)
+	connect := newSurfaceConnector(services, TargetSetConnectOptInSettingKeyForUser, TargetSetConnectProductionOptInSettingKeyForUser)
 	for _, asset := range candidates {
 		sessionID, err := resolver.liveSessionForAsset(validationCtx, asset.ID)
 		if err != nil {
-			return tools.ExecTargetSet{}, err
+			// R-07: a disconnected asset is connected only with the target-set
+			// surface's explicit opt-in and every authorization gate; the
+			// decline keeps the original no-auto-connect error.
+			if _, connectErr := connectSurfaceAsset(validationCtx, connect, ipc.OwnerID(validationCtx), asset.ID, err); connectErr != nil {
+				return tools.ExecTargetSet{}, connectErr
+			}
+			sessionID, err = resolver.liveSessionForAsset(validationCtx, asset.ID)
+			if err != nil {
+				return tools.ExecTargetSet{}, err
+			}
 		}
 		connected, err := services.Sessions.SessionFor(validationCtx, sessionID)
 		if err != nil {

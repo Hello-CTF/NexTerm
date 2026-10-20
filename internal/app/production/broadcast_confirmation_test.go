@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -118,9 +119,11 @@ func (t *broadcastGateTransport) firstChannel() *broadcastGateChannel {
 type broadcastGateConnector struct {
 	mu         sync.Mutex
 	transports map[string]*broadcastGateTransport
+	dials      atomic.Int32
 }
 
 func (c *broadcastGateConnector) Connect(_ context.Context, asset session.Asset, generation uint64) (base.Transport, error) {
+	c.dials.Add(1)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	transport := newBroadcastGateTransport(asset.Kind, generation)
@@ -146,6 +149,7 @@ type broadcastGateFixture struct {
 	manager    *session.Manager
 	dispatcher *ipc.Dispatcher
 	connector  *broadcastGateConnector
+	service    *terminalCommandService
 	production broadcastGateTarget
 	staging    broadcastGateTarget
 }
@@ -166,7 +170,7 @@ func newBroadcastGateFixture(t *testing.T) *broadcastGateFixture {
 	if err := service.registerSession(dispatcher); err != nil {
 		t.Fatal(err)
 	}
-	fixture := &broadcastGateFixture{ctx: ctx, database: database, manager: manager, dispatcher: dispatcher, connector: connector}
+	fixture := &broadcastGateFixture{ctx: ctx, database: database, manager: manager, dispatcher: dispatcher, connector: connector, service: service}
 	fixture.production = fixture.openTarget(t, "Production API", "api.production.example", "env:production")
 	fixture.staging = fixture.openTarget(t, "Staging API", "api.staging.example", "env:staging")
 	return fixture
@@ -481,4 +485,124 @@ func TestBroadcastProductionIPCHonorsConfiguredProductionEnvironments(t *testing
 		productionDetail.RequiredEnvironmentNames[0] != "live" || productionDetail.RequiredEnvironmentNames[1] != "production" {
 		t.Fatalf("combined required environment names = %v", productionDetail.RequiredEnvironmentNames)
 	}
+}
+
+func TestBroadcastConnectsDroppedSessionWithOptIn(t *testing.T) {
+	fixture := newBroadcastGateFixture(t)
+	fixture.service.hostKeys = newBroadcastFixtureHostKeys(t, fixture)
+	if err := fixture.database.KnownHostAccept(fixture.ctx, "api.production.example", 22, "ssh-ed25519", "SHA256:production"); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.database.KnownHostAccept(fixture.ctx, "api.staging.example", 22, "ssh-ed25519", "SHA256:staging"); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.manager.Disconnect(fixture.production.sessionID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Default: no opt-in keeps the pre-R-07 behavior and never dials.
+	baseline := fixture.connector.dials.Load()
+	tabIDs := []string{fixture.production.tabID, fixture.staging.tabID}
+	detail := requireBroadcastConfirmation(t, fixture.prepare(tabIDs, "hostname\n"))
+	if len(detail.ProductionTargets) != 1 || detail.ProductionTargets[0].TabID != fixture.production.tabID {
+		t.Fatalf("production targets = %+v", detail.ProductionTargets)
+	}
+	if fixture.connector.dials.Load() != baseline {
+		t.Fatalf("default resolve dialed %d times", fixture.connector.dials.Load()-baseline)
+	}
+
+	// With the broadcast opt-in the dropped session is reconnected exactly once;
+	// the R-01 typed-name confirmation still applies to the production target.
+	if err := fixture.database.SettingSet(fixture.ctx, BroadcastConnectOptInSettingKeyForUser(fixture.ctx), "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.database.SettingSet(fixture.ctx, BroadcastConnectProductionOptInSettingKeyForUser(fixture.ctx), "true"); err != nil {
+		t.Fatal(err)
+	}
+	rechallenge := requireBroadcastConfirmation(t, fixture.prepare(tabIDs, "hostname\n"))
+	if fixture.connector.dials.Load() != baseline+1 {
+		t.Fatalf("opt-in resolve dialed %d times, want 1", fixture.connector.dials.Load()-baseline)
+	}
+	requireBroadcastOK(t, fixture.write(fixture.production.tabID, "hostname\n", &terminalBroadcastWriteOptions{
+		TargetTabIDs: tabIDs,
+		ProductionConfirmation: &broadcastProductionConfirmation{
+			Confirmed: true, TargetSetHash: rechallenge.TargetSetHash, InputHash: rechallenge.InputHash,
+			EnvironmentNames: rechallenge.RequiredEnvironmentNames,
+		},
+	}))
+	connected, err := fixture.manager.SessionFor(fixture.ctx, fixture.production.sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if connected.Info().Status != session.StatusConnected {
+		t.Fatalf("reconnected session status = %q", connected.Info().Status)
+	}
+
+	// Already-connected targets are never dialed.
+	before := fixture.connector.dials.Load()
+	requireBroadcastConfirmation(t, fixture.prepare(tabIDs, "hostname\n"))
+	if fixture.connector.dials.Load() != before {
+		t.Fatalf("connected resolve redialed: %d dials", fixture.connector.dials.Load())
+	}
+}
+
+func TestBroadcastConnectGates(t *testing.T) {
+	fixture := newBroadcastGateFixture(t)
+	fixture.service.hostKeys = newBroadcastFixtureHostKeys(t, fixture)
+	live := fixture.openTarget(t, "Live API", "api.live.example", "env:live")
+	if err := fixture.database.KnownHostAccept(fixture.ctx, "api.live.example", 22, "ssh-ed25519", "SHA256:live"); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.database.SettingSet(fixture.ctx, BroadcastConnectOptInSettingKeyForUser(fixture.ctx), "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.manager.Disconnect(live.sessionID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Unknown host key on the dropped target is rejected without dialing.
+	unknown := fixture.openTarget(t, "Unknown API", "api.unknown.example", "")
+	if err := fixture.manager.Disconnect(unknown.sessionID); err != nil {
+		t.Fatal(err)
+	}
+	response := fixture.prepare([]string{unknown.tabID}, "hostname\n")
+	if response.OK || response.Error == nil {
+		t.Fatalf("unknown host key resolve = %+v", response)
+	}
+
+	// Production assets need the broadcast production confirmation.
+	if err := fixture.manager.Disconnect(fixture.production.sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.database.KnownHostAccept(fixture.ctx, "api.production.example", 22, "ssh-ed25519", "SHA256:production"); err != nil {
+		t.Fatal(err)
+	}
+	before := fixture.connector.dials.Load()
+	response = fixture.prepare([]string{fixture.production.tabID}, "hostname\n")
+	if response.OK || response.Error == nil {
+		t.Fatalf("unconfirmed production resolve = %+v", response)
+	}
+	if fixture.connector.dials.Load() != before {
+		t.Fatalf("unconfirmed production resolve dialed %d times", fixture.connector.dials.Load()-before)
+	}
+	if err := fixture.database.SettingSet(fixture.ctx, BroadcastConnectProductionOptInSettingKeyForUser(fixture.ctx), "true"); err != nil {
+		t.Fatal(err)
+	}
+	confirmed := requireBroadcastConfirmation(t, fixture.prepare([]string{fixture.production.tabID}, "hostname\n"))
+	requireBroadcastOK(t, fixture.write(fixture.production.tabID, "hostname\n", &terminalBroadcastWriteOptions{
+		TargetTabIDs: []string{fixture.production.tabID},
+		ProductionConfirmation: &broadcastProductionConfirmation{
+			Confirmed: true, TargetSetHash: confirmed.TargetSetHash, InputHash: confirmed.InputHash,
+			EnvironmentNames: confirmed.RequiredEnvironmentNames,
+		},
+	}))
+}
+
+func newBroadcastFixtureHostKeys(t *testing.T, fixture *broadcastGateFixture) *productionHostKeyStore {
+	t.Helper()
+	hostKeys, err := newProductionHostKeyStore(fixture.ctx, filepath.Join(t.TempDir(), "known_hosts.json"), fixture.database, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hostKeys
 }

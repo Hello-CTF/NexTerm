@@ -264,26 +264,32 @@ func (e cronConnectEvidence) ProductionConfirmed(ctx context.Context, _ cron.Tri
 // behavior.
 func cronConnectDial(services *ProductionServices) func(context.Context, cron.Trigger, string) (string, error) {
 	return func(ctx context.Context, trigger cron.Trigger, assetID string) (string, error) {
-		if services.Store == nil || services.Sessions == nil {
-			return "", ipc.NewError(ipc.CodeUnsupported, "终端会话服务未配置")
-		}
-		row, err := services.Store.AssetGetLive(ctx, assetID)
-		if err != nil {
-			return "", err
-		}
-		asset, err := productionSessionAsset(row, false, trigger.OwnerID)
-		if err != nil {
-			return "", err
-		}
-		if options, ok := asset.Options.(map[string]any); ok {
-			options["strictHostKey"] = true
-		}
-		connected, err := services.Sessions.ConnectFor(ctx, asset)
-		if err != nil {
-			return "", err
-		}
-		return connected.ID, nil
+		return dialAssetStrict(ctx, services, trigger.OwnerID, assetID)
 	}
+}
+
+// dialAssetStrict connects the asset with strict host-key verification on
+// every hop; the owner ID scopes the session asset conversion.
+func dialAssetStrict(ctx context.Context, services *ProductionServices, ownerID, assetID string) (string, error) {
+	if services.Store == nil || services.Sessions == nil {
+		return "", ipc.NewError(ipc.CodeUnsupported, "终端会话服务未配置")
+	}
+	row, err := services.Store.AssetGetLive(ctx, assetID)
+	if err != nil {
+		return "", err
+	}
+	asset, err := productionSessionAsset(row, false, ownerID)
+	if err != nil {
+		return "", err
+	}
+	if options, ok := asset.Options.(map[string]any); ok {
+		options["strictHostKey"] = true
+	}
+	connected, err := services.Sessions.ConnectFor(ctx, asset)
+	if err != nil {
+		return "", err
+	}
+	return connected.ID, nil
 }
 
 type cronRuntime struct {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -125,6 +126,63 @@ func normalizeBroadcastTabIDs(tabIDs []string, currentTabID string) error {
 	return nil
 }
 
+// surfaceServices assembles the minimal ProductionServices the R-07 connect
+// gate needs from the terminal command service's dependencies.
+func (s *terminalCommandService) surfaceServices() *ProductionServices {
+	services := &ProductionServices{
+		Store: s.database, Sessions: s.sessions, hostKeys: s.hostKeys, desktop: s.desktop,
+	}
+	if s.sshConnector != nil {
+		services.Vault = s.sshConnector.vault
+	}
+	return services
+}
+
+// connectDroppedBroadcastSession reconnects a dropped broadcast target's
+// asset only with the broadcast surface's explicit opt-in and every R-07
+// gate; without an opt-in the pre-R-07 behavior is kept (the write fails
+// downstream as before). It returns nil without error when no opt-in exists.
+// The gate is evidence-only here: a dropped session already exists, so the
+// actual redial is the in-place reconnect with the strict asset, which
+// verifies host keys again, and the caller gets the session back once it is
+// connected.
+func (s *terminalCommandService) connectDroppedBroadcastSession(ctx context.Context, sessionID, assetID string) (*session.Session, error) {
+	if err := authorizeSurfaceConnect(ctx, s.surfaceServices(), BroadcastConnectOptInSettingKeyForUser, BroadcastConnectProductionOptInSettingKeyForUser, ipc.OwnerID(ctx), assetID); err != nil {
+		if !errors.Is(err, guard.ErrConnectOptInRequired) {
+			return nil, err
+		}
+		return nil, nil
+	}
+	row, err := s.database.AssetGetLive(ctx, assetID)
+	if err != nil {
+		return nil, err
+	}
+	asset, err := productionSessionAsset(row, false, ipc.OwnerID(ctx))
+	if err != nil {
+		return nil, err
+	}
+	if options, ok := asset.Options.(map[string]any); ok {
+		options["strictHostKey"] = true
+	}
+	if err := s.sessions.StartReconnectWithAssetFor(ctx, sessionID, asset); err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		connected, err := s.sessions.SessionFor(ctx, sessionID)
+		if err != nil {
+			return nil, err
+		}
+		if connected.Info().Status == session.StatusConnected {
+			return connected, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, session.ErrDisconnected
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func (s *terminalCommandService) resolveBroadcastTarget(ctx context.Context, tabID string) (broadcastConfirmationTarget, error) {
 	target := broadcastConfirmationTarget{TabID: tabID}
 	tab, err := s.sessions.TabFor(ctx, tabID)
@@ -145,6 +203,15 @@ func (s *terminalCommandService) resolveBroadcastTarget(ctx context.Context, tab
 	}
 	if connected == nil {
 		return broadcastConfirmationTarget{}, session.ErrTabNotFound
+	}
+	if connected.Info().Status != session.StatusConnected && connected.Info().AssetID != "" && connected.Asset().StoreBacked {
+		reconnected, err := s.connectDroppedBroadcastSession(ctx, target.SessionID, connected.Info().AssetID)
+		if err != nil {
+			return broadcastConfirmationTarget{}, err
+		}
+		if reconnected != nil {
+			connected = reconnected
+		}
 	}
 	info := connected.Info()
 	target.SessionName = info.Name
