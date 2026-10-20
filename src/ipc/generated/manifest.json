@@ -1388,6 +1388,12 @@
       "channel": false,
       "stream": "none"
     },
+    "terminal_recover": {
+      "scope": "terminal-stream",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "terminal_release": {
       "nested": false,
       "channel": false,

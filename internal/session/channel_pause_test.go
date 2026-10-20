@@ -102,6 +102,66 @@ func TestRecoverChannelForRedeliversRefusedSuffix(t *testing.T) {
 	}
 }
 
+func TestRecoverChannelForCapacityBoundary(t *testing.T) {
+	manager, connector, _, connected := openOpenTestSession(t, KindLocal)
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-1"}); err != nil {
+		t.Fatal(err)
+	}
+	channel := connector.transport(0).channel(0)
+	receiverA := bindTestReceiver(t, manager, "a-1")
+	receiverB := bindTestReceiver(t, manager, "b-1")
+	drainAttachHeader(t, receiverA)
+	drainAttachHeader(t, receiverB)
+
+	// Sustained output well past the ring's 32 MiB capacity: the refused
+	// suffix per channel is still small enough to be redelivered whole.
+	const chunkSize = 64 << 10
+	const chunks = 600
+	var fed []byte
+	for i := 0; i < chunks; i++ {
+		chunk := bytes.Repeat([]byte{byte('a' + i%26)}, chunkSize)
+		fed = append(fed, chunk...)
+		if err := channel.emit(chunk); err != nil {
+			t.Fatal(err)
+		}
+		if got := readFramesUntil(t, receiverA, chunkSize); !bytes.Equal(got, chunk) {
+			t.Fatalf("channel A chunk %d mismatch", i)
+		}
+		if got := readFramesUntil(t, receiverB, chunkSize); !bytes.Equal(got, chunk) {
+			t.Fatalf("channel B chunk %d mismatch", i)
+		}
+	}
+
+	// Independent accepted offsets: each channel recovers only its own
+	// refused suffix, and the ring holds all of them.
+	const acceptedA = 37<<20 + 512<<10
+	const acceptedB = 36<<20 + 512<<10
+	// a-1 accepted everything: nothing to recover, no anchor, no replay.
+	if err := manager.RecoverChannelFor(context.Background(), "a-1", acceptedA); err != nil {
+		t.Fatal(err)
+	}
+	expectNoFrame(t, receiverA)
+	// b-1 refused 1 MiB: anchor frame followed by the refused suffix.
+	if err := manager.RecoverChannelFor(context.Background(), "b-1", acceptedB); err != nil {
+		t.Fatal(err)
+	}
+	anchorB := receiveTestFrame(t, receiverB)
+	if !bytes.Contains(anchorB.Data, []byte("recovery-")) {
+		t.Fatalf("anchor B = %q", anchorB.Data)
+	}
+	suffixB := readFramesUntil(t, receiverB, len(fed)-acceptedB)
+	if !bytes.Equal(suffixB, fed[acceptedB:]) {
+		t.Fatalf("channel B suffix mismatch: got %d bytes want %d", len(suffixB), len(fed)-acceptedB)
+	}
+}
+
 func TestPauseChannelHoldsOutputAndResumeFlushesInOrder(t *testing.T) {
 	manager, connector, _, session := openOpenTestSession(t, KindSSH)
 	openTestTab(t, manager, session, "client-a", "a-1")

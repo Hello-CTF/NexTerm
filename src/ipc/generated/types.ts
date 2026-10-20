@@ -547,15 +547,13 @@ export type StepState = {
   error?: string;
 };
 
-export type TerminalIDRequest = {
+export type TerminalPauseRequest = {
   tabId: string;
-  sessionId?: string;
   channelId: string;
-  mode: string;
-  n: number;
-  maxBytes: number;
-  visible: boolean;
-  encoding: string;
-  path: string;
-  line: string;
+};
+
+export type TerminalRecoverRequest = {
+  tabId: string;
+  channelId: string;
+  acceptedBytes: number;
 };

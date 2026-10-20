@@ -152,6 +152,5 @@ func (m *Manager) RecoverChannelFor(ctx context.Context, channelID string, accep
 		return err
 	}
 	fanout.SendTo(channelID, replay)
-	m.noteChannelSent(tab, channelID, int64(len(replay)))
 	return nil
 }

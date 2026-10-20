@@ -187,6 +187,11 @@ type terminalRecoverRequest struct {
 	AcceptedBytes int64  `json:"acceptedBytes"`
 }
 
+type terminalPauseRequest struct {
+	TabID     string `json:"tabId"`
+	ChannelID string `json:"channelId"`
+}
+
 type liveTabDTO struct {
 	TabID           string  `json:"tabId"`
 	SessionID       string  `json:"sessionId"`
@@ -590,13 +595,13 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		func() error {
 			// Client-driven producer backpressure: pause/resume one channel's
 			// output feed without detaching (ephemeral local/WinRM tabs stay alive).
-			return ipc.Register(dispatcher, "terminal_pause", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (any, error) {
+			return ipc.Register(dispatcher, "terminal_pause", func(ctx context.Context, _ *ipc.Call, input terminalPauseRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
 				return nil, terminalIPCError(s.sessions.PauseChannelFor(ctx, input.ChannelID))
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "terminal_resume", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (any, error) {
+			return ipc.Register(dispatcher, "terminal_resume", func(ctx context.Context, _ *ipc.Call, input terminalPauseRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
 				return nil, terminalIPCError(s.sessions.ResumeChannelFor(ctx, input.ChannelID))
 			})

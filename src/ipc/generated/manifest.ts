@@ -1438,7 +1438,7 @@ export const ipcContractManifest = {
       nested: false,
       channel: false,
       stream: "none",
-      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalIDRequest", ts: "TerminalIDRequest" },
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalPauseRequest", ts: "TerminalPauseRequest" },
       output: { go: "any", ts: "unknown" },
     },
     "terminal_record_start": {
@@ -1455,6 +1455,14 @@ export const ipcContractManifest = {
       nested: false,
       channel: false,
       stream: "none",
+    },
+    "terminal_recover": {
+      scope: "terminal-stream",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalRecoverRequest", ts: "TerminalRecoverRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "terminal_release": {
       nested: false,
@@ -1481,7 +1489,7 @@ export const ipcContractManifest = {
       nested: false,
       channel: false,
       stream: "none",
-      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalIDRequest", ts: "TerminalIDRequest" },
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalPauseRequest", ts: "TerminalPauseRequest" },
       output: { go: "any", ts: "unknown" },
     },
     "terminal_screen_text": {
@@ -2008,11 +2016,15 @@ export interface IPCCommandTypeMap {
     output: contractTypes.ServiceOperationBatch;
   };
   "terminal_pause": {
-    input: contractTypes.TerminalIDRequest;
+    input: contractTypes.TerminalPauseRequest;
+    output: unknown;
+  };
+  "terminal_recover": {
+    input: contractTypes.TerminalRecoverRequest;
     output: unknown;
   };
   "terminal_resume": {
-    input: contractTypes.TerminalIDRequest;
+    input: contractTypes.TerminalPauseRequest;
     output: unknown;
   };
 }

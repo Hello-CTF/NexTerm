@@ -34,7 +34,7 @@ const harness = vi.hoisted(() => ({
   setVisible: vi.fn(),
   write: vi.fn(),
   pushToast: vi.fn(),
-  unsafeCall: vi.fn(),
+  call: vi.fn(),
   execAttach: vi.fn(),
 }));
 
@@ -153,7 +153,7 @@ vi.mock("../ipc/commands", () => ({
   },
   dockerApi: { execAttach: harness.execAttach },
   sessionApi: { openLineTab: vi.fn() },
-  unsafeCall: harness.unsafeCall,
+  call: harness.call,
 }));
 
 vi.mock("../ipc/events", () => ({
@@ -296,7 +296,7 @@ beforeEach(() => {
   harness.detach.mockResolvedValue(undefined);
   harness.setVisible.mockResolvedValue(undefined);
   harness.write.mockResolvedValue(undefined);
-  harness.unsafeCall.mockReset().mockResolvedValue(undefined);
+  harness.call.mockReset().mockResolvedValue(undefined);
   harness.execAttach.mockReset().mockResolvedValue("kernel-1");
 });
 
@@ -387,7 +387,7 @@ describe("XtermView stream wiring", () => {
     expect(harness.detach).not.toHaveBeenCalled();
     expect(harness.pushToast).not.toHaveBeenCalled();
     // The high watermark asked the server to pause the feed.
-    expect(harness.unsafeCall).toHaveBeenCalledWith("terminal_pause", {
+    expect(harness.call).toHaveBeenCalledWith("terminal_pause", {
       tabId: "kernel-1",
       channelId: "channel-1",
     });
@@ -404,7 +404,7 @@ describe("XtermView stream wiring", () => {
     expect(t.writeLog.length).toBe(4);
     expect(harness.detach).toHaveBeenCalledTimes(1);
     // Draining asked the server to resume the feed.
-    expect(harness.unsafeCall).toHaveBeenCalledWith("terminal_resume", {
+    expect(harness.call).toHaveBeenCalledWith("terminal_resume", {
       tabId: "kernel-1",
       channelId: "channel-1",
     });
@@ -496,14 +496,14 @@ describe("XtermView stream wiring", () => {
     // The first chunk reaches the high watermark and the client pauses the
     // feed instead of letting the FIFO hit the cap.
     act(() => harness.channel?.onBytes?.(chunk));
-    expect(harness.unsafeCall).toHaveBeenCalledWith("terminal_pause", {
+    expect(harness.call).toHaveBeenCalledWith("terminal_pause", {
       tabId: "kernel-1",
       channelId: "channel-1",
     });
     // The feed is paused (no more bytes arrive); the FIFO drains below the
     // low watermark and the client resumes the feed.
     act(() => t.drainWrites());
-    expect(harness.unsafeCall).toHaveBeenCalledWith("terminal_resume", {
+    expect(harness.call).toHaveBeenCalledWith("terminal_resume", {
       tabId: "kernel-1",
       channelId: "channel-1",
     });
@@ -532,7 +532,7 @@ describe("XtermView stream wiring", () => {
       retainable: false,
       ephemeral: true,
     });
-    harness.unsafeCall.mockRejectedValue(new Error("no such command"));
+    harness.call.mockRejectedValue(new Error("no such command"));
     vi.useFakeTimers();
     await show();
     await attachOk();
@@ -550,8 +550,8 @@ describe("XtermView stream wiring", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });
-    expect(harness.unsafeCall).toHaveBeenCalledTimes(4);
-    expect(harness.unsafeCall).toHaveBeenCalledWith("terminal_recover", {
+    expect(harness.call).toHaveBeenCalledTimes(4);
+    expect(harness.call).toHaveBeenCalledWith("terminal_recover", {
       tabId: "kernel-1",
       channelId: "channel-1",
       acceptedBytes: 4 * (4 << 20),

@@ -8,7 +8,7 @@ import "@xterm/xterm/css/xterm.css";
 import { channelIdOf, createBinaryChannel, disposeChannel, onChannelReopen } from "../../ipc/events";
 import { WEB } from "../../ipc/env";
 import { openExternalURL } from "../../ipc/wails";
-import { dockerApi, terminalApi, unsafeCall } from "../../ipc/commands";
+import { call, dockerApi, terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { IconArrowDown } from "../../ui/icons";
 import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
@@ -293,7 +293,9 @@ export function XtermView(props: XtermViewProps) {
     };
     const pauseWithRetry = (attempts: number) => {
       if (!kernelTabId) return;
-      unsafeCall("terminal_pause", { tabId: kernelTabId, channelId: channelIdOf(channel) }).catch(() => {
+      const channelId = channelIdOf(channel);
+      if (!channelId) return;
+      call("terminal_pause", { tabId: kernelTabId, channelId }).catch(() => {
         if (attempts > 1) {
           window.setTimeout(() => pauseWithRetry(attempts - 1), 100);
           return;
@@ -305,9 +307,9 @@ export function XtermView(props: XtermViewProps) {
     };
     const resumeUpstream = () => {
       if (props.containerId || !kernelTabId) return;
-      void unsafeCall("terminal_resume", { tabId: kernelTabId, channelId: channelIdOf(channel) }).catch(
-        () => undefined,
-      );
+      const channelId = channelIdOf(channel);
+      if (!channelId) return;
+      void call("terminal_resume", { tabId: kernelTabId, channelId }).catch(() => undefined);
     };
     let lastRefuseToastAt = 0;
     const refuseStream = () => {
@@ -315,9 +317,11 @@ export function XtermView(props: XtermViewProps) {
         // Ephemeral local/WinRM tabs: never detach (it would reap the PTY).
         // Redeliver the refused suffix from the tab's recovery ring instead;
         // the replay arrives with a synthetic anchor that ends the episode.
-        void unsafeCall("terminal_recover", {
+        const channelId = channelIdOf(channel);
+        if (!channelId) return;
+        void call("terminal_recover", {
           tabId: kernelTabId,
-          channelId: channelIdOf(channel),
+          channelId,
           acceptedBytes: streamBytes,
         }).catch(() => undefined);
       } else if (kernelTabId) {
