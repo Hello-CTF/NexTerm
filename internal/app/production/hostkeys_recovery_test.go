@@ -775,6 +775,65 @@ func TestProductionHostKeyPostponedMigrationRevocationNotResurrected(t *testing.
 	}
 }
 
+func TestProductionHostKeyInterruptedFirstImportNotResurrected(t *testing.T) {
+	ctx := context.Background()
+	ownerA := ipc.WithUserID(ctx, "user-a")
+	database := newKnownHostOwnerTestDB(t)
+	putKnownHostOwnerTestUser(t, database, "admin", "superadmin", "active", 100)
+	putKnownHostOwnerTestUser(t, database, "user-a", "user", "active", 1)
+	mapped := knownHostOwnerTestKey("mapped.test", "SHA256:mapped", "mapped-key")
+	fallback := knownHostOwnerTestKey("fallback.test", "SHA256:fallback", "fallback-key")
+	if _, err := database.KnownHostAcceptWithKey(ownerA, mapped.Host, int32(mapped.Port), mapped.KeyType, mapped.Fingerprint, mapped.Key); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "known_hosts.json")
+	if err := writeProductionHostKeyFile(path, productionHostKeyFile{Version: 1, Keys: []ssh.HostKey{mapped, fallback}}); err != nil {
+		t.Fatal(err)
+	}
+	// Force the fallback entry's import to fail and verify dispositions and progress are persisted.
+	if _, err := database.DB().ExecContext(ctx, `CREATE TRIGGER fail_fallback_host_key_insert BEFORE INSERT ON known_host WHEN NEW.owner_id = 'admin' BEGIN SELECT RAISE(ABORT, 'forced fallback import failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newProductionHostKeyStore(ctx, path, database, false); err == nil {
+		t.Fatal("forced fallback import failure unexpectedly succeeded")
+	}
+	if _, err := os.Stat(path + ".owner-import-state.json"); err != nil {
+		t.Fatalf("interrupted import did not persist import state: %v", err)
+	}
+	if _, err := database.DB().ExecContext(ctx, `DROP TRIGGER fail_fallback_host_key_insert`); err != nil {
+		t.Fatal(err)
+	}
+	// The owner revokes the mapped key and is then promoted to superadmin.
+	rows, err := database.KnownHostList(ownerA)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("owner A rows = %+v, %v", rows, err)
+	}
+	if err := database.KnownHostRemove(ownerA, rows[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.GORM().WithContext(ctx).Model(&store.AppUser{}).Where("id = ?", "user-a").Update("role", "superadmin").Error; err != nil {
+		t.Fatal(err)
+	}
+	// The interrupted batch resumes from the persisted assignments: the revoked mapped entry is never
+	// re-imported for its original owner, and the fallback entry completes.
+	if _, err := newProductionHostKeyStore(ctx, path, database, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := database.KnownHostGet(ownerA, mapped.Host, int32(mapped.Port), mapped.KeyType); err != nil || found {
+		t.Fatalf("revoked entry resurrected after interrupted import: found=%v err=%v", found, err)
+	}
+	if row, found, err := database.KnownHostGet(ownerA, fallback.Host, int32(fallback.Port), fallback.KeyType); err != nil || !found || row.Fingerprint != fallback.Fingerprint {
+		t.Fatalf("fallback import = %+v, %v, %v", row, found, err)
+	}
+	// An explicit later re-accept of the revoked key stays allowed.
+	if _, err := database.KnownHostAcceptWithKey(ownerA, mapped.Host, int32(mapped.Port), mapped.KeyType, mapped.Fingerprint, mapped.Key); err != nil {
+		t.Fatalf("explicit re-accept was blocked: %v", err)
+	}
+	if _, found, err := database.KnownHostGet(ownerA, mapped.Host, int32(mapped.Port), mapped.KeyType); err != nil || !found {
+		t.Fatalf("explicit re-accept did not persist: found=%v err=%v", found, err)
+	}
+}
+
 func knownHostRowID(t *testing.T, database *store.Store, ctx context.Context, key ssh.HostKey) string {
 	t.Helper()
 	rows, err := database.KnownHostList(ctx)

@@ -404,6 +404,12 @@ func (s *productionHostKeyStore) migrateLegacy(ctx context.Context) (productionH
 		}
 		entries[identity] = entry
 	}
+	// Persist the original dispositions before any import work: an interrupted batch — postponed or
+	// proceeding — always resumes from these assignments plus the per-entry progress below, never from
+	// live-row recomputation.
+	if err := s.storeImportState(entries); err != nil {
+		return report, err
+	}
 	// Preflight: postpone the whole batch while any pending fallback entry has no active superadmin to
 	// receive it. The marker is never written for a postponed batch — a later startup retries once an
 	// administrator appears — and a partially imported batch can never mix with later revocations.
@@ -419,9 +425,6 @@ func (s *productionHostKeyStore) migrateLegacy(ctx context.Context) (productionH
 			return report, err
 		}
 		if fallbackOwner == "" {
-			if err := s.storeImportState(entries); err != nil {
-				return report, err
-			}
 			report.Skipped = fallbackPending
 			return report, nil
 		}
@@ -441,6 +444,9 @@ func (s *productionHostKeyStore) migrateLegacy(ctx context.Context) (productionH
 		key, ok := keysByIdentity[identity]
 		if !ok {
 			entry.State = "done"
+			if err := s.storeImportState(entries); err != nil {
+				return report, err
+			}
 			continue
 		}
 		if entry.Disposition == "fallback" {
@@ -458,6 +464,9 @@ func (s *productionHostKeyStore) migrateLegacy(ctx context.Context) (productionH
 			report.countResult(result)
 			entry.State = "done"
 			entry.Result = result.String()
+			if err := s.storeImportState(entries); err != nil {
+				return report, err
+			}
 			continue
 		}
 		allRevoked := true
@@ -488,9 +497,9 @@ func (s *productionHostKeyStore) migrateLegacy(ctx context.Context) (productionH
 		} else {
 			entry.State = "done"
 		}
-	}
-	if err := s.storeImportState(entries); err != nil {
-		return report, err
+		if err := s.storeImportState(entries); err != nil {
+			return report, err
+		}
 	}
 	remainingPending := 0
 	for _, entry := range entries {
