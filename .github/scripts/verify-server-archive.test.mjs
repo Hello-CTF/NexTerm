@@ -136,6 +136,52 @@ with tarfile.open(archive, "w:gz") as tar:
   assert.equal(run(intact).status, 0);
 });
 
+test("server archive byte evidence rejects non-canonical members that would overwrite the evidenced bytes", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-server-archive-canon-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const mainBytes = Buffer.from("server main binary fixture");
+  const binary = path.join(directory, "nexterm-server-linux-amd64");
+  fs.writeFileSync(binary, mainBytes);
+  fs.writeFileSync(`${binary}.manifest.json`, JSON.stringify({
+    artifact: { size_bytes: mainBytes.length, sha256: sha256(mainBytes) },
+  }));
+
+  // The canonical member carries the exact staged bytes; a second member whose
+  // name only normalizes onto the same extraction path ("."/empty segment)
+  // would overwrite them during a real unpack, so the header policy rejects it.
+  const build = (builder, label) => {
+    const root = `NexTerm-server_1.2.3_linux_amd64-${label}`;
+    const archive = path.join(directory, `${root}.tar.gz`);
+    execFileSync("python3", ["-c", builder, archive, root, binary], { encoding: "utf8" });
+    return archive;
+  };
+  const overwriteBuilder = (name) => `import io, sys, tarfile
+archive, root, payload_path = sys.argv[1], sys.argv[2], sys.argv[3]
+payload = open(payload_path, "rb").read()
+with tarfile.open(archive, "w:gz") as tar:
+    info = tarfile.TarInfo(f"{root}/nexterm-server")
+    info.size = len(payload)
+    tar.addfile(info, io.BytesIO(payload))
+    tampered = tarfile.TarInfo(f"{root}/${name}/nexterm-server")
+    data = payload + b"tampered"
+    tampered.size = len(data)
+    tar.addfile(tampered, io.BytesIO(data))
+`;
+  const run = (archive) => spawnSync(process.execPath, [script, archive, binary], { cwd: directory, encoding: "utf8" });
+
+  const dotSegment = run(build(overwriteBuilder("."), "dot-segment"));
+  assert.notEqual(dotSegment.status, 0);
+  assert.match(dotSegment.stderr, /'\.' path segment/);
+
+  const emptySegment = run(build(overwriteBuilder(""), "empty-segment"));
+  assert.notEqual(emptySegment.status, 0);
+  assert.match(emptySegment.stderr, /empty path segment/);
+
+  // The intact archive from the same fixture still passes.
+  const intact = writeArchive(directory, "NexTerm-server_1.2.3_linux_amd64", mainBytes);
+  assert.equal(run(intact).status, 0);
+});
+
 test("server archive byte evidence rejects missing members, manifests and layouts", (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-server-archive-neg-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
