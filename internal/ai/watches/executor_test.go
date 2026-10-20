@@ -165,7 +165,23 @@ func TestExecutorFeedsObservationsAndDeliversToolData(t *testing.T) {
 		event.WatchID != watch.ID || event.MatchedFrom != 10 || event.MatchedTo != 15 {
 		t.Fatalf("delivered event = %+v", event)
 	}
-	// The event is acknowledged: a later pass delivers nothing new.
+	// The event is acknowledged: wait for the durable ack, then a later pass
+	// delivers nothing new. (Two deliveries would be legal under at-least-once,
+	// so the test waits for the ack instead of racing it.)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		row, err := backend.AgentWatchEventGet(ctx, event.DeliveryID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if row.Status == store.AgentWatchEventAcked {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("event was not acked: %+v", row)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	if _, err := executor.DispatchOnce(ctx); err != nil {
 		t.Fatal(err)
 	}

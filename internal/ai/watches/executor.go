@@ -199,7 +199,11 @@ func (e *Executor) AttachTarget(ctx context.Context, targetID, identity string, 
 	if err := e.engine.Attach(ctx, targetID, identity); err != nil {
 		return err
 	}
-	pos, err := e.resumePosition(ctx, targetID, source)
+	_, generation, attached := e.engine.Credential(ctx, targetID)
+	if !attached {
+		return ErrDetached
+	}
+	pos, err := e.resumePosition(ctx, targetID, source, generation)
 	if err != nil {
 		return err
 	}
@@ -273,16 +277,21 @@ func (e *Executor) DetachTarget(ctx context.Context, targetID string, permanent 
 }
 
 // resumePosition picks the runner's start position: the smallest evaluated
-// position across armed watches and matched repeat watches that can still
-// re-arm, so a restart never shows them a gap, or the source end when no
-// such watch exists.
-func (e *Executor) resumePosition(ctx context.Context, targetID string, source Source) (int64, error) {
+// position across armed watches and matched repeat watches of the current
+// incarnation that can still re-arm, so a restart never shows them a gap, or
+// the source end when no such watch exists. A superseded matched repeat from
+// an older generation can no longer re-arm and must not pull a new
+// incarnation's watch back to pre-attach output.
+func (e *Executor) resumePosition(ctx context.Context, targetID string, source Source, generation uint64) (int64, error) {
 	watches, err := e.engine.ListByTarget(ctx, targetID)
 	if err != nil {
 		return 0, err
 	}
 	resume := int64(-1)
 	for _, watch := range watches {
+		if watch.Generation != generation {
+			continue
+		}
 		if watch.Status != StatusArmed && !(watch.Status == StatusMatched && watch.Repeat) {
 			continue
 		}
