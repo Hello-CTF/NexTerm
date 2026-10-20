@@ -2626,6 +2626,118 @@ describe("XtermView stream wiring", () => {
     expect(episode12Open).toBe(false);
     vi.useRealTimers();
   });
+
+  it("an old attachment's late pause failure never builds a second retry chain on the new attachment", async () => {
+    // The r21 counterexample: attachment 11's normal pause is pending; the
+    // view reopens to attachment 12, whose own pause fails transiently and
+    // arms a retry. Attachment 11's late failure must not schedule anything
+    // on attachment 12 — one retry chain only — and the current legitimate
+    // token's resume actually lifts the server-side pause.
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+      ephemeral: true,
+      attachmentId: 11,
+    });
+    let rejectPause11: ((reason: unknown) => void) | undefined;
+    let pauseCalls12 = 0;
+    let pauseSucceeds = false;
+    let episode12Open = false;
+    const resumeCalls: { attachmentId?: number; episodeToken?: number }[] = [];
+    harness.call.mockImplementation((command: string, args: { attachmentId?: number; episodeToken?: number }) => {
+      if (command === "terminal_pause") {
+        if (args.attachmentId === 11) {
+          // The old attachment's pause is held pending, then fails late.
+          return new Promise((_, reject) => {
+            rejectPause11 = reject;
+          });
+        }
+        pauseCalls12 += 1;
+        if (pauseSucceeds) return Promise.resolve({ episodeToken: 1 });
+        return Promise.reject(new Error("transient"));
+      }
+      if (command === "terminal_resume") {
+        resumeCalls.push({ attachmentId: args.attachmentId, episodeToken: args.episodeToken });
+        if (args.attachmentId === 12 && args.episodeToken === 1) {
+          episode12Open = false;
+          return Promise.resolve(undefined);
+        }
+        return Promise.reject(Object.assign(new Error("stale episode token"), { code: "forbidden" }));
+      }
+      return Promise.resolve(undefined);
+    });
+    vi.useFakeTimers();
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    // Attachment 11: one chunk saturates the writer; its pause is pending.
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    // Reopen to attachment 12; its own pause fails transiently and arms a
+    // retry.
+    harness.attachTab.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      retainable: true,
+      ephemeral: false,
+      attachmentId: 12,
+    });
+    await act(async () => {
+      harness.reopenCb?.();
+      await flushMacrotask();
+      await flushMacrotask();
+    });
+    act(() => harness.channel?.onBytes?.(chunk));
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(pauseCalls12).toBe(1);
+    // Attachment 11's late pause failure lands now: it must not schedule a
+    // retry on attachment 12.
+    rejectPause11?.(new Error("transient"));
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(pauseCalls12).toBe(1);
+    // Two 100ms cycles: exactly one retry chain fires, one pause per cycle.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(pauseCalls12).toBe(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(pauseCalls12).toBe(3);
+    // The chain keeps a single in-flight request and the current legitimate
+    // token's resume actually lifts the server-side pause.
+    pauseSucceeds = true;
+    episode12Open = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(pauseCalls12).toBe(4);
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(resumeCalls).toEqual([{ attachmentId: 12, episodeToken: 1 }]);
+    expect(episode12Open).toBe(false);
+    vi.useRealTimers();
+  });
 });
 
 describe("XtermView render coalescing (T-09 component portion)", () => {

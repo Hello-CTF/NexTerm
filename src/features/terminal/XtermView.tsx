@@ -361,9 +361,19 @@ export function XtermView(props: XtermViewProps) {
           // The pause could not be established yet: retry while the writer is
           // still over the high watermark — without it the producer keeps
           // advancing and the refused suffix can outgrow the recovery ring.
-          if (pauseNeeded && !disposed) {
-            pauseRetryTimer = window.setTimeout(() => pauseWithRetry(), 100);
+          // The retry belongs to the attachment that fired it: a mismatched
+          // callback never schedules anything on the new incarnation, and
+          // one attachment keeps at most one retry chain.
+          if (disposed || firedAttachment !== attachmentId) return;
+          if (!pauseNeeded) return;
+          if (pauseRetryTimer !== undefined) {
+            window.clearTimeout(pauseRetryTimer);
           }
+          pauseRetryTimer = window.setTimeout(() => {
+            pauseRetryTimer = undefined;
+            if (disposed || firedAttachment !== attachmentId || !pauseNeeded) return;
+            pauseWithRetry();
+          }, 100);
         });
     };
     let lastRefuseToastAt = 0;
@@ -418,6 +428,10 @@ export function XtermView(props: XtermViewProps) {
       recoverInFlight = false;
       recoverPending = false;
       recoverTarget = null;
+      if (pauseRetryTimer !== undefined) {
+        window.clearTimeout(pauseRetryTimer);
+        pauseRetryTimer = undefined;
+      }
       clearResumeRetry();
       sendStreamAck();
     };
