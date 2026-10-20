@@ -68,21 +68,12 @@ func (s *Store) KnownHostListForMigration(ctx context.Context) ([]KnownHostRow, 
 }
 
 func (s *Store) KnownHostRemove(ctx context.Context, id string) error {
-	userID, hasIdentity := SyncOptInUserID(ctx)
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		queries := query.Use(tx)
-		optIn := hasIdentity
-		if hasIdentity {
-			setting := queries.Setting
-			row, err := setting.WithContext(ctx).Where(setting.Key.Eq(knownHostOptInKey(userID))).First()
-			if err != nil && !isNoRows(err) {
-				return err
-			}
-			if err == nil {
-				optIn = row.Value == "1"
-			}
+		optIn, err := s.knownHostSyncOptInTx(ctx, tx)
+		if err != nil {
+			return err
 		}
-		knownHost := queries.KnownHostRow
+		knownHost := query.Use(tx).KnownHostRow
 		if _, err := knownHost.WithContext(ctx).
 			Where(knownHost.ID.Eq(id)).
 			Where(ownerConditions(ctx, knownHost.TableName())...).
@@ -92,13 +83,106 @@ func (s *Store) KnownHostRemove(ctx context.Context, id string) error {
 		if !optIn {
 			return nil
 		}
-		return tx.Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "owner_id"}, {Name: "id"}},
-			DoUpdates: clause.Assignments(map[string]any{
-				"deleted_at": MaxExpression(tx, "sync_tombstone", "deleted_at", nil),
-			}),
-			Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
-		}).Create(&SyncTombstone{ID: id, Kind: SyncTombstoneKindKnownHost, DeletedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)}).Error
+		return s.syncTombstonePut(ctx, tx, id, SyncTombstoneKindKnownHost, ids.NowMS())
+	})
+	if err != nil {
+		return dbError(err)
+	}
+	return nil
+}
+
+func (s *Store) knownHostSyncOptInTx(ctx context.Context, tx *gorm.DB) (bool, error) {
+	userID, hasIdentity := SyncOptInUserID(ctx)
+	if !hasIdentity {
+		return false, nil
+	}
+	setting := query.Use(tx).Setting
+	row, err := setting.WithContext(ctx).Where(setting.Key.Eq(knownHostOptInKey(userID))).First()
+	if isNoRows(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return row.Value == "1", nil
+}
+
+// KnownHostCompensateAccept rolls back a ledger accept whose mirror write failed. A nil previous removes the
+// freshly inserted row; otherwise the prior fingerprint and revision are restored in place.
+func (s *Store) KnownHostCompensateAccept(ctx context.Context, host string, port int32, keyType string, previous *KnownHostRow) error {
+	knownHost := query.Use(s.db).KnownHostRow
+	scoped := knownHost.WithContext(ctx).
+		Where(knownHost.Host.Eq(host), knownHost.Port.Eq(port), knownHost.KeyType.Eq(keyType)).
+		Where(ownerConditions(ctx, knownHost.TableName())...)
+	if previous == nil {
+		if _, err := scoped.Delete(); err != nil {
+			return dbError(err)
+		}
+		return nil
+	}
+	if _, err := scoped.Updates(map[string]any{"fingerprint": previous.Fingerprint, "added_at": previous.AddedAt}); err != nil {
+		return dbError(err)
+	}
+	return nil
+}
+
+// KnownHostRemoveForMirror removes one owner-scoped ledger row together with its sync tombstone in a single
+// transaction and returns the removed row so a failed mirror rewrite can restore it.
+func (s *Store) KnownHostRemoveForMirror(ctx context.Context, id string) (KnownHostRow, bool, error) {
+	var removed KnownHostRow
+	found := false
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		queries := query.Use(tx)
+		knownHost := queries.KnownHostRow
+		row, err := knownHost.WithContext(ctx).
+			Where(knownHost.ID.Eq(id)).
+			Where(ownerConditions(ctx, knownHost.TableName())...).
+			First()
+		if isNoRows(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := knownHost.WithContext(ctx).
+			Where(knownHost.ID.Eq(id)).
+			Where(ownerConditions(ctx, knownHost.TableName())...).
+			Delete(); err != nil {
+			return err
+		}
+		optIn, err := s.knownHostSyncOptInTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if optIn {
+			if err := s.syncTombstonePut(ctx, tx, id, SyncTombstoneKindKnownHost, ids.NowMS()); err != nil {
+				return err
+			}
+		}
+		removed = *row
+		found = true
+		return nil
+	})
+	if err != nil {
+		return KnownHostRow{}, false, dbError(err)
+	}
+	return removed, found, nil
+}
+
+// KnownHostRestoreRemoved re-inserts a ledger row removed by KnownHostRemoveForMirror and drops its sync
+// tombstone, compensating a mirror rewrite that failed after the removal committed.
+func (s *Store) KnownHostRestoreRemoved(ctx context.Context, row KnownHostRow) error {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.WithContext(ctx).Create(&row).Error; err != nil {
+			return err
+		}
+		tombstone := query.Use(tx).SyncTombstone
+		if _, err := tombstone.WithContext(ctx).
+			Where(tombstone.ID.Eq(row.ID), tombstone.OwnerID.Eq(row.OwnerID)).
+			Delete(); err != nil {
+			return err
+		}
+		return nil
 	})
 	if err != nil {
 		return dbError(err)

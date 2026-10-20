@@ -72,12 +72,12 @@ func newProductionHostKeyStore(ctx context.Context, path string, database *store
 		if err := store.ensureAccountDir(); err != nil {
 			return nil, err
 		}
-		report, err := store.migrateLegacy(ctx)
-		if err != nil {
-			return nil, err
-		}
-		store.migration = report
 	}
+	report, err := store.migrateLegacy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	store.migration = report
 	return store, nil
 }
 
@@ -165,14 +165,40 @@ func (s *productionHostKeyStore) fileFor(ctx context.Context) (*ssh.FileHostKeyS
 	return files, path, nil
 }
 
+// HostKeys returns the mirror entries that the owner-scoped ledger trusts: verification reads trust from the
+// database while the file only supplies complete key material. Mirror-only leftovers — for example from an
+// interrupted write — are never returned and cannot silently extend trust.
 func (s *productionHostKeyStore) HostKeys(ctx context.Context, host string, port int) ([]ssh.HostKey, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, err := s.requestOwner(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.database.KnownHostList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	trusted := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		if row.Host == host && int(row.Port) == port {
+			trusted[row.KeyType+"\x00"+row.Fingerprint] = struct{}{}
+		}
+	}
 	files, _, err := s.fileFor(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return files.HostKeys(ctx, host, port)
+	mirrored, err := files.HostKeys(ctx, host, port)
+	if err != nil {
+		return nil, err
+	}
+	var known []ssh.HostKey
+	for _, key := range mirrored {
+		if _, ok := trusted[key.KeyType+"\x00"+key.Fingerprint]; ok {
+			known = append(known, key)
+		}
+	}
+	return known, nil
 }
 
 func (s *productionHostKeyStore) ApprovedHostKeys(ctx context.Context, host string, port int) ([]ssh.HostKey, error) {
@@ -192,23 +218,42 @@ func (s *productionHostKeyStore) ApprovedHostKeys(ctx context.Context, host stri
 	return approved, nil
 }
 
+// PutHostKey commits the ledger first and the mirror second. A failed mirror write compensates the ledger,
+// so the database stays the single source of truth and the mirror never runs ahead of it.
 func (s *productionHostKeyStore) PutHostKey(ctx context.Context, key ssh.HostKey, replace bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	files, path, err := s.fileFor(ctx)
+	if _, err := s.requestOwner(ctx); err != nil {
+		return err
+	}
+	previous, existed, err := s.database.KnownHostGet(ctx, key.Host, int32(key.Port), key.KeyType)
 	if err != nil {
 		return err
 	}
-	previous, existed, err := readProductionHostKeyFile(path)
-	if err != nil {
-		return err
+	if existed && !replace && previous.Fingerprint != key.Fingerprint {
+		return ssh.ErrHostKeyConflict
 	}
-	if err := files.PutHostKey(ctx, key, replace); err != nil {
+	files, _, err := s.fileFor(ctx)
+	if err != nil {
 		return err
 	}
 	if err := s.database.KnownHostAccept(ctx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint); err != nil {
-		if rollbackErr := restoreProductionHostKeyFile(path, previous, existed); rollbackErr != nil {
-			return errors.Join(err, fmt.Errorf("restore SSH host key file: %w", rollbackErr))
+		return err
+	}
+	mirrorReplace := replace
+	if !mirrorReplace && existed && previous.Fingerprint == key.Fingerprint {
+		// The ledger already trusts exactly this key, so a different-key mirror entry for the same endpoint
+		// is a stale leftover (for example a replacement confirmed through the fingerprint-only IPC path);
+		// overwrite it instead of failing on a conflict the ledger has already resolved.
+		mirrorReplace = true
+	}
+	if err := files.PutHostKey(ctx, key, mirrorReplace); err != nil {
+		var rollback *store.KnownHostRow
+		if existed {
+			rollback = &previous
+		}
+		if compensateErr := s.database.KnownHostCompensateAccept(ctx, key.Host, int32(key.Port), key.KeyType, rollback); compensateErr != nil {
+			return errors.Join(err, fmt.Errorf("compensate SSH host key ledger: %w", compensateErr))
 		}
 		return err
 	}
@@ -216,6 +261,9 @@ func (s *productionHostKeyStore) PutHostKey(ctx context.Context, key ssh.HostKey
 }
 
 func (s *productionHostKeyStore) migrateLegacy(ctx context.Context) (productionHostKeyMigrationReport, error) {
+	if s.shared {
+		return s.migrateSharedLegacy(ctx)
+	}
 	var report productionHostKeyMigrationReport
 	data, existed, err := readProductionHostKeyFile(s.path)
 	if err != nil || !existed {
@@ -274,6 +322,35 @@ func (s *productionHostKeyStore) migrateLegacy(ctx context.Context) (productionH
 			case productionHostKeyMigrationConflict:
 				report.Conflicts++
 			}
+		}
+	}
+	return report, nil
+}
+
+// migrateSharedLegacy imports the desktop shared trust file into the owner-less ledger so the database, not
+// the file, decides verification. The file stays in place as the mirror: no backup is taken and no entry is
+// rewritten, and re-running the import is idempotent. Ledger rows win over conflicting file entries.
+func (s *productionHostKeyStore) migrateSharedLegacy(ctx context.Context) (productionHostKeyMigrationReport, error) {
+	var report productionHostKeyMigrationReport
+	keys, err := s.files.HostKeySnapshot(ctx)
+	if err != nil {
+		return report, err
+	}
+	for _, key := range keys {
+		ledger, ledgerExists, err := s.database.KnownHostGet(ctx, key.Host, int32(key.Port), key.KeyType)
+		if err != nil {
+			return report, err
+		}
+		switch {
+		case ledgerExists && ledger.Fingerprint == key.Fingerprint:
+			report.Existing++
+		case ledgerExists:
+			report.Conflicts++
+		default:
+			if err := s.database.KnownHostAccept(ctx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint); err != nil {
+				return report, err
+			}
+			report.Copied++
 		}
 	}
 	return report, nil
@@ -395,58 +472,53 @@ func restoreProductionHostKeyFile(path string, data []byte, existed bool) error 
 	})
 }
 
+// Remove deletes from the ledger first and rewrites the mirror second. A failed mirror rewrite restores the
+// ledger row and drops its tombstone, so a failed revocation never half-persists.
 func (s *productionHostKeyStore) Remove(ctx context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, err := s.requestOwner(ctx); err != nil {
+		return err
+	}
 	_, path, err := s.fileFor(ctx)
 	if err != nil {
 		return err
 	}
-	rows, err := s.database.KnownHostList(ctx)
+	removed, found, err := s.database.KnownHostRemoveForMirror(ctx, id)
 	if err != nil {
 		return err
 	}
-	var selected *store.KnownHostRow
-	for index := range rows {
-		if rows[index].ID == id {
-			selected = &rows[index]
-			break
-		}
-	}
-	if selected == nil {
+	if !found {
 		return s.database.KnownHostRemove(ctx, id)
 	}
-	data, existed, err := readProductionHostKeyFile(path)
+	restore := func(cause error) error {
+		if restoreErr := s.database.KnownHostRestoreRemoved(ctx, removed); restoreErr != nil {
+			return errors.Join(cause, fmt.Errorf("restore SSH host key ledger: %w", restoreErr))
+		}
+		return cause
+	}
+	data, _, err := readProductionHostKeyFile(path)
 	if err != nil {
-		return err
+		return restore(err)
 	}
-	fileChanged := false
-	if len(data) != 0 {
-		var file productionHostKeyFile
-		if err := json.Unmarshal(data, &file); err != nil {
-			return fmt.Errorf("decode host key store: %w", err)
-		}
-		kept := file.Keys[:0]
-		for _, key := range file.Keys {
-			if key.Host == selected.Host && key.Port == int(selected.Port) && key.KeyType == selected.KeyType && key.Fingerprint == selected.Fingerprint {
-				continue
-			}
-			kept = append(kept, key)
-		}
-		file.Version = 1
-		file.Keys = kept
-		if err := writeProductionHostKeyFile(path, file); err != nil {
-			return err
-		}
-		fileChanged = true
+	if len(data) == 0 {
+		return nil
 	}
-	if err := s.database.KnownHostRemove(ctx, id); err != nil {
-		if fileChanged {
-			if rollbackErr := restoreProductionHostKeyFile(path, data, existed); rollbackErr != nil {
-				return errors.Join(err, fmt.Errorf("restore SSH host key file: %w", rollbackErr))
-			}
+	var file productionHostKeyFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		return restore(fmt.Errorf("decode host key store: %w", err))
+	}
+	kept := file.Keys[:0]
+	for _, key := range file.Keys {
+		if key.Host == removed.Host && key.Port == int(removed.Port) && key.KeyType == removed.KeyType && key.Fingerprint == removed.Fingerprint {
+			continue
 		}
-		return err
+		kept = append(kept, key)
+	}
+	file.Version = 1
+	file.Keys = kept
+	if err := writeProductionHostKeyFile(path, file); err != nil {
+		return restore(err)
 	}
 	return nil
 }
