@@ -135,7 +135,7 @@ func TestCancelWaitsForRegisteredExecAndBlocksQueuedStart(t *testing.T) {
 	}()
 	<-ctx.Done()
 	service.mu.Lock()
-	canceling := service.batches["linearized"].canceling
+	canceling := service.batches[batchKey{ownerID: "owner-a", batchID: "linearized"}].canceling
 	service.mu.Unlock()
 	if !canceling {
 		t.Fatal("context was canceled before the batch entered the canceling state")

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
@@ -134,6 +135,20 @@ func (s *Store) ExecBatchHistoryList(ctx context.Context, filter ExecBatchHistor
 		items[index] = execBatchHistoryItem(row)
 	}
 	return ExecBatchHistoryPage{Items: items, Total: total, Limit: limit, Offset: filter.Offset}, nil
+}
+
+// ExecBatchStartupReconcile marks batches left running by a previous process as failed.
+// It runs once at startup before the first retention pass: no batch can be genuinely
+// active yet, and the finished timestamp makes the rows eligible for retention.
+func (s *Store) ExecBatchStartupReconcile(ctx context.Context) (int64, error) {
+	batch := query.Use(s.db).ExecBatchRow
+	info, err := batch.WithContext(ctx).
+		Where(batch.Status.Eq(ExecBatchStatusRunning), batch.FinishedAt.IsNull()).
+		Updates(map[string]any{"status": ExecBatchStatusFailed, "finished_at": time.Now().UnixMilli()})
+	if err != nil {
+		return 0, dbError(err)
+	}
+	return info.RowsAffected, nil
 }
 
 func execBatchHistoryItem(row ExecBatchRow) ExecBatchHistoryItem {

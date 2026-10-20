@@ -217,8 +217,33 @@ func (r *RetentionRunner) Start(ctx context.Context) error {
 	r.done = make(chan struct{})
 	done := r.done
 	r.mu.Unlock()
+	r.reconcileStartup(runCtx)
 	go r.run(runCtx, done)
 	return nil
+}
+
+// reconcileStartup marks batches left running by a previous process as failed before
+// the first retention pass. It runs synchronously so no exec batch can be genuinely
+// active yet: callers only serve traffic after Start returns.
+func (r *RetentionRunner) reconcileStartup(ctx context.Context) {
+	reconciler, ok := r.store.(interface {
+		ExecBatchStartupReconcile(context.Context) (int64, error)
+	})
+	if !ok {
+		return
+	}
+	attemptCtx, cancel := context.WithTimeout(ctx, r.attemptTimeout)
+	defer cancel()
+	reconciled, err := reconciler.ExecBatchStartupReconcile(attemptCtx)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			r.logger.Warn("startup reconcile of interrupted exec batches failed", "error", err)
+		}
+		return
+	}
+	if reconciled > 0 {
+		r.logger.Info("reconciled exec batches interrupted by the previous shutdown", "count", reconciled)
+	}
 }
 
 func (r *RetentionRunner) run(ctx context.Context, done chan struct{}) {

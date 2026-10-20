@@ -105,6 +105,10 @@ func TestExecBatchHealthIPCCancelChecksOwnerAndFinishesRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	connectedB, err := manager.ConnectFor(ownerB, session.Asset{ID: "asset-b", Name: "b", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
 	batches := newExecBatchService(manager, execBatchTestAssets(nil), nil)
 	dispatcher := ipc.NewDispatcher()
 	if err := registerExecBatchHealthCommands(dispatcher, batches, nil, nil); err != nil {
@@ -124,11 +128,21 @@ func TestExecBatchHealthIPCCancelChecksOwnerAndFinishesRun(t *testing.T) {
 	}
 
 	foreign := dispatchExecBatchTest(dispatcher, ownerB, "exec_batch_health_cancel", execBatchCancelRequest{BatchID: "health-cancel-ipc"})
-	if foreign.OK || foreign.Error == nil || foreign.Error.Code != ipc.CodeForbidden {
-		t.Fatalf("foreign cancel = %+v", foreign)
+	foreignResult := decodeExecBatchTest[execbatch.CancelResult](t, foreign)
+	if !foreignResult.Canceled || foreignResult.BatchID != "health-cancel-ipc" {
+		t.Fatalf("foreign cancel = %+v, want an owner-scoped pending cancel", foreignResult)
 	}
 	if execCtx.Err() != nil {
 		t.Fatal("foreign owner canceled the health execution")
+	}
+	early := decodeExecBatchTest[execbatch.ExecBatchHealth](t, dispatchExecBatchTest(dispatcher, ownerB, "exec_batch_health_probe", execbatch.ExecBatchHealthRequest{
+		BatchID: "health-cancel-ipc", Targets: []execbatch.ExecBatchHealthTarget{{AssetID: "asset-b", SessionID: connectedB.ID}},
+	}))
+	if len(early.Results) != 1 || early.Results[0].Status != execbatch.StatusCanceled {
+		t.Fatalf("foreign owner early-canceled probe = %+v", early)
+	}
+	if execCtx.Err() != nil {
+		t.Fatal("foreign owner pending cancel leaked into the health execution")
 	}
 	canceled := dispatchExecBatchTest(dispatcher, ownerA, "exec_batch_health_cancel", execBatchCancelRequest{BatchID: "health-cancel-ipc"})
 	result := decodeExecBatchTest[execbatch.CancelResult](t, canceled)
@@ -318,5 +332,65 @@ func TestExecBatchHealthIPCCancelDuringHistoryFinishesWithoutAttaching(t *testin
 	}
 	if got := historyCalls.Load(); got != 1 {
 		t.Fatalf("history calls = %d, want only the canceled read", got)
+	}
+}
+
+func TestExecBatchHealthIPCProbeAdmitsSameBatchIDForDifferentOwners(t *testing.T) {
+	started := make(chan context.Context, 2)
+	transport := newExecBatchTestTransport(func(ctx context.Context, _ string, _ base.ExecOptions) (base.ExecResult, error) {
+		started <- ctx
+		<-ctx.Done()
+		return base.ExecResult{}, ctx.Err()
+	})
+	manager := newExecBatchTestManager(t, transport)
+	ownerA := ipc.WithUserID(t.Context(), "owner-a")
+	ownerB := ipc.WithUserID(t.Context(), "owner-b")
+	connectedA, err := manager.ConnectFor(ownerA, session.Asset{ID: "asset-a", Name: "a", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connectedB, err := manager.ConnectFor(ownerB, session.Asset{ID: "asset-b", Name: "b", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatcher := ipc.NewDispatcher()
+	if err := registerExecBatchHealthCommands(dispatcher, newExecBatchService(manager, execBatchTestAssets(nil), nil), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan ipc.Response, 2)
+	for owner, target := range map[string]execbatch.ExecBatchHealthTarget{
+		"owner-a": {AssetID: "asset-a", SessionID: connectedA.ID},
+		"owner-b": {AssetID: "asset-b", SessionID: connectedB.ID},
+	} {
+		owner, target := owner, target
+		go func() {
+			done <- dispatchExecBatchTest(dispatcher, ipc.WithUserID(t.Context(), owner), "exec_batch_health_probe", execbatch.ExecBatchHealthRequest{
+				BatchID: "health-shared", Targets: []execbatch.ExecBatchHealthTarget{target},
+			})
+		}()
+	}
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatal("both owners' health probes must run concurrently with a shared batchID")
+		}
+	}
+	for _, owner := range []string{"owner-a", "owner-b"} {
+		canceled := dispatchExecBatchTest(dispatcher, ipc.WithUserID(t.Context(), owner), "exec_batch_health_cancel", execBatchCancelRequest{BatchID: "health-shared"})
+		if result := decodeExecBatchTest[execbatch.CancelResult](t, canceled); !result.Canceled {
+			t.Fatalf("%s cancel = %+v", owner, result)
+		}
+	}
+	for range 2 {
+		select {
+		case response := <-done:
+			batch := decodeExecBatchTest[execbatch.ExecBatchHealth](t, response)
+			if len(batch.Results) != 1 || batch.Results[0].Status != execbatch.StatusCanceled {
+				t.Fatalf("shared batchID probe = %+v", batch)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("health probe did not finish after cancel")
+		}
 	}
 }
