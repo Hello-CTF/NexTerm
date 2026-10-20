@@ -1079,7 +1079,7 @@ func TestSharePublicPageRetiredDeviceNotFound(t *testing.T) {
 		t.Fatal(err)
 	}
 	gotPath = ""
-	response, err := f.client.Get(f.http.URL + "/share/public/"+token)
+	response, err := f.client.Get(f.http.URL + "/share/public/" + token)
 	if err != nil {
 		t.Fatal(err)
 	}
