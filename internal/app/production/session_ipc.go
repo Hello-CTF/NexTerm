@@ -173,11 +173,18 @@ type terminalIDRequest struct {
 	ChannelID string `json:"channelId"`
 	Mode      string `json:"mode"`
 	N         int    `json:"n"`
+
 	MaxBytes  int    `json:"maxBytes"`
 	Visible   bool   `json:"visible"`
 	Encoding  string `json:"encoding"`
 	Path      string `json:"path"`
 	Line      string `json:"line"`
+}
+
+type terminalRecoverRequest struct {
+	TabID         string `json:"tabId"`
+	ChannelID     string `json:"channelId"`
+	AcceptedBytes int64  `json:"acceptedBytes"`
 }
 
 type liveTabDTO struct {
@@ -592,6 +599,14 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			return ipc.Register(dispatcher, "terminal_resume", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
 				return nil, terminalIPCError(s.sessions.ResumeChannelFor(ctx, input.ChannelID))
+			})
+		},
+		func() error {
+			// Redeliver the suffix a saturated client refused, from the tab's
+			// bounded recovery ring, without reaping an ephemeral tab.
+			return ipc.Register(dispatcher, "terminal_recover", func(ctx context.Context, _ *ipc.Call, input terminalRecoverRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
+				return nil, terminalIPCError(s.sessions.RecoverChannelFor(ctx, input.ChannelID, input.AcceptedBytes))
 			})
 		},
 		func() error {

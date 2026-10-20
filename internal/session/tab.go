@@ -25,10 +25,11 @@ var replayClear = []byte("\x1b[2J\x1b[3J\x1b[H")
 const sshFallbackNotice = "持久终端不可用，已切换为普通 SSH 终端；关闭或断开后无法恢复此终端"
 
 type subscriber struct {
-	client   string
-	producer *hub.Producer
-	co       *outCoalescer
-	paused   bool
+	client    string
+	producer  *hub.Producer
+	co        *outCoalescer
+	paused    bool
+	sentBytes int64
 }
 
 const streamAnchorType = "nexterm.stream-anchor"
@@ -94,6 +95,7 @@ type Tab struct {
 	renameAttempts   map[string]*durableRenameAttempt
 	streamEpoch      string
 	outputWake       chan struct{}
+	recovery         *recoveryRing
 
 	catchUpRemaining int64
 
@@ -405,6 +407,9 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
 		durableIdentity: durableIdentity, metadataRevision: metadataRevision,
 		streamEpoch: ids.New(), outputWake: make(chan struct{}),
+	}
+	if options.Ephemeral {
+		tab.recovery = newRecoveryRing(recoveryRingBytes)
 	}
 	if options.Durable != nil {
 		if m.offsets != nil {
@@ -1562,11 +1567,15 @@ func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []
 		tab.fanout = m.newOutputFanout()
 	}
 	fanout := tab.fanout
+	recovery := tab.recovery
 	subscribers := make([]outputTarget, 0, len(tab.subscribers))
 	for channelID, subscriber := range tab.subscribers {
 		subscribers = append(subscribers, outputTarget{channelID: channelID, subscriber: subscriber})
 	}
 	tab.mu.Unlock()
+	if recovery != nil {
+		recovery.add(data)
+	}
 	for _, target := range subscribers {
 		if target.subscriber.paused {
 			target.subscriber.co.addPaused(data)
@@ -1577,6 +1586,7 @@ func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []
 			continue
 		}
 		fanout.SendTo(target.channelID, batch)
+		m.noteChannelSent(tab, target.channelID, int64(len(batch)))
 	}
 	return nil
 }
@@ -1604,6 +1614,7 @@ func (m *Manager) flushSubscriberOutput(tabID, channelID string) {
 		return
 	}
 	fanout.SendTo(channelID, batch)
+	m.noteChannelSent(tab, channelID, int64(len(batch)))
 }
 
 func (m *Manager) startPump(tab *Tab, channel *channelHandle, generation uint64) bool {

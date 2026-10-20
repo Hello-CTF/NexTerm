@@ -1,6 +1,9 @@
 package session
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // Channel output pause (client-driven producer backpressure). A saturated
 // terminal view pauses its channel instead of detaching it: the subscriber's
@@ -88,4 +91,67 @@ func (t *Tab) signalOutputWakeLocked() {
 	}
 	close(t.outputWake)
 	t.outputWake = make(chan struct{})
+}
+
+// noteChannelSent records how many bytes were flushed to a channel, so a
+// saturated client can later ask for everything produced after its accepted
+// prefix.
+func (m *Manager) noteChannelSent(tab *Tab, channelID string, bytes int64) {
+	tab.mu.Lock()
+	subscriber, ok := tab.subscribers[channelID]
+	if ok {
+		subscriber.sentBytes += bytes
+		tab.subscribers[channelID] = subscriber
+	}
+	tab.mu.Unlock()
+}
+
+// RecoverChannelFor redelivers the suffix a saturated client refused: it
+// reports how many bytes it accepted, and the tab's recovery ring replays
+// everything produced after that point, in order, without reaping the tab.
+// A synthetic anchor frame opens the replay so the client can tell it apart
+// from stale in-flight bytes.
+func (m *Manager) RecoverChannelFor(ctx context.Context, channelID string, acceptedBytes int64) error {
+	tabID := m.tabIDForChannel(channelID)
+	if tabID == "" {
+		return ErrTabNotFound
+	}
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return err
+	}
+	tab, err := m.Tab(tabID)
+	if err != nil {
+		return err
+	}
+	tab.mu.Lock()
+	subscriber, ok := tab.subscribers[channelID]
+	recovery := tab.recovery
+	fanout := tab.fanout
+	tab.mu.Unlock()
+	if !ok || recovery == nil || fanout == nil {
+		return ErrUnsupported
+	}
+	refused := subscriber.sentBytes - acceptedBytes
+	if refused <= 0 {
+		return nil
+	}
+	start := recovery.currentOffset() - refused
+	replay := recovery.replayFrom(start)
+	if len(replay) == 0 {
+		return nil
+	}
+	anchor, err := json.Marshal(streamAnchor{
+		Type:      streamAnchorType,
+		Epoch:     "recovery-" + tabID,
+		StreamSeq: uint64(start),
+	})
+	if err != nil {
+		return err
+	}
+	if err := subscriber.producer.SendJSON(ctx, anchor); err != nil {
+		return err
+	}
+	fanout.SendTo(channelID, replay)
+	m.noteChannelSent(tab, channelID, int64(len(replay)))
+	return nil
 }
