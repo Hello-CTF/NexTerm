@@ -46,6 +46,11 @@ type forwardRuntimeConfig struct {
 	ReapTargets    func(ctx context.Context) ([]chunked.Target, error)
 }
 
+// defaultForwardReaperMinAge keeps the automatic reaper from treating fresh,
+// in-flight upload staging as crash leftovers when the composition root does
+// not configure a minimum age.
+const defaultForwardReaperMinAge = 24 * time.Hour
+
 func newForwardRuntime(config forwardRuntimeConfig) *forwardRuntime {
 	logger := config.Logger
 	if logger == nil {
@@ -59,7 +64,11 @@ func newForwardRuntime(config forwardRuntimeConfig) *forwardRuntime {
 		connect:  config.Connect,
 	}
 	if config.ReapTargets != nil {
-		runtime.reaper = chunked.NewScheduler(config.ReaperInterval, config.ReaperMinAge, config.ReapTargets, func(err error) {
+		minAge := config.ReaperMinAge
+		if minAge <= 0 {
+			minAge = defaultForwardReaperMinAge
+		}
+		runtime.reaper = chunked.NewScheduler(config.ReaperInterval, minAge, config.ReapTargets, func(err error) {
 			logger.Warn("chunked upload staging reaper sweep failed", "error", err)
 		})
 	}
@@ -93,15 +102,30 @@ func (r *forwardRuntime) Shutdown(context.Context) error {
 }
 
 // SessionConnected starts the forward auto-start rules bound to the session's
-// asset. It runs on every successful session connection; failures are logged
-// with the session id and stay visible without stopping other rules.
+// asset. Background reconnects publish connected without a user context, so
+// the account user is restored from the trusted event owner while desktop
+// open-access (no owner, no user) keeps working unchanged. Failures are
+// logged with the session id and stay visible without stopping other rules.
 func (r *forwardRuntime) SessionConnected(ctx context.Context, sessionID string) {
 	if r.forward == nil {
 		return
 	}
-	if _, err := r.forward.StartAutoStartRules(ctx, sessionID); err != nil {
+	if _, err := r.forward.StartAutoStartRules(forwardRuntimeOwnerContext(ctx), sessionID); err != nil {
 		r.logger.Warn("forward auto-start rules failed", "session", sessionID, "error", err)
 	}
+}
+
+// forwardRuntimeOwnerContext restores the account user context from a trusted
+// event owner for background reconnects; an existing user context or a bare
+// desktop context passes through unchanged.
+func forwardRuntimeOwnerContext(ctx context.Context) context.Context {
+	if _, ok := ipc.UserIDFromContext(ctx); ok {
+		return ctx
+	}
+	if ownerID := ipc.EventOwnerID(ctx); ownerID != "" {
+		return ipc.WithUserID(ctx, ownerID)
+	}
+	return ctx
 }
 
 // RecoverStartup reconnects the given devices and starts their auto-start
@@ -122,8 +146,10 @@ func (r *forwardRuntime) RecoverStartup(ctx context.Context, devices []forward.R
 }
 
 // ConnectDeviceForRecovery returns a recovery device whose Connect resolves
-// the asset through the owner-scoped store and establishes a session through
-// the session manager.
+// the asset through the owner-scoped store, converts it with the full
+// production asset mapping (host, options, auth metadata, StoreBacked), and
+// establishes a session through the session manager bound to the asset's
+// owner.
 func (r *forwardRuntime) ConnectDeviceForRecovery(ctx context.Context, assetID string) forward.RecoveryDevice {
 	return forward.RecoveryDevice{
 		AssetID: assetID,
@@ -131,11 +157,19 @@ func (r *forwardRuntime) ConnectDeviceForRecovery(ctx context.Context, assetID s
 			if r.connect != nil {
 				return r.connect(connectCtx, assetID)
 			}
-			asset, err := r.store.AssetGet(connectCtx, assetID)
+			row, err := r.store.AssetGet(connectCtx, assetID)
 			if err != nil {
 				return "", err
 			}
-			connected, err := r.sessions.ConnectFor(connectCtx, session.Asset{ID: asset.ID, Name: asset.Name, Kind: asset.Kind})
+			asset, err := productionSessionAsset(row, false, row.OwnerID)
+			if err != nil {
+				return "", err
+			}
+			sessionCtx := connectCtx
+			if _, ok := ipc.UserIDFromContext(sessionCtx); !ok && row.OwnerID != "" {
+				sessionCtx = ipc.WithUserID(sessionCtx, row.OwnerID)
+			}
+			connected, err := r.sessions.ConnectFor(sessionCtx, asset)
 			if err != nil {
 				return "", err
 			}
