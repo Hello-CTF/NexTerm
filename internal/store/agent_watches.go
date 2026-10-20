@@ -32,6 +32,9 @@ const (
 	// AgentWatchMaxCarryBytes hard-bounds the persisted partial-match overlap
 	// so a hostile or buggy writer cannot grow watch rows without limit.
 	AgentWatchMaxCarryBytes = 65536
+	// agentWatchMaxContextBytes hard-bounds the persisted left-context bytes
+	// that ground line/word-boundary assertions.
+	agentWatchMaxContextBytes = 256
 )
 
 var (
@@ -111,29 +114,30 @@ func (s *Store) AgentWatchTargetAttach(ctx context.Context, targetID, identity s
 	return out, err
 }
 
-// AgentWatchTargetDetach permanently detaches the target. The detach is
-// durable: the target row records the gone state and a bumped generation, so
-// after a restart the detach is still honored and a stale detach carrying an
-// older identity is rejected as a no-op. Store failures roll the transaction
-// back and propagate as retryable errors — a detach never reports success
-// while watches remain armed.
-func (s *Store) AgentWatchTargetDetach(ctx context.Context, targetID, identity string, now int64) (bool, error) {
+// AgentWatchTargetDetach permanently detaches the target. The presenter must
+// present the generation credential it obtained from Attach: a stale
+// presenter — same identity string or not — can never settle the current
+// incarnation. The detach is durable: the target row records the gone state
+// and a bumped generation, so after a restart the detach is still honored.
+// Store failures roll the transaction back and propagate as retryable
+// errors — a detach never reports success while watches remain armed.
+func (s *Store) AgentWatchTargetDetach(ctx context.Context, targetID, identity string, generation uint64, now int64) (bool, error) {
 	settled := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		row, found, err := s.agentWatchTargetForUpdate(ctx, tx, targetID)
 		if err != nil {
 			return err
 		}
-		if !found || row.Identity != identity || row.Gone {
+		if !found || row.Identity != identity || row.Gone || row.Generation != generation {
 			return nil
 		}
-		generation := row.Generation + 1
-		if err := s.settleAgentWatchTargetWatches(ctx, tx, targetID, row.OwnerID, generation, "target detached permanently", now); err != nil {
+		nextGeneration := row.Generation + 1
+		if err := s.settleAgentWatchTargetWatches(ctx, tx, targetID, row.OwnerID, nextGeneration, "target detached permanently", now); err != nil {
 			return err
 		}
 		if err := tx.Model(&model.AgentWatchTargetRow{}).
 			Where("target_id = ? AND owner_id = ?", targetID, row.OwnerID).
-			Updates(map[string]any{"generation": generation, "gone": true, "updated_at": now}).Error; err != nil {
+			Updates(map[string]any{"generation": nextGeneration, "gone": true, "updated_at": now}).Error; err != nil {
 			return dbError(err)
 		}
 		settled = true
@@ -188,11 +192,12 @@ func (s *Store) agentWatchEventByID(ctx context.Context, db *gorm.DB, deliveryID
 }
 
 // AgentWatchCreate inserts an armed watch bound to the target's current
-// durable identity and generation. Creation locks the target row, so it
-// serializes with permanent invalidation: a create either lands before the
-// invalidation and is settled by it, or fails with ErrAgentWatchDetached
-// after the target went away — it can never escape as an armed orphan.
-func (s *Store) AgentWatchCreate(ctx context.Context, row model.AgentWatchRow) (model.AgentWatchRow, error) {
+// durable identity and generation. The presenter must present the generation
+// credential it obtained from Attach; creation locks the target row, so it
+// serializes with permanent invalidation and a stale presenter fails with
+// ErrAgentWatchDetached instead of binding to an incarnation it never
+// attached to.
+func (s *Store) AgentWatchCreate(ctx context.Context, row model.AgentWatchRow, generation uint64) (model.AgentWatchRow, error) {
 	if row.ID == "" {
 		return model.AgentWatchRow{}, badParam(fmt.Errorf("agent watch 缺少 ID"))
 	}
@@ -202,12 +207,18 @@ func (s *Store) AgentWatchCreate(ctx context.Context, row model.AgentWatchRow) (
 	if !json.Valid([]byte(row.ConditionJSON)) {
 		return model.AgentWatchRow{}, badParam(fmt.Errorf("agent watch 条件不是有效 JSON"))
 	}
+	if row.AnchorSeq == 0 && len(row.ContextBlob) != 0 || row.AnchorSeq > 0 && len(row.ContextBlob) == 0 {
+		return model.AgentWatchRow{}, badParam(fmt.Errorf("agent watch 左上下文与锚点不一致"))
+	}
+	if len(row.ContextBlob) > agentWatchMaxContextBytes {
+		return model.AgentWatchRow{}, badParam(fmt.Errorf("agent watch 左上下文超过 %d 字节", agentWatchMaxContextBytes))
+	}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		target, found, err := s.agentWatchTargetForUpdate(ctx, tx, row.TargetID)
 		if err != nil {
 			return err
 		}
-		if !found || target.Gone {
+		if !found || target.Gone || target.Generation != generation {
 			return fmt.Errorf("agent watch target %s: %w", row.TargetID, ErrAgentWatchDetached)
 		}
 		row.OwnerID = ipc.OwnerID(ctx)
@@ -256,11 +267,26 @@ func agentWatchCarry(carry []byte) ([]byte, error) {
 	return carry, nil
 }
 
-// AgentWatchAdvance persists the new anchor and the bounded overlap that
-// preserves partial matches across chunk boundaries. The anchor never
-// regresses; identity and armed state must still match.
-func (s *Store) AgentWatchAdvance(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq int64, carry []byte, now int64) (model.AgentWatchRow, error) {
+func agentWatchContext(context []byte) ([]byte, error) {
+	if len(context) > agentWatchMaxContextBytes {
+		return nil, badParam(fmt.Errorf("agent watch 左上下文超过 %d 字节", agentWatchMaxContextBytes))
+	}
+	if len(context) == 0 {
+		return nil, nil
+	}
+	return context, nil
+}
+
+// AgentWatchAdvance persists the new anchor, the bounded overlap that
+// preserves partial matches across chunk boundaries, and the true left
+// context that grounds assertions at the seam. The anchor never regresses;
+// identity and armed state must still match.
+func (s *Store) AgentWatchAdvance(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq int64, carry, context []byte, now int64) (model.AgentWatchRow, error) {
 	carry, err := agentWatchCarry(carry)
+	if err != nil {
+		return model.AgentWatchRow{}, err
+	}
+	context, err = agentWatchContext(context)
 	if err != nil {
 		return model.AgentWatchRow{}, err
 	}
@@ -284,7 +310,7 @@ func (s *Store) AgentWatchAdvance(ctx context.Context, watchID string, expectedR
 		}
 		info := tx.Model(&model.AgentWatchRow{}).
 			Where("id = ? AND owner_id = ? AND revision = ?", watch.ID, watch.OwnerID, expectedRevision).
-			Updates(map[string]any{"anchor_seq": anchorSeq, "carry_blob": carry, "revision": expectedRevision + 1, "updated_at": now})
+			Updates(map[string]any{"anchor_seq": anchorSeq, "carry_blob": carry, "context_blob": context, "revision": expectedRevision + 1, "updated_at": now})
 		if info.Error != nil {
 			return dbError(info.Error)
 		}
@@ -322,7 +348,7 @@ func (s *Store) AgentWatchConsume(ctx context.Context, watchID string, expectedR
 		}
 		info := tx.Model(&model.AgentWatchRow{}).
 			Where("id = ? AND owner_id = ? AND revision = ?", watch.ID, watch.OwnerID, expectedRevision).
-			Updates(map[string]any{"anchor_seq": anchorSeq, "carry_blob": nil, "revision": expectedRevision + 1, "updated_at": now})
+			Updates(map[string]any{"anchor_seq": anchorSeq, "carry_blob": nil, "context_blob": nil, "revision": expectedRevision + 1, "updated_at": now})
 		if info.Error != nil {
 			return dbError(info.Error)
 		}
@@ -400,6 +426,7 @@ func (s *Store) AgentWatchFire(ctx context.Context, params AgentWatchFireParams)
 				"status":       AgentWatchStatusMatched,
 				"anchor_seq":   params.AnchorSeq,
 				"carry_blob":   nil,
+				"context_blob": nil,
 				"fire_seq":     fireSeq,
 				"delivery_id":  params.DeliveryID,
 				"run_id":       params.RunID,
@@ -478,7 +505,10 @@ func (s *Store) AgentWatchCancel(ctx context.Context, watchID string, expectedRe
 }
 
 // AgentWatchMarkUnverifiable terminally marks a watch whose output continuity
-// or identity can no longer be verified; unverifiable watches never fire.
+// or identity can no longer be verified; unverifiable watches never fire. An
+// armed watch always settles this way, and so does a matched repeat watch
+// whose stream continuity broke while its fire awaited acknowledgement — the
+// pending event stays deliverable, but the watch itself never re-arms.
 func (s *Store) AgentWatchMarkUnverifiable(ctx context.Context, watchID string, expectedRevision uint64, cause string, now int64) (model.AgentWatchRow, error) {
 	var updated model.AgentWatchRow
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -493,7 +523,7 @@ func (s *Store) AgentWatchMarkUnverifiable(ctx context.Context, watchID string, 
 		if watch.Revision != expectedRevision {
 			return fmt.Errorf("agent watch %s revision %d != %d: %w", watchID, watch.Revision, expectedRevision, ErrAgentWatchConflict)
 		}
-		if watch.Status != AgentWatchStatusArmed {
+		if watch.Status != AgentWatchStatusArmed && !(watch.Status == AgentWatchStatusMatched && watch.Repeat) {
 			return fmt.Errorf("agent watch %s status %s: %w", watchID, watch.Status, ErrAgentWatchState)
 		}
 		info := tx.Model(&model.AgentWatchRow{}).
@@ -574,6 +604,34 @@ func (s *Store) AgentWatchEventAck(ctx context.Context, deliveryID string, expec
 			return err
 		}
 		if watch.Repeat && watch.Status == AgentWatchStatusMatched && watch.DeliveryID == event.DeliveryID {
+			// Re-arming hands the watch back to the live incarnation: it is
+			// only valid while the durable target still is the incarnation
+			// the watch fired under. A permanent detach or a replacement
+			// revokes that, so the acknowledgement still commits the
+			// legitimately produced event but the watch is terminated in
+			// the same transaction instead of re-arming.
+			target, found, err := s.agentWatchTargetForUpdate(ctx, tx, watch.TargetID)
+			if err != nil {
+				return err
+			}
+			if !found || target.Gone || target.Generation != watch.Generation {
+				info := tx.Model(&model.AgentWatchRow{}).
+					Where("id = ? AND owner_id = ? AND revision = ?", watch.ID, watch.OwnerID, watch.Revision).
+					Updates(map[string]any{
+						"status":     AgentWatchStatusUnverifiable,
+						"last_error": "target incarnation gone",
+						"revision":   watch.Revision + 1,
+						"updated_at": now,
+					})
+				if info.Error != nil {
+					return dbError(info.Error)
+				}
+				if info.RowsAffected != 1 {
+					return fmt.Errorf("agent watch %s terminate on ack: %w", watch.ID, ErrAgentWatchConflict)
+				}
+				updated, err = s.agentWatchEventByID(ctx, tx, deliveryID)
+				return err
+			}
 			info := tx.Model(&model.AgentWatchRow{}).
 				Where("id = ? AND owner_id = ? AND revision = ?", watch.ID, watch.OwnerID, watch.Revision).
 				Updates(map[string]any{

@@ -206,11 +206,18 @@ func TestRestartPermanentDetachAfterRestartSettles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The fresh engine has no local bindings; the durable target row must
-	// still distinguish the valid permanent detach and settle the watch.
+	// The fresh engine has no local bindings; without an explicit Attach it
+	// holds no credential, so the permanent detach is rejected until it
+	// re-attaches and the durable target row settles the incarnation.
 	backend = openRestartStore(t, path)
 	defer backend.Close()
 	engine = newRestartEngine(t, backend, clock)
+	if err := engine.Detach(ctx, "target-1", "identity-1", true); !errors.Is(err, ErrDetached) {
+		t.Fatalf("permanent detach without credential = %v; want ErrDetached", err)
+	}
+	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
+		t.Fatal(err)
+	}
 	if err := engine.Detach(ctx, "target-1", "identity-1", true); err != nil {
 		t.Fatalf("permanent detach after restart: %v", err)
 	}

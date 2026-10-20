@@ -528,11 +528,14 @@ func TestConcurrentObserveFiresExactlyOnce(t *testing.T) {
 
 func TestConditionEvaluate(t *testing.T) {
 	condition := containsCondition("ready")
-	matched, from, to, excerpt := condition.Evaluate([]byte("xxready\n"), 0)
+	matched, from, to, excerpt := condition.Evaluate([]byte("xxready\n"), 0, 0)
 	if !matched || from != 2 || to != 7 || excerpt != "xxready" {
 		t.Fatalf("evaluate = %v %d %d %q", matched, from, to, excerpt)
 	}
-	if matched, _, _, _ = condition.Evaluate([]byte("nope"), 0); matched {
+	if matched, _, _, _ = condition.Evaluate([]byte("nope"), 0, 0); matched {
 		t.Fatal("miss evaluated as match")
+	}
+	if matched, _, _, _ = condition.Evaluate([]byte("ready"), 1, 0); matched {
+		t.Fatal("match before minStart evaluated as match")
 	}
 }

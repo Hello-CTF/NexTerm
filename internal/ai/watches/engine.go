@@ -18,17 +18,17 @@ import (
 // Store is the persistence port the engine and dispatcher need;
 // *store.Store satisfies it.
 type Store interface {
-	AgentWatchCreate(ctx context.Context, row model.AgentWatchRow) (model.AgentWatchRow, error)
+	AgentWatchCreate(ctx context.Context, row model.AgentWatchRow, generation uint64) (model.AgentWatchRow, error)
 	AgentWatchGet(ctx context.Context, watchID string) (model.AgentWatchRow, error)
 	AgentWatchListByTarget(ctx context.Context, targetID string) ([]model.AgentWatchRow, error)
-	AgentWatchAdvance(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq int64, carry []byte, now int64) (model.AgentWatchRow, error)
+	AgentWatchAdvance(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq int64, carry, context []byte, now int64) (model.AgentWatchRow, error)
 	AgentWatchConsume(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq, now int64) (model.AgentWatchRow, error)
 	AgentWatchFire(ctx context.Context, params store.AgentWatchFireParams) (model.AgentWatchOutboxRow, error)
 	AgentWatchCancel(ctx context.Context, watchID string, expectedRevision uint64, now int64) (model.AgentWatchRow, error)
 	AgentWatchMarkUnverifiable(ctx context.Context, watchID string, expectedRevision uint64, cause string, now int64) (model.AgentWatchRow, error)
 	AgentWatchExpireDue(ctx context.Context, now int64) (int64, error)
 	AgentWatchTargetAttach(ctx context.Context, targetID, identity string, now int64) (model.AgentWatchTargetRow, error)
-	AgentWatchTargetDetach(ctx context.Context, targetID, identity string, now int64) (bool, error)
+	AgentWatchTargetDetach(ctx context.Context, targetID, identity string, generation uint64, now int64) (bool, error)
 	AgentWatchTargetGet(ctx context.Context, targetID string) (model.AgentWatchTargetRow, error)
 	AgentWatchEventPendingList(ctx context.Context, limit int) ([]model.AgentWatchOutboxRow, error)
 	AgentWatchEventAck(ctx context.Context, deliveryID string, expectedRevision uint64, now int64) (model.AgentWatchOutboxRow, error)
@@ -38,6 +38,11 @@ type Store interface {
 // CAS race (for example an acknowledgement landing mid-Observe) moves a watch
 // between the listing and its transition.
 const maxWatchTransitionAttempts = 3
+
+// watchContextSize is how many true stream bytes are persisted immediately
+// before the anchor to ground line- and word-boundary assertions at the
+// evaluation seam; one byte already grounds ^ and \b, the rest is slack.
+const watchContextSize = 8
 
 type Options struct {
 	Now             func() time.Time
@@ -153,14 +158,27 @@ func (e *Engine) Attach(ctx context.Context, targetID, identity string) error {
 func (e *Engine) Detach(ctx context.Context, targetID, identity string, permanent bool) error {
 	key := targetKey{owner: ipc.OwnerID(ctx), target: targetID}
 	if permanent {
-		if _, err := e.store.AgentWatchTargetDetach(ctx, targetID, identity, e.opts.Now().UnixMilli()); err != nil {
+		binding, ok := e.binding(key)
+		if !ok || !binding.attached {
+			// Without a live attachment there is no credential to present;
+			// the presenter must explicitly re-Attach first.
+			return ErrDetached
+		}
+		if binding.identity != identity {
+			// A detach for an identity this mirror does not hold is a no-op.
+			return nil
+		}
+		settled, err := e.store.AgentWatchTargetDetach(ctx, targetID, identity, binding.generation, e.opts.Now().UnixMilli())
+		if err != nil {
 			return err
 		}
-		e.mu.Lock()
-		// A stale detach must not tear down a newer local attachment.
-		if binding, ok := e.targets[key]; !ok || binding.identity == identity {
-			delete(e.targets, key)
+		if !settled {
+			// The credential went stale while the mirror looked attached:
+			// the presenter must re-Attach before acting on the target.
+			return ErrDetached
 		}
+		e.mu.Lock()
+		delete(e.targets, key)
 		e.mu.Unlock()
 		return nil
 	}
@@ -181,7 +199,11 @@ type CreateParams struct {
 	Condition Condition
 	Repeat    bool
 	AnchorSeq int64
-	ExpiresAt time.Time
+	// LeftContext is the true stream history immediately before AnchorSeq
+	// (exactly min(watchContextSize, AnchorSeq) bytes, empty only when
+	// AnchorSeq is zero). It grounds ^/\b assertions at the evaluation seam.
+	LeftContext []byte
+	ExpiresAt   time.Time
 }
 
 func (e *Engine) Create(ctx context.Context, params CreateParams) (Watch, error) {
@@ -191,6 +213,9 @@ func (e *Engine) Create(ctx context.Context, params CreateParams) (Watch, error)
 	params.TargetID = strings.TrimSpace(params.TargetID)
 	if params.TargetID == "" {
 		return Watch{}, fmt.Errorf("%w: 目标不能为空", ErrInvalidCondition)
+	}
+	if params.AnchorSeq == 0 && len(params.LeftContext) != 0 || params.AnchorSeq > 0 && len(params.LeftContext) != min(watchContextSize, int(params.AnchorSeq)) {
+		return Watch{}, fmt.Errorf("%w: 左上下文与锚点不一致", ErrInvalidCondition)
 	}
 	binding, ok := e.binding(targetKey{owner: ipc.OwnerID(ctx), target: params.TargetID})
 	if !ok || !binding.attached {
@@ -207,10 +232,10 @@ func (e *Engine) Create(ctx context.Context, params CreateParams) (Watch, error)
 	row, err := e.store.AgentWatchCreate(ctx, model.AgentWatchRow{
 		ID: params.ID, TargetID: params.TargetID,
 		Name: strings.TrimSpace(params.Name), ConditionJSON: string(conditionJSON),
-		Repeat: params.Repeat, AnchorSeq: params.AnchorSeq,
+		Repeat: params.Repeat, AnchorSeq: params.AnchorSeq, ContextBlob: params.LeftContext,
 		CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli(),
 		ExpiresAt: optionalMillis(params.ExpiresAt),
-	})
+	}, binding.generation)
 	if err != nil {
 		if errors.Is(err, store.ErrAgentWatchDetached) {
 			return Watch{}, ErrDetached
@@ -392,8 +417,11 @@ func (e *Engine) observeWatch(ctx context.Context, row model.AgentWatchRow, iden
 		return nil, e.markUnverifiable(ctx, row, "stored condition is invalid")
 	}
 	// Only bytes beyond the evaluated position are new; the persisted
-	// overlap already covers [anchor, lastEvaluated).
-	buffer := make([]byte, 0, len(row.CarryBlob)+int(toSeq-lastEvaluated))
+	// overlap already covers [anchor, lastEvaluated), and the persisted left
+	// context grounds assertions at the seam.
+	contextLen := len(row.ContextBlob)
+	buffer := make([]byte, 0, contextLen+len(row.CarryBlob)+int(toSeq-lastEvaluated))
+	buffer = append(buffer, row.ContextBlob...)
 	buffer = append(buffer, row.CarryBlob...)
 	buffer = append(buffer, data[lastEvaluated-fromSeq:]...)
 	// An incomplete trailing UTF-8 sequence is not data yet: it is excluded
@@ -402,16 +430,18 @@ func (e *Engine) observeWatch(ctx context.Context, row model.AgentWatchRow, iden
 	// participation bound.
 	tail := incompleteUTF8Tail(buffer)
 	valid := buffer[:len(buffer)-tail]
-	matched, relFrom, relTo, excerpt := condition.Evaluate(valid, e.opts.MaxExcerptBytes)
+	matched, relFrom, relTo, excerpt := condition.Evaluate(valid, contextLen, e.opts.MaxExcerptBytes)
 	if matched {
+		// relFrom is relative to the buffer start, which sits contextLen
+		// bytes before the anchor.
 		deliveryID := e.opts.NewID()
 		runID := e.opts.NewID()
 		event := Event{
 			Kind: EventKind, DeliveryID: deliveryID, RunID: runID,
 			WatchID: row.ID, TargetID: row.TargetID, Identity: identity, Name: row.Name,
 			Condition:   condition,
-			MatchedFrom: row.AnchorSeq + relFrom,
-			MatchedTo:   row.AnchorSeq + relTo,
+			MatchedFrom: row.AnchorSeq - int64(contextLen) + relFrom,
+			MatchedTo:   row.AnchorSeq - int64(contextLen) + relTo,
 			Excerpt:     excerpt,
 			FiredAt:     now.UnixMilli(),
 		}
@@ -430,12 +460,17 @@ func (e *Engine) observeWatch(ctx context.Context, row model.AgentWatchRow, iden
 		}
 		return &event, nil
 	}
-	carryLen := condition.carryBound(e.opts.MaxCarryBytes, len(valid))
+	carryLen := condition.carryBound(e.opts.MaxCarryBytes, len(valid)-contextLen)
 	carry := make([]byte, 0, carryLen+tail)
 	carry = append(carry, valid[len(valid)-carryLen:]...)
 	carry = append(carry, buffer[len(buffer)-tail:]...)
 	newAnchor := toSeq - int64(len(carry))
-	if _, err := e.store.AgentWatchAdvance(ctx, row.ID, row.Revision, identity, newAnchor, carry, now.UnixMilli()); err != nil {
+	// The new left context is the true stream window immediately before the
+	// new anchor, taken from the same combined stream view.
+	streamStart := row.AnchorSeq - int64(contextLen)
+	contextEnd := int(newAnchor - streamStart)
+	newContext := buffer[max(0, contextEnd-watchContextSize):contextEnd]
+	if _, err := e.store.AgentWatchAdvance(ctx, row.ID, row.Revision, identity, newAnchor, carry, newContext, now.UnixMilli()); err != nil {
 		return nil, err
 	}
 	return nil, nil

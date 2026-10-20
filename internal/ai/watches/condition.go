@@ -91,35 +91,44 @@ func (c Condition) maxCarry(capacity int) int {
 }
 
 // Evaluate reports whether data matches the condition and, on a match, the
-// byte range within data plus a bounded excerpt of the containing line. The
-// excerpt is untrusted output data and is capped for the event envelope.
-func (c Condition) Evaluate(data []byte, maxExcerptBytes int) (matched bool, from, to int64, excerpt string) {
+// byte range within data plus a bounded excerpt of the containing line.
+// minStart is the first byte position eligible to start a match (the engine
+// passes the length of the prepended left context): earlier starts belong to
+// already-settled history. The excerpt is untrusted output data and is
+// capped for the event envelope.
+//
+// Evaluation treats data as the whole input: assertions see the true left
+// context prepended by the engine, and end-of-input assertions at the
+// buffer end are honest stream-so-far semantics, so results are identical
+// under any chunking and restarts.
+func (c Condition) Evaluate(data []byte, minStart, maxExcerptBytes int) (matched bool, from, to int64, excerpt string) {
 	if maxExcerptBytes <= 0 {
 		maxExcerptBytes = DefaultMaxExcerptBytes
 	}
-	start, length := c.locate(data)
-	if length < 0 {
+	if minStart < 0 {
+		minStart = 0
+	}
+	if minStart > len(data) {
 		return false, 0, 0, ""
 	}
-	return true, int64(start), int64(start + length), excerptLine(data, start, maxExcerptBytes)
-}
-
-func (c Condition) locate(data []byte) (start, length int) {
 	switch c.Type {
 	case ConditionContains:
-		index := bytes.Index(data, []byte(c.Pattern))
+		index := bytes.Index(data[minStart:], []byte(c.Pattern))
 		if index < 0 {
-			return 0, -1
+			return false, 0, 0, ""
 		}
-		return index, len(c.Pattern)
+		start := minStart + index
+		return true, int64(start), int64(start + len(c.Pattern)), excerptLine(data, start, maxExcerptBytes)
 	case ConditionRegex:
-		match := regexp.MustCompile(c.Pattern).FindIndex(data)
-		if match == nil {
-			return 0, -1
+		for _, match := range regexp.MustCompile(c.Pattern).FindAllIndex(data, -1) {
+			if match[0] < minStart {
+				continue
+			}
+			return true, int64(match[0]), int64(match[1]), excerptLine(data, match[0], maxExcerptBytes)
 		}
-		return match[0], match[1] - match[0]
+		return false, 0, 0, ""
 	default:
-		return 0, -1
+		return false, 0, 0, ""
 	}
 }
 

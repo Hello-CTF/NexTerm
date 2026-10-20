@@ -3,11 +3,12 @@ package model
 // AgentWatchRow is the durable state of one agent watch condition. The watch
 // binds to a target stream position (AnchorSeq plus the bounded CarryBlob
 // overlap that preserves partial matches across chunk boundaries and
-// restarts) and to a target incarnation (Identity plus the durable target
-// Generation); evaluation only advances through CAS on Revision. Status is
-// the watch condition state machine: armed -> matched | cancelled | expired |
-// unverifiable, where matched is terminal unless Repeat re-arms it on event
-// acknowledgement.
+// restarts, and ContextBlob, the true left-context bytes immediately before
+// the anchor that ground ^/\b assertions) and to a target incarnation
+// (Identity plus the durable target Generation); evaluation only advances
+// through CAS on Revision. Status is the watch condition state machine:
+// armed -> matched | cancelled | expired | unverifiable, where matched is
+// terminal unless Repeat re-arms it on event acknowledgement.
 type AgentWatchRow struct {
 	ID            string `gorm:"column:id;primaryKey;size:191" json:"id"`
 	OwnerID       string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_agent_watch_owner" json:"owner_id"`
@@ -19,6 +20,7 @@ type AgentWatchRow struct {
 	Status        string `gorm:"size:32;column:status;not null;index:idx_agent_watch_target_status,priority:2" json:"status"`
 	Repeat        bool   `gorm:"column:repeat;not null;default:0" json:"repeat"`
 	AnchorSeq     int64  `gorm:"column:anchor_seq;not null;default:0" json:"anchor_seq"`
+	ContextBlob   []byte `gorm:"column:context_blob" json:"context_blob"`
 	CarryBlob     []byte `gorm:"column:carry_blob" json:"carry_blob"`
 	FireSeq       int64  `gorm:"column:fire_seq;not null;default:0" json:"fire_seq"`
 	Revision      uint64 `gorm:"column:revision;not null;default:1" json:"revision"`

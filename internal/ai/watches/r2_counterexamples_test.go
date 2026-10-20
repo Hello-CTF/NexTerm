@@ -183,6 +183,9 @@ func TestSameIdentityPresenterCannotAdoptReincarnation(t *testing.T) {
 	}
 	// The current incarnation permanently detaches and then re-attaches,
 	// producing a new generation under the same identity string.
+	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
+		t.Fatal(err)
+	}
 	if err := engine.Detach(ctx, "target-1", "identity-1", true); err != nil {
 		t.Fatal(err)
 	}

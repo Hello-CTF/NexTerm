@@ -21,14 +21,14 @@ type faultStore struct {
 	markErr   error
 }
 
-func (s *faultStore) AgentWatchTargetDetach(ctx context.Context, targetID, identity string, now int64) (bool, error) {
+func (s *faultStore) AgentWatchTargetDetach(ctx context.Context, targetID, identity string, generation uint64, now int64) (bool, error) {
 	s.mu.Lock()
 	err := s.detachErr
 	s.mu.Unlock()
 	if err != nil {
 		return false, err
 	}
-	return s.Store.AgentWatchTargetDetach(ctx, targetID, identity, now)
+	return s.Store.AgentWatchTargetDetach(ctx, targetID, identity, generation, now)
 }
 
 func (s *faultStore) AgentWatchMarkUnverifiable(ctx context.Context, watchID string, expectedRevision uint64, cause string, now int64) (model.AgentWatchRow, error) {

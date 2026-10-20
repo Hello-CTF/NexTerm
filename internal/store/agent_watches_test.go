@@ -46,8 +46,8 @@ func testWatchRow(id, target string) model.AgentWatchRow {
 
 func createTestWatch(t *testing.T, backend *store.Store, ctx context.Context, id, target, identity string) model.AgentWatchRow {
 	t.Helper()
-	attachWatchTarget(t, backend, ctx, target, identity)
-	row, err := backend.AgentWatchCreate(ctx, testWatchRow(id, target))
+	targetRow := attachWatchTarget(t, backend, ctx, target, identity)
+	row, err := backend.AgentWatchCreate(ctx, testWatchRow(id, target), targetRow.Generation)
 	if err != nil {
 		t.Fatalf("create watch %s: %v", id, err)
 	}
@@ -63,8 +63,8 @@ func TestAgentWatchTablesMigratedAtStartup(t *testing.T) {
 		}
 	}
 	ctx := watchOwnerCtx("owner-a")
-	attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
-	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-idem", "target-1")); err != nil {
+	target := attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
+	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-idem", "target-1"), target.Generation); err != nil {
 		t.Fatal(err)
 	}
 	got, err := backend.AgentWatchGet(ctx, "watch-idem")
@@ -76,14 +76,14 @@ func TestAgentWatchTablesMigratedAtStartup(t *testing.T) {
 func TestAgentWatchCreateBindsTargetIdentityAndGeneration(t *testing.T) {
 	backend := openAgentWatchStore(t)
 	ctx := watchOwnerCtx("owner-a")
-	attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
+	target := attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
 	row := testWatchRow("watch-create-1", "target-1")
 	row.OwnerID = "owner-evil"
 	row.Identity = "identity-evil"
 	row.Generation = 42
 	row.Status = store.AgentWatchStatusMatched
 	row.Revision = 99
-	created, err := backend.AgentWatchCreate(ctx, row)
+	created, err := backend.AgentWatchCreate(ctx, row, target.Generation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,37 +101,69 @@ func TestAgentWatchCreateBindsTargetIdentityAndGeneration(t *testing.T) {
 func TestAgentWatchCreateValidation(t *testing.T) {
 	backend := openAgentWatchStore(t)
 	ctx := watchOwnerCtx("owner-a")
-	attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
+	target := attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
 	cases := map[string]model.AgentWatchRow{
 		"empty id":      {TargetID: "target-1", ConditionJSON: `{}`},
 		"empty target":  {ID: "watch-bad-target", ConditionJSON: `{}`},
 		"bad condition": {ID: "watch-bad-cond", TargetID: "target-1", ConditionJSON: `{`},
 	}
 	for name, row := range cases {
-		if _, err := backend.AgentWatchCreate(ctx, row); err == nil {
+		if _, err := backend.AgentWatchCreate(ctx, row, target.Generation); err == nil {
 			t.Fatalf("%s: create succeeded", name)
 		}
 	}
-	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-dup", "target-1")); err != nil {
+	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-dup", "target-1"), target.Generation); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-dup", "target-1")); !errors.Is(err, store.ErrAgentWatchConflict) {
+	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-dup", "target-1"), target.Generation); !errors.Is(err, store.ErrAgentWatchConflict) {
 		t.Fatalf("duplicate create = %v; want ErrAgentWatchConflict", err)
+	}
+	// Left context must be consistent with the anchor.
+	withAnchor := testWatchRow("watch-ctx", "target-1")
+	withAnchor.AnchorSeq = 8
+	if _, err := backend.AgentWatchCreate(ctx, withAnchor, target.Generation); err == nil {
+		t.Fatal("create with anchor but no left context succeeded")
+	}
+	withAnchor.ContextBlob = []byte("12345678")
+	if _, err := backend.AgentWatchCreate(ctx, withAnchor, target.Generation); err != nil {
+		t.Fatalf("create with left context: %v", err)
+	}
+	zeroAnchor := testWatchRow("watch-ctx-zero", "target-1")
+	zeroAnchor.ContextBlob = []byte("history")
+	if _, err := backend.AgentWatchCreate(ctx, zeroAnchor, target.Generation); err == nil {
+		t.Fatal("create with context but zero anchor succeeded")
 	}
 }
 
 func TestAgentWatchCreateRequiresAttachedTarget(t *testing.T) {
 	backend := openAgentWatchStore(t)
 	ctx := watchOwnerCtx("owner-a")
-	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-no-target", "target-missing")); !errors.Is(err, store.ErrAgentWatchDetached) {
+	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-no-target", "target-missing"), 1); !errors.Is(err, store.ErrAgentWatchDetached) {
 		t.Fatalf("create without target = %v; want ErrAgentWatchDetached", err)
 	}
-	attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
-	if _, err := backend.AgentWatchTargetDetach(ctx, "target-1", "identity-1", 2000); err != nil {
+	target := attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
+	if _, err := backend.AgentWatchTargetDetach(ctx, "target-1", "identity-1", target.Generation, 2000); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-gone", "target-1")); !errors.Is(err, store.ErrAgentWatchDetached) {
+	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-gone", "target-1"), target.Generation); !errors.Is(err, store.ErrAgentWatchDetached) {
 		t.Fatalf("create after permanent detach = %v; want ErrAgentWatchDetached", err)
+	}
+}
+
+func TestAgentWatchCreateRejectsStaleCredential(t *testing.T) {
+	backend := openAgentWatchStore(t)
+	ctx := watchOwnerCtx("owner-a")
+	attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
+	// The presenter holds generation 1; a replacement moves the target to
+	// generation 2 before the create lands.
+	if _, err := backend.AgentWatchTargetAttach(ctx, "target-1", "identity-2", 1500); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-stale", "target-1"), 1); !errors.Is(err, store.ErrAgentWatchDetached) {
+		t.Fatalf("stale credential create = %v; want ErrAgentWatchDetached", err)
+	}
+	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-fresh", "target-1"), 2); err != nil {
+		t.Fatalf("fresh credential create: %v", err)
 	}
 }
 
@@ -147,7 +179,7 @@ func TestAgentWatchOwnerIsolation(t *testing.T) {
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("cross-owner list = %+v, %v; want empty", rows, err)
 	}
-	if _, err := backend.AgentWatchAdvance(ctxB, created.ID, created.Revision, "identity-1", 10, nil, 2000); !errors.Is(err, store.ErrAgentWatchNotFound) {
+	if _, err := backend.AgentWatchAdvance(ctxB, created.ID, created.Revision, "identity-1", 10, nil, nil, 2000); !errors.Is(err, store.ErrAgentWatchNotFound) {
 		t.Fatalf("cross-owner advance = %v; want ErrAgentWatchNotFound", err)
 	}
 	if _, err := backend.AgentWatchFire(ctxB, store.AgentWatchFireParams{
@@ -175,23 +207,23 @@ func TestAgentWatchAdvanceGuards(t *testing.T) {
 	backend := openAgentWatchStore(t)
 	ctx := watchOwnerCtx("owner-a")
 	created := createTestWatch(t, backend, ctx, "watch-adv", "target-1", "identity-1")
-	advanced, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, []byte("tail"), 2000)
+	advanced, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, []byte("tail"), []byte("history"), 2000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if advanced.AnchorSeq != 10 || advanced.Revision != 2 || string(advanced.CarryBlob) != "tail" {
+	if advanced.AnchorSeq != 10 || advanced.Revision != 2 || string(advanced.CarryBlob) != "tail" || string(advanced.ContextBlob) != "history" {
 		t.Fatalf("advanced = %+v", advanced)
 	}
-	if _, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 20, nil, 2000); !errors.Is(err, store.ErrAgentWatchConflict) {
+	if _, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 20, nil, nil, 2000); !errors.Is(err, store.ErrAgentWatchConflict) {
 		t.Fatalf("stale revision advance = %v; want conflict", err)
 	}
-	if _, err := backend.AgentWatchAdvance(ctx, advanced.ID, advanced.Revision, "identity-1", 5, nil, 2000); !errors.Is(err, store.ErrAgentWatchConflict) {
+	if _, err := backend.AgentWatchAdvance(ctx, advanced.ID, advanced.Revision, "identity-1", 5, nil, nil, 2000); !errors.Is(err, store.ErrAgentWatchConflict) {
 		t.Fatalf("anchor regression = %v; want conflict", err)
 	}
-	if _, err := backend.AgentWatchAdvance(ctx, advanced.ID, advanced.Revision, "identity-2", 20, nil, 2000); !errors.Is(err, store.ErrAgentWatchIdentity) {
+	if _, err := backend.AgentWatchAdvance(ctx, advanced.ID, advanced.Revision, "identity-2", 20, nil, nil, 2000); !errors.Is(err, store.ErrAgentWatchIdentity) {
 		t.Fatalf("identity mismatch = %v; want ErrAgentWatchIdentity", err)
 	}
-	if _, err := backend.AgentWatchAdvance(ctx, "missing", 1, "identity-1", 20, nil, 2000); !errors.Is(err, store.ErrAgentWatchNotFound) {
+	if _, err := backend.AgentWatchAdvance(ctx, "missing", 1, "identity-1", 20, nil, nil, 2000); !errors.Is(err, store.ErrAgentWatchNotFound) {
 		t.Fatalf("missing advance = %v; want not found", err)
 	}
 }
@@ -200,10 +232,10 @@ func TestAgentWatchAdvanceCarryBound(t *testing.T) {
 	backend := openAgentWatchStore(t)
 	ctx := watchOwnerCtx("owner-a")
 	created := createTestWatch(t, backend, ctx, "watch-carry-bound", "target-1", "identity-1")
-	if _, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, make([]byte, store.AgentWatchMaxCarryBytes+1), 2000); err == nil {
+	if _, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, make([]byte, store.AgentWatchMaxCarryBytes+1), nil, 2000); err == nil {
 		t.Fatal("advance with oversized carry succeeded")
 	}
-	advanced, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, make([]byte, store.AgentWatchMaxCarryBytes), 2000)
+	advanced, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, make([]byte, store.AgentWatchMaxCarryBytes), nil, 2000)
 	if err != nil || len(advanced.CarryBlob) != store.AgentWatchMaxCarryBytes {
 		t.Fatalf("advance with hard-bound carry = %+v, %v", advanced, err)
 	}
@@ -223,13 +255,14 @@ func TestAgentWatchConsumeGuards(t *testing.T) {
 	if _, err := backend.AgentWatchConsume(ctx, oneShot.ID, 2, "identity-1", 20, 2000); !errors.Is(err, store.ErrAgentWatchState) {
 		t.Fatalf("consume one-shot matched = %v; want state error", err)
 	}
+	target := attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
 	repeat := testWatchRow("watch-consume-repeat", "target-1")
 	repeat.Repeat = true
-	repeatRow, err := backend.AgentWatchCreate(ctx, repeat)
+	repeatRow, err := backend.AgentWatchCreate(ctx, repeat, target.Generation)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := backend.AgentWatchAdvance(ctx, repeatRow.ID, repeatRow.Revision, "identity-1", 10, []byte("tail"), 2000); err != nil {
+	if _, err := backend.AgentWatchAdvance(ctx, repeatRow.ID, repeatRow.Revision, "identity-1", 10, []byte("tail"), []byte("history"), 2000); err != nil {
 		t.Fatal(err)
 	}
 	fire := fireParams(repeatRow, "delivery-consume-2", 10)
@@ -238,7 +271,7 @@ func TestAgentWatchConsumeGuards(t *testing.T) {
 		t.Fatal(err)
 	}
 	consumed, err := backend.AgentWatchConsume(ctx, repeatRow.ID, 3, "identity-1", 20, 2000)
-	if err != nil || consumed.AnchorSeq != 20 || len(consumed.CarryBlob) != 0 {
+	if err != nil || consumed.AnchorSeq != 20 || len(consumed.CarryBlob) != 0 || len(consumed.ContextBlob) != 0 {
 		t.Fatalf("consumed = %+v, %v", consumed, err)
 	}
 	if _, err := backend.AgentWatchConsume(ctx, repeatRow.ID, 3, "identity-1", 30, 2000); !errors.Is(err, store.ErrAgentWatchConflict) {
@@ -253,7 +286,7 @@ func TestAgentWatchFireWritesWatchAndOutboxTogether(t *testing.T) {
 	backend := openAgentWatchStore(t)
 	ctx := watchOwnerCtx("owner-a")
 	created := createTestWatch(t, backend, ctx, "watch-fire", "target-1", "identity-1")
-	if _, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 8, []byte("tail"), 2000); err != nil {
+	if _, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 8, []byte("tail"), []byte("history"), 2000); err != nil {
 		t.Fatal(err)
 	}
 	created.Revision = 2
@@ -270,7 +303,7 @@ func TestAgentWatchFireWritesWatchAndOutboxTogether(t *testing.T) {
 	}
 	if watch.Status != store.AgentWatchStatusMatched || watch.AnchorSeq != 10 || watch.FireSeq != 1 ||
 		watch.DeliveryID != "delivery-1" || watch.RunID != "run-delivery-1" || watch.Revision != 3 ||
-		len(watch.CarryBlob) != 0 {
+		len(watch.CarryBlob) != 0 || len(watch.ContextBlob) != 0 {
 		t.Fatalf("watch after fire = %+v", watch)
 	}
 	// Same logical fire retried with identical fixed IDs is idempotent.
@@ -308,7 +341,7 @@ func TestAgentWatchFireGuards(t *testing.T) {
 	if _, err := backend.AgentWatchFire(ctx, wrongIdentity); !errors.Is(err, store.ErrAgentWatchIdentity) {
 		t.Fatalf("identity fire = %v; want ErrAgentWatchIdentity", err)
 	}
-	if _, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, nil, 2000); err != nil {
+	if _, err := backend.AgentWatchAdvance(ctx, created.ID, created.Revision, "identity-1", 10, nil, nil, 2000); err != nil {
 		t.Fatal(err)
 	}
 	regression := fireParams(created, "delivery-r", 10)
@@ -387,10 +420,10 @@ func TestAgentWatchCancelSettlesPendingEventAtomically(t *testing.T) {
 func TestAgentWatchEventAckAndRepeatReArm(t *testing.T) {
 	backend := openAgentWatchStore(t)
 	ctx := watchOwnerCtx("owner-a")
+	target := attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
 	repeat := testWatchRow("watch-repeat", "target-1")
 	repeat.Repeat = true
-	attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
-	created, err := backend.AgentWatchCreate(ctx, repeat)
+	created, err := backend.AgentWatchCreate(ctx, repeat, target.Generation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,15 +492,132 @@ func TestAgentWatchEventAckRejectsCancelledAndStale(t *testing.T) {
 	}
 }
 
+func TestAgentWatchEventAckDoesNotReArmAfterPermanentDetach(t *testing.T) {
+	backend := openAgentWatchStore(t)
+	ctx := watchOwnerCtx("owner-a")
+	target := attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
+	repeat := testWatchRow("watch-ack-detach", "target-1")
+	repeat.Repeat = true
+	created, err := backend.AgentWatchCreate(ctx, repeat, target.Generation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backend.AgentWatchFire(ctx, fireParams(created, "delivery-ad1", 10)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backend.AgentWatchTargetDetach(ctx, "target-1", "identity-1", target.Generation, 3000); err != nil {
+		t.Fatal(err)
+	}
+	// The event was legitimately produced, so it still acks...
+	acked, err := backend.AgentWatchEventAck(ctx, "delivery-ad1", 1, 4000)
+	if err != nil || acked.Status != store.AgentWatchEventAcked {
+		t.Fatalf("ack after detach = %+v, %v", acked, err)
+	}
+	// ...but the revoked incarnation's watch is terminated, not re-armed.
+	watch, err := backend.AgentWatchGet(ctx, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if watch.Status != store.AgentWatchStatusUnverifiable || watch.LastError != "target incarnation gone" {
+		t.Fatalf("watch after detached ack = %+v", watch)
+	}
+	// The same applies after an identity replacement.
+	target2 := attachWatchTarget(t, backend, ctx, "target-2", "identity-1")
+	repeat2 := testWatchRow("watch-ack-replace", "target-2")
+	repeat2.Repeat = true
+	created2, err := backend.AgentWatchCreate(ctx, repeat2, target2.Generation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backend.AgentWatchFire(ctx, fireParams(created2, "delivery-ad2", 10)); err != nil {
+		t.Fatal(err)
+	}
+	replaced, err := backend.AgentWatchTargetAttach(ctx, "target-2", "identity-2", 5000)
+	if err != nil || replaced.Generation != 2 {
+		t.Fatalf("replacement = %+v, %v", replaced, err)
+	}
+	if _, err := backend.AgentWatchEventAck(ctx, "delivery-ad2", 1, 6000); err != nil {
+		t.Fatal(err)
+	}
+	watch, err = backend.AgentWatchGet(ctx, created2.ID)
+	if err != nil || watch.Status != store.AgentWatchStatusUnverifiable {
+		t.Fatalf("watch after replaced ack = %+v, %v", watch, err)
+	}
+}
+
+func TestAgentWatchMarkUnverifiable(t *testing.T) {
+	backend := openAgentWatchStore(t)
+	ctx := watchOwnerCtx("owner-a")
+	created := createTestWatch(t, backend, ctx, "watch-unver", "target-1", "identity-1")
+	marked, err := backend.AgentWatchMarkUnverifiable(ctx, created.ID, created.Revision, "output gap", 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if marked.Status != store.AgentWatchStatusUnverifiable || marked.LastError != "output gap" {
+		t.Fatalf("marked = %+v", marked)
+	}
+	// Idempotent when already unverifiable, strict for other terminal states.
+	again, err := backend.AgentWatchMarkUnverifiable(ctx, created.ID, 1, "output gap", 2000)
+	if err != nil || again.Revision != marked.Revision {
+		t.Fatalf("idempotent mark = %+v, %v", again, err)
+	}
+	armed := createTestWatch(t, backend, ctx, "watch-unver-2", "target-1", "identity-1")
+	if _, err := backend.AgentWatchCancel(ctx, armed.ID, armed.Revision, 2000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backend.AgentWatchMarkUnverifiable(ctx, armed.ID, 2, "late", 2000); !errors.Is(err, store.ErrAgentWatchState) {
+		t.Fatalf("mark cancelled = %v; want state error", err)
+	}
+	if _, err := backend.AgentWatchMarkUnverifiable(ctx, armed.ID, 1, "late", 2000); !errors.Is(err, store.ErrAgentWatchConflict) {
+		t.Fatalf("stale mark = %v; want conflict", err)
+	}
+}
+
+func TestAgentWatchMarkUnverifiableAllowsMatchedRepeat(t *testing.T) {
+	backend := openAgentWatchStore(t)
+	ctx := watchOwnerCtx("owner-a")
+	target := attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
+	repeat := testWatchRow("watch-unver-repeat", "target-1")
+	repeat.Repeat = true
+	created, err := backend.AgentWatchCreate(ctx, repeat, target.Generation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backend.AgentWatchFire(ctx, fireParams(created, "delivery-ur1", 5)); err != nil {
+		t.Fatal(err)
+	}
+	// A matched repeat watch whose stream continuity broke settles durably.
+	marked, err := backend.AgentWatchMarkUnverifiable(ctx, created.ID, 2, "output gap", 3000)
+	if err != nil || marked.Status != store.AgentWatchStatusUnverifiable {
+		t.Fatalf("mark matched repeat = %+v, %v", marked, err)
+	}
+	// The pending event still acks, but the watch never re-arms.
+	if _, err := backend.AgentWatchEventAck(ctx, "delivery-ur1", 1, 4000); err != nil {
+		t.Fatal(err)
+	}
+	watch, err := backend.AgentWatchGet(ctx, created.ID)
+	if err != nil || watch.Status != store.AgentWatchStatusUnverifiable {
+		t.Fatalf("watch after gap ack = %+v, %v", watch, err)
+	}
+	// A matched one-shot watch stays terminal without settling.
+	oneShot := createTestWatch(t, backend, ctx, "watch-unver-oneshot", "target-1", "identity-1")
+	if _, err := backend.AgentWatchFire(ctx, fireParams(oneShot, "delivery-ur2", 5)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backend.AgentWatchMarkUnverifiable(ctx, oneShot.ID, 2, "output gap", 3000); !errors.Is(err, store.ErrAgentWatchState) {
+		t.Fatalf("mark matched one-shot = %v; want state error", err)
+	}
+}
+
 func TestAgentWatchEventPendingListOwnerScopedAndOrdered(t *testing.T) {
 	backend := openAgentWatchStore(t)
 	ctxA := watchOwnerCtx("owner-a")
 	ctxB := watchOwnerCtx("owner-b")
-	attachWatchTarget(t, backend, ctxA, "target-1", "identity-1")
+	targetA := attachWatchTarget(t, backend, ctxA, "target-1", "identity-1")
 	for index, id := range []string{"watch-p1", "watch-p2"} {
 		row := testWatchRow(id, "target-1")
 		row.CreatedAt = int64(1000 + index)
-		created, err := backend.AgentWatchCreate(ctxA, row)
+		created, err := backend.AgentWatchCreate(ctxA, row, targetA.Generation)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -501,57 +651,29 @@ func TestAgentWatchEventPendingListOwnerScopedAndOrdered(t *testing.T) {
 	}
 }
 
-func TestAgentWatchMarkUnverifiable(t *testing.T) {
-	backend := openAgentWatchStore(t)
-	ctx := watchOwnerCtx("owner-a")
-	created := createTestWatch(t, backend, ctx, "watch-unver", "target-1", "identity-1")
-	marked, err := backend.AgentWatchMarkUnverifiable(ctx, created.ID, created.Revision, "output gap", 2000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if marked.Status != store.AgentWatchStatusUnverifiable || marked.LastError != "output gap" {
-		t.Fatalf("marked = %+v", marked)
-	}
-	// Idempotent when already unverifiable, strict for other terminal states.
-	again, err := backend.AgentWatchMarkUnverifiable(ctx, created.ID, 1, "output gap", 2000)
-	if err != nil || again.Revision != marked.Revision {
-		t.Fatalf("idempotent mark = %+v, %v", again, err)
-	}
-	armed := createTestWatch(t, backend, ctx, "watch-unver-2", "target-1", "identity-1")
-	if _, err := backend.AgentWatchCancel(ctx, armed.ID, armed.Revision, 2000); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := backend.AgentWatchMarkUnverifiable(ctx, armed.ID, 2, "late", 2000); !errors.Is(err, store.ErrAgentWatchState) {
-		t.Fatalf("mark cancelled = %v; want state error", err)
-	}
-	if _, err := backend.AgentWatchMarkUnverifiable(ctx, armed.ID, 1, "late", 2000); !errors.Is(err, store.ErrAgentWatchConflict) {
-		t.Fatalf("stale mark = %v; want conflict", err)
-	}
-}
-
 func TestAgentWatchExpireDue(t *testing.T) {
 	backend := openAgentWatchStore(t)
 	ctx := watchOwnerCtx("owner-a")
-	attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
+	target := attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
 	expired := testWatchRow("watch-exp-1", "target-1")
 	past := int64(1000)
 	expired.ExpiresAt = &past
-	if _, err := backend.AgentWatchCreate(ctx, expired); err != nil {
+	if _, err := backend.AgentWatchCreate(ctx, expired, target.Generation); err != nil {
 		t.Fatal(err)
 	}
 	future := int64(9999999999)
 	later := testWatchRow("watch-exp-2", "target-1")
 	later.ExpiresAt = &future
-	if _, err := backend.AgentWatchCreate(ctx, later); err != nil {
+	if _, err := backend.AgentWatchCreate(ctx, later, target.Generation); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-exp-3", "target-1")); err != nil {
+	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-exp-3", "target-1"), target.Generation); err != nil {
 		t.Fatal(err)
 	}
-	attachWatchTarget(t, backend, watchOwnerCtx("owner-b"), "target-1", "identity-1")
+	targetB := attachWatchTarget(t, backend, watchOwnerCtx("owner-b"), "target-1", "identity-1")
 	otherOwner := testWatchRow("watch-exp-4", "target-1")
 	otherOwner.ExpiresAt = &past
-	if _, err := backend.AgentWatchCreate(watchOwnerCtx("owner-b"), otherOwner); err != nil {
+	if _, err := backend.AgentWatchCreate(watchOwnerCtx("owner-b"), otherOwner, targetB.Generation); err != nil {
 		t.Fatal(err)
 	}
 	count, err := backend.AgentWatchExpireDue(ctx, 5000)
@@ -595,13 +717,13 @@ func TestAgentWatchFireRequiresArmedAndValidEvent(t *testing.T) {
 func TestAgentWatchTimestampsSurvive(t *testing.T) {
 	backend := openAgentWatchStore(t)
 	ctx := watchOwnerCtx("owner-a")
-	attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
+	target := attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
 	expires := time.Date(2026, time.March, 1, 2, 3, 4, 0, time.UTC).UnixMilli()
 	row := testWatchRow("watch-ts", "target-1")
 	row.CreatedAt = 1111
 	row.UpdatedAt = 2222
 	row.ExpiresAt = &expires
-	created, err := backend.AgentWatchCreate(ctx, row)
+	created, err := backend.AgentWatchCreate(ctx, row, target.Generation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -624,12 +746,20 @@ func TestAgentWatchTargetLifecycle(t *testing.T) {
 	}
 	armed := createTestWatch(t, backend, ctx, "watch-target-1", "target-1", "identity-1")
 	// A stale detach carrying another identity is a no-op.
-	settled, err := backend.AgentWatchTargetDetach(ctx, "target-1", "identity-2", 3000)
+	settled, err := backend.AgentWatchTargetDetach(ctx, "target-1", "identity-2", 1, 3000)
 	if err != nil || settled {
 		t.Fatalf("stale detach = %v, %v", settled, err)
 	}
 	if watch, err := backend.AgentWatchGet(ctx, armed.ID); err != nil || watch.Status != store.AgentWatchStatusArmed {
 		t.Fatalf("watch after stale detach = %+v, %v", watch, err)
+	}
+	// A stale generation credential cannot settle the current incarnation.
+	settled, err = backend.AgentWatchTargetDetach(ctx, "target-1", "identity-1", 99, 3000)
+	if err != nil || settled {
+		t.Fatalf("stale credential detach = %v, %v", settled, err)
+	}
+	if watch, err := backend.AgentWatchGet(ctx, armed.ID); err != nil || watch.Status != store.AgentWatchStatusArmed {
+		t.Fatalf("watch after stale credential detach = %+v, %v", watch, err)
 	}
 	// Identity replacement settles the old incarnation and bumps generation.
 	replaced, err := backend.AgentWatchTargetAttach(ctx, "target-1", "identity-2", 4000)
@@ -640,8 +770,9 @@ func TestAgentWatchTargetLifecycle(t *testing.T) {
 		t.Fatalf("watch after replacement = %+v, %v", watch, err)
 	}
 	// Permanent detach is durable: gone + generation bump + settlement.
+	targetRow := attachWatchTarget(t, backend, ctx, "target-1", "identity-2")
 	rearmed := createTestWatch(t, backend, ctx, "watch-target-2", "target-1", "identity-2")
-	settled, err = backend.AgentWatchTargetDetach(ctx, "target-1", "identity-2", 5000)
+	settled, err = backend.AgentWatchTargetDetach(ctx, "target-1", "identity-2", targetRow.Generation, 5000)
 	if err != nil || !settled {
 		t.Fatalf("permanent detach = %v, %v", settled, err)
 	}
@@ -653,7 +784,7 @@ func TestAgentWatchTargetLifecycle(t *testing.T) {
 		t.Fatalf("target after permanent detach = %+v, %v", row, err)
 	}
 	// Permanent detach is idempotent.
-	settled, err = backend.AgentWatchTargetDetach(ctx, "target-1", "identity-2", 6000)
+	settled, err = backend.AgentWatchTargetDetach(ctx, "target-1", "identity-2", 3, 6000)
 	if err != nil || settled {
 		t.Fatalf("idempotent detach = %v, %v", settled, err)
 	}
@@ -686,7 +817,7 @@ func TestAgentWatchTargetOwnerIsolation(t *testing.T) {
 		t.Fatalf("missing target get = %v; want not found", err)
 	}
 	// B's permanent detach must not touch A's target row.
-	if settled, err := backend.AgentWatchTargetDetach(ctxB, "target-shared", "identity-b", 2000); err != nil || !settled {
+	if settled, err := backend.AgentWatchTargetDetach(ctxB, "target-shared", "identity-b", rowB.Generation, 2000); err != nil || !settled {
 		t.Fatalf("detach B = %v, %v", settled, err)
 	}
 	rowA, err = backend.AgentWatchTargetGet(ctxA, "target-shared")
@@ -695,7 +826,7 @@ func TestAgentWatchTargetOwnerIsolation(t *testing.T) {
 	}
 	// And B cannot settle A's watches.
 	armed := createTestWatch(t, backend, ctxA, "watch-target-iso", "target-shared", "identity-a")
-	if _, err := backend.AgentWatchTargetDetach(ctxB, "target-shared", "identity-a", 3000); err != nil {
+	if _, err := backend.AgentWatchTargetDetach(ctxB, "target-shared", "identity-a", rowA.Generation, 3000); err != nil {
 		t.Fatal(err)
 	}
 	if watch, err := backend.AgentWatchGet(ctxA, armed.ID); err != nil || watch.Status != store.AgentWatchStatusArmed {
@@ -706,7 +837,7 @@ func TestAgentWatchTargetOwnerIsolation(t *testing.T) {
 func TestAgentWatchCreateSerializesWithPermanentDetach(t *testing.T) {
 	backend := openAgentWatchStore(t)
 	ctx := watchOwnerCtx("owner-a")
-	attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
+	target := attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
 	const creators = 8
 	var wg sync.WaitGroup
 	errs := make([]error, creators)
@@ -714,14 +845,14 @@ func TestAgentWatchCreateSerializesWithPermanentDetach(t *testing.T) {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			_, errs[index] = backend.AgentWatchCreate(ctx, testWatchRow(fmt.Sprintf("watch-race-%d", index), "target-1"))
+			_, errs[index] = backend.AgentWatchCreate(ctx, testWatchRow(fmt.Sprintf("watch-race-%d", index), "target-1"), target.Generation)
 		}(index)
 	}
 	wg.Add(1)
 	var detachErr error
 	go func() {
 		defer wg.Done()
-		_, detachErr = backend.AgentWatchTargetDetach(ctx, "target-1", "identity-1", 2000)
+		_, detachErr = backend.AgentWatchTargetDetach(ctx, "target-1", "identity-1", target.Generation, 2000)
 	}()
 	wg.Wait()
 	if detachErr != nil {
@@ -739,7 +870,7 @@ func TestAgentWatchCreateSerializesWithPermanentDetach(t *testing.T) {
 			t.Fatalf("watch %s escaped the permanent detach as armed", row.ID)
 		}
 	}
-	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-after-detach", "target-1")); !errors.Is(err, store.ErrAgentWatchDetached) {
+	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-after-detach", "target-1"), target.Generation); !errors.Is(err, store.ErrAgentWatchDetached) {
 		t.Fatalf("create after detach = %v; want ErrAgentWatchDetached", err)
 	}
 }

@@ -41,16 +41,17 @@ func reopenAgentWatchStore(t *testing.T, fixture *dbtest.Fixture) *store.Store {
 func TestAgentWatchDatabaseRoundTripEveryField(t *testing.T) {
 	_, backend := openAgentWatchFixture(t)
 	ctx := ipc.WithUserID(context.Background(), "owner-a")
-	attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
+	target := attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
 	expires := int64(1893456000000)
 	row := model.AgentWatchRow{
 		ID: "watch-db-1", TargetID: "target-1", Name: "db watch",
 		ConditionJSON: `{"type":"regex","pattern":"error \\d+"}`,
 		Repeat:        true, AnchorSeq: 42,
-		CarryBlob: []byte("partial"),
-		CreatedAt: 1000, UpdatedAt: 2000, ExpiresAt: &expires,
+		ContextBlob: []byte("history-"),
+		CarryBlob:   []byte("partial"),
+		CreatedAt:   1000, UpdatedAt: 2000, ExpiresAt: &expires,
 	}
-	created, err := backend.AgentWatchCreate(ctx, row)
+	created, err := backend.AgentWatchCreate(ctx, row, target.Generation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +65,7 @@ func TestAgentWatchDatabaseRoundTripEveryField(t *testing.T) {
 	if got.TargetID != row.TargetID || got.Name != row.Name ||
 		got.ConditionJSON != row.ConditionJSON || got.Repeat != row.Repeat ||
 		got.AnchorSeq != row.AnchorSeq || string(got.CarryBlob) != "partial" ||
+		string(got.ContextBlob) != "history-" ||
 		got.FireSeq != 0 || got.Revision != 1 ||
 		got.CreatedAt != 1000 || got.UpdatedAt != 2000 ||
 		got.ExpiresAt == nil || *got.ExpiresAt != expires {
@@ -135,9 +137,10 @@ func TestAgentWatchDatabaseCancelAndAckAreAtomic(t *testing.T) {
 		t.Fatalf("ack cancelled event = %v; want state error", err)
 	}
 
+	target := attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
 	repeat := testWatchRow("watch-db-repeat", "target-1")
 	repeat.Repeat = true
-	if _, err := backend.AgentWatchCreate(ctx, repeat); err != nil {
+	if _, err := backend.AgentWatchCreate(ctx, repeat, target.Generation); err != nil {
 		t.Fatal(err)
 	}
 	rearmed, err := backend.AgentWatchGet(ctx, "watch-db-repeat")
@@ -192,8 +195,8 @@ func TestAgentWatchDatabaseOwnerIsolation(t *testing.T) {
 func TestAgentWatchDatabaseTargetDurabilityAcrossRestart(t *testing.T) {
 	fixture, backend := openAgentWatchFixture(t)
 	ctx := ipc.WithUserID(context.Background(), "owner-a")
-	attachWatchTarget(t, backend, ctx, "target-db", "identity-1")
-	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-db-restart", "target-db")); err != nil {
+	target := attachWatchTarget(t, backend, ctx, "target-db", "identity-1")
+	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-db-restart", "target-db"), target.Generation); err != nil {
 		t.Fatal(err)
 	}
 	if err := backend.Close(); err != nil {
@@ -208,13 +211,16 @@ func TestAgentWatchDatabaseTargetDurabilityAcrossRestart(t *testing.T) {
 	if err != nil || row.Identity != "identity-1" || row.Generation != 1 || row.Gone {
 		t.Fatalf("target after restart = %+v, %v", row, err)
 	}
-	if settled, err := backend.AgentWatchTargetDetach(ctx, "target-db", "identity-stale", 2000); err != nil || settled {
+	if settled, err := backend.AgentWatchTargetDetach(ctx, "target-db", "identity-stale", 1, 2000); err != nil || settled {
 		t.Fatalf("stale detach after restart = %v, %v", settled, err)
+	}
+	if settled, err := backend.AgentWatchTargetDetach(ctx, "target-db", "identity-1", 99, 2000); err != nil || settled {
+		t.Fatalf("stale credential detach after restart = %v, %v", settled, err)
 	}
 	if watch, err := backend.AgentWatchGet(ctx, "watch-db-restart"); err != nil || watch.Status != store.AgentWatchStatusArmed {
 		t.Fatalf("watch after stale detach = %+v, %v", watch, err)
 	}
-	settled, err := backend.AgentWatchTargetDetach(ctx, "target-db", "identity-1", 3000)
+	settled, err := backend.AgentWatchTargetDetach(ctx, "target-db", "identity-1", 1, 3000)
 	if err != nil || !settled {
 		t.Fatalf("permanent detach after restart = %v, %v", settled, err)
 	}
@@ -222,7 +228,7 @@ func TestAgentWatchDatabaseTargetDurabilityAcrossRestart(t *testing.T) {
 	if err != nil || watch.Status != store.AgentWatchStatusUnverifiable {
 		t.Fatalf("watch after permanent detach = %+v, %v", watch, err)
 	}
-	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-db-gone", "target-db")); !errors.Is(err, store.ErrAgentWatchDetached) {
+	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-db-gone", "target-db"), 1); !errors.Is(err, store.ErrAgentWatchDetached) {
 		t.Fatalf("create after permanent detach = %v; want detached", err)
 	}
 }
