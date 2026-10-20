@@ -1030,3 +1030,82 @@ func TestSharePublicLinkResolveRateLimited(t *testing.T) {
 		t.Fatalf("flooded resolve = %d, want 429", status)
 	}
 }
+
+func TestSharePublicPageRetiredDeviceNotFound(t *testing.T) {
+	f := newHTTPFixture(t, false)
+	owner := f.createUser(t, "retired-page-owner")
+	device := startShareTestAgent(t, f, owner, "retired-page-box")
+	sessionID := device.createSession(t, "sh", "-c", "echo READY; exec cat")
+	ownerSession := f.session(t, owner)
+	_, token := createShareLink(t, f, ownerSession, device.deviceID, sessionID, false)
+
+	const page = "<html><head><title>NexTerm</title></head><body>share-viewer</body></html>"
+	var gotPath string
+	f.service.SetSharePublicPage(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write([]byte(page))
+	}))
+
+	// Valid and nonexistent tokens keep the SPA diversion (no regression).
+	for _, path := range []string{"/share/public/" + token, "/share/public/not-a-token"} {
+		response, err := f.client.Get(f.http.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response.StatusCode != http.StatusOK || string(body) != page {
+			t.Fatalf("GET %s = %d %q", path, response.StatusCode, body)
+		}
+		if response.Header.Get("Cache-Control") != "no-store" {
+			t.Fatalf("GET %s Cache-Control = %q, want no-store", path, response.Header.Get("Cache-Control"))
+		}
+	}
+	if gotPath != "/" {
+		t.Fatalf("static entry got path %q, want /", gotPath)
+	}
+
+	// Retire the device: the public page now 404s with no-store before the SPA fallback.
+	identity, err := f.accounts.ValidateSession(context.Background(), ownerSession.cookie.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.RevokeDevice(context.Background(), identity, device.deviceID); err != nil {
+		t.Fatal(err)
+	}
+	gotPath = ""
+	response, err := f.client.Get(f.http.URL + "/share/public/"+token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("retired device page = %d %q, want 404", response.StatusCode, body)
+	}
+	if response.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("retired device page Cache-Control = %q, want no-store", response.Header.Get("Cache-Control"))
+	}
+	if gotPath != "" {
+		t.Fatalf("retired device page reached the static entry with path %q", gotPath)
+	}
+
+	// The upgrade path still denies the retired device with 403 (data plane unchanged).
+	if status := dialShareViewerStatus(t, f, "/share/public/"+token); status != http.StatusForbidden {
+		t.Fatalf("retired device WS handshake = %d, want 403", status)
+	}
+
+	// Page loads stay audit-free: only the WS resolve wrote an audit row (device_revoked).
+	rows := auditPayloads(t, f, "share_link_access")
+	if len(rows) != 1 || rows[0]["reason"] != "device_revoked" {
+		t.Fatalf("share_link_access audit rows = %v, want only the WS device_revoked denial", rows)
+	}
+}
