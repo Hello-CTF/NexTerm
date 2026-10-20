@@ -18,14 +18,13 @@ func SessionTerminal(manager *session.Manager) Terminal {
 	return &sessionTerminal{manager: manager}
 }
 
-// sessionRequestContext elevates an identity-less caller to open access only
-// in trusted-open shapes: a desktop deployment, an explicitly open
-// deployment, or an internal shared-state caller already marked by the app
-// (owner.WithOpenAccess). Server account mode never elevates here, so a
-// gateway request without an identity keeps requester-less reads denied
-// (ErrForbidden) instead of reaching every tab.
+// sessionRequestContext passes the caller through unchanged: the session
+// layer natively denies identity-less open access on non-open servers and
+// scopes identified callers to their own resources. An app-marked
+// (owner.WithOpenAccess) caller carrying an identity is vouched to open
+// access; an identity-less mark is never elevated.
 func sessionRequestContext(ctx context.Context) context.Context {
-	if _, ok := ipc.UserIDFromContext(ctx); ok {
+	if _, ok := ipc.UserIDFromContext(ctx); !ok {
 		return ctx
 	}
 	if owner.OpenAccess(ctx) {
@@ -167,7 +166,9 @@ func (s *sessionTerminal) ListTerminalTabs(ctx context.Context) ([]TerminalBrief
 }
 
 // TabDetail reports the per-tab identity (kind, OSC title, shell-reported
-// cwd, lifecycle state) surfaced by read_screen headers.
+// cwd, lifecycle state) surfaced by read_screen headers. The title prefers
+// the live OSC 0/2 dynamic title the application reported and falls back to
+// the durable user/AI-set title.
 func (s *sessionTerminal) TabDetail(ctx context.Context, tabID string) (TabDetail, error) {
 	ctx = sessionRequestContext(ctx)
 	tab, err := s.manager.TabFor(ctx, tabID)
@@ -183,10 +184,22 @@ func (s *sessionTerminal) TabDetail(ctx context.Context, tabID string) (TabDetai
 		Exited:    info.Exited,
 		Durable:   info.Durable,
 	}
+	if snapshot, err := s.manager.TerminalSnapshotFor(ctx, tabID); err == nil && snapshot.Title != "" {
+		detail.Title = snapshot.Title
+	}
 	if session, err := s.manager.SessionFor(ctx, info.SessionID); err == nil {
 		detail.Kind = session.Asset().Kind
 	}
 	return detail, nil
+}
+
+// WritePasteLiteral writes text under the terminal's write lock with the
+// bracketed-paste mode read inside that same lock: when the mode is off,
+// text with line breaks is refused before any byte is written. force stays
+// false — the tools layer's own pre-write guard already refuses that shape,
+// so an in-lock refusal is a genuine mode flip and must surface.
+func (s *sessionTerminal) WritePasteLiteral(ctx context.Context, tabID, text string) error {
+	return s.manager.WritePasteLiteralFor(sessionRequestContext(ctx), tabID, text, false)
 }
 
 func WithSession(deps Dependencies, manager *session.Manager) Dependencies {

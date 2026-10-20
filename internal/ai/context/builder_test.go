@@ -185,9 +185,14 @@ func TestSessionContextDependenciesEnforceAccountOwnership(t *testing.T) {
 	if !strings.Contains(owned.Volatile, "owner-context-marker") {
 		t.Fatalf("owner prompt missing terminal marker: %q", owned.Volatile)
 	}
-	open := builder.Build(aiowner.WithOpenAccess(context.Background()), scope, "")
+	open := builder.Build(aiowner.WithOpenAccess(ipc.WithUserID(context.Background(), "owner")), scope, "")
 	if !strings.Contains(open.Volatile, "owner-context-marker") {
-		t.Fatalf("trusted open prompt missing terminal marker: %q", open.Volatile)
+		t.Fatalf("vouched open prompt missing terminal marker: %q", open.Volatile)
+	}
+	// An identity-less mark is a vouch, not an authorization: nothing leaks.
+	marked := builder.Build(aiowner.WithOpenAccess(context.Background()), scope, "")
+	if strings.Contains(marked.Volatile, "owner-context-marker") {
+		t.Fatalf("identity-less mark leaked terminal data: %q", marked.Volatile)
 	}
 }
 

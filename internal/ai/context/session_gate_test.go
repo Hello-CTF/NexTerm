@@ -14,8 +14,9 @@ import (
 )
 
 // The context builder's session dependencies share the tools-layer gate: an
-// identity-less caller is elevated to open access only in trusted-open
-// shapes, so a server gateway request without an identity stays denied.
+// identity-less caller is never elevated to open access — the session layer
+// natively denies it on non-open servers — and only a vouched identity (an
+// identified owner carrying the app's mark) keeps open-access semantics.
 func newGateManager(t *testing.T) *session.Manager {
 	t.Helper()
 	manager := session.NewManager(session.Config{
@@ -58,19 +59,36 @@ func TestContextSessionGatewayIdentityLessDenied(t *testing.T) {
 		t.Fatalf("transport err = %v", err)
 	}
 
-	// Trusted-open shape (desktop / explicit open deployment): elevated.
+	// An identity-less mark is a vouch, not an authorization: denied on a
+	// non-open server.
 	marked := owner.WithOpenAccess(context.Background())
-	if _, err := deps.Screen(marked, registered.ID); err != nil {
+	if _, err := deps.Screen(marked, registered.ID); !errors.Is(err, session.ErrForbidden) {
 		t.Fatalf("marked screen err = %v", err)
 	}
-	if _, err := deps.Tail(marked, registered.ID, 10); err != nil {
+	if _, err := deps.Tail(marked, registered.ID, 10); !errors.Is(err, session.ErrForbidden) {
 		t.Fatalf("marked tail err = %v", err)
 	}
-	if detail, err := deps.TabDetail(marked, registered.ID); err != nil || detail.TabID != registered.ID {
-		t.Fatalf("marked tab detail = %+v err=%v", detail, err)
+	if _, err := deps.TabDetail(marked, registered.ID); !errors.Is(err, session.ErrForbidden) {
+		t.Fatalf("marked tab detail err = %v", err)
 	}
-	if brief, err := deps.Session(marked, registered.SessionID); err != nil || brief.Kind != session.KindRemote {
-		t.Fatalf("marked session = %+v err=%v", brief, err)
+	if _, err := deps.Session(marked, registered.SessionID); !errors.Is(err, session.ErrForbidden) {
+		t.Fatalf("marked session err = %v", err)
+	}
+
+	// A vouched identity (the owner carrying the app's mark) keeps open
+	// access.
+	vouched := owner.WithOpenAccess(ipc.WithUserID(context.Background(), "u1"))
+	if _, err := deps.Screen(vouched, registered.ID); err != nil {
+		t.Fatalf("vouched screen err = %v", err)
+	}
+	if _, err := deps.Tail(vouched, registered.ID, 10); err != nil {
+		t.Fatalf("vouched tail err = %v", err)
+	}
+	if detail, err := deps.TabDetail(vouched, registered.ID); err != nil || detail.TabID != registered.ID {
+		t.Fatalf("vouched tab detail = %+v err=%v", detail, err)
+	}
+	if brief, err := deps.Session(vouched, registered.SessionID); err != nil || brief.Kind != session.KindRemote {
+		t.Fatalf("vouched session = %+v err=%v", brief, err)
 	}
 
 	// Cross-account: u2 never reads u1's tab; u1 reads it.
@@ -106,8 +124,8 @@ func TestContextSessionGateRace(t *testing.T) {
 	const racers = 8
 	begin := make(chan struct{})
 	var wg sync.WaitGroup
-	denied := make(chan error, racers)
-	allowed := make(chan error, racers*2)
+	denied := make(chan error, racers*2)
+	allowed := make(chan error, racers)
 	for range racers {
 		wg.Add(1)
 		go func() {
@@ -122,7 +140,7 @@ func TestContextSessionGateRace(t *testing.T) {
 			defer wg.Done()
 			<-begin
 			if _, err := deps.Screen(marked, registered.ID); err != nil {
-				allowed <- err
+				denied <- err
 			}
 			if _, err := deps.Tail(ownerCtx, registered.ID, 10); err != nil {
 				allowed <- err
@@ -149,11 +167,15 @@ func TestContextSessionRequestContextUnit(t *testing.T) {
 		t.Fatal("identity-less unmarked context must not be elevated")
 	}
 	marked := owner.WithOpenAccess(base)
-	if got := sessionRequestContext(marked); got == marked {
-		t.Fatal("trusted mark must elevate to open access")
+	if got := sessionRequestContext(marked); got != marked {
+		t.Fatal("identity-less mark must not be elevated")
 	}
 	identified := ipc.WithUserID(base, "u1")
 	if got := sessionRequestContext(identified); got != identified {
 		t.Fatal("identified context must pass through unchanged")
+	}
+	vouched := owner.WithOpenAccess(identified)
+	if got := sessionRequestContext(vouched); got == vouched {
+		t.Fatal("vouched identity must elevate to open access")
 	}
 }

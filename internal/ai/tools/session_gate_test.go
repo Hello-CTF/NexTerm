@@ -77,11 +77,29 @@ func TestSessionAdapterGatewayIdentityLessDenied(t *testing.T) {
 	}
 }
 
-func TestSessionAdapterTrustedMarkAllowed(t *testing.T) {
+func TestSessionAdapterIdentityLessMarkDeniedAndVouchedIdentityAllowed(t *testing.T) {
 	fixture := gateFixture(t)
 	adapter := SessionTerminal(fixture.manager)
-	ctx := owner.WithOpenAccess(context.Background())
+	marked := owner.WithOpenAccess(context.Background())
 
+	// An identity-less mark is a vouch, not an authorization: the session
+	// layer denies it on a non-open server, and nothing reaches the channel.
+	if _, err := adapter.Snapshot(marked, fixture.tabID); !errors.Is(err, session.ErrForbidden) {
+		t.Fatalf("identity-less marked snapshot err = %v", err)
+	}
+	if _, err := adapter.(ListTabsTerminal).ListTerminalTabs(marked); !errors.Is(err, session.ErrForbidden) {
+		t.Fatalf("identity-less marked list err = %v", err)
+	}
+	if err := adapter.Write(marked, fixture.tabID, []byte("ls")); !errors.Is(err, session.ErrForbidden) {
+		t.Fatalf("identity-less marked write err = %v", err)
+	}
+	if got := fixture.channel.attemptCount(); got != 0 {
+		t.Fatalf("identity-less marked write reached the channel %d times", got)
+	}
+
+	// A vouched identity — the identified owner carrying the app's mark —
+	// keeps open access.
+	ctx := trustedContext()
 	if _, err := adapter.Snapshot(ctx, fixture.tabID); err != nil {
 		t.Fatalf("snapshot err = %v", err)
 	}
@@ -256,7 +274,7 @@ func TestSessionAdapterGateRace(t *testing.T) {
 	const racers = 8
 	begin := make(chan struct{})
 	var wg sync.WaitGroup
-	denied := make(chan error, racers*2)
+	denied := make(chan error, racers*4)
 	allowed := make(chan error, racers*3)
 	for range racers {
 		wg.Add(1)
@@ -275,10 +293,10 @@ func TestSessionAdapterGateRace(t *testing.T) {
 			defer wg.Done()
 			<-begin
 			if _, err := adapter.Snapshot(marked, opened.ID); err != nil {
-				allowed <- err
+				denied <- err
 			}
 			if _, err := adapter.Snapshot(marked, fixture.tabID); err != nil {
-				allowed <- err
+				denied <- err
 			}
 			if _, err := adapter.Snapshot(ownerCtx, opened.ID); err != nil {
 				allowed <- err
@@ -305,11 +323,15 @@ func TestSessionRequestContextUnit(t *testing.T) {
 		t.Fatal("identity-less unmarked context must not be elevated")
 	}
 	marked := owner.WithOpenAccess(base)
-	if got := sessionRequestContext(marked); got == marked {
-		t.Fatal("trusted mark must elevate to open access")
+	if got := sessionRequestContext(marked); got != marked {
+		t.Fatal("identity-less mark must not be elevated")
 	}
 	identified := ipc.WithUserID(base, "u1")
 	if got := sessionRequestContext(identified); got != identified {
 		t.Fatal("identified context must pass through unchanged")
+	}
+	vouched := owner.WithOpenAccess(identified)
+	if got := sessionRequestContext(vouched); got == vouched {
+		t.Fatal("vouched identity must elevate to open access")
 	}
 }

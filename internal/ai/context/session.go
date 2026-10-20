@@ -13,14 +13,13 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-// sessionRequestContext elevates an identity-less caller to open access only
-// in trusted-open shapes: a desktop deployment, an explicitly open
-// deployment, or an internal shared-state caller already marked by the app
-// (owner.WithOpenAccess). Server account mode never elevates here, so a
-// gateway request without an identity keeps requester-less reads denied
-// (ErrForbidden) instead of reaching every tab.
+// sessionRequestContext passes the caller through unchanged: the session
+// layer natively denies identity-less open access on non-open servers and
+// scopes identified callers to their own resources. An app-marked
+// (owner.WithOpenAccess) caller carrying an identity is vouched to open
+// access; an identity-less mark is never elevated.
 func sessionRequestContext(ctx context.Context) context.Context {
-	if _, ok := ipc.UserIDFromContext(ctx); ok {
+	if _, ok := ipc.UserIDFromContext(ctx); !ok {
 		return ctx
 	}
 	if owner.OpenAccess(ctx) {

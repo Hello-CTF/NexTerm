@@ -310,9 +310,13 @@ func TestSessionDependenciesEnforceAccountOwnership(t *testing.T) {
 		if otherResult.OK || !strings.Contains(otherResult.Text, session.ErrForbidden.Error()) || strings.Contains(otherResult.Text, "owner-only-marker") {
 			t.Fatalf("cross-account read_screen = %+v", otherResult)
 		}
-		openResult := registry.Execute(aiowner.WithOpenAccess(context.Background()), "open", scope, Call{ID: "open-read", Name: "read_screen"}, nil)
+		openResult := registry.Execute(aiowner.WithOpenAccess(owner), "open", scope, Call{ID: "open-read", Name: "read_screen"}, nil)
 		if !openResult.OK || !strings.Contains(openResult.Text, "owner-only-marker") {
-			t.Fatalf("trusted open read_screen = %+v", openResult)
+			t.Fatalf("vouched open read_screen = %+v", openResult)
+		}
+		markedResult := registry.Execute(aiowner.WithOpenAccess(context.Background()), "marked", scope, Call{ID: "marked-read", Name: "read_screen"}, nil)
+		if markedResult.OK || !strings.Contains(markedResult.Text, session.ErrForbidden.Error()) || strings.Contains(markedResult.Text, "owner-only-marker") {
+			t.Fatalf("identity-less marked read_screen = %+v", markedResult)
 		}
 		if calls := legacyCalls.Load(); calls != 0 {
 			t.Fatalf("request-aware tab resolution fell back to unscoped TabSession %d times", calls)
@@ -326,8 +330,11 @@ func TestSessionDependenciesEnforceAccountOwnership(t *testing.T) {
 		if assetID := ResolveGrantDeviceID(other, registry, Scope{TabID: tab.ID}); assetID != "" {
 			t.Fatalf("cross-account grant device = %q", assetID)
 		}
-		if assetID := ResolveGrantDeviceID(aiowner.WithOpenAccess(context.Background()), registry, Scope{TabID: tab.ID}); assetID != "owner-asset" {
-			t.Fatalf("trusted open grant device = %q", assetID)
+		if assetID := ResolveGrantDeviceID(aiowner.WithOpenAccess(owner), registry, Scope{TabID: tab.ID}); assetID != "owner-asset" {
+			t.Fatalf("vouched open grant device = %q", assetID)
+		}
+		if assetID := ResolveGrantDeviceID(aiowner.WithOpenAccess(context.Background()), registry, Scope{TabID: tab.ID}); assetID != "" {
+			t.Fatalf("identity-less marked grant device = %q", assetID)
 		}
 		if calls := legacyCalls.Load(); calls != 0 {
 			t.Fatalf("request-aware grant resolution fell back to unscoped TabSession %d times", calls)
