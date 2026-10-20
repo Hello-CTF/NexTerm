@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   evaluateEnvironmentConfirmation,
+  goTrimSpace,
   isStaleChallenge,
   matchesEnvironmentName,
   type EnvironmentConfirmationChallenge,
@@ -44,10 +45,42 @@ const mixedChallenge: EnvironmentConfirmationChallenge = {
   ],
 };
 
+describe("goTrimSpace", () => {
+  it("trims the full Unicode White_Space set like Go's strings.TrimSpace", () => {
+    expect(goTrimSpace("\u0085production\u0085")).toBe("production");
+    expect(goTrimSpace("\u00a0production\u00a0")).toBe("production");
+    expect(goTrimSpace("\u3000production\u3000")).toBe("production");
+    expect(goTrimSpace(" \t\n production \r\n")).toBe("production");
+  });
+
+  it("does not trim U+FEFF, matching Go (unicode.IsSpace excludes it)", () => {
+    expect(goTrimSpace("\uFEFFproduction\uFEFF")).toBe("\uFEFFproduction\uFEFF");
+  });
+});
+
 describe("matchesEnvironmentName", () => {
-  it("matches with surrounding space and letter case ignored", () => {
-    expect(matchesEnvironmentName(" Production ", "production")).toBe(true);
-    expect(matchesEnvironmentName("production", "Production")).toBe(true);
+  it("matches with Go-trimmed surrounding space", () => {
+    expect(matchesEnvironmentName(" production ", "production")).toBe(true);
+    expect(matchesEnvironmentName("\u0085production\u0085", "production")).toBe(true);
+    expect(matchesEnvironmentName("\u00a0production", "production")).toBe(true);
+  });
+
+  it("rejects case-variant input locally (fail-closed boundary; backend EqualFold is authoritative)", () => {
+    expect(matchesEnvironmentName(" Production ", "production")).toBe(false);
+    expect(matchesEnvironmentName("PRODUCTION", "production")).toBe(false);
+  });
+
+  it("requires exact codepoints after trimming (fail-closed subset of Go EqualFold)", () => {
+    // U+0130 has no simple case folding in Go; the backend rejects it too.
+    expect(matchesEnvironmentName("İ", "i\u0307")).toBe(false);
+    expect(matchesEnvironmentName("İ", "i")).toBe(false);
+    // Long s and final sigma fold in Go but are rejected locally: the local
+    // check is a fail-closed subset, the backend is authoritative.
+    expect(matchesEnvironmentName("ſ", "s")).toBe(false);
+    expect(matchesEnvironmentName("ς", "σ")).toBe(false);
+    // U+FEFF is not Go whitespace, so a FEFF-prefixed name must not match.
+    expect(matchesEnvironmentName("\uFEFFproduction", "production")).toBe(false);
+    expect(matchesEnvironmentName("production\uFEFF", "production")).toBe(false);
   });
 
   it("rejects wrong, empty, and alias names", () => {
@@ -79,9 +112,16 @@ describe("evaluateEnvironmentConfirmation", () => {
     expect(state.targets[0].matches).toBe(true);
   });
 
-  it("confirms with surrounding space and letter case ignored", () => {
-    const state = evaluateEnvironmentConfirmation(challenge, { "tab-1": " Production " }, "hash-a");
+  it("confirms with Go-trimmed surrounding space", () => {
+    const state = evaluateEnvironmentConfirmation(challenge, { "tab-1": " production " }, "hash-a");
     expect(state.canConfirm).toBe(true);
+    const nel = evaluateEnvironmentConfirmation(challenge, { "tab-1": "\u0085production\u0085" }, "hash-a");
+    expect(nel.canConfirm).toBe(true);
+  });
+
+  it("rejects case-variant input locally (fail-closed boundary; backend EqualFold is authoritative)", () => {
+    const state = evaluateEnvironmentConfirmation(challenge, { "tab-1": " Production " }, "hash-a");
+    expect(state.canConfirm).toBe(false);
   });
 
   it("does not confirm on a cross-target mismatch", () => {
@@ -109,15 +149,35 @@ describe("evaluateEnvironmentConfirmation", () => {
     expect(state.canConfirm).toBe(false);
   });
 
-  it("does not confirm with extra typed names beyond the required set", () => {
-    const state = evaluateEnvironmentConfirmation(challenge, { "tab-1": "production" }, "hash-a");
-    expect(state.canConfirm).toBe(true);
-    const extra = evaluateEnvironmentConfirmation(
-      { ...challenge, requiredEnvironmentNames: ["production", "staging"] },
-      { "tab-1": "production" },
-      "hash-a",
+  it("does not confirm with an extra target key even when the real target is filled", () => {
+    const state = evaluateEnvironmentConfirmation(challenge, { "tab-1": "production", "tab-2": "staging" }, "hash-a");
+    expect(state.canConfirm).toBe(false);
+    expect(state.extraInputs).toEqual([{ key: "tab-2", typed: "staging" }]);
+  });
+
+  it("does not confirm with an extra key on a fully matched mixed set", () => {
+    const state = evaluateEnvironmentConfirmation(
+      mixedChallenge,
+      { "tab-1": "production", "tab-2": "live", "tab-3": "production" },
+      "hash-b",
     );
-    expect(extra.canConfirm).toBe(false);
+    expect(state.canConfirm).toBe(false);
+    expect(state.extraInputs).toHaveLength(1);
+  });
+
+  it("ignores extra keys with empty values", () => {
+    const state = evaluateEnvironmentConfirmation(challenge, { "tab-1": "production", "tab-2": "  " }, "hash-a");
+    expect(state.canConfirm).toBe(true);
+    expect(state.extraInputs).toEqual([]);
+  });
+
+  it("exposes the submitted names array matching the required cardinality and items", () => {
+    const state = evaluateEnvironmentConfirmation(mixedChallenge, { "tab-1": "production", "tab-2": "live" }, "hash-b");
+    expect(state.submittedNames).toEqual(["production", "live"]);
+    expect(state.canConfirm).toBe(true);
+    const wrong = evaluateEnvironmentConfirmation(mixedChallenge, { "tab-1": "production" }, "hash-b");
+    expect(wrong.submittedNames).toEqual(["production"]);
+    expect(wrong.canConfirm).toBe(false);
   });
 });
 
