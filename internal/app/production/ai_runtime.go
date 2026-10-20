@@ -461,7 +461,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 		return resolveProductionExecTargets(ctx, services, assetIDs, tags)
 	}
 	if services.ExecBatches == nil {
-		services.ExecBatches = newExecBatchService(services.Sessions, services.Store, services.Store, services.Store)
+		services.ExecBatches = newExecBatchServiceWithSettings(services.Sessions, services.Store, services.Store, services.Store, services.Store)
 	}
 	toolsDeps.ExecBatch = func(ctx context.Context, request execbatch.Request) (execbatch.Batch, error) {
 		requestCtx := productionSessionRequestContext(ctx)
