@@ -298,7 +298,7 @@ func TestRequestTerminalOperationsEnforceOwner(t *testing.T) {
 	}{
 		{name: "owner", ctx: requestTestUser("owner-a"), allowed: true},
 		{name: "same-account-second-client", ctx: requestTestUser("owner-a"), allowed: true},
-		{name: "open", ctx: WithOpenAccess(context.Background()), allowed: true},
+		{name: "open", ctx: WithOpenAccess(context.Background()), allowed: false},
 		{name: "closed", ctx: context.Background(), allowed: false},
 		{name: "other-account", ctx: requestTestUser("owner-b"), allowed: false},
 		{name: "superadmin", ctx: requestTestAdmin("admin"), allowed: false},

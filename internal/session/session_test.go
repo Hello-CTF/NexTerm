@@ -1533,7 +1533,7 @@ func TestRequestListAndLookupFilterBySessionOwner(t *testing.T) {
 		{name: "owner-a", ctx: ownerA, access: map[string]bool{"a": true}},
 		{name: "owner-b", ctx: ownerB, access: map[string]bool{"b": true}},
 		{name: "superadmin", ctx: requestTestAdmin("admin"), access: map[string]bool{}},
-		{name: "open", ctx: open, access: map[string]bool{"a": true, "b": true, "ownerless": true}},
+		{name: "open", ctx: open, access: map[string]bool{}, closed: true},
 		{name: "closed", ctx: context.Background(), access: map[string]bool{}, closed: true},
 		{name: "same-account-second-client", ctx: requestTestUser("owner-a"), access: map[string]bool{"a": true}},
 	}
@@ -1646,8 +1646,8 @@ func TestRequestOpenAccessConfiguration(t *testing.T) {
 	if err := closed.CloseTabFor(context.Background(), "missing-tab"); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("closed close error = %v, want ErrForbidden", err)
 	}
-	if infos, err := closed.ListSessionsFor(WithOpenAccess(context.Background())); err != nil || len(infos) != 1 {
-		t.Fatalf("explicit marker list = %+v, %v", infos, err)
+	if infos, err := closed.ListSessionsFor(WithOpenAccess(context.Background())); !errors.Is(err, ErrForbidden) || infos != nil {
+		t.Fatalf("explicit marker list on closed server = %+v, %v, want ErrForbidden", infos, err)
 	}
 
 	open := newManager(t, true)
@@ -1656,6 +1656,60 @@ func TestRequestOpenAccessConfiguration(t *testing.T) {
 	}
 	if _, err := open.SessionFor(context.Background(), open.ListSessions()[0].ID); err != nil {
 		t.Fatalf("configured open lookup: %v", err)
+	}
+}
+
+func TestRequestOpenAccessIdentityRequirement(t *testing.T) {
+	newManager := func(t *testing.T, open bool) *Manager {
+		t.Helper()
+		manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), OpenAccess: open})
+		t.Cleanup(func() { _ = manager.Close() })
+		if _, err := manager.Connect(requestTestUser("owner-a"), Asset{ID: "asset", Kind: KindSSH}); err != nil {
+			t.Fatal(err)
+		}
+		return manager
+	}
+
+	// A non-open server rejects identity-less open access even with the
+	// context flag: the flag is an in-process vouch, not an authorization.
+	closed := newManager(t, false)
+	sessionID := closed.ListSessions()[0].ID
+	marker := WithOpenAccess(context.Background())
+	if _, err := closed.SessionFor(marker, sessionID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("identity-less marker session lookup = %v, want ErrForbidden", err)
+	}
+	if _, err := closed.TabFor(marker, "any-tab"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("identity-less marker tab lookup = %v, want ErrForbidden", err)
+	}
+	if err := closed.CloseTabFor(marker, "any-tab"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("identity-less marker close = %v, want ErrForbidden", err)
+	}
+	if _, err := closed.ConnectFor(marker, Asset{ID: "other", Kind: KindSSH}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("identity-less marker connect = %v, want ErrForbidden", err)
+	}
+
+	// An authenticated identity is not gated by the open-access boundary:
+	// the owner reaches their own resources without any flag.
+	owner := requestTestUser("owner-a")
+	if _, err := closed.SessionFor(owner, sessionID); err != nil {
+		t.Fatalf("owner session lookup: %v", err)
+	}
+	if infos, err := closed.ListSessionsFor(owner); err != nil || len(infos) != 1 {
+		t.Fatalf("owner session list = %+v, %v", infos, err)
+	}
+	// An identity backed by the in-process vouch keeps open-access semantics.
+	if infos, err := closed.ListSessionsFor(WithOpenAccess(owner)); err != nil || len(infos) != 1 {
+		t.Fatalf("vouched identity session list = %+v, %v", infos, err)
+	}
+
+	// An explicitly open deployment (and desktop, which sets the same config)
+	// keeps accepting identity-less requests with or without the flag.
+	open := newManager(t, true)
+	if _, err := open.SessionFor(context.Background(), open.ListSessions()[0].ID); err != nil {
+		t.Fatalf("open deployment identity-less lookup: %v", err)
+	}
+	if _, err := open.SessionFor(marker, open.ListSessions()[0].ID); err != nil {
+		t.Fatalf("open deployment marker lookup: %v", err)
 	}
 }
 
@@ -1670,8 +1724,16 @@ func TestConnectForAccessScope(t *testing.T) {
 	if got := connector.callCount(); got != 0 {
 		t.Fatalf("closed connect called connector %d times", got)
 	}
-	if _, err := manager.ConnectFor(WithOpenAccess(context.Background()), asset); err != nil {
-		t.Fatalf("open marker connect: %v", err)
+	if _, err := manager.ConnectFor(WithOpenAccess(context.Background()), asset); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("marker connect on closed server = %v, want ErrForbidden", err)
+	}
+	openManager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), OpenAccess: true})
+	t.Cleanup(func() { _ = openManager.Close() })
+	if _, err := openManager.ConnectFor(WithOpenAccess(context.Background()), asset); err != nil {
+		t.Fatalf("open deployment marker connect: %v", err)
+	}
+	if _, err := openManager.ConnectFor(context.Background(), asset); err != nil {
+		t.Fatalf("open deployment connect: %v", err)
 	}
 	if _, err := manager.ConnectFor(requestTestUser("owner-a"), Asset{ID: "owned", Kind: KindSSH}); err != nil {
 		t.Fatalf("account connect: %v", err)
