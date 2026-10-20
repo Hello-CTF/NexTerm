@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
@@ -191,6 +192,13 @@ func (t *atomicPTYTransport) channelAt(index int) *atomicPTYChannel {
 	t.channelsMu.Lock()
 	defer t.channelsMu.Unlock()
 	return t.channels[index]
+}
+
+// trustedContext simulates the trusted-internal caller shape these atomicity
+// tests exercise: identity-less but marked open-access by the app, which is
+// the only identity-less shape the tools layer still elevates.
+func trustedContext() context.Context {
+	return owner.WithOpenAccess(context.Background())
 }
 
 type atomicSessionFixture struct {

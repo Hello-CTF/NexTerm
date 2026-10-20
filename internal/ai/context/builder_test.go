@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	aiowner "github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
@@ -184,7 +185,7 @@ func TestSessionContextDependenciesEnforceAccountOwnership(t *testing.T) {
 	if !strings.Contains(owned.Volatile, "owner-context-marker") {
 		t.Fatalf("owner prompt missing terminal marker: %q", owned.Volatile)
 	}
-	open := builder.Build(context.Background(), scope, "")
+	open := builder.Build(aiowner.WithOpenAccess(context.Background()), scope, "")
 	if !strings.Contains(open.Volatile, "owner-context-marker") {
 		t.Fatalf("trusted open prompt missing terminal marker: %q", open.Volatile)
 	}

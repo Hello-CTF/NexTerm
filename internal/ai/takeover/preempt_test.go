@@ -19,6 +19,7 @@ func TestR4PreemptAndEnterAreAtomic(t *testing.T) {
 	releaseExit := make(chan struct{})
 	var exitOnce sync.Once
 	deps := Dependencies{
+		Shared: true,
 		Snapshot: func(context.Context, string) (tools.Screen, error) {
 			enterStarted <- struct{}{}
 			return tools.Screen{Text: "$ ", IdleMS: 301}, nil

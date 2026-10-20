@@ -121,6 +121,7 @@ func composeOutcomeRuntimeContext(t *testing.T, command string, ctx context.Cont
 
 	transport := &outcomeFakeTransport{}
 	sessions := session.NewManager(session.Config{
+		OpenAccess: desktop,
 		Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 			return transport, nil
 		}),

@@ -527,6 +527,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 		Grants:      grantsManager,
 		Checkpoints: agent.NewStoreCheckpoints(services.Store),
 		Audit:       toolsDeps.Audit,
+		Shared:      services.desktop,
 	}
 	takeoverDeps = takeover.WithSession(takeoverDeps, services.Sessions)
 	takeoverManager := takeover.NewManager(takeoverDeps)

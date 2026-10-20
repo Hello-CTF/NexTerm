@@ -92,6 +92,9 @@ func (m *Manager) Enter(ctx context.Context, tabID string) (string, error) {
 }
 
 func (m *Manager) enter(ctx context.Context, tabID string) (*ownership, error) {
+	if _, err := m.resolveOwner(ctx); err != nil {
+		return nil, err
+	}
 	if err := m.authorizeTab(ctx, tabID); err != nil {
 		return nil, err
 	}
