@@ -1591,3 +1591,88 @@ func TestSSHImportApplyRollsBackAllWrites(t *testing.T) {
 		t.Fatalf("import audit rows after rollback = %d, err=%v", auditCount, err)
 	}
 }
+
+func TestSSHImportServerIncludeEscapeExcluded(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	sshDir := filepath.Join(home, ".ssh")
+	outside := t.TempDir()
+	configPath := filepath.Join(sshDir, "config")
+	writeInventoryTestFile(t, filepath.Join(outside, "secret.conf"), "Host secret\n  HostName secret.example\n")
+	writeInventoryTestFile(t, filepath.Join(home, "escape.conf"), "Host escaped\n  HostName escaped.example\n")
+	writeInventoryTestFile(t, configPath, "Include "+filepath.Join(outside, "secret.conf")+"\nInclude ../escape.conf\nHost alpha\n  HostName alpha.example\n")
+	dispatcher, _, _, _ := sshImportTestRigMode(t, false)
+
+	preview := sshImportPreview(t, dispatcher, `{"args":{"source":"ssh-config","path":`+strconvQuote(configPath)+`}}`)
+	aliases := map[string]bool{}
+	for _, host := range preview.Hosts {
+		aliases[host.Alias] = true
+	}
+	if !aliases["alpha"] || aliases["secret"] || aliases["escaped"] {
+		t.Fatalf("server preview hosts = %+v, want only in-bounds alpha", preview.Hosts)
+	}
+	boundaryDiags := 0
+	for _, diagnostic := range preview.Diagnostics {
+		if diagnostic.Code == "include-out-of-bounds" {
+			boundaryDiags++
+		}
+	}
+	if boundaryDiags != 2 {
+		t.Fatalf("include-out-of-bounds diagnostics = %+v, want 2", preview.Diagnostics)
+	}
+}
+
+func TestSSHImportDesktopIncludeEscapeStillParsed(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "ssh")
+	outside := t.TempDir()
+	configPath := filepath.Join(dir, "config")
+	writeInventoryTestFile(t, filepath.Join(outside, "extra.conf"), "Host beta\n  HostName beta.example\n")
+	writeInventoryTestFile(t, filepath.Join(base, "escape.conf"), "Host gamma\n  HostName gamma.example\n")
+	writeInventoryTestFile(t, configPath, "Include "+filepath.Join(outside, "extra.conf")+"\nInclude ../escape.conf\nHost alpha\n  HostName alpha.example\n")
+	dispatcher, _, _, _ := sshImportTestRig(t)
+
+	preview := sshImportPreview(t, dispatcher, `{"args":{"source":"ssh-config","path":`+strconvQuote(configPath)+`}}`)
+	aliases := map[string]bool{}
+	for _, host := range preview.Hosts {
+		aliases[host.Alias] = true
+	}
+	if !aliases["alpha"] || !aliases["beta"] || !aliases["gamma"] {
+		t.Fatalf("desktop preview hosts = %+v, want alpha, beta and gamma", preview.Hosts)
+	}
+	for _, diagnostic := range preview.Diagnostics {
+		if diagnostic.Code == "include-out-of-bounds" {
+			t.Fatalf("desktop preview gained boundary diagnostics: %+v", preview.Diagnostics)
+		}
+	}
+}
+
+func TestSSHImportServerHomeIncludeEscapeExcluded(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	sshDir := filepath.Join(home, ".ssh")
+	outside := t.TempDir()
+	writeInventoryTestFile(t, filepath.Join(outside, "secret.conf"), "Host secret\n  HostName secret.example\n")
+	writeInventoryTestFile(t, filepath.Join(sshDir, "config"), "Include "+filepath.Join(outside, "secret.conf")+"\nHost alpha\n  HostName alpha.example\n")
+	dispatcher, _, _, _ := sshImportTestRigMode(t, false)
+
+	preview := sshImportPreview(t, dispatcher, `{"args":{"source":"ssh-home","path":`+strconvQuote(sshDir)+`}}`)
+	aliases := map[string]bool{}
+	for _, host := range preview.Hosts {
+		aliases[host.Alias] = true
+	}
+	if !aliases["alpha"] || aliases["secret"] {
+		t.Fatalf("server ssh-home preview hosts = %+v, want only in-bounds alpha", preview.Hosts)
+	}
+	boundaryDiags := 0
+	for _, diagnostic := range preview.Diagnostics {
+		if diagnostic.Code == "include-out-of-bounds" {
+			boundaryDiags++
+		}
+	}
+	if boundaryDiags != 1 {
+		t.Fatalf("include-out-of-bounds diagnostics = %+v, want 1", preview.Diagnostics)
+	}
+}

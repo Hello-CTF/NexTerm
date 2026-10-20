@@ -283,7 +283,7 @@ func (p *sshImportPlanner) derive(ctx context.Context, source, path string, conf
 		if err := p.guardServerImportPath(effective); err != nil {
 			return nil, err
 		}
-		result, err := sshconfig.Parse(effective, sshconfig.Limits{})
+		result, err := sshconfig.Parse(effective, sshconfig.Limits{RootDir: p.serverSSHRoot()})
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil, ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("找不到 SSH 配置文件 %s", effective))
@@ -303,7 +303,11 @@ func (p *sshImportPlanner) derive(ctx context.Context, source, path string, conf
 		if err := p.guardServerImportPath(dir); err != nil {
 			return nil, err
 		}
-		preview, err := sshconfig.PreviewHome(dir, existing.assets, existing.keys, sshconfig.Limits{})
+		limits := sshconfig.Limits{}
+		if !p.desktop {
+			limits.RootDir = dir
+		}
+		preview, err := sshconfig.PreviewHome(dir, existing.assets, existing.keys, limits)
 		if err != nil {
 			return nil, ipc.NewError(ipc.CodeBadParam, "扫描 SSH 目录失败: "+err.Error())
 		}
@@ -379,6 +383,22 @@ func (p *sshImportPlanner) guardServerImportPath(path string) error {
 		return ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("服务端模式下只能导入当前用户 .ssh 目录内的路径：%s", path))
 	}
 	return nil
+}
+
+// serverSSHRoot returns the directory that canonically confines server-side SSH
+// config parsing (the current user's .ssh directory), or "" on desktop where
+// paths come from system dialogs and are not restricted. Callers must pass
+// guardServerImportPath first, which guarantees the home directory is known in
+// server mode.
+func (p *sshImportPlanner) serverSSHRoot() string {
+	if p.desktop {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".ssh")
 }
 
 func blockUnmappableJumps(preview *sshconfig.ImportPreview) {
