@@ -693,6 +693,16 @@ func (s *Store) AssetUpsertGuardedTx(ctx context.Context, tx *gorm.DB, row Asset
 		"updated_at": row.UpdatedAt, "deleted_at": row.DeletedAt,
 	}
 	asset := query.Use(tx).AssetRow
+	// The revision matched, but the row's content may still have changed since the
+	// snapshot (same-version ABA): verify the stored row still equals the base content
+	// before overwriting it.
+	matches, err := s.assetRowMatchesSnapshot(ctx, tx, base)
+	if err != nil {
+		return false, err
+	}
+	if !matches {
+		return false, ErrWriteConflict
+	}
 	statement := asset.WithContext(ctx).
 		Where(asset.ID.Eq(row.ID), asset.UpdatedAt.Eq(base.UpdatedAt)).
 		Where(ownerConditions(ctx, asset.TableName())...)
@@ -711,7 +721,7 @@ func (s *Store) AssetUpsertGuardedTx(ctx context.Context, tx *gorm.DB, row Asset
 	// MySQL/MariaDB report 0 affected rows when the guarded UPDATE sets identical
 	// values: accept the write only when the stored row already equals the desired
 	// state; anything else means the snapshot is stale.
-	matches, err := s.assetRowMatches(ctx, tx, row)
+	matches, err = s.assetRowMatches(ctx, tx, row)
 	if err != nil {
 		return false, err
 	}
@@ -719,6 +729,34 @@ func (s *Store) AssetUpsertGuardedTx(ctx context.Context, tx *gorm.DB, row Asset
 		return false, nil
 	}
 	return false, ErrWriteConflict
+}
+
+// assetRowMatchesSnapshot reports whether the stored row still carries exactly the base
+// snapshot's sync-visible content (same revision, deletion state, and content).
+func (s *Store) assetRowMatchesSnapshot(ctx context.Context, tx *gorm.DB, base *AssetRow) (bool, error) {
+	asset := query.Use(tx).AssetRow
+	stored, err := asset.WithContext(ctx).
+		Where(asset.ID.Eq(base.ID)).
+		Where(ownerConditions(ctx, asset.TableName())...).
+		First()
+	if isNoRows(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, dbError(err)
+	}
+	return stored.UpdatedAt == base.UpdatedAt &&
+		optionalInt64Equal(stored.DeletedAt, base.DeletedAt) &&
+		optionalStringEqual(stored.GroupID, base.GroupID) &&
+		stored.Kind == base.Kind && stored.Name == base.Name &&
+		optionalStringEqual(stored.Host, base.Host) &&
+		optionalInt32Equal(stored.Port, base.Port) &&
+		optionalStringEqual(stored.Username, base.Username) &&
+		optionalStringEqual(stored.AuthKind, base.AuthKind) &&
+		optionalStringEqual(stored.KeyPath, base.KeyPath) &&
+		optionalStringEqual(stored.CredID, base.CredID) &&
+		stored.OptionsJSON == base.OptionsJSON && stored.Tags == base.Tags &&
+		stored.Note == base.Note && stored.Sort == base.Sort, nil
 }
 
 // assetRowMatches reports whether the stored row already carries exactly the given

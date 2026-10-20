@@ -714,20 +714,50 @@ func (e *Engine) applyCredentialObject(ctx context.Context, plaintext []byte, re
 // The write and the deletion-tombstone clearing share one transaction: once a newer credential beats an old tombstone, no tombstone that could roll back the object may remain.
 func (e *Engine) credentialUpsert(ctx context.Context, payload credentialObject, nonce, blob []byte) error {
 	return e.store.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return e.credentialUpsertTx(ctx, tx, payload, nonce, blob, true)
+		return e.credentialUpsertTx(ctx, tx, payload, nonce, blob, nil)
 	})
 }
 
 // credentialUpsertTx is the in-transaction version of credentialUpsert, letting ImportBundle merge multiple writes of one object class into the same transaction.
-// revisionGuard enables the revision-ordering guard for the LWW sync apply path; the explicit bundle import disables it so an authoritative bundle overwrite is never rejected for being older.
-func (e *Engine) credentialUpsertTx(ctx context.Context, tx *gorm.DB, payload credentialObject, nonce, blob []byte, revisionGuard bool) error {
+// For the LWW sync apply path, expectedRevision is nil and the write is guarded by the
+// peer's revision ordering. For the explicit bundle import, expectedRevision is the
+// credential's snapshot revision (nil for a credential that did not exist at snapshot
+// time): the write lands only when the local credential is unchanged since the snapshot,
+// so a later local credential write is never blindly overwritten.
+func (e *Engine) credentialUpsertTx(ctx context.Context, tx *gorm.DB, payload credentialObject, nonce, blob []byte, expectedRevision *int64) error {
 	row := &store.CredentialRow{ID: payload.ID, Name: payload.Name, Kind: payload.Kind, Cipher: store.CipherAES256GCM, Nonce: nonce, Blob: blob, KEKHint: e.vault.KEKHint(), CreatedAt: payload.UpdatedAt, UpdatedAt: payload.UpdatedAt, OwnerID: ipc.OwnerID(ctx)}
-	revisionColumn := "updated_at"
-	if !revisionGuard {
-		revisionColumn = ""
+	if expectedRevision == nil {
+		if err := store.UpsertOwnerGuarded(ctx, tx, row, []string{"name", "kind", "cipher", "nonce", "blob", "kek_hint", "updated_at"}, "updated_at"); err != nil {
+			return err
+		}
+	} else {
+		if err := store.UpsertOwnerGuardedExpected(ctx, tx, row, []string{"name", "kind", "cipher", "nonce", "blob", "kek_hint", "updated_at"}, *expectedRevision); err != nil {
+			return err
+		}
 	}
-	if err := store.UpsertOwnerGuarded(ctx, tx, row, []string{"name", "kind", "cipher", "nonce", "blob", "kek_hint", "updated_at"}, revisionColumn); err != nil {
-		return err
+	tombstone := query.Use(tx).CredentialTombstone
+	if _, err := tombstone.WithContext(ctx).
+		Where(tombstone.ID.Eq(payload.ID)).
+		Where(ownerConditions(ctx, tombstone.TableName())...).
+		Delete(); err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	return nil
+}
+
+// credentialUpsertTxBound is the explicit-import variant of credentialUpsertTx: the write
+// binds to the snapshot's revision AND content, so a later local credential write (whose
+// content changed after the snapshot) is never blindly overwritten.
+func (e *Engine) credentialUpsertTxBound(ctx context.Context, tx *gorm.DB, payload credentialObject, nonce, blob []byte, snapshot *store.CredentialRow) error {
+	row := &store.CredentialRow{ID: payload.ID, Name: payload.Name, Kind: payload.Kind, Cipher: store.CipherAES256GCM, Nonce: nonce, Blob: blob, KEKHint: e.vault.KEKHint(), CreatedAt: payload.UpdatedAt, UpdatedAt: payload.UpdatedAt, OwnerID: ipc.OwnerID(ctx)}
+	if snapshot == nil {
+		if err := store.UpsertOwnerGuardedExpected(ctx, tx, row, []string{"name", "kind", "cipher", "nonce", "blob", "kek_hint", "updated_at"}, 0); err != nil {
+			return err
+		}
+	} else {
+		if err := store.UpsertOwnerGuardedExpectedContent(ctx, tx, row, []string{"name", "kind", "cipher", "nonce", "blob", "kek_hint", "updated_at"}, snapshot); err != nil {
+			return err
+		}
 	}
 	tombstone := query.Use(tx).CredentialTombstone
 	if _, err := tombstone.WithContext(ctx).

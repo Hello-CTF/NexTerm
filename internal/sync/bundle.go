@@ -305,6 +305,17 @@ type bundleAssetDecision struct {
 	equalRevision  bool
 }
 
+// preparedCred is one credential payload validated and encrypted for an import.
+type preparedCred struct {
+	id        string
+	name      string
+	kind      string
+	updatedAt int64
+	nonce     []byte
+	blob      []byte
+	exists    bool
+}
+
 // ImportBundle writes the bundle into the current backend per asset bundle protocol v1: entries whose local version is newer are skipped by default (force overrides),
 // invalid entries are rejected with a warning; credential deletion tombstones are decided by revision, and deletions write sync tombstones to prevent revival on the peer.
 // Groups keep their own committed transaction; credentials and assets share one transaction, so an asset-save failure rolls back the credential
@@ -425,15 +436,6 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		} else {
 			report.GroupsCreated++
 		}
-	}
-	type preparedCred struct {
-		id        string
-		name      string
-		kind      string
-		updatedAt int64
-		nonce     []byte
-		blob      []byte
-		exists    bool
 	}
 	preparedCreds := make([]preparedCred, 0, len(bundle.Creds))
 	// priorCredRows/priorCredTombstones snapshot the pre-import state of every upserted
@@ -733,9 +735,11 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 	// credential creates/updates back instead of leaving them orphaned.
 	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
 		for _, cred := range preparedCreds {
-			if err := s.engine.credentialUpsertTx(ctx, tx, credentialObject{
-				ID: cred.id, Name: cred.name, Kind: cred.kind, UpdatedAt: cred.updatedAt,
-			}, cred.nonce, cred.blob, false); err != nil {
+			// The write binds to the snapshot's revision AND content for an existing
+			// credential (a later local write is never overwritten) and to must-not-exist
+			// for a new one. A conflict is recorded per-credential and skipped, never
+			// overwriting the later local write.
+			if err := s.importCredentialTx(ctx, tx, cred, priorCredRows[cred.id], &report, warnf); err != nil {
 				return err
 			}
 		}
@@ -904,6 +908,34 @@ func (s *Service) importAssetTx(ctx context.Context, tx *gorm.DB, index int, row
 		return false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+rollbackErr.Error(), rollbackErr)
 	}
 	return false, err
+}
+
+// importCredentialTx writes one prepared credential inside the import transaction with a
+// savepoint: a conflict (the credential changed after the snapshot) is recorded and the
+// credential is skipped, never overwriting the later local write.
+func (s *Service) importCredentialTx(ctx context.Context, tx *gorm.DB, cred preparedCred, snapshot *store.CredentialRow, report *ImportReport, warnf func(string, ...any)) error {
+	savepoint := fmt.Sprintf("import_credential_%s", cred.id)
+	if err := tx.SavePoint(savepoint).Error; err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	err := s.engine.credentialUpsertTxBound(ctx, tx, credentialObject{
+		ID: cred.id, Name: cred.name, Kind: cred.kind, UpdatedAt: cred.updatedAt,
+	}, cred.nonce, cred.blob, snapshot)
+	if err == nil {
+		return nil
+	}
+	if rollbackErr := tx.RollbackTo(savepoint).Error; rollbackErr != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+rollbackErr.Error(), rollbackErr)
+	}
+	if errors.Is(err, store.ErrWriteConflict) {
+		report.Conflicts++
+		report.ConflictDetails = append(report.ConflictDetails, SkippedNewerEntry{
+			Kind: "credential", ID: cred.id, Name: cred.name,
+		})
+		warnf("凭据 %s 在导入决策后已被本机更新，已跳过（可重新导入覆盖）", cred.id)
+		return nil
+	}
+	return err
 }
 
 // compensateCredentialTx rolls one credential back to its pre-import state after the only
