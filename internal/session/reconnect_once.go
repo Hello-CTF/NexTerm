@@ -12,8 +12,13 @@ import (
 // nothing continues in the background afterwards. It backs the R-07 broadcast
 // flow, where a dropped session may be reconnected at most once and the caller
 // must observe the real failure; the interactive auto-reconnect budget is
-// unchanged.
+// unchanged. Like every other request-scoped session entry point, it
+// authorizes the caller first: a rejected caller leaves the session, its asset
+// snapshot, and its transport untouched and never dials.
 func (m *Manager) ReconnectOnceFor(ctx context.Context, id string, asset Asset) error {
+	if _, err := m.SessionFor(ctx, id); err != nil {
+		return err
+	}
 	if err := m.reconnectPreflight(id, 0, &asset); err != nil {
 		return err
 	}
