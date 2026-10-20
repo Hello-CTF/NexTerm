@@ -303,6 +303,11 @@ export function XtermView(props: XtermViewProps) {
     // bounded replay) and the reopen resumes via attachTab/ResumeExec.
     let pauseNeeded = false;
     let pauseRetryTimer: number | undefined;
+    // The request generation of the current normal-pause chain: each pause
+    // request carries a fresh generation, so a newer attempt invalidates the
+    // previous chain's pending timer and callbacks — a successful pause ends
+    // the chain and an old failure never continues it.
+    let pauseGeneration = 0;
     // The episode generation the server issued for the current refusal
     // episode (from the pause or recover response), and the token the last
     // resume was sent for: the server rejects a resume carrying a previous
@@ -347,31 +352,40 @@ export function XtermView(props: XtermViewProps) {
       if (disposed || !kernelTabId) return;
       const channelId = channelIdOf(channel);
       if (!channelId) return;
+      // Each pause request carries a fresh generation: a newer attempt
+      // invalidates the previous chain's pending timer and callbacks.
+      pauseGeneration += 1;
+      const firedGeneration = pauseGeneration;
       const firedAttachment = attachmentId;
       call("terminal_pause", { tabId: kernelTabId, channelId, clientId: clientId(), attachmentId: firedAttachment, acceptedBytes: acceptedOffsetNow() })
         .then((res) => {
-          // The response belongs to the attachment that fired it: a delayed
-          // response from an old attachment never pollutes the new
-          // incarnation's episode space, whose legitimate generation may be
-          // smaller than the old one's token.
-          if (disposed || firedAttachment !== attachmentId) return;
+          // The response belongs to the request that fired it: a stale
+          // request (a newer one exists) or an old attachment never touches
+          // the current chain or the new incarnation's episode space.
+          if (disposed || firedAttachment !== attachmentId || firedGeneration !== pauseGeneration) return;
+          // The current request succeeded: the chain ends here — cancel any
+          // pending retry and learn the token.
+          if (pauseRetryTimer !== undefined) {
+            window.clearTimeout(pauseRetryTimer);
+            pauseRetryTimer = undefined;
+          }
           learnEpisodeToken((res as { episodeToken?: number } | null)?.episodeToken);
         })
         .catch(() => {
           // The pause could not be established yet: retry while the writer is
           // still over the high watermark — without it the producer keeps
           // advancing and the refused suffix can outgrow the recovery ring.
-          // The retry belongs to the attachment that fired it: a mismatched
-          // callback never schedules anything on the new incarnation, and
-          // one attachment keeps at most one retry chain.
-          if (disposed || firedAttachment !== attachmentId) return;
+          // The failure belongs to the request that fired it: a stale
+          // request never continues the chain, and one attachment keeps at
+          // most one retry chain.
+          if (disposed || firedAttachment !== attachmentId || firedGeneration !== pauseGeneration) return;
           if (!pauseNeeded) return;
           if (pauseRetryTimer !== undefined) {
             window.clearTimeout(pauseRetryTimer);
           }
           pauseRetryTimer = window.setTimeout(() => {
             pauseRetryTimer = undefined;
-            if (disposed || firedAttachment !== attachmentId || !pauseNeeded) return;
+            if (disposed || firedAttachment !== attachmentId || firedGeneration !== pauseGeneration || !pauseNeeded) return;
             pauseWithRetry();
           }, 100);
         });

@@ -2738,6 +2738,83 @@ describe("XtermView stream wiring", () => {
     expect(episode12Open).toBe(false);
     vi.useRealTimers();
   });
+
+  it("a new same-attachment pause that succeeds ends the old request's retry chain", async () => {
+    // The r22 counterexample: pause 1 fails transiently and arms a retry;
+    // the writer drains and a new saturation's pause 2 succeeds with token 1
+    // — the old chain must die (two cycles stay [2, 2], not [3, 4]), and the
+    // current legitimate token's resume actually lifts the server-side pause.
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+      ephemeral: true,
+      attachmentId: 11,
+    });
+    let pauseCalls = 0;
+    let episodeOpen = false;
+    const resumeCalls: { attachmentId?: number; episodeToken?: number }[] = [];
+    harness.call.mockImplementation((command: string, args: { attachmentId?: number; episodeToken?: number }) => {
+      if (command === "terminal_pause") {
+        pauseCalls += 1;
+        if (pauseCalls === 1) return Promise.reject(new Error("transient"));
+        return Promise.resolve({ episodeToken: 1 });
+      }
+      if (command === "terminal_resume") {
+        resumeCalls.push({ attachmentId: args.attachmentId, episodeToken: args.episodeToken });
+        if (args.attachmentId === 11 && args.episodeToken === 1) {
+          episodeOpen = false;
+          return Promise.resolve(undefined);
+        }
+        return Promise.reject(Object.assign(new Error("stale episode token"), { code: "forbidden" }));
+      }
+      return Promise.resolve(undefined);
+    });
+    vi.useFakeTimers();
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    // Pause 1 fails transiently and arms a retry.
+    act(() => harness.channel?.onBytes?.(chunk));
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(pauseCalls).toBe(1);
+    // The writer drains; a new saturation's pause 2 succeeds with token 1 —
+    // the old chain ends.
+    act(() => t.drainWrites());
+    act(() => harness.channel?.onBytes?.(chunk));
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(pauseCalls).toBe(2);
+    // Two 100ms cycles: the old retry is dead, no new pause fires.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(pauseCalls).toBe(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(pauseCalls).toBe(2);
+    // The current legitimate token's resume actually lifts the server pause.
+    episodeOpen = true;
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(resumeCalls).toEqual([{ attachmentId: 11, episodeToken: 1 }]);
+    expect(episodeOpen).toBe(false);
+    vi.useRealTimers();
+  });
 });
 
 describe("XtermView render coalescing (T-09 component portion)", () => {
