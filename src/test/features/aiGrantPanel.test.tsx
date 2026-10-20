@@ -136,11 +136,12 @@ describe("GrantPanel long-term device grants", () => {
     useAuth.setState({ user: null });
   });
 
-  it("disables everything by default and explains that grants are installation-scoped rather than user-scoped", async () => {
+  it("disables everything by default and explains the shared instance-scoped grant semantics", async () => {
     await mountPanel();
     const text = view!.container.textContent ?? "";
     expect(text).toContain("默认关闭");
-    expect(text).toContain("授权对当前 NexTerm 实例的所有用户生效");
+    expect(text).toContain("桌面和明确开放部署使用共享授权");
+    expect(text).toContain("对当前 NexTerm 实例的所有会话生效");
     expect(text).toContain("普通终端写入和命令执行无需逐次确认");
     expect(text).toContain("只读模式下也会放行");
     expect(text).toContain("高危或无法判断的操作仍按当前权限模式处理");
@@ -175,7 +176,7 @@ describe("GrantPanel long-term device grants", () => {
     expect(mocks.ask).toHaveBeenCalledOnce();
     const message = mocks.ask.mock.calls[0][0] as string;
     expect(message).toContain("生产 Web");
-    expect(message).toContain("授权对当前 NexTerm 实例的所有用户生效");
+    expect(message).toContain("对当前 NexTerm 实例的所有会话生效");
     expect(message).toContain("只读模式下也会放行");
     expect(message).toContain("无需逐次确认");
     expect(message).toContain("高危或无法判断的操作仍按当前权限模式处理");
@@ -352,46 +353,83 @@ describe("GrantPanel authorization rules", () => {
   });
 });
 
-describe("GrantPanel web permission boundaries (only server superadmins can make changes)", () => {
+describe("GrantPanel account-scoped grants (web)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.web = true;
     mocks.assetList.mockResolvedValue(ASSETS);
     mocks.fleetDevices.mockResolvedValue({ devices: [] });
     mocks.grantList.mockResolvedValue([{ deviceId: "asset-1", kinds: ["terminal_write"], updatedAt: 1 }]);
-    mocks.ruleList.mockResolvedValue([
-      { id: "rule-1", deviceId: "asset-1", action: "write_file", path: "/var/log/**", expiresAt: 0, createdAt: 1, updatedAt: 1 },
-    ]);
+    mocks.ruleList.mockResolvedValue([]);
+    mocks.grantSet.mockImplementation((deviceId: string, kinds: string[]) =>
+      Promise.resolve({ deviceId, kinds, updatedAt: 1 }),
+    );
     mocks.ask.mockResolvedValue(true);
     useUi.setState({ pushToast: mocks.toast });
+    useAuth.setState({ user: null });
   });
 
-  it("keeps logged-in non-superadmins read-only with a superadmin hint and hides all mutation controls", async () => {
+  it("gives a logged-in regular user full control of current-account grants", async () => {
     useAuth.setState({ user: accountOf("user") });
-    view = mount(createElement(GrantPanel, { onClose: mocks.onClose }));
-    await flushUntil(() => view!.container.querySelectorAll("div.rounded-lg").length > 0);
+    await mountPanel();
 
     const text = view!.container.textContent ?? "";
-    expect(text).toContain("当前账号不是超管");
+    expect(text).not.toContain("当前账号不是超管");
+    expect(text).toContain("授权按账号隔离，仅对当前账号生效");
     expect(rowFor("生产 Web").textContent).toContain("已授权：终端写入");
-    const buttons = [...view!.container.querySelectorAll<HTMLButtonElement>("button")].map((b) => b.textContent);
-    expect(buttons).not.toContain("开启授权");
-    expect(buttons).not.toContain("撤销");
-    expect(buttons).not.toContain("添加");
-    expect(view!.container.querySelector("select[aria-label='规则设备']")).toBeNull();
-  });
-
-  it("keeps all mutation controls available to logged-in superadmins", async () => {
-    useAuth.setState({ user: accountOf("superadmin") });
-    view = mount(createElement(GrantPanel, { onClose: mocks.onClose }));
-    await flushUntil(() => view!.container.querySelectorAll("div.rounded-lg").length > 0);
-
     const buttons = [...view!.container.querySelectorAll<HTMLButtonElement>("button")].map((b) => b.textContent);
     expect(buttons).toContain("撤销");
     expect(buttons).toContain("添加规则");
+
+    clickButton(rowFor("生产 Web"), "撤销");
+    await flushUntil(() => mocks.grantRevoke.mock.calls.length > 0);
+    expect(mocks.ask.mock.calls[0][0] as string).toContain("授权记录会从当前账号删除");
+    await flushUntil(() => rowFor("生产 Web").textContent?.includes("未授权") === true);
+
+    clickButton(rowFor("生产 Web"), "开启授权");
+    await flushUntil(() => mocks.grantSet.mock.calls.length > 0);
+    expect(mocks.ask.mock.calls[1][0] as string).toContain("授权按账号隔离，仅对当前账号生效");
+    expect(mocks.grantSet).toHaveBeenCalledWith("asset-1", ["terminal_write"]);
+    await flushUntil(() => rowFor("生产 Web").textContent?.includes("已授权：终端写入") === true);
+  });
+
+  it("saves rules under the current account in account mode", async () => {
+    useAuth.setState({ user: accountOf("user") });
+    mocks.ruleSet.mockImplementation((deviceId: string, action: string, path: string, expiresAt: number) =>
+      Promise.resolve({ id: "rule-new", deviceId, action, path, expiresAt, createdAt: 1, updatedAt: 1 }),
+    );
+    await mountPanel();
     clickButton(view!.container, "添加规则");
     await flush();
-    expect(view!.container.querySelector("select[aria-label='规则设备']")).not.toBeNull();
+    setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则设备']")!, "asset-1");
+    setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则动作']")!, "exec_commands");
+    clickButton(view!.container, "添加");
+    await flushUntil(() => mocks.ruleSet.mock.calls.length > 0);
+    const message = mocks.ask.mock.calls[0][0] as string;
+    expect(message).toContain("规则保存在当前账号");
+    expect(mocks.ruleSet).toHaveBeenCalledWith("asset-1", "exec_commands", "", 0);
+  });
+
+  it("states shared instance-wide scope when no account is present", async () => {
+    mocks.grantList.mockResolvedValue([]);
+    await mountPanel();
+    const text = view!.container.textContent ?? "";
+    expect(text).toContain("桌面和明确开放部署使用共享授权");
+    expect(text).toContain("对当前 NexTerm 实例的所有会话生效");
+    expect(text).not.toContain("授权按账号隔离");
+    const buttons = [...view!.container.querySelectorAll<HTMLButtonElement>("button")].map((b) => b.textContent);
+    expect(buttons).toContain("开启授权");
+  });
+
+  it("surfaces the server owner/target rejection for another account's asset and keeps the row unauthorized", async () => {
+    useAuth.setState({ user: accountOf("user") });
+    mocks.grantList.mockResolvedValue([]);
+    mocks.grantSet.mockRejectedValue(new Error("授权资产不存在或不属于当前用户"));
+    await mountPanel();
+    clickButton(rowFor("生产 Web"), "开启授权");
+    await flush();
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("授权资产不存在或不属于当前用户"));
+    expect(rowFor("生产 Web").textContent).toContain("未授权");
   });
 });
 
