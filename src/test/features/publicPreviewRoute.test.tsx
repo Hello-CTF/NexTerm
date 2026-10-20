@@ -12,6 +12,12 @@ const mountedRoots = vi.hoisted(() => [] as Array<{ unmount: () => void }>);
 // any route behavior.
 vi.mock("../../app/App", () => ({ default: () => null }));
 
+// The share/preview viewers mount the xterm-backed terminal, which dominates the per-case
+// mount cost; the overlay chrome each case asserts on is rendered by the viewers themselves,
+// so the terminal is layered out the same way. The viewers tolerate a missing terminal
+// (terminalRef stays null and writes are optional-chained no-ops).
+vi.mock("../../features/sharing/PublicShareTerminal", () => ({ PublicShareTerminal: () => null }));
+
 vi.mock("react-dom/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-dom/client")>();
   return {
@@ -67,8 +73,10 @@ describe("main.tsx public preview route", () => {
     });
   });
 
-  afterEach(() => {
-    for (const root of mountedRoots.splice(0)) act(() => root.unmount());
+  afterEach(async () => {
+    await act(async () => {
+      for (const root of mountedRoots.splice(0)) root.unmount();
+    });
     vi.unstubAllGlobals();
     document.body.innerHTML = "";
   });

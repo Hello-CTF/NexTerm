@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   probe: vi.fn(),
   write: vi.fn(),
   assetDelete: vi.fn(),
+  disconnect: vi.fn(),
   ask: vi.fn(),
   realAsk: null as null | ((message: string, options?: { title?: string; kind?: "info" | "warning" | "error" }) => Promise<boolean>),
   pickKeyFile: vi.fn(),
@@ -76,6 +77,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       probe: mocks.probe,
       connect: vi.fn(),
       list: vi.fn(),
+      disconnect: mocks.disconnect,
     },
     terminalApi: { write: mocks.write },
     dbApi: {},
@@ -1187,6 +1189,97 @@ describe("asset delete confirmation (R42 audit pin, real DialogHost)", () => {
     expect(modal2.getAttribute("role")).toBe("alertdialog");
     await closeModal(modal2, "确定");
     await waitFor(() => expect(mocks.assetDelete).toHaveBeenCalledWith("a1"));
+  });
+
+  it("does not delete in B when A's confirmed disconnect-mode delete resolves its disconnect after a switch", async () => {
+    // Register a real choose handler so the delete-with-sessions choice dialog opens for real.
+    registerDialogHandlers({
+      ask: (message, options) =>
+        new Promise<boolean>((resolve) => {
+          useUi.getState().openAppDialog({
+            kind: "ask",
+            message,
+            title: options?.title,
+            level: dialogLevelForKind(options?.kind),
+            resolve,
+          });
+        }),
+      confirm: (message) =>
+        new Promise<boolean>((resolve) => {
+          useUi.getState().openAppDialog({ kind: "confirm", message, level: "warning", resolve });
+        }),
+      message: (message) =>
+        new Promise<void>((resolve) => {
+          useUi
+            .getState()
+            .openAppDialog({ kind: "message", message, level: "info", resolve: () => resolve() });
+        }),
+      choose: (message, options) =>
+        new Promise<{ key: string; remember: boolean } | null>((resolve) => {
+          useUi.getState().openAppChoice({
+            title: options?.title ?? "请选择",
+            message,
+            options: options?.choices ?? [],
+            level: options?.level ?? "warning",
+            rememberLabel: options?.rememberLabel,
+            resolve: (key, remember) => resolve(key === null ? null : { key, remember }),
+          });
+        }),
+    });
+    useUi.setState({
+      appDialog: null,
+      appChoice: null,
+      accountEpoch: 0,
+      sessions: [{ id: "s-a", assetId: "a1", name: "web-1", kind: "ssh", status: "connected", tabs: [], createdAt: 1 }],
+    });
+    mocks.list.mockResolvedValue([{
+      id: "a1",
+      groupId: null,
+      kind: "ssh",
+      name: "web-1",
+      host: "10.0.0.8",
+      port: 22,
+      username: "root",
+      authKind: "password",
+      keyPath: null,
+      credId: null,
+      options: {},
+      tags: "",
+      note: "",
+      sort: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      deletedAt: null,
+      builtin: false,
+    }]);
+    mounted = mountWithClient(
+      createElement("div", null, createElement(AssetTree), createElement(DialogHost)),
+    );
+    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+
+    // A confirms "断开会话并删除资产"; the disconnect RPC stays pending across the switch.
+    let resolveDisconnect!: () => void;
+    mocks.disconnect.mockImplementation(() => new Promise<void>((resolve) => {
+      resolveDisconnect = resolve;
+    }));
+    click(buttonByTitle(mounted.container, "删除"));
+    await waitFor(() => expect(mounted!.container.querySelector(".nx-modal")).not.toBeNull());
+    const disconnectOption = [...mounted!.container.querySelectorAll<HTMLButtonElement>(".nx-modal button")]
+      .find((button) => button.textContent?.includes("断开会话并删除资产"));
+    if (!disconnectOption) throw new Error("disconnect option not found");
+    click(disconnectOption);
+    await waitFor(() => expect(mocks.disconnect).toHaveBeenCalledWith("s-a"));
+
+    // Account switch: bump the epoch, reset workspaces, and unmount A before the disconnect resolves.
+    act(() => {
+      useUi.getState().advanceAccountEpoch();
+      useUi.getState().resetAccountWorkspaces();
+    });
+    mounted?.unmount();
+    resolveDisconnect();
+    await flush();
+
+    expect(mocks.assetDelete).not.toHaveBeenCalled();
   });
 });
 

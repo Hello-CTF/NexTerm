@@ -160,6 +160,21 @@ describe("sanitizeWorkspaceProblemText", () => {
     expect(sanitized).not.toContain("hunter3");
   });
 
+  it("falls back to the unquoted scan for unclosed quotes instead of consuming to EOF", () => {
+    const sanitized = sanitizeWorkspaceProblemText(
+      '.env A="unclosed tail B=secret C=public-diagnostics D=, E=; F=hunter2',
+    );
+    // The unclosed quoted value redacts only up to the first delimiter; later text survives.
+    expect(sanitized).toContain("A=[REDACTED] tail");
+    expect(sanitized).toContain("B=[REDACTED]");
+    expect(sanitized).toContain("C=[REDACTED]");
+    expect(sanitized).toContain("D=,");
+    expect(sanitized).toContain("E=;");
+    expect(sanitized).not.toContain("hunter2");
+    expect(sanitized).not.toContain("secret");
+    expect(sanitized).not.toContain("public-diagnostics");
+  });
+
   it("redacts long values without length truncation", () => {
     const longPassword = "p".repeat(4096);
     const longValue = "v".repeat(4096);

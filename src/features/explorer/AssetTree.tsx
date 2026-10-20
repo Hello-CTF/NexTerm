@@ -554,12 +554,17 @@ export function AssetTree() {
   const onConnectAsUser = async (a: Asset) => {
     const host = a.host?.trim();
     if (!host) return;
+    const epoch = useUi.getState().accountEpoch;
     const username = (await promptText(`用其他用户名连接「${a.name}」`, a.username ?? ""))?.trim();
-    if (!username) return;
+    if (!username || useUi.getState().accountEpoch !== epoch) return;
     void connectQuickTarget({ host, port: a.port ?? 22, username });
   };
 
-  const runDeleteAsset = async (a: Asset, mode: "keep" | "disconnect" | "close" = "keep") => {
+  const runDeleteAsset = async (a: Asset, epoch: number, mode: "keep" | "disconnect" | "close" = "keep") => {
+    // The confirmed delete is account-scoped: after every await, a changed epoch aborts the
+    // flow before the next RPC/cache/UI side effect — most importantly before assetApi.delete,
+    // which a late disconnect resolution would otherwise issue under the new account.
+    const stale = () => useUi.getState().accountEpoch !== epoch;
     setAssetError(null);
     let closedWorkspaceCount = 0;
     try {
@@ -567,18 +572,25 @@ export function AssetTree() {
         const sessionIds = useUi.getState().sessions
           .filter((s) => s.assetId === a.id && s.status !== "disconnected" && s.status !== "failed")
           .map((s) => s.id);
-        for (const id of sessionIds) await sessionApi.disconnect(id);
+        for (const id of sessionIds) {
+          await sessionApi.disconnect(id);
+          if (stale()) return;
+        }
         await useUi.getState().resyncSessions({ silent: true });
+        if (stale()) return;
       }
       if (mode === "close") {
         const workspaceIds = useUi.getState().workspaces.filter((w) => w.assetId === a.id).map((w) => w.id);
         for (const id of workspaceIds) {
           if (!useUi.getState().workspaces.some((w) => w.id === id)) continue;
           if (!(await useUi.getState().closeWorkspace(id))) return;
+          if (stale()) return;
           closedWorkspaceCount++;
         }
       }
+      if (stale()) return;
       await assetApi.delete(a.id);
+      if (stale()) return;
       if (mode !== "close") useUi.getState().markDeletedAssetWorkspaces(a.id);
       unhide(a.id);
       void qc.invalidateQueries({ queryKey: ["assets"] });
@@ -586,6 +598,7 @@ export function AssetTree() {
       void qc.invalidateQueries({ queryKey: ["credentials"] });
       pushToast("info", "已删除");
     } catch (e) {
+      if (stale()) return;
       const detail = closedWorkspaceCount > 0
         ? `${describeError(e)}；已关闭的工作区可从资产列表重新打开`
         : describeError(e);
@@ -594,6 +607,7 @@ export function AssetTree() {
   };
 
   const onDelete = async (a: Asset) => {
+    const epoch = useUi.getState().accountEpoch;
     const state = useUi.getState();
     const workspaces = state.workspaces.filter((w) => w.assetId === a.id);
     const liveSessions = state.sessions.filter((s) =>
@@ -615,11 +629,12 @@ export function AssetTree() {
         },
       );
       if (action !== "keep" && action !== "disconnect" && action !== "close") return;
-      await runDeleteAsset(a, action);
+      if (useUi.getState().accountEpoch !== epoch) return;
+      await runDeleteAsset(a, epoch, action);
       return;
     }
     const ok = await ask(`删除资产「${a.name}」？\n\n资产会从列表移除；关联的凭据会保留，已产生的终端历史仍可查看。`, { kind: "warning" });
-    if (ok) await runDeleteAsset(a);
+    if (ok && useUi.getState().accountEpoch === epoch) await runDeleteAsset(a, epoch);
   };
 
   const moveAsset = async (assetId: string, groupId: string | null) => {
@@ -818,7 +833,7 @@ export function AssetTree() {
       onEdit={() => setEditingAsset(asset)}
       onMore={(x, y, full) => setRowMenu({ x, y, asset, full })}
       error={assetError?.id === asset.id ? assetError.message : null}
-      onRetry={() => void runDeleteAsset(asset, assetError?.mode)}
+      onRetry={() => void runDeleteAsset(asset, useUi.getState().accountEpoch, assetError?.mode)}
       onDismissError={() => setAssetError(null)}
       moveError={moveErrors[asset.id]}
       movingTarget={movingTargets[asset.id]}
@@ -875,7 +890,7 @@ export function AssetTree() {
         onRetry={() => void (groupError?.id === group.id && groupError.action === "修复" ? repairGroup(group) : runDeleteGroup(group))}
         onDismissError={() => setGroupError(null)}
         assetError={assetError}
-        onRetryAssetDelete={(asset) => void runDeleteAsset(asset, assetError?.mode)}
+        onRetryAssetDelete={(asset) => void runDeleteAsset(asset, useUi.getState().accountEpoch, assetError?.mode)}
         onDismissAssetError={() => setAssetError(null)}
         moveErrors={moveErrors}
         movingTargets={movingTargets}

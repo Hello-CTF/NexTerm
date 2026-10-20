@@ -625,7 +625,13 @@ function redactEnvAssignments(text: string): string {
     let end = k;
     if (quote === "\"" || quote === "'") {
       const close = text.indexOf(quote, k + 1);
-      end = close < 0 ? text.length : close + 1;
+      if (close >= 0) {
+        end = close + 1;
+      } else {
+        // No closing quote: the original unquoted alternative takes over from the opening
+        // quote and stops at the first whitespace/comma/semicolon, never consuming to EOF.
+        while (end < text.length && !/[\s,;]/.test(text[end] as string)) end++;
+      }
     } else {
       while (end < text.length && !/[\s,;]/.test(text[end] as string)) end++;
     }
