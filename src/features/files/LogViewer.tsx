@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { assetApi, fsApi, toAppError } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
@@ -173,6 +174,18 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
       .map((text, index) => ({ text, index }))
       .filter(({ text }) => text.toLowerCase().includes(q));
   }, [lines, query]);
+  const rowItems = useMemo(() => filtered ?? lines.map((text, index) => ({ text, index })), [filtered, lines]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: rowItems.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 18.6,
+    overscan: 20,
+  });
+  const virtualItems = virtualizer.getVirtualItems();
+  const windowTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
+  const lastItem = virtualItems[virtualItems.length - 1];
+  const windowBottom = Math.max(0, virtualizer.getTotalSize() - (lastItem ? lastItem.start + lastItem.size : 0));
 
   const { Icon, tone } = fileVisual(path, "file");
 
@@ -327,16 +340,24 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
         <div
           role="log"
           aria-label={`日志内容 ${path}`}
+          ref={scrollRef}
           className="min-h-0 flex-1 overflow-auto px-1 py-1 font-mono text-[12px] leading-[1.55]"
+          style={{ paddingTop: windowTop, paddingBottom: windowBottom }}
         >
-          {(filtered ?? lines.map((text, index) => ({ text, index }))).map(({ text, index }) => (
-            <div key={index} className="flex gap-3 rounded px-2 hover:bg-neutral-800/30">
-              <span className="w-12 shrink-0 select-none text-right text-neutral-600">
-                {index + 1}
-              </span>
-              <span className="whitespace-pre">{highlight(text, query)}</span>
-            </div>
-          ))}
+          {virtualItems.map((vi) => {
+            const { text, index } = rowItems[vi.index];
+            return (
+              <div
+                key={vi.key}
+                className="flex gap-3 rounded px-2 hover:bg-neutral-800/30"
+              >
+                <span className="w-12 shrink-0 select-none text-right text-neutral-600">
+                  {index + 1}
+                </span>
+                <span className="whitespace-pre">{highlight(text, query)}</span>
+              </div>
+            );
+          })}
           {filtered && filtered.length === 0 && (
             <div className="nx-hint px-2 py-4 text-center">当前分块没有匹配的行</div>
           )}
