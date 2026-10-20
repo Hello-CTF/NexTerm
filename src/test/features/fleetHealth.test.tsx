@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { projectFocusForGroup } from "../../app/projectFocus";
-import { useUi } from "../../app/store";
+import { useUi, type Workspace } from "../../app/store";
 import type { Asset, AssetGroup, SessionInfo } from "../../ipc/commands";
 import type { ExecBatchHealth, ExecBatchHealthRequest } from "../../ipc/execBatchApi";
 import {
@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   healthProbe: vi.fn(),
   cancel: vi.fn(),
   createId: vi.fn(),
+  sessionList: vi.fn(),
 }));
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
@@ -31,6 +32,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   return {
     ...actual,
     assetApi: { ...actual.assetApi, list: mocks.assetList, groupList: mocks.groupList },
+    sessionApi: { ...actual.sessionApi, list: mocks.sessionList },
   };
 });
 
@@ -44,6 +46,11 @@ vi.mock("../../ipc/execBatchApi", async (importOriginal) => {
 });
 
 import { FleetHealthPanel } from "../../features/fleet/FleetHealthPanel";
+import {
+  createFleetHealthTabId,
+  FLEET_HEALTH_TAB_ID,
+  isFleetHealthTab,
+} from "../../features/fleet/fleetHealthTab";
 
 function group(id: string, parentId: string | null = null): AssetGroup {
   return { id, parentId, name: `Project ${id}`, sort: 0, createdAt: 1, updatedAt: 1 };
@@ -306,5 +313,117 @@ describe("FleetHealthPanel", () => {
     await act(async () => vi.advanceTimersByTimeAsync(300_000));
     expect(mocks.healthProbe).toHaveBeenCalledTimes(1);
     await act(async () => pending.resolve(healthResponse("health-1")));
+  });
+});
+
+describe("fleet health tab identity across workspaces", () => {
+  const paneTabIds = (workspaceId: string): string[] =>
+    useUi
+      .getState()
+      .workspaces.find((w) => w.id === workspaceId)
+      ?.panes.flatMap((p) => p.tabs)
+      .map((t) => t.id) ?? [];
+
+  const activeTabOf = (workspaceId: string): string | null | undefined =>
+    useUi
+      .getState()
+      .workspaces.find((w) => w.id === workspaceId)
+      ?.panes.find((p) => p.id === `${workspaceId}-pane`)?.activeTabId;
+
+  function seedWorkspaces(): void {
+    const workspaces: Workspace[] = [
+      {
+        id: "ws-1",
+        kind: "session",
+        title: "healthy",
+        sessionId: "session-healthy",
+        assetId: "healthy",
+        assetKind: "ssh",
+        panes: [{ id: "ws-1-pane", tabs: [], activeTabId: null }],
+        activePaneId: "ws-1-pane",
+        splitRatio: 0.5,
+        closable: true,
+      },
+      {
+        id: "ws-2",
+        kind: "tools",
+        title: "工具",
+        panes: [{ id: "ws-2-pane", tabs: [], activeTabId: null }],
+        activePaneId: "ws-2-pane",
+        splitRatio: 0.5,
+        closable: true,
+      },
+    ];
+    useUi.setState({ sessions, workspaces, activeWorkspaceId: "ws-1" });
+  }
+
+  function openFleetHealthInActiveWorkspace(id: string): void {
+    useUi.getState().addTab({ id, kind: "log", title: "主机概览", closable: true });
+  }
+
+  beforeEach(() => {
+    seedWorkspaces();
+    mocks.sessionList.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    useUi.setState({ sessions: [], workspaces: [], activeWorkspaceId: null });
+  });
+
+  it("opens an independent instance per workspace and activates only the intended one", () => {
+    const firstId = createFleetHealthTabId();
+    openFleetHealthInActiveWorkspace(firstId);
+    useUi.setState({ activeWorkspaceId: "ws-2" });
+    const secondId = createFleetHealthTabId();
+    openFleetHealthInActiveWorkspace(secondId);
+
+    expect(secondId).not.toBe(firstId);
+    expect(paneTabIds("ws-1")).toEqual([firstId]);
+    expect(paneTabIds("ws-2")).toEqual([secondId]);
+
+    useUi.getState().setActiveTab(secondId);
+    expect(useUi.getState().activeWorkspaceId).toBe("ws-2");
+    expect(activeTabOf("ws-2")).toBe(secondId);
+
+    useUi.getState().setActiveTab(firstId);
+    expect(useUi.getState().activeWorkspaceId).toBe("ws-1");
+    expect(activeTabOf("ws-1")).toBe(firstId);
+  });
+
+  it("closing one instance leaves the other workspace's instance untouched", async () => {
+    const firstId = createFleetHealthTabId();
+    openFleetHealthInActiveWorkspace(firstId);
+    useUi.setState({ activeWorkspaceId: "ws-2" });
+    const secondId = createFleetHealthTabId();
+    openFleetHealthInActiveWorkspace(secondId);
+
+    await expect(useUi.getState().closeTab(secondId)).resolves.toBe(true);
+
+    expect(paneTabIds("ws-2")).toEqual([]);
+    expect(paneTabIds("ws-1")).toEqual([firstId]);
+    const surviving = useUi
+      .getState()
+      .workspaces.find((w) => w.id === "ws-1")
+      ?.panes[0]?.tabs[0];
+    expect(surviving && isFleetHealthTab(surviving)).toBe(true);
+  });
+
+  it("keeps a legacy fixed-ID tab activatable, closable and renderable", async () => {
+    useUi.setState({ activeWorkspaceId: "ws-2" });
+    openFleetHealthInActiveWorkspace(FLEET_HEALTH_TAB_ID);
+
+    const legacyTab = useUi
+      .getState()
+      .workspaces.find((w) => w.id === "ws-2")
+      ?.panes[0]?.tabs[0];
+    expect(legacyTab && isFleetHealthTab(legacyTab)).toBe(true);
+
+    useUi.getState().setActiveTab(FLEET_HEALTH_TAB_ID);
+    expect(useUi.getState().activeWorkspaceId).toBe("ws-2");
+    expect(activeTabOf("ws-2")).toBe(FLEET_HEALTH_TAB_ID);
+
+    await expect(useUi.getState().closeTab(FLEET_HEALTH_TAB_ID)).resolves.toBe(true);
+    expect(paneTabIds("ws-2")).toEqual([]);
+    expect(paneTabIds("ws-1")).toEqual([]);
   });
 });
