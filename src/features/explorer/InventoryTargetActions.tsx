@@ -68,6 +68,8 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
   const [container, setContainer] = useState(isPod ? stringField(target, "container") : "");
   const [sessionId, setSessionId] = useState("");
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  busyRef.current = busy;
   const [result, setResult] = useState<InventoryTargetExecResponse | null>(null);
   const [failure, setFailure] = useState<{ message: string; exitCode?: number; output?: string } | null>(null);
   const [production, setProduction] = useState<{ challenge: DockerConfirmationChallenge; command: string } | null>(null);
@@ -78,8 +80,17 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
   const launchSnapshotRef = useRef<InventoryTargetExecRequest | null>(null);
 
   useEffect(() => {
+    // A target or owner switch must not leave the in-flight exec running
+    // and uncancellable: kill it on the backend with its frozen snapshot
+    // (original target and operationId), then reset the target state. The
+    // old exec settles as cancelled and never pollutes the new state.
+    const snapshot = launchSnapshotRef.current;
+    if (busyRef.current && snapshot !== null) {
+      void inventoryTargetApi.cancelExec(snapshot).catch(() => undefined);
+    }
     generationRef.current++;
     ignoredGenRef.current = null;
+    launchSnapshotRef.current = null;
     setBusy(false);
     setResult(null);
     setFailure(null);
@@ -89,6 +100,16 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
     setContainer(targetRef.current.type === "pod" ? stringField(targetRef.current, "container") : "");
     setSessionId("");
   }, [ownerKey, identity]);
+
+  // Unmount must not leave an in-flight exec running either.
+  useEffect(() => {
+    return () => {
+      const snapshot = launchSnapshotRef.current;
+      if (snapshot !== null && busyRef.current) {
+        void inventoryTargetApi.cancelExec(snapshot).catch(() => undefined);
+      }
+    };
+  }, []);
 
   const run = async (confirmation?: DockerProductionConfirmation) => {
     // An ignored command is still running on the target; starting another

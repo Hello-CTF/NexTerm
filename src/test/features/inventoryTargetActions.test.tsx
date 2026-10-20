@@ -413,6 +413,92 @@ describe("inventory target actions", () => {
     expect(m.container.querySelector('[role="note"]')?.textContent).toContain("执行已取消");
   });
 
+  it("auto-cancels the in-flight exec on target switch with the frozen snapshot", async () => {
+    let rejectA: (reason: unknown) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { rejectA = reject; }));
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+    expect(m.container.textContent).toContain("执行中");
+
+    // Switch target while A is in flight: the old exec is killed on the
+    // backend with its frozen snapshot (original target and operationId).
+    const otherTarget = { type: "context", name: "other", dockerEndpoint: "ssh://ops@other.example" };
+    act(() => m.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: otherTarget, ownerKey: "owner-a" })));
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(2);
+    const cancelArgs = mocks.call.mock.calls[1][1].args;
+    expect(cancelArgs.action).toBe("cancel");
+    expect(cancelArgs.target).toEqual(dockerTarget);
+    expect(cancelArgs.operationId).toBe(mocks.call.mock.calls[0][1].args.operationId);
+
+    // A settles as cancelled on the backend; the new target is not polluted.
+    await act(async () => { rejectA({ code: "io", message: "执行已取消", detail: { cancelled: true } }); });
+    await flush();
+    expect(m.container.textContent).toContain("context/other");
+    expect(m.container.querySelector('[role="status"]')).toBeNull();
+    expect(m.container.textContent).not.toContain("执行已取消");
+  });
+
+  it("cancel after editing the command input still uses the original request", async () => {
+    let rejectExec: (reason: unknown) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { rejectExec = reject; }));
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "false");
+    clickButton(m.container, "取消执行");
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(2);
+    const cancelArgs = mocks.call.mock.calls[1][1].args;
+    // The cancel reads the frozen launch snapshot, not the edited command.
+    expect(cancelArgs.command).toEqual(["true"]);
+    expect(cancelArgs.operationId).toBe(mocks.call.mock.calls[0][1].args.operationId);
+
+    await act(async () => { rejectExec({ code: "io", message: "执行已取消", detail: { cancelled: true } }); });
+    await flush();
+    expect(m.container.querySelector('[role="note"]')?.textContent).toContain("执行已取消");
+  });
+
+  it("auto-cancels with the original identity on owner switch and isolates the new owner", async () => {
+    let rejectA: (reason: unknown) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { rejectA = reject; }));
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+    const operationIdA = mocks.call.mock.calls[0][1].args.operationId;
+
+    // Switch owner while A is in flight: A is killed with its own snapshot
+    // identity, never with owner B's API identity.
+    act(() => m.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-b" })));
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(2);
+    const cancelArgs = mocks.call.mock.calls[1][1].args;
+    expect(cancelArgs.action).toBe("cancel");
+    expect(cancelArgs.operationId).toBe(operationIdA);
+    expect(cancelArgs.target).toEqual(dockerTarget);
+
+    // B's own launch uses a fresh operationId, never A's.
+    mocks.call.mockResolvedValueOnce({ output: "B ok\n", exitCode: 0 });
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(3);
+    expect(mocks.call.mock.calls[2][1].args.operationId).not.toBe(operationIdA);
+
+    await act(async () => { rejectA({ code: "io", message: "执行已取消", detail: { cancelled: true } }); });
+    await flush();
+    await waitFor(() => expect(m.container.textContent).toContain("B ok"));
+  });
+
   it("keeps cancel and ignore-results as distinct actions", async () => {
     let settleA: (resolve: boolean) => void = () => {};
     mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve, reject) => { settleA = (ok) => (ok ? resolve({ output: "A\n", exitCode: 0 }) : reject({ code: "io", message: "执行已取消", detail: { cancelled: true } })); }));
