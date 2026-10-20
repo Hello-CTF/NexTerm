@@ -102,6 +102,9 @@ func (s *Store) KnownHostAcceptForMirror(ctx context.Context, host string, port 
 	var accepted KnownHostRow
 	var previous *KnownHostRow
 	err := inBusyRetry(func() error {
+		// Each retry is a new transaction: the returned previous may only come from the transaction
+		// that actually succeeded, never from a rolled-back one.
+		previous = nil
 		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			queries := query.Use(tx)
 			knownHost := queries.KnownHostRow

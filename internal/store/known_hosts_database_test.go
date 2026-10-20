@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/dbtest"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -424,6 +425,75 @@ func TestKnownHostCompensateAcceptTokenABADatabase(t *testing.T) {
 	}
 	if row, found, err := database.KnownHostGet(ownerA, "aba-replace.test", 22, "ssh-ed25519"); err != nil || !found || row.Fingerprint != "SHA256:aba" || row.OpToken != acceptedB2.OpToken {
 		t.Fatalf("B replacement decision overwritten by stale previous: %+v, %v, %v", row, found, err)
+	}
+}
+
+func TestKnownHostAcceptForMirrorRetryResetsPreviousDatabase(t *testing.T) {
+	fixture := dbtest.NewFixture(t)
+	if fixture.Backend != store.BackendPostgres {
+		t.Skipf("retry-previous regression requires the PostgreSQL 40P01 trigger schedule, backend = %s", fixture.Backend)
+	}
+	database := fixture.OpenStore(t)
+	ctx := context.Background()
+	ownerA := ipc.WithUserID(ctx, "retry-owner-a")
+	if _, err := database.KnownHostAcceptWithKey(ownerA, "retry.test", 22, "ssh-ed25519", "SHA256:previous", "cHJldmlvdXMta2V5"); err != nil {
+		t.Fatal(err)
+	}
+	row, found, err := database.KnownHostGet(ownerA, "retry.test", 22, "ssh-ed25519")
+	if err != nil || !found {
+		t.Fatalf("seed row = %+v, %v, %v", row, found, err)
+	}
+	// Hold the first transaction open after its locked read so an independent delete queues on the row
+	// lock and commits right after the forced serialization failure rolls the transaction back.
+	if _, err := database.DB().ExecContext(ctx, `
+		CREATE OR REPLACE FUNCTION fail_known_host_update() RETURNS trigger AS $$
+		BEGIN
+			PERFORM pg_sleep(0.5);
+			RAISE EXCEPTION 'forced serialization failure' USING ERRCODE = '40P01';
+		END;
+		$$ LANGUAGE plpgsql;
+		CREATE TRIGGER fail_known_host_update BEFORE UPDATE ON known_host
+		FOR EACH ROW EXECUTE FUNCTION fail_known_host_update()`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = database.DB().ExecContext(context.Background(), `DROP TRIGGER IF EXISTS fail_known_host_update ON known_host; DROP FUNCTION IF EXISTS fail_known_host_update()`)
+	})
+	type acceptResult struct {
+		accepted store.KnownHostRow
+		previous *store.KnownHostRow
+		err      error
+	}
+	acceptedCh := make(chan acceptResult, 1)
+	go func() {
+		accepted, previous, err := database.KnownHostAcceptForMirror(ownerA, "retry.test", 22, "ssh-ed25519", "SHA256:replacement", "cmVwbGFjZW1lbnQta2V5", true)
+		acceptedCh <- acceptResult{accepted: accepted, previous: previous, err: err}
+	}()
+	// Let the first transaction take the row lock, then queue an independent identity-less delete.
+	time.Sleep(50 * time.Millisecond)
+	removedCh := make(chan error, 1)
+	go func() {
+		removedCh <- database.KnownHostRemove(context.Background(), row.ID)
+	}()
+	result := <-acceptedCh
+	if result.err != nil {
+		t.Fatalf("accept after retry = %v", result.err)
+	}
+	if err := <-removedCh; err != nil {
+		t.Fatalf("independent removal = %v", err)
+	}
+	// The retry was a fresh insert after the independent delete: the returned previous may only come
+	// from the successful transaction, so it must be nil — never the rolled-back row.
+	if result.previous != nil {
+		t.Fatalf("stale previous survived the retry: %+v", result.previous)
+	}
+	// Mirror-failure compensation with the fresh-insert identity deletes the new row; it must not
+	// restore the independently deleted trust.
+	if applied, err := database.KnownHostCompensateAccept(ownerA, "retry.test", 22, "ssh-ed25519", result.accepted, nil); err != nil || !applied {
+		t.Fatalf("fresh-insert compensation applied=%v err=%v", applied, err)
+	}
+	if _, found, err := database.KnownHostGet(ownerA, "retry.test", 22, "ssh-ed25519"); err != nil || found {
+		t.Fatalf("stale trust restored after fresh insert: found=%v err=%v", found, err)
 	}
 }
 
