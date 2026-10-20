@@ -90,7 +90,7 @@ func TestRecoverChannelForRedeliversRefusedSuffix(t *testing.T) {
 	}
 
 	// The client accepted only the first frame: recover the refused suffix.
-	if err := manager.RecoverChannelFor(context.Background(), "a-1", 3); err != nil {
+	if _, err := manager.RecoverChannelFor(context.Background(), "a-1", 3); err != nil {
 		t.Fatal(err)
 	}
 	// A synthetic anchor opens the replay, then the refused bytes arrive.
@@ -145,12 +145,12 @@ func TestRecoverChannelForCapacityBoundary(t *testing.T) {
 	const acceptedA = 37<<20 + 512<<10
 	const acceptedB = 36<<20 + 512<<10
 	// a-1 accepted everything: nothing to recover, no anchor, no replay.
-	if err := manager.RecoverChannelFor(context.Background(), "a-1", acceptedA); err != nil {
+	if _, err := manager.RecoverChannelFor(context.Background(), "a-1", acceptedA); err != nil {
 		t.Fatal(err)
 	}
 	expectNoFrame(t, receiverA)
 	// b-1 refused 1 MiB: anchor frame followed by the refused suffix.
-	if err := manager.RecoverChannelFor(context.Background(), "b-1", acceptedB); err != nil {
+	if _, err := manager.RecoverChannelFor(context.Background(), "b-1", acceptedB); err != nil {
 		t.Fatal(err)
 	}
 	anchorB := receiveTestFrame(t, receiverB)
@@ -201,7 +201,7 @@ func TestRecoverChannelForExcludesPausedCoalescerFromReplay(t *testing.T) {
 	}
 	expectNoFrame(t, receiver)
 
-	if err := manager.RecoverChannelFor(context.Background(), "a-1", 3); err != nil {
+	if _, err := manager.RecoverChannelFor(context.Background(), "a-1", 3); err != nil {
 		t.Fatal(err)
 	}
 	anchor := receiveTestFrame(t, receiver)
@@ -238,12 +238,12 @@ func TestRecoverChannelForRefusedSuffixBeyondRingFails(t *testing.T) {
 	receiver := bindTestReceiver(t, manager, "a-1")
 	drainAttachHeader(t, receiver)
 
-	// Sustained output past the ring's 32 MiB capacity with a healthy
+	// Sustained output past the ring's 64 MiB capacity with a healthy
 	// consumer: a client that then claims an accepted offset older than the
 	// retention window must get an explicit overrun, never a short replay
 	// that silently drops the evicted prefix.
 	const chunkSize = 64 << 10
-	const chunks = 600
+	const chunks = 1120
 	var fed []byte
 	for i := 0; i < chunks; i++ {
 		chunk := bytes.Repeat([]byte{byte('a' + i%26)}, chunkSize)
@@ -256,15 +256,15 @@ func TestRecoverChannelForRefusedSuffixBeyondRingFails(t *testing.T) {
 		}
 	}
 
-	if err := manager.RecoverChannelFor(context.Background(), "a-1", 4<<20); !errors.Is(err, ErrRecoveryOverrun) {
+	if _, err := manager.RecoverChannelFor(context.Background(), "a-1", 4<<20); !errors.Is(err, ErrRecoveryOverrun) {
 		t.Fatalf("recover = %v, want ErrRecoveryOverrun", err)
 	}
 	expectNoFrame(t, receiver)
 
 	// The boundary is exact: a refused suffix that still fits the window is
 	// redelivered whole and byte-identical.
-	const accepted = 37 << 20
-	if err := manager.RecoverChannelFor(context.Background(), "a-1", accepted); err != nil {
+	const accepted = 69 << 20
+	if _, err := manager.RecoverChannelFor(context.Background(), "a-1", accepted); err != nil {
 		t.Fatal(err)
 	}
 	anchor := receiveTestFrame(t, receiver)
@@ -447,5 +447,238 @@ func TestPauseChannelRequiresOwnership(t *testing.T) {
 	}
 	if err := manager.ResumeChannelFor(requestTestUser("owner-a"), "a-1"); err != nil {
 		t.Fatalf("owner resume: %v", err)
+	}
+}
+
+// The r6 counterexample: a real saturated client keeps draining the
+// transport while its writer refuses output, so its accepted offset stalls
+// while the producer keeps advancing. With a healthy peer on the same tab,
+// recovery must still redeliver the whole refused suffix — never
+// ErrRecoveryOverrun, never a short replay.
+func TestRecoverChannelForSaturatedMultiChannelClientKeepsSuffix(t *testing.T) {
+	manager, connector, _, connected := openOpenTestSession(t, KindLocal)
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-1"}); err != nil {
+		t.Fatal(err)
+	}
+	channel := connector.transport(0).channel(0)
+	receiverA := bindTestReceiver(t, manager, "a-1")
+	receiverB := bindTestReceiver(t, manager, "b-1")
+	drainAttachHeader(t, receiverA)
+	drainAttachHeader(t, receiverB)
+
+	// Sustained output well past the old 32 MiB ring: channel B accepted only
+	// the first 16 MiB (its writer cap); channel A stays healthy.
+	const chunkSize = 64 << 10
+	const chunks = 900
+	var fed []byte
+	for i := 0; i < chunks; i++ {
+		chunk := bytes.Repeat([]byte{byte('a' + i%26)}, chunkSize)
+		fed = append(fed, chunk...)
+		if err := channel.emit(chunk); err != nil {
+			t.Fatal(err)
+		}
+		if got := readFramesUntil(t, receiverA, chunkSize); !bytes.Equal(got, chunk) {
+			t.Fatalf("channel A chunk %d mismatch", i)
+		}
+		if got := readFramesUntil(t, receiverB, chunkSize); !bytes.Equal(got, chunk) {
+			t.Fatalf("channel B chunk %d mismatch", i)
+		}
+	}
+
+	// B's accepted offset stalled at 16 MiB: the 40.25 MiB suffix must be
+	// redelivered whole and byte-identical. The replay streams while the
+	// client reads, exactly as the production transport does — the recover
+	// RPC only returns once the whole suffix is enqueued.
+	const acceptedB = 16 << 20
+	recoverErr := make(chan error, 1)
+	go func() {
+		_, err := manager.RecoverChannelFor(context.Background(), "b-1", acceptedB)
+		recoverErr <- err
+	}()
+	anchorB := receiveTestFrame(t, receiverB)
+	if !bytes.Contains(anchorB.Data, []byte("recovery-")) {
+		t.Fatalf("anchor B = %q", anchorB.Data)
+	}
+	suffixB := readFramesUntil(t, receiverB, len(fed)-acceptedB)
+	if !bytes.Equal(suffixB, fed[acceptedB:]) {
+		t.Fatalf("channel B suffix mismatch: got %d bytes want %d", len(suffixB), len(fed)-acceptedB)
+	}
+	if err := <-recoverErr; err != nil {
+		t.Fatalf("recover = %v, want the full suffix retained", err)
+	}
+}
+
+// Recovery pauses the channel so live output never interleaves with the
+// replay: the coalescer holds the post-recovery bytes, the producer stalls
+// instead of overrunning the ring, and the resume flush delivers them in
+// order behind the replay — the full sequence stays contiguous.
+func TestRecoverChannelForPauseHoldsLiveOutputForOrderedResume(t *testing.T) {
+	manager, connector, _, connected := openOpenTestSession(t, KindLocal)
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-1"}); err != nil {
+		t.Fatal(err)
+	}
+	channel := connector.transport(0).channel(0)
+	receiverA := bindTestReceiver(t, manager, "a-1")
+	receiverB := bindTestReceiver(t, manager, "b-1")
+	drainAttachHeader(t, receiverA)
+	drainAttachHeader(t, receiverB)
+
+	const chunkSize = 64 << 10
+	var fed []byte
+	feedA := func(i int) bool {
+		chunk := bytes.Repeat([]byte{byte('a' + i%26)}, chunkSize)
+		fed = append(fed, chunk...)
+		if err := channel.emit(chunk); err != nil {
+			return false
+		}
+		if got := readFramesUntil(t, receiverA, chunkSize); !bytes.Equal(got, chunk) {
+			t.Fatalf("channel A chunk mismatch at %d", i)
+		}
+		return true
+	}
+	feedBoth := func(i int) bool {
+		chunk := bytes.Repeat([]byte{byte('a' + i%26)}, chunkSize)
+		if !feedA(i) {
+			return false
+		}
+		if got := readFramesUntil(t, receiverB, chunkSize); !bytes.Equal(got, chunk) {
+			t.Fatalf("channel B chunk mismatch at %d", i)
+		}
+		return true
+	}
+	for i := 0; i < 512; i++ {
+		if !feedBoth(i) {
+			t.Fatal("producer stalled before the recovery")
+		}
+	}
+	const acceptedB = 16 << 20
+	recoverDone := make(chan error, 1)
+	go func() {
+		_, err := manager.RecoverChannelFor(context.Background(), "b-1", acceptedB)
+		recoverDone <- err
+	}()
+	anchorB := receiveTestFrame(t, receiverB)
+	if !bytes.Contains(anchorB.Data, []byte("recovery-")) {
+		t.Fatalf("anchor B = %q", anchorB.Data)
+	}
+	if got := readFramesUntil(t, receiverB, len(fed)-acceptedB); !bytes.Equal(got, fed[acceptedB:]) {
+		t.Fatal("replay mismatch")
+	}
+	if err := <-recoverDone; err != nil {
+		t.Fatal(err)
+	}
+	// The channel is paused for the replay now: the next chunk fills B's
+	// coalescer, and the one after stalls the producer — it must not reach
+	// channel A either.
+	if !feedA(512) {
+		t.Fatal("producer stalled before the coalescer filled")
+	}
+	chunk513 := bytes.Repeat([]byte{byte('a' + 513%26)}, chunkSize)
+	if err := channel.emit(chunk513); err != nil {
+		t.Fatal(err)
+	}
+	expectNoFrame(t, receiverA)
+
+	// Resume flushes the held bytes in order behind the replay: B reads the
+	// post-recovery chunks contiguously, the producer continues, and the
+	// stalled chunk reaches A as well.
+	if err := manager.ResumeChannelFor(context.Background(), "b-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFramesUntil(t, receiverB, len(fed)-(32<<20)); !bytes.Equal(got, fed[32<<20:]) {
+		t.Fatal("post-recovery stream B mismatch")
+	}
+	if got := readFramesUntil(t, receiverA, chunkSize); !bytes.Equal(got, chunk513) {
+		t.Fatal("stalled chunk did not reach channel A after the resume")
+	}
+	if !feedA(len(fed) / chunkSize) {
+		t.Fatal("producer did not resume after the resume flush")
+	}
+}
+
+// The recovery anchor must not overtake frames already queued for the
+// subscriber: with a one-frame hub queue, b and c are still in the fanout
+// queue when recovery runs, and the client must read b, c, then the anchor,
+// then the replay — never anchor, stale frames, then a duplicate replay.
+func TestRecoverChannelForOrdersAnchorBehindPendingFrames(t *testing.T) {
+	bus := hub.New(hub.Options{QueueFrames: 1, QueueBytes: 1 << 20})
+	connector := newFakeConnector()
+	manager := NewManager(Config{
+		Connector: connector, Terminals: newFakeTerminalFactory(), ReconnectMax: 2,
+		ReconnectBackoff: []time.Duration{0}, OpenAccess: true, Hub: bus,
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(context.Background(), Asset{ID: "asset-local", Name: "local", Kind: KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+		t.Fatal(err)
+	}
+	channel := connector.transport(0).channel(0)
+	receiver := bindTestReceiver(t, manager, "a-1")
+	drainAttachHeader(t, receiver)
+
+	if err := channel.emit([]byte("a")); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFramesUntil(t, receiver, 1); string(got) != "a" {
+		t.Fatalf("first frame = %q", got)
+	}
+	if err := channel.emit([]byte("b")); err != nil {
+		t.Fatal(err)
+	}
+	if err := channel.emit([]byte("c")); err != nil {
+		t.Fatal(err)
+	}
+	// Wait for the coalescer to flush "bc" into the hub queue: it must be
+	// flushed (counted in the channel's flushed offset) but still pending
+	// (unread) when recovery runs.
+	deadline := time.Now().Add(2 * time.Second)
+	for manager.bus.Stats().QueuedFrames == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if manager.bus.Stats().QueuedFrames == 0 {
+		t.Fatal("coalescer did not flush the pending frames")
+	}
+
+	recoverDone := make(chan error, 1)
+	go func() {
+		_, err := manager.RecoverChannelFor(context.Background(), "a-1", 1)
+		recoverDone <- err
+	}()
+	// b and c were already queued for the subscriber: they deliver first
+	// (batched by the coalescer), then the anchor, then the replay of the
+	// refused suffix — each byte exactly once.
+	if got := readFramesUntil(t, receiver, 2); string(got) != "bc" {
+		t.Fatalf("pending frames = %q, want bc", got)
+	}
+	anchor := receiveTestFrame(t, receiver)
+	if !bytes.Contains(anchor.Data, []byte("recovery-")) {
+		t.Fatalf("frame after bc = %q, want the recovery anchor", anchor.Data)
+	}
+	if got := readFramesUntil(t, receiver, 2); string(got) != "bc" {
+		t.Fatalf("replay = %q, want bc", got)
+	}
+	if err := <-recoverDone; err != nil {
+		t.Fatal(err)
 	}
 }

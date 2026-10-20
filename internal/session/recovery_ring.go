@@ -3,9 +3,10 @@ package session
 import "sync"
 
 // recoveryRingBytes bounds the retained output per ephemeral tab. It must
-// comfortably exceed a saturated client's hard cap so a refused suffix can be
-// redelivered whole.
-const recoveryRingBytes = 32 << 20
+// comfortably exceed a saturated client's hard cap plus the in-flight
+// pipeline (hub queue 16 MiB + fanout queue 4 MiB + coalescer 64 KiB), so a
+// refused suffix can be redelivered whole even when the pause is delayed.
+const recoveryRingBytes = 64 << 20
 
 // recoveryRing is a bounded buffer of a tab's recent output frames with
 // cumulative offsets. It lets the server redeliver a refused suffix to a

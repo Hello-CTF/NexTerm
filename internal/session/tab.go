@@ -1503,7 +1503,12 @@ func (m *Manager) attachSubscriberOutput(tab *Tab, channelID string, incarnation
 	if tab.fanout == nil {
 		tab.fanout = m.newOutputFanout()
 	}
-	tab.fanout.AttachWithOptions(channelID, terminal.SinkFunc(producer.SendBinary), terminal.FanoutSubscriberOptions{
+	tab.fanout.AttachWithOptions(channelID, terminal.SinkFuncs{
+		Binary: producer.SendBinary,
+		JSON: func(ctx context.Context, data []byte) error {
+			return producer.SendJSON(ctx, data)
+		},
+	}, terminal.FanoutSubscriberOptions{
 		OnDisconnect: func(stats terminal.FanoutSubscriberStats, cause error) {
 			expected.teardown()
 			m.startGoroutine(func() {

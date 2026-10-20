@@ -611,7 +611,11 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			// bounded recovery ring, without reaping an ephemeral tab.
 			return ipc.Register(dispatcher, "terminal_recover", func(ctx context.Context, _ *ipc.Call, input terminalRecoverRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
-				return nil, terminalIPCError(s.sessions.RecoverChannelFor(ctx, input.ChannelID, input.AcceptedBytes))
+				flushed, err := s.sessions.RecoverChannelFor(ctx, input.ChannelID, input.AcceptedBytes)
+				if err != nil {
+					return nil, terminalIPCError(err)
+				}
+				return map[string]any{"flushedOffset": flushed}, nil
 			})
 		},
 		func() error {

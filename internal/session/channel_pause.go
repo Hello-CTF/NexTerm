@@ -116,26 +116,34 @@ func (m *Manager) noteChannelFlushed(tab *Tab, channelID string, bytes int64) {
 // resume flush delivers them behind the replay in stream order, so nothing
 // is sent twice and nothing is skipped.
 //
-// The whole snapshot-compute-send sequence runs under the feed gate: the
-// flushed offset, the ring content, and the anchor describe one consistent
-// stream snapshot with no feed interleaving. When the accepted offset has
-// already been evicted from the bounded ring the suffix cannot be
-// redelivered whole; ErrRecoveryOverrun reports that gap instead of
-// returning a short replay that would silently drop the prefix.
-func (m *Manager) RecoverChannelFor(ctx context.Context, channelID string, acceptedBytes int64) error {
+// The anchor and the replay travel the same ordered fanout queue as live
+// output, so frames already queued for the subscriber deliver first and the
+// refused suffix arrives exactly once. The reported offset also advances the
+// ring's retention floor: the suffix cannot be evicted before the client
+// catches up, and a caught-up report closes the episode. The whole
+// snapshot-compute-send sequence runs under the feed gate: the flushed
+// offset, the ring content, and the anchor describe one consistent stream
+// snapshot with no feed interleaving. When the accepted offset has already
+// been evicted from the bounded ring the suffix cannot be redelivered whole;
+// ErrRecoveryOverrun reports that gap instead of returning a short replay
+// that would silently drop the prefix.
+//
+// It returns the server's flushed offset, so the client knows when it has
+// caught up.
+func (m *Manager) RecoverChannelFor(ctx context.Context, channelID string, acceptedBytes int64) (int64, error) {
 	tabID := m.tabIDForChannel(channelID)
 	if tabID == "" {
-		return ErrTabNotFound
+		return 0, ErrTabNotFound
 	}
 	if _, err := m.TabFor(ctx, tabID); err != nil {
-		return err
+		return 0, err
 	}
 	tab, err := m.Tab(tabID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if err := tab.lockFeed(ctx); err != nil {
-		return err
+		return 0, err
 	}
 	defer tab.unlockFeed()
 	tab.mu.Lock()
@@ -144,30 +152,46 @@ func (m *Manager) RecoverChannelFor(ctx context.Context, channelID string, accep
 	fanout := tab.fanout
 	tab.mu.Unlock()
 	if !ok || recovery == nil || fanout == nil {
-		return ErrUnsupported
+		return 0, ErrUnsupported
 	}
 	refused := subscriber.flushedOffset - acceptedBytes
 	if refused <= 0 {
-		return nil
+		return subscriber.flushedOffset, nil
 	}
 	if oldest := recovery.oldestOffset(); oldest < 0 || acceptedBytes < oldest {
-		return ErrRecoveryOverrun
+		return 0, ErrRecoveryOverrun
 	}
 	replay := recovery.replayRange(acceptedBytes, subscriber.flushedOffset)
 	if int64(len(replay)) != refused {
-		return ErrRecoveryOverrun
+		return 0, ErrRecoveryOverrun
 	}
+	// Pause the channel for the replay: live output buffers in the coalescer
+	// and the resume flush delivers it in order behind the replay, so nothing
+	// interleaves with the refused suffix.
+	tab.mu.Lock()
+	if !subscriber.paused {
+		subscriber.paused = true
+		tab.subscribers[channelID] = subscriber
+		tab.signalOutputWakeLocked()
+	}
+	tab.mu.Unlock()
 	anchor, err := json.Marshal(streamAnchor{
 		Type:      streamAnchorType,
 		Epoch:     "recovery-" + tabID,
 		StreamSeq: uint64(acceptedBytes),
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if err := subscriber.producer.SendJSON(ctx, anchor); err != nil {
-		return err
+	if !fanout.SendJSONToWait(ctx, channelID, anchor) {
+		return 0, ErrTabClosed
 	}
-	fanout.SendTo(channelID, replay)
-	return nil
+	for len(replay) > 0 {
+		size := min(len(replay), 64<<10)
+		if !fanout.SendToWait(ctx, channelID, replay[:size]) {
+			return 0, ErrTabClosed
+		}
+		replay = replay[size:]
+	}
+	return subscriber.flushedOffset, nil
 }
