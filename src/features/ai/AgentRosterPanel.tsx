@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import {
+  IconAlert,
   IconBot,
   IconCheck,
   IconLoader,
@@ -32,8 +33,8 @@ const TONE_BADGE: Record<AgentStateTone, string> = {
   accent: "nx-badge nx-badge-blue",
 };
 
-// Presences whose tab/process is authoritatively over: there is nothing left
-// to open or attach to.
+// Presences that may be terminally over. They only count as dead when the
+// evidence view confirms them; without evidence the row stays unknown.
 const DEAD_PRESENCES: ReadonlySet<AgentPresence> = new Set<AgentPresence>([
   "gone",
   "replaced",
@@ -51,7 +52,8 @@ function deadReason(presence: AgentPresence): string {
   }
 }
 
-function PresenceIcon({ presence }: { presence: AgentPresence }) {
+function PresenceIcon({ presence, unknown }: { presence: AgentPresence; unknown: boolean }) {
+  if (unknown) return <IconAlert size={12} className="shrink-0 text-amber-300" />;
   if (presence === "attached") return <IconCheck size={12} className="shrink-0 text-green-300" />;
   if (presence === "detached") return <IconBot size={12} className="shrink-0 text-neutral-400" />;
   if (presence === "disconnected" || presence === "unverifiable")
@@ -76,12 +78,29 @@ export function AgentRosterPanel({
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
 
+  const aliveRef = useRef(true);
+  const loadGenRef = useRef(0);
+  const invalidatePendingLoads = useCallback(() => {
+    aliveRef.current = false;
+    loadGenRef.current++;
+  }, []);
+  useEffect(() => {
+    aliveRef.current = true;
+    return invalidatePendingLoads;
+  }, [invalidatePendingLoads]);
+
+  // Load generation + liveness guard (same pattern as CronPanel): an older
+  // list response must never roll back a newer roster or local mutation
+  // state such as a submitted release-pending flag.
   const reload = useCallback(async () => {
+    const gen = ++loadGenRef.current;
     try {
       const rows = await api.list();
+      if (!aliveRef.current || gen !== loadGenRef.current) return;
       setEntries(rows);
       setLoadError(null);
     } catch (e) {
+      if (!aliveRef.current || gen !== loadGenRef.current) return;
       setLoadError(describeError(e));
     }
   }, [api]);
@@ -138,6 +157,9 @@ export function AgentRosterPanel({
     void withBusy(entry.handle, async () => {
       try {
         const updated = await api.rename(entry.handle, next);
+        // Invalidate any in-flight list response so it cannot resurrect the
+        // pre-rename roster over this local mutation.
+        loadGenRef.current++;
         setEntries((prev) =>
           (prev ?? []).map((row) => (row.handle === entry.handle ? updated : row)),
         );
@@ -161,6 +183,9 @@ export function AgentRosterPanel({
       if (!confirmed) return;
       try {
         await api.release(entry.handle);
+        // Invalidate any in-flight list response so a stale roster cannot
+        // clear the release-pending flag and re-enable dangerous actions.
+        loadGenRef.current++;
         // The roster stays authoritative: until a reload shows the handle
         // gone, the row remains visible in its release-pending state instead
         // of claiming completion on the client's own say-so.
@@ -211,7 +236,12 @@ export function AgentRosterPanel({
       {entries?.map((entry) => {
         const presence = presenceView(entry.presence, entry.evidence);
         const pending = busy[entry.handle] === true;
-        const dead = DEAD_PRESENCES.has(entry.presence);
+        // Terminal presences only count as dead when evidence backs them;
+        // without evidence the row stays "unknown" and the actions must not
+        // claim a definitive reason.
+        const terminal = DEAD_PRESENCES.has(entry.presence);
+        const confirmedDead = terminal && !presence.unknown;
+        const unknownTerminal = terminal && presence.unknown;
         const run = entry.lastRun ? runStateView(entry.lastRun.state, entry.lastRun.evidence) : null;
         return (
           <div
@@ -221,7 +251,7 @@ export function AgentRosterPanel({
             data-presence={entry.presence}
           >
             <div className="flex items-center gap-1.5">
-              <PresenceIcon presence={entry.presence} />
+              <PresenceIcon presence={entry.presence} unknown={presence.unknown} />
               <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-neutral-200" title={handleAtHostCwd(entry)}>
                 {handleAtHostCwd(entry)}
               </span>
@@ -289,21 +319,29 @@ export function AgentRosterPanel({
               <div className="mt-1 flex flex-wrap items-center gap-1">
                 <button
                   className="nx-btn nx-btn-outline nx-btn-xs"
-                  disabled={pending || dead || entry.releasePending}
-                  title={dead ? deadReason(entry.presence) : "在终端标签页中打开"}
+                  disabled={pending || terminal || entry.releasePending}
+                  title={
+                    confirmedDead
+                      ? deadReason(entry.presence)
+                      : unknownTerminal
+                        ? "句柄状态未知，无法确认是否仍可打开"
+                        : "在终端标签页中打开"
+                  }
                   onClick={() => void openEntry(entry)}
                 >
                   打开
                 </button>
                 <button
                   className="nx-btn nx-btn-outline nx-btn-xs"
-                  disabled={pending || dead || entry.releasePending}
+                  disabled={pending || terminal || entry.releasePending}
                   title={
-                    dead
+                    confirmedDead
                       ? deadReason(entry.presence)
-                      : entry.releasePending
-                        ? "释放待确认，无法附加"
-                        : "附加到现有会话"
+                      : unknownTerminal
+                        ? "句柄状态未知，无法确认是否仍可附加"
+                        : entry.releasePending
+                          ? "释放待确认，无法附加"
+                          : "附加到现有会话"
                   }
                   onClick={() => void attachEntry(entry)}
                 >

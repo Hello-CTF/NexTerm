@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { clickButton, flush, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
+import { click, clickButton, deferred, flush, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
@@ -245,5 +245,78 @@ describe("AgentRosterPanel", () => {
     await flush();
     expect(api.list).toHaveBeenCalledTimes(2);
     expect(view.container.textContent).toContain("暂无句柄");
+  });
+
+  describe("evidence-less terminal presence", () => {
+    const terminalPresences = ["gone", "replaced", "exited"] as const;
+
+    for (const presence of terminalPresences) {
+      it(`${presence} without evidence disables open/attach with unknown copy, never a definitive reason`, async () => {
+        await mountPanel([entry({ presence, evidence: null })]);
+        const row = rowFor("build");
+        expect(row.textContent).toContain("未知");
+        const open = buttonIn(row, "打开");
+        const attach = buttonIn(row, "附加");
+        expect(open.disabled).toBe(true);
+        expect(attach.disabled).toBe(true);
+        expect(open.title).toContain("未知");
+        expect(attach.title).toContain("未知");
+        expect(open.title).not.toContain("已消失");
+        expect(open.title).not.toContain("已被替换");
+        expect(open.title).not.toContain("已退出");
+        expect(attach.title).not.toContain("已消失");
+        expect(attach.title).not.toContain("已被替换");
+        expect(attach.title).not.toContain("已退出");
+      });
+
+      it(`${presence} with evidence keeps the definitive disabled reason`, async () => {
+        await mountPanel([
+          entry({
+            presence,
+            evidence: { kind: "reconcile", observedAt: 1_760_000_000_000, summary: "对账确认" },
+          }),
+        ]);
+        const row = rowFor("build");
+        const open = buttonIn(row, "打开");
+        expect(open.disabled).toBe(true);
+        expect(open.title).not.toContain("未知");
+      });
+    }
+  });
+
+  it("a stale list response never overwrites a newer roster", async () => {
+    const stale = deferred<AgentRosterEntry[]>();
+    const api = makeApi([]);
+    api.list.mockReturnValueOnce(stale.promise).mockResolvedValue([]);
+    view = mount(createElement(AgentRosterPanel, { api }));
+    await flush();
+    const refresh = view.container.querySelector(
+      'button[aria-label="刷新句柄列表"]',
+    ) as HTMLButtonElement;
+    click(refresh);
+    await flush();
+    expect(view.container.textContent).toContain("暂无句柄");
+    stale.resolve([entry()]);
+    await flush();
+    expect(view.container.querySelector('[data-handle="build"]')).toBeNull();
+    expect(view.container.textContent).toContain("暂无句柄");
+  });
+
+  it("an older list response cannot clear a submitted release-pending state", async () => {
+    const stale = deferred<AgentRosterEntry[]>();
+    const api = makeApi([entry()]);
+    view = mount(createElement(AgentRosterPanel, { api }));
+    await flush();
+    api.list.mockReturnValueOnce(stale.promise);
+    const refresh = view.container.querySelector(
+      'button[aria-label="刷新句柄列表"]',
+    ) as HTMLButtonElement;
+    click(refresh);
+    clickButton(rowFor("build"), "释放");
+    await flush();
+    expect(rowFor("build").textContent).toContain("释放待确认");
+    stale.resolve([entry()]);
+    await flush();
+    expect(rowFor("build").textContent).toContain("释放待确认");
   });
 });
