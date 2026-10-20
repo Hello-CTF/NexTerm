@@ -188,6 +188,82 @@ describe("evaluateEnvironmentConfirmation", () => {
     expect(wrong.submittedNames).toEqual(["production"]);
     expect(wrong.canConfirm).toBe(false);
   });
+
+  it("confirms two targets sharing one environment against a single required name", () => {
+    const shared: EnvironmentConfirmationChallenge = {
+      targetSetHash: "hash-c",
+      requiredEnvironmentNames: ["production"],
+      productionTargets: [
+        { sessionId: "session-1", tabId: "tab-1", hostname: "api1.production.example", sessionName: "API 1", environment: "production" },
+        { sessionId: "session-2", tabId: "tab-2", hostname: "api2.production.example", sessionName: "API 2", environment: "production" },
+      ],
+    };
+    const state = evaluateEnvironmentConfirmation(shared, { "tab-1": "production", "tab-2": "production" }, "hash-c");
+    expect(state.canConfirm).toBe(true);
+    expect(state.targets.every((target) => target.matches)).toBe(true);
+  });
+
+  it("confirms three targets sharing one environment against a single required name", () => {
+    const shared: EnvironmentConfirmationChallenge = {
+      targetSetHash: "hash-d",
+      requiredEnvironmentNames: ["production"],
+      productionTargets: [
+        { sessionId: "session-1", tabId: "tab-1", hostname: "api1.production.example", sessionName: "API 1", environment: "production" },
+        { sessionId: "session-2", tabId: "tab-2", hostname: "api2.production.example", sessionName: "API 2", environment: "production" },
+        { sessionId: "session-3", tabId: "tab-3", hostname: "api3.production.example", sessionName: "API 3", environment: "production" },
+      ],
+    };
+    const state = evaluateEnvironmentConfirmation(
+      shared,
+      { "tab-1": "production", "tab-2": "production", "tab-3": "production" },
+      "hash-d",
+    );
+    expect(state.canConfirm).toBe(true);
+  });
+
+  it("does not confirm a shared environment when one target is missing or wrong", () => {
+    const shared: EnvironmentConfirmationChallenge = {
+      targetSetHash: "hash-c",
+      requiredEnvironmentNames: ["production"],
+      productionTargets: [
+        { sessionId: "session-1", tabId: "tab-1", hostname: "api1.production.example", sessionName: "API 1", environment: "production" },
+        { sessionId: "session-2", tabId: "tab-2", hostname: "api2.production.example", sessionName: "API 2", environment: "production" },
+      ],
+    };
+    const missing = evaluateEnvironmentConfirmation(shared, { "tab-1": "production" }, "hash-c");
+    expect(missing.canConfirm).toBe(false);
+    const wrong = evaluateEnvironmentConfirmation(shared, { "tab-1": "production", "tab-2": "staging" }, "hash-c");
+    expect(wrong.canConfirm).toBe(false);
+  });
+
+  it("confirms a case-variant set exactly like the Go oracle", () => {
+    const state = evaluateEnvironmentConfirmation(
+      mixedChallenge,
+      { "tab-1": "Production", "tab-2": "LIVE" },
+      "hash-b",
+    );
+    expect(state.canConfirm).toBe(true);
+  });
+
+  it("accepts a lone U+FEFF as a legal non-empty name", () => {
+    const feff: EnvironmentConfirmationChallenge = {
+      targetSetHash: "hash-e",
+      requiredEnvironmentNames: ["\uFEFF"],
+      productionTargets: [
+        { sessionId: "session-1", tabId: "tab-1", hostname: "feff.example", sessionName: "FEFF", environment: "\uFEFF" },
+      ],
+    };
+    const state = evaluateEnvironmentConfirmation(feff, { "tab-1": "\uFEFF" }, "hash-e");
+    expect(state.targets[0].missing).toBe(false);
+    expect(state.targets[0].matches).toBe(true);
+    expect(state.canConfirm).toBe(true);
+  });
+
+  it("rejects a FEFF-prefixed normal name as unequal", () => {
+    const state = evaluateEnvironmentConfirmation(challenge, { "tab-1": "\uFEFFproduction" }, "hash-a");
+    expect(state.canConfirm).toBe(false);
+    expect(state.targets[0].matches).toBe(false);
+  });
 });
 
 describe("isStaleChallenge", () => {

@@ -73,10 +73,22 @@ export function evaluateEnvironmentConfirmation(
     .map(([key, typed]) => ({ key, typed }));
   const targets = challenge.productionTargets.map((target) => {
     const typed = typedByTarget[targetKey(target)] ?? "";
-    const missing = typed.trim() === "";
+    const missing = goTrimSpace(typed) === "";
     return { target, typed, missing, matches: !missing && matchesEnvironmentName(typed, target.environment) };
   });
-  const submittedNames = targets.filter((entry) => !entry.missing).map((entry) => goTrimSpace(entry.typed));
+  // The backend's requiredEnvironmentNames is a deduplicated environment set,
+  // so the submitted names are deduplicated the same way before the set check;
+  // per-target actual-name validation above still applies to every target.
+  const submittedNames: string[] = [];
+  for (const entry of targets) {
+    if (entry.missing) {
+      continue;
+    }
+    const name = goTrimSpace(entry.typed);
+    if (!submittedNames.some((existing) => goEqualFold(existing, name))) {
+      submittedNames.push(name);
+    }
+  }
   const required = challenge.requiredEnvironmentNames.map((name) => goTrimSpace(name));
   const setMatches =
     submittedNames.length === required.length &&
