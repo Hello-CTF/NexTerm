@@ -9,6 +9,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store/model"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gen/field"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -22,6 +23,8 @@ const (
 	TranscriptChunkKindOutput = 0
 	TranscriptChunkKindInput  = 1
 	TranscriptChunkKindResize = 2
+
+	transcriptTombstoneKind = "transcript"
 )
 
 type TranscriptMatch struct {
@@ -117,19 +120,34 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 		}
 		if len(durableBytes) > 0 {
 			now := ids.NowMS()
+			ownerID := ipc.OwnerID(ctx)
 			for durableID, count := range durableBytes[0] {
 				if count <= 0 {
 					continue
 				}
+				// The insert never touches an existing row and the guarded UPDATE
+				// advances only this owner's row or a legacy ownerless one. The
+				// guard lives in the UPDATE's WHERE because MySQL and MariaDB
+				// ignore ON CONFLICT ... WHERE, so every backend isolates owners
+				// identically.
 				if err := tx.Clauses(clause.OnConflict{
-					Columns: []clause.Column{{Name: "durable_id"}},
-					DoUpdates: clause.Assignments(map[string]any{
-						"offset":     gorm.Expr("? + ?", clause.Column{Table: "durable_transcript_offset", Name: "offset"}, count),
-						"updated_at": now,
-					}),
-					Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
-				}).Create(&DurableTranscriptOffset{DurableID: durableID, Offset: count, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}).Error; err != nil {
+					Columns:   []clause.Column{{Name: "durable_id"}},
+					DoNothing: true,
+				}).Create(&DurableTranscriptOffset{DurableID: durableID, Offset: 0, UpdatedAt: now, OwnerID: ownerID}).Error; err != nil {
 					return err
+				}
+				advance := tx.Model(&DurableTranscriptOffset{}).
+					Where("durable_id = ? AND (owner_id = ? OR owner_id = '')", durableID, ownerID).
+					Updates(map[string]any{
+						"offset":     gorm.Expr("? + ?", clause.Column{Name: "offset"}, count),
+						"updated_at": now,
+						"owner_id":   ownerID,
+					})
+				if advance.Error != nil {
+					return advance.Error
+				}
+				if advance.RowsAffected == 0 {
+					s.logger.Warn("durable transcript offset advance skipped: row belongs to another owner", "durableId", durableID, "ownerId", ownerID)
 				}
 			}
 		}
@@ -340,7 +358,7 @@ func (s *Store) TranscriptDelete(ctx context.Context, id string) error {
 			return err
 		}
 		if row.SyncOptIn {
-			return transcriptTombstoneTx(ctx, tx, id)
+			return transcriptTombstoneTx(ctx, tx, id, row.OwnerID)
 		}
 		return nil
 	})
@@ -350,11 +368,11 @@ func (s *Store) TranscriptDelete(ctx context.Context, id string) error {
 	return nil
 }
 
-func transcriptTombstoneTx(ctx context.Context, tx *gorm.DB, id string) error {
+func transcriptTombstoneTx(ctx context.Context, tx *gorm.DB, id, ownerID string) error {
 	tombstone := query.Use(tx).SyncTombstone
 	err := tombstone.WithContext(ctx).
 		Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "owner_id"}, {Name: "id"}}, DoNothing: true}).
-		Create(&SyncTombstone{ID: id, Kind: "transcript", DeletedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)})
+		Create(&SyncTombstone{ID: id, Kind: transcriptTombstoneKind, DeletedAt: ids.NowMS(), OwnerID: ownerID})
 	if err != nil {
 		return dbError(err)
 	}
@@ -459,7 +477,7 @@ func (s *Store) TranscriptSetSyncOptIn(ctx context.Context, id string, optIn boo
 			return badParam(fmt.Errorf("进行中的会话不能开启同步"))
 		}
 		if row.SyncOptIn && !optIn {
-			return transcriptTombstoneTx(ctx, tx, id)
+			return transcriptTombstoneTx(ctx, tx, id, row.OwnerID)
 		}
 		return nil
 	})
@@ -486,15 +504,75 @@ func (s *Store) TranscriptInsertSynced(ctx context.Context, row TranscriptRow, c
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		row.SyncOptIn = true
 		row.OwnerID = ipc.OwnerID(ctx)
+		// Identify a foreign-owned ID before any write. The check is an
+		// explicit read, not a RowsAffected probe: MySQL and MariaDB count
+		// changed rows, so an identical re-apply would look like a conflict.
+		var existingOwner string
+		if err := tx.Model(&TranscriptRow{}).
+			Select("owner_id").
+			Where("id = ?", row.ID).
+			Limit(1).
+			Scan(&existingOwner).Error; err != nil {
+			return err
+		}
+		if existingOwner != "" && existingOwner != ipc.OwnerID(ctx) {
+			return ipc.NewError(ipc.CodeForbidden, "会话记录已属于其他用户, 拒绝覆盖")
+		}
+		// Insert-if-absent never touches an existing row; the guarded UPDATE
+		// below then applies only to this owner's row or a legacy ownerless
+		// one on every backend (MySQL and MariaDB ignore ON CONFLICT ... WHERE).
 		if err := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "id"}},
-			DoUpdates: clause.AssignmentColumns([]string{"ended_at", "bytes", "stored_bytes", "chunks", "truncated", "content_omitted"}),
-			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+			DoNothing: true,
 		}).Create(&row).Error; err != nil {
 			return err
 		}
+		transcript := query.Use(tx).TranscriptRow
+		if _, err := transcript.WithContext(ctx).
+			Where(transcript.ID.Eq(row.ID)).
+			Where(field.NewUnsafeFieldRaw("(owner_id = ? OR owner_id = '')", ipc.OwnerID(ctx))).
+			UpdateColumns(map[string]any{
+				"ended_at":        row.EndedAt,
+				"bytes":           row.Bytes,
+				"stored_bytes":    row.StoredBytes,
+				"chunks":          row.Chunks,
+				"truncated":       row.Truncated,
+				"content_omitted": row.ContentOmitted,
+				"owner_id":        ipc.OwnerID(ctx),
+			}); err != nil {
+			return err
+		}
+		// Verify the claim outcome with a current read that cannot conflate an
+		// absent row or a stale ownerless one with a successful ownerless
+		// claim: MySQL and MariaDB keep one REPEATABLE-READ snapshot per
+		// transaction, so their verify locks the row to read the latest
+		// committed owner, while PostgreSQL and SQLite already read the latest
+		// committed version. Existence and owner are read separately — the
+		// zero value never decides — and the claim wins only when the row
+		// exists and its owner is the caller; anything else rejects before any
+		// chunk write.
+		verify := tx.Model(&TranscriptRow{}).
+			Select("owner_id").
+			Where("id = ?", row.ID).
+			Limit(1)
+		if s.backend == BackendMySQL || s.backend == BackendMariaDB {
+			verify = verify.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		var claimed TranscriptRow
+		if err := verify.Take(&claimed).Error; err != nil {
+			if isNoRows(err) {
+				return ipc.NewError(ipc.CodeForbidden, "会话记录已属于其他用户, 拒绝覆盖")
+			}
+			return err
+		}
+		if claimed.OwnerID != ipc.OwnerID(ctx) {
+			return ipc.NewError(ipc.CodeForbidden, "会话记录已属于其他用户, 拒绝覆盖")
+		}
 		chunk := query.Use(tx).TranscriptChunkRow
-		if _, err := chunk.WithContext(ctx).Where(chunk.TranscriptID.Eq(row.ID)).Delete(); err != nil {
+		if _, err := chunk.WithContext(ctx).
+			Where(chunk.TranscriptID.Eq(row.ID)).
+			Where(field.NewUnsafeFieldRaw("(owner_id = ? OR owner_id = '')", ipc.OwnerID(ctx))).
+			Delete(); err != nil {
 			return err
 		}
 		for _, item := range blocks {
@@ -540,6 +618,51 @@ func (s *Store) DurableTranscriptOffsetSet(ctx context.Context, durableID string
 	return nil
 }
 
+// DurableTranscriptOffsetSeed resets a durable offset under an atomic owner
+// guard; it reports whether a row was reset. The guard passes for rows owned by
+// ownerID and for legacy ownerless rows (explicit owner_id = ”), so a stale
+// resolution never touches a row the transcript writer claimed in between.
+// Ownership is established by the writer when session output flushes, so a
+// seed for a tab with no recorded output is a no-op rather than an insert.
+func (s *Store) DurableTranscriptOffsetSeed(ctx context.Context, durableID, ownerID string, value int64) (bool, error) {
+	now := ids.NowMS()
+	info := s.db.WithContext(ctx).Model(&DurableTranscriptOffset{}).
+		Where("durable_id = ? AND (owner_id = ? OR owner_id = '')", durableID, ownerID).
+		Updates(map[string]any{"offset": value, "updated_at": now})
+	if info.Error != nil {
+		return false, dbError(info.Error)
+	}
+	return info.RowsAffected > 0, nil
+}
+
+// DurableTranscriptOffsetOwner resolves the owner recorded on a durable
+// offset row; an empty string means the row is legacy ownerless or absent.
+func (s *Store) DurableTranscriptOffsetOwner(ctx context.Context, durableID string) (string, error) {
+	var ownerID string
+	err := s.db.WithContext(ctx).Model(&DurableTranscriptOffset{}).
+		Select("owner_id").
+		Where("durable_id = ?", durableID).
+		Limit(1).
+		Scan(&ownerID).Error
+	if err != nil {
+		return "", dbError(err)
+	}
+	return ownerID, nil
+}
+
+// DurableTranscriptOffsetDeleteIfOwned removes a durable offset only while the
+// row is still owned by ownerID or still legacy ownerless, so a delete racing
+// a claim never removes a freshly claimed row.
+func (s *Store) DurableTranscriptOffsetDeleteIfOwned(ctx context.Context, durableID, ownerID string) error {
+	info := s.db.WithContext(ctx).
+		Where("durable_id = ? AND (owner_id = ? OR owner_id = '')", durableID, ownerID).
+		Delete(&DurableTranscriptOffset{})
+	if info.Error != nil {
+		return dbError(info.Error)
+	}
+	return nil
+}
+
 func (s *Store) DurableTranscriptOffsetDelete(ctx context.Context, durableID string) error {
 	offset := query.Use(s.db).DurableTranscriptOffset
 	_, err := offset.WithContext(ctx).
@@ -569,13 +692,51 @@ func (s *Store) DurableTabTitleGet(ctx context.Context, durableID string) (strin
 
 func (s *Store) DurableTabTitleSet(ctx context.Context, durableID, value string) error {
 	now := ids.NowMS()
-	err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "durable_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"title", "updated_at"}),
-		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
-	}).Create(&DurableTabTitle{DurableID: durableID, Title: value, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}).Error
+	ownerID := ipc.OwnerID(ctx)
+	// Insert-if-absent never touches an existing row; the guarded UPDATE then
+	// applies only to this owner's row or a legacy ownerless one on every
+	// backend (MySQL and MariaDB ignore ON CONFLICT ... WHERE).
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "durable_id"}},
+			DoNothing: true,
+		}).Create(&DurableTabTitle{DurableID: durableID, Title: value, UpdatedAt: now, OwnerID: ownerID}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&DurableTabTitle{}).
+			Where("durable_id = ? AND (owner_id = ? OR owner_id = '')", durableID, ownerID).
+			Updates(map[string]any{"title": value, "updated_at": now, "owner_id": ownerID}).Error
+	})
 	if err != nil {
 		return dbError(err)
+	}
+	return nil
+}
+
+// DurableTabTitleOwner resolves the owner recorded on a durable tab title;
+// an empty string means the row is legacy ownerless or absent.
+func (s *Store) DurableTabTitleOwner(ctx context.Context, durableID string) (string, error) {
+	var ownerID string
+	err := s.db.WithContext(ctx).Model(&DurableTabTitle{}).
+		Select("owner_id").
+		Where("durable_id = ?", durableID).
+		Limit(1).
+		Scan(&ownerID).Error
+	if err != nil {
+		return "", dbError(err)
+	}
+	return ownerID, nil
+}
+
+// DurableTabTitleDeleteIfOwned removes a durable tab title only while the row
+// is still owned by ownerID or still legacy ownerless, so a delete racing a
+// claim never removes a freshly claimed row.
+func (s *Store) DurableTabTitleDeleteIfOwned(ctx context.Context, durableID, ownerID string) error {
+	info := s.db.WithContext(ctx).
+		Where("durable_id = ? AND (owner_id = ? OR owner_id = '')", durableID, ownerID).
+		Delete(&DurableTabTitle{})
+	if info.Error != nil {
+		return dbError(info.Error)
 	}
 	return nil
 }
@@ -612,7 +773,9 @@ func (s *Store) EnforceTranscriptRetention(ctx context.Context, policy Transcrip
 				return rows, err
 			},
 			func(tx *gorm.DB, rows []TranscriptRow) (int64, error) {
-				return s.transcriptRetentionDeleteRows(ctx, tx, rows)
+				return s.transcriptRetentionDeleteRows(ctx, tx, rows, func(query *gorm.DB, _ TranscriptRow) *gorm.DB {
+					return query.Where("ended_at < ?", cutoff)
+				})
 			},
 		)
 		result.Deleted += deleted
@@ -635,7 +798,22 @@ func (s *Store) EnforceTranscriptRetention(ctx context.Context, policy Transcrip
 				return rows, err
 			},
 			func(tx *gorm.DB, rows []TranscriptRow) (int64, error) {
-				return s.transcriptRetentionDeleteRows(ctx, tx, rows)
+				// The keep set is evaluated inside each DELETE statement, so
+				// eligibility is judged against the current committed ordering
+				// instead of a separately read boundary a concurrent refresh
+				// can stale. The derived-table wrapper keeps MySQL and MariaDB
+				// from rejecting the same-table LIMIT subquery.
+				keepSet := tx.WithContext(ctx).Model(&TranscriptRow{}).
+					Select("id").
+					Where("ended_at IS NOT NULL").
+					Order("ended_at DESC, id DESC").
+					Limit(int(policy.MaxCount))
+				for _, condition := range ownerConditions(ctx, "transcript") {
+					keepSet = keepSet.Where(condition)
+				}
+				return s.transcriptRetentionDeleteRows(ctx, tx, rows, func(query *gorm.DB, _ TranscriptRow) *gorm.DB {
+					return query.Where("id NOT IN (SELECT id FROM (?) AS keep_set)", keepSet)
+				})
 			},
 		)
 		result.Deleted += deleted
@@ -646,30 +824,50 @@ func (s *Store) EnforceTranscriptRetention(ctx context.Context, policy Transcrip
 	return result, nil
 }
 
-func (s *Store) transcriptRetentionDeleteRows(ctx context.Context, tx *gorm.DB, rows []TranscriptRow) (int64, error) {
+// transcriptRetentionRowGuard narrows a selected row's delete to rows that are
+// still retention-eligible when the delete statement executes, re-checked
+// against the latest committed row on every backend.
+type transcriptRetentionRowGuard func(query *gorm.DB, row TranscriptRow) *gorm.DB
+
+// transcriptRetentionDeleteRows deletes the selected rows one guarded delete
+// at a time and tombstones only the rows that delete actually removed, under
+// each row's own owner and in the same transaction, so a background run
+// without an owner in the context still attributes deletions to the correct
+// sync scope. The guard re-checks retention eligibility against the latest
+// committed row on every backend, including the sync opt-in flag: a row whose
+// flag flipped after selection is skipped this round — the next round deletes
+// it under its new state, writing or omitting the tombstone accordingly — so
+// an opted-in row is never deleted without its tombstone. Rows that stay
+// eligible are deleted and tombstoned together, never one without the other.
+func (s *Store) transcriptRetentionDeleteRows(ctx context.Context, tx *gorm.DB, rows []TranscriptRow, guard transcriptRetentionRowGuard) (int64, error) {
 	if len(rows) == 0 {
 		return 0, nil
 	}
-	ids := make([]string, 0, len(rows))
-	optedIn := make([]string, 0, len(rows))
+	deletedAt := ids.NowMS()
+	tombstones := make([]*SyncTombstone, 0, len(rows))
+	var deleted int64
 	for _, row := range rows {
-		ids = append(ids, row.ID)
+		info := guard(tx.WithContext(ctx).
+			Where("id = ? AND owner_id = ? AND ended_at IS NOT NULL AND sync_opt_in = ?", row.ID, row.OwnerID, row.SyncOptIn), row).
+			Delete(&TranscriptRow{})
+		if info.Error != nil {
+			return 0, info.Error
+		}
+		if info.RowsAffected == 0 {
+			continue
+		}
+		deleted += info.RowsAffected
 		if row.SyncOptIn {
-			optedIn = append(optedIn, row.ID)
+			tombstones = append(tombstones, &SyncTombstone{ID: row.ID, Kind: transcriptTombstoneKind, DeletedAt: deletedAt, OwnerID: row.OwnerID})
 		}
 	}
-	transcript := query.Use(tx).TranscriptRow
-	info, err := transcript.WithContext(ctx).
-		Where(transcript.ID.In(ids...)).
-		Where(ownerConditions(ctx, transcript.TableName())...).
-		Delete()
-	if err != nil {
-		return 0, err
-	}
-	for _, id := range optedIn {
-		if err := transcriptTombstoneTx(ctx, tx, id); err != nil {
+	if len(tombstones) > 0 {
+		tombstone := query.Use(tx).SyncTombstone
+		if err := tombstone.WithContext(ctx).Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "owner_id"}, {Name: "id"}}, DoNothing: true,
+		}).CreateInBatches(tombstones, retentionBatchSize); err != nil {
 			return 0, err
 		}
 	}
-	return info.RowsAffected, nil
+	return deleted, nil
 }

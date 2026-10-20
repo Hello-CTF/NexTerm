@@ -185,6 +185,17 @@ func (s *retentionScheduler) execute(job *retentionJob) {
 
 	job.run(job.ctx)
 	finished := time.Now()
+	if wait < 0 {
+		wait = 0
+	}
+	// Log before publishing completion: closing job.done (below) is what lets
+	// RunRetentionSchedule — and with it the caller's shutdown — return, so
+	// the log write must happen first to stay ordered before that return.
+	s.store.logger.Info("scheduled retention cleanup finished",
+		"job", job.name,
+		"scheduler_wait_ms", retentionMilliseconds(wait),
+		"duration_ms", retentionMilliseconds(finished.Sub(started)),
+	)
 
 	s.mu.Lock()
 	job.running = false
@@ -193,14 +204,6 @@ func (s *retentionScheduler) execute(job *retentionJob) {
 		close(job.done)
 	}
 	s.mu.Unlock()
-	if wait < 0 {
-		wait = 0
-	}
-	s.store.logger.Info("scheduled retention cleanup finished",
-		"job", job.name,
-		"scheduler_wait_ms", retentionMilliseconds(wait),
-		"duration_ms", retentionMilliseconds(finished.Sub(started)),
-	)
 }
 
 func retentionMilliseconds(duration time.Duration) float64 {
