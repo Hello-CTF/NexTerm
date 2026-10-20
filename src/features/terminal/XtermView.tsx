@@ -295,26 +295,26 @@ export function XtermView(props: XtermViewProps) {
     // streams pause through the existing hub backpressure: detaching routes
     // to DetachStream (the exec keeps running, output accumulates in the
     // bounded replay) and the reopen resumes via attachTab/ResumeExec.
+    let pauseNeeded = false;
     const pauseUpstream = () => {
       if (!kernelTabId) return;
       if (containerId) {
         void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);
         return;
       }
-      void pauseWithRetry(3);
+      pauseWithRetry();
     };
-    const pauseWithRetry = (attempts: number) => {
+    const pauseWithRetry = () => {
       if (!kernelTabId) return;
       const channelId = channelIdOf(channel);
       if (!channelId) return;
-      call("terminal_pause", { tabId: kernelTabId, channelId }).catch(() => {
-        if (attempts > 1) {
-          window.setTimeout(() => pauseWithRetry(attempts - 1), 100);
-          return;
+      call("terminal_pause", { tabId: kernelTabId, channelId, acceptedBytes: acceptedOffsetNow() }).catch(() => {
+        // The pause could not be established yet: retry while the writer is
+        // still over the high watermark — without it the producer keeps
+        // advancing and the refused suffix can outgrow the recovery ring.
+        if (pauseNeeded) {
+          window.setTimeout(() => pauseWithRetry(), 100);
         }
-        // The pause could not be established: surface an accurate overflow
-        // state instead of silently dropping output.
-        useUi.getState().pushToast("error", "终端输出积压且无法暂停上游，部分输出可能丢失");
       });
     };
     let lastRefuseToastAt = 0;
@@ -322,6 +322,7 @@ export function XtermView(props: XtermViewProps) {
     // client resumes only once its accepted offset catches up to it.
     let recoverTarget: number | null = null;
     let recoverInFlight = false;
+    let recoverPending = false;
     const acceptedOffsetNow = () =>
       streamAnchor ? streamAnchor.seq + Math.max(0, streamBytes - streamAnchor.control) : streamBytes;
     const resumeUpstream = () => {
@@ -331,8 +332,10 @@ export function XtermView(props: XtermViewProps) {
       void call("terminal_resume", { tabId: kernelTabId, channelId }).catch(() => undefined);
     };
     const maybeResume = () => {
+      if (recoverInFlight || recoverPending) return;
       if (recoverTarget !== null && acceptedOffsetNow() >= recoverTarget) {
         recoverTarget = null;
+        resumeUpstream();
       }
     };
     const pumpRecover = () => {
@@ -348,6 +351,14 @@ export function XtermView(props: XtermViewProps) {
         .then((res) => {
           recoverInFlight = false;
           recoverTarget = (res as { flushedOffset?: number } | null)?.flushedOffset ?? null;
+          if (recoverPending) {
+            // A refusal arrived while this recover was in flight: serially
+            // recover the newly refused suffix with the latest accepted
+            // offset before any resume is considered.
+            recoverPending = false;
+            pumpRecover();
+            return;
+          }
           maybeResume();
         })
         .catch(() => {
@@ -369,8 +380,14 @@ export function XtermView(props: XtermViewProps) {
         // last anchor's streamSeq plus the bytes accepted since it — so the
         // server's recovery ring replays exactly the refused suffix, not the
         // bytes a paused coalescer still holds for the resume flush.
-        recoverTarget = null;
-        pumpRecover();
+        if (recoverInFlight) {
+          // A recover is already in flight: record that another refusal
+          // arrived so it serially re-recovers once the response lands.
+          recoverPending = true;
+        } else {
+          recoverTarget = null;
+          pumpRecover();
+        }
       } else if (kernelTabId) {
         // Durable tabs: the resume anchor replays refused bytes in order.
         void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);
@@ -410,18 +427,21 @@ export function XtermView(props: XtermViewProps) {
               : null,
           );
           if (paused) {
+            pauseNeeded = true;
             pauseUpstream();
           } else {
+            pauseNeeded = false;
             // Lift a refusal episode for tab kinds without an anchor-driven
             // recovery (docker exec); durable tabs end the episode at the
             // next anchor, and ephemeral recovery ends it at the recovery
             // anchor — never here, where a later old frame would be
             // accepted into a non-contiguous prefix.
             if (containerId) streamWriter.beginAttachment();
-            // Resume only once the refused suffix is fully accepted; a
-            // pending replay is awaited, not re-requested here.
+            // Resume only once the refused suffix is fully accepted and no
+            // recovery is in flight or pending; a pending replay is awaited,
+            // not re-requested here.
             maybeResume();
-            if (recoverTarget === null) {
+            if (recoverTarget === null && !recoverInFlight && !recoverPending) {
               resumeUpstream();
             }
           }
@@ -495,7 +515,7 @@ export function XtermView(props: XtermViewProps) {
           return;
         }
         streamBytes += bytes.length;
-        maybeResume();
+        if (recoverTarget !== null) maybeResume();
         if (expiredNoticePending && streamBytes >= (streamAnchor?.control ?? 0)) {
           expiredNoticePending = false;
           writeExpiredNotice();

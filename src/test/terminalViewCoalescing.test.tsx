@@ -392,6 +392,7 @@ describe("XtermView stream wiring", () => {
     expect(harness.call).toHaveBeenCalledWith("terminal_pause", {
       tabId: "kernel-1",
       channelId: "channel-1",
+      acceptedBytes: expect.any(Number),
     });
     // The fifth chunk is refused: it never enters the FIFO or the accounting.
     act(() => harness.channel?.onBytes?.(chunk));
@@ -501,6 +502,7 @@ describe("XtermView stream wiring", () => {
     expect(harness.call).toHaveBeenCalledWith("terminal_pause", {
       tabId: "kernel-1",
       channelId: "channel-1",
+      acceptedBytes: expect.any(Number),
     });
     // The feed is paused (no more bytes arrive); the FIFO drains below the
     // low watermark and the client resumes the feed.
@@ -608,6 +610,7 @@ describe("XtermView stream wiring", () => {
     expect(harness.call).toHaveBeenCalledWith("terminal_pause", {
       tabId: "kernel-1",
       channelId: "channel-1",
+      acceptedBytes: expect.any(Number),
     });
     // The pause RPC failed every retry: the client redelivers the refused
     // suffix from the tab's recovery ring. An ordinary detach would reap the
@@ -713,6 +716,102 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       channelId: "channel-1",
     });
+    vi.useRealTimers();
+  });
+
+  it("ephemeral tabs: a refusal during an in-flight recover schedules a serial re-recovery", async () => {
+    // A replay larger than the writer cap is refused again while the first
+    // recover RPC is still in flight. The follow-up refusal must be recorded
+    // and serially recovered with the latest accepted offset — never dropped.
+    let resolveRecover: ((value: unknown) => void) | undefined;
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+      ephemeral: true,
+    });
+    harness.call.mockImplementation((command: string) => {
+      if (command === "terminal_pause") return Promise.reject(new Error("no such command"));
+      if (command === "terminal_recover") {
+        return new Promise((resolve) => {
+          resolveRecover = resolve;
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+    vi.useFakeTimers();
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    act(() => harness.channel?.onBytes?.(chunk));
+    // The first recover is in flight (deferred). The anchor ends the episode.
+    expect(harness.call).toHaveBeenCalledTimes(2);
+    expect(harness.call).toHaveBeenCalledWith("terminal_recover", {
+      tabId: "kernel-1",
+      channelId: "channel-1",
+      acceptedBytes: 4 * (4 << 20),
+    });
+    act(() => t.drainWrites());
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "recovery-kernel-1",
+      streamSeq: 4 * (4 << 20),
+      controlBytes: 0,
+    });
+    // A 20 MiB replay arrives: the writer accepts 16 MiB of it, then refuses
+    // the last 4 MiB while the first RPC is still in flight.
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    act(() => harness.channel?.onBytes?.(chunk));
+    // Complete the first RPC: the pending refusal must now serially fire a
+    // second recover with the latest accepted offset (32 MiB).
+    resolveRecover?.({ flushedOffset: 36 << 20 });
+    await act(async () => {
+      await flushMacrotask();
+    });
+    // The pending refusal serially fired a second recover with the latest
+    // accepted offset (32 MiB).
+    expect(harness.call).toHaveBeenLastCalledWith("terminal_recover", {
+      tabId: "kernel-1",
+      channelId: "channel-1",
+      acceptedBytes: 32 << 20,
+    });
+    // Complete the second RPC as well; the second replay restores the last
+    // 4 MiB and the client resumes.
+    resolveRecover?.({ flushedOffset: 36 << 20 });
+    await act(async () => {
+      await flushMacrotask();
+    });
+    act(() => t.drainWrites());
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "recovery-kernel-1",
+      streamSeq: 32 << 20,
+      controlBytes: 0,
+    });
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(harness.call).toHaveBeenCalledWith("terminal_resume", {
+      tabId: "kernel-1",
+      channelId: "channel-1",
+    });
+    const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
+    expect(total).toBe(9 * (4 << 20));
     vi.useRealTimers();
   });
 
