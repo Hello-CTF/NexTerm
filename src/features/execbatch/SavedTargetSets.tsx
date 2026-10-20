@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { describeError } from "../../ui/errorText";
 
 export interface SavedTargetSet {
@@ -21,6 +21,11 @@ export interface SavedTargetSetsApi {
   delete(id: string): Promise<void>;
 }
 
+type savedTargetSetsState = {
+  forApi: SavedTargetSetsApi | null;
+  sets: SavedTargetSet[] | null;
+};
+
 export function SavedTargetSets({
   api,
   availableTargetIds,
@@ -34,7 +39,7 @@ export function SavedTargetSets({
   onSelect: (sessionIds: string[]) => void;
   disabled?: boolean;
 }) {
-  const [sets, setSets] = useState<SavedTargetSet[] | null>(null);
+  const [state, setState] = useState<savedTargetSetsState>({ forApi: null, sets: null });
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -42,24 +47,42 @@ export function SavedTargetSets({
   const [armedDeleteId, setArmedDeleteId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const available = useMemo(() => new Set(availableTargetIds), [availableTargetIds]);
+  // generationRef is the latest-request marker: list responses and failures
+  // only commit while their generation is still current, so a slow response
+  // from a previous API/owner or from before a mutation can never overwrite
+  // newer state.
+  const generationRef = useRef(0);
 
   const reload = useCallback(async () => {
+    const generation = ++generationRef.current;
+    const requestApi = api;
     try {
-      const loaded = await api.list();
-      setSets(loaded);
+      const loaded = await requestApi.list();
+      if (generationRef.current !== generation) return;
+      setState({ forApi: requestApi, sets: loaded });
       setError(null);
     } catch (cause) {
+      if (generationRef.current !== generation) return;
       setError(describeError(cause));
     }
   }, [api]);
 
   useEffect(() => {
+    // A new API identity invalidates in-flight requests, clears stale
+    // errors, and hides the previous owner's sets from the first frame
+    // (the forApi render guard below withholds them synchronously).
+    generationRef.current++;
+    setState((current) => (current.forApi === api ? current : { forApi: null, sets: null }));
+    setError(null);
     void reload();
-  }, [reload]);
+  }, [api, reload]);
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
     setError(null);
+    // Invalidate reads that started before the mutation so a late stale
+    // list cannot wipe the item this mutation is about to save.
+    generationRef.current++;
     try {
       await action();
       await reload();
@@ -108,6 +131,10 @@ export function SavedTargetSets({
   const apply = (set: SavedTargetSet) => {
     onSelect(set.sessionIds.filter((id) => available.has(id)));
   };
+
+  // The forApi guard withholds the previous owner's sets synchronously on
+  // the first frame after an API switch, before any effect has run.
+  const sets = state.forApi === api ? state.sets : null;
 
   return (
     <fieldset className="min-w-0" disabled={disabled}>

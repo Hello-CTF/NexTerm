@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import {
   SavedTargetSets,
   type SavedTargetSet,
@@ -10,9 +10,10 @@ import {
 import {
   click,
   clickButton,
+  deferred,
   flush,
   flushUntil,
-  mountWithClient,
+  mount,
   setInputValue,
   type MountedView,
 } from "./reactTestUtils";
@@ -34,18 +35,33 @@ function fakeApi(overrides: Partial<SavedTargetSetsApi> = {}): SavedTargetSetsAp
   };
 }
 
+function setsElement(
+  api: SavedTargetSetsApi,
+  options: { selectedIds?: string[]; availableTargetIds?: string[]; onSelect?: (ids: string[]) => void } = {},
+) {
+  return createElement(SavedTargetSets, {
+    api,
+    availableTargetIds: options.availableTargetIds ?? ["s1", "s2"],
+    selectedIds: options.selectedIds ?? ["s1", "s2"],
+    onSelect: options.onSelect ?? (() => {}),
+  });
+}
+
 function mountSets(
   api: SavedTargetSetsApi,
   options: { selectedIds?: string[]; availableTargetIds?: string[]; onSelect?: (ids: string[]) => void } = {},
 ): MountedView {
-  return mountWithClient(
-    createElement(SavedTargetSets, {
-      api,
-      availableTargetIds: options.availableTargetIds ?? ["s1", "s2"],
-      selectedIds: options.selectedIds ?? ["s1", "s2"],
-      onSelect: options.onSelect ?? (() => {}),
-    }),
-  );
+  return mount(setsElement(api, options));
+}
+
+function rerenderSets(
+  view: MountedView,
+  api: SavedTargetSetsApi,
+  options: { selectedIds?: string[]; availableTargetIds?: string[]; onSelect?: (ids: string[]) => void } = {},
+): void {
+  act(() => {
+    view.root.render(setsElement(api, options));
+  });
 }
 
 async function mountLoaded(api: SavedTargetSetsApi, options = {}): Promise<MountedView> {
@@ -177,5 +193,83 @@ describe("SavedTargetSets", () => {
     await flushUntil(() => mounted?.container.querySelector("[role='alert']") !== null);
     expect(mounted.container.querySelector("[role='alert']")?.textContent).toContain("disk on fire");
     expect(api.list).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the previous owner's sets on the first frame after an API switch", async () => {
+    const listB = deferred<SavedTargetSet[]>();
+    const apiA = fakeApi();
+    const apiB = fakeApi({ list: vi.fn(() => listB.promise) });
+    mounted = await mountLoaded(apiA);
+    expect(mounted.container.textContent).toContain("web");
+
+    rerenderSets(mounted, apiB);
+    expect(mounted.container.textContent).not.toContain("web");
+    expect(mounted.container.textContent).toContain("加载中");
+
+    await act(async () => {
+      listB.resolve([]);
+    });
+    expect(mounted.container.textContent).toContain("暂无保存的目标集");
+  });
+
+  it("discards a stale list response that resolves after an API switch", async () => {
+    const listA = deferred<SavedTargetSet[]>();
+    const apiA = fakeApi({ list: vi.fn(() => listA.promise) });
+    const apiB = fakeApi();
+    mounted = mountSets(apiA);
+    rerenderSets(mounted, apiB);
+    await flushUntil(() => mounted?.container.textContent?.includes("web") ?? false);
+
+    await act(async () => {
+      listA.resolve([{ id: "a1", name: "owner-a-set", sessionIds: ["s1"], createdAt: 1, updatedAt: 1 }]);
+    });
+    expect(mounted.container.textContent).toContain("web");
+    expect(mounted.container.textContent).not.toContain("owner-a-set");
+  });
+
+  it("discards a stale list failure that resolves after an API switch", async () => {
+    const listA = deferred<SavedTargetSet[]>();
+    const apiA = fakeApi({ list: vi.fn(() => listA.promise) });
+    const apiB = fakeApi();
+    mounted = mountSets(apiA);
+    rerenderSets(mounted, apiB);
+    await flushUntil(() => mounted?.container.textContent?.includes("web") ?? false);
+
+    await act(async () => {
+      listA.reject(new Error("stale failure"));
+    });
+    expect(mounted.container.querySelector("[role='alert']")).toBeNull();
+    expect(mounted.container.textContent).toContain("web");
+  });
+
+  it("keeps a newly saved set when the stale pre-mutation list resolves late", async () => {
+    const mountList = deferred<SavedTargetSet[]>();
+    const reloadList = deferred<SavedTargetSet[]>();
+    let listCalls = 0;
+    const saved: SavedTargetSet = { id: "set-new", name: "cache", sessionIds: ["s1"], createdAt: 2, updatedAt: 2 };
+    const api = fakeApi({
+      list: vi.fn(() => {
+        listCalls += 1;
+        return listCalls === 1 ? mountList.promise : reloadList.promise;
+      }),
+      create: vi.fn().mockResolvedValue(saved),
+    });
+    mounted = mountSets(api, { selectedIds: ["s1"] });
+    const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='目标集名称']");
+    if (!input) throw new Error("name input missing");
+    setInputValue(input, "cache");
+    clickButton(mounted.container, "保存当前选择");
+    await flushUntil(() => listCalls === 2);
+
+    await act(async () => {
+      reloadList.resolve([saved]);
+    });
+    expect(mounted.container.textContent).toContain("cache");
+
+    await act(async () => {
+      mountList.resolve([{ id: "set-1", name: "web", sessionIds: ["s1"], createdAt: 1, updatedAt: 1 }]);
+    });
+    expect(mounted.container.textContent).toContain("cache");
+    expect(mounted.container.textContent).not.toContain("web");
   });
 });
