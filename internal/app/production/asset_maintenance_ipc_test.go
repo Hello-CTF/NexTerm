@@ -196,6 +196,7 @@ func TestDeployPublicKeyIPCRequiresProductionConfirmation(t *testing.T) {
 	}
 	request.ProductionConfirmation = &execbatch.ProductionConfirmation{
 		Confirmed: true, TargetSetHash: detail.TargetSetHash, CommandHash: detail.CommandHash,
+		EnvironmentNames: detail.RequiredEnvironmentNames,
 	}
 	confirmed := dispatchExecBatchTest(dispatcher, owner, "exec_batch_deploy_public_key", request)
 	batch := decodeExecBatchTest[execbatch.Batch](t, confirmed)
