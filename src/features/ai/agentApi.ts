@@ -6,6 +6,9 @@
 
 import type {
   AgentApprovalDecision,
+  AgentRecoverySummary,
+  AgentRunHistoryPage,
+  AgentRunStatusFilter,
   AgentRosterEntry,
 } from "./agentTypes";
 
@@ -16,4 +19,22 @@ export interface AgentRosterApi {
   rename(handle: string, nextHandle: string): Promise<AgentRosterEntry>;
   release(handle: string): Promise<void>;
   resolveApproval(requestId: string, decision: AgentApprovalDecision): Promise<void>;
+}
+
+export interface AgentRunHistoryScope {
+  ownerId: string;
+  conversationId: string;
+}
+
+// AI-05 history contract: the backend owns paging (opaque cursor), status
+// filtering and recovery summaries. Implementations must return one page per
+// call; the UI never emulates paging by slicing accumulated results.
+export interface AgentRunHistoryApi {
+  listRuns(
+    scope: AgentRunHistoryScope,
+    filter: AgentRunStatusFilter,
+    cursor: string | null,
+    limit: number,
+  ): Promise<AgentRunHistoryPage>;
+  recoverySummary(scope: AgentRunHistoryScope): Promise<AgentRecoverySummary | null>;
 }
