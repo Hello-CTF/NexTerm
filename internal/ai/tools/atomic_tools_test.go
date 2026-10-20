@@ -73,13 +73,14 @@ func TestWaitForQuietContinuousOutputTimeoutCancelAndZeroOutput(t *testing.T) {
 			t.Fatal(err)
 		}
 		startClock := fixture.clock.Load()
-		// Drive the fixture clock from the wait's own polls instead of wall
-		// time: every snapshot advances the clock and emits noise, so the
-		// quiet threshold can never be reached regardless of scheduling.
+		// Drive the fixture clock and the tab's output from the wait's own
+		// polls instead of wall time: every snapshot advances the clock and
+		// feeds the tab model directly (no pump round-trip), so the quiet
+		// threshold can never be reached regardless of scheduling.
 		var armHook func()
 		armHook = func() {
 			fixture.clock.Add(10)
-			_ = fixture.channel.emit([]byte("noise\r\n"))
+			fixture.terminal().Feed([]byte("noise\r\n"))
 			fixture.setSnapshotHook(armHook)
 		}
 		fixture.setSnapshotHook(armHook)

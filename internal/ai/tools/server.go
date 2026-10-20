@@ -503,6 +503,16 @@ func (s *sessionTerminal) TabSession(ctx context.Context, tabID string) (string,
 	return tab.SessionID, nil
 }
 
+// hasTabSessionResolver reports whether any tab-session identity resolver is
+// available: the request-scoped TabSessionTerminal capability or the legacy
+// Dependencies.TabSession hook. Cursor binding treats both as resolvers.
+func (r *Registry) hasTabSessionResolver() bool {
+	if _, ok := r.deps.Terminal.(TabSessionTerminal); ok {
+		return true
+	}
+	return r.deps.TabSession != nil
+}
+
 func (r *Registry) tabSession(ctx context.Context, tabID string) (string, error) {
 	if terminal, ok := r.deps.Terminal.(TabSessionTerminal); ok {
 		return terminal.TabSession(ctx, tabID)
@@ -632,7 +642,7 @@ func (r *Registry) readScreen(ctx context.Context, jobID string, scope Scope, ra
 		if cursor.TabID != tabID {
 			return Fail(invalid("游标属于终端 %s，不能用于终端 %s", cursor.TabID, tabID))
 		}
-		_, hasResolver := r.deps.Terminal.(TabSessionTerminal)
+		hasResolver := r.hasTabSessionResolver()
 		if cursor.SessionID == "" && hasResolver {
 			return Fail(fmt.Errorf("游标缺少会话绑定，无法确认来源终端；请用 since_seq=%d 重新读取", cursor.Seq))
 		}
@@ -794,12 +804,13 @@ func (r *Registry) readScreenSince(ctx context.Context, tabID string, sinceSeq u
 	more := next < latest
 	if more {
 		header += fmt.Sprintf("；还有未读输出，下一页 since_seq=%d", next)
-		// An identity resolver that exists but fails must never produce an
-		// unbound cursor; the page still continues with the plain anchor.
-		_, hasResolver := r.deps.Terminal.(TabSessionTerminal)
+		// An identity resolver that exists but fails or yields an empty
+		// identity must never produce an unbound cursor; the page still
+		// continues with the plain anchor.
+		hasResolver := r.hasTabSessionResolver()
 		sessionID, sessionErr := r.tabSession(ctx, tabID)
-		if hasResolver && sessionErr != nil {
-			header += "；身份解析失败，本次不提供 cursor，请用 since_seq 翻页"
+		if hasResolver && (sessionErr != nil || sessionID == "") {
+			header += "；身份解析失败或返回空身份，本次不提供 cursor，请用 since_seq 翻页"
 		} else if cursor := encodeScreenCursor(screenCursor{Version: 1, Kind: "raw", Seq: next, TabID: tabID, SessionID: sessionID, Cols: cols, Rows: rows}); cursor != "" {
 			header += " 或 cursor=" + cursor
 		}
