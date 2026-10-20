@@ -568,19 +568,21 @@ func TestImportBundleDuplicateSnippetChainsSnapshotDatabase(t *testing.T) {
 	}
 }
 
-// The reviewer's exact r8 window, reproducible only where the import transaction does not
-// lock the absent row's gap and reads the latest commit (PostgreSQL): a concurrent
-// same-ID credential insert landing between the must-not-exist probe and the INSERT must
-// surface as a credential conflict — never as this import's success — and the
-// asset-conflict compensation must not delete the concurrently created credential.
-// SQLite hits SQLITE_BUSY inside the import transaction's write lock, and MySQL/MariaDB
-// gap locks plus repeatable-read snapshots cannot construct this window at all, so the
-// test only runs on PostgreSQL.
+// The reviewer's exact r8 window: a concurrent same-ID credential insert landing right
+// before the import's INSERT inside its write transaction must surface as a credential
+// conflict — never as this import's success — and the asset-conflict compensation must
+// not delete the concurrently created credential. The window needs the concurrent insert
+// to commit while the import transaction sits between its savepoint and the INSERT, which
+// PostgreSQL, MySQL, and MariaDB all allow; SQLite's immediate transaction write lock
+// blocks the concurrent connection, so the window is not constructible there and the test
+// skips (that skip is a non-constructible note, not a product pass or failure).
 //
-//dbtest:backend postgres
+//dbtest:backend postgres,mysql,mariadb
 func TestImportBundleConcurrentNewCredentialInsertInTxDatabase(t *testing.T) {
-	if !strings.EqualFold(os.Getenv("NEXTERM_TEST_DB_BACKEND"), "postgres") {
-		t.Skip("the in-transaction concurrent-insert window is only constructible on PostgreSQL")
+	switch strings.ToLower(os.Getenv("NEXTERM_TEST_DB_BACKEND")) {
+	case "postgres", "mysql", "mariadb":
+	default:
+		t.Skip("the in-transaction concurrent-insert window is not constructible on SQLite")
 	}
 	instance := newDatabaseTestInstance(t, true)
 	ctx := context.Background()
@@ -657,17 +659,22 @@ func TestImportBundleConcurrentNewCredentialInsertInTxDatabase(t *testing.T) {
 	}
 }
 
-// The reviewer's r9 counterexample, reproducible only where the import transaction does
-// not lock the absent row's gap and reads the latest commit (PostgreSQL): a concurrent
-// same-ID insert of a row byte-identical to the import's target (including created_at)
-// between the must-not-exist probe and the INSERT must surface as a credential conflict
-// — never as this import's success — and the asset-conflict compensation must not delete
-// the concurrently created identical credential.
+// The reviewer's r9 counterexample: a concurrent same-ID insert of a row byte-identical
+// to the import's target (including created_at) right before the import's INSERT must
+// surface as a credential conflict — never as this import's success — and the
+// asset-conflict compensation must not delete the concurrently created identical
+// credential. The window needs the concurrent insert to commit while the import
+// transaction sits between its savepoint and the INSERT, which PostgreSQL, MySQL, and
+// MariaDB all allow; SQLite's immediate transaction write lock blocks the concurrent
+// connection, so the window is not constructible there and the test skips (that skip is a
+// non-constructible note, not a product pass or failure).
 //
-//dbtest:backend postgres
+//dbtest:backend postgres,mysql,mariadb
 func TestImportBundleIdenticalConcurrentCredentialCompensatedDatabase(t *testing.T) {
-	if !strings.EqualFold(os.Getenv("NEXTERM_TEST_DB_BACKEND"), "postgres") {
-		t.Skip("the in-transaction identical-insert window is only constructible on PostgreSQL")
+	switch strings.ToLower(os.Getenv("NEXTERM_TEST_DB_BACKEND")) {
+	case "postgres", "mysql", "mariadb":
+	default:
+		t.Skip("the in-transaction identical-insert window is not constructible on SQLite")
 	}
 	instance := newDatabaseTestInstance(t, true)
 	ctx := context.Background()

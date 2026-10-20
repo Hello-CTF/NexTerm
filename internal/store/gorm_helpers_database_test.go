@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -25,9 +26,7 @@ func upsertGuardCredential(id, name string, createdAt, updatedAt int64) store.Cr
 
 // The must-not-exist paths prove ownership from the INSERT result, never from readback
 // content equality: a pre-existing row byte-identical to this call's target (including
-// created_at) must surface ErrWriteConflict, and the row survives. (The in-transaction
-// insert window is covered by the bundle-level PostgreSQL tests; on SQLite the store's
-// immediate transaction lock makes it non-constructible.)
+// created_at) must surface ErrWriteConflict, and the row survives.
 func TestUpsertOwnerGuardedExpectedIdenticalInsertDatabase(t *testing.T) {
 	db := dbtest.NewFixture(t).OpenStore(t)
 	ctx := context.Background()
@@ -196,4 +195,49 @@ func TestUpsertOwnerGuardedSnapshotPathsUnaffectedDatabase(t *testing.T) {
 			t.Fatalf("ordinary content idempotent replay failed: %v", err)
 		}
 	})
+}
+
+// The must-not-exist path also rejects an identical row that lands right before the
+// INSERT: the concurrent insert commits while this call sits between its savepoint and
+// the INSERT (constructible on PostgreSQL, MySQL, and MariaDB; SQLite's immediate
+// transaction write lock blocks the concurrent connection, so the window is not
+// constructible there and the test skips — a non-constructible note, not a product pass
+// or failure). The duplicate-key violation surfaces ErrWriteConflict and the concurrent
+// row survives.
+//
+//dbtest:backend postgres,mysql,mariadb
+func TestUpsertOwnerGuardedExpectedIdenticalInsertAtInsertDatabase(t *testing.T) {
+	switch strings.ToLower(os.Getenv("NEXTERM_TEST_DB_BACKEND")) {
+	case "postgres", "mysql", "mariadb":
+	default:
+		t.Skip("the at-insert identical-row window is not constructible on SQLite")
+	}
+	db := dbtest.NewFixture(t).OpenStore(t)
+	ctx := context.Background()
+	row := upsertGuardCredential(ids.New(), "imported", 200, 200)
+	concurrent := row
+	fired := false
+	if err := db.GORM().Callback().Create().Before("gorm:create").Register("test:identical-insert-expected", func(tx *gorm.DB) {
+		if fired || tx.Statement.Table != "credential" {
+			return
+		}
+		fired = true
+		if err := db.GORM().WithContext(context.Background()).Create(&concurrent).Error; err != nil {
+			t.Errorf("concurrent identical insert: %v", err)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.GORM().Callback().Create().Remove("test:identical-insert-expected") })
+
+	if err := store.UpsertOwnerGuardedExpected(ctx, db.GORM(), &row, upsertGuardCredentialColumns, 0); !errors.Is(err, store.ErrWriteConflict) {
+		t.Fatalf("identical concurrent insert error = %v, want ErrWriteConflict", err)
+	}
+	if !fired {
+		t.Fatal("identical concurrent insert did not fire")
+	}
+	stored, err := db.CredentialGetRow(ctx, row.ID)
+	if err != nil || stored.Name != "imported" || stored.UpdatedAt != 200 {
+		t.Fatalf("concurrent identical row must survive: %+v err=%v", stored, err)
+	}
 }
