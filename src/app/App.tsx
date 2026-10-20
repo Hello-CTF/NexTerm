@@ -111,7 +111,7 @@ import { LogViewer } from "../features/files/LogViewer";
 import { MultiHostLogTail } from "../features/logs/MultiHostLogTail";
 import { isMultiHostLogTabId } from "../features/logs/logTailTab";
 import { FleetHealthPanel } from "../features/fleet/FleetHealthPanel";
-import { FLEET_HEALTH_TAB_ID } from "../features/fleet/fleetHealthTab";
+import { isFleetHealthTabId } from "../features/fleet/fleetHealthTab";
 import { DockerPanel } from "../features/docker/DockerPanel";
 import { DbPanel } from "../features/db/DbPanel";
 import { ExecBatchPanel } from "../features/execbatch/ExecBatchPanel";
@@ -2453,7 +2453,7 @@ const PaneForTab = memo(function PaneForTab({
       );
     case "log":
       if (isMultiHostLogTabId(tab.id)) return <MultiHostLogTail sessions={sessions} />;
-      if (tab.id === FLEET_HEALTH_TAB_ID) return <FleetHealthPanel sessions={sessions} visible={active} />;
+      if (isFleetHealthTabId(tab.id)) return <FleetHealthPanel sessions={sessions} visible={active} />;
       if (!tab.sessionId || !tab.path) return <EmptyState />;
       return <LogViewer sessionId={tab.sessionId} path={tab.path} onClose={close} />;
     case "docker":

@@ -11,6 +11,7 @@ import {
   click,
   clickButton,
   deferred,
+  flush,
   flushUntil,
   mount,
   setInputValue,
@@ -25,13 +26,21 @@ const mocks = vi.hoisted(() => ({
   cancel: vi.fn(),
   createId: vi.fn(),
   sessionList: vi.fn(),
+  snippetList: vi.fn(),
+  probeBatch: vi.fn(),
 }));
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
   return {
     ...actual,
-    assetApi: { ...actual.assetApi, list: mocks.assetList, groupList: mocks.groupList },
+    assetApi: {
+      ...actual.assetApi,
+      list: mocks.assetList,
+      groupList: mocks.groupList,
+      snippetList: mocks.snippetList,
+      probeBatch: mocks.probeBatch,
+    },
     sessionApi: { ...actual.sessionApi, list: mocks.sessionList },
   };
 });
@@ -51,6 +60,7 @@ import {
   FLEET_HEALTH_TAB_ID,
   isFleetHealthTab,
 } from "../../features/fleet/fleetHealthTab";
+import { CommandPalette } from "../../app/CommandPalette";
 
 function group(id: string, parentId: string | null = null): AssetGroup {
   return { id, parentId, name: `Project ${id}`, sort: 0, createdAt: 1, updatedAt: 1 };
@@ -162,6 +172,9 @@ beforeEach(() => {
   mocks.createId.mockImplementation(() => `health-${++nextId}`);
   mocks.assetList.mockResolvedValue(assets);
   mocks.groupList.mockResolvedValue(groups);
+  mocks.snippetList.mockResolvedValue([]);
+  mocks.probeBatch.mockResolvedValue({ results: [] });
+  mocks.sessionList.mockResolvedValue([]);
   mocks.healthProbe.mockImplementation((request: ExecBatchHealthRequest) => Promise.resolve(healthResponse(request.batchId)));
   mocks.cancel.mockResolvedValue({ canceled: true });
   useUi.setState({ activeProject: projectFocusForGroup("p1"), projectInventory: null });
@@ -443,5 +456,96 @@ describe("fleet health tab identity across workspaces", () => {
     await expect(useUi.getState().closeTab(FLEET_HEALTH_TAB_ID)).resolves.toBe(true);
     expect(paneTabIds("ws-2")).toEqual([]);
     expect(paneTabIds("ws-1")).toEqual([]);
+  });
+});
+
+describe("fleet health palette entry", () => {
+  let palette: MountedView | undefined;
+  let paletteClient: QueryClient | undefined;
+
+  const workspaceTabs = (): { tabs: { id: string; kind: string }[]; activeTabId: string | null } => {
+    const pane = useUi.getState().workspaces.find((w) => w.id === "ws-palette")?.panes[0];
+    return { tabs: pane?.tabs ?? [], activeTabId: pane?.activeTabId ?? null };
+  };
+
+  function mountPalette(): MountedView {
+    paletteClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const currentClient = paletteClient;
+    palette = mount(
+      createElement(
+        QueryClientProvider,
+        { client: currentClient },
+        createElement(CommandPalette, { onClose: () => undefined }),
+      ),
+    );
+    return palette;
+  }
+
+  function paletteOption(view: MountedView, text: string): HTMLButtonElement {
+    const option = [...view.container.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(
+      (o) => o.textContent?.includes(text),
+    );
+    if (!option) throw new Error(`Palette option not found: ${text}`);
+    return option;
+  }
+
+  beforeEach(() => {
+    useUi.setState({
+      sessions,
+      workspaces: [
+        {
+          id: "ws-palette",
+          kind: "tools",
+          title: "工具",
+          panes: [{ id: "ws-palette-pane", tabs: [], activeTabId: null }],
+          activePaneId: "ws-palette-pane",
+          splitRatio: 0.5,
+          closable: true,
+        },
+      ],
+      activeWorkspaceId: "ws-palette",
+    });
+  });
+
+  afterEach(() => {
+    palette?.unmount();
+    palette = undefined;
+    paletteClient?.clear();
+    paletteClient = undefined;
+    useUi.setState({ sessions: [], workspaces: [], activeWorkspaceId: null });
+  });
+
+  it("opens a uniquely identified instance per invocation, keeping close and activation per instance", async () => {
+    const firstPalette = mountPalette();
+    await flush();
+    await flush();
+    click(paletteOption(firstPalette, "主机概览"));
+    await flush();
+    firstPalette.unmount();
+    palette = undefined;
+
+    const secondPalette = mountPalette();
+    await flush();
+    await flush();
+    click(paletteOption(secondPalette, "主机概览"));
+    await flush();
+    secondPalette.unmount();
+    palette = undefined;
+
+    const { tabs, activeTabId } = workspaceTabs();
+    expect(tabs).toHaveLength(2);
+    const [first, second] = tabs;
+    expect(first.id).not.toBe(second.id);
+    for (const tab of tabs) {
+      expect(tab.id.startsWith(`${FLEET_HEALTH_TAB_ID}:`)).toBe(true);
+      expect(isFleetHealthTab(tab)).toBe(true);
+    }
+    expect(activeTabId).toBe(second.id);
+
+    useUi.getState().setActiveTab(first.id);
+    expect(workspaceTabs().activeTabId).toBe(first.id);
+
+    await expect(useUi.getState().closeTab(first.id)).resolves.toBe(true);
+    expect(workspaceTabs().tabs.map((t) => t.id)).toEqual([second.id]);
   });
 });
