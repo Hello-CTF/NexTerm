@@ -299,7 +299,11 @@ beforeEach(() => {
   harness.detach.mockResolvedValue(undefined);
   harness.setVisible.mockResolvedValue(undefined);
   harness.write.mockResolvedValue(undefined);
-  harness.call.mockReset().mockResolvedValue(undefined);
+  harness.call.mockReset().mockImplementation((command: string) => {
+    if (command === "terminal_pause") return Promise.resolve({ episodeToken: 31 });
+    if (command === "terminal_recover") return Promise.resolve({ flushedOffset: 5 * (4 << 20), episodeToken: 31 });
+    return Promise.resolve(undefined);
+  });
   harness.execAttach.mockReset().mockResolvedValue("kernel-1");
   harness.openLineTab.mockReset().mockResolvedValue({
     tabId: "kernel-1",
@@ -423,12 +427,17 @@ describe("XtermView stream wiring", () => {
     act(() => harness.channel?.onBytes?.(new Uint8Array(1024).fill(0x62)));
     expect(t.writeLog.length).toBe(4);
     expect(harness.detach).toHaveBeenCalledTimes(1);
-    // Draining asked the server to resume the feed.
+    // Draining asked the server to resume the feed: the pause response
+    // carrying the episode token lands, then the resume fires with it.
+    await act(async () => {
+      await flushMacrotask();
+    });
     expect(harness.call).toHaveBeenCalledWith("terminal_resume", {
       tabId: "kernel-1",
       channelId: "channel-1",
       clientId: "me",
       attachmentId: 11,
+      episodeToken: 31,
     });
     // Transport reopen → reattach with a resume anchor at the last accepted
     // byte; the refused suffix will be replayed from there.
@@ -530,11 +539,17 @@ describe("XtermView stream wiring", () => {
     // The feed is paused (no more bytes arrive); the FIFO drains below the
     // low watermark and the client resumes the feed.
     act(() => t.drainWrites());
+    // The pause response carrying the episode token lands, then the resume
+    // fires with it.
+    await act(async () => {
+      await flushMacrotask();
+    });
     expect(harness.call).toHaveBeenCalledWith("terminal_resume", {
       tabId: "kernel-1",
       channelId: "channel-1",
       clientId: "me",
       attachmentId: 11,
+      episodeToken: 31,
     });
     // The feed resumes and the full sequence arrives in order: nothing was
     // refused, so there is no hole.
@@ -565,7 +580,7 @@ describe("XtermView stream wiring", () => {
     harness.call.mockImplementation((command: string) =>
       command === "terminal_pause"
         ? Promise.reject(new Error("no such command"))
-        : Promise.resolve({ flushedOffset: 5 * (4 << 20) }),
+        : Promise.resolve({ flushedOffset: 5 * (4 << 20), episodeToken: 31 }),
     );
     vi.useFakeTimers();
     await show();
@@ -609,6 +624,7 @@ describe("XtermView stream wiring", () => {
       channelId: "channel-1",
       clientId: "me",
       attachmentId: 11,
+      episodeToken: 31,
     });
     expect(t.writeLog.length).toBe(5);
     const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
@@ -702,7 +718,7 @@ describe("XtermView stream wiring", () => {
     harness.call.mockImplementation((command: string) =>
       command === "terminal_pause"
         ? Promise.reject(new Error("no such command"))
-        : Promise.resolve({ flushedOffset: 22 << 20 }),
+        : Promise.resolve({ flushedOffset: 22 << 20, episodeToken: 31 }),
     );
     vi.useFakeTimers();
     await show();
@@ -752,6 +768,7 @@ describe("XtermView stream wiring", () => {
       channelId: "channel-1",
       clientId: "me",
       attachmentId: 11,
+      episodeToken: 31,
     });
     vi.useRealTimers();
   });
@@ -817,7 +834,7 @@ describe("XtermView stream wiring", () => {
     act(() => harness.channel?.onBytes?.(chunk));
     // Complete the first RPC: the pending refusal must now serially fire a
     // second recover with the latest accepted offset (32 MiB).
-    resolveRecover?.({ flushedOffset: 36 << 20 });
+    resolveRecover?.({ flushedOffset: 36 << 20, episodeToken: 31 });
     await act(async () => {
       await flushMacrotask();
     });
@@ -832,7 +849,7 @@ describe("XtermView stream wiring", () => {
     });
     // Complete the second RPC as well; the second replay restores the last
     // 4 MiB and the client resumes.
-    resolveRecover?.({ flushedOffset: 36 << 20 });
+    resolveRecover?.({ flushedOffset: 36 << 20, episodeToken: 31 });
     await act(async () => {
       await flushMacrotask();
     });
@@ -853,6 +870,7 @@ describe("XtermView stream wiring", () => {
       channelId: "channel-1",
       clientId: "me",
       attachmentId: 11,
+      episodeToken: 31,
     });
     const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
     expect(total).toBe(9 * (4 << 20));
@@ -1131,7 +1149,7 @@ describe("XtermView stream wiring", () => {
     harness.call.mockImplementation((command: string) =>
       command === "terminal_pause"
         ? Promise.reject(new Error("no such command"))
-        : Promise.resolve({ flushedOffset: 5 * (4 << 20) }),
+        : Promise.resolve({ flushedOffset: 5 * (4 << 20), episodeToken: 31 }),
     );
     vi.useFakeTimers();
     await show();
@@ -1169,6 +1187,7 @@ describe("XtermView stream wiring", () => {
       channelId: "channel-1",
       clientId: "me",
       attachmentId: 11,
+      episodeToken: 31,
     });
     expect(t.writeLog.length).toBe(5);
     // Reopen: incarnation 12 takes over mid-stream.
@@ -1202,6 +1221,148 @@ describe("XtermView stream wiring", () => {
     const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
     expect(total).toBe(6 * (4 << 20));
     vi.useRealTimers();
+  });
+
+  it("a completed recovery emits exactly one terminal_resume, carrying the learned episode token", async () => {
+    // The server's episode token comes back with the pause and recover
+    // responses; the resume must present it, and the two resume triggers
+    // (caught-up maybeResume and the low-water drain) must dedup to a single
+    // effective resume for the episode.
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+      ephemeral: true,
+      attachmentId: 11,
+    });
+    harness.call.mockImplementation((command: string) => {
+      if (command === "terminal_pause") return Promise.resolve({ episodeToken: 31 });
+      if (command === "terminal_recover") return Promise.resolve({ flushedOffset: 5 * (4 << 20), episodeToken: 31 });
+      return Promise.resolve(undefined);
+    });
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    act(() => harness.channel?.onBytes?.(chunk));
+    expect(harness.call).toHaveBeenCalledWith("terminal_pause", {
+      tabId: "kernel-1",
+      channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 11,
+      acceptedBytes: expect.any(Number),
+    });
+    // The recover names the episode it opened; the client catches up and both
+    // resume triggers fire — exactly one resume leaves, with that token.
+    await act(async () => {
+      await flushMacrotask();
+    });
+    act(() => t.drainWrites());
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "recovery-kernel-1",
+      streamSeq: 4 * (4 << 20),
+      controlBytes: 0,
+      attachmentId: 11,
+    });
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    const resumes = harness.call.mock.calls.filter((c) => c[0] === "terminal_resume");
+    expect(resumes).toHaveLength(1);
+    expect(resumes[0][1]).toMatchObject({
+      tabId: "kernel-1",
+      channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 11,
+      episodeToken: 31,
+    });
+    // The full sequence is restored contiguously.
+    const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
+    expect(total).toBe(5 * (4 << 20));
+  });
+
+  it("each new episode's resume carries its own token; a prior episode's token is never reused", async () => {
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+      ephemeral: true,
+      attachmentId: 11,
+    });
+    // The server side of the token contract: pause joins the open episode
+    // (idempotent), resume closes only the episode matching the token.
+    let currentToken = 0;
+    let nextToken = 31;
+    harness.call.mockImplementation((command: string, args: { episodeToken?: number }) => {
+      if (command === "terminal_pause") {
+        if (currentToken === 0) currentToken = nextToken++;
+        return Promise.resolve({ episodeToken: currentToken });
+      }
+      if (command === "terminal_resume") {
+        if ((args.episodeToken ?? -1) !== currentToken) return Promise.reject(new Error("stale episode token"));
+        currentToken = 0;
+        return Promise.resolve(undefined);
+      }
+      return Promise.resolve(undefined);
+    });
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    // Episode 1: saturate past the high watermark, then drain to low water.
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(harness.call).toHaveBeenLastCalledWith("terminal_resume", {
+      tabId: "kernel-1",
+      channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 11,
+      episodeToken: 31,
+    });
+    // Episode 2: a later saturation is a new server episode with a new token.
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(harness.call).toHaveBeenLastCalledWith("terminal_resume", {
+      tabId: "kernel-1",
+      channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 11,
+      episodeToken: 32,
+    });
+    // Each episode got exactly one effective resume — the token-less and
+    // stale-token resumes the server rejected don't count.
+    const tokens = harness.call.mock.calls
+      .filter((c) => c[0] === "terminal_resume")
+      .map((c) => (c[1] as { episodeToken?: number }).episodeToken);
+    expect(tokens.filter((token) => token === 31)).toHaveLength(1);
+    expect(tokens.filter((token) => token === 32)).toHaveLength(1);
+    expect(tokens[tokens.length - 1]).toBe(32);
   });
 });
 

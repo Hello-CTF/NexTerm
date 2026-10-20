@@ -303,6 +303,22 @@ export function XtermView(props: XtermViewProps) {
     // bounded replay) and the reopen resumes via attachTab/ResumeExec.
     let pauseNeeded = false;
     let pauseRetryTimer: number | undefined;
+    // The episode generation the server issued for the current refusal
+    // episode (from the pause or recover response), and the token the last
+    // resume was sent for: the server rejects a resume carrying a previous
+    // episode's token, and one episode needs at most one effective resume.
+    let episodeToken = 0;
+    let resumeSentToken = -1;
+    const learnEpisodeToken = (next: number | undefined) => {
+      if (next !== undefined && next > episodeToken) {
+        episodeToken = next;
+        resumeSentToken = -1;
+      }
+      // A drain that preceded the token (or a resume the server rejected)
+      // gets its retry once the token is known and the writer is drained;
+      // the dedup in resumeUpstream collapses everything else.
+      if (!pauseNeeded) resumeUpstream();
+    };
     const pauseUpstream = () => {
       if (!kernelTabId) return;
       if (containerId) {
@@ -315,14 +331,18 @@ export function XtermView(props: XtermViewProps) {
       if (disposed || !kernelTabId) return;
       const channelId = channelIdOf(channel);
       if (!channelId) return;
-      call("terminal_pause", { tabId: kernelTabId, channelId, clientId: clientId(), attachmentId, acceptedBytes: acceptedOffsetNow() }).catch(() => {
-        // The pause could not be established yet: retry while the writer is
-        // still over the high watermark — without it the producer keeps
-        // advancing and the refused suffix can outgrow the recovery ring.
-        if (pauseNeeded && !disposed) {
-          pauseRetryTimer = window.setTimeout(() => pauseWithRetry(), 100);
-        }
-      });
+      call("terminal_pause", { tabId: kernelTabId, channelId, clientId: clientId(), attachmentId, acceptedBytes: acceptedOffsetNow() })
+        .then((res) => {
+          learnEpisodeToken((res as { episodeToken?: number } | null)?.episodeToken);
+        })
+        .catch(() => {
+          // The pause could not be established yet: retry while the writer is
+          // still over the high watermark — without it the producer keeps
+          // advancing and the refused suffix can outgrow the recovery ring.
+          if (pauseNeeded && !disposed) {
+            pauseRetryTimer = window.setTimeout(() => pauseWithRetry(), 100);
+          }
+        });
     };
     let lastRefuseToastAt = 0;
     // The server's flushed offset from the last recovery response: the
@@ -363,13 +383,27 @@ export function XtermView(props: XtermViewProps) {
       if (next === undefined || next <= attachmentId) return;
       attachmentId = next;
       lastStreamAckOffset = -1;
+      // A new attachment is a new episode space: generations restart, so the
+      // learned token and the resume dedup state must not carry over.
+      episodeToken = 0;
+      resumeSentToken = -1;
       sendStreamAck();
     };
     const resumeUpstream = () => {
       if (containerId || !kernelTabId) return;
       const channelId = channelIdOf(channel);
       if (!channelId) return;
-      void call("terminal_resume", { tabId: kernelTabId, channelId, clientId: clientId(), attachmentId }).catch(() => undefined);
+      // A token-less resume never accomplishes anything — the server rejects
+      // it while an episode is open — so it is skipped, not sent: the token
+      // is learned from the pause or recover response, and the learn path
+      // re-fires the resume once the writer is drained.
+      if (episodeToken === 0) return;
+      // One episode needs at most one effective resume: maybeResume and the
+      // low-water drain can both ask for it, and the server rejects a resume
+      // carrying a previous episode's token.
+      if (episodeToken === resumeSentToken) return;
+      resumeSentToken = episodeToken;
+      void call("terminal_resume", { tabId: kernelTabId, channelId, clientId: clientId(), attachmentId, episodeToken }).catch(() => undefined);
     };
     const maybeResume = () => {
       if (recoverInFlight || recoverPending) return;
@@ -392,7 +426,9 @@ export function XtermView(props: XtermViewProps) {
       })
         .then((res) => {
           recoverInFlight = false;
-          recoverTarget = (res as { flushedOffset?: number } | null)?.flushedOffset ?? null;
+          const payload = (res as { flushedOffset?: number; episodeToken?: number } | null) ?? null;
+          recoverTarget = payload?.flushedOffset ?? null;
+          learnEpisodeToken(payload?.episodeToken);
           if (recoverPending) {
             // A refusal arrived while this recover was in flight: serially
             // recover the newly refused suffix with the latest accepted
