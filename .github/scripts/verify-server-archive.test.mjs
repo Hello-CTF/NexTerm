@@ -198,6 +198,84 @@ with tarfile.open(archive, "w:gz") as tar:
   assert.equal(run(intact).status, 0);
 });
 
+test("server archive byte evidence rejects members under non-directory paths", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-server-archive-types-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const mainBytes = Buffer.from("server main binary fixture");
+  const binary = path.join(directory, "nexterm-server-linux-amd64");
+  fs.writeFileSync(binary, mainBytes);
+  fs.writeFileSync(`${binary}.manifest.json`, JSON.stringify({
+    artifact: { size_bytes: mainBytes.length, sha256: sha256(mainBytes) },
+  }));
+
+  // The canonical main member carries the exact staged bytes; the conflicting
+  // member is placed before and after it because archive order must not matter.
+  const build = (builder, label) => {
+    const root = `NexTerm-server_1.2.3_linux_amd64-${label}`;
+    const archive = path.join(directory, `${root}.tar.gz`);
+    execFileSync("python3", ["-c", builder, archive, root, binary], { encoding: "utf8" });
+    return archive;
+  };
+  const run = (archive) => spawnSync(process.execPath, [script, archive, binary], { cwd: directory, encoding: "utf8" });
+  const main = `    payload = open(payload_path, "rb").read()
+    info = tarfile.TarInfo(f"{root}/nexterm-server")
+    info.size = len(payload)
+    tar.addfile(info, io.BytesIO(payload))
+`;
+  const rootRegularFirst = build(`import io, sys, tarfile
+archive, root, payload_path = sys.argv[1], sys.argv[2], sys.argv[3]
+with tarfile.open(archive, "w:gz") as tar:
+    root_info = tarfile.TarInfo(root)
+    root_data = b"not a directory"
+    root_info.size = len(root_data)
+    tar.addfile(root_info, io.BytesIO(root_data))
+${main}`, "root-regular-first");
+  assert.match(run(rootRegularFirst).stderr, /non-directory/);
+
+  const rootRegularLast = build(`import io, sys, tarfile
+archive, root, payload_path = sys.argv[1], sys.argv[2], sys.argv[3]
+with tarfile.open(archive, "w:gz") as tar:
+${main}    root_info = tarfile.TarInfo(root)
+    root_data = b"not a directory"
+    root_info.size = len(root_data)
+    tar.addfile(root_info, io.BytesIO(root_data))
+`, "root-regular-last");
+  assert.match(run(rootRegularLast).stderr, /non-directory/);
+
+  const childFirst = build(`import io, sys, tarfile
+archive, root, payload_path = sys.argv[1], sys.argv[2], sys.argv[3]
+with tarfile.open(archive, "w:gz") as tar:
+    child = tarfile.TarInfo(f"{root}/nexterm-server/child")
+    child_data = b"child"
+    child.size = len(child_data)
+    tar.addfile(child, io.BytesIO(child_data))
+${main}`, "child-first");
+  assert.match(run(childFirst).stderr, /non-directory/);
+
+  const childLast = build(`import io, sys, tarfile
+archive, root, payload_path = sys.argv[1], sys.argv[2], sys.argv[3]
+with tarfile.open(archive, "w:gz") as tar:
+${main}    child = tarfile.TarInfo(f"{root}/nexterm-server/child")
+    child_data = b"child"
+    child.size = len(child_data)
+    tar.addfile(child, io.BytesIO(child_data))
+`, "child-last");
+  assert.match(run(childLast).stderr, /non-directory/);
+
+  // Implicitly missing directory members stay legal: the archive holds only
+  // the canonical main member and still passes.
+  const implicitDirs = build(`import io, sys, tarfile
+archive, root, payload_path = sys.argv[1], sys.argv[2], sys.argv[3]
+payload = open(payload_path, "rb").read()
+with tarfile.open(archive, "w:gz") as tar:
+    info = tarfile.TarInfo(f"{root}/nexterm-server")
+    info.size = len(payload)
+    tar.addfile(info, io.BytesIO(payload))
+`, "implicit-dirs");
+  const implicit = run(implicitDirs);
+  assert.equal(implicit.status, 0, implicit.stderr);
+});
+
 test("server archive byte evidence rejects missing members, manifests and layouts", (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-server-archive-neg-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));

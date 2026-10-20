@@ -81,6 +81,17 @@ with tar:
         ancestor = "/".join(parts[:index])
         if ancestor in links:
             fail(f"server archive redirects the main binary parent path through a link: {ancestor}")
+    # A member may only live under paths that are directories when they exist
+    # explicitly: a regular file or link at an ancestor path means the unpack
+    # cannot create this member (implicitly missing directories stay legal).
+    members_by_path = {canonical_name: member for member, canonical_name in zip(members, canonical_names)}
+    for canonical_name in canonical_names:
+        parts = canonical_name.split("/")
+        for index in range(1, len(parts)):
+            ancestor = "/".join(parts[:index])
+            ancestor_member = members_by_path.get(ancestor)
+            if ancestor_member is not None and not ancestor_member.isdir():
+                fail(f"server archive member is located under a non-directory path: {ancestor}")
     extracted = tar.extractfile(member)
     if extracted is None:
         fail(f"cannot read the main binary member: {member_name}")
