@@ -46,9 +46,8 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
 });
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../ipc/commands")>();
-  return {
-    ...actual,
+  const { createCommandsMock } = await import("../helpers/mockCommands");
+  return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
     fsApi: {
       roots: mocks.roots,
       list: mocks.list,
@@ -69,8 +68,8 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       lineExec: mocks.lineExec,
     },
     terminalApi: { write: mocks.termWrite },
-    assetApi: { ...(actual.assetApi ?? {}), knownHostAccept: mocks.knownHostAccept },
-  };
+    assetApi: { knownHostAccept: mocks.knownHostAccept },
+  });
 });
 
 vi.mock("../../ipc/events", async (importOriginal) => {
@@ -505,7 +504,9 @@ describe("FileBrowser deleted sessions", () => {
       'button[aria-label="更多操作"]',
     );
     expect(more).not.toBeNull();
-    act(() => more!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    act(() => {
+      more!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
     await flush();
     const items = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
     for (const label of ["打包下载当前目录", "上传到当前目录", "上传文件夹到当前目录", "新建目录", "刷新"]) {

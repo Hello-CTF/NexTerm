@@ -15,14 +15,15 @@ const mocks = vi.hoisted(() => ({
   user: { id: "review-user" } as { id: string } | null,
 }));
 
-vi.mock("../../ipc/commands", () => ({
-  layoutApi: { get: mocks.get, put: mocks.put },
-  assetApi: { list: mocks.assets, get: mocks.asset },
-  terminalApi: { listLive: vi.fn(async () => []) },
-  sessionApi: { connect: mocks.connect, disconnect: mocks.disconnect },
-  dbApi: {},
-  vaultApi: {},
-}));
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const { createCommandsMock } = await import("../helpers/mockCommands");
+  return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
+    layoutApi: { get: mocks.get, put: mocks.put },
+    assetApi: { list: mocks.assets, get: mocks.asset },
+    terminalApi: { listLive: vi.fn(async () => []) },
+    sessionApi: { connect: mocks.connect, disconnect: mocks.disconnect },
+  });
+});
 vi.mock("../../ipc/events", () => ({ listenEvent: vi.fn(async () => () => {}) }));
 vi.mock("../../ui/dialogs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../ui/dialogs")>()),

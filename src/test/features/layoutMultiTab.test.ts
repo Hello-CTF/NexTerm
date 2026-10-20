@@ -13,43 +13,43 @@ const server = vi.hoisted(() => ({
   handlers: [] as Array<(payload: { revision?: number } | null) => void>,
 }));
 
-vi.mock("../../ipc/commands", () => ({
-  layoutApi: {
-    get: vi.fn(async () => {
-      server.getCalls += 1;
-      if (server.holdNextGet !== null) {
-        const snapshot = server.holdNextGet;
-        server.holdNextGet = null;
-        await new Promise<void>((resolve) => {
-          server.heldRelease = resolve;
-        });
-        return snapshot;
-      }
-      return {
-        revision: server.revision,
-        updatedAt: 0,
-        data: server.data === null ? null : JSON.parse(server.data),
-      };
-    }),
-    put: vi.fn(async (data: string, revision: number) => {
-      server.putCalls += 1;
-      if (revision !== server.revision) {
-        return { saved: false, revision: server.revision, conflict: true };
-      }
-      server.revision = revision + 1;
-      server.data = data;
-      const event = { revision: server.revision };
-      setTimeout(() => {
-        for (const handler of [...server.handlers]) handler(event);
-      }, 0);
-      return { saved: true, revision: server.revision, conflict: false };
-    }),
-  },
-  terminalApi: { listLive: vi.fn(async () => []) },
-  dbApi: {},
-  sessionApi: {},
-  vaultApi: {},
-}));
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const { createCommandsMock } = await import("../helpers/mockCommands");
+  return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
+    layoutApi: {
+      get: vi.fn(async () => {
+        server.getCalls += 1;
+        if (server.holdNextGet !== null) {
+          const snapshot = server.holdNextGet;
+          server.holdNextGet = null;
+          await new Promise<void>((resolve) => {
+            server.heldRelease = resolve;
+          });
+          return snapshot;
+        }
+        return {
+          revision: server.revision,
+          updatedAt: 0,
+          data: server.data === null ? null : JSON.parse(server.data),
+        };
+      }),
+      put: vi.fn(async (data: string, revision: number) => {
+        server.putCalls += 1;
+        if (revision !== server.revision) {
+          return { saved: false, revision: server.revision, conflict: true };
+        }
+        server.revision = revision + 1;
+        server.data = data;
+        const event = { revision: server.revision };
+        setTimeout(() => {
+          for (const handler of [...server.handlers]) handler(event);
+        }, 0);
+        return { saved: true, revision: server.revision, conflict: false };
+      }),
+    },
+    terminalApi: { listLive: vi.fn(async () => []) },
+  });
+});
 
 vi.mock("../../ipc/events", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/events")>();

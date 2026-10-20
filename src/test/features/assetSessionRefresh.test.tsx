@@ -93,11 +93,13 @@ vi.mock("../../ipc/env", async (importOriginal) => {
 });
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
+  const { createCommandsMock } = await import("../helpers/mockCommands");
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
-  return {
-    ...actual,
+  return createCommandsMock(actual, {
     assetApi: {
-      ...actual.assetApi,
+      // The save flow under test runs the real update implementation down to
+      // the mocked callDesktop transport (see the ../../ipc/wails mock).
+      update: actual.assetApi.update,
       list: mocks.assetList,
       search: vi.fn(),
       searchMeta: vi.fn(),
@@ -130,9 +132,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       closeTab: vi.fn().mockResolvedValue(undefined),
     },
     sshImportApi: { preview: mocks.sshPreview, apply: mocks.sshApply },
-    fsApi: {},
-    dbApi: {},
-  };
+  });
 });
 
 vi.mock("../../ipc/events", async (importOriginal) => {

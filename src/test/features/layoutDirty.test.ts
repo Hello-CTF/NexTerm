@@ -7,27 +7,27 @@ const server = vi.hoisted(() => ({
   putAlwaysConflicts: false,
 }));
 
-vi.mock("../../ipc/commands", () => ({
-  layoutApi: {
-    get: vi.fn(async () => ({
-      revision: server.revision,
-      updatedAt: 0,
-      data: server.data === null ? null : JSON.parse(server.data),
-    })),
-    put: vi.fn(async (data: string, revision: number) => {
-      if (server.putAlwaysConflicts || revision !== server.revision) {
-        return { saved: false, revision: server.revision, conflict: true };
-      }
-      server.revision = revision + 1;
-      server.data = data;
-      return { saved: true, revision: server.revision, conflict: false };
-    }),
-  },
-  terminalApi: { listLive: vi.fn(async () => []) },
-  dbApi: {},
-  sessionApi: {},
-  vaultApi: {},
-}));
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const { createCommandsMock } = await import("../helpers/mockCommands");
+  return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
+    layoutApi: {
+      get: vi.fn(async () => ({
+        revision: server.revision,
+        updatedAt: 0,
+        data: server.data === null ? null : JSON.parse(server.data),
+      })),
+      put: vi.fn(async (data: string, revision: number) => {
+        if (server.putAlwaysConflicts || revision !== server.revision) {
+          return { saved: false, revision: server.revision, conflict: true };
+        }
+        server.revision = revision + 1;
+        server.data = data;
+        return { saved: true, revision: server.revision, conflict: false };
+      }),
+    },
+    terminalApi: { listLive: vi.fn(async () => []) },
+  });
+});
 vi.mock("../../ipc/events", () => ({ listenEvent: vi.fn() }));
 
 import { mergeDirtyEditorTabs, sanitizeLayout, type PersistedLayout } from "../../app/layout";

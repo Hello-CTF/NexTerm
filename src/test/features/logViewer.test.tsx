@@ -11,7 +11,6 @@ import {
   mount,
   setInputValue,
   setSelectValue,
-  waitFor,
   type MountedView,
 } from "./reactTestUtils";
 
@@ -64,14 +63,6 @@ vi.mock("../../ipc/events", async (importOriginal) => {
   return { ...actual, listenEvent: mocks.listenEvent };
 });
 
-vi.mock("@tanstack/react-virtual", () => ({
-  useVirtualizer: ({ count }: { count: number }) => ({
-    getVirtualItems: () =>
-      Array.from({ length: count }, (_, i) => ({ index: i, start: i * 30, size: 30, key: i })),
-    getTotalSize: () => count * 30,
-  }),
-}));
-
 import { LogViewer } from "../../features/files/LogViewer";
 import { FileBrowser } from "../../features/files/FileBrowser";
 import { FileTree } from "../../features/files/FileTree";
@@ -82,8 +73,8 @@ const CHUNK = 262144;
 const SESSION = "s1";
 const LOG_PATH = "/var/log/app.log";
 
-const FILE_LINES = Array.from({ length: 20000 }, (_, i) =>
-  i % 10 === 0 ? `line ${i} ERROR boom ${"x".repeat(20)}` : `line ${i} ok ${"y".repeat(20)}`,
+const FILE_LINES = Array.from({ length: 700 }, (_, i) =>
+  i % 10 === 0 ? `line ${i} ERROR boom ${"x".repeat(800)}` : `line ${i} ok ${"y".repeat(800)}`,
 );
 const FILE_TEXT = `${FILE_LINES.join("\n")}\n`;
 const FILE_BYTES = new TextEncoder().encode(FILE_TEXT);
@@ -170,11 +161,26 @@ beforeEach(() => {
   mocks.readRange.mockImplementation(async (_s: string, _p: string, offset: number, maxBytes?: number) =>
     rangeResult(offset, maxBytes ?? CHUNK),
   );
+  // Drive the real @tanstack/react-virtual: jsdom has no ResizeObserver and no
+  // layout, so give every element a fixed viewport height; the virtualizer then
+  // computes a bounded window (viewport/estimateSize + overscan) instead of
+  // rendering every row.
+  vi.stubGlobal("ResizeObserver", class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
+  Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+    configurable: true,
+    get: () => 400,
+  });
   useUi.setState({ leftOpen: true, pushToast: vi.fn(), sessions: [] });
 });
 afterEach(() => {
   mounted?.unmount();
   mounted = undefined;
+  vi.unstubAllGlobals();
+  delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetHeight;
 });
 
 describe("LogViewer", () => {
@@ -248,6 +254,108 @@ describe("LogViewer", () => {
       expected,
     );
   });
+
+  it("renders and filters 20k lines inside one production chunk through a bounded virtual window", async () => {
+    // Fixed-width lines keep the byte total exact: 2,000 ERROR lines of 22
+    // bytes and 18,000 plain lines of 11 bytes (newline included) sum to
+    // 242,000 bytes, which fits inside one production CHUNK of 262,144. The
+    // loaded chunk therefore holds every one of the 20,000 lines — nothing
+    // hides behind pagination — so the match count and line numbers asserted
+    // below cover the whole file, not a first-chunk prefix.
+    const largeLines = Array.from({ length: 20000 }, (_, i) => {
+      const n = String(i).padStart(5, "0");
+      return i % 10 === 0 ? `line ${n} ERROR boom` : `line ${n}`;
+    });
+    const largeText = `${largeLines.join("\n")}\n`;
+    const largeBytes = new TextEncoder().encode(largeText);
+    expect(largeBytes.length).toBe(242_000);
+    expect(largeBytes.length).toBeLessThanOrEqual(CHUNK);
+    const totalRows = largeLines.length + 1; // split("\n") keeps a trailing empty row
+    mocks.readRange.mockImplementation(async (_s: string, _p: string, offset: number, maxBytes?: number) => {
+      const slice = largeBytes.subarray(offset, offset + (maxBytes ?? CHUNK));
+      return {
+        path: LOG_PATH,
+        offset,
+        size: largeBytes.length,
+        contentBase64: toBase64(slice),
+        truncated: offset + slice.length < largeBytes.length,
+      };
+    });
+    mounted = mountWithClient(createElement(LogViewer, { sessionId: SESSION, path: LOG_PATH }));
+    await waitForText(mounted, "line 00000 ERROR boom");
+
+    // One 256 KiB range read covers the whole file: a single chunk page
+    // holds all 20,000 lines.
+    expect(mocks.readRange).toHaveBeenCalledTimes(1);
+    expect(mocks.readRange).toHaveBeenCalledWith(SESSION, LOG_PATH, 0, CHUNK);
+    expect(mounted!.container.textContent).toContain("分块 1 / 1");
+
+    const rowNumbers = () =>
+      [...mounted!.container.querySelectorAll('[role="log"] > div')].map(
+        (row) => Number(row.querySelector("span")?.textContent ?? 0),
+      );
+    const scrollEl = mounted!.container.querySelector<HTMLElement>('[role="log"]')!;
+    const scrollTo = (top: number) => {
+      act(() => {
+        scrollEl.scrollTop = top;
+        scrollEl.dispatchEvent(new Event("scroll"));
+      });
+    };
+
+    // The window is bounded: only a small fraction of the 20,001 rows render.
+    const topNumbers = rowNumbers();
+    expect(topNumbers.length).toBeGreaterThan(0);
+    expect(topNumbers.length).toBeLessThan(100);
+    expect(topNumbers[0]).toBe(1);
+
+    // Scrolling to an offset renders the rows at that offset.
+    scrollTo(3000);
+    await flush();
+    expect(rowNumbers()[0]).toBeGreaterThan(100);
+
+    // Scrolling far past the end clamps to the deepest rows: the last row of
+    // the single chunk is the 20,001st (the trailing empty row), proving
+    // every line is inside the loaded chunk, and the window stays bounded.
+    scrollTo(1_000_000);
+    await flushUntil(() => rowNumbers().at(-1) === totalRows);
+    const deepNumbers = rowNumbers();
+    expect(deepNumbers[0]).toBeGreaterThan(19_000);
+    expect(deepNumbers.length).toBeLessThan(100);
+
+    // Back at the top, filtering narrows the window to matching rows with
+    // the full match count: every 10th of the 20,000 lines matches, so
+    // exactly 2,000 matches across the whole chunk.
+    scrollTo(0);
+    await flush();
+    const search = mounted!.container.querySelector<HTMLInputElement>(
+      'input[placeholder="过滤当前分块…"]',
+    );
+    if (!search) throw new Error("search input not found");
+    setInputValue(search, "error boom");
+    await flush();
+    expect(mounted!.container.textContent).toContain("2000 行匹配");
+    const matchedRows = [...mounted!.container.querySelectorAll('[role="log"] > div')];
+    expect(matchedRows.length).toBeGreaterThan(0);
+    expect(matchedRows.length).toBeLessThan(100);
+    for (const row of matchedRows) {
+      expect(row.textContent?.toLowerCase()).toContain("error boom");
+      // The production row label is the original line number {index + 1}, so
+      // every visible match keeps its pre-filter numbering (1, 11, 21, ...).
+      expect(Number(row.querySelector("span")?.textContent) % 10).toBe(1);
+    }
+    expect(Number(matchedRows[0].querySelector("span")?.textContent)).toBe(1);
+
+    // Deep in the filtered list the visible rows still carry the original
+    // line numbers, down to the last match at line 19,991.
+    scrollTo(1_000_000);
+    await flushUntil(() => rowNumbers().at(-1) === 19_991);
+    const deepMatched = rowNumbers();
+    expect(deepMatched[0]).toBeGreaterThan(15_000);
+    expect(deepMatched.length).toBeLessThan(100);
+    for (const n of deepMatched) {
+      expect(n % 10).toBe(1);
+    }
+  }, 15000);
 
   it("refreshes the current chunk in place", async () => {
     mounted = mountWithClient(createElement(LogViewer, { sessionId: SESSION, path: LOG_PATH }));
@@ -392,7 +500,7 @@ describe("LogViewer", () => {
 describe("Log viewer entries", () => {
   it("FileTree context menu opens a read-only log tab", async () => {
     mounted = mountWithClient(createElement(FileTree, { sessionId: SESSION }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("app.log"));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("app.log"));
 
     const row = [...mounted!.container.querySelectorAll<HTMLElement>('[role="treeitem"]')].find(
       (r) => r.textContent?.includes("app.log"),
@@ -418,7 +526,7 @@ describe("Log viewer entries", () => {
 
   it("FileBrowser toolbar opens the log viewer for the selected file", async () => {
     mounted = mountWithClient(createElement(FileBrowser, { sessionId: SESSION }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("app.log"));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("app.log"));
 
     const row = [...mounted!.container.querySelectorAll<HTMLElement>(".cursor-pointer")].find((r) =>
       r.textContent?.includes("app.log"),
@@ -443,7 +551,7 @@ describe("Log viewer entries", () => {
 
   it("FileBrowser context menu offers the log viewer for files", async () => {
     mounted = mountWithClient(createElement(FileBrowser, { sessionId: SESSION }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("app.log"));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("app.log"));
 
     const row = [...mounted!.container.querySelectorAll<HTMLElement>(".cursor-pointer")].find((r) =>
       r.textContent?.includes("app.log"),

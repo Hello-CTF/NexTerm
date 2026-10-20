@@ -152,7 +152,7 @@ func TestHostShareIdentityStableAcrossSyncAndSessionReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(5 * time.Millisecond)
+	waitForClockToAdvance(t)
 	if _, err := instance.service.Sync(context.Background()); err != nil {
 		t.Fatal(err)
 	}

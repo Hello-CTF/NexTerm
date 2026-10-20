@@ -19,12 +19,11 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("../../ipc/commands")>();
-	return {
-		...actual,
-		syncApi: { ...actual.syncApi, status: mocks.status, linkGet: mocks.linkGet },
-		sessionApi: { ...actual.sessionApi, disconnect: mocks.disconnect },
-	};
+	const { createCommandsMock } = await import("../helpers/mockCommands");
+	return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
+		syncApi: { status: mocks.status, linkGet: mocks.linkGet },
+		sessionApi: { disconnect: mocks.disconnect },
+	});
 });
 
 vi.mock("../../ipc/remoteApi", async (importOriginal) => {

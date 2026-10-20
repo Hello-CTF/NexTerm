@@ -47,6 +47,23 @@ vi.mock("../ipc/authApi", async (importOriginal) => {
   };
 });
 
+// The preference-store lifecycle tests exercise register/logout state
+// transitions, not the KDF: wrapDEKWithPassword derives the KEK with
+// production Argon2id params (t=3, m=64MiB, p=4), which costs ~27s per call
+// and blows the test timeout under load. The KDF itself is covered against
+// the Go vectors in auth-crypto.test.ts, so stub the envelope wrap here.
+vi.mock("../features/auth/crypto", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../features/auth/crypto")>();
+  return {
+    ...actual,
+    wrapDEKWithPassword: vi.fn(async () => ({
+      envelope: new Uint8Array(28),
+      salt: new Uint8Array(16),
+      params: JSON.stringify({ t: 1, m: 8, p: 1 }),
+    })),
+  };
+});
+
 const DEMO_USER = {
   id: "u-1",
   username: "alice",

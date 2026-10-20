@@ -2,13 +2,10 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../../ipc/commands", () => ({
-  layoutApi: {},
-  terminalApi: {},
-  dbApi: {},
-  sessionApi: {},
-  vaultApi: {},
-}));
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const { createCommandsMock } = await import("../helpers/mockCommands");
+  return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {});
+});
 vi.mock("../../ipc/events", () => ({ listenEvent: vi.fn() }));
 
 import { sanitizeLayout, serializeLayout } from "../../app/layout";

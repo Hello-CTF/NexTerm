@@ -8,11 +8,17 @@ const config = ts.readConfigFile(configPath, ts.sys.readFile);
 if (config.error) throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, "\n"));
 const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
 
+// The contract probes only exercise the IPC type surface; dropping the
+// vite/client ambient types trims roughly a quarter of the in-memory compile
+// cost without weakening the checks (any missing global would surface as a
+// compile error here).
+const options: ts.CompilerOptions = { ...parsed.options, types: [] };
+
 function compile(rootNames: string[], overlays: Record<string, string> = {}): readonly ts.Diagnostic[] {
   const normalizedOverlays = new Map(
     Object.entries(overlays).map(([fileName, source]) => [resolve(fileName), source]),
   );
-  const host = ts.createCompilerHost(parsed.options);
+  const host = ts.createCompilerHost(options);
   const readFile = host.readFile.bind(host);
   const fileExists = host.fileExists.bind(host);
   host.readFile = (fileName) => normalizedOverlays.get(resolve(fileName)) ?? readFile(fileName);
@@ -21,7 +27,11 @@ function compile(rootNames: string[], overlays: Record<string, string> = {}): re
     const source = host.readFile(fileName);
     return source === undefined ? undefined : ts.createSourceFile(fileName, source, languageVersion, true);
   };
-  const program = ts.createProgram({ rootNames, options: parsed.options, host });
+  const program = ts.createProgram({
+    rootNames,
+    options,
+    host,
+  });
   return ts.getPreEmitDiagnostics(program);
 }
 
@@ -34,6 +44,17 @@ function formatted(diagnostics: readonly ts.Diagnostic[]): string {
 }
 
 describe("typed IPC call contract", () => {
+  // These tests run a real in-memory TypeScript compile of the generated IPC
+  // graph — deterministic CPU work, not an async wait that could be awaited
+  // away. Measured cost with the types:[] trim above: ~2.5s standalone,
+  // 7-13s under heavy host contention (load average 45-60 from sibling test
+  // runs). The explicit 30s budget is sized to that measured cost (roughly
+  // 12x headroom over standalone, 2.3x over the worst observed load); it is a
+  // compute budget for the compile itself, authorized for these two
+  // compile-type tests only, not a behavioral threshold and not a global
+  // timeout loosening.
+  const COMPILE_BUDGET_MS = 30_000;
+
   it("rejects unknown, dynamic and incorrectly shaped calls while preserving legacy and unsafe paths", () => {
     const probe = resolve("src/test/__ipc_typed_contract_probe.ts");
     const source = `
@@ -66,7 +87,7 @@ void unsafeCall(dynamic);
 `;
     const diagnostics = compile([probe], { [probe]: source });
     expect(diagnostics, formatted(diagnostics)).toEqual([]);
-  });
+  }, COMPILE_BUDGET_MS);
 
   it("surfaces an in-memory generated DTO rename in the real exec batch caller", () => {
     const consumer = resolve("src/ipc/execBatchApi.ts");
@@ -79,5 +100,5 @@ void unsafeCall(dynamic);
     const diagnostics = compile([consumer], { [generated]: source.replaceAll("batchId", "batchID") });
     expect(diagnostics.length).toBeGreaterThan(0);
     expect(diagnostics.some((diagnostic) => diagnostic.file?.fileName === consumer)).toBe(true);
-  });
+  }, COMPILE_BUDGET_MS);
 });
