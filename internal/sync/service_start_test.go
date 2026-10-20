@@ -531,7 +531,9 @@ func TestPersistedSessionReplacedOnLinkResetPassword(t *testing.T) {
 // Synchronization must use completion signals or condition polling (waitForCondition/waitForConditionTimeout);
 // the only tolerated time.Sleep is the single bounded poll interval that is the last statement of
 // waitForConditionTimeout's `for !condition()` loop. Any other sleep — including an extra sleep inside
-// that helper — is reported.
+// that helper — is reported. A helper that loses the poll structure entirely (poll sleep deleted or
+// moved) is reported even when no other sleep remains, so the shared condition wait cannot regress
+// into a busy-spin.
 func TestSyncScopedTestsNoBlindSleeps(t *testing.T) {
 	files := []string{"engine_cursor_test.go", "engine_sync_test.go", "service_start_test.go", "settings_sync_test.go"}
 	for _, name := range files {
@@ -548,6 +550,9 @@ func TestSyncScopedTestsNoBlindSleeps(t *testing.T) {
 			var exempt token.Pos
 			if fn.Name.Name == "waitForConditionTimeout" {
 				exempt = pollSleepPos(fn)
+				if exempt == token.NoPos {
+					t.Errorf("%s: waitForConditionTimeout lost its expected poll structure: the unique trailing time.Sleep poll interval inside the `for !condition()` loop is missing; restore it so the shared condition wait cannot regress into a busy-spin", name)
+				}
 			}
 			var sleeps []string
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -567,8 +572,9 @@ func TestSyncScopedTestsNoBlindSleeps(t *testing.T) {
 
 // pollSleepPos returns the position of the one bounded poll sleep tolerated inside
 // waitForConditionTimeout: the final statement of its `for !condition()` poll loop.
-// It returns token.NoPos when the helper no longer has that exact shape, so every
-// sleep in the helper is reported instead.
+// It returns token.NoPos when the helper no longer has that exact shape; the ratchet
+// then reports the missing poll structure explicitly, and every sleep in the helper is
+// enumerated instead of exempted.
 func pollSleepPos(fn *ast.FuncDecl) token.Pos {
 	for _, stmt := range fn.Body.List {
 		loop, ok := stmt.(*ast.ForStmt)
