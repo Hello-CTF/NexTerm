@@ -39,6 +39,10 @@ type subscriber struct {
 	// reported while its refusal episode is unresolved; the recovery ring
 	// retains everything at or after it. -1 when no episode is open.
 	episodeFloor int64
+	// floorHighWater is the highest floor ever reported for this subscriber.
+	// It persists across episodes so a late stale ACK after a resume cannot
+	// reopen an old floor, and it resets to -1 on a fresh attach.
+	floorHighWater int64
 }
 
 const streamAnchorType = "nexterm.stream-anchor"
@@ -799,7 +803,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 		flushedOffset = tab.recovery.currentOffset()
 	}
 	tab.subscribers[options.ChannelID] = subscriber{
-		client: client, producer: producer, co: co, flushedOffset: flushedOffset, episodeFloor: -1,
+		client: client, producer: producer, co: co, flushedOffset: flushedOffset, episodeFloor: -1, floorHighWater: -1,
 	}
 	if tab.controller == "" {
 		if tab.controlled && tab.grid != nil {
@@ -1225,19 +1229,31 @@ func parseStreamAck(data []byte) (int64, bool) {
 }
 
 // StreamAckFor applies the client's accepted-offset ACK to the retention
-// floor of one of its channels. The caller must own the tab and be its
-// controller, and the floor only advances: a stale or out-of-order report
-// can never regress it.
+// floor of one of its channels. The channel must be attached to the tab and
+// its attached client must match the caller, so an ACK can never be routed to
+// another client's channel or to an unknown channel; a legitimate observer
+// can ACK its own channel and establish its floor. The offset must be
+// non-negative and is clamped to the channel's flushed offset, and the floor
+// only advances: a stale or out-of-order report can never regress it.
 func (m *Manager) StreamAckFor(ctx context.Context, tabID, channelID, client string, acceptedBytes int64) error {
 	tab, err := m.TabFor(ctx, tabID)
 	if err != nil {
 		return err
 	}
 	tab.mu.Lock()
-	controller := tab.controller
+	subscriber, ok := tab.subscribers[channelID]
 	tab.mu.Unlock()
-	if controller != clientID(client) {
-		return ErrNotController
+	if !ok {
+		return ErrTabNotFound
+	}
+	if subscriber.client != clientID(client) {
+		return ErrForbidden
+	}
+	if acceptedBytes < 0 {
+		return ErrInvalidOptions
+	}
+	if acceptedBytes > subscriber.flushedOffset {
+		acceptedBytes = subscriber.flushedOffset
 	}
 	tab.mu.Lock()
 	tab.setEpisodeFloorLocked(channelID, acceptedBytes)

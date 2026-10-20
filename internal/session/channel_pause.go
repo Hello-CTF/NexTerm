@@ -105,15 +105,20 @@ func (t *Tab) outputStalled() (bool, chan struct{}) {
 
 // setEpisodeFloorLocked records a subscriber's accepted offset for an open
 // refusal episode and re-applies the tab's retention floor; a negative
-// accepted offset closes the episode. The floor is monotonic: it only
-// advances, so a stale or out-of-order report can never regress it.
+// accepted offset closes the episode. The floor is monotonic against the
+// subscriber's persistent high-water: it only advances, so a stale or
+// out-of-order report can never regress it, and a late stale ACK after a
+// resume cannot reopen an old floor.
 func (t *Tab) setEpisodeFloorLocked(channelID string, accepted int64) {
 	subscriber, ok := t.subscribers[channelID]
 	if !ok {
 		return
 	}
-	if accepted >= 0 && subscriber.episodeFloor >= 0 && accepted <= subscriber.episodeFloor {
-		return
+	if accepted >= 0 {
+		if subscriber.floorHighWater >= 0 && accepted <= subscriber.floorHighWater {
+			return
+		}
+		subscriber.floorHighWater = accepted
 	}
 	subscriber.episodeFloor = accepted
 	t.subscribers[channelID] = subscriber
@@ -204,6 +209,9 @@ func (m *Manager) RecoverChannelFor(ctx context.Context, channelID string, accep
 	tab.mu.Unlock()
 	if !ok || recovery == nil || fanout == nil {
 		return 0, ErrUnsupported
+	}
+	if acceptedBytes < 0 || acceptedBytes > subscriber.flushedOffset {
+		return 0, ErrInvalidOptions
 	}
 	refused := subscriber.flushedOffset - acceptedBytes
 	if refused <= 0 {
