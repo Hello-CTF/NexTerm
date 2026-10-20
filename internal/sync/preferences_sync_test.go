@@ -415,7 +415,7 @@ func TestEngineAIGrantConverge(t *testing.T) {
 	assertServerObjectKind(t, server, "alice", "alice-pw-123", "mode/dev-1", KindAIGrant)
 
 	// LWW: A widens the grant; B converges to the newer revision.
-	time.Sleep(2 * time.Millisecond)
+	waitForClockToAdvance(t)
 	if _, err := grantsA.Grant(userCtx, "dev-1", []guard.GrantKind{guard.GrantKindTerminalWrite, guard.GrantKindSessionExec}); err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +442,7 @@ func TestEngineAIGrantConverge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(2 * time.Millisecond)
+	waitForClockToAdvance(t)
 	if _, err := grantsA.Grant(userCtx, "dev-1", []guard.GrantKind{guard.GrantKindTerminalWrite}); err != nil {
 		t.Fatal(err)
 	}

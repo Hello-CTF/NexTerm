@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -110,6 +111,26 @@ func newTestInstanceWithMaster(t *testing.T, unlocked, master bool, options ...O
 }
 
 func testPtr[T any](value T) *T { return &value }
+
+// waitForClockToAdvance blocks until the wall clock's millisecond reading is
+// strictly newer than the moment of the call, so the next timestamped write
+// (an LWW revision or VerifiedAt) is ordered after everything that came
+// before. It is a condition wait with a bounded timeout, not a blind sleep:
+// it returns as soon as the clock ticks (usually well under a millisecond)
+// and fails loudly if the clock stalls.
+func waitForClockToAdvance(t *testing.T) {
+	t.Helper()
+	from := time.Now().UnixMilli()
+	ticker := time.NewTicker(50 * time.Microsecond)
+	defer ticker.Stop()
+	for time.Now().UnixMilli() <= from {
+		select {
+		case <-ticker.C:
+		case <-time.After(2 * time.Second):
+			t.Fatal("wall clock did not advance past the previous millisecond")
+		}
+	}
+}
 
 func float64PointersEqual(left, right *float64) bool {
 	if left == nil || right == nil {
