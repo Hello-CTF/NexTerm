@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/fs/conditional"
@@ -109,17 +110,16 @@ func TestWriteFileVersionCreateRejectsEveryOccupiedPathKind(t *testing.T) {
 func TestWriteFileVersionDetectsExternalCreateAroundFinalCheck(t *testing.T) {
 	for _, test := range []struct {
 		name string
-		hook *func()
+		hook func(*FileSystem, func())
 	}{
-		{name: "before final check", hook: &conditionalPreVerifyHook},
-		{name: "after final check before commit", hook: &conditionalPreCommitHook},
+		{name: "before final check", hook: func(f *FileSystem, fn func()) { f.conditionalPreVerifyHook = fn }},
+		{name: "after final check before commit", hook: func(f *FileSystem, fn func()) { f.conditionalPreCommitHook = fn }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "created.txt")
-			*test.hook = func() { writeSynthetic(t, path, "external") }
-			t.Cleanup(func() { *test.hook = nil })
 			filesystem := New()
+			test.hook(filesystem, func() { writeSynthetic(t, path, "external") })
 			requireMismatch(t, filesystem.WriteFileVersion(context.Background(), path, []byte("new"), false, conditional.Absent()))
 			if got := readSynthetic(t, path); got != "external" {
 				t.Fatalf("external create was clobbered: %q", got)
@@ -127,6 +127,70 @@ func TestWriteFileVersionDetectsExternalCreateAroundFinalCheck(t *testing.T) {
 			assertNoTemporaryLeftovers(t, dir)
 		})
 	}
+}
+
+func TestWriteFileVersionDirectoryMutationBeforeCommitFails(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "work")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "created.txt")
+	filesystem := New()
+	filesystem.conditionalPreCommitHook = func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Fatal(err)
+		}
+		writeSynthetic(t, dir, "directory replaced by a file")
+	}
+	err := filesystem.WriteFileVersion(context.Background(), path, []byte("new"), false, conditional.Absent())
+	if err == nil || errors.Is(err, conditional.ErrVersionMismatch) {
+		t.Fatalf("directory mutation = %v, want a plain commit failure", err)
+	}
+	if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) && !errors.Is(statErr, syscall.ENOTDIR) {
+		t.Fatalf("failed commit produced a target: %v", statErr)
+	}
+	assertNoTemporaryLeftovers(t, parent)
+	if got := readSynthetic(t, dir); got != "directory replaced by a file" {
+		t.Fatalf("directory replacement was modified: %q", got)
+	}
+}
+
+func TestWriteFileVersionConcurrentHookedAndPlainInstances(t *testing.T) {
+	dir := t.TempDir()
+	hookedPath := filepath.Join(dir, "hooked.txt")
+	plainPath := filepath.Join(dir, "plain.txt")
+	hooked := New()
+	hooked.conditionalPreVerifyHook = func() { writeSynthetic(t, hookedPath, "external") }
+	plain := New()
+	start := make(chan struct{})
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		errs[0] = hooked.WriteFileVersion(context.Background(), hookedPath, []byte("new"), false, conditional.Absent())
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		errs[1] = plain.WriteFileVersion(context.Background(), plainPath, []byte("fresh"), false, conditional.Absent())
+	}()
+	close(start)
+	wg.Wait()
+	requireMismatch(t, errs[0])
+	if errs[1] != nil {
+		t.Fatalf("plain instance affected by the other instance's hook: %v", errs[1])
+	}
+	if got := readSynthetic(t, hookedPath); got != "external" {
+		t.Fatalf("hooked instance clobbered the external create: %q", got)
+	}
+	if got := readSynthetic(t, plainPath); got != "fresh" {
+		t.Fatalf("plain instance content = %q", got)
+	}
+	assertNoTemporaryLeftovers(t, dir)
 }
 
 func TestWriteFileVersionConcurrentCreatesCommitOnce(t *testing.T) {
@@ -177,15 +241,15 @@ func TestWriteFileVersionCancellation(t *testing.T) {
 	}
 	for _, test := range []struct {
 		name string
-		hook *func()
+		hook func(*FileSystem, func())
 	}{
-		{name: "before final check", hook: &conditionalPreVerifyHook},
-		{name: "before commit", hook: &conditionalPreCommitHook},
+		{name: "before final check", hook: func(f *FileSystem, fn func()) { f.conditionalPreVerifyHook = fn }},
+		{name: "before commit", hook: func(f *FileSystem, fn func()) { f.conditionalPreCommitHook = fn }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
-			*test.hook = cancel
-			t.Cleanup(func() { *test.hook = nil })
+			filesystem := New()
+			test.hook(filesystem, cancel)
 			if err := filesystem.WriteFileVersion(ctx, path, []byte("new"), false, conditional.Absent()); !errors.Is(err, context.Canceled) {
 				t.Fatalf("cancelled write = %v", err)
 			}

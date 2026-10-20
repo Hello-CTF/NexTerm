@@ -24,6 +24,7 @@ type RuleStore interface {
 	ForwardRuleSave(context.Context, store.ForwardRuleInput) (store.ForwardRuleRow, error)
 	ForwardRuleDelete(context.Context, string) error
 	ForwardRuleAssetAvailable(context.Context, string) error
+	ForwardRuleAssetEnvironment(context.Context, string) (string, error)
 }
 
 type Rule struct {
@@ -38,8 +39,11 @@ type Rule struct {
 	Status     string `json:"status"`
 	SessionID  string `json:"sessionId,omitempty"`
 	Error      string `json:"error,omitempty"`
-	CreatedAt  int64  `json:"createdAt"`
-	UpdatedAt  int64  `json:"updatedAt"`
+	// AutoStart stays out of the IPC JSON surface until the forward contract
+	// regeneration lands; startup recovery already persists and honors it.
+	AutoStart bool  `json:"-"`
+	CreatedAt int64 `json:"createdAt"`
+	UpdatedAt int64 `json:"updatedAt"`
 }
 
 func ruleFromRow(row store.ForwardRuleRow) Rule {
@@ -47,6 +51,7 @@ func ruleFromRow(row store.ForwardRuleRow) Rule {
 		ID: row.ID, AssetID: row.AssetID, Name: row.Name, Kind: KindLocal,
 		ListenHost: savedListenHost, ListenPort: row.ListenPort,
 		TargetHost: row.TargetHost, TargetPort: row.TargetPort, Status: StatusStopped,
+		AutoStart: row.AutoStart,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 }

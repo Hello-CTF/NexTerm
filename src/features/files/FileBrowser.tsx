@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -245,7 +246,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
   const goneHint = "会话已在服务端删除，请重新连接这台主机";
   const [reconnecting, setReconnecting] = useState(false);
 
-  const reconnectHost = async () => {
+  const reconnectHost = useCallback(async () => {
     const st = useUi.getState();
     let target: { tabId: string; ws: Workspace } | undefined;
     for (const w of st.workspaces) {
@@ -296,7 +297,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
       }
       setReconnecting(false);
     }
-  };
+  }, [sessionId, pushToast]);
 
   const autoReconnectRef = useRef<string | null>(null);
   useEffect(() => {
@@ -307,7 +308,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
     if (autoReconnectRef.current === sessionId) return;
     autoReconnectRef.current = sessionId;
     void reconnectHost();
-  }, [sessionGone, sessionId]);
+  }, [sessionGone, sessionId, reconnectHost]);
 
   const uploadTo = async (dir: string) => {
     const file = await pickLocalFile();

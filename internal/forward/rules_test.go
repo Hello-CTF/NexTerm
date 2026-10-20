@@ -409,3 +409,46 @@ func TestSavedRuleIPCLifecycle(t *testing.T) {
 		t.Fatalf("final rules = %+v, %v", rules, err)
 	}
 }
+
+func TestStartRuleRejectsExposedRuntimeConfusion(t *testing.T) {
+	fixture := newSavedRuleFixture(t)
+	rule := fixture.saveRule(t, freeSavedRulePort(t))
+
+	// An exposed one-off listener squatting on the rule ID must not be adopted
+	// by StartRule or let the rule escape its loopback-only bind.
+	squatter, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(rule.ListenPort))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetHost := "remote-only.invalid"
+	targetPort := uint16(4567)
+	if _, err := fixture.service.startWithID(
+		fixture.ctx, rule.ID, fixture.connected.ID, fixture.asset.ID, KindLocal,
+		squatter, "0.0.0.0", net.JoinHostPort(targetHost, strconv.Itoa(int(targetPort))), &targetHost, &targetPort,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = fixture.service.StartRule(fixture.ctx, rule.ID, fixture.connected.ID)
+	requireSavedRuleCode(t, err, ipc.CodeBadParam)
+	runtimes := fixture.service.ListFor(fixture.ctx)
+	if len(runtimes) != 1 || runtimes[0].ListenHost != "0.0.0.0" {
+		t.Fatalf("confused runtime changed: %+v", runtimes)
+	}
+	if _, err := fixture.db.ForwardRuleGet(fixture.ctx, rule.ID); err != nil {
+		t.Fatalf("rejected start removed the definition: %v", err)
+	}
+
+	stopped, err := fixture.service.StopRule(fixture.ctx, rule.ID)
+	if err != nil || stopped.Status != StatusStopped {
+		t.Fatalf("stop evicting the squatter = %+v, %v", stopped, err)
+	}
+	started, err := fixture.service.StartRule(fixture.ctx, rule.ID, fixture.connected.ID)
+	if err != nil {
+		t.Fatalf("start after eviction: %v", err)
+	}
+	if started.ListenHost != savedListenHost || started.Status != StatusActive {
+		t.Fatalf("started rule = %+v", started)
+	}
+	assertEcho(t, dialForward(t, fixture.service.ListFor(fixture.ctx)[0]), "evicted")
+}

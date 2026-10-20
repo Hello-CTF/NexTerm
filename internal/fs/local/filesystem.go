@@ -20,7 +20,13 @@ import (
 
 const BackupSuffix = ".nexterm-bak"
 
-type FileSystem struct{}
+type FileSystem struct {
+	// conditionalPreVerifyHook and conditionalPreCommitHook interpose inside
+	// the conditional-create race window so tests can mutate the environment
+	// mid-operation without package-level state.
+	conditionalPreVerifyHook func()
+	conditionalPreCommitHook func()
+}
 
 func New() *FileSystem {
 	return &FileSystem{}

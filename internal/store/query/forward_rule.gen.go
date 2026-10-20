@@ -34,6 +34,7 @@ func newForwardRuleRow(db *gorm.DB, opts ...gen.DOOption) forwardRuleRow {
 	_forwardRuleRow.ListenPort = field.NewInt32(tableName, "listen_port")
 	_forwardRuleRow.TargetHost = field.NewString(tableName, "target_host")
 	_forwardRuleRow.TargetPort = field.NewInt32(tableName, "target_port")
+	_forwardRuleRow.AutoStart = field.NewBool(tableName, "auto_start")
 	_forwardRuleRow.CreatedAt = field.NewInt64(tableName, "created_at")
 	_forwardRuleRow.UpdatedAt = field.NewInt64(tableName, "updated_at")
 
@@ -53,6 +54,7 @@ type forwardRuleRow struct {
 	ListenPort field.Int32
 	TargetHost field.String
 	TargetPort field.Int32
+	AutoStart  field.Bool
 	CreatedAt  field.Int64
 	UpdatedAt  field.Int64
 
@@ -78,6 +80,7 @@ func (f *forwardRuleRow) updateTableName(table string) *forwardRuleRow {
 	f.ListenPort = field.NewInt32(table, "listen_port")
 	f.TargetHost = field.NewString(table, "target_host")
 	f.TargetPort = field.NewInt32(table, "target_port")
+	f.AutoStart = field.NewBool(table, "auto_start")
 	f.CreatedAt = field.NewInt64(table, "created_at")
 	f.UpdatedAt = field.NewInt64(table, "updated_at")
 
@@ -108,7 +111,7 @@ func (f *forwardRuleRow) GetFieldByName(fieldName string) (field.OrderExpr, bool
 }
 
 func (f *forwardRuleRow) fillFieldMap() {
-	f.fieldMap = make(map[string]field.Expr, 9)
+	f.fieldMap = make(map[string]field.Expr, 10)
 	f.fieldMap["id"] = f.ID
 	f.fieldMap["owner_id"] = f.OwnerID
 	f.fieldMap["asset_id"] = f.AssetID
@@ -116,6 +119,7 @@ func (f *forwardRuleRow) fillFieldMap() {
 	f.fieldMap["listen_port"] = f.ListenPort
 	f.fieldMap["target_host"] = f.TargetHost
 	f.fieldMap["target_port"] = f.TargetPort
+	f.fieldMap["auto_start"] = f.AutoStart
 	f.fieldMap["created_at"] = f.CreatedAt
 	f.fieldMap["updated_at"] = f.UpdatedAt
 }
