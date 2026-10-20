@@ -174,11 +174,11 @@ type terminalIDRequest struct {
 	Mode      string `json:"mode"`
 	N         int    `json:"n"`
 
-	MaxBytes  int    `json:"maxBytes"`
-	Visible   bool   `json:"visible"`
-	Encoding  string `json:"encoding"`
-	Path      string `json:"path"`
-	Line      string `json:"line"`
+	MaxBytes int    `json:"maxBytes"`
+	Visible  bool   `json:"visible"`
+	Encoding string `json:"encoding"`
+	Path     string `json:"path"`
+	Line     string `json:"line"`
 }
 
 type terminalRecoverRequest struct {

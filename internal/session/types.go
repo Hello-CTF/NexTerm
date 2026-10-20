@@ -49,6 +49,7 @@ var (
 	ErrInvalidTitle         = errors.New("invalid terminal tab title")
 	ErrDurableDisabled      = errors.New("SSH durable terminals disabled for this asset")
 	ErrAmbiguousDurable     = errors.New("durable terminal ID exists on multiple sessions")
+	ErrRecoveryOverrun      = errors.New("refused suffix exceeds the retained recovery window")
 )
 
 type Status string

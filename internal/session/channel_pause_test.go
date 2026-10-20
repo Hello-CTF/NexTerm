@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -159,6 +160,120 @@ func TestRecoverChannelForCapacityBoundary(t *testing.T) {
 	suffixB := readFramesUntil(t, receiverB, len(fed)-acceptedB)
 	if !bytes.Equal(suffixB, fed[acceptedB:]) {
 		t.Fatalf("channel B suffix mismatch: got %d bytes want %d", len(suffixB), len(fed)-acceptedB)
+	}
+}
+
+func TestRecoverChannelForExcludesPausedCoalescerFromReplay(t *testing.T) {
+	manager, connector, _, connected := openOpenTestSession(t, KindLocal)
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+		t.Fatal(err)
+	}
+	channel := connector.transport(0).channel(0)
+	receiver := bindTestReceiver(t, manager, "a-1")
+	drainAttachHeader(t, receiver)
+
+	if err := channel.emit([]byte("one")); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFramesUntil(t, receiver, 3); string(got) != "one" {
+		t.Fatalf("first frame = %q", got)
+	}
+	if err := channel.emit([]byte("two")); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFramesUntil(t, receiver, 3); string(got) != "two" {
+		t.Fatalf("second frame = %q", got)
+	}
+
+	// The client accepted only "one" (absolute offset 3). Pause, then let one
+	// more frame sit in the paused coalescer: it must not push the recovery
+	// anchor forward, must not be replayed, and must arrive only via the
+	// resume flush, so the full sequence stays contiguous without a hole.
+	if err := manager.PauseChannelFor(context.Background(), "a-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := channel.emit([]byte("three")); err != nil {
+		t.Fatal(err)
+	}
+	expectNoFrame(t, receiver)
+
+	if err := manager.RecoverChannelFor(context.Background(), "a-1", 3); err != nil {
+		t.Fatal(err)
+	}
+	anchor := receiveTestFrame(t, receiver)
+	var parsed streamAnchor
+	if err := json.Unmarshal(anchor.Data, &parsed); err != nil {
+		t.Fatalf("anchor frame = %q: %v", anchor.Data, err)
+	}
+	if parsed.StreamSeq != 3 {
+		t.Fatalf("anchor streamSeq = %d, want the client's accepted offset 3", parsed.StreamSeq)
+	}
+	if got := readFramesUntil(t, receiver, 3); string(got) != "two" {
+		t.Fatalf("recovered frame = %q", got)
+	}
+	expectNoFrame(t, receiver)
+
+	if err := manager.ResumeChannelFor(context.Background(), "a-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFramesUntil(t, receiver, 5); string(got) != "three" {
+		t.Fatalf("flushed frame = %q", got)
+	}
+}
+
+func TestRecoverChannelForRefusedSuffixBeyondRingFails(t *testing.T) {
+	manager, connector, _, connected := openOpenTestSession(t, KindLocal)
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+		t.Fatal(err)
+	}
+	channel := connector.transport(0).channel(0)
+	receiver := bindTestReceiver(t, manager, "a-1")
+	drainAttachHeader(t, receiver)
+
+	// Sustained output past the ring's 32 MiB capacity with a healthy
+	// consumer: a client that then claims an accepted offset older than the
+	// retention window must get an explicit overrun, never a short replay
+	// that silently drops the evicted prefix.
+	const chunkSize = 64 << 10
+	const chunks = 600
+	var fed []byte
+	for i := 0; i < chunks; i++ {
+		chunk := bytes.Repeat([]byte{byte('a' + i%26)}, chunkSize)
+		fed = append(fed, chunk...)
+		if err := channel.emit(chunk); err != nil {
+			t.Fatal(err)
+		}
+		if got := readFramesUntil(t, receiver, chunkSize); !bytes.Equal(got, chunk) {
+			t.Fatalf("chunk %d mismatch", i)
+		}
+	}
+
+	if err := manager.RecoverChannelFor(context.Background(), "a-1", 4<<20); !errors.Is(err, ErrRecoveryOverrun) {
+		t.Fatalf("recover = %v, want ErrRecoveryOverrun", err)
+	}
+	expectNoFrame(t, receiver)
+
+	// The boundary is exact: a refused suffix that still fits the window is
+	// redelivered whole and byte-identical.
+	const accepted = 37 << 20
+	if err := manager.RecoverChannelFor(context.Background(), "a-1", accepted); err != nil {
+		t.Fatal(err)
+	}
+	anchor := receiveTestFrame(t, receiver)
+	if !bytes.Contains(anchor.Data, []byte("recovery-")) {
+		t.Fatalf("anchor = %q", anchor.Data)
+	}
+	suffix := readFramesUntil(t, receiver, len(fed)-accepted)
+	if !bytes.Equal(suffix, fed[accepted:]) {
+		t.Fatalf("suffix mismatch: got %d bytes want %d", len(suffix), len(fed)-accepted)
 	}
 }
 

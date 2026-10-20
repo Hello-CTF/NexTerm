@@ -93,24 +93,35 @@ func (t *Tab) signalOutputWakeLocked() {
 	t.outputWake = make(chan struct{})
 }
 
-// noteChannelSent records how many bytes were flushed to a channel, so a
-// saturated client can later ask for everything produced after its accepted
-// prefix.
-func (m *Manager) noteChannelSent(tab *Tab, channelID string, bytes int64) {
+// noteChannelFlushed records the absolute stream offset a flush carried a
+// channel to, so a saturated client can later ask for everything produced
+// after its accepted offset.
+func (m *Manager) noteChannelFlushed(tab *Tab, channelID string, bytes int64) {
 	tab.mu.Lock()
 	subscriber, ok := tab.subscribers[channelID]
 	if ok {
-		subscriber.sentBytes += bytes
+		subscriber.flushedOffset += bytes
 		tab.subscribers[channelID] = subscriber
 	}
 	tab.mu.Unlock()
 }
 
-// RecoverChannelFor redelivers the suffix a saturated client refused: it
-// reports how many bytes it accepted, and the tab's recovery ring replays
-// everything produced after that point, in order, without reaping the tab.
-// A synthetic anchor frame opens the replay so the client can tell it apart
-// from stale in-flight bytes.
+// RecoverChannelFor redelivers the suffix a saturated client refused: the
+// client reports its accepted offset in absolute stream coordinates (the
+// attach or recovery anchor's streamSeq plus the bytes accepted since it),
+// and the tab's recovery ring replays everything the server flushed after
+// that point, in order, without reaping the tab. A synthetic anchor frame
+// opens the replay so the client can tell it apart from stale in-flight
+// bytes. Bytes still held in the paused coalescer are not replayed: the
+// resume flush delivers them behind the replay in stream order, so nothing
+// is sent twice and nothing is skipped.
+//
+// The whole snapshot-compute-send sequence runs under the feed gate: the
+// flushed offset, the ring content, and the anchor describe one consistent
+// stream snapshot with no feed interleaving. When the accepted offset has
+// already been evicted from the bounded ring the suffix cannot be
+// redelivered whole; ErrRecoveryOverrun reports that gap instead of
+// returning a short replay that would silently drop the prefix.
 func (m *Manager) RecoverChannelFor(ctx context.Context, channelID string, acceptedBytes int64) error {
 	tabID := m.tabIDForChannel(channelID)
 	if tabID == "" {
@@ -123,6 +134,10 @@ func (m *Manager) RecoverChannelFor(ctx context.Context, channelID string, accep
 	if err != nil {
 		return err
 	}
+	if err := tab.lockFeed(ctx); err != nil {
+		return err
+	}
+	defer tab.unlockFeed()
 	tab.mu.Lock()
 	subscriber, ok := tab.subscribers[channelID]
 	recovery := tab.recovery
@@ -131,19 +146,21 @@ func (m *Manager) RecoverChannelFor(ctx context.Context, channelID string, accep
 	if !ok || recovery == nil || fanout == nil {
 		return ErrUnsupported
 	}
-	refused := subscriber.sentBytes - acceptedBytes
+	refused := subscriber.flushedOffset - acceptedBytes
 	if refused <= 0 {
 		return nil
 	}
-	start := recovery.currentOffset() - refused
-	replay := recovery.replayFrom(start)
-	if len(replay) == 0 {
-		return nil
+	if oldest := recovery.oldestOffset(); oldest < 0 || acceptedBytes < oldest {
+		return ErrRecoveryOverrun
+	}
+	replay := recovery.replayRange(acceptedBytes, subscriber.flushedOffset)
+	if int64(len(replay)) != refused {
+		return ErrRecoveryOverrun
 	}
 	anchor, err := json.Marshal(streamAnchor{
 		Type:      streamAnchorType,
 		Epoch:     "recovery-" + tabID,
-		StreamSeq: uint64(start),
+		StreamSeq: uint64(acceptedBytes),
 	})
 	if err != nil {
 		return err

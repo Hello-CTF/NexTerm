@@ -25,11 +25,15 @@ var replayClear = []byte("\x1b[2J\x1b[3J\x1b[H")
 const sshFallbackNotice = "持久终端不可用，已切换为普通 SSH 终端；关闭或断开后无法恢复此终端"
 
 type subscriber struct {
-	client    string
-	producer  *hub.Producer
-	co        *outCoalescer
-	paused    bool
-	sentBytes int64
+	client   string
+	producer *hub.Producer
+	co       *outCoalescer
+	paused   bool
+	// flushedOffset is the absolute stream offset (recovery-ring coordinates)
+	// of the next byte to flush to this subscriber. It advances with every
+	// fanout enqueue, so a saturated client's refused suffix is
+	// [acceptedOffset, flushedOffset) regardless of paused coalescer buffers.
+	flushedOffset int64
 }
 
 const streamAnchorType = "nexterm.stream-anchor"
@@ -784,8 +788,12 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	}
 	client := clientID(options.ClientID)
 	co := newOutCoalescer(func() { m.flushSubscriberOutput(tab.ID, options.ChannelID) })
+	flushedOffset := int64(0)
+	if tab.recovery != nil {
+		flushedOffset = tab.recovery.currentOffset()
+	}
 	tab.subscribers[options.ChannelID] = subscriber{
-		client: client, producer: producer, co: co,
+		client: client, producer: producer, co: co, flushedOffset: flushedOffset,
 	}
 	if tab.controller == "" {
 		if tab.controlled && tab.grid != nil {
@@ -1586,7 +1594,7 @@ func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []
 			continue
 		}
 		fanout.SendTo(target.channelID, batch)
-		m.noteChannelSent(tab, target.channelID, int64(len(batch)))
+		m.noteChannelFlushed(tab, target.channelID, int64(len(batch)))
 	}
 	return nil
 }
@@ -1614,7 +1622,7 @@ func (m *Manager) flushSubscriberOutput(tabID, channelID string) {
 		return
 	}
 	fanout.SendTo(channelID, batch)
-	m.noteChannelSent(tab, channelID, int64(len(batch)))
+	m.noteChannelFlushed(tab, channelID, int64(len(batch)))
 }
 
 func (m *Manager) startPump(tab *Tab, channel *channelHandle, generation uint64) bool {

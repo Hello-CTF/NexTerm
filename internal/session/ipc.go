@@ -53,6 +53,8 @@ func IPCError(err error) *ipc.Error {
 		return ipc.WrapError(ipc.CodeTimeout, userMessage(err), err)
 	case errors.Is(err, ErrAssetSessionConflict), errors.Is(err, ErrStaleGeneration):
 		return ipc.WrapError(ipc.CodeInternal, userMessage(err), err)
+	case errors.Is(err, ErrRecoveryOverrun):
+		return ipc.WrapError(ipc.Code("recovery_overrun"), userMessage(err), err)
 	default:
 		return ipc.NormalizeError(err)
 	}
@@ -94,6 +96,8 @@ func userMessage(err error) string {
 		return "会话已更新，请重试"
 	case errors.Is(err, ErrAssetSessionConflict):
 		return "该资产已有活动会话，请先断开现有会话"
+	case errors.Is(err, ErrRecoveryOverrun):
+		return "终端输出积压过长，早期输出已无法恢复"
 	case errors.Is(err, durable.ErrNotFound):
 		return "资源不存在或已删除"
 	case errors.Is(err, context.DeadlineExceeded):

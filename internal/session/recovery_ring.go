@@ -63,21 +63,30 @@ func (r *recoveryRing) oldestOffset() int64 {
 	return r.chunks[0].offset
 }
 
-// replayFrom returns every retained byte produced at or after offset.
-func (r *recoveryRing) replayFrom(offset int64) []byte {
+// replayRange returns the retained bytes in [offset, end). A start earlier
+// than the retention window reads only from the oldest retained byte; callers
+// compare against oldestOffset first when a gap must be reported instead.
+func (r *recoveryRing) replayRange(offset, end int64) []byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var out []byte
 	for _, chunk := range r.chunks {
-		end := chunk.offset + int64(len(chunk.data))
-		if end <= offset {
+		chunkEnd := chunk.offset + int64(len(chunk.data))
+		if chunkEnd <= offset {
 			continue
+		}
+		if chunk.offset >= end {
+			break
 		}
 		start := int64(0)
 		if chunk.offset < offset {
 			start = offset - chunk.offset
 		}
-		out = append(out, chunk.data[start:]...)
+		stop := int64(len(chunk.data))
+		if chunkEnd > end {
+			stop = end - chunk.offset
+		}
+		out = append(out, chunk.data[start:stop]...)
 	}
 	return out
 }
