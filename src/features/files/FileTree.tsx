@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { FileEntryDto } from "../../ipc/types";
 import { fsApi, sessionApi, terminalApi } from "../../ipc/commands";
@@ -225,7 +225,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
   const goneHint = "会话已在服务端删除，请重新连接这台主机";
   const [reconnecting, setReconnecting] = useState(false);
 
-  const reconnectHost = async () => {
+  const reconnectHost = useCallback(async () => {
     const ws = useUi.getState().workspaces.find((w) => w.sessionId === sessionId);
     if (!ws) {
       pushToast("error", "找不到这个工作区的主机信息，请到左侧资产树里手动连接");
@@ -250,7 +250,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     } finally {
       setReconnecting(false);
     }
-  };
+  }, [sessionId, pushToast]);
 
   const autoReconnectRef = useRef<string | null>(null);
   useEffect(() => {
@@ -261,7 +261,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     if (autoReconnectRef.current === sessionId) return;
     autoReconnectRef.current = sessionId;
     void reconnectHost();
-  }, [sessionGone, sessionId]);
+  }, [sessionGone, sessionId, reconnectHost]);
 
   const rows = useMemo(() => {
     const out: {

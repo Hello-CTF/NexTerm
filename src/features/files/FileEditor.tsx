@@ -132,9 +132,11 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
   const mountedRef = useRef(true);
   const locatorRef = useRef({ sessionId, path });
   const loadLocksRef = useRef(new Map<string, { token: number; users: number }>());
+  const onCloseRef = useRef(onClose);
   const language = useRef(new Compartment()).current;
   locatorRef.current = { sessionId, path };
   dirtyRef.current = dirty;
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -171,7 +173,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
       const token = beginFileEditorLoad(initialLocator.sessionId, initialLocator.path, caseInsensitive);
       if (token === null) {
         pushToast("info", "文件读取或重命名进行中，完成后请重新读取");
-        onClose?.();
+        onCloseRef.current?.();
         return;
       }
       lock = { token, users: 0 };
@@ -209,11 +211,11 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
           if (choice === "view") {
             const current = locatorRef.current;
             openLogTab(current.sessionId, current.path);
-            onClose?.();
+            onCloseRef.current?.();
             return;
           }
           if (choice !== "edit") {
-            onClose?.();
+            onCloseRef.current?.();
             return;
           }
           largeEditConfirmed = true;
@@ -227,7 +229,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
           res.size > 5 * 1024 * 1024 &&
           !(await ask("文件超过 5MB，确定要编辑？", { kind: "info" }))
         ) {
-          onClose?.();
+          onCloseRef.current?.();
           return;
         }
         if (cancelled) return;
@@ -272,7 +274,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
       } catch (e) {
         if (!cancelled) {
           pushToast("error", `打开失败：${describeError(e)}`);
-          onClose?.();
+          onCloseRef.current?.();
         }
       } finally {
         const current = loadLocksRef.current.get(lockKey);
@@ -290,7 +292,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-  }, [sessionId, reloadEnc, reloadKey, language]);
+  }, [sessionId, reloadEnc, reloadKey, language, caseInsensitive, pushToast]);
 
   useEffect(() => {
     const view = viewRef.current;

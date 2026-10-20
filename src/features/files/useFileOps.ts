@@ -90,7 +90,8 @@ export function useFileOps(sessionId: string) {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      seqRef.current++;
+      // Pure write: every in-flight sequence is stale from now on.
+      seqRef.current = -1;
     };
   }, []);
 
