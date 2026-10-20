@@ -439,6 +439,47 @@ describe("fleet health tab identity across workspaces", () => {
     expect(activeTabOf("ws-1")).toBe(secondId);
   });
 
+  it("disambiguates duplicate legacy tabs toward the calling workspace for activation and close", async () => {
+    const legacyTab = () => ({ id: FLEET_HEALTH_TAB_ID, kind: "log" as const, title: "主机概览", closable: true });
+    const workspaces: Workspace[] = [
+      {
+        id: "ws-1",
+        kind: "session",
+        title: "healthy",
+        sessionId: "session-healthy",
+        assetId: "healthy",
+        assetKind: "ssh",
+        panes: [{ id: "ws-1-pane", tabs: [legacyTab()], activeTabId: FLEET_HEALTH_TAB_ID }],
+        activePaneId: "ws-1-pane",
+        splitRatio: 0.5,
+        closable: true,
+      },
+      {
+        id: "ws-2",
+        kind: "tools",
+        title: "工具",
+        panes: [{ id: "ws-2-pane", tabs: [legacyTab()], activeTabId: FLEET_HEALTH_TAB_ID }],
+        activePaneId: "ws-2-pane",
+        splitRatio: 0.5,
+        closable: true,
+      },
+    ];
+    useUi.setState({ sessions, workspaces, activeWorkspaceId: "ws-2" });
+
+    useUi.getState().setActiveTab(FLEET_HEALTH_TAB_ID);
+    expect(useUi.getState().activeWorkspaceId).toBe("ws-2");
+
+    await expect(useUi.getState().closeTab(FLEET_HEALTH_TAB_ID)).resolves.toBe(true);
+    expect(paneTabIds("ws-2")).toEqual([]);
+    expect(paneTabIds("ws-1")).toEqual([FLEET_HEALTH_TAB_ID]);
+
+    useUi.setState({ activeWorkspaceId: "ws-1" });
+    useUi.getState().setActiveTab(FLEET_HEALTH_TAB_ID);
+    expect(useUi.getState().activeWorkspaceId).toBe("ws-1");
+    await expect(useUi.getState().closeTab(FLEET_HEALTH_TAB_ID)).resolves.toBe(true);
+    expect(paneTabIds("ws-1")).toEqual([]);
+  });
+
   it("keeps a legacy fixed-ID tab activatable, closable and renderable", async () => {
     useUi.setState({ activeWorkspaceId: "ws-2" });
     openFleetHealthInActiveWorkspace(FLEET_HEALTH_TAB_ID);
