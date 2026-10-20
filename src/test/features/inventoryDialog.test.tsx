@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
-import { click, clickButton, flush, mountWithClient, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
+import { act, createElement } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { click, clickButton, flush, mount, mountWithClient, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   discover: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
 });
 
 import { InventoryDialog } from "../../features/explorer/InventoryDialog";
+import { useUi } from "../../app/store";
 
 const DISCOVERY = {
   source: "docker-context",
@@ -63,6 +65,7 @@ beforeEach(() => {
 afterEach(() => {
   mounted?.unmount();
   mounted = undefined;
+  useUi.setState({ accountEpoch: 0 });
 });
 
 describe("dynamic inventory dialog", () => {
@@ -99,6 +102,58 @@ describe("dynamic inventory dialog", () => {
     await waitFor(() => expect(mocks.setWatch).toHaveBeenCalledWith({ enabled: true, path: "/tmp/config", groupId: "g1" }));
     expect(mounted!.container.textContent).toContain("停止 watch");
     expect(mounted!.container.textContent).toContain("新增 1");
+  });
+
+  it("keeps B's watch cache and UI when A's setSshWatch resolves late after an account switch", async () => {
+    mounted?.unmount();
+    // A and B share the one QueryClient, exactly like the running app.
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const mountDialog = () =>
+      mount(createElement(QueryClientProvider, { client }, createElement(InventoryDialog, { onClose: () => undefined })));
+
+    // A's watch status loads first.
+    mocks.watchStatus.mockResolvedValue({ watching: false, path: "/home/a/.ssh/config", groupId: null, lastSyncAt: null, lastResult: null, lastError: "" });
+    mounted = mountDialog();
+    await waitFor(() => expect(mocks.watchStatus).toHaveBeenCalled());
+
+    // A starts watching; the RPC stays pending across the account switch.
+    let resolveWatch!: (value: unknown) => void;
+    mocks.setWatch.mockImplementation(() => new Promise((resolve) => {
+      resolveWatch = resolve;
+    }));
+    setInputValue(mounted.container.querySelector<HTMLInputElement>('input[placeholder="~/.ssh/config"]')!, "/home/a/.ssh/config");
+    clickButton(mounted.container, "启用 watch 并同步");
+    await waitFor(() => expect(mocks.setWatch).toHaveBeenCalledWith({ enabled: true, path: "/home/a/.ssh/config" }));
+
+    // Account switch: the epoch bumps, the asset tree remounts the dialog, and the account
+    // query keys reset (the accountSwitch wiring), all before B loads its own state.
+    act(() => {
+      useUi.getState().advanceAccountEpoch();
+    });
+    mounted?.unmount();
+    await act(async () => {
+      await client.resetQueries({ queryKey: ["inventory-ssh-watch"] });
+    });
+
+    // B loads its own watch status on the same client.
+    mocks.watchStatus.mockResolvedValue({ watching: true, path: "/home/b/.ssh/config", groupId: "g1", lastSyncAt: 2, lastResult: null, lastError: "" });
+    mounted = mountDialog();
+    const pathInput = mounted.container.querySelector<HTMLInputElement>('input[placeholder="~/.ssh/config"]')!;
+    await waitFor(() =>
+      expect(client.getQueryData(["inventory-ssh-watch"])).toMatchObject({ watching: true, path: "/home/b/.ssh/config" }),
+    );
+    // The path-sync effect commits to the DOM on the next flush after the cache write.
+    await flush();
+    expect(pathInput.value).toBe("/home/b/.ssh/config");
+
+    // A's late resolve must only settle the old component, never write B's cache or UI.
+    resolveWatch({ watching: true, path: "/home/a/.ssh/config", groupId: "group-a", lastSyncAt: 1, lastResult: SYNC_RESULT, lastError: "" });
+    await flush();
+
+    expect(client.getQueryData(["inventory-ssh-watch"])).toMatchObject({ watching: true, path: "/home/b/.ssh/config" });
+    expect(pathInput.value).toBe("/home/b/.ssh/config");
+    expect(mounted.container.textContent).not.toContain("/home/a/.ssh/config");
+    expect(mounted.container.textContent).not.toContain("group-a");
   });
 
   it("restores the active watch path and group when reopened", async () => {

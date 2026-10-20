@@ -7,6 +7,7 @@ import {
   type InventorySource,
   type InventorySyncDTO,
 } from "../../ipc/inventoryApi";
+import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
@@ -49,6 +50,23 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
   const pathId = useId();
   const layer = useOverlayFocus(true, modalRef, { initialFocus: () => pathRef.current });
 
+  // Async completions must not outlive the account that started them: after every await, shared
+  // side effects (query-cache writes, invalidations, refetches) require the dialog to still be
+  // mounted on the same account epoch. A stale completion does nothing at all — the account-epoch
+  // remount in the asset tree replaces the whole dialog on a switch, so the old instance's state
+  // is irrelevant and only the new account's cache may be written.
+  const accountEpoch = useUi((state) => state.accountEpoch);
+  const mountedRef = useRef(false);
+  const epochRef = useRef(accountEpoch);
+  useEffect(() => {
+    mountedRef.current = true;
+    epochRef.current = accountEpoch;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [accountEpoch]);
+  const isStale = (epoch: number) => !mountedRef.current || epochRef.current !== epoch;
+
   const refreshAssets = () => {
     void qc.invalidateQueries({ queryKey: ["assets"] });
     void qc.invalidateQueries({ queryKey: ["groups"] });
@@ -56,20 +74,23 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
   };
 
   const runDiscover = async () => {
+    const epoch = accountEpoch;
     setBusy("discover");
     setError(null);
     setResult(null);
     try {
       const response = await inventoryApi.discover(source, source === "ssh-config" ? path : undefined);
+      if (isStale(epoch)) return;
       const normalized = { ...response, items: response.items ?? [], warnings: response.warnings ?? [] };
       setDiscovery(normalized);
       setSelected(new Set(normalized.items.map((item) => item.key)));
     } catch (cause) {
+      if (isStale(epoch)) return;
       setDiscovery(null);
       setSelected(new Set());
       setError(describeError(cause));
     } finally {
-      setBusy(null);
+      if (!isStale(epoch)) setBusy(null);
     }
   };
 
@@ -81,6 +102,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
       );
       if (!confirmed) return;
     }
+    const epoch = accountEpoch;
     setBusy("sync");
     setError(null);
     try {
@@ -90,16 +112,19 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
         ...(groupId ? { groupId } : {}),
         ...(source === "ssh-config" ? {} : { keys: [...selected] }),
       });
+      if (isStale(epoch)) return;
       setResult({ ...response, warnings: response.warnings ?? [] });
       refreshAssets();
     } catch (cause) {
+      if (isStale(epoch)) return;
       setError(describeError(cause));
     } finally {
-      setBusy(null);
+      if (!isStale(epoch)) setBusy(null);
     }
   };
 
   const setWatch = async (enabled: boolean) => {
+    const epoch = accountEpoch;
     setBusy("watch");
     setError(null);
     try {
@@ -108,14 +133,16 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
         ...(enabled && path.trim() ? { path: path.trim() } : {}),
         ...(enabled && groupId ? { groupId } : {}),
       });
+      if (isStale(epoch)) return;
       qc.setQueryData(["inventory-ssh-watch"], status);
       if (status.lastResult) setResult({ ...status.lastResult, warnings: status.lastResult.warnings ?? [] });
       refreshAssets();
     } catch (cause) {
+      if (isStale(epoch)) return;
       setError(describeError(cause));
       void watchQuery.refetch();
     } finally {
-      setBusy(null);
+      if (!isStale(epoch)) setBusy(null);
     }
   };
 
