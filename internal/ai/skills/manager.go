@@ -106,7 +106,7 @@ func (m *Manager) stateForLocked(ctx context.Context, ownerID string) (*ownerSta
 	if entry, ok := m.states[ownerID]; ok {
 		return entry, nil
 	}
-	result, err := load(ctx, m.settings, ownerID)
+	result, err := load(ctx, m.settings, ownerID, m.index)
 	if err != nil {
 		return nil, err
 	}
@@ -256,21 +256,38 @@ func (m *Manager) DeleteOverride(ctx context.Context, name string) error {
 // Dispatch resolves the effective skill material for the load_skill path and
 // pins the digest of exactly what would be sent to the model. Callers
 // record the digest as the dispatch evidence; overrides only ever change
-// the returned instructions.
+// the returned instructions. Disabled skills are rejected here — Settings
+// reads go through Material instead.
 func (m *Manager) Dispatch(ctx context.Context, name string) (Dispatch, error) {
-	_, entry, err := m.stateFor(ctx)
+	dispatch, disabled, err := m.material(ctx, name)
 	if err != nil {
 		return Dispatch{}, err
+	}
+	if disabled {
+		return Dispatch{}, fmt.Errorf("%w: %s", ErrSkillDisabled, name)
+	}
+	return dispatch, nil
+}
+
+// Material returns the effective skill material for Settings reads. Unlike
+// Dispatch it also reads disabled skills, keeping Settings reads separate
+// from model dispatch evidence.
+func (m *Manager) Material(ctx context.Context, name string) (Dispatch, error) {
+	dispatch, _, err := m.material(ctx, name)
+	return dispatch, err
+}
+
+func (m *Manager) material(ctx context.Context, name string) (Dispatch, bool, error) {
+	_, entry, err := m.stateFor(ctx)
+	if err != nil {
+		return Dispatch{}, false, err
 	}
 	m.mu.RLock()
 	override, hasOverride := entry.overrides[name]
 	m.mu.RUnlock()
 	base, hasBase := m.index.Lookup(name)
 	if !hasBase && !hasOverride {
-		return Dispatch{}, fmt.Errorf("%w: %s", ErrSkillNotFound, name)
-	}
-	if hasOverride && override.Disabled {
-		return Dispatch{}, fmt.Errorf("%w: %s", ErrSkillDisabled, name)
+		return Dispatch{}, false, fmt.Errorf("%w: %s", ErrSkillNotFound, name)
 	}
 	skill := effective(base, hasBase, override)
 	source := SourceEmbedded
@@ -283,7 +300,7 @@ func (m *Manager) Dispatch(ctx context.Context, name string) (Dispatch, error) {
 		Body:        skill.Body,
 		Digest:      skill.Digest(),
 		Source:      source,
-	}, nil
+	}, hasOverride && override.Disabled, nil
 }
 
 // Reload re-reads the caller's override state from the settings store.
@@ -294,7 +311,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	result, err := load(ctx, m.settings, ownerID)
+	result, err := load(ctx, m.settings, ownerID, m.index)
 	if err != nil {
 		return err
 	}
@@ -319,7 +336,7 @@ type loadResult struct {
 	needsSave bool
 }
 
-func load(ctx context.Context, settings Settings, ownerID string) (loadResult, error) {
+func load(ctx context.Context, settings Settings, ownerID string, index *Index) (loadResult, error) {
 	raw, found, err := settings.SettingGet(ctx, SettingKeyForUser(ownerID))
 	if err != nil {
 		return loadResult{}, err
@@ -336,7 +353,7 @@ func load(ctx context.Context, settings Settings, ownerID string) (loadResult, e
 		return loadResult{}, fmt.Errorf("unsupported AI skill store version %d", persisted.Version)
 	}
 	before, _ := json.Marshal(persisted)
-	normalized := normalizeOverrides(persisted.Overrides)
+	normalized := normalizeOverrides(persisted.Overrides, index)
 	after, _ := json.Marshal(persistedState{Version: StoreVersion, Overrides: normalized})
 	return loadResult{overrides: overrideMap(normalized), needsSave: !bytes.Equal(before, after)}, nil
 }
@@ -368,8 +385,12 @@ type persistedState struct {
 
 // normalizeOverrides drops persisted entries that no longer pass name
 // validation and keeps the first entry per name so a poisoned or duplicated
-// store cannot make resolution nondeterministic.
-func normalizeOverrides(overrides []Override) []Override {
+// store cannot make resolution nondeterministic. Every retained entry must
+// also pass the same semantic rules as SaveOverride against the current
+// embedded index: blank or oversized fields, empty embedded overrides,
+// custom skills missing description or body, and overrides whose embedded
+// base has disappeared are all quarantined instead of being dispatched.
+func normalizeOverrides(overrides []Override, index *Index) []Override {
 	seen := make(map[string]struct{}, len(overrides))
 	result := make([]Override, 0, len(overrides))
 	for _, candidate := range overrides {
@@ -379,6 +400,15 @@ func normalizeOverrides(overrides []Override) []Override {
 			continue
 		}
 		if _, duplicate := seen[override.Name]; duplicate {
+			continue
+		}
+		_, hasBase := index.Lookup(override.Name)
+		if err := validateOverrideInput(override.Name, hasBase, OverrideInput{
+			Name:        override.Name,
+			Description: override.Description,
+			Body:        override.Body,
+			Disabled:    override.Disabled,
+		}); err != nil {
 			continue
 		}
 		seen[override.Name] = struct{}{}

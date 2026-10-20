@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -40,16 +41,27 @@ type Skill struct {
 	Body        string `json:"body"`
 }
 
-// Digest pins the exact material a dispatch would send: it covers the
-// canonical name, description, and body with "\x00" separators.
+// Digest pins the exact material a dispatch would send. Fields are framed
+// as "<byte-length>:<value>" so values containing separators cannot make
+// distinct dispatched tuples collide.
 func (s Skill) Digest() string {
-	sum := sha256.Sum256([]byte(s.Name + "\x00" + s.Description + "\x00" + s.Body))
+	sum := sha256.Sum256([]byte(canonicalMaterial(s.Name, s.Description, s.Body)))
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 // DigestOf is the package-level form of Skill.Digest.
 func DigestOf(skill Skill) string {
 	return skill.Digest()
+}
+
+func canonicalMaterial(fields ...string) string {
+	var builder strings.Builder
+	for _, field := range fields {
+		builder.WriteString(strconv.Itoa(len(field)))
+		builder.WriteString(":")
+		builder.WriteString(field)
+	}
+	return builder.String()
 }
 
 // Override is the per-owner persisted delta applied on top of an embedded

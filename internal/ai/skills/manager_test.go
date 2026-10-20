@@ -406,3 +406,102 @@ func TestManagerConcurrentOwnerIsolation(t *testing.T) {
 	}
 	wait.Wait()
 }
+
+func TestManagerMaterialReadsDisabledSkills(t *testing.T) {
+	manager, err := skills.NewManager(t.Context(), newMemorySettings(), skills.WithIndex(testIndex(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	baseline, err := manager.Dispatch(ctx, "alpha-skill")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.SaveOverride(ctx, skills.OverrideInput{Name: "alpha-skill", Disabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Dispatch(ctx, "alpha-skill"); !errors.Is(err, skills.ErrSkillDisabled) {
+		t.Fatalf("dispatch err = %v, want ErrSkillDisabled", err)
+	}
+	material, err := manager.Material(ctx, "alpha-skill")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if material.Body != "alpha body\n" || material.Digest != baseline.Digest || material.Source != skills.SourceEmbedded {
+		t.Fatalf("material = %+v", material)
+	}
+
+	if _, err := manager.SaveOverride(ctx, skills.OverrideInput{
+		Name: "custom-skill", Description: stringPointer("Custom"), Body: stringPointer("custom body\n"), Disabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	custom, err := manager.Material(ctx, "custom-skill")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if custom.Body != "custom body\n" || custom.Source != skills.SourceCustom {
+		t.Fatalf("custom material = %+v", custom)
+	}
+	if _, err := manager.Dispatch(ctx, "custom-skill"); !errors.Is(err, skills.ErrSkillDisabled) {
+		t.Fatalf("custom dispatch err = %v, want ErrSkillDisabled", err)
+	}
+	if _, err := manager.Material(ctx, "missing-skill"); !errors.Is(err, skills.ErrSkillNotFound) {
+		t.Fatalf("material err = %v, want ErrSkillNotFound", err)
+	}
+}
+
+func TestManagerLoadQuarantinesSemanticallyInvalidOverrides(t *testing.T) {
+	settings := newMemorySettings()
+	oversizedBody := strings.Repeat("b", 64*1024+1)
+	settings.seed(skills.SettingKeyForUser("owner-a"), `{"version":1,"overrides":[
+		{"name":"custom-skill","description":"desc"},
+		{"name":"alpha-skill","description":"   "},
+		{"name":"beta-skill","body":"`+oversizedBody+`"},
+		{"name":"ghost-skill","disabled":true},
+		{"name":"alpha-skill","description":"kept override"},
+		{"name":"custom-ok","description":"d","body":"b\n"}
+	]}`)
+	manager, err := skills.NewManager(t.Context(), settings, skills.WithIndex(testIndex(t)), skills.WithShared(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := ipc.WithUserID(t.Context(), "owner-a")
+
+	dispatch, err := manager.Dispatch(ctx, "alpha-skill")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dispatch.Description != "kept override" || dispatch.Body != "alpha body\n" {
+		t.Fatalf("valid partial override was not retained: %+v", dispatch)
+	}
+	custom, err := manager.Dispatch(ctx, "custom-ok")
+	if err != nil || custom.Body != "b\n" {
+		t.Fatalf("valid custom skill was not retained: %+v, %v", custom, err)
+	}
+	for _, dropped := range []string{"custom-skill", "ghost-skill"} {
+		if _, err := manager.Dispatch(ctx, dropped); !errors.Is(err, skills.ErrSkillNotFound) {
+			t.Fatalf("dispatch %s err = %v, want ErrSkillNotFound", dropped, err)
+		}
+	}
+	beta, err := manager.Dispatch(ctx, "beta-skill")
+	if err != nil || beta.Body != "beta body\n" {
+		t.Fatalf("beta-skill must fall back to embedded content: %+v, %v", beta, err)
+	}
+
+	var persisted struct {
+		Overrides []struct {
+			Name string `json:"name"`
+		} `json:"overrides"`
+	}
+	if err := json.Unmarshal([]byte(settings.value(skills.SettingKeyForUser("owner-a"))), &persisted); err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(persisted.Overrides))
+	for _, override := range persisted.Overrides {
+		names = append(names, override.Name)
+	}
+	if len(names) != 2 || names[0] != "alpha-skill" || names[1] != "custom-ok" {
+		t.Fatalf("quarantined store = %v", names)
+	}
+}

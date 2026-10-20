@@ -11,7 +11,7 @@ import (
 
 func TestDigestPinsExactDispatchedMaterial(t *testing.T) {
 	skill := skills.Skill{Name: "demo-skill", Description: "demo", Body: "body line\n"}
-	sum := sha256.Sum256([]byte("demo-skill\x00demo\x00body line\n"))
+	sum := sha256.Sum256([]byte("10:demo-skill4:demo10:body line\n"))
 	expected := "sha256:" + hex.EncodeToString(sum[:])
 	if skill.Digest() != expected || skills.DigestOf(skill) != expected {
 		t.Fatalf("digest = %q, want %q", skill.Digest(), expected)
@@ -20,6 +20,22 @@ func TestDigestPinsExactDispatchedMaterial(t *testing.T) {
 	other.Body = "body line\n\n"
 	if other.Digest() == skill.Digest() {
 		t.Fatal("trailing newline change did not change the digest")
+	}
+}
+
+// TestDigestEncodingIsUnambiguous pins the length-prefixed framing: field
+// values may legally contain the separator, so a naive separator-joined
+// encoding would let different dispatched tuples collide.
+func TestDigestEncodingIsUnambiguous(t *testing.T) {
+	left := skills.Skill{Name: "demo-skill", Description: "a\x00b", Body: "c"}
+	right := skills.Skill{Name: "demo-skill", Description: "a", Body: "b\x00c"}
+	if left.Digest() == right.Digest() {
+		t.Fatal("distinct dispatched tuples produced the same digest")
+	}
+	long := skills.Skill{Name: "demo-skill", Description: "ab", Body: "c"}
+	short := skills.Skill{Name: "demo-skill", Description: "a", Body: "bc"}
+	if long.Digest() == short.Digest() {
+		t.Fatal("field boundary change produced the same digest")
 	}
 }
 
