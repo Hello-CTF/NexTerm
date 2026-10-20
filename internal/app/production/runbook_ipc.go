@@ -198,7 +198,13 @@ func (s *runbookIPCService) withRun(ctx context.Context, ownerID, runID string, 
 	s.mu.Lock()
 	if s.runs[key] == entry {
 		entry.lastAccess = s.now()
-		entry.terminal = runbookRunTerminal(state.Status)
+		// Terminal is monotonic for the entry's lifetime: the engine never leaves a
+		// terminal state, so only a successful terminal result may set it. Errors
+		// return a zero state and a stale in-flight response may be non-terminal;
+		// neither may revert a completed run to active.
+		if err == nil && runbookRunTerminal(state.Status) {
+			entry.terminal = true
+		}
 	}
 	s.mu.Unlock()
 	return state, err

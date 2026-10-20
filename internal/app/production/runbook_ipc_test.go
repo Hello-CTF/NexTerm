@@ -706,3 +706,118 @@ func TestRunbookIPCProductionShutdownCancelsLiveRuns(t *testing.T) {
 		t.Fatal("production shutdown did not cancel the live run")
 	}
 }
+
+func TestRunbookIPCPostTerminalOperationsKeepSlotReleasedAndEvictable(t *testing.T) {
+	service := newRunbookIPCService(newRunbookIPCExecutor())
+	service.maxActiveRunsPerOwner = 1
+	service.maxRetainedRunsPerOwner = 0
+	dispatcher := ipc.NewDispatcher()
+	if err := service.register(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	owner := ipc.WithUserID(t.Context(), "owner-a")
+
+	runbookIPCStartRun(t, dispatcher, owner, "run-r1", "r1")
+	if state := runbookIPCCompleteRun(t, dispatcher, owner, "run-r1"); state.Status != runbook.RunSuccess {
+		t.Fatalf("run-r1 final state = %+v", state)
+	}
+
+	postTerminal := dispatchExecBatchTest(dispatcher, owner, "runbook_run_prepare", runbook.PrepareRequest{
+		RunID: "run-r1", StepNumber: 1,
+		Commands: []runbook.RenderedCommand{{SessionID: "session-1", Command: "do"}},
+	})
+	if postTerminal.OK || postTerminal.Error == nil || postTerminal.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("post-terminal prepare = %+v, want invalid-state error", postTerminal)
+	}
+	postAdvance := dispatchExecBatchTest(dispatcher, owner, "runbook_run_advance", runbook.AdvanceRequest{RunID: "run-r1", StepNumber: 1, Confirmed: true})
+	if postAdvance.OK || postAdvance.Error == nil || postAdvance.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("post-terminal advance = %+v, want invalid-state error", postAdvance)
+	}
+
+	decodeExecBatchTest[runbook.RunState](t, runbookIPCStartRun(t, dispatcher, owner, "run-r2", "r2"))
+	requireRunbookIPCNotFound(t, runbookIPCGetRun(t, dispatcher, owner, "run-r1"))
+	if state := runbookIPCCompleteRun(t, dispatcher, owner, "run-r2"); state.Status != runbook.RunSuccess {
+		t.Fatalf("run-r2 final state = %+v", state)
+	}
+}
+
+func TestRunbookIPCTerminalStateSurvivesStaleAndFailedResponses(t *testing.T) {
+	service := newRunbookIPCService(newRunbookIPCExecutor())
+	ownerID, runID := "owner-a", "run-mono"
+	service.mu.Lock()
+	entry := &runbookRunEntry{runs: runbook.New(service.executor), lastAccess: time.Now()}
+	service.runs[runbookRunKey{ownerID: ownerID, runID: runID}] = entry
+	service.mu.Unlock()
+
+	terminal := func(context.Context, *runbook.Service) (runbook.RunState, error) {
+		return runbook.RunState{Status: runbook.RunSuccess}, nil
+	}
+	if _, err := service.withRun(t.Context(), ownerID, runID, terminal); err != nil {
+		t.Fatal(err)
+	}
+
+	stale := func(context.Context, *runbook.Service) (runbook.RunState, error) {
+		return runbook.RunState{Status: runbook.RunAwaitingRender}, nil
+	}
+	if _, err := service.withRun(t.Context(), ownerID, runID, stale); err != nil {
+		t.Fatal(err)
+	}
+	service.mu.Lock()
+	observed := entry.terminal
+	service.mu.Unlock()
+	if !observed {
+		t.Fatal("stale non-terminal response reverted a terminal entry to active")
+	}
+
+	failed := func(context.Context, *runbook.Service) (runbook.RunState, error) {
+		return runbook.RunState{}, fmt.Errorf("injected post-terminal failure")
+	}
+	if _, err := service.withRun(t.Context(), ownerID, runID, failed); err == nil {
+		t.Fatal("expected injected failure")
+	}
+	service.mu.Lock()
+	observed = entry.terminal
+	service.mu.Unlock()
+	if !observed {
+		t.Fatal("failed post-terminal response reverted a terminal entry to active")
+	}
+}
+
+func TestRunbookIPCTerminalStateConcurrentResponsesNeverRevert(t *testing.T) {
+	service := newRunbookIPCService(newRunbookIPCExecutor())
+	ownerID, runID := "owner-a", "run-race"
+	service.mu.Lock()
+	entry := &runbookRunEntry{runs: runbook.New(service.executor), lastAccess: time.Now()}
+	service.runs[runbookRunKey{ownerID: ownerID, runID: runID}] = entry
+	service.mu.Unlock()
+
+	responses := []func(context.Context, *runbook.Service) (runbook.RunState, error){
+		func(context.Context, *runbook.Service) (runbook.RunState, error) {
+			return runbook.RunState{Status: runbook.RunSuccess}, nil
+		},
+		func(context.Context, *runbook.Service) (runbook.RunState, error) {
+			return runbook.RunState{Status: runbook.RunAwaitingRender}, nil
+		},
+		func(context.Context, *runbook.Service) (runbook.RunState, error) {
+			return runbook.RunState{}, fmt.Errorf("injected racing failure")
+		},
+		func(context.Context, *runbook.Service) (runbook.RunState, error) {
+			return runbook.RunState{Status: runbook.RunCanceled}, nil
+		},
+	}
+	var workers sync.WaitGroup
+	for _, response := range responses {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			_, _ = service.withRun(t.Context(), ownerID, runID, response)
+		}()
+	}
+	workers.Wait()
+	service.mu.Lock()
+	observed := entry.terminal
+	service.mu.Unlock()
+	if !observed {
+		t.Fatal("concurrent responses reverted a terminal entry to active")
+	}
+}
