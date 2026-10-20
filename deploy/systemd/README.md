@@ -35,12 +35,52 @@ sudo ./install.sh
 
 First install creates the `nexterm` system user, `/opt/nexterm`,
 `/etc/nexterm` and `/var/lib/nexterm`, installs the binaries, web assets,
-units and environment files, generates `/etc/nexterm/master.key`, then runs
-`systemctl enable --now nexterm-server` and verifies the unit reports active
-(a unit that does not start produces a warning with a `journalctl` hint, not
-a failed install). Use `--no-enable` to install without starting the service.
-On a completed first install the script prints where to finish super-admin
-setup; it never prints anything account-related on upgrades or re-runs.
+units and environment files, generates `/etc/nexterm/master.key`, creates
+the super-admin account, then runs `systemctl enable --now nexterm-server`
+and verifies the unit reports active (a unit that does not start produces
+a warning with a `journalctl` hint, not a failed install). Use
+`--no-enable` to install without starting the service.
+
+The super-admin bootstrap runs before the first service start, through
+the server's own account-initialization contract (no separate account
+path, no direct database edits). Only after the account was actually
+created does the installer print the initial password to the installing
+console; nothing account-related is ever printed on upgrades, existing
+accounts or re-runs, and the password is never written to env files,
+disk or logs. Two provisioning modes are supported:
+
+- default: a cryptographically random initial password, marked
+  must-change, so the first login has to set a new password;
+- injected: with `NEXTERM_ADMIN_PASSWORD` set in the installer's
+  environment, that exact password becomes the initial password with no
+  forced rotation — the channel install systems such as LazyCat use to
+  inject a known credential. `NEXTERM_ADMIN_USERNAME` overrides the
+  default name `admin`. The password travels via the process environment
+  only — never via argv, which is world-readable through
+  `/proc/<pid>/cmdline` — and is never written to env files, disk or
+  logs.
+
+The bootstrap runs as the `nexterm` service user: everything it creates
+is born with the right ownership, a data directory the service cannot
+write fails closed during the install, and pre-existing files in a
+custom data directory are never touched (the installer performs no
+recursive ownership changes). Its environment is scrubbed to a whitelist
+mirroring the service's effective configuration — the unit's `HOME` and
+every key from the env file, including `PG*` values the file sets
+explicitly — so ambient variables such as `PGDATABASE` or `PGPASSWORD`
+can never point the bootstrap at a different database or credential than
+the service uses. The bootstrap executes in the unit's
+`WorkingDirectory`, so relative paths such as
+`NEXTERM_DB_PASSWORD_FILE` resolve exactly like the service resolves
+them. When the bootstrap does not run (staged `--root` installs,
+`auth=off` or `auth=platform` deployments), finish setup with the
+one-time code from the server log instead. If an init code was
+already issued and cannot be proven usable (for example a previous
+attempt failed to clean up its own code), the first install keeps
+failing with recovery guidance instead of starting an uninitialized
+service and reporting success. A failed bootstrap aborts the first
+install before the service starts, so fixing the problem and re-running
+resumes and retries it.
 
 An upgrade (detected from an existing `/opt/nexterm/nexterm-server`,
 `/etc/nexterm/*.env` or unit) replaces binaries, web assets and units, and:
@@ -121,8 +161,9 @@ on `127.0.0.1:8080`, require account authentication and store local state
 in `/var/lib/nexterm`. After editing an environment file, restart the
 selected unit.
 
-On first start with no account, the log contains a one-time initialization
-code. Open the UI and finish super-admin setup. To run the sync-only peer
+When no super-admin exists at first start (the bootstrap was skipped, or
+it was never run), the log contains a one-time initialization code: open
+the UI and finish super-admin setup with it. To run the sync-only peer
 instead, disable the full server and enable `nexterm-onlyserver`; its unit
 adds only the `--sync-only` mode flag and reads `onlyserver.env`.
 

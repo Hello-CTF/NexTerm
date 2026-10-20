@@ -20,7 +20,36 @@ macOS and Windows are not supported.
 First install creates the nexterm system user, /opt/nexterm, /etc/nexterm
 and /var/lib/nexterm, installs binaries, web assets, units and environment
 files with safe defaults (loopback listen, auth on), generates
-/etc/nexterm/master.key, then enables and starts nexterm-server.
+/etc/nexterm/master.key, creates the super-admin account through the
+server's account initialization contract, then enables and starts
+nexterm-server.
+
+The super-admin bootstrap runs only on a first install to a real root and
+prints the initial password to this console only after the account was
+actually created. By default the password is cryptographically random and
+must be changed at first login. Set NEXTERM_ADMIN_PASSWORD in the
+installer's environment to inject a specific initial password instead (no
+forced rotation), e.g. for LazyCat-style install systems;
+NEXTERM_ADMIN_USERNAME overrides the default name "admin". The password
+travels via the process environment only — never via argv, which is
+world-readable through /proc/<pid>/cmdline — and is never written to
+env files, disk or logs. Nothing account-related is printed on upgrades, existing
+accounts or re-runs. The bootstrap runs as the nexterm service user, so
+everything it creates is born with the right ownership and a data
+directory the service cannot write fails closed; pre-existing files in a
+custom data directory are never touched. The bootstrap environment is
+scrubbed to a whitelist that mirrors the service's effective
+configuration — the unit's HOME and every key from the env file,
+including PG* values the file sets explicitly — so ambient variables
+such as PGDATABASE or PGPASSWORD can never point it at a different
+database or credential than the service uses. The bootstrap executes in
+the unit's WorkingDirectory, so relative paths such as
+NEXTERM_DB_PASSWORD_FILE resolve exactly like the service resolves
+them. When the bootstrap is skipped
+(staged --root installs, auth off/platform modes) finish setup with the
+one-time code from the server log instead. If an init code was already
+issued and cannot be proven usable, the first install keeps failing
+(with recovery guidance) rather than starting an uninitialized service.
 
 An upgrade replaces binaries, web assets and units, but preserves
 /etc/nexterm/nexterm.env, /etc/nexterm/onlyserver.env and the effective
@@ -48,6 +77,8 @@ Options:
 Test hooks (see scripts/test-systemd-install.py):
   NEXTERM_INSTALL_SYSTEMCTL   systemctl executable to call
   NEXTERM_INSTALL_UNAME       uname executable to call
+  NEXTERM_INSTALL_INIT_ADMIN  replacement for the server binary during the
+                              super-admin bootstrap (staged-root tests)
   NEXTERM_INSTALL_FAIL_AT     abort at the named step
 INSTALL_HELP_EOF
 }
@@ -600,6 +631,47 @@ env_get() {
   env_parse_value "$value"
 }
 
+env_key_valid() {
+  # a full key-name check (not a glob): a letter or underscore followed by
+  # any number of letters, digits or underscores — single-character keys
+  # are valid, empty keys and invalid trailing characters are not
+  local key="$1" i char
+  [ -n "$key" ] || return 1
+  case "$key" in
+    [A-Za-z_]*) ;;
+    *) return 1 ;;
+  esac
+  i=2
+  while [ "$i" -le "${#key}" ]; do
+    char="${key:$((i - 1)):1}"
+    case "$char" in
+      [A-Za-z0-9_]) ;;
+      *) return 1 ;;
+    esac
+    i=$((i + 1))
+  done
+  return 0
+}
+
+env_file_keys() {
+  # print the assignment key of every non-comment logical line, in order;
+  # used to mirror the service's effective environment exactly
+  local file="$1" line key
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line#"${line%%[![:blank:]]*}"}"
+    case "$line" in
+      ''|'#'*|';'*) continue ;;
+      *[=]*) ;;
+      *) continue ;;
+    esac
+    key="${line%%=*}"
+    key="${key%"${key##*[![:blank:]]}"}"
+    if env_key_valid "$key"; then
+      printf '%s\n' "$key"
+    fi
+  done < <(tr '\r' '\n' < "$file" | env_join_continuations)
+}
+
 transaction_pending() { [ -f "$BACKUP_DIR/pending" ]; }
 
 transaction_state_get() {
@@ -1057,16 +1129,96 @@ manage_services() {
   fi
 }
 
-report_account_bootstrap() {
+bootstrap_admin() {
+  fail_at bootstrap
   [ "$MODE" = "first" ] || return 0
-  [ "$ENABLE" -eq 1 ] || return 0
-  # DEP01 follow-up: once the initial-admin password policy and its server
-  # wiring land, create the super-admin through the server's account
-  # initialization contract here and print the initial password to this
-  # console only after successful creation; never on upgrade/re-run, never
-  # to logs, env files or disk. Until then the server prints a one-time
-  # initialization code to its own log on first start.
-  log "super-admin setup: finish initialization with the one-time code from the server log (journalctl -u $SERVER_UNIT)"
+  if [ "$REAL_ROOT" -ne 1 ] && [ -z "${NEXTERM_INSTALL_INIT_ADMIN:-}" ]; then
+    log "skipping super-admin bootstrap (staged root $ROOT_PREFIX)"
+    return 0
+  fi
+  local env_file="$ETC_DIR/nexterm.env" auth data_dir db dsn dbpw effective rc env_keys server_home admin_user admin_pass key bootstrap_wd
+  auth="$(env_get "$env_file" NEXTERM_AUTH)"
+  case "$auth" in
+    ""|on|loopback) ;;
+    *) log "skipping super-admin bootstrap (NEXTERM_AUTH=$auth manages accounts itself)"; return 0 ;;
+  esac
+  data_dir="$(env_get "$env_file" NEXTERM_DATA_DIR)"
+  db="$(env_get "$env_file" NEXTERM_DB)"
+  dsn="$(env_get "$env_file" NEXTERM_DB_DSN)"
+  dbpw="$(env_get "$env_file" NEXTERM_DB_PASSWORD_FILE)"
+  # Resolve the data directory the way the server resolves it (an explicit
+  # value, relative values against the unit working directory, otherwise the
+  # <working-dir>/data fallback) so the bootstrap opens the same database the
+  # service will open.
+  if [ -z "$data_dir" ]; then
+    effective="$WORKING_DIR_NEXTERM/data"
+  elif [ "${data_dir#/}" = "$data_dir" ]; then
+    effective="$WORKING_DIR_NEXTERM/$data_dir"
+  else
+    effective="$data_dir"
+  fi
+  effective="$(lex_clean "$effective")"
+  [ "$effective" != "/" ] || die "refusing to bootstrap with dangerous data directory $effective"
+  # The service's own HOME comes from the unit's Environment= line.
+  server_home="$(grep -m1 '^Environment=HOME=' "$UNIT_DIR/$SERVER_UNIT" | sed 's/^Environment=HOME=//' || true)"
+  [ -n "$server_home" ] || server_home="/var/lib/nexterm"
+  # The bootstrap runs in the unit's WorkingDirectory (mapped under the
+  # staged root when there is one), so relative paths such as
+  # NEXTERM_DB_PASSWORD_FILE resolve exactly like the service resolves them.
+  bootstrap_wd="$(resolve_path "$WORKING_DIR_NEXTERM" /)"
+  # The whitelist mirrors the service's effective environment: every key of
+  # the env file (systemd applies EnvironmentFile to the service verbatim),
+  # the unit's HOME, and the intentionally injected admin variables.
+  env_keys="$(env_file_keys "$env_file")"
+  admin_user="${NEXTERM_ADMIN_USERNAME:-}"
+  admin_pass="${NEXTERM_ADMIN_PASSWORD:-}"
+  local server_bin="$OPT_DIR/nexterm-server"
+  [ -n "${NEXTERM_INSTALL_INIT_ADMIN:-}" ] && server_bin="$NEXTERM_INSTALL_INIT_ADMIN"
+  if [ "$REAL_ROOT" -eq 1 ]; then
+    # Run the bootstrap as the service user: everything it creates is then
+    # born with the right ownership, and a data directory the nexterm user
+    # cannot write fails closed here instead of breaking the service later.
+    command -v runuser >/dev/null 2>&1 || die "runuser not found (required to run the super-admin bootstrap as the nexterm user)"
+  fi
+  log "creating the super-admin account (first install)"
+  rc=0
+  # The bootstrap runs in a scrubbed environment: ambient variables (PG*,
+  # LD_*, ...) never reach the child, so it sees exactly what the service
+  # would see and cannot land in a different database. Secrets travel
+  # through the process environment only: argv is world-readable via
+  # /proc/<pid>/cmdline. The scrub and exports live in a subshell so the
+  # rest of the installer never carries the admin variables.
+  (
+    while IFS= read -r line; do
+      case "$line" in
+        "declare -x "*) ;;
+        *) continue ;;
+      esac
+      name="${line#declare -x }"
+      name="${name%%=*}"
+      case "$name" in
+        PATH|INIT_ADMIN_*) ;;
+        *) unset "$name" 2>/dev/null || true ;;
+      esac
+    done < <(export -p)
+    export HOME="$server_home"
+    for key in $env_keys; do
+      export "$key=$(env_get "$env_file" "$key")"
+    done
+    if [ -n "$admin_user" ]; then export NEXTERM_ADMIN_USERNAME="$admin_user"; fi
+    if [ -n "$admin_pass" ]; then export NEXTERM_ADMIN_PASSWORD="$admin_pass"; fi
+    cd "$bootstrap_wd" || die "cannot enter the service working directory $bootstrap_wd"
+    if [ "$REAL_ROOT" -eq 1 ]; then
+      exec runuser --preserve-environment -u nexterm -- "$server_bin" init-admin
+    fi
+    exec "$server_bin" init-admin
+  ) || rc=$?
+  case "$rc" in
+    0) log "super-admin created; the initial password printed above is shown only once" ;;
+    3) log "super-admin bootstrap skipped: the account system is already initialized" ;;
+    4) die "super-admin bootstrap found an already-issued one-time init code it cannot prove usable (leftover from an interrupted attempt, or issued by a running server); if a server printed the code, finish initialization in the browser with it, otherwise clear auth.init_code in the server setting table, then re-run (the first install resumes)" ;;
+    *) die "super-admin bootstrap failed; fix the problem reported above and re-run (the first install resumes)" ;;
+  esac
 }
 
 run_install() {
@@ -1117,10 +1269,10 @@ run_install() {
   install_units
   ensure_env_files
   ensure_master_key
+  bootstrap_admin
   reload_systemd
   manage_services
   rm -f "$INCOMPLETE_MARKER" "$FIRST_INSTALL_STATE" "$BACKUP_DIR/pending"
-  report_account_bootstrap
   log "done"
 }
 

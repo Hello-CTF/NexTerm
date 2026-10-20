@@ -21,7 +21,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/account"
 	core "github.com/Hello-CTF/NexTerm/internal/app"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
@@ -1030,4 +1032,423 @@ func requestURL(t *testing.T, client *http.Client, url, method string, body io.R
 	if response.StatusCode != expectedStatus {
 		t.Fatalf("%s %s status = %d, want %d", method, url, response.StatusCode, expectedStatus)
 	}
+}
+
+// --- init-admin: installer super-admin bootstrap (DEP01) ---
+
+func initAdminTestGetenv(values map[string]string) func(string) string {
+	return func(key string) string { return values[key] }
+}
+
+func openInitAdminTestStore(t *testing.T, dir string) *store.Store {
+	t.Helper()
+	database, err := store.Open(context.Background(), filepath.Join(dir, "data.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	return database
+}
+
+func parseInitAdminPassword(t *testing.T, output string) string {
+	t.Helper()
+	index := strings.Index(output, initAdminPasswordMarker)
+	if index < 0 {
+		t.Fatalf("initial password was not printed to the console: %q", output)
+	}
+	password := output[index+len(initAdminPasswordMarker):]
+	if end := strings.Index(password, "（"); end >= 0 {
+		password = password[:end]
+	}
+	password = strings.TrimSpace(password)
+	if password == "" || strings.ContainsAny(password, " \n\t") {
+		t.Fatalf("invalid initial password format: %q", password)
+	}
+	return password
+}
+
+func TestInitAdminRandomPasswordFirstInstall(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	if code := runInitAdmin([]string{"--data-dir", dir}, initAdminTestGetenv(nil), &stdout, &stderr); code != 0 {
+		t.Fatalf("init-admin exit = %d, stderr: %s", code, stderr.String())
+	}
+	password := parseInitAdminPassword(t, stdout.String())
+	if strings.Contains(stderr.String(), password) {
+		t.Fatal("initial password leaked to stderr")
+	}
+	accounts := account.New(openInitAdminTestStore(t, dir).GORM())
+	user, err := accounts.Authenticate(context.Background(), "admin", password)
+	if err != nil {
+		t.Fatalf("printed password rejected: %v", err)
+	}
+	if user.Role != account.RoleSuperadmin || user.State != account.StateResetRequired || !user.MustChangePassword {
+		t.Fatalf("random first-install policy must force a first-login change: %+v", user)
+	}
+	// The forced first-login change works with freshly generated envelopes,
+	// the same flow the browser uses after an admin reset.
+	_, envelopes, _, err := vault.GenerateUserDEKEnvelopes("synthetic-password-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := accounts.ChangePassword(context.Background(), user.ID, password, "synthetic-password-2", envelopes, ""); err != nil {
+		t.Fatalf("forced first-login change rejected: %v", err)
+	}
+	after, err := accounts.Authenticate(context.Background(), "admin", "synthetic-password-2")
+	if err != nil {
+		t.Fatalf("new password rejected: %v", err)
+	}
+	if after.State != account.StateActive || after.MustChangePassword {
+		t.Fatalf("first-login change did not clear the forced-change state: %+v", after)
+	}
+}
+
+func TestInitAdminSuppliedPasswordNoForcedRotation(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	getenv := initAdminTestGetenv(map[string]string{"NEXTERM_ADMIN_PASSWORD": "synthetic-password-1"})
+	if code := runInitAdmin([]string{"--data-dir", dir}, getenv, &stdout, &stderr); code != 0 {
+		t.Fatalf("init-admin exit = %d, stderr: %s", code, stderr.String())
+	}
+	if password := parseInitAdminPassword(t, stdout.String()); password != "synthetic-password-1" {
+		t.Fatalf("printed password = %q, want the supplied one", password)
+	}
+	if strings.Contains(stderr.String(), "synthetic-password-1") {
+		t.Fatal("supplied password leaked to stderr")
+	}
+	accounts := account.New(openInitAdminTestStore(t, dir).GORM())
+	user, err := accounts.Authenticate(context.Background(), "admin", "synthetic-password-1")
+	if err != nil {
+		t.Fatalf("supplied password rejected: %v", err)
+	}
+	if user.State != account.StateActive || user.MustChangePassword {
+		t.Fatalf("supplied first-install policy must not force rotation: %+v", user)
+	}
+}
+
+func TestInitAdminExistingAccountPrintsNothing(t *testing.T) {
+	dir := t.TempDir()
+	seed := account.New(openInitAdminTestStore(t, dir).GORM())
+	if _, err := seed.CreateUser(context.Background(), "existing", "", "synthetic-password-1"); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	getenv := initAdminTestGetenv(map[string]string{"NEXTERM_ADMIN_PASSWORD": "synthetic-password-2"})
+	if code := runInitAdmin([]string{"--data-dir", dir}, getenv, &stdout, &stderr); code != initAdminExitUnavailable {
+		t.Fatalf("init-admin exit = %d, want %d (stderr: %s)", code, initAdminExitUnavailable, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("existing-account run must not print to stdout: %q", stdout.String())
+	}
+	if strings.Contains(stderr.String(), "synthetic-password-2") {
+		t.Fatal("supplied password leaked on the existing-account path")
+	}
+	accounts := account.New(openInitAdminTestStore(t, dir).GORM())
+	if _, err := accounts.Authenticate(context.Background(), "admin", "synthetic-password-2"); err == nil {
+		t.Fatal("a second superadmin was created over existing accounts")
+	}
+}
+
+func TestInitAdminFailedCreateRetrySucceeds(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	short := initAdminTestGetenv(map[string]string{"NEXTERM_ADMIN_PASSWORD": "short"})
+	if code := runInitAdmin([]string{"--data-dir", dir}, short, &stdout, &stderr); code != 1 {
+		t.Fatalf("short supplied password must fail creation, exit = %d", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("failed creation must not print a password: %q", stdout.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	valid := initAdminTestGetenv(map[string]string{"NEXTERM_ADMIN_PASSWORD": "synthetic-password-1"})
+	if code := runInitAdmin([]string{"--data-dir", dir}, valid, &stdout, &stderr); code != 0 {
+		t.Fatalf("retry after a failed create must succeed, exit = %d (stderr: %s)", code, stderr.String())
+	}
+	if password := parseInitAdminPassword(t, stdout.String()); password != "synthetic-password-1" {
+		t.Fatalf("retry printed password = %q", password)
+	}
+	accounts := account.New(openInitAdminTestStore(t, dir).GORM())
+	if _, err := accounts.Authenticate(context.Background(), "admin", "synthetic-password-1"); err != nil {
+		t.Fatalf("retry password rejected: %v", err)
+	}
+}
+
+func TestInitAdminFailureOutputRedactsPassword(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	getenv := initAdminTestGetenv(map[string]string{"NEXTERM_ADMIN_PASSWORD": "synthetic-password-1"})
+	if code := runInitAdmin([]string{"--data-dir", dir, "--username", "bad name"}, getenv, &stdout, &stderr); code != 1 {
+		t.Fatalf("invalid username must fail creation, exit = %d", code)
+	}
+	combined := stdout.String() + stderr.String()
+	if strings.Contains(combined, "synthetic-password-1") {
+		t.Fatalf("supplied password reached the failure output: %q", combined)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("failed creation must not print to stdout: %q", stdout.String())
+	}
+}
+
+func TestInitAdminKeepsAlreadyIssuedInitCode(t *testing.T) {
+	dir := t.TempDir()
+	seed := account.New(openInitAdminTestStore(t, dir).GORM())
+	code, err := seed.GenerateInitCode(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if got := runInitAdmin([]string{"--data-dir", dir}, initAdminTestGetenv(nil), &stdout, &stderr); got != initAdminExitCodeIssued {
+		t.Fatalf("init-admin exit = %d, want %d (stderr: %s)", got, initAdminExitCodeIssued, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("code-issued run must not print to stdout: %q", stdout.String())
+	}
+	accounts := account.New(openInitAdminTestStore(t, dir).GORM())
+	if _, err := accounts.InitSuperadmin(context.Background(), code, "root", "synthetic-password-1"); err != nil {
+		t.Fatalf("the already-issued init code must stay usable after a bootstrap attempt: %v", err)
+	}
+}
+
+func TestInitAdminSkipsPlatformManagedAuth(t *testing.T) {
+	for _, auth := range []string{"off", "platform"} {
+		dir := t.TempDir()
+		var stdout, stderr bytes.Buffer
+		getenv := initAdminTestGetenv(map[string]string{"NEXTERM_AUTH": auth})
+		if code := runInitAdmin([]string{"--data-dir", dir}, getenv, &stdout, &stderr); code != initAdminExitUnavailable {
+			t.Fatalf("auth=%s: exit = %d, want %d", auth, code, initAdminExitUnavailable)
+		}
+		if stdout.Len() != 0 {
+			t.Fatalf("auth=%s: must not print to stdout: %q", auth, stdout.String())
+		}
+		if _, err := os.Stat(filepath.Join(dir, "data.db")); !os.IsNotExist(err) {
+			t.Fatalf("auth=%s: the store must not be opened, data.db stat: %v", auth, err)
+		}
+	}
+}
+
+func TestInitAdminHelp(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := runInitAdmin([]string{"--help"}, initAdminTestGetenv(nil), &stdout, &stderr); code != 0 {
+		t.Fatalf("--help exit = %d", code)
+	}
+	if !strings.Contains(stdout.String(), "init-admin") || !strings.Contains(stdout.String(), "NEXTERM_ADMIN_PASSWORD") {
+		t.Fatalf("usage must document the command and the injection variable: %q", stdout.String())
+	}
+}
+
+func initAdminProcessEnv(extra ...string) []string {
+	env := make([]string, 0, len(os.Environ())+len(extra))
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, "NEXTERM_") {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return append(env, extra...)
+}
+
+func TestInitAdminBinaryEndToEnd(t *testing.T) {
+	binary := buildServerBinary(t)
+	ctx := context.Background()
+
+	randomDir := t.TempDir()
+	run := func(dir string, extraEnv []string, extraArgs ...string) (string, string, int) {
+		t.Helper()
+		args := append([]string{"init-admin", "--data-dir", dir}, extraArgs...)
+		command := exec.Command(binary, args...)
+		command.Env = initAdminProcessEnv(extraEnv...)
+		var stdout, stderr bytes.Buffer
+		command.Stdout = &stdout
+		command.Stderr = &stderr
+		err := command.Run()
+		code := 0
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			code = exitErr.ExitCode()
+		} else if err != nil {
+			t.Fatalf("run init-admin: %v", err)
+		}
+		return stdout.String(), stderr.String(), code
+	}
+
+	stdout, stderr, code := run(randomDir, nil)
+	if code != 0 {
+		t.Fatalf("first install exit = %d, stderr: %s", code, stderr)
+	}
+	password := parseInitAdminPassword(t, stdout)
+	if strings.Contains(stderr, password) {
+		t.Fatal("initial password leaked to stderr")
+	}
+	accounts := account.New(openInitAdminTestStore(t, randomDir).GORM())
+	if _, err := accounts.Authenticate(ctx, "admin", password); err != nil {
+		t.Fatalf("printed random password rejected: %v", err)
+	}
+
+	stdout, stderr, code = run(randomDir, nil)
+	if code != initAdminExitUnavailable {
+		t.Fatalf("re-run exit = %d, want %d", code, initAdminExitUnavailable)
+	}
+	if stdout != "" {
+		t.Fatalf("re-run must stay silent on stdout: %q", stdout)
+	}
+
+	suppliedDir := t.TempDir()
+	stdout, _, code = run(suppliedDir, []string{"NEXTERM_ADMIN_PASSWORD=short"})
+	if code != 1 || stdout != "" {
+		t.Fatalf("failed create: exit = %d stdout = %q", code, stdout)
+	}
+	stdout, stderr, code = run(suppliedDir, []string{"NEXTERM_ADMIN_PASSWORD=synthetic-password-1"})
+	if code != 0 {
+		t.Fatalf("retry exit = %d, stderr: %s", code, stderr)
+	}
+	if printed := parseInitAdminPassword(t, stdout); printed != "synthetic-password-1" {
+		t.Fatalf("retry printed password = %q", printed)
+	}
+	supplied := account.New(openInitAdminTestStore(t, suppliedDir).GORM())
+	if _, err := supplied.Authenticate(ctx, "admin", "synthetic-password-1"); err != nil {
+		t.Fatalf("supplied password rejected: %v", err)
+	}
+
+	redactDir := t.TempDir()
+	stdout, stderr, code = run(redactDir, []string{"NEXTERM_ADMIN_PASSWORD=synthetic-password-1"}, "--username", "bad name")
+	if code != 1 {
+		t.Fatalf("invalid username exit = %d, want 1", code)
+	}
+	if combined := stdout + stderr; strings.Contains(combined, "synthetic-password-1") {
+		t.Fatalf("supplied password reached the failure output: %q", combined)
+	}
+}
+
+type initAdminLoginView struct {
+	State              string `json:"state"`
+	MustChangePassword bool   `json:"must_change_password"`
+}
+
+func loginInitAdminSession(t *testing.T, client *http.Client, address, username, password string) (*accountSession, initAdminLoginView) {
+	t.Helper()
+	payload, err := json.Marshal(map[string]any{"username": username, "password": password})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodPost, "http://"+address+"/auth/login", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("login status = %d: %s", response.StatusCode, body)
+	}
+	var body struct {
+		User struct {
+			ID string `json:"id"`
+			initAdminLoginView
+		} `json:"user"`
+		CSRFToken string `json:"csrf_token"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	session := &accountSession{csrf: body.CSRFToken, userID: body.User.ID}
+	for _, cookie := range response.Cookies() {
+		if cookie.Name == "nexterm_session" {
+			session.cookie = cookie
+		}
+	}
+	if session.cookie == nil || session.csrf == "" || session.userID == "" {
+		t.Fatalf("login session incomplete: %+v", session)
+	}
+	return session, body.User.initAdminLoginView
+}
+
+func getInitAdminPath(t *testing.T, client *http.Client, address, path string, session *accountSession, expectedStatus int) map[string]any {
+	t.Helper()
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+address+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.AddCookie(session.cookie)
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != expectedStatus {
+		t.Fatalf("%s status = %d, want %d: %s", path, response.StatusCode, expectedStatus, body)
+	}
+	var decoded map[string]any
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &decoded); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+	}
+	return decoded
+}
+
+// TestInitAdminHTTPEndToEnd drives the installer-created admin through the
+// real HTTP surface: the random policy lands in reset_required with the API
+// locked down until the forced password change (fresh envelopes, the browser
+// flow), while the supplied policy logs in active with no forced rotation and
+// no stored DEK.
+func TestInitAdminHTTPEndToEnd(t *testing.T) {
+	binary := buildServerBinary(t)
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	randomDir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	if code := runInitAdmin([]string{"--data-dir", randomDir}, initAdminTestGetenv(nil), &stdout, &stderr); code != 0 {
+		t.Fatalf("init-admin exit = %d, stderr: %s", code, stderr.String())
+	}
+	password := parseInitAdminPassword(t, stdout.String())
+	process, address := startServerProcess(t, binary, randomDir, false, "--auth=on")
+	defer process.stop(t)
+	waitForHealth(t, process, address)
+
+	session, view := loginInitAdminSession(t, client, address, "admin", password)
+	if view.State != string(account.StateResetRequired) || !view.MustChangePassword {
+		t.Fatalf("random-policy login view: %+v", view)
+	}
+	getInitAdminPath(t, client, address, "/auth/devices", session, http.StatusForbidden)
+
+	_, envelopes, _, err := vault.GenerateUserDEKEnvelopes("synthetic-password-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestAccountJSON(t, client, address, "/auth/password", map[string]any{
+		"old_password": password, "new_password": "synthetic-password-2",
+		"dek_envelope": envelopes.DEKEnvelope, "kdf_salt": envelopes.KDFSalt, "kdf_params": envelopes.KDFParams,
+		"recovery_envelope": envelopes.RecoveryEnvelope, "recovery_hash": envelopes.RecoveryHash,
+	}, session, http.StatusOK)
+	me := getInitAdminPath(t, client, address, "/auth/me", session, http.StatusOK)
+	user := me["user"].(map[string]any)
+	if user["state"] != string(account.StateActive) || user["must_change_password"] != false {
+		t.Fatalf("post-change user: %v", user)
+	}
+	getInitAdminPath(t, client, address, "/auth/dek", session, http.StatusOK)
+	getInitAdminPath(t, client, address, "/auth/devices", session, http.StatusOK)
+
+	suppliedDir := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	getenv := initAdminTestGetenv(map[string]string{"NEXTERM_ADMIN_PASSWORD": "synthetic-password-1"})
+	if code := runInitAdmin([]string{"--data-dir", suppliedDir}, getenv, &stdout, &stderr); code != 0 {
+		t.Fatalf("init-admin exit = %d, stderr: %s", code, stderr.String())
+	}
+	suppliedProcess, suppliedAddress := startServerProcess(t, binary, suppliedDir, false, "--auth=on")
+	defer suppliedProcess.stop(t)
+	waitForHealth(t, suppliedProcess, suppliedAddress)
+	suppliedSession, suppliedView := loginInitAdminSession(t, client, suppliedAddress, "admin", "synthetic-password-1")
+	if suppliedView.State != string(account.StateActive) || suppliedView.MustChangePassword {
+		t.Fatalf("supplied-policy login view: %+v", suppliedView)
+	}
+	getInitAdminPath(t, client, suppliedAddress, "/auth/dek", suppliedSession, http.StatusNotFound)
 }

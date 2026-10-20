@@ -230,3 +230,106 @@ func TestInitSuperadminUnknownPolicyRefused(t *testing.T) {
 		t.Fatalf("init with valid policy after refusal: %v", err)
 	}
 }
+
+func failSettingDeleteTrigger(t *testing.T, a *Accounts) {
+	t.Helper()
+	if err := a.db.Exec(`CREATE TRIGGER fail_setting_delete BEFORE DELETE ON setting
+BEGIN
+	SELECT RAISE(ABORT, 'injected setting delete failure');
+END`).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func dropFailSettingDeleteTrigger(t *testing.T, a *Accounts) {
+	t.Helper()
+	if err := a.db.Exec("DROP TRIGGER fail_setting_delete").Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReleaseInitCodeDeletesOwnUnconsumedCode(t *testing.T) {
+	a, _ := testAccounts(t)
+	ctx := context.Background()
+	code, err := a.GenerateInitCode(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ReleaseInitCode(ctx, code); err != nil {
+		t.Fatalf("release of own unconsumed code: %v", err)
+	}
+	// The released code is gone: initialization with it fails and a fresh
+	// code can be generated again.
+	requireCode(t, func() error {
+		_, err := a.InitSuperadmin(ctx, code, "root", "synthetic-password-1")
+		return err
+	}(), ipc.CodeForbidden)
+	fresh, err := a.GenerateInitCode(ctx)
+	if err != nil {
+		t.Fatalf("a released code must free the slot for a fresh one: %v", err)
+	}
+	if fresh == code {
+		t.Fatal("expected a freshly generated code")
+	}
+}
+
+func TestReleaseInitCodeRefusesForeignPlaintext(t *testing.T) {
+	a, _ := testAccounts(t)
+	ctx := context.Background()
+	code, err := a.GenerateInitCode(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A plaintext that does not match the stored hash proves no ownership:
+	// the record must survive untouched.
+	requireCode(t, a.ReleaseInitCode(ctx, "not-the-code"), ipc.CodeForbidden)
+	if _, err := a.InitSuperadmin(ctx, code, "root", "synthetic-password-1"); err != nil {
+		t.Fatalf("code unusable after a foreign release attempt: %v", err)
+	}
+}
+
+func TestReleaseInitCodeRefusesConsumedCode(t *testing.T) {
+	a, _ := testAccounts(t)
+	ctx := context.Background()
+	code, err := a.GenerateInitCode(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.InitSuperadmin(ctx, code, "root", "synthetic-password-1"); err != nil {
+		t.Fatal(err)
+	}
+	requireCode(t, a.ReleaseInitCode(ctx, code), ipc.CodeForbidden)
+}
+
+func TestReleaseInitCodeNoopWithoutStoredCode(t *testing.T) {
+	a, _ := testAccounts(t)
+	if err := a.ReleaseInitCode(context.Background(), "anything"); err != nil {
+		t.Fatalf("release without a stored code must be a no-op: %v", err)
+	}
+}
+
+func TestReleaseInitCodeCleanupFailureThenRetry(t *testing.T) {
+	a, _ := testAccounts(t)
+	ctx := context.Background()
+	code, err := a.GenerateInitCode(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The failed create and the cleanup both fail: the unconsumed record the
+	// installer owns stays behind.
+	failSettingDeleteTrigger(t, a)
+	if _, _, err := a.InitSuperadminWithPolicy(ctx, code, "root", "short", nil, InitialPasswordSupplied); err == nil {
+		t.Fatal("invalid password must fail creation")
+	}
+	if err := a.ReleaseInitCode(ctx, code); err == nil {
+		t.Fatal("injected delete failure must fail the release")
+	}
+	dropFailSettingDeleteTrigger(t, a)
+	// Once the fault is gone the retry releases and the slot frees up.
+	if err := a.ReleaseInitCode(ctx, code); err != nil {
+		t.Fatalf("retry release after the fault cleared: %v", err)
+	}
+	if _, err := a.GenerateInitCode(ctx); err != nil {
+		t.Fatalf("generate after a successful cleanup: %v", err)
+	}
+}
