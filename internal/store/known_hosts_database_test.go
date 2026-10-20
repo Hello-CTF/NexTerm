@@ -109,8 +109,12 @@ func TestKnownHostCompensateAcceptDatabase(t *testing.T) {
 	if err := database.KnownHostAccept(ownerA, "insert.test", 22, "ssh-ed25519", "SHA256:insert"); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.KnownHostCompensateAccept(ownerA, "insert.test", 22, "ssh-ed25519", nil); err != nil {
-		t.Fatal(err)
+	inserted, found, err := database.KnownHostGet(ownerA, "insert.test", 22, "ssh-ed25519")
+	if err != nil || !found {
+		t.Fatalf("insert accept = %+v, %v, %v", inserted, found, err)
+	}
+	if applied, err := database.KnownHostCompensateAccept(ownerA, "insert.test", 22, "ssh-ed25519", inserted, nil); err != nil || !applied {
+		t.Fatalf("insert compensation applied=%v err=%v", applied, err)
 	}
 	if _, found, err := database.KnownHostGet(ownerA, "insert.test", 22, "ssh-ed25519"); err != nil || found {
 		t.Fatalf("compensated insert left a ledger row: found=%v err=%v", found, err)
@@ -129,8 +133,12 @@ func TestKnownHostCompensateAcceptDatabase(t *testing.T) {
 	if err := database.KnownHostAcceptWithKey(ownerA, "replace.test", 22, "ssh-ed25519", "SHA256:new", "bmV3LWtleQ=="); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.KnownHostCompensateAccept(ownerA, "replace.test", 22, "ssh-ed25519", &previous); err != nil {
-		t.Fatal(err)
+	accepted, found, err := database.KnownHostGet(ownerA, "replace.test", 22, "ssh-ed25519")
+	if err != nil || !found {
+		t.Fatalf("replacement accept = %+v, %v, %v", accepted, found, err)
+	}
+	if applied, err := database.KnownHostCompensateAccept(ownerA, "replace.test", 22, "ssh-ed25519", accepted, &previous); err != nil || !applied {
+		t.Fatalf("replacement compensation applied=%v err=%v", applied, err)
 	}
 	restored, found, err := database.KnownHostGet(ownerA, "replace.test", 22, "ssh-ed25519")
 	if err != nil || !found {
@@ -140,11 +148,102 @@ func TestKnownHostCompensateAcceptDatabase(t *testing.T) {
 		t.Fatalf("compensated replacement = %+v, want %+v", restored, previous)
 	}
 	// Compensation is owner-scoped: another owner cannot roll back someone else's accept.
-	if err := database.KnownHostCompensateAccept(ownerB, "replace.test", 22, "ssh-ed25519", nil); err != nil {
-		t.Fatal(err)
+	if applied, err := database.KnownHostCompensateAccept(ownerB, "replace.test", 22, "ssh-ed25519", restored, nil); err != nil || applied {
+		t.Fatalf("cross-owner compensation applied=%v err=%v", applied, err)
 	}
 	if _, found, err := database.KnownHostGet(ownerA, "replace.test", 22, "ssh-ed25519"); err != nil || !found {
 		t.Fatalf("cross-owner compensation deleted owner A: found=%v err=%v", found, err)
+	}
+}
+
+func TestKnownHostCompensateAcceptSkipsNewerDecisionDatabase(t *testing.T) {
+	database := dbtest.NewFixture(t).OpenStore(t)
+	ctx := context.Background()
+	ownerA := ipc.WithUserID(ctx, "cas-owner-a")
+	// An interleaved independent accept between the original accept and its compensation must survive:
+	// the CAS guard never rolls back a newer trust decision.
+	if err := database.KnownHostAcceptWithKey(ownerA, "interleave.test", 22, "ssh-ed25519", "SHA256:first", "Zmlyc3Qta2V5"); err != nil {
+		t.Fatal(err)
+	}
+	first, found, err := database.KnownHostGet(ownerA, "interleave.test", 22, "ssh-ed25519")
+	if err != nil || !found {
+		t.Fatalf("first accept = %+v, %v, %v", first, found, err)
+	}
+	if err := database.KnownHostAcceptWithKey(ownerA, "interleave.test", 22, "ssh-ed25519", "SHA256:newer", "bmV3ZXIta2V5"); err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := database.KnownHostCompensateAccept(ownerA, "interleave.test", 22, "ssh-ed25519", first, nil); err != nil || applied {
+		t.Fatalf("interleaved compensation applied=%v err=%v", applied, err)
+	}
+	row, found, err := database.KnownHostGet(ownerA, "interleave.test", 22, "ssh-ed25519")
+	if err != nil || !found {
+		t.Fatalf("newer decision = %+v, %v, %v", row, found, err)
+	}
+	if row.Fingerprint != "SHA256:newer" || row.Key != "bmV3ZXIta2V5" {
+		t.Fatalf("compensation rolled back a newer decision: %+v", row)
+	}
+	// The same CAS discipline applies to replacements: a stale accepted state must not restore the previous row.
+	previous := row
+	if err := database.KnownHostAcceptWithKey(ownerA, "interleave.test", 22, "ssh-ed25519", "SHA256:third", "dGhpcmQta2V5"); err != nil {
+		t.Fatal(err)
+	}
+	third, _, _ := database.KnownHostGet(ownerA, "interleave.test", 22, "ssh-ed25519")
+	if err := database.KnownHostAcceptWithKey(ownerA, "interleave.test", 22, "ssh-ed25519", "SHA256:fourth", "Zm91cnRoLWtleQ=="); err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := database.KnownHostCompensateAccept(ownerA, "interleave.test", 22, "ssh-ed25519", third, &previous); err != nil || applied {
+		t.Fatalf("stale replacement compensation applied=%v err=%v", applied, err)
+	}
+	if row, _, _ := database.KnownHostGet(ownerA, "interleave.test", 22, "ssh-ed25519"); row.Fingerprint != "SHA256:fourth" || row.Key != "Zm91cnRoLWtleQ==" {
+		t.Fatalf("stale replacement compensation changed the row: %+v", row)
+	}
+	// Compensating with the exact current state still applies.
+	fourth, _, _ := database.KnownHostGet(ownerA, "interleave.test", 22, "ssh-ed25519")
+	if applied, err := database.KnownHostCompensateAccept(ownerA, "interleave.test", 22, "ssh-ed25519", fourth, nil); err != nil || !applied {
+		t.Fatalf("current-state compensation applied=%v err=%v", applied, err)
+	}
+	if _, found, err := database.KnownHostGet(ownerA, "interleave.test", 22, "ssh-ed25519"); err != nil || found {
+		t.Fatalf("current-state compensation left a row: found=%v err=%v", found, err)
+	}
+}
+
+func TestKnownHostRestoreRemovedKeepsNewerDecisionDatabase(t *testing.T) {
+	database := dbtest.NewFixture(t).OpenStore(t)
+	ctx := context.Background()
+	ownerA := ipc.WithUserID(ctx, "guard-owner-a")
+	if err := database.KnownHostAcceptWithKey(ownerA, "guard.test", 22, "ssh-ed25519", "SHA256:old", "b2xkLWtleQ=="); err != nil {
+		t.Fatal(err)
+	}
+	row, found, err := database.KnownHostGet(ownerA, "guard.test", 22, "ssh-ed25519")
+	if err != nil || !found {
+		t.Fatalf("seed row = %+v, %v, %v", row, found, err)
+	}
+	removed, found, err := database.KnownHostRemoveForMirror(ownerA, row.ID)
+	if err != nil || !found {
+		t.Fatalf("removal = %+v, %v, %v", removed, found, err)
+	}
+	// An independent accept lands before the failed mirror rewrite is compensated.
+	if err := database.KnownHostAcceptWithKey(ownerA, "guard.test", 22, "ssh-ed25519", "SHA256:newer", "bmV3ZXIta2V5"); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.KnownHostRestoreRemoved(ownerA, removed); err != nil {
+		t.Fatal(err)
+	}
+	current, found, err := database.KnownHostGet(ownerA, "guard.test", 22, "ssh-ed25519")
+	if err != nil || !found {
+		t.Fatalf("newer decision = %+v, %v, %v", current, found, err)
+	}
+	if current.Fingerprint != "SHA256:newer" || current.Key != "bmV3ZXIta2V5" {
+		t.Fatalf("restore rolled back a newer decision: %+v", current)
+	}
+	// The tombstone of the removed row stands so the deletion still converges.
+	var tombstones int64
+	if err := database.GORM().WithContext(ctx).Table("sync_tombstone").
+		Where("id = ? AND owner_id = ?", row.ID, "guard-owner-a").Count(&tombstones).Error; err != nil {
+		t.Fatal(err)
+	}
+	if tombstones != 1 {
+		t.Fatalf("removed row tombstones = %d, want 1", tombstones)
 	}
 }
 

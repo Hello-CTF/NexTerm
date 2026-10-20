@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 	gossh "golang.org/x/crypto/ssh"
 )
@@ -228,6 +230,9 @@ func TestProductionHostKeySharedLegacyMigrationImportsLedger(t *testing.T) {
 	if _, err := os.Stat(path + ".pre-owner-migration.bak"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("shared migration created an account backup: %v", err)
 	}
+	if _, err := os.Stat(path + ".shared-import-done"); err != nil {
+		t.Fatalf("shared migration did not record its one-time marker: %v", err)
+	}
 	if known, err := keys.HostKeys(ctx, first.Host, first.Port); err != nil || len(known) != 1 || known[0] != first {
 		t.Fatalf("shared migrated host keys = %+v, %v", known, err)
 	}
@@ -236,7 +241,8 @@ func TestProductionHostKeySharedLegacyMigrationImportsLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.migration.BackupCreated || reloaded.migration.Copied != 0 || reloaded.migration.Existing != 2 || reloaded.migration.Conflicts != 0 {
+	// The one-time marker skips the legacy import entirely: mirror-only leftovers can never recreate trust.
+	if reloaded.migration.BackupCreated || reloaded.migration.Copied != 0 || reloaded.migration.Existing != 0 || reloaded.migration.Conflicts != 0 {
 		t.Fatalf("shared migration reentry report = %+v", reloaded.migration)
 	}
 	rowsAfter, err := database.KnownHostList(ctx)
@@ -257,10 +263,6 @@ func TestProductionHostKeySharedLegacyMigrationConflictKeepsLedger(t *testing.T)
 	legacy := knownHostOwnerTestKey("shared-conflict.test", "SHA256:legacy", "legacy-key")
 	other := knownHostOwnerTestKey("shared-other.test", "SHA256:other", "other-key")
 	if err := writeProductionHostKeyFile(path, productionHostKeyFile{Version: 1, Keys: []ssh.HostKey{legacy, other}}); err != nil {
-		t.Fatal(err)
-	}
-	original, err := os.ReadFile(path)
-	if err != nil {
 		t.Fatal(err)
 	}
 	if err := database.KnownHostAccept(ctx, legacy.Host, int32(legacy.Port), legacy.KeyType, "SHA256:ledger-wins"); err != nil {
@@ -287,9 +289,17 @@ func TestProductionHostKeySharedLegacyMigrationConflictKeepsLedger(t *testing.T)
 	if known, err := keys.HostKeys(ctx, legacy.Host, legacy.Port); err != nil || len(known) != 0 {
 		t.Fatalf("conflicting mirror entry surfaced as trusted: %+v, %v", known, err)
 	}
-	after, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(after, original) {
-		t.Fatalf("conflicting shared migration rewrote the mirror file: %v", err)
+	// Startup reconcile removes the conflicting mirror-only entry; the ledger row wins untouched.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file productionHostKeyFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Keys) != 1 || file.Keys[0] != other {
+		t.Fatalf("reconciled mirror = %+v, want only the non-conflicting entry", file.Keys)
 	}
 }
 
@@ -310,8 +320,30 @@ func TestProductionHostKeyVerificationWithoutMirror(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	keys.mu.Lock()
+	_, mirrorPath, err := keys.fileFor(ownerA)
+	keys.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Startup reconcile rebuilt the mirror from the ledger alone.
+	data, err := os.ReadFile(mirrorPath)
+	if err != nil {
+		t.Fatalf("startup reconcile did not rebuild the mirror: %v", err)
+	}
+	var rebuilt productionHostKeyFile
+	if err := json.Unmarshal(data, &rebuilt); err != nil {
+		t.Fatal(err)
+	}
+	if len(rebuilt.Keys) != 1 || rebuilt.Keys[0].Key != material {
+		t.Fatalf("rebuilt mirror = %+v", rebuilt.Keys)
+	}
 	if known, err := keys.HostKeys(ownerA, "127.0.0.1", server.port()); err != nil || len(known) != 1 || known[0].Key != material {
 		t.Fatalf("ledger-backed host keys = %+v, %v", known, err)
+	}
+	// Corrupt the mirror: verification must still succeed because it reads only the ledger.
+	if err := os.WriteFile(mirrorPath, []byte("corrupted"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	connection, err := ssh.Connect(ownerA, ssh.Config{
 		Host: "127.0.0.1", Port: server.port(), User: "test", HostKeys: keys,
@@ -321,24 +353,190 @@ func TestProductionHostKeyVerificationWithoutMirror(t *testing.T) {
 		_ = connection.Close()
 	}
 	if err != nil {
-		t.Fatalf("verification without a mirror failed: %v", err)
+		t.Fatalf("verification depended on the mirror file: %v", err)
 	}
-	// Exact-match verification succeeded without any mirror write.
+	// Restore a writable mirror, then the explicit acceptance path maintains it for desktop interop.
+	if err := os.Remove(mirrorPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := keys.PutHostKey(ownerA, ssh.HostKey{Host: "127.0.0.1", Port: server.port(), KeyType: publicKey.Type(), Fingerprint: gossh.FingerprintSHA256(publicKey), Key: material}, false); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(mirrorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var maintained productionHostKeyFile
+	if err := json.Unmarshal(data, &maintained); err != nil {
+		t.Fatal(err)
+	}
+	if len(maintained.Keys) != 1 || maintained.Keys[0].Key != material {
+		t.Fatalf("maintained mirror = %+v", maintained.Keys)
+	}
+}
+
+func TestProductionHostKeySharedRevokedMirrorEntryNotReimported(t *testing.T) {
+	ctx := context.Background()
+	database := newKnownHostOwnerTestDB(t)
+	path := filepath.Join(t.TempDir(), "known_hosts.json")
+	revoked := knownHostOwnerTestKey("revoked.test", "SHA256:revoked", "revoked-key")
+	if err := writeProductionHostKeyFile(path, productionHostKeyFile{Version: 1, Keys: []ssh.HostKey{revoked}}); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := newProductionHostKeyStore(ctx, path, database, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keys.migration.Copied != 1 {
+		t.Fatalf("shared migration report = %+v", keys.migration)
+	}
+	rows, err := database.KnownHostList(ctx)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("legacy key not imported: %+v, %v", rows, err)
+	}
+	// The user revokes the key; the process crashes between the ledger delete and the mirror rewrite,
+	// so the mirror still holds the revoked entry at restart.
+	if err := database.KnownHostRemove(ctx, rows[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newProductionHostKeyStore(ctx, path, database, true); err != nil {
+		t.Fatal(err)
+	}
+	// The one-time marker blocks re-import and startup reconcile removes the leftover: no resurrection.
+	if rows, err := database.KnownHostList(ctx); err != nil || len(rows) != 0 {
+		t.Fatalf("revoked key resurrected: %+v, %v", rows, err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file productionHostKeyFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Keys) != 0 {
+		t.Fatalf("revoked mirror entry survived reconcile: %+v", file.Keys)
+	}
+	if _, err := newProductionHostKeyStore(ctx, path, database, true); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := database.KnownHostList(ctx); err != nil || len(rows) != 0 {
+		t.Fatalf("revoked key resurrected on second restart: %+v, %v", rows, err)
+	}
+}
+
+func TestProductionHostKeyStaleMaterialFailsClosed(t *testing.T) {
+	server := newHostKeyTestServer(t)
+	signerA := *server.signer.Load()
+	publicA := signerA.PublicKey()
+	publicB := server.rotateHostKey(t)
+	signerB := *server.signer.Load()
+	materialA := base64.StdEncoding.EncodeToString(publicA.Marshal())
+	materialB := base64.StdEncoding.EncodeToString(publicB.Marshal())
+	ctx := context.Background()
+	ownerA := ipc.WithUserID(ctx, "stale-owner-a")
+	database := newKnownHostOwnerTestDB(t)
+	path := filepath.Join(t.TempDir(), "known_hosts.json")
+	// A fingerprint rotation left the row with the new fingerprint but the old key material.
+	if err := database.KnownHostAcceptWithKey(ownerA, "127.0.0.1", int32(server.port()), publicA.Type(), gossh.FingerprintSHA256(publicA), materialA); err != nil {
+		t.Fatal(err)
+	}
+	row, found, err := database.KnownHostGet(ownerA, "127.0.0.1", int32(server.port()), publicA.Type())
+	if err != nil || !found {
+		t.Fatalf("seed row = %+v, %v, %v", row, found, err)
+	}
+	if err := database.GORM().WithContext(ctx).Model(&store.KnownHostRow{}).Where("id = ?", row.ID).
+		Update("fingerprint", gossh.FingerprintSHA256(publicB)).Error; err != nil {
+		t.Fatal(err)
+	}
+	keys, err := newProductionHostKeyStore(ctx, path, database, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The stale material is never exposed for exact-match verification.
+	if known, err := keys.HostKeys(ownerA, "127.0.0.1", server.port()); err != nil || len(known) != 0 {
+		t.Fatalf("stale material surfaced for verification: %+v, %v", known, err)
+	}
+	// The old key is rejected even though its material is what the ledger stores.
+	server.signer.Store(&signerA)
+	connection, err := ssh.Connect(ownerA, ssh.Config{
+		Host: "127.0.0.1", Port: server.port(), User: "test", HostKeys: keys,
+		Auth: ssh.AuthConfig{Method: ssh.AuthPassword, Password: "host-key-test"},
+	})
+	if connection != nil {
+		_ = connection.Close()
+	}
+	if !errors.Is(err, ssh.ErrHostKeyPending) {
+		t.Fatalf("stale key material was trusted: %v", err)
+	}
+	// The rotated key verifies through the ledger fingerprint and completes the material on accept.
+	server.signer.Store(&signerB)
+	connection, err = ssh.Connect(ownerA, ssh.Config{
+		Host: "127.0.0.1", Port: server.port(), User: "test", HostKeys: keys,
+		Auth: ssh.AuthConfig{Method: ssh.AuthPassword, Password: "host-key-test"},
+	})
+	if connection != nil {
+		_ = connection.Close()
+	}
+	if err != nil {
+		t.Fatalf("rotated key was not trusted through its fingerprint: %v", err)
+	}
+	healed, found, err := database.KnownHostGet(ownerA, "127.0.0.1", int32(server.port()), publicA.Type())
+	if err != nil || !found {
+		t.Fatalf("healed row = %+v, %v, %v", healed, found, err)
+	}
+	if healed.Fingerprint != gossh.FingerprintSHA256(publicB) || healed.Key != materialB {
+		t.Fatalf("material was not completed on accept: %+v", healed)
+	}
+	if known, err := keys.HostKeys(ownerA, "127.0.0.1", server.port()); err != nil || len(known) != 1 || known[0].Key != materialB {
+		t.Fatalf("healed host keys = %+v, %v", known, err)
+	}
+}
+
+func TestProductionHostKeyStartupReconcileHealsMirror(t *testing.T) {
+	ctx := context.Background()
+	ownerA := ipc.WithUserID(ctx, "reconcile-owner-a")
+	database := newKnownHostOwnerTestDB(t)
+	path := filepath.Join(t.TempDir(), "known_hosts.json")
+	keys, err := newProductionHostKeyStore(ctx, path, database, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An interrupted full-key accept: the ledger holds the complete key, the mirror was never written.
+	healed := knownHostOwnerTestKey("heal.test", "SHA256:heal", "heal-key")
+	if err := database.KnownHostAcceptWithKey(ownerA, healed.Host, int32(healed.Port), healed.KeyType, healed.Fingerprint, healed.Key); err != nil {
+		t.Fatal(err)
+	}
+	// A fingerprint-only row has no material and must not be mirrored.
+	less := knownHostOwnerTestKey("material-less.test", "SHA256:less", "less-key")
+	if err := database.KnownHostAccept(ownerA, less.Host, int32(less.Port), less.KeyType, less.Fingerprint); err != nil {
+		t.Fatal(err)
+	}
+	// A stray mirror-only entry (interrupted revocation) sits in the mirror.
+	stray := knownHostOwnerTestKey("stray.test", "SHA256:stray", "stray-key")
 	keys.mu.Lock()
 	_, mirrorPath, err := keys.fileFor(ownerA)
 	keys.mu.Unlock()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(mirrorPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("mirrorless verification created a mirror file: %v", err)
-	}
-	// The explicit acceptance path still maintains the mirror for desktop interop.
-	if err := keys.PutHostKey(ownerA, ssh.HostKey{Host: "127.0.0.1", Port: server.port(), KeyType: publicKey.Type(), Fingerprint: gossh.FingerprintSHA256(publicKey), Key: material}, false); err != nil {
+	if err := writeProductionHostKeyFile(mirrorPath, productionHostKeyFile{Version: 1, Keys: []ssh.HostKey{stray}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(mirrorPath); err != nil {
-		t.Fatalf("explicit acceptance did not rebuild the mirror: %v", err)
+	if _, err := newProductionHostKeyStore(ctx, path, database, false); err != nil {
+		t.Fatal(err)
+	}
+	// Startup reconcile wrote the ledger's trusted material into the mirror and removed the leftover.
+	data, err := os.ReadFile(mirrorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file productionHostKeyFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Keys) != 1 || file.Keys[0] != healed {
+		t.Fatalf("reconciled mirror = %+v, want only the ledger-backed entry", file.Keys)
 	}
 }
 

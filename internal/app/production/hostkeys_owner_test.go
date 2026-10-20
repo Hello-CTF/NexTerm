@@ -3,6 +3,8 @@ package production
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -19,6 +21,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 func TestProductionHostKeyAccountAcceptReplaceRevokeIsolation(t *testing.T) {
@@ -591,9 +594,18 @@ func newKnownHostOwnerTestDB(t *testing.T) *store.Store {
 }
 
 func knownHostOwnerTestKey(host, fingerprint, material string) ssh.HostKey {
+	// The fingerprint parameter is only a human-readable label: the key material is derived
+	// deterministically from the material seed and the fingerprint always matches it, mirroring
+	// production rows where stored material and fingerprint are consistent.
+	seed := sha256.Sum256([]byte(material))
+	signer, err := gossh.NewSignerFromKey(ed25519.NewKeyFromSeed(seed[:]))
+	if err != nil {
+		panic(err)
+	}
+	publicKey := signer.PublicKey()
 	return ssh.HostKey{
-		Host: host, Port: 22, KeyType: "ssh-ed25519", Fingerprint: fingerprint,
-		Key: base64.StdEncoding.EncodeToString([]byte(material)),
+		Host: host, Port: 22, KeyType: publicKey.Type(), Fingerprint: gossh.FingerprintSHA256(publicKey),
+		Key: base64.StdEncoding.EncodeToString(publicKey.Marshal()),
 	}
 }
 

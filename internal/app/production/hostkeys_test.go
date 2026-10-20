@@ -26,8 +26,9 @@ func TestProductionHostKeyRemoveKeepsIndentedFileFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := ssh.HostKey{Host: "a.test", Port: 22, KeyType: "ssh-ed25519", Fingerprint: "SHA256:first", Key: "a2V5LW9uZQ=="}
-	second := ssh.HostKey{Host: "b.test", Port: 2222, KeyType: "ssh-ed25519", Fingerprint: "SHA256:second", Key: "a2V5LXR3bw=="}
+	first := knownHostOwnerTestKey("a.test", "SHA256:first", "first-key")
+	second := knownHostOwnerTestKey("b.test", "SHA256:second", "second-key")
+	second.Port = 2222
 	for _, key := range []ssh.HostKey{first, second} {
 		if err := keys.PutHostKey(ctx, key, false); err != nil {
 			t.Fatal(err)

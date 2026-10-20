@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,6 +20,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
+	gossh "golang.org/x/crypto/ssh"
 	"gorm.io/gorm"
 )
 
@@ -78,6 +81,9 @@ func newProductionHostKeyStore(ctx context.Context, path string, database *store
 		return nil, err
 	}
 	store.migration = report
+	if err := store.reconcileMirrors(ctx); err != nil {
+		return nil, err
+	}
 	return store, nil
 }
 
@@ -165,9 +171,28 @@ func (s *productionHostKeyStore) fileFor(ctx context.Context) (*ssh.FileHostKeyS
 	return files, path, nil
 }
 
+// knownHostMaterialTrusted reports whether the ledger row's complete key material is present and matches its
+// stored fingerprint. Stale or malformed material — for example after a fingerprint rotation that did not
+// carry the key — is never exposed for exact-match verification.
+func knownHostMaterialTrusted(row store.KnownHostRow) bool {
+	if row.Key == "" {
+		return false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(row.Key)
+	if err != nil {
+		return false
+	}
+	parsed, err := gossh.ParsePublicKey(decoded)
+	if err != nil {
+		return false
+	}
+	return gossh.FingerprintSHA256(parsed) == row.Fingerprint
+}
+
 // HostKeys answers from the owner-scoped ledger: the database holds the complete public key and metadata, so
-// verification does not depend on the mirror file. Ledger rows without recorded key material are omitted —
-// they still verify through ApprovedHostKeys and regain material on the next direct connect.
+// verification does not depend on the mirror file. Only rows with trusted key material are returned —
+// material-less or stale rows still verify through ApprovedHostKeys and regain material on the next direct
+// connect.
 func (s *productionHostKeyStore) HostKeys(ctx context.Context, host string, port int) ([]ssh.HostKey, error) {
 	if _, err := s.requestOwner(ctx); err != nil {
 		return nil, err
@@ -178,7 +203,7 @@ func (s *productionHostKeyStore) HostKeys(ctx context.Context, host string, port
 	}
 	var known []ssh.HostKey
 	for _, row := range rows {
-		if row.Host == host && int(row.Port) == port && row.Key != "" {
+		if row.Host == host && int(row.Port) == port && knownHostMaterialTrusted(row) {
 			known = append(known, ssh.HostKey{Host: row.Host, Port: int(row.Port), KeyType: row.KeyType, Fingerprint: row.Fingerprint, Key: row.Key})
 		}
 	}
@@ -224,6 +249,13 @@ func (s *productionHostKeyStore) PutHostKey(ctx context.Context, key ssh.HostKey
 	if err := s.database.KnownHostAcceptWithKey(ctx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint, key.Key); err != nil {
 		return err
 	}
+	accepted, found, err := s.database.KnownHostGet(ctx, key.Host, int32(key.Port), key.KeyType)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("accepted SSH host key ledger row is missing")
+	}
 	mirrorReplace := replace
 	if !mirrorReplace && existed && previous.Fingerprint == key.Fingerprint {
 		// The ledger already trusts exactly this key, so a different-key mirror entry for the same endpoint
@@ -236,7 +268,7 @@ func (s *productionHostKeyStore) PutHostKey(ctx context.Context, key ssh.HostKey
 		if existed {
 			rollback = &previous
 		}
-		if compensateErr := s.database.KnownHostCompensateAccept(ctx, key.Host, int32(key.Port), key.KeyType, rollback); compensateErr != nil {
+		if _, compensateErr := s.database.KnownHostCompensateAccept(ctx, key.Host, int32(key.Port), key.KeyType, accepted, rollback); compensateErr != nil {
 			return errors.Join(err, fmt.Errorf("compensate SSH host key ledger: %w", compensateErr))
 		}
 		return err
@@ -312,10 +344,18 @@ func (s *productionHostKeyStore) migrateLegacy(ctx context.Context) (productionH
 }
 
 // migrateSharedLegacy imports the desktop shared trust file into the owner-less ledger so the database, not
-// the file, decides verification. The file stays in place as the mirror: no backup is taken and no entry is
-// rewritten, and re-running the import is idempotent. Ledger rows win over conflicting file entries.
+// the file, decides verification. The import is one-time: a marker records that the legacy file has been
+// consumed, so mirror-only leftovers (for example a revocation whose mirror rewrite was interrupted) can
+// never recreate trust on a later startup. The file stays in place as the mirror: no backup is taken and no
+// entry is rewritten, and re-running the import is idempotent. Ledger rows win over conflicting file entries.
 func (s *productionHostKeyStore) migrateSharedLegacy(ctx context.Context) (productionHostKeyMigrationReport, error) {
 	var report productionHostKeyMigrationReport
+	markerPath := s.path + ".shared-import-done"
+	if _, err := os.Stat(markerPath); err == nil {
+		return report, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return report, err
+	}
 	keys, err := s.files.HostKeySnapshot(ctx)
 	if err != nil {
 		return report, err
@@ -342,7 +382,84 @@ func (s *productionHostKeyStore) migrateSharedLegacy(ctx context.Context) (produ
 			report.Copied++
 		}
 	}
+	if err := atomicfile.Write(markerPath, 0o600, func(writer io.Writer) error { return nil }); err != nil {
+		return report, err
+	}
 	return report, nil
+}
+
+// reconcileMirrors rewrites every mirror file to match the owner-scoped ledger, healing interrupted writes
+// in the database-wins direction: ledger rows with trusted material missing from a mirror are written, and
+// mirror-only leftovers (for example a revocation whose mirror rewrite was interrupted) are removed. Files
+// whose content already matches the ledger are left byte-identical.
+func (s *productionHostKeyStore) reconcileMirrors(ctx context.Context) error {
+	if s.shared {
+		return s.reconcileMirror(ctx, ctx)
+	}
+	rows, err := s.database.KnownHostListForMigration(ctx)
+	if err != nil {
+		return err
+	}
+	owners := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		if row.OwnerID != "" {
+			owners[row.OwnerID] = struct{}{}
+		}
+	}
+	for ownerID := range owners {
+		if err := s.reconcileMirror(ctx, ipc.WithUserID(ctx, ownerID)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *productionHostKeyStore) reconcileMirror(ctx context.Context, ownerCtx context.Context) error {
+	ownerID := ipc.OwnerID(ownerCtx)
+	rows, err := s.database.KnownHostList(ownerCtx)
+	if err != nil {
+		return err
+	}
+	desired := make(map[productionHostKeyIdentity]ssh.HostKey, len(rows))
+	for _, row := range rows {
+		if row.OwnerID != ownerID || !knownHostMaterialTrusted(row) {
+			continue
+		}
+		identity := productionHostKeyIdentity{host: row.Host, port: int(row.Port), keyType: row.KeyType, fingerprint: row.Fingerprint}
+		desired[identity] = ssh.HostKey{Host: row.Host, Port: int(row.Port), KeyType: row.KeyType, Fingerprint: row.Fingerprint, Key: row.Key}
+	}
+	s.mu.Lock()
+	files, path, err := s.fileFor(ownerCtx)
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	mirrored, err := files.HostKeySnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	current := make(map[productionHostKeyIdentity]ssh.HostKey, len(mirrored))
+	for _, key := range mirrored {
+		identity := productionHostKeyIdentity{host: key.Host, port: key.Port, keyType: key.KeyType, fingerprint: key.Fingerprint}
+		current[identity] = key
+	}
+	if maps.Equal(current, desired) {
+		return nil
+	}
+	keys := make([]ssh.HostKey, 0, len(desired))
+	for _, key := range desired {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Host != keys[j].Host {
+			return keys[i].Host < keys[j].Host
+		}
+		if keys[i].Port != keys[j].Port {
+			return keys[i].Port < keys[j].Port
+		}
+		return keys[i].KeyType < keys[j].KeyType
+	})
+	return writeProductionHostKeyFile(path, productionHostKeyFile{Version: 1, Keys: keys})
 }
 
 func backupLegacyProductionHostKeyFile(path string, data []byte) (bool, error) {
