@@ -2,7 +2,6 @@
 import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 function die(message) {
@@ -13,6 +12,65 @@ function die(message) {
 function sha256(bytes) {
   return crypto.createHash("sha256").update(bytes).digest("hex");
 }
+
+// Typed tar-header inspection: the main binary member must be a regular file,
+// its ancestor chain must not be redirected through symlink/hardlink members,
+// and its bytes are read from the archive itself. Nothing is extracted to
+// disk, so filesystem symlinks can never redirect the evidence read.
+const TAR_MEMBER_READER = `import hashlib, json, sys, tarfile
+
+archive, basename = sys.argv[1], sys.argv[2]
+
+def fail(message):
+    print(message, file=sys.stderr)
+    sys.exit(1)
+
+try:
+    tar = tarfile.open(archive, "r:gz")
+except tarfile.TarError as error:
+    fail(f"cannot open the server archive: {error}")
+
+with tar:
+    members = tar.getmembers()
+    if not members:
+        fail("server archive is empty")
+    names = [member.name for member in members]
+    for name in names:
+        if name.startswith("/") or name.startswith("./") or ".." in name.split("/"):
+            fail(f"server archive member has an unsafe path: {name}")
+    if len(set(names)) != len(names):
+        fail("server archive contains duplicate member names")
+    roots = {name.split("/")[0] for name in names}
+    if len(roots) != 1:
+        fail("server archive must contain exactly one top-level directory; found: " + ", ".join(sorted(roots)))
+    root = roots.pop()
+    member_name = root + "/" + basename
+    matches = [member for member in members if member.name == member_name]
+    if not matches:
+        fail(f"server archive is missing the main binary member: {member_name}")
+    member = matches[0]
+    if not member.isfile():
+        fail(f"server archive main binary member is not a regular file: {member_name}")
+    links = {member.name for member in members if member.issym() or member.islnk()}
+    parts = member_name.split("/")[:-1]
+    for index in range(1, len(parts) + 1):
+        ancestor = "/".join(parts[:index])
+        if ancestor in links:
+            fail(f"server archive redirects the main binary parent path through a link: {ancestor}")
+    extracted = tar.extractfile(member)
+    if extracted is None:
+        fail(f"cannot read the main binary member: {member_name}")
+    digest = hashlib.sha256()
+    size = 0
+    while True:
+        chunk = extracted.read(1024 * 1024)
+        if not chunk:
+            break
+        size += len(chunk)
+        digest.update(chunk)
+    if size != member.size:
+        fail(f"main binary member size differs from its tar header: {size} != {member.size}")
+json.dump({"root": root, "member": member_name, "size": size, "sha256": digest.hexdigest()}, sys.stdout)`;
 
 const [archive, binary] = process.argv.slice(2);
 if (!archive || !binary) die("usage: verify-server-archive.mjs <archive.tar.gz> <staged-binary>");
@@ -38,34 +96,16 @@ if (binaryDigest !== manifest.artifact.sha256) {
   die(`staged binary sha256 does not match its CI manifest: staged=${binaryDigest}, manifest=${manifest.artifact.sha256}`);
 }
 
-const head = fs.readFileSync(archive);
-if (head[0] !== 0x1f || head[1] !== 0x8b) die("server archive is not gzip compressed");
-let listing;
+let evidence;
 try {
-  listing = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" });
+  evidence = JSON.parse(execFileSync("python3", ["-c", TAR_MEMBER_READER, archive, "nexterm-server"], { encoding: "utf8" }));
 } catch (error) {
-  die(`cannot list the server archive: ${error.message}`);
+  die(String(error.stderr || "").trim() || error.message);
 }
-const members = listing.split("\n").filter((name) => name !== "");
-const roots = new Set(members.map((name) => name.split("/")[0]));
-if (roots.size !== 1) {
-  die(`server archive must contain exactly one top-level directory; found: ${[...roots].sort().join(", ")}`);
+if (evidence.sha256 !== binaryDigest) {
+  die(`server archive main binary does not match the staged CI binary: archive=${evidence.sha256}, staged=${binaryDigest}`);
 }
-const member = `${[...roots][0]}/nexterm-server`;
-if (!members.includes(member)) die(`server archive is missing the main binary member: ${member}`);
-
-const work = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-server-archive-"));
-try {
-  execFileSync("tar", ["-xzf", archive, "-C", work, member]);
-  const packagedBytes = fs.readFileSync(path.join(work, member));
-  const packagedDigest = sha256(packagedBytes);
-  if (packagedDigest !== binaryDigest) {
-    die(`server archive main binary does not match the staged CI binary: archive=${packagedDigest}, staged=${binaryDigest}`);
-  }
-  if (packagedBytes.length !== binaryBytes.length || packagedBytes.length !== manifest.artifact.size_bytes) {
-    die(`server archive main binary size evidence mismatch: archive=${packagedBytes.length}, staged=${binaryBytes.length}, manifest=${manifest.artifact.size_bytes}`);
-  }
-} finally {
-  fs.rmSync(work, { recursive: true, force: true });
+if (evidence.size !== binaryBytes.length || evidence.size !== manifest.artifact.size_bytes) {
+  die(`server archive main binary size evidence mismatch: archive=${evidence.size}, staged=${binaryBytes.length}, manifest=${manifest.artifact.size_bytes}`);
 }
 console.warn(`verify-server-archive: ${path.basename(archive)} carries the staged main binary sha256:${binaryDigest}`);
