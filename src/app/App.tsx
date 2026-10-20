@@ -1750,9 +1750,9 @@ function AppShell() {
           <main id="nx-main" tabIndex={-1} className="nx-workspace-main min-w-0 flex-1">
             {workspaces.length === 0 ? (
               sessions.length > 0 ? (
-                <WorkspaceEmpty onNew={openNewTerminal} />
+                <WorkspaceEmpty onNew={() => void openNewTerminal()} />
               ) : (
-                <EmptyState onLocal={openLocalTerminal} onPalette={() => setPaletteOpen(true)} />
+                <EmptyState onLocal={() => void openLocalTerminal()} onPalette={() => setPaletteOpen(true)} />
               )
             ) : (
               <>
@@ -1780,7 +1780,7 @@ function AppShell() {
                         else if (viewport.splitAllowed) splitWorkspace(w.id);
                       }}
                       onActivate={() => setActivePane(p.id, w.id)}
-                      onNewTerminal={openNewTerminal}
+                      onNewTerminal={() => void openNewTerminal()}
                       leftOpen={leftDockOpen}
                       onToggleLeft={() => setLeftOpen(!leftDockOpen)}
                     />

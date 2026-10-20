@@ -222,8 +222,7 @@ describe("asset group controls", () => {
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() => expect(mounted!.container.textContent).toContain("生产"));
     const row = mounted.container.querySelector<HTMLElement>('[role="treeitem"][aria-expanded]')!;
-    act(() => row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
-    const childAction = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((item) => item.textContent?.includes("新建子分组"));
+    void act(() => row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));    const childAction = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((item) => item.textContent?.includes("新建子分组"));
     expect(childAction).toBeTruthy();
     click(childAction!);
     const modal = mounted.container.querySelector(".nx-modal")!;
@@ -426,7 +425,7 @@ describe("asset group controls", () => {
     Object.defineProperty(drop, "dataTransfer", {
       value: { types: ["application/x-nexterm-asset"], getData: () => assetId },
     });
-    act(() => target.dispatchEvent(drop));
+    void act(() => target.dispatchEvent(drop));
   }
 
   it("keeps a failed move in its original group and retries the same target", async () => {

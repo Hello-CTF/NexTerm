@@ -525,7 +525,7 @@ export function DevicesView() {
     if (!list || !scroller) return;
     const next = list.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
     setDeviceListScrollMargin((current) => (Math.abs(current - next) < 1 ? current : next));
-  });
+  }, []);
 
   if (account.loading) {
     return (

@@ -97,11 +97,14 @@ vi.mock("../features/terminal/CommandBlockPanel", () => ({ CommandBlockPanel: ()
 vi.mock("../features/terminal/TerminalKeysBar", () => ({ TerminalKeysBar: () => null }));
 
 vi.mock("../features/terminal/XtermView", async () => {
-  const { useEffect } = await import("react");
+  const { useEffect, useRef } = await import("react");
   return {
     XtermView: (props: Record<string, unknown>) => {
       harness.xtermProps = props;
+      const attachFiredRef = useRef(false);
       useEffect(() => {
+        if (attachFiredRef.current) return;
+        attachFiredRef.current = true;
         (props.onHandle as ((h: unknown) => void) | undefined)?.({
           copyBlock: () => "",
           scrollToBlock: () => {},
@@ -114,7 +117,7 @@ vi.mock("../features/terminal/XtermView", async () => {
           dimensions: () => ({ cols: 80, rows: 24 }),
         });
         (props.onAttach as ((id: string) => void) | undefined)?.("kernel-1");
-      }, []);
+      }, [props.onAttach, props.onHandle]);
       return <div className="h-full w-full min-h-0" />;
     },
   };

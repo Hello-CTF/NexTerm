@@ -517,7 +517,7 @@ export function AssetTree() {
       return;
     }
     if (treeVirtualized) treeVirtualizer.scrollToIndex(index, { align: "auto" });
-  });
+  }, [restoreFocusId, query, treeItems, treeVirtualized, treeVirtualizer]);
 
   const onClone = async (a: Asset) => {
     try {
@@ -1542,7 +1542,7 @@ function GroupNode({
     if (!list || !scroller) return;
     const next = list.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
     setAssetsScrollMargin((current) => (Math.abs(current - next) < 1 ? current : next));
-  });
+  }, [virtualizeAssets, open, getTreeScrollElement]);
   useEffect(() => {
     if (!restoreFocusId || !virtualizeAssets || !open) return;
     const index = assets.findIndex((asset) => asset.id === restoreFocusId);
@@ -2166,7 +2166,7 @@ export function AssetEditor({
     if (keyOriginTouchedRef.current || !boundIsRefKey) return;
     setKeyOrigin("ref");
     if (!keyPath && boundCred?.refPath) setKeyPath(boundCred.refPath);
-  }, [boundIsRefKey, boundCred?.refPath]);
+  }, [boundIsRefKey, boundCred?.refPath, keyPath]);
 
   const isDb = DATABASE_ASSET_KINDS.has(groupKind);
   const keyAuth = authKind === "key";

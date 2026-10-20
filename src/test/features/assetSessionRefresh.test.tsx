@@ -204,10 +204,13 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
 });
 
 vi.mock("../../features/terminal/XtermView", async () => {
-  const { useEffect } = await import("react");
+  const { useEffect, useRef } = await import("react");
   return {
     XtermView: (props: Record<string, unknown>) => {
+      const attachFiredRef = useRef(false);
       useEffect(() => {
+        if (attachFiredRef.current) return;
+        attachFiredRef.current = true;
         (props.onHandle as ((handle: unknown) => void) | undefined)?.({
           copyBlock: () => "",
           scrollToBlock: () => {},
@@ -221,7 +224,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
         });
         mocks.attachSeq += 1;
         (props.onAttach as ((id: string) => void) | undefined)?.(`kernel-${mocks.attachSeq}`);
-      }, []);
+      }, [props.onAttach, props.onHandle]);
       return <div className="h-full w-full min-h-0" />;
     },
   };
