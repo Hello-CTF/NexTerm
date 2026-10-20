@@ -182,7 +182,12 @@ func (r *Registry) quietGroupConsistent(waitContext context.Context, targets []*
 	var previous []TabQuietState
 	for attempt := 0; attempt < 3; attempt++ {
 		current, err := snapshotter.QuietGroupSnapshot(waitContext, tabIDs)
-		if err != nil || !quietRosterExact(current, requested) {
+		if err != nil {
+			markGroupQuietFailure(targets, "组快照读取失败: "+err.Error())
+			return nil, false, true
+		}
+		if !quietRosterExact(current, requested) {
+			markGroupQuietFailure(targets, "组快照 roster 不完整（存在缺失、重复或额外的标签页）")
 			return nil, false, true
 		}
 		if previous != nil && quietVersionsEqual(previous, current) {
@@ -190,7 +195,20 @@ func (r *Registry) quietGroupConsistent(waitContext context.Context, targets []*
 		}
 		previous = current
 	}
+	markGroupQuietFailure(targets, "组快照版本持续变化，无法取得一致状态")
 	return nil, false, true
+}
+
+// markGroupQuietFailure revokes every target's satisfied verdict, clears the
+// stale idle reading, and records the visible failure reason for the timeout
+// output. A later valid snapshot — per-tab or group — re-evaluates success
+// and clears the error.
+func markGroupQuietFailure(targets []*waitTarget, reason string) {
+	for _, target := range targets {
+		target.satisfied = false
+		target.idleMS = -1
+		target.idleErr = reason
+	}
 }
 
 // quietRosterExact reports whether the response covers the requested tab
