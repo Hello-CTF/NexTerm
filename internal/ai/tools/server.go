@@ -913,12 +913,18 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, call
 		return Fail(err)
 	}
 	sameLockSubmit := true
+	literalGuarded := false
+	if _, ok := r.deps.Terminal.(PasteLiteralTerminal); ok {
+		literalGuarded = true
+	}
 	if args.Paste {
 		delay := time.Duration(defaultSubmitDelayMS) * time.Millisecond
 		if args.SubmitDelayMS > 0 {
 			delay = time.Duration(args.SubmitDelayMS) * time.Millisecond
 		}
 		if submitter, ok := r.deps.Terminal.(PasteSubmitTerminal); ok {
+			// The same-lock implementer owns the in-lock literal-newline guard.
+			literalGuarded = true
 			err = submitter.WritePasteSubmit(ctx, tabID, args.Keys, args.Enter, delay)
 		} else {
 			sameLockSubmit = false
@@ -962,6 +968,10 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, call
 		result.Notes += "; paste and Enter were written as separate writes (terminal lacks the combined paste-submit lock); user input could interleave between them"
 		result.Text += "；paste 与 Enter 为分次写入，之间可能插入用户输入"
 	}
+	if args.Paste && !literalGuarded {
+		result.Notes += "; paste mode guard is a pre-write snapshot only; the terminal has no write-lock guarded literal paste, so an on→off mode flip during the write window is not covered"
+		result.Text += "；paste 模式守卫仅为写入前快照，终端未提供写锁内字面守卫，on→off 切换窗口未覆盖"
+	}
 	result.Notes += arbitrationNote
 	result.Text += arbitrationNote
 	result.OperationID = operationID(jobID, call.ID, "send_keys")
@@ -970,15 +980,22 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, call
 
 // writePasteSplit is the fallback when the terminal cannot hold one write
 // lock across the paste block, the submit delay, and the Enter key. The
+// paste part prefers the write-lock guarded literal capability; the
 // intermediate failure states are reported explicitly so the caller never
 // blindly retries a partially submitted paste.
 func (r *Registry) writePasteSplit(ctx context.Context, tabID, text string, enter bool, delay time.Duration) error {
-	terminal, ok := r.deps.Terminal.(PasteTerminal)
-	if !ok {
-		return errors.New("该终端不支持原子 paste 写入")
-	}
-	if err := terminal.WritePaste(ctx, tabID, text); err != nil {
-		return err
+	if literal, ok := r.deps.Terminal.(PasteLiteralTerminal); ok {
+		if err := literal.WritePasteLiteral(ctx, tabID, text); err != nil {
+			return err
+		}
+	} else {
+		terminal, ok := r.deps.Terminal.(PasteTerminal)
+		if !ok {
+			return errors.New("该终端不支持原子 paste 写入")
+		}
+		if err := terminal.WritePaste(ctx, tabID, text); err != nil {
+			return err
+		}
 	}
 	if !enter {
 		return nil

@@ -162,22 +162,27 @@ func (r *Registry) waitForTabs(waitContext context.Context, jobID string, scope 
 
 // quietGroupConsistent reads the group's quiet state and requires two
 // consecutive per-tab version-identical snapshots, so a success verdict
-// comes from one consistent state. capable is false when the terminal does
-// not implement the consistent-snapshot extension; agreed is false when the
-// group kept moving or the read failed.
+// comes from one consistent state. Every read must cover the exact
+// requested roster — each requested tab exactly once, no missing,
+// duplicate, or extra entries; an incomplete roster or a failed read
+// never produces a success. capable is false when the terminal does not
+// implement the consistent-snapshot extension; agreed is false when the
+// group kept moving, the roster was incomplete, or the read failed.
 func (r *Registry) quietGroupConsistent(waitContext context.Context, targets []*waitTarget) (states []TabQuietState, agreed, capable bool) {
 	snapshotter, ok := r.deps.Terminal.(QuietGroupSnapshotTerminal)
 	if !ok {
 		return nil, false, false
 	}
 	tabIDs := make([]string, 0, len(targets))
+	requested := make(map[string]struct{}, len(targets))
 	for _, target := range targets {
 		tabIDs = append(tabIDs, target.tabID)
+		requested[target.tabID] = struct{}{}
 	}
 	var previous []TabQuietState
 	for attempt := 0; attempt < 3; attempt++ {
 		current, err := snapshotter.QuietGroupSnapshot(waitContext, tabIDs)
-		if err != nil {
+		if err != nil || !quietRosterExact(current, requested) {
 			return nil, false, true
 		}
 		if previous != nil && quietVersionsEqual(previous, current) {
@@ -186,6 +191,25 @@ func (r *Registry) quietGroupConsistent(waitContext context.Context, targets []*
 		previous = current
 	}
 	return nil, false, true
+}
+
+// quietRosterExact reports whether the response covers the requested tab
+// set exactly: every requested ID present exactly once, nothing else.
+func quietRosterExact(states []TabQuietState, requested map[string]struct{}) bool {
+	if len(states) != len(requested) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(states))
+	for _, state := range states {
+		if _, ok := requested[state.TabID]; !ok {
+			return false
+		}
+		if _, duplicate := seen[state.TabID]; duplicate {
+			return false
+		}
+		seen[state.TabID] = struct{}{}
+	}
+	return len(seen) == len(requested)
 }
 
 func quietVersionsEqual(a, b []TabQuietState) bool {

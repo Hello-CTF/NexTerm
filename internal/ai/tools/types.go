@@ -348,9 +348,12 @@ type TabQuietState struct {
 
 // QuietGroupSnapshotTerminal is the optional Terminal extension that reads
 // the quiet state of a set of tabs in one consistent snapshot with per-tab
-// versions. Terminals that cannot provide a consistent multi-tab read do
-// not implement it; multi-tab quiet waits then degrade to a best-effort
-// serial scan and say so in the result notes.
+// versions. The close/error contract: the response must contain exactly
+// one state per requested tab ID — every requested tab present exactly
+// once, no extras — or a non-nil error; callers reject incomplete rosters
+// and never treat them as a success. Terminals that cannot provide a
+// consistent multi-tab read do not implement it; multi-tab quiet waits
+// then degrade to a best-effort serial scan and say so in the result notes.
 type QuietGroupSnapshotTerminal interface {
 	QuietGroupSnapshot(ctx context.Context, tabIDs []string) ([]TabQuietState, error)
 }
@@ -358,11 +361,25 @@ type QuietGroupSnapshotTerminal interface {
 // PasteSubmitTerminal is the optional Terminal extension that writes a paste
 // block and, after the requested submit delay, the Enter key under one and
 // the same terminal write lock, so user input can never interleave between
-// the paste and the submission. Terminals that cannot hold the lock across
-// both writes do not implement it; send_keys then falls back to separate
-// writes and says so explicitly in the result notes.
+// the paste and the submission. Implementations must also enforce the
+// literal-newline guard inside that lock: when the in-lock bracketed-paste
+// mode is off, content whose newlines would map to carriage returns is
+// rejected before any byte is written. Terminals that cannot hold the lock
+// across both writes do not implement it; send_keys then falls back to
+// separate writes and says so explicitly in the result notes.
 type PasteSubmitTerminal interface {
 	WritePasteSubmit(ctx context.Context, tabID, text string, submit bool, delay time.Duration) error
+}
+
+// PasteLiteralTerminal is the optional Terminal extension that writes a
+// paste under the terminal's write lock with the bracketed-paste mode read
+// inside that same lock: when the mode is off, content whose newlines would
+// map to carriage returns is rejected before any byte is written. The
+// pre-write snapshot guard alone cannot close the on→off mode-flip window;
+// terminals that do not implement this leave that window open, and send_keys
+// marks it explicitly in the result notes.
+type PasteLiteralTerminal interface {
+	WritePasteLiteral(ctx context.Context, tabID, text string) error
 }
 
 // AssetConnector is the optional dependency that connects an asset and
