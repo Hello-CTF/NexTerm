@@ -271,7 +271,7 @@ export const sessionApi = {
       args: { assetId, timeoutMs },
     }),
   openLineTab: (sessionId: string, cols: number, rows: number, channel: unknown) =>
-    call<string>("session_open_line_tab", {
+    call<AttachedTabInfo>("session_open_line_tab", {
       sessionId,
       cols,
       rows,
@@ -294,10 +294,12 @@ export interface AttachedTabInfo {
   viewers: number;
   exited: boolean;
   retainable?: boolean;
+  ephemeral?: boolean;
   encoding?: string;
   title?: string;
   shell?: TerminalShell;
   fallbackNotice?: string;
+  attachmentId?: number;
 }
 
 export interface LiveTabInfo {

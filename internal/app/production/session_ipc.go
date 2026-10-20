@@ -133,10 +133,12 @@ type attachedTabDTO struct {
 	Viewers        int     `json:"viewers"`
 	Exited         bool    `json:"exited"`
 	Retainable     bool    `json:"retainable"`
+	Ephemeral      bool    `json:"ephemeral"`
 	Encoding       string  `json:"encoding,omitempty"`
 	Title          string  `json:"title,omitempty"`
 	Shell          string  `json:"shell"`
 	FallbackNotice string  `json:"fallbackNotice,omitempty"`
+	AttachmentID   uint64  `json:"attachmentId,omitempty"`
 }
 
 type renameTerminalRequest struct {
@@ -172,11 +174,84 @@ type terminalIDRequest struct {
 	ChannelID string `json:"channelId"`
 	Mode      string `json:"mode"`
 	N         int    `json:"n"`
-	MaxBytes  int    `json:"maxBytes"`
-	Visible   bool   `json:"visible"`
-	Encoding  string `json:"encoding"`
-	Path      string `json:"path"`
-	Line      string `json:"line"`
+
+	MaxBytes int    `json:"maxBytes"`
+	Visible  bool   `json:"visible"`
+	Encoding string `json:"encoding"`
+	Path     string `json:"path"`
+	Line     string `json:"line"`
+}
+
+type terminalRecoverRequest struct {
+	TabID     string `json:"tabId"`
+	ChannelID string `json:"channelId"`
+	ClientID  string `json:"clientId"`
+	// AttachmentID is the unique incarnation of this attachment, established
+	// at attach time; a stale report from a previous incarnation is rejected.
+	AttachmentID uint64 `json:"attachmentId"`
+	// AcceptedBytes is the client's absolute accepted stream offset for this
+	// channel; the recovery ring replays everything flushed after it.
+	AcceptedBytes int64 `json:"acceptedBytes"`
+}
+
+type terminalPauseRequest struct {
+	TabID     string `json:"tabId"`
+	ChannelID string `json:"channelId"`
+	ClientID  string `json:"clientId"`
+	// AttachmentID is the unique incarnation of this attachment, established
+	// at attach time; a stale report from a previous incarnation is rejected.
+	AttachmentID uint64 `json:"attachmentId"`
+	// AcceptedBytes is the client's absolute accepted stream offset when
+	// pausing; it opens the recovery ring's retention floor. Negative leaves
+	// the floor unchanged.
+	AcceptedBytes int64 `json:"acceptedBytes"`
+}
+
+type terminalResumeRequest struct {
+	TabID     string `json:"tabId"`
+	ChannelID string `json:"channelId"`
+	ClientID  string `json:"clientId"`
+	// AttachmentID is the unique incarnation of this attachment, established
+	// at attach time; a stale report from a previous incarnation is rejected.
+	AttachmentID uint64 `json:"attachmentId"`
+	// EpisodeToken is the generation of the refusal episode this resume
+	// answers, as issued by the pause or recover that opened it. A resume
+	// carrying a previous episode's token is rejected: it must not clear the
+	// current episode's retention floor.
+	EpisodeToken uint64 `json:"episodeToken"`
+}
+
+type terminalStreamAckRequest struct {
+	TabID     string `json:"tabId"`
+	ChannelID string `json:"channelId"`
+	ClientID  string `json:"clientId"`
+	// AttachmentID is the unique incarnation of this attachment, established
+	// at attach time; a stale report from a previous incarnation is rejected.
+	AttachmentID uint64 `json:"attachmentId"`
+	// AcceptedBytes is the client's absolute accepted stream offset for this
+	// channel; it opens the recovery ring's retention floor. The floor only
+	// advances.
+	AcceptedBytes int64 `json:"acceptedBytes"`
+}
+
+// streamControlCaller resolves the trusted caller for a stream-control
+// command (pause, resume, recover, and the accepted-offset ACK). The caller
+// is bound to the attachment: when both the environment and the payload name
+// a caller, they must agree — a payload cannot override the environment
+// caller; a single source (environment-only or payload-only) is a legitimate
+// fallback; an empty caller is rejected.
+func streamControlCaller(call *ipc.Call, payloadClient string) (string, error) {
+	if call.ClientID != "" && payloadClient != "" && call.ClientID != payloadClient {
+		return "", session.ErrForbidden
+	}
+	client := call.ClientID
+	if client == "" {
+		client = payloadClient
+	}
+	if client == "" {
+		return "", session.ErrForbidden
+	}
+	return client, nil
 }
 
 type liveTabDTO struct {
@@ -354,11 +429,11 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "session_open_line_tab", func(ctx context.Context, call *ipc.Call, input openTerminalRequest) (string, error) {
+			return ipc.Register(dispatcher, "session_open_line_tab", func(ctx context.Context, call *ipc.Call, input openTerminalRequest) (attachedTabDTO, error) {
 				ctx = productionSessionRequestContext(ctx)
 				bridged, err := s.bridge.bridge(call.Channel.ID)
 				if err != nil {
-					return "", terminalIPCError(err)
+					return attachedTabDTO{}, terminalIPCError(err)
 				}
 				info, err := s.sessions.OpenTabFor(context.WithoutCancel(ctx), session.OpenTabOptions{
 					SessionID: input.SessionID, ClientID: call.ClientID, ChannelID: call.Channel.ID,
@@ -368,8 +443,9 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					if bridged {
 						s.bridge.Unbridge(call.Channel.ID)
 					}
+					return attachedTabDTO{}, terminalIPCError(err)
 				}
-				return info.ID, terminalIPCError(err)
+				return attachedSessionTab(info), nil
 			})
 		},
 		func() error {
@@ -577,6 +653,68 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					}
 				}
 				return nil, terminalIPCError(err)
+			})
+		},
+		func() error {
+			// Client-driven producer backpressure: pause/resume one channel's
+			// output feed without detaching (ephemeral local/WinRM tabs stay alive).
+			// Both carry the trusted caller and the attachment incarnation, bound
+			// to the attached subscriber like the accepted-offset ACK.
+			return ipc.Register(dispatcher, "terminal_pause", func(ctx context.Context, call *ipc.Call, input terminalPauseRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
+				client, err := streamControlCaller(call, input.ClientID)
+				if err != nil {
+					return nil, terminalIPCError(err)
+				}
+				episodeToken, err := s.sessions.PauseChannelFor(ctx, input.TabID, input.ChannelID, client, input.AttachmentID, input.AcceptedBytes)
+				if err != nil {
+					return nil, terminalIPCError(err)
+				}
+				// The episode the client must reference on resume; joining the
+				// already-open episode is idempotent, so a retried pause
+				// returns the same token.
+				return map[string]any{"episodeToken": episodeToken}, nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "terminal_resume", func(ctx context.Context, call *ipc.Call, input terminalResumeRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
+				client, err := streamControlCaller(call, input.ClientID)
+				if err != nil {
+					return nil, terminalIPCError(err)
+				}
+				return nil, terminalIPCError(s.sessions.ResumeChannelFor(ctx, input.TabID, input.ChannelID, client, input.AttachmentID, input.EpisodeToken))
+			})
+		},
+		func() error {
+			// Redeliver the suffix a saturated client refused, from the tab's
+			// bounded recovery ring, without reaping an ephemeral tab. The
+			// trusted caller and attachment incarnation are bound to the
+			// attached subscriber like the accepted-offset ACK.
+			return ipc.Register(dispatcher, "terminal_recover", func(ctx context.Context, call *ipc.Call, input terminalRecoverRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
+				client, err := streamControlCaller(call, input.ClientID)
+				if err != nil {
+					return nil, terminalIPCError(err)
+				}
+				flushed, episodeToken, err := s.sessions.RecoverChannelFor(ctx, input.TabID, input.ChannelID, client, input.AttachmentID, input.AcceptedBytes)
+				if err != nil {
+					return nil, terminalIPCError(err)
+				}
+				return map[string]any{"flushedOffset": flushed, "episodeToken": episodeToken}, nil
+			})
+		},
+		func() error {
+			// The client's accepted-offset ACK for one channel: opens the
+			// recovery ring's retention floor without waiting for a pause/recover
+			// RPC. The caller must own the tab and be its controller.
+			return ipc.Register(dispatcher, "terminal_stream_ack", func(ctx context.Context, call *ipc.Call, input terminalStreamAckRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
+				client, err := streamControlCaller(call, input.ClientID)
+				if err != nil {
+					return nil, terminalIPCError(err)
+				}
+				return nil, terminalIPCError(s.sessions.StreamAckFor(ctx, input.TabID, input.ChannelID, client, input.AttachmentID, input.AcceptedBytes))
 			})
 		},
 		func() error {
@@ -1013,7 +1151,8 @@ func attachedSessionTab(info session.TabInfo) attachedTabDTO {
 	return attachedTabDTO{
 		TabID: info.ID, SessionID: info.SessionID, Cols: info.Cols, Rows: info.Rows,
 		Controller: nullableProductionString(info.Controller), Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
-		Retainable: info.Retainable, Encoding: info.Encoding, Title: info.Title, Shell: string(info.Shell), FallbackNotice: info.FallbackNotice,
+		Retainable: info.Retainable, Ephemeral: info.Ephemeral, Encoding: info.Encoding, Title: info.Title, Shell: string(info.Shell), FallbackNotice: info.FallbackNotice,
+		AttachmentID: info.AttachmentID,
 	}
 }
 

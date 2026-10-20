@@ -28,7 +28,7 @@ func TestDockerImageValidationMessages(t *testing.T) {
 	transport := &dockerShellTransport{kind: "ssh"}
 	manager := session.NewManager(session.Config{Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 		return transport, nil
-	})})
+	}), OpenAccess: true})
 	t.Cleanup(func() { _ = manager.Close() })
 	connected, err := manager.Connect(t.Context(), session.Asset{ID: "s1", Kind: session.KindSSH})
 	if err != nil {

@@ -37,6 +37,10 @@ func (m *memSink) SendBinary(_ context.Context, data []byte) error {
 	return nil
 }
 
+func (m *memSink) SendJSON(_ context.Context, data []byte) error {
+	return m.SendBinary(context.Background(), data)
+}
+
 func (m *memSink) Bytes() []byte {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -98,7 +98,7 @@ func TestProductionTerminalRecordAndExportResolveStagedPaths(t *testing.T) {
 			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 			Streams: ipc.StreamFactoryFuncs{Binary: factory.open},
 		},
-		DataDir: t.TempDir(), Desktop: false, StagedBlobs: staged,
+		DataDir: t.TempDir(), Desktop: true, StagedBlobs: staged,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +157,7 @@ func TestProductionTerminalRecordStopIPCContract(t *testing.T) {
 			recordingTerminal := &recordingIPCStopTerminal{bytes: test.bytes, err: test.stopErr}
 			manager := session.NewManager(session.Config{Terminals: session.TerminalFactoryFunc(func(session.TerminalConfig) (session.TerminalState, error) {
 				return recordingTerminal, nil
-			})})
+			}), OpenAccess: true})
 			t.Cleanup(func() { _ = manager.Close() })
 			tab, err := manager.RegisterRemoteSession(t.Context(), session.RemoteSessionOptions{OwnerID: "recording-owner"})
 			if err != nil {
@@ -191,7 +191,7 @@ func TestProductionTerminalRecordStatusIPCContract(t *testing.T) {
 	recordingTerminal := &recordingIPCStopTerminal{}
 	manager := session.NewManager(session.Config{Terminals: session.TerminalFactoryFunc(func(session.TerminalConfig) (session.TerminalState, error) {
 		return recordingTerminal, nil
-	})})
+	}), OpenAccess: true})
 	t.Cleanup(func() { _ = manager.Close() })
 	tab, err := manager.RegisterRemoteSession(t.Context(), session.RemoteSessionOptions{OwnerID: "recording-owner"})
 	if err != nil {

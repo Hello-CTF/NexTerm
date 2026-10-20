@@ -42,6 +42,12 @@ func (s *gatedSequenceSink) SendBinary(ctx context.Context, data []byte) error {
 	return nil
 }
 
+// SendJSON records the frame like SendBinary; the frame kind is identified
+// by content in ordering assertions.
+func (s *gatedSequenceSink) SendJSON(ctx context.Context, data []byte) error {
+	return s.SendBinary(ctx, data)
+}
+
 func (s *gatedSequenceSink) frame(seq uint64) []byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()

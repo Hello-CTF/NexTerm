@@ -546,3 +546,35 @@ export type StepState = {
   batchIds: string[];
   error?: string;
 };
+
+export type TerminalPauseRequest = {
+  tabId: string;
+  channelId: string;
+  clientId: string;
+  attachmentId: number;
+  acceptedBytes: number;
+};
+
+export type TerminalRecoverRequest = {
+  tabId: string;
+  channelId: string;
+  clientId: string;
+  attachmentId: number;
+  acceptedBytes: number;
+};
+
+export type TerminalResumeRequest = {
+  tabId: string;
+  channelId: string;
+  clientId: string;
+  attachmentId: number;
+  episodeToken: number;
+};
+
+export type TerminalStreamAckRequest = {
+  tabId: string;
+  channelId: string;
+  clientId: string;
+  attachmentId: number;
+  acceptedBytes: number;
+};

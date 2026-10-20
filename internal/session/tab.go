@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,6 +29,30 @@ type subscriber struct {
 	client   string
 	producer *hub.Producer
 	co       *outCoalescer
+	paused   bool
+	// attachmentId is the unique incarnation of this attachment, established
+	// at attach time and bound to the ACK and the floor high-water, so a late
+	// report from a previous incarnation of the same channel is rejected.
+	attachmentId uint64
+	// flushedOffset is the absolute stream offset (recovery-ring coordinates)
+	// of the next byte to flush to this subscriber. It advances with every
+	// fanout enqueue, so a saturated client's refused suffix is
+	// [acceptedOffset, flushedOffset) regardless of paused coalescer buffers.
+	flushedOffset int64
+	// episodeFloor is the absolute stream offset this subscriber has accepted,
+	// reported while its refusal episode is unresolved; the recovery ring
+	// retains everything at or after it. -1 when no episode is open.
+	episodeFloor int64
+	// floorHighWater is the highest floor ever reported for this subscriber.
+	// It persists across episodes so a late stale ACK after a resume cannot
+	// reopen an old floor, and it resets to -1 on a fresh attach.
+	floorHighWater int64
+	// episodeGen is the generation of the subscriber's current refusal
+	// episode. It advances only when a report opens the floor from closed, so
+	// a resume carrying an older generation is provably stale: the episode it
+	// belongs to is no longer current, and clearing the floor or unpausing on
+	// its behalf would evict a live episode's retained suffix.
+	episodeGen uint64
 }
 
 const streamAnchorType = "nexterm.stream-anchor"
@@ -37,12 +62,15 @@ const streamAnchorType = "nexterm.stream-anchor"
 // control bytes at the stream head that do not count toward the sequence (clear-screen escape); expired means the client
 // anchor was not adopted and this attach fell back to a full clear-screen replay. The client computes the consumed
 // sequence as streamSeq + max(0, bytes received - controlBytes) and brings it back via AttachOptions.FromSeq/FromEpoch on reconnect.
+// attachmentId is the incarnation this frame was sent for: the client adopts it as its current attachment identity, so
+// the ordered stream itself carries the incarnation even when the attach RPC response has not arrived yet.
 type streamAnchor struct {
 	Type         string `json:"type"`
 	Epoch        string `json:"epoch"`
 	StreamSeq    uint64 `json:"streamSeq"`
 	ControlBytes int    `json:"controlBytes,omitempty"`
 	Expired      bool   `json:"expired,omitempty"`
+	AttachmentID uint64 `json:"attachmentId,omitempty"`
 }
 
 type Tab struct {
@@ -92,6 +120,8 @@ type Tab struct {
 	metadataRevision uint64
 	renameAttempts   map[string]*durableRenameAttempt
 	streamEpoch      string
+	outputWake       chan struct{}
+	recovery         *recoveryRing
 
 	catchUpRemaining int64
 
@@ -277,8 +307,8 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		var killErr error
 		if destroyOnFailure && durableAttachment != nil {
 			killErr = durableAttachment.Kill(context.Background())
-			m.deleteDurableTranscriptOffset(tabID)
-			m.deleteDurableTabTitle(tabID)
+			m.deleteDurableTranscriptOffset(ownerCtx(context.Background(), session.userID), tabID)
+			m.deleteDurableTabTitle(ownerCtx(context.Background(), session.userID), tabID)
 		}
 		if channel != nil {
 			_ = channel.Close()
@@ -402,17 +432,20 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		ctx:    tabCtx, cancel: cancel, responses: newResponseQueue(generation), feedGate: make(chan struct{}, 1),
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
 		durableIdentity: durableIdentity, metadataRevision: metadataRevision,
-		streamEpoch: ids.New(),
+		streamEpoch: ids.New(), outputWake: make(chan struct{}),
+	}
+	if options.Ephemeral {
+		tab.recovery = newRecoveryRing(recoveryRingBytes)
 	}
 	if options.Durable != nil {
 		if m.offsets != nil {
 			if options.Durable.Recover {
-				tab.catchUpRemaining = m.offsets.DurableTranscriptCatchUpBytes(tabID)
+				tab.catchUpRemaining = m.durableTranscriptCatchUpBytes(ownerCtx(context.Background(), session.userID), tabID)
 				if tab.catchUpRemaining > 0 {
 					m.logger.Info("durable transcript catch-up armed; skipping already-recorded replay bytes", "tab", tabID, "bytes", tab.catchUpRemaining)
 				}
 			} else {
-				m.offsets.PersistDurableTranscriptOffset(tabID, 0)
+				m.persistDurableTranscriptOffset(ownerCtx(context.Background(), session.userID), tabID, 0)
 			}
 		}
 	}
@@ -425,7 +458,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		}
 		if options.Durable.CanonicalMetadata {
 			tab.title = options.Durable.Title
-		} else if title := m.durableTabTitle(tabID); title != "" {
+		} else if title := m.durableTabTitle(ownerCtx(context.Background(), session.userID), tabID); title != "" {
 			tab.title = title
 		}
 	}
@@ -645,7 +678,7 @@ func (m *Manager) RenameTab(ctx context.Context, tabID, title string) (TabInfo, 
 	info := tab.infoLocked()
 	tab.mu.Unlock()
 	if durable {
-		m.persistDurableTabTitle(tabID, title)
+		m.persistDurableTabTitle(ownerCtx(context.Background(), tab.session.userID), tabID, title)
 	}
 	m.emit(ctx, TopicTerminalControl, event)
 	return info, nil
@@ -724,6 +757,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	old, replaced := tab.subscribers[options.ChannelID]
 	if replaced {
 		delete(tab.subscribers, options.ChannelID)
+		tab.syncRecoveryFloorLocked()
 		tab.releaseOrphanControllerLocked()
 	}
 	tab.mu.Unlock()
@@ -735,8 +769,26 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 		_ = old.producer.Close()
 	}
 	attached := false
+	registered := false
+	var co *outCoalescer
 	defer func() {
 		if !attached {
+			if registered {
+				// The attach failed after the incarnation was registered but
+				// before it committed: roll the subscriber back so the channel
+				// never keeps a half-attached incarnation. The identity guard
+				// leaves a newer attachment in place.
+				m.mu.Lock()
+				tab.mu.Lock()
+				if current, ok := tab.subscribers[options.ChannelID]; ok && current.co == co {
+					delete(tab.subscribers, options.ChannelID)
+					tab.syncRecoveryFloorLocked()
+					tab.releaseOrphanControllerLocked()
+				}
+				tab.mu.Unlock()
+				m.mu.Unlock()
+				co.teardown()
+			}
 			_ = producer.Close()
 			m.releaseChannelReservation(tab.ID, options.ChannelID, incarnation)
 		}
@@ -744,8 +796,42 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	if err := m.bus.DiscardPending(options.ChannelID); err != nil {
 		return TabInfo{}, err
 	}
+
+	// Register the subscriber before the anchor and replay are sent: the
+	// anchor carries the new incarnation, and the client's first ACK must
+	// land on a live subscriber even when it arrives ahead of the attach
+	// response. Live output cannot interleave with the replay — the feed gate
+	// is held for the whole attach — and the fanout wiring and the controller
+	// claim still commit only after the sends succeed.
+	m.mu.Lock()
+	if m.closed || m.tabs[tab.ID] != tab || m.channelTabs[options.ChannelID] != tab.ID || m.channelIncarnations[options.ChannelID] != incarnation {
+		m.mu.Unlock()
+		return TabInfo{}, hub.ErrDetached
+	}
+	tab.mu.Lock()
+	if tab.closed || tab.destroying {
+		tab.mu.Unlock()
+		m.mu.Unlock()
+		return TabInfo{}, ErrTabClosed
+	}
+	client := clientID(options.ClientID)
+	co = newOutCoalescer(func() { m.flushSubscriberOutput(tab.ID, options.ChannelID) })
+	flushedOffset := int64(0)
+	if tab.recovery != nil {
+		flushedOffset = tab.recovery.currentOffset()
+	}
+	m.nextAttachmentId++
+	attachmentId := m.nextAttachmentId
+	tab.subscribers[options.ChannelID] = subscriber{
+		client: client, producer: producer, co: co, attachmentId: attachmentId, flushedOffset: flushedOffset, episodeFloor: -1, floorHighWater: -1,
+	}
+	tab.mu.Unlock()
+	m.mu.Unlock()
+	registered = true
+
 	anchor, control, replay := m.planAttachReplay(tab, options, clear)
 	if anchor != nil {
+		anchor.AttachmentID = attachmentId
 		frame, _ := json.Marshal(anchor)
 		if err := producer.SendJSON(attachCtx, frame); err != nil {
 			return TabInfo{}, err
@@ -775,11 +861,6 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 		m.mu.Unlock()
 		return TabInfo{}, ErrTabClosed
 	}
-	client := clientID(options.ClientID)
-	co := newOutCoalescer(func() { m.flushSubscriberOutput(tab.ID, options.ChannelID) })
-	tab.subscribers[options.ChannelID] = subscriber{
-		client: client, producer: producer, co: co,
-	}
 	if tab.controller == "" {
 		if tab.controlled && tab.grid != nil {
 			if err := tab.grid.Claim(); err != nil {
@@ -793,6 +874,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	}
 	m.attachSubscriberOutput(tab, options.ChannelID, incarnation, producer, co)
 	info := tab.infoLocked()
+	info.AttachmentID = attachmentId
 	event := tab.controlEventLocked()
 	tab.mu.Unlock()
 	m.mu.Unlock()
@@ -936,6 +1018,7 @@ func (m *Manager) detachChannelLocked(channelID string, incarnation uint64, clos
 	delete(m.channelTabs, channelID)
 	delete(m.channelIncarnations, channelID)
 	delete(tab.subscribers, channelID)
+	tab.syncRecoveryFloorLocked()
 	throttleRecovered, throttleVersion := m.clearThrottleChannelLocked(tab.ID, channelID)
 	tab.releaseOrphanControllerLocked()
 	event := tab.controlEventLocked()
@@ -943,6 +1026,7 @@ func (m *Manager) detachChannelLocked(channelID string, incarnation uint64, clos
 	ephemeral := tab.ephemeral
 	generation := tab.generation
 	tabID = tab.ID
+	tab.signalOutputWakeLocked()
 	tab.mu.Unlock()
 	return tabID, func() {
 		if attached {
@@ -1059,6 +1143,7 @@ func (m *Manager) detachMatching(tab *Tab, match func(string) bool, background b
 			}
 		}
 	}
+	tab.syncRecoveryFloorLocked()
 	tab.releaseOrphanControllerLocked()
 	event := tab.controlEventLocked()
 	empty := len(tab.subscribers) == 0
@@ -1176,6 +1261,64 @@ func (m *Manager) Release(tabID, client string) (bool, error) {
 		m.emit(context.Background(), TopicTerminalControl, event)
 	}
 	return released, nil
+}
+
+// streamAckType is the reserved control-frame type for the client's
+// accepted-offset ACK on the ordered write path. It is intercepted by the
+// write handler and never reaches the PTY.
+const streamAckType = "nexterm.stream-ack"
+
+// parseStreamAck reports whether data is a stream-ack control frame and, if
+// so, the absolute stream offset the client has accepted. The check is a
+// cheap prefix match first, so ordinary input never pays for a JSON parse.
+func parseStreamAck(data []byte) (int64, bool) {
+	prefix := `{"type":"` + streamAckType + `","offset":`
+	if !bytes.HasPrefix(data, []byte(prefix)) {
+		return 0, false
+	}
+	var frame struct {
+		Offset int64 `json:"offset"`
+	}
+	if err := json.Unmarshal(data, &frame); err != nil {
+		return 0, false
+	}
+	return frame.Offset, true
+}
+
+// StreamAckFor applies the client's accepted-offset ACK to the retention
+// floor of one of its channels. The channel must be attached to the tab, its
+// attached client must match the caller, and the report's attachmentId must
+// match the channel's current incarnation — a late report from a previous
+// incarnation of the same channel is rejected, never reopening the floor or
+// suppressing a new lower-but-real offset. The offset must be non-negative
+// and is clamped to the channel's flushed offset, and the floor only
+// advances. The lookup, the client/incarnation/offset checks, and the floor
+// write are atomic in one critical section for the same attachment.
+func (m *Manager) StreamAckFor(ctx context.Context, tabID, channelID, client string, attachmentID uint64, acceptedBytes int64) error {
+	tab, err := m.TabFor(ctx, tabID)
+	if err != nil {
+		return err
+	}
+	tab.mu.Lock()
+	defer tab.mu.Unlock()
+	subscriber, ok := tab.subscribers[channelID]
+	if !ok {
+		return ErrTabNotFound
+	}
+	if subscriber.client != clientID(client) {
+		return ErrForbidden
+	}
+	if subscriber.attachmentId != attachmentID {
+		return ErrForbidden
+	}
+	if acceptedBytes < 0 {
+		return ErrInvalidOptions
+	}
+	if acceptedBytes > subscriber.flushedOffset {
+		acceptedBytes = subscriber.flushedOffset
+	}
+	tab.setEpisodeFloorLocked(channelID, acceptedBytes)
+	return nil
 }
 
 func (m *Manager) Write(ctx context.Context, tabID, client string, data []byte) error {
@@ -1386,8 +1529,8 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 			tab.mu.Unlock()
 			return err
 		}
-		m.deleteDurableTranscriptOffset(id)
-		m.deleteDurableTabTitle(id)
+		m.deleteDurableTranscriptOffset(ownerCtx(context.Background(), tab.session.userID), id)
+		m.deleteDurableTabTitle(ownerCtx(context.Background(), tab.session.userID), id)
 	} else {
 		m.mu.Unlock()
 		if err := m.closeTabResources(tab); err != nil {
@@ -1487,7 +1630,12 @@ func (m *Manager) attachSubscriberOutput(tab *Tab, channelID string, incarnation
 	if tab.fanout == nil {
 		tab.fanout = m.newOutputFanout()
 	}
-	tab.fanout.AttachWithOptions(channelID, terminal.SinkFunc(producer.SendBinary), terminal.FanoutSubscriberOptions{
+	tab.fanout.AttachWithOptions(channelID, terminal.SinkFuncs{
+		Binary: producer.SendBinary,
+		JSON: func(ctx context.Context, data []byte) error {
+			return producer.SendJSON(ctx, data)
+		},
+	}, terminal.FanoutSubscriberOptions{
 		OnDisconnect: func(stats terminal.FanoutSubscriberStats, cause error) {
 			expected.teardown()
 			m.startGoroutine(func() {
@@ -1559,17 +1707,26 @@ func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []
 		tab.fanout = m.newOutputFanout()
 	}
 	fanout := tab.fanout
+	recovery := tab.recovery
 	subscribers := make([]outputTarget, 0, len(tab.subscribers))
 	for channelID, subscriber := range tab.subscribers {
 		subscribers = append(subscribers, outputTarget{channelID: channelID, subscriber: subscriber})
 	}
 	tab.mu.Unlock()
+	if recovery != nil {
+		recovery.add(data)
+	}
 	for _, target := range subscribers {
+		if target.subscriber.paused {
+			target.subscriber.co.addPaused(data)
+			continue
+		}
 		batch, sendNow := target.subscriber.co.add(data)
 		if !sendNow {
 			continue
 		}
 		fanout.SendTo(target.channelID, batch)
+		m.noteChannelFlushed(tab, target.channelID, int64(len(batch)))
 	}
 	return nil
 }
@@ -1589,7 +1746,7 @@ func (m *Manager) flushSubscriberOutput(tabID, channelID string) {
 	subscriber, ok := tab.subscribers[channelID]
 	fanout := tab.fanout
 	tab.mu.Unlock()
-	if !ok || fanout == nil {
+	if !ok || subscriber.paused || fanout == nil {
 		return
 	}
 	batch := subscriber.co.take()
@@ -1597,6 +1754,7 @@ func (m *Manager) flushSubscriberOutput(tabID, channelID string) {
 		return
 	}
 	fanout.SendTo(channelID, batch)
+	m.noteChannelFlushed(tab, channelID, int64(len(batch)))
 }
 
 func (m *Manager) startPump(tab *Tab, channel *channelHandle, generation uint64) bool {
@@ -1626,6 +1784,20 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 	buffer := make([]byte, 64<<10)
 	var readErr error
 	for {
+		// A paused subscriber with a full coalescer stalls the PTY read:
+		// output backpressure reaches the shell instead of growing memory.
+		if stalled, wake := tab.outputStalled(); stalled {
+			select {
+			case <-wake:
+				continue
+			case <-ctx.Done():
+				readErr = ctx.Err()
+			}
+			if readErr != nil {
+				break
+			}
+			continue
+		}
 		count, err := channel.Read(buffer)
 		if count > 0 {
 			chunk := append([]byte(nil), buffer[:count]...)

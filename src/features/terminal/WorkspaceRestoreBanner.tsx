@@ -88,7 +88,7 @@ export function WorkspaceRestoreBanner() {
   return (
     <section
       aria-label="工作区恢复"
-      className="shrink-0 border-b border-amber-500/30 bg-amber-950/30 text-xs text-amber-100"
+      className="shrink-0 border-b border-amber-500/30 bg-amber-950/30 text-xs text-[var(--nx-fg-warning)]"
     >
       <div className="flex flex-wrap items-center gap-2 px-4 py-2">
         <span>{summary}</span>
@@ -139,7 +139,7 @@ export function WorkspaceRestoreBanner() {
                   <span className={item.status === "failed" ? "text-red-300" : "text-amber-300"}>
                     {statusText(item)}
                   </span>
-                  {item.detail && <span className="text-amber-200/70">{item.detail}</span>}
+                  {item.detail && <span className="text-[var(--nx-fg-warning)]/70">{item.detail}</span>}
                 </li>
               );
             })}

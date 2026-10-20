@@ -36,4 +36,22 @@ type DurableTabTitleStore interface {
 	DeleteDurableTabTitle(tabID string)
 }
 
+// Owner-scoped variants of the durable stores: methods take a context so the
+// implementation can isolate rows by the session owner carried in it. The
+// Context suffix keeps them additive — a store can implement both the legacy
+// and the owner-scoped interface. Stores that implement them get owner
+// isolation on multi-user servers; a legacy adapter on a non-open server must
+// fail closed (zero-value reads, skipped writes) rather than run ownerless.
+type OwnerScopedDurableTranscriptOffsetStore interface {
+	DurableTranscriptCatchUpBytesContext(ctx context.Context, tabID string) int64
+	PersistDurableTranscriptOffsetContext(ctx context.Context, tabID string, offset int64)
+	DeleteDurableTranscriptOffsetContext(ctx context.Context, tabID string)
+}
+
+type OwnerScopedDurableTabTitleStore interface {
+	DurableTabTitleContext(ctx context.Context, tabID string) string
+	PersistDurableTabTitleContext(ctx context.Context, tabID, title string)
+	DeleteDurableTabTitleContext(ctx context.Context, tabID string)
+}
+
 type durableTranscriptOffsetSource = DurableTranscriptOffsetStore

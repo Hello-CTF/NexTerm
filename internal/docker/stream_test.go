@@ -265,14 +265,31 @@ func TestExecReplayIsBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec.emit(t, "abcdefgh")
-	waitExecReplay(t, service, id, 4)
+	waitExecReplay(t, service, id, 8)
+	// The buffer is full (8 bytes over the 4-byte limit): further output
+	// stalls the exec instead of being dropped.
+	exec.emit(t, "ij")
+	time.Sleep(50 * time.Millisecond)
+	stream, err := service.streams.get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream.mu.Lock()
+	stuck := stream.replay.size
+	stream.mu.Unlock()
+	if stuck != 8 {
+		t.Fatalf("replay kept growing while full: size = %d, want 8", stuck)
+	}
 	resumed := newCollectSink()
 	if err := service.ResumeExec(id, resumed); err != nil {
 		t.Fatal(err)
 	}
+	// The retained backlog drains, then the stalled exec continues: the full
+	// sequence arrives in order with nothing dropped.
 	resumed.waitFrame(t)
-	if resumed.String() != "efgh" {
-		t.Fatalf("bounded replay = %q", resumed.String())
+	resumed.waitFrame(t)
+	if got := resumed.String(); got != "abcdefghij" {
+		t.Fatalf("resumed stream = %q, want abcdefghij", got)
 	}
 }
 
@@ -312,6 +329,44 @@ func TestExecResumeBackpressureCanBeClosed(t *testing.T) {
 	case <-closeResult:
 	case <-time.After(2 * time.Second):
 		t.Fatal("close blocked behind replay")
+	}
+}
+
+func TestExecReplayRepeatedStallResumeKeepsOrder(t *testing.T) {
+	exec := newPipeExecSession(true)
+	backend := &stubBackend{openExec: func(context.Context, ExecOptions) (ExecSession, error) { return exec, nil }}
+	service := NewService(&stubProvider{sdk: backend}, WithConfig(Config{ExecReplayBytes: 8}))
+	id, err := service.AttachExec(t.Context(), ExecAttachRequest{SessionID: "s1", Container: "c1", Sink: newCollectSink()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.CloseStream(id)
+	if err := service.DetachStream(id); err != nil {
+		t.Fatal(err)
+	}
+	const rounds = 4
+	var want bytes.Buffer
+	for round := 0; round < rounds; round++ {
+		chunk := bytes.Repeat([]byte{byte('a' + round)}, 8)
+		want.Write(chunk)
+		exec.emit(t, string(chunk))
+		waitExecReplay(t, service, id, 8)
+		resumed := newCollectSink()
+		if err := service.ResumeExec(id, resumed); err != nil {
+			t.Fatal(err)
+		}
+		resumed.waitFrame(t)
+		if got := resumed.String(); got != string(chunk) {
+			t.Fatalf("round %d replay = %q, want %q", round, got, string(chunk))
+		}
+		if round+1 < rounds {
+			if err := service.DetachStream(id); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if got, want := want.String(), "aaaaaaaabbbbbbbbccccccccdddddddd"; got != want {
+		t.Fatalf("unexpected build: %q", got)
 	}
 }
 

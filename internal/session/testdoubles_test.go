@@ -287,6 +287,23 @@ type fakeTerminal struct {
 	response       func([]byte)
 	hidden         bool
 	visibilityHook func(bool)
+	bracketed      bool
+	bracketedGen   uint64
+}
+
+// setBracketedPaste flips the reported bracketed-paste mode and bumps its
+// generation, mirroring how the real terminal reports mode changes.
+func (t *fakeTerminal) setBracketedPaste(on bool) {
+	t.mu.Lock()
+	t.bracketed = on
+	t.bracketedGen++
+	t.mu.Unlock()
+}
+
+func (t *fakeTerminal) BracketedPasteMode() (bool, uint64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.bracketed, t.bracketedGen
 }
 
 func (t *fakeTerminal) Feed(data []byte) {

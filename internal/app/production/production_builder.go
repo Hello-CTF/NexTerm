@@ -156,7 +156,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Transcripts:          transcriptWriter,
 		Commands:             commandLogSink{database: database, logger: config.Config.Logger},
 		Logger:               config.Config.Logger,
-		OpenAccess:           config.Desktop,
+		OpenAccess:           config.Desktop || owner.OpenAccess(ctx),
 		Emitter: session.EmitterFunc(func(ctx context.Context, event session.Event) error {
 			if event.Topic == session.TopicSessionStatus {
 				if status, ok := event.Payload.(session.StatusEvent); ok {

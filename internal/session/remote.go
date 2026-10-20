@@ -83,7 +83,7 @@ func (m *Manager) RegisterRemoteSession(ctx context.Context, options RemoteSessi
 	tab := &Tab{
 		ID: tabID, SessionID: session.ID, session: session, terminal: terminal, fanout: m.newOutputFanout(),
 		cols: cols, rows: rows, encoding: canonicalEncoding(""),
-		generation: 1, subscribers: make(map[string]subscriber), streamEpoch: ids.New(),
+		generation: 1, subscribers: make(map[string]subscriber), streamEpoch: ids.New(), outputWake: make(chan struct{}),
 		ctx: tabCtx, cancel: tabCancel, responses: newResponseQueue(1), feedGate: make(chan struct{}, 1),
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
 	}

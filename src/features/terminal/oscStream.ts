@@ -14,6 +14,10 @@ export type OscStreamSegment =
 export interface OscStreamFilter {
   push: (bytes: Uint8Array) => OscStreamSegment[];
   flush: () => Uint8Array;
+  // pendingBytes reports bytes held back as a partial sequence. They were
+  // already accepted by the caller but will only reach the terminal once the
+  // sequence completes, so backpressure accounting must include them.
+  pendingBytes: () => number;
 }
 
 const ESC = 0x1b;
@@ -185,7 +189,7 @@ export function createOscStreamFilter(): OscStreamFilter {
     return joinPending(new Uint8Array(0));
   };
 
-  return { push, flush };
+  return { push, flush, pendingBytes: () => pendingBytes };
 }
 
 // createOscSegmentWriter returns a segment consumer that keeps OSC events in

@@ -118,8 +118,14 @@ export function BackgroundSessions({
   const accountScope = TRANSPORT === "web"
     ? (webUserId ? JSON.stringify([apiBase() || window.location.origin, webUserId]) : null)
     : desktopScope?.epoch === runtimeEpoch ? desktopScope.value : null;
-  const memoryKnown = !desktopChecking && knownState.scope === accountScope && knownState.epoch === runtimeEpoch ? knownState.tabs : {};
-  const verifiedQuickSessions = quickState.scope === accountScope && quickState.epoch === runtimeEpoch ? quickState.sessions : {};
+  const memoryKnown = useMemo(
+    () => (!desktopChecking && knownState.scope === accountScope && knownState.epoch === runtimeEpoch ? knownState.tabs : {}),
+    [desktopChecking, knownState, accountScope, runtimeEpoch],
+  );
+  const verifiedQuickSessions = useMemo(
+    () => (quickState.scope === accountScope && quickState.epoch === runtimeEpoch ? quickState.sessions : {}),
+    [quickState, accountScope, runtimeEpoch],
+  );
   useEffect(() => {
     if (TRANSPORT !== "desktop") return;
     let current = true;
@@ -315,7 +321,7 @@ export function BackgroundSessions({
     } finally {
       if (generation === loadGenerationRef.current) setLoading(false);
     }
-  }, [hostSessionId, showAll, sessions, remoteOwner, ownerWorkspace?.assetId, ownerWorkspace?.assetKind, accountScope, runtimeEpoch, desktopChecking, verifiedQuickSessions]);
+  }, [hostSessionId, showAll, sessions, remoteOwner, ownerWorkspace, accountScope, runtimeEpoch, desktopChecking, verifiedQuickSessions]);
 
   useEffect(() => {
     ownerGenerationRef.current += 1;

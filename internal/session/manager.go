@@ -39,6 +39,7 @@ type Manager struct {
 	channelIncarnations    map[string]uint64
 	channelOwners          map[string]channelOwnerRegistration
 	channelOwnerGeneration uint64
+	nextAttachmentId       uint64
 	sessionOwners          map[string]string
 	tabOwners              map[string]string
 	controlOwners          map[*recordingControlQueue]string
@@ -314,7 +315,13 @@ func (m *Manager) Shutdown(context.Context) error {
 }
 
 func (m *Manager) requestOpenAccess(ctx context.Context) bool {
-	return m.openAccess || openAccessFromContext(ctx)
+	if m.openAccess {
+		return true
+	}
+	// A non-open server never honors the context flag for identity-less
+	// callers: the flag is an in-process vouch, not an authorization, and
+	// open access must be backed by an authenticated identity.
+	return openAccessFromContext(ctx) && userIDFromContext(ctx) != ""
 }
 
 func (m *Manager) ConnectFor(ctx context.Context, asset Asset) (*Session, error) {
@@ -388,7 +395,7 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 	}
 
 	generation := uint64(1)
-	sessionCtx, cancel := context.WithCancel(m.ctx)
+	sessionCtx, cancel := context.WithCancel(ownerCtx(m.ctx, requester))
 	session := &Session{
 		ID:          newID(),
 		CreatedAt:   m.now(),

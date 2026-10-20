@@ -1367,6 +1367,12 @@
       "channel": false,
       "stream": "none"
     },
+    "terminal_pause": {
+      "scope": "terminal-stream",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "terminal_record_start": {
       "nested": false,
       "channel": false,
@@ -1378,6 +1384,12 @@
       "stream": "none"
     },
     "terminal_record_stop": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_recover": {
+      "scope": "terminal-stream",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1402,6 +1414,12 @@
       "channel": false,
       "stream": "none"
     },
+    "terminal_resume": {
+      "scope": "terminal-stream",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "terminal_screen_text": {
       "nested": false,
       "channel": false,
@@ -1413,6 +1431,12 @@
       "stream": "none"
     },
     "terminal_snapshot": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_stream_ack": {
+      "scope": "terminal-stream",
       "nested": false,
       "channel": false,
       "stream": "none"

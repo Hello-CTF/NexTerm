@@ -235,6 +235,7 @@ func newGatedRecoveryHarness(t *testing.T, resolver session.DurableResolver, fac
 	manager := session.NewManager(session.Config{
 		Connector:       fakeSSHConnector{},
 		DurableResolver: resolver,
+		OpenAccess:      true,
 	})
 	production, err := NewProductionWithServices(Config{
 		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),

@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -648,6 +649,59 @@ func (m *Manager) WritePasteFor(ctx context.Context, tabID, text string) error {
 	bracketed, generation := core.BracketedPasteMode()
 	encoded := terminal.EncodePaste(text, bracketed)
 	tab.unlockFeed()
+	if err := m.writeInternalLocked(ctx, tab, encoded); err != nil {
+		return err
+	}
+	if err := tab.lockFeed(ctx); err != nil {
+		return errors.Join(ErrPasteVerification, err)
+	}
+	defer tab.unlockFeed()
+	_, currentGeneration := core.BracketedPasteMode()
+	if currentGeneration != generation {
+		return ErrPasteModeChanged
+	}
+	return nil
+}
+
+// ErrPasteGuarded refuses a literal paste whose text would be reinterpreted
+// as line submissions: without bracketed-paste mode the encoder turns every
+// LF into CR, so multi-line text would execute line by line instead of
+// pasting literally.
+var ErrPasteGuarded = errors.New("literal paste refused: terminal left bracketed-paste mode and the text contains line breaks")
+
+// WritePasteLiteralFor writes text as literal terminal input for callers
+// that must never have line breaks reinterpreted as submissions (AI tools
+// pasting scripts). The mode snapshot is read inside the real write lock and
+// the encoding uses that same copy, so a mode flip between a caller's
+// precheck and the write cannot silently change the encoding: when the
+// snapshot says bracketed paste is off and the text contains line breaks,
+// the write is refused with ErrPasteGuarded before any byte is written.
+// force bypasses that refusal, but still writes under the same write lock
+// with the same mode snapshot, in arrival order with interactive input —
+// force never overrides newer user input. Single-line text is written
+// unchanged regardless of mode, and interactive WritePasteFor behavior is
+// untouched.
+func (m *Manager) WritePasteLiteralFor(ctx context.Context, tabID, text string, force bool) error {
+	tab, err := m.TabFor(ctx, tabID)
+	if err != nil {
+		return err
+	}
+	tab.writeMu.Lock()
+	defer tab.writeMu.Unlock()
+	if err := tab.lockFeed(ctx); err != nil {
+		return err
+	}
+	core, ok := tab.terminal.(interface{ BracketedPasteMode() (bool, uint64) })
+	if !ok {
+		tab.unlockFeed()
+		return ErrUnsupported
+	}
+	bracketed, generation := core.BracketedPasteMode()
+	encoded := terminal.EncodePaste(text, bracketed)
+	tab.unlockFeed()
+	if !bracketed && !force && strings.ContainsAny(text, "\r\n") {
+		return ErrPasteGuarded
+	}
 	if err := m.writeInternalLocked(ctx, tab, encoded); err != nil {
 		return err
 	}

@@ -135,6 +135,32 @@ func (p *fakeDurableProvider) DeleteDurableTabTitle(tabID string) {
 	delete(p.titles, tabID)
 }
 
+// Owner-scoped variants: the in-memory fake has no owner column, so they
+// delegate to the legacy methods and keep every store path exercised.
+func (p *fakeDurableProvider) DurableTranscriptCatchUpBytesContext(ctx context.Context, tabID string) int64 {
+	return p.DurableTranscriptCatchUpBytes(tabID)
+}
+
+func (p *fakeDurableProvider) PersistDurableTranscriptOffsetContext(ctx context.Context, tabID string, offset int64) {
+	p.PersistDurableTranscriptOffset(tabID, offset)
+}
+
+func (p *fakeDurableProvider) DeleteDurableTranscriptOffsetContext(ctx context.Context, tabID string) {
+	p.DeleteDurableTranscriptOffset(tabID)
+}
+
+func (p *fakeDurableProvider) DurableTabTitleContext(ctx context.Context, tabID string) string {
+	return p.DurableTabTitle(tabID)
+}
+
+func (p *fakeDurableProvider) PersistDurableTabTitleContext(ctx context.Context, tabID, title string) {
+	p.PersistDurableTabTitle(tabID, title)
+}
+
+func (p *fakeDurableProvider) DeleteDurableTabTitleContext(ctx context.Context, tabID string) {
+	p.DeleteDurableTabTitle(tabID)
+}
+
 func (p *fakeDurableProvider) newAttachmentLocked(id string, record *fakeDurableRecord) *fakeDurableAttachment {
 	channel := newFakeChannel(0)
 	channel.id = id

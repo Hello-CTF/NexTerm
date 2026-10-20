@@ -49,6 +49,7 @@ var (
 	ErrInvalidTitle         = errors.New("invalid terminal tab title")
 	ErrDurableDisabled      = errors.New("SSH durable terminals disabled for this asset")
 	ErrAmbiguousDurable     = errors.New("durable terminal ID exists on multiple sessions")
+	ErrRecoveryOverrun      = errors.New("refused suffix exceeds the retained recovery window")
 )
 
 type Status string
@@ -219,6 +220,9 @@ type TabInfo struct {
 	LastOutputAt    int64  `json:"lastOutputAt,omitempty"`
 	LastOutputMSAgo int64  `json:"-"`
 	FallbackNotice  string `json:"-"`
+	// AttachmentID is the unique incarnation of this attachment, established
+	// at attach time and bound to the ACK and the floor high-water.
+	AttachmentID uint64 `json:"attachmentId,omitempty"`
 }
 
 func (t TabInfo) MarshalJSON() ([]byte, error) {

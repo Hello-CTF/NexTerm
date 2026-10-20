@@ -66,6 +66,25 @@ func (c *outCoalescer) take() []byte {
 	return batch
 }
 
+// addPaused appends output for a paused subscriber: no limit check, no window
+// timer, no flush. The buffer is bounded by the pump stall (outputStalled)
+// instead of the coalescing limit, so a paused channel neither drops nor
+// grows without bound while the PTY read is blocked.
+func (c *outCoalescer) addPaused(data []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.gone {
+		return
+	}
+	c.buf = append(c.buf, data...)
+}
+
+func (c *outCoalescer) len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.buf)
+}
+
 // teardown stops the window and discards all residual data. Recovery starts at the client's last continuous anchor;
 // writing a newer suffix here could advance that anchor across older frames discarded by the fanout.
 func (c *outCoalescer) teardown() {

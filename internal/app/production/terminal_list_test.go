@@ -101,7 +101,8 @@ func TestTerminalListUsesOutputMetadataWithoutSnapshots(t *testing.T) {
 		Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 			return &terminalListTransport{channel: channel}, nil
 		}),
-		Terminals: factory,
+		Terminals:  factory,
+		OpenAccess: true,
 	})
 	production, err := NewProductionWithServices(Config{}, ProductionServices{Sessions: manager})
 	if err != nil {
@@ -192,7 +193,8 @@ func TestTerminalListPreservesLegacyOutputAge(t *testing.T) {
 		Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 			return &terminalListTransport{channel: channel}, nil
 		}),
-		Terminals: factory,
+		Terminals:  factory,
+		OpenAccess: true,
 	})
 	production, err := NewProductionWithServices(Config{}, ProductionServices{Sessions: manager})
 	if err != nil {

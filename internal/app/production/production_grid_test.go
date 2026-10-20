@@ -19,7 +19,7 @@ func TestProductionApplicationGridCommandsWithRealLocalTerminal(t *testing.T) {
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
 		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
 	})
-	manager := session.NewManager(session.Config{Connector: connector})
+	manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 	production, err := NewProductionWithServices(Config{}, ProductionServices{Sessions: manager})
 	if err != nil {
 		t.Fatal(err)

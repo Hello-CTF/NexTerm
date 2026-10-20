@@ -94,7 +94,7 @@ func TestFSIPCErrorClassifiesProviderFailures(t *testing.T) {
 			connector := session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 				return fakeProviderTransport{kind: testCase.kind, fs: fakeProviderFileSystem{err: sentinel}}, nil
 			})
-			manager := session.NewManager(session.Config{Connector: connector})
+			manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 			dispatcher := ipc.NewDispatcher()
 			if err := registerFSCommands(dispatcher, manager, nil); err != nil {
 				t.Fatal(err)
@@ -120,7 +120,7 @@ func TestFSIPCErrorPreservesExistingClassification(t *testing.T) {
 	connector := session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 		return fakeProviderTransport{kind: "winrm", fs: fakeProviderFileSystem{err: base.ErrUnsupported}}, nil
 	})
-	manager := session.NewManager(session.Config{Connector: connector})
+	manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 	dispatcher := ipc.NewDispatcher()
 	if err := registerFSCommands(dispatcher, manager, nil); err != nil {
 		t.Fatal(err)
@@ -141,7 +141,7 @@ func TestFSWriteRejectsInvalidBase64(t *testing.T) {
 	connector := session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 		return fakeProviderTransport{kind: "ssh", fs: fakeProviderFileSystem{}}, nil
 	})
-	manager := session.NewManager(session.Config{Connector: connector})
+	manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 	dispatcher := ipc.NewDispatcher()
 	if err := registerFSCommands(dispatcher, manager, nil); err != nil {
 		t.Fatal(err)
@@ -177,7 +177,7 @@ func TestFSIPCErrorClassifiesAcquireFailures(t *testing.T) {
 			connector := session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 				return fakeProviderTransport{kind: testCase.kind, fsErr: testCase.fsErr}, nil
 			})
-			manager := session.NewManager(session.Config{Connector: connector})
+			manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 			dispatcher := ipc.NewDispatcher()
 			if err := registerFSCommands(dispatcher, manager, nil); err != nil {
 				t.Fatal(err)
@@ -203,7 +203,7 @@ func TestFSIPCErrorAcquirePassesThroughSessionLookup(t *testing.T) {
 	manager := session.NewManager(session.Config{Connector: session.ConnectorFunc(
 		func(context.Context, session.Asset, uint64) (base.Transport, error) {
 			return fakeProviderTransport{kind: "ssh", fs: fakeProviderFileSystem{}}, nil
-		})})
+		}), OpenAccess: true})
 	dispatcher := ipc.NewDispatcher()
 	if err := registerFSCommands(dispatcher, manager, nil); err != nil {
 		t.Fatal(err)
@@ -232,7 +232,7 @@ func TestFSIPCErrorMapsNotExistToNotFound(t *testing.T) {
 			connector := session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 				return fakeProviderTransport{kind: testCase.kind, fs: fakeProviderFileSystem{err: notExist}}, nil
 			})
-			manager := session.NewManager(session.Config{Connector: connector})
+			manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 			dispatcher := ipc.NewDispatcher()
 			if err := registerFSCommands(dispatcher, manager, nil); err != nil {
 				t.Fatal(err)
@@ -274,7 +274,7 @@ func TestFSMkdirCreatesNestedDirectories(t *testing.T) {
 	connector := session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 		return fakeProviderTransport{kind: "ssh", fs: singleLevelMkdirFS{FileSystem: fslocal.New()}}, nil
 	})
-	manager := session.NewManager(session.Config{Connector: connector})
+	manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 	dispatcher := ipc.NewDispatcher()
 	if err := registerFSCommands(dispatcher, manager, nil); err != nil {
 		t.Fatal(err)

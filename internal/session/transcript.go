@@ -1,6 +1,10 @@
 package session
 
-import "context"
+import (
+	"context"
+
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+)
 
 type TranscriptInfo struct {
 	SessionID string
@@ -119,30 +123,108 @@ func (m *Manager) transcriptResize(ctx context.Context, tab *Tab, cols, rows uin
 	m.transcripts.SessionResize(ctx, tab.SessionID, tab.ID, cols, rows)
 }
 
-func (m *Manager) deleteDurableTranscriptOffset(tabID string) {
+// ownerCtx returns a context carrying the session owner's identity for
+// owner-scoped durable stores and lifecycle output. Desktop and open
+// deployments have no owner and keep the shared store behavior.
+func ownerCtx(parent context.Context, userID string) context.Context {
+	if userID == "" {
+		return parent
+	}
+	return ipc.WithUserID(parent, userID)
+}
+
+// failClosedStoreWarn notes a legacy adapter that cannot scope by owner on a
+// non-open server: the operation degrades to its zero value instead of
+// running ownerless.
+func (m *Manager) failClosedStoreWarn(tabID string, operation string) {
+	m.logger.Warn("legacy durable store on a non-open server; failing closed instead of ownerless",
+		"tab", tabID, "operation", operation)
+}
+
+func (m *Manager) durableTranscriptCatchUpBytes(ctx context.Context, tabID string) int64 {
+	if m.offsets == nil {
+		return 0
+	}
+	if store, ok := m.offsets.(OwnerScopedDurableTranscriptOffsetStore); ok {
+		return store.DurableTranscriptCatchUpBytesContext(ctx, tabID)
+	}
+	if m.openAccess {
+		return m.offsets.DurableTranscriptCatchUpBytes(tabID)
+	}
+	m.failClosedStoreWarn(tabID, "catch-up read")
+	return 0
+}
+
+func (m *Manager) persistDurableTranscriptOffset(ctx context.Context, tabID string, offset int64) {
 	if m.offsets == nil {
 		return
 	}
-	m.offsets.DeleteDurableTranscriptOffset(tabID)
+	if store, ok := m.offsets.(OwnerScopedDurableTranscriptOffsetStore); ok {
+		store.PersistDurableTranscriptOffsetContext(ctx, tabID, offset)
+		return
+	}
+	if m.openAccess {
+		m.offsets.PersistDurableTranscriptOffset(tabID, offset)
+		return
+	}
+	m.failClosedStoreWarn(tabID, "offset persist")
 }
 
-func (m *Manager) durableTabTitle(tabID string) string {
+func (m *Manager) deleteDurableTranscriptOffset(ctx context.Context, tabID string) {
+	if m.offsets == nil {
+		return
+	}
+	if store, ok := m.offsets.(OwnerScopedDurableTranscriptOffsetStore); ok {
+		store.DeleteDurableTranscriptOffsetContext(ctx, tabID)
+		return
+	}
+	if m.openAccess {
+		m.offsets.DeleteDurableTranscriptOffset(tabID)
+		return
+	}
+	m.failClosedStoreWarn(tabID, "offset delete")
+}
+
+func (m *Manager) durableTabTitle(ctx context.Context, tabID string) string {
 	if m.titles == nil {
 		return ""
 	}
-	return m.titles.DurableTabTitle(tabID)
+	if store, ok := m.titles.(OwnerScopedDurableTabTitleStore); ok {
+		return store.DurableTabTitleContext(ctx, tabID)
+	}
+	if m.openAccess {
+		return m.titles.DurableTabTitle(tabID)
+	}
+	m.failClosedStoreWarn(tabID, "title read")
+	return ""
 }
 
-func (m *Manager) persistDurableTabTitle(tabID, title string) {
+func (m *Manager) persistDurableTabTitle(ctx context.Context, tabID, title string) {
 	if m.titles == nil {
 		return
 	}
-	m.titles.PersistDurableTabTitle(tabID, title)
+	if store, ok := m.titles.(OwnerScopedDurableTabTitleStore); ok {
+		store.PersistDurableTabTitleContext(ctx, tabID, title)
+		return
+	}
+	if m.openAccess {
+		m.titles.PersistDurableTabTitle(tabID, title)
+		return
+	}
+	m.failClosedStoreWarn(tabID, "title persist")
 }
 
-func (m *Manager) deleteDurableTabTitle(tabID string) {
+func (m *Manager) deleteDurableTabTitle(ctx context.Context, tabID string) {
 	if m.titles == nil {
 		return
 	}
-	m.titles.DeleteDurableTabTitle(tabID)
+	if store, ok := m.titles.(OwnerScopedDurableTabTitleStore); ok {
+		store.DeleteDurableTabTitleContext(ctx, tabID)
+		return
+	}
+	if m.openAccess {
+		m.titles.DeleteDurableTabTitle(tabID)
+		return
+	}
+	m.failClosedStoreWarn(tabID, "title delete")
 }

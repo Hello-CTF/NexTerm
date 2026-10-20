@@ -1433,6 +1433,14 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "terminal_pause": {
+      scope: "terminal-stream",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalPauseRequest", ts: "TerminalPauseRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
     "terminal_record_start": {
       nested: false,
       channel: false,
@@ -1447,6 +1455,14 @@ export const ipcContractManifest = {
       nested: false,
       channel: false,
       stream: "none",
+    },
+    "terminal_recover": {
+      scope: "terminal-stream",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalRecoverRequest", ts: "TerminalRecoverRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "terminal_release": {
       nested: false,
@@ -1468,6 +1484,14 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "terminal_resume": {
+      scope: "terminal-stream",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalResumeRequest", ts: "TerminalResumeRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
     "terminal_screen_text": {
       nested: false,
       channel: false,
@@ -1482,6 +1506,14 @@ export const ipcContractManifest = {
       nested: false,
       channel: false,
       stream: "none",
+    },
+    "terminal_stream_ack": {
+      scope: "terminal-stream",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalStreamAckRequest", ts: "TerminalStreamAckRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "terminal_switch_encoding": {
       nested: false,
@@ -1990,6 +2022,22 @@ export interface IPCCommandTypeMap {
   "services_list": {
     input: contractTypes.ListRequest;
     output: contractTypes.ServiceOperationBatch;
+  };
+  "terminal_pause": {
+    input: contractTypes.TerminalPauseRequest;
+    output: unknown;
+  };
+  "terminal_recover": {
+    input: contractTypes.TerminalRecoverRequest;
+    output: unknown;
+  };
+  "terminal_resume": {
+    input: contractTypes.TerminalResumeRequest;
+    output: unknown;
+  };
+  "terminal_stream_ack": {
+    input: contractTypes.TerminalStreamAckRequest;
+    output: unknown;
   };
 }
 

@@ -65,14 +65,18 @@ vi.mock("../../features/terminal/CommandBlockPanel", () => ({ CommandBlockPanel:
 vi.mock("../../features/terminal/TerminalKeysBar", () => ({ TerminalKeysBar: () => null }));
 
 vi.mock("../../features/terminal/XtermView", async () => {
-  const { useEffect } = await import("react");
+  const { useEffect, useRef } = await import("react");
   return {
     XtermView: (props: Record<string, unknown>) => {
+      const onAttachRef = useRef(props.onAttach);
+      const onAttachFailedRef = useRef(props.onAttachFailed);
+      onAttachRef.current = props.onAttach;
+      onAttachFailedRef.current = props.onAttachFailed;
       useEffect(() => {
         if (mocks.attachDead) {
-          (props.onAttachFailed as ((code: string) => void) | undefined)?.("not_found");
+          (onAttachFailedRef.current as ((code: string) => void) | undefined)?.("not_found");
         } else {
-          (props.onAttach as ((id: string) => void) | undefined)?.("kernel-1");
+          (onAttachRef.current as ((id: string) => void) | undefined)?.("kernel-1");
         }
       }, []);
       return <div className="h-full w-full min-h-0" />;
