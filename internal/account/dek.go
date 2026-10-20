@@ -85,7 +85,7 @@ func (a *Accounts) ChangePassword(ctx context.Context, userID, oldPassword, newP
 	if err := validateEnvelopes(envelopes); err != nil {
 		return err
 	}
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		appUser := query.Use(tx).AppUser
 		user, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(userID)).First()
 		if err == gorm.ErrRecordNotFound {
@@ -134,6 +134,11 @@ func (a *Accounts) ChangePassword(ctx context.Context, userID, oldPassword, newP
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	a.epochs.bump(userID)
+	return nil
 }
 
 func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, recoveryKey, newPassword string, envelopes *vault.UserDEKEnvelopes) error {
@@ -143,7 +148,8 @@ func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, reco
 	if err := validateEnvelopes(envelopes); err != nil {
 		return err
 	}
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var resetUserID string
+	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		appUser := query.Use(tx).AppUser
 		user, err := appUser.WithContext(ctx).Where(appUser.Username.Lower().Eq(strings.ToLower(username))).First()
 		if err == gorm.ErrRecordNotFound {
@@ -152,6 +158,7 @@ func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, reco
 		if err != nil {
 			return dbError(err)
 		}
+		resetUserID = user.ID
 		if user.State == string(StateDisabled) {
 			return ipc.NewError(ipc.CodeForbidden, "账号已禁用")
 		}
@@ -200,10 +207,15 @@ func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, reco
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	a.epochs.bump(resetUserID)
+	return nil
 }
 
 func (a *Accounts) AdminResetUser(ctx context.Context, userID string) error {
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		appUser := query.Use(tx).AppUser
 		info, err := appUser.WithContext(ctx).
 			Where(appUser.ID.Eq(userID)).
@@ -246,4 +258,10 @@ func (a *Accounts) AdminResetUser(ctx context.Context, userID string) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	a.epochs.bump(userID)
+	a.epochs.clearPending(userID)
+	return nil
 }

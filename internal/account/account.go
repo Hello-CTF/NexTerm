@@ -17,6 +17,7 @@ type Accounts struct {
 	now         func() int64
 	totpKeyPath string
 	writeMu     sync.Mutex
+	epochs      *epochTracker
 }
 
 // userTable centralizes the account table name for future storage backend changes.
@@ -33,7 +34,7 @@ func WithNow(now func() int64) Option {
 }
 
 func New(db *gorm.DB, options ...Option) *Accounts {
-	a := &Accounts{db: db, now: ids.NowMS}
+	a := &Accounts{db: db, now: ids.NowMS, epochs: newEpochTracker()}
 	for _, option := range options {
 		option(a)
 	}

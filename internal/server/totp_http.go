@@ -19,6 +19,9 @@ type mfaTicket struct {
 	userID    string
 	deviceID  string
 	expiresAt time.Time
+	// epoch is the account generation at ticket issue; the confirm re-checks
+	// it so a revocation or reset between the two steps fails the login closed.
+	epoch uint64
 }
 
 // mfaTicketStore holds one-time tickets for "password passed, second factor pending" (memory only).
@@ -33,7 +36,7 @@ func newMFATicketStore() *mfaTicketStore {
 	return &mfaTicketStore{entries: make(map[string]*mfaTicket), now: time.Now}
 }
 
-func (s *mfaTicketStore) issue(userID, deviceID string) (string, time.Time) {
+func (s *mfaTicketStore) issue(userID, deviceID string, epoch uint64) (string, time.Time) {
 	raw := make([]byte, mfaTicketBytes)
 	if _, err := rand.Read(raw); err != nil {
 		return "", time.Time{}
@@ -45,7 +48,7 @@ func (s *mfaTicketStore) issue(userID, deviceID string) (string, time.Time) {
 	if len(s.entries) > 4096 {
 		s.sweepLocked(now)
 	}
-	s.entries[ticket] = &mfaTicket{userID: userID, deviceID: deviceID, expiresAt: now.Add(mfaTicketTTL)}
+	s.entries[ticket] = &mfaTicket{userID: userID, deviceID: deviceID, expiresAt: now.Add(mfaTicketTTL), epoch: epoch}
 	return ticket, now.Add(mfaTicketTTL)
 }
 
@@ -125,7 +128,7 @@ func (s *Server) serveAccountTOTPLogin(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
-	s.writeAccountSession(w, r, user, entry.deviceID)
+	s.writeAccountSession(w, r, user, entry.deviceID, entry.epoch)
 }
 
 type accountTOTPStatusView struct {

@@ -263,7 +263,19 @@ func (s *Server) newAccountSessionView(r *http.Request, user *account.User, sess
 	return accountSessionView{User: view, CSRFToken: accountCSRFToken(sessionID), MFARequired: required}, nil
 }
 
-func (s *Server) writeAccountSession(w http.ResponseWriter, r *http.Request, user *account.User, deviceID string) {
+// writeAccountSession issues the session under the revocation lock, so a login
+// waits for any in-flight logout or revocation ("login waits for the old
+// logout"). The epoch re-check afterwards fails the issuance closed when a
+// revocation, password change, reset, or disable committed while the login was
+// authenticating or waiting: the authentication no longer reflects the
+// account's current generation.
+func (s *Server) writeAccountSession(w http.ResponseWriter, r *http.Request, user *account.User, deviceID string, epoch uint64) {
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
+	if !s.accounts.CheckEpoch(user.ID, epoch) {
+		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "账号状态已变更，请重新登录"))
+		return
+	}
 	token, session, err := s.accounts.IssueSessionWithMetadata(r.Context(), user.ID, deviceID, account.SessionMetadata{
 		ClientName: sessionClientName(r), Origin: clientIP(r),
 	})
@@ -306,7 +318,7 @@ func (s *Server) serveAccountInit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.accountThrottle.init.RecordSuccess(key)
-	s.writeAccountSession(w, r, user, "")
+	s.writeAccountSession(w, r, user, "", s.accounts.Epoch(user.ID))
 }
 
 // servePlatformSession upgrades a request that "already passed the front gateway's auth" into a real account session.
@@ -343,7 +355,7 @@ func (s *Server) servePlatformSession(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
-	s.writeAccountSession(w, r, owner, "")
+	s.writeAccountSession(w, r, owner, "", s.accounts.Epoch(owner.ID))
 }
 
 type accountLoginRequest struct {
@@ -370,13 +382,14 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.accountThrottle.login.RecordSuccess(key)
+	epoch := s.accounts.Epoch(user.ID)
 	mfaEnabled, err := s.accounts.TOTPEnabled(r.Context(), user.ID)
 	if err != nil {
 		writeAccountFailure(w, err)
 		return
 	}
 	if mfaEnabled {
-		ticket, expiresAt := s.mfaTickets.issue(user.ID, request.DeviceID)
+		ticket, expiresAt := s.mfaTickets.issue(user.ID, request.DeviceID, epoch)
 		if ticket == "" {
 			writeAccountError(w, http.StatusInternalServerError, ipc.NewError(ipc.CodeInternal, "登录票据签发失败"))
 			return
@@ -384,7 +397,7 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		writeAccountJSON(w, http.StatusOK, accountMFABeginView{MFARequired: true, Ticket: ticket, ExpiresAt: expiresAt.UnixMilli()})
 		return
 	}
-	s.writeAccountSession(w, r, user, request.DeviceID)
+	s.writeAccountSession(w, r, user, request.DeviceID, epoch)
 }
 
 type accountRegisterRequest struct {
@@ -424,7 +437,7 @@ func (s *Server) serveAccountRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.accountThrottle.register.RecordSuccess(key)
-	s.writeAccountSession(w, r, user, "")
+	s.writeAccountSession(w, r, user, "", s.accounts.Epoch(user.ID))
 }
 
 type accountRecoveryResetRequest struct {
@@ -445,6 +458,10 @@ func (s *Server) serveAccountRecoveryReset(w http.ResponseWriter, r *http.Reques
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "尝试过于频繁，请稍后再试"))
 		return
 	}
+	// Serialize with logins and envelope uploads: the recovery reset revokes
+	// sessions and bumps the account epoch as one atomic generation change.
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
 	err := s.accounts.ResetPasswordWithRecovery(r.Context(), request.Username, request.RecoveryKey, request.NewPassword, request.toEnvelopes())
 	if err != nil {
 		s.accountThrottle.recovery.RecordFailure(key)
@@ -627,6 +644,10 @@ func (s *Server) serveAccountPasswordChange(w http.ResponseWriter, r *http.Reque
 		writeAccountFailure(w, err)
 		return
 	}
+	// Serialize with logins and envelope uploads: the password change revokes
+	// sessions and bumps the account epoch as one atomic generation change.
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
 	err := s.accounts.ChangePassword(r.Context(), identity.UserID, request.OldPassword, request.NewPassword, request.toEnvelopes(), identity.SessionID)
 	if err != nil {
 		writeAccountFailure(w, err)
@@ -644,11 +665,19 @@ type accountDEKView struct {
 }
 
 // serveAccountDEKGet returns only encrypted envelopes; the plaintext DEK never leaves the server (the server does not hold it).
+// The epoch re-check fails closed when a revocation or reset committed while the request was in flight.
 func (s *Server) serveAccountDEKGet(w http.ResponseWriter, r *http.Request) {
 	identity := accountIdentityFrom(r.Context())
+	epoch := s.accounts.Epoch(identity.UserID)
 	envelopes, err := s.accounts.GetUserDEKEnvelopes(r.Context(), identity.UserID)
 	if err != nil {
 		writeAccountFailure(w, err)
+		return
+	}
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
+	if !s.accounts.CheckEpoch(identity.UserID, epoch) {
+		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, sessionReloginMessage))
 		return
 	}
 	writeAccountJSON(w, http.StatusOK, accountDEKView{
@@ -661,11 +690,20 @@ func (s *Server) serveAccountDEKGet(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveAccountDEKUpload lets users created by an admin upload their initial envelope after first login; overwriting an existing one is refused.
+// The epoch re-check under the revocation lock stops an in-flight upload from resurrecting
+// envelope material after a concurrent reset or revocation deleted it.
 func (s *Server) serveAccountDEKUpload(w http.ResponseWriter, r *http.Request) {
 	identity := accountIdentityFrom(r.Context())
+	epoch := s.accounts.Epoch(identity.UserID)
 	var request dekEnvelopeRequest
 	if err := decodeAccountJSON(w, r, &request); err != nil {
 		writeAccountFailure(w, err)
+		return
+	}
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
+	if !s.accounts.CheckEpoch(identity.UserID, epoch) {
+		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, sessionReloginMessage))
 		return
 	}
 	err := s.accounts.InsertUserDEKEnvelopes(r.Context(), identity.UserID, request.toEnvelopes())
@@ -696,6 +734,10 @@ func (s *Server) serveAccountDeviceList(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) serveAccountDeviceRevoke(w http.ResponseWriter, r *http.Request) {
 	identity := accountIdentityFrom(r.Context())
+	// Serialize with logins and envelope uploads: the device revoke bumps the
+	// account epoch as part of the same generation change.
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
 	if err := s.accounts.RevokeDevice(r.Context(), identity.UserID, r.PathValue("id")); err != nil {
 		writeAccountFailure(w, err)
 		return
@@ -758,6 +800,10 @@ func (s *Server) serveAdminUserDisable(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveAdminUserReset(w http.ResponseWriter, r *http.Request) {
+	// Serialize with logins and envelope uploads: the admin reset deletes key
+	// material and bumps the account epoch as one atomic generation change.
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
 	if err := s.accounts.AdminResetUser(r.Context(), r.PathValue("id")); err != nil {
 		writeAccountFailure(w, err)
 		return

@@ -255,7 +255,21 @@ func (a *Accounts) RevokeSession(ctx context.Context, sessionID string) error {
 	if info.RowsAffected == 0 {
 		return ipc.NewError(ipc.CodeNotFound, "会话不存在")
 	}
+	if ownerID := a.sessionOwnerID(ctx, sessionID); ownerID != "" {
+		a.epochs.bump(ownerID)
+	}
 	return nil
+}
+
+// sessionOwnerID resolves the revoked session's owner for the epoch bump; the
+// revocation itself already committed, so a lookup failure only skips the bump.
+func (a *Accounts) sessionOwnerID(ctx context.Context, sessionID string) string {
+	userSession := query.Use(a.db).UserSession
+	row, err := userSession.WithContext(ctx).Where(userSession.ID.Eq(sessionID)).First()
+	if err != nil {
+		return ""
+	}
+	return row.UserID
 }
 
 func (a *Accounts) RevokeUserSession(ctx context.Context, userID, sessionID string) error {
@@ -269,6 +283,7 @@ func (a *Accounts) RevokeUserSession(ctx context.Context, userID, sessionID stri
 	if info.RowsAffected == 0 {
 		return ipc.NewError(ipc.CodeNotFound, "会话不存在或已撤销")
 	}
+	a.epochs.bump(userID)
 	return nil
 }
 
@@ -323,6 +338,9 @@ func (a *Accounts) RevokeUserSessionsWithIDs(ctx context.Context, userID, except
 	})
 	if err != nil {
 		return nil, err
+	}
+	if len(sessionIDs) > 0 {
+		a.epochs.bump(userID)
 	}
 	return sessionIDs, nil
 }

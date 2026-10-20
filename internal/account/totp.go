@@ -252,6 +252,7 @@ func (a *Accounts) BeginTOTPSetup(ctx context.Context, userID, reverify string) 
 	}).Create(&store.UserTOTP{UserID: userID, PendingSecretEnvelope: envelope, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
 		return "", "", dbError(err)
 	}
+	a.epochs.notePending(userID)
 	return encoded, totpAuthURI(user.Username, encoded), nil
 }
 
@@ -283,6 +284,11 @@ func (a *Accounts) ConfirmTOTPSetup(ctx context.Context, userID, code string) ([
 	}
 	if err != nil {
 		return nil, dbError(err)
+	}
+	// The pending binding belongs to the account generation that started it; a
+	// revocation, reset, or disable in between invalidates the confirm.
+	if !a.epochs.checkPending(userID) {
+		return nil, ipc.NewError(ipc.CodeBadParam, "参数错误：绑定已失效，请重新开始")
 	}
 	pending := row.PendingSecretEnvelope
 	secret, err := a.openTOTPSecret(userID, pending)
@@ -335,6 +341,7 @@ func (a *Accounts) ConfirmTOTPSetup(ctx context.Context, userID, code string) ([
 	for _, code := range codes {
 		formatted = append(formatted, formatRecoveryCode(code))
 	}
+	a.epochs.clearPending(userID)
 	return formatted, nil
 }
 
@@ -391,7 +398,7 @@ func (a *Accounts) DisableTOTP(ctx context.Context, userID, code string) error {
 	if !valid {
 		return ipc.NewError(ipc.CodeForbidden, "验证码错误")
 	}
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if _, err := query.Use(tx).UserTOTP.WithContext(ctx).Where(query.Use(tx).UserTOTP.UserID.Eq(userID)).Delete(); err != nil {
 			return dbError(err)
 		}
@@ -400,6 +407,11 @@ func (a *Accounts) DisableTOTP(ctx context.Context, userID, code string) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	a.epochs.clearPending(userID)
+	return nil
 }
 
 func (a *Accounts) MFARequired(ctx context.Context) (bool, error) {
