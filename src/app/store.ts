@@ -642,10 +642,22 @@ let sessionsRequestSeq = 0;
 const abnormalDisconnectNotices = new Set<string>();
 
 // Latest status-event evidence per session: backend status events carry a monotonically increasing
-// version, so a manual reconnect can tell a stale pre-reconnect list frame from a fresh one. Cleared with the sessions.
-const sessionStatusEvidenceMap = new Map<string, { version: number; status: string }>();
+// version, so a manual reconnect can tell a stale pre-reconnect list frame from a fresh one. Engagement
+// (connecting/reconnecting) is tracked as its own high-water mark so a later terminal event cannot erase
+// the proof that the current attempt engaged. Cleared with the sessions.
+export interface SessionStatusEvidence {
+  version: number;
+  status: SessionInfo["status"];
+  error: string | null;
+  errorCode: string | null;
+  attempt: number | undefined;
+  nextRetryAt: string | number | null | undefined;
+  engagedVersion: number;
+}
 
-export function sessionStatusEvidence(sessionId: string): { version: number; status: string } | undefined {
+const sessionStatusEvidenceMap = new Map<string, SessionStatusEvidence>();
+
+export function sessionStatusEvidence(sessionId: string): SessionStatusEvidence | undefined {
   return sessionStatusEvidenceMap.get(sessionId);
 }
 
@@ -653,7 +665,20 @@ function trackSessionStatusEvidence(p: SessionStatusEvent): void {
   if (typeof p.version !== "number" || !Number.isFinite(p.version) || p.version <= 0) return;
   const previous = sessionStatusEvidenceMap.get(p.sessionId);
   if (previous && previous.version >= p.version) return;
-  sessionStatusEvidenceMap.set(p.sessionId, { version: p.version, status: p.status });
+  const status = p.status as SessionInfo["status"];
+  const engagedVersion = Math.max(
+    previous?.engagedVersion ?? 0,
+    status === "connecting" || status === "reconnecting" ? p.version : 0,
+  );
+  sessionStatusEvidenceMap.set(p.sessionId, {
+    version: p.version,
+    status,
+    error: p.error ?? null,
+    errorCode: p.errorCode ?? null,
+    attempt: p.attempt,
+    nextRetryAt: p.nextRetryAt,
+    engagedVersion,
+  });
 }
 
 const LEFT_MIN = 180;
@@ -4304,7 +4329,9 @@ export interface SessionReconnectError extends Error {
   nextRetryAt?: string | number | null;
 }
 
-function reconnectPollingError(session: SessionRuntimeInfo): SessionReconnectError {
+function reconnectPollingError(
+  session: Pick<SessionRuntimeInfo, "status" | "error" | "errorCode" | "attempt" | "nextRetryAt">,
+): SessionReconnectError {
   const error = new Error(session.error || `会话${sessionStatusText(session.status)}`) as SessionReconnectError;
   if (session.errorCode) error.code = session.errorCode;
   if (session.attempt !== undefined) error.attempt = session.attempt;
@@ -4322,9 +4349,20 @@ async function runReconnectAndWait(
   // earlier belongs to the previous generation and must not settle the wait.
   const startEvidence = sessionStatusEvidence(session.id);
   const startVersion = startEvidence?.version ?? 0;
+  const latestEvidence = () => sessionStatusEvidence(session.id);
   const hasFreshEvidence = (status: string) => {
-    const evidence = sessionStatusEvidence(session.id);
+    const evidence = latestEvidence();
     return evidence !== undefined && evidence.version > startVersion && evidence.status === status;
+  };
+  // Engagement is tracked separately from the latest status: a terminal event that arrives after
+  // the reconnecting event must not erase the proof that this attempt engaged.
+  const engagedAfterStart = () => (latestEvidence()?.engagedVersion ?? 0) > startVersion;
+  // A post-start terminal event is fresh terminal evidence on its own: surface its typed error
+  // immediately instead of waiting for a list frame to observe engagement (or the six-minute timeout).
+  const freshTerminalEvidence = () => {
+    const evidence = latestEvidence();
+    if (!evidence || evidence.version <= startVersion) return undefined;
+    return evidence.status === "failed" || evidence.status === "disconnected" ? evidence : undefined;
   };
   // A stale connected list frame can only exist when the previous generation was still alive at
   // reconnect start; a session that was already disconnected/failed has no live frame to mistake.
@@ -4368,7 +4406,9 @@ async function runReconnectAndWait(
     polls += 1;
     const current = list.find((s) => s.id === session.id);
     if (current?.status === "connecting" || current?.status === "reconnecting") enteredReconnect = true;
-    if (hasFreshEvidence("connecting") || hasFreshEvidence("reconnecting")) enteredReconnect = true;
+    if (engagedAfterStart()) enteredReconnect = true;
+    const terminalEvidence = freshTerminalEvidence();
+    if (terminalEvidence) throw reconnectPollingError(terminalEvidence);
     if (current?.status === "connected") {
       if (enteredReconnect || polls > 1 || !staleConnectedPossible || hasFreshEvidence("connected")) return current;
     } else if (current && current.status !== "connecting" && current.status !== "reconnecting" && enteredReconnect) {

@@ -164,6 +164,43 @@ describe("manual reconnect session generation", () => {
     expect(mocks.sessionList).toHaveBeenCalledTimes(1);
   });
 
+  it("fails with the typed error when fresh reconnecting and failed events arrive without an engaged list frame", async () => {
+    applySessionStatusEvent({ sessionId: "s1", status: "disconnected", error: null, version: 1 });
+    // The list keeps returning the pre-start frame; only the events carry the fresh failure,
+    // so acceptance must come from the event evidence rather than an engaged list frame.
+    mocks.sessionList.mockResolvedValue([session("failed", { error: "stale frame", errorCode: "ssh" })]);
+    const waiting = reconnectSessionAndWait(session("disconnected"), { timeoutMs: 2_000, intervalMs: 1 });
+    // Attach the rejection assertion before the poll loop can reject: a handler added after the
+    // rejection is an unhandled rejection even when the assertion later passes.
+    const rejection = expect(waiting).rejects.toMatchObject({ message: "认证失败", code: "auth", attempt: 1 });
+    await flushPolls(1);
+    applySessionStatusEvent({ sessionId: "s1", status: "reconnecting", error: null, version: 2 });
+    applySessionStatusEvent({
+      sessionId: "s1",
+      status: "failed",
+      error: "认证失败",
+      errorCode: "auth",
+      attempt: 1,
+      nextRetryAt: null,
+      version: 3,
+    });
+
+    await rejection;
+  });
+
+  it("keeps list-driven failure when a fresh failed event lands after an engaged list frame", async () => {
+    applySessionStatusEvent({ sessionId: "s1", status: "disconnected", error: null, version: 1 });
+    mocks.sessionList
+      .mockResolvedValueOnce([session("reconnecting")])
+      .mockResolvedValue([session("failed", { error: "认证失败", errorCode: "auth", attempt: 1 })]);
+    const waiting = reconnectSessionAndWait(session("disconnected"), { timeoutMs: 2_000, intervalMs: 1 });
+    const rejection = expect(waiting).rejects.toMatchObject({ message: "认证失败", code: "auth" });
+    await flushPolls(1);
+    applySessionStatusEvent({ sessionId: "s1", status: "reconnecting", error: null, version: 2 });
+
+    await rejection;
+  });
+
   it("falls back to post-first-poll lists when no generation evidence arrives", async () => {
     applySessionStatusEvent({ sessionId: "s1", status: "connected", error: null, version: 7 });
     useUi.getState().resetSessions();

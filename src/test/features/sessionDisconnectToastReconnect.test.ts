@@ -139,6 +139,31 @@ describe("disconnect toast reconnect", () => {
     expect(useUi.getState().sessions[0]?.status).toBe("disconnected");
   });
 
+  it("records the typed failure from fresh events without an engaged list frame instead of timing out", async () => {
+    mocks.sessionList.mockResolvedValue([session("disconnected")]);
+
+    disconnectToast().action?.onSelect();
+    await flushMicrotasks();
+    applySessionStatusEvent({ sessionId: "s1", status: "reconnecting", error: null, version: 2 });
+    applySessionStatusEvent({
+      sessionId: "s1",
+      status: "failed",
+      error: "认证失败",
+      errorCode: "auth",
+      attempt: 1,
+      nextRetryAt: null,
+      version: 3,
+    });
+
+    await vi.waitFor(() =>
+      expect(useUi.getState().toasts.some((toast) => toast.text.includes("重连失败：认证失败"))).toBe(true),
+    );
+    const problems = workspaceProblems();
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatchObject({ summary: "认证失败", source: "connect" });
+    expect(useUi.getState().toasts.some((toast) => toast.text.includes("重连超时"))).toBe(false);
+  });
+
   it("adds no problem, no failure toast, and no stale session when the reconnect is canceled by an account switch", async () => {
     recordProblem();
     const pendingList = deferred<SessionRuntimeInfo[]>();
