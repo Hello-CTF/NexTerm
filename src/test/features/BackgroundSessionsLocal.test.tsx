@@ -18,10 +18,8 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, askChoiceRemember: mocks.askChoiceRemember }));
 vi.mock("../../ipc/commands", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../ipc/commands")>();
-  return {
-    ...actual,
-    dbApi: {},
+  const { createCommandsMock } = await import("../helpers/mockCommands");
+  return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
     sessionApi: {
       list: mocks.listSessions,
       reconnect: mocks.reconnectSession,
@@ -29,9 +27,8 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       connectDevice: mocks.connectDevice,
       probeHostKey: mocks.probeHostKey,
     },
-    vaultApi: {},
     terminalApi: { listLive: mocks.listLive, listDurable: mocks.listDurable, closeTab: mocks.closeTab },
-  };
+  });
 });
 
 import { BackgroundSessions } from "../../features/terminal/BackgroundSessions";

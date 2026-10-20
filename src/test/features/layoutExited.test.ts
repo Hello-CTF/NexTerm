@@ -11,13 +11,13 @@ const mocks = vi.hoisted(() => ({
   listLive: vi.fn(),
   listDurable: vi.fn(),
 }));
-vi.mock("../../ipc/commands", () => ({
-  layoutApi: { get: mocks.layoutGet, put: mocks.layoutPut },
-  terminalApi: { closeTab: mocks.closeTab, listLive: mocks.listLive, listDurable: mocks.listDurable },
-  dbApi: {},
-  sessionApi: {},
-  vaultApi: {},
-}));
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const { createCommandsMock } = await import("../helpers/mockCommands");
+  return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
+    layoutApi: { get: mocks.layoutGet, put: mocks.layoutPut },
+    terminalApi: { closeTab: mocks.closeTab, listLive: mocks.listLive, listDurable: mocks.listDurable },
+  });
+});
 vi.mock("../../ipc/events", () => ({ listenEvent: vi.fn() }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 

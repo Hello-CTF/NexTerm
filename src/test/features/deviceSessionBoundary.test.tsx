@@ -14,8 +14,10 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
-	const original = await importOriginal<typeof import("../../ipc/commands")>();
-	return { ...original, sessionApi: { ...original.sessionApi, disconnect: mocks.disconnect } };
+	const { createCommandsMock } = await import("../helpers/mockCommands");
+	return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
+		sessionApi: { disconnect: mocks.disconnect },
+	});
 });
 
 import { DeviceSessionBoundary } from "../../features/fleet/DeviceSessionBoundary";

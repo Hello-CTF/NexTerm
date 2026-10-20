@@ -46,9 +46,8 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
 });
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../ipc/commands")>();
-  return {
-    ...actual,
+  const { createCommandsMock } = await import("../helpers/mockCommands");
+  return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
     fsApi: {
       roots: mocks.roots,
       list: mocks.list,
@@ -69,8 +68,8 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       lineExec: mocks.lineExec,
     },
     terminalApi: { write: mocks.termWrite },
-    assetApi: { ...(actual.assetApi ?? {}), knownHostAccept: mocks.knownHostAccept },
-  };
+    assetApi: { knownHostAccept: mocks.knownHostAccept },
+  });
 });
 
 vi.mock("../../ipc/events", async (importOriginal) => {

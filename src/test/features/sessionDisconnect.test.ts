@@ -8,12 +8,13 @@ const mocks = vi.hoisted(() => ({
   listLive: vi.fn(),
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
-vi.mock("../../ipc/commands", () => ({
-  dbApi: {},
-  vaultApi: {},
-  terminalApi: { listLive: mocks.listLive },
-  sessionApi: { disconnect: mocks.disconnect },
-}));
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const { createCommandsMock } = await import("../helpers/mockCommands");
+  return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
+    terminalApi: { listLive: mocks.listLive },
+    sessionApi: { disconnect: mocks.disconnect },
+  });
+});
 
 import type { AppTab, Pane, Workspace } from "../../app/store";
 import { useUi } from "../../app/store";

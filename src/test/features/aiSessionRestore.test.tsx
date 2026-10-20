@@ -38,31 +38,30 @@ const mocks = vi.hoisted(() => ({
   reopens: new Map<unknown, () => void>(),
 }));
 
-vi.mock("../../ipc/commands", () => ({
-  aiApi: {
-    chat: mocks.chat,
-    steer: mocks.steer,
-    cancel: mocks.cancel,
-    confirm: mocks.confirm,
-    answer: mocks.answer,
-    hitlSnapshot: mocks.hitlSnapshot,
-    hitlEvents: mocks.hitlEvents,
-    runs: mocks.runs,
-    runEvents: mocks.runEvents,
-    getPermission: mocks.getPermission,
-    conversationList: mocks.conversationList,
-    conversationDelete: mocks.conversationDelete,
-    messages: mocks.messages,
-    takeoverEnter: mocks.takeoverEnter,
-    takeoverRun: mocks.takeoverRun,
-    takeoverExit: mocks.takeoverExit,
-  },
-  modelApi: { overview: mocks.overview, activate: vi.fn() },
-  dbApi: {},
-  sessionApi: {},
-  vaultApi: {},
-  terminalApi: {},
-}));
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const { createCommandsMock } = await import("../helpers/mockCommands");
+  return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
+    aiApi: {
+      chat: mocks.chat,
+      steer: mocks.steer,
+      cancel: mocks.cancel,
+      confirm: mocks.confirm,
+      answer: mocks.answer,
+      hitlSnapshot: mocks.hitlSnapshot,
+      hitlEvents: mocks.hitlEvents,
+      runs: mocks.runs,
+      runEvents: mocks.runEvents,
+      getPermission: mocks.getPermission,
+      conversationList: mocks.conversationList,
+      conversationDelete: mocks.conversationDelete,
+      messages: mocks.messages,
+      takeoverEnter: mocks.takeoverEnter,
+      takeoverRun: mocks.takeoverRun,
+      takeoverExit: mocks.takeoverExit,
+    },
+    modelApi: { overview: mocks.overview, activate: vi.fn() },
+  });
+});
 vi.mock("../../ipc/events", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../ipc/events")>()),
   createAiChannel: (onEvent: (ev: Record<string, unknown>) => void) => {

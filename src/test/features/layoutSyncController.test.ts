@@ -14,39 +14,39 @@ const server = vi.hoisted(() => ({
   heldPutRelease: null as (() => void) | null,
 }));
 
-vi.mock("../../ipc/commands", () => ({
-  layoutApi: {
-    get: vi.fn(async () => {
-      server.getCalls += 1;
-      return {
-        revision: server.revision,
-        updatedAt: server.revision,
-        data: server.data === null ? null : JSON.parse(server.data),
-      };
-    }),
-    put: vi.fn(async (data: string, revision: number) => {
-      server.putCalls += 1;
-      if (server.holdNextPut) {
-        server.holdNextPut = false;
-        await new Promise<void>((resolve) => {
-          server.heldPutRelease = resolve;
-        });
-        server.heldPutRelease = null;
-      }
-      if (server.putAlwaysConflicts || revision !== server.revision) {
-        return { saved: false, revision: server.revision, conflict: true };
-      }
-      server.revision = revision + 1;
-      server.data = data;
-      return { saved: true, revision: server.revision, conflict: false };
-    }),
-  },
-  assetApi: { list: vi.fn(async () => []) },
-  terminalApi: { listLive: vi.fn(async () => []) },
-  dbApi: {},
-  sessionApi: {},
-  vaultApi: {},
-}));
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const { createCommandsMock } = await import("../helpers/mockCommands");
+  return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
+    layoutApi: {
+      get: vi.fn(async () => {
+        server.getCalls += 1;
+        return {
+          revision: server.revision,
+          updatedAt: server.revision,
+          data: server.data === null ? null : JSON.parse(server.data),
+        };
+      }),
+      put: vi.fn(async (data: string, revision: number) => {
+        server.putCalls += 1;
+        if (server.holdNextPut) {
+          server.holdNextPut = false;
+          await new Promise<void>((resolve) => {
+            server.heldPutRelease = resolve;
+          });
+          server.heldPutRelease = null;
+        }
+        if (server.putAlwaysConflicts || revision !== server.revision) {
+          return { saved: false, revision: server.revision, conflict: true };
+        }
+        server.revision = revision + 1;
+        server.data = data;
+        return { saved: true, revision: server.revision, conflict: false };
+      }),
+    },
+    assetApi: { list: vi.fn(async () => []) },
+    terminalApi: { listLive: vi.fn(async () => []) },
+  });
+});
 vi.mock("../../ipc/events", () => ({ listenEvent: vi.fn(async () => () => {}) }));
 
 interface Client {

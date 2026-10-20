@@ -17,12 +17,11 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../ipc/commands")>();
-  return {
-    ...actual,
-    syncApi: { ...actual.syncApi, status: mocks.status, linkGet: mocks.linkGet },
-    terminalApi: { ...actual.terminalApi, listLive: mocks.listLive, listDurable: mocks.listDurable },
-  };
+  const { createCommandsMock } = await import("../helpers/mockCommands");
+  return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
+    syncApi: { status: mocks.status, linkGet: mocks.linkGet },
+    terminalApi: { listLive: mocks.listLive, listDurable: mocks.listDurable },
+  });
 });
 vi.mock("../../ipc/events", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/events")>();
