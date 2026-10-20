@@ -4,7 +4,7 @@ import type { AccountUser } from "../../ipc/authApi";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
-  return { sessionList: vi.fn() };
+  return { sessionList: vi.fn(), snippetList: vi.fn(), snippetDelete: vi.fn() };
 });
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
@@ -12,15 +12,31 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   return {
     ...actual,
     sessionApi: { ...actual.sessionApi, list: mocks.sessionList },
+    assetApi: {
+      ...actual.assetApi,
+      snippetList: mocks.snippetList,
+      snippetDelete: mocks.snippetDelete,
+    },
   };
 });
 
 import { QueryClient } from "@tanstack/react-query";
+import { createElement } from "react";
 import { useAuth } from "../../features/auth/store";
 import { useUi } from "../../app/store";
 import { subscribeAccountSwitchCleanup } from "../../app/accountSwitch";
 import { useAssetReachability } from "../../features/explorer/assetReachability";
 import { isTabUnread, setTabUnread } from "../../app/unreadStore";
+import {
+  ask,
+  askChoice,
+  promptText,
+  registerDialogEpochSource,
+  registerDialogHandlers,
+  registerPromptHandler,
+} from "../../ui/dialogs";
+import { SnippetsPanel } from "../../features/explorer/SnippetsPanel";
+import { click, flush, mountWithClient, waitFor, type MountedView } from "./reactTestUtils";
 
 const USER_A: AccountUser = {
   id: "u-a",
@@ -53,7 +69,47 @@ function authReady(user: AccountUser | null): void {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.sessionList.mockResolvedValue([]);
+  mocks.snippetList.mockResolvedValue([]);
+  mocks.snippetDelete.mockResolvedValue(undefined);
   queryClient = new QueryClient();
+  // Wire the global dialogs to the store exactly like the App shell does.
+  registerPromptHandler((message, value, options) =>
+    new Promise<string | null>((resolve) => {
+      useUi.getState().openTextPrompt({ message, value, ...options, resolve });
+    }),
+  );
+  registerDialogEpochSource(() => useUi.getState().accountEpoch);
+  registerDialogHandlers({
+    ask: (message, options) =>
+      new Promise<boolean>((resolve) => {
+        useUi.getState().openAppDialog({
+          kind: "ask",
+          message,
+          title: options?.title,
+          level: options?.kind === "warning" ? "warning" : "info",
+          resolve,
+        });
+      }),
+    confirm: (message) =>
+      new Promise<boolean>((resolve) => {
+        useUi.getState().openAppDialog({ kind: "confirm", message, level: "warning", resolve });
+      }),
+    message: (message) =>
+      new Promise<void>((resolve) => {
+        useUi.getState().openAppDialog({ kind: "message", message, level: "info", resolve: () => resolve() });
+      }),
+    choose: (message, options) =>
+      new Promise<{ key: string; remember: boolean } | null>((resolve) => {
+        useUi.getState().openAppChoice({
+          title: options?.title ?? "请选择",
+          message,
+          options: options?.choices ?? [],
+          level: options?.level ?? "info",
+          rememberLabel: options?.rememberLabel,
+          resolve: (key, remember) => resolve(key === null ? null : { key, remember }),
+        });
+      }),
+  });
   // Establish the signed-in baseline before subscribing so the seed describes account A's session.
   authReady(USER_A);
   unwire = subscribeAccountSwitchCleanup(useAuth, queryClient);
@@ -88,7 +144,16 @@ afterEach(() => {
   unwire?.();
   unwire = undefined;
   authReady(null);
-  useUi.setState({ workspaces: [], sessions: [], activeWorkspaceId: null, toasts: [] });
+  useUi.setState({
+    workspaces: [],
+    sessions: [],
+    activeWorkspaceId: null,
+    toasts: [],
+    accountEpoch: 0,
+    textPrompt: null,
+    appDialog: null,
+    appChoice: null,
+  });
   useAssetReachability.getState().reset();
   queryClient.clear();
 });
@@ -156,5 +221,57 @@ describe("account switch cleanup", () => {
     await resync;
 
     expect(useUi.getState().sessions).toEqual([]);
+  });
+});
+
+describe("queued dialog account isolation", () => {
+  it("settles two queued asks plus a prompt and a choice with cancel on switch without reopening old dialogs", async () => {
+    const firstAsk = ask("first ask", { kind: "warning" });
+    const secondAsk = ask("second ask", { kind: "warning" });
+    const prompt = promptText("prompt message");
+    const choice = askChoice("choose", { choices: [{ key: "k", label: "option" }] });
+    await flush();
+
+    // The first ask is active; everything else is queued behind it.
+    expect(useUi.getState().appDialog?.message).toBe("first ask");
+
+    authReady(USER_B);
+
+    // The active dialog settles with cancel; every stale queued task is dropped with the same
+    // cancellation result instead of starting: no old dialog reopens in B.
+    await expect(firstAsk).resolves.toBe(false);
+    await expect(secondAsk).resolves.toBe(false);
+    await expect(prompt).resolves.toBeNull();
+    await expect(choice).resolves.toBeNull();
+    await flush();
+    expect(useUi.getState().appDialog).toBeNull();
+    expect(useUi.getState().textPrompt).toBeNull();
+    expect(useUi.getState().appChoice).toBeNull();
+  });
+
+  it("does not delete B's snippet when A's two queued delete confirmations settle after a switch", async () => {
+    mocks.snippetList.mockResolvedValue([{ id: "shared-snippet", name: "A snippet", body: "echo hi", groupId: null, createdAt: 1, updatedAt: 1 }]);
+    let mounted: MountedView | undefined;
+    try {
+      mounted = mountWithClient(createElement(SnippetsPanel, { onClose: () => undefined }));
+      await waitFor(() => expect(mocks.snippetList).toHaveBeenCalled());
+      await waitFor(() => expect(mounted?.container.textContent).toContain("A snippet"));
+
+      // Click delete twice: the second confirmation queues behind the first.
+      const deleteButton = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="删除片段「A snippet」"]');
+      if (!deleteButton) throw new Error("delete button not found");
+      click(deleteButton);
+      click(deleteButton);
+      await waitFor(() => expect(useUi.getState().appDialog?.message).toContain("删除片段"));
+
+      // Account switch: the queued old confirmations must never fire a delete in B.
+      authReady(USER_B);
+      await flush();
+
+      expect(mocks.snippetDelete).not.toHaveBeenCalled();
+      expect(useUi.getState().appDialog).toBeNull();
+    } finally {
+      mounted?.unmount();
+    }
   });
 });

@@ -540,13 +540,14 @@ const ENV_ASSIGNMENT = /^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)(.*
 const SENSITIVE_ENV_NAME = /password|passwd|pwd|secret|token|credential|authorization|api[_-]?key|access[_-]?key|private[_-]?key/i;
 
 function isWhitespace(char: string): boolean {
-  return char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\f" || char === "\v";
+  // Full JavaScript \s semantics, including Unicode spaces such as NBSP.
+  return /\s/.test(char);
 }
 
 // Linear replacement for the old quadratic URL credential pattern: scheme positions are found
-// with indexOf and validated backwards over the short scheme token, so long unseparated inputs
-// cannot trigger superlinear backtracking. Semantics match scheme://user:password@ redaction —
-// userinfo stops at the first ':', the password at the next '@'.
+// with indexOf, and the scheme token is the longest suffix of the contiguous scheme-character
+// run that starts at a letter — the old unanchored regex matched valid scheme suffixes after
+// digits and punctuation too (1http://, .http://, -http://, +http:// all redacted).
 function redactUrlCredentials(text: string): string {
   let result = "";
   let last = 0;
@@ -554,11 +555,12 @@ function redactUrlCredentials(text: string): string {
   for (;;) {
     const schemeEnd = text.indexOf("://", searchFrom);
     if (schemeEnd < 0) break;
-    let schemeStart = schemeEnd - 1;
-    while (schemeStart >= 0 && /[a-z0-9+.-]/i.test(text[schemeStart] as string)) schemeStart--;
-    schemeStart++;
-    const first = text[schemeStart];
-    if (first === undefined || !/[a-z]/i.test(first)) {
+    let runStart = schemeEnd - 1;
+    while (runStart >= 0 && /[a-z0-9+.-]/i.test(text[runStart] as string)) runStart--;
+    runStart++;
+    let schemeStart = runStart;
+    while (schemeStart < schemeEnd && !/[a-z]/i.test(text[schemeStart] as string)) schemeStart++;
+    if (schemeStart >= schemeEnd) {
       searchFrom = schemeEnd + 3;
       continue;
     }

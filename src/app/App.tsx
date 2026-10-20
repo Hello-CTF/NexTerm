@@ -134,7 +134,7 @@ import { PromptModal } from "../ui/PromptModal";
 import { DialogHost, isEditableTarget } from "../ui/DialogHost";
 import { ResizeHandle } from "../ui/ResizeHandle";
 import { ErrorBoundary } from "../ui/ErrorBoundary";
-import { registerPromptHandler, registerDialogHandlers, promptText, type ChoiceResult } from "../ui/dialogs";
+import { registerPromptHandler, registerDialogHandlers, registerDialogEpochSource, promptText, type ChoiceResult } from "../ui/dialogs";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../ui/ContextMenu";
 import {
   IconActivity,
@@ -1232,6 +1232,7 @@ function AppShell() {
         openTextPrompt({ message, value, ...options, resolve });
       });
     });
+    registerDialogEpochSource(() => useUi.getState().accountEpoch);
   }, []);
 
   useEffect(() => {

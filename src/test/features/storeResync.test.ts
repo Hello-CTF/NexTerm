@@ -137,19 +137,60 @@ describe("sanitizeWorkspaceProblemText", () => {
     expect(sanitized).not.toContain("hunter2");
   });
 
+  it("redacts scheme suffixes after digit and punctuation prefixes like the old unanchored regex", () => {
+    for (const input of [
+      "1http://user:secret@host",
+      ".http://user:secret@host",
+      "-http://user:secret@host",
+      "+http://user:secret@host",
+      "9scheme+x://user:secret@host",
+    ]) {
+      const sanitized = sanitizeWorkspaceProblemText(input);
+      expect(sanitized).toContain("user:[REDACTED]@host");
+      expect(sanitized).not.toContain(":secret@");
+    }
+  });
+
+  it("redacts env assignments across full JavaScript whitespace including Unicode spaces", () => {
+    const sanitized = sanitizeWorkspaceProblemText(".env A = secret B = hunter2 C  =  hunter3");
+    expect(sanitized).toContain("A = [REDACTED]");
+    expect(sanitized).toContain("B = [REDACTED]");
+    expect(sanitized).toContain("C  =  [REDACTED]");
+    expect(sanitized).not.toContain("hunter2");
+    expect(sanitized).not.toContain("hunter3");
+  });
+
+  it("redacts long values without length truncation", () => {
+    const longPassword = "p".repeat(4096);
+    const longValue = "v".repeat(4096);
+    const sanitized = sanitizeWorkspaceProblemText(
+      `scheme://user:${longPassword}@host .env A=${longValue}`,
+    );
+    expect(sanitized).toContain("user:[REDACTED]@host");
+    expect(sanitized).not.toContain(longPassword);
+    expect(sanitized).toContain("A=[REDACTED]");
+    expect(sanitized).not.toContain(longValue);
+  });
+
   it("scales linearly on long unseparated input instead of regressing to quadratic backtracking", () => {
     const makeInput = (n: number) => `.env ${"a".repeat(n)}`;
-    // Warm up so JIT compilation does not distort the first measurement.
-    sanitizeWorkspaceProblemText(makeInput(32 * 1024));
-    const t0 = performance.now();
-    sanitizeWorkspaceProblemText(makeInput(32 * 1024));
-    const t1 = performance.now();
-    sanitizeWorkspaceProblemText(makeInput(256 * 1024));
-    const t2 = performance.now();
-    const small = Math.max(t1 - t0, 0.01);
-    const large = t2 - t1;
+    // Minimum-of-N per size: the fastest run approximates the true cost, so scheduler hiccups
+    // on the larger measurement cannot masquerade as superlinearity (a real quadratic would
+    // show up in every run). Warm-up first so JIT compilation is not measured.
+    const measure = (n: number) => {
+      let best = Infinity;
+      for (let i = 0; i < 5; i++) {
+        const t0 = performance.now();
+        sanitizeWorkspaceProblemText(makeInput(n));
+        best = Math.min(best, performance.now() - t0);
+      }
+      return best;
+    };
+    measure(16 * 1024);
+    const small = Math.max(measure(32 * 1024), 0.01);
+    const large = measure(256 * 1024);
     // 8x input: linear scales about 8x, the old quadratic patterns scaled about 64x.
-    // 24 leaves wide headroom for machine noise while still failing any quadratic regression.
+    // 24 leaves wide headroom while still failing any quadratic regression.
     expect(large / small).toBeLessThan(24);
   });
 });
