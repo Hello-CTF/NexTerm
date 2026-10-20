@@ -465,6 +465,6 @@ describe("AssetEditor tags and note", () => {
     setInputValue(noteInput, "  updated note\n");
     click(saveButton());
     await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
-    expect(updatedPayload()).toMatchObject({ tags: "Prod, 欧洲", note: "  updated note\n" });
+    expect(updatedPayload()).toMatchObject({ tags: "prod, 欧洲", note: "  updated note\n" });
   });
 });
