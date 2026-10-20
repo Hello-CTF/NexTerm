@@ -266,12 +266,17 @@ describe("inventory target actions", () => {
     expect(mocks.call).toHaveBeenCalledTimes(1);
     expect(m.container.querySelector('[role="note"]')?.textContent).toContain("命令仍在目标上执行");
 
-    // A settles: the notice updates, its output stays hidden, and only then
-    // is a new execution allowed.
+    // A settles: the notice updates and its output stays hidden, but the
+    // ignored generation is still tracked until the notice is cleared.
     await act(async () => { resolveA({ output: "A secret\n", exitCode: 0 }); });
     await flush();
     expect(m.container.textContent).not.toContain("A secret");
     expect(m.container.querySelector('[role="note"]')?.textContent).toContain("命令已结束");
+    expect(execButton()?.disabled).toBe(true);
+
+    clickButton(m.container, "清除");
+    await flush();
+    expect(m.container.querySelector('[role="note"]')).toBeNull();
     expect(execButton()?.disabled).toBe(false);
 
     mocks.call.mockResolvedValueOnce({ output: "B ok\n", exitCode: 0 });
@@ -279,6 +284,45 @@ describe("inventory target actions", () => {
     await flush();
     expect(mocks.call).toHaveBeenCalledTimes(2);
     await waitFor(() => expect(m.container.textContent).toContain("B ok"));
+  });
+
+  it("keeps the running notice clear-proof and re-entry blocked until the ignored command settles", async () => {
+    let resolveA: (value: { output: string; exitCode: number }) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveA = resolve; }));
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+    clickButton(m.container, "忽略结果");
+    await flush();
+    const note = () => m.container.querySelector('[role="note"]');
+    expect(note()?.textContent).toContain("命令仍在目标上执行");
+
+    // While A runs there is no effective clear: the button is absent, the
+    // notice cannot be deleted, and B cannot start.
+    const clearButton = () => [...m.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "清除");
+    expect(clearButton()).toBeUndefined();
+    const execButton = () => [...m.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "执行");
+    expect(execButton()?.disabled).toBe(true);
+    clickButton(m.container, "执行");
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(1);
+    expect(note()?.textContent).toContain("命令仍在目标上执行");
+
+    // A settles: done is shown without output, only now may the notice be
+    // cleared, and only clearing it re-enables execution.
+    await act(async () => { resolveA({ output: "A secret\n", exitCode: 0 }); });
+    await flush();
+    expect(m.container.textContent).not.toContain("A secret");
+    expect(note()?.textContent).toContain("命令已结束");
+    expect(execButton()?.disabled).toBe(true);
+    expect(clearButton()).not.toBeUndefined();
+
+    clickButton(m.container, "清除");
+    await flush();
+    expect(note()).toBeNull();
+    expect(execButton()?.disabled).toBe(false);
   });
 
   it("invalidates the in-flight request and resets target state on a same-owner target switch", async () => {

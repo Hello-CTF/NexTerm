@@ -89,8 +89,9 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
 
   const run = async (confirmation?: DockerProductionConfirmation) => {
     // An ignored command is still running on the target; starting another
-    // one now would repeat side effects and drop its settle tracking.
-    if (busy || ignoredNotice === "running") return;
+    // one now would repeat side effects and drop its settle tracking. The
+    // tracked ignored generation is the authority, not the notice text.
+    if (busy || ignoredGenRef.current !== null) return;
     const argv = command.trim() ? command.trim().split(/\s+/) : [];
     if (argv.length === 0) {
       setFailure({ message: "请输入要执行的命令" });
@@ -235,7 +236,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
             </label>
           )}
           <div className="flex gap-2">
-            <button type="button" className="nx-btn nx-btn-primary nx-btn-xs" disabled={busy || ignoredNotice === "running"} onClick={() => void run()}>
+            <button type="button" className="nx-btn nx-btn-primary nx-btn-xs" disabled={busy || ignoredGenRef.current !== null} onClick={() => void run()}>
               执行
             </button>
             {busy && (
@@ -243,7 +244,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
                 忽略结果
               </button>
             )}
-            {(result || failure || ignoredNotice) && (
+            {(result || failure || ignoredNotice === "done") && (
               <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={clearSettled}>
                 清除
               </button>
