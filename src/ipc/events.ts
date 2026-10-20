@@ -159,6 +159,10 @@ export interface StreamAnchorControl {
   streamSeq: number;
   controlBytes?: number;
   expired?: boolean;
+  // The attachment incarnation this anchor was sent for: the client adopts
+  // it as its current attachment identity, so the ordered stream itself
+  // carries the incarnation even before the attach RPC response arrives.
+  attachmentId?: number;
 }
 
 export const STREAM_ANCHOR_TYPE = "nexterm.stream-anchor";

@@ -282,6 +282,7 @@ beforeEach(() => {
     shell: "unknown",
     retainable: true,
     ephemeral: false,
+    attachmentId: 11,
   });
   harness.attachTab.mockResolvedValue({
     tabId: "kernel-1",
@@ -293,6 +294,7 @@ beforeEach(() => {
     exited: false,
     retainable: true,
     ephemeral: false,
+    attachmentId: 11,
   });
   harness.detach.mockResolvedValue(undefined);
   harness.setVisible.mockResolvedValue(undefined);
@@ -405,6 +407,8 @@ describe("XtermView stream wiring", () => {
     expect(harness.call).toHaveBeenCalledWith("terminal_pause", {
       tabId: "kernel-1",
       channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 11,
       acceptedBytes: expect.any(Number),
     });
     // The fifth chunk is refused: it never enters the FIFO or the accounting.
@@ -423,6 +427,8 @@ describe("XtermView stream wiring", () => {
     expect(harness.call).toHaveBeenCalledWith("terminal_resume", {
       tabId: "kernel-1",
       channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 11,
     });
     // Transport reopen → reattach with a resume anchor at the last accepted
     // byte; the refused suffix will be replayed from there.
@@ -480,6 +486,7 @@ describe("XtermView stream wiring", () => {
       exited: false,
       retainable: true,
       ephemeral: false,
+      attachmentId: 12,
     });
     await act(async () => {
       await flushMacrotask();
@@ -503,6 +510,7 @@ describe("XtermView stream wiring", () => {
       shell: "unknown",
       retainable: false,
       ephemeral: true,
+      attachmentId: 11,
     });
     await show();
     await attachOk();
@@ -515,6 +523,8 @@ describe("XtermView stream wiring", () => {
     expect(harness.call).toHaveBeenCalledWith("terminal_pause", {
       tabId: "kernel-1",
       channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 11,
       acceptedBytes: expect.any(Number),
     });
     // The feed is paused (no more bytes arrive); the FIFO drains below the
@@ -523,6 +533,8 @@ describe("XtermView stream wiring", () => {
     expect(harness.call).toHaveBeenCalledWith("terminal_resume", {
       tabId: "kernel-1",
       channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 11,
     });
     // The feed resumes and the full sequence arrives in order: nothing was
     // refused, so there is no hole.
@@ -548,6 +560,7 @@ describe("XtermView stream wiring", () => {
       shell: "unknown",
       retainable: false,
       ephemeral: true,
+      attachmentId: 11,
     });
     harness.call.mockImplementation((command: string) =>
       command === "terminal_pause"
@@ -574,6 +587,8 @@ describe("XtermView stream wiring", () => {
     expect(harness.call).toHaveBeenCalledWith("terminal_recover", {
       tabId: "kernel-1",
       channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 11,
       acceptedBytes: 4 * (4 << 20),
     });
     // The replay arrives with a synthetic anchor that ends the episode. The
@@ -592,6 +607,8 @@ describe("XtermView stream wiring", () => {
     expect(harness.call).toHaveBeenCalledWith("terminal_resume", {
       tabId: "kernel-1",
       channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 11,
     });
     expect(t.writeLog.length).toBe(5);
     const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
@@ -623,6 +640,8 @@ describe("XtermView stream wiring", () => {
     expect(harness.call).toHaveBeenCalledWith("terminal_pause", {
       tabId: "kernel-1",
       channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 7,
       acceptedBytes: expect.any(Number),
     });
     // The pause RPC failed every retry: the client redelivers the refused
@@ -635,6 +654,8 @@ describe("XtermView stream wiring", () => {
     expect(harness.call).toHaveBeenCalledWith("terminal_recover", {
       tabId: "kernel-1",
       channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 7,
       acceptedBytes: 4 * (4 << 20),
     });
     // The synthetic anchor ends the episode; the refused chunk is restored
@@ -676,6 +697,7 @@ describe("XtermView stream wiring", () => {
       shell: "unknown",
       retainable: false,
       ephemeral: true,
+      attachmentId: 11,
     });
     harness.call.mockImplementation((command: string) =>
       command === "terminal_pause"
@@ -728,6 +750,8 @@ describe("XtermView stream wiring", () => {
     expect(harness.call).toHaveBeenCalledWith("terminal_resume", {
       tabId: "kernel-1",
       channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 11,
     });
     vi.useRealTimers();
   });
@@ -748,6 +772,7 @@ describe("XtermView stream wiring", () => {
       shell: "unknown",
       retainable: false,
       ephemeral: true,
+      attachmentId: 11,
     });
     harness.call.mockImplementation((command: string) => {
       if (command === "terminal_pause") return Promise.reject(new Error("no such command"));
@@ -773,6 +798,8 @@ describe("XtermView stream wiring", () => {
     expect(harness.call).toHaveBeenCalledWith("terminal_recover", {
       tabId: "kernel-1",
       channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 11,
       acceptedBytes: 4 * (4 << 20),
     });
     act(() => t.drainWrites());
@@ -799,6 +826,8 @@ describe("XtermView stream wiring", () => {
     expect(harness.call).toHaveBeenLastCalledWith("terminal_recover", {
       tabId: "kernel-1",
       channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 11,
       acceptedBytes: 32 << 20,
     });
     // Complete the second RPC as well; the second replay restores the last
@@ -822,6 +851,8 @@ describe("XtermView stream wiring", () => {
     expect(harness.call).toHaveBeenCalledWith("terminal_resume", {
       tabId: "kernel-1",
       channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 11,
     });
     const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
     expect(total).toBe(9 * (4 << 20));
@@ -843,6 +874,7 @@ describe("XtermView stream wiring", () => {
       shell: "unknown",
       retainable: false,
       ephemeral: true,
+      attachmentId: 11,
     });
     harness.call.mockImplementation((command: string) =>
       command === "terminal_pause"
@@ -859,6 +891,8 @@ describe("XtermView stream wiring", () => {
     expect(harness.call).toHaveBeenCalledWith("terminal_pause", {
       tabId: "kernel-1",
       channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 11,
       acceptedBytes: expect.any(Number),
     });
     const callsBeforeUnmount = harness.call.mock.calls.length;
@@ -931,6 +965,7 @@ describe("XtermView stream wiring", () => {
       exited: false,
       retainable: false,
       ephemeral: true,
+      attachmentId: 12,
     });
     await act(async () => {
       await flushMacrotask();
@@ -968,6 +1003,205 @@ describe("XtermView stream wiring", () => {
     expect(t.writeLog.length).toBe(5);
     const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
     expect(total).toBe(5 * (4 << 20));
+  });
+
+  it("normal attach: every stream ACK carries the response's attachment incarnation", async () => {
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array((1 << 20) + 4096).fill(0x61);
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    const acks = harness.call.mock.calls.filter((c) => c[0] === "terminal_stream_ack");
+    expect(acks.length).toBeGreaterThan(0);
+    for (const ack of acks) {
+      expect(ack[1]).toMatchObject({
+        tabId: "kernel-1",
+        channelId: "channel-1",
+        clientId: "me",
+        attachmentId: 11,
+      });
+    }
+    // The periodic ACK reports the accepted offset in absolute coordinates.
+    expect(acks[acks.length - 1][1].acceptedBytes).toBe(chunk.length);
+  });
+
+  it("reopen: the response's new incarnation is adopted and re-reported immediately", async () => {
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    harness.attachTab.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      retainable: true,
+      ephemeral: false,
+      attachmentId: 12,
+    });
+    await act(async () => {
+      harness.reopenCb?.();
+      await flushMacrotask();
+      await flushMacrotask();
+    });
+    // The reopen response adopted the new incarnation: the immediate
+    // re-report carries it — never the previous incarnation and never a
+    // default 0 — and does not wait for the next 1 MiB boundary.
+    const acks = harness.call.mock.calls.filter((c) => c[0] === "terminal_stream_ack");
+    expect(acks.length).toBeGreaterThan(0);
+    expect(acks[acks.length - 1][1]).toMatchObject({
+      tabId: "kernel-1",
+      channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 12,
+      acceptedBytes: 4 << 20,
+    });
+  });
+
+  it("deferred response: the anchor's incarnation is adopted and a stale response cannot override it", async () => {
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    // The reattach RPC stays in flight while the anchor arrives first.
+    let finish: ((value: unknown) => void) | undefined;
+    harness.attachTab.mockImplementation(
+      () => new Promise((resolve) => { finish = resolve; }),
+    );
+    act(() => harness.reopenCb?.());
+    // The anchor carries the new incarnation: the immediate re-report uses it
+    // even though the attach response has not arrived.
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 4 * (4 << 20), controlBytes: 0, attachmentId: 12 });
+    let acks = harness.call.mock.calls.filter((c) => c[0] === "terminal_stream_ack");
+    expect(acks[acks.length - 1][1]).toMatchObject({
+      attachmentId: 12,
+      acceptedBytes: 4 * (4 << 20),
+    });
+    // A stale deferred response (older incarnation) must not override it.
+    finish?.({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      retainable: true,
+      ephemeral: false,
+      attachmentId: 11,
+    });
+    await act(async () => {
+      await flushMacrotask();
+    });
+    const more = new Uint8Array((1 << 20) + 4096).fill(0x62);
+    act(() => harness.channel?.onBytes?.(more));
+    act(() => t.drainWrites());
+    acks = harness.call.mock.calls.filter((c) => c[0] === "terminal_stream_ack");
+    expect(acks[acks.length - 1][1]).toMatchObject({
+      attachmentId: 12,
+      acceptedBytes: 4 * (4 << 20) + more.length,
+    });
+  });
+
+  it("the complete continuous sequence keeps every control frame on the current incarnation", async () => {
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+      ephemeral: true,
+      attachmentId: 11,
+    });
+    harness.call.mockImplementation((command: string) =>
+      command === "terminal_pause"
+        ? Promise.reject(new Error("no such command"))
+        : Promise.resolve({ flushedOffset: 5 * (4 << 20) }),
+    );
+    vi.useFakeTimers();
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    act(() => harness.channel?.onBytes?.(chunk));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    // The refusal episode runs entirely on incarnation 11.
+    expect(harness.call).toHaveBeenCalledWith("terminal_recover", {
+      tabId: "kernel-1",
+      channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 11,
+      acceptedBytes: 4 * (4 << 20),
+    });
+    act(() => t.drainWrites());
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "recovery-kernel-1",
+      streamSeq: 4 * (4 << 20),
+      controlBytes: 0,
+      attachmentId: 11,
+    });
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    expect(harness.call).toHaveBeenCalledWith("terminal_resume", {
+      tabId: "kernel-1",
+      channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 11,
+    });
+    expect(t.writeLog.length).toBe(5);
+    // Reopen: incarnation 12 takes over mid-stream.
+    harness.attachTab.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      retainable: true,
+      ephemeral: false,
+      attachmentId: 12,
+    });
+    await act(async () => {
+      harness.reopenCb?.();
+      await flushMacrotask();
+      await flushMacrotask();
+    });
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 5 * (4 << 20), controlBytes: 0, attachmentId: 12 });
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    // Every post-reopen frame carries incarnation 12, and the accepted
+    // sequence stays contiguous across the transition.
+    const acks = harness.call.mock.calls.filter((c) => c[0] === "terminal_stream_ack");
+    expect(acks[acks.length - 1][1]).toMatchObject({
+      attachmentId: 12,
+      acceptedBytes: 6 * (4 << 20),
+    });
+    const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
+    expect(total).toBe(6 * (4 << 20));
+    vi.useRealTimers();
   });
 });
 

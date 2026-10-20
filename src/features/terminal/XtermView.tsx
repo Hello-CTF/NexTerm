@@ -288,7 +288,10 @@ export function XtermView(props: XtermViewProps) {
       attachmentId?: number;
     }) => {
       ephemeral = info.ephemeral;
-      attachmentId = info.attachmentId ?? 0;
+      // Adopt the response's incarnation only when it is newer than the one
+      // already learned from the ordered stream: a deferred stale response
+      // must never override the current attachment identity.
+      adoptAttachmentId(info.attachmentId);
       onAttachInfoRef.current?.(info);
     };
     // Producer backpressure: a paused writer asks the server to stop feeding
@@ -312,7 +315,7 @@ export function XtermView(props: XtermViewProps) {
       if (disposed || !kernelTabId) return;
       const channelId = channelIdOf(channel);
       if (!channelId) return;
-      call("terminal_pause", { tabId: kernelTabId, channelId, acceptedBytes: acceptedOffsetNow() }).catch(() => {
+      call("terminal_pause", { tabId: kernelTabId, channelId, clientId: clientId(), attachmentId, acceptedBytes: acceptedOffsetNow() }).catch(() => {
         // The pause could not be established yet: retry while the writer is
         // still over the high watermark — without it the producer keeps
         // advancing and the refused suffix can outgrow the recovery ring.
@@ -349,11 +352,24 @@ export function XtermView(props: XtermViewProps) {
         acceptedBytes: offset,
       }).catch(() => undefined);
     };
+    // Adopt a newer attachment incarnation learned from the attach response
+    // or the stream anchor: the retention floor and the stream-control
+    // commands are bound to the incarnation, so a new one must re-report the
+    // current absolute accepted offset immediately instead of reusing the
+    // previous incarnation's ACK state or waiting for the next 1 MiB
+    // boundary. Attachments are allocated from a per-tab monotonic counter,
+    // so a smaller id is a deferred stale response and is ignored.
+    const adoptAttachmentId = (next: number | undefined) => {
+      if (next === undefined || next <= attachmentId) return;
+      attachmentId = next;
+      lastStreamAckOffset = -1;
+      sendStreamAck();
+    };
     const resumeUpstream = () => {
       if (containerId || !kernelTabId) return;
       const channelId = channelIdOf(channel);
       if (!channelId) return;
-      void call("terminal_resume", { tabId: kernelTabId, channelId }).catch(() => undefined);
+      void call("terminal_resume", { tabId: kernelTabId, channelId, clientId: clientId(), attachmentId }).catch(() => undefined);
     };
     const maybeResume = () => {
       if (recoverInFlight || recoverPending) return;
@@ -370,6 +386,8 @@ export function XtermView(props: XtermViewProps) {
       void call("terminal_recover", {
         tabId: kernelTabId,
         channelId,
+        clientId: clientId(),
+        attachmentId,
         acceptedBytes: acceptedOffsetNow(),
       })
         .then((res) => {
@@ -588,6 +606,11 @@ export function XtermView(props: XtermViewProps) {
           expiredNoticePending = false;
           writeExpiredNotice();
         }
+        // The anchor carries the incarnation it was sent for: adopt it before
+        // any replay bytes are accepted, so an ACK triggered by the replay
+        // reports the new attachment even when the attach response has not
+        // arrived yet.
+        adoptAttachmentId(control.attachmentId);
       },
     );
     const applyRemoteDimensions = (cols: number, rows: number) => {
@@ -680,6 +703,7 @@ export function XtermView(props: XtermViewProps) {
             shell: info.shell,
             retainable: info.retainable,
             ephemeral: info.ephemeral,
+            attachmentId: info.attachmentId,
           });
         }
         if (disposed) {
@@ -697,6 +721,10 @@ export function XtermView(props: XtermViewProps) {
         coordinator.attach(id, initialGrid, false);
         kernelTabId = id;
         kernelTabIdRef.current = id;
+        // The attach adopted an attachment incarnation before the tab id was
+        // known: deliver the re-report now so the new incarnation's retention
+        // floor opens immediately, not at the next 1 MiB boundary.
+        sendStreamAck();
         if (fallbackNotice) useUi.getState().pushToast("info", fallbackNotice);
         onAttachRef.current?.(id);
       } catch (e) {
@@ -761,6 +789,7 @@ export function XtermView(props: XtermViewProps) {
             shell: info.shell,
             retainable: info.retainable,
             ephemeral: info.ephemeral,
+            attachmentId: info.attachmentId,
           });
           onAttachRef.current?.(info.tabId);
         } catch (e) {
