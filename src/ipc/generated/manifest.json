@@ -1435,6 +1435,12 @@
       "channel": false,
       "stream": "none"
     },
+    "terminal_stream_ack": {
+      "scope": "terminal-stream",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "terminal_switch_encoding": {
       "nested": false,
       "channel": false,

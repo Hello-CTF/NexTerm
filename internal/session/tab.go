@@ -1224,15 +1224,25 @@ func parseStreamAck(data []byte) (int64, bool) {
 	return frame.Offset, true
 }
 
-// channelForClientLocked returns the channel ID of the subscriber attached
-// as the given client, or "" when the client is not attached to this tab.
-func (t *Tab) channelForClientLocked(client string) string {
-	for channelID, subscriber := range t.subscribers {
-		if subscriber.client == client {
-			return channelID
-		}
+// StreamAckFor applies the client's accepted-offset ACK to the retention
+// floor of one of its channels. The caller must own the tab and be its
+// controller, and the floor only advances: a stale or out-of-order report
+// can never regress it.
+func (m *Manager) StreamAckFor(ctx context.Context, tabID, channelID, client string, acceptedBytes int64) error {
+	tab, err := m.TabFor(ctx, tabID)
+	if err != nil {
+		return err
 	}
-	return ""
+	tab.mu.Lock()
+	controller := tab.controller
+	tab.mu.Unlock()
+	if controller != clientID(client) {
+		return ErrNotController
+	}
+	tab.mu.Lock()
+	tab.setEpisodeFloorLocked(channelID, acceptedBytes)
+	tab.mu.Unlock()
+	return nil
 }
 
 func (m *Manager) Write(ctx context.Context, tabID, client string, data []byte) error {
@@ -1240,20 +1250,6 @@ func (m *Manager) Write(ctx context.Context, tabID, client string, data []byte) 
 	tab, err := m.Tab(tabID)
 	if err != nil {
 		return err
-	}
-	// The ordered write path also carries the client's accepted-offset ACK: a
-	// small control frame that opens the recovery ring's retention floor
-	// without waiting for a pause/recover RPC. It is never written to the PTY.
-	if offset, ok := parseStreamAck(data); ok {
-		tab.mu.Lock()
-		channelID := tab.channelForClientLocked(clientID(client))
-		if channelID == "" {
-			tab.mu.Unlock()
-			return ErrNotController
-		}
-		tab.setEpisodeFloorLocked(channelID, offset)
-		tab.mu.Unlock()
-		return nil
 	}
 	tab.writeMu.Lock()
 	defer tab.writeMu.Unlock()

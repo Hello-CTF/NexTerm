@@ -29,7 +29,7 @@ var contractScopes = []scopeSpec{
 	{name: "services", prefixes: []string{"services_"}},
 	{name: "inventory", prefixes: []string{"inventory_"}},
 	{name: "fs-cancel", commands: []string{"fs_cancel"}},
-	{name: "terminal-stream", commands: []string{"terminal_pause", "terminal_recover", "terminal_resume"}},
+	{name: "terminal-stream", commands: []string{"terminal_pause", "terminal_recover", "terminal_resume", "terminal_stream_ack"}},
 	{name: "memory-owner", deferred: true},
 	{name: "ai-owner", deferred: true},
 }

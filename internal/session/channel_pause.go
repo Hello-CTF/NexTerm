@@ -105,10 +105,14 @@ func (t *Tab) outputStalled() (bool, chan struct{}) {
 
 // setEpisodeFloorLocked records a subscriber's accepted offset for an open
 // refusal episode and re-applies the tab's retention floor; a negative
-// accepted offset closes the episode.
+// accepted offset closes the episode. The floor is monotonic: it only
+// advances, so a stale or out-of-order report can never regress it.
 func (t *Tab) setEpisodeFloorLocked(channelID string, accepted int64) {
 	subscriber, ok := t.subscribers[channelID]
 	if !ok {
+		return
+	}
+	if accepted >= 0 && subscriber.episodeFloor >= 0 && accepted <= subscriber.episodeFloor {
 		return
 	}
 	subscriber.episodeFloor = accepted

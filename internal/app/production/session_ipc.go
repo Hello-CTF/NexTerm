@@ -201,6 +201,16 @@ type terminalResumeRequest struct {
 	ChannelID string `json:"channelId"`
 }
 
+type terminalStreamAckRequest struct {
+	TabID     string `json:"tabId"`
+	ChannelID string `json:"channelId"`
+	ClientID  string `json:"clientId"`
+	// AcceptedBytes is the client's absolute accepted stream offset for this
+	// channel; it opens the recovery ring's retention floor. The floor only
+	// advances.
+	AcceptedBytes int64 `json:"acceptedBytes"`
+}
+
 type liveTabDTO struct {
 	TabID           string  `json:"tabId"`
 	SessionID       string  `json:"sessionId"`
@@ -625,6 +635,16 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					return nil, terminalIPCError(err)
 				}
 				return map[string]any{"flushedOffset": flushed}, nil
+			})
+		},
+		func() error {
+			// The client's accepted-offset ACK for one channel: opens the
+			// recovery ring's retention floor without waiting for a pause/recover
+			// RPC. The caller must own the tab and be its controller.
+			return ipc.Register(dispatcher, "terminal_stream_ack", func(ctx context.Context, call *ipc.Call, input terminalStreamAckRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
+				client := gridRequestClient(call.ClientID, input.ClientID)
+				return nil, terminalIPCError(s.sessions.StreamAckFor(ctx, input.TabID, input.ChannelID, client, input.AcceptedBytes))
 			})
 		},
 		func() error {

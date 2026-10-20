@@ -563,3 +563,10 @@ export type TerminalResumeRequest = {
   tabId: string;
   channelId: string;
 };
+
+export type TerminalStreamAckRequest = {
+  tabId: string;
+  channelId: string;
+  clientId: string;
+  acceptedBytes: number;
+};

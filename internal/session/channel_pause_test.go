@@ -815,10 +815,10 @@ func TestRecoverChannelForFloorStallsBeforeDelayedRPC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-1"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-1"}); err != nil {
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
 		t.Fatal(err)
 	}
 	channel := connector.transport(0).channel(0)
@@ -856,9 +856,9 @@ func TestRecoverChannelForFloorStallsBeforeDelayedRPC(t *testing.T) {
 		}
 	}
 	const acceptedB = 16 << 20
-	// B reports its accepted offset through the ordered write path: the floor
+	// B reports its accepted offset through the typed control path: the floor
 	// opens at 16 MiB without waiting for the pause/recover RPCs.
-	if err := manager.WriteFor(context.Background(), info.ID, "client-b", []byte(`{"type":"nexterm.stream-ack","offset":16777216}`)); err != nil {
+	if err := manager.StreamAckFor(context.Background(), info.ID, "b-1", "client-b", acceptedB); err != nil {
 		t.Fatal(err)
 	}
 

@@ -1507,6 +1507,14 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "terminal_stream_ack": {
+      scope: "terminal-stream",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalStreamAckRequest", ts: "TerminalStreamAckRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
     "terminal_switch_encoding": {
       nested: false,
       channel: false,
@@ -2025,6 +2033,10 @@ export interface IPCCommandTypeMap {
   };
   "terminal_resume": {
     input: contractTypes.TerminalResumeRequest;
+    output: unknown;
+  };
+  "terminal_stream_ack": {
+    input: contractTypes.TerminalStreamAckRequest;
     output: unknown;
   };
 }
