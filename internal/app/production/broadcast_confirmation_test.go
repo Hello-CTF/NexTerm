@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -277,7 +278,25 @@ func TestBroadcastProductionIPCRequiresValidConfirmation(t *testing.T) {
 
 	confirmation := &broadcastProductionConfirmation{
 		Confirmed: true, TargetSetHash: detail.TargetSetHash, InputHash: detail.InputHash,
+		EnvironmentNames: detail.RequiredEnvironmentNames,
 	}
+	if len(detail.RequiredEnvironmentNames) != 1 || detail.RequiredEnvironmentNames[0] != "production" {
+		t.Fatalf("required environment names = %v", detail.RequiredEnvironmentNames)
+	}
+	requireBroadcastConfirmation(t, fixture.write(fixture.production.tabID, input, &terminalBroadcastWriteOptions{
+		TargetTabIDs: tabIDs,
+		ProductionConfirmation: &broadcastProductionConfirmation{
+			Confirmed: true, TargetSetHash: detail.TargetSetHash, InputHash: detail.InputHash,
+			EnvironmentNames: []string{"staging"},
+		},
+	}))
+	requireBroadcastConfirmation(t, fixture.write(fixture.production.tabID, input, &terminalBroadcastWriteOptions{
+		TargetTabIDs: tabIDs,
+		ProductionConfirmation: &broadcastProductionConfirmation{
+			Confirmed: false, TargetSetHash: detail.TargetSetHash, InputHash: detail.InputHash,
+			EnvironmentNames: detail.RequiredEnvironmentNames,
+		},
+	}))
 	requireBroadcastOK(t, fixture.write(fixture.production.tabID, input, &terminalBroadcastWriteOptions{
 		TargetTabIDs: tabIDs, ProductionConfirmation: confirmation,
 	}))
@@ -316,9 +335,30 @@ func TestBroadcastProductionIPCKeepsNonProductionAndOrdinaryInputDirect(t *testi
 	fixture := newBroadcastGateFixture(t)
 	tabIDs := []string{fixture.production.tabID, fixture.staging.tabID}
 	requireBroadcastOK(t, fixture.prepare([]string{fixture.staging.tabID}, "hostname\n"))
-	requireBroadcastOK(t, fixture.write(fixture.staging.tabID, "hostname\n", &terminalBroadcastWriteOptions{TargetTabIDs: tabIDs}))
+	requireBroadcastOK(t, fixture.write(fixture.staging.tabID, "hostname\n", &terminalBroadcastWriteOptions{
+		TargetTabIDs: []string{fixture.staging.tabID},
+	}))
 	if got := fixture.connector.transport(fixture.staging.assetID).firstChannel().written(); got != "hostname\n" {
 		t.Fatalf("non-production broadcast input = %q", got)
+	}
+
+	// A write from an ordinary terminal into a target set containing production is
+	// challenged just like a write originating from the production terminal.
+	mixedDetail := requireBroadcastConfirmation(t, fixture.write(fixture.staging.tabID, "mixed\n", &terminalBroadcastWriteOptions{
+		TargetTabIDs: tabIDs,
+	}))
+	if got := fixture.connector.transport(fixture.staging.assetID).firstChannel().written(); got != "hostname\n" {
+		t.Fatalf("challenged write reached the channel before confirmation: %q", got)
+	}
+	requireBroadcastOK(t, fixture.write(fixture.staging.tabID, "mixed\n", &terminalBroadcastWriteOptions{
+		TargetTabIDs: tabIDs,
+		ProductionConfirmation: &broadcastProductionConfirmation{
+			Confirmed: true, TargetSetHash: mixedDetail.TargetSetHash, InputHash: mixedDetail.InputHash,
+			EnvironmentNames: mixedDetail.RequiredEnvironmentNames,
+		},
+	}))
+	if got := fixture.connector.transport(fixture.staging.assetID).firstChannel().written(); got != "hostname\nmixed\n" {
+		t.Fatalf("confirmed cross-environment broadcast input = %q", got)
 	}
 
 	requireBroadcastOK(t, fixture.write(fixture.production.tabID, "ordinary\n", nil))
@@ -347,7 +387,98 @@ func TestBroadcastProductionIPCKeepsNonProductionAndOrdinaryInputDirect(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 0 {
-		t.Fatalf("direct paths recorded %d production confirmations", count)
+	if count != 1 {
+		t.Fatalf("direct paths recorded %d production confirmations, want exactly one", count)
+	}
+}
+
+func TestBroadcastProductionIPCRejectsStaleIdentityAfterRetag(t *testing.T) {
+	fixture := newBroadcastGateFixture(t)
+	tabIDs := []string{fixture.production.tabID, fixture.staging.tabID}
+	const input = "deploy --retag-sensitive\n"
+	detail := requireBroadcastConfirmation(t, fixture.prepare(tabIDs, input))
+	confirmation := &broadcastProductionConfirmation{
+		Confirmed: true, TargetSetHash: detail.TargetSetHash, InputHash: detail.InputHash,
+		EnvironmentNames: detail.RequiredEnvironmentNames,
+	}
+
+	// Re-tagging the asset changes its resolved identity: the old confirmation no
+	// longer binds the current target set and must be rejected as stale.
+	stagingTags := "env:staging"
+	if _, err := fixture.database.AssetUpdate(fixture.ctx, fixture.production.assetID, store.AssetPatch{Tags: &stagingTags}); err != nil {
+		t.Fatal(err)
+	}
+	stale := fixture.write(fixture.production.tabID, input, &terminalBroadcastWriteOptions{
+		TargetTabIDs: tabIDs, ProductionConfirmation: confirmation,
+	})
+	if stale.OK || stale.Error == nil || stale.Error.Code != ipc.Code("conflict") {
+		t.Fatalf("stale confirmation response = %+v, want conflict", stale)
+	}
+	if got := fixture.connector.transport(fixture.production.assetID).firstChannel().written(); got != "" {
+		t.Fatalf("stale confirmation survived an identity change: %q", got)
+	}
+	requireBroadcastOK(t, fixture.prepare(tabIDs, input))
+
+	// Re-tagging back to production challenges again; the target-set hash is
+	// deterministic over the resolved identity, so it matches the original
+	// challenge and the freshly obtained challenge confirms cleanly.
+	productionTags := "env:production"
+	if _, err := fixture.database.AssetUpdate(fixture.ctx, fixture.production.assetID, store.AssetPatch{Tags: &productionTags}); err != nil {
+		t.Fatal(err)
+	}
+	rechallenge := requireBroadcastConfirmation(t, fixture.prepare(tabIDs, input))
+	if rechallenge.TargetSetHash != detail.TargetSetHash {
+		t.Fatal("restored identity produced a different target-set hash")
+	}
+	requireBroadcastOK(t, fixture.write(fixture.production.tabID, input, &terminalBroadcastWriteOptions{
+		TargetTabIDs: tabIDs,
+		ProductionConfirmation: &broadcastProductionConfirmation{
+			Confirmed: true, TargetSetHash: rechallenge.TargetSetHash, InputHash: rechallenge.InputHash,
+			EnvironmentNames: rechallenge.RequiredEnvironmentNames,
+		},
+	}))
+	if got := fixture.connector.transport(fixture.production.assetID).firstChannel().written(); got != input {
+		t.Fatalf("reconfirmed channel input = %q, want %q", got, input)
+	}
+}
+
+func TestBroadcastProductionIPCHonorsConfiguredProductionEnvironments(t *testing.T) {
+	fixture := newBroadcastGateFixture(t)
+	if err := guard.SetProductionEnvironments(fixture.ctx, fixture.database, []string{"live"}); err != nil {
+		t.Fatal(err)
+	}
+	live := fixture.openTarget(t, "Live API", "api.live.example", "env:live")
+	tabIDs := []string{live.tabID, fixture.staging.tabID}
+	const input = "deploy --live\n"
+	detail := requireBroadcastConfirmation(t, fixture.prepare(tabIDs, input))
+	if len(detail.ProductionTargets) != 1 || detail.ProductionTargets[0].Hostname != "api.live.example" {
+		t.Fatalf("production targets = %+v", detail.ProductionTargets)
+	}
+	if len(detail.RequiredEnvironmentNames) != 1 || detail.RequiredEnvironmentNames[0] != "live" {
+		t.Fatalf("required environment names = %v", detail.RequiredEnvironmentNames)
+	}
+	requireBroadcastConfirmation(t, fixture.write(live.tabID, input, &terminalBroadcastWriteOptions{
+		TargetTabIDs: tabIDs,
+		ProductionConfirmation: &broadcastProductionConfirmation{
+			Confirmed: true, TargetSetHash: detail.TargetSetHash, InputHash: detail.InputHash,
+			EnvironmentNames: []string{"production"},
+		},
+	}))
+	requireBroadcastOK(t, fixture.write(live.tabID, input, &terminalBroadcastWriteOptions{
+		TargetTabIDs: tabIDs,
+		ProductionConfirmation: &broadcastProductionConfirmation{
+			Confirmed: true, TargetSetHash: detail.TargetSetHash, InputHash: detail.InputHash,
+			EnvironmentNames: []string{"live"},
+		},
+	}))
+	if got := fixture.connector.transport(live.assetID).firstChannel().written(); got != input {
+		t.Fatalf("confirmed live channel input = %q, want %q", got, input)
+	}
+
+	// Built-in production names stay guarded regardless of the configuration.
+	productionDetail := requireBroadcastConfirmation(t, fixture.prepare([]string{fixture.production.tabID, live.tabID}, input))
+	if len(productionDetail.RequiredEnvironmentNames) != 2 ||
+		productionDetail.RequiredEnvironmentNames[0] != "live" || productionDetail.RequiredEnvironmentNames[1] != "production" {
+		t.Fatalf("combined required environment names = %v", productionDetail.RequiredEnvironmentNames)
 	}
 }

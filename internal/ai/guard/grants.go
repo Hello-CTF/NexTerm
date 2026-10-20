@@ -27,11 +27,15 @@ type GrantKind string
 const (
 	GrantKindTerminalWrite GrantKind = "terminal_write"
 	GrantKindSessionExec   GrantKind = "session_exec"
+	GrantKindDBQuery       GrantKind = "db_query"
 )
 
+// DeviceGrant is a long-term device authorization. Permanent is explicit in the
+// persisted record: records written before the field existed are permanent.
 type DeviceGrant struct {
 	DeviceID  string      `json:"deviceId"`
 	Kinds     []GrantKind `json:"kinds"`
+	Permanent bool        `json:"permanent"`
 	UpdatedAt int64       `json:"updatedAt"`
 }
 
@@ -44,9 +48,9 @@ func ParseGrantKinds(values []string) ([]GrantKind, error) {
 	for _, value := range values {
 		kind := GrantKind(strings.TrimSpace(value))
 		switch kind {
-		case GrantKindTerminalWrite, GrantKindSessionExec:
+		case GrantKindTerminalWrite, GrantKindSessionExec, GrantKindDBQuery:
 		default:
-			return nil, errors.New("设备授权种类仅支持 terminal_write/session_exec")
+			return nil, errors.New("设备授权种类仅支持 terminal_write/session_exec/db_query")
 		}
 		if _, ok := seen[kind]; ok {
 			continue
@@ -75,6 +79,8 @@ func OperationGrantKind(operation string) GrantKind {
 		return GrantKindTerminalWrite
 	case "exec_commands", "terminal_create":
 		return GrantKindSessionExec
+	case "db_list_tables", "db_describe", "db_query", "db_redis_scan":
+		return GrantKindDBQuery
 	default:
 		return ""
 	}
@@ -105,6 +111,7 @@ type Grants struct {
 	shared            bool
 	targetValidator   TargetValidator
 	mutationValidator MutationValidator
+	conns             *connAssetRegistry
 
 	mu     sync.RWMutex
 	states map[string]*grantState
@@ -117,7 +124,9 @@ func NewGrants(ctx context.Context, settings Settings, audit GrantAuditor, opts 
 	}
 	manager := &Grants{
 		settings: settings, audit: audit, now: time.Now, newID: ids.New, shared: configuration.shared,
-		targetValidator: configuration.targetValidator, mutationValidator: configuration.mutationValidator, states: map[string]*grantState{},
+		targetValidator: configuration.targetValidator, mutationValidator: configuration.mutationValidator,
+		conns:  newConnAssetRegistry(configuration.shared),
+		states: map[string]*grantState{},
 	}
 	if _, err := owner.ID(ctx, manager.shared); err == nil {
 		if err := manager.Reload(ctx); err != nil {
@@ -134,8 +143,26 @@ func loadGrants(ctx context.Context, settings Settings) (grantState, error) {
 		return grantState{}, err
 	}
 	if found && raw != "" {
-		if err := json.Unmarshal([]byte(raw), &result.grants); err != nil {
+		var records map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(raw), &records); err != nil {
 			return grantState{}, err
+		}
+		for id, item := range records {
+			var grant DeviceGrant
+			if err := json.Unmarshal(item, &grant); err != nil {
+				return grantState{}, err
+			}
+			var marker struct {
+				Permanent *bool `json:"permanent"`
+			}
+			if err := json.Unmarshal(item, &marker); err != nil {
+				return grantState{}, err
+			}
+			if marker.Permanent == nil {
+				// Records written before permanence was explicit are permanent device grants.
+				grant.Permanent = true
+			}
+			result.grants[id] = grant
 		}
 	}
 	raw, found, err = settings.SettingGet(ctx, GrantRulesSettingKeyForUser(ctx))
@@ -232,7 +259,7 @@ func (g *Grants) Grant(ctx context.Context, deviceID string, kinds []GrantKind) 
 	if err != nil {
 		return DeviceGrant{}, err
 	}
-	grant := DeviceGrant{DeviceID: deviceID, Kinds: normalized, UpdatedAt: g.now().UnixMilli()}
+	grant := DeviceGrant{DeviceID: deviceID, Kinds: normalized, Permanent: true, UpdatedAt: g.now().UnixMilli()}
 	g.mu.Lock()
 	entry, err := g.stateForLocked(ctx, ownerID)
 	if err != nil {

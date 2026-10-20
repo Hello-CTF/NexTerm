@@ -23,6 +23,18 @@ func GrantRulesSettingKeyForUser(ctx context.Context) string {
 type Resource struct {
 	Action string `json:"action"`
 	Path   string `json:"path,omitempty"`
+	// Environment is the resolved environment name of the target asset.
+	Environment string `json:"environment,omitempty"`
+	// Production marks the target as production under the owner's configured
+	// production environment list; callers that resolve custom names set it
+	// explicitly, while built-in names are always recognized.
+	Production bool `json:"production,omitempty"`
+}
+
+// ProductionTarget reports whether the resource targets a production environment,
+// either explicitly resolved by the caller or via the built-in production names.
+func (r Resource) ProductionTarget() bool {
+	return r.Production || IsBuiltInProductionEnvironment(r.Environment)
 }
 
 // GrantRule is a persistent fine-grained allow rule: a limited scope for an action on a device.

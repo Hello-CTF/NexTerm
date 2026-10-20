@@ -22,6 +22,7 @@ const (
 )
 
 var errBroadcastConfirmationRequired = errors.New("broadcast production confirmation required")
+var errBroadcastStaleProductionConfirmation = errors.New("broadcast production confirmation is stale")
 
 type terminalBroadcastPrepareRequest struct {
 	TabIDs                 []string                         `json:"tabIds"`
@@ -33,6 +34,9 @@ type broadcastProductionConfirmation struct {
 	Confirmed     bool   `json:"confirmed"`
 	TargetSetHash string `json:"targetSetHash"`
 	InputHash     string `json:"inputHash"`
+	// EnvironmentNames are the actual environment names the user typed back;
+	// every required production environment name must be present.
+	EnvironmentNames []string `json:"environmentNames,omitempty"`
 }
 
 type terminalBroadcastWriteOptions struct {
@@ -50,16 +54,18 @@ type broadcastConfirmationTarget struct {
 }
 
 type broadcastConfirmationRequiredDetail struct {
-	Kind              string                        `json:"kind"`
-	TargetSetHash     string                        `json:"targetSetHash"`
-	InputHash         string                        `json:"inputHash"`
-	ProductionTargets []broadcastConfirmationTarget `json:"productionTargets"`
+	Kind                     string                        `json:"kind"`
+	TargetSetHash            string                        `json:"targetSetHash"`
+	InputHash                string                        `json:"inputHash"`
+	RequiredEnvironmentNames []string                      `json:"requiredEnvironmentNames"`
+	ProductionTargets        []broadcastConfirmationTarget `json:"productionTargets"`
 }
 
 type broadcastConfirmationRequiredError struct {
-	targetSetHash     string
-	inputHash         string
-	productionTargets []broadcastConfirmationTarget
+	targetSetHash            string
+	inputHash                string
+	requiredEnvironmentNames []string
+	productionTargets        []broadcastConfirmationTarget
 }
 
 func (e *broadcastConfirmationRequiredError) Error() string {
@@ -73,14 +79,16 @@ func (e *broadcastConfirmationRequiredError) Unwrap() error {
 func (e *broadcastConfirmationRequiredError) ipcDetail() broadcastConfirmationRequiredDetail {
 	return broadcastConfirmationRequiredDetail{
 		Kind: broadcastConfirmationRequiredKind, TargetSetHash: e.targetSetHash, InputHash: e.inputHash,
-		ProductionTargets: append([]broadcastConfirmationTarget(nil), e.productionTargets...),
+		RequiredEnvironmentNames: append([]string(nil), e.requiredEnvironmentNames...),
+		ProductionTargets:        append([]broadcastConfirmationTarget(nil), e.productionTargets...),
 	}
 }
 
 type broadcastProductionChallenge struct {
-	targetSetHash     string
-	inputHash         string
-	productionTargets []broadcastConfirmationTarget
+	targetSetHash            string
+	inputHash                string
+	requiredEnvironmentNames []string
+	productionTargets        []broadcastConfirmationTarget
 }
 
 type broadcastConfirmationAuditPayload struct {
@@ -88,6 +96,7 @@ type broadcastConfirmationAuditPayload struct {
 	TargetTabID       string                        `json:"targetTabId"`
 	TargetSetHash     string                        `json:"targetSetHash"`
 	InputHash         string                        `json:"inputHash"`
+	EnvironmentNames  []string                      `json:"environmentNames"`
 	ConfirmedAt       int64                         `json:"confirmedAt"`
 	ProductionTargets []broadcastConfirmationTarget `json:"productionTargets"`
 }
@@ -169,15 +178,21 @@ func (s *terminalCommandService) resolveBroadcastTargets(ctx context.Context, ta
 	return targets, nil
 }
 
-func newBroadcastProductionChallenge(targets []broadcastConfirmationTarget, data []byte) *broadcastProductionChallenge {
+func newBroadcastProductionChallenge(targets []broadcastConfirmationTarget, data []byte, isProduction productionEnvironmentClassifier) (*broadcastProductionChallenge, error) {
 	productionTargets := make([]broadcastConfirmationTarget, 0)
+	productionEnvironments := make([]string, 0, len(targets))
 	for _, target := range targets {
-		if target.Environment == "production" {
+		production, err := isProduction(target.Environment)
+		if err != nil {
+			return nil, err
+		}
+		if production {
 			productionTargets = append(productionTargets, target)
+			productionEnvironments = append(productionEnvironments, target.Environment)
 		}
 	}
 	if len(productionTargets) == 0 {
-		return nil
+		return nil, nil
 	}
 	allTargets := append([]broadcastConfirmationTarget(nil), targets...)
 	sort.Slice(allTargets, func(i, j int) bool {
@@ -192,21 +207,27 @@ func newBroadcastProductionChallenge(targets []broadcastConfirmationTarget, data
 	}{Targets: allTargets})
 	return &broadcastProductionChallenge{
 		targetSetHash: broadcastDigest("target-set-v2", canonical), inputHash: broadcastDigest("input-v1", data),
-		productionTargets: productionTargets,
-	}
+		requiredEnvironmentNames: productionEnvironmentNames(productionEnvironments),
+		productionTargets:        productionTargets,
+	}, nil
 }
 
 func validateBroadcastProductionConfirmation(confirmation *broadcastProductionConfirmation, challenge *broadcastProductionChallenge) error {
 	if challenge == nil {
+		if confirmation != nil {
+			return fmt.Errorf("%w: current target set has no production challenge; preflight again without the old confirmation", errBroadcastStaleProductionConfirmation)
+		}
 		return nil
 	}
 	if confirmation != nil && confirmation.Confirmed &&
-		confirmation.TargetSetHash == challenge.targetSetHash && confirmation.InputHash == challenge.inputHash {
+		confirmation.TargetSetHash == challenge.targetSetHash && confirmation.InputHash == challenge.inputHash &&
+		environmentNamesMatch(confirmation.EnvironmentNames, challenge.requiredEnvironmentNames) {
 		return nil
 	}
 	return &broadcastConfirmationRequiredError{
 		targetSetHash: challenge.targetSetHash, inputHash: challenge.inputHash,
-		productionTargets: append([]broadcastConfirmationTarget(nil), challenge.productionTargets...),
+		requiredEnvironmentNames: append([]string(nil), challenge.requiredEnvironmentNames...),
+		productionTargets:        append([]broadcastConfirmationTarget(nil), challenge.productionTargets...),
 	}
 }
 
@@ -218,7 +239,11 @@ func (s *terminalCommandService) prepareBroadcast(ctx context.Context, tabIDs []
 	if err != nil {
 		return err
 	}
-	return validateBroadcastProductionConfirmation(confirmation, newBroadcastProductionChallenge(targets, data))
+	challenge, err := newBroadcastProductionChallenge(targets, data, s.classifyProductionEnvironments(ctx))
+	if err != nil {
+		return err
+	}
+	return validateBroadcastProductionConfirmation(confirmation, challenge)
 }
 
 func (s *terminalCommandService) authorizeBroadcastWrite(ctx context.Context, tabID string, data []byte, options *terminalBroadcastWriteOptions) error {
@@ -232,14 +257,14 @@ func (s *terminalCommandService) authorizeBroadcastWrite(ctx context.Context, ta
 	if err != nil {
 		return err
 	}
-	if current.Environment != "production" {
-		return nil
-	}
 	targets, err := s.resolveBroadcastTargets(ctx, options.TargetTabIDs)
 	if err != nil {
 		return err
 	}
-	challenge := newBroadcastProductionChallenge(targets, data)
+	challenge, err := newBroadcastProductionChallenge(targets, data, s.classifyProductionEnvironments(ctx))
+	if err != nil {
+		return err
+	}
 	if err := validateBroadcastProductionConfirmation(options.ProductionConfirmation, challenge); err != nil {
 		return err
 	}
@@ -256,7 +281,8 @@ func (s *terminalCommandService) authorizeBroadcastWrite(ctx context.Context, ta
 		Source: "user", Kind: broadcastConfirmationRequiredKind,
 		Payload: broadcastConfirmationAuditPayload{
 			OwnerID: ipc.OwnerID(ctx), TargetTabID: tabID, TargetSetHash: challenge.targetSetHash,
-			InputHash: challenge.inputHash, ConfirmedAt: time.Now().UnixMilli(),
+			InputHash: challenge.inputHash, EnvironmentNames: append([]string(nil), challenge.requiredEnvironmentNames...),
+			ConfirmedAt:       time.Now().UnixMilli(),
 			ProductionTargets: append([]broadcastConfirmationTarget(nil), challenge.productionTargets...),
 		},
 	})
@@ -268,7 +294,10 @@ func broadcastConfirmationIPCError(err error) error {
 	}
 	var confirmation *broadcastConfirmationRequiredError
 	if errors.As(err, &confirmation) {
-		return ipc.WrapError(ipc.CodeNeedsConfirm, "生产环境广播需要显式确认", err).WithDetail(confirmation.ipcDetail())
+		return ipc.WrapError(ipc.CodeNeedsConfirm, "生产环境广播需要输入实际环境名确认", err).WithDetail(confirmation.ipcDetail())
+	}
+	if errors.Is(err, errBroadcastStaleProductionConfirmation) {
+		return ipc.WrapError(ipc.Code("conflict"), "生产确认已 stale，请重新 preflight：目标或环境已变化，请移除旧确认后重试", err)
 	}
 	return terminalIPCError(err)
 }
