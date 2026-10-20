@@ -30,7 +30,8 @@ import {
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
-import { takePendingDirectory, sessionStatusText, connectProgressText, applyRemoteTabTitle, reconnectWorkspaceSession, reconnectDeadHost, isSessionReconnectPending, requestCloseTab, useUi, type BroadcastState, type Workspace } from "../../app/store";
+import { takePendingDirectory, sessionStatusText, connectProgressText, reconnectWorkspaceSession, reconnectDeadHost, isSessionReconnectPending, requestCloseTab, useUi, type BroadcastState, type Workspace } from "../../app/store";
+import { applyRemoteTabTitleToView, resetTerminalView } from "../../app/terminalViewStore";
 import { directoryCommandFor } from "../files/pathUtils";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
 import { modHint } from "../../app/platform";
@@ -148,6 +149,9 @@ function applyBackendTabTitle(storeTabId: string, title: string): void {
       if (tab.title !== title || tab.renamedByUser !== true) {
         st.updateTab(storeTabId, { title, renamedByUser: true });
       }
+      // The custom title rules the tab strip: drop any OSC-derived view title so
+      // precise-selector chrome falls back to the authoritative tab title.
+      resetTerminalView(storeTabId);
       return;
     }
   }
@@ -442,7 +446,7 @@ export function TerminalPane({
   ).current;
   const handleOscTitle = useCallback(
     (t: string) => {
-      applyRemoteTabTitle(storeTabId, t);
+      applyRemoteTabTitleToView(storeTabId, t);
     },
     [storeTabId],
   );
@@ -831,6 +835,11 @@ export function TerminalPane({
       }),
     [refreshControl],
   );
+
+  // The per-tab view state (OSC title) lives in the root view store: drop this tab's
+  // entry on unmount so a closed tab or an account switch never leaves a stale title
+  // for precise-selector chrome.
+  useEffect(() => () => resetTerminalView(storeTabId), [storeTabId]);
 
   useEffect(() => {
     if (throttle?.recoveredAt == null) return;

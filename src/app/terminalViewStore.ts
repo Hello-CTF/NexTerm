@@ -1,8 +1,12 @@
 import { create } from "zustand";
+import { applyRemoteTabTitle, sanitizeRemoteTabTitle } from "./store";
 
 // Per-terminal view state that changes at output frequency (scrollback position, remote title).
 // Components subscribe through the narrow selectors below so a burst on one tab re-renders only
 // that tab's chrome; unchanged values are no-ops and never trigger a render.
+// linesBelow is keyed by the kernel tab id (the terminal's own identity), titles by the
+// workspace storeTabId (the id applyRemoteTabTitle and the tab strip know); the two key
+// spaces are disjoint, so a per-tab reset never clears the other kind's live entry.
 interface TerminalViewState {
   linesBelow: Record<string, number>;
   titles: Record<string, string>;
@@ -56,4 +60,14 @@ export function resetTerminalView(tabId?: string): void {
     delete titles[tabId];
     return { linesBelow, titles };
   });
+}
+
+// The OSC title path writes through the authoritative workspace-store application first:
+// only a title the workspace store actually accepted (tab exists, not user-renamed,
+// non-empty after sanitizing, changed) lands in the per-tab view state, so custom-title
+// precedence holds for every precise-selector consumer.
+export function applyRemoteTabTitleToView(tabId: string, rawTitle: string): boolean {
+  if (!applyRemoteTabTitle(tabId, rawTitle)) return false;
+  setTerminalTabTitle(tabId, sanitizeRemoteTabTitle(rawTitle));
+  return true;
 }

@@ -194,7 +194,8 @@ vi.mock("../app/preferences", () => ({
 }));
 vi.mock("../ui/clipboard", () => ({ copyText: vi.fn().mockResolvedValue(undefined) }));
 
-import { XtermView } from "../features/terminal/XtermView";
+import { XtermView, type XtermViewProps } from "../features/terminal/XtermView";
+import { getTerminalLinesBelow, resetTerminalView } from "../app/terminalViewStore";
 
 const enc = new TextEncoder();
 
@@ -221,7 +222,17 @@ function buttonText(): string {
     .join(" ");
 }
 
-async function show(props: Record<string, unknown> = {}) {
+// Counts every render of the XtermView element driven from above: with the view state
+// in the root store the component has no own subscriptions, so this stays flat across
+// output bursts — only the badge's precise selector re-renders.
+const xtermViewRenders = new Map<string, number>();
+
+function CountingXtermView(props: XtermViewProps) {
+  xtermViewRenders.set(props.tabId, (xtermViewRenders.get(props.tabId) ?? 0) + 1);
+  return createElement(XtermView, props);
+}
+
+function stubFrames() {
   frames = new Map();
   frameId = 0;
   vi.stubGlobal("requestAnimationFrame", (callback: () => void) => {
@@ -234,12 +245,16 @@ async function show(props: Record<string, unknown> = {}) {
     observe() {}
     disconnect() {}
   });
+}
+
+async function show(props: Record<string, unknown> = {}) {
+  stubFrames();
   commits = 0;
   mounted = mount(
     createElement(
       Profiler,
       { id: "xterm-view", onRender: () => { commits += 1; } },
-      createElement(XtermView, { sessionId: "session-1", tabId: "tab-1", ...props }),
+      createElement(CountingXtermView, { sessionId: "session-1", tabId: "tab-1", ...props }),
     ),
   );
   await act(async () => {
@@ -268,6 +283,8 @@ function feedControl(control: Record<string, unknown>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  xtermViewRenders.clear();
+  act(() => resetTerminalView());
   harness.terminals.length = 0;
   harness.channel = null;
   harness.reopenCb = null;
@@ -934,7 +951,7 @@ describe("XtermView stream wiring", () => {
           createElement(
             Profiler,
             { id: "xterm-view", onRender: () => { commits += 1; } },
-            createElement(XtermView, { sessionId: "session-1", tabId: "tab-1", ...props }),
+            createElement(CountingXtermView, { sessionId: "session-1", tabId: "tab-1", ...props }),
           ),
         );
         await flushMacrotask();
@@ -2824,6 +2841,7 @@ describe("XtermView render coalescing (T-09 component portion)", () => {
     const t = term();
     t.buffer.active.baseY = 100;
     const before = commits;
+    const rendersBefore = xtermViewRenders.get("tab-1") ?? 0;
     for (const y of [10, 20, 30, 40, 50]) {
       t.buffer.active.viewportY = y;
       act(() => t.handlers.scroll?.());
@@ -2832,6 +2850,30 @@ describe("XtermView render coalescing (T-09 component portion)", () => {
     act(() => runFrames());
     expect(commits).toBe(before + 1);
     expect(buttonText()).toContain("50 行");
+    // The coalesced value lands in the root view store, and the burst re-renders
+    // only the badge's precise selector — never the XtermView element above it.
+    expect(getTerminalLinesBelow("tab-1")).toBe(50);
+    expect(xtermViewRenders.get("tab-1")).toBe(rendersBefore);
+  });
+
+  it("writes nothing and re-renders nothing for frames where linesBelow is unchanged", async () => {
+    await show();
+    await attachOk();
+    const t = term();
+    t.buffer.active.baseY = 100;
+    t.buffer.active.viewportY = 10;
+    act(() => t.handlers.scroll?.());
+    act(() => runFrames());
+    expect(getTerminalLinesBelow("tab-1")).toBe(90);
+    const before = commits;
+    const rendersBefore = xtermViewRenders.get("tab-1") ?? 0;
+    act(() => t.handlers.scroll?.());
+    act(() => runFrames());
+    act(() => t.handlers.scroll?.());
+    act(() => runFrames());
+    expect(commits).toBe(before);
+    expect(getTerminalLinesBelow("tab-1")).toBe(90);
+    expect(xtermViewRenders.get("tab-1")).toBe(rendersBefore);
   });
 
   it("coalesces title changes to the latest one per frame and skips duplicates", async () => {
@@ -2876,5 +2918,111 @@ describe("XtermView render coalescing (T-09 component portion)", () => {
     act(() => runFrames());
     expect(commits).toBe(before + 1);
     expect(buttonText()).toContain("42 行");
+    expect(getTerminalLinesBelow("tab-1")).toBe(42);
+  });
+
+  it("unmount clears the view-store entry and late scroll/title signals never write stale values", async () => {
+    const onTitle = vi.fn();
+    await show({ onTitle });
+    await attachOk();
+    const t = term();
+    t.buffer.active.baseY = 100;
+    t.buffer.active.viewportY = 10;
+    act(() => t.handlers.scroll?.());
+    act(() => runFrames());
+    expect(getTerminalLinesBelow("tab-1")).toBe(90);
+    mounted?.unmount();
+    mounted = undefined;
+    expect(getTerminalLinesBelow("tab-1")).toBe(0);
+    // The fake terminal's disposables are no-ops, so its handlers still fire after
+    // unmount: without the disposal guard these would schedule a flush and write
+    // the stale value (and a stale title) back into the store for a dead tab.
+    act(() => {
+      t.handlers.scroll?.();
+      t.handlers.title?.("late title");
+    });
+    act(() => runFrames());
+    expect(getTerminalLinesBelow("tab-1")).toBe(0);
+    expect(onTitle).not.toHaveBeenCalled();
+  });
+
+  it("a scroll burst on one tab re-renders only that tab's badge", async () => {
+    stubFrames();
+    let commitsA = 0;
+    let commitsB = 0;
+    mounted = mount(
+      createElement(
+        "div",
+        null,
+        createElement(
+          Profiler,
+          { id: "view-a", onRender: () => { commitsA += 1; } },
+          createElement(CountingXtermView, { sessionId: "session-1", tabId: "tab-1" }),
+        ),
+        createElement(
+          Profiler,
+          { id: "view-b", onRender: () => { commitsB += 1; } },
+          createElement(CountingXtermView, { sessionId: "session-2", tabId: "tab-2" }),
+        ),
+      ),
+    );
+    await act(async () => {
+      await flushMacrotask();
+      await flushMacrotask();
+    });
+    expect(harness.terminals).toHaveLength(2);
+    const t = harness.terminals[1] as FakeTerminal;
+    t.buffer.active.baseY = 100;
+    const beforeA = commitsA;
+    const beforeB = commitsB;
+    const rendersBefore = xtermViewRenders.get("tab-1") ?? 0;
+    for (const y of [10, 20, 30]) {
+      t.buffer.active.viewportY = y;
+      act(() => t.handlers.scroll?.());
+    }
+    act(() => runFrames());
+    expect(commitsB).toBe(beforeB + 1);
+    expect(commitsA).toBe(beforeA);
+    expect(getTerminalLinesBelow("tab-2")).toBe(70);
+    expect(getTerminalLinesBelow("tab-1")).toBe(0);
+    expect(xtermViewRenders.get("tab-1")).toBe(rendersBefore);
+  });
+
+  it("realistic burst: 600 scroll events, cycling OSC titles, and streaming output coalesce to one commit per frame", async () => {
+    const onTitle = vi.fn();
+    await show({ onTitle });
+    await attachOk();
+    const t = term();
+    // A 100k-line scrollback with the viewport scrolled far up while output
+    // keeps arriving — the exact shape the per-tab view store exists for.
+    t.buffer.active.baseY = 100_000;
+    const before = commits;
+    const rendersBefore = xtermViewRenders.get("tab-1") ?? 0;
+    for (let frame = 0; frame < 60; frame += 1) {
+      for (let e = 0; e < 10; e += 1) {
+        t.buffer.active.viewportY = 50_000 - frame * 100 - e;
+        act(() => t.handlers.scroll?.());
+      }
+      // The cwd title holds steady for 10-frame runs: repeated identical OSC
+      // titles must be deduped, not delivered once per frame.
+      const title = `user@host: ~/projects/app${Math.floor(frame / 10)}`;
+      act(() => {
+        t.handlers.title?.(title);
+        t.handlers.title?.(title);
+      });
+      feedBytes(`output line ${frame}\r\n`);
+      act(() => t.drainWrites());
+      act(() => runFrames());
+    }
+    // Every frame carried a real value change, so each produced exactly one
+    // badge commit — never one per scroll event, title, or write completion.
+    expect(commits).toBe(before + 60);
+    expect(buttonText()).toContain("55909 行");
+    expect(getTerminalLinesBelow("tab-1")).toBe(55_909);
+    expect(xtermViewRenders.get("tab-1")).toBe(rendersBefore);
+    // Only the 6 distinct cwd titles were delivered; the repeated ones were
+    // deduped on top of the per-frame coalescing.
+    expect(onTitle).toHaveBeenCalledTimes(6);
+    expect(onTitle).toHaveBeenLastCalledWith("user@host: ~/projects/app5");
   });
 });

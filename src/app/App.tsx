@@ -65,6 +65,7 @@ import {
 import { wireAccountSwitchCleanup } from "./accountSwitch";
 import { startUnreadTracking } from "./unread";
 import { useTabUnread } from "./unreadStore";
+import { resetTerminalView, useTerminalTabTitle } from "./terminalViewStore";
 import { useEdgeGestures } from "./edgeGestures";
 import {
   formatBinding,
@@ -259,6 +260,16 @@ function TabStripItem({
 }) {
   const unread = useTabUnread(tab.id);
   return children(unread);
+}
+
+// A terminal tab's label prefers the OSC-derived remote title from the per-tab view
+// store (narrow subscription: only this tab's label re-renders on a title change);
+// renames clear that entry, so the authoritative workspace tab title shows instead.
+function TabStripTitle({ tab }: { tab: AppTab }) {
+  const remoteTitle = useTerminalTabTitle(tab.id);
+  return (
+    <span className="truncate">{tab.kind === "terminal" && remoteTitle ? remoteTitle : tab.title}</span>
+  );
 }
 
 function handleTablistKeyDown(
@@ -2015,11 +2026,13 @@ function PaneGroup({
       const tabId = pane.tabs.find((t) => t.id === id)?.tabId;
       if (!tabId) {
         updateTab(id, { title: trimmed, renamedByUser: true });
+        resetTerminalView(id);
         return;
       }
       try {
         const info = await terminalApi.renameTab(tabId, trimmed);
         updateTab(id, { title: info.title || trimmed, renamedByUser: true });
+        resetTerminalView(id);
         return;
       } catch (error) {
         draft = trimmed;
@@ -2191,7 +2204,7 @@ function PaneGroup({
                 title={tabTooltip(t, unread)}
               >
                 <Icon size={13} />
-                <span className="truncate">{t.title}</span>
+                <TabStripTitle tab={t} />
                 {t.closeError && (
                   <span className="flex shrink-0 items-center text-red-400" role="img" aria-label={`关闭失败：${t.closeError}`}>
                     <IconAlert size={11} />

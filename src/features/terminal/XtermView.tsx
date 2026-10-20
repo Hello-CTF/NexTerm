@@ -15,6 +15,11 @@ import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
 import { matchAppKeybinding } from "../../app/keybindings";
 import { useUi } from "../../app/store";
 import {
+  resetTerminalView,
+  setTerminalLinesBelow,
+  useTerminalLinesBelow,
+} from "../../app/terminalViewStore";
+import {
   getAppearancePrefs,
   getInputPrefs,
   getResolvedTerminalTheme,
@@ -101,6 +106,23 @@ export interface XtermViewProps {
   onRequestPaste?: () => void;
 }
 
+// The scrollback badge subscribes to the per-tab view store with the narrow selector:
+// a scroll burst on this tab re-renders only the badge, never the XtermView body above it.
+function LinesBelowBadge({ tabId, onJump }: { tabId: string; onJump: () => void }) {
+  const linesBelow = useTerminalLinesBelow(tabId);
+  if (linesBelow <= 0) return null;
+  return (
+    <button
+      type="button"
+      className="nx-btn nx-btn-sm absolute bottom-1.5 right-3 z-10 border border-neutral-700/80 bg-neutral-800/95 text-neutral-100 shadow-lg"
+      onClick={onJump}
+    >
+      <IconArrowDown size={12} />
+      回到底部 · {linesBelow} 行
+    </button>
+  );
+}
+
 export function XtermView(props: XtermViewProps) {
   const { sessionId, containerId, resumeTabId } = props;
   const hostRef = useRef<HTMLDivElement>(null);
@@ -108,7 +130,8 @@ export function XtermView(props: XtermViewProps) {
   const gridRef = useRef<TerminalGridCoordinator | null>(null);
   const onGeometryRef = useRef<(() => void) | null>(null);
   const kernelTabIdRef = useRef<string>("");
-  const [linesBelow, setLinesBelow] = useState(0);
+  const tabIdRef = useRef(props.tabId);
+  tabIdRef.current = props.tabId;
   const [selectionBar, setSelectionBar] = useState<{ x: number; y: number } | null>(null);
   const reattachRef = useRef<(() => void) | null>(null);
   const previousSessionConnected = useRef(props.sessionConnected === true);
@@ -234,15 +257,20 @@ export function XtermView(props: XtermViewProps) {
     const updateLinesBelow = () => {
       const buffer = term.buffer.active;
       const below = Math.max(0, buffer.baseY - buffer.viewportY);
-      setLinesBelow((prev) => (prev === below ? prev : below));
+      // The root view store dedups unchanged values: only a real change notifies
+      // the badge's precise selector.
+      setTerminalLinesBelow(tabIdRef.current, below);
     };
     // Scroll and write-completion signals are high-frequency: they only mark
-    // the UI dirty, and the buffer read plus state update runs once per
-    // animation frame with the latest value.
+    // the UI dirty, and the buffer read plus store update runs once per
+    // animation frame with the latest value. After disposal nothing may write
+    // again: a late write-callback scheduling a flush must stay a no-op so no
+    // stale value lands in the store for a dead tab.
     let uiFrame: number | null = null;
     let pendingTitle: string | null = null;
     let lastSentTitle: string | null = null;
     const flushUiUpdates = () => {
+      if (disposed) return;
       updateLinesBelow();
       if (pendingTitle !== null && pendingTitle !== lastSentTitle) {
         lastSentTitle = pendingTitle;
@@ -251,7 +279,7 @@ export function XtermView(props: XtermViewProps) {
       pendingTitle = null;
     };
     const scheduleUiFlush = () => {
-      if (uiFrame !== null) return;
+      if (disposed || uiFrame !== null) return;
       uiFrame = requestAnimationFrame(() => {
         uiFrame = null;
         flushUiUpdates();
@@ -1190,6 +1218,11 @@ export function XtermView(props: XtermViewProps) {
     if (!wasConnected && connected) reattachRef.current?.();
   }, [props.sessionConnected]);
 
+  // The scrollback badge lives in the root view store: drop this tab's entry when the
+  // view unmounts or the kernel tab id changes, so a closed tab (and the pre-attach
+  // "pending" key) never leaks a stale value into the next mount.
+  useEffect(() => () => resetTerminalView(props.tabId), [props.tabId]);
+
   useEffect(() => {
     const applyAppearance = () => {
       const term = termRef.current;
@@ -1246,6 +1279,8 @@ export function XtermView(props: XtermViewProps) {
     term?.focus();
   };
 
+  const scrollToBottom = () => termRef.current?.scrollToBottom();
+
   return (
     <div className="relative h-full w-full min-h-0">
       <div ref={hostRef} className="h-full w-full min-h-0" />
@@ -1258,16 +1293,7 @@ export function XtermView(props: XtermViewProps) {
           onSelectAll={() => termRef.current?.selectAll()}
         />
       )}
-      {linesBelow > 0 && (
-        <button
-          type="button"
-          className="nx-btn nx-btn-sm absolute bottom-1.5 right-3 z-10 border border-neutral-700/80 bg-neutral-800/95 text-neutral-100 shadow-lg"
-          onClick={() => termRef.current?.scrollToBottom()}
-        >
-          <IconArrowDown size={12} />
-          回到底部 · {linesBelow} 行
-        </button>
-      )}
+      <LinesBelowBadge tabId={props.tabId} onJump={scrollToBottom} />
     </div>
   );
 }
