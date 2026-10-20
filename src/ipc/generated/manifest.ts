@@ -176,6 +176,31 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "ai_skills_delete_override": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
+    "ai_skills_dispatch": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
+    "ai_skills_list": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
+    "ai_skills_material": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
+    "ai_skills_save_override": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
     "ai_steer": {
       nested: false,
       channel: false,
@@ -1664,6 +1689,11 @@ export const ipcContractManifest = {
     "ai_run_list",
     "ai_set_permission",
     "ai_set_provider",
+    "ai_skills_delete_override",
+    "ai_skills_dispatch",
+    "ai_skills_list",
+    "ai_skills_material",
+    "ai_skills_save_override",
     "ai_steer",
     "ai_takeover_cancel",
     "ai_takeover_confirm",

@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const legacyCommandLimit = 265
+const legacyCommandLimit = 270
 
 type generation struct {
 	commands []commandContract
