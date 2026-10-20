@@ -150,9 +150,12 @@ Download the latest version from [Releases](https://github.com/Hello-CTF/NexTerm
 | macOS (Apple Silicon / Intel) | `NexTerm_x.y.z_<arch>.dmg` | Drag into Applications. |
 | Linux desktop (amd64 / arm64) | `NexTerm-desktop_x.y.z_linux_<arch>.deb` | `apt install ./<package>.deb` |
 | Linux server | `NexTerm-server_x.y.z_linux_<arch>.tar.gz` | See [Server and Device Enrollment](#server-and-device-enrollment). |
-| Android | `NexTerm_x.y.z_android.apk` | Install directly on arm64 devices. |
-| iOS / iPadOS | TestFlight | Install with a NexTerm TestFlight invitation; releases do not provide an IPA asset. |
+| Android (preview) | `NexTerm_x.y.z_android.apk` | Preview: install directly on arm64 devices. |
+| iOS / iPadOS (preview) | TestFlight | Preview: install with a NexTerm TestFlight invitation; releases do not provide an IPA asset. |
 | Lazycat | App center | Install NexTerm from the app center. |
+
+> [!NOTE]
+> Mobile platforms (Android / iOS / iPadOS) are currently in preview and are not a formally supported platform until real-device signing acceptance completes.
 
 > [!TIP]
 > If macOS says it cannot verify the developer on first launch, click "Open Anyway" under System Settings → Privacy & Security. If it says the app is damaged, run `xattr -dr com.apple.quarantine /Applications/NexTerm.app`.

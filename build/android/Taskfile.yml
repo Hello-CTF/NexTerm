@@ -5,9 +5,6 @@ includes:
 
 vars:
   APP_ID: '{{.APP_ID | default "work.nexterm.app"}}'
-  NEXTERM_VERSION: '{{.NEXTERM_RELEASE_VERSION | default "0.0.0"}}'
-  NEXTERM_COMMIT:
-    sh: 'commit="$(git rev-parse HEAD 2>/dev/null || echo unknown)"; if [ "$commit" != "unknown" ] && [ -n "$(git status --porcelain 2>/dev/null)" ]; then commit="$commit+dirty"; fi; echo "$commit"'
   MIN_SDK: '21'
   TARGET_SDK: '35'
   # The emulator runs the host architecture; physical devices are arm64
@@ -49,8 +46,6 @@ tasks:
       - task: compile:go:shared
         vars:
           ARCH: '{{.ARCH | default .HOST_ARCH}}'
-    vars:
-      BUILD_FLAGS: '{{if eq .PRODUCTION "true"}}-tags production,android -trimpath -buildvcs=false -ldflags="-s -w -X github.com/Hello-CTF/NexTerm/internal/version.Version={{.NEXTERM_VERSION}} -X github.com/Hello-CTF/NexTerm/internal/version.Commit={{.NEXTERM_COMMIT}}"{{else}}-tags android,debug -buildvcs=false -gcflags=all="-l"{{end}}'
     env:
       PRODUCTION: '{{.PRODUCTION | default "false"}}'
 
@@ -108,7 +103,8 @@ tasks:
         go build -buildmode=c-shared -overlay build/android/overlay.json {{.BUILD_FLAGS}} \
           -o build/android/app/src/main/jniLibs/$JNI_DIR/libwails.so ./cmd/nexterm-desktop
     vars:
-      BUILD_FLAGS: '{{if eq .PRODUCTION "true"}}-tags production,android -trimpath -buildvcs=false -ldflags="-s -w -X github.com/Hello-CTF/NexTerm/internal/version.Version={{.NEXTERM_VERSION}} -X github.com/Hello-CTF/NexTerm/internal/version.Commit={{.NEXTERM_COMMIT}}"{{else}}-tags android,debug -buildvcs=false -gcflags=all="-l"{{end}}'
+      BUILD_FLAGS:
+        sh: 'node scripts/mobile-source.mjs ldflags --platform=android --production={{.PRODUCTION | default "false"}}'
 
   compile:go:all-archs:
     summary: Compile Go code for all Android architectures (fat APK)
@@ -238,11 +234,16 @@ tasks:
     summary: Generate Go build overlay that registers the Android main
     sources:
       - build/config.yml
+      - build/config.stamp.yml
     generates:
       - build/android/overlay.json
       - build/android/gen/main_android.gen.go
     cmds:
-      - wails3 android overlay:gen -out build/android/overlay.json -config build/config.yml
+      # Refresh the ignored generated stamp config (a no-op unless
+      # NEXTERM_RELEASE_VERSION is set) so wails consumes the stamped version
+      # without the tracked build/config.yml leaving the tree dirty.
+      - node scripts/mobile-source.mjs stamp
+      - wails3 android overlay:gen -out build/android/overlay.json -config "$(node scripts/mobile-source.mjs config)"
       - |
         node -e '
           const fs = require("node:fs");

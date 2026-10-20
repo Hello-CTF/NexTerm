@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveMakensis } from "./lib/makensis.mjs";
+import { commitLabel, sourceState } from "./lib/mobile.mjs";
 import { resolveSpawnSpec } from "./lib/spawn-spec.mjs";
 import { parseReleaseVersion, parseSemVer } from "./lib/semver.mjs";
 import {
@@ -74,9 +75,8 @@ const packageJSON = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), 
 const packageVersion = packageJSON.version;
 if (packageVersion !== WAILS_VERSION_PLACEHOLDER) die(`package.json version ${packageVersion} diverges from the wails.json placeholder ${WAILS_VERSION_PLACEHOLDER}`);
 let SOURCE_DATE_EPOCH = process.env.SOURCE_DATE_EPOCH || "";
-const SOURCE_COMMIT = output("git", ["rev-parse", "HEAD"], { allowFailure: true })?.trim() || "unknown";
-const DIRTY = SOURCE_COMMIT !== "unknown" && (output("git", ["status", "--porcelain"], { allowFailure: true })?.trim() || "") !== "";
-const COMMIT = DIRTY ? `${SOURCE_COMMIT}+dirty` : SOURCE_COMMIT;
+const { commit: SOURCE_COMMIT, dirty: DIRTY } = sourceState({ cwd: ROOT });
+const COMMIT = commitLabel({ commit: SOURCE_COMMIT, dirty: DIRTY });
 SOURCE_DATE_EPOCH ||= output("git", ["show", "-s", "--format=%ct", "HEAD"], { allowFailure: true })?.trim();
 if (!SOURCE_DATE_EPOCH || !/^\d+$/.test(SOURCE_DATE_EPOCH)) {
   die("SOURCE_DATE_EPOCH is required when the git commit timestamp is unavailable");
