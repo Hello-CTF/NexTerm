@@ -160,8 +160,50 @@ func (s *FileWatchStore) writeLocked(watches []SSHWatch) error {
 	})
 }
 
-// SSHWatchSyncFunc performs one synchronization pass for a watch.
-type SSHWatchSyncFunc func(ctx context.Context, watch SSHWatch) error
+// MemoryWatchStore keeps watch records in memory for the lifetime of the
+// process; desktop mode uses it so watch persistence stays a server
+// capability.
+type MemoryWatchStore struct {
+	mu      sync.Mutex
+	watches map[string]SSHWatch
+}
+
+func NewMemoryWatchStore() *MemoryWatchStore {
+	return &MemoryWatchStore{watches: map[string]SSHWatch{}}
+}
+
+func (s *MemoryWatchStore) SaveSSHWatch(_ context.Context, watch SSHWatch) error {
+	if err := watch.validate(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.watches[watch.OwnerID] = watch
+	return nil
+}
+
+func (s *MemoryWatchStore) DeleteSSHWatch(_ context.Context, ownerID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.watches, ownerID)
+	return nil
+}
+
+func (s *MemoryWatchStore) ListSSHWatches(context.Context) ([]SSHWatch, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	watches := make([]SSHWatch, 0, len(s.watches))
+	for _, watch := range s.watches {
+		watches = append(watches, watch)
+	}
+	sort.Slice(watches, func(i, j int) bool { return watches[i].OwnerID < watches[j].OwnerID })
+	return watches, nil
+}
+
+// SSHWatchSyncFunc performs one synchronization pass for a watch. It
+// returns the watch, allowing the implementation to resolve fields such
+// as the inventory group; the manager persists a changed record.
+type SSHWatchSyncFunc func(ctx context.Context, watch SSHWatch) (SSHWatch, error)
 
 // SSHWatchStatus is the runtime state of an owner's watch.
 type SSHWatchStatus struct {
@@ -395,19 +437,35 @@ func (m *WatchManager) run(ctx context.Context, handle *sshWatchHandle, immediat
 }
 
 func (m *WatchManager) syncAndRecord(ctx context.Context, handle *sshWatchHandle) error {
-	err := m.sync(ctx, handle.watch)
+	updated, err := m.sync(ctx, handle.watch)
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.watchers[handle.watch.OwnerID] != handle {
+		m.mu.Unlock()
 		return err
 	}
 	if err != nil {
 		handle.lastError = err.Error()
+		m.mu.Unlock()
 		return err
 	}
 	now := m.now()
 	handle.lastSyncAt = &now
 	handle.lastError = ""
+	groupResolved := updated.GroupID != "" && updated.GroupID != handle.watch.GroupID
+	if groupResolved {
+		handle.watch.GroupID = updated.GroupID
+	}
+	m.mu.Unlock()
+	if groupResolved {
+		if saveErr := m.store.SaveSSHWatch(context.WithoutCancel(ctx), handle.watch); saveErr != nil {
+			m.mu.Lock()
+			if m.watchers[handle.watch.OwnerID] == handle {
+				handle.lastError = saveErr.Error()
+			}
+			m.mu.Unlock()
+			return saveErr
+		}
+	}
 	return nil
 }
 

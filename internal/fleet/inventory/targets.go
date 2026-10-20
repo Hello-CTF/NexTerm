@@ -12,6 +12,7 @@ const inventoryTargetOptionKey = "inventoryTarget"
 var (
 	ErrNotExecutable           = errors.New("inventory target is not executable")
 	ErrEmptyAction             = errors.New("target action is required")
+	ErrInvalidTarget           = errors.New("invalid inventory target")
 	ErrKubeconfigNotAuthorized = errors.New("server-local kubeconfig requires explicit authorization")
 )
 
@@ -72,17 +73,17 @@ func requireKubeconfig(ctx context.Context, gate KubeconfigAuthorizer) error {
 func ResolveTarget(candidate Candidate) (Target, error) {
 	raw, exists := candidate.Options[inventoryTargetOptionKey]
 	if !exists {
-		return Target{}, fmt.Errorf("candidate %q has no inventory target", candidate.Key)
+		return Target{}, fmt.Errorf("%w: candidate %q has no inventory target", ErrInvalidTarget, candidate.Key)
 	}
 	fields, ok := raw.(map[string]any)
 	if !ok {
-		return Target{}, fmt.Errorf("candidate %q has an invalid inventory target", candidate.Key)
+		return Target{}, fmt.Errorf("%w: candidate %q has an invalid inventory target", ErrInvalidTarget, candidate.Key)
 	}
 	typeName, _ := fields["type"].(string)
 	switch candidate.Kind {
 	case DockerContextKind:
 		if typeName != "context" {
-			return Target{}, fmt.Errorf("docker candidate %q has unsupported target type %q", candidate.Key, typeName)
+			return Target{}, fmt.Errorf("%w: docker candidate %q has unsupported target type %q", ErrInvalidTarget, candidate.Key, typeName)
 		}
 		return Target{Kind: candidate.Kind, Docker: &DockerContextTarget{Name: targetString(fields, "name")}}, nil
 	case KubernetesKind:
@@ -97,10 +98,10 @@ func ResolveTarget(candidate Candidate) (Target, error) {
 				Container: targetString(fields, "container"),
 			}}, nil
 		default:
-			return Target{}, fmt.Errorf("kubernetes candidate %q has unsupported target type %q", candidate.Key, typeName)
+			return Target{}, fmt.Errorf("%w: kubernetes candidate %q has unsupported target type %q", ErrInvalidTarget, candidate.Key, typeName)
 		}
 	default:
-		return Target{}, fmt.Errorf("candidate %q has unsupported target kind %q", candidate.Key, candidate.Kind)
+		return Target{}, fmt.Errorf("%w: candidate %q has unsupported target kind %q", ErrInvalidTarget, candidate.Key, candidate.Kind)
 	}
 }
 
@@ -122,7 +123,7 @@ func (t Target) Command(action ...string) (string, []string, error) {
 			return "", nil, err
 		}
 		if strings.HasPrefix(action[0], "-") {
-			return "", nil, fmt.Errorf("docker context action must not start with a flag: %q", action[0])
+			return "", nil, fmt.Errorf("%w: docker context action must not start with a flag: %q", ErrInvalidTarget, action[0])
 		}
 		args := make([]string, 0, len(action)+2)
 		args = append(args, "--context", t.Docker.Name)
@@ -137,7 +138,7 @@ func (t Target) Command(action ...string) (string, []string, error) {
 			{"kubernetes pod", kubernetes.Pod},
 		} {
 			if field.value == "" {
-				return "", nil, fmt.Errorf("kubernetes target %s is required", field.name)
+				return "", nil, fmt.Errorf("%w: kubernetes target %s is required", ErrInvalidTarget, field.name)
 			}
 			if err := validateTargetValue(field.name, field.value); err != nil {
 				return "", nil, err
@@ -170,7 +171,7 @@ func (t Target) Command(action ...string) (string, []string, error) {
 
 func validateTargetValue(name, value string) error {
 	if strings.HasPrefix(value, "-") {
-		return fmt.Errorf("%s %q must not start with a flag prefix", name, value)
+		return fmt.Errorf("%w: %s %q must not start with a flag prefix", ErrInvalidTarget, name, value)
 	}
 	return nil
 }

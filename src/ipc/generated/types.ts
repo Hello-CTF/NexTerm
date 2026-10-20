@@ -404,6 +404,16 @@ export type InventorySyncRequest = {
   keys?: string[] | null;
 };
 
+export type InventoryTargetExecRequest = {
+  kind: string;
+  target: Record<string, unknown>;
+  action: string[];
+};
+
+export type InventoryTargetExecResponse = {
+  output: string;
+};
+
 export type KillRequest = {
   batchId: string;
   sessionId: string;

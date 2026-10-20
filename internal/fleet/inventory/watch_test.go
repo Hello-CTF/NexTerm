@@ -78,13 +78,13 @@ func newSyncRecorder() *syncRecorder {
 	return &syncRecorder{calls: make(chan SSHWatch, 128), errors: make(chan error, 128), failures: map[string]error{}}
 }
 
-func (r *syncRecorder) sync(_ context.Context, watch SSHWatch) error {
+func (r *syncRecorder) sync(_ context.Context, watch SSHWatch) (SSHWatch, error) {
 	r.mu.Lock()
 	err := r.failures[watch.Path]
 	r.mu.Unlock()
 	r.calls <- watch
 	r.errors <- err
-	return err
+	return watch, err
 }
 
 func (r *syncRecorder) fail(path string, err error) {
@@ -431,12 +431,63 @@ func TestWatchManagerRecordsSyncErrorsAndRecovers(t *testing.T) {
 	}
 }
 
+func TestWatchManagerPersistsResolvedGroup(t *testing.T) {
+	store := newFakeWatchStore()
+	manager, err := NewWatchManager(store, func(_ context.Context, watch SSHWatch) (SSHWatch, error) {
+		watch.GroupID = "resolved-group"
+		return watch, nil
+	}, WithWatchInterval(5*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
+	if _, err := manager.Start(context.Background(), "owner-a", "/a", ""); err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	persisted := store.watches["owner-a"]
+	store.mu.Unlock()
+	if persisted.GroupID != "resolved-group" {
+		t.Fatalf("persisted watch = %+v", persisted)
+	}
+	if status, active := manager.Status("owner-a"); !active || status.Watch.GroupID != "resolved-group" {
+		t.Fatalf("runtime status = %+v", status)
+	}
+}
+
 func TestNewWatchManagerRequiresStoreAndSync(t *testing.T) {
 	if _, err := NewWatchManager(nil, newSyncRecorder().sync); err == nil {
 		t.Fatal("nil store was accepted")
 	}
 	if _, err := NewWatchManager(newFakeWatchStore(), nil); err == nil {
 		t.Fatal("nil sync was accepted")
+	}
+}
+
+func TestMemoryWatchStoreRoundTrip(t *testing.T) {
+	store := NewMemoryWatchStore()
+	watches, err := store.ListSSHWatches(context.Background())
+	if err != nil || len(watches) != 0 {
+		t.Fatalf("watches = %+v err = %v", watches, err)
+	}
+	if err := store.SaveSSHWatch(context.Background(), SSHWatch{OwnerID: "owner-a", Path: "/a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveSSHWatch(context.Background(), SSHWatch{OwnerID: "owner-a", Path: "/a2", GroupID: "g"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveSSHWatch(context.Background(), SSHWatch{OwnerID: ""}); err == nil {
+		t.Fatal("invalid watch was accepted")
+	}
+	watches, err = store.ListSSHWatches(context.Background())
+	if err != nil || len(watches) != 1 || watches[0].Path != "/a2" || watches[0].GroupID != "g" {
+		t.Fatalf("watches = %+v err = %v", watches, err)
+	}
+	if err := store.DeleteSSHWatch(context.Background(), "owner-a"); err != nil {
+		t.Fatal(err)
+	}
+	if watches, err = store.ListSSHWatches(context.Background()); err != nil || len(watches) != 0 {
+		t.Fatalf("watches = %+v err = %v", watches, err)
 	}
 }
 

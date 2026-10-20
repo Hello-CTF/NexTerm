@@ -2,6 +2,7 @@ package production
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,7 +15,10 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-const inventoryDiscoveryTimeout = 15 * time.Second
+const (
+	inventoryDiscoveryTimeout  = 15 * time.Second
+	inventoryTargetExecTimeout = 30 * time.Second
+)
 
 type inventoryDiscoverRequest struct {
 	Source string `json:"source"`
@@ -70,6 +74,16 @@ type inventorySSHWatchDTO struct {
 	LastSyncAt *int64            `json:"lastSyncAt"`
 	LastResult *inventorySyncDTO `json:"lastResult"`
 	LastError  string            `json:"lastError"`
+}
+
+type inventoryTargetExecRequest struct {
+	Kind   string         `json:"kind"`
+	Target map[string]any `json:"target"`
+	Action []string       `json:"action"`
+}
+
+type inventoryTargetExecResponse struct {
+	Output string `json:"output"`
 }
 
 func inventorySyncDTOFromStore(result store.InventorySyncResult, warnings []string) inventorySyncDTO {
@@ -220,9 +234,12 @@ func (s *inventoryService) discover(ctx context.Context, source, path string) ([
 		if source == store.InventorySourceDockerContext {
 			candidates, err = fleetinventory.DiscoverDockerContexts(discoverCtx, s.runner)
 		} else {
-			candidates, err = fleetinventory.DiscoverKubernetes(discoverCtx, s.runner)
+			candidates, err = fleetinventory.DiscoverKubernetesGated(discoverCtx, s.runner, s.kubeconfigGate)
 		}
 		if err != nil {
+			if errors.Is(err, fleetinventory.ErrKubeconfigNotAuthorized) {
+				return nil, nil, ipc.NewError(ipc.CodeForbidden, err.Error())
+			}
 			return nil, nil, ipc.NewError(ipc.CodeBadParam, err.Error())
 		}
 		return inventoryItemsFromFleet(candidates), []string{}, nil
@@ -330,6 +347,30 @@ func (s *inventoryService) sync(ctx context.Context, input inventorySyncRequest)
 	return inventorySyncDTOFromStore(result, warnings), nil
 }
 
+func (s *inventoryService) execTarget(ctx context.Context, input inventoryTargetExecRequest) (inventoryTargetExecResponse, error) {
+	candidate := fleetinventory.Candidate{Kind: input.Kind, Options: map[string]any{"inventoryTarget": input.Target}}
+	target, err := fleetinventory.ResolveTarget(candidate)
+	if err != nil {
+		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeBadParam, err.Error())
+	}
+	execCtx, cancel := context.WithTimeout(ctx, inventoryTargetExecTimeout)
+	defer cancel()
+	output, err := fleetinventory.RunTargetGated(execCtx, s.runner, s.kubeconfigGate, target, input.Action...)
+	if err != nil {
+		switch {
+		case errors.Is(err, fleetinventory.ErrKubeconfigNotAuthorized):
+			return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeForbidden, err.Error())
+		case errors.Is(err, fleetinventory.ErrEmptyAction),
+			errors.Is(err, fleetinventory.ErrNotExecutable),
+			errors.Is(err, fleetinventory.ErrInvalidTarget):
+			return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeBadParam, err.Error())
+		default:
+			return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeIO, err.Error())
+		}
+	}
+	return inventoryTargetExecResponse{Output: string(output)}, nil
+}
+
 func (s *inventoryService) registerCommands(dispatcher *ipc.Dispatcher) error {
 	registrations := []func() error{
 		func() error {
@@ -362,6 +403,11 @@ func (s *inventoryService) registerCommands(dispatcher *ipc.Dispatcher) error {
 					return inventorySSHWatchDTO{}, s.stopWatch(ctx, ipc.OwnerID(ctx))
 				}
 				return s.startWatch(ctx, input.Path, input.GroupID)
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, "inventory_target_exec", func(ctx context.Context, _ *ipc.Call, input inventoryTargetExecRequest) (inventoryTargetExecResponse, error) {
+				return s.execTarget(ctx, input)
 			})
 		},
 	}

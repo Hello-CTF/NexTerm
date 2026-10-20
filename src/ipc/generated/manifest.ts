@@ -828,6 +828,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.inventorySyncRequest", ts: "InventorySyncRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.inventorySyncDTO", ts: "InventorySyncDTO" },
     },
+    "inventory_target_exec": {
+      scope: "inventory",
+      nested: true,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.inventoryTargetExecRequest", ts: "InventoryTargetExecRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.inventoryTargetExecResponse", ts: "InventoryTargetExecResponse" },
+    },
     "known_host_accept": {
       nested: false,
       channel: false,
@@ -1982,6 +1990,10 @@ export interface IPCCommandTypeMap {
   "inventory_sync": {
     input: contractTypes.InventorySyncRequest;
     output: contractTypes.InventorySyncDTO;
+  };
+  "inventory_target_exec": {
+    input: contractTypes.InventoryTargetExecRequest;
+    output: contractTypes.InventoryTargetExecResponse;
   };
   "runbook_run_advance": {
     input: contractTypes.AdvanceRequest;
