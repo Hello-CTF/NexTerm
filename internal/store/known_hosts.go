@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -55,17 +56,19 @@ func (knownHostKeyAssignment) Build(builder clause.Builder) {
 func (s *Store) KnownHostAccept(ctx context.Context, host string, port int32, keyType, fingerprint string) error {
 	knownHost := query.Use(s.db).KnownHostRow
 	row := KnownHostRow{ID: ids.New(), Host: host, Port: port, KeyType: keyType, Fingerprint: fingerprint, AddedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)}
-	err := knownHost.WithContext(ctx).
-		Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "owner_id"}, {Name: "host"}, {Name: "port"}, {Name: "key_type"}},
-			DoUpdates: clause.Set{
-				{Column: clause.Column{Name: "key"}, Value: knownHostKeyAssignment{}},
-				{Column: clause.Column{Name: "fingerprint"}, Value: incomingValue{name: "fingerprint"}},
-				{Column: clause.Column{Name: "added_at"}, Value: incomingValue{name: "added_at"}},
-			},
-			Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
-		}).
-		Create(&row)
+	err := inBusyRetry(func() error {
+		return knownHost.WithContext(ctx).
+			Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "owner_id"}, {Name: "host"}, {Name: "port"}, {Name: "key_type"}},
+				DoUpdates: clause.Set{
+					{Column: clause.Column{Name: "key"}, Value: knownHostKeyAssignment{}},
+					{Column: clause.Column{Name: "fingerprint"}, Value: incomingValue{name: "fingerprint"}},
+					{Column: clause.Column{Name: "added_at"}, Value: incomingValue{name: "added_at"}},
+				},
+				Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+			}).
+			Create(&row)
+	})
 	if err != nil {
 		return dbError(err)
 	}
@@ -74,6 +77,19 @@ func (s *Store) KnownHostAccept(ctx context.Context, host string, port int32, ke
 
 // ErrKnownHostConflict reports an accept that would replace a trusted key without the replace flag.
 var ErrKnownHostConflict = errors.New("SSH host key store conflict")
+
+// inBusyRetry runs fn, retrying serialization failures (SQLite busy, PostgreSQL
+// serialization/deadlock, MySQL/MariaDB lock timeout and deadlock) a bounded number of times. Every
+// caller's transaction is guarded by conditional writes, so a retry never reapplies a stale outcome.
+func inBusyRetry(fn func() error) error {
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if err = fn(); !isBusyErr(err) {
+			return err
+		}
+	}
+	return err
+}
 
 // KnownHostAcceptForMirror atomically reads the current row and applies the accept in one transaction,
 // returning the exact accepted outcome and the actual previous row (nil when none existed). The caller
@@ -84,37 +100,61 @@ var ErrKnownHostConflict = errors.New("SSH host key store conflict")
 func (s *Store) KnownHostAcceptForMirror(ctx context.Context, host string, port int32, keyType, fingerprint, key string, replace bool) (KnownHostRow, *KnownHostRow, error) {
 	var accepted KnownHostRow
 	var previous *KnownHostRow
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		queries := query.Use(tx)
-		knownHost := queries.KnownHostRow
-		scope := knownHost.WithContext(ctx).
-			Where(knownHost.Host.Eq(host), knownHost.Port.Eq(port), knownHost.KeyType.Eq(keyType)).
-			Where(ownerConditions(ctx, knownHost.TableName())...)
-		var row *model.KnownHostRow
-		var err error
-		if tx.Dialector.Name() == "postgres" || tx.Dialector.Name() == "mysql" {
-			row, err = scope.Clauses(clause.Locking{Strength: "UPDATE"}).First()
-		} else {
-			row, err = scope.First()
-		}
-		if err != nil && !isNoRows(err) {
-			return err
-		}
-		if err == nil {
-			previousRow := *row
-			previous = &previousRow
-			if !replace && previousRow.Fingerprint != fingerprint {
-				return ErrKnownHostConflict
+	err := inBusyRetry(func() error {
+		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			queries := query.Use(tx)
+			knownHost := queries.KnownHostRow
+			// Insert-if-absent first: ON CONFLICT DO NOTHING waits out any concurrent inserter, so a row
+			// read afterwards is the definitive state at write time — an empty endpoint can never hide a
+			// committed row from the conflict check or from the previous snapshot.
+			for attempt := 0; attempt < 3; attempt++ {
+				accepted = KnownHostRow{ID: ids.New(), Host: host, Port: port, KeyType: keyType, Fingerprint: fingerprint, Key: key, AddedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)}
+				if err := knownHost.WithContext(ctx).
+					Clauses(clause.OnConflict{
+						Columns:   []clause.Column{{Name: "owner_id"}, {Name: "host"}, {Name: "port"}, {Name: "key_type"}},
+						DoNothing: true,
+					}).
+					Create(&accepted); err != nil {
+					return err
+				}
+				scope := knownHost.WithContext(ctx).
+					Where(knownHost.Host.Eq(host), knownHost.Port.Eq(port), knownHost.KeyType.Eq(keyType)).
+					Where(ownerConditions(ctx, knownHost.TableName())...)
+				var row *model.KnownHostRow
+				var err error
+				if tx.Dialector.Name() == "postgres" || tx.Dialector.Name() == "mysql" {
+					row, err = scope.Clauses(clause.Locking{Strength: "UPDATE"}).First()
+				} else {
+					row, err = scope.First()
+				}
+				if isNoRows(err) {
+					continue
+				}
+				if err != nil {
+					return err
+				}
+				if row.ID == accepted.ID {
+					return nil
+				}
+				previousRow := *row
+				previous = &previousRow
+				if !replace && previousRow.Fingerprint != fingerprint {
+					return ErrKnownHostConflict
+				}
+				updated, err := knownHost.WithContext(ctx).
+					Where(knownHost.ID.Eq(row.ID)).
+					Where(ownerConditions(ctx, knownHost.TableName())...).
+					Updates(map[string]any{"fingerprint": fingerprint, "key": key, "added_at": accepted.AddedAt})
+				if err != nil {
+					return err
+				}
+				if updated.RowsAffected == 0 {
+					return fmt.Errorf("known host row vanished during accept")
+				}
+				return nil
 			}
-		}
-		accepted = KnownHostRow{ID: ids.New(), Host: host, Port: port, KeyType: keyType, Fingerprint: fingerprint, Key: key, AddedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)}
-		return knownHost.WithContext(ctx).
-			Clauses(clause.OnConflict{
-				Columns:   []clause.Column{{Name: "owner_id"}, {Name: "host"}, {Name: "port"}, {Name: "key_type"}},
-				DoUpdates: clause.AssignmentColumns([]string{"fingerprint", "key", "added_at"}),
-				Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
-			}).
-			Create(&accepted)
+			return fmt.Errorf("known host accept kept racing a concurrent writer")
+		})
 	})
 	if err != nil {
 		return KnownHostRow{}, nil, dbError(err)
@@ -126,10 +166,14 @@ func (s *Store) KnownHostAcceptForMirror(ctx context.Context, host string, port 
 // the trust revision. The empty-material guard keeps it idempotent.
 func (s *Store) KnownHostFillKeyMaterial(ctx context.Context, host string, port int32, keyType, fingerprint, key string) error {
 	knownHost := query.Use(s.db).KnownHostRow
-	if _, err := knownHost.WithContext(ctx).
-		Where(knownHost.Host.Eq(host), knownHost.Port.Eq(port), knownHost.KeyType.Eq(keyType), knownHost.Fingerprint.Eq(fingerprint), knownHost.Key.Eq("")).
-		Where(ownerConditions(ctx, knownHost.TableName())...).
-		Updates(map[string]any{"key": key}); err != nil {
+	err := inBusyRetry(func() error {
+		_, err := knownHost.WithContext(ctx).
+			Where(knownHost.Host.Eq(host), knownHost.Port.Eq(port), knownHost.KeyType.Eq(keyType), knownHost.Fingerprint.Eq(fingerprint), knownHost.Key.Eq("")).
+			Where(ownerConditions(ctx, knownHost.TableName())...).
+			Updates(map[string]any{"key": key})
+		return err
+	})
+	if err != nil {
 		return dbError(err)
 	}
 	return nil
@@ -143,13 +187,15 @@ func (s *Store) KnownHostFillKeyMaterial(ctx context.Context, host string, port 
 func (s *Store) KnownHostAcceptWithKey(ctx context.Context, host string, port int32, keyType, fingerprint, key string) (KnownHostRow, error) {
 	knownHost := query.Use(s.db).KnownHostRow
 	row := KnownHostRow{ID: ids.New(), Host: host, Port: port, KeyType: keyType, Fingerprint: fingerprint, Key: key, AddedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)}
-	err := knownHost.WithContext(ctx).
-		Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "owner_id"}, {Name: "host"}, {Name: "port"}, {Name: "key_type"}},
-			DoUpdates: clause.AssignmentColumns([]string{"fingerprint", "key", "added_at"}),
-			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
-		}).
-		Create(&row)
+	err := inBusyRetry(func() error {
+		return knownHost.WithContext(ctx).
+			Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "owner_id"}, {Name: "host"}, {Name: "port"}, {Name: "key_type"}},
+				DoUpdates: clause.AssignmentColumns([]string{"fingerprint", "key", "added_at"}),
+				Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+			}).
+			Create(&row)
+	})
 	if err != nil {
 		return KnownHostRow{}, dbError(err)
 	}
@@ -183,22 +229,24 @@ func (s *Store) KnownHostListForMigration(ctx context.Context) ([]KnownHostRow, 
 }
 
 func (s *Store) KnownHostRemove(ctx context.Context, id string) error {
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		optIn, err := s.knownHostSyncOptInTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		knownHost := query.Use(tx).KnownHostRow
-		if _, err := knownHost.WithContext(ctx).
-			Where(knownHost.ID.Eq(id)).
-			Where(ownerConditions(ctx, knownHost.TableName())...).
-			Delete(); err != nil {
-			return err
-		}
-		if !optIn {
-			return nil
-		}
-		return s.syncTombstonePut(ctx, tx, id, SyncTombstoneKindKnownHost, ids.NowMS())
+	err := inBusyRetry(func() error {
+		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			optIn, err := s.knownHostSyncOptInTx(ctx, tx)
+			if err != nil {
+				return err
+			}
+			knownHost := query.Use(tx).KnownHostRow
+			if _, err := knownHost.WithContext(ctx).
+				Where(knownHost.ID.Eq(id)).
+				Where(ownerConditions(ctx, knownHost.TableName())...).
+				Delete(); err != nil {
+				return err
+			}
+			if !optIn {
+				return nil
+			}
+			return s.syncTombstonePut(ctx, tx, id, SyncTombstoneKindKnownHost, ids.NowMS())
+		})
 	})
 	if err != nil {
 		return dbError(err)
@@ -232,56 +280,74 @@ func (s *Store) KnownHostCompensateAccept(ctx context.Context, host string, port
 		Where(knownHost.Host.Eq(host), knownHost.Port.Eq(port), knownHost.KeyType.Eq(keyType)).
 		Where(knownHost.Fingerprint.Eq(accepted.Fingerprint), knownHost.Key.Eq(accepted.Key), knownHost.AddedAt.Eq(accepted.AddedAt)).
 		Where(ownerConditions(ctx, knownHost.TableName())...)
-	if previous == nil {
-		result, err := scoped.Delete()
-		if err != nil {
-			return false, dbError(err)
+	var applied bool
+	err := inBusyRetry(func() error {
+		if previous == nil {
+			result, err := scoped.Delete()
+			if err != nil {
+				return err
+			}
+			applied = result.RowsAffected > 0
+			return nil
 		}
-		return result.RowsAffected > 0, nil
-	}
-	result, err := scoped.Updates(map[string]any{"fingerprint": previous.Fingerprint, "key": previous.Key, "added_at": previous.AddedAt})
+		result, err := scoped.Updates(map[string]any{"fingerprint": previous.Fingerprint, "key": previous.Key, "added_at": previous.AddedAt})
+		if err != nil {
+			return err
+		}
+		applied = result.RowsAffected > 0
+		return nil
+	})
 	if err != nil {
 		return false, dbError(err)
 	}
-	return result.RowsAffected > 0, nil
+	return applied, nil
 }
 
 // KnownHostRemoveForMirror removes one owner-scoped ledger row together with its sync tombstone in a single
-// transaction and returns the removed row so a failed mirror rewrite can restore it.
+// transaction and returns the removed row so a failed mirror rewrite can restore it. The row is read under
+// a write lock where the backend supports it, so the returned snapshot is always the actual deleted state.
 func (s *Store) KnownHostRemoveForMirror(ctx context.Context, id string) (KnownHostRow, bool, error) {
 	var removed KnownHostRow
 	found := false
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		queries := query.Use(tx)
-		knownHost := queries.KnownHostRow
-		row, err := knownHost.WithContext(ctx).
-			Where(knownHost.ID.Eq(id)).
-			Where(ownerConditions(ctx, knownHost.TableName())...).
-			First()
-		if isNoRows(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if _, err := knownHost.WithContext(ctx).
-			Where(knownHost.ID.Eq(id)).
-			Where(ownerConditions(ctx, knownHost.TableName())...).
-			Delete(); err != nil {
-			return err
-		}
-		optIn, err := s.knownHostSyncOptInTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if optIn {
-			if err := s.syncTombstonePut(ctx, tx, id, SyncTombstoneKindKnownHost, ids.NowMS()); err != nil {
+	err := inBusyRetry(func() error {
+		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			queries := query.Use(tx)
+			knownHost := queries.KnownHostRow
+			scope := knownHost.WithContext(ctx).
+				Where(knownHost.ID.Eq(id)).
+				Where(ownerConditions(ctx, knownHost.TableName())...)
+			var row *model.KnownHostRow
+			var err error
+			if tx.Dialector.Name() == "postgres" || tx.Dialector.Name() == "mysql" {
+				row, err = scope.Clauses(clause.Locking{Strength: "UPDATE"}).First()
+			} else {
+				row, err = scope.First()
+			}
+			if isNoRows(err) {
+				return nil
+			}
+			if err != nil {
 				return err
 			}
-		}
-		removed = *row
-		found = true
-		return nil
+			if _, err := knownHost.WithContext(ctx).
+				Where(knownHost.ID.Eq(id)).
+				Where(ownerConditions(ctx, knownHost.TableName())...).
+				Delete(); err != nil {
+				return err
+			}
+			optIn, err := s.knownHostSyncOptInTx(ctx, tx)
+			if err != nil {
+				return err
+			}
+			if optIn {
+				if err := s.syncTombstonePut(ctx, tx, id, SyncTombstoneKindKnownHost, ids.NowMS()); err != nil {
+					return err
+				}
+			}
+			removed = *row
+			found = true
+			return nil
+		})
 	})
 	if err != nil {
 		return KnownHostRow{}, false, dbError(err)
@@ -293,29 +359,31 @@ func (s *Store) KnownHostRemoveForMirror(ctx context.Context, id string) (KnownH
 // tombstone, compensating a mirror rewrite that failed after the removal committed. A newer independent
 // trust decision for the same endpoint wins: the removed row and its tombstone stand.
 func (s *Store) KnownHostRestoreRemoved(ctx context.Context, row KnownHostRow) error {
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		queries := query.Use(tx)
-		knownHost := queries.KnownHostRow
-		existing, err := knownHost.WithContext(ctx).
-			Where(knownHost.Host.Eq(row.Host), knownHost.Port.Eq(row.Port), knownHost.KeyType.Eq(row.KeyType)).
-			Where(ownerConditions(ctx, knownHost.TableName())...).
-			Count()
-		if err != nil {
-			return err
-		}
-		if existing > 0 {
+	err := inBusyRetry(func() error {
+		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			queries := query.Use(tx)
+			knownHost := queries.KnownHostRow
+			existing, err := knownHost.WithContext(ctx).
+				Where(knownHost.Host.Eq(row.Host), knownHost.Port.Eq(row.Port), knownHost.KeyType.Eq(row.KeyType)).
+				Where(ownerConditions(ctx, knownHost.TableName())...).
+				Count()
+			if err != nil {
+				return err
+			}
+			if existing > 0 {
+				return nil
+			}
+			if err := tx.WithContext(ctx).Create(&row).Error; err != nil {
+				return err
+			}
+			tombstone := queries.SyncTombstone
+			if _, err := tombstone.WithContext(ctx).
+				Where(tombstone.ID.Eq(row.ID), tombstone.OwnerID.Eq(row.OwnerID)).
+				Delete(); err != nil {
+				return err
+			}
 			return nil
-		}
-		if err := tx.WithContext(ctx).Create(&row).Error; err != nil {
-			return err
-		}
-		tombstone := queries.SyncTombstone
-		if _, err := tombstone.WithContext(ctx).
-			Where(tombstone.ID.Eq(row.ID), tombstone.OwnerID.Eq(row.OwnerID)).
-			Delete(); err != nil {
-			return err
-		}
-		return nil
+		})
 	})
 	if err != nil {
 		return dbError(err)

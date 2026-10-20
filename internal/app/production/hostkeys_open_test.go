@@ -4,17 +4,46 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 	gossh "golang.org/x/crypto/ssh"
 )
+
+// dispatchHostKeyOpenTest mirrors how the application marks an admitted open request — the owner-open
+// deployment mark plus the session-open grant — so the session manager's open boundary admits the
+// identity-less dispatch exactly as it does for a real desktop/open deployment, while every other
+// request shape stays fail-closed.
+func dispatchHostKeyOpenTest(t *testing.T, application *Production, command, args string) ipc.Response {
+	t.Helper()
+	ctx := owner.WithOpenAccess(session.WithOpenAccess(t.Context()))
+	return application.Dispatcher.Dispatch(ctx, ipc.Request{Command: command, Args: json.RawMessage(args), ClientID: "client-a"}, application.Environment("client-a"))
+}
+
+func createHostKeyOpenTestAsset(t *testing.T, application *Production, port int) string {
+	t.Helper()
+	response := dispatchHostKeyOpenTest(t, application, "asset_create", `{"args":{"kind":"ssh","name":"host-key-test","host":"127.0.0.1","port":`+strconv.Itoa(port)+`,"username":"test","authKind":"password","options":{"password":"host-key-test-secret"}}}`)
+	var created assetDTO
+	requireStoreTestResponse(t, response, &created)
+	return created.ID
+}
+
+func connectHostKeyOpenTestAsset(t *testing.T, application *Production, assetID string) sessionInfoDTO {
+	t.Helper()
+	response := dispatchHostKeyOpenTest(t, application, "session_connect", `{"args":{"assetId":"`+assetID+`"}}`)
+	var connected sessionInfoDTO
+	requireStoreTestResponse(t, response, &connected)
+	return connected
+}
 
 func TestProductionHostKeyOpenSSHUsesLegacyFile(t *testing.T) {
 	server := newHostKeyTestServer(t)
@@ -48,12 +77,12 @@ func TestProductionHostKeyOpenSSHUsesLegacyFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = application.Shutdown(context.Background()) })
-	assetID := createHostKeyTestAsset(t, application, server.port())
-	connected := connectHostKeyTestAsset(t, application, assetID)
+	assetID := createHostKeyOpenTestAsset(t, application, server.port())
+	connected := connectHostKeyOpenTestAsset(t, application, assetID)
 	if connected.ID == "" {
 		t.Fatal("explicit Open did not trust the legacy host key during SSH")
 	}
-	requireProductionNullHostKey(t, dispatchHostKeyTest(t, application, "session_disconnect", `{"sessionId":"`+connected.ID+`"}`))
+	requireProductionNullHostKey(t, dispatchHostKeyOpenTest(t, application, "session_disconnect", `{"sessionId":"`+connected.ID+`"}`))
 	after, err := os.ReadFile(legacyPath)
 	if err != nil || !bytes.Equal(after, before) {
 		t.Fatalf("explicit Open rewrote the legacy trust file: %v", err)

@@ -3,6 +3,8 @@ package store_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/dbtest"
@@ -252,6 +254,121 @@ func TestKnownHostAcceptForMirrorAtomicDatabase(t *testing.T) {
 	}
 	if row, _, _ := database.KnownHostGet(ownerA, "atomic.test", 22, "ssh-ed25519"); row.Fingerprint != "SHA256:c" || row.Key != "Yy1rZXk=" {
 		t.Fatalf("conflicting accept changed the row: %+v", row)
+	}
+}
+
+func TestKnownHostAcceptForMirrorConcurrentInsertDatabase(t *testing.T) {
+	database := dbtest.NewFixture(t).OpenStore(t)
+	ctx := context.Background()
+	ownerA := ipc.WithUserID(ctx, "race-owner-a")
+	// Two concurrent accepts for the same absent endpoint: exactly one may report a fresh insert, and
+	// the other must observe the winner's row as its actual previous — never a stale empty read.
+	for iteration := 0; iteration < 20; iteration++ {
+		host := fmt.Sprintf("race-%d.test", iteration)
+		fingerprintA := fmt.Sprintf("SHA256:race-a-%d", iteration)
+		fingerprintB := fmt.Sprintf("SHA256:race-b-%d", iteration)
+		start := make(chan struct{})
+		type outcome struct {
+			accepted store.KnownHostRow
+			previous *store.KnownHostRow
+			err      error
+		}
+		outcomes := make([]outcome, 2)
+		var wait sync.WaitGroup
+		for index, fingerprint := range []string{fingerprintA, fingerprintB} {
+			wait.Add(1)
+			go func(index int, fingerprint string) {
+				defer wait.Done()
+				<-start
+				accepted, previous, err := database.KnownHostAcceptForMirror(ownerA, host, 22, "ssh-ed25519", fingerprint, fingerprint+"-a2V5", true)
+				outcomes[index] = outcome{accepted: accepted, previous: previous, err: err}
+			}(index, fingerprint)
+		}
+		close(start)
+		wait.Wait()
+		for _, outcome := range outcomes {
+			if outcome.err != nil {
+				t.Fatalf("iteration %d accept = %v", iteration, outcome.err)
+			}
+		}
+		fresh := 0
+		for _, outcome := range outcomes {
+			if outcome.previous == nil {
+				fresh++
+			}
+		}
+		if fresh != 1 {
+			t.Fatalf("iteration %d fresh inserts = %d, outcomes = %+v", iteration, fresh, outcomes)
+		}
+		var winner, loser outcome
+		if outcomes[0].previous == nil {
+			winner, loser = outcomes[0], outcomes[1]
+		} else {
+			winner, loser = outcomes[1], outcomes[0]
+		}
+		if loser.previous.Fingerprint != winner.accepted.Fingerprint || loser.previous.Key != winner.accepted.Key {
+			t.Fatalf("iteration %d loser previous = %+v, want winner outcome %+v", iteration, loser.previous, winner.accepted)
+		}
+		row, found, err := database.KnownHostGet(ownerA, host, 22, "ssh-ed25519")
+		if err != nil || !found {
+			t.Fatalf("iteration %d final row = %+v, %v, %v", iteration, row, found, err)
+		}
+		if row.Fingerprint != fingerprintA && row.Fingerprint != fingerprintB {
+			t.Fatalf("iteration %d final row = %+v, want one of the accepted outcomes", iteration, row)
+		}
+	}
+}
+
+func TestKnownHostRemoveForMirrorConcurrentUpdateDatabase(t *testing.T) {
+	database := dbtest.NewFixture(t).OpenStore(t)
+	ctx := context.Background()
+	ownerA := ipc.WithUserID(ctx, "remove-race-owner-a")
+	// A fingerprint-changing accept races a mirror removal: whichever schedule the backend picks, the
+	// independent decision survives — the locked snapshot makes the restored row the actual deleted one.
+	for iteration := 0; iteration < 20; iteration++ {
+		host := fmt.Sprintf("remove-race-%d.test", iteration)
+		if _, err := database.KnownHostAcceptWithKey(ownerA, host, 22, "ssh-ed25519", "SHA256:seed", "c2VlZC1rZXk="); err != nil {
+			t.Fatal(err)
+		}
+		seed, found, err := database.KnownHostGet(ownerA, host, 22, "ssh-ed25519")
+		if err != nil || !found {
+			t.Fatalf("iteration %d seed row = %+v, %v, %v", iteration, seed, found, err)
+		}
+		fingerprintB := fmt.Sprintf("SHA256:b-%d", iteration)
+		keyB := fmt.Sprintf("Yi1rZXk=%d", iteration)
+		start := make(chan struct{})
+		var wait sync.WaitGroup
+		removedCh := make(chan store.KnownHostRow, 1)
+		wait.Add(2)
+		go func() {
+			defer wait.Done()
+			<-start
+			removed, _, err := database.KnownHostRemoveForMirror(ownerA, seed.ID)
+			if err != nil {
+				t.Errorf("iteration %d removal = %v", iteration, err)
+			}
+			removedCh <- removed
+		}()
+		go func() {
+			defer wait.Done()
+			<-start
+			if _, err := database.KnownHostAcceptWithKey(ownerA, host, 22, "ssh-ed25519", fingerprintB, keyB); err != nil {
+				t.Errorf("iteration %d concurrent accept = %v", iteration, err)
+			}
+		}()
+		close(start)
+		wait.Wait()
+		removed := <-removedCh
+		if err := database.KnownHostRestoreRemoved(ownerA, removed); err != nil {
+			t.Fatalf("iteration %d restore = %v", iteration, err)
+		}
+		row, found, err := database.KnownHostGet(ownerA, host, 22, "ssh-ed25519")
+		if err != nil || !found {
+			t.Fatalf("iteration %d final row = %+v, %v, %v", iteration, row, found, err)
+		}
+		if row.Fingerprint != fingerprintB || row.Key != keyB {
+			t.Fatalf("iteration %d independent decision lost: %+v, want fingerprint %q key %q", iteration, row, fingerprintB, keyB)
+		}
 	}
 }
 
