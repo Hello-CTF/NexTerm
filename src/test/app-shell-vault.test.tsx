@@ -11,32 +11,33 @@ const mocks = vi.hoisted(() => ({
   vaultStatus: vi.fn(),
 }));
 
-vi.mock("../ipc/commands", () => ({
-  assetApi: { list: mocks.assetList, search: vi.fn() },
-  sessionApi: {
-    list: mocks.sessionList,
-    connectLocal: vi.fn(),
-    connect: vi.fn(),
-    reconnect: vi.fn(),
-    probe: vi.fn(),
-  },
-  vaultApi: { status: mocks.vaultStatus, listCredentials: vi.fn() },
-  syncApi: {
-    linkGet: vi.fn().mockResolvedValue({
-      url: "",
-      username: "",
-      insecure: false,
-      hasPassword: false,
-      verifiedAt: 0,
-      lastError: null,
-    }),
-    status: vi.fn().mockResolvedValue({ configured: false, loggedIn: false, lastError: "", warnings: [] }),
-    kindOptInGet: vi.fn().mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false }),
-    wake: vi.fn().mockResolvedValue(undefined),
-  },
-  terminalApi: {},
-  dbApi: {},
-}));
+vi.mock("../ipc/commands", async (importOriginal) => {
+  const { createCommandsMock } = await import("./helpers/mockCommands");
+  return createCommandsMock(await importOriginal<typeof import("../ipc/commands")>(), {
+    assetApi: { list: mocks.assetList, search: vi.fn() },
+    sessionApi: {
+      list: mocks.sessionList,
+      connectLocal: vi.fn(),
+      connect: vi.fn(),
+      reconnect: vi.fn(),
+      probe: vi.fn(),
+    },
+    vaultApi: { status: mocks.vaultStatus, listCredentials: vi.fn() },
+    syncApi: {
+      linkGet: vi.fn().mockResolvedValue({
+        url: "",
+        username: "",
+        insecure: false,
+        hasPassword: false,
+        verifiedAt: 0,
+        lastError: null,
+      }),
+      status: vi.fn().mockResolvedValue({ configured: false, loggedIn: false, lastError: "", warnings: [] }),
+      kindOptInGet: vi.fn().mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false }),
+      wake: vi.fn().mockResolvedValue(undefined),
+    },
+  });
+});
 
 vi.mock("../features/terminal/TerminalPane", () => ({ TerminalPane: () => null }));
 vi.mock("../features/terminal/BackgroundSessions", () => ({ BackgroundSessions: () => null }));
