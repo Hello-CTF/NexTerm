@@ -150,6 +150,13 @@ func TestFanoutRetainedFramesKeepBoundedQueueMetadata(t *testing.T) {
 			t.Fatalf("delivered frame %d = %v, want %v", seq, got, want)
 		}
 	}
+	// The sink records the final frame before SendBinary returns, while lag is
+	// only zeroed by finish afterwards; wait for that post-finish state instead
+	// of assuming it. Lag stays nonzero from the first publish until then.
+	waitFor(t, "lag drained after final frame", func() bool {
+		stats, ok := f.SubscriberStats("slow")
+		return ok && stats.LagFrames == 0 && stats.LagBytes == 0
+	})
 	stats, ok = f.SubscriberStats("slow")
 	if !ok {
 		t.Fatal("slow subscriber detached after drain")
