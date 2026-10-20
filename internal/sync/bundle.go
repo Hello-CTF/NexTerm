@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gen"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -407,22 +409,33 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 	}
 	// Two-pass group write: first store everything as top-level groups (any order, no FK dependencies), then link parents.
 	// Groups keep their own committed transaction: a later class failure never rolls them back.
+	// The second pass binds each group's first-pass written content, so the two-phase
+	// topology write never mistakes its own intermediate state for a conflict.
 	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
+		written := map[string]*store.AssetGroupRow{}
 		for _, plan := range groupPlans {
-			if err := s.engine.groupUpsertTx(ctx, tx, groupObject{
+			if err := s.engine.groupUpsertTxBound(ctx, tx, groupObject{
 				ID: plan.id, Name: plan.name, Sort: plan.sort, CreatedAt: plan.createdAt, UpdatedAt: plan.updatedAt,
-			}, nil); err != nil {
+			}, nil, plan.snapshot); err != nil {
 				return err
+			}
+			createdAt := plan.createdAt
+			if plan.snapshot != nil {
+				createdAt = plan.snapshot.CreatedAt
+			}
+			written[plan.id] = &store.AssetGroupRow{
+				ID: plan.id, Name: plan.name, Sort: plan.sort,
+				CreatedAt: createdAt, UpdatedAt: plan.updatedAt, OwnerID: ipc.OwnerID(ctx),
 			}
 		}
 		for _, plan := range groupPlans {
 			if plan.parentID == nil {
 				continue
 			}
-			if err := s.engine.groupUpsertTx(ctx, tx, groupObject{
+			if err := s.engine.groupUpsertTxBound(ctx, tx, groupObject{
 				ID: plan.id, ParentID: plan.parentID, Name: plan.name, Sort: plan.sort,
 				CreatedAt: plan.createdAt, UpdatedAt: plan.updatedAt,
-			}, plan.parentID); err != nil {
+			}, plan.parentID, written[plan.id]); err != nil {
 				return err
 			}
 		}
@@ -652,11 +665,12 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		tombstonedCredIDs[id] = true
 	}
 	type preparedSnippet struct {
-		row    store.SnippetRow
-		exists bool
+		row      store.SnippetRow
+		snapshot *store.SnippetRow
+		exists   bool
 	}
 	preparedSnippets := make([]preparedSnippet, 0, len(bundle.Snippets))
-	seenSnippetIDs := map[string]bool{}
+	seenSnippetIDs := map[string]int{}
 	for _, payload := range bundle.Snippets {
 		id := strings.TrimSpace(payload.ID)
 		if id == "" || !ids.Valid(id) || strings.TrimSpace(payload.Name) == "" {
@@ -719,22 +733,33 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 				return ImportReport{}, err
 			}
 		}
-		preparedSnippets = append(preparedSnippets, preparedSnippet{
+		prepared := preparedSnippet{
 			row: store.SnippetRow{
 				ID: id, GroupID: groupID, Name: name, Body: body,
 				Sort: sort, CreatedAt: createdAt, UpdatedAt: updatedAt,
 			},
-			exists: exists || seenSnippetIDs[id],
-		})
-		seenSnippetIDs[id] = true
+			exists: exists,
+		}
+		if earlier, ok := seenSnippetIDs[id]; ok {
+			// An earlier in-bundle entry writes this snippet first in the same
+			// transaction: bind this write to that entry's content, never to the
+			// pre-import row.
+			prepared.snapshot = &preparedSnippets[earlier].row
+			prepared.exists = true
+		} else if exists {
+			prepared.snapshot = &existing
+		}
+		seenSnippetIDs[id] = len(preparedSnippets)
+		preparedSnippets = append(preparedSnippets, prepared)
 	}
 	createdFlags := make([]bool, len(preparedAssets))
 	conflicted := make([]bool, len(preparedAssets))
 	compensatedCredIDs := map[string]bool{}
-	// credWriteResults records which credentials this import actually wrote: a
-	// conflict-skipped credential keeps a later local write and must be neither
-	// compensated nor counted as imported.
-	credWriteResults := map[string]bool{}
+	// credWriteResults records the exact row content this import actually wrote per
+	// credential: a conflict-skipped credential keeps a later local write and must be
+	// neither compensated nor counted as imported, and compensation binds this content so
+	// a row replaced by a later write survives untouched.
+	credWriteResults := map[string]*store.CredentialRow{}
 	// Credentials and assets share one transaction: an asset-save failure rolls the
 	// credential creates/updates back instead of leaving them orphaned.
 	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
@@ -747,8 +772,8 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			if err != nil {
 				return err
 			}
-			if written {
-				credWriteResults[cred.id] = true
+			if written != nil {
+				credWriteResults[cred.id] = written
 			}
 		}
 		for index, entry := range preparedAssets {
@@ -795,11 +820,12 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			// Only a credential this import actually upserted can be compensated: one that
 			// is absent from bundle.Creds was never written here, and a conflict-skipped
 			// one holds a later local write — both must survive untouched.
-			if !credWriteResults[credID] || writtenCredRefs[credID] || compensatedCredIDs[credID] {
+			written := credWriteResults[credID]
+			if written == nil || writtenCredRefs[credID] || compensatedCredIDs[credID] {
 				continue
 			}
 			compensatedCredIDs[credID] = true
-			if err := s.compensateCredentialTx(ctx, tx, credID, priorCredRows[credID], priorCredTombstones[credID]); err != nil {
+			if err := s.compensateCredentialTx(ctx, tx, credID, priorCredRows[credID], priorCredTombstones[credID], written); err != nil {
 				return err
 			}
 			warnf("凭据 %s 引用的资产在写入时冲突，已回滚该凭据的导入写入", credID)
@@ -809,7 +835,7 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		return ImportReport{}, err
 	}
 	for _, cred := range preparedCreds {
-		if compensatedCredIDs[cred.id] || !credWriteResults[cred.id] {
+		if compensatedCredIDs[cred.id] || credWriteResults[cred.id] == nil {
 			continue
 		}
 		if cred.exists {
@@ -854,7 +880,7 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 	report.CredsDeleted += len(preparedTombstones)
 	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
 		for _, snippet := range preparedSnippets {
-			if err := s.engine.snippetUpsertTx(ctx, tx, snippet.row); err != nil {
+			if err := s.engine.snippetUpsertTxBound(ctx, tx, snippet.row, snippet.snapshot); err != nil {
 				return err
 			}
 		}
@@ -921,22 +947,31 @@ func (s *Service) importAssetTx(ctx context.Context, tx *gorm.DB, index int, row
 
 // importCredentialTx writes one prepared credential inside the import transaction with a
 // savepoint: a conflict (the credential changed after the snapshot) is recorded and the
-// credential is skipped, never overwriting the later local write. It reports whether the
-// write actually landed; a conflict-skipped credential reports false so the caller keeps
-// it out of compensation and out of the imported counts.
-func (s *Service) importCredentialTx(ctx context.Context, tx *gorm.DB, cred preparedCred, snapshot *store.CredentialRow, report *ImportReport, warnf func(string, ...any)) (bool, error) {
+// credential is skipped, never overwriting the later local write. On success it returns
+// the exact row content this import wrote (including the stored created_at), so the
+// caller can bind compensation to it; a conflict-skipped credential returns nil so the
+// caller keeps it out of compensation and out of the imported counts.
+func (s *Service) importCredentialTx(ctx context.Context, tx *gorm.DB, cred preparedCred, snapshot *store.CredentialRow, report *ImportReport, warnf func(string, ...any)) (*store.CredentialRow, error) {
 	savepoint := fmt.Sprintf("import_credential_%s", cred.id)
 	if err := tx.SavePoint(savepoint).Error; err != nil {
-		return false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		return nil, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	err := s.engine.credentialUpsertTxBound(ctx, tx, credentialObject{
 		ID: cred.id, Name: cred.name, Kind: cred.kind, UpdatedAt: cred.updatedAt,
 	}, cred.nonce, cred.blob, snapshot)
 	if err == nil {
-		return true, nil
+		createdAt := cred.updatedAt
+		if snapshot != nil {
+			createdAt = snapshot.CreatedAt
+		}
+		return &store.CredentialRow{
+			ID: cred.id, Name: cred.name, Kind: cred.kind, Cipher: store.CipherAES256GCM,
+			Nonce: cred.nonce, Blob: cred.blob, KEKHint: s.engine.vault.KEKHint(),
+			CreatedAt: createdAt, UpdatedAt: cred.updatedAt, OwnerID: ipc.OwnerID(ctx),
+		}, nil
 	}
 	if rollbackErr := tx.RollbackTo(savepoint).Error; rollbackErr != nil {
-		return false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+rollbackErr.Error(), rollbackErr)
+		return nil, ipc.WrapError(ipc.CodeDB, "数据库错误: "+rollbackErr.Error(), rollbackErr)
 	}
 	if errors.Is(err, store.ErrWriteConflict) {
 		report.Conflicts++
@@ -944,36 +979,62 @@ func (s *Service) importCredentialTx(ctx context.Context, tx *gorm.DB, cred prep
 			Kind: "credential", ID: cred.id, Name: cred.name,
 		})
 		warnf("凭据 %s 在导入决策后已被本机更新，已跳过（可重新导入覆盖）", cred.id)
-		return false, nil
+		return nil, nil
 	}
-	return false, err
+	return nil, err
 }
 
 // compensateCredentialTx rolls one credential back to its pre-import state after the only
 // asset referencing it conflicted at write time: a credential created by this import is
-// removed, an overwritten one is restored field-by-field (including the original revision),
-// and a tombstone cleared by the upsert is re-recorded. A nil prior row means the
-// credential did not exist before the import.
-func (s *Service) compensateCredentialTx(ctx context.Context, tx *gorm.DB, credID string, prior *store.CredentialRow, priorTombstone *store.CredentialTombstone) error {
+// removed, an overwritten one is restored field-by-field (including the original
+// revision), and a tombstone cleared by the upsert is re-recorded. Every statement binds
+// the row content this import actually wrote: a row that no longer carries it was
+// replaced by a later write and survives untouched (and its tombstone stays cleared).
+// A nil prior row means the credential did not exist before the import.
+func (s *Service) compensateCredentialTx(ctx context.Context, tx *gorm.DB, credID string, prior *store.CredentialRow, priorTombstone *store.CredentialTombstone, written *store.CredentialRow) error {
 	credential := query.Use(tx).CredentialRow
+	writtenConds := []gen.Condition{
+		credential.Name.Eq(written.Name), credential.Kind.Eq(written.Kind), credential.Cipher.Eq(written.Cipher),
+		credential.Nonce.Eq(written.Nonce), credential.Blob.Eq(written.Blob), credential.KEKHint.Eq(written.KEKHint),
+		credential.CreatedAt.Eq(written.CreatedAt), credential.UpdatedAt.Eq(written.UpdatedAt),
+	}
+	compensated := false
 	if prior == nil {
-		if _, err := credential.WithContext(ctx).
+		info, err := credential.WithContext(ctx).
 			Where(credential.ID.Eq(credID)).
 			Where(ownerConditions(ctx, credential.TableName())...).
-			Delete(); err != nil {
+			Where(writtenConds...).
+			Delete()
+		if err != nil {
 			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 		}
+		compensated = info.RowsAffected == 1
 	} else {
-		if _, err := credential.WithContext(ctx).
+		info, err := credential.WithContext(ctx).
 			Where(credential.ID.Eq(credID)).
 			Where(ownerConditions(ctx, credential.TableName())...).
+			Where(writtenConds...).
 			UpdateColumns(map[string]any{
 				"name": prior.Name, "kind": prior.Kind, "cipher": prior.Cipher,
 				"nonce": prior.Nonce, "blob": prior.Blob, "kek_hint": prior.KEKHint,
 				"created_at": prior.CreatedAt, "updated_at": prior.UpdatedAt,
-			}); err != nil {
+			})
+		if err != nil {
 			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 		}
+		compensated = info.RowsAffected == 1
+		if !compensated {
+			// MySQL/MariaDB report 0 for a no-op UPDATE: the restore is already in
+			// place only when the stored row already equals the prior content.
+			matches, err := credentialRowMatches(ctx, tx, credID, prior)
+			if err != nil {
+				return err
+			}
+			compensated = matches
+		}
+	}
+	if !compensated {
+		return nil
 	}
 	if priorTombstone != nil {
 		if err := tx.Clauses(clause.OnConflict{
@@ -985,6 +1046,25 @@ func (s *Service) compensateCredentialTx(ctx context.Context, tx *gorm.DB, credI
 		}
 	}
 	return nil
+}
+
+// credentialRowMatches reports whether the stored credential row carries exactly the
+// given row's content (every column except the primary key and owner_id).
+func credentialRowMatches(ctx context.Context, tx *gorm.DB, credID string, target *store.CredentialRow) (bool, error) {
+	credential := query.Use(tx).CredentialRow
+	row, err := credential.WithContext(ctx).
+		Where(credential.ID.Eq(credID)).
+		Where(ownerConditions(ctx, credential.TableName())...).
+		First()
+	if isNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	return row.Name == target.Name && row.Kind == target.Kind && row.Cipher == target.Cipher &&
+		bytes.Equal(row.Nonce, target.Nonce) && bytes.Equal(row.Blob, target.Blob) && row.KEKHint == target.KEKHint &&
+		row.CreatedAt == target.CreatedAt && row.UpdatedAt == target.UpdatedAt, nil
 }
 
 // inImportTx commits all writes of one object class in a single transaction; any statement failure rolls back the whole class.
@@ -1020,6 +1100,7 @@ type bundleGroupPlan struct {
 	createdAt int64
 	updatedAt int64
 	exists    bool
+	snapshot  *store.AssetGroupRow
 }
 
 // planGroupImports validates group payloads and resolves parents: each non-empty ID after trim only processes the last in-bundle entry (last-index dedup);
@@ -1076,16 +1157,20 @@ func (s *Service) planGroupImports(ctx context.Context, payloads []SyncBundleGro
 		if parentID != nil && *parentID == "" {
 			parentID = nil
 		}
-		_, err := s.store.GroupGet(ctx, id)
+		existing, err := s.store.GroupGet(ctx, id)
 		exists := err == nil
 		if err != nil && !isNotFound(err) {
 			return nil, err
 		}
 		planIndex[id] = len(plans)
-		plans = append(plans, bundleGroupPlan{
+		plan := bundleGroupPlan{
 			id: id, name: name, parentID: parentID, sort: payload.Sort,
 			createdAt: createdAt, updatedAt: updatedAt, exists: exists,
-		})
+		}
+		if exists {
+			plan.snapshot = &existing
+		}
+		plans = append(plans, plan)
 	}
 	parents, err := s.engine.groupParents(ctx)
 	if err != nil {

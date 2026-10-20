@@ -198,6 +198,35 @@ func ownerRowMatchesAssignments(ctx context.Context, tx *gorm.DB, values any, gu
 	return true, nil
 }
 
+// ownerRowMatchesContent reports whether the stored row carries exactly the given row's
+// full content (every column except the primary key and owner_id); a missing row reports
+// false.
+func ownerRowMatchesContent(ctx context.Context, tx *gorm.DB, values any, guard map[string]any, statement *gorm.Statement) (bool, error) {
+	elem := reflect.ValueOf(values)
+	for elem.Kind() == reflect.Pointer {
+		elem = elem.Elem()
+	}
+	row := reflect.New(elem.Type()).Interface()
+	if err := tx.Where(guard).First(row).Error; err != nil {
+		if isNoRows(err) {
+			return false, nil
+		}
+		return false, dbError(err)
+	}
+	rowElem := reflect.ValueOf(row).Elem()
+	for _, f := range statement.Schema.Fields {
+		if f.PrimaryKey || f.DBName == "" || f.DBName == "owner_id" {
+			continue
+		}
+		want, _ := f.ValueOf(ctx, elem)
+		got, _ := f.ValueOf(ctx, rowElem)
+		if !reflect.DeepEqual(got, want) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // UpsertOwnerGuardedExpected writes values by primary key with an owner guard and an
 // expected-revision CAS bound to the caller's snapshot: an existing row is updated only
 // when its revision still equals expectedRevision, and a new row is inserted only when it
@@ -258,11 +287,15 @@ func UpsertOwnerGuardedExpected(ctx context.Context, db *gorm.DB, values any, co
 	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: primary.DBName}}, DoNothing: true}).Create(values).Error; err != nil {
 		return dbError(err)
 	}
-	var inserted int64
-	if err := tx.Model(values).Where(guard).Count(&inserted).Error; err != nil {
-		return dbError(err)
+	// The INSERT is a no-op when a concurrent writer created the same ID first, so the
+	// insert alone cannot prove this call landed: accept only when the stored row carries
+	// exactly this call's content — a concurrent same-ID insert with different content
+	// surfaces ErrWriteConflict instead of being mistaken for this call's success.
+	matches, err = ownerRowMatchesContent(ctx, tx, values, guard, statement)
+	if err != nil {
+		return err
 	}
-	if inserted > 0 {
+	if matches {
 		return nil
 	}
 	return ErrWriteConflict
@@ -339,11 +372,15 @@ func UpsertOwnerGuardedExpectedContent(ctx context.Context, db *gorm.DB, values 
 	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: primary.DBName}}, DoNothing: true}).Create(values).Error; err != nil {
 		return dbError(err)
 	}
-	var inserted int64
-	if err := tx.Model(values).Where(guard).Count(&inserted).Error; err != nil {
-		return dbError(err)
+	// The INSERT is a no-op when a concurrent writer created the same ID first, so the
+	// insert alone cannot prove this call landed: accept only when the stored row carries
+	// exactly this call's content — a concurrent same-ID insert with different content
+	// surfaces ErrWriteConflict instead of being mistaken for this call's success.
+	matches, err = ownerRowMatchesContent(ctx, tx, values, guard, statement)
+	if err != nil {
+		return err
 	}
-	if inserted > 0 {
+	if matches {
 		return nil
 	}
 	return ErrWriteConflict

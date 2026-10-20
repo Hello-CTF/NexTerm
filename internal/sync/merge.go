@@ -526,9 +526,11 @@ func (e *Engine) groupUpsert(ctx context.Context, payload groupObject, parentID 
 	})
 }
 
-// groupUpsertTxBound is the LWW-apply variant of groupUpsertTx: the write binds to the
-// planner's snapshot, so an equal-revision winner lands while a concurrent local write is
-// never overwritten (the conflict leaves the object unreconciled for the next round).
+// groupUpsertTxBound writes one group inside a transaction with the write bound to the
+// caller's snapshot: the planner's equal-revision winner lands while a concurrent local
+// write is never overwritten (the conflict leaves the object unreconciled for the next
+// round). The explicit bundle import passes the pre-import snapshot, and its second
+// topology pass passes the first pass's written content.
 func (e *Engine) groupUpsertTxBound(ctx context.Context, tx *gorm.DB, payload groupObject, parentID *string, snapshot *store.AssetGroupRow) error {
 	row := &store.AssetGroupRow{ID: payload.ID, ParentID: parentID, Name: strings.TrimSpace(payload.Name), Sort: payload.Sort, CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt, OwnerID: ipc.OwnerID(ctx)}
 	if snapshot == nil {
@@ -539,22 +541,6 @@ func (e *Engine) groupUpsertTxBound(ctx context.Context, tx *gorm.DB, payload gr
 		if err := store.UpsertOwnerGuardedExpectedContent(ctx, tx, row, []string{"parent_id", "name", "sort", "updated_at"}, snapshot); err != nil {
 			return err
 		}
-	}
-	tombstone := query.Use(tx).SyncTombstone
-	if _, err := tombstone.WithContext(ctx).
-		Where(tombstone.ID.Eq(payload.ID)).
-		Where(ownerConditions(ctx, tombstone.TableName())...).
-		Delete(); err != nil {
-		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-	}
-	return nil
-}
-
-// groupUpsertTx is the in-transaction version of groupUpsert, letting ImportBundle merge multiple writes of one object class into the same transaction.
-func (e *Engine) groupUpsertTx(ctx context.Context, tx *gorm.DB, payload groupObject, parentID *string) error {
-	row := &store.AssetGroupRow{ID: payload.ID, ParentID: parentID, Name: strings.TrimSpace(payload.Name), Sort: payload.Sort, CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt, OwnerID: ipc.OwnerID(ctx)}
-	if err := store.UpsertOwnerGuarded(ctx, tx, row, []string{"parent_id", "name", "sort", "updated_at"}, "updated_at"); err != nil {
-		return err
 	}
 	tombstone := query.Use(tx).SyncTombstone
 	if _, err := tombstone.WithContext(ctx).

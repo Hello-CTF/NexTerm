@@ -817,10 +817,11 @@ func (e *Engine) snippetUpsert(ctx context.Context, row store.SnippetRow, snapsh
 	})
 }
 
-// snippetUpsertTxBound is the LWW-apply variant of snippetUpsertTx: the write binds to
-// the planner's snapshot, so an equal-revision winner lands while a concurrent local
-// write is never overwritten (the conflict leaves the object unreconciled for the next
-// round).
+// snippetUpsertTxBound writes one snippet inside a transaction with the write bound to
+// the caller's snapshot: the planner's equal-revision winner lands while a concurrent
+// local write is never overwritten (the conflict leaves the object unreconciled for the
+// next round). The explicit bundle import passes the pre-import snapshot (or the earlier
+// in-bundle entry's content for duplicate IDs).
 func (e *Engine) snippetUpsertTxBound(ctx context.Context, tx *gorm.DB, row store.SnippetRow, snapshot *store.SnippetRow) error {
 	row.OwnerID = ipc.OwnerID(ctx)
 	if snapshot == nil {
@@ -831,22 +832,6 @@ func (e *Engine) snippetUpsertTxBound(ctx context.Context, tx *gorm.DB, row stor
 		if err := store.UpsertOwnerGuardedExpectedContent(ctx, tx, &row, []string{"group_id", "name", "body", "sort", "updated_at"}, snapshot); err != nil {
 			return err
 		}
-	}
-	tombstone := query.Use(tx).SyncTombstone
-	if _, err := tombstone.WithContext(ctx).
-		Where(tombstone.ID.Eq(row.ID)).
-		Where(ownerConditions(ctx, tombstone.TableName())...).
-		Delete(); err != nil {
-		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-	}
-	return nil
-}
-
-// snippetUpsertTx is the in-transaction version of snippetUpsert, letting ImportBundle merge multiple writes of one object class into the same transaction.
-func (e *Engine) snippetUpsertTx(ctx context.Context, tx *gorm.DB, row store.SnippetRow) error {
-	row.OwnerID = ipc.OwnerID(ctx)
-	if err := store.UpsertOwnerGuarded(ctx, tx, &row, []string{"group_id", "name", "body", "sort", "updated_at"}, "updated_at"); err != nil {
-		return err
 	}
 	tombstone := query.Use(tx).SyncTombstone
 	if _, err := tombstone.WithContext(ctx).

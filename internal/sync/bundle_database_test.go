@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -363,5 +365,291 @@ func TestEngineApplyEqualRevisionInterleaveKeepsLaterWriteDatabase(t *testing.T)
 	secret, err := instance.vault.DecryptCredentialString(ctx, row)
 	if err != nil || secret != "seed-secret" {
 		t.Fatalf("stored secret = %q err=%v, want seed-secret", secret, err)
+	}
+}
+
+// A parent+child group pair at the same revision imports cleanly on every real backend:
+// the second topology pass binds the first pass's written content, so the two-phase
+// group write never mistakes its own intermediate state for a conflict.
+func TestImportBundleParentChildGroupsDatabase(t *testing.T) {
+	instance := newDatabaseTestInstance(t, true)
+	ctx := context.Background()
+
+	parentID := ids.New()
+	childID := ids.New()
+	bundle := SyncBundle{
+		Protocol: BundleProtocolVersion,
+		Groups: []SyncBundleGroup{
+			{ID: parentID, Name: "parent", CreatedAt: 1, UpdatedAt: 100},
+			{ID: childID, Name: "child", ParentID: &parentID, CreatedAt: 1, UpdatedAt: 100},
+		},
+	}
+	report, err := instance.service.ImportBundle(ctx, ImportBundleRequest{Bundle: bundle})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.GroupsCreated != 2 || report.Conflicts != 0 {
+		t.Fatalf("parent+child group import report = %+v", report)
+	}
+	child, err := instance.db.GroupGet(ctx, childID)
+	if err != nil || child.ParentID == nil || *child.ParentID != parentID {
+		t.Fatalf("child group parent = %+v err=%v", child, err)
+	}
+}
+
+// An equal-revision group or snippet re-import lands on every real backend (the write
+// binds the pre-import snapshot's content), and Force overwrites a newer local revision.
+func TestImportBundleEqualRevisionGroupSnippetDatabase(t *testing.T) {
+	t.Run("group", func(t *testing.T) {
+		instance := newDatabaseTestInstance(t, true)
+		ctx := context.Background()
+		groupID := ids.New()
+		seed := SyncBundle{Protocol: BundleProtocolVersion, Groups: []SyncBundleGroup{{ID: groupID, Name: "a", CreatedAt: 1, UpdatedAt: 100}}}
+		if _, err := instance.service.ImportBundle(ctx, ImportBundleRequest{Bundle: seed}); err != nil {
+			t.Fatal(err)
+		}
+		update := SyncBundle{Protocol: BundleProtocolVersion, Groups: []SyncBundleGroup{{ID: groupID, Name: "b", CreatedAt: 1, UpdatedAt: 100}}}
+		report, err := instance.service.ImportBundle(ctx, ImportBundleRequest{Bundle: update})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.GroupsUpdated != 1 || report.Conflicts != 0 {
+			t.Fatalf("equal-revision group import report = %+v", report)
+		}
+		group, err := instance.db.GroupGet(ctx, groupID)
+		if err != nil || group.Name != "b" {
+			t.Fatalf("group = %+v err=%v", group, err)
+		}
+	})
+
+	t.Run("snippet", func(t *testing.T) {
+		instance := newDatabaseTestInstance(t, true)
+		ctx := context.Background()
+		snippetID := ids.New()
+		seed := SyncBundle{Protocol: BundleProtocolVersion, Snippets: []SyncBundleSnippet{{ID: snippetID, Name: "a", Body: "one", CreatedAt: 1, UpdatedAt: 100}}}
+		if _, err := instance.service.ImportBundle(ctx, ImportBundleRequest{Bundle: seed}); err != nil {
+			t.Fatal(err)
+		}
+		update := SyncBundle{Protocol: BundleProtocolVersion, Snippets: []SyncBundleSnippet{{ID: snippetID, Name: "b", Body: "two", CreatedAt: 1, UpdatedAt: 100}}}
+		report, err := instance.service.ImportBundle(ctx, ImportBundleRequest{Bundle: update})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.SnippetsUpdated != 1 || report.Conflicts != 0 {
+			t.Fatalf("equal-revision snippet import report = %+v", report)
+		}
+		snippet, err := instance.db.SnippetGet(ctx, snippetID)
+		if err != nil || snippet.Name != "b" || snippet.Body != "two" {
+			t.Fatalf("snippet = %+v err=%v", snippet, err)
+		}
+	})
+
+	t.Run("force", func(t *testing.T) {
+		instance := newDatabaseTestInstance(t, true)
+		ctx := context.Background()
+		snippetID := ids.New()
+		seed := SyncBundle{Protocol: BundleProtocolVersion, Snippets: []SyncBundleSnippet{{ID: snippetID, Name: "s", Body: "new", CreatedAt: 1, UpdatedAt: 200}}}
+		if _, err := instance.service.ImportBundle(ctx, ImportBundleRequest{Bundle: seed}); err != nil {
+			t.Fatal(err)
+		}
+		older := SyncBundle{Protocol: BundleProtocolVersion, Snippets: []SyncBundleSnippet{{ID: snippetID, Name: "s", Body: "old", CreatedAt: 1, UpdatedAt: 100}}}
+		if _, err := instance.service.ImportBundle(ctx, ImportBundleRequest{Bundle: older}); err != nil {
+			t.Fatal(err)
+		}
+		snippet, err := instance.db.SnippetGet(ctx, snippetID)
+		if err != nil || snippet.Body != "new" {
+			t.Fatalf("newer local snippet must survive a non-force import: %+v err=%v", snippet, err)
+		}
+		report, err := instance.service.ImportBundle(ctx, ImportBundleRequest{Bundle: older, Force: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.SnippetsUpdated != 1 || report.Conflicts != 0 {
+			t.Fatalf("force snippet import report = %+v", report)
+		}
+		snippet, err = instance.db.SnippetGet(ctx, snippetID)
+		if err != nil || snippet.Body != "old" {
+			t.Fatalf("force import must land the older revision: %+v err=%v", snippet, err)
+		}
+	})
+}
+
+// A concurrent same-ID credential insert between the import's snapshot and its write is
+// never mistaken for this import's success: the credential write reports a conflict, and
+// the asset-conflict compensation must not delete the concurrently created credential.
+func TestImportBundleConcurrentNewCredentialInsertDatabase(t *testing.T) {
+	instance := newDatabaseTestInstance(t, true)
+	ctx := context.Background()
+
+	assetID := ids.New()
+	putTestAsset(t, instance, store.AssetRow{
+		ID: assetID, Kind: "ssh", Name: "web", OptionsJSON: "{}", CreatedAt: 1, UpdatedAt: 100,
+	})
+	credID := ids.New()
+	interleaveOnceOnTableQuery(t, instance, "sync_tombstone", func() {
+		nonce, blob, err := instance.vault.EncryptCredential(context.Background(), "concurrent-secret")
+		if err != nil {
+			t.Errorf("interleaved credential encrypt: %v", err)
+			return
+		}
+		if _, err := instance.db.CredentialPut(context.Background(), store.CredentialInput{
+			ID: credID, Name: "concurrent", Kind: "password", Nonce: nonce, Blob: blob, KEKHint: instance.vault.KEKHint(),
+		}); err != nil {
+			t.Errorf("interleaved credential insert: %v", err)
+			return
+		}
+		if err := instance.db.GORM().WithContext(context.Background()).
+			Model(&store.AssetRow{}).Where("id = ?", assetID).
+			Updates(map[string]any{"host": "later-host", "updated_at": 150}).Error; err != nil {
+			t.Errorf("interleaved asset edit: %v", err)
+		}
+	})
+
+	bundle := SyncBundle{
+		Protocol: BundleProtocolVersion,
+		Creds:    []SyncBundleCredential{{ID: credID, Name: "imported", Kind: "password", Secret: "import-secret", UpdatedAt: 200}},
+		Assets: []SyncBundleAsset{{
+			ID: assetID, Kind: "ssh", Name: "web", CredID: &credID, OptionsJSON: "{}", CreatedAt: 1, UpdatedAt: 200,
+		}},
+		Snippets: []SyncBundleSnippet{{ID: ids.New(), Name: "s", Body: "b", CreatedAt: 1, UpdatedAt: 2}},
+	}
+	report, err := instance.service.ImportBundle(ctx, ImportBundleRequest{Bundle: bundle})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Conflicts != 2 {
+		t.Fatalf("import conflicts = %d, want 2 (credential + asset): %+v", report.Conflicts, report)
+	}
+	if report.CredsCreated != 0 {
+		t.Fatalf("concurrent insert counted as imported: %+v", report)
+	}
+	row, err := instance.db.CredentialGetRow(ctx, credID)
+	if err != nil {
+		t.Fatalf("concurrently created credential must survive: %v", err)
+	}
+	if row.Name != "concurrent" {
+		t.Fatalf("concurrent credential content replaced: %+v", row)
+	}
+	secret, err := instance.vault.DecryptCredentialString(ctx, row)
+	if err != nil || secret != "concurrent-secret" {
+		t.Fatalf("concurrent credential secret = %q err=%v", secret, err)
+	}
+	asset, err := instance.db.AssetGet(ctx, assetID)
+	if err != nil || asset.Host == nil || *asset.Host != "later-host" {
+		t.Fatalf("interleaved asset edit overwritten: %+v err=%v", asset, err)
+	}
+}
+
+// In-bundle duplicate snippet IDs chain their snapshots: the last entry lands without a
+// conflict, and the counts reflect the create plus the update.
+func TestImportBundleDuplicateSnippetChainsSnapshotDatabase(t *testing.T) {
+	instance := newDatabaseTestInstance(t, true)
+	ctx := context.Background()
+
+	snippetID := ids.New()
+	bundle := SyncBundle{
+		Protocol: BundleProtocolVersion,
+		Snippets: []SyncBundleSnippet{
+			{ID: snippetID, Name: "a", Body: "one", CreatedAt: 1, UpdatedAt: 100},
+			{ID: snippetID, Name: "b", Body: "two", CreatedAt: 1, UpdatedAt: 200},
+		},
+	}
+	report, err := instance.service.ImportBundle(ctx, ImportBundleRequest{Bundle: bundle})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.SnippetsCreated != 1 || report.SnippetsUpdated != 1 || report.Conflicts != 0 {
+		t.Fatalf("duplicate snippet import report = %+v", report)
+	}
+	snippet, err := instance.db.SnippetGet(ctx, snippetID)
+	if err != nil || snippet.Name != "b" || snippet.Body != "two" || snippet.UpdatedAt != 200 {
+		t.Fatalf("duplicate snippet final = %+v err=%v", snippet, err)
+	}
+}
+
+// The reviewer's exact r8 window, reproducible only where the import transaction does not
+// lock the absent row's gap and reads the latest commit (PostgreSQL): a concurrent
+// same-ID credential insert landing between the must-not-exist probe and the INSERT must
+// surface as a credential conflict — never as this import's success — and the
+// asset-conflict compensation must not delete the concurrently created credential.
+// SQLite hits SQLITE_BUSY inside the import transaction's write lock, and MySQL/MariaDB
+// gap locks plus repeatable-read snapshots cannot construct this window at all, so the
+// test only runs on PostgreSQL.
+func TestImportBundleConcurrentNewCredentialInsertInTxDatabase(t *testing.T) {
+	if !strings.EqualFold(os.Getenv("NEXTERM_TEST_DB_BACKEND"), "postgres") {
+		t.Skip("the in-transaction concurrent-insert window is only constructible on PostgreSQL")
+	}
+	instance := newDatabaseTestInstance(t, true)
+	ctx := context.Background()
+
+	assetID := ids.New()
+	putTestAsset(t, instance, store.AssetRow{
+		ID: assetID, Kind: "ssh", Name: "web", OptionsJSON: "{}", CreatedAt: 1, UpdatedAt: 100,
+	})
+	credID := ids.New()
+	// Land the asset edit between the import's snapshot and its write (prep phase).
+	interleaveOnceOnTableQuery(t, instance, "sync_tombstone", func() {
+		if err := instance.db.GORM().WithContext(context.Background()).
+			Model(&store.AssetRow{}).Where("id = ?", assetID).
+			Updates(map[string]any{"host": "later-host", "updated_at": 150}).Error; err != nil {
+			t.Errorf("interleaved asset edit: %v", err)
+		}
+	})
+	// Land a concurrent same-ID credential insert between the must-not-exist Count and the
+	// INSERT inside the import's write transaction.
+	fired := false
+	if err := instance.db.GORM().Callback().Query().After("gorm:query").Register("test:import-concurrent-cred-insert", func(tx *gorm.DB) {
+		sql := tx.Statement.SQL.String()
+		if fired || !strings.Contains(sql, "count(*)") || !strings.Contains(sql, "`credential`") && !strings.Contains(sql, `"credential"`) {
+			return
+		}
+		fired = true
+		nonce, blob, err := instance.vault.EncryptCredential(context.Background(), "concurrent-secret")
+		if err != nil {
+			t.Errorf("interleaved credential encrypt: %v", err)
+			return
+		}
+		if _, err := instance.db.CredentialPut(context.Background(), store.CredentialInput{
+			ID: credID, Name: "concurrent", Kind: "password", Nonce: nonce, Blob: blob, KEKHint: instance.vault.KEKHint(),
+		}); err != nil {
+			t.Errorf("interleaved credential insert: %v", err)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = instance.db.GORM().Callback().Query().Remove("test:import-concurrent-cred-insert") })
+
+	bundle := SyncBundle{
+		Protocol: BundleProtocolVersion,
+		Creds:    []SyncBundleCredential{{ID: credID, Name: "imported", Kind: "password", Secret: "import-secret", UpdatedAt: 200}},
+		Assets: []SyncBundleAsset{{
+			ID: assetID, Kind: "ssh", Name: "web", CredID: &credID, OptionsJSON: "{}", CreatedAt: 1, UpdatedAt: 200,
+		}},
+		Snippets: []SyncBundleSnippet{{ID: ids.New(), Name: "s", Body: "b", CreatedAt: 1, UpdatedAt: 2}},
+	}
+	report, err := instance.service.ImportBundle(ctx, ImportBundleRequest{Bundle: bundle})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Conflicts != 2 {
+		t.Fatalf("import conflicts = %d, want 2 (credential + asset): %+v", report.Conflicts, report)
+	}
+	if report.CredsCreated != 0 {
+		t.Fatalf("concurrent insert counted as imported: %+v", report)
+	}
+	row, err := instance.db.CredentialGetRow(ctx, credID)
+	if err != nil {
+		t.Fatalf("concurrently created credential must survive: %v", err)
+	}
+	if row.Name != "concurrent" {
+		t.Fatalf("concurrent credential content replaced: %+v", row)
+	}
+	secret, err := instance.vault.DecryptCredentialString(ctx, row)
+	if err != nil || secret != "concurrent-secret" {
+		t.Fatalf("concurrent credential secret = %q err=%v", secret, err)
+	}
+	asset, err := instance.db.AssetGet(ctx, assetID)
+	if err != nil || asset.Host == nil || *asset.Host != "later-host" {
+		t.Fatalf("interleaved asset edit overwritten: %+v err=%v", asset, err)
 	}
 }
