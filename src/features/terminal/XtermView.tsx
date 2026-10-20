@@ -288,9 +288,19 @@ export function XtermView(props: XtermViewProps) {
         void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);
         return;
       }
-      void unsafeCall("terminal_pause", { tabId: kernelTabId, channelId: channelIdOf(channel) }).catch(
-        () => undefined,
-      );
+      void pauseWithRetry(3);
+    };
+    const pauseWithRetry = (attempts: number) => {
+      if (!kernelTabId) return;
+      unsafeCall("terminal_pause", { tabId: kernelTabId, channelId: channelIdOf(channel) }).catch(() => {
+        if (attempts > 1) {
+          window.setTimeout(() => pauseWithRetry(attempts - 1), 100);
+          return;
+        }
+        // The pause could not be established: surface an accurate overflow
+        // state instead of silently dropping output.
+        useUi.getState().pushToast("error", "终端输出积压且无法暂停上游，部分输出可能丢失");
+      });
     };
     const resumeUpstream = () => {
       if (props.containerId || !kernelTabId) return;
@@ -310,7 +320,15 @@ export function XtermView(props: XtermViewProps) {
       const nowMs = Date.now();
       if (nowMs - lastRefuseToastAt > 10_000) {
         lastRefuseToastAt = nowMs;
-        useUi.getState().pushToast("info", "终端输出积压，正在重新同步，画面将自动恢复");
+        const replayable = props.containerId || retainable === true;
+        useUi
+          .getState()
+          .pushToast(
+            replayable ? "info" : "error",
+            replayable
+              ? "终端输出积压，正在重新同步，画面将自动恢复"
+              : "终端输出积压，部分输出可能丢失",
+          );
       }
     };
     const streamWriter = createTerminalStreamWriter(
@@ -582,6 +600,13 @@ export function XtermView(props: XtermViewProps) {
       reattaching = true;
       void (async () => {
         try {
+          if (props.containerId) {
+            // Docker exec replays synchronously inside the attach RPC, before
+            // its response: end the refusal episode up front so the replay is
+            // accepted. Session tabs end the episode at the anchor frame
+            // instead, which the server sends first.
+            streamWriter.beginAttachment();
+          }
           const info = resume
             ? await terminalApi.attachTab(id, channel, -1, resume, props.containerId ? undefined : props.sessionId)
             : await terminalApi.attachTab(id, channel, -1, undefined, props.containerId ? undefined : props.sessionId);

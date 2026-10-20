@@ -265,14 +265,31 @@ func TestExecReplayIsBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec.emit(t, "abcdefgh")
-	waitExecReplay(t, service, id, 4)
+	waitExecReplay(t, service, id, 8)
+	// The buffer is full (8 bytes over the 4-byte limit): further output
+	// stalls the exec instead of being dropped.
+	exec.emit(t, "ij")
+	time.Sleep(50 * time.Millisecond)
+	stream, err := service.streams.get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream.mu.Lock()
+	stuck := stream.replay.size
+	stream.mu.Unlock()
+	if stuck != 8 {
+		t.Fatalf("replay kept growing while full: size = %d, want 8", stuck)
+	}
 	resumed := newCollectSink()
 	if err := service.ResumeExec(id, resumed); err != nil {
 		t.Fatal(err)
 	}
+	// The retained backlog drains, then the stalled exec continues: the full
+	// sequence arrives in order with nothing dropped.
 	resumed.waitFrame(t)
-	if resumed.String() != "efgh" {
-		t.Fatalf("bounded replay = %q", resumed.String())
+	resumed.waitFrame(t)
+	if got := resumed.String(); got != "abcdefghij" {
+		t.Fatalf("resumed stream = %q, want abcdefghij", got)
 	}
 }
 

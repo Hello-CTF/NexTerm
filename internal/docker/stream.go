@@ -123,7 +123,7 @@ type managedStream struct {
 	exit        StreamExit
 	writeMu     sync.Mutex
 	deliveryMu  sync.Mutex
-	replay      boundedReplay
+	replay      *boundedReplay
 	closeOnce   sync.Once
 	finishOnce  sync.Once
 	closeErr    error
@@ -171,7 +171,7 @@ func (s *managedStream) sinkFailed(version uint64, frame []byte) {
 		if s.sinkCancel != nil {
 			s.sinkCancel()
 		}
-		s.replay.add(frame)
+		s.replay.addForced(frame)
 		s.sink = nil
 		s.sinkCtx = nil
 		s.sinkCancel = nil
@@ -187,8 +187,16 @@ func (s *managedStream) dispatch(frame []byte) error {
 	if sink == nil {
 		if s.kind == streamExec {
 			s.mu.Lock()
-			s.replay.add(frame)
+			full := s.replay.full()
+			if !full {
+				s.replay.addForced(frame)
+			}
 			s.mu.Unlock()
+			if full {
+				// The caller retries once the resume drains the replay; waiting
+				// here would block the resume path, which shares deliveryMu.
+				return errReplayFull
+			}
 		}
 		return nil
 	}
@@ -210,8 +218,22 @@ func (s *managedStream) run() {
 		if count > 0 {
 			frame := append([]byte(nil), buffer[:count]...)
 			if sendErr := s.dispatch(frame); sendErr != nil {
-				_ = s.close(sendErr)
-				return
+				if !errors.Is(sendErr, errReplayFull) {
+					_ = s.close(sendErr)
+					return
+				}
+				// The replay buffer is full: stall the read until a resume
+				// drains it instead of dropping the exec's output.
+				select {
+				case <-s.replay.roomAvail:
+				case <-s.ctx.Done():
+					_ = s.close(s.ctx.Err())
+					return
+				}
+				if sendErr := s.dispatch(frame); sendErr != nil {
+					_ = s.close(sendErr)
+					return
+				}
 			}
 		}
 		if err != nil {
@@ -441,7 +463,7 @@ func (s *Service) AttachExec(ctx context.Context, request ExecAttachRequest) (st
 	managed := newManagedStream(s.streams, request.SessionID, streamExec, request.Sink, streamCtx, streamCancel)
 	managed.reader = session
 	managed.exec = session
-	managed.replay.limit = s.config.ExecReplayBytes
+	managed.replay = newBoundedReplay(s.config.ExecReplayBytes)
 	if err := s.streams.add(managed, token); err != nil {
 		_ = managed.close(err)
 		return "", err

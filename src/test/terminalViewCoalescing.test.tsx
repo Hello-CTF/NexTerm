@@ -472,7 +472,7 @@ describe("XtermView stream wiring", () => {
     expect(total).toBe(5 * (4 << 20));
   });
 
-  it("ephemeral tabs never detach on refusal: the episode lifts at the low watermark", async () => {
+  it("ephemeral tabs: a working pause keeps the full sequence lossless with no refusal", async () => {
     harness.attach.mockResolvedValue({
       tabId: "kernel-1",
       cols: 80,
@@ -489,19 +489,105 @@ describe("XtermView stream wiring", () => {
     const t = term();
     feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
     const chunk = new Uint8Array(4 << 20).fill(0x61);
+    // The first chunk reaches the high watermark and the client pauses the
+    // feed instead of letting the FIFO hit the cap.
+    act(() => harness.channel?.onBytes?.(chunk));
+    expect(harness.unsafeCall).toHaveBeenCalledWith("terminal_pause", {
+      tabId: "kernel-1",
+      channelId: "channel-1",
+    });
+    // The feed is paused (no more bytes arrive); the FIFO drains below the
+    // low watermark and the client resumes the feed.
+    act(() => t.drainWrites());
+    expect(harness.unsafeCall).toHaveBeenCalledWith("terminal_resume", {
+      tabId: "kernel-1",
+      channelId: "channel-1",
+    });
+    // The feed resumes and the full sequence arrives in order: nothing was
+    // refused, so there is no hole.
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+      act(() => t.drainWrites());
+    }
+    expect(harness.pushToast).not.toHaveBeenCalledWith("error", expect.anything());
+    expect(t.writeLog.length).toBe(5);
+    const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
+    expect(total).toBe(5 * (4 << 20));
+  });
+
+  it("ephemeral tabs: a failed pause retries and then surfaces an accurate overflow state", async () => {
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+    });
+    harness.unsafeCall.mockRejectedValue(new Error("no such command"));
+    vi.useFakeTimers();
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
     for (let i = 0; i < 4; i += 1) {
       act(() => harness.channel?.onBytes?.(chunk));
     }
     act(() => harness.channel?.onBytes?.(chunk));
-    // Refusal on an ephemeral local/WinRM tab must not reap the PTY.
+    // The pause RPC failed every retry: the client surfaces an accurate
+    // overflow state, never reaps the PTY, and keeps the FIFO bounded.
     expect(harness.detach).not.toHaveBeenCalled();
-    expect(harness.pushToast).toHaveBeenCalledWith("info", expect.stringContaining("重新同步"));
-    // Once the backlog drains below the low watermark the episode lifts and
-    // output flows again — no detach, no reap, no frozen terminal.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(harness.unsafeCall).toHaveBeenCalledTimes(3);
+    expect(harness.pushToast).toHaveBeenCalledWith("error", expect.stringContaining("部分输出可能丢失"));
     act(() => t.drainWrites());
-    act(() => harness.channel?.onBytes?.(new Uint8Array(1024).fill(0x63)));
+    expect(t.writeLog.length).toBe(4);
+    vi.useRealTimers();
+  });
+
+  it("docker exec accepts replay that arrives before the attach response", async () => {
+    await show({ containerId: "container-1" });
+    await attachOk();
+    const t = term();
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    act(() => harness.channel?.onBytes?.(chunk));
+    expect(harness.detach).toHaveBeenCalledWith("kernel-1", "channel-1");
     act(() => t.drainWrites());
+    // The resume RPC stays in flight while the replay arrives: the episode
+    // must already be closed so the replay is accepted, not discarded.
+    let finish: ((value: unknown) => void) | undefined;
+    harness.attachTab.mockImplementation(
+      () => new Promise((resolve) => { finish = resolve; }),
+    );
+    act(() => harness.reopenCb?.());
+    const replay = new Uint8Array(4 << 20).fill(0x62);
+    act(() => harness.channel?.onBytes?.(replay));
+    act(() => t.drainWrites());
+    finish?.({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      retainable: false,
+    });
+    await act(async () => {
+      await flushMacrotask();
+    });
     expect(t.writeLog.length).toBe(5);
+    const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
+    expect(total).toBe(5 * (4 << 20));
   });
 
   it("docker exec pauses via detach and resumes through attachTab/ResumeExec", async () => {
