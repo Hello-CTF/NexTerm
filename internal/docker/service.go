@@ -358,9 +358,17 @@ func execWithSession(ctx context.Context, backend Backend, options ExecOptions) 
 		return ExecResult{}, err
 	}
 	defer session.Close()
+	// Terminate the actual stream when the context ends: closing the
+	// session unblocks the read below, so a cancelled exec never waits
+	// for the remote command to finish on its own.
+	stop := context.AfterFunc(ctx, func() { _ = session.Close() })
+	defer stop()
 	_ = session.CloseWrite()
 	output, readErr := readDemultiplexed(session, session.IsTTY())
 	if readErr != nil {
+		if ctx.Err() != nil {
+			return ExecResult{}, ctx.Err()
+		}
 		return ExecResult{}, readErr
 	}
 	exitCode, waitErr := session.Wait(ctx)
