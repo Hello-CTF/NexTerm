@@ -529,7 +529,9 @@ func TestPersistedSessionReplacedOnLinkResetPassword(t *testing.T) {
 
 // GT-07 ratchet: the sync engine/service test files must not reintroduce blind time.Sleep waits.
 // Synchronization must use completion signals or condition polling (waitForCondition/waitForConditionTimeout);
-// the only tolerated time.Sleep is the poll interval inside waitForConditionTimeout itself.
+// the only tolerated time.Sleep is the single bounded poll interval that is the last statement of
+// waitForConditionTimeout's `for !condition()` loop. Any other sleep — including an extra sleep inside
+// that helper — is reported.
 func TestSyncScopedTestsNoBlindSleeps(t *testing.T) {
 	files := []string{"engine_cursor_test.go", "engine_sync_test.go", "service_start_test.go", "settings_sync_test.go"}
 	for _, name := range files {
@@ -543,20 +545,14 @@ func TestSyncScopedTestsNoBlindSleeps(t *testing.T) {
 			if !ok || fn.Body == nil {
 				continue
 			}
+			var exempt token.Pos
 			if fn.Name.Name == "waitForConditionTimeout" {
-				continue
+				exempt = pollSleepPos(fn)
 			}
 			var sleeps []string
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				selector, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok || selector.Sel.Name != "Sleep" {
-					return true
-				}
-				if ident, ok := selector.X.(*ast.Ident); !ok || ident.Name != "time" {
+				if !ok || !isTimeSleepCall(call) || call.Pos() == exempt {
 					return true
 				}
 				sleeps = append(sleeps, fmt.Sprintf("line %d", fset.Position(call.Pos()).Line))
@@ -567,4 +563,49 @@ func TestSyncScopedTestsNoBlindSleeps(t *testing.T) {
 			}
 		}
 	}
+}
+
+// pollSleepPos returns the position of the one bounded poll sleep tolerated inside
+// waitForConditionTimeout: the final statement of its `for !condition()` poll loop.
+// It returns token.NoPos when the helper no longer has that exact shape, so every
+// sleep in the helper is reported instead.
+func pollSleepPos(fn *ast.FuncDecl) token.Pos {
+	for _, stmt := range fn.Body.List {
+		loop, ok := stmt.(*ast.ForStmt)
+		if !ok {
+			continue
+		}
+		unary, ok := loop.Cond.(*ast.UnaryExpr)
+		if !ok || unary.Op != token.NOT {
+			continue
+		}
+		condCall, ok := unary.X.(*ast.CallExpr)
+		if !ok {
+			continue
+		}
+		if ident, ok := condCall.Fun.(*ast.Ident); !ok || ident.Name != "condition" {
+			continue
+		}
+		body := loop.Body.List
+		if len(body) == 0 {
+			continue
+		}
+		exprStmt, ok := body[len(body)-1].(*ast.ExprStmt)
+		if !ok {
+			continue
+		}
+		if call, ok := exprStmt.X.(*ast.CallExpr); ok && isTimeSleepCall(call) {
+			return call.Pos()
+		}
+	}
+	return token.NoPos
+}
+
+func isTimeSleepCall(call *ast.CallExpr) bool {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "Sleep" {
+		return false
+	}
+	ident, ok := selector.X.(*ast.Ident)
+	return ok && ident.Name == "time"
 }
