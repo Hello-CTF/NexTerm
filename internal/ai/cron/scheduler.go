@@ -63,6 +63,12 @@ func NewScheduler(store Store, executor Executor, options Options) (*Scheduler, 
 	if options.CircuitCooldown <= 0 {
 		options.CircuitCooldown = DefaultCircuitCooldown
 	}
+	if options.DueScanBatchSize <= 0 {
+		options.DueScanBatchSize = DefaultDueScanBatchSize
+	}
+	if options.RecoveryBatchSize <= 0 {
+		options.RecoveryBatchSize = DefaultRecoveryBatchSize
+	}
 	if options.Now == nil {
 		options.Now = time.Now
 	}
@@ -296,36 +302,83 @@ loop:
 
 func (s *Scheduler) runOnce(ctx context.Context, now time.Time) (int, error) {
 	ctx = WithInternalAccess(ctx)
-	jobs, err := s.store.ListDue(ctx, now)
-	if err != nil {
-		return 0, storageError("list due", "", err)
+	if err := s.recoverAbandonedRuns(ctx, now); err != nil {
+		return 0, err
 	}
-	started := 0
-	for _, job := range jobs {
-		if job.Running() {
-			if err := s.recoverIfAbandoned(ctx, job, now); err != nil {
-				return started, err
-			}
-			continue
-		}
-		if !job.Enabled || !due(job, now) {
-			continue
-		}
-		if err := ownerExecutionError(job.OwnerID, job.OwnerKind, s.options.AllowOwnerlessLegacy); err != nil {
-			if err := s.disableUnexecutable(ctx, job, now, err); err != nil {
-				return started, err
-			}
-			continue
-		}
-		claimed, err := s.claim(ctx, job, now)
+	return s.startDueJobs(ctx, now)
+}
+
+// recoverAbandonedRuns reconciles expired runs in stable batches. It stops as
+// soon as a batch makes no progress so locally active cleanups are never
+// treated as abandoned, and never reexecutes the interrupted occurrence.
+func (s *Scheduler) recoverAbandonedRuns(ctx context.Context, now time.Time) error {
+	for {
+		candidates, err := s.store.ListRecoveryCandidates(ctx, now, s.options.RecoveryBatchSize)
 		if err != nil {
-			return started, err
+			return storageError("list recovery", "", err)
 		}
-		if claimed {
-			started++
+		if len(candidates) == 0 {
+			return nil
+		}
+		progressed := false
+		for _, job := range candidates {
+			recovered, err := s.recoverIfAbandoned(ctx, job, now)
+			if err != nil {
+				return err
+			}
+			progressed = progressed || recovered
+		}
+		if !progressed {
+			return nil
 		}
 	}
-	return started, nil
+}
+
+// startDueJobs claims due jobs in batches bounded by the free execution
+// slots, so a full slot pool stops the scan instead of prefetching every due
+// row. Claimed and disabled rows leave the due set, which bounds the loop.
+func (s *Scheduler) startDueJobs(ctx context.Context, now time.Time) (int, error) {
+	started := 0
+	for {
+		free := cap(s.executionSlots) - len(s.executionSlots)
+		if free == 0 {
+			return started, nil
+		}
+		if free > s.options.DueScanBatchSize {
+			free = s.options.DueScanBatchSize
+		}
+		jobs, err := s.store.ListDueIdle(ctx, now, free)
+		if err != nil {
+			return started, storageError("list due", "", err)
+		}
+		if len(jobs) == 0 {
+			return started, nil
+		}
+		progressed := false
+		for _, job := range jobs {
+			if !job.Enabled || !due(job, now) {
+				continue
+			}
+			if err := ownerExecutionError(job.OwnerID, job.OwnerKind, s.options.AllowOwnerlessLegacy); err != nil {
+				if err := s.disableUnexecutable(ctx, job, now, err); err != nil {
+					return started, err
+				}
+				progressed = true
+				continue
+			}
+			claimed, err := s.claim(ctx, job, now)
+			if err != nil {
+				return started, err
+			}
+			if claimed {
+				started++
+				progressed = true
+			}
+		}
+		if !progressed {
+			return started, nil
+		}
+	}
 }
 
 func due(job Job, now time.Time) bool {
@@ -419,19 +472,19 @@ func (s *Scheduler) tryAcquireExecutionSlot() bool {
 
 func (s *Scheduler) releaseExecutionSlot() { <-s.executionSlots }
 
-func (s *Scheduler) recoverIfAbandoned(ctx context.Context, job Job, now time.Time) error {
+func (s *Scheduler) recoverIfAbandoned(ctx context.Context, job Job, now time.Time) (bool, error) {
 	if s.locallyRunning(job.ID, job.Run.ID) || leaseHeldByAnyone(job.Lease, now) || now.Before(job.Run.Deadline) {
-		return nil
+		return false, nil
 	}
 	job.Lease = Lease{Owner: s.ownerID, ExpiresAt: now.Add(s.options.LeaseDuration)}
 	_, err := s.finish(ctx, job, errors.New("execution interrupted before completion"), now)
 	if err != nil {
 		if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
-	return nil
+	return true, nil
 }
 
 func leaseHeldByAnother(lease Lease, owner string, now time.Time) bool {

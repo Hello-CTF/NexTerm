@@ -48,7 +48,14 @@ func storageError(op, jobID string, err error) error {
 
 type Store interface {
 	List(ctx context.Context) ([]Job, error)
-	ListDue(ctx context.Context, now time.Time) ([]Job, error)
+	// ListDueIdle returns at most limit enabled, non-running jobs whose next
+	// occurrence is due at now, ordered by (next_run_at, id) so batches are
+	// stable. A limit <= 0 yields no rows.
+	ListDueIdle(ctx context.Context, now time.Time, limit int) ([]Job, error)
+	// ListRecoveryCandidates returns at most limit running jobs whose lease and
+	// run deadline have both expired at now, ordered by (run_deadline, id) so
+	// batches are stable. A limit <= 0 yields no rows.
+	ListRecoveryCandidates(ctx context.Context, now time.Time, limit int) ([]Job, error)
 	Create(ctx context.Context, job Job, maxPerSession int) (Job, error)
 	CompareAndSwap(ctx context.Context, job Job, expectedRevision uint64) (Job, error)
 	Delete(ctx context.Context, sessionID, jobID string, expectedRevision uint64) error
@@ -136,6 +143,8 @@ const (
 	DefaultMaxFailureBackoff       = time.Minute
 	DefaultCircuitThreshold        = 5
 	DefaultCircuitCooldown         = 5 * time.Minute
+	DefaultDueScanBatchSize        = 64
+	DefaultRecoveryBatchSize       = 64
 )
 
 type Options struct {
@@ -148,6 +157,8 @@ type Options struct {
 	MaxFailureBackoff       time.Duration
 	CircuitThreshold        int
 	CircuitCooldown         time.Duration
+	DueScanBatchSize        int
+	RecoveryBatchSize       int
 	AllowOwnerlessLegacy    bool
 	OwnerID                 string
 	Now                     func() time.Time

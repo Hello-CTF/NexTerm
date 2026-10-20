@@ -26,6 +26,9 @@ type AgentExecutor struct {
 var _ Executor = (*AgentExecutor)(nil)
 
 func (e *AgentExecutor) Execute(ctx context.Context, trigger Trigger) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := ownerExecutionError(trigger.OwnerID, trigger.OwnerKind, e.AllowOwnerlessLegacy); err != nil {
 		return err
 	}
@@ -55,7 +58,11 @@ func (e *AgentExecutor) Execute(ctx context.Context, trigger Trigger) error {
 			if event, closed := stream.outcome(); event != nil {
 				return e.terminalError(ctx, response.JobID, *event, stream)
 			} else if closed {
-				return fmt.Errorf("cron: agent run %s ended without a terminal event", response.JobID)
+				// The stream ended without a terminal event, so the underlying
+				// run may still be alive; cancel and wait for it instead of
+				// letting it outlive the cron run.
+				_ = e.Runner.Cancel(response.JobID)
+				return errors.Join(fmt.Errorf("cron: agent run %s ended without a terminal event", response.JobID), e.waitRun(ctx, response.JobID, stream))
 			}
 		}
 	}

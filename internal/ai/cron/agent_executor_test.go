@@ -183,6 +183,25 @@ func TestAgentExecutorClosedWithoutTerminalEvent(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "without a terminal event") {
 		t.Fatalf("execute error = %v; want an explicit missing-outcome failure", err)
 	}
+	if canceled := runner.canceledJobs(); len(canceled) != 1 || canceled[0] != "run-1" {
+		t.Fatalf("canceled = %v; want the orphaned run canceled so it cannot outlive the cron run", canceled)
+	}
+}
+
+func TestAgentExecutorSkipsStartWhenContextAlreadyCanceled(t *testing.T) {
+	runner := &fakeAgentRunner{}
+	executor := &AgentExecutor{Runner: runner}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := executor.Execute(ctx, testTrigger())
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("execute error = %v; want context.Canceled", err)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.args) != 0 {
+		t.Fatalf("started %d runs for an already-canceled trigger", len(runner.args))
+	}
 }
 
 func TestAgentExecutorRequiresRunner(t *testing.T) {
