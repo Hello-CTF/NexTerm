@@ -206,6 +206,7 @@ type job struct {
 	eino        *einoRuntime
 	cancelFn    adk.AgentCancelFunc
 	cancelSync  *cancelSync
+	capture     *Capture
 
 	steer *steer.Queue
 

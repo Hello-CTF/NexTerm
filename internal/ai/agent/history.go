@@ -58,6 +58,7 @@ func (r *Runner) persistToolCallRows(ctx context.Context, conversationID, jobID 
 }
 
 func (r *Runner) persistToolResultRows(ctx context.Context, current *job, message *schema.Message, result tools.Output, text string) error {
+	r.recordToolResult(current, text, result.ExecFailed)
 	if result.Change != nil {
 		change := map[string]any{
 			"type":   historyTypeFileChange,

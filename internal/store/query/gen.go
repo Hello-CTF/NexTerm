@@ -19,6 +19,10 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 	return &Query{
 		db:                      db,
 		AIOwnerMigration:        newAIOwnerMigration(db, opts...),
+		AgentEvidenceAnchorRow:  newAgentEvidenceAnchorRow(db, opts...),
+		AgentEvidenceKeyRow:     newAgentEvidenceKeyRow(db, opts...),
+		AgentOutcomeRow:         newAgentOutcomeRow(db, opts...),
+		AgentRosterRow:          newAgentRosterRow(db, opts...),
 		AppUser:                 newAppUser(db, opts...),
 		AssetGroupRow:           newAssetGroupRow(db, opts...),
 		AssetRow:                newAssetRow(db, opts...),
@@ -72,6 +76,10 @@ type Query struct {
 	db *gorm.DB
 
 	AIOwnerMigration        aIOwnerMigration
+	AgentEvidenceAnchorRow  agentEvidenceAnchorRow
+	AgentEvidenceKeyRow     agentEvidenceKeyRow
+	AgentOutcomeRow         agentOutcomeRow
+	AgentRosterRow          agentRosterRow
 	AppUser                 appUser
 	AssetGroupRow           assetGroupRow
 	AssetRow                assetRow
@@ -126,6 +134,10 @@ func (q *Query) clone(db *gorm.DB) *Query {
 	return &Query{
 		db:                      db,
 		AIOwnerMigration:        q.AIOwnerMigration.clone(db),
+		AgentEvidenceAnchorRow:  q.AgentEvidenceAnchorRow.clone(db),
+		AgentEvidenceKeyRow:     q.AgentEvidenceKeyRow.clone(db),
+		AgentOutcomeRow:         q.AgentOutcomeRow.clone(db),
+		AgentRosterRow:          q.AgentRosterRow.clone(db),
 		AppUser:                 q.AppUser.clone(db),
 		AssetGroupRow:           q.AssetGroupRow.clone(db),
 		AssetRow:                q.AssetRow.clone(db),
@@ -187,6 +199,10 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 	return &Query{
 		db:                      db,
 		AIOwnerMigration:        q.AIOwnerMigration.replaceDB(db),
+		AgentEvidenceAnchorRow:  q.AgentEvidenceAnchorRow.replaceDB(db),
+		AgentEvidenceKeyRow:     q.AgentEvidenceKeyRow.replaceDB(db),
+		AgentOutcomeRow:         q.AgentOutcomeRow.replaceDB(db),
+		AgentRosterRow:          q.AgentRosterRow.replaceDB(db),
 		AppUser:                 q.AppUser.replaceDB(db),
 		AssetGroupRow:           q.AssetGroupRow.replaceDB(db),
 		AssetRow:                q.AssetRow.replaceDB(db),
@@ -238,6 +254,10 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 
 type queryCtx struct {
 	AIOwnerMigration        *aIOwnerMigrationDo
+	AgentEvidenceAnchorRow  *agentEvidenceAnchorRowDo
+	AgentEvidenceKeyRow     *agentEvidenceKeyRowDo
+	AgentOutcomeRow         *agentOutcomeRowDo
+	AgentRosterRow          *agentRosterRowDo
 	AppUser                 *appUserDo
 	AssetGroupRow           *assetGroupRowDo
 	AssetRow                *assetRowDo
@@ -289,6 +309,10 @@ type queryCtx struct {
 func (q *Query) WithContext(ctx context.Context) *queryCtx {
 	return &queryCtx{
 		AIOwnerMigration:        q.AIOwnerMigration.WithContext(ctx),
+		AgentEvidenceAnchorRow:  q.AgentEvidenceAnchorRow.WithContext(ctx),
+		AgentEvidenceKeyRow:     q.AgentEvidenceKeyRow.WithContext(ctx),
+		AgentOutcomeRow:         q.AgentOutcomeRow.WithContext(ctx),
+		AgentRosterRow:          q.AgentRosterRow.WithContext(ctx),
 		AppUser:                 q.AppUser.WithContext(ctx),
 		AssetGroupRow:           q.AssetGroupRow.WithContext(ctx),
 		AssetRow:                q.AssetRow.WithContext(ctx),
