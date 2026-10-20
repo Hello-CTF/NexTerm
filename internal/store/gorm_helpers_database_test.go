@@ -44,10 +44,6 @@ func TestUpsertOwnerGuardedExpectedIdenticalInsertDatabase(t *testing.T) {
 	}
 }
 
-// The ExpectedContent must-not-exist path proves ownership from the INSERT result: a
-// concurrent same-ID insert whose row is byte-identical to this call's target (including
-// created_at) between the absence probe and the INSERT surfaces ErrWriteConflict through
-// the duplicate-key violation, and the concurrent row survives.
 // The ExpectedContent path never claims a row it did not write: a pre-existing row
 // byte-identical to this call's target (including created_at) makes the snapshot CAS
 // land nothing, and the write surfaces ErrWriteConflict instead of succeeding on
