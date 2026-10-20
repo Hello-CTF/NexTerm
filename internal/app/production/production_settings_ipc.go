@@ -81,6 +81,11 @@ func loadProductionSettings(ctx context.Context, database productionSettingsStor
 	if err != nil {
 		return productionSettingsDTO{}, err
 	}
+	// The generated DTO declares a string array; a missing or cleared setting
+	// must marshal as [] rather than null at the API boundary.
+	if environments == nil {
+		environments = []string{}
+	}
 	result.ProductionEnvironments = environments
 	for key, target := range map[string]*bool{
 		cron.ConnectOptInSettingKeyForUser(ctx):               &result.CronConnectOptIn,

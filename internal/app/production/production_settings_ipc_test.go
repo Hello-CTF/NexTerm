@@ -64,6 +64,27 @@ func TestProductionSettingsDefaultOff(t *testing.T) {
 	}
 }
 
+func TestProductionSettingsEmptyEnvironmentsMarshalAsEmptyArray(t *testing.T) {
+	fixture := newProductionSettingsFixture(t)
+	requireRawEmptyEnvironments := func(t *testing.T, response ipc.Response) {
+		t.Helper()
+		if !response.OK {
+			t.Fatalf("dispatch failed: %+v", response)
+		}
+		if !strings.Contains(string(response.Data), `"productionEnvironments":[]`) {
+			t.Fatalf("raw response must serialize an empty array, got %s", response.Data)
+		}
+	}
+	// Never configured.
+	requireRawEmptyEnvironments(t, fixture.dispatch(t, fixture.owner, "production_settings_get", nil))
+	// Patch that only touches an opt-in leaves the environment list unset.
+	requireRawEmptyEnvironments(t, fixture.set(t, fixture.owner, productionSettingsUpdateRequest{CronConnectOptIn: boolPointer(true)}))
+	// Clearing the list persists and returns an empty array, not null.
+	fixture.set(t, fixture.owner, productionSettingsUpdateRequest{ProductionEnvironments: stringSlicePointer([]string{"live"})})
+	requireRawEmptyEnvironments(t, fixture.set(t, fixture.owner, productionSettingsUpdateRequest{ProductionEnvironments: stringSlicePointer([]string{})}))
+	requireRawEmptyEnvironments(t, fixture.dispatch(t, fixture.owner, "production_settings_get", nil))
+}
+
 func TestProductionSettingsSetAndGet(t *testing.T) {
 	fixture := newProductionSettingsFixture(t)
 	response := fixture.set(t, fixture.owner, productionSettingsUpdateRequest{
