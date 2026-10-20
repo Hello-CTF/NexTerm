@@ -1,7 +1,6 @@
 package account
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -47,36 +46,27 @@ func (a *Accounts) InsertUserDEKEnvelopes(ctx context.Context, userID string, en
 	if err := validateEnvelopes(envelopes); err != nil {
 		return err
 	}
-	// Check existence first so the conflict determination never depends on
-	// RowsAffected semantics (a no-op INSERT reports 1 under clientFoundRows).
-	userDEK := query.Use(a.db).UserDEK
-	if _, err := userDEK.WithContext(ctx).Where(userDEK.UserID.Eq(userID)).First(); err == nil {
-		return ipc.WrapError(ipc.CodeBadParam, ErrDEKEnvelopesExist.Error(), ErrDEKEnvelopesExist)
-	} else if err != gorm.ErrRecordNotFound {
-		return dbError(err)
-	}
 	now := a.now()
-	result := a.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "user_id"}},
-		DoNothing: true,
-	}).Create(&store.UserDEK{
+	row := &store.UserDEK{
 		UserID: userID, DEKEnvelope: envelopes.DEKEnvelope, KDFSalt: envelopes.KDFSalt, KDFParams: envelopes.KDFParams,
 		RecoveryEnvelope: envelopes.RecoveryEnvelope, RecoveryHash: envelopes.RecoveryHash, CreatedAt: now, UpdatedAt: now,
+	}
+	// A plain INSERT: the unique constraint on user_id decides the winner and
+	// the unique-conflict error is the deterministic conflict signal — never
+	// RowsAffected or clientFoundRows semantics. The busy retry also covers
+	// SQLite's single-writer contention so a concurrent loser reaches the
+	// unique error instead of a transient lock error.
+	err := a.withBusyRetry(ctx, func() error {
+		if err := a.db.WithContext(ctx).Create(row).Error; err != nil {
+			if store.IsUniqueErr(err) {
+				return ipc.WrapError(ipc.CodeBadParam, ErrDEKEnvelopesExist.Error(), ErrDEKEnvelopesExist)
+			}
+			return err
+		}
+		return nil
 	})
-	if result.Error != nil {
-		return dbError(result.Error)
-	}
-	// A concurrent insert may have won the race; confirm the stored row is ours
-	// by content instead of trusting RowsAffected (clientFoundRows reports 1
-	// for a no-op INSERT, so it cannot distinguish a real write from a loss).
-	var row store.UserDEK
-	if err := a.db.WithContext(ctx).Where("user_id = ?", userID).First(&row).Error; err != nil {
+	if err != nil {
 		return dbError(err)
-	}
-	if row.RecoveryHash != envelopes.RecoveryHash || !bytes.Equal(row.DEKEnvelope, envelopes.DEKEnvelope) ||
-		!bytes.Equal(row.KDFSalt, envelopes.KDFSalt) || row.KDFParams != envelopes.KDFParams ||
-		!bytes.Equal(row.RecoveryEnvelope, envelopes.RecoveryEnvelope) {
-		return ipc.WrapError(ipc.CodeBadParam, ErrDEKEnvelopesExist.Error(), ErrDEKEnvelopesExist)
 	}
 	return nil
 }
