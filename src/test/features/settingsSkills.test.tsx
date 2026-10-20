@@ -943,4 +943,73 @@ describe("SkillsCard", () => {
     expect(alpha?.disabled).toBe(false);
     expect(alpha?.overridden).toBe(true);
   });
+
+  it("hides the previous owner's list error on the first committed frame after a swap", async () => {
+    const backend = createSkillsMockBackend(EMBEDDED);
+    const apiA = spyApi(backend.apiFor("owner-a"));
+    const apiB = spyApi(backend.apiFor("owner-b"));
+    apiA.list.mockRejectedValueOnce(new Error("owner A disk explosion"));
+    mounted = mount(createElement(SkillsCard, { api: apiA }));
+    await expectText(mounted.container, "owner A disk explosion");
+
+    // Synchronous swap to B with B's list pending: passive effects are not
+    // flushed, so only same-render owner tagging can keep A's error out of
+    // B's first committed frame.
+    const slow = deferred<SkillEntry[]>();
+    apiB.list.mockReturnValueOnce(slow.promise);
+    const actFlag = (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean })
+      .IS_REACT_ACT_ENVIRONMENT;
+    try {
+      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+      flushSync(() => {
+        mounted!.root.render(createElement(SkillsCard, { api: apiB }));
+      });
+    } finally {
+      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = actFlag;
+    }
+
+    const text = mounted.container.textContent ?? "";
+    expect(text).not.toContain("owner A disk explosion");
+    expect(text).toContain("读取中…");
+
+    slow.resolve(await backend.apiFor("owner-b").list());
+    await expectText(mounted.container, "Alpha synthetic skill");
+    expect(mounted.container.textContent ?? "").not.toContain("owner A disk explosion");
+  });
+
+  it("ignores a retained owner-A refresh callback so B's list survives and no A error leaks", async () => {
+    const backend = createSkillsMockBackend(EMBEDDED);
+    const ownerA = backend.apiFor("owner-a");
+    await ownerA.saveOverride({ name: "alpha-skill", description: "Alpha overridden by A" });
+    const apiA = spyApi(ownerA);
+    const apiB = spyApi(backend.apiFor("owner-b"));
+    mounted = mount(createElement(SkillsCard, { api: apiA }));
+    await expectText(mounted.container, "Alpha overridden by A");
+
+    const refreshButton = [...mounted.container.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent?.trim() === "刷新",
+    );
+    if (!refreshButton) throw new Error("refresh button not found");
+    const retainedRefresh = reactOnClick(refreshButton);
+    if (!retainedRefresh) throw new Error("refresh handler not found");
+
+    // Swap to B and let B's load start; a retained A refresh must neither
+    // call A's backend again nor bump the shared load generation that B's
+    // in-flight list depends on.
+    const slow = deferred<SkillEntry[]>();
+    apiB.list.mockReturnValueOnce(slow.promise);
+    act(() => {
+      mounted!.root.render(createElement(SkillsCard, { api: apiB }));
+    });
+    apiA.list.mockRejectedValueOnce(new Error("stale owner A explosion"));
+    await retainedRefresh();
+
+    slow.resolve(await backend.apiFor("owner-b").list());
+    await expectText(mounted.container, "Alpha synthetic skill");
+
+    expect(apiA.list).toHaveBeenCalledTimes(1);
+    const text = mounted.container.textContent ?? "";
+    expect(text).not.toContain("stale owner A explosion");
+    expect(text).not.toContain("Alpha overridden by A");
+  });
 });
