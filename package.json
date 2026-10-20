@@ -12,7 +12,7 @@
     "dev": "vite",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint . --max-warnings 61",
+    "lint": "eslint . --max-warnings 39",
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview",
