@@ -610,6 +610,7 @@ func (s *Store) assetUpsert(ctx context.Context, db *gorm.DB, row AssetRow) (boo
 	row.Name = strings.TrimSpace(row.Name)
 	row.Tags = NormalizeAssetTags(row.Tags)
 	row.Builtin = false
+	row.OptionsJSON = normalizeAssetOptionsJSON(row.OptionsJSON)
 	if err := s.upsertWithDB(ctx, db, &row, []string{
 		"group_id", "kind", "name", "host", "port", "username", "auth_kind", "key_path", "cred_id",
 		"options_json", "tags", "note", "sort", "updated_at", "deleted_at",
@@ -617,6 +618,16 @@ func (s *Store) assetUpsert(ctx context.Context, db *gorm.DB, row AssetRow) (boo
 		return false, err
 	}
 	return !exists, nil
+}
+
+// normalizeAssetOptionsJSON keeps stored options valid JSON and consistent with the
+// database default: an empty payload never overwrites the column default "{}" with an
+// invalid empty string.
+func normalizeAssetOptionsJSON(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return "{}"
+	}
+	return raw
 }
 
 // AssetUpsertGuarded is the expected-revision variant of AssetUpsert: the write lands only
@@ -658,6 +669,7 @@ func (s *Store) AssetUpsertGuardedTx(ctx context.Context, tx *gorm.DB, row Asset
 	row.Name = strings.TrimSpace(row.Name)
 	row.Tags = NormalizeAssetTags(row.Tags)
 	row.Builtin = false
+	row.OptionsJSON = normalizeAssetOptionsJSON(row.OptionsJSON)
 	if base == nil {
 		if err := validateInventoryCreateOptions(row.OptionsJSON); err != nil {
 			return false, err

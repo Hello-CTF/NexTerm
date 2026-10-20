@@ -335,3 +335,41 @@ func TestAssetUpdateInterleavedEditsAdvanceRevisionAtomically(t *testing.T) {
 		t.Fatalf("final revision = %d, want %d (atomic retry onto a fresh revision)", updated.UpdatedAt, base+2)
 	}
 }
+
+// A concurrent same-owner insert landing between the existence probe and the upsert must
+// not be mistaken for this call's success: the guarded UPDATE after the insert attempt
+// lands the desired content on the concurrent row instead of silently returning it.
+func TestAssetUpsertConcurrentSameOwnerInsertLandsDesiredContent(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	assetID := ids.New()
+
+	// On the first existence probe, a concurrent writer inserts the same ID with different
+	// content, so the upsert's INSERT is a no-op and only the guarded UPDATE can land.
+	fired := false
+	if err := db.GORM().Callback().Query().After("gorm:query").Register("test:concurrent-insert", func(tx *gorm.DB) {
+		if fired || !strings.Contains(tx.Statement.SQL.String(), "count(*)") || !strings.Contains(tx.Statement.SQL.String(), "FROM `asset`") {
+			return
+		}
+		fired = true
+		concurrent := AssetRow{ID: assetID, Kind: "ssh", Name: "concurrent", OptionsJSON: "{}", CreatedAt: 1, UpdatedAt: 100}
+		if _, err := db.AssetUpsert(ctx, concurrent); err != nil {
+			t.Errorf("concurrent insert: %v", err)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.GORM().Callback().Query().Remove("test:concurrent-insert") })
+
+	desired := AssetRow{ID: assetID, Kind: "ssh", Name: "desired", OptionsJSON: "{}", CreatedAt: 1, UpdatedAt: 200}
+	if _, err := db.AssetUpsert(ctx, desired); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := db.AssetGet(ctx, assetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Name != "desired" || stored.UpdatedAt != 200 {
+		t.Fatalf("concurrent insert misjudged as success: got %+v, want desired/200", stored)
+	}
+}

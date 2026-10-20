@@ -195,3 +195,43 @@ func TestAssetRevisionMonotonicDatabase(t *testing.T) {
 		t.Fatalf("delete revision must advance past update: %+v err=%v", deleted, err)
 	}
 }
+
+// The database default for options_json survives every write path: a changed same-owner
+// upsert with a zero-value OptionsJSON keeps the column default "{}" instead of writing an
+// invalid empty string, for both the plain and the guarded upsert.
+func TestSameOwnerUpsertPreservesDefaultOptionsDatabase(t *testing.T) {
+	db := dbtest.NewFixture(t).OpenStore(t)
+	ctx := ipc.WithUserID(context.Background(), "guard-owner")
+
+	created, err := db.AssetCreate(ctx, store.AssetInput{Kind: "ssh", Name: "opts", OptionsJSON: ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.OptionsJSON != "{}" {
+		t.Fatalf("create with empty options landed as %q, want column default {}", created.OptionsJSON)
+	}
+
+	changed := store.AssetRow{ID: created.ID, Kind: "ssh", Name: "opts-renamed", OptionsJSON: "", CreatedAt: created.CreatedAt, UpdatedAt: created.UpdatedAt + 100}
+	if _, err := db.AssetUpsert(ctx, changed); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := db.AssetGet(ctx, created.ID)
+	if err != nil || stored.Name != "opts-renamed" {
+		t.Fatalf("changed same-owner upsert did not land: %+v err=%v", stored, err)
+	}
+	if stored.OptionsJSON != "{}" {
+		t.Fatalf("changed same-owner upsert wrote options_json=%q, want column default {}", stored.OptionsJSON)
+	}
+
+	guarded := store.AssetRow{ID: created.ID, Kind: "ssh", Name: "opts-guarded", OptionsJSON: "", CreatedAt: created.CreatedAt, UpdatedAt: stored.UpdatedAt + 100}
+	if _, err := db.AssetUpsertGuarded(ctx, guarded, &stored); err != nil {
+		t.Fatal(err)
+	}
+	final, err := db.AssetGet(ctx, created.ID)
+	if err != nil || final.Name != "opts-guarded" {
+		t.Fatalf("guarded changed upsert did not land: %+v err=%v", final, err)
+	}
+	if final.OptionsJSON != "{}" {
+		t.Fatalf("guarded changed upsert wrote options_json=%q, want column default {}", final.OptionsJSON)
+	}
+}

@@ -780,7 +780,9 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 				continue
 			}
 			credID := *entry.row.CredID
-			if writtenCredRefs[credID] || compensatedCredIDs[credID] {
+			// Only a credential this import actually upserted can be compensated: one that
+			// is absent from bundle.Creds was never written here and must survive untouched.
+			if !seenCredIDs[credID] || writtenCredRefs[credID] || compensatedCredIDs[credID] {
 				continue
 			}
 			compensatedCredIDs[credID] = true

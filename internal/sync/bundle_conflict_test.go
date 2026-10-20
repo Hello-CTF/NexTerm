@@ -101,6 +101,46 @@ func TestImportBundleConflictDoesNotCreateOrphanCredential(t *testing.T) {
 	}
 }
 
+// R-03 absent-from-bundle case: a pre-existing local credential that the bundle's asset
+// references but that is NOT part of bundle.Creds was never written by this import, so an
+// asset conflict must not delete it; the local credential and its secret survive.
+func TestImportBundleConflictKeepsAbsentFromBundleCredential(t *testing.T) {
+	instance := newTestInstance(t, true)
+	ctx := context.Background()
+
+	credID := ids.New()
+	putTestCredential(t, instance, credID, "local", "password", "old-secret")
+	assetID := ids.New()
+	putTestAsset(t, instance, store.AssetRow{
+		ID: assetID, Kind: "ssh", Name: "web", CredID: &credID, OptionsJSON: "{}", CreatedAt: 1, UpdatedAt: 100,
+	})
+	// The snippet's tombstone check runs after the snapshot and before the write.
+	interleaveAssetEdit(t, instance, "sync_tombstone", "local-edit", 101, assetID)
+
+	bundle := SyncBundle{
+		Protocol: BundleProtocolVersion,
+		Assets: []SyncBundleAsset{{
+			ID: assetID, Kind: "ssh", Name: "web", CredID: &credID, OptionsJSON: "{}", CreatedAt: 1, UpdatedAt: 200,
+		}},
+		Snippets: []SyncBundleSnippet{{ID: ids.New(), Name: "s", Body: "b", CreatedAt: 1, UpdatedAt: 2}},
+	}
+	report, err := instance.service.ImportBundle(ctx, ImportBundleRequest{Bundle: bundle})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Conflicts != 1 {
+		t.Fatalf("import conflicts = %d, want 1: %+v", report.Conflicts, report)
+	}
+	row, err := instance.db.CredentialGetRow(ctx, credID)
+	if err != nil {
+		t.Fatalf("absent-from-bundle credential must survive the asset conflict: %v", err)
+	}
+	secret, err := instance.vault.DecryptCredentialString(ctx, row)
+	if err != nil || secret != "old-secret" {
+		t.Fatalf("absent-from-bundle credential secret = %q err=%v, want old-secret", secret, err)
+	}
+}
+
 // R-03 update case: an existing credential referenced only by an asset that conflicts at
 // write time must keep its prior secret; the import's overwrite is compensated back.
 func TestImportBundleConflictKeepsExistingCredentialSecret(t *testing.T) {
