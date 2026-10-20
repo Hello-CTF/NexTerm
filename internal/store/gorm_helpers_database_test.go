@@ -48,32 +48,20 @@ func TestUpsertOwnerGuardedExpectedIdenticalInsertDatabase(t *testing.T) {
 // concurrent same-ID insert whose row is byte-identical to this call's target (including
 // created_at) between the absence probe and the INSERT surfaces ErrWriteConflict through
 // the duplicate-key violation, and the concurrent row survives.
+// The ExpectedContent path never claims a row it did not write: a pre-existing row
+// byte-identical to this call's target (including created_at) makes the snapshot CAS
+// land nothing, and the write surfaces ErrWriteConflict instead of succeeding on
+// readback equality; the identical row survives.
 func TestUpsertOwnerGuardedExpectedContentIdenticalInsertDatabase(t *testing.T) {
 	db := dbtest.NewFixture(t).OpenStore(t)
 	ctx := context.Background()
 	row := upsertGuardCredential(ids.New(), "imported", 200, 200)
-	snapshot := upsertGuardCredential(row.ID, "before", 100, 100)
-	concurrent := row
-	fired := false
-	if err := db.GORM().Callback().Query().After("gorm:query").Register("test:identical-insert-content", func(tx *gorm.DB) {
-		sql := tx.Statement.SQL.String()
-		if fired || tx.Statement.Table != "credential" || !strings.Contains(strings.ToLower(sql), "count(") {
-			return
-		}
-		fired = true
-		if err := db.GORM().WithContext(context.Background()).Create(&concurrent).Error; err != nil {
-			t.Errorf("concurrent identical insert: %v", err)
-		}
-	}); err != nil {
+	if err := db.GORM().WithContext(ctx).Create(&row).Error; err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = db.GORM().Callback().Query().Remove("test:identical-insert-content") })
-
+	snapshot := upsertGuardCredential(row.ID, "before", 100, 100)
 	if _, err := store.UpsertOwnerGuardedExpectedContent(ctx, db.GORM(), &row, upsertGuardCredentialColumns, &snapshot); !errors.Is(err, store.ErrWriteConflict) {
-		t.Fatalf("identical concurrent insert error = %v, want ErrWriteConflict", err)
-	}
-	if !fired {
-		t.Fatal("identical concurrent insert did not fire")
+		t.Fatalf("identical pre-existing row error = %v, want ErrWriteConflict", err)
 	}
 	stored, err := db.CredentialGetRow(ctx, row.ID)
 	if err != nil || stored.Name != "imported" || stored.UpdatedAt != 200 {

@@ -331,22 +331,20 @@ func UpsertOwnerGuardedExpected(ctx context.Context, db *gorm.DB, values any, co
 	if matches {
 		return nil
 	}
-	var count int64
-	if err := tx.Model(values).Where(guard).Count(&count).Error; err != nil {
-		return dbError(err)
-	}
-	if count > 0 {
-		return ErrWriteConflict
-	}
-	return insertOwnerRowMustNotExist(ctx, tx, values)
+	// The row is absent. The caller's snapshot saw it at the expected revision, so its
+	// disappearance is itself evidence the snapshot is stale: the delete wins and the
+	// object must not be resurrected by an INSERT. Only the must-not-exist shape
+	// (expectedRevision 0) may insert.
+	return ErrWriteConflict
 }
 
 // UpsertOwnerGuardedExpectedContent writes values by primary key with an owner guard and
 // a content CAS bound to the caller's snapshot: an existing row is updated only when its
-// full content still equals the snapshot's, and a new row is inserted only when it is
-// still absent. A row whose content changed since the snapshot (a later local write) is
-// never overwritten — the write surfaces ErrWriteConflict instead. The snapshot must be
-// the same row type as values.
+// full content still equals the snapshot's. A row whose content changed since the
+// snapshot (a later local write) is never overwritten, and a row that disappeared after
+// the snapshot was taken is never resurrected by an INSERT — both surface
+// ErrWriteConflict instead. The snapshot must be the same row type as values and must be
+// non-nil (the must-not-exist shape belongs to UpsertOwnerGuardedExpected).
 //
 // The boolean result reports whether this call's write actually landed. Only a landed
 // write is this call's own and may be recorded or compensated as such: a genuine
@@ -413,20 +411,13 @@ func UpsertOwnerGuardedExpectedContent(ctx context.Context, db *gorm.DB, values 
 		return true, nil
 	}
 	// The guarded UPDATE landed nothing: either the row changed since the snapshot (a
-	// later local write wins and is never overwritten) or it is absent. A row that now
-	// reads back equal to the target was moved there by someone else — content equality
-	// cannot prove ownership — so only absence may proceed to the INSERT.
-	var count int64
-	if err := tx.Model(values).Where(guard).Count(&count).Error; err != nil {
-		return false, dbError(err)
-	}
-	if count > 0 {
-		return false, ErrWriteConflict
-	}
-	if err := insertOwnerRowMustNotExist(ctx, tx, values); err != nil {
-		return false, err
-	}
-	return true, nil
+	// later local write wins and is never overwritten) or it was deleted after the
+	// snapshot was taken (its disappearance is itself evidence the snapshot is stale, so
+	// the delete wins and the object must not be resurrected by an INSERT). A row that
+	// now reads back equal to the target was moved there by someone else — content
+	// equality cannot prove ownership. Only a nil snapshot (the must-not-exist shape,
+	// handled by UpsertOwnerGuardedExpected) may insert.
+	return false, ErrWriteConflict
 }
 
 // snapshotContentConditions builds dialect-quoted equality conditions binding every

@@ -966,3 +966,112 @@ func TestImportBundleCredentialIdempotentReplayDatabase(t *testing.T) {
 		t.Fatalf("replay changed the credential: secret=%q revision=%d err=%v", secret, row.UpdatedAt, err)
 	}
 }
+
+// A local delete landing between the planner's snapshot and the guarded write is never
+// resurrected by the apply: the non-empty snapshot CAS reports a conflict, the object
+// stays deleted, and its deletion tombstone is not cleared. One contract per object
+// class that shares the snapshot-bound write path.
+func TestApplyCredentialDeleteInterleaveKeepsDeleteDatabase(t *testing.T) {
+	instance := newDatabaseTestInstance(t, true)
+	ctx := context.Background()
+	credID := ids.New()
+	seed := ApplyObject{ID: credID, Kind: KindCredential, Payload: applyPayload(t, credentialObject{
+		ID: credID, Name: "seed", Kind: "password", Secret: "seed-secret", UpdatedAt: 100,
+	})}
+	requireApplyResult(t, mustApplyObjects(t, instance, seed).Objects[0], ApplyResultApplied)
+
+	interleaveOnceOnTableQuery(t, instance, "credential_tombstone", func() {
+		if err := instance.db.CredentialDelete(context.Background(), credID); err != nil {
+			t.Errorf("interleaved credential delete: %v", err)
+		}
+	})
+
+	remote := ApplyObject{ID: credID, Kind: KindCredential, Payload: applyPayload(t, credentialObject{
+		ID: credID, Name: "remote", Kind: "password", Secret: "remote-secret", UpdatedAt: 200,
+	})}
+	requireApplyResult(t, mustApplyObjects(t, instance, remote).Objects[0], ApplyResultSkipped)
+	if _, err := instance.db.CredentialGetRow(ctx, credID); !isNotFound(err) {
+		t.Fatalf("deleted credential was resurrected: %v", err)
+	}
+	if _, err := instance.db.CredentialTombstoneGet(ctx, credID); err != nil {
+		t.Fatalf("credential tombstone must survive the conflicted apply: %v", err)
+	}
+}
+
+func TestApplyGroupDeleteInterleaveKeepsDeleteDatabase(t *testing.T) {
+	instance := newDatabaseTestInstance(t, true)
+	ctx := context.Background()
+	groupID := ids.New()
+	seed := applyGroupObject(t, groupID, "seed", 100)
+	requireApplyResult(t, mustApplyObjects(t, instance, seed).Objects[0], ApplyResultApplied)
+
+	interleaveOnceOnTableQuery(t, instance, "sync_tombstone", func() {
+		if err := instance.db.GroupDelete(context.Background(), groupID); err != nil {
+			t.Errorf("interleaved group delete: %v", err)
+		}
+	})
+
+	remote := applyGroupObject(t, groupID, "remote", 200)
+	requireApplyResult(t, mustApplyObjects(t, instance, remote).Objects[0], ApplyResultSkipped)
+	if _, err := instance.db.GroupGet(ctx, groupID); !isNotFound(err) {
+		t.Fatalf("deleted group was resurrected: %v", err)
+	}
+	if _, found, err := instance.service.engine.syncTombstoneGet(ctx, groupID); err != nil || !found {
+		t.Fatalf("group tombstone must survive the conflicted apply: found=%v err=%v", found, err)
+	}
+}
+
+func TestApplySnippetDeleteInterleaveKeepsDeleteDatabase(t *testing.T) {
+	instance := newDatabaseTestInstance(t, true)
+	ctx := context.Background()
+	snippetID := ids.New()
+	seed := ApplyObject{ID: snippetID, Kind: KindSnippet, Payload: applyPayload(t, snippetObject{
+		ID: snippetID, Name: "seed", Body: "seed-body", CreatedAt: 1, UpdatedAt: 100,
+	})}
+	requireApplyResult(t, mustApplyObjects(t, instance, seed).Objects[0], ApplyResultApplied)
+
+	interleaveOnceOnTableQuery(t, instance, "sync_tombstone", func() {
+		if err := instance.db.SnippetDelete(context.Background(), snippetID); err != nil {
+			t.Errorf("interleaved snippet delete: %v", err)
+		}
+	})
+
+	remote := ApplyObject{ID: snippetID, Kind: KindSnippet, Payload: applyPayload(t, snippetObject{
+		ID: snippetID, Name: "remote", Body: "remote-body", CreatedAt: 1, UpdatedAt: 200,
+	})}
+	requireApplyResult(t, mustApplyObjects(t, instance, remote).Objects[0], ApplyResultSkipped)
+	if _, err := instance.db.SnippetGet(ctx, snippetID); !isNotFound(err) {
+		t.Fatalf("deleted snippet was resurrected: %v", err)
+	}
+	if _, found, err := instance.service.engine.syncTombstoneGet(ctx, snippetID); err != nil || !found {
+		t.Fatalf("snippet tombstone must survive the conflicted apply: found=%v err=%v", found, err)
+	}
+}
+
+func TestApplyKnownHostDeleteInterleaveKeepsDeleteDatabase(t *testing.T) {
+	instance := newDatabaseTestInstance(t, false)
+	ctx := context.Background()
+	id := ids.New()
+	seed := applyKnownHost(t, id, "delete-interleave.example.com", 22, "ssh-ed25519", "SHA256:seed", 100)
+	requireApplyResult(t, mustApplyObjects(t, instance, seed).Objects[0], ApplyResultApplied)
+
+	interleaveOnceOnTableQuery(t, instance, "known_host", func() {
+		if err := instance.db.GORM().WithContext(context.Background()).
+			Model(&store.KnownHostRow{}).Where("id = ?", id).Delete(&store.KnownHostRow{}).Error; err != nil {
+			t.Errorf("interleaved known-host delete: %v", err)
+			return
+		}
+		if err := instance.service.engine.syncTombstonePut(context.Background(), id, KindKnownHost, 150); err != nil {
+			t.Errorf("interleaved known-host tombstone: %v", err)
+		}
+	})
+
+	remote := applyKnownHost(t, id, "delete-interleave.example.com", 22, "ssh-ed25519", "SHA256:remote", 200)
+	requireApplyResult(t, mustApplyObjects(t, instance, remote).Objects[0], ApplyResultSkipped)
+	if _, found, err := instance.service.engine.knownHostByID(ctx, id); err != nil || found {
+		t.Fatalf("deleted known host was resurrected: found=%v err=%v", found, err)
+	}
+	if _, found, err := instance.service.engine.syncTombstoneGet(ctx, id); err != nil || !found {
+		t.Fatalf("known-host tombstone must survive the conflicted apply: found=%v err=%v", found, err)
+	}
+}
