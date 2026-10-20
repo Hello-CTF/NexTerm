@@ -30,10 +30,30 @@ type accountCleanupState struct {
 	events  map[accountCleanupKey]*accountCleanupEvent
 	aliases map[accountCleanupKey]accountCleanupKey
 
+	// runbook is the narrow owner-cleanup contract of the runbook service,
+	// wired by the composition root (SetRunbookCleanup). Nil until wired.
+	runbook runbookCleanup
+
 	// Fault seams for deterministic tests: when non-nil, these replace the
 	// generation-bound read and the owner device listing.
 	cutoffBound       func(ctx context.Context, ownerID, cleanupID string) (*time.Time, error)
 	listOwnerSessions func(ctx context.Context, ownerID string) ([]session.SessionInfo, error)
+}
+
+// runbookCleanup is the narrow slice of the runbook service's owner-cleanup
+// contract the account cleanup lifecycle depends on; *runbookIPCService
+// satisfies it.
+type runbookCleanup interface {
+	PrepareOwnerCleanup(ctx context.Context, ownerID, eventID string) (commit func(...string), rollback func())
+}
+
+// SetRunbookCleanup wires the runbook service into the account cleanup
+// lifecycle so an owner cleanup also cancels that owner's live runbook runs.
+// The composition root calls it once the runbook service is built (today a
+// productionModules local; the ProductionServices.Runbook field lands with
+// M15 and turns this into a direct field read).
+func (p *Production) SetRunbookCleanup(r runbookCleanup) {
+	p.accountCleanup.runbook = r
 }
 
 // CleanupAccount runs the cleanup for an already-committed revocation (the
@@ -63,9 +83,14 @@ func (p *Production) PrepareAccountCleanup(ctx context.Context, ownerID, cleanup
 	if p.Services.ExecBatches != nil {
 		commitBatches, rollbackBatches = p.Services.ExecBatches.PrepareOwnerCleanup(ctx, ownerID, cleanupID)
 	}
+	commitRunbook, rollbackRunbook := func(...string) {}, func() {}
+	if p.accountCleanup.runbook != nil {
+		commitRunbook, rollbackRunbook = p.accountCleanup.runbook.PrepareOwnerCleanup(ctx, ownerID, cleanupID)
+	}
 	key, event, err := p.prepareAccountDeviceSnapshot(ctx, ownerID, cleanupID)
 	if err != nil {
 		rollbackBatches()
+		rollbackRunbook()
 		return func(...string) {}, func() {}, err
 	}
 	return func(sessionIDs ...string) {
@@ -73,6 +98,7 @@ func (p *Production) PrepareAccountCleanup(ctx context.Context, ownerID, cleanup
 				return
 			}
 			commitBatches(sessionIDs...)
+			commitRunbook(sessionIDs...)
 			p.cleanupAccountDeviceSnapshot(ctx, ownerID, event.deviceSessions)
 			if p.Services.inventory != nil {
 				_ = p.Services.inventory.stopWatch(ctx, ownerID)
@@ -80,6 +106,7 @@ func (p *Production) PrepareAccountCleanup(ctx context.Context, ownerID, cleanup
 		}, func() {
 			if p.rollbackAccountDeviceSnapshot(key, event) {
 				rollbackBatches()
+				rollbackRunbook()
 			}
 		}, nil
 }
