@@ -297,25 +297,34 @@ func (r *Registry) bindCallAssetIdentities(ctx context.Context, jobID string, ca
 // otherwise.
 func (r *Registry) bindTerminalCreateIdentity(ctx context.Context, jobID string, call *Call, assetID string, connect bool) *Output {
 	if r.deps.ResolveAssetSessionIdentity != nil {
-		_, identity, err := r.deps.ResolveAssetSessionIdentity(ctx, assetID)
+		sessionID, identity, err := r.deps.ResolveAssetSessionIdentity(ctx, assetID)
 		if err == nil {
 			if identity.AssetID == "" || identity.ConfigFingerprint == "" {
 				failure := Fail(fmt.Errorf("身份解析失败: 资产 %s 的身份为空: %w", assetID, ErrAssetIdentityChanged))
 				return &failure
 			}
 			call.AssetIdentities = []AssetIdentity{identity}
+			r.state(jobID).rememberAssetOperation(call.ID, call.AssetIdentities, sessionID, "")
 			return nil
 		}
 		if !errors.Is(err, ErrNoLiveSession) || !connect {
 			failure := Fail(fmt.Errorf("身份解析失败: %w", err))
 			return &failure
 		}
-		sessionID, identity, failure := r.connectAssetSession(ctx, jobID, *call, assetID, err, AssetIdentity{}, false)
+		// Before any ConnectAsset, adjudicate the operation's existing
+		// outcome records through the stable operation→identity mapping: a
+		// finished record replays directly, a non-terminal one fails
+		// visibly, and only the certain fresh-execution case connects.
+		if output, adjudicated := r.adjudicateRecordedCreate(ctx, jobID, call); adjudicated {
+			return output
+		}
+		connectedID, identity, failure := r.connectAssetSession(ctx, jobID, *call, assetID, err, AssetIdentity{}, false)
 		if failure != nil {
 			return failure
 		}
-		call.ConnectedSessionID = sessionID
+		call.ConnectedSessionID = connectedID
 		call.AssetIdentities = []AssetIdentity{identity}
+		r.state(jobID).rememberAssetOperation(call.ID, call.AssetIdentities, connectedID, connectedID)
 		return nil
 	}
 	if r.deps.ResolveAssetSession == nil {
@@ -328,11 +337,17 @@ func (r *Registry) bindTerminalCreateIdentity(ctx context.Context, jobID string,
 				call.AssetIdentities = []AssetIdentity{identity}
 			}
 		}
+		r.state(jobID).rememberAssetOperation(call.ID, call.AssetIdentities, sessionID, "")
 		return nil
 	}
 	if !errors.Is(err, ErrNoLiveSession) || !connect {
 		failure := Fail(err)
 		return &failure
+	}
+	// The same adjudication guards the legacy path: a recorded operation
+	// never reconnects just to replay or to discover a conflict.
+	if output, adjudicated := r.adjudicateRecordedCreate(ctx, jobID, call); adjudicated {
+		return output
 	}
 	connectedID, identity, failure := r.connectAssetSession(ctx, jobID, *call, assetID, err, AssetIdentity{}, false)
 	if failure != nil {
@@ -340,7 +355,94 @@ func (r *Registry) bindTerminalCreateIdentity(ctx context.Context, jobID string,
 	}
 	call.ConnectedSessionID = connectedID
 	call.AssetIdentities = []AssetIdentity{identity}
+	r.state(jobID).rememberAssetOperation(call.ID, call.AssetIdentities, connectedID, connectedID)
 	return nil
+}
+
+// adjudicateRecordedCreate probes the outcome ledger for existing records of
+// this operation before any ConnectAsset, using the stable operation→
+// identity mapping recorded when the call first bound: a finished record
+// replays directly (naming the originally connected session), a pending or
+// running record fails visibly without reconnecting, and a record made under
+// a different authorization surfaces the conflict. Only the certain
+// fresh-execution case — no record at all — proceeds to connect.
+func (r *Registry) adjudicateRecordedCreate(ctx context.Context, jobID string, call *Call) (*Output, bool) {
+	binding, _ := r.state(jobID).assetOperation(call.ID)
+	candidates := make([][]AssetIdentity, 0, len(binding.identities)+1)
+	candidates = append(candidates, nil)
+	for _, identity := range binding.identities {
+		candidates = append(candidates, []AssetIdentity{identity})
+	}
+	for _, identities := range candidates {
+		record, err := r.deps.Outcome.Get(ctx, OutcomeKeyWithIdentity(jobID, call.ID, identities))
+		if errors.Is(err, outcome.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			failure := Fail(fmt.Errorf("执行记录查询失败: %w", err))
+			return &failure, true
+		}
+		if record.AuthorizationID != call.AuthorizationID {
+			failure := Fail(errors.New("调用与已记录的执行冲突（授权不一致），未重复执行"))
+			return &failure, true
+		}
+		switch record.State {
+		case outcome.ExecutionFinished:
+			if r.recordStaleAfterReconfigure(ctx, binding, identities) {
+				// The originally bound session now reports a different
+				// complete identity: the asset was reconfigured, so this
+				// record must not replay — fresh execution proceeds.
+				continue
+			}
+			output := replayOutput(record)
+			output.OperationID = operationID(jobID, call.ID, "terminal_create")
+			if binding.connectedSessionID != "" {
+				note := fmt.Sprintf("；原执行建立的连接 session_id=%s（残留资源保留，未自动清理）", binding.connectedSessionID)
+				output.Text += note
+				output.Notes += note
+			}
+			return &output, true
+		case outcome.ExecutionRunning:
+			failure := Fail(errors.New("相同调用正在执行中，未重复执行"))
+			return &failure, true
+		default:
+			failure := Fail(fmt.Errorf("相同调用已有未完成的执行记录（state=%s），未重复执行", record.State))
+			return &failure, true
+		}
+	}
+	return nil, false
+}
+
+// recordStaleAfterReconfigure reports whether the session the operation
+// originally bound now reports a different complete identity — the only
+// side-effect-free proof that a finished record is stale and fresh execution
+// is needed. An unreadable, vanished, or incomplete session proves nothing:
+// replay stays the no-side-effect path there.
+func (r *Registry) recordStaleAfterReconfigure(ctx context.Context, binding assetOperationBinding, recorded []AssetIdentity) bool {
+	if binding.sessionID == "" {
+		return false
+	}
+	checker, ok := r.deps.Terminal.(SessionAssetIdentityResolver)
+	if !ok {
+		return false
+	}
+	current, err := checker.SessionAssetIdentity(ctx, binding.sessionID)
+	if err != nil || current.AssetID == "" || current.ConfigFingerprint == "" {
+		return false
+	}
+	reference := recorded
+	if len(reference) == 0 {
+		reference = binding.identities
+	}
+	if len(reference) == 0 {
+		return false
+	}
+	for _, identity := range reference {
+		if current == identity {
+			return false
+		}
+	}
+	return true
 }
 
 func GuardAuthorizationID(decision guard.Decision) string {

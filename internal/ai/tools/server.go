@@ -1123,47 +1123,65 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 		if r.deps.ResolveAssetSession == nil && r.deps.ResolveAssetSessionIdentity == nil {
 			return Fail(errors.New("按资产创建终端未配置"))
 		}
-		resolved, identity, resolveErr := r.resolveAssetSessionForCreate(ctx, args.AssetID, &identityNote)
-		if len(call.AssetIdentities) > 0 {
-			// The pre-resolved identity bound to the operation key is
-			// authoritative for validation; the tool's own resolution only
-			// supplies the session target. A bound identity also means the
-			// operation is verifiable, so no unverifiable note applies.
-			identity = call.AssetIdentities[0]
-			identityNote = ""
-		}
-		if resolveErr != nil {
-			// Connecting is an uncertain mutation that leaves a residual
-			// session behind, so it happens only on explicit opt-in and only
-			// for an explicit not-connected verdict; forbidden, unsupported,
-			// and transient resolver failures propagate untouched.
-			if !args.Connect || !errors.Is(resolveErr, ErrNoLiveSession) {
-				return Fail(resolveErr)
-			}
-			// When the operation already binds an identity, the reconnect
-			// must land on that exact identity: a reconfigured asset fails
-			// closed with the residual session and operation ID visible.
-			var bound AssetIdentity
-			if len(call.AssetIdentities) > 0 {
-				bound = call.AssetIdentities[0]
-			}
-			connectedID, connectedIdentity, failure := r.connectAssetSession(ctx, jobID, call, args.AssetID, resolveErr, bound, len(call.AssetIdentities) > 0)
-			if failure != nil {
-				return *failure
-			}
-			sessionID = connectedID
+		var identity AssetIdentity
+		if call.ConnectedSessionID != "" {
+			// The pre-key connect already established and verified this exact
+			// session: reuse it directly and re-verify that precise session,
+			// never resolving or connecting a second time within the call.
+			sessionID = call.ConnectedSessionID
 			connected = true
-			if len(call.AssetIdentities) == 0 {
-				call.AssetIdentities = []AssetIdentity{connectedIdentity}
+			if len(call.AssetIdentities) > 0 {
+				identity = call.AssetIdentities[0]
+			}
+			if failure, checkErr := r.validateExecutionAssetIdentity(ctx, sessionID, identity, call.AssetIdentities); checkErr != nil {
+				failure.Text += fmt.Sprintf("；已建立的会话 session_id=%s 作为残留资源保留（未自动清理）", sessionID)
+				failure.OperationID = operation
+				return failure
 			}
 		} else {
-			sessionID = resolved
-			// Re-validate the resolved identity at execution time: the
-			// session's bound identity must match, and so must the identity
-			// bound to the operation key. A replaced asset never receives the
-			// mutation and the old result is never attributed to it.
-			if failure, checkErr := r.validateExecutionAssetIdentity(ctx, sessionID, identity, call.AssetIdentities); checkErr != nil {
-				return failure
+			resolved, resolvedIdentity, resolveErr := r.resolveAssetSessionForCreate(ctx, args.AssetID, &identityNote)
+			identity = resolvedIdentity
+			if len(call.AssetIdentities) > 0 {
+				// The pre-resolved identity bound to the operation key is
+				// authoritative for validation; the tool's own resolution only
+				// supplies the session target. A bound identity also means the
+				// operation is verifiable, so no unverifiable note applies.
+				identity = call.AssetIdentities[0]
+				identityNote = ""
+			}
+			if resolveErr != nil {
+				// Connecting is an uncertain mutation that leaves a residual
+				// session behind, so it happens only on explicit opt-in and only
+				// for an explicit not-connected verdict; forbidden, unsupported,
+				// and transient resolver failures propagate untouched.
+				if !args.Connect || !errors.Is(resolveErr, ErrNoLiveSession) {
+					return Fail(resolveErr)
+				}
+				// When the operation already binds an identity, the reconnect
+				// must land on that exact identity: a reconfigured asset fails
+				// closed with the residual session and operation ID visible.
+				var bound AssetIdentity
+				if len(call.AssetIdentities) > 0 {
+					bound = call.AssetIdentities[0]
+				}
+				connectedID, connectedIdentity, failure := r.connectAssetSession(ctx, jobID, call, args.AssetID, resolveErr, bound, len(call.AssetIdentities) > 0)
+				if failure != nil {
+					return *failure
+				}
+				sessionID = connectedID
+				connected = true
+				if len(call.AssetIdentities) == 0 {
+					call.AssetIdentities = []AssetIdentity{connectedIdentity}
+				}
+			} else {
+				sessionID = resolved
+				// Re-validate the resolved identity at execution time: the
+				// session's bound identity must match, and so must the identity
+				// bound to the operation key. A replaced asset never receives the
+				// mutation and the old result is never attributed to it.
+				if failure, checkErr := r.validateExecutionAssetIdentity(ctx, sessionID, identity, call.AssetIdentities); checkErr != nil {
+					return failure
+				}
 			}
 		}
 	}

@@ -27,6 +27,23 @@ type jobState struct {
 	plan         string
 	createdTabs  map[string]string
 	lastInput    map[string]terminalInputState
+	// assetOperations maps a call ID to the asset identities it executed
+	// under and the session its explicit connect established: the stable
+	// operation→identity mapping a later retry adjudicates before
+	// reconnecting.
+	assetOperations map[string]assetOperationBinding
+}
+
+// assetOperationBinding is the stable operation→identity mapping entry for
+// one recorded call.
+type assetOperationBinding struct {
+	identities []AssetIdentity
+	// sessionID is the session the identities were bound from, re-read to
+	// prove reconfiguration before a finished record replays.
+	sessionID string
+	// connectedSessionID is set only when this call's explicit connect
+	// established the session, so the replay names the residual.
+	connectedSessionID string
 }
 
 // terminalInputState is the terminal input buffer the job last observed via
@@ -123,6 +140,45 @@ func (s *jobState) inputChanged(tabID, buffered string, cursor int) (changed boo
 		return false, false
 	}
 	return baseline.buffered != buffered || baseline.cursor != cursor, true
+}
+
+// rememberAssetOperation records the identities a call bound, the session
+// they were bound from, and the session its explicit connect established, so
+// a later retry can adjudicate the operation's outcome records before
+// reconnecting.
+func (s *jobState) rememberAssetOperation(callID string, identities []AssetIdentity, sessionID, connectedSessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.assetOperations == nil {
+		s.assetOperations = make(map[string]assetOperationBinding)
+	}
+	binding := s.assetOperations[callID]
+	for _, identity := range identities {
+		known := false
+		for _, existing := range binding.identities {
+			if existing == identity {
+				known = true
+				break
+			}
+		}
+		if !known {
+			binding.identities = append(binding.identities, identity)
+		}
+	}
+	if sessionID != "" {
+		binding.sessionID = sessionID
+	}
+	if connectedSessionID != "" {
+		binding.connectedSessionID = connectedSessionID
+	}
+	s.assetOperations[callID] = binding
+}
+
+func (s *jobState) assetOperation(callID string) (assetOperationBinding, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	binding, ok := s.assetOperations[callID]
+	return binding, ok
 }
 
 func targetKey(scope Scope, name string) string {
