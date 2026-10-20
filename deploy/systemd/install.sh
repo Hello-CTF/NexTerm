@@ -168,7 +168,7 @@ codepoint_valid() {
 }
 
 systemd_split() {
-  local input="$1" token="" state=plain return_state=plain c hex oct val
+  local input="$1" token="" state=plain return_state=plain c hex oct val present=0
   local i=0 len=${#input}
   while [ "$i" -lt "$len" ]; do
     c="${input:$i:1}"
@@ -176,12 +176,12 @@ systemd_split() {
       plain)
         case "$c" in
           ' '|$'\t')
-            if [ -n "$token" ]; then printf '%s\n' "$token"; token=""; fi
+            if [ "$present" -eq 1 ]; then printf '%s\n' "$token"; token=""; present=0; fi
             ;;
-          "'") state=single ;;
-          '"') state=double ;;
-          \\) return_state=plain; state=escape ;;
-          *) token="$token$c" ;;
+          "'") state=single; present=1 ;;
+          '"') state=double; present=1 ;;
+          \\) return_state=plain; state=escape; present=1 ;;
+          *) token="$token$c"; present=1 ;;
         esac
         ;;
       single)
@@ -204,7 +204,7 @@ systemd_split() {
           b) token="$token"$'\b'; state="$return_state" ;;
           f) token="$token"$'\f'; state="$return_state" ;;
           n) return 3 ;;
-          r) token="$token"$'\r'; state="$return_state" ;;
+          r) return 3 ;;
           t) token="$token"$'\t'; state="$return_state" ;;
           v) token="$token"$'\v'; state="$return_state" ;;
           \\) token="$token\\"; state="$return_state" ;;
@@ -218,7 +218,9 @@ systemd_split() {
                 *[!0-9a-fA-F]*|'') token="$token\\x" ;;
                 *)
                   val=$((16#$hex))
-                  if [ "$val" -ne 0 ]; then
+                  if [ "$val" -eq 10 ] || [ "$val" -eq 13 ]; then
+                    return 3
+                  elif [ "$val" -ne 0 ]; then
                     token="$token$(printf "\\$(printf '%03o' "$val")")"
                     i=$((i + 2))
                   else
@@ -238,9 +240,9 @@ systemd_split() {
                 *[!0-9a-fA-F]*|'') token="$token\\u" ;;
                 *)
                   val=$((16#$hex))
-                  if [ "$val" -eq 10 ]; then
+                  if [ "$val" -eq 10 ] || [ "$val" -eq 13 ]; then
                     return 3
-                  elif codepoint_valid "$val"; then
+                  elif [ "$val" -ne 0 ]; then
                     token="$token$(utf8_encode "$val")"
                     i=$((i + 4))
                   else
@@ -260,7 +262,7 @@ systemd_split() {
                 *[!0-9a-fA-F]*|'') token="$token\\U" ;;
                 *)
                   val=$((16#$hex))
-                  if [ "$val" -eq 10 ]; then
+                  if [ "$val" -eq 10 ] || [ "$val" -eq 13 ]; then
                     return 3
                   elif codepoint_valid "$val"; then
                     token="$token$(utf8_encode "$val")"
@@ -282,7 +284,9 @@ systemd_split() {
                 *[!0-7]*|'') token="$token\\$c" ;;
                 *)
                   val=$((8#$oct))
-                  if [ "$val" -le 255 ] && [ "$val" -ne 0 ]; then
+                  if [ "$val" -eq 10 ] || [ "$val" -eq 13 ]; then
+                    return 3
+                  elif [ "$val" -le 255 ] && [ "$val" -ne 0 ]; then
                     token="$token$(printf "\\$(printf '%03o' "$val")")"
                     i=$((i + 2))
                   else
@@ -310,7 +314,7 @@ systemd_split() {
     fi
   fi
   if [ "$state" != "plain" ]; then return 1; fi
-  if [ -n "$token" ]; then printf '%s\n' "$token"; fi
+  if [ "$present" -eq 1 ]; then printf '%s\n' "$token"; fi
   return 0
 }
 
@@ -353,17 +357,24 @@ capture_legacy_values() {
 
 env_join_continuations() {
   # join lines ending with an odd number of backslashes: the backslash and
-  # the newline are eaten, per systemd's VALUE_ESCAPE/COMMENT_ESCAPE rules
+  # the newline are eaten, per systemd's VALUE_ESCAPE rules. Comment lines
+  # only lose the trailing backslash (COMMENT_ESCAPE returns to PRE_KEY, so
+  # the next line is parsed fresh, never swallowed into the comment).
   awk '
     {
-      while (1) {
+      n = 0
+      while (substr($0, length($0) - n, 1) == "\\") n++
+      if ($0 ~ /^[[:blank:]]*[#;]/) {
+        if (n % 2 == 1) {
+          $0 = substr($0, 1, length($0) - 1)
+        }
+        print
+        next
+      }
+      while (n % 2 == 1 && (getline nxt) > 0) {
+        $0 = substr($0, 1, length($0) - 1) nxt
         n = 0
         while (substr($0, length($0) - n, 1) == "\\") n++
-        if (n % 2 == 1 && (getline nxt) > 0) {
-          $0 = substr($0, 1, length($0) - 1) nxt
-        } else {
-          break
-        }
       }
       print
     }
@@ -797,6 +808,15 @@ EOF
       if [ "$pre_existed" -eq 0 ] || ! env_has_key "$env_file" NEXTERM_DATA_DIR; then
         env_set "$env_file" NEXTERM_DATA_DIR "$(join_path "$wd" data)"
         log "pinned NEXTERM_DATA_DIR=$(join_path "$wd" data) in ${env_file#$ROOT_PREFIX} (existing data at the fallback location)"
+      fi
+    fi
+    if [ "$MODE" = "upgrade" ] && [ "$data_dir_migrated" -eq 0 ] && [ "$wd" != "/var/lib/nexterm" ]; then
+      if ! data_dir_value="$(env_get "$env_file" NEXTERM_DATA_DIR)"; then
+        die "cannot parse NEXTERM_DATA_DIR in ${env_file#$ROOT_PREFIX} (unsupported EnvironmentFile syntax); fix the file and re-run"
+      fi
+      if [ -z "$data_dir_value" ] && env_has_key "$env_file" NEXTERM_DATA_DIR; then
+        env_set "$env_file" NEXTERM_DATA_DIR "$(join_path "$wd" data)"
+        log "pinned empty NEXTERM_DATA_DIR to the previous fallback $(join_path "$wd" data) (working directory changed)"
       fi
     fi
     if ! data_dir_value="$(env_get "$env_file" NEXTERM_DATA_DIR)"; then
