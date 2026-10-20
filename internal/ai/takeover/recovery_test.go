@@ -426,7 +426,10 @@ func TestPauseEscalationFailsClosed(t *testing.T) {
 			return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(namedToolCall("keys", "send_keys", `{"keys":"ls","enter":true}`))}), nil
 		}
 		secondOnce.Do(func() { close(secondCallStarted) })
-		<-stuck
+		select {
+		case <-stuck:
+		case <-ctx.Done():
+		}
 		return nil, errors.New("unreachable")
 	}}
 	store := agent.NewMemoryCheckpoints()
@@ -493,7 +496,10 @@ func TestPauseWatchdogFailsClosedAndDropsLateSave(t *testing.T) {
 			return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(namedToolCall("keys", "send_keys", `{"keys":"ls","enter":true}`))}), nil
 		}
 		secondOnce.Do(func() { close(secondCallStarted) })
-		<-stuck
+		select {
+		case <-stuck:
+		case <-ctx.Done():
+		}
 		return nil, errors.New("unreachable")
 	}}
 	store := &gatedCheckpointStore{inner: newCtxCheckpointStore(), gate: make(chan struct{})}

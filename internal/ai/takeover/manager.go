@@ -300,7 +300,11 @@ func (m *Manager) pauseState(state *runState) {
 func (m *Manager) pauseWatchdog(state *runState) {
 	timer := time.NewTimer(m.deps.PauseEscalationTimeout + 3*time.Second)
 	defer timer.Stop()
-	<-timer.C
+	select {
+	case <-timer.C:
+	case <-state.ctx.Done():
+		return
+	}
 	state.finalizeMu.Lock()
 	defer state.finalizeMu.Unlock()
 	if state.completed {
@@ -333,7 +337,12 @@ func (m *Manager) cancelIteration(cancelFn adk.AgentCancelFunc, state *runState,
 		iterCancel := state.iterCancel
 		state.pendingMu.Unlock()
 		if outcomeCh != nil {
-			outcomeCh <- outcome
+			// The run only drains one outcome per pause; once the run ends
+			// nobody reads, so drop the outcome instead of blocking forever.
+			select {
+			case outcomeCh <- outcome:
+			case <-state.ctx.Done():
+			}
 		}
 		if iterCancel != nil {
 			iterCancel()
