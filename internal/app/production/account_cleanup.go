@@ -3,6 +3,7 @@ package production
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -28,6 +29,11 @@ type accountCleanupState struct {
 	mu      sync.Mutex
 	events  map[accountCleanupKey]*accountCleanupEvent
 	aliases map[accountCleanupKey]accountCleanupKey
+
+	// Fault seams for deterministic tests: when non-nil, these replace the
+	// generation-bound read and the owner device listing.
+	cutoffBound       func(ctx context.Context, ownerID, cleanupID string) (*time.Time, error)
+	listOwnerSessions func(ctx context.Context, ownerID string) ([]session.SessionInfo, error)
 }
 
 func (p *Production) CleanupAccount(ctx context.Context, ownerID, cleanupID string, sessionIDs ...string) {
@@ -45,7 +51,15 @@ func (p *Production) PrepareAccountCleanup(ctx context.Context, ownerID, cleanup
 	if p.Services.ExecBatches != nil {
 		commitBatches, rollbackBatches = p.Services.ExecBatches.PrepareOwnerCleanup(ctx, ownerID, cleanupID)
 	}
-	key, event := p.prepareAccountDeviceSnapshot(ctx, ownerID, cleanupID)
+	key, event, err := p.prepareAccountDeviceSnapshot(ctx, ownerID, cleanupID)
+	if err != nil {
+		// The generation bound or the owner device listing could not be read.
+		// Never commit an empty or unbounded cleanup: roll the reservation back
+		// and leave the event absent so a same-event retry takes a fresh snapshot.
+		rollbackBatches()
+		slog.Warn("account device cleanup snapshot failed; cleanup deferred for same-event retry", "owner", ownerID, "event", cleanupID, "error", err)
+		return func(...string) {}, func() {}
+	}
 	return func(sessionIDs ...string) {
 			if !p.commitAccountDeviceSnapshot(key, event, sessionIDs) {
 				return
@@ -62,7 +76,7 @@ func (p *Production) PrepareAccountCleanup(ctx context.Context, ownerID, cleanup
 		}
 }
 
-func (p *Production) prepareAccountDeviceSnapshot(ctx context.Context, ownerID, cleanupID string) (accountCleanupKey, *accountCleanupEvent) {
+func (p *Production) prepareAccountDeviceSnapshot(ctx context.Context, ownerID, cleanupID string) (accountCleanupKey, *accountCleanupEvent, error) {
 	key := accountCleanupKey{ownerID: ownerID, eventID: cleanupID}
 	state := &p.accountCleanup
 	state.mu.Lock()
@@ -75,22 +89,25 @@ func (p *Production) prepareAccountDeviceSnapshot(ctx context.Context, ownerID, 
 	}
 	if event, ok := state.events[key]; ok {
 		state.mu.Unlock()
-		return key, event
+		return key, event, nil
 	}
 	state.mu.Unlock()
 
-	snapshot := p.accountDeviceSnapshot(ctx, ownerID, key.eventID)
+	snapshot, err := p.accountDeviceSnapshot(ctx, ownerID, key.eventID)
+	if err != nil {
+		return key, nil, err
+	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if canonical, ok := state.aliases[key]; ok {
 		key = canonical
 	}
 	if event, ok := state.events[key]; ok {
-		return key, event
+		return key, event, nil
 	}
 	event := &accountCleanupEvent{deviceSessions: snapshot}
 	state.events[key] = event
-	return key, event
+	return key, event, nil
 }
 
 func (p *Production) commitAccountDeviceSnapshot(key accountCleanupKey, event *accountCleanupEvent, sessionIDs []string) bool {
@@ -149,20 +166,31 @@ func (p *Production) accountCleanupCutoff(ctx context.Context, ownerID, cleanupI
 	return &cutoff, nil
 }
 
-func (p *Production) accountDeviceSnapshot(ctx context.Context, ownerID, cleanupID string) []session.SessionInfo {
+// accountDeviceSnapshot lists the owner's device sessions created before the
+// cleanup event's generation bound. A failed bound or listing read is returned
+// explicitly: the caller must never substitute an unbounded snapshot.
+func (p *Production) accountDeviceSnapshot(ctx context.Context, ownerID, cleanupID string) ([]session.SessionInfo, error) {
 	if p.Services.Sessions == nil {
-		return nil
+		return nil, nil
 	}
-	cutoff, err := p.accountCleanupCutoff(ctx, ownerID, cleanupID)
-	if err != nil {
-		slog.Warn("resolve account device cleanup generation", "error", err)
-		return nil
+	state := &p.accountCleanup
+	cutoffFn := state.cutoffBound
+	if cutoffFn == nil {
+		cutoffFn = p.accountCleanupCutoff
 	}
-	ownerCtx := ipc.WithUserID(ctx, ownerID)
-	infos, err := p.Services.Sessions.ListSessionsFor(ownerCtx)
+	listFn := state.listOwnerSessions
+	if listFn == nil {
+		listFn = func(ctx context.Context, ownerID string) ([]session.SessionInfo, error) {
+			return p.Services.Sessions.ListSessionsFor(ipc.WithUserID(ctx, ownerID))
+		}
+	}
+	cutoff, err := cutoffFn(ctx, ownerID, cleanupID)
 	if err != nil {
-		slog.Warn("list account device sessions for cleanup", "error", err)
-		return nil
+		return nil, fmt.Errorf("resolve account device cleanup generation: %w", err)
+	}
+	infos, err := listFn(ctx, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("list account device sessions for cleanup: %w", err)
 	}
 	devices := make([]session.SessionInfo, 0, len(infos))
 	for _, info := range infos {
@@ -172,7 +200,7 @@ func (p *Production) accountDeviceSnapshot(ctx context.Context, ownerID, cleanup
 		info.Tabs = append([]string(nil), info.Tabs...)
 		devices = append(devices, info)
 	}
-	return devices
+	return devices, nil
 }
 
 func (p *Production) cleanupAccountDeviceSnapshot(ctx context.Context, ownerID string, snapshot []session.SessionInfo) {

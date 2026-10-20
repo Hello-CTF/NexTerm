@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,12 +33,13 @@ type accountCleanupHTTPResponse struct {
 }
 
 type accountCleanupHTTPFixture struct {
-	clock      *accountCleanupClock
-	rig        *accountCleanupRig
-	accounts   *account.Accounts
-	db         *store.Store
-	dispatcher *ipc.Dispatcher
-	http       *httptest.Server
+	clock       *accountCleanupClock
+	rig         *accountCleanupRig
+	accounts    *account.Accounts
+	db          *store.Store
+	dispatcher  *ipc.Dispatcher
+	http        *httptest.Server
+	application *Production
 }
 
 func newAccountCleanupHTTPFixture(t *testing.T) *accountCleanupHTTPFixture {
@@ -73,7 +75,7 @@ func newAccountCleanupHTTPFixture(t *testing.T) *accountCleanupHTTPFixture {
 		httpServer.Close()
 		_ = api.Close()
 	})
-	return &accountCleanupHTTPFixture{clock: clock, rig: rig, accounts: accounts, db: database, dispatcher: dispatcher, http: httpServer}
+	return &accountCleanupHTTPFixture{clock: clock, rig: rig, accounts: accounts, db: database, dispatcher: dispatcher, http: httpServer, application: application}
 }
 
 func (f *accountCleanupHTTPFixture) call(t *testing.T, method, path string, body any, session *accountCleanupHTTPSession) accountCleanupHTTPResponse {
@@ -253,4 +255,82 @@ func TestAccountServerExpiredSessionUsesPreExpiryDeviceGeneration(t *testing.T) 
 	if _, err := fixture.accounts.ValidateSession(context.Background(), bob.cookie.Value); err != nil {
 		t.Fatalf("expiry cleanup revoked another user's login session: %v", err)
 	}
+}
+
+func TestAccountServerExpiredSessionCleanupRetriesAfterSnapshotFailure(t *testing.T) {
+	fixture := newAccountCleanupHTTPFixture(t)
+	aliceID, _ := fixture.initUsers(t)
+	alice := fixture.login(t, "alice", "password-alice")
+	ownerA := ipc.WithUserID(t.Context(), aliceID)
+	deviceA, tabA := fixture.rig.open(t, ownerA, session.Asset{ID: "device/a", Kind: session.KindDevice})
+
+	gates := []chan struct{}{make(chan struct{}), make(chan struct{})}
+	var gateOnce [2]sync.Once
+	releaseGate := func(index int) {
+		gateOnce[index].Do(func() { close(gates[index]) })
+	}
+	t.Cleanup(func() {
+		releaseGate(0)
+		releaseGate(1)
+	})
+	entered := make(chan int, 2)
+	var requestIndex atomic.Int32
+	if err := fixture.dispatcher.RegisterRaw("test_expired_cleanup_retry", func(ctx context.Context, _ *ipc.Call) (any, error) {
+		index := int(requestIndex.Add(1)) - 1
+		entered <- index
+		<-gates[index]
+		return nil, ipc.CheckAccountSession(ctx)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	callDone := make(chan accountCleanupHTTPResponse, 2)
+	for range 2 {
+		go func() {
+			callDone <- fixture.call(t, http.MethodPost, "/rpc", map[string]any{
+				"cmd": "test_expired_cleanup_retry", "args": map[string]any{},
+			}, alice)
+		}()
+	}
+	for range 2 {
+		select {
+		case <-entered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("requests did not reach account session revalidation")
+		}
+	}
+	fixture.clock.Advance(time.Millisecond)
+	fixture.expireOnlySession(t, aliceID)
+	fixture.clock.Advance(time.Millisecond)
+
+	// First revalidation: the snapshot read fails, so the deferred cleanup must
+	// not touch the device and must leave the event retryable.
+	fixture.application.accountCleanup.listOwnerSessions = func(context.Context, string) ([]session.SessionInfo, error) {
+		return nil, errors.New("injected listing failure")
+	}
+	releaseGate(0)
+	select {
+	case call := <-callDone:
+		if call.status != http.StatusOK || call.body["ok"] != false {
+			t.Fatalf("first expired session RPC status = %d body = %v", call.status, call.body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first expired session RPC did not finish")
+	}
+	requireAccountCleanupTab(t, ownerA, fixture.rig.manager, tabA.ID, true)
+	requireAccountCleanupStatus(t, ownerA, fixture.rig.manager, deviceA.ID, session.StatusConnected)
+
+	// Second revalidation with the same event after the read recovers: the
+	// retry takes a fresh snapshot and cleans the expired generation's device.
+	fixture.application.accountCleanup.listOwnerSessions = nil
+	releaseGate(1)
+	select {
+	case call := <-callDone:
+		if call.status != http.StatusOK || call.body["ok"] != false {
+			t.Fatalf("second expired session RPC status = %d body = %v", call.status, call.body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("second expired session RPC did not finish")
+	}
+	requireAccountCleanupTab(t, ownerA, fixture.rig.manager, tabA.ID, false)
+	requireAccountCleanupStatus(t, ownerA, fixture.rig.manager, deviceA.ID, session.StatusDisconnected)
 }
