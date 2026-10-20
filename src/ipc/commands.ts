@@ -629,8 +629,8 @@ export const assetApi = {
       args: { assetIds, timeoutMs, maxConcurrent },
     }),
   knownHostList: () => call<import("./types").KnownHostDto[]>("known_host_list"),
-  knownHostAccept: (host: string, port: number, keyType: string, fingerprint: string) =>
-    call<void>("known_host_accept", { host, port, keyType, fingerprint }),
+  knownHostAccept: (host: string, port: number, keyType: string, fingerprint: string, key?: string) =>
+    call<void>("known_host_accept", { host, port, keyType, fingerprint, key }),
   knownHostRemove: (id: string) => call<void>("known_host_remove", { id }),
 };
 

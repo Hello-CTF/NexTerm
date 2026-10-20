@@ -116,6 +116,7 @@ type hostKeyDetail struct {
 	Port        int                  `json:"port"`
 	KeyType     string               `json:"keyType"`
 	Fingerprint string               `json:"fingerprint"`
+	Key         string               `json:"key,omitempty"`
 	Changed     bool                 `json:"changed"`
 	Known       []hostKeyKnownDetail `json:"known,omitempty"`
 }
@@ -126,6 +127,7 @@ func hostKeyIPCError(err *ssh.HostKeyError) *ipc.Error {
 		Port:        err.Presented.Port,
 		KeyType:     err.Presented.KeyType,
 		Fingerprint: err.Presented.Fingerprint,
+		Key:         err.Presented.Key,
 		Changed:     !err.Pending,
 	}
 	for _, known := range err.Known {

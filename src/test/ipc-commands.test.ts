@@ -205,6 +205,22 @@ describe("desktop command envelopes", () => {
     });
   });
 
+  it("carries known-host accept material only when the presented key is provided", async () => {
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: null });
+    const { assetApi } = await import("../ipc/commands");
+
+    await assetApi.knownHostAccept("10.0.0.8", 22, "ssh-ed25519", "SHA256:abc");
+    expect(requestAt(0)).toEqual({
+      cmd: "known_host_accept",
+      args: { host: "10.0.0.8", port: 22, keyType: "ssh-ed25519", fingerprint: "SHA256:abc" },
+    });
+    await assetApi.knownHostAccept("10.0.0.8", 22, "ssh-ed25519", "SHA256:abc", "ZmFrZS1rZXk=");
+    expect(requestAt(1)).toEqual({
+      cmd: "known_host_accept",
+      args: { host: "10.0.0.8", port: 22, keyType: "ssh-ed25519", fingerprint: "SHA256:abc", key: "ZmFrZS1rZXk=" },
+    });
+  });
+
   it("keeps the takeover payload flat and channel at the top level", async () => {
     runtime.Call.ByName.mockResolvedValue({ ok: true, data: { jobId: "job-1", token: "token-1" } });
     const { aiApi } = await import("../ipc/commands");

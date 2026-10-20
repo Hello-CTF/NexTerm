@@ -252,6 +252,36 @@ describe("Host key confirmation when creating a terminal (App openNewTerminal)",
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
   });
 
+  it("sends the probed public key with the accept after confirmation", async () => {
+    seedWorkspace(true);
+    mocks.probeHostKey.mockResolvedValue({
+      host: "10.0.0.8",
+      port: 22,
+      keyType: "ssh-ed25519",
+      fingerprint: "SHA256:newfp",
+      key: "ZmFrZS1rZXktdGVzdA==",
+      state: "pending",
+    });
+    mocks.reconnect.mockResolvedValue(true);
+    listUntilReconnectThenConnected();
+    mounted = mountApp();
+    await flush();
+
+    clickWorkspaceNewTerminal();
+    await flush();
+    await waitFor(() => expect(dialog()).not.toBeNull());
+
+    clickButton(dialog() as HTMLElement, "确定");
+    await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
+    expect(mocks.knownHostAccept).toHaveBeenCalledWith(
+      "10.0.0.8",
+      22,
+      "ssh-ed25519",
+      "SHA256:newfp",
+      "ZmFrZS1rZXktdGVzdA==",
+    );
+  });
+
   it("shows confirmation when probe itself reports host_key_pending for a jump host and does not reconnect after cancellation", async () => {
     seedWorkspace(true);
     mocks.probeHostKey.mockRejectedValue({

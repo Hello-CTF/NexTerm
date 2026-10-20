@@ -207,6 +207,32 @@ describe("Host key retry stays actionable", () => {
     expect(mocks.knownHostAccept).toHaveBeenCalledTimes(1);
   });
 
+  it("sends the presented public key with the accept when the pending detail carries one", async () => {
+    mocks.ask.mockResolvedValue(true);
+    mocks.connect
+      .mockRejectedValueOnce({
+        code: "host_key_pending",
+        message: "approval required",
+        detail: { ...PENDING_DETAIL, key: "ZmFrZS1rZXktdGVzdA==" },
+      })
+      .mockResolvedValueOnce({ id: "s2" });
+
+    await expect(connectWithHostKeyConfirm(() => mocks.connect())).resolves.toEqual({ id: "s2" });
+    expect(mocks.knownHostAccept).toHaveBeenCalledWith("10.0.0.8", 22, "ssh-ed25519", "SHA256:newfp", "ZmFrZS1rZXktdGVzdA==");
+    expect(mocks.connect).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the fingerprint-only accept when the pending detail carries no key", async () => {
+    mocks.ask.mockResolvedValue(true);
+    mocks.connect
+      .mockRejectedValueOnce({ code: "host_key_pending", message: "approval required", detail: PENDING_DETAIL })
+      .mockResolvedValueOnce({ id: "s2" });
+
+    await expect(connectWithHostKeyConfirm(() => mocks.connect())).resolves.toEqual({ id: "s2" });
+    expect(mocks.knownHostAccept).toHaveBeenCalledWith("10.0.0.8", 22, "ssh-ed25519", "SHA256:newfp");
+    expect(mocks.knownHostAccept.mock.calls[0]).toHaveLength(4);
+  });
+
   it("does not accept a fingerprint or retry after the account changes during confirmation", async () => {
     const confirmation = deferred<boolean>();
     mocks.ask.mockReturnValueOnce(confirmation.promise);
