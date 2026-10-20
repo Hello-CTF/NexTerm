@@ -100,6 +100,7 @@ func newRemoteRecoveryHarness(t *testing.T, resolver session.DurableResolver) (*
 		Connector:            fakeSSHConnector{},
 		DurableResolver:      resolver,
 		TerminalModeResolver: newProductionTerminalModeResolver(database),
+		OpenAccess:           true,
 	})
 	production, err := NewProductionWithServices(Config{
 		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),

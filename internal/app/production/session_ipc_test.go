@@ -200,7 +200,7 @@ func TestProductionTerminalCloseFailureRetainsTabForRetry(t *testing.T) {
 			channel:          channel,
 		}, nil
 	})
-	manager := session.NewManager(session.Config{Connector: connector})
+	manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 	production, err := NewProductionWithServices(Config{}, ProductionServices{Sessions: manager})
 	if err != nil {
 		t.Fatal(err)

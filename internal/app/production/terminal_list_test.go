@@ -102,6 +102,7 @@ func TestTerminalListUsesOutputMetadataWithoutSnapshots(t *testing.T) {
 			return &terminalListTransport{channel: channel}, nil
 		}),
 		Terminals: factory,
+		OpenAccess: true,
 	})
 	production, err := NewProductionWithServices(Config{}, ProductionServices{Sessions: manager})
 	if err != nil {
@@ -193,6 +194,7 @@ func TestTerminalListPreservesLegacyOutputAge(t *testing.T) {
 			return &terminalListTransport{channel: channel}, nil
 		}),
 		Terminals: factory,
+		OpenAccess: true,
 	})
 	production, err := NewProductionWithServices(Config{}, ProductionServices{Sessions: manager})
 	if err != nil {

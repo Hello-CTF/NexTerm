@@ -31,6 +31,7 @@ func TestProductionShutdownDrainsTranscriptEndAndOffset(t *testing.T) {
 		DurableResolver:   resolver,
 		TranscriptOffsets: durableTranscriptOffsets{database: database},
 		Transcripts:       transcripts,
+		OpenAccess:        true,
 	})
 	production, err := NewProductionWithServices(Config{
 		Logger:  logger,

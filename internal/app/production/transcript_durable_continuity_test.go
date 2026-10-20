@@ -99,6 +99,7 @@ func startContinuityManager(t *testing.T, database *delayedTranscriptStore, prov
 			return newTranscriptFeedTransport(asset.Kind, generation), nil
 		}),
 		Durable: provider, TranscriptOffsets: provider, Transcripts: writer, Logger: discardTranscriptLogger(),
+		OpenAccess: true,
 	})
 	t.Cleanup(func() { _ = manager.Close() })
 	return manager, writer

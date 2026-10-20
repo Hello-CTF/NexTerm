@@ -89,6 +89,7 @@ func composeMemoryRuntime(t *testing.T) (*ProductionServices, *store.Store, *mem
 		Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 			return &outcomeFakeTransport{}, nil
 		}),
+		OpenAccess: true,
 	})
 	connected, err := sessions.Connect(ctx, session.Asset{ID: asset.ID, Kind: session.KindSSH})
 	if err != nil {

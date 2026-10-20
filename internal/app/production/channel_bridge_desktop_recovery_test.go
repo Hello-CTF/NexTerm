@@ -207,6 +207,7 @@ func newDesktopRecoveryProduction(t *testing.T, factory *desktopRecoveryFactory)
 			transport = newTranscriptFeedTransport(asset.Kind, generation)
 			return transport, nil
 		}),
+		OpenAccess: true,
 	})
 	database, err := store.OpenInMemory(t.Context())
 	if err != nil {

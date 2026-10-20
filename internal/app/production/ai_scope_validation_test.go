@@ -50,6 +50,7 @@ func TestProductionScopeValidatorTwoAccountCoverage(t *testing.T) {
 		Terminals: session.TerminalFactoryFunc(func(session.TerminalConfig) (session.TerminalState, error) {
 			return &scopeTestTerminal{}, nil
 		}),
+		OpenAccess: true,
 	})
 	t.Cleanup(func() { _ = sessions.Close() })
 	assetA, err := database.AssetCreate(ctxA, store.AssetInput{Kind: "local", Name: "A"})

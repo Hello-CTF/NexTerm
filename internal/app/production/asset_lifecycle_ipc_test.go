@@ -74,6 +74,7 @@ func newAssetLifecycleFixture(t *testing.T) (*ipc.Dispatcher, *store.Store, *ses
 	connector := &assetLifecycleConnector{}
 	manager := session.NewManager(session.Config{
 		Connector: connector, IdleTimeout: -1, ReconnectMax: 1, ReconnectBackoff: []time.Duration{time.Millisecond},
+		OpenAccess: true,
 	})
 	t.Cleanup(func() { _ = manager.Close() })
 	service := newTerminalCommandService(database, manager, nil, nil, nil, nil, nil, nil, true)

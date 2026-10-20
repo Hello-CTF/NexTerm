@@ -74,6 +74,7 @@ func composeRestartRuntime(t *testing.T, database *store.Store, providerURL stri
 			Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 				return &outcomeFakeTransport{}, nil
 			}),
+			OpenAccess: true,
 		})
 	}
 	sessionID := ""

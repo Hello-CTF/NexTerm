@@ -157,6 +157,7 @@ func TestComposedCronRuntimeSurvivesRestart(t *testing.T) {
 			Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 				return &outcomeFakeTransport{}, nil
 			}),
+			OpenAccess: true,
 		})
 		services := &ProductionServices{Store: database, Profiles: profileManager, Sessions: sessions, desktop: true}
 		if err := composeAIRuntime(ctx, services); err != nil {

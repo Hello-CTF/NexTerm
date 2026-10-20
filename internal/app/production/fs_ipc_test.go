@@ -48,7 +48,7 @@ func TestProductionFSCommandsUseLiveTransportAndEmitProgress(t *testing.T) {
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
 		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
 	})
-	manager := session.NewManager(session.Config{Connector: connector})
+	manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 	production, err := NewProductionWithServices(Config{Events: events}, ProductionServices{Sessions: manager})
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +138,7 @@ func TestProductionFSReadWithoutMaxBytesAppliesDefaultLimit(t *testing.T) {
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
 		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
 	})
-	manager := session.NewManager(session.Config{Connector: connector})
+	manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 	production, err := NewProductionWithServices(Config{Events: events}, ProductionServices{Sessions: manager})
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +186,7 @@ func TestProductionFSUploadFailureEmitsErrorProgress(t *testing.T) {
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
 		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
 	})
-	manager := session.NewManager(session.Config{Connector: connector})
+	manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 	production, err := NewProductionWithServices(Config{Events: events}, ProductionServices{Sessions: manager})
 	if err != nil {
 		t.Fatal(err)
@@ -232,7 +232,7 @@ func TestProductionFSPathAndSessionErrorsAreDistinct(t *testing.T) {
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
 		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
 	})
-	manager := session.NewManager(session.Config{Connector: connector})
+	manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 	production, err := NewProductionWithServices(Config{}, ProductionServices{Sessions: manager})
 	if err != nil {
 		t.Fatal(err)
@@ -293,7 +293,7 @@ func TestProductionFSRootsUsesLiveLocalTransport(t *testing.T) {
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
 		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
 	})
-	manager := session.NewManager(session.Config{Connector: connector})
+	manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 	production, err := NewProductionWithServices(Config{}, ProductionServices{Sessions: manager})
 	if err != nil {
 		t.Fatal(err)
@@ -393,7 +393,7 @@ func TestProductionFSRootsDTOAndFallbacks(t *testing.T) {
 			connector := session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 				return fakeProviderTransport{kind: "ssh", fs: testCase.filesystem}, nil
 			})
-			manager := session.NewManager(session.Config{Connector: connector})
+			manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 			dispatcher := ipc.NewDispatcher()
 			if err := registerFSCommands(dispatcher, manager, nil); err != nil {
 				t.Fatal(err)
@@ -448,7 +448,7 @@ func TestProductionFSWindowsPathErrorsDoNotPoisonRoots(t *testing.T) {
 			connector := session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 				return fakeProviderTransport{kind: testCase.kind, fs: filesystem}, nil
 			})
-			manager := session.NewManager(session.Config{Connector: connector})
+			manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 			dispatcher := ipc.NewDispatcher()
 			if err := registerFSCommands(dispatcher, manager, nil); err != nil {
 				t.Fatal(err)
@@ -535,7 +535,7 @@ func TestProductionFSDeviceSessionOwnerEnforced(t *testing.T) {
 	transport := device.New("dev-1", "digest", bridge.dial, 1, "windows")
 	manager := session.NewManager(session.Config{Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 		return transport, nil
-	})})
+	}), OpenAccess: true})
 	t.Cleanup(func() { _ = manager.Close() })
 	dispatcher := ipc.NewDispatcher()
 	if err := registerFSCommands(dispatcher, manager, nil); err != nil {
@@ -600,7 +600,7 @@ func TestProductionFSDevicePathErrorsDoNotPoisonRoots(t *testing.T) {
 			transport := device.New("dev-1", "digest", bridge.dial, 1, "windows")
 			manager := session.NewManager(session.Config{Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 				return transport, nil
-			})})
+			}), OpenAccess: true})
 			t.Cleanup(func() { _ = manager.Close() })
 			dispatcher := ipc.NewDispatcher()
 			if err := registerFSCommands(dispatcher, manager, nil); err != nil {
@@ -659,7 +659,7 @@ func TestProductionFSStagedLocalPathResolution(t *testing.T) {
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
 		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
 	})
-	manager := session.NewManager(session.Config{Connector: connector})
+	manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 	staged := &fakeStagedBlobResolver{dir: t.TempDir()}
 	production, err := NewProductionWithServices(Config{Events: events}, ProductionServices{Sessions: manager, stagedBlobs: staged})
 	if err != nil {
@@ -750,7 +750,7 @@ func TestProductionFSExtract(t *testing.T) {
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
 		return &extractFakeTransport{fs: filesystem}, nil
 	})
-	manager := session.NewManager(session.Config{Connector: connector})
+	manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 	production, err := NewProductionWithServices(Config{Events: events}, ProductionServices{Sessions: manager})
 	if err != nil {
 		t.Fatal(err)
@@ -786,7 +786,7 @@ func TestProductionFSExtractUnsupportedForLocal(t *testing.T) {
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
 		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
 	})
-	manager := session.NewManager(session.Config{Connector: connector})
+	manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 	production, err := NewProductionWithServices(Config{Events: events}, ProductionServices{Sessions: manager})
 	if err != nil {
 		t.Fatal(err)
@@ -857,7 +857,7 @@ func TestProductionFSReadRange(t *testing.T) {
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
 		return &rangeFakeTransport{fs: filesystem}, nil
 	})
-	manager := session.NewManager(session.Config{Connector: connector})
+	manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 	production, err := NewProductionWithServices(Config{Events: events}, ProductionServices{Sessions: manager})
 	if err != nil {
 		t.Fatal(err)
@@ -911,7 +911,7 @@ func TestProductionFSReadRangeUnsupportedForNonSSH(t *testing.T) {
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
 		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
 	})
-	manager := session.NewManager(session.Config{Connector: connector})
+	manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 	production, err := NewProductionWithServices(Config{Events: events}, ProductionServices{Sessions: manager})
 	if err != nil {
 		t.Fatal(err)
@@ -1071,7 +1071,7 @@ func newProductionHTTPBoundaryFixture(t *testing.T) *productionHTTPBoundaryFixtu
 	transport := &productionHTTPBoundaryTransport{Transport: local.NewWithConfig(local.Config{Shell: "/bin/sh"})}
 	manager := session.NewManager(session.Config{Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 		return transport, nil
-	})})
+	}), OpenAccess: true})
 	application, err := NewProductionWithServices(Config{
 		Streams: ipc.StreamFactoryFuncs{},
 		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -1374,7 +1374,7 @@ func TestWinRMExecLineFileOperationsPreserveCWD(t *testing.T) {
 	}
 	manager := session.NewManager(session.Config{Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 		return transport, nil
-	})})
+	}), OpenAccess: true})
 	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
 	connected, err := manager.Connect(ctx, session.Asset{ID: "winrm-cwd-chain", Kind: session.KindWinRM})
