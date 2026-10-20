@@ -140,8 +140,11 @@ type KnownHostRow struct {
 	KeyType     string `gorm:"column:key_type;not null;size:191;uniqueIndex:known_host_owner_endpoint_unique,priority:4" json:"keyType"`
 	Fingerprint string `gorm:"column:fingerprint;not null" json:"fingerprint"`
 	Key         string `gorm:"column:key;not null;default:''" json:"key"`
-	AddedAt     int64  `gorm:"column:added_at;not null" json:"addedAt"`
-	OwnerID     string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_known_host_owner;uniqueIndex:known_host_owner_endpoint_unique,priority:1" json:"owner_id"`
+	// OpToken is the unique identity of the accept operation that last wrote the row; it backs
+	// conditional compensation, which wall-clock added_at cannot disambiguate. It is not synced state.
+	OpToken string `gorm:"column:op_token;not null;default:''" json:"-"`
+	AddedAt int64  `gorm:"column:added_at;not null" json:"addedAt"`
+	OwnerID string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_known_host_owner;uniqueIndex:known_host_owner_endpoint_unique,priority:1" json:"owner_id"`
 }
 
 func (KnownHostRow) TableName() string { return "known_host" }

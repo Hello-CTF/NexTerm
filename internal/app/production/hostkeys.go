@@ -13,6 +13,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -47,6 +48,30 @@ type productionHostKeyMigrationReport struct {
 	Existing      int
 	Conflicts     int
 	Skipped       int
+	Revoked       int
+}
+
+func (report *productionHostKeyMigrationReport) countResult(result productionHostKeyMigrationResult) {
+	switch result {
+	case productionHostKeyMigrationCopied:
+		report.Copied++
+	case productionHostKeyMigrationExisting:
+		report.Existing++
+	case productionHostKeyMigrationConflict:
+		report.Conflicts++
+	}
+}
+
+func (result productionHostKeyMigrationResult) String() string {
+	switch result {
+	case productionHostKeyMigrationCopied:
+		return "copied"
+	case productionHostKeyMigrationExisting:
+		return "existing"
+	case productionHostKeyMigrationConflict:
+		return "conflict"
+	}
+	return "unknown"
 }
 
 type productionHostKeyIdentity struct {
@@ -265,6 +290,60 @@ func (s *productionHostKeyStore) PutHostKey(ctx context.Context, key ssh.HostKey
 	return nil
 }
 
+type productionHostKeyImportEntry struct {
+	Host          string   `json:"host"`
+	Port          int      `json:"port"`
+	KeyType       string   `json:"keyType"`
+	Fingerprint   string   `json:"fingerprint"`
+	Disposition   string   `json:"disposition"`
+	Owners        []string `json:"owners,omitempty"`
+	State         string   `json:"state"`
+	Result        string   `json:"result,omitempty"`
+	RevokedOwners []string `json:"revokedOwners,omitempty"`
+}
+
+type productionHostKeyImportState struct {
+	Version int                            `json:"version"`
+	Entries []productionHostKeyImportEntry `json:"entries"`
+}
+
+func productionHostKeyImportIdentity(key ssh.HostKey) string {
+	return fmt.Sprintf("%s|%d|%s|%s", key.Host, key.Port, key.KeyType, key.Fingerprint)
+}
+
+func (s *productionHostKeyStore) loadImportState() (map[string]*productionHostKeyImportEntry, error) {
+	entries := make(map[string]*productionHostKeyImportEntry)
+	data, existed, err := readProductionHostKeyFile(s.path + ".owner-import-state.json")
+	if err != nil || !existed {
+		return entries, err
+	}
+	var state productionHostKeyImportState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("decode host key import state: %w", err)
+	}
+	for index := range state.Entries {
+		entry := &state.Entries[index]
+		entries[productionHostKeyImportIdentity(ssh.HostKey{Host: entry.Host, Port: entry.Port, KeyType: entry.KeyType, Fingerprint: entry.Fingerprint})] = entry
+	}
+	return entries, nil
+}
+
+func (s *productionHostKeyStore) storeImportState(entries map[string]*productionHostKeyImportEntry) error {
+	state := productionHostKeyImportState{Version: 1, Entries: make([]productionHostKeyImportEntry, 0, len(entries))}
+	for _, entry := range entries {
+		state.Entries = append(state.Entries, *entry)
+	}
+	sort.Slice(state.Entries, func(i, j int) bool {
+		return productionHostKeyImportIdentity(ssh.HostKey{Host: state.Entries[i].Host, Port: state.Entries[i].Port, KeyType: state.Entries[i].KeyType, Fingerprint: state.Entries[i].Fingerprint}) <
+			productionHostKeyImportIdentity(ssh.HostKey{Host: state.Entries[j].Host, Port: state.Entries[j].Port, KeyType: state.Entries[j].KeyType, Fingerprint: state.Entries[j].Fingerprint})
+	})
+	return atomicfile.Write(s.path+".owner-import-state.json", 0o600, func(writer io.Writer) error {
+		encoder := json.NewEncoder(writer)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(state)
+	})
+}
+
 func (s *productionHostKeyStore) migrateLegacy(ctx context.Context) (productionHostKeyMigrationReport, error) {
 	if s.shared {
 		return s.migrateSharedLegacy(ctx)
@@ -287,71 +366,142 @@ func (s *productionHostKeyStore) migrateLegacy(ctx context.Context) (productionH
 	if err != nil {
 		return report, err
 	}
-	rows, err := s.database.KnownHostListForMigration(ctx)
+	entries, err := s.loadImportState()
 	if err != nil {
 		return report, err
 	}
-	owners := make(map[productionHostKeyIdentity][]string)
-	for _, row := range rows {
-		if row.OwnerID == "" {
-			continue
-		}
-		identity := productionHostKeyIdentity{host: row.Host, port: int(row.Port), keyType: row.KeyType, fingerprint: row.Fingerprint}
-		owners[identity] = append(owners[identity], row.OwnerID)
-	}
-	// Preflight: postpone the whole batch while any legacy entry has no owning ledger row and no active
-	// superadmin exists to receive it. The marker is never written for a postponed batch — a later startup
-	// retries once an administrator appears — and a partially imported batch can never mix with later
-	// revocations, which is why "skip the leftovers and still mark done" is not an option.
-	fallbackOwner := ""
-	fallbackResolved := false
+	// Record every legacy entry's original disposition before any import runs. Resuming batches use
+	// these persisted assignments instead of recomputing ownership from live rows, so an entry whose
+	// mapped owner revoked it while the batch was pending is never re-imported for that owner.
 	for _, key := range keys {
-		identity := productionHostKeyIdentity{host: key.Host, port: key.Port, keyType: key.KeyType, fingerprint: key.Fingerprint}
-		if len(owners[identity]) > 0 {
+		identity := productionHostKeyImportIdentity(key)
+		if _, ok := entries[identity]; ok {
 			continue
 		}
-		if !fallbackResolved {
-			fallbackOwner, err = s.firstActiveSuperadmin(ctx)
-			fallbackResolved = true
-			if err != nil {
-				return report, err
+		rows, err := s.database.KnownHostListForMigration(ctx)
+		if err != nil {
+			return report, err
+		}
+		mapped := []string{}
+		for _, row := range rows {
+			if row.OwnerID == "" {
+				continue
+			}
+			if row.Host == key.Host && int(row.Port) == key.Port && row.KeyType == key.KeyType && row.Fingerprint == key.Fingerprint {
+				mapped = append(mapped, row.OwnerID)
 			}
 		}
-		if fallbackOwner == "" {
-			report.Skipped++
+		sort.Strings(mapped)
+		entry := &productionHostKeyImportEntry{
+			Host: key.Host, Port: key.Port, KeyType: key.KeyType, Fingerprint: key.Fingerprint,
+			State: "pending",
+		}
+		if len(mapped) > 0 {
+			entry.Disposition = "owners"
+			entry.Owners = mapped
+		} else {
+			entry.Disposition = "fallback"
+		}
+		entries[identity] = entry
+	}
+	// Preflight: postpone the whole batch while any pending fallback entry has no active superadmin to
+	// receive it. The marker is never written for a postponed batch — a later startup retries once an
+	// administrator appears — and a partially imported batch can never mix with later revocations.
+	fallbackPending := 0
+	for _, entry := range entries {
+		if entry.State == "pending" && entry.Disposition == "fallback" {
+			fallbackPending++
 		}
 	}
-	if report.Skipped > 0 {
-		return report, nil
+	if fallbackPending > 0 {
+		fallbackOwner, err := s.firstActiveSuperadmin(ctx)
+		if err != nil {
+			return report, err
+		}
+		if fallbackOwner == "" {
+			if err := s.storeImportState(entries); err != nil {
+				return report, err
+			}
+			report.Skipped = fallbackPending
+			return report, nil
+		}
 	}
 	report.BackupCreated, err = backupLegacyProductionHostKeyFile(s.path, data)
 	if err != nil {
 		return report, err
 	}
+	keysByIdentity := make(map[string]ssh.HostKey, len(keys))
 	for _, key := range keys {
-		identity := productionHostKeyIdentity{host: key.Host, port: key.Port, keyType: key.KeyType, fingerprint: key.Fingerprint}
-		mappedOwners := owners[identity]
-		if len(mappedOwners) == 0 {
-			mappedOwners = []string{fallbackOwner}
+		keysByIdentity[productionHostKeyImportIdentity(key)] = key
+	}
+	for identity, entry := range entries {
+		if entry.State != "pending" {
+			continue
 		}
-		sort.Strings(mappedOwners)
-		for _, ownerID := range mappedOwners {
-			result, err := s.importLegacyKey(ctx, ownerID, key)
+		key, ok := keysByIdentity[identity]
+		if !ok {
+			entry.State = "done"
+			continue
+		}
+		if entry.Disposition == "fallback" {
+			fallbackOwner, err := s.firstActiveSuperadmin(ctx)
 			if err != nil {
 				return report, err
 			}
-			switch result {
-			case productionHostKeyMigrationCopied:
-				report.Copied++
-			case productionHostKeyMigrationExisting:
-				report.Existing++
-			case productionHostKeyMigrationConflict:
-				report.Conflicts++
+			if fallbackOwner == "" {
+				continue
 			}
+			result, err := s.importLegacyKey(ctx, fallbackOwner, key)
+			if err != nil {
+				return report, err
+			}
+			report.countResult(result)
+			entry.State = "done"
+			entry.Result = result.String()
+			continue
+		}
+		allRevoked := true
+		for _, ownerID := range entry.Owners {
+			if slices.Contains(entry.RevokedOwners, ownerID) {
+				continue
+			}
+			ownerCtx := ipc.WithUserID(ctx, ownerID)
+			_, found, err := s.database.KnownHostGet(ownerCtx, entry.Host, int32(entry.Port), entry.KeyType)
+			if err != nil {
+				return report, err
+			}
+			if !found {
+				entry.RevokedOwners = append(entry.RevokedOwners, ownerID)
+				report.Revoked++
+				continue
+			}
+			allRevoked = false
+			result, err := s.importLegacyKey(ownerCtx, ownerID, key)
+			if err != nil {
+				return report, err
+			}
+			report.countResult(result)
+			entry.Result = result.String()
+		}
+		if allRevoked {
+			entry.State = "revoked"
+		} else {
+			entry.State = "done"
 		}
 	}
-	if err := atomicfile.Write(markerPath, 0o600, func(writer io.Writer) error { return nil }); err != nil {
+	if err := s.storeImportState(entries); err != nil {
 		return report, err
+	}
+	remainingPending := 0
+	for _, entry := range entries {
+		if entry.State == "pending" {
+			remainingPending++
+		}
+	}
+	if remainingPending == 0 {
+		if err := atomicfile.Write(markerPath, 0o600, func(writer io.Writer) error { return nil }); err != nil {
+			return report, err
+		}
 	}
 	return report, nil
 }

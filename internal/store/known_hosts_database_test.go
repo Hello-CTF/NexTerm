@@ -372,6 +372,61 @@ func TestKnownHostRemoveForMirrorConcurrentUpdateDatabase(t *testing.T) {
 	}
 }
 
+func TestKnownHostCompensateAcceptTokenABADatabase(t *testing.T) {
+	database := dbtest.NewFixture(t).OpenStore(t)
+	ctx := context.Background()
+	ownerA := ipc.WithUserID(ctx, "aba-owner-a")
+	// Insert ABA: A accepts F/K, an independent B accepts the identical F/K in the same revision, and
+	// A's mirror-failure compensation must not match B's row even with colliding added_at.
+	acceptedA, previous, err := database.KnownHostAcceptForMirror(ownerA, "aba-insert.test", 22, "ssh-ed25519", "SHA256:aba", "YWJhLWtleQ==", false)
+	if err != nil || previous != nil {
+		t.Fatalf("A accept = %+v, %+v, %v", acceptedA, previous, err)
+	}
+	acceptedB, err := database.KnownHostAcceptWithKey(ownerA, "aba-insert.test", 22, "ssh-ed25519", "SHA256:aba", "YWJhLWtleQ==")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acceptedB.OpToken == acceptedA.OpToken {
+		t.Fatal("accepts shared an operation token")
+	}
+	if err := database.GORM().WithContext(ctx).Model(&store.KnownHostRow{}).
+		Where("host = ? AND port = ? AND key_type = ? AND owner_id = ?", "aba-insert.test", 22, "ssh-ed25519", "aba-owner-a").
+		Update("added_at", acceptedA.AddedAt).Error; err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := database.KnownHostCompensateAccept(ownerA, "aba-insert.test", 22, "ssh-ed25519", acceptedA, nil); err != nil || applied {
+		t.Fatalf("ABA insert compensation applied=%v err=%v", applied, err)
+	}
+	if row, found, err := database.KnownHostGet(ownerA, "aba-insert.test", 22, "ssh-ed25519"); err != nil || !found || row.OpToken != acceptedB.OpToken || row.AddedAt != acceptedA.AddedAt {
+		t.Fatalf("B decision = %+v, %v, %v", row, found, err)
+	}
+	// Replacement ABA: A replaces P with F/K, an independent B re-accepts the identical F/K in the
+	// same revision, and A's compensation must not restore stale P over B.
+	if _, err := database.KnownHostAcceptWithKey(ownerA, "aba-replace.test", 22, "ssh-ed25519", "SHA256:previous", "cHJldmlvdXMta2V5"); err != nil {
+		t.Fatal(err)
+	}
+	previousRow, _, _ := database.KnownHostGet(ownerA, "aba-replace.test", 22, "ssh-ed25519")
+	acceptedR, previous, err := database.KnownHostAcceptForMirror(ownerA, "aba-replace.test", 22, "ssh-ed25519", "SHA256:aba", "YWJhLWtleQ==", true)
+	if err != nil || previous == nil || previous.ID != previousRow.ID {
+		t.Fatalf("replacement accept = %+v, %+v, %v", acceptedR, previous, err)
+	}
+	acceptedB2, err := database.KnownHostAcceptWithKey(ownerA, "aba-replace.test", 22, "ssh-ed25519", "SHA256:aba", "YWJhLWtleQ==")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.GORM().WithContext(ctx).Model(&store.KnownHostRow{}).
+		Where("host = ? AND port = ? AND key_type = ? AND owner_id = ?", "aba-replace.test", 22, "ssh-ed25519", "aba-owner-a").
+		Update("added_at", acceptedR.AddedAt).Error; err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := database.KnownHostCompensateAccept(ownerA, "aba-replace.test", 22, "ssh-ed25519", acceptedR, previous); err != nil || applied {
+		t.Fatalf("ABA replacement compensation applied=%v err=%v", applied, err)
+	}
+	if row, found, err := database.KnownHostGet(ownerA, "aba-replace.test", 22, "ssh-ed25519"); err != nil || !found || row.Fingerprint != "SHA256:aba" || row.OpToken != acceptedB2.OpToken {
+		t.Fatalf("B replacement decision overwritten by stale previous: %+v, %v, %v", row, found, err)
+	}
+}
+
 func TestKnownHostRestoreRemovedKeepsNewerDecisionDatabase(t *testing.T) {
 	database := dbtest.NewFixture(t).OpenStore(t)
 	ctx := context.Background()

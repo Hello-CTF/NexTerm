@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -688,6 +690,104 @@ func TestProductionHostKeyLegacyMigrationWaitsForSuperadmin(t *testing.T) {
 	if rows, err := database.KnownHostList(admin); err != nil || len(rows) != 0 {
 		t.Fatalf("revoked key resurrected after completed import: %+v, %v", rows, err)
 	}
+}
+
+func TestProductionHostKeyPostponedMigrationRevocationNotResurrected(t *testing.T) {
+	ctx := context.Background()
+	ownerA := ipc.WithUserID(ctx, "user-a")
+	dataDir := t.TempDir()
+	legacyPath := filepath.Join(dataDir, "known_hosts.json")
+	mapped := knownHostOwnerTestKey("mapped.test", "SHA256:mapped", "mapped-key")
+	unassigned := knownHostOwnerTestKey("unassigned.test", "SHA256:unassigned", "unassigned-key")
+	if err := writeProductionHostKeyFile(legacyPath, productionHostKeyFile{Version: 1, Keys: []ssh.HostKey{mapped, unassigned}}); err != nil {
+		t.Fatal(err)
+	}
+	// Seed the mapped owner's row before the first startup so the postponed batch records the original
+	// owner assignment, exactly like a deployment whose user already trusted the legacy key.
+	seedStore, err := store.Open(ctx, filepath.Join(dataDir, "data.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seedStore.GORM().WithContext(ctx).Create(&store.AppUser{
+		ID: "user-a", Username: "user-user-a", Role: "user", State: "active", PasswordHash: "test-only", CreatedAt: 1, UpdatedAt: 1,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seedStore.KnownHostAcceptWithKey(ownerA, mapped.Host, int32(mapped.Port), mapped.KeyType, mapped.Fingerprint, mapped.Key); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	newApp := func() *Production {
+		application, err := NewProduction(ctx, ProductionConfig{
+			Config:  Config{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Streams: ipc.StreamFactoryFuncs{}},
+			DataDir: dataDir,
+			Desktop: false,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := application.Start(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		return application
+	}
+	application := newApp()
+	database := application.Services.Store
+	// The first startup postponed the batch: unassigned has no owner and no superadmin exists yet.
+	if _, err := os.Stat(legacyPath + ".owner-import-done"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("postponed batch wrote the marker: %v", err)
+	}
+	if _, err := os.Stat(legacyPath + ".owner-import-state.json"); err != nil {
+		t.Fatalf("postponed batch did not persist import state: %v", err)
+	}
+	// While the application runs, A revokes the mapped key through the IPC surface.
+	remove := application.Dispatcher.Dispatch(ownerA, ipc.Request{Command: "known_host_remove", Args: json.RawMessage(`{"id":"` + knownHostRowID(t, database, ownerA, mapped) + `"}`)}, application.Environment("client-a"))
+	if !remove.OK {
+		t.Fatalf("revocation dispatch = %+v", remove)
+	}
+	// A is promoted to superadmin; the application restarts and the batch resumes.
+	if err := database.GORM().WithContext(ctx).Model(&store.AppUser{}).Where("id = ?", "user-a").Update("role", "superadmin").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := application.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	restarted := newApp()
+	t.Cleanup(func() { _ = restarted.Shutdown(context.Background()) })
+	restartedDatabase := restarted.Services.Store
+	// The mapped entry was revoked by its original owner while the batch was pending: it must not be
+	// re-imported for that same owner even though the owner is now the superadmin.
+	if _, found, err := restartedDatabase.KnownHostGet(ownerA, mapped.Host, int32(mapped.Port), mapped.KeyType); err != nil || found {
+		t.Fatalf("revoked entry resurrected for its original owner: found=%v err=%v", found, err)
+	}
+	// The unassigned entry completed to the fallback superadmin.
+	if row, found, err := restartedDatabase.KnownHostGet(ownerA, unassigned.Host, int32(unassigned.Port), unassigned.KeyType); err != nil || !found || row.Fingerprint != unassigned.Fingerprint {
+		t.Fatalf("fallback import = %+v, %v, %v", row, found, err)
+	}
+	// An explicit later re-accept of the revoked key is a new authorization and stays allowed.
+	if _, err := restartedDatabase.KnownHostAcceptWithKey(ownerA, mapped.Host, int32(mapped.Port), mapped.KeyType, mapped.Fingerprint, mapped.Key); err != nil {
+		t.Fatalf("explicit re-accept was blocked: %v", err)
+	}
+	if _, found, err := restartedDatabase.KnownHostGet(ownerA, mapped.Host, int32(mapped.Port), mapped.KeyType); err != nil || !found {
+		t.Fatalf("explicit re-accept did not persist: found=%v err=%v", found, err)
+	}
+}
+
+func knownHostRowID(t *testing.T, database *store.Store, ctx context.Context, key ssh.HostKey) string {
+	t.Helper()
+	rows, err := database.KnownHostList(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.Host == key.Host && int(row.Port) == key.Port && row.KeyType == key.KeyType && row.Fingerprint == key.Fingerprint {
+			return row.ID
+		}
+	}
+	t.Fatalf("ledger row for %+v not found", key)
+	return ""
 }
 
 func breakKnownHostMirror(t *testing.T, keys *productionHostKeyStore, ctx context.Context) string {

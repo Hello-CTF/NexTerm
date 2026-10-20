@@ -55,7 +55,7 @@ func (knownHostKeyAssignment) Build(builder clause.Builder) {
 // in by the next acceptance that carries the complete public key.
 func (s *Store) KnownHostAccept(ctx context.Context, host string, port int32, keyType, fingerprint string) error {
 	knownHost := query.Use(s.db).KnownHostRow
-	row := KnownHostRow{ID: ids.New(), Host: host, Port: port, KeyType: keyType, Fingerprint: fingerprint, AddedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)}
+	row := KnownHostRow{ID: ids.New(), Host: host, Port: port, KeyType: keyType, Fingerprint: fingerprint, OpToken: ids.New(), AddedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)}
 	err := inBusyRetry(func() error {
 		return knownHost.WithContext(ctx).
 			Clauses(clause.OnConflict{
@@ -63,6 +63,7 @@ func (s *Store) KnownHostAccept(ctx context.Context, host string, port int32, ke
 				DoUpdates: clause.Set{
 					{Column: clause.Column{Name: "key"}, Value: knownHostKeyAssignment{}},
 					{Column: clause.Column{Name: "fingerprint"}, Value: incomingValue{name: "fingerprint"}},
+					{Column: clause.Column{Name: "op_token"}, Value: incomingValue{name: "op_token"}},
 					{Column: clause.Column{Name: "added_at"}, Value: incomingValue{name: "added_at"}},
 				},
 				Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
@@ -108,7 +109,7 @@ func (s *Store) KnownHostAcceptForMirror(ctx context.Context, host string, port 
 			// read afterwards is the definitive state at write time — an empty endpoint can never hide a
 			// committed row from the conflict check or from the previous snapshot.
 			for attempt := 0; attempt < 3; attempt++ {
-				accepted = KnownHostRow{ID: ids.New(), Host: host, Port: port, KeyType: keyType, Fingerprint: fingerprint, Key: key, AddedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)}
+				accepted = KnownHostRow{ID: ids.New(), Host: host, Port: port, KeyType: keyType, Fingerprint: fingerprint, Key: key, OpToken: ids.New(), AddedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)}
 				if err := knownHost.WithContext(ctx).
 					Clauses(clause.OnConflict{
 						Columns:   []clause.Column{{Name: "owner_id"}, {Name: "host"}, {Name: "port"}, {Name: "key_type"}},
@@ -144,7 +145,7 @@ func (s *Store) KnownHostAcceptForMirror(ctx context.Context, host string, port 
 				updated, err := knownHost.WithContext(ctx).
 					Where(knownHost.ID.Eq(row.ID)).
 					Where(ownerConditions(ctx, knownHost.TableName())...).
-					Updates(map[string]any{"fingerprint": fingerprint, "key": key, "added_at": accepted.AddedAt})
+					Updates(map[string]any{"fingerprint": fingerprint, "key": key, "op_token": accepted.OpToken, "added_at": accepted.AddedAt})
 				if err != nil {
 					return err
 				}
@@ -186,12 +187,12 @@ func (s *Store) KnownHostFillKeyMaterial(ctx context.Context, host string, port 
 // compensation purposes.
 func (s *Store) KnownHostAcceptWithKey(ctx context.Context, host string, port int32, keyType, fingerprint, key string) (KnownHostRow, error) {
 	knownHost := query.Use(s.db).KnownHostRow
-	row := KnownHostRow{ID: ids.New(), Host: host, Port: port, KeyType: keyType, Fingerprint: fingerprint, Key: key, AddedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)}
+	row := KnownHostRow{ID: ids.New(), Host: host, Port: port, KeyType: keyType, Fingerprint: fingerprint, Key: key, OpToken: ids.New(), AddedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)}
 	err := inBusyRetry(func() error {
 		return knownHost.WithContext(ctx).
 			Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "owner_id"}, {Name: "host"}, {Name: "port"}, {Name: "key_type"}},
-				DoUpdates: clause.AssignmentColumns([]string{"fingerprint", "key", "added_at"}),
+				DoUpdates: clause.AssignmentColumns([]string{"fingerprint", "key", "op_token", "added_at"}),
 				Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
 			}).
 			Create(&row)
@@ -271,14 +272,15 @@ func (s *Store) knownHostSyncOptInTx(ctx context.Context, tx *gorm.DB) (bool, er
 }
 
 // KnownHostCompensateAccept rolls back a ledger accept whose mirror write failed. The rollback is
-// conditional on the row still holding exactly the accepted outcome (fingerprint, key material and
-// revision): a newer independent trust decision for the endpoint is left untouched. Reports whether the
-// rollback applied; a nil previous removes the freshly inserted row, otherwise the prior state is restored.
+// conditional on the row still carrying this accept's operation token: a newer independent trust
+// decision — even an identical fingerprint/key in the same millisecond — has a different token and is
+// left untouched. Reports whether the rollback applied; a nil previous removes the freshly inserted row,
+// otherwise the prior state is restored.
 func (s *Store) KnownHostCompensateAccept(ctx context.Context, host string, port int32, keyType string, accepted KnownHostRow, previous *KnownHostRow) (bool, error) {
 	knownHost := query.Use(s.db).KnownHostRow
 	scoped := knownHost.WithContext(ctx).
 		Where(knownHost.Host.Eq(host), knownHost.Port.Eq(port), knownHost.KeyType.Eq(keyType)).
-		Where(knownHost.Fingerprint.Eq(accepted.Fingerprint), knownHost.Key.Eq(accepted.Key), knownHost.AddedAt.Eq(accepted.AddedAt)).
+		Where(knownHost.OpToken.Eq(accepted.OpToken)).
 		Where(ownerConditions(ctx, knownHost.TableName())...)
 	var applied bool
 	err := inBusyRetry(func() error {
