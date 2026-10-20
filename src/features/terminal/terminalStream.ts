@@ -7,8 +7,18 @@ import type { OscStreamEvent, OscStreamSegment } from "./oscStream";
 // xterm has fully caught up, so queued bytes always keep flowing. Accepted
 // bytes wait in the writer's FIFO instead of growing xterm's own write
 // buffer, and no accepted byte is ever dropped or reordered.
+//
+// The FIFO itself is hard-bounded by maxPendingBytes: a write whose text
+// would push pending bytes past the cap is refused atomically (nothing is
+// enqueued or dispatched, the caller keeps its byte offset, and refusedBytes
+// records the total). The caller is expected to stop the producer — XtermView
+// detaches the channel so the existing reopen + resume-replay redelivers the
+// refused bytes in order — so the queue can never grow unboundedly and no
+// byte is lost. Local notices bypass the cap: they are a few dozen bytes of
+// UI chrome that must always render.
 export const STREAM_HIGH_WATER_BYTES = 4 << 20;
 export const STREAM_LOW_WATER_BYTES = 1 << 20;
+export const STREAM_MAX_PENDING_BYTES = 16 << 20;
 
 export interface TerminalStreamBacklog {
   paused: boolean;
@@ -20,11 +30,14 @@ export interface TerminalStreamStats extends TerminalStreamBacklog {
   generation: number;
   inFlightWrites: number;
   suppressedEvents: number;
+  refusedBytes: number;
+  maxPendingBytes: number;
 }
 
 export interface TerminalStreamWriterOptions {
   highWaterBytes: number;
   lowWaterBytes: number;
+  maxPendingBytes?: number;
   now?: () => number;
   onPausedChange?: (paused: boolean, stats: TerminalStreamStats) => void;
   onWritten?: () => void;
@@ -39,7 +52,8 @@ interface WriteUnit {
 }
 
 export interface TerminalStreamWriter {
-  write: (segments: OscStreamSegment[]) => void;
+  write: (segments: OscStreamSegment[]) => boolean;
+  canAccept: (bytes: number) => boolean;
   writeLocalText: (data: string) => void;
   nextGeneration: () => number;
   stats: () => TerminalStreamStats;
@@ -51,12 +65,17 @@ export function createTerminalStreamWriter(
   options: TerminalStreamWriterOptions,
 ): TerminalStreamWriter {
   const { highWaterBytes, lowWaterBytes } = options;
+  const maxPendingBytes = options.maxPendingBytes ?? STREAM_MAX_PENDING_BYTES;
   if (
     !Number.isFinite(highWaterBytes) ||
     !Number.isFinite(lowWaterBytes) ||
-    lowWaterBytes >= highWaterBytes
+    !Number.isFinite(maxPendingBytes) ||
+    lowWaterBytes >= highWaterBytes ||
+    highWaterBytes >= maxPendingBytes
   ) {
-    throw new RangeError("stream writer requires lowWaterBytes < highWaterBytes");
+    throw new RangeError(
+      "stream writer requires lowWaterBytes < highWaterBytes < maxPendingBytes",
+    );
   }
   const now = options.now ?? Date.now;
   const encoder = new TextEncoder();
@@ -68,6 +87,7 @@ export function createTerminalStreamWriter(
   let paused = false;
   let pumping = false;
   let suppressedEvents = 0;
+  let refusedBytes = 0;
   let lastUnit: WriteUnit | null = null;
 
   const pendingBytes = () => queuedBytes + inFlightBytes;
@@ -83,6 +103,8 @@ export function createTerminalStreamWriter(
       paused,
       inFlightWrites: inFlight.length,
       suppressedEvents,
+      refusedBytes,
+      maxPendingBytes,
     };
   };
 
@@ -142,7 +164,21 @@ export function createTerminalStreamWriter(
     return unit;
   };
 
-  const write = (segments: OscStreamSegment[]) => {
+  const canAccept = (bytes: number): boolean =>
+    bytes <= 0 || pendingBytes() + bytes <= maxPendingBytes;
+
+  const write = (segments: OscStreamSegment[]): boolean => {
+    let incoming = 0;
+    for (const segment of segments) {
+      if (segment.kind === "text") incoming += segment.data.length;
+    }
+    // Atomic refusal: a batch that would push pending bytes past the hard cap
+    // is rejected whole — nothing is enqueued and no event is dispatched, so
+    // the caller can recover the exact byte range later (resume replay).
+    if (incoming > 0 && !canAccept(incoming)) {
+      refusedBytes += incoming;
+      return false;
+    }
     for (const segment of segments) {
       if (segment.kind === "event") {
         const tail = lastUnit;
@@ -161,9 +197,12 @@ export function createTerminalStreamWriter(
       enqueue(segment.data, []);
     }
     pump();
+    return true;
   };
 
   const writeLocalText = (data: string) => {
+    // Local notices bypass the cap: they are a few dozen bytes of UI chrome
+    // that must always render, and they carry no stream-sequence bytes.
     enqueue(encoder.encode(data), []);
     pump();
   };
@@ -173,5 +212,5 @@ export function createTerminalStreamWriter(
     return generation;
   };
 
-  return { write, writeLocalText, nextGeneration, stats };
+  return { write, canAccept, writeLocalText, nextGeneration, stats };
 }

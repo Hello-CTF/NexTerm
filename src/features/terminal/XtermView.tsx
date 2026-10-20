@@ -326,22 +326,58 @@ export function XtermView(props: XtermViewProps) {
     const writeExpiredNotice = () => {
       streamWriter.writeLocalText("\x1b[33m[输出历史已过期，已刷新屏幕]\x1b[0m\n");
     };
+    // Hard backpressure: when the writer's FIFO is saturated, refuse the chunk
+    // (it never enters the filter or the byte accounting) and detach the
+    // channel. The detach closes the server-side stream, and the existing
+    // reopen → reattach-with-resume path replays from the last accepted byte,
+    // so refused bytes are redelivered in order once the FIFO drains — the
+    // queue stays bounded and no byte is lost. Container exec streams have no
+    // resume path; there the server's own slow-consumer kick stays the
+    // enforcement and refusal alone bounds the client.
+    let refusing = false;
+    let lastRefuseToastAt = 0;
+    const refuseStream = () => {
+      if (!refusing) {
+        refusing = true;
+        if (!props.containerId && kernelTabId) {
+          void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);
+        }
+      }
+      const nowMs = Date.now();
+      if (nowMs - lastRefuseToastAt > 10_000) {
+        lastRefuseToastAt = nowMs;
+        useUi.getState().pushToast("info", "终端输出积压，已暂停接收并重新同步，画面将自动恢复");
+      }
+    };
     const channel = createBinaryChannel(
       (bytes) => {
-        streamBytes += bytes.length;
         let out = bytes;
+        let skipped = 0;
         if (skipLeading > 0) {
           if (out.length <= skipLeading) {
+            skipped = out.length;
             skipLeading -= out.length;
             out = out.subarray(0, 0);
           } else {
+            skipped = skipLeading;
             out = out.subarray(skipLeading);
             skipLeading = 0;
           }
         }
+        if (out.length > 0 && (refusing || !streamWriter.canAccept(out.length))) {
+          // Refused bytes are not counted in streamBytes: the resume anchor
+          // must point at the last accepted byte so the replay resends them.
+          // Refusal is sticky for the whole episode (until the reattach
+          // succeeds) so the accepted prefix stays contiguous and the replay
+          // redelivers exactly the refused suffix in stream order.
+          streamBytes += skipped;
+          refuseStream();
+          return;
+        }
         if (out.length > 0) {
           streamWriter.write(oscFilter.push(out));
         }
+        streamBytes += bytes.length;
         if (expiredNoticePending && streamBytes >= (streamAnchor?.control ?? 0)) {
           expiredNoticePending = false;
           writeExpiredNotice();
@@ -520,6 +556,9 @@ export function XtermView(props: XtermViewProps) {
           }
           kernelTabId = info.tabId;
           kernelTabIdRef.current = info.tabId;
+          // The backpressure episode ends here: the replay from the resume
+          // anchor redelivers everything the saturated FIFO refused.
+          refusing = false;
           applyRemoteDimensions(info.cols, info.rows);
           coordinator.attach(info.tabId, { cols: info.cols, rows: info.rows }, true);
           onAttachInfoRef.current?.({

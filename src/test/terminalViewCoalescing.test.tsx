@@ -24,6 +24,7 @@ interface FakeTerminal {
 const harness = vi.hoisted(() => ({
   terminals: [] as unknown[],
   channel: null as { onBytes?: (bytes: Uint8Array) => void; onControl?: (control: unknown) => void } | null,
+  reopenCb: null as (() => void) | null,
   feedInput: vi.fn(),
   feedOSC133: vi.fn(),
   blocksClear: vi.fn(),
@@ -60,7 +61,12 @@ vi.mock("@xterm/xterm", () => ({
       this.writeLog.push(typeof data === "string" ? data : new TextDecoder().decode(data));
       if (callback) this.pendingWrites.push(callback);
     }
-    drainWrites(count = this.pendingWrites.length) {
+    drainWrites(count?: number) {
+      if (count === undefined) {
+        let guard = 0;
+        while (this.pendingWrites.length > 0 && guard++ < 10_000) this.pendingWrites.shift()!();
+        return;
+      }
       for (let i = 0; i < count && this.pendingWrites.length > 0; i += 1) {
         this.pendingWrites.shift()!();
       }
@@ -157,7 +163,12 @@ vi.mock("../ipc/events", () => ({
     return {};
   },
   disposeChannel: vi.fn(),
-  onChannelReopen: () => vi.fn(),
+  onChannelReopen: (_channel: unknown, callback: () => void) => {
+    harness.reopenCb = callback;
+    return () => {
+      harness.reopenCb = null;
+    };
+  },
 }));
 
 vi.mock("../ipc/env", () => ({ WEB: false }));
@@ -255,6 +266,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   harness.terminals.length = 0;
   harness.channel = null;
+  harness.reopenCb = null;
   harness.attach.mockResolvedValue({
     tabId: "kernel-1",
     cols: 80,
@@ -351,6 +363,53 @@ describe("XtermView stream wiring", () => {
     expect(t.writeLog.length).toBe(2);
     const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
     expect(total).toBe(flood.length + 4096);
+  });
+
+  it("bounds the FIFO under a sustained flood: refuses overflow, detaches, and replays from the accepted offset", async () => {
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    // Four 4 MiB chunks reach the 16 MiB hard cap; the writer is paused at
+    // the 4 MiB high watermark after the first one.
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    expect(harness.detach).not.toHaveBeenCalled();
+    expect(harness.pushToast).not.toHaveBeenCalled();
+    // The fifth chunk is refused: it never enters the FIFO or the accounting.
+    act(() => harness.channel?.onBytes?.(chunk));
+    expect(harness.detach).toHaveBeenCalledTimes(1);
+    expect(harness.detach).toHaveBeenCalledWith("kernel-1", "channel-1");
+    expect(harness.pushToast).toHaveBeenCalledWith("info", expect.stringContaining("重新同步"));
+    // Refusal is sticky: even after the FIFO drains, new chunks are refused
+    // until the reattach succeeds, so the accepted prefix stays contiguous.
+    act(() => t.drainWrites());
+    expect(t.writeLog.length).toBe(4);
+    act(() => harness.channel?.onBytes?.(new Uint8Array(1024).fill(0x62)));
+    expect(t.writeLog.length).toBe(4);
+    expect(harness.detach).toHaveBeenCalledTimes(1);
+    // Transport reopen → reattach with a resume anchor at the last accepted
+    // byte; the refused suffix will be replayed from there.
+    await act(async () => {
+      harness.reopenCb?.();
+      await flushMacrotask();
+      await flushMacrotask();
+    });
+    expect(harness.attachTab).toHaveBeenCalledWith(
+      "kernel-1",
+      expect.anything(),
+      -1,
+      { seq: 4 * (4 << 20), epoch: "e1" },
+      "session-1",
+    );
+    // The replay redelivers the refused chunk: accepted and rendered in order.
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    expect(t.writeLog.length).toBe(5);
+    const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
+    expect(total).toBe(5 * (4 << 20));
   });
 });
 

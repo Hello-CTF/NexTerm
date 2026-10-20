@@ -49,7 +49,12 @@ const notify = (body: string): OscStreamSegment => ({
   event: { kind: "notification", body },
 });
 
-function setup(options?: { highWaterBytes?: number; lowWaterBytes?: number; now?: () => number }) {
+function setup(options?: {
+  highWaterBytes?: number;
+  lowWaterBytes?: number;
+  maxPendingBytes?: number;
+  now?: () => number;
+}) {
   const h = fakeTerm();
   const events: OscStreamEvent[] = [];
   const pauses: boolean[] = [];
@@ -59,6 +64,7 @@ function setup(options?: { highWaterBytes?: number; lowWaterBytes?: number; now?
     {
       highWaterBytes: options?.highWaterBytes ?? 1024,
       lowWaterBytes: options?.lowWaterBytes ?? 512,
+      maxPendingBytes: options?.maxPendingBytes,
       now: options?.now,
       onPausedChange: (paused) => pauses.push(paused),
     },
@@ -297,6 +303,136 @@ describe("terminal stream writer parsed watermarks (T-03)", () => {
     const buffer = term.buffer.active;
     expect(buffer.length).toBe(1001);
     for (let i = 0; i < 1000; i += 1) {
+      expect(buffer.getLine(i)?.translateToString(true)).toBe("line-");
+    }
+    term.dispose();
+  });
+});
+
+describe("terminal stream writer bounded FIFO (T-03 hard backpressure)", () => {
+  it("rejects a high watermark that is not below maxPendingBytes", () => {
+    const h = fakeTerm();
+    expect(() =>
+      createTerminalStreamWriter(h.term, () => undefined, {
+        highWaterBytes: 8,
+        lowWaterBytes: 4,
+        maxPendingBytes: 8,
+      }),
+    ).toThrow(RangeError);
+  });
+
+  it("keeps queuedBytes bounded under a sustained producer with a stalled consumer", () => {
+    const h = setup({ highWaterBytes: 4, lowWaterBytes: 2, maxPendingBytes: 12 });
+    // Producer keeps feeding 4-byte chunks; the consumer never drains.
+    expect(h.writer.write([text("aaaa")])).toBe(true);
+    expect(h.writer.write([text("bbbb")])).toBe(true);
+    expect(h.writer.write([text("cccc")])).toBe(true);
+    let maxPending = 0;
+    for (let i = 0; i < 100; i += 1) {
+      h.writer.write([text("dddd")]);
+      maxPending = Math.max(maxPending, h.writer.stats().pendingBytes);
+    }
+    // 100 sustained writes never pushed pending past the cap.
+    expect(maxPending).toBe(12);
+    expect(h.writer.stats().pendingBytes).toBe(12);
+    expect(h.writer.stats().refusedBytes).toBe(400);
+    expect(h.writes.length).toBe(1);
+  });
+
+  it("refuses a batch atomically: nothing enqueued, no event dispatched", () => {
+    const h = setup({ highWaterBytes: 4, lowWaterBytes: 2, maxPendingBytes: 8 });
+    h.writer.write([text("aaaa")]);
+    h.writer.write([text("bbbb")]);
+    expect(h.writer.write([text("cccc"), notify("lost?")])).toBe(false);
+    expect(h.writer.write([notify("also-lost?"), text("dddd")])).toBe(false);
+    expect(h.events).toEqual([]);
+    expect(h.writer.stats().pendingBytes).toBe(8);
+    h.drain();
+    expect(h.writtenText()).toBe("aaaabbbb");
+    expect(h.events).toEqual([]);
+    expect(h.writer.stats().suppressedEvents).toBe(0);
+    expect(h.writer.stats().refusedBytes).toBe(8);
+  });
+
+  it("re-feeding refused chunks after drain loses nothing and preserves order", () => {
+    const h = setup({ highWaterBytes: 4, lowWaterBytes: 2, maxPendingBytes: 10 });
+    h.writer.write([text("aaaa")]);
+    h.writer.write([text("bbbb")]);
+    const refused: string[] = [];
+    for (const chunk of ["cccc", "ddd", "ee"]) {
+      if (!h.writer.write([text(chunk)])) refused.push(chunk);
+    }
+    expect(refused).toEqual(["cccc", "ddd"]);
+    h.drain();
+    expect(h.writtenText()).toBe("aaaabbbbee");
+    // Simulate the resume replay redelivering the refused suffix in order.
+    for (const chunk of refused) {
+      expect(h.writer.write([text(chunk)])).toBe(true);
+    }
+    h.drain();
+    expect(h.writtenText()).toBe("aaaabbbbeeccccddd");
+    expect(h.writer.stats().refusedBytes).toBe(7);
+  });
+
+  it("event-only batches are always accepted even when the FIFO is full", () => {
+    const h = setup({ highWaterBytes: 4, lowWaterBytes: 2, maxPendingBytes: 6 });
+    h.writer.write([text("aaaa")]);
+    h.writer.write([text("bb")]);
+    expect(h.writer.stats().pendingBytes).toBe(6);
+    expect(h.writer.write([notify("marker")])).toBe(true);
+    expect(h.writer.write([text("cc")])).toBe(false);
+    h.drain();
+    expect(h.events).toEqual([{ kind: "notification", body: "marker" }]);
+    expect(h.writtenText()).toBe("aaaabb");
+  });
+
+  it("writeLocalText bypasses the cap so notices are never lost", () => {
+    const h = setup({ highWaterBytes: 4, lowWaterBytes: 2, maxPendingBytes: 6 });
+    h.writer.write([text("aaaa")]);
+    h.writer.write([text("bb")]);
+    expect(h.writer.write([text("cc")])).toBe(false);
+    h.writer.writeLocalText("NOTICE\n");
+    h.drain();
+    expect(h.writtenText()).toBe("aaaabbNOTICE\n");
+  });
+
+  it("bounds a real-xterm flood at the hard cap with zero loss after replay", async () => {
+    const term = new Terminal({ cols: 80, rows: 24, scrollback: 20000, allowProposedApi: true });
+    const writer = createTerminalStreamWriter(term, () => undefined, {
+      highWaterBytes: 4096,
+      lowWaterBytes: 1024,
+      maxPendingBytes: 16384,
+    });
+    const line = enc.encode("line-\r\n");
+    const refused: Uint8Array[] = [];
+    let accepted = 0;
+    let maxPending = 0;
+    // 10000 chunks = 70000 bytes against a 16 KiB cap, consumer stalled.
+    for (let i = 0; i < 10000; i += 1) {
+      if (writer.write([{ kind: "text", data: line }])) accepted += 1;
+      else refused.push(line);
+      maxPending = Math.max(maxPending, writer.stats().pendingBytes);
+    }
+    expect(accepted + refused.length).toBe(10000);
+    expect(accepted).toBeGreaterThan(0);
+    expect(refused.length).toBeGreaterThan(0);
+    expect(maxPending).toBeLessThanOrEqual(16384);
+    expect(writer.stats().refusedBytes).toBe(refused.length * line.length);
+    await drainWriter(writer, term);
+    // Replay the refused suffix in bounded slices: every byte arrives in
+    // order, nothing is lost.
+    let replayed = 0;
+    while (replayed < refused.length) {
+      const slice = refused.slice(replayed, replayed + 1000);
+      for (const chunk of slice) {
+        expect(writer.write([{ kind: "text", data: chunk }])).toBe(true);
+      }
+      replayed += slice.length;
+      await drainWriter(writer, term);
+    }
+    const buffer = term.buffer.active;
+    expect(buffer.length).toBe(10001);
+    for (let i = 0; i < 10000; i += 1) {
       expect(buffer.getLine(i)?.translateToString(true)).toBe("line-");
     }
     term.dispose();
