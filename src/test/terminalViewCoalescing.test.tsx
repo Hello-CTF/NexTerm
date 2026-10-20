@@ -534,7 +534,11 @@ describe("XtermView stream wiring", () => {
       retainable: false,
       ephemeral: true,
     });
-    harness.call.mockRejectedValue(new Error("no such command"));
+    harness.call.mockImplementation((command: string) =>
+      command === "terminal_pause"
+        ? Promise.reject(new Error("no such command"))
+        : Promise.resolve({ flushedOffset: 5 * (4 << 20) }),
+    );
     vi.useFakeTimers();
     await show();
     await attachOk();
@@ -552,7 +556,6 @@ describe("XtermView stream wiring", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });
-    expect(harness.call).toHaveBeenCalledTimes(4);
     expect(harness.call).toHaveBeenCalledWith("terminal_recover", {
       tabId: "kernel-1",
       channelId: "channel-1",
@@ -570,6 +573,11 @@ describe("XtermView stream wiring", () => {
     });
     act(() => harness.channel?.onBytes?.(chunk));
     act(() => t.drainWrites());
+    // Caught up: the client resumes the feed.
+    expect(harness.call).toHaveBeenCalledWith("terminal_resume", {
+      tabId: "kernel-1",
+      channelId: "channel-1",
+    });
     expect(t.writeLog.length).toBe(5);
     const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
     expect(total).toBe(5 * (4 << 20));
@@ -635,6 +643,106 @@ describe("XtermView stream wiring", () => {
     const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
     expect(total).toBe(5 * (4 << 20));
     vi.useRealTimers();
+  });
+
+  it("ephemeral tabs: the refusal episode persists through the low-water drain until the recovery anchor", async () => {
+    // A refused frame must stay refused across the low-water drain: ending
+    // the episode there accepts a later old frame and breaks the contiguous
+    // prefix, which the scalar skipLeading cannot represent.
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+      ephemeral: true,
+    });
+    harness.call.mockImplementation((command: string) =>
+      command === "terminal_pause"
+        ? Promise.reject(new Error("no such command"))
+        : Promise.resolve({ flushedOffset: 22 << 20 }),
+    );
+    vi.useFakeTimers();
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const a = new Uint8Array(4 << 20).fill(0x61);
+    const b = new Uint8Array(4 << 20).fill(0x62);
+    const c = new Uint8Array(1 << 20).fill(0x63);
+    const d = new Uint8Array(1 << 20).fill(0x64);
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(a));
+    }
+    act(() => harness.channel?.onBytes?.(b));
+    act(() => harness.channel?.onBytes?.(c));
+    // The writer drains to low water: the episode must NOT end here — only a
+    // real recovery anchor ends it.
+    act(() => t.drainWrites());
+    act(() => harness.channel?.onBytes?.(d));
+    // The recovery anchor ends the episode; the replay restores the refused
+    // suffix (b+c+d) in order, so the full sequence stays contiguous.
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "recovery-kernel-1",
+      streamSeq: 4 * (4 << 20),
+      controlBytes: 0,
+    });
+    const replay = new Uint8Array(6 << 20);
+    replay.set(b, 0);
+    replay.set(c, 4 << 20);
+    replay.set(d, 5 << 20);
+    act(() => harness.channel?.onBytes?.(replay));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    const rendered = t.writeLog.join("");
+    expect(rendered.length).toBe(22 << 20);
+    // Contiguous original sequence: a(16 MiB) → b(4 MiB) → c(1 MiB) → d(1 MiB),
+    // checked at the segment boundaries.
+    expect(rendered.slice((16 << 20) - 4, (16 << 20) + 4)).toBe("aaaabbbb");
+    expect(rendered.slice((20 << 20) - 4, (20 << 20) + 4)).toBe("bbbbcccc");
+    expect(rendered.slice((21 << 20) - 4, (21 << 20) + 4)).toBe("ccccdddd");
+    // Caught up: the client resumes the feed.
+    expect(harness.call).toHaveBeenCalledWith("terminal_resume", {
+      tabId: "kernel-1",
+      channelId: "channel-1",
+    });
+    vi.useRealTimers();
+  });
+
+  it("visibility and controller-only changes do not detach or recreate the terminal", async () => {
+    await show();
+    await attachOk();
+    expect(harness.terminals.length).toBe(1);
+    expect(harness.attach).toHaveBeenCalledTimes(1);
+    const rerender = async (props: Record<string, unknown>) => {
+      await act(async () => {
+        mounted!.root.render(
+          createElement(
+            Profiler,
+            { id: "xterm-view", onRender: () => { commits += 1; } },
+            createElement(XtermView, { sessionId: "session-1", tabId: "tab-1", ...props }),
+          ),
+        );
+        await flushMacrotask();
+      });
+    };
+    // Only `visible` changed: no remount, no detach, no new xterm instance.
+    await rerender({ visible: false });
+    expect(harness.detach).not.toHaveBeenCalled();
+    expect(harness.terminals.length).toBe(1);
+    expect(harness.attach).toHaveBeenCalledTimes(1);
+    // Only `canResize` changed: same expectations.
+    await rerender({ canResize: false });
+    expect(harness.detach).not.toHaveBeenCalled();
+    expect(harness.terminals.length).toBe(1);
+    expect(harness.attach).toHaveBeenCalledTimes(1);
   });
 
   it("docker exec accepts replay that arrives before the attach response", async () => {

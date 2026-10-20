@@ -102,7 +102,7 @@ export interface XtermViewProps {
 }
 
 export function XtermView(props: XtermViewProps) {
-  const { sessionId, containerId, resumeTabId, visible, canResize, winrm } = props;
+  const { sessionId, containerId, resumeTabId } = props;
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const gridRef = useRef<TerminalGridCoordinator | null>(null);
@@ -126,6 +126,12 @@ export function XtermView(props: XtermViewProps) {
   const onPasteImagesRef = useRef(props.onPasteImages);
   const onRequestPasteRef = useRef(props.onRequestPaste);
   const registerSearchRef = useRef(props.registerSearch);
+  // Mount-effect inputs that must not rebuild the terminal when they change:
+  // visibility and resize updates flow through their dedicated effects, and
+  // the WinRM mode is fixed for the tab's lifetime.
+  const visibleRef = useRef(props.visible);
+  const canResizeRef = useRef(props.canResize);
+  const winrmRef = useRef(props.winrm);
   onBlocksRef.current = props.onBlocks;
   onHandleRef.current = props.onHandle;
   onAttachRef.current = props.onAttach;
@@ -140,6 +146,9 @@ export function XtermView(props: XtermViewProps) {
   onPasteImagesRef.current = props.onPasteImages;
   onRequestPasteRef.current = props.onRequestPaste;
   registerSearchRef.current = props.registerSearch;
+  visibleRef.current = props.visible;
+  canResizeRef.current = props.canResize;
+  winrmRef.current = props.winrm;
 
   const fitIfSized = (afterClaim = false, final = false): boolean => {
     const host = hostRef.current;
@@ -204,7 +213,7 @@ export function XtermView(props: XtermViewProps) {
     const coordinator = new TerminalGridCoordinator(
       productionGridRuntime,
       applyGrid,
-      { visible: visible !== false, canResize: canResize !== false },
+      { visible: visibleRef.current !== false, canResize: canResizeRef.current !== false },
     );
     gridRef.current = coordinator;
     fitIfSized();
@@ -308,13 +317,49 @@ export function XtermView(props: XtermViewProps) {
         useUi.getState().pushToast("error", "终端输出积压且无法暂停上游，部分输出可能丢失");
       });
     };
+    let lastRefuseToastAt = 0;
+    // The server's flushed offset from the last recovery response: the
+    // client resumes only once its accepted offset catches up to it.
+    let recoverTarget: number | null = null;
+    let recoverInFlight = false;
+    const acceptedOffsetNow = () =>
+      streamAnchor ? streamAnchor.seq + Math.max(0, streamBytes - streamAnchor.control) : streamBytes;
     const resumeUpstream = () => {
       if (containerId || !kernelTabId) return;
       const channelId = channelIdOf(channel);
       if (!channelId) return;
       void call("terminal_resume", { tabId: kernelTabId, channelId }).catch(() => undefined);
     };
-    let lastRefuseToastAt = 0;
+    const maybeResume = () => {
+      if (recoverTarget !== null && acceptedOffsetNow() >= recoverTarget) {
+        recoverTarget = null;
+      }
+    };
+    const pumpRecover = () => {
+      if (recoverInFlight || !kernelTabId || ephemeral !== true) return;
+      const channelId = channelIdOf(channel);
+      if (!channelId) return;
+      recoverInFlight = true;
+      void call("terminal_recover", {
+        tabId: kernelTabId,
+        channelId,
+        acceptedBytes: acceptedOffsetNow(),
+      })
+        .then((res) => {
+          recoverInFlight = false;
+          recoverTarget = (res as { flushedOffset?: number } | null)?.flushedOffset ?? null;
+          maybeResume();
+        })
+        .catch(() => {
+          recoverInFlight = false;
+          // The recovery could not redeliver the refused suffix whole (the
+          // accepted offset fell out of the server's bounded recovery
+          // window): the view is missing output and cannot silently
+          // resync, so surface the accurate state instead of a false
+          // "recovering" notice.
+          useUi.getState().pushToast("error", "终端输出积压过长，早期输出无法恢复，画面可能不完整");
+        });
+    };
     const refuseStream = () => {
       if (kernelTabId && ephemeral === true) {
         // Ephemeral local/WinRM tabs: never detach (it would reap the PTY).
@@ -324,23 +369,8 @@ export function XtermView(props: XtermViewProps) {
         // last anchor's streamSeq plus the bytes accepted since it — so the
         // server's recovery ring replays exactly the refused suffix, not the
         // bytes a paused coalescer still holds for the resume flush.
-        const channelId = channelIdOf(channel);
-        if (!channelId) return;
-        const acceptedOffset = streamAnchor
-          ? streamAnchor.seq + Math.max(0, streamBytes - streamAnchor.control)
-          : streamBytes;
-        void call("terminal_recover", {
-          tabId: kernelTabId,
-          channelId,
-          acceptedBytes: acceptedOffset,
-        }).catch(() => {
-          // The recovery could not redeliver the refused suffix whole (the
-          // accepted offset fell out of the server's bounded recovery
-          // window): the view is missing output and cannot silently
-          // resync, so surface the accurate state instead of a false
-          // "recovering" notice.
-          useUi.getState().pushToast("error", "终端输出积压过长，早期输出无法恢复，画面可能不完整");
-        });
+        recoverTarget = null;
+        pumpRecover();
       } else if (kernelTabId) {
         // Durable tabs: the resume anchor replays refused bytes in order.
         void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);
@@ -383,10 +413,17 @@ export function XtermView(props: XtermViewProps) {
             pauseUpstream();
           } else {
             // Lift a refusal episode for tab kinds without an anchor-driven
-            // recovery (docker exec, ephemeral local/WinRM); durable tabs end
-            // the episode at the next anchor instead.
-            if (containerId || ephemeral === true) streamWriter.beginAttachment();
-            resumeUpstream();
+            // recovery (docker exec); durable tabs end the episode at the
+            // next anchor, and ephemeral recovery ends it at the recovery
+            // anchor — never here, where a later old frame would be
+            // accepted into a non-contiguous prefix.
+            if (containerId) streamWriter.beginAttachment();
+            // Resume only once the refused suffix is fully accepted; a
+            // pending replay is awaited, not re-requested here.
+            maybeResume();
+            if (recoverTarget === null) {
+              resumeUpstream();
+            }
           }
         },
         onRefused: () => refuseStream(),
@@ -458,6 +495,7 @@ export function XtermView(props: XtermViewProps) {
           return;
         }
         streamBytes += bytes.length;
+        maybeResume();
         if (expiredNoticePending && streamBytes >= (streamAnchor?.control ?? 0)) {
           expiredNoticePending = false;
           writeExpiredNotice();
@@ -552,7 +590,7 @@ export function XtermView(props: XtermViewProps) {
             shell: "unknown",
             retainable: false,
           });
-        } else if (winrm) {
+        } else if (winrmRef.current) {
           if (!dimensions) return;
           id = await import("../../ipc/commands").then((m) =>
             m.sessionApi.openLineTab(sessionId, dimensions.cols, dimensions.rows, channel),
@@ -843,7 +881,7 @@ export function XtermView(props: XtermViewProps) {
       term.dispose();
       termRef.current = null;
     };
-  }, [sessionId, containerId, resumeTabId, visible, canResize, winrm]);
+  }, [sessionId, containerId, resumeTabId]);
 
   useEffect(() => {
     const connected = props.sessionConnected === true;
