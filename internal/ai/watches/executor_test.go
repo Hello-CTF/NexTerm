@@ -16,15 +16,16 @@ import (
 // chunks with optional error/EOF injection and position skips. It is a test
 // double, not external CLI validation. When gate is non-nil, the first Chunk
 // call blocks until the gate closes, which pins watch creation before any
-// output is consumed.
+// output is consumed. gateAfter blocks before the step at that index.
 type scriptSource struct {
-	mu     sync.Mutex
-	steps  []scriptStep
-	endSeq int64
-	tail   []byte
-	gate   chan struct{}
-	calls  int
-	closed bool
+	mu        sync.Mutex
+	steps     []scriptStep
+	endSeq    int64
+	tail      []byte
+	gate      chan struct{}
+	gateAfter int
+	calls     int
+	closed    bool
 }
 
 type scriptStep struct {
@@ -35,7 +36,7 @@ type scriptStep struct {
 
 func (s *scriptSource) Chunk(ctx context.Context, fromSeq int64) ([]byte, int64, error) {
 	s.mu.Lock()
-	if s.gate != nil {
+	if s.gate != nil && s.calls == s.gateAfter {
 		gate := s.gate
 		s.gate = nil
 		s.mu.Unlock()

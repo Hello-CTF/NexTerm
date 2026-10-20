@@ -221,6 +221,20 @@ func (e *Engine) Create(ctx context.Context, params CreateParams) (Watch, error)
 	if params.AnchorSeq == 0 && len(params.LeftContext) != 0 || params.AnchorSeq > 0 && len(params.LeftContext) != min(watchContextSize, int(params.AnchorSeq)) {
 		return Watch{}, fmt.Errorf("%w: 左上下文与锚点不一致", ErrInvalidCondition)
 	}
+	// A left context ending mid-rune seeds the carry with the incomplete
+	// sequence and anchors at the rune start, so the first chunk completes
+	// it instead of tripping the anchor guard.
+	anchorSeq := params.AnchorSeq
+	carry := []byte(nil)
+	context := params.LeftContext
+	if tail := incompleteUTF8Tail(context); tail > 0 {
+		carry = append(carry, context[len(context)-tail:]...)
+		context = context[:len(context)-tail]
+		anchorSeq -= int64(tail)
+	}
+	if anchorSeq == 0 && len(context) != 0 {
+		return Watch{}, fmt.Errorf("%w: 左上下文与锚点不一致", ErrInvalidCondition)
+	}
 	binding, ok := e.binding(targetKey{owner: ipc.OwnerID(ctx), target: params.TargetID})
 	if !ok || !binding.attached {
 		return Watch{}, ErrDetached
@@ -236,7 +250,7 @@ func (e *Engine) Create(ctx context.Context, params CreateParams) (Watch, error)
 	row, err := e.store.AgentWatchCreate(ctx, model.AgentWatchRow{
 		ID: params.ID, TargetID: params.TargetID,
 		Name: strings.TrimSpace(params.Name), ConditionJSON: string(conditionJSON),
-		Repeat: params.Repeat, AnchorSeq: params.AnchorSeq, ContextBlob: params.LeftContext,
+		Repeat: params.Repeat, AnchorSeq: anchorSeq, ContextBlob: context, CarryBlob: carry,
 		CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli(),
 		ExpiresAt: optionalMillis(params.ExpiresAt),
 	}, binding.generation)
@@ -349,6 +363,17 @@ func (e *Engine) Observe(ctx context.Context, targetID, identity string, fromSeq
 		}
 	}
 	return fired, nil
+}
+
+// Credential returns the mirror's current identity and generation for a
+// target, and whether it is attached. It lets the executor present the same
+// incarnation credential for a durable detach retry.
+func (e *Engine) Credential(ctx context.Context, targetID string) (identity string, generation uint64, attached bool) {
+	binding, ok := e.binding(targetKey{owner: ipc.OwnerID(ctx), target: targetID})
+	if !ok {
+		return "", 0, false
+	}
+	return binding.identity, binding.generation, binding.attached
 }
 
 // ObserveEOF marks the target stream as ended at fromSeq. Armed watches
@@ -476,10 +501,13 @@ func (e *Engine) prefixBody(pattern string) (string, bool) {
 // exceeds the configured carry capacity: an over-capacity condition is
 // settled as unverifiable instead of silently dropping possible matches.
 func (e *Engine) liveCarryPlan(condition Condition, valid []byte, contextLen int, row model.AgentWatchRow) (int, bool, error) {
-	avail := len(valid) - contextLen
+	// The incomplete sequence may span the context boundary, leaving the
+	// valid prefix shorter than the left context; never index past it.
+	region := valid[min(contextLen, len(valid)):]
+	avail := len(region)
 	switch condition.Type {
 	case ConditionContains:
-		live := exactLiveSuffix(valid[contextLen:], condition.Pattern)
+		live := exactLiveSuffix(region, condition.Pattern)
 		if live > e.opts.MaxCarryBytes {
 			return 0, true, nil
 		}
@@ -493,7 +521,7 @@ func (e *Engine) liveCarryPlan(condition Condition, valid []byte, contextLen int
 		if !ok {
 			return 0, true, nil
 		}
-		live := scanLiveSuffix(row.ContextBlob, valid[contextLen:], e.opts.MaxCarryBytes, prefixBody)
+		live := scanLiveSuffix(row.ContextBlob, region, e.opts.MaxCarryBytes, prefixBody)
 		if live > e.opts.MaxCarryBytes {
 			return 0, true, nil
 		}

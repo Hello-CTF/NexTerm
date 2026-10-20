@@ -78,10 +78,18 @@ type Executor struct {
 	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc
 
-	mu       sync.Mutex
-	targets  map[string]*targetRunner
-	started  bool
-	dispatch sync.WaitGroup
+	mu      sync.Mutex
+	targets map[string]*targetRunner
+	// pendingDetach keeps the incarnation credential of a failed permanent
+	// detach so the retry can complete the durable transition.
+	pendingDetach map[string]pendingDetach
+	started       bool
+	dispatch      sync.WaitGroup
+}
+
+type pendingDetach struct {
+	identity   string
+	generation uint64
 }
 
 // NewExecutor builds the engine and dispatcher over the same store. The
@@ -105,7 +113,8 @@ func NewExecutor(ctx context.Context, store Store, sink Sink, options ExecutorOp
 	lifecycleCtx, cancel := context.WithCancel(context.Background())
 	return &Executor{
 		engine: engine, dispatcher: dispatcher, store: store, opts: options, ownerCtx: ctx,
-		lifecycleCtx: lifecycleCtx, lifecycleCancel: cancel, targets: map[string]*targetRunner{},
+		lifecycleCtx: lifecycleCtx, lifecycleCancel: cancel,
+		targets: map[string]*targetRunner{}, pendingDetach: map[string]pendingDetach{},
 	}, nil
 }
 
@@ -206,12 +215,17 @@ func (e *Executor) AttachTarget(ctx context.Context, targetID, identity string, 
 		return fmt.Errorf("watches: target %s already attached", targetID)
 	}
 	e.targets[targetID] = runner
+	// A fresh attach supersedes any failed detach attempt.
+	delete(e.pendingDetach, targetID)
 	e.mu.Unlock()
 	go runner.run(runnerCtx, e)
 	return nil
 }
 
-// DetachTarget stops the runner and detaches the target durably.
+// DetachTarget stops the runner and detaches the target durably. A failed
+// permanent detach keeps the incarnation credential as a pending record, so
+// the retry can complete the durable transition instead of reporting a
+// false success.
 func (e *Executor) DetachTarget(ctx context.Context, targetID string, permanent bool) error {
 	e.mu.Lock()
 	runner, ok := e.targets[targetID]
@@ -223,14 +237,45 @@ func (e *Executor) DetachTarget(ctx context.Context, targetID string, permanent 
 		runner.cancel()
 		<-runner.done
 		_ = runner.source.Close()
-		return e.engine.Detach(ctx, targetID, runner.identity, permanent)
 	}
+	if !permanent {
+		if runner == nil {
+			return nil
+		}
+		return e.engine.Detach(ctx, targetID, runner.identity, false)
+	}
+	// Permanent detach needs the incarnation credential: from the live
+	// mirror when present, else from the pending record of a failed attempt.
+	identity, generation, attached := e.engine.Credential(ctx, targetID)
+	if !attached {
+		e.mu.Lock()
+		pending, ok := e.pendingDetach[targetID]
+		e.mu.Unlock()
+		if !ok {
+			return ErrDetached
+		}
+		identity, generation = pending.identity, pending.generation
+	}
+	settled, err := e.store.AgentWatchTargetDetach(ctx, targetID, identity, generation, e.opts.Now().UnixMilli())
+	if err != nil {
+		e.mu.Lock()
+		e.pendingDetach[targetID] = pendingDetach{identity: identity, generation: generation}
+		e.mu.Unlock()
+		return err
+	}
+	if !settled {
+		return ErrDetached
+	}
+	e.mu.Lock()
+	delete(e.pendingDetach, targetID)
+	e.mu.Unlock()
 	return nil
 }
 
 // resumePosition picks the runner's start position: the smallest evaluated
-// position across armed watches so a restart never shows them a gap, or the
-// source end when no armed watch exists.
+// position across armed watches and matched repeat watches that can still
+// re-arm, so a restart never shows them a gap, or the source end when no
+// such watch exists.
 func (e *Executor) resumePosition(ctx context.Context, targetID string, source Source) (int64, error) {
 	watches, err := e.engine.ListByTarget(ctx, targetID)
 	if err != nil {
@@ -238,7 +283,7 @@ func (e *Executor) resumePosition(ctx context.Context, targetID string, source S
 	}
 	resume := int64(-1)
 	for _, watch := range watches {
-		if watch.Status != StatusArmed {
+		if watch.Status != StatusArmed && !(watch.Status == StatusMatched && watch.Repeat) {
 			continue
 		}
 		evaluated := watch.AnchorSeq + int64(len(watch.Carry))
@@ -298,8 +343,26 @@ func (r *targetRunner) run(ctx context.Context, e *Executor) {
 		r.observeMu.Unlock()
 		chunk, next, err := r.source.Chunk(ctx, pos)
 		if err == io.EOF {
-			_, _ = e.engine.ObserveEOF(r.ownerCtx, r.targetID, r.identity, pos)
-			return
+			// EOF evaluation gets the same retry discipline as chunk
+			// observations: a transient store failure must not silently
+			// drop the deferred events.
+			for {
+				_, observeErr := e.engine.ObserveEOF(r.ownerCtx, r.targetID, r.identity, pos)
+				if observeErr == nil {
+					return
+				}
+				if errors.Is(observeErr, ErrDetached) || errors.Is(observeErr, ErrIdentityMismatch) {
+					return
+				}
+				if ctx.Err() != nil {
+					return
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(e.opts.RetryBackoff):
+				}
+			}
 		}
 		if err != nil {
 			if ctx.Err() != nil {
