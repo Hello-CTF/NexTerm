@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../ipc/commands", () => ({
-  aiApi: { cancel: mocks.cancel, takeoverExit: mocks.takeoverExit },
+  aiApi: { takeoverCancel: mocks.cancel, takeoverExit: mocks.takeoverExit },
   dbApi: {},
   sessionApi: {},
   vaultApi: {},
@@ -25,6 +25,7 @@ import { resetAllKeybindings, setKeybinding } from "../../app/keybindings";
 
 const takeover: TakeoverState = {
   tabId: "terminal-1",
+  jobId: "job-1",
   token: "ownership-token",
   task: "Check service status",
   allowWrite: true,
@@ -48,6 +49,7 @@ describe("takeover accessibility and overlay priority", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.cancel.mockResolvedValue(undefined);
     mocks.takeoverExit.mockResolvedValue(undefined);
     document.body.replaceChildren();
     useUi.setState({
@@ -98,6 +100,8 @@ describe("takeover accessibility and overlay priority", () => {
     keyDown("Escape", { repeat: true });
     expect(mocks.takeoverExit).not.toHaveBeenCalled();
     keyDown("Escape");
+    expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith("job-1");
+    await flush();
     expect(mocks.takeoverExit).toHaveBeenCalledExactlyOnceWith(
       "terminal-1",
       "ownership-token",
@@ -129,6 +133,7 @@ describe("takeover accessibility and overlay priority", () => {
     expect(useUi.getState().takeover).toEqual(takeover);
 
     keyDown("Escape");
+    await flush();
     expect(mocks.takeoverExit).toHaveBeenCalledOnce();
     await flush();
     expect(useUi.getState().takeover).toBeNull();

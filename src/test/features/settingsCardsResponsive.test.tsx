@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
-import { click, flushUntil, mount, type MountedView } from "./reactTestUtils";
+import { act, createElement } from "react";
+import { click, flush, flushUntil, mount, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -44,7 +44,6 @@ import { KnownHostsCard } from "../../features/settings/KnownHostsCard";
 import { useUi } from "../../app/store";
 import type { MemoryTopicIndex } from "../../ipc/memory";
 
-const SCOPE = { tenant: "local", subject: "default" };
 const ULID = "01J4ZQXK6M2N8P3R5T7V9W0Y1Z";
 const LONG_TOKEN = `tok_${"a1B2".repeat(24)}`;
 
@@ -121,6 +120,7 @@ describe("MemoryCard narrow-screen layout", () => {
   });
 
   it("makes both toggle rows full labels so clicking their text toggles them", async () => {
+    mocks.memorySetSettings.mockResolvedValue({ injectionEnabled: true, toolsEnabled: false, version: 4 });
     mounted = mount(createElement(MemoryCard));
     await flushUntil(() => {
       const input = mounted!.container.querySelector<HTMLInputElement>(
@@ -134,12 +134,15 @@ describe("MemoryCard narrow-screen layout", () => {
       );
       expect(input?.closest("label")).toBeTruthy();
     }
-    const label = mounted.container
-      .querySelector('input[aria-label="在 AI 运行时注入记忆"]')!
-      .closest("label")!;
-    click(label);
-    await flushUntil(() => mocks.memorySetSettings.mock.calls.length > 0);
-    expect(mocks.memorySetSettings).toHaveBeenCalledWith(SCOPE, 3, { injectionEnabled: true });
+    const input = mounted.container.querySelector<HTMLInputElement>('input[aria-label="在 AI 运行时注入记忆"]')!;
+    click(input.closest("label")!);
+    await act(async () => {
+      await flush();
+    });
+    expect(mocks.memorySetSettings).toHaveBeenCalledWith(3, { injectionEnabled: true });
+    const updated = mounted.container.querySelector<HTMLInputElement>('input[aria-label="在 AI 运行时注入记忆"]')!;
+    expect(updated.checked).toBe(true);
+    expect(updated.disabled).toBe(false);
   });
 });
 

@@ -54,7 +54,8 @@
     "runner": "ubuntu-latest",
     "os": "linux",
     "arch": "amd64",
-    "kind": "helper"
+    "kind": "helper",
+    "smoke": true
   },
   {
     "runner": "ubuntu-24.04-arm",
@@ -66,7 +67,8 @@
     "runner": "ubuntu-latest",
     "os": "linux",
     "arch": "amd64",
-    "kind": "agent"
+    "kind": "agent",
+    "smoke": true
   },
   {
     "runner": "ubuntu-24.04-arm",

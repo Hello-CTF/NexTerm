@@ -163,4 +163,116 @@ describe("OSC stream filter", () => {
     h.feed(broken);
     expect(h.events[1]?.kind).toBe("notification");
   });
+
+  it("preserves output and events across deterministic randomized chunking", () => {
+    const bytes = enc.encode(
+      "start\x1b]9;构建完成 🎉\x07middle\x1b]52;c;aGVsbG8=\x1b\\middle2\x1b]0;title\x07end1\x1b]133;D;23\x07end2",
+    );
+    for (let seed = 1; seed <= 32; seed++) {
+      let state = seed;
+      const random = () => {
+        state = (state * 1664525 + 1013904223) >>> 0;
+        return state;
+      };
+      const h = harness();
+      for (let offset = 0; offset < bytes.length; ) {
+        const size = 1 + (random() % 23);
+        h.feed(bytes.subarray(offset, offset + size));
+        offset += size;
+      }
+      expect(h.output(), `seed ${seed}`).toBe("startmiddlemiddle2\x1b]0;title\x07end1end2");
+      expect(h.events, `seed ${seed}`).toEqual([
+        { kind: "notification", body: "构建完成 🎉" },
+        { kind: "clipboard", payload: "c;aGVsbG8=" },
+        { kind: "command", phase: "D", exitCode: 23 },
+      ]);
+    }
+  });
+
+  it("recognizes ST and BEL terminators arriving in later chunks", () => {
+    const h = harness();
+    h.feed("a\x1b]9;one\x1b");
+    expect(h.output()).toBe("a");
+    expect(h.events).toEqual([]);
+    h.feed("\\b\x1b]52;c;eA==");
+    expect(h.output()).toBe("ab");
+    expect(h.events).toEqual([{ kind: "notification", body: "one" }]);
+    h.feed("\x07c\x1b]133;D;");
+    expect(h.output()).toBe("abc");
+    expect(h.events).toEqual([
+      { kind: "notification", body: "one" },
+      { kind: "clipboard", payload: "c;eA==" },
+    ]);
+    h.feed("7");
+    h.feed("\x07d");
+    expect(h.output()).toBe("abcd");
+    expect(h.events).toEqual([
+      { kind: "notification", body: "one" },
+      { kind: "clipboard", payload: "c;eA==" },
+      { kind: "command", phase: "D", exitCode: 7 },
+    ]);
+  });
+
+  it("keeps text and events in stream order when pending sequences complete", () => {
+    const filter = createOscStreamFilter();
+    const ordered: string[] = [];
+    const feed = (chunk: string) => {
+      for (const segment of filter.push(enc.encode(chunk))) {
+        if (segment.kind === "text") ordered.push(`text:${dec.decode(segment.data)}`);
+        else ordered.push(`event:${segment.event.kind}`);
+      }
+    };
+    feed("before\x1b]9;one");
+    feed("\x07middle\x1b]52;c;eA==\x1b");
+    feed("\\after\x1b]133;D;4\x07tail");
+    expect(ordered).toEqual([
+      "text:before",
+      "event:notification",
+      "text:middle",
+      "event:clipboard",
+      "text:after",
+      "event:command",
+      "text:tail",
+    ]);
+  });
+
+  it("holds exactly 1 MiB and passes through one byte over the limit across chunks", () => {
+    for (const length of [1 << 20, (1 << 20) + 1]) {
+      const bytes = new Uint8Array(length);
+      bytes.fill(0x61);
+      bytes.set([0x1b, 0x5d, 0x39, 0x3b]);
+      const h = harness();
+      for (let offset = 0; offset < bytes.length; offset += 64) {
+        h.feed(bytes.subarray(offset, offset + 64));
+      }
+      expect(h.events).toEqual([]);
+      if (length === 1 << 20) {
+        expect(h.output()).toBe("");
+        const rest = h.filter.flush();
+        expect(rest.length).toBe(bytes.length);
+        expect(rest.every((byte, index) => byte === bytes[index])).toBe(true);
+      } else {
+        expect(h.output()).toBe(dec.decode(bytes));
+        expect(h.filter.flush().length).toBe(0);
+      }
+    }
+  });
+
+  it("processes a 1 MiB unterminated OSC in 64-byte chunks in under 100ms", () => {
+    const bytes = new Uint8Array(1 << 20);
+    bytes.fill(0x61);
+    bytes.set([0x1b, 0x5d, 0x39, 0x3b]);
+    const h = harness();
+    const started = performance.now();
+    for (let offset = 0; offset < bytes.length; offset += 64) {
+      h.feed(bytes.subarray(offset, offset + 64));
+    }
+    const rest = h.filter.flush();
+    const elapsedMs = performance.now() - started;
+    expect(h.output()).toBe("");
+    expect(h.events).toEqual([]);
+    expect(rest.length).toBe(bytes.length);
+    expect(rest.every((byte, index) => byte === bytes[index])).toBe(true);
+    expect(elapsedMs).toBeLessThan(100);
+  });
 });

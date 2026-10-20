@@ -152,7 +152,7 @@ describe("upload overwrite confirmation (FileBrowser)", () => {
 
   it("uploads directly without asking when no same-named file exists", async () => {
     click(buttonByTitle(mounted!.container, "上传"));
-    await waitFor(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false));
+    await waitFor(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false, expect.any(String), expect.any(String)));
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("~/nginx-access.log"));
   });
@@ -183,7 +183,7 @@ describe("upload overwrite confirmation (FileBrowser)", () => {
 
     mocks.ask.mockResolvedValueOnce(true);
     click(buttonByTitle(mounted!.container, "上传"));
-    await waitFor(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false));
+    await waitFor(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false, expect.any(String), expect.any(String)));
   });
 
   it("also blocks same-named directories and identifies them as directories", async () => {
@@ -290,7 +290,7 @@ describe("upload overwrite confirmation (FileTree)", () => {
 
   it("uploads directly without asking when no same-named file exists", async () => {
     click(buttonByTitle(mounted!.container, "上传到当前目录"));
-    await waitFor(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false));
+    await waitFor(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false, expect.any(String), expect.any(String)));
     expect(mocks.ask).not.toHaveBeenCalled();
   });
 
@@ -311,6 +311,6 @@ describe("upload overwrite confirmation (FileTree)", () => {
 
     mocks.ask.mockResolvedValueOnce(true);
     click(buttonByTitle(mounted!.container, "上传到当前目录"));
-    await waitFor(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false));
+    await waitFor(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false, expect.any(String), expect.any(String)));
   });
 });

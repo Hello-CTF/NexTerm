@@ -132,6 +132,7 @@ beforeEach(() => {
   server.data = null;
   server.putAlwaysConflicts = false;
   server.handlers.length = 0;
+  window.localStorage.clear();
 });
 
 afterEach(() => {
@@ -242,6 +243,6 @@ describe("device tabs in the layout pane contract", () => {
     });
     const pane = store.getState().workspaces[0]?.panes[0];
     expect(pane?.tabs.map((t) => t.kind)).toEqual(["devices", "settings"]);
-    expect(pane?.activeTabId).toBe("devices");
+    expect(pane?.activeTabId).toBe("settings");
   });
 });

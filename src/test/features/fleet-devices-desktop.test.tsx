@@ -4,7 +4,15 @@
 // online state refreshes only via 30-second polling, no device://status subscription.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, flush, flushUntil, mountWithClient, setInputValue, type MountedView } from "./reactTestUtils";
+import { click, flush, flushUntil as flushUntilRaw, mountWithClient, setInputValue, type MountedView } from "./reactTestUtils";
+
+async function flushUntil(predicate: () => boolean): Promise<void> {
+  if (predicate()) {
+    await flush();
+    return;
+  }
+  await flushUntilRaw(predicate);
+}
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";

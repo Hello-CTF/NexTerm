@@ -15,6 +15,7 @@ import {
   resetKeybinding,
   setKeybinding,
 } from "../app/keybindings";
+import { flushMacrotask } from "./features/reactTestUtils";
 
 const prefsMocks = vi.hoisted(() => ({
   get: vi.fn(),
@@ -211,7 +212,7 @@ describe("account theme preferences", () => {
   it("writes local theme changes back to the account", async () => {
     const store = memoryStore({});
     registerAccountPreferenceStore(store);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flushMacrotask();
     const { useUi } = await import("../app/store");
 
     useUi.getState().setThemeMode("light");
@@ -351,7 +352,7 @@ describe("production path: flat HTTP preference-store contract", () => {
     await vi.waitFor(() => expect(getAccountPreferenceStore()).toBe(storeB));
 
     resolveA?.({ defaults: {}, overrides: { "input.selectionAutoCopy": true } });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flushMacrotask();
     const { getInputPrefs } = await import("../app/preferences");
     expect(getInputPrefs().selectionAutoCopy).toBe(false);
     expect(getAccountOverrides()).toEqual({});

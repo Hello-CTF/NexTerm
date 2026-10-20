@@ -8,6 +8,7 @@ import { THROTTLE_RECOVERED_MS } from "../../features/terminal/terminalThrottle"
 const harness = vi.hoisted(() => ({
   handlers: new Map<string, (payload: unknown) => void>(),
   resyncSubs: new Set<() => void>(),
+  sessionList: vi.fn(),
   xtermProps: null as Record<string, unknown> | null,
 }));
 
@@ -24,7 +25,7 @@ vi.mock("../../ipc/commands", () => ({
   assetApi: {},
   dbApi: {},
   vaultApi: {},
-  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn() },
+  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn(), list: harness.sessionList },
   terminalApi: {
     listLive: vi.fn().mockResolvedValue([]),
     write: vi.fn().mockResolvedValue(undefined),
@@ -111,10 +112,11 @@ function badge(text: string): HTMLElement | null {
   );
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   harness.handlers.clear();
   document.body.replaceChildren();
+  harness.sessionList.mockImplementation(async () => useUi.getState().sessions);
   useUi.setState({
     sessions: [
       {
@@ -159,6 +161,7 @@ beforeEach(() => {
   mounted = mount(
     createElement(TerminalPane, { sessionId: "s1", title: "term", storeTabId: "t1" }),
   );
+  await flush();
 });
 
 afterEach(() => {
@@ -286,6 +289,7 @@ describe("terminal://throttled badge", () => {
     act(() => {
       for (const cb of [...harness.resyncSubs]) cb();
     });
+    await flush();
     expect(badge("输出积压")).toBeNull();
     expect(badge("输出已恢复")).toBeNull();
 
@@ -324,6 +328,7 @@ describe("terminal://throttled badge", () => {
     act(() => {
       for (const cb of [...harness.resyncSubs]) cb();
     });
+    await flush();
     expect(badge("输出已恢复")).toBeNull();
 
     act(() => {

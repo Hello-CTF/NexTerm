@@ -1,4 +1,4 @@
-.nx-menu-sheet-overlay {
+.nx-overlay.nx-menu-sheet-overlay {
   align-items: flex-end;
   padding: 0;
 }
@@ -9,7 +9,7 @@
   max-height: 60vh;
   max-height: 60dvh;
   flex-direction: column;
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: var(--nx-safe-bottom);
   border: 1px solid var(--nx-border-strong);
   border-bottom: none;
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;

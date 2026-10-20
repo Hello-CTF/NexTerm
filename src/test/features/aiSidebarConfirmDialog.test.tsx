@@ -92,7 +92,7 @@ async function sendAndEmit(events: Record<string, unknown>[]): Promise<void> {
     (b) => b.getAttribute("title") === "发送 (Enter)",
   );
   click(send as HTMLButtonElement);
-  await flushUntil(() => mocks.channels.length > 0);
+  await flush();
   act(() => {
     for (const event of events) mocks.channels[0].onEvent(event);
   });
@@ -150,7 +150,8 @@ beforeEach(async () => {
   await show();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await flush();
   mounted?.unmount();
   mounted = undefined;
   resetAllKeybindings();
@@ -243,7 +244,7 @@ describe("AiSidebar permission request dialogs", () => {
       },
     ]);
     click(permanentButton() as HTMLButtonElement);
-    await flushUntil(() => mocks.confirm.mock.calls.length > 0);
+    await flush();
     expect(mocks.confirm.mock.calls[0][0]).toEqual({
       jobId: "job-1",
       callId: "call-4",
@@ -276,7 +277,7 @@ describe("AiSidebar permission request dialogs", () => {
         new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
       );
     });
-    await flushUntil(() => mocks.confirm.mock.calls.length > 0);
+    await flush();
     expect(mocks.confirm.mock.calls[0][0]).toEqual({
       jobId: "job-1",
       callId: "call-5",
@@ -295,7 +296,7 @@ describe("AiSidebar permission request dialogs", () => {
     await sendAndEmit([{ type: "planSubmitted" }, { type: "done", answer: "步骤 A" }]);
 
     clickButton(mounted!.container, "批准并执行方案");
-    await flushUntil(() => mocks.chat.mock.calls.length === 2);
+    await flush();
     const approval = mocks.chat.mock.calls[1][0] as Record<string, unknown>;
     expect(approval.message).toBe("按上面的方案执行。");
     expect(approval.message).not.toContain("步骤 A");
@@ -323,9 +324,11 @@ describe("AiSidebar permission request dialogs", () => {
   });
 
   it("reuses the original request images, references, and plan mode on retry", async () => {
-    useUi.setState({
-      sessions: [{ id: "s1", assetId: null, name: "生产机", kind: "ssh", status: "connected", tabs: [], createdAt: 1 }],
-      aiRulePrefill: null,
+    act(() => {
+      useUi.setState({
+        sessions: [{ id: "s1", assetId: null, name: "生产机", kind: "ssh", status: "connected", tabs: [], createdAt: 1 }],
+        aiRulePrefill: null,
+      });
     });
     mounted?.unmount();
     mocks.channels.length = 0;
@@ -345,7 +348,9 @@ describe("AiSidebar permission request dialogs", () => {
         files: [],
       },
     });
-    act(() => textarea.dispatchEvent(paste));
+    await act(async () => {
+      textarea.dispatchEvent(paste);
+    });
     await flushUntil(() => mounted!.container.querySelectorAll(".nx-attach").length === 1);
 
     setInputValue(textarea, "@");
@@ -356,14 +361,14 @@ describe("AiSidebar permission request dialogs", () => {
     );
     setInputValue(textarea, "重试快照");
     click(mounted!.container.querySelector('button[title="发送 (Enter)"]')!);
-    await flushUntil(() => mocks.chat.mock.calls.length === 1);
+    await flush();
     act(() => {
       mocks.channels[0].onEvent({ type: "error", message: "Network timeout", retryable: true });
     });
     await flush();
 
     clickButton(mounted!.container, "重试");
-    await flushUntil(() => mocks.chat.mock.calls.length === 2);
+    await flush();
     const retry = mocks.chat.mock.calls[1][0] as Record<string, unknown>;
     expect(retry.message).toBe("[引用对象]\n- 生产机（ssh 会话）\n\n重试快照");
     expect(retry.images).toEqual([expect.stringContaining("data:image/png;base64")]);
@@ -379,7 +384,7 @@ describe("AiSidebar permission request dialogs", () => {
     await sendAndEmit([{ type: "planSubmitted" }, { type: "done", answer: "步骤 A" }]);
 
     clickButton(mounted!.container, "批准并执行方案");
-    await flushUntil(() => mocks.chat.mock.calls.length === 2);
+    await flush();
     act(() => {
       mocks.channels.at(-1)!.onEvent({ type: "error", message: "Execution interrupted", retryable: true });
     });
@@ -398,42 +403,44 @@ describe("AiSidebar permission request dialogs", () => {
     const input = mounted!.container.querySelector<HTMLTextAreaElement>("textarea[aria-label='消息输入']")!;
     setInputValue(input, "Continue");
     click(mounted!.container.querySelector('button[title="发送 (Enter)"]')!);
-    await flushUntil(() => mocks.channels.length === 3);
+    await flush();
     act(() => {
       mocks.channels.at(-1)!.onEvent({ type: "planSubmitted" });
       mocks.channels.at(-1)!.onEvent({ type: "done", answer: "Step B" });
     });
     await flush();
     clickButton(mounted!.container, "批准并执行方案");
-    await flushUntil(() => mocks.chat.mock.calls.length === 4);
+    await flush();
     const second = mocks.chat.mock.calls[3][0] as Record<string, unknown>;
     expect(second.message).toBe("按上面的方案执行。");
   });
 
   it("sends backend-resolvable terminal and file objects for @ references with the message", async () => {
-    useUi.setState({
-      sessions: [{ id: "s1", assetId: null, name: "生产机", kind: "ssh", status: "connected", tabs: [], createdAt: 1 }],
-      workspaces: [
-        {
-          id: "w1",
-          kind: "session",
-          title: "Production",
-          sessionId: "s1",
-          panes: [
-            {
-              id: "p1",
-              activeTabId: "ui-t2",
-              tabs: [
-                { id: "ui-t2", kind: "terminal", title: "构建机", tabId: "term-2", closable: true },
-                { id: "f1", kind: "files", title: "nginx.conf", path: "/etc/nginx/nginx.conf", sessionId: "s1", closable: true },
-              ],
-            },
-          ],
-          activePaneId: "p1",
-          splitRatio: 1,
-          closable: true,
-        },
-      ],
+    act(() => {
+      useUi.setState({
+        sessions: [{ id: "s1", assetId: null, name: "生产机", kind: "ssh", status: "connected", tabs: [], createdAt: 1 }],
+        workspaces: [
+          {
+            id: "w1",
+            kind: "session",
+            title: "Production",
+            sessionId: "s1",
+            panes: [
+              {
+                id: "p1",
+                activeTabId: "ui-t2",
+                tabs: [
+                  { id: "ui-t2", kind: "terminal", title: "构建机", tabId: "term-2", closable: true },
+                  { id: "f1", kind: "files", title: "nginx.conf", path: "/etc/nginx/nginx.conf", sessionId: "s1", closable: true },
+                ],
+              },
+            ],
+            activePaneId: "p1",
+            splitRatio: 1,
+            closable: true,
+          },
+        ],
+      });
     });
     mounted?.unmount();
     await show();
@@ -453,7 +460,7 @@ describe("AiSidebar permission request dialogs", () => {
     );
     setInputValue(textarea(), "Inspect these two");
     click(mounted!.container.querySelector('button[title="发送 (Enter)"]')!);
-    await flushUntil(() => mocks.chat.mock.calls.length === 1);
+    await flush();
 
     const call = mocks.chat.mock.calls[0][0] as Record<string, unknown>;
     expect(call.refs).toEqual([
@@ -477,14 +484,14 @@ describe("AiSidebar permission request dialogs", () => {
       },
     ]);
     clickButton(mounted!.container, "本轮允许此类");
-    await flushUntil(() => mocks.confirm.mock.calls.length > 0);
+    await flush();
     expect(mocks.confirm.mock.calls[0][0].decision).toBe("allow_session");
     expect(mounted!.container.textContent).toContain("本轮已允许此类");
     expect(mounted!.container.textContent).not.toContain("本会话允许此类");
   });
 
   it("uses structured commands for command interception rules and preview.path for file rules", async () => {
-    useUi.setState({ aiRulePrefill: null });
+    act(() => useUi.setState({ aiRulePrefill: null }));
     await sendAndEmit([
       {
         type: "confirmRequired",
@@ -497,6 +504,7 @@ describe("AiSidebar permission request dialogs", () => {
       },
     ]);
     clickButton(mounted!.container, "去设置拦截规则");
+    await flush();
     expect(useUi.getState().aiRulePrefill).toBe("ls -l\npwd");
 
     act(() => mocks.channels[0].onEvent({ type: "done", answer: "Done" }));
@@ -504,7 +512,7 @@ describe("AiSidebar permission request dialogs", () => {
     mounted?.unmount();
     mocks.channels.length = 0;
     await show();
-    useUi.setState({ aiRulePrefill: null });
+    act(() => useUi.setState({ aiRulePrefill: null }));
     await sendAndEmit([
       {
         type: "confirmRequired",
@@ -517,6 +525,7 @@ describe("AiSidebar permission request dialogs", () => {
       },
     ]);
     clickButton(mounted!.container, "去设置拦截规则");
+    await flush();
     expect(useUi.getState().aiRulePrefill).toBe("/etc/nginx/nginx.conf");
   });
 

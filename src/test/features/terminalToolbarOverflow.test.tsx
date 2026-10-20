@@ -9,6 +9,7 @@ const harness = vi.hoisted(() => ({
   mac: false,
   switchEncoding: vi.fn(),
   listLive: vi.fn(),
+  sessionList: vi.fn(),
 }));
 
 vi.mock("../../app/platform", () => ({
@@ -24,7 +25,7 @@ vi.mock("../../ipc/commands", () => ({
   assetApi: {},
   dbApi: {},
   vaultApi: {},
-  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn() },
+  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn(), list: harness.sessionList },
   terminalApi: {
     listLive: harness.listLive,
     write: vi.fn().mockResolvedValue(undefined),
@@ -123,11 +124,12 @@ function clickMenuItem(label: string): void {
   click(item);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   harness.mac = false;
   harness.listLive.mockResolvedValue([]);
+  harness.sessionList.mockImplementation(async () => useUi.getState().sessions);
   harness.switchEncoding.mockResolvedValue(undefined);
   vi.mocked(pickSavePath).mockResolvedValue(null);
   vi.mocked(finishSave).mockResolvedValue(null);
@@ -175,6 +177,7 @@ beforeEach(() => {
   mounted = mount(
     createElement(TerminalPane, { sessionId: "s1", title: "term", storeTabId: "t1" }),
   );
+  await flush();
 });
 
 afterEach(() => {

@@ -102,7 +102,7 @@ async function send(view: MountedView, text: string) {
 describe("AiSidebar tab context menu", () => {
   let view: MountedView | null = null;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     clearAiTabRuns([...aiTabBusyIds, ...aiTabRunControls.keys()]);
     mocks.channels.length = 0;
@@ -146,9 +146,11 @@ describe("AiSidebar tab context menu", () => {
       activeWorkspaceId: null,
     });
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    await flush();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flush();
     view?.unmount();
     view = null;
   });
@@ -159,7 +161,7 @@ describe("AiSidebar tab context menu", () => {
     expect(menuItem(view!, "重新生成标题").disabled).toBe(false);
 
     click(menuItem(view!, "重新生成标题"));
-    await flushUntil(() => mocks.conversationRetitle.mock.calls.length > 0);
+    await flush();
     expect(mocks.conversationRetitle).toHaveBeenCalledWith("conv-1");
     await flushUntil(() => textOf(view!).includes("主机名: 新主题"));
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].title).toBe("主机名: 新主题");
@@ -192,7 +194,9 @@ describe("AiSidebar tab context menu", () => {
 
   it("disables menu items for tabs without a bound conversation", async () => {
     await flush();
-    useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    await act(async () => {
+      useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    });
     await flush();
 
     openTabMenu(view!, 1);
@@ -201,7 +205,9 @@ describe("AiSidebar tab context menu", () => {
 
   it("includes close and bulk-close items, disabling the side without tabs", async () => {
     await flush();
-    useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    await act(async () => {
+      useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    });
     await flush();
 
     openTabMenu(view!, 0);
@@ -215,9 +221,13 @@ describe("AiSidebar tab context menu", () => {
 
   it("closes only the tabs to the left", async () => {
     await flush();
-    useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    await act(async () => {
+      useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    });
     await flush();
-    useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    await act(async () => {
+      useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    });
     await flush();
     const ids = useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs.map((t) => t.id);
     expect(ids).toHaveLength(3);
@@ -233,15 +243,19 @@ describe("AiSidebar tab context menu", () => {
 
   it("closes only the tabs to the right", async () => {
     await flush();
-    useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    await act(async () => {
+      useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    });
     await flush();
-    useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    await act(async () => {
+      useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    });
     await flush();
     const ids = useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs.map((t) => t.id);
 
     openTabMenu(view!, 1);
     click(menuItem(view!, "关闭右侧全部标签"));
-    await flushUntil(() => useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs.length === 2);
+    await flush();
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs.map((t) => t.id)).toEqual([
       ids[0],
       ids[1],
@@ -252,7 +266,9 @@ describe("AiSidebar tab context menu", () => {
     await flush();
     await send(view!, "Long-running task");
     expect(useUi.getState().aiBusy).toBe(true);
-    useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    await act(async () => {
+      useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    });
     await flush();
 
     openTabMenu(view!, 1);
@@ -274,7 +290,9 @@ describe("AiSidebar tab context menu", () => {
   it("keeps a busy tab when bulk-close confirmation is rejected", async () => {
     await flush();
     await send(view!, "Long-running task");
-    useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    await act(async () => {
+      useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    });
     await flush();
     mocks.ask.mockResolvedValue(false);
 
@@ -295,10 +313,14 @@ describe("AiSidebar tab context menu", () => {
       return Promise.resolve({ jobId: `job-${sequence}`, conversationId: `conv-${sequence}` });
     });
     await send(view!, "First task");
-    useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    await act(async () => {
+      useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    });
     await flush();
     await send(view!, "Second task");
-    useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    await act(async () => {
+      useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    });
     await flush();
     mocks.cancel.mockRejectedValueOnce(new Error("offline"));
 

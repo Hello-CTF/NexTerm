@@ -3,9 +3,9 @@
 // for M163 objects (revealed/masked secret handling, vault-locked warning, tombstones filtered by toggle, conflict triples kept, second sync converges).
 // All through real SyncCard interaction and real encryption; remote payloads are real Go json.Marshal fixture bytes (src/test/auth-sync-fixtures.ts).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
+import { clickButton, flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -161,15 +161,23 @@ function seedAuthed() {
   });
 }
 
-async function runAutoSync() {
+async function runAutoSync(wrapInAct = true) {
   const { runWebSync, WEB_SYNC_RESULT_EVENT, WEB_SYNC_ERROR_EVENT } = await import("../features/settings/SyncCard");
-  try {
-    const result = await runWebSync(DEK, { aiPermission: false, aiGrant: false, preferences: false, ...optInState });
-    if (result) window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result }));
-  } catch (error) {
-    window.dispatchEvent(new CustomEvent(WEB_SYNC_ERROR_EVENT, { detail: error }));
-    throw error;
-  }
+  const execute = async () => {
+    try {
+      const result = await runWebSync(DEK, { aiPermission: false, aiGrant: false, preferences: false, ...optInState });
+      if (result) {
+        if (wrapInAct) window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result }));
+        else await act(() => window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result })));
+      }
+    } catch (error) {
+      if (wrapInAct) window.dispatchEvent(new CustomEvent(WEB_SYNC_ERROR_EVENT, { detail: error }));
+      else await act(() => window.dispatchEvent(new CustomEvent(WEB_SYNC_ERROR_EVENT, { detail: error })));
+      throw error;
+    }
+  };
+  if (wrapInAct) await act(execute);
+  else await execute();
 }
 
 async function remoteFixtureWire(id: string, kind: import("../features/auth/crypto").SyncObjectKind, fixture: string, seq: number) {
@@ -300,7 +308,7 @@ describe("M165 known_host sync", () => {
 
     mounted = mountSyncCard();
     await flushUntilOptInRendered();
-    optInCheckbox(0).click();
+    act(() => optInCheckbox(0).click());
     openDetails();
     await flushUntil(() => text().includes("10.0.0.9:22"));
     expect(mocks.kindOptInSet).toHaveBeenCalledWith({ knownHost: true });
@@ -346,7 +354,7 @@ describe("M165 known_host sync", () => {
     expect(text()).not.toContain("kh-del");
     expect(mocks.syncPush).not.toHaveBeenCalled();
 
-    optInCheckbox(0).click();
+    act(() => optInCheckbox(0).click());
     await flushUntil(() => text().includes("待推送 1 项"));
     await runAutoSync();
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
@@ -514,7 +522,7 @@ describe("M165 R2 opt-in toggle races", () => {
       await reloadGate.promise;
       return { tombstones: [], hasMore: false };
     });
-    optInCheckbox(0).click();
+    act(() => optInCheckbox(0).click());
     await flushUntil(() => mocks.kindOptInSet.mock.calls.length > 0);
     setGate.resolve();
     // reload has started (second collectTombstones call) but not finished: the old snapshot is still (1), the button must stay disabled
@@ -535,7 +543,7 @@ describe("M165 R2 opt-in toggle races", () => {
     mounted = mountSyncCard();
     // The first load (enabled) hangs on collectKnownHosts; toggle off right after the toggles render (the load with opt-in off does not touch that mock and finishes first)
     await flushUntilOptInRendered();
-    optInCheckbox(0).click();
+    act(() => optInCheckbox(0).click());
     openDetails();
     await flushUntil(() => text().includes("本机与云端都还没有可同步的内容。"));
     // The slow load finishes only now: the write-back must be discarded by the generation check, and the disabled kind must not appear in compare rows
@@ -560,8 +568,8 @@ describe("M165 R2 opt-in toggle races", () => {
       await reloadGate.promise;
       return { tombstones: [], hasMore: false };
     });
-    optInCheckbox(0).click();
-    await flushUntil(() => mocks.kindOptInSet.mock.calls.length > 0);
+    act(() => optInCheckbox(0).click());
+    await flush();
     // reload has started but not finished: the old applySet is still (1), the button must stay disabled
     await flushUntil(() => mocks.collectTombstones.mock.calls.length === 2);
     reloadGate.resolve();
@@ -590,7 +598,7 @@ describe("CompareConsole automatic sync", () => {
 
     mounted = mountSyncCard();
     await flushUntil(() => text().includes("当前待应用 1 项"));
-    const syncPromise = runAutoSync();
+    const syncPromise = runAutoSync(false);
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
     expect(mocks.syncPush).not.toHaveBeenCalled();
 
@@ -613,7 +621,7 @@ describe("CompareConsole automatic sync", () => {
       await refreshGate.promise;
       return { knownHosts: [], hasMore: false };
     });
-    const syncPromise = runAutoSync();
+    const syncPromise = runAutoSync(false);
     await flushUntil(() => mocks.collectKnownHosts.mock.calls.length > 1);
     expect(mocks.applyObjects).not.toHaveBeenCalled();
     expect(mocks.syncPush).not.toHaveBeenCalled();

@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveMakensis } from "./lib/makensis.mjs";
 import { resolveSpawnSpec } from "./lib/spawn-spec.mjs";
+import { parseReleaseVersion, parseSemVer } from "./lib/semver.mjs";
 import {
   binaryManifestProblems,
   createBinaryManifest,
@@ -27,6 +28,8 @@ const HELP_TEXT = `#!/usr/bin/env node
  *   node scripts/build.mjs frontend --repro-check
  *   node scripts/build.mjs frontend --consume-dist=DIR --dist-manifest=PATH
  *   node scripts/build.mjs bindings
+ *   node scripts/build.mjs desktop-ldflags --os=linux
+ *   node scripts/build.mjs write-minisign-public-key --out=PATH
  *   node scripts/build.mjs desktop --release --os=darwin --arch=arm64 --package
  *   node scripts/build.mjs desktop --release --package --package-only --consume-dist=DIR \\
  *     --os=darwin --arch=arm64 --require-evidence
@@ -38,15 +41,19 @@ const HELP_TEXT = `#!/usr/bin/env node
  `;
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const WAILS_VERSION = "v3.0.0-beta.27";
+const goMod = fs.readFileSync(path.join(ROOT, "go.mod"), "utf8");
+const WAILS_MODULE = "github.com/wailsapp/wails/v3/cmd/wails3";
+const WAILS_VERSION = goMod.match(/^\s*github\.com\/wailsapp\/wails\/v3\s+(v\S+)\s*$/m)?.[1];
+const GO_TOOLCHAIN = goMod.match(/^toolchain\s+(go\d+\.\d+\.\d+)\s*$/m)?.[1];
+if (!WAILS_VERSION || !GO_TOOLCHAIN) die("go.mod must declare the Wails module and an exact Go toolchain");
 const RSRC_VERSION = "v0.10.2";
 const argv = process.argv.slice(2);
 const command = argv[0] && !argv[0].startsWith("-") ? argv.shift() : "debug";
 const KNOWN_OPTIONS = new Set([
-  "arch", "assets-dir", "base", "binary-manifest", "cgo", "consume-dist",
+  "arch", "assets-dir", "base", "binary", "binary-manifest", "cgo", "consume-dist",
   "dist-manifest", "file", "helpers-dir", "id", "kind", "os", "out", "output", "package",
   "package-only", "release", "repro-check", "require-evidence",
-  "skip-frontend",
+  "skip-frontend", "write",
 ]);
 const options = {};
 for (const arg of argv) {
@@ -59,13 +66,17 @@ for (const arg of argv) {
 const wailsConfig = JSON.parse(fs.readFileSync(path.join(ROOT, "wails.json"), "utf8"));
 const WAILS_VERSION_PLACEHOLDER = wailsConfig.info?.version;
 const VERSION = process.env.NEXTERM_RELEASE_VERSION || WAILS_VERSION_PLACEHOLDER;
-if (!VERSION || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(VERSION)) {
+const VERSION_INFO = process.env.NEXTERM_RELEASE_VERSION ? parseReleaseVersion(VERSION) : parseSemVer(VERSION);
+if (!VERSION_INFO) {
   die(`release version is not a semver version: ${VERSION}`);
 }
-const packageVersion = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
+const packageJSON = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+const packageVersion = packageJSON.version;
 if (packageVersion !== WAILS_VERSION_PLACEHOLDER) die(`package.json version ${packageVersion} diverges from the wails.json placeholder ${WAILS_VERSION_PLACEHOLDER}`);
 let SOURCE_DATE_EPOCH = process.env.SOURCE_DATE_EPOCH || "";
-const COMMIT = output("git", ["rev-parse", "HEAD"], { allowFailure: true })?.trim() || "unknown";
+const SOURCE_COMMIT = output("git", ["rev-parse", "HEAD"], { allowFailure: true })?.trim() || "unknown";
+const DIRTY = SOURCE_COMMIT !== "unknown" && (output("git", ["status", "--porcelain"], { allowFailure: true })?.trim() || "") !== "";
+const COMMIT = DIRTY ? `${SOURCE_COMMIT}+dirty` : SOURCE_COMMIT;
 SOURCE_DATE_EPOCH ||= output("git", ["show", "-s", "--format=%ct", "HEAD"], { allowFailure: true })?.trim();
 if (!SOURCE_DATE_EPOCH || !/^\d+$/.test(SOURCE_DATE_EPOCH)) {
   die("SOURCE_DATE_EPOCH is required when the git commit timestamp is unavailable");
@@ -143,7 +154,7 @@ function buildEnvironment(goos, goarch, kind) {
     GOOS: goos,
     GOARCH: goarch,
     CGO_ENABLED: cgo,
-    GOTOOLCHAIN: "go1.26.8",
+    GOTOOLCHAIN: GO_TOOLCHAIN,
   };
   if (goos === "darwin") {
     env.MACOSX_DEPLOYMENT_TARGET = "12.0";
@@ -252,20 +263,68 @@ function compareDirectories(expected, actual, prefix = "") {
   return differences;
 }
 
+let wailsVerified = false;
+
+function runWails(args, options = {}) {
+  const env = { ...process.env, GOTOOLCHAIN: GO_TOOLCHAIN, ...options.env };
+  if (!wailsVerified) {
+    const result = run("go", ["run", `${WAILS_MODULE}@${WAILS_VERSION}`, "version"], { env, quiet: true });
+    const outputLines = `${result.stdout || ""}${result.stderr || ""}`.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const actual = outputLines.at(-1) || "unavailable";
+    if (actual !== WAILS_VERSION) die(`Wails CLI version ${actual} does not match go.mod ${WAILS_VERSION}`);
+    wailsVerified = true;
+    log(`Wails CLI: ${actual} (pinned by go.mod)`);
+  }
+  return run("go", ["run", `${WAILS_MODULE}@${WAILS_VERSION}`, ...args], { ...options, env });
+}
+
+function replaceBindings(generated, committed) {
+  const backup = `${committed}.previous-${process.pid}`;
+  const hadCommitted = fs.existsSync(committed);
+  if (hadCommitted) fs.renameSync(committed, backup);
+  try {
+    fs.cpSync(generated, committed, { recursive: true });
+    if (hadCommitted) fs.rmSync(backup, { recursive: true, force: true });
+  } catch (error) {
+    fs.rmSync(committed, { recursive: true, force: true });
+    if (hadCommitted) fs.renameSync(backup, committed);
+    throw error;
+  }
+}
+
 function verifyBindings() {
   const committed = path.join(ROOT, "src/ipc/bindings");
-  if (!fs.existsSync(committed)) die("src/ipc/bindings is missing; generate and review bindings before enabling drift checks");
+  const write = flag("write");
+  if (!write && !fs.existsSync(committed)) die("src/ipc/bindings is missing; generate and review bindings before enabling drift checks");
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-bindings-"));
   try {
-    run("wails3", ["generate", "bindings", "-ts", "-i", "-d", temporary, "./cmd/nexterm-desktop"], {
-      env: { ...process.env, GOTOOLCHAIN: "go1.26.8" },
-    });
+    runWails(["generate", "bindings", "-ts", "-i", "-d", temporary, "./cmd/nexterm-desktop"]);
+    if (write) {
+      replaceBindings(temporary, committed);
+      log(`Wails bindings generated with ${WAILS_VERSION}`);
+      return;
+    }
     const differences = compareDirectories(committed, temporary);
     if (differences.length) die(`Wails bindings drift detected:\n${differences.join("\n")}`);
     log("Wails bindings: no drift");
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
   }
+}
+
+function desktopMinisignPublicKey() {
+  const configured = (process.env.NEXTERM_MINISIGN_PUBLIC_KEY || "").trim();
+  if (!configured) return "";
+  const lines = configured.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 2 && lines[0].startsWith("untrusted comment:")) lines.shift();
+  if (lines.length !== 1) die("NEXTERM_MINISIGN_PUBLIC_KEY must be one Base64 public key or a two-line minisign public key file");
+  const encoded = lines[0];
+  if (!/^[A-Za-z0-9+/]{56}$/.test(encoded)) die("NEXTERM_MINISIGN_PUBLIC_KEY must contain one 56-character Base64 minisign public key");
+  const decoded = Buffer.from(encoded, "base64");
+  if (decoded.length !== 42 || decoded.subarray(0, 2).toString() !== "Ed" || decoded.toString("base64") !== encoded) {
+    die("NEXTERM_MINISIGN_PUBLIC_KEY is not an Ed25519 minisign public key");
+  }
+  return encoded;
 }
 
 function ldflags(kind, goos) {
@@ -275,8 +334,22 @@ function ldflags(kind, goos) {
     `-X github.com/Hello-CTF/NexTerm/internal/version.Version=${VERSION}`,
     `-X github.com/Hello-CTF/NexTerm/internal/version.Commit=${COMMIT}`,
   ];
+  if (kind === "desktop") {
+    const publicKey = desktopMinisignPublicKey();
+    if (publicKey) flags.push(`-X github.com/Hello-CTF/NexTerm/internal/update.defaultMinisignPublicKey=${publicKey}`);
+  }
   if (kind === "desktop" && goos === "windows") flags.push("-H windowsgui");
   return flags.join(" ");
+}
+
+function writeMinisignPublicKey() {
+  const destination = path.resolve(ROOT, option("out", ""));
+  if (!option("out")) die("write-minisign-public-key requires --out=PATH");
+  const publicKey = desktopMinisignPublicKey();
+  if (!publicKey) die("NEXTERM_MINISIGN_PUBLIC_KEY is required");
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.writeFileSync(destination, `untrusted comment: NexTerm release minisign public key\n${publicKey}\n`, { mode: 0o644 });
+  log(`minisign public key file: ${destination}`);
 }
 
 function stageWindowsResource(goarch) {
@@ -407,6 +480,32 @@ function validateBinaryForPackaging(outputPath, kind, goos, goarch) {
   log(`${kind}-${goos}-${goarch}: reusing verified production binary sha256:${manifest.artifact.sha256}`);
 }
 
+function reproduceBinary(args, outputPath, kind, goos, goarch) {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-go-repro-"));
+  const checkout = path.join(temporary, "checkout");
+  const cache = path.join(temporary, "fresh-go-cache");
+  const reproduction = `${outputPath}.repro`;
+  try {
+    fs.mkdirSync(checkout, { recursive: true });
+    for (const name of ["go.mod", "go.sum"]) {
+      fs.copyFileSync(path.join(ROOT, name), path.join(checkout, name));
+    }
+    for (const name of ["cmd", "internal"]) {
+      fs.cpSync(path.join(ROOT, name), path.join(checkout, name), { recursive: true });
+    }
+    const reproductionArgs = [...args];
+    reproductionArgs[reproductionArgs.indexOf("-o") + 1] = reproduction;
+    run("go", reproductionArgs, {
+      cwd: checkout,
+      env: { ...buildEnvironment(goos, goarch, kind), GOCACHE: cache },
+    });
+    if (sha256(outputPath) !== sha256(reproduction)) die(`${kind} binary is not reproducible across checkout paths with a fresh GOCACHE: ${outputPath} != ${reproduction}`);
+    log(`${kind} ${goos}/${goarch} cross-checkout reproducibility with fresh GOCACHE: ${sha256(outputPath)}`);
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+}
+
 function buildBinary(kind) {
   const goos = targetOS();
   const goarch = targetArch();
@@ -447,13 +546,8 @@ function buildBinary(kind) {
     } else {
       run("go", args, { env: buildEnvironment(goos, goarch, kind) });
       if (flag("repro-check")) {
-        const reproduction = `${outputPath}.repro`;
-        const reproductionArgs = [...args];
-        reproductionArgs[reproductionArgs.indexOf("-o") + 1] = reproduction;
-        run("go", reproductionArgs, { env: buildEnvironment(goos, goarch, kind) });
-        if (sha256(outputPath) !== sha256(reproduction)) die(`${kind} binary is not reproducible: ${outputPath} != ${reproduction}`);
-        fs.rmSync(reproduction, { force: true });
-        log(`${kind} ${goos}/${goarch} reproducibility: ${sha256(outputPath)}`);
+        reproduceBinary(args, outputPath, kind, goos, goarch);
+        fs.rmSync(`${outputPath}.repro`, { force: true });
       }
     }
   } finally {
@@ -629,6 +723,37 @@ function sevenZipCommand() {
   return null;
 }
 
+function agentArchiveBinaryAssertions(kind, file, goos, goarch) {
+  const member = goos === "windows" ? "nexterm-agent.exe" : "nexterm-agent";
+  const input = path.resolve(ROOT, option("binary", defaultBinaryPath("agent", goos, goarch)));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-agent-assert-"));
+  const checks = [];
+  try {
+    const extracted = kind === "agent-archive"
+      ? output("tar", ["-xzf", path.resolve(file), "-C", work, member], { allowFailure: true })
+      : output("python3", ["-m", "zipfile", "-e", path.resolve(file), work], { allowFailure: true });
+    checks.push(assertion(`${kind}-binary-extract`, extracted !== null, `extract ${member} from the final archive`));
+    if (extracted === null) return checks;
+    const packaged = path.join(work, member);
+    const packagedValid = fs.existsSync(packaged) && fs.statSync(packaged).isFile();
+    const inputValid = fs.existsSync(input) && fs.statSync(input).isFile();
+    checks.push(assertion(`${kind}-binary-input`, packagedValid && inputValid, `packaged=${packaged}; input=${input}`));
+    if (!packagedValid || !inputValid) return checks;
+    const packagedDigest = sha256(packaged);
+    const inputDigest = sha256(input);
+    checks.push(assertion(`${kind}-binary-sha256`, packagedDigest === inputDigest, `package SHA256=${packagedDigest}; input SHA256=${inputDigest}`));
+    const binary = binaryAssertions({ kind: "agent", goos, goarch, file: packaged, cgo: "0", stripped: true });
+    for (const item of binary.assertions) {
+      checks.push(assertion(`${kind}-binary-${item.id}`, item.status === "passed", item.detail));
+    }
+  } catch (error) {
+    checks.push(assertion(`${kind}-binary-inspect`, false, String(error)));
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
+  }
+  return checks;
+}
+
 function packageAssertions(kind, file, goos, goarch) {
   const data = fs.readFileSync(file);
   if (kind === "desktop-nsis") {
@@ -730,11 +855,12 @@ function packageAssertions(kind, file, goos, goarch) {
         (goos === "linux" || goos === "darwin") && listing !== null && members.length === 1 && members[0] === "nexterm-agent",
         `tar root must contain only nexterm-agent; members: ${members.join(", ")}`,
     ));
+    checks.push(...agentArchiveBinaryAssertions(kind, file, goos, goarch));
     return checks;
   }
   if (kind === "agent-zip") {
     const members = zipMembers(data);
-    return [
+    const checks = [
       assertion("zip-container", data[0] === 0x50 && data[1] === 0x4b && data[2] === 0x03 && data[3] === 0x04, "agent package is not a zip archive"),
       assertion(
           "agent-zip-members",
@@ -742,6 +868,8 @@ function packageAssertions(kind, file, goos, goarch) {
           `zip root must contain only nexterm-agent.exe; members: ${members === null ? "unreadable central directory" : members.join(", ")}`,
       ),
     ];
+    checks.push(...agentArchiveBinaryAssertions(kind, file, goos, goarch));
+    return checks;
   }
   return [];
 }
@@ -791,6 +919,8 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
     platform: { os: goos, arch: goarch, cgo: cgo === "1" ? "enabled-only-for-wails-platform-layer" : "disabled" },
     version: VERSION,
     commit: COMMIT,
+    source_commit: SOURCE_COMMIT,
+    dirty_source_tree: DIRTY,
     source_date_epoch: Number(SOURCE_DATE_EPOCH),
     artifact: { path: path.relative(ROOT, file), size_bytes: bytes, sha256: sha256(file), stripped },
     build: {
@@ -799,7 +929,7 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
       windows_resource: `rsrc ${RSRC_VERSION} embeds public/brand/icon.ico as rsrc_windows_<arch>.syso for windows desktop binaries`,
       node: process.version,
       pnpm: output("pnpm", ["--version"], { allowFailure: true })?.trim() || "unknown",
-      toolchain_pin: "CI pins Go 1.26.8, Node 24 and pnpm 11; local Node/pnpm drift must not change committed lockfile artifacts",
+      toolchain_pin: `${GO_TOOLCHAIN} from go.mod; Node 24+; ${packageJSON.packageManager || "pnpm version supplied by CI"}; Wails ${WAILS_VERSION} pinned for generation`,
       module_mode: "-mod=readonly",
       reproducible_flags: ["-trimpath", "-buildvcs=false", "-ldflags=-s -w + version/commit"],
       runtime_metadata: "Go pclntab and build info are preserved for stack symbolization; no UPX and no manual symbol-table or pclntab stripping",
@@ -886,13 +1016,14 @@ function packageLinuxDesktop(binary, goarch) {
   normalizeModes(dataDir);
   fs.chmodSync(path.join(dataDir, "usr/bin/nexterm-desktop"), 0o755);
   for (const arch of ["amd64", "arm64"]) fs.chmodSync(path.join(dataDir, "usr/bin", `nexterm-helper-linux-${arch}`), 0o755);
-  const tarFlags = ["--sort=name", `--mtime=@${SOURCE_DATE_EPOCH}`, "--owner=0", "--group=0", "--numeric-owner"];
-  run("tar", [...tarFlags, "-czf", path.join(work, "control.tar.gz"), "-C", path.join(work, "control"), "control"]);
-  run("tar", [...tarFlags, "-czf", path.join(work, "data.tar.gz"), "-C", dataDir, "usr"]);
+  const portableArchive = path.join(ROOT, "scripts/lib/portable-archive.py");
+  run("python3", [portableArchive, "tar", path.join(work, "control.tar.gz"), path.join(work, "control"), "control", String(SOURCE_DATE_EPOCH)]);
+  run("python3", [portableArchive, "tar", path.join(work, "data.tar.gz"), dataDir, "usr", String(SOURCE_DATE_EPOCH)]);
   fs.writeFileSync(path.join(work, "debian-binary"), "2.0\n");
   const deb = path.join(assets, `${name}.deb`);
   fs.rmSync(deb, { force: true });
   run("ar", ["rD", deb, path.join(work, "debian-binary"), path.join(work, "control.tar.gz"), path.join(work, "data.tar.gz")]);
+  fs.chmodSync(deb, 0o644);
   return deb;
 }
 
@@ -946,7 +1077,7 @@ function packageWindows(binary, goarch) {
   const work = path.join(ROOT, "target/package-work/windows", goarch);
   fs.mkdirSync(work, { recursive: true });
   fs.mkdirSync(assets, { recursive: true });
-  run("wails3", ["generate", "webview2bootstrapper", "-dir", work]);
+  runWails(["generate", "webview2bootstrapper", "-dir", work]);
   const bootstrapper = path.join(work, "MicrosoftEdgeWebview2Setup.exe");
   if (!fs.existsSync(bootstrapper)) die("Wails did not generate the WebView2 bootstrapper");
   const icon = path.join(ROOT, "public/brand/icon.ico");
@@ -956,7 +1087,7 @@ function packageWindows(binary, goarch) {
   const defines = [
     `NEXTERM_BINARY=${binary}`,
     `NEXTERM_VERSION=${VERSION}`,
-    `NEXTERM_NUMERIC_VERSION=${VERSION.split(/[-+]/)[0]}.0`,
+    `NEXTERM_NUMERIC_VERSION=${VERSION_INFO.core}.0`,
     `NEXTERM_OUT=${installer}`,
     `NEXTERM_ICON=${icon}`,
     `NEXTERM_WEBVIEW2=${bootstrapper}`,
@@ -1036,10 +1167,16 @@ switch (command) {
     buildBinary("desktop");
     break;
   }
+  case "desktop-ldflags":
+    console.log(ldflags("desktop", targetOS()));
+    break;
+  case "write-minisign-public-key":
+    writeMinisignPublicKey();
+    break;
   case "help":
   case "--help":
     console.log(HELP_TEXT);
     break;
   default:
-    die(`unknown command ${command}; use debug, release, frontend, bindings, desktop, server, agent, helper, report, or help`);
+    die(`unknown command ${command}; use debug, release, frontend, bindings, desktop, server, agent, helper, report, desktop-ldflags, write-minisign-public-key, or help`);
 }

@@ -9,6 +9,9 @@ const harness = vi.hoisted(() => ({
   resyncSubs: new Set<() => void>(),
   xtermProps: null as Record<string, unknown> | null,
   closeTab: vi.fn(),
+  sessionList: vi.fn(),
+  listLive: vi.fn(),
+  listDurable: vi.fn(),
   fitChanged: true,
 }));
 
@@ -25,9 +28,10 @@ vi.mock("../ipc/commands", () => ({
   assetApi: {},
   dbApi: {},
   vaultApi: {},
-  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn() },
+  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn(), list: harness.sessionList },
   terminalApi: {
-    listLive: vi.fn().mockResolvedValue([]),
+    listLive: harness.listLive,
+    listDurable: harness.listDurable,
     write: vi.fn().mockResolvedValue(undefined),
     detach: vi.fn().mockResolvedValue(undefined),
     setVisible: vi.fn().mockResolvedValue(undefined),
@@ -101,6 +105,7 @@ vi.mock("../features/terminal/XtermView", async () => {
 });
 
 import { TerminalPane } from "../features/terminal/TerminalPane";
+import { setTerminalCloseAction } from "../app/preferences";
 import { useUi } from "../app/store";
 
 let mounted: MountedView | undefined;
@@ -142,7 +147,11 @@ beforeEach(() => {
   harness.handlers.clear();
   harness.resyncSubs.clear();
   document.body.replaceChildren();
+  setTerminalCloseAction("detach");
   harness.closeTab.mockResolvedValue(undefined);
+  harness.sessionList.mockImplementation(async () => useUi.getState().sessions);
+  harness.listLive.mockResolvedValue([]);
+  harness.listDurable.mockResolvedValue([]);
   harness.fitChanged = true;
   useUi.setState({
     sessions: [
@@ -216,7 +225,21 @@ describe("terminal overlay accessibility", () => {
     expect(document.activeElement).toBe(close);
   });
 
-  it("closes the dead tab from the focused process-ended action", async () => {
+  const currentLiveTab = (exited: boolean) => ({
+    tabId: "kernel-1",
+    sessionId: "s1",
+    sessionName: "web-01",
+    sessionKind: "ssh",
+    cols: 80,
+    rows: 24,
+    controller: "me",
+    subscribers: 1,
+    viewers: 1,
+    exited,
+    lastOutputMsAgo: 0,
+  });
+
+  it("uses default close from the process-ended action when the current tab is exited", async () => {
     mounted = mountPane();
     await act(async () => {
       await flush();
@@ -233,10 +256,40 @@ describe("terminal overlay accessibility", () => {
       gridRevision: 0,
     });
     expect(alertButton("关闭标签")).toBeDefined();
+    harness.listLive.mockResolvedValue([currentLiveTab(true)]);
 
     clickButton(mounted.container, "关闭标签");
 
     await waitFor(() => expect(harness.closeTab).toHaveBeenCalledWith("kernel-1", undefined, "s1"));
+    expect(harness.closeTab).not.toHaveBeenCalledWith("kernel-1", "kill", "s1");
+    const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
+    expect(tabs.find((candidate) => candidate.id === "t1")).toBeUndefined();
+  });
+
+  it("detaches from the process-ended action when the current tab is still live", async () => {
+    mounted = mountPane();
+    await act(async () => {
+      await flush();
+    });
+    deliverControl({
+      tabId: "kernel-1",
+      version: 1,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: true,
+      cols: 80,
+      rows: 24,
+      gridRevision: 0,
+    });
+    expect(alertButton("关闭标签")).toBeDefined();
+    harness.listLive.mockResolvedValue([currentLiveTab(false)]);
+    act(() => useUi.getState().updateTab("t1", { retainable: true }));
+
+    clickButton(mounted.container, "关闭标签");
+
+    await waitFor(() => expect(harness.closeTab).toHaveBeenCalledWith("kernel-1", "detach", "s1"));
+    expect(harness.closeTab).not.toHaveBeenCalledWith("kernel-1", "kill", "s1");
     const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
     expect(tabs.find((candidate) => candidate.id === "t1")).toBeUndefined();
   });

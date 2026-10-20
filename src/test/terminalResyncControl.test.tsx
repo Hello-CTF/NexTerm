@@ -10,6 +10,9 @@ const harness = vi.hoisted(() => ({
   resyncSubs: new Set<() => void>(),
   xtermProps: null as Record<string, unknown> | null,
   listLive: vi.fn(),
+  sessionList: vi.fn(),
+  sessionReconnect: vi.fn(),
+  probeHostKey: vi.fn(),
   recordingStatus: vi.fn(),
   recordStart: vi.fn(),
   recordStop: vi.fn(),
@@ -29,7 +32,13 @@ vi.mock("../ipc/commands", () => ({
   assetApi: {},
   dbApi: {},
   vaultApi: {},
-  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn() },
+  sessionApi: {
+    connect: vi.fn(),
+    reconnect: harness.sessionReconnect,
+    disconnect: vi.fn(),
+    list: harness.sessionList,
+    probeHostKey: harness.probeHostKey,
+  },
   terminalApi: {
     listLive: harness.listLive,
     write: vi.fn().mockResolvedValue(undefined),
@@ -192,6 +201,9 @@ beforeEach(() => {
   harness.resyncSubs.clear();
   document.body.replaceChildren();
   harness.listLive.mockResolvedValue([]);
+  harness.sessionList.mockImplementation(() => Promise.resolve(useUi.getState().sessions));
+  harness.sessionReconnect.mockResolvedValue(true);
+  harness.probeHostKey.mockResolvedValue({ state: "known" });
   harness.recordingStatus.mockResolvedValue({
     tabId: "kernel-1",
     state: "never-started",
@@ -292,6 +304,29 @@ describe("terminal control resync compensation", () => {
       .getState()
       .workspaces[0]?.panes[0]?.tabs.find((candidate) => candidate.id === "t1");
     expect(tab?.exited).toBe(true);
+  });
+
+  it("treats a missing listLive entry as unknown instead of exited", async () => {
+    harness.listLive
+      .mockResolvedValueOnce([liveTab({ exited: true })])
+      .mockResolvedValue([]);
+    mounted = mountPane();
+    await act(async () => {
+      await flush();
+    });
+    expect(overlayText("终端进程已结束")).not.toBeNull();
+
+    fireResync();
+    await act(async () => {
+      await flush();
+    });
+
+    expect(overlayText("终端进程已结束")).toBeNull();
+    const tab = useUi
+      .getState()
+      .workspaces[0]?.panes[0]?.tabs.find((candidate) => candidate.id === "t1");
+    expect(tab?.exited).toBeUndefined();
+    expect(tab?.dead).not.toBe(true);
   });
 
   it("keeps a newer control event when the stale listLive snapshot returns later", async () => {
@@ -477,5 +512,35 @@ describe("terminal control resync compensation", () => {
     expect(
       mounted.container.querySelector('.nx-toolbar .nx-badge[title="/tmp/restarted.log"]'),
     ).not.toBeNull();
+  });
+
+  it("shows stale configuration and reconnects a connected session with the current asset", async () => {
+    useUi.setState({
+      sessions: [{ ...useUi.getState().sessions[0], staleConfig: true }],
+    });
+    let reconnectRequested = false;
+    harness.sessionReconnect.mockImplementation(() => {
+      reconnectRequested = true;
+      return Promise.resolve(true);
+    });
+    harness.sessionList.mockImplementation(() => Promise.resolve(
+      useUi.getState().sessions.map((session) => reconnectRequested ? { ...session, staleConfig: false } : session),
+    ));
+    mounted = mountPane();
+    await act(async () => {
+      await flush();
+    });
+
+    expect(overlayText("配置已修改，重连后生效")).not.toBeNull();
+    const reconnect = mounted.container.querySelector<HTMLButtonElement>('button[title="使用当前资产配置重连"]');
+    expect(reconnect).not.toBeNull();
+    expect(reconnect?.disabled).toBe(false);
+    click(reconnect!);
+    await act(async () => {
+      await flush();
+    });
+
+    expect(harness.sessionReconnect).toHaveBeenCalledWith("s1");
+    expect(useUi.getState().sessions[0]?.staleConfig).toBe(false);
   });
 });

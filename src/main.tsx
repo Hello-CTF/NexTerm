@@ -9,7 +9,7 @@ import { mountApi, systemApi } from "./ipc/commands";
 import { WEB } from "./ipc/env";
 import { consumeDeepLinks } from "./ipc/wails";
 import { openDeepLink } from "./app/deepLink";
-import { useUi } from "./app/store";
+import { applySessionStatusEvent, useUi } from "./app/store";
 import { onRemoteChange } from "./app/layout";
 import { setMacPlatform, setWindowsPlatform } from "./app/platform";
 import { installLongPressContextMenu } from "./app/longPress";
@@ -55,19 +55,7 @@ function mount(node: React.ReactNode): void {
 function wireDesktopShell(): void {
   void listenEvent<SessionStatusEvent>(EVENTS.sessionStatus, (p) => {
     if (!eventVersions.accept(p.sessionId, p.version)) return;
-    const { sessions, setSessions, pushToast, setConnectProgress } = useUi.getState();
-    setSessions(
-      sessions.map((s) =>
-        s.id === p.sessionId ? { ...s, status: p.status as never } : s,
-      ),
-    );
-    if (p.status !== "connecting" && p.status !== "reconnecting") {
-      const assetId = sessions.find((s) => s.id === p.sessionId)?.assetId;
-      if (assetId) setConnectProgress(assetId, null);
-    }
-    if (p.status === "failed" && p.error) {
-      pushToast("error", `会话失败：${p.error}`);
-    }
+    applySessionStatusEvent(p);
   });
 
   void listenEvent<ConnectProgressEvent>(EVENTS.connectProgress, (p) => {

@@ -79,6 +79,7 @@ beforeEach(() => {
     workspaces: [],
     activeWorkspaceId: null,
     workspaceRuntime: {},
+    connectionProblems: {},
     connectingAssetIds: [],
     connectFocusRevision: 0,
     pushToast: mocks.toast,
@@ -101,6 +102,7 @@ afterEach(() => {
     workspaces: [],
     activeWorkspaceId: null,
     workspaceRuntime: {},
+    connectionProblems: {},
     connectingAssetIds: [],
   });
 });
@@ -213,7 +215,11 @@ describe("connectAsset in-flight guard", () => {
     useUi.getState().resetAccountWorkspaces();
     password.resolve("test-password");
 
-    expect(await save).toEqual({ ok: false, canceled: true });
+    expect(await save).toEqual({
+      ok: false,
+      canceled: true,
+      problemKey: "quick:operator@example.invalid",
+    });
     expect(mocks.assetCreate).not.toHaveBeenCalled();
   });
 
@@ -548,9 +554,14 @@ describe("connectAsset asset workspace deduplication", () => {
     expect(state.workspaces).toHaveLength(1);
     expect(state.workspaces[0]).toMatchObject({ id: "ws-db", connId: "conn-1" });
     expect(state.workspaces[0]?.panes[0]?.tabs).toEqual([]);
-    expect(state.getWorkspaceRuntime("ws-db")).toEqual({
+    expect(state.getWorkspaceRuntime("ws-db")).toMatchObject({
       generation: 7,
       sqlDraft: draft,
+    });
+    expect(state.getWorkspaceRuntime("ws-db")?.problems?.[0]).toMatchObject({
+      source: "connect",
+      connectionKey: "asset:db-1",
+      summary: "connect failed",
     });
   });
 });

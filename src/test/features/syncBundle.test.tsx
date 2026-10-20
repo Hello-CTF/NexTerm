@@ -360,7 +360,7 @@ describe("SyncBundleCard section references", () => {
 
   it("shows only the description and export/import buttons by default, expanding each area on demand", async () => {
     mounted = withClient(createElement(SyncBundleCard));
-    await flushUntil(() => text().includes("与上方「账号同步」的推送和拉取互不影响"));
+    expect(text()).toContain("与上方「账号同步」的推送和拉取互不影响");
     expect(mounted!.container.querySelector("#bundle-password")).toBeNull();
     expect(
       [...mounted!.container.querySelectorAll("button")].some(

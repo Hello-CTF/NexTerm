@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	core "github.com/Hello-CTF/NexTerm/internal/app"
 	production "github.com/Hello-CTF/NexTerm/internal/app/production"
 	"github.com/Hello-CTF/NexTerm/internal/applog"
@@ -40,6 +41,13 @@ func init() {
 		r.RegisterPurposeHandler(deviceproto.PurposeListen, purpose.NewListenServer(dial, hub).Serve)
 		r.RegisterPurposeHandler(deviceproto.PurposeAccept, purpose.NewAcceptServer(dial, hub).Serve)
 	}
+}
+
+func startupContextForAuth(ctx context.Context, auth, listen string) context.Context {
+	if auth == core.AuthOff || auth == core.AuthLoopback && core.LoopbackListen(listen) {
+		return owner.WithOpenAccess(ctx)
+	}
+	return ctx
 }
 
 func main() {
@@ -204,6 +212,7 @@ func run(args []string) int {
 	if paths.DataDir != "" {
 		blobs = server.NewBlobStore(paths.DataDir, logger.Logger)
 	}
+	ctx = startupContextForAuth(ctx, invocation.Auth, invocation.Listen)
 	application, err := production.NewProduction(ctx, production.ProductionConfig{
 		Config: core.Config{
 			Logger: logger.Logger,
@@ -308,28 +317,30 @@ func run(args []string) int {
 			AllowedOrigins:    allowedOrigins(),
 			TrustedProxyCIDRs: trustedProxyCIDRs(),
 		},
-		Blobs:              blobs,
-		Dispatcher:         application.Dispatcher,
-		PeerDispatcher:     peerDispatcher,
-		Environment:        application.Environment(""),
-		SyncObjects:        application.SyncObjectHandler(),
-		GatewayAuthKey:     application.Services.Sync.GatewayAuthKey(),
-		Accounts:           accounts,
-		Events:             broker,
-		Channels:           hubAdapter,
-		ChannelStats:       hubAdapter.Stats,
-		Vault:              application.Services.Vault,
-		Retention:          serverRetentionConfig(application.Services.Retention),
-		Fleet:              fleetService,
-		Previews:           previewService,
-		Spectator:          application.Services.Sessions,
-		DB:                 healthDB,
-		AccountConnections: application.Services.Database,
-		Settings:           settings,
-		AuditFunc:          audit,
-		AssetOwnerFunc:     assetOwner,
-		Logger:             logger.Logger,
-		WebSocket:          webSocket,
+		Blobs:                 blobs,
+		Dispatcher:            application.Dispatcher,
+		PeerDispatcher:        peerDispatcher,
+		Environment:           application.Environment(""),
+		SyncObjects:           application.SyncObjectHandler(),
+		GatewayAuthKey:        application.Services.Sync.GatewayAuthKey(),
+		Accounts:              accounts,
+		Events:                broker,
+		Channels:              hubAdapter,
+		ChannelStats:          hubAdapter.Stats,
+		Vault:                 application.Services.Vault,
+		Retention:             serverRetentionConfig(application.Services.Retention),
+		Fleet:                 fleetService,
+		Previews:              previewService,
+		Spectator:             application.Services.Sessions,
+		DB:                    healthDB,
+		AccountConnections:    application.Services.Database,
+		AccountCleanup:        application.CleanupAccount,
+		AccountCleanupPrepare: application.PrepareAccountCleanup,
+		Settings:              settings,
+		AuditFunc:             audit,
+		AssetOwnerFunc:        assetOwner,
+		Logger:                logger.Logger,
+		WebSocket:             webSocket,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))

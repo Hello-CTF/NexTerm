@@ -5,13 +5,14 @@ const h = vi.hoisted(() => ({
   kind: "device",
   calls: [] as string[],
   tarSize: 0,
+  chunkSize: 0,
   stagedBytes: null as Uint8Array | null,
+  receivedChunks: new Set<number>(),
+  failBegin: false,
+  failChunk: false,
   failExtract: false,
   listEntries: [] as { name: string; kind: string }[],
   localReads: {} as Record<string, string>,
-  progressHandler: null as
-    | null
-    | ((e: { taskId: string; transferred: number; total: number; done: boolean }) => void),
 }));
 
 vi.mock("../../ipc/env", () => ({ get WEB() { return h.web; } }));
@@ -26,14 +27,32 @@ vi.mock("../../ipc/commands", () => ({
       h.calls.push("list");
       return h.listEntries;
     },
-    upload: async (_sid: string, local: string, remote: string) => {
-      h.calls.push(`upload:${local}->${remote}`);
-      h.progressHandler?.({ taskId: "t1", transferred: 64, total: h.tarSize, done: false });
-      h.progressHandler?.({ taskId: "t1", transferred: h.tarSize, total: h.tarSize, done: true });
+    uploadBegin: async (args: { remotePath: string; totalSize: number; chunkSize: number }) => {
+      h.calls.push(`begin:${args.remotePath}:${args.totalSize}`);
+      h.tarSize = args.totalSize;
+      h.chunkSize = args.chunkSize;
+      if (h.failBegin) throw new Error("begin boom");
+      h.stagedBytes = new Uint8Array(args.totalSize);
+      return { uploadId: "upload-1", chunkSize: args.chunkSize };
+    },
+    uploadChunk: async (args: { index: number; size: number; contentBase64: string }) => {
+      h.calls.push(`chunk:${args.index}:${args.size}`);
+      if (h.failChunk) throw { code: "bad_param", message: "chunk boom" };
+      const data = Uint8Array.from(atob(args.contentBase64), (char) => char.charCodeAt(0));
+      h.stagedBytes!.set(data, args.index * h.chunkSize);
+      h.receivedChunks.add(args.index);
+      let received = 0;
+      for (const index of h.receivedChunks) {
+        received += Math.min(h.chunkSize, h.tarSize - index * h.chunkSize);
+      }
+      return { received, total: h.tarSize };
+    },
+    uploadCommit: async () => {
+      h.calls.push("commit");
       return h.tarSize;
     },
-    write: async (_sid: string, path: string, contentBase64: string) => {
-      h.calls.push(`write:${path}:${contentBase64}`);
+    uploadAbort: async () => {
+      h.calls.push("abort");
     },
     extract: async (_sid: string, path: string) => {
       h.calls.push(`extract:${path}`);
@@ -45,44 +64,26 @@ vi.mock("../../ipc/commands", () => ({
     },
   },
   localFileApi: {
-    read: async (path: string) => {
-      h.calls.push(`read:${path}`);
+    readRange: async (path: string, offset: number, length: number) => {
+      h.calls.push(`read:${path}:${offset}:${length}`);
       const content = h.localReads[path];
       if (content === undefined) throw new Error(`no read sample for ${path}`);
-      return { path, size: atob(content).length, contentBase64: content };
+      const decoded = atob(content);
+      const selected = decoded.slice(offset, offset + length);
+      return {
+        path,
+        offset,
+        size: decoded.length,
+        contentBase64: btoa(selected),
+        truncated: offset + selected.length < decoded.length,
+      };
     },
-  },
-}));
-
-vi.mock("../../ipc/webFiles", () => ({
-  stageFile: async (file: File) => {
-    h.tarSize = file.size;
-    h.stagedBytes = new Uint8Array(await file.arrayBuffer());
-    h.calls.push(`stage:${file.name}:${file.size}`);
-    return { id: "blob-1", path: `blob-1/${file.name}` };
-  },
-  dropStaged: async (path: string) => {
-    h.calls.push(`drop:${path}`);
-  },
-}));
-
-vi.mock("../../ipc/events", () => ({
-  EVENTS: { fsProgress: "fs://progress" },
-  listenEvent: async (
-    _event: string,
-    handler: (e: { taskId: string; transferred: number; total: number; done: boolean }) => void,
-  ) => {
-    h.progressHandler = handler;
-    return () => {
-      h.progressHandler = null;
-    };
   },
 }));
 
 import {
   buildFolderTar,
   MAX_PACK_BYTES,
-  MAX_PACK_BYTES_DEVICE,
   packExtractSupported,
   packUploadAndExtract,
   type FolderFileEntry,
@@ -127,11 +128,14 @@ beforeEach(() => {
   h.kind = "device";
   h.calls.length = 0;
   h.tarSize = 0;
+  h.chunkSize = 0;
   h.stagedBytes = null;
+  h.receivedChunks.clear();
+  h.failBegin = false;
+  h.failChunk = false;
   h.failExtract = false;
   h.listEntries = [];
   h.localReads = {};
-  h.progressHandler = null;
 });
 
 describe("buildFolderTar (ustar byte layout)", () => {
@@ -254,7 +258,7 @@ describe("packUploadAndExtract (device flow, in-place extraction)", () => {
   const files = () => [entry("a.txt", "abc")];
   const tarSize = 512 + 512 + 512 + 1024;
 
-  it("runs pack -> stage upload -> extract -> delete in order and reports progress", async () => {
+  it("streams pack chunks -> commit -> extract -> delete in order and reports progress", async () => {
     const progress: [number, number][] = [];
     const result = await packUploadAndExtract({
       sessionId: "s1",
@@ -264,18 +268,16 @@ describe("packUploadAndExtract (device flow, in-place extraction)", () => {
       onProgress: (t, total) => progress.push([t, total]),
     });
     expect(result).toBe("/data/photos");
-    expect(h.calls[0]).toMatch(/^stage:\.nexterm-upload-[0-9a-f]{12}\.tar:2560$/);
-    expect(h.calls[1]).toMatch(
-      /^upload:blob-1\/\.nexterm-upload-[0-9a-f]{12}\.tar->\/data\/\.nexterm-upload-[0-9a-f]{12}\.tar$/,
-    );
-    const temp = h.calls[1].split("->")[1];
-    expect(h.calls.slice(2)).toEqual([
-      `drop:blob-1/${temp.split("/").pop()}`,
+    expect(h.calls[0]).toMatch(/^begin:\/data\/\.nexterm-upload-[0-9a-f]{12}\.tar:2560$/);
+    const temp = h.calls[0].slice("begin:".length, -`:${tarSize}`.length);
+    expect(h.calls.slice(1)).toEqual([
+      "chunk:0:2560",
+      "commit",
       `extract:${temp}`,
       `delete:${temp}:false`,
     ]);
     expect(progress).toEqual([
-      [64, tarSize],
+      [0, tarSize],
       [tarSize, tarSize],
       [tarSize, tarSize],
     ]);
@@ -302,6 +304,22 @@ describe("packUploadAndExtract (device flow, in-place extraction)", () => {
     expect(extractIdx).toBeGreaterThan(-1);
     expect(deleteIdx).toBeGreaterThan(extractIdx);
     expect(h.calls[deleteIdx].endsWith(":false")).toBe(true);
+  });
+
+  it("aborts the chunked session when a pack chunk fails", async () => {
+    h.failChunk = true;
+    await expect(
+      packUploadAndExtract({
+        sessionId: "s1",
+        dir: "/data",
+        folderName: "photos",
+        files: files(),
+        onProgress: () => {},
+      }),
+    ).rejects.toThrow("chunk boom");
+    expect(h.calls).toContain("abort");
+    expect(h.calls).not.toContain("commit");
+    expect(h.calls.some((call) => call.startsWith("extract:"))).toBe(false);
   });
 
   it("empty dirs upload with the package: the tar contains root-prefixed empty dir entries", async () => {
@@ -338,9 +356,9 @@ describe("packUploadAndExtract (ssh flow, derived directory extraction)", () => 
     expect(result).toBe("/data/photos");
     expect(h.calls).toEqual([
       "list",
-      `stage:photos.tar:${tarSize}`,
-      "upload:blob-1/photos.tar->/data/photos.tar",
-      "drop:blob-1/photos.tar",
+      `begin:/data/photos.tar:${tarSize}`,
+      `chunk:0:${tarSize}`,
+      "commit",
       "extract:/data/photos.tar",
       "delete:/data/photos.tar:false",
     ]);
@@ -377,7 +395,7 @@ describe("packUploadAndExtract (ssh flow, derived directory extraction)", () => 
       files: files(),
       onProgress: () => {},
     });
-    expect(h.calls[1]).toBe(`stage:photos.tar:${tarSize}`);
+    expect(h.calls[1]).toBe(`begin:/data/photos.tar:${tarSize}`);
   });
 });
 
@@ -432,58 +450,47 @@ describe("packUploadAndExtract (input validation)", () => {
     expect(h.calls).toEqual([]);
   });
 
-  it("device sessions over the 64 MB single-write limit are rejected before any IPC and suggest per-file upload", async () => {
+  it("device packs above the former 64 MB single-write limit enter chunked begin", async () => {
     h.kind = "device";
     h.web = false;
-    const attempt = () => {
-      const big = new File([new Uint8Array(0)], "big.bin");
-      Object.defineProperty(big, "size", { value: MAX_PACK_BYTES_DEVICE + 1 });
-      return packUploadAndExtract({
+    h.failBegin = true;
+    const big = new File([new Uint8Array(0)], "big.bin");
+    Object.defineProperty(big, "size", { value: 65 * 1024 * 1024 });
+    await expect(
+      packUploadAndExtract({
         sessionId: "s1",
         dir: "/data",
         folderName: "photos",
         files: [{ file: big, relativePath: "big.bin", localPath: "", size: big.size, mtimeMs: MTIME_MS }],
         onProgress: () => {},
-      });
-    };
-    await expect(attempt()).rejects.toThrow("单次写入上限 64.0 MB");
-    await expect(attempt()).rejects.toThrow("逐文件");
-    expect(h.calls).toEqual([]);
+      }),
+    ).rejects.toThrow("begin boom");
+    expect(h.calls[0]).toMatch(/^begin:\/data\/\.nexterm-upload-[0-9a-f]{12}\.tar:/);
+    expect(h.calls[0].endsWith(`:${big.size + 2048}`)).toBe(true);
+    expect(h.calls.some((call) => call.includes("单次写入上限"))).toBe(false);
   });
 
-  it("device sessions via WEB staged streaming are not subject to the 64 MB limit", async () => {
-    h.kind = "device";
-    const big = new File([new Uint8Array(0)], "big.bin");
-    Object.defineProperty(big, "size", { value: 100 * 1024 * 1024 });
-    await packUploadAndExtract({
-      sessionId: "s1",
-      dir: "/data",
-      folderName: "photos",
-      files: [{ file: big, relativePath: "big.bin", localPath: "", size: big.size, mtimeMs: MTIME_MS }],
-      onProgress: () => {},
-    });
-    expect(h.calls.some((c) => c.startsWith("stage:"))).toBe(true);
-    expect(h.calls.some((c) => c.startsWith("extract:"))).toBe(true);
-  });
-
-  it("100 MB on ssh sessions is unaffected by the device limit and enters the pack flow", async () => {
+  it("100 MB on ssh sessions remains below the pack limit and enters chunked begin", async () => {
     h.kind = "ssh";
+    h.failBegin = true;
     const big = new File([new Uint8Array(0)], "big.bin");
     Object.defineProperty(big, "size", { value: 100 * 1024 * 1024 });
-    await packUploadAndExtract({
-      sessionId: "s1",
-      dir: "/data",
-      folderName: "photos",
-      files: [{ file: big, relativePath: "big.bin", localPath: "", size: big.size, mtimeMs: MTIME_MS }],
-      onProgress: () => {},
-    });
+    await expect(
+      packUploadAndExtract({
+        sessionId: "s1",
+        dir: "/data",
+        folderName: "photos",
+        files: [{ file: big, relativePath: "big.bin", localPath: "", size: big.size, mtimeMs: MTIME_MS }],
+        onProgress: () => {},
+      }),
+    ).rejects.toThrow("begin boom");
     expect(h.calls[0]).toBe("list");
-    expect(h.calls.some((c) => c.startsWith("stage:photos.tar:"))).toBe(true);
+    expect(h.calls[1]).toBe(`begin:/data/photos.tar:${big.size + 1536}`);
   });
 });
 
 describe("packUploadAndExtract (desktop flow)", () => {
-  it("writes directly to the remote via fs_write without staging", async () => {
+  it("streams the tar through chunk commit without staging", async () => {
     h.web = false;
     const progress: [number, number][] = [];
     const result = await packUploadAndExtract({
@@ -494,18 +501,19 @@ describe("packUploadAndExtract (desktop flow)", () => {
       onProgress: (t, total) => progress.push([t, total]),
     });
     expect(result).toBe("/data/photos");
-    expect(h.calls.some((c) => c.startsWith("stage:"))).toBe(false);
-    const write = h.calls.find((c) => c.startsWith("write:"));
-    expect(write).toMatch(/^write:\/data\/\.nexterm-upload-[0-9a-f]{12}\.tar:/);
-    const b64 = write!.slice(write!.indexOf(":", "write:".length) + 1);
     const expected = await buildFolderTar([entry("a.txt", "abc")], "photos");
-    const decoded = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
-    expect(decoded).toEqual(expected);
-    const temp = write!.slice("write:".length, write!.indexOf(":", "write:".length));
-    expect(h.calls[h.calls.length - 2]).toBe(`extract:${temp}`);
-    expect(h.calls[h.calls.length - 1]).toBe(`delete:${temp}:false`);
+    expect(h.stagedBytes).toEqual(expected);
+    expect(h.calls[0]).toMatch(/^begin:\/data\/\.nexterm-upload-[0-9a-f]{12}\.tar:/);
+    const temp = h.calls[0].slice("begin:".length, -`:${expected.length}`.length);
+    expect(h.calls.slice(1)).toEqual([
+      `chunk:0:${expected.length}`,
+      "commit",
+      `extract:${temp}`,
+      `delete:${temp}:false`,
+    ]);
     expect(progress).toEqual([
       [0, expected.length],
+      [expected.length, expected.length],
       [expected.length, expected.length],
     ]);
   });
@@ -516,10 +524,10 @@ describe("buildFolderTar (desktop native picker entries without File)", () => {
     return { relativePath: rel, localPath, size, mtimeMs: MTIME_MS };
   }
 
-  it("packs bytes read via localFileApi.read with correct header mtime and size", async () => {
+  it("packs bytes read via localFileApi.readRange with correct header mtime and size", async () => {
     h.localReads = { "C:\\pics\\hello.txt": btoa("hello") };
     const tar = await buildFolderTar([nativeEntry("hello.txt", "C:\\pics\\hello.txt", 5)]);
-    expect(h.calls).toEqual(["read:C:\\pics\\hello.txt"]);
+    expect(h.calls).toEqual(["read:C:\\pics\\hello.txt:0:5"]);
     expect(tar.length).toBe(512 + 512 + 1024);
     expect(ascii(tar, 0, 100)).toBe("hello.txt");
     expect(ascii(tar, 124, 12)).toBe("00000000005");
@@ -534,7 +542,7 @@ describe("buildFolderTar (desktop native picker entries without File)", () => {
     );
   });
 
-  it("desktop pack upload without File entries writes directly to the remote via fs_write", async () => {
+  it("desktop pack upload without File entries streams native range reads", async () => {
     h.web = false;
     h.kind = "ssh";
     h.localReads = { "/local/pics/a.txt": btoa("abc") };
@@ -546,13 +554,11 @@ describe("buildFolderTar (desktop native picker entries without File)", () => {
       onProgress: () => {},
     });
     expect(result).toBe("/data/pics");
-    expect(h.calls).toContain("read:/local/pics/a.txt");
-    const write = h.calls.find((c) => c.startsWith("write:"));
-    expect(write).toBeDefined();
-    const b64 = write!.slice(write!.indexOf(":", "write:".length) + 1);
-    const decoded = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
-    expect(ascii(decoded, 0, 100)).toBe("a.txt");
-    expect(ascii(decoded, 512, 3)).toBe("abc");
-    expect(h.calls.some((c) => c.startsWith("stage:"))).toBe(false);
+    expect(h.calls).toContain("read:/local/pics/a.txt:0:3");
+    expect(h.stagedBytes).not.toBeNull();
+    expect(ascii(h.stagedBytes!, 0, 100)).toBe("a.txt");
+    expect(ascii(h.stagedBytes!, 512, 3)).toBe("abc");
+    expect(h.calls).toContain("commit");
+    expect(h.calls.some((c) => c.startsWith("stage:") || c.startsWith("write:"))).toBe(false);
   });
 });

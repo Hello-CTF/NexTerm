@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { flushMacrotask } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
@@ -8,10 +9,11 @@ const mocks = vi.hoisted(() => ({
   layoutGet: vi.fn(),
   layoutPut: vi.fn(),
   listLive: vi.fn(),
+  listDurable: vi.fn(),
 }));
 vi.mock("../../ipc/commands", () => ({
   layoutApi: { get: mocks.layoutGet, put: mocks.layoutPut },
-  terminalApi: { closeTab: mocks.closeTab, listLive: mocks.listLive },
+  terminalApi: { closeTab: mocks.closeTab, listLive: mocks.listLive, listDurable: mocks.listDurable },
   dbApi: {},
   sessionApi: {},
   vaultApi: {},
@@ -20,6 +22,7 @@ vi.mock("../../ipc/events", () => ({ listenEvent: vi.fn() }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 
 import {
+  flushLayout,
   mergeExitedTabs,
   onRemoteChange,
   resetLayoutSyncForTest,
@@ -28,9 +31,25 @@ import {
 } from "../../app/layout";
 import { setTerminalCloseAction } from "../../app/preferences";
 import { requestCloseTab, useUi, type AppTab, type Workspace } from "../../app/store";
+import { isTabUnread, resetUnreadTabs, setTabUnread } from "../../app/unreadStore";
 
 function terminal(id = "terminal"): AppTab {
   return { id, kind: "terminal", title: id, sessionId: "s", tabId: `kernel-${id}`, closable: true, retainable: true };
+}
+function liveTab(tabId: string, exited = false) {
+  return {
+    tabId,
+    sessionId: "s",
+    sessionName: "session",
+    sessionKind: "ssh",
+    cols: 80,
+    rows: 24,
+    controller: null,
+    subscribers: 1,
+    viewers: 1,
+    exited,
+    lastOutputMsAgo: 0,
+  };
 }
 function workspace(panes: { id: string; tabs: AppTab[] }[]): Workspace {
   return {
@@ -56,8 +75,8 @@ function toastText(): string {
   return useUi.getState().toasts.map((t) => t.text).join("\n");
 }
 async function flushAsync() {
-  await new Promise((r) => setTimeout(r, 0));
-  await new Promise((r) => setTimeout(r, 0));
+  await flushMacrotask();
+  await flushMacrotask();
 }
 function applyAttachedCapabilities() {
   const st = useUi.getState();
@@ -69,8 +88,10 @@ function applyAttachedCapabilities() {
 describe("remote layout preserves exited terminal state", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetUnreadTabs();
     setTerminalCloseAction("detach");
     mocks.listLive.mockResolvedValue([]);
+    mocks.listDurable.mockResolvedValue([]);
     mocks.layoutPut.mockResolvedValue({ saved: true, revision: 1, conflict: false });
   });
   afterEach(() => resetLayoutSyncForTest());
@@ -127,64 +148,97 @@ describe("remote layout preserves exited terminal state", () => {
     );
   });
 
-  it("after serializeLayout → onRemoteChange, closing the exited tab kills instead of detaching", async () => {
+  it("after serializeLayout → onRemoteChange, a stale exited flag detaches when the current tab is live", async () => {
     const exitedTab = { ...terminal(), exited: true };
     seed([{ id: "pane", tabs: [exitedTab] }]);
     const dto = serializeLayout(useUi.getState());
+    await flushLayout();
     mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: dto });
 
-    onRemoteChange({ revision: 1 });
+    onRemoteChange(null);
     await flushAsync();
     applyAttachedCapabilities();
 
     const after = useUi.getState().workspaces[0].panes[0].tabs[0];
     expect(after.exited).toBe(true);
+    mocks.listLive.mockResolvedValue([liveTab("kernel-terminal")]);
 
     await requestCloseTab(exitedTab.id);
 
     expect(mocks.closeTab).toHaveBeenCalledTimes(1);
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill", "s");
-    expect(toastText()).not.toContain("已转入后台");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "detach", "s");
+    expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-terminal", "kill", "s");
+    expect(toastText()).toContain("已转入后台");
   });
 
-  it("workspace close after a remote change still cleans up the exited backend tab", async () => {
+  it("after serializeLayout → onRemoteChange, a current durable-dead tab uses default cleanup", async () => {
+    const exitedTab = { ...terminal(), exited: true };
+    seed([{ id: "pane", tabs: [exitedTab] }]);
+    const dto = serializeLayout(useUi.getState());
+    await flushLayout();
+    mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: dto });
+
+    onRemoteChange(null);
+    await flushAsync();
+    applyAttachedCapabilities();
+
+    expect(useUi.getState().workspaces[0].panes[0].tabs[0].exited).toBe(true);
+    mocks.listDurable.mockResolvedValue([{ id: "kernel-terminal", dead: true }]);
+
+    await requestCloseTab(exitedTab.id);
+
+    expect(mocks.closeTab).toHaveBeenCalledTimes(1);
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", undefined, "s");
+    expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-terminal", "kill", "s");
+  });
+
+  it.each([false, true])("workspace close after a remote change handles current exited=%s safely", async (currentExited) => {
     const exitedTab = { ...terminal("x1"), exited: true };
     seed([
       { id: "p1", tabs: [terminal("t1")] },
       { id: "p2", tabs: [exitedTab] },
     ]);
     const dto = serializeLayout(useUi.getState());
+    await flushLayout();
     mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: dto });
 
-    onRemoteChange({ revision: 1 });
+    onRemoteChange(null);
     await flushAsync();
     applyAttachedCapabilities();
+    mocks.listLive.mockResolvedValue([
+      liveTab("kernel-t1"),
+      liveTab("kernel-x1", currentExited),
+    ]);
 
     await useUi.getState().closeWorkspace("ws");
 
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s");
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "kill", "s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", currentExited ? undefined : "detach", "s");
+    expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-x1", "kill", "s");
     expect(useUi.getState().workspaces).toEqual([]);
   });
 
-  it("unsplit after a remote change still cleans up the exited backend tab", async () => {
+  it.each([false, true])("unsplit after a remote change handles current exited=%s safely", async (currentExited) => {
     const exitedTab = { ...terminal("x1"), exited: true };
     seed([
       { id: "p1", tabs: [terminal("keep")] },
       { id: "p2", tabs: [exitedTab] },
     ]);
     const dto = serializeLayout(useUi.getState());
+    await flushLayout();
     mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: dto });
 
-    onRemoteChange({ revision: 1 });
+    onRemoteChange(null);
     await flushAsync();
     applyAttachedCapabilities();
+    mocks.listLive.mockResolvedValue([liveTab("kernel-x1", currentExited)]);
 
     await useUi.getState().unsplitWorkspace("p2", "ws");
 
     expect(mocks.ask).not.toHaveBeenCalled();
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "kill", "s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", currentExited ? undefined : "detach", "s");
+    expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-x1", "kill", "s");
     expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
   });
 
@@ -204,9 +258,10 @@ describe("remote layout preserves exited terminal state", () => {
       activeWorkspaceId: "ws",
       aiBoards: {},
     };
+    await flushLayout();
     mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: remoteDto });
 
-    onRemoteChange({ revision: 1 });
+    onRemoteChange(null);
     await flushAsync();
     applyAttachedCapabilities();
 
@@ -244,9 +299,10 @@ describe("remote layout preserves exited terminal state", () => {
       activeWorkspaceId: "ws",
       aiBoards: {},
     };
+    await flushLayout();
     mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: remoteDto });
 
-    onRemoteChange({ revision: 1 });
+    onRemoteChange(null);
     await flushAsync();
     applyAttachedCapabilities();
 
@@ -281,9 +337,10 @@ describe("remote layout preserves exited terminal state", () => {
       activeWorkspaceId: "ws",
       aiBoards: {},
     };
+    await flushLayout();
     mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: remoteDto });
 
-    onRemoteChange({ revision: 1 });
+    onRemoteChange(null);
     await flushAsync();
     applyAttachedCapabilities();
 
@@ -300,7 +357,6 @@ describe("remote layout preserves exited terminal state", () => {
       ...terminal("attached"),
       shell: "posix",
       pendingDirectory: "/tmp/project",
-      unread: true,
       closeError: "close failed",
     };
     const removed: AppTab = {
@@ -318,6 +374,9 @@ describe("remote layout preserves exited terminal state", () => {
       { id: "p1", tabs: [removed, attached] },
       { id: "p2", tabs: [reconnected] },
     ]);
+    setTabUnread("attached", true);
+    setTabUnread("removed", true);
+    setTabUnread("shared", true);
     const moved = {
       ...workspace([
         {
@@ -342,9 +401,10 @@ describe("remote layout preserves exited terminal state", () => {
       activeWorkspaceId: "moved-ws",
       aiBoards: {},
     };
+    await flushLayout();
     mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: remoteDto });
 
-    onRemoteChange({ revision: 1 });
+    onRemoteChange(null);
     await flushAsync();
 
     const state = useUi.getState();
@@ -357,14 +417,16 @@ describe("remote layout preserves exited terminal state", () => {
       shell: "posix",
       retainable: true,
       pendingDirectory: "/tmp/project",
-      unread: true,
       closeError: "close failed",
     });
+    expect(isTabUnread("attached")).toBe(true);
+    expect(isTabUnread("removed")).toBe(false);
+    expect(isTabUnread("shared")).toBe(false);
+    expect(isTabUnread("restored")).toBe(false);
     for (const restored of [tabs[0], tabs[2]]) {
       expect(restored).not.toHaveProperty("shell");
       expect(restored).not.toHaveProperty("retainable");
       expect(restored).not.toHaveProperty("pendingDirectory");
-      expect(restored).not.toHaveProperty("unread");
       expect(restored).not.toHaveProperty("closeError");
     }
     expect(tabs[2].tabId).toBe("kernel-new");

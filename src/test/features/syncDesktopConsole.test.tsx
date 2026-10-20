@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flushUntil, mount, type MountedView } from "./reactTestUtils";
+import { click, flush, flushUntil, mount, type MountedView } from "./reactTestUtils";
 import { formatTime } from "../../ui/format";
 
 const mocks = vi.hoisted(() => {
@@ -71,6 +71,15 @@ let mounted: MountedView | undefined;
 function withClient(node: React.ReactElement): MountedView {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return mount(createElement(QueryClientProvider, { client }, node));
+}
+
+async function waitForConsole(extraText?: string): Promise<void> {
+  await flushUntil(() =>
+    document.body.textContent?.includes("立即同步") === true &&
+    document.body.textContent?.includes("已知主机 已开启") === true &&
+    document.body.textContent?.includes("云端 0 个对象") === true &&
+    (!extraText || document.body.textContent.includes(extraText)),
+  );
 }
 
 function fireRoundComplete(): void {
@@ -154,8 +163,11 @@ describe("Desktop account sync console", () => {
     mocks.linkGet.mockResolvedValue({ url: "", username: "", insecure: false, hasPassword: false, verifiedAt: 0, lastError: "" });
     mocks.status.mockResolvedValue({ configured: false, loggedIn: false, seq: 0, verifiedAt: 0, lastError: "" });
     mounted = withClient(createElement(SyncCard));
-    await flushUntil(() => document.body.textContent?.includes("账号同步") ?? false);
+    await act(async () => {
+      await flush();
+    });
 
+    expect(document.body.textContent).toContain("账号同步");
     expect(document.body.textContent).not.toContain("立即同步");
     expect(mocks.kindOptInGet).not.toHaveBeenCalled();
   });
@@ -163,7 +175,7 @@ describe("Desktop account sync console", () => {
   it("shows the sync console after login with shared title, status rows, and guide, plus IPC-backed toggle summary and checked state", async () => {
     seedLoggedIn();
     mounted = withClient(createElement(SyncCard));
-    await flushUntil(() => document.body.textContent?.includes("立即同步") ?? false);
+    await waitForConsole();
 
     const text = document.body.textContent ?? "";
     expect(text).toContain("自动同步");
@@ -190,24 +202,27 @@ describe("Desktop account sync console", () => {
     seedLoggedIn();
     mocks.kindOptInSet.mockResolvedValue({ ...OPT_IN, knownHost: false });
     mounted = withClient(createElement(SyncCard));
-    await flushUntil(() => document.body.textContent?.includes("立即同步") ?? false);
+    await waitForConsole();
 
     const knownHost = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find(
       (c) => c.closest("label")?.textContent?.includes("同步已知主机"),
     )!;
     click(knownHost);
-    await flushUntil(() => mocks.kindOptInSet.mock.calls.length === 1);
+    await flushUntil(() =>
+      mocks.kindOptInSet.mock.calls.length === 1 &&
+      document.body.textContent?.includes("已知主机 已关闭") === true && !knownHost.disabled,
+    );
     expect(mocks.kindOptInSet).toHaveBeenCalledWith({ knownHost: false });
-    await flushUntil(() => (document.body.textContent ?? "").includes("已知主机 已关闭"));
   });
 
   it("triggers sync_wake and shows a toast for immediate sync", async () => {
     seedLoggedIn();
     mounted = withClient(createElement(SyncCard));
-    await flushUntil(() => document.body.textContent?.includes("立即同步") ?? false);
+    await waitForConsole();
 
-    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("立即同步")) as HTMLButtonElement);
-    await flushUntil(() => mocks.wake.mock.calls.length === 1);
+    const syncButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("立即同步")) as HTMLButtonElement;
+    click(syncButton);
+    await flushUntil(() => mocks.wake.mock.calls.length === 1 && !syncButton.disabled);
     expect(mocks.toast).toHaveBeenCalledWith("success", "已触发一轮后台同步");
   });
 
@@ -224,14 +239,14 @@ describe("Desktop account sync console", () => {
     const completedText = `上次同步：${formatTime(Date.parse(completed))}。`;
     seedLoggedIn({ lastSuccessAt: initial });
     mounted = withClient(createElement(SyncCard));
-    await flushUntil(() => (document.body.textContent ?? "").includes(initialText));
+    await waitForConsole(initialText);
     await flushUntil(() => mocks.roundCompleteHandlers.length === 1);
     const statusCalls = mocks.status.mock.calls.length;
 
     seedLoggedIn({ lastSuccessAt: completed });
     fireRoundComplete();
 
-    await flushUntil(() => (document.body.textContent ?? "").includes(completedText));
+    await waitForConsole(completedText);
     expect(mocks.status.mock.calls.length).toBeGreaterThan(statusCalls);
     expect(document.body.textContent).not.toContain(initialText);
   });
@@ -244,11 +259,12 @@ describe("Desktop account sync console", () => {
     const completedText = `上次同步：${formatTime(Date.parse(completed))}。`;
     seedLoggedIn({ lastSuccessAt: initial });
     mounted = withClient(createElement(SyncCard));
-    await flushUntil(() => (document.body.textContent ?? "").includes(initialText));
+    await waitForConsole(initialText);
     await flushUntil(() => mocks.roundCompleteHandlers.length === 1);
 
-    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("立即同步")) as HTMLButtonElement);
-    await flushUntil(() => mocks.wake.mock.calls.length === 1);
+    const syncButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("立即同步")) as HTMLButtonElement;
+    click(syncButton);
+    await flushUntil(() => mocks.wake.mock.calls.length === 1 && !syncButton.disabled);
     const statusCalls = mocks.status.mock.calls.length;
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
@@ -258,14 +274,14 @@ describe("Desktop account sync console", () => {
 
     seedLoggedIn({ lastSuccessAt: completed });
     fireRoundComplete();
-    await flushUntil(() => (document.body.textContent ?? "").includes(completedText));
+    await waitForConsole(completedText);
     expect(document.body.textContent).not.toContain(initialText);
   });
 
   it("explains content-type opt-out and per-transcript cloud deletion", async () => {
     seedLoggedIn();
     mounted = withClient(createElement(SyncCard));
-    await flushUntil(() => document.body.textContent?.includes("立即同步") ?? false);
+    await waitForConsole();
 
     expect(document.body.textContent).toContain(
       "关闭上方内容类型开关不会删除云端已有副本；在「终端历史」关闭单条录像同步会删除其云端副本，本机记录保留。",

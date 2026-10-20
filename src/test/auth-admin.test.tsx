@@ -2,7 +2,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, deferred, flush, flushUntil, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
+import { clickButton, deferred, flush, flushUntil as flushUntilBase, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
+
+async function flushUntil(predicate: () => boolean, maxTicks = 60): Promise<void> {
+  await flush();
+  await flushUntilBase(predicate, maxTicks);
+  await flush();
+}
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -100,9 +106,11 @@ beforeEach(() => {
   mocks.ask.mockResolvedValue(true);
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await flush();
   mounted?.unmount();
   mounted = undefined;
+  await flush();
   useAuth.setState({ user: null, dek: null, gate: "ready", pendingRecoveryKey: null, error: null, status: null });
 });
 
@@ -168,7 +176,7 @@ describe("AccountCard superadmin user management", () => {
       (d) => d.textContent?.includes("alice") && !d.textContent?.includes("（我）"),
     )!;
     const disableBtn = [...aliceRow.querySelectorAll("button")].find((b) => b.textContent?.trim() === "禁用")!;
-    disableBtn.click();
+    act(() => disableBtn.click());
     await flushUntil(() => mocks.ask.mock.calls.length > 0);
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("alice");
     await flushUntil(() => mocks.disableUser.mock.calls.length > 0);
@@ -183,7 +191,7 @@ describe("AccountCard superadmin user management", () => {
       (d) => d.textContent?.includes("alice") && !d.textContent?.includes("（我）"),
     )!;
     const disableBtn = [...aliceRow.querySelectorAll("button")].find((b) => b.textContent?.trim() === "禁用")!;
-    disableBtn.click();
+    act(() => disableBtn.click());
     await flush();
     expect(mocks.disableUser).not.toHaveBeenCalled();
   });
@@ -195,7 +203,7 @@ describe("AccountCard superadmin user management", () => {
       (d) => d.textContent?.includes("alice") && !d.textContent?.includes("（我）"),
     )!;
     const resetBtn = [...aliceRow.querySelectorAll("button")].find((b) => b.textContent?.trim() === "重置")!;
-    resetBtn.click();
+    act(() => resetBtn.click());
     await flushUntil(() => mocks.ask.mock.calls.length > 0);
     const question = String(mocks.ask.mock.calls[0]?.[0]);
     expect(question).toContain("数据密钥");

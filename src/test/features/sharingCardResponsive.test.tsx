@@ -170,11 +170,12 @@ describe("ShareCard narrow-screen row layout (M233)", () => {
     expect(nameSpan.className).toContain("truncate");
     expect(nameSpan.getAttribute("title")).toBe("web-01");
 
-    const revokeButtons = rows.flatMap((r) => [...r.querySelectorAll("button")]);
-    expect(revokeButtons.length).toBe(3);
-    for (const button of revokeButtons) {
+    const rowButtons = rows.flatMap((r) => [...r.querySelectorAll("button")]);
+    expect(rowButtons.length).toBe(4);
+    expect(rowButtons.filter((button) => button.textContent?.trim() === "打开终端")).toHaveLength(1);
+    expect(rowButtons.filter((button) => button.textContent?.trim() === "吊销")).toHaveLength(3);
+    for (const button of rowButtons) {
       expect(button.className).toContain("shrink-0");
-      expect(button.textContent?.trim()).toBe("吊销");
     }
   });
 });

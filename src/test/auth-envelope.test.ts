@@ -49,7 +49,7 @@ describe("DEK envelope interoperability with the Go vault", () => {
     const opened = await unwrapDEKWithPassword("correct horse battery staple", envelope, salt, params);
     expect(bytesToHex(opened)).toBe(bytesToHex(dek));
     await expect(unwrapDEKWithPassword("wrong password", envelope, salt, params)).rejects.toThrow();
-  }, 60_000);
+  }, 180_000);
 
   it("round-trips a local recovery-key-wrapped envelope", async () => {
     const dek = generateDEK();

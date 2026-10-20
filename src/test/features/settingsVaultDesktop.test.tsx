@@ -192,7 +192,10 @@ describe("Desktop credential protection disable paths", () => {
 
   it("distinguishes local key storage from sync upload requirements in desktop copy", async () => {
     mounted = withClient(createElement(SettingsView));
-    await flushUntil(() => (mounted!.container.textContent ?? "").includes("密钥加密后保存在当前实例的数据库中"));
+    await flushUntil(() =>
+      (vaultCard()?.textContent ?? "").includes("已开启") &&
+      (mounted!.container.textContent ?? "").includes("密钥加密后保存在当前实例的数据库中"),
+    );
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("启用「同步 AI 模型档案」并解锁凭据库后");
     expect(text).toContain("端到端加密同步");

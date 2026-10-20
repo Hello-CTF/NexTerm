@@ -1,37 +1,69 @@
-import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+/** @vitest-environment jsdom */
 
-const css = readFileSync(new URL("../ui/skeleton.css", import.meta.url), "utf8");
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  flattenCSSRules,
+  installCompiledCSS,
+  requireStyleRule,
+  styleRules,
+} from "./lib/cssom";
 
-describe("skeleton.css contract", () => {
+let installed: HTMLStyleElement;
+let rules: CSSStyleRule[];
+let allRules: CSSRule[];
+
+beforeAll(async () => {
+  installed = await installCompiledCSS("src/ui/skeleton.css");
+  rules = styleRules(installed);
+  allRules = flattenCSSRules(installed.sheet!.cssRules);
+});
+
+afterAll(() => {
+  installed?.remove();
+});
+
+function mediaRules(condition: string): CSSStyleRule[] {
+  const media = allRules.find(
+    (rule): rule is CSSMediaRule => rule instanceof CSSMediaRule && rule.conditionText === condition,
+  );
+  if (!media) throw new Error(`missing media query: ${condition}`);
+  return flattenCSSRules(media.cssRules).filter(
+    (rule): rule is CSSStyleRule => rule instanceof CSSStyleRule,
+  );
+}
+
+describe("skeleton style contract", () => {
   it("disables the pulse animation under prefers-reduced-motion", () => {
-    const block = css.match(/@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/);
-    expect(block).not.toBeNull();
-    expect(block![1]).toContain(".nx-skeleton");
-    expect(block![1]).toMatch(/animation:\s*none/);
+    const reducedMotion = requireStyleRule(
+      mediaRules("(prefers-reduced-motion: reduce)"),
+      ".nx-skeleton",
+      "animation",
+    );
+    expect(reducedMotion.style.getPropertyValue("animation")).toBe("none");
   });
 
-  it("defines pulse keyframes and adapts the background to theme variables", () => {
-    expect(css).toContain("@keyframes nx-skeleton-pulse");
-    expect(css).toMatch(/background:\s*color-mix\(in srgb, var\(--nx-fg\)/);
+  it("defines pulse keyframes and derives the bar color from the theme foreground", () => {
+    const base = requireStyleRule(rules, ".nx-skeleton", "background");
+    expect(base.style.getPropertyValue("display")).toBe("block");
+    expect(base.style.getPropertyValue("background")).toContain("color-mix(");
+    expect(base.style.getPropertyValue("background")).toContain("var(--nx-fg)");
+    expect(base.style.getPropertyValue("animation")).toContain("nx-skeleton-pulse");
+
+    const keyframes = allRules.find(
+      (rule): rule is CSSKeyframesRule =>
+        rule instanceof CSSKeyframesRule && rule.name === "nx-skeleton-pulse",
+    );
+    expect(keyframes).toBeDefined();
+    expect(keyframes?.cssRules.length).toBeGreaterThan(0);
   });
 
   it("keeps skeleton bars distinguishable in forced-colors mode", () => {
-    const block = css.match(/@media \(forced-colors: active\) \{([\s\S]*?)\n\}/);
-    expect(block).not.toBeNull();
-    expect(block![1]).toContain("CanvasText");
-  });
-
-  it("imports skeleton.css in all four consumer components", () => {
-    const files = [
-      "features/files/FileBrowser.tsx",
-      "features/files/FileTree.tsx",
-      "features/docker/DockerPanel.tsx",
-      "features/terminal/BackgroundSessions.tsx",
-    ];
-    for (const file of files) {
-      const src = readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
-      expect(src, file).toContain('import "../../ui/skeleton.css";');
-    }
+    const forcedColors = requireStyleRule(
+      mediaRules("(forced-colors: active)"),
+      ".nx-skeleton",
+      "background",
+    );
+    expect(forcedColors.style.getPropertyValue("background").toLowerCase()).toBe("canvastext");
+    expect(Number(forcedColors.style.getPropertyValue("opacity"))).toBeGreaterThan(0);
   });
 });

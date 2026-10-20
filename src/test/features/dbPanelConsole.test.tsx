@@ -5,11 +5,20 @@ import { act, createElement } from "react";
 import {
   click,
   clickButton,
-  flushUntil,
+  flush,
+  flushUntil as flushUntilRaw,
   mount,
   setInputValue,
   type MountedView,
 } from "./reactTestUtils";
+
+async function flushUntil(predicate: () => boolean): Promise<void> {
+  if (predicate()) {
+    await flush();
+    return;
+  }
+  await flushUntilRaw(predicate);
+}
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
@@ -149,6 +158,7 @@ describe("DbPanel Redis console accessibility", () => {
     mountRedis();
     await expandConsole();
     const text = mounted!.container.textContent ?? "";
+    expect(text).toContain("使用 Redis 命令协议，不支持 SQL");
     expect(text).toContain("危险命令执行前需要确认");
     expect(text).toContain("其余命令直接执行");
     expect(text).toContain("不支持引号");

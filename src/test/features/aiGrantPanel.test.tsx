@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import type { Asset } from "../../ipc/commands";
 import { clickButton, flush, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
@@ -111,7 +111,14 @@ function rowFor(name: string): HTMLElement {
 async function mountPanel(): Promise<void> {
   view = mount(createElement(GrantPanel, { onClose: mocks.onClose }));
   await flushUntil(() => view!.container.querySelectorAll("div.rounded-lg").length > 0);
+  await flush();
 }
+
+afterEach(async () => {
+  await flush();
+  view?.unmount();
+  view = null;
+});
 
 describe("GrantPanel long-term device grants", () => {
   beforeEach(() => {

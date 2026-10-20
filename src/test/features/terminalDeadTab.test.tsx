@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../../app/platform", () => ({
   isMac: () => false,
+  isWindows: () => false,
   modHint: () => "Ctrl",
   setMacPlatform: () => {},
   wailsDragRegionStyle: {},
@@ -98,7 +99,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
 });
 
 import { TerminalPane } from "../../features/terminal/TerminalPane";
-import { useUi, type AppTab } from "../../app/store";
+import { assetConnectionProblemKey, useUi, type AppTab } from "../../app/store";
 
 let mounted: MountedView | undefined;
 
@@ -193,7 +194,9 @@ async function clickMenuItem(label: string): Promise<void> {
     (candidate) => candidate.textContent?.includes(label),
   );
   if (!item) throw new Error(`menu item ${label} not found`);
-  act(() => item.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await act(async () => {
+    item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
 }
 
 function menuLabels(): string[] {
@@ -228,6 +231,7 @@ describe("terminal dead-tab overlay", () => {
     document.body.replaceChildren();
     harness.props = null;
     mocks.listLive.mockResolvedValue([]);
+    mocks.listSessions.mockImplementation(async () => useUi.getState().sessions);
     mocks.write.mockResolvedValue(undefined);
     mocks.closeTab.mockResolvedValue(undefined);
     mocks.connect.mockResolvedValue({
@@ -267,6 +271,61 @@ describe("terminal dead-tab overlay", () => {
     await waitFor(() => expect(overlay()).not.toBeNull());
     expect(storeTab()?.dead).toBe(true);
     expect(storeTab()?.tabId).toBe("kernel-1");
+  });
+
+  it.each([
+    { kind: "ssh", expected: ["kernel-1", "detach", "s1"] },
+    { kind: "device", expected: ["kernel-1", "detach", "s1"] },
+    { kind: "local", expected: ["kernel-1", undefined] },
+  ])("uses the safe default close path for an attach-dead $kind terminal", async ({ kind, expected }) => {
+    seedTab({}, { assetId: kind === "device" ? "device/d-1" : "asset-1", assetKind: kind });
+    mounted = mountPane();
+    await flush();
+    failAttach("not_found");
+    await waitFor(() => expect(overlay()).not.toBeNull());
+
+    clickButton(mounted.container, "关闭标签");
+
+    await waitFor(() => expect(mocks.closeTab).toHaveBeenCalledWith(...expected));
+    expect(storeTab()).toBeUndefined();
+  });
+
+  it.each([false, true])("synchronizes attach info with exited=%s and clears stale close state", async (exited) => {
+    seedTab({ dead: true, exited: !exited, closeError: "stale" });
+    mocks.listLive.mockResolvedValue([{
+      tabId: "kernel-1",
+      sessionId: "s1",
+      sessionName: "web-01",
+      sessionKind: "ssh",
+      cols: 80,
+      rows: 24,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited,
+      lastOutputMsAgo: 0,
+    }]);
+    mounted = mountPane();
+    await flush();
+
+    act(() => {
+      (harness.props?.onAttachInfo as ((info: Record<string, unknown>) => void) | undefined)?.({
+        tabId: "kernel-1",
+        controller: "me",
+        subscribers: 1,
+        viewers: 1,
+        exited,
+        retainable: true,
+        shell: "posix",
+      });
+      (harness.props?.onAttach as ((id: string) => void) | undefined)?.("kernel-1");
+    });
+
+    await waitFor(() => {
+      expect(storeTab()?.exited).toBe(exited);
+      expect(storeTab()?.dead).toBe(false);
+      expect(storeTab()?.closeError).toBeUndefined();
+    });
   });
 
   it("keeps the terminal on other attach failures such as bad_param", async () => {
@@ -599,6 +658,38 @@ describe("terminal dead-tab context menu reconnect", () => {
     expect(storeTab()?.tabId).toBe("kernel-1");
   });
 
+  it("records a current-session reconnect failure and clears it after retry", async () => {
+    useUi.setState({ workspaceRuntime: {}, connectionProblems: {} });
+    seedTab();
+    mocks.reconnect.mockResolvedValueOnce(false).mockResolvedValue(true);
+    mounted = mountPane();
+    await flush();
+
+    await openTerminalMenu();
+    await clickMenuItem("重连会话");
+    await waitFor(() => expect(toastTexts()).toContain("重连失败：重连未能启动"));
+    expect(useUi.getState().workspaceRuntime.ws1?.problems?.[0]).toMatchObject({
+      connectionKey: assetConnectionProblemKey("asset-1"),
+      summary: "重连未能启动",
+    });
+
+    mocks.listSessions.mockResolvedValue([
+      {
+        id: "s1",
+        assetId: "asset-1",
+        name: "web-01",
+        kind: "ssh",
+        status: "connected",
+        tabs: [],
+        createdAt: 1,
+      },
+    ]);
+    await openTerminalMenu();
+    await clickMenuItem("重连会话");
+    await waitFor(() => expect(toastTexts()).toContain("已重新连接"));
+    expect(useUi.getState().workspaceRuntime.ws1?.problems ?? []).toEqual([]);
+  });
+
   it("cancelling the changed host key confirmation neither trusts nor retries", async () => {
     seedTab();
     mounted = mountPane();
@@ -703,7 +794,7 @@ describe("terminal dead-tab context menu reconnect", () => {
     expect(mounted.container.textContent).toContain("原进程和输入不能恢复");
     expect(storeTab()?.tabId).toBe("exec-1");
     clickButton(mounted.container, "重新打开 exec");
-    await waitFor(() => expect(storeTab()?.exited).toBe(false));
+    await waitFor(() => expect(storeTab()?.exited).toBeUndefined());
     expect(storeTab()?.tabId).toBeUndefined();
   });
 

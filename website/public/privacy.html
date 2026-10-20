@@ -56,9 +56,9 @@
   <h2>2. 数据存储位置</h2>
   <ul>
     <li><strong>本地数据</strong>：桌面和移动端在应用数据目录保存资产、设置、终端历史和 AI 对话。凭据库可使用系统保护或你设置的保护密码；终端历史可能含敏感输入，请保护应用数据目录和备份。</li>
-    <li><strong>端到端加密同步</strong>：使用同步功能时，资产、分组、片段、凭据和可选配置作为加密同步对象传输；服务端无法解密这些同步对象。</li>
+    <li><strong>端到端加密同步</strong>：桌面端使用跨设备同步时，资产、分组、片段、凭据和可选配置作为加密同步对象传输；服务端无法解密这些同步对象。</li>
     <li><strong>终端历史</strong>：历史记录默认不参与跨设备同步；你可以对单条记录单独开启端到端加密同步，也可以逐条删除。浏览器模式的会话和历史由你部署的服务端处理和保存。</li>
-    <li><strong>自托管服务端</strong>：服务端由你或你的团队部署，账号、工作区、会话及 AI 对话等数据保存在其数据目录或数据库（SQLite / PostgreSQL / MySQL / MariaDB）中。服务端管理员应控制访问权限和备份。</li>
+    <li><strong>自托管服务端</strong>：服务端由你或你的团队部署，账号、工作区、会话及 AI 对话等数据保存在其数据目录或数据库（SQLite / PostgreSQL / MySQL / MariaDB）中。浏览器模式保存的凭据由服务端 master key 保护的凭据库加密，与上述端到端加密同步不同；服务端可解密凭据以建立连接。服务端管理员应控制访问权限，并保护数据目录、master key 和备份。</li>
   </ul>
 
   <h2>3. 生物识别</h2>
@@ -68,7 +68,7 @@
   <p>AI 功能使用你配置的 OpenAI 兼容接口，可以是本地模型或第三方端点。请求由运行 AI 功能的 NexTerm 实例发送：桌面端由本机发送，浏览器模式由你部署的服务端发送。发送给模型的对话、终端或文件内容受该端点的隐私规则约束；AI 对话和运行记录也会保存在相应 NexTerm 实例的数据存储中。</p>
 
   <h2>5. 分享链接</h2>
-  <p>你可以主动把设备或会话生成限时公开链接。链接默认只读，只有显式授权才允许读写，可随时吊销。获得链接的人在有效期内无需登录即可访问，请仅授予可信对象。</p>
+  <p>你可以主动为已有终端会话创建限时公开预览链接。链接默认只读，浏览器模式可显式授权写入，桌面中继创建的预览目前只读，均可随时吊销。获得链接的人在有效期内无需登录即可访问，请仅授予可信对象。</p>
 
   <h2>6. 第三方共享</h2>
   <p>本官网不加载第三方分析、广告或追踪脚本，项目维护者不出售用户数据。你主动使用远程连接、同步、AI 或更新功能时，相关请求会发送至相应的主机或服务。</p>
@@ -96,9 +96,9 @@
     <h2>2. Where Data Is Stored</h2>
     <ul>
       <li><strong>Local data</strong>: desktop and mobile apps store assets, settings, terminal history, and AI conversations in the app data directory. The credential vault can use OS protection or a protection password you set. Terminal history may contain sensitive input; protect the app data directory and its backups.</li>
-      <li><strong>End-to-end encrypted sync</strong>: when you use sync, assets, groups, snippets, credentials, and optional settings are transmitted as encrypted sync objects. The server cannot decrypt those sync objects.</li>
+      <li><strong>End-to-end encrypted sync</strong>: when you use desktop cross-device sync, assets, groups, snippets, credentials, and optional settings are transmitted as encrypted sync objects. The server cannot decrypt those sync objects.</li>
       <li><strong>Terminal history</strong>: recordings are excluded from cross-device sync by default. You may enable end-to-end encrypted sync per entry or delete entries individually. In browser mode, sessions and history are processed and stored by the server you deploy.</li>
-      <li><strong>Self-hosted server</strong>: you or your team deploy the server. Accounts, workspaces, sessions, AI conversations, and related data live in its data directory or database (SQLite / PostgreSQL / MySQL / MariaDB). Server administrators should control access and backups.</li>
+      <li><strong>Self-hosted server</strong>: you or your team deploy the server. Accounts, workspaces, sessions, AI conversations, and related data live in its data directory or database (SQLite / PostgreSQL / MySQL / MariaDB). In browser mode, credentials are encrypted by the server-side vault protected by its master key, separately from the end-to-end encrypted sync above; the server can decrypt credentials to establish connections. Server administrators should control access and protect the data directory, master key, and backups.</li>
     </ul>
 
     <h2>3. Biometrics</h2>
@@ -108,7 +108,7 @@
     <p>AI features use an OpenAI-compatible endpoint you configure, whether a local model or a third-party endpoint. Requests are sent by the NexTerm instance running AI: your device in desktop mode, or your deployed server in browser mode. Conversations, terminal output, and file content sent to a model are subject to that endpoint's privacy rules. AI conversations and run records are also stored by the corresponding NexTerm instance.</p>
 
     <h2>5. Sharing Links</h2>
-    <p>You may create time-limited public links to devices or sessions. Links are read-only by default; read-write access requires explicit authorization and links can be revoked at any time. Anyone with the link can access it within its validity period without signing in — share only with trusted parties.</p>
+    <p>You may create time-limited public preview links to existing live terminal sessions. Links are read-only by default; browser mode allows explicit write grants, while previews created through the desktop relay are currently read-only. Links can be revoked at any time. Anyone with the link can access it within its validity period without signing in — share only with trusted parties.</p>
 
     <h2>6. Third Parties</h2>
     <p>This website loads no third-party analytics, advertising, or tracking scripts. The project maintainers do not sell user data. When you use remote connections, sync, AI, or updates, related requests go to the respective hosts or services.</p>

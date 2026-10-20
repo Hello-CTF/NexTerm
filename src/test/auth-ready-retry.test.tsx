@@ -22,6 +22,17 @@ const mocks = vi.hoisted(() => {
     login: vi.fn(),
     logout: vi.fn(),
     dekGet: vi.fn(),
+    transcriptHosts: vi.fn(),
+    transcriptList: vi.fn(),
+    transcriptRead: vi.fn(),
+    collectAssets: vi.fn(),
+    collectTombstones: vi.fn(),
+    collectCredentials: vi.fn(),
+    kindOptInGet: vi.fn(),
+    applyObjects: vi.fn(),
+    syncIds: vi.fn(),
+    syncPull: vi.fn(),
+    syncPush: vi.fn(),
     onRemoteChange: vi.fn(),
     advanceLayoutAccount: vi.fn(),
   };
@@ -42,7 +53,19 @@ vi.mock("../ipc/commands", () => ({
     probe: vi.fn(),
   },
   vaultApi: { status: mocks.vaultStatus, listCredentials: mocks.listCredentials },
-  syncApi: { linkGet: vi.fn() },
+  transcriptApi: {
+    hosts: mocks.transcriptHosts,
+    list: mocks.transcriptList,
+    read: mocks.transcriptRead,
+  },
+  syncApi: {
+    linkGet: vi.fn(),
+    collectAssets: mocks.collectAssets,
+    collectTombstones: mocks.collectTombstones,
+    collectCredentials: mocks.collectCredentials,
+    kindOptInGet: mocks.kindOptInGet,
+    applyObjects: mocks.applyObjects,
+  },
   terminalApi: {},
   dbApi: {},
 }));
@@ -61,6 +84,11 @@ vi.mock("../ipc/authApi", async (importOriginal) => {
       changePassword: vi.fn(),
       recoveryReset: vi.fn(),
       init: vi.fn(),
+    },
+    syncV2Api: {
+      ids: mocks.syncIds,
+      pull: mocks.syncPull,
+      push: mocks.syncPush,
     },
   };
 });
@@ -214,6 +242,17 @@ beforeEach(() => {
     recovery_envelope: "",
     recovery_hash: "",
   });
+  mocks.transcriptHosts.mockResolvedValue([]);
+  mocks.transcriptList.mockResolvedValue([]);
+  mocks.transcriptRead.mockResolvedValue({ chunks: [], nextSeq: 0, done: true, totalBytes: 0 });
+  mocks.collectAssets.mockResolvedValue({ assets: [], hasMore: false });
+  mocks.collectTombstones.mockResolvedValue({ tombstones: [], hasMore: false });
+  mocks.collectCredentials.mockResolvedValue({ credentials: [], hasMore: false });
+  mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
+  mocks.applyObjects.mockResolvedValue({ applied: 0, identical: 0, skipped: 0, objects: [] });
+  mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-0", max_seq: 0 });
+  mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [], head: "head-0", max_seq: 0, next_seq: 0, cursor_done: true });
+  mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-1", max_seq: 2, applied: 2, skipped: 0 });
   mocks.assetList.mockImplementation(() => (authed ? Promise.resolve([ASSET]) : Promise.reject(UNAUTH)));
   mocks.groupList.mockImplementation(() => (authed ? Promise.resolve([GROUP]) : Promise.reject(UNAUTH)));
   mocks.snippetList.mockImplementation(() => (authed ? Promise.resolve([SNIPPET]) : Promise.reject(UNAUTH)));
@@ -244,9 +283,11 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await flush();
   mounted?.unmount();
   mounted = undefined;
+  await flush();
 });
 
 describe("data refetch after successful auth=on login (real AssetTree)", () => {
@@ -360,7 +401,7 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
     expect(mocks.onRemoteChange).toHaveBeenCalledTimes(2);
   });
 
-  it("clears forward overview cache when the user changes without leaving the ready gate", async () => {
+  it("clears account-scoped query caches when the user changes without leaving the ready gate", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mounted = mountApp(client);
     await flushUntil(() => useAuth.getState().gate === "login");
@@ -369,11 +410,15 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
     await flushUntil(() => text().includes("web-01"));
     client.setQueryData(["forwards"], [{ id: "old-account-forward" }]);
     client.setQueryData(["forwardEnv"], { available: true, listenHost: "old-account" });
+    client.setQueryData(["exec-batch-history", "account-a", 0], { items: [{ id: "old-account-batch" }] });
+    client.setQueryData(["exec-batch-history-detail", "account-a", "shared-id", "self"], { batch: { id: "shared-id" } });
 
     act(() => useAuth.setState({ user: { ...ADMIN, id: "u-b", username: "account-b" } }));
     await flush();
     expect(client.getQueryData(["forwards"])).toBeUndefined();
     expect(client.getQueryData(["forwardEnv"])).toBeUndefined();
+    expect(client.getQueryData(["exec-batch-history", "account-a", 0])).toBeUndefined();
+    expect(client.getQueryData(["exec-batch-history-detail", "account-a", "shared-id", "self"])).toBeUndefined();
   });
 
   it("synchronizes a cross-tab session identity response into the auth store", async () => {
@@ -396,15 +441,17 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
     await login();
     await flushUntil(() => text().includes("web-01"));
     const seedDraft = (draft: string) => {
-      useUi.setState({
-        aiBoards: {
-          account: {
-            tabs: [{ id: "ai-shared", title: "History", conversationId: "conv-history", draft }],
-            activeTabId: "ai-shared",
+      act(() => {
+        useUi.setState({
+          aiBoards: {
+            account: {
+              tabs: [{ id: "ai-shared", title: "History", conversationId: "conv-history", draft }],
+              activeTabId: "ai-shared",
+            },
           },
-        },
-        aiBusy: true,
-        takeover: { tabId: "old-tab", token: "old-token", task: "old task", allowWrite: true, startedAt: 1 },
+          aiBusy: true,
+          takeover: { tabId: "old-tab", token: "old-token", task: "old task", allowWrite: true, startedAt: 1 },
+        });
       });
     };
     mocks.onRemoteChange.mockImplementation(() => {

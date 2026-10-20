@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => {
     authDevices: vi.fn(),
     authSessions: vi.fn(),
     authSessionRevoke: vi.fn(),
+    authLogout: vi.fn(),
     adminUsers: vi.fn(),
     adminSettingsGet: vi.fn(),
     transcriptHosts: vi.fn(),
@@ -95,7 +96,7 @@ vi.mock("../../ipc/authApi", async (importOriginal) => {
       devices: mocks.authDevices,
       sessions: mocks.authSessions,
       sessionRevoke: mocks.authSessionRevoke,
-      logout: vi.fn().mockResolvedValue({ ok: true }),
+      logout: mocks.authLogout,
       logoutAll: vi.fn().mockResolvedValue({ revoked: 1 }),
       deviceRevoke: vi.fn().mockResolvedValue({ ok: true }),
       totpStatus: vi.fn().mockResolvedValue({ enabled: false, pending: false, mfa_required: false, recovery_codes_left: 0 }),
@@ -164,13 +165,15 @@ function mountAuthCard(): MountedView {
 
 async function runAutoSync() {
   const { runWebSync, WEB_SYNC_RESULT_EVENT, WEB_SYNC_ERROR_EVENT } = await import("../../features/settings/SyncCard");
-  try {
-    const result = await runWebSync(new Uint8Array(32).fill(7), { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
-    if (result) window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result }));
-  } catch (error) {
-    window.dispatchEvent(new CustomEvent(WEB_SYNC_ERROR_EVENT, { detail: error }));
-    throw error;
-  }
+  await act(async () => {
+    try {
+      const result = await runWebSync(new Uint8Array(32).fill(7), { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
+      if (result) window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result }));
+    } catch (error) {
+      window.dispatchEvent(new CustomEvent(WEB_SYNC_ERROR_EVENT, { detail: error }));
+      throw error;
+    }
+  });
 }
 
 const DEMO_USER = {
@@ -238,6 +241,7 @@ beforeEach(() => {
   mocks.authDevices.mockResolvedValue({ devices: [] });
   mocks.authSessions.mockResolvedValue({ sessions: [] });
   mocks.authSessionRevoke.mockResolvedValue({ ok: true });
+  mocks.authLogout.mockResolvedValue({ ok: true });
   mocks.adminUsers.mockResolvedValue({ users: [DEMO_USER] });
   mocks.adminSettingsGet.mockResolvedValue({ registration_open: false, mfa_required: false });
 });
@@ -447,7 +451,7 @@ describe("SyncCard (web account sync)", () => {
     expect(mounted.container.textContent).toContain("受管主机");
   });
 
-  it("clears the local login when the current session is revoked", async () => {
+  it("uses the unified logout path when the current session is revoked", async () => {
     seedAuthed(true);
     mocks.authSessions.mockResolvedValue({ sessions: [
       { id: "s-current", name: "此浏览器", origin: "203.0.113.1", created_at: 1000, last_seen_at: 2000, expires_at: 3000, current: true },
@@ -457,7 +461,8 @@ describe("SyncCard (web account sync)", () => {
     await flushUntil(() => mounted!.container.textContent?.includes("当前会话") ?? false);
     clickButton(mounted.container, "退出会话");
     await flushUntil(() => useAuth.getState().user === null);
-    expect(mocks.authSessionRevoke).toHaveBeenCalledWith("s-current");
+    expect(mocks.authLogout).toHaveBeenCalledTimes(1);
+    expect(mocks.authSessionRevoke).not.toHaveBeenCalled();
   });
 
   it("renders only the account-card login entry when logged out, without a duplicate sync console", async () => {

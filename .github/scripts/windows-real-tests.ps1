@@ -144,6 +144,9 @@ try {
     Invoke-TargetedGoTest -Package './internal/fs/local' -Test 'TestRealWindowsSecondVolume'
     Remove-Item Env:NEXTERM_WINDOWS_LOCAL_INTEGRATION
 
+    Invoke-TargetedGoTest -Package './internal/pty' -Test 'TestSessionWindowsNaturalExitEOF'
+    Invoke-TargetedGoTest -Package './internal/pty' -Test 'TestSessionWindowsBackpressureAndDrain'
+
     $userName = 'nxt' + [guid]::NewGuid().ToString('N').Substring(0, 10)
     $password = [guid]::NewGuid().ToString('N') + 'aA1!'
     Write-Host "::add-mask::$password"
@@ -537,4 +540,4 @@ if ($cleanupFailures.Count -ne 0) {
 if ($null -ne $failure -or $cleanupFailures.Count -ne 0) {
     exit 1
 }
-Write-Host 'Real Windows Go, second-volume, WinRM and OpenSSH tests passed'
+Write-Host 'Real Windows Go, ConPTY, second-volume, WinRM and OpenSSH tests passed'

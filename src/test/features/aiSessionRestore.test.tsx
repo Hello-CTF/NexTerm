@@ -433,16 +433,17 @@ describe("AiSidebar session restore", () => {
     expect(mocks.steer).toHaveBeenCalledWith("job-1", "先补充一句");
   });
 
-  it("restores the latest usage from run events", async () => {
+  it("restores usage only from runs that need event replay", async () => {
     bindConversation("conv-1", "Investigate 502");
     mocks.runs.mockResolvedValue([
+      runOf({ id: "job-needed", status: "interrupted", createdAt: 3000, finishedAt: undefined }),
       runOf({ id: "job-new", status: "completed", createdAt: 2000 }),
       runOf({ id: "job-old", status: "completed", createdAt: 1000 }),
     ]);
     mocks.runEvents.mockImplementation((jobId: string) =>
       Promise.resolve(
-        jobId === "job-old"
-          ? [{ type: "usage", seq: 1, promptTokens: 4000, completionTokens: 800, cachedTokens: 2000, contextWindow: 10000 }]
+        jobId === "job-needed"
+          ? [{ type: "usage", seq: 1, promptTokens: 5000, completionTokens: 800, cachedTokens: 2500, contextWindow: 10000 }]
           : [],
       ),
     );
@@ -452,7 +453,9 @@ describe("AiSidebar session restore", () => {
       return ring?.getAttribute("aria-label")?.includes("上下文占用") === true;
     });
     expect(view!.container.querySelector('span[role="img"]')?.getAttribute("aria-label")).toBe(
-      "上下文占用 40%（4.0k / 10.0k），缓存命中 50%",
+      "上下文占用 50%（5.0k / 10.0k），缓存命中 50%",
     );
+    expect(mocks.runEvents).toHaveBeenCalledTimes(1);
+    expect(mocks.runEvents).toHaveBeenCalledWith("job-needed", 0, 200);
   });
 });

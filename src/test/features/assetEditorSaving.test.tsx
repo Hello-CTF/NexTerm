@@ -26,7 +26,6 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       groupDelete: vi.fn(),
       list: vi.fn(),
       readKeyFile: vi.fn(),
-      saveKeyFile: vi.fn(),
       auditQuery: vi.fn(),
     },
     vaultApi: {
@@ -129,7 +128,7 @@ describe("AssetEditor duplicate-save prevention", () => {
     expect(saveBtn.disabled).toBe(false);
     mocks.create.mockResolvedValueOnce({ id: "a1" });
     click(saveBtn);
-    await flushUntil(() => !text().includes("name already exists"));
+    await flushUntil(() => !text().includes("name already exists") && !saveBtn.disabled);
     expect(mocks.create).toHaveBeenCalledTimes(2);
   });
 });

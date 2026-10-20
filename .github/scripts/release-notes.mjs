@@ -56,15 +56,25 @@ if (prevTagOnly) {
 }
 if (!previous) console.warn(`release-notes: no previous v* tag before ${tag}; using the full history`);
 const range = previous ? `${previous}..${tag}` : tag;
-const subjects = git("log", "--format=%s", range).split("\n").filter((line) => line.trim() !== "");
+const messages = git("log", "--no-merges", "--format=%B%x00", range)
+  .split("\0")
+  .map((message) => message.replace(/^\n+/, "").trim())
+  .filter((message) => message !== "");
 
 const other = [];
 const excluded = [];
-for (const subject of subjects) {
+const breaking = [];
+for (const message of messages) {
+  const [subject, ...bodyLines] = message.split("\n");
+  const body = bodyLines.join("\n");
   const match = conventional.exec(subject);
   const commit = match
     ? { type: match[1], scope: match[2] || "", text: match[4] }
     : { type: "", scope: "", text: subject };
+  const breakingFooter = /^BREAKING CHANGE:[ \t]*(.*)$/m.exec(body);
+  if ((match && match[3]) || breakingFooter) {
+    breaking.push({ scope: commit.scope, text: breakingFooter?.[1]?.trim() || commit.text });
+  }
   const group = groups.find((item) => item.type === commit.type);
   if (group) group.commits.push(commit);
   else if (match && excludedTypes.has(commit.type)) excluded.push(commit);
@@ -73,8 +83,14 @@ for (const subject of subjects) {
 const visible = groups.filter((group) => group.commits.length > 0);
 const rendered = [...visible, { title: "其他", commits: visible.length === 0 && other.length === 0 ? excluded : other }];
 for (const group of rendered) group.commits.sort(compareCommits);
+breaking.sort(compareCommits);
 
 const lines = [`### ${tag} 变化`, ""];
+if (breaking.length > 0) {
+  lines.push("#### 破坏性变更", "");
+  for (const commit of breaking) lines.push(formatCommit(commit));
+  lines.push("");
+}
 for (const group of rendered) {
   if (group.commits.length === 0) continue;
   lines.push(`#### ${group.title}`, "");

@@ -76,7 +76,7 @@ vi.mock("../../ipc/events", async (importOriginal) => ({
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, askChoice: mocks.askChoice, promptText: mocks.promptText }));
 
-import { AiSidebar } from "../../features/ai/AiSidebar";
+import { AI_HITL_EXPIRY_GRACE_MS, AiSidebar } from "../../features/ai/AiSidebar";
 import { useUi } from "../../app/store";
 
 let rafQueue: { cb: FrameRequestCallback; cancelled: boolean }[] = [];
@@ -1141,6 +1141,11 @@ describe("AiSidebar conversation stream UX", () => {
   });
 
   it("settles the bound restored run by itself when it expires while viewing", async () => {
+    vi.useFakeTimers({
+      now: 1_000_000,
+      toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+    });
+    const expiryLeadMs = 80;
     mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
     mocks.messages.mockResolvedValue([{ role: "user", content: { role: "user", content: "旧问题" } }]);
     mocks.runs.mockResolvedValue([
@@ -1165,7 +1170,7 @@ describe("AiSidebar conversation stream UX", () => {
           id: "req-old", runId: "job-old", checkpointId: "job-old", callId: "ask-1",
           tool: "ask_user", kind: "question", parameters: {}, nonce: "nonce-old",
           question: { id: "req-old", text: "继续吗？", options: ["继续"] },
-          expiresAt: new Date(Date.now() + 80).toISOString(),
+          expiresAt: new Date(Date.now() + expiryLeadMs).toISOString(),
         }),
       ], { runId: "job-old", checkpointId: "job-old" }),
     );
@@ -1179,8 +1184,9 @@ describe("AiSidebar conversation stream UX", () => {
     const restoredChannel = mocks.channels.at(-1);
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await vi.advanceTimersByTimeAsync(expiryLeadMs + AI_HITL_EXPIRY_GRACE_MS);
     });
+    await flushReplay();
 
     expect(mocks.runEvents).toHaveBeenCalledTimes(2);
     expect(useUi.getState().aiBusy).toBe(false);

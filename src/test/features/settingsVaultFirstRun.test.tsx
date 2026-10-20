@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
+import { click, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -129,7 +129,8 @@ describe("SettingsView first-run credential protection guidance", () => {
     mounted = withClient(createElement(SettingsView));
     await waitForVaultText("尚未初始化");
 
-    protectionToggle()!.click();
+    mocks.vaultStatus.mockResolvedValue(MASTER_VAULT);
+    click(protectionToggle()!);
     await flushUntil(() => passwordInput() !== null);
     expect(vaultCard()?.textContent).toContain("忘记密码后，已保存的凭据将无法恢复");
 
@@ -138,14 +139,15 @@ describe("SettingsView first-run credential protection guidance", () => {
       (b) => b.textContent === "启用保护",
     );
     expect(enableButton).toBeDefined();
-    enableButton!.click();
-    await flushUntil(() => mocks.initMaster.mock.calls.length > 0);
+    click(enableButton!);
+    await flushUntil(() =>
+      mocks.initMaster.mock.calls.length > 0 && mocks.toast.mock.calls.length > 0 &&
+      (vaultCard()?.textContent ?? "").includes("已开启") && passwordInput() === null,
+    );
 
     expect(mocks.initMaster).toHaveBeenCalledWith("first-run-password");
-    await flushUntil(() => mocks.toast.mock.calls.length > 0);
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已开启密码保护"));
-    await flushUntil(() => mocks.vaultStatus.mock.calls.length >= 2);
-    await flush();
+    expect(mocks.vaultStatus.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(passwordInput()).toBeNull();
   });
 
@@ -173,7 +175,8 @@ describe("SettingsView first-run credential protection guidance", () => {
     mounted = withClient(createElement(SettingsView));
     await waitForVaultText("尚未初始化");
 
-    protectionToggle()!.click();
+    mocks.vaultStatus.mockResolvedValue(MASTER_VAULT);
+    click(protectionToggle()!);
     await flushUntil(() => passwordInput() !== null);
     expect(vaultCard()?.textContent).toContain("留空则不设密码");
 
@@ -182,12 +185,15 @@ describe("SettingsView first-run credential protection guidance", () => {
     );
     expect(enableButton).toBeDefined();
     expect(enableButton!.disabled).toBe(false);
-    enableButton!.click();
-    await flushUntil(() => mocks.initMaster.mock.calls.length > 0);
+    click(enableButton!);
+    await flushUntil(() =>
+      mocks.initMaster.mock.calls.length > 0 && mocks.toast.mock.calls.length > 0 &&
+      (vaultCard()?.textContent ?? "").includes("已开启") && passwordInput() === null,
+    );
 
     expect(mocks.initMaster).toHaveBeenCalledWith("");
-    await flushUntil(() => mocks.toast.mock.calls.length > 0);
     expect(mocks.toast).toHaveBeenCalledWith("success", "已完成初始化，未设置密码");
+    expect(mocks.vaultStatus.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   it("shows encryption enabled without a password and the set-password entry in a passwordless vault, without auto-lock", async () => {

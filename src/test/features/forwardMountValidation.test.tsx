@@ -786,7 +786,8 @@ describe("ForwardPanel and MountPanel session scope", () => {
 
     expect(mounted!.container.textContent).toContain("远端监听已断开");
     clickButton(mounted!.container, "重试");
-    await flushUntil(() => mocks.forwardRetry.mock.calls.some(([id, connectedSession]) => id === "f1" && connectedSession === "s"));
+    await flushUntil(() => mocks.toast.mock.calls.some(([kind, text]) => kind === "success" && text === "转发已恢复"));
+    expect(mocks.forwardRetry.mock.calls.some(([id, connectedSession]) => id === "f1" && connectedSession === "s")).toBe(true);
     expect(mocks.toast).toHaveBeenCalledWith("success", "转发已恢复");
   });
 

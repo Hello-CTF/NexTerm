@@ -1,7 +1,13 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
-import { flush, flushUntil, mount, setInputValue, clickButton, type MountedView } from "./features/reactTestUtils";
+import { act, createElement } from "react";
+import { flush, flushUntil as flushUntilBase, mount, setInputValue, clickButton, type MountedView } from "./features/reactTestUtils";
+
+async function flushUntil(predicate: () => boolean, maxTicks = 60): Promise<void> {
+  await flush();
+  await flushUntilBase(predicate, maxTicks);
+  await flush();
+}
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -108,9 +114,11 @@ beforeEach(() => {
   mocks.recoveryReset.mockResolvedValue({ ok: true });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await flush();
   mounted?.unmount();
   mounted = undefined;
+  await flush();
   resetStore();
 });
 
@@ -194,7 +202,7 @@ describe("AuthGate loopback login bypass", () => {
     await flushUntil(() => useAuth.getState().gate === "ready");
 
     // "Initialize account" entry on the settings page account card
-    useAuth.setState({ gate: "setup" });
+    act(() => useAuth.setState({ gate: "setup" }));
     await flushUntil(() => mounted!.container.textContent?.includes("初始化 NexTerm"));
     clickButton(mounted.container, "暂不初始化，匿名使用");
     await flushUntil(() => useAuth.getState().gate === "ready");
@@ -214,7 +222,7 @@ describe("AuthGate loopback login bypass", () => {
     mounted = mountGate();
     await flushUntil(() => useAuth.getState().gate === "ready");
 
-    useAuth.setState({ gate: "setup" });
+    act(() => useAuth.setState({ gate: "setup" }));
     await flushUntil(() => mounted!.container.textContent?.includes("初始化 NexTerm"));
     const inputs = mounted.container.querySelectorAll("input");
     setInputValue(inputs[0], "console-init-code");
@@ -255,7 +263,7 @@ describe("AuthGate auth=off", () => {
     mounted = mountGate();
     await flushUntil(() => useAuth.getState().gate === "ready");
 
-    useAuth.setState({ gate: "setup" });
+    act(() => useAuth.setState({ gate: "setup" }));
     await flushUntil(() => mounted!.container.textContent?.includes("初始化 NexTerm"));
     clickButton(mounted.container, "账号功能已关闭，返回应用");
     await flushUntil(() => useAuth.getState().gate === "ready");
@@ -274,6 +282,7 @@ describe("AuthGate fullscreen recovery-key gate", () => {
       error: null,
     });
     mounted = mountGate();
+    await flush();
     await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥（仅显示一次）"));
 
     // Fullscreen gate container (fixed inset-0) is present, the underlying app is covered
@@ -286,7 +295,7 @@ describe("AuthGate fullscreen recovery-key gate", () => {
 
     // Available after copying
     const copyBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("复制")) as HTMLButtonElement | undefined;
-    copyBtn?.click();
+    act(() => copyBtn?.click());
     await flush();
     const doneBtn2 = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入应用")) as HTMLButtonElement | undefined;
     expect(doneBtn2?.disabled).toBe(false);
@@ -304,6 +313,7 @@ describe("AuthGate fullscreen recovery-key gate", () => {
       error: null,
     });
     mounted = mountGate();
+    await flush();
     await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥（仅显示一次）"));
 
     clickButton(mounted.container, "复制");

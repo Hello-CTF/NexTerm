@@ -7,6 +7,7 @@ import { flush, mount, type MountedView } from "./features/reactTestUtils";
 const harness = vi.hoisted(() => ({
   handlers: new Map<string, (payload: unknown) => void>(),
   resyncSubs: new Set<() => void>(),
+  sessionList: vi.fn(),
   xtermProps: null as Record<string, unknown> | null,
 }));
 
@@ -23,7 +24,7 @@ vi.mock("../ipc/commands", () => ({
   assetApi: {},
   dbApi: {},
   vaultApi: {},
-  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn() },
+  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn(), list: harness.sessionList },
   terminalApi: {
     listLive: vi.fn().mockResolvedValue([]),
     write: vi.fn().mockResolvedValue(undefined),
@@ -127,6 +128,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   harness.handlers.clear();
   document.body.replaceChildren();
+  harness.sessionList.mockImplementation(async () => useUi.getState().sessions);
   useUi.setState({
     sessions: [
       {
@@ -200,6 +202,7 @@ describe("TerminalPane early control state", () => {
     expect(badge("守护终端")).toBeNull();
 
     attach("kernel-9");
+    await flush();
     expect(badge("/srv/www/app")).not.toBeNull();
     expect(badge("守护终端")).not.toBeNull();
   });
@@ -223,6 +226,7 @@ describe("TerminalPane early control state", () => {
     });
 
     attach("kernel-9");
+    await flush();
     expect(badge("/elsewhere")).toBeNull();
     expect(badge("守护终端")).toBeNull();
     expect(badge("直接连接")).not.toBeNull();
@@ -260,6 +264,7 @@ describe("TerminalPane early control state", () => {
     });
 
     attach("kernel-9");
+    await flush();
     expect(badge("/fresh")).not.toBeNull();
     expect(badge("/stale")).toBeNull();
     expect(badge("守护终端")).not.toBeNull();

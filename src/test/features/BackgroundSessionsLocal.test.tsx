@@ -38,6 +38,7 @@ import { BackgroundSessions } from "../../features/terminal/BackgroundSessions";
 import { useAuth } from "../../features/auth/store";
 import { setTerminalCloseAction } from "../../app/preferences";
 import {
+  assetConnectionProblemKey,
   closeActionHint,
   closeTabHint,
   requestCloseTab,
@@ -357,6 +358,43 @@ describe("BackgroundSessions host-scoped view", () => {
       await waitFor(() => expect(mocks.listDurable).toHaveBeenCalledWith("s1"));
       await waitFor(() => expect(view.container.textContent).toContain("远端构建"));
       expect(mocks.listDurable).not.toHaveBeenCalledWith("s2");
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("records scoped current-session recovery failure and clears it after retry", async () => {
+    useUi.setState({ workspaceRuntime: {}, connectionProblems: {} });
+    seedScope();
+    useUi.setState((state) => ({
+      sessions: [{ ...s1, assetId: "asset-host-one", status: "disconnected" }, s2],
+      workspaces: state.workspaces.map((workspace) =>
+        workspace.id === "ws-host"
+          ? { ...workspace, assetId: "asset-host-one", assetKind: "ssh" }
+          : workspace,
+      ),
+    }));
+    mocks.listSessions.mockResolvedValue([{ ...s1, assetId: "asset-host-one" }, s2]);
+    mocks.reconnectSession.mockResolvedValueOnce(false).mockResolvedValue(true);
+    const view = mountHost();
+    try {
+      await flush();
+      await act(async () => {
+        actionButton(view, "重连并查找").click();
+        await flush();
+      });
+      await waitFor(() => expect(toastText()).toContain("重连主机失败：重连未能启动"));
+      expect(useUi.getState().workspaceRuntime["ws-host"]?.problems?.[0]).toMatchObject({
+        connectionKey: assetConnectionProblemKey("asset-host-one"),
+        summary: "重连未能启动",
+      });
+
+      await act(async () => {
+        actionButton(view, "重连并查找").click();
+        await flush();
+      });
+      await waitFor(() => expect(mocks.listDurable).toHaveBeenCalledWith("s1"));
+      expect(useUi.getState().workspaceRuntime["ws-host"]?.problems ?? []).toEqual([]);
     } finally {
       view.unmount();
     }
@@ -749,6 +787,21 @@ describe("BackgroundSessions host-scoped view", () => {
       expect(view.container.textContent).toContain("当前主机没有在后台运行的终端");
       expect(view.container.querySelector('tr[aria-hidden="true"]')).toBeNull();
       expect(view.container.textContent).not.toContain("读取后台会话失败");
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("shows an explicit empty state for a tab without output", async () => {
+    mocks.listLive.mockResolvedValue([
+      liveTab({ tabId: "empty", sessionId: "s1", sessionName: "主机一", title: "空终端", lastOutputAt: 0, lastOutputMsAgo: 0 }),
+    ]);
+    seedScope();
+    const view = mountHost();
+    try {
+      await flush();
+      await waitFor(() => expect(view.container.textContent).toContain("暂无输出"));
+      expect(view.container.textContent).toContain("空终端");
     } finally {
       view.unmount();
     }
@@ -1368,7 +1421,7 @@ describe("closing a local terminal follows explicit capability and preference", 
     expect(mocks.askChoiceRemember).toHaveBeenCalledTimes(1);
     expect(mocks.askChoiceRemember.mock.calls[0][1].choices.map((c: { key: string }) => c.key)).toEqual(["detach", "kill"]);
     expect(mocks.closeTab).not.toHaveBeenCalled();
-    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([tab]);
+    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([{ ...tab, exited: false }]);
   });
 
   it("does not infer background capability from the local kind", async () => {
@@ -1391,7 +1444,7 @@ describe("closing a local terminal follows explicit capability and preference", 
 
     await requestCloseTab(tab.id);
 
-    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([{ ...tab, closeError: "boom" }]);
+    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([{ ...tab, exited: false, closeError: "boom" }]);
     expect(toastText()).toContain("终端操作失败");
     expect(toastText()).not.toContain("已转入后台");
   });

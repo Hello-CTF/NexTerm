@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { flush, mount, type MountedView } from "./features/reactTestUtils";
+import { click, flush, mount, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -22,6 +22,10 @@ vi.mock("../ipc/commands", () => ({
     probe: vi.fn(),
   },
   vaultApi: { status: mocks.vaultStatus, listCredentials: vi.fn() },
+  layoutApi: {
+    get: vi.fn().mockResolvedValue({ revision: 0, updatedAt: 0, data: null }),
+    put: vi.fn().mockResolvedValue({ saved: true, revision: 1, conflict: false }),
+  },
   terminalApi: {},
   dbApi: {},
 }));
@@ -43,6 +47,7 @@ vi.mock("../features/credentials/CredentialsSidebar", () => ({ CredentialsSideba
 vi.mock("../features/explorer/AssetTree", () => ({ AssetTree: () => null }));
 vi.mock("../app/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
+vi.mock("../features/fleet/DeviceSessionBoundary", () => ({ DeviceSessionBoundary: () => null }));
 
 import App from "../app/App";
 import { useUi, type ToastItem } from "../app/store";
@@ -237,5 +242,63 @@ describe("toast announcements", () => {
     const holder = document.querySelector(".nx-toasts");
     expect(holder?.querySelectorAll('[role="status"], [role="alert"]').length).toBe(0);
     expect(holder?.querySelectorAll("button").length).toBe(2);
+  });
+
+  it("renders and runs a toast action separately from dismissing the message", async () => {
+    const onSelect = vi.fn();
+    useUi.setState({
+      toasts: [{
+        id: 3,
+        kind: "error",
+        text: "会话异常断开",
+        action: { label: "重新连接", onSelect },
+      }],
+    });
+    mounted = mountApp();
+    await flush();
+
+    const action = [...document.querySelectorAll<HTMLButtonElement>(".nx-toasts button")]
+      .find((button) => button.textContent === "重新连接");
+    expect(action).toBeDefined();
+    click(action as HTMLButtonElement);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(useUi.getState().toasts).toEqual([]);
+  });
+});
+
+describe("workspace reconnect status", () => {
+  it("shows the attempt count and next retry time for the active workspace", async () => {
+    const reconnecting = {
+      id: "s1",
+      assetId: "a1",
+      name: "web-01",
+      kind: "ssh",
+      status: "reconnecting" as const,
+      tabs: [],
+      createdAt: 1,
+      attempt: 2,
+      nextRetryAt: 1_800_000_000_000,
+    };
+    mocks.sessionList.mockResolvedValue([reconnecting]);
+    useUi.setState({
+      sessions: [reconnecting],
+      workspaces: [{
+        id: "ws",
+        kind: "session",
+        title: "web-01",
+        sessionId: "s1",
+        closable: true,
+        panes: [{ id: "pane", tabs: [], activeTabId: null }],
+        activePaneId: "pane",
+        splitRatio: 0.5,
+      }],
+      activeWorkspaceId: "ws",
+    });
+    mounted = mountApp();
+    await flush();
+
+    const status = document.querySelector(".nx-app-header [role='status']");
+    expect(status?.textContent).toContain("重连尝试 2 次");
+    expect(status?.textContent).toContain("下次重连");
   });
 });

@@ -113,6 +113,40 @@ describe("desktop command envelopes", () => {
     });
   });
 
+  it("keeps broadcast preflight and confirmation inside nested terminal args", async () => {
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: null });
+    const { terminalApi } = await import("../ipc/commands");
+    const productionConfirmation = {
+      confirmed: true,
+      targetSetHash: "a".repeat(64),
+      inputHash: "b".repeat(64),
+    };
+
+    await terminalApi.prepareBroadcast(["tab-1", "tab-2"], new Uint8Array([100, 111]), productionConfirmation);
+    await terminalApi.write("tab-1", new Uint8Array([100, 111]), {
+      targetTabIds: ["tab-1", "tab-2"],
+      productionConfirmation,
+    });
+
+    expect(requestAt(0)).toEqual({
+      cmd: "terminal_broadcast_prepare",
+      args: {
+        args: { tabIds: ["tab-1", "tab-2"], data: [100, 111], productionConfirmation },
+      },
+    });
+    expect(requestAt(1)).toEqual({
+      cmd: "terminal_write",
+      args: {
+        args: {
+          tabId: "tab-1",
+          data: [100, 111],
+          clientId: expect.any(String),
+          broadcast: { targetTabIds: ["tab-1", "tab-2"], productionConfirmation },
+        },
+      },
+    });
+  });
+
   it("uses flat parameters for rename and create-terminal commands", async () => {
     runtime.Call.ByName.mockResolvedValue({ ok: true, data: { tabId: "tab-1", title: "构建机" } });
     const { terminalApi } = await import("../ipc/commands");
@@ -186,6 +220,32 @@ describe("desktop command envelopes", () => {
       cmd: "ai_takeover_run",
       args: { tabId: "tab-1", token: "token-1", instruction: "Check load", allowWrite: false },
       channel: "ai-1",
+    });
+  });
+
+  it("dispatches takeover controls and resumes the same job with a top-level channel", async () => {
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: { jobId: "job-1", token: "token-1" } });
+    const { aiApi } = await import("../ipc/commands");
+    const confirmation = { jobId: "job-1", callId: "call-1", nonce: "nonce-1", decision: "allow" as const };
+
+    await aiApi.takeoverConfirm(confirmation);
+    expect(requestAt(0)).toEqual({ cmd: "ai_takeover_confirm", args: confirmation });
+    await aiApi.takeoverCancel("job-1");
+    expect(requestAt(1)).toEqual({ cmd: "ai_takeover_cancel", args: { jobId: "job-1" } });
+    await aiApi.takeoverPause("tab-1", "token-1");
+    expect(requestAt(2)).toEqual({ cmd: "ai_takeover_pause", args: { tabId: "tab-1", token: "token-1" } });
+    await expect(
+      aiApi.takeoverResume({
+        tabId: "tab-1",
+        token: "token-1",
+        jobId: "job-1",
+        channel: { toJSON: () => "ai-resume-1" },
+      }),
+    ).resolves.toEqual({ jobId: "job-1", token: "token-1" });
+    expect(JSON.parse(JSON.stringify(requestAt(3)))).toEqual({
+      cmd: "ai_takeover_resume",
+      args: { tabId: "tab-1", token: "token-1", jobId: "job-1" },
+      channel: "ai-resume-1",
     });
   });
 
@@ -297,6 +357,100 @@ describe("desktop command envelopes", () => {
     await expect(fsApi.list("session-1", "C:\\")).resolves.toEqual([
       { path: "C:/Users/test/file.txt" },
     ]);
+  });
+
+  it("passes transfer task ids, resume flags, and cancellation through the IPC envelope", async () => {
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: 6 });
+    const { fsApi } = await import("../ipc/commands");
+
+    await fsApi.upload("session-1", "/local/source", "/remote/target", true, "task-upload", "attempt-upload");
+    expect(requestAt(0)).toEqual({
+      cmd: "fs_upload",
+      args: {
+        sessionId: "session-1",
+        localPath: "/local/source",
+        remotePath: "/remote/target",
+        resume: true,
+        taskId: "task-upload",
+        attemptId: "attempt-upload",
+      },
+    });
+    await fsApi.download("session-1", "/remote/source", "/local/target", true, "task-download", "attempt-download");
+    expect(requestAt(1)).toEqual({
+      cmd: "fs_download",
+      args: {
+        sessionId: "session-1",
+        remotePath: "/remote/source",
+        localPath: "/local/target",
+        resume: true,
+        taskId: "task-download",
+        attemptId: "attempt-download",
+      },
+    });
+    await fsApi.packDownload("session-1", "/remote/dir", "/local/archive", "task-pack", "attempt-pack");
+    expect(requestAt(2)).toEqual({
+      cmd: "fs_pack_download",
+      args: {
+        sessionId: "session-1",
+        remotePath: "/remote/dir",
+        localPath: "/local/archive",
+        taskId: "task-pack",
+        attemptId: "attempt-pack",
+      },
+    });
+    await fsApi.write("session-1", "/remote/content", "YQ==", false, "task-write", "attempt-write");
+    expect(requestAt(3)).toEqual({
+      cmd: "fs_write",
+      args: {
+        args: {
+          sessionId: "session-1",
+          path: "/remote/content",
+          contentBase64: "YQ==",
+          backup: false,
+          taskId: "task-write",
+          attemptId: "attempt-write",
+        },
+      },
+    });
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: true });
+    await expect(fsApi.cancel("task-download", "attempt-download")).resolves.toBe(true);
+    expect(requestAt(4)).toEqual({
+      cmd: "fs_cancel",
+      args: { taskId: "task-download", attemptId: "attempt-download" },
+    });
+  });
+
+  it("passes chunked upload and native range arguments through flat envelopes", async () => {
+    const { fsApi, localFileApi } = await import("../ipc/commands");
+    const identity = { sessionId: "session-1", taskId: "task-1", attemptId: "attempt-1" };
+    const upload = { ...identity, uploadId: "upload-1" };
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: { uploadId: "upload-1", chunkSize: 1048576 } });
+    await fsApi.uploadBegin({ ...identity, remotePath: "/remote/file.bin", totalSize: 3, chunkSize: 1048576 });
+    expect(requestAt(0)).toEqual({
+      cmd: "fs_upload_begin",
+      args: { ...identity, remotePath: "/remote/file.bin", totalSize: 3, chunkSize: 1048576 },
+    });
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: { received: 3, total: 3 } });
+    await fsApi.uploadChunk({ ...upload, index: 0, size: 3, sha256: "abc", contentBase64: "YQ==" });
+    expect(requestAt(1)).toEqual({
+      cmd: "fs_upload_chunk",
+      args: { ...upload, index: 0, size: 3, sha256: "abc", contentBase64: "YQ==" },
+    });
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: 3 });
+    await fsApi.uploadCommit(upload);
+    expect(requestAt(2)).toEqual({ cmd: "fs_upload_commit", args: upload });
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: null });
+    await fsApi.uploadAbort(upload);
+    expect(requestAt(3)).toEqual({ cmd: "fs_upload_abort", args: upload });
+    runtime.Call.ByName.mockResolvedValue({
+      ok: true,
+      data: { path: "/local/file.bin", offset: 2, size: 3, contentBase64: "YQ==", truncated: false },
+    });
+    await localFileApi.readRange("/local/file.bin", 2, 1);
+    expect(requestAt(4)).toEqual({
+      cmd: "local_file_read_range",
+      args: { path: "/local/file.bin", offset: 2, maxBytes: 1 },
+    });
   });
 
   it("keeps desktop TypeErrors on the existing internal fallback", async () => {

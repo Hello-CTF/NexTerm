@@ -8,30 +8,19 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { releaseArtifacts } from "./release-artifacts.mjs";
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const SCRIPT = path.join(ROOT, ".github", "scripts", "release-upload.mjs");
 const VERSION = process.env.NEXTERM_RELEASE_VERSION || JSON.parse(fs.readFileSync(path.join(ROOT, "wails.json"), "utf8")).info.version;
 function packageNamesFor(version) {
-  return [
-    `NexTerm_${version}_x64-setup.exe`,
-    `NexTerm_${version}_arm64-setup.exe`,
-    `NexTerm_${version}_aarch64.dmg`,
-    `NexTerm_${version}_x86_64.dmg`,
-    `NexTerm_${version}_android.apk`,
-    `NexTerm_${version}_ios.ipa`,
-    `NexTerm-agent_${version}_windows_amd64.zip`,
-    ...["amd64", "arm64"].flatMap((arch) => [
-      `NexTerm-desktop_${version}_linux_${arch}.deb`,
-      `NexTerm-server_${version}_linux_${arch}.tar.gz`,
-      `NexTerm-agent_${version}_linux_${arch}.tar.gz`,
-      `NexTerm-agent_${version}_darwin_${arch}.tar.gz`,
-    ]),
-  ];
+  return [...releaseArtifacts(version).keys()];
 }
 const PACKAGE_NAMES = packageNamesFor(VERSION);
 const EVIDENCE_NAMES = ["SHA256SUMS"];
+const SIGNATURE_NAMES = ["SHA256SUMS.minisig", "SHA256SUMS.minisign.pub"];
 function expectedNamesFor(version) {
-  return [...packageNamesFor(version), ...EVIDENCE_NAMES];
+  return [...packageNamesFor(version), ...EVIDENCE_NAMES, ...SIGNATURE_NAMES];
 }
 const EXPECTED_NAMES = expectedNamesFor(VERSION);
 const RELEASE_ID = 4242;
@@ -56,6 +45,7 @@ function startStub(t, overrides = {}) {
     assetAttempts: new Map(),
     deletedAssetIds: [],
     releaseCreated: null,
+    releasePatched: null,
     currentAssets: (overrides.existingAssets || []).map((asset) => ({ ...asset })),
   };
   let nextAssetId = 9000;
@@ -79,6 +69,10 @@ function startStub(t, overrides = {}) {
     if (req.method === "POST" && url.pathname === "/repos/stub/repo/releases") {
       state.releaseCreated = JSON.parse(body.toString("utf8"));
       return respond(201, releaseDocument());
+    }
+    if (req.method === "PATCH" && url.pathname === `/repos/stub/repo/releases/${RELEASE_ID}`) {
+      state.releasePatched = JSON.parse(body.toString("utf8"));
+      return respond(200, releaseDocument());
     }
     if (req.method === "POST" && url.pathname === `/upload/${RELEASE_ID}/assets`) {
       const name = url.searchParams.get("name");
@@ -199,7 +193,7 @@ test("gates an unexpected package before any request", async (t) => {
   assert.match(result.stderr, /NexTerm_9\.9\.9_evil\.exe/);
 });
 
-test("creates the draft release and uploads all 16 assets", async (t) => {
+test("creates the draft release and uploads every expected asset", async (t) => {
   const stub = await startStub(t, { listReleases: () => [] });
   const directory = makeCandidate(t);
   const result = await runUploader(stub, directory);
@@ -215,7 +209,7 @@ test("creates the draft release and uploads all 16 assets", async (t) => {
   });
   const uploaded = [...stub.state.assetAttempts.keys()].sort();
   assert.deepEqual(uploaded, [...EXPECTED_NAMES].sort());
-  const sample = stub.state.requests.find((entry) => entry.url.includes("name=SHA256SUMS"));
+  const sample = stub.state.requests.find((entry) => new URL(entry.url, stub.base).searchParams.get("name") === "SHA256SUMS");
   assert.equal(sample.method, "POST");
   assert.equal(sample.body.toString("utf8"), "stub SHA256SUMS\n");
   const summary = summaryOf(result);
@@ -225,15 +219,36 @@ test("creates the draft release and uploads all 16 assets", async (t) => {
   assert.equal(summary.prerelease, false);
   assert.equal(summary.deleted_assets, 0);
   assert.deepEqual(summary.failed, []);
-  assert.equal(summary.files.length, 16);
+  assert.equal(summary.files.length, EXPECTED_NAMES.length);
   for (const file of summary.files) {
     assert.equal(file.attempts, 1, file.name);
     assert.ok(file.bytes > 0, file.name);
     assert.ok(file.seconds > 0, file.name);
   }
   const uploadedLines = result.stderr.split("\n").filter((line) => line.includes("release-upload: uploaded ") && line.includes(" bytes="));
-  assert.equal(uploadedLines.length, 16);
+  assert.equal(uploadedLines.length, EXPECTED_NAMES.length);
 });
+
+test("uploads required minisign evidence with every release", async (t) => {
+  const stub = await startStub(t, { listReleases: () => [] });
+  const directory = makeCandidate(t);
+  const result = await runUploader(stub, directory);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual([...stub.state.assetAttempts.keys()].sort(), [...EXPECTED_NAMES].sort());
+  for (const name of SIGNATURE_NAMES) assert.ok(stub.state.assetAttempts.has(name));
+  assert.equal(summaryOf(result).files.length, EXPECTED_NAMES.length);
+});
+
+for (const missing of SIGNATURE_NAMES) {
+  test(`rejects missing ${missing} before any request`, async (t) => {
+    const stub = await startStub(t);
+    const directory = makeCandidate(t, { omit: [missing] });
+    const result = await runUploader(stub, directory);
+    assert.notEqual(result.status, 0);
+    assert.equal(stub.state.requests.length, 0);
+    assert.match(result.stderr, /minisign signature and public key are required/);
+  });
+}
 
 test("marks a matching prerelease version as prerelease", async (t) => {
   const version = "9.9.9-beta.1";
@@ -255,21 +270,25 @@ test("marks a matching prerelease version as prerelease", async (t) => {
   assert.deepEqual([...stub.state.assetAttempts.keys()].sort(), [...expectedNamesFor(version)].sort());
 });
 
-test("replaces same-name assets on the existing draft discovered through the list when the tags endpoint 404s", async (t) => {
-  const existingAssets = EXPECTED_NAMES.map((name, index) => ({ id: 100 + index, name }));
+test("updates notes, removes retired assets and replaces same-name files on the existing draft", async (t) => {
+  const existingAssets = [...EXPECTED_NAMES, `NexTerm_${VERSION}_ios.ipa`]
+    .map((name, index) => ({ id: 100 + index, name }));
   const stub = await startStub(t, { existingAssets });
   const directory = makeCandidate(t);
   const result = await runUploader(stub, directory);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(stub.state.releaseCreated, null);
+  assert.deepEqual(stub.state.releasePatched, { body: "stub notes\n" });
   const releaseMutations = stub.state.requests.filter((entry) => ["POST", "PATCH", "PUT"].includes(entry.method)
     && entry.url.startsWith("/repos/stub/repo/releases"));
-  assert.deepEqual(releaseMutations, []);
+  assert.equal(releaseMutations.length, 1);
+  assert.equal(releaseMutations[0].method, "PATCH");
+  assert.equal(releaseMutations[0].url, `/repos/stub/repo/releases/${RELEASE_ID}`);
   assert.ok(!stub.state.requests.some((entry) => entry.url.includes("/releases/tags/")));
   assert.deepEqual([...stub.state.deletedAssetIds].sort((a, b) => a - b), existingAssets.map((asset) => asset.id));
-  assert.equal(stub.state.assetAttempts.size, 16);
+  assert.equal(stub.state.assetAttempts.size, EXPECTED_NAMES.length);
   const summary = summaryOf(result);
-  assert.equal(summary.deleted_assets, 16);
+  assert.equal(summary.deleted_assets, existingAssets.length);
   assert.equal(summary.draft, true);
 });
 
@@ -290,17 +309,18 @@ test("finds the existing draft on a later releases page", async (t) => {
   const result = await runUploader(stub, directory);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(stub.state.releaseCreated, null);
+  assert.deepEqual(stub.state.releasePatched, { body: "stub notes\n" });
   const pages = stub.state.requests.filter((entry) => entry.url.startsWith("/repos/stub/repo/releases?per_page=100"));
   assert.equal(pages.length, 2);
   assert.ok(pages[0].url.includes("page=1"));
   assert.ok(pages[1].url.includes("page=2"));
-  assert.equal(stub.state.assetAttempts.size, 16);
+  assert.equal(stub.state.assetAttempts.size, EXPECTED_NAMES.length);
   const summary = summaryOf(result);
   assert.equal(summary.release_id, RELEASE_ID);
   assert.equal(summary.draft, true);
 });
 
-test("resolves a published release through the list without creating or drafting it", async (t) => {
+test("refuses to modify a published release", async (t) => {
   const stub = await startStub(t, {
     releaseDocument: () => ({
       id: RELEASE_ID,
@@ -314,12 +334,13 @@ test("resolves a published release through the list without creating or drafting
   });
   const directory = makeCandidate(t);
   const result = await runUploader(stub, directory);
-  assert.equal(result.status, 0, result.stderr);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /refusing to modify published release/);
   assert.equal(stub.state.releaseCreated, null);
-  assert.equal(stub.state.assetAttempts.size, 16);
-  const summary = summaryOf(result);
-  assert.equal(summary.draft, false);
-  assert.equal(summary.prerelease, false);
+  assert.equal(stub.state.releasePatched, null);
+  assert.equal(stub.state.assetAttempts.size, 0);
+  assert.deepEqual(stub.state.deletedAssetIds, []);
+  assert.ok(!stub.state.requests.some((entry) => entry.url.startsWith("/upload/")));
 });
 
 test("bounds in-flight uploads to the configured concurrency", async (t) => {
@@ -330,7 +351,7 @@ test("bounds in-flight uploads to the configured concurrency", async (t) => {
   const result = await runUploader(stub, directory, ["--concurrency", "4"]);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(stub.state.assetPeak, 4);
-  assert.equal(stub.state.assetAttempts.size, 16);
+  assert.equal(stub.state.assetAttempts.size, EXPECTED_NAMES.length);
   const summary = summaryOf(result);
   assert.equal(summary.concurrency, 4);
 });
@@ -360,9 +381,9 @@ test("fails after retry exhaustion and names the failed asset", async (t) => {
   const result = await runUploader(stub, directory, ["--max-attempts", "2", "--retry-base-ms", "10"]);
   assert.notEqual(result.status, 0);
   assert.equal(stub.state.assetAttempts.get(broken), 2);
-  assert.equal(stub.state.assetAttempts.size, 16);
+  assert.equal(stub.state.assetAttempts.size, EXPECTED_NAMES.length);
   assert.match(result.stderr, new RegExp(`failed ${broken.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
-  assert.match(result.stderr, /1\/16 uploads failed/);
+  assert.match(result.stderr, new RegExp(`1/${EXPECTED_NAMES.length} uploads failed`));
   const summary = summaryOf(result);
   assert.equal(summary.failed.length, 1);
   assert.equal(summary.failed[0].name, broken);
@@ -414,7 +435,7 @@ test("fails when the final asset listing misses an uploaded file", async (t) => 
   const directory = makeCandidate(t);
   const result = await runUploader(stub, directory);
   assert.notEqual(result.status, 0);
-  assert.equal(stub.state.assetAttempts.size, 16);
+  assert.equal(stub.state.assetAttempts.size, EXPECTED_NAMES.length);
   assert.match(result.stderr, /missing uploaded assets/);
   assert.match(result.stderr, new RegExp(lost.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });

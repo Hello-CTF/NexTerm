@@ -266,7 +266,7 @@ describe("SettingsView responsive structure", () => {
   });
 
   it("disables the terminal OSC 52 toggle by default and allows remote clipboard writes only after explicit opt-in", async () => {
-    useUi.setState({ terminalOsc52: false });
+    act(() => useUi.setState({ terminalOsc52: false }));
     localStorage.clear();
     mounted = withClient(createElement(SettingsView));
     await flush();
@@ -281,7 +281,7 @@ describe("SettingsView responsive structure", () => {
     await flush();
     expect(useUi.getState().terminalOsc52).toBe(true);
     expect(localStorage.getItem("nexterm.terminal.v1")).toBe('{"osc52":true}');
-    useUi.setState({ terminalOsc52: false });
+    act(() => useUi.setState({ terminalOsc52: false }));
   });
 
   it("explains the host-lifetime limit of local background terminals", async () => {

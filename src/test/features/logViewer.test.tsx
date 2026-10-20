@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement, type ReactNode } from "react";
+import { act, createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   click,
@@ -210,7 +210,7 @@ describe("LogViewer", () => {
     setInputValue(pageInput, "1");
     const form = pageInput.closest("form");
     if (!form) throw new Error("page form not found");
-    form.requestSubmit();
+    act(() => form.requestSubmit());
     await waitForSettled(mounted, 0);
     expect(mocks.readRange).toHaveBeenLastCalledWith(SESSION, LOG_PATH, 0, CHUNK);
 
@@ -257,6 +257,7 @@ describe("LogViewer", () => {
     await waitForSettled(mounted, CHUNK);
 
     click(toolbarButton(mounted!.container, "重新读取当前分块（日志文件可能已增长）"));
+    await flush();
     await flushUntil(() => mocks.readRange.mock.calls.length === 3);
     expect(mocks.readRange).toHaveBeenLastCalledWith(SESSION, LOG_PATH, CHUNK, CHUNK);
     await waitForSettled(mounted, CHUNK);
@@ -340,7 +341,7 @@ describe("LogViewer", () => {
     await flushUntil(() => mocks.readRange.mock.calls.length === 2);
     const pageInput = inputByLabel(mounted.container, "页码");
     setInputValue(pageInput, "3");
-    pageInput.closest("form")?.requestSubmit();
+    act(() => pageInput.closest("form")?.requestSubmit());
     await flushUntil(() => mocks.readRange.mock.calls.length === 3);
 
     latest.resolve(rangeResult(CHUNK * 2, CHUNK));
@@ -397,7 +398,9 @@ describe("Log viewer entries", () => {
       (r) => r.textContent?.includes("app.log"),
     );
     if (!row) throw new Error("row not found");
-    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    act(() => {
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
     await flush();
 
     const item = [...document.querySelectorAll('[role="menuitem"]')].find((el) =>
@@ -446,7 +449,9 @@ describe("Log viewer entries", () => {
       r.textContent?.includes("app.log"),
     );
     if (!row) throw new Error("browser row not found");
-    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    act(() => {
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
     await flush();
 
     const labels = [...document.querySelectorAll('[role="menuitem"]')].map(

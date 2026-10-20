@@ -21,7 +21,9 @@ function makeRepo(t, entries) {
   fs.copyFileSync(SCRIPT, path.join(directory, ".github", "scripts", "release-notes.mjs"));
   git(directory, "init", "-q", "-b", "main");
   for (const entry of entries) {
-    git(directory, "-c", "user.email=notes@test", "-c", "user.name=Notes Test", "commit", "--allow-empty", "-q", "-m", entry.subject);
+    const args = ["-c", "user.email=notes@test", "-c", "user.name=Notes Test", "commit", "--allow-empty", "-q", "-m", entry.subject];
+    if (entry.body) args.push("-m", entry.body);
+    git(directory, ...args);
     if (entry.tag) git(directory, "tag", entry.tag);
   }
   return directory;
@@ -109,4 +111,45 @@ test("falls back to the full history when no previous stable tag exists", (t) =>
 - more notes (#3)
 
 `);
+});
+
+test("renders breaking changes from ! markers and BREAKING CHANGE footers", (t) => {
+  const directory = makeRepo(t, [
+    { subject: "feat: initial release", tag: "v1.0.0" },
+    { subject: "feat(api)!: remove old endpoint" },
+    { subject: "fix(core): require explicit configuration", body: "BREAKING CHANGE: the implicit default configuration has been removed" },
+    { subject: "docs: final documentation", tag: "v2.0.0" },
+  ]);
+  const result = runNotes(directory, ["v2.0.0"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, `### v2.0.0 变化
+
+#### 破坏性变更
+
+- **api**: remove old endpoint
+- **core**: the implicit default configuration has been removed
+
+#### 功能
+
+- **api**: remove old endpoint
+
+#### 修复
+
+- **core**: require explicit configuration
+
+`);
+});
+
+test("excludes merge commits while retaining changes merged into the release", (t) => {
+  const directory = makeRepo(t, [{ subject: "feat: initial release", tag: "v1.0.0" }]);
+  git(directory, "checkout", "-q", "-b", "feature");
+  git(directory, "-c", "user.email=notes@test", "-c", "user.name=Notes Test", "commit", "--allow-empty", "-q", "-m", "feat(branch): add merged feature");
+  git(directory, "checkout", "-q", "main");
+  git(directory, "-c", "user.email=notes@test", "-c", "user.name=Notes Test", "commit", "--allow-empty", "-q", "-m", "docs: update main");
+  git(directory, "-c", "user.email=notes@test", "-c", "user.name=Notes Test", "merge", "--no-ff", "-q", "feature", "-m", "Merge branch 'feature'");
+  git(directory, "tag", "v1.1.0");
+  const result = runNotes(directory, ["v1.1.0"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stdout, /Merge branch/);
+  assert.match(result.stdout, /- \*\*branch\*\*: add merged feature/);
 });

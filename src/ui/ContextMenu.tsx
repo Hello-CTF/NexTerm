@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -39,6 +40,27 @@ type ActionMenuItem = Extract<MenuItem, { kind: "item" }>;
 
 const MARGIN = 8;
 const COARSE_POINTER_QUERY = "(pointer: coarse)";
+
+function measureSafeBottom(): number {
+  const probe = document.createElement("div");
+  probe.style.position = "fixed";
+  probe.style.visibility = "hidden";
+  probe.style.pointerEvents = "none";
+  probe.style.paddingBottom = "var(--nx-safe-bottom)";
+  document.body.append(probe);
+  const inset = Number.parseFloat(window.getComputedStyle(probe).paddingBottom);
+  probe.remove();
+  return Number.isFinite(inset) ? inset : 0;
+}
+
+function clampMenuStart(start: number, size: number, viewport: number, safeBottom: number): number {
+  if (start + size + MARGIN + safeBottom <= viewport) return start;
+  return Math.max(MARGIN, viewport - size - MARGIN - safeBottom);
+}
+
+function menuAvailableHeight(viewport: number, safeBottom: number): number {
+  return Math.max(0, viewport - 2 * MARGIN - safeBottom);
+}
 
 // Does not use useCoarsePointer from app/platform: several terminal tests partially mock platform without exporting it.
 function subscribeCoarsePointer(callback: () => void): () => void {
@@ -82,7 +104,7 @@ function FloatingContextMenu({
   onClose: () => void;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const [pos, setPos] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
   const onCloseRef = useRef(onClose);
   const closedRef = useRef(false);
   onCloseRef.current = onClose;
@@ -108,12 +130,13 @@ function FloatingContextMenu({
     }
     const element = boxRef.current;
     if (!element) return;
-    const { offsetWidth: width, offsetHeight: height } = element;
+    const { offsetWidth: width, offsetHeight: naturalHeight } = element;
     let left = state.x;
-    let top = state.y;
     if (left + width + MARGIN > window.innerWidth) left = Math.max(MARGIN, window.innerWidth - width - MARGIN);
-    if (top + height + MARGIN > window.innerHeight) top = Math.max(MARGIN, window.innerHeight - height - MARGIN);
-    setPos({ left, top });
+    const safeBottom = measureSafeBottom();
+    const maxHeight = menuAvailableHeight(window.innerHeight, safeBottom);
+    const top = clampMenuStart(state.y, Math.min(naturalHeight, maxHeight), window.innerHeight, safeBottom);
+    setPos({ left, top, maxHeight });
   }, [state]);
 
   useEffect(() => {
@@ -129,8 +152,9 @@ function FloatingContextMenu({
       closeRef.current();
     };
     const dismiss = () => closeRef.current();
-    const dismissOnScroll = () => {
-      if (layer.isTopmost()) closeRef.current();
+    const dismissOnScroll = (event: WheelEvent) => {
+      if (!layer.isTopmost() || boxRef.current?.contains(event.target as Node)) return;
+      closeRef.current();
     };
     window.addEventListener("pointerdown", onDown, true);
     window.addEventListener("keydown", onKey, true);
@@ -191,6 +215,8 @@ function FloatingContextMenu({
       style={{
         left: pos?.left ?? state.x,
         top: pos?.top ?? state.y,
+        maxHeight: pos?.maxHeight,
+        overflowY: "auto",
         visibility: pos ? "visible" : "hidden",
       }}
       onContextMenu={(event) => event.preventDefault()}
@@ -359,22 +385,67 @@ function SubMenu({
   label: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [flip, setFlip] = useState(false);
+  const [position, setPosition] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
+
+  const reposition = useCallback(() => {
+    const element = ref.current;
+    const row = element?.parentElement;
+    if (!element || !row) return;
+    const rect = element.getBoundingClientRect();
+    const anchor = row.getBoundingClientRect();
+    const safeBottom = measureSafeBottom();
+    const maxHeight = menuAvailableHeight(window.innerHeight, safeBottom);
+    let left = anchor.right + 2;
+    if (left + rect.width + MARGIN > window.innerWidth) {
+      left = Math.max(MARGIN, anchor.left - rect.width - 2);
+    }
+    const top = clampMenuStart(
+      anchor.top - 5,
+      Math.min(rect.height, maxHeight),
+      window.innerHeight,
+      safeBottom,
+    );
+    // Fixed positioning keeps the flyout outside the parent menu's scroll clipping.
+    setPosition({ left, top, maxHeight });
+  }, []);
 
   useLayoutEffect(() => {
+    reposition();
+    if (autoFocus) menuButtons(ref.current)[0]?.focus();
+  }, [items, autoFocus, reposition]);
+
+  useEffect(() => {
     const element = ref.current;
     if (!element) return;
-    setFlip(element.getBoundingClientRect().right + MARGIN > window.innerWidth);
-    if (autoFocus) menuButtons(element)[0]?.focus();
-  }, [items, autoFocus]);
+    const ancestors: Element[] = [];
+    for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+      if (parent.classList.contains("nx-menu") || parent.classList.contains("nx-submenu")) {
+        ancestors.push(parent);
+      }
+    }
+    for (const ancestor of ancestors) ancestor.addEventListener("scroll", reposition);
+    return () => {
+      for (const ancestor of ancestors) ancestor.removeEventListener("scroll", reposition);
+    };
+  }, [reposition]);
 
   return (
     <div
       ref={ref}
       id={id}
-      className={`nx-submenu ${flip ? "is-flip" : ""}`}
+      className="nx-submenu"
       role="menu"
       aria-label={label}
+      style={position ? {
+        position: "fixed",
+        left: position.left,
+        top: position.top,
+        maxHeight: position.maxHeight,
+        overflowY: "auto",
+        marginLeft: 0,
+        marginRight: 0,
+        visibility: "visible",
+      } : { visibility: "hidden" }}
     >
       <MenuList items={items} onClose={onClose} onExit={onExit} />
     </div>

@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { click, flush, flushUntil, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
@@ -318,8 +318,9 @@ describe("AiSidebar automatic terminal_create opening", () => {
   const sendMessage = async () => {
     setInputValue(view!.container.querySelector("textarea")!, "Open a terminal");
     click(view!.container.querySelector<HTMLButtonElement>('button[title="发送 (Enter)"]')!);
-    await flushUntil(() => mocks.channels.length > 0 && mocks.chat.mock.calls.length > 0);
-    return mocks.channels[0];
+    await flush();
+    const channel = mocks.channels[0];
+    return { onEvent: (ev: Record<string, unknown>) => act(() => channel.onEvent(ev)) };
   };
 
   const workspaceTabs = () => useUi.getState().workspaces.flatMap((w) => w.panes).flatMap((p) => p.tabs);
@@ -336,7 +337,7 @@ describe("AiSidebar automatic terminal_create opening", () => {
       exitCode: 0,
       terminal: { tabId: "tab-9", sessionId: "s1", title: "构建机" },
     });
-    await flushUntil(() => workspaceTabs().some((t) => t.tabId === "tab-9"));
+    await flush();
     const tab = workspaceTabs().find((t) => t.tabId === "tab-9")!;
     expect(tab.kind).toBe("terminal");
     expect(tab.sessionId).toBe("s1");
@@ -377,7 +378,7 @@ describe("AiSidebar automatic terminal_create opening", () => {
     await flush();
     expect(workspaceTabs().every((t) => t.tabId === undefined)).toBe(true);
     channel.onEvent({ type: "status", phase: "thinking", seq: 2 });
-    await flushUntil(() => workspaceTabs().some((t) => t.tabId === "tab-9"));
+    await flush();
     channel.onEvent(toolResult);
     await flush();
     expect(workspaceTabs().filter((t) => t.tabId === "tab-9")).toHaveLength(1);

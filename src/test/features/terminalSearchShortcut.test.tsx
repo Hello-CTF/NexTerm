@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { flush, flushMacrotask, mount, waitFor, type MountedView } from "./reactTestUtils";
 
 const harness = vi.hoisted(() => ({
   mac: false,
@@ -110,9 +110,9 @@ function searchInput(): HTMLInputElement | null {
   return mounted?.container.querySelector<HTMLInputElement>('input[placeholder="搜索终端内容…"]') ?? null;
 }
 
-async function flushTimers(ms = 0): Promise<void> {
+async function flushTimers(): Promise<void> {
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, ms));
+    await flushMacrotask();
   });
 }
 
@@ -135,7 +135,7 @@ async function pressFromTerminal(
   return { event, targetSeen, bubbleSeen };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   harness.mac = false;
@@ -184,6 +184,7 @@ beforeEach(() => {
   mounted = mount(
     createElement(TerminalPane, { sessionId: "s1", title: "term", storeTabId: "t1" }),
   );
+  await flush();
 });
 
 afterEach(() => {

@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { click, clickButton, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
 
@@ -30,6 +30,19 @@ vi.mock("../../ipc/commands", () => ({
     probeHostKey: mocks.probeHostKey,
   },
   vaultApi: { status: mocks.vaultStatus, listCredentials: vi.fn() },
+  syncApi: {
+    linkGet: vi.fn().mockResolvedValue({
+      url: "",
+      username: "",
+      insecure: false,
+      hasPassword: false,
+      verifiedAt: 0,
+      lastError: null,
+    }),
+    status: vi.fn().mockResolvedValue({ configured: false, loggedIn: false, lastError: "", warnings: [] }),
+    kindOptInGet: vi.fn().mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false }),
+    wake: vi.fn().mockResolvedValue(undefined),
+  },
   terminalApi: {},
   dbApi: {},
 }));
@@ -414,12 +427,17 @@ describe("Host key confirmation dialog deduplication", () => {
     await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
 
-    const connectPromise = connectAsset({ id: "a1", name: "web-01", kind: "ssh" });
+    let connectPromise!: ReturnType<typeof connectAsset>;
+    act(() => {
+      connectPromise = connectAsset({ id: "a1", name: "web-01", kind: "ssh" });
+    });
     await flush();
     expect(document.querySelectorAll('[role="alertdialog"]')).toHaveLength(1);
 
     clickButton(dialog() as HTMLElement, "确定");
-    await connectPromise;
+    await act(async () => {
+      await connectPromise;
+    });
     await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
 
     expect(document.querySelectorAll('[role="alertdialog"]')).toHaveLength(0);
@@ -454,12 +472,17 @@ describe("Host key confirmation dialog deduplication", () => {
     await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
 
-    const connectPromise = connectAsset({ id: "a1", name: "web-01", kind: "ssh" });
+    let connectPromise!: ReturnType<typeof connectAsset>;
+    act(() => {
+      connectPromise = connectAsset({ id: "a1", name: "web-01", kind: "ssh" });
+    });
     await flush();
     expect(document.querySelectorAll('[role="alertdialog"]')).toHaveLength(1);
 
     clickButton(dialog() as HTMLElement, "取消");
-    await connectPromise;
+    await act(async () => {
+      await connectPromise;
+    });
     await flush();
 
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();

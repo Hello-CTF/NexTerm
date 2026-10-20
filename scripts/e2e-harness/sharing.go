@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	_ "github.com/glebarez/go-sqlite"
 )
 
 var (
@@ -187,6 +190,43 @@ func (v *shareViewer) expectClosed(timeout time.Duration) error {
 	return fmt.Errorf("viewer websocket was not closed in time")
 }
 
+func seedHistoricalShareLink(server *instance, ownerID, deviceID, sessionID string, write bool, ttl time.Duration) (linkID, token string, err error) {
+	if server == nil || ownerID == "" || deviceID == "" || sessionID == "" || ttl <= 0 {
+		return "", "", fmt.Errorf("invalid historical share link seed")
+	}
+	token = randomHex(32)
+	if token == "" {
+		return "", "", fmt.Errorf("historical share link seed returned an empty token")
+	}
+	digest := sha256.Sum256([]byte(token))
+	permission := "read"
+	if write {
+		permission = "read_write"
+	}
+	now := time.Now()
+	linkID = syntheticID()
+	db, err := sql.Open("sqlite", filepath.Join(server.dataDir, "data.db"))
+	if err != nil {
+		return "", "", fmt.Errorf("open database for historical share link seed: %w", err)
+	}
+	defer func() {
+		if closeErr := db.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
+	result, err := db.Exec(`INSERT INTO share_link
+		(id, owner_id, device_id, session_id, token_hash, permission, created_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		linkID, ownerID, deviceID, sessionID, fmt.Sprintf("%x", digest), permission, now.UnixMilli(), now.Add(ttl).UnixMilli())
+	if err != nil {
+		return "", "", fmt.Errorf("seed historical share link: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		return "", "", fmt.Errorf("seed historical share link affected %d rows, err=%v", affected, err)
+	}
+	return linkID, token, nil
+}
+
 func runSharing(h *harness) error {
 	work, err := os.MkdirTemp("", "nexterm-sharing-e2e-")
 	if err != nil {
@@ -347,16 +387,20 @@ func runSharing(h *harness) error {
 	relay.close()
 	h.check("owner creates a session through the bridge", sessionID != "", fmt.Sprintf("info=%v", info))
 
-	fmt.Println("== public read-only link ==")
+	fmt.Println("== retired public link creation ==")
 	status, body, err = alice.request("POST", "/share/links", map[string]interface{}{
 		"device_id": deviceID, "session_id": sessionID, "write": false, "ttl_ms": 3600000,
 	}, true)
 	if err != nil {
 		return err
 	}
-	h.check("create read-only link", status == 200 && getStr(body, "permission") == "read" && getStr(body, "token") != "", fmt.Sprintf("HTTP %d %v", status, body))
-	readLinkID := getStr(body, "id")
-	readToken := getStr(body, "token")
+	h.check("public session link creation returns 405", status == http.StatusMethodNotAllowed, fmt.Sprintf("HTTP %d %v", status, body))
+
+	fmt.Println("== public read-only link ==")
+	readLinkID, readToken, err := seedHistoricalShareLink(server, alice.userID, deviceID, sessionID, false, time.Hour)
+	if err != nil {
+		return fmt.Errorf("seed read-only link: %w", err)
+	}
 
 	fmt.Println("== public page plain GET ==")
 	status, _, indexBody, err := plainGet(server.port, "/")
@@ -407,14 +451,10 @@ func runSharing(h *harness) error {
 	viewer.ws.close()
 
 	fmt.Println("== public read-write link ==")
-	status, body, err = alice.request("POST", "/share/links", map[string]interface{}{
-		"device_id": deviceID, "session_id": sessionID, "write": true, "ttl_ms": 3600000,
-	}, true)
+	_, writeToken, err := seedHistoricalShareLink(server, alice.userID, deviceID, sessionID, true, time.Hour)
 	if err != nil {
-		return err
+		return fmt.Errorf("seed read-write link: %w", err)
 	}
-	h.check("create read-write link", status == 200 && getStr(body, "permission") == "read_write", fmt.Sprintf("HTTP %d %v", status, body))
-	writeToken := getStr(body, "token")
 	rwViewer, err := newShareViewer(server.port, "/share/public/"+writeToken, nil)
 	if err != nil {
 		return err
@@ -472,14 +512,10 @@ func runSharing(h *harness) error {
 	h.check("token cannot be reused after revocation", revokedStatus == 403, fmt.Sprintf("status=%d", revokedStatus))
 
 	fmt.Println("== expiration ==")
-	status, body, err = alice.request("POST", "/share/links", map[string]interface{}{
-		"device_id": deviceID, "session_id": sessionID, "write": false, "ttl_ms": 60000,
-	}, true)
+	_, expiringToken, err := seedHistoricalShareLink(server, alice.userID, deviceID, sessionID, false, time.Minute)
 	if err != nil {
-		return err
+		return fmt.Errorf("seed short-lived link: %w", err)
 	}
-	h.check("create a short-lived 60s link", status == 200, fmt.Sprintf("HTTP %d %v", status, body))
-	expiringToken := getStr(body, "token")
 	expiringViewer, err := newShareViewer(server.port, "/share/public/"+expiringToken, nil)
 	if err != nil {
 		return err
@@ -677,14 +713,10 @@ func runSharing(h *harness) error {
 		return err
 	}
 	h.check("re-grant bob", status == 200, fmt.Sprintf("HTTP %d %v", status, body))
-	status, body, err = alice.request("POST", "/share/links", map[string]interface{}{
-		"device_id": deviceID, "session_id": sessionID, "write": true, "ttl_ms": 3600000,
-	}, true)
+	_, offlineToken, err := seedHistoricalShareLink(server, alice.userID, deviceID, sessionID, true, time.Hour)
 	if err != nil {
-		return err
+		return fmt.Errorf("seed link before going offline: %w", err)
 	}
-	h.check("create read-write link before going offline", status == 200, fmt.Sprintf("HTTP %d %v", status, body))
-	offlineToken := getStr(body, "token")
 	offlineViewer, err := newShareViewer(server.port, "/share/public/"+offlineToken, nil)
 	if err != nil {
 		return err
@@ -705,14 +737,6 @@ func runSharing(h *harness) error {
 		return err
 	}
 	h.check("registered open returns 503 after going offline", status == 503, fmt.Sprintf("HTTP %d %v", status, body))
-	status, body, err = alice.request("POST", "/share/links", map[string]interface{}{
-		"device_id": deviceID, "session_id": sessionID, "write": false, "ttl_ms": 3600000,
-	}, true)
-	if err != nil {
-		return err
-	}
-	h.check("creating a link returns 503 after going offline", status == 503, fmt.Sprintf("HTTP %d %v", status, body))
-
 	fmt.Println("== invalid token WS gate ==")
 	invalidStatus := wsHandshakeStatus(server.port, "/share/public/not-a-real-token")
 	h.check("invalid token WS handshake is still rejected", invalidStatus == 403, fmt.Sprintf("status=%d", invalidStatus))

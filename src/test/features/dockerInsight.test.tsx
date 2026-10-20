@@ -67,6 +67,7 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
 });
 
 import { DockerPanel } from "../../features/docker/DockerPanel";
+import { CONTAINER_STATS_POLL_MS } from "../../features/docker/ContainerInsight";
 import type { ContainerSummary, ImageSummary } from "../../ipc/commands";
 import { dialogLevelForKind } from "../../app/App";
 import { registerDialogHandlers } from "../../ui/dialogs";
@@ -132,10 +133,6 @@ const STATS_JSON_LINES = [
   '{"ID":"aaaa11112222","Name":"/web","CPUPerc":"1.50%","MemUsage":"100MiB / 2GiB","MemPerc":"4.90%","NetIO":"1kB / 2kB","BlockIO":"0B / 0B","PIDs":"12"}',
   '{"ID":"cccc55556666","Name":"/intruder","CPUPerc":"99.00%","MemUsage":"8GiB / 8GiB","MemPerc":"98.00%","NetIO":"9kB / 9kB","BlockIO":"1GB / 1GB","PIDs":"200"}',
 ].join("\n");
-
-function sleep(ms: number): Promise<void> {
-  return act(() => new Promise<void>((r) => setTimeout(r, ms)));
-}
 
 function mountPanel(
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
@@ -403,6 +400,7 @@ describe("Docker insight controls (M61)", () => {
   });
 
   it("stats polling stops after leaving the stats tab", async () => {
+    vi.useFakeTimers();
     const m = (mounted = mountPanel());
     await openInsight(m, 0);
     clickButton(m.container, "统计");
@@ -411,11 +409,12 @@ describe("Docker insight controls (M61)", () => {
     clickButton(m.container, "文件");
     await waitFor(() => expect(mockedText()).toContain("仅列出容器目录内容，不读取文件"));
     const callsAfterLeave = mocks.stats.mock.calls.length;
-    await sleep(3600);
+    await act(() => vi.advanceTimersByTimeAsync(CONTAINER_STATS_POLL_MS * 2));
     expect(mocks.stats.mock.calls.length).toBe(callsAfterLeave);
-  }, 15000);
+  });
 
   it("stats polling stops on unmount", async () => {
+    vi.useFakeTimers();
     const m = (mounted = mountPanel());
     await openInsight(m, 0);
     clickButton(m.container, "统计");
@@ -423,9 +422,9 @@ describe("Docker insight controls (M61)", () => {
 
     m.unmount();
     mounted = undefined;
-    await sleep(3600);
+    await act(() => vi.advanceTimersByTimeAsync(CONTAINER_STATS_POLL_MS * 2));
     expect(mocks.stats).toHaveBeenCalledTimes(1);
-  }, 15000);
+  });
 
   it("files tab lists entries without dot-link noise and navigates directories", async () => {
     mocks.listDir.mockImplementation((_s: string, _c: string, path: string) => {
@@ -695,7 +694,7 @@ describe("Docker insight controls (M61)", () => {
     await flush();
     await waitFor(() => expect(mockedText()).toContain("跟随中 · 关闭此标签或返回即停止"));
 
-    mocks.reopenCbs[mocks.reopenCbs.length - 1]();
+    act(() => mocks.reopenCbs[mocks.reopenCbs.length - 1]());
     await flush();
     await waitFor(() => expect(mockedText()).toContain("跟随中断"));
     expect(mockedText()).toContain("ssh: session down");
@@ -717,7 +716,7 @@ describe("Docker insight controls (M61)", () => {
     await flush();
     await waitFor(() => expect(mockedText()).toContain("跟随中 · 关闭此标签或返回即停止"));
 
-    mocks.reopenCbs[mocks.reopenCbs.length - 1]();
+    act(() => mocks.reopenCbs[mocks.reopenCbs.length - 1]());
     await flush();
     await waitFor(() => expect(mockedText()).toContain("跟随结束"));
     expect(mockedText()).toContain("容器已停止，不再产生新日志");

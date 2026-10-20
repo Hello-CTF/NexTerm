@@ -31,7 +31,6 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       groupDelete: vi.fn(),
       list: mocks.listAssets,
       readKeyFile: vi.fn(),
-      saveKeyFile: vi.fn(),
       auditQuery: vi.fn(),
     },
     vaultApi: {
@@ -146,7 +145,7 @@ describe("AssetEditor SSH connectivity", () => {
     expect(passwordInput).toBeTruthy();
     setInputValue(passwordInput, "s3cret");
     click(saveButton());
-    await flushUntil(() => mocks.create.mock.calls.length > 0);
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
     const payload = createdPayload();
     expect(payload.authKind).toBe("keyboard-interactive");
     expect(payload.credId).toBe("cred-1");
@@ -172,7 +171,7 @@ describe("AssetEditor SSH connectivity", () => {
     fillName("via-jump");
     fillHost("10.0.0.8");
     click(saveButton());
-    await flushUntil(() => mocks.create.mock.calls.length > 0);
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
     expect(createdPayload().options).toEqual({ jumpAssetId: "j1" });
   });
 
@@ -210,7 +209,7 @@ describe("AssetEditor SSH connectivity", () => {
     expect(labels.some((label) => label?.includes("web-01"))).toBe(false);
     setSelectValue(jumpSelect, "");
     click(saveButton());
-    await flushUntil(() => mocks.update.mock.calls.length > 0);
+    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
     expect(updatedPayload().options).toEqual({});
   });
 
@@ -230,7 +229,7 @@ describe("AssetEditor SSH connectivity", () => {
     fillName("forwarder");
     fillHost("10.0.0.8");
     click(saveButton());
-    await flushUntil(() => mocks.create.mock.calls.length > 0);
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
     expect(createdPayload().options).toEqual({
       forwardAgent: true,
       agentSocket: "/tmp/agent.sock",
@@ -249,7 +248,7 @@ describe("AssetEditor SSH connectivity", () => {
     fillName("cert-user");
     fillHost("10.0.0.8");
     click(saveButton());
-    await flushUntil(() => mocks.create.mock.calls.length > 0);
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
     const payload = createdPayload();
     expect(payload.keyPath).toBe("/home/u/.ssh/id_ed25519");
     expect(payload.options).toEqual({ certPath: "/home/u/.ssh/id_ed25519-cert.pub" });
@@ -281,7 +280,7 @@ describe("AssetEditor SSH connectivity", () => {
     expandAdvanced();
     setInputValue(findInput("nc %h %p"), "nc %h %p");
     click(saveButton());
-    await flushUntil(() => mocks.update.mock.calls.length > 0);
+    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
     expect(updatedPayload().options).toEqual({
       proxy: "socks5://127.0.0.1:1080",
       connectTimeout: 30,
@@ -299,7 +298,7 @@ describe("AssetEditor SSH connectivity", () => {
     fillName("ordinary-ssh");
     fillHost("10.0.0.8");
     click(saveButton());
-    await flushUntil(() => mocks.create.mock.calls.length > 0);
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
     expect(createdPayload().options).toEqual({ terminalMode: "regular" });
   });
 
@@ -330,7 +329,7 @@ describe("AssetEditor SSH connectivity", () => {
     expect(mode.value).toBe("regular");
     setSelectValue(mode, "auto");
     click(saveButton());
-    await flushUntil(() => mocks.update.mock.calls.length > 0);
+    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
     expect(updatedPayload().options).toEqual({});
   });
 });
@@ -431,5 +430,41 @@ describe("AssetEditor SSH advanced options collapsing", () => {
     ) as HTMLInputElement;
     expect(recheck.checked).toBe(true);
     expect(findInput("$SSH_AUTH_SOCK")).toBeTruthy();
+  });
+});
+
+describe("AssetEditor tags and note", () => {
+  it("loads existing values and saves trimmed deduplicated tags with an unchanged note payload", async () => {
+    const initial = {
+      id: "asset-tags",
+      kind: "ssh",
+      name: "tagged",
+      host: "10.0.0.8",
+      port: 22,
+      username: "root",
+      authKind: "password",
+      credId: null,
+      keyPath: null,
+      groupId: null,
+      options: {},
+      tags: "legacy, blue",
+      note: "  keep this note\n",
+      sort: 0,
+      createdAt: 0,
+      updatedAt: 0,
+      deletedAt: null,
+      builtin: false,
+    } as unknown as Asset;
+    mountEditor(initial);
+    await flush();
+    const tagsInput = findInput("用逗号分隔");
+    const noteInput = mounted!.container.querySelector<HTMLTextAreaElement>('textarea[placeholder="备注（可选）"]')!;
+    expect(tagsInput.value).toBe("legacy, blue");
+    expect(noteInput.value).toBe("  keep this note\n");
+    setInputValue(tagsInput, " Prod, prod, 欧洲，PROD ");
+    setInputValue(noteInput, "  updated note\n");
+    click(saveButton());
+    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    expect(updatedPayload()).toMatchObject({ tags: "Prod, 欧洲", note: "  updated note\n" });
   });
 });

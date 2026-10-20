@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { flush } from "./reactTestUtils";
 
 const server = vi.hoisted(() => ({
   revision: 0,
@@ -147,13 +148,13 @@ describe("layout://changed synchronization between two browser tabs", () => {
     expect(server.revision).toBe(1);
 
     await vi.waitFor(() => {
-      expect(tabB.store.getState().leftWidth).toBe(300);
       expect(tabB.store.getState().workspaces[0]?.title).toBe("from-a");
     });
+    expect(tabB.store.getState().leftWidth).toBe(248);
     expect(server.getCalls).toBe(3);
 
     for (const handler of [...server.handlers]) handler({ revision: 1 });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await flush();
     expect(server.getCalls).toBe(3);
 
     tabB.layout.onRemoteChange(null);
@@ -163,11 +164,12 @@ describe("layout://changed synchronization between two browser tabs", () => {
   it("forces a refresh on resync with no payload even when the revision is unchanged", async () => {
     server.data = JSON.stringify(layout(260, "server"));
     const tabA = await openTab();
-    expect(tabA.store.getState().leftWidth).toBe(260);
+    expect(tabA.store.getState().leftWidth).toBe(248);
 
     server.data = JSON.stringify(layout(280, "server-moved-on"));
     tabA.layout.onRemoteChange(null);
-    await vi.waitFor(() => expect(tabA.store.getState().leftWidth).toBe(280));
+    await vi.waitFor(() => expect(tabA.store.getState().workspaces[0]?.title).toBe("server-moved-on"));
+    expect(tabA.store.getState().leftWidth).toBe(248);
   });
 
   it("does not lose five revision events while a pull is in flight and catches up to the latest after it finishes", async () => {
@@ -187,13 +189,13 @@ describe("layout://changed synchronization between two browser tabs", () => {
 
     server.heldRelease?.();
     await vi.waitFor(() => {
-      expect(tabB.store.getState().leftWidth).toBe(253);
       expect(tabB.store.getState().workspaces[0]?.title).toBe("v5");
     });
+    expect(tabB.store.getState().leftWidth).toBe(248);
     expect(server.getCalls).toBe(4);
 
     for (const handler of [...server.handlers]) handler({ revision: 5 });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await flush();
     expect(server.getCalls).toBe(4);
   });
 });

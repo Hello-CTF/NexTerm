@@ -3,7 +3,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { readFileSync } from "node:fs";
 import { act } from "react";
 import { click, clickButton, flushUntil, mount, type MountedView } from "./reactTestUtils";
 
@@ -81,6 +80,11 @@ function text(): string {
   return mounted?.container.textContent ?? "";
 }
 
+function expectNoLowContrastAmberText(container: HTMLElement): void {
+  const rendered = [...container.querySelectorAll("*")].flatMap((element) => [...element.classList]);
+  expect(rendered.filter((name) => /(?:^|:)text-amber-(400|500)(?:\/|$)/.test(name))).toEqual([]);
+}
+
 describe("CredentialsSidebar states", () => {
   it("list failure shows the real error with a retry, not the empty state", async () => {
     mocks.listCredentials.mockRejectedValue(new Error("vault unavailable"));
@@ -106,6 +110,7 @@ describe("CredentialsSidebar states", () => {
       (s) => s.textContent === "未使用",
     );
     expect(badge?.className).toContain("var(--nx-fg-warning)");
+    expectNoLowContrastAmberText(mounted!.container);
   });
 
   it("filter chips use the accent palette when selected and neutral hover feedback when unselected", async () => {
@@ -202,6 +207,7 @@ describe("CredentialsPanel vault status badges", () => {
     mounted = withClient(createElement(CredentialsPanel, { credId: undefined }));
     await flushUntil(() => text().includes("未初始化"));
     expect(text()).not.toContain("未启用密码保护");
+    expectNoLowContrastAmberText(mounted!.container);
   });
 
   it("passwordless vault shows Enabled - no password; the locked state shows no banner and silently auto-unlocks", async () => {
@@ -270,6 +276,7 @@ describe("NewCredentialModal form and keyboard", () => {
     expect(valueInput).not.toBeNull();
     expect(valueInput!.type).toBe("password");
     expect(valueInput!.autocomplete).toBe("off");
+    expectNoLowContrastAmberText(doc);
   });
 
   it("focus lands on the name input on open", () => {
@@ -316,18 +323,4 @@ describe("NewCredentialModal form and keyboard", () => {
     expect(labelledBy).toBeTruthy();
     expect(modal.querySelector(`[id="${labelledBy}"]`)?.textContent).toContain("新建凭据");
   });
-});
-
-describe("Credential amber text semantics (source guard)", () => {
-  const files = [
-    "CredentialsSidebar.tsx",
-    "CredentialsPanel.tsx",
-    "NewCredentialModal.tsx",
-  ];
-  for (const file of files) {
-    it(`${file} no longer uses low-contrast amber text classes`, () => {
-      const src = readFileSync(`src/features/credentials/${file}`, "utf8");
-      expect(src).not.toMatch(/text-amber-(400|500)\b/);
-    });
-  }
 });

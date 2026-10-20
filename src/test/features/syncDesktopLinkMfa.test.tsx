@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => {
     linkGet: vi.fn(),
     status: vi.fn(),
     kindOptInGet: vi.fn(),
+    compare: vi.fn(),
     linkSet: vi.fn(),
     mfa: vi.fn(),
     resetPassword: vi.fn(),
@@ -41,7 +42,12 @@ vi.mock("../../ipc/remoteApi", async (importOriginal) => {
       mfa: mocks.mfa,
       resetPassword: mocks.resetPassword,
     },
+    syncCompareApi: { ...actual.syncCompareApi, compare: mocks.compare },
   };
+});
+vi.mock("../../ipc/events", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/events")>();
+  return { ...actual, listenEvent: vi.fn(async () => () => undefined) };
 });
 vi.mock("../../features/settings/AuthCard", () => ({ AuthCard: () => null }));
 vi.mock("../../features/settings/AccountCard", () => ({ AccountCard: () => null }));
@@ -70,13 +76,25 @@ function seedForm() {
   mocks.linkGet.mockResolvedValue({ ...LINK });
   mocks.status.mockImplementation(() => Promise.resolve(statusPayload()));
   mocks.kindOptInGet.mockResolvedValue({ knownHost: true, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
+  mocks.compare.mockResolvedValue({ rows: [], remote: 0, warnings: [], userId: "u-1", compareToken: "compare-1" });
 }
 
-async function mountAndLogin() {
+function consoleReady(): boolean {
+  return document.body.textContent?.includes("立即同步") === true &&
+    document.body.textContent?.includes("已知主机 已开启") === true &&
+    document.body.textContent?.includes("云端 0 个对象") === true;
+}
+
+async function waitForConsole(): Promise<void> {
+  await flushUntil(consoleReady);
+}
+
+async function mountAndLogin(ready: () => boolean) {
   mounted = withClient(createElement(SyncCard));
   await flushUntil(() => (document.querySelector("#sync-url") as HTMLInputElement | null)?.value === LINK.url);
   click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "登录") as HTMLButtonElement);
-  await flushUntil(() => mocks.linkSet.mock.calls.length === 1);
+  await flushUntil(ready);
+  expect(mocks.linkSet).toHaveBeenCalledTimes(1);
 }
 
 beforeEach(() => {
@@ -99,8 +117,7 @@ describe("Desktop login - direct success", () => {
       loggedIn = true;
       return Promise.resolve({ ...LINK, connect: "connected" });
     });
-    await mountAndLogin();
-    await flushUntil(() => document.body.textContent?.includes("立即同步") ?? false);
+    await mountAndLogin(consoleReady);
 
     expect(document.body.textContent).not.toContain("两步验证");
     expect(document.body.textContent).not.toContain("设置新密码");
@@ -118,8 +135,7 @@ describe("Desktop login - mfa_required branch", () => {
       loggedIn = true;
       return Promise.resolve({ ...LINK, connect: "connected" });
     });
-    await mountAndLogin();
-    await flushUntil(() => document.body.textContent?.includes("两步验证") ?? false);
+    await mountAndLogin(() => document.body.textContent?.includes("两步验证") ?? false);
 
     // The main form is hidden, only the OTP input remains
     expect(document.querySelector("#sync-url")).toBeNull();
@@ -127,7 +143,7 @@ describe("Desktop login - mfa_required branch", () => {
 
     setInputValue(document.querySelector("#sync-mfa-code") as HTMLInputElement, "123456");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("验证并登录")) as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("立即同步") ?? false);
+    await waitForConsole();
 
     expect(mocks.mfa).toHaveBeenCalledWith("123456");
     expect(mocks.toast).toHaveBeenCalledWith("success", "登录信息已保存，自动同步已开启");
@@ -140,8 +156,7 @@ describe("Desktop login - mfa_required branch", () => {
       loggedIn = true;
       return Promise.resolve({ ...LINK, connect: "connected" });
     });
-    await mountAndLogin();
-    await flushUntil(() => document.body.textContent?.includes("两步验证") ?? false);
+    await mountAndLogin(() => document.body.textContent?.includes("两步验证") ?? false);
 
     setInputValue(document.querySelector("#sync-mfa-code") as HTMLInputElement, "000000");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("验证并登录")) as HTMLButtonElement);
@@ -158,7 +173,7 @@ describe("Desktop login - mfa_required branch", () => {
     await flushUntil(() => document.body.textContent?.includes("两步验证") ?? false);
     setInputValue(document.querySelector("#sync-mfa-code") as HTMLInputElement, "123456");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("验证并登录")) as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("立即同步") ?? false);
+    await waitForConsole();
   });
 });
 
@@ -166,8 +181,7 @@ describe("Desktop login - reset_required branch", () => {
   async function enterReset() {
     seedForm();
     mocks.linkSet.mockResolvedValue({ ...LINK, connect: "reset_required" });
-    await mountAndLogin();
-    await flushUntil(() => document.body.textContent?.includes("必须先设置新密码") ?? false);
+    await mountAndLogin(() => document.body.textContent?.includes("必须先设置新密码") ?? false);
   }
 
   it("requires at least eight characters and matching new passwords without making a request", async () => {
@@ -210,16 +224,11 @@ describe("Desktop login - reset_required branch", () => {
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "显示") as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes(RECOVERY_KEY) ?? false);
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "复制") as HTMLButtonElement);
-    await flushUntil(() => writeText.mock.calls.length === 1);
+    await flushUntil(() => writeText.mock.calls.length === 1 && !finish.disabled);
     expect(writeText).toHaveBeenCalledWith(RECOVERY_KEY);
-    await flushUntil(
-      () =>
-        !([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入同步")) as HTMLButtonElement)
-          .disabled,
-    );
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入同步")) as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("立即同步") ?? false);
+    await waitForConsole();
     expect(document.body.textContent).not.toContain(RECOVERY_KEY);
     expect(mocks.toast).toHaveBeenCalledWith("success", "登录信息已保存，自动同步已开启");
   });
@@ -238,16 +247,13 @@ describe("Desktop login - reset_required branch", () => {
     await flushUntil(() => document.body.textContent?.includes("恢复密钥（仅显示一次）") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "复制") as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("复制失败，请手动复制恢复密钥") ?? false);
-    expect(document.body.textContent).toContain(RECOVERY_KEY);
-
-    await flushUntil(
-      () =>
-        !([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入同步")) as HTMLButtonElement)
-          .disabled,
+    await flushUntil(() =>
+      document.body.textContent?.includes("复制失败，请手动复制恢复密钥") === true &&
+      !([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入同步")) as HTMLButtonElement).disabled,
     );
+    expect(document.body.textContent).toContain(RECOVERY_KEY);
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入同步")) as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("立即同步") ?? false);
+    await waitForConsole();
   });
 
   it("shows password change failures inline and stays on the step for retry", async () => {

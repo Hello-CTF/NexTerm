@@ -4,8 +4,8 @@
 // bounded TTL / username trim / inline errors for invalid and disabled recipients), revoke confirmation, no creation entry for public links,
 // and account-switch isolation (late responses never write into the new account).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
-import { click, deferred, flush, flushUntil, mountWithClient, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
+import { act, createElement } from "react";
+import { click, deferred, flush, flushUntil, mountWithClient, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -211,6 +211,18 @@ function shareCard(): HTMLElement | undefined {
   );
 }
 
+function shareRefreshEnabled(): boolean {
+  return [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "刷新")?.disabled === false;
+}
+
+async function waitForShareRefresh(calls: RecordedCall[], expectedRound = 2): Promise<void> {
+  await flushUntil(() =>
+    ["/fleet/devices", "/share/host-shares", "/share/links"].every(
+      (url) => calls.filter((call) => call.method === "GET" && call.url === url).length >= expectedRound,
+    ) && shareRefreshEnabled(),
+  );
+}
+
 function recipientInput(): HTMLInputElement {
   const input = [...document.querySelectorAll<HTMLInputElement>(".nx-card input:not([type=checkbox])")].find((i) =>
     i.placeholder?.includes("接收者的用户名"),
@@ -298,8 +310,12 @@ describe("ShareCard auth=off/on/loopback", () => {
     expect(calls.filter((c) => c.url.startsWith("/share") || c.url.startsWith("/fleet") || c.url.startsWith("/admin"))).toHaveLength(0);
     expect(document.body.textContent).toContain("终端分享不可用");
 
-    seedUser(SUPERADMIN, "on");
+    await act(async () => {
+      seedUser(SUPERADMIN, "on");
+      await flush();
+    });
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+    await waitForShareRefresh(calls, 1);
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       "GET /fleet/devices",
       "GET /share/host-shares",
@@ -332,7 +348,7 @@ describe("ShareCard auth=off/on/loopback", () => {
 });
 
 describe("ShareCard lists and states", () => {
-  it("renders device names, direction, permission, state, and expiry for host shares, plus short session ids and recent access for public links", async () => {
+  it("renders device names, direction, permission, state, and expiry for host shares, plus short session ids and recent access for legacy public links", async () => {
     route(shareHandler());
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(ShareCard));
@@ -340,7 +356,9 @@ describe("ShareCard lists and states", () => {
 
     const text = document.body.textContent ?? "";
     expect(text).toContain("5 条主机分享");
-    expect(text).toContain("3 条公开链接");
+    expect(text).toContain("3 条旧版链接");
+    expect(text).toContain("旧版链接（只可吊销）");
+    expect(text).toContain("新的公开访问请使用终端中的「预览链接」");
     expect(text).toContain("分享给 alice");
     expect(text).toContain("来自 alice");
     expect(text).toContain("alice 分享给 carol");
@@ -356,7 +374,6 @@ describe("ShareCard lists and states", () => {
     expect(sessionSpan?.textContent).toContain("01J4Z8Y7…");
     expect(text).toContain("最近访问");
     expect(text).toContain("通过设备代理在你的接入设备上新建终端");
-    expect(text).toContain("公开链接用于访问已有的实时会话");
     expect(text.match(/主机密码或私钥/g)).toHaveLength(1);
   });
 
@@ -365,7 +382,8 @@ describe("ShareCard lists and states", () => {
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("还没有主机分享") ?? false);
-    expect(document.body.textContent).toContain("还没有公开链接");
+    expect(document.body.textContent).toContain("还没有旧版链接");
+    expect(document.body.textContent).toContain("「预览链接」");
     mounted.unmount();
 
     route(() => ({ status: 500, payload: { error: { code: "internal", message: "database error" } } }));
@@ -424,6 +442,7 @@ describe("ShareCard host-share creation", () => {
     const create = calls.find((c) => c.url === "/share/host-shares" && c.method === "POST");
     expect(create?.body).toEqual({ device_id: "d-2", recipient_username: "root", write: false, ttl_ms: 86_400_000 });
     expect(calls.some((c) => c.url === "/admin/users")).toBe(false);
+    await waitForShareRefresh(calls);
   });
 
   it("submits write=true and a seven-day ttl_ms when read-write access is explicitly selected", async () => {
@@ -446,6 +465,7 @@ describe("ShareCard host-share creation", () => {
 
     const create = calls.find((c) => c.url === "/share/host-shares" && c.method === "POST");
     expect(create?.body).toEqual({ device_id: "d-1", recipient_username: "alice", write: true, ttl_ms: 604_800_000 });
+    await waitForShareRefresh(calls);
   });
 
   it("shows inline not_found for an invalid username and forbidden for a disabled recipient", async () => {
@@ -587,11 +607,15 @@ describe("ShareCard account isolation while confirmation is open", () => {
     await flushUntil(() => mocks.ask.mock.calls.length === 1);
 
     // The confirm dialog is still open: switch to a regular user, confirm only afterwards - the old account's revoke must not be fired.
-    seedUser(ALICE);
-    await flush();
-    dialog.resolve(true);
-    await flush();
-    await flush();
+    await act(async () => {
+      seedUser(ALICE);
+      await flush();
+    });
+    await waitForShareRefresh(calls);
+    await act(async () => {
+      dialog.resolve(true);
+      await flush();
+    });
 
     expect(calls.some((c) => c.url.includes("/revoke"))).toBe(false);
   });
@@ -611,11 +635,15 @@ describe("ShareCard account isolation while confirmation is open", () => {
     click([...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "吊销") as HTMLButtonElement);
     await flushUntil(() => mocks.ask.mock.calls.length === 1);
 
-    seedUser(ALICE);
-    await flush();
-    dialog.resolve(true);
-    await flush();
-    await flush();
+    await act(async () => {
+      seedUser(ALICE);
+      await flush();
+    });
+    await waitForShareRefresh(calls);
+    await act(async () => {
+      dialog.resolve(true);
+      await flush();
+    });
 
     expect(calls.some((c) => c.url.includes("/revoke"))).toBe(false);
   });
@@ -672,18 +700,22 @@ describe("ShareCard account-switch isolation", () => {
     await flushUntil(() => document.body.textContent?.includes("新建主机分享") !== null);
 
     // The old account's list is still in flight before the switch: simulate the AuthGate scenario switching to a regular user, the card is not remounted.
-    switched = true;
-    seedUser(ALICE);
-    await flushUntil(() => document.body.textContent?.includes("分享给 carol") ?? false);
+    await act(async () => {
+      switched = true;
+      seedUser(ALICE);
+      await flush();
+    });
+    await flushUntil(() => document.body.textContent?.includes("分享给 carol") === true && shareRefreshEnabled());
 
     // The old account's late response arrives only now: it must not overwrite the new account's list.
-    lateAdminShares.resolve({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify({ shares: [SHARE_GRANTED] }),
+    await act(async () => {
+      lateAdminShares.resolve({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ shares: [SHARE_GRANTED] }),
+      });
+      await flush();
     });
-    await flush();
-    await flush();
     expect(document.body.textContent).not.toContain("分享给 alice");
     expect(document.body.textContent).toContain("分享给 carol");
   });
@@ -722,19 +754,26 @@ describe("ShareCard account-switch isolation", () => {
     await flushUntil(() => createCalls === 1);
 
     // Switching to a regular user while creation is in flight: the render-time reset has already cleared the form and creating.
-    seedUser(ALICE);
-    await flush();
+    await act(async () => {
+      seedUser(ALICE);
+      await flush();
+    });
+    await flushUntil(() => !document.body.textContent?.includes("创建中") && shareRefreshEnabled());
     expect(document.body.textContent).not.toContain("创建中");
 
     // The old account's creation response arrives only now: it must not trigger the old account's refresh or any write.
-    lateCreate.resolve({ ok: true, status: 200, text: async () => JSON.stringify({ id: "hs-old" }) });
-    await flush();
-    await flush();
+    await act(async () => {
+      lateCreate.resolve({ ok: true, status: 200, text: async () => JSON.stringify({ id: "hs-old" }) });
+      await flush();
+    });
     expect(document.body.textContent).not.toContain("hs-old");
 
     // Switching back to super admin and creating again: creating is not stuck by the old finally.
-    seedUser(SUPERADMIN);
-    await flushUntil(() => document.body.textContent?.includes("新建主机分享") ?? false);
+    await act(async () => {
+      seedUser(SUPERADMIN);
+      await flush();
+    });
+    await flushUntil(() => document.body.textContent?.includes("新建主机分享") === true && shareRefreshEnabled());
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
     // Wait for the device list to be ready before selecting, so empty options do not swallow setSelectValue.
     await flushUntil(
@@ -743,8 +782,9 @@ describe("ShareCard account-switch isolation", () => {
     setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");
     setInputValue(recipientInput(), "alice");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "创建分享") as HTMLButtonElement);
-    await waitFor(() => {
-      expect(createCalls).toBe(2);
-    });
+    await flushUntil(() =>
+      createCalls === 2 && document.querySelector('select[aria-label="分享主机"]') === null && shareRefreshEnabled(),
+    );
+    expect(createCalls).toBe(2);
   });
 });

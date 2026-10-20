@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
 }));
 vi.mock("../../ipc/commands", () => ({
-  aiApi: { cancel: mocks.cancel, takeoverExit: mocks.exit },
+  aiApi: { takeoverCancel: mocks.cancel, takeoverExit: mocks.exit },
   dbApi: {},
   sessionApi: {},
   vaultApi: {},

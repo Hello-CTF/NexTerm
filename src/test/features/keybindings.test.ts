@@ -325,6 +325,35 @@ describe("matchAppKeybinding", () => {
   });
 });
 
+describe("browser navigation keybindings", () => {
+  const cases = [
+    { action: "nextWorkspace", binding: "Ctrl+Alt+ArrowRight", key: "ArrowRight", code: "ArrowRight" },
+    { action: "previousWorkspace", binding: "Ctrl+Alt+ArrowLeft", key: "ArrowLeft", code: "ArrowLeft" },
+    { action: "nextTab", binding: "Ctrl+Alt+]", key: "]", code: "BracketRight" },
+    { action: "previousTab", binding: "Ctrl+Alt+[", key: "[", code: "BracketLeft" },
+    { action: "focusUpperPane", binding: "Ctrl+Alt+ArrowUp", key: "ArrowUp", code: "ArrowUp" },
+    { action: "focusLowerPane", binding: "Ctrl+Alt+ArrowDown", key: "ArrowDown", code: "ArrowDown" },
+  ] as const;
+
+  it.each(cases)("maps $action from a real KeyboardEvent", ({ action, binding, key, code }) => {
+    expect(getKeybinding(action)).toBe(binding);
+    const event = new KeyboardEvent("keydown", { key, code, ctrlKey: true, altKey: true });
+    expect(matchAppKeybinding(event)).toEqual({ action, digit: null });
+  });
+
+  it("does not claim reserved browser tab switching keys", () => {
+    for (const shiftKey of [false, true]) {
+      const event = new KeyboardEvent("keydown", {
+        key: "Tab",
+        code: "Tab",
+        ctrlKey: true,
+        shiftKey,
+      });
+      expect(matchAppKeybinding(event)).toBeNull();
+    }
+  });
+});
+
 describe("catalog sanity", () => {
   it("every action default parses", () => {
     for (const action of KEYBINDING_ACTIONS) {

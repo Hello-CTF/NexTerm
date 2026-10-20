@@ -145,7 +145,9 @@ async function clickMenuItem(label: string): Promise<void> {
     (candidate) => candidate.textContent?.includes(label),
   );
   if (!item) throw new Error(`menu item ${label} not found`);
-  act(() => item.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await act(async () => {
+    item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
 }
 
 describe("TerminalPane truthful command-input send feedback", () => {

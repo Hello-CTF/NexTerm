@@ -569,6 +569,34 @@ describe("conversation terminal reconciliation", () => {
     expect(s.getState().attempts[0].outcome).toBe("canceled");
   });
 
+  it("keeps takeover pause, resume and terminal events on one continuous sequence", () => {
+    const { s } = stream();
+    s.beginRun(7, "takeover");
+    expect(s.pushEvent(7, { type: "paused", reason: "用户暂停", seq: 1 }).accepted).toBe(true);
+    expect(s.getState().status).toEqual({ phase: "paused", detail: "用户暂停" });
+    expect(s.getState().attempts[0].outcome).toBeNull();
+
+    expect(s.pushEvent(7, { type: "resumed", seq: 2 }).accepted).toBe(true);
+    expect(s.getState().status).toBeNull();
+    expect(s.pushEvent(7, { type: "delta", text: "继续", seq: 3 }).accepted).toBe(true);
+    expect(s.pushEvent(7, { type: "done", answer: "完成", seq: 4 }).accepted).toBe(true);
+    expect(s.lastSeq(7)).toBe(4);
+    expect(s.pushEvent(7, { type: "paused", reason: "迟到暂停", seq: 3 }).accepted).toBe(false);
+    expect(s.getState().attempts[0].outcome).toBe("done");
+  });
+
+  it("anchors a restored takeover at its first real sequence and then deduplicates", () => {
+    const { s } = stream();
+    s.beginRun(7, "takeover");
+    s.resumeFromNextEvent(7);
+    expect(s.pushEvent(7, { type: "delta", text: "恢复", seq: 41 }).accepted).toBe(true);
+    expect(s.lastSeq(7)).toBe(41);
+    expect(s.pushEvent(7, { type: "delta", text: "继续", seq: 42 }).accepted).toBe(true);
+    expect(s.pushEvent(7, { type: "done", answer: "完成", seq: 43 }).accepted).toBe(true);
+    expect(s.pushEvent(7, { type: "delta", text: "重复", seq: 42 }).accepted).toBe(false);
+    expect(s.lastSeq(7)).toBe(43);
+  });
+
   it("takeover done appends the closing narration; cancel waits for the real terminal", () => {
     const { s } = stream();
     s.beginRun(7, "takeover");
@@ -748,6 +776,25 @@ describe("history and reset", () => {
     s.pushEvent(2, { type: "delta", text: "New" });
     s.flush();
     const ids = s.getState().items.map((i) => i.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("replaces the loaded history window without discarding live run state", () => {
+    const { s } = stream();
+    const recent = { id: "recent", role: "user", content: { content: "Recent" } };
+    s.reset(historyToItems(s.getState(), [recent]));
+    s.beginRun(2);
+    s.pushEvent(2, { type: "delta", text: "Live" });
+    s.pushEvent(2, { type: "usage", promptTokens: 3, contextWindow: 9 });
+    s.flush();
+    const older = { id: "older", role: "user", content: { content: "Older" } };
+    s.replaceHistory(historyToItems(s.getState(), [older, recent]));
+
+    expect(texts(s.getState().items, "user")).toEqual(["Older", "Recent"]);
+    expect(texts(s.getState().items, "assistant")).toEqual(["Live"]);
+    expect(s.getState().attempts).toHaveLength(1);
+    expect(s.getState().usage).toMatchObject({ promptTokens: 3, contextWindow: 9 });
+    const ids = s.getState().items.map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
 

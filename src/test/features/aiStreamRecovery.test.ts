@@ -75,7 +75,12 @@ vi.mock("../../ipc/events", async (importOriginal) => ({
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, promptText: mocks.promptText }));
 
-import { AiSidebar } from "../../features/ai/AiSidebar";
+import {
+  AI_RESYNC_BACKOFF_MS,
+  AI_RESYNC_MAX_ATTEMPTS,
+  AI_SYNC_NOTICE_DISMISS_MS,
+  AiSidebar,
+} from "../../features/ai/AiSidebar";
 import { useUi } from "../../app/store";
 import { createConversationStream } from "../../features/ai/conversationStream";
 import type { ChatItem } from "../../features/ai/conversation";
@@ -305,6 +310,7 @@ describe("AiSidebar stream recovery", () => {
   let view: MountedView | null = null;
 
   beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
     rafQueue = [];
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
       rafQueue.push({ cb, cancelled: false });
@@ -409,6 +415,19 @@ describe("AiSidebar stream recovery", () => {
     expect(useUi.getState().aiBusy).toBe(false);
   });
 
+  it("does not resync a settled run when its stream closes normally", async () => {
+    await send("Hello");
+    const channel = mocks.channels.at(-1)!;
+    const closed = mocks.reopens.get(channel)!;
+    emit({ type: "done", answer: "Done", seq: 1 });
+    await flush();
+    expect(useUi.getState().aiBusy).toBe(false);
+    const calls = mocks.runEvents.mock.calls.length;
+
+    act(() => closed());
+    expect(mocks.runEvents.mock.calls.length).toBe(calls);
+  });
+
   it("retries a retryable failure with the original message in the same conversation", async () => {
     await send("重启服务");
     emit({ type: "error", message: "模型超时", retryable: true, seq: 1 });
@@ -471,12 +490,12 @@ describe("AiSidebar stream recovery", () => {
     expect(textOf(view!)).toContain("正在补齐");
     expect(textOf(view!)).not.toContain("输出无缺失");
 
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1100));
-    });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 2100));
-    });
+    for (let attempt = 1; attempt <= AI_RESYNC_MAX_ATTEMPTS; attempt += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(AI_RESYNC_BACKOFF_MS * attempt);
+      });
+      await flushReplay();
+    }
     await flushReplay();
 
     expect(textOf(view!)).toContain("已补齐");
@@ -493,18 +512,18 @@ describe("AiSidebar stream recovery", () => {
 
     emit({ type: "delta", text: "三", seq: 3 });
     await flushReplay();
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1100));
-    });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 2100));
-    });
+    for (let attempt = 1; attempt <= AI_RESYNC_MAX_ATTEMPTS; attempt += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(AI_RESYNC_BACKOFF_MS * attempt);
+      });
+      await flushReplay();
+    }
     await flushReplay();
 
     const failedText = textOf(view!);
     expect(failedText).toContain("补齐失败");
     expect(failedText).not.toContain("输出无缺失");
-    expect(mocks.runEvents).toHaveBeenCalledTimes(3);
+    expect(mocks.runEvents).toHaveBeenCalledTimes(1 + AI_RESYNC_MAX_ATTEMPTS);
 
     mocks.runEvents.mockResolvedValue([{ type: "delta", text: "二", seq: 2 }]);
     clickButton(view!.container, "重新补齐");
@@ -534,7 +553,7 @@ describe("AiSidebar stream recovery", () => {
 
     const callsBefore = mocks.runEvents.mock.calls.length;
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1100));
+      await vi.advanceTimersByTimeAsync(AI_RESYNC_BACKOFF_MS * AI_RESYNC_MAX_ATTEMPTS);
     });
     expect(mocks.runEvents.mock.calls.length).toBe(callsBefore);
     expect(textOf(view!)).not.toContain("正在补齐");
@@ -576,7 +595,7 @@ describe("AiSidebar stream recovery", () => {
     expect(textOf(view!)).toContain("正在补齐");
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1100));
+      await vi.advanceTimersByTimeAsync(AI_RESYNC_BACKOFF_MS);
     });
     await flushReplay();
     expect(mocks.runEvents).toHaveBeenCalledTimes(3);
@@ -617,7 +636,11 @@ describe("AiSidebar stream recovery", () => {
     await flushReplay();
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 2600));
+      await vi.advanceTimersByTimeAsync(AI_SYNC_NOTICE_DISMISS_MS - 1);
+    });
+    expect(textOf(view!)).toContain("已补齐断线期间的 1 条输出");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
     });
     expect(textOf(view!)).not.toContain("已补齐");
   });

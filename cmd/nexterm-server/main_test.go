@@ -463,19 +463,123 @@ func vaultStatusFromHealth(t *testing.T, health core.Health) vault.Status {
 	return status
 }
 
-func TestSystemdUnitsEnforceAuthOn(t *testing.T) {
-	for _, unit := range []string{"nexterm-server.service", "nexterm-onlyserver.service"} {
-		data, err := os.ReadFile(filepath.Join("..", "..", "deploy", "systemd", unit))
-		if err != nil {
-			t.Fatal(err)
+func parseSystemdUnit(t *testing.T, path string) map[string]map[string][]string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(data), "\n")
+	unit := make(map[string]map[string][]string)
+	section := ""
+	for index := 0; index < len(lines); index++ {
+		line := strings.TrimSpace(lines[index])
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
 		}
-		content := string(data)
-		if !strings.Contains(content, "--auth on") {
-			t.Fatalf("%s does not enforce --auth on:\n%s", unit, content)
+		for strings.HasSuffix(line, `\`) {
+			line = strings.TrimSpace(strings.TrimSuffix(line, `\`))
+			index++
+			if index >= len(lines) {
+				t.Fatalf("%s: unterminated continuation", path)
+			}
+			line += " " + strings.TrimSpace(lines[index])
 		}
-		if strings.Contains(content, "--auth loopback") || strings.Contains(content, "--auth off") {
-			t.Fatalf("%s weakens access control:\n%s", unit, content)
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = strings.TrimSpace(line[1 : len(line)-1])
+			if _, ok := unit[section]; !ok {
+				unit[section] = make(map[string][]string)
+			}
+			continue
 		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || section == "" {
+			t.Fatalf("%s: invalid unit entry %q", path, line)
+		}
+		key = strings.TrimSpace(key)
+		unit[section][key] = append(unit[section][key], strings.TrimSpace(value))
+	}
+	return unit
+}
+
+func systemdValue(t *testing.T, unit map[string]map[string][]string, section, key string) string {
+	t.Helper()
+	values := unit[section][key]
+	if len(values) != 1 {
+		t.Fatalf("[%s] %s has %d values, want 1", section, key, len(values))
+	}
+	return values[0]
+}
+
+func applyEnvironment(t *testing.T, environment map[string]string, assignments string) {
+	t.Helper()
+	for _, assignment := range strings.Fields(assignments) {
+		key, value, ok := strings.Cut(assignment, "=")
+		if !ok || key == "" {
+			t.Fatalf("invalid environment assignment %q", assignment)
+		}
+		environment[key] = value
+	}
+}
+
+func environmentExample(t *testing.T, path string) map[string]string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment := make(map[string]string)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		applyEnvironment(t, environment, line)
+	}
+	return environment
+}
+
+func TestSystemdUnitsDefaultToAuthOn(t *testing.T) {
+	for _, test := range []struct {
+		unit            string
+		environmentFile string
+		example         string
+		syncOnly        bool
+	}{
+		{unit: "nexterm-server.service", environmentFile: "/etc/nexterm/nexterm.env", example: "nexterm.env.example"},
+		{unit: "nexterm-onlyserver.service", environmentFile: "/etc/nexterm/onlyserver.env", example: "onlyserver.env.example", syncOnly: true},
+	} {
+		t.Run(test.unit, func(t *testing.T) {
+			root := filepath.Join("..", "..", "deploy", "systemd")
+			unit := parseSystemdUnit(t, filepath.Join(root, test.unit))
+			environment := make(map[string]string)
+			for _, assignments := range unit["Service"]["Environment"] {
+				applyEnvironment(t, environment, assignments)
+			}
+			environmentFile := strings.TrimPrefix(systemdValue(t, unit, "Service", "EnvironmentFile"), "-")
+			if environmentFile != test.environmentFile {
+				t.Fatalf("EnvironmentFile = %q, want %q", environmentFile, test.environmentFile)
+			}
+			for key, value := range environmentExample(t, filepath.Join(root, test.example)) {
+				environment[key] = value
+			}
+			execStart := strings.Fields(systemdValue(t, unit, "Service", "ExecStart"))
+			if len(execStart) == 0 {
+				t.Fatal("ExecStart is empty")
+			}
+			invocation, err := core.ParseCLI(execStart[1:], core.CommandServe, func(key string) string {
+				return environment[key]
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if invocation.Auth != core.AuthOn {
+				t.Fatalf("effective auth = %q, want %q", invocation.Auth, core.AuthOn)
+			}
+			if invocation.SyncOnly != test.syncOnly {
+				t.Fatalf("sync-only = %v, want %v", invocation.SyncOnly, test.syncOnly)
+			}
+		})
 	}
 }
 

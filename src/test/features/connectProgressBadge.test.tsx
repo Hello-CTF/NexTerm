@@ -17,7 +17,7 @@ vi.mock("../../ipc/commands", () => ({
   assetApi: {},
   dbApi: {},
   vaultApi: {},
-  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn() },
+  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn(), list: vi.fn() },
   terminalApi: {
     listLive: vi.fn().mockResolvedValue([]),
     write: vi.fn().mockResolvedValue(undefined),
@@ -77,7 +77,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
 
 import { TerminalPane } from "../../features/terminal/TerminalPane";
 import { useUi } from "../../app/store";
-import type { SessionInfo } from "../../ipc/commands";
+import { sessionApi, type SessionInfo } from "../../ipc/commands";
 
 let mounted: MountedView | undefined;
 
@@ -119,13 +119,15 @@ function seedSession(status: SessionInfo["status"]): void {
   });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   seedSession("reconnecting");
+  vi.mocked(sessionApi.list).mockImplementation(async () => useUi.getState().sessions);
   mounted = mount(
     createElement(TerminalPane, { sessionId: "s1", title: "term", storeTabId: "t1" }),
   );
+  await flush();
 });
 
 afterEach(() => {
@@ -169,7 +171,9 @@ describe("session://connect-progress badge", () => {
   });
 
   it("shows the target-host stage while connecting", async () => {
-    seedSession("connecting");
+    act(() => {
+      seedSession("connecting");
+    });
     await act(async () => {
       await flush();
     });

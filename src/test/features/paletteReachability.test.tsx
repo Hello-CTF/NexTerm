@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement, type ReactNode } from "react";
+import { act, createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   click,
@@ -91,8 +91,11 @@ async function mountPalette(props: {
 }): Promise<MountedView> {
   const view = mountWithClient(createElement(CommandPalette, props));
   mountedViews.push(view);
-  await flush();
-  await waitFor(() => expect(optionByText(view.container, "连接 web-01")).toBeTruthy());
+  await waitFor(() => {
+    expect(optionByText(view.container, "连接 web-01")).toBeTruthy();
+    expect(mocks.probeBatch).toHaveBeenCalledTimes(1);
+    expect(Object.values(useAssetReachability.getState().entries).every((entry) => entry.state !== "checking")).toBe(true);
+  });
   return view;
 }
 
@@ -165,7 +168,7 @@ describe("Command palette reachability and quick connect", () => {
 
   it("shows a connecting state on entries while a connection is in flight", async () => {
     const view = await mountPalette({ onClose: vi.fn() });
-    useUi.setState({ connectingAssetIds: ["a-web"] });
+    act(() => useUi.setState({ connectingAssetIds: ["a-web"] }));
     await flush();
     expect(optionByText(view.container, "连接 web-01").textContent).toContain("连接中…");
   });

@@ -19,85 +19,134 @@ jobs:
   version:
     name: Validate the release tag
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      desktop-matrix: ${{ steps.desktop-matrix.outputs.value }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Require the tagged commit to be on master
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin master:refs/remotes/origin/master
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "::error::tag $GITHUB_REF_NAME is not on origin/master"
+            exit 1
+          fi
       - name: The tag drives the release version; version files stay 0.0.0 placeholders
         run: |
           tag="$GITHUB_REF_NAME"
-          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+          if [[ "$tag" != v* ]] || ! node scripts/check-semver.mjs "${tag#v}"; then
             echo "tag $tag is not a v<semver> release tag" >&2; exit 1;
           fi
-          node -e '
-            const fs = require("node:fs");
-            const wails = require("./wails.json").info.version;
-            const pkg = require("./package.json").version;
-            const lazycat = fs.readFileSync("./lazycat/package.yml", "utf8").match(/^version:\s*(\S+)\s*$/m)?.[1];
-            if (wails !== "0.0.0" || pkg !== "0.0.0" || lazycat !== "0.0.0") {
-              throw new Error(`version files must stay 0.0.0 placeholders (wails.json=${wails}, package.json=${pkg}, lazycat/package.yml=${lazycat}); the release version comes from the tag`);
-            }'
+          node scripts/check-placeholders.mjs
+      - name: Require release signing configuration before any build
+        env:
+          NEXTERM_MINISIGN_PUBLIC_KEY: ${{ vars.NEXTERM_MINISIGN_PUBLIC_KEY }}
+          NEXTERM_MINISIGN_PRIVATE_KEY: ${{ secrets.NEXTERM_MINISIGN_PRIVATE_KEY }}
+          NEXTERM_WINDOWS_CERT_BASE64: ${{ secrets.NEXTERM_WINDOWS_CERT_BASE64 }}
+          NEXTERM_WINDOWS_CERT_PASSWORD: ${{ secrets.NEXTERM_WINDOWS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in NEXTERM_MINISIGN_PUBLIC_KEY NEXTERM_MINISIGN_PRIVATE_KEY NEXTERM_WINDOWS_CERT_BASE64 NEXTERM_WINDOWS_CERT_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::$name is required for a signed release"
+              exit 1
+            fi
+          done
+      - name: Normalize the updater public key without build secrets
+        env:
+          NEXTERM_MINISIGN_PUBLIC_KEY: ${{ vars.NEXTERM_MINISIGN_PUBLIC_KEY }}
+        run: node scripts/build.mjs write-minisign-public-key --out="$RUNNER_TEMP/nexterm-minisign-preflight.pub"
+      - name: Verify the updater key pair before any build
+        env:
+          MINISIGN_PRIVATE_KEY: ${{ secrets.NEXTERM_MINISIGN_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends minisign
+          umask 077
+          SECRET_KEY="$RUNNER_TEMP/nexterm-minisign-preflight.key"
+          PUBLIC_KEY="$RUNNER_TEMP/nexterm-minisign-preflight.pub"
+          MESSAGE="$RUNNER_TEMP/nexterm-minisign-preflight.txt"
+          SIGNATURE="$MESSAGE.minisig"
+          trap 'rm -f "$SECRET_KEY" "$MESSAGE" "$SIGNATURE"' EXIT
+          printf '%s\n' "$MINISIGN_PRIVATE_KEY" > "$SECRET_KEY"
+          test -s "$PUBLIC_KEY"
+          printf 'NexTerm updater key preflight\n' > "$MESSAGE"
+          minisign -S -W -s "$SECRET_KEY" -m "$MESSAGE" -x "$SIGNATURE"
+          minisign -V -H -p "$PUBLIC_KEY" -m "$MESSAGE" -x "$SIGNATURE"
+      - name: Validate the updater public key without build secrets
+        env:
+          NEXTERM_MINISIGN_PUBLIC_KEY: ${{ vars.NEXTERM_MINISIGN_PUBLIC_KEY }}
+        run: node scripts/build.mjs desktop-ldflags --os=linux >/dev/null
+      - name: Generate the desktop release matrix from the native matrix
+        id: desktop-matrix
+        run: echo "value=$(node scripts/release-matrix.mjs)" >> "$GITHUB_OUTPUT"
+  # Reusable workflow callers do not support timeout-minutes; ci.yml bounds every runner job.
   ci:
     needs: version
     uses: ./.github/workflows/ci.yml
-    secrets: inherit
+    secrets:
+      NEXTERM_ANDROID_KEYSTORE_BASE64: ${{ secrets.NEXTERM_ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      NEXTERM_IOS_P12_BASE64: ${{ secrets.NEXTERM_IOS_P12_BASE64 }}
+      NEXTERM_IOS_P12_PASSWORD: ${{ secrets.NEXTERM_IOS_P12_PASSWORD }}
+      NEXTERM_IOS_PROVISIONING_PROFILE: ${{ secrets.NEXTERM_IOS_PROVISIONING_PROFILE }}
     with:
       release_version: ${{ github.ref_name }}
 
   desktop:
     name: ${{ matrix.os }}/${{ matrix.arch }} native package
-    needs: ci
+    needs: [ci, version]
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - runner: windows-latest
-            os: windows
-            arch: amd64
-          - runner: windows-11-arm
-            os: windows
-            arch: arm64
-          - runner: macos-15
-            os: darwin
-            arch: arm64
-          - runner: macos-15-intel
-            os: darwin
-            arch: amd64
-          - runner: ubuntu-latest
-            os: linux
-            arch: amd64
-          - runner: ubuntu-24.04-arm
-            os: linux
-            arch: arm64
+      matrix: ${{ fromJSON(needs.version.outputs.desktop-matrix) }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      NEXTERM_MINISIGN_PUBLIC_KEY: ${{ vars.NEXTERM_MINISIGN_PUBLIC_KEY }}
+      NEXTERM_MACOS_SIGNING: ${{ vars.NEXTERM_MACOS_SIGNING }}
+      NEXTERM_MACOS_SIGN_IDENTITY: ${{ vars.NEXTERM_MACOS_SIGN_IDENTITY }}
+      NEXTERM_MACOS_NOTARY_KEY_ID: ${{ vars.NEXTERM_MACOS_NOTARY_KEY_ID }}
+      NEXTERM_MACOS_NOTARY_ISSUER: ${{ vars.NEXTERM_MACOS_NOTARY_ISSUER }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Resolve the release version from the tag
         shell: bash
         run: echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
       - name: Restore the pinned Wails CLI
         if: matrix.os == 'windows'
         id: wails-cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/go/bin
           key: wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.26.8
       - name: Restore NSIS
         if: matrix.os == 'windows'
         id: nsis-cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: C:/Program Files (x86)/NSIS
           key: nsis-3.12-${{ runner.os }}-${{ runner.arch }}
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.26.8
           cache: false
+      - name: Install Linux Wails cgo prerequisites
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
       - name: Install the pinned Wails CLI
         if: matrix.os == 'windows'
         shell: bash
@@ -130,38 +179,42 @@ jobs:
             7z i >/dev/null
           fi
       - name: Download the verified frontend dist
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: frontend-dist
-          path: verified-dist
-      - name: Download the CI production desktop binary
-        uses: actions/download-artifact@v8
-        with:
-          name: native-${{ matrix.os }}-${{ matrix.arch }}-desktop
-          path: reused-native
+          path: target/release-work/verified-dist
       - name: Download both verified Linux SSH helpers
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: native-linux-*-helper
           merge-multiple: true
-          path: verified-helpers
-      - name: Stage the reused production binary
+          path: target/release-work/verified-helpers
+      - name: Stage the verified Linux SSH helpers
         shell: bash
         run: |
           set -euo pipefail
-          binary="nexterm-desktop-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.os == 'windows' && '.exe' || '' }}"
           mkdir -p target/go-build
-          cp "reused-native/go-build/${binary}" "reused-native/go-build/${binary}.manifest.json" target/go-build/
           for helper_arch in amd64 arm64; do
             helper="nexterm-helper-linux-$helper_arch"
-            cp "verified-helpers/go-build/$helper" "verified-helpers/go-build/$helper.manifest.json" target/go-build/
+            cp "target/release-work/verified-helpers/go-build/$helper" "target/release-work/verified-helpers/go-build/$helper.manifest.json" target/go-build/
             chmod +x "target/go-build/$helper"
           done
-          if [ "${{ matrix.os }}" != "windows" ]; then
-            chmod +x "target/go-build/${binary}"
+      - name: Import the Windows Authenticode certificate
+        if: matrix.os == 'windows'
+        shell: bash
+        env:
+          NEXTERM_WINDOWS_CERT_BASE64: ${{ secrets.NEXTERM_WINDOWS_CERT_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$NEXTERM_WINDOWS_CERT_BASE64" ]]; then
+            echo "::error::NEXTERM_WINDOWS_CERT_BASE64 is required for Windows release signing"
+            exit 1
           fi
+          umask 077
+          echo "$NEXTERM_WINDOWS_CERT_BASE64" | base64 --decode > "$RUNNER_TEMP/nexterm-windows-authenticode.pfx"
+          test -s "$RUNNER_TEMP/nexterm-windows-authenticode.pfx"
       - name: Import the macOS signing identity (optional)
-        if: matrix.os == 'darwin' && vars.NEXTERM_MACOS_SIGNING == 'true'
+        if: matrix.os == 'darwin' && env.NEXTERM_MACOS_SIGNING == 'true'
         shell: bash
         env:
           P12_BASE64: ${{ secrets.NEXTERM_MACOS_P12_BASE64 }}
@@ -169,44 +222,80 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          KEYCHAIN="$HOME/Library/Keychains/nexterm-signing.keychain-db"
-          echo "$P12_BASE64" | base64 --decode > /tmp/nexterm-signing.p12
-          security create-keychain -p "" "$KEYCHAIN"
+          KEYCHAIN="$RUNNER_TEMP/nexterm-macos-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
+          P12="$RUNNER_TEMP/nexterm-signing.p12"
+          echo "$P12_BASE64" | base64 --decode > "$P12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
-          security import /tmp/nexterm-signing.p12 -k "$KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
-          security unlock-keychain -p "" "$KEYCHAIN"
-          shred -u /tmp/nexterm-signing.p12 2>/dev/null || rm -f /tmp/nexterm-signing.p12
-          echo "NEXTERM_MACOS_SIGN_IDENTITY=${{ vars.NEXTERM_MACOS_SIGN_IDENTITY }}" >> "$GITHUB_ENV"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          rm -f "$P12"
+          printf 'NEXTERM_MACOS_SIGN_IDENTITY=%s\n' "$NEXTERM_MACOS_SIGN_IDENTITY" >> "$GITHUB_ENV"
       - name: Prepare macOS notarization credentials (optional)
-        if: matrix.os == 'darwin' && vars.NEXTERM_MACOS_SIGNING == 'true'
+        if: matrix.os == 'darwin' && env.NEXTERM_MACOS_SIGNING == 'true'
         shell: bash
         env:
           NOTARY_KEY_BASE64: ${{ secrets.NEXTERM_MACOS_NOTARY_KEY_BASE64 }}
         run: |
           set -euo pipefail
           if [ -n "$NOTARY_KEY_BASE64" ]; then
-            (umask 077; echo "$NOTARY_KEY_BASE64" | base64 --decode > /tmp/nexterm-notary.p8)
-            echo "NEXTERM_MACOS_NOTARY_KEY_PATH=/tmp/nexterm-notary.p8" >> "$GITHUB_ENV"
-            echo "NEXTERM_MACOS_NOTARY_KEY_ID=${{ vars.NEXTERM_MACOS_NOTARY_KEY_ID }}" >> "$GITHUB_ENV"
-            echo "NEXTERM_MACOS_NOTARY_ISSUER=${{ vars.NEXTERM_MACOS_NOTARY_ISSUER }}" >> "$GITHUB_ENV"
+            (umask 077; echo "$NOTARY_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/nexterm-notary.p8")
+            printf 'NEXTERM_MACOS_NOTARY_KEY_PATH=%s\n' "$RUNNER_TEMP/nexterm-notary.p8" >> "$GITHUB_ENV"
+            printf 'NEXTERM_MACOS_NOTARY_KEY_ID=%s\n' "$NEXTERM_MACOS_NOTARY_KEY_ID" >> "$GITHUB_ENV"
+            printf 'NEXTERM_MACOS_NOTARY_ISSUER=%s\n' "$NEXTERM_MACOS_NOTARY_ISSUER" >> "$GITHUB_ENV"
           fi
-      - name: Package the verified production binary and enforce final artifact evidence
-        run: node scripts/build.mjs desktop --release --package --package-only --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json --os=${{ matrix.os }} --arch=${{ matrix.arch }} --require-evidence
-      - name: Clean up notarization key (optional)
-        if: matrix.os == 'darwin' && vars.NEXTERM_MACOS_SIGNING == 'true' && always()
+      - name: Build and package the production desktop with updater verification
+        run: node scripts/build.mjs desktop --release --package --repro-check --consume-dist=target/release-work/verified-dist/dist --dist-manifest=target/release-work/verified-dist/target/dist-manifest.json --os=${{ matrix.os }} --arch=${{ matrix.arch }} --require-evidence
+      - name: Sign and verify the Windows installer with Authenticode
+        if: matrix.os == 'windows'
         shell: bash
-        run: shred -u /tmp/nexterm-notary.p8 2>/dev/null || rm -f /tmp/nexterm-notary.p8
+        env:
+          NEXTERM_WINDOWS_CERT_PASSWORD: ${{ secrets.NEXTERM_WINDOWS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$NEXTERM_WINDOWS_CERT_PASSWORD" ]]; then
+            echo "::error::NEXTERM_WINDOWS_CERT_PASSWORD is required for Windows release signing"
+            exit 1
+          fi
+          CERT="$RUNNER_TEMP/nexterm-windows-authenticode.pfx"
+          test -s "$CERT"
+          SIGNTOOL="$(command -v signtool || true)"
+          if [[ -z "$SIGNTOOL" ]]; then
+            SIGNTOOL="$(find "/c/Program Files (x86)/Windows Kits/10/bin" -type f -path '*/x64/signtool.exe' 2>/dev/null | sort -V | tail -1)"
+          fi
+          if [[ -z "$SIGNTOOL" ]]; then
+            echo "::error::signtool is required for Windows Authenticode release signing"
+            exit 1
+          fi
+          package_arch="${{ matrix.arch == 'amd64' && 'x64' || 'arm64' }}"
+          installer="target/release-assets/NexTerm_${NEXTERM_RELEASE_VERSION}_${package_arch}-setup.exe"
+          test -f "$installer"
+          "$SIGNTOOL" sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f "$CERT" /p "$NEXTERM_WINDOWS_CERT_PASSWORD" "$installer"
+          "$SIGNTOOL" verify /pa "$installer"
+          node scripts/build.mjs report --kind=desktop-nsis --os=windows --arch=${{ matrix.arch }} --file="$installer" --require-evidence
+      - name: Clean up Windows signing material
+        if: always() && matrix.os == 'windows'
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/nexterm-windows-authenticode.pfx"
+      - name: Clean up macOS signing material (optional)
+        if: always() && matrix.os == 'darwin' && env.NEXTERM_MACOS_SIGNING == 'true'
+        shell: bash
+        run: |
+          security delete-keychain "$RUNNER_TEMP/nexterm-macos-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/nexterm-signing.p12" "$RUNNER_TEMP/nexterm-notary.p8"
       - name: Upload candidate and raw/final reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-desktop-${{ matrix.os }}-${{ matrix.arch }}
           path: |
             target/release-assets/
             target/go-build/*.artifact.json
           if-no-files-found: error
+          overwrite: true
 
   server:
     name: Linux ${{ matrix.arch }} full package with optional restricted runtime
@@ -220,95 +309,99 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Resolve the release version from the tag
         shell: bash
         run: echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.26.8
           cache: true
       - name: Download the verified frontend dist
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: frontend-dist
-          path: verified-dist
+          path: target/release-work/verified-dist
       - name: Download the CI production server binary
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: native-linux-${{ matrix.arch }}-server
-          path: reused-native
+          path: target/release-work/reused-native
       - name: Download both verified Linux SSH helpers
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: native-linux-*-helper
           merge-multiple: true
-          path: verified-helpers
+          path: target/release-work/verified-helpers
       - name: Stage the reused production server binary
         shell: bash
         run: |
           set -euo pipefail
           binary="nexterm-server-linux-${{ matrix.arch }}"
           mkdir -p target/go-build
-          cp "reused-native/go-build/${binary}" "reused-native/go-build/${binary}.manifest.json" target/go-build/
+          cp "target/release-work/reused-native/go-build/${binary}" "target/release-work/reused-native/go-build/${binary}.manifest.json" target/go-build/
           chmod +x "target/go-build/${binary}"
           for helper_arch in amd64 arm64; do
             helper="nexterm-helper-linux-$helper_arch"
-            cp "verified-helpers/go-build/$helper" "verified-helpers/go-build/$helper.manifest.json" target/go-build/
+            cp "target/release-work/verified-helpers/go-build/$helper" "target/release-work/verified-helpers/go-build/$helper.manifest.json" target/go-build/
             chmod +x "target/go-build/$helper"
           done
       - name: Verify the reused production server binary against its manifest
         run: node .github/scripts/verify-reused-binary.mjs "target/go-build/nexterm-server-linux-${{ matrix.arch }}" "server-linux-${{ matrix.arch }}" linux "${{ matrix.arch }}" 0
       - name: Restore the verified frontend for packaging
-        run: node scripts/build.mjs frontend --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json
+        run: node scripts/build.mjs frontend --consume-dist=target/release-work/verified-dist/dist --dist-manifest=target/release-work/verified-dist/target/dist-manifest.json
       - name: Re-assert the reused binary evidence
         run: node scripts/build.mjs report --kind=server --os=linux --arch=${{ matrix.arch }} --file=target/go-build/nexterm-server-linux-${{ matrix.arch }}
       - name: Stage and verify the CI e2e report
-        run: node .github/scripts/stage-server-evidence.mjs reused-native target/go-build/nexterm-server-linux-${{ matrix.arch }}
+        run: node .github/scripts/stage-server-evidence.mjs target/release-work/reused-native target/go-build/nexterm-server-linux-${{ matrix.arch }}
       - name: Produce and validate the full archive with final evidence gates
         run: bash scripts/pack-linux-server.sh --arch=${{ matrix.arch }} --require-evidence
       - name: Upload candidates and raw/final reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-server-linux-${{ matrix.arch }}
           path: |
             target/release-assets/
             target/go-build/*.artifact.json
           if-no-files-found: error
+          overwrite: true
       - name: Upload runtime evidence outside the release candidate
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: runtime-server-linux-${{ matrix.arch }}
           path: target/e2e-sync/
           if-no-files-found: error
+          overwrite: true
 
   agent:
     name: Device agent archives (linux/darwin tar.gz, windows zip)
     needs: ci
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Resolve the release version from the tag
         shell: bash
         run: echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
       - name: Download the CI production agent binaries
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: native-*-agent
-          path: agent-native
+          path: target/release-work/agent-native
           merge-multiple: true
       - name: Stage and verify the reused production agent binaries
         shell: bash
@@ -321,7 +414,7 @@ jobs:
             suffix=""
             if [ "$os" = "windows" ]; then suffix=".exe"; fi
             binary="nexterm-agent-${os}-${arch}${suffix}"
-            cp "agent-native/go-build/${binary}" "agent-native/go-build/${binary}.manifest.json" target/go-build/
+            cp "target/release-work/agent-native/go-build/${binary}" "target/release-work/agent-native/go-build/${binary}.manifest.json" target/go-build/
             if [ "$os" != "windows" ]; then chmod +x "target/go-build/${binary}"; fi
             node .github/scripts/verify-reused-binary.mjs "target/go-build/${binary}" "agent-${os}-${arch}" "$os" "$arch" 0
           done
@@ -329,103 +422,112 @@ jobs:
         run: bash scripts/pack-agent.sh --require-evidence
       - name: Upload candidates and raw/final reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-agent
           path: target/release-assets/
           if-no-files-found: error
+          overwrite: true
 
   mobile:
-    name: ${{ matrix.platform }} mobile package
+    name: Android mobile package
     needs: ci
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: android
-            runner: ubuntu-latest
-          - platform: ios
-            runner: macos-26
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXTERM_ANDROID_CERT_SHA256: ${{ vars.NEXTERM_ANDROID_CERT_SHA256 }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Resolve the release version from the tag
         shell: bash
         run: echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      - name: Download the verified mobile package
-        uses: actions/download-artifact@v8
+      - name: Download the verified Android package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: mobile-${{ matrix.platform }}
-          path: mobile-input
-      - name: Package and verify the mobile artifact
+          name: mobile-android
+          path: target/release-work/mobile-input
+      - name: Package and verify the Android artifact
         shell: bash
         env:
           GITHUB_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          version="${NEXTERM_RELEASE_VERSION}"
+          package="NexTerm_${NEXTERM_RELEASE_VERSION}_android.apk"
           mkdir -p target/release-assets
-          case "${{ matrix.platform }}" in
-            android)
-              package="NexTerm_${version}_android.apk"
-              cp "mobile-input/nexterm.apk" "target/release-assets/$package"
-              ;;
-            ios)
-              package="NexTerm_${version}_ios.ipa"
-              rm -rf target/mobile-payload
-              mkdir -p target/mobile-payload/Payload/nexterm.app
-              cp -R "mobile-input/." "target/mobile-payload/Payload/nexterm.app/"
-              (cd target/mobile-payload && zip -qry "../release-assets/$package" Payload)
-              ;;
-          esac
-          node .github/scripts/mobile-evidence.mjs "target/release-assets/$package" "mobile-${{ matrix.platform }}"
+          cp "target/release-work/mobile-input/nexterm.apk" "target/release-assets/$package"
+          node .github/scripts/mobile-evidence.mjs "target/release-assets/$package" mobile-android
       - name: Upload mobile candidates and raw/final reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: release-mobile-${{ matrix.platform }}
+          name: release-mobile-android
           path: |
             target/release-assets/
             target/go-build/*.artifact.json
           if-no-files-found: error
+          overwrite: true
 
   publish:
     name: Verify complete release evidence and upload a draft
     needs: [desktop, server, mobile, agent]
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXTERM_MINISIGN_PUBLIC_KEY: ${{ vars.NEXTERM_MINISIGN_PUBLIC_KEY }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
       - name: Resolve the release version from the tag
         shell: bash
         run: echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-*
-          path: candidate
-          merge-multiple: true
-      - name: Flatten directories preserved by multi-path artifact uploads
+          path: target/release-work/candidate-input
+      - name: Check every downloaded basename and hash before flattening
+        run: node scripts/flatten-release-assets.mjs target/release-work/candidate-input --into target/release-work/candidate
+      - name: Require every final artifact, hash and evidence report
+        run: node .github/scripts/release-evidence.mjs target/release-work/candidate
+      - name: Normalize the updater public key for signing and release
+        run: node scripts/build.mjs write-minisign-public-key --out="$RUNNER_TEMP/nexterm-minisign.pub"
+      - name: Sign and verify SHA256SUMS with the required minisign key pair
         shell: bash
+        env:
+          MINISIGN_PRIVATE_KEY: ${{ secrets.NEXTERM_MINISIGN_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          for directory in release-assets go-build; do
-            if [[ -d "candidate/$directory" ]]; then
-              find "candidate/$directory" -type f -exec mv -f {} candidate/ \;
-              find "candidate/$directory" -depth -type d -empty -delete
-            fi
-          done
-      - name: Require every final artifact, hash and evidence report
-        run: node .github/scripts/release-evidence.mjs candidate
+          if [[ -z "$MINISIGN_PRIVATE_KEY" || -z "$NEXTERM_MINISIGN_PUBLIC_KEY" ]]; then
+            echo "::error::NEXTERM_MINISIGN_PRIVATE_KEY and NEXTERM_MINISIGN_PUBLIC_KEY are required for an updater-signed release"
+            exit 1
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends minisign
+          umask 077
+          SECRET_KEY="$RUNNER_TEMP/nexterm-minisign.key"
+          PUBLIC_KEY="$RUNNER_TEMP/nexterm-minisign.pub"
+          trap 'rm -f "$SECRET_KEY" "$PUBLIC_KEY"' EXIT
+          printf '%s\n' "$MINISIGN_PRIVATE_KEY" > "$SECRET_KEY"
+          test -s "$PUBLIC_KEY"
+          minisign -S -W -s "$SECRET_KEY" -m target/release-work/candidate/SHA256SUMS -x target/release-work/candidate/SHA256SUMS.minisig -t "NexTerm ${NEXTERM_RELEASE_VERSION} SHA256SUMS"
+          minisign -V -H -p "$PUBLIC_KEY" -m target/release-work/candidate/SHA256SUMS -x target/release-work/candidate/SHA256SUMS.minisig
+          cp "$PUBLIC_KEY" target/release-work/candidate/SHA256SUMS.minisign.pub
+          printf '`SHA256SUMS` 附带 `SHA256SUMS.minisig` 与 `SHA256SUMS.minisign.pub`；可运行 `minisign -V -H -p SHA256SUMS.minisign.pub -m SHA256SUMS` 验证。\n' > target/release-work/candidate/release-signing.md
+      - name: Attest build provenance for the checksum manifest
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-path: target/release-work/candidate/SHA256SUMS
       - name: Assemble release notes
         shell: bash
         env:
@@ -435,8 +537,9 @@ jobs:
           {
             node .github/scripts/release-notes.mjs "$GITHUB_REF_NAME"
             cat .github/release-template.md
-            printf '\n### 验证说明\n\n本 Release 附带 `SHA256SUMS`（文件校验和）。\n'
-          } > candidate/release-body.md
+            printf '\n### 验证说明\n\n本 Release 附带 `SHA256SUMS`（文件校验和），其 GitHub build provenance 已生成。\n'
+            cat target/release-work/candidate/release-signing.md
+          } > target/release-work/candidate/release-body.md
           previous="$(node .github/scripts/release-notes.mjs --prev-tag "$GITHUB_REF_NAME")"
           notes_args=(-X POST -f "tag_name=$GITHUB_REF_NAME")
           if [ -n "$previous" ]; then
@@ -444,7 +547,7 @@ jobs:
           fi
           if appendix="$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${notes_args[@]}" --jq .body)"; then
             if [ -n "$appendix" ]; then
-              printf '\n<details><summary>完整变更列表（自动生成）</summary>\n\n%s\n\n</details>\n' "$appendix" >> candidate/release-body.md
+              printf '\n<details><summary>完整变更列表（自动生成）</summary>\n\n%s\n\n</details>\n' "$appendix" >> target/release-work/candidate/release-body.md
             fi
           else
             echo "assemble: generate-notes API failed; omitting the auto-generated change list appendix" >&2
@@ -453,4 +556,61 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: node .github/scripts/release-upload.mjs candidate --notes-file candidate/release-body.md
+        run: node .github/scripts/release-upload.mjs target/release-work/candidate --notes-file target/release-work/candidate/release-body.md
+
+  testflight:
+    name: Upload the signed iOS build to TestFlight
+    needs: publish
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      NEXTERM_IOS_SIGNING: ${{ vars.NEXTERM_IOS_SIGNING }}
+      NEXTERM_IOS_ASC_KEY_ID: ${{ vars.NEXTERM_IOS_ASC_KEY_ID }}
+      NEXTERM_IOS_ASC_ISSUER: ${{ vars.NEXTERM_IOS_ASC_ISSUER }}
+    steps:
+      - name: Record a TestFlight skip when iOS signing is disabled
+        if: env.NEXTERM_IOS_SIGNING != 'true'
+        run: echo "::warning::NEXTERM_IOS_SIGNING is not true; skipping the TestFlight upload"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.NEXTERM_IOS_SIGNING == 'true'
+        with:
+          persist-credentials: false
+      - name: Resolve the release version from the tag
+        if: env.NEXTERM_IOS_SIGNING == 'true'
+        run: echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: env.NEXTERM_IOS_SIGNING == 'true'
+        with:
+          node-version: 24
+      - name: Download the signed iOS distribution IPA
+        if: env.NEXTERM_IOS_SIGNING == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: mobile-ios-dist
+          path: target/release-work/testflight-input
+      - name: Require device platform and valid iOS package evidence
+        if: env.NEXTERM_IOS_SIGNING == 'true'
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          IOS_BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
+        run: node .github/scripts/mobile-evidence.mjs target/release-work/testflight-input/nexterm.ipa mobile-ios
+      - name: Upload the signed IPA to TestFlight
+        if: env.NEXTERM_IOS_SIGNING == 'true'
+        env:
+          ASC_KEY_BASE64: ${{ secrets.NEXTERM_IOS_ASC_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          for name in ASC_KEY_BASE64 NEXTERM_IOS_ASC_KEY_ID NEXTERM_IOS_ASC_ISSUER; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::NEXTERM_IOS_SIGNING is enabled but $name is missing; cannot upload to TestFlight"
+              exit 1
+            fi
+          done
+          umask 077
+          mkdir -p private_keys
+          echo "$ASC_KEY_BASE64" | base64 --decode > "private_keys/AuthKey_${NEXTERM_IOS_ASC_KEY_ID}.p8"
+          xcrun altool --upload-app --type ios -f target/release-work/testflight-input/nexterm.ipa --apiKey "$NEXTERM_IOS_ASC_KEY_ID" --apiIssuer "$NEXTERM_IOS_ASC_ISSUER"
+      - name: Remove the App Store Connect key
+        if: always() && env.NEXTERM_IOS_SIGNING == 'true'
+        run: rm -f private_keys/AuthKey_*.p8

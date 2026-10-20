@@ -2,9 +2,15 @@
 // M125 R3 end-to-end acceptance: M141 collect consumption (P1-1), applySet dedup and second-round convergence (P1-2),
 // transcript endedAt revision and content completion (P1-3). All through real SyncCard interaction and real encryption.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
+import { clickButton, flush, flushUntil as flushUntilBase, mount, type MountedView } from "./features/reactTestUtils";
+
+async function flushUntil(predicate: () => boolean, maxTicks = 60): Promise<void> {
+  await flush();
+  await flushUntilBase(predicate, maxTicks);
+  await flush();
+}
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -166,13 +172,15 @@ function openDetails(): void {
 
 async function runAutoSync() {
   const { runWebSync, WEB_SYNC_RESULT_EVENT, WEB_SYNC_ERROR_EVENT } = await import("../features/settings/SyncCard");
-  try {
-    const result = await runWebSync(DEK, { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
-    if (result) window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result }));
-  } catch (error) {
-    window.dispatchEvent(new CustomEvent(WEB_SYNC_ERROR_EVENT, { detail: error }));
-    throw error;
-  }
+  await act(async () => {
+    try {
+      const result = await runWebSync(DEK, { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
+      if (result) window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result }));
+    } catch (error) {
+      window.dispatchEvent(new CustomEvent(WEB_SYNC_ERROR_EVENT, { detail: error }));
+      throw error;
+    }
+  });
 }
 
 beforeEach(() => {
@@ -1068,5 +1076,25 @@ describe("transcript endedAt revision and content completion (P1-3)", () => {
     expect(text()).toContain("当前待应用 0 项");
     expect(mocks.syncPush).toHaveBeenCalledTimes(1);
     expect(mocks.applyObjects).not.toHaveBeenCalled();
+  });
+
+  it("reuses an immutable transcript without rereading chunks on the second round", async () => {
+    const summary = { ...SUMMARY_FULL, id: "t-cache" };
+    mocks.transcriptHosts.mockResolvedValue([
+      { assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false, transcripts: 1, lastStartedAt: 1 },
+    ]);
+    mocks.transcriptList.mockResolvedValue([summary]);
+    mocks.transcriptRead.mockResolvedValue({
+      chunks: [{ seq: 1, tabId: "tab-1", ts: 1, dataBase64: "AQID" }],
+      nextSeq: 2, done: true, totalBytes: 3,
+    });
+    mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-1", max_seq: 1, applied: 1, skipped: 0 });
+    const { runWebSync } = await import("../features/settings/SyncCard");
+    const optIn = { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false };
+
+    await runWebSync(DEK, optIn);
+    expect(mocks.transcriptRead).toHaveBeenCalledTimes(1);
+    await runWebSync(DEK, optIn);
+    expect(mocks.transcriptRead).toHaveBeenCalledTimes(1);
   });
 });

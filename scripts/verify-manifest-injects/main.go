@@ -26,7 +26,7 @@ const (
 	masterKeyTransportEnv = masterKeyTransport + `={{ stable_secret "vault_master" }}`
 )
 
-var expectedPublicPath = []string{"/device/enroll", "/agent/sync", "/agent/current-url", "/ws/device", "/share/public"}
+var expectedPublicPath = []string{"/device/enroll", "/agent/sync", "/agent/current-url", "/ws/device", "/share/public", "/share/preview"}
 
 var (
 	directiveRe  = regexp.MustCompile(`^\s*#@build\s+(.*?)\s*$`)

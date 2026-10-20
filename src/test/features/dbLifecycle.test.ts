@@ -6,13 +6,19 @@ const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
   disconnect: vi.fn(),
   closeTerminalTab: vi.fn(),
+  listLive: vi.fn().mockResolvedValue([]),
+  listDurable: vi.fn().mockResolvedValue([]),
   sessionList: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("../../ipc/commands", () => ({
   assetApi: {},
   dbApi: { disconnect: mocks.disconnect },
   sessionApi: { list: mocks.sessionList },
-  terminalApi: { closeTab: mocks.closeTerminalTab },
+  terminalApi: {
+    closeTab: mocks.closeTerminalTab,
+    listLive: mocks.listLive,
+    listDurable: mocks.listDurable,
+  },
   vaultApi: {},
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
@@ -420,6 +426,44 @@ describe("Workspace closing", () => {
 
     expect(workspaceExists("ws")).toBe(true);
     expect(tabExists(added.id)).toBe(true);
+  });
+
+  it("freezes new content before terminal reconciliation without freezing the close plan", async () => {
+    const original = { ...terminal("original"), exited: true };
+    useUi.setState({
+      workspaces: [ws([{ id: "p", tabs: [original], activeTabId: original.id }])],
+      activeWorkspaceId: "ws",
+      sessions: [{ id: "s", assetId: "a", name: "session", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }],
+    });
+    let release!: (live: { tabId: string; exited: boolean }[]) => void;
+    mocks.listLive.mockReturnValueOnce(new Promise<{ tabId: string; exited: boolean }[]>((resolve) => {
+      release = resolve;
+    }));
+    const added = terminal("added");
+
+    const closing = useUi.getState().closeWorkspace("ws");
+    useUi.setState({
+      workspaces: useUi.getState().workspaces.map((workspace) =>
+        workspace.id === "ws"
+          ? {
+              ...workspace,
+              panes: workspace.panes.map((pane) => ({ ...pane, tabs: [...pane.tabs, added] })),
+            }
+          : workspace,
+      ),
+    });
+    useUi.getState().updateSqlDraft("ws", sqlDraft());
+    release([{ tabId: "kernel-original", exited: false }]);
+
+    await expect(closing).resolves.toBe(false);
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.closeTerminalTab).toHaveBeenCalledTimes(1);
+    expect(mocks.closeTerminalTab).toHaveBeenCalledWith("kernel-original", "detach", "s");
+    expect(workspaceExists("ws")).toBe(true);
+    expect(tabExists(original.id)).toBe(false);
+    expect(tabExists(added.id)).toBe(true);
+    expect(useUi.getState().getWorkspaceRuntime("ws")?.sqlDraft).toEqual(sqlDraft());
+    expect(toastText()).toContain("新增");
   });
 
   it("keeps a SQL draft edited again during close", async () => {

@@ -204,11 +204,9 @@ describe("Vault-not-initialized gate (credentials entry)", () => {
     await flushUntil(() => !!initModal());
 
     completeInit();
-    await flushUntil(() => mocks.initMaster.mock.calls.length > 0);
+    await flushUntil(() => modalHeaders().includes("新建凭据"));
     expect(mocks.initMaster).toHaveBeenCalledWith("first-run-password");
     expect(mocks.toast).toHaveBeenCalledWith("success", "已开启密码保护");
-
-    await flushUntil(() => modalHeaders().includes("新建凭据"));
     expect(initModal()).toBeNull();
   });
 
@@ -236,8 +234,8 @@ describe("Vault-not-initialized gate (credentials entry)", () => {
       (b) => b.textContent?.trim() === "启用保护",
     )!;
     expect(submit.disabled).toBe(false);
-    submit.click();
-    await flushUntil(() => mocks.initMaster.mock.calls.length > 0);
+    click(submit);
+    await flushUntil(() => modalHeaders().includes("新建凭据"));
     expect(mocks.initMaster).toHaveBeenCalledWith("");
     expect(mocks.toast).toHaveBeenCalledWith("success", "已完成初始化，未设置密码");
   });
@@ -308,7 +306,6 @@ describe("Vault-not-initialized gate (asset flows)", () => {
     await flushUntil(() => !!initModal());
 
     completeInit();
-    await flushUntil(() => mocks.initMaster.mock.calls.length > 0);
     await flushUntil(() => initModal() === null && !!assetEditorModal());
 
     const editor = assetEditorModal()!;
@@ -323,7 +320,7 @@ describe("Vault-not-initialized gate (asset flows)", () => {
     await flushUntil(() => mocks.setCredential.mock.calls.length > 0);
     expect(mocks.setCredential).toHaveBeenCalledWith("web-01", "password", "s3cret");
     await flushUntil(() => mocks.assetCreate.mock.calls.length > 0);
-    await flushUntil(() => onSaved.mock.calls.length > 0);
+    await flushUntil(() => onSaved.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
     for (const call of mocks.toast.mock.calls) {
       expect(String(call[1])).not.toContain("尚未初始化");
     }
@@ -406,14 +403,14 @@ describe("Vault-not-initialized gate (asset flows)", () => {
     await flushUntil(() => !!initModal());
 
     completeInit();
-    await flushUntil(() => mocks.initMaster.mock.calls.length > 0);
+    await flushUntil(() => initModal() === null && !!assetEditorModal());
     await flushUntil(() => initModal() === null);
 
     clickButton(assetEditorModal()!, "保存");
     await flushUntil(() => mocks.setCredential.mock.calls.length > 0);
     expect(mocks.setCredential).toHaveBeenCalledWith("web-1", "password", "s3cret");
     await flushUntil(() => mocks.assetUpdate.mock.calls.length > 0);
-    await flushUntil(() => onSaved.mock.calls.length > 0);
+    await flushUntil(() => onSaved.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
     for (const call of mocks.toast.mock.calls) {
       expect(String(call[1])).not.toContain("尚未初始化");
     }
@@ -482,7 +479,7 @@ describe("Locked-vault unlock gate on asset save (M205 finding 5)", () => {
     });
     await flushUntil(() => mocks.setCredential.mock.calls.length > 0);
     expect(mocks.setCredential).toHaveBeenCalledWith("web-1", "password", "s3cret");
-    await flushUntil(() => onSaved.mock.calls.length > 0);
+    await flushUntil(() => onSaved.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
   });
 
   it("failed unlock reports the error and aborts the save, preserving form data", async () => {
@@ -547,7 +544,7 @@ describe("Locked-vault unlock gate on new credential (M205 finding 5)", () => {
     expect(mocks.setCredential).toHaveBeenCalledWith("db-prod", "password", "s3cret", {
       source: undefined,
     });
-    await flushUntil(() => onSaved.mock.calls.length > 0);
+    await flushUntil(() => onSaved.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
     expect(onSaved).toHaveBeenCalledWith("cred-1");
   });
 
@@ -573,7 +570,7 @@ describe("Locked-vault unlock gate on new credential (M205 finding 5)", () => {
     expect(mocks.setCredential).toHaveBeenCalledWith("db-prod", "password", "s3cret", {
       source: undefined,
     });
-    await flushUntil(() => onSaved.mock.calls.length > 0);
+    await flushUntil(() => onSaved.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
   });
 
   it("failed unlock does not create the credential and preserves input", async () => {

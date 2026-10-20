@@ -4,7 +4,15 @@
 // device://status online/offline events flip the online state in real time.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, deferred, flush, flushUntil, mountWithClient, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, flushUntil as flushUntilRaw, mountWithClient, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
+
+async function flushUntil(predicate: () => boolean): Promise<void> {
+  if (predicate()) {
+    await flush();
+    return;
+  }
+  await flushUntilRaw(predicate);
+}
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -888,7 +896,10 @@ describe("Device management view - enrollment code issuance", () => {
     expect(document.querySelector('input[aria-label="新接入地址"]')).toBeNull();
     expect([...document.querySelectorAll("button")].some((b) => b.textContent?.includes("保存修改"))).toBe(false);
 
-    firstBaseUrls.reject(new Error("地址服务不可用"));
+    await act(async () => {
+      firstBaseUrls.reject(new Error("地址服务不可用"));
+      await firstBaseUrls.promise.catch(() => {});
+    });
     await flushUntil(() => document.body.textContent?.includes("接入地址读取失败") ?? false);
     expect(document.body.textContent).toContain("地址服务不可用");
     expect(issueButton.disabled).toBe(true);
@@ -1074,17 +1085,22 @@ describe("Device management view - account switching isolation", () => {
 
     // Simulate the AuthGate scenario: the super-admin session expires and a regular user logs in, the pane is not remounted.
     switched = true;
-    useAuth.setState({ user: PLAIN_USER });
+    act(() => {
+      useAuth.setState({ user: PLAIN_USER });
+    });
     await flushUntil(() => document.body.textContent?.includes("user-device") ?? false);
 
     expect(document.body.textContent).not.toContain("old-admin-code");
     expect(document.body.textContent).not.toContain("web-01");
 
     // The old account's late response arrives only now: it must not overwrite the new account's list.
-    lateAdminDevices.resolve({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify({ devices: [AGENT_DEVICE] }),
+    await act(async () => {
+      lateAdminDevices.resolve({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ devices: [AGENT_DEVICE] }),
+      });
+      await lateAdminDevices.promise;
     });
     await flush();
     await flush();
@@ -1127,14 +1143,19 @@ describe("Device management view - account isolation during issuance", () => {
     await flushUntil(() => issueCalls === 1);
 
     // Switching to a regular user while issuance is in flight: the render-time reset has already cleared the enrollment panel and issuing.
-    useAuth.setState({ user: PLAIN_USER });
+    act(() => {
+      useAuth.setState({ user: PLAIN_USER });
+    });
     await flush();
 
     // The old account's issuance response arrives only now: it must not be written into the new account's view.
-    lateIssue.resolve({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify({ code: "old-admin-code", expires_at: NOW + 900_000 }),
+    await act(async () => {
+      lateIssue.resolve({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ code: "old-admin-code", expires_at: NOW + 900_000 }),
+      });
+      await lateIssue.promise;
     });
     await flush();
     await flush();

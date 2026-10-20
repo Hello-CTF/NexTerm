@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { click, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
 
 const h = vi.hoisted(() => ({
@@ -59,7 +59,7 @@ describe("Cwd", () => {
     expect(view.container.querySelector("button")).toBeNull();
   });
 
-  it("renders the reported cwd and copies the full path on click", () => {
+  it("renders the reported cwd and copies the full path on click", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
     const view = mount(createElement(Cwd, { cwd: "/srv/www/app" }));
@@ -69,6 +69,9 @@ describe("Cwd", () => {
     expect(button?.getAttribute("title")).toContain("/srv/www/app");
     click(button!);
     expect(writeText).toHaveBeenCalledWith("/srv/www/app");
+    await act(async () => {
+      await writeText.mock.results[0]?.value;
+    });
   });
 
   it("pushes an error toast when the copy fails", async () => {
@@ -84,7 +87,7 @@ describe("Cwd", () => {
       await flushUntil(() => toast.mock.calls.length > 0);
       expect(toast).toHaveBeenCalledWith("error", expect.stringContaining("复制工作目录失败"));
     } finally {
-      useUi.setState({ pushToast: original });
+      act(() => useUi.setState({ pushToast: original }));
     }
   });
 
@@ -102,7 +105,7 @@ describe("Cwd", () => {
       expect(h.setText).toHaveBeenCalledWith("/srv/www/app");
       expect(toast).toHaveBeenCalledWith("success", "已复制工作目录");
     } finally {
-      useUi.setState({ pushToast: original });
+      act(() => useUi.setState({ pushToast: original }));
     }
   });
 });

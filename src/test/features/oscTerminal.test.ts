@@ -20,7 +20,7 @@ function wire() {
       else if (segment.data.length > 0) term.write(segment.data);
     }
   };
-  const settle = () => new Promise<void>((r) => setTimeout(r, 40));
+  const settle = () => new Promise<void>((resolve) => term.write("", resolve));
   const line = (n: number) => term.buffer.active.getLine(n)?.translateToString(true) ?? "";
   return { term, events, titles, feed, settle, line, filter };
 }

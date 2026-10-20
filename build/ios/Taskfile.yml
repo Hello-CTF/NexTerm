@@ -13,6 +13,9 @@ includes:
 # build from the generated Xcode project instead.
 vars:
   BUNDLE_ID: '{{.BUNDLE_ID | default "com.wails.app"}}'
+  NEXTERM_VERSION: '{{.NEXTERM_RELEASE_VERSION | default "0.0.0"}}'
+  NEXTERM_COMMIT:
+    sh: 'commit="$(git rev-parse HEAD 2>/dev/null || echo unknown)"; if [ "$commit" != "unknown" ] && [ -n "$(git status --porcelain 2>/dev/null)" ]; then commit="$commit+dirty"; fi; echo "$commit"'
   IOS_PLATFORM: '{{.IOS_PLATFORM | default "simulator"}}'
   MIN_IOS_VERSION: '{{.MIN_IOS_VERSION | default "15.0"}}'
   IOS_SDK: '{{if eq .IOS_PLATFORM "device"}}iphoneos{{else}}iphonesimulator{{end}}'
@@ -49,7 +52,7 @@ tasks:
       - echo "Building iOS app {{.APP_NAME}} ({{.IOS_PLATFORM}})..."
       - go build -buildmode=c-archive -overlay build/ios/xcode/overlay.json {{.BUILD_FLAGS}} -o {{.OUTPUT}}.a ./cmd/nexterm-desktop
     vars:
-      BUILD_FLAGS: '{{if eq .PRODUCTION "true"}}-tags production,ios -trimpath -buildvcs=false -ldflags="-w -s"{{else}}-tags ios,debug -buildvcs=false -gcflags=all="-l"{{end}}'
+      BUILD_FLAGS: '{{if eq .PRODUCTION "true"}}-tags production,ios -trimpath -buildvcs=false -ldflags="-s -w -X github.com/Hello-CTF/NexTerm/internal/version.Version={{.NEXTERM_VERSION}} -X github.com/Hello-CTF/NexTerm/internal/version.Commit={{.NEXTERM_COMMIT}}"{{else}}-tags ios,debug -buildvcs=false -gcflags=all="-l"{{end}}'
       DEFAULT_OUTPUT: '{{.BIN_DIR}}/{{.APP_NAME}}'
       OUTPUT: '{{ .OUTPUT | default .DEFAULT_OUTPUT }}'
       SDK_PATH:
@@ -79,6 +82,7 @@ tasks:
     cmds:
       - rm -rf "{{.BIN_DIR}}/Payload" "{{.BIN_DIR}}/{{.APP_NAME}}.ipa"
       - mkdir -p "{{.BIN_DIR}}/Payload"
+      - chmod 0755 "{{.BIN_DIR}}/{{.APP_NAME}}.app/{{.APP_NAME | lower}}"
       - cp -R "{{.BIN_DIR}}/{{.APP_NAME}}.app" "{{.BIN_DIR}}/Payload/"
       - cd "{{.BIN_DIR}}" && zip -qry "{{.APP_NAME}}.ipa" Payload
       - rm -rf "{{.BIN_DIR}}/Payload"
@@ -117,6 +121,7 @@ tasks:
       - rm -rf "{{.BIN_DIR}}/{{.APP_NAME}}.app"
       - mkdir -p "{{.BIN_DIR}}/{{.APP_NAME}}.app"
       - cp "{{.BIN_DIR}}/{{.APP_NAME | lower}}" "{{.BIN_DIR}}/{{.APP_NAME}}.app/"
+      - chmod 0755 "{{.BIN_DIR}}/{{.APP_NAME}}.app/{{.APP_NAME | lower}}"
       - cp build/ios/Info.plist "{{.BIN_DIR}}/{{.APP_NAME}}.app/"
       - |
         if [ -n "${NEXTERM_RELEASE_VERSION:-}" ] || [ -n "${IOS_BUILD_NUMBER:-}" ]; then
@@ -301,7 +306,6 @@ tasks:
         msg: "xcrun not found. Please run 'wails3 task ios:install:deps' to install iOS development dependencies"
 
   generate:ios:overlay:
-    internal: true
     summary: Generate Go build overlay and iOS shim
     sources:
       - build/config.yml

@@ -22,6 +22,19 @@ vi.mock("../../ipc/commands", () => ({
     probe: vi.fn(),
   },
   vaultApi: { status: mocks.vaultStatus, listCredentials: vi.fn() },
+  syncApi: {
+    linkGet: vi.fn().mockResolvedValue({
+      url: "",
+      username: "",
+      insecure: false,
+      hasPassword: false,
+      verifiedAt: 0,
+      lastError: null,
+    }),
+    status: vi.fn().mockResolvedValue({ configured: false, loggedIn: false, lastError: "", warnings: [] }),
+    kindOptInGet: vi.fn().mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false }),
+    wake: vi.fn().mockResolvedValue(undefined),
+  },
   terminalApi: {},
   dbApi: {},
 }));
@@ -339,7 +352,7 @@ describe("rail and toast accessibility", () => {
     act(() => {
       useUi.getState().pushToast("success", "已保存");
     });
-    const toast = mounted.container.querySelector<HTMLElement>(".nx-toasts button");
+    const toast = mounted.container.querySelector<HTMLElement>(".nx-toasts > div");
     expect(toast).not.toBeNull();
     expect(toast?.textContent).toContain("已保存");
     expect(toast?.className).toContain("nx-alert-success");

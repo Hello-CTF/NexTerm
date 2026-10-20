@@ -18,22 +18,64 @@ class RecordingSink implements ReplaySink {
   resets = 0;
   writes: string[] = [];
   resizes: { cols: number; rows: number }[] = [];
+  events: string[] = [];
+  content = "";
 
   reset() {
     this.resets += 1;
+    this.content = "";
+    this.events.push("reset");
   }
 
-  write(data: Uint8Array) {
-    this.writes.push(new TextDecoder().decode(data));
+  protected append(data: Uint8Array): void {
+    const text = new TextDecoder().decode(data);
+    this.writes.push(text);
+    this.content += text;
+    this.events.push(`write:${text}`);
+  }
+
+  write(data: Uint8Array, callback?: () => void) {
+    this.append(data);
+    callback?.();
   }
 
   resize(cols: number, rows: number) {
     this.resizes.push({ cols, rows });
+    this.events.push(`resize:${cols}x${rows}`);
+  }
+}
+
+class DeferredRecordingSink extends RecordingSink {
+  private callbacks: (() => void)[] = [];
+
+  override write(data: Uint8Array, callback?: () => void) {
+    this.append(data);
+    if (callback) this.callbacks.push(callback);
+  }
+
+  get pendingWrites(): number {
+    return this.callbacks.length;
+  }
+
+  completeNext(): void {
+    const callback = this.callbacks.shift();
+    if (!callback) throw new Error("No pending write");
+    callback();
+  }
+
+  completeAll(): void {
+    while (this.callbacks.length > 0) this.completeNext();
   }
 }
 
 function chunk(seq: number, ts: number, kind: number, text: string) {
   return toReplayChunk({ seq, ts, kind, dataBase64: b64(text) });
+}
+
+async function seek(replay: TranscriptReplay, sink: ReplaySink, position: number): Promise<number> {
+  const result = replay.seek(sink, position);
+  await Promise.resolve();
+  return result;
 }
 
 describe("toReplayChunk", () => {
@@ -67,19 +109,19 @@ describe("TranscriptReplay", () => {
     chunk(4, 2500, TRANSCRIPT_KIND_RESIZE, '{"cols":120,"rows":40}'),
   ];
 
-  it("seek(0) applies the initial resize and output", () => {
+  it("seek(0) applies the initial resize and output", async () => {
     const replay = new TranscriptReplay(chunks);
     const sink = new RecordingSink();
-    expect(replay.seek(sink, 0)).toBe(0);
+    expect(await seek(replay, sink, 0)).toBe(0);
     expect(sink.resets).toBe(1);
     expect(sink.resizes).toEqual([{ cols: 80, rows: 24 }]);
     expect(sink.writes).toEqual(["hello "]);
   });
 
-  it("playStep advances by position and ignores input", () => {
+  it("playStep advances by position and ignores input", async () => {
     const replay = new TranscriptReplay(chunks);
     const sink = new RecordingSink();
-    replay.seek(sink, 0);
+    await seek(replay, sink, 0);
     expect(replay.playStep(sink, 600)).toBe(600);
     expect(sink.writes).toEqual(["hello "]);
     expect(replay.playStep(sink, 1000)).toBe(1000);
@@ -92,15 +134,15 @@ describe("TranscriptReplay", () => {
     ]);
   });
 
-  it("seeking backward resets the terminal and replays from zero", () => {
+  it("seeking backward resets the terminal and replays from zero", async () => {
     const replay = new TranscriptReplay(chunks);
     const sink = new RecordingSink();
-    replay.seek(sink, 0);
+    await seek(replay, sink, 0);
     replay.playStep(sink, 2000);
     expect(sink.writes).toEqual(["hello ", "world"]);
     const resetsBefore = sink.resets;
     const writesBefore = sink.writes.length;
-    expect(replay.seek(sink, 500)).toBe(500);
+    expect(await seek(replay, sink, 500)).toBe(500);
     expect(sink.resets).toBe(resetsBefore + 1);
     expect(sink.writes.length).toBe(writesBefore + 1);
     expect(sink.writes.at(-1)).toBe("hello ");
@@ -116,12 +158,73 @@ describe("TranscriptReplay", () => {
     expect(sink.writes.length).toBe(writes);
   });
 
-  it("uses zero duration for an empty timeline and seeks safely", () => {
+  it("uses zero duration for an empty timeline and seeks safely", async () => {
     const replay = new TranscriptReplay([]);
     const sink = new RecordingSink();
     expect(replay.durationMs()).toBe(0);
-    expect(replay.seek(sink, 100)).toBe(0);
+    expect(await seek(replay, sink, 100)).toBe(0);
     expect(sink.writes).toEqual([]);
+  });
+
+  it("waits for output callbacks before resize events and preserves byte order", async () => {
+    const replay = new TranscriptReplay(chunks);
+    const sink = new DeferredRecordingSink();
+    replay.seek(sink, 1500);
+    await Promise.resolve();
+    expect(sink.events).toEqual(["reset", "resize:80x24", "write:hello "]);
+    sink.completeNext();
+    expect(sink.events).toEqual(["reset", "resize:80x24", "write:hello ", "write:world"]);
+    sink.completeNext();
+    expect(sink.events).toEqual([
+      "reset",
+      "resize:80x24",
+      "write:hello ",
+      "write:world",
+      "resize:120x40",
+    ]);
+    expect(sink.content).toBe("hello world");
+    expect(sink.pendingWrites).toBe(0);
+  });
+
+  it("catches up to the latest play position after a pending write", () => {
+    const replay = new TranscriptReplay(chunks);
+    const sink = new DeferredRecordingSink();
+    replay.playStep(sink, 0);
+    replay.playStep(sink, 1500);
+    expect(sink.content).toBe("hello ");
+
+    sink.completeAll();
+
+    expect(sink.content).toBe("hello world");
+    expect(sink.resizes).toEqual([
+      { cols: 80, rows: 24 },
+      { cols: 120, rows: 40 },
+    ]);
+  });
+
+  it("coalesces 20 seeks behind a pending write into one final replay", async () => {
+    const replay = new TranscriptReplay([
+      chunk(0, 1000, TRANSCRIPT_KIND_OUTPUT, "A"),
+      chunk(1, 1100, TRANSCRIPT_KIND_OUTPUT, "B"),
+      chunk(2, 1200, TRANSCRIPT_KIND_RESIZE, '{"cols":120,"rows":40}'),
+      chunk(3, 1300, TRANSCRIPT_KIND_OUTPUT, "C"),
+      chunk(4, 1500, TRANSCRIPT_KIND_OUTPUT, "D"),
+    ]);
+    const sink = new DeferredRecordingSink();
+    replay.playStep(sink, 0);
+    expect(sink.pendingWrites).toBe(1);
+    for (let i = 0; i < 20; i += 1) replay.seek(sink, i * 25);
+    expect(sink.resets).toBe(0);
+
+    sink.completeNext();
+    await Promise.resolve();
+    expect(sink.resets).toBe(1);
+    sink.completeAll();
+
+    expect(sink.resets).toBe(1);
+    expect(sink.events).toEqual(["write:A", "reset", "write:AB", "resize:120x40", "write:C"]);
+    expect(sink.content).toBe("ABC");
+    expect(sink.pendingWrites).toBe(0);
   });
 });
 

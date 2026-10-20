@@ -3,10 +3,13 @@ package dbtest
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,6 +24,13 @@ type Fixture struct {
 	Schema  string
 	Backend store.Backend
 }
+
+type fixtureUseReport struct {
+	Test    string `json:"test"`
+	Backend string `json:"backend"`
+}
+
+var fixtureReportMutex sync.Mutex
 
 func NewFixture(t *testing.T) *Fixture {
 	t.Helper()
@@ -86,15 +96,52 @@ func NewFixture(t *testing.T) *Fixture {
 	})
 	return fixture
 }
+
+func writeFixtureUse(t *testing.T, backend store.Backend) error {
+	t.Helper()
+	path := os.Getenv("NEXTERM_DBTEST_REPORT")
+	if path == "" {
+		return nil
+	}
+	fixtureReportMutex.Lock()
+	defer fixtureReportMutex.Unlock()
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("open dbtest fixture report: %w", err)
+	}
+	report := fixtureUseReport{Test: t.Name(), Backend: string(backend)}
+	if err := json.NewEncoder(file).Encode(report); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("write dbtest fixture report: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close dbtest fixture report: %w", err)
+	}
+	return nil
+}
+
 func (f *Fixture) OpenStore(t *testing.T) *store.Store {
+	t.Helper()
+	db, err := f.openStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+func (f *Fixture) openStore(t *testing.T) (*store.Store, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 	db, err := store.OpenBackend(ctx, store.BackendConfig{Backend: f.Backend, DSN: f.DSN}, store.OpenOptions{})
 	if err != nil {
-		t.Fatalf("open %s store: %v", f.Backend, err)
+		return nil, fmt.Errorf("open %s store: %w", f.Backend, err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	return db
+	if err := writeFixtureUse(t, f.Backend); err != nil {
+		return db, err
+	}
+	return db, nil
 }
+
 func (f *Fixture) OpenRaw(t *testing.T) *sql.DB { t.Helper(); return f.OpenStore(t).DB() }

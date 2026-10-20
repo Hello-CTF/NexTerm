@@ -1,8 +1,19 @@
 import { vi } from "vitest";
 
+const bindingNames: Record<number, string> = {
+  2349242617: "main.Service.Call",
+  3490772380: "main.Service.ConsumeDeepLinks",
+};
+
 export function createWailsMock() {
+  const byName = vi.fn();
+  const byID = vi.fn((id: number, ...args: unknown[]) => {
+    const name = bindingNames[id];
+    if (!name) throw new Error(`unknown Wails binding ID: ${id}`);
+    return byName(name, ...args);
+  });
   return {
-    Call: { ByName: vi.fn() },
+    Call: { ByName: byName, ByID: byID },
     Events: { On: vi.fn() },
     Dialogs: {
       Info: vi.fn(),

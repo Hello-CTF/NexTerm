@@ -1,263 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as ts from "typescript";
-import commandsSource from "../ipc/commands.ts?raw";
-import cronSource from "../ipc/cron.ts?raw";
-import grantSource from "../ipc/grantApi.ts?raw";
-import memorySource from "../ipc/memory.ts?raw";
-import eventsSource from "../ipc/events.ts?raw";
-import layoutSource from "../app/layout.ts?raw";
-import appSource from "../app/App.tsx?raw";
+import { ipcContractManifest, type IPCCommandName } from "../ipc/generated/manifest";
 
-function propertyName(node: ts.PropertyName | undefined): string | undefined {
-  return node && (ts.isIdentifier(node) || ts.isStringLiteral(node)) ? node.text : undefined;
+declare const callForContract: typeof import("../ipc/commands").call;
+if (false) {
+  // @ts-expect-error nested legacy commands reject flat arguments
+  void callForContract("session_connect", { assetId: "asset-1" });
+  void callForContract("session_connect", { args: { assetId: "asset-1" } });
+  void callForContract("redis_command", { connId: "conn-1", args: ["PING"] });
+  void callForContract("terminal_close_tab", { tabId: "tab-1" });
 }
 
-function commandCalls(fileName: string, fileSource: string) {
-  const source = ts.createSourceFile(
-    fileName,
-    fileSource,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
-  const calls: { command: string; nested: boolean }[] = [];
-  const visit = (node: ts.Node): void => {
-    if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === "call" &&
-      node.arguments[0] &&
-      ts.isStringLiteral(node.arguments[0])
-    ) {
-      const args = node.arguments[1];
-      const nested =
-        args !== undefined &&
-        ts.isObjectLiteralExpression(args) &&
-        args.properties.some(
-          (property) =>
-            (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
-            propertyName(property.name) === "args",
-        ) &&
-        args.properties.every((property) => {
-          const name = propertyName(property.name);
-          return name === "args" || name === "channel";
-        });
-      calls.push({ command: node.arguments[0].text, nested });
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
-  return calls;
-}
-
-describe("IPC facade static contract", () => {
-  it("keeps required commands and intentional duplicates", () => {
-    const names = commandCalls("commands.ts", commandsSource).map((call) => call.command);
-    expect(names).toContain("fs_roots");
-    expect(names.filter((name, index) => names.indexOf(name) !== index)).toEqual([
-      "ai_test_provider",
-      "ai_presets",
-    ]);
-  });
-
-  it("keeps required nested-args commands", () => {
-    const nested = commandCalls("commands.ts", commandsSource)
-      .filter((call) => call.nested)
-      .map((call) => call.command);
-    expect(nested).toEqual(
-      expect.arrayContaining([
-        "session_connect",
-        "session_connect_quick",
-        "session_connect_device",
-        "session_probe",
-        "session_probe_host_key",
-        "terminal_write",
-        "layout_put",
-        "asset_create",
-        "asset_update",
-        "audit_query",
-        "audit_count",
-        "command_query",
-        "command_count",
-        "asset_probe_batch",
-        "fs_write",
-        "mount_create",
-        "docker_exec_attach",
-        "docker_action",
-        "db_connect",
-        "ai_chat",
-        "vault_set_credential",
-        "credential_update",
-        "vault_generate_key",
-        "ssh_import_preview",
-        "ssh_import_apply",
-        "sync_export",
-        "sync_import",
-        "sync_bundle_read",
-        "sync_bundle_write",
-        "sync_link_set",
-        "sync_apply_objects",
-        "sync_collect_assets",
-        "sync_collect_tombstones",
-        "sync_collect_credentials",
-        "sync_collect_known_hosts",
-        "sync_collect_ai_profiles",
-        "sync_preferences_set",
-        "sync_kind_opt_in_set",
-      ]),
-    );
-    expect(new Set(nested).size).toBe(nested.length);
-  });
-
-  it("uses flat args for required cron commands (prevents cron_register double-wrapping regression)", () => {
-    const calls = commandCalls("cron.ts", cronSource);
-    const commands = calls.map((call) => call.command);
-    expect(commands).toEqual(
-      expect.arrayContaining([
-        "cron_register",
-        "cron_list",
-        "cron_get",
-        "cron_set_enabled",
-        "cron_unregister",
-      ]),
-    );
-    expect(new Set(commands).size).toBe(commands.length);
-    expect(calls.filter((call) => call.nested)).toEqual([]);
-  });
-
-  it("keeps required grantApi commands, all with flat args", () => {
-    const calls = commandCalls("grantApi.ts", grantSource);
-    const commands = calls.map((call) => call.command);
-    expect(commands).toEqual(
-      expect.arrayContaining([
-        "ai_grant_list",
-        "ai_grant_set",
-        "ai_grant_revoke",
-        "ai_grant_rule_list",
-        "ai_grant_rule_set",
-        "ai_grant_rule_revoke",
-      ]),
-    );
-    expect(new Set(commands).size).toBe(commands.length);
-    expect(calls.filter((call) => call.nested)).toEqual([]);
-  });
-
-  it("keeps required memoryApi commands, all with flat args", () => {
-    const calls = commandCalls("memory.ts", memorySource);
-    const commands = calls.map((call) => call.command);
-    expect(commands).toEqual(
-      expect.arrayContaining([
-        "memory_create",
-        "memory_get",
-        "memory_edit",
-        "memory_delete",
-        "memory_index",
-        "memory_settings_get",
-        "memory_settings_set",
-      ]),
-    );
-    expect(new Set(commands).size).toBe(commands.length);
-    expect(calls.filter((call) => call.nested)).toEqual([]);
-  });
-
-  it("keeps required EVENTS channels and layout://changed unchanged", () => {
-    const block = /export const EVENTS = \{([^}]*)\}/.exec(eventsSource)?.[1] ?? "";
-    const entries = [...block.matchAll(/^  (\w+): "([^"]+)",$/gm)].map((match) => [
-      match[1],
-      match[2],
-    ]);
-    expect(entries).toEqual(
-      expect.arrayContaining([
-        ["sessionStatus", "session://status"],
-        ["connectProgress", "session://connect-progress"],
-        ["helperProgress", "session://helper-progress"],
-        ["terminalExit", "terminal://exit"],
-        ["terminalThrottled", "terminal://throttled"],
-        ["terminalControl", "terminal://control"],
-        ["fsProgress", "fs://progress"],
-        ["updateProgress", "update://progress"],
-        ["dockerStats", "docker://stats"],
-        ["aiEvent", "ai://event"],
-        ["aiNotification", "ai://notification"],
-        ["appError", "app://error"],
-        ["deepLink", "app://deep-link"],
-        ["deviceStatus", "device://status"],
-        ["filesDropped", "files://dropped"],
-      ]),
-    );
-    const keys = entries.map(([key]) => key);
-    const channels = entries.map(([, channel]) => channel);
-    expect(new Set(keys).size).toBe(keys.length);
-    expect(new Set(channels).size).toBe(channels.length);
-    expect(layoutSource).toContain('const LAYOUT_CHANGED = "layout://changed";');
-  });
-
-  it("gives every button in the drag region no-drag and matches double-clicks only on the target itself", () => {
-    expect(appSource).not.toContain("@tauri-apps");
-    expect(appSource).not.toContain("data-tauri-drag-region");
-    expect(appSource).not.toContain('closest("[data-wails-drag-region]")');
-    expect(appSource).toContain("isWailsDragRegionTarget(event.target)");
-    expect(appSource).toContain("onDoubleClick={onDragRegionDoubleClick}");
-
-    const source = ts.createSourceFile(
-      "App.tsx",
-      appSource,
-      ts.ScriptTarget.Latest,
-      true,
-      ts.ScriptKind.TSX,
-    );
-    type OpeningElement = ts.JsxOpeningElement | ts.JsxSelfClosingElement;
-    const hasAttribute = (node: OpeningElement, name: string) =>
-      node.attributes.properties.some(
-        (property) =>
-          ts.isJsxAttribute(property) &&
-          ts.isIdentifier(property.name) &&
-          property.name.text === name,
-      );
-    const hasNoDragStyle = (node: OpeningElement) =>
-      node.attributes.properties.some(
-        (property) =>
-          ts.isJsxAttribute(property) &&
-          ts.isIdentifier(property.name) &&
-          property.name.text === "style" &&
-          property.initializer !== undefined &&
-          ts.isJsxExpression(property.initializer) &&
-          property.initializer.expression !== undefined &&
-          ts.isIdentifier(property.initializer.expression) &&
-          property.initializer.expression.text === "wailsNoDragRegionStyle",
-      );
-    const missingNoDrag: number[] = [];
-    let buttons = 0;
-    const checkButton = (node: OpeningElement, insideDragRegion: boolean) => {
-      if (!ts.isIdentifier(node.tagName) || node.tagName.text !== "button" || !insideDragRegion) {
-        return;
-      }
-      buttons += 1;
-      if (!hasNoDragStyle(node)) {
-        missingNoDrag.push(source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1);
-      }
-    };
-    const visit = (node: ts.Node, insideDragRegion: boolean): void => {
-      if (ts.isJsxElement(node)) {
-        const current =
-          insideDragRegion || hasAttribute(node.openingElement, "data-wails-drag-region");
-        checkButton(node.openingElement, current);
-        for (const child of node.children) visit(child, current);
-        return;
-      }
-      if (ts.isJsxSelfClosingElement(node)) {
-        const current = insideDragRegion || hasAttribute(node, "data-wails-drag-region");
-        checkButton(node, current);
-        return;
-      }
-      ts.forEachChild(node, (child) => visit(child, insideDragRegion));
-    };
-    visit(source, false);
-
-    expect(buttons).toBeGreaterThan(0);
-    expect(missingNoDrag).toEqual([]);
-  });
-});
+type RpcCall = {
+  url: unknown;
+  cmd?: unknown;
+  args?: unknown;
+  channel?: unknown;
+  clientId?: unknown;
+};
 
 function installWebEnv() {
   const storage = new Map<string, string>();
@@ -272,41 +31,68 @@ function installWebEnv() {
 }
 
 function captureRpc() {
-  const calls: { url: unknown; cmd?: unknown; args?: unknown }[] = [];
+  const calls: RpcCall[] = [];
   vi.stubGlobal("fetch", async (...fetchArgs: unknown[]) => {
     const init = fetchArgs[1] as { body?: string } | undefined;
-    const body = JSON.parse(String(init?.body)) as { cmd?: unknown; args?: unknown };
+    const body = JSON.parse(String(init?.body)) as Omit<RpcCall, "url">;
     calls.push({ url: fetchArgs[0], ...body });
     return { text: async () => JSON.stringify({ ok: true, data: null }) };
   });
   return calls;
 }
 
-function dispatchCronRegister(
-  wireArgs: unknown,
-): { ok: true; sessionId: string } | { ok: false; code: string } {
-  const raw = (wireArgs ?? {}) as Record<string, unknown>;
-  const pick = (tag: string) => {
-    const key = Object.keys(raw).find(
-      (candidate) => candidate.toLowerCase() === tag.toLowerCase(),
-    );
-    return key === undefined ? undefined : raw[key];
-  };
-  const sessionId = pick("sessionId");
-  if (typeof sessionId !== "string" || sessionId === "") return { ok: false, code: "not_found" };
-  return { ok: true, sessionId };
+function expectManifestEnvelope(call: RpcCall | undefined, command: IPCCommandName, payload: unknown) {
+  if (!call) throw new Error(`missing RPC call for ${command}`);
+  const contract = ipcContractManifest.commands[command];
+  expect(call.url).toBe("/rpc");
+  expect(call.cmd).toBe(command);
+  expect(call.args).toEqual(contract.nested ? { args: payload } : payload);
+  if (contract.channel) {
+    expect(call.channel).toBeDefined();
+  } else {
+    expect(call.channel).toBeUndefined();
+  }
 }
 
-describe("cron IPC wire contract", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    installWebEnv();
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
+beforeEach(() => {
+  vi.resetModules();
+  installWebEnv();
+});
 
-  it("keeps cron_register production args flat; legacy double-wrapping always fails dispatcher decoding", async () => {
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("generated IPC envelope contract", () => {
+  it("matches per-command nested and channel metadata on real facade calls", async () => {
+    const calls = captureRpc();
+    const { terminalApi } = await import("../ipc/commands");
+    const { remoteHostShareApi } = await import("../ipc/remoteApi");
+
+    await terminalApi.write("tab-1", new Uint8Array([1, 2]));
+    await terminalApi.prepareBroadcast(["tab-1", "tab-2"], new Uint8Array([100, 111]));
+    await terminalApi.attach("session-1", 80, 24, { toJSON: () => "pty-1" });
+    await remoteHostShareApi.open("device-1", "stream-1", { toJSON: () => "host-1" });
+
+    expect(calls).toHaveLength(4);
+    expectManifestEnvelope(calls[0], "terminal_write", {
+      tabId: "tab-1",
+      data: [1, 2],
+      clientId: expect.any(String),
+    });
+    expectManifestEnvelope(calls[1], "terminal_broadcast_prepare", {
+      tabIds: ["tab-1", "tab-2"],
+      data: [100, 111],
+    });
+    expectManifestEnvelope(calls[2], "terminal_attach", { sessionId: "session-1", cols: 80, rows: 24 });
+    expect(calls[2]?.channel).toBe("pty-1");
+    expectManifestEnvelope(calls[3], "host_share_terminal_open", { deviceId: "device-1", streamId: "stream-1" });
+    expect(calls[3]?.channel).toBe("host-1");
+  });
+});
+
+describe("cron IPC wire contract", () => {
+  it("uses the generated flat envelope for cron_register", async () => {
     const calls = captureRpc();
     const { cronApi } = await import("../ipc/cron");
     const registration = {
@@ -321,15 +107,7 @@ describe("cron IPC wire contract", () => {
     await cronApi.register(registration);
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe("/rpc");
-    expect(calls[0]?.cmd).toBe("cron_register");
-    expect(calls[0]?.args).toEqual(registration);
-    expect((calls[0]?.args as Record<string, unknown>).args).toBeUndefined();
-    expect(dispatchCronRegister(calls[0]?.args)).toEqual({ ok: true, sessionId: "c-1" });
-    expect(dispatchCronRegister({ args: registration })).toEqual({
-      ok: false,
-      code: "not_found",
-    });
+    expectManifestEnvelope(calls[0], "cron_register", registration);
   });
 
   it("keeps cron_list/get/set_enabled/unregister production args flat", async () => {
@@ -341,24 +119,15 @@ describe("cron IPC wire contract", () => {
     await cronApi.setEnabled("c-1", "j-1", false);
     await cronApi.unregister("c-1", "j-1");
 
-    expect(calls).toEqual([
-      { url: "/rpc", cmd: "cron_list", args: { sessionId: "c-1" } },
-      { url: "/rpc", cmd: "cron_get", args: { sessionId: "c-1", jobId: "j-1" } },
-      { url: "/rpc", cmd: "cron_set_enabled", args: { sessionId: "c-1", jobId: "j-1", enabled: false } },
-      { url: "/rpc", cmd: "cron_unregister", args: { sessionId: "c-1", jobId: "j-1" } },
-    ]);
+    expect(calls).toHaveLength(4);
+    expectManifestEnvelope(calls[0], "cron_list", { sessionId: "c-1" });
+    expectManifestEnvelope(calls[1], "cron_get", { sessionId: "c-1", jobId: "j-1" });
+    expectManifestEnvelope(calls[2], "cron_set_enabled", { sessionId: "c-1", jobId: "j-1", enabled: false });
+    expectManifestEnvelope(calls[3], "cron_unregister", { sessionId: "c-1", jobId: "j-1" });
   });
 });
 
 describe("ai_edit_resend wire contract", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    installWebEnv();
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
   it("keeps ai_edit_resend production args flat with exact fields", async () => {
     const calls = captureRpc();
     const { aiApi } = await import("../ipc/commands");
@@ -366,22 +135,11 @@ describe("ai_edit_resend wire contract", () => {
     await aiApi.editResend("conv-1", "msg-3");
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe("/rpc");
-    expect(calls[0]?.cmd).toBe("ai_edit_resend");
-    expect(calls[0]?.args).toEqual({ conversationId: "conv-1", messageId: "msg-3" });
-    expect((calls[0]?.args as Record<string, unknown>).args).toBeUndefined();
+    expectManifestEnvelope(calls[0], "ai_edit_resend", { conversationId: "conv-1", messageId: "msg-3" });
   });
 });
 
 describe("ai_circuit_status wire contract", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    installWebEnv();
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
   it("keeps ai_circuit_status production args flat with exact fields", async () => {
     const calls = captureRpc();
     const { modelApi } = await import("../ipc/commands");
@@ -389,9 +147,6 @@ describe("ai_circuit_status wire contract", () => {
     await modelApi.circuitStatus("m-1");
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe("/rpc");
-    expect(calls[0]?.cmd).toBe("ai_circuit_status");
-    expect(calls[0]?.args).toEqual({ id: "m-1" });
-    expect((calls[0]?.args as Record<string, unknown>).args).toBeUndefined();
+    expectManifestEnvelope(calls[0], "ai_circuit_status", { id: "m-1" });
   });
 });

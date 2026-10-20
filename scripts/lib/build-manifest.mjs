@@ -88,7 +88,7 @@ export function distManifestProblems(root, manifest, { version, commit }) {
   return problems;
 }
 
-export function createBinaryManifest({ file, id, kind, goos, goarch, tags, cgo, stripped, version, commit, source_date_epoch: sourceDateEpoch }) {
+export function createBinaryManifest({ file, id, kind: _kind, goos, goarch, tags, cgo, stripped, version, commit, source_date_epoch: sourceDateEpoch }) {
   const content = fs.readFileSync(file);
   return {
     schema_version: 1,

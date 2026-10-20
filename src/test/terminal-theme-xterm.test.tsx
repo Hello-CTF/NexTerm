@@ -4,6 +4,7 @@ import { act } from "react";
 import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { flushMacrotask } from "./features/reactTestUtils";
 
 const harness = vi.hoisted(() => ({
   terminals: [] as Array<{
@@ -153,8 +154,8 @@ async function flushWork(): Promise<void> {
     const callbacks = [...harness.frames.values()];
     harness.frames.clear();
     for (const callback of callbacks) callback();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flushMacrotask();
+    await flushMacrotask();
   });
 }
 

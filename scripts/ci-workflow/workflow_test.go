@@ -1,0 +1,611 @@
+package ciworkflow
+
+import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strings"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
+
+type workflowFile struct {
+	On   workflowTriggers       `yaml:"on"`
+	Jobs map[string]workflowJob `yaml:"jobs"`
+}
+
+type workflowTriggers struct {
+	Push         workflowTrigger  `yaml:"push"`
+	PullRequest  *workflowTrigger `yaml:"pull_request"`
+	WorkflowCall struct {
+		Secrets map[string]workflowSecret `yaml:"secrets"`
+	} `yaml:"workflow_call"`
+}
+
+type workflowTrigger struct {
+	Branches []string `yaml:"branches"`
+	Paths    []string `yaml:"paths"`
+	Types    []string `yaml:"types"`
+}
+
+type workflowSecret struct {
+	Required bool `yaml:"required"`
+}
+
+type workflowJob struct {
+	Name           string            `yaml:"name"`
+	If             string            `yaml:"if"`
+	Needs          stringList        `yaml:"needs"`
+	RunsOn         string            `yaml:"runs-on"`
+	TimeoutMinutes int               `yaml:"timeout-minutes"`
+	Permissions    map[string]string `yaml:"permissions"`
+	Env            map[string]string `yaml:"env"`
+	Strategy       struct {
+		Matrix workflowMatrix `yaml:"matrix"`
+	} `yaml:"strategy"`
+	Steps []workflowStep `yaml:"steps"`
+}
+
+type workflowMatrix struct {
+	Expression string
+	Include    []map[string]any
+}
+
+func (matrix *workflowMatrix) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		matrix.Expression = node.Value
+		return nil
+	}
+	var decoded struct {
+		Include []map[string]any `yaml:"include"`
+	}
+	if err := node.Decode(&decoded); err != nil {
+		return err
+	}
+	matrix.Include = decoded.Include
+	return nil
+}
+
+type workflowStep struct {
+	ID   string            `yaml:"id"`
+	Name string            `yaml:"name"`
+	If   string            `yaml:"if"`
+	Uses string            `yaml:"uses"`
+	Run  string            `yaml:"run"`
+	Env  map[string]string `yaml:"env"`
+	With map[string]any    `yaml:"with"`
+}
+
+type stringList []string
+
+func (values *stringList) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		*values = stringList{node.Value}
+		return nil
+	}
+	var decoded []string
+	if err := node.Decode(&decoded); err != nil {
+		return err
+	}
+	*values = decoded
+	return nil
+}
+
+type taskFile struct {
+	Tasks map[string]taskDefinition `yaml:"tasks"`
+}
+
+type taskDefinition struct {
+	Commands []taskCommand `yaml:"cmds"`
+}
+
+type taskCommand struct {
+	Run  string
+	Task string
+}
+
+func (command *taskCommand) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		command.Run = node.Value
+		return nil
+	}
+	var decoded struct {
+		Task string `yaml:"task"`
+	}
+	if err := node.Decode(&decoded); err != nil {
+		return err
+	}
+	command.Task = decoded.Task
+	return nil
+}
+
+func TestQualityUsesSharedTaskWithoutDroppingCoverage(t *testing.T) {
+	ci := loadWorkflow(t, ".github/workflows/ci.yml")
+	quality := requireJob(t, ci, "quality")
+	requireRun(t, quality, "wails3 task check:ci-quality")
+	windowsVet := requireRun(t, quality, "go vet ./...")
+	if got := windowsVet.Env["GOOS"]; got != "windows" {
+		t.Fatalf("Windows vet GOOS = %q, want windows", got)
+	}
+	requireRun(t, quality, "go test -count=1 ./scripts/gen-ipc-contract")
+	requireRun(t, quality, "go test -count=1 ./scripts/compile-only")
+	requireRun(t, quality, "go test -count=1 ./scripts/ci-workflow")
+
+	tasks := loadTaskfile(t)
+	commands := make(map[string]bool)
+	for _, command := range tasks.Tasks["check:ci-quality"].Commands {
+		if command.Task != "" {
+			commands["task:"+command.Task] = true
+		} else {
+			commands["run:"+normalize(command.Run)] = true
+		}
+	}
+	for _, required := range []string{
+		"task:fmt:check",
+		"run:go mod verify",
+		"run:go run ./scripts/verify-manifest-injects",
+		"task:ipc:contract:check",
+		"task:gorm:check",
+		"task:check:scripts",
+		"task:vet",
+		"task:bindings:check",
+	} {
+		if !commands[required] {
+			t.Errorf("check:ci-quality is missing %s", required)
+		}
+	}
+}
+
+func TestProductionJobRunsOnEveryPullRequestWithoutExpandingRace(t *testing.T) {
+	ci := loadWorkflow(t, ".github/workflows/ci.yml")
+	production := requireJob(t, ci, "production")
+	if got := expression(production.If); got != "github.event_name == 'pull_request'" {
+		t.Fatalf("production job condition = %q", got)
+	}
+	if production.RunsOn != "ubuntu-latest" || production.TimeoutMinutes <= 0 || production.TimeoutMinutes > 30 {
+		t.Fatalf("production runner/timeout = %q/%d", production.RunsOn, production.TimeoutMinutes)
+	}
+	productionRun := requireRun(t, production, "wails3 task test:production")
+	requireRun(t, production, "pnpm install --frozen-lockfile")
+	requireUse(t, production, "actions/checkout@")
+	pnpm := requireUse(t, production, "pnpm/action-setup@")
+	node := requireUse(t, production, "actions/setup-node@")
+	goSetup := requireUse(t, production, "actions/setup-go@")
+	wailsCache := requireUse(t, production, "actions/cache@")
+	if node.With["cache"] != "pnpm" {
+		t.Fatalf("production setup-node cache = %v", node.With["cache"])
+	}
+	requireBefore(t, production, pnpm, node, "pnpm must be installed before setup-node configures its cache")
+	requireBefore(t, production, node, productionRun, "Node must be installed before production tests")
+	requireBefore(t, production, goSetup, productionRun, "Go must be installed before production tests")
+	requireBefore(t, production, wailsCache, productionRun, "Wails must be restored before production tests")
+	wailsInstall := requireRunContaining(t, production, "go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27")
+	requireBefore(t, production, wailsInstall, productionRun, "Wails must be installed before production tests")
+	for _, step := range production.Steps {
+		run := normalize(step.Run)
+		if strings.Contains(run, "task verify") || strings.Contains(run, "test:race") || strings.Contains(run, "go test -race") {
+			t.Fatalf("production PR job duplicates verify/race: %s", run)
+		}
+	}
+	race := requireJob(t, ci, "race")
+	if got := expression(race.If); got != "github.event_name == 'push' || inputs.release_version != ''" {
+		t.Fatalf("race job condition = %q", got)
+	}
+}
+
+func TestCompileOnlyPreservesNativeTargetsAndNeverRunsTestMain(t *testing.T) {
+	ci := loadWorkflow(t, ".github/workflows/ci.yml")
+	compile := requireJob(t, ci, "compile")
+	requireRun(t, compile, "go run -mod=readonly ./scripts/compile-only ./...")
+	if compile.RunsOn != "${{ matrix.runner }}" {
+		t.Fatalf("compile runner = %q, want matrix.runner", compile.RunsOn)
+	}
+	targets := make(map[string]string)
+	for _, entry := range compile.Strategy.Matrix.Include {
+		targetOS, _ := entry["os"].(string)
+		runner, _ := entry["runner"].(string)
+		targets[targetOS] = runner
+	}
+	for targetOS, runner := range map[string]string{"windows": "windows-latest", "darwin": "macos-15"} {
+		if targets[targetOS] != runner {
+			t.Errorf("compile target %s runner = %q, want %q", targetOS, targets[targetOS], runner)
+		}
+	}
+	for _, key := range []string{"GOOS", "GOARCH"} {
+		if compile.Env[key] != "" {
+			t.Errorf("compile job overrides native %s=%q", key, compile.Env[key])
+		}
+		for _, step := range compile.Steps {
+			if step.Env[key] != "" {
+				t.Errorf("compile step %q overrides native %s=%q", step.Name, key, step.Env[key])
+			}
+		}
+	}
+	requireRun(t, requireJob(t, ci, "quality"), "go test -count=1 ./scripts/compile-only")
+	for jobName, job := range ci.Jobs {
+		for _, step := range job.Steps {
+			if strings.Contains(normalize(step.Run), "go test -run '^$'") {
+				t.Errorf("%s retains the TestMain-executing compile command", jobName)
+			}
+		}
+	}
+}
+
+func TestCIOKAggregatesAllJobsAndRejectsUnsuccessfulResults(t *testing.T) {
+	ci := loadWorkflow(t, ".github/workflows/ci.yml")
+	aggregator := requireJob(t, ci, "ci-ok")
+	if expression(aggregator.If) != "always()" {
+		t.Fatalf("ci-ok condition = %q", aggregator.If)
+	}
+	actualNeeds := make(map[string]bool)
+	for _, need := range aggregator.Needs {
+		actualNeeds[need] = true
+	}
+	for name := range ci.Jobs {
+		if name != "ci-ok" && !actualNeeds[name] {
+			t.Errorf("ci-ok does not need %s", name)
+		}
+		delete(actualNeeds, name)
+	}
+	for extra := range actualNeeds {
+		t.Errorf("ci-ok needs unknown job %s", extra)
+	}
+
+	var aggregateStep *workflowStep
+	for index := range aggregator.Steps {
+		if aggregator.Steps[index].Env["NEEDS"] == "${{ toJSON(needs) }}" {
+			aggregateStep = &aggregator.Steps[index]
+			break
+		}
+	}
+	if aggregateStep == nil {
+		t.Fatal("ci-ok aggregation step not found")
+	}
+	script := extractNodeScript(t, aggregateStep.Run)
+	scenarios := []struct {
+		name        string
+		results     map[string]string
+		wantSuccess bool
+		wantOutput  string
+	}{
+		{
+			name: "pull request with conditional jobs skipped",
+			results: map[string]string{
+				"race": "skipped", "mobile": "skipped", "ios-dist": "skipped",
+			},
+			wantSuccess: true,
+		},
+		{
+			name: "master push without PR jobs",
+			results: map[string]string{
+				"production": "skipped", "mobile-compile": "skipped", "ios-dist": "skipped",
+			},
+			wantSuccess: true,
+		},
+		{
+			name: "release without PR jobs",
+			results: map[string]string{
+				"production": "skipped", "mobile-compile": "skipped", "ios-dist": "skipped",
+			},
+			wantSuccess: true,
+		},
+		{
+			name:        "production failure",
+			results:     map[string]string{"production": "failure"},
+			wantSuccess: false,
+			wantOutput:  "production=failure",
+		},
+		{
+			name:        "compile failure",
+			results:     map[string]string{"compile": "failure"},
+			wantSuccess: false,
+			wantOutput:  "compile=failure",
+		},
+		{
+			name:        "quality cancellation",
+			results:     map[string]string{"quality": "cancelled"},
+			wantSuccess: false,
+			wantOutput:  "quality=cancelled",
+		},
+	}
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			results := make(map[string]map[string]string)
+			for _, need := range aggregator.Needs {
+				result := scenario.results[need]
+				if result == "" {
+					result = "success"
+				}
+				results[need] = map[string]string{"result": result}
+			}
+			payload, err := json.Marshal(results)
+			if err != nil {
+				t.Fatal(err)
+			}
+			command := exec.Command("node", "--input-type=module", "-e", script)
+			command.Env = append(os.Environ(), "NEEDS="+string(payload))
+			output, err := command.CombinedOutput()
+			if scenario.wantSuccess && err != nil {
+				t.Fatalf("ci-ok rejected valid results: %v\n%s", err, output)
+			}
+			if !scenario.wantSuccess {
+				if err == nil {
+					t.Fatalf("ci-ok accepted unsuccessful results:\n%s", output)
+				}
+				if !strings.Contains(string(output), scenario.wantOutput) {
+					t.Fatalf("ci-ok output does not contain %q:\n%s", scenario.wantOutput, output)
+				}
+			}
+		})
+	}
+}
+
+func TestPagesBuildsPullRequestsAndDeploysOnlyPush(t *testing.T) {
+	pages := loadWorkflow(t, ".github/workflows/pages.yml")
+	if pages.On.PullRequest == nil {
+		t.Fatal("Pages does not run for pull requests")
+	}
+	if len(pages.On.Push.Branches) != 1 || pages.On.Push.Branches[0] != "master" {
+		t.Fatalf("Pages push branches = %v", pages.On.Push.Branches)
+	}
+	for _, trigger := range []struct {
+		name  string
+		paths []string
+	}{
+		{name: "push", paths: pages.On.Push.Paths},
+		{name: "pull request", paths: pages.On.PullRequest.Paths},
+	} {
+		found := false
+		for _, path := range trigger.paths {
+			found = found || path == "Taskfile.yml"
+		}
+		if !found {
+			t.Errorf("Pages %s paths do not include Taskfile.yml", trigger.name)
+		}
+	}
+	build := requireJob(t, pages, "build")
+	if build.If != "" {
+		t.Fatalf("Pages build unexpectedly limited by %q", build.If)
+	}
+	buildSite := requireRun(t, build, "go run github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27 task website:check")
+	install := requireRun(t, build, "pnpm install --frozen-lockfile")
+	pnpm := requireUse(t, build, "pnpm/action-setup@")
+	node := requireUse(t, build, "actions/setup-node@")
+	goSetup := requireUse(t, build, "actions/setup-go@")
+	requireBefore(t, build, pnpm, node, "pnpm must be installed before setup-node configures its cache")
+	requireBefore(t, build, node, install, "Node must be installed before dependencies")
+	requireBefore(t, build, goSetup, buildSite, "Go must be installed before wails3")
+	requireBefore(t, build, install, buildSite, "dependencies must be installed before website:check")
+	if node.With["cache"] != "pnpm" {
+		t.Fatalf("Pages setup-node cache = %v", node.With["cache"])
+	}
+
+	var artifact *workflowStep
+	for index := range build.Steps {
+		if strings.HasPrefix(build.Steps[index].Uses, "actions/upload-pages-artifact@") {
+			artifact = &build.Steps[index]
+			break
+		}
+	}
+	if artifact == nil || expression(artifact.If) != "github.event_name == 'push'" || artifact.With["path"] != "_site" {
+		t.Fatalf("Pages artifact step = %#v", artifact)
+	}
+	deploy := requireJob(t, pages, "deploy")
+	if expression(deploy.If) != "github.event_name == 'push'" || len(deploy.Needs) != 1 || deploy.Needs[0] != "build" {
+		t.Fatalf("Pages deploy contract = if %q needs %v", deploy.If, deploy.Needs)
+	}
+	if deploy.Permissions["pages"] != "write" || deploy.Permissions["id-token"] != "write" {
+		t.Fatalf("Pages deploy permissions = %v", deploy.Permissions)
+	}
+
+	tasks := loadTaskfile(t)
+	commands := make(map[string]bool)
+	for _, command := range tasks.Tasks["website:check"].Commands {
+		commands[normalize(command.Run)] = true
+	}
+	for _, required := range []string{
+		"pnpm exec tsc -p website/tsconfig.json --noEmit",
+		"pnpm exec vite build --config website/vite.config.mjs",
+	} {
+		if !commands[required] {
+			t.Errorf("website:check is missing %s", required)
+		}
+	}
+}
+
+func TestExistingCISecurityAndBackendContractsRemain(t *testing.T) {
+	ci := loadWorkflow(t, ".github/workflows/ci.yml")
+	database := requireJob(t, ci, "database")
+	if database.Env["NEXTERM_TEST_DB_BACKEND"] != "${{ matrix.backend }}" || database.Env["NEXTERM_TEST_DB_DSN"] != "${{ matrix.dsn }}" {
+		t.Fatalf("database environment = %v", database.Env)
+	}
+	backends := make(map[string]bool)
+	digest := regexp.MustCompile(`^[^@]+@sha256:[0-9a-f]{64}$`)
+	for _, entry := range database.Strategy.Matrix.Include {
+		backend, _ := entry["backend"].(string)
+		backends[backend] = true
+		if backend != "sqlite" {
+			image, _ := entry["image"].(string)
+			if !digest.MatchString(image) {
+				t.Errorf("%s image is not digest pinned: %q", backend, image)
+			}
+		}
+	}
+	for _, backend := range []string{"postgres", "mysql", "mariadb", "sqlite"} {
+		if !backends[backend] {
+			t.Errorf("database backend %s is missing", backend)
+		}
+	}
+	requireRunContaining(t, database, "task test:database")
+
+	native := requireJob(t, ci, "native")
+	windowsTests := requireRunContaining(t, native, "& ./.github/scripts/windows-real-tests.ps1")
+	if !strings.Contains(windowsTests.If, "matrix.os == 'windows'") {
+		t.Fatalf("Windows real tests condition = %q", windowsTests.If)
+	}
+	windowsScript := readRepositoryFile(t, ".github/scripts/windows-real-tests.ps1")
+	for _, testName := range []string{"TestSessionWindowsNaturalExitEOF", "TestSessionWindowsBackpressureAndDrain"} {
+		if !strings.Contains(windowsScript, "-Package './internal/pty' -Test '"+testName+"'") {
+			t.Errorf("Windows PTY test %s is not wired", testName)
+		}
+	}
+
+	for _, secret := range []string{
+		"NEXTERM_ANDROID_KEYSTORE_BASE64",
+		"ANDROID_KEYSTORE_PASSWORD",
+		"ANDROID_KEY_ALIAS",
+		"ANDROID_KEY_PASSWORD",
+		"NEXTERM_IOS_P12_BASE64",
+		"NEXTERM_IOS_P12_PASSWORD",
+		"NEXTERM_IOS_PROVISIONING_PROFILE",
+	} {
+		if _, ok := ci.On.WorkflowCall.Secrets[secret]; !ok {
+			t.Errorf("workflow_call secret %s is missing", secret)
+		}
+	}
+	mobile := requireJob(t, ci, "mobile")
+	packageStep := requireRun(t, mobile, "wails3 task ${{ matrix.platform }}:package")
+	for _, secret := range []string{"ANDROID_KEYSTORE_PASSWORD", "ANDROID_KEY_ALIAS", "ANDROID_KEY_PASSWORD"} {
+		if !strings.Contains(packageStep.Env[secret], "secrets."+secret) {
+			t.Errorf("mobile package secret %s is not scoped to the package step", secret)
+		}
+	}
+
+	uploads := 0
+	for _, job := range ci.Jobs {
+		for _, step := range job.Steps {
+			if !strings.HasPrefix(step.Uses, "actions/upload-artifact@") {
+				continue
+			}
+			uploads++
+			if overwrite, _ := step.With["overwrite"].(bool); !overwrite {
+				t.Errorf("%s upload does not overwrite reruns", job.Name)
+			}
+			if step.With["if-no-files-found"] != "error" {
+				t.Errorf("%s upload does not reject missing files", job.Name)
+			}
+		}
+	}
+	if uploads == 0 {
+		t.Fatal("no CI artifact uploads found")
+	}
+}
+
+func loadWorkflow(t *testing.T, name string) workflowFile {
+	t.Helper()
+	var workflow workflowFile
+	if err := yaml.Unmarshal([]byte(readRepositoryFile(t, name)), &workflow); err != nil {
+		t.Fatalf("parse %s: %v", name, err)
+	}
+	return workflow
+}
+
+func loadTaskfile(t *testing.T) taskFile {
+	t.Helper()
+	var tasks taskFile
+	if err := yaml.Unmarshal([]byte(readRepositoryFile(t, "Taskfile.yml")), &tasks); err != nil {
+		t.Fatalf("parse Taskfile.yml: %v", err)
+	}
+	return tasks
+}
+
+func readRepositoryFile(t *testing.T, name string) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate workflow contract source")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(content)
+}
+
+func requireJob(t *testing.T, workflow workflowFile, name string) workflowJob {
+	t.Helper()
+	job, ok := workflow.Jobs[name]
+	if !ok {
+		t.Fatalf("job %s not found", name)
+	}
+	return job
+}
+
+func requireUse(t *testing.T, job workflowJob, prefix string) workflowStep {
+	t.Helper()
+	for _, step := range job.Steps {
+		if strings.HasPrefix(step.Uses, prefix) {
+			return step
+		}
+	}
+	t.Fatalf("%s has no step using %s", job.Name, prefix)
+	return workflowStep{}
+}
+
+func requireRun(t *testing.T, job workflowJob, command string) workflowStep {
+	t.Helper()
+	for _, step := range job.Steps {
+		if normalize(step.Run) == command {
+			return step
+		}
+	}
+	t.Fatalf("%s has no step running %q", job.Name, command)
+	return workflowStep{}
+}
+
+func requireRunContaining(t *testing.T, job workflowJob, command string) workflowStep {
+	t.Helper()
+	for _, step := range job.Steps {
+		if strings.Contains(normalize(step.Run), command) {
+			return step
+		}
+	}
+	t.Fatalf("%s has no step containing %q", job.Name, command)
+	return workflowStep{}
+}
+
+func requireBefore(t *testing.T, job workflowJob, first, second workflowStep, message string) {
+	t.Helper()
+	firstIndex, secondIndex := -1, -1
+	for index, step := range job.Steps {
+		if step.ID == first.ID && step.Name == first.Name && step.If == first.If && step.Uses == first.Uses && step.Run == first.Run {
+			firstIndex = index
+		}
+		if step.ID == second.ID && step.Name == second.Name && step.If == second.If && step.Uses == second.Uses && step.Run == second.Run {
+			secondIndex = index
+		}
+	}
+	if firstIndex < 0 || secondIndex < 0 || firstIndex >= secondIndex {
+		t.Fatalf("%s: %s", job.Name, message)
+	}
+}
+
+func extractNodeScript(t *testing.T, run string) string {
+	t.Helper()
+	const prefix = "node --input-type=module -e '"
+	start := strings.Index(run, prefix)
+	if start < 0 {
+		t.Fatalf("Node aggregation command not found in %q", run)
+	}
+	script := strings.TrimSpace(run[start+len(prefix):])
+	if !strings.HasSuffix(script, "'") {
+		t.Fatalf("unterminated Node aggregation script in %q", run)
+	}
+	return strings.TrimSpace(strings.TrimSuffix(script, "'"))
+}
+
+func expression(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "${{")
+	value = strings.TrimSuffix(value, "}}")
+	return strings.TrimSpace(value)
+}
+
+func normalize(value string) string {
+	return strings.Join(strings.Fields(value), " ")
+}

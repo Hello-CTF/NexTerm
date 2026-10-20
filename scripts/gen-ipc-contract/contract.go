@@ -1,0 +1,418 @@
+package main
+
+import (
+	"fmt"
+	"go/ast"
+	"go/constant"
+	"go/types"
+	"os"
+	"sort"
+	"strings"
+
+	"golang.org/x/tools/go/packages"
+)
+
+const ipcPackagePath = "github.com/Hello-CTF/NexTerm/internal/ipc"
+
+type scopeSpec struct {
+	name     string
+	prefixes []string
+	commands []string
+	deferred bool
+}
+
+var contractScopes = []scopeSpec{
+	{name: "host-share", prefixes: []string{"host_share_"}},
+	{name: "exec-batch", prefixes: []string{"exec_batch_"}},
+	{name: "runbook", prefixes: []string{"runbook_"}},
+	{name: "forward-rule", prefixes: []string{"forward_rule_"}},
+	{name: "services", prefixes: []string{"services_"}},
+	{name: "inventory", prefixes: []string{"inventory_"}},
+	{name: "fs-cancel", commands: []string{"fs_cancel"}},
+	{name: "memory-owner", deferred: true},
+	{name: "ai-owner", deferred: true},
+}
+
+type commandContract struct {
+	Scope   string
+	Name    string
+	Nested  bool
+	Channel bool
+	Stream  string
+	Input   types.Type
+	Output  types.Type
+}
+
+type channelUsage struct {
+	channel       bool
+	stream        bool
+	jsonStream    bool
+	binaryStream  bool
+	unknownStream bool
+}
+
+type functionDecl struct {
+	pkg  *packages.Package
+	body ast.Node
+}
+
+func loadContractPackages(root string, overlay map[string][]byte) ([]*packages.Package, error) {
+	config := &packages.Config{
+		Dir:     root,
+		Mode:    packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports | packages.NeedDeps | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
+		Overlay: overlay,
+		Env:     readOnlyGoEnv(),
+	}
+	loaded, err := packages.Load(config, "./internal/...", "./cmd/nexterm-desktop")
+	if err != nil {
+		return nil, err
+	}
+	if len(loaded) == 0 {
+		return nil, fmt.Errorf("no IPC registration packages loaded")
+	}
+	for _, pkg := range loaded {
+		if pkg.TypesInfo == nil {
+			return nil, fmt.Errorf("IPC registration package %s has no type information", pkg.PkgPath)
+		}
+	}
+	return loaded, nil
+}
+
+func readOnlyGoEnv() []string {
+	environment := os.Environ()
+	result := make([]string, 0, len(environment)+1)
+	for _, value := range environment {
+		if !strings.HasPrefix(value, "GOFLAGS=") {
+			result = append(result, value)
+		}
+	}
+	return append(result, "GOFLAGS=-mod=readonly")
+}
+
+func extractContracts(loaded []*packages.Package) ([]commandContract, error) {
+	declarations := make(map[*types.Func]functionDecl)
+	for _, pkg := range loaded {
+		for _, file := range pkg.Syntax {
+			for _, declaration := range file.Decls {
+				function, ok := declaration.(*ast.FuncDecl)
+				if !ok {
+					continue
+				}
+				object, _ := pkg.TypesInfo.Defs[function.Name].(*types.Func)
+				if object != nil {
+					declarations[object] = functionDecl{pkg: pkg, body: function.Body}
+				}
+			}
+		}
+	}
+
+	nestedOverrides := registrationNestedOverrides(loaded)
+	commandsByName := make(map[string]commandContract)
+	seenScopes := make(map[string]bool)
+	for _, pkg := range loaded {
+		for _, file := range pkg.Syntax {
+			var extractionErr error
+			ast.Inspect(file, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok || len(call.Args) != 3 {
+					return true
+				}
+				registration := registrationName(pkg, call)
+				if registration == "" {
+					return true
+				}
+				names := commandNames(pkg, call.Args[1], loaded, declarations, nil)
+				if len(names) == 0 {
+					extractionErr = fmt.Errorf("non-constant IPC command registration at %s", pkg.Fset.Position(call.Args[1].Pos()))
+					return false
+				}
+				for _, name := range names {
+					scope, selected := selectedScope(name)
+					usage := inspectChannelUsage(pkg, call.Args[2], declarations)
+					nested := registration == "RegisterNested"
+					if override, ok := nestedOverrides[name]; ok {
+						nested = override
+					}
+					contract := commandContract{
+						Name: name, Nested: nested,
+						Channel: usage.channel, Stream: streamKind(usage),
+					}
+					if selected {
+						signature, ok := pkg.TypesInfo.TypeOf(call.Args[2]).Underlying().(*types.Signature)
+						if !ok || signature.Params().Len() != 3 || signature.Results().Len() != 2 {
+							commandsByName[name] = commandContract{Name: name, Scope: "invalid"}
+							continue
+						}
+						contract.Scope = scope
+						contract.Input = signature.Params().At(2).Type()
+						contract.Output = signature.Results().At(0).Type()
+					}
+					if existing, exists := commandsByName[name]; exists {
+						if selected || existing.Scope != "" {
+							commandsByName[name] = commandContract{Name: name, Scope: "duplicate"}
+						}
+						continue
+					}
+					commandsByName[name] = contract
+					if selected {
+						seenScopes[scope] = true
+					}
+				}
+				return true
+			})
+			if extractionErr != nil {
+				return nil, extractionErr
+			}
+		}
+	}
+
+	var commands []commandContract
+	for _, command := range commandsByName {
+		if command.Scope == "duplicate" {
+			return nil, fmt.Errorf("command %q has multiple selected registrations", command.Name)
+		}
+		if command.Scope == "invalid" {
+			return nil, fmt.Errorf("command %q does not use the IPC handler signature", command.Name)
+		}
+		commands = append(commands, command)
+	}
+	for _, scope := range contractScopes {
+		if !scope.deferred && !seenScopes[scope.name] {
+			return nil, fmt.Errorf("selected IPC scope %q has no registrations", scope.name)
+		}
+	}
+	sort.Slice(commands, func(i, j int) bool { return commands[i].Name < commands[j].Name })
+	return commands, nil
+}
+
+func registrationNestedOverrides(loaded []*packages.Package) map[string]bool {
+	overrides := make(map[string]bool)
+	for _, pkg := range loaded {
+		if pkg.PkgPath != "github.com/Hello-CTF/NexTerm/internal/db" {
+			continue
+		}
+		for _, file := range pkg.Syntax {
+			ast.Inspect(file, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok || len(call.Args) != 4 {
+					return true
+				}
+				function := calledFunction(pkg, call.Fun)
+				if function == nil || function.Name() != "registerCommand" {
+					return true
+				}
+				name := commandName(pkg, call.Args[1])
+				value := pkg.TypesInfo.Types[call.Args[2]].Value
+				if name != "" && value != nil && value.Kind() == constant.Bool {
+					overrides[name] = constant.BoolVal(value)
+				}
+				return true
+			})
+		}
+	}
+	return overrides
+}
+
+func registrationName(pkg *packages.Package, call *ast.CallExpr) string {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return ""
+	}
+	object, _ := pkg.TypesInfo.Uses[selector.Sel].(*types.Func)
+	if object == nil || object.Pkg() == nil || object.Pkg().Path() != ipcPackagePath {
+		return ""
+	}
+	if object.Name() == "Register" || object.Name() == "RegisterNested" {
+		return object.Name()
+	}
+	return ""
+}
+
+func commandName(pkg *packages.Package, expression ast.Expr) string {
+	value := pkg.TypesInfo.Types[expression].Value
+	if value == nil || value.Kind() != constant.String {
+		return ""
+	}
+	return constant.StringVal(value)
+}
+
+func commandNames(pkg *packages.Package, expression ast.Expr, loaded []*packages.Package, declarations map[*types.Func]functionDecl, visited map[*types.Var]bool) []string {
+	if name := commandName(pkg, expression); name != "" {
+		return []string{name}
+	}
+	identifier, ok := expression.(*ast.Ident)
+	if !ok {
+		return nil
+	}
+	parameter, _ := pkg.TypesInfo.Uses[identifier].(*types.Var)
+	if parameter == nil {
+		return nil
+	}
+	if visited[parameter] {
+		return nil
+	}
+	var owner *types.Func
+	parameterIndex := -1
+	for function := range declarations {
+		params := function.Signature().Params()
+		for index := 0; index < params.Len(); index++ {
+			if params.At(index) == parameter {
+				owner = function
+				parameterIndex = index
+				break
+			}
+		}
+		if owner != nil {
+			break
+		}
+	}
+	if owner == nil {
+		return nil
+	}
+	if visited == nil {
+		visited = make(map[*types.Var]bool)
+	}
+	visited[parameter] = true
+	defer delete(visited, parameter)
+
+	names := make(map[string]bool)
+	for _, candidatePkg := range loaded {
+		for _, file := range candidatePkg.Syntax {
+			ast.Inspect(file, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok || parameterIndex >= len(call.Args) || calledFunction(candidatePkg, call.Fun) != owner {
+					return true
+				}
+				for _, name := range commandNames(candidatePkg, call.Args[parameterIndex], loaded, declarations, visited) {
+					names[name] = true
+				}
+				return true
+			})
+		}
+	}
+	result := make([]string, 0, len(names))
+	for name := range names {
+		result = append(result, name)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func selectedScope(name string) (string, bool) {
+	for _, scope := range contractScopes {
+		if scope.deferred {
+			continue
+		}
+		for _, command := range scope.commands {
+			if name == command {
+				return scope.name, true
+			}
+		}
+		for _, prefix := range scope.prefixes {
+			if strings.HasPrefix(name, prefix) {
+				return scope.name, true
+			}
+		}
+	}
+	return "", false
+}
+
+func inspectChannelUsage(pkg *packages.Package, handler ast.Expr, declarations map[*types.Func]functionDecl) channelUsage {
+	var usage channelUsage
+	visited := make(map[*types.Func]bool)
+	var inspect func(*packages.Package, ast.Node)
+	inspect = func(owner *packages.Package, body ast.Node) {
+		ast.Inspect(body, func(node ast.Node) bool {
+			switch current := node.(type) {
+			case *ast.SelectorExpr:
+				if isIPCCall(owner.TypesInfo.TypeOf(current.X)) {
+					switch current.Sel.Name {
+					case "Channel":
+						usage.channel = true
+					case "Streams":
+						usage.stream = true
+						usage.unknownStream = true
+					}
+				}
+			case *ast.CallExpr:
+				object := calledFunction(owner, current.Fun)
+				if object != nil && object.Pkg() != nil && object.Pkg().Path() == ipcPackagePath {
+					switch object.Name() {
+					case "OpenJSON":
+						usage.stream = true
+						usage.jsonStream = true
+					case "OpenBinary":
+						usage.stream = true
+						usage.binaryStream = true
+					}
+				}
+				if object != nil && !visited[object] {
+					if declaration, ok := declarations[object]; ok {
+						visited[object] = true
+						inspect(declaration.pkg, declaration.body)
+					}
+				}
+			}
+			return true
+		})
+	}
+
+	switch current := handler.(type) {
+	case *ast.FuncLit:
+		inspect(pkg, current.Body)
+	default:
+		if object := calledFunction(pkg, handler); object != nil {
+			if declaration, ok := declarations[object]; ok {
+				visited[object] = true
+				inspect(declaration.pkg, declaration.body)
+			}
+		}
+	}
+	return usage
+}
+
+func calledFunction(pkg *packages.Package, expression ast.Expr) *types.Func {
+	switch current := expression.(type) {
+	case *ast.Ident:
+		object, _ := pkg.TypesInfo.Uses[current].(*types.Func)
+		return object
+	case *ast.SelectorExpr:
+		if selection := pkg.TypesInfo.Selections[current]; selection != nil {
+			object, _ := selection.Obj().(*types.Func)
+			return object
+		}
+		object, _ := pkg.TypesInfo.Uses[current.Sel].(*types.Func)
+		return object
+	case *ast.IndexExpr:
+		return calledFunction(pkg, current.X)
+	case *ast.IndexListExpr:
+		return calledFunction(pkg, current.X)
+	default:
+		return nil
+	}
+}
+
+func isIPCCall(value types.Type) bool {
+	pointer, ok := types.Unalias(value).(*types.Pointer)
+	if !ok {
+		return false
+	}
+	named, ok := types.Unalias(pointer.Elem()).(*types.Named)
+	return ok && named.Obj().Name() == "Call" && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == ipcPackagePath
+}
+
+func streamKind(usage channelUsage) string {
+	if usage.jsonStream && usage.binaryStream {
+		return "unknown"
+	}
+	if usage.jsonStream {
+		return "json"
+	}
+	if usage.binaryStream {
+		return "binary"
+	}
+	if usage.stream || usage.unknownStream {
+		return "unknown"
+	}
+	return "none"
+}

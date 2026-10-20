@@ -5,7 +5,13 @@
 import { act, createElement, Fragment } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, deferred, flush, flushUntil, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
+import { clickButton, deferred, flush, flushUntil as flushUntilBase, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
+
+async function flushUntil(predicate: () => boolean, maxTicks = 60): Promise<void> {
+  await flush();
+  await flushUntilBase(predicate, maxTicks);
+  await flush();
+}
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -140,9 +146,11 @@ beforeEach(() => {
   mocks.ask.mockResolvedValue(true);
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await flush();
   mounted?.unmount();
   mounted = undefined;
+  await flush();
 });
 
 describe("desktop account card signed-out state", () => {

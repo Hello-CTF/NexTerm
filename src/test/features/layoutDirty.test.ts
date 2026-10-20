@@ -176,10 +176,11 @@ describe("remote layout dirty-editor preservation", () => {
     });
     store.getState().updateSqlDraft("ws", sqlDraft());
     store.getState().updateSqlDraft("empty", { ...sqlDraft(), text: "" });
-    server.revision = 1;
+    await sync.flushLayout();
+    server.revision = 2;
     server.data = JSON.stringify(layout([]));
 
-    sync.onRemoteChange({ revision: 1 });
+    sync.onRemoteChange({ revision: 2 });
 
     await vi.waitFor(() => {
       expect(store.getState().workspaces.some((w) => w.id === "ws")).toBe(true);
@@ -201,6 +202,10 @@ describe("remote layout dirty-editor preservation", () => {
     });
     store.getState().updateSqlDraft("ws", sqlDraft());
     store.getState().updateSqlDraft("empty", { ...sqlDraft(), text: "" });
+    await sync.flushLayout();
+    store.setState({
+      workspaces: [withDraft, { ...empty, title: "local edit" }],
+    });
     server.revision = 7;
     server.data = JSON.stringify(layout([]));
     server.putAlwaysConflicts = true;

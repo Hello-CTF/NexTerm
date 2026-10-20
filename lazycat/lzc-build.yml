@@ -6,8 +6,8 @@ contentdir: ./content
 
 images:
   nexterm-server:
-    context: ./image
-    dockerfile: ./image/Dockerfile
+    context: ./image-context
+    dockerfile: ./image-context/Dockerfile
     builder: remote
 
 pkgout: ./

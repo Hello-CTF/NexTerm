@@ -1,7 +1,25 @@
 /** @vitest-environment jsdom */
-import { readFileSync } from "node:fs";
+import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { installMatchMediaStub } from "./setup";
+import { flush } from "./features/reactTestUtils";
+
+vi.mock("../features/sharing/PublicShareApp", () => ({
+  PublicShareApp: () => "public share",
+}));
+vi.mock("../features/sharing/PublicPreviewApp", () => ({
+  PublicPreviewApp: () => "public preview",
+}));
+
+async function mountPublicEntry(pathname: string): Promise<void> {
+  window.history.replaceState({}, "", pathname);
+  document.body.innerHTML = '<div id="root"></div>';
+  vi.resetModules();
+  await act(async () => {
+    await import("../main");
+  });
+  await flush();
+}
 
 vi.mock("../ipc/commands", () => ({
   dbApi: {},
@@ -191,9 +209,14 @@ describe("public entries", () => {
     expect(seen).toEqual([["system", "dark"]]);
   });
 
-  it("forces dark in both public mount branches", () => {
-    const main = readFileSync("src/main.tsx", "utf8");
-    expect(main).toMatch(/if \(publicShareToken\) \{\s*forceResolvedTheme\("dark"\);/);
-    expect(main).toMatch(/else if \(publicPreviewToken\) \{\s*forceResolvedTheme\("dark"\);/);
-  });
+  for (const [pathname, heading] of [
+    ["/share/public/theme-token", "public share"],
+    ["/share/preview/theme-token", "public preview"],
+  ] as const) {
+    it(`forces dark while mounting ${pathname}`, async () => {
+      await mountPublicEntry(pathname);
+      expect(document.documentElement.dataset.nxTheme).toBe("dark");
+      expect(document.body.textContent).toContain(heading);
+    }, 15000);
+  }
 });

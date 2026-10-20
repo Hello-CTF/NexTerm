@@ -14,11 +14,14 @@ vi.mock("../../app/platform", () => ({
   wailsNoDragRegionStyle: {},
   isWailsDragRegionTarget: () => false,
 }));
+vi.mock("../../ipc/env", () => ({ WEB: false }));
 
 import {
   bindingConflicts,
   formatBinding,
   formatBindingAria,
+  getKeybinding,
+  matchAppKeybinding,
   matchBinding,
   resetAllKeybindings,
   setKeybinding,
@@ -73,6 +76,37 @@ describe("platform-specific keybinding behaviour", () => {
     const event = keyEvent({ key: "å", code: "KeyA", altKey: true });
     expect(matchBinding(event, "Alt+a")).toBe(true);
     expect(matchBinding(event, "Alt+å")).toBe(false);
+  });
+
+  it("uses the requested desktop navigation bindings with real key events", () => {
+    const cases = [
+      { action: "nextWorkspace", binding: "Mod+Alt+ArrowRight", key: "ArrowRight", code: "ArrowRight", ctrlKey: true, altKey: true },
+      { action: "previousWorkspace", binding: "Mod+Alt+ArrowLeft", key: "ArrowLeft", code: "ArrowLeft", ctrlKey: true, altKey: true },
+      { action: "nextTab", binding: "Ctrl+Tab", key: "Tab", code: "Tab", ctrlKey: true },
+      { action: "previousTab", binding: "Ctrl+Shift+Tab", key: "Tab", code: "Tab", ctrlKey: true, shiftKey: true },
+      { action: "focusUpperPane", binding: "Mod+Alt+ArrowUp", key: "ArrowUp", code: "ArrowUp", ctrlKey: true, altKey: true },
+      { action: "focusLowerPane", binding: "Mod+Alt+ArrowDown", key: "ArrowDown", code: "ArrowDown", ctrlKey: true, altKey: true },
+    ] as const;
+    for (const { action, binding, ...init } of cases) {
+      expect(getKeybinding(action)).toBe(binding);
+      expect(matchAppKeybinding(new KeyboardEvent("keydown", init))).toEqual({ action, digit: null });
+    }
+  });
+
+  it("matches macOS bracket alternatives from shifted key values and physical codes", () => {
+    harness.mac = true;
+    expect(matchAppKeybinding(new KeyboardEvent("keydown", {
+      key: "}",
+      code: "BracketRight",
+      metaKey: true,
+      shiftKey: true,
+    }))).toEqual({ action: "nextTab", digit: null });
+    expect(matchAppKeybinding(new KeyboardEvent("keydown", {
+      key: "{",
+      code: "BracketLeft",
+      metaKey: true,
+      shiftKey: true,
+    }))).toEqual({ action: "previousTab", digit: null });
   });
 
   it("flags Mod+letter against Primary+letter on both platforms", () => {

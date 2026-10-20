@@ -1,14 +1,28 @@
-import { afterAll, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, expect, vi } from "vitest";
 
-afterAll(async () => {
-  if (typeof window === "undefined") return;
-  if (vi.isFakeTimers()) {
-    await vi.advanceTimersByTimeAsync(75);
-    return;
-  }
-  await new Promise<void>((resolve) => {
-    setTimeout(resolve, 75);
-  });
+const reactWarnings: string[] = [];
+const REACT_WARNING = /not wrapped in act|overlapping act|unmounted component|Can't perform a React state update|testing environment is not configured to support act/;
+const originalConsoleError = console.error;
+
+console.error = (...args: unknown[]) => {
+  const text = args.map(String).join(" ");
+  if (REACT_WARNING.test(text)) reactWarnings.push(text);
+  originalConsoleError(...args);
+};
+
+beforeEach(() => {
+  reactWarnings.length = 0;
+});
+
+afterEach(() => {
+  if (vi.isFakeTimers()) vi.clearAllTimers();
+  vi.useRealTimers();
+  expect(reactWarnings, "React act/unmounted-update warnings").toEqual([]);
+});
+
+afterAll(() => {
+  console.error = originalConsoleError;
+  expect(reactWarnings, "React act/unmounted-update warnings during teardown").toEqual([]);
 });
 
 export function installMatchMediaStub(): void {

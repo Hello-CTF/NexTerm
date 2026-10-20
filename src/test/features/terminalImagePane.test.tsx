@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { flush, flushMacrotask, mount, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   return {
@@ -150,7 +150,7 @@ function png(name: string): File {
 async function pasteImages(files: File[]): Promise<void> {
   await act(async () => {
     (harness.props?.onPasteImages as ((files: File[]) => void) | undefined)?.(files);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flushMacrotask();
   });
 }
 

@@ -2,6 +2,53 @@ plugins {
     id 'com.android.application'
 }
 
+def releaseVersion = System.getenv("NEXTERM_RELEASE_VERSION")
+def hasReleaseVersion = releaseVersion != null && !releaseVersion.isEmpty()
+def androidVersionName = "0.0.0"
+def androidVersionCode = 1L
+if (hasReleaseVersion) {
+    def semverScript = new File(rootProject.projectDir, "../../scripts/check-semver.mjs").canonicalFile
+    def versionProcess = ["node", semverScript.absolutePath, "--android-json", releaseVersion].execute()
+    def versionOutput = new StringBuffer()
+    def versionError = new StringBuffer()
+    versionProcess.waitForProcessOutput(versionOutput, versionError)
+    if (versionProcess.exitValue() != 0) {
+        throw new GradleException("Cannot resolve Android release version: ${versionError.toString().trim()}")
+    }
+    def androidVersion = new groovy.json.JsonSlurper().parseText(versionOutput.toString())
+    androidVersionName = androidVersion.versionName
+    androidVersionCode = androidVersion.versionCode as long
+}
+
+def hasEnvironmentValue = { name ->
+    def value = System.getenv(name)
+    return value != null && !value.trim().isEmpty()
+}
+def keystoreFile = System.getenv("ANDROID_KEYSTORE_FILE")
+def releaseSigningVariables = [
+    "ANDROID_KEYSTORE_FILE",
+    "ANDROID_KEYSTORE_PASSWORD",
+    "ANDROID_KEY_ALIAS",
+    "ANDROID_KEY_PASSWORD",
+]
+def signingRequired = hasReleaseVersion || System.getenv("NEXTERM_ANDROID_SIGNING_REQUIRED") == "true" || releaseSigningVariables.any { hasEnvironmentValue(it) }
+
+gradle.taskGraph.whenReady { graph ->
+    if (graph.allTasks.any { task -> task.name in ["assembleRelease", "bundleRelease", "packageRelease"] }) {
+        if (!signingRequired) {
+            logger.warn("Android Release is using the local debug signing configuration; set NEXTERM_RELEASE_VERSION or provide ANDROID_KEYSTORE_* for a signed release")
+            return
+        }
+        def missing = releaseSigningVariables.findAll { name -> !hasEnvironmentValue(name) }
+        if (!missing.isEmpty()) {
+            throw new GradleException("Android release signing requires environment variables: ${missing.join(', ')}")
+        }
+        if (!project.file(keystoreFile).isFile() || !project.file(keystoreFile).canRead()) {
+            throw new GradleException("ANDROID_KEYSTORE_FILE does not point to a readable keystore: ${keystoreFile}")
+        }
+    }
+}
+
 android {
     namespace 'com.wails.app'
     compileSdk 35
@@ -14,8 +61,8 @@ android {
         applicationId "work.nexterm.app"
         minSdk 21
         targetSdk 35
-        versionCode 1
-        versionName System.getenv("NEXTERM_RELEASE_VERSION") ?: "0.0.0"
+        versionCode androidVersionCode.intValue()
+        versionName androidVersionName
 
         // Configure supported ABIs
         ndk {
@@ -23,15 +70,9 @@ android {
         }
     }
 
-    def keystoreFile = System.getenv("ANDROID_KEYSTORE_FILE")
-    def hasKeystore = keystoreFile != null && !keystoreFile.trim().isEmpty()
-
     signingConfigs {
-        // A real keystore can be provided via environment variables; without
-        // one, release builds are signed with the debug keystore so they can
-        // be installed for testing (not suitable for Play Store uploads).
         release {
-            if (hasKeystore) {
+            if (hasEnvironmentValue("ANDROID_KEYSTORE_FILE")) {
                 storeFile file(keystoreFile)
                 storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
                 keyAlias System.getenv("ANDROID_KEY_ALIAS")
@@ -44,7 +85,7 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            signingConfig hasKeystore ? signingConfigs.release : signingConfigs.debug
+            signingConfig signingRequired ? signingConfigs.release : signingConfigs.debug
         }
         debug {
             debuggable true

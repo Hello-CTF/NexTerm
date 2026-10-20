@@ -85,7 +85,7 @@ func prepareDesktopPackageRepo(root, base, version string) error {
 	script := strings.Join([]string{
 		"cp -R " + shellQuote(filepath.Join(root, "scripts")) + " " + shellQuote(filepath.Join(base, "scripts")),
 		"cp -R " + shellQuote(filepath.Join(root, "public")) + " " + shellQuote(filepath.Join(base, "public")),
-		"cp " + shellQuote(filepath.Join(root, "wails.json")) + " " + shellQuote(filepath.Join(root, "package.json")) + " " + shellQuote(filepath.Join(root, "LICENSE")) + " " + shellQuote(base),
+		"cp " + shellQuote(filepath.Join(root, "wails.json")) + " " + shellQuote(filepath.Join(root, "package.json")) + " " + shellQuote(filepath.Join(root, "go.mod")) + " " + shellQuote(filepath.Join(root, "go.sum")) + " " + shellQuote(filepath.Join(root, "LICENSE")) + " " + shellQuote(base),
 	}, "\n")
 	result := runScript(script, base, nil)
 	if result.rc != 0 {
@@ -123,9 +123,6 @@ func prepareDesktopPackageRepo(root, base, version string) error {
 	}
 	if metadata.Protocol <= 0 || len(metadata.Features) == 0 {
 		return fmt.Errorf("helper metadata is incomplete: %s", metadataRaw.stdout)
-	}
-	if err := os.WriteFile(filepath.Join(base, "go.mod"), []byte("module desktop-evidence-fixture\n\ngo 1.26\n"), 0o644); err != nil {
-		return err
 	}
 	helperCommand := filepath.Join(base, "cmd", "nexterm-helper")
 	if err := os.MkdirAll(helperCommand, 0o755); err != nil {

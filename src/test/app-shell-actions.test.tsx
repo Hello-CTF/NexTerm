@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, flush, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
+import { click, clickButton, flush, flushMacrotask, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   aiSidebarProps: [] as { sessionId?: string }[],
   backgroundProps: [] as { workspaceId?: string; sessionId?: string }[],
   historyProps: [] as { workspaceId?: string; assetId?: string }[],
+  terminalPaneProps: [] as { storeTabId: string }[],
   renameTab: vi.fn(),
 }));
 
@@ -80,6 +81,7 @@ vi.mock("../ipc/wails", () => ({
   closeWindow: mocks.closeWindow,
   minimiseWindow: mocks.minimiseWindow,
   toggleMaximiseWindow: mocks.toggleMaximiseWindow,
+  listenWailsEvent: vi.fn(() => Promise.resolve(() => {})),
 }));
 vi.mock("../app/layout", () => ({
   layoutBootstrapped: Promise.resolve(),
@@ -100,7 +102,12 @@ vi.mock("../features/settings/useWebAutoSync", () => ({
   useWebAutoSync: () => {},
 }));
 
-vi.mock("../features/terminal/TerminalPane", () => ({ TerminalPane: () => null }));
+vi.mock("../features/terminal/TerminalPane", () => ({
+  TerminalPane: (props: { storeTabId: string }) => {
+    mocks.terminalPaneProps.push(props);
+    return null;
+  },
+}));
 vi.mock("../features/terminal/BackgroundSessions", () => ({
   BackgroundSessions: (props: { workspaceId?: string; sessionId?: string }) => {
     mocks.backgroundProps.push(props);
@@ -157,6 +164,7 @@ import App from "../app/App";
 import { resetAllKeybindings, setKeybinding } from "../app/keybindings";
 import { setMacPlatform } from "../app/platform";
 import { useUi, type AppTab, type Workspace } from "../app/store";
+import { resetUnreadTabs, setTabUnread } from "../app/unreadStore";
 import type { Asset, SessionInfo } from "../ipc/commands";
 
 function assetOf(extra: Partial<Asset> & { id: string; name: string }): Asset {
@@ -260,6 +268,8 @@ beforeEach(() => {
   mocks.aiSidebarProps.length = 0;
   mocks.backgroundProps.length = 0;
   mocks.historyProps.length = 0;
+  mocks.terminalPaneProps.length = 0;
+  resetUnreadTabs();
   mocks.assetList.mockResolvedValue([]);
   mocks.sessionList.mockResolvedValue([]);
   mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
@@ -793,7 +803,120 @@ describe("App Ctrl+T new terminal", () => {
   });
 });
 
+async function pressNavigationKey(
+  key: string,
+  code: string,
+  init: KeyboardEventInit = {},
+): Promise<KeyboardEvent> {
+  const event = new KeyboardEvent("keydown", {
+    key,
+    code,
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  });
+  await act(async () => {
+    window.dispatchEvent(event);
+  });
+  return event;
+}
+
+describe("App workspace navigation in browser mode", () => {
+  it("cycles workspaces with the non-reserved browser bindings", async () => {
+    useUi.setState({
+      workspaces: [
+        hostWorkspace("ws-a", "s1"),
+        hostWorkspace("ws-b", "s2"),
+        hostWorkspace("ws-c", "s3"),
+      ],
+      activeWorkspaceId: "ws-b",
+    });
+    mounted = mountApp();
+    await flush();
+
+    expect((await pressNavigationKey("ArrowRight", "ArrowRight", { ctrlKey: true, altKey: true })).defaultPrevented).toBe(true);
+    expect(useUi.getState().activeWorkspaceId).toBe("ws-c");
+    await pressNavigationKey("ArrowRight", "ArrowRight", { ctrlKey: true, altKey: true });
+    expect(useUi.getState().activeWorkspaceId).toBe("ws-a");
+    await pressNavigationKey("ArrowLeft", "ArrowLeft", { ctrlKey: true, altKey: true });
+    expect(useUi.getState().activeWorkspaceId).toBe("ws-c");
+  });
+
+  it("cycles tabs with browser alternatives and leaves Ctrl+Tab unclaimed", async () => {
+    const current = workspaceOf("s1", [
+      { id: "t1", kind: "terminal", title: "Terminal 1", sessionId: "s1", closable: true },
+      { id: "t2", kind: "terminal", title: "Terminal 2", sessionId: "s1", closable: true },
+    ]);
+    useUi.setState({ workspaces: [current], activeWorkspaceId: "ws" });
+    mounted = mountApp();
+    await flush();
+
+    const reserved = await pressNavigationKey("Tab", "Tab", { ctrlKey: true });
+    expect(reserved.defaultPrevented).toBe(false);
+    expect(useUi.getState().workspaces[0].panes[0].activeTabId).toBe("t1");
+
+    expect((await pressNavigationKey("]", "BracketRight", { ctrlKey: true, altKey: true })).defaultPrevented).toBe(true);
+    expect(useUi.getState().workspaces[0].panes[0].activeTabId).toBe("t2");
+    await pressNavigationKey("]", "BracketRight", { ctrlKey: true, altKey: true });
+    expect(useUi.getState().workspaces[0].panes[0].activeTabId).toBe("t1");
+    await pressNavigationKey("[", "BracketLeft", { ctrlKey: true, altKey: true });
+    expect(useUi.getState().workspaces[0].panes[0].activeTabId).toBe("t2");
+
+    const reservedPrevious = await pressNavigationKey("Tab", "Tab", { ctrlKey: true, shiftKey: true });
+    expect(reservedPrevious.defaultPrevented).toBe(false);
+    expect(useUi.getState().workspaces[0].panes[0].activeTabId).toBe("t2");
+  });
+
+  it("leaves Safari's macOS bracket shortcuts unclaimed and uses the browser alternative", async () => {
+    setMacPlatform(true);
+    const current = workspaceOf("s1", [
+      { id: "t1", kind: "terminal", title: "Terminal 1", sessionId: "s1", closable: true },
+      { id: "t2", kind: "terminal", title: "Terminal 2", sessionId: "s1", closable: true },
+    ]);
+    useUi.setState({ workspaces: [current], activeWorkspaceId: "ws" });
+    mounted = mountApp();
+    await flush();
+
+    const safariNext = await pressNavigationKey("}", "BracketRight", { metaKey: true, shiftKey: true });
+    expect(safariNext.defaultPrevented).toBe(false);
+    expect(useUi.getState().workspaces[0].panes[0].activeTabId).toBe("t1");
+    await pressNavigationKey("]", "BracketRight", { ctrlKey: true, altKey: true });
+    expect(useUi.getState().workspaces[0].panes[0].activeTabId).toBe("t2");
+    const safariPrevious = await pressNavigationKey("{", "BracketLeft", { metaKey: true, shiftKey: true });
+    expect(safariPrevious.defaultPrevented).toBe(false);
+    expect(useUi.getState().workspaces[0].panes[0].activeTabId).toBe("t2");
+  });
+
+  it("cycles focus between the two rendered panes only", async () => {
+    const current = workspaceOf("s1", [
+      { id: "t1", kind: "terminal", title: "Terminal 1", sessionId: "s1", closable: true },
+    ]);
+    current.panes.push(
+      {
+        id: "lower",
+        tabs: [{ id: "t2", kind: "terminal", title: "Terminal 2", sessionId: "s1", closable: true }],
+        activeTabId: "t2",
+      },
+      { id: "hidden-third", tabs: [], activeTabId: null },
+    );
+    useUi.setState({ workspaces: [current], activeWorkspaceId: "ws" });
+    mounted = mountApp();
+    await flush();
+
+    expect((await pressNavigationKey("ArrowDown", "ArrowDown", { ctrlKey: true, altKey: true })).defaultPrevented).toBe(true);
+    expect(useUi.getState().workspaces[0].activePaneId).toBe("lower");
+    await pressNavigationKey("ArrowDown", "ArrowDown", { ctrlKey: true, altKey: true });
+    expect(useUi.getState().workspaces[0].activePaneId).toBe("pane");
+    await pressNavigationKey("ArrowUp", "ArrowUp", { ctrlKey: true, altKey: true });
+    expect(useUi.getState().workspaces[0].activePaneId).toBe("lower");
+  });
+});
+
 describe("App tab markers", () => {
+  function renderCount(tabId: string): number {
+    return mocks.terminalPaneProps.filter((props) => props.storeTabId === tabId).length;
+  }
+
   it("renders unread and close-failure markers on the tab and in its tooltip", async () => {
     useUi.setState({
       sessions: [sessionOf("s1")],
@@ -806,13 +929,13 @@ describe("App tab markers", () => {
             sessionId: "s1",
             tabId: "T1",
             closable: true,
-            unread: true,
             closeError: "资源不存在：tab not found",
           },
         ]),
       ],
       activeWorkspaceId: "ws",
     });
+    setTabUnread("t1", true);
     mounted = mountApp();
     await flush();
 
@@ -821,6 +944,59 @@ describe("App tab markers", () => {
     expect(tabEl?.getAttribute("title")).toContain("上次关闭失败：资源不存在：tab not found");
     expect(tabEl?.querySelector('[role="img"][aria-label="有新输出"]')).not.toBeNull();
     expect(tabEl?.querySelector('[role="img"][aria-label="关闭失败：资源不存在：tab not found"]')).not.toBeNull();
+  });
+
+  it("updates unread markers without rerendering terminal panes", async () => {
+    useUi.setState({
+      sessions: [sessionOf("s1")],
+      workspaces: [
+        workspaceOf("s1", [
+          { id: "t1", kind: "terminal", title: "Terminal 1", sessionId: "s1", tabId: "T1", closable: true },
+          { id: "t2", kind: "terminal", title: "Terminal 2", sessionId: "s1", tabId: "T2", closable: true },
+        ]),
+      ],
+      activeWorkspaceId: "ws",
+    });
+    mounted = mountApp();
+    await flush();
+    const before = mocks.terminalPaneProps.length;
+
+    act(() => setTabUnread("t2", true));
+    await flush();
+
+    const tabEl = mounted.container.querySelector('[data-tab-id="t2"]');
+    expect(tabEl?.getAttribute("title")).toContain("有新输出");
+    expect(tabEl?.querySelector('[aria-label="有新输出"]')).not.toBeNull();
+    expect(mocks.terminalPaneProps.length).toBe(before);
+    expect(renderCount("t1")).toBeGreaterThan(0);
+    expect(renderCount("t2")).toBeGreaterThan(0);
+
+    act(() => setTabUnread("t2", false));
+    await flush();
+    expect(mocks.terminalPaneProps.length).toBe(before);
+  });
+
+  it("rerenders only the updated terminal pane when a title changes", async () => {
+    useUi.setState({
+      sessions: [sessionOf("s1")],
+      workspaces: [
+        workspaceOf("s1", [
+          { id: "t1", kind: "terminal", title: "Terminal 1", sessionId: "s1", tabId: "T1", closable: true },
+          { id: "t2", kind: "terminal", title: "Terminal 2", sessionId: "s1", tabId: "T2", closable: true },
+        ]),
+      ],
+      activeWorkspaceId: "ws",
+    });
+    mounted = mountApp();
+    await flush();
+    const beforeTarget = renderCount("t2");
+    const beforeOther = renderCount("t1");
+
+    act(() => useUi.getState().updateTab("t2", { title: "Renamed" }));
+    await flush();
+
+    expect(renderCount("t2")).toBe(beforeTarget + 1);
+    expect(renderCount("t1")).toBe(beforeOther);
   });
 });
 
@@ -900,9 +1076,7 @@ describe("App shell notification layout", () => {
       });
       await act(async () => {
         window.dispatchEvent(new Event("resize"));
-        await new Promise<void>((resolve) => {
-          window.setTimeout(resolve, 0);
-        });
+        await flushMacrotask();
       });
     };
 

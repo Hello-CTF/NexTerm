@@ -100,7 +100,7 @@ function emitDone(answer: string) {
 describe("AiSidebar cron entry point", () => {
   let view: MountedView | null = null;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     convSeq = 0;
     mocks.channels.length = 0;
     mocks.chat.mockImplementation(() => {
@@ -140,9 +140,11 @@ describe("AiSidebar cron entry point", () => {
       activeWorkspaceId: null,
     });
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    await flush();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flush();
     view?.unmount();
     view = null;
   });
@@ -159,6 +161,15 @@ describe("AiSidebar cron entry point", () => {
 
   it("enables the entry point after a conversation starts, loads the panel for the current conversation, and collapses it on close", async () => {
     await flush();
+    act(() => {
+      useUi.getState().ensureWorkspace({
+        kind: "session",
+        title: "prod-host",
+        sessionId: "s1",
+        assetId: "asset-1",
+      });
+    });
+    await flush();
     await send(view!, "Question A");
     emitDone("Answer A");
     await flush();
@@ -168,6 +179,7 @@ describe("AiSidebar cron entry point", () => {
     await flushUntil(() => textOf(view!).includes("这个会话还没有定时任务"));
     expect(mocks.cronList).toHaveBeenCalledWith("conv-1");
     expect(textOf(view!)).toContain("定时任务");
+    expect(textOf(view!)).toContain("绑定主机：prod-host");
 
     click(view!.container.querySelector('button[title="关闭"]')!);
     await flush();

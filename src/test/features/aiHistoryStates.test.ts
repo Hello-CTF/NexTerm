@@ -44,7 +44,7 @@ import { useUi } from "../../app/store";
 let rafQueue: { cb: FrameRequestCallback; cancelled: boolean }[] = [];
 
 let mounted: MountedView | undefined;
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   rafQueue = [];
@@ -72,11 +72,13 @@ beforeEach(() => {
     sessions: [],
   });
   mounted = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+  await flush();
 });
-afterEach(() => {
-  vi.unstubAllGlobals();
+afterEach(async () => {
+  await flush();
   mounted?.unmount();
   mounted = undefined;
+  vi.unstubAllGlobals();
 });
 
 function text(): string {

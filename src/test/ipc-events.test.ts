@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import layoutSource from "../app/layout.ts?raw";
+import { ipcEventTopics } from "../ipc/generated/events";
 import { createWailsMock, type WailsMock } from "./wailsMock";
 import type {
   SessionStatusEvent as SessionStatusEventFromEvents,
@@ -37,26 +37,9 @@ async function ready(channel: unknown): Promise<void> {
 }
 
 describe("Wails events and channels", () => {
-  it("preserves the shared event list and layout event", async () => {
+  it("matches the generated event topics as a set", async () => {
     const { EVENTS } = await import("../ipc/events");
-    expect(Object.values(EVENTS)).toEqual([
-      "session://status",
-      "session://connect-progress",
-      "session://helper-progress",
-      "terminal://exit",
-      "terminal://throttled",
-      "terminal://control",
-      "fs://progress",
-      "update://progress",
-      "docker://stats",
-      "ai://event",
-      "ai://notification",
-      "app://error",
-      "app://deep-link",
-      "device://status",
-      "files://dropped",
-    ]);
-    expect(layoutSource).toContain('"layout://changed"');
+    expect(new Set(Object.values(EVENTS))).toEqual(new Set(Object.values(ipcEventTopics)));
   });
 
   it("subscribes before commands and preserves early bytes in order", async () => {
@@ -183,13 +166,34 @@ describe("Wails events and channels", () => {
     expect(off).toHaveBeenCalledTimes(1);
   });
 
-  it("desktop has no WS reopen notifications but still returns a working unsubscribe", async () => {
-    const { createBinaryChannel, onChannelReopen } = await import("../ipc/events");
-    const channel = createBinaryChannel(() => {});
+  it("routes desktop stream close notifications to reopen subscribers without emitting bytes", async () => {
+    const { createBinaryChannel, onChannelReopen, DESKTOP_STREAM_CLOSED_TYPE } = await import("../ipc/events");
+    const received = vi.fn();
+    const channel = createBinaryChannel(received);
+    await ready(channel);
     const reopened = vi.fn();
     const off = onChannelReopen(channel, reopened);
+    const push = handlerAt();
+
+    push({ data: { type: DESKTOP_STREAM_CLOSED_TYPE } });
+    expect(reopened).toHaveBeenCalledTimes(1);
+    expect(received).not.toHaveBeenCalled();
 
     off();
+    push({ data: { type: DESKTOP_STREAM_CLOSED_TYPE } });
+    expect(reopened).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not reopen a disposed desktop channel on a late close notification", async () => {
+    const { createBinaryChannel, disposeChannel, onChannelReopen, DESKTOP_STREAM_CLOSED_TYPE } = await import("../ipc/events");
+    const channel = createBinaryChannel(() => {});
+    await ready(channel);
+    const reopened = vi.fn();
+    onChannelReopen(channel, reopened);
+    const push = handlerAt();
+
+    disposeChannel(channel);
+    push({ data: { type: DESKTOP_STREAM_CLOSED_TYPE } });
     expect(reopened).not.toHaveBeenCalled();
   });
 });

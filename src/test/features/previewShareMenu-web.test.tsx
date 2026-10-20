@@ -5,8 +5,8 @@
 // directly by tabId and shows read-only/controllable badges by permission, revoke goes through revokePreviewLink;
 // the desktop relay entry is not touched.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
-import { click, clickButton, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
+import { act, createElement } from "react";
+import { click, clickButton, flush, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   createPreviewLink: vi.fn(),
@@ -62,12 +62,18 @@ describe("PreviewShareMenu WEB dispatch", () => {
   it("creates directly through previewApi and builds the public URL with previewPublicUrl, defaulting write to false", async () => {
     mounted = mountWithClient(createElement(PreviewShareMenu, { tabId: "tab-1", sessionName: "web-01" }));
     const container = mounted.container;
-    clickButton(container, "预览链接");
-    await flushUntil(() => container.querySelector("select") !== null);
+    const open = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "预览链接")!;
+    await act(async () => {
+      open.click();
+      await flush();
+    });
+    expect(container.querySelector("select")).not.toBeNull();
     clickButton(container, "创建链接");
     await flushUntil(
       () => container.textContent?.includes(`${window.location.origin}/share/preview/tok-web`) === true,
     );
+    await flushUntil(() => mocks.listPreviewLinks.mock.calls.length >= 2);
+    await flush();
     expect(mocks.createPreviewLink).toHaveBeenCalledWith({ sessionId: "tab-1", ttlMs: 3_600_000, write: false });
     expect(mocks.remoteCreate).not.toHaveBeenCalled();
   });
@@ -75,7 +81,11 @@ describe("PreviewShareMenu WEB dispatch", () => {
   it("sends write:true after checking allow control and resets the checkbox after success", async () => {
     mounted = mountWithClient(createElement(PreviewShareMenu, { tabId: "tab-1", sessionName: "web-01" }));
     const container = mounted.container;
-    clickButton(container, "预览链接");
+    const open = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "预览链接")!;
+    await act(async () => {
+      open.click();
+      await flush();
+    });
     await flushUntil(() => container.querySelector("select") !== null);
     const checkbox = [...container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find((candidate) =>
       candidate.closest("label")?.textContent?.includes("允许控制"),
@@ -89,6 +99,8 @@ describe("PreviewShareMenu WEB dispatch", () => {
     await flushUntil(
       () => container.textContent?.includes(`${window.location.origin}/share/preview/tok-web`) === true,
     );
+    await flushUntil(() => mocks.listPreviewLinks.mock.calls.length >= 2);
+    await flush();
     expect(mocks.createPreviewLink).toHaveBeenCalledWith({ sessionId: "tab-1", ttlMs: 3_600_000, write: true });
     expect(checkbox!.checked).toBe(false);
   });
@@ -117,7 +129,11 @@ describe("PreviewShareMenu WEB dispatch", () => {
     });
     mounted = mountWithClient(createElement(PreviewShareMenu, { tabId: "tab-1", sessionName: "web-01" }));
     const container = mounted.container;
-    clickButton(container, "预览链接");
+    const open = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "预览链接")!;
+    await act(async () => {
+      open.click();
+      await flush();
+    });
     await flushUntil(() => container.textContent?.includes("进行中的预览") === true);
     const badges = [...container.querySelectorAll("span")].map((span) => span.textContent?.trim());
     expect(badges.filter((text) => text === "可控制")).toHaveLength(1);
@@ -133,14 +149,22 @@ describe("PreviewShareMenu WEB dispatch", () => {
     });
     mounted = mountWithClient(createElement(PreviewShareMenu, { tabId: "tab-1", sessionName: "web-01" }));
     const container = mounted.container;
-    clickButton(container, "预览链接");
+    const open = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "预览链接")!;
+    await act(async () => {
+      open.click();
+      await flush();
+    });
     await flushUntil(() => container.textContent?.includes("进行中的预览") === true);
     const revokes = [...container.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "吊销");
     expect(revokes).toHaveLength(1);
     expect(mocks.remoteActive).not.toHaveBeenCalled();
 
-    clickButton(container, "吊销");
-    await flushUntil(() => mocks.revokePreviewLink.mock.calls.length === 1);
+    await act(async () => {
+      revokes[0].click();
+      await flushUntil(() => mocks.revokePreviewLink.mock.calls.length === 1);
+      await flushUntil(() => mocks.listPreviewLinks.mock.calls.length >= 2);
+      await flush();
+    });
     expect(mocks.revokePreviewLink).toHaveBeenCalledWith("l-1");
   });
 });

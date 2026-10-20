@@ -1,7 +1,24 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act } from "react";
 import { flush } from "./reactTestUtils";
+
+const mountedRoots = vi.hoisted(() => [] as Array<{ unmount: () => void }>);
+
+vi.mock("react-dom/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-dom/client")>();
+  return {
+    ...actual,
+    default: {
+      createRoot: (container: Parameters<typeof actual.createRoot>[0]) => {
+        const root = actual.createRoot(container);
+        mountedRoots.push(root);
+        return root;
+      },
+    },
+  };
+});
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -27,8 +44,10 @@ async function importMainAt(pathname: string): Promise<void> {
   window.history.replaceState({}, "", pathname);
   document.body.innerHTML = '<div id="root"></div>';
   vi.resetModules();
-  await import("../../main");
-  await flush();
+  await act(async () => {
+    await import("../../main");
+    await flush();
+  });
 }
 
 describe("main.tsx public preview route", () => {
@@ -37,11 +56,13 @@ describe("main.tsx public preview route", () => {
     vi.stubGlobal("WebSocket", FakeWebSocket);
     vi.stubGlobal("ResizeObserver", class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     });
   });
 
   afterEach(() => {
+    for (const root of mountedRoots.splice(0)) act(() => root.unmount());
     vi.unstubAllGlobals();
     document.body.innerHTML = "";
   });
@@ -61,5 +82,17 @@ describe("main.tsx public preview route", () => {
     FakeWebSocket.instances = [];
     await importMainAt("/share/preview/");
     expect(FakeWebSocket.instances.some((socket) => socket.url.includes("/share/preview/"))).toBe(false);
+  }, 15000);
+
+  it("keeps the legacy session-share viewer route", async () => {
+    await importMainAt("/share/public/legacy-session-token");
+    expect(document.body.textContent).toContain("NexTerm 公开分享");
+    expect(FakeWebSocket.instances.some((socket) => socket.url.includes("/share/public/legacy-session-token"))).toBe(true);
+  }, 15000);
+
+  it("does not mount a viewer for retired device public tokens", async () => {
+    await importMainAt("/share/public/device/retired-device-token");
+    expect(document.body.textContent).not.toContain("NexTerm 公开分享");
+    expect(FakeWebSocket.instances.some((socket) => socket.url.includes("/share/public/device/"))).toBe(false);
   }, 15000);
 });

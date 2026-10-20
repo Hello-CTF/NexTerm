@@ -32,6 +32,7 @@ const config = defineConfig({
     chunkSizeWarningLimit: 2000,
   },
   test: {
+    maxWorkers: 2,
     environment: "node",
     include: ["src/test/**/*.test.ts", "src/test/**/*.test.tsx"],
     setupFiles: ["src/test/setup.ts"],

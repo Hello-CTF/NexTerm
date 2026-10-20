@@ -189,6 +189,18 @@ describe("asset group controls", () => {
     expect(mounted!.container.textContent).toContain("root@10.0.0.8:22");
   });
 
+  it("shows an environment badge without exposing variable values", async () => {
+    mocks.list.mockResolvedValue([{
+      id: "env-1", groupId: null, kind: "ssh", name: "env-host", host: "10.0.0.8",
+      port: 22, username: "root", options: { env: { LANG: "zh_CN", SECRET: "do-not-show" } }, builtin: false,
+    }]);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("env-host"));
+    const badge = [...mounted.container.querySelectorAll(".nx-badge")].find((item) => item.textContent?.trim() === "env 2");
+    expect(badge).not.toBeUndefined();
+    expect(mounted.container.textContent).not.toContain("do-not-show");
+  });
+
   it("renders parent, child, and grandchild groups at their actual tree levels", async () => {
     mocks.groupList.mockResolvedValue([
       { ...GROUP },
@@ -1176,5 +1188,43 @@ describe("asset delete confirmation (R42 audit pin, real DialogHost)", () => {
     expect(modal2.getAttribute("role")).toBe("alertdialog");
     await closeModal(modal2, "确定");
     await waitFor(() => expect(mocks.assetDelete).toHaveBeenCalledWith("a1"));
+  });
+});
+
+describe("asset bulk maintenance entry", () => {
+  it("opens and closes the maintenance dialog from the asset toolbar", async () => {
+    mocks.list.mockResolvedValue([{
+      id: "bulk-a",
+      groupId: null,
+      kind: "ssh",
+      name: "bulk-host",
+      host: "10.0.0.9",
+      port: 22,
+      username: "root",
+      authKind: "key",
+      keyPath: null,
+      credId: null,
+      options: {},
+      tags: "",
+      note: "",
+      sort: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      deletedAt: null,
+      builtin: false,
+    }]);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("bulk-host"));
+
+    click(buttonByTitle(mounted!.container, "批量维护"));
+    await waitFor(() => expect(document.body.querySelector('[role="dialog"][aria-label="批量主机维护"]')).not.toBeNull());
+    expect(document.body.textContent).toContain("批量编辑");
+    expect(document.body.textContent).toContain("部署公钥");
+    expect(document.body.textContent).toContain("test login");
+
+    const close = document.body.querySelector<HTMLButtonElement>('button[aria-label="关闭批量维护"]');
+    if (!close) throw new Error("bulk maintenance close button not found");
+    click(close);
+    await waitFor(() => expect(document.body.querySelector('[role="dialog"][aria-label="批量主机维护"]')).toBeNull());
   });
 });
