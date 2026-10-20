@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -455,6 +456,89 @@ func TestEngineConcurrentPushConflictRecovers(t *testing.T) {
 		}
 		if !names["A 分组"] || !names["B 分组"] {
 			t.Fatalf("device%s groups=%v, want both", name, names)
+		}
+	}
+}
+
+// Deterministic stress (GT-07): several devices push concurrently against the same account over real HTTP.
+// The server head CAS serializes concurrent pushes and the engine retries conflicts inside Sync; every device
+// must converge to exactly the union of all objects, concurrent same-object edits must resolve to the single
+// highest revision everywhere regardless of push order, and idle rounds stay quiescent.
+func TestEngineConcurrentSyncStressConverges(t *testing.T) {
+	server := newTestSyncServer(t)
+	server.createUser(t, "alice", "alice-pw-123")
+	ctx := context.Background()
+
+	// maxSyncAttempts=3 bounds worst-case conflict retries: with deviceCount devices the unluckiest
+	// pusher loses at most deviceCount-1 head races, so 3 devices always fit the retry budget.
+	const deviceCount = 3
+	const perDevice = 8
+	devices := make([]*testDevice, 0, deviceCount)
+	want := map[string]string{}
+	for d := 0; d < deviceCount; d++ {
+		device := newTestDevice(t)
+		for i := 0; i < perDevice; i++ {
+			id := ids.New()
+			body := fmt.Sprintf("stress-body-%d-%d", d, i)
+			putDeviceSnippet(t, device, id, fmt.Sprintf("stress-%d-%d", d, i), body, 100)
+			want[id] = body
+		}
+		devices = append(devices, device)
+	}
+
+	syncConcurrently := func() {
+		t.Helper()
+		var wg sync.WaitGroup
+		errs := make(chan error, len(devices))
+		for _, device := range devices {
+			wg.Add(1)
+			go func(device *testDevice) {
+				defer wg.Done()
+				if _, err := device.engine.Sync(ctx, device.config(server, "alice", "alice-pw-123")); err != nil {
+					errs <- err
+				}
+			}(device)
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			t.Fatalf("concurrent sync: %v", err)
+		}
+	}
+
+	// Phase 1: all devices push their distinct objects concurrently.
+	syncConcurrently()
+
+	// Phase 2: concurrent edits of the same object at distinct revisions; the highest revision must win everywhere.
+	sharedID := ids.New()
+	for d, device := range devices {
+		putDeviceSnippet(t, device, sharedID, "stress-shared", fmt.Sprintf("shared-rev-%d", 100*(d+1)), int64(100*(d+1)))
+	}
+	syncConcurrently()
+	want[sharedID] = fmt.Sprintf("shared-rev-%d", 100*deviceCount)
+
+	// Phase 3: bounded convergence rounds until every device is quiescent, then exact-union assertions.
+	for _, device := range devices {
+		quiescent := false
+		var lastReport SyncReport
+		for round := 0; round < deviceCount+2 && !quiescent; round++ {
+			lastReport = syncDevice(t, device, server, "alice", "alice-pw-123")
+			quiescent = lastReport.Pulled+lastReport.Applied+lastReport.Pushed == 0
+		}
+		if !quiescent {
+			t.Fatalf("device did not reach a quiescent idle round, last report: %+v", lastReport)
+		}
+		rows, err := device.db.SnippetList(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != len(want) {
+			t.Fatalf("device snippets=%d, want %d", len(rows), len(want))
+		}
+		for _, row := range rows {
+			if want[row.ID] != row.Body {
+				t.Fatalf("device snippet %s body=%q, want %q", row.ID, row.Body, want[row.ID])
+			}
 		}
 	}
 }

@@ -760,11 +760,12 @@ func TestEngineKindOptInDefaultOnAndDisable(t *testing.T) {
 		t.Fatalf("default opt-in must apply ai_profile: %+v", state.Profiles)
 	}
 
+	userID := serverUserID(t, server, "alice", "alice-pw-123")
 	for _, device := range []*testDevice{deviceA, deviceB} {
-		if err := device.db.SetKnownHostSyncOptIn(context.Background(), serverUserID(t, server, "alice", "alice-pw-123"), false); err != nil {
+		if err := device.db.SetKnownHostSyncOptIn(context.Background(), userID, false); err != nil {
 			t.Fatal(err)
 		}
-		if err := device.db.SetAIProfileSyncOptIn(context.Background(), serverUserID(t, server, "alice", "alice-pw-123"), false); err != nil {
+		if err := device.db.SetAIProfileSyncOptIn(context.Background(), userID, false); err != nil {
 			t.Fatal(err)
 		}
 	}

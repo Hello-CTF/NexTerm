@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -234,7 +237,11 @@ func TestServiceStartConnectsAfterVaultUnlock(t *testing.T) {
 	startProbeService(t, service)
 
 	// During the locked period both the probe and background rounds silently skip: no events, no recorded errors.
-	time.Sleep(100 * time.Millisecond)
+	// Deterministic completion signal instead of a blind sleep: the first background round records its blocked attempt in the round status.
+	waitForCondition(t, "background round did not record a blocked attempt while the vault is locked", func() bool {
+		status, err := service.Status(ctx)
+		return err == nil && status.Paused && status.VaultLocked && !status.LastAttemptAt.IsZero()
+	})
 	if events.count() != 0 {
 		t.Fatal("probe must stay silent while the vault is locked")
 	}
@@ -395,7 +402,11 @@ func TestServiceStartSkipsPersistedSessionWhileVaultLocked(t *testing.T) {
 	}
 	startProbeService(t, service)
 
-	time.Sleep(100 * time.Millisecond)
+	// Same deterministic completion signal as above: wait until the background round provably ran while locked.
+	waitForCondition(t, "background round did not record a blocked attempt while the vault is locked", func() bool {
+		status, err := service.Status(ctx)
+		return err == nil && status.Paused && status.VaultLocked && !status.LastAttemptAt.IsZero()
+	})
 	if events.count() != 0 {
 		t.Fatal("probe must stay silent while the vault is locked")
 	}
@@ -513,5 +524,47 @@ func TestPersistedSessionReplacedOnLinkResetPassword(t *testing.T) {
 	})
 	if got := fixture.logins.Load(); got != loginsBefore {
 		t.Fatalf("logins = %d, want %d (restart after reset restored the persisted session)", got, loginsBefore)
+	}
+}
+
+// GT-07 ratchet: the sync engine/service test files must not reintroduce blind time.Sleep waits.
+// Synchronization must use completion signals or condition polling (waitForCondition/waitForConditionTimeout);
+// the only tolerated time.Sleep is the poll interval inside waitForConditionTimeout itself.
+func TestSyncScopedTestsNoBlindSleeps(t *testing.T) {
+	files := []string{"engine_cursor_test.go", "engine_sync_test.go", "service_start_test.go", "settings_sync_test.go"}
+	for _, name := range files {
+		fset := token.NewFileSet()
+		node, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, decl := range node.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			if fn.Name.Name == "waitForConditionTimeout" {
+				continue
+			}
+			var sleeps []string
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				selector, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok || selector.Sel.Name != "Sleep" {
+					return true
+				}
+				if ident, ok := selector.X.(*ast.Ident); !ok || ident.Name != "time" {
+					return true
+				}
+				sleeps = append(sleeps, fmt.Sprintf("line %d", fset.Position(call.Pos()).Line))
+				return true
+			})
+			if len(sleeps) > 0 {
+				t.Errorf("%s: %s uses blind time.Sleep (%s); use waitForCondition or another completion signal", name, fn.Name.Name, strings.Join(sleeps, ", "))
+			}
+		}
 	}
 }
