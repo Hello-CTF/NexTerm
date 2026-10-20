@@ -314,10 +314,10 @@ export function XtermView(props: XtermViewProps) {
         episodeToken = next;
         resumeSentToken = -1;
       }
-      // A drain that preceded the token (or a resume the server rejected)
-      // gets its retry once the token is known and the writer is drained;
-      // the dedup in resumeUpstream collapses everything else.
-      if (!pauseNeeded) resumeUpstream();
+      // The unified gate decides whether the learned token may resume now:
+      // never while a recovery is in flight or pending, and only once the
+      // accepted offset caught up to the recovery target.
+      resumeIfReady();
     };
     const pauseUpstream = () => {
       if (!kernelTabId) return;
@@ -396,21 +396,30 @@ export function XtermView(props: XtermViewProps) {
       // A token-less resume never accomplishes anything — the server rejects
       // it while an episode is open — so it is skipped, not sent: the token
       // is learned from the pause or recover response, and the learn path
-      // re-fires the resume once the writer is drained.
+      // re-fires the resume through the gate once the writer is drained.
       if (episodeToken === 0) return;
-      // One episode needs at most one effective resume: maybeResume and the
-      // low-water drain can both ask for it, and the server rejects a resume
-      // carrying a previous episode's token.
+      // One episode needs at most one effective resume: the sent marker is
+      // recorded only when a resume actually fires, and a rejected resume
+      // clears it so a later legitimate resume is never blocked.
       if (episodeToken === resumeSentToken) return;
       resumeSentToken = episodeToken;
-      void call("terminal_resume", { tabId: kernelTabId, channelId, clientId: clientId(), attachmentId, episodeToken }).catch(() => undefined);
+      void call("terminal_resume", { tabId: kernelTabId, channelId, clientId: clientId(), attachmentId, episodeToken }).catch(() => {
+        resumeSentToken = -1;
+      });
     };
-    const maybeResume = () => {
+    // The unified resume gate, the only path to resumeUpstream: a resume
+    // fires only when no recovery is in flight or pending, the accepted
+    // offset has caught up to the recovery target, the writer is drained,
+    // and the episode token belongs to the current episode and has not been
+    // resumed yet. A learned token, a drained writer, and a caught-up replay
+    // all funnel through here — never around it.
+    const resumeIfReady = () => {
+      if (containerId || !kernelTabId) return;
       if (recoverInFlight || recoverPending) return;
-      if (recoverTarget !== null && acceptedOffsetNow() >= recoverTarget) {
-        recoverTarget = null;
-        resumeUpstream();
-      }
+      if (recoverTarget !== null && acceptedOffsetNow() < recoverTarget) return;
+      if (pauseNeeded) return;
+      recoverTarget = null;
+      resumeUpstream();
     };
     const pumpRecover = () => {
       if (recoverInFlight || !kernelTabId || ephemeral !== true) return;
@@ -437,7 +446,7 @@ export function XtermView(props: XtermViewProps) {
             pumpRecover();
             return;
           }
-          maybeResume();
+          resumeIfReady();
         })
         .catch(() => {
           recoverInFlight = false;
@@ -517,13 +526,10 @@ export function XtermView(props: XtermViewProps) {
             // anchor — never here, where a later old frame would be
             // accepted into a non-contiguous prefix.
             if (containerId) streamWriter.beginAttachment();
-            // Resume only once the refused suffix is fully accepted and no
-            // recovery is in flight or pending; a pending replay is awaited,
-            // not re-requested here.
-            maybeResume();
-            if (recoverTarget === null && !recoverInFlight && !recoverPending) {
-              resumeUpstream();
-            }
+            // The unified gate: resume only once the refused suffix is fully
+            // accepted, no recovery is in flight or pending, the writer is
+            // drained, and the episode token is current and unresent.
+            resumeIfReady();
           }
         },
         onRefused: () => refuseStream(),
@@ -595,7 +601,7 @@ export function XtermView(props: XtermViewProps) {
           return;
         }
         streamBytes += bytes.length;
-        if (recoverTarget !== null) maybeResume();
+        if (recoverTarget !== null) resumeIfReady();
         // Keep the server's retention floor current with the accepted offset
         // through the ordered write path, without waiting for a pause/recover
         // RPC: report at most once per MiB accepted, in absolute stream

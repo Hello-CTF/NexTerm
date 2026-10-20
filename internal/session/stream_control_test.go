@@ -975,3 +975,136 @@ func TestStreamControlRecoverBindsEpisodeToken(t *testing.T) {
 		t.Fatalf("episodeFloor after matching resume = %d, want -1", got)
 	}
 }
+
+// The r15 full-sequence regression: sustained output to exactly
+// 104,857,600 bytes across TWO recover rounds. Each round the client stalls
+// accepting while the transport keeps draining, the retention floor holds
+// the refused suffix, the recover redelivers it whole, and the resume fires
+// only after the client caught up — the second recover must never hit
+// ErrRecoveryOverrun, and the accepted sequence stays byte-identical.
+func TestStreamControlFullSequenceTwoRecoverRounds(t *testing.T) {
+	manager, connector, _, connected := openOpenTestSession(t, KindLocal)
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+		t.Fatal(err)
+	}
+	channel := connector.transport(0).channel(0)
+	receiver := bindTestReceiver(t, manager, "a-1")
+	drainAttachHeader(t, receiver)
+
+	const chunkSize = 64 << 10
+	chunk := func(i int) []byte { return bytes.Repeat([]byte{byte('a' + i%26)}, chunkSize) }
+	var fed []byte
+	fedThrough := 0
+	feedHealthy := func(until int) {
+		for i := fedThrough; i < until; i++ {
+			data := chunk(i)
+			fed = append(fed, data...)
+			if err := channel.emit(data); err != nil {
+				t.Fatal(err)
+			}
+			if got := readFramesUntil(t, receiver, chunkSize); !bytes.Equal(got, data) {
+				t.Fatalf("chunk %d mismatch", i)
+			}
+			fedThrough = i + 1
+		}
+	}
+	// feedStalled keeps the transport draining while the client accepts
+	// nothing more, until the producer stalls at the retention floor plus the
+	// ring; it reports the pipe-held chunk, which arrives after the resume.
+	feedStalled := func() (stallEmitted bool) {
+		stalled := false
+		for i := fedThrough; i < 4000 && !stalled; i++ {
+			data := chunk(i)
+			if err := channel.emit(data); err != nil {
+				stalled = true
+				break
+			}
+			if !tryReadFrames(t, receiver, chunkSize, data) {
+				stalled = true
+				stallEmitted = true
+			}
+			if !stalled {
+				fed = append(fed, data...)
+				fedThrough = i + 1
+			}
+		}
+		if !stalled {
+			t.Fatal("producer kept reading past the ring capacity with the floor set")
+		}
+		return stallEmitted
+	}
+	var attachmentId uint64
+	recoverRound := func(accepted int64, episodeGen uint64) (suffix []byte) {
+		recoverDone := make(chan error, 1)
+		go func() {
+			_, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, accepted)
+			recoverDone <- err
+		}()
+		anchor := receiveTestFrame(t, receiver)
+		if !bytes.Contains(anchor.Data, []byte("recovery-")) {
+			t.Fatalf("anchor = %q", anchor.Data)
+		}
+		suffix = readFramesUntil(t, receiver, len(fed)-int(accepted))
+		if !bytes.Equal(suffix, fed[accepted:]) {
+			t.Fatalf("refused suffix mismatch: got %d bytes want %d", len(suffix), len(fed)-int(accepted))
+		}
+		if err := <-recoverDone; err != nil {
+			t.Fatalf("recover(%d) = %v, want the full suffix retained", accepted, err)
+		}
+		if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, episodeGen); err != nil {
+			t.Fatalf("resume after recover(%d) = %v", accepted, err)
+		}
+		return suffix
+	}
+
+	// Round 1: the client accepts 16 MiB, stalls, and recovers the suffix.
+	feedHealthy(256)
+	attachmentId = attachmentIdFor(t, manager, info.ID, "a-1")
+	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, 16<<20); err != nil {
+		t.Fatal(err)
+	}
+	stallEmitted := feedStalled()
+	suffix1 := recoverRound(16<<20, episodeGenFor(t, manager, info.ID, "a-1"))
+	round1End := len(fed)
+	if stallEmitted {
+		data := chunk(fedThrough)
+		if got := readFramesUntil(t, receiver, chunkSize); !bytes.Equal(got, data) {
+			t.Fatalf("pipe-held chunk %d mismatch", fedThrough)
+		}
+		fed = append(fed, data...)
+		fedThrough++
+	}
+
+	// Round 2: the client accepts up to 88 MiB, then stops ACKing while the
+	// transport keeps draining to exactly 104,857,600 bytes; the second
+	// recover must not hit ErrRecoveryOverrun — the floor held from round 1.
+	feedHealthy(1408)
+	middle := fed[round1End : 1408*chunkSize]
+	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, 88<<20); err != nil {
+		t.Fatal(err)
+	}
+	const totalChunks = 1600 // 1600 * 64 KiB = 104,857,600 bytes
+	for i := fedThrough; i < totalChunks; i++ {
+		data := chunk(i)
+		fed = append(fed, data...)
+		if err := channel.emit(data); err != nil {
+			t.Fatalf("chunk %d: %v", i, err)
+		}
+		if got := readFramesUntil(t, receiver, chunkSize); !bytes.Equal(got, data) {
+			t.Fatalf("chunk %d mismatch", i)
+		}
+		fedThrough = i + 1
+	}
+	suffix2 := recoverRound(88<<20, episodeGenFor(t, manager, info.ID, "a-1"))
+	if len(fed) != 104857600 {
+		t.Fatalf("fed = %d bytes, want 104,857,600", len(fed))
+	}
+	accepted := append(append(append(append([]byte{}, fed[:16<<20]...), suffix1...), middle...), suffix2...)
+	if !bytes.Equal(accepted, fed) {
+		t.Fatal("accepted sequence is not byte-identical to the original stream")
+	}
+}

@@ -1364,6 +1364,164 @@ describe("XtermView stream wiring", () => {
     expect(tokens.filter((token) => token === 32)).toHaveLength(1);
     expect(tokens[tokens.length - 1]).toBe(32);
   });
+
+  it("a pause token learned mid-recovery never resumes early (deferred pause, then deferred recover)", async () => {
+    // The r15 counterexample: the writer drains while the recover is still
+    // pending, and the deferred pause response lands at that moment. The
+    // learned token must NOT fire a resume until the recover completes and
+    // the replay is accepted — then exactly one effective resume fires.
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+      ephemeral: true,
+      attachmentId: 11,
+    });
+    let resolvePause: ((value: unknown) => void) | undefined;
+    let resolveRecover: ((value: unknown) => void) | undefined;
+    harness.call.mockImplementation((command: string) => {
+      if (command === "terminal_pause") {
+        return new Promise((resolve) => {
+          resolvePause = resolve;
+        });
+      }
+      if (command === "terminal_recover") {
+        return new Promise((resolve) => {
+          resolveRecover = resolve;
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    act(() => harness.channel?.onBytes?.(chunk));
+    expect(harness.call.mock.calls.filter((c) => c[0] === "terminal_recover")).toHaveLength(1);
+    // The writer drains while the recover is still pending.
+    act(() => t.drainWrites());
+    // The deferred pause response lands now, mid-recovery: no resume.
+    resolvePause?.({ episodeToken: 31 });
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(harness.call.mock.calls.filter((c) => c[0] === "terminal_resume")).toHaveLength(0);
+    // The recover completes: the replay arrives, is accepted, and exactly one
+    // resume fires once the client catches up.
+    resolveRecover?.({ flushedOffset: 5 * (4 << 20), episodeToken: 31 });
+    await act(async () => {
+      await flushMacrotask();
+    });
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "recovery-kernel-1",
+      streamSeq: 4 * (4 << 20),
+      controlBytes: 0,
+      attachmentId: 11,
+    });
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    const resumes = harness.call.mock.calls.filter((c) => c[0] === "terminal_resume");
+    expect(resumes).toHaveLength(1);
+    expect(resumes[0][1]).toMatchObject({
+      tabId: "kernel-1",
+      channelId: "channel-1",
+      clientId: "me",
+      attachmentId: 11,
+      episodeToken: 31,
+    });
+    const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
+    expect(total).toBe(5 * (4 << 20));
+  });
+
+  it("a recover completing before the deferred pause still resumes exactly once (deferred recover, then deferred pause)", async () => {
+    // The other response order: the recover response lands first (the replay
+    // is accepted and the resume fires with the recover's token); the stale
+    // deferred pause response lands afterwards and must not fire a second
+    // resume for the same episode.
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+      ephemeral: true,
+      attachmentId: 11,
+    });
+    let resolvePause: ((value: unknown) => void) | undefined;
+    let resolveRecover: ((value: unknown) => void) | undefined;
+    harness.call.mockImplementation((command: string) => {
+      if (command === "terminal_pause") {
+        return new Promise((resolve) => {
+          resolvePause = resolve;
+        });
+      }
+      if (command === "terminal_recover") {
+        return new Promise((resolve) => {
+          resolveRecover = resolve;
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    act(() => harness.channel?.onBytes?.(chunk));
+    expect(harness.call.mock.calls.filter((c) => c[0] === "terminal_recover")).toHaveLength(1);
+    act(() => t.drainWrites());
+    // The recover response lands first: the replay is accepted and the
+    // resume fires with the recover's token.
+    resolveRecover?.({ flushedOffset: 5 * (4 << 20), episodeToken: 31 });
+    await act(async () => {
+      await flushMacrotask();
+    });
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "recovery-kernel-1",
+      streamSeq: 4 * (4 << 20),
+      controlBytes: 0,
+      attachmentId: 11,
+    });
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(harness.call.mock.calls.filter((c) => c[0] === "terminal_resume")).toHaveLength(1);
+    // The stale deferred pause response lands after the resume: it carries
+    // the same generation, so it must not fire a second resume.
+    resolvePause?.({ episodeToken: 31 });
+    await act(async () => {
+      await flushMacrotask();
+    });
+    const resumes = harness.call.mock.calls.filter((c) => c[0] === "terminal_resume");
+    expect(resumes).toHaveLength(1);
+    expect(resumes[0][1]).toMatchObject({ attachmentId: 11, episodeToken: 31 });
+    const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
+    expect(total).toBe(5 * (4 << 20));
+  });
 });
 
 describe("XtermView render coalescing (T-09 component portion)", () => {
