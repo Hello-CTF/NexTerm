@@ -1,6 +1,7 @@
 package account
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -46,6 +47,14 @@ func (a *Accounts) InsertUserDEKEnvelopes(ctx context.Context, userID string, en
 	if err := validateEnvelopes(envelopes); err != nil {
 		return err
 	}
+	// Check existence first so the conflict determination never depends on
+	// RowsAffected semantics (a no-op INSERT reports 1 under clientFoundRows).
+	userDEK := query.Use(a.db).UserDEK
+	if _, err := userDEK.WithContext(ctx).Where(userDEK.UserID.Eq(userID)).First(); err == nil {
+		return ipc.WrapError(ipc.CodeBadParam, ErrDEKEnvelopesExist.Error(), ErrDEKEnvelopesExist)
+	} else if err != gorm.ErrRecordNotFound {
+		return dbError(err)
+	}
 	now := a.now()
 	result := a.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "user_id"}},
@@ -57,7 +66,16 @@ func (a *Accounts) InsertUserDEKEnvelopes(ctx context.Context, userID string, en
 	if result.Error != nil {
 		return dbError(result.Error)
 	}
-	if result.RowsAffected == 0 {
+	// A concurrent insert may have won the race; confirm the stored row is ours
+	// by content instead of trusting RowsAffected (clientFoundRows reports 1
+	// for a no-op INSERT, so it cannot distinguish a real write from a loss).
+	var row store.UserDEK
+	if err := a.db.WithContext(ctx).Where("user_id = ?", userID).First(&row).Error; err != nil {
+		return dbError(err)
+	}
+	if row.RecoveryHash != envelopes.RecoveryHash || !bytes.Equal(row.DEKEnvelope, envelopes.DEKEnvelope) ||
+		!bytes.Equal(row.KDFSalt, envelopes.KDFSalt) || row.KDFParams != envelopes.KDFParams ||
+		!bytes.Equal(row.RecoveryEnvelope, envelopes.RecoveryEnvelope) {
 		return ipc.WrapError(ipc.CodeBadParam, ErrDEKEnvelopesExist.Error(), ErrDEKEnvelopesExist)
 	}
 	return nil
