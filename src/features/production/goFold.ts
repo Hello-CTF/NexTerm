@@ -82,6 +82,14 @@ function goToLower(r: number): number {
   return convertCase("lower", r, cr);
 }
 
+// goToLowerString mirrors Go's strings.ToLower: per-codepoint unicode.ToLower
+// (the CaseRanges simple lowercase mapping). Unlike JS toLowerCase it never
+// applies multi-rune expansions, so it is the exact dedup key used by the
+// backend's ProductionEnvironmentNames.
+export function goToLowerString(value: string): string {
+  return Array.from(value, (char) => String.fromCodePoint(goToLower(char.codePointAt(0) ?? 0))).join("");
+}
+
 function goToUpper(r: number): number {
   const cr = lookupCaseRange(r);
   if (cr === undefined) {

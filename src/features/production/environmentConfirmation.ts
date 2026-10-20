@@ -7,7 +7,7 @@
 // accept is therefore exactly a backend accept; the backend remains the
 // final authorization boundary.
 
-import { goEqualFold, goTrimSpace } from "./goFold";
+import { goEqualFold, goToLowerString, goTrimSpace } from "./goFold";
 
 export { goTrimSpace } from "./goFold";
 
@@ -76,18 +76,22 @@ export function evaluateEnvironmentConfirmation(
     const missing = goTrimSpace(typed) === "";
     return { target, typed, missing, matches: !missing && matchesEnvironmentName(typed, target.environment) };
   });
-  // The backend's requiredEnvironmentNames is a deduplicated environment set,
-  // so the submitted names are deduplicated the same way before the set check;
-  // per-target actual-name validation above still applies to every target.
+  // The backend's requiredEnvironmentNames is deduplicated with goTrimSpace +
+  // strings.ToLower keys (not EqualFold), so fold-equivalent but distinct
+  // names like ſ/s and ς/σ stay separate entries; deduplicate the same way.
   const submittedNames: string[] = [];
+  const seenNames = new Set<string>();
   for (const entry of targets) {
     if (entry.missing) {
       continue;
     }
     const name = goTrimSpace(entry.typed);
-    if (!submittedNames.some((existing) => goEqualFold(existing, name))) {
-      submittedNames.push(name);
+    const key = goToLowerString(name);
+    if (seenNames.has(key)) {
+      continue;
     }
+    seenNames.add(key);
+    submittedNames.push(name);
   }
   const required = challenge.requiredEnvironmentNames.map((name) => goTrimSpace(name));
   const setMatches =

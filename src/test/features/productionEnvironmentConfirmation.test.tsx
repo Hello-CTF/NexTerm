@@ -264,6 +264,60 @@ describe("evaluateEnvironmentConfirmation", () => {
     expect(state.canConfirm).toBe(false);
     expect(state.targets[0].matches).toBe(false);
   });
+
+  it("accepts fold-equivalent but ToLower-distinct names as separate required entries", () => {
+    const longS: EnvironmentConfirmationChallenge = {
+      targetSetHash: "hash-f",
+      requiredEnvironmentNames: ["s", "ſ"],
+      productionTargets: [
+        { sessionId: "session-1", tabId: "tab-1", hostname: "s.example", sessionName: "S", environment: "s" },
+        { sessionId: "session-2", tabId: "tab-2", hostname: "long-s.example", sessionName: "Long S", environment: "ſ" },
+      ],
+    };
+    const state = evaluateEnvironmentConfirmation(longS, { "tab-1": "s", "tab-2": "ſ" }, "hash-f");
+    expect(state.canConfirm).toBe(true);
+    const sigma: EnvironmentConfirmationChallenge = {
+      targetSetHash: "hash-g",
+      requiredEnvironmentNames: ["ς", "σ"],
+      productionTargets: [
+        { sessionId: "session-1", tabId: "tab-1", hostname: "final-sigma.example", sessionName: "Final", environment: "ς" },
+        { sessionId: "session-2", tabId: "tab-2", hostname: "sigma.example", sessionName: "Sigma", environment: "σ" },
+      ],
+    };
+    const sigmaState = evaluateEnvironmentConfirmation(sigma, { "tab-1": "ς", "tab-2": "σ" }, "hash-g");
+    expect(sigmaState.canConfirm).toBe(true);
+  });
+
+  it("deduplicates case variants of one environment by the ToLower key", () => {
+    const shared: EnvironmentConfirmationChallenge = {
+      targetSetHash: "hash-d",
+      requiredEnvironmentNames: ["production"],
+      productionTargets: [
+        { sessionId: "session-1", tabId: "tab-1", hostname: "api1.production.example", sessionName: "API 1", environment: "production" },
+        { sessionId: "session-2", tabId: "tab-2", hostname: "api2.production.example", sessionName: "API 2", environment: "production" },
+        { sessionId: "session-3", tabId: "tab-3", hostname: "api3.production.example", sessionName: "API 3", environment: "production" },
+      ],
+    };
+    const state = evaluateEnvironmentConfirmation(
+      shared,
+      { "tab-1": "production", "tab-2": "Production", "tab-3": "PRODUCTION" },
+      "hash-d",
+    );
+    expect(state.canConfirm).toBe(true);
+  });
+
+  it("rejects a fold-equivalent duplicate that collapses the required cardinality", () => {
+    const longS: EnvironmentConfirmationChallenge = {
+      targetSetHash: "hash-f",
+      requiredEnvironmentNames: ["s", "ſ"],
+      productionTargets: [
+        { sessionId: "session-1", tabId: "tab-1", hostname: "s.example", sessionName: "S", environment: "s" },
+        { sessionId: "session-2", tabId: "tab-2", hostname: "long-s.example", sessionName: "Long S", environment: "ſ" },
+      ],
+    };
+    const state = evaluateEnvironmentConfirmation(longS, { "tab-1": "s", "tab-2": "s" }, "hash-f");
+    expect(state.canConfirm).toBe(false);
+  });
 });
 
 describe("isStaleChallenge", () => {
