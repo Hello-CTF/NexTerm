@@ -26,6 +26,7 @@ type Service struct {
 	mu                   sync.RWMutex
 	conns                map[string]managedConnection
 	owners               map[string]string
+	assetIDs             map[string]string
 	loginSessions        map[string]map[string]struct{}
 	revokedLoginSessions map[string]struct{}
 	closed               bool
@@ -50,6 +51,7 @@ func NewService(resolver AssetResolver, options ...ServiceOption) *Service {
 		resolver:             resolver,
 		conns:                make(map[string]managedConnection),
 		owners:               make(map[string]string),
+		assetIDs:             make(map[string]string),
 		loginSessions:        make(map[string]map[string]struct{}),
 		revokedLoginSessions: make(map[string]struct{}),
 		openMySQL:            connectMySQL,
@@ -83,6 +85,7 @@ func (s *Service) Close() error {
 		connections = append(connections, connection)
 		delete(s.conns, id)
 		delete(s.owners, id)
+		delete(s.assetIDs, id)
 		delete(s.loginSessions, id)
 	}
 	s.mu.Unlock()
@@ -203,6 +206,9 @@ func (s *Service) Connect(ctx context.Context, args ConnectArgs) (ConnectResult,
 	}
 	s.conns[id] = connection
 	s.owners[id] = ipc.OwnerID(ctx)
+	if args.AssetID != "" {
+		s.assetIDs[id] = args.AssetID
+	}
 	if loginSessionID != "" {
 		s.loginSessions[id] = map[string]struct{}{loginSessionID: {}}
 	}
@@ -215,6 +221,7 @@ func (s *Service) Disconnect(ctx context.Context, id string) error {
 	connection := s.conns[id]
 	if connection == nil {
 		delete(s.owners, id)
+		delete(s.assetIDs, id)
 		s.mu.Unlock()
 		return nil
 	}
@@ -224,6 +231,7 @@ func (s *Service) Disconnect(ctx context.Context, id string) error {
 	}
 	delete(s.conns, id)
 	delete(s.owners, id)
+	delete(s.assetIDs, id)
 	delete(s.loginSessions, id)
 	s.mu.Unlock()
 	if err := connection.Close(); err != nil {
@@ -249,6 +257,7 @@ func (s *Service) CloseAccountSession(sessionID string) error {
 		connections = append(connections, s.conns[id])
 		delete(s.conns, id)
 		delete(s.owners, id)
+		delete(s.assetIDs, id)
 		delete(s.loginSessions, id)
 	}
 	s.mu.Unlock()
