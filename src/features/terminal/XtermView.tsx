@@ -309,6 +309,12 @@ export function XtermView(props: XtermViewProps) {
     // episode's token, and one episode needs at most one effective resume.
     let episodeToken = 0;
     let resumeSentToken = -1;
+    // A token the server rejected as stale: the gate refreshes it
+    // single-flight instead of resending a known-stale resume. The refresh
+    // is one in-flight request at a time — a deferred refresh never piles
+    // up behind another, and unmount or a new attachment cancels it.
+    let staleToken = -1;
+    let tokenRefreshInFlight = false;
     // Resume retry state, isolated by attachment and episode: the timer and
     // the consecutive attempt count for the current episode. An old
     // attempt's callbacks never touch a newer episode's dedup or timers.
@@ -318,9 +324,11 @@ export function XtermView(props: XtermViewProps) {
       if (next !== undefined && next > episodeToken) {
         episodeToken = next;
         resumeSentToken = -1;
-        // A new episode is a fresh retry budget; a pending timer simply
-        // re-evaluates the gate for the new episode when it fires.
-        resumeAttempts = 0;
+        staleToken = -1;
+        // A new episode is a fresh retry budget, and the old episode's
+        // pending retry timer is cancelled: one timer, always for the
+        // current episode.
+        clearResumeRetry();
       }
       // The unified gate decides whether the learned token may resume now:
       // never while a recovery is in flight or pending, and only once the
@@ -400,7 +408,7 @@ export function XtermView(props: XtermViewProps) {
       sendStreamAck();
     };
     const resumeUpstream = () => {
-      if (containerId || !kernelTabId) return;
+      if (disposed || containerId || !kernelTabId) return;
       const channelId = channelIdOf(channel);
       if (!channelId) return;
       // A token-less resume never accomplishes anything — the server rejects
@@ -412,12 +420,21 @@ export function XtermView(props: XtermViewProps) {
       // recorded only when a resume actually fires, and a rejected resume
       // clears it so a later legitimate resume is never blocked.
       if (episodeToken === resumeSentToken) return;
+      // The server rejected this token as stale: refresh it single-flight
+      // instead of resending a known-stale resume.
+      if (episodeToken === staleToken) {
+        refreshEpisodeToken();
+        return;
+      }
       const firedAttachment = attachmentId;
       const firedToken = episodeToken;
       resumeSentToken = firedToken;
       void call("terminal_resume", { tabId: kernelTabId, channelId, clientId: clientId(), attachmentId: firedAttachment, episodeToken: firedToken })
         .then(() => {
-          if (firedAttachment !== attachmentId) return;
+          // The success belongs to the attachment and episode that fired it:
+          // a late success from an old episode never clears the new
+          // episode's retry budget or dedup state.
+          if (firedAttachment !== attachmentId || firedToken !== episodeToken) return;
           clearResumeRetry();
         })
         .catch((e) => {
@@ -435,9 +452,11 @@ export function XtermView(props: XtermViewProps) {
             return;
           }
           if (code === "forbidden") {
-            // The episode moved on: re-pause to learn the current token; the
-            // learn path re-fires the resume through the gate.
-            pauseWithRetry();
+            // The token is stale: refresh it single-flight — never resend a
+            // known-stale resume, and never pile up refresh requests.
+            staleToken = firedToken;
+            refreshEpisodeToken();
+            return;
           }
           scheduleResumeRetry();
         });
@@ -449,7 +468,7 @@ export function XtermView(props: XtermViewProps) {
     // resumed yet. A learned token, a drained writer, and a caught-up replay
     // all funnel through here — never around it.
     const resumeIfReady = () => {
-      if (containerId || !kernelTabId) return;
+      if (disposed || containerId || !kernelTabId) return;
       if (recoverInFlight || recoverPending) return;
       if (recoverTarget !== null && acceptedOffsetNow() < recoverTarget) return;
       if (pauseNeeded) return;
@@ -466,12 +485,18 @@ export function XtermView(props: XtermViewProps) {
     };
     const scheduleResumeRetry = () => {
       if (disposed || !kernelTabId) return;
-      // Transient failures retry with a bounded backoff that re-enters the
-      // unified gate; once the backoff is exhausted the channel stays paused
+      // One retry timer at any time: a new attempt always replaces the
+      // previous chain instead of piling up, and the timer re-checks
+      // disposal before re-entering the gate. Transient failures retry with
+      // a bounded backoff; once it is exhausted the channel stays paused
       // until a retry lands, so the accurate state is surfaced instead of a
       // silent stall — recovery is the existing manual path (a transport
       // reopen re-attaches and unpauses) plus the slow retry, which keeps
       // trying while the view lives.
+      if (resumeRetryTimer !== undefined) {
+        window.clearTimeout(resumeRetryTimer);
+        resumeRetryTimer = undefined;
+      }
       const exhausted = resumeAttempts >= resumeRetryDelays.length;
       const delay = exhausted ? 5000 : resumeRetryDelays[resumeAttempts];
       resumeAttempts += 1;
@@ -480,8 +505,41 @@ export function XtermView(props: XtermViewProps) {
       }
       resumeRetryTimer = window.setTimeout(() => {
         resumeRetryTimer = undefined;
+        if (disposed) return;
         resumeIfReady();
       }, delay);
+    };
+    // The forbidden path's token refresh is single-flight: one in-flight
+    // refresh at a time, bound to the attachment that started it. The gate
+    // never fires a resume with a known-stale token while a refresh is
+    // pending, and a failed refresh retries with the same bounded,
+    // cancellable backoff — never by piling up concurrent requests.
+    const refreshEpisodeToken = () => {
+      if (disposed || !kernelTabId || tokenRefreshInFlight) return;
+      const channelId = channelIdOf(channel);
+      if (!channelId) return;
+      const firedAttachment = attachmentId;
+      tokenRefreshInFlight = true;
+      call("terminal_pause", { tabId: kernelTabId, channelId, clientId: clientId(), attachmentId: firedAttachment, acceptedBytes: acceptedOffsetNow() })
+        .then((res) => {
+          if (disposed || firedAttachment !== attachmentId) {
+            tokenRefreshInFlight = false;
+            return;
+          }
+          tokenRefreshInFlight = false;
+          staleToken = -1;
+          learnEpisodeToken((res as { episodeToken?: number } | null)?.episodeToken);
+        })
+        .catch(() => {
+          if (disposed || firedAttachment !== attachmentId) {
+            tokenRefreshInFlight = false;
+            return;
+          }
+          tokenRefreshInFlight = false;
+          // The refresh failed: bounded, cancellable backoff that re-enters
+          // the gate — which re-attempts the refresh, never a stale resume.
+          scheduleResumeRetry();
+        });
     };
     const pumpRecover = () => {
       if (recoverInFlight || !kernelTabId || ephemeral !== true) return;
