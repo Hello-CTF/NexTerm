@@ -13,11 +13,11 @@ import (
 // fakeRunbookCleanup tracks live runs per owner and cancels the prepared
 // snapshot on commit; rollback is a no-op, mirroring the real contract.
 type fakeRunbookCleanup struct {
-	mu       sync.Mutex
-	live     map[string][]string
-	canceled map[string][]string
-	prepares int
-	commits  int
+	mu        sync.Mutex
+	live      map[string][]string
+	canceled  map[string][]string
+	prepares  int
+	commits   int
 	rollbacks int
 }
 
@@ -184,4 +184,82 @@ func TestAccountCleanupDeferredRunbookEpochBoundary(t *testing.T) {
 
 func ipcWithUser(userID string) context.Context {
 	return ipc.WithUserID(context.Background(), userID)
+}
+
+// A replay of an already-committed cleanup event (directly or through a
+// registered alias) reuses the original snapshot and must not cancel a new
+// generation of runbook runs started after the first commit.
+func TestAccountCleanupReplayDoesNotCancelNewRunbookGeneration(t *testing.T) {
+	rig := newAccountCleanupRig(t)
+	runbook := newFakeRunbookCleanup()
+	runbook.live["owner-a"] = []string{"run-a1"}
+	application := &Production{Services: ProductionServices{Sessions: rig.manager}}
+	application.SetRunbookCleanup(runbook)
+
+	commit, _, err := application.PrepareAccountCleanup(context.Background(), "owner-a", "logout-all:login-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit("login-1", "login-2")
+	if got := runbook.canceledRuns("owner-a"); len(got) != 1 || got[0] != "run-a1" {
+		t.Fatalf("first commit canceled runs = %v, want the original snapshot's run", got)
+	}
+
+	// A new generation starts after the commit.
+	runbook.mu.Lock()
+	runbook.live["owner-a"] = append(runbook.live["owner-a"], "run-b")
+	runbook.mu.Unlock()
+
+	// Replaying through the registered alias must reuse the original snapshot.
+	if err := application.CleanupAccount(context.Background(), "owner-a", "login-2", "login-2"); err != nil {
+		t.Fatal(err)
+	}
+	if got := runbook.canceledRuns("owner-a"); len(got) != 1 || got[0] != "run-a1" {
+		t.Fatalf("alias replay canceled runs = %v, want only the original snapshot's run (no new generation)", got)
+	}
+	if got := runbook.live["owner-a"]; len(got) != 1 || got[0] != "run-b" {
+		t.Fatalf("alias replay canceled the new generation: live = %v, want run-b to survive", got)
+	}
+
+	// Replaying the original event id likewise reuses the original snapshot.
+	if err := application.CleanupAccount(context.Background(), "owner-a", "logout-all:login-1", "login-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := runbook.live["owner-a"]; len(got) != 1 || got[0] != "run-b" {
+		t.Fatalf("event replay canceled the new generation: live = %v, want run-b to survive", got)
+	}
+	if runbook.commits != 1 {
+		t.Fatalf("runbook snapshot taken %d times, want exactly once per canonical event", runbook.commits)
+	}
+}
+
+// A rollback or a snapshot-read-failure leaves the event absent, so a
+// same-event retry takes a fresh snapshot and cancels normally.
+func TestAccountCleanupRetryAfterRollbackResnapshotsRunbook(t *testing.T) {
+	rig := newAccountCleanupRig(t)
+	runbook := newFakeRunbookCleanup()
+	runbook.live["owner-a"] = []string{"run-a1"}
+	application := &Production{Services: ProductionServices{Sessions: rig.manager}}
+	application.SetRunbookCleanup(runbook)
+
+	commit, rollback, err := application.PrepareAccountCleanup(context.Background(), "owner-a", "logout-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rollback()
+	if runbook.commits != 0 || runbook.rollbacks != 1 {
+		t.Fatalf("after rollback: commits = %d, rollbacks = %d, want 0 and 1", runbook.commits, runbook.rollbacks)
+	}
+	_ = commit
+
+	// The same event retries with a fresh snapshot and cancels.
+	runbook.mu.Lock()
+	runbook.live["owner-a"] = append(runbook.live["owner-a"], "run-a2")
+	runbook.mu.Unlock()
+	if err := application.CleanupAccount(context.Background(), "owner-a", "logout-a", "logout-a"); err != nil {
+		t.Fatal(err)
+	}
+	if got := runbook.canceledRuns("owner-a"); len(got) != 2 || got[0] != "run-a1" || got[1] != "run-a2" {
+		t.Fatalf("retry after rollback canceled runs = %v, want the fresh snapshot's runs", got)
+	}
 }

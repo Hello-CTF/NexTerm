@@ -21,8 +21,13 @@ type accountCleanupKey struct {
 
 type accountCleanupEvent struct {
 	deviceSessions []session.SessionInfo
-	committed      bool
-	aborted        bool
+	// runbookCommit/runbookRollback are the runbook reservation taken once
+	// when the event is first prepared; replays reuse it instead of
+	// re-snapshotting (which would cancel a new generation of runs).
+	runbookCommit   func(...string)
+	runbookRollback func()
+	committed       bool
+	aborted         bool
 }
 
 type accountCleanupState struct {
@@ -83,14 +88,9 @@ func (p *Production) PrepareAccountCleanup(ctx context.Context, ownerID, cleanup
 	if p.Services.ExecBatches != nil {
 		commitBatches, rollbackBatches = p.Services.ExecBatches.PrepareOwnerCleanup(ctx, ownerID, cleanupID)
 	}
-	commitRunbook, rollbackRunbook := func(...string) {}, func() {}
-	if p.accountCleanup.runbook != nil {
-		commitRunbook, rollbackRunbook = p.accountCleanup.runbook.PrepareOwnerCleanup(ctx, ownerID, cleanupID)
-	}
 	key, event, err := p.prepareAccountDeviceSnapshot(ctx, ownerID, cleanupID)
 	if err != nil {
 		rollbackBatches()
-		rollbackRunbook()
 		return func(...string) {}, func() {}, err
 	}
 	return func(sessionIDs ...string) {
@@ -98,7 +98,7 @@ func (p *Production) PrepareAccountCleanup(ctx context.Context, ownerID, cleanup
 				return
 			}
 			commitBatches(sessionIDs...)
-			commitRunbook(sessionIDs...)
+			event.runbookCommit(sessionIDs...)
 			p.cleanupAccountDeviceSnapshot(ctx, ownerID, event.deviceSessions)
 			if p.Services.inventory != nil {
 				_ = p.Services.inventory.stopWatch(ctx, ownerID)
@@ -106,7 +106,7 @@ func (p *Production) PrepareAccountCleanup(ctx context.Context, ownerID, cleanup
 		}, func() {
 			if p.rollbackAccountDeviceSnapshot(key, event) {
 				rollbackBatches()
-				rollbackRunbook()
+				event.runbookRollback()
 			}
 		}, nil
 }
@@ -128,8 +128,13 @@ func (p *Production) prepareAccountDeviceSnapshot(ctx context.Context, ownerID, 
 	}
 	state.mu.Unlock()
 
+	commitRunbook, rollbackRunbook := func(...string) {}, func() {}
+	if state.runbook != nil {
+		commitRunbook, rollbackRunbook = state.runbook.PrepareOwnerCleanup(ctx, ownerID, key.eventID)
+	}
 	snapshot, err := p.accountDeviceSnapshot(ctx, ownerID, key.eventID)
 	if err != nil {
+		rollbackRunbook()
 		return key, nil, err
 	}
 	state.mu.Lock()
@@ -140,7 +145,7 @@ func (p *Production) prepareAccountDeviceSnapshot(ctx context.Context, ownerID, 
 	if event, ok := state.events[key]; ok {
 		return key, event, nil
 	}
-	event := &accountCleanupEvent{deviceSessions: snapshot}
+	event := &accountCleanupEvent{deviceSessions: snapshot, runbookCommit: commitRunbook, runbookRollback: rollbackRunbook}
 	state.events[key] = event
 	return key, event, nil
 }
