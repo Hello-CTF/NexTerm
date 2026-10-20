@@ -38,6 +38,8 @@ import {
   type DeviceLayoutState,
 } from "./layoutFocus";
 import { ALL_PROJECTS } from "./projectFocus";
+import { useClosedTabs } from "./closedTabs";
+import { useGroupCollapse } from "../features/explorer/groupCollapse";
 import {
   capWorkspacePanes,
   hasPersistentLayoutChange,
@@ -511,6 +513,14 @@ export const layoutBootstrapped: Promise<void> = new Promise((r) => {
 
 function layoutAccountId(): string {
   return useAuth.getState().user?.id ?? (WEB ? "anonymous" : "desktop");
+}
+
+// Account-scoped R-09 UI state (closed-tab stack, project-group collapse) follows the
+// same account epoch as the layout: loaded per account at boot, switched on account change.
+function prepareAccountScopedUi(): void {
+  const accountId = layoutAccountId();
+  useClosedTabs.getState().ensureAccount(accountId);
+  useGroupCollapse.getState().ensureAccount(accountId);
 }
 
 let accountEpoch = 0;
@@ -1312,6 +1322,7 @@ export function advanceLayoutAccount(): void {
   restoreCommitInFlight = false;
   restoreCommitToken += 1;
   prepareDeviceLayout();
+  prepareAccountScopedUi();
   notifyRestoreChanged();
   clearSaveTimer();
   clearRetryTimer();
@@ -1392,6 +1403,7 @@ export function startLayoutSync(): void {
   if (started) return;
   started = true;
   prepareDeviceLayout();
+  prepareAccountScopedUi();
   void (async () => {
     try {
       await pullLatest("boot");

@@ -39,6 +39,8 @@ import {
 } from "./preferences";
 import { moveItem } from "./tabReorder";
 import { clearTabUnread, retainUnreadTabs } from "./unreadStore";
+import { closedTabEntryFromTab, useClosedTabs, type ClosedTabEntry } from "./closedTabs";
+import { reorderWorkspaces } from "./workspaceOrdering";
 import {
   ALL_PROJECTS,
   focusedActiveWorkspace,
@@ -463,6 +465,7 @@ interface UiState {
   migrateFileEditorLocators: (sessionId: string, from: string, to: string, kind: string) => void;
   resolveUnknownFileEditorRename: (sessionId: string, path: string, renamed: boolean) => void;
   moveTabInPane: (paneId: string, fromIndex: number, toIndex: number) => void;
+  moveWorkspace: (fromIndex: number, toIndex: number) => void;
   updateWorkspaceSession: (workspaceId: string, sessionId: string) => void;
 
   recordings: Record<string, RecordingStatus>;
@@ -1149,6 +1152,7 @@ export const useUi = create<UiState>((set, get) => ({
     const target = workspaces.find((w) => w.id === id);
     if (!target) return false;
     const epoch = get().workspaceRuntimeEpoch;
+    const closedTabGeneration = useClosedTabs.getState().stack.generation;
     const tabs = target.panes.flatMap((p) => p.tabs);
     const summary = collectWorkspaceClose(tabs, target.assetKind, target.kind, id);
     const originalTabIds = new Set(summary.tabs.map((tab) => tab.id));
@@ -1272,6 +1276,13 @@ export const useUi = create<UiState>((set, get) => ({
         : {}),
     });
     if (deleteWorkspace) {
+      // Terminal tabs were already captured by closeTab with their real close mode;
+      // only the remaining restorable kinds (files, log, background) are captured here.
+      for (const tab of latestTarget.panes.flatMap((pane) => pane.tabs)) {
+        if (tab.kind === "terminal" || tab.kind === "db") continue;
+        const entry = closedTabEntryFromTab(tab, { workspaceId: id });
+        if (entry) useClosedTabs.getState().capture(entry, closedTabGeneration);
+      }
       const board = latest.aiBoards[id];
       if (board) clearAiTabRuns(board.tabs.map((tab) => tab.id));
     }
@@ -1506,17 +1517,23 @@ export const useUi = create<UiState>((set, get) => ({
     const target = hit.tab;
     const wsId = hit.workspace.id;
     const paneId = hit.pane.id;
+    const closedTabGeneration = useClosedTabs.getState().stack.generation;
+    let closeMode: "kill" | "detach" | undefined;
+    // A detached entry may only be recorded when the detach IPC actually succeeded;
+    // a not_found/disconnected cleanup means the process is already gone.
+    let detachConfirmed = false;
     if (target.tabId) {
       try {
         const kind = st.sessions.find((session) => session.id === target.sessionId)?.kind
           ?? st.workspaces.find((workspace) => workspace.id === wsId)?.assetKind;
         const remote = !target.containerId && (kind === "ssh" || kind === "device");
-        const closeMode = mode ?? (remote && target.exited !== true ? "detach" : undefined);
+        closeMode = mode ?? (remote && target.exited !== true ? "detach" : undefined);
         if (remote) {
           await terminalApi.closeTab(target.tabId, closeMode, target.sessionId);
         } else {
           await terminalApi.closeTab(target.tabId, closeMode);
         }
+        detachConfirmed = closeMode === "detach";
       } catch (e) {
         const code = (e as { code?: string } | null)?.code;
         const endedTab = target.kind === "terminal" && (
@@ -1569,6 +1586,11 @@ export const useUi = create<UiState>((set, get) => ({
           : {}),
       };
     });
+    const closedEntry = closedTabEntryFromTab(target, {
+      workspaceId: wsId,
+      detached: detachConfirmed,
+    });
+    if (closedEntry) useClosedTabs.getState().capture(closedEntry, closedTabGeneration);
     void get().resyncSessions({ silent: true });
     return true;
   },
@@ -1653,6 +1675,12 @@ export const useUi = create<UiState>((set, get) => ({
         };
       }
       return {};
+    }),
+
+  moveWorkspace: (fromIndex, toIndex) =>
+    set((st) => {
+      const workspaces = reorderWorkspaces(st.workspaces, fromIndex, toIndex);
+      return workspaces === st.workspaces ? {} : { workspaces };
     }),
 
   updateWorkspaceSession: (workspaceId, sessionId) =>
@@ -3227,6 +3255,123 @@ export async function requestKillWorkspaceTerminals(workspaceId: string): Promis
     }
   });
   void st.resyncSessions({ silent: true });
+}
+
+// restoreClosedTab pops the most recent (or keyed) closed-tab entry and lands it in a
+// workspace chosen before the pop, so a failed placement never consumes the entry.
+// Reattach entries are pinned to the workspace owning entry.sessionId — the live
+// process is bound to that session, so a workspace re-bound to another session is
+// never a valid target — and require the owning session to be connected right now.
+// Killed terminals and file targets come back as restorePending tabs that only
+// reconnect on an explicit user action.
+export async function restoreClosedTab(key?: string): Promise<boolean> {
+  const closedTabs = useClosedTabs.getState();
+  const entry = key === undefined
+    ? closedTabs.stack.entries[0]
+    : closedTabs.stack.entries.find((candidate) => candidate.key === key);
+  if (!entry) return false;
+  const reattach = entry.kind === "detached-terminal" && entry.tabKind === "terminal";
+  if (reattach) {
+    const session = useUi.getState().sessions.find((s) => s.id === entry.sessionId);
+    if (!session || session.status !== "connected") {
+      useUi.getState().pushToast("error", "原会话未连接，请重新连接后再恢复后台终端");
+      return false;
+    }
+  }
+  const target = resolveClosedTabTarget(entry, reattach);
+  const restored = useClosedTabs.getState().restore(key);
+  if (!restored) return false;
+  applyRestoredClosedTab(restored.tab, target);
+  if (!findTabLocation(useUi.getState().workspaces, useUi.getState().activeWorkspaceId, restored.tab.id)) {
+    useClosedTabs.getState().capture(entry, useClosedTabs.getState().stack.generation);
+    return false;
+  }
+  return true;
+}
+
+function resolveClosedTabTarget(entry: ClosedTabEntry, reattach: boolean): Workspace | undefined {
+  const st = useUi.getState();
+  const hostsSession = (w: Workspace | undefined): w is Workspace =>
+    Boolean(w && w.kind === "session" && w.sessionId);
+  if (reattach && entry.sessionId) {
+    const pinned = st.workspaces.find((w) => w.kind === "session" && w.sessionId === entry.sessionId);
+    if (pinned) return pinned;
+    const session = st.sessions.find((s) => s.id === entry.sessionId);
+    const workspaceId = st.ensureWorkspace({
+      kind: "session",
+      sessionId: entry.sessionId,
+      ...(entry.assetId ? { assetId: entry.assetId } : {}),
+      title: session?.name ?? "会话",
+    });
+    return useUi.getState().workspaces.find((w) => w.id === workspaceId);
+  }
+  let target = entry.workspaceId ? st.workspaces.find((w) => w.id === entry.workspaceId) : undefined;
+  if (!hostsSession(target) && entry.sessionId) {
+    target = st.workspaces.find((w) => w.kind === "session" && w.sessionId === entry.sessionId);
+  }
+  if (!hostsSession(target) && entry.assetId) {
+    target = st.workspaces.find((w) => w.kind === "session" && w.assetId === entry.assetId && w.sessionId);
+  }
+  if (!hostsSession(target) && (entry.sessionId || entry.assetId)) {
+    const session = entry.sessionId ? st.sessions.find((s) => s.id === entry.sessionId) : undefined;
+    const workspaceId = st.ensureWorkspace({
+      kind: "session",
+      ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
+      ...(entry.assetId ? { assetId: entry.assetId } : {}),
+      title: session?.name ?? "会话",
+    });
+    target = useUi.getState().workspaces.find((w) => w.id === workspaceId);
+  }
+  return target;
+}
+
+function applyRestoredClosedTab(tab: AppTab, target: Workspace | undefined): void {
+  const placed = target
+    ? {
+        ...tab,
+        ...(target.sessionId ? { sessionId: target.sessionId } : {}),
+        ...(target.assetId ? { assetId: target.assetId } : {}),
+      }
+    : tab;
+  useUi.getState().addTab(placed);
+}
+
+export async function reconnectRestoredTab(tabId: string): Promise<ConnectOutcome> {
+  const st = useUi.getState();
+  const hit = findTabLocation(st.workspaces, st.activeWorkspaceId, tabId);
+  if (!hit) return { ok: false, error: "标签不存在" };
+  const workspace = hit.workspace;
+  if (workspace.deletedTarget) return { ok: false, error: "原资产已删除，请从资产树选择其他目标" };
+  const session = st.sessions.find((s) => s.id === workspace.sessionId);
+  const live = session && ["connecting", "connected", "reconnecting"].includes(session.status);
+  if (live) {
+    clearRestoredTabPending(tabId, session.id);
+    return { ok: true };
+  }
+  const outcome = await reconnectRestoredWorkspace(workspace.id);
+  if (!outcome.ok) return outcome;
+  const current = useUi.getState().workspaces.find((w) => w.id === workspace.id);
+  if (current) clearRestoredTabPending(tabId, current.sessionId);
+  return { ok: true };
+}
+
+function clearRestoredTabPending(tabId: string, sessionId: string | undefined): void {
+  useUi.setState((state) => ({
+    workspaces: state.workspaces.map((w) => {
+      if (!w.panes.some((pane) => pane.tabs.some((tab) => tab.id === tabId))) return w;
+      return {
+        ...w,
+        panes: w.panes.map((p) => ({
+          ...p,
+          tabs: p.tabs.map((t) =>
+            t.id === tabId
+              ? { ...t, ...(sessionId ? { sessionId } : {}), restorePending: undefined }
+              : t,
+          ),
+        })),
+      };
+    }),
+  }));
 }
 
 export function takePendingDirectory(storeTabId: string): string | null {
