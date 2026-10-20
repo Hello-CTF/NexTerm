@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
@@ -268,6 +269,29 @@ func requireAIDualNoSecret(t *testing.T, call aiDualAccountCall, secret, context
 
 func (f *aiDualAccountFixture) ownerContext(userID string) context.Context {
 	return ipc.WithUserID(context.Background(), userID)
+}
+
+func (f *aiDualAccountFixture) screenText(t *testing.T, ctx context.Context, tabID string) string {
+	t.Helper()
+	text, err := f.rig.manager.ScreenTextFor(ctx, tabID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return text
+}
+
+func (f *aiDualAccountFixture) requireScreenText(t *testing.T, ctx context.Context, tabID, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if text := f.screenText(t, ctx, tabID); strings.Contains(text, want) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("screen does not contain %q: %q", want, f.screenText(t, ctx, tabID))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func (f *aiDualAccountFixture) createAsset(t *testing.T, userID, name string) string {
@@ -717,16 +741,45 @@ func TestAIDualAccountTakeoverOverRPC(t *testing.T) {
 	exit := fixture.rpc(t, fixture.alice, "ai_takeover_exit", map[string]any{"tabId": tab.ID, "token": token, "reason": "alice leaves"})
 	requireAIDualOK(t, exit, "alice ai_takeover_exit")
 
-	// Documented boundary: the gateway-only caller must fail closed here, but
-	// the takeover manager currently accepts identity-less ownership on an
-	// unattended tab (the session snapshot escalates to open access). The fix
-	// is owned by M27/M26/M6 (takeover owner check); once those land, enable
-	// this subtest and prove the 403, the absent banner, and the absence of a
-	// persistent empty-owner ownership.
-	t.Run("gatewayEnterFailsClosed", func(t *testing.T) {
-		t.Skip("blocked on M27/M26/M6 takeover owner-check fixes; then prove 403, no banner, no persistent empty-owner")
-		gatewayEnter := fixture.gatewayRPC(t, "ai_takeover_enter", map[string]any{"tabId": tab.ID})
-		requireAIDualFailed(t, gatewayEnter, "gateway ai_takeover_enter")
-		requireAIDualForbiddenCode(t, gatewayEnter, "gateway ai_takeover_enter")
-	})
+	// The gateway-only caller is fail closed by the takeover owner gate: no
+	// token, no banner injection, no empty-owner ownership that would lock the
+	// legitimate owner out, and no secret on the wire. The screen already
+	// carries one banner from the owner's own enter; the gateway must not add
+	// another.
+	baseline := strings.Count(fixture.screenText(t, aliceCtx, tab.ID), "AI 正在操作此终端")
+	gatewayEnter := fixture.gatewayRPC(t, "ai_takeover_enter", map[string]any{"tabId": tab.ID})
+	requireAIDualFailed(t, gatewayEnter, "gateway ai_takeover_enter")
+	requireAIDualForbiddenCode(t, gatewayEnter, "gateway ai_takeover_enter")
+	if got := strings.Count(fixture.screenText(t, aliceCtx, tab.ID), "AI 正在操作此终端"); got != baseline {
+		t.Fatalf("gateway enter injected a takeover banner: screen count = %d, baseline = %d", got, baseline)
+	}
+
+	// The failed attempt left no empty-owner ownership: the owner enters
+	// normally and a fresh banner lands on her terminal.
+	aliceEnter := fixture.rpc(t, fixture.alice, "ai_takeover_enter", map[string]any{"tabId": tab.ID})
+	requireAIDualOK(t, aliceEnter, "alice ai_takeover_enter after the gateway attempt")
+	aliceToken, _ := aliceEnter.dataMap()["token"].(string)
+	if aliceToken == "" {
+		t.Fatalf("alice ai_takeover_enter returned no token after the gateway attempt: %s", aliceEnter.raw)
+	}
+	fixture.requireScreenText(t, aliceCtx, tab.ID, "AI 正在操作此终端")
+	if got := strings.Count(fixture.screenText(t, aliceCtx, tab.ID), "AI 正在操作此终端"); got <= baseline {
+		t.Fatalf("owner enter did not inject a fresh banner: screen count = %d, baseline = %d", got, baseline)
+	}
+
+	for _, test := range []struct {
+		command string
+		args    map[string]any
+	}{
+		{command: "ai_takeover_pause", args: map[string]any{"tabId": tab.ID, "token": aliceToken}},
+		{command: "ai_takeover_exit", args: map[string]any{"tabId": tab.ID, "token": aliceToken, "reason": "gateway leaves"}},
+		{command: "ai_takeover_run", args: map[string]any{"tabId": tab.ID, "token": aliceToken, "instruction": "list files"}},
+	} {
+		call := fixture.gatewayRPC(t, test.command, test.args)
+		requireAIDualFailed(t, call, "gateway "+test.command)
+		requireAIDualForbiddenCode(t, call, "gateway "+test.command)
+	}
+
+	aliceExit := fixture.rpc(t, fixture.alice, "ai_takeover_exit", map[string]any{"tabId": tab.ID, "token": aliceToken, "reason": "alice leaves"})
+	requireAIDualOK(t, aliceExit, "alice ai_takeover_exit")
 }
