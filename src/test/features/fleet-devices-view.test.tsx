@@ -736,6 +736,75 @@ describe("Device management view - device list and metrics", () => {
     }
   });
 
+  it("re-measures the virtual offset when the enrollment panel opens and closes without a resize", async () => {
+    const devices = Array.from({ length: 41 }, (_, index) => ({
+      ...AGENT_DEVICE,
+      id: `enroll-${index}`,
+      name: `enroll-${index}`,
+      agent: {
+        ...AGENT_DEVICE.agent,
+        service_state: { ...AGENT_DEVICE.agent.service_state },
+      },
+    }));
+    route(fleetHandler({ devices: { devices } }));
+    seedUser(SUPERADMIN);
+
+    // Deterministic geometry: scroller top 100; the list sits at top 140, or 260 once the
+    // enrollment panel renders above it. No window resize is ever dispatched — the panel
+    // toggle alone must re-measure the offset.
+    let enrollPanelShown = false;
+    const rectSpy = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      const top = this.classList.contains("overflow-auto")
+        ? 100
+        : this.classList.contains("shrink-0")
+          ? enrollPanelShown
+            ? 260
+            : 140
+          : 0;
+      return {
+        top,
+        bottom: top + 100,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 100,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+    try {
+      mounted = mountWithClient(createElement(DevicesView));
+      await flushUntil(() => document.body.textContent?.includes("enroll-0") ?? false);
+
+      const firstItem = document.querySelector<HTMLElement>('[data-index="0"]');
+      expect(firstItem).not.toBeNull();
+      expect(firstItem?.style.transform).toBe("translateY(-40px)");
+
+      const enrollButton = [...document.querySelectorAll("button")].find(
+        (button) =>
+          button.getAttribute("aria-expanded") !== null &&
+          button.textContent?.includes("接入新设备"),
+      );
+      if (!enrollButton) throw new Error("Enrollment toggle not found");
+
+      enrollPanelShown = true;
+      click(enrollButton);
+      expect(document.body.textContent).toContain("签发接入码");
+      expect(firstItem?.style.transform).toBe("translateY(-160px)");
+
+      enrollPanelShown = false;
+      click(enrollButton);
+      await flush();
+      expect(document.body.textContent).not.toContain("签发接入码");
+      expect(firstItem?.style.transform).toBe("translateY(-40px)");
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
   it("shows offline badges and offline autostart hints for offline devices", async () => {
     route(fleetHandler());
     seedUser(SUPERADMIN);

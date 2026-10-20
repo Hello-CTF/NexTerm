@@ -528,8 +528,10 @@ export function DevicesView() {
   }, []);
 
   // The list only renders once the asynchronous device response arrives, so a mount-only
-  // effect misses it: measure via a callback ref when the element mounts, re-measure when
-  // the list's length/virtualization/loading state changes, and follow window resizes.
+  // effect misses it; and any state rendered above the list (the enrollment panel and its
+  // issued-code content, filter hints) moves the list without remounting it or resizing the
+  // window. Measure via a callback ref at mount, after every render, and on window resizes;
+  // the setter no-ops when the offset is unchanged, so renders without layout changes are free.
   const deviceListCallbackRef = useCallback(
     (node: HTMLDivElement | null) => {
       deviceListRef.current = node;
@@ -540,7 +542,7 @@ export function DevicesView() {
 
   useLayoutEffect(() => {
     measureDeviceListScrollMargin();
-  }, [measureDeviceListScrollMargin, devicesVirtualized, visibleDevices?.length, account.loading]);
+  });
 
   useEffect(() => {
     window.addEventListener("resize", measureDeviceListScrollMargin);
