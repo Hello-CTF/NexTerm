@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/Hello-CTF/NexTerm/internal/session"
 )
 
 // TerminalHandle is the stable reference a terminal tab is addressed by in
@@ -44,9 +46,10 @@ func operationID(jobID, callID, tool string) string {
 }
 
 // resolveHandle verifies the handle against the live tab set: the tab must
-// still exist (gone otherwise) and must still belong to the session the
-// handle was issued for (replaced otherwise). It never falls back to
-// addressing a different terminal.
+// still exist (gone only on a verified not-found; transient, forbidden, and
+// internal errors propagate as themselves) and must still belong to the
+// session the handle was issued for (replaced otherwise). It never falls
+// back to addressing a different terminal.
 func (r *Registry) resolveHandle(ctx context.Context, handle TerminalHandle) (string, error) {
 	terminal, ok := r.deps.Terminal.(TabSessionTerminal)
 	if !ok {
@@ -63,7 +66,13 @@ func (r *Registry) resolveHandle(ctx context.Context, handle TerminalHandle) (st
 		return handle.TabID, nil
 	}
 	sessionID, err := terminal.TabSession(ctx, handle.TabID)
-	if err != nil || sessionID == "" {
+	if err != nil {
+		if errors.Is(err, session.ErrTabNotFound) {
+			return "", ErrTerminalGone
+		}
+		return "", err
+	}
+	if sessionID == "" {
 		return "", ErrTerminalGone
 	}
 	if sessionID != handle.SessionID {

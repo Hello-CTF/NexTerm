@@ -17,19 +17,22 @@ const (
 // waitTarget is the per-tab scan state of an anchored multi-tab wait_for
 // call. The anchor is the exact output sequence the wait started from, so
 // already-visible content can never false-match and the reported anchors let
-// a follow-up read resume without repeating or skipping output.
+// a follow-up read resume without repeating or skipping output. Pattern and
+// line conditions are tracked separately and combine as AND.
 type waitTarget struct {
-	tabID    string
-	fromSeq  uint64
-	scanPos  uint64
-	carry    []byte
-	newLines int
-	matched  bool
-	latest   uint64
-	idleMS   int64
-	cols     int
-	rows     int
-	note     string
+	tabID          string
+	fromSeq        uint64
+	scanPos        uint64
+	carry          []byte
+	newLines       int
+	patternMatched bool
+	linesMatched   bool
+	matched        bool
+	latest         uint64
+	idleMS         int64
+	cols           int
+	rows           int
+	note           string
 }
 
 // waitForTabs waits across multiple tabs for a pattern, a new-line count,
@@ -143,11 +146,14 @@ func (r *Registry) scanWaitTarget(waitContext context.Context, target *waitTarge
 		}
 	}
 	if regex != nil && regex.MatchString(strings.Join(rendered, "\n")) {
-		target.matched = true
+		target.patternMatched = true
 	}
 	if lines > 0 && target.newLines >= lines {
-		target.matched = true
+		target.linesMatched = true
 	}
+	// Pattern and line conditions combine as AND: a wait asking for both
+	// ends only when both hold.
+	target.matched = (regex == nil || target.patternMatched) && (lines <= 0 || target.linesMatched)
 	if len(data) > 0 {
 		keep := waitScanOverlap
 		if keep > len(window) {

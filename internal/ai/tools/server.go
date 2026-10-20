@@ -625,8 +625,23 @@ func (r *Registry) readScreen(ctx context.Context, jobID string, scope Scope, ra
 		if err != nil {
 			return Fail(err)
 		}
-		if screen, snapshotErr := r.deps.Terminal.Snapshot(ctx, tabID); snapshotErr == nil &&
-			(screen.Cols != cursor.Cols || screen.Rows != cursor.Rows) {
+		if cursor.TabID != tabID {
+			return Fail(invalid("游标属于终端 %s，不能用于终端 %s", cursor.TabID, tabID))
+		}
+		if cursor.SessionID != "" {
+			sessionID, sessionErr := r.tabSession(ctx, tabID)
+			if sessionErr != nil || sessionID != cursor.SessionID {
+				return Fail(fmt.Errorf("游标对应的终端会话身份已变化；请用 since_seq=%d 重新读取（原始流按当前尺寸完整重放）", cursor.Seq))
+			}
+		}
+		// A cursor read must confirm the current geometry: resizing changes
+		// how the raw stream renders into lines, and an unconfirmed geometry
+		// must fail closed with the recovery anchor, never render at defaults.
+		screen, snapshotErr := r.deps.Terminal.Snapshot(ctx, tabID)
+		if snapshotErr != nil {
+			return Fail(fmt.Errorf("无法确认终端几何（快照失败: %v）；请用 since_seq=%d 重新读取（原始流按当前尺寸完整重放）", snapshotErr, cursor.Seq))
+		}
+		if screen.Cols != cursor.Cols || screen.Rows != cursor.Rows {
 			return Fail(fmt.Errorf("终端已从 %dx%d resize 为 %dx%d，游标失效；请用 since_seq=%d 重新读取（原始流按新尺寸完整重放）",
 				cursor.Cols, cursor.Rows, screen.Cols, screen.Rows, cursor.Seq))
 		}
@@ -762,7 +777,8 @@ func (r *Registry) readScreenSince(ctx context.Context, tabID string, sinceSeq u
 	more := next < latest
 	if more {
 		header += fmt.Sprintf("；还有未读输出，下一页 since_seq=%d", next)
-		if cursor := encodeScreenCursor(screenCursor{Version: 1, Kind: "raw", Seq: next, Cols: cols, Rows: rows}); cursor != "" {
+		sessionID, _ := r.tabSession(ctx, tabID)
+		if cursor := encodeScreenCursor(screenCursor{Version: 1, Kind: "raw", Seq: next, TabID: tabID, SessionID: sessionID, Cols: cols, Rows: rows}); cursor != "" {
 			header += " 或 cursor=" + cursor
 		}
 	}
@@ -859,7 +875,11 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, call
 		err = r.deps.Terminal.Write(ctx, tabID, encoded)
 	}
 	if err != nil {
-		return Fail(err)
+		// The write was initiated: its outcome is uncertain, so the failure
+		// carries the same operation ID as a success would.
+		result := Fail(err)
+		result.OperationID = operationID(jobID, call.ID, "send_keys")
+		return result
 	}
 	if r.deps.Audit != nil {
 		_ = r.deps.Audit(context.WithoutCancel(ctx), AuditEntry{SessionID: scope.SessionID, AssetID: scope.AssetID, Kind: "takeover", Payload: map[string]any{"keys": "<redacted>", "enter": args.Enter, "paste": args.Paste, "tab": tabID}})
@@ -986,6 +1006,7 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 	}
 	sessionID := scope.SessionID
 	connected := false
+	operation := operationID(jobID, call.ID, "terminal_create")
 	if args.AssetID != "" {
 		if strings.TrimSpace(args.AssetID) != args.AssetID {
 			return Fail(invalid("asset_id 不能包含首尾空白"))
@@ -996,10 +1017,10 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 		resolved, err := r.deps.ResolveAssetSession(ctx, args.AssetID)
 		if err != nil {
 			// Connecting is an uncertain mutation that leaves a residual
-			// session behind, so it only happens on explicit opt-in and its
-			// failure stages stay visible instead of masking the resolve
-			// error.
-			if !args.Connect {
+			// session behind, so it happens only on explicit opt-in and only
+			// for an explicit not-connected verdict; forbidden, unsupported,
+			// and transient resolver failures propagate untouched.
+			if !args.Connect || !errors.Is(err, ErrNoLiveSession) {
 				return Fail(err)
 			}
 			if r.deps.AssetConnector == nil {
@@ -1007,7 +1028,12 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 			}
 			connectedID, connectErr := r.deps.AssetConnector.ConnectAsset(ctx, args.AssetID)
 			if connectErr != nil {
-				return Fail(fmt.Errorf("解析资产会话失败: %v；建立新连接失败: %w", err, connectErr))
+				failure := Fail(fmt.Errorf("解析资产会话失败: %v；建立新连接失败: %w", err, connectErr))
+				if connectedID != "" {
+					failure.Text += fmt.Sprintf("；已建立的会话 session_id=%s 作为残留资源保留（未自动清理）", connectedID)
+				}
+				failure.OperationID = operation
+				return failure
 			}
 			sessionID = connectedID
 			connected = true
@@ -1024,10 +1050,14 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 	}
 	created, err := terminal.Create(ctx, sessionID, CreateTerminalOptions{Title: args.Title, Command: args.Command})
 	if err != nil {
+		failure := Fail(err)
 		if connected {
-			return Fail(fmt.Errorf("标签页创建失败: %w；已建立的连接 session_id=%s 作为残留资源保留（未自动清理，可重试创建或手动断开）", err, sessionID))
+			failure.Text = fmt.Sprintf("标签页创建失败: %v；已建立的连接 session_id=%s 作为残留资源保留（未自动清理）；请先核对终端与连接状态再决定后续操作", err, sessionID)
 		}
-		return Fail(err)
+		// The create was initiated: its outcome is uncertain, so the failure
+		// carries the same operation ID as a success would.
+		failure.OperationID = operation
+		return failure
 	}
 	r.state(jobID).rememberCreatedTab(created.TabID, sessionID)
 	handle := TerminalHandle{TabID: created.TabID, SessionID: sessionID}.String()
@@ -1045,7 +1075,6 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 	if args.Command != "" {
 		detail += "，启动命令已发送"
 	}
-	operation := operationID(jobID, call.ID, "terminal_create")
 	if args.Background {
 		return Output{OK: true, Text: fmt.Sprintf("已在后台创建分离终端（%s），AI 可在其中工作，用户可在「后台会话」中接管", detail), OperationID: operation}
 	}

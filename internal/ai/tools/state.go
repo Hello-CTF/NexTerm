@@ -99,9 +99,11 @@ func (s *jobState) createdTab(tabID string) (string, bool) {
 }
 
 // observeInput records the terminal input buffer the job actually saw, so
-// later writes can detect new user input. Only read_screen and post-write
-// snapshots call this: wait tails never surface the input buffer to the
-// model, so they must not refresh the baseline.
+// later writes can detect new user input. Only read_screen, post-write
+// prediction, and the confirmed-resume sync (the user approved against
+// exactly this buffer) call this: wait tails and the Eino classification
+// snapshot never surface the input buffer as observed state, so they must
+// not refresh the baseline.
 func (s *jobState) observeInput(tabID, buffered string, cursor int) {
 	s.mu.Lock()
 	if s.lastInput == nil {

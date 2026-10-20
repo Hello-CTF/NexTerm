@@ -94,15 +94,17 @@ func unwrapLines(lines []string, cols int) []string {
 }
 
 // screenCursor is the opaque continuation token for anchored raw-stream
-// reads. It binds the anchor to the terminal geometry it was issued at: a
-// resize changes how the raw stream renders into lines, so a stale cursor
-// must be surfaced instead of silently paging with shifted wrapping.
+// reads. It binds the anchor to the exact tab and session it was issued
+// for, and to the terminal geometry at issuance: a cursor must never read
+// another terminal's stream or page with shifted wrapping after a resize.
 type screenCursor struct {
-	Version int    `json:"v"`
-	Kind    string `json:"kind"`
-	Seq     uint64 `json:"seq"`
-	Cols    int    `json:"cols"`
-	Rows    int    `json:"rows"`
+	Version   int    `json:"v"`
+	Kind      string `json:"kind"`
+	Seq       uint64 `json:"seq"`
+	TabID     string `json:"tab"`
+	SessionID string `json:"session,omitempty"`
+	Cols      int    `json:"cols"`
+	Rows      int    `json:"rows"`
 }
 
 func encodeScreenCursor(cursor screenCursor) string {

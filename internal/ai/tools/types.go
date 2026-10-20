@@ -45,6 +45,11 @@ var (
 	// present and must be looked at (read_screen) or explicitly forced
 	// through, never silently overwritten.
 	ErrUserInputPending = errors.New("终端存在自上次查看以来的新输入（可能是用户输入）；请先 read_screen 查看，确认后再发送，或用 force=true 强制发送")
+	// ErrNoLiveSession marks the resolver verdict that an asset has no live
+	// session right now — the only condition under which terminal_create
+	// may establish a new connection on explicit opt-in. Forbidden,
+	// unsupported, and transient resolver failures never trigger connect.
+	ErrNoLiveSession = errors.New("资产当前没有活动会话")
 )
 
 type Scope struct {

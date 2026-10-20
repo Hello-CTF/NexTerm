@@ -11,23 +11,24 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
 )
 
 // tabFakeTerminal is a multi-tab terminal fake implementing every optional
 // capability the P1 terminal tools rely on.
 type tabFakeTerminal struct {
-	mu           sync.Mutex
-	tabs         map[string]*tabFakeTab
-	writes       map[string][][]byte
-	pastes       map[string][]string
-	pasteSubmits []pasteSubmitCall
-	createResult CreatedTab
-	createErr    error
-	created      []CreatedTab
-	renamed      [][2]string
-	snapshotErr  error
+	mu              sync.Mutex
+	tabs            map[string]*tabFakeTab
+	writes          map[string][][]byte
+	pastes          map[string][]string
+	pasteSubmits    []pasteSubmitCall
+	createResult    CreatedTab
+	createErr       error
+	created         []CreatedTab
+	renamed         [][2]string
+	snapshotErr     error
+	outputSinceHook func(tabID string)
 }
 
 type tabFakeTab struct {
@@ -113,7 +114,7 @@ func (f *tabFakeTerminal) TabSession(_ context.Context, tabID string) (string, e
 	defer f.mu.Unlock()
 	tab, ok := f.tabs[tabID]
 	if !ok {
-		return "", fmt.Errorf("tab %s not found", tabID)
+		return "", session.ErrTabNotFound
 	}
 	return tab.sessionID, nil
 }
@@ -127,6 +128,12 @@ func (f *tabFakeTerminal) CommandState(_ context.Context, tabID string) (Command
 }
 
 func (f *tabFakeTerminal) OutputSince(_ context.Context, tabID string, seq uint64, maxBytes int) ([]byte, uint64, uint64, error) {
+	f.mu.Lock()
+	hook := f.outputSinceHook
+	f.mu.Unlock()
+	if hook != nil {
+		hook(tabID)
+	}
 	tab, err := f.tab(tabID)
 	if err != nil {
 		return nil, 0, 0, err
@@ -428,7 +435,7 @@ func (c *fakeConnector) ConnectAsset(context.Context, string) (string, error) {
 }
 
 func TestTerminalCreateConnectStages(t *testing.T) {
-	resolveErr := errors.New("资产未连接")
+	resolveErr := fmt.Errorf("资产未连接: %w", ErrNoLiveSession)
 	newTabFake := func() *tabFakeTerminal { return newTabFake(fakeTab("t1", "s1", "$ ", 0)) }
 
 	t.Run("no opt-in keeps resolve error", func(t *testing.T) {
@@ -514,17 +521,39 @@ func TestTerminalCreateConnectStages(t *testing.T) {
 
 // P1.4: multi-tab wait with any/all modes, lines condition, and per-tab
 // result metadata carrying exact anchors.
+// waitAnchoredHook returns a hook plus per-tab channels that close when the
+// wait has read each tab's anchor, so tests append output strictly after
+// anchoring instead of racing a sleep.
+func waitAnchoredHook(tabIDs ...string) (func(string), map[string]chan struct{}) {
+	anchored := make(map[string]chan struct{}, len(tabIDs))
+	onces := make(map[string]*sync.Once, len(tabIDs))
+	for _, tabID := range tabIDs {
+		anchored[tabID] = make(chan struct{})
+		onces[tabID] = &sync.Once{}
+	}
+	hook := func(tabID string) {
+		if once, ok := onces[tabID]; ok {
+			once.Do(func() { close(anchored[tabID]) })
+		}
+	}
+	return hook, anchored
+}
+
 func TestWaitForTabsAnyMode(t *testing.T) {
 	t1 := fakeTab("t1", "s1", "$ ", 10)
 	t2 := fakeTab("t2", "s1", "$ ", 20)
 	fake := newTabFake(t1, t2)
+	hook, anchored := waitAnchoredHook("t2")
+	fake.outputSinceHook = hook
 	registry := p1Registry(fake)
+	resultCh := make(chan Output, 1)
 	go func() {
-		time.Sleep(15 * time.Millisecond)
-		t2.ring.append("done\r\n")
+		resultCh <- registry.Execute(context.Background(), "job", Scope{SessionID: "s1", TabID: "t1"},
+			p1Call("w", "wait_for", `{"tab_ids":["t/t1/s1","t/t2/s1"],"pattern":"done","mode":"any","timeout_ms":2000}`), nil)
 	}()
-	result := registry.Execute(context.Background(), "job", Scope{SessionID: "s1", TabID: "t1"},
-		p1Call("w", "wait_for", `{"tab_ids":["t/t1/s1","t/t2/s1"],"pattern":"done","mode":"any","timeout_ms":2000}`), nil)
+	<-anchored["t2"]
+	t2.ring.append("done\r\n")
+	result := <-resultCh
 	if !result.OK || result.Wait == nil {
 		t.Fatalf("wait = %+v", result)
 	}
@@ -556,13 +585,17 @@ func TestWaitForTabsAllModeTimeout(t *testing.T) {
 	t1 := fakeTab("t1", "s1", "$ ", 10)
 	t2 := fakeTab("t2", "s1", "$ ", 20)
 	fake := newTabFake(t1, t2)
+	hook, anchored := waitAnchoredHook("t2")
+	fake.outputSinceHook = hook
 	registry := p1Registry(fake)
+	resultCh := make(chan Output, 1)
 	go func() {
-		time.Sleep(10 * time.Millisecond)
-		t2.ring.append("ready\r\n")
+		resultCh <- registry.Execute(context.Background(), "job", Scope{SessionID: "s1", TabID: "t1"},
+			p1Call("w", "wait_for", `{"tab_ids":["t/t1/s1","t/t2/s1"],"pattern":"ready","mode":"all","timeout_ms":80}`), nil)
 	}()
-	result := registry.Execute(context.Background(), "job", Scope{SessionID: "s1", TabID: "t1"},
-		p1Call("w", "wait_for", `{"tab_ids":["t/t1/s1","t/t2/s1"],"pattern":"ready","mode":"all","timeout_ms":80}`), nil)
+	<-anchored["t2"]
+	t2.ring.append("ready\r\n")
+	result := <-resultCh
 	if result.OK || result.ExitCode != 1 || result.Wait == nil {
 		t.Fatalf("wait = %+v", result)
 	}
@@ -866,37 +899,6 @@ func TestSendKeysArbitrationDegradesOnSnapshotFailure(t *testing.T) {
 	}
 }
 
-// The eino classification path observes the buffer it shows the user, so a
-// confirmed or allowed write never false-refuses on the baseline.
-func TestExecutionInitialSendKeysSyncsBaseline(t *testing.T) {
-	terminal := &fakeTerminal{screen: Screen{Text: "$ ", CursorCol: 2, Cols: 80, Rows: 24}}
-	registry := p1Registry(terminal)
-	execution := &Execution{JobID: "job", Registry: registry, Scope: Scope{SessionID: "s", TabID: "t"}, Permission: guard.Config{}}
-
-	output, err := execution.initial(context.Background(), p1Call("k1", "send_keys", `{"keys":"true","enter":true}`))
-	if err != nil || !output.OK {
-		t.Fatalf("initial = %+v err=%v", output, err)
-	}
-	// New user input arrives; the direct execution path must still refuse,
-	// proving the sync did not disable arbitration.
-	terminal.mu.Lock()
-	terminal.screen = Screen{Text: "$ git ", CursorCol: 6, Cols: 80, Rows: 24}
-	terminal.mu.Unlock()
-	result := registry.Execute(context.Background(), "job", execution.Scope,
-		p1Call("k2", "send_keys", `{"keys":"ls","enter":true}`), nil)
-	if result.OK || !strings.Contains(result.Text, ErrUserInputPending.Error()) {
-		t.Fatalf("direct path arbitration = %+v", result)
-	}
-	// The next classified call observes the new buffer itself and proceeds.
-	terminal.mu.Lock()
-	terminal.screen = Screen{Text: "$ true ", CursorCol: 7, Cols: 80, Rows: 24}
-	terminal.mu.Unlock()
-	output, err = execution.initial(context.Background(), p1Call("k3", "send_keys", `{"keys":"true","enter":true}`))
-	if err != nil || !output.OK {
-		t.Fatalf("second initial = %+v err=%v", output, err)
-	}
-}
-
 // P1.6: geometry-bound cursors, deep history, unwrapped lines.
 func TestReadScreenCursorRoundTrip(t *testing.T) {
 	ring := newFakeRing(0, "hello world")
@@ -1025,8 +1027,17 @@ func TestWaitForTabsConcurrentOutputRace(t *testing.T) {
 	t1 := fakeTab("t1", "s1", "$ ", 0)
 	t2 := fakeTab("t2", "s1", "$ ", 0)
 	fake := newTabFake(t1, t2)
+	hook, anchored := waitAnchoredHook("t1", "t2")
+	fake.outputSinceHook = hook
 	registry := p1Registry(fake)
 	var wg sync.WaitGroup
+	resultCh := make(chan Output, 1)
+	go func() {
+		resultCh <- registry.Execute(context.Background(), "job", Scope{SessionID: "s1", TabID: "t1"},
+			p1Call("w", "wait_for", `{"tab_ids":["t/t1/s1","t/t2/s1"],"lines":5,"mode":"all","timeout_ms":400}`), nil)
+	}()
+	<-anchored["t1"]
+	<-anchored["t2"]
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -1036,8 +1047,7 @@ func TestWaitForTabsConcurrentOutputRace(t *testing.T) {
 			time.Sleep(time.Millisecond)
 		}
 	}()
-	result := registry.Execute(context.Background(), "job", Scope{SessionID: "s1", TabID: "t1"},
-		p1Call("w", "wait_for", `{"tab_ids":["t/t1/s1","t/t2/s1"],"lines":5,"mode":"all","timeout_ms":400}`), nil)
+	result := <-resultCh
 	wg.Wait()
 	if !result.OK || result.Wait == nil || !result.Wait.Satisfied {
 		t.Fatalf("race wait = %+v", result)

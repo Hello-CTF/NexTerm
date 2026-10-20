@@ -852,10 +852,6 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 			return Fail(err), nil
 		}
 		terminalInput, cursor = TerminalInputCursor(screen)
-		// The confirmation dialog presents exactly this buffer; record it as
-		// the observed baseline so a confirmed write is not refused as
-		// unseen new input.
-		e.Registry.state(e.JobID).observeInput(tabID, terminalInput, cursor)
 		ruling = guard.Worst(ruling, guard.ClassifySendKeysWithCursor(input.Keys, terminalInput, cursor, input.Enter, e.Permission.DangerRules))
 	}
 	memory := e.Memory
