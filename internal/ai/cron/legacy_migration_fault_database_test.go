@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
@@ -483,7 +484,8 @@ func TestOwnerlessAIMigrationWriteFaultDatabase(t *testing.T) {
 				t.Fatalf("crash rerun failed: %v", err)
 			}
 			verifyCronMigrationOutcome(t, database.GORM(), rerun)
-			if after := zeroCronLedgerAddedAt(snapshotCronMigration(t, database.GORM())); !reflect.DeepEqual(after, zeroCronLedgerAddedAt(baseline)) {
+			converged := snapshotCronMigration(t, database.GORM())
+			if after := zeroCronLedgerAddedAt(converged); !reflect.DeepEqual(after, zeroCronLedgerAddedAt(baseline)) {
 				t.Fatalf("crash rerun did not converge to the uninterrupted baseline: %s", cronSnapshotDifference(after, zeroCronLedgerAddedAt(baseline)))
 			}
 
@@ -494,9 +496,39 @@ func TestOwnerlessAIMigrationWriteFaultDatabase(t *testing.T) {
 			if repeated != (OwnerlessMigrationReport{Unattributed: 17}) {
 				t.Fatalf("idempotent reentry report = %+v", repeated)
 			}
-			if after := zeroCronLedgerAddedAt(snapshotCronMigration(t, database.GORM())); !reflect.DeepEqual(after, zeroCronLedgerAddedAt(baseline)) {
-				t.Fatalf("idempotent reentry changed database rows: %s", cronSnapshotDifference(after, zeroCronLedgerAddedAt(baseline)))
+			if after := snapshotCronMigration(t, database.GORM()); !reflect.DeepEqual(after, converged) {
+				t.Fatalf("idempotent reentry changed database rows: %s", cronSnapshotDifference(after, converged))
 			}
 		})
+	}
+}
+
+// TestOwnerlessAIMigrationLedgerAddedAtOracleDatabase proves the exact
+// third-run comparison catches ledger added-at rewrites that the normalized
+// baseline comparison intentionally ignores.
+func TestOwnerlessAIMigrationLedgerAddedAtOracleDatabase(t *testing.T) {
+	database := dbtest.NewFixture(t).OpenStore(t)
+	gormDB := database.GORM()
+	createLegacyMigrationRow(t, gormDB, &store.ConversationRow{ID: "conv-oracle", ScopeJSON: "{}", CreatedAt: 1, UpdatedAt: 1, OwnerID: "owner-a"})
+	job := legacyMigrationCronJob("job-oracle", "conv-oracle")
+	createLegacyMigrationRow(t, gormDB, &job)
+	if _, err := MigrateOwnerlessAI(context.Background(), gormDB, false); err != nil {
+		t.Fatal(err)
+	}
+	captured := snapshotCronMigration(t, gormDB)
+	if err := gormDB.Model(&store.AIOwnerMigration{}).
+		Where("migration = ? AND kind = ? AND record_id = ?", ownerMigrationVersion, "cron_job", "job-oracle").
+		Update("added_at", 1).Error; err != nil {
+		t.Fatal(err)
+	}
+	after := snapshotCronMigration(t, gormDB)
+	if reflect.DeepEqual(after, captured) {
+		t.Fatal("exact comparison missed a rewritten ledger added-at timestamp")
+	}
+	if difference := cronSnapshotDifference(after, captured); !strings.Contains(difference, "ledger row") {
+		t.Fatalf("exact comparison difference = %q, want a ledger row mismatch", difference)
+	}
+	if !reflect.DeepEqual(zeroCronLedgerAddedAt(after), zeroCronLedgerAddedAt(captured)) {
+		t.Fatal("normalized comparison must ignore added-at; the exact third-run comparison is what catches rewrites")
 	}
 }

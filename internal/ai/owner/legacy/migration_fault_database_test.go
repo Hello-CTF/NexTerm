@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
@@ -366,7 +367,8 @@ func TestMigrateLegacyAISettingsWriteFaultDatabase(t *testing.T) {
 				t.Fatalf("crash rerun failed: %v", err)
 			}
 			verifyFaultMigrationOutcome(t, database, rerun)
-			if after := zeroLedgerAddedAt(snapshotDatabase(t, database)); !reflect.DeepEqual(after, zeroLedgerAddedAt(baseline)) {
+			converged := snapshotDatabase(t, database)
+			if after := zeroLedgerAddedAt(converged); !reflect.DeepEqual(after, zeroLedgerAddedAt(baseline)) {
 				t.Fatalf("crash rerun did not converge to the uninterrupted baseline: %s", snapshotDifference(after, zeroLedgerAddedAt(baseline)))
 			}
 
@@ -374,9 +376,37 @@ func TestMigrateLegacyAISettingsWriteFaultDatabase(t *testing.T) {
 			if err != nil || !repeated.Empty() {
 				t.Fatalf("idempotent reentry report = %+v, err = %v", repeated, err)
 			}
-			if after := zeroLedgerAddedAt(snapshotDatabase(t, database)); !reflect.DeepEqual(after, zeroLedgerAddedAt(baseline)) {
-				t.Fatalf("idempotent reentry changed database rows: %s", snapshotDifference(after, zeroLedgerAddedAt(baseline)))
+			if after := snapshotDatabase(t, database); !reflect.DeepEqual(after, converged) {
+				t.Fatalf("idempotent reentry changed database rows: %s", snapshotDifference(after, converged))
 			}
 		})
+	}
+}
+
+// TestMigrateLegacyAISettingsLedgerAddedAtOracleDatabase proves the exact
+// third-run comparison catches ledger added-at rewrites that the normalized
+// baseline comparison intentionally ignores.
+func TestMigrateLegacyAISettingsLedgerAddedAtOracleDatabase(t *testing.T) {
+	database := dbtest.NewFixture(t).OpenStore(t)
+	putUser(t, database, firstAdmin, "superadmin", "active", 1)
+	putJSONSetting(t, database, store.AIProfilesSettingKey, profileJSON(nil, profiles.Profile{ID: "p-once", Name: "once", Model: "m"}), 100)
+	if _, err := legacy.Migrate(context.Background(), database.GORM(), false); err != nil {
+		t.Fatal(err)
+	}
+	captured := snapshotDatabase(t, database)
+	if err := database.GORM().Model(&store.AIOwnerMigration{}).
+		Where("migration = ? AND kind = ? AND record_id = ?", faultMigrationLedgerVersion, "profile", "p-once").
+		Update("added_at", 1).Error; err != nil {
+		t.Fatal(err)
+	}
+	after := snapshotDatabase(t, database)
+	if reflect.DeepEqual(after, captured) {
+		t.Fatal("exact comparison missed a rewritten ledger added-at timestamp")
+	}
+	if difference := snapshotDifference(after, captured); !strings.Contains(difference, "ledger row") {
+		t.Fatalf("exact comparison difference = %q, want a ledger row mismatch", difference)
+	}
+	if !reflect.DeepEqual(zeroLedgerAddedAt(after), zeroLedgerAddedAt(captured)) {
+		t.Fatal("normalized comparison must ignore added-at; the exact third-run comparison is what catches rewrites")
 	}
 }
