@@ -714,4 +714,93 @@ describe("SkillsCard", () => {
     expect(toast).not.toHaveBeenCalledWith("success", expect.anything());
     expect(mounted.container.textContent).toContain("Alpha synthetic skill");
   });
+
+  it("hides owner-A rows while owner B's list is still loading", async () => {
+    const backend = createSkillsMockBackend(EMBEDDED);
+    const ownerA = backend.apiFor("owner-a");
+    await ownerA.saveOverride({ name: "alpha-skill", description: "Alpha overridden by A" });
+    const apiA = spyApi(ownerA);
+    const apiB = spyApi(backend.apiFor("owner-b"));
+    mounted = mount(createElement(SkillsCard, { api: apiA }));
+    await flush();
+    expect(mounted.container.textContent).toContain("Alpha overridden by A");
+
+    const slow = deferred<SkillEntry[]>();
+    apiB.list.mockReturnValueOnce(slow.promise);
+    act(() => {
+      mounted!.root.render(createElement(SkillsCard, { api: apiB }));
+    });
+    await flush();
+
+    const text = mounted.container.textContent ?? "";
+    expect(text).not.toContain("Alpha overridden by A");
+    expect(text).not.toContain("alpha-skill");
+    expect(mounted.container.querySelector('[aria-label="编辑技能 alpha-skill"]')).toBeNull();
+    expect(mounted.container.querySelector('[aria-label="禁用技能 alpha-skill"]')).toBeNull();
+    expect(text).toContain("读取中…");
+
+    slow.resolve(await backend.apiFor("owner-b").list());
+    await flush();
+    expect(mounted.container.textContent).toContain("Alpha synthetic skill");
+  });
+
+  it("cannot write or delete through stale owner-A rows while B loads", async () => {
+    const backend = createSkillsMockBackend(EMBEDDED);
+    const ownerA = backend.apiFor("owner-a");
+    await ownerA.saveOverride({
+      name: "alpha-skill",
+      description: "Alpha overridden by A",
+      body: "body from A\n",
+    });
+    const apiA = spyApi(ownerA);
+    const apiB = spyApi(backend.apiFor("owner-b"));
+    mounted = mount(createElement(SkillsCard, { api: apiA }));
+    await flush();
+    expect(mounted.container.textContent).toContain("已覆盖");
+
+    const slow = deferred<SkillEntry[]>();
+    apiB.list.mockReturnValueOnce(slow.promise);
+    act(() => {
+      mounted!.root.render(createElement(SkillsCard, { api: apiB }));
+    });
+    await flush();
+
+    expect(mounted.container.querySelector('[aria-label="禁用技能 alpha-skill"]')).toBeNull();
+    expect(mounted.container.querySelector('[aria-label="删除覆盖 alpha-skill"]')).toBeNull();
+    expect(apiB.saveOverride).not.toHaveBeenCalled();
+    expect(apiB.deleteOverride).not.toHaveBeenCalled();
+
+    slow.resolve(await backend.apiFor("owner-b").list());
+    await flush();
+    const entriesB = await backend.apiFor("owner-b").list();
+    expect(entriesB.find((entry) => entry.name === "alpha-skill")?.overridden).toBe(false);
+    const entriesA = await ownerA.list();
+    expect(entriesA.find((entry) => entry.name === "alpha-skill")?.overridden).toBe(true);
+  });
+
+  it("hides an open owner-A editor immediately on swap even before B's list resolves", async () => {
+    const backend = createSkillsMockBackend(EMBEDDED);
+    const apiA = spyApi(backend.apiFor("owner-a"));
+    const apiB = spyApi(backend.apiFor("owner-b"));
+    mounted = mount(createElement(SkillsCard, { api: apiA }));
+    await flush();
+    click(iconButton(mounted.container, "编辑技能 alpha-skill"));
+    await flush();
+    expect(textareaByLabel(mounted.container, "技能正文").value).toBe("alpha body\n");
+
+    const slow = deferred<SkillEntry[]>();
+    apiB.list.mockReturnValueOnce(slow.promise);
+    act(() => {
+      mounted!.root.render(createElement(SkillsCard, { api: apiB }));
+    });
+    await flush();
+
+    expect(mounted.container.querySelector('textarea[aria-label="技能正文"]')).toBeNull();
+    expect(mounted.container.querySelector('input[aria-label="覆盖描述"]')).toBeNull();
+    expect(apiB.saveOverride).not.toHaveBeenCalled();
+
+    slow.resolve(await backend.apiFor("owner-b").list());
+    await flush();
+    expect(mounted.container.textContent).toContain("Alpha synthetic skill");
+  });
 });

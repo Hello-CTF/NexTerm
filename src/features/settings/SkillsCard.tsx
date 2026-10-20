@@ -37,7 +37,10 @@ function shortDigest(digest: string): string {
 export function SkillsCard({ api }: { api: SkillsApi }) {
   const { pushToast } = useUi();
 
-  const [entries, setEntries] = useState<SkillEntry[] | null>(null);
+  // Entries are tagged with the api they were loaded from. A list loaded
+  // for a previous owner never renders under the next owner's api, even
+  // while the current owner's list is still in flight.
+  const [entries, setEntries] = useState<{ api: SkillsApi; items: SkillEntry[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,6 +48,8 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [busyName, setBusyName] = useState<string | null>(null);
+
+  const visibleEntries = entries !== null && entries.api === api ? entries.items : null;
 
   const aliveRef = useRef(true);
   const loadGenRef = useRef(0);
@@ -72,14 +77,15 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
 
   const reload = useCallback(async () => {
     const gen = ++loadGenRef.current;
+    const epoch = epochRef.current;
     setLoading(true);
     setError(null);
     try {
       const next = await api.list();
-      if (!aliveRef.current || gen !== loadGenRef.current) return;
-      setEntries(next);
+      if (!aliveRef.current || gen !== loadGenRef.current || epoch !== epochRef.current) return;
+      setEntries({ api, items: next });
     } catch (e) {
-      if (!aliveRef.current || gen !== loadGenRef.current) return;
+      if (!aliveRef.current || gen !== loadGenRef.current || epoch !== epochRef.current) return;
       setEntries(null);
       setError(describeError(e));
     } finally {
@@ -103,6 +109,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
   };
 
   const openEdit = async (entry: SkillEntry) => {
+    if (entries === null || entries.api !== api) return;
     const gen = ++editGenRef.current;
     const epoch = epochRef.current;
     setFormError(null);
@@ -178,7 +185,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
   };
 
   const toggleDisable = async (entry: SkillEntry) => {
-    if (busyName !== null) return;
+    if (busyName !== null || entries === null || entries.api !== api) return;
     setBusyName(entry.name);
     const epoch = epochRef.current;
     try {
@@ -216,6 +223,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
   };
 
   const remove = async (entry: SkillEntry) => {
+    if (entries === null || entries.api !== api) return;
     const custom = entry.source === "custom";
     const epoch = epochRef.current;
     const ok = await ask(
@@ -244,7 +252,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
       <div className="mb-1 flex items-center gap-2">
         <IconBot size={15} className="text-purple-300" />
         <span className="nx-card-title">AI 技能</span>
-        {entries && <span className="nx-badge">{entries.length} 个</span>}
+        {visibleEntries && <span className="nx-badge">{visibleEntries.length} 个</span>}
         <div className="nx-spacer" />
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void reload()}>
           <IconRefresh size={11} className={loading ? "animate-spin" : undefined} />
@@ -374,7 +382,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
         </div>
       )}
 
-      {entries === null ? (
+      {visibleEntries === null ? (
         error ? (
           <div className="nx-alert nx-alert-danger flex items-start gap-2" role="alert">
             <IconXCircle size={13} className="mt-0.5 shrink-0" />
@@ -391,11 +399,11 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
             读取中…
           </div>
         )
-      ) : entries.length === 0 ? (
+      ) : visibleEntries.length === 0 ? (
         <div className="nx-hint py-2 text-[12px]">还没有技能。新建自定义技能后，AI 即可按名称加载。</div>
       ) : (
         <div className="flex flex-col gap-2">
-          {entries.map((entry) => (
+          {visibleEntries.map((entry) => (
             <div key={entry.name} className="flex flex-col gap-1">
               <div className="flex flex-wrap items-center gap-2">
                 <span
