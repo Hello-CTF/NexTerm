@@ -234,8 +234,15 @@ func quietVersionsEqual(a, b []TabQuietState) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for index := range a {
-		if a[index].TabID != b[index].TabID || a[index].Version != b[index].Version {
+	// The contract guarantees each requested tab exactly once, not response
+	// order: compare versions by TabID, never by slice index.
+	versions := make(map[string]uint64, len(a))
+	for _, state := range a {
+		versions[state.TabID] = state.Version
+	}
+	for _, state := range b {
+		version, ok := versions[state.TabID]
+		if !ok || version != state.Version {
 			return false
 		}
 	}

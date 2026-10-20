@@ -864,7 +864,7 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, call
 	if args.SubmitDelayMS < 0 || args.SubmitDelayMS > maxSubmitDelayMS {
 		return Fail(invalid("submit_delay_ms 必须在 0-%d 毫秒之间", maxSubmitDelayMS))
 	}
-	if args.SubmitDelayMS > 0 && !args.Paste {
+	if args.SubmitDelayMS > 0 && (!args.Paste || !args.Enter) {
 		return Fail(invalid("submit_delay_ms 仅用于 paste 提交（paste=true 且 enter=true）"))
 	}
 	if args.Paste {
