@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -168,6 +169,55 @@ func TestCycle(t *testing.T) { first(t) }
 	}
 	if !reflect.DeepEqual(tests, []string{"TestCycle"}) {
 		t.Fatalf("selected tests = %v", tests)
+	}
+}
+
+func TestRunFixtureTestsPrintsSuiteAuditReconcilingDiscoveryAndExecution(t *testing.T) {
+	t.Chdir("../..")
+	if err := os.MkdirAll(".tmp", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	directory, err := os.MkdirTemp(".tmp", "database-suite-audit-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(directory) }()
+	contents := `package suiteauditfixture
+import (
+    "testing"
+    "github.com/Hello-CTF/NexTerm/internal/dbtest"
+)
+func TestPositive(t *testing.T) { dbtest.NewFixture(t).OpenStore(t) }
+`
+	if err := os.WriteFile(filepath.Join(directory, "audit_test.go"), []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	packages := []fixturePackage{{ImportPath: filepath.ToSlash(directory), Tests: []string{"TestPositive"}}}
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalStderr := os.Stderr
+	os.Stderr = writer
+	runErr := runFixtureTests(packages)
+	if closeErr := writer.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	os.Stderr = originalStderr
+	captured, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runErr != nil {
+		t.Fatalf("full-suite run failed: %v\n%s", runErr, captured)
+	}
+	for _, want := range []string{
+		"database suite audit: 1 packages, 1 fixture tests executed and fixture-audited on backend sqlite",
+	} {
+		if !strings.Contains(string(captured), want) {
+			t.Fatalf("suite audit output %q does not contain %q", captured, want)
+		}
 	}
 }
 

@@ -39,6 +39,12 @@ report("pnpm", versionOutput("pnpm", ["--version"]), (version) => version.split(
 report("task", versionOutput("task", ["--version"]), (version) => version.replace(/^v/, "").split(".")[0] === "3", "Task v3 (CI uses v3.45.5)");
 report("python3", versionOutput("python3", ["--version"]), (version) => Number(version.split(".")[0]) === 3, "Python 3");
 report("wails3 (pinned go run)", versionOutput("go", ["run", `github.com/wailsapp/wails/v3/cmd/wails3@${wailsVersion}`, "version"], { ...process.env, GOTOOLCHAIN: goToolchain }), (version) => version === wailsVersion, wailsVersion);
+if (process.platform === "linux") {
+  // Linux desktop builds link gtk4/webkitgtk-6.0 via cgo; CI installs the same
+  // pkg-config modules as libgtk-4-dev/libwebkitgtk-6.0-dev.
+  report("gtk4 (pkg-config)", versionOutput("pkg-config", ["--modversion", "gtk4"]), (version) => /^\d+\.\d+/.test(version), "libgtk-4-dev (pkg-config gtk4)");
+  report("webkitgtk-6.0 (pkg-config)", versionOutput("pkg-config", ["--modversion", "webkitgtk-6.0"]), (version) => /^\d+\.\d+/.test(version), "libwebkitgtk-6.0-dev (pkg-config webkitgtk-6.0)");
+}
 report("docker", versionOutput("docker", ["--version"]), (version) => Number(version.split(".")[0]) > 0, "Docker CLI");
 report("docker compose", versionOutput("docker", ["compose", "version"]), (version) => Number(version.replace(/^v/, "").split(".")[0]) >= 2, "Docker Compose v2");
 

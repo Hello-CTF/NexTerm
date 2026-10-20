@@ -113,6 +113,88 @@ func TestCompileError(t *testing.T) {
 	assertNoBuildArtifacts(t, module)
 }
 
+func TestCompileOnlyCompilesHiddenInterfaceAssertions(t *testing.T) {
+	module := writeFixtureModule(t, map[string]string{
+		"hidden/hidden.go": `package hidden
+
+type doer interface {
+	do() string
+}
+
+type Thing struct{}
+
+func (Thing) do() string { return "done" }
+func (Thing) Do() string { return "done" }
+`,
+		"hidden/hidden_test.go": `package hidden
+
+import "testing"
+
+var _ doer = Thing{}
+
+func TestHiddenInterface(t *testing.T) {
+	var d doer = Thing{}
+	_ = d.do()
+}
+`,
+		"hidden/hidden_external_test.go": `package hidden_test
+
+import (
+	"testing"
+
+	"example.com/fixture/hidden"
+)
+
+var _ interface{ Do() string } = hidden.Thing{}
+
+func TestExportedInterface(t *testing.T) {
+	var d interface{ Do() string } = hidden.Thing{}
+	_ = d.Do()
+}
+`,
+	})
+	artifactRoot := t.TempDir()
+	output, err := runFixture(module, artifactRoot, nil)
+	if err != nil {
+		t.Fatalf("hidden-interface fixtures failed to compile: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "test packages compiled=1") {
+		t.Fatalf("hidden-interface test package was not discovered:\n%s", output)
+	}
+	assertEmptyDir(t, artifactRoot)
+	assertNoBuildArtifacts(t, module)
+}
+
+func TestCompileOnlyRejectsBrokenHiddenInterfaceAssertions(t *testing.T) {
+	module := writeFixtureModule(t, map[string]string{
+		"hidden/hidden.go": `package hidden
+
+type doer interface {
+	do() string
+}
+
+type Thing struct{}
+`,
+		"hidden/hidden_test.go": `package hidden
+
+var _ doer = Thing{}
+`,
+	})
+	artifactRoot := t.TempDir()
+	output, err := runFixture(module, artifactRoot, nil)
+	if err == nil {
+		t.Fatalf("a missing hidden-interface method compiled successfully:\n%s", output)
+	}
+	if !strings.Contains(err.Error(), "example.com/fixture/hidden") {
+		t.Fatalf("error %q does not identify the hidden-interface package", err)
+	}
+	if !strings.Contains(output, "does not implement") {
+		t.Fatalf("compiler output does not preserve the interface satisfaction failure:\n%s", output)
+	}
+	assertEmptyDir(t, artifactRoot)
+	assertNoBuildArtifacts(t, module)
+}
+
 func TestCompileOnlyWindowsOutputsAreCleaned(t *testing.T) {
 	module := writeFixtureModule(t, map[string]string{
 		"first/first.go": `package same

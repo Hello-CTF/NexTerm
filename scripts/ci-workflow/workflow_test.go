@@ -132,7 +132,6 @@ func TestQualityUsesSharedTaskWithoutDroppingCoverage(t *testing.T) {
 		t.Fatalf("Windows vet GOOS = %q, want windows", got)
 	}
 	requireRun(t, quality, "go test -count=1 ./scripts/gen-ipc-contract")
-	requireRun(t, quality, "go test -count=1 ./scripts/compile-only")
 	requireRun(t, quality, "go test -count=1 ./scripts/ci-workflow")
 
 	tasks := loadTaskfile(t)
@@ -151,8 +150,10 @@ func TestQualityUsesSharedTaskWithoutDroppingCoverage(t *testing.T) {
 		"task:ipc:contract:check",
 		"task:gorm:check",
 		"task:check:scripts",
+		"run:go test -count=1 ./scripts/compile-only",
 		"task:vet",
 		"task:bindings:check",
+		"run:GOOS=$(go env GOOS) GOARCH=$(go env GOARCH) go run -mod=readonly ./scripts/compile-only ./...",
 	} {
 		if !commands[required] {
 			t.Errorf("check:ci-quality is missing %s", required)
@@ -225,7 +226,33 @@ func TestCompileOnlyPreservesNativeTargetsAndNeverRunsTestMain(t *testing.T) {
 			}
 		}
 	}
-	requireRun(t, requireJob(t, ci, "quality"), "go test -count=1 ./scripts/compile-only")
+	// The shared quality gate owns the compile-only behavior tests and the
+	// explicit host-target compile; the quality job must not duplicate them as
+	// standalone steps.
+	tasks := loadTaskfile(t)
+	qualityCommands := make(map[string]bool)
+	for _, command := range tasks.Tasks["check:ci-quality"].Commands {
+		if command.Task != "" {
+			qualityCommands["task:"+command.Task] = true
+		} else {
+			qualityCommands["run:"+normalize(command.Run)] = true
+		}
+	}
+	for _, required := range []string{
+		"run:go test -count=1 ./scripts/compile-only",
+		"run:GOOS=$(go env GOOS) GOARCH=$(go env GOARCH) go run -mod=readonly ./scripts/compile-only ./...",
+	} {
+		if !qualityCommands[required] {
+			t.Errorf("check:ci-quality is missing %s", required)
+		}
+	}
+	quality := requireJob(t, ci, "quality")
+	for _, step := range quality.Steps {
+		run := normalize(step.Run)
+		if strings.Contains(run, "./scripts/compile-only") {
+			t.Errorf("quality job duplicates the shared compile-only gate: %s", run)
+		}
+	}
 	for jobName, job := range ci.Jobs {
 		for _, step := range job.Steps {
 			if strings.Contains(normalize(step.Run), "go test -run '^$'") {
@@ -267,30 +294,87 @@ func TestCIOKAggregatesAllJobsAndRejectsUnsuccessfulResults(t *testing.T) {
 	}
 	script := extractNodeScript(t, aggregateStep.Run)
 	scenarios := []struct {
-		name        string
-		results     map[string]string
-		wantSuccess bool
-		wantOutput  string
+		name           string
+		event          string
+		iosSigning     string
+		releaseVersion string
+		results        map[string]string
+		wantSuccess    bool
+		wantOutput     string
 	}{
 		{
-			name: "pull request with conditional jobs skipped",
+			name:  "pull request with conditional jobs skipped",
+			event: "pull_request",
 			results: map[string]string{
 				"race": "skipped", "mobile": "skipped", "ios-dist": "skipped",
 			},
 			wantSuccess: true,
 		},
 		{
-			name: "master push without PR jobs",
+			name:  "master push without PR jobs",
+			event: "push",
 			results: map[string]string{
 				"production": "skipped", "mobile-compile": "skipped", "ios-dist": "skipped",
 			},
 			wantSuccess: true,
 		},
 		{
-			name: "release without PR jobs",
+			name:           "release without PR jobs",
+			event:          "workflow_call",
+			releaseVersion: "v1.2.3",
 			results: map[string]string{
 				"production": "skipped", "mobile-compile": "skipped", "ios-dist": "skipped",
 			},
+			wantSuccess: true,
+		},
+		{
+			name:           "release with iOS signing enabled skips nothing",
+			event:          "workflow_call",
+			iosSigning:     "true",
+			releaseVersion: "v1.2.3",
+			results:        map[string]string{},
+			wantSuccess:    true,
+		},
+		{
+			name:        "quality skip on a pull request",
+			event:       "pull_request",
+			results:     map[string]string{"quality": "skipped"},
+			wantSuccess: false,
+			wantOutput:  "quality=skipped",
+		},
+		{
+			name:        "unit skip on a push",
+			event:       "push",
+			results:     map[string]string{"unit": "skipped"},
+			wantSuccess: false,
+			wantOutput:  "unit=skipped",
+		},
+		{
+			name:        "race skip on a push",
+			event:       "push",
+			results:     map[string]string{"race": "skipped"},
+			wantSuccess: false,
+			wantOutput:  "race=skipped",
+		},
+		{
+			name:        "production skip on a pull request",
+			event:       "pull_request",
+			results:     map[string]string{"production": "skipped"},
+			wantSuccess: false,
+			wantOutput:  "production=skipped",
+		},
+		{
+			name:        "ios-dist skip on a push with signing enabled",
+			event:       "push",
+			iosSigning:  "true",
+			results:     map[string]string{"ios-dist": "skipped"},
+			wantSuccess: false,
+			wantOutput:  "ios-dist=skipped",
+		},
+		{
+			name:        "ios-dist skip on a push with signing disabled",
+			event:       "push",
+			results:     map[string]string{"ios-dist": "skipped"},
 			wantSuccess: true,
 		},
 		{
@@ -327,7 +411,12 @@ func TestCIOKAggregatesAllJobsAndRejectsUnsuccessfulResults(t *testing.T) {
 				t.Fatal(err)
 			}
 			command := exec.Command("node", "--input-type=module", "-e", script)
-			command.Env = append(os.Environ(), "NEEDS="+string(payload))
+			command.Env = append(os.Environ(),
+				"NEEDS="+string(payload),
+				"EVENT_NAME="+scenario.event,
+				"IOS_SIGNING="+scenario.iosSigning,
+				"RELEASE_VERSION="+scenario.releaseVersion,
+			)
 			output, err := command.CombinedOutput()
 			if scenario.wantSuccess && err != nil {
 				t.Fatalf("ci-ok rejected valid results: %v\n%s", err, output)
@@ -414,6 +503,74 @@ func TestPagesBuildsPullRequestsAndDeploysOnlyPush(t *testing.T) {
 		if !commands[required] {
 			t.Errorf("website:check is missing %s", required)
 		}
+	}
+}
+
+func TestPullRequestNativeScopeCoversPlatformFilesAndModuleManifests(t *testing.T) {
+	ci := loadWorkflow(t, ".github/workflows/ci.yml")
+	version := requireJob(t, ci, "version")
+	scope := requireRunContaining(t, version, "git diff --name-only")
+	for _, trigger := range []string{
+		"^(build|\\.github)/",
+		"go\\.mod",
+		"go\\.sum",
+		"darwin|linux|unix|windows",
+	} {
+		if !strings.Contains(scope.Run, trigger) {
+			t.Errorf("PR native scope step is missing the %q full-matrix trigger:\n%s", trigger, scope.Run)
+		}
+	}
+}
+
+func TestSetupNodeVersionsArePinnedAcrossCIReleaseAndPages(t *testing.T) {
+	for _, name := range []string{".github/workflows/ci.yml", ".github/workflows/release.yml", ".github/workflows/pages.yml"} {
+		workflow := loadWorkflow(t, name)
+		for jobName, job := range workflow.Jobs {
+			for _, step := range job.Steps {
+				if !strings.HasPrefix(step.Uses, "actions/setup-node@") {
+					continue
+				}
+				if got := step.With["node-version"]; got != "24.22.0" {
+					t.Errorf("%s job %s uses node-version %v, want the pinned 24.22.0", name, jobName, got)
+				}
+			}
+		}
+	}
+}
+
+func TestReleaseWindowsToolingProvenanceFailsClosed(t *testing.T) {
+	release := loadWorkflow(t, ".github/workflows/release.yml")
+	desktop := requireJob(t, release, "desktop")
+	nsis := requireRunContaining(t, desktop, "choco install nsis")
+	if !strings.Contains(nsis.Run, "command -v makensis") {
+		t.Error("NSIS install does not prefer the preinstalled makensis")
+	}
+	if !strings.Contains(nsis.Run, "--require-checksums") {
+		t.Error("NSIS install does not require package checksums")
+	}
+	sevenZip := requireRunContaining(t, desktop, "choco install 7zip")
+	if !strings.Contains(sevenZip.Run, "--require-checksums") {
+		t.Error("7-Zip install does not require package checksums")
+	}
+}
+
+func TestCIDownloadsStayUnderTargetCIWork(t *testing.T) {
+	ci := loadWorkflow(t, ".github/workflows/ci.yml")
+	downloads := 0
+	for jobName, job := range ci.Jobs {
+		for _, step := range job.Steps {
+			if !strings.HasPrefix(step.Uses, "actions/download-artifact@") {
+				continue
+			}
+			downloads++
+			downloadPath, _ := step.With["path"].(string)
+			if !strings.HasPrefix(downloadPath, "target/ci-work/") {
+				t.Errorf("%s downloads artifacts to %q, want a target/ci-work/ path", jobName, downloadPath)
+			}
+		}
+	}
+	if downloads == 0 {
+		t.Fatal("no CI artifact downloads found")
 	}
 }
 

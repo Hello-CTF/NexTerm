@@ -159,8 +159,10 @@ tasks:
       - task: ipc:contract:check
       - task: gorm:check
       - task: check:scripts
+      - go test -count=1 ./scripts/compile-only
       - task: vet
       - task: bindings:check
+      - GOOS=$(go env GOOS) GOARCH=$(go env GOARCH) go run -mod=readonly ./scripts/compile-only ./...
 
   check:
     summary: Run fast integrity checks before Go, bindings and frontend quality gates
