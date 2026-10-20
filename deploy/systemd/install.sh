@@ -23,13 +23,15 @@ master key (an explicit NEXTERM_MASTER_KEY_FILE, an existing
 <data-dir>/master.key, or /etc/nexterm/master.key, in that order; a new
 key is generated only when none exists). Missing environment keys are
 backfilled with the safe defaults from the shipped examples, explicit
-legacy unit flags (--listen, --auth, --data-dir, --web-root) are migrated
-into the env files instead of being discarded, legacy unit copies under
-/usr/lib/systemd/system or /lib/systemd/system are removed, the previous
-payload is saved to /opt/nexterm/.rollback, and only units that were
-active are restarted. An interrupted upgrade keeps its original rollback
-backup across retries; an interrupted first install resumes and finishes
-with enable --now.
+legacy unit flags (--listen, --auth, --data-dir, --web-root,
+--master-key-file) are migrated into the env files instead of being
+discarded, legacy unit copies under /usr/lib/systemd/system or
+/lib/systemd/system are removed, the previous payload is saved to
+/opt/nexterm/.rollback, and only units that were active are restarted.
+An interrupted upgrade keeps its original rollback backup, env-origin
+record, active-unit list, and pending legacy migrations across retries;
+an interrupted first install records the same env origin and resumes,
+finishing with enable --now.
 
 Options:
   --source DIR   release payload directory (default: this script's directory)
@@ -83,6 +85,9 @@ ONLYSERVER_LEGACY_VALUES=""
 NEXTERM_ENV_PREEXISTED=0
 ONLYSERVER_ENV_PREEXISTED=0
 INCOMPLETE_MARKER="$OPT_DIR/.install-incomplete"
+FIRST_INSTALL_STATE="$OPT_DIR/.install-transaction"
+MIGRATED_KEY_FILE_NEXTERM=0
+MIGRATED_KEY_FILE_ONLYSERVER=0
 
 log() { printf 'install: %s\n' "$*"; }
 die() { printf 'install: error: %s\n' "$*" >&2; exit 1; }
@@ -114,7 +119,7 @@ capture_active_units() {
 
 is_legacy_unit() {
   grep -qE '^EnvironmentFile=-' "$1" ||
-    grep -qE '^[[:space:]]*--(listen|auth|data-dir|web-root)([[:space:]=]|$)' "$1"
+    grep -qE '^[[:space:]]*--(listen|auth|data-dir|web-root|master-key-file)([[:space:]=]|$)' "$1"
 }
 
 legacy_exec_line() {
@@ -158,7 +163,7 @@ capture_legacy_values() {
   local file="$1" exec_line flag key value
   exec_line="$(legacy_exec_line "$file")"
   [ -n "$exec_line" ] || return 0
-  for flag in listen auth data-dir web-root; do
+  for flag in listen auth data-dir web-root master-key-file; do
     value="$(legacy_flag_value "$exec_line" "$flag" || true)"
     [ -n "$value" ] || continue
     case "$flag" in
@@ -166,44 +171,87 @@ capture_legacy_values() {
       auth) key=NEXTERM_AUTH ;;
       data-dir) key=NEXTERM_DATA_DIR ;;
       web-root) key=NEXTERM_WEB_ROOT ;;
+      master-key-file) key=NEXTERM_MASTER_KEY_FILE ;;
     esac
     printf '%s=%s\n' "$key" "$value"
   done
 }
 
 env_get() {
-  local file="$1" key="$2" line value="" found=0 first last
+  local file="$1" key="$2" line rest value="" found=0 first="" closing="" after=""
   while IFS= read -r line || [ -n "$line" ]; do
+    line="${line#"${line%%[![:blank:]]*}"}"
     case "$line" in
-      "$key"=*) value="${line#"$key"=}"; found=1 ;;
+      "$key"=*)
+        value="${line#"$key"=}"; found=1 ;;
+      "$key"[[:blank:]]*=*)
+        rest="${line#"$key"}"
+        value="${rest#*=}"; found=1 ;;
     esac
   done < "$file"
   [ "$found" -eq 1 ] || return 0
-  if [ "${#value}" -ge 2 ]; then
-    first="${value%"${value#?}"}"
-    last="${value#"${value%?}"}"
-    if { [ "$first" = '"' ] && [ "$last" = '"' ]; } || { [ "$first" = "'" ] && [ "$last" = "'" ]; }; then
-      value="${value#?}"
-      value="${value%?}"
-    elif [ "$first" = '"' ] || [ "$first" = "'" ]; then
-      return 1
-    fi
-  elif [ "$value" = '"' ] || [ "$value" = "'" ]; then
-    return 1
-  fi
+  value="$(printf '%s' "$value" | sed -e 's/^[[:blank:]]*//' -e 's/[[:blank:]]*$//')"
+  case "$value" in *\\*) return 1 ;; esac
+  if [ -n "$value" ]; then first="${value%"${value#?}"}"; fi
+  case "$first" in
+    '"')
+      rest="${value#?}"
+      case "$rest" in
+        *'"'*)
+          closing="${rest%%\"*}"
+          after="${rest#*\"}"
+          [ -z "$(printf '%s' "$after" | tr -d ' \t')" ] || return 1
+          value="$closing"
+          ;;
+        *) value="$rest" ;;
+      esac
+      ;;
+    "'")
+      rest="${value#?}"
+      case "$rest" in
+        *"'"*)
+          closing="${rest%%\'*}"
+          after="${rest#*\'}"
+          [ -z "$(printf '%s' "$after" | tr -d ' \t')" ] || return 1
+          value="$closing"
+          ;;
+        *) value="$rest" ;;
+      esac
+      ;;
+  esac
   printf '%s' "$value"
 }
 
 transaction_pending() { [ -f "$BACKUP_DIR/pending" ]; }
 
 transaction_state_get() {
-  local key="$1" line
+  local file="$1" key="$2" line
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       "$key"=*) printf '%s' "${line#"$key"=}"; return 0 ;;
     esac
-  done < "$BACKUP_DIR/transaction"
+  done < "$file"
   return 1
+}
+
+env_origin_record_file() {
+  if transaction_pending; then
+    printf '%s' "$BACKUP_DIR/transaction"
+  elif [ -f "$INCOMPLETE_MARKER" ] && [ -f "$FIRST_INSTALL_STATE" ]; then
+    printf '%s' "$FIRST_INSTALL_STATE"
+  else
+    return 1
+  fi
+}
+
+load_saved_active_units() {
+  ACTIVE_UNITS=""
+  local unit
+  [ -f "$BACKUP_DIR/active-units" ] || return 1
+  while IFS= read -r unit; do
+    if [ -n "$unit" ]; then ACTIVE_UNITS="$ACTIVE_UNITS $unit"; fi
+  done < "$BACKUP_DIR/active-units"
+  return 0
 }
 
 pick_effective_unit() {
@@ -223,6 +271,18 @@ physical_path() {
   printf '%s' "$path"
 }
 
+env_has_key() {
+  local file="$1" key="$2" line
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line#"${line%%[![:blank:]]*}"}"
+    case "$line" in
+      "$key"=*|"$key"[[:blank:]]*=*)
+        return 0 ;;
+    esac
+  done < "$file"
+  return 1
+}
+
 env_append() {
   local file="$1" line="$2"
   if [ -s "$file" ] && [ -n "$(tail -c 1 "$file")" ]; then
@@ -232,11 +292,13 @@ env_append() {
 }
 
 env_set() {
-  local file="$1" key="$2" value="$3" tmp="$1.nexterm-new" line
-  if grep -q "^$key=" "$file"; then
+  local file="$1" key="$2" value="$3" tmp="$1.nexterm-new" line trimmed
+  if env_has_key "$file" "$key"; then
     while IFS= read -r line || [ -n "$line" ]; do
-      case "$line" in
-        "$key"=*) printf '%s=%s\n' "$key" "$value" ;;
+      trimmed="${line#"${line%%[![:blank:]]*}"}"
+      case "$trimmed" in
+        "$key"=*|"$key"[[:blank:]]*=*)
+          printf '%s=%s\n' "$key" "$value" ;;
         *) printf '%s\n' "$line" ;;
       esac
     done < "$file" > "$tmp"
@@ -358,14 +420,14 @@ install_units() {
 
 ensure_env_files() {
   fail_at env
-  local name env_file example legacy line key pre_existed
+  local name env_file example legacy line key pre_existed record_file
   for name in nexterm onlyserver; do
     env_file="$ETC_DIR/$name.env"
     example="$SOURCE_DIR/$name.env.example"
-    if transaction_pending; then
-      if ! pre_existed="$(transaction_state_get "env_preexisted.$name")"; then
-        die "rollback backup state is incomplete (missing env_preexisted.$name); inspect $BACKUP_DIR or remove it and re-run"
-      fi
+    if record_file="$(env_origin_record_file)"; then
+      [ -f "$record_file" ] || die "transaction state is missing ($record_file); inspect the rollback backup or remove it and re-run"
+      pre_existed="$(transaction_state_get "$record_file" "env_preexisted.$name")" ||
+        die "transaction state $record_file lacks env_preexisted.$name; inspect it or remove and re-run"
     elif [ -f "$env_file" ]; then
       pre_existed=1
     else
@@ -384,6 +446,9 @@ ensure_env_files() {
         [ -n "$line" ] || continue
         key="${line%%=*}"
         env_set "$env_file" "$key" "${line#*=}"
+        if [ "$key" = "NEXTERM_MASTER_KEY_FILE" ]; then
+          if [ "$name" = "nexterm" ]; then MIGRATED_KEY_FILE_NEXTERM=1; else MIGRATED_KEY_FILE_ONLYSERVER=1; fi
+        fi
         log "migrated legacy unit setting $key=${line#*=} into ${env_file#$ROOT_PREFIX}"
       done <<EOF
 $legacy
@@ -393,7 +458,7 @@ EOF
       if [ "$key" = "NEXTERM_MASTER_KEY_FILE" ]; then continue; fi
       line="$(grep -m1 "^$key=" "$example" || true)"
       [ -n "$line" ] || continue
-      if ! grep -q "^$key=" "$env_file"; then
+      if ! env_has_key "$env_file" "$key"; then
         env_append "$env_file" "$line"
         log "backfilled $key in ${env_file#$ROOT_PREFIX} (was absent; applied the example default)"
       fi
@@ -403,19 +468,25 @@ EOF
 
 ensure_master_key() {
   fail_at masterkey
-  local env_file configured data_dir data_dir_key key_file physical parent name pre_existed
+  local env_file configured data_dir data_dir_key key_file physical parent name pre_existed migrated_key
   for name in nexterm onlyserver; do
     env_file="$ETC_DIR/$name.env"
-    if [ "$name" = "nexterm" ]; then pre_existed="$NEXTERM_ENV_PREEXISTED"; else pre_existed="$ONLYSERVER_ENV_PREEXISTED"; fi
+    if [ "$name" = "nexterm" ]; then
+      pre_existed="$NEXTERM_ENV_PREEXISTED"
+      migrated_key="$MIGRATED_KEY_FILE_NEXTERM"
+    else
+      pre_existed="$ONLYSERVER_ENV_PREEXISTED"
+      migrated_key="$MIGRATED_KEY_FILE_ONLYSERVER"
+    fi
     if ! configured="$(env_get "$env_file" NEXTERM_MASTER_KEY_FILE)"; then
-      die "cannot parse NEXTERM_MASTER_KEY_FILE in ${env_file#$ROOT_PREFIX} (unbalanced quotes); fix the file and re-run"
+      die "cannot parse NEXTERM_MASTER_KEY_FILE in ${env_file#$ROOT_PREFIX} (unsupported EnvironmentFile syntax); fix the file and re-run"
     fi
     if ! data_dir="$(env_get "$env_file" NEXTERM_DATA_DIR)"; then
-      die "cannot parse NEXTERM_DATA_DIR in ${env_file#$ROOT_PREFIX} (unbalanced quotes); fix the file and re-run"
+      die "cannot parse NEXTERM_DATA_DIR in ${env_file#$ROOT_PREFIX} (unsupported EnvironmentFile syntax); fix the file and re-run"
     fi
     [ -n "$data_dir" ] || data_dir="${DATA_DIR#$ROOT_PREFIX}"
     data_dir_key="$data_dir/master.key"
-    if [ "$pre_existed" -eq 1 ] && [ -n "$configured" ]; then
+    if [ -n "$configured" ] && { [ "$pre_existed" -eq 1 ] || [ "$migrated_key" -eq 1 ]; }; then
       key_file="$configured"
     elif [ -f "$(physical_path "$data_dir_key")" ]; then
       key_file="$data_dir_key"
@@ -440,7 +511,7 @@ ensure_master_key() {
       fi
       log "generated $key_file (back it up with ${DATA_DIR#$ROOT_PREFIX}; it cannot be recreated)"
     fi
-    if [ "$key_file" != "$configured" ] || ! grep -q "^NEXTERM_MASTER_KEY_FILE=" "$env_file"; then
+    if [ "$key_file" != "$configured" ] || ! env_has_key "$env_file" NEXTERM_MASTER_KEY_FILE; then
       env_set "$env_file" NEXTERM_MASTER_KEY_FILE "$key_file"
       log "configured NEXTERM_MASTER_KEY_FILE=$key_file in ${env_file#$ROOT_PREFIX}"
     fi
@@ -496,10 +567,24 @@ run_install() {
   ensure_user
   ensure_dirs
   if [ "$MODE" = "upgrade" ]; then
-    capture_active_units
+    if transaction_pending && load_saved_active_units; then
+      log "reusing the active-unit state saved by the interrupted upgrade"
+    else
+      capture_active_units
+    fi
     backup_current
   else
-    : > "$INCOMPLETE_MARKER"
+    if [ ! -f "$INCOMPLETE_MARKER" ]; then
+      : > "$INCOMPLETE_MARKER"
+      : > "$FIRST_INSTALL_STATE"
+      for f in nexterm onlyserver; do
+        if [ -f "$ETC_DIR/$f.env" ]; then
+          printf 'env_preexisted.%s=1\n' "$f" >> "$FIRST_INSTALL_STATE"
+        else
+          printf 'env_preexisted.%s=0\n' "$f" >> "$FIRST_INSTALL_STATE"
+        fi
+      done
+    fi
     ACTIVE_UNITS=""
   fi
   install_binaries
@@ -509,7 +594,7 @@ run_install() {
   ensure_master_key
   reload_systemd
   manage_services
-  rm -f "$INCOMPLETE_MARKER" "$BACKUP_DIR/pending"
+  rm -f "$INCOMPLETE_MARKER" "$FIRST_INSTALL_STATE" "$BACKUP_DIR/pending"
   log "done"
 }
 
@@ -521,7 +606,9 @@ run_rollback() {
   require_root_when_real
 
   MODE=upgrade
-  capture_active_units
+  if ! load_saved_active_units; then
+    capture_active_units
+  fi
   fail_at rollback
   install -d -m 0755 "$OPT_DIR"
   rm -rf "$FAILED_DIR"

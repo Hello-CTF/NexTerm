@@ -23,9 +23,10 @@ An upgrade (detected from an existing `/opt/nexterm/nexterm-server`,
 
 - preserves `/etc/nexterm/nexterm.env` and
   `/etc/nexterm/onlyserver.env`; existing values are never rewritten.
-  Values are read with systemd `EnvironmentFile` semantics: the last
-  duplicate assignment wins and matching quotes are stripped; an
-  unbalanced quote aborts the run before any key is generated;
+  Values are read with systemd `EnvironmentFile` semantics: surrounding
+  whitespace is trimmed, the last duplicate assignment wins, and matching
+  quotes are stripped; unsupported quoting aborts the run before any key
+  is generated;
 - preserves the effective master key: an explicit `NEXTERM_MASTER_KEY_FILE`
   setting wins, then an existing `<data-dir>/master.key`, then
   `/etc/nexterm/master.key`. A new key is generated only when none exists,
@@ -35,23 +36,29 @@ An upgrade (detected from an existing `/opt/nexterm/nexterm-server`,
   the shipped example, so an install that predates the env files never
   falls back to the built-in `0.0.0.0:8080` listener;
 - migrates legacy units (older releases kept `--listen`, `--auth`,
-  `--data-dir` and `--web-root` flags in `ExecStart`): explicit flag
-  values move into the corresponding env files (they were the effective
-  settings). Only the effective unit per systemd priority
-  (`/etc/systemd/system/`, then `/usr/lib/systemd/system/`, then
-  `/lib/systemd/system/`) is consulted; lower-priority copies are removed
-  without applying their values;
+  `--data-dir`, `--web-root` and `--master-key-file` flags in
+  `ExecStart`): explicit flag values move into the corresponding env
+  files (they were the effective settings; a migrated
+  `--master-key-file` becomes an explicit `NEXTERM_MASTER_KEY_FILE` that
+  wins over the data-dir fallback). Only the effective unit per systemd
+  priority (`/etc/systemd/system/`, then `/usr/lib/systemd/system/`,
+  then `/lib/systemd/system/`) is consulted; lower-priority copies are
+  removed without applying their values;
 - saves the previous payload to `/opt/nexterm/.rollback` and restarts only
   the units that were active. An interrupted upgrade keeps that original
   backup across retries, records whether each env file predates the
-  transaction, and recovers legacy unit settings from the backup, so a
-  retry never overwrites the rollback point, adopts an installer-written
-  example env as explicit configuration, or loses pending migrations.
+  transaction and which units were active, and recovers legacy unit
+  settings from the backup, so a retry never overwrites the rollback
+  point, adopts an installer-written example env as explicit
+  configuration, loses pending migrations, or skips restarting a unit
+  that was active before the interruption.
 
 Options: `--source DIR` (payload directory, default the script's own),
 `--root DIR` (staged install prefix, for testing), `--rollback`,
 `--no-enable`. An interrupted first install is resumed by re-running the
-script and finishes with `enable --now`.
+script — including whether each env file predates the attempt, so an
+example env written by the interrupted run is never mistaken for explicit
+configuration — and finishes with `enable --now`.
 
 Keep both helpers beside `nexterm-server`. On the server's own
 architecture, verify the matching helper before enabling the service; it
