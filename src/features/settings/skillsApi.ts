@@ -64,6 +64,12 @@ export interface SkillsApi {
   saveOverride(input: SkillOverrideInput): Promise<SkillEntry>;
   deleteOverride(name: string): Promise<void>;
   dispatch(name: string): Promise<SkillDispatch>;
+  /**
+   * Settings read path: returns the effective material, including for
+   * disabled skills. Distinct from dispatch(), which is the model
+   * load_skill path and rejects disabled skills.
+   */
+  getEffective(name: string): Promise<SkillDispatch>;
 }
 
 export const SKILL_NAME_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;

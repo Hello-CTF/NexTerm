@@ -49,12 +49,26 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
   const aliveRef = useRef(true);
   const loadGenRef = useRef(0);
   const editGenRef = useRef(0);
+  const epochRef = useRef(0);
   useEffect(() => {
     aliveRef.current = true;
     return () => {
       aliveRef.current = false;
     };
   }, []);
+
+  // The api prop identifies the owner scope. Every time it changes, the
+  // previous owner's epoch ends: open drafts close, pending reads and
+  // mutations are abandoned by the epoch checks below, and in-flight
+  // list loads are superseded by the new owner's reload.
+  useEffect(() => {
+    epochRef.current += 1;
+    editGenRef.current += 1;
+    setDraft(null);
+    setFormError(null);
+    setSaving(false);
+    setBusyName(null);
+  }, [api]);
 
   const reload = useCallback(async () => {
     const gen = ++loadGenRef.current;
@@ -90,11 +104,12 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
 
   const openEdit = async (entry: SkillEntry) => {
     const gen = ++editGenRef.current;
+    const epoch = epochRef.current;
     setFormError(null);
     setDraft({ kind: "edit-loading", entry });
     try {
-      const material = await api.dispatch(entry.name);
-      if (!aliveRef.current || gen !== editGenRef.current) return;
+      const material = await api.getEffective(entry.name);
+      if (!aliveRef.current || gen !== editGenRef.current || epoch !== epochRef.current) return;
       setDraft({
         kind: "edit",
         entry,
@@ -105,7 +120,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
         disabled: entry.disabled,
       });
     } catch (e) {
-      if (!aliveRef.current || gen !== editGenRef.current) return;
+      if (!aliveRef.current || gen !== editGenRef.current || epoch !== epochRef.current) return;
       setDraft(null);
       pushToast("error", `读取技能内容失败：${describeError(e)}`);
     }
@@ -147,21 +162,25 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
     }
     setSaving(true);
     setFormError(null);
+    const epoch = epochRef.current;
     try {
       await api.saveOverride(input);
+      if (epoch !== epochRef.current) return;
       pushToast("success", draft.kind === "create" ? "自定义技能已保存" : "技能覆盖已保存");
       setDraft(null);
       await reload();
     } catch (e) {
+      if (epoch !== epochRef.current) return;
       setFormError(describeError(e));
     } finally {
-      if (aliveRef.current) setSaving(false);
+      if (aliveRef.current && epoch === epochRef.current) setSaving(false);
     }
   };
 
   const toggleDisable = async (entry: SkillEntry) => {
     if (busyName !== null) return;
     setBusyName(entry.name);
+    const epoch = epochRef.current;
     try {
       if (entry.disabled) {
         const override = entry.override;
@@ -175,6 +194,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
         } else {
           await api.deleteOverride(entry.name);
         }
+        if (epoch !== epochRef.current) return;
         pushToast("success", `技能 ${entry.name} 已启用`);
       } else {
         await api.saveOverride({
@@ -183,34 +203,39 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
           body: entry.override?.body,
           disabled: true,
         });
+        if (epoch !== epochRef.current) return;
         pushToast("success", `技能 ${entry.name} 已禁用`);
       }
       await reload();
     } catch (e) {
+      if (epoch !== epochRef.current) return;
       pushToast("error", `${entry.disabled ? "启用" : "禁用"}失败：${describeError(e)}`);
     } finally {
-      if (aliveRef.current) setBusyName(null);
+      if (aliveRef.current && epoch === epochRef.current) setBusyName(null);
     }
   };
 
   const remove = async (entry: SkillEntry) => {
     const custom = entry.source === "custom";
+    const epoch = epochRef.current;
     const ok = await ask(
       custom
         ? `删除自定义技能 ${entry.name}？\n\n删除后 AI 将无法再加载该技能，且无法恢复。`
         : `删除技能 ${entry.name} 的覆盖？\n\n删除后恢复为内置内容，AI 将按内置版本加载该技能。`,
       { title: custom ? "删除自定义技能" : "删除技能覆盖", kind: "warning" },
     );
-    if (!ok) return;
+    if (!ok || epoch !== epochRef.current) return;
     setBusyName(entry.name);
     try {
       await api.deleteOverride(entry.name);
+      if (epoch !== epochRef.current) return;
       pushToast("success", custom ? `自定义技能 ${entry.name} 已删除` : `技能 ${entry.name} 已恢复为内置版本`);
       await reload();
     } catch (e) {
+      if (epoch !== epochRef.current) return;
       pushToast("error", `删除失败：${describeError(e)}`);
     } finally {
-      if (aliveRef.current) setBusyName(null);
+      if (aliveRef.current && epoch === epochRef.current) setBusyName(null);
     }
   };
 
