@@ -347,8 +347,14 @@ export function XtermView(props: XtermViewProps) {
       if (disposed || !kernelTabId) return;
       const channelId = channelIdOf(channel);
       if (!channelId) return;
-      call("terminal_pause", { tabId: kernelTabId, channelId, clientId: clientId(), attachmentId, acceptedBytes: acceptedOffsetNow() })
+      const firedAttachment = attachmentId;
+      call("terminal_pause", { tabId: kernelTabId, channelId, clientId: clientId(), attachmentId: firedAttachment, acceptedBytes: acceptedOffsetNow() })
         .then((res) => {
+          // The response belongs to the attachment that fired it: a delayed
+          // response from an old attachment never pollutes the new
+          // incarnation's episode space, whose legitimate generation may be
+          // smaller than the old one's token.
+          if (disposed || firedAttachment !== attachmentId) return;
           learnEpisodeToken((res as { episodeToken?: number } | null)?.episodeToken);
         })
         .catch(() => {
@@ -400,10 +406,13 @@ export function XtermView(props: XtermViewProps) {
       attachmentId = next;
       lastStreamAckOffset = -1;
       // A new attachment is a new episode space: generations restart, so the
-      // learned token, the resume dedup state, and any retry timer for the
-      // previous attachment must not carry over.
+      // learned token, the resume dedup state, the stale marker, any pending
+      // token refresh, and any retry timer for the previous attachment must
+      // not carry over.
       episodeToken = 0;
       resumeSentToken = -1;
+      staleToken = -1;
+      tokenRefreshInFlight = false;
       clearResumeRetry();
       sendStreamAck();
     };

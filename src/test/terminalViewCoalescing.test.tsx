@@ -2164,6 +2164,124 @@ describe("XtermView stream wiring", () => {
     expect(resumeCalls).toBe(callsAtExhaustion + 2);
     vi.useRealTimers();
   });
+
+  it("a delayed pause response from the old attachment never pollutes the new incarnation's smaller legitimate token", async () => {
+    // The r18 counterexample: attachment 11's pause response (token 31) is
+    // held pending; the writer drains and the view reopens to attachment 12,
+    // whose legitimate generation restarts at 1. The old response must be
+    // dropped — never learned — and attachment 12's own token 1 must be
+    // learned and actually lift the server-side pause.
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+      ephemeral: true,
+      attachmentId: 11,
+    });
+    let resolvePause11: ((value: unknown) => void) | undefined;
+    let episode12Open = false;
+    const resumeCalls: { attachmentId?: number; episodeToken?: number }[] = [];
+    let pauseCalls12 = 0;
+    harness.call.mockImplementation((command: string, args: { attachmentId?: number; episodeToken?: number }) => {
+      if (command === "terminal_pause") {
+        if (args.attachmentId === 11) {
+          // The old attachment's pause is held pending.
+          return new Promise((resolve) => {
+            resolvePause11 = resolve;
+          });
+        }
+        pauseCalls12 += 1;
+        return Promise.resolve({ episodeToken: 1 });
+      }
+      if (command === "terminal_recover") return Promise.resolve({ flushedOffset: 5 * (4 << 20), episodeToken: 31 });
+      if (command === "terminal_resume") {
+        resumeCalls.push({ attachmentId: args.attachmentId, episodeToken: args.episodeToken });
+        if (args.attachmentId === 12 && args.episodeToken === 1) {
+          episode12Open = false;
+          return Promise.resolve(undefined);
+        }
+        if (args.attachmentId === 11 && args.episodeToken === 31) {
+          return Promise.resolve(undefined);
+        }
+        return Promise.reject(Object.assign(new Error("stale episode token"), { code: "forbidden" }));
+      }
+      return Promise.resolve(undefined);
+    });
+    vi.useFakeTimers();
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "recovery-kernel-1",
+      streamSeq: 4 * (4 << 20),
+      controlBytes: 0,
+      attachmentId: 11,
+    });
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    // Attachment 11's resume fired with its own token and closed its episode;
+    // its pause response is still pending.
+    expect(resumeCalls).toEqual([{ attachmentId: 11, episodeToken: 31 }]);
+    // Reopen to attachment 12.
+    harness.attachTab.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      retainable: true,
+      ephemeral: false,
+      attachmentId: 12,
+    });
+    await act(async () => {
+      harness.reopenCb?.();
+      await flushMacrotask();
+      await flushMacrotask();
+    });
+    // The old attachment's pause response lands now: it must be dropped, not
+    // learned — attachment 12's episode space stays clean.
+    resolvePause11?.({ episodeToken: 31 });
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(resumeCalls).toEqual([{ attachmentId: 11, episodeToken: 31 }]);
+    expect(pauseCalls12).toBe(0);
+    // Attachment 12's own flow: a new saturation pauses with its first
+    // generation, and the resume with the legitimate smaller token 1
+    // actually lifts the server-side pause.
+    episode12Open = true;
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(pauseCalls12).toBe(1);
+    expect(resumeCalls).toEqual([
+      { attachmentId: 11, episodeToken: 31 },
+      { attachmentId: 12, episodeToken: 1 },
+    ]);
+    expect(episode12Open).toBe(false);
+    vi.useRealTimers();
+  });
 });
 
 describe("XtermView render coalescing (T-09 component portion)", () => {
