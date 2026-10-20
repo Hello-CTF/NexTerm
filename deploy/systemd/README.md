@@ -69,9 +69,12 @@ mirroring the service's effective configuration — the unit's `HOME` and
 every key from the env file, including `PG*` values the file sets
 explicitly — so ambient variables such as `PGDATABASE` or `PGPASSWORD`
 can never point the bootstrap at a different database or credential than
-the service uses. When the bootstrap does not run (staged `--root`
-installs, `auth=off` or `auth=platform` deployments), finish setup with
-the one-time code from the server log instead. If an init code was
+the service uses. The bootstrap executes in the unit's
+`WorkingDirectory`, so relative paths such as
+`NEXTERM_DB_PASSWORD_FILE` resolve exactly like the service resolves
+them. When the bootstrap does not run (staged `--root` installs,
+`auth=off` or `auth=platform` deployments), finish setup with the
+one-time code from the server log instead. If an init code was
 already issued and cannot be proven usable (for example a previous
 attempt failed to clean up its own code), the first install keeps
 failing with recovery guidance instead of starting an uninitialized

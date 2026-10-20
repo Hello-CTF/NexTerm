@@ -42,7 +42,10 @@ scrubbed to a whitelist that mirrors the service's effective
 configuration — the unit's HOME and every key from the env file,
 including PG* values the file sets explicitly — so ambient variables
 such as PGDATABASE or PGPASSWORD can never point it at a different
-database or credential than the service uses. When the bootstrap is skipped
+database or credential than the service uses. The bootstrap executes in
+the unit's WorkingDirectory, so relative paths such as
+NEXTERM_DB_PASSWORD_FILE resolve exactly like the service resolves
+them. When the bootstrap is skipped
 (staged --root installs, auth off/platform modes) finish setup with the
 one-time code from the server log instead. If an init code was already
 issued and cannot be proven usable, the first install keeps failing
@@ -628,6 +631,28 @@ env_get() {
   env_parse_value "$value"
 }
 
+env_key_valid() {
+  # a full key-name check (not a glob): a letter or underscore followed by
+  # any number of letters, digits or underscores — single-character keys
+  # are valid, empty keys and invalid trailing characters are not
+  local key="$1" i char
+  [ -n "$key" ] || return 1
+  case "$key" in
+    [A-Za-z_]*) ;;
+    *) return 1 ;;
+  esac
+  i=2
+  while [ "$i" -le "${#key}" ]; do
+    char="${key:$((i - 1)):1}"
+    case "$char" in
+      [A-Za-z0-9_]) ;;
+      *) return 1 ;;
+    esac
+    i=$((i + 1))
+  done
+  return 0
+}
+
 env_file_keys() {
   # print the assignment key of every non-comment logical line, in order;
   # used to mirror the service's effective environment exactly
@@ -641,9 +666,9 @@ env_file_keys() {
     esac
     key="${line%%=*}"
     key="${key%"${key##*[![:blank:]]}"}"
-    case "$key" in
-      [A-Za-z_][A-Za-z0-9_]*) printf '%s\n' "$key" ;;
-    esac
+    if env_key_valid "$key"; then
+      printf '%s\n' "$key"
+    fi
   done < <(tr '\r' '\n' < "$file" | env_join_continuations)
 }
 
@@ -1111,7 +1136,7 @@ bootstrap_admin() {
     log "skipping super-admin bootstrap (staged root $ROOT_PREFIX)"
     return 0
   fi
-  local env_file="$ETC_DIR/nexterm.env" auth data_dir db dsn dbpw effective rc env_keys server_home admin_user admin_pass key
+  local env_file="$ETC_DIR/nexterm.env" auth data_dir db dsn dbpw effective rc env_keys server_home admin_user admin_pass key bootstrap_wd
   auth="$(env_get "$env_file" NEXTERM_AUTH)"
   case "$auth" in
     ""|on|loopback) ;;
@@ -1137,6 +1162,10 @@ bootstrap_admin() {
   # The service's own HOME comes from the unit's Environment= line.
   server_home="$(grep -m1 '^Environment=HOME=' "$UNIT_DIR/$SERVER_UNIT" | sed 's/^Environment=HOME=//' || true)"
   [ -n "$server_home" ] || server_home="/var/lib/nexterm"
+  # The bootstrap runs in the unit's WorkingDirectory (mapped under the
+  # staged root when there is one), so relative paths such as
+  # NEXTERM_DB_PASSWORD_FILE resolve exactly like the service resolves them.
+  bootstrap_wd="$(resolve_path "$WORKING_DIR_NEXTERM" /)"
   # The whitelist mirrors the service's effective environment: every key of
   # the env file (systemd applies EnvironmentFile to the service verbatim),
   # the unit's HOME, and the intentionally injected admin variables.
@@ -1178,6 +1207,7 @@ bootstrap_admin() {
     done
     if [ -n "$admin_user" ]; then export NEXTERM_ADMIN_USERNAME="$admin_user"; fi
     if [ -n "$admin_pass" ]; then export NEXTERM_ADMIN_PASSWORD="$admin_pass"; fi
+    cd "$bootstrap_wd" || die "cannot enter the service working directory $bootstrap_wd"
     if [ "$REAL_ROOT" -eq 1 ]; then
       exec runuser --preserve-environment -u nexterm -- "$server_bin" init-admin
     fi

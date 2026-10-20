@@ -236,6 +236,7 @@ INIT_ADMIN_STUB = """#!/bin/sh
 printf '%s\\n' "$*" >> "$INIT_ADMIN_LOG"
 {
   printf 'RUNUSER_USER=%s\\n' "$(id -un)"
+  printf 'PWD=%s\\n' "$PWD"
   printf 'NEXTERM_AUTH=%s\\n' "${NEXTERM_AUTH:-}"
   printf 'NEXTERM_DATA_DIR=%s\\n' "${NEXTERM_DATA_DIR:-}"
   printf 'NEXTERM_DB=%s\\n' "${NEXTERM_DB:-}"
@@ -251,6 +252,7 @@ printf '%s\\n' "$*" >> "$INIT_ADMIN_LOG"
   printf 'PGSSLMODE=%s\\n' "${PGSSLMODE:-}"
   printf 'HOME=%s\\n' "${HOME:-}"
 } >> "$INIT_ADMIN_ENV_LOG"
+env >> "$INIT_ADMIN_ENV_LOG"
 if [ "${INIT_ADMIN_TOUCH_DATA:-0}" = "1" ]; then
   : > "$NEXTERM_DATA_DIR/data.db"
 fi
@@ -2697,6 +2699,8 @@ def test_real_root_bootstrap_preserves_custom_data_dir_ownership() -> None:
     finally:
         for path in ("/opt/nexterm", "/etc/nexterm", "/var/lib/nexterm"):
             shutil.rmtree(path, ignore_errors=True)
+        for unit in ("nexterm-server.service", "nexterm-onlyserver.service"):
+            pathlib.Path(f"/etc/systemd/system/{unit}").unlink(missing_ok=True)
         if created_run_dir:
             shutil.rmtree("/run/systemd/system", ignore_errors=True)
         if created_user:
@@ -2837,6 +2841,50 @@ def test_bootstrap_env_file_pg_values_pass_through() -> None:
         assert envlog["PGHOST"] == "pg.internal", envlog
 
 
+def test_bootstrap_runs_in_service_working_directory() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        example = payload / "nexterm.env.example"
+        example.write_text(example.read_text().replace(
+            "NEXTERM_DB=sqlite",
+            "NEXTERM_DB=postgres\nNEXTERM_DB_DSN=postgres://nexterm@db.example/nexterm\n"
+            "NEXTERM_DB_PASSWORD_FILE=db.password"))
+        # The relative password file exists only inside the staged root, the
+        # way the service would see it from its WorkingDirectory.
+        staged_wd = root / "var/lib/nexterm"
+        staged_wd.mkdir(parents=True)
+        (staged_wd / "db.password").write_text("file-password\n")
+        result = run_install(payload, root, stubs, base, init_admin=True)
+        assert result.returncode == 0, result.stderr
+        envlog = init_admin_env(base)
+        assert os.path.realpath(envlog["PWD"]) == os.path.realpath(staged_wd), \
+            f"the bootstrap must run in the service's WorkingDirectory so relative paths resolve identically: {envlog}"
+
+
+def test_bootstrap_env_file_single_char_key() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        example = payload / "nexterm.env.example"
+        example.write_text(example.read_text().replace(
+            "NEXTERM_DB=sqlite",
+            "NEXTERM_DB=postgres\nNEXTERM_DB_DSN=postgres://nexterm@db.example/nexterm\n"
+            "A=fromfile\nB=two\nA-B=not-an-identifier\n=nope\n1BAD=digit-start\nAFTER-TRAILING=bad"))
+        result = run_install(payload, root, stubs, base, init_admin=True, ambient={
+            "A": "ambient",
+            "B": "ambient-two",
+        })
+        assert result.returncode == 0, result.stderr
+        envlog = init_admin_env(base)
+        assert envlog["A"] == "fromfile", f"single-character keys must pass through with file values: {envlog}"
+        assert envlog["B"] == "two", envlog
+
+
 def test_bootstrap_real_postgres_database_isolation() -> None:
     dsn_base = os.environ.get("NEXTERM_TEST_POSTGRES_DSN", "")
     binary = os.environ.get("NEXTERM_TEST_SERVER_BINARY", "")
@@ -2894,7 +2942,13 @@ def test_bootstrap_real_postgres_database_isolation() -> None:
                 root = base / "root"
                 payload = make_payload(base, "v1")
                 example = payload / "nexterm.env.example"
+                # The real server binary does not know the staged root: give
+                # every case its own scratch data directory and HOME so
+                # nothing lands in the host's real /var/lib/nexterm (the
+                # binary maintains a cache directory under HOME).
+                data_dir = base / "data"
                 example.write_text(example.read_text().replace(
+                    "NEXTERM_DATA_DIR=/var/lib/nexterm", f"NEXTERM_DATA_DIR={data_dir}\nHOME={data_dir}").replace(
                     "NEXTERM_DB=sqlite", f"NEXTERM_DB=postgres\nNEXTERM_DB_DSN={dsn}\n{file_extra}"))
                 result = run_install(payload, root, stubs, base, ambient=ambient,
                                      init_admin_cmd=binary)
@@ -2905,6 +2959,112 @@ def test_bootstrap_real_postgres_database_isolation() -> None:
     finally:
         for name in created:
             psql("postgres", f"DROP DATABASE IF EXISTS {name}")
+
+
+def test_real_root_postgres_relative_db_password_file() -> None:
+    dsn_base = os.environ.get("NEXTERM_TEST_POSTGRES_DSN", "")
+    binary = os.environ.get("NEXTERM_TEST_SERVER_BINARY", "")
+    if (os.geteuid() != 0 or platform.system() != "Linux"
+            or os.environ.get("NEXTERM_TEST_REAL_ROOT_INSTALL") != "1"
+            or not dsn_base or not binary or not shutil.which("psql")):
+        print("skip   test_real_root_postgres_relative_db_password_file (needs root on Linux, NEXTERM_TEST_REAL_ROOT_INSTALL=1, psql, NEXTERM_TEST_POSTGRES_DSN and NEXTERM_TEST_SERVER_BINARY; mutates the system: disposable containers only)")
+        return
+    for path in ("/opt/nexterm", "/etc/nexterm", "/var/lib/nexterm"):
+        if os.path.exists(path):
+            raise AssertionError(f"refusing the real-root leg on a system with an existing install: {path}")
+    import re
+
+    match = re.match(r"^postgres(?:ql)?://([^:@/]+)(?::([^@/]*))?@([^/:]+)(?::(\d+))?/", dsn_base)
+    assert match, f"cannot parse NEXTERM_TEST_POSTGRES_DSN: {dsn_base!r}"
+    user, password, host, port = match.groups()
+    port = port or "5432"
+    db = "nexterm_boot_cwd"
+    created_user = False
+    created_run_dir = False
+
+    def psql(dbname: str, sql: str) -> subprocess.CompletedProcess:
+        dsn = f"postgres://{user}:{password}@{host}:{port}/{dbname}"
+        return subprocess.run(["psql", dsn, "-tAc", sql], capture_output=True, text=True, timeout=30)
+
+    try:
+        assert psql("postgres", f"DROP DATABASE IF EXISTS {db}").returncode == 0
+        assert psql("postgres", f"CREATE DATABASE {db}").returncode == 0
+        if subprocess.run(["id", "-u", "nexterm"], capture_output=True).returncode != 0:
+            subprocess.run(["useradd", "--system", "--user-group", "--home-dir", "/var/lib/nexterm",
+                            "--shell", "/usr/sbin/nologin", "nexterm"], check=True)
+            created_user = True
+        if not os.path.isdir("/run/systemd/system"):
+            os.makedirs("/run/systemd/system")
+            created_run_dir = True
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            os.chmod(base, 0o777)
+            stubs = make_stubs(base)
+            payload = make_payload(base, "v1")
+            example = payload / "nexterm.env.example"
+            dsn = f"postgres://{user}@{host}:{port}/{db}"
+            example.write_text(example.read_text().replace(
+                "NEXTERM_DB=sqlite",
+                f"NEXTERM_DB=postgres\nNEXTERM_DB_DSN={dsn}\nNEXTERM_DB_PASSWORD_FILE=m50-review-db.password"))
+
+            def install() -> subprocess.CompletedProcess:
+                env = dict(os.environ)
+                env["PATH"] = f"{stubs}:{env['PATH']}"
+                env["SYSTEMCTL_LOG"] = str(base / "systemctl.log")
+                env["OPENSSL_LOG"] = str(base / "openssl.log")
+                env["USERADD_LOG"] = str(base / "useradd.log")
+                env["NEXTERM_INSTALL_SYSTEMCTL"] = str(stubs / "systemctl")
+                env["NEXTERM_INSTALL_UNAME"] = str(stubs / "uname")
+                env["NEXTERM_INSTALL_INIT_ADMIN"] = binary
+                env["FAKE_ACTIVE_UNITS"] = ""
+                state = base / "systemctl-state-cwd"
+                state.write_text("")
+                env["SYSTEMCTL_STATE"] = str(state)
+                return subprocess.run(["/bin/bash", str(SCRIPT), "--source", str(payload)],
+                                      capture_output=True, text=True, env=env, cwd=base, timeout=120)
+
+            # Negative case: the relative password file is absent from the
+            # service WorkingDirectory — the first install fails closed and
+            # the service never starts.
+            missing = install()
+            assert missing.returncode != 0, "a relative password file missing from the service WorkingDirectory must fail the bootstrap"
+            assert "database password file" in missing.stderr, missing.stderr
+            assert "初始密码" not in missing.stdout, missing.stdout
+            assert os.path.exists("/opt/nexterm/.install-incomplete"), "the incomplete marker must survive"
+            calls = systemctl_calls(base)
+            assert "enable --now nexterm-server.service" not in calls, calls
+
+            # Positive case: the file exists where the service would find it
+            # (nexterm-owned, 0600), while the installer's own cwd does not
+            # contain it — the bootstrap must resolve it exactly like the
+            # service and complete the first install.
+            for path in ("/opt/nexterm", "/etc/nexterm", "/var/lib/nexterm"):
+                shutil.rmtree(path, ignore_errors=True)
+            for unit in ("nexterm-server.service", "nexterm-onlyserver.service"):
+                pathlib.Path(f"/etc/systemd/system/{unit}").unlink(missing_ok=True)
+            (base / "systemctl.log").unlink(missing_ok=True)
+            wd = pathlib.Path("/var/lib/nexterm")
+            wd.mkdir(parents=True)
+            (wd / "m50-review-db.password").write_text(password + "\n")
+            subprocess.run(["chown", "nexterm:nexterm", str(wd / "m50-review-db.password")], check=True)
+            os.chmod(wd / "m50-review-db.password", 0o600)
+            result = install()
+            assert result.returncode == 0, result.stderr
+            assert "初始密码: " in result.stdout, result.stdout
+            calls = systemctl_calls(base)
+            assert "enable --now nexterm-server.service" in calls, calls
+            row = psql(db, "SELECT count(*) FROM app_user")
+            assert row.returncode == 0 and row.stdout.strip() == "1", (row.stdout, row.stderr)
+    finally:
+        psql("postgres", f"DROP DATABASE IF EXISTS {db}")
+        for path in ("/opt/nexterm", "/etc/nexterm", "/var/lib/nexterm"):
+            shutil.rmtree(path, ignore_errors=True)
+        for unit in ("nexterm-server.service", "nexterm-onlyserver.service"):
+            pathlib.Path(f"/etc/systemd/system/{unit}").unlink(missing_ok=True)
+        if created_run_dir:
+            shutil.rmtree("/run/systemd/system", ignore_errors=True)
+        if created_user:
+            subprocess.run(["userdel", "nexterm"], capture_output=True)
 
 
 def test_real_server_archive_smoke() -> None:
@@ -3061,7 +3221,10 @@ def main() -> int:
         test_bootstrap_secrets_never_in_proc_cmdline,
         test_bootstrap_scrubs_ambient_pg_env,
         test_bootstrap_env_file_pg_values_pass_through,
+        test_bootstrap_runs_in_service_working_directory,
+        test_bootstrap_env_file_single_char_key,
         test_bootstrap_real_postgres_database_isolation,
+        test_real_root_postgres_relative_db_password_file,
         test_real_root_bootstrap_preserves_custom_data_dir_ownership,
         test_real_server_archive_smoke,
     ]
