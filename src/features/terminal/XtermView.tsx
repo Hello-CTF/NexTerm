@@ -296,6 +296,7 @@ export function XtermView(props: XtermViewProps) {
     // to DetachStream (the exec keeps running, output accumulates in the
     // bounded replay) and the reopen resumes via attachTab/ResumeExec.
     let pauseNeeded = false;
+    let pauseRetryTimer: number | undefined;
     const pauseUpstream = () => {
       if (!kernelTabId) return;
       if (containerId) {
@@ -305,15 +306,15 @@ export function XtermView(props: XtermViewProps) {
       pauseWithRetry();
     };
     const pauseWithRetry = () => {
-      if (!kernelTabId) return;
+      if (disposed || !kernelTabId) return;
       const channelId = channelIdOf(channel);
       if (!channelId) return;
       call("terminal_pause", { tabId: kernelTabId, channelId, acceptedBytes: acceptedOffsetNow() }).catch(() => {
         // The pause could not be established yet: retry while the writer is
         // still over the high watermark — without it the producer keeps
         // advancing and the refused suffix can outgrow the recovery ring.
-        if (pauseNeeded) {
-          window.setTimeout(() => pauseWithRetry(), 100);
+        if (pauseNeeded && !disposed) {
+          pauseRetryTimer = window.setTimeout(() => pauseWithRetry(), 100);
         }
       });
     };
@@ -325,6 +326,19 @@ export function XtermView(props: XtermViewProps) {
     let recoverPending = false;
     const acceptedOffsetNow = () =>
       streamAnchor ? streamAnchor.seq + Math.max(0, streamBytes - streamAnchor.control) : streamBytes;
+    // Report the accepted offset through the ordered write path so the server
+    // opens the recovery ring's retention floor without waiting for a
+    // pause/recover RPC: a delayed RPC must never let the producer evict the
+    // refused suffix first.
+    let lastStreamAckOffset = 0;
+    const sendStreamAck = () => {
+      if (!kernelTabId || containerId) return;
+      const offset = acceptedOffsetNow();
+      if (offset === lastStreamAckOffset) return;
+      lastStreamAckOffset = offset;
+      const frame = `{"type":"nexterm.stream-ack","offset":${offset}}`;
+      void terminalApi.write(kernelTabId, new TextEncoder().encode(frame)).catch(() => undefined);
+    };
     const resumeUpstream = () => {
       if (containerId || !kernelTabId) return;
       const channelId = channelIdOf(channel);
@@ -380,6 +394,7 @@ export function XtermView(props: XtermViewProps) {
         // last anchor's streamSeq plus the bytes accepted since it — so the
         // server's recovery ring replays exactly the refused suffix, not the
         // bytes a paused coalescer still holds for the resume flush.
+        sendStreamAck();
         if (recoverInFlight) {
           // A recover is already in flight: record that another refusal
           // arrived so it serially re-recovers once the response lands.
@@ -428,6 +443,7 @@ export function XtermView(props: XtermViewProps) {
           );
           if (paused) {
             pauseNeeded = true;
+            sendStreamAck();
             pauseUpstream();
           } else {
             pauseNeeded = false;
@@ -516,6 +532,12 @@ export function XtermView(props: XtermViewProps) {
         }
         streamBytes += bytes.length;
         if (recoverTarget !== null) maybeResume();
+        // Keep the server's retention floor current with the accepted offset
+        // through the ordered write path, without waiting for a pause/recover
+        // RPC: report at most once per MiB accepted.
+        if (streamBytes - lastStreamAckOffset >= 1 << 20) {
+          sendStreamAck();
+        }
         if (expiredNoticePending && streamBytes >= (streamAnchor?.control ?? 0)) {
           expiredNoticePending = false;
           writeExpiredNotice();
@@ -868,6 +890,11 @@ export function XtermView(props: XtermViewProps) {
 
     return () => {
       disposed = true;
+      pauseNeeded = false;
+      if (pauseRetryTimer !== undefined) {
+        window.clearTimeout(pauseRetryTimer);
+        pauseRetryTimer = undefined;
+      }
       coordinator.close();
       gridRef.current = null;
       onGeometryRef.current = null;

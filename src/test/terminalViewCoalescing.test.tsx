@@ -815,6 +815,49 @@ describe("XtermView stream wiring", () => {
     vi.useRealTimers();
   });
 
+  it("unmount stops the pause retry: no new pause RPCs after unmount", async () => {
+    // The pause retry must not keep calling a detached channel after the
+    // component unmounts: the timer is cleared and the retry entry checks
+    // disposed, so no new terminal_pause calls fire post-unmount.
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+      ephemeral: true,
+    });
+    harness.call.mockImplementation((command: string) =>
+      command === "terminal_pause"
+        ? Promise.reject(new Error("no such command"))
+        : Promise.resolve(undefined),
+    );
+    vi.useFakeTimers();
+    await show();
+    await attachOk();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    // Reach the high watermark so the pause retry loop starts (and keeps
+    // failing, so it would retry forever if not torn down).
+    act(() => harness.channel?.onBytes?.(new Uint8Array(4 << 20).fill(0x61)));
+    expect(harness.call).toHaveBeenCalledWith("terminal_pause", {
+      tabId: "kernel-1",
+      channelId: "channel-1",
+      acceptedBytes: expect.any(Number),
+    });
+    const callsBeforeUnmount = harness.call.mock.calls.length;
+    mounted!.unmount();
+    mounted = undefined;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(350);
+    });
+    expect(harness.call.mock.calls.length).toBe(callsBeforeUnmount);
+    vi.useRealTimers();
+  });
+
   it("visibility and controller-only changes do not detach or recreate the terminal", async () => {
     await show();
     await attachOk();
