@@ -96,7 +96,15 @@ type inventoryTargetExecRequest struct {
 }
 
 type inventoryTargetExecResponse struct {
-	Output string `json:"output"`
+	Output   string `json:"output"`
+	ExitCode int    `json:"exitCode"`
+}
+
+// inventoryTargetExecFailure details a command that ran but exited non-zero;
+// the output is preserved so callers can inspect the failed command's result.
+type inventoryTargetExecFailure struct {
+	ExitCode int    `json:"exitCode"`
+	Output   string `json:"output"`
 }
 
 // inventoryTargetActionExec is the only target action the IPC exposes;
@@ -381,10 +389,17 @@ func (s *inventoryService) execTarget(ctx context.Context, input inventoryTarget
 	output, execErr := fleetinventory.RunTargetGated(execCtx, s.runner, s.kubeconfigGate, target, fleetinventory.TargetExecAction{
 		Container: input.Container, Command: input.Command,
 	})
-	s.auditTargetExec(ctx, input, target, "", execErr)
 	if execErr != nil {
+		var exitErr *fleetinventory.CommandExitError
+		if errors.As(execErr, &exitErr) {
+			s.auditTargetExec(ctx, input, target, "", execErr)
+			return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeIO, "命令已执行但返回非零退出码").
+				WithDetail(inventoryTargetExecFailure{ExitCode: exitErr.Code, Output: string(exitErr.Output)})
+		}
+		s.auditTargetExec(ctx, input, target, "", execErr)
 		return inventoryTargetExecResponse{}, inventoryTargetExecError(execErr)
 	}
+	s.auditTargetExec(ctx, input, target, "", nil)
 	return inventoryTargetExecResponse{Output: string(output)}, nil
 }
 
@@ -428,29 +443,55 @@ func (s *inventoryService) execDockerTargetViaSession(ctx context.Context, input
 	result, execErr := s.docker.Exec(ctx, docker.ExecRequest{
 		SessionID: sessionID, Container: container, Command: inventoryShellJoin(input.Command),
 	})
-	s.auditTargetExec(ctx, input, target, sessionID, execErr)
 	if execErr != nil {
+		s.auditTargetExec(ctx, input, target, sessionID, execErr)
 		return inventoryTargetExecResponse{}, terminalIPCError(execErr)
 	}
-	return inventoryTargetExecResponse{Output: result.Output}, nil
+	if result.ExitCode != 0 {
+		execErr = &inventoryExecExitError{code: result.ExitCode}
+		s.auditTargetExec(ctx, input, target, sessionID, execErr)
+		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeIO, "命令已执行但返回非零退出码").
+			WithDetail(inventoryTargetExecFailure{ExitCode: result.ExitCode, Output: result.Output})
+	}
+	s.auditTargetExec(ctx, input, target, sessionID, nil)
+	return inventoryTargetExecResponse{Output: result.Output, ExitCode: result.ExitCode}, nil
 }
 
+// inventoryExecExitError marks a command that ran but exited non-zero on the
+// session-backed docker path.
+type inventoryExecExitError struct{ code int }
+
+func (e *inventoryExecExitError) Error() string { return fmt.Sprintf("exit code %d", e.code) }
+
 // dockerEndpointMatchesAsset reports whether the context endpoint addresses
-// the session asset's host; local socket endpoints never match.
+// the session asset's host. The scheme carries the transport semantics: an
+// ssh endpoint is matched against the asset's SSH port (default 22), while a
+// tcp endpoint is the Docker daemon port and is never compared with the
+// session's SSH/WinRM transport port. Local socket endpoints never match.
 func dockerEndpointMatchesAsset(endpoint fleetinventory.DockerEndpoint, asset store.AssetRow) bool {
-	if endpoint.Host == "" || asset.Host == nil {
+	if endpoint.Host == "" || asset.Host == nil || !strings.EqualFold(endpoint.Host, *asset.Host) {
 		return false
 	}
-	if !strings.EqualFold(endpoint.Host, *asset.Host) {
+	switch endpoint.Scheme {
+	case "ssh":
+		if endpoint.Username != "" && (asset.Username == nil || *asset.Username != endpoint.Username) {
+			return false
+		}
+		if endpoint.Port != "" {
+			assetPort := 22
+			if asset.Port != nil {
+				assetPort = int(*asset.Port)
+			}
+			if strconv.Itoa(assetPort) != endpoint.Port {
+				return false
+			}
+		}
+		return true
+	case "tcp":
+		return true
+	default:
 		return false
 	}
-	if endpoint.Username != "" && (asset.Username == nil || *asset.Username != endpoint.Username) {
-		return false
-	}
-	if endpoint.Port != "" && (asset.Port == nil || strconv.Itoa(int(*asset.Port)) != endpoint.Port) {
-		return false
-	}
-	return true
 }
 
 func inventoryShellJoin(argv []string) string {
@@ -526,12 +567,26 @@ func (s *inventoryService) auditTargetExec(ctx context.Context, input inventoryT
 	case target.Kubernetes != nil:
 		payload["target"] = target.Kubernetes.Namespace + "/" + target.Kubernetes.Pod
 	}
+	var exitCode *int32
 	if execErr != nil {
 		payload["error"] = execErr.Error()
+		var exitErr *fleetinventory.CommandExitError
+		var sessionExitErr *inventoryExecExitError
+		switch {
+		case errors.As(execErr, &exitErr):
+			code := int32(exitErr.Code)
+			exitCode = &code
+		case errors.As(execErr, &sessionExitErr):
+			code := int32(sessionExitErr.code)
+			exitCode = &code
+		}
+	} else {
+		zero := int32(0)
+		exitCode = &zero
 	}
 	auditCtx, cancel := context.WithTimeout(ipc.WithUserID(context.WithoutCancel(ctx), ipc.OwnerID(ctx)), 5*time.Second)
 	defer cancel()
-	_ = s.database.AuditInsert(auditCtx, store.AuditInput{Source: "user", Kind: "inventory_target_exec", Payload: payload})
+	_ = s.database.AuditInsert(auditCtx, store.AuditInput{Source: "user", Kind: "inventory_target_exec", Payload: payload, ExitCode: exitCode})
 }
 
 func (s *inventoryService) registerCommands(dispatcher *ipc.Dispatcher) error {

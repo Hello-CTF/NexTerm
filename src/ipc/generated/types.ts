@@ -422,6 +422,7 @@ export type InventoryTargetExecRequest = {
 
 export type InventoryTargetExecResponse = {
   output: string;
+  exitCode: number;
 };
 
 export type KillRequest = {

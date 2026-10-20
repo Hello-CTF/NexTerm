@@ -90,6 +90,8 @@ func connectInventoryTestSession(t *testing.T, manager *session.Manager, ownerID
 	return connected
 }
 
+func inventoryInt32Pointer(value int32) *int32 { return &value }
+
 func inventoryDockerExecRequest() inventoryTargetExecRequest {
 	return inventoryTargetExecRequest{
 		Kind: "docker-context",
@@ -280,6 +282,172 @@ func TestInventoryTargetExecDockerServerRequiresManagedSession(t *testing.T) {
 	dispatchInventoryTest(t, dispatcher, ctxB, "inventory_target_exec", ownSession, &result)
 	if len(executor.calls) != 1 || executor.calls[0].SessionID != sessionB.ID {
 		t.Fatalf("owner-b own-session exec = %+v", executor.calls)
+	}
+}
+
+func TestInventoryTargetExecDockerServerEndpointSchemes(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	manager := newInventorySessionManager(t)
+	executor := &fakeInventoryDockerExecutor{result: docker.ExecResult{Output: "Linux\n"}}
+	service := newInventoryService(database, nil, false, t.TempDir(),
+		withInventoryWatchInterval(20*time.Millisecond), withInventoryDockerAccess(manager, executor))
+	t.Cleanup(func() { _ = service.Shutdown(context.Background()) })
+	runner := &recordingInventoryRunner{outputs: map[string][]byte{}}
+	service.runner = runner
+	dispatcher := newInventoryExecDispatcher(t, service)
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+
+	asset, err := database.AssetCreate(ctx, store.AssetInput{Kind: "ssh", Name: "prod-host", Host: stringPointerForInventory("prod.example"), Port: inventoryInt32Pointer(22), Username: optionalString("ops")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jumpAsset, err := database.AssetCreate(ctx, store.AssetInput{Kind: "ssh", Name: "jump-host", Host: stringPointerForInventory("prod.example"), Port: inventoryInt32Pointer(2222), Username: optionalString("ops")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connected := connectInventoryTestSession(t, manager, "owner-a", asset.ID)
+	jumpConnected := connectInventoryTestSession(t, manager, "owner-a", jumpAsset.ID)
+
+	// A TCP Docker daemon port is not the session transport port: the same
+	// host through an own session is allowed even though 2375 != 22.
+	tcpSameHost := inventoryDockerExecRequest()
+	tcpSameHost.Target = map[string]any{"type": "context", "name": "prod", "dockerEndpoint": "tcp://prod.example:2375"}
+	tcpSameHost.SessionID = connected.ID
+	var result inventoryTargetExecResponse
+	dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", tcpSameHost, &result)
+	if result.Output != "Linux\n" || len(executor.calls) != 1 {
+		t.Fatalf("tcp same-host exec = %+v calls=%+v", result, executor.calls)
+	}
+
+	// A different host stays fail closed for TCP endpoints.
+	executor.calls = nil
+	tcpOtherHost := inventoryDockerExecRequest()
+	tcpOtherHost.Target = map[string]any{"type": "context", "name": "prod", "dockerEndpoint": "tcp://other.example:2375"}
+	tcpOtherHost.SessionID = connected.ID
+	response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", tcpOtherHost, nil)
+	requireInventoryIPCError(t, response, ipc.CodeForbidden)
+	if len(executor.calls) != 0 {
+		t.Fatalf("tcp other-host exec reached the backend: %+v", executor.calls)
+	}
+
+	// SSH endpoints compare the SSH port: 2222 against asset port 22 fails.
+	sshWrongPort := inventoryDockerExecRequest()
+	sshWrongPort.Target = map[string]any{"type": "context", "name": "prod", "dockerEndpoint": "ssh://ops@prod.example:2222"}
+	sshWrongPort.SessionID = connected.ID
+	response = dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", sshWrongPort, nil)
+	requireInventoryIPCError(t, response, ipc.CodeForbidden)
+	if len(executor.calls) != 0 {
+		t.Fatalf("ssh wrong-port exec reached the backend: %+v", executor.calls)
+	}
+
+	// The matching SSH port on the same host is allowed.
+	sshRightPort := sshWrongPort
+	sshRightPort.SessionID = jumpConnected.ID
+	dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", sshRightPort, &result)
+	if len(executor.calls) != 1 {
+		t.Fatalf("ssh matching-port exec calls = %+v", executor.calls)
+	}
+}
+
+func TestInventoryTargetExecExitCodeContract(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	manager := newInventorySessionManager(t)
+	executor := &fakeInventoryDockerExecutor{}
+	service := newInventoryService(database, nil, false, t.TempDir(),
+		withInventoryWatchInterval(20*time.Millisecond), withInventoryDockerAccess(manager, executor))
+	t.Cleanup(func() { _ = service.Shutdown(context.Background()) })
+	runner := &recordingInventoryRunner{outputs: map[string][]byte{}}
+	service.runner = runner
+	dispatcher := newInventoryExecDispatcher(t, service)
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	asset, err := database.AssetCreate(ctx, store.AssetInput{Kind: "ssh", Name: "prod-host", Host: stringPointerForInventory("prod.example"), Username: optionalString("ops")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connected := connectInventoryTestSession(t, manager, "owner-a", asset.ID)
+
+	requireExecFailure := func(response ipc.Response, exitCode int, output string) {
+		t.Helper()
+		requireInventoryIPCError(t, response, ipc.CodeIO)
+		detailJSON, err := json.Marshal(response.Error.Detail)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var detail inventoryTargetExecFailure
+		if err := json.Unmarshal(detailJSON, &detail); err != nil {
+			t.Fatal(err)
+		}
+		if detail.ExitCode != exitCode || detail.Output != output {
+			t.Fatalf("failure detail = %+v, want exitCode=%d output=%q", detail, exitCode, output)
+		}
+	}
+
+	// Non-zero exit with empty output is an executed-but-failed command.
+	failing := inventoryDockerExecRequest()
+	failing.SessionID = connected.ID
+	executor.result = docker.ExecResult{Output: "", ExitCode: 7}
+	response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", failing, nil)
+	requireExecFailure(response, 7, "")
+	rows, err := database.AuditQuery(ctx, store.AuditQuery{Limit: 10})
+	if err != nil || len(rows) == 0 {
+		t.Fatalf("audit rows = %+v, err=%v", rows, err)
+	}
+	if rows[0].ExitCode == nil || *rows[0].ExitCode != 7 {
+		t.Fatalf("audit exit code = %v, want 7", rows[0].ExitCode)
+	}
+
+	// Non-zero exit with output preserves both.
+	executor.result = docker.ExecResult{Output: "boom\n", ExitCode: 2}
+	response = dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", failing, nil)
+	requireExecFailure(response, 2, "boom\n")
+
+	// Success carries exitCode 0.
+	executor.result = docker.ExecResult{Output: "ok\n", ExitCode: 0}
+	var result inventoryTargetExecResponse
+	dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", failing, &result)
+	if result.Output != "ok\n" || result.ExitCode != 0 {
+		t.Fatalf("success result = %+v", result)
+	}
+}
+
+func TestInventoryTargetExecLocalPathExitCodeContract(t *testing.T) {
+	service, database := newInventoryTestService(t, true)
+	runner := &recordingInventoryRunner{errors: map[string]error{
+		"docker --context prod exec web uname -a": &fleetinventory.CommandExitError{Code: 3, Output: []byte("partial\n"), Stderr: "boom"},
+	}}
+	service.runner = runner
+	dispatcher := newInventoryExecDispatcher(t, service)
+	response := dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", inventoryDockerExecRequest(), nil)
+	requireInventoryIPCError(t, response, ipc.CodeIO)
+	detailJSON, err := json.Marshal(response.Error.Detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var detail inventoryTargetExecFailure
+	if err := json.Unmarshal(detailJSON, &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.ExitCode != 3 || detail.Output != "partial\n" {
+		t.Fatalf("failure detail = %+v", detail)
+	}
+	rows, err := database.AuditQuery(context.Background(), store.AuditQuery{Limit: 10})
+	if err != nil || len(rows) == 0 {
+		t.Fatalf("audit rows = %+v, err=%v", rows, err)
+	}
+	if rows[0].ExitCode == nil || *rows[0].ExitCode != 3 {
+		t.Fatalf("audit exit code = %v, want 3", rows[0].ExitCode)
 	}
 }
 
