@@ -8,6 +8,14 @@ tasks:
     cmds:
       - go mod tidy -diff
 
+  stamp:mobile:config:
+    summary: Refresh the ignored generated mobile stamp config from NEXTERM_RELEASE_VERSION
+    # Always runs (no sources/generates): go-task executes deps before the
+    # dependent task's up-to-date check, so a version change or removal
+    # reaches build/config.stamp.yml in time to invalidate cached generation.
+    cmds:
+      - node scripts/mobile-source.mjs stamp
+
   build:frontend:
     summary: Build or consume the manifest-verified frontend project
     run: once

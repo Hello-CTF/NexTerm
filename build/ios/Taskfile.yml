@@ -304,6 +304,11 @@ tasks:
 
   generate:ios:overlay:
     summary: Generate Go build overlay and iOS shim
+    deps:
+      # The stamp refresh must run before this task's up-to-date check; as a
+      # dep it always runs, so a version change or removal reaches the
+      # sources and invalidates the cached generation.
+      - task: common:stamp:mobile:config
     sources:
       - build/config.yml
       - build/config.stamp.yml
@@ -311,10 +316,6 @@ tasks:
       - build/ios/xcode/overlay.json
       - build/ios/xcode/gen/main_ios.gen.go
     cmds:
-      # Refresh the ignored generated stamp config (a no-op unless
-      # NEXTERM_RELEASE_VERSION is set) so wails consumes the stamped version
-      # without the tracked build/config.yml leaving the tree dirty.
-      - node scripts/mobile-source.mjs stamp
       - wails3 ios overlay:gen -out build/ios/xcode/overlay.json -config "$(node scripts/mobile-source.mjs config)"
       - |
         node -e '
@@ -332,6 +333,12 @@ tasks:
   generate:ios:xcode:
     internal: true
     summary: Generate iOS Xcode project structure and assets
+    deps:
+      # The stamp refresh must run before this task's up-to-date check; as a
+      # dep it always runs, so a version change or removal reaches the
+      # sources and invalidates the cached generation (the generated
+      # Info.plist picks the version up from the stamp).
+      - task: common:stamp:mobile:config
     sources:
       - build/config.yml
       - build/config.stamp.yml
@@ -344,10 +351,6 @@ tasks:
       - build/ios/xcode/main/Assets.xcassets/**/*
       - build/ios/xcode/main.xcodeproj/project.pbxproj
     cmds:
-      # The stamp step keeps the ignored generated config in sync with
-      # NEXTERM_RELEASE_VERSION; the generated Info.plist picks the version up
-      # from it while the tracked build/config.yml stays a 0.0.0 placeholder.
-      - node scripts/mobile-source.mjs stamp
       - wails3 ios xcode:gen -outdir build/ios/xcode -config "$(node scripts/mobile-source.mjs config)"
       # The generated launch screen shows the product name as a text label;
       # overlay the icon-only storyboard and its LaunchIcon image set.

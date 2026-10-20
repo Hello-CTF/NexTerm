@@ -212,3 +212,126 @@ test("ldflags CLI resolves the release version and dirty commit from the environ
   assert.equal(missing.status, 1);
   assert.match(missing.stderr, /--platform/);
 });
+
+
+// --- go-task level checks ---------------------------------------------------
+// The CLI tests above bypass go-task: variable propagation, deps and the
+// sources/generates up-to-date cache only exist at the task level.
+
+function taskRunner() {
+  for (const runner of [["task"], ["wails3", "task"]]) {
+    const probe = spawnSync(runner[0], runner[0] === "task" ? ["--version"] : ["version"], { encoding: "utf8" });
+    if (!probe.error && probe.status === 0) return runner;
+  }
+  return null;
+}
+
+function runTask(cwd, args, version) {
+  const runner = taskRunner();
+  assert.ok(runner, "a go-task runner is required (install task or the pinned wails3 CLI)");
+  return spawnSync(runner[0], [...runner.slice(1), ...args], {
+    cwd,
+    env: { ...process.env, NEXTERM_RELEASE_VERSION: version || "" },
+    encoding: "utf8",
+  });
+}
+
+function requireWails3() {
+  const probe = spawnSync("wails3", ["version"], { encoding: "utf8" });
+  assert.ok(!probe.error && probe.status === 0, "the pinned wails3 CLI is required (go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27)");
+}
+
+// An isolated checkout with just the files the generation tasks touch, so the
+// real task graph (deps, up-to-date cache, wails3 generators) runs without
+// touching the repository work tree.
+function isolatedRepo(t) {
+  requireWails3();
+  const root = fixture(t, "nexterm-mobile-task-");
+  for (const item of ["Taskfile.yml", ".gitignore", "build", "scripts"]) {
+    fs.cpSync(path.join(ROOT, item), path.join(root, item), { recursive: true });
+  }
+  // generate:ios:xcode is internal; reach it through a harness task.
+  fs.appendFileSync(path.join(root, "Taskfile.yml"), `  harness:ios:xcode:
+    deps:
+      - task: ios:generate:ios:xcode
+    cmds:
+      - echo "harness done"
+`);
+  for (const generated of [MOBILE_STAMP_CONFIG_PATH, "build/android/overlay.json", "build/android/gen", "build/ios/xcode"]) {
+    fs.rmSync(path.join(root, generated), { recursive: true, force: true });
+  }
+  git(root, "init", "-q");
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "init");
+  return root;
+}
+
+function stampVersion(root) {
+  const stamp = path.join(root, MOBILE_STAMP_CONFIG_PATH);
+  if (!fs.existsSync(stamp)) return null;
+  return fs.readFileSync(stamp, "utf8").match(/version: "([^"]+)"/)?.[1] ?? null;
+}
+
+function plistShortVersion(plist) {
+  const text = fs.readFileSync(plist, "utf8");
+  return text.match(/<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/)?.[1] ?? null;
+}
+
+test("release package tasks compile every architecture with production tags", () => {
+  requireWails3();
+  for (const [target, expectedBuilds] of [
+    ["android:package", 1],
+    ["android:package:fat", 2],
+    ["android:bundle", 1],
+    ["android:bundle:fat", 2],
+    ["ios:package", 1],
+  ]) {
+    const result = runTask(ROOT, [target, "--dry"], "1.2.3");
+    assert.equal(result.status, 0, `${target}: ${result.stderr}`);
+    const builds = `${result.stdout}\n${result.stderr}`.split(/\r?\n/).filter((line) => line.includes("go build -buildmode="));
+    assert.equal(builds.length, expectedBuilds, `${target}: expected ${expectedBuilds} go build lines`);
+    for (const line of builds) {
+      assert.ok(line.includes("-tags production,"), `${target}: ${line}`);
+      assert.ok(!line.includes(",debug"), `${target}: ${line}`);
+    }
+  }
+});
+
+test("android overlay generation refreshes the stamp across cached runs", (t) => {
+  const root = isolatedRepo(t);
+  const run = (version) => {
+    const result = runTask(root, ["android:generate:android:overlay"], version);
+    assert.equal(result.status, 0, result.stderr);
+  };
+  run("3.0.0");
+  run("3.0.0");
+  run("3.0.0"); // stabilized; further same-version runs may be up to date
+  assert.equal(stampVersion(root), "3.0.0");
+  run("4.0.0"); // was stuck at 3.0.0 when the stamp refresh was a task command
+  assert.equal(stampVersion(root), "4.0.0");
+  run(""); // unset removes the stale stamp and regenerates from the tracked config
+  assert.equal(stampVersion(root), null);
+  assert.equal(fs.readFileSync(path.join(root, MOBILE_CONFIG_PATH), "utf8").includes('version: "0.0.0"'), true);
+  assert.equal(fs.existsSync(path.join(root, "build/android/overlay.json")), true);
+  assert.equal(git(root, "status", "--porcelain").trim(), "");
+});
+
+test("ios xcode generation refreshes the stamp across cached runs", (t) => {
+  const root = isolatedRepo(t);
+  const plist = path.join(root, "build/ios/xcode/main/Info.plist");
+  const run = (version) => {
+    const result = runTask(root, ["harness:ios:xcode"], version);
+    assert.equal(result.status, 0, result.stderr);
+  };
+  run("1.2.3");
+  run("1.2.3");
+  run("1.2.3"); // stabilized; further same-version runs may be up to date
+  assert.equal(plistShortVersion(plist), "1.2.3");
+  run("5.0.0"); // was stuck at 1.2.3 when the stamp refresh was a task command
+  assert.equal(stampVersion(root), "5.0.0");
+  assert.equal(plistShortVersion(plist), "5.0.0");
+  run(""); // unset removes the stale stamp and regenerates from the tracked config
+  assert.equal(stampVersion(root), null);
+  assert.equal(plistShortVersion(plist), "0.0.0");
+  assert.equal(fs.readFileSync(path.join(root, MOBILE_CONFIG_PATH), "utf8").includes('version: "0.0.0"'), true);
+});

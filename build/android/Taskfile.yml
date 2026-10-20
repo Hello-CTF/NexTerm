@@ -46,8 +46,7 @@ tasks:
       - task: compile:go:shared
         vars:
           ARCH: '{{.ARCH | default .HOST_ARCH}}'
-    env:
-      PRODUCTION: '{{.PRODUCTION | default "false"}}'
+          PRODUCTION: '{{.PRODUCTION | default "false"}}'
 
   compile:go:shared:
     summary: Compile Go code to shared library (.so)
@@ -232,6 +231,11 @@ tasks:
 
   generate:android:overlay:
     summary: Generate Go build overlay that registers the Android main
+    deps:
+      # The stamp refresh must run before this task's up-to-date check; as a
+      # dep it always runs, so a version change or removal reaches the
+      # sources and invalidates the cached generation.
+      - task: common:stamp:mobile:config
     sources:
       - build/config.yml
       - build/config.stamp.yml
@@ -239,10 +243,6 @@ tasks:
       - build/android/overlay.json
       - build/android/gen/main_android.gen.go
     cmds:
-      # Refresh the ignored generated stamp config (a no-op unless
-      # NEXTERM_RELEASE_VERSION is set) so wails consumes the stamped version
-      # without the tracked build/config.yml leaving the tree dirty.
-      - node scripts/mobile-source.mjs stamp
       - wails3 android overlay:gen -out build/android/overlay.json -config "$(node scripts/mobile-source.mjs config)"
       - |
         node -e '
