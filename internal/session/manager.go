@@ -755,7 +755,7 @@ func (m *Manager) disconnect(id string, expectedIdle *time.Time) error {
 		_ = transport.Close()
 	}
 	m.emit(context.Background(), TopicSessionStatus, disconnectedEvent)
-	m.transcriptEnded(id)
+	m.transcriptEnded(session)
 	return nil
 }
 
@@ -874,7 +874,7 @@ func (m *Manager) reap(id string, expectedIdle ...time.Time) error {
 		return ErrStaleGeneration
 	}
 	m.emit(context.Background(), TopicSessionStatus, disconnectedEvent)
-	m.transcriptEnded(id)
+	m.transcriptEnded(session)
 	return nil
 }
 

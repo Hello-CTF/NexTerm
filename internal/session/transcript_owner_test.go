@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -442,3 +443,178 @@ var (
 	_ DurableTabTitleStore         = (*legacyOnlyStore)(nil)
 	_ base.DurableProvider         = (*fakeDurableProvider)(nil)
 )
+
+// ownerRecordingSink records the owner every sink call carried so tests can
+// prove the manager stamps the trusted session owner onto the transcript
+// context, independent of what the caller's context carried.
+type ownerRecordingSink struct {
+	mu     sync.Mutex
+	owners map[string][]string
+}
+
+func newOwnerRecordingSink() *ownerRecordingSink {
+	return &ownerRecordingSink{owners: make(map[string][]string)}
+}
+
+func (s *ownerRecordingSink) record(method string, ctx context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.owners[method] = append(s.owners[method], ipc.OwnerID(ctx))
+}
+
+func (s *ownerRecordingSink) SessionStarted(ctx context.Context, _ TranscriptInfo) {
+	s.record("started", ctx)
+}
+
+func (s *ownerRecordingSink) SessionOutput(ctx context.Context, _, _, _ string, _ []byte) {
+	s.record("output", ctx)
+}
+
+func (s *ownerRecordingSink) SessionInput(ctx context.Context, _, _ string, _ []byte) {
+	s.record("input", ctx)
+}
+
+func (s *ownerRecordingSink) SessionResize(ctx context.Context, _, _ string, _, _ uint32) {
+	s.record("resize", ctx)
+}
+
+func (s *ownerRecordingSink) SessionEnded(ctx context.Context, _ string) {
+	s.record("ended", ctx)
+}
+
+func (s *ownerRecordingSink) calls(method string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.owners[method]...)
+}
+
+func (s *ownerRecordingSink) assertEveryCallCarries(t *testing.T, method, want string) {
+	t.Helper()
+	calls := s.calls(method)
+	if len(calls) == 0 {
+		t.Fatalf("sink recorded no %s calls", method)
+	}
+	for index, owner := range calls {
+		if owner != want {
+			t.Fatalf("%s call %d owner = %q, want %q (all calls: %v)", method, index, owner, want, calls)
+		}
+	}
+}
+
+func TestTranscriptSinkCallsCarryTrustedSessionOwner(t *testing.T) {
+	connector := newFakeConnector()
+	sink := newOwnerRecordingSink()
+	manager := NewManager(Config{
+		Connector: connector, Terminals: newFakeTerminalFactory(),
+		Transcripts: sink, ReconnectBackoff: []time.Duration{0},
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	ownerA := requestTestUser("owner-a")
+	connected, err := manager.Connect(ownerA, Asset{ID: "asset", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.OpenTab(ownerA, OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client-a", ChannelID: "channel-a", Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := connector.transport(0).channel(0).emit([]byte("owner-output\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(sink.calls("output")) > 0 })
+	if err := manager.Write(ownerA, info.ID, "client-a", []byte("owner-input\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(sink.calls("input")) > 0 })
+	if err := manager.Resize(ownerA, info.ID, "client-a", 120, 40); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(sink.calls("resize")) >= 2 })
+
+	if err := manager.Disconnect(connected.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(sink.calls("ended")) == 1 })
+	if err := manager.Reconnect(ownerA, connected.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(sink.calls("started")) == 2 })
+
+	for _, method := range []string{"started", "output", "input", "resize", "ended"} {
+		sink.assertEveryCallCarries(t, method, "owner-a")
+	}
+}
+
+// The trusted owner comes from the session record, not the caller's context:
+// an open deployment admits identity-less callers, and their transcript calls
+// must still write under the session owner's identity. Ownerless sessions on
+// open deployments keep the legacy ownerless behavior.
+func TestTranscriptSinkOwnerComesFromSessionNotCaller(t *testing.T) {
+	connector := newFakeConnector()
+	sink := newOwnerRecordingSink()
+	manager := NewManager(Config{
+		Connector: connector, Terminals: newFakeTerminalFactory(),
+		Transcripts: sink, OpenAccess: true,
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(requestTestUser("owner-a"), Asset{ID: "asset", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.OpenTab(context.Background(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client-a", ChannelID: "channel-a", Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := connector.transport(0).channel(0).emit([]byte("open-output\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(sink.calls("output")) > 0 })
+	if err := manager.Write(context.Background(), info.ID, "client-a", []byte("open-input\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(sink.calls("input")) > 0 })
+	for _, method := range []string{"started", "output", "input"} {
+		sink.assertEveryCallCarries(t, method, "owner-a")
+	}
+
+	if _, err := manager.Connect(context.Background(), Asset{ID: "asset-open", Kind: KindSSH}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(sink.calls("started")) == 2 })
+	if got := sink.calls("started")[1]; got != "" {
+		t.Fatalf("ownerless open-deployment session sink owner = %q, want legacy ownerless", got)
+	}
+}
+
+func TestReconnectOnceSecondPeriodCarriesOwner(t *testing.T) {
+	connector := newFakeConnector()
+	sink := newOwnerRecordingSink()
+	manager := NewManager(Config{
+		Connector: connector, Terminals: newFakeTerminalFactory(),
+		Transcripts: sink, ReconnectBackoff: []time.Duration{0},
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	ownerA := requestTestUser("owner-a")
+	connected, err := manager.Connect(ownerA, Asset{ID: "asset", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.ReconnectOnceFor(ownerA, connected.ID, Asset{ID: "asset", Kind: KindSSH}); err != nil {
+		t.Fatal(err)
+	}
+	connected.mu.Lock()
+	owner := userIDFromContext(connected.ctx)
+	connected.mu.Unlock()
+	if owner != "owner-a" {
+		t.Fatalf("reconnect-once second period ctx owner = %q, want owner-a", owner)
+	}
+	waitFor(t, func() bool { return len(sink.calls("started")) == 2 && len(sink.calls("ended")) == 1 })
+	for _, method := range []string{"started", "ended"} {
+		sink.assertEveryCallCarries(t, method, "owner-a")
+	}
+}

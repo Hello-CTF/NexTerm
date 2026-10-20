@@ -77,7 +77,7 @@ func (m *Manager) beginReconnectOnce(ctx context.Context, id string) (*Session, 
 	oldTransport := session.transport
 	session.transport = nil
 	session.generation = generation
-	session.ctx, session.cancel = context.WithCancel(m.ctx)
+	session.ctx, session.cancel = context.WithCancel(ownerCtx(m.ctx, session.userID))
 	session.status = StatusReconnecting
 	session.reconnecting = true
 	session.reconnectDone = make(chan struct{})
@@ -96,7 +96,7 @@ func (m *Manager) beginReconnectOnce(ctx context.Context, id string) (*Session, 
 		_ = oldTransport.Close()
 	}
 	m.emit(context.Background(), TopicSessionStatus, reconnectingEvent)
-	m.transcriptEnded(id)
+	m.transcriptEnded(session)
 	return session, generation, nil
 }
 

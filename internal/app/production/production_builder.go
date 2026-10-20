@@ -136,6 +136,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	emitter := session.AdaptEmitter(config.Config.Events)
 	transcriptWriter := newTranscriptWriter(transcriptWriterConfig{
 		Database: database, Logger: config.Config.Logger,
+		RequireOwner: !(config.Desktop || owner.OpenAccess(ctx)),
 	})
 	var durableResolver session.DurableResolver
 	var sshResolver *sshdaemon.Resolver
