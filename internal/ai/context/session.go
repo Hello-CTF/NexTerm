@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
@@ -12,11 +13,20 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
+// sessionRequestContext elevates an identity-less caller to open access only
+// in trusted-open shapes: a desktop deployment, an explicitly open
+// deployment, or an internal shared-state caller already marked by the app
+// (owner.WithOpenAccess). Server account mode never elevates here, so a
+// gateway request without an identity keeps requester-less reads denied
+// (ErrForbidden) instead of reaching every tab.
 func sessionRequestContext(ctx context.Context) context.Context {
 	if _, ok := ipc.UserIDFromContext(ctx); ok {
 		return ctx
 	}
-	return session.WithOpenAccess(ctx)
+	if owner.OpenAccess(ctx) {
+		return session.WithOpenAccess(ctx)
+	}
+	return ctx
 }
 
 func WithSession(deps Dependencies, manager *session.Manager, storage *store.Store, database tools.Database) Dependencies {

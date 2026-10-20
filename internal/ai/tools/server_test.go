@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	aiowner "github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/db"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
@@ -309,7 +310,7 @@ func TestSessionDependenciesEnforceAccountOwnership(t *testing.T) {
 		if otherResult.OK || !strings.Contains(otherResult.Text, session.ErrForbidden.Error()) || strings.Contains(otherResult.Text, "owner-only-marker") {
 			t.Fatalf("cross-account read_screen = %+v", otherResult)
 		}
-		openResult := registry.Execute(context.Background(), "open", scope, Call{ID: "open-read", Name: "read_screen"}, nil)
+		openResult := registry.Execute(aiowner.WithOpenAccess(context.Background()), "open", scope, Call{ID: "open-read", Name: "read_screen"}, nil)
 		if !openResult.OK || !strings.Contains(openResult.Text, "owner-only-marker") {
 			t.Fatalf("trusted open read_screen = %+v", openResult)
 		}
@@ -325,7 +326,7 @@ func TestSessionDependenciesEnforceAccountOwnership(t *testing.T) {
 		if assetID := ResolveGrantDeviceID(other, registry, Scope{TabID: tab.ID}); assetID != "" {
 			t.Fatalf("cross-account grant device = %q", assetID)
 		}
-		if assetID := ResolveGrantDeviceID(context.Background(), registry, Scope{TabID: tab.ID}); assetID != "owner-asset" {
+		if assetID := ResolveGrantDeviceID(aiowner.WithOpenAccess(context.Background()), registry, Scope{TabID: tab.ID}); assetID != "owner-asset" {
 			t.Fatalf("trusted open grant device = %q", assetID)
 		}
 		if calls := legacyCalls.Load(); calls != 0 {

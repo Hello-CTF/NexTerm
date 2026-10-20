@@ -5,11 +5,19 @@ import (
 	"errors"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
+	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 func requestOwnerID(ctx context.Context) string {
 	return ipc.OwnerID(ctx)
+}
+
+// resolveOwner fails closed when the deployment requires an accountable
+// identity: server mode rejects requests without an account instead of
+// letting them act as an empty owner; shared deployments stay compatible.
+func (m *Manager) resolveOwner(ctx context.Context) (string, error) {
+	return owner.ID(ctx, m.deps.Shared)
 }
 
 func linkedRequestContext(requestCtx, ownerCtx context.Context) (context.Context, context.CancelFunc) {
@@ -22,6 +30,9 @@ func linkedRequestContext(requestCtx, ownerCtx context.Context) (context.Context
 }
 
 func (m *Manager) authorizeTab(ctx context.Context, tabID string) error {
+	if _, err := m.resolveOwner(ctx); err != nil {
+		return err
+	}
 	if tabID == "" || m.deps.Snapshot == nil {
 		return errors.New("tabId 或终端服务无效")
 	}
@@ -32,6 +43,9 @@ func (m *Manager) authorizeTab(ctx context.Context, tabID string) error {
 func (m *Manager) authorizeOwnership(ctx context.Context, tabID, token string) (*ownership, error) {
 	if token == "" {
 		return nil, ErrStaleOwnership
+	}
+	if _, err := m.resolveOwner(ctx); err != nil {
+		return nil, err
 	}
 	if err := m.authorizeTab(ctx, tabID); err != nil {
 		return nil, err
@@ -49,6 +63,9 @@ func (m *Manager) authorizeOwnership(ctx context.Context, tabID, token string) (
 }
 
 func (m *Manager) authorizeJob(ctx context.Context, jobID string) (*runState, error) {
+	if _, err := m.resolveOwner(ctx); err != nil {
+		return nil, err
+	}
 	m.mu.Lock()
 	state := m.jobs[jobID]
 	m.mu.Unlock()

@@ -160,6 +160,7 @@ func composeTakeoverRuntime(t *testing.T, database *store.Store, providerURL, as
 	}
 	transport := &takeoverFakeTransport{}
 	sessions := session.NewManager(session.Config{
+		OpenAccess: true,
 		Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 			return transport, nil
 		}),

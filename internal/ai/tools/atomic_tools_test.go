@@ -24,7 +24,7 @@ func TestProductionWaitSnapshotKeepsTailAndIdleAtomic(t *testing.T) {
 	if !ok {
 		t.Fatal("production terminal does not expose synchronized wait snapshots")
 	}
-	first, err := waitTerminal.WaitSnapshot(context.Background(), fixture.tabID)
+	first, err := waitTerminal.WaitSnapshot(trustedContext(), fixture.tabID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestProductionWaitSnapshotKeepsTailAndIdleAtomic(t *testing.T) {
 	}
 	deadline := time.Now().Add(time.Second)
 	for {
-		second, err := waitTerminal.WaitSnapshot(context.Background(), fixture.tabID)
+		second, err := waitTerminal.WaitSnapshot(trustedContext(), fixture.tabID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -57,11 +57,11 @@ func TestWaitForQuietContinuousOutputTimeoutCancelAndZeroOutput(t *testing.T) {
 	t.Run("zero output", func(t *testing.T) {
 		fixture := newAtomicSessionFixture(t, true)
 		fixture.clock.Add(100)
-		result := fixture.registry().Execute(context.Background(), "job", fixture.scope(), Call{ID: "quiet", Name: "wait_for", Args: json.RawMessage(`{"quiet_ms":50,"timeout_ms":100}`)}, nil)
+		result := fixture.registry().Execute(trustedContext(), "job", fixture.scope(), Call{ID: "quiet", Name: "wait_for", Args: json.RawMessage(`{"quiet_ms":50,"timeout_ms":100}`)}, nil)
 		if !result.OK || !strings.Contains(result.Text, "安静 100ms") {
 			t.Fatalf("zero-output quiet result = %+v", result)
 		}
-		result = fixture.registry().Execute(context.Background(), "job", fixture.scope(), Call{ID: "never", Name: "wait_for", Args: json.RawMessage(`{"pattern":"never","quiet_ms":1,"timeout_ms":10}`)}, nil)
+		result = fixture.registry().Execute(trustedContext(), "job", fixture.scope(), Call{ID: "never", Name: "wait_for", Args: json.RawMessage(`{"pattern":"never","quiet_ms":1,"timeout_ms":10}`)}, nil)
 		if result.OK || !strings.Contains(result.Text, "等待超时") {
 			t.Fatalf("zero-output nonmatch result = %+v", result)
 		}
@@ -94,7 +94,7 @@ func TestWaitForQuietContinuousOutputTimeoutCancelAndZeroOutput(t *testing.T) {
 				}
 			}
 		}()
-		result := fixture.registry().Execute(context.Background(), "job", fixture.scope(), Call{ID: "continuous", Name: "wait_for", Args: json.RawMessage(`{"pattern":"READY","quiet_ms":50,"timeout_ms":60}`)}, nil)
+		result := fixture.registry().Execute(trustedContext(), "job", fixture.scope(), Call{ID: "continuous", Name: "wait_for", Args: json.RawMessage(`{"pattern":"READY","quiet_ms":50,"timeout_ms":60}`)}, nil)
 		close(stop)
 		feeder.Wait()
 		select {
@@ -113,7 +113,7 @@ func TestWaitForQuietContinuousOutputTimeoutCancelAndZeroOutput(t *testing.T) {
 
 	t.Run("cancel", func(t *testing.T) {
 		fixture := newAtomicSessionFixture(t, true)
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(trustedContext())
 		go func() {
 			time.Sleep(10 * time.Millisecond)
 			cancel()
@@ -167,7 +167,7 @@ func TestSessionPasteDECSETFlipsFailVisibly(t *testing.T) {
 			})
 			finished := make(chan Output, 1)
 			go func() {
-				finished <- fixture.registry().Execute(context.Background(), "job", fixture.scope(), Call{ID: "paste", Name: "send_keys", Args: json.RawMessage(`{"keys":"prompt","paste":true}`)}, nil)
+				finished <- fixture.registry().Execute(trustedContext(), "job", fixture.scope(), Call{ID: "paste", Name: "send_keys", Args: json.RawMessage(`{"keys":"prompt","paste":true}`)}, nil)
 			}()
 			var result Output
 			select {
@@ -219,7 +219,7 @@ func TestSessionPasteStableModeSucceedsWhilePumpAndOtherTabProgress(t *testing.T
 	defer releaseOnce.Do(func() { close(release) })
 	finished := make(chan Output, 1)
 	go func() {
-		finished <- fixture.registry().Execute(context.Background(), "job", fixture.scope(), Call{ID: "paste", Name: "send_keys", Args: json.RawMessage(`{"keys":"prompt","paste":true}`)}, nil)
+		finished <- fixture.registry().Execute(trustedContext(), "job", fixture.scope(), Call{ID: "paste", Name: "send_keys", Args: json.RawMessage(`{"keys":"prompt","paste":true}`)}, nil)
 	}()
 	select {
 	case <-started:
@@ -268,7 +268,7 @@ func TestSessionPasteEnterFailureAndCancelDoNotRetry(t *testing.T) {
 		fixture.channel.mu.Lock()
 		fixture.channel.failAt = 2
 		fixture.channel.mu.Unlock()
-		result := fixture.registry().Execute(context.Background(), "job", fixture.scope(), Call{ID: "paste", Name: "send_keys", Args: json.RawMessage(`{"keys":"prompt","paste":true,"enter":true}`)}, nil)
+		result := fixture.registry().Execute(trustedContext(), "job", fixture.scope(), Call{ID: "paste", Name: "send_keys", Args: json.RawMessage(`{"keys":"prompt","paste":true,"enter":true}`)}, nil)
 		if result.OK || !strings.Contains(result.Text, "Enter") || result.WriteConfirmed || result.SubmittedSeq != nil {
 			t.Fatalf("Enter failure result = %+v", result)
 		}
@@ -283,7 +283,7 @@ func TestSessionPasteEnterFailureAndCancelDoNotRetry(t *testing.T) {
 
 	t.Run("cancel before Enter", func(t *testing.T) {
 		fixture := newAtomicSessionFixture(t, false)
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(trustedContext())
 		written := make(chan struct{})
 		var once sync.Once
 		fixture.setWriteHook(func([]byte) {

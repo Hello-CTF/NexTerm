@@ -93,6 +93,7 @@ func TestPauseResumeAcrossRestart(t *testing.T) {
 		WriteAI:      func(context.Context, string, []byte) error { writes.Add(1); return nil },
 		TabAsset:     func(context.Context, string) (string, error) { return asset.Load().(string), nil },
 		PollInterval: time.Millisecond,
+		Shared:       true,
 	}
 	first := NewManager(deps)
 	stream := &agent.SliceStream{}
@@ -180,6 +181,7 @@ func TestShutdownPreservesRunningJobForRecovery(t *testing.T) {
 		WriteAI:      func(context.Context, string, []byte) error { return nil },
 		TabAsset:     func(context.Context, string) (string, error) { return "asset-a", nil },
 		PollInterval: time.Millisecond,
+		Shared:       true,
 	}
 	first := NewManager(deps)
 	stream := &agent.SliceStream{}

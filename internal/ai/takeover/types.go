@@ -41,6 +41,10 @@ type Dependencies struct {
 	PollInterval           time.Duration
 	PauseEscalationTimeout time.Duration
 	Now                    func() time.Time
+	// Shared marks a single-user desktop or explicitly shared deployment where
+	// ownerless takeover is legitimate; server mode must leave it false so
+	// requests without an account identity fail closed.
+	Shared bool
 }
 
 type RunArgs struct {
