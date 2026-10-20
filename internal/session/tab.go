@@ -28,6 +28,7 @@ type subscriber struct {
 	client   string
 	producer *hub.Producer
 	co       *outCoalescer
+	paused   bool
 }
 
 const streamAnchorType = "nexterm.stream-anchor"
@@ -92,6 +93,7 @@ type Tab struct {
 	metadataRevision uint64
 	renameAttempts   map[string]*durableRenameAttempt
 	streamEpoch      string
+	outputWake       chan struct{}
 
 	catchUpRemaining int64
 
@@ -277,8 +279,8 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		var killErr error
 		if destroyOnFailure && durableAttachment != nil {
 			killErr = durableAttachment.Kill(context.Background())
-			m.deleteDurableTranscriptOffset(tabID)
-			m.deleteDurableTabTitle(tabID)
+			m.deleteDurableTranscriptOffset(ownerCtx(context.Background(), session.userID), tabID)
+			m.deleteDurableTabTitle(ownerCtx(context.Background(), session.userID), tabID)
 		}
 		if channel != nil {
 			_ = channel.Close()
@@ -402,17 +404,17 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		ctx:    tabCtx, cancel: cancel, responses: newResponseQueue(generation), feedGate: make(chan struct{}, 1),
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
 		durableIdentity: durableIdentity, metadataRevision: metadataRevision,
-		streamEpoch: ids.New(),
+		streamEpoch: ids.New(), outputWake: make(chan struct{}),
 	}
 	if options.Durable != nil {
 		if m.offsets != nil {
 			if options.Durable.Recover {
-				tab.catchUpRemaining = m.offsets.DurableTranscriptCatchUpBytes(tabID)
+				tab.catchUpRemaining = m.durableTranscriptCatchUpBytes(ownerCtx(context.Background(), session.userID), tabID)
 				if tab.catchUpRemaining > 0 {
 					m.logger.Info("durable transcript catch-up armed; skipping already-recorded replay bytes", "tab", tabID, "bytes", tab.catchUpRemaining)
 				}
 			} else {
-				m.offsets.PersistDurableTranscriptOffset(tabID, 0)
+				m.persistDurableTranscriptOffset(ownerCtx(context.Background(), session.userID), tabID, 0)
 			}
 		}
 	}
@@ -425,7 +427,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		}
 		if options.Durable.CanonicalMetadata {
 			tab.title = options.Durable.Title
-		} else if title := m.durableTabTitle(tabID); title != "" {
+		} else if title := m.durableTabTitle(ownerCtx(context.Background(), session.userID), tabID); title != "" {
 			tab.title = title
 		}
 	}
@@ -645,7 +647,7 @@ func (m *Manager) RenameTab(ctx context.Context, tabID, title string) (TabInfo, 
 	info := tab.infoLocked()
 	tab.mu.Unlock()
 	if durable {
-		m.persistDurableTabTitle(tabID, title)
+		m.persistDurableTabTitle(ownerCtx(context.Background(), tab.session.userID), tabID, title)
 	}
 	m.emit(ctx, TopicTerminalControl, event)
 	return info, nil
@@ -943,6 +945,7 @@ func (m *Manager) detachChannelLocked(channelID string, incarnation uint64, clos
 	ephemeral := tab.ephemeral
 	generation := tab.generation
 	tabID = tab.ID
+	tab.signalOutputWakeLocked()
 	tab.mu.Unlock()
 	return tabID, func() {
 		if attached {
@@ -1386,8 +1389,8 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 			tab.mu.Unlock()
 			return err
 		}
-		m.deleteDurableTranscriptOffset(id)
-		m.deleteDurableTabTitle(id)
+		m.deleteDurableTranscriptOffset(ownerCtx(context.Background(), tab.session.userID), id)
+		m.deleteDurableTabTitle(ownerCtx(context.Background(), tab.session.userID), id)
 	} else {
 		m.mu.Unlock()
 		if err := m.closeTabResources(tab); err != nil {
@@ -1565,6 +1568,10 @@ func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []
 	}
 	tab.mu.Unlock()
 	for _, target := range subscribers {
+		if target.subscriber.paused {
+			target.subscriber.co.addPaused(data)
+			continue
+		}
 		batch, sendNow := target.subscriber.co.add(data)
 		if !sendNow {
 			continue
@@ -1589,7 +1596,7 @@ func (m *Manager) flushSubscriberOutput(tabID, channelID string) {
 	subscriber, ok := tab.subscribers[channelID]
 	fanout := tab.fanout
 	tab.mu.Unlock()
-	if !ok || fanout == nil {
+	if !ok || subscriber.paused || fanout == nil {
 		return
 	}
 	batch := subscriber.co.take()
@@ -1626,6 +1633,20 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 	buffer := make([]byte, 64<<10)
 	var readErr error
 	for {
+		// A paused subscriber with a full coalescer stalls the PTY read:
+		// output backpressure reaches the shell instead of growing memory.
+		if stalled, wake := tab.outputStalled(); stalled {
+			select {
+			case <-wake:
+				continue
+			case <-ctx.Done():
+				readErr = ctx.Err()
+			}
+			if readErr != nil {
+				break
+			}
+			continue
+		}
 		count, err := channel.Read(buffer)
 		if count > 0 {
 			chunk := append([]byte(nil), buffer[:count]...)
