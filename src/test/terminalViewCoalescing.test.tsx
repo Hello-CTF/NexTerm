@@ -1522,6 +1522,335 @@ describe("XtermView stream wiring", () => {
     const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
     expect(total).toBe(5 * (4 << 20));
   });
+
+  it("a transient resume failure retries with backoff and the second resume actually unpauses the channel", async () => {
+    // The r16 counterexample: the recovery completes, the first resume
+    // fails transiently before the handler, and the bounded backoff retry
+    // lands the second resume — the server actually unpauses.
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+      ephemeral: true,
+      attachmentId: 11,
+    });
+    let episodeOpen = true;
+    let resumeCalls = 0;
+    harness.call.mockImplementation((command: string) => {
+      if (command === "terminal_pause") return Promise.resolve({ episodeToken: 31 });
+      if (command === "terminal_recover") return Promise.resolve({ flushedOffset: 5 * (4 << 20), episodeToken: 31 });
+      if (command === "terminal_resume") {
+        resumeCalls += 1;
+        if (resumeCalls === 1) return Promise.reject(new Error("transient"));
+        if (!episodeOpen) return Promise.resolve(undefined);
+        episodeOpen = false;
+        return Promise.resolve(undefined);
+      }
+      return Promise.resolve(undefined);
+    });
+    vi.useFakeTimers();
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "recovery-kernel-1",
+      streamSeq: 4 * (4 << 20),
+      controlBytes: 0,
+      attachmentId: 11,
+    });
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    // The recover completed and the first resume fired — it failed
+    // transiently before the handler, so the channel is still paused.
+    expect(resumeCalls).toBe(1);
+    expect(episodeOpen).toBe(true);
+    // The bounded backoff retry fires: the second resume actually unpauses.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150);
+    });
+    expect(resumeCalls).toBe(2);
+    expect(episodeOpen).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("a resume that executed but lost its response retries with the current token idempotently", async () => {
+    // The first resume executes server-side (the episode closes) but the
+    // response is lost; the retry with the same token is an idempotent OK —
+    // exactly one effective state change.
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+      ephemeral: true,
+      attachmentId: 11,
+    });
+    let episodeOpen = true;
+    let resumeCalls = 0;
+    harness.call.mockImplementation((command: string) => {
+      if (command === "terminal_pause") return Promise.resolve({ episodeToken: 31 });
+      if (command === "terminal_recover") return Promise.resolve({ flushedOffset: 5 * (4 << 20), episodeToken: 31 });
+      if (command === "terminal_resume") {
+        resumeCalls += 1;
+        if (resumeCalls === 1) {
+          episodeOpen = false; // executed before the response was lost
+          return Promise.reject(new Error("response lost"));
+        }
+        return Promise.resolve(undefined); // idempotent no-op
+      }
+      return Promise.resolve(undefined);
+    });
+    vi.useFakeTimers();
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "recovery-kernel-1",
+      streamSeq: 4 * (4 << 20),
+      controlBytes: 0,
+      attachmentId: 11,
+    });
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(resumeCalls).toBe(1);
+    expect(episodeOpen).toBe(false); // the first resume executed
+    // The retry with the same token is an idempotent OK — no double change.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150);
+    });
+    expect(resumeCalls).toBe(2);
+    expect(episodeOpen).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("a stale episode's late resume catch never clears the new episode's dedup or retry state", async () => {
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+      ephemeral: true,
+      attachmentId: 11,
+    });
+    let episode2 = false;
+    let rejectResume: ((reason: unknown) => void) | undefined;
+    let resumeCalls = 0;
+    harness.call.mockImplementation((command: string) => {
+      if (command === "terminal_pause") return Promise.resolve({ episodeToken: episode2 ? 32 : 31 });
+      if (command === "terminal_recover") return Promise.resolve({ flushedOffset: 5 * (4 << 20), episodeToken: 31 });
+      if (command === "terminal_resume") {
+        resumeCalls += 1;
+        if (resumeCalls === 1) {
+          // Deferred rejection: the catch lands after episode 2 started.
+          return new Promise((_, reject) => {
+            rejectResume = reject;
+          });
+        }
+        return Promise.resolve(undefined);
+      }
+      return Promise.resolve(undefined);
+    });
+    vi.useFakeTimers();
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "recovery-kernel-1",
+      streamSeq: 4 * (4 << 20),
+      controlBytes: 0,
+      attachmentId: 11,
+    });
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    // Episode 1's resume is in flight (deferred rejection).
+    expect(resumeCalls).toBe(1);
+    // Episode 2: a new saturation opens a new episode (token 32), and its
+    // resume fires and succeeds.
+    episode2 = true;
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(resumeCalls).toBe(2);
+    // Episode 1's late rejection lands now: it must not clear episode 2's
+    // dedup state or arm a retry for the moot episode.
+    rejectResume?.(new Error("stale"));
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(resumeCalls).toBe(2);
+    vi.useRealTimers();
+  });
+
+  it("unmount with a pending resume retry stops the timer: zero new calls", async () => {
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+      ephemeral: true,
+      attachmentId: 11,
+    });
+    let resumeCalls = 0;
+    harness.call.mockImplementation((command: string) => {
+      if (command === "terminal_pause") return Promise.resolve({ episodeToken: 31 });
+      if (command === "terminal_recover") return Promise.resolve({ flushedOffset: 5 * (4 << 20), episodeToken: 31 });
+      if (command === "terminal_resume") {
+        resumeCalls += 1;
+        return Promise.reject(new Error("transient"));
+      }
+      return Promise.resolve(undefined);
+    });
+    vi.useFakeTimers();
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "recovery-kernel-1",
+      streamSeq: 4 * (4 << 20),
+      controlBytes: 0,
+      attachmentId: 11,
+    });
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(resumeCalls).toBe(1);
+    // Unmount with the backoff timer armed: no new resume calls after it.
+    mounted!.unmount();
+    mounted = undefined;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(resumeCalls).toBe(1);
+    vi.useRealTimers();
+  });
+
+  it("retry exhaustion surfaces the visible error state and keeps a slow retry alive", async () => {
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+      ephemeral: true,
+      attachmentId: 11,
+    });
+    let resumeCalls = 0;
+    harness.call.mockImplementation((command: string) => {
+      if (command === "terminal_pause") return Promise.resolve({ episodeToken: 31 });
+      if (command === "terminal_recover") return Promise.resolve({ flushedOffset: 5 * (4 << 20), episodeToken: 31 });
+      if (command === "terminal_resume") {
+        resumeCalls += 1;
+        return Promise.reject(new Error("transient"));
+      }
+      return Promise.resolve(undefined);
+    });
+    vi.useFakeTimers();
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "recovery-kernel-1",
+      streamSeq: 4 * (4 << 20),
+      controlBytes: 0,
+      attachmentId: 11,
+    });
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    // Every resume fails: the bounded backoff exhausts, the visible error
+    // state is surfaced once, and the slow retry keeps trying.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(resumeCalls).toBeGreaterThan(1);
+    expect(harness.pushToast).toHaveBeenCalledWith("error", expect.stringContaining("恢复失败"));
+    const callsAtToast = resumeCalls;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(resumeCalls).toBeGreaterThan(callsAtToast);
+    vi.useRealTimers();
+  });
 });
 
 describe("XtermView render coalescing (T-09 component portion)", () => {

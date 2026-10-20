@@ -309,10 +309,18 @@ export function XtermView(props: XtermViewProps) {
     // episode's token, and one episode needs at most one effective resume.
     let episodeToken = 0;
     let resumeSentToken = -1;
+    // Resume retry state, isolated by attachment and episode: the timer and
+    // the consecutive attempt count for the current episode. An old
+    // attempt's callbacks never touch a newer episode's dedup or timers.
+    let resumeRetryTimer: number | undefined;
+    let resumeAttempts = 0;
     const learnEpisodeToken = (next: number | undefined) => {
       if (next !== undefined && next > episodeToken) {
         episodeToken = next;
         resumeSentToken = -1;
+        // A new episode is a fresh retry budget; a pending timer simply
+        // re-evaluates the gate for the new episode when it fires.
+        resumeAttempts = 0;
       }
       // The unified gate decides whether the learned token may resume now:
       // never while a recovery is in flight or pending, and only once the
@@ -384,9 +392,11 @@ export function XtermView(props: XtermViewProps) {
       attachmentId = next;
       lastStreamAckOffset = -1;
       // A new attachment is a new episode space: generations restart, so the
-      // learned token and the resume dedup state must not carry over.
+      // learned token, the resume dedup state, and any retry timer for the
+      // previous attachment must not carry over.
       episodeToken = 0;
       resumeSentToken = -1;
+      clearResumeRetry();
       sendStreamAck();
     };
     const resumeUpstream = () => {
@@ -402,10 +412,35 @@ export function XtermView(props: XtermViewProps) {
       // recorded only when a resume actually fires, and a rejected resume
       // clears it so a later legitimate resume is never blocked.
       if (episodeToken === resumeSentToken) return;
-      resumeSentToken = episodeToken;
-      void call("terminal_resume", { tabId: kernelTabId, channelId, clientId: clientId(), attachmentId, episodeToken }).catch(() => {
-        resumeSentToken = -1;
-      });
+      const firedAttachment = attachmentId;
+      const firedToken = episodeToken;
+      resumeSentToken = firedToken;
+      void call("terminal_resume", { tabId: kernelTabId, channelId, clientId: clientId(), attachmentId: firedAttachment, episodeToken: firedToken })
+        .then(() => {
+          if (firedAttachment !== attachmentId) return;
+          clearResumeRetry();
+        })
+        .catch((e) => {
+          // The outcome belongs to the attachment and episode that fired it:
+          // never clear a newer episode's dedup state or retry budget.
+          if (firedAttachment !== attachmentId) return;
+          if (resumeSentToken === firedToken) resumeSentToken = -1;
+          // The episode moved on while this attempt was in flight: its
+          // failure is moot and must not schedule a retry.
+          if (episodeToken !== firedToken) return;
+          const code = (e as { code?: string } | null)?.code;
+          if (code === "not_found" || code === "unsupported") {
+            // No retry will help: surface the accurate terminal state.
+            useUi.getState().pushToast("error", "终端输出流恢复失败，画面可能停滞，请重新连接");
+            return;
+          }
+          if (code === "forbidden") {
+            // The episode moved on: re-pause to learn the current token; the
+            // learn path re-fires the resume through the gate.
+            pauseWithRetry();
+          }
+          scheduleResumeRetry();
+        });
     };
     // The unified resume gate, the only path to resumeUpstream: a resume
     // fires only when no recovery is in flight or pending, the accepted
@@ -420,6 +455,33 @@ export function XtermView(props: XtermViewProps) {
       if (pauseNeeded) return;
       recoverTarget = null;
       resumeUpstream();
+    };
+    const resumeRetryDelays = [100, 200, 400, 800, 1600];
+    const clearResumeRetry = () => {
+      if (resumeRetryTimer !== undefined) {
+        window.clearTimeout(resumeRetryTimer);
+        resumeRetryTimer = undefined;
+      }
+      resumeAttempts = 0;
+    };
+    const scheduleResumeRetry = () => {
+      if (disposed || !kernelTabId) return;
+      // Transient failures retry with a bounded backoff that re-enters the
+      // unified gate; once the backoff is exhausted the channel stays paused
+      // until a retry lands, so the accurate state is surfaced instead of a
+      // silent stall — recovery is the existing manual path (a transport
+      // reopen re-attaches and unpauses) plus the slow retry, which keeps
+      // trying while the view lives.
+      const exhausted = resumeAttempts >= resumeRetryDelays.length;
+      const delay = exhausted ? 5000 : resumeRetryDelays[resumeAttempts];
+      resumeAttempts += 1;
+      if (exhausted && resumeAttempts === resumeRetryDelays.length + 1) {
+        useUi.getState().pushToast("error", "终端输出流恢复失败，画面可能停滞，正在尝试恢复");
+      }
+      resumeRetryTimer = window.setTimeout(() => {
+        resumeRetryTimer = undefined;
+        resumeIfReady();
+      }, delay);
     };
     const pumpRecover = () => {
       if (recoverInFlight || !kernelTabId || ephemeral !== true) return;
@@ -980,6 +1042,7 @@ export function XtermView(props: XtermViewProps) {
         window.clearTimeout(pauseRetryTimer);
         pauseRetryTimer = undefined;
       }
+      clearResumeRetry();
       coordinator.close();
       gridRef.current = null;
       onGeometryRef.current = null;

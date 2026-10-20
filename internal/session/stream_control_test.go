@@ -1108,3 +1108,80 @@ func TestStreamControlFullSequenceTwoRecoverRounds(t *testing.T) {
 		t.Fatal("accepted sequence is not byte-identical to the original stream")
 	}
 }
+
+// The r16 server-side regression: after the recover pauses the channel for
+// the replay, a stale-token resume is rejected and the channel stays
+// paused; the current-token resume actually unpauses it and clears the
+// retention floor — the "second resume succeeds and lifts the pause"
+// contract the client's retry depends on.
+func TestStreamControlResumeRetryActuallyUnpauses(t *testing.T) {
+	manager, connector, _, connected := openOpenTestSession(t, KindLocal)
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+		t.Fatal(err)
+	}
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel := connector.transport(0).channel(0)
+	receiver := bindTestReceiver(t, manager, "a-1")
+	drainAttachHeader(t, receiver)
+	if err := channel.emit([]byte("one")); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFramesUntil(t, receiver, 3); string(got) != "one" {
+		t.Fatalf("first frame = %q", got)
+	}
+	attachmentId := attachmentIdFor(t, manager, info.ID, "a-1")
+
+	// The recover pauses the channel for the replay and returns its episode.
+	flushed, recoverGen, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flushed != 3 {
+		t.Fatalf("flushed = %d, want 3", flushed)
+	}
+	anchor := receiveTestFrame(t, receiver)
+	if !bytes.Contains(anchor.Data, []byte("recovery-")) {
+		t.Fatalf("anchor = %q", anchor.Data)
+	}
+	if got := readFramesUntil(t, receiver, 2); string(got) != "ne" {
+		t.Fatalf("recovered frame = %q", got)
+	}
+	if !tab.subscribers["a-1"].paused {
+		t.Fatal("recover did not pause the channel for the replay")
+	}
+
+	// A stale-token resume is rejected: the channel stays paused and the
+	// floor survives.
+	err = manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, recoverGen-1)
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("stale resume = %v, want ErrForbidden", err)
+	}
+	if !tab.subscribers["a-1"].paused {
+		t.Fatal("stale resume unpaused the channel")
+	}
+	if got := tab.subscribers["a-1"].episodeFloor; got != 1 {
+		t.Fatalf("episodeFloor after stale resume = %d, want 1 (unchanged)", got)
+	}
+
+	// The current-token resume actually unpauses the channel and clears the
+	// floor — the retry the client schedules after a transient failure.
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, recoverGen); err != nil {
+		t.Fatalf("current-token resume = %v, want nil", err)
+	}
+	if tab.subscribers["a-1"].paused {
+		t.Fatal("current-token resume did not unpause the channel")
+	}
+	if got := tab.subscribers["a-1"].episodeFloor; got != -1 {
+		t.Fatalf("episodeFloor after current-token resume = %d, want -1", got)
+	}
+	if got := tab.recovery.floor; got != -1 {
+		t.Fatalf("ring floor after current-token resume = %d, want -1", got)
+	}
+}
