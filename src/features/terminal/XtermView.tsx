@@ -260,19 +260,20 @@ export function XtermView(props: XtermViewProps) {
       dimensions: () => ({ cols: term.cols, rows: term.rows }),
     });
 
-    let retainable: boolean | undefined;
+    let ephemeral: boolean | undefined;
     const reportAttachInfo = (info: {
       tabId: string;
       controller: string | null;
       subscribers: number;
       viewers: number;
       exited: boolean;
+      ephemeral?: boolean;
       retainable?: boolean;
       encoding?: string;
       title?: string;
       shell?: "powershell" | "cmd" | "posix" | "unknown";
     }) => {
-      retainable = info.retainable;
+      ephemeral = info.ephemeral;
       onAttachInfoRef.current?.(info);
     };
     // Producer backpressure: a paused writer asks the server to stop feeding
@@ -310,17 +311,16 @@ export function XtermView(props: XtermViewProps) {
     };
     let lastRefuseToastAt = 0;
     const refuseStream = () => {
-      if (retainable === true && kernelTabId) {
+      if (ephemeral !== true && kernelTabId) {
         // Durable tabs: the resume anchor replays refused bytes in order.
+        // Ephemeral local/WinRM tabs must never take this path: an ordinary
+        // detach reaps their PTY.
         void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);
       }
-      // Ephemeral local/WinRM tabs must not detach (it would reap the PTY),
-      // and docker exec streams already detached through pauseUpstream; the
-      // episode lifts at the low watermark or the next attachment boundary.
       const nowMs = Date.now();
       if (nowMs - lastRefuseToastAt > 10_000) {
         lastRefuseToastAt = nowMs;
-        const replayable = props.containerId || retainable === true;
+        const replayable = props.containerId || ephemeral !== true;
         useUi
           .getState()
           .pushToast(
@@ -357,7 +357,7 @@ export function XtermView(props: XtermViewProps) {
             // Lift a refusal episode for tab kinds without an anchor-driven
             // recovery (docker exec, ephemeral local/WinRM); durable tabs end
             // the episode at the next anchor instead.
-            if (props.containerId || retainable !== true) streamWriter.beginAttachment();
+            if (props.containerId || ephemeral === true) streamWriter.beginAttachment();
             resumeUpstream();
           }
         },
@@ -504,6 +504,7 @@ export function XtermView(props: XtermViewProps) {
             title: info.title,
             shell: info.shell,
             retainable: info.retainable,
+            ephemeral: info.ephemeral,
           });
         } else if (props.containerId) {
           if (!dimensions) return;
@@ -552,6 +553,7 @@ export function XtermView(props: XtermViewProps) {
             title: info.title,
             shell: info.shell,
             retainable: info.retainable,
+            ephemeral: info.ephemeral,
           });
         }
         if (disposed) {
@@ -632,6 +634,7 @@ export function XtermView(props: XtermViewProps) {
             title: info.title,
             shell: info.shell,
             retainable: info.retainable,
+            ephemeral: info.ephemeral,
           });
           onAttachRef.current?.(info.tabId);
         } catch (e) {

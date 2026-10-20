@@ -280,6 +280,7 @@ beforeEach(() => {
     exited: false,
     shell: "unknown",
     retainable: true,
+    ephemeral: false,
   });
   harness.attachTab.mockResolvedValue({
     tabId: "kernel-1",
@@ -290,6 +291,7 @@ beforeEach(() => {
     viewers: 1,
     exited: false,
     retainable: true,
+    ephemeral: false,
   });
   harness.detach.mockResolvedValue(undefined);
   harness.setVisible.mockResolvedValue(undefined);
@@ -461,6 +463,7 @@ describe("XtermView stream wiring", () => {
       viewers: 1,
       exited: false,
       retainable: true,
+      ephemeral: false,
     });
     await act(async () => {
       await flushMacrotask();
@@ -483,6 +486,7 @@ describe("XtermView stream wiring", () => {
       exited: false,
       shell: "unknown",
       retainable: false,
+      ephemeral: true,
     });
     await show();
     await attachOk();
@@ -526,6 +530,7 @@ describe("XtermView stream wiring", () => {
       exited: false,
       shell: "unknown",
       retainable: false,
+      ephemeral: true,
     });
     harness.unsafeCall.mockRejectedValue(new Error("no such command"));
     vi.useFakeTimers();
@@ -581,6 +586,7 @@ describe("XtermView stream wiring", () => {
       viewers: 1,
       exited: false,
       retainable: false,
+      ephemeral: true,
     });
     await act(async () => {
       await flushMacrotask();

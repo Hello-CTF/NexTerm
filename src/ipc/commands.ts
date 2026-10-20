@@ -294,6 +294,7 @@ export interface AttachedTabInfo {
   viewers: number;
   exited: boolean;
   retainable?: boolean;
+  ephemeral?: boolean;
   encoding?: string;
   title?: string;
   shell?: TerminalShell;

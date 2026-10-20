@@ -133,6 +133,7 @@ type attachedTabDTO struct {
 	Viewers        int     `json:"viewers"`
 	Exited         bool    `json:"exited"`
 	Retainable     bool    `json:"retainable"`
+	Ephemeral      bool    `json:"ephemeral"`
 	Encoding       string  `json:"encoding,omitempty"`
 	Title          string  `json:"title,omitempty"`
 	Shell          string  `json:"shell"`
@@ -1027,7 +1028,7 @@ func attachedSessionTab(info session.TabInfo) attachedTabDTO {
 	return attachedTabDTO{
 		TabID: info.ID, SessionID: info.SessionID, Cols: info.Cols, Rows: info.Rows,
 		Controller: nullableProductionString(info.Controller), Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
-		Retainable: info.Retainable, Encoding: info.Encoding, Title: info.Title, Shell: string(info.Shell), FallbackNotice: info.FallbackNotice,
+		Retainable: info.Retainable, Ephemeral: info.Ephemeral, Encoding: info.Encoding, Title: info.Title, Shell: string(info.Shell), FallbackNotice: info.FallbackNotice,
 	}
 }
 
