@@ -1,0 +1,239 @@
+import { useEffect, useRef, useState } from "react";
+import { ProductionConfirmationDialog } from "../execbatch/ProductionConfirmationDialog";
+import { describeError } from "../../ui/errorText";
+import { dockerConfirmation, getDockerConfirmationChallenge, type DockerConfirmationChallenge } from "../docker/productionGuard";
+import { inventoryExecFailure, inventoryTargetApi } from "./inventoryTargetApi";
+import type { DockerProductionConfirmation } from "../../ipc/commands";
+import type { InventoryTargetExecResponse } from "../../ipc/generated/types";
+
+export interface InventoryTargetSession {
+  id: string;
+  name: string;
+  assetId?: string | null;
+}
+
+export interface InventoryTargetActionsProps {
+  kind: string;
+  target: Record<string, unknown>;
+  ownerKey: string;
+  sessions?: InventoryTargetSession[];
+  requireSession?: boolean;
+}
+
+function stringField(target: Record<string, unknown>, key: string): string {
+  const value = target[key];
+  return typeof value === "string" ? value : "";
+}
+
+function targetText(kind: string, target: Record<string, unknown>): string {
+  if (kind === "docker-context") {
+    const name = stringField(target, "name");
+    return name ? `context/${name}` : "docker context";
+  }
+  if (kind === "kubernetes") {
+    if (target.type === "pod") {
+      return `${stringField(target, "namespace")}/${stringField(target, "pod")}`;
+    }
+    const name = stringField(target, "name");
+    return name ? `context/${name}` : "kubernetes context";
+  }
+  return kind;
+}
+
+export function targetExecutable(kind: string, target: Record<string, unknown>): boolean {
+  return kind === "docker-context" || (kind === "kubernetes" && target.type === "pod");
+}
+
+export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], requireSession = false }: InventoryTargetActionsProps) {
+  const executable = targetExecutable(kind, target);
+  const isPod = kind === "kubernetes" && target.type === "pod";
+  const containers = isPod && Array.isArray(target.containers)
+    ? target.containers.filter((item): item is string => typeof item === "string")
+    : [];
+  const [command, setCommand] = useState("");
+  const [container, setContainer] = useState(isPod ? stringField(target, "container") : "");
+  const [sessionId, setSessionId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<InventoryTargetExecResponse | null>(null);
+  const [failure, setFailure] = useState<{ message: string; exitCode?: number; output?: string } | null>(null);
+  const [production, setProduction] = useState<{ challenge: DockerConfirmationChallenge; command: string } | null>(null);
+  const generationRef = useRef(0);
+
+  useEffect(() => {
+    generationRef.current++;
+    setBusy(false);
+    setResult(null);
+    setFailure(null);
+    setProduction(null);
+  }, [ownerKey]);
+
+  const run = async (confirmation?: DockerProductionConfirmation) => {
+    if (busy) return;
+    const argv = command.trim() ? command.trim().split(/\s+/) : [];
+    if (argv.length === 0) {
+      setFailure({ message: "请输入要执行的命令" });
+      return;
+    }
+    const resolvedContainer = container.trim();
+    if (kind === "docker-context" && resolvedContainer === "") {
+      setFailure({ message: "请输入容器名" });
+      return;
+    }
+    if (requireSession && sessionId === "") {
+      setFailure({ message: "请选择受管会话" });
+      return;
+    }
+    const generation = generationRef.current;
+    setBusy(true);
+    setResult(null);
+    setFailure(null);
+    try {
+      const response = await inventoryTargetApi.execTarget({
+        kind,
+        target,
+        action: "exec",
+        container: resolvedContainer === "" ? undefined : resolvedContainer,
+        command: argv,
+        sessionId: sessionId === "" ? undefined : sessionId,
+        confirmation,
+      });
+      if (generation !== generationRef.current) return;
+      setResult(response);
+    } catch (cause) {
+      if (generation !== generationRef.current) return;
+      const challenge = getDockerConfirmationChallenge(cause);
+      if (challenge) {
+        setProduction({ challenge, command: command.trim() });
+        return;
+      }
+      const exitFailure = inventoryExecFailure(cause);
+      if (exitFailure) {
+        setFailure({
+          message: `命令已执行但返回非零退出码（${exitFailure.exitCode}）`,
+          exitCode: exitFailure.exitCode,
+          output: exitFailure.output,
+        });
+        return;
+      }
+      setFailure({ message: describeError(cause) });
+    } finally {
+      if (generation === generationRef.current) setBusy(false);
+    }
+  };
+
+  const cancel = () => {
+    generationRef.current++;
+    setBusy(false);
+    setResult(null);
+    setFailure(null);
+    setProduction(null);
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="text-[11px] text-neutral-400">
+        目标 <span className="nx-badge nx-badge-purple">{targetText(kind, target)}</span>
+      </div>
+      {!executable && (
+        <div className="text-[11px] text-amber-300">该目标不支持 exec</div>
+      )}
+      {executable && (
+        <>
+          <label className="flex items-center gap-2 text-[11px] text-neutral-400">
+            命令
+            <input
+              aria-label="命令"
+              className="nx-input flex-1"
+              value={command}
+              onChange={(event) => setCommand(event.target.value)}
+              placeholder="例如 uname -a"
+            />
+          </label>
+          {isPod && containers.length > 0 && (
+            <label className="flex items-center gap-2 text-[11px] text-neutral-400">
+              容器
+              <select
+                aria-label="容器"
+                className="nx-input flex-1"
+                value={container}
+                onChange={(event) => setContainer(event.target.value)}
+              >
+                {containers.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {kind === "docker-context" && (
+            <label className="flex items-center gap-2 text-[11px] text-neutral-400">
+              容器
+              <input
+                aria-label="容器"
+                className="nx-input flex-1"
+                value={container}
+                onChange={(event) => setContainer(event.target.value)}
+                placeholder="容器名或 ID"
+              />
+            </label>
+          )}
+          {requireSession && (
+            <label className="flex items-center gap-2 text-[11px] text-neutral-400">
+              受管会话
+              <select
+                aria-label="受管会话"
+                className="nx-input flex-1"
+                value={sessionId}
+                onChange={(event) => setSessionId(event.target.value)}
+              >
+                <option value="">选择会话</option>
+                {sessions.map((session) => (
+                  <option key={session.id} value={session.id}>{session.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <div className="flex gap-2">
+            <button type="button" className="nx-btn nx-btn-primary nx-btn-xs" disabled={busy} onClick={() => void run()}>
+              执行
+            </button>
+            {(busy || result || failure) && (
+              <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={cancel}>
+                取消
+              </button>
+            )}
+          </div>
+          {busy && <div className="text-[11px] text-neutral-400">执行中…</div>}
+          {result && (
+            <div role="status" className="text-[11px] text-neutral-300">
+              <div>退出码 {result.exitCode}</div>
+              <pre className="nx-pre max-h-56 overflow-auto whitespace-pre-wrap break-all text-[11px]">{result.output}</pre>
+            </div>
+          )}
+          {failure && (
+            <div role="alert" className="text-[11px] text-red-300">
+              <div>{failure.message}</div>
+              {failure.exitCode !== undefined && <div>退出码 {failure.exitCode}</div>}
+              {failure.output !== undefined && (
+                <pre className="nx-pre max-h-56 overflow-auto whitespace-pre-wrap break-all text-[11px]">{failure.output}</pre>
+              )}
+            </div>
+          )}
+        </>
+      )}
+      {production && (
+        <ProductionConfirmationDialog
+          challenge={production.challenge}
+          contentHash={production.challenge.commandHash}
+          command={production.command}
+          typedPhrase="production"
+          onCancel={() => setProduction(null)}
+          onConfirm={() => {
+            const current = production;
+            setProduction(null);
+            void run(dockerConfirmation(current.challenge));
+          }}
+        />
+      )}
+    </div>
+  );
+}
