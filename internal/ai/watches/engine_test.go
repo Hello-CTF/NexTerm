@@ -40,9 +40,6 @@ func newTestEngine(t *testing.T, clock *testClock) (*Engine, *store.Store) {
 		t.Fatalf("open in-memory store: %v", err)
 	}
 	t.Cleanup(func() { _ = backend.Close() })
-	if err := store.EnsureAgentWatchTables(context.Background(), backend.GORM()); err != nil {
-		t.Fatalf("ensure agent watch tables: %v", err)
-	}
 	engine, err := New(backend, Options{Now: clock.Now})
 	if err != nil {
 		t.Fatalf("new engine: %v", err)
@@ -457,9 +454,6 @@ func TestRegexConditionAndBoundedExcerpt(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = backend.Close() })
-	if err := store.EnsureAgentWatchTables(context.Background(), backend.GORM()); err != nil {
-		t.Fatal(err)
-	}
 	engine, err := New(backend, Options{Now: clock.Now, MaxExcerptBytes: 16})
 	if err != nil {
 		t.Fatal(err)

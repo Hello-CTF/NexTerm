@@ -36,20 +36,6 @@ var (
 	ErrAgentWatchState    = errors.New("agent watch state conflict")
 )
 
-// EnsureAgentWatchTables migrates the agent watch schema on the given handle.
-// The models are intentionally not part of model.AllModels yet, so the shared
-// GORM generation owner can register and regenerate them in one batch; until
-// then the watches store owns its idempotent migration.
-func EnsureAgentWatchTables(ctx context.Context, db *gorm.DB) error {
-	if db == nil {
-		return badParam(fmt.Errorf("agent watch 迁移缺少数据库句柄"))
-	}
-	if err := db.WithContext(ctx).AutoMigrate(&model.AgentWatchRow{}, &model.AgentWatchOutboxRow{}); err != nil {
-		return migrateError(err)
-	}
-	return nil
-}
-
 func agentWatchOwnerScope(ctx context.Context, db *gorm.DB, column string) *gorm.DB {
 	return db.Where(column+" = ?", ipc.OwnerID(ctx))
 }

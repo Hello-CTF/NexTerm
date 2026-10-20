@@ -18,10 +18,6 @@ func openRestartStore(t *testing.T, path string) *store.Store {
 	if err != nil {
 		t.Fatalf("open store %s: %v", path, err)
 	}
-	if err := store.EnsureAgentWatchTables(context.Background(), backend.GORM()); err != nil {
-		_ = backend.Close()
-		t.Fatalf("ensure agent watch tables: %v", err)
-	}
 	return backend
 }
 

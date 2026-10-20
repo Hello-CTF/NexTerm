@@ -19,8 +19,9 @@ func openAgentWatchFixture(t *testing.T) *store.Store {
 	t.Helper()
 	fixture := dbtest.NewFixture(t)
 	backend := fixture.OpenStore(t)
-	if err := store.EnsureAgentWatchTables(context.Background(), backend.GORM()); err != nil {
-		t.Fatalf("ensure agent watch tables: %v", err)
+	migrator := backend.GORM().Migrator()
+	if !migrator.HasTable(&model.AgentWatchRow{}) || !migrator.HasTable(&model.AgentWatchOutboxRow{}) {
+		t.Fatal("agent watch tables missing after startup migration")
 	}
 	return backend
 }

@@ -19,9 +19,6 @@ func openAgentWatchStore(t *testing.T) *store.Store {
 		t.Fatalf("open in-memory store: %v", err)
 	}
 	t.Cleanup(func() { _ = backend.Close() })
-	if err := store.EnsureAgentWatchTables(context.Background(), backend.GORM()); err != nil {
-		t.Fatalf("ensure agent watch tables: %v", err)
-	}
 	return backend
 }
 
@@ -517,21 +514,22 @@ func TestAgentWatchFireRequiresArmedAndValidEvent(t *testing.T) {
 	}
 }
 
-func TestEnsureAgentWatchTablesIsIdempotent(t *testing.T) {
+func TestAgentWatchTablesMigratedAtStartup(t *testing.T) {
 	backend := openAgentWatchStore(t)
+	migrator := backend.GORM().Migrator()
+	if !migrator.HasTable(&model.AgentWatchRow{}) {
+		t.Fatal("agent_watch table missing after startup migration")
+	}
+	if !migrator.HasTable(&model.AgentWatchOutboxRow{}) {
+		t.Fatal("agent_watch_outbox table missing after startup migration")
+	}
 	ctx := watchOwnerCtx("owner-a")
 	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-idem", "target-1", "identity-1")); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.EnsureAgentWatchTables(context.Background(), backend.GORM()); err != nil {
-		t.Fatalf("second ensure: %v", err)
-	}
 	got, err := backend.AgentWatchGet(ctx, "watch-idem")
 	if err != nil || got.TargetID != "target-1" {
-		t.Fatalf("watch after re-ensure = %+v, %v", got, err)
-	}
-	if err := store.EnsureAgentWatchTables(context.Background(), nil); err == nil {
-		t.Fatal("ensure with nil db succeeded")
+		t.Fatalf("watch after startup migration = %+v, %v", got, err)
 	}
 }
 
