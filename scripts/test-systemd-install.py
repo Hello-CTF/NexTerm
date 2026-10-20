@@ -58,12 +58,26 @@ material is touched. Coverage:
   13. A combination matrix (first install/upgrade x failure point x env origin x
      key location x active state) asserts the key-preservation, data-dir,
      enable, and restart invariants across all of the above
+  14. Platform detection uses explicit evidence: non-Linux kernels (Darwin,
+     Windows) and non-systemd init systems fail visibly before any mutation;
+     a systemd /sbin/init symlink is accepted as evidence; supported distros
+     (ID or ID_LIKE) are identified from /etc/os-release while unknown or
+     missing os-release warns and proceeds; rollback is gated the same way;
+     a missing systemctl fails visibly
+  15. First install verifies the enabled unit reports active and warns with a
+     journalctl hint when it does not (the install itself still succeeds)
+  16. Installer console output never contains master-key material (generated or
+     preexisting)
+  17. Real packaged-archive smoke test (runs only when a server archive built
+     by scripts/pack-linux-server.sh is available; live systemd and live
+     distribution runs remain outside this suite)
 
     python3 scripts/test-systemd-install.py
 """
 
 from __future__ import annotations
 
+import itertools
 import os
 import pathlib
 import shutil
@@ -145,13 +159,33 @@ WantedBy=multi-user.target
 
 SYSTEMCTL_STUB = """#!/bin/sh
 printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
-if [ "${1:-}" = "is-active" ]; then
-  for unit in $FAKE_ACTIVE_UNITS; do
-    if [ "${3:-}" = "$unit" ]; then exit 0; fi
+cmd="${1:-}"
+unit=""
+for a in "$@"; do
+  case "$a" in -*) ;; *) unit="$a" ;; esac
+done
+if [ "$cmd" = "is-active" ]; then
+  if [ "${FAKE_FAIL_START:-}" = "1" ] && [ "$unit" = "nexterm-server.service" ]; then
+    exit 3
+  fi
+  for u in $FAKE_ACTIVE_UNITS; do
+    if [ "$unit" = "$u" ]; then exit 0; fi
   done
+  if [ -n "${SYSTEMCTL_STATE:-}" ] && [ -f "$SYSTEMCTL_STATE" ] && grep -qx "$unit" "$SYSTEMCTL_STATE"; then
+    exit 0
+  fi
   exit 3
 fi
+if [ "$cmd" = "enable" ] || [ "$cmd" = "restart" ]; then
+  if [ -n "${SYSTEMCTL_STATE:-}" ] && [ -n "$unit" ]; then
+    printf '%s\\n' "$unit" >> "$SYSTEMCTL_STATE"
+  fi
+fi
 exit 0
+"""
+
+UNAME_STUB = """#!/bin/sh
+printf '%s\\n' "${FAKE_UNAME_NAME:-Linux}"
 """
 
 OPENSSL_STUB = """#!/bin/sh
@@ -184,25 +218,79 @@ def make_payload(base: pathlib.Path, version: str) -> pathlib.Path:
     return payload
 
 
-def make_stubs(base: pathlib.Path) -> pathlib.Path:
+def make_stubs(base: pathlib.Path, with_systemctl: bool = True, with_openssl: bool = True) -> pathlib.Path:
     stubs = base / "stubs"
     stubs.mkdir()
-    (stubs / "systemctl").write_text(SYSTEMCTL_STUB)
-    (stubs / "openssl").write_text(OPENSSL_STUB.replace("FAKEKEYHEXPLACEHOLDER", FAKE_KEY_HEX))
+    if with_systemctl:
+        (stubs / "systemctl").write_text(SYSTEMCTL_STUB)
+    (stubs / "uname").write_text(UNAME_STUB)
+    if with_openssl:
+        (stubs / "openssl").write_text(OPENSSL_STUB.replace("FAKEKEYHEXPLACEHOLDER", FAKE_KEY_HEX))
     (stubs / "useradd").write_text(USERADD_STUB)
     for stub in stubs.iterdir():
         stub.chmod(0o755)
     return stubs
 
 
+OS_RELEASE_UBUNTU = (
+    'ID=ubuntu\nID_LIKE=debian\nPRETTY_NAME="Ubuntu 24.04.1 LTS"\nVERSION_ID="24.04"\n'
+)
+
+_RUN_SEQ = itertools.count(1)
+
+
+def seed_platform(root: pathlib.Path, systemd: str, os_release: str | None) -> None:
+    run_marker = root / "run/systemd/system"
+    if run_marker.is_dir():
+        shutil.rmtree(run_marker)
+    init_link = root / "sbin/init"
+    if init_link.is_symlink():
+        init_link.unlink()
+    if systemd == "run":
+        (root / "run/systemd/system").mkdir(parents=True, exist_ok=True)
+    elif systemd == "systemd-link":
+        sbin = root / "sbin"
+        sbin.mkdir(parents=True, exist_ok=True)
+        (sbin / "init").symlink_to("/lib/systemd/systemd")
+    elif systemd == "sysv":
+        sbin = root / "sbin"
+        sbin.mkdir(parents=True, exist_ok=True)
+        (sbin / "init").symlink_to("/lib/sysvinit/init")
+    if os_release == "default":
+        os_release = OS_RELEASE_UBUNTU
+    os_release_path = root / "etc/os-release"
+    if os_release is None:
+        if os_release_path.exists():
+            os_release_path.unlink()
+    else:
+        etc = root / "etc"
+        etc.mkdir(parents=True, exist_ok=True)
+        os_release_path.write_text(os_release)
+
+
 def run_install(payload: pathlib.Path, root: pathlib.Path, stubs: pathlib.Path, base: pathlib.Path,
-                args: tuple[str, ...] = (), fail_at: str = "", active: str = "") -> subprocess.CompletedProcess:
+                args: tuple[str, ...] = (), fail_at: str = "", active: str = "",
+                uname: str = "", systemd: str = "run", os_release: str | None = "default",
+                fail_start: bool = False) -> subprocess.CompletedProcess:
+    seed_platform(root, systemd, os_release)
     env = dict(os.environ)
     env["PATH"] = f"{stubs}:{env['PATH']}"
     env["SYSTEMCTL_LOG"] = str(base / "systemctl.log")
     env["OPENSSL_LOG"] = str(base / "openssl.log")
     env["USERADD_LOG"] = str(base / "useradd.log")
     env["FAKE_ACTIVE_UNITS"] = active
+    env["NEXTERM_INSTALL_SYSTEMCTL"] = str(stubs / "systemctl")
+    state = base / f"systemctl-state-{next(_RUN_SEQ)}"
+    state.write_text("")
+    env["SYSTEMCTL_STATE"] = str(state)
+    if uname:
+        env["FAKE_UNAME_NAME"] = uname
+    else:
+        env.pop("FAKE_UNAME_NAME", None)
+    if fail_start:
+        env["FAKE_FAIL_START"] = "1"
+    else:
+        env.pop("FAKE_FAIL_START", None)
     if fail_at:
         env["NEXTERM_INSTALL_FAIL_AT"] = fail_at
     else:
@@ -1981,6 +2069,231 @@ def test_no_enable_flag_and_missing_payload() -> None:
         assert not (base / "root2/opt/nexterm").exists(), "failed preflight must not create directories"
 
 
+def test_non_linux_fails_visibly() -> None:
+    for kernel in ("Darwin", "Windows_NT", "MINGW64_NT-10.0"):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            stubs = make_stubs(base)
+            root = base / "root"
+            payload = make_payload(base, "v1")
+            result = run_install(payload, root, stubs, base, uname=kernel)
+            assert result.returncode != 0, kernel
+            assert f"unsupported operating system: {kernel}" in result.stderr, (kernel, result.stderr)
+            assert not (root / "opt/nexterm").exists(), kernel
+            assert not (root / "etc/nexterm").exists(), kernel
+            assert systemctl_calls(base) == [], kernel
+            assert openssl_calls(base) == [], kernel
+            assert not (base / "useradd.log").exists(), kernel
+
+
+def test_non_systemd_init_fails_visibly() -> None:
+    for variant in ("sysv", "none"):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            stubs = make_stubs(base)
+            root = base / "root"
+            payload = make_payload(base, "v1")
+            result = run_install(payload, root, stubs, base, systemd=variant)
+            assert result.returncode != 0, variant
+            assert "systemd is required" in result.stderr, (variant, result.stderr)
+            assert "non-systemd" in result.stderr, (variant, result.stderr)
+            assert not (root / "opt/nexterm").exists(), variant
+            assert not (root / "etc/nexterm").exists(), variant
+            assert systemctl_calls(base) == [], variant
+
+
+def test_systemd_init_symlink_evidence_accepted() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        result = run_install(payload, root, stubs, base, systemd="systemd-link")
+        assert result.returncode == 0, result.stderr
+        assert "init: systemd" in result.stdout, result.stdout
+        assert "platform: Linux" in result.stdout, result.stdout
+
+
+def test_distro_detection_variants() -> None:
+    supported = [
+        OS_RELEASE_UBUNTU,
+        'ID=debian\nPRETTY_NAME="Debian GNU/Linux 12 (bookworm)"\n',
+        'ID=rocky\nID_LIKE="rhel centos fedora"\nPRETTY_NAME="Rocky Linux 9.4"\n',
+        'ID=linuxmint\nID_LIKE="ubuntu debian"\nPRETTY_NAME="Linux Mint 22"\n',
+        'ID=arch\nPRETTY_NAME="Arch Linux"\n',
+        'ID=opensuse-tumbleweed\nID_LIKE="opensuse suse"\nPRETTY_NAME="openSUSE Tumbleweed"\n',
+    ]
+    for os_release in supported:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            stubs = make_stubs(base)
+            root = base / "root"
+            payload = make_payload(base, "v1")
+            result = run_install(payload, root, stubs, base, os_release=os_release)
+            assert result.returncode == 0, (os_release, result.stderr)
+            assert "(supported)" in result.stdout, (os_release, result.stdout)
+            assert "not in the supported" not in result.stdout, (os_release, result.stdout)
+            assert "cannot identify the distribution" not in result.stdout, (os_release, result.stdout)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        result = run_install(payload, root, stubs, base, os_release='ID=weirdos\nPRETTY_NAME="WeirdOS 1.0"\n')
+        assert result.returncode == 0, result.stderr
+        assert "not in the supported" in result.stdout, result.stdout
+        assert "WeirdOS 1.0" in result.stdout, result.stdout
+        assert "WARNING" in result.stdout, result.stdout
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        result = run_install(payload, root, stubs, base, os_release=None)
+        assert result.returncode == 0, result.stderr
+        assert "cannot identify the distribution" in result.stdout, result.stdout
+        assert "WARNING" in result.stdout, result.stdout
+
+
+def test_first_install_reports_active_service() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        result = run_install(payload, root, stubs, base)
+        assert result.returncode == 0, result.stderr
+        assert "nexterm-server.service is active" in result.stdout, result.stdout
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        result = run_install(payload, root, stubs, base, fail_start=True)
+        assert result.returncode == 0, result.stderr
+        assert "did not report active" in result.stdout, result.stdout
+        assert "journalctl -u nexterm-server.service" in result.stdout, result.stdout
+        assert "WARNING" in result.stdout, result.stdout
+
+
+def test_console_output_redacts_key_material() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        result = run_install(payload, root, stubs, base)
+        assert result.returncode == 0, result.stderr
+        assert read(root / "etc/nexterm/master.key") == FAKE_KEY_HEX + "\n"
+        assert FAKE_KEY_HEX not in result.stdout + result.stderr, "generated key material must never reach the console"
+
+        key_file = root / "etc/nexterm/master.key"
+        key_file.write_text("preexisting-super-secret-key\n")
+        (base / "openssl.log").unlink(missing_ok=True)
+        payload_v2 = make_payload(base, "v2")
+        upgrade = run_install(payload_v2, root, stubs, base, active="nexterm-server.service")
+        assert upgrade.returncode == 0, upgrade.stderr
+        combined = upgrade.stdout + upgrade.stderr
+        assert "preexisting-super-secret-key" not in combined, "existing key material must never reach the console"
+        assert FAKE_KEY_HEX not in combined, "no key regeneration on upgrade"
+        assert openssl_calls(base) == [], "no key generation while the key exists"
+
+
+def test_rollback_requires_supported_platform() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload_v1 = seed_first_install(base, stubs, root)
+        payload_v2 = make_payload(base, "v2")
+        failed = run_install(payload_v2, root, stubs, base, fail_at="units", active="nexterm-server.service")
+        assert failed.returncode != 0, "injected failure must abort"
+
+        rollback = run_install(payload_v2, root, stubs, base, args=("--rollback",), uname="Darwin")
+        assert rollback.returncode != 0, "rollback on a non-Linux host must fail"
+        assert "unsupported operating system: Darwin" in rollback.stderr, rollback.stderr
+        assert read(root / "opt/nexterm/nexterm-server") == read(payload_v2 / "nexterm-server"), "payload must be untouched"
+
+        rollback = run_install(payload_v2, root, stubs, base, args=("--rollback",), systemd="none")
+        assert rollback.returncode != 0, "rollback without systemd evidence must fail"
+        assert "systemd is required" in rollback.stderr, rollback.stderr
+        assert read(root / "opt/nexterm/nexterm-server") == read(payload_v2 / "nexterm-server"), "payload must be untouched"
+
+        rollback = run_install(payload_v2, root, stubs, base, args=("--rollback",), active="nexterm-server.service")
+        assert rollback.returncode == 0, rollback.stderr
+        assert read(root / "opt/nexterm/nexterm-server") == read(payload_v1 / "nexterm-server"), "supported rollback must restore v1"
+
+
+def test_missing_systemctl_fails_visibly() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base, with_systemctl=False)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        result = run_install(payload, root, stubs, base)
+        assert result.returncode != 0, "a missing systemctl must fail"
+        assert "systemctl not found" in result.stderr, result.stderr
+        assert not (root / "opt/nexterm").exists(), "failed preflight must not create directories"
+
+
+def test_real_server_archive_smoke() -> None:
+    archive_dir = ROOT / "target/release-assets"
+    candidates = sorted(archive_dir.glob("NexTerm-server_*_linux_*.tar.gz")) if archive_dir.is_dir() else []
+    env_archive = os.environ.get("NEXTERM_TEST_SERVER_ARCHIVE")
+    archive = pathlib.Path(env_archive) if env_archive else (candidates[-1] if candidates else None)
+    if archive is None:
+        print("skip   test_real_server_archive_smoke (no packaged server archive; build one with scripts/pack-linux-server.sh and re-run, or set NEXTERM_TEST_SERVER_ARCHIVE)")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        extract = base / "extracted"
+        extract.mkdir()
+        subprocess.run(["tar", "-xzf", str(archive), "-C", str(extract)], check=True)
+        dirs = [p for p in extract.iterdir() if p.is_dir()]
+        assert len(dirs) == 1, f"archive must extract to a single directory: {dirs}"
+        payload = dirs[0]
+        for member in (
+            "install.sh", "nexterm-server", "nexterm-helper-linux-amd64", "nexterm-helper-linux-arm64",
+            "nexterm-server.service", "nexterm-onlyserver.service",
+            "nexterm.env.example", "onlyserver.env.example", "web/index.html",
+        ):
+            assert (payload / member).exists(), f"archive payload is missing {member}"
+        stubs = make_stubs(base, with_openssl=False)
+        root = base / "root"
+        seed_platform(root, "run", "default")
+        env = dict(os.environ)
+        env["PATH"] = f"{stubs}:{env['PATH']}"
+        env["SYSTEMCTL_LOG"] = str(base / "systemctl.log")
+        env["USERADD_LOG"] = str(base / "useradd.log")
+        env["FAKE_ACTIVE_UNITS"] = ""
+        env["NEXTERM_INSTALL_SYSTEMCTL"] = str(stubs / "systemctl")
+        state = base / "systemctl-state-archive"
+        state.write_text("")
+        env["SYSTEMCTL_STATE"] = str(state)
+        result = subprocess.run(
+            ["/bin/bash", str(payload / "install.sh"), "--root", str(root)],
+            capture_output=True, text=True, env=env, timeout=120,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "platform: Linux" in result.stdout, result.stdout
+        assert "init: systemd" in result.stdout, result.stdout
+        assert "(supported)" in result.stdout, result.stdout
+        key = root / "etc/nexterm/master.key"
+        content = read(key).strip()
+        assert mode(key) == 0o600, oct(mode(key))
+        assert len(content) == 64 and all(c in "0123456789abcdef" for c in content), "a real random hex key must be generated"
+        assert content not in result.stdout + result.stderr, "key material must never reach the console"
+        assert read(root / "opt/nexterm/nexterm-server") == read(payload / "nexterm-server")
+        for unit in UNITS:
+            assert read(root / "etc/systemd/system" / unit) == read(payload / unit), unit
+        calls = systemctl_calls(base)
+        assert "enable --now nexterm-server.service" in calls, calls
+        assert "nexterm-server.service is active" in result.stdout, result.stdout
+
+
 def main() -> int:
     tests = [
         test_first_install_safe_defaults,
@@ -2024,6 +2337,15 @@ def main() -> int:
         test_first_install_failure_at_env_is_recoverable,
         test_upgrade_no_active_unit_never_restarts,
         test_no_enable_flag_and_missing_payload,
+        test_non_linux_fails_visibly,
+        test_non_systemd_init_fails_visibly,
+        test_systemd_init_symlink_evidence_accepted,
+        test_distro_detection_variants,
+        test_first_install_reports_active_service,
+        test_console_output_redacts_key_material,
+        test_rollback_requires_supported_platform,
+        test_missing_systemctl_fails_visibly,
+        test_real_server_archive_smoke,
     ]
     for test in tests:
         try:

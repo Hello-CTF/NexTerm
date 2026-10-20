@@ -12,6 +12,11 @@ Usage: install.sh [options]
 
 Install or upgrade the NexTerm server from an extracted release archive.
 
+Requires a Linux distribution with systemd; the platform is detected from
+explicit evidence before anything is changed, and unsupported systems
+(non-Linux kernels, non-systemd init systems) fail with a visible error.
+macOS and Windows are not supported.
+
 First install creates the nexterm system user, /opt/nexterm, /etc/nexterm
 and /var/lib/nexterm, installs binaries, web assets, units and environment
 files with safe defaults (loopback listen, auth on), generates
@@ -42,6 +47,7 @@ Options:
 
 Test hooks (see scripts/test-systemd-install.py):
   NEXTERM_INSTALL_SYSTEMCTL   systemctl executable to call
+  NEXTERM_INSTALL_UNAME       uname executable to call
   NEXTERM_INSTALL_FAIL_AT     abort at the named step
 INSTALL_HELP_EOF
 }
@@ -78,6 +84,8 @@ ENV_KEYS="NEXTERM_LISTEN NEXTERM_AUTH NEXTERM_DATA_DIR NEXTERM_WEB_ROOT NEXTERM_
 REAL_ROOT=0
 [ "$ROOT_PREFIX" = "/" ] && REAL_ROOT=1
 SYSTEMCTL="${NEXTERM_INSTALL_SYSTEMCTL:-systemctl}"
+UNAME="${NEXTERM_INSTALL_UNAME:-uname}"
+SUPPORTED_DISTRO_IDS="debian ubuntu raspbian rhel fedora centos rocky almalinux ol amzn arch manjaro sles opensuse-leap opensuse-tumbleweed"
 MODE="first"
 ACTIVE_UNITS=""
 SERVER_LEGACY_VALUES=""
@@ -106,6 +114,87 @@ require_systemctl() {
 require_root_when_real() {
   if [ "$REAL_ROOT" -eq 1 ] && [ "$(id -u)" -ne 0 ]; then
     die "must run as root for a system install (use --root DIR for a staged install)"
+  fi
+}
+
+systemd_booted() {
+  # explicit, filesystem-only evidence that systemd is the init system, so a
+  # staged (--root) target is checked identically to the live host: the
+  # sd_booted() probe (/run/systemd/system) or an init symlink to systemd
+  [ -d "$ROOT_PREFIX/run/systemd/system" ] && return 0
+  local link
+  for link in sbin/init usr/sbin/init; do
+    if [ -L "$ROOT_PREFIX/$link" ]; then
+      case "$(readlink "$ROOT_PREFIX/$link")" in
+        *systemd*) return 0 ;;
+      esac
+    fi
+  done
+  return 1
+}
+
+os_release_file() {
+  if [ -f "$ROOT_PREFIX/etc/os-release" ]; then
+    printf '%s\n' "$ROOT_PREFIX/etc/os-release"
+  elif [ -f "$ROOT_PREFIX/usr/lib/os-release" ]; then
+    printf '%s\n' "$ROOT_PREFIX/usr/lib/os-release"
+  else
+    return 1
+  fi
+}
+
+os_release_get() {
+  # print one KEY's value from an os-release file with matching quotes
+  # stripped; the file is parsed, never sourced
+  local file="$1" key="$2" line
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "$key"=*)
+        line="${line#"$key"=}"
+        case "$line" in
+          '"'*'"') line="${line#\"}"; line="${line%\"}" ;;
+          "'"*"'") line="${line#\'}"; line="${line%\'}" ;;
+        esac
+        printf '%s' "$line"
+        return 0
+        ;;
+    esac
+  done < "$file"
+  return 1
+}
+
+distro_supported() {
+  local token
+  for token in $1 $2; do
+    case " $SUPPORTED_DISTRO_IDS " in
+      *" $token "*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+detect_platform() {
+  fail_at platform
+  local kernel file id id_like pretty
+  command -v "$UNAME" >/dev/null 2>&1 || die "uname not found (set NEXTERM_INSTALL_UNAME)"
+  kernel="$("$UNAME" -s)"
+  if [ "$kernel" != "Linux" ]; then
+    die "unsupported operating system: $kernel (this installer requires a Linux distribution with systemd; macOS and Windows are not supported)"
+  fi
+  if ! systemd_booted; then
+    die "systemd is required but was not detected (no /run/systemd/system and no systemd /sbin/init under $ROOT_PREFIX); this installer does not support non-systemd init systems"
+  fi
+  if file="$(os_release_file)"; then
+    id="$(os_release_get "$file" ID || true)"
+    id_like="$(os_release_get "$file" ID_LIKE || true)"
+    pretty="$(os_release_get "$file" PRETTY_NAME || true)"
+    if distro_supported "$id" "$id_like"; then
+      log "platform: Linux, init: systemd, distribution: ${pretty:-$id} (supported)"
+    else
+      log "WARNING: distribution ${pretty:-${id:-unknown}} is not in the supported list ($SUPPORTED_DISTRO_IDS); continuing because systemd was detected"
+    fi
+  else
+    log "WARNING: cannot identify the distribution (no /etc/os-release); continuing because systemd was detected"
   fi
 }
 
@@ -947,6 +1036,11 @@ manage_services() {
     if [ "$ENABLE" -eq 1 ]; then
       "$SYSTEMCTL" enable --now "$SERVER_UNIT"
       log "enabled and started $SERVER_UNIT"
+      if unit_active "$SERVER_UNIT"; then
+        log "$SERVER_UNIT is active"
+      else
+        log "WARNING: $SERVER_UNIT did not report active after enable --now; inspect it with: systemctl status $SERVER_UNIT; journalctl -u $SERVER_UNIT"
+      fi
     else
       log "skipped enabling $SERVER_UNIT (--no-enable)"
     fi
@@ -963,6 +1057,18 @@ manage_services() {
   fi
 }
 
+report_account_bootstrap() {
+  [ "$MODE" = "first" ] || return 0
+  [ "$ENABLE" -eq 1 ] || return 0
+  # DEP01 follow-up: once the initial-admin password policy and its server
+  # wiring land, create the super-admin through the server's account
+  # initialization contract here and print the initial password to this
+  # console only after successful creation; never on upgrade/re-run, never
+  # to logs, env files or disk. Until then the server prints a one-time
+  # initialization code to its own log on first start.
+  log "super-admin setup: finish initialization with the one-time code from the server log (journalctl -u $SERVER_UNIT)"
+}
+
 run_install() {
   fail_at preflight
   local f
@@ -970,6 +1076,7 @@ run_install() {
     [ -f "$SOURCE_DIR/$f" ] || die "payload is missing $f (run this script from an extracted NexTerm server archive, or pass --source DIR)"
   done
   [ -f "$SOURCE_DIR/web/index.html" ] || die "payload is missing web/index.html"
+  detect_platform
   require_systemctl
   require_root_when_real
 
@@ -1013,6 +1120,7 @@ run_install() {
   reload_systemd
   manage_services
   rm -f "$INCOMPLETE_MARKER" "$FIRST_INSTALL_STATE" "$BACKUP_DIR/pending"
+  report_account_bootstrap
   log "done"
 }
 
@@ -1020,6 +1128,7 @@ run_rollback() {
   fail_at preflight
   [ -d "$BACKUP_DIR" ] || die "no rollback backup found at ${BACKUP_DIR#$ROOT_PREFIX}"
   [ -f "$BACKUP_DIR/nexterm-server" ] || die "rollback backup at ${BACKUP_DIR#$ROOT_PREFIX} is incomplete"
+  detect_platform
   require_systemctl
   require_root_when_real
 
