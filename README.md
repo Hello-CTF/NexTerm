@@ -147,9 +147,12 @@ PostgreSQL 与普通 SSH/SFTP 无需远端 agent，agent 仅用于设备管理�
 | macOS（Apple Silicon / Intel） | `NexTerm_x.y.z_<架构>.dmg` | 打开后拖入「应用程序」。 |
 | Linux 桌面（amd64 / arm64） | `NexTerm-desktop_x.y.z_linux_<架构>.deb` | `apt install ./<包名>.deb` |
 | Linux 服务器 | `NexTerm-server_x.y.z_linux_<架构>.tar.gz` | 见[服务端与设备接入](#服务端与设备接入)。 |
-| Android | `NexTerm_x.y.z_android.apk` | arm64 设备直接安装。 |
-| iOS / iPadOS | TestFlight | 使用 NexTerm 的 TestFlight 测试邀请安装；Release 不提供 IPA 资产。 |
+| Android（预览） | `NexTerm_x.y.z_android.apk` | 预览版：arm64 设备直接安装。 |
+| iOS / iPadOS（预览） | TestFlight | 预览版：使用 NexTerm 的 TestFlight 测试邀请安装；Release 不提供 IPA 资产。 |
 | 懒猫微服 | 应用中心 | 在应用中心安装 NexTerm。 |
+
+> [!NOTE]
+> 移动端（Android / iOS / iPadOS）目前为预览版，完成真实设备签名验收前不作为正式支持平台。
 
 > [!TIP]
 > macOS 首次打开提示无法验证开发者时，在「系统设置 → 隐私与安全性」中点「仍要打开」；提示应用已损坏则执行 `xattr -dr com.apple.quarantine /Applications/NexTerm.app`。

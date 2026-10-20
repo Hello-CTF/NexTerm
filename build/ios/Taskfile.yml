@@ -12,10 +12,6 @@ includes:
 # For automatically managed signing & provisioning, use `task ios:xcode` and
 # build from the generated Xcode project instead.
 vars:
-  BUNDLE_ID: '{{.BUNDLE_ID | default "com.wails.app"}}'
-  NEXTERM_VERSION: '{{.NEXTERM_RELEASE_VERSION | default "0.0.0"}}'
-  NEXTERM_COMMIT:
-    sh: 'commit="$(git rev-parse HEAD 2>/dev/null || echo unknown)"; if [ "$commit" != "unknown" ] && [ -n "$(git status --porcelain 2>/dev/null)" ]; then commit="$commit+dirty"; fi; echo "$commit"'
   IOS_PLATFORM: '{{.IOS_PLATFORM | default "simulator"}}'
   MIN_IOS_VERSION: '{{.MIN_IOS_VERSION | default "15.0"}}'
   IOS_SDK: '{{if eq .IOS_PLATFORM "device"}}iphoneos{{else}}iphonesimulator{{end}}'
@@ -52,7 +48,8 @@ tasks:
       - echo "Building iOS app {{.APP_NAME}} ({{.IOS_PLATFORM}})..."
       - go build -buildmode=c-archive -overlay build/ios/xcode/overlay.json {{.BUILD_FLAGS}} -o {{.OUTPUT}}.a ./cmd/nexterm-desktop
     vars:
-      BUILD_FLAGS: '{{if eq .PRODUCTION "true"}}-tags production,ios -trimpath -buildvcs=false -ldflags="-s -w -X github.com/Hello-CTF/NexTerm/internal/version.Version={{.NEXTERM_VERSION}} -X github.com/Hello-CTF/NexTerm/internal/version.Commit={{.NEXTERM_COMMIT}}"{{else}}-tags ios,debug -buildvcs=false -gcflags=all="-l"{{end}}'
+      BUILD_FLAGS:
+        sh: 'node scripts/mobile-source.mjs ldflags --platform=ios --production={{.PRODUCTION | default "false"}}'
       DEFAULT_OUTPUT: '{{.BIN_DIR}}/{{.APP_NAME}}'
       OUTPUT: '{{ .OUTPUT | default .DEFAULT_OUTPUT }}'
       SDK_PATH:
@@ -213,7 +210,7 @@ tasks:
     cmds:
       - |
         # Read the real bundle id from the built bundle (it comes from
-        # build/config.yml, not the BUNDLE_ID var, so it varies per project).
+        # build/config.yml, so it varies per project).
         APP="{{.BIN_DIR}}/{{.APP_NAME}}.app"
         BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")
         xcrun simctl terminate booted "$BUNDLE_ID" 2>/dev/null || true
@@ -307,13 +304,19 @@ tasks:
 
   generate:ios:overlay:
     summary: Generate Go build overlay and iOS shim
+    deps:
+      # The stamp refresh must run before this task's up-to-date check; as a
+      # dep it always runs, so a version change or removal reaches the
+      # sources and invalidates the cached generation.
+      - task: common:stamp:mobile:config
     sources:
       - build/config.yml
+      - build/config.stamp.yml
     generates:
       - build/ios/xcode/overlay.json
       - build/ios/xcode/gen/main_ios.gen.go
     cmds:
-      - wails3 ios overlay:gen -out build/ios/xcode/overlay.json -config build/config.yml
+      - wails3 ios overlay:gen -out build/ios/xcode/overlay.json -config "$(node scripts/mobile-source.mjs config)"
       - |
         node -e '
           const fs = require("node:fs");
@@ -330,8 +333,15 @@ tasks:
   generate:ios:xcode:
     internal: true
     summary: Generate iOS Xcode project structure and assets
+    deps:
+      # The stamp refresh must run before this task's up-to-date check; as a
+      # dep it always runs, so a version change or removal reaches the
+      # sources and invalidates the cached generation (the generated
+      # Info.plist picks the version up from the stamp).
+      - task: common:stamp:mobile:config
     sources:
       - build/config.yml
+      - build/config.stamp.yml
       - build/appicon.png
       - build/ios/LaunchScreen.storyboard
       - build/ios/LaunchIcon.imageset/Contents.json
@@ -341,7 +351,7 @@ tasks:
       - build/ios/xcode/main/Assets.xcassets/**/*
       - build/ios/xcode/main.xcodeproj/project.pbxproj
     cmds:
-      - wails3 ios xcode:gen -outdir build/ios/xcode -config build/config.yml
+      - wails3 ios xcode:gen -outdir build/ios/xcode -config "$(node scripts/mobile-source.mjs config)"
       # The generated launch screen shows the product name as a text label;
       # overlay the icon-only storyboard and its LaunchIcon image set.
       - cp build/ios/LaunchScreen.storyboard build/ios/xcode/main/LaunchScreen.storyboard
