@@ -8,11 +8,21 @@ const config = ts.readConfigFile(configPath, ts.sys.readFile);
 if (config.error) throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, "\n"));
 const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
 
+// The contract probes only exercise the IPC type surface; dropping the
+// vite/client ambient types trims roughly a quarter of the in-memory compile
+// cost without weakening the checks (any missing global would surface as a
+// compile error here).
+const options: ts.CompilerOptions = { ...parsed.options, types: [] };
+
+// Shared across the compiles in this file so the generated IPC graph is
+// parsed once and its source-file ASTs are reused by subsequent programs.
+const documentRegistry = ts.createDocumentRegistry();
+
 function compile(rootNames: string[], overlays: Record<string, string> = {}): readonly ts.Diagnostic[] {
   const normalizedOverlays = new Map(
     Object.entries(overlays).map(([fileName, source]) => [resolve(fileName), source]),
   );
-  const host = ts.createCompilerHost(parsed.options);
+  const host = ts.createCompilerHost(options);
   const readFile = host.readFile.bind(host);
   const fileExists = host.fileExists.bind(host);
   host.readFile = (fileName) => normalizedOverlays.get(resolve(fileName)) ?? readFile(fileName);
@@ -21,7 +31,12 @@ function compile(rootNames: string[], overlays: Record<string, string> = {}): re
     const source = host.readFile(fileName);
     return source === undefined ? undefined : ts.createSourceFile(fileName, source, languageVersion, true);
   };
-  const program = ts.createProgram({ rootNames, options: parsed.options, host });
+  const program = ts.createProgram({
+    rootNames,
+    options,
+    host,
+    documentRegistry,
+  });
   return ts.getPreEmitDiagnostics(program);
 }
 
