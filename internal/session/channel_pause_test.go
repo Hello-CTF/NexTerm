@@ -193,7 +193,7 @@ func TestRecoverChannelForExcludesPausedCoalescerFromReplay(t *testing.T) {
 	// more frame sit in the paused coalescer: it must not push the recovery
 	// anchor forward, must not be replayed, and must arrive only via the
 	// resume flush, so the full sequence stays contiguous without a hole.
-	if err := manager.PauseChannelFor(context.Background(), "a-1"); err != nil {
+	if err := manager.PauseChannelFor(context.Background(), "a-1", -1); err != nil {
 		t.Fatal(err)
 	}
 	if err := channel.emit([]byte("three")); err != nil {
@@ -290,7 +290,7 @@ func TestPauseChannelHoldsOutputAndResumeFlushesInOrder(t *testing.T) {
 		t.Fatalf("first frame = %q", got)
 	}
 
-	if err := manager.PauseChannelFor(context.Background(), "a-1"); err != nil {
+	if err := manager.PauseChannelFor(context.Background(), "a-1", -1); err != nil {
 		t.Fatal(err)
 	}
 	if err := channel.emit([]byte("two")); err != nil {
@@ -323,7 +323,7 @@ func TestPauseChannelDoesNotDisturbOtherSubscribers(t *testing.T) {
 	receiverB := bindTestReceiver(t, manager, "b-1")
 	drainAttachHeader(t, receiverB)
 
-	if err := manager.PauseChannelFor(context.Background(), "a-1"); err != nil {
+	if err := manager.PauseChannelFor(context.Background(), "a-1", -1); err != nil {
 		t.Fatal(err)
 	}
 	if err := channel.emit([]byte("x")); err != nil {
@@ -364,7 +364,7 @@ func TestPauseChannelStallsPumpAndLosesNothing(t *testing.T) {
 		t.Fatalf("pre-pause frame B = %q", gotB)
 	}
 
-	if err := manager.PauseChannelFor(context.Background(), "a-1"); err != nil {
+	if err := manager.PauseChannelFor(context.Background(), "a-1", -1); err != nil {
 		t.Fatal(err)
 	}
 	// Fill the paused coalescer, then the pipe: the pump must stall the PTY
@@ -406,7 +406,7 @@ func TestPauseChannelKeepsEphemeralTabAlive(t *testing.T) {
 	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-local"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.PauseChannelFor(context.Background(), "a-local"); err != nil {
+	if err := manager.PauseChannelFor(context.Background(), "a-local", -1); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := manager.Tab(info.ID); err != nil {
@@ -436,13 +436,13 @@ func TestPauseChannelRequiresOwnership(t *testing.T) {
 	}
 	openTestTab(t, manager, session, "client-a", "a-1")
 
-	if err := manager.PauseChannelFor(requestTestUser("owner-b"), "a-1"); !errors.Is(err, ErrForbidden) {
+	if err := manager.PauseChannelFor(requestTestUser("owner-b"), "a-1", -1); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("other owner pause = %v, want ErrForbidden", err)
 	}
-	if err := manager.PauseChannelFor(context.Background(), "a-1"); !errors.Is(err, ErrForbidden) {
+	if err := manager.PauseChannelFor(context.Background(), "a-1", -1); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("identity-less pause on closed server = %v, want ErrForbidden", err)
 	}
-	if err := manager.PauseChannelFor(requestTestUser("owner-a"), "a-1"); err != nil {
+	if err := manager.PauseChannelFor(requestTestUser("owner-a"), "a-1", -1); err != nil {
 		t.Fatalf("owner pause: %v", err)
 	}
 	if err := manager.ResumeChannelFor(requestTestUser("owner-a"), "a-1"); err != nil {
@@ -680,5 +680,106 @@ func TestRecoverChannelForOrdersAnchorBehindPendingFrames(t *testing.T) {
 	}
 	if err := <-recoverDone; err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The retention floor must stop eviction even before a recover arrives: a
+// saturated client that pauses with its accepted offset stalls the producer
+// at the ring limit instead of letting sustained output evict the refused
+// suffix. The whole suffix is then redelivered byte-identical.
+func TestRecoverChannelForFloorRetainsSuffixBeforeRecover(t *testing.T) {
+	manager, connector, _, connected := openOpenTestSession(t, KindLocal)
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-1"}); err != nil {
+		t.Fatal(err)
+	}
+	channel := connector.transport(0).channel(0)
+	receiverA := bindTestReceiver(t, manager, "a-1")
+	receiverB := bindTestReceiver(t, manager, "b-1")
+	drainAttachHeader(t, receiverA)
+	drainAttachHeader(t, receiverB)
+
+	const chunkSize = 64 << 10
+	var fed []byte
+	feedA := func(i int) bool {
+		chunk := bytes.Repeat([]byte{byte('a' + i%26)}, chunkSize)
+		fed = append(fed, chunk...)
+		if err := channel.emit(chunk); err != nil {
+			return false
+		}
+		if got := readFramesUntil(t, receiverA, chunkSize); !bytes.Equal(got, chunk) {
+			t.Fatalf("channel A chunk mismatch at %d", i)
+		}
+		return true
+	}
+	feedBoth := func(i int) bool {
+		chunk := bytes.Repeat([]byte{byte('a' + i%26)}, chunkSize)
+		if !feedA(i) {
+			return false
+		}
+		if got := readFramesUntil(t, receiverB, chunkSize); !bytes.Equal(got, chunk) {
+			t.Fatalf("channel B chunk mismatch at %d", i)
+		}
+		return true
+	}
+	// B accepts 16 MiB while the producer advances past it, then pauses with
+	// its accepted offset: the retention floor opens at 16 MiB.
+	for i := 0; i < 512; i++ {
+		if !feedBoth(i) {
+			t.Fatal("producer stalled before the floor opened")
+		}
+	}
+	const acceptedB = 16 << 20
+	if err := manager.PauseChannelFor(context.Background(), "b-1", acceptedB); err != nil {
+		t.Fatal(err)
+	}
+
+	// Sustained output past the ring's capacity: the producer stalls at the
+	// retention floor instead of evicting the refused suffix. The next chunk
+	// fills B's coalescer; the one after stalls the producer and must not
+	// reach channel A either.
+	if !feedA(512) {
+		t.Fatal("producer stalled before the coalescer filled")
+	}
+	chunk512 := bytes.Repeat([]byte{byte('a' + 512%26)}, chunkSize)
+	chunk513 := bytes.Repeat([]byte{byte('a' + 513%26)}, chunkSize)
+	if err := channel.emit(chunk513); err != nil {
+		t.Fatal(err)
+	}
+	expectNoFrame(t, receiverA)
+
+	// The whole refused suffix is redelivered byte-identical — no overrun.
+	// Chunk 512 went to the paused coalescer, so the replay covers exactly
+	// [16 MiB, 32 MiB).
+	recoverDone := make(chan error, 1)
+	go func() {
+		_, err := manager.RecoverChannelFor(context.Background(), "b-1", acceptedB)
+		recoverDone <- err
+	}()
+	anchorB := receiveTestFrame(t, receiverB)
+	if !bytes.Contains(anchorB.Data, []byte("recovery-")) {
+		t.Fatalf("anchor B = %q", anchorB.Data)
+	}
+	if got := readFramesUntil(t, receiverB, (32<<20)-acceptedB); !bytes.Equal(got, fed[acceptedB:32<<20]) {
+		t.Fatal("recovered suffix mismatch")
+	}
+	if err := <-recoverDone; err != nil {
+		t.Fatal(err)
+	}
+	// Resume flushes the held chunk in order behind the replay.
+	if err := manager.ResumeChannelFor(context.Background(), "b-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFramesUntil(t, receiverB, chunkSize); !bytes.Equal(got, chunk512) {
+		t.Fatal("post-recovery stream B mismatch")
+	}
+	if got := readFramesUntil(t, receiverA, chunkSize); !bytes.Equal(got, chunk513) {
+		t.Fatal("stalled chunk did not reach channel A after the resume")
 	}
 }

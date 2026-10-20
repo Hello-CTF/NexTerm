@@ -190,6 +190,15 @@ type terminalRecoverRequest struct {
 type terminalPauseRequest struct {
 	TabID     string `json:"tabId"`
 	ChannelID string `json:"channelId"`
+	// AcceptedBytes is the client's absolute accepted stream offset when
+	// pausing; it opens the recovery ring's retention floor. Negative leaves
+	// the floor unchanged.
+	AcceptedBytes int64 `json:"acceptedBytes"`
+}
+
+type terminalResumeRequest struct {
+	TabID     string `json:"tabId"`
+	ChannelID string `json:"channelId"`
 }
 
 type liveTabDTO struct {
@@ -597,11 +606,11 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			// output feed without detaching (ephemeral local/WinRM tabs stay alive).
 			return ipc.Register(dispatcher, "terminal_pause", func(ctx context.Context, _ *ipc.Call, input terminalPauseRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
-				return nil, terminalIPCError(s.sessions.PauseChannelFor(ctx, input.ChannelID))
+				return nil, terminalIPCError(s.sessions.PauseChannelFor(ctx, input.ChannelID, input.AcceptedBytes))
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "terminal_resume", func(ctx context.Context, _ *ipc.Call, input terminalPauseRequest) (any, error) {
+			return ipc.Register(dispatcher, "terminal_resume", func(ctx context.Context, _ *ipc.Call, input terminalResumeRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
 				return nil, terminalIPCError(s.sessions.ResumeChannelFor(ctx, input.ChannelID))
 			})

@@ -1489,7 +1489,7 @@ export const ipcContractManifest = {
       nested: false,
       channel: false,
       stream: "none",
-      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalPauseRequest", ts: "TerminalPauseRequest" },
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalResumeRequest", ts: "TerminalResumeRequest" },
       output: { go: "any", ts: "unknown" },
     },
     "terminal_screen_text": {
@@ -2024,7 +2024,7 @@ export interface IPCCommandTypeMap {
     output: unknown;
   };
   "terminal_resume": {
-    input: contractTypes.TerminalPauseRequest;
+    input: contractTypes.TerminalResumeRequest;
     output: unknown;
   };
 }

@@ -34,6 +34,10 @@ type subscriber struct {
 	// fanout enqueue, so a saturated client's refused suffix is
 	// [acceptedOffset, flushedOffset) regardless of paused coalescer buffers.
 	flushedOffset int64
+	// episodeFloor is the absolute stream offset this subscriber has accepted,
+	// reported while its refusal episode is unresolved; the recovery ring
+	// retains everything at or after it. -1 when no episode is open.
+	episodeFloor int64
 }
 
 const streamAnchorType = "nexterm.stream-anchor"
@@ -735,6 +739,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	old, replaced := tab.subscribers[options.ChannelID]
 	if replaced {
 		delete(tab.subscribers, options.ChannelID)
+		tab.syncRecoveryFloorLocked()
 		tab.releaseOrphanControllerLocked()
 	}
 	tab.mu.Unlock()
@@ -793,7 +798,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 		flushedOffset = tab.recovery.currentOffset()
 	}
 	tab.subscribers[options.ChannelID] = subscriber{
-		client: client, producer: producer, co: co, flushedOffset: flushedOffset,
+		client: client, producer: producer, co: co, flushedOffset: flushedOffset, episodeFloor: -1,
 	}
 	if tab.controller == "" {
 		if tab.controlled && tab.grid != nil {
@@ -951,6 +956,7 @@ func (m *Manager) detachChannelLocked(channelID string, incarnation uint64, clos
 	delete(m.channelTabs, channelID)
 	delete(m.channelIncarnations, channelID)
 	delete(tab.subscribers, channelID)
+	tab.syncRecoveryFloorLocked()
 	throttleRecovered, throttleVersion := m.clearThrottleChannelLocked(tab.ID, channelID)
 	tab.releaseOrphanControllerLocked()
 	event := tab.controlEventLocked()
@@ -1075,6 +1081,7 @@ func (m *Manager) detachMatching(tab *Tab, match func(string) bool, background b
 			}
 		}
 	}
+	tab.syncRecoveryFloorLocked()
 	tab.releaseOrphanControllerLocked()
 	event := tab.controlEventLocked()
 	empty := len(tab.subscribers) == 0

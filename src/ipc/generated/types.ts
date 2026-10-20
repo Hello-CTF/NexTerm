@@ -550,10 +550,16 @@ export type StepState = {
 export type TerminalPauseRequest = {
   tabId: string;
   channelId: string;
+  acceptedBytes: number;
 };
 
 export type TerminalRecoverRequest = {
   tabId: string;
   channelId: string;
   acceptedBytes: number;
+};
+
+export type TerminalResumeRequest = {
+  tabId: string;
+  channelId: string;
 };

@@ -20,8 +20,12 @@ func (m *Manager) tabIDForChannel(channelID string) string {
 }
 
 // PauseChannelFor stops feeding output to one channel without touching the
-// attachment: the tab, its PTY, and other subscribers stay live.
-func (m *Manager) PauseChannelFor(ctx context.Context, channelID string) error {
+// attachment: the tab, its PTY, and other subscribers stay live. The client's
+// accepted offset opens a retention floor: the recovery ring keeps everything
+// at or after it until the episode resolves, stalling the producer instead of
+// evicting the refused suffix. A negative acceptedBytes leaves the floor
+// unchanged.
+func (m *Manager) PauseChannelFor(ctx context.Context, channelID string, acceptedBytes int64) error {
 	tabID := m.tabIDForChannel(channelID)
 	if tabID == "" {
 		return ErrTabNotFound
@@ -35,9 +39,15 @@ func (m *Manager) PauseChannelFor(ctx context.Context, channelID string) error {
 	}
 	tab.mu.Lock()
 	subscriber, ok := tab.subscribers[channelID]
-	if ok && !subscriber.paused {
-		subscriber.paused = true
-		tab.subscribers[channelID] = subscriber
+	if ok {
+		if !subscriber.paused {
+			subscriber.paused = true
+			tab.subscribers[channelID] = subscriber
+		}
+		if acceptedBytes >= 0 {
+			floor := min(max(acceptedBytes, 0), subscriber.flushedOffset)
+			tab.setEpisodeFloorLocked(channelID, floor)
+		}
 	}
 	tab.signalOutputWakeLocked()
 	tab.mu.Unlock()
@@ -45,7 +55,8 @@ func (m *Manager) PauseChannelFor(ctx context.Context, channelID string) error {
 }
 
 // ResumeChannelFor releases a paused channel and flushes whatever the
-// coalescer held, restoring stream order behind already-delivered bytes.
+// coalescer held, restoring stream order behind already-delivered bytes. The
+// client only resumes once it caught up, so its retention floor closes.
 func (m *Manager) ResumeChannelFor(ctx context.Context, channelID string) error {
 	tabID := m.tabIDForChannel(channelID)
 	if tabID == "" {
@@ -64,6 +75,9 @@ func (m *Manager) ResumeChannelFor(ctx context.Context, channelID string) error 
 		subscriber.paused = false
 		tab.subscribers[channelID] = subscriber
 	}
+	if ok {
+		tab.setEpisodeFloorLocked(channelID, -1)
+	}
 	tab.signalOutputWakeLocked()
 	tab.mu.Unlock()
 	m.flushSubscriberOutput(tabID, channelID)
@@ -72,7 +86,9 @@ func (m *Manager) ResumeChannelFor(ctx context.Context, channelID string) error 
 
 // outputStalled reports whether a paused subscriber's coalescer is full: the
 // pump must stop reading the PTY until the wake channel fires, applying
-// backpressure to the shell instead of growing memory without bound.
+// backpressure to the shell instead of growing memory without bound. A
+// recovery floor at capacity stalls it the same way: the ring must not evict
+// a subscriber's unresolved refused suffix.
 func (t *Tab) outputStalled() (bool, chan struct{}) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -81,7 +97,38 @@ func (t *Tab) outputStalled() (bool, chan struct{}) {
 			return true, t.outputWake
 		}
 	}
+	if t.recovery != nil && t.recovery.needsStall() {
+		return true, t.outputWake
+	}
 	return false, nil
+}
+
+// setEpisodeFloorLocked records a subscriber's accepted offset for an open
+// refusal episode and re-applies the tab's retention floor; a negative
+// accepted offset closes the episode.
+func (t *Tab) setEpisodeFloorLocked(channelID string, accepted int64) {
+	subscriber, ok := t.subscribers[channelID]
+	if !ok {
+		return
+	}
+	subscriber.episodeFloor = accepted
+	t.subscribers[channelID] = subscriber
+	t.syncRecoveryFloorLocked()
+}
+
+// syncRecoveryFloorLocked re-applies the retention floor: the minimum
+// accepted offset among subscribers with an open episode, or -1 when none.
+func (t *Tab) syncRecoveryFloorLocked() {
+	if t.recovery == nil {
+		return
+	}
+	floor := int64(-1)
+	for _, subscriber := range t.subscribers {
+		if subscriber.episodeFloor >= 0 && (floor < 0 || subscriber.episodeFloor < floor) {
+			floor = subscriber.episodeFloor
+		}
+	}
+	t.recovery.setFloor(floor)
 }
 
 func (t *Tab) signalOutputWakeLocked() {
@@ -156,6 +203,9 @@ func (m *Manager) RecoverChannelFor(ctx context.Context, channelID string, accep
 	}
 	refused := subscriber.flushedOffset - acceptedBytes
 	if refused <= 0 {
+		tab.mu.Lock()
+		tab.setEpisodeFloorLocked(channelID, -1)
+		tab.mu.Unlock()
 		return subscriber.flushedOffset, nil
 	}
 	if oldest := recovery.oldestOffset(); oldest < 0 || acceptedBytes < oldest {
@@ -165,6 +215,11 @@ func (m *Manager) RecoverChannelFor(ctx context.Context, channelID string, accep
 	if int64(len(replay)) != refused {
 		return 0, ErrRecoveryOverrun
 	}
+	// Advance the retention floor to the reported accepted offset: the ring
+	// keeps everything at or after it while the episode is unresolved.
+	tab.mu.Lock()
+	tab.setEpisodeFloorLocked(channelID, acceptedBytes)
+	tab.mu.Unlock()
 	// Pause the channel for the replay: live output buffers in the coalescer
 	// and the resume flush delivers it in order behind the replay, so nothing
 	// interleaves with the refused suffix.
