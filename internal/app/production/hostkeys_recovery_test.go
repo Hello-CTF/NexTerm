@@ -313,7 +313,7 @@ func TestProductionHostKeyVerificationWithoutMirror(t *testing.T) {
 	database := newKnownHostOwnerTestDB(t)
 	path := filepath.Join(t.TempDir(), "known_hosts.json")
 	// The ledger alone holds the complete public key and metadata; the mirror file does not exist.
-	if err := database.KnownHostAcceptWithKey(ownerA, "127.0.0.1", int32(server.port()), publicKey.Type(), gossh.FingerprintSHA256(publicKey), material); err != nil {
+	if _, err := database.KnownHostAcceptWithKey(ownerA, "127.0.0.1", int32(server.port()), publicKey.Type(), gossh.FingerprintSHA256(publicKey), material); err != nil {
 		t.Fatal(err)
 	}
 	keys, err := newProductionHostKeyStore(ctx, path, database, false)
@@ -438,7 +438,7 @@ func TestProductionHostKeyStaleMaterialFailsClosed(t *testing.T) {
 	database := newKnownHostOwnerTestDB(t)
 	path := filepath.Join(t.TempDir(), "known_hosts.json")
 	// A fingerprint rotation left the row with the new fingerprint but the old key material.
-	if err := database.KnownHostAcceptWithKey(ownerA, "127.0.0.1", int32(server.port()), publicA.Type(), gossh.FingerprintSHA256(publicA), materialA); err != nil {
+	if _, err := database.KnownHostAcceptWithKey(ownerA, "127.0.0.1", int32(server.port()), publicA.Type(), gossh.FingerprintSHA256(publicA), materialA); err != nil {
 		t.Fatal(err)
 	}
 	row, found, err := database.KnownHostGet(ownerA, "127.0.0.1", int32(server.port()), publicA.Type())
@@ -504,7 +504,7 @@ func TestProductionHostKeyStartupReconcileHealsMirror(t *testing.T) {
 	}
 	// An interrupted full-key accept: the ledger holds the complete key, the mirror was never written.
 	healed := knownHostOwnerTestKey("heal.test", "SHA256:heal", "heal-key")
-	if err := database.KnownHostAcceptWithKey(ownerA, healed.Host, int32(healed.Port), healed.KeyType, healed.Fingerprint, healed.Key); err != nil {
+	if _, err := database.KnownHostAcceptWithKey(ownerA, healed.Host, int32(healed.Port), healed.KeyType, healed.Fingerprint, healed.Key); err != nil {
 		t.Fatal(err)
 	}
 	// A fingerprint-only row has no material and must not be mirrored.
@@ -538,6 +538,101 @@ func TestProductionHostKeyStartupReconcileHealsMirror(t *testing.T) {
 	if len(file.Keys) != 1 || file.Keys[0] != healed {
 		t.Fatalf("reconciled mirror = %+v, want only the ledger-backed entry", file.Keys)
 	}
+}
+
+func TestProductionHostKeyAccountRevokedLegacyEntryNotReimported(t *testing.T) {
+	ctx := context.Background()
+	database := newKnownHostOwnerTestDB(t)
+	putKnownHostOwnerTestUser(t, database, "admin", "superadmin", "active", 1)
+	admin := ipc.WithUserID(ctx, "admin")
+	legacy := knownHostOwnerTestKey("legacy-revoked.test", "SHA256:legacy-revoked", "legacy-revoked-key")
+	path := filepath.Join(t.TempDir(), "known_hosts.json")
+	if err := writeProductionHostKeyFile(path, productionHostKeyFile{Version: 1, Keys: []ssh.HostKey{legacy}}); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := newProductionHostKeyStore(ctx, path, database, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keys.migration.Copied != 1 {
+		t.Fatalf("account migration report = %+v", keys.migration)
+	}
+	rows, err := database.KnownHostList(admin)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("fallback import did not assign the legacy key: %+v, %v", rows, err)
+	}
+	// The user revokes the key; the process crashes between the ledger delete and the mirror rewrite,
+	// so the per-owner mirror still holds the revoked entry at restart.
+	if err := database.KnownHostRemove(admin, rows[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := newProductionHostKeyStore(ctx, path, database, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The one-time marker blocks the re-import and reconcile removes the orphaned mirror file.
+	if rows, err := database.KnownHostList(admin); err != nil || len(rows) != 0 {
+		t.Fatalf("revoked legacy key resurrected: %+v, %v", rows, err)
+	}
+	restarted.mu.Lock()
+	_, mirrorPath, err := restarted.fileFor(admin)
+	restarted.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(mirrorPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("orphaned mirror file survived reconcile: %v", err)
+	}
+	if _, err := newProductionHostKeyStore(ctx, path, database, false); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := database.KnownHostList(admin); err != nil || len(rows) != 0 {
+		t.Fatalf("revoked legacy key resurrected on second restart: %+v, %v", rows, err)
+	}
+}
+
+func TestProductionHostKeyReconcileRemovesOrphanMirrorFile(t *testing.T) {
+	ctx := context.Background()
+	ownerA := ipc.WithUserID(ctx, "orphan-owner-a")
+	ownerB := ipc.WithUserID(ctx, "orphan-owner-b")
+	database := newKnownHostOwnerTestDB(t)
+	path := filepath.Join(t.TempDir(), "known_hosts.json")
+	keys, err := newProductionHostKeyStore(ctx, path, database, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyA := knownHostOwnerTestKey("orphan-a.test", "SHA256:orphan-a", "orphan-a-key")
+	keyB := knownHostOwnerTestKey("orphan-b.test", "SHA256:orphan-b", "orphan-b-key")
+	if err := keys.PutHostKey(ownerA, keyA, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := keys.PutHostKey(ownerB, keyB, false); err != nil {
+		t.Fatal(err)
+	}
+	// Owner A's last ledger row is deleted while the mirror rewrite never runs (interrupted removal):
+	// the mirror file outlives its owner's trust.
+	rows, err := database.KnownHostList(ownerA)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("owner A rows = %+v, %v", rows, err)
+	}
+	if err := database.KnownHostRemove(ownerA, rows[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	keys.mu.Lock()
+	_, mirrorPathA, err := keys.fileFor(ownerA)
+	keys.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := newProductionHostKeyStore(ctx, path, database, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The orphaned mirror file is removed; the owner with remaining trust keeps theirs.
+	if _, err := os.Stat(mirrorPathA); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("orphaned mirror file survived reconcile: %v", err)
+	}
+	requireKnownHostOwnerTestKey(t, restarted, ownerB, keyB)
 }
 
 func breakKnownHostMirror(t *testing.T, keys *productionHostKeyStore, ctx context.Context) string {

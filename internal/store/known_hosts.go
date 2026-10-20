@@ -84,8 +84,11 @@ func (s *Store) KnownHostFillKeyMaterial(ctx context.Context, host string, port 
 }
 
 // KnownHostAcceptWithKey records trust together with the complete public key, so verification can exact-match
-// from the ledger without consulting a mirror file.
-func (s *Store) KnownHostAcceptWithKey(ctx context.Context, host string, port int32, keyType, fingerprint, key string) error {
+// from the ledger without consulting a mirror file. It returns the exact outcome of this accept (fingerprint,
+// key material and revision); the ID is only meaningful for a fresh insert. Callers must use the returned
+// outcome — not a re-read, which could observe an interleaved writer — as the identity of this write for
+// compensation purposes.
+func (s *Store) KnownHostAcceptWithKey(ctx context.Context, host string, port int32, keyType, fingerprint, key string) (KnownHostRow, error) {
 	knownHost := query.Use(s.db).KnownHostRow
 	row := KnownHostRow{ID: ids.New(), Host: host, Port: port, KeyType: keyType, Fingerprint: fingerprint, Key: key, AddedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)}
 	err := knownHost.WithContext(ctx).
@@ -96,9 +99,9 @@ func (s *Store) KnownHostAcceptWithKey(ctx context.Context, host string, port in
 		}).
 		Create(&row)
 	if err != nil {
-		return dbError(err)
+		return KnownHostRow{}, dbError(err)
 	}
-	return nil
+	return row, nil
 }
 
 func (s *Store) KnownHostList(ctx context.Context) ([]KnownHostRow, error) {

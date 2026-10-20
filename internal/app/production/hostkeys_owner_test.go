@@ -376,7 +376,9 @@ func TestProductionHostKeyLegacyMigrationOwnershipBackupAndReentry(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.migration.BackupCreated || reloaded.migration.Copied != 0 || reloaded.migration.Existing != 3 || reloaded.migration.Conflicts != 0 || reloaded.migration.Skipped != 0 {
+	// The one-time marker skips the legacy import entirely: entries revoked since the first import can
+	// never be resurrected from the untouched legacy file.
+	if reloaded.migration.BackupCreated || reloaded.migration.Copied != 0 || reloaded.migration.Existing != 0 || reloaded.migration.Conflicts != 0 || reloaded.migration.Skipped != 0 {
 		t.Fatalf("idempotent migration report = %+v", reloaded.migration)
 	}
 	adminPathAfter, adminAfter := knownHostOwnerTestFile(t, reloaded, admin)
@@ -493,7 +495,8 @@ func TestProductionHostKeyLegacyMigrationConflictPreservesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reentered.migration.Conflicts != 1 || reentered.migration.Copied != 0 {
+	// The one-time marker skips the legacy import on later startups; the conflicting entry stays out.
+	if reentered.migration.Conflicts != 0 || reentered.migration.Copied != 0 || reentered.migration.Existing != 0 {
 		t.Fatalf("conflicting migration reentry report = %+v", reentered.migration)
 	}
 	requireKnownHostOwnerTestKey(t, reentered, admin, current)

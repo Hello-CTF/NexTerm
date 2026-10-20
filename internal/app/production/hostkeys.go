@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/Hello-CTF/NexTerm/internal/atomicfile"
@@ -246,15 +247,9 @@ func (s *productionHostKeyStore) PutHostKey(ctx context.Context, key ssh.HostKey
 	if err != nil {
 		return err
 	}
-	if err := s.database.KnownHostAcceptWithKey(ctx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint, key.Key); err != nil {
-		return err
-	}
-	accepted, found, err := s.database.KnownHostGet(ctx, key.Host, int32(key.Port), key.KeyType)
+	accepted, err := s.database.KnownHostAcceptWithKey(ctx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint, key.Key)
 	if err != nil {
 		return err
-	}
-	if !found {
-		return fmt.Errorf("accepted SSH host key ledger row is missing")
 	}
 	mirrorReplace := replace
 	if !mirrorReplace && existed && previous.Fingerprint == key.Fingerprint {
@@ -281,6 +276,15 @@ func (s *productionHostKeyStore) migrateLegacy(ctx context.Context) (productionH
 		return s.migrateSharedLegacy(ctx)
 	}
 	var report productionHostKeyMigrationReport
+	// The legacy import is one-time: the marker is written only after the whole batch succeeds, so a crash
+	// mid-import resumes idempotently, and once the import completes, entries revoked since can never be
+	// resurrected from the untouched legacy file on a later startup.
+	markerPath := s.path + ".owner-import-done"
+	if _, err := os.Stat(markerPath); err == nil {
+		return report, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return report, err
+	}
 	data, existed, err := readProductionHostKeyFile(s.path)
 	if err != nil || !existed {
 		return report, err
@@ -340,6 +344,9 @@ func (s *productionHostKeyStore) migrateLegacy(ctx context.Context) (productionH
 			}
 		}
 	}
+	if err := atomicfile.Write(markerPath, 0o600, func(writer io.Writer) error { return nil }); err != nil {
+		return report, err
+	}
 	return report, nil
 }
 
@@ -376,7 +383,7 @@ func (s *productionHostKeyStore) migrateSharedLegacy(ctx context.Context) (produ
 		case ledgerExists:
 			report.Conflicts++
 		default:
-			if err := s.database.KnownHostAcceptWithKey(ctx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint, key.Key); err != nil {
+			if _, err := s.database.KnownHostAcceptWithKey(ctx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint, key.Key); err != nil {
 				return report, err
 			}
 			report.Copied++
@@ -408,6 +415,30 @@ func (s *productionHostKeyStore) reconcileMirrors(ctx context.Context) error {
 	}
 	for ownerID := range owners {
 		if err := s.reconcileMirror(ctx, ipc.WithUserID(ctx, ownerID)); err != nil {
+			return err
+		}
+	}
+	// Mirror files whose owner no longer holds any ledger row are leftovers of fully revoked trust — for
+	// example a crash between the last row's delete and the mirror rewrite. Their names are derived from
+	// the owner ID hash, so any u-*.json outside the expected set belongs to a row-less owner: remove it.
+	expected := make(map[string]struct{}, len(owners))
+	for ownerID := range owners {
+		digest := sha256.Sum256([]byte(ownerID))
+		expected[fmt.Sprintf("u-%x.json", digest)] = struct{}{}
+	}
+	entries, err := os.ReadDir(s.accountDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, "u-") || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		if _, ok := expected[name]; ok {
+			continue
+		}
+		if err := os.Remove(filepath.Join(s.accountDir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 	}
@@ -543,7 +574,7 @@ func (s *productionHostKeyStore) importLegacyKey(ctx context.Context, ownerID st
 		}
 	}
 	if !ledgerExists {
-		if err := s.database.KnownHostAcceptWithKey(ownerCtx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint, key.Key); err != nil {
+		if _, err := s.database.KnownHostAcceptWithKey(ownerCtx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint, key.Key); err != nil {
 			if !alreadyPresent {
 				if rollbackErr := restoreProductionHostKeyFile(path, previous, fileExisted); rollbackErr != nil {
 					return productionHostKeyMigrationConflict, errors.Join(err, fmt.Errorf("restore SSH host key file: %w", rollbackErr))
