@@ -371,6 +371,27 @@ def test_upgrade_preserves_data_dir_master_key() -> None:
             values = env_values(root / "etc/nexterm" / env)
             assert values["NEXTERM_MASTER_KEY_FILE"] == "/var/lib/nexterm/master.key", (env, values)
 
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        legacy_bin = root / "opt/nexterm/nexterm-server"
+        legacy_bin.parent.mkdir(parents=True)
+        legacy_bin.write_text("# fake nexterm-server v0\n")
+        data_key = root / "var/lib/nexterm/master.key"
+        data_key.parent.mkdir(parents=True)
+        data_key.write_text("data-dir-key-material\n")
+        (base / "openssl.log").unlink(missing_ok=True)
+        payload_v2 = make_payload(base, "v2")
+        result = run_install(payload_v2, root, stubs, base)
+        assert result.returncode == 0, result.stderr
+        assert read(data_key) == "data-dir-key-material\n", "data-dir key must be untouched"
+        assert not (root / "etc/nexterm/master.key").exists(), "fresh env files must not trigger a new /etc key"
+        assert openssl_calls(base) == [], "no key generation while a data-dir key exists"
+        for env in ENVS:
+            values = env_values(root / "etc/nexterm" / env)
+            assert values["NEXTERM_MASTER_KEY_FILE"] == "/var/lib/nexterm/master.key", (env, values)
+
 
 def test_upgrade_preserves_legacy_key_file_setting() -> None:
     with tempfile.TemporaryDirectory() as tmp:

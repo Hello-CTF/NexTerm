@@ -80,6 +80,8 @@ MODE="first"
 ACTIVE_UNITS=""
 SERVER_LEGACY_VALUES=""
 ONLYSERVER_LEGACY_VALUES=""
+NEXTERM_ENV_PREEXISTED=0
+ONLYSERVER_ENV_PREEXISTED=0
 INCOMPLETE_MARKER="$OPT_DIR/.install-incomplete"
 
 log() { printf 'install: %s\n' "$*"; }
@@ -311,8 +313,10 @@ ensure_env_files() {
     env_file="$ETC_DIR/$name.env"
     example="$SOURCE_DIR/$name.env.example"
     if [ -f "$env_file" ]; then
+      if [ "$name" = "nexterm" ]; then NEXTERM_ENV_PREEXISTED=1; else ONLYSERVER_ENV_PREEXISTED=1; fi
       log "preserving existing ${env_file#$ROOT_PREFIX}"
     else
+      if [ "$name" = "nexterm" ]; then NEXTERM_ENV_PREEXISTED=0; else ONLYSERVER_ENV_PREEXISTED=0; fi
       install -m 0600 "$example" "$env_file"
       log "installed ${env_file#$ROOT_PREFIX} with safe defaults"
     fi
@@ -341,14 +345,15 @@ EOF
 
 ensure_master_key() {
   fail_at masterkey
-  local env_file configured data_dir data_dir_key key_file physical parent name
+  local env_file configured data_dir data_dir_key key_file physical parent name pre_existed
   for name in nexterm onlyserver; do
     env_file="$ETC_DIR/$name.env"
+    if [ "$name" = "nexterm" ]; then pre_existed="$NEXTERM_ENV_PREEXISTED"; else pre_existed="$ONLYSERVER_ENV_PREEXISTED"; fi
     configured="$(env_get "$env_file" NEXTERM_MASTER_KEY_FILE)"
     data_dir="$(env_get "$env_file" NEXTERM_DATA_DIR)"
     [ -n "$data_dir" ] || data_dir="${DATA_DIR#$ROOT_PREFIX}"
     data_dir_key="$data_dir/master.key"
-    if [ -n "$configured" ]; then
+    if [ "$pre_existed" -eq 1 ] && [ -n "$configured" ]; then
       key_file="$configured"
     elif [ -f "$(physical_path "$data_dir_key")" ]; then
       key_file="$data_dir_key"
@@ -373,8 +378,8 @@ ensure_master_key() {
       fi
       log "generated $key_file (back it up with ${DATA_DIR#$ROOT_PREFIX}; it cannot be recreated)"
     fi
-    if ! grep -q "^NEXTERM_MASTER_KEY_FILE=" "$env_file"; then
-      env_append "$env_file" "NEXTERM_MASTER_KEY_FILE=$key_file"
+    if [ "$key_file" != "$configured" ] || ! grep -q "^NEXTERM_MASTER_KEY_FILE=" "$env_file"; then
+      env_set "$env_file" NEXTERM_MASTER_KEY_FILE "$key_file"
       log "configured NEXTERM_MASTER_KEY_FILE=$key_file in ${env_file#$ROOT_PREFIX}"
     fi
   done
