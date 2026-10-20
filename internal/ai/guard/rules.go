@@ -2,6 +2,7 @@ package guard
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"time"
@@ -11,6 +12,17 @@ import (
 
 // GrantRulesSettingKey persists path-level grant rules; it shares the settings storage with device-level grants, so no migration is needed.
 const GrantRulesSettingKey = "ai.grant_rules"
+
+// Sentinel validation errors for grant-rule mutations; IPC layers classify
+// them with errors.Is instead of matching error text.
+var (
+	ErrRuleDeviceRequired    = errors.New("授权规则缺少设备 ID")
+	ErrRuleActionUnsupported = errors.New("授权规则动作仅支持 write_file/edit_file/exec_commands/send_keys")
+	ErrRulePathRequired      = errors.New("文件写入规则必须限定路径范围")
+	ErrRulePathUnsupported   = errors.New("该动作的规则不支持路径范围")
+	ErrRuleExpiryInvalid     = errors.New("授权规则过期时间必须晚于当前时间")
+	ErrRuleIDRequired        = errors.New("授权规则缺少规则 ID")
+)
 
 func GrantRulesSettingKeyForUser(ctx context.Context) string {
 	if userID, ok := ipc.UserIDFromContext(ctx); ok {

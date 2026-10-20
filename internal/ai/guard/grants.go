@@ -15,6 +15,14 @@ import (
 
 const DeviceGrantsSettingKey = "ai.device_grants"
 
+// Sentinel validation errors for grant mutations; IPC layers classify them
+// with errors.Is instead of matching error text.
+var (
+	ErrGrantKindsRequired  = errors.New("设备授权至少需要一个种类")
+	ErrInvalidGrantKind    = errors.New("设备授权种类仅支持 terminal_write/session_exec/db_query")
+	ErrGrantDeviceRequired = errors.New("设备授权缺少设备 ID")
+)
+
 func DeviceGrantsSettingKeyForUser(ctx context.Context) string {
 	if userID, ok := ipc.UserIDFromContext(ctx); ok {
 		return DeviceGrantsSettingKey + ".user." + userID
@@ -41,7 +49,7 @@ type DeviceGrant struct {
 
 func ParseGrantKinds(values []string) ([]GrantKind, error) {
 	if len(values) == 0 {
-		return nil, errors.New("设备授权至少需要一个种类")
+		return nil, ErrGrantKindsRequired
 	}
 	seen := make(map[GrantKind]struct{}, len(values))
 	kinds := make([]GrantKind, 0, len(values))
@@ -50,7 +58,7 @@ func ParseGrantKinds(values []string) ([]GrantKind, error) {
 		switch kind {
 		case GrantKindTerminalWrite, GrantKindSessionExec, GrantKindDBQuery:
 		default:
-			return nil, errors.New("设备授权种类仅支持 terminal_write/session_exec/db_query")
+			return nil, ErrInvalidGrantKind
 		}
 		if _, ok := seen[kind]; ok {
 			continue
@@ -231,7 +239,7 @@ func (g *Grants) authorizeTarget(ctx context.Context, deviceID string) error {
 func (g *Grants) Grant(ctx context.Context, deviceID string, kinds []GrantKind) (DeviceGrant, error) {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
-		return DeviceGrant{}, errors.New("设备授权缺少设备 ID")
+		return DeviceGrant{}, ErrGrantDeviceRequired
 	}
 	if len(kinds) == 0 {
 		return DeviceGrant{}, errors.New("设备授权至少需要一个种类")
@@ -281,7 +289,7 @@ func (g *Grants) Grant(ctx context.Context, deviceID string, kinds []GrantKind) 
 func (g *Grants) Revoke(ctx context.Context, deviceID string) error {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
-		return errors.New("设备授权缺少设备 ID")
+		return ErrGrantDeviceRequired
 	}
 	if err := g.authorizeMutation(ctx); err != nil {
 		return err
@@ -321,17 +329,17 @@ func (g *Grants) Revoke(ctx context.Context, deviceID string) error {
 func (g *Grants) AddRule(ctx context.Context, deviceID, action, pattern string, expiresAt time.Time) (GrantRule, error) {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
-		return GrantRule{}, errors.New("授权规则缺少设备 ID")
+		return GrantRule{}, ErrRuleDeviceRequired
 	}
 	if !RuleActionSupported(action) {
-		return GrantRule{}, errors.New("授权规则动作仅支持 write_file/edit_file/exec_commands/send_keys")
+		return GrantRule{}, ErrRuleActionUnsupported
 	}
 	pattern = strings.TrimSpace(pattern)
 	if RuleActionNeedsPath(action) && pattern == "" {
-		return GrantRule{}, errors.New("文件写入规则必须限定路径范围")
+		return GrantRule{}, ErrRulePathRequired
 	}
 	if !RuleActionNeedsPath(action) && pattern != "" {
-		return GrantRule{}, errors.New("该动作的规则不支持路径范围")
+		return GrantRule{}, ErrRulePathUnsupported
 	}
 	if err := g.authorizeMutation(ctx); err != nil {
 		return GrantRule{}, err
@@ -343,7 +351,7 @@ func (g *Grants) AddRule(ctx context.Context, deviceID, action, pattern string, 
 	if !expiresAt.IsZero() {
 		expiresAtMS = expiresAt.UnixMilli()
 		if expiresAtMS <= g.now().UnixMilli() {
-			return GrantRule{}, errors.New("授权规则过期时间必须晚于当前时间")
+			return GrantRule{}, ErrRuleExpiryInvalid
 		}
 	}
 	ownerID, err := owner.ID(ctx, g.shared)
@@ -389,7 +397,7 @@ func (g *Grants) AddRule(ctx context.Context, deviceID, action, pattern string, 
 func (g *Grants) RevokeRule(ctx context.Context, ruleID string) error {
 	ruleID = strings.TrimSpace(ruleID)
 	if ruleID == "" {
-		return errors.New("授权规则缺少规则 ID")
+		return ErrRuleIDRequired
 	}
 	if err := g.authorizeMutation(ctx); err != nil {
 		return err

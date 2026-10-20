@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
@@ -218,5 +219,73 @@ func TestExecuteHistoryProductionMarkerAndRejectedConfirmation(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), "super-secret") || strings.Contains(string(encoded), "deploy --token") {
 		t.Fatalf("production history contains command plaintext: %s", encoded)
+	}
+}
+
+func TestExecuteHistoryKeepsConfiguredProductionMarkerAfterCancel(t *testing.T) {
+	database := openExecBatchHistoryStore(t)
+	owner := execBatchHistoryContext("owner-a")
+	if err := guard.SetProductionEnvironments(owner, database, []string{"live"}); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	transport := newFakeTransport(func(ctx context.Context, _ string, _ base.ExecOptions) (base.ExecResult, error) {
+		close(started)
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return base.ExecResult{}, ctx.Err()
+	})
+	live := targetFor("live", transport)
+	live.Environment = "live"
+	service := New(Config{
+		Resolver: &fakeResolver{targets: map[string]Target{"live": live}},
+		Auditor:  &confirmationAuditor{}, History: database, ProductionSettings: database,
+	})
+	request := Request{BatchID: "batch-live-cancel", SessionIDs: []string{"live"}, Command: "deploy"}
+	_, err := service.Execute(owner, "owner-a", request)
+	var required *ConfirmationRequiredError
+	if !errors.As(err, &required) || !errors.Is(err, ErrConfirmationRequired) {
+		t.Fatalf("execute error = %v, want confirmation required", err)
+	}
+	detail := required.IPCDetail()
+	if len(detail.RequiredEnvironmentNames) != 1 || detail.RequiredEnvironmentNames[0] != "live" {
+		t.Fatalf("required environment names = %v", detail.RequiredEnvironmentNames)
+	}
+	request.ProductionConfirmation = &ProductionConfirmation{
+		Confirmed: true, TargetSetHash: detail.TargetSetHash, CommandHash: detail.CommandHash,
+		EnvironmentNames: detail.RequiredEnvironmentNames,
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.Execute(owner, "owner-a", request)
+		done <- err
+	}()
+	<-started
+	running, err := database.ExecBatchHistoryGet(owner, request.BatchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !running.Batch.Production || running.Batch.Status != store.ExecBatchStatusRunning {
+		t.Fatalf("running history = %+v", running.Batch)
+	}
+	if _, err := service.Cancel(owner, "owner-a", request.BatchID); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("canceled execute = %v", err)
+	}
+	finished, err := database.ExecBatchHistoryGet(owner, request.BatchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !finished.Batch.Production {
+		t.Fatalf("finished history lost the production marker: %+v", finished.Batch)
+	}
+	if finished.Batch.Status != store.ExecBatchStatusCanceled {
+		t.Fatalf("finished history status = %q", finished.Batch.Status)
 	}
 }

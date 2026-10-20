@@ -89,43 +89,70 @@ type productionConfirmationAuditPayload struct {
 	ProductionTargets []ConfirmationTarget `json:"productionTargets"`
 }
 
-// newProductionChallenge classifies targets through the owner's configured
-// production environment list (guard settings); the owner ID is bound into the
-// target-set hash so one owner's confirmation never authorizes another owner.
-func (s *Service) newProductionChallenge(ctx context.Context, ownerID, batchID, command string, targets []Target) (*productionChallenge, error) {
-	classificationCtx := ctx
+// productionClassification is the single per-batch production classification:
+// the challenge and the running/finished history rows reuse it, so a canceled
+// run never re-reads the owner's settings and a read error never degrades the
+// marker to false.
+type productionClassification struct {
+	productionTargets        []ConfirmationTarget
+	requiredEnvironmentNames []string
+}
+
+func (c *productionClassification) production() bool {
+	return c != nil && len(c.productionTargets) != 0
+}
+
+// classifyProductionTargets classifies targets through the owner's configured
+// production environment list with a detached, owner-bound context that stays
+// readable after cancellation; a settings read error fails the batch instead
+// of silently degrading to non-production.
+func (s *Service) classifyProductionTargets(ctx context.Context, ownerID string, targets []Target) (*productionClassification, error) {
+	classificationCtx := context.WithoutCancel(ctx)
 	if ownerID != "" {
-		classificationCtx = ipc.WithUserID(ctx, ownerID)
+		classificationCtx = ipc.WithUserID(classificationCtx, ownerID)
 	}
-	allTargets := make([]ConfirmationTarget, 0, len(targets))
-	productionTargets := make([]ConfirmationTarget, 0)
-	productionEnvironments := make([]string, 0, len(targets))
+	result := &productionClassification{}
 	for _, target := range targets {
-		item := ConfirmationTarget{
-			SessionID: target.SessionID, SessionName: target.SessionName, AssetID: target.AssetID,
-			Hostname: target.Hostname, Environment: target.Environment,
-		}
-		allTargets = append(allTargets, item)
 		production, err := guard.IsProductionEnvironment(classificationCtx, s.productionSettings, target.Environment)
 		if err != nil {
 			return nil, err
 		}
 		if production {
-			productionTargets = append(productionTargets, item)
-			productionEnvironments = append(productionEnvironments, target.Environment)
+			result.productionTargets = append(result.productionTargets, ConfirmationTarget{
+				SessionID: target.SessionID, SessionName: target.SessionName, AssetID: target.AssetID,
+				Hostname: target.Hostname, Environment: target.Environment,
+			})
+			result.requiredEnvironmentNames = append(result.requiredEnvironmentNames, target.Environment)
 		}
 	}
-	if len(productionTargets) == 0 {
-		return nil, nil
+	if len(result.productionTargets) == 0 {
+		return result, nil
+	}
+	sort.Slice(result.productionTargets, func(i, j int) bool {
+		return result.productionTargets[i].SessionID < result.productionTargets[j].SessionID
+	})
+	result.requiredEnvironmentNames = guard.ProductionEnvironmentNames(result.requiredEnvironmentNames)
+	return result, nil
+}
+
+// newProductionChallenge binds the confirmed target set, owner, and command
+// into the challenge hashes from the single batch classification.
+func newProductionChallenge(batchID, ownerID, command string, targets []Target, classification *productionClassification) *productionChallenge {
+	if !classification.production() {
+		return nil
+	}
+	allTargets := make([]ConfirmationTarget, 0, len(targets))
+	for _, target := range targets {
+		allTargets = append(allTargets, ConfirmationTarget{
+			SessionID: target.SessionID, SessionName: target.SessionName, AssetID: target.AssetID,
+			Hostname: target.Hostname, Environment: target.Environment,
+		})
 	}
 	sort.Slice(allTargets, func(i, j int) bool {
 		if allTargets[i].SessionID == allTargets[j].SessionID {
 			return allTargets[i].AssetID < allTargets[j].AssetID
 		}
 		return allTargets[i].SessionID < allTargets[j].SessionID
-	})
-	sort.Slice(productionTargets, func(i, j int) bool {
-		return productionTargets[i].SessionID < productionTargets[j].SessionID
 	})
 	canonical, _ := json.Marshal(struct {
 		BatchID string               `json:"batchId"`
@@ -134,9 +161,9 @@ func (s *Service) newProductionChallenge(ctx context.Context, ownerID, batchID, 
 	}{BatchID: batchID, OwnerID: ownerID, Targets: allTargets})
 	return &productionChallenge{
 		batchID: batchID, targetSetHash: digest("target-set-v2", canonical), commandHash: commandDigest(command),
-		requiredEnvironmentNames: guard.ProductionEnvironmentNames(productionEnvironments),
-		productionTargets:        productionTargets,
-	}, nil
+		requiredEnvironmentNames: append([]string(nil), classification.requiredEnvironmentNames...),
+		productionTargets:        append([]ConfirmationTarget(nil), classification.productionTargets...),
+	}
 }
 
 func validateProductionConfirmation(confirmation *ProductionConfirmation, challenge *productionChallenge) error {

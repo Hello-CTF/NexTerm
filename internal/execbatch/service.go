@@ -157,28 +157,29 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 
 	started := s.now()
 	targets, failures := s.preflight(runCtx, request.SessionIDs)
+	classification, err := s.classifyProductionTargets(ctx, ownerID, targets)
+	if err != nil {
+		return Batch{}, fmt.Errorf("classify production targets: %w", err)
+	}
 	if runCtx.Err() != nil {
-		return s.finishWithHistory(runCtx, ownerID, request, started, targets, canceledResults(request.SessionIDs, targets)), nil
+		return s.finishWithHistory(runCtx, ownerID, request, started, targets, canceledResults(request.SessionIDs, targets), classification.production()), nil
 	}
 	if len(failures) > 0 {
 		preflightErr := &PreflightError{Failures: failures}
 		if request.Runbook != nil {
-			batch := s.finishWithHistory(runCtx, ownerID, request, started, targets, preflightFailureResults(request.SessionIDs, targets, failures))
+			batch := s.finishWithHistory(runCtx, ownerID, request, started, targets, preflightFailureResults(request.SessionIDs, targets, failures), classification.production())
 			return batch, preflightErr
 		}
 		return Batch{}, preflightErr
 	}
-	challenge, err := s.newProductionChallenge(ctx, ownerID, request.BatchID, request.Command, targets)
-	if err != nil {
-		return Batch{}, err
-	}
+	challenge := newProductionChallenge(request.BatchID, ownerID, request.Command, targets, classification)
 	if err := validateProductionConfirmation(request.ProductionConfirmation, challenge); err != nil {
 		return Batch{}, err
 	}
 	if err := s.auditProductionConfirmation(runCtx, ownerID, request, challenge); err != nil {
 		return Batch{}, fmt.Errorf("record exec batch production confirmation: %w", err)
 	}
-	s.startHistory(runCtx, ownerID, request, started, targets)
+	s.startHistory(runCtx, ownerID, request, started, targets, classification.production())
 
 	results := make([]Result, len(targets))
 	jobs := make(chan int, len(targets))
@@ -208,7 +209,7 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 		}()
 	}
 	workers.Wait()
-	return s.finishWithHistory(runCtx, ownerID, request, started, targets, results), nil
+	return s.finishWithHistory(runCtx, ownerID, request, started, targets, results, classification.production()), nil
 }
 
 // Cancel sets canceling under this same mutex before waiting, so no Add can race its Wait.
