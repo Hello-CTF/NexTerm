@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { clickButton, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 import type { ProjectTemplate } from "../../app/projectTemplates";
 import type { Workspace } from "../../app/store";
@@ -15,6 +15,12 @@ const mocks = vi.hoisted(() => ({
   open: vi.fn(),
   close: vi.fn(),
 }));
+
+const dialogs = vi.hoisted(() => ({ ask: vi.fn(), promptText: vi.fn() }));
+vi.mock("../../ui/dialogs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ui/dialogs")>();
+  return { ...actual, ask: dialogs.ask, promptText: dialogs.promptText };
+});
 
 vi.mock("../../app/projectTemplateStore", () => ({
   createProjectTemplateRepository: () => ({
@@ -84,6 +90,7 @@ beforeEach(() => {
     activeWorkspaceId: "ws",
     activeProject: projectFocusForGroup("project"),
     projectInventory: inventory,
+    accountEpoch: 0,
     toasts: [],
   });
 });
@@ -130,5 +137,53 @@ describe("project template panel", () => {
     expect(mocks.close.mock.calls[0][0]).toBe(projectFocusForGroup("project"));
     clickButton(mounted.container, "聚焦");
     expect(useUi.getState().activeProject).toBe(projectFocusForGroup("other"));
+  });
+
+  it("does not delete when A's confirmation resolves after an account switch", async () => {
+    mocks.list.mockResolvedValue([savedTemplate()]);
+    mounted = mount(createElement(ProjectTemplatePanel, { groups }));
+    clickButton(mounted.container, "项目模板（0）");
+    await flushUntil(() => mounted!.container.textContent?.includes("Daily") ?? false);
+
+    let resolveAsk!: (value: boolean) => void;
+    dialogs.ask.mockImplementation(() => new Promise((resolve) => {
+      resolveAsk = resolve;
+    }));
+    clickButton(mounted.container, "删除");
+    await flushUntil(() => dialogs.ask.mock.calls.length === 1);
+
+    // Account switch: A's panel is replaced; A's late confirmation must never reach a repository.
+    act(() => {
+      useUi.getState().advanceAccountEpoch();
+    });
+    resolveAsk(true);
+    await flush();
+
+    expect(mocks.delete).not.toHaveBeenCalled();
+    expect(mocks.rename).not.toHaveBeenCalled();
+    expect(mounted.container.textContent).toContain("Daily");
+  });
+
+  it("does not rename when A's prompt resolves after an account switch", async () => {
+    mocks.list.mockResolvedValue([savedTemplate()]);
+    mounted = mount(createElement(ProjectTemplatePanel, { groups }));
+    clickButton(mounted.container, "项目模板（0）");
+    await flushUntil(() => mounted!.container.textContent?.includes("Daily") ?? false);
+
+    let resolvePrompt!: (value: string | null) => void;
+    dialogs.promptText.mockImplementation(() => new Promise((resolve) => {
+      resolvePrompt = resolve;
+    }));
+    clickButton(mounted.container, "重命名");
+    await flushUntil(() => dialogs.promptText.mock.calls.length === 1);
+
+    act(() => {
+      useUi.getState().advanceAccountEpoch();
+    });
+    resolvePrompt("Renamed");
+    await flush();
+
+    expect(mocks.rename).not.toHaveBeenCalled();
+    expect(mounted.container.textContent).toContain("Daily");
   });
 });

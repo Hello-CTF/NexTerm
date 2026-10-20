@@ -430,6 +430,7 @@ interface UiState {
   appChoice: AppChoiceState | null;
   openAppChoice: (c: AppChoiceState) => void;
   closeAppChoice: (v: string | null) => void;
+  cancelAccountDialogs: () => void;
 
   setLeftOpen: (v: boolean) => void;
   setLeftMode: (m: LeftMode) => void;
@@ -929,6 +930,13 @@ export const useUi = create<UiState>((set, get) => ({
     const cur = get().textPrompt;
     cur?.resolve(v);
     set({ textPrompt: null });
+  },
+  cancelAccountDialogs: () => {
+    // Settle, don't just clear: an account switch must resolve pending ask/choice/prompt
+    // promises with a cancel result so their callers never mutate across the boundary.
+    get().closeTextPrompt(null);
+    get().closeAppDialog(false);
+    get().closeAppChoice(null);
   },
   aiRulePrefill: null,
   setAiRulePrefill: (v) => set({ aiRulePrefill: v }),
@@ -1621,6 +1629,7 @@ export const useUi = create<UiState>((set, get) => ({
     recordingsEpoch += 1;
     abnormalDisconnectNotices.clear();
     sessionStatusEvidenceMap.clear();
+    get().cancelAccountDialogs();
     set((state) => ({
       sessions: [],
       recordings: {},
@@ -1645,6 +1654,7 @@ export const useUi = create<UiState>((set, get) => ({
     recordingsEpoch += 1;
     abnormalDisconnectNotices.clear();
     sessionStatusEvidenceMap.clear();
+    get().cancelAccountDialogs();
     set((state) => ({
       sessions: [],
       recordings: {},

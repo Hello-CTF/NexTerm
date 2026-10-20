@@ -110,6 +110,26 @@ describe("account switch cleanup", () => {
     expect(queryClient.getQueryData(["assets"])).toBeUndefined();
   });
 
+  it("settles pending global dialogs with cancel results on account switch", () => {
+    const textResolve = vi.fn();
+    const dialogResolve = vi.fn();
+    const choiceResolve = vi.fn();
+    useUi.setState({
+      textPrompt: { message: "m", value: "", resolve: textResolve },
+      appDialog: { kind: "confirm", message: "m", level: "warning", resolve: dialogResolve },
+      appChoice: { title: "t", message: "m", options: [], level: "warning", resolve: choiceResolve },
+    });
+
+    authReady(USER_B);
+
+    expect(textResolve).toHaveBeenCalledWith(null);
+    expect(dialogResolve).toHaveBeenCalledWith(false);
+    expect(choiceResolve).toHaveBeenCalledWith(null, false);
+    expect(useUi.getState().textPrompt).toBeNull();
+    expect(useUi.getState().appDialog).toBeNull();
+    expect(useUi.getState().appChoice).toBeNull();
+  });
+
   it("does not clear caches for same-account gate transitions", () => {
     useAuth.setState({ gate: "login" });
     useAssetReachability.setState({ entries: { "a-1": { state: "reachable", at: 1 } }, batchError: null });
