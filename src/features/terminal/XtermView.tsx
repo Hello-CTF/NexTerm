@@ -6,7 +6,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 
 import { channelIdOf, createBinaryChannel, disposeChannel, onChannelReopen } from "../../ipc/events";
-import { WEB } from "../../ipc/env";
+import { WEB, clientId } from "../../ipc/env";
 import { openExternalURL } from "../../ipc/wails";
 import { call, dockerApi, terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
@@ -333,11 +333,17 @@ export function XtermView(props: XtermViewProps) {
     let lastStreamAckOffset = 0;
     const sendStreamAck = () => {
       if (!kernelTabId || containerId) return;
+      const channelId = channelIdOf(channel);
+      if (!channelId) return;
       const offset = acceptedOffsetNow();
       if (offset === lastStreamAckOffset) return;
       lastStreamAckOffset = offset;
-      const frame = `{"type":"nexterm.stream-ack","offset":${offset}}`;
-      void terminalApi.write(kernelTabId, new TextEncoder().encode(frame)).catch(() => undefined);
+      void call("terminal_stream_ack", {
+        tabId: kernelTabId,
+        channelId,
+        clientId: clientId(),
+        acceptedBytes: offset,
+      }).catch(() => undefined);
     };
     const resumeUpstream = () => {
       if (containerId || !kernelTabId) return;

@@ -175,7 +175,7 @@ vi.mock("../ipc/events", () => ({
   },
 }));
 
-vi.mock("../ipc/env", () => ({ WEB: false }));
+vi.mock("../ipc/env", () => ({ WEB: false, clientId: () => "me" }));
 vi.mock("../ipc/wails", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../ipc/wails")>()),
   openExternalURL: vi.fn(),
@@ -756,7 +756,7 @@ describe("XtermView stream wiring", () => {
     }
     act(() => harness.channel?.onBytes?.(chunk));
     // The first recover is in flight (deferred). The anchor ends the episode.
-    expect(harness.call).toHaveBeenCalledTimes(2);
+    expect(harness.call.mock.calls.filter((c) => c[0] === "terminal_recover")).toHaveLength(1);
     expect(harness.call).toHaveBeenCalledWith("terminal_recover", {
       tabId: "kernel-1",
       channelId: "channel-1",
