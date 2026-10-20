@@ -65,19 +65,28 @@ describe("matchesEnvironmentName", () => {
     expect(matchesEnvironmentName("\u00a0production", "production")).toBe(true);
   });
 
-  it("rejects case-variant input locally (fail-closed boundary; backend EqualFold is authoritative)", () => {
-    expect(matchesEnvironmentName(" Production ", "production")).toBe(false);
-    expect(matchesEnvironmentName("PRODUCTION", "production")).toBe(false);
-  });
-
-  it("requires exact codepoints after trimming (fail-closed subset of Go EqualFold)", () => {
+  it("matches case variants exactly like Go's EqualFold", () => {
+    expect(matchesEnvironmentName(" Production ", "production")).toBe(true);
+    expect(matchesEnvironmentName("PRODUCTION", "production")).toBe(true);
+    // Long s and final sigma fold to s and sigma in Go's simple folding.
+    expect(matchesEnvironmentName("ſ", "s")).toBe(true);
+    expect(matchesEnvironmentName("ς", "σ")).toBe(true);
+    expect(matchesEnvironmentName("Σ", "σ")).toBe(true);
     // U+0130 has no simple case folding in Go; the backend rejects it too.
     expect(matchesEnvironmentName("İ", "i\u0307")).toBe(false);
     expect(matchesEnvironmentName("İ", "i")).toBe(false);
-    // Long s and final sigma fold in Go but are rejected locally: the local
-    // check is a fail-closed subset, the backend is authoritative.
-    expect(matchesEnvironmentName("ſ", "s")).toBe(false);
-    expect(matchesEnvironmentName("ς", "σ")).toBe(false);
+    // U+FEFF is not Go whitespace, so a FEFF-prefixed name must not match.
+    expect(matchesEnvironmentName("\uFEFFproduction", "production")).toBe(false);
+    expect(matchesEnvironmentName("production\uFEFF", "production")).toBe(false);
+  });
+
+  it("rejects names the backend rejects and folds names the backend folds", () => {
+    // U+0130 has no simple case folding in Go; the backend rejects it too.
+    expect(matchesEnvironmentName("İ", "i\u0307")).toBe(false);
+    expect(matchesEnvironmentName("İ", "i")).toBe(false);
+    // Long s and final sigma fold to s and sigma in Go's simple folding.
+    expect(matchesEnvironmentName("ſ", "s")).toBe(true);
+    expect(matchesEnvironmentName("ς", "σ")).toBe(true);
     // U+FEFF is not Go whitespace, so a FEFF-prefixed name must not match.
     expect(matchesEnvironmentName("\uFEFFproduction", "production")).toBe(false);
     expect(matchesEnvironmentName("production\uFEFF", "production")).toBe(false);
@@ -119,9 +128,9 @@ describe("evaluateEnvironmentConfirmation", () => {
     expect(nel.canConfirm).toBe(true);
   });
 
-  it("rejects case-variant input locally (fail-closed boundary; backend EqualFold is authoritative)", () => {
+  it("confirms case-variant input exactly like the backend", () => {
     const state = evaluateEnvironmentConfirmation(challenge, { "tab-1": " Production " }, "hash-a");
-    expect(state.canConfirm).toBe(false);
+    expect(state.canConfirm).toBe(true);
   });
 
   it("does not confirm on a cross-target mismatch", () => {
@@ -165,10 +174,10 @@ describe("evaluateEnvironmentConfirmation", () => {
     expect(state.extraInputs).toHaveLength(1);
   });
 
-  it("ignores extra keys with empty values", () => {
-    const state = evaluateEnvironmentConfirmation(challenge, { "tab-1": "production", "tab-2": "  " }, "hash-a");
-    expect(state.canConfirm).toBe(true);
-    expect(state.extraInputs).toEqual([]);
+  it("rejects extra keys even with empty values (out-of-challenge state never slips through)", () => {
+    const state = evaluateEnvironmentConfirmation(challenge, { "tab-1": "production", "tab-2": "" }, "hash-a");
+    expect(state.canConfirm).toBe(false);
+    expect(state.extraInputs).toEqual([{ key: "tab-2", typed: "" }]);
   });
 
   it("exposes the submitted names array matching the required cardinality and items", () => {
