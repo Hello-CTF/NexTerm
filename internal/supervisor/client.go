@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -369,7 +370,14 @@ func (c *clientConn) request(ctx context.Context, kind frameType, message any) (
 }
 
 func (c *clientConn) requestRaw(ctx context.Context, kind frameType, payload []byte) (frameType, []byte, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, nil, context.Cause(ctx)
+	}
 	c.writeMu.Lock()
+	if err := ctx.Err(); err != nil {
+		c.writeMu.Unlock()
+		return 0, nil, context.Cause(ctx)
+	}
 	err := writeFrame(c.conn, kind, payload)
 	c.writeMu.Unlock()
 	if err != nil {
@@ -399,6 +407,9 @@ func (c *clientConn) requestRaw(ctx context.Context, kind frameType, payload []b
 		}
 		return response.kind, response.payload, nil
 	case <-ctx.Done():
+		// The reply can no longer be matched to this request, so the conn is
+		// torn down; this also unblocks the parked reader above.
+		_ = c.conn.Close()
 		return 0, nil, context.Cause(ctx)
 	}
 }
@@ -434,6 +445,12 @@ type Stream struct {
 	exitCh    chan struct{}
 	closed    chan struct{}
 	closeOnce sync.Once
+	closeErr  error
+
+	// tokenWaitHook, when non-nil, runs after the initial ctx check and
+	// immediately before requestRaw blocks acquiring the request token.
+	// Tests use it to observe the token wait deterministically.
+	tokenWaitHook func()
 }
 
 func (s *Stream) Info() Info {
@@ -478,6 +495,18 @@ func (s *Stream) Read(p []byte) (int, error) {
 }
 
 func (s *Stream) Write(p []byte) (int, error) {
+	return s.WriteContext(context.Background(), p)
+}
+
+// WriteContext writes p to the session's input pipeline, with ctx governing
+// each chunk's acknowledgement. Cancelling ctx fails the stream: the
+// cancelled chunk may or may not have reached the supervisor, and the late
+// acknowledgement can no longer be told apart from the next response, so
+// the input pipeline is withdrawn rather than restored: the stream never
+// replays the unconfirmed chunk, and the caller must re-attach to resume.
+// A request cancelled before its frame reaches the wire leaves the stream
+// healthy. The returned count covers only acknowledged chunks.
+func (s *Stream) WriteContext(ctx context.Context, p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -487,7 +516,7 @@ func (s *Stream) Write(p []byte) (int, error) {
 		if len(chunk) > maxFramePayload {
 			chunk = chunk[:maxFramePayload]
 		}
-		kind, payload, err := s.requestRaw(context.Background(), frameInput, chunk)
+		kind, payload, err := s.requestRaw(ctx, frameInput, chunk)
 		if err != nil {
 			return written, err
 		}
@@ -594,12 +623,25 @@ func (s *Stream) Close() error {
 			s.reqToken <- struct{}{}
 		}
 		defer func() { <-s.reqToken }()
+		s.mu.Lock()
+		readErr := s.readErr
+		s.mu.Unlock()
 		s.writeMu.Lock()
-		_ = writeFrame(s.conn.conn, frameDetach, []byte("{}"))
+		detachErr := writeFrame(s.conn.conn, frameDetach, []byte("{}"))
 		s.writeMu.Unlock()
-		_ = s.conn.Close()
+		closeErr := s.conn.Close()
+		switch {
+		case readErr != nil:
+			// The stream already failed: the close inherits that evidence
+			// rather than reporting success over a dead supervisor.
+			s.closeErr = readErr
+		case detachErr != nil && !errors.Is(detachErr, net.ErrClosed):
+			s.closeErr = fmt.Errorf("%w: detach supervisor stream: %v", base.ErrDisconnected, detachErr)
+		case closeErr != nil && !errors.Is(closeErr, net.ErrClosed):
+			s.closeErr = closeErr
+		}
 	})
-	return nil
+	return s.closeErr
 }
 
 func (s *Stream) request(ctx context.Context, kind frameType, message any) (frameType, []byte, error) {
@@ -611,7 +653,17 @@ func (s *Stream) request(ctx context.Context, kind frameType, message any) (fram
 }
 
 func (s *Stream) requestRaw(ctx context.Context, kind frameType, payload []byte) (frameType, []byte, error) {
-	s.reqToken <- struct{}{}
+	if err := ctx.Err(); err != nil {
+		return 0, nil, context.Cause(ctx)
+	}
+	if s.tokenWaitHook != nil {
+		s.tokenWaitHook()
+	}
+	select {
+	case s.reqToken <- struct{}{}:
+	case <-ctx.Done():
+		return 0, nil, context.Cause(ctx)
+	}
 	defer func() { <-s.reqToken }()
 	select {
 	case <-s.closed:
@@ -626,6 +678,25 @@ func (s *Stream) requestRaw(ctx context.Context, kind frameType, payload []byte)
 		return 0, nil, base.ErrDisconnected
 	default:
 	}
+	// fail records readErr before the conn dies and before readLoop exits,
+	// and Close records userClosed before draining; consulting the state
+	// closes the gap where the conn is already gone but the closed channel
+	// has not fired yet.
+	s.mu.Lock()
+	userClosed := s.userClosed
+	readErr := s.readErr
+	s.mu.Unlock()
+	if userClosed {
+		return 0, nil, ErrClosed
+	}
+	if readErr != nil {
+		return 0, nil, readErr
+	}
+	// The token wait can outlive the ctx; re-check before the frame reaches
+	// the wire so a withdrawn request never touches the input pipeline.
+	if err := ctx.Err(); err != nil {
+		return 0, nil, context.Cause(ctx)
+	}
 	s.mu.Lock()
 	s.pending = true
 	s.mu.Unlock()
@@ -638,6 +709,12 @@ func (s *Stream) requestRaw(ctx context.Context, kind frameType, payload []byte)
 	err := writeFrame(s.conn.conn, kind, payload)
 	s.writeMu.Unlock()
 	if err != nil {
+		s.mu.Lock()
+		readErr := s.readErr
+		s.mu.Unlock()
+		if readErr != nil {
+			return 0, nil, readErr
+		}
 		return 0, nil, fmt.Errorf("%w: send frame: %v", base.ErrDisconnected, err)
 	}
 	select {
