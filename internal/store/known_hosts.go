@@ -315,6 +315,10 @@ func (s *Store) KnownHostRemoveForMirror(ctx context.Context, id string) (KnownH
 	var removed KnownHostRow
 	found := false
 	err := inBusyRetry(func() error {
+		// Each retry is a new transaction: the returned snapshot may only come from the transaction
+		// that actually committed, never from a rolled-back one.
+		removed = KnownHostRow{}
+		found = false
 		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			queries := query.Use(tx)
 			knownHost := queries.KnownHostRow

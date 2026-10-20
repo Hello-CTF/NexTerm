@@ -497,6 +497,78 @@ func TestKnownHostAcceptForMirrorRetryResetsPreviousDatabase(t *testing.T) {
 	}
 }
 
+func TestKnownHostRemoveForMirrorRetryResetsSnapshotDatabase(t *testing.T) {
+	fixture := dbtest.NewFixture(t)
+	if fixture.Backend != store.BackendPostgres {
+		t.Skipf("retry-snapshot regression requires the PostgreSQL 40P01 trigger schedule, backend = %s", fixture.Backend)
+	}
+	database := fixture.OpenStore(t)
+	ctx := context.Background()
+	ownerA := ipc.WithUserID(ctx, "retry-owner-a")
+	if _, err := database.KnownHostAcceptWithKey(ownerA, "retry-remove.test", 22, "ssh-ed25519", "SHA256:previous", "cHJldmlvdXMta2V5"); err != nil {
+		t.Fatal(err)
+	}
+	row, found, err := database.KnownHostGet(ownerA, "retry-remove.test", 22, "ssh-ed25519")
+	if err != nil || !found {
+		t.Fatalf("seed row = %+v, %v, %v", row, found, err)
+	}
+	// Fire a 40P01 at COMMIT only for the first DELETE: a sequence makes the one-shot fault
+	// deterministic across rollbacks without session state.
+	if _, err := database.DB().ExecContext(ctx, `
+		CREATE SEQUENCE fail_known_host_delete_seq;
+		CREATE OR REPLACE FUNCTION fail_known_host_delete_commit() RETURNS trigger AS $$
+		BEGIN
+			IF nextval('fail_known_host_delete_seq') = 1 THEN
+				PERFORM pg_sleep(0.5);
+				RAISE EXCEPTION 'forced serialization failure' USING ERRCODE = '40P01';
+			END IF;
+			RETURN NULL;
+		END;
+		$$ LANGUAGE plpgsql;
+		CREATE CONSTRAINT TRIGGER fail_known_host_delete_commit AFTER DELETE ON known_host
+		DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION fail_known_host_delete_commit()`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = database.DB().ExecContext(context.Background(), `DROP TRIGGER IF EXISTS fail_known_host_delete_commit ON known_host; DROP FUNCTION IF EXISTS fail_known_host_delete_commit(); DROP SEQUENCE IF EXISTS fail_known_host_delete_seq`)
+	})
+	type removeResult struct {
+		removed store.KnownHostRow
+		found   bool
+		err     error
+	}
+	removedCh := make(chan removeResult, 1)
+	go func() {
+		removed, found, err := database.KnownHostRemoveForMirror(ownerA, row.ID)
+		removedCh <- removeResult{removed: removed, found: found, err: err}
+	}()
+	// Let the first transaction take the row lock, then queue an independent identity-less removal.
+	time.Sleep(50 * time.Millisecond)
+	independentCh := make(chan error, 1)
+	go func() {
+		independentCh <- database.KnownHostRemove(context.Background(), row.ID)
+	}()
+	result := <-removedCh
+	if result.err != nil {
+		t.Fatalf("removal after retry = %v", result.err)
+	}
+	if err := <-independentCh; err != nil {
+		t.Fatalf("independent removal = %v", err)
+	}
+	// The retry found no row after the independent delete committed: the returned snapshot may only
+	// come from the successful transaction, so it must report found=false — never the rolled-back row.
+	if result.found || result.removed != (store.KnownHostRow{}) {
+		t.Fatalf("stale removal snapshot survived the retry: %+v found=%v", result.removed, result.found)
+	}
+	// The production !found fallback is a plain removal: it must not resurrect the deleted trust.
+	if err := database.KnownHostRemove(context.Background(), row.ID); err != nil {
+		t.Fatalf("fallback removal = %v", err)
+	}
+	if _, found, err := database.KnownHostGet(ownerA, "retry-remove.test", 22, "ssh-ed25519"); err != nil || found {
+		t.Fatalf("independently deleted trust resurrected: found=%v err=%v", found, err)
+	}
+}
+
 func TestKnownHostRestoreRemovedKeepsNewerDecisionDatabase(t *testing.T) {
 	database := dbtest.NewFixture(t).OpenStore(t)
 	ctx := context.Background()
