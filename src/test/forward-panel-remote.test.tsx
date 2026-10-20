@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, flush, mount, setInputValue, waitFor, type MountedView } from "./features/reactTestUtils";
+import { click, clickButton, deferred, flush, mount, setInputValue, waitFor, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   forwardEnv: vi.fn(),
@@ -271,11 +271,13 @@ function fakeSettingsRules(): ForwardRuleSettings[] {
   return [
     {
       id: "rule-a", assetId: "asset-1", name: "database", listenPort: 13306,
-      targetHost: "db.internal", targetPort: 5432, autoStart: false, status: "stopped",
+      targetHost: "db.internal", targetPort: 5432, kind: "local", listenHost: "127.0.0.1",
+      autoStart: false, status: "stopped",
     },
     {
       id: "rule-b", assetId: "asset-1", name: "cache", listenPort: 16379,
-      targetHost: "cache.internal", targetPort: 6379, autoStart: true, status: "stopped",
+      targetHost: "cache.internal", targetPort: 6379, kind: "local", listenHost: "127.0.0.1",
+      autoStart: true, status: "stopped",
     },
   ];
 }
@@ -295,15 +297,18 @@ function fakeSettingsApi(overrides: Partial<ForwardSettingsApi> = {}) {
   };
 }
 
+function settingsTree(api: ForwardSettingsApi) {
+  return createElement(ForwardSettingsApiProvider, { api }, createElement(ForwardSettingsPanel));
+}
+
 function mountSettings(api: ForwardSettingsApi): MountedView {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return mount(
-    createElement(
-      QueryClientProvider,
-      { client },
-      createElement(ForwardSettingsApiProvider, { api }, createElement(ForwardSettingsPanel)),
-    ),
-  );
+  return mount(settingsTree(api));
+}
+
+function rerenderSettings(mounted: MountedView, api: ForwardSettingsApi): void {
+  act(() => {
+    mounted.root.render(settingsTree(api));
+  });
 }
 
 function settingsSwitch(container: HTMLElement, label: string): HTMLButtonElement {
@@ -379,5 +384,182 @@ describe("Forward settings", () => {
     await waitFor(() => expect(api.setRecoverySettings).toHaveBeenCalledOnce());
     clickButton(settingsMounted.container, "立即恢复");
     await waitFor(() => expect(api.recoverNow).toHaveBeenCalledOnce());
+  });
+});
+
+describe("Forward settings generations and eligibility", () => {
+  let settingsMounted: MountedView | undefined;
+  beforeEach(() => {
+    settingsMounted = undefined;
+  });
+  afterEach(() => {
+    settingsMounted?.unmount();
+    settingsMounted = undefined;
+  });
+
+  it("keeps the recovery switch disabled until the initial settings load and never clobbers a successful write", async () => {
+    const settings = deferred<ForwardRecoverySettings>();
+    const api = fakeSettingsApi({
+      getRecoverySettings: vi.fn().mockReturnValue(settings.promise),
+    });
+    settingsMounted = mountSettings(api);
+
+    const pending = settingsSwitch(settingsMounted.container, "启动时自动恢复转发");
+    expect(pending.disabled).toBe(true);
+    expect(api.setRecoverySettings).not.toHaveBeenCalled();
+
+    settings.resolve({ enabled: false, maxConcurrentConnections: 4, skipProduction: true });
+    await act(async () => {
+      await settings.promise;
+    });
+    await waitFor(() =>
+      expect(settingsSwitch(settingsMounted!.container, "启动时自动恢复转发").disabled).toBe(false),
+    );
+
+    click(settingsSwitch(settingsMounted.container, "启动时自动恢复转发"));
+    await waitFor(() =>
+      expect(api.setRecoverySettings).toHaveBeenCalledWith({
+        enabled: true,
+        maxConcurrentConnections: 4,
+        skipProduction: true,
+      }),
+    );
+    await flush();
+    expect(settingsSwitch(settingsMounted.container, "启动时自动恢复转发").getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("hides the previous account's rules immediately on API switch and never submits them to the new API", async () => {
+    const apiA = fakeSettingsApi();
+    settingsMounted = mountSettings(apiA);
+    await waitFor(() => expect(apiA.listRules).toHaveBeenCalledOnce());
+    expect(settingsSwitch(settingsMounted.container, "自动启动 database")).toBeDefined();
+
+    const apiB = fakeSettingsApi({
+      listRules: vi.fn().mockReturnValue(new Promise<ForwardRuleSettings[]>(() => {})),
+      getRecoverySettings: vi.fn().mockReturnValue(new Promise<ForwardRecoverySettings>(() => {})),
+    });
+    rerenderSettings(settingsMounted, apiB);
+    await flush();
+
+    expect(settingsMounted.container.querySelector('button[aria-label="自动启动 database"]')).toBeNull();
+    expect(settingsSwitch(settingsMounted.container, "启动时自动恢复转发").disabled).toBe(true);
+    expect(apiB.setRuleAutoStart).not.toHaveBeenCalled();
+    expect(apiB.setRuleAutoStart).not.toHaveBeenCalledWith("rule-a", expect.anything());
+  });
+
+  it("does not let the previous account's late write completion pollute the new generation's display", async () => {
+    const write = deferred<void>();
+    const apiA = fakeSettingsApi({
+      setRecoverySettings: vi.fn().mockReturnValue(write.promise),
+    });
+    settingsMounted = mountSettings(apiA);
+    await waitFor(() => expect(apiA.getRecoverySettings).toHaveBeenCalledOnce());
+
+    click(settingsSwitch(settingsMounted.container, "启动时自动恢复转发"));
+    await waitFor(() => expect(apiA.setRecoverySettings).toHaveBeenCalledOnce());
+
+    const apiB = fakeSettingsApi();
+    rerenderSettings(settingsMounted, apiB);
+    await waitFor(() => expect(apiB.getRecoverySettings).toHaveBeenCalledOnce());
+    await flush();
+    expect(settingsSwitch(settingsMounted.container, "启动时自动恢复转发").getAttribute("aria-checked")).toBe("false");
+
+    write.resolve(undefined);
+    await flush();
+    expect(settingsSwitch(settingsMounted.container, "启动时自动恢复转发").getAttribute("aria-checked")).toBe("false");
+    expect(apiB.setRecoverySettings).not.toHaveBeenCalled();
+  });
+
+  it("does not update state after unmount when a write settles late", async () => {
+    const write = deferred<void>();
+    const api = fakeSettingsApi({
+      setRuleAutoStart: vi.fn().mockReturnValue(write.promise),
+    });
+    settingsMounted = mountSettings(api);
+    await waitFor(() => expect(api.listRules).toHaveBeenCalledOnce());
+
+    click(settingsSwitch(settingsMounted.container, "自动启动 database"));
+    await waitFor(() => expect(api.setRuleAutoStart).toHaveBeenCalledOnce());
+    settingsMounted.unmount();
+    settingsMounted = undefined;
+    write.resolve(undefined);
+    await flush();
+  });
+
+  it("offers autoStart only for local strictly-loopback fixed-port rules", async () => {
+    const rules: ForwardRuleSettings[] = [
+      {
+        id: "local-ok", assetId: "asset-1", name: "db", listenPort: 13306,
+        targetHost: "db.internal", targetPort: 5432, kind: "local", listenHost: "127.0.0.1",
+        autoStart: false, status: "stopped",
+      },
+      {
+        id: "remote-rule", assetId: "asset-1", name: "remote-db", listenPort: 18080,
+        targetHost: "127.0.0.1", targetPort: 3306, kind: "remote", listenHost: "0.0.0.0",
+        autoStart: false, status: "stopped",
+      },
+      {
+        id: "socks-rule", assetId: "asset-1", name: "proxy", listenPort: 1080,
+        targetHost: "", targetPort: 0, kind: "socks", listenHost: "::",
+        autoStart: false, status: "stopped",
+      },
+      {
+        id: "local-public", assetId: "asset-1", name: "public-db", listenPort: 13307,
+        targetHost: "db.internal", targetPort: 5432, kind: "local", listenHost: "0.0.0.0",
+        autoStart: false, status: "stopped",
+      },
+      {
+        id: "local-localhost", assetId: "asset-1", name: "named-db", listenPort: 13308,
+        targetHost: "db.internal", targetPort: 5432, kind: "local", listenHost: "localhost",
+        autoStart: false, status: "stopped",
+      },
+    ];
+    const api = fakeSettingsApi({ listRules: vi.fn().mockResolvedValue(rules) });
+    settingsMounted = mountSettings(api);
+    await waitFor(() => expect(api.listRules).toHaveBeenCalledOnce());
+
+    expect(settingsSwitch(settingsMounted.container, "自动启动 db").getAttribute("aria-checked")).toBe("false");
+    for (const label of ["自动启动 remote-db", "自动启动 proxy", "自动启动 public-db", "自动启动 named-db"]) {
+      expect(settingsMounted.container.querySelector(`button[aria-label="${label}"]`)).toBeNull();
+    }
+    expect(settingsMounted.container.textContent).toContain("0.0.0.0:18080");
+    expect(settingsMounted.container.textContent).not.toContain("127.0.0.1:18080");
+    expect(api.setRuleAutoStart).not.toHaveBeenCalled();
+  });
+
+  it("disables recover-now after the first click until the in-flight recovery settles", async () => {
+    const recover = deferred<void>();
+    const api = fakeSettingsApi({
+      getRecoverySettings: vi.fn().mockResolvedValue({
+        enabled: true,
+        maxConcurrentConnections: 4,
+        skipProduction: true,
+      } satisfies ForwardRecoverySettings),
+      recoverNow: vi.fn().mockReturnValue(recover.promise),
+    });
+    settingsMounted = mountSettings(api);
+    await waitFor(() => expect(api.getRecoverySettings).toHaveBeenCalledOnce());
+
+    clickButton(settingsMounted.container, "立即恢复");
+    await waitFor(() => expect(api.recoverNow).toHaveBeenCalledOnce());
+    const again = [...settingsMounted.container.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "立即恢复",
+    );
+    expect(again?.disabled).toBe(true);
+    click(again as HTMLButtonElement);
+    await flush();
+    expect(api.recoverNow).toHaveBeenCalledOnce();
+
+    recover.resolve(undefined);
+    await act(async () => {
+      await recover.promise;
+    });
+    await waitFor(() =>
+      expect(
+        [...settingsMounted!.container.querySelectorAll("button")].find(
+          (b) => b.textContent?.trim() === "立即恢复",
+        )?.disabled,
+      ).toBe(false),
+    );
   });
 });

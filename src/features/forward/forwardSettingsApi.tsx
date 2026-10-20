@@ -8,11 +8,20 @@ export interface ForwardRuleSettings {
   id: string;
   assetId: string;
   name: string;
+  kind: string;
+  listenHost: string;
   listenPort: number;
   targetHost: string;
   targetPort: number;
   autoStart: boolean;
   status: string;
+}
+
+// isAutoStartEligible reports whether a rule may offer auto-start: only
+// local forwards bound strictly to 127.0.0.1. The check is structural, not
+// informational — remote, SOCKS, and any non-loopback listener are excluded.
+export function isAutoStartEligible(rule: Pick<ForwardRuleSettings, "kind" | "listenHost">): boolean {
+  return rule.kind === "local" && rule.listenHost === "127.0.0.1";
 }
 
 export interface ForwardRecoverySettings {
