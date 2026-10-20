@@ -31,8 +31,9 @@ must be changed at first login. Set NEXTERM_ADMIN_PASSWORD in the
 installer's environment to inject a specific initial password instead (no
 forced rotation), e.g. for LazyCat-style install systems;
 NEXTERM_ADMIN_USERNAME overrides the default name "admin". The password
-travels via the environment only: it is never written to env files, disk
-or logs. Nothing account-related is printed on upgrades, existing
+travels via the process environment only — never via argv, which is
+world-readable through /proc/<pid>/cmdline — and is never written to
+env files, disk or logs. Nothing account-related is printed on upgrades, existing
 accounts or re-runs. The bootstrap runs as the nexterm service user, so
 everything it creates is born with the right ownership and a data
 directory the service cannot write fails closed; pre-existing files in a
@@ -1087,7 +1088,6 @@ bootstrap_admin() {
     return 0
   fi
   local env_file="$ETC_DIR/nexterm.env" auth data_dir db dsn dbpw effective rc
-  local -a child_env
   auth="$(env_get "$env_file" NEXTERM_AUTH)"
   case "$auth" in
     ""|on|loopback) ;;
@@ -1110,26 +1110,32 @@ bootstrap_admin() {
   fi
   effective="$(lex_clean "$effective")"
   [ "$effective" != "/" ] || die "refusing to bootstrap with dangerous data directory $effective"
-  # Every variable init-admin reads is set explicitly from the effective env
-  # file — including empty values, which the server resolves to its defaults
-  # — so an ambient environment can never point the bootstrap at a different
-  # database than the service will use.
-  child_env=(NEXTERM_AUTH="$auth" NEXTERM_DATA_DIR="$effective" NEXTERM_DB="$db" NEXTERM_DB_DSN="$dsn" NEXTERM_DB_PASSWORD_FILE="$dbpw")
-  [ -n "${NEXTERM_ADMIN_USERNAME:-}" ] && child_env+=(NEXTERM_ADMIN_USERNAME="$NEXTERM_ADMIN_USERNAME")
-  [ -n "${NEXTERM_ADMIN_PASSWORD:-}" ] && child_env+=(NEXTERM_ADMIN_PASSWORD="$NEXTERM_ADMIN_PASSWORD")
   local server_bin="$OPT_DIR/nexterm-server"
   [ -n "${NEXTERM_INSTALL_INIT_ADMIN:-}" ] && server_bin="$NEXTERM_INSTALL_INIT_ADMIN"
-  log "creating the super-admin account (first install)"
-  rc=0
   if [ "$REAL_ROOT" -eq 1 ]; then
     # Run the bootstrap as the service user: everything it creates is then
     # born with the right ownership, and a data directory the nexterm user
     # cannot write fails closed here instead of breaking the service later.
     command -v runuser >/dev/null 2>&1 || die "runuser not found (required to run the super-admin bootstrap as the nexterm user)"
-    runuser -u nexterm -- env "${child_env[@]}" "$server_bin" init-admin || rc=$?
-  else
-    env "${child_env[@]}" "$server_bin" init-admin || rc=$?
   fi
+  log "creating the super-admin account (first install)"
+  rc=0
+  # Every variable init-admin reads is exported explicitly from the effective
+  # env file — including empty values, which the server resolves to its
+  # defaults — so an ambient environment can never point the bootstrap at a
+  # different database than the service will use. Secrets travel through the
+  # process environment only: argv is world-readable via /proc/<pid>/cmdline.
+  # The exports live in a subshell so the rest of the installer never carries
+  # the admin variables.
+  (
+    export NEXTERM_AUTH="$auth" NEXTERM_DATA_DIR="$effective" NEXTERM_DB="$db" NEXTERM_DB_DSN="$dsn" NEXTERM_DB_PASSWORD_FILE="$dbpw"
+    if [ -n "${NEXTERM_ADMIN_USERNAME:-}" ]; then export NEXTERM_ADMIN_USERNAME; fi
+    if [ -n "${NEXTERM_ADMIN_PASSWORD:-}" ]; then export NEXTERM_ADMIN_PASSWORD; fi
+    if [ "$REAL_ROOT" -eq 1 ]; then
+      exec runuser --preserve-environment -u nexterm -- "$server_bin" init-admin
+    fi
+    exec "$server_bin" init-admin
+  ) || rc=$?
   case "$rc" in
     0) log "super-admin created; the initial password printed above is shown only once" ;;
     3) log "super-admin bootstrap skipped: the account system is already initialized" ;;

@@ -56,8 +56,9 @@ disk or logs. Two provisioning modes are supported:
   forced rotation — the channel install systems such as LazyCat use to
   inject a known credential. `NEXTERM_ADMIN_USERNAME` overrides the
   default name `admin`. The password travels via the process environment
-  only; there is deliberately no command-line flag, because argv is
-  visible to other processes.
+  only — never via argv, which is world-readable through
+  `/proc/<pid>/cmdline` — and is never written to env files, disk or
+  logs.
 
 The bootstrap runs as the `nexterm` service user: everything it creates
 is born with the right ownership, a data directory the service cannot

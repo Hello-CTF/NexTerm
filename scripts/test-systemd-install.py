@@ -93,8 +93,12 @@ material is touched. Coverage:
      containers only): the bootstrap executes as the nexterm service user via
      runuser, files it creates are born service-owned, and pre-existing
      top-level and nested files in a custom data directory keep their
-     original owners (no recursive ownership changes). Live systemd, live
-     distribution and LazyCat injection runs remain outside this suite.
+     original owners (no recursive ownership changes). A missing runuser
+     fails closed, and an unprivileged (nobody) reader scanning
+     /proc/<pid>/cmdline for the whole blocking bootstrap never finds the
+     admin password or its variable name: secrets travel via the process
+     environment only, never via argv. Live systemd, live distribution and
+     LazyCat injection runs remain outside this suite.
 
     python3 scripts/test-systemd-install.py
 """
@@ -110,6 +114,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "deploy" / "systemd" / "install.sh"
@@ -246,6 +251,9 @@ fi
 if [ -n "${INIT_ADMIN_STDOUT:-}" ]; then
   printf '%s\\n' "$INIT_ADMIN_STDOUT"
 fi
+if [ -n "${INIT_ADMIN_BLOCK_SECONDS:-}" ]; then
+  sleep "$INIT_ADMIN_BLOCK_SECONDS"
+fi
 exit "${INIT_ADMIN_EXIT:-0}"
 """
 
@@ -316,13 +324,11 @@ def seed_platform(root: pathlib.Path, systemd: str, os_release: str | None) -> N
         os_release_path.write_text(os_release)
 
 
-def run_install(payload: pathlib.Path, root: pathlib.Path, stubs: pathlib.Path, base: pathlib.Path,
-                args: tuple[str, ...] = (), fail_at: str = "", active: str = "",
-                uname: str = "", systemd: str = "run", os_release: str | None = "default",
-                fail_start: bool = False, init_admin: bool = False, init_admin_exit: int = 0,
-                init_admin_stdout: str = "", admin_password: str | None = None,
-                ambient: dict[str, str] | None = None) -> subprocess.CompletedProcess:
-    seed_platform(root, systemd, os_release)
+def make_install_env(base: pathlib.Path, stubs: pathlib.Path, *, fail_at: str = "", active: str = "",
+                     uname: str = "", fail_start: bool = False, init_admin: bool = False,
+                     init_admin_exit: int = 0, init_admin_stdout: str = "",
+                     admin_password: str | None = None, ambient: dict[str, str] | None = None,
+                     init_admin_block: float = 0) -> dict[str, str]:
     env = dict(os.environ)
     env["PATH"] = f"{stubs}:{env['PATH']}"
     if ambient:
@@ -352,6 +358,10 @@ def run_install(payload: pathlib.Path, root: pathlib.Path, stubs: pathlib.Path, 
         env["INIT_ADMIN_LOG"] = str(base / "init-admin.log")
         env["INIT_ADMIN_ENV_LOG"] = str(base / "init-admin-env.log")
         env["INIT_ADMIN_EXIT"] = str(init_admin_exit)
+        if init_admin_block:
+            env["INIT_ADMIN_BLOCK_SECONDS"] = str(init_admin_block)
+        else:
+            env.pop("INIT_ADMIN_BLOCK_SECONDS", None)
         if init_admin_stdout:
             env["INIT_ADMIN_STDOUT"] = init_admin_stdout
         else:
@@ -359,10 +369,25 @@ def run_install(payload: pathlib.Path, root: pathlib.Path, stubs: pathlib.Path, 
     else:
         env.pop("NEXTERM_INSTALL_INIT_ADMIN", None)
         env.pop("INIT_ADMIN_STDOUT", None)
+        env.pop("INIT_ADMIN_BLOCK_SECONDS", None)
     if admin_password is not None:
         env["NEXTERM_ADMIN_PASSWORD"] = admin_password
     else:
         env.pop("NEXTERM_ADMIN_PASSWORD", None)
+    return env
+
+
+def run_install(payload: pathlib.Path, root: pathlib.Path, stubs: pathlib.Path, base: pathlib.Path,
+                args: tuple[str, ...] = (), fail_at: str = "", active: str = "",
+                uname: str = "", systemd: str = "run", os_release: str | None = "default",
+                fail_start: bool = False, init_admin: bool = False, init_admin_exit: int = 0,
+                init_admin_stdout: str = "", admin_password: str | None = None,
+                ambient: dict[str, str] | None = None, init_admin_block: float = 0) -> subprocess.CompletedProcess:
+    seed_platform(root, systemd, os_release)
+    env = make_install_env(base, stubs, fail_at=fail_at, active=active, uname=uname,
+                           fail_start=fail_start, init_admin=init_admin, init_admin_exit=init_admin_exit,
+                           init_admin_stdout=init_admin_stdout, admin_password=admin_password,
+                           ambient=ambient, init_admin_block=init_admin_block)
     return subprocess.run(
         ["/bin/bash", str(SCRIPT), "--root", str(root), "--source", str(payload), *args],
         capture_output=True, text=True, env=env, timeout=60,
@@ -2582,27 +2607,76 @@ def test_real_root_bootstrap_preserves_custom_data_dir_ownership() -> None:
             payload = make_payload(base, "v1")
             example = payload / "nexterm.env.example"
             example.write_text(example.read_text().replace("NEXTERM_DATA_DIR=/var/lib/nexterm", f"NEXTERM_DATA_DIR={custom}"))
-            env = dict(os.environ)
-            env["PATH"] = f"{stubs}:{env['PATH']}"
-            env["SYSTEMCTL_LOG"] = str(base / "systemctl.log")
-            env["OPENSSL_LOG"] = str(base / "openssl.log")
-            env["USERADD_LOG"] = str(base / "useradd.log")
-            env["INIT_ADMIN_LOG"] = str(base / "init-admin.log")
-            env["INIT_ADMIN_ENV_LOG"] = str(base / "init-admin-env.log")
-            env["NEXTERM_INSTALL_SYSTEMCTL"] = str(stubs / "systemctl")
-            env["NEXTERM_INSTALL_UNAME"] = str(stubs / "uname")
-            env["NEXTERM_INSTALL_INIT_ADMIN"] = str(stubs / "init-admin")
+
+            def real_root_env(path_value: str) -> dict[str, str]:
+                env = dict(os.environ)
+                env["PATH"] = path_value
+                env["SYSTEMCTL_LOG"] = str(base / "systemctl.log")
+                env["OPENSSL_LOG"] = str(base / "openssl.log")
+                env["USERADD_LOG"] = str(base / "useradd.log")
+                env["INIT_ADMIN_LOG"] = str(base / "init-admin.log")
+                env["INIT_ADMIN_ENV_LOG"] = str(base / "init-admin-env.log")
+                env["NEXTERM_INSTALL_SYSTEMCTL"] = str(stubs / "systemctl")
+                env["NEXTERM_INSTALL_UNAME"] = str(stubs / "uname")
+                env["NEXTERM_INSTALL_INIT_ADMIN"] = str(stubs / "init-admin")
+                env["FAKE_ACTIVE_UNITS"] = ""
+                env["NEXTERM_ADMIN_PASSWORD"] = "synthetic-password-1"
+                state = base / "systemctl-state-realroot"
+                state.write_text("")
+                env["SYSTEMCTL_STATE"] = str(state)
+                return env
+
+            # Phase 1: runuser unavailable (PATH without /usr/sbin) fails
+            # closed before the service is ever enabled.
+            blocked = subprocess.run(["/bin/bash", str(SCRIPT), "--source", str(payload)],
+                                     capture_output=True, text=True,
+                                     env=real_root_env(f"{stubs}:/bin:/usr/bin"), timeout=120)
+            assert blocked.returncode != 0, "a missing runuser must fail the bootstrap closed"
+            assert "runuser not found" in blocked.stderr, blocked.stderr
+            assert os.path.exists("/opt/nexterm/.install-incomplete"), "the incomplete marker must survive"
+            calls = systemctl_calls(base)
+            assert "enable --now nexterm-server.service" not in calls, calls
+
+            # Phase 2: full run with a blocking bootstrap stub; an
+            # unprivileged reader scans /proc for argv leaks the whole time.
+            env = real_root_env(f"{stubs}:{os.environ['PATH']}")
             env["INIT_ADMIN_TOUCH_DATA"] = "1"
-            env["FAKE_ACTIVE_UNITS"] = ""
-            state = base / "systemctl-state-realroot"
-            state.write_text("")
-            env["SYSTEMCTL_STATE"] = str(state)
-            result = subprocess.run(["/bin/bash", str(SCRIPT), "--source", str(payload)], capture_output=True, text=True, env=env, timeout=120)
-            assert result.returncode == 0, result.stderr
-            assert "mode: first install" in result.stdout, result.stdout
+            env["INIT_ADMIN_BLOCK_SECONDS"] = "8"
+            process = subprocess.Popen(["/bin/bash", str(SCRIPT), "--source", str(payload)],
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+            leaks: list[str] = []
+            try:
+                deadline = time.time() + 60
+                while not (base / "init-admin-env.log").exists() and time.time() < deadline:
+                    if process.poll() is not None:
+                        break
+                    time.sleep(0.05)
+                assert (base / "init-admin-env.log").exists(), "the blocking bootstrap stub never started"
+                needles = base / "proc-needles.txt"
+                needles.write_text("synthetic-password-1\nNEXTERM_ADMIN_PASSWORD\n")
+                os.chmod(needles, 0o644)
+                for _ in range(10):
+                    scan = subprocess.run(
+                        ["runuser", "-u", "nobody", "--", "sh", "-c",
+                         'grep -a -l -F -f "$1" /proc/[0-9]*/cmdline 2>/dev/null', "sh", str(needles)],
+                        capture_output=True, text=True, timeout=30)
+                    if scan.stdout.strip():
+                        leaks.append(scan.stdout.strip())
+                    time.sleep(0.3)
+                stdout, stderr = process.communicate(timeout=120)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate()
+            assert not leaks, f"bootstrap secrets leaked into /proc cmdline: {leaks}"
+            assert process.returncode == 0, stderr
+            assert "mode: first install" in stdout, stdout
+            assert "resuming incomplete first install" in stdout, stdout
             envlog = init_admin_env(base)
             assert envlog.get("RUNUSER_USER") == "nexterm", f"the bootstrap must run as the service user: {envlog}"
+            assert envlog["NEXTERM_ADMIN_PASSWORD"] == "synthetic-password-1", envlog
             assert envlog["NEXTERM_DATA_DIR"] == str(custom), envlog
+            assert envlog["NEXTERM_DB"] == "sqlite", envlog
             assert (custom / "data.db").exists(), "the bootstrap must create the database"
             assert owner(custom / "data.db") == (nexterm.pw_uid, nexterm.pw_gid), "the database must be born service-owned"
             assert owner(custom / "preexisting-top.txt") == (12345, 12345), "pre-existing top-level file must keep its owner"
@@ -2617,6 +2691,90 @@ def test_real_root_bootstrap_preserves_custom_data_dir_ownership() -> None:
             shutil.rmtree("/run/systemd/system", ignore_errors=True)
         if created_user:
             subprocess.run(["userdel", "nexterm"], capture_output=True)
+
+
+def test_bootstrap_never_uses_env_argv() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        real_env = shutil.which("env")
+        assert real_env, "env must exist on the host"
+        (stubs / "env").write_text(f"""#!/bin/sh
+printf '%s\\n' "$*" >> "$ENV_ARGV_LOG"
+sleep 5
+exec {real_env} "$@"
+""")
+        (stubs / "env").chmod(0o755)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        result = run_install(payload, root, stubs, base, init_admin=True,
+                             admin_password="synthetic-password-1",
+                             init_admin_stdout="nexterm-server: 初始密码: synthetic-password-1（仅显示一次）",
+                             ambient={"ENV_ARGV_LOG": str(base / "env-argv.log")})
+        assert result.returncode == 0, result.stderr
+        assert not (base / "env-argv.log").exists(), \
+            "the bootstrap must not pass secrets through an env argv (world-readable via /proc)"
+        assert "初始密码: synthetic-password-1" in result.stdout, result.stdout
+        envlog = init_admin_env(base)
+        assert envlog["NEXTERM_ADMIN_PASSWORD"] == "synthetic-password-1", \
+            f"the child must receive the password via the environment: {envlog}"
+        assert envlog["NEXTERM_DB"] == "sqlite", envlog
+
+
+def proc_cmdline_leaks(*needles: str) -> list[str]:
+    hits = []
+    for entry in pathlib.Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            data = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        for needle in needles:
+            if needle.encode() in data:
+                hits.append(f"pid {entry.name}: {needle}")
+    return hits
+
+
+def test_bootstrap_secrets_never_in_proc_cmdline() -> None:
+    if platform.system() != "Linux":
+        print("skip   test_bootstrap_secrets_never_in_proc_cmdline (needs /proc; Linux only)")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        seed_platform(root, "run", "default")
+        env = make_install_env(base, stubs, init_admin=True, init_admin_block=8,
+                               admin_password="synthetic-password-1",
+                               init_admin_stdout="nexterm-server: 初始密码: synthetic-password-1（仅显示一次）")
+        env["ENV_ARGV_LOG"] = str(base / "env-argv.log")
+        process = subprocess.Popen(
+            ["/bin/bash", str(SCRIPT), "--root", str(root), "--source", str(payload)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+        )
+        leaks: list[str] = []
+        try:
+            deadline = time.time() + 30
+            while not (base / "init-admin-env.log").exists() and time.time() < deadline:
+                if process.poll() is not None:
+                    break
+                time.sleep(0.05)
+            assert (base / "init-admin-env.log").exists(), "the blocking bootstrap stub never started"
+            for _ in range(10):
+                leaks.extend(proc_cmdline_leaks("synthetic-password-1", "NEXTERM_ADMIN_PASSWORD"))
+                time.sleep(0.2)
+            stdout, stderr = process.communicate(timeout=60)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+        assert not leaks, f"bootstrap secrets leaked into /proc cmdline: {leaks}"
+        assert process.returncode == 0, stderr
+        assert "初始密码: synthetic-password-1" in stdout, stdout
+        envlog = init_admin_env(base)
+        assert envlog["NEXTERM_ADMIN_PASSWORD"] == "synthetic-password-1", envlog
 
 
 def test_real_server_archive_smoke() -> None:
@@ -2769,6 +2927,8 @@ def main() -> int:
         test_bootstrap_db_env_unconditional_overrides_ambient,
         test_bootstrap_db_env_from_file_wins_over_ambient,
         test_bootstrap_exit4_keeps_install_failed,
+        test_bootstrap_never_uses_env_argv,
+        test_bootstrap_secrets_never_in_proc_cmdline,
         test_real_root_bootstrap_preserves_custom_data_dir_ownership,
         test_real_server_archive_smoke,
     ]
