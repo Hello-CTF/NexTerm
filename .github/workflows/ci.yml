@@ -631,9 +631,6 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           export PATH="$(go env GOPATH)/bin:$PATH"
           wails3 version
-      - name: Stamp the mobile version
-        if: env.NEXTERM_RELEASE_VERSION != ''
-        run: node scripts/stamp-version.mjs build/config.yml
       - name: Build the mobile package
         env:
           DIST_SOURCE: target/ci-work/verified-dist/dist
@@ -765,9 +762,6 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security find-identity -v -p codesigning "$KEYCHAIN" | grep -F "Apple Distribution"
-      - name: Stamp the mobile version
-        if: env.NEXTERM_RELEASE_VERSION != ''
-        run: node scripts/stamp-version.mjs build/config.yml
       - name: Build the signed iOS distribution IPA
         env:
           DIST_SOURCE: target/ci-work/verified-dist/dist

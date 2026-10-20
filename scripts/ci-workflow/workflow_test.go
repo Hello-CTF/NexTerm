@@ -100,6 +100,7 @@ type taskFile struct {
 }
 
 type taskDefinition struct {
+	Deps     []taskCommand `yaml:"deps"`
 	Commands []taskCommand `yaml:"cmds"`
 }
 
@@ -663,9 +664,14 @@ func loadWorkflow(t *testing.T, name string) workflowFile {
 
 func loadTaskfile(t *testing.T) taskFile {
 	t.Helper()
+	return loadTaskfileAt(t, "Taskfile.yml")
+}
+
+func loadTaskfileAt(t *testing.T, name string) taskFile {
+	t.Helper()
 	var tasks taskFile
-	if err := yaml.Unmarshal([]byte(readRepositoryFile(t, "Taskfile.yml")), &tasks); err != nil {
-		t.Fatalf("parse Taskfile.yml: %v", err)
+	if err := yaml.Unmarshal([]byte(readRepositoryFile(t, name)), &tasks); err != nil {
+		t.Fatalf("parse %s: %v", name, err)
 	}
 	return tasks
 }
