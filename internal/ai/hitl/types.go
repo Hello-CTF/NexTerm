@@ -72,6 +72,10 @@ var (
 	ErrAnswerReused       = errors.New("hitl: answer ID belongs to another request")
 	ErrAssetMismatch      = errors.New("hitl: asset identity does not match the request evidence")
 	ErrAssetUnknown       = errors.New("hitl: asset identity evidence is unavailable")
+	// ErrRestorePersist reports a retryable persistence failure during
+	// restore: the in-memory registration was rolled back and the persisted
+	// blob, run row, and checkpoint stay untouched for the next recovery.
+	ErrRestorePersist = errors.New("hitl: restore persist failed")
 )
 
 type Question struct {

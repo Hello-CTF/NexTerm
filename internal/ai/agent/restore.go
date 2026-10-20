@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -44,8 +45,11 @@ func (r *Runner) RecoverRuns(ctx context.Context) error {
 	for _, blob := range blobs {
 		byID[blob.ID] = blob
 	}
+	var recoverErrs []error
 	for _, row := range active {
-		r.recoverRun(ctx, row, byID[row.ID])
+		if err := r.recoverRun(ctx, row, byID[row.ID]); err != nil {
+			recoverErrs = append(recoverErrs, err)
+		}
 	}
 	for _, blob := range blobs {
 		if _, err := r.runs.RunGet(ctx, blob.ID); err != nil {
@@ -55,7 +59,7 @@ func (r *Runner) RecoverRuns(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
+	return errors.Join(recoverErrs...)
 }
 
 // activeRuns returns the owner's unfinished running and interrupted runs.
@@ -88,15 +92,24 @@ func (r *Runner) activeRuns(ctx context.Context) ([]store.RunRow, error) {
 	}
 }
 
-func (r *Runner) recoverRun(ctx context.Context, row store.RunRow, blob hitl.RunBlob) {
+func (r *Runner) recoverRun(ctx context.Context, row store.RunRow, blob hitl.RunBlob) error {
 	restored := false
 	var snapshot hitl.Snapshot
 	if len(blob.Data) > 0 {
-		if err := r.hitl.Restore(blob); err == nil || errors.Is(err, hitl.ErrRunExists) {
+		err := r.hitl.Restore(blob)
+		switch {
+		case err == nil || errors.Is(err, hitl.ErrRunExists):
 			if current, err := r.hitl.Snapshot(row.ID); err == nil {
 				restored = true
 				snapshot = current
 			}
+		case errors.Is(err, hitl.ErrInvalidArgument):
+			// Explicitly unrecoverable input: terminalize below.
+		default:
+			// A retryable persistence failure: keep the active row, blob,
+			// and checkpoint untouched for the next recovery and surface
+			// the error instead of converting it into permanent data loss.
+			return fmt.Errorf("AI 恢复运行 %s 失败: %w", row.ID, err)
 		}
 	}
 	if restored && snapshot.Terminal == nil && len(snapshot.Pending) > 0 {
@@ -111,7 +124,7 @@ func (r *Runner) recoverRun(ctx context.Context, row store.RunRow, blob hitl.Run
 			}
 		}
 		r.watchRestoredRun(ctx, row)
-		return
+		return nil
 	}
 	status := store.RunStatusInterrupted
 	message := "AI 任务因应用重启而中断"
@@ -125,6 +138,7 @@ func (r *Runner) recoverRun(ctx context.Context, row store.RunRow, blob hitl.Run
 	if deleter, ok := r.checkpoints.(adk.CheckPointDeleter); ok {
 		_ = deleter.Delete(context.WithoutCancel(ctx), row.ID)
 	}
+	return nil
 }
 
 func (r *Runner) finishRecoveredRun(ctx context.Context, row store.RunRow, status, message string, retryable bool) {

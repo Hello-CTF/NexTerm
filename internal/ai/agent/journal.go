@@ -46,7 +46,7 @@ func (b hitlStoreBridge) ListRuns(ctx context.Context) ([]hitl.RunBlob, error) {
 	}
 	blobs := make([]hitl.RunBlob, len(rows))
 	for index, row := range rows {
-		blobs[index] = hitl.RunBlob{ID: row.ID, Data: row.Data}
+		blobs[index] = hitl.RunBlob{ID: row.ID, OwnerID: row.OwnerID, Data: row.Data}
 	}
 	return blobs, nil
 }

@@ -11,8 +11,9 @@ import (
 )
 
 type RunBlob struct {
-	ID   string
-	Data []byte
+	ID      string
+	OwnerID string
+	Data    []byte
 }
 
 type Store interface {
@@ -87,15 +88,22 @@ func (m *Manager) Restore(blob RunBlob) error {
 		return ErrInvalidArgument
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
-	// The restored run must keep persisting under the owner that wrote the blob:
-	// owner-guarded stores reject an owner-less rewrite of an owned row.
-	if record.OwnerID != "" {
-		runCtx = ipc.WithUserID(runCtx, record.OwnerID)
+	// The restored run must keep persisting under the owner that wrote the
+	// blob: owner-guarded stores reject an owner-less rewrite of an owned
+	// row. The persisted row's owner is authoritative; blobs written before
+	// the owner field existed have no ownerId and fall back to it, while
+	// ownerless desktop rows stay ownerless.
+	owner := blob.OwnerID
+	if owner == "" {
+		owner = record.OwnerID
+	}
+	if owner != "" {
+		runCtx = ipc.WithUserID(runCtx, owner)
 	}
 	run := &runState{
 		id:           record.ID,
 		checkpointID: record.CheckpointID,
-		ownerID:      record.OwnerID,
+		ownerID:      owner,
 		ctx:          runCtx,
 		cancel:       cancel,
 		status:       record.Status,
@@ -167,5 +175,22 @@ func (m *Manager) Restore(blob RunBlob) error {
 		run.finishedAt = now
 		run.cancel()
 	}
-	return m.persistLocked(run)
+	if err := m.persistLocked(run); err != nil {
+		// A retryable persistence failure must not leave a ghost run,
+		// nonce, or timer registered: roll the in-memory registration back
+		// so the persisted blob stays the untouched retry input and the
+		// next recovery starts clean.
+		for _, request := range run.requests {
+			if request.timer != nil {
+				request.timer.Stop()
+			}
+			m.releaseNonces(request.interrupt.Nonce)
+		}
+		m.mu.Lock()
+		delete(m.runs, record.ID)
+		m.mu.Unlock()
+		run.cancel()
+		return fmt.Errorf("%w: %v", ErrRestorePersist, err)
+	}
+	return nil
 }
