@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -20,20 +21,54 @@ func (s *Store) CredentialPutTx(ctx context.Context, tx *gorm.DB, input Credenti
 	return s.credentialPut(ctx, tx, input)
 }
 
+// credentialPut upserts atomically: the update path advances the revision only when the
+// row still matches the revision it was computed from, so two concurrent local writes
+// cannot land on the same revision with different content (same-version ABA). A conflict
+// re-reads the fresh row and retries; exhausting the bounded retries reports ErrWriteConflict.
 func (s *Store) credentialPut(ctx context.Context, db *gorm.DB, input CredentialInput) (string, error) {
 	id := input.ID
 	if id == "" {
 		id = ids.New()
 	}
-	now := ids.NowMS()
-	row := CredentialRow{
-		ID: id, Name: input.Name, Kind: input.Kind, Cipher: CipherAES256GCM, Nonce: input.Nonce, Blob: input.Blob,
-		KEKHint: input.KEKHint, CreatedAt: now, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx),
+	for attempt := 0; attempt < maxWriteRetries; attempt++ {
+		existing, err := s.credentialGetRow(ctx, db, id)
+		var appErr *ipc.Error
+		missing := errors.As(err, &appErr) && appErr.Code == ipc.CodeNotFound
+		if err != nil && !missing {
+			return "", err
+		}
+		if missing {
+			now := ids.NowMS()
+			row := CredentialRow{
+				ID: id, Name: input.Name, Kind: input.Kind, Cipher: CipherAES256GCM, Nonce: input.Nonce, Blob: input.Blob,
+				KEKHint: input.KEKHint, CreatedAt: now, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx),
+			}
+			if err := query.Use(db).CredentialRow.WithContext(ctx).Create(&row); err != nil {
+				if IsUniqueErr(err) {
+					continue
+				}
+				return "", dbError(err)
+			}
+			return id, nil
+		}
+		values := map[string]any{
+			"name": input.Name, "kind": input.Kind, "cipher": CipherAES256GCM,
+			"nonce": input.Nonce, "blob": input.Blob, "kek_hint": input.KEKHint,
+			"updated_at": nextWriteVersion(existing.UpdatedAt),
+		}
+		credential := query.Use(db).CredentialRow
+		info, err := credential.WithContext(ctx).
+			Where(credential.ID.Eq(id), credential.UpdatedAt.Eq(existing.UpdatedAt)).
+			Where(ownerConditions(ctx, credential.TableName())...).
+			UpdateColumns(values)
+		if err != nil {
+			return "", dbError(err)
+		}
+		if info.RowsAffected == 1 {
+			return id, nil
+		}
 	}
-	if err := s.upsertWithDB(ctx, db, &row, []string{"name", "kind", "cipher", "nonce", "blob", "kek_hint", "updated_at"}); err != nil {
-		return "", err
-	}
-	return id, nil
+	return "", ErrWriteConflict
 }
 
 func (s *Store) CredentialCreateTx(ctx context.Context, tx *gorm.DB, input CredentialInput) (string, error) {

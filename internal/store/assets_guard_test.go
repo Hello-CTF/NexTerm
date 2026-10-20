@@ -3,10 +3,12 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"gorm.io/gorm"
 )
 
 // The guarded upsert lands only when the decision snapshot is still current: a concurrent
@@ -286,5 +288,50 @@ func TestUpsertOwnerGuardCrossOwnerConflict(t *testing.T) {
 	}
 	if _, err := db.AssetUpsert(ctx, asset); err != nil {
 		t.Fatalf("same-owner idempotent re-upsert err=%v", err)
+	}
+}
+
+// Same-version ABA: two local edits that interleave on the same base revision must not
+// land on the same revision with different content. The base revision is future-dated so
+// nextWriteVersion returns expected+1 and the collision is real: with a non-atomic
+// read-compute-write both edits land on R+1 and the second silently overwrites the first;
+// the expected-revision write forces the second edit to retry onto a fresh revision.
+func TestAssetUpdateInterleavedEditsAdvanceRevisionAtomically(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	base := ids.NowMS() + 10_000
+	asset := AssetRow{ID: ids.New(), Kind: "ssh", Name: "aba", OptionsJSON: "{}", CreatedAt: 1, UpdatedAt: base}
+	if _, err := db.AssetUpsert(ctx, asset); err != nil {
+		t.Fatal(err)
+	}
+
+	// U2's edit lands revision R+1 while U1 is reading R: on the first asset read during
+	// U1's update, a direct write advances the row, simulating U2's stale-read write.
+	fired := false
+	if err := db.GORM().Callback().Query().After("gorm:query").Register("test:aba-interleave", func(tx *gorm.DB) {
+		if fired || !strings.Contains(tx.Statement.SQL.String(), "FROM `asset`") {
+			return
+		}
+		fired = true
+		if _, err := db.DB().ExecContext(ctx,
+			"UPDATE asset SET host = ?, updated_at = ? WHERE id = ?", "edit-2", base+1, asset.ID); err != nil {
+			t.Errorf("interleaved edit: %v", err)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.GORM().Callback().Query().Remove("test:aba-interleave") })
+
+	// U1's first write attempt (computed from R) conflicts with U2's R+1 and retries
+	// onto R+2; the edit-2 content is never flattened into the same revision.
+	updated, err := db.AssetUpdate(ctx, asset.ID, AssetPatch{Host: Value("edit-1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Host == nil || *updated.Host != "edit-1" {
+		t.Fatalf("final host = %+v, want edit-1", updated.Host)
+	}
+	if updated.UpdatedAt != base+2 {
+		t.Fatalf("final revision = %d, want %d (atomic retry onto a fresh revision)", updated.UpdatedAt, base+2)
 	}
 }

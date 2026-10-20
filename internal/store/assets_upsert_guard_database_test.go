@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -111,12 +112,30 @@ func TestUpsertOwnerGuardCrossOwnerDatabase(t *testing.T) {
 		t.Fatalf("cross-owner credential upsert landed: %+v err=%v", storedCred, err)
 	}
 
+	// Same-owner re-upsert stays idempotent on all backends, and a changed upsert
+	// actually lands in the row (the guard must not silently skip the UPDATE).
 	asset.UpdatedAt = 300
 	if _, err := db.AssetUpsert(ctx, asset); err != nil {
-		t.Fatalf("same-owner re-upsert err=%v", err)
+		t.Fatalf("same-owner changed upsert err=%v", err)
+	}
+	landed, err := db.AssetGet(ctx, asset.ID)
+	if err != nil || landed.Name != "invader" || landed.UpdatedAt != 300 {
+		t.Fatalf("same-owner changed upsert did not land: %+v err=%v", landed, err)
 	}
 	if _, err := db.AssetUpsert(ctx, asset); err != nil {
 		t.Fatalf("same-owner idempotent re-upsert err=%v", err)
+	}
+	landed, err = db.AssetGet(ctx, asset.ID)
+	if err != nil || landed.Name != "invader" || landed.UpdatedAt != 300 {
+		t.Fatalf("idempotent re-upsert changed the row: %+v err=%v", landed, err)
+	}
+	// Same-owner changed credential upsert lands as well.
+	if _, err := db.CredentialPut(ctx, store.CredentialInput{ID: credentialID, Name: "renamed", Kind: "password", Nonce: []byte{5}, Blob: []byte{6}}); err != nil {
+		t.Fatalf("same-owner changed credential upsert err=%v", err)
+	}
+	landedCred, err := db.CredentialGetRow(ctx, credentialID)
+	if err != nil || landedCred.Name != "renamed" || !bytes.Equal(landedCred.Blob, []byte{6}) {
+		t.Fatalf("same-owner changed credential upsert did not land: %+v err=%v", landedCred, err)
 	}
 }
 

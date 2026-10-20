@@ -27,13 +27,16 @@ func (s *Store) upsertWithDB(ctx context.Context, db *gorm.DB, values any, colum
 	return UpsertOwnerGuarded(ctx, db, values, columns)
 }
 
-// UpsertOwnerGuarded inserts values by primary key, falling back to an owner-guarded UPDATE
-// when the row already exists. clause.OnConflict's DO UPDATE ... WHERE guard is silently
-// dropped by the MySQL/MariaDB dialect (rendered as ON DUPLICATE KEY UPDATE without WHERE),
-// so this portable shape is used instead: a cross-owner ID collision surfaces as
-// ErrWriteConflict on every backend instead of overwriting the other owner's row
-// (MySQL/MariaDB) or silently skipping the write (SQLite/PostgreSQL). Re-applying an
-// identical row stays a successful no-op on all backends.
+// UpsertOwnerGuarded writes values by primary key with an owner guard that behaves
+// identically on every supported backend. clause.OnConflict's DO UPDATE ... WHERE guard is
+// silently dropped by the MySQL/MariaDB dialect (rendered as ON DUPLICATE KEY UPDATE
+// without WHERE), so the portable shape probes existence first: an owner-matching row is
+// updated in place (a changed same-owner upsert always lands), while an absent row is
+// inserted with ON CONFLICT DO NOTHING (never aborts the surrounding transaction on
+// PostgreSQL) and re-checked to distinguish a genuinely new insert from a cross-owner
+// collision. A cross-owner ID collision surfaces as ErrWriteConflict on every backend
+// instead of overwriting the other owner's row (MySQL/MariaDB) or silently skipping the
+// write (SQLite/PostgreSQL), and re-applying an identical row stays a successful no-op.
 func UpsertOwnerGuarded(ctx context.Context, db *gorm.DB, values any, columns []string) error {
 	statement := &gorm.Statement{DB: db}
 	if err := statement.Parse(values); err != nil {
@@ -61,28 +64,45 @@ func UpsertOwnerGuarded(ctx context.Context, db *gorm.DB, values any, columns []
 		assignments[column] = value
 	}
 	tx := db.WithContext(ctx)
-	inserted := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: primary.DBName}}, DoNothing: true}).Create(values)
-	if inserted.Error != nil {
-		return dbError(inserted.Error)
-	}
-	if inserted.RowsAffected == 1 {
-		return nil
-	}
 	guard := map[string]any{primary.DBName: id, "owner_id": ipc.OwnerID(ctx)}
-	updated := tx.Model(values).Where(guard).Updates(assignments)
-	if updated.Error != nil {
-		return dbError(updated.Error)
+	countOwnerRow := func() (int64, error) {
+		var count int64
+		if err := tx.Model(values).Where(guard).Count(&count).Error; err != nil {
+			return 0, dbError(err)
+		}
+		return count, nil
 	}
-	if updated.RowsAffected == 1 {
-		return nil
+	existing, err := countOwnerRow()
+	if err != nil {
+		return err
 	}
-	// MySQL/MariaDB report 0 affected rows when the UPDATE sets identical values:
-	// distinguish that idempotent no-op from a cross-owner collision.
-	var count int64
-	if err := tx.Model(values).Where(guard).Count(&count).Error; err != nil {
+	if existing > 0 {
+		updated := tx.Model(values).Where(guard).Updates(assignments)
+		if updated.Error != nil {
+			return dbError(updated.Error)
+		}
+		if updated.RowsAffected == 1 {
+			return nil
+		}
+		// MySQL/MariaDB with clientFoundRows=false report 0 affected rows when the UPDATE
+		// sets identical values: that is an idempotent no-op, and a row deleted in the
+		// meantime falls through to the insert below.
+		existing, err = countOwnerRow()
+		if err != nil {
+			return err
+		}
+		if existing > 0 {
+			return nil
+		}
+	}
+	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: primary.DBName}}, DoNothing: true}).Create(values).Error; err != nil {
 		return dbError(err)
 	}
-	if count > 0 {
+	inserted, err := countOwnerRow()
+	if err != nil {
+		return err
+	}
+	if inserted > 0 {
 		return nil
 	}
 	return ErrWriteConflict

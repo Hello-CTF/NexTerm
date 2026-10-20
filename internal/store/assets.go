@@ -114,6 +114,11 @@ func (s *Store) assetCreate(ctx context.Context, db *gorm.DB, input AssetInput) 
 
 var ErrWriteConflict = errors.New("store: write conflict")
 
+// maxWriteRetries bounds the expected-revision retry loop of local writes. Concurrent
+// local edits on the same row serialize: each conflict re-reads the fresh revision and
+// advances strictly past it, so equal revision always means "unchanged" for CAS consumers.
+const maxWriteRetries = 8
+
 func nextWriteVersion(expected int64) int64 {
 	now := ids.NowMS()
 	if now <= expected {
@@ -177,30 +182,41 @@ func (s *Store) assetUpdateValues(ctx context.Context, db *gorm.DB, id string, p
 	return values, nil
 }
 
+// assetUpdate advances the revision atomically: the write lands only when the row still
+// matches the revision the patch was computed from, so two concurrent local edits cannot
+// both land on the same revision with different content (same-version ABA). A conflict
+// re-reads the fresh row and retries; exhausting the bounded retries reports ErrWriteConflict.
 func (s *Store) assetUpdate(ctx context.Context, db *gorm.DB, id string, patch AssetPatch) (AssetRow, error) {
-	current, err := s.assetGet(ctx, db, id)
-	if err != nil {
-		return AssetRow{}, err
+	for attempt := 0; attempt < maxWriteRetries; attempt++ {
+		current, err := s.assetGet(ctx, db, id)
+		if err != nil {
+			return AssetRow{}, err
+		}
+		if err := validateInventoryPatch(current, patch); err != nil {
+			return AssetRow{}, err
+		}
+		values, err := s.assetUpdateValues(ctx, db, id, patch, nextWriteVersion(current.UpdatedAt))
+		if err != nil {
+			return AssetRow{}, err
+		}
+		asset := query.Use(db).AssetRow
+		statement := asset.WithContext(ctx).
+			Where(asset.ID.Eq(id), asset.UpdatedAt.Eq(current.UpdatedAt)).
+			Where(ownerConditions(ctx, asset.TableName())...)
+		if current.DeletedAt == nil {
+			statement = statement.Where(asset.DeletedAt.IsNull())
+		} else {
+			statement = statement.Where(asset.DeletedAt.Eq(*current.DeletedAt))
+		}
+		info, err := statement.UpdateColumns(values)
+		if err != nil {
+			return AssetRow{}, dbError(err)
+		}
+		if info.RowsAffected == 1 {
+			return s.assetGet(ctx, db, id)
+		}
 	}
-	if err := validateInventoryPatch(current, patch); err != nil {
-		return AssetRow{}, err
-	}
-	// Local edits advance the revision strictly monotonically so an equal
-	// updated_at always means "unchanged" for CAS consumers, even when two
-	// writes land within the same millisecond.
-	values, err := s.assetUpdateValues(ctx, db, id, patch, nextWriteVersion(current.UpdatedAt))
-	if err != nil {
-		return AssetRow{}, err
-	}
-	asset := query.Use(db).AssetRow
-	_, err = asset.WithContext(ctx).
-		Where(asset.ID.Eq(id)).
-		Where(ownerConditions(ctx, asset.TableName())...).
-		UpdateColumns(values)
-	if err != nil {
-		return AssetRow{}, dbError(err)
-	}
-	return s.assetGet(ctx, db, id)
+	return AssetRow{}, ErrWriteConflict
 }
 
 func (s *Store) AssetUpdateCAS(ctx context.Context, db *gorm.DB, id string, expectedUpdatedAt int64, patch AssetPatch) (AssetRow, error) {
@@ -248,26 +264,34 @@ func applyOptional[T any](current **T, patch Optional[T]) {
 	}
 }
 
+// AssetDelete soft-deletes with the same atomic revision advancement as assetUpdate: the
+// delete lands only when the row still matches the revision it was computed from, so a
+// concurrent edit or delete can never be flattened into the same revision.
 func (s *Store) AssetDelete(ctx context.Context, id string) error {
-	row, err := s.AssetGet(ctx, id)
-	if err != nil {
-		return err
+	for attempt := 0; attempt < maxWriteRetries; attempt++ {
+		row, err := s.AssetGet(ctx, id)
+		if err != nil {
+			return err
+		}
+		if row.Builtin {
+			return badParam(errString("\"当前设备\"是内置资产，不能删除"))
+		}
+		asset := query.Use(s.db).AssetRow
+		// The deletion advances the effective revision strictly past the last update
+		// (same-millisecond deletes included) so LWW comparisons always observe it.
+		revision := nextWriteVersion(row.UpdatedAt)
+		info, err := asset.WithContext(ctx).
+			Where(asset.ID.Eq(id), asset.UpdatedAt.Eq(row.UpdatedAt)).
+			Where(ownerConditions(ctx, asset.TableName())...).
+			UpdateColumns(map[string]any{"deleted_at": revision, "updated_at": revision})
+		if err != nil {
+			return dbError(err)
+		}
+		if info.RowsAffected == 1 {
+			return nil
+		}
 	}
-	if row.Builtin {
-		return badParam(errString("\"当前设备\"是内置资产，不能删除"))
-	}
-	asset := query.Use(s.db).AssetRow
-	// The deletion advances the effective revision strictly past the last update
-	// (same-millisecond deletes included) so LWW comparisons always observe it.
-	revision := nextWriteVersion(row.UpdatedAt)
-	_, err = asset.WithContext(ctx).
-		Where(asset.ID.Eq(id)).
-		Where(ownerConditions(ctx, asset.TableName())...).
-		UpdateColumns(map[string]any{"deleted_at": revision, "updated_at": revision})
-	if err != nil {
-		return dbError(err)
-	}
-	return nil
+	return ErrWriteConflict
 }
 
 func (s *Store) AssetEnsureBuiltinLocal(ctx context.Context) (AssetRow, error) {

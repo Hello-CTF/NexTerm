@@ -436,6 +436,12 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		exists    bool
 	}
 	preparedCreds := make([]preparedCred, 0, len(bundle.Creds))
+	// priorCredRows/priorCredTombstones snapshot the pre-import state of every upserted
+	// credential: an asset that conflicts at write time must not leave the credential
+	// created, overwritten, or its tombstone cleared, so the import compensates back to
+	// exactly this state before commit.
+	priorCredRows := map[string]*store.CredentialRow{}
+	priorCredTombstones := map[string]*store.CredentialTombstone{}
 	seenCredIDs := map[string]bool{}
 	for _, payload := range bundle.Creds {
 		id := strings.TrimSpace(payload.ID)
@@ -479,11 +485,17 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			continue
 		} else if err != nil && !isNotFound(err) {
 			return ImportReport{}, err
+		} else if err == nil {
+			priorCredTombstones[id] = &tombstone
 		}
-		_, err := s.store.CredentialGetRow(ctx, id)
+		existing, err := s.store.CredentialGetRow(ctx, id)
 		exists := err == nil
 		if err != nil && !isNotFound(err) {
 			return ImportReport{}, err
+		}
+		if exists {
+			row := existing
+			priorCredRows[id] = &row
 		}
 		nonce, blob, err := s.vault.EncryptCredential(ctx, payload.Secret)
 		if err != nil {
@@ -716,6 +728,7 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 	}
 	createdFlags := make([]bool, len(preparedAssets))
 	conflicted := make([]bool, len(preparedAssets))
+	compensatedCredIDs := map[string]bool{}
 	// Credentials and assets share one transaction: an asset-save failure rolls the
 	// credential creates/updates back instead of leaving them orphaned.
 	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
@@ -751,11 +764,39 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			}
 			createdFlags[index] = created
 		}
+		// An asset that conflicted at write time must not take its credentials down with
+		// it: a credential referenced only by conflicted assets is compensated back to its
+		// pre-import state (created ones removed, overwritten ones restored, cleared
+		// tombstones re-recorded) before the transaction commits. Credentials shared with
+		// successfully written assets stay.
+		writtenCredRefs := map[string]bool{}
+		for index, entry := range preparedAssets {
+			if entry.accepted && !conflicted[index] && entry.row.CredID != nil && *entry.row.CredID != "" {
+				writtenCredRefs[*entry.row.CredID] = true
+			}
+		}
+		for index, entry := range preparedAssets {
+			if !conflicted[index] || entry.row.CredID == nil || *entry.row.CredID == "" {
+				continue
+			}
+			credID := *entry.row.CredID
+			if writtenCredRefs[credID] || compensatedCredIDs[credID] {
+				continue
+			}
+			compensatedCredIDs[credID] = true
+			if err := s.compensateCredentialTx(ctx, tx, credID, priorCredRows[credID], priorCredTombstones[credID]); err != nil {
+				return err
+			}
+			warnf("凭据 %s 引用的资产在写入时冲突，已回滚该凭据的导入写入", credID)
+		}
 		return nil
 	}); err != nil {
 		return ImportReport{}, err
 	}
 	for _, cred := range preparedCreds {
+		if compensatedCredIDs[cred.id] {
+			continue
+		}
 		if cred.exists {
 			report.CredsUpdated++
 		} else {
@@ -861,6 +902,44 @@ func (s *Service) importAssetTx(ctx context.Context, tx *gorm.DB, index int, row
 		return false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+rollbackErr.Error(), rollbackErr)
 	}
 	return false, err
+}
+
+// compensateCredentialTx rolls one credential back to its pre-import state after the only
+// asset referencing it conflicted at write time: a credential created by this import is
+// removed, an overwritten one is restored field-by-field (including the original revision),
+// and a tombstone cleared by the upsert is re-recorded. A nil prior row means the
+// credential did not exist before the import.
+func (s *Service) compensateCredentialTx(ctx context.Context, tx *gorm.DB, credID string, prior *store.CredentialRow, priorTombstone *store.CredentialTombstone) error {
+	credential := query.Use(tx).CredentialRow
+	if prior == nil {
+		if _, err := credential.WithContext(ctx).
+			Where(credential.ID.Eq(credID)).
+			Where(ownerConditions(ctx, credential.TableName())...).
+			Delete(); err != nil {
+			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		}
+	} else {
+		if _, err := credential.WithContext(ctx).
+			Where(credential.ID.Eq(credID)).
+			Where(ownerConditions(ctx, credential.TableName())...).
+			UpdateColumns(map[string]any{
+				"name": prior.Name, "kind": prior.Kind, "cipher": prior.Cipher,
+				"nonce": prior.Nonce, "blob": prior.Blob, "kek_hint": prior.KEKHint,
+				"created_at": prior.CreatedAt, "updated_at": prior.UpdatedAt,
+			}); err != nil {
+			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		}
+	}
+	if priorTombstone != nil {
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "owner_id"}, {Name: "id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"deleted_at"}),
+			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+		}).Create(priorTombstone).Error; err != nil {
+			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		}
+	}
+	return nil
 }
 
 // inImportTx commits all writes of one object class in a single transaction; any statement failure rolls back the whole class.
