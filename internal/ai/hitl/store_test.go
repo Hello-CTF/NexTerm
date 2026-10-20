@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/cloudwego/eino/adk"
 )
 
@@ -203,5 +204,88 @@ func TestRestoreRejectsGarbage(t *testing.T) {
 	}
 	if err := manager.Restore(RunBlob{ID: "other", Data: []byte(`{"id":"run","checkpointId":"cp"}`)}); !errors.Is(err, ErrInvalidArgument) {
 		t.Fatalf("mismatched id restore error = %v", err)
+	}
+}
+
+// ownerGuardedRunStore mimics the real store's owner-guarded upsert: a save
+// whose context owner differs from the stored row's owner is a write conflict.
+type ownerGuardedRunStore struct {
+	mu     sync.Mutex
+	owners map[string]string
+	blobs  map[string][]byte
+}
+
+func newOwnerGuardedRunStore() *ownerGuardedRunStore {
+	return &ownerGuardedRunStore{owners: make(map[string]string), blobs: make(map[string][]byte)}
+}
+
+func (s *ownerGuardedRunStore) SaveRun(ctx context.Context, blob RunBlob) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	owner := ipc.OwnerID(ctx)
+	if existing, ok := s.owners[blob.ID]; ok && existing != owner {
+		return errors.New("store: write conflict")
+	}
+	s.owners[blob.ID] = owner
+	s.blobs[blob.ID] = append([]byte(nil), blob.Data...)
+	return nil
+}
+
+func (s *ownerGuardedRunStore) ListRuns(context.Context) ([]RunBlob, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	blobs := make([]RunBlob, 0, len(s.blobs))
+	for id, data := range s.blobs {
+		blobs = append(blobs, RunBlob{ID: id, Data: append([]byte(nil), data...)})
+	}
+	return blobs, nil
+}
+
+func (s *ownerGuardedRunStore) snapshot(id string) (RunBlob, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return RunBlob{ID: id, Data: append([]byte(nil), s.blobs[id]...)}, s.owners[id]
+}
+
+func TestStoreRestartRestoresOwnedRunUnderRecordedOwner(t *testing.T) {
+	checkpoints := newFakeCheckpoints()
+	checkpoints.put("checkpoint", []byte("checkpoint-one"))
+	blobStore := newOwnerGuardedRunStore()
+	ownerCtx := ipc.WithUserID(context.Background(), "user-1")
+	first, err := NewManager(Config{Checkpoints: checkpoints, Store: blobStore, TTL: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.RegisterRun(ownerCtx, "run", "checkpoint"); err != nil {
+		t.Fatal(err)
+	}
+	request, err := first.Interrupt(ownerCtx, &adk.InterruptCtx{ID: "target-one", IsRootCause: true}, InterruptInput{
+		RunID: "run", CheckpointID: "checkpoint", CallID: "call-one", Tool: "exec_commands", Kind: KindConfirm, Parameters: []byte(`{"commands":["ls"]}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured, owner := blobStore.snapshot("run")
+	if len(captured.Data) == 0 || owner != "user-1" {
+		t.Fatalf("persisted blob owner = %q bytes = %d", owner, len(captured.Data))
+	}
+
+	second, err := NewManager(Config{Checkpoints: checkpoints, Store: blobStore, TTL: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = second.Close() })
+	if err := second.Restore(captured); err != nil {
+		t.Fatalf("restore of owned run: %v", err)
+	}
+	if _, owner := blobStore.snapshot("run"); owner != "user-1" {
+		t.Fatalf("restored blob owner = %q", owner)
+	}
+	resume, iterator, err := second.Resume(context.Background(), &fakeResumer{}, answerFor("answer-one", request))
+	if err != nil || iterator == nil || resume.Attempt != 2 {
+		t.Fatalf("resume after owned restart = %+v err=%v", resume, err)
+	}
+	if _, err := second.Finish("run", TerminalCompleted, nil); err != nil {
+		t.Fatal(err)
 	}
 }

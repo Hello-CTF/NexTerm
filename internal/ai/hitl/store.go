@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 type RunBlob struct {
@@ -26,6 +28,7 @@ type requestRecord struct {
 type runRecord struct {
 	ID           string            `json:"id"`
 	CheckpointID string            `json:"checkpointId"`
+	OwnerID      string            `json:"ownerId,omitempty"`
 	Status       RunStatus         `json:"status"`
 	Attempt      uint64            `json:"attempt"`
 	Sequence     uint64            `json:"sequence"`
@@ -39,6 +42,7 @@ func (run *runState) record() runRecord {
 	record := runRecord{
 		ID:           run.id,
 		CheckpointID: run.checkpointID,
+		OwnerID:      run.ownerID,
 		Status:       run.status,
 		Attempt:      run.attempt,
 		Sequence:     run.sequence,
@@ -83,9 +87,15 @@ func (m *Manager) Restore(blob RunBlob) error {
 		return ErrInvalidArgument
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
+	// The restored run must keep persisting under the owner that wrote the blob:
+	// owner-guarded stores reject an owner-less rewrite of an owned row.
+	if record.OwnerID != "" {
+		runCtx = ipc.WithUserID(runCtx, record.OwnerID)
+	}
 	run := &runState{
 		id:           record.ID,
 		checkpointID: record.CheckpointID,
+		ownerID:      record.OwnerID,
 		ctx:          runCtx,
 		cancel:       cancel,
 		status:       record.Status,

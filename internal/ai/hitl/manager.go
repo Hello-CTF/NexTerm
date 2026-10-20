@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/cloudwego/eino/adk"
 )
 
@@ -35,6 +36,7 @@ type requestState struct {
 type runState struct {
 	id           string
 	checkpointID string
+	ownerID      string
 	ctx          context.Context
 	cancel       context.CancelFunc
 
@@ -119,6 +121,7 @@ func (m *Manager) RegisterRun(ctx context.Context, runID, checkpointID string) (
 	run := &runState{
 		id:           runID,
 		checkpointID: checkpointID,
+		ownerID:      ipc.OwnerID(ctx),
 		ctx:          runCtx,
 		cancel:       cancel,
 		status:       RunStatusRunning,
