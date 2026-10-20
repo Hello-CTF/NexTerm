@@ -2282,6 +2282,107 @@ describe("XtermView stream wiring", () => {
     expect(episode12Open).toBe(false);
     vi.useRealTimers();
   });
+
+  it("a delayed recover response from the old attachment never pollutes the new incarnation's recovery or episode state", async () => {
+    // The r19 counterexample: attachment 11's recover response
+    // ({flushedOffset: 20 MiB, episodeToken: 31}) is held pending; the view
+    // reopens to attachment 12 and the old response lands afterwards. It
+    // must be dropped — never clearing the new attachment's recovery state,
+    // never writing the old flushed offset, never feeding the large token —
+    // and attachment 12's own first-generation token 1 must actually lift
+    // the server-side pause.
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+      ephemeral: true,
+      attachmentId: 11,
+    });
+    let resolveRecover11: ((value: unknown) => void) | undefined;
+    let episode12Open = false;
+    const resumeCalls: { attachmentId?: number; episodeToken?: number }[] = [];
+    let pauseCalls12 = 0;
+    harness.call.mockImplementation((command: string, args: { attachmentId?: number; episodeToken?: number }) => {
+      if (command === "terminal_pause") {
+        if (args.attachmentId === 12) pauseCalls12 += 1;
+        return Promise.resolve({ episodeToken: 1 });
+      }
+      if (command === "terminal_recover") {
+        if (args.attachmentId === 11) {
+          // The old attachment's recover is held pending.
+          return new Promise((resolve) => {
+            resolveRecover11 = resolve;
+          });
+        }
+        return Promise.resolve({ flushedOffset: 5 * (4 << 20), episodeToken: 1 });
+      }
+      if (command === "terminal_resume") {
+        resumeCalls.push({ attachmentId: args.attachmentId, episodeToken: args.episodeToken });
+        if (args.attachmentId === 12 && args.episodeToken === 1) {
+          episode12Open = false;
+          return Promise.resolve(undefined);
+        }
+        return Promise.reject(Object.assign(new Error("stale episode token"), { code: "forbidden" }));
+      }
+      return Promise.resolve(undefined);
+    });
+    vi.useFakeTimers();
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    act(() => harness.channel?.onBytes?.(chunk));
+    expect(harness.call.mock.calls.filter((c) => c[0] === "terminal_recover")).toHaveLength(1);
+    act(() => t.drainWrites());
+    // Reopen to attachment 12 while attachment 11's recover is in flight.
+    harness.attachTab.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      retainable: true,
+      ephemeral: false,
+      attachmentId: 12,
+    });
+    await act(async () => {
+      harness.reopenCb?.();
+      await flushMacrotask();
+      await flushMacrotask();
+    });
+    // Attachment 11's old recover response lands now: dropped, not learned.
+    resolveRecover11?.({ flushedOffset: 20 << 20, episodeToken: 31 });
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(resumeCalls).toEqual([]);
+    expect(pauseCalls12).toBe(0);
+    // Attachment 12's own flow: a new saturation pauses with its first
+    // generation, and the resume with the legitimate smaller token 1
+    // actually lifts the server-side pause.
+    episode12Open = true;
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(pauseCalls12).toBe(1);
+    expect(resumeCalls).toEqual([{ attachmentId: 12, episodeToken: 1 }]);
+    expect(episode12Open).toBe(false);
+    vi.useRealTimers();
+  });
 });
 
 describe("XtermView render coalescing (T-09 component portion)", () => {

@@ -405,14 +405,19 @@ export function XtermView(props: XtermViewProps) {
       if (next === undefined || next <= attachmentId) return;
       attachmentId = next;
       lastStreamAckOffset = -1;
-      // A new attachment is a new episode space: generations restart, so the
-      // learned token, the resume dedup state, the stale marker, any pending
-      // token refresh, and any retry timer for the previous attachment must
-      // not carry over.
+      // A new attachment is a new episode and recovery space: generations
+      // restart, so the learned token, the resume dedup state, the stale
+      // marker, any pending token refresh, any retry timer, and any
+      // in-flight or pending recovery state for the previous attachment
+      // must not carry over — a delayed callback from the old attachment is
+      // dropped by its fired-attachment guard, never clearing the new one.
       episodeToken = 0;
       resumeSentToken = -1;
       staleToken = -1;
       tokenRefreshInFlight = false;
+      recoverInFlight = false;
+      recoverPending = false;
+      recoverTarget = null;
       clearResumeRetry();
       sendStreamAck();
     };
@@ -554,15 +559,21 @@ export function XtermView(props: XtermViewProps) {
       if (recoverInFlight || !kernelTabId || ephemeral !== true) return;
       const channelId = channelIdOf(channel);
       if (!channelId) return;
+      const firedAttachment = attachmentId;
       recoverInFlight = true;
       void call("terminal_recover", {
         tabId: kernelTabId,
         channelId,
         clientId: clientId(),
-        attachmentId,
+        attachmentId: firedAttachment,
         acceptedBytes: acceptedOffsetNow(),
       })
         .then((res) => {
+          // The response belongs to the attachment that fired it: a delayed
+          // recover from an old attachment never clears the new attachment's
+          // recovery state, never writes its flushed offset, and never feeds
+          // its episode space.
+          if (disposed || firedAttachment !== attachmentId) return;
           recoverInFlight = false;
           const payload = (res as { flushedOffset?: number; episodeToken?: number } | null) ?? null;
           recoverTarget = payload?.flushedOffset ?? null;
@@ -578,6 +589,7 @@ export function XtermView(props: XtermViewProps) {
           resumeIfReady();
         })
         .catch(() => {
+          if (disposed || firedAttachment !== attachmentId) return;
           recoverInFlight = false;
           // The recovery could not redeliver the refused suffix whole (the
           // accepted offset fell out of the server's bounded recovery
