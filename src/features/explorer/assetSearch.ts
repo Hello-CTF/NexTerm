@@ -10,10 +10,10 @@ export function normalizeAssetTags(raw: string): string {
   const seen = new Set<string>();
   const tags: string[] = [];
   for (const tag of assetTagValues(raw)) {
-    const key = tag.toLocaleLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    tags.push(tag);
+    const canonical = tag.toLowerCase();
+    if (seen.has(canonical)) continue;
+    seen.add(canonical);
+    tags.push(canonical);
   }
   return tags.join(", ");
 }
