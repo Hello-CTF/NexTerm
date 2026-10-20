@@ -57,10 +57,13 @@ An upgrade (detected from an existing `/opt/nexterm/nexterm-server`,
   preserved, and duplicate flags keep the last value like the server
   CLI. Values that cannot be represented safely are rejected before
   anything is replaced: newlines and carriage returns (no line-based env
-  representation) and systemd specifiers other than `%%` (which becomes
-  a literal `%`). Only the effective unit per systemd priority
-  (`/etc/systemd/system/`, then `/usr/lib/systemd/system/`, then
-  `/lib/systemd/system/`) is consulted; lower-priority copies are
+  representation), systemd specifiers other than `%%` (which becomes a
+  literal `%`), and bytes that fail EnvironmentFile UTF-8 validation
+  (decoded `\uFFFF`/`\uD800`/`\xFF` and friends). An empty
+  `--master-key-file` override clears a stale env key and follows the
+  server's data-dir fallback. Only the effective unit per systemd
+  priority (`/etc/systemd/system/`, then `/usr/lib/systemd/system/`,
+  then `/lib/systemd/system/`) is consulted; lower-priority copies are
   removed without applying their values;
 - saves the previous payload to `/opt/nexterm/.rollback` and restarts only
   the units that were active. An interrupted upgrade keeps that original

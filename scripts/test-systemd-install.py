@@ -47,10 +47,12 @@ material is touched. Coverage:
      filepath.Join) before the staged-root prefix is applied, with containment
      verified; legacy ExecStart values honor systemd C-unescape (\\s, hex,
      octal, \\u/\\U) with relaxed-literal preservation of invalid escapes,
-     distinct \\u/\\U noncharacter rules, empty-argument preservation, and
-     duplicate flags keep the last value like the CLI, while values
-     containing newlines/carriage returns or unexpandable systemd
-     specifiers fail closed before any replacement; env values round-trip
+     distinct \\u/\\U noncharacter rules, empty-argument preservation (an
+     empty --master-key-file override clears a stale env key and follows the
+     data-dir fallback), and duplicate flags keep the last value like the
+     CLI, while values containing newlines/carriage returns, unexpandable
+     systemd specifiers, or bytes that fail EnvironmentFile UTF-8
+     validation fail closed before any replacement; env values round-trip
      through systemd's env-file parser (quotes, escapes, concatenation,
      continuations that never swallow assignments after comments)
   13. A combination matrix (first install/upgrade x failure point x env origin x
@@ -1691,10 +1693,10 @@ def test_legacy_lowercase_u_decodes_noncharacters() -> None:
                 failed = run_install(payload_v2, root, stubs, base, fail_at=failure)
                 assert failed.returncode != 0, "injected failure must abort"
             result = run_install(payload_v2, root, stubs, base)
-            assert result.returncode == 0 or "Illegal byte sequence" in result.stderr, result.stderr
-            values = env_values(root / "etc/nexterm/nexterm.env")
-            assert values["NEXTERM_MASTER_KEY_FILE"] == "/srv/keys/legacy\uffffkey", "lowercase \\u must decode the noncharacter, not preserve the literal spelling"
-            assert not (root / "srv/keys/legacy\\uFFFFkey").exists(), "the literal spelling must not be configured or generated"
+            assert result.returncode != 0, "a decoded noncharacter must fail closed, not be written to an unloadable env file"
+            assert "cannot be represented in an environment file" in result.stderr, result.stderr
+            assert "legacy inline-flag layout" in read(root / "etc/systemd/system/nexterm-server.service"), "the unit must not be replaced"
+            assert not (root / "etc/nexterm/master.key").exists(), "no key may be generated"
 
     for failure in (None, "env"):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1823,6 +1825,76 @@ def test_empty_data_dir_pinned_on_working_dir_change() -> None:
             assert not (root / "etc/nexterm/master.key").exists(), "no key may be generated"
 
 
+def test_legacy_empty_master_key_override_clears_stale_env_key() -> None:
+    for empty_flag in ('--master-key-file ""', "--master-key-file="):
+        for failure in (None, "env"):
+            with tempfile.TemporaryDirectory() as tmp:
+                base = pathlib.Path(tmp)
+                stubs = make_stubs(base)
+                root = base / "root"
+                legacy_bin = root / "opt/nexterm/nexterm-server"
+                legacy_bin.parent.mkdir(parents=True)
+                legacy_bin.write_text("# fake nexterm-server v0\n")
+                (root / "etc/systemd/system").mkdir(parents=True)
+                (root / "etc/systemd/system/nexterm-server.service").write_text(
+                    LEGACY_UNIT.replace(
+                        "  --web-root /opt/nexterm/web",
+                        f"  --data-dir /srv/data \\\n  {empty_flag} \\\n  --web-root /srv/web",
+                    )
+                )
+                env_key = root / "srv/keys/env.key"
+                env_key.parent.mkdir(parents=True)
+                env_key.write_text("stale-env-key\n")
+                data_key = root / "srv/data/master.key"
+                data_key.parent.mkdir(parents=True)
+                data_key.write_text("data-dir-key\n")
+                etc = root / "etc/nexterm"
+                etc.mkdir(parents=True)
+                (etc / "nexterm.env").write_text(
+                    "NEXTERM_LISTEN=127.0.0.1:8080\nNEXTERM_AUTH=on\nNEXTERM_DATA_DIR=/srv/data\n"
+                    "NEXTERM_WEB_ROOT=/opt/nexterm/web\nNEXTERM_MASTER_KEY_FILE=/srv/keys/env.key\nNEXTERM_DB=sqlite\n"
+                )
+                payload_v2 = make_payload(base, "v2")
+                if failure is not None:
+                    failed = run_install(payload_v2, root, stubs, base, fail_at=failure)
+                    assert failed.returncode != 0, "injected failure must abort"
+                result = run_install(payload_v2, root, stubs, base)
+                assert result.returncode == 0, result.stderr
+                values = env_values(etc / "nexterm.env")
+                assert values["NEXTERM_MASTER_KEY_FILE"] == "/srv/data/master.key", "an empty legacy override must clear the stale env key and follow the data-dir fallback"
+                assert read(data_key) == "data-dir-key\n"
+                assert read(env_key) == "stale-env-key\n", "the stale env key must not be adopted"
+
+
+def test_legacy_unrepresentable_bytes_fail_closed() -> None:
+    for flag_value, label in (
+        ("/srv/keys/legacy\\uFFFFkey", "U+FFFF noncharacter"),
+        ("/srv/keys/legacy\\uD800key", "U+D800 surrogate"),
+        ("/srv/keys/legacy\\xFFkey", "raw 0xFF byte"),
+    ):
+        for failure in (None, "env"):
+            with tempfile.TemporaryDirectory() as tmp:
+                base = pathlib.Path(tmp)
+                stubs = make_stubs(base)
+                root = base / "root"
+                legacy_bin = root / "opt/nexterm/nexterm-server"
+                legacy_bin.parent.mkdir(parents=True)
+                legacy_bin.write_text("# fake nexterm-server v0\n")
+                (root / "etc/systemd/system").mkdir(parents=True)
+                (root / "etc/systemd/system/nexterm-server.service").write_text(
+                    LEGACY_UNIT.replace("  --web-root /opt/nexterm/web", f"  --master-key-file {flag_value} \\\n  --web-root /opt/nexterm/web")
+                )
+                payload_v2 = make_payload(base, "v2")
+                if failure is not None:
+                    failed = run_install(payload_v2, root, stubs, base, fail_at=failure)
+                    assert failed.returncode != 0, "injected failure must abort"
+                result = run_install(payload_v2, root, stubs, base)
+                assert result.returncode != 0, label
+                assert "cannot be represented in an environment file" in result.stderr, (label, result.stderr)
+                assert "legacy inline-flag layout" in read(root / "etc/systemd/system/nexterm-server.service"), (label, "the unit must not be replaced")
+                assert not (root / "etc/nexterm/master.key").exists(), (label, "no key may be generated")
+
+
 def test_failed_upgrade_retry_preserves_rollback() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         base = pathlib.Path(tmp)
@@ -1942,6 +2014,8 @@ def main() -> int:
         test_legacy_empty_master_key_arg_falls_back,
         test_env_comment_continuation_keeps_assignment,
         test_empty_data_dir_pinned_on_working_dir_change,
+        test_legacy_empty_master_key_override_clears_stale_env_key,
+        test_legacy_unrepresentable_bytes_fail_closed,
         test_install_upgrade_combination_matrix,
         test_failed_upgrade_retry_preserves_rollback,
         test_first_install_failure_at_env_is_recoverable,

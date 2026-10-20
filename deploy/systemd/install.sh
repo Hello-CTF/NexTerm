@@ -319,22 +319,35 @@ systemd_split() {
 }
 
 legacy_flag_value() {
-  local exec_line="$1" want="--$2" tokens
-  tokens="$(systemd_split "$exec_line")" || return $?
+  local exec_line="$1" want="--$2" tokens rc
+  if tokens="$(systemd_split "$exec_line")"; then
+    :
+  else
+    rc=$?
+    if [ "$rc" -eq 3 ]; then return 3; fi
+    return 2
+  fi
   printf '%s\n' "$tokens" | awk -v want="$want" '
     $0 == want { if ((getline nxt) > 0) { value = nxt; found = 1 }; next }
     index($0, want "=") == 1 { value = substr($0, length(want) + 2); found = 1; next }
-    END { if (found) print value }
+    END { if (found) { print value; exit 0 }; exit 1 }
   '
 }
 
 capture_legacy_values() {
-  local file="$1" exec_line flag key value probe
+  local file="$1" exec_line flag key value probe rc
   exec_line="$(legacy_exec_line "$file")"
   [ -n "$exec_line" ] || return 0
   for flag in listen auth data-dir web-root master-key-file; do
-    value="$(legacy_flag_value "$exec_line" "$flag")" || return $?
-    [ -n "$value" ] || continue
+    if value="$(legacy_flag_value "$exec_line" "$flag")"; then
+      :
+    else
+      rc=$?
+      if [ "$rc" -eq 1 ]; then
+        continue
+      fi
+      return "$rc"
+    fi
     case "$value" in
       *%*)
         probe="$(printf '%s' "$value" | sed 's/%%//g')"
@@ -344,6 +357,12 @@ capture_legacy_values() {
         value="$(printf '%s' "$value" | sed 's/%%/%/g')"
         ;;
     esac
+    if ! env_utf8_valid "$value"; then
+      return 5
+    fi
+    if [ -z "$value" ] && [ "$flag" != "master-key-file" ]; then
+      continue
+    fi
     case "$flag" in
       listen) key=NEXTERM_LISTEN ;;
       auth) key=NEXTERM_AUTH ;;
@@ -453,6 +472,28 @@ env_quote_if_needed() {
       ;;
     *) printf '%s' "$value" ;;
   esac
+}
+
+env_utf8_valid() {
+  # mirrors systemd's utf8_is_valid as used by load_env_file: the value must
+  # be structurally valid UTF-8 (iconv rejects overlongs, surrogate encodings,
+  # lone continuations, and invalid lead bytes) and every codepoint must pass
+  # unichar_is_valid (no surrogates, no U+FDD0..U+FDEF or U+xFFFE/U+xFFFF
+  # noncharacters, nothing above U+10FFFF)
+  local value="$1"
+  printf '%s' "$value" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 || return 1
+  printf '%s' "$value" | iconv -f UTF-8 -t UTF-32BE 2>/dev/null | od -An -v -tx1 | awk '
+    BEGIN { for (i = 0; i < 256; i++) hex[sprintf("%02x", i)] = i }
+    {
+      for (i = 1; i + 3 <= NF; i += 4) {
+        cp = hex[$(i)] * 16777216 + hex[$(i + 1)] * 65536 + hex[$(i + 2)] * 256 + hex[$(i + 3)]
+        if (cp >= 1114112) exit 1
+        if (cp >= 55296 && cp <= 57343) exit 1
+        if (cp >= 64976 && cp <= 65007) exit 1
+        if (cp % 65536 >= 65534) exit 1
+      }
+    }
+  '
 }
 
 env_get() {
@@ -702,6 +743,7 @@ legacy_capture_failed() {
   case "$rc" in
     3) die "legacy ExecStart values in ${file#$ROOT_PREFIX} contain a newline, which cannot be represented in an environment file; migrate the settings to the ${ETC_DIR#$ROOT_PREFIX} env files manually" ;;
     4) die "legacy ExecStart values in ${file#$ROOT_PREFIX} contain systemd specifiers, which this installer cannot expand safely; migrate the settings to the ${ETC_DIR#$ROOT_PREFIX} env files manually" ;;
+    5) die "legacy ExecStart values in ${file#$ROOT_PREFIX} decode to bytes that cannot be represented in an environment file (invalid UTF-8 or Unicode noncharacters); migrate the settings to the ${ETC_DIR#$ROOT_PREFIX} env files manually" ;;
     *) die "cannot parse the legacy ExecStart in ${file#$ROOT_PREFIX} (unsupported quoting); fix the unit or restore it from the rollback backup and re-run" ;;
   esac
 }
