@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net"
 	"strings"
@@ -33,6 +34,9 @@ func TestProbeHostKeyStates(t *testing.T) {
 	if result.Fingerprint != gossh.FingerprintSHA256(server.hostKey) || result.KeyType != server.hostKey.Type() {
 		t.Fatalf("probe fingerprint = %+v", result)
 	}
+	if result.Key != base64.StdEncoding.EncodeToString(server.hostKey.Marshal()) {
+		t.Fatalf("probe dropped the presented key material: %q", result.Key)
+	}
 	if keys, _ := store.HostKeys(context.Background(), result.Host, result.Port); len(keys) != 0 {
 		t.Fatalf("probe persisted a pending key: %+v", keys)
 	}
@@ -61,6 +65,9 @@ func TestProbeHostKeyStates(t *testing.T) {
 	}
 	if result.Fingerprint != gossh.FingerprintSHA256(server.hostKey) {
 		t.Fatalf("changed probe fingerprint = %q", result.Fingerprint)
+	}
+	if result.Key != base64.StdEncoding.EncodeToString(server.hostKey.Marshal()) {
+		t.Fatalf("changed probe dropped the presented key material: %q", result.Key)
 	}
 	if len(result.Known) != 1 || result.Known[0].Fingerprint != gossh.FingerprintSHA256(rotated) {
 		t.Fatalf("changed probe known keys = %+v", result.Known)

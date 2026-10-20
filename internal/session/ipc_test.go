@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -98,6 +99,32 @@ func TestIPCErrorHostKeyMessageIsActionable(t *testing.T) {
 	for _, want := range []string{"确认", "SHA256:abc"} {
 		if !strings.Contains(got.Message, want) {
 			t.Fatalf("message = %q, want it to contain %q", got.Message, want)
+		}
+	}
+}
+
+func TestIPCErrorHostKeyDetailCarriesPresentedKey(t *testing.T) {
+	presented := ssh.HostKey{Host: "203.0.113.10", Port: 2222, KeyType: "ssh-ed25519", Fingerprint: "SHA256:abc", Key: "ZmFrZS1rZXktdGVzdA=="}
+	for _, pending := range []bool{true, false} {
+		keyErr := &ssh.HostKeyError{Pending: pending, Presented: presented}
+		got := IPCError(keyErr)
+		if got.Code != ipc.CodeHostKeyPending {
+			t.Fatalf("pending=%v code = %s, want host_key_pending", pending, got.Code)
+		}
+		encoded, err := json.Marshal(got.Detail)
+		if err != nil {
+			t.Fatalf("detail is not serializable: %v", err)
+		}
+		var detail struct {
+			KeyType     string `json:"keyType"`
+			Fingerprint string `json:"fingerprint"`
+			Key         string `json:"key"`
+		}
+		if err := json.Unmarshal(encoded, &detail); err != nil {
+			t.Fatalf("detail is malformed: %v", err)
+		}
+		if detail.Key != presented.Key || detail.KeyType != presented.KeyType || detail.Fingerprint != presented.Fingerprint {
+			t.Fatalf("pending=%v detail = %+v, want the presented key material", pending, detail)
 		}
 	}
 }

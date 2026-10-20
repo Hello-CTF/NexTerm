@@ -138,7 +138,7 @@ func productionKnownHostList(ctx context.Context, database *store.Store, hostKey
 	return database.KnownHostList(ctx)
 }
 
-func productionKnownHostAccept(ctx context.Context, database *store.Store, hostKeys *productionHostKeyStore, shared bool, host string, port int32, keyType, fingerprint string) error {
+func productionKnownHostAccept(ctx context.Context, database *store.Store, hostKeys *productionHostKeyStore, shared bool, host string, port int32, keyType, fingerprint, key string) error {
 	if hostKeys != nil {
 		if _, err := hostKeys.requestOwner(ctx); err != nil {
 			return err
@@ -146,7 +146,33 @@ func productionKnownHostAccept(ctx context.Context, database *store.Store, hostK
 	} else if _, err := productionHostKeyOwner(ctx, shared); err != nil {
 		return err
 	}
-	return database.KnownHostAccept(ctx, host, port, keyType, fingerprint)
+	if key == "" {
+		// Legacy fingerprint-only acceptance: recorded key material stays untouched until an acceptance or
+		// the next direct connect carries the complete public key.
+		return database.KnownHostAccept(ctx, host, port, keyType, fingerprint)
+	}
+	if err := knownHostPresentedKeyMatches(keyType, fingerprint, key); err != nil {
+		return err
+	}
+	_, err := database.KnownHostAcceptWithKey(ctx, host, port, keyType, fingerprint, key)
+	return err
+}
+
+// knownHostPresentedKeyMatches rejects tampered acceptance material before it can reach the ledger: the
+// carried key must parse, and its type and fingerprint must equal the claimed metadata.
+func knownHostPresentedKeyMatches(keyType, fingerprint, key string) error {
+	decoded, err := base64.StdEncoding.DecodeString(key)
+	if err != nil {
+		return ipc.NewError(ipc.CodeBadParam, "主机密钥材料无效，未记录信任")
+	}
+	parsed, err := gossh.ParsePublicKey(decoded)
+	if err != nil {
+		return ipc.NewError(ipc.CodeBadParam, "主机密钥材料无效，未记录信任")
+	}
+	if parsed.Type() != keyType || gossh.FingerprintSHA256(parsed) != fingerprint {
+		return ipc.NewError(ipc.CodeBadParam, "主机密钥材料与指纹不一致，未记录信任")
+	}
+	return nil
 }
 
 func productionKnownHostRemove(ctx context.Context, database *store.Store, hostKeys *productionHostKeyStore, shared bool, id string) error {

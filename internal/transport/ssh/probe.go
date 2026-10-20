@@ -23,6 +23,7 @@ type HostKeyProbeResult struct {
 	Port        int
 	KeyType     string
 	Fingerprint string
+	Key         string
 	State       HostKeyProbeState
 	Known       []HostKey
 }
@@ -70,7 +71,7 @@ func ProbeHostKey(ctx context.Context, cfg Config) (*HostKeyProbeResult, error) 
 	}
 
 	key := newHostKey(cfg.Host, cfg.Port, presented)
-	result := &HostKeyProbeResult{Host: cfg.Host, Port: cfg.Port, KeyType: key.KeyType, Fingerprint: key.Fingerprint, State: HostKeyProbePending}
+	result := &HostKeyProbeResult{Host: cfg.Host, Port: cfg.Port, KeyType: key.KeyType, Fingerprint: key.Fingerprint, Key: key.Key, State: HostKeyProbePending}
 	known, err := cfg.HostKeys.HostKeys(ctx, cfg.Host, cfg.Port)
 	if err != nil {
 		return nil, fmt.Errorf("load SSH host keys: %w", err)

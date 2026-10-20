@@ -217,6 +217,7 @@ type knownHostRequest struct {
 	Port        int32  `json:"port"`
 	KeyType     string `json:"keyType"`
 	Fingerprint string `json:"fingerprint"`
+	Key         string `json:"key"`
 }
 
 type desktopTrayDTO struct {
@@ -473,7 +474,7 @@ func registerStoreCommandsWithHostKeyMode(dispatcher *ipc.Dispatcher, database *
 		},
 		func() error {
 			return ipc.Register(dispatcher, "known_host_accept", func(ctx context.Context, _ *ipc.Call, input knownHostRequest) (any, error) {
-				return nil, productionKnownHostAccept(ctx, database, hostKeys, hostKeysShared, input.Host, input.Port, input.KeyType, input.Fingerprint)
+				return nil, productionKnownHostAccept(ctx, database, hostKeys, hostKeysShared, input.Host, input.Port, input.KeyType, input.Fingerprint, input.Key)
 			})
 		},
 		func() error {

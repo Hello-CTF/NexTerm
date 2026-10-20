@@ -7,6 +7,7 @@ export type HostKeyDetail = {
   port?: number;
   keyType?: string;
   fingerprint?: string;
+  key?: string;
   changed?: boolean;
   known?: { keyType?: string; fingerprint?: string }[];
 };
@@ -58,7 +59,12 @@ function ensureCurrent(isCurrent?: () => boolean): void {
 export async function trustPresentedHostKey(detail: HostKeyDetail | undefined, isCurrent?: () => boolean): Promise<boolean> {
   if (!detail?.host || !detail?.port || !detail?.keyType || !detail?.fingerprint) return false;
   ensureCurrent(isCurrent);
-  await assetApi.knownHostAccept(detail.host, detail.port, detail.keyType, detail.fingerprint);
+  if (detail.key) {
+    await assetApi.knownHostAccept(detail.host, detail.port, detail.keyType, detail.fingerprint, detail.key);
+  } else {
+    // Legacy pending detail without material: keep the fingerprint-only acceptance.
+    await assetApi.knownHostAccept(detail.host, detail.port, detail.keyType, detail.fingerprint);
+  }
   return true;
 }
 
@@ -101,6 +107,7 @@ export function hostKeyDetailFromProbe(probe: SshHostKeyProbeDto): HostKeyDetail
     port: probe.port,
     keyType: probe.keyType,
     fingerprint: probe.fingerprint,
+    key: probe.key,
     changed: probe.state === "changed",
     known: probe.known,
   };
