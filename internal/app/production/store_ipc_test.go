@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"runtime"
 	"slices"
 	"testing"
 
@@ -24,8 +23,8 @@ func TestStoreCommandsProjectDTOsAndPreserveTriStatePatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, command := range []string{
-		"layout_get", "layout_put", "asset_list", "asset_get", "asset_create", "asset_update", "asset_delete", "asset_search",
-		"asset_save_key_file", "asset_read_key_file", "group_list", "group_create", "group_update", "group_delete",
+		"layout_get", "layout_put", "asset_list", "asset_get", "asset_create", "asset_update", "asset_delete", "asset_search", "asset_search_meta",
+		"asset_read_key_file", "group_list", "group_create", "group_update", "group_delete",
 		"snippet_list", "snippet_create", "snippet_update", "snippet_delete", "audit_query", "audit_count", "known_host_list", "known_host_accept", "known_host_remove",
 	} {
 		if !slices.Contains(dispatcher.Commands(), command) {
@@ -38,6 +37,18 @@ func TestStoreCommandsProjectDTOsAndPreserveTriStatePatches(t *testing.T) {
 	requireStoreTestResponse(t, response, &created)
 	if created.Name != "Production" || string(created.Options) != `{"encoding":"utf-8"}` || created.Host == nil || *created.Host != "127.0.0.1" {
 		t.Fatalf("created asset = %+v", created)
+	}
+	response = dispatchStoreTest(dispatcher, "asset_search_meta", `{"q":"Production"}`)
+	var meta assetSearchDTO
+	requireStoreTestResponse(t, response, &meta)
+	if meta.Total != 1 || len(meta.Assets) != 1 || meta.Truncated {
+		t.Fatalf("search meta = %+v", meta)
+	}
+	response = dispatchStoreTest(dispatcher, "asset_search", `{"q":"Production"}`)
+	var legacy []assetDTO
+	requireStoreTestResponse(t, response, &legacy)
+	if len(legacy) != 1 {
+		t.Fatalf("legacy search = %+v", legacy)
 	}
 	response = dispatchStoreTest(dispatcher, "asset_update", `{"args":{"id":"`+created.ID+`","host":null,"options":{"encoding":"gbk"}}}`)
 	var updated assetDTO
@@ -82,21 +93,15 @@ func TestStoreCommandsProjectDTOsAndPreserveTriStatePatches(t *testing.T) {
 		t.Fatalf("group parent = %+v", group.ParentID)
 	}
 
-	response = dispatchStoreTest(dispatcher, "asset_save_key_file", `{"content":"PRIVATE KEY"}`)
-	var savedFile map[string]string
-	requireStoreTestResponse(t, response, &savedFile)
-	response = dispatchStoreTest(dispatcher, "asset_read_key_file", `{"path":`+strconvQuote(savedFile["path"])+`}`)
+	keyPath := t.TempDir() + "/asset.key"
+	if err := os.WriteFile(keyPath, []byte("PRIVATE KEY"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	response = dispatchStoreTest(dispatcher, "asset_read_key_file", `{"path":`+strconvQuote(keyPath)+`}`)
 	var content string
 	requireStoreTestResponse(t, response, &content)
 	if content != "PRIVATE KEY" {
 		t.Fatalf("key content = %q", content)
-	}
-	info, err := os.Stat(savedFile["path"])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
-		t.Fatalf("key mode = %o", info.Mode().Perm())
 	}
 }
 

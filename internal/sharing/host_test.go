@@ -44,6 +44,12 @@ func TestHostShareCreateAndOpenTerminal(t *testing.T) {
 	if grant.SessionID != "" {
 		t.Fatalf("host share grant must not pin a session, got %q", grant.SessionID)
 	}
+	if grant.RecipientSessionID == "" {
+		t.Fatal("host grant must bind the recipient authentication session")
+	}
+	if _, err := fixture.service.RevalidateHostAccess(context.Background(), grant); err != nil {
+		t.Fatalf("valid recipient session must revalidate: %v", err)
+	}
 	if grant.Permission != PermissionReadWrite || grant.ExpiresAt != share.ExpiresAt {
 		t.Fatalf("grant permission/expiry = %+v", grant)
 	}

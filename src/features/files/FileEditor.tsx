@@ -49,10 +49,40 @@ import { python } from "@codemirror/legacy-modes/mode/python";
 import { sql } from "@codemirror/lang-sql";
 import { describeError } from "../../ui/errorText";
 
+export interface FileEditorSaveChange {
+  sessionId: string;
+  path: string;
+  previous: string;
+  baseContentBase64: string;
+  content: string;
+}
+
 export interface FileEditorProps {
   sessionId: string;
   path: string;
   onClose?: () => void;
+  saveFile?: (change: FileEditorSaveChange) => Promise<boolean>;
+}
+
+export async function loadFileEditorSaveChange({
+  sessionId,
+  path,
+  editorBase,
+  content,
+  encoding,
+}: {
+  sessionId: string;
+  path: string;
+  editorBase: string;
+  content: string;
+  encoding: EncChoice;
+}): Promise<FileEditorSaveChange> {
+  const current = await fsApi.read(sessionId, path);
+  const currentText = decodeContent(bytesFromBase64(current.contentBase64), encoding).text;
+  if (currentText !== editorBase) {
+    throw new Error("文件在打开后已被外部修改；请重新读取并合并改动后再保存");
+  }
+  return { sessionId, path, previous: currentText, baseContentBase64: current.contentBase64, content };
 }
 
 function modeFor(path: string) {
@@ -78,7 +108,7 @@ const ENC_LABEL: Record<EncChoice, string> = {
 
 const ZOOM_STEPS = [11, 12, 13, 14.5, 16, 18];
 
-export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
+export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorProps) {
   const qc = useQueryClient();
   const pushToast = useUi((state) => state.pushToast);
   const caseInsensitive = useUi((state) =>
@@ -98,6 +128,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
   const saveInFlightRef = useRef(false);
   const editVersionRef = useRef(0);
   const dirtyRef = useRef(false);
+  const originalRef = useRef("");
   const mountedRef = useRef(true);
   const locatorRef = useRef({ sessionId, path });
   const loadLocksRef = useRef(new Map<string, { token: number; users: number }>());
@@ -202,6 +233,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
         if (cancelled) return;
         const bin = bytesFromBase64(res.contentBase64);
         const { text, encoding } = decodeContent(bin, reloadEnc);
+        originalRef.current = text;
         setMeta({ encoding, size: res.size });
         setEol(text.includes("\r\n") ? "CRLF" : "LF");
         dirtyRef.current = false;
@@ -348,7 +380,19 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       const bytes = new TextEncoder().encode(text);
       const b64 = bytesToBase64(bytes);
       const writeLocator = locatorRef.current;
-      await fsApi.write(writeLocator.sessionId, writeLocator.path, b64, true);
+      if (saveFile) {
+        const change = await loadFileEditorSaveChange({
+          sessionId: writeLocator.sessionId,
+          path: writeLocator.path,
+          editorBase: originalRef.current,
+          content: text,
+          encoding: reloadEnc,
+        });
+        if (!(await saveFile(change))) return;
+      } else {
+        await fsApi.write(writeLocator.sessionId, writeLocator.path, b64, true);
+      }
+      originalRef.current = text;
       if (mountedRef.current) {
         setMeta({ encoding: "utf-8", size: bytes.length });
         if (meta && meta.encoding !== "utf-8") setEnc("utf-8");

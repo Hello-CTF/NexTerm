@@ -10,7 +10,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-func TestAssetKeyFileValidationMessages(t *testing.T) {
+func TestAssetReadKeyFileValidationMessages(t *testing.T) {
 	ctx := t.Context()
 	database, err := store.OpenInMemory(ctx)
 	if err != nil {
@@ -18,29 +18,20 @@ func TestAssetKeyFileValidationMessages(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	unavailable := ipc.NewDispatcher()
-	if err := registerStoreCommands(unavailable, database, nil, "", true); err != nil {
-		t.Fatal(err)
-	}
-	response := dispatchStoreTest(unavailable, "asset_save_key_file", `{"content":"key"}`)
-	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("asset_save_key_file without data dir = %+v, want unsupported", response)
-	}
-	if response.Error.Message != "密钥存储不可用" {
-		t.Fatalf("asset_save_key_file message = %q", response.Error.Message)
-	}
-
 	dispatcher := ipc.NewDispatcher()
 	if err := registerStoreCommands(dispatcher, database, nil, t.TempDir(), true); err != nil {
 		t.Fatal(err)
 	}
-	oversized := `"` + strings.Repeat("a", 64<<10+1) + `"`
-	response = dispatchStoreTest(dispatcher, "asset_save_key_file", `{"content":`+oversized+`}`)
+	path := t.TempDir() + "/oversized.key"
+	if err := os.WriteFile(path, []byte(strings.Repeat("a", 64<<10+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	response := dispatchStoreTest(dispatcher, "asset_read_key_file", `{"path":`+strconv.Quote(path)+`}`)
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
-		t.Fatalf("oversized asset_save_key_file = %+v, want bad_param", response)
+		t.Fatalf("oversized asset_read_key_file = %+v, want bad_param", response)
 	}
 	if response.Error.Message != "参数错误: 私钥内容超过 64 KiB 上限" {
-		t.Fatalf("asset_save_key_file message = %q", response.Error.Message)
+		t.Fatalf("asset_read_key_file message = %q", response.Error.Message)
 	}
 }
 

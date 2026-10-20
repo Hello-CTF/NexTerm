@@ -25,6 +25,9 @@ func TestIPCCommandsUseNestedCreateAndSafeCredentials(t *testing.T) {
 	if response := dispatch("mount_capability", `{}`); !response.OK || string(response.Data) != "null" {
 		t.Fatalf("capability = %+v", response)
 	}
+	if response := dispatch("mount_list", `{"global":true,"forceRefresh":true}`); response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("global mount_list = %+v, want bad_param", response)
+	}
 	response := dispatch("mount_create", `{"args":{"sessionId":"s","remotePath":"\\\\server\\share","localPoint":"Z:","username":"alice","password":"ipc-secret"}}`)
 	if !response.OK {
 		t.Fatalf("create = %+v", response)

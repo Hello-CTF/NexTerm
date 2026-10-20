@@ -282,6 +282,8 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+export const CONTAINER_STATS_POLL_MS = 3000;
+
 function StatsView({
   sessionId,
   containerId,
@@ -296,7 +298,7 @@ function StatsView({
   const stats = useQuery({
     queryKey: ["docker-stats", sessionId],
     queryFn: () => dockerApi.stats(sessionId),
-    refetchInterval: active ? 3000 : false,
+    refetchInterval: active ? CONTAINER_STATS_POLL_MS : false,
   });
   const ps = useQuery({
     queryKey: ["docker-ps", sessionId],

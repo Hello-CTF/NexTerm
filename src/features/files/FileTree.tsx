@@ -46,6 +46,7 @@ import { useCwdFollow } from "./cwdFollow";
 import { dropFolderUpload, pickFolderUpload } from "./folderUpload";
 import { noteHtml5Drop, useNativeFileDrop } from "./nativeDrop";
 import { enqueueDownload, enqueueUploads, subscribeTransferSettled } from "./transferStore";
+import { createTransferTaskId } from "./transferTaskId";
 import {
   IconArchive,
   IconArrowUp,
@@ -489,7 +490,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     if (!target) return;
     pushToast("info", "正在远端打包…");
     try {
-      const bytes = await fsApi.packDownload(sessionId, dir, target);
+      const bytes = await fsApi.packDownload(sessionId, dir, target, createTransferTaskId());
       const where = await finishSave(target, `${baseName(dir)}.tar.gz`);
       pushToast(
         where ? "success" : "info",

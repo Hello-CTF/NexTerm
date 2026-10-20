@@ -56,7 +56,13 @@ func TestUploadSourceChangesAfterStat(t *testing.T) {
 		if !errors.Is(err, io.ErrUnexpectedEOF) || transferred != 1 {
 			t.Fatalf("shrunk upload = %d, %v", transferred, err)
 		}
-		assertBytes(t, remote, []byte("x"))
+		if _, statErr := os.Stat(remote); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("failed non-resume upload exposed a partial target: %v", statErr)
+		}
+		artifacts, globErr := filepath.Glob(filepath.Join(filepath.Dir(remote), "."+filepath.Base(remote)+".nexterm-*.commit"))
+		if globErr != nil || len(artifacts) != 0 {
+			t.Fatalf("failed upload artifacts = %v, %v", artifacts, globErr)
+		}
 		assertFailedProgress(t, progress, 1, 6)
 	})
 	t.Run("growth", func(t *testing.T) {
@@ -198,7 +204,7 @@ func TestResumeExactAndOversizedTargets(t *testing.T) {
 		if err := os.WriteFile(remote, []byte("keep-oversized"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Upload(context.Background(), source, New(), remote, TransferOptions{Resume: true}); err == nil || !strings.Contains(err.Error(), "larger") {
+		if _, err := Upload(context.Background(), source, New(), remote, TransferOptions{Resume: true}); err == nil || !strings.Contains(err.Error(), "larger") || !errors.Is(err, ErrResumeMismatch) {
 			t.Fatalf("oversized upload error = %v", err)
 		}
 		assertBytes(t, remote, []byte("keep-oversized"))
@@ -237,6 +243,36 @@ func TestResumeExactAndOversizedTargets(t *testing.T) {
 		}
 		assertDoneProgress(t, progress, 0)
 	})
+}
+
+func TestAtomicUploadFailureDoesNotCreateResumePartial(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source")
+	remote := filepath.Join(dir, "remote")
+	if err := os.WriteFile(source, []byte("abc"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(remote, []byte("keep-oversized"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeErr := errors.New("write failed")
+	destination := &failingWriteFS{FileSystem: New(), err: writeErr}
+	if _, err := Upload(context.Background(), source, destination, remote, TransferOptions{}); !errors.Is(err, writeErr) {
+		t.Fatalf("initial atomic upload = %v", err)
+	}
+	assertBytes(t, remote, []byte("keep-oversized"))
+	artifacts, err := filepath.Glob(filepath.Join(dir, ".remote.nexterm-*.commit"))
+	if err != nil || len(artifacts) != 0 {
+		t.Fatalf("failed upload artifacts = %v, %v", artifacts, err)
+	}
+	if _, err := Upload(context.Background(), source, New(), remote, TransferOptions{Resume: true}); !errors.Is(err, ErrResumeMismatch) {
+		t.Fatalf("oversized resume = %v", err)
+	}
+	assertBytes(t, remote, []byte("keep-oversized"))
+	if _, err := Upload(context.Background(), source, New(), remote, TransferOptions{}); err != nil {
+		t.Fatalf("full restart = %v", err)
+	}
+	assertBytes(t, remote, []byte("abc"))
 }
 
 func TestFinishTransferDoneRequiresSyncAndClose(t *testing.T) {

@@ -2,96 +2,73 @@ package production
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
-	"regexp"
-	"slices"
 	"sort"
 	"testing"
 )
 
-// Command pinned values in the frontend IPC facade (files under src/ipc that initiate calls directly) must all fall within
-// the desktop production dispatcher's registered surface and, except the desktop-only local-folder pair, the server
-// dispatcher's as well; the reverse difference may only contain ai_takeover_resume, the single pure-backend entry (the
-// frontend only consumes ai_takeover_enter/run/exit).
-var frontendFacadeFiles = []string{
-	filepath.Join("..", "..", "..", "src", "ipc", "commands.ts"),
-	filepath.Join("..", "..", "..", "src", "ipc", "cron.ts"),
-	filepath.Join("..", "..", "..", "src", "ipc", "grantApi.ts"),
-	filepath.Join("..", "..", "..", "src", "ipc", "memory.ts"),
-	filepath.Join("..", "..", "..", "src", "ipc", "remoteApi.ts"),
+type generatedIPCManifest struct {
+	Commands map[string]generatedIPCCommand `json:"commands"`
 }
 
-var (
-	frontendCallSite = regexp.MustCompile(`\bcall\b`)
-	frontendCallName = regexp.MustCompile(`^[a-z][a-z0-9_]+$`)
-)
+type generatedIPCCommand struct {
+	Nested  bool   `json:"nested"`
+	Channel bool   `json:"channel"`
+	Stream  string `json:"stream"`
+}
 
-func frontendFacadeCommands(t *testing.T) map[string]bool {
+func readGeneratedIPCManifest(t *testing.T) generatedIPCManifest {
 	t.Helper()
-	commands := map[string]bool{}
-	for _, name := range frontendFacadeFiles {
-		data, err := os.ReadFile(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		text := string(data)
-		for _, site := range frontendCallSite.FindAllStringIndex(text, -1) {
-			index := site[1]
-			skipSpace := func() {
-				for index < len(text) && (text[index] == ' ' || text[index] == '\t' || text[index] == '\n' || text[index] == '\r') {
-					index++
-				}
-			}
-			skipSpace()
-			if index < len(text) && text[index] == '<' {
-				depth := 1
-				index++
-				for index < len(text) && depth > 0 {
-					if text[index] == '<' {
-						depth++
-					} else if text[index] == '>' {
-						depth--
-					}
-					index++
-				}
-				if depth != 0 {
-					continue
-				}
-				skipSpace()
-			}
-			if index >= len(text) || text[index] != '(' {
-				continue
-			}
-			index++
-			skipSpace()
-			if index >= len(text) || text[index] != '"' {
-				continue
-			}
-			end := index + 1
-			for end < len(text) && text[end] != '"' {
-				end++
-			}
-			if end >= len(text) {
-				continue
-			}
-			if command := text[index+1 : end]; frontendCallName.MatchString(command) {
-				commands[command] = true
-			}
-		}
+	path := filepath.Join("..", "..", "..", "src", "ipc", "generated", "manifest.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(commands) == 0 {
-		t.Fatal("frontend facade extraction returned no commands")
+	var manifest generatedIPCManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
 	}
-	return commands
+	if len(manifest.Commands) == 0 {
+		t.Fatal("generated IPC manifest contains no commands")
+	}
+	return manifest
 }
 
-// desktopOnlyFacadeCommands are called by the frontend but registered only in the desktop
-// assembly (local_folder_list/local_file_read walk the machine the process runs on, so the
-// server assembly must never expose them); every other facade command must exist in both.
-var desktopOnlyFacadeCommands = []string{"local_file_read", "local_folder_list"}
+var desktopOnlyProductionCommands = []string{"local_file_read", "local_file_read_range", "local_folder_list", "log_tail_save"}
 
-func TestFrontendFacadeCommandsAreRegisteredInProduction(t *testing.T) {
+func commandSet(commands []string) map[string]bool {
+	set := make(map[string]bool, len(commands))
+	for _, command := range commands {
+		set[command] = true
+	}
+	return set
+}
+
+func assertCommandSet(t *testing.T, label string, actual []string, expected map[string]bool) {
+	t.Helper()
+	actualSet := commandSet(actual)
+	var missing []string
+	for command := range expected {
+		if !actualSet[command] {
+			missing = append(missing, command)
+		}
+	}
+	var unexpected []string
+	for command := range actualSet {
+		if !expected[command] {
+			unexpected = append(unexpected, command)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(unexpected)
+	if len(missing) > 0 || len(unexpected) > 0 {
+		t.Fatalf("%s command set mismatch: missing=%v unexpected=%v", label, missing, unexpected)
+	}
+}
+
+func TestProductionCommandsMatchGeneratedManifest(t *testing.T) {
 	server, err := NewProduction(t.Context(), ProductionConfig{DataDir: t.TempDir(), Desktop: false})
 	if err != nil {
 		t.Fatal(err)
@@ -109,50 +86,43 @@ func TestFrontendFacadeCommandsAreRegisteredInProduction(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = desktop.Shutdown(context.Background()) })
 
-	registeredServer := map[string]bool{}
-	for _, command := range server.Dispatcher.Commands() {
-		registeredServer[command] = true
+	manifest := readGeneratedIPCManifest(t)
+	desktopCommands := make(map[string]bool, len(manifest.Commands))
+	serverCommands := make(map[string]bool, len(manifest.Commands))
+	desktopOnly := commandSet(desktopOnlyProductionCommands)
+	for command := range manifest.Commands {
+		desktopCommands[command] = true
+		if !desktopOnly[command] {
+			serverCommands[command] = true
+		}
 	}
-	registeredDesktop := map[string]bool{}
-	for _, command := range desktop.Dispatcher.Commands() {
-		registeredDesktop[command] = true
-	}
-	facade := frontendFacadeCommands(t)
+	assertCommandSet(t, "desktop production", desktop.Dispatcher.Commands(), desktopCommands)
+	assertCommandSet(t, "server production", server.Dispatcher.Commands(), serverCommands)
+}
 
-	var missing []string
-	for command := range facade {
-		if !registeredDesktop[command] {
-			missing = append(missing, command)
-			continue
+func TestGeneratedManifestEnvelopeMetadata(t *testing.T) {
+	manifest := readGeneratedIPCManifest(t)
+	for _, test := range []struct {
+		name    string
+		nested  bool
+		channel bool
+		stream  string
+	}{
+		{name: "app_platform", stream: "none"},
+		{name: "db_connect", nested: true, stream: "none"},
+		{name: "db_disconnect", stream: "none"},
+		{name: "session_connect", nested: true, stream: "none"},
+		{name: "terminal_attach", channel: true, stream: "binary"},
+		{name: "terminal_broadcast_prepare", nested: true, stream: "none"},
+		{name: "host_share_terminal_open", nested: true, channel: true, stream: "json"},
+	} {
+		command, ok := manifest.Commands[test.name]
+		if !ok {
+			t.Fatalf("generated command %q is missing", test.name)
 		}
-		if !registeredServer[command] && !slices.Contains(desktopOnlyFacadeCommands, command) {
-			missing = append(missing, command)
+		if command.Nested != test.nested || command.Channel != test.channel || command.Stream != test.stream {
+			t.Fatalf("%s metadata = nested:%t channel:%t stream:%s, want nested:%t channel:%t stream:%s",
+				test.name, command.Nested, command.Channel, command.Stream, test.nested, test.channel, test.stream)
 		}
-	}
-	sort.Strings(missing)
-	if len(missing) > 0 {
-		t.Fatalf("frontend facade commands without a production registration: %v", missing)
-	}
-
-	var backendOnly []string
-	for command := range registeredServer {
-		if !facade[command] {
-			backendOnly = append(backendOnly, command)
-		}
-	}
-	sort.Strings(backendOnly)
-	if !slices.Equal(backendOnly, []string{"ai_takeover_resume"}) {
-		t.Fatalf("production commands without a frontend wrapper = %v, want [ai_takeover_resume]", backendOnly)
-	}
-
-	var desktopBackendOnly []string
-	for command := range registeredDesktop {
-		if !facade[command] {
-			desktopBackendOnly = append(desktopBackendOnly, command)
-		}
-	}
-	sort.Strings(desktopBackendOnly)
-	if !slices.Equal(desktopBackendOnly, []string{"ai_takeover_resume"}) {
-		t.Fatalf("desktop production commands without a frontend wrapper = %v, want [ai_takeover_resume]", desktopBackendOnly)
 	}
 }

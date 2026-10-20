@@ -6,8 +6,8 @@ import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import type { FileEntryDto } from "../../ipc/types";
 import { formatSize } from "./fileTypes";
-import { MAX_PACK_BYTES_DEVICE, packExtractSupported, packUploadAndExtract } from "./folderPackUpload";
-import { dropLocalFiles, dropUploadFiles, enqueueFolderUpload, oversizedContentDrop } from "./transferActions";
+import { packExtractSupported, packUploadAndExtract } from "./folderPackUpload";
+import { dropLocalFiles, dropUploadFiles, enqueueFolderUpload } from "./transferActions";
 
 export interface FolderFileEntry {
   // file is present when the entry came from browser File APIs (drop / webkitdirectory picker);
@@ -278,24 +278,6 @@ async function uploadFolderSelection(
       );
       return;
     }
-  }
-
-  // Content entries (desktop drops / webkit fallback) upload via a single fs_write, which device
-  // sessions cap at MAX_PACK_BYTES_DEVICE; reject before the mode dialog so the user can switch
-  // to the native folder picker, whose path-based upload streams uncapped.
-  const oversized = oversizedContentDrop(
-    args.sessionId,
-    selection.files
-      .filter((f) => f.localPath === "")
-      .map((f) => ({ name: f.relativePath, size: f.size })),
-  );
-  if (oversized) {
-    await releaseStaged();
-    pushToast(
-      "error",
-      `文件夹内的「${oversized.name}」（${formatSize(oversized.size)}）超过设备连接的单次写入上限 ${formatSize(MAX_PACK_BYTES_DEVICE)}，无法拖拽上传，请改用上传按钮选择文件夹按路径上传`,
-    );
-    return;
   }
 
   if (selection.files.length > 0) {

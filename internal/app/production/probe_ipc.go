@@ -134,7 +134,7 @@ func (s *terminalCommandService) sshProbeAsset(ctx context.Context, assetID stri
 	if assetID == "" {
 		return store.AssetRow{}, "", ipc.BadParam(fmt.Errorf("asset id is required"))
 	}
-	row, err := s.database.AssetGet(ctx, assetID)
+	row, err := s.database.AssetGetLive(ctx, assetID)
 	if err != nil {
 		return store.AssetRow{}, "", err
 	}
@@ -216,7 +216,7 @@ type assetProbeTarget struct {
 
 func (s *terminalCommandService) resolveAssetProbeTarget(ctx context.Context, assetID string) assetProbeTarget {
 	target := assetProbeTarget{assetID: assetID}
-	row, err := s.database.AssetGet(ctx, assetID)
+	row, err := s.database.AssetGetLive(ctx, assetID)
 	if err != nil {
 		target.failure = &assetProbeResultDTO{AssetID: assetID, Kind: "not_found", Error: "asset not found"}
 		return target
@@ -377,6 +377,8 @@ func sshConnectIPCError(connectErr *ssh.ConnectError) *ipc.Error {
 		code = ipc.CodeBadParam
 	case ssh.ErrorKindTimeout:
 		code = ipc.CodeTimeout
+	case ssh.ErrorKindAuth:
+		code = ipc.Code(connectErr.Kind)
 	}
 	detail := sshConnectErrorDetail{
 		Kind: string(connectErr.Kind), Hint: connectErr.Hint, Op: connectErr.Op,

@@ -63,8 +63,8 @@ type productionAssetOptions struct {
 	UserID                string            `json:"userId"`
 }
 
-func newProductionConnector(database *store.Store, credentialVault *vault.Vault, dataDir string, events ipc.Emitter) (*productionConnector, error) {
-	hostKeys, err := newProductionHostKeyStore(filepath.Join(dataDir, "known_hosts.json"), database)
+func newProductionConnector(ctx context.Context, database *store.Store, credentialVault *vault.Vault, dataDir string, events ipc.Emitter, shared bool) (*productionConnector, error) {
+	hostKeys, err := newProductionHostKeyStore(ctx, filepath.Join(dataDir, "known_hosts.json"), database, shared)
 	if err != nil {
 		return nil, err
 	}
@@ -81,6 +81,17 @@ func (c *productionConnector) Connect(ctx context.Context, asset session.Asset, 
 		if err := json.Unmarshal(raw, &options); err != nil {
 			return nil, ipc.BadParam(fmt.Errorf("会话资产选项无效: %w", err))
 		}
+	}
+	if ipc.OwnerID(ctx) == "" && options.UserID != "" && asset.StoreBacked && (asset.Kind == session.KindSSH || asset.Kind == session.KindDocker) {
+		// Session connectors can lose request values; only an owner bound by the authorized asset conversion may be restored.
+		ownerID, err := c.database.AssetOwnerID(ctx, asset.ID)
+		if err != nil {
+			return nil, err
+		}
+		if ownerID != options.UserID {
+			return nil, ipc.NewError(ipc.CodeForbidden, "会话资产所有者无效")
+		}
+		ctx = ipc.WithUserID(ctx, ownerID)
 	}
 	var transport base.Transport
 	var err error

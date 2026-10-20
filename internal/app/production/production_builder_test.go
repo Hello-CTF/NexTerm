@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -20,29 +22,34 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/server"
 	"github.com/Hello-CTF/NexTerm/internal/session"
-	"github.com/Hello-CTF/NexTerm/internal/tasks"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/local"
 	"github.com/coder/websocket"
 )
 
-func TestConcreteProductionCompositionAndPersistentTaskReopen(t *testing.T) {
+func TestConcreteProductionCompositionPreservesLegacyTaskData(t *testing.T) {
 	dataDir := t.TempDir()
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	legacyTasksDir := filepath.Join(dataDir, "tasks")
+	if err := os.MkdirAll(legacyTasksDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sentinelPath := filepath.Join(legacyTasksDir, "task.json")
+	if err := os.WriteFile(sentinelPath, []byte("legacy task data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	production, err := NewProduction(t.Context(), ProductionConfig{
 		Config: Config{Logger: logger}, DataDir: dataDir, Desktop: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if production.PersistentTasks() == nil {
-		t.Fatal("production capabilities are not composed")
-	}
 	for _, command := range []string{
 		"app_info", "app_platform", "session_connect", "session_connect_local", "terminal_attach", "terminal_attach_tab",
 		"terminal_resize", "terminal_resize_flush", "fs_list", "fs_write", "asset_list", "asset_update", "layout_put",
 		"vault_set_credential", "credential_update", "ai_model_save", "ai_conversation_list", "docker_exec_attach",
-		"docker_action", "db_connect", "mount_create", "forward_create", "sync_link_get", "sync_status", "sync_wake",
+		"docker_action", "db_connect", "mount_create", "forward_create", "forward_rule_list", "sync_link_get", "sync_status", "sync_wake",
 	} {
 		if !slices.Contains(production.Dispatcher.Commands(), command) {
 			t.Fatalf("production is missing %s", command)
@@ -68,47 +75,20 @@ func TestConcreteProductionCompositionAndPersistentTaskReopen(t *testing.T) {
 	if err := production.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	owner := tasks.Owner{Kind: "test", ID: "owner"}
-	result, err := production.PersistentTasks().Run(t.Context(), owner, tasks.Command{
-		Path: "/bin/sh", Args: []string{"-c", "sleep 30"},
-	}, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.Detached {
-		t.Fatal("task did not detach")
-	}
-	if err := production.Shutdown(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	reopened, err := NewProduction(t.Context(), ProductionConfig{
-		Config: Config{Logger: logger}, DataDir: dataDir, Desktop: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	info, err := reopened.PersistentTasks().Get(t.Context(), owner, result.Info.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.State != tasks.StateInterrupted || info.ExitCode != nil {
-		t.Fatalf("reopened task = %+v", info)
-	}
-	infos, err := reopened.PersistentTasks().List(t.Context(), owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(infos) != 1 || infos[0].ID != result.Info.ID {
-		t.Fatalf("tasks were rerun or duplicated = %+v", infos)
-	}
-	if err := reopened.Start(t.Context()); err != nil {
-		t.Fatal(err)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := reopened.Shutdown(ctx); err != nil {
+	if err := production.Shutdown(ctx); err != nil {
 		t.Fatal(err)
+	}
+	preserved, err := os.ReadFile(sentinelPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(preserved) != "legacy task data" {
+		t.Fatalf("legacy task data = %q", preserved)
+	}
+	if count := bytes.Count(logs.Bytes(), []byte("legacy persistent task data directory preserved")); count != 1 {
+		t.Fatalf("legacy task log count = %d, logs = %s", count, logs.String())
 	}
 }
 

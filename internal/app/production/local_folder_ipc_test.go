@@ -233,6 +233,50 @@ func TestLocalFileRead(t *testing.T) {
 	}
 }
 
+func TestLocalFileReadRange(t *testing.T) {
+	dispatcher := newLocalFolderDispatcher(t)
+	path := filepath.Join(t.TempDir(), "data.bin")
+	writeLocalFile(t, path, "abcdefgh")
+	dispatch := func(args string) (fsRangeReadDTO, *ipc.Error) {
+		response := dispatcher.Dispatch(context.Background(), ipc.Request{
+			Command: "local_file_read_range", Args: json.RawMessage(args),
+		}, ipc.Environment{})
+		if response.Error != nil {
+			return fsRangeReadDTO{}, response.Error
+		}
+		raw, err := json.Marshal(response.Data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result fsRangeReadDTO
+		if err := json.Unmarshal(raw, &result); err != nil {
+			t.Fatal(err)
+		}
+		return result, nil
+	}
+	result, ipcErr := dispatch(`{"path":` + localPathJSON(path) + `,"offset":2,"maxBytes":3}`)
+	if ipcErr != nil {
+		t.Fatal(ipcErr)
+	}
+	data, err := base64.StdEncoding.DecodeString(result.ContentBase64)
+	if err != nil || string(data) != "cde" || result.Offset != 2 || result.Size != 8 || !result.Truncated {
+		t.Fatalf("range = %+v, content %q, %v", result, data, err)
+	}
+	end, ipcErr := dispatch(`{"path":` + localPathJSON(path) + `,"offset":8,"maxBytes":3}`)
+	if ipcErr != nil || end.Size != 8 || end.ContentBase64 != "" || end.Truncated {
+		t.Fatalf("EOF range = %+v, %v", end, ipcErr)
+	}
+	for _, args := range []string{
+		`{"path":` + localPathJSON(path) + `,"offset":-1,"maxBytes":3}`,
+		`{"path":` + localPathJSON(path) + `,"offset":9,"maxBytes":3}`,
+		`{"path":` + localPathJSON(path) + `,"offset":0,"maxBytes":4194305}`,
+	} {
+		if _, ipcErr := dispatch(args); ipcErr == nil || ipcErr.Code != ipc.CodeBadParam {
+			t.Fatalf("invalid range %s = %+v", args, ipcErr)
+		}
+	}
+}
+
 func localPathJSON(value string) string {
 	encoded, _ := json.Marshal(value)
 	return string(encoded)

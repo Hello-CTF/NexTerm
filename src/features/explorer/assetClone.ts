@@ -1,5 +1,6 @@
 import { ask } from "../../ui/dialogs";
 import { assetApi, type Asset } from "../../ipc/commands";
+import { withoutInventoryMetadata } from "./inventory";
 
 export async function cloneAsset(a: Asset): Promise<Asset | null> {
   const ok = await ask(
@@ -17,7 +18,7 @@ export async function cloneAsset(a: Asset): Promise<Asset | null> {
     authKind: a.authKind,
     keyPath: a.keyPath,
     credId: a.credId,
-    options: a.options,
+    options: withoutInventoryMetadata(a.options),
     tags: a.tags,
     note: a.note,
   });

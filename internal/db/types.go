@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"net"
 )
 
 const (
@@ -87,9 +88,14 @@ type InlineConnection struct {
 	Username   string      `json:"username,omitempty"`
 	Password   string      `json:"password,omitempty"`
 	Database   string      `json:"database,omitempty"`
-	ViaSession string      `json:"viaSession,omitempty"`
 	TLS        *TLSOptions `json:"tls,omitempty"`
+	viaAssetID string
 }
+
+type DialContextFunc func(context.Context, string, string) (net.Conn, error)
+
+// DialerFactory may snapshot admission identity from Connect, but the returned dialer must resolve current tunnel state on every call without retaining the Connect context.
+type DialerFactory func(context.Context, string) (DialContextFunc, error)
 
 type ConnectArgs struct {
 	AssetID string            `json:"assetId,omitempty"`
@@ -120,28 +126,31 @@ func (f AssetResolverFunc) ResolveDBAsset(ctx context.Context, id string) (Asset
 }
 
 type MySQLConfig struct {
-	Host      string
-	Port      uint16
-	Username  string
-	Password  string
-	Database  string
-	TLSConfig *tls.Config
+	Host        string
+	Port        uint16
+	Username    string
+	Password    string
+	Database    string
+	TLSConfig   *tls.Config
+	DialContext DialContextFunc
 }
 
 type PostgresConfig struct {
-	Host      string
-	Port      uint16
-	Username  string
-	Password  string
-	Database  string
-	TLSConfig *tls.Config
+	Host        string
+	Port        uint16
+	Username    string
+	Password    string
+	Database    string
+	TLSConfig   *tls.Config
+	DialContext DialContextFunc
 }
 
 type RedisConfig struct {
-	Host      string
-	Port      uint16
-	Username  string
-	Password  string
-	Database  int
-	TLSConfig *tls.Config
+	Host        string
+	Port        uint16
+	Username    string
+	Password    string
+	Database    int
+	TLSConfig   *tls.Config
+	DialContext DialContextFunc
 }

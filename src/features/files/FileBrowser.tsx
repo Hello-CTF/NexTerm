@@ -55,6 +55,7 @@ import { useCwdFollow } from "./cwdFollow";
 import { dropFolderUpload, pickFolderUpload } from "./folderUpload";
 import { noteHtml5Drop, useNativeFileDrop } from "./nativeDrop";
 import {
+  createTransferTaskId,
   enqueueDownload,
   enqueueUploads,
   subscribeTransferSettled,
@@ -166,7 +167,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
   const [progress, setProgress] = useState<FileProgressMap>({});
   useEffect(() => {
     const un = listenEvent<FsProgressEvent>(EVENTS.fsProgress, (event) => {
-      if (useTransferStore.getState().runningId) return;
+      if (useTransferStore.getState().tasks.some((task) => task.id === event.taskId)) return;
       if (event.error) {
         pushToast("error", `文件传输失败：${event.error}`);
       }
@@ -427,7 +428,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
     if (!target) return;
     pushToast("info", "正在远端打包…");
     try {
-      const bytes = await fsApi.packDownload(sessionId, dir, target);
+      const bytes = await fsApi.packDownload(sessionId, dir, target, createTransferTaskId());
       const where = await finishSave(target, `${baseName(dir)}.tar.gz`);
       pushToast(
         where ? "success" : "info",

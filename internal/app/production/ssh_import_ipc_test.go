@@ -14,7 +14,6 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/keys"
-	"github.com/Hello-CTF/NexTerm/internal/sshconfig"
 	"github.com/Hello-CTF/NexTerm/internal/sshconfig/termiusdb"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
@@ -166,10 +165,10 @@ func TestSSHImportPreviewToApply(t *testing.T) {
 		t.Fatal("preview leaks private key material")
 	}
 
-	bastionIdentity := sshImportHostIdentity(&sshconfig.HostPreview{Alias: "bastion", Username: "admin", Hostname: "bastion.example.com", Port: 22}, 0)
-	webIdentity := sshImportHostIdentity(&sshconfig.HostPreview{Alias: "web", Username: "deploy", Hostname: "web.example.com", Port: 2222}, 0)
-	dbIdentity := sshImportHostIdentity(&sshconfig.HostPreview{Alias: "db", Username: "postgres", Hostname: "db.example.com", Port: 22}, 0)
-	keyIdentity := sshImportKeyIdentity(&sshconfig.KeyPreview{Aliases: []string{"id_ed25519"}, Fingerprint: keyFingerprint, Path: keyPath}, 0)
+	bastionIdentity := previewHost(t, preview, "bastion").ID
+	webIdentity := web.ID
+	dbIdentity := previewHost(t, preview, "db").ID
+	keyIdentity := previewKey(t, preview, "id_ed25519").ID
 	applyBody := `{"args":{"source":"ssh-config","path":` + strconvQuote(configPath) + `,` +
 		`"hosts":[{"id":` + strconvQuote(bastionIdentity) + `,"action":"import"},{"id":` + strconvQuote(webIdentity) + `,"action":"import"},{"id":` + strconvQuote(dbIdentity) + `,"action":"import"}],` +
 		`"keys":[{"id":` + strconvQuote(keyIdentity) + `,"action":"import"}]}}`
@@ -240,16 +239,30 @@ func TestSSHImportPreviewToApply(t *testing.T) {
 		t.Fatalf("audit payload leaks secret material: %s", auditPayload)
 	}
 
-	second, response := sshImportApply(t, dispatcher, applyBody)
-	if !response.OK {
-		t.Fatalf("second apply failed: %+v", response.Error)
-	}
-	if second.AssetsCreated != 0 || second.CredentialsCreated != 0 || second.Skipped != 4 {
-		t.Fatalf("second apply = %+v", second)
+	_, staleResponse := sshImportApply(t, dispatcher, applyBody)
+	if staleResponse.OK || staleResponse.Error == nil || !strings.Contains(staleResponse.Error.Message, "重新预览") {
+		t.Fatalf("stale second apply = %+v, want re-preview error", staleResponse)
 	}
 	rePreview := sshImportPreview(t, dispatcher, `{"args":{"source":"ssh-config","path":`+strconvQuote(configPath)+`}}`)
 	if got := previewKey(t, rePreview, "id_ed25519").Action; got != "skip-duplicate" {
 		t.Fatalf("key re-preview action = %q, want skip-duplicate (fingerprint dedupe)", got)
+	}
+	secondHosts := make([]sshImportItemAction, 0, len(rePreview.Hosts))
+	for _, host := range rePreview.Hosts {
+		secondHosts = append(secondHosts, sshImportItemAction{ID: host.ID, Action: "skip"})
+	}
+	secondKeys := make([]sshImportItemAction, 0, len(rePreview.Keys))
+	for _, key := range rePreview.Keys {
+		secondKeys = append(secondKeys, sshImportItemAction{ID: key.ID, Action: "skip"})
+	}
+	second, response := sshImportApply(t, dispatcher, sshImportApplyRequestBody(t, sshImportApplyRequest{
+		Source: "ssh-config", Path: configPath, Hosts: secondHosts, Keys: secondKeys,
+	}))
+	if !response.OK {
+		t.Fatalf("re-previewed second apply failed: %+v", response.Error)
+	}
+	if second.AssetsCreated != 0 || second.CredentialsCreated != 0 || second.Skipped != 4 {
+		t.Fatalf("second apply = %+v", second)
 	}
 }
 
@@ -726,7 +739,7 @@ func sshImportTermiusPEM(t *testing.T) (string, string) {
 	return string(pair.PrivateKeyPEM), pair.Fingerprint
 }
 
-func TestSSHImportSelectionIdentitySurvivesChanges(t *testing.T) {
+func TestSSHImportSelectionRejectsUnknownToken(t *testing.T) {
 	ctx := t.Context()
 	dispatcher, database, _, _ := sshImportTestRig(t)
 	dir := t.TempDir()
@@ -753,32 +766,13 @@ func TestSSHImportSelectionIdentitySurvivesChanges(t *testing.T) {
 	body := `{"args":{"source":"ssh-config","path":` + strconvQuote(pathV2) + `,` +
 		`"hosts":[{"id":` + strconvQuote(bastionID) + `,"action":"import"},{"id":` + strconvQuote(webID) + `,"action":"import"},{"id":"ghost|root@ghost.example.com:22#0","action":"import"}],` +
 		`"keys":[]}}`
-	result, response := sshImportApply(t, dispatcher, body)
-	if !response.OK {
-		t.Fatalf("apply failed: %+v", response.Error)
+	_, response := sshImportApply(t, dispatcher, body)
+	if response.OK || response.Error == nil || !strings.Contains(response.Error.Message, "重新预览") {
+		t.Fatalf("stale selection response = %+v, want re-preview error", response)
 	}
-	if result.AssetsCreated != 2 || result.Skipped != 1 {
-		t.Fatalf("apply result = %+v", result)
-	}
-	if len(result.Warnings) == 0 || !strings.Contains(strings.Join(result.Warnings, " "), "不一致") {
-		t.Fatalf("stale selection must warn: %+v", result.Warnings)
-	}
-
 	assets, err := database.AssetList(ctx, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	byName := map[string]string{}
-	for _, row := range assets {
-		if row.Host != nil {
-			byName[row.Name] = *row.Host
-		}
-	}
-	if byName["bastion"] != "bastion.example.com" || byName["web"] != "web.example.com" {
-		t.Fatalf("imported hosts = %v", byName)
-	}
-	if _, ok := byName["aaa"]; ok {
-		t.Fatal("host inserted after preview must not be imported by a stale selection")
+	if err != nil || len(assets) != 0 {
+		t.Fatalf("stale selection wrote assets = %+v, err=%v", assets, err)
 	}
 }
 
@@ -1471,7 +1465,21 @@ func TestSSHImportServerAssemblyRestrictsPathsToSSHHome(t *testing.T) {
 	rejected(`{"args":{"source":"ssh-config","path":` + strconvQuote(outsideConfig) + `}}`)
 	rejected(`{"args":{"source":"ssh-config","path":` + strconvQuote(filepath.Join(sshDir, "..", "outside")) + `}}`)
 	rejected(`{"args":{"source":"ssh-home","path":` + strconvQuote(t.TempDir()) + `}}`)
-	rejected(`{"args":{"source":"termius","confirmed":true,"path":"/etc"}}`)
+	assertTermiusPath := func(command, body string) {
+		t.Helper()
+		response := dispatchStoreTest(dispatcher, command, body)
+		if runtime.GOOS == "darwin" {
+			if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam || !strings.Contains(response.Error.Message, ".ssh") {
+				t.Fatalf("darwin Termius path guard %s = %+v, want bad_param/.ssh", command, response)
+			}
+			return
+		}
+		if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
+			t.Fatalf("non-darwin Termius %s = %+v, want unsupported", command, response)
+		}
+	}
+	assertTermiusPath("ssh_import_preview", `{"args":{"source":"termius","confirmed":true,"path":"/etc"}}`)
+	assertTermiusPath("ssh_import_apply", `{"args":{"source":"termius","confirmed":true,"path":"/etc","hosts":[],"keys":[]}}`)
 
 	preview := sshImportPreview(t, dispatcher, `{"args":{"source":"ssh-config","path":`+strconvQuote(insideConfig)+`}}`)
 	if len(preview.Hosts) != 3 {
@@ -1489,5 +1497,97 @@ func TestSSHImportServerAssemblyRestrictsPathsToSSHHome(t *testing.T) {
 	response := dispatchStoreTest(dispatcher, "ssh_import_apply", `{"args":{"source":"ssh-config","path":`+strconvQuote(outsideConfig)+`,"hosts":[],"keys":[]}}`)
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
 		t.Fatalf("server apply outside .ssh = %+v, want bad_param", response)
+	}
+}
+
+func sshImportApplyRequestBody(t *testing.T, request sshImportApplyRequest) string {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"args": request})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func TestSSHImportApplyDestinationGroupAndTags(t *testing.T) {
+	ctx := t.Context()
+	dispatcher, database, _, _ := sshImportTestRig(t)
+	group, err := database.GroupCreate(ctx, store.GroupInput{Name: "导入目标"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	keyPath, _ := sshImportTestKeyFile(t, dir)
+	configPath := sshImportTestConfig(t, dir, keyPath)
+	preview := sshImportPreview(t, dispatcher, `{"args":{"source":"ssh-config","path":`+strconvQuote(configPath)+`}}`)
+	hosts := make([]sshImportItemAction, 0, len(preview.Hosts))
+	for _, host := range preview.Hosts {
+		hosts = append(hosts, sshImportItemAction{ID: host.ID, Action: "import"})
+	}
+	keys := make([]sshImportItemAction, 0, len(preview.Keys))
+	for _, key := range preview.Keys {
+		keys = append(keys, sshImportItemAction{ID: key.ID, Action: "import"})
+	}
+	result, response := sshImportApply(t, dispatcher, sshImportApplyRequestBody(t, sshImportApplyRequest{
+		Source: "ssh-config", Path: configPath, GroupID: &group.ID, Tags: sshImportStrPtr(" prod, PROD, 欧洲 "), Hosts: hosts, Keys: keys,
+	}))
+	if !response.OK {
+		t.Fatalf("apply failed: %+v", response.Error)
+	}
+	if result.AssetsCreated != 3 || result.CredentialsCreated != 1 {
+		t.Fatalf("apply result = %+v", result)
+	}
+	rows, err := database.AssetList(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("imported assets = %+v", rows)
+	}
+	for _, row := range rows {
+		if row.GroupID == nil || *row.GroupID != group.ID || row.Tags != "prod, 欧洲" {
+			t.Fatalf("asset destination = %+v", row)
+		}
+	}
+}
+
+func TestSSHImportApplyRollsBackAllWrites(t *testing.T) {
+	ctx := t.Context()
+	dispatcher, database, _, _ := sshImportTestRig(t)
+	dir := t.TempDir()
+	keyPath, _ := sshImportTestKeyFile(t, dir)
+	configPath := sshImportTestConfig(t, dir, keyPath)
+	preview := sshImportPreview(t, dispatcher, `{"args":{"source":"ssh-config","path":`+strconvQuote(configPath)+`}}`)
+	hosts := make([]sshImportItemAction, 0, len(preview.Hosts))
+	for _, host := range preview.Hosts {
+		hosts = append(hosts, sshImportItemAction{ID: host.ID, Action: "import"})
+	}
+	keys := make([]sshImportItemAction, 0, len(preview.Keys))
+	for _, key := range preview.Keys {
+		keys = append(keys, sshImportItemAction{ID: key.ID, Action: "import"})
+	}
+	if _, err := database.DB().Exec(`CREATE TRIGGER fail_third_import_host BEFORE INSERT ON asset WHEN NEW.name = 'db' BEGIN SELECT RAISE(ABORT, 'forced third host failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	_, response := sshImportApply(t, dispatcher, sshImportApplyRequestBody(t, sshImportApplyRequest{
+		Source: "ssh-config", Path: configPath, Hosts: hosts, Keys: keys,
+	}))
+	if response.OK || response.Error == nil {
+		t.Fatalf("forced third-host failure returned success: %+v", response)
+	}
+	if !strings.Contains(response.Error.Message, "回滚") || !strings.Contains(response.Error.Message, "第 3 条主机") {
+		t.Fatalf("rollback error = %+v", response.Error)
+	}
+	assets, err := database.AssetList(ctx, false)
+	if err != nil || len(assets) != 0 {
+		t.Fatalf("assets after rollback = %+v, err=%v", assets, err)
+	}
+	credentials, err := database.CredentialList(ctx)
+	if err != nil || len(credentials) != 0 {
+		t.Fatalf("credentials after rollback = %+v, err=%v", credentials, err)
+	}
+	auditCount, err := database.AuditCount(ctx, store.AuditQuery{Kind: sshImportStrPtr("ssh-import")})
+	if err != nil || auditCount != 0 {
+		t.Fatalf("import audit rows after rollback = %d, err=%v", auditCount, err)
 	}
 }

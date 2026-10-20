@@ -73,6 +73,7 @@ type ReconnectPolicy struct {
 type Config struct {
 	Provider         DialerProvider
 	SessionHost      func(context.Context, string) (string, error)
+	Rules            RuleStore
 	Policy           Policy
 	Reconnect        ReconnectPolicy
 	DialTimeout      time.Duration

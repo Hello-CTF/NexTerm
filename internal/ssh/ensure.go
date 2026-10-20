@@ -357,12 +357,15 @@ func (r *Resolver) install(ctx context.Context, host Host, binDir string, upload
 		if err == nil {
 			break
 		}
+		if !errors.Is(err, fs.ErrExist) {
+			return "", fmt.Errorf("%w: create helper installation lock %s: %v", durable.ErrUnavailable, lock, err)
+		}
 		exists, existsErr := host.Exists(uploadCtx, lock)
 		if existsErr != nil {
 			return "", fmt.Errorf("%w: inspect helper installation lock %s: %v", durable.ErrUnavailable, lock, existsErr)
 		}
 		if !exists {
-			return "", fmt.Errorf("%w: create helper installation lock %s: %v", durable.ErrUnavailable, lock, err)
+			continue
 		}
 		select {
 		case <-uploadCtx.Done():

@@ -242,23 +242,16 @@ func (s *Service) mountPresent(entries []Entry, owned Entry) bool {
 }
 
 func (s *Service) ListFor(ctx context.Context, args listRequest) ([]Entry, error) {
-	if args.Global == (args.SessionID != "") {
-		return nil, ipc.NewError(ipc.CodeBadParam, "请指定当前会话，或显式选择全局挂载表")
+	if args.SessionID == "" {
+		return nil, ipc.NewError(ipc.CodeBadParam, "请指定当前会话")
 	}
-	hostID := ""
-	if !args.Global {
-		var err error
-		hostID, err = s.authorizeSession(ctx, args.SessionID)
-		if err != nil {
-			return nil, err
-		}
+	hostID, err := s.authorizeSession(ctx, args.SessionID)
+	if err != nil {
+		return nil, err
 	}
 	entries, err := s.List(ctx, args.ForceRefresh)
 	if err != nil {
 		return nil, err
-	}
-	if args.Global {
-		return entries, nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

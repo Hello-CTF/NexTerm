@@ -4,8 +4,15 @@ import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { ask, askChoice, pickKeyFile, promptText } from "../../ui/dialogs";
 import { assetApi, sessionApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
+import { onAssetDataChanged } from "../../ipc/assetEvents";
 import { browserFilesAvailable } from "../../ipc/webFiles";
-import { connectAsset, connectQuickTarget, useUi } from "../../app/store";
+import {
+  assetConnectionProblemKey,
+  connectAsset,
+  connectQuickTarget,
+  useConnectionProblem,
+  useUi,
+} from "../../app/store";
 import { copyAssetDeepLink } from "../../app/deepLink";
 import { isMobile, useCoarsePointer } from "../../app/platform";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
@@ -19,6 +26,7 @@ import { useAssetVisibility } from "./assetVisibility";
 import { useConnectTemplates, type ConnectTemplate } from "./connectTemplates";
 import { formatSshCommand, sshCommandCopyable } from "./sshCommand";
 import { useGroupCollapse } from "./groupCollapse";
+import { normalizeAssetTags } from "./assetSearch";
 import {
   ASSET_ICON_NAMES,
   assetIcon,
@@ -39,13 +47,25 @@ import {
   IconPlug,
   IconPlus,
   IconSearch,
+  IconServer,
   IconTerminal,
   IconTrash,
   IconXCircle,
 } from "../../ui/icons";
 import { SnippetsPanel } from "./SnippetsPanel";
 import { SshImportDialog } from "./SshImportDialog";
+import { InventoryDialog } from "./InventoryDialog";
 import { DeviceTreeSection } from "../fleet/DeviceTreeSection";
+import { BulkMaintenanceDialog } from "../execbatch/BulkMaintenancePanel";
+import { ProjectSelector } from "./ProjectSelector";
+import { assetInventoryMetadata, inventorySourceLabel, inventoryTargetText, isInventoryOnlyKind } from "./inventory";
+import { EVENTS, listenEvent } from "../../ipc/events";
+import {
+  ALL_PROJECTS,
+  UNGROUPED_PROJECT,
+  filterAssetsForProject,
+  filterGroupsForProject,
+} from "../../app/projectFocus";
 
 const ASSET_IDENTITY_KEY = "nexterm.assetIdentity.v1";
 
@@ -98,10 +118,14 @@ const KIND_LABEL: Record<string, string> = {
   winrm: "WinRM",
   local: "本地终端",
   docker: "Docker 主机",
-  mysql: "MySQL",
+  "docker-context": "Docker context（仅清单）",
+  kubernetes: "Kubernetes（仅清单）",
+  mysql: "MySQL / MariaDB",
   postgres: "PostgreSQL",
   redis: "Redis",
 };
+
+const DATABASE_ASSET_KINDS = new Set<string>(["mysql", "postgres", "redis"]);
 
 const DRAG_ASSET = "application/x-nexterm-asset";
 
@@ -283,7 +307,9 @@ type AssetMoveError = {
 
 export function AssetTree() {
   const qc = useQueryClient();
-  const { pushToast, leftOpen, leftWidth } = useUi();
+  const { pushToast, leftOpen, leftWidth, activeProject } = useUi();
+  const sessions = useUi((state) => state.sessions);
+  const [bulkMaintenanceOpen, setBulkMaintenanceOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [detailedIdentity, setDetailedIdentity] = useState(loadDetailedAssetIdentity);
   const [editing, setEditing] = useState<"none" | "asset" | "group">("none");
@@ -292,12 +318,13 @@ export function AssetTree() {
   const [renamingGroup, setRenamingGroup] = useState<AssetGroup | null>(null);
   const [groupBusyId, setGroupBusyId] = useState<string | null>(null);
   const [groupError, setGroupError] = useState<{ id: string; message: string; action: "删除" | "修复" } | null>(null);
-  const [assetError, setAssetError] = useState<{ id: string; message: string; mode?: "keep" | "close" } | null>(null);
+  const [assetError, setAssetError] = useState<{ id: string; message: string; mode?: "keep" | "disconnect" | "close" } | null>(null);
   const [moveErrors, setMoveErrors] = useState<Record<string, AssetMoveError>>({});
   const [movingTargets, setMovingTargets] = useState<Record<string, string>>({});
   const pendingMovesRef = useRef(new Set<string>());
   const [snippetsOpen, setSnippetsOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [inventoryOpen, setInventoryOpen] = useState(false);
   const [rowMenu, setRowMenu] = useState<{ x: number; y: number; asset: Asset; full?: boolean } | null>(null);
   const [treeMenu, setTreeMenu] = useState<{ x: number; y: number } | null>(null);
   const treeRef = useRef<HTMLDivElement>(null);
@@ -323,11 +350,45 @@ export function AssetTree() {
   });
   const results = useQuery({
     queryKey: ["asset-search", query],
-    queryFn: () => assetApi.search(query),
+    queryFn: async () => {
+      if (typeof assetApi.searchMeta === "function") return assetApi.searchMeta(query);
+      const legacy = await assetApi.search(query);
+      return { assets: legacy, total: legacy.length, truncated: false };
+    },
     enabled: query.trim().length > 0,
   });
 
-  const filtered = query.trim() ? (results.data ?? []) : (assets.data ?? []);
+  useEffect(() => {
+    const refresh = () => {
+      void qc.invalidateQueries({ queryKey: ["assets"] });
+      void qc.invalidateQueries({ queryKey: ["groups"] });
+      void qc.invalidateQueries({ queryKey: ["asset-search"] });
+    };
+    const offLocal = onAssetDataChanged(refresh);
+    let disposed = false;
+    let offRemote: (() => void) | undefined;
+    void listenEvent(EVENTS.inventoryChanged, refresh).then((off) => {
+      if (disposed) off();
+      else offRemote = off;
+    }).catch(() => undefined);
+    return () => {
+      disposed = true;
+      offLocal();
+      offRemote?.();
+    };
+  }, [qc]);
+
+  const filtered = useMemo(
+    () => query.trim() ? (results.data?.assets ?? []) : (assets.data ?? []),
+    [query, results.data?.assets, assets.data],
+  );
+  const projectFiltered = useMemo(
+    () => filterAssetsForProject(filtered, activeProject, groups.data ?? []),
+    [filtered, activeProject, groups.data],
+  );
+  const searchSummary = query.trim() && results.data
+    ? { total: results.data.total, returned: results.data.assets.length, truncated: results.data.truncated }
+    : null;
   const listError = query.trim()
     ? results.isError
       ? results.error
@@ -341,8 +402,8 @@ export function AssetTree() {
   };
   const isHidden = (id: string) => hiddenIds.includes(id);
   const visible = useMemo(
-    () => filtered.filter((a) => showHidden || !hiddenIds.includes(a.id)),
-    [filtered, hiddenIds, showHidden],
+    () => projectFiltered.filter((a) => showHidden || !hiddenIds.includes(a.id)),
+    [projectFiltered, hiddenIds, showHidden],
   );
   const duplicateNames = useMemo(() => {
     const seen = new Set<string>();
@@ -373,7 +434,11 @@ export function AssetTree() {
     }
     return map;
   }, [visible]);
-  const groupRoots = useMemo(() => groupHierarchy(groups.data ?? [], byGroup), [groups.data, byGroup]);
+  const focusedGroups = useMemo(
+    () => filterGroupsForProject(groups.data ?? [], activeProject),
+    [groups.data, activeProject],
+  );
+  const groupRoots = useMemo(() => groupHierarchy(focusedGroups, byGroup), [focusedGroups, byGroup]);
   const groupPaths = useMemo(() => {
     const paths = new Map<string, string>();
     const visit = (node: GroupTreeNode) => {
@@ -397,13 +462,15 @@ export function AssetTree() {
     const headAssets = localIndex >= 0 ? ungrouped.slice(0, localIndex + 1) : [];
     const restAssets = localIndex >= 0 ? ungrouped.slice(localIndex + 1) : ungrouped;
     for (const asset of headAssets) items.push({ key: `asset:${asset.id}`, kind: "asset", asset, orphaned: orphanedIds.has(asset.id) });
-    if (!query.trim()) items.push({ key: "devices", kind: "devices" });
+    if (!query.trim() && (activeProject === ALL_PROJECTS || activeProject === UNGROUPED_PROJECT)) {
+      items.push({ key: "devices", kind: "devices" });
+    }
     for (const asset of restAssets) items.push({ key: `asset:${asset.id}`, kind: "asset", asset, orphaned: orphanedIds.has(asset.id) });
     for (const node of groupRoots) {
       items.push({ key: `group:${node.group.id}`, kind: "group", node });
     }
     return items;
-  }, [byGroup, groupRoots, groupPaths, groups.data, query, visible]);
+  }, [activeProject, byGroup, groupRoots, groupPaths, groups.data, query, visible]);
   const treeWindowCount = treeItems.reduce(
     (count, item) => count + (item.kind === "group" ? 1 + item.node.totalAssets + item.node.children.length : 1),
     0,
@@ -457,6 +524,7 @@ export function AssetTree() {
       const created = await cloneAsset(a);
       if (!created) return;
       void qc.invalidateQueries({ queryKey: ["assets"] });
+      void qc.invalidateQueries({ queryKey: ["asset-search"] });
       pushToast("success", `已克隆为「${created.name}」`);
     } catch (e) {
       pushToast("error", `克隆失败：${describeError(e)}`);
@@ -491,11 +559,18 @@ export function AssetTree() {
     void connectQuickTarget({ host, port: a.port ?? 22, username });
   };
 
-  const runDeleteAsset = async (a: Asset, openWorkspaces: "keep" | "close" = "keep") => {
+  const runDeleteAsset = async (a: Asset, mode: "keep" | "disconnect" | "close" = "keep") => {
     setAssetError(null);
     let closedWorkspaceCount = 0;
     try {
-      if (openWorkspaces === "close") {
+      if (mode === "disconnect") {
+        const sessionIds = useUi.getState().sessions
+          .filter((s) => s.assetId === a.id && s.status !== "disconnected" && s.status !== "failed")
+          .map((s) => s.id);
+        for (const id of sessionIds) await sessionApi.disconnect(id);
+        await useUi.getState().resyncSessions({ silent: true });
+      }
+      if (mode === "close") {
         const workspaceIds = useUi.getState().workspaces.filter((w) => w.assetId === a.id).map((w) => w.id);
         for (const id of workspaceIds) {
           if (!useUi.getState().workspaces.some((w) => w.id === id)) continue;
@@ -504,34 +579,42 @@ export function AssetTree() {
         }
       }
       await assetApi.delete(a.id);
-      if (openWorkspaces === "keep") useUi.getState().markDeletedAssetWorkspaces(a.id);
+      if (mode !== "close") useUi.getState().markDeletedAssetWorkspaces(a.id);
       unhide(a.id);
       void qc.invalidateQueries({ queryKey: ["assets"] });
+      void qc.invalidateQueries({ queryKey: ["asset-search"] });
       void qc.invalidateQueries({ queryKey: ["credentials"] });
       pushToast("info", "已删除");
     } catch (e) {
       const detail = closedWorkspaceCount > 0
         ? `${describeError(e)}；已关闭的工作区可从资产列表重新打开`
         : describeError(e);
-      setAssetError({ id: a.id, message: detail, mode: openWorkspaces });
+      setAssetError({ id: a.id, message: detail, mode });
     }
   };
 
   const onDelete = async (a: Asset) => {
-    const workspaces = useUi.getState().workspaces.filter((w) => w.assetId === a.id);
-    if (workspaces.length > 0) {
+    const state = useUi.getState();
+    const workspaces = state.workspaces.filter((w) => w.assetId === a.id);
+    const liveSessions = state.sessions.filter((s) =>
+      s.assetId === a.id && s.status !== "disconnected" && s.status !== "failed",
+    );
+    if (workspaces.length > 0 || liveSessions.length > 0) {
+      const workspaceNotice = workspaces.length > 0 ? `当前有 ${workspaces.length} 个工作区使用此资产。` : "";
+      const sessionNotice = liveSessions.length > 0 ? `当前有 ${liveSessions.length} 个活动会话使用此资产。` : "";
       const action = await askChoice(
-        `删除资产「${a.name}」？\n\n当前有 ${workspaces.length} 个工作区使用此资产。资产会从列表移除；关联的凭据会保留，已产生的终端历史仍可查看。`,
+        `删除资产「${a.name}」？\n\n${workspaceNotice}${sessionNotice}资产会从列表移除；关联的凭据会保留，已产生的终端历史仍可查看。`,
         {
           title: "删除资产及打开的工作区",
           level: "warning",
           choices: [
-            { key: "keep", label: "保留工作区并删除资产", hint: "工作区会显示目标已删除，可继续查看或关闭。", primary: true },
-            { key: "close", label: "关闭工作区并删除资产", hint: "先关闭关联工作区，再删除资产；取消关闭时不会删除。", danger: true },
+            { key: "keep", label: workspaces.length > 0 ? "保留工作区并删除资产" : "保留会话并删除资产", hint: "工作区会显示目标已删除，可继续查看或关闭。", primary: true },
+            ...(liveSessions.length > 0 ? [{ key: "disconnect", label: "断开会话并删除资产", hint: "显式断开会话并停止其端口转发；工作区保留。", danger: true }] : []),
+            ...(workspaces.length > 0 ? [{ key: "close", label: "关闭工作区并删除资产", hint: "先关闭关联工作区，再删除资产；取消关闭时不会删除。", danger: true }] : []),
           ],
         },
       );
-      if (action !== "keep" && action !== "close") return;
+      if (action !== "keep" && action !== "disconnect" && action !== "close") return;
       await runDeleteAsset(a, action);
       return;
     }
@@ -560,7 +643,6 @@ export function AssetTree() {
       const updateCachedGroup = (rows: Asset[] | undefined) =>
         rows?.map((row) => row.id === assetId ? { ...row, groupId } : row);
       qc.setQueryData<Asset[]>(["assets"], updateCachedGroup);
-      qc.setQueriesData<Asset[]>({ queryKey: ["asset-search"] }, updateCachedGroup);
       void qc.invalidateQueries({ queryKey: ["assets"] });
       void qc.invalidateQueries({ queryKey: ["asset-search"] });
       pushToast("info", groupId ? "已移入分组" : "已移出分组");
@@ -602,6 +684,7 @@ export function AssetTree() {
       await assetApi.groupDelete(g.id);
       void qc.invalidateQueries({ queryKey: ["groups"] });
       void qc.invalidateQueries({ queryKey: ["assets"] });
+      void qc.invalidateQueries({ queryKey: ["asset-search"] });
       pushToast("info", "已删除分组");
     } catch (e) {
       setGroupError({ id: g.id, message: describeError(e), action: "删除" });
@@ -626,6 +709,7 @@ export function AssetTree() {
     try {
       await assetApi.groupUpdate(g.id, undefined, null);
       await qc.invalidateQueries({ queryKey: ["groups"] });
+      void qc.invalidateQueries({ queryKey: ["asset-search"] });
       pushToast("success", `已将「${g.name}」移到根目录`);
     } catch (e) {
       setGroupError({ id: g.id, message: describeError(e), action: "修复" });
@@ -646,12 +730,12 @@ export function AssetTree() {
         };
     const primary: MenuItem[] = full
       ? [
-          {
-            kind: "item",
+          ...(!isInventoryOnlyKind(asset.kind) ? [{
+            kind: "item" as const,
             label: "连接",
             icon: <IconPlay size={13} />,
             onSelect: () => void connectAsset(asset),
-          },
+          }] : []),
           {
             kind: "item",
             label: "编辑",
@@ -875,13 +959,31 @@ export function AssetTree() {
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
+          title="批量维护"
+          aria-label="批量维护"
+          onClick={() => setBulkMaintenanceOpen(true)}
+        >
+          <IconServer size={14} />
+        </button>
+        <button
+          className="nx-icon-btn nx-icon-btn-sm"
           title="从 SSH 配置或 Termius 导入"
           aria-label="导入 SSH 主机与密钥"
           onClick={() => setImporting(true)}
         >
           <IconDownload size={14} />
         </button>
+        <button
+          className="nx-icon-btn nx-icon-btn-sm"
+          title="动态清单源：SSH config、Docker contexts、Kubernetes"
+          aria-label="动态清单源"
+          onClick={() => setInventoryOpen(true)}
+        >
+          <IconGlobe size={14} />
+        </button>
       </div>
+
+      <ProjectSelector groups={groups.data ?? []} />
 
       <div className="px-2 pb-2">
         <div className="nx-field">
@@ -903,6 +1005,13 @@ export function AssetTree() {
           />
         </div>
       </div>
+
+      {searchSummary && !listError && (
+        <div className="px-2 pb-1 text-[11px] text-neutral-500" role="status">
+          共 {searchSummary.total} 条匹配
+          {searchSummary.truncated ? `，仅返回前 ${searchSummary.returned} 条（结果已截断）` : ""}
+        </div>
+      )}
 
       <div
         ref={treeRef}
@@ -959,9 +1068,11 @@ export function AssetTree() {
               <div className="nx-hint px-2 py-8 text-center">
                 {query
                   ? "没有匹配的资产"
-                  : (assets.data?.length ?? 0) > 0
-                    ? "资产都隐藏了 — 点右上角眼睛按钮显示"
-                    : "还没有资产 — 点右上角的 + 新建一个"}
+                  : activeProject !== ALL_PROJECTS
+                    ? "当前筛选没有可见资产"
+                    : (assets.data?.length ?? 0) > 0
+                      ? "资产都隐藏了 — 点右上角眼睛按钮显示"
+                      : "还没有资产 — 点右上角的 + 新建一个"}
               </div>
             )}
           </>
@@ -991,6 +1102,7 @@ export function AssetTree() {
             setEditing("none");
             setPresetGroup(null);
             void qc.invalidateQueries({ queryKey: ["assets"] });
+            void qc.invalidateQueries({ queryKey: ["asset-search"] });
             void qc.invalidateQueries({ queryKey: ["groups"] });
             void qc.invalidateQueries({ queryKey: ["credentials"] });
           }}
@@ -1004,6 +1116,7 @@ export function AssetTree() {
           onSaved={() => {
             setEditingAsset(null);
             void qc.invalidateQueries({ queryKey: ["assets"] });
+            void qc.invalidateQueries({ queryKey: ["asset-search"] });
             void qc.invalidateQueries({ queryKey: ["credentials"] });
           }}
         />
@@ -1016,11 +1129,14 @@ export function AssetTree() {
           onRenamed={() => {
             setRenamingGroup(null);
             void qc.invalidateQueries({ queryKey: ["groups"] });
+            void qc.invalidateQueries({ queryKey: ["asset-search"] });
           }}
         />
       )}
       {snippetsOpen && <SnippetsPanel onClose={() => setSnippetsOpen(false)} />}
       {importing && <SshImportDialog onClose={() => setImporting(false)} />}
+      {inventoryOpen && <InventoryDialog onClose={() => setInventoryOpen(false)} />}
+      {bulkMaintenanceOpen && <BulkMaintenanceDialog sessions={sessions} onClose={() => setBulkMaintenanceOpen(false)} />}
       <ContextMenu
         state={
           rowMenu
@@ -1097,9 +1213,15 @@ function AssetRow({
   const compactActions = coarse || leftWidth - (level - 1) * 14 <= 225;
   const Icon = assetIcon(asset.kind, typeof asset.options?.icon === "string" ? asset.options.icon : undefined);
   const connecting = useUi((s) => s.connectingAssetIds.includes(asset.id));
+  const connectionProblem = useConnectionProblem(assetConnectionProblemKey(asset.id));
+  const managed = assetInventoryMetadata(asset);
+  const inventoryOnly = isInventoryOnlyKind(asset.kind);
   const label = asset.name;
   const target = asset.host ? `${asset.host}${asset.port ? `:${asset.port}` : ""}` : "";
-  const identity = target ? `${asset.username?.trim() ? `${asset.username.trim()}@` : ""}${target}` : asset.builtin ? "本机" : "";
+  const targetSummary = inventoryTargetText(asset.options);
+  const identity = target ? `${asset.username?.trim() ? `${asset.username.trim()}@` : ""}${target}` : targetSummary || (asset.builtin ? "本机" : "");
+  const env = asset.options?.env;
+  const envCount = env && typeof env === "object" && !Array.isArray(env) ? Object.keys(env).length : 0;
   const identityAreaRef = useRef<HTMLSpanElement>(null);
   const nameMeasureRef = useRef<HTMLSpanElement>(null);
   const identityMeasureRef = useRef<HTMLSpanElement>(null);
@@ -1124,10 +1246,12 @@ function AssetRow({
   }, [showIdentity, identity, label]);
   const tip = [
     asset.name,
-    target || (asset.builtin ? "本机" : ""),
+    target || targetSummary || (asset.builtin ? "本机" : ""),
+    managed ? `由 ${inventorySourceLabel(managed.source)} 管理 · 来源字段只读` : "",
     asset.builtin ? "内置资产 · 不可删除" : "",
     hidden ? "已隐藏" : "",
-    "双击连接 · 可拖入分组",
+    connectionProblem ? `连接失败：${connectionProblem.summary}` : "",
+    inventoryOnly ? "仅清单记录 · 终端接入未实现" : "双击连接 · 可拖入分组",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -1140,12 +1264,18 @@ function AssetRow({
       tabIndex={0}
       className={`nx-row nx-row-oneline nx-row-reserve-actions nx-asset-row ${hidden ? "opacity-55" : ""}`}
       onFocusCapture={onFocus}
-      draggable={!movingTarget}
+      draggable={!movingTarget && !managed}
       onDragStart={(e) => {
+        if (managed) {
+          e.preventDefault();
+          return;
+        }
         e.dataTransfer.setData(DRAG_ASSET, asset.id);
         e.dataTransfer.effectAllowed = "move";
       }}
-      onDoubleClick={() => void connectAsset(asset)}
+      onDoubleClick={() => {
+        if (!inventoryOnly) void connectAsset(asset);
+      }}
       onContextMenu={(e) => {
         e.preventDefault();
         onMore(e.clientX, e.clientY, coarse);
@@ -1154,7 +1284,7 @@ function AssetRow({
         if (e.target !== e.currentTarget) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          void connectAsset(asset);
+          if (!inventoryOnly) void connectAsset(asset);
           return;
         }
         treeRowKeyDown(e);
@@ -1174,8 +1304,25 @@ function AssetRow({
           <span ref={identityMeasureRef} className="nx-asset-row-identity-measure inline-block whitespace-nowrap text-[11px]">{identity}</span>
         </span>
       )}
+      {managed && <span className="nx-badge nx-badge-blue shrink-0" title={`由 ${inventorySourceLabel(managed.source)} 管理；来源字段只读`}>{inventorySourceLabel(managed.source)}</span>}
+      {envCount > 0 && <span className="nx-badge nx-badge-amber" title={`${envCount} 个环境变量`}>env {envCount}</span>}
       {hidden && <span className="nx-badge">已隐藏</span>}
       {asset.builtin && <span className="nx-badge nx-badge-blue">本机</span>}
+      {connectionProblem && !inventoryOnly && (
+        <button
+          type="button"
+          className="nx-badge nx-badge-red shrink-0 cursor-pointer"
+          title={`连接失败：${connectionProblem.summary}；点击重试`}
+          aria-label={`重试连接 ${asset.name}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            void connectAsset(asset);
+          }}
+          onDoubleClick={(event) => event.stopPropagation()}
+        >
+          连接失败 · 重试
+        </button>
+      )}
       {compactActions ? (
         <button
           className="nx-icon-btn nx-icon-btn-sm nx-row-more"
@@ -1192,7 +1339,7 @@ function AssetRow({
         </button>
       ) : (
         <span className="nx-row-actions" onDoubleClick={(e) => e.stopPropagation()}>
-          {connecting ? (
+          {!inventoryOnly && (connecting ? (
             <span
               className="nx-icon-btn nx-icon-btn-sm"
               title="连接中…"
@@ -1212,7 +1359,7 @@ function AssetRow({
             >
               <IconPlay size={12} />
             </button>
-          )}
+          ))}
           <button
             className="nx-icon-btn nx-icon-btn-sm"
             title="编辑"
@@ -1803,11 +1950,15 @@ export function AssetEditor({
   onClose: () => void;
   onSaved: (asset?: Asset) => void;
 }) {
+  const managed = assetInventoryMetadata(initial);
   const [name, setName] = useState(initial?.name ?? "");
   const [groupKind, setGroupKind] = useState<
-    "ssh" | "winrm" | "local" | "docker" | "mysql" | "postgres" | "redis"
+    "ssh" | "winrm" | "local" | "docker" | "docker-context" | "kubernetes" | "mysql" | "postgres" | "redis"
   >((initial?.kind as "ssh") ?? "ssh");
+  const inventoryOnly = isInventoryOnlyKind(groupKind);
   const [groupId, setGroupId] = useState<string | null>(initial?.groupId ?? presetGroupId ?? null);
+  const [tags, setTags] = useState(initial?.tags ?? "");
+  const [note, setNote] = useState(initial?.note ?? "");
   const [host, setHost] = useState(initial?.host ?? "");
   const [port, setPort] = useState(initial?.port ?? 22);
   const [username, setUsername] = useState(initial?.username ?? "root");
@@ -1822,6 +1973,11 @@ export function AssetEditor({
   );
   const [jumpAssetId, setJumpAssetId] = useState(
     typeof initial?.options?.jumpAssetId === "string" ? (initial.options.jumpAssetId as string) : "",
+  );
+  const [viaAssetId, setViaAssetId] = useState(
+    DATABASE_ASSET_KINDS.has(initial?.kind ?? "") && typeof initial?.options?.viaAssetId === "string"
+      ? (initial?.options?.viaAssetId as string)
+      : "",
   );
   const [proxyCommand, setProxyCommand] = useState(
     typeof initial?.options?.proxyCommand === "string" ? (initial.options.proxyCommand as string) : "",
@@ -1971,6 +2127,9 @@ export function AssetEditor({
   const jumpCandidates = (assets.data ?? []).filter(
     (a) => (a.kind === "ssh" || a.kind === "docker") && a.id !== initial?.id,
   );
+  const viaCandidates = (assets.data ?? []).filter(
+    (a) => a.kind === "ssh" && a.id !== initial?.id,
+  );
 
   const createGroupInline = async () => {
     const name = (await promptText("新建分组", ""))?.trim();
@@ -2009,7 +2168,7 @@ export function AssetEditor({
     if (!keyPath && boundCred?.refPath) setKeyPath(boundCred.refPath);
   }, [boundIsRefKey, boundCred?.refPath]);
 
-  const isDb = groupKind === "mysql" || groupKind === "postgres" || groupKind === "redis";
+  const isDb = DATABASE_ASSET_KINDS.has(groupKind);
   const keyAuth = authKind === "key";
   const usesCred = isDb || authKind === "password" || authKind === "keyboard-interactive";
   const credKind = "password";
@@ -2022,6 +2181,7 @@ export function AssetEditor({
   const editAddsVaultSecret =
     kind === "asset" &&
     !!initial &&
+    !managed &&
     ((usesCred && credChoice === "new" && password.length > 0) ||
       (keyAuth && keyOrigin === "ref" && passphrase.length > 0) ||
       (keyAuth && keyOrigin === "vault" && vaultMode === "new"));
@@ -2091,7 +2251,7 @@ export function AssetEditor({
 
   const save = async () => {
     if (savingRef.current) return;
-    if (kind === "asset" && groupKind !== "local") {
+    if (kind === "asset" && groupKind !== "local" && !inventoryOnly) {
       const nextHostError = validateAssetHost(hostRef.current);
       const nextPortError = validateAssetPort(portRef.current);
       setHostError(nextHostError);
@@ -2115,16 +2275,20 @@ export function AssetEditor({
         onSaved();
         return;
       }
-      const willWriteVault =
+      const willWriteVault = !managed && (
         (usesCred && credChoice === "new" && password.length > 0) ||
         (keyAuth && keyOrigin === "ref" && (passphrase.length > 0 || boundIsRefKey)) ||
-        (keyAuth && keyOrigin === "vault" && vaultMode === "new");
+        (keyAuth && keyOrigin === "vault" && vaultMode === "new")
+      );
       if (willWriteVault && !(await ensureVaultReady("保存凭据前需要解锁凭据库"))) return;
       let finalKeyPath: string | null = null;
       let credId: string | null = null;
       const reuseCredId = boundIsVaultKey ? (initial?.credId ?? undefined) : undefined;
       const credLabel = credName.trim() || name.trim();
-      if (keyAuth) {
+      if (managed) {
+        finalKeyPath = initial?.keyPath ?? null;
+        credId = initial?.credId ?? null;
+      } else if (keyAuth) {
         if (keyOrigin === "ref") {
           const path = keyPath.trim();
           if (!path && !initial) {
@@ -2196,20 +2360,24 @@ export function AssetEditor({
           : groupKind === "ssh" || groupKind === "docker"
             ? sshConnectivityOptions()
             : { ...(initial?.options ?? {}) };
+      if (isDb && viaAssetId) baseOptions.viaAssetId = viaAssetId;
+      else delete baseOptions.viaAssetId;
       if (icon.trim()) baseOptions.icon = icon.trim();
       else delete baseOptions.icon;
       const options = baseOptions;
       const fields = {
-        kind: groupKind,
-        name,
-        groupId,
-        host: groupKind === "local" ? null : host,
-        port: groupKind === "local" ? null : Number(port),
-        username: groupKind === "local" ? null : username,
-        authKind: groupKind === "local" ? "none" : authKind,
-        keyPath: keyAuth ? finalKeyPath : null,
+        kind: managed ? initial?.kind ?? groupKind : groupKind,
+        name: managed ? initial?.name ?? name : name,
+        groupId: managed ? initial?.groupId ?? null : groupId,
+        host: managed ? initial?.host ?? null : groupKind === "local" ? null : host,
+        port: managed ? initial?.port ?? null : groupKind === "local" ? null : Number(port),
+        username: managed ? initial?.username ?? null : groupKind === "local" ? null : username,
+        authKind: managed ? initial?.authKind ?? null : groupKind === "local" ? "none" : authKind,
+        keyPath: managed ? initial?.keyPath ?? null : keyAuth ? finalKeyPath : null,
         credId,
         options,
+        tags: normalizeAssetTags(tags),
+        note,
       };
       const saved = initial
         ? await assetApi.update({ id: initial.id, ...fields })
@@ -2337,13 +2505,18 @@ export function AssetEditor({
           className="nx-modal-body min-h-0 flex-1 overflow-y-auto"
           onChange={() => setDirty(true)}
         >
+          {managed && (
+            <div className="mb-3 rounded-md border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-[12px] text-blue-300" role="note">
+              由 {inventorySourceLabel(managed.source)} 动态管理。名称、分组、端点、认证与来源选项只读；图标、标签、备注及其他用户选项可编辑。
+            </div>
+          )}
           {kind === "asset" && (
             <div className="nx-form-row">
               <label className="nx-label">类型</label>
               <select
                 className="nx-select"
                 value={groupKind}
-                disabled={initial?.builtin}
+                disabled={initial?.builtin || managed !== null}
                 onChange={(e) => {
                   const v = e.target.value as typeof groupKind;
                   setGroupKind(v);
@@ -2357,7 +2530,7 @@ export function AssetEditor({
                 }}
               >
                 {Object.entries(KIND_LABEL)
-                  .filter(([k]) => k !== "local" || !isMobile() || initial?.builtin === true)
+                  .filter(([k]) => (k !== "local" || !isMobile() || initial?.builtin === true) && (!isInventoryOnlyKind(k) || initial?.kind === k))
                   .map(([k, label]) => (
                     <option key={k} value={k}>
                       {label}
@@ -2413,6 +2586,7 @@ export function AssetEditor({
               ref={nameInputRef}
               className="nx-input"
               value={name}
+              disabled={managed !== null}
               onChange={(e) => (kind === "group" ? setName(e.target.value) : syncCredName(e.target.value))}
               placeholder={kind === "group" ? "生产环境" : "web-01"}
             />
@@ -2485,6 +2659,7 @@ export function AssetEditor({
                 <select
                   className="nx-select"
                   value={groupId ?? ""}
+                  disabled={managed !== null}
                   onChange={(e) => setGroupId(e.target.value || null)}
                 >
                   <option value="">{kind === "group" ? "（根目录）" : "（不分组）"}</option>
@@ -2494,7 +2669,7 @@ export function AssetEditor({
                     </option>
                   ))}
                 </select>
-                {kind === "asset" && <button
+                {kind === "asset" && !managed && <button
                   type="button"
                   className="nx-btn nx-btn-outline shrink-0"
                   onClick={() => void createGroupInline()}
@@ -2502,6 +2677,16 @@ export function AssetEditor({
                   <IconPlus size={11} />
                   新建分组
                 </button>}
+              </div>
+            </div>
+          )}
+
+          {kind === "asset" && inventoryOnly && (
+            <div className="nx-form-row">
+              <span className="nx-label">来源目标</span>
+              <div className="rounded-md border border-neutral-800/70 bg-neutral-950/40 px-3 py-2 text-[12px] text-neutral-400">
+                <div className="break-all">{initial?.host || inventoryTargetText(initial?.options) || "仅清单记录"}</div>
+                <div className="nx-hint mt-1">此类型只用于动态清单展示，终端接入未实现；来源目标由同步更新。</div>
               </div>
             </div>
           )}
@@ -2532,8 +2717,9 @@ export function AssetEditor({
             </>
           )}
 
-          {kind === "asset" && groupKind !== "local" && (
+          {kind === "asset" && groupKind !== "local" && !inventoryOnly && (
             <>
+              <fieldset disabled={managed !== null} className="contents">
               <div className="mb-3 flex gap-2">
                 <div className="min-w-0 flex-1">
                   <label className="nx-label" htmlFor={hostInputId}>主机</label>
@@ -2620,6 +2806,31 @@ export function AssetEditor({
                     <option value="key">私钥文件</option>
                     <option value="agent">SSH Agent</option>
                   </select>
+                </div>
+              )}
+
+              {isDb && (
+                <div className="nx-form-row">
+                  <label className="nx-label">通过SSH资产连接</label>
+                  <select
+                    className="nx-select"
+                    aria-label="通过SSH资产连接"
+                    value={viaAssetId}
+                    onChange={(e) => setViaAssetId(e.target.value)}
+                  >
+                    <option value="">（直连，不通过SSH）</option>
+                    {viaAssetId && !viaCandidates.some((a) => a.id === viaAssetId) && (
+                      <option value={viaAssetId}>当前配置的SSH资产（不在可选列表）</option>
+                    )}
+                    {viaCandidates.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}（{a.host}:{a.port}）
+                      </option>
+                    ))}
+                  </select>
+                  <div className="nx-hint mt-1.5">
+                    ↳ 默认直连；选择后使用该资产已建立的 SSH 连接，不会自动连接 SSH。资产归属、类型和连接状态仍由后端校验。
+                  </div>
                 </div>
               )}
 
@@ -2846,6 +3057,7 @@ export function AssetEditor({
                   ) : null}
                 </div>
               )}
+              </fieldset>
 
               {(groupKind === "ssh" || groupKind === "docker") && (
                 <div className="mt-3 border-t border-neutral-800/60 pt-2.5">
@@ -2870,6 +3082,7 @@ export function AssetEditor({
                         <select
                           className="nx-select"
                           value={jumpAssetId}
+                          disabled={managed !== null}
                           onChange={(e) => setJumpAssetId(e.target.value)}
                         >
                           <option value="">（不使用跳板机）</option>
@@ -3006,6 +3219,30 @@ export function AssetEditor({
                   )}
                 </div>
               )}
+            </>
+          )}
+          {kind === "asset" && (
+            <>
+              <div className="nx-form-row">
+                <label className="nx-label">标签</label>
+                <input
+                  className="nx-input"
+                  value={tags}
+                  onChange={(e) => setTags(e.target.value)}
+                  placeholder="用逗号分隔，如 production, 欧洲"
+                />
+                <div className="nx-hint mt-1.5">保存时会去除首尾空格并合并重复标签；已有标签内容不会被后台改写。</div>
+              </div>
+              <div className="nx-form-row">
+                <label className="nx-label">备注</label>
+                <textarea
+                  className="nx-textarea"
+                  rows={3}
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="备注（可选）"
+                />
+              </div>
             </>
           )}
           {saveError && (

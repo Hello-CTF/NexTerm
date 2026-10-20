@@ -76,8 +76,12 @@ func (b *CommandBackend) ListContainerDTOs(ctx context.Context, all bool) ([]Con
 	result := make([]ContainerSummary, 0, len(rows))
 	for _, row := range rows {
 		var project *string
-		if value, ok := cliLabel(row.Labels, "com.docker.compose.project"); ok {
+		if value, ok := cliLabel(row.Labels, composeProjectLabel); ok {
 			project = &value
+		}
+		var service *string
+		if value, ok := cliLabel(row.Labels, composeServiceLabel); ok {
+			service = &value
 		}
 		result = append(result, ContainerSummary{
 			ID:             row.ID,
@@ -87,6 +91,7 @@ func (b *CommandBackend) ListContainerDTOs(ctx context.Context, all bool) ([]Con
 			Status:         row.Status,
 			Ports:          row.Ports,
 			ComposeProject: project,
+			ComposeService: service,
 		})
 	}
 	return result, nil
@@ -345,13 +350,15 @@ func (b *CommandBackend) command(args []string) string {
 }
 
 type cliContainer struct {
-	ID     string `json:"ID"`
-	Names  string `json:"Names"`
-	Image  string `json:"Image"`
-	State  string `json:"State"`
-	Status string `json:"Status"`
-	Ports  string `json:"Ports"`
-	Labels string `json:"Labels"`
+	ID       string `json:"ID"`
+	Names    string `json:"Names"`
+	Image    string `json:"Image"`
+	State    string `json:"State"`
+	Status   string `json:"Status"`
+	Ports    string `json:"Ports"`
+	Labels   string `json:"Labels"`
+	Mounts   string `json:"Mounts"`
+	Networks string `json:"Networks"`
 }
 
 type cliImage struct {

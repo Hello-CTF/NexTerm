@@ -22,7 +22,7 @@ func TestProductionHostKeyRemoveKeepsIndentedFileFormat(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	path := filepath.Join(dir, "hostkeys.json")
-	keys, err := newProductionHostKeyStore(path, database)
+	keys, err := newProductionHostKeyStore(ctx, path, database, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestProductionHostKeyAcceptFailureRestoresFile(t *testing.T) {
 				t.Fatal(err)
 			}
 			path := filepath.Join(dir, "hostkeys.json")
-			keys, err := newProductionHostKeyStore(path, database)
+			keys, err := newProductionHostKeyStore(ctx, path, database, true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -143,7 +143,7 @@ func TestProductionHostKeyRemoveFailureRestoresFile(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	path := filepath.Join(dir, "hostkeys.json")
-	keys, err := newProductionHostKeyStore(path, database)
+	keys, err := newProductionHostKeyStore(ctx, path, database, true)
 	if err != nil {
 		t.Fatal(err)
 	}

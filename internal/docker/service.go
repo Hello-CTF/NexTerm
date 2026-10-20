@@ -39,6 +39,11 @@ type Service struct {
 	auditor      Auditor
 	config       Config
 	streams      *streamRegistry
+
+	composeMu     sync.Mutex
+	composeProbes map[string]*composeProbe
+	pruneMu       sync.Mutex
+	prunePreviews map[string]storedPrunePreview
 }
 
 func NewService(provider BackendProvider, options ...ServiceOption) *Service {
@@ -386,6 +391,8 @@ func (s *Service) recordAudit(ctx context.Context, event AuditEvent) {
 }
 
 func (s *Service) CloseSession(sessionID string) error {
+	s.clearComposeProbe(sessionID)
+	s.clearPrunePreviews(sessionID)
 	streamErr := s.streams.closeSession(sessionID)
 	if closer, ok := s.provider.(interface{ CloseSession(string) error }); ok {
 		return errors.Join(streamErr, closer.CloseSession(sessionID))
@@ -394,6 +401,12 @@ func (s *Service) CloseSession(sessionID string) error {
 }
 
 func (s *Service) Close() error {
+	s.composeMu.Lock()
+	s.composeProbes = nil
+	s.composeMu.Unlock()
+	s.pruneMu.Lock()
+	s.prunePreviews = nil
+	s.pruneMu.Unlock()
 	streamErr := s.streams.closeAll()
 	if closer, ok := s.provider.(interface{ Close() error }); ok {
 		return errors.Join(streamErr, closer.Close())

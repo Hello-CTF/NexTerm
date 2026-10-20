@@ -21,6 +21,7 @@ import (
 type Service struct {
 	provider         DialerProvider
 	sessionHost      func(context.Context, string) (string, error)
+	rules            RuleStore
 	env              Environment
 	reconnect        ReconnectPolicy
 	dialTimeout      time.Duration
@@ -32,6 +33,7 @@ type Service struct {
 
 	ctx       context.Context
 	cancel    context.CancelFunc
+	ruleMu    sync.Mutex
 	mu        sync.Mutex
 	forwards  map[string]*forwarder
 	closed    bool
@@ -65,6 +67,7 @@ func NewService(config Config) *Service {
 	return &Service{
 		provider:         config.Provider,
 		sessionHost:      config.SessionHost,
+		rules:            config.Rules,
 		env:              config.Policy.Environment(),
 		reconnect:        reconnect,
 		dialTimeout:      config.DialTimeout,
@@ -267,6 +270,10 @@ func (s *Service) create(ctx context.Context, sessionID, hostID, kind string, li
 }
 
 func (s *Service) start(requestCtx context.Context, sessionID, hostID, kind string, listener net.Listener, listenHost, target string, targetHost *string, targetPort *uint16) (Spec, error) {
+	return s.startWithID(requestCtx, "", sessionID, hostID, kind, listener, listenHost, target, targetHost, targetPort)
+}
+
+func (s *Service) startWithID(requestCtx context.Context, id, sessionID, hostID, kind string, listener net.Listener, listenHost, target string, targetHost *string, targetPort *uint16) (Spec, error) {
 	_, portText, err := net.SplitHostPort(listener.Addr().String())
 	if err != nil {
 		_ = listener.Close()
@@ -278,7 +285,10 @@ func (s *Service) start(requestCtx context.Context, sessionID, hostID, kind stri
 		return Spec{}, ipc.WrapError(ipc.CodeIO, "转发监听端口无效", err)
 	}
 
-	id := ids.New()
+	ruleID := id
+	if id == "" {
+		id = ids.New()
+	}
 	spec := Spec{
 		ID:         id,
 		SessionID:  sessionID,
@@ -292,6 +302,7 @@ func (s *Service) start(requestCtx context.Context, sessionID, hostID, kind stri
 		CreatedAt:  s.now().UnixMilli(),
 	}
 	f := s.newForwarder(requestCtx, spec, ipc.OwnerID(requestCtx), target, listener)
+	f.ruleID = ruleID
 
 	f.wg.Add(1)
 	s.mu.Lock()
@@ -363,14 +374,39 @@ func (s *Service) list(owner string) []Spec {
 }
 
 func (s *Service) Remove(id string) error {
+	if ruleID, ok := s.savedRuntime(id); ok {
+		_, err := s.StopRule(context.Background(), ruleID)
+		return err
+	}
 	return s.remove("", id)
 }
 
 func (s *Service) RemoveFor(ctx context.Context, id string) error {
+	if ruleID, ok := s.savedRuntime(id); ok {
+		_, err := s.StopRule(ctx, ruleID)
+		return err
+	}
 	return s.remove(ipc.OwnerID(ctx), id)
 }
 
 func (s *Service) RetryFor(ctx context.Context, id, sessionID string) (Spec, error) {
+	if ruleID, ok := s.savedRuntime(id); ok {
+		if sessionID == "" {
+			s.mu.Lock()
+			if f := s.forwards[ruleID]; f != nil {
+				sessionID = f.spec.SessionID
+			}
+			s.mu.Unlock()
+		}
+		if _, err := s.StartRule(ctx, ruleID, sessionID); err != nil {
+			return Spec{}, err
+		}
+		spec, ok := s.runtimeForRule(ctx, ruleID)
+		if !ok {
+			return Spec{}, ipc.NewError(ipc.CodeNotFound, "转发规则运行时不存在或已移除")
+		}
+		return spec, nil
+	}
 	return s.retry(ctx, ipc.OwnerID(ctx), id, sessionID)
 }
 
@@ -448,6 +484,7 @@ func (s *Service) retry(ctx context.Context, owner, id, requestedSessionID strin
 	spec.Status = StatusActive
 	spec.Error = ""
 	replacement := s.newForwarder(ctx, spec, previous.owner, previous.target, listener)
+	replacement.ruleID = previous.ruleID
 	replacement.wg.Add(1)
 	s.mu.Lock()
 	if s.closed || s.forwards[id] != previous || previous.spec.Status != StatusReconnecting {
@@ -636,6 +673,7 @@ func (s *Service) openUpstream(ctx context.Context, sessionID, target string) (n
 
 type forwarder struct {
 	id        string
+	ruleID    string
 	sessionID string
 	owner     string
 	kind      string

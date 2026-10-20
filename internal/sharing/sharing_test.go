@@ -62,7 +62,11 @@ func (f *serviceFixture) createSuperadmin(t *testing.T, username string) *accoun
 }
 
 func (f *serviceFixture) identity(user *account.User) *account.Identity {
-	return &account.Identity{UserID: user.ID, Role: user.Role, State: user.State}
+	_, session, err := f.accounts.IssueSession(context.Background(), user.ID, "")
+	if err != nil {
+		panic(err)
+	}
+	return &account.Identity{UserID: user.ID, SessionID: session.ID, Role: user.Role, State: user.State}
 }
 
 func (f *serviceFixture) createDevice(t *testing.T, owner *account.User, name string) string {

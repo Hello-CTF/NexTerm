@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/fs/chunked"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/pkg/sftp"
 )
@@ -188,6 +189,50 @@ func TestSFTPHomeExpansion(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(root, "home.txt"))
 	if err != nil || string(data) != "home" {
 		t.Fatalf("home file = %q, %v", data, err)
+	}
+}
+
+func TestSFTPChunkedUploadPreservesTargetMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits are not available on Windows")
+	}
+	for _, mode := range []os.FileMode{0o600, 0o755} {
+		t.Run(mode.String(), func(t *testing.T) {
+			filesystem, root := newTestFS(t, nil)
+			remote := filepath.Join(root, "mode.bin")
+			if err := os.WriteFile(remote, []byte("old"), mode); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(remote, mode); err != nil {
+				t.Fatal(err)
+			}
+			upload, err := chunked.New("00000000000000000000000001", remote, 4, 4)
+			if err != nil {
+				t.Fatal(err)
+			}
+			digest := sha256.Sum256([]byte("new!"))
+			if _, err := upload.WriteChunk(context.Background(), filesystem, chunked.Chunk{
+				Index: 0, Size: 4, SHA256: hex.EncodeToString(digest[:]), Data: []byte("new!"),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			part := chunked.StagingPath(remote, "00000000000000000000000001", "part-000000000000")
+			if !strings.HasPrefix(filepath.Base(part), ".") {
+				t.Fatalf("staging path is not hidden: %s", part)
+			}
+			info, err := os.Stat(part)
+			if err != nil || info.Mode().Perm() != 0o600 {
+				t.Fatalf("staging mode = %v, %v", info.Mode(), err)
+			}
+			if _, err := upload.Commit(context.Background(), filesystem); err != nil {
+				t.Fatal(err)
+			}
+			info, err = os.Stat(remote)
+			if err != nil || info.Mode().Perm() != mode {
+				t.Fatalf("committed mode = %v, %v; want %v", info.Mode(), err, mode)
+			}
+			assertRemoteContent(t, filesystem, remote, "new!")
+		})
 	}
 }
 

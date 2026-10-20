@@ -8,7 +8,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
 	"github.com/Hello-CTF/NexTerm/internal/docker"
 	"github.com/Hello-CTF/NexTerm/internal/store"
-	"github.com/Hello-CTF/NexTerm/internal/tasks"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
@@ -20,12 +19,6 @@ func closeStoreComponent(store *store.Store, agent *agent.Runner) Component {
 			}
 		}
 		return store.Close()
-	}}
-}
-
-func closeTasksComponent(manager *tasks.Manager) Component {
-	return ComponentFuncs{ShutdownFunc: func(ctx context.Context) error {
-		return manager.Close(ctx)
 	}}
 }
 

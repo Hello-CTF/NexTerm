@@ -6,6 +6,13 @@ import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import { insertSnippet, executeSnippet, type Snippet } from "./snippetInsert";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
+import { useSnippetVariablePrompt } from "./SnippetVariablePrompt";
+import { RunbookPanel } from "./RunbookPanel";
+import {
+  analyzeSnippetTemplate,
+  renderSnippetTemplate,
+  type SnippetAsset,
+} from "./snippetVariables";
 import {
   IconCommand,
   IconEdit,
@@ -17,10 +24,22 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 
+function activeTerminalAssetId(): string | undefined {
+  const state = useUi.getState();
+  const workspace =
+    state.workspaces.find((candidate) => candidate.id === state.activeWorkspaceId) ??
+    state.workspaces[state.workspaces.length - 1];
+  const pane = workspace?.panes.find((candidate) => candidate.id === workspace.activePaneId) ?? workspace?.panes[0];
+  const tab = pane?.tabs.find((candidate) => candidate.id === pane.activeTabId);
+  return tab?.assetId ?? workspace?.assetId;
+}
+
 export function SnippetsPanel({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const pushToast = useUi((s) => s.pushToast);
+  const { promptForValues, promptElement, prompting } = useSnippetVariablePrompt();
   const [editing, setEditing] = useState<Snippet | "new" | null>(null);
+  const [runbookOpen, setRunbookOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
@@ -34,13 +53,44 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
 
   const refresh = () => void qc.invalidateQueries({ queryKey: ["snippets"] });
 
-  const insert = async (s: Snippet) => {
-    if (await insertSnippet(s)) onClose();
+  const prepareBody = async (s: Snippet): Promise<string | null> => {
+    try {
+      const analysis = analyzeSnippetTemplate(s.body);
+      if (!analysis.hasVariables) return s.body;
+      if (analysis.unknownVariables.length > 0) {
+        pushToast("error", `未知变量：${analysis.unknownVariables.map((name) => `「${name}」`).join("、")}`);
+        return null;
+      }
+      let asset: SnippetAsset | undefined;
+      const assetId = analysis.usesAsset ? activeTerminalAssetId() : undefined;
+      if (assetId) {
+        try {
+          asset = await assetApi.get(assetId);
+        } catch (cause) {
+          pushToast("error", `资产信息加载失败：${describeError(cause)}`);
+          return null;
+        }
+      }
+      const values = await promptForValues(`填写片段变量 · ${s.name}`, analysis.variables);
+      if (values === null) return null;
+      return renderSnippetTemplate(s.body, values, asset);
+    } catch (cause) {
+      pushToast("error", `变量解析失败：${describeError(cause)}`);
+      return null;
+    }
   };
 
-  const execute = async (s: Snippet) => {
-    if (await executeSnippet(s)) onClose();
+  const run = async (s: Snippet, action: "insert" | "execute") => {
+    if (prompting) return;
+    const body = await prepareBody(s);
+    if (body === null) return;
+    const rendered = { ...s, body };
+    if (await (action === "insert" ? insertSnippet(rendered) : executeSnippet(rendered))) onClose();
   };
+
+  const insert = async (s: Snippet) => run(s, "insert");
+
+  const execute = async (s: Snippet) => run(s, "execute");
 
   const remove = async (s: Snippet) => {
     if (deletingId) return;
@@ -180,6 +230,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
         </div>
         <div className="nx-modal-footer shrink-0">
           <span className="nx-hint mr-auto">插入仅写入输入行，不自动执行；执行会在写入后回车提交；包含回车、换行或控制字符时需先确认。</span>
+          <button type="button" className="nx-btn" onClick={() => setRunbookOpen(true)}>Runbook</button>
           <button className="nx-btn nx-btn-ghost" onClick={onClose}>
             关闭
           </button>
@@ -195,6 +246,8 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
           }}
         />
       )}
+      {runbookOpen && <RunbookPanel snippets={snippets.data ?? []} onClose={() => setRunbookOpen(false)} />}
+      {promptElement}
     </div>
   );
 }
@@ -321,7 +374,8 @@ function SnippetEditor({
               aria-describedby={hintId}
             />
             <div id={hintId} className="nx-hint mt-1.5">
-              ↳ 插入仅写入输入行，不自动执行；执行会在写入后回车提交；包含回车、换行或控制字符时需先确认。
+              <div>变量：{"{{service}}"} 必填，{"{{service=nginx}}"} 设默认值，{"{{service|multiline}}"} 使用多行输入；内建变量：{"{{asset.name}}"}、{"{{asset.host}}"}、{"{{asset.tags}}"}。</div>
+              <div className="mt-1">↳ 插入仅写入输入行，不自动执行；执行会在写入后回车提交；包含回车、换行或控制字符时需先确认。</div>
             </div>
           </div>
           {error && (

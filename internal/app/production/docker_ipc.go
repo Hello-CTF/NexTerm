@@ -184,6 +184,7 @@ func (s *terminalCommandService) registerDocker(dispatcher *ipc.Dispatcher) erro
 				return value, terminalIPCError(err)
 			})
 		},
+		func() error { return s.registerDockerMaintenance(dispatcher) },
 	}
 	for _, register := range registrations {
 		if err := register(); err != nil {

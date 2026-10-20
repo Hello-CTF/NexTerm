@@ -241,13 +241,20 @@ func (s *Service) loadValidHostShares(ctx context.Context, deviceID, recipientID
 	return shares, nil
 }
 
+// HostGrant is the registered-recipient authorization snapshot. RecipientSessionID binds the authentication session,
+// not the terminal session and never the raw session cookie.
+type HostGrant struct {
+	Grant
+	RecipientSessionID string
+}
+
 // AuthorizeTerminalOpen verifies that a registered user may open a new terminal on the device through the host agent:
 // the device is not revoked, at least one unexpired unrevoked share exists, and the daemon is online; only when all hold does it
 // return the authorization snapshot and write an audit; with multiple valid shares stacked, permission and expiry are computed
 // by the level union of unionHostShares.
-func (s *Service) AuthorizeTerminalOpen(ctx context.Context, identity *account.Identity, deviceID string) (*Grant, error) {
+func (s *Service) AuthorizeTerminalOpen(ctx context.Context, identity *account.Identity, deviceID string) (*HostGrant, error) {
 	grant, err := s.loadGrant(ctx, deviceID)
-	deny := func(reason string, decision error) (*Grant, error) {
+	deny := func(reason string, decision error) (*HostGrant, error) {
 		auditErr := s.audit(ctx, auditKindHostTerminal, auditPayload{
 			Action: "open_terminal", DeviceID: deviceID, Recipient: identity.UserID,
 			Requester: identity.UserID, Outcome: "deny", Reason: reason,
@@ -266,6 +273,9 @@ func (s *Service) AuthorizeTerminalOpen(ctx context.Context, identity *account.I
 	}
 	if grant.revoked {
 		return deny("device_revoked", ipc.NewError(ipc.CodeForbidden, "设备已吊销"))
+	}
+	if err := s.validateHostRecipientSession(ctx, identity.UserID, identity.SessionID); err != nil {
+		return deny("recipient_session", err)
 	}
 	shares, err := s.loadValidHostShares(ctx, deviceID, identity.UserID)
 	if err != nil {
@@ -289,26 +299,53 @@ func (s *Service) AuthorizeTerminalOpen(ctx context.Context, identity *account.I
 	}); err != nil {
 		return nil, err
 	}
-	return &Grant{
-		ShareIDs:   shareIDs,
-		DeviceID:   deviceID,
-		OwnerID:    grant.userID,
-		Recipient:  identity.UserID,
-		Permission: permission,
-		ExpiresAt:  expiresAt,
+	return &HostGrant{
+		Grant: Grant{
+			ShareIDs:   shareIDs,
+			DeviceID:   deviceID,
+			OwnerID:    grant.userID,
+			Recipient:  identity.UserID,
+			Permission: permission,
+			ExpiresAt:  expiresAt,
+		},
+		RecipientSessionID: identity.SessionID,
 	}, nil
 }
 
-// RevalidateHostAccess re-reads host share rows by ShareIDs and verifies device/recipient binding:
-// it first uses checkDeviceBinding to verify current device ownership and revocation state, then drops revoked or expired
-// share rows and recomputes the union over the remaining rows (permission may shrink to read, and the expiry follows the rows still backing that permission level);
-// if everything is invalid it denies. Returns the refreshed Grant, shared by the server-side input check and the agent
-// recheck, never trusting the snapshot from issuance.
-func (s *Service) RevalidateHostAccess(ctx context.Context, grant *Grant) (*Grant, error) {
+func (s *Service) validateHostRecipientSession(ctx context.Context, userID, sessionID string) error {
+	if userID == "" || sessionID == "" {
+		return ipc.NewError(ipc.CodeForbidden, "接收者会话已失效，请重新登录")
+	}
+	user, err := s.accounts.GetUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user.State != account.StateActive {
+		return ipc.NewError(ipc.CodeForbidden, "接收者账号不可用")
+	}
+	sessions, err := s.accounts.ListUserSessions(ctx, userID)
+	if err != nil {
+		return err
+	}
+	for _, session := range sessions {
+		if session.ID == sessionID {
+			return nil
+		}
+	}
+	return ipc.NewError(ipc.CodeForbidden, "接收者会话已失效，请重新登录")
+}
+
+// RevalidateHostAccess re-reads host share rows by ShareIDs and verifies device/recipient/session binding:
+// it first validates the authentication session and current device ownership, then drops revoked or expired share rows and
+// recomputes the union over the remaining rows. Permission may shrink to read, and the expiry follows the rows still backing that level.
+func (s *Service) RevalidateHostAccess(ctx context.Context, grant *HostGrant) (*HostGrant, error) {
 	if grant == nil || len(grant.ShareIDs) == 0 || grant.Recipient == "" {
 		return nil, ipc.NewError(ipc.CodeForbidden, "没有该设备的有效分享")
 	}
-	if _, err := s.checkDeviceBinding(ctx, grant); err != nil {
+	if err := s.validateHostRecipientSession(ctx, grant.Recipient, grant.RecipientSessionID); err != nil {
+		return nil, err
+	}
+	if _, err := s.checkDeviceBinding(ctx, &grant.Grant); err != nil {
 		return nil, err
 	}
 	now := s.now()
@@ -365,14 +402,18 @@ func hostShareDenyMessage(reason string) string {
 }
 
 // NewHostGate builds the enforcement Gate for registered share terminals: per block it refreshes the authorization from current rows
-// via RevalidateHostAccess; permission shrinkage (read_write -> read) takes effect immediately - input stops, output
-// continues under valid read rows; share or device revocation stops both directions. Future connection slices should build their data path through this
-// constructor instead of holding a Grant snapshot directly.
-func (s *Service) NewHostGate(grant *Grant, options ...GateOption) *Gate {
+// and the bound authentication session; permission shrinkage (read_write -> read) takes effect immediately - input stops, output
+// continues under valid read rows; share/device/session revocation stops both directions.
+func (s *Service) NewHostGate(grant *HostGrant, options ...GateOption) *Gate {
+	recipientSessionID := grant.RecipientSessionID
 	wired := []GateOption{
 		WithRecheck(func(ctx context.Context, current *Grant) (*Grant, error) {
-			return s.RevalidateHostAccess(ctx, current)
+			refreshed, err := s.RevalidateHostAccess(ctx, &HostGrant{Grant: *current, RecipientSessionID: recipientSessionID})
+			if err != nil {
+				return nil, err
+			}
+			return &refreshed.Grant, nil
 		}),
 	}
-	return NewGate(grant, append(wired, options...)...)
+	return NewGate(&grant.Grant, append(wired, options...)...)
 }

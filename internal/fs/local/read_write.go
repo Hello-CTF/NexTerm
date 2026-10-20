@@ -154,7 +154,7 @@ func (f *FileSystem) OpenWrite(ctx context.Context, path string, appendMode bool
 	} else {
 		flags |= os.O_TRUNC
 	}
-	file, err := os.OpenFile(real(path), flags, 0o666)
+	file, err := os.OpenFile(real(path), flags, 0o600)
 	if err != nil {
 		return nil, err
 	}

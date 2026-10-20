@@ -326,7 +326,7 @@ func TestProductionSessionProbeHostKeyJumpFailures(t *testing.T) {
 	response := dispatchHostKeyTest(t, production, "session_probe_host_key", `{"args":{"assetId":"`+targetAssetID+`"}}`)
 	acceptHostKeyTest(t, production, requireHostKeyPending(t, response, false))
 	response = dispatchHostKeyTest(t, production, "session_probe_host_key", `{"args":{"assetId":"`+targetAssetID+`"}}`)
-	detail := requireSSHErrorDetail(t, response, ipc.CodeSSH, "auth")
+	detail := requireSSHErrorDetail(t, response, ipc.Code("auth"), "auth")
 	if detail.Host != "127.0.0.1" || detail.Port != jump.port() {
 		t.Fatalf("jump auth failure detail = %+v", detail)
 	}
@@ -580,7 +580,7 @@ func TestProductionSessionConnectErrorClassification(t *testing.T) {
 
 	authID := createProbeTestAsset(t, production, `"host":"127.0.0.1","port":`+itoa(server.port())+`,"username":"intruder","authKind":"password"`)
 	response = dispatchHostKeyTest(t, production, "session_connect", `{"args":{"assetId":"`+authID+`","acceptHostKey":true}}`)
-	requireSSHErrorDetail(t, response, ipc.CodeSSH, "auth")
+	requireSSHErrorDetail(t, response, ipc.Code("auth"), "auth")
 
 	stalling := stallingProxyListener(t)
 	timeoutID := createProbeTestAsset(t, production, `"host":"127.0.0.1","port":`+strconv.Itoa(stalling.Addr().(*net.TCPAddr).Port)+`,"username":"test","authKind":"password","options":{"connectTimeout":1}`)

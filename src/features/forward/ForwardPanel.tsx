@@ -6,6 +6,7 @@ import { forwardApi, type ForwardSpec } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
+import { ForwardRules } from "./ForwardRules";
 import {
   IconDownload,
   IconGlobe,
@@ -752,6 +753,12 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
           </>
         )}
       </div>
+      <ForwardRules
+        sessionId={sessionId}
+        draft={{ listenPort, targetHost, targetPort }}
+        canSave={kind === "local" && Boolean(sessionId) && !localSession && !unavailable && Boolean(env.data)}
+        visible={visible}
+      />
     </div>
   );
 }

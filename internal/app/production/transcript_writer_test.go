@@ -56,6 +56,21 @@ func waitForTranscriptChunks(t *testing.T, database *store.Store, id string, cou
 	t.Fatalf("transcript %s did not reach %d chunks: row=%+v err=%v", id, count, row, err)
 }
 
+func waitForTranscriptQueueChunks(t *testing.T, writer *transcriptWriter, count int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		writer.queueMu.Lock()
+		queued := writer.queuedChunks
+		writer.queueMu.Unlock()
+		if queued == count {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("transcript queue did not reach %d chunks", count)
+}
+
 func readTranscriptAll(t *testing.T, database *store.Store, id string) []store.TranscriptChunkRow {
 	t.Helper()
 	var result []store.TranscriptChunkRow
@@ -184,7 +199,7 @@ func TestTranscriptWriterHighThroughputOrdering(t *testing.T) {
 		total, total*len(payload)>>20, enqueueElapsed, elapsed)
 }
 
-func TestTranscriptWriterBackpressureBlocksUntilDrain(t *testing.T) {
+func TestTranscriptWriterBackpressureDropsWithoutBlocking(t *testing.T) {
 	ctx := context.Background()
 	database, err := store.OpenInMemory(ctx)
 	if err != nil {
@@ -196,38 +211,41 @@ func TestTranscriptWriterBackpressureBlocksUntilDrain(t *testing.T) {
 	})
 	writer.SessionStarted(ctx, transcriptIdentity("session-backpressure"))
 	payload := bytes.Repeat([]byte("y"), 1024)
-	blocked := make(chan struct{})
+	enqueued := make(chan struct{})
 	go func() {
-		defer close(blocked)
+		defer close(enqueued)
 		for index := 0; index < 64; index++ {
 			writer.SessionOutput(ctx, "", "session-backpressure", "tab-1", payload)
 		}
 	}()
 	select {
-	case <-blocked:
-		t.Fatal("enqueue must block while the queue is above its byte bound")
-	case <-time.After(150 * time.Millisecond):
+	case <-enqueued:
+	case <-time.After(5 * time.Second):
+		t.Fatal("enqueue must not wait for the writer or database to drain")
 	}
+	writer.SessionEnded(ctx, "session-backpressure")
 	if err := writer.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-blocked:
-	case <-time.After(30 * time.Second):
-		t.Fatal("enqueue did not resume after the writer started draining")
-	}
-	writer.SessionEnded(ctx, "session-backpressure")
 	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := writer.Shutdown(shutdownCtx); err != nil {
 		t.Fatal(err)
 	}
+	stats := writer.statsSnapshot()
+	if stats.droppedChunks != 60 || stats.droppedBytes != 60*1024 {
+		t.Fatalf("drop accounting = %+v", stats)
+	}
 	rows, err := database.TranscriptListByAsset(ctx, "asset-1", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].Chunks != 64 {
-		t.Fatalf("all 64 chunks must be persisted: %+v", rows)
+	if len(rows) != 1 || rows[0].Chunks != 5 || !rows[0].Truncated {
+		t.Fatalf("four accepted chunks and one degradation marker must be persisted: %+v", rows)
+	}
+	chunks := readTranscriptAll(t, database, rows[0].ID)
+	if !bytes.Contains(chunks[4].Data, []byte("omitted 60 chunk(s)")) {
+		t.Fatalf("degradation marker must describe the loss: %+v", chunks[4])
 	}
 }
 
@@ -505,7 +523,7 @@ func TestTranscriptWriterReconnectPeriodsSharingBatch(t *testing.T) {
 	}
 }
 
-func TestTranscriptWriterBackpressureEndDoesNotOvertakeOutput(t *testing.T) {
+func TestTranscriptWriterBackpressureEndFollowsQueuedOutputAndDropMarker(t *testing.T) {
 	ctx := context.Background()
 	database, err := store.OpenInMemory(ctx)
 	if err != nil {
@@ -525,11 +543,10 @@ func TestTranscriptWriterBackpressureEndDoesNotOvertakeOutput(t *testing.T) {
 		defer close(tailDone)
 		writer.SessionOutput(ctx, "", "session-order", "tab-1", []byte("tail-output"))
 	}()
-	time.Sleep(150 * time.Millisecond)
 	select {
 	case <-tailDone:
-		t.Fatal("tail output must wait while the queue is full")
-	default:
+	case <-time.After(5 * time.Second):
+		t.Fatal("tail output must be dropped rather than block on a full queue")
 	}
 	endDone := make(chan struct{})
 	go func() {
@@ -539,20 +556,10 @@ func TestTranscriptWriterBackpressureEndDoesNotOvertakeOutput(t *testing.T) {
 	select {
 	case <-endDone:
 	case <-time.After(5 * time.Second):
-		t.Fatal("End must not wedge behind a blocked output")
-	}
-	select {
-	case <-tailDone:
-		t.Fatal("tail output must stay blocked until the writer drains")
-	default:
+		t.Fatal("End must not wedge behind queued output")
 	}
 	if err := writer.Start(ctx); err != nil {
 		t.Fatal(err)
-	}
-	select {
-	case <-tailDone:
-	case <-time.After(30 * time.Second):
-		t.Fatal("tail output did not drain")
 	}
 	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -563,15 +570,20 @@ func TestTranscriptWriterBackpressureEndDoesNotOvertakeOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].EndedAt == nil {
-		t.Fatalf("expected one ended transcript, got %+v", rows)
+	if len(rows) != 1 || rows[0].EndedAt == nil || !rows[0].Truncated {
+		t.Fatalf("expected one ended, degraded transcript, got %+v", rows)
 	}
 	chunks := readTranscriptAll(t, database, rows[0].ID)
 	if len(chunks) != 5 {
-		t.Fatalf("expected 5 chunks including the tail, got %d", len(chunks))
+		t.Fatalf("expected 4 accepted chunks and a degradation marker, got %d", len(chunks))
 	}
-	if !bytes.Contains(chunks[4].Data, []byte("tail-output")) {
-		t.Fatalf("tail output must be recorded before End applies: %+v", chunks[4])
+	for index := 0; index < 4; index++ {
+		if !bytes.Equal(chunks[index].Data, payload) || chunks[index].Seq != int64(index) {
+			t.Fatalf("accepted output changed order at %d: %+v", index, chunks[index])
+		}
+	}
+	if !bytes.Contains(chunks[4].Data, []byte("omitted 1 chunk(s)")) || bytes.Contains(chunks[4].Data, []byte("tail-output")) {
+		t.Fatalf("the dropped tail must be represented by its marker before End: %+v", chunks[4])
 	}
 }
 
@@ -593,16 +605,9 @@ func TestTranscriptWriterDBStallKeepsOrderAndDoesNotWedge(t *testing.T) {
 	if _, err := conn.ExecContext(ctx, "BEGIN EXCLUSIVE"); err != nil {
 		t.Fatal(err)
 	}
-	writer.queueMu.Lock()
-	drained := writer.spaceCh
-	writer.queueMu.Unlock()
 	payload := bytes.Repeat([]byte("z"), 1024)
 	writer.SessionOutput(ctx, "", "session-stall", "tab-1", payload)
-	select {
-	case <-drained:
-	case <-time.After(5 * time.Second):
-		t.Fatal("writer did not take the first output during the database stall")
-	}
+	waitForTranscriptQueueChunks(t, writer, 0)
 	for index := 1; index < 8; index++ {
 		writer.SessionOutput(ctx, "", "session-stall", "tab-1", payload)
 	}
@@ -695,8 +700,11 @@ func TestTranscriptWriterEnqueueHonorsCancelledContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].EndedAt == nil || rows[0].Chunks != 1 {
-		t.Fatalf("the cancelled output must be dropped while the rest completes: %+v", rows)
+	if len(rows) != 1 || rows[0].EndedAt == nil || rows[0].Chunks != 2 || !rows[0].Truncated {
+		t.Fatalf("the cancelled, full-queue output must leave a counted gap while the rest completes: %+v", rows)
+	}
+	if stats := writer.statsSnapshot(); stats.droppedChunks != 1 || stats.droppedBytes != 1024 {
+		t.Fatalf("cancelled full-queue drop accounting = %+v", stats)
 	}
 }
 

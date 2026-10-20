@@ -7,7 +7,11 @@ import { baseName } from "./pathUtils";
 import { TRANSFER_STATUS_LABEL } from "./transferQueue";
 import {
   cancelTransferTask,
+  canRestartTransfer,
+  canResumeTransfer,
   clearFinishedTransfers,
+  restartTransferTask,
+  resumeTransferTask,
   transferMatchesScope,
   useTransferStore,
   type ScopedTransferTask,
@@ -50,14 +54,48 @@ function TransferRow({ task }: { task: ScopedTransferTask }) {
             task.status === "failed" ? "text-red-300" : "text-neutral-500"
           }`}
         >
-          {task.status === "running" ? `${percent}%` : TRANSFER_STATUS_LABEL[task.status]}
+          {task.status === "running"
+            ? task.cancelling
+              ? "取消中"
+              : `${percent}%`
+            : TRANSFER_STATUS_LABEL[task.status]}
         </span>
-        {task.status === "queued" && (
+        {(canRestartTransfer(task) || task.restartPreparing) && (
+          <button
+            type="button"
+            className="nx-link shrink-0"
+            title={task.restartPreparing ? "正在准备全量重传" : "全量重传这个传输任务"}
+            aria-label={`全量重传 ${name}`}
+            disabled={task.restartPreparing}
+            onClick={() => void restartTransferTask(task.id)}
+          >
+            {task.restartPreparing ? "准备中" : "全量重传"}
+          </button>
+        )}
+        {canResumeTransfer(task) && (
+          <button
+            type="button"
+            className="nx-link shrink-0"
+            title="续传这个传输任务"
+            aria-label={`续传 ${name}`}
+            onClick={() => resumeTransferTask(task.id)}
+          >
+            续传
+          </button>
+        )}
+        {(task.status === "queued" || task.status === "running") && (
           <button
             type="button"
             className="nx-icon-btn nx-icon-btn-sm"
-            title="取消这个排队任务"
+            title={
+              task.status === "queued"
+                ? "取消这个排队任务"
+                : task.cancelling
+                  ? "正在取消这个传输任务"
+                  : "取消这个传输任务"
+            }
             aria-label={`取消 ${name}`}
+            disabled={task.cancelling}
             onClick={() => cancelTransferTask(task.id)}
           >
             <IconClose size={11} />

@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -69,16 +70,59 @@ func (h spawnProcessHost) Run(ctx context.Context, command string, _ time.Durati
 	return string(output), 0, err
 }
 
+const (
+	spawnHelperModeEnv = "NEXTERM_SSH_SPAWN_HELPER_MODE"
+	spawnHelperPIDEnv  = "NEXTERM_SSH_SPAWN_HELPER_PID"
+)
+
+func TestMain(m *testing.M) {
+	if os.Getenv(spawnHelperModeEnv) == "" {
+		os.Exit(m.Run())
+	}
+	os.Exit(runSpawnHelperProcess())
+}
+
+func runSpawnHelperProcess() int {
+	switch filepath.Base(os.Args[0]) {
+	case "setsid":
+		if len(os.Args) < 2 {
+			return 2
+		}
+		if _, err := syscall.Setsid(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		if err := syscall.Exec(os.Args[1], os.Args[1:], os.Environ()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	case "helper":
+		if err := os.WriteFile(os.Getenv(spawnHelperPIDEnv), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		time.Sleep(30 * time.Second)
+		return 0
+	default:
+		return 2
+	}
+}
+
 func TestSpawnDaemonClosesExecOutputWhileHelperKeepsRunning(t *testing.T) {
 	directory := t.TempDir()
 	pidPath := filepath.Join(directory, "helper.pid")
-	if err := os.WriteFile(filepath.Join(directory, "setsid"), []byte("#!/bin/sh\nexec \"$@\"\n"), 0o700); err != nil {
+	executable, err := os.Executable()
+	if err != nil {
 		t.Fatal(err)
 	}
-	helper := filepath.Join(directory, "helper")
-	if err := os.WriteFile(helper, []byte("#!/bin/sh\nprintf '%s' \"$$\" > "+quoteShell(pidPath)+"\nexec sleep 30\n"), 0o700); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"setsid", "helper"} {
+		if err := os.Symlink(executable, filepath.Join(directory, name)); err != nil {
+			t.Fatal(err)
+		}
 	}
+	t.Setenv(spawnHelperModeEnv, "1")
+	t.Setenv(spawnHelperPIDEnv, pidPath)
 	t.Cleanup(func() {
 		raw, err := os.ReadFile(pidPath)
 		if err == nil {
@@ -93,16 +137,23 @@ func TestSpawnDaemonClosesExecOutputWhileHelperKeepsRunning(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	if err := spawnDaemon(ctx, spawnProcessHost{fakeHost: &fakeHost{}, path: directory}, helper, filepath.Join(directory, "state")); err != nil {
+	stateDir := filepath.Join(directory, "state")
+	spawnStarted := time.Now()
+	helper := filepath.Join(directory, "helper")
+	if err := spawnDaemon(ctx, spawnProcessHost{fakeHost: &fakeHost{}, path: directory}, helper, stateDir); err != nil {
 		t.Fatal(err)
 	}
+	spawnElapsed := time.Since(spawnStarted)
 	for {
 		if raw, err := os.ReadFile(pidPath); err == nil && len(raw) > 0 {
 			return
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatal("detached helper did not start")
+			raw, pidErr := os.ReadFile(pidPath)
+			helperLog, logErr := os.ReadFile(filepath.Join(stateDir, "helper.log"))
+			t.Fatalf("detached helper did not start after %s (spawn %s): pid=%q pidErr=%v helperLog=%q helperLogErr=%v",
+				time.Since(spawnStarted), spawnElapsed, raw, pidErr, helperLog, logErr)
 		case <-time.After(5 * time.Millisecond):
 		}
 	}

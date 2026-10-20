@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -61,8 +62,16 @@ func connectRedis(ctx context.Context, config RedisConfig) (*redisConnection, er
 		MaxActiveConns:        4,
 		MinIdleConns:          1,
 	}
+	options.Dialer = config.DialContext
 	if config.TLSConfig != nil {
-		options.TLSConfig = config.TLSConfig.Clone()
+		tlsConfig := config.TLSConfig.Clone()
+		if config.DialContext != nil {
+			if tlsConfig.ServerName == "" {
+				tlsConfig.ServerName = config.Host
+			}
+			options.Dialer = newRedisTLSDialer(config.DialContext, tlsConfig)
+		}
+		options.TLSConfig = tlsConfig
 	}
 	client := redisDriver.NewClient(options)
 	pingContext, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -73,7 +82,13 @@ func connectRedis(ctx context.Context, config RedisConfig) (*redisConnection, er
 		return nil, internalError("Redis 连接失败", err)
 	}
 
-	console := client.Conn()
+	consoleOptions := *options
+	consoleOptions.PoolSize = 1
+	consoleOptions.MaxActiveConns = 1
+	consoleOptions.MinIdleConns = 0
+	consoleOptions.ConnMaxIdleTime = -1
+	// A one-connection pool preserves console state but can replace a broken transport.
+	console := redisDriver.NewClient(&consoleOptions)
 	return &redisConnection{
 		client:  client,
 		console: console,
@@ -81,6 +96,21 @@ func connectRedis(ctx context.Context, config RedisConfig) (*redisConnection, er
 			return errors.Join(console.Close(), client.Close())
 		},
 	}, nil
+}
+
+func newRedisTLSDialer(dial DialContextFunc, config *tls.Config) DialContextFunc {
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		connection, err := dial(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		tlsConnection := tls.Client(connection, config)
+		if err := tlsConnection.HandshakeContext(ctx); err != nil {
+			_ = connection.Close()
+			return nil, err
+		}
+		return tlsConnection, nil
+	}
 }
 
 func (s *Service) RedisScan(ctx context.Context, connID string, cursor uint64, pattern string, count uint64) (RedisScanResult, error) {

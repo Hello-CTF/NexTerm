@@ -9,6 +9,10 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
+type connectRequest struct {
+	AssetID string `json:"assetId"`
+}
+
 type connectionRequest struct {
 	ConnID string `json:"connId"`
 }
@@ -55,8 +59,8 @@ type redisTTLRequest struct {
 }
 
 func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
-	if err := registerCommand(dispatcher, "db_connect", true, func(ctx context.Context, input ConnectArgs) (ConnectResult, error) {
-		return s.Connect(ctx, input)
+	if err := registerCommand(dispatcher, "db_connect", true, func(ctx context.Context, input connectRequest) (ConnectResult, error) {
+		return s.Connect(ctx, ConnectArgs{AssetID: input.AssetID})
 	}); err != nil {
 		return err
 	}

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 )
@@ -52,6 +53,15 @@ func connectPostgres(ctx context.Context, config PostgresConfig) (*postgresConne
 	parsed.Fallbacks = nil
 	parsed.ConnectTimeout = 10 * time.Second
 	parsed.RuntimeParams = map[string]string{}
+	if config.DialContext != nil {
+		// Preserve the original remote hostname for SSH and TLS instead of resolving it locally.
+		parsed.LookupFunc = func(_ context.Context, host string) ([]string, error) {
+			return []string{host}, nil
+		}
+		parsed.DialFunc = func(ctx context.Context, network, address string) (net.Conn, error) {
+			return config.DialContext(ctx, network, address)
+		}
+	}
 
 	database := sql.OpenDB(stdlib.GetConnector(*parsed))
 	database.SetMaxOpenConns(4)
@@ -64,6 +74,12 @@ func connectPostgres(ctx context.Context, config PostgresConfig) (*postgresConne
 	cancel()
 	if err != nil {
 		_ = database.Close()
+		if config.DialContext != nil {
+			var ipcErr *ipc.Error
+			if errors.As(err, &ipcErr) {
+				return nil, ipcErr
+			}
+		}
 		return nil, internalError("PostgreSQL 连接失败", err)
 	}
 	return &postgresConnection{db: database}, nil

@@ -544,7 +544,7 @@ function SqlView({
     <div className="nx-pane">
       <div className="nx-toolbar">
         <IconDatabase size={14} className="text-neutral-500" />
-        <span className="nx-toolbar-title">{dialect === "postgres" ? "PostgreSQL" : "MySQL"}</span>
+        <span className="nx-toolbar-title">{dialect === "postgres" ? "PostgreSQL" : "MySQL / MariaDB"}</span>
         <select
           className="nx-select nx-input-sm w-[168px]"
           value={schema}
@@ -1276,7 +1276,8 @@ function RedisView({ connId }: { connId: string }) {
           <div id={consolePanelId} className="nx-redis-console flex min-h-[74px] flex-col border-t border-neutral-800/60 bg-neutral-950/40 p-2.5">
             <div ref={consoleScrollRef} className="min-h-0 flex-1 overflow-auto">
               <div className="mb-1.5 text-[11px] text-neutral-500">
-                <div>控制台 · 危险命令执行前需要确认，其余命令直接执行</div>
+                <div>控制台 · 使用 Redis 命令协议，不支持 SQL</div>
+                <div>危险命令执行前需要确认，其余命令直接执行</div>
                 <div>参数按空白切分，不支持引号包裹（如 SET k "a b" 会被拆成 3 个参数）</div>
               </div>
               {cmdOut && (

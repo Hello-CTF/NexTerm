@@ -43,30 +43,6 @@ import (
 	"github.com/pkg/sftp"
 )
 
-type fsEventRecorder struct {
-	mu     sync.Mutex
-	events []ipc.Event
-}
-
-func (r *fsEventRecorder) Emit(_ context.Context, event ipc.Event) error {
-	r.mu.Lock()
-	r.events = append(r.events, event)
-	r.mu.Unlock()
-	return nil
-}
-
-func (r *fsEventRecorder) count(topic ipc.Topic) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	count := 0
-	for _, event := range r.events {
-		if event.Event == topic {
-			count++
-		}
-	}
-	return count
-}
-
 func TestProductionFSCommandsUseLiveTransportAndEmitProgress(t *testing.T) {
 	events := &fsEventRecorder{}
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
@@ -674,20 +650,6 @@ func TestProductionFSDevicePathErrorsDoNotPoisonRoots(t *testing.T) {
 func jsonString(value string) string {
 	encoded, _ := json.Marshal(value)
 	return string(encoded)
-}
-
-type fakeStagedBlobResolver struct {
-	dir     string
-	userIDs []string
-}
-
-func (f *fakeStagedBlobResolver) ResolveStagedPath(rel, userID string) (string, error) {
-	f.userIDs = append(f.userIDs, userID)
-	id, name, found := strings.Cut(rel, "/")
-	if !found || id != "staged-id" || name == "" {
-		return "", errors.New("staged blob missing")
-	}
-	return filepath.Join(f.dir, name), nil
 }
 
 // In the server-side assembly, localPath of fs_upload/fs_download is the relative id/name from a Stage/Reserve response

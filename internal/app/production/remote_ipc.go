@@ -140,14 +140,6 @@ func registerRemoteCommands(dispatcher *ipc.Dispatcher, syncService *syncservice
 			})
 		},
 		func() error {
-			return ipc.RegisterNested(dispatcher, "remote_share_link_create", func(ctx context.Context, _ *ipc.Call, input syncservice.RemoteShareLinkInput) (*syncservice.RemoteShareLink, error) {
-				if input.DeviceID == "" || input.SessionID == "" {
-					return nil, badEmpty("deviceId/sessionId")
-				}
-				return remote.CreateShareLink(ctx, input)
-			})
-		},
-		func() error {
 			return ipc.RegisterNested(dispatcher, "remote_share_link_revoke", func(ctx context.Context, _ *ipc.Call, input remoteIDRequest) (syncservice.RemoteOK, error) {
 				if input.ID == "" {
 					return syncservice.RemoteOK{}, badEmpty("id")

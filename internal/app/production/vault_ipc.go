@@ -9,6 +9,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
+	"gorm.io/gorm"
 )
 
 type vaultPasswordRequest struct {
@@ -252,6 +253,26 @@ func putProductionCredential(ctx context.Context, credentialVault *vault.Vault, 
 	}
 	return database.CredentialPut(ctx, store.CredentialInput{
 		ID: id, Name: name, Kind: kind, Nonce: nonce, Blob: blob, KEKHint: credentialVault.KEKHint(),
+	})
+}
+
+func createProductionCredentialTx(ctx context.Context, credentialVault *vault.Vault, database *store.Store, tx *gorm.DB, name, kind, plaintext string) (string, error) {
+	nonce, blob, err := credentialVault.EncryptCredential(ctx, plaintext)
+	if err != nil {
+		return "", err
+	}
+	return database.CredentialCreateTx(ctx, tx, store.CredentialInput{
+		Name: name, Kind: kind, Nonce: nonce, Blob: blob, KEKHint: credentialVault.KEKHint(),
+	})
+}
+
+func overwriteProductionCredentialTx(ctx context.Context, credentialVault *vault.Vault, database *store.Store, tx *gorm.DB, id string, expectedUpdatedAt int64, name, kind, plaintext string) error {
+	nonce, blob, err := credentialVault.EncryptCredential(ctx, plaintext)
+	if err != nil {
+		return err
+	}
+	return database.CredentialUpdateCAS(ctx, tx, id, expectedUpdatedAt, store.CredentialInput{
+		Name: name, Kind: kind, Nonce: nonce, Blob: blob, KEKHint: credentialVault.KEKHint(),
 	})
 }
 
