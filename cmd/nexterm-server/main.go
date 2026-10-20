@@ -28,8 +28,10 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/server"
 	"github.com/Hello-CTF/NexTerm/internal/sharing"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/version"
+	"gorm.io/gorm"
 )
 
 func init() {
@@ -94,6 +96,9 @@ func run(args []string) int {
 	}
 	if len(args) > 0 && args[0] == "agent" {
 		return fleetagent.RunCLIWithServicePrefix(args[1:], []string{"agent"}, os.Getenv, os.Stdout, os.Stderr)
+	}
+	if len(args) > 0 && args[0] == "init-admin" {
+		return runInitAdmin(args[1:], os.Getenv, os.Stdout, os.Stderr)
 	}
 	invocation, err := core.ParseCLI(args, core.CommandServe, os.Getenv)
 	if err != nil {
@@ -449,4 +454,246 @@ func printAccountInitCode(ctx context.Context, accounts *account.Accounts, stder
 	}
 	fmt.Fprintf(stderr, "\nnexterm-server: 账号系统尚未初始化\nnexterm-server: 一次性初始化码: %s\nnexterm-server: 请在浏览器中打开本服务完成超级管理员账号初始化(初始化码仅可使用一次)\n\n", code)
 	return nil
+}
+
+const (
+	// initAdminExitUnavailable reports that no bootstrap was needed: accounts
+	// already exist, or the auth mode manages accounts without an initial
+	// admin. Nothing is printed to stdout.
+	initAdminExitUnavailable = 3
+	// initAdminExitCodeIssued reports that a one-time init code was already
+	// generated elsewhere (for example the running server printed it to its
+	// own log), so the local bootstrap must not create an account or touch
+	// that code.
+	initAdminExitCodeIssued = 4
+)
+
+// initAdminPasswordMarker prefixes the one-time initial-password line the
+// init-admin command prints to stdout after the admin was actually created.
+const initAdminPasswordMarker = "初始密码: "
+
+// initAdminSettingKey mirrors internal/account's unexported initCodeSettingKey.
+// The key is stable and documented by the server's own operational guidance
+// ("clear auth.init_code in the setting table and restart to regenerate it").
+const initAdminSettingKey = "auth.init_code"
+
+func initAdminUsage() string {
+	return `Usage:
+  nexterm-server init-admin [flags]
+
+Create the first superadmin through the server's account initialization
+contract and print the initial password to this console exactly once,
+only after the account was actually created. With no
+NEXTERM_ADMIN_PASSWORD a cryptographically random password is generated
+and must be changed at first login; a supplied initial password is kept
+as-is (no forced rotation) so install systems such as LazyCat can inject
+it. Never prints on upgrade, existing-account or re-run paths, and never
+persists the password to env files, disk or logs.
+
+Exit codes:
+  0  admin created; the initial password was printed to stdout
+  3  nothing to do: accounts exist, or the auth mode manages accounts itself
+  4  an init code was already issued; finish setup with the code from the server log
+  1  creation failed; nothing was printed
+  2  usage error
+
+Flags:
+  --data-dir PATH     Data directory (env NEXTERM_DATA_DIR)
+  --db BACKEND        Server storage: sqlite, postgres, mysql, or mariadb
+                      (env NEXTERM_DB, default sqlite)
+  --db-dsn DSN        Database connection string (env NEXTERM_DB_DSN)
+  --db-password-file PATH  Read the database password from a 0600 file
+                      (env NEXTERM_DB_PASSWORD_FILE)
+  --username NAME     Superadmin username (env NEXTERM_ADMIN_USERNAME, default admin)
+  --auth MODE         Only used to refuse off/platform modes, which manage
+                      accounts themselves (env NEXTERM_AUTH)
+  -h, --help          Print this help
+
+The initial password is read from the NEXTERM_ADMIN_PASSWORD environment
+variable only: argv is visible to other processes via ps, so there is
+deliberately no password flag.
+`
+}
+
+type initAdminOptions struct {
+	dataDir        string
+	db             string
+	dbDSN          string
+	dbPasswordFile string
+	username       string
+	auth           string
+	help           bool
+	version        bool
+}
+
+func parseInitAdminArgs(args []string, getenv func(string) string) (initAdminOptions, error) {
+	options := initAdminOptions{
+		dataDir:        getenv("NEXTERM_DATA_DIR"),
+		db:             getenv("NEXTERM_DB"),
+		dbDSN:          getenv("NEXTERM_DB_DSN"),
+		dbPasswordFile: getenv("NEXTERM_DB_PASSWORD_FILE"),
+		username:       getenv("NEXTERM_ADMIN_USERNAME"),
+		auth:           getenv("NEXTERM_AUTH"),
+	}
+	if options.username == "" {
+		options.username = "admin"
+	}
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		if argument == "-h" || argument == "--help" {
+			options.help = true
+			continue
+		}
+		if argument == "--version" {
+			options.version = true
+			continue
+		}
+		if !strings.HasPrefix(argument, "--") {
+			return initAdminOptions{}, fmt.Errorf("unknown argument %q", argument)
+		}
+		name, value, hasValue := strings.Cut(argument, "=")
+		if !hasValue {
+			index++
+			if index >= len(args) {
+				return initAdminOptions{}, fmt.Errorf("option %s requires a value", name)
+			}
+			value = args[index]
+		}
+		switch name {
+		case "--data-dir":
+			options.dataDir = value
+		case "--db":
+			options.db = value
+		case "--db-dsn":
+			options.dbDSN = value
+		case "--db-password-file":
+			options.dbPasswordFile = value
+		case "--username":
+			options.username = value
+		case "--auth":
+			options.auth = value
+		default:
+			return initAdminOptions{}, fmt.Errorf("unknown option %s", name)
+		}
+	}
+	return options, nil
+}
+
+// runInitAdmin implements the init-admin command: the installer-side half of
+// the first-install super-admin bootstrap. The account itself is only ever
+// created through the account package's InitSuperadmin contract (one-time init
+// code included); this command adds no second creation path and writes no
+// account rows directly.
+func runInitAdmin(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
+	options, err := parseInitAdminArgs(args, getenv)
+	if err != nil {
+		fmt.Fprintln(stderr, "nexterm-server init-admin:", applog.RedactText(err.Error()))
+		return 2
+	}
+	if options.help {
+		fmt.Fprint(stdout, initAdminUsage())
+		return 0
+	}
+	if options.version {
+		fmt.Fprintln(stdout, version.Version)
+		return 0
+	}
+	switch options.auth {
+	case core.AuthOff, core.AuthPlatform:
+		fmt.Fprintf(stderr, "nexterm-server init-admin: NEXTERM_AUTH=%s 模式下账号由部署环境自行管理，跳过超级管理员引导\n", options.auth)
+		return initAdminExitUnavailable
+	}
+	ctx := context.Background()
+	paths, err := platform.ServerPaths(options.dataDir)
+	if err != nil {
+		fmt.Fprintln(stderr, "nexterm-server init-admin:", applog.RedactText(err.Error()))
+		return 1
+	}
+	if err := paths.Prepare(); err != nil {
+		fmt.Fprintln(stderr, "nexterm-server init-admin:", applog.RedactText(err.Error()))
+		return 1
+	}
+	database, err := openInitAdminStore(ctx, options, paths.DataDir)
+	if err != nil {
+		fmt.Fprintln(stderr, "nexterm-server init-admin:", applog.RedactText(err.Error()))
+		return 1
+	}
+	defer func() { _ = database.Close() }()
+	accounts := account.New(database.GORM())
+	count, err := accounts.CountUsers(ctx)
+	if err != nil {
+		fmt.Fprintln(stderr, "nexterm-server init-admin:", applog.RedactText(err.Error()))
+		return 1
+	}
+	if count > 0 {
+		fmt.Fprintln(stderr, "nexterm-server init-admin: 账号系统已初始化，跳过超级管理员引导")
+		return initAdminExitUnavailable
+	}
+	policy := account.InitialPasswordRandom
+	supplied := getenv("NEXTERM_ADMIN_PASSWORD")
+	if supplied != "" {
+		policy = account.InitialPasswordSupplied
+	}
+	code, err := accounts.GenerateInitCode(ctx)
+	if err != nil {
+		if ipc.NormalizeError(err).Code == ipc.CodeForbidden {
+			fmt.Fprintln(stderr, "nexterm-server init-admin: 一次性初始化码已生成，请改用服务器日志中的初始化码在浏览器中完成初始化")
+			return initAdminExitCodeIssued
+		}
+		fmt.Fprintln(stderr, "nexterm-server init-admin:", applog.RedactText(err.Error()))
+		return 1
+	}
+	user, generated, err := accounts.InitSuperadminWithPolicy(ctx, code, options.username, supplied, nil, policy)
+	if err != nil {
+		// The init code was generated by this very process and never disclosed,
+		// so removing the stale unconsumed record is safe: a retry (or the
+		// server's own first-start flow) issues a fresh code instead of
+		// dead-ending on "already generated". Without this cleanup a failed
+		// first install could never be retried.
+		if resetErr := resetInitCodeSetting(ctx, database.GORM()); resetErr != nil {
+			fmt.Fprintln(stderr, "nexterm-server init-admin: 清理未使用的初始化码失败（若重跑提示初始化码已生成，请清除 setting 表 "+initAdminSettingKey+" 后重试）:", applog.RedactText(resetErr.Error()))
+		}
+		fmt.Fprintln(stderr, "nexterm-server init-admin:", applog.RedactText(err.Error()))
+		return 1
+	}
+	password := generated
+	if policy == account.InitialPasswordSupplied {
+		password = supplied
+	}
+	fmt.Fprintf(stdout, "\nnexterm-server: 超级管理员账号已创建\nnexterm-server: 用户名: %s\nnexterm-server: %s%s（仅显示一次，请立即妥善保存）\n", user.Username, initAdminPasswordMarker, password)
+	if policy == account.InitialPasswordRandom {
+		fmt.Fprintln(stdout, "nexterm-server: 该密码为随机首装密码，首次登录时必须修改")
+	} else {
+		fmt.Fprintln(stdout, "nexterm-server: 该密码由安装方指定，首次登录不强制修改")
+	}
+	fmt.Fprintln(stdout)
+	return 0
+}
+
+// openInitAdminStore mirrors how the serve command opens the account store:
+// SQLite lives at <data-dir>/data.db, remote backends go through the shared
+// BackendConfig path.
+func openInitAdminStore(ctx context.Context, options initAdminOptions, dataDir string) (*store.Store, error) {
+	backend, err := store.ParseBackend(options.db)
+	if err != nil {
+		return nil, err
+	}
+	if backend != store.BackendSQLite {
+		dbPassword, err := server.ResolveDBPassword(options.dbPasswordFile)
+		if err != nil {
+			return nil, err
+		}
+		return store.OpenBackend(ctx, store.BackendConfig{Backend: backend, DSN: options.dbDSN, Password: dbPassword}, store.OpenOptions{})
+	}
+	return store.OpenWithOptions(ctx, filepath.Join(dataDir, "data.db"), store.OpenOptions{})
+}
+
+// resetInitCodeSetting removes the one-time init-code record. It is called
+// only when this process generated the code and the account creation that was
+// supposed to consume it failed; the plaintext was never disclosed, so the
+// record is installer-owned operational state, not user data.
+func resetInitCodeSetting(ctx context.Context, db *gorm.DB) error {
+	setting := query.Use(db).Setting
+	_, err := setting.WithContext(ctx).Where(setting.Key.Eq(initAdminSettingKey)).Delete()
+	return err
 }

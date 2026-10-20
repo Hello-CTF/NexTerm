@@ -70,7 +70,20 @@ material is touched. Coverage:
      preexisting)
   17. Real packaged-archive smoke test (runs only when a server archive built
      by scripts/pack-linux-server.sh is available; live systemd and live
-     distribution runs remain outside this suite)
+     distribution runs remain outside this suite). When the host can execute
+     the archived Linux binary, the smoke also drives `init-admin` against a
+     scratch data dir: random first install prints the password, re-run is
+     silent, and a failed supplied-password create retries cleanly.
+  18. Super-admin bootstrap (DEP01): on first install the server binary is
+     invoked as `init-admin` with the effective environment before the unit
+     is enabled, its stdout (the initial password) reaches the installer
+     console only after a successful create, upgrades and re-runs never
+     invoke it, an already-initialized store (exit 3) stays silent, a failed
+     create (exit 1) aborts the install so a re-run resumes and retries, the
+     supplied password is only passed through the environment and never
+     echoed by the installer itself, auth off/platform and staged roots skip
+     the bootstrap, and --no-enable still bootstraps. Live systemd, live
+     distribution and LazyCat injection runs remain outside this suite.
 
     python3 scripts/test-systemd-install.py
 """
@@ -202,6 +215,22 @@ printf '%s\\n' "$*" >> "$USERADD_LOG"
 exit 0
 """
 
+INIT_ADMIN_STUB = """#!/bin/sh
+printf '%s\\n' "$*" >> "$INIT_ADMIN_LOG"
+printf 'init-admin\\n' >> "$SYSTEMCTL_LOG"
+{
+  printf 'NEXTERM_AUTH=%s\\n' "${NEXTERM_AUTH:-}"
+  printf 'NEXTERM_DATA_DIR=%s\\n' "${NEXTERM_DATA_DIR:-}"
+  printf 'NEXTERM_DB=%s\\n' "${NEXTERM_DB:-}"
+  printf 'NEXTERM_ADMIN_USERNAME=%s\\n' "${NEXTERM_ADMIN_USERNAME:-}"
+  printf 'NEXTERM_ADMIN_PASSWORD=%s\\n' "${NEXTERM_ADMIN_PASSWORD:-}"
+} >> "$INIT_ADMIN_ENV_LOG"
+if [ -n "${INIT_ADMIN_STDOUT:-}" ]; then
+  printf '%s\\n' "$INIT_ADMIN_STDOUT"
+fi
+exit "${INIT_ADMIN_EXIT:-0}"
+"""
+
 
 def make_payload(base: pathlib.Path, version: str) -> pathlib.Path:
     payload = base / f"payload-{version}"
@@ -227,6 +256,7 @@ def make_stubs(base: pathlib.Path, with_systemctl: bool = True, with_openssl: bo
     if with_openssl:
         (stubs / "openssl").write_text(OPENSSL_STUB.replace("FAKEKEYHEXPLACEHOLDER", FAKE_KEY_HEX))
     (stubs / "useradd").write_text(USERADD_STUB)
+    (stubs / "init-admin").write_text(INIT_ADMIN_STUB)
     for stub in stubs.iterdir():
         stub.chmod(0o755)
     return stubs
@@ -271,7 +301,8 @@ def seed_platform(root: pathlib.Path, systemd: str, os_release: str | None) -> N
 def run_install(payload: pathlib.Path, root: pathlib.Path, stubs: pathlib.Path, base: pathlib.Path,
                 args: tuple[str, ...] = (), fail_at: str = "", active: str = "",
                 uname: str = "", systemd: str = "run", os_release: str | None = "default",
-                fail_start: bool = False) -> subprocess.CompletedProcess:
+                fail_start: bool = False, init_admin: bool = False, init_admin_exit: int = 0,
+                init_admin_stdout: str = "", admin_password: str | None = None) -> subprocess.CompletedProcess:
     seed_platform(root, systemd, os_release)
     env = dict(os.environ)
     env["PATH"] = f"{stubs}:{env['PATH']}"
@@ -295,6 +326,22 @@ def run_install(payload: pathlib.Path, root: pathlib.Path, stubs: pathlib.Path, 
         env["NEXTERM_INSTALL_FAIL_AT"] = fail_at
     else:
         env.pop("NEXTERM_INSTALL_FAIL_AT", None)
+    if init_admin:
+        env["NEXTERM_INSTALL_INIT_ADMIN"] = str(stubs / "init-admin")
+        env["INIT_ADMIN_LOG"] = str(base / "init-admin.log")
+        env["INIT_ADMIN_ENV_LOG"] = str(base / "init-admin-env.log")
+        env["INIT_ADMIN_EXIT"] = str(init_admin_exit)
+        if init_admin_stdout:
+            env["INIT_ADMIN_STDOUT"] = init_admin_stdout
+        else:
+            env.pop("INIT_ADMIN_STDOUT", None)
+    else:
+        env.pop("NEXTERM_INSTALL_INIT_ADMIN", None)
+        env.pop("INIT_ADMIN_STDOUT", None)
+    if admin_password is not None:
+        env["NEXTERM_ADMIN_PASSWORD"] = admin_password
+    else:
+        env.pop("NEXTERM_ADMIN_PASSWORD", None)
     return subprocess.run(
         ["/bin/bash", str(SCRIPT), "--root", str(root), "--source", str(payload), *args],
         capture_output=True, text=True, env=env, timeout=60,
@@ -345,6 +392,24 @@ def openssl_calls(base: pathlib.Path) -> list[str]:
     if not log.exists():
         return []
     return [line for line in read(log).splitlines() if line]
+
+
+def init_admin_calls(base: pathlib.Path) -> list[str]:
+    log = base / "init-admin.log"
+    if not log.exists():
+        return []
+    return [line for line in read(log).splitlines() if line]
+
+
+def init_admin_env(base: pathlib.Path) -> dict[str, str]:
+    log = base / "init-admin-env.log"
+    if not log.exists():
+        return {}
+    values: dict[str, str] = {}
+    for line in read(log).splitlines():
+        key, _, value = line.partition("=")
+        values[key] = value
+    return values
 
 
 def seed_first_install(base: pathlib.Path, stubs: pathlib.Path, root: pathlib.Path) -> pathlib.Path:
@@ -2239,6 +2304,154 @@ def test_missing_systemctl_fails_visibly() -> None:
         assert not (root / "opt/nexterm").exists(), "failed preflight must not create directories"
 
 
+def test_first_install_bootstrap_prints_password_before_service_start() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        result = run_install(payload, root, stubs, base, init_admin=True,
+                             init_admin_stdout="nexterm-server: 初始密码: bootstrap-random-password-123（仅显示一次，请立即妥善保存）")
+        assert result.returncode == 0, result.stderr
+        assert "bootstrap-random-password-123" in result.stdout, result.stdout
+        assert "super-admin created" in result.stdout, result.stdout
+        assert init_admin_calls(base) == ["init-admin"], init_admin_calls(base)
+        envlog = init_admin_env(base)
+        assert envlog["NEXTERM_AUTH"] == "on", envlog
+        assert envlog["NEXTERM_DATA_DIR"] == "/var/lib/nexterm", envlog
+        assert envlog["NEXTERM_DB"] == "sqlite", envlog
+        assert envlog["NEXTERM_ADMIN_PASSWORD"] == "", envlog
+        assert envlog["NEXTERM_ADMIN_USERNAME"] == "", envlog
+        calls = systemctl_calls(base)
+        assert "init-admin" in calls and "enable --now nexterm-server.service" in calls, calls
+        assert calls.index("init-admin") < calls.index("enable --now nexterm-server.service"), calls
+
+
+def test_bootstrap_supplied_password_passthrough() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        result = run_install(payload, root, stubs, base, init_admin=True,
+                             admin_password="synthetic-password-1",
+                             init_admin_stdout="nexterm-server: 初始密码: synthetic-password-1（仅显示一次，请立即妥善保存）")
+        assert result.returncode == 0, result.stderr
+        assert init_admin_env(base)["NEXTERM_ADMIN_PASSWORD"] == "synthetic-password-1", init_admin_env(base)
+        assert "初始密码: synthetic-password-1" in result.stdout, result.stdout
+
+
+def test_bootstrap_failed_create_aborts_and_redacts() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        result = run_install(payload, root, stubs, base, init_admin=True,
+                             init_admin_exit=1, admin_password="synthetic-password-1")
+        assert result.returncode != 0, "a failed bootstrap must abort the first install so a re-run retries it"
+        combined = result.stdout + result.stderr
+        assert "synthetic-password-1" not in combined, "the injected password must never reach the installer output"
+        assert "初始密码" not in result.stdout, result.stdout
+        assert "super-admin bootstrap failed" in result.stderr, result.stderr
+        calls = systemctl_calls(base)
+        assert "enable --now nexterm-server.service" not in calls, calls
+        assert (root / "opt/nexterm/.install-incomplete").exists(), "the incomplete marker must remain for the retry"
+
+
+def test_bootstrap_failed_create_retry() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        failed = run_install(payload, root, stubs, base, init_admin=True, init_admin_exit=1)
+        assert failed.returncode != 0, failed.stdout
+        assert "初始密码" not in failed.stdout, failed.stdout
+
+        retry = run_install(payload, root, stubs, base, init_admin=True,
+                            init_admin_stdout="nexterm-server: 初始密码: retry-password-12345（仅显示一次，请立即妥善保存）")
+        assert retry.returncode == 0, retry.stderr
+        assert "resuming incomplete first install" in retry.stdout, retry.stdout
+        assert "retry-password-12345" in retry.stdout, retry.stdout
+        assert not (root / "opt/nexterm/.install-incomplete").exists(), "the successful retry clears the marker"
+        calls = systemctl_calls(base)
+        assert calls.count("init-admin") == 2, calls
+        assert calls.index("init-admin", calls.index("init-admin") + 1) < calls.index("enable --now nexterm-server.service"), calls
+
+
+def test_bootstrap_existing_account_silence() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        result = run_install(payload, root, stubs, base, init_admin=True, init_admin_exit=3)
+        assert result.returncode == 0, result.stderr
+        assert "初始密码" not in result.stdout, result.stdout
+        assert "already initialized" in result.stdout, result.stdout
+        assert init_admin_calls(base) == ["init-admin"], init_admin_calls(base)
+
+
+def test_bootstrap_not_invoked_on_upgrade() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload_v1 = make_payload(base, "v1")
+        seed = run_install(payload_v1, root, stubs, base, init_admin=True,
+                           init_admin_stdout="nexterm-server: 初始密码: first-install-password-123（仅显示一次）")
+        assert seed.returncode == 0, seed.stderr
+        (base / "init-admin.log").unlink()
+
+        payload_v2 = make_payload(base, "v2")
+        upgrade = run_install(payload_v2, root, stubs, base, active="nexterm-server.service", init_admin=True)
+        assert upgrade.returncode == 0, upgrade.stderr
+        assert "mode: upgrade install" in upgrade.stdout, upgrade.stdout
+        assert not (base / "init-admin.log").exists(), "upgrades must never invoke the bootstrap"
+        assert "初始密码" not in upgrade.stdout, upgrade.stdout
+
+
+def test_bootstrap_skipped_when_auth_off() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        example = payload / "nexterm.env.example"
+        example.write_text(example.read_text().replace("NEXTERM_AUTH=on", "NEXTERM_AUTH=off"))
+        result = run_install(payload, root, stubs, base, init_admin=True)
+        assert result.returncode == 0, result.stderr
+        assert not (base / "init-admin.log").exists(), "auth=off manages accounts itself; the bootstrap must not run"
+        assert "manages accounts itself" in result.stdout, result.stdout
+
+
+def test_bootstrap_skipped_on_staged_root_without_hook() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        result = run_install(payload, root, stubs, base)
+        assert result.returncode == 0, result.stderr
+        assert "skipping super-admin bootstrap (staged root" in result.stdout, result.stdout
+
+
+def test_no_enable_still_bootstraps() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        result = run_install(payload, root, stubs, base, args=("--no-enable",), init_admin=True,
+                             init_admin_stdout="nexterm-server: 初始密码: no-enable-password-12345（仅显示一次）")
+        assert result.returncode == 0, result.stderr
+        assert "no-enable-password-12345" in result.stdout, result.stdout
+        assert init_admin_calls(base) == ["init-admin"], init_admin_calls(base)
+        calls = systemctl_calls(base)
+        assert not [c for c in calls if c.startswith("enable")], calls
+
+
 def test_real_server_archive_smoke() -> None:
     archive_dir = ROOT / "target/release-assets"
     candidates = sorted(archive_dir.glob("NexTerm-server_*_linux_*.tar.gz")) if archive_dir.is_dir() else []
@@ -2293,6 +2506,38 @@ def test_real_server_archive_smoke() -> None:
         assert "enable --now nexterm-server.service" in calls, calls
         assert "nexterm-server.service is active" in result.stdout, result.stdout
 
+        server_binary = payload / "nexterm-server"
+        probe_env = {k: v for k, v in os.environ.items() if not k.startswith("NEXTERM_")}
+        try:
+            probe = subprocess.run([str(server_binary), "--version"], capture_output=True, text=True, env=probe_env)
+            executable = probe.returncode == 0
+        except OSError:
+            executable = False
+        if not executable:
+            print("skip   real-binary init-admin smoke (host cannot execute the archived Linux binary; live systemd, distribution and LazyCat acceptance remain outside this suite)")
+            return
+        data_dir = root / "var/lib/nexterm"
+        first = subprocess.run([str(server_binary), "init-admin", "--data-dir", str(data_dir)], capture_output=True, text=True, env=probe_env)
+        assert first.returncode == 0, first.stderr
+        marker = "初始密码: "
+        assert marker in first.stdout, first.stdout
+        password = first.stdout.split(marker, 1)[1].split("（", 1)[0].strip()
+        assert password and " " not in password, first.stdout
+        assert "首次登录时必须修改" in first.stdout, "the default random policy must force a first-login change"
+        assert password not in first.stderr, "the initial password must not reach stderr"
+        again = subprocess.run([str(server_binary), "init-admin", "--data-dir", str(data_dir)], capture_output=True, text=True, env=probe_env)
+        assert again.returncode == 3, (again.returncode, again.stderr)
+        assert again.stdout == "", "existing-account re-run must stay silent"
+        supplied_dir = base / "supplied-data"
+        failed = subprocess.run([str(server_binary), "init-admin", "--data-dir", str(supplied_dir)], capture_output=True, text=True,
+                                env={**probe_env, "NEXTERM_ADMIN_PASSWORD": "short"})
+        assert failed.returncode == 1 and failed.stdout == "", (failed.returncode, failed.stdout)
+        retried = subprocess.run([str(server_binary), "init-admin", "--data-dir", str(supplied_dir)], capture_output=True, text=True,
+                                 env={**probe_env, "NEXTERM_ADMIN_PASSWORD": "synthetic-password-1"})
+        assert retried.returncode == 0, retried.stderr
+        assert "初始密码: synthetic-password-1" in retried.stdout, retried.stdout
+        assert "synthetic-password-1" not in retried.stderr, "the supplied password must not reach stderr"
+
 
 def main() -> int:
     tests = [
@@ -2345,6 +2590,15 @@ def main() -> int:
         test_console_output_redacts_key_material,
         test_rollback_requires_supported_platform,
         test_missing_systemctl_fails_visibly,
+        test_first_install_bootstrap_prints_password_before_service_start,
+        test_bootstrap_supplied_password_passthrough,
+        test_bootstrap_failed_create_aborts_and_redacts,
+        test_bootstrap_failed_create_retry,
+        test_bootstrap_existing_account_silence,
+        test_bootstrap_not_invoked_on_upgrade,
+        test_bootstrap_skipped_when_auth_off,
+        test_bootstrap_skipped_on_staged_root_without_hook,
+        test_no_enable_still_bootstraps,
         test_real_server_archive_smoke,
     ]
     for test in tests:
