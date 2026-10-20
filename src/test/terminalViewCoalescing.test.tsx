@@ -543,16 +543,34 @@ describe("XtermView stream wiring", () => {
       act(() => harness.channel?.onBytes?.(chunk));
     }
     act(() => harness.channel?.onBytes?.(chunk));
-    // The pause RPC failed every retry: the client surfaces an accurate
-    // overflow state, never reaps the PTY, and keeps the FIFO bounded.
+    // The pause RPC failed every retry: the client redelivers the refused
+    // suffix from the tab's recovery ring, never reaps the PTY, and the full
+    // sequence arrives contiguously.
     expect(harness.detach).not.toHaveBeenCalled();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });
-    expect(harness.unsafeCall).toHaveBeenCalledTimes(3);
-    expect(harness.pushToast).toHaveBeenCalledWith("error", expect.stringContaining("部分输出可能丢失"));
+    expect(harness.unsafeCall).toHaveBeenCalledTimes(4);
+    expect(harness.unsafeCall).toHaveBeenCalledWith("terminal_recover", {
+      tabId: "kernel-1",
+      channelId: "channel-1",
+      acceptedBytes: 4 * (4 << 20),
+    });
+    // The replay arrives with a synthetic anchor that ends the episode. The
+    // writer drains to make room for it, and the refused chunk is restored
+    // in order.
     act(() => t.drainWrites());
-    expect(t.writeLog.length).toBe(4);
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "recovery-kernel-1",
+      streamSeq: 4 * (4 << 20),
+      controlBytes: 0,
+    });
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    expect(t.writeLog.length).toBe(5);
+    const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
+    expect(total).toBe(5 * (4 << 20));
     vi.useRealTimers();
   });
 

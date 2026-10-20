@@ -311,10 +311,17 @@ export function XtermView(props: XtermViewProps) {
     };
     let lastRefuseToastAt = 0;
     const refuseStream = () => {
-      if (ephemeral !== true && kernelTabId) {
+      if (kernelTabId && ephemeral === true) {
+        // Ephemeral local/WinRM tabs: never detach (it would reap the PTY).
+        // Redeliver the refused suffix from the tab's recovery ring instead;
+        // the replay arrives with a synthetic anchor that ends the episode.
+        void unsafeCall("terminal_recover", {
+          tabId: kernelTabId,
+          channelId: channelIdOf(channel),
+          acceptedBytes: streamBytes,
+        }).catch(() => undefined);
+      } else if (kernelTabId) {
         // Durable tabs: the resume anchor replays refused bytes in order.
-        // Ephemeral local/WinRM tabs must never take this path: an ordinary
-        // detach reaps their PTY.
         void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);
       }
       const nowMs = Date.now();
@@ -327,7 +334,7 @@ export function XtermView(props: XtermViewProps) {
             replayable ? "info" : "error",
             replayable
               ? "终端输出积压，正在重新同步，画面将自动恢复"
-              : "终端输出积压，部分输出可能丢失",
+              : "终端输出积压，正在重新同步，画面将自动恢复",
           );
       }
     };

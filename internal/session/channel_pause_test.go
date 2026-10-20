@@ -62,6 +62,46 @@ func openOpenTestSession(t *testing.T, kind string) (*Manager, *fakeConnector, *
 	return manager, connector, terminals, session
 }
 
+func TestRecoverChannelForRedeliversRefusedSuffix(t *testing.T) {
+	manager, connector, _, connected := openOpenTestSession(t, KindLocal)
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+		t.Fatal(err)
+	}
+	channel := connector.transport(0).channel(0)
+	receiver := bindTestReceiver(t, manager, "a-1")
+	drainAttachHeader(t, receiver)
+
+	if err := channel.emit([]byte("one")); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFramesUntil(t, receiver, 3); string(got) != "one" {
+		t.Fatalf("first frame = %q", got)
+	}
+	if err := channel.emit([]byte("two")); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFramesUntil(t, receiver, 3); string(got) != "two" {
+		t.Fatalf("second frame = %q", got)
+	}
+
+	// The client accepted only the first frame: recover the refused suffix.
+	if err := manager.RecoverChannelFor(context.Background(), "a-1", 3); err != nil {
+		t.Fatal(err)
+	}
+	// A synthetic anchor opens the replay, then the refused bytes arrive.
+	anchor := receiveTestFrame(t, receiver)
+	if !bytes.Contains(anchor.Data, []byte("recovery-")) {
+		t.Fatalf("anchor = %q", anchor.Data)
+	}
+	if got := readFramesUntil(t, receiver, 3); string(got) != "two" {
+		t.Fatalf("recovered frame = %q", got)
+	}
+}
+
 func TestPauseChannelHoldsOutputAndResumeFlushesInOrder(t *testing.T) {
 	manager, connector, _, session := openOpenTestSession(t, KindSSH)
 	openTestTab(t, manager, session, "client-a", "a-1")
