@@ -105,6 +105,9 @@ func TestManagerOverrideCRUD(t *testing.T) {
 	if !entry.Overridden || entry.Source != skills.SourceEmbedded || entry.UpdatedAt == 0 {
 		t.Fatalf("entry = %+v", entry)
 	}
+	if entry.Override == nil || entry.Override.Description == nil || *entry.Override.Description != "Alpha overridden" || entry.Override.Body != nil {
+		t.Fatalf("override detail must expose exactly the overridden fields: %+v", entry.Override)
+	}
 	if entry.Digest == baseline.Digest {
 		t.Fatal("override did not change the effective digest")
 	}
@@ -255,6 +258,9 @@ func TestManagerOwnerIsolation(t *testing.T) {
 	}
 	if len(entriesB) != 2 || !entriesB[0].Disabled {
 		t.Fatalf("owner B entries = %+v", entriesB)
+	}
+	if entriesB[0].Override == nil || entriesB[0].Override.Body != nil || entriesB[0].Override.Description != nil {
+		t.Fatalf("owner A's body override leaked into owner B's override detail: %+v", entriesB[0].Override)
 	}
 	if _, err := manager.Dispatch(t.Context(), "alpha-skill"); err == nil {
 		t.Fatal("ownerless server request dispatched shared skills")

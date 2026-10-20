@@ -168,6 +168,13 @@ func (m *Manager) entryFor(name string, override Override, hasOverride bool) Ent
 		entry.UpdatedAt = override.UpdatedAt
 		entry.Disabled = override.Disabled
 		entry.Overridden = hasBase && (override.Description != nil || override.Body != nil)
+		entry.Override = &Override{
+			Name:        override.Name,
+			Description: cloneString(override.Description),
+			Body:        cloneString(override.Body),
+			Disabled:    override.Disabled,
+			UpdatedAt:   override.UpdatedAt,
+		}
 	}
 	return entry
 }

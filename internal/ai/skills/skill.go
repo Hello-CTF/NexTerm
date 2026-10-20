@@ -84,6 +84,9 @@ type Entry struct {
 	Disabled    bool   `json:"disabled"`
 	Digest      string `json:"digest"`
 	UpdatedAt   int64  `json:"updatedAt"`
+	// Override carries the owner's persisted delta when present so the
+	// Settings editor can prefill exactly which fields are overridden.
+	Override *Override `json:"override,omitempty"`
 }
 
 // Dispatch is the pinned material produced for the load_skill path: the
