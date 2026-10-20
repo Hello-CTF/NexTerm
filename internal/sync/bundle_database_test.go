@@ -69,14 +69,14 @@ func TestEngineCredentialUpsertCrossOwnerDatabase(t *testing.T) {
 	if err := instance.db.GORM().WithContext(ctxA).Transaction(func(tx *gorm.DB) error {
 		return instance.service.engine.credentialUpsertTx(ctxA, tx, credentialObject{
 			ID: credID, Name: "owned", Kind: "password", UpdatedAt: 100,
-		}, []byte{1}, []byte{2})
+		}, []byte{1}, []byte{2}, true)
 	}); err != nil {
 		t.Fatal(err)
 	}
 	err := instance.db.GORM().WithContext(ctxB).Transaction(func(tx *gorm.DB) error {
 		return instance.service.engine.credentialUpsertTx(ctxB, tx, credentialObject{
 			ID: credID, Name: "invader", Kind: "password", UpdatedAt: 200,
-		}, []byte{3}, []byte{4})
+		}, []byte{3}, []byte{4}, true)
 	})
 	if !errors.Is(err, store.ErrWriteConflict) {
 		t.Fatalf("cross-owner credential upsert error = %v, want ErrWriteConflict", err)

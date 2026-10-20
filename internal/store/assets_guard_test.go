@@ -373,3 +373,66 @@ func TestAssetUpsertConcurrentSameOwnerInsertLandsDesiredContent(t *testing.T) {
 		t.Fatalf("concurrent insert misjudged as success: got %+v, want desired/200", stored)
 	}
 }
+
+// A later committed write with a newer revision must never be overwritten by this call's
+// follow-up UPDATE: the revision-ordering guard fails and the later write wins.
+func TestAssetUpsertDoesNotOverwriteLaterCommittedWrite(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	assetID := ids.New()
+
+	// After the insert commits, a later write lands with a newer revision; the original
+	// call's follow-up UPDATE is guarded by revisionColumn <= its own revision (200), so
+	// it must fail and leave the later write in place.
+	fired := false
+	if err := db.GORM().Callback().Create().After("gorm:commit_or_rollback_transaction").Register("test:later-write", func(tx *gorm.DB) {
+		if fired {
+			return
+		}
+		fired = true
+		if _, err := db.DB().ExecContext(ctx,
+			"UPDATE asset SET name = ?, updated_at = ? WHERE id = ?", "later-local-write", 300, assetID); err != nil {
+			t.Errorf("later write: %v", err)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.GORM().Callback().Create().Remove("test:later-write") })
+
+	original := AssetRow{ID: assetID, Kind: "ssh", Name: "imported", OptionsJSON: "{}", CreatedAt: 1, UpdatedAt: 200}
+	if _, err := db.AssetUpsert(ctx, original); !errors.Is(err, ErrWriteConflict) {
+		t.Fatalf("original call err = %v, want ErrWriteConflict (the later write wins)", err)
+	}
+	stored, err := db.AssetGet(ctx, assetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Name != "later-local-write" || stored.UpdatedAt != 300 {
+		t.Fatalf("later committed write overwritten: got %+v, want later-local-write/300", stored)
+	}
+}
+
+// Zero-value tags and note are legitimate target content: a changed same-owner upsert
+// clears them instead of silently keeping the old values.
+func TestAssetUpsertClearsTagsAndNote(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	asset := AssetRow{ID: ids.New(), Kind: "ssh", Name: "web", OptionsJSON: "{}", Tags: "prod", Note: "old note", CreatedAt: 1, UpdatedAt: 100}
+	if _, err := db.AssetUpsert(ctx, asset); err != nil {
+		t.Fatal(err)
+	}
+	cleared := asset
+	cleared.Tags = ""
+	cleared.Note = ""
+	cleared.UpdatedAt = 200
+	if _, err := db.AssetUpsert(ctx, cleared); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := db.AssetGet(ctx, asset.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Tags != "" || stored.Note != "" {
+		t.Fatalf("tags/note not cleared: tags=%q note=%q", stored.Tags, stored.Note)
+	}
+}

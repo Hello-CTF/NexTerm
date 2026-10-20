@@ -524,7 +524,7 @@ func (e *Engine) groupUpsert(ctx context.Context, payload groupObject, parentID 
 // groupUpsertTx is the in-transaction version of groupUpsert, letting ImportBundle merge multiple writes of one object class into the same transaction.
 func (e *Engine) groupUpsertTx(ctx context.Context, tx *gorm.DB, payload groupObject, parentID *string) error {
 	row := &store.AssetGroupRow{ID: payload.ID, ParentID: parentID, Name: strings.TrimSpace(payload.Name), Sort: payload.Sort, CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt, OwnerID: ipc.OwnerID(ctx)}
-	if err := store.UpsertOwnerGuarded(ctx, tx, row, []string{"parent_id", "name", "sort", "updated_at"}); err != nil {
+	if err := store.UpsertOwnerGuarded(ctx, tx, row, []string{"parent_id", "name", "sort", "updated_at"}, "updated_at"); err != nil {
 		return err
 	}
 	tombstone := query.Use(tx).SyncTombstone
@@ -714,14 +714,19 @@ func (e *Engine) applyCredentialObject(ctx context.Context, plaintext []byte, re
 // The write and the deletion-tombstone clearing share one transaction: once a newer credential beats an old tombstone, no tombstone that could roll back the object may remain.
 func (e *Engine) credentialUpsert(ctx context.Context, payload credentialObject, nonce, blob []byte) error {
 	return e.store.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return e.credentialUpsertTx(ctx, tx, payload, nonce, blob)
+		return e.credentialUpsertTx(ctx, tx, payload, nonce, blob, true)
 	})
 }
 
 // credentialUpsertTx is the in-transaction version of credentialUpsert, letting ImportBundle merge multiple writes of one object class into the same transaction.
-func (e *Engine) credentialUpsertTx(ctx context.Context, tx *gorm.DB, payload credentialObject, nonce, blob []byte) error {
+// revisionGuard enables the revision-ordering guard for the LWW sync apply path; the explicit bundle import disables it so an authoritative bundle overwrite is never rejected for being older.
+func (e *Engine) credentialUpsertTx(ctx context.Context, tx *gorm.DB, payload credentialObject, nonce, blob []byte, revisionGuard bool) error {
 	row := &store.CredentialRow{ID: payload.ID, Name: payload.Name, Kind: payload.Kind, Cipher: store.CipherAES256GCM, Nonce: nonce, Blob: blob, KEKHint: e.vault.KEKHint(), CreatedAt: payload.UpdatedAt, UpdatedAt: payload.UpdatedAt, OwnerID: ipc.OwnerID(ctx)}
-	if err := store.UpsertOwnerGuarded(ctx, tx, row, []string{"name", "kind", "cipher", "nonce", "blob", "kek_hint", "updated_at"}); err != nil {
+	revisionColumn := "updated_at"
+	if !revisionGuard {
+		revisionColumn = ""
+	}
+	if err := store.UpsertOwnerGuarded(ctx, tx, row, []string{"name", "kind", "cipher", "nonce", "blob", "kek_hint", "updated_at"}, revisionColumn); err != nil {
 		return err
 	}
 	tombstone := query.Use(tx).CredentialTombstone

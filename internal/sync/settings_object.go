@@ -374,7 +374,7 @@ func (e *Engine) knownHostUpsert(ctx context.Context, payload knownHostObject, d
 			}
 		}
 		row := &store.KnownHostRow{ID: payload.ID, Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType, Fingerprint: payload.Fingerprint, AddedAt: payload.AddedAt, OwnerID: ipc.OwnerID(ctx)}
-		if err := store.UpsertOwnerGuarded(ctx, tx, row, []string{"host", "port", "key_type", "fingerprint", "added_at", "op_token"}); err != nil {
+		if err := store.UpsertOwnerGuarded(ctx, tx, row, []string{"host", "port", "key_type", "fingerprint", "added_at", "op_token"}, "added_at"); err != nil {
 			return err
 		}
 		tombstone := query.Use(tx).SyncTombstone

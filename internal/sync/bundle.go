@@ -735,7 +735,7 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		for _, cred := range preparedCreds {
 			if err := s.engine.credentialUpsertTx(ctx, tx, credentialObject{
 				ID: cred.id, Name: cred.name, Kind: cred.kind, UpdatedAt: cred.updatedAt,
-			}, cred.nonce, cred.blob); err != nil {
+			}, cred.nonce, cred.blob, false); err != nil {
 				return err
 			}
 		}
