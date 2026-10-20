@@ -49,6 +49,17 @@ function formatted(diagnostics: readonly ts.Diagnostic[]): string {
 }
 
 describe("typed IPC call contract", () => {
+  // These tests run a real in-memory TypeScript compile of the generated IPC
+  // graph — deterministic CPU work, not an async wait that could be awaited
+  // away. Measured cost with the shared DocumentRegistry and types:[] above:
+  // ~2.5s standalone, 7-13s under heavy host contention (load average 45-60
+  // from sibling test runs). The explicit 30s budget is sized to that
+  // measured cost (roughly 12x headroom over standalone, 2.3x over the worst
+  // observed load); it is a compute budget for the compile itself, authorized
+  // for these two compile-type tests only, not a behavioral threshold and not
+  // a global timeout loosening.
+  const COMPILE_BUDGET_MS = 30_000;
+
   it("rejects unknown, dynamic and incorrectly shaped calls while preserving legacy and unsafe paths", () => {
     const probe = resolve("src/test/__ipc_typed_contract_probe.ts");
     const source = `
@@ -81,7 +92,7 @@ void unsafeCall(dynamic);
 `;
     const diagnostics = compile([probe], { [probe]: source });
     expect(diagnostics, formatted(diagnostics)).toEqual([]);
-  });
+  }, COMPILE_BUDGET_MS);
 
   it("surfaces an in-memory generated DTO rename in the real exec batch caller", () => {
     const consumer = resolve("src/ipc/execBatchApi.ts");
@@ -94,5 +105,5 @@ void unsafeCall(dynamic);
     const diagnostics = compile([consumer], { [generated]: source.replaceAll("batchId", "batchID") });
     expect(diagnostics.length).toBeGreaterThan(0);
     expect(diagnostics.some((diagnostic) => diagnostic.file?.fileName === consumer)).toBe(true);
-  });
+  }, COMPILE_BUDGET_MS);
 });
