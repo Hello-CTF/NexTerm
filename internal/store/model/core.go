@@ -202,10 +202,10 @@ type CronJob struct {
 	LastError           string `gorm:"column:last_error;not null;default:''" json:"lastError"`
 	LeaseOwner          string `gorm:"column:lease_owner;not null;default:''" json:"leaseOwner"`
 	LeaseExpiresAt      *int64 `gorm:"column:lease_expires_at" json:"leaseExpiresAt"`
-	RunID               string `gorm:"size:191;column:run_id;not null;default:''" json:"runId"`
+	RunID               string `gorm:"size:191;column:run_id;not null;default:'';index:idx_cron_job_recovery,priority:1" json:"runId"`
 	RunScheduledFor     *int64 `gorm:"column:run_scheduled_for" json:"runScheduledFor"`
 	RunStartedAt        *int64 `gorm:"column:run_started_at" json:"runStartedAt"`
-	RunDeadline         *int64 `gorm:"column:run_deadline" json:"runDeadline"`
+	RunDeadline         *int64 `gorm:"column:run_deadline;index:idx_cron_job_recovery,priority:2" json:"runDeadline"`
 	RunCoalesced        bool   `gorm:"column:run_coalesced;not null;default:0;check:chk_cron_run_coalesced,run_coalesced IN (false,true)" json:"runCoalesced"`
 	OwnerID             string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_cron_job_owner" json:"owner_id"`
 	OwnerKind           string `gorm:"size:16;column:owner_kind;not null;default:''" json:"owner_kind"`

@@ -70,32 +70,61 @@ func (s *SQLStore) List(ctx context.Context) ([]Job, error) {
 	return jobsFromModels(rows), nil
 }
 
-func (s *SQLStore) ListDue(ctx context.Context, now time.Time) ([]Job, error) {
+const (
+	cronDueIdleWhere  = `enabled = ? AND run_id = '' AND next_run_at <= ? AND (retry_at IS NULL OR retry_at <= ?) AND (circuit_open_until IS NULL OR circuit_open_until <= ?)`
+	cronRecoveryWhere = `run_id > '' AND (lease_owner = '' OR lease_expires_at IS NULL OR lease_expires_at <= ?) AND (run_deadline IS NULL OR run_deadline <= ?)`
+	cronDueIdleOrder  = `next_run_at ASC, id ASC`
+	cronRecoveryOrder = `run_deadline ASC, id ASC`
+)
+
+func (s *SQLStore) ListDueIdle(ctx context.Context, now time.Time, limit int) ([]Job, error) {
 	if err := s.validateAccess(ctx); err != nil {
 		return nil, err
 	}
+	if limit <= 0 {
+		return []Job{}, nil
+	}
 	stamp := now.UnixMilli()
 	rows := []store.CronJob{}
-	db := s.db.WithContext(ctx).Model(&store.CronJob{})
-	if !internalAccess(ctx) {
-		if ownerID := ipc.OwnerID(ctx); ownerID != "" {
-			if role, ok := ipc.RoleFromContext(ctx); ok && role == "superadmin" {
-				db = db.Where("owner_id IN ?", []string{ownerID, ""})
-			} else {
-				db = db.Where("owner_id = ?", ownerID)
-			}
-		} else {
-			db = db.Where("owner_id = ?", "")
-		}
-	}
-	err := db.Where(
-		`((enabled = ? AND run_id = '' AND next_run_at <= ? AND (retry_at IS NULL OR retry_at <= ?) AND (circuit_open_until IS NULL OR circuit_open_until <= ?)) OR (run_id <> '' AND (lease_owner = '' OR lease_expires_at IS NULL OR lease_expires_at <= ?) AND (run_deadline IS NULL OR run_deadline <= ?)))`,
-		true, stamp, stamp, stamp, stamp, stamp,
-	).Order("next_run_at ASC, id ASC").Find(&rows).Error
+	err := scopeCronJobs(ctx, s.db).Where(cronDueIdleWhere, true, stamp, stamp, stamp).
+		Order(cronDueIdleOrder).Limit(limit).Find(&rows).Error
 	if err != nil {
 		return nil, err
 	}
 	return jobsFromModels(rows), nil
+}
+
+func (s *SQLStore) ListRecoveryCandidates(ctx context.Context, now time.Time, limit int) ([]Job, error) {
+	if err := s.validateAccess(ctx); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return []Job{}, nil
+	}
+	stamp := now.UnixMilli()
+	rows := []store.CronJob{}
+	// run_id > '' is the sargable form of run_id <> '' (run_id is NOT NULL):
+	// the comparison keeps the recovery scan on idx_cron_job_recovery.
+	err := scopeCronJobs(ctx, s.db).Where(cronRecoveryWhere, stamp, stamp).
+		Order(cronRecoveryOrder).Limit(limit).Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return jobsFromModels(rows), nil
+}
+
+func scopeCronJobs(ctx context.Context, db *gorm.DB) *gorm.DB {
+	scoped := db.WithContext(ctx).Model(&store.CronJob{})
+	if internalAccess(ctx) {
+		return scoped
+	}
+	if ownerID := ipc.OwnerID(ctx); ownerID != "" {
+		if role, ok := ipc.RoleFromContext(ctx); ok && role == "superadmin" {
+			return scoped.Where("owner_id IN ?", []string{ownerID, ""})
+		}
+		return scoped.Where("owner_id = ?", ownerID)
+	}
+	return scoped.Where("owner_id = ?", "")
 }
 
 func jobsFromModels(rows []store.CronJob) []Job {

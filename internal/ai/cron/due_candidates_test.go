@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestDatabaseListDueSelectsOnlyActionableCandidates(t *testing.T) {
+func TestDatabaseDueScansSelectOnlyActionableCandidates(t *testing.T) {
 	cronStore := openDatabaseStore(t)
 	ctx := context.Background()
 	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
@@ -27,6 +27,9 @@ func TestDatabaseListDueSelectsOnlyActionableCandidates(t *testing.T) {
 		newJob("disabled"),
 		newJob("active"),
 		newJob("abandoned"),
+		newJob("due-earlier"),
+		newJob("due-b"),
+		newJob("abandoned-earlier"),
 	}
 	jobs[1].NextRunAt = now.Add(time.Minute)
 	jobs[2].RetryAt = now.Add(time.Minute)
@@ -36,21 +39,58 @@ func TestDatabaseListDueSelectsOnlyActionableCandidates(t *testing.T) {
 	jobs[5].Lease = Lease{Owner: "scheduler", ExpiresAt: now.Add(time.Minute)}
 	jobs[6].Run = RunState{ID: "abandoned-run", Deadline: now.Add(-time.Minute)}
 	jobs[6].Lease = Lease{Owner: "scheduler", ExpiresAt: now.Add(-time.Minute)}
+	jobs[7].NextRunAt = now.Add(-2 * time.Minute)
+	jobs[8].NextRunAt = now.Add(-time.Minute)
+	jobs[9].Run = RunState{ID: "abandoned-earlier-run", Deadline: now.Add(-2 * time.Minute)}
+	jobs[9].Lease = Lease{Owner: "scheduler", ExpiresAt: now.Add(-2 * time.Minute)}
 	for _, job := range jobs {
 		if _, err := cronStore.Create(ctx, job, 20); err != nil {
 			t.Fatalf("create %s: %v", job.ID, err)
 		}
 	}
 
-	candidates, err := cronStore.ListDue(ctx, now)
+	idle, err := cronStore.ListDueIdle(ctx, now, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := make(map[string]bool, len(candidates))
-	for _, job := range candidates {
-		got[job.ID] = true
+	if got := jobIDs(idle); !equalJobIDs(got, []string{"due-earlier", "due", "due-b"}) {
+		t.Fatalf("idle candidates = %v; want due-earlier, due, due-b in stable order", got)
 	}
-	if len(got) != 2 || !got["due"] || !got["abandoned"] {
-		t.Fatalf("due candidates = %+v, want due and abandoned only", got)
+	recovery, err := cronStore.ListRecoveryCandidates(ctx, now, 20)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if got := jobIDs(recovery); !equalJobIDs(got, []string{"abandoned-earlier", "abandoned"}) {
+		t.Fatalf("recovery candidates = %v; want abandoned-earlier, abandoned in stable order", got)
+	}
+
+	limited, err := cronStore.ListDueIdle(ctx, now, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := jobIDs(limited); !equalJobIDs(got, []string{"due-earlier", "due"}) {
+		t.Fatalf("limited idle batch = %v; want the first two in stable order", got)
+	}
+	limitedRecovery, err := cronStore.ListRecoveryCandidates(ctx, now, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := jobIDs(limitedRecovery); !equalJobIDs(got, []string{"abandoned-earlier"}) {
+		t.Fatalf("limited recovery batch = %v; want the earliest deadline", got)
+	}
+	if empty, err := cronStore.ListDueIdle(ctx, now, 0); err != nil || len(empty) != 0 {
+		t.Fatalf("zero-limit idle batch = %v, %v; want none", jobIDs(empty), err)
+	}
+}
+
+func equalJobIDs(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			return false
+		}
+	}
+	return true
 }

@@ -30,7 +30,7 @@ func TestSchedulerExecutorContextIsAccountScoped(t *testing.T) {
 				t.Fatalf("account executor listed foreign job: %+v", job)
 			}
 		}
-		due, err := storage.ListDue(ctx, time.Now())
+		due, err := storage.ListDueIdle(ctx, time.Now(), 10)
 		if err != nil {
 			return err
 		}

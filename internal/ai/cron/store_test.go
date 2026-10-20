@@ -2,6 +2,7 @@ package cron
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -37,7 +38,7 @@ func (s *memoryStore) List(ctx context.Context) ([]Job, error) {
 	return jobs, nil
 }
 
-func (s *memoryStore) ListDue(ctx context.Context, now time.Time) ([]Job, error) {
+func (s *memoryStore) ListDueIdle(ctx context.Context, now time.Time, limit int) ([]Job, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -46,17 +47,68 @@ func (s *memoryStore) ListDue(ctx context.Context, now time.Time) ([]Job, error)
 	if err := s.failures["list"]; err != nil {
 		return nil, err
 	}
+	if limit <= 0 {
+		return []Job{}, nil
+	}
 	jobs := make([]Job, 0, len(s.jobs))
 	for _, job := range s.jobs {
-		if !memoryOwnerMatches(ctx, job) {
-			continue
-		}
-		abandoned := job.Running() && !leaseHeldByAnyone(job.Lease, now) && !now.Before(job.Run.Deadline)
-		if (job.Enabled && !job.Running() && due(job, now)) || abandoned {
+		if memoryOwnerMatches(ctx, job) && job.Enabled && !job.Running() && due(job, now) {
 			jobs = append(jobs, job)
 		}
 	}
+	sortJobsByNextRun(jobs)
+	if len(jobs) > limit {
+		jobs = jobs[:limit]
+	}
 	return jobs, nil
+}
+
+func (s *memoryStore) ListRecoveryCandidates(ctx context.Context, now time.Time, limit int) ([]Job, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.failures["list"]; err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return []Job{}, nil
+	}
+	jobs := make([]Job, 0, len(s.jobs))
+	for _, job := range s.jobs {
+		if !memoryOwnerMatches(ctx, job) || !job.Running() {
+			continue
+		}
+		leaseExpired := job.Lease.Owner == "" || job.Lease.ExpiresAt.IsZero() || !now.Before(job.Lease.ExpiresAt)
+		deadlinePassed := job.Run.Deadline.IsZero() || !now.Before(job.Run.Deadline)
+		if leaseExpired && deadlinePassed {
+			jobs = append(jobs, job)
+		}
+	}
+	sortJobsByDeadline(jobs)
+	if len(jobs) > limit {
+		jobs = jobs[:limit]
+	}
+	return jobs, nil
+}
+
+func sortJobsByNextRun(jobs []Job) {
+	sort.Slice(jobs, func(i, j int) bool {
+		if jobs[i].NextRunAt.Equal(jobs[j].NextRunAt) {
+			return jobs[i].ID < jobs[j].ID
+		}
+		return jobs[i].NextRunAt.Before(jobs[j].NextRunAt)
+	})
+}
+
+func sortJobsByDeadline(jobs []Job) {
+	sort.Slice(jobs, func(i, j int) bool {
+		if jobs[i].Run.Deadline.Equal(jobs[j].Run.Deadline) {
+			return jobs[i].ID < jobs[j].ID
+		}
+		return jobs[i].Run.Deadline.Before(jobs[j].Run.Deadline)
+	})
 }
 
 func memoryOwnerMatches(ctx context.Context, job Job) bool {

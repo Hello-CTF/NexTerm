@@ -458,7 +458,7 @@ func TestOwnerlessMigrationBlocksDueClaimDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	due, err := storage.ListDue(WithInternalAccess(ctx), clock.Now())
+	due, err := storage.ListDueIdle(WithInternalAccess(ctx), clock.Now(), 10)
 	if err != nil || len(due) != 1 || due[0].ID != job.ID {
 		t.Fatalf("fixture was not due before migration: %+v, %v", due, err)
 	}
@@ -583,7 +583,7 @@ func TestCronOwnerlessQueryIsolationDatabase(t *testing.T) {
 				t.Fatal(err)
 			}
 			requireCronJobIDs(t, jobs, test.want)
-			due, err := storage.ListDue(test.ctx, time.Now())
+			due, err := storage.ListDueIdle(test.ctx, time.Now(), 10)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -593,8 +593,8 @@ func TestCronOwnerlessQueryIsolationDatabase(t *testing.T) {
 	if _, err := storage.List(context.Background()); err == nil {
 		t.Fatal("anonymous account-mode List succeeded")
 	}
-	if _, err := storage.ListDue(context.Background(), time.Now()); err == nil {
-		t.Fatal("anonymous account-mode ListDue succeeded")
+	if _, err := storage.ListDueIdle(context.Background(), time.Now(), 10); err == nil {
+		t.Fatal("anonymous account-mode ListDueIdle succeeded")
 	}
 }
 
