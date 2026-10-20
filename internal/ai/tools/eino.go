@@ -498,6 +498,9 @@ func (e *Execution) enabled(name string) bool {
 		_, ok := deps.Terminal.(RenameTerminal)
 		return ok && e.Scope.TabID != ""
 	case "terminal_list":
+		if e.Scope.SessionID == "" {
+			return false
+		}
 		_, ok := deps.Terminal.(ListTabsTerminal)
 		return ok
 	case "terminal_create":
