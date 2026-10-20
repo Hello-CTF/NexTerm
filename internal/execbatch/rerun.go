@@ -1,5 +1,11 @@
 package execbatch
 
+import (
+	"context"
+	"fmt"
+	"strings"
+)
+
 // RerunEligible reports whether a finished target status qualifies for a
 // failed-target-only rerun. Successful targets are not rerun, and canceled
 // targets are excluded on purpose: cancellation is a deliberate user action,
@@ -24,4 +30,47 @@ func SelectRerunTargets(results []Result) []string {
 		}
 	}
 	return sessionIDs
+}
+
+// RerunRequest builds the rerun Request for the failed targets of a finished
+// batch, preserving the command, timeout, and concurrency of the original
+// request. ProductionConfirmation and Runbook are deliberately dropped: a
+// rerun of production targets must pass a fresh confirmation through the
+// normal Execute flow, and a manual rerun is not part of the original
+// runbook run.
+func RerunRequest(original Request, results []Result, newBatchID string) (Request, error) {
+	if newBatchID == "" || len(newBatchID) > 128 || strings.TrimSpace(newBatchID) != newBatchID {
+		return Request{}, fmt.Errorf("%w: invalid rerun batch id", ErrInvalid)
+	}
+	sessionIDs := SelectRerunTargets(results)
+	if len(sessionIDs) == 0 {
+		return Request{}, fmt.Errorf("%w: batch has no failed targets to rerun", ErrInvalid)
+	}
+	return Request{
+		BatchID:       newBatchID,
+		SessionIDs:    sessionIDs,
+		Command:       original.Command,
+		TimeoutMS:     original.TimeoutMS,
+		MaxConcurrent: original.MaxConcurrent,
+	}, nil
+}
+
+// BatchExecutor executes a batch request; *Service satisfies it in
+// production wiring.
+type BatchExecutor interface {
+	Execute(context.Context, string, Request) (Batch, error)
+}
+
+// ExecuteRerun reruns the failed targets of a finished batch through the
+// given executor, reusing the service's production confirmation,
+// cancellation, and history contracts unchanged.
+func ExecuteRerun(ctx context.Context, executor BatchExecutor, ownerID string, original Request, results []Result, newBatchID string) (Batch, error) {
+	if executor == nil {
+		return Batch{}, fmt.Errorf("%w: no batch executor", ErrUnsupported)
+	}
+	request, err := RerunRequest(original, results, newBatchID)
+	if err != nil {
+		return Batch{}, err
+	}
+	return executor.Execute(ctx, ownerID, request)
 }
