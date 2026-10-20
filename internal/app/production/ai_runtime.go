@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -373,7 +374,11 @@ func resolveProductionExecTargets(ctx context.Context, services *ProductionServi
 			return tools.ExecTargetSet{}, ipc.NewError(ipc.CodeForbidden, "多主机目标与在线会话身份或类型不匹配")
 		}
 		targets.SessionIDs = append(targets.SessionIDs, sessionID)
-		targets.Production = targets.Production || store.AssetEnvironment(asset) == "production"
+		production, err := guard.IsProductionEnvironment(validationCtx, services.Store, store.AssetEnvironment(asset))
+		if err != nil {
+			return tools.ExecTargetSet{}, fmt.Errorf("resolve production classification for %s: %w", asset.ID, err)
+		}
+		targets.Production = targets.Production || production
 	}
 	return targets, nil
 }

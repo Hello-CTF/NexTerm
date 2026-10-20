@@ -125,3 +125,101 @@ func TestDeviceGrantPermanenceIsExplicit(t *testing.T) {
 		t.Fatalf("legacy grant did not round-trip the marker: %s", encoded)
 	}
 }
+
+func TestEvaluateDBResourceStripsSessionMemoryForProduction(t *testing.T) {
+	settings := &memorySettings{values: make(map[string]string)}
+	grants, err := NewGrants(context.Background(), settings, nil, WithShared(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	if err := grants.BindConnAsset(ctx, "conn-a", "asset-a"); err != nil {
+		t.Fatal(err)
+	}
+	memory := NewMemory()
+	memory.Add(KindDBWrite)
+	memory.AddPathRule("db_query", "/var/log/**")
+	ruling := Confirm(KindDBWrite, "数据库写入需要确认")
+
+	// Without a persistent grant, session memory auto-authorizes ordinary
+	// environments but never production targets.
+	ordinary := Resource{Action: "db_query", Environment: "staging"}
+	if decision := grants.EvaluateDBResource(ctx, Config{Mode: ReadWrite}, ruling, memory, "conn-a", "db_query", "run-1", ordinary); decision.Action != ActionAllow {
+		t.Fatalf("ordinary db decision = %+v", decision)
+	}
+	production := Resource{Action: "db_query", Environment: "production"}
+	if decision := grants.EvaluateDBResource(ctx, Config{Mode: ReadWrite}, ruling, memory, "conn-a", "db_query", "run-2", production); decision.Action != ActionAsk {
+		t.Fatalf("production db decision = %+v", decision)
+	}
+	configured := Resource{Action: "db_query", Environment: "live", Production: true}
+	if decision := grants.EvaluateDBResource(ctx, Config{Mode: ReadWrite}, ruling, memory, "conn-a", "db_query", "run-3", configured); decision.Action != ActionAsk {
+		t.Fatalf("configured production db decision = %+v", decision)
+	}
+
+	// An explicit persistent device grant still authorizes production: the
+	// session-memory ban does not weaken deliberate long-term grants.
+	if _, err := grants.Grant(ctx, "asset-a", []GrantKind{GrantKindDBQuery}); err != nil {
+		t.Fatal(err)
+	}
+	if decision := grants.EvaluateDBResource(ctx, Config{Mode: ReadWrite}, ruling, memory, "conn-a", "db_query", "run-4", production); decision.Action != ActionAllow {
+		t.Fatalf("granted production db decision = %+v", decision)
+	}
+}
+
+func TestEvaluateDBResourceRebindInvalidatesStaleBinding(t *testing.T) {
+	settings := &memorySettings{values: make(map[string]string)}
+	grants, err := NewGrants(context.Background(), settings, nil, WithShared(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	if _, err := grants.Grant(ctx, "asset-a", []GrantKind{GrantKindDBQuery}); err != nil {
+		t.Fatal(err)
+	}
+	if err := grants.BindConnAsset(ctx, "conn-a", "asset-a"); err != nil {
+		t.Fatal(err)
+	}
+	ruling := Confirm(KindDBWrite, "数据库写入需要确认")
+	if decision := grants.EvaluateDBResource(ctx, Config{Mode: ReadWrite}, ruling, nil, "conn-a", "db_query", "run-1", Resource{Action: "db_query"}); decision.Action != ActionAllow {
+		t.Fatalf("bound decision = %+v", decision)
+	}
+	// Rebinding the connection to another asset must not inherit the previous
+	// asset's grant.
+	if err := grants.BindConnAsset(ctx, "conn-a", "asset-b"); err != nil {
+		t.Fatal(err)
+	}
+	if decision := grants.EvaluateDBResource(ctx, Config{Mode: ReadWrite}, ruling, nil, "conn-a", "db_query", "run-2", Resource{Action: "db_query"}); decision.Action != ActionAsk {
+		t.Fatalf("stale binding decision = %+v", decision)
+	}
+	if err := grants.BindConnAsset(ctx, "conn-a", "asset-a"); err != nil {
+		t.Fatal(err)
+	}
+	if decision := grants.EvaluateDBResource(ctx, Config{Mode: ReadWrite}, ruling, nil, "conn-a", "db_query", "run-3", Resource{Action: "db_query"}); decision.Action != ActionAllow {
+		t.Fatalf("rebound decision = %+v", decision)
+	}
+}
+
+func TestEvaluateDBResourceRevokeIsImmediate(t *testing.T) {
+	settings := &memorySettings{values: make(map[string]string)}
+	grants, err := NewGrants(context.Background(), settings, nil, WithShared(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	if _, err := grants.Grant(ctx, "asset-a", []GrantKind{GrantKindDBQuery}); err != nil {
+		t.Fatal(err)
+	}
+	if err := grants.BindConnAsset(ctx, "conn-a", "asset-a"); err != nil {
+		t.Fatal(err)
+	}
+	ruling := Confirm(KindDBWrite, "数据库写入需要确认")
+	if decision := grants.EvaluateDBResource(ctx, Config{Mode: ReadWrite}, ruling, nil, "conn-a", "db_query", "run-1", Resource{Action: "db_query"}); decision.Action != ActionAllow {
+		t.Fatalf("granted decision = %+v", decision)
+	}
+	if err := grants.Revoke(ctx, "asset-a"); err != nil {
+		t.Fatal(err)
+	}
+	if decision := grants.EvaluateDBResource(ctx, Config{Mode: ReadWrite}, ruling, nil, "conn-a", "db_query", "run-2", Resource{Action: "db_query"}); decision.Action != ActionAsk {
+		t.Fatalf("post-revoke decision = %+v", decision)
+	}
+}
