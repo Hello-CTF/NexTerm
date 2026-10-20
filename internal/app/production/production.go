@@ -157,6 +157,12 @@ func productionModules(services ProductionServices) []Module {
 			},
 			Component: closeStoreComponent(services.Store, services.Agent),
 		})
+		modules = append(modules, Module{
+			Name: "production-settings",
+			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+				return registerProductionSettingsCommands(dispatcher, services.Store)
+			},
+		})
 	}
 	if services.inventory != nil {
 		modules = append(modules, Module{
