@@ -39,6 +39,27 @@ func expectNoFrame(t *testing.T, receiver *hub.Receiver) {
 	}
 }
 
+// tryReadFrames reads want bytes with a short deadline and reports whether
+// they arrived intact; a timeout means the producer stalled.
+func tryReadFrames(t *testing.T, receiver *hub.Receiver, want int, chunk []byte) bool {
+	t.Helper()
+	var got []byte
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for len(got) < want {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Until(deadline))
+		frame, err := receiver.Next(ctx)
+		cancel()
+		if err != nil {
+			return false
+		}
+		got = append(got, frame.Data...)
+		if err := receiver.Ack(frame.Sequence); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return bytes.Equal(got, chunk)
+}
+
 func drainAttachHeader(t *testing.T, receiver *hub.Receiver) {
 	t.Helper()
 	frame := receiveTestFrame(t, receiver)
@@ -781,5 +802,106 @@ func TestRecoverChannelForFloorRetainsSuffixBeforeRecover(t *testing.T) {
 	}
 	if got := readFramesUntil(t, receiverA, chunkSize); !bytes.Equal(got, chunk513) {
 		t.Fatal("stalled chunk did not reach channel A after the resume")
+	}
+}
+
+// The retention floor must be established by a timely accepted-offset signal,
+// not by a delayed RPC: with pause and recover both delayed until after the
+// ring would have wrapped, the producer must already have stalled at the
+// floor so the full refused suffix survives.
+func TestRecoverChannelForFloorStallsBeforeDelayedRPC(t *testing.T) {
+	manager, connector, _, connected := openOpenTestSession(t, KindLocal)
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-1"}); err != nil {
+		t.Fatal(err)
+	}
+	channel := connector.transport(0).channel(0)
+	receiverA := bindTestReceiver(t, manager, "a-1")
+	receiverB := bindTestReceiver(t, manager, "b-1")
+	drainAttachHeader(t, receiverA)
+	drainAttachHeader(t, receiverB)
+
+	const chunkSize = 64 << 10
+	var fed []byte
+	feedA := func(i int) bool {
+		chunk := bytes.Repeat([]byte{byte('a' + i%26)}, chunkSize)
+		fed = append(fed, chunk...)
+		if err := channel.emit(chunk); err != nil {
+			return false
+		}
+		if got := readFramesUntil(t, receiverA, chunkSize); !bytes.Equal(got, chunk) {
+			t.Fatalf("channel A chunk mismatch at %d", i)
+		}
+		return true
+	}
+	feedBoth := func(i int) bool {
+		chunk := bytes.Repeat([]byte{byte('a' + i%26)}, chunkSize)
+		if !feedA(i) {
+			return false
+		}
+		if got := readFramesUntil(t, receiverB, chunkSize); !bytes.Equal(got, chunk) {
+			t.Fatalf("channel B chunk mismatch at %d", i)
+		}
+		return true
+	}
+	for i := 0; i < 256; i++ {
+		if !feedBoth(i) {
+			t.Fatal("producer stalled before the floor opened")
+		}
+	}
+	const acceptedB = 16 << 20
+	// B reports its accepted offset through the ordered write path: the floor
+	// opens at 16 MiB without waiting for the pause/recover RPCs.
+	if err := manager.WriteFor(context.Background(), info.ID, "client-b", []byte(`{"type":"nexterm.stream-ack","offset":16777216}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Sustained output past the ring's capacity: the producer stalls at the
+	// retention floor instead of evicting the refused suffix. Both transports
+	// keep draining, exactly like the real saturated client and its healthy
+	// peer. Feed until a chunk no longer arrives — that is the floor stall.
+	stalled := false
+	for i := 256; i < 4000 && !stalled; i++ {
+		chunk := bytes.Repeat([]byte{byte('a' + i%26)}, chunkSize)
+		if err := channel.emit(chunk); err != nil {
+			stalled = true
+			break
+		}
+		if !tryReadFrames(t, receiverA, chunkSize, chunk) {
+			stalled = true
+		}
+		if !tryReadFrames(t, receiverB, chunkSize, chunk) {
+			stalled = true
+		}
+		if !stalled {
+			fed = append(fed, chunk...)
+		}
+	}
+	if !stalled {
+		t.Fatal("producer kept reading past the ring capacity with the floor set")
+	}
+
+	// The whole refused suffix is redelivered byte-identical — no overrun,
+	// even though the pause/recover RPCs only now arrive.
+	recoverDone := make(chan error, 1)
+	go func() {
+		_, err := manager.RecoverChannelFor(context.Background(), "b-1", acceptedB)
+		recoverDone <- err
+	}()
+	anchorB := receiveTestFrame(t, receiverB)
+	if !bytes.Contains(anchorB.Data, []byte("recovery-")) {
+		t.Fatalf("anchor B = %q", anchorB.Data)
+	}
+	if got := readFramesUntil(t, receiverB, len(fed)-acceptedB); !bytes.Equal(got, fed[acceptedB:]) {
+		t.Fatal("recovered suffix mismatch")
+	}
+	if err := <-recoverDone; err != nil {
+		t.Fatal(err)
 	}
 }

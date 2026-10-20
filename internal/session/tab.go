@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1201,11 +1202,58 @@ func (m *Manager) Release(tabID, client string) (bool, error) {
 	return released, nil
 }
 
+// streamAckType is the reserved control-frame type for the client's
+// accepted-offset ACK on the ordered write path. It is intercepted by the
+// write handler and never reaches the PTY.
+const streamAckType = "nexterm.stream-ack"
+
+// parseStreamAck reports whether data is a stream-ack control frame and, if
+// so, the absolute stream offset the client has accepted. The check is a
+// cheap prefix match first, so ordinary input never pays for a JSON parse.
+func parseStreamAck(data []byte) (int64, bool) {
+	prefix := `{"type":"` + streamAckType + `","offset":`
+	if !bytes.HasPrefix(data, []byte(prefix)) {
+		return 0, false
+	}
+	var frame struct {
+		Offset int64 `json:"offset"`
+	}
+	if err := json.Unmarshal(data, &frame); err != nil {
+		return 0, false
+	}
+	return frame.Offset, true
+}
+
+// channelForClientLocked returns the channel ID of the subscriber attached
+// as the given client, or "" when the client is not attached to this tab.
+func (t *Tab) channelForClientLocked(client string) string {
+	for channelID, subscriber := range t.subscribers {
+		if subscriber.client == client {
+			return channelID
+		}
+	}
+	return ""
+}
+
 func (m *Manager) Write(ctx context.Context, tabID, client string, data []byte) error {
 	m.notifyUserInput(tabID)
 	tab, err := m.Tab(tabID)
 	if err != nil {
 		return err
+	}
+	// The ordered write path also carries the client's accepted-offset ACK: a
+	// small control frame that opens the recovery ring's retention floor
+	// without waiting for a pause/recover RPC. It is never written to the PTY.
+	if offset, ok := parseStreamAck(data); ok {
+		tab.mu.Lock()
+		channelID := tab.channelForClientLocked(clientID(client))
+		if channelID == "" {
+			tab.mu.Unlock()
+			return ErrNotController
+		}
+		tab.setEpisodeFloorLocked(channelID, offset)
+		tab.mu.Unlock()
+		return nil
 	}
 	tab.writeMu.Lock()
 	defer tab.writeMu.Unlock()
