@@ -319,19 +319,18 @@ systemd_split() {
 }
 
 legacy_flag_value() {
-  local exec_line="$1" want="--$2" tokens rc
-  if tokens="$(systemd_split "$exec_line")"; then
-    :
-  else
-    rc=$?
-    if [ "$rc" -eq 3 ]; then return 3; fi
-    return 2
-  fi
-  printf '%s\n' "$tokens" | awk -v want="$want" '
+  local exec_line="$1" want="--$2" rc
+  # Feed awk straight from systemd_split: command substitution would strip the
+  # trailing newlines and lose a final empty argument's record boundary.
+  systemd_split "$exec_line" | awk -v want="$want" '
     $0 == want { if ((getline nxt) > 0) { value = nxt; found = 1 }; next }
     index($0, want "=") == 1 { value = substr($0, length(want) + 2); found = 1; next }
     END { if (found) { print value; exit 0 }; exit 1 }
   '
+  rc=("${PIPESTATUS[@]}")
+  if [ "${rc[0]}" -eq 3 ]; then return 3; fi
+  if [ "${rc[0]}" -ne 0 ]; then return 2; fi
+  return "${rc[1]}"
 }
 
 capture_legacy_values() {

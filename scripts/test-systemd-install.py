@@ -1826,44 +1826,47 @@ def test_empty_data_dir_pinned_on_working_dir_change() -> None:
 
 
 def test_legacy_empty_master_key_override_clears_stale_env_key() -> None:
-    for empty_flag in ('--master-key-file ""', "--master-key-file="):
-        for failure in (None, "env"):
-            with tempfile.TemporaryDirectory() as tmp:
-                base = pathlib.Path(tmp)
-                stubs = make_stubs(base)
-                root = base / "root"
-                legacy_bin = root / "opt/nexterm/nexterm-server"
-                legacy_bin.parent.mkdir(parents=True)
-                legacy_bin.write_text("# fake nexterm-server v0\n")
-                (root / "etc/systemd/system").mkdir(parents=True)
-                (root / "etc/systemd/system/nexterm-server.service").write_text(
-                    LEGACY_UNIT.replace(
-                        "  --web-root /opt/nexterm/web",
-                        f"  --data-dir /srv/data \\\n  {empty_flag} \\\n  --web-root /srv/web",
+    layouts = {
+        "middle": "  --data-dir /srv/data \\\n  {empty_flag} \\\n  --web-root /srv/web",
+        "trailing": "  --data-dir /srv/data \\\n  --web-root /srv/web \\\n  {empty_flag}",
+    }
+    for position, layout in layouts.items():
+        for empty_flag in ('--master-key-file ""', "--master-key-file ''", "--master-key-file="):
+            for failure in (None, "env"):
+                with tempfile.TemporaryDirectory() as tmp:
+                    base = pathlib.Path(tmp)
+                    stubs = make_stubs(base)
+                    root = base / "root"
+                    legacy_bin = root / "opt/nexterm/nexterm-server"
+                    legacy_bin.parent.mkdir(parents=True)
+                    legacy_bin.write_text("# fake nexterm-server v0\n")
+                    (root / "etc/systemd/system").mkdir(parents=True)
+                    (root / "etc/systemd/system/nexterm-server.service").write_text(
+                        LEGACY_UNIT.replace("  --web-root /opt/nexterm/web", layout.format(empty_flag=empty_flag))
                     )
-                )
-                env_key = root / "srv/keys/env.key"
-                env_key.parent.mkdir(parents=True)
-                env_key.write_text("stale-env-key\n")
-                data_key = root / "srv/data/master.key"
-                data_key.parent.mkdir(parents=True)
-                data_key.write_text("data-dir-key\n")
-                etc = root / "etc/nexterm"
-                etc.mkdir(parents=True)
-                (etc / "nexterm.env").write_text(
-                    "NEXTERM_LISTEN=127.0.0.1:8080\nNEXTERM_AUTH=on\nNEXTERM_DATA_DIR=/srv/data\n"
-                    "NEXTERM_WEB_ROOT=/opt/nexterm/web\nNEXTERM_MASTER_KEY_FILE=/srv/keys/env.key\nNEXTERM_DB=sqlite\n"
-                )
-                payload_v2 = make_payload(base, "v2")
-                if failure is not None:
-                    failed = run_install(payload_v2, root, stubs, base, fail_at=failure)
-                    assert failed.returncode != 0, "injected failure must abort"
-                result = run_install(payload_v2, root, stubs, base)
-                assert result.returncode == 0, result.stderr
-                values = env_values(etc / "nexterm.env")
-                assert values["NEXTERM_MASTER_KEY_FILE"] == "/srv/data/master.key", "an empty legacy override must clear the stale env key and follow the data-dir fallback"
-                assert read(data_key) == "data-dir-key\n"
-                assert read(env_key) == "stale-env-key\n", "the stale env key must not be adopted"
+                    env_key = root / "srv/keys/env.key"
+                    env_key.parent.mkdir(parents=True)
+                    env_key.write_text("stale-env-key\n")
+                    data_key = root / "srv/data/master.key"
+                    data_key.parent.mkdir(parents=True)
+                    data_key.write_text("data-dir-key\n")
+                    etc = root / "etc/nexterm"
+                    etc.mkdir(parents=True)
+                    (etc / "nexterm.env").write_text(
+                        "NEXTERM_LISTEN=127.0.0.1:8080\nNEXTERM_AUTH=on\nNEXTERM_DATA_DIR=/srv/data\n"
+                        "NEXTERM_WEB_ROOT=/srv/web\nNEXTERM_MASTER_KEY_FILE=/srv/keys/env.key\nNEXTERM_DB=sqlite\n"
+                    )
+                    payload_v2 = make_payload(base, "v2")
+                    if failure is not None:
+                        failed = run_install(payload_v2, root, stubs, base, fail_at=failure)
+                        assert failed.returncode != 0, "injected failure must abort"
+                    result = run_install(payload_v2, root, stubs, base)
+                    label = f"{position} {empty_flag} failure={failure}"
+                    assert result.returncode == 0, (label, result.stderr)
+                    values = env_values(etc / "nexterm.env")
+                    assert values["NEXTERM_MASTER_KEY_FILE"] == "/srv/data/master.key", f"an empty legacy override must clear the stale env key and follow the data-dir fallback ({label})"
+                    assert read(data_key) == "data-dir-key\n", label
+                    assert read(env_key) == "stale-env-key\n", f"the stale env key must not be adopted ({label})"
 
 
 def test_legacy_unrepresentable_bytes_fail_closed() -> None:
