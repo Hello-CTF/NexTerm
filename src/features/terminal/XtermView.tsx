@@ -22,7 +22,14 @@ import {
 } from "../../app/preferences";
 import { xtermThemeFor } from "./xtermTheme";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
-import { createOscSegmentWriter, createOscStreamFilter } from "./oscStream";
+import { createOscStreamFilter } from "./oscStream";
+import {
+  createTerminalStreamWriter,
+  STREAM_HIGH_WATER_BYTES,
+  STREAM_LOW_WATER_BYTES,
+  type TerminalStreamBacklog,
+} from "./terminalStream";
+import { createTerminalResponseCoalescer } from "./terminalResponses";
 import { measureTerminalGeometry, resizeTerminalToGridPreservingSelection } from "./terminalGeometry";
 import { TerminalGridCoordinator, type TerminalGrid } from "./terminalGrid";
 import { productionGridRuntime } from "./gridRuntimeAdapter";
@@ -89,6 +96,7 @@ export interface XtermViewProps {
   onTitle?: (title: string) => void;
   onNotification?: (body: string) => void;
   onClipboard?: (payload: string) => void;
+  onStreamBacklog?: (backlog: TerminalStreamBacklog | null) => void;
   onSelectionCopy?: (text: string, error: unknown | null) => void;
   onPasteImages?: (files: File[]) => void;
   onRequestPaste?: () => void;
@@ -113,6 +121,7 @@ export function XtermView(props: XtermViewProps) {
   const onTitleRef = useRef(props.onTitle);
   const onNotificationRef = useRef(props.onNotification);
   const onClipboardRef = useRef(props.onClipboard);
+  const onStreamBacklogRef = useRef(props.onStreamBacklog);
   const onSelectionCopyRef = useRef(props.onSelectionCopy);
   const onPasteImagesRef = useRef(props.onPasteImages);
   const onRequestPasteRef = useRef(props.onRequestPaste);
@@ -125,6 +134,7 @@ export function XtermView(props: XtermViewProps) {
   onTitleRef.current = props.onTitle;
   onNotificationRef.current = props.onNotification;
   onClipboardRef.current = props.onClipboard;
+  onStreamBacklogRef.current = props.onStreamBacklog;
   onSelectionCopyRef.current = props.onSelectionCopy;
   onPasteImagesRef.current = props.onPasteImages;
   onRequestPasteRef.current = props.onRequestPaste;
@@ -215,7 +225,28 @@ export function XtermView(props: XtermViewProps) {
       const below = Math.max(0, buffer.baseY - buffer.viewportY);
       setLinesBelow((prev) => (prev === below ? prev : below));
     };
-    const scrollDisposable = term.onScroll(updateLinesBelow);
+    // Scroll and write-completion signals are high-frequency: they only mark
+    // the UI dirty, and the buffer read plus state update runs once per
+    // animation frame with the latest value.
+    let uiFrame: number | null = null;
+    let pendingTitle: string | null = null;
+    let lastSentTitle: string | null = null;
+    const flushUiUpdates = () => {
+      updateLinesBelow();
+      if (pendingTitle !== null && pendingTitle !== lastSentTitle) {
+        lastSentTitle = pendingTitle;
+        onTitleRef.current?.(pendingTitle);
+      }
+      pendingTitle = null;
+    };
+    const scheduleUiFlush = () => {
+      if (uiFrame !== null) return;
+      uiFrame = requestAnimationFrame(() => {
+        uiFrame = null;
+        flushUiUpdates();
+      });
+    };
+    const scrollDisposable = term.onScroll(scheduleUiFlush);
     onHandleRef.current?.({
       copyBlock: (index) => blocks.getBlockText(index),
       scrollToBlock: (index) => blocks.scrollTo(index),
@@ -231,15 +262,58 @@ export function XtermView(props: XtermViewProps) {
     });
 
     let oscFilter = createOscStreamFilter();
-    const writeOscSegments = createOscSegmentWriter(
+    const streamWriter = createTerminalStreamWriter(
       term,
       (event) => {
         if (event.kind === "notification") onNotificationRef.current?.(event.body);
         else if (event.kind === "command") blocks.feedOSC133(event.phase, event.exitCode);
         else onClipboardRef.current?.(event.payload);
       },
-      updateLinesBelow,
+      {
+        highWaterBytes: STREAM_HIGH_WATER_BYTES,
+        lowWaterBytes: STREAM_LOW_WATER_BYTES,
+        onPausedChange: (paused, stats) =>
+          onStreamBacklogRef.current?.(
+            paused
+              ? {
+                  paused: true,
+                  pendingBytes: stats.pendingBytes,
+                  oldestPendingAgeMs: stats.oldestPendingAgeMs,
+                }
+              : null,
+          ),
+        onWritten: scheduleUiFlush,
+      },
     );
+    // Automatic query responses (DA/DSR/CPR reports and friends) are answered
+    // by xterm itself through onData; floods of them collapse per type with a
+    // budget instead of one upstream write each. Keystrokes and pastes never
+    // enter the coalescer.
+    const overflowNotified = new Set<string>();
+    const responses = createTerminalResponseCoalescer({
+      send: (data) => {
+        if (!kernelTabId) return;
+        const onData = onDataRef.current;
+        if (onData) {
+          onData(data);
+        } else {
+          void terminalApi
+            .write(kernelTabId, new TextEncoder().encode(data))
+            .catch(() => undefined);
+        }
+      },
+      onOverflow: (info) => {
+        const key = `${info.generation}:${info.type}`;
+        if (overflowNotified.has(key)) return;
+        overflowNotified.add(key);
+        useUi
+          .getState()
+          .pushToast(
+            "info",
+            `终端自动响应（${info.type}）超出预算，已抑制 ${info.dropped} 条相同类型响应`,
+          );
+      },
+    });
     // Output stream sequence anchor: on every attach the server first delivers an anchor frame, after which this stream segment's bytes
     // map continuously to ring sequence streamSeq + max(0, bytes received - controlBytes). A reconnecting attach brings the
     // sequence and epoch back (fromSeq/fromEpoch), and the server resumes from the offset instead of clearing the screen for a full replay.
@@ -250,7 +324,7 @@ export function XtermView(props: XtermViewProps) {
     let skipLeading = 0;
     let expiredNoticePending = false;
     const writeExpiredNotice = () => {
-      term.writeln("\x1b[33m[输出历史已过期，已刷新屏幕]\x1b[0m");
+      streamWriter.writeLocalText("\x1b[33m[输出历史已过期，已刷新屏幕]\x1b[0m\n");
     };
     const channel = createBinaryChannel(
       (bytes) => {
@@ -266,7 +340,7 @@ export function XtermView(props: XtermViewProps) {
           }
         }
         if (out.length > 0) {
-          writeOscSegments(oscFilter.push(out));
+          streamWriter.write(oscFilter.push(out));
         }
         if (expiredNoticePending && streamBytes >= (streamAnchor?.control ?? 0)) {
           expiredNoticePending = false;
@@ -278,6 +352,12 @@ export function XtermView(props: XtermViewProps) {
           term.clearSelection();
           oscFilter = createOscStreamFilter();
           blocks.clear();
+          // History is gone: write callbacks still queued from the previous
+          // attachment must not dispatch their OSC events into the fresh
+          // screen, so the stream moves to a new generation. A resumed
+          // reattach (non-expired anchor) keeps its queued events: the server
+          // does not resend the bytes they came from.
+          responses.setGeneration(streamWriter.nextGeneration());
         }
         const previous = streamAnchor
           ? streamAnchor.seq + Math.max(0, streamBytes - streamAnchor.control)
@@ -403,9 +483,9 @@ export function XtermView(props: XtermViewProps) {
         const code = (e as { code?: string } | null)?.code;
         if (code === "not_found") {
           if (!disposed) onAttachFailedRef.current?.(code);
-          term.writeln("\r\n\x1b[33m[连接已失效] 该终端所属的连接已在服务端删除\x1b[0m");
+          streamWriter.writeLocalText("\r\n\x1b[33m[连接已失效] 该终端所属的连接已在服务端删除\x1b[0m\n");
         } else {
-          term.writeln(`\r\n\x1b[31m[连接失败] ${describeError(e)}\x1b[0m`);
+          streamWriter.writeLocalText(`\r\n\x1b[31m[连接失败] ${describeError(e)}\x1b[0m\n`);
         }
       } finally {
         attaching = false;
@@ -471,8 +551,14 @@ export function XtermView(props: XtermViewProps) {
       void doAttach();
     }, 0);
 
-    const dataDisposable = term.onData((data) => sendInput(data));
-    const titleDisposable = term.onTitleChange((t) => onTitleRef.current?.(t));
+    const dataDisposable = term.onData((data) => {
+      blocks.feedInput(data);
+      responses.submit(data);
+    });
+    const titleDisposable = term.onTitleChange((t) => {
+      pendingTitle = t;
+      scheduleUiFlush();
+    });
     const autoCopy = createSelectionAutoCopy({
       isEnabled: () => getInputPrefs().selectionAutoCopy,
       getSelection: () => term.getSelection(),
@@ -589,6 +675,8 @@ export function XtermView(props: XtermViewProps) {
       window.clearTimeout(attachTimer);
       if (windowResizeTimer !== null) window.clearTimeout(windowResizeTimer);
       if (measureFrame !== null) cancelAnimationFrame(measureFrame);
+      if (uiFrame !== null) cancelAnimationFrame(uiFrame);
+      responses.flush();
       window.removeEventListener(RESIZE_END_EVENT, onFinalResize);
       window.removeEventListener("resize", onWindowResize);
       window.visualViewport?.removeEventListener("resize", onWindowResize);

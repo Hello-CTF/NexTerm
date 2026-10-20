@@ -44,6 +44,7 @@ import {
   throttleView,
   type ThrottleState,
 } from "./terminalThrottle";
+import type { TerminalStreamBacklog } from "./terminalStream";
 import { ask, askChoice, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { formatBytes } from "../../ui/format";
@@ -272,6 +273,7 @@ export function TerminalPane({
     revision: number;
   } | null>(null);
   const [throttle, setThrottle] = useState<ThrottleState | null>(null);
+  const [streamBacklog, setStreamBacklog] = useState<TerminalStreamBacklog | null>(null);
   const [, setThrottleTick] = useState(0);
   const [claiming, setClaiming] = useState(false);
   const [handoffSyncing, setHandoffSyncing] = useState(false);
@@ -823,6 +825,7 @@ export function TerminalPane({
       onEventsResync(() => {
         throttleVersions.current = new EventVersionGate();
         setThrottle(null);
+        setStreamBacklog(null);
         void refreshControl();
         if (kernelTabIdRef.current) void useUi.getState().resyncRecording(kernelTabIdRef.current);
       }),
@@ -1509,6 +1512,14 @@ export function TerminalPane({
             输出已恢复
           </span>
         )}
+        {streamBacklog && (
+          <span
+            className="nx-badge nx-badge-amber"
+            title={`终端输出解析积压（${streamBacklog.pendingBytes} 字节待解析），画面可能有延迟`}
+          >
+            解析积压
+          </span>
+        )}
         {recording?.state === "running" && (
           <span className="nx-badge nx-badge-red" title={recording.path || "正在录制"}>
             <span className="nx-dot nx-dot-pulse" />
@@ -1750,6 +1761,7 @@ export function TerminalPane({
               onAttachFailed={handleAttachDead}
               onAttachInfo={(info) => {
                 setThrottle(null);
+                setStreamBacklog(null);
                 setControl({
                   controller: info.controller,
                   subscribers: info.subscribers,
@@ -1771,6 +1783,7 @@ export function TerminalPane({
                 setKernelTabId(id);
                 setAttachDead(false);
                 setThrottle(null);
+                setStreamBacklog(null);
                 resumeAttemptedRef.current = false;
                 useUi.getState().updateTab(storeTabId, { tabId: id, dead: false, closeError: undefined });
                 void useUi.getState().resyncSessions({ silent: true });
@@ -1814,6 +1827,7 @@ export function TerminalPane({
               onTitle={handleOscTitle}
               onNotification={osc9Notifier}
               onClipboard={osc52Handler}
+              onStreamBacklog={setStreamBacklog}
               onPasteImages={(files) => void handlePasteImages(files)}
               onHandle={(h) => {
                 handleRef.current = h;
