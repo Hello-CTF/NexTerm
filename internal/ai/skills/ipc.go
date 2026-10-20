@@ -7,8 +7,10 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
-// IPC command names for the owner-scoped skills service. The frontend
-// adapter in src/features/settings/skillsApi.ts mirrors these strings.
+// IPC command names for the owner-scoped skills service. No frontend
+// adapter exists yet: the typed adapter lands only after the runtime
+// registers these commands and the contract generation (M46) produces
+// the manifest entries.
 const (
 	CommandList           = "ai_skills_list"
 	CommandSaveOverride   = "ai_skills_save_override"
@@ -24,9 +26,9 @@ type nameRequest struct {
 // RegisterIPC registers the owner-scoped skills commands on the dispatcher.
 // It is the single registration entry point for the shared IPC owner: the
 // agent runtime constructs the Manager (settings store, shared flag,
-// embedded index) and calls RegisterIPC once during wiring. Until that
-// registration lands, the frontend adapter's calls fail with an unknown
-// command error — end-to-end dispatch is not claimed before then.
+// embedded index) and calls RegisterIPC once during wiring. There is no
+// frontend adapter until that registration and the contract generation
+// (M46) have landed, so end-to-end dispatch is not claimed before then.
 func RegisterIPC(dispatcher *ipc.Dispatcher, manager *Manager) error {
 	registrations := []func() error{
 		func() error {
