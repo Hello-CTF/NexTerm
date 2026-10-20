@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
+	"github.com/mattn/go-runewidth"
 )
 
 const (
@@ -69,10 +70,11 @@ func (r *Registry) outputSince(ctx context.Context, tabID string, seq uint64, ma
 const historyScanBytes = 256 << 10
 
 // unwrapLines joins soft-wrapped screen lines back into logical lines: a
-// rendered line that filled the full terminal width continues on the next
-// line. Long logical lines that happen to end exactly at the width boundary
-// are joined with their successor; that ambiguity is inherent to wrapped
-// screen content.
+// rendered line that filled the full terminal cell width continues on the
+// next line. Width is measured in terminal cells, not runes, so CJK and
+// other wide characters fill a row with far fewer runes. Long logical lines
+// that happen to end exactly at the width boundary are joined with their
+// successor; that ambiguity is inherent to wrapped screen content.
 func unwrapLines(lines []string, cols int) []string {
 	if cols <= 0 || len(lines) == 0 {
 		return lines
@@ -81,7 +83,7 @@ func unwrapLines(lines []string, cols int) []string {
 	var current strings.Builder
 	for _, line := range lines {
 		current.WriteString(line)
-		if len([]rune(line)) >= cols {
+		if runewidth.StringWidth(line) >= cols {
 			continue
 		}
 		joined = append(joined, current.String())

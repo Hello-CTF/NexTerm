@@ -18,17 +18,19 @@ import (
 // tabFakeTerminal is a multi-tab terminal fake implementing every optional
 // capability the P1 terminal tools rely on.
 type tabFakeTerminal struct {
-	mu              sync.Mutex
-	tabs            map[string]*tabFakeTab
-	writes          map[string][][]byte
-	pastes          map[string][]string
-	pasteSubmits    []pasteSubmitCall
-	createResult    CreatedTab
-	createErr       error
-	created         []CreatedTab
-	renamed         [][2]string
-	snapshotErr     error
-	outputSinceHook func(tabID string)
+	mu               sync.Mutex
+	tabs             map[string]*tabFakeTab
+	writes           map[string][][]byte
+	pastes           map[string][]string
+	pasteSubmits     []pasteSubmitCall
+	createResult     CreatedTab
+	createErr        error
+	created          []CreatedTab
+	renamed          [][2]string
+	snapshotErr      error
+	snapshotCalls    int
+	snapshotErrAfter int
+	outputSinceHook  func(tabID string)
 }
 
 type tabFakeTab struct {
@@ -72,7 +74,8 @@ func (f *tabFakeTerminal) tab(tabID string) (*tabFakeTab, error) {
 func (f *tabFakeTerminal) Snapshot(_ context.Context, tabID string) (Screen, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.snapshotErr != nil {
+	f.snapshotCalls++
+	if f.snapshotErr != nil && f.snapshotCalls > f.snapshotErrAfter {
 		return Screen{}, f.snapshotErr
 	}
 	tab, ok := f.tabs[tabID]

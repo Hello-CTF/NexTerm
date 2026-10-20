@@ -14,6 +14,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -568,6 +569,9 @@ func (r *Registry) resolveTab(ctx context.Context, jobID string, scope Scope, re
 	if hasResolver && scope.SessionID != "" {
 		sessionID, err := r.tabSession(ctx, scope.TabID)
 		if err != nil {
+			if errors.Is(err, session.ErrTabNotFound) {
+				return "", ErrTerminalGone
+			}
 			return "", err
 		}
 		if sessionID != scope.SessionID {
@@ -628,15 +632,26 @@ func (r *Registry) readScreen(ctx context.Context, jobID string, scope Scope, ra
 		if cursor.TabID != tabID {
 			return Fail(invalid("游标属于终端 %s，不能用于终端 %s", cursor.TabID, tabID))
 		}
+		_, hasResolver := r.deps.Terminal.(TabSessionTerminal)
+		if cursor.SessionID == "" && hasResolver {
+			return Fail(fmt.Errorf("游标缺少会话绑定，无法确认来源终端；请用 since_seq=%d 重新读取", cursor.Seq))
+		}
 		if cursor.SessionID != "" {
 			sessionID, sessionErr := r.tabSession(ctx, tabID)
-			if sessionErr != nil || sessionID != cursor.SessionID {
+			if sessionErr != nil {
+				if errors.Is(sessionErr, session.ErrTabNotFound) {
+					return Fail(ErrTerminalGone)
+				}
+				return Fail(sessionErr)
+			}
+			if sessionID != cursor.SessionID {
 				return Fail(fmt.Errorf("游标对应的终端会话身份已变化；请用 since_seq=%d 重新读取（原始流按当前尺寸完整重放）", cursor.Seq))
 			}
 		}
-		// A cursor read must confirm the current geometry: resizing changes
+		// The cursor read must confirm the current geometry: resizing changes
 		// how the raw stream renders into lines, and an unconfirmed geometry
 		// must fail closed with the recovery anchor, never render at defaults.
+		// The one validated geometry is then reused for the whole read.
 		screen, snapshotErr := r.deps.Terminal.Snapshot(ctx, tabID)
 		if snapshotErr != nil {
 			return Fail(fmt.Errorf("无法确认终端几何（快照失败: %v）；请用 since_seq=%d 重新读取（原始流按当前尺寸完整重放）", snapshotErr, cursor.Seq))
@@ -645,10 +660,14 @@ func (r *Registry) readScreen(ctx context.Context, jobID string, scope Scope, ra
 			return Fail(fmt.Errorf("终端已从 %dx%d resize 为 %dx%d，游标失效；请用 since_seq=%d 重新读取（原始流按新尺寸完整重放）",
 				cursor.Cols, cursor.Rows, screen.Cols, screen.Rows, cursor.Seq))
 		}
-		return r.readScreenSince(ctx, tabID, cursor.Seq, int(args.MaxBytes), args.Unwrap)
+		return r.readScreenSince(ctx, tabID, cursor.Seq, int(args.MaxBytes), args.Unwrap, screen.Cols, screen.Rows)
 	}
 	if args.SinceSeq > 0 {
-		return r.readScreenSince(ctx, tabID, args.SinceSeq, int(args.MaxBytes), args.Unwrap)
+		cols, rows := 80, 24
+		if screen, snapshotErr := r.deps.Terminal.Snapshot(ctx, tabID); snapshotErr == nil {
+			cols, rows = screen.Cols, screen.Rows
+		}
+		return r.readScreenSince(ctx, tabID, args.SinceSeq, int(args.MaxBytes), args.Unwrap, cols, rows)
 	}
 	screen, err := r.deps.Terminal.Snapshot(ctx, tabID)
 	if err != nil {
@@ -752,18 +771,16 @@ func (r *Registry) readScreenHistory(ctx context.Context, tabID string, maxLines
 }
 
 // readScreenSince returns only the output produced after the anchor sequence,
-// bounded by maxBytes. The header carries the exact continuation anchor
-// (start+len(data)) plus an opaque cursor bound to the current geometry, so
-// the next page neither repeats nor skips output, plus explicit
-// expired-anchor and render-truncation recovery notes.
-func (r *Registry) readScreenSince(ctx context.Context, tabID string, sinceSeq uint64, maxBytes int, unwrap bool) Output {
+// bounded by maxBytes. The caller supplies the geometry: cursor reads pass the
+// one validated geometry, plain anchored reads pass their snapshot geometry or
+// the 80x24 default. The header carries the exact continuation anchor
+// (start+len(data)) plus an opaque cursor bound to that geometry and the tab's
+// session identity, so the next page neither repeats nor skips output, plus
+// explicit expired-anchor and render-truncation recovery notes.
+func (r *Registry) readScreenSince(ctx context.Context, tabID string, sinceSeq uint64, maxBytes int, unwrap bool, cols, rows int) Output {
 	data, start, latest, err := r.outputSince(ctx, tabID, sinceSeq, maxBytes)
 	if err != nil {
 		return Fail(err)
-	}
-	cols, rows := 80, 24
-	if screen, snapshotErr := r.deps.Terminal.Snapshot(ctx, tabID); snapshotErr == nil {
-		cols, rows = screen.Cols, screen.Rows
 	}
 	lines := renderOutputDiff(data, cols, rows)
 	if unwrap {
@@ -777,8 +794,13 @@ func (r *Registry) readScreenSince(ctx context.Context, tabID string, sinceSeq u
 	more := next < latest
 	if more {
 		header += fmt.Sprintf("；还有未读输出，下一页 since_seq=%d", next)
-		sessionID, _ := r.tabSession(ctx, tabID)
-		if cursor := encodeScreenCursor(screenCursor{Version: 1, Kind: "raw", Seq: next, TabID: tabID, SessionID: sessionID, Cols: cols, Rows: rows}); cursor != "" {
+		// An identity resolver that exists but fails must never produce an
+		// unbound cursor; the page still continues with the plain anchor.
+		_, hasResolver := r.deps.Terminal.(TabSessionTerminal)
+		sessionID, sessionErr := r.tabSession(ctx, tabID)
+		if hasResolver && sessionErr != nil {
+			header += "；身份解析失败，本次不提供 cursor，请用 since_seq 翻页"
+		} else if cursor := encodeScreenCursor(screenCursor{Version: 1, Kind: "raw", Seq: next, TabID: tabID, SessionID: sessionID, Cols: cols, Rows: rows}); cursor != "" {
 			header += " 或 cursor=" + cursor
 		}
 	}
@@ -1298,6 +1320,12 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 	for {
 		screen, snapshotErr := r.waitSnapshot(waitContext, tabID, args.QuietMS > 0)
 		if snapshotErr != nil {
+			// The wait budget exhausted mid-snapshot is the wait's own
+			// timeout: surface the structured timeout output, not a raw
+			// context error.
+			if waitContext.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+				return legacyWaitTimeoutOutput(tabID, nil, Screen{})
+			}
 			return Fail(snapshotErr)
 		}
 		tail := screen.Tail
@@ -1319,16 +1347,20 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 			if ctx.Err() != nil {
 				return Fail(ctx.Err())
 			}
-			if len(tail) > 10 {
-				tail = tail[len(tail)-10:]
-			}
-			return Output{Text: "等待超时，最近输出：\n" + strings.Join(tail, "\n"), ExitCode: 1,
-				Wait: &WaitOutcome{Mode: "single", TimedOut: true, Tabs: []WaitTabOutcome{{
-					TabID: tabID, IdleMS: screen.IdleMS, ToSeq: screen.Seq, Note: "匹配自可见屏幕尾部，无输出锚点",
-				}}}}
+			return legacyWaitTimeoutOutput(tabID, tail, screen)
 		case <-ticker.C:
 		}
 	}
+}
+
+func legacyWaitTimeoutOutput(tabID string, tail []string, screen Screen) Output {
+	if len(tail) > 10 {
+		tail = tail[len(tail)-10:]
+	}
+	return Output{Text: "等待超时，最近输出：\n" + strings.Join(tail, "\n"), ExitCode: 1,
+		Wait: &WaitOutcome{Mode: "single", TimedOut: true, Tabs: []WaitTabOutcome{{
+			TabID: tabID, IdleMS: screen.IdleMS, ToSeq: screen.Seq, Note: "匹配自可见屏幕尾部，无输出锚点",
+		}}}}
 }
 
 func waitSatisfiedText(pattern string, idleMS, quietMS int64) string {

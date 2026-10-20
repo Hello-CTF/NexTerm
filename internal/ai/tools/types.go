@@ -150,16 +150,19 @@ type TabDetail struct {
 // means the wait condition was satisfied; Idle means the tab went quiet
 // without satisfying it; Running reflects the OSC 133 command state. FromSeq
 // and ToSeq are the exact output anchors the wait scanned, so a follow-up
-// since_seq read neither repeats nor skips output.
+// since_seq read neither repeats nor skips output. Matched is the
+// fully-satisfied verdict including quiet; ConditionMatched reports the
+// pattern/lines condition alone when quiet is still pending.
 type WaitTabOutcome struct {
-	TabID    string `json:"tab_id"`
-	Matched  bool   `json:"matched"`
-	Running  bool   `json:"running,omitempty"`
-	IdleMS   int64  `json:"idle_ms"`
-	NewLines int    `json:"new_lines"`
-	FromSeq  uint64 `json:"from_seq"`
-	ToSeq    uint64 `json:"to_seq"`
-	Note     string `json:"note,omitempty"`
+	TabID            string `json:"tab_id"`
+	Matched          bool   `json:"matched"`
+	ConditionMatched bool   `json:"condition_matched,omitempty"`
+	Running          bool   `json:"running,omitempty"`
+	IdleMS           int64  `json:"idle_ms"`
+	NewLines         int    `json:"new_lines"`
+	FromSeq          uint64 `json:"from_seq"`
+	ToSeq            uint64 `json:"to_seq"`
+	Note             string `json:"note,omitempty"`
 }
 
 // WaitOutcome is the structured result of wait_for: which tabs satisfied the

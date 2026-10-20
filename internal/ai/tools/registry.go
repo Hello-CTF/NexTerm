@@ -241,9 +241,14 @@ func (r *Registry) executeRecorded(ctx context.Context, jobID string, scope Scop
 		branch = r.execute(effectCtx, jobID, scope, call, preparation)
 		return completionFromOutput(branch)
 	})
+	// The deterministic operation ID of this call: replays and every
+	// effect-initiated outcome reference the same operation.
+	operation := operationID(jobID, call.ID, call.Name)
 	switch {
 	case err == nil && !ranEffect:
-		return replayOutput(record)
+		output := replayOutput(record)
+		output.OperationID = operation
+		return output
 	case err == nil:
 		return branch
 	case errors.Is(err, outcome.ErrInProgress):
@@ -254,7 +259,12 @@ func (r *Registry) executeRecorded(ctx context.Context, jobID string, scope Scop
 		return Fail(fmt.Errorf("执行结果记录失败: %w", err))
 	case record.State != outcome.ExecutionFinished || record.Audit.State == outcome.AuditPending:
 
-		return Fail(fmt.Errorf("操作已执行，但结果记录失败：%w", err))
+		result := Fail(fmt.Errorf("操作已执行，但结果记录失败：%w", err))
+		result.OperationID = branch.OperationID
+		if result.OperationID == "" {
+			result.OperationID = operation
+		}
+		return result
 	case record.Audit.State == outcome.AuditFailed:
 		if branch.ModelText == "" {
 			branch.ModelText = provider.ProjectModelOutput(call.Name, branch.OK, branch.Text, branch.Truncated, branch.Panic)

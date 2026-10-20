@@ -73,35 +73,18 @@ func TestWaitForQuietContinuousOutputTimeoutCancelAndZeroOutput(t *testing.T) {
 			t.Fatal(err)
 		}
 		startClock := fixture.clock.Load()
-		stop := make(chan struct{})
-		emitErrors := make(chan error, 1)
-		var feeder sync.WaitGroup
-		feeder.Add(1)
-		go func() {
-			defer feeder.Done()
-			ticker := time.NewTicker(2 * time.Millisecond)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-stop:
-					return
-				case <-ticker.C:
-					fixture.clock.Add(10)
-					if err := fixture.channel.emit([]byte("noise\r\n")); err != nil {
-						emitErrors <- err
-						return
-					}
-				}
-			}
-		}()
-		result := fixture.registry().Execute(trustedContext(), "job", fixture.scope(), Call{ID: "continuous", Name: "wait_for", Args: json.RawMessage(`{"pattern":"READY","quiet_ms":50,"timeout_ms":60}`)}, nil)
-		close(stop)
-		feeder.Wait()
-		select {
-		case err := <-emitErrors:
-			t.Fatal(err)
-		default:
+		// Drive the fixture clock from the wait's own polls instead of wall
+		// time: every snapshot advances the clock and emits noise, so the
+		// quiet threshold can never be reached regardless of scheduling.
+		var armHook func()
+		armHook = func() {
+			fixture.clock.Add(10)
+			_ = fixture.channel.emit([]byte("noise\r\n"))
+			fixture.setSnapshotHook(armHook)
 		}
+		fixture.setSnapshotHook(armHook)
+		result := fixture.registry().Execute(trustedContext(), "job", fixture.scope(), Call{ID: "continuous", Name: "wait_for", Args: json.RawMessage(`{"pattern":"READY","quiet_ms":50,"timeout_ms":60}`)}, nil)
+		fixture.setSnapshotHook(nil)
 		timedOut := strings.Contains(result.Text, "等待超时") || strings.Contains(result.Text, context.DeadlineExceeded.Error())
 		if result.OK || result.ExitCode != 1 || !timedOut || strings.Contains(result.Text, "模式已出现") {
 			t.Fatalf("continuous output result = %+v", result)

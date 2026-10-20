@@ -18,7 +18,8 @@ const (
 // call. The anchor is the exact output sequence the wait started from, so
 // already-visible content can never false-match and the reported anchors let
 // a follow-up read resume without repeating or skipping output. Pattern and
-// line conditions are tracked separately and combine as AND.
+// line conditions are tracked separately and combine as AND; satisfied is
+// the fully-satisfied verdict including the quiet requirement.
 type waitTarget struct {
 	tabID          string
 	fromSeq        uint64
@@ -28,8 +29,10 @@ type waitTarget struct {
 	patternMatched bool
 	linesMatched   bool
 	matched        bool
+	satisfied      bool
 	latest         uint64
 	idleMS         int64
+	idleErr        string
 	cols           int
 	rows           int
 	note           string
@@ -88,7 +91,7 @@ func (r *Registry) waitForTabs(waitContext context.Context, jobID string, scope 
 	for {
 		satisfied := 0
 		for _, target := range targets {
-			if target.matched && quietMS == 0 {
+			if target.satisfied {
 				satisfied++
 				continue
 			}
@@ -96,13 +99,21 @@ func (r *Registry) waitForTabs(waitContext context.Context, jobID string, scope 
 			if quietMS > 0 && (target.matched || quietOnly) {
 				if screen, err := r.waitSnapshot(waitContext, target.tabID, true); err == nil {
 					target.idleMS = screen.IdleMS
+					target.idleErr = ""
+				} else {
+					// A failed quiet snapshot must never reuse stale idle to
+					// fake success: the tab goes unsatisfied with the failure
+					// recorded for the timeout output.
+					target.idleMS = -1
+					target.idleErr = "安静快照失败: " + err.Error()
 				}
 				// A quiet-only wait is satisfied by silence itself.
 				if quietOnly {
 					target.matched = target.idleMS >= quietMS
 				}
 			}
-			if target.matched && (quietMS == 0 || target.idleMS >= quietMS) {
+			target.satisfied = target.matched && (quietMS == 0 || target.idleMS >= quietMS)
+			if target.satisfied {
 				satisfied++
 			}
 		}
@@ -166,32 +177,41 @@ func (r *Registry) scanWaitTarget(waitContext context.Context, target *waitTarge
 }
 
 // waitTabsResult renders the structured multi-tab outcome and its text
-// summary; per-tab anchors and line counts ride in the wait metadata.
+// summary; per-tab anchors and line counts ride in the wait metadata. Only
+// fully-satisfied tabs (condition plus quiet) count as satisfied anywhere.
 func (r *Registry) waitTabsResult(ctx context.Context, targets []*waitTarget, mode string, satisfied, timedOut bool) Output {
 	outcome := &WaitOutcome{Mode: mode, Satisfied: satisfied, TimedOut: timedOut, Tabs: make([]WaitTabOutcome, 0, len(targets))}
 	matchedIDs := make([]string, 0, len(targets))
 	var summary strings.Builder
 	for _, target := range targets {
+		note := target.note
+		if target.idleErr != "" {
+			if note != "" {
+				note += "; "
+			}
+			note += target.idleErr
+		}
 		tab := WaitTabOutcome{
-			TabID:    target.tabID,
-			Matched:  target.matched,
-			IdleMS:   target.idleMS,
-			NewLines: target.newLines,
-			FromSeq:  target.fromSeq,
-			ToSeq:    target.latest,
-			Note:     target.note,
+			TabID:            target.tabID,
+			Matched:          target.satisfied,
+			ConditionMatched: target.matched,
+			IdleMS:           target.idleMS,
+			NewLines:         target.newLines,
+			FromSeq:          target.fromSeq,
+			ToSeq:            target.latest,
+			Note:             note,
 		}
 		if state, err := r.commandState(ctx, target.tabID); err == nil {
 			tab.Running = state.Running
 		}
 		outcome.Tabs = append(outcome.Tabs, tab)
-		if target.matched {
+		if target.satisfied {
 			matchedIDs = append(matchedIDs, target.tabID)
 		}
 		fmt.Fprintf(&summary, "\n- %s matched=%v new_lines=%d idle=%dms from_seq=%d to_seq=%d",
-			target.tabID, target.matched, target.newLines, target.idleMS, target.fromSeq, target.latest)
-		if target.note != "" {
-			summary.WriteString(" (" + target.note + ")")
+			target.tabID, target.satisfied, target.newLines, target.idleMS, target.fromSeq, target.latest)
+		if note != "" {
+			summary.WriteString(" (" + note + ")")
 		}
 	}
 	var headline string
