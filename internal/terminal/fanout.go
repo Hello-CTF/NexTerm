@@ -58,8 +58,9 @@ type fanoutEntry struct {
 	done   chan struct{}
 
 	mu            sync.Mutex
-	queue         [][]byte
-	head          int
+	queue         [][]byte // ring buffer, capacity bounded by maxFrames
+	head          int      // index of the oldest retained frame
+	queued        int      // frames retained in the ring
 	lagFrames     int
 	lagBytes      int
 	inFlight      bool
@@ -225,13 +226,10 @@ func (f *Fanout) abort(entry *fanoutEntry, cause error, rejected []byte) {
 	var stats FanoutSubscriberStats
 	entry.stopOnce.Do(func() {
 		entry.mu.Lock()
-		waiting := len(entry.queue) - entry.head
-		waitingBytes := 0
-		for _, queued := range entry.queue[entry.head:] {
-			waitingBytes += len(queued)
-		}
+		waiting, waitingBytes := entry.retainedLocked()
 		entry.queue = nil
 		entry.head = 0
+		entry.queued = 0
 		entry.lagFrames -= waiting
 		entry.lagBytes -= waitingBytes
 		entry.droppedFrames += uint64(waiting)
@@ -292,7 +290,11 @@ func (e *fanoutEntry) enqueue(data []byte) (accepted, full bool) {
 	if e.lagFrames >= e.maxFrames || e.lagFrames > 0 && e.lagBytes+len(data) > e.maxBytes {
 		return false, true
 	}
-	e.queue = append(e.queue, bytes.Clone(data))
+	if e.queued == len(e.queue) {
+		e.grow()
+	}
+	e.queue[(e.head+e.queued)%len(e.queue)] = bytes.Clone(data)
+	e.queued++
 	e.lagFrames++
 	e.lagBytes += len(data)
 	select {
@@ -302,6 +304,32 @@ func (e *fanoutEntry) enqueue(data []byte) (accepted, full bool) {
 	return true, false
 }
 
+// grow doubles the ring, never beyond maxFrames.
+func (e *fanoutEntry) grow() {
+	size := 2 * len(e.queue)
+	if size == 0 {
+		size = 1
+	}
+	if size > e.maxFrames {
+		size = e.maxFrames
+	}
+	grown := make([][]byte, size)
+	for i := range e.queued {
+		grown[i] = e.queue[(e.head+i)%len(e.queue)]
+	}
+	e.queue = grown
+	e.head = 0
+}
+
+// retainedLocked reports the queued frames and their combined size.
+func (e *fanoutEntry) retainedLocked() (count, size int) {
+	count = e.queued
+	for i := range e.queued {
+		size += len(e.queue[(e.head+i)%len(e.queue)])
+	}
+	return count, size
+}
+
 func (e *fanoutEntry) next() ([]byte, bool) {
 	for {
 		e.mu.Lock()
@@ -309,15 +337,12 @@ func (e *fanoutEntry) next() ([]byte, bool) {
 			e.mu.Unlock()
 			return nil, false
 		}
-		if e.head < len(e.queue) {
+		if e.queued > 0 {
 			delivery := e.queue[e.head]
 			e.queue[e.head] = nil
-			e.head++
+			e.head = (e.head + 1) % len(e.queue)
+			e.queued--
 			e.inFlight = true
-			if e.head == len(e.queue) {
-				e.queue = nil
-				e.head = 0
-			}
 			e.mu.Unlock()
 			return delivery, true
 		}
@@ -349,13 +374,10 @@ func (e *fanoutEntry) finish(delivery []byte, sendErr error) bool {
 func (e *fanoutEntry) stop() {
 	e.stopOnce.Do(func() {
 		e.mu.Lock()
-		waiting := len(e.queue) - e.head
-		waitingBytes := 0
-		for _, queued := range e.queue[e.head:] {
-			waitingBytes += len(queued)
-		}
+		waiting, waitingBytes := e.retainedLocked()
 		e.queue = nil
 		e.head = 0
+		e.queued = 0
 		e.lagFrames -= waiting
 		e.lagBytes -= waitingBytes
 		e.stopped = true
