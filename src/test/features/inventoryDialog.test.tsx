@@ -95,6 +95,59 @@ describe("dynamic inventory dialog", () => {
     expect(mocks.sync).not.toHaveBeenCalled();
   });
 
+  it("never syncs when A's empty-selection confirmation resolves true after an account switch", async () => {
+    mounted?.unmount();
+    // A and B share the one QueryClient, exactly like the running app.
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const mountDialog = () =>
+      mount(createElement(QueryClientProvider, { client }, createElement(InventoryDialog, { onClose: () => undefined })));
+
+    // A opens the dialog, discovers Docker candidates, and starts an empty-selection sync;
+    // the confirmation stays pending across the account switch.
+    let resolveAsk!: (value: boolean) => void;
+    mocks.ask.mockImplementation(() => new Promise((resolve) => {
+      resolveAsk = resolve;
+    }));
+    mocks.watchStatus.mockResolvedValue({ watching: true, path: "/home/a/.ssh/config", groupId: "g1", lastSyncAt: 1, lastResult: null, lastError: "" });
+    mounted = mountDialog();
+    clickButton(mounted!.container, "Docker contexts");
+    clickButton(mounted!.container, "发现");
+    await waitFor(() => expect(mocks.discover).toHaveBeenCalledWith("docker-context", undefined));
+    await waitFor(() => expect(mounted!.container.querySelectorAll('input[aria-label^="选择清单项"]').length).toBe(2));
+    clickButton(mounted!.container, "全不选");
+    clickButton(mounted!.container, "同步选中项");
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalled());
+
+    // Account switch: the epoch bumps, the asset tree remounts the dialog, and the account
+    // query keys reset (the accountSwitch wiring), all before B loads its own state.
+    act(() => {
+      useUi.getState().advanceAccountEpoch();
+    });
+    mounted?.unmount();
+    await act(async () => {
+      await client.resetQueries({ queryKey: ["inventory-ssh-watch"] });
+    });
+
+    // B loads its own watch status on the same client.
+    mocks.watchStatus.mockResolvedValue({ watching: true, path: "/home/b/.ssh/config", groupId: "g1", lastSyncAt: 2, lastResult: null, lastError: "" });
+    mounted = mountDialog();
+    await waitFor(() =>
+      expect(client.getQueryData(["inventory-ssh-watch"])).toMatchObject({ watching: true, path: "/home/b/.ssh/config" }),
+    );
+    const groupCallsAfterBLoads = mocks.groupList.mock.calls.length;
+
+    // A's confirmation resolves true late: the empty-keys sync must never fire.
+    resolveAsk(true);
+    await flush();
+
+    expect(mocks.sync).not.toHaveBeenCalled();
+    expect(mocks.groupList.mock.calls.length).toBe(groupCallsAfterBLoads);
+    expect(client.getQueryData(["inventory-ssh-watch"])).toMatchObject({ watching: true, path: "/home/b/.ssh/config" });
+    // A's sync result badges must not render in B's dialog.
+    expect(mounted!.container.textContent).not.toContain("新增");
+    expect(mounted!.container.textContent).not.toContain("移除 1");
+  });
+
   it("starts SSH watching with the selected path and group", async () => {
     setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="~/.ssh/config"]')!, "/tmp/config");
     setSelectValue(mounted!.container.querySelector<HTMLSelectElement>("#inventory-group")!, "g1");
@@ -121,8 +174,8 @@ describe("dynamic inventory dialog", () => {
     mocks.setWatch.mockImplementation(() => new Promise((resolve) => {
       resolveWatch = resolve;
     }));
-    setInputValue(mounted.container.querySelector<HTMLInputElement>('input[placeholder="~/.ssh/config"]')!, "/home/a/.ssh/config");
-    clickButton(mounted.container, "启用 watch 并同步");
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="~/.ssh/config"]')!, "/home/a/.ssh/config");
+    clickButton(mounted!.container, "启用 watch 并同步");
     await waitFor(() => expect(mocks.setWatch).toHaveBeenCalledWith({ enabled: true, path: "/home/a/.ssh/config" }));
 
     // Account switch: the epoch bumps, the asset tree remounts the dialog, and the account
@@ -138,7 +191,7 @@ describe("dynamic inventory dialog", () => {
     // B loads its own watch status on the same client.
     mocks.watchStatus.mockResolvedValue({ watching: true, path: "/home/b/.ssh/config", groupId: "g1", lastSyncAt: 2, lastResult: null, lastError: "" });
     mounted = mountDialog();
-    const pathInput = mounted.container.querySelector<HTMLInputElement>('input[placeholder="~/.ssh/config"]')!;
+    const pathInput = mounted!.container.querySelector<HTMLInputElement>('input[placeholder="~/.ssh/config"]')!;
     await waitFor(() =>
       expect(client.getQueryData(["inventory-ssh-watch"])).toMatchObject({ watching: true, path: "/home/b/.ssh/config" }),
     );
@@ -152,8 +205,8 @@ describe("dynamic inventory dialog", () => {
 
     expect(client.getQueryData(["inventory-ssh-watch"])).toMatchObject({ watching: true, path: "/home/b/.ssh/config" });
     expect(pathInput.value).toBe("/home/b/.ssh/config");
-    expect(mounted.container.textContent).not.toContain("/home/a/.ssh/config");
-    expect(mounted.container.textContent).not.toContain("group-a");
+    expect(mounted!.container.textContent).not.toContain("/home/a/.ssh/config");
+    expect(mounted!.container.textContent).not.toContain("group-a");
   });
 
   it("restores the active watch path and group when reopened", async () => {

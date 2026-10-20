@@ -95,14 +95,17 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
   };
 
   const runSync = async () => {
+    // The epoch is captured at entry: a confirmation that resolves after an account switch must
+    // never reach inventoryApi.sync — empty keys would soft-delete the new account's assets, and
+    // no post-hoc staleness check can undo that call.
+    const epoch = accountEpoch;
     if (source !== "ssh-config" && selected.size === 0) {
       const confirmed = await ask(
         "本次没有勾选任何候选。继续会软删除此来源在当前 owner 下管理的全部资产；手工资产和其他来源不受影响。",
         { title: "同步为空清单", kind: "warning" },
       );
-      if (!confirmed) return;
+      if (!confirmed || isStale(epoch)) return;
     }
-    const epoch = accountEpoch;
     setBusy("sync");
     setError(null);
     try {
