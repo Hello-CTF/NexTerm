@@ -91,12 +91,14 @@ func (r *Registry) waitForTabs(waitContext context.Context, jobID string, scope 
 	for {
 		satisfied := 0
 		for _, target := range targets {
-			if target.satisfied {
-				satisfied++
-				continue
+			// The pattern/lines condition latches, but quiet is re-evaluated
+			// for every matched tab each round: a previously satisfied tab
+			// that became busy or whose snapshot fails is revoked, so an
+			// all-mode return never rests on a stale idle verdict.
+			if !target.matched {
+				r.scanWaitTarget(waitContext, target, regex, lines)
 			}
-			r.scanWaitTarget(waitContext, target, regex, lines)
-			if quietMS > 0 && (target.matched || quietOnly) {
+			if quietMS > 0 && target.matched {
 				if screen, err := r.waitSnapshot(waitContext, target.tabID, true); err == nil {
 					target.idleMS = screen.IdleMS
 					target.idleErr = ""

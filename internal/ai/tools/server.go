@@ -584,6 +584,11 @@ func (r *Registry) resolveTab(ctx context.Context, jobID string, scope Scope, re
 			}
 			return "", err
 		}
+		// An empty identity from either resolver is a verified absence, the
+		// same contract as handle resolution — never a cross-scope verdict.
+		if sessionID == "" {
+			return "", ErrTerminalGone
+		}
 		if sessionID != scope.SessionID {
 			return "", ErrCrossScope
 		}
@@ -1037,6 +1042,13 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 	if err := decode(call.Args, &args); err != nil {
 		return Fail(err)
 	}
+	// The Create capability is checked before any connection is initiated: a
+	// missing capability never burns a connector call or leaves an unreported
+	// residual session behind.
+	terminal, ok := r.deps.Terminal.(CreateTerminal)
+	if !ok {
+		return Fail(errors.New("终端服务未配置"))
+	}
 	sessionID := scope.SessionID
 	connected := false
 	operation := operationID(jobID, call.ID, "terminal_create")
@@ -1076,10 +1088,6 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 	}
 	if sessionID == "" {
 		return Fail(errors.New("当前 AI 作用域没有 sessionId"))
-	}
-	terminal, ok := r.deps.Terminal.(CreateTerminal)
-	if !ok {
-		return Fail(errors.New("终端服务未配置"))
 	}
 	created, err := terminal.Create(ctx, sessionID, CreateTerminalOptions{Title: args.Title, Command: args.Command})
 	if err != nil {
