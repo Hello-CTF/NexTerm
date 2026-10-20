@@ -32,26 +32,64 @@ func TestForwardRuleAutoStartPersistsDatabase(t *testing.T) {
 		t.Fatalf("listed rules = %+v, %v", rules, err)
 	}
 
+	// The legacy IPC edit cannot express autoStart; it must not clear the persisted flag.
 	updated, err := db.ForwardRuleSave(ctx, store.ForwardRuleInput{
-		ID: created.ID, AssetID: asset.ID, Name: "auto", ListenPort: 23306,
-		TargetHost: "db.internal", TargetPort: 5432, AutoStart: false,
+		ID: created.ID, AssetID: asset.ID, Name: "renamed", ListenPort: 23307,
+		TargetHost: "db.internal", TargetPort: 5432,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.AutoStart {
-		t.Fatal("update did not clear autoStart")
+	if !updated.AutoStart {
+		t.Fatal("legacy edit cleared autoStart")
 	}
-	reupdated, err := db.ForwardRuleSave(ctx, store.ForwardRuleInput{
-		ID: created.ID, AssetID: asset.ID, Name: "auto", ListenPort: 23306,
-		TargetHost: "db.internal", TargetPort: 5432, AutoStart: true,
-	})
-	if err != nil || !reupdated.AutoStart {
-		t.Fatalf("re-updated rule = %+v, %v", reupdated, err)
+	if updated.Name != "renamed" || updated.ListenPort != 23307 {
+		t.Fatalf("legacy edit lost other fields = %+v", updated)
 	}
 
 	if err := db.ForwardRuleDelete(ctx, created.ID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestForwardRuleSetAutoStartDatabase(t *testing.T) {
+	db := openForwardRuleDatabase(t)
+	ctxA := ipc.WithUserID(context.Background(), "forward-autostart-owner-a")
+	ctxB := ipc.WithUserID(context.Background(), "forward-autostart-owner-b")
+	asset := createForwardRuleAsset(t, db, ctxA, "autostart-host")
+	created, err := db.ForwardRuleSave(ctxA, store.ForwardRuleInput{
+		AssetID: asset.ID, Name: "auto", ListenPort: 23306,
+		TargetHost: "db.internal", TargetPort: 5432,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.AutoStart {
+		t.Fatal("rule created without autoStart")
+	}
+
+	enabled, err := db.ForwardRuleSetAutoStart(ctxA, created.ID, true)
+	if err != nil || !enabled.AutoStart {
+		t.Fatalf("enable = %+v, %v", enabled, err)
+	}
+	disabled, err := db.ForwardRuleSetAutoStart(ctxA, created.ID, false)
+	if err != nil || disabled.AutoStart {
+		t.Fatalf("disable = %+v, %v", disabled, err)
+	}
+
+	if _, err := db.ForwardRuleSetAutoStart(ctxA, "  ", true); err == nil {
+		t.Fatal("blank id accepted")
+	}
+	if _, err := db.ForwardRuleSetAutoStart(ctxA, "not-an-id", true); err == nil {
+		t.Fatal("malformed id accepted")
+	}
+	_, err = db.ForwardRuleSetAutoStart(ctxA, "01JEXAMPLEEXAMPLEEXAMPLEEX", true)
+	requireForwardRuleCode(t, err, ipc.CodeNotFound)
+	_, err = db.ForwardRuleSetAutoStart(ctxB, created.ID, true)
+	requireForwardRuleCode(t, err, ipc.CodeNotFound)
+	fetched, err := db.ForwardRuleGet(ctxA, created.ID)
+	if err != nil || fetched.AutoStart {
+		t.Fatalf("rule after rejected toggles = %+v, %v", fetched, err)
 	}
 }
 

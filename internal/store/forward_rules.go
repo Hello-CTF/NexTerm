@@ -172,32 +172,81 @@ func (s *Store) forwardRuleUpdate(ctx context.Context, input ForwardRuleInput) (
 	var row ForwardRuleRow
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		rule := query.Use(tx).ForwardRuleRow
-		if _, err := rule.WithContext(ctx).
+		existing, err := rule.WithContext(ctx).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where(rule.ID.Eq(input.ID), rule.OwnerID.Eq(ipc.OwnerID(ctx))).
-			First(); isNoRows(err) {
+			First()
+		if isNoRows(err) {
 			return notFound("转发规则")
-		} else if err != nil {
+		}
+		if err != nil {
 			return err
 		}
 		if err := forwardRuleAssetAvailable(ctx, tx, input.AssetID); err != nil {
 			return err
 		}
+		// AutoStart stays out of the IPC JSON surface until the forward contract
+		// regeneration lands, so updates must keep the persisted flag; explicit
+		// toggles go through ForwardRuleSetAutoStart.
 		if _, err := rule.WithContext(ctx).
 			Where(rule.ID.Eq(input.ID), rule.OwnerID.Eq(ipc.OwnerID(ctx))).
-			UpdateSimple(
-				rule.AssetID.Value(input.AssetID),
-				rule.Name.Value(input.Name),
-				rule.ListenPort.Value(input.ListenPort),
-				rule.TargetHost.Value(input.TargetHost),
-				rule.TargetPort.Value(input.TargetPort),
-				rule.AutoStart.Value(input.AutoStart),
-				rule.UpdatedAt.Value(ids.NowMS()),
-			); err != nil {
+			UpdateColumns(map[string]any{
+				"asset_id":    input.AssetID,
+				"name":        input.Name,
+				"listen_port": input.ListenPort,
+				"target_host": input.TargetHost,
+				"target_port": input.TargetPort,
+				"auto_start":  existing.AutoStart,
+				"updated_at":  ids.NowMS(),
+			}); err != nil {
 			return err
 		}
 		updated, err := rule.WithContext(ctx).
 			Where(rule.ID.Eq(input.ID), rule.OwnerID.Eq(ipc.OwnerID(ctx))).
+			First()
+		if err != nil {
+			return err
+		}
+		row = *updated
+		return nil
+	})
+	if err != nil {
+		return ForwardRuleRow{}, dbError(err)
+	}
+	return row, nil
+}
+
+// ForwardRuleSetAutoStart explicitly toggles a rule's persisted autoStart flag
+// until the IPC surface can express field presence.
+func (s *Store) ForwardRuleSetAutoStart(ctx context.Context, id string, autoStart bool) (ForwardRuleRow, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ForwardRuleRow{}, badParam(errString("转发规则 ID 不能为空"))
+	}
+	if err := EnsureID(id); err != nil {
+		return ForwardRuleRow{}, err
+	}
+	var row ForwardRuleRow
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		rule := query.Use(tx).ForwardRuleRow
+		if _, err := rule.WithContext(ctx).
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where(rule.ID.Eq(id), rule.OwnerID.Eq(ipc.OwnerID(ctx))).
+			First(); isNoRows(err) {
+			return notFound("转发规则")
+		} else if err != nil {
+			return err
+		}
+		if _, err := rule.WithContext(ctx).
+			Where(rule.ID.Eq(id), rule.OwnerID.Eq(ipc.OwnerID(ctx))).
+			UpdateColumns(map[string]any{
+				"auto_start": autoStart,
+				"updated_at": ids.NowMS(),
+			}); err != nil {
+			return err
+		}
+		updated, err := rule.WithContext(ctx).
+			Where(rule.ID.Eq(id), rule.OwnerID.Eq(ipc.OwnerID(ctx))).
 			First()
 		if err != nil {
 			return err
