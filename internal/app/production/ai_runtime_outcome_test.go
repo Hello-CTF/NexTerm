@@ -16,6 +16,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/outcome"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -346,36 +347,42 @@ func composedAuditRows(t *testing.T, database *store.Store, kind string) []store
 	return rows
 }
 
-// The owner-open mark is the explicit trusted shape for identity-less callers
-// on a non-open manager: an open-marked caller works, the same caller without
-// the mark fails closed before any tool or session access.
-func TestComposedAIRuntimeOpenAccessMarkRequiredForIdentityLess(t *testing.T) {
-	openCtx := owner.WithOpenAccess(context.Background())
-	services, _, transport, sessionID, _ := composeOutcomeRuntimeContext(t, "echo hi", openCtx, false)
+// A non-open manager admits only an identity-backed vouch: the session
+// open-access flag must be backed by an authenticated identity. Identity-less
+// callers fail closed before any tool or session access, with or without the
+// owner-open mark.
+func TestComposedAIRuntimeNonOpenManagerRequiresIdentityBackedVouch(t *testing.T) {
+	vouchedCtx := session.WithOpenAccess(ipc.WithUserID(context.Background(), "user-a"))
+	services, _, transport, sessionID, _ := composeOutcomeRuntimeContext(t, "echo hi", vouchedCtx, false)
 
 	stream := &agent.SliceStream{}
-	if _, err := services.Agent.Start(openCtx, agent.ChatArgs{Message: "run it", Scope: tools.Scope{SessionID: sessionID}}, agent.StaticStream(stream)); err != nil {
+	if _, err := services.Agent.Start(vouchedCtx, agent.ChatArgs{Message: "run it", Scope: tools.Scope{SessionID: sessionID}}, agent.StaticStream(stream)); err != nil {
 		t.Fatal(err)
 	}
 	sawDone := false
 	for _, event := range waitOutcomeClosed(t, stream) {
 		if event.Type == "error" {
-			t.Fatalf("open-marked run failed: %s", event.Message)
+			t.Fatalf("vouched run failed: %s", event.Message)
 		}
 		if event.Type == "done" {
 			sawDone = true
 		}
 	}
 	if !sawDone {
-		t.Fatal("open-marked run did not finish")
+		t.Fatal("vouched run did not finish")
 	}
 	if got := transport.effectCalls("echo hi"); got != 1 {
-		t.Fatalf("open-marked effect runs = %d, want 1", got)
+		t.Fatalf("vouched effect runs = %d, want 1", got)
 	}
 
-	denied := &agent.SliceStream{}
-	if _, err := services.Agent.Start(context.Background(), agent.ChatArgs{Message: "run it", Scope: tools.Scope{SessionID: sessionID}}, agent.StaticStream(denied)); err == nil {
-		t.Fatal("identity-less run without the open mark was admitted on a non-open manager")
+	for name, ctx := range map[string]context.Context{
+		"owner open mark": owner.WithOpenAccess(context.Background()),
+		"plain":           context.Background(),
+	} {
+		denied := &agent.SliceStream{}
+		if _, err := services.Agent.Start(ctx, agent.ChatArgs{Message: "run it", Scope: tools.Scope{SessionID: sessionID}}, agent.StaticStream(denied)); err == nil {
+			t.Fatalf("identity-less run (%s) was admitted on a non-open manager", name)
+		}
 	}
 	if got := transport.effectCalls("echo hi"); got != 1 {
 		t.Fatalf("denied run executed the effect: total runs = %d", got)
