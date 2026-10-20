@@ -3,6 +3,7 @@ package production
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -20,24 +21,66 @@ type accountCleanupKey struct {
 
 type accountCleanupEvent struct {
 	deviceSessions []session.SessionInfo
-	committed      bool
-	aborted        bool
+	// runbookCommit/runbookRollback are the runbook reservation taken once
+	// when the event is first prepared; replays reuse it instead of
+	// re-snapshotting (which would cancel a new generation of runs).
+	runbookCommit   func(...string)
+	runbookRollback func()
+	committed       bool
+	aborted         bool
 }
 
 type accountCleanupState struct {
 	mu      sync.Mutex
 	events  map[accountCleanupKey]*accountCleanupEvent
 	aliases map[accountCleanupKey]accountCleanupKey
+
+	// runbook is the narrow owner-cleanup contract of the runbook service,
+	// wired by the composition root (SetRunbookCleanup). Nil until wired.
+	runbook runbookCleanup
+
+	// Fault seams for deterministic tests: when non-nil, these replace the
+	// generation-bound read and the owner device listing.
+	cutoffBound       func(ctx context.Context, ownerID, cleanupID string) (*time.Time, error)
+	listOwnerSessions func(ctx context.Context, ownerID string) ([]session.SessionInfo, error)
 }
 
-func (p *Production) CleanupAccount(ctx context.Context, ownerID, cleanupID string, sessionIDs ...string) {
-	commit, _ := p.PrepareAccountCleanup(ctx, ownerID, cleanupID)
+// runbookCleanup is the narrow slice of the runbook service's owner-cleanup
+// contract the account cleanup lifecycle depends on; *runbookIPCService
+// satisfies it.
+type runbookCleanup interface {
+	PrepareOwnerCleanup(ctx context.Context, ownerID, eventID string) (commit func(...string), rollback func())
+}
+
+// SetRunbookCleanup wires the runbook service into the account cleanup
+// lifecycle so an owner cleanup also cancels that owner's live runbook runs.
+// The composition root calls it once the runbook service is built (today a
+// productionModules local; the ProductionServices.Runbook field lands with
+// M15 and turns this into a direct field read).
+func (p *Production) SetRunbookCleanup(r runbookCleanup) {
+	p.accountCleanup.runbook = r
+}
+
+// CleanupAccount runs the cleanup for an already-committed revocation (the
+// natural-expiry deferred path). A snapshot read failure is returned explicitly:
+// nothing is committed, the event stays absent, and a later trigger with the
+// same event id retries the snapshot.
+func (p *Production) CleanupAccount(ctx context.Context, ownerID, cleanupID string, sessionIDs ...string) error {
+	commit, _, err := p.PrepareAccountCleanup(ctx, ownerID, cleanupID)
+	if err != nil {
+		return err
+	}
 	commit(sessionIDs...)
+	return nil
 }
 
-func (p *Production) PrepareAccountCleanup(ctx context.Context, ownerID, cleanupID string) (func(...string), func()) {
+// PrepareAccountCleanup reserves the owner snapshot before revocation. The
+// snapshot's generation-bound or owner-listing read failure is returned
+// explicitly so the caller can abort: nothing is committed (no empty event,
+// never an unbounded sweep), and a same-event retry takes a fresh snapshot.
+func (p *Production) PrepareAccountCleanup(ctx context.Context, ownerID, cleanupID string) (func(...string), func(), error) {
 	if p == nil || ownerID == "" || cleanupID == "" {
-		return func(...string) {}, func() {}
+		return func(...string) {}, func() {}, nil
 	}
 	ctx = context.WithoutCancel(ctx)
 	commitBatches := func(...string) {}
@@ -45,12 +88,17 @@ func (p *Production) PrepareAccountCleanup(ctx context.Context, ownerID, cleanup
 	if p.Services.ExecBatches != nil {
 		commitBatches, rollbackBatches = p.Services.ExecBatches.PrepareOwnerCleanup(ctx, ownerID, cleanupID)
 	}
-	key, event := p.prepareAccountDeviceSnapshot(ctx, ownerID, cleanupID)
+	key, event, err := p.prepareAccountDeviceSnapshot(ctx, ownerID, cleanupID)
+	if err != nil {
+		rollbackBatches()
+		return func(...string) {}, func() {}, err
+	}
 	return func(sessionIDs ...string) {
 			if !p.commitAccountDeviceSnapshot(key, event, sessionIDs) {
 				return
 			}
 			commitBatches(sessionIDs...)
+			event.runbookCommit(sessionIDs...)
 			p.cleanupAccountDeviceSnapshot(ctx, ownerID, event.deviceSessions)
 			if p.Services.inventory != nil {
 				_ = p.Services.inventory.stopWatch(ctx, ownerID)
@@ -58,11 +106,12 @@ func (p *Production) PrepareAccountCleanup(ctx context.Context, ownerID, cleanup
 		}, func() {
 			if p.rollbackAccountDeviceSnapshot(key, event) {
 				rollbackBatches()
+				event.runbookRollback()
 			}
-		}
+		}, nil
 }
 
-func (p *Production) prepareAccountDeviceSnapshot(ctx context.Context, ownerID, cleanupID string) (accountCleanupKey, *accountCleanupEvent) {
+func (p *Production) prepareAccountDeviceSnapshot(ctx context.Context, ownerID, cleanupID string) (accountCleanupKey, *accountCleanupEvent, error) {
 	key := accountCleanupKey{ownerID: ownerID, eventID: cleanupID}
 	state := &p.accountCleanup
 	state.mu.Lock()
@@ -75,22 +124,30 @@ func (p *Production) prepareAccountDeviceSnapshot(ctx context.Context, ownerID, 
 	}
 	if event, ok := state.events[key]; ok {
 		state.mu.Unlock()
-		return key, event
+		return key, event, nil
 	}
 	state.mu.Unlock()
 
-	snapshot := p.accountDeviceSnapshot(ctx, ownerID, key.eventID)
+	commitRunbook, rollbackRunbook := func(...string) {}, func() {}
+	if state.runbook != nil {
+		commitRunbook, rollbackRunbook = state.runbook.PrepareOwnerCleanup(ctx, ownerID, key.eventID)
+	}
+	snapshot, err := p.accountDeviceSnapshot(ctx, ownerID, key.eventID)
+	if err != nil {
+		rollbackRunbook()
+		return key, nil, err
+	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if canonical, ok := state.aliases[key]; ok {
 		key = canonical
 	}
 	if event, ok := state.events[key]; ok {
-		return key, event
+		return key, event, nil
 	}
-	event := &accountCleanupEvent{deviceSessions: snapshot}
+	event := &accountCleanupEvent{deviceSessions: snapshot, runbookCommit: commitRunbook, runbookRollback: rollbackRunbook}
 	state.events[key] = event
-	return key, event
+	return key, event, nil
 }
 
 func (p *Production) commitAccountDeviceSnapshot(key accountCleanupKey, event *accountCleanupEvent, sessionIDs []string) bool {
@@ -149,20 +206,31 @@ func (p *Production) accountCleanupCutoff(ctx context.Context, ownerID, cleanupI
 	return &cutoff, nil
 }
 
-func (p *Production) accountDeviceSnapshot(ctx context.Context, ownerID, cleanupID string) []session.SessionInfo {
+// accountDeviceSnapshot lists the owner's device sessions created before the
+// cleanup event's generation bound. A failed bound or listing read is returned
+// explicitly: the caller must never substitute an unbounded snapshot.
+func (p *Production) accountDeviceSnapshot(ctx context.Context, ownerID, cleanupID string) ([]session.SessionInfo, error) {
 	if p.Services.Sessions == nil {
-		return nil
+		return nil, nil
 	}
-	cutoff, err := p.accountCleanupCutoff(ctx, ownerID, cleanupID)
-	if err != nil {
-		slog.Warn("resolve account device cleanup generation", "error", err)
-		return nil
+	state := &p.accountCleanup
+	cutoffFn := state.cutoffBound
+	if cutoffFn == nil {
+		cutoffFn = p.accountCleanupCutoff
 	}
-	ownerCtx := ipc.WithUserID(ctx, ownerID)
-	infos, err := p.Services.Sessions.ListSessionsFor(ownerCtx)
+	listFn := state.listOwnerSessions
+	if listFn == nil {
+		listFn = func(ctx context.Context, ownerID string) ([]session.SessionInfo, error) {
+			return p.Services.Sessions.ListSessionsFor(ipc.WithUserID(ctx, ownerID))
+		}
+	}
+	cutoff, err := cutoffFn(ctx, ownerID, cleanupID)
 	if err != nil {
-		slog.Warn("list account device sessions for cleanup", "error", err)
-		return nil
+		return nil, fmt.Errorf("resolve account device cleanup generation: %w", err)
+	}
+	infos, err := listFn(ctx, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("list account device sessions for cleanup: %w", err)
 	}
 	devices := make([]session.SessionInfo, 0, len(infos))
 	for _, info := range infos {
@@ -172,7 +240,7 @@ func (p *Production) accountDeviceSnapshot(ctx context.Context, ownerID, cleanup
 		info.Tabs = append([]string(nil), info.Tabs...)
 		devices = append(devices, info)
 	}
-	return devices
+	return devices, nil
 }
 
 func (p *Production) cleanupAccountDeviceSnapshot(ctx context.Context, ownerID string, snapshot []session.SessionInfo) {

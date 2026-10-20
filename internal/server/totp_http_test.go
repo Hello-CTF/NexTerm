@@ -474,7 +474,7 @@ func TestMFATicketStoreAbsoluteTTLAndCapacitySweep(t *testing.T) {
 	now := time.Unix(1000, 0)
 	tickets := newMFATicketStore()
 	tickets.now = func() time.Time { return now }
-	ticket, expiresAt := tickets.issue("user", "device")
+	ticket, expiresAt := tickets.issue("user", "device", 0)
 	now = expiresAt
 	if entry, ok := tickets.get(ticket); !ok || entry.deviceID != "device" {
 		t.Fatalf("ticket at absolute expiry = %+v, %v", entry, ok)
@@ -492,7 +492,7 @@ func TestMFATicketStoreAbsoluteTTLAndCapacitySweep(t *testing.T) {
 		}
 		tickets.entries[id] = &mfaTicket{userID: id, expiresAt: expires}
 	}
-	if _, _ = tickets.issue("new-user", "new-device"); len(tickets.entries) != 4097 {
+	if _, _ = tickets.issue("new-user", "new-device", 0); len(tickets.entries) != 4097 {
 		t.Fatalf("capacity sweep left %d entries", len(tickets.entries))
 	}
 	if _, ok := tickets.entries["0"]; ok {

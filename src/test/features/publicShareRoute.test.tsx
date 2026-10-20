@@ -20,6 +20,25 @@ vi.mock("react-dom/client", async (importOriginal) => {
   };
 });
 
+// The route tests assert routing, connection, and rendered text, not terminal
+// emulation, so the real canvas/WebGL stack is replaced with no-op doubles.
+vi.mock("@xterm/xterm", async () => {
+  const m = await import("./xtermMock");
+  return { Terminal: m.FakeTerminal };
+});
+vi.mock("@xterm/addon-fit", async () => {
+  const m = await import("./xtermMock");
+  return { FitAddon: m.FakeFitAddon };
+});
+vi.mock("@xterm/addon-webgl", async () => {
+  const m = await import("./xtermMock");
+  return { WebglAddon: m.FakeWebglAddon };
+});
+vi.mock("../../features/terminal/selectionAutoCopy", async () => {
+  const m = await import("./xtermMock");
+  return { createSelectionAutoCopy: m.fakeSelectionAutoCopy };
+});
+
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
   static readonly OPEN = 1;

@@ -17,6 +17,12 @@ type Accounts struct {
 	now         func() int64
 	totpKeyPath string
 	writeMu     sync.Mutex
+	epochs      *epochTracker
+	// revocationMu is the shared async-boundary mutex: session issuance,
+	// revocation, password changes, resets, disables, device revocations, and
+	// the TOTP/DEK/MFA generation checks all serialize on it, so an epoch bump
+	// cannot land inside another boundary's check-to-commit window.
+	revocationMu sync.Mutex
 }
 
 // userTable centralizes the account table name for future storage backend changes.
@@ -33,7 +39,7 @@ func WithNow(now func() int64) Option {
 }
 
 func New(db *gorm.DB, options ...Option) *Accounts {
-	a := &Accounts{db: db, now: ids.NowMS}
+	a := &Accounts{db: db, now: ids.NowMS, epochs: newEpochTracker()}
 	for _, option := range options {
 		option(a)
 	}

@@ -93,7 +93,7 @@ func (g *accountAtomicGate) wait(t *testing.T, session *accountTestSession) acco
 			t.Fatalf("old request status = %d body = %v", call.status, call.body)
 		}
 		return call
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("old request did not finish revalidation")
 		return accountCall{}
 	}
@@ -181,7 +181,51 @@ func TestAccountLifecycleLogoutAllCommitWindowKeepsUnifiedEvent(t *testing.T) {
 		t.Fatal("prepared cleanup canceled the old batch before commit")
 	}
 
-	s3 := fixture.login(t, "alice", "password-alice")
+	// A login racing the commit window waits for the in-flight logout instead
+	// of being issued inside the window: issuance is serialized with revocation.
+	s3Done := make(chan *accountTestSession, 1)
+	go func() {
+		s3Done <- fixture.login(t, "alice", "password-alice")
+	}()
+	select {
+	case <-s3Done:
+		t.Fatal("login completed inside the commit window; issuance must wait for the in-flight logout")
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	gate.release(s2)
+	gate.release(s1)
+	for _, session := range []*accountTestSession{s2, s1} {
+		select {
+		case call := <-gate.requests[gate.bySession[session]]:
+			t.Fatalf("old revalidation returned before alias commit: %+v", call)
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+	allow()
+	select {
+	case call := <-logoutDone:
+		if call.status != http.StatusOK {
+			t.Fatalf("logout-all status = %d body = %v", call.status, call.body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("logout-all did not finish")
+	}
+	requireAccountAtomicBatch(t, oldBatchDone, execbatch.StatusCanceled)
+	gate.wait(t, s2)
+	gate.wait(t, s1)
+
+	// The waiting login completes once the window closes: it authenticated
+	// under the post-revocation generation, so its batch belongs to the new
+	// generation and the old cleanup event must not cancel it. The wait is
+	// scheduling-dependent (lock handoff plus HTTP round trip), so allow a
+	// generous budget rather than a tight one.
+	var s3 *accountTestSession
+	select {
+	case s3 = <-s3Done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("waiting login did not complete after the commit window closed")
+	}
 	s3ID := currentAccountSessionID(t, fixture, s3)
 	admissionStarted := make(chan struct{}, 1)
 	originalAdmission := fixture.server.accountExecutionAdmission
@@ -206,27 +250,6 @@ func TestAccountLifecycleLogoutAllCommitWindowKeepsUnifiedEvent(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("S3 did not reach the execution admission barrier")
 	}
-	gate.release(s2)
-	gate.release(s1)
-	for _, session := range []*accountTestSession{s2, s1} {
-		select {
-		case call := <-gate.requests[gate.bySession[session]]:
-			t.Fatalf("old revalidation returned before alias commit: %+v", call)
-		case <-time.After(25 * time.Millisecond):
-		}
-	}
-	allow()
-	select {
-	case call := <-logoutDone:
-		if call.status != http.StatusOK {
-			t.Fatalf("logout-all status = %d body = %v", call.status, call.body)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("logout-all did not finish")
-	}
-	requireAccountAtomicBatch(t, oldBatchDone, execbatch.StatusCanceled)
-	gate.wait(t, s2)
-	gate.wait(t, s1)
 	var newExecCtx context.Context
 	select {
 	case newExecCtx = <-newTransport.started:

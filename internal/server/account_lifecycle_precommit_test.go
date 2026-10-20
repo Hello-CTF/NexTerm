@@ -30,6 +30,10 @@ func TestAccountLifecycleLogoutAllPreTransactionAdmission(t *testing.T) {
 		<-allowRevoke
 		return originalRevoke(ctx, ownerID, exceptSessionID, beforeCommit...)
 	}
+	// S3 exists before logout-all starts: with issuance serialized under the
+	// revocation lock, a session can no longer be created inside the window.
+	s3 := fixture.login(t, "alice", "password-alice")
+	s3ID := currentAccountSessionID(t, fixture, s3)
 	logoutDone := make(chan accountCall, 1)
 	go func() {
 		logoutDone <- fixture.call(t, http.MethodPost, "/auth/logout-all", nil, s1, s1.csrf, nil)
@@ -40,8 +44,6 @@ func TestAccountLifecycleLogoutAllPreTransactionAdmission(t *testing.T) {
 		t.Fatal("logout-all did not reach the pre-transaction barrier")
 	}
 
-	s3 := fixture.login(t, "alice", "password-alice")
-	s3ID := currentAccountSessionID(t, fixture, s3)
 	admissionAttempts := make(chan string, 2)
 	originalAdmission := fixture.server.accountExecutionAdmission
 	fixture.server.accountExecutionAdmission = func(ctx context.Context, token string, identity *account.Identity, fn func() error) error {

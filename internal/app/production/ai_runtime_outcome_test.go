@@ -13,6 +13,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/outcome"
@@ -343,4 +344,40 @@ func composedAuditRows(t *testing.T, database *store.Store, kind string) []store
 		t.Fatal(err)
 	}
 	return rows
+}
+
+// The owner-open mark is the explicit trusted shape for identity-less callers
+// on a non-open manager: an open-marked caller works, the same caller without
+// the mark fails closed before any tool or session access.
+func TestComposedAIRuntimeOpenAccessMarkRequiredForIdentityLess(t *testing.T) {
+	openCtx := owner.WithOpenAccess(context.Background())
+	services, _, transport, sessionID, _ := composeOutcomeRuntimeContext(t, "echo hi", openCtx, false)
+
+	stream := &agent.SliceStream{}
+	if _, err := services.Agent.Start(openCtx, agent.ChatArgs{Message: "run it", Scope: tools.Scope{SessionID: sessionID}}, agent.StaticStream(stream)); err != nil {
+		t.Fatal(err)
+	}
+	sawDone := false
+	for _, event := range waitOutcomeClosed(t, stream) {
+		if event.Type == "error" {
+			t.Fatalf("open-marked run failed: %s", event.Message)
+		}
+		if event.Type == "done" {
+			sawDone = true
+		}
+	}
+	if !sawDone {
+		t.Fatal("open-marked run did not finish")
+	}
+	if got := transport.effectCalls("echo hi"); got != 1 {
+		t.Fatalf("open-marked effect runs = %d, want 1", got)
+	}
+
+	denied := &agent.SliceStream{}
+	if _, err := services.Agent.Start(context.Background(), agent.ChatArgs{Message: "run it", Scope: tools.Scope{SessionID: sessionID}}, agent.StaticStream(denied)); err == nil {
+		t.Fatal("identity-less run without the open mark was admitted on a non-open manager")
+	}
+	if got := transport.effectCalls("echo hi"); got != 1 {
+		t.Fatalf("denied run executed the effect: total runs = %d", got)
+	}
 }

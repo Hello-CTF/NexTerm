@@ -239,7 +239,10 @@ func TestProductionAccountCleanupPreparedSnapshotExcludesNewSessions(t *testing.
 	application := &Production{Services: ProductionServices{Sessions: rig.manager}}
 	owner := ipc.WithUserID(t.Context(), "owner-a")
 	oldSession, oldTab := rig.open(t, owner, session.Asset{ID: "device/old", Kind: session.KindDevice})
-	commit, _ := application.PrepareAccountCleanup(context.Background(), "owner-a", "logout-all:login-1")
+	commit, _, err := application.PrepareAccountCleanup(context.Background(), "owner-a", "logout-all:login-1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	newSession, newTab := rig.open(t, owner, session.Asset{ID: "device/new", Kind: session.KindDevice})
 
 	commit("login-1", "login-2")
@@ -259,7 +262,10 @@ func TestProductionAccountCleanupRollbackAllowsRetry(t *testing.T) {
 	application := &Production{Services: ProductionServices{Sessions: rig.manager}}
 	owner := ipc.WithUserID(t.Context(), "owner-a")
 	connected, tab := rig.open(t, owner, session.Asset{ID: "device/retry", Kind: session.KindDevice})
-	commit, rollback := application.PrepareAccountCleanup(context.Background(), "owner-a", "login-retry")
+	commit, rollback, err := application.PrepareAccountCleanup(context.Background(), "owner-a", "login-retry")
+	if err != nil {
+		t.Fatal(err)
+	}
 	rollback()
 	commit("login-retry")
 	requireAccountCleanupTab(t, owner, rig.manager, tab.ID, true)
@@ -268,4 +274,71 @@ func TestProductionAccountCleanupRollbackAllowsRetry(t *testing.T) {
 	application.CleanupAccount(context.Background(), "owner-a", "login-retry")
 	requireAccountCleanupTab(t, owner, rig.manager, tab.ID, false)
 	requireAccountCleanupStatus(t, owner, rig.manager, connected.ID, session.StatusDisconnected)
+}
+
+func TestProductionAccountCleanupSnapshotReadFailureRollsBackAndRetries(t *testing.T) {
+	injected := errors.New("injected snapshot read failure")
+	for _, test := range []struct {
+		name   string
+		inject func(state *accountCleanupState)
+		clear  func(state *accountCleanupState)
+	}{
+		{
+			name: "generation bound read",
+			inject: func(state *accountCleanupState) {
+				state.cutoffBound = func(context.Context, string, string) (*time.Time, error) {
+					return nil, injected
+				}
+			},
+			clear: func(state *accountCleanupState) { state.cutoffBound = nil },
+		},
+		{
+			name: "owner device listing",
+			inject: func(state *accountCleanupState) {
+				state.listOwnerSessions = func(context.Context, string) ([]session.SessionInfo, error) {
+					return nil, injected
+				}
+			},
+			clear: func(state *accountCleanupState) { state.listOwnerSessions = nil },
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rig := newAccountCleanupRig(t)
+			application := &Production{Services: ProductionServices{Sessions: rig.manager}}
+			owner := ipc.WithUserID(t.Context(), "owner-a")
+			connected, tab := rig.open(t, owner, session.Asset{ID: "device/a", Kind: session.KindDevice})
+
+			test.inject(&application.accountCleanup)
+			// The failed prepare must return the read failure explicitly, must
+			// not commit an event, and must not touch any device.
+			if err := application.CleanupAccount(context.Background(), "owner-a", "login-a", "login-a"); err == nil {
+				t.Fatal("CleanupAccount swallowed the snapshot read failure")
+			}
+			requireAccountCleanupTab(t, owner, rig.manager, tab.ID, true)
+			requireAccountCleanupStatus(t, owner, rig.manager, connected.ID, session.StatusConnected)
+
+			// The same event retries with a fresh snapshot once the read recovers.
+			test.clear(&application.accountCleanup)
+			application.CleanupAccount(context.Background(), "owner-a", "login-a", "login-a")
+			requireAccountCleanupTab(t, owner, rig.manager, tab.ID, false)
+			requireAccountCleanupStatus(t, owner, rig.manager, connected.ID, session.StatusDisconnected)
+		})
+	}
+}
+
+func TestProductionAccountCleanupSnapshotFailureNeverCleansUnbounded(t *testing.T) {
+	rig := newAccountCleanupRig(t)
+	application := &Production{Services: ProductionServices{Sessions: rig.manager}}
+	owner := ipc.WithUserID(t.Context(), "owner-a")
+	connected, tab := rig.open(t, owner, session.Asset{ID: "device/a", Kind: session.KindDevice})
+	application.accountCleanup.listOwnerSessions = func(context.Context, string) ([]session.SessionInfo, error) {
+		return nil, errors.New("persistent listing failure")
+	}
+	for range 3 {
+		application.CleanupAccount(context.Background(), "owner-a", "login-a", "login-a")
+	}
+	// A persistent read failure leaves every device untouched; the cleanup must
+	// not degrade into an unbounded full sweep.
+	requireAccountCleanupTab(t, owner, rig.manager, tab.ID, true)
+	requireAccountCleanupStatus(t, owner, rig.manager, connected.ID, session.StatusConnected)
 }

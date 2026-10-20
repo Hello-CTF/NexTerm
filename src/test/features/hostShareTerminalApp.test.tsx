@@ -119,7 +119,9 @@ describe("HostShareTerminalApp", () => {
     ready("read");
     act(() => mocks.handlers!.onClose({ code: 1006, reason: "", wasClean: false }));
     const button = [...mounted!.container.querySelectorAll("button")].find((item) => item.textContent === "重新连接")!;
-    act(() => button.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await act(async () => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
     await flush();
     expect(connection.close).toHaveBeenCalledTimes(1);
     expect(mocks.create).toHaveBeenCalledTimes(2);

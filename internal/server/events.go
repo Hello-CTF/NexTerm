@@ -80,8 +80,17 @@ func (r *eventDispatchResult) complete(err error) {
 	r.wait.Done()
 }
 
-func (r *eventDispatchResult) waitFor() error {
-	r.wait.Wait()
+func (r *eventDispatchResult) waitFor(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		r.wait.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.err
@@ -181,7 +190,15 @@ func (b *EventBroker) Emit(ctx context.Context, event ipc.Event) error {
 		}
 		delivery := &eventDelivery{ctx: ctx, event: event, data: data, result: result}
 		result.wait.Add(1)
-		if !subscriber.enqueue(delivery) {
+		enqueued, overflow := subscriber.enqueue(delivery)
+		switch {
+		case overflow:
+			// The pending backlog exceeded its bound: drop the subscriber so its
+			// client resyncs; the event stays buffered for the resync.
+			delete(b.subscribers, subscriber.id)
+			dropped = append(dropped, subscriber)
+			result.complete(nil)
+		case !enqueued:
 			if b.closed {
 				result.complete(ErrEventBrokerClosed)
 			} else {
@@ -199,7 +216,7 @@ func (b *EventBroker) Emit(ctx context.Context, event ipc.Event) error {
 		return directErr
 	}
 	result.fail(directErr)
-	return result.waitFor()
+	return result.waitFor(ctx)
 }
 
 func (b *EventBroker) appendBufferLocked(id uint64, event ipc.Event, data []byte) {
@@ -286,7 +303,7 @@ func (b *EventBroker) subscribe(since uint64, present, resync bool, filter func(
 		for _, buffered := range replay {
 			delivery := &eventDelivery{ctx: context.Background(), event: buffered.event, data: buffered.data, result: replayResult}
 			replayResult.wait.Add(1)
-			if !subscriber.enqueue(delivery) {
+			if enqueued, _ := subscriber.enqueue(delivery); !enqueued {
 				replayResult.complete(nil)
 			}
 		}
@@ -299,7 +316,7 @@ func (b *EventBroker) subscribe(since uint64, present, resync bool, filter func(
 	if markedResync || filter == nil {
 		return subscriber, func() { b.drop(subscriber) }, nil
 	}
-	if err := replayResult.waitFor(); err != nil {
+	if err := replayResult.waitFor(context.Background()); err != nil {
 		b.drop(subscriber)
 		return nil, nil, err
 	}
@@ -313,15 +330,22 @@ func (b *EventBroker) subscribe(since uint64, present, resync bool, filter func(
 	return subscriber, func() { b.drop(subscriber) }, nil
 }
 
-func (s *eventSubscription) enqueue(delivery *eventDelivery) bool {
+// enqueue returns (enqueued, overflow). overflow means the pending backlog
+// exceeded its bound (twice the queue capacity, which also absorbs a full
+// replay): the caller drops the subscriber so its client resyncs, while the
+// event stays buffered for the resync.
+func (s *eventSubscription) enqueue(delivery *eventDelivery) (bool, bool) {
 	s.deliveryMu.Lock()
 	defer s.deliveryMu.Unlock()
 	if eventSubscriptionStopped(s.done) {
-		return false
+		return false, false
+	}
+	if len(s.deliveries) >= 2*cap(s.queue) {
+		return false, true
 	}
 	s.deliveries = append(s.deliveries, delivery)
 	s.deliveryCond.Signal()
-	return true
+	return true, false
 }
 
 func eventSubscriptionStopped(done <-chan struct{}) bool {
@@ -417,6 +441,11 @@ func (b *EventBroker) deliver(subscriber *eventSubscription, delivery *eventDeli
 	}
 	var result error
 	slow := false
+	// A delivery whose producer context is already canceled is dropped
+	// deterministically instead of racing the queue push against ctx.Done.
+	if err := delivery.ctx.Err(); err != nil {
+		return err
+	}
 	b.mu.Lock()
 	switch {
 	case b.closed:

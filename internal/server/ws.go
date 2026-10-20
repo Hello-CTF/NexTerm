@@ -114,6 +114,15 @@ func parseEventCursor(r *http.Request) (since uint64, present, resync bool) {
 	return value, true, false
 }
 
+// eventOwnerLookupTimeout bounds ownership lookups inside event filters so a
+// stuck database cannot pin a subscription worker (and, with it, the pending
+// delivery backlog) forever.
+var eventOwnerLookupTimeout = 5 * time.Second
+
+func eventOwnerLookupContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), eventOwnerLookupTimeout)
+}
+
 // eventFilter filters events by subscriber identity: identity-less connections (open deployments/gateway) are not filtered;
 // logged-in users receive owner-scoped resources plus explicitly public and legacy events. Failed ownership lookups,
 // malformed payloads, empty owners, and unknown topics are never delivered (fail closed); superadmins are scoped likewise.
@@ -147,7 +156,9 @@ func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
 			if !ok {
 				return false
 			}
-			ownerID, err := s.fleet.DeviceOwnerID(context.Background(), status.DeviceID)
+			lookupCtx, cancel := eventOwnerLookupContext()
+			defer cancel()
+			ownerID, err := s.fleet.DeviceOwnerID(lookupCtx, status.DeviceID)
 			return err == nil && ownerID == userID
 		case ipc.TopicConnectProgress:
 			if s.assetOwner == nil {
@@ -157,7 +168,9 @@ func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
 			if !ok {
 				return false
 			}
-			ownerID, err := s.assetOwner(context.Background(), progress.AssetID)
+			lookupCtx, cancel := eventOwnerLookupContext()
+			defer cancel()
+			ownerID, err := s.assetOwner(lookupCtx, progress.AssetID)
 			return err == nil && ownerID == userID
 		case ipc.TopicHelperProgress:
 			if s.assetOwner == nil {
@@ -167,7 +180,9 @@ func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
 			if !ok {
 				return false
 			}
-			ownerID, err := s.assetOwner(context.Background(), progress.AssetID)
+			lookupCtx, cancel := eventOwnerLookupContext()
+			defer cancel()
+			ownerID, err := s.assetOwner(lookupCtx, progress.AssetID)
 			return err == nil && ownerID == userID
 		case ipc.TopicAINotification:
 			notification, ok := event.Payload.(ipc.AINotificationEvent)

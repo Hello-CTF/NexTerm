@@ -13,8 +13,10 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/sharing"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/coder/websocket"
+	"gorm.io/gorm"
 )
 
 // maxShareViewerMessage is the read limit of the viewer WS; input frames go through supervisor protocol
@@ -310,10 +312,39 @@ func headerHasToken(header http.Header, key, token string) bool {
 	return false
 }
 
+// deviceShareRetired reports whether the public token resolves to a share link on a
+// retired (revoked) device. It is a plain read for the page path: page loads stay
+// audit-free, unlike the upgrade path's audited ResolveLink.
+func (s *Service) deviceShareRetired(ctx context.Context, token string) bool {
+	shareLink := query.Use(s.db).ShareLink
+	row, err := shareLink.WithContext(ctx).Where(shareLink.TokenHash.Eq(hashSecret(token))).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false
+	}
+	if err != nil {
+		return false
+	}
+	userDevice := query.Use(s.db).UserDevice
+	device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(row.DeviceID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false
+	}
+	if err != nil {
+		return false
+	}
+	return device.RevokedAt != nil
+}
+
 // serveSharePublicPage serves the SPA with the configured static entry (the same index.html as "/", with no redirect and no separate shell);
 // token URLs are always no-store. The static entry looks up files by URL.Path, and raw token paths could hit a real static file or be rejected
 // by encoded dot-segment checks, so the request is cloned with the path pinned to "/", keeping only the query and other context.
+// A retired device is rejected with an explicit 404 before the SPA fallback.
 func (s *Service) serveSharePublicPage(w http.ResponseWriter, r *http.Request) {
+	if s.deviceShareRetired(r.Context(), r.PathValue("token")) {
+		w.Header().Set("Cache-Control", "no-store")
+		http.NotFound(w, r)
+		return
+	}
 	if s.sharePublicPage == nil {
 		http.NotFound(w, r)
 		return

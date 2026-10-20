@@ -3,6 +3,7 @@ package account
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -63,6 +64,45 @@ func TestSetAndGetUserDEKEnvelopes(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireCode(t, getEnvErr(a, ctx, other.ID), ipc.CodeNotFound)
+}
+
+// The second envelope upload conflicts deterministically regardless of driver
+// RowsAffected semantics (clientFoundRows reports 1 for a no-op INSERT), and
+// the stored row keeps the first upload's content.
+func TestInsertUserDEKEnvelopesConflictDeterministic(t *testing.T) {
+	a, _ := testAccounts(t)
+	ctx := context.Background()
+	user, err := a.CreateUser(ctx, "oliver", "", "synthetic-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, first, _, err := vault.GenerateUserDEKEnvelopes("synthetic-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.InsertUserDEKEnvelopes(ctx, user.ID, first); err != nil {
+		t.Fatalf("first envelope upload = %v", err)
+	}
+	second := testEnvelopes(t)
+	if err := a.InsertUserDEKEnvelopes(ctx, user.ID, second); err == nil || !errors.Is(err, ErrDEKEnvelopesExist) {
+		t.Fatalf("second envelope upload = %v, want ErrDEKEnvelopesExist", err)
+	}
+	stored, err := a.GetUserDEKEnvelopes(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stored.DEKEnvelope, first.DEKEnvelope) ||
+		!bytes.Equal(stored.KDFSalt, first.KDFSalt) ||
+		stored.KDFParams != first.KDFParams ||
+		!bytes.Equal(stored.RecoveryEnvelope, first.RecoveryEnvelope) ||
+		stored.RecoveryHash != first.RecoveryHash {
+		t.Fatal("stored envelopes mismatch: the second upload overwrote the first")
+	}
+	// Re-uploading the identical envelope set also conflicts (no idempotent
+	// success path): the row already exists.
+	if err := a.InsertUserDEKEnvelopes(ctx, user.ID, first); err == nil || !errors.Is(err, ErrDEKEnvelopesExist) {
+		t.Fatalf("identical re-upload = %v, want ErrDEKEnvelopesExist", err)
+	}
 }
 
 func TestChangePasswordRewrapOnly(t *testing.T) {

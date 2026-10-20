@@ -244,7 +244,28 @@ func (a *Accounts) ValidateSession(ctx context.Context, token string) (*Identity
 	}, nil
 }
 
+// accountSessionOwnerRead resolves the session's owner before revocation; tests
+// replace it to inject owner-read failures.
+var accountSessionOwnerRead = func(ctx context.Context, db *gorm.DB, sessionID string) (string, error) {
+	userSession := query.Use(db).UserSession
+	row, err := userSession.WithContext(ctx).Where(userSession.ID.Eq(sessionID)).First()
+	if err != nil {
+		return "", err
+	}
+	return row.UserID, nil
+}
+
 func (a *Accounts) RevokeSession(ctx context.Context, sessionID string) error {
+	// Read the owner before revoking: a failed lookup aborts the revocation
+	// (the session stays active and the caller retries) instead of silently
+	// skipping the epoch bump after the revoke already committed.
+	ownerID, err := accountSessionOwnerRead(ctx, a.db, sessionID)
+	if err == gorm.ErrRecordNotFound {
+		return ipc.NewError(ipc.CodeNotFound, "会话不存在")
+	}
+	if err != nil {
+		return dbError(err)
+	}
 	userSession := query.Use(a.db).UserSession
 	info, err := userSession.WithContext(ctx).
 		Where(userSession.ID.Eq(sessionID), userSession.RevokedAt.IsNull()).
@@ -255,6 +276,7 @@ func (a *Accounts) RevokeSession(ctx context.Context, sessionID string) error {
 	if info.RowsAffected == 0 {
 		return ipc.NewError(ipc.CodeNotFound, "会话不存在")
 	}
+	a.epochs.bump(ownerID)
 	return nil
 }
 
@@ -269,6 +291,7 @@ func (a *Accounts) RevokeUserSession(ctx context.Context, userID, sessionID stri
 	if info.RowsAffected == 0 {
 		return ipc.NewError(ipc.CodeNotFound, "会话不存在或已撤销")
 	}
+	a.epochs.bump(userID)
 	return nil
 }
 
@@ -323,6 +346,9 @@ func (a *Accounts) RevokeUserSessionsWithIDs(ctx context.Context, userID, except
 	})
 	if err != nil {
 		return nil, err
+	}
+	if len(sessionIDs) > 0 {
+		a.epochs.bump(userID)
 	}
 	return sessionIDs, nil
 }

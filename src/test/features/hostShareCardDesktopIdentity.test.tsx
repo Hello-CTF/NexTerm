@@ -88,7 +88,9 @@ async function openViewer() {
   mounted = mount(createElement(QueryClientProvider, { client }, createElement(ShareCard)));
   await flushUntil(() => [...document.querySelectorAll("button")].some((button) => button.textContent === "打开终端"));
   const open = [...document.querySelectorAll("button")].find((button) => button.textContent === "打开终端")!;
-  act(() => open.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await act(async () => {
+    open.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
   expect(mocks.active?.deviceId).toBe("shared-a");
 }
 

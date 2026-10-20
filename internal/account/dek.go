@@ -47,18 +47,28 @@ func (a *Accounts) InsertUserDEKEnvelopes(ctx context.Context, userID string, en
 		return err
 	}
 	now := a.now()
-	result := a.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "user_id"}},
-		DoNothing: true,
-	}).Create(&store.UserDEK{
+	row := &store.UserDEK{
 		UserID: userID, DEKEnvelope: envelopes.DEKEnvelope, KDFSalt: envelopes.KDFSalt, KDFParams: envelopes.KDFParams,
 		RecoveryEnvelope: envelopes.RecoveryEnvelope, RecoveryHash: envelopes.RecoveryHash, CreatedAt: now, UpdatedAt: now,
-	})
-	if result.Error != nil {
-		return dbError(result.Error)
 	}
-	if result.RowsAffected == 0 {
-		return ipc.WrapError(ipc.CodeBadParam, ErrDEKEnvelopesExist.Error(), ErrDEKEnvelopesExist)
+	// A plain INSERT: the unique constraint on user_id decides the winner and
+	// the unique-conflict error is the deterministic conflict signal — never
+	// RowsAffected or clientFoundRows semantics. The busy retry also covers
+	// SQLite's single-writer contention so a concurrent loser reaches the
+	// unique error instead of a transient lock error. Skipping the default
+	// transaction keeps a single-row insert atomic while avoiding SQLite's
+	// read-lock-to-write escalation deadlock between concurrent racers.
+	err := a.withBusyRetry(ctx, func() error {
+		if err := a.db.WithContext(ctx).Session(&gorm.Session{SkipDefaultTransaction: true}).Create(row).Error; err != nil {
+			if store.IsUniqueErr(err) {
+				return ipc.WrapError(ipc.CodeBadParam, ErrDEKEnvelopesExist.Error(), ErrDEKEnvelopesExist)
+			}
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return dbError(err)
 	}
 	return nil
 }
@@ -85,7 +95,7 @@ func (a *Accounts) ChangePassword(ctx context.Context, userID, oldPassword, newP
 	if err := validateEnvelopes(envelopes); err != nil {
 		return err
 	}
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		appUser := query.Use(tx).AppUser
 		user, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(userID)).First()
 		if err == gorm.ErrRecordNotFound {
@@ -134,6 +144,11 @@ func (a *Accounts) ChangePassword(ctx context.Context, userID, oldPassword, newP
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	a.epochs.bump(userID)
+	return nil
 }
 
 func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, recoveryKey, newPassword string, envelopes *vault.UserDEKEnvelopes) error {
@@ -143,7 +158,8 @@ func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, reco
 	if err := validateEnvelopes(envelopes); err != nil {
 		return err
 	}
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var resetUserID string
+	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		appUser := query.Use(tx).AppUser
 		user, err := appUser.WithContext(ctx).Where(appUser.Username.Lower().Eq(strings.ToLower(username))).First()
 		if err == gorm.ErrRecordNotFound {
@@ -152,6 +168,7 @@ func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, reco
 		if err != nil {
 			return dbError(err)
 		}
+		resetUserID = user.ID
 		if user.State == string(StateDisabled) {
 			return ipc.NewError(ipc.CodeForbidden, "账号已禁用")
 		}
@@ -200,10 +217,15 @@ func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, reco
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	a.epochs.bump(resetUserID)
+	return nil
 }
 
 func (a *Accounts) AdminResetUser(ctx context.Context, userID string) error {
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		appUser := query.Use(tx).AppUser
 		info, err := appUser.WithContext(ctx).
 			Where(appUser.ID.Eq(userID)).
@@ -246,4 +268,10 @@ func (a *Accounts) AdminResetUser(ctx context.Context, userID string) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	a.epochs.bump(userID)
+	a.epochs.clearPending(userID)
+	return nil
 }

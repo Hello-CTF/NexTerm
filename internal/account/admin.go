@@ -39,7 +39,7 @@ func (a *Accounts) SetUserDisabled(ctx context.Context, userID string, disabled 
 	if disabled {
 		target = StateDisabled
 	}
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		appUser := query.Use(tx).AppUser
 		info, err := appUser.WithContext(ctx).
 			Where(appUser.ID.Eq(userID)).
@@ -60,6 +60,13 @@ func (a *Accounts) SetUserDisabled(ctx context.Context, userID string, disabled 
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if disabled {
+		a.epochs.bump(userID)
+	}
+	return nil
 }
 
 func (a *Accounts) RegistrationEnabled(ctx context.Context) (bool, error) {
