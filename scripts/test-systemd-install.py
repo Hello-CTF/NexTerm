@@ -2286,7 +2286,7 @@ def test_real_server_archive_smoke() -> None:
         assert mode(key) == 0o600, oct(mode(key))
         assert len(content) == 64 and all(c in "0123456789abcdef" for c in content), "a real random hex key must be generated"
         assert content not in result.stdout + result.stderr, "key material must never reach the console"
-        assert read(root / "opt/nexterm/nexterm-server") == read(payload / "nexterm-server")
+        assert (root / "opt/nexterm/nexterm-server").read_bytes() == (payload / "nexterm-server").read_bytes()
         for unit in UNITS:
             assert read(root / "etc/systemd/system" / unit) == read(payload / unit), unit
         calls = systemctl_calls(base)
