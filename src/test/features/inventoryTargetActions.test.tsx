@@ -325,6 +325,82 @@ describe("inventory target actions", () => {
     expect(execButton()?.disabled).toBe(false);
   });
 
+  it("cancels an in-flight command and allows retry once the cancelled contract settles", async () => {
+    let rejectExec: (reason: unknown) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { rejectExec = reject; }));
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+    expect(m.container.textContent).toContain("执行中");
+
+    clickButton(m.container, "取消执行");
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(2);
+    const cancelArgs = mocks.call.mock.calls[1][1].args;
+    expect(cancelArgs.action).toBe("cancel");
+    expect(cancelArgs.kind).toBe("docker-context");
+    expect(cancelArgs.target).toEqual(dockerTarget);
+    expect(cancelArgs.container).toBe("web");
+
+    await act(async () => { rejectExec({ code: "io", message: "执行已取消", detail: { cancelled: true } }); });
+    await flush();
+    const note = m.container.querySelector('[role="note"]');
+    expect(note?.textContent).toContain("执行已取消");
+    expect(m.container.textContent).not.toContain("命令仍在目标上执行");
+    expect(m.container.querySelector('[role="alert"]')).toBeNull();
+
+    const execButton = () => [...m.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "执行");
+    expect(execButton()?.disabled).toBe(false);
+
+    clickButton(m.container, "清除");
+    await flush();
+    expect(m.container.querySelector('[role="note"]')).toBeNull();
+  });
+
+  it("keeps cancel and ignore-results as distinct actions", async () => {
+    let settleA: (resolve: boolean) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve, reject) => { settleA = (ok) => (ok ? resolve({ output: "A\n", exitCode: 0 }) : reject({ code: "io", message: "执行已取消", detail: { cancelled: true } })); }));
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+
+    const cancelButton = () => [...m.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "取消执行");
+    const ignoreButton = () => [...m.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "忽略结果");
+    expect(cancelButton()).not.toBeUndefined();
+    expect(ignoreButton()).not.toBeUndefined();
+
+    // Ignore never calls the cancel API and starts the still-running track.
+    clickButton(m.container, "忽略结果");
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(1);
+    expect(m.container.querySelector('[role="note"]')?.textContent).toContain("命令仍在目标上执行");
+
+    // Settle A as ignored; the notice clears only through the clear action.
+    await act(async () => { settleA(true); });
+    await flush();
+    expect(m.container.querySelector('[role="note"]')?.textContent).toContain("命令已结束");
+    clickButton(m.container, "清除");
+    await flush();
+    expect(m.container.querySelector('[role="note"]')).toBeNull();
+
+    // Cancel calls the cancel action and never opens the still-running track.
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { settleA = () => reject({ code: "io", message: "执行已取消", detail: { cancelled: true } }); }));
+    clickButton(m.container, "执行");
+    await flush();
+    clickButton(m.container, "取消执行");
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(3);
+    expect(mocks.call.mock.calls[2][1].args.action).toBe("cancel");
+    expect(m.container.querySelector('[role="note"]')).toBeNull();
+    await act(async () => { settleA(false); });
+    await flush();
+    expect(m.container.querySelector('[role="note"]')?.textContent).toContain("执行已取消");
+  });
+
   it("invalidates the in-flight request and resets target state on a same-owner target switch", async () => {
     let resolveExec: (value: { output: string; exitCode: number }) => void = () => {};
     mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveExec = resolve; }));

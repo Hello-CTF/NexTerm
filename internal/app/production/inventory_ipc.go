@@ -109,7 +109,10 @@ type inventoryTargetExecFailure struct {
 
 // inventoryTargetActionExec is the only target action the IPC exposes;
 // free-form Docker or kubectl argv is deliberately not representable.
-const inventoryTargetActionExec = "exec"
+const (
+	inventoryTargetActionExec   = "exec"
+	inventoryTargetActionCancel = "cancel"
+)
 
 func inventorySyncDTOFromStore(result store.InventorySyncResult, warnings []string) inventorySyncDTO {
 	if warnings == nil {
@@ -373,6 +376,9 @@ func (s *inventoryService) sync(ctx context.Context, input inventorySyncRequest)
 }
 
 func (s *inventoryService) execTarget(ctx context.Context, input inventoryTargetExecRequest) (inventoryTargetExecResponse, error) {
+	if input.Action == inventoryTargetActionCancel {
+		return s.cancelTargetExec(ctx)
+	}
 	if input.Action != inventoryTargetActionExec {
 		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("不支持的目标动作 %q，仅支持 %q", input.Action, inventoryTargetActionExec))
 	}
@@ -386,10 +392,18 @@ func (s *inventoryService) execTarget(ctx context.Context, input inventoryTarget
 	}
 	execCtx, cancel := context.WithTimeout(ctx, inventoryTargetExecTimeout)
 	defer cancel()
+	handle := &inventoryExecHandle{cancel: cancel}
+	ownerID := inventoryOwnerID(ctx)
+	s.registerExec(ownerID, handle)
+	defer s.unregisterExec(ownerID, handle)
 	output, execErr := fleetinventory.RunTargetGated(execCtx, s.runner, s.kubeconfigGate, target, fleetinventory.TargetExecAction{
 		Container: input.Container, Command: input.Command,
 	})
 	if execErr != nil {
+		if errors.Is(execCtx.Err(), context.Canceled) {
+			s.auditTargetExec(ctx, input, target, "", execErr)
+			return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeIO, "执行已取消").WithDetail(map[string]any{"cancelled": true})
+		}
 		var exitErr *fleetinventory.CommandExitError
 		if errors.As(execErr, &exitErr) {
 			s.auditTargetExec(ctx, input, target, "", execErr)
@@ -401,6 +415,34 @@ func (s *inventoryService) execTarget(ctx context.Context, input inventoryTarget
 	}
 	s.auditTargetExec(ctx, input, target, "", nil)
 	return inventoryTargetExecResponse{Output: string(output)}, nil
+}
+
+func (s *inventoryService) registerExec(ownerID string, handle *inventoryExecHandle) {
+	s.execMu.Lock()
+	defer s.execMu.Unlock()
+	s.execCancels[ownerID] = handle
+}
+
+func (s *inventoryService) unregisterExec(ownerID string, handle *inventoryExecHandle) {
+	s.execMu.Lock()
+	defer s.execMu.Unlock()
+	if s.execCancels[ownerID] == handle {
+		delete(s.execCancels, ownerID)
+	}
+}
+
+// cancelTargetExec cancels the owner's current in-flight target exec. With
+// nothing in flight it is an idempotent no-op; the cancelled exec itself
+// reports through the cancelled contract on its own request.
+func (s *inventoryService) cancelTargetExec(ctx context.Context) (inventoryTargetExecResponse, error) {
+	ownerID := inventoryOwnerID(ctx)
+	s.execMu.Lock()
+	handle := s.execCancels[ownerID]
+	s.execMu.Unlock()
+	if handle != nil {
+		handle.cancel()
+	}
+	return inventoryTargetExecResponse{}, nil
 }
 
 // execDockerTargetViaSession runs the exec through the caller's own managed
@@ -446,10 +488,20 @@ func (s *inventoryService) execDockerTargetViaSession(ctx context.Context, input
 	if err := s.confirmInventoryDockerExec(ctx, connected, assetRow, target.Docker.Name, container, input.Command, input.Confirmation); err != nil {
 		return inventoryTargetExecResponse{}, err
 	}
-	result, execErr := s.docker.Exec(ctx, docker.ExecRequest{
+	execCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	handle := &inventoryExecHandle{cancel: cancel}
+	ownerID := inventoryOwnerID(ctx)
+	s.registerExec(ownerID, handle)
+	defer s.unregisterExec(ownerID, handle)
+	result, execErr := s.docker.Exec(execCtx, docker.ExecRequest{
 		SessionID: sessionID, Container: container, Command: inventoryShellJoin(input.Command),
 	})
 	if execErr != nil {
+		if errors.Is(execCtx.Err(), context.Canceled) {
+			s.auditTargetExec(ctx, input, target, sessionID, execErr)
+			return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeIO, "执行已取消").WithDetail(map[string]any{"cancelled": true})
+		}
 		s.auditTargetExec(ctx, input, target, sessionID, execErr)
 		return inventoryTargetExecResponse{}, terminalIPCError(execErr)
 	}

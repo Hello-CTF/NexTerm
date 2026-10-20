@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ProductionConfirmationDialog } from "../execbatch/ProductionConfirmationDialog";
 import { describeError } from "../../ui/errorText";
 import { dockerConfirmation, getDockerConfirmationChallenge, type DockerConfirmationChallenge } from "../docker/productionGuard";
-import { inventoryExecFailure, inventoryTargetApi } from "./inventoryTargetApi";
+import { inventoryExecCancelled, inventoryExecFailure, inventoryTargetApi } from "./inventoryTargetApi";
 import type { DockerProductionConfirmation } from "../../ipc/commands";
 import type { InventoryTargetExecResponse } from "../../ipc/generated/types";
 
@@ -72,6 +72,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
   const [failure, setFailure] = useState<{ message: string; exitCode?: number; output?: string } | null>(null);
   const [production, setProduction] = useState<{ challenge: DockerConfirmationChallenge; command: string } | null>(null);
   const [ignoredNotice, setIgnoredNotice] = useState<"running" | "done" | null>(null);
+  const [cancelled, setCancelled] = useState(false);
   const generationRef = useRef(0);
   const ignoredGenRef = useRef<number | null>(null);
 
@@ -83,6 +84,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
     setFailure(null);
     setProduction(null);
     setIgnoredNotice(null);
+    setCancelled(false);
     setContainer(targetRef.current.type === "pod" ? stringField(targetRef.current, "container") : "");
     setSessionId("");
   }, [ownerKey, identity]);
@@ -109,6 +111,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
     const generation = generationRef.current;
     ignoredGenRef.current = null;
     setIgnoredNotice(null);
+    setCancelled(false);
     setBusy(true);
     setResult(null);
     setFailure(null);
@@ -130,6 +133,10 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
     } catch (cause) {
       if (generation !== generationRef.current) {
         if (generation === ignoredGenRef.current) setIgnoredNotice("done");
+        return;
+      }
+      if (inventoryExecCancelled(cause)) {
+        setCancelled(true);
         return;
       }
       const challenge = getDockerConfirmationChallenge(cause);
@@ -164,12 +171,33 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
     setFailure(null);
   };
 
+  // Real cancellation: the backend kills the in-flight command, so retry
+  // is safe once the cancelled contract settles. This is distinct from
+  // ignoring a result, which leaves the command running.
+  const cancelExecution = async () => {
+    if (!busy) return;
+    const argv = command.trim() ? command.trim().split(/\s+/) : [];
+    try {
+      await inventoryTargetApi.cancelExec({
+        kind,
+        target,
+        action: "cancel",
+        container: container.trim() === "" ? undefined : container.trim(),
+        command: argv,
+        sessionId: sessionId === "" ? undefined : sessionId,
+      });
+    } catch {
+      // the exec request itself reports the cancellation outcome
+    }
+  };
+
   const clearSettled = () => {
     ignoredGenRef.current = null;
     setIgnoredNotice(null);
     setResult(null);
     setFailure(null);
     setProduction(null);
+    setCancelled(false);
   };
 
   return (
@@ -240,17 +268,25 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
               执行
             </button>
             {busy && (
-              <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={ignoreResults}>
-                忽略结果
-              </button>
+              <>
+                <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void cancelExecution()}>
+                  取消执行
+                </button>
+                <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={ignoreResults}>
+                  忽略结果
+                </button>
+              </>
             )}
-            {(result || failure || ignoredNotice === "done") && (
+            {(result || failure || cancelled || ignoredNotice === "done") && (
               <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={clearSettled}>
                 清除
               </button>
             )}
           </div>
           {busy && <div className="text-[11px] text-neutral-400">执行中…</div>}
+          {cancelled && (
+            <div role="note" className="text-[11px] text-neutral-300">执行已取消</div>
+          )}
           {ignoredNotice && (
             <div role="note" className="text-[11px] text-amber-300">
               {ignoredNotice === "running"

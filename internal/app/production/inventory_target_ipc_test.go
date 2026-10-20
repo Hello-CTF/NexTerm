@@ -21,10 +21,22 @@ type recordingInventoryRunner struct {
 	calls   [][]string
 	outputs map[string][]byte
 	errors  map[string]error
+	block   bool
+	started chan struct{}
 }
 
-func (r *recordingInventoryRunner) Output(_ context.Context, name string, args ...string) ([]byte, error) {
+func (r *recordingInventoryRunner) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
 	r.calls = append(r.calls, append([]string{name}, args...))
+	if r.started != nil {
+		select {
+		case r.started <- struct{}{}:
+		default:
+		}
+	}
+	if r.block {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	key := name + " " + strings.Join(args, " ")
 	if err := r.errors[key]; err != nil {
 		return nil, err
@@ -63,13 +75,25 @@ func newInventoryExecDispatcher(t *testing.T, service *inventoryService) *ipc.Di
 }
 
 type fakeInventoryDockerExecutor struct {
-	calls  []docker.ExecRequest
-	result docker.ExecResult
-	err    error
+	calls   []docker.ExecRequest
+	result  docker.ExecResult
+	err     error
+	block   bool
+	started chan struct{}
 }
 
-func (f *fakeInventoryDockerExecutor) Exec(_ context.Context, request docker.ExecRequest) (docker.ExecResult, error) {
+func (f *fakeInventoryDockerExecutor) Exec(ctx context.Context, request docker.ExecRequest) (docker.ExecResult, error) {
 	f.calls = append(f.calls, request)
+	if f.started != nil {
+		select {
+		case f.started <- struct{}{}:
+		default:
+		}
+	}
+	if f.block {
+		<-ctx.Done()
+		return docker.ExecResult{}, ctx.Err()
+	}
 	return f.result, f.err
 }
 
@@ -536,6 +560,130 @@ func TestInventoryTargetExecLocalPathExitCodeContract(t *testing.T) {
 	if rows[0].ExitCode == nil || *rows[0].ExitCode != 3 {
 		t.Fatalf("audit exit code = %v, want 3", rows[0].ExitCode)
 	}
+}
+
+func requireInventoryExecCancelled(t *testing.T, response ipc.Response) {
+	t.Helper()
+	requireInventoryIPCError(t, response, ipc.CodeIO)
+	detailJSON, err := json.Marshal(response.Error.Detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var detail struct {
+		Cancelled bool `json:"cancelled"`
+	}
+	if err := json.Unmarshal(detailJSON, &detail); err != nil {
+		t.Fatal(err)
+	}
+	if !detail.Cancelled {
+		t.Fatalf("detail = %+v", detail)
+	}
+}
+
+func TestInventoryTargetExecCancelInFlight(t *testing.T) {
+	service, _ := newInventoryTestService(t, true)
+	runner := &recordingInventoryRunner{block: true, started: make(chan struct{}, 1)}
+	service.runner = runner
+	dispatcher := newInventoryExecDispatcher(t, service)
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	execDone := make(chan ipc.Response, 1)
+	go func() {
+		execDone <- dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryDockerExecRequest(), nil)
+	}()
+	<-runner.started
+	cancelResponse := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryTargetExecRequest{Action: "cancel"}, nil)
+	if !cancelResponse.OK {
+		t.Fatalf("cancel response = %+v", cancelResponse)
+	}
+	requireInventoryExecCancelled(t, <-execDone)
+}
+
+func TestInventoryTargetExecCancelWithoutInFlightIsNoop(t *testing.T) {
+	service, _ := newInventoryTestService(t, true)
+	service.runner = &recordingInventoryRunner{outputs: map[string][]byte{}}
+	dispatcher := newInventoryExecDispatcher(t, service)
+	response := dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", inventoryTargetExecRequest{Action: "cancel"}, nil)
+	if !response.OK {
+		t.Fatalf("cancel response = %+v", response)
+	}
+}
+
+func TestInventoryTargetExecCancelOwnerIsolation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	manager := newInventorySessionManager(t)
+	executor := &fakeInventoryDockerExecutor{block: true, started: make(chan struct{}, 1)}
+	service := newInventoryService(database, nil, false, t.TempDir(),
+		withInventoryWatchInterval(20*time.Millisecond), withInventoryDockerAccess(manager, executor))
+	t.Cleanup(func() { _ = service.Shutdown(context.Background()) })
+	service.runner = &recordingInventoryRunner{outputs: map[string][]byte{}}
+	dispatcher := newInventoryExecDispatcher(t, service)
+	ctxA := ipc.WithUserID(context.Background(), "owner-a")
+	ctxB := ipc.WithUserID(context.Background(), "owner-b")
+	asset, err := database.AssetCreate(ctxA, store.AssetInput{Kind: "ssh", Name: "prod-host", Host: stringPointerForInventory("prod.example"), Username: optionalString("ops")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connected := connectInventoryTestSession(t, manager, "owner-a", asset)
+	request := inventoryDockerExecRequest()
+	request.SessionID = connected.ID
+	execDone := make(chan ipc.Response, 1)
+	go func() {
+		execDone <- dispatchInventoryTest(t, dispatcher, ctxA, "inventory_target_exec", request, nil)
+	}()
+	<-executor.started
+	// owner-b's cancel is an idempotent no-op and leaves owner-a's exec running.
+	if response := dispatchInventoryTest(t, dispatcher, ctxB, "inventory_target_exec", inventoryTargetExecRequest{Action: "cancel"}, nil); !response.OK {
+		t.Fatalf("owner-b cancel = %+v", response)
+	}
+	select {
+	case response := <-execDone:
+		t.Fatalf("owner-a exec finished early: %+v", response)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if response := dispatchInventoryTest(t, dispatcher, ctxA, "inventory_target_exec", inventoryTargetExecRequest{Action: "cancel"}, nil); !response.OK {
+		t.Fatalf("owner-a cancel = %+v", response)
+	}
+	requireInventoryExecCancelled(t, <-execDone)
+}
+
+func TestInventoryTargetExecCancelSessionPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	manager := newInventorySessionManager(t)
+	executor := &fakeInventoryDockerExecutor{block: true, started: make(chan struct{}, 1)}
+	service := newInventoryService(database, nil, false, t.TempDir(),
+		withInventoryWatchInterval(20*time.Millisecond), withInventoryDockerAccess(manager, executor))
+	t.Cleanup(func() { _ = service.Shutdown(context.Background()) })
+	service.runner = &recordingInventoryRunner{outputs: map[string][]byte{}}
+	dispatcher := newInventoryExecDispatcher(t, service)
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	asset, err := database.AssetCreate(ctx, store.AssetInput{Kind: "ssh", Name: "prod-host", Host: stringPointerForInventory("prod.example"), Username: optionalString("ops")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connected := connectInventoryTestSession(t, manager, "owner-a", asset)
+	request := inventoryDockerExecRequest()
+	request.SessionID = connected.ID
+	execDone := make(chan ipc.Response, 1)
+	go func() {
+		execDone <- dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", request, nil)
+	}()
+	<-executor.started
+	if response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryTargetExecRequest{Action: "cancel"}, nil); !response.OK {
+		t.Fatalf("cancel response = %+v", response)
+	}
+	requireInventoryExecCancelled(t, <-execDone)
 }
 
 func TestInventoryTargetExecRejectsHighRiskAndInvalidRequests(t *testing.T) {
