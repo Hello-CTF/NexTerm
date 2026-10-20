@@ -42,7 +42,11 @@ material is touched. Coverage:
   12. Missing/empty/relative NEXTERM_DATA_DIR resolve against the effective unit
      working directory: the server fallback <wd>/data is pinned on upgrades when
      it holds data, relative paths resolve against the previous working
-     directory, and the effective key at those locations is preserved
+     directory, and the effective key at those locations is preserved. Logical
+     paths are lexically cleaned (.. and . resolved like the server's
+     filepath.Join) before the staged-root prefix is applied, with containment
+     verified; legacy ExecStart values honor systemd C-unescape (\\s, hex,
+     octal, \\u/\\U) and duplicate flags keep the last value like the CLI
   13. A combination matrix (first install/upgrade x failure point x env origin x
      key location x active state) asserts the key-preservation, data-dir,
      enable, and restart invariants across all of the above
@@ -1247,6 +1251,236 @@ def test_relative_data_dir_resolved_against_working_dir() -> None:
         assert read(data_key) == "relative-custom-wd-key\n"
 
 
+def test_legacy_c_style_escapes() -> None:
+    legacy_escaped = """[Unit]
+Description=NexTerm server (legacy C-style escapes)
+After=network-online.target
+
+[Service]
+Type=simple
+User=nexterm
+Group=nexterm
+EnvironmentFile=-/etc/nexterm/nexterm.env
+WorkingDirectory=/var/lib/nexterm
+ExecStart=/opt/nexterm/nexterm-server \\
+  --listen 0.0.0.0:9000 \\
+  --auth off \\
+  --data-dir /srv/nexterm\\sdata \\
+  --web-root /srv/nexterm\\x20web \\
+  --master-key-file /srv/keys/legacy\\skey
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+    def seed(root: pathlib.Path) -> None:
+        legacy_bin = root / "opt/nexterm/nexterm-server"
+        legacy_bin.parent.mkdir(parents=True)
+        legacy_bin.write_text("# fake nexterm-server v0\n")
+        (root / "etc/systemd/system").mkdir(parents=True)
+        (root / "etc/systemd/system/nexterm-server.service").write_text(legacy_escaped)
+        data_key = root / "srv/nexterm data/master.key"
+        data_key.parent.mkdir(parents=True)
+        data_key.write_text("escaped-data-key\n")
+        explicit_key = root / "srv/keys/legacy key"
+        explicit_key.parent.mkdir(parents=True)
+        explicit_key.write_text("escaped-explicit-key\n")
+
+    def assert_migrated(root: pathlib.Path) -> None:
+        values = env_values(root / "etc/nexterm/nexterm.env")
+        assert values["NEXTERM_DATA_DIR"] == "/srv/nexterm data", values
+        assert values["NEXTERM_WEB_ROOT"] == "/srv/nexterm web", values
+        assert values["NEXTERM_MASTER_KEY_FILE"] == "/srv/keys/legacy key", values
+        assert read(root / "srv/keys/legacy key") == "escaped-explicit-key\n"
+        assert read(root / "srv/nexterm data/master.key") == "escaped-data-key\n"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        seed(root)
+        payload_v2 = make_payload(base, "v2")
+        result = run_install(payload_v2, root, stubs, base)
+        assert result.returncode == 0, result.stderr
+        assert_migrated(root)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        seed(root)
+        payload_v2 = make_payload(base, "v2")
+        failed = run_install(payload_v2, root, stubs, base, fail_at="env")
+        assert failed.returncode != 0, "injected failure must abort"
+        retry = run_install(payload_v2, root, stubs, base)
+        assert retry.returncode == 0, retry.stderr
+        assert "recovering legacy unit settings" in retry.stdout, retry.stdout
+        assert_migrated(root)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        legacy_bin = root / "opt/nexterm/nexterm-server"
+        legacy_bin.parent.mkdir(parents=True)
+        legacy_bin.write_text("# fake nexterm-server v0\n")
+        (root / "etc/systemd/system").mkdir(parents=True)
+        (root / "etc/systemd/system/nexterm-server.service").write_text(
+            legacy_escaped.replace("/srv/keys/legacy\\skey", '"/srv/keys/legacy key')
+        )
+        payload_v2 = make_payload(base, "v2")
+        failed = run_install(payload_v2, root, stubs, base)
+        assert failed.returncode != 0, "unterminated quoting must fail closed"
+        assert "unsupported quoting" in failed.stderr, failed.stderr
+        assert "legacy C-style escapes" in read(root / "etc/systemd/system/nexterm-server.service"), "the unit must not be replaced when parsing fails"
+
+
+def test_legacy_duplicate_flags_last_value_wins() -> None:
+    legacy_dupe = """[Unit]
+Description=NexTerm server (legacy duplicate flags)
+After=network-online.target
+
+[Service]
+Type=simple
+User=nexterm
+Group=nexterm
+EnvironmentFile=-/etc/nexterm/nexterm.env
+WorkingDirectory=/var/lib/nexterm
+ExecStart=/opt/nexterm/nexterm-server \\
+  --listen 127.0.0.1:8080 \\
+  --data-dir /srv/first \\
+  --data-dir=/srv/last \\
+  --master-key-file /srv/first.key \\
+  --master-key-file=/srv/last.key
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+    def seed(root: pathlib.Path) -> None:
+        legacy_bin = root / "opt/nexterm/nexterm-server"
+        legacy_bin.parent.mkdir(parents=True)
+        legacy_bin.write_text("# fake nexterm-server v0\n")
+        (root / "etc/systemd/system").mkdir(parents=True)
+        (root / "etc/systemd/system/nexterm-server.service").write_text(legacy_dupe)
+        last_key = root / "srv/last.key"
+        last_key.parent.mkdir(parents=True)
+        last_key.write_text("last-key\n")
+
+    def assert_migrated(root: pathlib.Path) -> None:
+        values = env_values(root / "etc/nexterm/nexterm.env")
+        assert values["NEXTERM_DATA_DIR"] == "/srv/last", values
+        assert values["NEXTERM_MASTER_KEY_FILE"] == "/srv/last.key", values
+        assert read(root / "srv/last.key") == "last-key\n"
+        assert not (root / "srv/first.key").exists(), "the superseded first key must not be generated"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        seed(root)
+        payload_v2 = make_payload(base, "v2")
+        result = run_install(payload_v2, root, stubs, base)
+        assert result.returncode == 0, result.stderr
+        assert_migrated(root)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        seed(root)
+        payload_v2 = make_payload(base, "v2")
+        failed = run_install(payload_v2, root, stubs, base, fail_at="env")
+        assert failed.returncode != 0, "injected failure must abort"
+        retry = run_install(payload_v2, root, stubs, base)
+        assert retry.returncode == 0, retry.stderr
+        assert "recovering legacy unit settings" in retry.stdout, retry.stdout
+        assert_migrated(root)
+
+
+def test_path_normalization_and_containment() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        seed_first_install(base, stubs, root)
+        (root / "etc/nexterm/master.key").unlink()
+        data_key = root / "srv/nexterm-data/master.key"
+        data_key.parent.mkdir(parents=True)
+        data_key.write_text("dotdot-key\n")
+        (root / "etc/nexterm/nexterm.env").write_text(
+            "NEXTERM_LISTEN=127.0.0.1:8080\nNEXTERM_AUTH=on\n"
+            "NEXTERM_DATA_DIR=/srv/missing/../nexterm-data\nNEXTERM_WEB_ROOT=/opt/nexterm/web\n"
+            "NEXTERM_DB=sqlite\n"
+        )
+        (root / "etc/nexterm/onlyserver.env").write_text(
+            "NEXTERM_LISTEN=127.0.0.1:8080\nNEXTERM_AUTH=on\n"
+            "NEXTERM_DATA_DIR=/srv/missing/../nexterm-data\nNEXTERM_DB=sqlite\n"
+        )
+        payload_v2 = make_payload(base, "v2")
+        result = run_install(payload_v2, root, stubs, base)
+        assert result.returncode == 0, result.stderr
+        values = env_values(root / "etc/nexterm/nexterm.env")
+        assert values["NEXTERM_MASTER_KEY_FILE"] == "/srv/nexterm-data/master.key", "the cleaned key path must be adopted"
+        assert read(data_key) == "dotdot-key\n"
+        assert not (root / "etc/nexterm/master.key").exists()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        seed_first_install(base, stubs, root)
+        (root / "etc/nexterm/master.key").unlink()
+        data_key = root / "srv/nexterm-data/master.key"
+        data_key.parent.mkdir(parents=True)
+        data_key.write_text("dotdot-key\n")
+        (root / "etc/nexterm/nexterm.env").write_text(
+            "NEXTERM_LISTEN=127.0.0.1:8080\nNEXTERM_AUTH=on\n"
+            "NEXTERM_DATA_DIR=/srv/missing/../nexterm-data\nNEXTERM_WEB_ROOT=/opt/nexterm/web\n"
+            "NEXTERM_DB=sqlite\n"
+        )
+        (root / "etc/nexterm/onlyserver.env").write_text(
+            "NEXTERM_LISTEN=127.0.0.1:8080\nNEXTERM_AUTH=on\n"
+            "NEXTERM_DATA_DIR=/srv/missing/../nexterm-data\nNEXTERM_DB=sqlite\n"
+        )
+        payload_v2 = make_payload(base, "v2")
+        failed = run_install(payload_v2, root, stubs, base, fail_at="masterkey")
+        assert failed.returncode != 0, "injected failure must abort"
+        retry = run_install(payload_v2, root, stubs, base)
+        assert retry.returncode == 0, retry.stderr
+        values = env_values(root / "etc/nexterm/nexterm.env")
+        assert values["NEXTERM_MASTER_KEY_FILE"] == "/srv/nexterm-data/master.key", "retry must adopt the cleaned key path"
+        assert read(data_key) == "dotdot-key\n"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        seed_first_install(base, stubs, root)
+        (root / "etc/nexterm/master.key").unlink()
+        escaped_key = root / "review-escaped/master.key"
+        escaped_key.parent.mkdir(parents=True)
+        escaped_key.write_text("contained-key\n")
+        (root / "etc/nexterm/nexterm.env").write_text(
+            "NEXTERM_LISTEN=127.0.0.1:8080\nNEXTERM_AUTH=on\n"
+            "NEXTERM_DATA_DIR=/var/lib/nexterm\nNEXTERM_WEB_ROOT=/opt/nexterm/web\n"
+            "NEXTERM_MASTER_KEY_FILE=/../review-escaped/master.key\nNEXTERM_DB=sqlite\n"
+        )
+        (root / "etc/nexterm/onlyserver.env").write_text(
+            "NEXTERM_LISTEN=127.0.0.1:8080\nNEXTERM_AUTH=on\n"
+            "NEXTERM_DATA_DIR=/var/lib/nexterm\nNEXTERM_DB=sqlite\n"
+        )
+        payload_v2 = make_payload(base, "v2")
+        result = run_install(payload_v2, root, stubs, base)
+        assert result.returncode == 0, result.stderr
+        assert read(escaped_key) == "contained-key\n", "the escaped path must resolve inside the staged root"
+        assert not (base / "review-escaped").exists(), "the staged root's parent must never be touched"
+        values = env_values(root / "etc/nexterm/nexterm.env")
+        assert values["NEXTERM_MASTER_KEY_FILE"] == "/../review-escaped/master.key", "the admin's raw value is preserved; systemd cleans it identically"
+
+
 def test_failed_upgrade_retry_preserves_rollback() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         base = pathlib.Path(tmp)
@@ -1355,6 +1589,9 @@ def main() -> int:
         test_legacy_quoted_paths_tokenization,
         test_missing_and_empty_data_dir_preserve_fallback,
         test_relative_data_dir_resolved_against_working_dir,
+        test_legacy_c_style_escapes,
+        test_legacy_duplicate_flags_last_value_wins,
+        test_path_normalization_and_containment,
         test_install_upgrade_combination_matrix,
         test_failed_upgrade_retry_preserves_rollback,
         test_first_install_failure_at_env_is_recoverable,

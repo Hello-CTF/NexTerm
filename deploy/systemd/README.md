@@ -33,7 +33,11 @@ An upgrade (detected from an existing `/opt/nexterm/nexterm-server`,
   so credentials encrypted under an existing key stay decryptable. A
   missing or empty `NEXTERM_DATA_DIR` resolves the way the server
   resolves it — `<unit WorkingDirectory>/data` — and relative paths
-  resolve against the effective unit's working directory;
+  resolve against the effective unit's working directory. Paths are
+  lexically cleaned (dot segments resolved the way the server's
+  `filepath.Join` resolves them) before any check, so a key reached
+  through a dotted path is still found, and a root-escaping path can
+  never leave the target root;
 - backfills any missing `NEXTERM_LISTEN`, `NEXTERM_AUTH` or
   `NEXTERM_WEB_ROOT` key with the safe default from the shipped example,
   so an install that predates the env files never falls back to the
@@ -47,12 +51,13 @@ An upgrade (detected from an existing `/opt/nexterm/nexterm-server`,
   files (they were the effective settings; a migrated
   `--master-key-file` becomes an explicit `NEXTERM_MASTER_KEY_FILE` that
   wins over the data-dir fallback). ExecStart values are tokenized with
-  systemd quote/escape rules, so quoted paths migrate intact; an
-  unparseable legacy unit aborts the run before anything is replaced.
-  Only the effective unit per systemd priority (`/etc/systemd/system/`,
-  then `/usr/lib/systemd/system/`, then `/lib/systemd/system/`) is
-  consulted; lower-priority copies are removed without applying their
-  values;
+  systemd's unquote/C-unescape rules, so quoted paths and escapes such
+  as `\s` or `\x20` migrate intact, and duplicate flags keep the last
+  value like the server CLI; an unparseable legacy unit aborts the run
+  before anything is replaced. Only the effective unit per systemd
+  priority (`/etc/systemd/system/`, then `/usr/lib/systemd/system/`,
+  then `/lib/systemd/system/`) is consulted; lower-priority copies are
+  removed without applying their values;
 - saves the previous payload to `/opt/nexterm/.rollback` and restarts only
   the units that were active. An interrupted upgrade keeps that original
   backup across retries, records whether each env file predates the

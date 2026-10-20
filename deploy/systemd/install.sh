@@ -143,8 +143,21 @@ legacy_exec_line() {
   printf '%s' "$acc"
 }
 
+utf8_encode() {
+  local cp="$1"
+  if [ "$cp" -lt 128 ]; then
+    printf "\\$(printf '%03o' "$cp")"
+  elif [ "$cp" -lt 2048 ]; then
+    printf "\\$(printf '%03o' $((192 | (cp >> 6))))\\$(printf '%03o' $((128 | (cp & 63))))"
+  elif [ "$cp" -lt 65536 ]; then
+    printf "\\$(printf '%03o' $((224 | (cp >> 12))))\\$(printf '%03o' $((128 | ((cp >> 6) & 63))))\\$(printf '%03o' $((128 | (cp & 63))))"
+  else
+    printf "\\$(printf '%03o' $((240 | (cp >> 18))))\\$(printf '%03o' $((128 | ((cp >> 12) & 63))))\\$(printf '%03o' $((128 | ((cp >> 6) & 63))))\\$(printf '%03o' $((128 | (cp & 63))))"
+  fi
+}
+
 systemd_split() {
-  local input="$1" token="" state=plain c
+  local input="$1" token="" state=plain return_state=plain c hex oct val
   local i=0 len=${#input}
   while [ "$i" -lt "$len" ]; do
     c="${input:$i:1}"
@@ -156,31 +169,131 @@ systemd_split() {
             ;;
           "'") state=single ;;
           '"') state=double ;;
-          \\) state=escape ;;
+          \\) return_state=plain; state=escape ;;
           *) token="$token$c" ;;
         esac
         ;;
       single)
-        if [ "$c" = "'" ]; then state=plain; else token="$token$c"; fi
+        case "$c" in
+          "'") state=plain ;;
+          \\) return_state=single; state=escape ;;
+          *) token="$token$c" ;;
+        esac
         ;;
       double)
         case "$c" in
           '"') state=plain ;;
-          \\) state=double_escape ;;
+          \\) return_state=double; state=escape ;;
           *) token="$token$c" ;;
         esac
         ;;
       escape)
-        token="$token$c"; state=plain ;;
-      double_escape)
         case "$c" in
-          '$'|'`'|'"'|\\) token="$token$c" ;;
-          *) token="$token\\$c" ;;
+          a) token="$token"$'\a'; state="$return_state" ;;
+          b) token="$token"$'\b'; state="$return_state" ;;
+          f) token="$token"$'\f'; state="$return_state" ;;
+          n) token="$token"$'\n'; state="$return_state" ;;
+          r) token="$token"$'\r'; state="$return_state" ;;
+          t) token="$token"$'\t'; state="$return_state" ;;
+          v) token="$token"$'\v'; state="$return_state" ;;
+          \\) token="$token\\"; state="$return_state" ;;
+          '"') token="$token\""; state="$return_state" ;;
+          "'") token="$token'"; state="$return_state" ;;
+          s) token="$token "; state="$return_state" ;;
+          x)
+            if [ $((i + 2)) -lt "$len" ]; then
+              hex="${input:$((i + 1)):2}"
+              case "$hex" in
+                *[!0-9a-fA-F]*|'') token="$token\\" ;;
+                *)
+                  val=$((16#$hex))
+                  if [ "$val" -ne 0 ]; then
+                    token="$token$(printf "\\$(printf '%03o' "$val")")"
+                    i=$((i + 2))
+                  else
+                    token="$token\\"
+                  fi
+                  ;;
+              esac
+            else
+              token="$token\\"
+            fi
+            state="$return_state"
+            ;;
+          u)
+            if [ $((i + 4)) -lt "$len" ]; then
+              hex="${input:$((i + 1)):4}"
+              case "$hex" in
+                *[!0-9a-fA-F]*|'') token="$token\\" ;;
+                *)
+                  val=$((16#$hex))
+                  if [ "$val" -ne 0 ] && { [ "$val" -lt 55296 ] || [ "$val" -gt 57343 ]; }; then
+                    token="$token$(utf8_encode "$val")"
+                    i=$((i + 4))
+                  else
+                    token="$token\\"
+                  fi
+                  ;;
+              esac
+            else
+              token="$token\\"
+            fi
+            state="$return_state"
+            ;;
+          U)
+            if [ $((i + 8)) -lt "$len" ]; then
+              hex="${input:$((i + 1)):8}"
+              case "$hex" in
+                *[!0-9a-fA-F]*|'') token="$token\\" ;;
+                *)
+                  val=$((16#$hex))
+                  if [ "$val" -ne 0 ] && [ "$val" -le 1114111 ] && { [ "$val" -lt 55296 ] || [ "$val" -gt 57343 ]; }; then
+                    token="$token$(utf8_encode "$val")"
+                    i=$((i + 8))
+                  else
+                    token="$token\\"
+                  fi
+                  ;;
+              esac
+            else
+              token="$token\\"
+            fi
+            state="$return_state"
+            ;;
+          [0-7])
+            if [ $((i + 2)) -lt "$len" ]; then
+              oct="${input:$i:3}"
+              case "$oct" in
+                *[!0-7]*|'') token="$token\\" ;;
+                *)
+                  val=$((8#$oct))
+                  if [ "$val" -le 255 ] && [ "$val" -ne 0 ]; then
+                    token="$token$(printf "\\$(printf '%03o' "$val")")"
+                    i=$((i + 2))
+                  else
+                    token="$token\\"
+                  fi
+                  ;;
+              esac
+            else
+              token="$token\\"
+            fi
+            state="$return_state"
+            ;;
+          *) token="$token\\$c"; state="$return_state" ;;
         esac
-        state=double ;;
+        ;;
     esac
     i=$((i + 1))
   done
+  if [ "$state" = "escape" ]; then
+    if [ "$return_state" = "plain" ]; then
+      token="$token\\"
+      state=plain
+    else
+      return 1
+    fi
+  fi
   if [ "$state" != "plain" ]; then return 1; fi
   if [ -n "$token" ]; then printf '%s\n' "$token"; fi
   return 0
@@ -192,8 +305,9 @@ legacy_flag_value() {
     return 2
   fi
   printf '%s\n' "$tokens" | awk -v want="$want" '
-    $0 == want { if ((getline nxt) > 0) print nxt; exit 0 }
-    index($0, want "=") == 1 { print substr($0, length(want) + 2); exit 0 }
+    $0 == want { if ((getline nxt) > 0) { value = nxt; found = 1 }; next }
+    index($0, want "=") == 1 { value = substr($0, length(want) + 2); found = 1; next }
+    END { if (found) print value }
   '
 }
 
@@ -310,7 +424,13 @@ unit_working_dir() {
       WorkingDirectory=*)
         value="${line#WorkingDirectory=}"
         value="$(printf '%s' "$value" | sed -e 's/^[[:blank:]]*//' -e 's/[[:blank:]]*$//')"
-        if [ -n "$value" ]; then printf '%s' "$value"; else printf '/'; fi
+        if [ -z "$value" ]; then
+          printf '/'
+        elif [ "${value#/}" = "$value" ]; then
+          return 1
+        else
+          lex_clean "$value"
+        fi
         return 0
         ;;
     esac
@@ -325,13 +445,36 @@ join_path() {
   esac
 }
 
+lex_clean() {
+  # lexical path normalization (like Go's filepath.Clean): resolves . and ..
+  # textually without touching the filesystem; input must be absolute
+  local path="$1" out="" part
+  case "$path" in /*) ;; *) return 1 ;; esac
+  local IFS='/'
+  for part in $path; do
+    case "$part" in
+      ""|.) ;;
+      ..) out="${out%/*}" ;;
+      *) out="$out/$part" ;;
+    esac
+  done
+  [ -n "$out" ] || out="/"
+  printf '%s' "$out"
+}
+
 resolve_path() {
-  # $1 = logical path; absolute paths map under the staged root, relative
-  # paths resolve against the effective unit working directory
-  local logical="$1" wd="$2" physical
+  # $1 = logical path, $2 = effective unit working directory; the logical
+  # path is lexically cleaned first, then mapped under the staged root, and
+  # the result must stay contained
+  local logical="$1" wd="$2" physical cleaned
   case "$logical" in
-    /*) physical="$ROOT_PREFIX$logical" ;;
-    *) physical="$ROOT_PREFIX$(join_path "$wd" "$logical")" ;;
+    /*) cleaned="$(lex_clean "$logical")" ;;
+    *) cleaned="$(lex_clean "$(join_path "$wd" "$logical")")" ;;
+  esac
+  physical="$ROOT_PREFIX$cleaned"
+  case "$physical" in
+    "$ROOT_PREFIX"/*|"$ROOT_PREFIX") ;;
+    *) die "resolved path escapes the staged root: $logical" ;;
   esac
   case "$physical" in //*) physical="${physical#?}" ;; esac
   printf '%s' "$physical"
@@ -468,7 +611,9 @@ install_units() {
   for unit in $UNITS; do
     effective="$(pick_effective_unit "$unit" "$base" || true)"
     [ -n "$effective" ] || continue
-    wd="$(unit_working_dir "$effective")"
+    if ! wd="$(unit_working_dir "$effective")"; then
+      die "cannot parse WorkingDirectory in ${effective#$ROOT_PREFIX} (systemd requires an absolute path)"
+    fi
     if [ "$unit" = "$SERVER_UNIT" ]; then
       WORKING_DIR_NEXTERM="$wd"
     else
@@ -565,14 +710,14 @@ EOF
       die "cannot parse NEXTERM_DATA_DIR in ${env_file#$ROOT_PREFIX} (unsupported EnvironmentFile syntax); fix the file and re-run"
     fi
     if [ -n "$data_dir_value" ] && [ "${data_dir_value#/}" = "$data_dir_value" ] && [ "$wd" != "/var/lib/nexterm" ]; then
-      env_set "$env_file" NEXTERM_DATA_DIR "$(join_path "$wd" "$data_dir_value")"
+      env_set "$env_file" NEXTERM_DATA_DIR "$(lex_clean "$(join_path "$wd" "$data_dir_value")")"
       log "absolutized relative NEXTERM_DATA_DIR against the previous working directory $wd"
     fi
     if ! configured_key_value="$(env_get "$env_file" NEXTERM_MASTER_KEY_FILE)"; then
       die "cannot parse NEXTERM_MASTER_KEY_FILE in ${env_file#$ROOT_PREFIX} (unsupported EnvironmentFile syntax); fix the file and re-run"
     fi
     if [ -n "$configured_key_value" ] && [ "${configured_key_value#/}" = "$configured_key_value" ] && [ "$wd" != "/var/lib/nexterm" ]; then
-      env_set "$env_file" NEXTERM_MASTER_KEY_FILE "$(join_path "$wd" "$configured_key_value")"
+      env_set "$env_file" NEXTERM_MASTER_KEY_FILE "$(lex_clean "$(join_path "$wd" "$configured_key_value")")"
       log "absolutized relative NEXTERM_MASTER_KEY_FILE against the previous working directory $wd"
     fi
   done
@@ -603,6 +748,7 @@ ensure_master_key() {
     elif [ "${data_dir#/}" = "$data_dir" ]; then
       data_dir="$(join_path "$wd" "$data_dir")"
     fi
+    data_dir="$(lex_clean "$data_dir")"
     data_dir_key="$data_dir/master.key"
     if [ -n "$configured" ] && { [ "$pre_existed" -eq 1 ] || [ "$migrated_key" -eq 1 ]; }; then
       key_file="$configured"
