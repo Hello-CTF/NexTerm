@@ -11,7 +11,6 @@ import {
   mount,
   setInputValue,
   setSelectValue,
-  waitFor,
   type MountedView,
 } from "./reactTestUtils";
 
@@ -82,8 +81,8 @@ const CHUNK = 262144;
 const SESSION = "s1";
 const LOG_PATH = "/var/log/app.log";
 
-const FILE_LINES = Array.from({ length: 20000 }, (_, i) =>
-  i % 10 === 0 ? `line ${i} ERROR boom ${"x".repeat(20)}` : `line ${i} ok ${"y".repeat(20)}`,
+const FILE_LINES = Array.from({ length: 700 }, (_, i) =>
+  i % 10 === 0 ? `line ${i} ERROR boom ${"x".repeat(800)}` : `line ${i} ok ${"y".repeat(800)}`,
 );
 const FILE_TEXT = `${FILE_LINES.join("\n")}\n`;
 const FILE_BYTES = new TextEncoder().encode(FILE_TEXT);
@@ -392,7 +391,7 @@ describe("LogViewer", () => {
 describe("Log viewer entries", () => {
   it("FileTree context menu opens a read-only log tab", async () => {
     mounted = mountWithClient(createElement(FileTree, { sessionId: SESSION }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("app.log"));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("app.log"));
 
     const row = [...mounted!.container.querySelectorAll<HTMLElement>('[role="treeitem"]')].find(
       (r) => r.textContent?.includes("app.log"),
@@ -418,7 +417,7 @@ describe("Log viewer entries", () => {
 
   it("FileBrowser toolbar opens the log viewer for the selected file", async () => {
     mounted = mountWithClient(createElement(FileBrowser, { sessionId: SESSION }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("app.log"));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("app.log"));
 
     const row = [...mounted!.container.querySelectorAll<HTMLElement>(".cursor-pointer")].find((r) =>
       r.textContent?.includes("app.log"),
@@ -443,7 +442,7 @@ describe("Log viewer entries", () => {
 
   it("FileBrowser context menu offers the log viewer for files", async () => {
     mounted = mountWithClient(createElement(FileBrowser, { sessionId: SESSION }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("app.log"));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("app.log"));
 
     const row = [...mounted!.container.querySelectorAll<HTMLElement>(".cursor-pointer")].find((r) =>
       r.textContent?.includes("app.log"),
