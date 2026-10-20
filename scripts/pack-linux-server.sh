@@ -81,6 +81,7 @@ node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$BIN" "server-linux-$ARCH
 for unit in nexterm-server.service nexterm-onlyserver.service; do
   [ -f "$ROOT/deploy/systemd/$unit" ] || { echo "missing systemd unit: deploy/systemd/$unit" >&2; exit 1; }
 done
+[ -f "$ROOT/deploy/systemd/install.sh" ] || { echo "missing systemd installer: deploy/systemd/install.sh" >&2; exit 1; }
 [ -f "$ROOT/LICENSE" ] || { echo "missing LICENSE" >&2; exit 1; }
 
 mkdir -p "$OUT"
@@ -108,6 +109,7 @@ package_full() {
   for unit in nexterm-server.service nexterm-onlyserver.service; do
     install -m 0644 "$ROOT/deploy/systemd/$unit" "$dir/$unit"
   done
+  install -m 0755 "$ROOT/deploy/systemd/install.sh" "$dir/install.sh"
   for env_file in nexterm.env onlyserver.env; do
     install -m 0644 "$ROOT/deploy/systemd/$env_file.example" "$dir/$env_file.example"
   done
@@ -125,6 +127,7 @@ package_full() {
     nexterm-helper-linux-arm64 \
     nexterm-server.service \
     nexterm-onlyserver.service \
+    install.sh \
     nexterm.env.example \
     onlyserver.env.example \
     LICENSE \
