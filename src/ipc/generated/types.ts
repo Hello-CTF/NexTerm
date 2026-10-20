@@ -568,6 +568,7 @@ export type TerminalResumeRequest = {
   channelId: string;
   clientId: string;
   attachmentId: number;
+  episodeToken: number;
 };
 
 export type TerminalStreamAckRequest = {

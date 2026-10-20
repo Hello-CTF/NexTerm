@@ -214,6 +214,11 @@ type terminalResumeRequest struct {
 	// AttachmentID is the unique incarnation of this attachment, established
 	// at attach time; a stale report from a previous incarnation is rejected.
 	AttachmentID uint64 `json:"attachmentId"`
+	// EpisodeToken is the generation of the refusal episode this resume
+	// answers, as issued by the pause or recover that opened it. A resume
+	// carrying a previous episode's token is rejected: it must not clear the
+	// current episode's retention floor.
+	EpisodeToken uint64 `json:"episodeToken"`
 }
 
 type terminalStreamAckRequest struct {
@@ -661,7 +666,14 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				if err != nil {
 					return nil, terminalIPCError(err)
 				}
-				return nil, terminalIPCError(s.sessions.PauseChannelFor(ctx, input.TabID, input.ChannelID, client, input.AttachmentID, input.AcceptedBytes))
+				episodeToken, err := s.sessions.PauseChannelFor(ctx, input.TabID, input.ChannelID, client, input.AttachmentID, input.AcceptedBytes)
+				if err != nil {
+					return nil, terminalIPCError(err)
+				}
+				// The episode the client must reference on resume; joining the
+				// already-open episode is idempotent, so a retried pause
+				// returns the same token.
+				return map[string]any{"episodeToken": episodeToken}, nil
 			})
 		},
 		func() error {
@@ -671,7 +683,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				if err != nil {
 					return nil, terminalIPCError(err)
 				}
-				return nil, terminalIPCError(s.sessions.ResumeChannelFor(ctx, input.TabID, input.ChannelID, client, input.AttachmentID))
+				return nil, terminalIPCError(s.sessions.ResumeChannelFor(ctx, input.TabID, input.ChannelID, client, input.AttachmentID, input.EpisodeToken))
 			})
 		},
 		func() error {
@@ -685,11 +697,11 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				if err != nil {
 					return nil, terminalIPCError(err)
 				}
-				flushed, err := s.sessions.RecoverChannelFor(ctx, input.TabID, input.ChannelID, client, input.AttachmentID, input.AcceptedBytes)
+				flushed, episodeToken, err := s.sessions.RecoverChannelFor(ctx, input.TabID, input.ChannelID, client, input.AttachmentID, input.AcceptedBytes)
 				if err != nil {
 					return nil, terminalIPCError(err)
 				}
-				return map[string]any{"flushedOffset": flushed}, nil
+				return map[string]any{"flushedOffset": flushed, "episodeToken": episodeToken}, nil
 			})
 		},
 		func() error {

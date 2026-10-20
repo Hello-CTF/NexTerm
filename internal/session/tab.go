@@ -47,6 +47,12 @@ type subscriber struct {
 	// It persists across episodes so a late stale ACK after a resume cannot
 	// reopen an old floor, and it resets to -1 on a fresh attach.
 	floorHighWater int64
+	// episodeGen is the generation of the subscriber's current refusal
+	// episode. It advances only when a report opens the floor from closed, so
+	// a resume carrying an older generation is provably stale: the episode it
+	// belongs to is no longer current, and clearing the floor or unpausing on
+	// its behalf would evict a live episode's retained suffix.
+	episodeGen uint64
 }
 
 const streamAnchorType = "nexterm.stream-anchor"

@@ -111,7 +111,7 @@ func TestRecoverChannelForRedeliversRefusedSuffix(t *testing.T) {
 	}
 
 	// The client accepted only the first frame: recover the refused suffix.
-	if _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), 3); err != nil {
+	if _, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), 3); err != nil {
 		t.Fatal(err)
 	}
 	// A synthetic anchor opens the replay, then the refused bytes arrive.
@@ -166,12 +166,12 @@ func TestRecoverChannelForCapacityBoundary(t *testing.T) {
 	const acceptedA = 37<<20 + 512<<10
 	const acceptedB = 36<<20 + 512<<10
 	// a-1 accepted everything: nothing to recover, no anchor, no replay.
-	if _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), acceptedA); err != nil {
+	if _, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), acceptedA); err != nil {
 		t.Fatal(err)
 	}
 	expectNoFrame(t, receiverA)
 	// b-1 refused 1 MiB: anchor frame followed by the refused suffix.
-	if _, err := manager.RecoverChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), acceptedB); err != nil {
+	if _, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), acceptedB); err != nil {
 		t.Fatal(err)
 	}
 	anchorB := receiveTestFrame(t, receiverB)
@@ -214,7 +214,7 @@ func TestRecoverChannelForExcludesPausedCoalescerFromReplay(t *testing.T) {
 	// more frame sit in the paused coalescer: it must not push the recovery
 	// anchor forward, must not be replayed, and must arrive only via the
 	// resume flush, so the full sequence stays contiguous without a hole.
-	if err := manager.PauseChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), -1); err != nil {
+	if _, err := manager.PauseChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), -1); err != nil {
 		t.Fatal(err)
 	}
 	if err := channel.emit([]byte("three")); err != nil {
@@ -222,7 +222,7 @@ func TestRecoverChannelForExcludesPausedCoalescerFromReplay(t *testing.T) {
 	}
 	expectNoFrame(t, receiver)
 
-	if _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), 3); err != nil {
+	if _, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), 3); err != nil {
 		t.Fatal(err)
 	}
 	anchor := receiveTestFrame(t, receiver)
@@ -238,7 +238,7 @@ func TestRecoverChannelForExcludesPausedCoalescerFromReplay(t *testing.T) {
 	}
 	expectNoFrame(t, receiver)
 
-	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1")); err != nil {
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), episodeGenFor(t, manager, info.ID, "a-1")); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFramesUntil(t, receiver, 5); string(got) != "three" {
@@ -277,7 +277,7 @@ func TestRecoverChannelForRefusedSuffixBeyondRingFails(t *testing.T) {
 		}
 	}
 
-	if _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), 4<<20); !errors.Is(err, ErrRecoveryOverrun) {
+	if _, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), 4<<20); !errors.Is(err, ErrRecoveryOverrun) {
 		t.Fatalf("recover = %v, want ErrRecoveryOverrun", err)
 	}
 	expectNoFrame(t, receiver)
@@ -285,7 +285,7 @@ func TestRecoverChannelForRefusedSuffixBeyondRingFails(t *testing.T) {
 	// The boundary is exact: a refused suffix that still fits the window is
 	// redelivered whole and byte-identical.
 	const accepted = 69 << 20
-	if _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), accepted); err != nil {
+	if _, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), accepted); err != nil {
 		t.Fatal(err)
 	}
 	anchor := receiveTestFrame(t, receiver)
@@ -311,7 +311,7 @@ func TestPauseChannelHoldsOutputAndResumeFlushesInOrder(t *testing.T) {
 		t.Fatalf("first frame = %q", got)
 	}
 
-	if err := manager.PauseChannelFor(context.Background(), tab.ID, "a-1", "client-a", attachmentIdFor(t, manager, tab.ID, "a-1"), -1); err != nil {
+	if _, err := manager.PauseChannelFor(context.Background(), tab.ID, "a-1", "client-a", attachmentIdFor(t, manager, tab.ID, "a-1"), -1); err != nil {
 		t.Fatal(err)
 	}
 	if err := channel.emit([]byte("two")); err != nil {
@@ -319,7 +319,7 @@ func TestPauseChannelHoldsOutputAndResumeFlushesInOrder(t *testing.T) {
 	}
 	expectNoFrame(t, receiver)
 
-	if err := manager.ResumeChannelFor(context.Background(), tab.ID, "a-1", "client-a", attachmentIdFor(t, manager, tab.ID, "a-1")); err != nil {
+	if err := manager.ResumeChannelFor(context.Background(), tab.ID, "a-1", "client-a", attachmentIdFor(t, manager, tab.ID, "a-1"), episodeGenFor(t, manager, tab.ID, "a-1")); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFramesUntil(t, receiver, 3); string(got) != "two" {
@@ -344,7 +344,7 @@ func TestPauseChannelDoesNotDisturbOtherSubscribers(t *testing.T) {
 	receiverB := bindTestReceiver(t, manager, "b-1")
 	drainAttachHeader(t, receiverB)
 
-	if err := manager.PauseChannelFor(context.Background(), tab.ID, "a-1", "client-a", attachmentIdFor(t, manager, tab.ID, "a-1"), -1); err != nil {
+	if _, err := manager.PauseChannelFor(context.Background(), tab.ID, "a-1", "client-a", attachmentIdFor(t, manager, tab.ID, "a-1"), -1); err != nil {
 		t.Fatal(err)
 	}
 	if err := channel.emit([]byte("x")); err != nil {
@@ -355,7 +355,7 @@ func TestPauseChannelDoesNotDisturbOtherSubscribers(t *testing.T) {
 	}
 	expectNoFrame(t, receiverA)
 
-	if err := manager.ResumeChannelFor(context.Background(), tab.ID, "a-1", "client-a", attachmentIdFor(t, manager, tab.ID, "a-1")); err != nil {
+	if err := manager.ResumeChannelFor(context.Background(), tab.ID, "a-1", "client-a", attachmentIdFor(t, manager, tab.ID, "a-1"), episodeGenFor(t, manager, tab.ID, "a-1")); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFramesUntil(t, receiverA, 1); string(got) != "x" {
@@ -385,7 +385,7 @@ func TestPauseChannelStallsPumpAndLosesNothing(t *testing.T) {
 		t.Fatalf("pre-pause frame B = %q", gotB)
 	}
 
-	if err := manager.PauseChannelFor(context.Background(), tab.ID, "a-1", "client-a", attachmentIdFor(t, manager, tab.ID, "a-1"), -1); err != nil {
+	if _, err := manager.PauseChannelFor(context.Background(), tab.ID, "a-1", "client-a", attachmentIdFor(t, manager, tab.ID, "a-1"), -1); err != nil {
 		t.Fatal(err)
 	}
 	// Fill the paused coalescer, then the pipe: the pump must stall the PTY
@@ -406,7 +406,7 @@ func TestPauseChannelStallsPumpAndLosesNothing(t *testing.T) {
 	// The unpaused subscriber received the first chunk before the stall.
 	gotB = append(gotB, readFramesUntil(t, receiverB, outputCoalesceMax)...)
 
-	if err := manager.ResumeChannelFor(context.Background(), tab.ID, "a-1", "client-a", attachmentIdFor(t, manager, tab.ID, "a-1")); err != nil {
+	if err := manager.ResumeChannelFor(context.Background(), tab.ID, "a-1", "client-a", attachmentIdFor(t, manager, tab.ID, "a-1"), episodeGenFor(t, manager, tab.ID, "a-1")); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFramesUntil(t, receiverA, len(injected)); !bytes.Equal(got, injected) {
@@ -427,7 +427,7 @@ func TestPauseChannelKeepsEphemeralTabAlive(t *testing.T) {
 	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-local"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.PauseChannelFor(context.Background(), info.ID, "a-local", "client-a", attachmentIdFor(t, manager, info.ID, "a-local"), -1); err != nil {
+	if _, err := manager.PauseChannelFor(context.Background(), info.ID, "a-local", "client-a", attachmentIdFor(t, manager, info.ID, "a-local"), -1); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := manager.Tab(info.ID); err != nil {
@@ -436,7 +436,7 @@ func TestPauseChannelKeepsEphemeralTabAlive(t *testing.T) {
 	if got := connector.transport(0).channel(0).closeCount.Load(); got != 0 {
 		t.Fatalf("PTY closed by pause: close count = %d", got)
 	}
-	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-local", "client-a", attachmentIdFor(t, manager, info.ID, "a-local")); err != nil {
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-local", "client-a", attachmentIdFor(t, manager, info.ID, "a-local"), episodeGenFor(t, manager, info.ID, "a-local")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := manager.Tab(info.ID); err != nil {
@@ -458,16 +458,16 @@ func TestPauseChannelRequiresOwnership(t *testing.T) {
 	tab := openTestTab(t, manager, session, "client-a", "a-1")
 
 	attachmentId := attachmentIdFor(t, manager, tab.ID, "a-1")
-	if err := manager.PauseChannelFor(requestTestUser("owner-b"), tab.ID, "a-1", "client-a", attachmentId, -1); !errors.Is(err, ErrForbidden) {
+	if _, err := manager.PauseChannelFor(requestTestUser("owner-b"), tab.ID, "a-1", "client-a", attachmentId, -1); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("other owner pause = %v, want ErrForbidden", err)
 	}
-	if err := manager.PauseChannelFor(context.Background(), tab.ID, "a-1", "client-a", attachmentId, -1); !errors.Is(err, ErrForbidden) {
+	if _, err := manager.PauseChannelFor(context.Background(), tab.ID, "a-1", "client-a", attachmentId, -1); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("identity-less pause on closed server = %v, want ErrForbidden", err)
 	}
-	if err := manager.PauseChannelFor(requestTestUser("owner-a"), tab.ID, "a-1", "client-a", attachmentId, -1); err != nil {
+	if _, err := manager.PauseChannelFor(requestTestUser("owner-a"), tab.ID, "a-1", "client-a", attachmentId, -1); err != nil {
 		t.Fatalf("owner pause: %v", err)
 	}
-	if err := manager.ResumeChannelFor(requestTestUser("owner-a"), tab.ID, "a-1", "client-a", attachmentId); err != nil {
+	if err := manager.ResumeChannelFor(requestTestUser("owner-a"), tab.ID, "a-1", "client-a", attachmentId, episodeGenFor(t, manager, tab.ID, "a-1")); err != nil {
 		t.Fatalf("owner resume: %v", err)
 	}
 }
@@ -521,7 +521,7 @@ func TestRecoverChannelForSaturatedMultiChannelClientKeepsSuffix(t *testing.T) {
 	const acceptedB = 16 << 20
 	recoverErr := make(chan error, 1)
 	go func() {
-		_, err := manager.RecoverChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), acceptedB)
+		_, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), acceptedB)
 		recoverErr <- err
 	}()
 	anchorB := receiveTestFrame(t, receiverB)
@@ -590,7 +590,7 @@ func TestRecoverChannelForPauseHoldsLiveOutputForOrderedResume(t *testing.T) {
 	const acceptedB = 16 << 20
 	recoverDone := make(chan error, 1)
 	go func() {
-		_, err := manager.RecoverChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), acceptedB)
+		_, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), acceptedB)
 		recoverDone <- err
 	}()
 	anchorB := receiveTestFrame(t, receiverB)
@@ -618,7 +618,7 @@ func TestRecoverChannelForPauseHoldsLiveOutputForOrderedResume(t *testing.T) {
 	// Resume flushes the held bytes in order behind the replay: B reads the
 	// post-recovery chunks contiguously, the producer continues, and the
 	// stalled chunk reaches A as well.
-	if err := manager.ResumeChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1")); err != nil {
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), episodeGenFor(t, manager, info.ID, "b-1")); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFramesUntil(t, receiverB, len(fed)-(32<<20)); !bytes.Equal(got, fed[32<<20:]) {
@@ -684,7 +684,7 @@ func TestRecoverChannelForOrdersAnchorBehindPendingFrames(t *testing.T) {
 
 	recoverDone := make(chan error, 1)
 	go func() {
-		_, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), 1)
+		_, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), 1)
 		recoverDone <- err
 	}()
 	// b and c were already queued for the subscriber: they deliver first
@@ -758,7 +758,7 @@ func TestRecoverChannelForFloorRetainsSuffixBeforeRecover(t *testing.T) {
 		}
 	}
 	const acceptedB = 16 << 20
-	if err := manager.PauseChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), acceptedB); err != nil {
+	if _, err := manager.PauseChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), acceptedB); err != nil {
 		t.Fatal(err)
 	}
 
@@ -781,7 +781,7 @@ func TestRecoverChannelForFloorRetainsSuffixBeforeRecover(t *testing.T) {
 	// [16 MiB, 32 MiB).
 	recoverDone := make(chan error, 1)
 	go func() {
-		_, err := manager.RecoverChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), acceptedB)
+		_, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), acceptedB)
 		recoverDone <- err
 	}()
 	anchorB := receiveTestFrame(t, receiverB)
@@ -795,7 +795,7 @@ func TestRecoverChannelForFloorRetainsSuffixBeforeRecover(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Resume flushes the held chunk in order behind the replay.
-	if err := manager.ResumeChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1")); err != nil {
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), episodeGenFor(t, manager, info.ID, "b-1")); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFramesUntil(t, receiverB, chunkSize); !bytes.Equal(got, chunk512) {
@@ -892,7 +892,7 @@ func TestRecoverChannelForFloorStallsBeforeDelayedRPC(t *testing.T) {
 	// even though the pause/recover RPCs only now arrive.
 	recoverDone := make(chan error, 1)
 	go func() {
-		_, err := manager.RecoverChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), acceptedB)
+		_, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), acceptedB)
 		recoverDone <- err
 	}()
 	anchorB := receiveTestFrame(t, receiverB)

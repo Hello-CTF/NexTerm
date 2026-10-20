@@ -57,7 +57,7 @@ func TestStreamControlOldPauseResumeRejectedBeforeNewACK(t *testing.T) {
 
 	// The old incarnation's late pause must not touch the new subscriber's
 	// floor, high-water, or paused state.
-	err = manager.PauseChannelFor(context.Background(), info.ID, "a-1", "client-a", oldAttachmentId, 8<<20)
+	_, err = manager.PauseChannelFor(context.Background(), info.ID, "a-1", "client-a", oldAttachmentId, 8<<20)
 	if !errors.Is(err, ErrForbidden) {
 		t.Fatalf("old-incarnation pause = %v, want ErrForbidden", err)
 	}
@@ -80,7 +80,7 @@ func TestStreamControlOldPauseResumeRejectedBeforeNewACK(t *testing.T) {
 	}
 
 	// The old incarnation's late resume must not clear the new floor.
-	err = manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", oldAttachmentId)
+	err = manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", oldAttachmentId, episodeGenFor(t, manager, info.ID, "a-1"))
 	if !errors.Is(err, ErrForbidden) {
 		t.Fatalf("old-incarnation resume = %v, want ErrForbidden", err)
 	}
@@ -133,7 +133,7 @@ func TestStreamControlOldPauseResumeRejectedAfterNewACK(t *testing.T) {
 	}
 	// A late old pause carries a HIGHER offset than the new floor: it must not
 	// advance the floor or the high-water.
-	err = manager.PauseChannelFor(context.Background(), info.ID, "a-1", "client-a", oldAttachmentId, 8<<20)
+	_, err = manager.PauseChannelFor(context.Background(), info.ID, "a-1", "client-a", oldAttachmentId, 8<<20)
 	if !errors.Is(err, ErrForbidden) {
 		t.Fatalf("old-incarnation pause = %v, want ErrForbidden", err)
 	}
@@ -144,7 +144,7 @@ func TestStreamControlOldPauseResumeRejectedAfterNewACK(t *testing.T) {
 		t.Fatalf("floorHighWater after old pause = %d, want 5 MiB (unchanged)", got)
 	}
 	// A late old resume must not clear the new floor either.
-	err = manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", oldAttachmentId)
+	err = manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", oldAttachmentId, episodeGenFor(t, manager, info.ID, "a-1"))
 	if !errors.Is(err, ErrForbidden) {
 		t.Fatalf("old-incarnation resume = %v, want ErrForbidden", err)
 	}
@@ -189,7 +189,7 @@ func TestStreamControlOldRecoverCannotForgeReplay(t *testing.T) {
 	drainAttachHeader(t, receiver)
 
 	// The old incarnation's recover is rejected and sends nothing.
-	if _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", oldAttachmentId, 5<<20); !errors.Is(err, ErrForbidden) {
+	if _, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", oldAttachmentId, 5<<20); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("old-incarnation recover = %v, want ErrForbidden", err)
 	}
 	expectNoFrame(t, receiver)
@@ -200,7 +200,7 @@ func TestStreamControlOldRecoverCannotForgeReplay(t *testing.T) {
 		t.Fatal("old-incarnation recover paused the new subscriber")
 	}
 	// The new incarnation's own recover works: anchor plus the refused suffix.
-	if _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", newAttachmentId, 5<<20); err != nil {
+	if _, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", newAttachmentId, 5<<20); err != nil {
 		t.Fatalf("new-incarnation recover = %v, want nil", err)
 	}
 	anchor := receiveTestFrame(t, receiver)
@@ -252,16 +252,16 @@ func TestStreamControlCrossClientForbidden(t *testing.T) {
 
 	// Client A against client B's channel: rejected whether it presents B's
 	// incarnation (wrong client) or its own (wrong channel binding).
-	if err := manager.PauseChannelFor(context.Background(), info.ID, "b-1", "client-a", attachmentB, 4<<20); !errors.Is(err, ErrForbidden) {
+	if _, err := manager.PauseChannelFor(context.Background(), info.ID, "b-1", "client-a", attachmentB, 4<<20); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("cross-client pause with B incarnation = %v, want ErrForbidden", err)
 	}
-	if err := manager.PauseChannelFor(context.Background(), info.ID, "b-1", "client-a", attachmentA, 4<<20); !errors.Is(err, ErrForbidden) {
+	if _, err := manager.PauseChannelFor(context.Background(), info.ID, "b-1", "client-a", attachmentA, 4<<20); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("cross-client pause with A incarnation = %v, want ErrForbidden", err)
 	}
-	if err := manager.ResumeChannelFor(context.Background(), info.ID, "b-1", "client-a", attachmentB); !errors.Is(err, ErrForbidden) {
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "b-1", "client-a", attachmentB, episodeGenFor(t, manager, info.ID, "b-1")); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("cross-client resume = %v, want ErrForbidden", err)
 	}
-	if _, err := manager.RecoverChannelFor(context.Background(), info.ID, "b-1", "client-a", attachmentB, 4<<20); !errors.Is(err, ErrForbidden) {
+	if _, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "b-1", "client-a", attachmentB, 4<<20); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("cross-client recover = %v, want ErrForbidden", err)
 	}
 	if got := tab.subscribers["b-1"].episodeFloor; got != -1 {
@@ -273,7 +273,7 @@ func TestStreamControlCrossClientForbidden(t *testing.T) {
 
 	// The legitimate observer operates its own attachment: pause with its
 	// accepted offset opens its floor, resume closes it, recover replays.
-	if err := manager.PauseChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentB, 4<<20); err != nil {
+	if _, err := manager.PauseChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentB, 4<<20); err != nil {
 		t.Fatalf("observer own-channel pause = %v, want nil", err)
 	}
 	if got := tab.subscribers["b-1"].episodeFloor; got != 4<<20 {
@@ -289,13 +289,13 @@ func TestStreamControlCrossClientForbidden(t *testing.T) {
 	if got := readFramesUntil(t, receiverA, 64<<10); len(got) != 64<<10 {
 		t.Fatal("channel A did not receive the chunk while B was paused")
 	}
-	if err := manager.ResumeChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentB); err != nil {
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentB, episodeGenFor(t, manager, info.ID, "b-1")); err != nil {
 		t.Fatalf("observer own-channel resume = %v, want nil", err)
 	}
 	if got := readFramesUntil(t, receiverB, 64<<10); len(got) != 64<<10 {
 		t.Fatal("observer resume did not flush the held chunk")
 	}
-	if _, err := manager.RecoverChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentB, 4<<20); err != nil {
+	if _, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentB, 4<<20); err != nil {
 		t.Fatalf("observer own-channel recover = %v, want nil", err)
 	}
 	anchor := receiveTestFrame(t, receiverB)
@@ -354,13 +354,13 @@ func TestStreamControlFullSequenceSurvivesLateOldControlFrames(t *testing.T) {
 	}
 	newAttachmentId := attachmentIdFor(t, manager, info.ID, "a-1")
 	drainAttachHeader(t, receiver)
-	if err := manager.PauseChannelFor(context.Background(), info.ID, "a-1", "client-a", oldAttachmentId, 8<<20); !errors.Is(err, ErrForbidden) {
+	if _, err := manager.PauseChannelFor(context.Background(), info.ID, "a-1", "client-a", oldAttachmentId, 8<<20); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("old pause = %v, want ErrForbidden", err)
 	}
 	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", newAttachmentId, 5<<20); err != nil {
 		t.Fatalf("new ACK = %v, want nil", err)
 	}
-	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", oldAttachmentId); !errors.Is(err, ErrForbidden) {
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", oldAttachmentId, episodeGenFor(t, manager, info.ID, "a-1")); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("old resume = %v, want ErrForbidden", err)
 	}
 
@@ -392,7 +392,7 @@ func TestStreamControlFullSequenceSurvivesLateOldControlFrames(t *testing.T) {
 	// The whole refused suffix [5 MiB, fed) is redelivered byte-identical.
 	recoverDone := make(chan error, 1)
 	go func() {
-		_, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", newAttachmentId, 5<<20)
+		_, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", newAttachmentId, 5<<20)
 		recoverDone <- err
 	}()
 	anchor := receiveTestFrame(t, receiver)
@@ -409,7 +409,7 @@ func TestStreamControlFullSequenceSurvivesLateOldControlFrames(t *testing.T) {
 
 	// Resume closes the episode; the pipe-held chunk and the rest of the
 	// sequence arrive in order.
-	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", newAttachmentId); err != nil {
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", newAttachmentId, episodeGenFor(t, manager, info.ID, "a-1")); err != nil {
 		t.Fatal(err)
 	}
 	var tail []byte
@@ -561,7 +561,7 @@ func TestRecoverAnchorCarriesCurrentAttachmentID(t *testing.T) {
 		t.Fatalf("first frame = %q", got)
 	}
 	attachmentId := attachmentIdFor(t, manager, info.ID, "a-1")
-	if _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, 1); err != nil {
+	if _, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, 1); err != nil {
 		t.Fatal(err)
 	}
 	frame := receiveTestFrame(t, receiver)
@@ -574,5 +574,404 @@ func TestRecoverAnchorCarriesCurrentAttachmentID(t *testing.T) {
 	}
 	if got := readFramesUntil(t, receiver, 2); string(got) != "ne" {
 		t.Fatalf("recovered frame = %q", got)
+	}
+}
+
+// episodeGenFor returns the channel's current episode generation.
+func episodeGenFor(t *testing.T, manager *Manager, tabID, channelID string) uint64 {
+	t.Helper()
+	tab, err := manager.Tab(tabID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab.mu.Lock()
+	defer tab.mu.Unlock()
+	subscriber, ok := tab.subscribers[channelID]
+	if !ok {
+		t.Fatalf("channel %s not attached", channelID)
+	}
+	return subscriber.episodeGen
+}
+
+// The r14 counterexample, order 1: a resume from a prior episode of the SAME
+// attachment lands after the new episode's pause — it must be rejected and
+// leave the new floor, high-water, and paused state untouched.
+func TestStreamControlStaleResumeRejectedAfterNewPause(t *testing.T) {
+	manager, connector, _, connected := openOpenTestSession(t, KindLocal)
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+		t.Fatal(err)
+	}
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel := connector.transport(0).channel(0)
+	receiver := bindTestReceiver(t, manager, "a-1")
+	drainAttachHeader(t, receiver)
+	for i := 0; i < 128; i++ {
+		chunk := bytes.Repeat([]byte{byte('a' + i%26)}, 64<<10)
+		if err := channel.emit(chunk); err != nil {
+			t.Fatal(err)
+		}
+		if got := readFramesUntil(t, receiver, len(chunk)); !bytes.Equal(got, chunk) {
+			t.Fatalf("chunk %d mismatch", i)
+		}
+	}
+	attachmentId := attachmentIdFor(t, manager, info.ID, "a-1")
+
+	// The prior episode: pause opens it at 4 MiB, the matching resume closes
+	// it.
+	priorGen, err := manager.PauseChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, 4<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if priorGen == 0 {
+		t.Fatal("pause returned generation 0")
+	}
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, priorGen); err != nil {
+		t.Fatal(err)
+	}
+	if got := tab.recovery.floor; got != -1 {
+		t.Fatalf("floor after resume = %d, want -1 (closed)", got)
+	}
+
+	// The new episode: the ACK opens the floor at 8 MiB (the client advanced
+	// past the prior high-water), pause joins it and returns the same
+	// generation.
+	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, 8<<20); err != nil {
+		t.Fatal(err)
+	}
+	newGen, err := manager.PauseChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, 8<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newGen <= priorGen {
+		t.Fatalf("new episode generation = %d, want greater than the prior %d", newGen, priorGen)
+	}
+
+	// The prior episode's delayed resume is rejected: the new floor, the
+	// high-water, and the paused state survive.
+	err = manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, priorGen)
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("stale resume = %v, want ErrForbidden", err)
+	}
+	if got := tab.recovery.floor; got != 8<<20 {
+		t.Fatalf("floor after stale resume = %d, want 8 MiB (unchanged)", got)
+	}
+	if got := tab.subscribers["a-1"].floorHighWater; got != 8<<20 {
+		t.Fatalf("floorHighWater after stale resume = %d, want 8 MiB (unchanged)", got)
+	}
+	if !tab.subscribers["a-1"].paused {
+		t.Fatal("stale resume unpaused the subscriber")
+	}
+	// The matching resume closes the new episode.
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, newGen); err != nil {
+		t.Fatalf("matching resume = %v, want nil", err)
+	}
+	if got := tab.recovery.floor; got != -1 {
+		t.Fatalf("floor after matching resume = %d, want -1", got)
+	}
+}
+
+// The r14 counterexample, order 2: the stale resume lands BEFORE the new
+// episode's ACK/pause — it must not pre-close or otherwise disturb the
+// episode that opens next.
+func TestStreamControlStaleResumeRejectedBeforeNewPause(t *testing.T) {
+	manager, connector, _, connected := openOpenTestSession(t, KindLocal)
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+		t.Fatal(err)
+	}
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel := connector.transport(0).channel(0)
+	receiver := bindTestReceiver(t, manager, "a-1")
+	drainAttachHeader(t, receiver)
+	for i := 0; i < 128; i++ {
+		chunk := bytes.Repeat([]byte{byte('a' + i%26)}, 64<<10)
+		if err := channel.emit(chunk); err != nil {
+			t.Fatal(err)
+		}
+		if got := readFramesUntil(t, receiver, len(chunk)); !bytes.Equal(got, chunk) {
+			t.Fatalf("chunk %d mismatch", i)
+		}
+	}
+	attachmentId := attachmentIdFor(t, manager, info.ID, "a-1")
+
+	priorGen, err := manager.PauseChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, 4<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, priorGen); err != nil {
+		t.Fatal(err)
+	}
+
+	// The prior episode's resume lands again before the new episode opens:
+	// with no live floor it is an explicit no-op and disturbs nothing.
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, priorGen); err != nil {
+		t.Fatalf("repeated prior resume with no live episode = %v, want nil (no-op)", err)
+	}
+	if got := tab.recovery.floor; got != -1 {
+		t.Fatalf("floor after no-op resume = %d, want -1", got)
+	}
+	// The new episode opens at a higher offset: the no-op resume did not
+	// pre-close it nor change the generation the client learns.
+	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, 8<<20); err != nil {
+		t.Fatal(err)
+	}
+	newGen, err := manager.PauseChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, 8<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newGen <= priorGen {
+		t.Fatalf("new episode generation = %d, want greater than the prior %d", newGen, priorGen)
+	}
+	if got := tab.recovery.floor; got != 8<<20 {
+		t.Fatalf("floor = %d, want 8 MiB (the no-op resume did not pre-close it)", got)
+	}
+	// Now the prior generation is stale: its resume is rejected and the new
+	// floor survives.
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, priorGen); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("stale resume = %v, want ErrForbidden", err)
+	}
+	if got := tab.recovery.floor; got != 8<<20 {
+		t.Fatalf("floor after stale resume = %d, want 8 MiB (unchanged)", got)
+	}
+	// A repeated pause is idempotent: the generation the client learned stays
+	// valid, so its legitimate resume cannot be mismatched.
+	againGen, err := manager.PauseChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, 8<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if againGen != newGen {
+		t.Fatalf("repeated pause generation = %d, want the idempotent %d", againGen, newGen)
+	}
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, newGen); err != nil {
+		t.Fatalf("resume after repeated pause = %v, want nil", err)
+	}
+}
+
+// The r14 full-sequence counterexample: on the SAME attachment (no re-attach),
+// a delayed prior-episode resume must not clear the new episode's floor.
+// With the floor protected, sustained output to exactly 91,750,400 bytes
+// stalls at the ring limit instead of evicting the refused suffix, and the
+// whole sequence is redelivered byte-identical — never ErrRecoveryOverrun.
+func TestStreamControlFullSequenceSurvivesStaleResume(t *testing.T) {
+	manager, connector, _, connected := openOpenTestSession(t, KindLocal)
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+		t.Fatal(err)
+	}
+	channel := connector.transport(0).channel(0)
+	receiver := bindTestReceiver(t, manager, "a-1")
+	drainAttachHeader(t, receiver)
+
+	const chunkSize = 64 << 10
+	chunk := func(i int) []byte { return bytes.Repeat([]byte{byte('a' + i%26)}, chunkSize) }
+	var fed []byte
+	fedThrough := 0
+	feedHealthy := func(until int) {
+		for i := fedThrough; i < until; i++ {
+			data := chunk(i)
+			fed = append(fed, data...)
+			if err := channel.emit(data); err != nil {
+				t.Fatal(err)
+			}
+			if got := readFramesUntil(t, receiver, chunkSize); !bytes.Equal(got, data) {
+				t.Fatalf("chunk %d mismatch", i)
+			}
+			fedThrough = i + 1
+		}
+	}
+	// Phase A: the client accepts 8 MiB; a prior episode opens and closes
+	// normally.
+	feedHealthy(128)
+	attachmentId := attachmentIdFor(t, manager, info.ID, "a-1")
+	priorGen, err := manager.PauseChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, 8<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, priorGen); err != nil {
+		t.Fatal(err)
+	}
+
+	// Phase B: the client accepts 4 MiB more and stalls at 12 MiB; the new
+	// episode opens on its accepted-offset report alone (the transport keeps
+	// draining; the writer refuses).
+	feedHealthy(192)
+	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, 12<<20); err != nil {
+		t.Fatal(err)
+	}
+	// The prior episode's delayed resume arrives now: rejected, floor intact.
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, priorGen); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("stale resume = %v, want ErrForbidden", err)
+	}
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tab.recovery.floor; got != 12<<20 {
+		t.Fatalf("floor after stale resume = %d, want 12 MiB (unchanged)", got)
+	}
+
+	// Phase C: the transport keeps draining but the client accepts nothing
+	// more: sustained output stalls at the retention floor plus the ring
+	// instead of evicting the refused suffix.
+	stalled := false
+	stallEmitted := false
+	for i := fedThrough; i < 4000 && !stalled; i++ {
+		data := chunk(i)
+		if err := channel.emit(data); err != nil {
+			stalled = true
+			break
+		}
+		if !tryReadFrames(t, receiver, chunkSize, data) {
+			stalled = true
+			// Emitted but not fed: it waits in the transport pipe and arrives
+			// once the resume wakes the pump.
+			stallEmitted = true
+		}
+		if !stalled {
+			fed = append(fed, data...)
+			fedThrough = i + 1
+		}
+	}
+	if !stalled {
+		t.Fatal("producer kept reading past the ring capacity with the floor set")
+	}
+
+	// The whole refused suffix [12 MiB, fed) is redelivered byte-identical.
+	recoverDone := make(chan error, 1)
+	var recoverGen uint64
+	go func() {
+		_, gen, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, 12<<20)
+		recoverGen = gen
+		recoverDone <- err
+	}()
+	anchor := receiveTestFrame(t, receiver)
+	if !bytes.Contains(anchor.Data, []byte("recovery-")) {
+		t.Fatalf("anchor = %q", anchor.Data)
+	}
+	suffix := readFramesUntil(t, receiver, len(fed)-(12<<20))
+	if !bytes.Equal(suffix, fed[12<<20:]) {
+		t.Fatalf("refused suffix mismatch: got %d bytes want %d", len(suffix), len(fed)-(12<<20))
+	}
+	if err := <-recoverDone; err != nil {
+		t.Fatalf("recover = %v, want the full suffix retained", err)
+	}
+
+	// The matching resume closes the episode; the pipe-held chunk and the
+	// rest of the sequence arrive in order.
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, recoverGen); err != nil {
+		t.Fatal(err)
+	}
+	var tail []byte
+	if stallEmitted {
+		data := chunk(fedThrough)
+		got := readFramesUntil(t, receiver, chunkSize)
+		if !bytes.Equal(got, data) {
+			t.Fatalf("pipe-held chunk %d mismatch", fedThrough)
+		}
+		fed = append(fed, data...)
+		tail = append(tail, got...)
+		fedThrough++
+	}
+	const totalChunks = 1400 // 1400 * 64 KiB = 91,750,400 bytes
+	for i := fedThrough; i < totalChunks; i++ {
+		data := chunk(i)
+		fed = append(fed, data...)
+		if err := channel.emit(data); err != nil {
+			t.Fatalf("final chunk %d: %v", i, err)
+		}
+		got := readFramesUntil(t, receiver, chunkSize)
+		if !bytes.Equal(got, data) {
+			t.Fatalf("final chunk %d mismatch", i)
+		}
+		tail = append(tail, got...)
+	}
+	if len(fed) != 91750400 {
+		t.Fatalf("fed = %d bytes, want 91,750,400", len(fed))
+	}
+	accepted := append(append(append([]byte{}, fed[:12<<20]...), suffix...), tail...)
+	if !bytes.Equal(accepted, fed) {
+		t.Fatal("accepted sequence is not byte-identical to the original stream")
+	}
+}
+
+// The recover names the episode it opened (or joined) so the client can
+// resume exactly that episode; a resume carrying a pre-recover generation is
+// rejected.
+func TestStreamControlRecoverBindsEpisodeToken(t *testing.T) {
+	manager, connector, _, connected := openOpenTestSession(t, KindLocal)
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+		t.Fatal(err)
+	}
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel := connector.transport(0).channel(0)
+	receiver := bindTestReceiver(t, manager, "a-1")
+	drainAttachHeader(t, receiver)
+	if err := channel.emit([]byte("one")); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFramesUntil(t, receiver, 3); string(got) != "one" {
+		t.Fatalf("first frame = %q", got)
+	}
+	attachmentId := attachmentIdFor(t, manager, info.ID, "a-1")
+
+	// The recover opens the episode and returns its generation; a resume
+	// carrying the generation from before the recover is rejected and leaves
+	// the episode open.
+	flushed, recoverGen, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flushed != 3 {
+		t.Fatalf("flushed = %d, want 3", flushed)
+	}
+	if recoverGen == 0 {
+		t.Fatal("recover returned generation 0")
+	}
+	anchor := receiveTestFrame(t, receiver)
+	if !bytes.Contains(anchor.Data, []byte("recovery-")) {
+		t.Fatalf("anchor = %q", anchor.Data)
+	}
+	if got := readFramesUntil(t, receiver, 2); string(got) != "ne" {
+		t.Fatalf("recovered frame = %q", got)
+	}
+	err = manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, recoverGen-1)
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("pre-recover resume = %v, want ErrForbidden", err)
+	}
+	if got := tab.subscribers["a-1"].episodeFloor; got != 1 {
+		t.Fatalf("episodeFloor after stale resume = %d, want 1 (unchanged)", got)
+	}
+	if !tab.subscribers["a-1"].paused {
+		t.Fatal("stale resume unpaused the subscriber")
+	}
+	// The matching resume closes the recover's episode.
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, recoverGen); err != nil {
+		t.Fatalf("matching resume = %v, want nil", err)
+	}
+	if got := tab.subscribers["a-1"].episodeFloor; got != -1 {
+		t.Fatalf("episodeFloor after matching resume = %d, want -1", got)
 	}
 }

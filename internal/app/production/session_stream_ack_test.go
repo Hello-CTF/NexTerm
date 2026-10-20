@@ -125,43 +125,65 @@ func TestProductionStreamControlBindsTrustedCaller(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dispatch := func(command, environmentCaller, payloadClient string, attachmentID uint64, acceptedBytes int64) ipc.Response {
+	dispatch := func(command, environmentCaller, payloadClient string, attachmentID uint64, acceptedBytes int64, episodeToken uint64) ipc.Response {
 		args, _ := json.Marshal(map[string]any{
 			"tabId":         info.ID,
 			"channelId":     "channel-b",
 			"clientId":      payloadClient,
 			"attachmentId":  attachmentID,
 			"acceptedBytes": acceptedBytes,
+			"episodeToken":  episodeToken,
 		})
 		return application.Dispatcher.Dispatch(t.Context(), ipc.Request{
 			Command: command, Args: args,
 		}, application.Environment(environmentCaller))
 	}
 
+	// Open the episode and learn the token the server issued for it, the way
+	// the client does from the pause response.
+	opened := dispatch("terminal_pause", "client-b", "", infoB.AttachmentID, 0, 0)
+	if !opened.OK {
+		t.Fatalf("opening pause = %+v, want OK", opened)
+	}
+	var openedPayload struct {
+		EpisodeToken uint64 `json:"episodeToken"`
+	}
+	if err := json.Unmarshal(opened.Data, &openedPayload); err != nil || openedPayload.EpisodeToken == 0 {
+		t.Fatalf("pause response = %s, want a nonzero episodeToken", opened.Data)
+	}
+	token := openedPayload.EpisodeToken
+
 	for _, command := range []string{"terminal_pause", "terminal_resume", "terminal_recover"} {
 		// Environment caller and payload client disagree: rejected.
-		if response := dispatch(command, "client-a", "client-b", infoB.AttachmentID, 0); response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
+		if response := dispatch(command, "client-a", "client-b", infoB.AttachmentID, 0, token); response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
 			t.Fatalf("%s mismatched caller = %+v, want forbidden", command, response)
 		}
 		// Environment-only caller: a legitimate single-source fallback.
-		if response := dispatch(command, "client-b", "", infoB.AttachmentID, 0); !response.OK {
+		if response := dispatch(command, "client-b", "", infoB.AttachmentID, 0, token); !response.OK {
 			t.Fatalf("%s environment-only caller = %+v, want OK", command, response)
 		}
 		// Payload-only client: a legitimate single-source fallback.
-		if response := dispatch(command, "", "client-b", infoB.AttachmentID, 0); !response.OK {
+		if response := dispatch(command, "", "client-b", infoB.AttachmentID, 0, token); !response.OK {
 			t.Fatalf("%s payload-only caller = %+v, want OK", command, response)
 		}
 		// Both empty: rejected.
-		if response := dispatch(command, "", "", infoB.AttachmentID, 0); response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
+		if response := dispatch(command, "", "", infoB.AttachmentID, 0, token); response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
 			t.Fatalf("%s empty caller = %+v, want forbidden", command, response)
 		}
 		// Cross-client: client A presenting client B's incarnation is forbidden.
-		if response := dispatch(command, "client-a", "client-a", infoB.AttachmentID, 0); response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
+		if response := dispatch(command, "client-a", "client-a", infoB.AttachmentID, 0, token); response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
 			t.Fatalf("%s cross-client = %+v, want forbidden", command, response)
 		}
 		// Stale incarnation: the previous attachment id is forbidden.
-		if response := dispatch(command, "client-b", "client-b", infoB.AttachmentID-1, 0); response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
+		if response := dispatch(command, "client-b", "client-b", infoB.AttachmentID-1, 0, token); response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
 			t.Fatalf("%s stale incarnation = %+v, want forbidden", command, response)
+		}
+		// Stale episode: a resume carrying the previous episode's token is
+		// forbidden and never clears the current floor.
+		if command == "terminal_resume" {
+			if response := dispatch(command, "client-b", "client-b", infoB.AttachmentID, 0, token-1); response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
+				t.Fatalf("%s stale episode token = %+v, want forbidden", command, response)
+			}
 		}
 	}
 }

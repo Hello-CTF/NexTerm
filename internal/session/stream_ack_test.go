@@ -341,13 +341,13 @@ func TestRecoverChannelForRejectsOutOfRangeOffsets(t *testing.T) {
 		t.Fatal(err)
 	}
 	attachmentId := attachmentIdFor(t, manager, info.ID, "a-1")
-	if _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, -1<<63); !errors.Is(err, ErrInvalidOptions) {
+	if _, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, -1<<63); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("recover MinInt64 = %v, want ErrInvalidOptions", err)
 	}
-	if _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, -1); !errors.Is(err, ErrInvalidOptions) {
+	if _, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, -1); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("recover(-1) = %v, want ErrInvalidOptions", err)
 	}
-	if _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, 1<<62); !errors.Is(err, ErrInvalidOptions) {
+	if _, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, 1<<62); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("recover(future) = %v, want ErrInvalidOptions", err)
 	}
 }
@@ -382,7 +382,7 @@ func TestStreamAckLateStaleACKIgnored(t *testing.T) {
 	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), 8<<20); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1")); err != nil {
+	if err := manager.ResumeChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), episodeGenFor(t, manager, info.ID, "a-1")); err != nil {
 		t.Fatal(err)
 	}
 	if got := tab.recovery.floor; got != -1 {
