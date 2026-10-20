@@ -132,6 +132,10 @@ func TestExecBatchIPCCancelRunsParallelAndChecksOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	connectedB, err := manager.ConnectFor(ownerB, session.Asset{ID: "asset-b", Name: "b", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
 	dispatcher := ipc.NewDispatcher()
 	if err := newExecBatchIPCService(manager, execBatchTestAssets(nil), nil).register(dispatcher); err != nil {
 		t.Fatal(err)
@@ -149,11 +153,22 @@ func TestExecBatchIPCCancelRunsParallelAndChecksOwner(t *testing.T) {
 		t.Fatal("execution did not start")
 	}
 	crossOwner := dispatchExecBatchTest(dispatcher, ownerB, "exec_batch_cancel", execBatchCancelRequest{BatchID: "batch-shared"})
-	if crossOwner.OK || crossOwner.Error == nil || crossOwner.Error.Code != ipc.CodeForbidden {
-		t.Fatalf("cross-owner cancel = %+v", crossOwner)
+	crossResult := decodeExecBatchTest[execbatch.CancelResult](t, crossOwner)
+	if !crossResult.Canceled || crossResult.BatchID != "batch-shared" {
+		t.Fatalf("cross-owner cancel = %+v, want an owner-scoped pending cancel", crossResult)
 	}
 	if execCtx.Err() != nil {
 		t.Fatal("owner B canceled owner A batch")
+	}
+	early := dispatchExecBatchTest(dispatcher, ownerB, "exec_batch_execute", execbatch.Request{
+		BatchID: "batch-shared", SessionIDs: []string{connectedB.ID}, Command: "wait",
+	})
+	earlyBatch := decodeExecBatchTest[execbatch.Batch](t, early)
+	if len(earlyBatch.Results) != 1 || earlyBatch.Results[0].Status != execbatch.StatusCanceled {
+		t.Fatalf("owner B early-canceled batch = %+v", earlyBatch)
+	}
+	if execCtx.Err() != nil {
+		t.Fatal("owner B pending cancel leaked into owner A's batch")
 	}
 	canceled := dispatchExecBatchTest(dispatcher, ownerA, "exec_batch_cancel", execBatchCancelRequest{BatchID: "batch-shared"})
 	result := decodeExecBatchTest[execbatch.CancelResult](t, canceled)

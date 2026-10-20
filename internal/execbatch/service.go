@@ -43,10 +43,15 @@ type Service struct {
 
 	beforeCleanupCommit   func(accountCleanupKey) error
 	mu                    sync.Mutex
-	batches               map[string]*activeBatch
+	batches               map[batchKey]*activeBatch
 	pendingCancels        map[pendingCancelKey]time.Time
 	accountCleanups       map[accountCleanupKey]*accountCleanupEvent
 	accountCleanupAliases map[accountCleanupKey]accountCleanupKey
+}
+
+type batchKey struct {
+	ownerID string
+	batchID string
 }
 
 type activeBatch struct {
@@ -96,7 +101,7 @@ func New(config Config) *Service {
 	}
 	return &Service{
 		resolver: config.Resolver, auditor: config.Auditor, history: config.History, now: now, onError: onError,
-		outputLimit: outputLimit, batches: make(map[string]*activeBatch),
+		outputLimit: outputLimit, batches: make(map[batchKey]*activeBatch),
 		pendingCancels:        make(map[pendingCancelKey]time.Time),
 		accountCleanups:       make(map[accountCleanupKey]*accountCleanupEvent),
 		accountCleanupAliases: make(map[accountCleanupKey]accountCleanupKey),
@@ -114,15 +119,16 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 
 	runCtx, cancel := context.WithCancel(ctx)
 	active := &activeBatch{ownerID: ownerID, cancel: cancel}
+	key := batchKey{ownerID: ownerID, batchID: request.BatchID}
 	pendingKey := pendingCancelKey{ownerID: ownerID, batchID: request.BatchID}
 	err = admit(ctx, func() error {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		s.purgePendingCancelsLocked(s.now())
-		if _, exists := s.batches[request.BatchID]; exists {
+		if _, exists := s.batches[key]; exists {
 			return fmt.Errorf("%w: %s", ErrBatchConflict, request.BatchID)
 		}
-		s.batches[request.BatchID] = active
+		s.batches[key] = active
 		if _, exists := s.pendingCancels[pendingKey]; exists {
 			delete(s.pendingCancels, pendingKey)
 			active.canceling = true
@@ -136,8 +142,8 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 	}
 	defer func() {
 		s.mu.Lock()
-		if s.batches[request.BatchID] == active {
-			delete(s.batches, request.BatchID)
+		if s.batches[key] == active {
+			delete(s.batches, key)
 		}
 		s.mu.Unlock()
 		cancel()
@@ -213,7 +219,7 @@ func (s *Service) Cancel(_ context.Context, ownerID, batchID string) (CancelResu
 	}
 	s.mu.Lock()
 	s.purgePendingCancelsLocked(s.now())
-	active := s.batches[batchID]
+	active := s.batches[batchKey{ownerID: ownerID, batchID: batchID}]
 	if active == nil {
 		key := pendingCancelKey{ownerID: ownerID, batchID: batchID}
 		if _, exists := s.pendingCancels[key]; !exists {
@@ -225,10 +231,6 @@ func (s *Service) Cancel(_ context.Context, ownerID, batchID string) (CancelResu
 		}
 		s.mu.Unlock()
 		return CancelResult{BatchID: batchID, Canceled: true}, nil
-	}
-	if active.ownerID != ownerID {
-		s.mu.Unlock()
-		return CancelResult{}, fmt.Errorf("%w: %s", ErrForbidden, batchID)
 	}
 	active.canceling = true
 	cancel := active.cancel

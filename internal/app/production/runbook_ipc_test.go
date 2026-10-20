@@ -2,9 +2,13 @@ package production
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -194,4 +198,447 @@ func TestRunbookIPCDisconnectedTargetContinuesAndPersistsFailure(t *testing.T) {
 	if failedBatches != 2 || successfulBatches != 2 {
 		t.Fatalf("history status counts = failed %d, success %d", failedBatches, successfulBatches)
 	}
+}
+
+type runbookIPCExecutor struct {
+	mu      sync.Mutex
+	block   map[string]bool
+	cancels map[string]context.CancelFunc
+	started chan string
+}
+
+func newRunbookIPCExecutor(block ...string) *runbookIPCExecutor {
+	blocked := make(map[string]bool, len(block))
+	for _, batchID := range block {
+		blocked[batchID] = true
+	}
+	return &runbookIPCExecutor{block: blocked, cancels: map[string]context.CancelFunc{}, started: make(chan string, 16)}
+}
+
+func (e *runbookIPCExecutor) Execute(ctx context.Context, _ string, request execbatch.Request) (execbatch.Batch, error) {
+	results := make([]execbatch.Result, len(request.SessionIDs))
+	for index, sessionID := range request.SessionIDs {
+		results[index] = execbatch.Result{SessionID: sessionID, SessionName: sessionID, Status: execbatch.StatusSuccess}
+	}
+	batch := execbatch.Batch{BatchID: request.BatchID, Command: request.Command, Results: results}
+	e.mu.Lock()
+	blocked := e.block[request.BatchID]
+	e.mu.Unlock()
+	if !blocked {
+		return batch, nil
+	}
+	execCtx, cancel := context.WithCancel(ctx)
+	e.mu.Lock()
+	e.cancels[request.BatchID] = cancel
+	e.mu.Unlock()
+	e.started <- request.BatchID
+	<-execCtx.Done()
+	e.mu.Lock()
+	delete(e.cancels, request.BatchID)
+	e.mu.Unlock()
+	for index := range results {
+		results[index].Status = execbatch.StatusCanceled
+		results[index].Error = context.Canceled.Error()
+	}
+	return batch, nil
+}
+
+func (e *runbookIPCExecutor) Cancel(_ context.Context, _, batchID string) (execbatch.CancelResult, error) {
+	e.mu.Lock()
+	cancel := e.cancels[batchID]
+	e.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	return execbatch.CancelResult{BatchID: batchID, Canceled: true}, nil
+}
+
+func runbookIPCStartRun(t *testing.T, dispatcher *ipc.Dispatcher, ctx context.Context, runID, name string) ipc.Response {
+	t.Helper()
+	return dispatchExecBatchTest(dispatcher, ctx, "runbook_run_start", runbook.StartRequest{
+		RunID: runID, RunbookID: "rb-" + runID, RunbookName: name,
+		Steps: []runbook.Step{{ID: "s1", Name: "S1", Command: "do"}}, SessionIDs: []string{"session-1"},
+	})
+}
+
+func runbookIPCGetRun(t *testing.T, dispatcher *ipc.Dispatcher, ctx context.Context, runID string) ipc.Response {
+	t.Helper()
+	return dispatchExecBatchTest(dispatcher, ctx, "runbook_run_get", runbook.RunRequest{RunID: runID})
+}
+
+func runbookIPCCompleteRun(t *testing.T, dispatcher *ipc.Dispatcher, ctx context.Context, runID string) runbook.RunState {
+	t.Helper()
+	prepare := dispatchExecBatchTest(dispatcher, ctx, "runbook_run_prepare", runbook.PrepareRequest{
+		RunID: runID, StepNumber: 1,
+		Commands: []runbook.RenderedCommand{{SessionID: "session-1", Command: "do"}},
+	})
+	decodeExecBatchTest[runbook.RunState](t, prepare)
+	advance := dispatchExecBatchTest(dispatcher, ctx, "runbook_run_advance", runbook.AdvanceRequest{RunID: runID, StepNumber: 1, Confirmed: true})
+	return decodeExecBatchTest[runbook.RunState](t, advance)
+}
+
+func runbookIPCAdvanceAsync(dispatcher *ipc.Dispatcher, ctx context.Context, runID string) <-chan ipc.Response {
+	done := make(chan ipc.Response, 1)
+	go func() {
+		dispatchExecBatchTest(dispatcher, ctx, "runbook_run_prepare", runbook.PrepareRequest{
+			RunID: runID, StepNumber: 1,
+			Commands: []runbook.RenderedCommand{{SessionID: "session-1", Command: "do"}},
+		})
+		done <- dispatchExecBatchTest(dispatcher, ctx, "runbook_run_advance", runbook.AdvanceRequest{RunID: runID, StepNumber: 1, Confirmed: true})
+	}()
+	return done
+}
+
+func requireRunbookIPCNotFound(t *testing.T, response ipc.Response) {
+	t.Helper()
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNotFound {
+		t.Fatalf("response = %+v, want not-found", response)
+	}
+}
+
+func TestRunbookIPCOwnersShareRunIDWithoutInterference(t *testing.T) {
+	service := newRunbookIPCService(newRunbookIPCExecutor())
+	dispatcher := ipc.NewDispatcher()
+	if err := service.register(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	ownerA := ipc.WithUserID(t.Context(), "owner-a")
+	ownerB := ipc.WithUserID(t.Context(), "owner-b")
+
+	stateA := decodeExecBatchTest[runbook.RunState](t, runbookIPCStartRun(t, dispatcher, ownerA, "shared-run", "runbook A"))
+	stateB := decodeExecBatchTest[runbook.RunState](t, runbookIPCStartRun(t, dispatcher, ownerB, "shared-run", "runbook B"))
+	if stateA.RunbookName != "runbook A" || stateB.RunbookName != "runbook B" {
+		t.Fatalf("shared runID start states = %+v, %+v", stateA, stateB)
+	}
+	getA := decodeExecBatchTest[runbook.RunState](t, runbookIPCGetRun(t, dispatcher, ownerA, "shared-run"))
+	getB := decodeExecBatchTest[runbook.RunState](t, runbookIPCGetRun(t, dispatcher, ownerB, "shared-run"))
+	if getA.RunbookName != "runbook A" || getB.RunbookName != "runbook B" {
+		t.Fatalf("shared runID reads = %+v, %+v", getA, getB)
+	}
+
+	stateA = runbookIPCCompleteRun(t, dispatcher, ownerA, "shared-run")
+	if stateA.Status != runbook.RunSuccess {
+		t.Fatalf("owner A final state = %+v", stateA)
+	}
+	getB = decodeExecBatchTest[runbook.RunState](t, runbookIPCGetRun(t, dispatcher, ownerB, "shared-run"))
+	if getB.Status != runbook.RunAwaitingRender {
+		t.Fatalf("owner A completion changed owner B run: %+v", getB)
+	}
+	stateB = runbookIPCCompleteRun(t, dispatcher, ownerB, "shared-run")
+	if stateB.Status != runbook.RunSuccess {
+		t.Fatalf("owner B final state = %+v", stateB)
+	}
+
+	requireRunbookIPCNotFound(t, runbookIPCGetRun(t, dispatcher, ownerA, "only-b"))
+}
+
+func TestRunbookIPCActiveRunLimitIsPerOwner(t *testing.T) {
+	service := newRunbookIPCService(newRunbookIPCExecutor())
+	service.maxActiveRunsPerOwner = 1
+	dispatcher := ipc.NewDispatcher()
+	if err := service.register(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	ownerA := ipc.WithUserID(t.Context(), "owner-a")
+	ownerB := ipc.WithUserID(t.Context(), "owner-b")
+
+	decodeExecBatchTest[runbook.RunState](t, runbookIPCStartRun(t, dispatcher, ownerA, "run-a1", "A1"))
+	overflow := runbookIPCStartRun(t, dispatcher, ownerA, "run-a2", "A2")
+	if overflow.OK || overflow.Error == nil || overflow.Error.Code != ipc.Code("conflict") {
+		t.Fatalf("active run overflow = %+v, want conflict", overflow)
+	}
+	decodeExecBatchTest[runbook.RunState](t, runbookIPCStartRun(t, dispatcher, ownerB, "run-b1", "B1"))
+
+	canceled := dispatchExecBatchTest(dispatcher, ownerA, "runbook_run_cancel", runbook.RunRequest{RunID: "run-a1"})
+	if state := decodeExecBatchTest[runbook.RunState](t, canceled); state.Status != runbook.RunCanceled {
+		t.Fatalf("canceled run state = %+v", state)
+	}
+	decodeExecBatchTest[runbook.RunState](t, runbookIPCStartRun(t, dispatcher, ownerA, "run-a2", "A2"))
+}
+
+func TestRunbookIPCRetainedRunsEvictLRUAndTTL(t *testing.T) {
+	service := newRunbookIPCService(newRunbookIPCExecutor())
+	now := time.Unix(1000, 0)
+	service.now = func() time.Time { return now }
+	service.maxRetainedRunsPerOwner = 2
+	service.retainedRunTTL = time.Hour
+	dispatcher := ipc.NewDispatcher()
+	if err := service.register(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	owner := ipc.WithUserID(t.Context(), "owner-a")
+
+	complete := func(runID string) {
+		t.Helper()
+		runbookIPCStartRun(t, dispatcher, owner, runID, runID)
+		if state := runbookIPCCompleteRun(t, dispatcher, owner, runID); state.Status != runbook.RunSuccess {
+			t.Fatalf("%s final state = %+v", runID, state)
+		}
+	}
+	complete("run-r1")
+	now = now.Add(time.Minute)
+	complete("run-r2")
+	now = now.Add(time.Minute)
+	complete("run-r3")
+	now = now.Add(time.Minute)
+	decodeExecBatchTest[runbook.RunState](t, runbookIPCGetRun(t, dispatcher, owner, "run-r1"))
+
+	now = now.Add(time.Minute)
+	runbookIPCStartRun(t, dispatcher, owner, "run-r4", "run-r4")
+	requireRunbookIPCNotFound(t, runbookIPCGetRun(t, dispatcher, owner, "run-r2"))
+	decodeExecBatchTest[runbook.RunState](t, runbookIPCGetRun(t, dispatcher, owner, "run-r1"))
+	if state := runbookIPCCompleteRun(t, dispatcher, owner, "run-r4"); state.Status != runbook.RunSuccess {
+		t.Fatalf("run-r4 final state = %+v", state)
+	}
+
+	now = now.Add(2 * time.Hour)
+	runbookIPCStartRun(t, dispatcher, owner, "run-r5", "run-r5")
+	for _, runID := range []string{"run-r1", "run-r3", "run-r4"} {
+		requireRunbookIPCNotFound(t, runbookIPCGetRun(t, dispatcher, owner, runID))
+	}
+	decodeExecBatchTest[runbook.RunState](t, runbookIPCGetRun(t, dispatcher, owner, "run-r5"))
+}
+
+func TestRunbookIPCEvictionSkipsActiveRuns(t *testing.T) {
+	executor := newRunbookIPCExecutor("run-live:s01:g01")
+	service := newRunbookIPCService(executor)
+	service.maxRetainedRunsPerOwner = 0
+	dispatcher := ipc.NewDispatcher()
+	if err := service.register(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	owner := ipc.WithUserID(t.Context(), "owner-a")
+
+	runbookIPCStartRun(t, dispatcher, owner, "run-live", "live")
+	advance := runbookIPCAdvanceAsync(dispatcher, owner, "run-live")
+	select {
+	case <-executor.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("blocked run did not start executing")
+	}
+	runbookIPCStartRun(t, dispatcher, owner, "run-done", "done")
+	if state := runbookIPCCompleteRun(t, dispatcher, owner, "run-done"); state.Status != runbook.RunSuccess {
+		t.Fatalf("run-done final state = %+v", state)
+	}
+	runbookIPCStartRun(t, dispatcher, owner, "run-next", "next")
+	decodeExecBatchTest[runbook.RunState](t, runbookIPCGetRun(t, dispatcher, owner, "run-live"))
+	requireRunbookIPCNotFound(t, runbookIPCGetRun(t, dispatcher, owner, "run-done"))
+
+	canceled := dispatchExecBatchTest(dispatcher, owner, "runbook_run_cancel", runbook.RunRequest{RunID: "run-live"})
+	decodeExecBatchTest[runbook.RunState](t, canceled)
+	select {
+	case response := <-advance:
+		if state := decodeExecBatchTest[runbook.RunState](t, response); state.Status != runbook.RunCanceled {
+			t.Fatalf("blocked run state = %+v", state)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("blocked run did not finish after cancel")
+	}
+}
+
+func TestRunbookIPCAccountCleanupDropsOnlyOwnerRuns(t *testing.T) {
+	executor := newRunbookIPCExecutor("run-live:s01:g01", "run-b-live:s01:g01")
+	service := newRunbookIPCService(executor)
+	dispatcher := ipc.NewDispatcher()
+	if err := service.register(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	ownerA := ipc.WithUserID(t.Context(), "owner-a")
+	ownerB := ipc.WithUserID(t.Context(), "owner-b")
+
+	runbookIPCStartRun(t, dispatcher, ownerA, "run-live", "live")
+	advanceA := runbookIPCAdvanceAsync(dispatcher, ownerA, "run-live")
+	runbookIPCStartRun(t, dispatcher, ownerA, "run-done", "done")
+	if state := runbookIPCCompleteRun(t, dispatcher, ownerA, "run-done"); state.Status != runbook.RunSuccess {
+		t.Fatalf("run-done final state = %+v", state)
+	}
+	runbookIPCStartRun(t, dispatcher, ownerB, "run-b-live", "b-live")
+	advanceB := runbookIPCAdvanceAsync(dispatcher, ownerB, "run-b-live")
+	for range 2 {
+		select {
+		case <-executor.started:
+		case <-time.After(2 * time.Second):
+			t.Fatal("blocked runs did not start executing")
+		}
+	}
+
+	service.CancelOwner(context.WithoutCancel(t.Context()), "owner-a", "logout-all")
+	select {
+	case response := <-advanceA:
+		if state := decodeExecBatchTest[runbook.RunState](t, response); state.Status != runbook.RunCanceled {
+			t.Fatalf("owner A live run state = %+v", state)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("owner cleanup did not cancel the live run")
+	}
+	requireRunbookIPCNotFound(t, runbookIPCGetRun(t, dispatcher, ownerA, "run-live"))
+	requireRunbookIPCNotFound(t, runbookIPCGetRun(t, dispatcher, ownerA, "run-done"))
+	decodeExecBatchTest[runbook.RunState](t, runbookIPCGetRun(t, dispatcher, ownerB, "run-b-live"))
+
+	commit, rollback := service.PrepareOwnerCleanup(t.Context(), "owner-b", "logout-all")
+	rollback()
+	decodeExecBatchTest[runbook.RunState](t, runbookIPCGetRun(t, dispatcher, ownerB, "run-b-live"))
+	commit()
+	requireRunbookIPCNotFound(t, runbookIPCGetRun(t, dispatcher, ownerB, "run-b-live"))
+	select {
+	case response := <-advanceB:
+		if state := decodeExecBatchTest[runbook.RunState](t, response); state.Status != runbook.RunCanceled {
+			t.Fatalf("owner B live run state after commit = %+v", state)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("committed cleanup did not cancel owner B's live run")
+	}
+}
+
+func TestRunbookIPCShutdownCancelsActiveRunsAndClearsRegistry(t *testing.T) {
+	executor := newRunbookIPCExecutor("run-a:s01:g01", "run-b:s01:g01")
+	service := newRunbookIPCService(executor)
+	dispatcher := ipc.NewDispatcher()
+	if err := service.register(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	ownerA := ipc.WithUserID(t.Context(), "owner-a")
+	ownerB := ipc.WithUserID(t.Context(), "owner-b")
+
+	runbookIPCStartRun(t, dispatcher, ownerA, "run-a", "A")
+	advanceA := runbookIPCAdvanceAsync(dispatcher, ownerA, "run-a")
+	runbookIPCStartRun(t, dispatcher, ownerB, "run-b", "B")
+	advanceB := runbookIPCAdvanceAsync(dispatcher, ownerB, "run-b")
+	for range 2 {
+		select {
+		case <-executor.started:
+		case <-time.After(2 * time.Second):
+			t.Fatal("blocked runs did not start executing")
+		}
+	}
+
+	if err := service.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for name, advance := range map[string]<-chan ipc.Response{"run-a": advanceA, "run-b": advanceB} {
+		select {
+		case response := <-advance:
+			if state := decodeExecBatchTest[runbook.RunState](t, response); state.Status != runbook.RunCanceled {
+				t.Fatalf("%s state after shutdown = %+v", name, state)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s did not finish after shutdown", name)
+		}
+	}
+	requireRunbookIPCNotFound(t, runbookIPCGetRun(t, dispatcher, ownerA, "run-a"))
+	requireRunbookIPCNotFound(t, runbookIPCGetRun(t, dispatcher, ownerB, "run-b"))
+	if err := service.Shutdown(t.Context()); err != nil {
+		t.Fatalf("second shutdown = %v", err)
+	}
+}
+
+func TestRunbookIPCEvictedRunKeepsDurableHistory(t *testing.T) {
+	transport := newExecBatchTestTransport(func(context.Context, string, base.ExecOptions) (base.ExecResult, error) {
+		code := 0
+		return base.ExecResult{ExitCode: &code}, nil
+	})
+	manager := newExecBatchTestManager(t, transport)
+	owner := ipc.WithUserID(t.Context(), "owner-a")
+	connected, err := manager.ConnectFor(owner, session.Asset{ID: "asset-history", Name: "history", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.OpenInMemory(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	batches := newExecBatchService(manager, execBatchTestAssets(nil), nil, database)
+	service := newRunbookIPCService(batches, database)
+	service.maxRetainedRunsPerOwner = 0
+	dispatcher := ipc.NewDispatcher()
+	if err := service.register(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+
+	start := dispatchExecBatchTest(dispatcher, owner, "runbook_run_start", runbook.StartRequest{
+		RunID: "run-history", RunbookID: "rb-history", RunbookName: "history",
+		Steps:      []runbook.Step{{ID: "s1", Name: "S1", Command: "do"}},
+		SessionIDs: []string{connected.ID},
+	})
+	decodeExecBatchTest[runbook.RunState](t, start)
+	prepare := dispatchExecBatchTest(dispatcher, owner, "runbook_run_prepare", runbook.PrepareRequest{
+		RunID: "run-history", StepNumber: 1,
+		Commands: []runbook.RenderedCommand{{SessionID: connected.ID, Command: "do"}},
+	})
+	decodeExecBatchTest[runbook.RunState](t, prepare)
+	advance := dispatchExecBatchTest(dispatcher, owner, "runbook_run_advance", runbook.AdvanceRequest{RunID: "run-history", StepNumber: 1, Confirmed: true})
+	if state := decodeExecBatchTest[runbook.RunState](t, advance); state.Status != runbook.RunSuccess {
+		t.Fatalf("run-history final state = %+v", state)
+	}
+
+	runbookIPCStartRun(t, dispatcher, owner, "run-evictor", "evictor")
+	requireRunbookIPCNotFound(t, runbookIPCGetRun(t, dispatcher, owner, "run-history"))
+
+	historyResponse := dispatchExecBatchTest(dispatcher, owner, "runbook_run_history_get", runbook.RunRequest{RunID: "run-history"})
+	history := decodeExecBatchTest[store.ExecBatchRunHistory](t, historyResponse)
+	if history.RunbookID != "rb-history" || history.Status != store.ExecBatchStatusSuccess || len(history.Batches) != 1 {
+		t.Fatalf("durable history after live eviction = %+v", history)
+	}
+}
+
+func TestRunbookIPCConcurrentOwnersLifecycle(t *testing.T) {
+	service := newRunbookIPCService(newRunbookIPCExecutor())
+	dispatcher := ipc.NewDispatcher()
+	if err := service.register(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	owners := map[string]string{"owner-a": "runbook A", "owner-b": "runbook B"}
+	var workers sync.WaitGroup
+	errs := make(chan error, len(owners)*2)
+	for ownerID, name := range owners {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			owner := ipc.WithUserID(t.Context(), ownerID)
+			start := runbookIPCStartRun(t, dispatcher, owner, "race-run", name)
+			state, err := decodeExecBatchTestErr[runbook.RunState](start)
+			if err != nil {
+				errs <- err
+				return
+			}
+			if state.RunbookName != name {
+				errs <- fmt.Errorf("%s start observed %q", ownerID, state.RunbookName)
+				return
+			}
+			prepare := dispatchExecBatchTest(dispatcher, owner, "runbook_run_prepare", runbook.PrepareRequest{
+				RunID: "race-run", StepNumber: 1,
+				Commands: []runbook.RenderedCommand{{SessionID: "session-1", Command: "do"}},
+			})
+			if _, err := decodeExecBatchTestErr[runbook.RunState](prepare); err != nil {
+				errs <- err
+				return
+			}
+			advance := dispatchExecBatchTest(dispatcher, owner, "runbook_run_advance", runbook.AdvanceRequest{RunID: "race-run", StepNumber: 1, Confirmed: true})
+			final, err := decodeExecBatchTestErr[runbook.RunState](advance)
+			if err != nil {
+				errs <- err
+				return
+			}
+			if final.Status != runbook.RunSuccess || final.RunbookName != name {
+				errs <- fmt.Errorf("%s final state = %+v", ownerID, final)
+			}
+		}()
+	}
+	workers.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+}
+
+func decodeExecBatchTestErr[T any](response ipc.Response) (T, error) {
+	var value T
+	if !response.OK {
+		return value, fmt.Errorf("dispatch failed: %+v", response)
+	}
+	if err := json.Unmarshal(response.Data, &value); err != nil {
+		return value, err
+	}
+	return value, nil
 }

@@ -292,8 +292,9 @@ func TestCancelIsOwnerBoundAndParallelWithExecute(t *testing.T) {
 	}()
 	ctxA := <-contexts["a"]
 	ctxB := <-contexts["b"]
-	if _, err := service.Cancel(t.Context(), "owner-b", "batch-a"); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("cross-owner cancel = %v", err)
+	cancelB, err := service.Cancel(t.Context(), "owner-b", "batch-a")
+	if err != nil || !cancelB.Canceled {
+		t.Fatalf("cross-owner cancel must be accepted in the caller's own namespace: %+v, %v", cancelB, err)
 	}
 	if ctxA.Err() != nil || ctxB.Err() != nil {
 		t.Fatal("cross-owner cancel affected a batch")
