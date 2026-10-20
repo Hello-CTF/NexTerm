@@ -298,8 +298,9 @@ func TestProductionLineTabExplicitDetachUnsupportedPreservesTab(t *testing.T) {
 	connected := connectLocalTerminalTest(t, production)
 	channelID := "local-line-background-channel"
 	attachResponse := dispatchDurableTest(t, production, "session_open_line_tab", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, channelID, "client-a")
-	var tabID string
-	requireStoreTestResponse(t, attachResponse, &tabID)
+	var attached attachedTabDTO
+	requireStoreTestResponse(t, attachResponse, &attached)
+	tabID := attached.TabID
 
 	response := dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","mode":"detach"}`, channelID, "client-a")
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {

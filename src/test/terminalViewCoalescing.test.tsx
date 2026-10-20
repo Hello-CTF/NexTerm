@@ -299,7 +299,20 @@ beforeEach(() => {
   harness.write.mockResolvedValue(undefined);
   harness.call.mockReset().mockResolvedValue(undefined);
   harness.execAttach.mockReset().mockResolvedValue("kernel-1");
-  harness.openLineTab.mockReset().mockResolvedValue("kernel-1");
+  harness.openLineTab.mockReset().mockResolvedValue({
+    tabId: "kernel-1",
+    sessionId: "session-1",
+    cols: 80,
+    rows: 30,
+    controller: "me",
+    subscribers: 1,
+    viewers: 1,
+    exited: false,
+    shell: "unknown",
+    retainable: false,
+    ephemeral: true,
+    attachmentId: 7,
+  });
 });
 
 afterEach(() => {

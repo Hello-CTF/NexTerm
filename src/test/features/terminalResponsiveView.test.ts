@@ -271,7 +271,20 @@ beforeEach(() => {
     exited: false,
   });
   harness.execAttach.mockReset().mockResolvedValue("tab-exec");
-  harness.openLineTab.mockReset().mockResolvedValue("tab-line");
+  harness.openLineTab.mockReset().mockResolvedValue({
+    tabId: "tab-line",
+    sessionId: "session-1",
+    cols: 80,
+    rows: 30,
+    controller: "me",
+    subscribers: 1,
+    viewers: 1,
+    exited: false,
+    shell: "unknown",
+    retainable: false,
+    ephemeral: true,
+    attachmentId: 7,
+  });
   harness.resize.mockReset().mockResolvedValue(undefined);
   harness.flush.mockReset().mockResolvedValue(undefined);
   harness.write.mockReset().mockResolvedValue(undefined);

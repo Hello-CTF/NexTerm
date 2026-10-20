@@ -273,6 +273,7 @@ export function XtermView(props: XtermViewProps) {
     });
 
     let ephemeral: boolean | undefined;
+    let attachmentId = 0;
     const reportAttachInfo = (info: {
       tabId: string;
       controller: string | null;
@@ -284,8 +285,10 @@ export function XtermView(props: XtermViewProps) {
       encoding?: string;
       title?: string;
       shell?: "powershell" | "cmd" | "posix" | "unknown";
+      attachmentId?: number;
     }) => {
       ephemeral = info.ephemeral;
+      attachmentId = info.attachmentId ?? 0;
       onAttachInfoRef.current?.(info);
     };
     // Producer backpressure: a paused writer asks the server to stop feeding
@@ -342,6 +345,7 @@ export function XtermView(props: XtermViewProps) {
         tabId: kernelTabId,
         channelId,
         clientId: clientId(),
+        attachmentId,
         acceptedBytes: offset,
       }).catch(() => undefined);
     };
@@ -620,6 +624,7 @@ export function XtermView(props: XtermViewProps) {
             shell: info.shell,
             retainable: info.retainable,
             ephemeral: info.ephemeral,
+            attachmentId: info.attachmentId,
           });
         } else if (containerId) {
           if (!dimensions) return;
@@ -641,17 +646,19 @@ export function XtermView(props: XtermViewProps) {
           });
         } else if (winrmRef.current) {
           if (!dimensions) return;
-          id = await import("../../ipc/commands").then((m) =>
+          const info = await import("../../ipc/commands").then((m) =>
             m.sessionApi.openLineTab(sessionId, dimensions.cols, dimensions.rows, channel),
           );
+          id = info.tabId;
           reportAttachInfo({
-            tabId: id,
-            controller: null,
-            subscribers: 1,
-            viewers: 1,
-            exited: false,
-            shell: "unknown",
-            retainable: false,
+            tabId: info.tabId,
+            controller: info.controller,
+            subscribers: info.subscribers,
+            viewers: info.viewers,
+            exited: info.exited,
+            shell: info.shell,
+            retainable: info.retainable,
+            attachmentId: info.attachmentId,
             // session_open_line_tab creates an Ephemeral tab: a cap refusal
             // must take the recovery path, never the ordinary detach that
             // reaps the line tab's process.
