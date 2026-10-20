@@ -505,3 +505,62 @@ func TestManagerLoadQuarantinesSemanticallyInvalidOverrides(t *testing.T) {
 		t.Fatalf("quarantined store = %v", names)
 	}
 }
+
+func TestManagerLoadCanonicalizesPaddedDescriptions(t *testing.T) {
+	settings := newMemorySettings()
+	settings.seed(skills.SettingKeyForUser("owner-a"), `{"version":1,"overrides":[
+		{"name":"alpha-skill","description":"   padded desc   "},
+		{"name":"custom-skill","description":"`+strings.Repeat(" ", 300)+`x","body":"b\n"},
+		{"name":"beta-skill","description":"`+strings.Repeat(" ", 200)+strings.Repeat("技", 100)+`"}
+	]}`)
+	manager, err := skills.NewManager(t.Context(), settings, skills.WithIndex(testIndex(t)), skills.WithShared(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := ipc.WithUserID(t.Context(), "owner-a")
+
+	alpha, err := manager.Dispatch(ctx, "alpha-skill")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alpha.Description != "padded desc" {
+		t.Fatalf("embedded description = %q, want the canonical trimmed value", alpha.Description)
+	}
+	custom, err := manager.Dispatch(ctx, "custom-skill")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if custom.Description != "x" || custom.Body != "b\n" {
+		t.Fatalf("custom material = %+v, want trimmed description", custom)
+	}
+	beta, err := manager.Dispatch(ctx, "beta-skill")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if beta.Description != "Beta synthetic skill" {
+		t.Fatalf("padded overlong description must be quarantined, got %q", beta.Description)
+	}
+
+	var persisted struct {
+		Overrides []struct {
+			Name        string  `json:"name"`
+			Description *string `json:"description"`
+		} `json:"overrides"`
+	}
+	if err := json.Unmarshal([]byte(settings.value(skills.SettingKeyForUser("owner-a"))), &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if len(persisted.Overrides) != 2 {
+		t.Fatalf("rewritten store = %+v", persisted.Overrides)
+	}
+	for _, override := range persisted.Overrides {
+		if override.Name == "custom-skill" {
+			if override.Description == nil || *override.Description != "x" {
+				t.Fatalf("persisted custom description = %v, want trimmed %q", override.Description, "x")
+			}
+		}
+		if override.Name == "beta-skill" {
+			t.Fatalf("quarantined beta-skill override was persisted: %+v", override)
+		}
+	}
+}

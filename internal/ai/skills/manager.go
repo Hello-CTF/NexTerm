@@ -411,6 +411,13 @@ func normalizeOverrides(overrides []Override, index *Index) []Override {
 		}); err != nil {
 			continue
 		}
+		// Load applies the same canonicalization as SaveOverride: the
+		// trimmed description is what gets validated, persisted, and
+		// dispatched, so padding cannot bypass the effective byte cap.
+		if override.Description != nil {
+			trimmed := strings.TrimSpace(*override.Description)
+			override.Description = &trimmed
+		}
 		seen[override.Name] = struct{}{}
 		result = append(result, override)
 	}
