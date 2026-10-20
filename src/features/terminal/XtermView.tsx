@@ -536,19 +536,17 @@ export function XtermView(props: XtermViewProps) {
       tokenRefreshInFlight = true;
       call("terminal_pause", { tabId: kernelTabId, channelId, clientId: clientId(), attachmentId: firedAttachment, acceptedBytes: acceptedOffsetNow() })
         .then((res) => {
-          if (disposed || firedAttachment !== attachmentId) {
-            tokenRefreshInFlight = false;
-            return;
-          }
+          // The callback belongs to the attachment that fired it: a delayed
+          // response from an old attachment returns directly and never
+          // clears the new attachment's in-flight marker — only the callback
+          // that still owns the current attachment clears it.
+          if (disposed || firedAttachment !== attachmentId) return;
           tokenRefreshInFlight = false;
           staleToken = -1;
           learnEpisodeToken((res as { episodeToken?: number } | null)?.episodeToken);
         })
         .catch(() => {
-          if (disposed || firedAttachment !== attachmentId) {
-            tokenRefreshInFlight = false;
-            return;
-          }
+          if (disposed || firedAttachment !== attachmentId) return;
           tokenRefreshInFlight = false;
           // The refresh failed: bounded, cancellable backoff that re-enters
           // the gate — which re-attempts the refresh, never a stale resume.

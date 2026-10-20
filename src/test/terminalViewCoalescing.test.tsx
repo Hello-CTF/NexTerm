@@ -2383,6 +2383,249 @@ describe("XtermView stream wiring", () => {
     expect(episode12Open).toBe(false);
     vi.useRealTimers();
   });
+
+  it("an old attachment's late refresh success never clears the new attachment's in-flight refresh; the current token actually unpauses", async () => {
+    // The r20 counterexample: attachment 11's refresh is pending; reopen to
+    // attachment 12, whose own refresh is also pending. The old refresh's
+    // late success must not clear the new attachment's single-flight marker
+    // — no duplicate refresh fires — and the current token's resume
+    // actually lifts the server-side pause.
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+      ephemeral: true,
+      attachmentId: 11,
+    });
+    let resolveRefresh11: ((value: unknown) => void) | undefined;
+    let resolveRefresh12: ((value: unknown) => void) | undefined;
+    let pauseCalls11 = 0;
+    let pauseCalls12 = 0;
+    let episode12Open = false;
+    const resumeCalls: { attachmentId?: number; episodeToken?: number }[] = [];
+    harness.call.mockImplementation((command: string, args: { attachmentId?: number; episodeToken?: number }) => {
+      if (command === "terminal_pause") {
+        if (args.attachmentId === 11) {
+          pauseCalls11 += 1;
+          if (pauseCalls11 === 1) return Promise.resolve({ episodeToken: 31 });
+          return new Promise((resolve) => {
+            resolveRefresh11 = resolve;
+          });
+        }
+        pauseCalls12 += 1;
+        if (pauseCalls12 === 1) return Promise.resolve({ episodeToken: 1 });
+        return new Promise((resolve) => {
+          resolveRefresh12 = resolve;
+        });
+      }
+      if (command === "terminal_resume") {
+        resumeCalls.push({ attachmentId: args.attachmentId, episodeToken: args.episodeToken });
+        if (args.attachmentId === 12 && args.episodeToken === 2) {
+          episode12Open = false;
+          return Promise.resolve(undefined);
+        }
+        return Promise.reject(Object.assign(new Error("stale episode token"), { code: "forbidden" }));
+      }
+      return Promise.resolve(undefined);
+    });
+    vi.useFakeTimers();
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    // Attachment 11: one chunk saturates the writer; the pause returns token
+    // 31; the drain's resume is forbidden; its refresh is pending.
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(resumeCalls).toEqual([{ attachmentId: 11, episodeToken: 31 }]);
+    expect(pauseCalls11).toBe(2);
+    // Reopen to attachment 12; its own resume is forbidden too, so its own
+    // refresh is pending.
+    harness.attachTab.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      retainable: true,
+      ephemeral: false,
+      attachmentId: 12,
+    });
+    await act(async () => {
+      harness.reopenCb?.();
+      await flushMacrotask();
+      await flushMacrotask();
+    });
+    episode12Open = true;
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(resumeCalls).toEqual([
+      { attachmentId: 11, episodeToken: 31 },
+      { attachmentId: 12, episodeToken: 1 },
+    ]);
+    expect(pauseCalls12).toBe(2);
+    // Attachment 11's late refresh success lands now: it must not clear
+    // attachment 12's in-flight marker.
+    resolveRefresh11?.({ episodeToken: 32 });
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(resumeCalls).toHaveLength(2);
+    expect(pauseCalls12).toBe(2);
+    // A drain cycle adds one normal pause, never a duplicate refresh.
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(pauseCalls12).toBe(3);
+    expect(resumeCalls).toHaveLength(2);
+    // Attachment 12's refresh returns the current token: its resume
+    // actually lifts the server-side pause.
+    resolveRefresh12?.({ episodeToken: 2 });
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(resumeCalls).toEqual([
+      { attachmentId: 11, episodeToken: 31 },
+      { attachmentId: 12, episodeToken: 1 },
+      { attachmentId: 12, episodeToken: 2 },
+    ]);
+    expect(episode12Open).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("an old attachment's late refresh failure never clears the new attachment's in-flight refresh or schedules a retry on it", async () => {
+    // The same shape with the old refresh failing: the failure callback is
+    // bound to the old attachment as well — it clears nothing and schedules
+    // nothing on the new attachment.
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+      ephemeral: true,
+      attachmentId: 11,
+    });
+    let rejectRefresh11: ((reason: unknown) => void) | undefined;
+    let resolveRefresh12: ((value: unknown) => void) | undefined;
+    let pauseCalls11 = 0;
+    let pauseCalls12 = 0;
+    let episode12Open = false;
+    const resumeCalls: { attachmentId?: number; episodeToken?: number }[] = [];
+    harness.call.mockImplementation((command: string, args: { attachmentId?: number; episodeToken?: number }) => {
+      if (command === "terminal_pause") {
+        if (args.attachmentId === 11) {
+          pauseCalls11 += 1;
+          if (pauseCalls11 === 1) return Promise.resolve({ episodeToken: 31 });
+          return new Promise((_, reject) => {
+            rejectRefresh11 = reject;
+          });
+        }
+        pauseCalls12 += 1;
+        if (pauseCalls12 === 1) return Promise.resolve({ episodeToken: 1 });
+        return new Promise((resolve) => {
+          resolveRefresh12 = resolve;
+        });
+      }
+      if (command === "terminal_resume") {
+        resumeCalls.push({ attachmentId: args.attachmentId, episodeToken: args.episodeToken });
+        if (args.attachmentId === 12 && args.episodeToken === 2) {
+          episode12Open = false;
+          return Promise.resolve(undefined);
+        }
+        return Promise.reject(Object.assign(new Error("stale episode token"), { code: "forbidden" }));
+      }
+      return Promise.resolve(undefined);
+    });
+    vi.useFakeTimers();
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(resumeCalls).toEqual([{ attachmentId: 11, episodeToken: 31 }]);
+    expect(pauseCalls11).toBe(2);
+    harness.attachTab.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      retainable: true,
+      ephemeral: false,
+      attachmentId: 12,
+    });
+    await act(async () => {
+      harness.reopenCb?.();
+      await flushMacrotask();
+      await flushMacrotask();
+    });
+    episode12Open = true;
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(resumeCalls).toEqual([
+      { attachmentId: 11, episodeToken: 31 },
+      { attachmentId: 12, episodeToken: 1 },
+    ]);
+    expect(pauseCalls12).toBe(2);
+    // Attachment 11's late refresh failure lands now: it clears nothing and
+    // schedules nothing on attachment 12.
+    rejectRefresh11?.(new Error("transient"));
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(resumeCalls).toHaveLength(2);
+    expect(pauseCalls12).toBe(2);
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(pauseCalls12).toBe(3);
+    expect(resumeCalls).toHaveLength(2);
+    resolveRefresh12?.({ episodeToken: 2 });
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(resumeCalls).toEqual([
+      { attachmentId: 11, episodeToken: 31 },
+      { attachmentId: 12, episodeToken: 1 },
+      { attachmentId: 12, episodeToken: 2 },
+    ]);
+    expect(episode12Open).toBe(false);
+    vi.useRealTimers();
+  });
 });
 
 describe("XtermView render coalescing (T-09 component portion)", () => {
