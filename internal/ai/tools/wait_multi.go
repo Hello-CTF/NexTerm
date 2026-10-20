@@ -123,16 +123,29 @@ func (r *Registry) waitForTabs(waitContext context.Context, jobID string, scope 
 	}
 	for {
 		satisfied := evaluate(true)
-		// Before any success return, re-verify the whole group's quiet state
-		// so a tab that became busy during a later tab's snapshot in the
-		// same round is revoked instead of resting the return on stale idle.
-		if satisfied > 0 && mode == "any" {
-			if final := evaluate(false); final > 0 {
-				return r.waitTabsResult(waitContext, targets, mode, true, false)
-			}
-		}
-		if satisfied == len(targets) {
-			if final := evaluate(false); final == len(targets) {
+		ready := (mode == "any" && satisfied > 0) || (mode == "all" && satisfied == len(targets))
+		if ready {
+			if quietMS > 0 {
+				// The success return and its headline/metadata must come
+				// from one consistent group state: with the capability, two
+				// consecutive version-identical group reads; without it, the
+				// serial pass with an explicit degradation mark.
+				if states, agreed, capable := r.quietGroupConsistent(waitContext, targets); capable {
+					if agreed {
+						consistent := applyGroupQuietStates(targets, states, quietMS)
+						if (mode == "any" && consistent > 0) || (mode == "all" && consistent == len(targets)) {
+							return r.waitTabsResult(waitContext, targets, mode, true, false)
+						}
+					}
+					// The group moved during verification or is unverifiable
+					// right now: keep waiting with the freshest state.
+				} else if final := evaluate(false); (mode == "any" && final > 0) || (mode == "all" && final == len(targets)) {
+					result := r.waitTabsResult(waitContext, targets, mode, true, false)
+					result.Notes += "; multi-tab quiet state is a best-effort serial snapshot, not a consistent group version"
+					result.Text += "；多标签安静状态为尽力串行快照，非一致版本"
+					return result
+				}
+			} else {
 				return r.waitTabsResult(waitContext, targets, mode, true, false)
 			}
 		}
@@ -145,6 +158,65 @@ func (r *Registry) waitForTabs(waitContext context.Context, jobID string, scope 
 		case <-ticker.C:
 		}
 	}
+}
+
+// quietGroupConsistent reads the group's quiet state and requires two
+// consecutive per-tab version-identical snapshots, so a success verdict
+// comes from one consistent state. capable is false when the terminal does
+// not implement the consistent-snapshot extension; agreed is false when the
+// group kept moving or the read failed.
+func (r *Registry) quietGroupConsistent(waitContext context.Context, targets []*waitTarget) (states []TabQuietState, agreed, capable bool) {
+	snapshotter, ok := r.deps.Terminal.(QuietGroupSnapshotTerminal)
+	if !ok {
+		return nil, false, false
+	}
+	tabIDs := make([]string, 0, len(targets))
+	for _, target := range targets {
+		tabIDs = append(tabIDs, target.tabID)
+	}
+	var previous []TabQuietState
+	for attempt := 0; attempt < 3; attempt++ {
+		current, err := snapshotter.QuietGroupSnapshot(waitContext, tabIDs)
+		if err != nil {
+			return nil, false, true
+		}
+		if previous != nil && quietVersionsEqual(previous, current) {
+			return current, true, true
+		}
+		previous = current
+	}
+	return nil, false, true
+}
+
+func quietVersionsEqual(a, b []TabQuietState) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for index := range a {
+		if a[index].TabID != b[index].TabID || a[index].Version != b[index].Version {
+			return false
+		}
+	}
+	return true
+}
+
+// applyGroupQuietStates recomputes per-tab satisfaction from one agreed
+// group snapshot and returns the satisfied count.
+func applyGroupQuietStates(targets []*waitTarget, states []TabQuietState, quietMS int64) int {
+	consistent := 0
+	for _, target := range targets {
+		for _, state := range states {
+			if state.TabID == target.tabID {
+				target.idleMS = state.IdleMS
+				target.idleErr = ""
+				target.satisfied = target.matched && state.IdleMS >= quietMS
+			}
+		}
+		if target.satisfied {
+			consistent++
+		}
+	}
+	return consistent
 }
 
 // scanWaitTarget advances one tab's scan cursor through the output produced

@@ -901,6 +901,13 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, call
 			arbitrationNote = "；force=true：已在知晓终端新输入的情况下写入"
 		}
 	}
+	// Mode-aware newline guard: with bracketed-paste off, the real encoder
+	// maps LF to CR, so a paste containing newlines would submit even with
+	// enter=false. The guard must match the actual terminal mode, and a
+	// failed snapshot fails closed (mode unconfirmed).
+	if args.Paste && strings.Contains(args.Keys, "\n") && (snapshotErr != nil || !screen.BracketedPaste) {
+		return Fail(invalid("当前终端未开启 bracketed-paste 模式，paste 中的换行会被编码为回车并提前提交；请拆分为多条 send_keys（或开启 bracketed paste 后再试）"))
+	}
 	before, err := r.commandState(ctx, tabID)
 	if err != nil {
 		return Fail(err)

@@ -336,6 +336,25 @@ type TabDetailTerminal interface {
 	TabDetail(context.Context, string) (TabDetail, error)
 }
 
+// TabQuietState is one tab's quiet reading at a point in the terminal's
+// state: idle milliseconds and a version that bumps on any output or
+// lifecycle change to the tab. Two group snapshots whose per-tab versions
+// all match describe one consistent state.
+type TabQuietState struct {
+	TabID   string
+	IdleMS  int64
+	Version uint64
+}
+
+// QuietGroupSnapshotTerminal is the optional Terminal extension that reads
+// the quiet state of a set of tabs in one consistent snapshot with per-tab
+// versions. Terminals that cannot provide a consistent multi-tab read do
+// not implement it; multi-tab quiet waits then degrade to a best-effort
+// serial scan and say so in the result notes.
+type QuietGroupSnapshotTerminal interface {
+	QuietGroupSnapshot(ctx context.Context, tabIDs []string) ([]TabQuietState, error)
+}
+
 // PasteSubmitTerminal is the optional Terminal extension that writes a paste
 // block and, after the requested submit delay, the Enter key under one and
 // the same terminal write lock, so user input can never interleave between
