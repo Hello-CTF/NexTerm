@@ -27,6 +27,8 @@ import { GrantPanel } from "./GrantPanel";
 import { CronPanel } from "./CronPanel";
 import { ModelSelector } from "./ModelSelector";
 import { Markdown } from "./Markdown";
+import { ProductionWriteRiskNotice } from "../production/ProductionWarning";
+import { useAssetProductionClassification } from "../production/productionSettings";
 import { diffLineText, hasVisibleChange, simpleDiff } from "./diff";
 import {
   answerInput,
@@ -655,6 +657,8 @@ function AiChatTab({
   }, [activeWorkspace, sessionId, tabId, sessions]);
   const hasAiScope = Boolean(sessionId || (activeWorkspace?.kind === "db" && activeWorkspace.connId));
   const permScope = hasAiScope ? aiScope : undefined;
+  const aiScopeAssetId = typeof aiScope.assetId === "string" ? aiScope.assetId : undefined;
+  const aiScopeProduction = useAssetProductionClassification(aiScopeAssetId);
   const activeRef = useRef(active);
   activeRef.current = active;
   const mountedRef = useRef(false);
@@ -3030,6 +3034,15 @@ function AiChatTab({
           >
             <IconLoader size={10} className="animate-spin text-amber-300/80" />
             <span className="truncate">{statusText(conv.status)}</span>
+          </div>
+        )}
+        {aiScopeProduction?.production && (
+          <div className="mb-1.5">
+            <ProductionWriteRiskNotice
+              environment={aiScopeProduction.environment}
+              production
+              operation="AI"
+            />
           </div>
         )}
         {refs.length > 0 && (

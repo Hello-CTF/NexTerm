@@ -5,10 +5,9 @@ import { assetApi, vaultApi, type Asset, type SessionInfo } from "../../ipc/comm
 import {
   createExecBatchId,
   execBatchApi,
-  getExecBatchConfirmationChallenge,
-  type ExecBatchConfirmationChallenge,
   type ExecBatchResult,
 } from "../../ipc/execBatchApi";
+import { getProductionChallenge, type ExecBatchProductionChallenge } from "../production/productionChallenge";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { describeError } from "../../ui/errorText";
 import { IconClose, IconEdit, IconKey, IconPlay, IconPlug, IconServer } from "../../ui/icons";
@@ -145,7 +144,7 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
   const [authorizedKeysPath, setAuthorizedKeysPath] = useState("~/.ssh/authorized_keys");
   const [production, setProduction] = useState<{
     request: DeployPublicKeyRequest;
-    challenge: ExecBatchConfirmationChallenge;
+    challenge: ExecBatchProductionChallenge;
   } | null>(null);
   const activeDeployRef = useRef<string | null>(null);
 
@@ -253,7 +252,7 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
       });
       setDeployResults([...offline, ...remote]);
     } catch (cause) {
-      const challenge = getExecBatchConfirmationChallenge(cause);
+      const challenge = getProductionChallenge(cause, "exec_batch_production_confirmation");
       if (challenge?.batchId === request.batchId) {
         const unconfirmed = { ...request };
         delete unconfirmed.productionConfirmation;
@@ -444,12 +443,13 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
           contentHash={production.challenge.commandHash}
           command={`向 ${authorizedKeysPath} 追加公钥：\n${publicKey}`}
           onCancel={() => setProduction(null)}
-          onConfirm={() => void runDeploy({
+          onConfirm={(environmentNames) => void runDeploy({
             ...production.request,
             productionConfirmation: {
               confirmed: true,
               targetSetHash: production.challenge.targetSetHash,
               commandHash: production.challenge.commandHash,
+              ...(environmentNames ? { environmentNames } : {}),
             },
           })}
         />

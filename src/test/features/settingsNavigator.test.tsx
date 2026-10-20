@@ -82,7 +82,7 @@ function tocToggle(): HTMLButtonElement {
 
 const SECTION_LABELS = [
   "外观", "终端", "AI 模型", "AI 拦截", "长期记忆",
-  "凭据保护", "已知主机", "账号同步", "资产包", "分享", "快捷键",
+  "凭据保护", "已知主机", "生产安全", "账号同步", "资产包", "分享", "快捷键",
 ];
 
 beforeEach(() => {
@@ -126,7 +126,7 @@ describe("Settings section navigation", () => {
     expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(SECTION_LABELS);
     const ids = [
       "settings-appearance", "settings-terminal", "settings-ai-model", "settings-ai-rules",
-      "settings-memory", "settings-vault", "settings-known-hosts",
+      "settings-memory", "settings-vault", "settings-known-hosts", "settings-production",
       "settings-account", "settings-bundle", "settings-share", "settings-shortcuts",
     ];
     for (const id of ids) {

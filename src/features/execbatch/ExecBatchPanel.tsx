@@ -5,13 +5,12 @@ import { assetApi, type Asset, type SessionInfo } from "../../ipc/commands";
 import {
   createExecBatchId,
   execBatchApi,
-  getExecBatchConfirmationChallenge,
   type ExecBatch,
-  type ExecBatchConfirmationChallenge,
   type ExecBatchRequest,
   type ExecBatchResult,
   type ExecBatchStatus,
 } from "../../ipc/execBatchApi";
+import { getProductionChallenge, type ExecBatchProductionChallenge } from "../production/productionChallenge";
 import { describeError } from "../../ui/errorText";
 import { IconPlay, IconServer, IconStop } from "../../ui/icons";
 import { assetTagValues } from "../explorer/assetSearch";
@@ -146,7 +145,7 @@ export function ExecBatchPanel({ sessions }: { sessions: SessionInfo[] }) {
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [productionConfirmation, setProductionConfirmation] = useState<{
     request: ExecBatchRequest;
-    challenge: ExecBatchConfirmationChallenge;
+    challenge: ExecBatchProductionChallenge;
   } | null>(null);
   const activeRef = useRef<string | null>(null);
   const executionPlanRef = useRef<ExecutionPlan | null>(null);
@@ -205,7 +204,7 @@ export function ExecBatchPanel({ sessions }: { sessions: SessionInfo[] }) {
       }
     } catch (cause) {
       if (activeRef.current === batchId) {
-        const challenge = getExecBatchConfirmationChallenge(cause);
+        const challenge = getProductionChallenge(cause, "exec_batch_production_confirmation");
         if (challenge?.batchId === batchId) {
           const unconfirmedRequest = { ...request };
           delete unconfirmedRequest.productionConfirmation;
@@ -333,7 +332,7 @@ export function ExecBatchPanel({ sessions }: { sessions: SessionInfo[] }) {
     }
   };
 
-  const confirmProduction = () => {
+  const confirmProduction = (environmentNames?: string[]) => {
     const pending = productionConfirmation;
     if (!pending || activeRef.current) return;
     void runExecute({
@@ -342,6 +341,7 @@ export function ExecBatchPanel({ sessions }: { sessions: SessionInfo[] }) {
         confirmed: true,
         targetSetHash: pending.challenge.targetSetHash,
         commandHash: pending.challenge.commandHash,
+        ...(environmentNames ? { environmentNames } : {}),
       },
     });
   };

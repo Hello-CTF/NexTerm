@@ -2,9 +2,8 @@ import { clientId } from "../../ipc/env";
 import {
   terminalApi,
   type AttachedTabInfo,
-  type BroadcastConfirmationChallenge,
-  type BroadcastProductionConfirmation,
 } from "../../ipc/commands";
+import type { BroadcastEnvironmentConfirmation, BroadcastProductionChallenge } from "../production/productionChallenge";
 import { useUi, type AppTab, type Workspace } from "../../app/store";
 import { templateCommandEntries, type ProjectTemplate } from "../../app/projectTemplates";
 import { describeError } from "../../ui/errorText";
@@ -23,9 +22,14 @@ export interface ProjectCommandResult {
 export interface ProjectCommandDependencies {
   createTab(sessionId: string, title: string): Promise<AttachedTabInfo>;
   claim(tabId: string): Promise<unknown>;
-  prepare(tabId: string, data: Uint8Array, confirmation?: BroadcastProductionConfirmation): Promise<void>;
-  write(tabId: string, data: Uint8Array, confirmation?: BroadcastProductionConfirmation): Promise<void>;
-  confirmProduction(challenge: BroadcastConfirmationChallenge, command: string): Promise<boolean>;
+  prepare(tabId: string, data: Uint8Array, confirmation?: BroadcastEnvironmentConfirmation): Promise<void>;
+  write(tabId: string, data: Uint8Array, confirmation?: BroadcastEnvironmentConfirmation): Promise<void>;
+  // Legacy acknowledge-only confirmation (pre-typed-name challenges). Typed-name
+  // challenges need confirmProductionEnvironmentNames instead.
+  confirmProduction(challenge: BroadcastProductionChallenge, command: string): Promise<boolean>;
+  // R-01 typed confirmation: resolves the per-target environment names the
+  // user entered, or null when canceled.
+  confirmProductionEnvironmentNames?(challenge: BroadcastProductionChallenge, command: string): Promise<string[] | null>;
 }
 
 function defaultDependencies(): ProjectCommandDependencies {
@@ -83,13 +87,31 @@ async function ensureTerminalTab(storeTabId: string, deps: ProjectCommandDepende
   return info.tabId;
 }
 
+// Resolve the typed names for a challenge. Legacy challenges (no
+// requiredEnvironmentNames) keep the acknowledge-only dep; typed challenges
+// require the names-carrying dep so the confirmation the backend demands is
+// the one the user actually gave.
+async function confirmProductionNames(
+  challenge: BroadcastProductionChallenge,
+  command: string,
+  deps: ProjectCommandDependencies,
+): Promise<string[] | null> {
+  if (challenge.requiredEnvironmentNames === undefined) {
+    return (await deps.confirmProduction(challenge, command)) ? [] : null;
+  }
+  if (!deps.confirmProductionEnvironmentNames) {
+    throw new Error("当前入口不支持逐目标环境名确认，命令未执行");
+  }
+  return deps.confirmProductionEnvironmentNames(challenge, command);
+}
+
 async function writeWithProductionConfirmation(
   kernelTabId: string,
   command: string,
   deps: ProjectCommandDependencies,
 ): Promise<"sent" | "canceled"> {
   const payload = new TextEncoder().encode(/[\r\n]$/.test(command) ? command : `${command}\r`);
-  let confirmation: BroadcastProductionConfirmation | undefined;
+  let confirmation: BroadcastEnvironmentConfirmation | undefined;
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
       await deps.prepare(kernelTabId, payload, confirmation);
@@ -98,12 +120,13 @@ async function writeWithProductionConfirmation(
     } catch (error) {
       const challenge = getBroadcastConfirmationChallenge(error);
       if (!challenge) throw error;
-      const confirmed = await deps.confirmProduction(challenge, command);
-      if (!confirmed) return "canceled";
+      const environmentNames = await confirmProductionNames(challenge, command, deps);
+      if (environmentNames === null) return "canceled";
       confirmation = {
         confirmed: true,
         targetSetHash: challenge.targetSetHash,
         inputHash: challenge.inputHash,
+        ...(environmentNames.length > 0 ? { environmentNames } : {}),
       };
     }
   }

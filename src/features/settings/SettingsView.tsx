@@ -14,6 +14,7 @@ import { ModelManager } from "../ai/ModelPanel";
 import { AppearanceCard } from "./AppearanceCard";
 import { KnownHostsCard } from "./KnownHostsCard";
 import { MemoryCard } from "./MemoryCard";
+import { ProductionSettingsPanel } from "../production/ProductionSettingsPanel";
 import { ShortcutsCard } from "./ShortcutsCard";
 import { SyncCard } from "./SyncCard";
 import { SyncBundleCard } from "./SyncBundleCard";
@@ -22,6 +23,7 @@ import { UpdateCard } from "./UpdateCard";
 import { describeError } from "../../ui/errorText";
 import { DESKTOP } from "../../ipc/env";
 import {
+  IconAlert,
   IconArchive,
   IconBot,
   IconCheckCircle,
@@ -55,6 +57,7 @@ const SETTINGS_SECTIONS = [
   { id: "settings-memory", label: "长期记忆", icon: IconBot },
   { id: "settings-vault", label: "凭据保护", icon: IconLock },
   { id: "settings-known-hosts", label: "已知主机", icon: IconShieldCheck },
+  { id: "settings-production", label: "生产安全", icon: IconAlert },
   { id: "settings-account", label: "账号同步", icon: IconServer },
   { id: "settings-bundle", label: "资产包", icon: IconArchive },
   { id: "settings-share", label: "分享", icon: IconGlobe },
@@ -865,6 +868,8 @@ export function SettingsView() {
         <div id="settings-known-hosts" className="scroll-mt-12">
           <KnownHostsCard />
         </div>
+
+        <ProductionSettingsPanel />
 
         <div id="settings-account" className="scroll-mt-12">
           <SyncCard />

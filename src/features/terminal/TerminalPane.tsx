@@ -18,15 +18,16 @@ import { BroadcastStrip } from "./BroadcastPanel";
 import { BroadcastPickerModal } from "./BroadcastPickerModal";
 import { PreviewShareMenu } from "../sharing/PreviewShareMenu";
 import { ProductionConfirmationDialog } from "../execbatch/ProductionConfirmationDialog";
+import { ProductionWriteRiskNotice } from "../production/ProductionWarning";
+import { useAssetProductionClassification } from "../production/productionSettings";
 import type { CommandBlock } from "./commandBlocks";
 import {
   terminalApi,
   fsApi,
   assetApi,
   syncApi,
-  type BroadcastConfirmationChallenge,
-  type BroadcastProductionConfirmation,
 } from "../../ipc/commands";
+import type { BroadcastEnvironmentConfirmation, BroadcastProductionChallenge } from "../production/productionChallenge";
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
@@ -110,7 +111,7 @@ interface PendingBroadcastConfirmation {
   sequence: number;
   data: string;
   generation: number;
-  challenge: BroadcastConfirmationChallenge;
+  challenge: BroadcastProductionChallenge;
 }
 
 function readBroadcastContext(
@@ -333,6 +334,7 @@ export function TerminalPane({
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
   const sessionAssetId = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.assetId);
   const sessionStatus = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.status);
+  const productionClassification = useAssetProductionClassification(sessionAssetId);
   const staleConfig = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.staleConfig === true);
   const execTabAssetId = useUi((s) => s.workspaces.flatMap((w) => w.panes).flatMap((p) => p.tabs).find((tab) => tab.id === storeTabId)?.assetId);
   const execAttachedSessionRef = useRef(sessionId);
@@ -534,7 +536,7 @@ export function TerminalPane({
     async (
       text: string,
       opts?: { fromCommand?: boolean },
-      productionConfirmation?: BroadcastProductionConfirmation,
+      productionConfirmation?: BroadcastEnvironmentConfirmation,
     ): Promise<"sent" | "observer" | "failed"> => {
       if (containerId && (execInterrupted || useUi.getState().sessions.find((x) => x.id === sessionId)?.status !== "connected")) {
         return "failed";
@@ -623,7 +625,7 @@ export function TerminalPane({
     [kernelTabId, isObserver, me, pushToast, refreshControl, broadcastContext, broadcastQueue, queueBroadcastConfirmation, containerId, execInterrupted, sessionId, storeTabId],
   );
 
-  const confirmBroadcastProduction = useCallback(() => {
+  const confirmBroadcastProduction = useCallback((environmentNames?: string[]) => {
     const pending = broadcastConfirmationRef.current;
     if (!pending || broadcastConfirmingRef.current) return;
     broadcastConfirmingRef.current = true;
@@ -638,6 +640,7 @@ export function TerminalPane({
           confirmed: true,
           targetSetHash: pending.challenge.targetSetHash,
           inputHash: pending.challenge.inputHash,
+          ...(environmentNames ? { environmentNames } : {}),
         });
       } finally {
         broadcastConfirmingRef.current = false;
@@ -1700,6 +1703,16 @@ export function TerminalPane({
               复制路径
             </button>
           )}
+        </div>
+      )}
+
+      {productionClassification?.production && (
+        <div className="shrink-0 px-2 pt-1.5" data-testid="terminal-production-warning">
+          <ProductionWriteRiskNotice
+            environment={productionClassification.environment}
+            production
+            operation="终端"
+          />
         </div>
       )}
 
