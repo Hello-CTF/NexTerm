@@ -63,14 +63,6 @@ vi.mock("../../ipc/events", async (importOriginal) => {
   return { ...actual, listenEvent: mocks.listenEvent };
 });
 
-vi.mock("@tanstack/react-virtual", () => ({
-  useVirtualizer: ({ count }: { count: number }) => ({
-    getVirtualItems: () =>
-      Array.from({ length: count }, (_, i) => ({ index: i, start: i * 30, size: 30, key: i })),
-    getTotalSize: () => count * 30,
-  }),
-}));
-
 import { LogViewer } from "../../features/files/LogViewer";
 import { FileBrowser } from "../../features/files/FileBrowser";
 import { FileTree } from "../../features/files/FileTree";
@@ -169,11 +161,26 @@ beforeEach(() => {
   mocks.readRange.mockImplementation(async (_s: string, _p: string, offset: number, maxBytes?: number) =>
     rangeResult(offset, maxBytes ?? CHUNK),
   );
+  // Drive the real @tanstack/react-virtual: jsdom has no ResizeObserver and no
+  // layout, so give every element a fixed viewport height; the virtualizer then
+  // computes a bounded window (viewport/estimateSize + overscan) instead of
+  // rendering every row.
+  vi.stubGlobal("ResizeObserver", class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
+  Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+    configurable: true,
+    get: () => 400,
+  });
   useUi.setState({ leftOpen: true, pushToast: vi.fn(), sessions: [] });
 });
 afterEach(() => {
   mounted?.unmount();
   mounted = undefined;
+  vi.unstubAllGlobals();
+  delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetHeight;
 });
 
 describe("LogViewer", () => {
@@ -247,6 +254,67 @@ describe("LogViewer", () => {
       expected,
     );
   });
+
+  it("renders and filters a large chunk through a bounded virtual window", async () => {
+    // The production render path virtualizes rows, so a 20k-line chunk is
+    // cheap to cover here; the retired all-items mock rendered every row and
+    // made this fixture too slow to keep.
+    const largeLines = Array.from({ length: 20000 }, (_, i) =>
+      i % 10 === 0 ? `line ${i} ERROR boom ${"x".repeat(20)}` : `line ${i} ok ${"y".repeat(20)}`,
+    );
+    const largeText = `${largeLines.join("\n")}\n`;
+    const largeBytes = new TextEncoder().encode(largeText);
+    mocks.readRange.mockImplementation(async (_s: string, _p: string, offset: number, maxBytes?: number) => {
+      const slice = largeBytes.subarray(offset, offset + (maxBytes ?? CHUNK));
+      return {
+        path: LOG_PATH,
+        offset,
+        size: largeBytes.length,
+        contentBase64: toBase64(slice),
+        truncated: offset + slice.length < largeBytes.length,
+      };
+    });
+    mounted = mountWithClient(createElement(LogViewer, { sessionId: SESSION, path: LOG_PATH }));
+    await waitForText(mounted, "line 0 ERROR boom");
+
+    // The window is bounded: only a small fraction of the chunk's rows render.
+    const renderedRows = mounted!.container.querySelectorAll('[role="log"] > div').length;
+    const chunkRows = largeText.slice(0, CHUNK).split("\n").length;
+    expect(renderedRows).toBeGreaterThan(0);
+    expect(renderedRows).toBeLessThan(Math.min(chunkRows / 10, 100));
+
+    // Scrolling to an offset renders the rows at that offset.
+    const firstRowNumber = () => {
+      const first = mounted!.container.querySelector('[role="log"] > div span');
+      return Number(first?.textContent ?? 0);
+    };
+    const scrollEl = mounted!.container.querySelector<HTMLElement>('[role="log"]')!;
+    const beforeScroll = firstRowNumber();
+    act(() => {
+      scrollEl.scrollTop = 3000;
+      scrollEl.dispatchEvent(new Event("scroll"));
+    });
+    await flush();
+    expect(firstRowNumber()).toBeGreaterThan(beforeScroll + 100);
+
+    // Filtering narrows the window to matching rows with the full match count.
+    const search = mounted!.container.querySelector<HTMLInputElement>(
+      'input[placeholder="过滤当前分块…"]',
+    );
+    if (!search) throw new Error("search input not found");
+    setInputValue(search, "error boom");
+    await flush();
+    const expected = largeText
+      .slice(0, CHUNK)
+      .split("\n")
+      .filter((l) => l.toLowerCase().includes("error boom")).length;
+    expect(mounted!.container.textContent).toContain(`${expected} 行匹配`);
+    const rows = [...mounted!.container.querySelectorAll('[role="log"] > div')];
+    expect(rows.length).toBeLessThan(expected);
+    for (const row of rows) {
+      expect(row.textContent?.toLowerCase()).toContain("error boom");
+    }
+  }, 15000);
 
   it("refreshes the current chunk in place", async () => {
     mounted = mountWithClient(createElement(LogViewer, { sessionId: SESSION, path: LOG_PATH }));
