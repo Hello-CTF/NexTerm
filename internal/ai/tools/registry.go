@@ -23,10 +23,31 @@ type Registry struct {
 	mu      sync.Mutex
 	jobs    map[string]*jobState
 	schemas []Schema
+	// flights arbitrates recorded operations in-process across
+	// adjudication, any pre-key connect, and the ledger reserve/claim, so a
+	// concurrent duplicate of the same call fails fast instead of
+	// establishing a second connection.
+	flights map[string]struct{}
 }
 
 func NewRegistry(deps Dependencies) *Registry {
-	return &Registry{deps: deps, jobs: make(map[string]*jobState), schemas: toolSchemas()}
+	return &Registry{deps: deps, jobs: make(map[string]*jobState), schemas: toolSchemas(), flights: make(map[string]struct{})}
+}
+
+// acquireOperationFlight marks the operation in-flight until the returned
+// release runs; a busy operation reports acquired=false.
+func (r *Registry) acquireOperationFlight(key string) (release func(), acquired bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, busy := r.flights[key]; busy {
+		return nil, false
+	}
+	r.flights[key] = struct{}{}
+	return func() {
+		r.mu.Lock()
+		delete(r.flights, key)
+		r.mu.Unlock()
+	}, true
 }
 
 func PlanAllowed(name string) bool {
@@ -189,6 +210,19 @@ func (r *Registry) Execute(ctx context.Context, jobID string, scope Scope, call 
 		return Fail(ctx.Err())
 	}
 	if r.deps.Outcome != nil && call.AuthorizationID != "" && sideEffectKind(call.Name) != "" {
+		if call.Name == "terminal_create" {
+			// The adjudication→connect→reserve sequence is arbitrated
+			// in-process per operation: a concurrent duplicate fails fast
+			// with the operation ID instead of establishing a second
+			// connection before the ledger can see it.
+			release, acquired := r.acquireOperationFlight(OutcomeKey(jobID, call.ID))
+			if !acquired {
+				failure := Fail(errors.New("相同调用正在执行中，未重复执行"))
+				failure.OperationID = operationID(jobID, call.ID, call.Name)
+				return failure
+			}
+			defer release()
+		}
 		if failure := r.bindCallAssetIdentities(ctx, jobID, &call); failure != nil {
 			return *failure
 		}
@@ -380,10 +414,21 @@ func (r *Registry) adjudicateRecordedCreate(ctx context.Context, jobID string, c
 		}
 		if err != nil {
 			failure := Fail(fmt.Errorf("执行记录查询失败: %w", err))
+			failure.OperationID = operationID(jobID, call.ID, "terminal_create")
 			return &failure, true
 		}
-		if record.AuthorizationID != call.AuthorizationID {
-			failure := Fail(errors.New("调用与已记录的执行冲突（授权不一致），未重复执行"))
+		// The same binding contract the ledger enforces on reserve: canonical
+		// arguments, Kind, and AuthorizationID all bind the operation, so a
+		// same-authorization retry with changed arguments is a conflict, not
+		// a replay.
+		canonical, canonErr := outcome.CanonicalizeArguments(call.Args)
+		if canonErr != nil || record.AuthorizationID != call.AuthorizationID ||
+			record.Kind != sideEffectKind(call.Name) ||
+			!bytes.Equal(record.CanonicalArguments, canonical) {
+			failure := Fail(fmt.Errorf("调用与已记录的执行冲突（授权或参数不一致）: %w", outcome.ErrIdempotenceConflict))
+			failure.OperationID = operationID(jobID, call.ID, "terminal_create")
+			failure.Text += originalSessionNote(binding)
+			failure.Notes += originalSessionNote(binding)
 			return &failure, true
 		}
 		switch record.State {
@@ -396,21 +441,34 @@ func (r *Registry) adjudicateRecordedCreate(ctx context.Context, jobID string, c
 			}
 			output := replayOutput(record)
 			output.OperationID = operationID(jobID, call.ID, "terminal_create")
-			if binding.connectedSessionID != "" {
-				note := fmt.Sprintf("；原执行建立的连接 session_id=%s（残留资源保留，未自动清理）", binding.connectedSessionID)
-				output.Text += note
-				output.Notes += note
-			}
+			output.Text += originalSessionNote(binding)
+			output.Notes += originalSessionNote(binding)
 			return &output, true
 		case outcome.ExecutionRunning:
 			failure := Fail(errors.New("相同调用正在执行中，未重复执行"))
+			failure.OperationID = operationID(jobID, call.ID, "terminal_create")
+			failure.Text += originalSessionNote(binding)
+			failure.Notes += originalSessionNote(binding)
 			return &failure, true
 		default:
 			failure := Fail(fmt.Errorf("相同调用已有未完成的执行记录（state=%s），未重复执行", record.State))
+			failure.OperationID = operationID(jobID, call.ID, "terminal_create")
+			failure.Text += originalSessionNote(binding)
+			failure.Notes += originalSessionNote(binding)
 			return &failure, true
 		}
 	}
 	return nil, false
+}
+
+// originalSessionNote names the session this operation's explicit connect
+// originally established, so replay and conflict verdicts keep the residual
+// visible.
+func originalSessionNote(binding assetOperationBinding) string {
+	if binding.connectedSessionID == "" {
+		return ""
+	}
+	return fmt.Sprintf("；原执行建立的连接 session_id=%s（残留资源保留，未自动清理）", binding.connectedSessionID)
 }
 
 // recordStaleAfterReconfigure reports whether the session the operation
@@ -477,15 +535,15 @@ func (r *Registry) executeRecorded(ctx context.Context, jobID string, scope Scop
 	case err == nil && !ranEffect:
 		output := replayOutput(record)
 		output.OperationID = operation
-		return output
+		return withConnectedResidual(call, operation, output)
 	case err == nil:
 		return branch
 	case errors.Is(err, outcome.ErrInProgress):
-		return Fail(fmt.Errorf("相同调用正在执行中，未重复执行: %w", err))
+		return withConnectedResidual(call, operation, Fail(fmt.Errorf("相同调用正在执行中，未重复执行: %w", err)))
 	case errors.Is(err, outcome.ErrIdempotenceConflict):
-		return Fail(fmt.Errorf("调用与已记录的执行冲突（授权或参数不一致）: %w", err))
+		return withConnectedResidual(call, operation, Fail(fmt.Errorf("调用与已记录的执行冲突（授权或参数不一致）: %w", err)))
 	case !ranEffect:
-		return Fail(fmt.Errorf("执行结果记录失败: %w", err))
+		return withConnectedResidual(call, operation, Fail(fmt.Errorf("执行结果记录失败: %w", err)))
 	case record.State != outcome.ExecutionFinished || record.Audit.State == outcome.AuditPending:
 
 		result := Fail(fmt.Errorf("操作已执行，但结果记录失败：%w", err))
@@ -493,7 +551,7 @@ func (r *Registry) executeRecorded(ctx context.Context, jobID string, scope Scop
 		if result.OperationID == "" {
 			result.OperationID = operation
 		}
-		return result
+		return withConnectedResidual(call, operation, result)
 	case record.Audit.State == outcome.AuditFailed:
 		if branch.ModelText == "" {
 			branch.ModelText = provider.ProjectModelOutput(call.Name, branch.OK, branch.Text, branch.Truncated, branch.Panic)
@@ -504,6 +562,23 @@ func (r *Registry) executeRecorded(ctx context.Context, jobID string, scope Scop
 	default:
 		return branch
 	}
+}
+
+// withConnectedResidual keeps the session this call's pre-key connect
+// established visible on replay, conflict, in-progress, and record-failure
+// paths: the session exists because of this call, so every one of those
+// outcomes names it as a residual together with the operation ID.
+func withConnectedResidual(call Call, operation string, output Output) Output {
+	if call.ConnectedSessionID == "" {
+		return output
+	}
+	if output.OperationID == "" {
+		output.OperationID = operation
+	}
+	note := fmt.Sprintf("；已建立的会话 session_id=%s 作为残留资源保留（未自动清理）", call.ConnectedSessionID)
+	output.Text += note
+	output.Notes += note
+	return output
 }
 
 func completionFromOutput(output Output) (outcome.Completion, error) {
