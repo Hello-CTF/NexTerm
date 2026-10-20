@@ -52,12 +52,14 @@ An upgrade (detected from an existing `/opt/nexterm/nexterm-server`,
   `--master-key-file` becomes an explicit `NEXTERM_MASTER_KEY_FILE` that
   wins over the data-dir fallback). ExecStart values are tokenized with
   systemd's unquote/C-unescape rules, so quoted paths and escapes such
-  as `\s` or `\x20` migrate intact, and duplicate flags keep the last
-  value like the server CLI; an unparseable legacy unit aborts the run
-  before anything is replaced. Only the effective unit per systemd
-  priority (`/etc/systemd/system/`, then `/usr/lib/systemd/system/`,
-  then `/lib/systemd/system/`) is consulted; lower-priority copies are
-  removed without applying their values;
+  as `\s` or `\x20` migrate intact, invalid escapes stay literal, and
+  duplicate flags keep the last value like the server CLI. Values that
+  cannot be represented safely are rejected before anything is replaced:
+  newlines (no line-based env representation) and systemd specifiers
+  other than `%%` (which becomes a literal `%`). Only the effective unit
+  per systemd priority (`/etc/systemd/system/`, then
+  `/usr/lib/systemd/system/`, then `/lib/systemd/system/`) is consulted;
+  lower-priority copies are removed without applying their values;
 - saves the previous payload to `/opt/nexterm/.rollback` and restarts only
   the units that were active. An interrupted upgrade keeps that original
   backup across retries, records whether each env file predates the

@@ -156,6 +156,17 @@ utf8_encode() {
   fi
 }
 
+codepoint_valid() {
+  # mirrors systemd's unichar_is_valid: reject NUL, out-of-range, UTF-16
+  # surrogates, the U+FDD0..U+FDEF noncharacters, and U+xFFFE/U+xFFFF
+  local val="$1"
+  [ "$val" -ne 0 ] &&
+    [ "$val" -le 1114111 ] &&
+    { [ "$val" -lt 55296 ] || [ "$val" -gt 57343 ]; } &&
+    { [ "$val" -lt 64976 ] || [ "$val" -gt 65007 ]; } &&
+    [ $((val & 65534)) -ne 65534 ]
+}
+
 systemd_split() {
   local input="$1" token="" state=plain return_state=plain c hex oct val
   local i=0 len=${#input}
@@ -192,7 +203,7 @@ systemd_split() {
           a) token="$token"$'\a'; state="$return_state" ;;
           b) token="$token"$'\b'; state="$return_state" ;;
           f) token="$token"$'\f'; state="$return_state" ;;
-          n) token="$token"$'\n'; state="$return_state" ;;
+          n) return 3 ;;
           r) token="$token"$'\r'; state="$return_state" ;;
           t) token="$token"$'\t'; state="$return_state" ;;
           v) token="$token"$'\v'; state="$return_state" ;;
@@ -204,19 +215,19 @@ systemd_split() {
             if [ $((i + 2)) -lt "$len" ]; then
               hex="${input:$((i + 1)):2}"
               case "$hex" in
-                *[!0-9a-fA-F]*|'') token="$token\\" ;;
+                *[!0-9a-fA-F]*|'') token="$token\\x" ;;
                 *)
                   val=$((16#$hex))
                   if [ "$val" -ne 0 ]; then
                     token="$token$(printf "\\$(printf '%03o' "$val")")"
                     i=$((i + 2))
                   else
-                    token="$token\\"
+                    token="$token\\x"
                   fi
                   ;;
               esac
             else
-              token="$token\\"
+              token="$token\\x"
             fi
             state="$return_state"
             ;;
@@ -224,19 +235,21 @@ systemd_split() {
             if [ $((i + 4)) -lt "$len" ]; then
               hex="${input:$((i + 1)):4}"
               case "$hex" in
-                *[!0-9a-fA-F]*|'') token="$token\\" ;;
+                *[!0-9a-fA-F]*|'') token="$token\\u" ;;
                 *)
                   val=$((16#$hex))
-                  if [ "$val" -ne 0 ] && { [ "$val" -lt 55296 ] || [ "$val" -gt 57343 ]; }; then
+                  if [ "$val" -eq 10 ]; then
+                    return 3
+                  elif codepoint_valid "$val"; then
                     token="$token$(utf8_encode "$val")"
                     i=$((i + 4))
                   else
-                    token="$token\\"
+                    token="$token\\u"
                   fi
                   ;;
               esac
             else
-              token="$token\\"
+              token="$token\\u"
             fi
             state="$return_state"
             ;;
@@ -244,19 +257,21 @@ systemd_split() {
             if [ $((i + 8)) -lt "$len" ]; then
               hex="${input:$((i + 1)):8}"
               case "$hex" in
-                *[!0-9a-fA-F]*|'') token="$token\\" ;;
+                *[!0-9a-fA-F]*|'') token="$token\\U" ;;
                 *)
                   val=$((16#$hex))
-                  if [ "$val" -ne 0 ] && [ "$val" -le 1114111 ] && { [ "$val" -lt 55296 ] || [ "$val" -gt 57343 ]; }; then
+                  if [ "$val" -eq 10 ]; then
+                    return 3
+                  elif codepoint_valid "$val"; then
                     token="$token$(utf8_encode "$val")"
                     i=$((i + 8))
                   else
-                    token="$token\\"
+                    token="$token\\U"
                   fi
                   ;;
               esac
             else
-              token="$token\\"
+              token="$token\\U"
             fi
             state="$return_state"
             ;;
@@ -264,19 +279,19 @@ systemd_split() {
             if [ $((i + 2)) -lt "$len" ]; then
               oct="${input:$i:3}"
               case "$oct" in
-                *[!0-7]*|'') token="$token\\" ;;
+                *[!0-7]*|'') token="$token\\$c" ;;
                 *)
                   val=$((8#$oct))
                   if [ "$val" -le 255 ] && [ "$val" -ne 0 ]; then
                     token="$token$(printf "\\$(printf '%03o' "$val")")"
                     i=$((i + 2))
                   else
-                    token="$token\\"
+                    token="$token\\$c"
                   fi
                   ;;
               esac
             else
-              token="$token\\"
+              token="$token\\$c"
             fi
             state="$return_state"
             ;;
@@ -301,9 +316,7 @@ systemd_split() {
 
 legacy_flag_value() {
   local exec_line="$1" want="--$2" tokens
-  if ! tokens="$(systemd_split "$exec_line")"; then
-    return 2
-  fi
+  tokens="$(systemd_split "$exec_line")" || return $?
   printf '%s\n' "$tokens" | awk -v want="$want" '
     $0 == want { if ((getline nxt) > 0) { value = nxt; found = 1 }; next }
     index($0, want "=") == 1 { value = substr($0, length(want) + 2); found = 1; next }
@@ -312,12 +325,21 @@ legacy_flag_value() {
 }
 
 capture_legacy_values() {
-  local file="$1" exec_line flag key value
+  local file="$1" exec_line flag key value probe
   exec_line="$(legacy_exec_line "$file")"
   [ -n "$exec_line" ] || return 0
   for flag in listen auth data-dir web-root master-key-file; do
-    value="$(legacy_flag_value "$exec_line" "$flag")" || return 2
+    value="$(legacy_flag_value "$exec_line" "$flag")" || return $?
     [ -n "$value" ] || continue
+    case "$value" in
+      *%*)
+        probe="$(printf '%s' "$value" | sed 's/%%//g')"
+        case "$probe" in
+          *%*) return 4 ;;
+        esac
+        value="$(printf '%s' "$value" | sed 's/%%/%/g')"
+        ;;
+    esac
     case "$flag" in
       listen) key=NEXTERM_LISTEN ;;
       auth) key=NEXTERM_AUTH ;;
@@ -329,8 +351,101 @@ capture_legacy_values() {
   done
 }
 
+env_join_continuations() {
+  # join lines ending with an odd number of backslashes: the backslash and
+  # the newline are eaten, per systemd's VALUE_ESCAPE/COMMENT_ESCAPE rules
+  awk '
+    {
+      while (1) {
+        n = 0
+        while (substr($0, length($0) - n, 1) == "\\") n++
+        if (n % 2 == 1 && (getline nxt) > 0) {
+          $0 = substr($0, 1, length($0) - 1) nxt
+        } else {
+          break
+        }
+      }
+      print
+    }
+  '
+}
+
+env_parse_value() {
+  # $1 = raw text after the first '=' on a logical line; prints the parsed
+  # value per systemd env-file semantics (quotes, escapes, concatenation)
+  local value="$1" out="" state=pre c
+  local i=0 len=${#value} trail=0
+  while [ "$i" -lt "$len" ]; do
+    c="${value:$i:1}"
+    case "$state" in
+      pre)
+        case "$c" in
+          ' '|$'\t') ;;
+          '"') state=dquote ;;
+          "'") state=squote ;;
+          \\) state=plain_escape ;;
+          *) out="$out$c"; state=plain; trail=0 ;;
+        esac
+        ;;
+      plain)
+        case "$c" in
+          \\) state=plain_escape ;;
+          ' '|$'\t') out="$out$c"; trail=$((trail + 1)) ;;
+          *) out="$out$c"; trail=0 ;;
+        esac
+        ;;
+      plain_escape)
+        out="$out$c"; state=plain ;;
+      dquote)
+        case "$c" in
+          '"') state=after_quote ;;
+          \\) state=dquote_escape ;;
+          *) out="$out$c"; trail=0 ;;
+        esac
+        ;;
+      dquote_escape)
+        case "$c" in
+          '"'|\\|'$'|'`') out="$out$c" ;;
+          *) out="$out\\$c" ;;
+        esac
+        state=dquote ;;
+      squote)
+        if [ "$c" = "'" ]; then
+          state=after_quote
+        else
+          out="$out$c"; trail=0
+        fi
+        ;;
+      after_quote)
+        case "$c" in
+          ' '|$'\t') ;;
+          '"') state=dquote ;;
+          "'") state=squote ;;
+          \\) state=plain_escape ;;
+          *) out="$out$c"; state=plain; trail=0 ;;
+        esac
+        ;;
+    esac
+    i=$((i + 1))
+  done
+  if [ "$trail" -gt 0 ]; then
+    out="${out:0:${#out}-$trail}"
+  fi
+  printf '%s' "$out"
+}
+
+env_quote_if_needed() {
+  local value="$1"
+  case "$value" in
+    *\\*|*\"*|*\$*|*\`*|[[:blank:]]*|*[[:blank:]]|"'"*|'"'*|"")
+      printf '"%s"' "$(printf '%s' "$value" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\$/\\$/g' -e 's/`/\\`/g')"
+      ;;
+    *) printf '%s' "$value" ;;
+  esac
+}
+
 env_get() {
-  local file="$1" key="$2" line rest value="" found=0 first="" closing="" after=""
+  local file="$1" key="$2" line rest value="" found=0
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line#"${line%%[![:blank:]]*}"}"
     case "$line" in
@@ -340,38 +455,9 @@ env_get() {
         rest="${line#"$key"}"
         value="${rest#*=}"; found=1 ;;
     esac
-  done < <(tr '\r' '\n' < "$file")
+  done < <(tr '\r' '\n' < "$file" | env_join_continuations)
   [ "$found" -eq 1 ] || return 0
-  value="$(printf '%s' "$value" | sed -e 's/^[[:blank:]]*//' -e 's/[[:blank:]]*$//')"
-  case "$value" in *\\*) return 1 ;; esac
-  if [ -n "$value" ]; then first="${value%"${value#?}"}"; fi
-  case "$first" in
-    '"')
-      rest="${value#?}"
-      case "$rest" in
-        *'"'*)
-          closing="${rest%%\"*}"
-          after="${rest#*\"}"
-          [ -z "$(printf '%s' "$after" | tr -d ' \t')" ] || return 1
-          value="$closing"
-          ;;
-        *) value="$rest" ;;
-      esac
-      ;;
-    "'")
-      rest="${value#?}"
-      case "$rest" in
-        *"'"*)
-          closing="${rest%%\'*}"
-          after="${rest#*\'}"
-          [ -z "$(printf '%s' "$after" | tr -d ' \t')" ] || return 1
-          value="$closing"
-          ;;
-        *) value="$rest" ;;
-      esac
-      ;;
-  esac
-  printf '%s' "$value"
+  env_parse_value "$value"
 }
 
 transaction_pending() { [ -f "$BACKUP_DIR/pending" ]; }
@@ -492,16 +578,16 @@ env_has_key() {
       "$key"=*|"$key"[[:blank:]]*=*)
         return 0 ;;
     esac
-  done < <(tr '\r' '\n' < "$file")
+  done < <(tr '\r' '\n' < "$file" | env_join_continuations)
   return 1
 }
 
 env_append() {
-  local file="$1" line="$2"
+  local file="$1" key="$2" value="$3"
   if [ -s "$file" ] && [ -n "$(tail -c 1 "$file")" ]; then
     printf '\n' >> "$file"
   fi
-  printf '%s\n' "$line" >> "$file"
+  printf '%s=%s\n' "$key" "$(env_quote_if_needed "$value")" >> "$file"
 }
 
 env_set() {
@@ -511,14 +597,14 @@ env_set() {
       trimmed="${line#"${line%%[![:blank:]]*}"}"
       case "$trimmed" in
         "$key"=*|"$key"[[:blank:]]*=*)
-          printf '%s=%s\n' "$key" "$value" ;;
+          printf '%s=%s\n' "$key" "$(env_quote_if_needed "$value")" ;;
         *) printf '%s\n' "$line" ;;
       esac
-    done < <(tr '\r' '\n' < "$file") > "$tmp"
+    done < <(tr '\r' '\n' < "$file" | env_join_continuations) > "$tmp"
     cat "$tmp" > "$file"
     rm -f "$tmp"
   else
-    env_append "$file" "$key=$value"
+    env_append "$file" "$key" "$value"
   fi
 }
 
@@ -600,6 +686,15 @@ install_web() {
   rm -rf "$OPT_DIR/web.old"
 }
 
+legacy_capture_failed() {
+  local file="$1" rc="$2"
+  case "$rc" in
+    3) die "legacy ExecStart values in ${file#$ROOT_PREFIX} contain a newline, which cannot be represented in an environment file; migrate the settings to the ${ETC_DIR#$ROOT_PREFIX} env files manually" ;;
+    4) die "legacy ExecStart values in ${file#$ROOT_PREFIX} contain systemd specifiers, which this installer cannot expand safely; migrate the settings to the ${ETC_DIR#$ROOT_PREFIX} env files manually" ;;
+    *) die "cannot parse the legacy ExecStart in ${file#$ROOT_PREFIX} (unsupported quoting); fix the unit or restore it from the rollback backup and re-run" ;;
+  esac
+}
+
 install_units() {
   fail_at units
   local unit d effective base wd
@@ -625,11 +720,9 @@ install_units() {
       fi
       log "migrating legacy unit $unit (inline ExecStart flags move to the ${ETC_DIR#$ROOT_PREFIX} env files)"
       if [ "$unit" = "$SERVER_UNIT" ]; then
-        SERVER_LEGACY_VALUES="$(capture_legacy_values "$effective")" ||
-          die "cannot parse the legacy ExecStart in ${effective#$ROOT_PREFIX} (unsupported quoting); fix the unit or restore it from the rollback backup and re-run"
+        SERVER_LEGACY_VALUES="$(capture_legacy_values "$effective")" || legacy_capture_failed "$effective" $?
       else
-        ONLYSERVER_LEGACY_VALUES="$(capture_legacy_values "$effective")" ||
-          die "cannot parse the legacy ExecStart in ${effective#$ROOT_PREFIX} (unsupported quoting); fix the unit or restore it from the rollback backup and re-run"
+        ONLYSERVER_LEGACY_VALUES="$(capture_legacy_values "$effective")" || legacy_capture_failed "$effective" $?
       fi
     fi
   done
@@ -685,7 +778,7 @@ EOF
       line="$(grep -m1 "^$key=" "$example" || true)"
       [ -n "$line" ] || continue
       if ! env_has_key "$env_file" "$key"; then
-        env_append "$env_file" "$line"
+        env_append "$env_file" "$key" "${line#*=}"
         log "backfilled $key in ${env_file#$ROOT_PREFIX} (was absent; applied the example default)"
       fi
     done
