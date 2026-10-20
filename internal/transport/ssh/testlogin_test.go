@@ -331,6 +331,34 @@ func TestTestLoginThroughJump(t *testing.T) {
 	waitForTestServerIdle(t, target)
 }
 
+func TestTestLoginJumpChainBoundedByRootTimeout(t *testing.T) {
+	target := newTestSSHServer(t, nil)
+	store := NewMemoryHostKeyStore()
+	listener := stallingTCPListener(t)
+
+	jumpCfg := Config{
+		Host: "127.0.0.1", Port: listener.Addr().(*net.TCPAddr).Port, User: "test",
+		Auth: AuthConfig{Method: AuthPassword, Password: "secret"}, HostKeys: store,
+	}
+	targetCfg := testLoginConfig(t, target, store)
+	targetCfg.Jump = &jumpCfg
+	targetCfg.ConnectTimeout = 300 * time.Millisecond
+
+	started := time.Now()
+	err := TestLogin(context.Background(), targetCfg)
+	elapsed := time.Since(started)
+	connectErr := requireConnectError(t, err, ErrorKindTimeout)
+	if connectErr.Host != jumpCfg.Host || connectErr.Port != jumpCfg.Port {
+		t.Fatalf("stalling jump failure hop = %+v", connectErr)
+	}
+	if got := ClassifyLoginFailure(err); got != LoginFailureNetwork {
+		t.Fatalf("stalling jump failure class = %q", got)
+	}
+	if elapsed > 3*time.Second {
+		t.Fatalf("jump chain test login took %v, want the 300ms root timeout to bound the chain", elapsed)
+	}
+}
+
 func TestClassifyLoginFailure(t *testing.T) {
 	sentinel := errors.New("vault locked")
 	tests := []struct {

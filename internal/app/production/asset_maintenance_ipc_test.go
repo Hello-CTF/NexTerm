@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -462,6 +463,28 @@ func TestTestLoginIPCTimeout(t *testing.T) {
 	batch := dispatchTestLoginBatch(t, production, 500, slowAssetID)
 	if len(batch.Results) != 1 || batch.Results[0].Reachable || batch.Results[0].Kind != "timeout" {
 		t.Fatalf("stalling proxy test login = %+v", batch.Results)
+	}
+	requireNoManagedSessions(t, production)
+}
+
+func TestTestLoginIPCJumpChainTimeoutBound(t *testing.T) {
+	production := newHostKeyTestProduction(t)
+	initConnectorTestVault(t, production)
+	credID := createConnectorTestCredential(t, production, "login-jump-timeout", "secret")
+	stalling := stallingProxyListener(t)
+	jumpAssetID := createConnectorTestAsset(t, production, "login-stall-jump", "127.0.0.1", 22, "password", credID,
+		`{"proxy":"socks5://`+stalling.Addr().String()+`"}`)
+	targetAssetID := createConnectorTestAsset(t, production, "login-stall-target", "127.0.0.1", closedProbePort(t), "password", credID,
+		`{"jumpAssetId":"`+jumpAssetID+`"}`)
+
+	started := time.Now()
+	batch := dispatchTestLoginBatch(t, production, 500, targetAssetID)
+	elapsed := time.Since(started)
+	if len(batch.Results) != 1 || batch.Results[0].Reachable || batch.Results[0].Kind != "timeout" {
+		t.Fatalf("stalling jump test login = %+v", batch.Results)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("stalling jump test login took %v, want the 500ms request budget to bound the whole jump chain", elapsed)
 	}
 	requireNoManagedSessions(t, production)
 }

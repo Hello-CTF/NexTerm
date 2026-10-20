@@ -63,7 +63,8 @@ func ClassifyLoginFailure(err error) LoginFailureClass {
 // session, never opens channels, and never persists host keys: the host key
 // check is strictly read-only against recorded and approved keys, so unknown
 // keys are never accepted regardless of Config.AutoAcceptUnknown and
-// Config.HostKeyApproval.
+// Config.HostKeyApproval. Config.ConnectTimeout bounds the entire jump chain,
+// including hops that rely on the default per-hop timeout.
 func TestLogin(ctx context.Context, cfg Config) error {
 	validated, err := cfg.validate()
 	if err != nil {
@@ -127,7 +128,7 @@ func testLoginHandshake(ctx context.Context, cfg Config, depth, hops int, progre
 	var netConn net.Conn
 	var jumpClient loginConn
 	if cfg.Jump != nil {
-		jumpClient, err = testLoginHandshake(ctx, *cfg.Jump, depth+1, hops, progress)
+		jumpClient, err = testLoginHandshake(connectCtx, *cfg.Jump, depth+1, hops, progress)
 		if err != nil {
 			return nil, err
 		}
