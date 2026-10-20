@@ -805,6 +805,94 @@ describe("Device management view - device list and metrics", () => {
     }
   });
 
+  it("re-measures the virtual offset when the issued panel's native details toggles without a render or resize", async () => {
+    const devices = Array.from({ length: 41 }, (_, index) => ({
+      ...AGENT_DEVICE,
+      id: `details-${index}`,
+      name: `details-${index}`,
+      agent: {
+        ...AGENT_DEVICE.agent,
+        service_state: { ...AGENT_DEVICE.agent.service_state },
+      },
+    }));
+    route(fleetHandler({ devices: { devices } }));
+    seedUser(SUPERADMIN);
+
+    // Deterministic geometry: scroller top 100; the list sits at 140, +120 once the
+    // enrollment panel opens, +80 once the issued-code view replaces the form, and +160
+    // once the native advanced details expands. No window resize is ever dispatched.
+    let enrollPanelShown = false;
+    let issuedShown = false;
+    let detailsOpen = false;
+    const rectSpy = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      const top = this.classList.contains("overflow-auto")
+        ? 100
+        : this.classList.contains("shrink-0")
+          ? 140 + (enrollPanelShown ? 120 : 0) + (issuedShown ? 80 : 0) + (detailsOpen ? 160 : 0)
+          : 0;
+      return {
+        top,
+        bottom: top + 100,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 100,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+    try {
+      mounted = mountWithClient(createElement(DevicesView));
+      await flushUntil(() => document.body.textContent?.includes("details-0") ?? false);
+
+      const firstItem = document.querySelector<HTMLElement>('[data-index="0"]');
+      expect(firstItem).not.toBeNull();
+      expect(firstItem?.style.transform).toBe("translateY(-40px)");
+
+      const enrollButton = [...document.querySelectorAll("button")].find(
+        (button) =>
+          button.getAttribute("aria-expanded") !== null &&
+          button.textContent?.includes("接入新设备"),
+      );
+      if (!enrollButton) throw new Error("Enrollment toggle not found");
+      enrollPanelShown = true;
+      click(enrollButton);
+      expect(firstItem?.style.transform).toBe("translateY(-160px)");
+
+      const issueButton = [...document.querySelectorAll("button")].find(
+        (button) => button.textContent?.trim() === "签发接入码",
+      );
+      if (!issueButton) throw new Error("Issue-code button not found");
+      issuedShown = true;
+      click(issueButton);
+      await flushUntil(() => document.body.textContent?.includes("fleet-code-1") ?? false);
+      expect(firstItem?.style.transform).toBe("translateY(-240px)");
+
+      const details = document.querySelector("details");
+      const summary = details?.querySelector("summary");
+      if (!details || !summary) throw new Error("Advanced details not found");
+
+      // Expanding the native details fires no React render and no resize; only the
+      // toggle-driven measurement can pick up the new offset.
+      detailsOpen = true;
+      click(summary);
+      await flushUntil(() => firstItem?.style.transform !== "translateY(-240px)");
+      expect(details.open).toBe(true);
+      expect(firstItem?.style.transform).toBe("translateY(-400px)");
+
+      detailsOpen = false;
+      click(summary);
+      await flushUntil(() => firstItem?.style.transform !== "translateY(-400px)");
+      expect(details.open).toBe(false);
+      expect(firstItem?.style.transform).toBe("translateY(-240px)");
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
   it("shows offline badges and offline autostart hints for offline devices", async () => {
     route(fleetHandler());
     seedUser(SUPERADMIN);

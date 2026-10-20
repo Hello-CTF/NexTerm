@@ -549,6 +549,13 @@ export function DevicesView() {
     return () => window.removeEventListener("resize", measureDeviceListScrollMargin);
   }, [measureDeviceListScrollMargin]);
 
+  // The enrollment panel's native advanced <details> changes the list's offset without a
+  // React render or window resize. Its toggle event fires after the open state applies, so
+  // measuring here reads the settled layout (getBoundingClientRect forces reflow).
+  const handleAdvancedDetailsToggle = useCallback(() => {
+    measureDeviceListScrollMargin();
+  }, [measureDeviceListScrollMargin]);
+
   if (account.loading) {
     return (
       <div className="nx-pane">
@@ -828,7 +835,7 @@ export function DevicesView() {
                       <div className="text-[11.5px] text-neutral-400">
                         本页面不会执行安装，也无法确认安装结果；请以设备上的输出为准。
                       </div>
-                      <details className="rounded border border-red-500/20 px-2 py-1.5">
+                      <details className="rounded border border-red-500/20 px-2 py-1.5" onToggle={handleAdvancedDetailsToggle}>
                         <summary className="cursor-pointer text-[11.5px] text-neutral-300">高级说明：多地址、手动接入与服务管理</summary>
                         <div className="mt-2 flex flex-col gap-1.5">
                           {baseUrls.length > 1 && (
