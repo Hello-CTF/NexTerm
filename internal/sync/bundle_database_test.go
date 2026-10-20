@@ -598,12 +598,12 @@ func TestImportBundleConcurrentNewCredentialInsertInTxDatabase(t *testing.T) {
 			t.Errorf("interleaved asset edit: %v", err)
 		}
 	})
-	// Land a concurrent same-ID credential insert between the must-not-exist Count and the
-	// INSERT inside the import's write transaction.
+	// Land a concurrent same-ID credential insert right before the import's INSERT inside
+	// the import's write transaction (the must-not-exist path goes straight to the
+	// ownership-proving INSERT, so there is no Count to interleave on anymore).
 	fired := false
-	if err := instance.db.GORM().Callback().Query().After("gorm:query").Register("test:import-concurrent-cred-insert", func(tx *gorm.DB) {
-		sql := tx.Statement.SQL.String()
-		if fired || !strings.Contains(sql, "count(*)") || !strings.Contains(sql, "`credential`") && !strings.Contains(sql, `"credential"`) {
+	if err := instance.db.GORM().Callback().Create().Before("gorm:create").Register("test:import-concurrent-cred-insert", func(tx *gorm.DB) {
+		if fired || tx.Statement.Table != "credential" {
 			return
 		}
 		fired = true
@@ -620,7 +620,7 @@ func TestImportBundleConcurrentNewCredentialInsertInTxDatabase(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = instance.db.GORM().Callback().Query().Remove("test:import-concurrent-cred-insert") })
+	t.Cleanup(func() { _ = instance.db.GORM().Callback().Create().Remove("test:import-concurrent-cred-insert") })
 
 	bundle := SyncBundle{
 		Protocol: BundleProtocolVersion,
@@ -687,8 +687,8 @@ func TestImportBundleIdenticalConcurrentCredentialCompensatedDatabase(t *testing
 	}
 
 	fired := false
-	if err := instance.db.GORM().Callback().Query().After("gorm:query").Register("test:import-identical-cred-insert", func(tx *gorm.DB) {
-		if fired || tx.Statement.Table != "credential" || !strings.Contains(strings.ToLower(tx.Statement.SQL.String()), "count(") {
+	if err := instance.db.GORM().Callback().Create().Before("gorm:create").Register("test:import-identical-cred-insert", func(tx *gorm.DB) {
+		if fired || tx.Statement.Table != "credential" {
 			return
 		}
 		fired = true
@@ -703,7 +703,7 @@ func TestImportBundleIdenticalConcurrentCredentialCompensatedDatabase(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = instance.db.GORM().Callback().Query().Remove("test:import-identical-cred-insert") })
+	t.Cleanup(func() { _ = instance.db.GORM().Callback().Create().Remove("test:import-identical-cred-insert") })
 
 	rand.Reader = zeroReader{}
 	report, err := instance.service.ImportBundle(ctx, ImportBundleRequest{Bundle: SyncBundle{
@@ -738,4 +738,48 @@ func (zeroReader) Read(p []byte) (int, error) {
 		p[i] = 0
 	}
 	return len(p), nil
+}
+
+// A concurrent zero-revision credential insert between the planner's snapshot and the
+// write is never overwritten by the must-not-exist apply: the write goes straight to the
+// ownership-proving INSERT and the duplicate surfaces as a conflict, so the concurrent
+// credential and its secret survive on every real backend.
+func TestApplyZeroRevisionCredentialPrePlannerInsertDatabase(t *testing.T) {
+	instance := newDatabaseTestInstance(t, true)
+	ctx := context.Background()
+	credID := ids.New()
+	interleaveOnceOnTableQuery(t, instance, "credential_tombstone", func() {
+		nonce, blob, err := instance.vault.EncryptCredential(context.Background(), "concurrent-secret")
+		if err != nil {
+			t.Errorf("interleaved credential encrypt: %v", err)
+			return
+		}
+		row := store.CredentialRow{
+			ID: credID, Name: "concurrent", Kind: "password", Cipher: store.CipherAES256GCM,
+			Nonce: nonce, Blob: blob, KEKHint: instance.vault.KEKHint(), CreatedAt: 100, UpdatedAt: 0,
+		}
+		if err := instance.db.GORM().WithContext(context.Background()).Create(&row).Error; err != nil {
+			t.Errorf("interleaved credential insert: %v", err)
+			return
+		}
+		if err := instance.db.GORM().WithContext(context.Background()).Model(&store.CredentialRow{}).Where("id = ?", credID).UpdateColumn("updated_at", 0).Error; err != nil {
+			t.Errorf("interleaved credential zero revision: %v", err)
+		}
+	})
+	payload := applyPayload(t, credentialObject{ID: credID, Name: "remote", Kind: "password", Secret: "remote-secret", UpdatedAt: 0})
+	entry := mustApplyObjects(t, instance, ApplyObject{ID: credID, Kind: KindCredential, Payload: payload}).Objects[0]
+	if entry.Result != ApplyResultSkipped {
+		t.Errorf("object %s result=%q warning=%q, want %q", entry.ID, entry.Result, entry.Warning, ApplyResultSkipped)
+	}
+	row, err := instance.db.CredentialGetRow(ctx, credID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Name != "concurrent" || row.CreatedAt != 100 || row.UpdatedAt != 0 {
+		t.Errorf("concurrent zero-revision credential overwritten: %+v", row)
+	}
+	secret, err := instance.vault.DecryptCredentialString(ctx, row)
+	if err != nil || secret != "concurrent-secret" {
+		t.Errorf("concurrent secret = %q err=%v", secret, err)
+	}
 }

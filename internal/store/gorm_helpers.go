@@ -273,7 +273,9 @@ func insertOwnerRowMustNotExist(ctx context.Context, tx *gorm.DB, values any) er
 // expected-revision CAS bound to the caller's snapshot: an existing row is updated only
 // when its revision still equals expectedRevision, and a new row is inserted only when it
 // is still absent. A row that changed since the snapshot (a later local write) is never
-// overwritten — the write surfaces ErrWriteConflict instead.
+// overwritten — the write surfaces ErrWriteConflict instead. An expectedRevision of 0 is
+// the must-not-exist shape: the write goes straight to the ownership-proving INSERT and
+// any existing row surfaces ErrWriteConflict.
 func UpsertOwnerGuardedExpected(ctx context.Context, db *gorm.DB, values any, columns []string, expectedRevision int64) error {
 	statement := &gorm.Statement{DB: db}
 	if err := statement.Parse(values); err != nil {
@@ -302,6 +304,15 @@ func UpsertOwnerGuardedExpected(ctx context.Context, db *gorm.DB, values any, co
 	}
 	tx := db.WithContext(ctx)
 	guard := map[string]any{primary.DBName: id, "owner_id": ipc.OwnerID(ctx)}
+	if expectedRevision == 0 {
+		// Must-not-exist: the row must be absent, so prove ownership from the INSERT
+		// result itself. Never run a guarded UPDATE or accept a readback no-op here —
+		// a concurrent zero-revision row would match `updated_at = 0` and be overwritten
+		// or mistaken for this call's own write. Any existing row (different content,
+		// only created_at different, fully identical, or cross-owner) surfaces
+		// ErrWriteConflict; only this call's own INSERT records ownership.
+		return insertOwnerRowMustNotExist(ctx, tx, values)
+	}
 	updated := tx.Model(values).Where(guard).Where("updated_at = ?", expectedRevision).Updates(assignments)
 	if updated.Error != nil {
 		return dbError(updated.Error)
