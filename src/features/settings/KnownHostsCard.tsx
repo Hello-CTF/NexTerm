@@ -23,7 +23,6 @@ export function KnownHostsCard() {
     aliveRef.current = true;
     return () => {
       aliveRef.current = false;
-      loadGenRef.current++;
     };
   }, []);
 
