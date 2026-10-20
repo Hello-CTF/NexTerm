@@ -78,7 +78,11 @@ func fakeStreamServer(t *testing.T, stateDir string, handle func(conn net.Conn, 
 
 func TestStreamCloseReturnsWhenServerStalls(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
+	writeStarted := make(chan struct{})
 	path := fakeStreamServer(t, stateDir, func(conn net.Conn, kind frameType, payload []byte) bool {
+		if kind == frameInput {
+			close(writeStarted)
+		}
 		return true
 	})
 	client := NewClient(path, stateDir)
@@ -86,15 +90,17 @@ func TestStreamCloseReturnsWhenServerStalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	stream.closeDrainTimeout = 500 * time.Millisecond
 	writeErr := make(chan error, 1)
 	go func() {
 		_, err := stream.Write([]byte("stalled"))
 		writeErr <- err
 	}()
-	time.Sleep(100 * time.Millisecond)
-	original := streamCloseDrainTimeout
-	streamCloseDrainTimeout = 500 * time.Millisecond
-	defer func() { streamCloseDrainTimeout = original }()
+	select {
+	case <-writeStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not receive the stalled Write")
+	}
 	closed := make(chan struct{})
 	go func() {
 		_ = stream.Close()
@@ -117,9 +123,12 @@ func TestStreamCloseReturnsWhenServerStalls(t *testing.T) {
 
 func TestStreamCloseDrainsInflightKill(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
+	killStarted := make(chan struct{})
+	releaseKill := make(chan struct{})
 	path := fakeStreamServer(t, stateDir, func(conn net.Conn, kind frameType, payload []byte) bool {
 		if kind == frameKill {
-			time.Sleep(150 * time.Millisecond)
+			close(killStarted)
+			<-releaseKill
 			_ = writeFrame(conn, frameOK, []byte("{}"))
 		}
 		return true
@@ -133,11 +142,16 @@ func TestStreamCloseDrainsInflightKill(t *testing.T) {
 	go func() {
 		killErr <- stream.Kill(context.Background())
 	}()
-	time.Sleep(10 * time.Millisecond)
+	select {
+	case <-killStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not receive Kill")
+	}
 	closeErr := make(chan error, 1)
 	go func() {
 		closeErr <- stream.Close()
 	}()
+	close(releaseKill)
 	select {
 	case err := <-killErr:
 		if err != nil {

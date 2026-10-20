@@ -134,8 +134,8 @@ func TestRemoteProviderCreateCompensatesOnlyOwnedSessions(t *testing.T) {
 	client := testClient(t, server)
 	provider := NewRemoteProvider(client)
 
-	realCreate := remoteProviderCreate
-	t.Cleanup(func() { remoteProviderCreate = realCreate })
+	realCreate := provider.create
+	t.Cleanup(func() { provider.create = realCreate })
 
 	lostResponse := func(createCtx context.Context, createClient *Client, options CreateOptions) (Info, error) {
 		if _, err := createClient.Create(createCtx, options); err != nil {
@@ -145,7 +145,7 @@ func TestRemoteProviderCreateCompensatesOnlyOwnedSessions(t *testing.T) {
 	}
 
 	t.Run("generated ID lost response is cleaned up", func(t *testing.T) {
-		remoteProviderCreate = lostResponse
+		provider.create = lostResponse
 		_, err := provider.Create(context.Background(), base.DurableCreateOptions{
 			Command: []string{"/bin/sh", "-c", "sleep 30"},
 			Env:     []string{"TERM=xterm-256color", "LC_ALL=C"},
@@ -163,7 +163,7 @@ func TestRemoteProviderCreateCompensatesOnlyOwnedSessions(t *testing.T) {
 	})
 
 	t.Run("explicit ID lost response is rolled back by attempt", func(t *testing.T) {
-		remoteProviderCreate = lostResponse
+		provider.create = lostResponse
 		id := ids.New()
 		_, err := provider.Create(context.Background(), base.DurableCreateOptions{
 			ID:      id,
@@ -183,7 +183,7 @@ func TestRemoteProviderCreateCompensatesOnlyOwnedSessions(t *testing.T) {
 	})
 
 	t.Run("attempt mismatch never kills an existing session", func(t *testing.T) {
-		remoteProviderCreate = realCreate
+		provider.create = realCreate
 		id := ids.New()
 		if _, err := client.Create(context.Background(), CreateOptions{
 			ID:      id,
@@ -214,9 +214,9 @@ func TestRemoteProviderCreateRejectsReplacedIncarnation(t *testing.T) {
 	client := testClient(t, server)
 	provider := NewRemoteProvider(client)
 
-	realAttach := remoteProviderAttach
-	t.Cleanup(func() { remoteProviderAttach = realAttach })
-	remoteProviderAttach = func(attachCtx context.Context, attachClient *Client, id string, expect *Identity) (*Stream, error) {
+	realAttach := provider.attach
+	t.Cleanup(func() { provider.attach = realAttach })
+	provider.attach = func(attachCtx context.Context, attachClient *Client, id string, expect *Identity) (*Stream, error) {
 		if err := supervisor.Kill(context.Background(), id); err != nil {
 			t.Fatal(err)
 		}

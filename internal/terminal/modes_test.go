@@ -76,3 +76,25 @@ func TestModeTrackerRISAndAbort(t *testing.T) {
 		t.Fatal("aborted sequence must not set modes")
 	}
 }
+
+func TestBracketedPasteGenerationTracksChangesAndABA(t *testing.T) {
+	m := NewModeTracker()
+	for index, step := range []struct {
+		input string
+		want  uint64
+	}{
+		{input: "\x1b[?2004h", want: 1},
+		{input: "\x1b[?2004h", want: 1},
+		{input: "\x1b[?2004l", want: 2},
+		{input: "\x1b[?2004h", want: 3},
+		{input: "\x1bc", want: 4},
+	} {
+		m.Feed([]byte(step.input))
+		if got := m.BracketedPasteGeneration(); got != step.want {
+			t.Fatalf("step %d generation = %d, want %d", index, got, step.want)
+		}
+	}
+	if m.BracketedPaste() {
+		t.Fatal("reset must leave bracketed paste disabled")
+	}
+}

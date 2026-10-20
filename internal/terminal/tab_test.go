@@ -79,6 +79,40 @@ func TestIdleDetection(t *testing.T) {
 	}
 }
 
+func TestLastOutputAtTracksRealOutput(t *testing.T) {
+	clock := newFakeClock()
+	tab := newTestTab(t, WithClock(clock.now))
+	if got := tab.LastOutputAt(); got != 0 {
+		t.Fatalf("initial lastOutputAt = %d, want zero", got)
+	}
+	if got := tab.LastOutputAgo(); got != 0 {
+		t.Fatalf("initial lastOutputAgo = %v, want zero", got)
+	}
+	clock.advance(10 * time.Millisecond)
+	if got := tab.LastOutputAt(); got != 0 {
+		t.Fatalf("lastOutputAt before output = %d, want zero", got)
+	}
+	if got := tab.LastOutputAgo(); got != 10*time.Millisecond {
+		t.Fatalf("legacy idle age before output = %v, want 10ms", got)
+	}
+	tab.Feed([]byte("first"))
+	if got := tab.LastOutputAt(); got != 1_000_010 {
+		t.Fatalf("first lastOutputAt = %d, want 1000010", got)
+	}
+	clock.advance(5 * time.Millisecond)
+	if got := tab.LastOutputAgo(); got != 5*time.Millisecond {
+		t.Fatalf("lastOutputAgo = %v, want 5ms", got)
+	}
+	clock.advance(5 * time.Millisecond)
+	tab.Feed([]byte("second"))
+	if got := tab.LastOutputAt(); got != 1_000_020 {
+		t.Fatalf("second lastOutputAt = %d, want 1000020", got)
+	}
+	if got := tab.LastOutputAgo(); got != 0 {
+		t.Fatalf("lastOutputAgo after output = %v, want zero", got)
+	}
+}
+
 func TestTailLinesWithScrollback(t *testing.T) {
 	tab := newTestTab(t)
 	for i := 0; i < 100; i++ {
@@ -232,9 +266,7 @@ func TestRecordingShortWriteStopsRecordingWithoutStoppingOutput(t *testing.T) {
 	if writes, closes := writer.counts(); writes != 1 || closes != 1 {
 		t.Fatalf("write/close calls = %d/%d, want 1/1", writes, closes)
 	}
-	if got := sink.Bytes(); !bytes.Equal(got, []byte("abcdef")) {
-		t.Fatalf("terminal output = %q, want %q", got, "abcdef")
-	}
+	waitFor(t, "output after recording failure", func() bool { return bytes.Equal(sink.Bytes(), []byte("abcdef")) })
 }
 
 func TestRecordingWriteFailureKeepsActualBytesAndFirstError(t *testing.T) {

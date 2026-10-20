@@ -21,6 +21,7 @@ import (
 type deviceIPCTestRig struct {
 	digest   string
 	endpoint string
+	stateDir string
 }
 
 func newDeviceIPCTestRig(t *testing.T) *deviceIPCTestRig {
@@ -54,7 +55,7 @@ func newDeviceIPCTestRig(t *testing.T) *deviceIPCTestRig {
 		_ = server.Shutdown(shutdownCtx)
 		_ = instance.Close()
 	})
-	return &deviceIPCTestRig{digest: digest, endpoint: endpoint}
+	return &deviceIPCTestRig{digest: digest, endpoint: endpoint, stateDir: stateDir}
 }
 
 func (r *deviceIPCTestRig) connector(authorize *sync.Map) *DeviceConnectorConfig {

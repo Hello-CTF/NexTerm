@@ -13,19 +13,24 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-const maxStreamBuffer = 64 * 1024 * 1024
+const (
+	maxStreamBuffer                = 64 * 1024 * 1024
+	defaultMaxExecOutput           = 4 * 1024 * 1024
+	defaultStreamCloseDrainTimeout = 10 * time.Second
+)
 
 type DialFunc func(ctx context.Context) (net.Conn, error)
 
 type Client struct {
-	socketPath  string
-	stateDir    string
-	stateDigest string
-	dial        DialFunc
+	socketPath    string
+	stateDir      string
+	stateDigest   string
+	dial          DialFunc
+	maxExecOutput int
 }
 
 func NewClient(socketPath, stateDir string) *Client {
-	return &Client{socketPath: endpointPath(socketPath), stateDir: stateDir}
+	return &Client{socketPath: endpointPath(socketPath), stateDir: stateDir, maxExecOutput: defaultMaxExecOutput}
 }
 
 // NewRemoteClient returns a Client that speaks the supervisor protocol over
@@ -33,7 +38,7 @@ func NewClient(socketPath, stateDir string) *Client {
 // remote daemon socket. The state digest of the remote state directory is
 // presented at hello; the caller computes it on the remote host.
 func NewRemoteClient(dial DialFunc, stateDigest string) *Client {
-	return &Client{stateDigest: stateDigest, dial: dial}
+	return &Client{stateDigest: stateDigest, dial: dial, maxExecOutput: defaultMaxExecOutput}
 }
 
 func (c *Client) Create(ctx context.Context, options CreateOptions) (Info, error) {
@@ -78,15 +83,11 @@ type ExecSpec struct {
 	Env     []string
 }
 
-// maxExecOutput bounds the combined stdout+stderr Exec collects; a variable
-// so tests can shrink it.
-var maxExecOutput = 4 * 1024 * 1024
-
 // Exec runs a non-PTY command through the supervisor and collects stdout and
 // stderr separately until the process exits. exitCode is the process exit
 // code, or -1 when the process was terminated by a signal (signal then carries
-// its name); both are meaningful only when err is nil. Output beyond
-// maxExecOutput kills the process and returns the partial buffers with an
+// its name); both are meaningful only when err is nil. Output beyond the
+// client's limit kills the process and returns the partial buffers with an
 // error. Cancelling ctx kills the process (the connection drop makes the
 // supervisor terminate the one-shot session).
 func (c *Client) Exec(ctx context.Context, spec ExecSpec) (stdout, stderr []byte, exitCode int, signal string, err error) {
@@ -139,8 +140,8 @@ func (c *Client) Exec(ctx context.Context, spec ExecSpec) (stdout, stderr []byte
 			default:
 				return stdout, stderr, -1, "", fmt.Errorf("%w: exec output stream %d", ErrProtocol, stream)
 			}
-			if len(stdout)+len(stderr) > maxExecOutput {
-				return stdout, stderr, -1, "", fmt.Errorf("%w: exec output exceeds limit of %d bytes", ErrUnavailable, maxExecOutput)
+			if len(stdout)+len(stderr) > c.maxExecOutput {
+				return stdout, stderr, -1, "", fmt.Errorf("%w: exec output exceeds limit of %d bytes", ErrUnavailable, c.maxExecOutput)
 			}
 		case frameExit:
 			var msg exitMsg
@@ -249,15 +250,16 @@ func (c *Client) AttachFrom(ctx context.Context, id string, expect *Identity, of
 		return nil, err
 	}
 	stream := &Stream{
-		conn:     conn,
-		info:     info,
-		identity: Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation},
-		want:     offset,
-		reqToken: make(chan struct{}, 1),
-		resp:     make(chan clientFrame, 1),
-		newData:  make(chan struct{}, 1),
-		exitCh:   make(chan struct{}),
-		closed:   make(chan struct{}),
+		conn:              conn,
+		info:              info,
+		identity:          Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation},
+		closeDrainTimeout: defaultStreamCloseDrainTimeout,
+		want:              offset,
+		reqToken:          make(chan struct{}, 1),
+		resp:              make(chan clientFrame, 1),
+		newData:           make(chan struct{}, 1),
+		exitCh:            make(chan struct{}),
+		closed:            make(chan struct{}),
 	}
 	go stream.readLoop()
 	return stream, nil
@@ -406,9 +408,10 @@ func (c *clientConn) Close() error {
 }
 
 type Stream struct {
-	conn     *clientConn
-	info     Info
-	identity Identity
+	conn              *clientConn
+	info              Info
+	identity          Identity
+	closeDrainTimeout time.Duration
 
 	writeMu sync.Mutex
 
@@ -432,8 +435,6 @@ type Stream struct {
 	closed    chan struct{}
 	closeOnce sync.Once
 }
-
-var streamCloseDrainTimeout = 10 * time.Second
 
 func (s *Stream) Info() Info {
 	return s.info
@@ -588,7 +589,7 @@ func (s *Stream) Close() error {
 		s.mu.Unlock()
 		select {
 		case s.reqToken <- struct{}{}:
-		case <-time.After(streamCloseDrainTimeout):
+		case <-time.After(s.closeDrainTimeout):
 			_ = s.conn.Close()
 			s.reqToken <- struct{}{}
 		}

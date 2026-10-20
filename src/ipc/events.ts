@@ -11,6 +11,7 @@ import {
   newWailsChannel,
   type WailsChannel,
 } from "./wails";
+import type { ipcEventTopics } from "./generated/events";
 
 export type UnlistenFn = () => void;
 
@@ -35,7 +36,11 @@ export const EVENTS = {
   deepLink: "app://deep-link",
   deviceStatus: "device://status",
   filesDropped: "files://dropped",
-} as const;
+  layoutChanged: "layout://changed",
+  inventoryChanged: "inventory://changed",
+  syncStatus: "sync://status",
+  syncRoundComplete: "sync://round-complete",
+} as const satisfies typeof ipcEventTopics;
 
 export type { SessionStatusEvent, TerminalExitEvent } from "./types";
 
@@ -168,12 +173,43 @@ function isStreamAnchor(raw: unknown): raw is StreamAnchorControl {
   );
 }
 
+export const DESKTOP_STREAM_CLOSED_TYPE = "nexterm.desktop-stream-closed";
+
+const desktopReopenSubs = new Map<string, Set<() => void>>();
+
+function isDesktopStreamClosed(raw: unknown): boolean {
+  return (
+    typeof raw === "object" &&
+    raw !== null &&
+    (raw as { type?: unknown }).type === DESKTOP_STREAM_CLOSED_TYPE
+  );
+}
+
+function notifyDesktopChannelReopen(channelId: string) {
+  const subs = desktopReopenSubs.get(channelId);
+  if (!subs) return;
+  for (const cb of [...subs]) {
+    try {
+      cb();
+    } catch {
+    }
+  }
+}
+
+function handleDesktopStreamClosed(channel: unknown, raw: unknown): boolean {
+  if (WEB || !isDesktopStreamClosed(raw)) return false;
+  const id = channelIdOf(channel);
+  if (id !== undefined) notifyDesktopChannelReopen(id);
+  return true;
+}
+
 export function createBinaryChannel(
   onBytes: (data: Uint8Array) => void,
   onControl?: (control: StreamAnchorControl) => void,
 ): IpcChannel<unknown> {
   const channel = WEB ? newBinaryChannel() : newWailsChannel();
   channel.onmessage = (raw) => {
+    if (handleDesktopStreamClosed(channel, raw)) return;
     if (isStreamAnchor(raw)) {
       onControl?.(raw);
       return;
@@ -190,8 +226,20 @@ export function channelIdOf(ch: unknown): string | undefined {
 
 export function onChannelReopen(ch: unknown, cb: () => void): () => void {
   const id = channelIdOf(ch);
-  if (!WEB || id === undefined) return () => {};
-  return onWsChannelReopen(id, cb);
+  if (id === undefined) return () => {};
+  if (WEB) return onWsChannelReopen(id, cb);
+  let subs = desktopReopenSubs.get(id);
+  if (!subs) {
+    subs = new Set();
+    desktopReopenSubs.set(id, subs);
+  }
+  subs.add(cb);
+  return () => {
+    const current = desktopReopenSubs.get(id);
+    if (!current) return;
+    current.delete(cb);
+    if (current.size === 0) desktopReopenSubs.delete(id);
+  };
 }
 
 export function disposeChannel(ch: unknown): void {
@@ -201,6 +249,7 @@ export function disposeChannel(ch: unknown): void {
     disposeWsChannel(id);
     return;
   }
+  desktopReopenSubs.delete(id);
   disposeWailsChannel(ch as WailsChannel);
 }
 
@@ -216,10 +265,11 @@ function decodeBytes(raw: unknown, onBytes: (data: Uint8Array) => void) {
   }
 }
 
-export function createAiChannel(
+export function createJsonChannel(
   onEvent: (event: Record<string, unknown>) => void,
 ): IpcChannel<unknown> {
   const push = (raw: unknown) => {
+    if (handleDesktopStreamClosed(channel, raw)) return;
     if (raw && typeof raw === "object") {
       onEvent(raw as Record<string, unknown>);
     }
@@ -227,6 +277,12 @@ export function createAiChannel(
   const channel = WEB ? newBinaryChannel() : newWailsChannel();
   channel.onmessage = push;
   return channel;
+}
+
+export function createAiChannel(
+  onEvent: (event: Record<string, unknown>) => void,
+): IpcChannel<unknown> {
+  return createJsonChannel(onEvent);
 }
 
 export function listenEvent<T>(

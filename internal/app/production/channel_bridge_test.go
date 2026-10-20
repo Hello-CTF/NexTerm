@@ -125,7 +125,7 @@ func TestProductionTerminalBridgeStreamsDetachAndReplayOnReopen(t *testing.T) {
 	second := factory.at(channelID, 1)
 	waitForProductionOutput(t, second, "nexterm-bridge-ok")
 
-	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","clientId":"client-a"}`, "", "client-a"))
+	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","clientId":"client-a","mode":"kill"}`, "", "client-a"))
 }
 
 func TestProductionFailedAttachReleasesNewBridge(t *testing.T) {
@@ -299,7 +299,7 @@ func TestProductionTerminalBridgeReopenWinsOverStaleCleanup(t *testing.T) {
 	writeDurableTestInput(t, production, tabID, "printf 'nexterm-bridge-live\\n'", "client-a")
 	waitForProductionOutput(t, second.bridgeTestStream, "nexterm-bridge-live")
 
-	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","clientId":"client-a"}`, "", "client-a"))
+	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","clientId":"client-a","mode":"kill"}`, "", "client-a"))
 }
 
 func waitForProductionOutput(t *testing.T, stream *bridgeTestStream, text string) {

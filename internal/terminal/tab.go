@@ -70,9 +70,10 @@ type Tab struct {
 	cols atomic.Int64
 	rows atomic.Int64
 
-	visible    atomic.Bool
-	lastOutput atomic.Int64
-	closed     atomic.Bool
+	visible      atomic.Bool
+	lastOutput   atomic.Int64
+	lastOutputAt atomic.Int64
+	closed       atomic.Bool
 
 	mu    sync.Mutex
 	ring  *Ring
@@ -188,7 +189,9 @@ func (t *Tab) Feed(raw []byte) {
 	if len(raw) == 0 || t.closed.Load() {
 		return
 	}
-	t.lastOutput.Store(t.now().UnixMilli())
+	now := t.now().UnixMilli()
+	t.lastOutput.Store(now)
+	t.lastOutputAt.Store(now)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.closed.Load() {
@@ -217,6 +220,12 @@ func (t *Tab) State() State {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.state
+}
+
+func (t *Tab) BracketedPasteMode() (bool, uint64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.modes.BracketedPaste(), t.modes.BracketedPasteGeneration()
 }
 
 func (t *Tab) SwitchEncoding(enc Encoding) {
@@ -357,6 +366,8 @@ func (t *Tab) ExportLog(path string, maxBytes int) (uint64, error) {
 }
 
 func (t *Tab) IsIdle(quiet time.Duration) bool { return t.LastOutputAgo() >= quiet }
+
+func (t *Tab) LastOutputAt() int64 { return t.lastOutputAt.Load() }
 
 func (t *Tab) LastOutputAgo() time.Duration {
 	ago := t.now().UnixMilli() - t.lastOutput.Load()

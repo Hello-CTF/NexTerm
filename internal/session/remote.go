@@ -52,7 +52,7 @@ func (m *Manager) RegisterRemoteSession(ctx context.Context, options RemoteSessi
 		return TabInfo{}, err
 	}
 
-	now := time.Now()
+	now := m.now()
 	sessionCtx, sessionCancel := context.WithCancel(m.ctx)
 	session := &Session{
 		ID:          newID(),
@@ -81,7 +81,7 @@ func (m *Manager) RegisterRemoteSession(ctx context.Context, options RemoteSessi
 
 	tabCtx, tabCancel := context.WithCancel(m.ctx)
 	tab := &Tab{
-		ID: tabID, SessionID: session.ID, session: session, terminal: terminal,
+		ID: tabID, SessionID: session.ID, session: session, terminal: terminal, fanout: m.newOutputFanout(),
 		cols: cols, rows: rows, encoding: canonicalEncoding(""),
 		generation: 1, subscribers: make(map[string]subscriber), streamEpoch: ids.New(),
 		ctx: tabCtx, cancel: tabCancel, responses: newResponseQueue(1), feedGate: make(chan struct{}, 1),
@@ -149,9 +149,9 @@ func (m *Manager) remoteTab(tabID string) (*Tab, error) {
 	return tab, nil
 }
 
-func (s *Session) touchRemoteActivity() {
+func (s *Session) touchRemoteActivity(now time.Time) {
 	s.mu.Lock()
-	s.remoteActivity = time.Now()
+	s.remoteActivity = now
 	s.mu.Unlock()
 }
 
@@ -195,7 +195,7 @@ func (m *Manager) FeedRemote(ctx context.Context, tabID string, data []byte) err
 	if err := m.feed(ctx, tab, generation, data); err != nil {
 		return err
 	}
-	tab.session.touchRemoteActivity()
+	tab.session.touchRemoteActivity(m.now())
 	return nil
 }
 
@@ -215,7 +215,7 @@ func (m *Manager) EndRemote(tabID string, exitCode *int) error {
 	exitEvent := tab.exitEventLocked(exitCode)
 	controlEvent := tab.controlEventLocked()
 	tab.mu.Unlock()
-	tab.session.touchRemoteActivity()
+	tab.session.touchRemoteActivity(m.now())
 	m.emit(context.Background(), TopicTerminalExit, exitEvent)
 	m.emit(context.Background(), TopicTerminalControl, controlEvent)
 	return nil
@@ -242,7 +242,7 @@ func (m *Manager) ResizeRemote(ctx context.Context, tabID string, cols, rows uin
 	tab.rows = rows
 	controlEvent := tab.controlEventLocked()
 	tab.mu.Unlock()
-	tab.session.touchRemoteActivity()
+	tab.session.touchRemoteActivity(m.now())
 	m.emit(ctx, TopicTerminalControl, controlEvent)
 	m.transcriptResize(ctx, tab, cols, rows)
 	return nil
@@ -272,7 +272,7 @@ func (m *Manager) AttachRemoteFeed(tabID string) (*Session, error) {
 		return nil, ErrRemoteFeedAttached
 	}
 	session.remoteFeeds++
-	session.remoteActivity = time.Now()
+	session.remoteActivity = m.now()
 	return session, nil
 }
 
@@ -286,7 +286,7 @@ func (m *Manager) DetachRemoteFeed(session *Session) {
 	if session.remoteFeeds > 0 {
 		session.remoteFeeds--
 	}
-	session.remoteActivity = time.Now()
+	session.remoteActivity = m.now()
 	session.mu.Unlock()
 }
 

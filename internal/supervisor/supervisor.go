@@ -16,11 +16,10 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/pty"
 )
 
-var ptyStart = pty.Start
-
 type Supervisor struct {
 	stateDir       string
 	commandTimeout time.Duration
+	ptyStart       func(context.Context, pty.Config) (*pty.Session, error)
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -64,6 +63,7 @@ func New(config Config) (*Supervisor, error) {
 	supervisor := &Supervisor{
 		stateDir:       stateDir,
 		commandTimeout: config.CommandTimeout,
+		ptyStart:       pty.Start,
 		ctx:            ctx,
 		cancel:         cancel,
 		sessions:       make(map[string]*Session),
@@ -129,7 +129,7 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 		if wrapped {
 			command, commandEnv = launch.command, launch.env
 		}
-		ptySession, err := ptyStart(s.ctx, pty.Config{
+		ptySession, err := s.ptyStart(s.ctx, pty.Config{
 			Path: command[0],
 			Args: command[1:],
 			Dir:  options.Dir,

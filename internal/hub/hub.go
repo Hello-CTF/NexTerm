@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 var (
@@ -32,9 +33,12 @@ type Frame struct {
 	Data     []byte
 }
 
+const DefaultDrainTimeout = 30 * time.Second
+
 type Options struct {
 	QueueFrames    int
 	QueueBytes     int
+	DrainTimeout   time.Duration
 	OnChannelClose func(channelID string, incarnation uint64, closeChannel func())
 	OnBackpressure func(channelID string, queuedBytes int)
 	OnDrain        func(channelID string, queuedBytes int)
@@ -61,6 +65,9 @@ func New(options Options) *Hub {
 	}
 	if options.QueueBytes <= 0 {
 		options.QueueBytes = 16 << 20
+	}
+	if options.DrainTimeout <= 0 {
+		options.DrainTimeout = DefaultDrainTimeout
 	}
 	return &Hub{channels: make(map[string]*channel), options: options}
 }
@@ -201,6 +208,7 @@ func (p *Producer) CloseGracefully() error {
 				delete(p.hub.channels, p.channelID)
 				p.channel.closeLocked()
 			} else {
+				p.channel.drainTimer = time.AfterFunc(p.hub.options.DrainTimeout, func() { _ = p.Close() })
 				p.channel.signalLocked()
 			}
 		}
@@ -408,6 +416,7 @@ type channel struct {
 	bound          bool
 	receiverClosed bool
 	draining       bool
+	drainTimer     *time.Timer
 	closed         bool
 	backpressured  bool
 	maxFrames      int
@@ -550,6 +559,10 @@ func (c *channel) close() {
 }
 
 func (c *channel) closeLocked() {
+	if c.drainTimer != nil {
+		c.drainTimer.Stop()
+		c.drainTimer = nil
+	}
 	if !c.closed {
 		c.closed = true
 		c.bound = false

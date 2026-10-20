@@ -69,15 +69,19 @@ func TestServiceCallPreservesClientAndDeliversEarlyChannelFrames(t *testing.T) {
 		t.Fatalf("early stream response = %+v", response)
 	}
 	events := window.snapshot()
-	if len(events) != 1 || events[0].Name != "channel://early-channel" {
+	if len(events) != 2 || events[0].Name != "channel://early-channel" || events[1].Name != "channel://early-channel" {
 		t.Fatalf("early events = %+v", events)
 	}
 	encoded, err := json.Marshal(events[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(encoded) != `[0,127,255]` {
+	if got := decodeDesktopBinaryData(t, events[0].Data); string(got) != "\x00\x7f\xff" {
 		t.Fatalf("early binary payload = %s", encoded)
+	}
+	closed, ok := events[1].Data.(desktopStreamClosedEvent)
+	if !ok || closed.Type != desktopStreamClosedEventType {
+		t.Fatalf("early close payload = %#v, want typed close after binary", events[1].Data)
 	}
 	response = service.Call(t.Context(), ipc.Request{Command: "test_client"})
 	if !response.OK || string(response.Data) != `"desktop"` {

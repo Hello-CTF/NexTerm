@@ -275,13 +275,16 @@ func TestBridgePipeCarriesSupervisorProtocol(t *testing.T) {
 	}
 }
 
-func TestBridgePipeSessionProvidesTerm(t *testing.T) {
-	if value, ok := os.LookupEnv("TERM"); ok {
-		t.Cleanup(func() { _ = os.Setenv("TERM", value) })
-	}
-	if err := os.Unsetenv("TERM"); err != nil {
+func unsetEnv(t *testing.T, key string) {
+	t.Helper()
+	t.Setenv(key, "")
+	if err := os.Unsetenv(key); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestBridgePipeSessionProvidesTerm(t *testing.T) {
+	unsetEnv(t, "TERM")
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	harness := newBridgeHarness(t, ctx)

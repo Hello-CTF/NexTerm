@@ -13,22 +13,41 @@ export function workspaceProblemCopyText(problem: WorkspaceProblem): string {
   return sanitizeWorkspaceProblemText(lines.join("\n"));
 }
 
-export function WorkspaceProblems({
-  workspaceId,
-  onRetryRead,
-  onLoadSql,
-  onReconnect,
-  targetAvailable,
-}: {
-  workspaceId: string;
+interface WorkspaceProblemActions {
   onRetryRead?: (problem: WorkspaceProblem) => void;
   onLoadSql?: (problem: WorkspaceProblem) => void;
   onReconnect?: (problem: WorkspaceProblem) => void;
   targetAvailable?: (problem: WorkspaceProblem) => boolean;
-}) {
-  const { pushToast } = useUi();
+}
+
+export function WorkspaceProblems({
+  workspaceId,
+  ...actions
+}: WorkspaceProblemActions & { workspaceId: string }) {
   const problems = useUi((state) => state.workspaceRuntime[workspaceId]?.problems);
   if (!problems || problems.length === 0) return null;
+  return <WorkspaceProblemSection workspaceId={workspaceId} problems={problems} {...actions} />;
+}
+
+export function ConnectionProblemNotice({
+  problem,
+  ...actions
+}: WorkspaceProblemActions & { problem: WorkspaceProblem }) {
+  return <WorkspaceProblemSection problems={[problem]} {...actions} />;
+}
+
+function WorkspaceProblemSection({
+  workspaceId,
+  problems,
+  onRetryRead,
+  onLoadSql,
+  onReconnect,
+  targetAvailable,
+}: WorkspaceProblemActions & {
+  workspaceId?: string;
+  problems: WorkspaceProblem[];
+}) {
+  const { pushToast } = useUi();
 
   const copy = async (problem: WorkspaceProblem) => {
     try {
@@ -36,6 +55,14 @@ export function WorkspaceProblems({
       pushToast("success", "问题详情已复制");
     } catch (error) {
       pushToast("error", `复制失败：${describeError(error)}`);
+    }
+  };
+
+  const dismiss = (problem: WorkspaceProblem) => {
+    if (problem.connectionKey) {
+      useUi.getState().clearConnectionProblem(problem.connectionKey);
+    } else if (workspaceId) {
+      useUi.getState().dismissWorkspaceProblem(workspaceId, problem.id, problem.generation);
     }
   };
 
@@ -98,9 +125,7 @@ export function WorkspaceProblems({
                     type="button"
                     className="nx-link ml-auto"
                     aria-label={`关闭问题：${problem.summary}`}
-                    onClick={() =>
-                      useUi.getState().dismissWorkspaceProblem(workspaceId, problem.id, problem.generation)
-                    }
+                    onClick={() => dismiss(problem)}
                   >
                     关闭
                   </button>

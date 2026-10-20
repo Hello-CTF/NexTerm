@@ -131,6 +131,7 @@ func (o *Output) Close() {
 	o.closeOnce.Do(func() {
 		close(o.done)
 		o.cancelFlush()
+		o.fanout.DetachAll()
 		<-o.flusherDone
 	})
 }

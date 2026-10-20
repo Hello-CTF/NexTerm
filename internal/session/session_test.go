@@ -385,6 +385,8 @@ func TestLocalDisconnectReapsAndNetworkDisconnectRetains(t *testing.T) {
 
 func TestIdleSweepRechecksTabStateAndDisconnectsExactlyOnce(t *testing.T) {
 	manager, connector, _, session := openTestSession(t, KindSSH)
+	clock := newSessionTestClock()
+	manager.now = clock.Now
 	manager.idleTimeout = time.Nanosecond
 	session.mu.Lock()
 	oldIdle := session.idleSince
@@ -396,7 +398,6 @@ func TestIdleSweepRechecksTabStateAndDisconnectsExactlyOnce(t *testing.T) {
 	if got := session.Info().Status; got != StatusConnected {
 		t.Fatalf("stale idle candidate disconnected active tab: %s", got)
 	}
-	waitFor(t, func() bool { return time.Now().After(oldIdle) })
 	if err := manager.CloseTab(tab.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +407,7 @@ func TestIdleSweepRechecksTabStateAndDisconnectsExactlyOnce(t *testing.T) {
 	if got := session.Info().Status; got != StatusConnected {
 		t.Fatalf("old idle timestamp disconnected new idle period: %s", got)
 	}
-	time.Sleep(time.Millisecond)
+	clock.Advance(time.Nanosecond)
 	if err := manager.SweepIdle(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -823,8 +824,8 @@ func TestChannelReceiverCloseRejectedReattachRollback(t *testing.T) {
 			}
 			entered := make(chan struct{})
 			release := make(chan struct{})
-			previous := channelCloseAfterCapture
-			channelCloseAfterCapture = func(string) {
+			previous := manager.hooks.channelCloseAfterCapture
+			manager.hooks.channelCloseAfterCapture = func(string) {
 				close(entered)
 				<-release
 			}
@@ -834,7 +835,7 @@ func TestChannelReceiverCloseRejectedReattachRollback(t *testing.T) {
 			}
 			t.Cleanup(func() {
 				releaseBarrier()
-				channelCloseAfterCapture = previous
+				manager.hooks.channelCloseAfterCapture = previous
 			})
 			closed := make(chan error, 1)
 			go func() { closed <- receiver.Close() }()
@@ -872,8 +873,8 @@ func TestChannelReceiverCloseDoesNotDetachReplacementEphemeralIncarnation(t *tes
 	}
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	previous := channelCloseAfterCapture
-	channelCloseAfterCapture = func(string) {
+	previous := manager.hooks.channelCloseAfterCapture
+	manager.hooks.channelCloseAfterCapture = func(string) {
 		select {
 		case <-entered:
 			return
@@ -888,7 +889,7 @@ func TestChannelReceiverCloseDoesNotDetachReplacementEphemeralIncarnation(t *tes
 	}
 	t.Cleanup(func() {
 		releaseBarrier()
-		channelCloseAfterCapture = previous
+		manager.hooks.channelCloseAfterCapture = previous
 	})
 	closed := make(chan error, 1)
 	go func() { closed <- receiver.Close() }()
@@ -1005,7 +1006,7 @@ func TestChannelReceiverCloseDoesNotCloseReusedRawChannel(t *testing.T) {
 func TestChannelReceiverCloseDuringAttachDoesNotCloseReusedRetainableTab(t *testing.T) {
 	const channelID = "attach-reused-retainable"
 	fixture, receiver := newBlockedChannelAttach(t, channelID)
-	release, closed := pauseReceiverCloseAfterCheck(t, receiver)
+	release, closed := pauseReceiverCloseAfterCheck(t, fixture.manager, receiver)
 	if err := fixture.manager.DetachChannel(channelID); err != nil {
 		t.Fatal(err)
 	}
@@ -1043,7 +1044,7 @@ func TestChannelReceiverCloseDuringAttachDoesNotCloseReusedRetainableTab(t *test
 func TestChannelReceiverCloseDuringAttachDoesNotCloseReusedRawChannel(t *testing.T) {
 	const channelID = "attach-reused-raw"
 	fixture, receiver := newBlockedChannelAttach(t, channelID)
-	release, closed := pauseReceiverCloseAfterCheck(t, receiver)
+	release, closed := pauseReceiverCloseAfterCheck(t, fixture.manager, receiver)
 	if err := fixture.manager.DetachChannel(channelID); err != nil {
 		t.Fatal(err)
 	}
@@ -1075,13 +1076,6 @@ func TestChannelDetachCleanupsDoNotDeadlockWithBackpressure(t *testing.T) {
 	const backpressureID = "backpressure-cleanup"
 	const otherID = "other-cleanup"
 	captureStarted := make(chan struct{})
-	previous := channelCloseBeforeCapture
-	channelCloseBeforeCapture = func(channelID string) {
-		if channelID == otherID {
-			close(captureStarted)
-		}
-	}
-	t.Cleanup(func() { channelCloseBeforeCapture = previous })
 	backpressured := make(chan struct{})
 	drainEntered := make(chan struct{})
 	var manager *Manager
@@ -1099,6 +1093,13 @@ func TestChannelDetachCleanupsDoNotDeadlockWithBackpressure(t *testing.T) {
 		},
 	})
 	manager = NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), Hub: bus})
+	previous := manager.hooks.channelCloseBeforeCapture
+	manager.hooks.channelCloseBeforeCapture = func(channelID string) {
+		if channelID == otherID {
+			close(captureStarted)
+		}
+	}
+	t.Cleanup(func() { manager.hooks.channelCloseBeforeCapture = previous })
 	connected, err := manager.Connect(context.Background(), Asset{ID: "cleanup-deadlock", Kind: KindSSH})
 	if err != nil {
 		t.Fatal(err)
@@ -1144,15 +1145,15 @@ func pauseChannelReceiverCloseAfterCheck(t *testing.T, manager *Manager, channel
 	if err != nil {
 		t.Fatal(err)
 	}
-	return pauseReceiverCloseAfterCheck(t, receiver)
+	return pauseReceiverCloseAfterCheck(t, manager, receiver)
 }
 
-func pauseReceiverCloseAfterCheck(t *testing.T, receiver *hub.Receiver) (func(), <-chan error) {
+func pauseReceiverCloseAfterCheck(t *testing.T, manager *Manager, receiver *hub.Receiver) (func(), <-chan error) {
 	t.Helper()
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	previous := channelCloseAfterCheck
-	channelCloseAfterCheck = func() {
+	previous := manager.hooks.channelCloseAfterCheck
+	manager.hooks.channelCloseAfterCheck = func() {
 		close(entered)
 		<-release
 	}
@@ -1162,7 +1163,7 @@ func pauseReceiverCloseAfterCheck(t *testing.T, receiver *hub.Receiver) (func(),
 	}
 	t.Cleanup(func() {
 		releaseBarrier()
-		channelCloseAfterCheck = previous
+		manager.hooks.channelCloseAfterCheck = previous
 	})
 	closed := make(chan error, 1)
 	go func() { closed <- receiver.Close() }()

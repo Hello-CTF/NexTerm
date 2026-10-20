@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sessionApi, syncApi, terminalApi, type LiveTabInfo } from "../../ipc/commands";
-import { nextTabId, reconnectDeadHost, reconnectSessionAndWait, useUi, type Workspace } from "../../app/store";
+import { nextTabId, reconnectDeadHost, reconnectWorkspaceSession, useUi, type Workspace } from "../../app/store";
 import { apiBase, TRANSPORT } from "../../ipc/env";
 import { listenEvent } from "../../ipc/events";
 import { useAuth } from "../auth/store";
@@ -81,6 +81,11 @@ function ago(ms: number): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h} 小时前`;
   return `${Math.floor(h / 24)} 天前`;
+}
+
+function lastOutputLabel(tab: BackgroundTab): string {
+  if (tab.lastOutputAt !== undefined && tab.lastOutputAt <= 0) return "暂无输出";
+  return ago(tab.lastOutputMsAgo ?? 0);
 }
 
 export function BackgroundSessions({
@@ -431,11 +436,13 @@ export function BackgroundSessions({
     const connectionEpoch = runtimeEpoch;
     setReconnecting(true);
     setError(null);
+    const isCurrent = () =>
+      ownerGeneration === ownerGenerationRef.current && connectionEpoch === useUi.getState().workspaceRuntimeEpoch;
     try {
       const fresh = currentSession && workspaceSessionMatches(target, currentSession, verifiedQuickSessions)
-        ? await reconnectSessionAndWait(currentSession)
-        : await reconnectDeadHost(target);
-      if (ownerGeneration !== ownerGenerationRef.current || connectionEpoch !== useUi.getState().workspaceRuntimeEpoch) return;
+        ? await reconnectWorkspaceSession(target, currentSession, { isCurrent })
+        : await reconnectDeadHost(target, { isCurrent });
+      if (!isCurrent()) return;
       if (!fresh) {
         pushToast("info", "已取消重连");
         return;
@@ -600,7 +607,7 @@ export function BackgroundSessions({
                   <td className="nx-mono text-neutral-400" title={t.title}>
                     {t.title ?? `${t.cols}×${t.rows}`}
                   </td>
-                  <td className="text-neutral-400">{t.remote ? "远端持久终端" : ago(t.lastOutputMsAgo ?? 0)}</td>
+                  <td className="text-neutral-400">{t.remote ? "远端持久终端" : lastOutputLabel(t)}</td>
                   <td className="nx-right">
                     <div className="flex items-center justify-end gap-1.5">
                       <button

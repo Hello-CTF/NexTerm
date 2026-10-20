@@ -142,9 +142,7 @@ func TestExecOutputCap(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
 	client := testClient(t, server)
-	original := maxExecOutput
-	maxExecOutput = 64 * 1024
-	defer func() { maxExecOutput = original }()
+	client.maxExecOutput = 64 * 1024
 	stdout, _, exitCode, _, err := client.Exec(context.Background(), ExecSpec{
 		Command: []string{"dd", "if=/dev/zero", "bs=4096", "count=64"},
 	})

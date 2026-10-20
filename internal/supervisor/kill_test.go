@@ -132,15 +132,15 @@ func TestCreateCloseRaceLeavesNoOrphanRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	realStart := ptyStart
+	realStart := supervisor.ptyStart
 	release := make(chan struct{})
 	started := make(chan struct{})
-	ptyStart = func(ctx context.Context, config pty.Config) (*pty.Session, error) {
+	supervisor.ptyStart = func(ctx context.Context, config pty.Config) (*pty.Session, error) {
 		close(started)
 		<-release
 		return realStart(context.Background(), config)
 	}
-	t.Cleanup(func() { ptyStart = realStart })
+	t.Cleanup(func() { supervisor.ptyStart = realStart })
 
 	createDone := make(chan error, 1)
 	go func() {

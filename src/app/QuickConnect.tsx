@@ -1,7 +1,20 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { connectAsset, connectQuickTarget, dbKindOf, saveQuickConnectAsset, useUi, type ConnectAssetInput, type WorkspaceProblem } from "./store";
-import { WorkspaceProblems } from "../features/problems/WorkspaceProblems";
+import {
+  assetConnectionProblemKey,
+  connectAsset,
+  connectDevice,
+  connectQuickTarget,
+  dbKindOf,
+  quickConnectionProblemKey,
+  saveQuickConnectAsset,
+  useConnectionProblem,
+  useUi,
+  type ConnectAssetInput,
+  type ConnectOutcome,
+  type WorkspaceProblem,
+} from "./store";
+import { ConnectionProblemNotice } from "../features/problems/WorkspaceProblems";
 import { assetApi, type Asset } from "../ipc/commands";
 import { WEB } from "../ipc/env";
 import { describeError } from "../ui/errorText";
@@ -53,9 +66,7 @@ export function QuickConnect({
     retry: () => void;
   } | null>(null);
   const [pendingQuick, setPendingQuick] = useState<"temporary" | "save" | null>(null);
-  const [problemWorkspaceId, setProblemWorkspaceId] = useState<string | null>(
-    () => useUi.getState().activeWorkspaceId,
-  );
+  const [problemKey, setProblemKey] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
   const quickPendingRef = useRef(false);
@@ -73,9 +84,6 @@ export function QuickConnect({
   const hiddenDatabaseCount = assets.filter(
     (asset) => dbKindOf(asset.kind) !== null && hiddenIds.includes(asset.id),
   ).length;
-  const workspaceProblems = useUi((state) =>
-    problemWorkspaceId ? state.workspaceRuntime[problemWorkspaceId]?.problems : undefined,
-  );
   const mobile = isMobile();
   const visible = useMemo(
     () =>
@@ -145,7 +153,17 @@ export function QuickConnect({
   const showConnectionActions = assetsQuery.isSuccess && rows.length === 0;
 
   const activeIndex = rows.length > 0 ? Math.min(cursor, rows.length - 1) : 0;
-  const activeOptionId = rows[activeIndex] ? `${listId}-option-${activeIndex}` : undefined;
+  const activeRow = rows[activeIndex];
+  const targetProblemKey = quickTarget
+    ? quickConnectionProblemKey(quickTarget)
+    : query.trim() && activeRow?.kind === "asset"
+      ? assetConnectionProblemKey(activeRow.asset.id)
+      : null;
+  const connectionProblem = useConnectionProblem(
+    problemKey ?? targetProblemKey,
+    !problemKey && !query.trim(),
+  );
+  const activeOptionId = activeRow ? `${listId}-option-${activeIndex}` : undefined;
   useEffect(() => {
     if (!activeOptionId) return;
     const option = document.getElementById(activeOptionId);
@@ -179,10 +197,12 @@ export function QuickConnect({
       return;
     }
     if (useUi.getState().connectingAssetIds.includes(asset.id)) return;
-    setProblemWorkspaceId(useUi.getState().activeWorkspaceId);
+    setProblemKey(assetConnectionProblemKey(asset.id));
     setConnectError(null);
     refocusInput();
-    const outcome = await connectAsset(asset, { silent: true });
+    const outcome = asset.kind === "device" && asset.id.startsWith("device/")
+      ? await connectDevice({ id: asset.id.slice("device/".length), name: asset.name }, { silent: true })
+      : await connectAsset(asset, { silent: true });
     if (closedRef.current) return;
     if (outcome.ok) {
       closeOverlay();
@@ -199,6 +219,7 @@ export function QuickConnect({
   const onAssetSaved = (asset?: Asset) => {
     setCreating(false);
     void queryClient.invalidateQueries({ queryKey: ["assets"] });
+    void queryClient.invalidateQueries({ queryKey: ["asset-search"] });
     void queryClient.invalidateQueries({ queryKey: ["groups"] });
     void queryClient.invalidateQueries({ queryKey: ["credentials"] });
     if (!asset) return;
@@ -210,18 +231,27 @@ export function QuickConnect({
     if (kindFilter === "database") return;
     if (quickPendingRef.current) return;
     quickPendingRef.current = true;
-    setProblemWorkspaceId(useUi.getState().activeWorkspaceId);
+    setProblemKey(quickConnectionProblemKey(row.target));
     setConnectError(null);
     refocusInput();
     setPendingQuick(row.mode);
     try {
-      const outcome =
-        row.mode === "temporary"
-          ? await connectQuickTarget(row.target, { silent: true })
-          : await saveQuickConnectAsset(row.target, { silent: true });
+      let outcome: ConnectOutcome;
+      let retryAsset: Asset | undefined;
+      if (row.mode === "temporary") {
+        outcome = await connectQuickTarget(row.target, { silent: true });
+      } else {
+        const saved = await saveQuickConnectAsset(row.target, { silent: true });
+        outcome = saved;
+        retryAsset = saved.asset;
+        if (saved.asset) {
+          void queryClient.invalidateQueries({ queryKey: ["assets"] });
+          void queryClient.invalidateQueries({ queryKey: ["asset-search"] });
+        }
+        if (!closedRef.current) setProblemKey(saved.problemKey);
+      }
       if (closedRef.current) return;
       if (outcome.ok) {
-        if (row.mode === "save") void queryClient.invalidateQueries({ queryKey: ["assets"] });
         closeOverlay();
         return;
       }
@@ -229,7 +259,7 @@ export function QuickConnect({
       setConnectError({
         label: row.label,
         message: outcome.error ?? "连接失败",
-        retry: () => void runQuick(row),
+        retry: () => retryAsset ? void connect(retryAsset) : void runQuick(row),
       });
     } finally {
       quickPendingRef.current = false;
@@ -241,9 +271,7 @@ export function QuickConnect({
     const connection = problem.connection;
     if (!connection) return;
     if (connection.kind === "asset") {
-      if (!assets.some((asset) => asset.id === connection.asset.id) || !problemTargetAvailable(problem)) {
-        return;
-      }
+      if (!problemTargetAvailable(problem)) return;
       void connect(connection.asset);
     } else {
       void runQuick({
@@ -258,6 +286,7 @@ export function QuickConnect({
   const problemTargetAvailable = (problem: WorkspaceProblem): boolean => {
     const connection = problem.connection;
     if (connection?.kind !== "asset") return true;
+    if (connection.asset.kind === "device" && connection.asset.id.startsWith("device/")) return true;
     return assets.some((asset) => asset.id === connection.asset.id);
   };
 
@@ -479,9 +508,9 @@ export function QuickConnect({
             </button>
           </div>
         )}
-        {kindFilter !== "database" && problemWorkspaceId && workspaceProblems && workspaceProblems.length > 0 && (
-          <WorkspaceProblems
-            workspaceId={problemWorkspaceId}
+        {kindFilter !== "database" && connectionProblem && (
+          <ConnectionProblemNotice
+            problem={connectionProblem}
             onReconnect={reconnectProblem}
             targetAvailable={problemTargetAvailable}
           />

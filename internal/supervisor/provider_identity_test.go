@@ -20,9 +20,9 @@ func TestRemoteProviderCreateLostResponseNeverKillsReplacement(t *testing.T) {
 	client := testClient(t, server)
 	provider := NewRemoteProvider(client)
 
-	realCreate := remoteProviderCreate
-	t.Cleanup(func() { remoteProviderCreate = realCreate })
-	remoteProviderCreate = func(createCtx context.Context, createClient *Client, options CreateOptions) (Info, error) {
+	realCreate := provider.create
+	t.Cleanup(func() { provider.create = realCreate })
+	provider.create = func(createCtx context.Context, createClient *Client, options CreateOptions) (Info, error) {
 		if _, err := createClient.Create(createCtx, options); err != nil {
 			return Info{}, err
 		}
@@ -133,15 +133,15 @@ func TestInFlightReplacementCreateSurvivesIdentityKill(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	realStart := ptyStart
+	realStart := supervisor.ptyStart
 	started := make(chan struct{})
 	release := make(chan struct{})
-	ptyStart = func(startCtx context.Context, config pty.Config) (*pty.Session, error) {
+	supervisor.ptyStart = func(startCtx context.Context, config pty.Config) (*pty.Session, error) {
 		close(started)
 		<-release
 		return realStart(startCtx, config)
 	}
-	t.Cleanup(func() { ptyStart = realStart })
+	t.Cleanup(func() { supervisor.ptyStart = realStart })
 
 	createDone := make(chan error, 1)
 	go func() {

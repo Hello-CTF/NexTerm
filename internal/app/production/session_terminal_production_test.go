@@ -730,9 +730,6 @@ func TestProductionTerminalRequestsEnforceAccountOwnership(t *testing.T) {
 		{name: "close", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
 			return []ipc.Response{f.dispatch(actor, "terminal_close_tab", `{"tabId":"`+f.ownerTab.ID+`","clientId":"`+actor.clientID+`"}`, "")}
 		}},
-		{name: "cwd", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
-			return []ipc.Response{f.dispatch(actor, "session_cwd", `{"sessionId":"`+f.ownerSession.ID+`"}`, "")}
-		}},
 		{name: "reconnect", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
 			return []ipc.Response{f.dispatch(actor, "session_reconnect", `{"sessionId":"`+f.ownerSession.ID+`"}`, "")}
 		}},

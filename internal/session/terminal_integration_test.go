@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -96,6 +97,43 @@ func TestCoreTerminalRawReplayAndResponseIntegration(t *testing.T) {
 	}
 	if got := channel.written(); !bytes.HasSuffix(got, []byte("internal")) {
 		t.Fatalf("trusted internal write = %q", got)
+	}
+}
+
+func TestTabInfoOutputAgeIsListOnly(t *testing.T) {
+	var clock atomic.Int64
+	clock.Store(1_000_000)
+	connector := newFakeConnector()
+	manager := NewManager(Config{
+		Connector: connector,
+		Terminals: TerminalFactoryFunc(func(config TerminalConfig) (TerminalState, error) {
+			return terminal.NewTab(config.TabID, config.SessionID, int(config.Cols), int(config.Rows), terminal.UTF8, terminal.WithClock(func() time.Time {
+				return time.UnixMilli(clock.Load())
+			})), nil
+		}),
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(context.Background(), Asset{ID: "list-only-output-age", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab := openTestTab(t, manager, connected, "client-a", "list-only-output-age")
+
+	clock.Add(5000)
+	before := tab.Info()
+	if before.LastOutputMSAgo != 0 {
+		t.Fatalf("general Tab.Info output age = %d, want zero", before.LastOutputMSAgo)
+	}
+	infos := manager.ListTabs()
+	if len(infos) != 1 || infos[0].ID != tab.ID || infos[0].LastOutputMSAgo != 5000 {
+		t.Fatalf("ListTabs output age = %+v, want tab %s with age 5000", infos, tab.ID)
+	}
+	if got := tab.Info().LastOutputMSAgo; got != 0 {
+		t.Fatalf("general Tab.Info after ListTabs output age = %d, want zero", got)
+	}
+	clock.Add(1)
+	if after := tab.Info(); after != before {
+		t.Fatalf("general Tab.Info changed across clock advance: before=%+v after=%+v", before, after)
 	}
 }
 

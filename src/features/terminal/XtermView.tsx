@@ -65,6 +65,7 @@ export interface XtermViewProps {
   winrm?: boolean;
   containerId?: string;
   resumeTabId?: string;
+  sessionConnected?: boolean;
   onAttachInfo?: (info: {
     tabId: string;
     controller: string | null;
@@ -101,8 +102,11 @@ export function XtermView(props: XtermViewProps) {
   const kernelTabIdRef = useRef<string>("");
   const [linesBelow, setLinesBelow] = useState(0);
   const [selectionBar, setSelectionBar] = useState<{ x: number; y: number } | null>(null);
+  const reattachRef = useRef<(() => void) | null>(null);
+  const previousSessionConnected = useRef(props.sessionConnected === true);
   const onBlocksRef = useRef(props.onBlocks);
   const onHandleRef = useRef(props.onHandle);
+  const onAttachRef = useRef(props.onAttach);
   const onAttachInfoRef = useRef(props.onAttachInfo);
   const onAttachFailedRef = useRef(props.onAttachFailed);
   const onDataRef = useRef(props.onData);
@@ -114,6 +118,7 @@ export function XtermView(props: XtermViewProps) {
   const onRequestPasteRef = useRef(props.onRequestPaste);
   onBlocksRef.current = props.onBlocks;
   onHandleRef.current = props.onHandle;
+  onAttachRef.current = props.onAttach;
   onAttachInfoRef.current = props.onAttachInfo;
   onAttachFailedRef.current = props.onAttachFailed;
   onDataRef.current = props.onData;
@@ -225,7 +230,7 @@ export function XtermView(props: XtermViewProps) {
       dimensions: () => ({ cols: term.cols, rows: term.rows }),
     });
 
-    const oscFilter = createOscStreamFilter();
+    let oscFilter = createOscStreamFilter();
     const writeOscSegments = createOscSegmentWriter(
       term,
       (event) => {
@@ -269,6 +274,11 @@ export function XtermView(props: XtermViewProps) {
         }
       },
       (control) => {
+        if (control.expired) {
+          term.clearSelection();
+          oscFilter = createOscStreamFilter();
+          blocks.clear();
+        }
         const previous = streamAnchor
           ? streamAnchor.seq + Math.max(0, streamBytes - streamAnchor.control)
           : 0;
@@ -388,7 +398,7 @@ export function XtermView(props: XtermViewProps) {
         kernelTabId = id;
         kernelTabIdRef.current = id;
         if (fallbackNotice) useUi.getState().pushToast("info", fallbackNotice);
-        props.onAttach?.(id);
+        onAttachRef.current?.(id);
       } catch (e) {
         const code = (e as { code?: string } | null)?.code;
         if (code === "not_found") {
@@ -403,9 +413,10 @@ export function XtermView(props: XtermViewProps) {
     };
     onGeometryRef.current = () => void doAttach();
 
+    let reattaching = false;
     const reattachOnReopen = () => {
       const id = kernelTabId;
-      if (!id) return;
+      if (!id || reattaching) return;
       if (props.containerId) {
         kernelTabId = "";
         onAttachFailedRef.current?.("interrupted");
@@ -417,6 +428,7 @@ export function XtermView(props: XtermViewProps) {
             epoch: streamAnchor.epoch,
           }
         : undefined;
+      reattaching = true;
       void (async () => {
         try {
           const info = resume
@@ -426,6 +438,7 @@ export function XtermView(props: XtermViewProps) {
             void terminalApi.detach(info.tabId, channelIdOf(channel)).catch(() => undefined);
             return;
           }
+          kernelTabId = info.tabId;
           kernelTabIdRef.current = info.tabId;
           applyRemoteDimensions(info.cols, info.rows);
           coordinator.attach(info.tabId, { cols: info.cols, rows: info.rows }, true);
@@ -440,14 +453,18 @@ export function XtermView(props: XtermViewProps) {
             shell: info.shell,
             retainable: info.retainable,
           });
+          onAttachRef.current?.(info.tabId);
         } catch (e) {
           if (disposed) return;
           if ((e as { code?: string } | null)?.code === "not_found") {
             onAttachFailedRef.current?.("not_found");
           }
+        } finally {
+          reattaching = false;
         }
       })();
     };
+    reattachRef.current = reattachOnReopen;
     const offReopen = onChannelReopen(channel, reattachOnReopen);
 
     const attachTimer = window.setTimeout(() => {
@@ -567,6 +584,7 @@ export function XtermView(props: XtermViewProps) {
       coordinator.close();
       gridRef.current = null;
       onGeometryRef.current = null;
+      if (reattachRef.current === reattachOnReopen) reattachRef.current = null;
       offReopen();
       window.clearTimeout(attachTimer);
       if (windowResizeTimer !== null) window.clearTimeout(windowResizeTimer);
@@ -595,6 +613,13 @@ export function XtermView(props: XtermViewProps) {
       termRef.current = null;
     };
   }, [props.sessionId, props.containerId, props.resumeTabId]);
+
+  useEffect(() => {
+    const connected = props.sessionConnected === true;
+    const wasConnected = previousSessionConnected.current;
+    previousSessionConnected.current = connected;
+    if (!wasConnected && connected) reattachRef.current?.();
+  }, [props.sessionConnected]);
 
   useEffect(() => {
     const applyAppearance = () => {

@@ -79,16 +79,19 @@ func TestEnvironmentLeavesColortermOutsideTerminal(t *testing.T) {
 	}
 }
 
+func unsetEnv(t *testing.T, key string) {
+	t.Helper()
+	t.Setenv(key, "")
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestEnvironmentDefaultsTermForExec(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("exec TERM default is unix-only")
 	}
-	if value, ok := os.LookupEnv("TERM"); ok {
-		t.Cleanup(func() { _ = os.Setenv("TERM", value) })
-	}
-	if err := os.Unsetenv("TERM"); err != nil {
-		t.Fatal(err)
-	}
+	unsetEnv(t, "TERM")
 	env := environment(nil, false, "")
 	if got := environmentValue(env, "TERM"); got != "xterm-256color" {
 		t.Fatalf("TERM = %q, want xterm-256color", got)

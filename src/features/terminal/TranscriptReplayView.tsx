@@ -27,7 +27,7 @@ const REPLAY_THEME = {
 function terminalSink(terminal: Terminal): ReplaySink {
   return {
     reset: () => terminal.reset(),
-    write: (data) => terminal.write(data),
+    write: (data, callback) => terminal.write(data, callback),
     resize: (cols, rows) => terminal.resize(cols, rows),
   };
 }
@@ -117,6 +117,10 @@ export function TranscriptReplayView({
       positionRef.current = engine.seek(terminalSink(terminal), 0);
       setPosition(positionRef.current);
     }
+    return () => {
+      if (engineRef.current === engine) engineRef.current = null;
+      engine.dispose();
+    };
   }, [chunks]);
 
   useEffect(() => {

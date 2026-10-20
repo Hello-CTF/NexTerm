@@ -74,65 +74,11 @@ func newHostShareView(share *sharing.HostShare) hostShareView {
 	}
 }
 
-type shareLinkCreateRequest struct {
-	DeviceID  string `json:"device_id"`
-	SessionID string `json:"session_id"`
-	Write     bool   `json:"write"`
-	TTLMS     int64  `json:"ttl_ms"`
-}
-
-// deviceShareLinkView is the management view of a device public link; unlike shareLinkView it binds the
-// device rather than a single session, and carries not_before (the delayed effect time).
-type deviceShareLinkView struct {
-	ID             string `json:"id"`
-	OwnerID        string `json:"owner_id"`
-	DeviceID       string `json:"device_id"`
-	Permission     string `json:"permission"`
-	CreatedAt      int64  `json:"created_at"`
-	NotBefore      int64  `json:"not_before"`
-	ExpiresAt      int64  `json:"expires_at"`
-	RevokedAt      int64  `json:"revoked_at,omitempty"`
-	LastAccessedAt int64  `json:"last_accessed_at,omitempty"`
-}
-
-func newDeviceShareLinkView(link *sharing.DeviceLink) deviceShareLinkView {
-	return deviceShareLinkView{
-		ID: link.ID, OwnerID: link.OwnerID, DeviceID: link.DeviceID,
-		Permission: string(link.Permission), CreatedAt: link.CreatedAt, NotBefore: link.NotBefore, ExpiresAt: link.ExpiresAt,
-		RevokedAt: link.RevokedAt, LastAccessedAt: link.LastAccessedAt,
-	}
-}
-
-type deviceShareLinkCreateRequest struct {
-	DeviceID    string `json:"device_id"`
-	Write       bool   `json:"write"`
-	NotBeforeMS int64  `json:"not_before_ms"`
-	TTLMS       int64  `json:"ttl_ms"`
-}
-
 type hostShareCreateRequest struct {
 	DeviceID          string `json:"device_id"`
 	RecipientUsername string `json:"recipient_username"`
 	Write             bool   `json:"write"`
 	TTLMS             int64  `json:"ttl_ms"`
-}
-
-func (s *Service) serveShareLinkCreate(w http.ResponseWriter, r *http.Request) {
-	var request shareLinkCreateRequest
-	if err := decodeFleetJSON(w, r, &request); err != nil {
-		writeFleetFailure(w, err)
-		return
-	}
-	link, token, err := s.sharing.CreateLink(r.Context(), identityFrom(r), request.DeviceID, request.SessionID, request.Write, time.Duration(request.TTLMS)*time.Millisecond)
-	if err != nil {
-		writeFleetFailure(w, err)
-		return
-	}
-	view := newShareLinkView(link)
-	writeFleetJSON(w, http.StatusOK, struct {
-		shareLinkView
-		Token string `json:"token"`
-	}{shareLinkView: view, Token: token})
 }
 
 func (s *Service) serveShareLinkList(w http.ResponseWriter, r *http.Request) {
@@ -150,47 +96,6 @@ func (s *Service) serveShareLinkList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) serveShareLinkRevoke(w http.ResponseWriter, r *http.Request) {
 	if err := s.sharing.RevokeLink(r.Context(), identityFrom(r), r.PathValue("id")); err != nil {
-		writeFleetFailure(w, err)
-		return
-	}
-	writeFleetJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-// serveDeviceShareLinkCreate handles POST /share/device-links: creates a device public link,
-// and the response is the only entry carrying the one-time token (list/revoke responses carry no token).
-func (s *Service) serveDeviceShareLinkCreate(w http.ResponseWriter, r *http.Request) {
-	var request deviceShareLinkCreateRequest
-	if err := decodeFleetJSON(w, r, &request); err != nil {
-		writeFleetFailure(w, err)
-		return
-	}
-	link, token, err := s.sharing.CreateDeviceLink(r.Context(), identityFrom(r), request.DeviceID, request.Write, request.NotBeforeMS, time.Duration(request.TTLMS)*time.Millisecond)
-	if err != nil {
-		writeFleetFailure(w, err)
-		return
-	}
-	view := newDeviceShareLinkView(link)
-	writeFleetJSON(w, http.StatusOK, struct {
-		deviceShareLinkView
-		Token string `json:"token"`
-	}{deviceShareLinkView: view, Token: token})
-}
-
-func (s *Service) serveDeviceShareLinkList(w http.ResponseWriter, r *http.Request) {
-	links, err := s.sharing.ListDeviceLinks(r.Context(), identityFrom(r))
-	if err != nil {
-		writeFleetFailure(w, err)
-		return
-	}
-	views := make([]deviceShareLinkView, 0, len(links))
-	for _, link := range links {
-		views = append(views, newDeviceShareLinkView(link))
-	}
-	writeFleetJSON(w, http.StatusOK, map[string][]deviceShareLinkView{"links": views})
-}
-
-func (s *Service) serveDeviceShareLinkRevoke(w http.ResponseWriter, r *http.Request) {
-	if err := s.sharing.RevokeDeviceLink(r.Context(), identityFrom(r), r.PathValue("id")); err != nil {
 		writeFleetFailure(w, err)
 		return
 	}
@@ -354,7 +259,7 @@ func (s *Service) shareResolveKey(w http.ResponseWriter, r *http.Request) (strin
 }
 
 // recordShareResolveOutcome only counts nonexistent tokens toward rate-limit backoff (random token floods);
-// denials of real tokens such as revoked/expired/not-yet-valid/device-offline do not punish the holder.
+// denials of real tokens such as revoked/expired/device-offline do not punish the holder.
 func (s *Service) recordShareResolveOutcome(key string, err error) {
 	if err == nil {
 		s.shareResolveGate.RecordSuccess(key)
@@ -386,28 +291,6 @@ func (s *Service) serveSharePublicTerminal(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	s.serveShareTerminal(w, r, grant, s.sharing.NewLinkGate(grant))
-}
-
-// serveSharePublicDeviceTerminal handles GET /share/public/device/{token}: the data plane of a device
-// public link, under the same contract as serveSharePublicTerminal - plain navigations are served the SPA directly by the static
-// entry (no token verification), and only the WS upgrade enters token auth; the difference is that the Grant carries no SessionID, so the data plane
-// creates a terminal for the visitor via the host agent (instead of attaching to the sharer's existing session), never touching host passwords or private keys.
-func (s *Service) serveSharePublicDeviceTerminal(w http.ResponseWriter, r *http.Request) {
-	if !isShareWSUpgrade(r) {
-		s.serveSharePublicPage(w, r)
-		return
-	}
-	key, allowed := s.shareResolveKey(w, r)
-	if !allowed {
-		return
-	}
-	grant, err := s.sharing.ResolveDeviceLink(r.Context(), r.PathValue("token"))
-	s.recordShareResolveOutcome(key, err)
-	if err != nil {
-		writeFleetFailure(w, err)
-		return
-	}
-	s.serveShareTerminal(w, r, grant, s.sharing.NewDeviceLinkGate(grant))
 }
 
 // isShareWSUpgrade reports whether the request is a WebSocket upgrade; the conditions match
@@ -468,7 +351,7 @@ func (s *Service) serveShareTerminalOpen(w http.ResponseWriter, r *http.Request)
 		writeFleetFailure(w, err)
 		return
 	}
-	s.serveShareTerminal(w, r, grant, s.sharing.NewHostGate(grant))
+	s.serveShareTerminal(w, r, &grant.Grant, s.sharing.NewHostGate(grant))
 }
 
 // serveShareTerminal upgrades the viewer WS and establishes the gated data path. When the grant carries a
@@ -505,7 +388,7 @@ func (s *Service) serveShareTerminalWithViewer(r *http.Request, viewer *shareTer
 		_ = viewer.conn.Close(websocket.StatusInternalError, "ready failed")
 		return sessionID
 	}
-	s.pumpShareTerminal(viewer, stream, gate)
+	s.pumpShareTerminal(viewer, stream, gate, sessionID)
 	return sessionID
 }
 
@@ -538,7 +421,7 @@ func (s *Service) openShareStream(r *http.Request, client *supervisor.Client, gr
 // goroutine to cover idle connections (revocation/expiry takes effect even with no data flow). Once the grant becomes invalid, any
 // goroutine returns with an error, followed by a best-effort error frame and close; blocked reads
 // are woken by stream.Close and the viewer close.
-func (s *Service) pumpShareTerminal(viewer *shareTerminalWS, stream *supervisor.Stream, gate *sharing.Gate) {
+func (s *Service) pumpShareTerminal(viewer *shareTerminalWS, stream *supervisor.Stream, gate *sharing.Gate, sessionID string) {
 	pumpCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 3)
 	go func() {
@@ -551,6 +434,7 @@ func (s *Service) pumpShareTerminal(viewer *shareTerminalWS, stream *supervisor.
 		}
 		done <- err
 	}()
+	lastReady := gate.Grant()
 	go func() {
 		ticker := time.NewTicker(s.shareRevalidateInterval)
 		defer ticker.Stop()
@@ -563,6 +447,16 @@ func (s *Service) pumpShareTerminal(viewer *shareTerminalWS, stream *supervisor.
 				if err := gate.Check(pumpCtx); err != nil {
 					done <- err
 					return
+				}
+				current := gate.Grant()
+				if current != nil && (lastReady == nil || lastReady.Permission != current.Permission || lastReady.ExpiresAt != current.ExpiresAt) {
+					if err := viewer.writeJSON(pumpCtx, shareReadyFrame{
+						Type: "ready", SessionID: sessionID, Permission: string(current.Permission), ExpiresAt: current.ExpiresAt,
+					}); err != nil {
+						done <- err
+						return
+					}
+					lastReady = current
 				}
 			}
 		}

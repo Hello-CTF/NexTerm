@@ -13,6 +13,7 @@ import (
 func TestConcurrentTabAndOutput(t *testing.T) {
 	tab := newTestTab(t)
 	o := newTestOutput(t, tab)
+	o.fanout = newFanoutSlowTest(FanoutOptions{QueueFrames: 1024, QueueBytes: 16 << 20})
 	ctx := context.Background()
 	stable := &memSink{}
 	o.Attach("stable", stable)
@@ -168,7 +169,7 @@ func TestConcurrentCloseFeeds(t *testing.T) {
 }
 
 func TestConcurrentFanoutSendDetach(t *testing.T) {
-	f := NewFanout()
+	f := newFanoutSlowTest(FanoutOptions{QueueFrames: 1024, QueueBytes: 1 << 20})
 	ctx := context.Background()
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -189,4 +190,5 @@ func TestConcurrentFanoutSendDetach(t *testing.T) {
 	if f.Count() != 25 {
 		t.Fatalf("count = %d", f.Count())
 	}
+	f.DetachAll()
 }

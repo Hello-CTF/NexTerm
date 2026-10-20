@@ -301,8 +301,8 @@ func TestRemoteProviderCreateCompensatesOnAttachFailure(t *testing.T) {
 	server := testServer(t, supervisor)
 	provider := NewRemoteProvider(testClient(t, server))
 
-	realAttach := remoteProviderAttach
-	t.Cleanup(func() { remoteProviderAttach = realAttach })
+	realAttach := provider.attach
+	t.Cleanup(func() { provider.attach = realAttach })
 
 	assertCompensated := func(t *testing.T, err error) {
 		t.Helper()
@@ -327,7 +327,7 @@ func TestRemoteProviderCreateCompensatesOnAttachFailure(t *testing.T) {
 
 	t.Run("context canceled", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
-		remoteProviderAttach = func(attachCtx context.Context, client *Client, id string, _ *Identity) (*Stream, error) {
+		provider.attach = func(attachCtx context.Context, client *Client, id string, _ *Identity) (*Stream, error) {
 			cancel()
 			return realAttach(attachCtx, client, id, nil)
 		}
@@ -339,7 +339,7 @@ func TestRemoteProviderCreateCompensatesOnAttachFailure(t *testing.T) {
 	})
 
 	t.Run("protocol failure", func(t *testing.T) {
-		remoteProviderAttach = func(context.Context, *Client, string, *Identity) (*Stream, error) {
+		provider.attach = func(context.Context, *Client, string, *Identity) (*Stream, error) {
 			return nil, errors.New("attach: malformed attach response")
 		}
 		_, err := provider.Create(context.Background(), base.DurableCreateOptions{
@@ -710,10 +710,10 @@ func TestEmbeddedProviderCreateRechecksIdentityBeforeAttach(t *testing.T) {
 	ctx := context.Background()
 	id := ids.New()
 	t.Cleanup(func() { _ = supervisor.Kill(context.Background(), id) })
-	realAttach := embeddedProviderAttach
-	t.Cleanup(func() { embeddedProviderAttach = realAttach })
+	realAttach := provider.attach
+	t.Cleanup(func() { provider.attach = realAttach })
 	var replacement *Session
-	embeddedProviderAttach = func(attachCtx context.Context, current *Supervisor, original *Session) (*Attachment, error) {
+	provider.attach = func(attachCtx context.Context, current *Supervisor, original *Session) (*Attachment, error) {
 		if err := current.Kill(attachCtx, id); err != nil {
 			return nil, err
 		}

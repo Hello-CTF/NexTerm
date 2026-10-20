@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/terminal"
 )
 
 func TestThrottleEventPairsEntryWithRealDrain(t *testing.T) {
@@ -31,7 +33,20 @@ func TestThrottleEventPairsEntryWithRealDrain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tab := openTestTab(t, manager, session, "client-a", "a-1")
+	info, err := manager.OpenTab(context.Background(), OpenTabOptions{SessionID: session.ID, Cols: 80, Rows: 24, Detached: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab.fanout = terminal.NewFanoutWithOptions(terminal.FanoutOptions{
+		QueueFrames: 1 << 20, QueueBytes: 1 << 30, Logger: manager.logger,
+	})
+	if _, err := manager.AttachTab(context.Background(), tab.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+		t.Fatal(err)
+	}
 	channel := connector.transport(0).channel(0)
 
 	flood := func() (chan struct{}, *sync.WaitGroup) {
@@ -601,17 +616,25 @@ func TestSlowConsumerDrainedWithinGraceIsNotKicked(t *testing.T) {
 	if entry.Recovered || entry.ChannelID != "a-1" {
 		t.Fatalf("entry = %+v", entry)
 	}
+	assertSettled := func() {
+		manager.mu.Lock()
+		_, kickPending := manager.slowKicks["a-1"]
+		manager.mu.Unlock()
+		if kickPending {
+			t.Fatal("drained consumer retained a pending slow-consumer kick")
+		}
+		if info := tab.Info(); info.Subscribers != 1 {
+			t.Fatalf("drained consumer was kicked: %+v", info)
+		}
+	}
+	close(stop)
+	wg.Wait()
 	paused.Store(false)
 	recovery := waitThrottleEventMatching(t, events, throttleChannelEvent("a-1", true))
 	if !recovery.Recovered || recovery.ChannelID != "a-1" {
 		t.Fatalf("recovery = %+v", recovery)
 	}
-	close(stop)
-	wg.Wait()
-	time.Sleep(1500 * time.Millisecond)
-	if info := tab.Info(); info.Subscribers != 1 {
-		t.Fatalf("drained consumer was kicked: %+v", info)
-	}
+	assertSettled()
 
 	// Backpressure starts a new timer again; after draining, the channel is likewise not kicked.
 	paused.Store(true)
@@ -620,12 +643,9 @@ func TestSlowConsumerDrainedWithinGraceIsNotKicked(t *testing.T) {
 	if reentry.Recovered || reentry.ChannelID != "a-1" {
 		t.Fatalf("reentry = %+v", reentry)
 	}
-	paused.Store(false)
-	waitThrottleEventMatching(t, events, throttleChannelEvent("a-1", true))
 	close(stop2)
 	wg2.Wait()
-	time.Sleep(1500 * time.Millisecond)
-	if info := tab.Info(); info.Subscribers != 1 {
-		t.Fatalf("re-armed grace kicked drained consumer: %+v", info)
-	}
+	paused.Store(false)
+	waitThrottleEventMatching(t, events, throttleChannelEvent("a-1", true))
+	assertSettled()
 }

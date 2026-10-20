@@ -232,18 +232,19 @@ type shareReadTimeoutError struct{}
 
 func (*shareReadTimeoutError) Error() string { return "share read timed out" }
 
-// expectReady reads the ready control frame and verifies the permission declaration.
+// expectReady waits on the control channel without consuming or reordering binary terminal output.
 func (c *shareConnCollector) expectReady(t *testing.T, permission string) shareReadyFrame {
 	t.Helper()
-	frame := c.next(10 * time.Second)
-	if frame.err != nil {
-		t.Fatalf("read ready frame: %v", frame.err)
-	}
-	if frame.kind != websocket.MessageText {
-		t.Fatalf("ready frame kind = %v payload=%q", frame.kind, frame.payload)
+	var payload []byte
+	select {
+	case payload = <-c.text:
+	case err := <-c.errCh:
+		t.Fatalf("read ready frame: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatalf("read ready frame: %v", errShareReadTimeout)
 	}
 	var ready shareReadyFrame
-	if err := json.Unmarshal(frame.payload, &ready); err != nil {
+	if err := json.Unmarshal(payload, &ready); err != nil {
 		t.Fatal(err)
 	}
 	if ready.Type != "ready" || ready.Permission != permission || ready.SessionID == "" || ready.ExpiresAt <= 0 {
@@ -439,18 +440,15 @@ func dialShareViewerStatus(t *testing.T, f *httpFixture, path string) int {
 
 func createShareLink(t *testing.T, f *httpFixture, session *httpSession, deviceID, sessionID string, write bool) (string, string) {
 	t.Helper()
-	call := f.call(t, "POST", "/share/links", map[string]any{
-		"device_id": deviceID, "session_id": sessionID, "write": write, "ttl_ms": 3600000,
-	}, session, session.csrf)
-	if call.status != http.StatusOK {
-		t.Fatalf("create link: HTTP %d %v", call.status, call.body)
+	identity, err := f.accounts.ValidateSession(context.Background(), session.cookie.Value)
+	if err != nil {
+		t.Fatal(err)
 	}
-	link, _ := call.body["id"].(string)
-	token, _ := call.body["token"].(string)
-	if link == "" || token == "" || call.body["permission"] == "" {
-		t.Fatalf("create link body = %v", call.body)
+	link, token, err := f.service.sharing.CreateLink(context.Background(), identity, deviceID, sessionID, write, time.Hour)
+	if err != nil {
+		t.Fatalf("seed legacy link: %v", err)
 	}
-	return link, token
+	return link.ID, token
 }
 
 func auditPayloads(t *testing.T, f *httpFixture, kind string) []map[string]any {
@@ -466,12 +464,13 @@ func TestShareLinkManagement(t *testing.T) {
 	sessionID := device.createSession(t, "sh", "-c", "echo READY; exec cat")
 	ownerSession := f.session(t, owner)
 
-	// Anonymous and CSRF boundaries.
 	if call := f.call(t, "GET", "/share/links", nil, nil, ""); call.status != http.StatusUnauthorized {
 		t.Fatalf("anonymous list: HTTP %d", call.status)
 	}
-	if call := f.call(t, "POST", "/share/links", map[string]any{"device_id": device.deviceID, "session_id": sessionID}, ownerSession, ""); call.status != http.StatusForbidden {
-		t.Fatalf("missing csrf: HTTP %d", call.status)
+	if call := f.call(t, "POST", "/share/links", map[string]any{
+		"device_id": device.deviceID, "session_id": sessionID, "write": false, "ttl_ms": 3600000,
+	}, ownerSession, ownerSession.csrf); call.status != http.StatusMethodNotAllowed {
+		t.Fatalf("retired create route: HTTP %d %v, want 405", call.status, call.body)
 	}
 
 	linkID, token := createShareLink(t, f, ownerSession, device.deviceID, sessionID, false)
@@ -750,9 +749,11 @@ func TestShareHostTerminalOpenAndShrink(t *testing.T) {
 		t.Fatal("host terminal ready has no session id")
 	}
 
-	// Input produces output: first start a continuous output loop, then shrink the permission.
-	collector.sendBinary(t, []byte("while true; do echo tick; sleep 0.2; done\n"))
-	collector.expectOutput(t, "tick", 10*time.Second)
+	// The expected values are produced by shell arithmetic, so command echo alone cannot satisfy the assertions.
+	marker := strconv.FormatInt(time.Now().UnixNano(), 36)
+	liveOutput := "live-" + marker + "-42"
+	collector.sendBinary(t, []byte("while true; do echo live-"+marker+"-$((40+2)); sleep 0.2; done\n"))
+	collector.expectOutput(t, liveOutput, 10*time.Second)
 
 	call = f.call(t, "POST", "/share/host-shares", map[string]any{
 		"device_id": device.deviceID, "recipient_username": "host-recipient", "write": false, "ttl_ms": 3600000,
@@ -761,14 +762,19 @@ func TestShareHostTerminalOpenAndShrink(t *testing.T) {
 		t.Fatalf("shrink share: HTTP %d %v", call.status, call.body)
 	}
 
+	// The periodic revalidation publishes the shrunk permission on the same terminal session.
+	updated := collector.expectReady(t, "read")
+	if updated.SessionID != ready.SessionID {
+		t.Fatalf("updated ready session = %q, want %q", updated.SessionID, ready.SessionID)
+	}
 	// After the shrink takes effect, input is discarded and existing output keeps flowing.
-	time.Sleep(600 * time.Millisecond)
-	collector.sendBinary(t, []byte("echo nope-42\n"))
+	blockedOutput := "blocked-" + marker + "-42"
+	collector.sendBinary(t, []byte("echo blocked-"+marker+"-$((40+2))\n"))
 	output := collector.collectOutput(t, 1500*time.Millisecond)
-	if !strings.Contains(string(output), "tick") {
+	if !strings.Contains(string(output), liveOutput) {
 		t.Fatalf("output did not continue after shrink: %q", output)
 	}
-	if strings.Contains(string(output), "nope-42") {
+	if strings.Contains(string(output), blockedOutput) {
 		t.Fatalf("input leaked after shrink: %q", output)
 	}
 	_ = conn.Close(websocket.StatusNormalClosure, "")
@@ -784,6 +790,72 @@ func TestShareHostTerminalOpenAndShrink(t *testing.T) {
 	}
 	if call := f.call(t, "GET", "/share/devices/"+device.deviceID+"/terminal", nil, recipientSession, ""); call.status != http.StatusForbidden {
 		t.Fatalf("open after revoke: HTTP %d", call.status)
+	}
+}
+
+func TestShareHostTerminalRecipientSessionInvalidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		invalidate func(t *testing.T, f *httpFixture, recipient *account.User)
+	}{
+		{
+			name: "logout-all",
+			invalidate: func(t *testing.T, f *httpFixture, recipient *account.User) {
+				if _, err := f.accounts.RevokeUserSessions(context.Background(), recipient.ID, ""); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "disabled",
+			invalidate: func(t *testing.T, f *httpFixture, recipient *account.User) {
+				if err := f.accounts.SetUserDisabled(context.Background(), recipient.ID, true); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "expired",
+			invalidate: func(t *testing.T, f *httpFixture, recipient *account.User) {
+				userSession := query.Use(f.service.db).UserSession
+				if _, err := userSession.WithContext(context.Background()).Where(userSession.UserID.Eq(recipient.ID)).
+					UpdateColumns(map[string]any{"expires_at": time.Now().Add(-time.Second).UnixMilli()}); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			f := newHTTPFixture(t, false, WithShareRevalidateInterval(100*time.Millisecond))
+			owner := f.createUser(t, "session-owner-"+test.name)
+			recipient := f.createUser(t, "session-recipient-"+test.name)
+			device := startShareTestAgent(t, f, owner, "session-box-"+test.name)
+			ownerSession := f.session(t, owner)
+			recipientSession := f.session(t, recipient)
+			call := f.call(t, "POST", "/share/host-shares", map[string]any{
+				"device_id": device.deviceID, "recipient_username": recipient.Username, "write": true, "ttl_ms": 3600000,
+			}, ownerSession, ownerSession.csrf)
+			if call.status != http.StatusOK {
+				t.Fatalf("create host share: HTTP %d %v", call.status, call.body)
+			}
+			conn := dialShareViewer(t, f, "/share/devices/"+device.deviceID+"/terminal", recipientSession)
+			collector := watchShareConn(conn)
+			ready := collector.expectReady(t, "read_write")
+			collector.sendBinary(t, []byte("echo before-$((40+2))\n"))
+			collector.expectOutput(t, "before-42", 10*time.Second)
+
+			test.invalidate(t, f, recipient)
+			if failure := collector.expectTerminated(t, 15*time.Second); failure != nil && failure.Code != "forbidden" {
+				t.Fatalf("session invalidation error = %+v, want forbidden", failure)
+			}
+			device.waitSessionMissing(t, ready.SessionID)
+			writeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if err := conn.Write(writeCtx, websocket.MessageBinary, []byte("echo after-42\n")); err == nil {
+				t.Fatal("input succeeded after the recipient session was invalidated")
+			}
+		})
 	}
 }
 
@@ -886,15 +958,10 @@ func TestShareDaemonOfflineStopsOpenAndStream(t *testing.T) {
 	device.stop()
 	collector.expectClosed(t, 10*time.Second)
 
-	// Opens/creates after offline always get 503 (the probe judges offline instantly, without waiting for last_seen to expire).
+	// Opens after offline always get 503 (the probe judges offline instantly, without waiting for last_seen to expire).
 	expectShareViewerStatus(t, f, "/share/public/"+token, http.StatusServiceUnavailable)
 	if call := f.call(t, "GET", "/share/devices/"+device.deviceID+"/terminal", nil, recipientSession, ""); call.status != http.StatusServiceUnavailable {
 		t.Fatalf("offline host open: HTTP %d %v", call.status, call.body)
-	}
-	if call := f.call(t, "POST", "/share/links", map[string]any{
-		"device_id": device.deviceID, "session_id": sessionID, "write": false, "ttl_ms": 3600000,
-	}, ownerSession, ownerSession.csrf); call.status != http.StatusServiceUnavailable {
-		t.Fatalf("offline create: HTTP %d %v", call.status, call.body)
 	}
 }
 
@@ -902,17 +969,12 @@ func TestShareRoutesAuthOff(t *testing.T) {
 	f := newHTTPFixture(t, true)
 	session := f.session(t, f.createUser(t, "off-user"))
 	calls := []httpCall{
-		f.call(t, "POST", "/share/links", map[string]any{"device_id": "d", "session_id": "s"}, session, session.csrf),
 		f.call(t, "GET", "/share/links", nil, session, ""),
 		f.call(t, "POST", "/share/links/x/revoke", nil, session, session.csrf),
-		f.call(t, "POST", "/share/device-links", map[string]any{"device_id": "d"}, session, session.csrf),
-		f.call(t, "GET", "/share/device-links", nil, session, ""),
-		f.call(t, "POST", "/share/device-links/x/revoke", nil, session, session.csrf),
 		f.call(t, "POST", "/share/host-shares", map[string]any{"device_id": "d", "recipient_username": "r"}, session, session.csrf),
 		f.call(t, "GET", "/share/host-shares", nil, session, ""),
 		f.call(t, "POST", "/share/host-shares/x/revoke", nil, session, session.csrf),
 		f.call(t, "GET", "/share/public/sometoken", nil, nil, ""),
-		f.call(t, "GET", "/share/public/device/sometoken", nil, nil, ""),
 		f.call(t, "GET", "/share/devices/d/terminal", nil, session, ""),
 	}
 	for i, call := range calls {

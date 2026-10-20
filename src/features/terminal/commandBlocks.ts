@@ -13,10 +13,16 @@ export interface CommandBlock {
 
 const OVERVIEW_RULER_COLOR = "#4f9cf9";
 const MAX_BLOCK_LINES = 2000;
+export const MAX_ACTIVE_COMMAND_BLOCKS = 200;
 
 interface MarkerSlot {
   marker: IMarker;
   decoration?: IDisposable;
+}
+
+function disposeSlot(slot: MarkerSlot): void {
+  slot.decoration?.dispose();
+  slot.marker.dispose();
 }
 
 export class CommandBlockManager {
@@ -24,6 +30,7 @@ export class CommandBlockManager {
   private readonly onUpdate: (blocks: CommandBlock[]) => void;
   private blocks: CommandBlock[] = [];
   private slots: MarkerSlot[] = [];
+  private nextBlockIndex = 1;
   private pending = "";
   private pendingReliable = true;
   private osc133 = false;
@@ -89,7 +96,6 @@ export class CommandBlockManager {
     this.closeLast(now);
 
     if (!command) {
-      this.syncEndLines();
       this.emit();
       return;
     }
@@ -113,7 +119,7 @@ export class CommandBlockManager {
     this.slots.push(slot);
 
     this.blocks.push({
-      index: this.blocks.length + 1,
+      index: this.nextBlockIndex++,
       command,
       reliable,
       startedAt: now,
@@ -122,7 +128,6 @@ export class CommandBlockManager {
       endLine: marker.line,
       exitCode: null,
     });
-    this.syncEndLines();
     this.emit();
   }
 
@@ -157,7 +162,7 @@ export class CommandBlockManager {
         }
         this.slots.push(slot);
         this.blocks.push({
-          index: this.blocks.length + 1,
+          index: this.nextBlockIndex++,
           command,
           reliable: true,
           startedAt: now,
@@ -166,7 +171,6 @@ export class CommandBlockManager {
           endLine: marker.line,
           exitCode: null,
         });
-        this.syncEndLines();
         this.emit();
         break;
       }
@@ -175,7 +179,6 @@ export class CommandBlockManager {
         if (last && last.endedAt === null) {
           last.endedAt = now;
           last.exitCode = exitCode;
-          this.syncEndLines();
           this.emit();
         }
         break;
@@ -185,7 +188,6 @@ export class CommandBlockManager {
         const last = this.blocks[this.blocks.length - 1];
         if (last && last.endedAt === null) {
           last.endedAt = now;
-          this.syncEndLines();
           this.emit();
         }
         break;
@@ -234,15 +236,21 @@ export class CommandBlockManager {
   private syncEndLines(): void {
     const buf = this.term.buffer.active;
     const cursor = buf.baseY + buf.cursorY;
-    for (let i = 0; i < this.blocks.length; i += 1) {
+    let nextStart = cursor;
+    for (let i = this.blocks.length - 1; i >= 0; i -= 1) {
       const b = this.blocks[i];
-      const next = this.blocks[i + 1];
       b.startLine = this.slots[i]?.marker.line ?? b.startLine;
-      b.endLine = next ? Math.max(b.startLine, (this.slots[i + 1]?.marker.line ?? cursor) - 1) : cursor;
+      b.endLine = i === this.blocks.length - 1 ? cursor : Math.max(b.startLine, nextStart - 1);
+      nextStart = b.startLine;
     }
   }
 
   private emit(): void {
+    while (this.blocks.length > MAX_ACTIVE_COMMAND_BLOCKS) {
+      this.blocks.shift();
+      const slot = this.slots.shift();
+      if (slot) disposeSlot(slot);
+    }
     this.syncEndLines();
     this.onUpdate(this.blocks.map((b) => ({ ...b })));
   }
@@ -287,12 +295,10 @@ export class CommandBlockManager {
   }
 
   clear(): void {
-    for (const s of this.slots) {
-      s.marker.dispose();
-      s.decoration?.dispose();
-    }
+    for (const slot of this.slots) disposeSlot(slot);
     this.slots = [];
     this.blocks = [];
+    this.nextBlockIndex = 1;
     this.pending = "";
     this.pendingReliable = true;
     this.submitted = "";

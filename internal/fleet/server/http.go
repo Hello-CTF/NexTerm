@@ -110,17 +110,12 @@ var fleetRoutePatterns = []string{
 	"POST /agent/sync",
 	"POST /agent/current-url",
 	"GET /ws/device",
-	"POST /share/links",
 	"GET /share/links",
 	"POST /share/links/{id}/revoke",
-	"POST /share/device-links",
-	"GET /share/device-links",
-	"POST /share/device-links/{id}/revoke",
 	"POST /share/host-shares",
 	"GET /share/host-shares",
 	"POST /share/host-shares/{id}/revoke",
 	"GET /share/public/{token}",
-	"GET /share/public/device/{token}",
 	"GET /share/devices/{id}/terminal",
 }
 
@@ -170,22 +165,18 @@ func (s *Service) mountRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ws/device", s.serveDeviceWS)
 
 	// Share management routes: account session required, writes additionally require CSRF.
-	sessionCSRF("POST /share/links", s.serveShareLinkCreate)
+	// Legacy session links are list/revoke only; new anonymous access uses preview links.
 	session("GET /share/links", s.serveShareLinkList)
 	sessionCSRF("POST /share/links/{id}/revoke", s.serveShareLinkRevoke)
-	sessionCSRF("POST /share/device-links", s.serveDeviceShareLinkCreate)
-	session("GET /share/device-links", s.serveDeviceShareLinkList)
-	sessionCSRF("POST /share/device-links/{id}/revoke", s.serveDeviceShareLinkRevoke)
 	sessionCSRF("POST /share/host-shares", s.serveHostShareCreate)
 	session("GET /share/host-shares", s.serveHostShareList)
 	sessionCSRF("POST /share/host-shares/{id}/revoke", s.serveHostShareRevoke)
 
-	// Share data plane: public links use the token as the credential (anonymously reachable, same as /device/enroll),
+	// Share data plane: legacy public links use the token as the credential (anonymously reachable, same as /device/enroll),
 	// registered share terminals require an account session; both are GET upgrades and, like the other session routes,
 	// require no CSRF. Plain GETs of public links (browser navigations) are diverted to the static
 	// SPA entry inside the handler; only the WS upgrade enters token auth.
 	mux.HandleFunc("GET /share/public/{token}", s.serveSharePublicTerminal)
-	mux.HandleFunc("GET /share/public/device/{token}", s.serveSharePublicDeviceTerminal)
 	session("GET /share/devices/{id}/terminal", s.serveShareTerminalOpen)
 }
 

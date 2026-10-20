@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
-	"github.com/Hello-CTF/NexTerm/internal/db"
 	"github.com/Hello-CTF/NexTerm/internal/docker"
 	"github.com/Hello-CTF/NexTerm/internal/forward"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
@@ -22,7 +22,6 @@ import (
 	sshdaemon "github.com/Hello-CTF/NexTerm/internal/ssh"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
-	"github.com/Hello-CTF/NexTerm/internal/tasks"
 	"github.com/Hello-CTF/NexTerm/internal/update"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 	"github.com/Hello-CTF/NexTerm/internal/version"
@@ -35,7 +34,6 @@ type ProductionConfig struct {
 	ForwardPlatform         string
 	Connector               session.Connector
 	Terminals               session.TerminalFactory
-	TaskOptions             tasks.Options
 	Docker                  *docker.Service
 	RetentionInterval       time.Duration
 	RetentionAttemptTimeout time.Duration
@@ -64,6 +62,10 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	if config.Config.Logger == nil {
 		config.Config.Logger = slog.Default()
 	}
+	legacyTasksDir := filepath.Join(config.DataDir, "tasks")
+	if _, err := os.Stat(legacyTasksDir); err == nil {
+		config.Config.Logger.Info("legacy persistent task data directory preserved; tasks are no longer loaded", "path", legacyTasksDir)
+	}
 	if config.Config.Version == "" {
 		config.Config.Version = version.Version
 	}
@@ -71,7 +73,6 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	if err != nil {
 		return nil, err
 	}
-	var taskManager *tasks.Manager
 	var sessionManager *session.Manager
 	var services ProductionServices
 	defer func() {
@@ -90,12 +91,16 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		if services.Database != nil {
 			_ = services.Database.Close()
 		}
-		if taskManager != nil {
-			_ = taskManager.Close(context.Background())
-		}
 		_ = database.Close()
 	}()
 
+	database.SetAIHistoryShared(config.Desktop || owner.OpenAccess(ctx))
+	if err := migrateProductionOwnerlessAI(ctx, database, config.Config.Logger, config.Desktop || owner.OpenAccess(ctx)); err != nil {
+		return nil, err
+	}
+	if err := migrateProductionLegacyAISettings(ctx, database, config.Config.Logger, config.Desktop || owner.OpenAccess(ctx)); err != nil {
+		return nil, err
+	}
 	credentialVault := vault.Load(ctx, database)
 	if config.Desktop && !credentialVault.Status().Initialized {
 		if err := credentialVault.InitMaster(ctx, ""); err != nil {
@@ -103,13 +108,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		}
 		config.Config.Logger.Info("credential vault was not initialized; completed passwordless initialization automatically")
 	}
-	profileManager, err := profiles.NewManager(ctx, database)
-	if err != nil {
-		return nil, err
-	}
-	taskOptions := config.TaskOptions
-	taskOptions.Dir = filepath.Join(config.DataDir, "tasks")
-	taskManager, err = tasks.Open(taskOptions)
+	profileManager, err := profiles.NewManager(ctx, database, profiles.WithShared(config.Desktop))
 	if err != nil {
 		return nil, err
 	}
@@ -117,16 +116,23 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	var hostKeys *productionHostKeyStore
 	var sshConnector *productionConnector
 	if connector == nil {
-		defaultConnector, err := newProductionConnector(database, credentialVault, config.DataDir, config.Config.Events)
+		defaultConnector, err := newProductionConnector(ctx, database, credentialVault, config.DataDir, config.Config.Events, config.Desktop || owner.OpenAccess(ctx))
 		if err != nil {
 			return nil, err
 		}
 		connector = defaultConnector
 		hostKeys = defaultConnector.hostKeys
 		sshConnector = defaultConnector
+		report := hostKeys.migration
+		if report.Conflicts > 0 || report.Skipped > 0 {
+			config.Config.Logger.Warn("legacy SSH host key migration left entries unattended", "conflicts", report.Conflicts, "skipped", report.Skipped)
+		} else if report.BackupCreated || report.Copied > 0 {
+			config.Config.Logger.Info("migrated legacy SSH host keys", "backup_created", report.BackupCreated, "copied", report.Copied, "already_present", report.Existing)
+		}
 	}
 	dockerService := config.Docker
 	var forwardService *forward.Service
+	fsUploads := newFSChunkUploadRegistry(config.Config.Logger)
 	emitter := session.AdaptEmitter(config.Config.Events)
 	transcriptWriter := newTranscriptWriter(transcriptWriterConfig{
 		Database: database, Logger: config.Config.Logger,
@@ -171,6 +177,11 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 								reason = "会话已断开，请连接后重试转发"
 							}
 							forwardService.FailSession(status.SessionID, reason)
+						}
+					}
+					if status.Status == session.StatusDisconnected || status.Status == session.StatusFailed {
+						if err := fsUploads.closeSession(status.SessionID); err != nil {
+							config.Config.Logger.Warn("close chunked uploads on session status failed", "session", status.SessionID, "error", err)
 						}
 					}
 				}
@@ -229,6 +240,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	}
 	forwardService = forward.NewService(forward.Config{
 		Provider: forward.DialerProviderFunc(sessionManager.CurrentDialerFor),
+		Rules:    database,
 		SessionHost: func(ctx context.Context, sessionID string) (string, error) {
 			connected, err := sessionManager.SessionFor(productionSessionRequestContext(ctx), sessionID)
 			if err != nil {
@@ -241,8 +253,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	})
 	services = ProductionServices{
 		Store: database, Vault: credentialVault, Sync: syncService, Profiles: profileManager,
-		Tasks:    taskManager,
-		Database: db.NewService(db.NewStoreAssetResolver(database, credentialVault)),
+		Database: newProductionDatabaseService(database, credentialVault, sessionManager),
 		Mount: mount.NewService(mount.Config{Auditor: database, SessionHost: func(ctx context.Context, sessionID string) (string, error) {
 			connected, err := sessionManager.SessionFor(productionSessionRequestContext(ctx), sessionID)
 			if err != nil {
@@ -253,11 +264,13 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Sessions: sessionManager,
 		Forward:  forwardService,
 		Docker:   dockerService, Retention: retention, hostKeys: hostKeys, sshConnector: sshConnector, dataDir: config.DataDir,
-		desktop:     config.Desktop,
-		stagedBlobs: config.StagedBlobs,
-		Transcripts: transcriptWriter,
-		aiRetention: newAIRetentionComponent(database, config.RetentionInterval),
-		Events:      config.Config.Events,
+		desktop:        config.Desktop,
+		hostKeysShared: config.Desktop || owner.OpenAccess(ctx),
+		stagedBlobs:    config.StagedBlobs,
+		fsUploads:      fsUploads,
+		Transcripts:    transcriptWriter,
+		aiRetention:    newAIRetentionComponent(database, config.RetentionInterval),
+		Events:         config.Config.Events,
 	}
 	services.channelBridge = newTerminalBridge(sessionManager, streams)
 	services.ScreenInsets = config.ScreenInsets

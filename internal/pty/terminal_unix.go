@@ -19,12 +19,15 @@ type unixTerminal struct {
 	process *Process
 }
 
-func startTerminal(cmd *exec.Cmd, cols, rows uint32) (terminal, error) {
+func startTerminal(cmd *exec.Cmd, cols, rows uint32, processFactory func(*exec.Cmd) (*Process, error)) (terminal, error) {
 	master, err := creack.StartWithSize(cmd, &creack.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 	if err != nil {
 		return nil, err
 	}
-	process, err := newStartedProcess(cmd)
+	if processFactory == nil {
+		processFactory = newStartedProcess
+	}
+	process, err := processFactory(cmd)
 	if err != nil {
 		_ = master.Close()
 		_ = cmd.Process.Kill()

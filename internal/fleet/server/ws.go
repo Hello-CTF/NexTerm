@@ -246,7 +246,7 @@ func pipeBridge(user *websocket.Conn, bridge *wsConn) {
 	}()
 	go func() {
 		defer func() { done <- struct{}{} }()
-		buffer := make([]byte, 32*1024)
+		buffer := make([]byte, 64*1024)
 		for {
 			count, err := bridge.Read(buffer)
 			if count > 0 {

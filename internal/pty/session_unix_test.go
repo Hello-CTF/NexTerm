@@ -97,7 +97,7 @@ func TestSessionCloseKillsProcessTreeAndIsIdempotent(t *testing.T) {
 }
 
 func TestUnixProcessSnapshotListsCurrentProcessWithState(t *testing.T) {
-	output, err := unixProcessSnapshot()
+	output, err := defaultUnixProcessAPI().snapshot()
 	if err != nil {
 		t.Fatalf("process snapshot = %v", err)
 	}
@@ -248,8 +248,25 @@ func (f *fakeUnixSession) getProcessIdentity(pid int) (string, error) {
 	return f.identity, nil
 }
 
+func (f *fakeUnixSession) api() unixProcessAPI {
+	return unixProcessAPI{
+		snapshot:            f.snapshot,
+		getSessionID:        f.getSessionID,
+		getProcessGroupID:   f.getProcessGroupID,
+		readProcessIdentity: f.getProcessIdentity,
+		kill:                f.kill,
+	}
+}
+
 func (f *fakeUnixSession) tree() *unixProcessTree {
-	return &unixProcessTree{process: &os.Process{Pid: f.sessionID}, session: true, identity: f.identity}
+	return f.treeWithAPI(f.api())
+}
+
+func (f *fakeUnixSession) treeWithAPI(api unixProcessAPI) *unixProcessTree {
+	if f.identity == "" {
+		f.identity = "test-leader-identity"
+	}
+	return &unixProcessTree{process: &os.Process{Pid: f.sessionID}, session: true, identity: f.identity, api: api}
 }
 
 func (f *fakeUnixSession) kill(group int, _ syscall.Signal) error {
@@ -268,22 +285,6 @@ func (f *fakeUnixSession) kill(group int, _ syscall.Signal) error {
 	return nil
 }
 
-func (f *fakeUnixSession) install(t *testing.T) {
-	t.Helper()
-	if f.identity == "" {
-		f.identity = "test-leader-identity"
-	}
-	oldSnapshot, oldGetSessionID, oldGetProcessGroupID, oldGetProcessIdentity, oldKill := unixProcessSnapshot, unixGetSessionID, unixGetProcessGroupID, unixReadProcessIdentity, unixKill
-	unixProcessSnapshot = f.snapshot
-	unixGetSessionID = f.getSessionID
-	unixGetProcessGroupID = f.getProcessGroupID
-	unixReadProcessIdentity = f.getProcessIdentity
-	unixKill = f.kill
-	t.Cleanup(func() {
-		unixProcessSnapshot, unixGetSessionID, unixGetProcessGroupID, unixReadProcessIdentity, unixKill = oldSnapshot, oldGetSessionID, oldGetProcessGroupID, oldGetProcessIdentity, oldKill
-	})
-}
-
 func TestUnixSessionKillConvergesWhenJobsArriveDuringCleanup(t *testing.T) {
 	fake := &fakeUnixSession{sessionID: 100, processes: map[int]int{100: 100, 200: 200}}
 	fake.onKill = func(fake *fakeUnixSession, group int) {
@@ -291,7 +292,6 @@ func TestUnixSessionKillConvergesWhenJobsArriveDuringCleanup(t *testing.T) {
 			fake.processes[201] = 201
 		}
 	}
-	fake.install(t)
 	tree := fake.tree()
 	if err := tree.Kill(); err != nil {
 		t.Fatal(err)
@@ -307,7 +307,6 @@ func TestUnixSessionKillConvergesWithZombieMembers(t *testing.T) {
 		processes: map[int]int{100: 100, 200: 200, 201: 201},
 		states:    map[int]string{200: "Z"},
 	}
-	fake.install(t)
 	tree := fake.tree()
 	if err := tree.Kill(); err != nil {
 		t.Fatalf("cleanup with zombie members = %v; kills = %v", err, fake.kills)
@@ -323,7 +322,6 @@ func TestUnixSessionKillReportsNonConvergence(t *testing.T) {
 		next := 1000 + len(fake.kills)
 		fake.processes[next] = next
 	}
-	fake.install(t)
 	tree := fake.tree()
 	if err := tree.Kill(); err == nil {
 		t.Fatal("continuously growing session cleanup reported success")
@@ -340,7 +338,6 @@ func TestUnixSessionKillRevalidatesMemberBeforeGroupKill(t *testing.T) {
 			delete(fake.processes, 102)
 		}
 	}
-	fake.install(t)
 	tree := fake.tree()
 	if err := tree.Kill(); err != nil {
 		t.Fatal(err)
@@ -352,7 +349,6 @@ func TestUnixSessionKillRevalidatesMemberBeforeGroupKill(t *testing.T) {
 
 func TestUnixSessionKillRejectsUnconfirmedLeader(t *testing.T) {
 	fake := &fakeUnixSession{sessionID: 100, processes: map[int]int{200: 200}}
-	fake.install(t)
 	tree := fake.tree()
 	if err := tree.Kill(); err == nil {
 		t.Fatal("cleanup without a verifiable session leader reported success")
@@ -364,14 +360,14 @@ func TestUnixSessionKillRejectsUnconfirmedLeader(t *testing.T) {
 
 func TestUnixSessionKillChecksProcessGroupBeforeKill(t *testing.T) {
 	fake := &fakeUnixSession{sessionID: 100, processes: map[int]int{100: 100, 200: 200}}
-	fake.install(t)
-	unixGetProcessGroupID = func(pid int) (int, error) {
+	api := fake.api()
+	api.getProcessGroupID = func(pid int) (int, error) {
 		if pid == 200 {
 			return 201, nil
 		}
 		return fake.getProcessGroupID(pid)
 	}
-	tree := fake.tree()
+	tree := fake.treeWithAPI(api)
 	if err := tree.Kill(); err == nil {
 		t.Fatal("cleanup with changed PGID reported success")
 	}
@@ -382,7 +378,6 @@ func TestUnixSessionKillChecksProcessGroupBeforeKill(t *testing.T) {
 
 func TestUnixSessionKillRejectsReusedLeaderIdentity(t *testing.T) {
 	fake := &fakeUnixSession{sessionID: 100, processes: map[int]int{100: 100, 200: 200}, identity: "old-leader"}
-	fake.install(t)
 	tree := fake.tree()
 	fake.identity = "new-leader"
 	if err := tree.Kill(); err == nil {
@@ -396,7 +391,6 @@ func TestUnixSessionKillRejectsReusedLeaderIdentity(t *testing.T) {
 func TestUnixSessionKillReportsIdentityReadFailure(t *testing.T) {
 	injected := errors.New("injected identity read failure")
 	fake := &fakeUnixSession{sessionID: 100, processes: map[int]int{100: 100}, identityErr: injected}
-	fake.install(t)
 	tree := fake.tree()
 	if err := tree.Kill(); !errors.Is(err, injected) {
 		t.Fatalf("identity read failure = %v, want injected error", err)
@@ -408,9 +402,9 @@ func TestUnixSessionKillReportsIdentityReadFailure(t *testing.T) {
 
 func TestUnixSessionKillDoesNotKillReusedGroupWhenEmpty(t *testing.T) {
 	fake := &fakeUnixSession{sessionID: 100, processes: map[int]int{500: 100}}
-	fake.install(t)
-	unixGetSessionID = func(int) (int, error) { return 999, nil }
-	tree := fake.tree()
+	api := fake.api()
+	api.getSessionID = func(int) (int, error) { return 999, nil }
+	tree := fake.treeWithAPI(api)
 	if err := tree.Kill(); err != nil {
 		t.Fatal(err)
 	}
@@ -421,13 +415,13 @@ func TestUnixSessionKillDoesNotKillReusedGroupWhenEmpty(t *testing.T) {
 
 func TestUnixNonSessionKillKeepsProcessGroupBehavior(t *testing.T) {
 	fake := &fakeUnixSession{sessionID: 100, processes: map[int]int{100: 100}}
-	fake.install(t)
 	snapshots := 0
-	unixProcessSnapshot = func() ([]byte, error) {
+	api := fake.api()
+	api.snapshot = func() ([]byte, error) {
 		snapshots++
 		return fake.snapshot()
 	}
-	tree := &unixProcessTree{process: &os.Process{Pid: 100}}
+	tree := &unixProcessTree{process: &os.Process{Pid: 100}, api: api}
 	if err := tree.Kill(); err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +443,7 @@ func TestSessionRecordsProcessStartIdentity(t *testing.T) {
 	if tree.identity == "" {
 		t.Fatal("PTY leader start identity was not recorded")
 	}
-	current, err := unixReadProcessIdentity(tree.process.Pid)
+	current, err := readUnixProcessIdentity(tree.process.Pid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,14 +460,16 @@ func TestSessionStartRejectsIdentityReadFailure(t *testing.T) {
 		t.Skip("process start identity test requires Darwin or Linux")
 	}
 	injected := errors.New("injected initial identity read failure")
-	oldReadIdentity := unixReadProcessIdentity
+	api := defaultUnixProcessAPI()
 	var leaderPID atomic.Int32
-	unixReadProcessIdentity = func(pid int) (string, error) {
+	api.readProcessIdentity = func(pid int) (string, error) {
 		leaderPID.Store(int32(pid))
 		return "", injected
 	}
-	t.Cleanup(func() { unixReadProcessIdentity = oldReadIdentity })
-	if _, err := Start(context.Background(), Config{Path: "/bin/sh", Args: []string{"-lc", "sleep 1000"}, Env: testEnvironment(), Cols: 80, Rows: 24}); !errors.Is(err, injected) {
+	processFactory := func(cmd *osexec.Cmd) (*Process, error) {
+		return newStartedProcessWithAPI(cmd, api)
+	}
+	if _, err := Start(context.Background(), Config{Path: "/bin/sh", Args: []string{"-lc", "sleep 1000"}, Env: testEnvironment(), Cols: 80, Rows: 24, processFactory: processFactory}); !errors.Is(err, injected) {
 		t.Fatalf("Start error = %v, want initial identity failure", err)
 	}
 	if leaderPID.Load() == 0 {
@@ -566,16 +562,19 @@ func TestSessionCloseRetriesFailedCleanup(t *testing.T) {
 
 func TestSessionCloseRetriesProcessSnapshotFailure(t *testing.T) {
 	injected := errors.New("injected process snapshot failure")
-	oldSnapshot := unixProcessSnapshot
+	api := defaultUnixProcessAPI()
+	snapshot := api.snapshot
 	var calls atomic.Int32
-	unixProcessSnapshot = func() ([]byte, error) {
+	api.snapshot = func() ([]byte, error) {
 		if calls.Add(1) == 1 {
 			return nil, injected
 		}
-		return oldSnapshot()
+		return snapshot()
 	}
-	t.Cleanup(func() { unixProcessSnapshot = oldSnapshot })
-	session, err := Start(context.Background(), Config{Path: "/bin/sh", Args: []string{"-lc", "sleep 1000"}, Env: testEnvironment(), Cols: 80, Rows: 24})
+	processFactory := func(cmd *osexec.Cmd) (*Process, error) {
+		return newStartedProcessWithAPI(cmd, api)
+	}
+	session, err := Start(context.Background(), Config{Path: "/bin/sh", Args: []string{"-lc", "sleep 1000"}, Env: testEnvironment(), Cols: 80, Rows: 24, processFactory: processFactory})
 	if err != nil {
 		t.Fatal(err)
 	}

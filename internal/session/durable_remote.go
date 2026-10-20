@@ -33,7 +33,7 @@ func (m *Manager) durableProviderFor(ctx context.Context, session *Session, tran
 		return session.durableProvider, nil
 	}
 	if session.durableFailure != nil && session.durableGen == generation && session.durableTransport == transport &&
-		!retryFailure && time.Since(session.durableFailureAt) < 30*time.Second {
+		!retryFailure && m.now().Sub(session.durableFailureAt) < 30*time.Second {
 		return nil, session.durableFailure
 	}
 	session.durableFailure = nil
@@ -45,7 +45,7 @@ func (m *Manager) durableProviderFor(ctx context.Context, session *Session, tran
 		if kind == KindSSH && sshHelperUnavailable(err) && ctx.Err() == nil {
 			session.durableProvider = nil
 			session.durableFailure = err
-			session.durableFailureAt = time.Now()
+			session.durableFailureAt = m.now()
 			session.durableGen = generation
 			session.durableTransport = transport
 		}
@@ -274,6 +274,7 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 	options.SessionID = selected.sessionID
 	options.Durable = &DurableTabOptions{
 		Recover: true, Title: selected.descriptor.Title, MetadataRevision: selected.descriptor.MetadataRevision, CanonicalMetadata: selected.canonical,
+		RecoveredExited: selected.descriptor.Dead,
 	}
 	if selected.descriptor.Incarnation != "" {
 		identity := base.DurableIdentity{CreatedAt: selected.descriptor.CreatedAt, Incarnation: selected.descriptor.Incarnation}

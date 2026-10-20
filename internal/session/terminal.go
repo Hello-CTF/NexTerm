@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 
@@ -354,6 +355,10 @@ func lockRecordingOperation(tab *Tab) func() {
 
 type terminalFactory struct{}
 
+func (m *Manager) newOutputFanout() *terminal.Fanout {
+	return terminal.NewFanoutWithOptions(terminal.FanoutOptions{Logger: m.logger})
+}
+
 func (terminalFactory) NewTerminal(config TerminalConfig) (TerminalState, error) {
 	encoding := terminal.UTF8
 	var err error
@@ -617,6 +622,47 @@ func (m *Manager) WriteInternal(ctx context.Context, tabID string, data []byte) 
 	}
 	tab.writeMu.Lock()
 	defer tab.writeMu.Unlock()
+	return m.writeInternalLocked(ctx, tab, data)
+}
+
+var (
+	ErrPasteModeChanged  = errors.New("terminal paste mode changed during write; input may be partially written; do not retry blindly")
+	ErrPasteVerification = errors.New("terminal paste mode verification failed after write; input may be partially written; do not retry blindly")
+)
+
+func (m *Manager) WritePasteFor(ctx context.Context, tabID, text string) error {
+	tab, err := m.TabFor(ctx, tabID)
+	if err != nil {
+		return err
+	}
+	tab.writeMu.Lock()
+	defer tab.writeMu.Unlock()
+	if err := tab.lockFeed(ctx); err != nil {
+		return err
+	}
+	core, ok := tab.terminal.(interface{ BracketedPasteMode() (bool, uint64) })
+	if !ok {
+		tab.unlockFeed()
+		return ErrUnsupported
+	}
+	bracketed, generation := core.BracketedPasteMode()
+	encoded := terminal.EncodePaste(text, bracketed)
+	tab.unlockFeed()
+	if err := m.writeInternalLocked(ctx, tab, encoded); err != nil {
+		return err
+	}
+	if err := tab.lockFeed(ctx); err != nil {
+		return errors.Join(ErrPasteVerification, err)
+	}
+	defer tab.unlockFeed()
+	_, currentGeneration := core.BracketedPasteMode()
+	if currentGeneration != generation {
+		return ErrPasteModeChanged
+	}
+	return nil
+}
+
+func (m *Manager) writeInternalLocked(ctx context.Context, tab *Tab, data []byte) error {
 	tab.mu.Lock()
 	if tab.closed {
 		tab.mu.Unlock()
@@ -654,6 +700,26 @@ func (m *Manager) TerminalSnapshotFor(ctx context.Context, tabID string) (termin
 		return terminal.Snapshot{}, err
 	}
 	return m.TerminalSnapshot(tabID)
+}
+
+func (m *Manager) TerminalWaitSnapshotFor(ctx context.Context, tabID string) (terminal.Snapshot, []string, error) {
+	tab, err := m.TabFor(ctx, tabID)
+	if err != nil {
+		return terminal.Snapshot{}, nil, err
+	}
+	if err := tab.lockFeed(ctx); err != nil {
+		return terminal.Snapshot{}, nil, err
+	}
+	defer tab.unlockFeed()
+	snapshot, err := m.TerminalSnapshot(tabID)
+	if err != nil {
+		return terminal.Snapshot{}, nil, err
+	}
+	tail, err := m.TailLines(tabID, 30)
+	if err != nil {
+		return terminal.Snapshot{}, nil, err
+	}
+	return snapshot, tail, nil
 }
 
 func (m *Manager) ScreenTextFor(ctx context.Context, tabID string) (string, error) {

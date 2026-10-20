@@ -67,12 +67,7 @@ func TestExecTimeoutKillsProcessTree(t *testing.T) {
 }
 
 func TestExecInjectsTermWhenEnvironmentLacksIt(t *testing.T) {
-	if value, ok := os.LookupEnv("TERM"); ok {
-		t.Cleanup(func() { _ = os.Setenv("TERM", value) })
-	}
-	if err := os.Unsetenv("TERM"); err != nil {
-		t.Fatal(err)
-	}
+	unsetEnv(t, "TERM")
 	transport := unixTransport(t)
 	result, err := transport.Exec(context.Background(), `printf 'term=%s' "${TERM:-unset}"`, base.ExecOptions{Timeout: 5 * time.Second})
 	if err != nil {
@@ -179,12 +174,7 @@ func TestShellArgumentsUsesLoginFlagOnlyForLoginShells(t *testing.T) {
 }
 
 func TestDefaultShellFallbackIsNotALoginShell(t *testing.T) {
-	if value, ok := os.LookupEnv("SHELL"); ok {
-		t.Cleanup(func() { _ = os.Setenv("SHELL", value) })
-	}
-	if err := os.Unsetenv("SHELL"); err != nil {
-		t.Fatal(err)
-	}
+	unsetEnv(t, "SHELL")
 	shell, login := defaultShell()
 	if shell != "/bin/sh" || login {
 		t.Fatalf("defaultShell without SHELL = (%q, %v)", shell, login)
@@ -197,9 +187,7 @@ func TestDefaultShellFallbackIsNotALoginShell(t *testing.T) {
 	if err != nil || result.Stdout != "fallback-ok" {
 		t.Fatalf("Exec via fallback shell = %#v, %v", result, err)
 	}
-	if err := os.Setenv("SHELL", "/bin/sh"); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("SHELL", "/bin/sh")
 	if shell, login := defaultShell(); shell != "/bin/sh" || !login {
 		t.Fatalf("defaultShell with explicit SHELL = (%q, %v)", shell, login)
 	}

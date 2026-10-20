@@ -1,11 +1,8 @@
 package session
 
 import (
-	"context"
 	"sync"
 	"time"
-
-	"github.com/Hello-CTF/NexTerm/internal/hub"
 )
 
 const (
@@ -13,15 +10,14 @@ const (
 	outputCoalesceMax      = 64 << 10
 )
 
-// outCoalescer is the subscriber-side output coalescing buffer: a first chunk at the limit is sent directly, otherwise a short window
-// accumulates; when the window fires or the buffer reaches the limit, the whole batch goes out, and oversized batches are never truncated.
-// All send paths (synchronous feed sends, timer flush) go through feedGate, preserving relative order with attach replay/snapshot frames;
-// teardown's fallback flush uses TrySend and never blocks, giving up the fallback when a send is in flight to avoid reordering with it.
+// outCoalescer is the subscriber-side output coalescing buffer: a first chunk at the limit is handed to the subscriber's fanout directly,
+// otherwise a short window accumulates; when the window fires or the buffer reaches the limit, the whole batch is enqueued without truncation.
+// Batch extraction and fanout enqueue (feed and timer flush) go through feedGate, preserving order with attach replay/snapshot frames. The
+// fanout worker owns the actual blocking send and its cancellation/replay recovery.
 type outCoalescer struct {
 	mu      sync.Mutex
 	buf     []byte
 	timer   *time.Timer
-	sending bool
 	gone    bool
 	onTimer func()
 }
@@ -30,7 +26,7 @@ func newOutCoalescer(onTimer func()) *outCoalescer {
 	return &outCoalescer{onTimer: onTimer}
 }
 
-// add appends data and returns the batch to send immediately (first chunk over the limit, or the whole buffer at the limit);
+// add appends data and returns the batch to enqueue immediately (first chunk over the limit, or the whole buffer at the limit);
 // below the limit it buffers and starts the window timer, returning sendNow=false.
 func (c *outCoalescer) add(data []byte) (batch []byte, sendNow bool) {
 	c.mu.Lock()
@@ -39,7 +35,6 @@ func (c *outCoalescer) add(data []byte) (batch []byte, sendNow bool) {
 		return nil, false
 	}
 	if len(c.buf) == 0 && len(data) >= outputCoalesceMax {
-		c.sending = true
 		return data, true
 	}
 	c.buf = append(c.buf, data...)
@@ -50,7 +45,6 @@ func (c *outCoalescer) add(data []byte) (batch []byte, sendNow bool) {
 			c.timer.Stop()
 			c.timer = nil
 		}
-		c.sending = true
 		return batch, true
 	}
 	if c.timer == nil {
@@ -59,7 +53,7 @@ func (c *outCoalescer) add(data []byte) (batch []byte, sendNow bool) {
 	return nil, false
 }
 
-// take removes the buffered batch when the window fires, for the timer flush to send.
+// take removes the buffered batch when the window fires, for the timer flush to enqueue.
 func (c *outCoalescer) take() []byte {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -69,30 +63,18 @@ func (c *outCoalescer) take() []byte {
 	}
 	batch := c.buf
 	c.buf = nil
-	c.sending = true
 	return batch
 }
 
-func (c *outCoalescer) sent() {
+// teardown stops the window and discards all residual data. Recovery starts at the client's last continuous anchor;
+// writing a newer suffix here could advance that anchor across older frames discarded by the fanout.
+func (c *outCoalescer) teardown() {
 	c.mu.Lock()
-	c.sending = false
-	c.mu.Unlock()
-}
-
-// teardown stops the window and marks the coalescer removed; with no send in flight, the residual buffer is TrySent as a best-effort fallback
-// (dropped if the queue is full or the channel was already replaced, consistent with producer.Close's existing queue-drop semantics).
-func (c *outCoalescer) teardown(producer *hub.Producer) {
-	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.gone = true
 	if c.timer != nil {
 		c.timer.Stop()
 		c.timer = nil
 	}
-	batch := c.buf
 	c.buf = nil
-	flush := !c.sending && len(batch) > 0
-	c.mu.Unlock()
-	if flush {
-		_ = producer.TrySendBinary(context.Background(), batch)
-	}
 }

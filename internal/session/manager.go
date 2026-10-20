@@ -23,6 +23,13 @@ type channelOwnerRegistration struct {
 	generation uint64
 }
 
+type managerHooks struct {
+	channelCloseAfterCheck    func()
+	channelCloseBeforeCapture func(string)
+	channelCloseAfterCapture  func(string)
+	ephemeralReapAfterCurrent func()
+}
+
 type Manager struct {
 	mu                     sync.Mutex
 	sessions               map[string]*Session
@@ -54,7 +61,10 @@ type Manager struct {
 	emitter              Emitter
 	transcripts          TranscriptSink
 	commands             CommandSink
+	commandQueue         *asyncCommandSink
 	logger               *slog.Logger
+	now                  func() time.Time
+	hooks                managerHooks
 
 	hookMu        sync.RWMutex
 	userInputHook func(string)
@@ -98,15 +108,25 @@ func NewManager(config Config) *Manager {
 		emitter:              config.Emitter,
 		transcripts:          config.Transcripts,
 		commands:             config.Commands,
-		idleTimeout:          config.IdleTimeout,
-		sweepInterval:        config.SweepInterval,
-		reconnectMax:         config.ReconnectMax,
-		reconnectBackoff:     append([]time.Duration(nil), config.ReconnectBackoff...),
-		defaultReplay:        config.DefaultReplay,
-		openAccess:           config.OpenAccess,
-		ctx:                  ctx,
-		cancel:               cancel,
-		closeDone:            make(chan struct{}),
+		now:                  config.Now,
+		hooks: managerHooks{
+			channelCloseAfterCheck:    func() {},
+			channelCloseBeforeCapture: func(string) {},
+			channelCloseAfterCapture:  func(string) {},
+			ephemeralReapAfterCurrent: func() {},
+		},
+		idleTimeout:      config.IdleTimeout,
+		sweepInterval:    config.SweepInterval,
+		reconnectMax:     config.ReconnectMax,
+		reconnectBackoff: append([]time.Duration(nil), config.ReconnectBackoff...),
+		defaultReplay:    config.DefaultReplay,
+		openAccess:       config.OpenAccess,
+		ctx:              ctx,
+		cancel:           cancel,
+		closeDone:        make(chan struct{}),
+	}
+	if manager.now == nil {
+		manager.now = time.Now
 	}
 	if manager.terminals == nil {
 		manager.terminals = terminalFactory{}
@@ -156,6 +176,10 @@ func NewManager(config Config) *Manager {
 	if manager.logger == nil {
 		manager.logger = slog.Default()
 	}
+	if config.Commands != nil {
+		manager.commandQueue = newAsyncCommandSink(config.Commands, manager.logger, commandLogQueueSize, manager.now)
+		manager.commands = manager.commandQueue
+	}
 	if binder, ok := config.Transcripts.(interface {
 		BindTranscriptOffsetSource(durableTranscriptOffsetSource)
 	}); ok && manager.offsets != nil {
@@ -172,12 +196,8 @@ func (m *Manager) Bind(channelID string) (*hub.Receiver, error) {
 	return m.bus.Bind(channelID)
 }
 
-var channelCloseAfterCheck = func() {}
-var channelCloseBeforeCapture = func(string) {}
-var channelCloseAfterCapture = func(string) {}
-
 func (m *Manager) onChannelClose(channelID string, incarnation uint64, closeChannel func()) {
-	channelCloseAfterCapture(channelID)
+	m.hooks.channelCloseAfterCapture(channelID)
 	m.mu.Lock()
 	tabID := m.channelTabs[channelID]
 	if tabID == "" {
@@ -201,7 +221,7 @@ func (m *Manager) onChannelClose(channelID string, incarnation uint64, closeChan
 	}
 	_, cleanup := m.detachChannelLocked(channelID, incarnation, closeChannel)
 	m.mu.Unlock()
-	channelCloseAfterCheck()
+	m.hooks.channelCloseAfterCheck()
 	cleanup()
 }
 
@@ -371,7 +391,7 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 	sessionCtx, cancel := context.WithCancel(m.ctx)
 	session := &Session{
 		ID:          newID(),
-		CreatedAt:   time.Now(),
+		CreatedAt:   m.now(),
 		asset:       asset,
 		userID:      requester,
 		status:      StatusConnecting,
@@ -379,7 +399,7 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 		ctx:         sessionCtx,
 		cancel:      cancel,
 		tabs:        make(map[string]*Tab),
-		idleSince:   time.Now(),
+		idleSince:   m.now(),
 		connectDone: make(chan struct{}),
 	}
 	m.sessions[session.ID] = session
@@ -447,7 +467,7 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 	}
 	session.transport = handle
 	session.status = StatusConnected
-	session.idleSince = time.Now()
+	session.idleSince = m.now()
 	session.finishConnectLocked(nil)
 	connectedEvent := session.statusEventLocked(StatusConnected, nil)
 	session.mu.Unlock()
@@ -636,7 +656,7 @@ func (m *Manager) listTabs(requester string, openAccess bool) ([]TabInfo, error)
 	m.mu.Unlock()
 	infos := make([]TabInfo, 0, len(tabs))
 	for _, tab := range tabs {
-		infos = append(infos, tab.Info())
+		infos = append(infos, tab.listInfo())
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].ID < infos[j].ID })
 	return infos, nil
@@ -863,7 +883,7 @@ func (m *Manager) SweepIdle(ctx context.Context) error {
 		id       string
 		activity time.Time
 	}
-	now := time.Now()
+	now := m.now()
 	m.mu.Lock()
 	candidates := make([]candidate, 0)
 	remoteCandidates := make([]remoteCandidate, 0)
@@ -923,6 +943,11 @@ func (m *Manager) Close() error {
 	if m.closeComplete {
 		return m.closeErr
 	}
+	defer func() {
+		if m.commandQueue != nil {
+			m.commandQueue.Close()
+		}
+	}()
 	m.mu.Lock()
 	m.closed = true
 	for channelID, timer := range m.slowKicks {

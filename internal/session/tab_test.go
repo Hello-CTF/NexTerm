@@ -619,12 +619,12 @@ func TestDetachCleanupBarrierRejectsLateAttachAndBackground(t *testing.T) {
 	tab := openExplicitBackgroundTab(t, manager, connected, "client-a", "barrier-cleanup-a", true)
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	oldBarrier := ephemeralReapAfterCurrent
-	ephemeralReapAfterCurrent = func() {
+	oldBarrier := manager.hooks.ephemeralReapAfterCurrent
+	manager.hooks.ephemeralReapAfterCurrent = func() {
 		close(entered)
 		<-release
 	}
-	t.Cleanup(func() { ephemeralReapAfterCurrent = oldBarrier })
+	t.Cleanup(func() { manager.hooks.ephemeralReapAfterCurrent = oldBarrier })
 
 	detached := make(chan error, 1)
 	go func() { detached <- manager.DetachClient(tab.ID, "client-a") }()
@@ -962,12 +962,16 @@ func TestRealLocalPTYExplicitBackgroundCleanupRaceReplayInputAndKill(t *testing.
 	waitForRealLocalCondition(t, func() bool { return !processPresent(ordinaryProcess) })
 }
 
-var realLocalProcessSnapshot = func() ([]byte, error) {
+func realLocalProcessSnapshot() ([]byte, error) {
 	return osexec.Command("ps", "-A", "-o", "pid=,pgid=,stat=").Output()
 }
 
-func realLocalProcessInfo(pid int) (int, string, error) {
-	output, err := realLocalProcessSnapshot()
+func realLocalProcessInfo(pid int, snapshots ...func() ([]byte, error)) (int, string, error) {
+	snapshot := realLocalProcessSnapshot
+	if len(snapshots) > 0 {
+		snapshot = snapshots[0]
+	}
+	output, err := snapshot()
 	if err != nil {
 		return 0, "", err
 	}
@@ -989,8 +993,8 @@ func realLocalProcessInfo(pid int) (int, string, error) {
 	return 0, "", nil
 }
 
-func realLocalProcessPresent(pid int) (bool, error) {
-	_, state, err := realLocalProcessInfo(pid)
+func realLocalProcessPresent(pid int, snapshots ...func() ([]byte, error)) (bool, error) {
+	_, state, err := realLocalProcessInfo(pid, snapshots...)
 	if err != nil {
 		return false, err
 	}
@@ -999,10 +1003,7 @@ func realLocalProcessPresent(pid int) (bool, error) {
 
 func TestRealLocalProcessPresentReportsSnapshotFailure(t *testing.T) {
 	injected := errors.New("injected process snapshot failure")
-	oldSnapshot := realLocalProcessSnapshot
-	realLocalProcessSnapshot = func() ([]byte, error) { return nil, injected }
-	t.Cleanup(func() { realLocalProcessSnapshot = oldSnapshot })
-	present, err := realLocalProcessPresent(1)
+	present, err := realLocalProcessPresent(1, func() ([]byte, error) { return nil, injected })
 	if !errors.Is(err, injected) {
 		t.Fatalf("processPresent error = %v, want injected snapshot failure", err)
 	}

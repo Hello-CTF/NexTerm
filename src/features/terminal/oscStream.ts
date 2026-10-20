@@ -76,16 +76,57 @@ function parseOSC133(payload: Uint8Array): OscStreamEvent | null {
 }
 
 export function createOscStreamFilter(): OscStreamFilter {
-  let pending: Uint8Array | null = null;
+  let pendingChunks: Uint8Array[] = [];
+  let pendingBytes = 0;
+
+  const appendPending = (bytes: Uint8Array) => {
+    if (bytes.length === 0) return;
+    pendingChunks.push(bytes.slice());
+    pendingBytes += bytes.length;
+  };
+
+  const joinPending = (bytes: Uint8Array): Uint8Array => {
+    const joined = new Uint8Array(pendingBytes + bytes.length);
+    let offset = 0;
+    for (const chunk of pendingChunks) {
+      joined.set(chunk, offset);
+      offset += chunk.length;
+    }
+    joined.set(bytes, offset);
+    pendingChunks = [];
+    pendingBytes = 0;
+    return joined;
+  };
 
   const push = (bytes: Uint8Array): OscStreamSegment[] => {
+    if (bytes.length === 0 && pendingBytes > 0) return [];
     let data = bytes;
-    if (pending) {
-      const merged = new Uint8Array(pending.length + bytes.length);
-      merged.set(pending, 0);
-      merged.set(bytes, pending.length);
-      data = merged;
-      pending = null;
+    let firstSequenceEnd: SequenceEnd | null = null;
+    if (pendingBytes === 1) {
+      data = joinPending(bytes);
+    } else if (pendingBytes > 1) {
+      const previousBytes = pendingBytes;
+      const lastChunk = pendingChunks[pendingChunks.length - 1];
+      const lastByte = lastChunk[lastChunk.length - 1];
+      if (lastByte === ESC && bytes[0] === ST_FINAL) {
+        firstSequenceEnd = { end: previousBytes + 1, contentEnd: previousBytes - 1 };
+      } else {
+        const found = findSequenceEnd(bytes, 0);
+        if (found) {
+          firstSequenceEnd = {
+            end: previousBytes + found.end,
+            contentEnd: previousBytes + found.contentEnd,
+          };
+        }
+      }
+      if (!firstSequenceEnd) {
+        if (previousBytes + bytes.length > MAX_SEQUENCE_BYTES) {
+          return [{ kind: "text", data: joinPending(bytes) }];
+        }
+        appendPending(bytes);
+        return [];
+      }
+      data = joinPending(bytes);
     }
     const segments: OscStreamSegment[] = [];
     let segmentStart = 0;
@@ -95,7 +136,8 @@ export function createOscStreamFilter(): OscStreamFilter {
       const esc = indexOfByte(data, ESC, i);
       if (esc < 0) break;
       if (esc + 1 >= data.length) {
-        pending = data.slice(esc);
+        pendingChunks = [data.slice(esc)];
+        pendingBytes = data.length - esc;
         stop = esc;
         break;
       }
@@ -103,10 +145,12 @@ export function createOscStreamFilter(): OscStreamFilter {
         i = esc + 1;
         continue;
       }
-      const found = findSequenceEnd(data, esc + 2);
+      const found = firstSequenceEnd ?? findSequenceEnd(data, esc + 2);
+      firstSequenceEnd = null;
       if (!found) {
         if (data.length - esc > MAX_SEQUENCE_BYTES) break;
-        pending = data.slice(esc);
+        pendingChunks = [data.slice(esc)];
+        pendingBytes = data.length - esc;
         stop = esc;
         break;
       }
@@ -137,9 +181,8 @@ export function createOscStreamFilter(): OscStreamFilter {
   };
 
   const flush = (): Uint8Array => {
-    const rest = pending ?? new Uint8Array(0);
-    pending = null;
-    return rest;
+    if (pendingBytes === 0) return new Uint8Array(0);
+    return joinPending(new Uint8Array(0));
   };
 
   return { push, flush };

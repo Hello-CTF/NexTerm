@@ -240,7 +240,11 @@ func TestRemoteSessionLimit(t *testing.T) {
 // TestRemoteIdleSweep pins idle reaping: a shell with no feed, no watchers, and timed-out activity is reaped
 // (tab and session removed together); an active feed connection or subscribed watchers suspend reaping; disconnect resets the timer.
 func TestRemoteIdleSweep(t *testing.T) {
-	manager := newRemoteManager(t, func(config *Config) { config.IdleTimeout = 30 * time.Millisecond })
+	clock := newSessionTestClock()
+	manager := newRemoteManager(t, func(config *Config) {
+		config.Now = clock.Now
+		config.IdleTimeout = 30 * time.Millisecond
+	})
 	ctx := context.Background()
 	info := registerRemote(t, manager, "user-a")
 	session, err := manager.Session(info.SessionID)
@@ -249,7 +253,7 @@ func TestRemoteIdleSweep(t *testing.T) {
 	}
 	stale := func() {
 		session.mu.Lock()
-		session.remoteActivity = time.Now().Add(-time.Hour)
+		session.remoteActivity = clock.Now().Add(-time.Hour)
 		session.mu.Unlock()
 	}
 

@@ -67,6 +67,16 @@ func (s *FileHostKeyStore) HostKeys(ctx context.Context, host string, port int) 
 	return selectHostKeys(keys, host, port), nil
 }
 
+func (s *FileHostKeyStore) HostKeySnapshot(ctx context.Context) ([]HostKey, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	keys, err := s.read(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return append([]HostKey(nil), keys...), nil
+}
+
 func (s *FileHostKeyStore) PutHostKey(ctx context.Context, key HostKey, replace bool) error {
 	if !key.valid() {
 		return fmt.Errorf("invalid host key")

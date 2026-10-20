@@ -7,22 +7,39 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
 
 func (m *Manager) StartReconnect(id string) error {
-	if err := m.reconnectPreflight(id); err != nil {
+	return m.startReconnect(id, 0, nil)
+}
+
+func (m *Manager) StartReconnectWithAssetFor(ctx context.Context, id string, asset Asset) error {
+	if _, err := m.SessionFor(ctx, id); err != nil {
+		return err
+	}
+	return m.startReconnect(id, 0, &asset)
+}
+
+func (m *Manager) startReconnect(id string, expectedGeneration uint64, assets ...*Asset) error {
+	var refreshed *Asset
+	if len(assets) > 0 {
+		refreshed = assets[0]
+	}
+	if err := m.reconnectPreflight(id, expectedGeneration, refreshed); err != nil {
 		return err
 	}
 	if !m.startGoroutine(func() {
-		_ = m.Reconnect(context.Background(), id)
+		_ = m.reconnect(context.Background(), id, expectedGeneration)
 	}) {
 		return ErrSessionClosed
 	}
 	return nil
 }
 
-func (m *Manager) reconnectPreflight(id string) error {
+func (m *Manager) reconnectPreflight(id string, expectedGeneration uint64, refreshed *Asset) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	session := m.sessions[id]
@@ -31,11 +48,18 @@ func (m *Manager) reconnectPreflight(id string) error {
 	}
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	if !reconnectable(session.asset.Kind) {
+	asset := session.Asset()
+	if refreshed != nil {
+		asset = *refreshed
+	}
+	if !reconnectable(asset.Kind) {
 		return ErrUnsupported
 	}
 	if session.closed {
 		return ErrSessionClosed
+	}
+	if expectedGeneration != 0 && (session.generation != expectedGeneration || session.status != StatusConnected) {
+		return ErrStaleGeneration
 	}
 	if session.reconnecting {
 		return nil
@@ -44,12 +68,44 @@ func (m *Manager) reconnectPreflight(id string) error {
 		return ErrDisconnected
 	}
 	if other := m.sessions[m.byAsset[session.assetOwnerKey()]]; other != nil && other != session {
-		return fmt.Errorf("%w: %s", ErrAssetSessionConflict, session.asset.ID)
+		return fmt.Errorf("%w: %s", ErrAssetSessionConflict, asset.ID)
+	}
+	if refreshed != nil {
+		snapshot := *refreshed
+		session.assetSnapshot.Store(&snapshot)
+		session.staleConfig = false
+	}
+	return nil
+}
+
+func (m *Manager) MarkSessionConfigStaleFor(ctx context.Context, id string) error {
+	requester := userIDFromContext(ctx)
+	openAccess := m.requestOpenAccess(ctx)
+	if requester == "" && !openAccess {
+		return ErrForbidden
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session := m.sessions[id]
+	if session == nil {
+		return ErrSessionNotFound
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if !sessionRequestAllowed(session, requester, openAccess) {
+		return ErrForbidden
+	}
+	if !session.closed {
+		session.staleConfig = true
 	}
 	return nil
 }
 
 func (m *Manager) Reconnect(ctx context.Context, id string) error {
+	return m.reconnect(ctx, id, 0)
+}
+
+func (m *Manager) reconnect(ctx context.Context, id string, expectedGeneration uint64) error {
 	m.mu.Lock()
 	session := m.sessions[id]
 	if session == nil {
@@ -57,7 +113,7 @@ func (m *Manager) Reconnect(ctx context.Context, id string) error {
 		return ErrSessionNotFound
 	}
 	session.mu.Lock()
-	if !reconnectable(session.asset.Kind) {
+	if !reconnectable(session.Asset().Kind) {
 		session.mu.Unlock()
 		m.mu.Unlock()
 		return ErrUnsupported
@@ -71,6 +127,11 @@ func (m *Manager) Reconnect(ctx context.Context, id string) error {
 		session.mu.Unlock()
 		m.mu.Unlock()
 		return ErrSessionClosed
+	}
+	if expectedGeneration != 0 && (session.generation != expectedGeneration || session.status != StatusConnected) {
+		session.mu.Unlock()
+		m.mu.Unlock()
+		return nil
 	}
 	if session.reconnecting {
 		done := session.reconnectDone
@@ -99,6 +160,8 @@ func (m *Manager) Reconnect(ctx context.Context, id string) error {
 	session.reconnecting = true
 	session.reconnectDone = make(chan struct{})
 	session.reconnectErr = nil
+	session.reconnectAttempt = 0
+	session.reconnectNextRetry = m.now().Add(m.reconnectBackoff[0])
 	channels := session.detachChannelsLocked()
 	m.byAsset[session.assetOwnerKey()] = session.ID
 	reconnectCtx := session.ctx
@@ -148,7 +211,7 @@ func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generatio
 			lastErr = err
 			break
 		}
-		transport, err := m.connector.Connect(ctx, session.asset, generation)
+		transport, err := m.connector.Connect(ctx, session.Asset(), generation)
 		var handle *transportHandle
 		if transport != nil {
 			handle = newTransportHandle(transport)
@@ -188,6 +251,20 @@ func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generatio
 			lastErr = ctx.Err()
 			break
 		}
+		if !m.noteReconnectAttempt(session, generation, attempt+1) {
+			return lastErr
+		}
+		if isNonRetryableReconnectError(lastErr) {
+			break
+		}
+		if attempt+1 < m.reconnectMax {
+			nextBackoff := m.reconnectBackoff[min(attempt+1, len(m.reconnectBackoff)-1)]
+			event, current := m.reconnectRetryEvent(session, generation, lastErr, m.now().Add(nextBackoff))
+			if !current {
+				return lastErr
+			}
+			m.emit(context.Background(), TopicSessionStatus, event)
+		}
 	}
 	if lastErr == nil {
 		lastErr = errors.New("reconnect attempts exhausted")
@@ -195,10 +272,49 @@ func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generatio
 	return m.finishReconnect(session, generation, lastErr)
 }
 
+func isNonRetryableReconnectError(err error) bool {
+	var appErr *ipc.Error
+	if errors.As(err, &appErr) {
+		switch appErr.Code {
+		case ipc.CodeBadParam, ipc.CodeVaultLocked, ipc.CodeVaultNotInit:
+			return true
+		}
+	}
+	var connectErr *ssh.ConnectError
+	if errors.As(err, &connectErr) {
+		switch connectErr.Kind {
+		case ssh.ErrorKindAuth, ssh.ErrorKindHostKeyPending, ssh.ErrorKindHostKeyChanged, ssh.ErrorKindConfig:
+			return true
+		}
+	}
+	var hostKeyErr *ssh.HostKeyError
+	return errors.As(err, &hostKeyErr)
+}
+
+func (m *Manager) noteReconnectAttempt(session *Session, generation uint64, attempt int) bool {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.closed || session.status != StatusReconnecting || !session.reconnecting || session.generation != generation {
+		return false
+	}
+	session.reconnectAttempt = attempt
+	return true
+}
+
+func (m *Manager) reconnectRetryEvent(session *Session, generation uint64, cause error, nextRetryAt time.Time) (StatusEvent, bool) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.closed || session.status != StatusReconnecting || !session.reconnecting || session.generation != generation {
+		return StatusEvent{}, false
+	}
+	session.reconnectNextRetry = nextRetryAt
+	return session.statusEventLocked(StatusReconnecting, cause), true
+}
+
 func (m *Manager) openReplacementChannels(ctx context.Context, session *Session, transport *transportHandle, generation uint64) (map[*Tab]*replacementChannel, map[*Tab]struct{}, error) {
 	opened := make(map[*Tab]*replacementChannel)
 	gone := make(map[*Tab]struct{})
-	if !ptyBacked(session.asset.Kind) {
+	if !ptyBacked(session.Asset().Kind) {
 		return opened, gone, nil
 	}
 	session.mu.Lock()
@@ -206,7 +322,7 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 	for _, tab := range session.tabs {
 		tabs = append(tabs, tab)
 	}
-	kind := session.asset.Kind
+	kind := session.Asset().Kind
 	session.mu.Unlock()
 	var provider base.DurableProvider
 	for _, tab := range tabs {
@@ -218,6 +334,7 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 		durableTab := tab.durable != nil
 		cols, rows := tab.cols, tab.rows
 		durableFed := tab.durableFed
+		durableIdentity := tab.durableIdentity
 		if tab.grid != nil {
 			if desired := tab.grid.Snapshot().DesiredGrid; desired.Valid() {
 				cols, rows = uint32(desired.Cols), uint32(desired.Rows)
@@ -232,16 +349,11 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 					return opened, gone, err
 				}
 			}
-			var attachment base.DurableAttachment
-			var err error
-			offsetResume := false
-			if attacher, ok := provider.(durableOffsetAttacher); ok {
-				attachment, err = attacher.AttachFrom(ctx, tab.ID, uint64(durableFed))
-				offsetResume = true
-			} else {
-				attachment, err = provider.Attach(ctx, tab.ID)
-			}
-			if errors.Is(err, durable.ErrNotFound) {
+			attachment, offsetResume, err := attachDurableReplacement(ctx, provider, tab.ID, durableIdentity, uint64(durableFed))
+			if errors.Is(err, durable.ErrNotFound) || errors.Is(err, durable.ErrIdentity) {
+				if attachment != nil {
+					_ = attachment.Close()
+				}
 				gone[tab] = struct{}{}
 				continue
 			}
@@ -284,6 +396,25 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 		opened[tab] = &replacementChannel{channel: newChannelHandle(channel)}
 	}
 	return opened, gone, nil
+}
+
+// attachDurableReplacement uses legacy unchecked attach only for tabs that never had an incarnation.
+// A known identity always requires checked attach; identity errors never fall back to the legacy path.
+func attachDurableReplacement(ctx context.Context, provider base.DurableProvider, tabID string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, bool, error) {
+	if identity.Incarnation != "" {
+		attacher, ok := provider.(base.DurableIdentityAttacher)
+		if !ok {
+			return nil, false, ErrUnsupported
+		}
+		attachment, err := attacher.AttachFromWithIdentity(ctx, tabID, identity, offset)
+		return attachment, true, err
+	}
+	if attacher, ok := provider.(durableOffsetAttacher); ok {
+		attachment, err := attacher.AttachFrom(ctx, tabID, offset)
+		return attachment, true, err
+	}
+	attachment, err := provider.Attach(ctx, tabID)
+	return attachment, false, err
 }
 
 type replacementChannel struct {
@@ -372,7 +503,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		}
 		tab.mu.Unlock()
 	}
-	if !ptyBacked(session.asset.Kind) {
+	if !ptyBacked(session.Asset().Kind) {
 		for _, tab := range session.tabs {
 			tab.mu.Lock()
 			if !tab.closed && m.tabs[tab.ID] == tab {
@@ -395,7 +526,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 	session.transport = transport
 	session.status = StatusConnected
 	if len(session.tabs) == 0 {
-		session.idleSince = time.Now()
+		session.idleSince = m.now()
 	}
 	session.finishReconnectLocked(nil)
 	reconnectCtx := session.ctx
@@ -431,7 +562,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		tabs = append(tabs, tab)
 	}
 	session.mu.Unlock()
-	if ptyBacked(session.asset.Kind) {
+	if ptyBacked(session.Asset().Kind) {
 		for _, tab := range tabs {
 			tab.mu.Lock()
 			channel := tab.channel

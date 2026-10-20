@@ -156,6 +156,28 @@ func TestFileHostKeyStorePersistsAndConflicts(t *testing.T) {
 	}
 }
 
+func TestFileHostKeyStoreSnapshotReturnsIndependentCopy(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "hostkeys.json")
+	store, err := NewFileHostKeyStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := newHostKey("example.test", 22, hostKeyForTest(t))
+	if err := store.PutHostKey(ctx, key, false); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := store.HostKeySnapshot(ctx)
+	if err != nil || len(snapshot) != 1 || snapshot[0] != key {
+		t.Fatalf("snapshot = %+v, %v", snapshot, err)
+	}
+	snapshot[0].Key = "changed"
+	reloaded, err := store.HostKeySnapshot(ctx)
+	if err != nil || len(reloaded) != 1 || reloaded[0] != key {
+		t.Fatalf("snapshot mutation escaped into the store: %+v, %v", reloaded, err)
+	}
+}
+
 func TestFileHostKeyStoreWritesIndentedJSON(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "hostkeys.json")

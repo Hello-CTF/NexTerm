@@ -20,9 +20,7 @@ func TestOutputVisibleImmediateDelivery(t *testing.T) {
 	if err := o.Chunk(context.Background(), raw); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(sink.Bytes(), raw) {
-		t.Fatalf("sink = %q", sink.Bytes())
-	}
+	waitFor(t, "visible output delivery", func() bool { return bytes.Equal(sink.Bytes(), raw) })
 	if !bytes.Equal(tab.Dump(0), raw) {
 		t.Fatalf("ring = %q", tab.Dump(0))
 	}
@@ -73,9 +71,9 @@ func TestOutputHiddenBatchMaxFlushesImmediately(t *testing.T) {
 	if err := o.Chunk(ctx, []byte("y")); err != nil {
 		t.Fatal(err)
 	}
-	if len(sink.Frames()) != 1 || sink.Len() != HiddenBatchMax+1 {
-		t.Fatalf("frames=%d bytes=%d", len(sink.Frames()), sink.Len())
-	}
+	waitFor(t, "hidden max batch delivery", func() bool {
+		return len(sink.Frames()) == 1 && sink.Len() == HiddenBatchMax+1
+	})
 	got := sink.Bytes()
 	if got[0] != 'x' || got[len(got)-1] != 'y' {
 		t.Fatalf("batch order broken: %c ... %c", got[0], got[len(got)-1])
@@ -96,9 +94,7 @@ func TestOutputVisibleAgainFlushesPromptly(t *testing.T) {
 	if err := o.Chunk(context.Background(), []byte("y")); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(sink.Bytes(), []byte("xy")) {
-		t.Fatalf("sink = %q", sink.Bytes())
-	}
+	waitFor(t, "visible output after flush", func() bool { return bytes.Equal(sink.Bytes(), []byte("xy")) })
 }
 
 func TestOutputAttachReplayNoGapNoDuplicate(t *testing.T) {
@@ -174,9 +170,9 @@ func TestOutputAttachFromSequence(t *testing.T) {
 	if err := o.Chunk(ctx, []byte("X")); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(sink.Bytes(), []byte("456789X")) {
-		t.Fatalf("sink = %q", sink.Bytes())
-	}
+	waitFor(t, "live output after sequence replay", func() bool {
+		return bytes.Equal(sink.Bytes(), []byte("456789X"))
+	})
 	sinkC := &memSink{}
 	next, clamped, attached, err = o.AttachFrom(ctx, "c", sinkC, 999, 0)
 	if err != nil || next != 11 || clamped || !attached {
@@ -241,9 +237,9 @@ func TestOutputAttachFromBoundedReplayCatchUp(t *testing.T) {
 	if err := o.Chunk(ctx, []byte("X")); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(sink.Bytes(), []byte("0123456789X")) {
-		t.Fatalf("sink = %q", sink.Bytes())
-	}
+	waitFor(t, "bounded replay followed by live output", func() bool {
+		return bytes.Equal(sink.Bytes(), []byte("0123456789X"))
+	})
 }
 
 func TestOutputAttachReplayFailureNotAttached(t *testing.T) {

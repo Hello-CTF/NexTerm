@@ -1,13 +1,14 @@
 package terminal
 
 type ModeTracker struct {
-	state         byte
-	private       bool
-	intermediate  bool
-	params        []byte
-	cursorVisible bool
-	appCursor     bool
-	bracketed     bool
+	state               byte
+	private             bool
+	intermediate        bool
+	params              []byte
+	cursorVisible       bool
+	appCursor           bool
+	bracketed           bool
+	bracketedGeneration uint64
 }
 
 const (
@@ -30,6 +31,9 @@ func (m *ModeTracker) Reset() {
 	m.private, m.intermediate = false, false
 	m.cursorVisible = true
 	m.appCursor = false
+	if m.bracketed {
+		m.bracketedGeneration++
+	}
 	m.bracketed = false
 }
 
@@ -38,6 +42,8 @@ func (m *ModeTracker) CursorVisible() bool { return m.cursorVisible }
 func (m *ModeTracker) ApplicationCursor() bool { return m.appCursor }
 
 func (m *ModeTracker) BracketedPaste() bool { return m.bracketed }
+
+func (m *ModeTracker) BracketedPasteGeneration() uint64 { return m.bracketedGeneration }
 
 func (m *ModeTracker) Feed(p []byte) {
 	for _, b := range p {
@@ -133,7 +139,10 @@ func (m *ModeTracker) dispatch(final byte) {
 		case 25:
 			m.cursorVisible = set
 		case 2004:
-			m.bracketed = set
+			if m.bracketed != set {
+				m.bracketedGeneration++
+				m.bracketed = set
+			}
 		}
 	}
 }

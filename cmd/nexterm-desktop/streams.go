@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,20 @@ import (
 )
 
 var errDesktopStreamClosed = errors.New("desktop stream is closed")
+
+const (
+	desktopBinaryEventType       = "nexterm.desktop-binary"
+	desktopStreamClosedEventType = "nexterm.desktop-stream-closed"
+)
+
+type desktopBinaryEvent struct {
+	Type string `json:"type"`
+	Data string `json:"data"`
+}
+
+type desktopStreamClosedEvent struct {
+	Type string `json:"type"`
+}
 
 type desktopStreamWindow interface {
 	DispatchWailsEvent(*application.CustomEvent)
@@ -111,19 +126,15 @@ func (f *desktopStreamFactory) dispatch(event *application.CustomEvent) error {
 	if window == nil {
 		return ipc.ErrStreamsUnavailable
 	}
-	if _, err := json.Marshal(event); err != nil {
-		return err
-	}
 	window.DispatchWailsEvent(event)
 	return nil
 }
 
 func (s *desktopStream) SendBinary(ctx context.Context, data []byte) error {
-	payload := make([]int, len(data))
-	for index, value := range data {
-		payload[index] = int(value)
-	}
-	return s.send(ctx, payload)
+	return s.send(ctx, desktopBinaryEvent{
+		Type: desktopBinaryEventType,
+		Data: base64.StdEncoding.EncodeToString(data),
+	})
 }
 
 func (s *desktopStream) SendJSON(ctx context.Context, data json.RawMessage) error {
@@ -163,6 +174,9 @@ func (s *desktopStream) Close() error {
 	s.closed = true
 	s.mu.Unlock()
 	s.factory.remove(s.topic[len("channel://"):], s)
+	_ = s.factory.dispatch(&application.CustomEvent{
+		Name: s.topic, Data: desktopStreamClosedEvent{Type: desktopStreamClosedEventType},
+	})
 	return nil
 }
 

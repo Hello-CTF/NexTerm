@@ -284,6 +284,9 @@ func TestTransportProviderCreateAttachRoundTrip(t *testing.T) {
 }
 
 func TestTransportFileSystemRoots(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	rig := newPurposeRig(t)
 	transport := New("dev-1", rig.digest, rig.dial, 1)
 	filesystem, err := transport.FileSystem(context.Background())
@@ -314,10 +317,6 @@ func TestTransportFileSystemRoots(t *testing.T) {
 		if roots.PathStyle != base.PathStylePOSIX || len(roots.Roots) != 1 || roots.Roots[0].Path != "/" {
 			t.Fatalf("roots = %+v; want the agent POSIX root", roots)
 		}
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
 	}
 	wantHome, err := filepath.Abs(home)
 	if err != nil {

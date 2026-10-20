@@ -40,7 +40,8 @@ func (m *Manager) WriteGuest(ctx context.Context, tabID, guest string, data []by
 		return ErrUnsupported
 	}
 	guestID := clientID(guest)
-	if tab.guestLease != "" && tab.guestLease != guestID && !time.Now().Before(tab.guestLeaseUntil) {
+	now := m.now()
+	if tab.guestLease != "" && tab.guestLease != guestID && !now.Before(tab.guestLeaseUntil) {
 		tab.clearGuestLeaseLocked()
 	}
 	if tab.controller != "" && tab.controller != guestID {
@@ -64,7 +65,7 @@ func (m *Manager) WriteGuest(ctx context.Context, tabID, guest string, data []by
 		tab.controlled = true
 	}
 	tab.guestLease = guestID
-	tab.guestLeaseUntil = time.Now().Add(leaseTTL)
+	tab.guestLeaseUntil = now.Add(leaseTTL)
 	channel := tab.channel
 	generation := tab.generation
 	exited := tab.exited

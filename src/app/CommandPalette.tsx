@@ -1,6 +1,6 @@
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useUi, connectAsset, nextTabId, openTerminalTab, requestKillTab } from "./store";
+import { useUi, connectAsset, nextTabId, openTerminalTab, requestKillTab, type Workspace } from "./store";
 import { formatBinding, useKeybindings, type KeybindingActionId } from "./keybindings";
 import { assetApi, sessionApi, type Asset } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
@@ -9,14 +9,18 @@ import { isMobile } from "./platform";
 import { splitAllowedForHeight } from "../features/terminal/workspaceLayout";
 import { insertSnippet } from "../features/explorer/snippetInsert";
 import { cloneAsset } from "../features/explorer/assetClone";
+import { isInventoryOnlyKind } from "../features/explorer/inventory";
 import { useAssetVisibility } from "../features/explorer/assetVisibility";
 import { useAssetReachability, type ReachabilityEntry } from "../features/explorer/assetReachability";
 import { ReachabilityDot } from "../features/explorer/ReachabilityDot";
+import { createMultiHostLogTabId, MULTI_HOST_LOG_TAB_ID } from "../features/logs/logTailTab";
+import { FLEET_HEALTH_TAB_ID } from "../features/fleet/fleetHealthTab";
 import {
   IconActivity,
   IconClock,
   IconCommand,
   IconCopy,
+  IconDatabase,
   IconEdit,
   IconEye,
   IconEyeOff,
@@ -37,6 +41,7 @@ interface Action {
   id: string;
   label: string;
   hint?: string;
+  section?: string;
   icon: typeof IconTerminal;
   dot?: ReachabilityEntry;
   run: () => void;
@@ -45,6 +50,12 @@ interface Action {
 function snippetHint(body: string): string {
   const first = body.split(/\r?\n/, 1)[0]?.trim() ?? "";
   return first.length > 36 ? `${first.slice(0, 36)}…` : first;
+}
+
+function workspaceIcon(workspace: Workspace) {
+  if (workspace.kind === "db") return IconDatabase;
+  if (workspace.kind === "tools") return IconSettings;
+  return assetIcon(workspace.assetKind ?? "ssh");
 }
 
 export function CommandPalette({
@@ -59,8 +70,17 @@ export function CommandPalette({
   onQuickConnect?: () => void;
 }) {
   const qc = useQueryClient();
-  const { sessions, setSessions, addTab, pushToast, themeMode, setThemeMode, connectingAssetIds } =
-    useUi();
+  const {
+    sessions,
+    setSessions,
+    addTab,
+    pushToast,
+    themeMode,
+    setThemeMode,
+    connectingAssetIds,
+    workspaces,
+    activeWorkspaceId,
+  } = useUi();
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
   const assetsQuery = useQuery({ queryKey: ["assets"], queryFn: () => assetApi.list(), retry: false });
@@ -90,7 +110,7 @@ export function CommandPalette({
     if (probedRef.current || assets.length === 0) return;
     probedRef.current = true;
     const ids = assets
-      .filter((a) => Boolean(a.host) && (showHidden || !hiddenIds.includes(a.id)))
+      .filter((a) => !isInventoryOnlyKind(a.kind) && Boolean(a.host) && (showHidden || !hiddenIds.includes(a.id)))
       .slice(0, 16)
       .map((a) => a.id);
     if (ids.length > 0) void useAssetReachability.getState().probe(ids);
@@ -118,6 +138,25 @@ export function CommandPalette({
   };
 
   const actions = useMemo<Action[]>(() => {
+    const currentWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ??
+      workspaces[workspaces.length - 1];
+    const workspaceActions: Action[] = workspaces.map((workspace) => ({
+      id: `workspace-${workspace.id}`,
+      label: workspace.title,
+      section: "已打开的工作区",
+      hint: [
+        workspace.id === currentWorkspace?.id ? "当前" : null,
+        `${workspace.panes.flatMap((pane) => pane.tabs).length} 个标签`,
+        workspace.panes.length > 1 ? "已分屏" : null,
+      ].filter(Boolean).join(" · "),
+      icon: workspaceIcon(workspace),
+      run: () => {
+        const current = useUi.getState();
+        if (current.workspaces.some((item) => item.id === workspace.id)) {
+          current.setActiveWorkspace(workspace.id);
+        }
+      },
+    }));
     const list: Action[] = [
       {
         id: "quick-connect",
@@ -205,6 +244,27 @@ export function CommandPalette({
             title: "端口转发",
             closable: true,
           }),
+      },
+      {
+        id: "exec-batch",
+        label: "批量执行命令",
+        hint: "已连接 SSH",
+        icon: IconZap,
+        run: () => addTab({ id: "exec-batch", kind: "execBatch", title: "批量执行", closable: true }),
+      },
+      {
+        id: MULTI_HOST_LOG_TAB_ID,
+        label: "多主机日志合并",
+        hint: "文件 / journalctl / Docker · 已连接 SSH",
+        icon: IconCommand,
+        run: () => addTab({ id: createMultiHostLogTabId(), kind: "log", title: "多主机日志", closable: true }),
+      },
+      {
+        id: FLEET_HEALTH_TAB_ID,
+        label: "主机概览",
+        hint: "当前项目 · 只读健康网格 · 默认手动刷新",
+        icon: IconActivity,
+        run: () => addTab({ id: FLEET_HEALTH_TAB_ID, kind: "log", title: "主机概览", closable: true }),
       },
       {
         id: "settings",
@@ -299,18 +359,21 @@ export function CommandPalette({
         },
       },
     ];
+    list.push(...workspaceActions);
     const isHidden = (id: string) => hiddenIds.includes(id);
     for (const asset of assets.filter((a) => showHidden || !isHidden(a.id))) {
       const hidden = isHidden(asset.id);
       const connecting = connectingAssetIds.includes(asset.id);
-      list.push({
-        id: `conn-${asset.id}`,
-        label: `连接 ${asset.name}`,
-        hint: connecting ? "连接中…" : [asset.host, asset.kind].filter(Boolean).join(" · "),
-        icon: assetIcon(asset.kind, typeof asset.options?.icon === "string" ? asset.options.icon : undefined),
-        dot: reachEntries[asset.id],
-        run: () => void connectAsset(asset),
-      });
+      if (!isInventoryOnlyKind(asset.kind)) {
+        list.push({
+          id: `conn-${asset.id}`,
+          label: `连接 ${asset.name}`,
+          hint: connecting ? "连接中…" : [asset.host, asset.kind].filter(Boolean).join(" · "),
+          icon: assetIcon(asset.kind, typeof asset.options?.icon === "string" ? asset.options.icon : undefined),
+          dot: reachEntries[asset.id],
+          run: () => void connectAsset(asset),
+        });
+      }
       list.push({
         id: `edit-${asset.id}`,
         label: `编辑资产 ${asset.name}`,
@@ -360,10 +423,12 @@ export function CommandPalette({
     setThemeMode,
     reachEntries,
     connectingAssetIds,
+    workspaces,
+    activeWorkspaceId,
   ]);
 
   const filtered = actions.filter((action) =>
-    `${action.label} ${action.hint ?? ""}`.toLowerCase().includes(query.toLowerCase()),
+    `${action.section ?? ""} ${action.label} ${action.hint ?? ""}`.toLowerCase().includes(query.toLowerCase()),
   );
   const activeIndex = filtered.length > 0 ? Math.min(cursor, filtered.length - 1) : 0;
   const activeOptionId = filtered[activeIndex] ? `${listId}-option-${activeIndex}` : undefined;
@@ -455,23 +520,32 @@ export function CommandPalette({
         </div>
         <div id={listId} className="max-h-[340px] overflow-y-auto p-1.5" role="listbox" aria-label="命令结果" tabIndex={-1}>
           {filtered.map((action, index) => (
-            <button
-              key={action.id}
-              id={`${listId}-option-${index}`}
-              type="button"
-              role="option"
-              aria-selected={index === activeIndex}
-              tabIndex={-1}
-              className={`nx-command-item ${index === activeIndex ? "is-active" : ""}`}
-              onMouseEnter={() => setCursor(index)}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => execute(action)}
-            >
-              <action.icon size={15} className="shrink-0 text-neutral-400" />
-              <span className="min-w-0 flex-1 truncate">{action.label}</span>
-              <ReachabilityDot entry={action.dot} />
-              {action.hint && <span className="nx-command-hint shrink-0 text-[11px]">{action.hint}</span>}
-            </button>
+            <Fragment key={action.id}>
+              {action.section && filtered[index - 1]?.section !== action.section && (
+                <div
+                  className="px-3 pb-1 pt-2 text-[10.5px] font-medium text-neutral-500"
+                  data-command-section={action.section}
+                >
+                  {action.section}
+                </div>
+              )}
+              <button
+                id={`${listId}-option-${index}`}
+                type="button"
+                role="option"
+                aria-selected={index === activeIndex}
+                tabIndex={-1}
+                className={`nx-command-item ${index === activeIndex ? "is-active" : ""}`}
+                onMouseEnter={() => setCursor(index)}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => execute(action)}
+              >
+                <action.icon size={15} className="shrink-0 text-neutral-400" />
+                <span className="min-w-0 flex-1 truncate">{action.label}</span>
+                <ReachabilityDot entry={action.dot} />
+                {action.hint && <span className="nx-command-hint shrink-0 text-[11px]">{action.hint}</span>}
+              </button>
+            </Fragment>
           ))}
           {filtered.length === 0 && (
             <div className="nx-command-empty px-4 py-8 text-center text-xs" role="status">

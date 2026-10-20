@@ -23,12 +23,18 @@ const (
 	TopicDeviceStatus      Topic = "device://status"
 	TopicUpdateProgress    Topic = "update://progress"
 	TopicAINotification    Topic = "ai://notification"
+	TopicInventoryChanged  Topic = "inventory://changed"
 )
 
 var ErrEventsUnavailable = errors.New("event adapter is not configured")
 
 type LayoutChangedEvent struct {
 	Revision int64 `json:"revision"`
+}
+
+type InventoryChangedEvent struct {
+	Source  string `json:"source"`
+	GroupID string `json:"groupId"`
 }
 
 // AINotificationEvent is an in-app notification emitted by the AI notify tool; OwnerID is the session owner,

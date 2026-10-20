@@ -1,8 +1,9 @@
 import { create } from "zustand";
 import { assetApi, dbApi, sessionApi, terminalApi, vaultApi, type RecordingStatus, type SessionInfo, type VaultStatus } from "../ipc/commands";
 import { DESKTOP } from "../ipc/env";
-import type { ConnectProgressEvent, HelperProgressEvent } from "../ipc/events";
+import type { ConnectProgressEvent, HelperProgressEvent, SessionStatusEvent as BaseSessionStatusEvent } from "../ipc/events";
 import { describeError } from "../ui/errorText";
+import { formatTime } from "../ui/format";
 import type { ChoiceOption } from "../ui/dialogs";
 import { connectWithHostKeyConfirm, confirmHostKeyIfNeeded } from "./hostKeys";
 import { formatQuickConnectTarget, type QuickConnectTarget } from "./quickConnectTarget";
@@ -36,6 +37,15 @@ import {
   type TerminalCloseAction,
 } from "./preferences";
 import { moveItem } from "./tabReorder";
+import { clearTabUnread, retainUnreadTabs } from "./unreadStore";
+import {
+  ALL_PROJECTS,
+  focusedActiveWorkspace,
+  focusedWorkspaces,
+  reconcileActiveWorkspaceForFocus,
+  type ProjectFocus,
+  type ProjectInventory,
+} from "./projectFocus";
 
 export type PaneKind =
   | "terminal"
@@ -50,7 +60,8 @@ export type PaneKind =
   | "audit"
   | "devices"
   | "background"
-  | "history";
+  | "history"
+  | "execBatch";
 
 const TOOL_TAB_KINDS = new Set<PaneKind>([
   "credentials",
@@ -58,10 +69,19 @@ const TOOL_TAB_KINDS = new Set<PaneKind>([
   "audit",
   "devices",
   "history",
+  "execBatch",
 ]);
 
 export function isToolTabKind(kind: PaneKind): boolean {
   return TOOL_TAB_KINDS.has(kind);
+}
+
+export function isGlobalToolTab(tab: { kind: PaneKind; sessionId?: string }): boolean {
+  return tab.kind === "forward" && !tab.sessionId;
+}
+
+function isWorkspaceToolTab(tab: { kind: PaneKind; sessionId?: string }): boolean {
+  return isToolTabKind(tab.kind) || isGlobalToolTab(tab);
 }
 
 export type LeftMode = "assets" | "files" | "credentials";
@@ -97,7 +117,6 @@ export interface AppTab {
   exited?: boolean;
   retainable?: boolean;
   renamedByUser?: boolean;
-  unread?: boolean;
   closeError?: string;
   restorePending?: boolean;
 }
@@ -213,12 +232,21 @@ export interface WorkspaceProblem {
   sqlTruncated?: boolean;
   outcome?: SqlExecutionOutcome;
   connection?: WorkspaceProblemConnection;
+  connectionKey?: string;
 }
 
 export type WorkspaceProblemInput = Omit<
   WorkspaceProblem,
   "id" | "detailTruncated" | "sqlTruncated"
 >;
+
+export type ConnectionProblemInput = Omit<
+  WorkspaceProblemInput,
+  "generation" | "connectionKey"
+> & {
+  connectionKey: string;
+  workspaceId?: string;
+};
 
 export interface WorkspaceRuntime {
   generation: number;
@@ -227,10 +255,34 @@ export interface WorkspaceRuntime {
   problems?: WorkspaceProblem[];
 }
 
+export type WorkspaceRestoreStatus = "waiting" | "connecting" | "success" | "failed" | "canceled" | "skipped";
+
+export interface WorkspaceRestoreResult {
+  status: WorkspaceRestoreStatus;
+  detail?: string;
+}
+
+export interface SessionReconnectMetadata {
+  error?: string | null;
+  errorCode?: string | null;
+  attempt?: number;
+  nextRetryAt?: string | number | null;
+  staleConfig?: boolean | null;
+}
+
+export type SessionRuntimeInfo = SessionInfo & SessionReconnectMetadata;
+export type SessionStatusEvent = BaseSessionStatusEvent & SessionReconnectMetadata;
+
+export interface ToastAction {
+  label: string;
+  onSelect: () => void;
+}
+
 export interface ToastItem {
   id: number;
   kind: "info" | "error" | "success";
   text: string;
+  action?: ToastAction;
 }
 
 export interface TextPromptState {
@@ -291,9 +343,32 @@ export interface AiBoard {
 // Without a remote-host workspace (no workspace or the "tools" workspace), the AI board falls into the global group.
 export const GLOBAL_AI_BOARD_KEY = "global";
 
-export interface BroadcastState {
+export type BroadcastTargetStatus = "pending" | "sent" | "skipped" | "failed";
+
+export interface BroadcastTargetReport {
+  status: BroadcastTargetStatus;
+  reason: string | null;
+}
+
+export interface BroadcastOrigin {
   workspaceId: string;
+  storeTabId: string;
+}
+
+export interface BroadcastState {
+  origin: BroadcastOrigin;
   targetIds: string[];
+  generation: number;
+  results: Record<string, BroadcastTargetReport>;
+}
+
+export interface BroadcastConfig {
+  origin: BroadcastOrigin;
+  targetIds: string[];
+}
+
+export interface BroadcastTargetUpdate extends BroadcastTargetReport {
+  targetId: string;
 }
 
 interface UiState {
@@ -305,7 +380,11 @@ interface UiState {
   setThemeMode: (m: ThemeMode) => void;
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
-  sessions: SessionInfo[];
+  activeProject: ProjectFocus;
+  projectInventory: ProjectInventory | null;
+  setActiveProject: (focus: ProjectFocus) => void;
+  setProjectInventory: (inventory: ProjectInventory) => void;
+  sessions: SessionRuntimeInfo[];
   aiBusy: boolean;
   takeover: TakeoverState | null;
   setTakeover: (t: TakeoverState | null) => void;
@@ -313,11 +392,14 @@ interface UiState {
   aiAccountEpoch: number;
   workspaceRuntime: Record<string, WorkspaceRuntime>;
   workspaceRuntimeEpoch: number;
+  connectionProblems: Record<string, WorkspaceProblem>;
   getWorkspaceRuntime: (workspaceId: string) => WorkspaceRuntime | undefined;
   ensureWorkspaceRuntime: (workspaceId: string) => WorkspaceRuntime | undefined;
   updateSqlDraft: (workspaceId: string, draft: SqlDraft, expectedGeneration?: number) => void;
   recordSqlExecution: (workspaceId: string, record: SqlExecutionInput) => void;
   recordWorkspaceProblem: (workspaceId: string, problem: WorkspaceProblemInput) => void;
+  recordConnectionProblem: (problem: ConnectionProblemInput) => void;
+  clearConnectionProblem: (connectionKey: string) => void;
   dismissWorkspaceProblem: (workspaceId: string, problemId: number, expectedGeneration?: number) => void;
   clearSqlDraft: (workspaceId: string, expectedGeneration?: number) => void;
   ensureAiBoard: (key: string) => AiBoard;
@@ -328,7 +410,8 @@ interface UiState {
   updateAiTab: (key: string, tabId: string, patch: Partial<AiDockTab>, expectedEpoch?: number) => void;
   resetAiAccount: () => void;
   broadcast: BroadcastState | null;
-  setBroadcast: (b: BroadcastState | null) => void;
+  setBroadcast: (b: BroadcastConfig | null) => void;
+  reportBroadcastTarget: (generation: number, update: BroadcastTargetUpdate) => void;
   modelProfilesRevision: number;
   bumpModelProfilesRevision: () => void;
   connectFocusRevision: number;
@@ -360,7 +443,7 @@ interface UiState {
 
   ensureWorkspace: (spec: WorkspaceSpec) => string;
   setActiveWorkspace: (id: string) => void;
-  closeWorkspace: (id: string) => Promise<boolean>;
+  closeWorkspace: (id: string, mode?: "detach") => Promise<boolean>;
   markDeletedAssetWorkspaces: (assetId: string) => void;
 
   splitWorkspace: (workspaceId?: string) => void;
@@ -381,13 +464,18 @@ interface UiState {
   recordings: Record<string, RecordingStatus>;
   setRecordingStatus: (status: RecordingStatus) => void;
   resyncRecording: (tabId: string) => Promise<void>;
-  setSessions: (s: SessionInfo[]) => void;
+  setSessions: (s: SessionRuntimeInfo[]) => void;
   resyncSessions: (options?: { silent?: boolean }) => Promise<void>;
   resetSessions: (options?: { clearWorkspaceRuntime?: boolean }) => void;
   resetAccountWorkspaces: () => void;
   sessionResyncFailed: boolean;
+  sessionResyncCompleted: boolean;
+  layoutSyncCompleted: boolean;
+  workspaceRestoreDismissed: boolean;
+  workspaceRestoreResults: Record<string, WorkspaceRestoreResult>;
+  dismissWorkspaceRestoreBanner: () => void;
   setAiBusy: (v: boolean) => void;
-  pushToast: (kind: ToastItem["kind"], text: string) => void;
+  pushToast: (kind: ToastItem["kind"], text: string, action?: ToastAction) => void;
   dismissToast: (id: number) => void;
 
   connectingAssetIds: string[];
@@ -406,7 +494,33 @@ let workspaceProblemSeq = 0;
 let workspaceProblemResetGeneration = 0;
 let recordingRequestSeq = 0;
 let recordingsEpoch = 0;
+let broadcastGeneration = 0;
 const recordingRequests = new Map<string, number>();
+
+export function pruneBroadcastToWorkspaces(
+  broadcast: BroadcastState,
+  workspaces: readonly Workspace[],
+): BroadcastState | null {
+  const openTabIds = new Set(
+    workspaces.flatMap((workspace) =>
+      workspace.panes.flatMap((pane) => pane.tabs.map((tab) => tab.id)),
+    ),
+  );
+  const originExists = workspaces.some(
+    (workspace) =>
+      workspace.id === broadcast.origin.workspaceId &&
+      workspace.panes.some((pane) => pane.tabs.some((tab) => tab.id === broadcast.origin.storeTabId)),
+  );
+  const remaining = broadcast.targetIds.filter((targetId) => openTabIds.has(targetId));
+  if (!originExists || remaining.length === 0) return null;
+  if (remaining.length === broadcast.targetIds.length) return broadcast;
+  return {
+    ...broadcast,
+    targetIds: remaining,
+    generation: ++broadcastGeneration,
+    results: {},
+  };
+}
 
 const SQL_EXECUTION_HISTORY_LIMIT = 50;
 const SQL_EXECUTION_TEXT_BYTES = 32 * 1024;
@@ -475,8 +589,54 @@ export function sanitizeWorkspaceProblemText(text: string): string {
   );
 }
 
+function makeWorkspaceProblem(problem: WorkspaceProblemInput): WorkspaceProblem {
+  const detail = boundedUtf8(sanitizeWorkspaceProblemText(problem.detail), WORKSPACE_PROBLEM_DETAIL_BYTES);
+  const sql = problem.sql === undefined ? undefined : boundedSqlExecutionText(problem.sql);
+  const connection = problem.connection
+    ? problem.connection.kind === "asset"
+      ? { ...problem.connection, asset: { ...problem.connection.asset } }
+      : { ...problem.connection, target: { ...problem.connection.target } }
+    : undefined;
+  return {
+    ...problem,
+    id: ++workspaceProblemSeq,
+    target: {
+      ...problem.target,
+      title: sanitizeWorkspaceProblemText(problem.target.title),
+      identity: sanitizeWorkspaceProblemText(problem.target.identity),
+    },
+    summary: boundedUtf8(sanitizeWorkspaceProblemText(problem.summary), 240).text,
+    detail: detail.text,
+    detailTruncated: detail.truncated,
+    sql: sql?.text,
+    sqlTruncated: sql?.truncated ?? false,
+    connection,
+  };
+}
+
+function withoutConnectionProblem(
+  runtime: Record<string, WorkspaceRuntime>,
+  connectionKey: string,
+): Record<string, WorkspaceRuntime> {
+  let changed = false;
+  const next: Record<string, WorkspaceRuntime> = {};
+  for (const [workspaceId, entry] of Object.entries(runtime)) {
+    if (!entry.problems?.some((problem) => problem.connectionKey === connectionKey)) {
+      next[workspaceId] = entry;
+      continue;
+    }
+    changed = true;
+    next[workspaceId] = {
+      ...entry,
+      problems: entry.problems.filter((problem) => problem.connectionKey !== connectionKey),
+    };
+  }
+  return changed ? next : runtime;
+}
+
 // Auth guard for the session list: when login/logout switches accounts, in-flight old requests may arrive late and must not write back over the new session data.
 let sessionsEpoch = 0;
+const abnormalDisconnectNotices = new Set<string>();
 
 const LEFT_MIN = 180;
 const LEFT_MAX = 560;
@@ -699,6 +859,8 @@ export const useUi = create<UiState>((set, get) => ({
   rightWidth: initialLayout.rightWidth,
   workspaces: [],
   activeWorkspaceId: null,
+  activeProject: ALL_PROJECTS,
+  projectInventory: null,
   sessions: [],
   recordings: {},
   aiBusy: false,
@@ -707,6 +869,7 @@ export const useUi = create<UiState>((set, get) => ({
   aiAccountEpoch: 0,
   workspaceRuntime: {},
   workspaceRuntimeEpoch: 0,
+  connectionProblems: {},
   broadcast: null,
   modelProfilesRevision: 0,
   bumpModelProfilesRevision: () =>
@@ -796,14 +959,24 @@ export const useUi = create<UiState>((set, get) => ({
     return id;
   },
 
-  setActiveWorkspace: (id) => set({ activeWorkspaceId: id }),
+  setActiveWorkspace: (id) => set((state) => ({
+    activeWorkspaceId: reconcileActiveWorkspaceForFocus({ ...state, activeWorkspaceId: id }),
+  })),
+  setActiveProject: (activeProject) => set((state) => ({
+    activeProject,
+    activeWorkspaceId: reconcileActiveWorkspaceForFocus({ ...state, activeProject }),
+  })),
+  setProjectInventory: (projectInventory) => set((state) => ({
+    projectInventory,
+    activeWorkspaceId: reconcileActiveWorkspaceForFocus({ ...state, projectInventory }),
+  })),
   markDeletedAssetWorkspaces: (assetId) => set((st) => ({
     workspaces: st.workspaces.map((w) =>
       w.assetId === assetId ? { ...w, deletedTarget: true } : w,
     ),
   })),
 
-  closeWorkspace: async (id) => {
+  closeWorkspace: async (id, mode) => {
     const sameSqlDraft = (left: SqlDraft | undefined, right: SqlDraft | undefined): boolean => {
       if (!left || !right) return left === right;
       return (
@@ -821,9 +994,35 @@ export const useUi = create<UiState>((set, get) => ({
     const epoch = get().workspaceRuntimeEpoch;
     const tabs = target.panes.flatMap((p) => p.tabs);
     const summary = collectWorkspaceClose(tabs, target.assetKind, target.kind, id);
-    if (!(await confirmWorkspaceClose(summary, target.title))) return false;
+    const originalTabIds = new Set(summary.tabs.map((tab) => tab.id));
+    await reconcileTerminalCloseState(tabs.map((tab) => tab.id));
+    const currentTarget = get().workspaces.find((workspace) => workspace.id === id);
+    if (!currentTarget) return false;
+    const closePlan: WorkspaceCloseSummary = {
+      ...collectWorkspaceClose(
+        currentTarget.panes
+          .flatMap((pane) => pane.tabs)
+          .filter((tab) => originalTabIds.has(tab.id)),
+        currentTarget.assetKind,
+        currentTarget.kind,
+        id,
+      ),
+      dirty: summary.dirty,
+      hasSqlDraft: summary.hasSqlDraft,
+      sqlDraft: summary.sqlDraft,
+      runningAiTabs: summary.runningAiTabs,
+      aiTabIds: summary.aiTabIds,
+    };
+    if (mode === "detach" && closePlan.blocked.length > 0) {
+      get().pushToast(
+        "error",
+        `「${currentTarget.title}」有 ${closePlan.blocked.length} 个${closePlan.blockedKinds}终端不支持转入后台；工作区已保留，未结束任何进程`,
+      );
+      return false;
+    }
+    if (!(await confirmWorkspaceClose(closePlan, currentTarget.title, mode === "detach"))) return false;
     if (get().workspaceRuntimeEpoch !== epoch) return false;
-    for (const tab of summary.runningAiTabs) {
+    for (const tab of closePlan.runningAiTabs) {
       const cancelAndConfirm = aiTabRunControls.get(tab.id);
       if (!cancelAndConfirm) {
         get().pushToast("error", "停止未确认：运行状态不可用，标签已保留");
@@ -833,7 +1032,7 @@ export const useUi = create<UiState>((set, get) => ({
       if (get().workspaceRuntimeEpoch !== epoch) return false;
     }
 
-    const outcome = await executeWorkspaceClose(summary);
+    const outcome = await executeWorkspaceClose(closePlan);
     if (get().workspaceRuntimeEpoch !== epoch) return false;
     if (outcome.failed > 0) {
       pushWorkspaceCloseToast(target.title, outcome, false);
@@ -842,14 +1041,13 @@ export const useUi = create<UiState>((set, get) => ({
     if (outcome.dbFailed > 0) {
       get().pushToast(
         "error",
-        `「${target.title}」保持打开：${outcome.dbFailed}/${summary.dbConnIds.length} 个数据库断开失败：${outcome.dbError}`,
+        `「${target.title}」保持打开：${outcome.dbFailed}/${closePlan.dbConnIds.length} 个数据库断开失败：${outcome.dbError}`,
       );
     }
 
     const latest = get();
     const latestTarget = latest.workspaces.find((w) => w.id === id);
     if (!latestTarget) return false;
-    const originalTabIds = new Set(summary.tabs.map((tab) => tab.id));
     const originalDirtyIds = new Set(summary.dirty.map((tab) => tab.id));
     const addedTabs = latestTarget.panes
       .flatMap((pane) => pane.tabs)
@@ -899,24 +1097,16 @@ export const useUi = create<UiState>((set, get) => ({
           }));
           return normalizeWorkspacePanes({ ...workspace, panes });
         });
-    const broadcast = latest.broadcast?.workspaceId === id ? latest.broadcast : null;
-    const remainingBroadcastIds = broadcast
-      ? broadcast.targetIds.filter((tabId) => !outcome.succeededTabIds.has(tabId))
-      : [];
+    const broadcast = latest.broadcast
+      ? pruneBroadcastToWorkspaces(latest.broadcast, nextWorkspaces)
+      : null;
     set({
       workspaces: nextWorkspaces,
       activeWorkspaceId:
         latest.activeWorkspaceId === id
           ? (nextWorkspaces[nextWorkspaces.length - 1]?.id ?? null)
           : latest.activeWorkspaceId,
-      ...(broadcast
-        ? {
-            broadcast:
-              deleteWorkspace || remainingBroadcastIds.length === 0
-                ? null
-                : { ...broadcast, targetIds: remainingBroadcastIds },
-          }
-        : {}),
+      ...(latest.broadcast ? { broadcast } : {}),
       ...(deleteWorkspace && latest.aiBoards[id]
         ? { aiBoards: omitAiBoard(latest.aiBoards, id) }
         : {}),
@@ -998,11 +1188,17 @@ export const useUi = create<UiState>((set, get) => ({
     if (!(await confirmDirtyEditors(target.tabs, "取消分屏"))) return;
     if (!(await reclaimTerminals(target.tabs, "这个面板", "取消分屏", w.assetKind))) return;
     if (!(await disconnectDbTabs(target.tabs))) return;
-    set((s2) => ({
-      workspaces: s2.workspaces.map((x) =>
-        x.id === id ? { ...x, panes: keep, activePaneId: keep[0].id } : x,
-      ),
-    }));
+    set((s2) => {
+      const workspaces = s2.workspaces.map((workspace) =>
+        workspace.id === id ? { ...workspace, panes: keep, activePaneId: keep[0].id } : workspace,
+      );
+      return {
+        workspaces,
+        ...(s2.broadcast
+          ? { broadcast: pruneBroadcastToWorkspaces(s2.broadcast, workspaces) }
+          : {}),
+      };
+    });
   },
 
   setActivePane: (paneId, workspaceId) =>
@@ -1026,7 +1222,8 @@ export const useUi = create<UiState>((set, get) => ({
       };
     }),
 
-  setActiveTab: (id) =>
+  setActiveTab: (id) => {
+    clearTabUnread(id);
     set((st) => {
       for (const w of st.workspaces) {
         for (const p of w.panes) {
@@ -1039,15 +1236,7 @@ export const useUi = create<UiState>((set, get) => ({
                     ...x,
                     activePaneId: p.id,
                     panes: x.panes.map((q) =>
-                      q.id === p.id
-                        ? {
-                            ...q,
-                            activeTabId: id,
-                            tabs: q.tabs.some((t) => t.id === id && t.unread)
-                              ? q.tabs.map((t) => (t.id === id ? { ...t, unread: undefined } : t))
-                              : q.tabs,
-                          }
-                        : q,
+                      q.id === p.id ? { ...q, activeTabId: id } : q,
                     ),
                   }
                 : x,
@@ -1056,7 +1245,8 @@ export const useUi = create<UiState>((set, get) => ({
         }
       }
       return {};
-    }),
+    });
+  },
 
   addTab: (tab, paneId) => {
     if (rejectPendingFileLocator(tab)) return;
@@ -1073,7 +1263,7 @@ export const useUi = create<UiState>((set, get) => ({
     }
 
     const wsId = resolveWorkspaceId(tab, get(), paneWorkspace?.id);
-    if (isToolTabKind(tab.kind)) {
+    if (isWorkspaceToolTab(tab)) {
       const current = get();
       const migrated = migrateToolTabs(current.workspaces, current.aiBoards);
       if (migrated !== current.workspaces) set({ workspaces: migrated });
@@ -1178,10 +1368,12 @@ export const useUi = create<UiState>((set, get) => ({
       try {
         const kind = st.sessions.find((session) => session.id === target.sessionId)?.kind
           ?? st.workspaces.find((workspace) => workspace.id === wsId)?.assetKind;
-        if (!target.containerId && (kind === "ssh" || kind === "device")) {
-          await terminalApi.closeTab(target.tabId, mode, target.sessionId);
+        const remote = !target.containerId && (kind === "ssh" || kind === "device");
+        const closeMode = mode ?? (remote && target.exited !== true ? "detach" : undefined);
+        if (remote) {
+          await terminalApi.closeTab(target.tabId, closeMode, target.sessionId);
         } else {
-          await terminalApi.closeTab(target.tabId, mode);
+          await terminalApi.closeTab(target.tabId, closeMode);
         }
       } catch (e) {
         const code = (e as { code?: string } | null)?.code;
@@ -1205,39 +1397,34 @@ export const useUi = create<UiState>((set, get) => ({
       }
     }
     set((s2) => {
-      const bc = s2.broadcast;
-      let broadcastPatch: Partial<Pick<UiState, "broadcast">> = {};
-      if (bc && bc.targetIds.includes(id)) {
-        const remaining = bc.targetIds.filter((t) => t !== id);
-        broadcastPatch = {
-          broadcast: remaining.length > 0 ? { workspaceId: bc.workspaceId, targetIds: remaining } : null,
+      const workspaces = s2.workspaces.map((w) => {
+        if (w.id !== wsId) return w;
+        const pane = w.panes.find((p) => p.id === paneId);
+        if (!pane) return w;
+        const tabs = pane.tabs.filter((t) => t.id !== id);
+        const dropPane = tabs.length === 0 && w.panes.length > 1;
+        const panes = dropPane
+          ? w.panes.filter((p) => p.id !== paneId)
+          : w.panes.map((p) =>
+              p.id === paneId
+                ? {
+                    ...p,
+                    tabs,
+                    activeTabId: p.activeTabId === id ? (tabs[tabs.length - 1]?.id ?? null) : p.activeTabId,
+                  }
+                : p,
+            );
+        return {
+          ...w,
+          panes,
+          activePaneId: dropPane ? (panes[0]?.id ?? w.activePaneId) : w.activePaneId,
         };
-      }
+      });
       return {
-        workspaces: s2.workspaces.map((w) => {
-          if (w.id !== wsId) return w;
-          const pane = w.panes.find((p) => p.id === paneId);
-          if (!pane) return w;
-          const tabs = pane.tabs.filter((t) => t.id !== id);
-          const dropPane = tabs.length === 0 && w.panes.length > 1;
-          const panes = dropPane
-            ? w.panes.filter((p) => p.id !== paneId)
-            : w.panes.map((p) =>
-                p.id === paneId
-                  ? {
-                      ...p,
-                      tabs,
-                      activeTabId: p.activeTabId === id ? (tabs[tabs.length - 1]?.id ?? null) : p.activeTabId,
-                    }
-                  : p,
-              );
-          return {
-            ...w,
-            panes,
-            activePaneId: dropPane ? (panes[0]?.id ?? w.activePaneId) : w.activePaneId,
-          };
-        }),
-        ...broadcastPatch,
+        workspaces,
+        ...(s2.broadcast
+          ? { broadcast: pruneBroadcastToWorkspaces(s2.broadcast, workspaces) }
+          : {}),
       };
     });
     void get().resyncSessions({ silent: true });
@@ -1246,17 +1433,20 @@ export const useUi = create<UiState>((set, get) => ({
 
   updateTab: (id, patch) =>
     set((st) => {
+      let found = false;
       let from: string | undefined;
       let workspaceId: string | undefined;
       for (const w of st.workspaces) {
         for (const p of w.panes) {
           const t = p.tabs.find((x) => x.id === id);
           if (t) {
+            found = true;
             from = t.sessionId;
             workspaceId = w.id;
           }
         }
       }
+      if (!found) return st;
       const to =
         typeof patch.sessionId === "string" && from !== undefined && patch.sessionId !== from
           ? patch.sessionId
@@ -1266,19 +1456,20 @@ export const useUi = create<UiState>((set, get) => ({
           ? rebindWorkspaceSession(st.workspaces, workspaceId, from, to)
           : st.workspaces;
       return {
-        workspaces: workspaces.map((w) => ({
-          ...w,
-          panes: w.panes.map((p) =>
-            p.tabs.some((t) => t.id === id)
-              ? {
-                  ...p,
-                  tabs: p.tabs.map((t) => t.id === id
-                    ? { ...t, ...patch, restorePending: patch.tabId ? undefined : (patch.restorePending ?? t.restorePending) }
-                    : t),
-                }
-              : p,
-          ),
-        })),
+        workspaces: workspaces.map((w) => {
+          let changed = false;
+          const panes = w.panes.map((p) => {
+            if (!p.tabs.some((t) => t.id === id)) return p;
+            changed = true;
+            return {
+              ...p,
+              tabs: p.tabs.map((t) => t.id === id
+                ? { ...t, ...patch, restorePending: patch.tabId ? undefined : (patch.restorePending ?? t.restorePending) }
+                : t),
+            };
+          });
+          return changed ? { ...w, panes } : w;
+        }),
       };
     }),
 
@@ -1355,6 +1546,11 @@ export const useUi = create<UiState>((set, get) => ({
   },
   setSessions: (s) => set({ sessions: s }),
   sessionResyncFailed: false,
+  sessionResyncCompleted: false,
+  layoutSyncCompleted: false,
+  workspaceRestoreDismissed: false,
+  workspaceRestoreResults: {},
+  dismissWorkspaceRestoreBanner: () => set({ workspaceRestoreDismissed: true }),
   resyncSessions: async (options) => {
     const epoch = sessionsEpoch;
     try {
@@ -1367,6 +1563,8 @@ export const useUi = create<UiState>((set, get) => ({
       if (get().sessionResyncFailed) return;
       set({ sessionResyncFailed: true });
       get().pushToast("error", `刷新会话列表失败：${describeError(e)}`);
+    } finally {
+      if (epoch === sessionsEpoch) set({ sessionResyncCompleted: true });
     }
   },
   resetSessions: (options) => {
@@ -1374,11 +1572,13 @@ export const useUi = create<UiState>((set, get) => ({
     sessionsEpoch += 1;
     workspaceProblemResetGeneration += 1;
     recordingsEpoch += 1;
+    abnormalDisconnectNotices.clear();
     set((state) => ({
       sessions: [],
       recordings: {},
       helperProgress: {},
       sessionResyncFailed: false,
+      sessionResyncCompleted: false,
       workspaceRuntimeEpoch: state.workspaceRuntimeEpoch + (clearWorkspaceRuntime ? 1 : 0),
       workspaceRuntime: Object.fromEntries(
         Object.entries(state.workspaceRuntime).map(([workspaceId, runtime]) => [
@@ -1388,23 +1588,31 @@ export const useUi = create<UiState>((set, get) => ({
             : { ...runtime, problems: undefined },
         ]),
       ) as Record<string, WorkspaceRuntime>,
+      connectionProblems: {},
     }));
   },
   resetAccountWorkspaces: () => {
     sessionsEpoch += 1;
     workspaceProblemResetGeneration += 1;
     recordingsEpoch += 1;
+    abnormalDisconnectNotices.clear();
     set((state) => ({
       sessions: [],
       recordings: {},
       sessionResyncFailed: false,
+      sessionResyncCompleted: false,
+      workspaceRestoreDismissed: false,
+      workspaceRestoreResults: {},
       workspaces: [],
       activeWorkspaceId: null,
+      projectInventory: null,
       connectingAssetIds: [],
       connectProgress: {},
       helperProgress: {},
       workspaceRuntimeEpoch: state.workspaceRuntimeEpoch + 1,
       workspaceRuntime: {},
+      connectionProblems: {},
+      broadcast: null,
     }));
   },
   setAiBusy: (v) => set({ aiBusy: v }),
@@ -1413,7 +1621,37 @@ export const useUi = create<UiState>((set, get) => ({
     persistTakeover(t);
     set({ takeover: t });
   },
-  setBroadcast: (b) => set({ broadcast: b }),
+  setBroadcast: (b) =>
+    set({
+      broadcast: b
+        ? {
+            origin: b.origin,
+            targetIds: [...new Set(b.targetIds)],
+            generation: ++broadcastGeneration,
+            results: {},
+          }
+        : null,
+    }),
+  reportBroadcastTarget: (generation, update) =>
+    set((state) => {
+      const broadcast = state.broadcast;
+      if (
+        !broadcast ||
+        broadcast.generation !== generation ||
+        !broadcast.targetIds.includes(update.targetId)
+      ) {
+        return state;
+      }
+      return {
+        broadcast: {
+          ...broadcast,
+          results: {
+            ...broadcast.results,
+            [update.targetId]: { status: update.status, reason: update.reason },
+          },
+        },
+      };
+    }),
 
   getWorkspaceRuntime: (workspaceId) => get().workspaceRuntime[workspaceId],
   ensureWorkspaceRuntime: (workspaceId) => {
@@ -1493,28 +1731,7 @@ export const useUi = create<UiState>((set, get) => ({
       ) {
         return state;
       }
-      const detail = boundedUtf8(sanitizeWorkspaceProblemText(problem.detail), WORKSPACE_PROBLEM_DETAIL_BYTES);
-      const sql = problem.sql === undefined ? undefined : boundedSqlExecutionText(problem.sql);
-      const connection = problem.connection
-        ? problem.connection.kind === "asset"
-          ? { ...problem.connection, asset: { ...problem.connection.asset } }
-          : { ...problem.connection, target: { ...problem.connection.target } }
-        : undefined;
-      const entry: WorkspaceProblem = {
-        ...problem,
-        id: ++workspaceProblemSeq,
-        target: {
-          ...problem.target,
-          title: sanitizeWorkspaceProblemText(problem.target.title),
-          identity: sanitizeWorkspaceProblemText(problem.target.identity),
-        },
-        summary: boundedUtf8(sanitizeWorkspaceProblemText(problem.summary), 240).text,
-        detail: detail.text,
-        detailTruncated: detail.truncated,
-        sql: sql?.text,
-        sqlTruncated: sql?.truncated ?? false,
-        connection,
-      };
+      const entry = makeWorkspaceProblem(problem);
       return {
         workspaceRuntime: {
           ...state.workspaceRuntime,
@@ -1524,6 +1741,70 @@ export const useUi = create<UiState>((set, get) => ({
           },
         },
       };
+    });
+  },
+  recordConnectionProblem: (problem) => {
+    if (
+      problem.resetGeneration !== undefined &&
+      problem.resetGeneration !== workspaceProblemResetGeneration
+    ) {
+      return;
+    }
+    const workspace = findConnectionWorkspace(get().workspaces, problem);
+    const generation = workspace
+      ? get().ensureWorkspaceRuntime(workspace.id)?.generation
+      : undefined;
+    if (workspace && generation === undefined) return;
+    const input = { ...problem, generation: generation ?? 0 };
+    delete input.workspaceId;
+    const entry = makeWorkspaceProblem(input);
+    set((state) => {
+      if (
+        problem.resetGeneration !== undefined &&
+        problem.resetGeneration !== workspaceProblemResetGeneration
+      ) {
+        return state;
+      }
+      const workspaceId = workspace && state.workspaces.some((item) => item.id === workspace.id)
+        ? workspace.id
+        : null;
+      const workspaceRuntime = withoutConnectionProblem(state.workspaceRuntime, problem.connectionKey);
+      const connectionProblems = { ...state.connectionProblems };
+      delete connectionProblems[problem.connectionKey];
+      if (workspaceId) {
+        const existing = workspaceRuntime[workspaceId];
+        if (!existing || existing.generation !== generation) return state;
+        return {
+          connectionProblems,
+          workspaceRuntime: {
+            ...workspaceRuntime,
+            [workspaceId]: {
+              ...existing,
+              problems: [entry, ...(existing.problems ?? [])].slice(0, WORKSPACE_PROBLEM_LIMIT),
+            },
+          },
+        };
+      }
+      connectionProblems[problem.connectionKey] = entry;
+      return {
+        connectionProblems: Object.fromEntries(
+          Object.entries(connectionProblems)
+            .sort(([, left], [, right]) => right.id - left.id)
+            .slice(0, WORKSPACE_PROBLEM_LIMIT),
+        ),
+        workspaceRuntime,
+      };
+    });
+  },
+  clearConnectionProblem: (connectionKey) => {
+    set((state) => {
+      const workspaceRuntime = withoutConnectionProblem(state.workspaceRuntime, connectionKey);
+      if (!state.connectionProblems[connectionKey] && workspaceRuntime === state.workspaceRuntime) {
+        return state;
+      }
+      const connectionProblems = { ...state.connectionProblems };
+      delete connectionProblems[connectionKey];
+      return { connectionProblems, workspaceRuntime };
     });
   },
   dismissWorkspaceProblem: (workspaceId, problemId, expectedGeneration) => {
@@ -1648,16 +1929,29 @@ export const useUi = create<UiState>((set, get) => ({
       return { helperProgress: next };
     }),
 
-  pushToast: (kind, text) => {
+  pushToast: (kind, text, action) => {
     const existing = get().toasts.find((t) => t.kind === kind && t.text === text);
     if (existing) get().dismissToast(existing.id);
     const id = toastSeq++;
-    set((st) => ({ toasts: [...st.toasts, { id, kind, text }] }));
+    set((st) => ({ toasts: [...st.toasts, { id, kind, text, action }] }));
     window.setTimeout(() => get().dismissToast(id), kind === "error" ? 8000 : 3500);
   },
   dismissToast: (id) =>
     set((st) => ({ toasts: st.toasts.filter((t) => t.id !== id) })),
 }));
+
+useUi.subscribe((state, previous) => {
+  if (
+    state.activeProject === previous.activeProject &&
+    state.projectInventory === previous.projectInventory &&
+    state.workspaces === previous.workspaces &&
+    state.activeWorkspaceId === previous.activeWorkspaceId
+  ) {
+    return;
+  }
+  const activeWorkspaceId = reconcileActiveWorkspaceForFocus(state);
+  if (activeWorkspaceId !== state.activeWorkspaceId) useUi.setState({ activeWorkspaceId });
+});
 
 useUi.subscribe((state, previous) => {
   if (
@@ -1672,6 +1966,16 @@ useUi.subscribe((state, previous) => {
       rightOpen: state.rightOpen,
     });
   }
+});
+
+useUi.subscribe((state, previous) => {
+  if (state.workspaces === previous.workspaces) return;
+  const openTabIds = new Set(
+    state.workspaces.flatMap((workspace) =>
+      workspace.panes.flatMap((pane) => pane.tabs.map((tab) => tab.id)),
+    ),
+  );
+  retainUnreadTabs(openTabIds);
 });
 
 initTheme();
@@ -1693,7 +1997,7 @@ function rejectPendingFileLocator(tab: AppTab): boolean {
 }
 
 function explicitWorkspaceMatchesTab(tab: AppTab, workspace: Workspace): boolean {
-  if (isToolTabKind(tab.kind)) return workspace.kind === "tools";
+  if (isWorkspaceToolTab(tab)) return workspace.kind === "tools";
   if (tab.kind === "background" && workspace.kind !== "session") return false;
   if (tab.sessionId) return workspace.sessionId === tab.sessionId;
   if (tab.connId) return workspace.connId === tab.connId;
@@ -1702,11 +2006,11 @@ function explicitWorkspaceMatchesTab(tab: AppTab, workspace: Workspace): boolean
 
 function resolveWorkspaceId(
   tab: AppTab,
-  st: { workspaces: Workspace[]; sessions: SessionInfo[]; activeWorkspaceId: string | null },
+  st: { workspaces: Workspace[]; sessions: SessionRuntimeInfo[]; activeWorkspaceId: string | null },
   workspaceId?: string,
 ): string {
   const { ensureWorkspace } = useUi.getState();
-  if (isToolTabKind(tab.kind)) return ensureWorkspace({ kind: "tools", title: "工具" });
+  if (isWorkspaceToolTab(tab)) return ensureWorkspace({ kind: "tools", title: "工具" });
   if (tab.sessionId) {
     const hit = st.workspaces.find((w) => w.sessionId === tab.sessionId);
     if (hit) return hit.id;
@@ -1809,7 +2113,7 @@ export function migrateToolTabs(
   const toolsIndex = workspaces.findIndex((w) => w.kind === "tools");
   const sourceTools = toolsIndex >= 0 ? workspaces[toolsIndex] : undefined;
   const hasToolTabs = workspaces.some((w) =>
-    w.panes.some((pane) => pane.tabs.some((tab) => isToolTabKind(tab.kind))),
+    w.panes.some((pane) => pane.tabs.some((tab) => isWorkspaceToolTab(tab))),
   );
   if (!sourceTools && !hasToolTabs) return workspaces;
 
@@ -1820,13 +2124,13 @@ export function migrateToolTabs(
   const hasExternalToolTabs = workspaces.some(
     (w) =>
       w !== sourceTools &&
-      w.panes.some((pane) => pane.tabs.some((tab) => isToolTabKind(tab.kind))),
+      w.panes.some((pane) => pane.tabs.some((tab) => isWorkspaceToolTab(tab))),
   );
   const kinds = new Set<PaneKind>();
   let hasDuplicateToolTabs = false;
   for (const pane of sourceTools?.panes ?? []) {
     for (const tab of pane.tabs) {
-      if (!isToolTabKind(tab.kind)) continue;
+      if (!isWorkspaceToolTab(tab)) continue;
       if (kinds.has(tab.kind)) hasDuplicateToolTabs = true;
       kinds.add(tab.kind);
     }
@@ -1856,7 +2160,7 @@ export function migrateToolTabs(
   const collect = (w: Workspace) => {
     for (const pane of w.panes) {
       for (const tab of pane.tabs) {
-        if (!isToolTabKind(tab.kind)) continue;
+        if (!isWorkspaceToolTab(tab)) continue;
         const candidate =
           tab.kind === "history" && w.kind === "session"
             ? {
@@ -1888,7 +2192,7 @@ export function migrateToolTabs(
   const basePanes = (tools.panes.length > 0 ? tools.panes : [makePane()]).map((pane) => ({
     ...pane,
     tabs: pane.tabs.filter((tab) => {
-      if (!isToolTabKind(tab.kind)) return true;
+      if (!isWorkspaceToolTab(tab)) return true;
       if (selected.get(tab.kind) !== tab) return false;
       kept.add(tab);
       return true;
@@ -1898,7 +2202,7 @@ export function migrateToolTabs(
   for (const w of workspaces) {
     if (w.kind !== "tools" || w === sourceTools) continue;
     for (const pane of w.panes) {
-      additions.push(...pane.tabs.filter((tab) => !isToolTabKind(tab.kind)));
+      additions.push(...pane.tabs.filter((tab) => !isWorkspaceToolTab(tab)));
     }
   }
   const targetPaneId = basePanes.some((pane) => pane.id === tools.activePaneId)
@@ -1935,7 +2239,7 @@ export function migrateToolTabs(
     }
     const panes = w.panes.map((pane) => ({
       ...pane,
-      tabs: pane.tabs.filter((tab) => !isToolTabKind(tab.kind)),
+      tabs: pane.tabs.filter((tab) => !isWorkspaceToolTab(tab)),
     }));
     const changed = w.panes.some((pane, index) => pane.tabs.length !== panes[index].tabs.length);
     next.push(changed ? normalizeWorkspacePanes({ ...w, panes }) : w);
@@ -1948,7 +2252,7 @@ function sameTab(t: AppTab, tab: AppTab, caseInsensitive = false): boolean {
   if (t.id === tab.id) return true;
   if (t.tabId && tab.tabId && t.tabId === tab.tabId) return true;
   if (tab.kind === "background" && t.kind === "background") return true;
-  if (isToolTabKind(tab.kind) && t.kind === tab.kind) return true;
+  if (isWorkspaceToolTab(tab) && t.kind === tab.kind) return true;
   if ((tab.kind === "files" || tab.kind === "log") && tab.path && t.path) {
     return (
       t.kind === tab.kind &&
@@ -1974,12 +2278,55 @@ function pickPaneForTab(panes: Pane[], activePaneId: string, tab: AppTab): Pane 
 }
 
 export function useActiveWorkspace(): Workspace | null {
-  return useUi(
-    (s) =>
-      s.workspaces.find((w) => w.id === s.activeWorkspaceId) ??
-      s.workspaces[s.workspaces.length - 1] ??
-      null,
-  );
+  return useUi((state) => focusedActiveWorkspace(state));
+}
+
+function workspaceForNavigation(
+  state: Pick<UiState, "workspaces" | "activeWorkspaceId" | "activeProject" | "projectInventory">,
+): Workspace | null {
+  return focusedActiveWorkspace(state);
+}
+
+function cycleIndex(current: number, length: number, direction: 1 | -1): number {
+  return (current + direction + length) % length;
+}
+
+export function cycleActiveWorkspace(direction: 1 | -1): string | null {
+  const state = useUi.getState();
+  const current = workspaceForNavigation(state);
+  if (!current) return null;
+  const visible = focusedWorkspaces(state);
+  const index = visible.indexOf(current);
+  const target = visible[cycleIndex(index, visible.length, direction)];
+  if (!target) return null;
+  state.setActiveWorkspace(target.id);
+  return target.id;
+}
+
+export function cycleActiveTab(direction: 1 | -1): string | null {
+  const state = useUi.getState();
+  const workspace = workspaceForNavigation(state);
+  const panes = workspace?.panes.slice(0, 2) ?? [];
+  const pane = panes.find((candidate) => candidate.id === workspace?.activePaneId) ?? panes[0];
+  if (!workspace || !pane || pane.tabs.length === 0) return null;
+  const current = pane.tabs.find((tab) => tab.id === pane.activeTabId) ?? pane.tabs[pane.tabs.length - 1];
+  const target = pane.tabs[cycleIndex(pane.tabs.indexOf(current), pane.tabs.length, direction)];
+  if (!target) return null;
+  state.setActiveTab(target.id);
+  return target.id;
+}
+
+export function cycleActivePane(direction: 1 | -1): string | null {
+  const state = useUi.getState();
+  const workspace = workspaceForNavigation(state);
+  const panes = workspace?.panes.slice(0, 2) ?? [];
+  if (!workspace || panes.length === 0) return null;
+  const current = panes.find((pane) => pane.id === workspace.activePaneId) ?? panes[0];
+  const target = panes[cycleIndex(panes.indexOf(current), panes.length, direction)];
+  if (!target) return null;
+  if (state.activeWorkspaceId !== workspace.id) state.setActiveWorkspace(workspace.id);
+  state.setActivePane(target.id, workspace.id);
+  return target.id;
 }
 
 export async function openTerminalTab(
@@ -2051,8 +2398,12 @@ export function applyRemoteTabTitle(id: string, rawTitle: string): boolean {
   return true;
 }
 
+function isTerminalCloseCandidate(t: AppTab): boolean {
+  return t.kind === "terminal" && Boolean(t.tabId) && !t.dead;
+}
+
 function isRunningTerminal(t: AppTab): boolean {
-  return t.kind === "terminal" && Boolean(t.tabId) && !t.dead && !t.exited;
+  return isTerminalCloseCandidate(t) && !t.exited;
 }
 
 function detachBlockOf(
@@ -2096,9 +2447,13 @@ async function reclaimTerminals(
   title: string,
   assetKind?: string,
 ): Promise<boolean> {
+  await reconcileTerminalCloseState(tabs.map((tab) => tab.id));
+  const currentTabs = tabs
+    .map((tab) => findTab(tab.id)?.tab)
+    .filter((tab): tab is AppTab => tab !== undefined);
   const st = useUi.getState();
-  const live = tabs.filter(isRunningTerminal);
-  const cleanup = tabs.filter(
+  const live = currentTabs.filter(isRunningTerminal);
+  const cleanup = currentTabs.filter(
     (t) => t.kind === "terminal" && t.tabId && !t.dead && t.exited,
   );
   if (live.length === 0 && cleanup.length === 0) return true;
@@ -2126,11 +2481,11 @@ async function reclaimTerminals(
     if (!ok) return false;
   }
   const { detachable, preferredKills } = plan;
-  const operations: { tab: AppTab; mode: "kill" | "detach" }[] = [
+  const operations: { tab: AppTab; mode?: "kill" | "detach" }[] = [
     ...detachable.map((tab) => ({ tab, mode: "detach" as const })),
     ...preferredKills.map((tab) => ({ tab, mode: "kill" as const })),
     ...blocked.map((tab) => ({ tab, mode: "kill" as const })),
-    ...cleanup.map((tab) => ({ tab, mode: "kill" as const })),
+    ...cleanup.map((tab) => ({ tab, mode: undefined })),
   ];
   const results = await Promise.all(
     operations.map(async ({ tab, mode }) => ({ tab, ok: await useUi.getState().closeTab(tab.id, mode, true) })),
@@ -2272,8 +2627,12 @@ function collectWorkspaceClose(
 async function confirmWorkspaceClose(
   summary: WorkspaceCloseSummary,
   title: string,
+  detachOnly = false,
 ): Promise<boolean> {
-  if (!(await applyClosePreference(summary, `关闭「${title}」`))) return false;
+  if (detachOnly) {
+    summary.preferredKills = [];
+    summary.confirmBlocked = false;
+  } else if (!(await applyClosePreference(summary, `关闭「${title}」`))) return false;
   const confirmBlocked = summary.blocked.length > 0 && summary.confirmBlocked;
   if (summary.dirty.length === 0 && !confirmBlocked && !summary.hasSqlDraft && summary.runningAiTabs.length === 0) return true;
   const lines: string[] = [];
@@ -2302,11 +2661,11 @@ async function confirmWorkspaceClose(
 }
 
 async function executeWorkspaceClose(summary: WorkspaceCloseSummary): Promise<WorkspaceCloseOutcome> {
-  const operations: { tab: AppTab; mode: "kill" | "detach" }[] = [
+  const operations: { tab: AppTab; mode?: "kill" | "detach" }[] = [
     ...summary.detachable.map((tab) => ({ tab, mode: "detach" as const })),
     ...summary.preferredKills.map((tab) => ({ tab, mode: "kill" as const })),
     ...summary.blocked.map((tab) => ({ tab, mode: "kill" as const })),
-    ...summary.cleanup.map((tab) => ({ tab, mode: "kill" as const })),
+    ...summary.cleanup.map((tab) => ({ tab, mode: undefined })),
   ];
   const results = await Promise.all(
     operations.map(async ({ tab, mode }) => ({ tab, ok: await useUi.getState().closeTab(tab.id, mode, true) })),
@@ -2360,6 +2719,87 @@ export function closeActionHint(t: AppTab): string | undefined {
   return "转入后台运行或结束进程";
 }
 
+export function sessionReconnectStatusText(
+  session: Pick<SessionRuntimeInfo, "status" | "attempt" | "nextRetryAt"> | undefined,
+): string {
+  if (session?.status !== "reconnecting") return "";
+  const attempt = Math.max(0, Math.floor(session.attempt ?? 0));
+  const retryAt = typeof session.nextRetryAt === "number"
+    ? session.nextRetryAt
+    : session.nextRetryAt
+      ? Date.parse(session.nextRetryAt)
+      : null;
+  const next = retryAt !== null && Number.isFinite(retryAt) && retryAt > 0
+    ? `下次重连 ${formatTime(retryAt)}`
+    : null;
+  return [attempt > 0 ? `重连尝试 ${attempt} 次` : "准备第 1 次重连", next]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+const retryableSessionErrorCodes = new Set(["ssh", "timeout", "disconnected"]);
+
+export function applySessionStatusEvent(p: SessionStatusEvent): void {
+  const state = useUi.getState();
+  const current = state.sessions.find((session) => session.id === p.sessionId);
+  const attempt = p.attempt ?? current?.attempt ?? 0;
+  const retryableFailed = p.status === "failed" &&
+    (current?.status === "reconnecting" || attempt > 0) &&
+    retryableSessionErrorCodes.has(p.errorCode ?? "");
+  state.setSessions(state.sessions.map((session) => session.id === p.sessionId
+    ? {
+        ...session,
+        status: p.status as SessionInfo["status"],
+        error: p.error ?? null,
+        errorCode: p.errorCode ?? null,
+        attempt: p.attempt ?? 0,
+        nextRetryAt: p.nextRetryAt ?? null,
+      }
+    : session));
+  if (p.status !== "connecting" && p.status !== "reconnecting" && current?.assetId) {
+    state.setConnectProgress(current.assetId, null);
+  }
+  if (p.status === "connecting" || p.status === "reconnecting" || p.status === "connected") {
+    abnormalDisconnectNotices.delete(p.sessionId);
+  }
+  if (p.status === "failed" && !retryableFailed) {
+    if (p.error) state.pushToast("error", `会话失败：${p.error}`);
+    return;
+  }
+  if (p.status !== "disconnected" && !retryableFailed) return;
+  if (!p.error && !p.errorCode) {
+    abnormalDisconnectNotices.delete(p.sessionId);
+    return;
+  }
+  if (abnormalDisconnectNotices.has(p.sessionId)) return;
+  abnormalDisconnectNotices.add(p.sessionId);
+  const name = current?.name ?? p.sessionId;
+  const message = retryableFailed
+    ? `会话「${name}」自动重连失败：${p.error ?? p.errorCode}`
+    : `会话「${name}」异常断开：${p.error ?? p.errorCode}`;
+  state.pushToast("error", message, {
+    label: "重新连接",
+    onSelect: () => void reconnectSessionAfterDisconnect(p.sessionId),
+  });
+}
+
+async function reconnectSessionAfterDisconnect(sessionId: string): Promise<void> {
+  const state = useUi.getState();
+  const session = state.sessions.find((item) => item.id === sessionId);
+  if (!session) {
+    state.pushToast("error", "重连失败：会话已不存在，请刷新会话列表");
+    return;
+  }
+  try {
+    const fresh = await reconnectSessionAndWait(session);
+    if (!fresh) return;
+    const latest = useUi.getState();
+    latest.setSessions([...latest.sessions.filter((item) => item.id !== fresh.id), fresh]);
+  } catch (error) {
+    useUi.getState().pushToast("error", `重连失败：${describeError(error)}`);
+  }
+}
+
 export function sessionStatusText(status: SessionInfo["status"] | undefined): string {
   if (status === "connected") return "已连接";
   if (status === "reconnecting") return "重连中";
@@ -2409,7 +2849,7 @@ async function requestCloseTabWithAction(
     return;
   }
   if (target.exited) {
-    await st.closeTab(id, "kill");
+    await st.closeTab(id, decided === "kill" ? "kill" : undefined);
     return;
   }
   if (decided === null) return;
@@ -2457,12 +2897,23 @@ async function requestCloseTabWithAction(
 async function reconcileTerminalCloseState(ids: string[]): Promise<void> {
   const candidates = ids
     .map((id) => findTab(id)?.tab)
-    .filter((tab): tab is AppTab => tab !== undefined && isRunningTerminal(tab));
+    .filter((tab): tab is AppTab => tab !== undefined && isTerminalCloseCandidate(tab));
   if (candidates.length === 0) return;
+  const currentCandidate = (candidate: AppTab): AppTab | undefined => {
+    const current = findTab(candidate.id)?.tab;
+    if (!current || current.tabId !== candidate.tabId || current.sessionId !== candidate.sessionId) return undefined;
+    return isTerminalCloseCandidate(current) ? current : undefined;
+  };
+  const markUnknown = () => {
+    for (const candidate of candidates) {
+      if (currentCandidate(candidate)) useUi.getState().updateTab(candidate.id, { exited: undefined });
+    }
+  };
   let live: Awaited<ReturnType<typeof terminalApi.listLive>>;
   try {
     live = await terminalApi.listLive();
   } catch {
+    markUnknown();
     return;
   }
   const byId = new Map(live.map((tab) => [tab.tabId, tab]));
@@ -2477,27 +2928,32 @@ async function reconcileTerminalCloseState(ids: string[]): Promise<void> {
     return [id, result.status === "fulfilled" ? new Map(result.value.map((tab) => [tab.id, tab])) : null] as const;
   }));
   for (const candidate of candidates) {
-    const current = findTab(candidate.id)?.tab;
-    if (!current || current.tabId !== candidate.tabId || current.sessionId !== candidate.sessionId || !isRunningTerminal(current)) continue;
+    if (!currentCandidate(candidate)) continue;
     const hit = byId.get(candidate.tabId as string);
     if (hit) {
-      if (hit.exited) useUi.getState().updateTab(candidate.id, { exited: true });
+      useUi.getState().updateTab(candidate.id, { exited: hit.exited });
       continue;
     }
     const found = findTab(candidate.id);
     const kind = useUi.getState().sessions.find((session) => session.id === candidate.sessionId)?.kind
       ?? found?.ws.assetKind;
-    if (!candidate.containerId && kind === "device") continue;
+    if (!candidate.containerId && kind === "device") {
+      useUi.getState().updateTab(candidate.id, { exited: undefined });
+      continue;
+    }
     if (!candidate.containerId && kind === "ssh") {
       const descriptors = remote.get(candidate.sessionId as string);
-      if (!descriptors) continue;
+      if (!descriptors) {
+        useUi.getState().updateTab(candidate.id, { exited: undefined });
+        continue;
+      }
       const descriptor = descriptors.get(candidate.tabId as string);
       if (descriptor) {
-        if (descriptor.dead) useUi.getState().updateTab(candidate.id, { exited: true });
+        useUi.getState().updateTab(candidate.id, { exited: descriptor.dead });
         continue;
       }
     }
-    useUi.getState().updateTab(candidate.id, { dead: true });
+    useUi.getState().updateTab(candidate.id, { exited: undefined });
   }
 }
 
@@ -2874,70 +3330,179 @@ export function isAssetConnecting(assetId: string): boolean {
   return useUi.getState().connectingAssetIds.includes(assetId);
 }
 
-interface ConnectionWorkspaceContext {
-  workspaceId: string | null;
-  generation: number | undefined;
+export function assetConnectionProblemKey(assetId: string): string {
+  return `asset:${assetId}`;
+}
+
+export function quickConnectionProblemKey(target: QuickConnectTarget): string {
+  const normalized = {
+    host: target.host.trim().toLowerCase(),
+    port: target.port,
+    username: target.username?.trim() || null,
+  };
+  return `quick:${formatQuickConnectTarget(normalized)}`;
+}
+
+function findConnectionWorkspace(
+  workspaces: Workspace[],
+  problem: ConnectionProblemInput,
+): Workspace | undefined {
+  if (problem.workspaceId) {
+    const explicit = workspaces.find((workspace) => workspace.id === problem.workspaceId);
+    if (explicit) return explicit;
+  }
+  const connection = problem.connection;
+  if (connection?.kind === "asset") {
+    return workspaces.find((workspace) => workspace.assetId === connection.asset.id);
+  }
+  if (connection?.kind === "quick") {
+    const key = quickConnectionProblemKey(connection.target);
+    return workspaces.find(
+      (workspace) => workspace.quickTarget && quickConnectionProblemKey(workspace.quickTarget) === key,
+    );
+  }
+  return undefined;
+}
+
+type ConnectionProblemState = Pick<UiState, "connectionProblems" | "workspaceRuntime">;
+
+export function selectConnectionProblem(
+  state: ConnectionProblemState,
+  connectionKey: string,
+): WorkspaceProblem | undefined {
+  const global = state.connectionProblems[connectionKey];
+  if (global) return global;
+  for (const runtime of Object.values(state.workspaceRuntime)) {
+    const problem = runtime.problems?.find((item) => item.connectionKey === connectionKey);
+    if (problem) return problem;
+  }
+  return undefined;
+}
+
+export function latestConnectionProblem(state: ConnectionProblemState): WorkspaceProblem | undefined {
+  let latest: WorkspaceProblem | undefined;
+  const consider = (problem: WorkspaceProblem) => {
+    if (problem.connectionKey && (!latest || problem.id > latest.id)) latest = problem;
+  };
+  Object.values(state.connectionProblems).forEach(consider);
+  for (const runtime of Object.values(state.workspaceRuntime)) {
+    runtime.problems?.forEach(consider);
+  }
+  return latest;
+}
+
+export function useConnectionProblem(
+  connectionKey: string | null,
+  fallbackToLatest = false,
+): WorkspaceProblem | undefined {
+  return useUi((state) => {
+    if (connectionKey) {
+      const problem = selectConnectionProblem(state, connectionKey);
+      if (problem) return problem;
+    }
+    return fallbackToLatest ? latestConnectionProblem(state) : undefined;
+  });
+}
+
+interface ConnectionAttemptContext {
   resetGeneration: number;
 }
 
-function captureConnectionWorkspace(): ConnectionWorkspaceContext {
-  const workspaceId = useUi.getState().activeWorkspaceId;
-  return {
-    workspaceId,
-    generation: workspaceId
-      ? useUi.getState().ensureWorkspaceRuntime(workspaceId)?.generation
-      : undefined,
-    resetGeneration: workspaceProblemResetGeneration,
-  };
+function captureConnectionAttempt(): ConnectionAttemptContext {
+  return { resetGeneration: workspaceProblemResetGeneration };
 }
 
-function recordAssetConnectionProblem(
-  context: ConnectionWorkspaceContext,
-  asset: ConnectAssetInput,
-  error: string | undefined,
+function settleConnectionOutcome(
+  context: ConnectionAttemptContext,
+  outcome: ConnectOutcome,
+  operation: string,
+  target: WorkspaceProblemTarget,
+  connection: WorkspaceProblemConnection,
+  workspaceId?: string,
 ): void {
-  if (!context.workspaceId || context.generation === undefined) return;
-  const addressed = asset as ConnectAssetInput & { host?: unknown; port?: unknown };
-  const host = typeof addressed.host === "string" ? addressed.host : "";
-  const port = typeof addressed.port === "number" ? addressed.port : undefined;
-  useUi.getState().recordWorkspaceProblem(context.workspaceId, {
-    generation: context.generation,
+  if (context.resetGeneration !== workspaceProblemResetGeneration) return;
+  const connectionKey = connection.kind === "asset"
+    ? assetConnectionProblemKey(connection.asset.id)
+    : quickConnectionProblemKey(connection.target);
+  if (outcome.ok) {
+    useUi.getState().clearConnectionProblem(connectionKey);
+    return;
+  }
+  if (outcome.canceled) return;
+  const error = outcome.error ?? "连接失败";
+  useUi.getState().recordConnectionProblem({
+    connectionKey,
+    workspaceId,
     resetGeneration: context.resetGeneration,
     createdAt: Date.now(),
     source: "connect",
-    operation: "连接",
-    target: {
+    operation,
+    target,
+    summary: error,
+    detail: error,
+    canRetryRead: false,
+    connection,
+  });
+}
+
+function settleAssetConnectionOutcome(
+  context: ConnectionAttemptContext,
+  asset: ConnectAssetInput,
+  outcome: ConnectOutcome,
+  workspaceId?: string,
+): void {
+  const addressed = asset as ConnectAssetInput & { host?: unknown; port?: unknown };
+  const host = typeof addressed.host === "string" ? addressed.host : "";
+  const port = typeof addressed.port === "number" ? addressed.port : undefined;
+  settleConnectionOutcome(
+    context,
+    outcome,
+    "连接",
+    {
       title: asset.name,
       identity: host ? `${asset.name} · ${host}${port ? `:${port}` : ""}` : asset.name,
       kind: asset.kind,
       assetId: asset.id,
     },
-    summary: error ?? "连接失败",
-    detail: error ?? "连接失败",
-    canRetryRead: false,
-    connection: { kind: "asset", asset: { ...asset } },
-  });
+    { kind: "asset", asset: { ...asset } },
+    workspaceId,
+  );
 }
 
-function recordQuickConnectionProblem(
-  context: ConnectionWorkspaceContext,
+function settleQuickConnectionOutcome(
+  context: ConnectionAttemptContext,
   target: QuickConnectTarget,
-  error: string | undefined,
+  outcome: ConnectOutcome,
+  mode: "temporary" | "save" = "temporary",
+  workspaceId?: string,
 ): void {
-  if (!context.workspaceId || context.generation === undefined) return;
   const label = formatQuickConnectTarget(target);
-  useUi.getState().recordWorkspaceProblem(context.workspaceId, {
-    generation: context.generation,
-    resetGeneration: context.resetGeneration,
-    createdAt: Date.now(),
-    source: "connect",
-    operation: "临时连接",
-    target: { title: label, identity: label, kind: "ssh" },
-    summary: error ?? "连接失败",
-    detail: error ?? "连接失败",
-    canRetryRead: false,
-    connection: { kind: "quick", mode: "temporary", target: { ...target }, label },
-  });
+  settleConnectionOutcome(
+    context,
+    outcome,
+    mode === "save" ? "保存并连接" : "临时连接",
+    { title: label, identity: label, kind: "ssh" },
+    { kind: "quick", mode, target: { ...target }, label },
+    workspaceId,
+  );
+}
+
+function settleWorkspaceConnectionOutcome(
+  context: ConnectionAttemptContext,
+  workspace: Pick<Workspace, "assetId" | "assetKind" | "title" | "quickTarget">,
+  outcome: ConnectOutcome,
+  workspaceId?: string,
+): void {
+  if (workspace.assetId) {
+    settleAssetConnectionOutcome(
+      context,
+      { id: workspace.assetId, name: workspace.title, kind: workspace.assetKind ?? "ssh" },
+      outcome,
+      workspaceId,
+    );
+  } else if (workspace.quickTarget) {
+    settleQuickConnectionOutcome(context, workspace.quickTarget, outcome, "temporary", workspaceId);
+  }
 }
 
 export async function connectAsset(
@@ -2948,7 +3513,7 @@ export async function connectAsset(
   const key = inflightAssetKey(asset.id, epoch, options);
   const inflight = inflightConnects.get(key);
   if (inflight) return inflight;
-  const context = captureConnectionWorkspace();
+  const context = captureConnectionAttempt();
   const promise = runConnectAsset(asset, options, epoch).finally(() => {
     if (inflightConnects.get(key) === promise) inflightConnects.delete(key);
     setAssetConnecting(asset.id, false, epoch);
@@ -2957,7 +3522,7 @@ export async function connectAsset(
   inflightConnects.set(key, promise);
   setAssetConnecting(asset.id, true, epoch);
   const outcome = await promise;
-  if (currentConnectionEpoch(epoch) && !outcome.ok && !outcome.canceled) recordAssetConnectionProblem(context, asset, outcome.error);
+  if (currentConnectionEpoch(epoch)) settleAssetConnectionOutcome(context, asset, outcome);
   return outcome;
 }
 
@@ -3110,13 +3675,22 @@ export async function connectDevice(
   const key = inflightAssetKey(assetId, epoch, options);
   const inflight = inflightConnects.get(key);
   if (inflight) return inflight;
+  const context = captureConnectionAttempt();
   const promise = runConnectDevice(device, options, epoch).finally(() => {
     if (inflightConnects.get(key) === promise) inflightConnects.delete(key);
     setAssetConnecting(assetId, false, epoch);
   });
   inflightConnects.set(key, promise);
   setAssetConnecting(assetId, true, epoch);
-  return promise;
+  const outcome = await promise;
+  if (currentConnectionEpoch(epoch)) {
+    settleAssetConnectionOutcome(
+      context,
+      { id: assetId, name: device.name, kind: "device" },
+      outcome,
+    );
+  }
+  return outcome;
 }
 
 function activateDeviceWorkspace(workspaceId: string, options?: ConnectAssetOptions): void {
@@ -3199,15 +3773,20 @@ export async function reconnectDeadHost(
   options?: { isCurrent?: () => boolean },
 ): Promise<SessionInfo | null> {
   const epoch = useUi.getState().workspaceRuntimeEpoch;
+  const context = captureConnectionAttempt();
   const isCurrent = () => currentConnectionEpoch(epoch) && (options?.isCurrent?.() ?? true);
   const finish = async (pending: Promise<SessionInfo | null>): Promise<SessionInfo | null> => {
     try {
       const session = await pending;
-      if (isCurrent()) return session;
+      if (isCurrent()) {
+        if (session) settleWorkspaceConnectionOutcome(context, ws, { ok: true });
+        return session;
+      }
       if (session) await discardStaleSession(session);
       return null;
     } catch (error) {
       if (!isCurrent()) return null;
+      settleWorkspaceConnectionOutcome(context, ws, { ok: false, error: describeError(error) });
       throw error;
     }
   };
@@ -3243,22 +3822,61 @@ const inflightRestoreConnects = new Map<string, {
   promise: Promise<ConnectOutcome>;
 }>();
 
-export function reconnectRestoredWorkspace(workspaceId: string): Promise<ConnectOutcome> {
-  const state = useUi.getState();
-  const workspace = state.workspaces.find((item) => item.id === workspaceId);
-  const inflight = inflightRestoreConnects.get(workspaceId);
-  if (inflight && workspace === inflight.workspace && state.workspaceRuntimeEpoch === inflight.epoch) return inflight.promise;
-  const attempt = connectRestoredWorkspace(workspaceId).finally(() => {
-    if (inflightRestoreConnects.get(workspaceId)?.promise === attempt) inflightRestoreConnects.delete(workspaceId);
-  });
-  if (workspace) inflightRestoreConnects.set(workspaceId, { workspace, epoch: state.workspaceRuntimeEpoch, promise: attempt });
-  return attempt;
+export interface RestoreWorkspaceOptions {
+  preserveUserFocus?: boolean;
 }
 
-async function connectRestoredWorkspace(workspaceId: string): Promise<ConnectOutcome> {
+export function workspaceSessionIsDead(
+  workspace: Pick<Workspace, "kind" | "sessionId">,
+  sessions: SessionRuntimeInfo[],
+): boolean {
+  if (workspace.kind !== "session" || !workspace.sessionId) return false;
+  const session = sessions.find((item) => item.id === workspace.sessionId);
+  return !session || session.status === "disconnected" || session.status === "failed";
+}
+
+export function recordWorkspaceRestoreFailure(workspaceId: string, error: unknown): void {
+  const workspace = useUi.getState().workspaces.find((item) => item.id === workspaceId);
+  if (!workspace) return;
+  settleWorkspaceConnectionOutcome(
+    captureConnectionAttempt(),
+    workspace,
+    { ok: false, error: describeError(error) },
+    workspaceId,
+  );
+}
+
+export function reconnectRestoredWorkspace(
+  workspaceId: string,
+  options?: RestoreWorkspaceOptions,
+): Promise<ConnectOutcome> {
+  const state = useUi.getState();
+  const epoch = state.workspaceRuntimeEpoch;
+  const workspace = state.workspaces.find((item) => item.id === workspaceId);
+  const inflight = inflightRestoreConnects.get(workspaceId);
+  if (inflight && workspace === inflight.workspace && epoch === inflight.epoch) return inflight.promise;
+  const context = captureConnectionAttempt();
+  const attempt = connectRestoredWorkspace(workspaceId, options);
+  const tracked = attempt.then((outcome) => {
+    if (workspace && currentConnectionEpoch(epoch)) {
+      settleWorkspaceConnectionOutcome(context, workspace, outcome, workspaceId);
+    }
+    return outcome;
+  }).finally(() => {
+    if (inflightRestoreConnects.get(workspaceId)?.promise === tracked) inflightRestoreConnects.delete(workspaceId);
+  });
+  if (workspace) inflightRestoreConnects.set(workspaceId, { workspace, epoch, promise: tracked });
+  return tracked;
+}
+
+async function connectRestoredWorkspace(
+  workspaceId: string,
+  options?: RestoreWorkspaceOptions,
+): Promise<ConnectOutcome> {
   const state = useUi.getState();
   const workspace = state.workspaces.find((item) => item.id === workspaceId);
-  if (!workspace?.restorePending) return { ok: false, error: "工作区无需重新连接" };
+  if (!workspace) return { ok: false, error: "工作区无需重新连接" };
+  if (!workspace.restorePending) return reconnectDeadRestoredWorkspace(workspace, options);
   if (workspace.deletedTarget) return { ok: false, error: "原资产已删除，请从资产树选择其他目标" };
   const epoch = state.workspaceRuntimeEpoch;
   const stillPending = () => {
@@ -3281,7 +3899,7 @@ async function connectRestoredWorkspace(workspaceId: string): Promise<ConnectOut
         return { ok: false, canceled: true };
       }
       useUi.setState((current) => ({
-        activeWorkspaceId: workspaceId,
+        ...(options?.preserveUserFocus ? {} : { activeWorkspaceId: workspaceId }),
         workspaces: current.workspaces.map((item) => item.id === workspaceId ? {
           ...item,
           connId,
@@ -3312,7 +3930,7 @@ async function connectRestoredWorkspace(workspaceId: string): Promise<ConnectOut
       return { ok: false, canceled: true };
     }
     useUi.setState((current) => ({
-      activeWorkspaceId: workspaceId,
+      ...(options?.preserveUserFocus ? {} : { activeWorkspaceId: workspaceId }),
       sessions: [...current.sessions.filter((item) => item.id !== session.id), session],
       workspaces: current.workspaces.map((item) => item.id === workspaceId ? {
         ...item,
@@ -3329,13 +3947,119 @@ async function connectRestoredWorkspace(workspaceId: string): Promise<ConnectOut
       } : item),
     }));
     if (workspace.assetKind !== "device" && !workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "terminal"))) {
-      await openTerminalTab(session);
+      if (options?.preserveUserFocus) addRestoredTerminalWithoutFocus(workspaceId, session);
+      else await openTerminalTab(session);
     }
     return { ok: true };
   } catch (error) {
     if (!stillPending()) return { ok: false, canceled: true };
     return { ok: false, error: describeError(error) };
   }
+}
+
+async function reconnectDeadRestoredWorkspace(
+  workspace: Workspace,
+  options?: RestoreWorkspaceOptions,
+): Promise<ConnectOutcome> {
+  const state = useUi.getState();
+  if (!workspaceSessionIsDead(workspace, state.sessions)) {
+    return { ok: false, error: "工作区无需重新连接" };
+  }
+  if (workspace.deletedTarget) return { ok: false, error: "原资产已删除，请从资产树选择其他目标" };
+  const epoch = state.workspaceRuntimeEpoch;
+  const existing = state.sessions.find((item) => item.id === workspace.sessionId);
+  const stillCurrent = () => {
+    const current = useUi.getState();
+    return current.workspaceRuntimeEpoch === epoch && current.workspaces.some(
+      (item) => item === workspace && !item.restorePending && item.sessionId === workspace.sessionId &&
+        item.assetId === workspace.assetId && item.quickTarget?.id === workspace.quickTarget?.id,
+    );
+  };
+  try {
+    if (workspace.assetId && !workspace.assetId.startsWith("device/")) {
+      const asset = await assetApi.get(workspace.assetId);
+      if (!stillCurrent()) return { ok: false, canceled: true };
+      if (!(await ensureVaultReadyFor(asset, epoch))) return { ok: false, canceled: true };
+    }
+    if (!stillCurrent()) return { ok: false, canceled: true };
+    if (existing) {
+      const fresh = await reconnectSessionAndWait(existing, { isCurrent: stillCurrent });
+      if (!fresh || !stillCurrent()) return { ok: false, canceled: true };
+      useUi.setState((current) => ({
+        ...(options?.preserveUserFocus ? {} : { activeWorkspaceId: workspace.id }),
+        sessions: [...current.sessions.filter((item) => item.id !== fresh.id), fresh],
+      }));
+      return { ok: true };
+    }
+
+    const session = await reconnectDeadHost(workspace, { isCurrent: stillCurrent });
+    if (!session) return { ok: false, canceled: true };
+    if (!stillCurrent()) {
+      await sessionApi.disconnect(session.id).catch(() => undefined);
+      return { ok: false, canceled: true };
+    }
+    useUi.setState((current) => ({
+      ...(options?.preserveUserFocus ? {} : { activeWorkspaceId: workspace.id }),
+      sessions: [...current.sessions.filter((item) => item.id !== session.id), session],
+      workspaces: current.workspaces.map((item) => item.id === workspace.id ? {
+        ...item,
+        sessionId: session.id,
+        panes: item.panes.map((pane) => ({
+          ...pane,
+          tabs: pane.tabs.map((tab) => {
+            if (tab.kind !== "terminal") return { ...tab, sessionId: session.id, restorePending: undefined };
+            if (tab.containerId) {
+              return {
+                ...tab,
+                sessionId: session.id,
+                tabId: undefined,
+                restorePending: true,
+                dead: undefined,
+                exited: true,
+              };
+            }
+            return { ...tab, sessionId: session.id, restorePending: undefined, dead: false };
+          }),
+        })),
+      } : item),
+    }));
+    if (workspace.assetKind !== "device" && !workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "terminal"))) {
+      if (options?.preserveUserFocus) addRestoredTerminalWithoutFocus(workspace.id, session);
+      else await openTerminalTab(session);
+    }
+    return { ok: true };
+  } catch (error) {
+    if (!stillCurrent()) return { ok: false, canceled: true };
+    return { ok: false, error: describeError(error) };
+  }
+}
+
+function addRestoredTerminalWithoutFocus(workspaceId: string, session: SessionInfo): void {
+  useUi.setState((current) => ({
+    workspaces: current.workspaces.map((workspace) => {
+      if (
+        workspace.id !== workspaceId || workspace.sessionId !== session.id ||
+        workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "terminal"))
+      ) {
+        return workspace;
+      }
+      const panes = workspace.panes.length > 0 ? workspace.panes : [makePane()];
+      const activePane = panes.find((pane) => pane.id === workspace.activePaneId) ?? panes[0];
+      const tab: AppTab = {
+        id: nextTabId(`term-${session.id}`),
+        kind: "terminal",
+        title: "终端 1",
+        sessionId: session.id,
+        closable: true,
+      };
+      return {
+        ...workspace,
+        panes: panes.map((pane) => pane.id === activePane.id
+          ? { ...pane, tabs: [...pane.tabs, tab] }
+          : pane),
+      };
+    }),
+  }));
 }
 
 const inflightQuickConnects = new Map<string, Promise<ConnectOutcome>>();
@@ -3352,16 +4076,16 @@ export async function connectQuickTarget(
   options?: ConnectAssetOptions,
 ): Promise<ConnectOutcome> {
   const epoch = useUi.getState().workspaceRuntimeEpoch;
-  const key = JSON.stringify([epoch, formatQuickConnectTarget(target)]);
+  const key = JSON.stringify([epoch, quickConnectionProblemKey(target)]);
   const inflight = inflightQuickConnects.get(key);
   if (inflight) return inflight;
-  const context = captureConnectionWorkspace();
+  const context = captureConnectionAttempt();
   const promise = runQuickConnectTarget(target, options, epoch).finally(() => {
     if (inflightQuickConnects.get(key) === promise) inflightQuickConnects.delete(key);
   });
   inflightQuickConnects.set(key, promise);
   const outcome = await promise;
-  if (currentConnectionEpoch(epoch) && !outcome.ok && !outcome.canceled) recordQuickConnectionProblem(context, target, outcome.error);
+  if (currentConnectionEpoch(epoch)) settleQuickConnectionOutcome(context, target, outcome);
   return outcome;
 }
 
@@ -3409,30 +4133,62 @@ async function runQuickConnectTarget(
   }
 }
 
+export type SaveQuickConnectOutcome = ConnectOutcome & {
+  asset?: Awaited<ReturnType<typeof assetApi.create>>;
+  problemKey: string;
+};
+
+interface SaveQuickConnectAttempt {
+  outcome: ConnectOutcome;
+  asset?: SaveQuickConnectOutcome["asset"];
+}
+
 export async function saveQuickConnectAsset(
   target: QuickConnectTarget,
   options?: ConnectAssetOptions,
-): Promise<ConnectOutcome> {
+): Promise<SaveQuickConnectOutcome> {
   const epoch = useUi.getState().workspaceRuntimeEpoch;
+  const context = captureConnectionAttempt();
+  const quickKey = quickConnectionProblemKey(target);
+  const attempt = await runSaveQuickConnectAsset(target, options, epoch);
+  if (currentConnectionEpoch(epoch) && !attempt.asset) {
+    settleQuickConnectionOutcome(context, target, attempt.outcome, "save");
+  }
+  return {
+    ...attempt.outcome,
+    ...(attempt.asset ? { asset: attempt.asset } : {}),
+    problemKey: attempt.asset ? assetConnectionProblemKey(attempt.asset.id) : quickKey,
+  };
+}
+
+async function runSaveQuickConnectAsset(
+  target: QuickConnectTarget,
+  options: ConnectAssetOptions | undefined,
+  epoch: number,
+): Promise<SaveQuickConnectAttempt> {
   const { pushToast } = useUi.getState();
   const display = formatQuickConnectTarget(target);
+  let created: SaveQuickConnectOutcome["asset"];
+  const finish = (outcome: ConnectOutcome): SaveQuickConnectAttempt => ({
+    outcome,
+    ...(created ? { asset: created } : {}),
+  });
   const password = await promptQuickConnectPassword(display);
-  if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
-  if (password === null) return { ok: false, canceled: true };
+  if (!currentConnectionEpoch(epoch)) return finish({ ok: false, canceled: true });
+  if (password === null) return finish({ ok: false, canceled: true });
   try {
     // The server assembly disabled session_quick_connect_user: in web mode, do not backfill the server OS user.
     const username = target.username ?? (DESKTOP ? await sessionApi.quickConnectDefaultUser() : "");
-    if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
+    if (!currentConnectionEpoch(epoch)) return finish({ ok: false, canceled: true });
     let credId: string | null = null;
     if (password) {
       if (!(await ensureVaultUnlocked("保存凭据前需要解锁凭据库", epoch)) || !currentConnectionEpoch(epoch)) {
-        return { ok: false, canceled: true };
+        return finish({ ok: false, canceled: true });
       }
       const res = await vaultApi.setCredential(display, "password", password);
       credId = res.id;
-      if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
+      if (!currentConnectionEpoch(epoch)) return finish({ ok: false, canceled: true });
     }
-    let created: Awaited<ReturnType<typeof assetApi.create>>;
     try {
       created = await assetApi.create({
         kind: "ssh",
@@ -3444,18 +4200,19 @@ export async function saveQuickConnectAsset(
         keyPath: null,
         credId,
       });
-      if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
+      if (!currentConnectionEpoch(epoch)) return finish({ ok: false, canceled: true });
     } catch (e) {
       if (credId && currentConnectionEpoch(epoch)) await vaultApi.deleteCredential(credId).catch(() => undefined);
       throw e;
     }
-    return await connectAsset(created, options);
+    useUi.getState().clearConnectionProblem(quickConnectionProblemKey(target));
+    return finish(await connectAsset(created, options));
   } catch (e) {
-    if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
+    if (!currentConnectionEpoch(epoch)) return finish({ ok: false, canceled: true });
     const err = e as { message?: string };
     const message = err.message || describeError(e);
     if (!options?.silent) pushToast("error", message);
-    return { ok: false, error: message };
+    return finish({ ok: false, error: message });
   }
 }
 
@@ -3468,6 +4225,26 @@ export const SESSION_RECONNECT_WAIT_MS = 360_000;
 
 export function isSessionReconnectPending(sessionId: string): boolean {
   return inflightReconnects.has(JSON.stringify([useUi.getState().workspaceRuntimeEpoch, sessionId]));
+}
+
+export async function reconnectWorkspaceSession(
+  workspace: Pick<Workspace, "assetId" | "assetKind" | "title" | "quickTarget"> & { id?: string },
+  session: SessionInfo,
+  options?: { timeoutMs?: number; intervalMs?: number; isCurrent?: () => boolean },
+): Promise<SessionInfo | null> {
+  const epoch = useUi.getState().workspaceRuntimeEpoch;
+  const context = captureConnectionAttempt();
+  const isCurrent = () => currentConnectionEpoch(epoch) && (options?.isCurrent?.() ?? true);
+  try {
+    const fresh = await reconnectSessionAndWait(session, { ...options, isCurrent });
+    if (!isCurrent()) return null;
+    if (fresh) settleWorkspaceConnectionOutcome(context, workspace, { ok: true }, workspace.id);
+    return fresh;
+  } catch (error) {
+    if (!isCurrent()) return null;
+    settleWorkspaceConnectionOutcome(context, workspace, { ok: false, error: describeError(error) }, workspace.id);
+    throw error;
+  }
 }
 
 export function reconnectSessionAndWait(
@@ -3489,6 +4266,20 @@ export function reconnectSessionAndWait(
   });
   inflightReconnects.set(key, promise);
   return promise;
+}
+
+export interface SessionReconnectError extends Error {
+  code?: string;
+  attempt?: number;
+  nextRetryAt?: string | number | null;
+}
+
+function reconnectPollingError(session: SessionRuntimeInfo): SessionReconnectError {
+  const error = new Error(session.error || `会话${sessionStatusText(session.status)}`) as SessionReconnectError;
+  if (session.errorCode) error.code = session.errorCode;
+  if (session.attempt !== undefined) error.attempt = session.attempt;
+  if (session.nextRetryAt !== undefined) error.nextRetryAt = session.nextRetryAt;
+  return error;
 }
 
 async function runReconnectAndWait(
@@ -3520,7 +4311,7 @@ async function runReconnectAndWait(
   let enteredReconnect = false;
   for (;;) {
     if (!isCurrent()) return null;
-    let list: SessionInfo[];
+    let list: SessionRuntimeInfo[];
     try {
       list = await sessionApi.list();
     } catch (error) {
@@ -3533,7 +4324,7 @@ async function runReconnectAndWait(
     if (current?.status === "connecting" || current?.status === "reconnecting") {
       enteredReconnect = true;
     } else if (current && enteredReconnect) {
-      throw new Error(`会话${sessionStatusText(current.status)}`);
+      throw reconnectPollingError(current);
     }
     if (Date.now() >= deadline) throw new Error("重连超时，请检查网络后重试");
     await new Promise((resolve) => setTimeout(resolve, intervalMs));

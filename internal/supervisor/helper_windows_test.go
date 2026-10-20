@@ -842,7 +842,11 @@ func fakePipeStreamServer(t *testing.T, stateDir string, handle func(conn net.Co
 
 func TestPipeStreamCloseReturnsWhenServerStalls(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
+	writeStarted := make(chan struct{})
 	name := fakePipeStreamServer(t, stateDir, func(conn net.Conn, kind frameType, payload []byte) bool {
+		if kind == frameInput {
+			close(writeStarted)
+		}
 		return true
 	})
 	client := NewClient(name, stateDir)
@@ -850,15 +854,17 @@ func TestPipeStreamCloseReturnsWhenServerStalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	stream.closeDrainTimeout = 500 * time.Millisecond
 	writeErr := make(chan error, 1)
 	go func() {
 		_, err := stream.Write([]byte("stalled"))
 		writeErr <- err
 	}()
-	time.Sleep(100 * time.Millisecond)
-	original := streamCloseDrainTimeout
-	streamCloseDrainTimeout = 500 * time.Millisecond
-	defer func() { streamCloseDrainTimeout = original }()
+	select {
+	case <-writeStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("pipe server did not receive the stalled Write")
+	}
 	closed := make(chan struct{})
 	go func() {
 		_ = stream.Close()

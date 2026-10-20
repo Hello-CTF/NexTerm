@@ -399,10 +399,9 @@ func (c *presenceCapture) waitFor(t *testing.T, count int) []ipc.DeviceStatusEve
 	return nil
 }
 
-// requireNoPresenceEvent asserts that no new events arrive within the window (leaks would appear if replacement reconnects/shutdown were not deduplicated).
+// requireNoPresenceEvent checks for unexpected transitions after the caller has observed the lifecycle operation complete.
 func (c *presenceCapture) requireNoPresenceEvent(t *testing.T, want int) {
 	t.Helper()
-	time.Sleep(300 * time.Millisecond)
 	if events := c.snapshot(); len(events) != want {
 		t.Fatalf("device status event count = %d, want %d: %+v", len(events), want, events)
 	}
@@ -486,6 +485,11 @@ func TestDevicePresenceShutdownSilent(t *testing.T) {
 	if err := f.service.Close(); err != nil {
 		t.Fatal(err)
 	}
+	readCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, _, err := control.Read(readCtx); err == nil {
+		t.Fatal("control channel remains open after service shutdown")
+	}
 	capture.requireNoPresenceEvent(t, 1)
 	if ids := auditAssetIDs(t, f.service.db, auditKindDeviceOffline); len(ids) != 0 {
 		t.Fatalf("shutdown wrote offline audits: %v", ids)
@@ -527,16 +531,13 @@ func TestDeviceWSHelloRefreshesAppVersion(t *testing.T) {
 	}
 	waitForAppVersion(t, f, deviceID, "9.9.9")
 
-	// An empty hello version leaves the stored version untouched: the refresh skips empty values, so once the first
-	// refresh landed nothing in flight can still change the row; the settle window (as in requireNoPresenceEvent) lets
-	// a regression that writes empty surface instead of racing the read.
+	// The first refresh is confirmed persisted above; an empty version is rejected before any database write.
 	response = helloDevice(t, dialDeviceWS(t, f), agent.HelloMessage{
 		Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: deviceID, Secret: secret,
 	})
 	if response.Type != "hello_ok" {
 		t.Fatalf("hello response = %+v", response)
 	}
-	time.Sleep(300 * time.Millisecond)
 	deviceAgent := query.Use(f.service.db).DeviceAgent
 	row, err := deviceAgent.WithContext(context.Background()).Where(deviceAgent.DeviceID.Eq(deviceID)).First()
 	if err != nil || row.AppVersion != "9.9.9" {

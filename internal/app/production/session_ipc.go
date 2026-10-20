@@ -2,6 +2,8 @@ package production
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +33,7 @@ type terminalCommandService struct {
 	sshConnector *productionConnector
 	events       ipc.Emitter
 	stagedBlobs  StagedBlobResolver
+	fsUploads    *fsChunkUploadRegistry
 	desktop      bool
 
 	mu         sync.Mutex
@@ -72,13 +75,18 @@ type sessionProbeResult struct {
 }
 
 type sessionInfoDTO struct {
-	ID        string   `json:"id"`
-	AssetID   *string  `json:"assetId"`
-	Name      string   `json:"name"`
-	Kind      string   `json:"kind"`
-	Status    string   `json:"status"`
-	Tabs      []string `json:"tabs"`
-	CreatedAt int64    `json:"createdAt"`
+	ID          string     `json:"id"`
+	AssetID     *string    `json:"assetId"`
+	Name        string     `json:"name"`
+	Kind        string     `json:"kind"`
+	Status      string     `json:"status"`
+	Tabs        []string   `json:"tabs"`
+	CreatedAt   int64      `json:"createdAt"`
+	Error       string     `json:"error,omitempty"`
+	ErrorCode   ipc.Code   `json:"errorCode,omitempty"`
+	Attempt     int        `json:"attempt,omitempty"`
+	NextRetryAt *time.Time `json:"nextRetryAt,omitempty"`
+	StaleConfig bool       `json:"staleConfig"`
 }
 
 type openTerminalRequest struct {
@@ -145,9 +153,10 @@ type createTerminalRequest struct {
 }
 
 type terminalWriteRequest struct {
-	TabID    string `json:"tabId"`
-	Data     []int  `json:"data"`
-	ClientID string `json:"clientId"`
+	TabID     string                         `json:"tabId"`
+	Data      []int                          `json:"data"`
+	ClientID  string                         `json:"clientId"`
+	Broadcast *terminalBroadcastWriteOptions `json:"broadcast,omitempty"`
 }
 
 type terminalResizeRequest struct {
@@ -181,6 +190,7 @@ type liveTabDTO struct {
 	Subscribers     int     `json:"subscribers"`
 	Viewers         int     `json:"viewers"`
 	Exited          bool    `json:"exited"`
+	LastOutputAt    int64   `json:"lastOutputAt"`
 	LastOutputMSAgo int64   `json:"lastOutputMsAgo"`
 	Title           string  `json:"title,omitempty"`
 }
@@ -198,11 +208,11 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		func() error {
 			return ipc.RegisterNested(dispatcher, "session_connect", func(ctx context.Context, _ *ipc.Call, input sessionConnectRequest) (sessionInfoDTO, error) {
 				ctx = productionSessionRequestContext(ctx)
-				row, err := s.database.AssetGet(ctx, input.AssetID)
+				row, err := s.database.AssetGetLive(ctx, input.AssetID)
 				if err != nil {
 					return sessionInfoDTO{}, err
 				}
-				asset, err := productionSessionAsset(row, input.AcceptHostKey)
+				asset, err := productionSessionAsset(row, input.AcceptHostKey, ipc.OwnerID(ctx))
 				if err != nil {
 					return sessionInfoDTO{}, err
 				}
@@ -210,7 +220,9 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				if err != nil {
 					return sessionInfoDTO{}, terminalIPCError(err)
 				}
-				return productionSessionInfo(connected.Info()), nil
+				infos := []session.SessionInfo{connected.Info()}
+				s.refreshStaleConfigs(ctx, infos)
+				return productionSessionInfo(infos[0]), nil
 			})
 		},
 		// Quick connect lets the server initiate SSH directly to arbitrary host:ports; in the server-side assembly (desktop=false)
@@ -283,7 +295,25 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		func() error {
 			return ipc.Register(dispatcher, "session_reconnect", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (bool, error) {
 				ctx = productionSessionRequestContext(ctx)
-				if err := s.sessions.StartReconnectFor(ctx, input.SessionID); err != nil {
+				connected, err := s.sessions.SessionFor(ctx, input.SessionID)
+				if err != nil {
+					return false, terminalIPCError(err)
+				}
+				asset := connected.Asset()
+				if asset.StoreBacked {
+					row, loadErr := s.database.AssetGetLive(ctx, asset.ID)
+					if loadErr != nil {
+						return false, loadErr
+					}
+					asset, err = productionSessionAsset(row, false, ipc.OwnerID(ctx))
+					if err != nil {
+						return false, err
+					}
+					err = s.sessions.StartReconnectWithAssetFor(ctx, input.SessionID, asset)
+				} else {
+					err = s.sessions.StartReconnectFor(ctx, input.SessionID)
+				}
+				if err != nil {
 					return false, terminalIPCError(err)
 				}
 				if s.docker != nil {
@@ -299,6 +329,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				if err != nil {
 					return nil, terminalIPCError(err)
 				}
+				s.refreshStaleConfigs(ctx, infos)
 				result := make([]sessionInfoDTO, len(infos))
 				for index, info := range infos {
 					result[index] = productionSessionInfo(info)
@@ -346,21 +377,6 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				ctx = productionSessionRequestContext(ctx)
 				_, err := s.sessions.ExecLineFor(ctx, input.TabID, call.ClientID, input.Line)
 				return nil, terminalIPCError(err)
-			})
-		},
-		func() error {
-			return ipc.Register(dispatcher, "session_cwd", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (*string, error) {
-				ctx = productionSessionRequestContext(ctx)
-				transport, err := s.sessions.TransportFor(ctx, input.SessionID)
-				if err != nil {
-					return nil, terminalIPCError(err)
-				}
-				cwd, ok := transport.(interface{ CWD() string })
-				if !ok {
-					return nil, nil
-				}
-				value := cwd.CWD()
-				return &value, nil
 			})
 		},
 		func() error {
@@ -487,11 +503,24 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			})
 		},
 		func() error {
+			return ipc.RegisterNested(dispatcher, "terminal_broadcast_prepare", func(ctx context.Context, _ *ipc.Call, input terminalBroadcastPrepareRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
+				data, err := productionBytes(input.Data)
+				if err != nil {
+					return nil, err
+				}
+				return nil, broadcastConfirmationIPCError(s.prepareBroadcast(ctx, input.TabIDs, data, input.ProductionConfirmation))
+			})
+		},
+		func() error {
 			return ipc.RegisterNested(dispatcher, "terminal_write", func(ctx context.Context, call *ipc.Call, input terminalWriteRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
 				data, err := productionBytes(input.Data)
 				if err != nil {
 					return nil, err
+				}
+				if err := s.authorizeBroadcastWrite(ctx, input.TabID, data, input.Broadcast); err != nil {
+					return nil, broadcastConfirmationIPCError(err)
 				}
 				client := gridRequestClient(call.ClientID, input.ClientID)
 				err = s.sessions.WriteFor(ctx, input.TabID, client, data)
@@ -613,15 +642,11 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						continue
 					}
 					sessionInfo := connected.Info()
-					var lastOutputMSAgo int64
-					if snapshot, snapshotErr := s.sessions.TerminalSnapshotFor(ctx, info.ID); snapshotErr == nil {
-						lastOutputMSAgo = int64(snapshot.LastOutputMsAgo)
-					}
 					result = append(result, liveTabDTO{
 						TabID: info.ID, SessionID: info.SessionID, SessionName: sessionInfo.Name, SessionKind: sessionInfo.Kind,
 						Cols: info.Cols, Rows: info.Rows, Controller: nullableProductionString(info.Controller),
-						Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited, LastOutputMSAgo: lastOutputMSAgo,
-						Title: info.Title,
+						Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
+						LastOutputAt: info.LastOutputAt, LastOutputMSAgo: info.LastOutputMSAgo, Title: info.Title,
 					})
 				}
 				return result, nil
@@ -705,23 +730,17 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		func() error {
 			return ipc.Register(dispatcher, "terminal_close_tab", func(ctx context.Context, call *ipc.Call, input terminalIDRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
-				var err error
-				if input.Mode == "detach" {
-					err = s.sessions.BackgroundTab(ctx, input.TabID, call.ClientID)
-				} else {
-					err = s.sessions.CloseTabFor(ctx, input.TabID)
+				if input.Mode != "" && input.Mode != "detach" && input.Mode != "kill" {
+					return nil, ipc.BadParam(errors.New("终端关闭模式无效"))
 				}
+				err := s.closeSessionTab(ctx, call, input)
 				if errors.Is(err, session.ErrTabNotFound) && input.SessionID != "" {
 					if _, err = s.sessions.SessionFor(ctx, input.SessionID); err == nil {
 						_, err = s.sessions.RecoverRemoteDurable(ctx, input.TabID, session.OpenTabOptions{
 							SessionID: input.SessionID, ClientID: call.ClientID, Detached: true, Cols: 80, Rows: 24,
 						})
 						if err == nil {
-							if input.Mode == "detach" {
-								err = s.sessions.BackgroundTab(ctx, input.TabID, call.ClientID)
-							} else {
-								err = s.sessions.CloseTabFor(ctx, input.TabID)
-							}
+							err = s.closeSessionTab(ctx, call, input)
 						}
 					}
 				}
@@ -772,13 +791,37 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 	if err := s.registerSSHDiagnostics(dispatcher); err != nil {
 		return err
 	}
-	if err := registerFSCommands(dispatcher, s.sessions, s.stagedBlobs); err != nil {
+	if err := registerFSCommands(dispatcher, s.sessions, s.stagedBlobs, s.fsUploads); err != nil {
 		return err
 	}
 	if !s.desktop {
 		return nil
 	}
 	return registerLocalFolderCommands(dispatcher)
+}
+
+func (s *terminalCommandService) closeSessionTab(ctx context.Context, call *ipc.Call, input terminalIDRequest) error {
+	if input.Mode == "detach" {
+		return s.sessions.BackgroundTab(ctx, input.TabID, call.ClientID)
+	}
+	if input.Mode == "kill" {
+		return s.sessions.CloseTabFor(ctx, input.TabID)
+	}
+	tab, err := s.sessions.TabFor(ctx, input.TabID)
+	if err != nil {
+		return err
+	}
+	if tab.Info().Exited {
+		return s.sessions.CloseTabFor(ctx, input.TabID)
+	}
+	connected, err := s.sessions.SessionFor(ctx, tab.SessionID)
+	if err != nil {
+		return err
+	}
+	if kind := connected.Asset().Kind; kind == session.KindSSH || kind == session.KindDevice {
+		return s.sessions.BackgroundTab(ctx, input.TabID, call.ClientID)
+	}
+	return s.sessions.CloseTabFor(ctx, input.TabID)
 }
 
 func (s *terminalCommandService) recoverRemoteDurable(ctx context.Context, call *ipc.Call, tabID, sessionID string) (attachedTabDTO, error) {
@@ -850,10 +893,16 @@ func productionSessionRequestContext(ctx context.Context) context.Context {
 	return session.WithOpenAccess(ctx)
 }
 
-func productionSessionAsset(row store.AssetRow, acceptHostKey bool) (session.Asset, error) {
+func productionSessionAsset(row store.AssetRow, acceptHostKey bool, trustedOwner ...string) (session.Asset, error) {
 	options, err := productionAssetOptionMap(row)
 	if err != nil {
 		return session.Asset{}, ipc.BadParam(fmt.Errorf("资产选项不是有效的 JSON: %w", err))
+	}
+	if row.Kind == session.KindSSH || row.Kind == session.KindDocker {
+		delete(options, "userId")
+		if len(trustedOwner) > 0 && trustedOwner[0] != "" {
+			options["userId"] = trustedOwner[0]
+		}
 	}
 	if acceptHostKey {
 		options["autoAcceptUnknownHost"] = true
@@ -871,7 +920,32 @@ func productionSessionAsset(row store.AssetRow, acceptHostKey bool) (session.Ass
 			return session.Asset{}, ipc.BadParam(fmt.Errorf("资产环境变量无效: %w", err))
 		}
 	}
-	return session.Asset{ID: row.ID, Name: row.Name, Kind: row.Kind, Encoding: encoding, StartupCommand: startupCommand, TerminalMode: terminalMode, Env: environment, Options: options}, nil
+	return session.Asset{
+		ID: row.ID, Name: row.Name, Kind: row.Kind, Encoding: encoding, StartupCommand: startupCommand,
+		TerminalMode: terminalMode, Env: environment, Options: options, StoreBacked: true,
+		ConfigFingerprint: productionAssetConfigFingerprint(row),
+	}, nil
+}
+
+func productionAssetConfigFingerprint(row store.AssetRow) string {
+	raw, err := json.Marshal(struct {
+		Kind        string  `json:"kind"`
+		Host        *string `json:"host"`
+		Port        *int32  `json:"port"`
+		Username    *string `json:"username"`
+		AuthKind    *string `json:"authKind"`
+		KeyPath     *string `json:"keyPath"`
+		CredID      *string `json:"credId"`
+		OptionsJSON string  `json:"optionsJson"`
+	}{
+		Kind: row.Kind, Host: row.Host, Port: row.Port, Username: row.Username,
+		AuthKind: row.AuthKind, KeyPath: row.KeyPath, CredID: row.CredID, OptionsJSON: row.OptionsJSON,
+	})
+	if err != nil {
+		return ""
+	}
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:])
 }
 
 func productionTerminalMode(options map[string]any) (string, error) {
@@ -904,6 +978,25 @@ func newProductionTerminalModeResolver(database *store.Store) func(context.Conte
 	}
 }
 
+func (s *terminalCommandService) refreshStaleConfigs(ctx context.Context, infos []session.SessionInfo) {
+	if s.database == nil {
+		return
+	}
+	for index := range infos {
+		info := &infos[index]
+		if info.StaleConfig || info.AssetConfigFingerprint == "" {
+			continue
+		}
+		row, err := s.database.AssetGetLive(ctx, info.AssetID)
+		if err != nil || productionAssetConfigFingerprint(row) == info.AssetConfigFingerprint {
+			continue
+		}
+		if err := s.sessions.MarkSessionConfigStaleFor(ctx, info.ID); err == nil {
+			info.StaleConfig = true
+		}
+	}
+}
+
 func productionSessionInfo(info session.SessionInfo) sessionInfoDTO {
 	var assetID *string
 	if info.AssetID != "" {
@@ -911,7 +1004,8 @@ func productionSessionInfo(info session.SessionInfo) sessionInfoDTO {
 	}
 	return sessionInfoDTO{
 		ID: info.ID, AssetID: assetID, Name: info.Name, Kind: info.Kind, Status: string(info.Status),
-		Tabs: info.Tabs, CreatedAt: info.CreatedAt.UnixMilli(),
+		Tabs: info.Tabs, CreatedAt: info.CreatedAt.UnixMilli(), Error: info.Error, ErrorCode: info.ErrorCode,
+		Attempt: info.Attempt, NextRetryAt: info.NextRetryAt, StaleConfig: info.StaleConfig,
 	}
 }
 

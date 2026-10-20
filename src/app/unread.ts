@@ -1,10 +1,12 @@
 import { terminalApi } from "../ipc/commands";
 import { useUi } from "./store";
+import { resetUnreadTabs, updateUnreadTabs, useUnreadStore } from "./unreadStore";
 
 const POLL_MS = 2000;
 
 let started = false;
-const lastOutputMsAgo = new Map<string, number>();
+const lastOutputAt = new Map<string, number>();
+const legacyLastOutputMsAgo = new Map<string, number>();
 
 function collectTracked(): { storeIdByTabId: Map<string, string>; backgroundIds: Set<string>; foregroundIds: Set<string> } {
   const storeIdByTabId = new Map<string, string>();
@@ -25,11 +27,14 @@ function collectTracked(): { storeIdByTabId: Map<string, string>; backgroundIds:
 }
 
 // The first poll only builds a baseline without marking: restored layouts may have daemon terminals that just produced output, avoiding all dots lighting up at startup.
-// Afterwards, lastOutputMsAgo decreasing means new output between two polls; only non-active tabs are marked, applied in one batched setState.
+// New responses use the absolute output timestamp, including the zero-to-first-output transition. Older servers retain the age-based fallback.
 export async function pollUnreadTabsOnce(): Promise<void> {
   const { storeIdByTabId, backgroundIds, foregroundIds } = collectTracked();
-  for (const tabId of [...lastOutputMsAgo.keys()]) {
-    if (!storeIdByTabId.has(tabId)) lastOutputMsAgo.delete(tabId);
+  for (const tabId of [...lastOutputAt.keys()]) {
+    if (!storeIdByTabId.has(tabId)) lastOutputAt.delete(tabId);
+  }
+  for (const tabId of [...legacyLastOutputMsAgo.keys()]) {
+    if (!storeIdByTabId.has(tabId)) legacyLastOutputMsAgo.delete(tabId);
   }
   if (storeIdByTabId.size === 0) return;
   let live;
@@ -42,43 +47,29 @@ export async function pollUnreadTabsOnce(): Promise<void> {
   for (const info of live) {
     const storeId = storeIdByTabId.get(info.tabId);
     if (!storeId) continue;
-    const prev = lastOutputMsAgo.get(info.tabId);
-    lastOutputMsAgo.set(info.tabId, info.lastOutputMsAgo);
-    if (prev === undefined) continue;
-    if (info.lastOutputMsAgo < prev && backgroundIds.has(storeId)) mark.add(storeId);
+    if (info.lastOutputAt !== undefined) {
+      const prev = lastOutputAt.get(info.tabId);
+      lastOutputAt.set(info.tabId, info.lastOutputAt);
+      legacyLastOutputMsAgo.delete(info.tabId);
+      if (prev !== undefined && info.lastOutputAt > prev && backgroundIds.has(storeId)) mark.add(storeId);
+      continue;
+    }
+    const prev = legacyLastOutputMsAgo.get(info.tabId);
+    legacyLastOutputMsAgo.set(info.tabId, info.lastOutputMsAgo);
+    lastOutputAt.delete(info.tabId);
+    if (prev !== undefined && info.lastOutputMsAgo < prev && backgroundIds.has(storeId)) mark.add(storeId);
   }
   // Stale marks on activated tabs are cleared too, covering activation paths that bypass setActiveTab such as addTab focus/close succession.
   const state = useUi.getState();
-  const stale = new Set<string>();
-  for (const w of state.workspaces) {
-    for (const p of w.panes) {
-      for (const t of p.tabs) {
-        if (t.unread && foregroundIds.has(t.id)) stale.add(t.id);
-      }
-    }
-  }
+  const unreadTabIds = useUnreadStore.getState().unreadTabIds;
+  const stale = new Set([...foregroundIds].filter((tabId) => unreadTabIds.has(tabId)));
   if (mark.size === 0 && stale.size === 0) return;
-  useUi.setState((s) => ({
-    workspaces: s.workspaces.map((w) =>
-      w.panes.some((p) => p.tabs.some((t) => (mark.has(t.id) && !t.unread) || (stale.has(t.id) && t.unread)))
-        ? {
-            ...w,
-            panes: w.panes.map((p) =>
-              p.tabs.some((t) => (mark.has(t.id) && !t.unread) || (stale.has(t.id) && t.unread))
-                ? {
-                    ...p,
-                    tabs: p.tabs.map((t) => {
-                      if (mark.has(t.id) && !t.unread) return { ...t, unread: true };
-                      if (stale.has(t.id) && t.unread) return { ...t, unread: undefined };
-                      return t;
-                    }),
-                  }
-                : p,
-            ),
-          }
-        : w,
+  const openTabIds = new Set(
+    state.workspaces.flatMap((workspace) =>
+      workspace.panes.flatMap((pane) => pane.tabs.map((tab) => tab.id)),
     ),
-  }));
+  );
+  updateUnreadTabs({ mark, clear: stale, openTabIds });
 }
 
 export function startUnreadTracking(): void {
@@ -88,5 +79,7 @@ export function startUnreadTracking(): void {
 }
 
 export function resetUnreadTrackingForTest(): void {
-  lastOutputMsAgo.clear();
+  lastOutputAt.clear();
+  legacyLastOutputMsAgo.clear();
+  resetUnreadTabs();
 }

@@ -17,6 +17,9 @@ const (
 	// integration in an interactive terminal tab. The command text is the
 	// completed input line read off the tab screen at the 133;B boundary.
 	CommandSourceTerminal = "terminal"
+	// CommandSourceTerminalGap marks omitted terminal observations caused by
+	// persistence saturation. It never represents an executed command.
+	CommandSourceTerminalGap = "terminal_gap"
 	// CommandSourceExec marks a command executed through the WinRM line-mode
 	// exec path, where the exact command line and exit code are known.
 	CommandSourceExec = "exec"
@@ -35,9 +38,8 @@ type CommandRecord struct {
 	FinishedAt time.Time
 }
 
-// CommandSink receives audited commands. The session feed path calls it
-// synchronously once per finished command, so implementations should return
-// quickly.
+// CommandSink receives audited commands from the manager's bounded worker.
+// The interactive enqueue result does not claim that durable persistence finished.
 type CommandSink interface {
 	RecordCommand(ctx context.Context, record CommandRecord)
 }
@@ -68,7 +70,7 @@ const maxCommandWrapRows = 8
 func (m *Manager) observeCommand(tab *Tab, data []byte) {
 	reports, state, _ := tab.commandTrack.ObserveReports(data)
 	if len(reports) > 0 {
-		now := time.Now()
+		now := m.now()
 		for _, report := range reports {
 			switch {
 			case report.Letter == 'B' && report.Started:
@@ -111,7 +113,7 @@ func (m *Manager) finishCommand(tab *Tab, now time.Time, exitCode *int) {
 	if m.commands == nil {
 		return
 	}
-	m.commands.RecordCommand(context.Background(), CommandRecord{
+	record := CommandRecord{
 		SessionID:  tab.SessionID,
 		TabID:      tab.ID,
 		AssetID:    tab.session.asset.ID,
@@ -121,13 +123,18 @@ func (m *Manager) finishCommand(tab *Tab, now time.Time, exitCode *int) {
 		ExitCode:   exitCode,
 		StartedAt:  pending.startedAt,
 		FinishedAt: now,
-	})
+	}
+	if m.commandQueue != nil {
+		m.commandQueue.RecordTerminalCommand(context.Background(), record)
+		return
+	}
+	m.commands.RecordCommand(context.Background(), record)
 }
 
 // flushPendingCommand closes a still-running command when its tab closes, so
 // long-lived commands are not lost from the audit trail.
 func (m *Manager) flushPendingCommand(tab *Tab) {
-	m.finishCommand(tab, time.Now(), nil)
+	m.finishCommand(tab, m.now(), nil)
 }
 
 // recordExecCommand audits a WinRM line-mode command, where the exact command
@@ -136,7 +143,7 @@ func (m *Manager) recordExecCommand(ctx context.Context, tab *Tab, command strin
 	if m.commands == nil || command == "" {
 		return
 	}
-	finished := time.Now()
+	finished := m.now()
 	m.commands.RecordCommand(ctx, CommandRecord{
 		SessionID:  tab.SessionID,
 		TabID:      tab.ID,

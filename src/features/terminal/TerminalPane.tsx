@@ -7,21 +7,30 @@ import { Daemon } from "./Daemon";
 import { resolveWinrmMode } from "./terminalPolicy";
 import { splitAllowedForHeight } from "./workspaceLayout";
 import {
-  broadcastInput,
+  BroadcastInputQueue,
   broadcastRiskMessage,
   collectBroadcastCandidates,
-  describeBroadcastSkips,
+  getBroadcastConfirmationChallenge,
   localRemoteMix,
   quickBroadcastIds,
 } from "./broadcast";
-import { BroadcastPickerModal, BroadcastStrip } from "./BroadcastPanel";
+import { BroadcastStrip } from "./BroadcastPanel";
+import { BroadcastPickerModal } from "./BroadcastPickerModal";
 import { PreviewShareMenu } from "../sharing/PreviewShareMenu";
+import { ProductionConfirmationDialog } from "../execbatch/ProductionConfirmationDialog";
 import type { CommandBlock } from "./commandBlocks";
-import { terminalApi, fsApi, assetApi, syncApi } from "../../ipc/commands";
+import {
+  terminalApi,
+  fsApi,
+  assetApi,
+  syncApi,
+  type BroadcastConfirmationChallenge,
+  type BroadcastProductionConfirmation,
+} from "../../ipc/commands";
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
-import { takePendingDirectory, sessionStatusText, connectProgressText, applyRemoteTabTitle, reconnectSessionAndWait, reconnectDeadHost, isSessionReconnectPending, useUi, type Workspace } from "../../app/store";
+import { takePendingDirectory, sessionStatusText, connectProgressText, applyRemoteTabTitle, reconnectWorkspaceSession, reconnectDeadHost, isSessionReconnectPending, requestCloseTab, useUi, type BroadcastState, type Workspace } from "../../app/store";
 import { directoryCommandFor } from "../files/pathUtils";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
 import { modHint } from "../../app/platform";
@@ -88,6 +97,42 @@ function findWorkspacePane(
     }
   }
   return null;
+}
+
+interface BroadcastContext {
+  generation: number;
+  targetIds: string[];
+}
+
+interface PendingBroadcastConfirmation {
+  sequence: number;
+  data: string;
+  generation: number;
+  challenge: BroadcastConfirmationChallenge;
+}
+
+function readBroadcastContext(
+  state: {
+    workspaces: Workspace[];
+    activeWorkspaceId: string | null;
+    broadcast: BroadcastState | null;
+  },
+  storeTabId: string,
+): BroadcastContext | null {
+  const broadcast = state.broadcast;
+  if (
+    !broadcast ||
+    broadcast.origin.storeTabId !== storeTabId ||
+    state.activeWorkspaceId !== broadcast.origin.workspaceId
+  ) {
+    return null;
+  }
+  const workspace = state.workspaces.find((item) => item.id === broadcast.origin.workspaceId);
+  const pane = workspace?.panes.find((item) => item.id === workspace.activePaneId);
+  if (!pane || pane.activeTabId !== storeTabId || !pane.tabs.some((tab) => tab.id === storeTabId)) {
+    return null;
+  }
+  return { generation: broadcast.generation, targetIds: broadcast.targetIds };
 }
 
 // A backend-owned custom title (rename via IPC or the AI terminal_rename tool)
@@ -219,7 +264,7 @@ export function TerminalPane({
     controller: string | null;
     subscribers: number;
     viewers: number;
-    exited: boolean;
+    exited?: boolean;
   } | null>(null);
   const [remoteGrid, setRemoteGrid] = useState<{
     cols: number;
@@ -252,9 +297,15 @@ export function TerminalPane({
   const resumeAttemptedRef = useRef(false);
   const observerHintAt = useRef(0);
   const writeErrorAt = useRef(0);
-  const broadcastSkipAt = useRef(0);
-  const broadcastChainRef = useRef<Promise<void>>(Promise.resolve());
-  const broadcastDisposedRef = useRef(false);
+  const [broadcastQueue] = useState(() => new BroadcastInputQueue());
+  const [broadcastConfirmation, setBroadcastConfirmation] = useState<PendingBroadcastConfirmation | null>(null);
+  const broadcastConfirmationRef = useRef<PendingBroadcastConfirmation | null>(null);
+  const pendingBroadcastConfirmations = useRef<PendingBroadcastConfirmation[]>([]);
+  const broadcastConfirmationSequence = useRef(0);
+  const broadcastConfirmationEpoch = useRef(0);
+  const broadcastConfirmingRef = useRef(false);
+  const broadcastVisibleRef = useRef(visible !== false);
+  broadcastVisibleRef.current = visible !== false;
   const controlRef = useRef(control);
   controlRef.current = control;
   const controlRefreshGen = useRef(0);
@@ -276,6 +327,7 @@ export function TerminalPane({
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
   const sessionAssetId = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.assetId);
   const sessionStatus = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.status);
+  const staleConfig = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.staleConfig === true);
   const execTabAssetId = useUi((s) => s.workspaces.flatMap((w) => w.panes).flatMap((p) => p.tabs).find((tab) => tab.id === storeTabId)?.assetId);
   const execAttachedSessionRef = useRef(sessionId);
   const execTargetAssetRef = useRef(execTabAssetId ?? sessionAssetId);
@@ -300,20 +352,22 @@ export function TerminalPane({
   );
   const broadcastCount = useUi((s) => {
     const wsId = findWorkspacePane(s.workspaces, storeTabId)?.wsId;
-    if (!wsId || !s.broadcast || s.broadcast.workspaceId !== wsId) return 0;
-    return s.broadcast.targetIds.length;
+    const bc = s.broadcast;
+    if (!wsId || !bc || bc.origin.workspaceId !== wsId || bc.origin.storeTabId !== storeTabId) return 0;
+    return bc.targetIds.length;
   });
   const memberBroadcastCount = useUi((s) => {
     const found = findWorkspacePane(s.workspaces, storeTabId);
     const bc = s.broadcast;
-    if (!found || !bc || bc.workspaceId !== found.wsId || !bc.targetIds.includes(storeTabId)) return 0;
-    const ws = s.workspaces.find((w) => w.id === found.wsId);
-    if (!ws) return 0;
+    if (!found || !bc || bc.origin.workspaceId !== found.wsId || bc.origin.storeTabId !== storeTabId) return 0;
     const members = new Set(bc.targetIds);
-    return collectBroadcastCandidates(ws, s.sessions).filter(
-      (c) => members.has(c.storeTabId) && c.eligible,
+    return collectBroadcastCandidates(s.workspaces, s.sessions).filter(
+      (candidate) => members.has(candidate.storeTabId) && candidate.eligible,
     ).length;
   });
+  const broadcastRevision = useUi(
+    (state) => readBroadcastContext(state, storeTabId)?.generation ?? null,
+  );
   const [assetEncoding, setAssetEncoding] = useState<string | null>(null);
   useEffect(() => {
     if (!sessionAssetId || typeof assetApi.list !== "function") return;
@@ -342,7 +396,8 @@ export function TerminalPane({
   const showConnectProgress =
     sessionStatus === "connecting" || sessionStatus === "reconnecting";
   const canReconnect =
-    sessionStatus === "disconnected" || sessionStatus === "failed" || sessionStatus === undefined;
+    sessionStatus === "disconnected" || sessionStatus === "failed" || sessionStatus === undefined ||
+    (staleConfig && sessionStatus === "connected");
   const canDisconnect =
     sessionStatus === "connected" ||
     sessionStatus === "connecting" ||
@@ -412,38 +467,69 @@ export function TerminalPane({
             exited: hit.exited,
           });
         } else {
-          setControl((c) => (c ? { ...c, exited: true } : c));
+          setControl((c) => (c ? { ...c, exited: undefined } : c));
         }
+        useUi.getState().updateTab(storeTabId, { exited: hit?.exited });
       } catch {
       }
     },
-    [kernelTabId],
+    [kernelTabId, storeTabId],
   );
 
-  const broadcastContext = useCallback((): { ws: Workspace; targetIds: string[]; key: string } | null => {
-    const st = useUi.getState();
-    const found = findWorkspacePane(st.workspaces, storeTabId);
-    const ws = found ? st.workspaces.find((w) => w.id === found.wsId) : undefined;
-    const broadcastState = st.broadcast;
-    if (!ws || !broadcastState || broadcastState.workspaceId !== ws.id || !broadcastState.targetIds.includes(storeTabId)) {
-      return null;
-    }
-    return {
-      ws,
-      targetIds: broadcastState.targetIds,
-      key: `${broadcastState.workspaceId}:${broadcastState.targetIds.join(",")}`,
-    };
-  }, [storeTabId]);
+  const broadcastContext = useCallback((): BroadcastContext | null => {
+    if (visible === false) return null;
+    return readBroadcastContext(useUi.getState(), storeTabId);
+  }, [storeTabId, visible]);
 
   useEffect(() => {
-    broadcastDisposedRef.current = false;
-    return () => {
-      broadcastDisposedRef.current = true;
-    };
+    broadcastQueue.sync(broadcastRevision);
+  }, [broadcastQueue, broadcastRevision]);
+
+  useEffect(() => {
+    if (visible === false) broadcastQueue.reset();
+  }, [broadcastQueue, visible]);
+
+  useEffect(() => {
+    broadcastQueue.activate();
+    return () => broadcastQueue.dispose();
+  }, [broadcastQueue]);
+
+  const advanceBroadcastConfirmation = useCallback(() => {
+    const next = pendingBroadcastConfirmations.current.shift() ?? null;
+    broadcastConfirmationRef.current = next;
+    setBroadcastConfirmation(next);
   }, []);
 
+  const queueBroadcastConfirmation = useCallback((pending: Omit<PendingBroadcastConfirmation, "sequence">) => {
+    pendingBroadcastConfirmations.current.push({
+      ...pending,
+      sequence: ++broadcastConfirmationSequence.current,
+    });
+    if (broadcastConfirmationRef.current === null) advanceBroadcastConfirmation();
+  }, [advanceBroadcastConfirmation]);
+
+  const clearBroadcastConfirmations = useCallback((notify: boolean) => {
+    const hadPending = broadcastConfirmationRef.current !== null || pendingBroadcastConfirmations.current.length > 0;
+    if (notify) broadcastConfirmationEpoch.current += 1;
+    pendingBroadcastConfirmations.current = [];
+    broadcastConfirmationRef.current = null;
+    setBroadcastConfirmation(null);
+    if (notify && hadPending) pushToast("info", "已取消生产广播，待确认输入未发送");
+  }, [pushToast]);
+
+  useEffect(() => {
+    if (broadcastConfirmationRef.current !== null || pendingBroadcastConfirmations.current.length > 0) {
+      pushToast("info", "广播目标已变化，待确认输入未发送");
+    }
+    clearBroadcastConfirmations(false);
+  }, [broadcastRevision, clearBroadcastConfirmations, pushToast]);
+
   const sendData = useCallback(
-    async (text: string, opts?: { fromCommand?: boolean }): Promise<"sent" | "observer" | "failed"> => {
+    async (
+      text: string,
+      opts?: { fromCommand?: boolean },
+      productionConfirmation?: BroadcastProductionConfirmation,
+    ): Promise<"sent" | "observer" | "failed"> => {
       if (containerId && (execInterrupted || useUi.getState().sessions.find((x) => x.id === sessionId)?.status !== "connected")) {
         return "failed";
       }
@@ -461,35 +547,52 @@ export function TerminalPane({
       }
       const broadcast = broadcastContext();
       if (broadcast) {
-        const queued = broadcastChainRef.current.then(async () => {
-          if (broadcastDisposedRef.current) return null;
-          const current = broadcastContext();
-          if (!current || current.key !== broadcast.key) return null;
-          return broadcastInput({
-            candidates: collectBroadcastCandidates(current.ws, useUi.getState().sessions),
-            targetIds: current.targetIds,
+        const state = useUi.getState();
+        const confirmationEpoch = broadcastConfirmationEpoch.current;
+        try {
+          const outcome = await broadcastQueue.enqueue({
+            revision: broadcast.generation,
+            candidates: collectBroadcastCandidates(state.workspaces, state.sessions),
+            targetIds: broadcast.targetIds,
             data: text,
-            write: (id, bytes) => terminalApi.write(id, bytes),
+            productionConfirmation,
+            prepare: (targetTabIds, bytes) => terminalApi.prepareBroadcast(targetTabIds, bytes, productionConfirmation),
+            write: (id, bytes, options) => terminalApi.write(id, bytes, options),
+            isCurrent: () =>
+              broadcastConfirmationEpoch.current === confirmationEpoch &&
+              broadcastVisibleRef.current &&
+              readBroadcastContext(useUi.getState(), storeTabId)?.generation === broadcast.generation,
+            resolveTarget: (targetId) => {
+              const latest = useUi.getState();
+              return collectBroadcastCandidates(latest.workspaces, latest.sessions).find(
+                (candidate) => candidate.storeTabId === targetId,
+              );
+            },
+            onProgress: (result) => {
+              useUi.getState().reportBroadcastTarget(broadcast.generation, result);
+            },
           });
-        });
-        broadcastChainRef.current = queued.then(
-          () => undefined,
-          () => undefined,
-        );
-        const outcome = await queued;
-        if (!outcome) return "failed";
-        if (outcome.skipped.length > 0) {
-          const now = Date.now();
-          if (opts?.fromCommand || now - broadcastSkipAt.current > 4000) {
-            broadcastSkipAt.current = now;
-            pushToast(
-              "info",
-              `广播：已发送到 ${outcome.sent} 个终端，跳过 ${outcome.skipped.length} 个（${describeBroadcastSkips(outcome.skipped)}）`,
-            );
+          return outcome && outcome.sent > 0 ? "sent" : "failed";
+        } catch (cause) {
+          const challenge = getBroadcastConfirmationChallenge(cause);
+          if (challenge) {
+            if (
+              broadcastConfirmationEpoch.current === confirmationEpoch &&
+              readBroadcastContext(useUi.getState(), storeTabId)?.generation === broadcast.generation
+            ) {
+              queueBroadcastConfirmation({ data: text, generation: broadcast.generation, challenge });
+            }
+          } else {
+            const now = Date.now();
+            if (opts?.fromCommand || now - writeErrorAt.current > 5000) {
+              writeErrorAt.current = now;
+              pushToast("error", `广播写入失败：${describeError(cause)}`);
+            }
           }
+          return "failed";
         }
-        return outcome.sent > 0 ? "sent" : "failed";
       }
+      broadcastQueue.reset();
       try {
         await terminalApi.write(kernelTabId, new TextEncoder().encode(text));
         return "sent";
@@ -511,8 +614,31 @@ export function TerminalPane({
         return "failed";
       }
     },
-    [kernelTabId, isObserver, me, pushToast, refreshControl, broadcastContext, containerId, execInterrupted, sessionId],
+    [kernelTabId, isObserver, me, pushToast, refreshControl, broadcastContext, broadcastQueue, queueBroadcastConfirmation, containerId, execInterrupted, sessionId, storeTabId],
   );
+
+  const confirmBroadcastProduction = useCallback(() => {
+    const pending = broadcastConfirmationRef.current;
+    if (!pending || broadcastConfirmingRef.current) return;
+    broadcastConfirmingRef.current = true;
+    void (async () => {
+      try {
+        const current = readBroadcastContext(useUi.getState(), storeTabId);
+        if (current?.generation !== pending.generation) {
+          pushToast("info", "广播目标已变化，过期生产输入未发送");
+          return;
+        }
+        await sendData(pending.data, undefined, {
+          confirmed: true,
+          targetSetHash: pending.challenge.targetSetHash,
+          inputHash: pending.challenge.inputHash,
+        });
+      } finally {
+        broadcastConfirmingRef.current = false;
+        if (broadcastConfirmationRef.current === pending) advanceBroadcastConfirmation();
+      }
+    })();
+  }, [advanceBroadcastConfirmation, pushToast, sendData, storeTabId]);
 
   const takeControl = useCallback(async () => {
     if (!kernelTabId || claiming) return;
@@ -570,29 +696,31 @@ export function TerminalPane({
   }, [visible, kernelTabId, attachDead, control?.exited]);
 
   const enableBroadcastScope = useCallback(
-    async (scope: "pane" | "workspace") => {
+    async (scope: "pane" | "all") => {
       const st = useUi.getState();
       const found = findWorkspacePane(st.workspaces, storeTabId);
-      const ws = found ? st.workspaces.find((w) => w.id === found.wsId) : undefined;
-      if (!ws || !found) return;
-      const candidates = collectBroadcastCandidates(ws, st.sessions);
+      if (!found) return;
+      const candidates = collectBroadcastCandidates(st.workspaces, st.sessions);
       const ids = quickBroadcastIds(candidates, scope, found.paneId);
       if (ids.length < 2) {
         pushToast(
           "info",
           scope === "pane"
             ? "当前分屏的可广播终端不足 2 个"
-            : "当前工作区的可广播终端不足 2 个",
+            : "全部已打开工作区的可广播终端不足 2 个",
         );
         return;
       }
-      const mix = localRemoteMix(candidates.filter((c) => ids.includes(c.storeTabId)));
+      const mix = localRemoteMix(candidates.filter((candidate) => ids.includes(candidate.storeTabId)));
       const confirmed = await ask(broadcastRiskMessage(ids.length, mix), {
         title: "开启命令广播",
         kind: "warning",
       });
       if (!confirmed) return;
-      st.setBroadcast({ workspaceId: ws.id, targetIds: ids });
+      st.setBroadcast({
+        origin: { workspaceId: found.wsId, storeTabId },
+        targetIds: ids,
+      });
       pushToast("info", `广播已开启：输入将发送到 ${ids.length} 个终端`);
     },
     [storeTabId, pushToast],
@@ -614,6 +742,7 @@ export function TerminalPane({
       viewers: p.viewers,
       exited: p.exited,
     });
+    useUi.getState().updateTab(storeTabId, { exited: p.exited });
     if (p.gridRevision > 0) {
       setRemoteGrid({ cols: p.cols, rows: p.rows, revision: p.gridRevision });
     }
@@ -635,11 +764,6 @@ export function TerminalPane({
     if (!kernelTabId) return;
     void useUi.getState().resyncRecording(kernelTabId);
   }, [kernelTabId]);
-  useEffect(() => {
-    if (controlSupported && control?.exited) {
-      useUi.getState().updateTab(storeTabId, { exited: true });
-    }
-  }, [controlSupported, control?.exited, storeTabId]);
   useEffect(() => {
     if (visible === false) return;
     if (attachDead) {
@@ -674,7 +798,7 @@ export function TerminalPane({
       cancelled = true;
       unlisten?.();
     };
-  }, []);
+  }, [applyControl]);
 
   const throttleVersions = useRef(new EventVersionGate());
   useEffect(() => {
@@ -778,7 +902,7 @@ export function TerminalPane({
     if (!containerId || sessionStatus !== "connected" || !execTargetMatches) return;
     resumeRef.current = undefined;
     resumeAttemptedRef.current = false;
-    useUi.getState().updateTab(storeTabId, { tabId: undefined, exited: false, dead: false });
+    useUi.getState().updateTab(storeTabId, { tabId: undefined, exited: undefined, dead: false });
     setControl(null);
     setExecInterrupted(false);
     setEpoch((value) => value + 1);
@@ -810,7 +934,7 @@ export function TerminalPane({
       setKernelTabId(null);
       setAttachDead(true);
     },
-    [storeTabId, containerId, effectiveWinrm, markExecInterrupted],
+    [storeTabId, containerId, effectiveWinrm, markExecInterrupted, pushToast],
   );
 
   const reconnectNow = useCallback(async () => {
@@ -841,7 +965,7 @@ export function TerminalPane({
         ? current?.tabId
         : resumeAttemptedRef.current ? undefined : current?.tabId;
       resumeAttemptedRef.current = resumeId !== undefined;
-      useUi.getState().updateTab(storeTabId, { sessionId: s.id, tabId: resumeId, dead: false, exited: false });
+      useUi.getState().updateTab(storeTabId, { sessionId: s.id, tabId: resumeId, dead: false });
       resumeRef.current = resumeId;
       setControl(null);
       setRemoteGrid(null);
@@ -903,8 +1027,16 @@ export function TerminalPane({
       return;
     }
     if (isSessionReconnectPending(sessionId)) return;
+    const workspace = useUi.getState().workspaces.find((item) =>
+      item.panes.some((pane) => pane.tabs.some((tab) => tab.id === storeTabId)),
+    );
+    const target = workspace ?? {
+      title: session.name,
+      assetId: session.assetId ?? undefined,
+      assetKind: session.kind,
+    };
     try {
-      const fresh = await reconnectSessionAndWait(session);
+      const fresh = await reconnectWorkspaceSession(target, session);
       if (!fresh) {
         pushToast("info", "已取消重连");
         return;
@@ -920,7 +1052,7 @@ export function TerminalPane({
         ? current?.tabId
         : resumeAttemptedRef.current ? undefined : current?.tabId;
       resumeAttemptedRef.current = resumeId !== undefined;
-      useUi.getState().updateTab(storeTabId, { tabId: resumeId, dead: false, exited: false });
+      useUi.getState().updateTab(storeTabId, { tabId: resumeId, dead: false });
       resumeRef.current = resumeId;
       setControl(null);
       setRemoteGrid(null);
@@ -1126,8 +1258,8 @@ export function TerminalPane({
     {
       kind: "item",
       label: "广播到全部终端",
-      hint: "整个工作区",
-      onSelect: () => void enableBroadcastScope("workspace"),
+      hint: "全部已打开工作区",
+      onSelect: () => void enableBroadcastScope("all"),
     },
     {
       kind: "item",
@@ -1332,6 +1464,22 @@ export function TerminalPane({
             ? `${statusText} · ${connectProgressText(connectProgress)}`
             : statusText}
         </span>
+        {staleConfig && (
+          <>
+            <span className="nx-badge nx-badge-amber" role="status">
+              配置已修改，重连后生效
+            </span>
+            <button
+              type="button"
+              className="nx-btn nx-btn-ghost nx-btn-sm"
+              disabled={!canReconnect}
+              title="使用当前资产配置重连"
+              onClick={() => void reconnectSession()}
+            >
+              重连
+            </button>
+          </>
+        )}
         {effectiveWinrm && (
           <span
             className="nx-badge nx-badge-amber"
@@ -1594,6 +1742,7 @@ export function TerminalPane({
               winrm={effectiveWinrm}
               containerId={containerId}
               resumeTabId={resumeRef.current}
+              sessionConnected={sessionStatus === "connected"}
               canResize={canResize}
               remoteGrid={remoteGrid ?? undefined}
               visible={visible}
@@ -1610,6 +1759,9 @@ export function TerminalPane({
                 useUi.getState().updateTab(storeTabId, {
                   shell: info.shell ?? "unknown",
                   retainable: info.retainable === true,
+                  exited: info.exited,
+                  dead: false,
+                  closeError: undefined,
                 });
                 if (info.encoding) setEncoding(info.encoding);
                 if (info.title) applyBackendTabTitle(storeTabId, info.title);
@@ -1620,11 +1772,8 @@ export function TerminalPane({
                 setAttachDead(false);
                 setThrottle(null);
                 resumeAttemptedRef.current = false;
-                useUi.getState().updateTab(storeTabId, { tabId: id, exited: false });
+                useUi.getState().updateTab(storeTabId, { tabId: id, dead: false, closeError: undefined });
                 void useUi.getState().resyncSessions({ silent: true });
-                if (isStoreTabDead(storeTabId)) {
-                  useUi.getState().updateTab(storeTabId, { dead: false });
-                }
                 const pending = takePendingDirectory(storeTabId);
                 if (pending) {
                   const tab = useUi
@@ -1720,7 +1869,7 @@ export function TerminalPane({
                   <button
                     ref={exitedCloseBtnRef}
                     className="nx-btn nx-btn-ghost nx-btn-sm pointer-events-auto"
-                    onClick={() => void useUi.getState().closeTab(storeTabId)}
+                    onClick={() => void requestCloseTab(storeTabId)}
                   >
                     <IconClose size={13} />
                     关闭标签
@@ -1809,7 +1958,7 @@ export function TerminalPane({
                 </button>
                 <button
                   className="nx-btn nx-btn-ghost nx-btn-sm"
-                  onClick={() => void useUi.getState().closeTab(storeTabId)}
+                  onClick={() => void requestCloseTab(storeTabId)}
                 >
                   <IconClose size={13} />
                   关闭标签
@@ -1839,7 +1988,19 @@ export function TerminalPane({
         <BroadcastPickerModal
           workspaceId={workspaceId}
           myPaneId={myPaneId}
+          myStoreTabId={storeTabId}
           onClose={() => setBroadcastPickerOpen(false)}
+        />
+      )}
+      {broadcastConfirmation && (
+        <ProductionConfirmationDialog
+          key={`${broadcastConfirmation.sequence}:${broadcastConfirmation.challenge.targetSetHash}:${broadcastConfirmation.challenge.inputHash}`}
+          challenge={broadcastConfirmation.challenge}
+          contentHash={broadcastConfirmation.challenge.inputHash}
+          command={broadcastConfirmation.data}
+          variant="broadcast"
+          onCancel={() => clearBroadcastConfirmations(true)}
+          onConfirm={confirmBroadcastProduction}
         />
       )}
     </div>

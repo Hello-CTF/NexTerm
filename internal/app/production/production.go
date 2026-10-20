@@ -11,6 +11,7 @@ import (
 	core "github.com/Hello-CTF/NexTerm/internal/app"
 	"github.com/Hello-CTF/NexTerm/internal/db"
 	"github.com/Hello-CTF/NexTerm/internal/docker"
+	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/forward"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -18,7 +19,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
-	"github.com/Hello-CTF/NexTerm/internal/tasks"
 	"github.com/Hello-CTF/NexTerm/internal/update"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
@@ -48,10 +48,10 @@ type ProductionServices struct {
 	Vault            *vault.Vault
 	Sync             *syncservice.Service
 	Profiles         *profiles.Manager
-	Tasks            *tasks.Manager
 	Database         *db.Service
 	Mount            *mount.Service
 	Sessions         *session.Manager
+	ExecBatches      *execbatch.Service
 	Forward          *forward.Service
 	Docker           *docker.Service
 	Retention        *RetentionRunner
@@ -64,20 +64,24 @@ type ProductionServices struct {
 	channelBridge    *terminalBridge
 	previewRelay     *previewRelayManager
 	terminalCommands *terminalCommandService
+	fsUploads        *fsChunkUploadRegistry
 	hostKeys         *productionHostKeyStore
 	sshConnector     *productionConnector
 	stagedBlobs      StagedBlobResolver
 	dataDir          string
 	desktop          bool
+	hostKeysShared   bool
 	aiRelease        func()
 	cron             *cronRuntime
 	Transcripts      *transcriptWriter
 	aiRetention      *aiRetentionComponent
+	inventory        *inventoryService
 }
 
 type Production struct {
 	*Application
-	Services ProductionServices
+	Services       ProductionServices
+	accountCleanup accountCleanupState
 }
 
 func NewProductionWithServices(config Config, services ProductionServices) (*Production, error) {
@@ -89,17 +93,33 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 	if config.Streams == nil && services.Sessions != nil {
 		config.Streams = hub.StreamFactory{Hub: services.Sessions.Hub()}
 	}
+	if services.ExecBatches == nil && services.Sessions != nil {
+		var auditor execbatch.Auditor
+		var history execbatch.History
+		if services.Store != nil {
+			auditor = services.Store
+			history = services.Store
+		}
+		services.ExecBatches = newExecBatchService(services.Sessions, services.Store, auditor, history)
+	}
 	if services.channelBridge == nil {
 		services.channelBridge = newTerminalBridge(services.Sessions, config.Streams)
 	}
 	if services.previewRelay == nil && services.Sync != nil {
 		services.previewRelay = newPreviewRelayManager(services.Sessions, services.Sync.Remote(), services.Sync, nil)
 	}
+	if services.fsUploads == nil {
+		services.fsUploads = newFSChunkUploadRegistry(config.Logger)
+	}
 	if services.terminalCommands == nil {
 		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.channelBridge, services.hostKeys, services.sshConnector, services.Events, services.stagedBlobs, services.desktop)
 	}
+	services.terminalCommands.fsUploads = services.fsUploads
 	if config.RetentionStatus == nil && services.Retention != nil {
 		config.RetentionStatus = services.Retention.Status
+	}
+	if services.inventory == nil && services.Store != nil {
+		services.inventory = newInventoryService(services.Store, services.Events, services.desktop)
 	}
 	config.Modules = append(productionModules(services), config.Modules...)
 	application, err := core.New(config)
@@ -122,7 +142,7 @@ func productionModules(services ProductionServices) []Module {
 		modules = append(modules, Module{
 			Name: "store",
 			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
-				if err := registerStoreCommands(dispatcher, services.Store, services.hostKeys, services.dataDir, services.desktop); err != nil {
+				if err := registerStoreCommandsWithHostKeyMode(dispatcher, services.Store, services.hostKeys, services.dataDir, services.desktop, services.hostKeysShared); err != nil {
 					return err
 				}
 				if services.Vault != nil {
@@ -131,6 +151,11 @@ func productionModules(services ProductionServices) []Module {
 				return nil
 			},
 			Component: closeStoreComponent(services.Store, services.Agent),
+		})
+	}
+	if services.inventory != nil {
+		modules = append(modules, Module{
+			Name: "inventory", RegisterCommands: services.inventory.registerCommands, Component: services.inventory,
 		})
 	}
 	if services.Vault != nil {
@@ -166,17 +191,22 @@ func productionModules(services ProductionServices) []Module {
 		if services.previewRelay != nil {
 			modules = append(modules, Module{Name: "preview-relay", Component: services.previewRelay})
 		}
+		hostShare := newHostShareIPC(services.Sync.Remote())
+		modules = append(modules, Module{
+			Name: "host-share-terminal",
+			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+				return registerHostShareCommands(dispatcher, hostShare)
+			},
+			Component: hostShare,
+		})
 	}
 	if services.Profiles != nil {
 		modules = append(modules, Module{
 			Name: "ai-profiles",
 			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
-				return registerAICommands(dispatcher, services.Profiles, services.Store)
+				return registerAICommands(dispatcher, services.Profiles, services.Store, productionScopeValidator(&services))
 			},
 		})
-	}
-	if services.Tasks != nil {
-		modules = append(modules, Module{Name: "tasks", Component: closeTasksComponent(services.Tasks)})
 	}
 	if services.Database != nil {
 		modules = append(modules, Module{Name: "database", RegisterCommands: services.Database.RegisterCommands, Component: services.Database})
@@ -188,22 +218,48 @@ func productionModules(services ProductionServices) []Module {
 		modules = append(modules, Module{Name: "transcript-writer", Component: services.Transcripts})
 	}
 	if services.Sessions != nil {
+		logTails := newLogTailIPCService(services.Sessions, services.desktop)
 		modules = append(modules, Module{
 			Name: "session",
 			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
 				if err := services.terminalCommands.registerSession(dispatcher); err != nil {
 					return err
 				}
-				return services.terminalCommands.registerTranscripts(dispatcher)
+				if err := services.terminalCommands.registerTranscripts(dispatcher); err != nil {
+					return err
+				}
+				if err := registerExecBatchCommands(dispatcher, services.ExecBatches, services.Store); err != nil {
+					return err
+				}
+				if err := registerExecBatchHealthCommands(dispatcher, services.ExecBatches, services.terminalCommands, services.Store); err != nil {
+					return err
+				}
+				if err := registerRunbookCommands(dispatcher, services.ExecBatches, services.Store); err != nil {
+					return err
+				}
+				return registerAssetMaintenanceCommands(dispatcher, services.Store, services.ExecBatches, services.terminalCommands)
 			},
 			Component: services.Sessions,
 		})
+		modules = append(modules, Module{
+			Name:             "log-tail",
+			RegisterCommands: logTails.register,
+			Component:        ComponentFuncs{ShutdownFunc: logTails.Shutdown},
+		})
+	}
+	if services.fsUploads != nil {
+		modules = append(modules, Module{Name: "fs-chunk-uploads", Component: services.fsUploads})
 	}
 	if services.channelBridge != nil {
 		modules = append(modules, Module{Name: "terminal-channel-bridge", Component: services.channelBridge})
 	}
 	if services.Forward != nil {
-		modules = append(modules, Module{Name: "forward", RegisterCommands: services.Forward.RegisterCommands, Component: services.Forward})
+		modules = append(modules, Module{Name: "forward", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+			if err := services.Forward.RegisterCommands(dispatcher); err != nil {
+				return err
+			}
+			return services.Forward.RegisterRuleCommands(dispatcher)
+		}, Component: services.Forward})
 	}
 	if services.Docker != nil {
 		modules = append(modules, Module{Name: "docker", RegisterCommands: services.terminalCommands.registerDocker, Component: closeDockerComponent(services.Docker)})

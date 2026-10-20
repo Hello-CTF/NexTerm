@@ -54,9 +54,7 @@ func testScriptSessionID(t *testing.T, supervisor *Supervisor, id, script string
 func unsetTerminalEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{"TERM", "COLORTERM", "LANG", "LC_ALL", "LC_CTYPE"} {
-		if value, ok := os.LookupEnv(key); ok {
-			t.Cleanup(func() { _ = os.Setenv(key, value) })
-		}
+		t.Setenv(key, "")
 		if err := os.Unsetenv(key); err != nil {
 			t.Fatal(err)
 		}
