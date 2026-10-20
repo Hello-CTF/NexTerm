@@ -546,3 +546,16 @@ export type StepState = {
   batchIds: string[];
   error?: string;
 };
+
+export type TerminalIDRequest = {
+  tabId: string;
+  sessionId?: string;
+  channelId: string;
+  mode: string;
+  n: number;
+  maxBytes: number;
+  visible: boolean;
+  encoding: string;
+  path: string;
+  line: string;
+};

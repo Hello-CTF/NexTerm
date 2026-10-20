@@ -1433,6 +1433,14 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "terminal_pause": {
+      scope: "terminal-stream",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalIDRequest", ts: "TerminalIDRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
     "terminal_record_start": {
       nested: false,
       channel: false,
@@ -1467,6 +1475,14 @@ export const ipcContractManifest = {
       nested: false,
       channel: false,
       stream: "none",
+    },
+    "terminal_resume": {
+      scope: "terminal-stream",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalIDRequest", ts: "TerminalIDRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "terminal_screen_text": {
       nested: false,
@@ -1990,6 +2006,14 @@ export interface IPCCommandTypeMap {
   "services_list": {
     input: contractTypes.ListRequest;
     output: contractTypes.ServiceOperationBatch;
+  };
+  "terminal_pause": {
+    input: contractTypes.TerminalIDRequest;
+    output: unknown;
+  };
+  "terminal_resume": {
+    input: contractTypes.TerminalIDRequest;
+    output: unknown;
   };
 }
 

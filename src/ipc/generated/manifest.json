@@ -1367,6 +1367,12 @@
       "channel": false,
       "stream": "none"
     },
+    "terminal_pause": {
+      "scope": "terminal-stream",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "terminal_record_start": {
       "nested": false,
       "channel": false,
@@ -1398,6 +1404,12 @@
       "stream": "none"
     },
     "terminal_resize_flush": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_resume": {
+      "scope": "terminal-stream",
       "nested": false,
       "channel": false,
       "stream": "none"
