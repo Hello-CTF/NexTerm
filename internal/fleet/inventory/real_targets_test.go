@@ -88,7 +88,8 @@ func TestRealDockerContextExecCancel(t *testing.T) {
 	}
 }
 
-func TestRealKubernetesTargets(t *testing.T) {	if os.Getenv("NEXTERM_K8S_E2E") != "1" {
+func TestRealKubernetesTargets(t *testing.T) {
+	if os.Getenv("NEXTERM_K8S_E2E") != "1" {
 		t.Skip("set NEXTERM_K8S_E2E=1 to run live Kubernetes verification")
 	}
 	ctx := context.Background()
