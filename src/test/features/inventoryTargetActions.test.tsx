@@ -245,6 +245,42 @@ describe("inventory target actions", () => {
     expect(m.container.querySelector('[role="note"]')).toBeNull();
   });
 
+  it("blocks re-execution while an ignored command is still running and keeps its notice", async () => {
+    let resolveA: (value: { output: string; exitCode: number }) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveA = resolve; }));
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+    clickButton(m.container, "忽略结果");
+    await flush();
+    expect(m.container.querySelector('[role="note"]')?.textContent).toContain("命令仍在目标上执行");
+
+    // B must not start while A is still running: no second call, the
+    // execute action stays disabled, and A's notice is not dropped.
+    const execButton = () => [...m.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "执行");
+    expect(execButton()?.disabled).toBe(true);
+    clickButton(m.container, "执行");
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(1);
+    expect(m.container.querySelector('[role="note"]')?.textContent).toContain("命令仍在目标上执行");
+
+    // A settles: the notice updates, its output stays hidden, and only then
+    // is a new execution allowed.
+    await act(async () => { resolveA({ output: "A secret\n", exitCode: 0 }); });
+    await flush();
+    expect(m.container.textContent).not.toContain("A secret");
+    expect(m.container.querySelector('[role="note"]')?.textContent).toContain("命令已结束");
+    expect(execButton()?.disabled).toBe(false);
+
+    mocks.call.mockResolvedValueOnce({ output: "B ok\n", exitCode: 0 });
+    clickButton(m.container, "执行");
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(m.container.textContent).toContain("B ok"));
+  });
+
   it("invalidates the in-flight request and resets target state on a same-owner target switch", async () => {
     let resolveExec: (value: { output: string; exitCode: number }) => void = () => {};
     mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveExec = resolve; }));

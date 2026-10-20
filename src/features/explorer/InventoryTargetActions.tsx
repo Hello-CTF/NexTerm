@@ -88,7 +88,9 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
   }, [ownerKey, identity]);
 
   const run = async (confirmation?: DockerProductionConfirmation) => {
-    if (busy) return;
+    // An ignored command is still running on the target; starting another
+    // one now would repeat side effects and drop its settle tracking.
+    if (busy || ignoredNotice === "running") return;
     const argv = command.trim() ? command.trim().split(/\s+/) : [];
     if (argv.length === 0) {
       setFailure({ message: "请输入要执行的命令" });
@@ -233,7 +235,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
             </label>
           )}
           <div className="flex gap-2">
-            <button type="button" className="nx-btn nx-btn-primary nx-btn-xs" disabled={busy} onClick={() => void run()}>
+            <button type="button" className="nx-btn nx-btn-primary nx-btn-xs" disabled={busy || ignoredNotice === "running"} onClick={() => void run()}>
               执行
             </button>
             {busy && (
