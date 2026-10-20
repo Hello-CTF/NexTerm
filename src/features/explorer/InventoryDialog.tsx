@@ -260,7 +260,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
             <div className="nx-hint mb-3">只读执行 docker context ls。导入为 Docker context 清单记录，不修改 context，也不假定已有终端传输。</div>
           )}
           {source === "kubernetes" && (
-            <div className="nx-hint mb-3">只读发现 contexts 与当前 kubectl context 的 pods。本步仅同步清单与 managed 标记，不创建 kubectl exec 终端。</div>
+            <div className="nx-hint mb-3">只读发现 contexts 与当前 kubectl context 的 pods。context 仅作清单与导航记录；pod 支持一次性 exec，不创建交互式终端。</div>
           )}
 
           {error && (

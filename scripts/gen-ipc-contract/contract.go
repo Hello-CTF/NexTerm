@@ -64,19 +64,63 @@ func loadContractPackages(root string, overlay map[string][]byte) ([]*packages.P
 		Overlay: overlay,
 		Env:     readOnlyGoEnv(),
 	}
-	loaded, err := packages.Load(config, "./internal/...", "./cmd/nexterm-desktop")
+	loaded, err := packages.Load(config, "./internal/...", "./cmd/nexterm-desktop", "./cmd/nexterm-server")
 	if err != nil {
 		return nil, err
 	}
 	if len(loaded) == 0 {
 		return nil, fmt.Errorf("no IPC registration packages loaded")
 	}
+	reachable := reachableFromBinaries(loaded)
+	filtered := make([]*packages.Package, 0, len(loaded))
 	for _, pkg := range loaded {
 		if pkg.TypesInfo == nil {
 			return nil, fmt.Errorf("IPC registration package %s has no type information", pkg.PkgPath)
 		}
+		// A command counts as production-registered only when its
+		// registration package is reachable from a shipped binary.
+		// Registration-ready packages that no binary imports yet (deferred
+		// owners) stay out of the published contract and the ratchet.
+		if reachable[pkg.PkgPath] {
+			filtered = append(filtered, pkg)
+		}
 	}
-	return loaded, nil
+	return filtered, nil
+}
+
+// productionBinaries are the shipped entrypoints whose import graphs decide
+// which IPC registrations are actually wired into the running product.
+var productionBinaries = []string{
+	"github.com/Hello-CTF/NexTerm/cmd/nexterm-desktop",
+	"github.com/Hello-CTF/NexTerm/cmd/nexterm-server",
+}
+
+// reachableFromBinaries walks the import graph from the production binaries
+// and returns the set of package paths they can reach.
+func reachableFromBinaries(loaded []*packages.Package) map[string]bool {
+	byPath := make(map[string]*packages.Package, len(loaded))
+	for _, pkg := range loaded {
+		byPath[pkg.PkgPath] = pkg
+	}
+	reachable := make(map[string]bool)
+	queue := make([]*packages.Package, 0, len(productionBinaries))
+	for _, path := range productionBinaries {
+		if pkg, ok := byPath[path]; ok {
+			queue = append(queue, pkg)
+		}
+	}
+	for len(queue) > 0 {
+		pkg := queue[0]
+		queue = queue[1:]
+		if reachable[pkg.PkgPath] {
+			continue
+		}
+		reachable[pkg.PkgPath] = true
+		for _, imported := range pkg.Imports {
+			queue = append(queue, imported)
+		}
+	}
+	return reachable
 }
 
 func readOnlyGoEnv() []string {

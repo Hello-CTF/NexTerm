@@ -260,10 +260,12 @@ describe("dynamic inventory dialog", () => {
     await waitFor(() => expect(mocks.sync).toHaveBeenCalledWith({ source: "ssh-config", path: "/custom/ssh-config", groupId: "g1" }));
   });
 
-  it("states the Kubernetes read-only and no-exec boundary", () => {
+  it("states the Kubernetes inventory-only context and one-shot pod exec boundary", () => {
     clickButton(mounted!.container, "Kubernetes");
     expect(mounted!.container.textContent).toContain("当前 kubectl context 的 pods");
-    expect(mounted!.container.textContent).toContain("不创建 kubectl exec 终端");
+    expect(mounted!.container.textContent).toContain("context 仅作清单与导航记录");
+    expect(mounted!.container.textContent).toContain("pod 支持一次性 exec");
+    expect(mounted!.container.textContent).toContain("不创建交互式终端");
   });
 
   it("executes a discovered docker context target through the dialog", async () => {

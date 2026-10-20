@@ -179,6 +179,39 @@ func TestLegacyCommandRatchet(t *testing.T) {
 	}
 }
 
+// The published contract is derived from the production wiring: a command
+// enters the manifest only when its registration package is reachable from a
+// shipped binary. Registration-ready packages that no binary imports yet are
+// deferred and stay out of the published output and the ratchet.
+func TestUnwiredRegistrationsStayOutOfThePublishedContract(t *testing.T) {
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	// The AI skills service is registration-ready but no shipped binary
+	// imports it yet, so its commands must not be published.
+	for _, name := range []string{"ai_skills_list", "ai_skills_dispatch", "ai_skills_material", "ai_skills_save_override", "ai_skills_delete_override"} {
+		if _, ok := commands[name]; ok {
+			t.Fatalf("unwired command %q was published", name)
+		}
+	}
+	// Real production commands stay published: deferred registration must
+	// not exclude them.
+	for _, name := range []string{"app_platform", "session_connect", "inventory_target_exec", "terminal_stream_ack"} {
+		if _, ok := commands[name]; !ok {
+			t.Fatalf("production command %q was wrongly excluded", name)
+		}
+	}
+	// The ratchet sees only the published legacy commands.
+	legacy := 0
+	for _, command := range generated.commands {
+		if command.Input == nil {
+			legacy++
+		}
+	}
+	if legacy > legacyCommandLimit {
+		t.Fatalf("published legacy count %d exceeds ratchet %d", legacy, legacyCommandLimit)
+	}
+}
+
 func TestCheckGeneratedIgnoresOSMetadataAndRejectsStrayFiles(t *testing.T) {
 	outputDir := t.TempDir()
 	files := map[string][]byte{"manifest.ts": []byte("generated\n")}
