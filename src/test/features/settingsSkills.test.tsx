@@ -149,6 +149,16 @@ async function expectSkillError(promise: Promise<unknown>, code: string): Promis
   }
 }
 
+// Extracts the React onClick prop attached to a rendered element so a test
+// can invoke a handler retained from before an owner swap — the
+// stale-closure path a detached DOM click cannot reach.
+function reactOnClick(element: Element): (() => void | Promise<void>) | undefined {
+  const key = Object.keys(element).find((candidate) => candidate.startsWith("__reactProps$"));
+  if (!key) throw new Error("react props not found on element");
+  const props = (element as unknown as Record<string, { onClick?: () => void | Promise<void> }>)[key];
+  return props?.onClick;
+}
+
 describe("skills mock backend contract", () => {
   it("partially overriding the description inherits the embedded body and changes the digest", async () => {
     const backend = createSkillsMockBackend(EMBEDDED);
@@ -877,5 +887,60 @@ describe("SkillsCard", () => {
 
     slow.resolve(await backend.apiFor("owner-b").list());
     await expectText(mounted.container, "Alpha synthetic skill");
+  });
+
+  it("retained owner-A row closures cannot read, write, delete, or reload after a flushSync swap", async () => {
+    const backend = createSkillsMockBackend(EMBEDDED);
+    const ownerA = backend.apiFor("owner-a");
+    await ownerA.saveOverride({
+      name: "alpha-skill",
+      description: "Alpha overridden by A",
+      body: "body from A\n",
+    });
+    const apiA = spyApi(ownerA);
+    const apiB = spyApi(backend.apiFor("owner-b"));
+    mocks.ask.mockResolvedValue(true);
+    mounted = mount(createElement(SkillsCard, { api: apiA }));
+
+    const retainedToggle = reactOnClick(await waitForButton(mounted.container, "禁用技能 alpha-skill"));
+    const retainedRemove = reactOnClick(await waitForButton(mounted.container, "删除覆盖 alpha-skill"));
+    const retainedRead = reactOnClick(await waitForButton(mounted.container, "编辑技能 alpha-skill"));
+    if (!retainedToggle || !retainedRemove || !retainedRead) throw new Error("row handlers not found");
+
+    // Synchronous swap to B with B's list pending; passive effects not
+    // flushed, so the retained closures still see their own render's state.
+    const slow = deferred<SkillEntry[]>();
+    apiB.list.mockReturnValueOnce(slow.promise);
+    const actFlag = (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean })
+      .IS_REACT_ACT_ENVIRONMENT;
+    try {
+      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+      flushSync(() => {
+        mounted!.root.render(createElement(SkillsCard, { api: apiB }));
+      });
+    } finally {
+      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = actFlag;
+    }
+
+    await retainedToggle();
+    await retainedRemove();
+    await retainedRead();
+
+    expect(apiA.saveOverride).not.toHaveBeenCalled();
+    expect(apiA.deleteOverride).not.toHaveBeenCalled();
+    expect(apiA.getEffective).not.toHaveBeenCalled();
+    expect(apiB.saveOverride).not.toHaveBeenCalled();
+    expect(apiB.deleteOverride).not.toHaveBeenCalled();
+    expect(mocks.ask).not.toHaveBeenCalled();
+
+    // The stale handlers must not have triggered an old-owner reload that
+    // could replace the current owner's list.
+    slow.resolve(await backend.apiFor("owner-b").list());
+    await expectText(mounted.container, "Alpha synthetic skill");
+    expect(mounted.container.textContent ?? "").not.toContain("Alpha overridden by A");
+    const entriesA = await ownerA.list();
+    const alpha = entriesA.find((entry) => entry.name === "alpha-skill");
+    expect(alpha?.disabled).toBe(false);
+    expect(alpha?.overridden).toBe(true);
   });
 });

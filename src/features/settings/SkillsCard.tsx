@@ -124,14 +124,17 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
   };
 
   const openEdit = async (entry: SkillEntry) => {
-    if (entries === null || entries.api !== api) return;
+    // Row handlers must compare their captured owner against the latest
+    // api: a retained closure from before an owner swap still sees its own
+    // render's entries/api, so only the apiRef check detects the swap.
+    if (entries === null || entries.api !== api || apiRef.current !== api) return;
     const gen = ++editGenRef.current;
     const epoch = epochRef.current;
     setFormError(null);
     setDraft({ kind: "edit-loading", entry });
     try {
       const material = await api.getEffective(entry.name);
-      if (!aliveRef.current || gen !== editGenRef.current || epoch !== epochRef.current) return;
+      if (!aliveRef.current || gen !== editGenRef.current || epoch !== epochRef.current || apiRef.current !== api) return;
       setDraft({
         kind: "edit",
         entry,
@@ -142,7 +145,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
         disabled: entry.disabled,
       });
     } catch (e) {
-      if (!aliveRef.current || gen !== editGenRef.current || epoch !== epochRef.current) return;
+      if (!aliveRef.current || gen !== editGenRef.current || epoch !== epochRef.current || apiRef.current !== api) return;
       setDraft(null);
       pushToast("error", `读取技能内容失败：${describeError(e)}`);
     }
@@ -205,7 +208,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
   };
 
   const toggleDisable = async (entry: SkillEntry) => {
-    if (busyName !== null || entries === null || entries.api !== api) return;
+    if (busyName !== null || entries === null || entries.api !== api || apiRef.current !== api) return;
     setBusyName(entry.name);
     const epoch = epochRef.current;
     try {
@@ -221,7 +224,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
         } else {
           await api.deleteOverride(entry.name);
         }
-        if (epoch !== epochRef.current) return;
+        if (epoch !== epochRef.current || apiRef.current !== api) return;
         pushToast("success", `技能 ${entry.name} 已启用`);
       } else {
         await api.saveOverride({
@@ -230,20 +233,20 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
           body: entry.override?.body,
           disabled: true,
         });
-        if (epoch !== epochRef.current) return;
+        if (epoch !== epochRef.current || apiRef.current !== api) return;
         pushToast("success", `技能 ${entry.name} 已禁用`);
       }
       await reload();
     } catch (e) {
-      if (epoch !== epochRef.current) return;
+      if (epoch !== epochRef.current || apiRef.current !== api) return;
       pushToast("error", `${entry.disabled ? "启用" : "禁用"}失败：${describeError(e)}`);
     } finally {
-      if (aliveRef.current && epoch === epochRef.current) setBusyName(null);
+      if (aliveRef.current && epoch === epochRef.current && apiRef.current === api) setBusyName(null);
     }
   };
 
   const remove = async (entry: SkillEntry) => {
-    if (entries === null || entries.api !== api) return;
+    if (entries === null || entries.api !== api || apiRef.current !== api) return;
     const custom = entry.source === "custom";
     const epoch = epochRef.current;
     const ok = await ask(
@@ -252,18 +255,18 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
         : `删除技能 ${entry.name} 的覆盖？\n\n删除后恢复为内置内容，AI 将按内置版本加载该技能。`,
       { title: custom ? "删除自定义技能" : "删除技能覆盖", kind: "warning" },
     );
-    if (!ok || epoch !== epochRef.current) return;
+    if (!ok || epoch !== epochRef.current || apiRef.current !== api) return;
     setBusyName(entry.name);
     try {
       await api.deleteOverride(entry.name);
-      if (epoch !== epochRef.current) return;
+      if (epoch !== epochRef.current || apiRef.current !== api) return;
       pushToast("success", custom ? `自定义技能 ${entry.name} 已删除` : `技能 ${entry.name} 已恢复为内置版本`);
       await reload();
     } catch (e) {
-      if (epoch !== epochRef.current) return;
+      if (epoch !== epochRef.current || apiRef.current !== api) return;
       pushToast("error", `删除失败：${describeError(e)}`);
     } finally {
-      if (aliveRef.current && epoch === epochRef.current) setBusyName(null);
+      if (aliveRef.current && epoch === epochRef.current && apiRef.current === api) setBusyName(null);
     }
   };
 
