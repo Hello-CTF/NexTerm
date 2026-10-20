@@ -347,16 +347,23 @@ func UpsertOwnerGuardedExpected(ctx context.Context, db *gorm.DB, values any, co
 // still absent. A row whose content changed since the snapshot (a later local write) is
 // never overwritten — the write surfaces ErrWriteConflict instead. The snapshot must be
 // the same row type as values.
-func UpsertOwnerGuardedExpectedContent(ctx context.Context, db *gorm.DB, values any, columns []string, snapshot any) error {
+//
+// The boolean result reports whether this call's write actually landed. Only a landed
+// write is this call's own and may be recorded or compensated as such: a genuine
+// idempotent replay (the snapshot already carried the target content) succeeds with
+// false, and a row that merely reads back equal to the target while the snapshot differs
+// was written by someone else — content equality cannot prove ownership, so it surfaces
+// ErrWriteConflict instead of a false success.
+func UpsertOwnerGuardedExpectedContent(ctx context.Context, db *gorm.DB, values any, columns []string, snapshot any) (bool, error) {
 	statement := &gorm.Statement{DB: db}
 	if err := statement.Parse(values); err != nil {
-		return dbError(err)
+		return false, dbError(err)
 	}
 	if statement.Schema == nil || len(statement.Schema.PrimaryFields) != 1 {
-		return dbError(fmt.Errorf("owner-guarded upsert requires exactly one primary key field"))
+		return false, dbError(fmt.Errorf("owner-guarded upsert requires exactly one primary key field"))
 	}
 	if reflect.TypeOf(snapshot) != reflect.TypeOf(values) {
-		return dbError(fmt.Errorf("owner-guarded content upsert requires the snapshot to match the written row type"))
+		return false, dbError(fmt.Errorf("owner-guarded content upsert requires the snapshot to match the written row type"))
 	}
 	primary := statement.Schema.PrimaryFields[0]
 	elem := reflect.ValueOf(values)
@@ -365,51 +372,61 @@ func UpsertOwnerGuardedExpectedContent(ctx context.Context, db *gorm.DB, values 
 	}
 	id, zero := primary.ValueOf(ctx, elem)
 	if zero {
-		return dbError(fmt.Errorf("owner-guarded upsert requires a non-zero primary key"))
+		return false, dbError(fmt.Errorf("owner-guarded upsert requires a non-zero primary key"))
 	}
 	assignments := make(map[string]any, len(columns))
 	for _, column := range columns {
 		field := statement.Schema.LookUpField(column)
 		if field == nil {
-			return dbError(fmt.Errorf("owner-guarded upsert column %s not found in schema", column))
+			return false, dbError(fmt.Errorf("owner-guarded upsert column %s not found in schema", column))
 		}
 		value, _ := field.ValueOf(ctx, elem)
 		assignments[column] = value
 	}
-	contentConds, err := snapshotContentConditions(ctx, statement, snapshot)
-	if err != nil {
-		return err
-	}
 	tx := db.WithContext(ctx)
 	guard := map[string]any{primary.DBName: id, "owner_id": ipc.OwnerID(ctx)}
+	if snapshotMatchesAssignments(ctx, statement, snapshot, assignments) {
+		// The planner's snapshot already carries this call's target content: a genuine
+		// idempotent replay. It succeeds only while the stored row still equals that
+		// content; a row that moved since the snapshot is a conflict and survives.
+		matches, err := ownerRowMatchesAssignments(ctx, tx, values, guard, assignments)
+		if err != nil {
+			return false, err
+		}
+		if matches {
+			return false, nil
+		}
+		return false, ErrWriteConflict
+	}
+	contentConds, err := snapshotContentConditions(ctx, statement, snapshot)
+	if err != nil {
+		return false, err
+	}
 	// The content CAS binds through dialect-quoted column references built from the
 	// schema: a hand-written WHERE string breaks on MySQL/MariaDB, where `blob` is a
 	// reserved word (Error 1064).
 	updated := tx.Model(values).Where(guard).Where(contentConds).Updates(assignments)
 	if updated.Error != nil {
-		return dbError(updated.Error)
+		return false, dbError(updated.Error)
 	}
 	if updated.RowsAffected == 1 {
-		return nil
+		return true, nil
 	}
 	// The guarded UPDATE landed nothing: either the row changed since the snapshot (a
-	// later local write wins and is never overwritten) or it is absent. Compare content to
-	// tell an identical no-op apart from a genuine conflict.
-	matches, err := ownerRowMatchesAssignments(ctx, tx, values, guard, assignments)
-	if err != nil {
-		return err
-	}
-	if matches {
-		return nil
-	}
+	// later local write wins and is never overwritten) or it is absent. A row that now
+	// reads back equal to the target was moved there by someone else — content equality
+	// cannot prove ownership — so only absence may proceed to the INSERT.
 	var count int64
 	if err := tx.Model(values).Where(guard).Count(&count).Error; err != nil {
-		return dbError(err)
+		return false, dbError(err)
 	}
 	if count > 0 {
-		return ErrWriteConflict
+		return false, ErrWriteConflict
 	}
-	return insertOwnerRowMustNotExist(ctx, tx, values)
+	if err := insertOwnerRowMustNotExist(ctx, tx, values); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // snapshotContentConditions builds dialect-quoted equality conditions binding every
@@ -436,4 +453,24 @@ func snapshotContentConditions(ctx context.Context, statement *gorm.Statement, s
 		conds = append(conds, clause.Eq{Column: clause.Column{Name: f.DBName}, Value: value})
 	}
 	return conds, nil
+}
+
+// snapshotMatchesAssignments reports whether the snapshot row carries exactly the
+// assignment values for the assignment columns.
+func snapshotMatchesAssignments(ctx context.Context, statement *gorm.Statement, snapshot any, assignments map[string]any) bool {
+	elem := reflect.ValueOf(snapshot)
+	for elem.Kind() == reflect.Pointer {
+		elem = elem.Elem()
+	}
+	for column, want := range assignments {
+		field := statement.Schema.LookUpField(column)
+		if field == nil {
+			continue
+		}
+		got, _ := field.ValueOf(ctx, elem)
+		if !reflect.DeepEqual(got, want) {
+			return false
+		}
+	}
+	return true
 }

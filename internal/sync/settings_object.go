@@ -359,7 +359,9 @@ func (e *Engine) knownHostReincarnationID(incarnation *store.KnownHostRow) (stri
 }
 
 // knownHostUpsert writes idempotently by ID and preserves the peer revision added_at; the loser row of a triple conflict and its tombstone are cleared in the same transaction.
-func (e *Engine) knownHostUpsert(ctx context.Context, payload knownHostObject, displacedID string) error {
+// The write binds to the snapshot the planner's LWW decision was made on (nil for a known host that did not exist locally): the equal-revision winner lands only while that
+// snapshot is still current, and a concurrent write is never overwritten. op_token is cleared in the assignments, so a sync apply still invalidates the accept token.
+func (e *Engine) knownHostUpsert(ctx context.Context, payload knownHostObject, displacedID string, snapshot *store.KnownHostRow) error {
 	return e.store.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		knownHost := query.Use(tx).KnownHostRow
 		if displacedID != "" {
@@ -374,8 +376,14 @@ func (e *Engine) knownHostUpsert(ctx context.Context, payload knownHostObject, d
 			}
 		}
 		row := &store.KnownHostRow{ID: payload.ID, Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType, Fingerprint: payload.Fingerprint, AddedAt: payload.AddedAt, OwnerID: ipc.OwnerID(ctx)}
-		if err := store.UpsertOwnerGuarded(ctx, tx, row, []string{"host", "port", "key_type", "fingerprint", "added_at", "op_token"}, "added_at"); err != nil {
-			return err
+		if snapshot == nil {
+			if err := store.UpsertOwnerGuardedExpected(ctx, tx, row, []string{"host", "port", "key_type", "fingerprint", "added_at", "op_token"}, 0); err != nil {
+				return err
+			}
+		} else {
+			if _, err := store.UpsertOwnerGuardedExpectedContent(ctx, tx, row, []string{"host", "port", "key_type", "fingerprint", "added_at", "op_token"}, snapshot); err != nil {
+				return err
+			}
 		}
 		tombstone := query.Use(tx).SyncTombstone
 		if _, err := tombstone.WithContext(ctx).

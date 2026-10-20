@@ -69,7 +69,7 @@ func TestUpsertOwnerGuardedExpectedContentIdenticalInsertDatabase(t *testing.T) 
 	}
 	t.Cleanup(func() { _ = db.GORM().Callback().Query().Remove("test:identical-insert-content") })
 
-	if err := store.UpsertOwnerGuardedExpectedContent(ctx, db.GORM(), &row, upsertGuardCredentialColumns, &snapshot); !errors.Is(err, store.ErrWriteConflict) {
+	if _, err := store.UpsertOwnerGuardedExpectedContent(ctx, db.GORM(), &row, upsertGuardCredentialColumns, &snapshot); !errors.Is(err, store.ErrWriteConflict) {
 		t.Fatalf("identical concurrent insert error = %v, want ErrWriteConflict", err)
 	}
 	if !fired {
@@ -144,9 +144,11 @@ func TestUpsertOwnerGuardedExpectedZeroRevisionMustNotExistDatabase(t *testing.T
 }
 
 // The snapshot-bound paths keep their ordinary semantics: the Expected path replays an
-// identical write at the expected revision as a no-op, and the ExpectedContent path
-// lands a snapshot-bound update and replays it, while a same-revision different-content
-// row still conflicts.
+// identical write at the expected revision as a no-op; the ExpectedContent path lands a
+// snapshot-bound update, replays a refreshed snapshot that already carries the target
+// content, conflicts on a same-revision different-content row, and conflicts on a stale
+// snapshot whose row merely reads back equal to the target (content equality cannot
+// prove ownership).
 func TestUpsertOwnerGuardedSnapshotPathsUnaffectedDatabase(t *testing.T) {
 	t.Run("expected idempotent replay", func(t *testing.T) {
 		db := dbtest.NewFixture(t).OpenStore(t)
@@ -160,7 +162,7 @@ func TestUpsertOwnerGuardedSnapshotPathsUnaffectedDatabase(t *testing.T) {
 		}
 	})
 
-	t.Run("expected content ABA and replay", func(t *testing.T) {
+	t.Run("expected content ABA conflict", func(t *testing.T) {
 		db := dbtest.NewFixture(t).OpenStore(t)
 		ctx := context.Background()
 		id := ids.New()
@@ -170,7 +172,7 @@ func TestUpsertOwnerGuardedSnapshotPathsUnaffectedDatabase(t *testing.T) {
 			t.Fatal(err)
 		}
 		target := upsertGuardCredential(id, "imported", 100, 100)
-		if err := store.UpsertOwnerGuardedExpectedContent(ctx, db.GORM(), &target, upsertGuardCredentialColumns, &snapshot); !errors.Is(err, store.ErrWriteConflict) {
+		if _, err := store.UpsertOwnerGuardedExpectedContent(ctx, db.GORM(), &target, upsertGuardCredentialColumns, &snapshot); !errors.Is(err, store.ErrWriteConflict) {
 			t.Fatalf("same-revision ABA error = %v, want ErrWriteConflict", err)
 		}
 		stored, err := db.CredentialGetRow(ctx, id)
@@ -179,7 +181,7 @@ func TestUpsertOwnerGuardedSnapshotPathsUnaffectedDatabase(t *testing.T) {
 		}
 	})
 
-	t.Run("expected content idempotent replay", func(t *testing.T) {
+	t.Run("expected content replay and stale snapshot", func(t *testing.T) {
 		db := dbtest.NewFixture(t).OpenStore(t)
 		ctx := context.Background()
 		id := ids.New()
@@ -188,11 +190,23 @@ func TestUpsertOwnerGuardedSnapshotPathsUnaffectedDatabase(t *testing.T) {
 			t.Fatal(err)
 		}
 		target := upsertGuardCredential(id, "imported", 100, 100)
-		if err := store.UpsertOwnerGuardedExpectedContent(ctx, db.GORM(), &target, upsertGuardCredentialColumns, &snapshot); err != nil {
+		if _, err := store.UpsertOwnerGuardedExpectedContent(ctx, db.GORM(), &target, upsertGuardCredentialColumns, &snapshot); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.UpsertOwnerGuardedExpectedContent(ctx, db.GORM(), &target, upsertGuardCredentialColumns, &snapshot); err != nil {
-			t.Fatalf("ordinary content idempotent replay failed: %v", err)
+		// A genuine idempotent replay — the snapshot refreshed to the target content —
+		// succeeds without writing anything.
+		replay := target
+		if _, err := store.UpsertOwnerGuardedExpectedContent(ctx, db.GORM(), &target, upsertGuardCredentialColumns, &replay); err != nil {
+			t.Fatalf("genuine idempotent replay failed: %v", err)
+		}
+		// A replayed call with the stale snapshot no longer proves ownership: the row
+		// reached the target through the earlier write, so it conflicts and survives.
+		if _, err := store.UpsertOwnerGuardedExpectedContent(ctx, db.GORM(), &target, upsertGuardCredentialColumns, &snapshot); !errors.Is(err, store.ErrWriteConflict) {
+			t.Fatalf("stale snapshot replay error = %v, want ErrWriteConflict", err)
+		}
+		stored, err := db.CredentialGetRow(ctx, id)
+		if err != nil || stored.Name != "imported" {
+			t.Fatalf("stored row changed: %+v err=%v", stored, err)
 		}
 	})
 }

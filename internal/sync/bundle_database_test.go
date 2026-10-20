@@ -73,16 +73,18 @@ func TestEngineCredentialUpsertCrossOwnerDatabase(t *testing.T) {
 
 	credID := ids.New()
 	if err := instance.db.GORM().WithContext(ctxA).Transaction(func(tx *gorm.DB) error {
-		return instance.service.engine.credentialUpsertTxBound(ctxA, tx, credentialObject{
+		_, err := instance.service.engine.credentialUpsertTxBound(ctxA, tx, credentialObject{
 			ID: credID, Name: "owned", Kind: "password", UpdatedAt: 100,
 		}, []byte{1}, []byte{2}, nil)
+		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
 	err := instance.db.GORM().WithContext(ctxB).Transaction(func(tx *gorm.DB) error {
-		return instance.service.engine.credentialUpsertTxBound(ctxB, tx, credentialObject{
+		_, err := instance.service.engine.credentialUpsertTxBound(ctxB, tx, credentialObject{
 			ID: credID, Name: "invader", Kind: "password", UpdatedAt: 200,
 		}, []byte{3}, []byte{4}, nil)
+		return err
 	})
 	if !errors.Is(err, store.ErrWriteConflict) {
 		t.Fatalf("cross-owner credential upsert error = %v, want ErrWriteConflict", err)
@@ -788,5 +790,179 @@ func TestApplyZeroRevisionCredentialPrePlannerInsertDatabase(t *testing.T) {
 	secret, err := instance.vault.DecryptCredentialString(ctx, row)
 	if err != nil || secret != "concurrent-secret" {
 		t.Errorf("concurrent secret = %q err=%v", secret, err)
+	}
+}
+
+// A same-ID known-host object at an equal revision converges by the planner's payload
+// LWW: the hash winner lands through the snapshot-bound content CAS on every real
+// backend (the store layer never re-decides the winner).
+func TestApplyKnownHostSameIDEqualRevisionLandsDatabase(t *testing.T) {
+	instance := newDatabaseTestInstance(t, false)
+	id := ids.New()
+	local := applyKnownHost(t, id, "same-id-db.example.com", 22, "ssh-ed25519", "SHA256:local", 100)
+	requireApplyResult(t, mustApplyObjects(t, instance, local).Objects[0], ApplyResultApplied)
+
+	var remote ApplyObject
+	want := ""
+	for index := 0; ; index++ {
+		fingerprint := fmt.Sprintf("SHA256:remote-%d", index)
+		candidate := applyKnownHost(t, id, "same-id-db.example.com", 22, "ssh-ed25519", fingerprint, 100)
+		if remoteWins(100, 100, candidate.Payload, local.Payload) {
+			remote = candidate
+			want = fingerprint
+			break
+		}
+	}
+	result := mustApplyObjects(t, instance, remote)
+	requireApplyResult(t, result.Objects[0], ApplyResultApplied)
+	requireKnownHost(t, instance, id, want, 100)
+}
+
+// A same-revision local write landing between the planner's snapshot and the guarded
+// write is never overwritten by the LWW apply: the content CAS reports a conflict and
+// the interleaved fingerprint survives.
+func TestApplyKnownHostSameIDEqualRevisionInterleaveKeepsLaterWriteDatabase(t *testing.T) {
+	instance := newDatabaseTestInstance(t, false)
+	id := ids.New()
+	local := applyKnownHost(t, id, "same-id-conflict.example.com", 22, "ssh-ed25519", "SHA256:local", 100)
+	requireApplyResult(t, mustApplyObjects(t, instance, local).Objects[0], ApplyResultApplied)
+
+	interleaveOnceOnTableQuery(t, instance, "known_host", func() {
+		if err := instance.db.GORM().WithContext(context.Background()).
+			Model(&store.KnownHostRow{}).Where("id = ?", id).
+			Updates(map[string]any{"fingerprint": "SHA256:interleaved"}).Error; err != nil {
+			t.Errorf("interleaved known-host write: %v", err)
+		}
+	})
+
+	var remote ApplyObject
+	for index := 0; ; index++ {
+		fingerprint := fmt.Sprintf("SHA256:remote-%d", index)
+		candidate := applyKnownHost(t, id, "same-id-conflict.example.com", 22, "ssh-ed25519", fingerprint, 100)
+		if remoteWins(100, 100, candidate.Payload, local.Payload) {
+			remote = candidate
+			break
+		}
+	}
+	entry := mustApplyObjects(t, instance, remote).Objects[0]
+	requireApplyResult(t, entry, ApplyResultSkipped)
+	requireKnownHost(t, instance, id, "SHA256:interleaved", 100)
+}
+
+// The r12 counterexample: a concurrent write of a row identical to the import's target
+// between the pre-import snapshot and the CAS must not be claimed by this import — the
+// credential write reports a conflict, and the asset-conflict compensation must not
+// roll the concurrent row back to the pre-import snapshot. The window needs the
+// concurrent update to commit inside the import transaction, which SQLite's immediate
+// write lock makes non-constructible, so the test skips there (a non-constructible
+// note, not a product pass or failure).
+//
+//dbtest:backend postgres,mysql,mariadb
+func TestImportBundleIdenticalConcurrentCredentialUpdateCompensatedDatabase(t *testing.T) {
+	switch strings.ToLower(os.Getenv("NEXTERM_TEST_DB_BACKEND")) {
+	case "postgres", "mysql", "mariadb":
+	default:
+		t.Skip("the in-transaction identical-update window is not constructible on SQLite")
+	}
+	instance := newDatabaseTestInstance(t, true)
+	ctx := context.Background()
+	credID := ids.New()
+	assetID := ids.New()
+	seed := SyncBundle{
+		Protocol: BundleProtocolVersion,
+		Creds:    []SyncBundleCredential{{ID: credID, Name: "before", Kind: "password", Secret: "old-secret", UpdatedAt: 100}},
+		Assets:   []SyncBundleAsset{{ID: assetID, Kind: "ssh", Name: "web", CredID: &credID, OptionsJSON: "{}", CreatedAt: 1, UpdatedAt: 100}},
+	}
+	if _, err := instance.service.ImportBundle(ctx, ImportBundleRequest{Bundle: seed}); err != nil {
+		t.Fatal(err)
+	}
+	interleaveAssetEdit(t, instance, "credential_tombstone", "later-asset", 101, assetID)
+
+	oldRandom := rand.Reader
+	defer func() { rand.Reader = oldRandom }()
+	rand.Reader = zeroReader{}
+	nonce, blob, err := instance.vault.EncryptCredential(ctx, "import-secret")
+	rand.Reader = oldRandom
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fired := false
+	if err := instance.db.GORM().Callback().Update().Before("gorm:update").Register("test:import-identical-cred-update", func(tx *gorm.DB) {
+		if fired || tx.Statement.Table != "credential" {
+			return
+		}
+		fired = true
+		if err := instance.db.GORM().WithContext(context.Background()).Model(&store.CredentialRow{}).Where("id = ?", credID).Updates(map[string]any{
+			"name": "imported", "kind": "password", "cipher": store.CipherAES256GCM,
+			"nonce": nonce, "blob": blob, "kek_hint": instance.vault.KEKHint(), "updated_at": 200,
+		}).Error; err != nil {
+			t.Errorf("concurrent identical update: %v", err)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = instance.db.GORM().Callback().Update().Remove("test:import-identical-cred-update") })
+
+	rand.Reader = zeroReader{}
+	report, err := instance.service.ImportBundle(ctx, ImportBundleRequest{Bundle: SyncBundle{
+		Protocol: BundleProtocolVersion,
+		Creds:    []SyncBundleCredential{{ID: credID, Name: "imported", Kind: "password", Secret: "import-secret", UpdatedAt: 200}},
+		Assets:   []SyncBundleAsset{{ID: assetID, Kind: "ssh", Name: "web", CredID: &credID, OptionsJSON: "{}", CreatedAt: 1, UpdatedAt: 200}},
+	}})
+	rand.Reader = oldRandom
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fired {
+		t.Fatal("identical concurrent update did not fire")
+	}
+	row, err := instance.db.CredentialGetRow(ctx, credID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := instance.vault.DecryptCredentialString(ctx, row)
+	if err != nil || secret != "import-secret" || row.UpdatedAt != 200 {
+		t.Fatalf("concurrent identical update was compensated away: secret=%q revision=%d err=%v report=%+v", secret, row.UpdatedAt, err, report)
+	}
+	if report.Conflicts != 2 || report.CredsCreated != 0 || report.CredsUpdated != 0 {
+		t.Fatalf("concurrent identical update was not reported as a conflict: %+v", report)
+	}
+}
+
+// A genuine idempotent replay — the pre-import snapshot already carries the import's
+// target content byte-for-byte — succeeds, counts as updated, and is not compensated:
+// re-importing the same bundle leaves the credential at the target content with no
+// conflicts. Deterministic encryption makes the replayed target byte-identical.
+func TestImportBundleCredentialIdempotentReplayDatabase(t *testing.T) {
+	instance := newDatabaseTestInstance(t, true)
+	ctx := context.Background()
+	credID := ids.New()
+	bundle := SyncBundle{
+		Protocol: BundleProtocolVersion,
+		Creds:    []SyncBundleCredential{{ID: credID, Name: "imported", Kind: "password", Secret: "import-secret", UpdatedAt: 200}},
+	}
+	oldRandom := rand.Reader
+	defer func() { rand.Reader = oldRandom }()
+	rand.Reader = zeroReader{}
+	if _, err := instance.service.ImportBundle(ctx, ImportBundleRequest{Bundle: bundle}); err != nil {
+		t.Fatal(err)
+	}
+	rand.Reader = zeroReader{}
+	report, err := instance.service.ImportBundle(ctx, ImportBundleRequest{Bundle: bundle})
+	rand.Reader = oldRandom
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Conflicts != 0 || report.CredsUpdated != 1 || report.CredsCreated != 0 {
+		t.Fatalf("idempotent replay report = %+v", report)
+	}
+	row, err := instance.db.CredentialGetRow(ctx, credID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := instance.vault.DecryptCredentialString(ctx, row)
+	if err != nil || secret != "import-secret" || row.UpdatedAt != 200 {
+		t.Fatalf("replay changed the credential: secret=%q revision=%d err=%v", secret, row.UpdatedAt, err)
 	}
 }

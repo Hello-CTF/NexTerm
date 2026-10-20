@@ -538,7 +538,7 @@ func (e *Engine) groupUpsertTxBound(ctx context.Context, tx *gorm.DB, payload gr
 			return err
 		}
 	} else {
-		if err := store.UpsertOwnerGuardedExpectedContent(ctx, tx, row, []string{"parent_id", "name", "sort", "updated_at"}, snapshot); err != nil {
+		if _, err := store.UpsertOwnerGuardedExpectedContent(ctx, tx, row, []string{"parent_id", "name", "sort", "updated_at"}, snapshot); err != nil {
 			return err
 		}
 	}
@@ -736,23 +736,29 @@ func (e *Engine) applyCredentialObject(ctx context.Context, plaintext []byte, re
 // The write and the deletion-tombstone clearing share one transaction: once a newer credential beats an old tombstone, no tombstone that could roll back the object may remain.
 func (e *Engine) credentialUpsert(ctx context.Context, payload credentialObject, nonce, blob []byte, snapshot *store.CredentialRow) error {
 	return e.store.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return e.credentialUpsertTxBound(ctx, tx, payload, nonce, blob, snapshot)
+		_, err := e.credentialUpsertTxBound(ctx, tx, payload, nonce, blob, snapshot)
+		return err
 	})
 }
 
 // credentialUpsertTxBound is the snapshot-bound credential write: an existing row is
 // updated only when its content still equals the snapshot's, and a new row is inserted
 // only when it is still absent. The explicit bundle import passes the pre-import snapshot
-// so a later local credential write is never blindly overwritten.
-func (e *Engine) credentialUpsertTxBound(ctx context.Context, tx *gorm.DB, payload credentialObject, nonce, blob []byte, snapshot *store.CredentialRow) error {
+// so a later local credential write is never blindly overwritten. The boolean result
+// reports whether the write actually landed; a false nil-error result is a genuine
+// idempotent replay (the snapshot already carried the target content), which the caller
+// must not record as a write of its own.
+func (e *Engine) credentialUpsertTxBound(ctx context.Context, tx *gorm.DB, payload credentialObject, nonce, blob []byte, snapshot *store.CredentialRow) (bool, error) {
 	row := &store.CredentialRow{ID: payload.ID, Name: payload.Name, Kind: payload.Kind, Cipher: store.CipherAES256GCM, Nonce: nonce, Blob: blob, KEKHint: e.vault.KEKHint(), CreatedAt: payload.UpdatedAt, UpdatedAt: payload.UpdatedAt, OwnerID: ipc.OwnerID(ctx)}
+	landed := true
 	if snapshot == nil {
 		if err := store.UpsertOwnerGuardedExpected(ctx, tx, row, []string{"name", "kind", "cipher", "nonce", "blob", "kek_hint", "updated_at"}, 0); err != nil {
-			return err
+			return false, err
 		}
 	} else {
-		if err := store.UpsertOwnerGuardedExpectedContent(ctx, tx, row, []string{"name", "kind", "cipher", "nonce", "blob", "kek_hint", "updated_at"}, snapshot); err != nil {
-			return err
+		var err error
+		if landed, err = store.UpsertOwnerGuardedExpectedContent(ctx, tx, row, []string{"name", "kind", "cipher", "nonce", "blob", "kek_hint", "updated_at"}, snapshot); err != nil {
+			return false, err
 		}
 	}
 	tombstone := query.Use(tx).CredentialTombstone
@@ -760,9 +766,9 @@ func (e *Engine) credentialUpsertTxBound(ctx context.Context, tx *gorm.DB, paylo
 		Where(tombstone.ID.Eq(payload.ID)).
 		Where(ownerConditions(ctx, tombstone.TableName())...).
 		Delete(); err != nil {
-		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		return false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	return nil
+	return landed, nil
 }
 
 func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
@@ -1079,7 +1085,11 @@ func (e *Engine) applyKnownHostObject(ctx context.Context, plaintext []byte, rep
 		}
 		displacedID = conflict.ID
 	}
-	if err := e.knownHostUpsert(ctx, payload, displacedID); err != nil {
+	var snapshot *store.KnownHostRow
+	if exists {
+		snapshot = &local
+	}
+	if err := e.knownHostUpsert(ctx, payload, displacedID, snapshot); err != nil {
 		report.warnf("已知主机 %s 应用失败: %v", payload.ID, err)
 		return false, false
 	}

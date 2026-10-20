@@ -829,7 +829,7 @@ func (e *Engine) snippetUpsertTxBound(ctx context.Context, tx *gorm.DB, row stor
 			return err
 		}
 	} else {
-		if err := store.UpsertOwnerGuardedExpectedContent(ctx, tx, &row, []string{"group_id", "name", "body", "sort", "updated_at"}, snapshot); err != nil {
+		if _, err := store.UpsertOwnerGuardedExpectedContent(ctx, tx, &row, []string{"group_id", "name", "body", "sort", "updated_at"}, snapshot); err != nil {
 			return err
 		}
 	}

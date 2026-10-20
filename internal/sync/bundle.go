@@ -758,8 +758,11 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 	// credWriteResults records the exact row content this import actually wrote per
 	// credential: a conflict-skipped credential keeps a later local write and must be
 	// neither compensated nor counted as imported, and compensation binds this content so
-	// a row replaced by a later write survives untouched.
+	// a row replaced by a later write survives untouched. replayedCredIDs records genuine
+	// idempotent replays (the snapshot already carried the target content): they count as
+	// imported but wrote nothing, so they stay out of compensation.
 	credWriteResults := map[string]*store.CredentialRow{}
+	replayedCredIDs := map[string]bool{}
 	// Credentials and assets share one transaction: an asset-save failure rolls the
 	// credential creates/updates back instead of leaving them orphaned.
 	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
@@ -768,12 +771,15 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			// credential (a later local write is never overwritten) and to must-not-exist
 			// for a new one. A conflict is recorded per-credential and skipped, never
 			// overwriting the later local write.
-			written, err := s.importCredentialTx(ctx, tx, cred, priorCredRows[cred.id], &report, warnf)
+			written, replayed, err := s.importCredentialTx(ctx, tx, cred, priorCredRows[cred.id], &report, warnf)
 			if err != nil {
 				return err
 			}
 			if written != nil {
 				credWriteResults[cred.id] = written
+			}
+			if replayed {
+				replayedCredIDs[cred.id] = true
 			}
 		}
 		for index, entry := range preparedAssets {
@@ -835,7 +841,7 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		return ImportReport{}, err
 	}
 	for _, cred := range preparedCreds {
-		if compensatedCredIDs[cred.id] || credWriteResults[cred.id] == nil {
+		if compensatedCredIDs[cred.id] || (credWriteResults[cred.id] == nil && !replayedCredIDs[cred.id]) {
 			continue
 		}
 		if cred.exists {
@@ -947,19 +953,23 @@ func (s *Service) importAssetTx(ctx context.Context, tx *gorm.DB, index int, row
 
 // importCredentialTx writes one prepared credential inside the import transaction with a
 // savepoint: a conflict (the credential changed after the snapshot) is recorded and the
-// credential is skipped, never overwriting the later local write. On success it returns
-// the exact row content this import wrote (including the stored created_at), so the
-// caller can bind compensation to it; a conflict-skipped credential returns nil so the
-// caller keeps it out of compensation and out of the imported counts.
-func (s *Service) importCredentialTx(ctx context.Context, tx *gorm.DB, cred preparedCred, snapshot *store.CredentialRow, report *ImportReport, warnf func(string, ...any)) (*store.CredentialRow, error) {
+// credential is skipped, never overwriting the later local write. On a landed write it
+// returns the exact row content this import wrote (including the stored created_at), so
+// the caller can bind compensation to it; a genuine idempotent replay (the snapshot
+// already carried the target content) reports replayed with no written row — it counts
+// as imported but must not be compensated, since this import wrote nothing.
+func (s *Service) importCredentialTx(ctx context.Context, tx *gorm.DB, cred preparedCred, snapshot *store.CredentialRow, report *ImportReport, warnf func(string, ...any)) (*store.CredentialRow, bool, error) {
 	savepoint := fmt.Sprintf("import_credential_%s", cred.id)
 	if err := tx.SavePoint(savepoint).Error; err != nil {
-		return nil, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		return nil, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	err := s.engine.credentialUpsertTxBound(ctx, tx, credentialObject{
+	landed, err := s.engine.credentialUpsertTxBound(ctx, tx, credentialObject{
 		ID: cred.id, Name: cred.name, Kind: cred.kind, UpdatedAt: cred.updatedAt,
 	}, cred.nonce, cred.blob, snapshot)
 	if err == nil {
+		if !landed {
+			return nil, true, nil
+		}
 		createdAt := cred.updatedAt
 		if snapshot != nil {
 			createdAt = snapshot.CreatedAt
@@ -968,10 +978,10 @@ func (s *Service) importCredentialTx(ctx context.Context, tx *gorm.DB, cred prep
 			ID: cred.id, Name: cred.name, Kind: cred.kind, Cipher: store.CipherAES256GCM,
 			Nonce: cred.nonce, Blob: cred.blob, KEKHint: s.engine.vault.KEKHint(),
 			CreatedAt: createdAt, UpdatedAt: cred.updatedAt, OwnerID: ipc.OwnerID(ctx),
-		}, nil
+		}, false, nil
 	}
 	if rollbackErr := tx.RollbackTo(savepoint).Error; rollbackErr != nil {
-		return nil, ipc.WrapError(ipc.CodeDB, "数据库错误: "+rollbackErr.Error(), rollbackErr)
+		return nil, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+rollbackErr.Error(), rollbackErr)
 	}
 	if errors.Is(err, store.ErrWriteConflict) {
 		report.Conflicts++
@@ -979,9 +989,9 @@ func (s *Service) importCredentialTx(ctx context.Context, tx *gorm.DB, cred prep
 			Kind: "credential", ID: cred.id, Name: cred.name,
 		})
 		warnf("凭据 %s 在导入决策后已被本机更新，已跳过（可重新导入覆盖）", cred.id)
-		return nil, nil
+		return nil, false, nil
 	}
-	return nil, err
+	return nil, false, err
 }
 
 // compensateCredentialTx rolls one credential back to its pre-import state after the only
