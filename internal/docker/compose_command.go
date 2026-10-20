@@ -140,7 +140,7 @@ func (b *CommandBackend) composeCommand(cli ComposeCLI, args []string) string {
 	if cli == ComposeCLILegacy {
 		return b.commandWithBinary("docker-compose", args)
 	}
-	return b.commandWithBinary(b.binary, append([]string{"compose"}, args...))
+	return b.commandWithBinary(b.binary, b.contextArgs(append([]string{"compose"}, args...)))
 }
 
 func (b *CommandBackend) commandWithBinary(binary string, args []string) string {

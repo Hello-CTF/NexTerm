@@ -57,6 +57,14 @@ export function inventoryTargetText(options: Record<string, unknown> | undefined
   return "";
 }
 
+// inventoryExecTarget returns the raw exec target carried by a discovery or
+// synced item, or null when the item has no executable target record.
+export function inventoryExecTarget(options: Record<string, unknown> | undefined): Record<string, unknown> | null {
+  const raw = options?.inventoryTarget;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  return raw as Record<string, unknown>;
+}
+
 export function withoutInventoryMetadata(options: Record<string, unknown>): Record<string, unknown> {
   const cloned = { ...options };
   delete cloned.inventory;

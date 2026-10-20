@@ -28,6 +28,25 @@ func (r *fakeRunner) Output(_ context.Context, name string, args ...string) ([]b
 	return r.outputs[key], nil
 }
 
+func TestExecRunnerReturnsCommandExitError(t *testing.T) {
+	runner := ExecRunner{}
+	_, err := runner.Output(context.Background(), "sh", "-c", "printf partial; printf boom >&2; exit 7")
+	var exitErr *CommandExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("err = %T %v", err, err)
+	}
+	if exitErr.Code != 7 || string(exitErr.Output) != "partial" || exitErr.Stderr != "boom" {
+		t.Fatalf("exit error = %+v", exitErr)
+	}
+	if !strings.Contains(err.Error(), "exit code 7") {
+		t.Fatalf("error message = %q", err.Error())
+	}
+	output, err := runner.Output(context.Background(), "sh", "-c", "printf ok")
+	if err != nil || string(output) != "ok" {
+		t.Fatalf("output = %q err = %v", output, err)
+	}
+}
+
 func TestDiscoverDockerContextsReadOnlyParsing(t *testing.T) {
 	runner := &fakeRunner{outputs: map[string][]byte{
 		"docker context ls --format {{json .}}": []byte("{\"Name\":\"prod\",\"Description\":\"Production\",\"DockerEndpoint\":\"ssh://ops@prod.example\",\"KubernetesEndpoint\":\"\",\"ContextType\":\"moby\",\"Current\":true}\n" +

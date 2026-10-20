@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
@@ -163,6 +163,70 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
   const attachedMatchesSession = attached?.sessionId === sessionId && attached.assetId === sessionAssetId &&
     (!attached.sessionKnown || Boolean(session));
 
+  const openLogs = useCallback(async (containerId: string, containerName: string, reattach = false) => {
+    if (attachInFlight.current !== null) return;
+    const attachId = ++nextAttachId.current;
+    attachInFlight.current = attachId;
+    const generation = attachGeneration.current;
+    const target = useUi.getState().sessions.find((entry) => entry.id === sessionId);
+    const targetAssetId = target?.assetId ?? null;
+    const stillOnTarget = () => {
+      const current = useUi.getState().sessions.find((entry) => entry.id === sessionId);
+      return currentSessionId.current === sessionId && generation === attachGeneration.current &&
+        (target
+          ? Boolean(current && current.assetId === targetAssetId && current.status === "connected")
+          : !current);
+    };
+    if (reattach && attached && (attached.sessionId !== sessionId || (attached.sessionKnown && (!target || target.assetId !== attached.assetId)))) {
+      attachInFlight.current = null;
+      setLogsIssue({ text: "原主机已改变，请返回后重新选择容器", ended: true });
+      return;
+    }
+    if (target && target.status !== "connected") {
+      attachInFlight.current = null;
+      setLogsIssue({ text: "主机连接中断，连接恢复后将重新读取最近 500 行日志" });
+      pendingReconnect.current = true;
+      return;
+    }
+    const sink: LogAttach["sink"] = { onBytes: null };
+    const channel = createBinaryChannel((bytes) => sink.onBytes?.(bytes));
+    try {
+      const kernelTab = await dockerApi.logsAttach(sessionId, containerId, 500, channel);
+      if (!stillOnTarget()) {
+        void terminalApi.closeTab(kernelTab, "kill", sessionId).catch(() => undefined);
+        disposeChannel(channel);
+        if (currentSessionId.current !== sessionId) return;
+        const current = useUi.getState().sessions.find((entry) => entry.id === sessionId);
+        if (reattach) {
+          setLogsIssue({
+            text: current?.assetId === targetAssetId
+              ? "主机连接发生变化，日志跟随已中断；请重新跟随"
+              : "原主机已改变，请返回后重新选择容器",
+            ended: current?.assetId !== targetAssetId,
+          });
+        } else {
+          pushToast("info", "打开日志时主机连接发生变化，请重新打开日志");
+        }
+        return;
+      }
+      setAttached({ container: containerName, containerId, sessionId, assetId: targetAssetId, sessionKnown: Boolean(target), hostName: target?.name ?? sessionId, tabId: kernelTab, channel, sink });
+      setLogsIssue(null);
+      setLogsResumeNote(reattach
+        ? "已重新读取此主机最近 500 行日志；先前画面已替换，断线期间超过 500 行的内容可能缺失。"
+        : null);
+    } catch (e) {
+      disposeChannel(channel);
+      if (!stillOnTarget()) return;
+      if (reattach) {
+        setLogsIssue({ text: `重新跟随失败：${describeError(e)}` });
+      } else {
+        pushToast("error", `读取日志失败：${describeError(e)}`);
+      }
+    } finally {
+      if (attachInFlight.current === attachId) attachInFlight.current = null;
+    }
+  }, [sessionId, attached, pushToast]);
+
   useEffect(() => {
     if (previousIdentity.current.sessionId !== sessionId || previousIdentity.current.assetId !== sessionAssetId) {
       attachGeneration.current++;
@@ -279,7 +343,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
       cancelled = true;
       off();
     };
-  }, [attached]);
+  }, [attached, openLogs, qc, sessionId]);
 
   useEffect(() => {
     if (!attached) return;
@@ -301,7 +365,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     }
     pendingReconnect.current = true;
     setLogsIssue({ text: "主机连接中断，连接恢复后将重新读取最近 500 行日志" });
-  }, [attached, attachedMatchesSession, sessionStatus]);
+  }, [attached, attachedMatchesSession, openLogs, sessionStatus]);
 
   const markPending = (key: string, on: boolean) =>
     setPending((prev) => {
@@ -449,70 +513,6 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     setBulkBusy(false);
     void qc.invalidateQueries({ queryKey: ["docker-ps", sessionId] });
     void qc.invalidateQueries({ queryKey: ["docker-images", sessionId] });
-  };
-
-  const openLogs = async (containerId: string, containerName: string, reattach = false) => {
-    if (attachInFlight.current !== null) return;
-    const attachId = ++nextAttachId.current;
-    attachInFlight.current = attachId;
-    const generation = attachGeneration.current;
-    const target = useUi.getState().sessions.find((entry) => entry.id === sessionId);
-    const targetAssetId = target?.assetId ?? null;
-    const stillOnTarget = () => {
-      const current = useUi.getState().sessions.find((entry) => entry.id === sessionId);
-      return currentSessionId.current === sessionId && generation === attachGeneration.current &&
-        (target
-          ? Boolean(current && current.assetId === targetAssetId && current.status === "connected")
-          : !current);
-    };
-    if (reattach && attached && (attached.sessionId !== sessionId || (attached.sessionKnown && (!target || target.assetId !== attached.assetId)))) {
-      attachInFlight.current = null;
-      setLogsIssue({ text: "原主机已改变，请返回后重新选择容器", ended: true });
-      return;
-    }
-    if (target && target.status !== "connected") {
-      attachInFlight.current = null;
-      setLogsIssue({ text: "主机连接中断，连接恢复后将重新读取最近 500 行日志" });
-      pendingReconnect.current = true;
-      return;
-    }
-    const sink: LogAttach["sink"] = { onBytes: null };
-    const channel = createBinaryChannel((bytes) => sink.onBytes?.(bytes));
-    try {
-      const kernelTab = await dockerApi.logsAttach(sessionId, containerId, 500, channel);
-      if (!stillOnTarget()) {
-        void terminalApi.closeTab(kernelTab, "kill", sessionId).catch(() => undefined);
-        disposeChannel(channel);
-        if (currentSessionId.current !== sessionId) return;
-        const current = useUi.getState().sessions.find((entry) => entry.id === sessionId);
-        if (reattach) {
-          setLogsIssue({
-            text: current?.assetId === targetAssetId
-              ? "主机连接发生变化，日志跟随已中断；请重新跟随"
-              : "原主机已改变，请返回后重新选择容器",
-            ended: current?.assetId !== targetAssetId,
-          });
-        } else {
-          pushToast("info", "打开日志时主机连接发生变化，请重新打开日志");
-        }
-        return;
-      }
-      setAttached({ container: containerName, containerId, sessionId, assetId: targetAssetId, sessionKnown: Boolean(target), hostName: target?.name ?? sessionId, tabId: kernelTab, channel, sink });
-      setLogsIssue(null);
-      setLogsResumeNote(reattach
-        ? "已重新读取此主机最近 500 行日志；先前画面已替换，断线期间超过 500 行的内容可能缺失。"
-        : null);
-    } catch (e) {
-      disposeChannel(channel);
-      if (!stillOnTarget()) return;
-      if (reattach) {
-        setLogsIssue({ text: `重新跟随失败：${describeError(e)}` });
-      } else {
-        pushToast("error", `读取日志失败：${describeError(e)}`);
-      }
-    } finally {
-      if (attachInFlight.current === attachId) attachInFlight.current = null;
-    }
   };
 
   const openExec = (c: ContainerSummary) => {

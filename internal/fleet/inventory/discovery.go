@@ -36,6 +36,25 @@ type CommandRunner interface {
 	Output(context.Context, string, ...string) ([]byte, error)
 }
 
+// CommandExitError reports a command that ran but exited non-zero, keeping
+// the captured output so callers can preserve it in their own contracts.
+type CommandExitError struct {
+	Code   int
+	Output []byte
+	Stderr string
+}
+
+func (e *CommandExitError) Error() string {
+	message := strings.TrimSpace(e.Stderr)
+	if message == "" {
+		message = strings.TrimSpace(string(e.Output))
+	}
+	if message == "" {
+		return fmt.Sprintf("exit code %d", e.Code)
+	}
+	return fmt.Sprintf("exit code %d: %s", e.Code, message)
+}
+
 type ExecRunner struct{}
 
 type boundedBuffer struct {
@@ -70,6 +89,10 @@ func (ExecRunner) Output(ctx context.Context, name string, args ...string) ([]by
 		return nil, fmt.Errorf("%s output exceeds %d bytes", name, maxOutputBytes)
 	}
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return nil, &CommandExitError{Code: exitErr.ExitCode(), Output: stdout.Bytes(), Stderr: stderr.String()}
+		}
 		message := strings.TrimSpace(stderr.String())
 		if message != "" {
 			return nil, fmt.Errorf("%s: %w: %s", name, err, message)

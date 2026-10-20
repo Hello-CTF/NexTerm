@@ -49,14 +49,29 @@ const (
 )
 
 type CommandBackend struct {
-	runner CommandRunner
-	opener CommandOpener
-	shell  Shell
-	binary string
+	runner  CommandRunner
+	opener  CommandOpener
+	shell   Shell
+	binary  string
+	context string
 }
 
-func NewCommandBackend(runner CommandRunner, opener CommandOpener, shell Shell) *CommandBackend {
-	return &CommandBackend{runner: runner, opener: opener, shell: shell, binary: "docker"}
+// CommandBackendOption customizes a CommandBackend.
+type CommandBackendOption func(*CommandBackend)
+
+// WithDockerContext pins every Docker CLI command to a Docker context.
+func WithDockerContext(name string) CommandBackendOption {
+	return func(backend *CommandBackend) {
+		backend.context = strings.TrimSpace(name)
+	}
+}
+
+func NewCommandBackend(runner CommandRunner, opener CommandOpener, shell Shell, options ...CommandBackendOption) *CommandBackend {
+	backend := &CommandBackend{runner: runner, opener: opener, shell: shell, binary: "docker"}
+	for _, option := range options {
+		option(backend)
+	}
+	return backend
 }
 
 func (b *CommandBackend) ListContainerDTOs(ctx context.Context, all bool) ([]ContainerSummary, error) {
@@ -341,12 +356,16 @@ func (b *CommandBackend) open(ctx context.Context, command string, width, height
 }
 
 func (b *CommandBackend) command(args []string) string {
-	parts := make([]string, 0, len(args)+1)
-	parts = append(parts, b.binary)
-	for _, arg := range args {
-		parts = append(parts, quoteShell(arg, b.shell))
+	return b.commandWithBinary(b.binary, b.contextArgs(args))
+}
+
+func (b *CommandBackend) contextArgs(args []string) []string {
+	if b.context == "" {
+		return args
 	}
-	return strings.Join(parts, " ")
+	prefixed := make([]string, 0, len(args)+2)
+	prefixed = append(prefixed, "--context", b.context)
+	return append(prefixed, args...)
 }
 
 type cliContainer struct {

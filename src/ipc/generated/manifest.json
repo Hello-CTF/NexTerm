@@ -782,6 +782,12 @@
       "channel": false,
       "stream": "none"
     },
+    "inventory_target_exec": {
+      "scope": "inventory",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
     "known_host_accept": {
       "nested": false,
       "channel": false,
