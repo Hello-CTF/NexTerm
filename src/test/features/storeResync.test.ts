@@ -10,7 +10,7 @@ vi.mock("../../ipc/commands", () => ({
 }));
 
 import { sessionApi, terminalApi, type SessionInfo } from "../../ipc/commands";
-import { useUi } from "../../app/store";
+import { sanitizeWorkspaceProblemText, useUi } from "../../app/store";
 import { deferred } from "./reactTestUtils";
 
 function session(id: string, status: SessionInfo["status"]): SessionInfo {
@@ -110,6 +110,47 @@ describe("resyncSessions", () => {
 
     expect(useUi.getState().sessionResyncFailed).toBe(false);
     expect(useUi.getState().toasts).toEqual([]);
+  });
+});
+
+describe("sanitizeWorkspaceProblemText", () => {
+  it("redacts URL credentials, env assignments, and secrets on 32KiB and 1MiB inputs", () => {
+    for (const size of [32 * 1024, 1024 * 1024]) {
+      const text = `.env scheme://user:secret@${"a".repeat(size)} FOO=bar ${"b".repeat(size)} password=hunter2`;
+      const sanitized = sanitizeWorkspaceProblemText(text);
+      expect(sanitized).toContain("scheme://user:[REDACTED]@");
+      expect(sanitized).not.toContain(":secret@");
+      expect(sanitized).toContain("FOO=[REDACTED]");
+      expect(sanitized).toContain("password=[REDACTED]");
+      expect(sanitized).not.toContain("hunter2");
+    }
+  });
+
+  it("keeps env-assignment redaction semantics on quoted and unquoted values", () => {
+    const sanitized = sanitizeWorkspaceProblemText(
+      '.env A="" B=\'x\' C=bare D="unclosed E=, F=; G=hunter2',
+    );
+    expect(sanitized).toContain('A=[REDACTED]');
+    expect(sanitized).toContain('B=[REDACTED]');
+    expect(sanitized).toContain('C=[REDACTED]');
+    expect(sanitized).toContain('D=[REDACTED]');
+    expect(sanitized).not.toContain("hunter2");
+  });
+
+  it("scales linearly on long unseparated input instead of regressing to quadratic backtracking", () => {
+    const makeInput = (n: number) => `.env ${"a".repeat(n)}`;
+    // Warm up so JIT compilation does not distort the first measurement.
+    sanitizeWorkspaceProblemText(makeInput(32 * 1024));
+    const t0 = performance.now();
+    sanitizeWorkspaceProblemText(makeInput(32 * 1024));
+    const t1 = performance.now();
+    sanitizeWorkspaceProblemText(makeInput(256 * 1024));
+    const t2 = performance.now();
+    const small = Math.max(t1 - t0, 0.01);
+    const large = t2 - t1;
+    // 8x input: linear scales about 8x, the old quadratic patterns scaled about 64x.
+    // 24 leaves wide headroom for machine noise while still failing any quadratic regression.
+    expect(large / small).toBeLessThan(24);
   });
 });
 

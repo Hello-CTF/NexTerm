@@ -531,15 +531,112 @@ const WORKSPACE_PROBLEM_LIMIT = 50;
 const WORKSPACE_PROBLEM_DETAIL_BYTES = 16 * 1024;
 const PROBLEM_REDACTED = "[REDACTED]";
 const PRIVATE_KEY_BLOCK = /-----BEGIN [^-]+-----[\s\S]*?-----END [^-]+-----/g;
-const URL_CREDENTIAL = /([a-z][a-z0-9+.-]*:\/\/[^/@\s:]*):([^/@\s]+)@/gi;
 const BEARER_TOKEN = /\b(Bearer\s+)([^\s]+)/gi;
 const SENSITIVE_ASSIGNMENT =
   /(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential|authorization)(\s*["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
 const SENSITIVE_CLI_OPTION =
   /((?:--(?:password|passwd|pwd|secret|token|api-key|access-key)|-p)(?:=|\s+)?)("[^"]*"|'[^']*'|[^\s,;]+)/gi;
 const ENV_ASSIGNMENT = /^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)(.*)$/gm;
-const ENV_ASSIGNMENT_ANY = /([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)("[^"]*"|'[^']*'|[^\s,;]+)/g;
 const SENSITIVE_ENV_NAME = /password|passwd|pwd|secret|token|credential|authorization|api[_-]?key|access[_-]?key|private[_-]?key/i;
+
+function isWhitespace(char: string): boolean {
+  return char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\f" || char === "\v";
+}
+
+// Linear replacement for the old quadratic URL credential pattern: scheme positions are found
+// with indexOf and validated backwards over the short scheme token, so long unseparated inputs
+// cannot trigger superlinear backtracking. Semantics match scheme://user:password@ redaction —
+// userinfo stops at the first ':', the password at the next '@'.
+function redactUrlCredentials(text: string): string {
+  let result = "";
+  let last = 0;
+  let searchFrom = 0;
+  for (;;) {
+    const schemeEnd = text.indexOf("://", searchFrom);
+    if (schemeEnd < 0) break;
+    let schemeStart = schemeEnd - 1;
+    while (schemeStart >= 0 && /[a-z0-9+.-]/i.test(text[schemeStart] as string)) schemeStart--;
+    schemeStart++;
+    const first = text[schemeStart];
+    if (first === undefined || !/[a-z]/i.test(first)) {
+      searchFrom = schemeEnd + 3;
+      continue;
+    }
+    const userStart = schemeEnd + 3;
+    let colon = -1;
+    for (let i = userStart; i < text.length; i++) {
+      const c = text[i] as string;
+      if (c === ":") {
+        colon = i;
+        break;
+      }
+      if (c === "/" || c === "@" || isWhitespace(c)) break;
+    }
+    if (colon < 0) {
+      searchFrom = schemeEnd + 3;
+      continue;
+    }
+    let at = -1;
+    for (let i = colon + 1; i < text.length; i++) {
+      const c = text[i] as string;
+      if (c === "@") {
+        at = i;
+        break;
+      }
+      if (c === "/" || isWhitespace(c)) break;
+    }
+    if (at < 0) {
+      searchFrom = schemeEnd + 3;
+      continue;
+    }
+    result += text.slice(last, colon + 1) + PROBLEM_REDACTED;
+    last = at;
+    searchFrom = at;
+  }
+  return result + text.slice(last);
+}
+
+// Linear replacement for the old quadratic env-assignment pattern: each maximal identifier run is
+// visited once, and a match is only possible at its first character. Values follow the original
+// quoted/unquoted alternatives, including empty quoted strings.
+function redactEnvAssignments(text: string): string {
+  let result = "";
+  let last = 0;
+  let i = 0;
+  while (i < text.length) {
+    const start = text[i] as string;
+    if (!/[A-Za-z_]/.test(start)) {
+      i++;
+      continue;
+    }
+    let j = i + 1;
+    while (j < text.length && /[A-Za-z0-9_]/.test(text[j] as string)) j++;
+    let k = j;
+    while (k < text.length && isWhitespace(text[k] as string)) k++;
+    if (text[k] !== "=") {
+      i = j;
+      continue;
+    }
+    k++;
+    while (k < text.length && isWhitespace(text[k] as string)) k++;
+    const quote = text[k];
+    let end = k;
+    if (quote === "\"" || quote === "'") {
+      const close = text.indexOf(quote, k + 1);
+      end = close < 0 ? text.length : close + 1;
+    } else {
+      while (end < text.length && !/[\s,;]/.test(text[end] as string)) end++;
+    }
+    if (end === k) {
+      i = j;
+      continue;
+    }
+    result += text.slice(last, k) + PROBLEM_REDACTED;
+    last = end;
+    i = end;
+  }
+  return result + text.slice(last);
+}
 
 function boundedUtf8(text: string, maxBytes: number): { text: string; truncated: boolean } {
   let bytes = 0;
@@ -565,23 +662,21 @@ export function getWorkspaceProblemResetGeneration(): number {
 
 export function sanitizeWorkspaceProblemText(text: string): string {
   const allEnv = text.toLowerCase().includes(".env");
-  const sanitized = text
-    .replace(PRIVATE_KEY_BLOCK, PROBLEM_REDACTED)
-    .replace(URL_CREDENTIAL, (_match, schemeAndUser: string) => `${schemeAndUser}:${PROBLEM_REDACTED}@`)
-    .replace(BEARER_TOKEN, (_match, prefix: string) => `${prefix}${PROBLEM_REDACTED}`)
-    .replace(
-      SENSITIVE_ASSIGNMENT,
-      (_match, name: string, separator: string) => `${name}${separator}${PROBLEM_REDACTED}`,
-    )
-    .replace(
-      SENSITIVE_CLI_OPTION,
-      (_match, option: string) => `${option}${PROBLEM_REDACTED}`,
-    );
+  const sanitized = redactUrlCredentials(
+    text
+      .replace(PRIVATE_KEY_BLOCK, PROBLEM_REDACTED)
+      .replace(BEARER_TOKEN, (_match, prefix: string) => `${prefix}${PROBLEM_REDACTED}`)
+      .replace(
+        SENSITIVE_ASSIGNMENT,
+        (_match, name: string, separator: string) => `${name}${separator}${PROBLEM_REDACTED}`,
+      )
+      .replace(
+        SENSITIVE_CLI_OPTION,
+        (_match, option: string) => `${option}${PROBLEM_REDACTED}`,
+      ),
+  );
   if (allEnv) {
-    return sanitized.replace(
-      ENV_ASSIGNMENT_ANY,
-      (_match, name: string, separator: string) => `${name}${separator}${PROBLEM_REDACTED}`,
-    );
+    return redactEnvAssignments(sanitized);
   }
   return sanitized.replace(
     ENV_ASSIGNMENT,
