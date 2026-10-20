@@ -521,23 +521,46 @@ func (r *Registry) resolveTab(ctx context.Context, jobID string, scope Scope, re
 	_, requestScoped := r.deps.Terminal.(TabSessionTerminal)
 	hasResolver := requestScoped || r.deps.TabSession != nil
 	if requested != "" && requested != scope.TabID {
-		createdSessionID, created := r.state(jobID).createdTab(requested)
-		if !created {
-			return "", ErrCrossScope
+		if createdSessionID, created := r.state(jobID).createdTab(requested); created {
+			if hasResolver {
+				sessionID, err := r.tabSession(ctx, requested)
+				if err != nil {
+					return "", err
+				}
+				if sessionID != createdSessionID {
+					return "", ErrCrossScope
+				}
+			}
+			if r.deps.Terminal == nil {
+				return "", errors.New("终端服务未配置")
+			}
+			return requested, nil
 		}
-		if hasResolver {
-			sessionID, err := r.tabSession(ctx, requested)
+		// Handles are the stable reference form emitted by terminal_list and
+		// terminal_create. Resolving one verifies the tab still exists and
+		// still belongs to the issuing session (gone/replaced are distinct
+		// failures); it never widens scope beyond the current session or
+		// tabs this job created.
+		if strings.HasPrefix(requested, "t/") {
+			handle, err := ParseTerminalHandle(requested)
 			if err != nil {
 				return "", err
 			}
-			if sessionID != createdSessionID {
-				return "", ErrCrossScope
+			tabID, err := r.resolveHandle(ctx, handle)
+			if err != nil {
+				return "", err
 			}
+			if handle.SessionID != scope.SessionID {
+				if _, created := r.state(jobID).createdTab(tabID); !created {
+					return "", ErrCrossScope
+				}
+			}
+			if r.deps.Terminal == nil {
+				return "", errors.New("终端服务未配置")
+			}
+			return tabID, nil
 		}
-		if r.deps.Terminal == nil {
-			return "", errors.New("终端服务未配置")
-		}
-		return requested, nil
+		return "", ErrCrossScope
 	}
 	if scope.TabID == "" {
 		return "", errors.New("当前 AI 作用域没有 tabId")
@@ -568,9 +591,12 @@ func (r *Registry) commandState(ctx context.Context, tabID string) (CommandState
 
 func (r *Registry) readScreen(ctx context.Context, jobID string, scope Scope, raw []byte) Output {
 	var args struct {
-		TabID    string `json:"tab_id"`
-		SinceSeq uint64 `json:"since_seq"`
-		MaxBytes int64  `json:"max_bytes"`
+		TabID        string `json:"tab_id"`
+		SinceSeq     uint64 `json:"since_seq"`
+		MaxBytes     int64  `json:"max_bytes"`
+		Cursor       string `json:"cursor"`
+		HistoryLines int    `json:"history_lines"`
+		Unwrap       bool   `json:"unwrap"`
 	}
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
@@ -581,18 +607,42 @@ func (r *Registry) readScreen(ctx context.Context, jobID string, scope Scope, ra
 	if args.MaxBytes < 1 || args.MaxBytes > MaxOutputBytes {
 		return Fail(invalid("max_bytes 必须在 1-%d 字节之间", MaxOutputBytes))
 	}
+	if args.HistoryLines < 0 || args.HistoryLines > diffHistoryLines {
+		return Fail(invalid("history_lines 必须在 0-%d 行之间", diffHistoryLines))
+	}
+	if args.Cursor != "" && args.SinceSeq > 0 {
+		return Fail(invalid("cursor 与 since_seq 不能同时使用"))
+	}
 	tabID, err := r.resolveTab(ctx, jobID, scope, args.TabID)
 	if err != nil {
 		return Fail(err)
 	}
+	if args.HistoryLines > 0 {
+		return r.readScreenHistory(ctx, tabID, args.HistoryLines, args.Unwrap)
+	}
+	if args.Cursor != "" {
+		cursor, err := decodeScreenCursor(args.Cursor)
+		if err != nil {
+			return Fail(err)
+		}
+		if screen, snapshotErr := r.deps.Terminal.Snapshot(ctx, tabID); snapshotErr == nil &&
+			(screen.Cols != cursor.Cols || screen.Rows != cursor.Rows) {
+			return Fail(fmt.Errorf("终端已从 %dx%d resize 为 %dx%d，游标失效；请用 since_seq=%d 重新读取（原始流按新尺寸完整重放）",
+				cursor.Cols, cursor.Rows, screen.Cols, screen.Rows, cursor.Seq))
+		}
+		return r.readScreenSince(ctx, tabID, cursor.Seq, int(args.MaxBytes), args.Unwrap)
+	}
 	if args.SinceSeq > 0 {
-		return r.readScreenSince(ctx, tabID, args.SinceSeq, int(args.MaxBytes))
+		return r.readScreenSince(ctx, tabID, args.SinceSeq, int(args.MaxBytes), args.Unwrap)
 	}
 	screen, err := r.deps.Terminal.Snapshot(ctx, tabID)
 	if err != nil {
 		return Fail(err)
 	}
-	header := fmt.Sprintf("光标 (%d, %d)，空闲 %dms，屏幕序号 %d", screen.CursorRow, screen.CursorCol, screen.IdleMS, screen.Seq)
+	buffered, cursor := terminalInputOf(screen)
+	r.state(jobID).observeInput(tabID, buffered, cursor)
+	header := r.screenIdentityHeader(ctx, tabID) +
+		fmt.Sprintf("光标 (%d, %d)，空闲 %dms，屏幕序号 %d", screen.CursorRow, screen.CursorCol, screen.IdleMS, screen.Seq)
 	if screen.AltScreen {
 		header += "，AltScreen"
 	}
@@ -607,14 +657,91 @@ func (r *Registry) readScreen(ctx context.Context, jobID string, scope Scope, ra
 		}
 		header += "\n" + line
 	}
-	return OK(header + "\n" + screen.Text)
+	text := screen.Text
+	if args.Unwrap {
+		text = strings.Join(unwrapLines(strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n"), screen.Cols), "\n")
+	}
+	return OK(header + "\n" + text)
+}
+
+// screenIdentityHeader renders the per-tab identity lines (title, kind, cwd,
+// handle) when the terminal exposes them; it degrades to empty otherwise.
+func (r *Registry) screenIdentityHeader(ctx context.Context, tabID string) string {
+	detail := r.tabDetail(ctx, tabID)
+	if detail == (TabDetail{}) {
+		return ""
+	}
+	line := "终端"
+	if detail.Title != "" {
+		line += fmt.Sprintf("「%s」", detail.Title)
+	}
+	if detail.Kind != "" {
+		line += " kind=" + detail.Kind
+	}
+	if detail.CWD != "" {
+		line += fmt.Sprintf(" cwd=%q", detail.CWD)
+	}
+	if detail.SessionID != "" {
+		line += " handle=" + TerminalHandle{TabID: tabID, SessionID: detail.SessionID}.String()
+	}
+	return line + "\n"
+}
+
+// terminalInputOf extracts the observable input buffer state from a screen.
+func terminalInputOf(screen Screen) (string, int) {
+	return TerminalInputCursor(screen)
+}
+
+// readScreenHistory returns up to maxLines rendered scrollback lines
+// directly above the visible screen, replayed from a bounded raw tail
+// window. It reports the exact raw anchors of the window and the earliest
+// retained sequence, so a reader needing more can continue forward with
+// since_seq reads from earliest_seq.
+func (r *Registry) readScreenHistory(ctx context.Context, tabID string, maxLines int, unwrap bool) Output {
+	cols, rows := 80, 24
+	if screen, snapshotErr := r.deps.Terminal.Snapshot(ctx, tabID); snapshotErr == nil {
+		cols, rows = screen.Cols, screen.Rows
+	}
+	_, earliest, latest, err := r.outputSince(ctx, tabID, 0, 1)
+	if err != nil {
+		return Fail(err)
+	}
+	from := uint64(0)
+	if latest > historyScanBytes {
+		from = latest - historyScanBytes
+	}
+	data, start, windowLatest, err := r.outputSince(ctx, tabID, from, historyScanBytes)
+	if err != nil {
+		return Fail(err)
+	}
+	rendered, _ := renderOutputDiffSplit(data, cols, rows)
+	scrollback := rendered
+	if len(scrollback) > maxLines {
+		scrollback = scrollback[len(scrollback)-maxLines:]
+	}
+	evicted := start > from || earliest > 0
+	header := fmt.Sprintf("历史 %d 行（原始窗口 %d → %d，屏幕序号 %d）", len(scrollback), start, windowLatest, latest)
+	if evicted {
+		header += "；更早的输出已被淘汰"
+	}
+	header += fmt.Sprintf("；需要完整历史请用 since_seq=%d 向前翻页", earliest)
+	lines := scrollback
+	if unwrap {
+		lines = unwrapLines(lines, cols)
+	}
+	text, truncated := capText(strings.Join(lines, "\n"))
+	if truncated {
+		header += "；本页渲染已截断，用更小的 history_lines 重读"
+	}
+	return Output{OK: true, Text: header + "\n" + text, Truncated: truncated}
 }
 
 // readScreenSince returns only the output produced after the anchor sequence,
 // bounded by maxBytes. The header carries the exact continuation anchor
-// (start+len(data)) so the next page neither repeats nor skips output, plus
-// explicit expired-anchor and render-truncation recovery notes.
-func (r *Registry) readScreenSince(ctx context.Context, tabID string, sinceSeq uint64, maxBytes int) Output {
+// (start+len(data)) plus an opaque cursor bound to the current geometry, so
+// the next page neither repeats nor skips output, plus explicit
+// expired-anchor and render-truncation recovery notes.
+func (r *Registry) readScreenSince(ctx context.Context, tabID string, sinceSeq uint64, maxBytes int, unwrap bool) Output {
 	data, start, latest, err := r.outputSince(ctx, tabID, sinceSeq, maxBytes)
 	if err != nil {
 		return Fail(err)
@@ -624,6 +751,9 @@ func (r *Registry) readScreenSince(ctx context.Context, tabID string, sinceSeq u
 		cols, rows = screen.Cols, screen.Rows
 	}
 	lines := renderOutputDiff(data, cols, rows)
+	if unwrap {
+		lines = unwrapLines(lines, cols)
+	}
 	next := start + uint64(len(data))
 	header := fmt.Sprintf("新输出（序号 %d → %d，最新 %d）", start, next, latest)
 	if start > sinceSeq {
@@ -632,6 +762,9 @@ func (r *Registry) readScreenSince(ctx context.Context, tabID string, sinceSeq u
 	more := next < latest
 	if more {
 		header += fmt.Sprintf("；还有未读输出，下一页 since_seq=%d", next)
+		if cursor := encodeScreenCursor(screenCursor{Version: 1, Kind: "raw", Seq: next, Cols: cols, Rows: rows}); cursor != "" {
+			header += " 或 cursor=" + cursor
+		}
 	}
 	text, truncated := capText(strings.Join(lines, "\n"))
 	if truncated {
@@ -640,19 +773,42 @@ func (r *Registry) readScreenSince(ctx context.Context, tabID string, sinceSeq u
 	return Output{OK: true, Text: header + "\n" + text, Truncated: truncated || more}
 }
 
-func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, raw []byte) Output {
-	var args struct {
-		Keys   string `json:"keys"`
-		Enter  bool   `json:"enter"`
-		WaitMS int    `json:"wait_ms"`
-		TabID  string `json:"tab_id"`
-		Paste  bool   `json:"paste"`
-	}
-	if err := decode(raw, &args); err != nil {
+const (
+	defaultSubmitDelayMS = 150
+	maxSubmitDelayMS     = 10_000
+)
+
+// sendKeysArgs is the decoded argument set of send_keys, shared between the
+// tool handler and the post-write input-baseline refresh.
+type sendKeysArgs struct {
+	Keys          string `json:"keys"`
+	Enter         bool   `json:"enter"`
+	WaitMS        int    `json:"wait_ms"`
+	TabID         string `json:"tab_id"`
+	Paste         bool   `json:"paste"`
+	SubmitDelayMS int    `json:"submit_delay_ms"`
+	Force         bool   `json:"force"`
+	AllowControl  bool   `json:"allow_control"`
+}
+
+func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, call Call) Output {
+	var args sendKeysArgs
+	if err := decode(call.Args, &args); err != nil {
 		return Fail(err)
 	}
 	if args.WaitMS < 0 || args.WaitMS > maxSendKeysWaitMS {
 		return Fail(invalid("wait_ms 必须在 0-%d 毫秒之间", maxSendKeysWaitMS))
+	}
+	if args.SubmitDelayMS < 0 || args.SubmitDelayMS > maxSubmitDelayMS {
+		return Fail(invalid("submit_delay_ms 必须在 0-%d 毫秒之间", maxSubmitDelayMS))
+	}
+	if args.SubmitDelayMS > 0 && !args.Paste {
+		return Fail(invalid("submit_delay_ms 仅用于 paste 提交（paste=true 且 enter=true）"))
+	}
+	if args.Paste {
+		if err := validatePasteText(args.Keys, args.AllowControl); err != nil {
+			return Fail(err)
+		}
 	}
 	tabID, err := r.resolveTab(ctx, jobID, scope, args.TabID)
 	if err != nil {
@@ -665,36 +821,50 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, raw 
 			return Fail(err)
 		}
 	}
+	// User-input arbitration: refuse to write when the input buffer changed
+	// after this job last observed it, unless the call forces through with
+	// full knowledge. A failed snapshot degrades to an explicit note instead
+	// of silently skipping the check.
+	arbitrationNote := ""
+	buffered, cursor := "", 0
+	screen, snapshotErr := r.deps.Terminal.Snapshot(ctx, tabID)
+	if snapshotErr != nil {
+		arbitrationNote = "；终端输入状态无法校验（快照失败），已直接写入"
+	} else {
+		buffered, cursor = TerminalInputCursor(screen)
+		if changed, observed := r.state(jobID).inputChanged(tabID, buffered, cursor); observed && changed {
+			if !args.Force {
+				return Fail(ErrUserInputPending)
+			}
+			arbitrationNote = "；force=true：已在知晓终端新输入的情况下写入"
+		}
+	}
 	before, err := r.commandState(ctx, tabID)
 	if err != nil {
 		return Fail(err)
 	}
+	sameLockSubmit := true
 	if args.Paste {
-		terminal, ok := r.deps.Terminal.(PasteTerminal)
-		if !ok {
-			return Fail(errors.New("该终端不支持原子 paste 写入"))
+		delay := time.Duration(defaultSubmitDelayMS) * time.Millisecond
+		if args.SubmitDelayMS > 0 {
+			delay = time.Duration(args.SubmitDelayMS) * time.Millisecond
 		}
-		if err := terminal.WritePaste(ctx, tabID, args.Keys); err != nil {
-			return Fail(err)
+		if submitter, ok := r.deps.Terminal.(PasteSubmitTerminal); ok {
+			err = submitter.WritePasteSubmit(ctx, tabID, args.Keys, args.Enter, delay)
+		} else {
+			sameLockSubmit = false
+			err = r.writePasteSplit(ctx, tabID, args.Keys, args.Enter, delay)
 		}
-	} else if err := r.deps.Terminal.Write(ctx, tabID, encoded); err != nil {
-		return Fail(err)
+	} else {
+		err = r.deps.Terminal.Write(ctx, tabID, encoded)
 	}
-	if args.Paste && args.Enter {
-		timer := time.NewTimer(150 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			_ = timer.Stop()
-			return Fail(fmt.Errorf("paste 块已写入，Enter 未发送；请检查屏幕且不要盲重发: %w", ctx.Err()))
-		case <-timer.C:
-		}
-		if err := r.deps.Terminal.Write(ctx, tabID, []byte("\r")); err != nil {
-			return Fail(fmt.Errorf("paste 块已写入，但 Enter 发送失败；请检查屏幕且不要盲重发: %w", err))
-		}
+	if err != nil {
+		return Fail(err)
 	}
 	if r.deps.Audit != nil {
 		_ = r.deps.Audit(context.WithoutCancel(ctx), AuditEntry{SessionID: scope.SessionID, AssetID: scope.AssetID, Kind: "takeover", Payload: map[string]any{"keys": "<redacted>", "enter": args.Enter, "paste": args.Paste, "tab": tabID}})
 	}
+	r.observePostWriteInput(jobID, tabID, buffered, cursor, args, encoded)
 	var proofScreen Screen
 	var proofErr error
 	if args.Paste {
@@ -710,8 +880,72 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, raw 
 	}
 	if args.Paste {
 		result = withSubmissionProof(proofScreen, proofErr, result)
+		if note := pasteLiteralNote(args.Keys); note != "" {
+			result.Text += note
+			result.Notes += note
+		}
 	}
+	if !sameLockSubmit && args.Paste && args.Enter {
+		result.Notes += "; paste and Enter were written as separate writes (terminal lacks the combined paste-submit lock); user input could interleave between them"
+		result.Text += "；paste 与 Enter 为分次写入，之间可能插入用户输入"
+	}
+	result.Notes += arbitrationNote
+	result.Text += arbitrationNote
+	result.OperationID = operationID(jobID, call.ID, "send_keys")
 	return result
+}
+
+// writePasteSplit is the fallback when the terminal cannot hold one write
+// lock across the paste block, the submit delay, and the Enter key. The
+// intermediate failure states are reported explicitly so the caller never
+// blindly retries a partially submitted paste.
+func (r *Registry) writePasteSplit(ctx context.Context, tabID, text string, enter bool, delay time.Duration) error {
+	terminal, ok := r.deps.Terminal.(PasteTerminal)
+	if !ok {
+		return errors.New("该终端不支持原子 paste 写入")
+	}
+	if err := terminal.WritePaste(ctx, tabID, text); err != nil {
+		return err
+	}
+	if !enter {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	select {
+	case <-ctx.Done():
+		_ = timer.Stop()
+		return fmt.Errorf("paste 块已写入，Enter 未发送；请检查屏幕且不要盲重发: %w", ctx.Err())
+	case <-timer.C:
+	}
+	if err := r.deps.Terminal.Write(ctx, tabID, []byte("\r")); err != nil {
+		return fmt.Errorf("paste 块已写入，但 Enter 发送失败；请检查屏幕且不要盲重发: %w", err)
+	}
+	return nil
+}
+
+// observePostWriteInput refreshes the job's input baseline after its own
+// write: deterministic text/paste writes predict the resulting buffer, and
+// unpredictable control keys fall back to the live post-write screen so new
+// user input still trips the next arbitration check.
+func (r *Registry) observePostWriteInput(jobID, tabID, buffered string, cursor int, args sendKeysArgs, encoded []byte) {
+	state := r.state(jobID)
+	if args.Paste {
+		if args.Enter {
+			state.observeInput(tabID, "", 0)
+			return
+		}
+		if predicted, predictedCursor, ok := predictedInput(buffered, cursor, []byte(args.Keys)); ok {
+			state.observeInput(tabID, predicted, predictedCursor)
+			return
+		}
+	} else if predicted, predictedCursor, ok := predictedInput(buffered, cursor, encoded); ok {
+		state.observeInput(tabID, predicted, predictedCursor)
+		return
+	}
+	if screen, err := r.deps.Terminal.Snapshot(context.Background(), tabID); err == nil {
+		observed, observedCursor := TerminalInputCursor(screen)
+		state.observeInput(tabID, observed, observedCursor)
+	}
 }
 
 func withSubmissionProof(screen Screen, snapshotErr error, result Output) Output {
@@ -739,17 +973,19 @@ func screenAnchorSuffix(ctx context.Context, terminal Terminal, tabID string) st
 	return fmt.Sprintf("（屏幕序号 %d）", screen.Seq)
 }
 
-func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope, raw []byte) Output {
+func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope, call Call) Output {
 	var args struct {
 		Title      string `json:"title"`
 		Command    string `json:"command"`
 		Background bool   `json:"background"`
 		AssetID    string `json:"asset_id"`
+		Connect    bool   `json:"connect"`
 	}
-	if err := decode(raw, &args); err != nil {
+	if err := decode(call.Args, &args); err != nil {
 		return Fail(err)
 	}
 	sessionID := scope.SessionID
+	connected := false
 	if args.AssetID != "" {
 		if strings.TrimSpace(args.AssetID) != args.AssetID {
 			return Fail(invalid("asset_id 不能包含首尾空白"))
@@ -759,9 +995,25 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 		}
 		resolved, err := r.deps.ResolveAssetSession(ctx, args.AssetID)
 		if err != nil {
-			return Fail(err)
+			// Connecting is an uncertain mutation that leaves a residual
+			// session behind, so it only happens on explicit opt-in and its
+			// failure stages stay visible instead of masking the resolve
+			// error.
+			if !args.Connect {
+				return Fail(err)
+			}
+			if r.deps.AssetConnector == nil {
+				return Fail(fmt.Errorf("解析资产会话失败: %v；未配置资产连接建立（connect=true 需要环境支持）", err))
+			}
+			connectedID, connectErr := r.deps.AssetConnector.ConnectAsset(ctx, args.AssetID)
+			if connectErr != nil {
+				return Fail(fmt.Errorf("解析资产会话失败: %v；建立新连接失败: %w", err, connectErr))
+			}
+			sessionID = connectedID
+			connected = true
+		} else {
+			sessionID = resolved
 		}
-		sessionID = resolved
 	}
 	if sessionID == "" {
 		return Fail(errors.New("当前 AI 作用域没有 sessionId"))
@@ -772,23 +1024,33 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 	}
 	created, err := terminal.Create(ctx, sessionID, CreateTerminalOptions{Title: args.Title, Command: args.Command})
 	if err != nil {
+		if connected {
+			return Fail(fmt.Errorf("标签页创建失败: %w；已建立的连接 session_id=%s 作为残留资源保留（未自动清理，可重试创建或手动断开）", err, sessionID))
+		}
 		return Fail(err)
 	}
 	r.state(jobID).rememberCreatedTab(created.TabID, sessionID)
+	handle := TerminalHandle{TabID: created.TabID, SessionID: sessionID}.String()
 	detail := fmt.Sprintf("tab_id=%s", created.TabID)
 	if args.AssetID != "" {
 		detail += fmt.Sprintf("，asset_id=%s", args.AssetID)
 	}
+	if connected {
+		detail += fmt.Sprintf("，已建立新连接 session_id=%s", sessionID)
+	}
 	if created.Title != "" {
 		detail += fmt.Sprintf("，标题「%s」", created.Title)
 	}
+	detail += "，handle=" + handle
 	if args.Command != "" {
 		detail += "，启动命令已发送"
 	}
+	operation := operationID(jobID, call.ID, "terminal_create")
 	if args.Background {
-		return OK(fmt.Sprintf("已在后台创建分离终端（%s），AI 可在其中工作，用户可在「后台会话」中接管", detail))
+		return Output{OK: true, Text: fmt.Sprintf("已在后台创建分离终端（%s），AI 可在其中工作，用户可在「后台会话」中接管", detail), OperationID: operation}
 	}
-	return Output{OK: true, Text: fmt.Sprintf("已创建并在前台展示终端标签页（%s），AI 正在其中工作，用户可随时接管输入", detail), Terminal: &CreatedTerminal{TabID: created.TabID, SessionID: sessionID, Title: created.Title}}
+	return Output{OK: true, Text: fmt.Sprintf("已创建并在前台展示终端标签页（%s），AI 正在其中工作，用户可随时接管输入", detail), OperationID: operation,
+		Terminal: &CreatedTerminal{TabID: created.TabID, SessionID: sessionID, Title: created.Title, Handle: handle}}
 }
 
 func (r *Registry) terminalRename(ctx context.Context, jobID string, scope Scope, raw []byte) Output {
@@ -926,11 +1188,14 @@ func tailText(screen Screen, maxLines int) string {
 
 func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw []byte, maximumSeconds int) Output {
 	var args struct {
-		Pattern   *string `json:"pattern"`
-		TimeoutMS int64   `json:"timeout_ms"`
-		SinceSeq  uint64  `json:"since_seq"`
-		TabID     string  `json:"tab_id"`
-		QuietMS   int64   `json:"quiet_ms"`
+		Pattern   *string  `json:"pattern"`
+		TimeoutMS int64    `json:"timeout_ms"`
+		SinceSeq  uint64   `json:"since_seq"`
+		TabID     string   `json:"tab_id"`
+		QuietMS   int64    `json:"quiet_ms"`
+		TabIDs    []string `json:"tab_ids"`
+		Mode      string   `json:"mode"`
+		Lines     int      `json:"lines"`
 	}
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
@@ -944,8 +1209,21 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 	if args.QuietMS < 0 || args.QuietMS > int64(maximumSeconds)*1000 {
 		return Fail(invalid("quiet_ms 超出 0-%d 毫秒范围", maximumSeconds*1000))
 	}
-	if args.Pattern == nil && args.QuietMS == 0 {
-		return Fail(invalid("pattern 不能为空；仅 quiet_ms 大于 0 时可以省略"))
+	if args.Lines < 0 || args.Lines > maxWaitLines {
+		return Fail(invalid("lines 必须在 0-%d 之间", maxWaitLines))
+	}
+	if args.Mode != "" && args.Mode != "any" && args.Mode != "all" {
+		return Fail(invalid("mode 必须为 any 或 all"))
+	}
+	if args.Pattern == nil && args.QuietMS == 0 && args.Lines == 0 {
+		return Fail(invalid("pattern 不能为空；仅 quiet_ms 大于 0 或 lines 大于 0 时可以省略"))
+	}
+	if args.TabID != "" && len(args.TabIDs) > 0 {
+		return Fail(invalid("tab_id 与 tab_ids 不能同时使用"))
+	}
+	if len(args.TabIDs) == 1 {
+		args.TabID = args.TabIDs[0]
+		args.TabIDs = nil
 	}
 	pattern := ""
 	if args.Pattern != nil {
@@ -954,6 +1232,23 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 	regex, err := regexp.Compile(pattern)
 	if err != nil {
 		return Fail(invalid("正则无效: %v", err))
+	}
+	if args.Lines > 0 || len(args.TabIDs) > 1 {
+		mode := args.Mode
+		if mode == "" {
+			mode = "all"
+		}
+		tabIDs := args.TabIDs
+		if len(tabIDs) == 0 {
+			tabIDs = []string{args.TabID}
+		}
+		waitContext, cancel := context.WithTimeout(ctx, time.Duration(args.TimeoutMS)*time.Millisecond)
+		defer cancel()
+		var matcher *regexp.Regexp
+		if pattern != "" {
+			matcher = regex
+		}
+		return r.waitForTabs(waitContext, jobID, scope, tabIDs, matcher, pattern, args.Lines, args.QuietMS, mode, args.SinceSeq)
 	}
 	tabID, err := r.resolveTab(ctx, jobID, scope, args.TabID)
 	if err != nil {
@@ -984,7 +1279,11 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 			tail = tail[len(tail)-30:]
 		}
 		if regex.MatchString(strings.Join(tail, "\n")) && (args.QuietMS == 0 || screen.IdleMS >= args.QuietMS) {
-			return OK(waitSatisfiedText(pattern, screen.IdleMS, args.QuietMS))
+			output := OK(waitSatisfiedText(pattern, screen.IdleMS, args.QuietMS))
+			output.Wait = &WaitOutcome{Mode: "single", Satisfied: true, Tabs: []WaitTabOutcome{{
+				TabID: tabID, Matched: true, IdleMS: screen.IdleMS, ToSeq: screen.Seq, Note: "匹配自可见屏幕尾部，无输出锚点",
+			}}}
+			return output
 		}
 		select {
 		case <-waitContext.Done():
@@ -994,7 +1293,10 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 			if len(tail) > 10 {
 				tail = tail[len(tail)-10:]
 			}
-			return Output{Text: "等待超时，最近输出：\n" + strings.Join(tail, "\n"), ExitCode: 1}
+			return Output{Text: "等待超时，最近输出：\n" + strings.Join(tail, "\n"), ExitCode: 1,
+				Wait: &WaitOutcome{Mode: "single", TimedOut: true, Tabs: []WaitTabOutcome{{
+					TabID: tabID, IdleMS: screen.IdleMS, ToSeq: screen.Seq, Note: "匹配自可见屏幕尾部，无输出锚点",
+				}}}}
 		case <-ticker.C:
 		}
 	}
@@ -1034,11 +1336,13 @@ func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, r
 	var recent []string
 	gap := false
 	matched := false
+	toSeq := sinceSeq
 	for {
 		data, start, latest, err := r.outputSince(waitContext, tabID, scanPos, waitScanBytes)
 		if err != nil {
 			return Fail(err)
 		}
+		toSeq = latest
 		if start > scanPos {
 			gap = true
 		}
@@ -1046,7 +1350,11 @@ func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, r
 		rendered := renderOutputDiff(window, cols, rows)
 		matched = matched || regex.MatchString(strings.Join(rendered, "\n"))
 		if matched && quietMS == 0 {
-			return OK(fmt.Sprintf("模式已出现（新输出，屏幕序号 %d）", latest))
+			output := OK(fmt.Sprintf("模式已出现（新输出，屏幕序号 %d）", latest))
+			output.Wait = &WaitOutcome{Mode: "single", Satisfied: true, Tabs: []WaitTabOutcome{{
+				TabID: tabID, Matched: true, FromSeq: sinceSeq, ToSeq: latest,
+			}}}
+			return output
 		}
 		if matched && quietMS > 0 {
 			screen, snapshotErr := r.waitSnapshot(waitContext, tabID, quietMS > 0)
@@ -1054,7 +1362,11 @@ func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, r
 				return Fail(snapshotErr)
 			}
 			if screen.IdleMS >= quietMS {
-				return OK(fmt.Sprintf("%s（新输出，屏幕序号 %d）", waitSatisfiedText(regex.String(), screen.IdleMS, quietMS), latest))
+				output := OK(fmt.Sprintf("%s（新输出，屏幕序号 %d）", waitSatisfiedText(regex.String(), screen.IdleMS, quietMS), latest))
+				output.Wait = &WaitOutcome{Mode: "single", Satisfied: true, Tabs: []WaitTabOutcome{{
+					TabID: tabID, Matched: true, IdleMS: screen.IdleMS, FromSeq: sinceSeq, ToSeq: latest,
+				}}}
+				return output
 			}
 		}
 		if len(data) > 0 {
@@ -1077,7 +1389,14 @@ func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, r
 				if gap {
 					text += "（部分输出已被淘汰）"
 				}
-				return Output{Text: text + "：\n" + strings.Join(shown, "\n"), ExitCode: 1}
+				note := ""
+				if gap {
+					note = "部分输出已被淘汰"
+				}
+				return Output{Text: text + "：\n" + strings.Join(shown, "\n"), ExitCode: 1,
+					Wait: &WaitOutcome{Mode: "single", TimedOut: true, Tabs: []WaitTabOutcome{{
+						TabID: tabID, FromSeq: sinceSeq, ToSeq: toSeq, Note: note,
+					}}}}
 			}
 			return Fail(waitContext.Err())
 		case <-ticker.C:

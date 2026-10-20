@@ -66,6 +66,9 @@ func WithSession(deps Dependencies, manager *session.Manager, storage *store.Sto
 		return brief, nil
 	}
 	deps.Screen = terminal.Snapshot
+	if detail, ok := terminal.(tools.TabDetailTerminal); ok {
+		deps.TabDetail = detail.TabDetail
+	}
 	deps.Tail = func(ctx context.Context, tabID string, count int) ([]string, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err

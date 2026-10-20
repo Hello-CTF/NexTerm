@@ -26,6 +26,16 @@ type jobState struct {
 	todos        []TodoItem
 	plan         string
 	createdTabs  map[string]string
+	lastInput    map[string]terminalInputState
+}
+
+// terminalInputState is the terminal input buffer the job last observed via
+// read_screen. send_keys refuses to write when the live buffer no longer
+// matches this baseline — new user input arrived after the AI last looked —
+// unless the call forces through with full knowledge.
+type terminalInputState struct {
+	buffered string
+	cursor   int
 }
 
 func newJobState() *jobState {
@@ -86,6 +96,31 @@ func (s *jobState) createdTab(tabID string) (string, bool) {
 	defer s.mu.Unlock()
 	sessionID, ok := s.createdTabs[tabID]
 	return sessionID, ok
+}
+
+// observeInput records the terminal input buffer the job actually saw, so
+// later writes can detect new user input. Only read_screen and post-write
+// snapshots call this: wait tails never surface the input buffer to the
+// model, so they must not refresh the baseline.
+func (s *jobState) observeInput(tabID, buffered string, cursor int) {
+	s.mu.Lock()
+	if s.lastInput == nil {
+		s.lastInput = make(map[string]terminalInputState)
+	}
+	s.lastInput[tabID] = terminalInputState{buffered: buffered, cursor: cursor}
+	s.mu.Unlock()
+}
+
+// inputChanged reports whether the live terminal input differs from the
+// baseline this job observed, and whether a baseline exists at all.
+func (s *jobState) inputChanged(tabID, buffered string, cursor int) (changed bool, observed bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	baseline, ok := s.lastInput[tabID]
+	if !ok {
+		return false, false
+	}
+	return baseline.buffered != buffered || baseline.cursor != cursor, true
 }
 
 func targetKey(scope Scope, name string) string {

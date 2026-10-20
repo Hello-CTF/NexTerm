@@ -124,6 +124,59 @@ func (s *sessionTerminal) Rename(ctx context.Context, tabID, title string) error
 	return err
 }
 
+// ListTerminalTabs enumerates the tabs visible to the caller with the exact
+// handle each is addressed by; the asset kind is resolved server-side so
+// privacy decisions never depend on client-supplied fields.
+func (s *sessionTerminal) ListTerminalTabs(ctx context.Context) ([]TerminalBrief, error) {
+	ctx = sessionRequestContext(ctx)
+	infos, err := s.manager.ListTabsFor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	briefs := make([]TerminalBrief, 0, len(infos))
+	for _, info := range infos {
+		brief := TerminalBrief{
+			Handle:    TerminalHandle{TabID: info.ID, SessionID: info.SessionID}.String(),
+			TabID:     info.ID,
+			SessionID: info.SessionID,
+			Title:     info.Title,
+			CWD:       info.Cwd,
+			Durable:   info.Durable,
+			Exited:    info.Exited,
+		}
+		if session, err := s.manager.SessionFor(ctx, info.SessionID); err == nil {
+			asset := session.Asset()
+			brief.AssetID = asset.ID
+			brief.Kind = asset.Kind
+		}
+		briefs = append(briefs, brief)
+	}
+	return briefs, nil
+}
+
+// TabDetail reports the per-tab identity (kind, OSC title, shell-reported
+// cwd, lifecycle state) surfaced by read_screen headers.
+func (s *sessionTerminal) TabDetail(ctx context.Context, tabID string) (TabDetail, error) {
+	ctx = sessionRequestContext(ctx)
+	tab, err := s.manager.TabFor(ctx, tabID)
+	if err != nil {
+		return TabDetail{}, err
+	}
+	info := tab.Info()
+	detail := TabDetail{
+		TabID:     info.ID,
+		SessionID: info.SessionID,
+		Title:     info.Title,
+		CWD:       info.Cwd,
+		Exited:    info.Exited,
+		Durable:   info.Durable,
+	}
+	if session, err := s.manager.SessionFor(ctx, info.SessionID); err == nil {
+		detail.Kind = session.Asset().Kind
+	}
+	return detail, nil
+}
+
 func WithSession(deps Dependencies, manager *session.Manager) Dependencies {
 	deps.Transport = func(ctx context.Context, sessionID string) (base.Transport, error) {
 		return manager.TransportFor(sessionRequestContext(ctx), sessionID)

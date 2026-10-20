@@ -32,6 +32,19 @@ var (
 	ErrTerminalInputChanged = errors.New("终端输入在确认后已变化，请重新评估")
 	ErrQuestionRequired     = errors.New("需要用户回答")
 	ErrDockerUnavailable    = errors.New("Docker 服务未配置")
+	// ErrTerminalGone marks a handle whose tab no longer exists; the absence
+	// was verified against the live tab set, so the terminal is gone rather
+	// than merely unreachable.
+	ErrTerminalGone = errors.New("句柄对应的终端标签页已不存在")
+	// ErrTerminalReplaced marks a handle whose tab ID now belongs to a
+	// different session: the exact identity the handle was issued for no
+	// longer matches, so the handle must not be resolved to the new tab.
+	ErrTerminalReplaced = errors.New("句柄对应的终端标签页已被替换（会话身份不一致）")
+	// ErrUserInputPending marks a write refused because the terminal input
+	// buffer changed after the job last observed it: new user input is
+	// present and must be looked at (read_screen) or explicitly forced
+	// through, never silently overwritten.
+	ErrUserInputPending = errors.New("终端存在自上次查看以来的新输入（可能是用户输入）；请先 read_screen 查看，确认后再发送，或用 force=true 强制发送")
 )
 
 type Scope struct {
@@ -79,6 +92,13 @@ type Output struct {
 	Plan        string           `json:"plan,omitempty"`
 	Question    *Question        `json:"question,omitempty"`
 	Terminal    *CreatedTerminal `json:"terminal,omitempty"`
+	// OperationID identifies an uncertain mutation (tab creation with asset
+	// connection, paste submission) so a later call can reference the exact
+	// operation when querying its result. It is deterministic per
+	// job/call/tool and never implies exactly-once execution.
+	OperationID string          `json:"operation_id,omitempty"`
+	Wait        *WaitOutcome    `json:"wait,omitempty"`
+	Terminals   []TerminalBrief `json:"terminals,omitempty"`
 }
 
 type ExecBatchProductionChallenge struct {
@@ -92,6 +112,59 @@ type CreatedTerminal struct {
 	TabID     string `json:"tabId"`
 	SessionID string `json:"sessionId"`
 	Title     string `json:"title,omitempty"`
+	Handle    string `json:"handle,omitempty"`
+}
+
+// TerminalBrief is one open terminal tab as listed by terminal_list.
+type TerminalBrief struct {
+	Handle    string `json:"handle"`
+	TabID     string `json:"tab_id"`
+	SessionID string `json:"session_id"`
+	AssetID   string `json:"asset_id,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	Title     string `json:"title,omitempty"`
+	CWD       string `json:"cwd,omitempty"`
+	Durable   bool   `json:"durable,omitempty"`
+	Exited    bool   `json:"exited,omitempty"`
+}
+
+// TabDetail carries the per-tab identity and state surfaced by read_screen
+// and context injection: kind, OSC title, shell-reported cwd, and the exact
+// handle reference.
+type TabDetail struct {
+	TabID     string
+	SessionID string
+	Title     string
+	CWD       string
+	Kind      string
+	Exited    bool
+	Durable   bool
+}
+
+// WaitTabOutcome is the per-tab result metadata of a wait_for call. Done
+// means the wait condition was satisfied; Idle means the tab went quiet
+// without satisfying it; Running reflects the OSC 133 command state. FromSeq
+// and ToSeq are the exact output anchors the wait scanned, so a follow-up
+// since_seq read neither repeats nor skips output.
+type WaitTabOutcome struct {
+	TabID    string `json:"tab_id"`
+	Matched  bool   `json:"matched"`
+	Running  bool   `json:"running,omitempty"`
+	IdleMS   int64  `json:"idle_ms"`
+	NewLines int    `json:"new_lines"`
+	FromSeq  uint64 `json:"from_seq"`
+	ToSeq    uint64 `json:"to_seq"`
+	Note     string `json:"note,omitempty"`
+}
+
+// WaitOutcome is the structured result of wait_for: which tabs satisfied the
+// condition, whether the wait ended satisfied or timed out, and the mode it
+// ran under.
+type WaitOutcome struct {
+	Mode      string           `json:"mode"`
+	Satisfied bool             `json:"satisfied"`
+	TimedOut  bool             `json:"timed_out"`
+	Tabs      []WaitTabOutcome `json:"tabs"`
 }
 
 func OK(text string) Output {
@@ -241,6 +314,38 @@ type AssetKindTerminal interface {
 	SessionAssetKind(context.Context, string) (string, error)
 }
 
+// ListTabsTerminal is the optional Terminal extension enumerating the open
+// terminal tabs visible to the caller. Terminals without tab management do
+// not implement it, and terminal_list stays disabled.
+type ListTabsTerminal interface {
+	ListTerminalTabs(context.Context) ([]TerminalBrief, error)
+}
+
+// TabDetailTerminal is the optional Terminal extension reporting per-tab
+// identity and state (kind, OSC title, shell-reported cwd). Terminals
+// without it simply omit the detail lines from read_screen output.
+type TabDetailTerminal interface {
+	TabDetail(context.Context, string) (TabDetail, error)
+}
+
+// PasteSubmitTerminal is the optional Terminal extension that writes a paste
+// block and, after the requested submit delay, the Enter key under one and
+// the same terminal write lock, so user input can never interleave between
+// the paste and the submission. Terminals that cannot hold the lock across
+// both writes do not implement it; send_keys then falls back to separate
+// writes and says so explicitly in the result notes.
+type PasteSubmitTerminal interface {
+	WritePasteSubmit(ctx context.Context, tabID, text string, submit bool, delay time.Duration) error
+}
+
+// AssetConnector is the optional dependency that connects an asset and
+// returns the live session ID. Connecting is an uncertain mutation: the
+// implementation reports the session it created so failures after a
+// successful connect can name the residual session instead of hiding it.
+type AssetConnector interface {
+	ConnectAsset(ctx context.Context, assetID string) (sessionID string, err error)
+}
+
 type Database interface {
 	Tables(context.Context, string, string) ([]string, error)
 	Describe(context.Context, string, string, string) (db.TableDescribe, error)
@@ -260,6 +365,7 @@ type Dependencies struct {
 	ResolveAssetSession func(context.Context, string) (string, error)
 	ResolveExecTargets  func(context.Context, []string, []string) (ExecTargetSet, error)
 	ExecBatch           func(context.Context, execbatch.Request) (execbatch.Batch, error)
+	AssetConnector      AssetConnector
 	Database            Database
 	ListAssets          func(context.Context) ([]Asset, error)
 	DockerPS            func(context.Context, string) ([]Container, error)

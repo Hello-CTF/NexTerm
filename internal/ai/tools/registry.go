@@ -29,7 +29,7 @@ func NewRegistry(deps Dependencies) *Registry {
 
 func PlanAllowed(name string) bool {
 	switch name {
-	case "read_file", "list_dir", "search_files", "read_screen", "wait_for", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode", NotifyTool:
+	case "read_file", "list_dir", "search_files", "read_screen", "wait_for", "terminal_list", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode", NotifyTool:
 		return true
 	default:
 		return false
@@ -336,11 +336,13 @@ func (r *Registry) executeTool(ctx context.Context, jobID string, scope Scope, c
 	case "read_screen":
 		return r.readScreen(ctx, jobID, scope, call.Args)
 	case "send_keys":
-		return r.sendKeys(ctx, jobID, scope, call.Args)
+		return r.sendKeys(ctx, jobID, scope, call)
 	case "terminal_create":
-		return r.terminalCreate(ctx, jobID, scope, call.Args)
+		return r.terminalCreate(ctx, jobID, scope, call)
 	case "terminal_rename":
 		return r.terminalRename(ctx, jobID, scope, call.Args)
+	case "terminal_list":
+		return r.terminalList(ctx, scope, call.Args)
 	case "wait_for":
 		return r.waitFor(ctx, jobID, scope, call.Args, 120)
 	case "shell_history":
