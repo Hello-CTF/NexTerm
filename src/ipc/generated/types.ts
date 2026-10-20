@@ -417,6 +417,7 @@ export type InventoryTargetExecRequest = {
   container?: string;
   command: string[];
   sessionId?: string;
+  operationId: string;
   confirmation?: DockerProductionConfirmation | null;
 };
 

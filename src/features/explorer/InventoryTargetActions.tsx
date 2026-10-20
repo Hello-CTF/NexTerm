@@ -75,6 +75,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
   const [cancelled, setCancelled] = useState(false);
   const generationRef = useRef(0);
   const ignoredGenRef = useRef<number | null>(null);
+  const operationIdRef = useRef<string>("");
 
   useEffect(() => {
     generationRef.current++;
@@ -115,6 +116,10 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
     setBusy(true);
     setResult(null);
     setFailure(null);
+    // Each launch freezes a fresh, caller-generated operation identity;
+    // retry gets a new one, and cancel addresses exactly this instance.
+    const operationId = globalThis.crypto.randomUUID();
+    operationIdRef.current = operationId;
     try {
       const response = await inventoryTargetApi.execTarget({
         kind,
@@ -123,6 +128,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
         container: resolvedContainer === "" ? undefined : resolvedContainer,
         command: argv,
         sessionId: sessionId === "" ? undefined : sessionId,
+        operationId,
         confirmation,
       });
       if (generation !== generationRef.current) {
@@ -173,7 +179,8 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
 
   // Real cancellation: the backend kills the in-flight command, so retry
   // is safe once the cancelled contract settles. This is distinct from
-  // ignoring a result, which leaves the command running.
+  // ignoring a result, which leaves the command running. The cancel
+  // addresses the frozen launch identity, not editable current input.
   const cancelExecution = async () => {
     if (!busy) return;
     const argv = command.trim() ? command.trim().split(/\s+/) : [];
@@ -185,6 +192,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
         container: container.trim() === "" ? undefined : container.trim(),
         command: argv,
         sessionId: sessionId === "" ? undefined : sessionId,
+        operationId: operationIdRef.current,
       });
     } catch {
       // the exec request itself reports the cancellation outcome

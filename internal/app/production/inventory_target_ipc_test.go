@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 )
 
 type recordingInventoryRunner struct {
+	mu      sync.Mutex
 	calls   [][]string
 	outputs map[string][]byte
 	errors  map[string]error
@@ -26,7 +28,9 @@ type recordingInventoryRunner struct {
 }
 
 func (r *recordingInventoryRunner) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
+	r.mu.Lock()
 	r.calls = append(r.calls, append([]string{name}, args...))
+	r.mu.Unlock()
 	if r.started != nil {
 		select {
 		case r.started <- struct{}{}:
@@ -42,6 +46,18 @@ func (r *recordingInventoryRunner) Output(ctx context.Context, name string, args
 		return nil, err
 	}
 	return r.outputs[key], nil
+}
+
+func (r *recordingInventoryRunner) callCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.calls)
+}
+
+func (r *recordingInventoryRunner) callSnapshot() [][]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([][]string(nil), r.calls...)
 }
 
 func kubernetesDiscoveryOutputs() map[string][]byte {
@@ -124,9 +140,10 @@ func inventoryDockerExecRequest() inventoryTargetExecRequest {
 		Target: map[string]any{
 			"type": "context", "name": "prod", "dockerEndpoint": "ssh://ops@prod.example",
 		},
-		Action:    "exec",
-		Container: "web",
-		Command:   []string{"uname", "-a"},
+		Action:      "exec",
+		Container:   "web",
+		Command:     []string{"uname", "-a"},
+		OperationID: "op-exec-1",
 	}
 }
 
@@ -136,9 +153,19 @@ func inventoryKubernetesExecRequest() inventoryTargetExecRequest {
 		Target: map[string]any{
 			"type": "pod", "context": "staging", "namespace": "ops", "pod": "api-0", "container": "app",
 		},
-		Action:  "exec",
-		Command: []string{"uname", "-a"},
+		Action:      "exec",
+		Command:     []string{"uname", "-a"},
+		OperationID: "op-exec-1",
 	}
+}
+
+func inventoryCancelRequest(operationID string) inventoryTargetExecRequest {
+	return inventoryTargetExecRequest{Action: "cancel", OperationID: operationID}
+}
+
+func inventoryCancelFor(request inventoryTargetExecRequest) inventoryTargetExecRequest {
+	request.Action = "cancel"
+	return request
 }
 
 func importDockerContext(t *testing.T, dispatcher *ipc.Dispatcher, ctx context.Context, runner *recordingInventoryRunner) {
@@ -165,7 +192,7 @@ func TestInventoryServerKubernetesDiscoveryRequiresAuthorization(t *testing.T) {
 	ctx := ipc.WithUserID(context.Background(), "owner-a")
 	response := dispatchInventoryTest(t, denied, ctx, "inventory_discover", inventoryDiscoverRequest{Source: store.InventorySourceKubernetes}, nil)
 	requireInventoryIPCError(t, response, ipc.CodeForbidden)
-	if len(runner.calls) != 0 {
+	if runner.callCount() != 0 {
 		t.Fatalf("denied discovery ran commands: %+v", runner.calls)
 	}
 
@@ -206,7 +233,7 @@ func TestInventoryTargetExecDockerDesktopRunsAllowlistedExec(t *testing.T) {
 		t.Fatalf("output = %q", result.Output)
 	}
 	want := []string{"docker", "--context", "prod", "exec", "web", "uname", "-a"}
-	if len(runner.calls) != 1 || strings.Join(runner.calls[0], " ") != strings.Join(want, " ") {
+	if runner.callCount() != 1 || strings.Join(runner.callSnapshot()[0], " ") != strings.Join(want, " ") {
 		t.Fatalf("calls = %+v, want %+v", runner.calls, want)
 	}
 	rows, err := database.AuditQuery(context.Background(), store.AuditQuery{Limit: 10})
@@ -591,7 +618,7 @@ func TestInventoryTargetExecCancelInFlight(t *testing.T) {
 		execDone <- dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryDockerExecRequest(), nil)
 	}()
 	<-runner.started
-	cancelResponse := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryTargetExecRequest{Action: "cancel"}, nil)
+	cancelResponse := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryCancelFor(inventoryDockerExecRequest()), nil)
 	if !cancelResponse.OK {
 		t.Fatalf("cancel response = %+v", cancelResponse)
 	}
@@ -602,7 +629,7 @@ func TestInventoryTargetExecCancelWithoutInFlightIsNoop(t *testing.T) {
 	service, _ := newInventoryTestService(t, true)
 	service.runner = &recordingInventoryRunner{outputs: map[string][]byte{}}
 	dispatcher := newInventoryExecDispatcher(t, service)
-	response := dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", inventoryTargetExecRequest{Action: "cancel"}, nil)
+	response := dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", inventoryCancelRequest("op-missing"), nil)
 	if !response.OK {
 		t.Fatalf("cancel response = %+v", response)
 	}
@@ -638,7 +665,7 @@ func TestInventoryTargetExecCancelOwnerIsolation(t *testing.T) {
 	}()
 	<-executor.started
 	// owner-b's cancel is an idempotent no-op and leaves owner-a's exec running.
-	if response := dispatchInventoryTest(t, dispatcher, ctxB, "inventory_target_exec", inventoryTargetExecRequest{Action: "cancel"}, nil); !response.OK {
+	if response := dispatchInventoryTest(t, dispatcher, ctxB, "inventory_target_exec", inventoryCancelFor(request), nil); !response.OK {
 		t.Fatalf("owner-b cancel = %+v", response)
 	}
 	select {
@@ -646,7 +673,7 @@ func TestInventoryTargetExecCancelOwnerIsolation(t *testing.T) {
 		t.Fatalf("owner-a exec finished early: %+v", response)
 	case <-time.After(50 * time.Millisecond):
 	}
-	if response := dispatchInventoryTest(t, dispatcher, ctxA, "inventory_target_exec", inventoryTargetExecRequest{Action: "cancel"}, nil); !response.OK {
+	if response := dispatchInventoryTest(t, dispatcher, ctxA, "inventory_target_exec", inventoryCancelFor(request), nil); !response.OK {
 		t.Fatalf("owner-a cancel = %+v", response)
 	}
 	requireInventoryExecCancelled(t, <-execDone)
@@ -680,10 +707,168 @@ func TestInventoryTargetExecCancelSessionPath(t *testing.T) {
 		execDone <- dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", request, nil)
 	}()
 	<-executor.started
-	if response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryTargetExecRequest{Action: "cancel"}, nil); !response.OK {
+	if response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryCancelFor(request), nil); !response.OK {
 		t.Fatalf("cancel response = %+v", response)
 	}
 	requireInventoryExecCancelled(t, <-execDone)
+}
+
+func TestInventoryTargetExecCancelBindsExactOperation(t *testing.T) {
+	service, _ := newInventoryTestService(t, true)
+	runner := &recordingInventoryRunner{block: true, started: make(chan struct{}, 2)}
+	service.runner = runner
+	dispatcher := newInventoryExecDispatcher(t, service)
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	requestA := inventoryDockerExecRequest()
+	requestA.OperationID = "op-a"
+	requestB := inventoryDockerExecRequest()
+	requestB.Target = map[string]any{"type": "context", "name": "other", "dockerEndpoint": "ssh://ops@other.example"}
+	requestB.OperationID = "op-b"
+	doneA := make(chan ipc.Response, 1)
+	doneB := make(chan ipc.Response, 1)
+	go func() { doneA <- dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", requestA, nil) }()
+	go func() { doneB <- dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", requestB, nil) }()
+	<-runner.started
+	<-runner.started
+
+	// Cancelling A must not touch B.
+	if response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryCancelFor(requestA), nil); !response.OK {
+		t.Fatalf("cancel A = %+v", response)
+	}
+	requireInventoryExecCancelled(t, <-doneA)
+	select {
+	case response := <-doneB:
+		t.Fatalf("B was affected by A's cancel: %+v", response)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryCancelFor(requestB), nil); !response.OK {
+		t.Fatalf("cancel B = %+v", response)
+	}
+	requireInventoryExecCancelled(t, <-doneB)
+}
+
+func TestInventoryTargetExecCancelRetryNewOperationIsolated(t *testing.T) {
+	service, _ := newInventoryTestService(t, true)
+	runner := &recordingInventoryRunner{block: true, started: make(chan struct{}, 2)}
+	service.runner = runner
+	dispatcher := newInventoryExecDispatcher(t, service)
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	requestA := inventoryDockerExecRequest()
+	requestA.OperationID = "op-a"
+	doneA := make(chan ipc.Response, 1)
+	go func() { doneA <- dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", requestA, nil) }()
+	<-runner.started
+	if response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryCancelFor(requestA), nil); !response.OK {
+		t.Fatalf("cancel A = %+v", response)
+	}
+	requireInventoryExecCancelled(t, <-doneA)
+
+	// A late cancel for the settled A must not touch the new instance B,
+	// and a duplicate cancel for A is an idempotent no-op.
+	requestB := inventoryDockerExecRequest()
+	requestB.OperationID = "op-b"
+	doneB := make(chan ipc.Response, 1)
+	go func() { doneB <- dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", requestB, nil) }()
+	<-runner.started
+	if response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryCancelFor(requestA), nil); !response.OK {
+		t.Fatalf("late cancel A = %+v", response)
+	}
+	select {
+	case response := <-doneB:
+		t.Fatalf("B was affected by the late cancel for A: %+v", response)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryCancelFor(requestA), nil); !response.OK {
+		t.Fatalf("duplicate cancel A = %+v", response)
+	}
+	select {
+	case response := <-doneB:
+		t.Fatalf("B was affected by the duplicate cancel for A: %+v", response)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryCancelFor(requestB), nil); !response.OK {
+		t.Fatalf("cancel B = %+v", response)
+	}
+	requireInventoryExecCancelled(t, <-doneB)
+}
+
+func TestInventoryTargetExecCancelBeforeRegisterTombstones(t *testing.T) {
+	service, _ := newInventoryTestService(t, true)
+	runner := &recordingInventoryRunner{outputs: map[string][]byte{}}
+	service.runner = runner
+	dispatcher := newInventoryExecDispatcher(t, service)
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	// The cancel overtakes the exec: it lands before the operation registers.
+	if response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryCancelFor(inventoryDockerExecRequest()), nil); !response.OK {
+		t.Fatalf("early cancel = %+v", response)
+	}
+	response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryDockerExecRequest(), nil)
+	requireInventoryIPCError(t, response, ipc.CodeBadParam)
+	if runner.callCount() != 0 {
+		t.Fatalf("tombstoned operation started anyway: %+v", runner.calls)
+	}
+}
+
+func TestInventoryTargetExecRejectsDuplicateOperationID(t *testing.T) {
+	service, _ := newInventoryTestService(t, true)
+	runner := &recordingInventoryRunner{block: true, started: make(chan struct{}, 1)}
+	service.runner = runner
+	dispatcher := newInventoryExecDispatcher(t, service)
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	doneA := make(chan ipc.Response, 1)
+	go func() {
+		doneA <- dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryDockerExecRequest(), nil)
+	}()
+	<-runner.started
+	response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryDockerExecRequest(), nil)
+	requireInventoryIPCError(t, response, ipc.CodeBadParam)
+	if response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryCancelFor(inventoryDockerExecRequest()), nil); !response.OK {
+		t.Fatalf("cancel = %+v", response)
+	}
+	requireInventoryExecCancelled(t, <-doneA)
+}
+
+func TestInventoryTargetExecCancelMetadataMismatchNoops(t *testing.T) {
+	service, _ := newInventoryTestService(t, true)
+	runner := &recordingInventoryRunner{block: true, started: make(chan struct{}, 1)}
+	service.runner = runner
+	dispatcher := newInventoryExecDispatcher(t, service)
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	doneA := make(chan ipc.Response, 1)
+	go func() {
+		doneA <- dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryDockerExecRequest(), nil)
+	}()
+	<-runner.started
+	// A cancel whose launch metadata does not match the handle is a no-op.
+	mismatched := inventoryDockerExecRequest()
+	mismatched.Container = "other"
+	if response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryCancelFor(mismatched), nil); !response.OK {
+		t.Fatalf("mismatched cancel = %+v", response)
+	}
+	select {
+	case response := <-doneA:
+		t.Fatalf("exec cancelled by a metadata-mismatched cancel: %+v", response)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryCancelFor(inventoryDockerExecRequest()), nil); !response.OK {
+		t.Fatalf("cancel = %+v", response)
+	}
+	requireInventoryExecCancelled(t, <-doneA)
+}
+
+func TestInventoryTargetExecOperationIDValidation(t *testing.T) {
+	service, _ := newInventoryTestService(t, true)
+	service.runner = &recordingInventoryRunner{outputs: map[string][]byte{}}
+	dispatcher := newInventoryExecDispatcher(t, service)
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	empty := inventoryDockerExecRequest()
+	empty.OperationID = ""
+	requireInventoryIPCError(t, dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", empty, nil), ipc.CodeBadParam)
+	overlong := inventoryDockerExecRequest()
+	overlong.OperationID = strings.Repeat("x", 129)
+	requireInventoryIPCError(t, dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", overlong, nil), ipc.CodeBadParam)
+	cancel := inventoryCancelRequest("")
+	requireInventoryIPCError(t, dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", cancel, nil), ipc.CodeBadParam)
 }
 
 func TestInventoryTargetExecRejectsHighRiskAndInvalidRequests(t *testing.T) {
@@ -709,7 +894,7 @@ func TestInventoryTargetExecRejectsHighRiskAndInvalidRequests(t *testing.T) {
 	injection.Container = "--privileged"
 	response = dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", injection, nil)
 	requireInventoryIPCError(t, response, ipc.CodeBadParam)
-	if len(runner.calls) != 0 {
+	if runner.callCount() != 0 {
 		t.Fatalf("rejected requests ran commands: %+v", runner.calls)
 	}
 }
@@ -848,7 +1033,7 @@ func TestInventoryTargetExecKubernetes(t *testing.T) {
 		dispatcher := newInventoryExecDispatcher(t, service)
 		response := dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", inventoryKubernetesExecRequest(), nil)
 		requireInventoryIPCError(t, response, ipc.CodeForbidden)
-		if len(runner.calls) != 0 {
+		if runner.callCount() != 0 {
 			t.Fatalf("denied exec ran commands: %+v", runner.calls)
 		}
 	})
@@ -865,7 +1050,7 @@ func TestInventoryTargetExecKubernetes(t *testing.T) {
 		dispatcher := newInventoryExecDispatcher(t, service)
 		var result inventoryTargetExecResponse
 		dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", inventoryKubernetesExecRequest(), &result)
-		if result.Output != "Linux\n" || len(runner.calls) != 1 {
+		if result.Output != "Linux\n" || runner.callCount() != 1 {
 			t.Fatalf("result = %+v calls = %+v", result, runner.calls)
 		}
 	})
@@ -884,7 +1069,7 @@ func TestInventoryTargetExecKubernetes(t *testing.T) {
 			response := dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", request, nil)
 			requireInventoryIPCError(t, response, ipc.CodeBadParam)
 		}
-		if len(runner.calls) != 0 {
+		if runner.callCount() != 0 {
 			t.Fatalf("rejected requests ran commands: %+v", runner.calls)
 		}
 	})

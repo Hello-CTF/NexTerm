@@ -78,13 +78,22 @@ type inventoryService struct {
 	watchResults  map[string]inventorySyncDTO
 	closed        bool
 
-	execMu      sync.Mutex
-	execCancels map[string]*inventoryExecHandle // ownerID → in-flight exec cancel
+	execMu            sync.Mutex
+	execCancels       map[string]*inventoryExecHandle // operationId → in-flight exec
+	execTombstones    map[string]struct{}             // operationIds that received a cancel
+	execTombstoneFIFO []string                        // bounded FIFO eviction order
 }
 
 // inventoryExecHandle tracks one in-flight target exec so the owner can
-// cancel it through the cancel action.
-type inventoryExecHandle struct{ cancel context.CancelFunc }
+// cancel exactly that instance through the cancel action.
+type inventoryExecHandle struct {
+	cancel    context.CancelFunc
+	ownerID   string
+	kind      string
+	targetKey string
+	container string
+	sessionID string
+}
 
 func newInventoryService(database *store.Store, events ipc.Emitter, desktop bool, dataDir string, options ...inventoryServiceOption) *inventoryService {
 	service := &inventoryService{
@@ -93,6 +102,7 @@ func newInventoryService(database *store.Store, events ipc.Emitter, desktop bool
 		kubeconfigGate: inventoryKubeconfigGate(desktop),
 		watchResults:   map[string]inventorySyncDTO{},
 		execCancels:    map[string]*inventoryExecHandle{},
+		execTombstones: map[string]struct{}{},
 	}
 	for _, option := range options {
 		option(service)

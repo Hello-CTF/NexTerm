@@ -73,17 +73,17 @@ describe("inventory target actions", () => {
     expect(mocks.call).toHaveBeenCalledTimes(1);
     const [cmd, args] = mocks.call.mock.calls[0];
     expect(cmd).toBe("inventory_target_exec");
-    expect(args).toEqual({
-      args: {
-        kind: "docker-context",
-        target: dockerTarget,
-        action: "exec",
-        container: "web",
-        command: ["uname", "-a"],
-        sessionId: undefined,
-        confirmation: undefined,
-      },
+    expect(args.args).toMatchObject({
+      kind: "docker-context",
+      target: dockerTarget,
+      action: "exec",
+      container: "web",
+      command: ["uname", "-a"],
+      sessionId: undefined,
+      confirmation: undefined,
     });
+    expect(typeof args.args.operationId).toBe("string");
+    expect(args.args.operationId.length).toBeGreaterThan(0);
     await waitFor(() => expect(m.container.textContent).toContain("Linux"));
     expect(m.container.textContent).toContain("退出码 0");
   });
@@ -343,6 +343,9 @@ describe("inventory target actions", () => {
     expect(cancelArgs.kind).toBe("docker-context");
     expect(cancelArgs.target).toEqual(dockerTarget);
     expect(cancelArgs.container).toBe("web");
+    // The cancel carries the frozen launch identity of the in-flight exec.
+    expect(cancelArgs.operationId).toBe(mocks.call.mock.calls[0][1].args.operationId);
+    expect(typeof cancelArgs.operationId).toBe("string");
 
     await act(async () => { rejectExec({ code: "io", message: "执行已取消", detail: { cancelled: true } }); });
     await flush();
