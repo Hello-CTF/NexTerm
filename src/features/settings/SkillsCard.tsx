@@ -44,12 +44,27 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [draft, setDraft] = useState<Draft | null>(null);
+  // Drafts are tagged the same way: an editor opened for a previous owner
+  // is not part of the render under the next owner's api, even before
+  // passive effects run.
+  const [draftState, setDraftState] = useState<{ api: SkillsApi; value: Draft } | null>(null);
+  const draft = draftState !== null && draftState.api === api ? draftState.value : null;
+  const setDraft = useCallback(
+    (next: Draft | null) => {
+      setDraftState(next === null ? null : { api, value: next });
+    },
+    [api],
+  );
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [busyName, setBusyName] = useState<string | null>(null);
 
   const visibleEntries = entries !== null && entries.api === api ? entries.items : null;
+
+  // Latest owner, assigned during render so owner checks see a swap in the
+  // same commit — passive effects run too late for this.
+  const apiRef = useRef(api);
+  apiRef.current = api;
 
   const aliveRef = useRef(true);
   const loadGenRef = useRef(0);
@@ -73,7 +88,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
     setFormError(null);
     setSaving(false);
     setBusyName(null);
-  }, [api]);
+  }, [api, setDraft]);
 
   const reload = useCallback(async () => {
     const gen = ++loadGenRef.current;
@@ -167,6 +182,11 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
       if (draft.overrideDescription) input.description = draft.description.trim();
       if (draft.overrideBody) input.body = draft.body;
     }
+    // Re-check the draft's owner against the latest api immediately before
+    // the backend call: a stale closure (e.g. a click delivered after a
+    // synchronous owner swap) must never send the previous owner's draft
+    // to the current owner's backend.
+    if (draftState === null || draftState.api !== apiRef.current) return;
     setSaving(true);
     setFormError(null);
     const epoch = epochRef.current;

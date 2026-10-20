@@ -2,11 +2,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { createElement } from "react";
 import { act } from "react";
+import { flushSync } from "react-dom";
 import {
   click,
   clickButton,
   deferred,
   flush,
+  flushUntil,
   mount,
   setInputValue,
   type MountedView,
@@ -75,6 +77,65 @@ function textareaByLabel(container: ParentNode, label: string): HTMLTextAreaElem
   const textarea = container.querySelector<HTMLTextAreaElement>(`textarea[aria-label="${label}"]`);
   if (!textarea) throw new Error(`textarea not found: ${label}`);
   return textarea;
+}
+
+// Async list and form content settles through digest promises and reloads.
+// React's act queue only flushes when an act scope exits, so polling
+// helpers like vi.waitFor never observe the re-render; flushUntil drives
+// explicit act+macrotask cycles until the observable condition holds,
+// keeping the suite deterministic under load.
+async function waitForButton(container: ParentNode, label: string): Promise<HTMLButtonElement> {
+  await flushUntil(() => {
+    try {
+      iconButton(container, label);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  return iconButton(container, label);
+}
+
+async function waitForInput(container: ParentNode, label: string): Promise<HTMLInputElement> {
+  await flushUntil(() => {
+    try {
+      inputByLabel(container, label);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  return inputByLabel(container, label);
+}
+
+async function waitForTextarea(container: ParentNode, label: string): Promise<HTMLTextAreaElement> {
+  await flushUntil(() => {
+    try {
+      textareaByLabel(container, label);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  return textareaByLabel(container, label);
+}
+
+async function expectText(container: ParentNode, text: string): Promise<void> {
+  await flushUntil(() => (container.textContent ?? "").includes(text));
+}
+
+async function expectNoText(container: ParentNode, text: string): Promise<void> {
+  await flushUntil(() => !(container.textContent ?? "").includes(text));
+}
+
+async function expectToast(
+  toast: Mock<(kind: "info" | "error" | "success", text: string) => void>,
+  kind: "info" | "error" | "success",
+  text: string,
+): Promise<void> {
+  await flushUntil(() =>
+    toast.mock.calls.some((call) => call[0] === kind && String(call[1]).includes(text)),
+  );
 }
 
 async function expectSkillError(promise: Promise<unknown>, code: string): Promise<void> {
@@ -256,10 +317,9 @@ describe("SkillsCard", () => {
         updatedAt: 0,
       },
     ]);
-    await flush();
+    await expectText(mounted.container, "alpha-skill");
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("AI 技能");
-    expect(text).toContain("alpha-skill");
     expect(text).toContain("内置");
     expect(text).toContain("1 个");
     expect(text).toContain("摘要");
@@ -273,8 +333,7 @@ describe("SkillsCard", () => {
   it("shows an empty hint when no skills exist", async () => {
     const backend = createSkillsMockBackend([]);
     renderWith(backend.apiFor("owner-a"));
-    await flush();
-    expect(mounted!.container.textContent).toContain("还没有技能");
+    await expectText(mounted!.container, "还没有技能");
   });
 
   it("surfaces a list failure with a working retry", async () => {
@@ -282,12 +341,10 @@ describe("SkillsCard", () => {
     const api = spyApi(backend.apiFor("owner-a"));
     api.list.mockRejectedValueOnce(new Error("disk failure"));
     mounted = mount(createElement(SkillsCard, { api }));
-    await flush();
-    expect(mounted.container.textContent).toContain("disk failure");
+    await expectText(mounted.container, "disk failure");
 
     clickButton(mounted.container, "重试");
-    await flush();
-    expect(mounted.container.textContent).toContain("alpha-skill");
+    await expectText(mounted.container, "alpha-skill");
     expect(api.list).toHaveBeenCalledTimes(2);
   });
 
@@ -301,15 +358,14 @@ describe("SkillsCard", () => {
     setInputValue(inputByLabel(mounted!.container, "技能描述"), "Custom skill");
     setInputValue(textareaByLabel(mounted!.container, "技能正文"), "custom body\n");
     clickButton(mounted!.container, "保存");
-    await flush();
 
     expect(api.saveOverride).toHaveBeenCalledWith({
       name: "custom-skill",
       description: "Custom skill",
       body: "custom body\n",
     });
+    await flushUntil(() => api.list.mock.calls.length === 2);
     expect(toast).toHaveBeenCalledWith("success", expect.stringContaining("已保存"));
-    expect(api.list).toHaveBeenCalledTimes(2);
     expect(mounted!.container.textContent).toContain("自定义");
   });
 
@@ -340,9 +396,8 @@ describe("SkillsCard", () => {
     setInputValue(textareaByLabel(mounted!.container, "技能正文"), "body");
     api.saveOverride.mockRejectedValueOnce(new SkillError("invalid_param", "AI 技能内容无效: boom"));
     clickButton(mounted!.container, "保存");
-    await flush();
 
-    expect(mounted!.container.textContent).toContain("AI 技能内容无效: boom");
+    await expectText(mounted!.container, "AI 技能内容无效: boom");
     expect(inputByLabel(mounted!.container, "技能名称").value).toBe("custom-skill");
     expect(api.list).toHaveBeenCalledTimes(1);
     expect(toast).not.toHaveBeenCalledWith("success", expect.anything());
@@ -351,26 +406,23 @@ describe("SkillsCard", () => {
   it("edits an embedded skill with a partial description override and omits the body from the payload", async () => {
     const backend = createSkillsMockBackend(EMBEDDED);
     const api = renderWith(backend.apiFor("owner-a"));
-    await flush();
 
-    click(iconButton(mounted!.container, "编辑技能 alpha-skill"));
-    await flush();
+    click(await waitForButton(mounted!.container, "编辑技能 alpha-skill"));
     expect(api.getEffective).toHaveBeenCalledWith("alpha-skill");
     expect(api.dispatch).not.toHaveBeenCalled();
-    const description = inputByLabel(mounted!.container, "技能描述");
+    const description = await waitForInput(mounted!.container, "技能描述");
     expect(description.disabled).toBe(true);
     expect(description.value).toBe("Alpha synthetic skill");
-    expect(textareaByLabel(mounted!.container, "技能正文").value).toBe("alpha body\n");
+    expect((await waitForTextarea(mounted!.container, "技能正文")).value).toBe("alpha body\n");
 
     click(inputByLabel(mounted!.container, "覆盖描述"));
     setInputValue(inputByLabel(mounted!.container, "技能描述"), "Alpha overridden");
     clickButton(mounted!.container, "保存");
-    await flush();
 
     const call: SkillOverrideInput = api.saveOverride.mock.calls[0]![0];
     expect(call).toMatchObject({ name: "alpha-skill", description: "Alpha overridden", disabled: false });
     expect("body" in call).toBe(false);
-    expect(toast).toHaveBeenCalledWith("success", expect.stringContaining("已保存"));
+    await expectToast(toast, "success", "已保存");
   });
 
   it("prefills the edit form with the exact overridden fields", async () => {
@@ -378,35 +430,30 @@ describe("SkillsCard", () => {
     const owner = backend.apiFor("owner-a");
     await owner.saveOverride({ name: "alpha-skill", description: "Alpha overridden" });
     renderWith(owner);
-    await flush();
 
-    click(iconButton(mounted!.container, "编辑技能 alpha-skill"));
-    await flush();
-    expect(inputByLabel(mounted!.container, "覆盖描述")).toBeTruthy();
-    expect((inputByLabel(mounted!.container, "覆盖描述") as HTMLInputElement).checked).toBe(true);
-    expect((inputByLabel(mounted!.container, "覆盖正文") as HTMLInputElement).checked).toBe(false);
+    click(await waitForButton(mounted!.container, "编辑技能 alpha-skill"));
+    const overrideDescription = await waitForInput(mounted!.container, "覆盖描述");
+    expect(overrideDescription.checked).toBe(true);
+    expect(inputByLabel(mounted!.container, "覆盖正文").checked).toBe(false);
     expect(inputByLabel(mounted!.container, "技能描述").value).toBe("Alpha overridden");
   });
 
   it("disables an embedded skill from the row and enables it again by deleting the disable-only override", async () => {
     const backend = createSkillsMockBackend(EMBEDDED);
     const api = renderWith(backend.apiFor("owner-a"));
-    await flush();
 
-    click(iconButton(mounted!.container, "禁用技能 alpha-skill"));
-    await flush();
+    click(await waitForButton(mounted!.container, "禁用技能 alpha-skill"));
     expect(api.saveOverride).toHaveBeenCalledWith({
       name: "alpha-skill",
       description: undefined,
       body: undefined,
       disabled: true,
     });
-    expect(mounted!.container.textContent).toContain("已禁用");
+    await expectText(mounted!.container, "已禁用");
 
-    click(iconButton(mounted!.container, "启用技能 alpha-skill"));
-    await flush();
+    click(await waitForButton(mounted!.container, "启用技能 alpha-skill"));
     expect(api.deleteOverride).toHaveBeenCalledWith("alpha-skill");
-    expect(mounted!.container.textContent).not.toContain("已禁用");
+    await expectNoText(mounted!.container, "已禁用");
   });
 
   it("keeps the overridden fields when toggling disable on an overridden skill", async () => {
@@ -414,10 +461,8 @@ describe("SkillsCard", () => {
     const owner = backend.apiFor("owner-a");
     await owner.saveOverride({ name: "alpha-skill", description: "Alpha overridden" });
     const api = renderWith(owner);
-    await flush();
 
-    click(iconButton(mounted!.container, "禁用技能 alpha-skill"));
-    await flush();
+    click(await waitForButton(mounted!.container, "禁用技能 alpha-skill"));
     expect(api.saveOverride).toHaveBeenCalledWith({
       name: "alpha-skill",
       description: "Alpha overridden",
@@ -425,15 +470,14 @@ describe("SkillsCard", () => {
       disabled: true,
     });
 
-    click(iconButton(mounted!.container, "启用技能 alpha-skill"));
-    await flush();
+    click(await waitForButton(mounted!.container, "启用技能 alpha-skill"));
     expect(api.saveOverride).toHaveBeenLastCalledWith({
       name: "alpha-skill",
       description: "Alpha overridden",
       body: undefined,
       disabled: false,
     });
-    expect(mounted!.container.textContent).toContain("已覆盖");
+    await expectText(mounted!.container, "已覆盖");
   });
 
   it("deletes an override only after confirmation, then reverts the row", async () => {
@@ -442,15 +486,14 @@ describe("SkillsCard", () => {
     await seedEntries(owner);
     mocks.ask.mockResolvedValue(true);
     const api = renderWith(owner);
-    await flush();
-    expect(mounted!.container.textContent).toContain("已覆盖");
+    await expectText(mounted!.container, "已覆盖");
 
-    click(iconButton(mounted!.container, "删除覆盖 alpha-skill"));
-    await flush();
-    expect(String(mocks.ask.mock.calls[0]?.[0] ?? "")).toContain("恢复为内置内容");
+    click(await waitForButton(mounted!.container, "删除覆盖 alpha-skill"));
+    await flushUntil(() => api.deleteOverride.mock.calls.length > 0);
     expect(api.deleteOverride).toHaveBeenCalledWith("alpha-skill");
+    expect(String(mocks.ask.mock.calls[0]?.[0] ?? "")).toContain("恢复为内置内容");
     expect(toast).toHaveBeenCalledWith("success", expect.stringContaining("已恢复为内置版本"));
-    expect(mounted!.container.textContent).not.toContain("已覆盖");
+    await expectNoText(mounted!.container, "已覆盖");
   });
 
   it("does nothing when the delete confirmation is declined", async () => {
@@ -459,9 +502,9 @@ describe("SkillsCard", () => {
     await seedEntries(owner);
     mocks.ask.mockResolvedValue(false);
     const api = renderWith(owner);
-    await flush();
+    await expectText(mounted!.container, "已覆盖");
 
-    click(iconButton(mounted!.container, "删除覆盖 alpha-skill"));
+    click(await waitForButton(mounted!.container, "删除覆盖 alpha-skill"));
     await flush();
     expect(api.deleteOverride).not.toHaveBeenCalled();
     expect(mounted!.container.textContent).toContain("已覆盖");
@@ -473,12 +516,10 @@ describe("SkillsCard", () => {
     await seedEntries(owner);
     mocks.ask.mockResolvedValue(true);
     const api = renderWith(owner);
-    await flush();
 
     api.deleteOverride.mockRejectedValueOnce(new Error("read-only database"));
-    click(iconButton(mounted!.container, "删除覆盖 alpha-skill"));
-    await flush();
-    expect(toast).toHaveBeenCalledWith("error", expect.stringContaining("删除失败"));
+    click(await waitForButton(mounted!.container, "删除覆盖 alpha-skill"));
+    await expectToast(toast, "error", "删除失败");
     expect(mounted!.container.textContent).toContain("已覆盖");
   });
 
@@ -490,17 +531,14 @@ describe("SkillsCard", () => {
     const apiA = spyApi(ownerA);
     const apiB = spyApi(ownerB);
     mounted = mount(createElement(SkillsCard, { api: apiA }));
-    await flush();
-    expect(mounted.container.textContent).toContain("Alpha overridden by A");
+    await expectText(mounted.container, "Alpha overridden by A");
 
     act(() => {
       mounted!.root.render(createElement(SkillsCard, { api: apiB }));
     });
-    await flush();
-    const text = mounted.container.textContent ?? "";
+    await expectText(mounted.container, "Alpha synthetic skill");
     expect(apiB.list).toHaveBeenCalled();
-    expect(text).toContain("Alpha synthetic skill");
-    expect(text).not.toContain("Alpha overridden by A");
+    expect(mounted.container.textContent ?? "").not.toContain("Alpha overridden by A");
   });
 
   it("drops a stale list result that lands after a newer reload", async () => {
@@ -511,8 +549,7 @@ describe("SkillsCard", () => {
     mounted = mount(createElement(SkillsCard, { api }));
 
     clickButton(mounted.container, "刷新");
-    await flush();
-    expect(mounted.container.textContent).toContain("alpha-skill");
+    await expectText(mounted.container, "alpha-skill");
 
     stale.resolve([]);
     await flush();
@@ -524,14 +561,12 @@ describe("SkillsCard", () => {
     const owner = backend.apiFor("owner-a");
     await owner.saveOverride({ name: "alpha-skill", disabled: true });
     const api = renderWith(owner);
-    await flush();
 
-    click(iconButton(mounted!.container, "编辑技能 alpha-skill"));
-    await flush();
+    click(await waitForButton(mounted!.container, "编辑技能 alpha-skill"));
     expect(api.getEffective).toHaveBeenCalledWith("alpha-skill");
     expect(api.dispatch).not.toHaveBeenCalled();
-    expect(textareaByLabel(mounted!.container, "技能正文").value).toBe("alpha body\n");
-    expect((inputByLabel(mounted!.container, "禁用此技能") as HTMLInputElement).checked).toBe(true);
+    expect((await waitForTextarea(mounted!.container, "技能正文")).value).toBe("alpha body\n");
+    expect(inputByLabel(mounted!.container, "禁用此技能").checked).toBe(true);
   });
 
   it("opens the editor for a disabled custom skill and can re-enable it from the form", async () => {
@@ -544,16 +579,14 @@ describe("SkillsCard", () => {
       disabled: true,
     });
     const api = renderWith(owner);
-    await flush();
 
-    click(iconButton(mounted!.container, "编辑技能 custom-skill"));
-    await flush();
+    click(await waitForButton(mounted!.container, "编辑技能 custom-skill"));
     expect(api.getEffective).toHaveBeenCalledWith("custom-skill");
-    expect(textareaByLabel(mounted!.container, "技能正文").value).toBe("custom body\n");
+    expect((await waitForTextarea(mounted!.container, "技能正文")).value).toBe("custom body\n");
 
     click(inputByLabel(mounted!.container, "禁用此技能"));
     clickButton(mounted!.container, "保存");
-    await flush();
+    await flushUntil(() => !(mounted!.container.textContent ?? "").includes("已禁用"));
     expect(api.saveOverride).toHaveBeenCalledWith({
       name: "custom-skill",
       description: "Custom skill",
@@ -571,10 +604,9 @@ describe("SkillsCard", () => {
     const apiA = spyApi(ownerA);
     const apiB = spyApi(ownerB);
     mounted = mount(createElement(SkillsCard, { api: apiA }));
-    await flush();
-    click(iconButton(mounted.container, "编辑技能 alpha-skill"));
-    await flush();
-    expect(textareaByLabel(mounted.container, "技能正文").value).toBe("alpha body\n");
+
+    click(await waitForButton(mounted.container, "编辑技能 alpha-skill"));
+    expect((await waitForTextarea(mounted.container, "技能正文")).value).toBe("alpha body\n");
 
     act(() => {
       mounted!.root.render(createElement(SkillsCard, { api: apiB }));
@@ -585,7 +617,7 @@ describe("SkillsCard", () => {
     expect(apiB.saveOverride).not.toHaveBeenCalled();
     const entriesB = await ownerB.list();
     expect(entriesB.find((entry) => entry.name === "alpha-skill")?.overridden).toBe(false);
-    expect(mounted.container.textContent).toContain("Alpha synthetic skill");
+    await expectText(mounted.container, "Alpha synthetic skill");
   });
 
   it("drops a pending owner-A read after the swap instead of repopulating the editor", async () => {
@@ -595,10 +627,8 @@ describe("SkillsCard", () => {
     const slow = deferred<SkillDispatch>();
     apiA.getEffective.mockReturnValueOnce(slow.promise);
     mounted = mount(createElement(SkillsCard, { api: apiA }));
-    await flush();
 
-    click(iconButton(mounted.container, "编辑技能 alpha-skill"));
-    await flush();
+    click(await waitForButton(mounted.container, "编辑技能 alpha-skill"));
     expect(mounted.container.textContent).toContain("读取技能内容…");
 
     act(() => {
@@ -652,8 +682,8 @@ describe("SkillsCard", () => {
 
     expect(apiA.list).toHaveBeenCalledTimes(1);
     expect(toast).not.toHaveBeenCalledWith("success", expect.anything());
-    expect(mounted.container.textContent).toContain("Alpha synthetic skill");
     expect(mounted.container.querySelector('input[aria-label="技能名称"]')).toBeNull();
+    await expectText(mounted.container, "Alpha synthetic skill");
   });
 
   it("abandons a pending owner-A toggle completion after the swap", async () => {
@@ -661,11 +691,10 @@ describe("SkillsCard", () => {
     const apiA = spyApi(backend.apiFor("owner-a"));
     const apiB = spyApi(backend.apiFor("owner-b"));
     mounted = mount(createElement(SkillsCard, { api: apiA }));
-    await flush();
 
     const slow = deferred<Awaited<ReturnType<SkillsApi["saveOverride"]>>>();
     apiA.saveOverride.mockReturnValueOnce(slow.promise);
-    click(iconButton(mounted.container, "禁用技能 alpha-skill"));
+    click(await waitForButton(mounted.container, "禁用技能 alpha-skill"));
     await flush();
 
     act(() => {
@@ -685,7 +714,7 @@ describe("SkillsCard", () => {
 
     expect(apiA.list).toHaveBeenCalledTimes(1);
     expect(toast).not.toHaveBeenCalledWith("success", expect.anything());
-    expect(mounted.container.textContent).toContain("Alpha synthetic skill");
+    await expectText(mounted.container, "Alpha synthetic skill");
   });
 
   it("abandons a pending owner-A delete completion after the swap", async () => {
@@ -696,11 +725,10 @@ describe("SkillsCard", () => {
     const apiB = spyApi(backend.apiFor("owner-b"));
     mocks.ask.mockResolvedValue(true);
     mounted = mount(createElement(SkillsCard, { api: apiA }));
-    await flush();
 
     const slow = deferred<void>();
     apiA.deleteOverride.mockReturnValueOnce(slow.promise);
-    click(iconButton(mounted.container, "删除覆盖 alpha-skill"));
+    click(await waitForButton(mounted.container, "删除覆盖 alpha-skill"));
     await flush();
 
     act(() => {
@@ -712,7 +740,7 @@ describe("SkillsCard", () => {
 
     expect(apiA.list).toHaveBeenCalledTimes(1);
     expect(toast).not.toHaveBeenCalledWith("success", expect.anything());
-    expect(mounted.container.textContent).toContain("Alpha synthetic skill");
+    await expectText(mounted.container, "Alpha synthetic skill");
   });
 
   it("hides owner-A rows while owner B's list is still loading", async () => {
@@ -722,8 +750,7 @@ describe("SkillsCard", () => {
     const apiA = spyApi(ownerA);
     const apiB = spyApi(backend.apiFor("owner-b"));
     mounted = mount(createElement(SkillsCard, { api: apiA }));
-    await flush();
-    expect(mounted.container.textContent).toContain("Alpha overridden by A");
+    await expectText(mounted.container, "Alpha overridden by A");
 
     const slow = deferred<SkillEntry[]>();
     apiB.list.mockReturnValueOnce(slow.promise);
@@ -740,8 +767,7 @@ describe("SkillsCard", () => {
     expect(text).toContain("读取中…");
 
     slow.resolve(await backend.apiFor("owner-b").list());
-    await flush();
-    expect(mounted.container.textContent).toContain("Alpha synthetic skill");
+    await expectText(mounted.container, "Alpha synthetic skill");
   });
 
   it("cannot write or delete through stale owner-A rows while B loads", async () => {
@@ -755,8 +781,7 @@ describe("SkillsCard", () => {
     const apiA = spyApi(ownerA);
     const apiB = spyApi(backend.apiFor("owner-b"));
     mounted = mount(createElement(SkillsCard, { api: apiA }));
-    await flush();
-    expect(mounted.container.textContent).toContain("已覆盖");
+    await expectText(mounted.container, "已覆盖");
 
     const slow = deferred<SkillEntry[]>();
     apiB.list.mockReturnValueOnce(slow.promise);
@@ -783,10 +808,9 @@ describe("SkillsCard", () => {
     const apiA = spyApi(backend.apiFor("owner-a"));
     const apiB = spyApi(backend.apiFor("owner-b"));
     mounted = mount(createElement(SkillsCard, { api: apiA }));
-    await flush();
-    click(iconButton(mounted.container, "编辑技能 alpha-skill"));
-    await flush();
-    expect(textareaByLabel(mounted.container, "技能正文").value).toBe("alpha body\n");
+
+    click(await waitForButton(mounted.container, "编辑技能 alpha-skill"));
+    expect((await waitForTextarea(mounted.container, "技能正文")).value).toBe("alpha body\n");
 
     const slow = deferred<SkillEntry[]>();
     apiB.list.mockReturnValueOnce(slow.promise);
@@ -800,7 +824,58 @@ describe("SkillsCard", () => {
     expect(apiB.saveOverride).not.toHaveBeenCalled();
 
     slow.resolve(await backend.apiFor("owner-b").list());
+    await expectText(mounted.container, "Alpha synthetic skill");
+  });
+
+  it("refuses an immediate save from a detached owner-A editor after a flushSync swap", async () => {
+    const backend = createSkillsMockBackend(EMBEDDED);
+    const ownerA = backend.apiFor("owner-a");
+    await ownerA.saveOverride({
+      name: "alpha-skill",
+      description: "A private description",
+      body: "BODY FROM A",
+    });
+    const apiA = spyApi(ownerA);
+    const apiB = spyApi(backend.apiFor("owner-b"));
+    mounted = mount(createElement(SkillsCard, { api: apiA }));
+
+    click(await waitForButton(mounted.container, "编辑技能 alpha-skill"));
+    expect((await waitForTextarea(mounted.container, "技能正文")).value).toBe("BODY FROM A");
+    const saveButton = [...mounted.container.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent?.trim() === "保存",
+    ) as HTMLButtonElement;
+    expect(saveButton.isConnected).toBe(true);
+
+    // Synchronous owner swap: B's list stays pending and passive effects
+    // are not flushed, so only same-render protections can take effect.
+    // flushSync outside act is exactly the window under test; silence the
+    // act-environment warning for this call only.
+    const actFlag = (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean })
+      .IS_REACT_ACT_ENVIRONMENT;
+    const slow = deferred<SkillEntry[]>();
+    apiB.list.mockReturnValueOnce(slow.promise);
+    try {
+      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+      flushSync(() => {
+        mounted!.root.render(createElement(SkillsCard, { api: apiB }));
+      });
+    } finally {
+      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = actFlag;
+    }
+
+    expect(saveButton.isConnected).toBe(false);
+    expect(mounted.container.querySelector('textarea[aria-label="技能正文"]')).toBeNull();
+    expect(mounted.container.querySelector('input[aria-label="覆盖描述"]')).toBeNull();
+    expect(mounted.container.textContent ?? "").not.toContain("编辑技能 alpha-skill");
+
+    // Even a click delivered to the detached editor must not reach either
+    // owner's backend.
+    click(saveButton);
     await flush();
-    expect(mounted.container.textContent).toContain("Alpha synthetic skill");
+    expect(apiB.saveOverride).not.toHaveBeenCalled();
+    expect(apiA.saveOverride).not.toHaveBeenCalled();
+
+    slow.resolve(await backend.apiFor("owner-b").list());
+    await expectText(mounted.container, "Alpha synthetic skill");
   });
 });
