@@ -671,6 +671,9 @@ func (e *actionExecution) writeKeys(ctx context.Context, callID string, input ta
 	if !current {
 		return tools.Output{}, ErrStaleOwnership
 	}
+	if err := e.manager.verifyJobAsset(ctx, e.state); err != nil {
+		return tools.Output{}, err
+	}
 	records, err := e.manager.loadExecRecords(ctx, e.state.id)
 	if err != nil {
 		return tools.Fail(err), nil
