@@ -233,8 +233,10 @@ func TestAgentExecutorSkipsConnectWithoutOptIn(t *testing.T) {
 		},
 	}
 	err := executor.Execute(context.Background(), testTrigger())
-	if !errors.Is(err, guard.ErrConnectOptInRequired) {
-		t.Fatalf("execute error = %v, want opt-in required", err)
+	// Without an explicit opt-in the run keeps the original disconnected
+	// failure instead of the opt-in gate error.
+	if !errors.Is(err, ErrAssetDisconnected) {
+		t.Fatalf("execute error = %v, want the original disconnected failure", err)
 	}
 	runner.mu.Lock()
 	defer runner.mu.Unlock()

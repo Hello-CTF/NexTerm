@@ -78,14 +78,18 @@ func (e *AgentExecutor) Execute(ctx context.Context, trigger Trigger) error {
 
 // connectDisconnectedScope applies the opt-in connect flow when scope
 // resolution reports a disconnected asset: it authorizes and dials the asset
-// once, then retries the scope query a single time. Every other scope failure
-// stays on the original path.
+// once, then retries the scope query a single time. Without an explicit
+// opt-in the run keeps the original disconnected failure; every other scope
+// failure stays on the original path.
 func (e *AgentExecutor) connectDisconnectedScope(ctx context.Context, trigger Trigger, scopeErr error) (tools.Scope, error) {
 	var disconnected *AssetDisconnectedError
 	if e.Connect == nil || !errors.As(scopeErr, &disconnected) || strings.TrimSpace(disconnected.AssetID) == "" {
 		return tools.Scope{}, scopeErr
 	}
 	if _, err := e.Connect.Connect(ctx, trigger, disconnected.AssetID); err != nil {
+		if errors.Is(err, guard.ErrConnectOptInRequired) {
+			return tools.Scope{}, scopeErr
+		}
 		return tools.Scope{}, err
 	}
 	return e.ScopeFor(ctx, trigger)

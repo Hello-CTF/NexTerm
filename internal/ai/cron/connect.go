@@ -7,7 +7,31 @@ import (
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
+
+// ConnectOptInSettingKey persists the per-owner explicit opt-in for connecting
+// disconnected assets during cron runs (default off).
+const ConnectOptInSettingKey = "ai.cron_connect_opt_in"
+
+// ConnectProductionOptInSettingKey persists the per-owner explicit opt-in for
+// connecting production-classified assets during cron runs (default off).
+const ConnectProductionOptInSettingKey = "ai.cron_connect_production"
+
+func connectOptInSettingKeyForUser(ctx context.Context, key string) string {
+	if userID, ok := ipc.UserIDFromContext(ctx); ok {
+		return key + ".user." + userID
+	}
+	return key
+}
+
+func ConnectOptInSettingKeyForUser(ctx context.Context) string {
+	return connectOptInSettingKeyForUser(ctx, ConnectOptInSettingKey)
+}
+
+func ConnectProductionOptInSettingKeyForUser(ctx context.Context) string {
+	return connectOptInSettingKeyForUser(ctx, ConnectProductionOptInSettingKey)
+}
 
 // ErrAssetDisconnected marks that a cron run's scope asset has no healthy
 // connected session. The scope-resolution layer returns it (wrapped in
