@@ -386,7 +386,7 @@ describe("terminal stream writer bounded FIFO (T-03 hard backpressure)", () => {
     // the text counts toward the writer's pending bytes.
     expect(h.writer.pushBytes(enc.encode("0123456789ab"))).toBe(true);
     expect(h.writer.pushBytes(enc.encode("\x1b]9;part"))).toBe(true);
-    expect(h.writer.stats().pendingBytes).toBe(12);
+    expect(h.writer.stats().pendingBytes).toBe(20);
     // This chunk would complete the sequence, but it does not fit the cap:
     // it is refused whole and the filter's partial state stays intact.
     const completion = " done\x07" + "t".repeat(10);
@@ -418,6 +418,40 @@ describe("terminal stream writer bounded FIFO (T-03 hard backpressure)", () => {
     h.drain();
     expect(h.writtenText()).toBe("aaaabbcc");
     expect(h.refusals.length).toBe(1);
+  });
+
+  it("a split OSC refused at the cap keeps the filter intact and replays byte-identically", () => {
+    const h = setup({ highWaterBytes: 4, lowWaterBytes: 2, maxPendingBytes: 8 });
+    h.writer.pushBytes(enc.encode("aaaa"));
+    // The partial sequence fits the cap and is held by the filter; it counts
+    // toward pending from now on.
+    expect(h.writer.pushBytes(enc.encode("\x1b]0;"))).toBe(true);
+    expect(h.writer.stats().pendingBytes).toBe(8);
+    // The completion would fit the raw precheck, but the assembled batch
+    // (held prefix + new bytes) exceeds the cap: refused whole, filter intact.
+    expect(h.writer.pushBytes(enc.encode("x\x07"))).toBe(false);
+    expect(h.events).toEqual([]);
+    h.writer.beginAttachment();
+    h.drain();
+    expect(h.writer.pushBytes(enc.encode("x\x07"))).toBe(true);
+    h.drain();
+    // Byte-identical replay: the full title sequence reaches xterm once.
+    expect(h.writtenText()).toBe("aaaa\x1b]0;x\x07");
+    expect(h.events).toEqual([]);
+  });
+
+  it("a split intercepted OSC refused at the cap dispatches its event exactly once on replay", () => {
+    const h = setup({ highWaterBytes: 4, lowWaterBytes: 2, maxPendingBytes: 8 });
+    h.writer.pushBytes(enc.encode("aaaa"));
+    expect(h.writer.pushBytes(enc.encode("\x1b]9;"))).toBe(true);
+    expect(h.writer.pushBytes(enc.encode("x\x07"))).toBe(false);
+    expect(h.events).toEqual([]);
+    h.writer.beginAttachment();
+    h.drain();
+    expect(h.writer.pushBytes(enc.encode("x\x07"))).toBe(true);
+    h.drain();
+    expect(h.events).toEqual([{ kind: "notification", body: "x" }]);
+    expect(h.writtenText()).toBe("aaaa");
   });
 
   it("event-only batches are always accepted even when the FIFO is full", () => {

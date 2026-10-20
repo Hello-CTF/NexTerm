@@ -98,7 +98,7 @@ export function createTerminalStreamWriter(
   let refusedBytes = 0;
   let lastUnit: WriteUnit | null = null;
 
-  const pendingBytes = () => queuedBytes + inFlightBytes;
+  const pendingBytes = () => queuedBytes + inFlightBytes + filter.pendingBytes();
 
   const stats = (): TerminalStreamStats => {
     let oldest = Number.POSITIVE_INFINITY;
