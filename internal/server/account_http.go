@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -121,6 +122,36 @@ func decodeAccountJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 	return nil
 }
 
+type adminRoute struct {
+	name         string
+	pattern      string
+	csrfRequired bool
+	handler      http.HandlerFunc
+}
+
+func (s *Server) adminRoutes() []adminRoute {
+	return []adminRoute{
+		{name: "list_users", pattern: "GET /admin/users", handler: s.serveAdminUserList},
+		{name: "get_settings", pattern: "GET /admin/settings", handler: s.serveAdminSettingsGet},
+		{name: "create_user", pattern: "POST /admin/users", csrfRequired: true, handler: s.serveAdminUserCreate},
+		{name: "disable_user", pattern: "POST /admin/users/{id}/disable", csrfRequired: true, handler: s.serveAdminUserDisable},
+		{name: "reset_user", pattern: "POST /admin/users/{id}/reset", csrfRequired: true, handler: s.serveAdminUserReset},
+		{name: "put_settings", pattern: "PUT /admin/settings", csrfRequired: true, handler: s.serveAdminSettingsPut},
+		{name: "get_preferences", pattern: "GET /admin/preferences", handler: s.serveAdminPreferencesGet},
+		{name: "put_preferences", pattern: "PUT /admin/preferences", csrfRequired: true, handler: s.serveAdminPreferencesPut},
+	}
+}
+
+func (s *Server) mountAdminRoutes(mux *http.ServeMux) {
+	for _, route := range s.adminRoutes() {
+		handler := s.requireSuperadmin(route.handler)
+		if route.csrfRequired {
+			handler = s.requireAccountCSRF(handler)
+		}
+		mux.Handle(route.pattern, s.accountGuard(s.requireAccountSession(handler)))
+	}
+}
+
 func (s *Server) mountAccountRoutes(mux *http.ServeMux) {
 	if s.accounts == nil {
 		return
@@ -133,12 +164,6 @@ func (s *Server) mountAccountRoutes(mux *http.ServeMux) {
 	}
 	sessionCSRF := func(pattern string, handler http.HandlerFunc) {
 		mux.Handle(pattern, s.accountGuard(s.requireAccountSession(s.requireAccountCSRF(handler))))
-	}
-	admin := func(pattern string, handler http.HandlerFunc) {
-		mux.Handle(pattern, s.accountGuard(s.requireAccountSession(s.requireSuperadmin(handler))))
-	}
-	adminCSRF := func(pattern string, handler http.HandlerFunc) {
-		mux.Handle(pattern, s.accountGuard(s.requireAccountSession(s.requireAccountCSRF(s.requireSuperadmin(handler)))))
 	}
 
 	public("GET /auth/status", s.serveAccountStatus)
@@ -164,12 +189,7 @@ func (s *Server) mountAccountRoutes(mux *http.ServeMux) {
 	sessionCSRF("DELETE /auth/totp", s.serveAccountTOTPDisable)
 	sessionCSRF("DELETE /auth/devices/{id}", s.serveAccountDeviceRevoke)
 
-	admin("GET /admin/users", s.serveAdminUserList)
-	admin("GET /admin/settings", s.serveAdminSettingsGet)
-	adminCSRF("POST /admin/users", s.serveAdminUserCreate)
-	adminCSRF("POST /admin/users/{id}/disable", s.serveAdminUserDisable)
-	adminCSRF("POST /admin/users/{id}/reset", s.serveAdminUserReset)
-	adminCSRF("PUT /admin/settings", s.serveAdminSettingsPut)
+	s.mountAdminRoutes(mux)
 
 	if !s.options.SyncOnly && s.previews != nil && s.spectator != nil {
 		session("GET /share/previews", s.servePreviewLinkList)
@@ -459,7 +479,18 @@ func (s *Server) serveAccountMe(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveAccountLogout(w http.ResponseWriter, r *http.Request) {
 	identity := accountIdentityFrom(r.Context())
-	if err := s.accounts.RevokeSession(r.Context(), identity.SessionID); err != nil {
+	err := func() error {
+		s.accountRevocationMu.Lock()
+		defer s.accountRevocationMu.Unlock()
+		commit, rollback := s.prepareAccountCleanup(r.Context(), identity.UserID, identity.SessionID)
+		if err := s.accounts.RevokeSession(r.Context(), identity.SessionID); err != nil {
+			rollback()
+			return err
+		}
+		commit(identity.SessionID)
+		return nil
+	}()
+	if err != nil {
 		writeAccountFailure(w, err)
 		return
 	}
@@ -470,25 +501,33 @@ func (s *Server) serveAccountLogout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveAccountLogoutAll(w http.ResponseWriter, r *http.Request) {
 	identity := accountIdentityFrom(r.Context())
-	var sessions []account.SessionInfo
-	if s.accountConnections != nil {
-		var err error
-		sessions, err = s.accounts.ListUserSessions(r.Context(), identity.UserID)
+	sessionIDs, err := func() ([]string, error) {
+		s.accountRevocationMu.Lock()
+		defer s.accountRevocationMu.Unlock()
+		var commit func(...string)
+		rollback := func() {}
+		sessionIDs, err := s.revokeUserSessions(r.Context(), identity.UserID, "", func() error {
+			commit, rollback = s.prepareAccountCleanup(r.Context(), identity.UserID, "logout-all:"+identity.SessionID)
+			return nil
+		})
 		if err != nil {
-			writeAccountFailure(w, err)
-			return
+			rollback()
+			return nil, err
 		}
-	}
-	revoked, err := s.accounts.RevokeUserSessions(r.Context(), identity.UserID, "")
+		if commit != nil {
+			commit(sessionIDs...)
+		}
+		return sessionIDs, nil
+	}()
 	if err != nil {
 		writeAccountFailure(w, err)
 		return
 	}
-	for _, session := range sessions {
-		s.closeAccountConnections(session.ID)
+	for _, sessionID := range sessionIDs {
+		s.closeAccountConnections(sessionID)
 	}
 	s.clearSessionCookie(w, r)
-	writeAccountJSON(w, http.StatusOK, map[string]int64{"revoked": revoked})
+	writeAccountJSON(w, http.StatusOK, map[string]int64{"revoked": int64(len(sessionIDs))})
 }
 
 func (s *Server) serveAccountSessionList(w http.ResponseWriter, r *http.Request) {
@@ -524,7 +563,18 @@ func (s *Server) serveAccountSessionList(w http.ResponseWriter, r *http.Request)
 func (s *Server) serveAccountSessionRevoke(w http.ResponseWriter, r *http.Request) {
 	identity := accountIdentityFrom(r.Context())
 	sessionID := r.PathValue("id")
-	if err := s.accounts.RevokeUserSession(r.Context(), identity.UserID, sessionID); err != nil {
+	err := func() error {
+		s.accountRevocationMu.Lock()
+		defer s.accountRevocationMu.Unlock()
+		commit, rollback := s.prepareAccountCleanup(r.Context(), identity.UserID, sessionID)
+		if err := s.accounts.RevokeUserSession(r.Context(), identity.UserID, sessionID); err != nil {
+			rollback()
+			return err
+		}
+		commit(sessionID)
+		return nil
+	}()
+	if err != nil {
 		writeAccountFailure(w, err)
 		return
 	}
@@ -533,6 +583,26 @@ func (s *Server) serveAccountSessionRevoke(w http.ResponseWriter, r *http.Reques
 		s.clearSessionCookie(w, r)
 	}
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) cleanupAccount(ctx context.Context, ownerID, cleanupID string, sessionIDs ...string) {
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
+	s.cleanupAccountLocked(ctx, ownerID, cleanupID, sessionIDs...)
+}
+
+func (s *Server) cleanupAccountLocked(ctx context.Context, ownerID, cleanupID string, sessionIDs ...string) {
+	if s.accountCleanup == nil || ownerID == "" || cleanupID == "" {
+		return
+	}
+	s.accountCleanup(context.WithoutCancel(ctx), ownerID, cleanupID, sessionIDs...)
+}
+
+func (s *Server) prepareAccountCleanup(ctx context.Context, ownerID, cleanupID string) (func(...string), func()) {
+	if s.accountCleanupPrepare == nil {
+		return func(...string) {}, func() {}
+	}
+	return s.accountCleanupPrepare(context.WithoutCancel(ctx), ownerID, cleanupID)
 }
 
 func (s *Server) closeAccountConnections(sessionID string) {

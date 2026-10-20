@@ -6,14 +6,15 @@
 //   resolved exactly by the server (case-insensitive); the frontend needs no user directory (/admin/users is superadmin-only),
 //   and plain device owners share the same create path as superadmins; all TTL options fall within the server-side 1 minute-30 day
 //   bounds.
-// - Public links (GET /share/links + /share/links/{id}/revoke): this slice only has list and
-//   revoke, no create entry, and shows no token (the list contract carries no token; a one-time token
-//   can only come from a real create response).
+// - Legacy public links (GET /share/links + /share/links/{id}/revoke): existing session links remain
+//   viewable and revocable for one compatibility cycle, but cannot be created; new public access uses
+//   the terminal's existing preview-link menu. List responses never carry tokens.
 // The server filters the list by owner/superadmin; the desktop proxies the same contracts (remote_share_*) through the
 // "account sync" link server session; logged out, a "log in to a server account to use this" guide card
 // points to the "account sync" section, and no request is issued.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { type FleetDevice } from "../../ipc/fleetApi";
 import {
   type HostShareView,
@@ -23,8 +24,14 @@ import {
 import { useAuth } from "../auth/store";
 import { useUi } from "../../app/store";
 import { WEB } from "../../ipc/env";
+import { remoteHostShareApi } from "../../ipc/remoteApi";
+import {
+  browserHostShareIdentityScope,
+  hostShareIdentityScope,
+} from "../../ipc/hostShareApi";
 import { fleetClient, sharingClient } from "../fleet/clients";
 import { useFleetAccount } from "../fleet/useFleetAccount";
+import { HostShareTerminalApp } from "../sharing/HostShareTerminalApp";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { formatTime } from "../../ui/format";
@@ -118,9 +125,30 @@ function ShareAuthOff() {
 export function ShareCard() {
   const authStatus = useAuth((s) => s.status);
   const account = useFleetAccount();
+  const identityLink = useQuery({
+    queryKey: ["sync-link", "host-share-identity"],
+    queryFn: remoteHostShareApi.identity,
+    enabled: !WEB && Boolean(account.userId),
+    staleTime: 30_000,
+    retry: false,
+  });
+  const needsDesktopIdentity = !WEB && Boolean(account.userId);
   // auth=off is only detectable on WEB (desktop login itself relies on the account system; logging in implies auth=on).
   if (WEB && authStatus?.auth === "off") return <ShareAuthOff />;
-  if (account.loading) {
+  const identityMismatch = needsDesktopIdentity && identityLink.isSuccess && identityLink.data.userId !== account.userId;
+  const initialIdentityFailure = needsDesktopIdentity && identityLink.isError && identityLink.data === undefined;
+  if (needsDesktopIdentity && (initialIdentityFailure || identityMismatch)) {
+    return (
+      <section className="nx-card">
+        <div className="mb-1 flex items-center gap-2">
+          <IconGlobe size={15} className="text-neutral-400" />
+          <span className="nx-card-title">分享</span>
+          <span className="nx-hint">账号身份信息不可用，请重新登录。</span>
+        </div>
+      </section>
+    );
+  }
+  if (account.loading || (needsDesktopIdentity && identityLink.isPending)) {
     return (
       <section className="nx-card">
         <div className="mb-1 flex items-center gap-2">
@@ -132,10 +160,13 @@ export function ShareCard() {
     );
   }
   if (!account.userId) return WEB ? <ShareLoginHint /> : <ShareUnsupported />;
-  return <ShareManagement userId={account.userId} isAdmin={account.isAdmin} />;
+  const scopeKey = WEB
+    ? browserHostShareIdentityScope(account.userId)
+    : hostShareIdentityScope(identityLink.data!.serverUrl, identityLink.data!.userId, identityLink.data!.generation);
+  return <ShareManagement userId={account.userId} scopeKey={scopeKey} isAdmin={account.isAdmin} />;
 }
 
-function ShareManagement({ userId, isAdmin }: { userId: string; isAdmin: boolean }) {
+function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeKey: string; isAdmin: boolean }) {
   const { pushToast } = useUi();
 
   const [devices, setDevices] = useState<FleetDevice[] | null>(null);
@@ -152,17 +183,18 @@ function ShareManagement({ userId, isAdmin }: { userId: string; isAdmin: boolean
   const [write, setWrite] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [activeShare, setActiveShare] = useState<{ deviceId: string; deviceName: string; ownerUsername: string } | null>(null);
 
   const loadSeq = useRef(0);
   // accountEpoch bumps only on account switch (manual refresh leaves it alone), isolating in-flight create/revoke
   // then/catch/finally: late completions from an old account never write into the new account's view.
   const accountEpoch = useRef(0);
 
-  // Account-scope isolation: when user.id changes, reset all account state (list/create form) during render,
-  // and bump loadSeq to invalidate late responses from the old account; AuthGate is only an overlay, so logout/login does not unmount this card.
-  const [scopedUserId, setScopedUserId] = useState(userId);
-  if (scopedUserId !== userId) {
-    setScopedUserId(userId);
+  // Account-scope isolation covers normalized server URL, user and login generation. Any scope change resets the
+  // list/viewer and invalidates late responses, including a same-user switch to another server.
+  const [scopedScopeKey, setScopedScopeKey] = useState(scopeKey);
+  if (scopedScopeKey !== scopeKey) {
+    setScopedScopeKey(scopeKey);
     loadSeq.current += 1;
     accountEpoch.current += 1;
     setDevices(null);
@@ -177,6 +209,7 @@ function ShareManagement({ userId, isAdmin }: { userId: string; isAdmin: boolean
     setCreateError(null);
     setCreating(false);
     setLoading(false);
+    setActiveShare(null);
   }
 
   const load = useCallback(() => {
@@ -218,7 +251,7 @@ function ShareManagement({ userId, isAdmin }: { userId: string; isAdmin: boolean
 
   useEffect(() => {
     load();
-  }, [userId, load]);
+  }, [scopeKey, load]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
@@ -298,7 +331,7 @@ function ShareManagement({ userId, isAdmin }: { userId: string; isAdmin: boolean
         <IconGlobe size={15} className="text-neutral-400" />
         <span className="nx-card-title">分享</span>
         {shares !== null && <span className="nx-badge">{shares.length} 条主机分享</span>}
-        {links !== null && <span className="nx-badge">{links.length} 条公开链接</span>}
+        {links !== null && <span className="nx-badge">{links.length} 条旧版链接</span>}
         <div className="nx-spacer" />
         <button
           className="nx-btn nx-btn-outline nx-btn-sm"
@@ -315,7 +348,7 @@ function ShareManagement({ userId, isAdmin }: { userId: string; isAdmin: boolean
       </div>
 
       <p className="nx-hint mb-3">
-        主机分享允许另一个注册用户在有效期内通过设备代理在你的接入设备上新建终端。公开链接用于访问已有的实时会话，访问者加入的是同一会话，不会新建终端；链接只能在这里查看和吊销。
+        主机分享允许另一个注册用户在有效期内通过设备代理在你的接入设备上新建终端。旧版公开链接只能在这里查看和吊销；新的公开访问请使用终端中的「预览链接」。
       </p>
 
       {createOpen && (
@@ -406,6 +439,7 @@ function ShareManagement({ userId, isAdmin }: { userId: string; isAdmin: boolean
                   ? `来自 ${s.owner_username}`
                   : `${s.owner_username} 分享给 ${s.recipient_username}`;
             const canRevoke = isAdmin || s.owner_id === userId || (devices?.some((d) => d.id === s.device_id) ?? false);
+            const canOpen = s.recipient_id === userId && !s.revoked_at && now < s.expires_at;
             return (
               <div
                 key={s.id}
@@ -418,6 +452,18 @@ function ShareManagement({ userId, isAdmin }: { userId: string; isAdmin: boolean
                 <span className={`nx-badge shrink-0 ${perm.tone}`}>{perm.text}</span>
                 <span className={`nx-badge shrink-0 ${state.tone}`}>{state.text}</span>
                 <span className="nx-hint min-w-0 text-[11px]">有效期至 {formatTime(s.expires_at)}</span>
+                {canOpen && (
+                  <button
+                    className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
+                    onClick={() => setActiveShare({
+                      deviceId: s.device_id,
+                      deviceName: deviceName(s.device_id),
+                      ownerUsername: s.owner_username,
+                    })}
+                  >
+                    打开终端
+                  </button>
+                )}
                 {canRevoke && !s.revoked_at && (
                   <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void revokeHostShare(s)}>
                     吊销
@@ -433,7 +479,7 @@ function ShareManagement({ userId, isAdmin }: { userId: string; isAdmin: boolean
         <div className="nx-hint py-1.5 text-[11.5px]">还没有主机分享。</div>
       )}
 
-      <div className="mb-1 mt-3 text-[12.5px] text-neutral-200">公开链接</div>
+      <div className="mb-1 mt-3 text-[12.5px] text-neutral-200">旧版链接（只可吊销）</div>
       {links !== null && links.length > 0 && (
         <div className="max-h-[240px] overflow-y-auto rounded border border-neutral-800/60">
           {links.map((l) => {
@@ -464,9 +510,9 @@ function ShareManagement({ userId, isAdmin }: { userId: string; isAdmin: boolean
           })}
         </div>
       )}
-      {links === null && !listError && <div className="nx-hint py-1.5 text-[11.5px]">公开链接加载中…</div>}
+      {links === null && !listError && <div className="nx-hint py-1.5 text-[11.5px]">旧版链接加载中…</div>}
       {links !== null && links.length === 0 && !listError && (
-        <div className="nx-hint py-1.5 text-[11.5px]">还没有公开链接。</div>
+        <div className="nx-hint py-1.5 text-[11.5px]">还没有旧版链接。新的公开访问请使用终端中的「预览链接」。</div>
       )}
 
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
@@ -475,6 +521,14 @@ function ShareManagement({ userId, isAdmin }: { userId: string; isAdmin: boolean
           列表由服务端按账号过滤：普通用户只能查看自己授予或接收的分享，以及自己创建的公开链接；超级管理员可查看全部。吊销立即生效；主机分享和公开链接都不会向访问者泄露主机密码或私钥。
         </div>
       </div>
+      {activeShare && (
+        <HostShareTerminalApp
+          deviceId={activeShare.deviceId}
+          deviceName={activeShare.deviceName}
+          ownerUsername={activeShare.ownerUsername}
+          onClose={() => setActiveShare(null)}
+        />
+      )}
     </section>
   );
 }

@@ -79,6 +79,8 @@ type retentionSettings struct {
 	RecordingMaxCount       int64 `json:"recordingMaxCount"`
 	CommandMaxAgeMS         int64 `json:"commandMaxAgeMs"`
 	CommandMaxCount         int64 `json:"commandMaxCount"`
+	ExecBatchMaxAgeMS       int64 `json:"execBatchMaxAgeMs"`
+	ExecBatchMaxCount       int64 `json:"execBatchMaxCount"`
 	CommandFollowTranscript bool  `json:"commandFollowTranscript"`
 }
 
@@ -142,7 +144,11 @@ func StoreRetentionPolicy(database *store.Store) RetentionPolicySource {
 		if err != nil {
 			return store.RetentionPolicy{}, err
 		}
-		if settings.AuditMaxCount < 0 || settings.RecordingMaxCount < 0 || settings.CommandMaxCount < 0 {
+		execBatchAge, err := retentionDuration("execBatchMaxAgeMs", settings.ExecBatchMaxAgeMS)
+		if err != nil {
+			return store.RetentionPolicy{}, err
+		}
+		if settings.AuditMaxCount < 0 || settings.RecordingMaxCount < 0 || settings.CommandMaxCount < 0 || settings.ExecBatchMaxCount < 0 {
 			return store.RetentionPolicy{}, fmt.Errorf("%s counts must not be negative", RetentionSettingKey)
 		}
 		policy := store.RetentionPolicy{
@@ -152,6 +158,8 @@ func StoreRetentionPolicy(database *store.Store) RetentionPolicySource {
 			RecordingMaxCount: settings.RecordingMaxCount,
 			CommandMaxAge:     commandAge,
 			CommandMaxCount:   settings.CommandMaxCount,
+			ExecBatchMaxAge:   execBatchAge,
+			ExecBatchMaxCount: settings.ExecBatchMaxCount,
 		}
 		if settings.CommandFollowTranscript {
 			transcript, err := TranscriptRetentionPolicy(ctx, database)
@@ -215,6 +223,14 @@ func (r *RetentionRunner) Start(ctx context.Context) error {
 
 func (r *RetentionRunner) run(ctx context.Context, done chan struct{}) {
 	defer close(done)
+	if scheduler, ok := r.store.(interface {
+		RunRetentionSchedule(context.Context, store.RetentionSchedule) error
+	}); ok {
+		if err := scheduler.RunRetentionSchedule(ctx, store.RetentionSchedule{Name: "general", Interval: r.interval, Run: r.enforce}); err != nil {
+			r.logger.Error("retention scheduler failed", "error", err)
+		}
+		return
+	}
 	for {
 		r.enforce(ctx)
 		select {
@@ -254,7 +270,7 @@ func (r *RetentionRunner) enforce(ctx context.Context) {
 
 func retentionEnabled(policy store.RetentionPolicy) bool {
 	return policy.AuditMaxAge > 0 || policy.AuditMaxCount > 0 || policy.RecordingMaxAge > 0 || policy.RecordingMaxCount > 0 ||
-		policy.CommandMaxAge > 0 || policy.CommandMaxCount > 0
+		policy.CommandMaxAge > 0 || policy.CommandMaxCount > 0 || policy.ExecBatchMaxAge > 0 || policy.ExecBatchMaxCount > 0
 }
 
 func (r *RetentionRunner) Status(_ context.Context) (RetentionHealth, error) {

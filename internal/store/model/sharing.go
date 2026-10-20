@@ -62,20 +62,3 @@ type CommandLog struct {
 }
 
 func (CommandLog) TableName() string { return "command_log" }
-
-type DeviceShareLink struct {
-	ID             string     `gorm:"column:id;primaryKey" json:"id"`
-	OwnerID        string     `gorm:"size:191;column:owner_id;not null;index:idx_device_share_link_owner" json:"ownerId"`
-	DeviceID       string     `gorm:"size:191;column:device_id;not null;index:idx_device_share_link_device" json:"deviceId"`
-	TokenHash      string     `gorm:"column:token_hash;not null;size:191;uniqueIndex:idx_device_share_token_hash" json:"tokenHash"`
-	Permission     string     `gorm:"column:permission;not null;default:'read'" json:"permission"`
-	CreatedAt      int64      `gorm:"column:created_at;not null" json:"createdAt"`
-	NotBefore      int64      `gorm:"column:not_before;not null;default:0" json:"notBefore"`
-	ExpiresAt      int64      `gorm:"column:expires_at;not null" json:"expiresAt"`
-	RevokedAt      *int64     `gorm:"column:revoked_at" json:"revokedAt"`
-	LastAccessedAt *int64     `gorm:"column:last_accessed_at" json:"lastAccessedAt"`
-	Owner          AppUser    `gorm:"foreignKey:OwnerID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
-	Device         UserDevice `gorm:"foreignKey:DeviceID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
-}
-
-func (DeviceShareLink) TableName() string { return "device_share_link" }

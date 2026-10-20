@@ -34,7 +34,10 @@ func TestLegacyProviderKeyIsIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	overview := manager.Overview()
+	overview, err := manager.Overview(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(overview.Profiles) != 0 || overview.ActiveID != nil {
 		t.Fatalf("legacy ai.provider row must not be imported: %+v", overview)
 	}
@@ -56,7 +59,10 @@ func TestMalformedCurrentStoreOpensEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	overview := manager.Overview()
+	overview, err := manager.Overview(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(overview.Profiles) != 0 || overview.ActiveID != nil {
 		t.Fatalf("malformed current store should open an empty profile list: %+v", overview)
 	}
@@ -99,7 +105,7 @@ func TestProfileLifecycleAndActiveRuntimeSnapshots(t *testing.T) {
 	if first.Name != "first" || first.APIKey != profiles.MaskedAPIKey {
 		t.Fatalf("profile was not normalized: %+v", first)
 	}
-	firstClient, err := manager.ActiveClient()
+	firstClient, err := manager.ActiveClient(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +122,7 @@ func TestProfileLifecycleAndActiveRuntimeSnapshots(t *testing.T) {
 	if _, err = manager.Activate(ctx, second.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := manager.ActiveConfig(); got.Model != "deepseek-flash" {
+	if got, _ := mustActiveConfig(t, manager); got.Model != "deepseek-flash" {
 		t.Fatalf("active model = %s", got.Model)
 	}
 	if firstClient.Config().Model != "kimi-k3" {
@@ -127,7 +133,7 @@ func TestProfileLifecycleAndActiveRuntimeSnapshots(t *testing.T) {
 	if _, err = manager.Save(ctx, second); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := manager.ActiveConfig(); got.BaseURL != "https://replacement.test/v2" {
+	if got, _ := mustActiveConfig(t, manager); got.BaseURL != "https://replacement.test/v2" {
 		t.Fatalf("active replacement was not applied: %s", got.BaseURL)
 	}
 	if _, err = manager.Activate(ctx, "missing"); !errors.Is(err, profiles.ErrProfileNotFound) {
@@ -151,7 +157,7 @@ func TestProfileLifecycleAndActiveRuntimeSnapshots(t *testing.T) {
 	if len(overview.Profiles) != 0 || overview.ActiveID != nil {
 		t.Fatalf("deleting final profile left state behind: %+v", overview)
 	}
-	if _, err = manager.ActiveClient(); !errors.Is(err, profiles.ErrNoActiveProfile) {
+	if _, err = manager.ActiveClient(ctx); !errors.Is(err, profiles.ErrNoActiveProfile) {
 		t.Fatalf("deleted provider is still usable: %v", err)
 	}
 	if firstClient.Config().Model != "kimi-k3" {
@@ -173,7 +179,10 @@ func TestLoadRepairsIDsOrderAndActive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	overview := manager.Overview()
+	overview, err := manager.Overview(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(overview.Profiles) != 2 {
 		t.Fatalf("profiles = %+v", overview.Profiles)
 	}
@@ -190,7 +199,7 @@ func TestLoadRepairsIDsOrderAndActive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.Overview().Profiles[1].ID != overview.Profiles[1].ID {
+	if mustOverview(t, reloaded).Profiles[1].ID != overview.Profiles[1].ID {
 		t.Fatal("repair was not persisted")
 	}
 }
@@ -223,7 +232,10 @@ func TestConcurrentSaveDoesNotLoseProfiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	overview := manager.Overview()
+	overview, err := manager.Overview(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(overview.Profiles) != count {
 		t.Fatalf("concurrent saves left %d profiles, want %d", len(overview.Profiles), count)
 	}
@@ -238,7 +250,7 @@ func TestConcurrentSaveDoesNotLoseProfiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := len(reloaded.Overview().Profiles); got != count {
+	if got := len(mustOverview(t, reloaded).Profiles); got != count {
 		t.Fatalf("persisted profile count = %d, want %d", got, count)
 	}
 }

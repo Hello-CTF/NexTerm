@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
@@ -57,11 +58,12 @@ type RunResponse struct {
 }
 
 type ownership struct {
-	tabID  string
-	token  string
-	jobID  string
-	ctx    context.Context
-	cancel context.CancelFunc
+	tabID   string
+	token   string
+	ownerID string
+	jobID   string
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 type pending struct {
@@ -82,6 +84,7 @@ type runState struct {
 	eino          *takeoverRuntime
 	cancelFn      adk.AgentCancelFunc
 	eventMu       sync.Mutex
+	seq           uint64
 	finished      bool
 	finalOnce     sync.Once
 	finalizeMu    sync.Mutex
@@ -124,6 +127,7 @@ func (s *runState) emit(ctx context.Context, event agent.Event) error {
 	if s.finished {
 		return errors.New("takeover already finished")
 	}
+	event.Seq = atomic.AddUint64(&s.seq, 1)
 	return s.stream.Send(ctx, event)
 }
 
@@ -131,6 +135,7 @@ func (s *runState) finish(event agent.Event) {
 	s.finalOnce.Do(func() {
 		s.eventMu.Lock()
 		s.finished = true
+		event.Seq = atomic.AddUint64(&s.seq, 1)
 		parent := s.deliveryCtx
 		if parent == nil {
 			parent = context.WithoutCancel(s.ctx)

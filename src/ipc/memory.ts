@@ -36,31 +36,26 @@ export interface MemorySettings {
 export type MemorySecretPolicy = "reject" | "redact";
 
 export const memoryApi = {
-  create: (scope: MemoryScope, topic: string, content: string, secrets?: MemorySecretPolicy) =>
-    call<MemoryEntry>("memory_create", { scope, topic, content, secrets }),
+  create: (topic: string, content: string, secrets?: MemorySecretPolicy) =>
+    call<MemoryEntry>("memory_create", { topic, content, secrets }),
 
-  get: (scope: MemoryScope, id: string) =>
-    call<MemoryEntry>("memory_get", { scope, id }),
+  get: (id: string) => call<MemoryEntry>("memory_get", { id }),
 
   edit: (
-    scope: MemoryScope,
     id: string,
     expectedVersion: number,
     patch: { topic?: string; content?: string; secrets?: MemorySecretPolicy },
-  ) => call<MemoryEntry>("memory_edit", { scope, id, expectedVersion, ...patch }),
+  ) => call<MemoryEntry>("memory_edit", { id, expectedVersion, ...patch }),
 
-  delete: (scope: MemoryScope, id: string, expectedVersion: number) =>
-    call<void>("memory_delete", { scope, id, expectedVersion }),
+  delete: (id: string, expectedVersion: number) =>
+    call<void>("memory_delete", { id, expectedVersion }),
 
-  index: (scope: MemoryScope) =>
-    call<MemoryTopicIndex[]>("memory_index", { scope }),
+  index: () => call<MemoryTopicIndex[]>("memory_index", {}),
 
-  settings: (scope: MemoryScope) =>
-    call<MemorySettings>("memory_settings_get", { scope }),
+  settings: () => call<MemorySettings>("memory_settings_get", {}),
 
   setSettings: (
-    scope: MemoryScope,
     expectedVersion: number,
     patch: { injectionEnabled?: boolean; toolsEnabled?: boolean },
-  ) => call<MemorySettings>("memory_settings_set", { scope, expectedVersion, ...patch }),
+  ) => call<MemorySettings>("memory_settings_set", { expectedVersion, ...patch }),
 };

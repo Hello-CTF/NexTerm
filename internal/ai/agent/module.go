@@ -6,28 +6,22 @@ import (
 	"errors"
 	"time"
 
-	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/app"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
-// guardGrantMutation under server assembly (ServerMode) restricts device grant /
-// grant rule mutations to super admins: grant state is isolated per account, but
-// currently only super admins may change it. Desktop and identity-less open
-// deployments (auth=off / loopback login-exempt) keep the original behavior.
+// guardGrantMutation requires an account or explicit Open identity; target ownership is enforced by Grants.
 func (r *Runner) guardGrantMutation(ctx context.Context) error {
 	if !r.config.ServerMode {
 		return nil
 	}
-	if _, ok := ipc.UserIDFromContext(ctx); !ok {
+	if _, ok := ipc.UserIDFromContext(ctx); ok || owner.OpenAccess(ctx) {
 		return nil
 	}
-	if role, _ := ipc.RoleFromContext(ctx); role != string(account.RoleSuperadmin) {
-		return ipc.NewError(ipc.CodeForbidden, "需要超管权限")
-	}
-	return nil
+	return ipc.NewError(ipc.CodeForbidden, "AI 请求缺少账号身份")
 }
 
 func channelStreamFactory(call *ipc.Call) StreamFactory {
@@ -164,18 +158,18 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "ai_hitl_snapshot", func(_ context.Context, _ *ipc.Call, args struct {
+			return ipc.Register(dispatcher, "ai_hitl_snapshot", func(ctx context.Context, _ *ipc.Call, args struct {
 				JobID string `json:"jobId"`
 			}) (any, error) {
-				return r.HITLSnapshot(args.JobID)
+				return r.HITLSnapshotContext(ctx, args.JobID)
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "ai_hitl_events", func(_ context.Context, _ *ipc.Call, args struct {
+			return ipc.Register(dispatcher, "ai_hitl_events", func(ctx context.Context, _ *ipc.Call, args struct {
 				JobID    string `json:"jobId"`
 				AfterSeq uint64 `json:"afterSeq"`
 			}) (any, error) {
-				return r.HITLEvents(args.JobID, args.AfterSeq)
+				return r.HITLEventsContext(ctx, args.JobID, args.AfterSeq)
 			})
 		},
 		func() error {
@@ -185,8 +179,12 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				if r.config.Permissions == nil {
 					return guard.Config{}, ipc.NewError(ipc.CodeUnsupported, "权限设置未配置")
 				}
-				config := r.config.Permissions.Get()
-				return r.config.Permissions.WithDeviceMode(config, tools.ResolveGrantDeviceID(ctx, r.config.Tools, args.Scope)), nil
+				config, err := r.config.Permissions.Get(ctx)
+				if err != nil {
+					return guard.Config{}, agentIPCError(err)
+				}
+				config, err = r.config.Permissions.WithDeviceMode(ctx, config, tools.ResolveGrantDeviceID(ctx, r.config.Tools, args.Scope))
+				return config, agentIPCError(err)
 			})
 		},
 		func() error {
@@ -206,7 +204,8 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 					if err := r.config.Permissions.SetDeviceMode(ctx, deviceID, ""); err != nil {
 						return guard.Config{}, agentIPCError(err)
 					}
-					return r.config.Permissions.Get(), nil
+					config, err := r.config.Permissions.Get(ctx)
+					return config, agentIPCError(err)
 				}
 				if args.Config == nil {
 					return guard.Config{}, ipc.NewError(ipc.CodeBadParam, "缺少 config")
@@ -215,7 +214,12 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 					if err := r.config.Permissions.SetDeviceMode(ctx, deviceID, args.Config.Mode); err != nil {
 						return guard.Config{}, agentIPCError(err)
 					}
-					return r.config.Permissions.WithDeviceMode(r.config.Permissions.Get(), deviceID), nil
+					config, err := r.config.Permissions.Get(ctx)
+					if err != nil {
+						return guard.Config{}, agentIPCError(err)
+					}
+					config, err = r.config.Permissions.WithDeviceMode(ctx, config, deviceID)
+					return config, agentIPCError(err)
 				}
 				if args.Scope.SessionID != "" || args.Scope.TabID != "" {
 					return guard.Config{}, ipc.NewError(ipc.CodeBadParam, "无法确定设备身份, 权限未保存; 请重新连接后再试")
@@ -223,15 +227,17 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				if err := r.config.Permissions.Set(ctx, *args.Config); err != nil {
 					return guard.Config{}, agentIPCError(err)
 				}
-				return r.config.Permissions.Get(), nil
+				config, err := r.config.Permissions.Get(ctx)
+				return config, agentIPCError(err)
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "ai_grant_list", func(context.Context, *ipc.Call, struct{}) ([]guard.DeviceGrant, error) {
+			return ipc.Register(dispatcher, "ai_grant_list", func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]guard.DeviceGrant, error) {
 				if r.config.Grants == nil {
 					return nil, ipc.NewError(ipc.CodeUnsupported, "设备授权未配置")
 				}
-				return r.config.Grants.List(), nil
+				grants, err := r.config.Grants.List(ctx)
+				return grants, agentIPCError(err)
 			})
 		},
 		func() error {
@@ -267,11 +273,12 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "ai_grant_rule_list", func(context.Context, *ipc.Call, struct{}) ([]guard.GrantRule, error) {
+			return ipc.Register(dispatcher, "ai_grant_rule_list", func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]guard.GrantRule, error) {
 				if r.config.Grants == nil {
 					return nil, ipc.NewError(ipc.CodeUnsupported, "设备授权未配置")
 				}
-				return r.config.Grants.Rules(), nil
+				rules, err := r.config.Grants.Rules(ctx)
+				return rules, agentIPCError(err)
 			})
 		},
 		func() error {

@@ -95,8 +95,12 @@ func TestMemoryIPCScopeAuthorizedCRUD(t *testing.T) {
 	}
 
 	foreign := memoryDispatch(t, dispatcher, memoryCommandGet, `{"scope":{"tenant":"tenant-a","subject":"subject-b"},"id":"`+entry.ID+`"}`)
-	if foreign.OK || foreign.Error == nil || foreign.Error.Code != ipc.CodeForbidden {
-		t.Fatalf("cross-scope get = %+v", foreign)
+	if !foreign.OK {
+		t.Fatalf("submitted scope must be ignored, not used for authorization: %+v", foreign)
+	}
+	var sameEntry memoryEntryDTO
+	if err := json.Unmarshal(foreign.Data, &sameEntry); err != nil || sameEntry != entry {
+		t.Fatalf("get with ignored scope = %+v, err = %v", sameEntry, err)
 	}
 
 	edited := memoryDispatch(t, dispatcher, memoryCommandEdit, `{"scope":`+memoryScopeJSON()+`,"id":"`+entry.ID+`","expectedVersion":1,"content":"restart at 03:00"}`)

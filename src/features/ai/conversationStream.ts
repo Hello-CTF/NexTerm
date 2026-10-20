@@ -63,11 +63,13 @@ export interface ConversationStream {
   appendSteer(generation: number, text: string): string;
   resolveSteer(generation: number, itemId: string, delivery: SteerDelivery): void;
   bindJob(generation: number, jobId: string): void;
+  resumeFromNextEvent(generation: number): void;
   pushEvent(generation: number, ev: Record<string, unknown>): ApplyResult;
   resolveInteraction(generation: number, itemId: string, nonce: string, label: string): void;
   cancelRun(generation: number, settle: boolean): void;
   restoreUsage(usage: AiUsage): void;
   reset(items?: ChatItem[]): void;
+  replaceHistory(items: ChatItem[]): void;
   truncateAfterItem(itemId: string): void;
   hydrateUserMessageIds(messages: { id?: string; role: string; content: unknown }[]): void;
   lastSeq(generation: number): number;
@@ -96,6 +98,7 @@ export function createConversationStream(
   let disposed = false;
   const listeners = new Set<(state: ConversationState) => void>();
   const lastSequences = new Map<number, number>();
+  const sequenceAnchors = new Set<number>();
   const reorderBuffers = new Map<number, Map<number, Record<string, unknown>>>();
   const hitlSequences = new Map<number, number>();
   const lastSeqOf = (generation: number): number => lastSequences.get(generation) ?? 0;
@@ -288,10 +291,20 @@ export function createConversationStream(
         }
       });
     },
+    resumeFromNextEvent(generation) {
+      if (!disposed && !lastSequences.has(generation)) sequenceAnchors.add(generation);
+    },
     pushEvent(generation, ev): ApplyResult {
       if (disposed) return { state, accepted: false, terminal: null };
       const seq = eventSequence(ev);
       if (seq === null) return applyEvent(generation, ev);
+      if (sequenceAnchors.has(generation) && !lastSequences.has(generation)) {
+        sequenceAnchors.delete(generation);
+        const anchored = applyEvent(generation, ev);
+        lastSequences.set(generation, seq);
+        const drained = drainBuffer(generation, seq, anchored.terminal);
+        return { ...anchored, terminal: drained.terminal, drained: drained.events };
+      }
       const last = lastSeqOf(generation);
       const type = ev.type as string;
       const terminalEvent =
@@ -351,6 +364,14 @@ export function createConversationStream(
         lastSequences.clear();
         reorderBuffers.clear();
         hitlSequences.clear();
+        sequenceAnchors.clear();
+        publish();
+      });
+    },
+    replaceHistory(items) {
+      mutate(() => {
+        const activeItems = state.items.filter((item) => item.attempt !== null);
+        state = { ...state, items: [...items, ...activeItems], seq: state.seq + items.length };
         publish();
       });
     },
@@ -406,6 +427,7 @@ export function createConversationStream(
       lastSequences.clear();
       reorderBuffers.clear();
       hitlSequences.clear();
+      sequenceAnchors.clear();
       listeners.clear();
     },
   };

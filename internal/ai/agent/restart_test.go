@@ -251,12 +251,12 @@ func TestRestartResumesPendingHITL(t *testing.T) {
 
 func TestRestartExpiresPendingHITL(t *testing.T) {
 	storage := restartStore(t)
-	frozen := time.Now()
+	clock := newHITLTestClock()
 	manager, err := hitl.NewManager(hitl.Config{
 		Checkpoints: NewStoreCheckpoints(storage),
 		Store:       hitlStoreBridge{storage},
-		TTL:         60 * time.Millisecond,
-		Now:         func() time.Time { return frozen },
+		TTL:         time.Hour,
+		Now:         clock.Now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -267,7 +267,17 @@ func TestRestartExpiresPendingHITL(t *testing.T) {
 	response := startTestJob(t, runner, stream, "go")
 	confirmation := waitEvent(t, stream, "confirmRequired")
 
-	restarted := durableRunner(t, storage, sequenceModel(schema.AssistantMessage("done", nil)), deps, nil)
+	restartManager, err := hitl.NewManager(hitl.Config{
+		Checkpoints: NewStoreCheckpoints(storage),
+		Store:       hitlStoreBridge{storage},
+		TTL:         time.Hour,
+		Now:         clock.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted := durableRunner(t, storage, sequenceModel(schema.AssistantMessage("done", nil)), deps, restartManager)
+	clock.Advance(2 * time.Hour)
 	if err := restarted.RecoverRuns(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -384,10 +394,13 @@ func hitlBlobOf(t *testing.T, storage *store.Store, id string) []byte {
 
 func TestCloseStopsParkedHitlTimerWithoutTerminalWrites(t *testing.T) {
 	storage := restartStore(t)
+	clock := newHITLTestClock()
 	manager, err := hitl.NewManager(hitl.Config{
 		Checkpoints: NewStoreCheckpoints(storage),
 		Store:       hitlStoreBridge{storage},
-		TTL:         200 * time.Millisecond,
+		TTL:         time.Hour,
+		Now:         clock.Now,
+		AfterFunc:   clock.AfterFunc,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -400,10 +413,13 @@ func TestCloseStopsParkedHitlTimerWithoutTerminalWrites(t *testing.T) {
 	if err := runner.Close(); err != nil {
 		t.Fatal(err)
 	}
+	if active := clock.activeTimers(); active != 0 {
+		t.Fatalf("parked HITL timers after Close = %d, want 0", active)
+	}
 
 	blobAfterClose := hitlBlobOf(t, storage, response.JobID)
 	eventsAfterClose := len(runEventsOf(t, storage, response.JobID))
-	time.Sleep(400 * time.Millisecond)
+	clock.Advance(2 * time.Hour)
 
 	if blob := hitlBlobOf(t, storage, response.JobID); !bytes.Equal(blob, blobAfterClose) {
 		t.Fatal("parked hitl blob was rewritten after Close")
@@ -438,7 +454,6 @@ func TestCloseQuiescesRestoredWatcherWithoutTerminalWrites(t *testing.T) {
 
 	blobAfterClose := hitlBlobOf(t, storage, response.JobID)
 	eventsAfterClose := len(runEventsOf(t, storage, response.JobID))
-	time.Sleep(50 * time.Millisecond)
 
 	if blob := hitlBlobOf(t, storage, response.JobID); !bytes.Equal(blob, blobAfterClose) {
 		t.Fatal("restored hitl blob was rewritten after Close")

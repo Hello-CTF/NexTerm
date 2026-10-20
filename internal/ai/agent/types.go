@@ -10,6 +10,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ai/hitl"
 	"github.com/Hello-CTF/NexTerm/internal/ai/memory"
+	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
 	"github.com/Hello-CTF/NexTerm/internal/ai/steer"
 	"github.com/Hello-CTF/NexTerm/internal/ai/subagent"
@@ -33,7 +34,7 @@ type openAccessContextKey struct{}
 
 // WithOpenAccess marks an already-admitted open or trusted internal caller.
 func WithOpenAccess(ctx context.Context) context.Context {
-	return context.WithValue(ctx, openAccessContextKey{}, true)
+	return owner.WithOpenAccess(context.WithValue(ctx, openAccessContextKey{}, true))
 }
 
 func openAccessFromContext(ctx context.Context) bool {
@@ -51,10 +52,12 @@ type baseChatModelClient interface {
 
 func activeProfileModel(manager *profiles.Manager) ModelFactory {
 	return func(ctx context.Context) (model.BaseChatModel, uint64, error) {
-		if _, ok := manager.ActiveProfile(); !ok {
+		if _, ok, err := manager.ActiveProfile(ctx); err != nil {
+			return nil, 0, err
+		} else if !ok {
 			return nil, 0, errors.New("未配置活动 AI 模型")
 		}
-		client, err := manager.ActiveClient()
+		client, err := manager.ActiveClient(ctx)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -81,13 +84,17 @@ type Config struct {
 	Grants                *guard.Grants
 	Tools                 *tools.Registry
 	Context               *aicontext.Builder
+	ScopeValidator        ScopeValidator
+	ScopeResolver         ScopeResolver
 	Store                 ConversationStore
 	Runs                  RunStore
+	TitleTimeout          time.Duration
 	Permission            func(context.Context) (guard.Config, error)
 	Checkpoints           adk.CheckPointStore
 	HITL                  *hitl.Manager
 	HITLTTL               time.Duration
 	HITLTerminalRetention time.Duration
+	Now                   func() time.Time
 	Subagents             *tools.SubagentConfig
 	NewID                 func() string
 	MaxTurns              int
@@ -96,11 +103,12 @@ type Config struct {
 
 	MaxPendingSteers int
 
-	Memory      *memory.Store
-	MemoryScope memory.Scope
+	Memory         *memory.Store
+	MemoryScope    memory.Scope
+	MemoryScopeFor func(context.Context) (memory.Scope, error)
 
-	// ServerMode marks nexterm-server assembly (false on desktop): device grants and
-	// grant rules are isolated per account; currently only super admins may change them.
+	// ServerMode marks nexterm-server assembly (false on desktop): grant state is
+	// isolated per account and mutations require an account or explicit Open identity.
 	ServerMode bool
 }
 
@@ -214,6 +222,8 @@ type job struct {
 	running        bool
 	subagents      *subagent.Manager
 	completed      bool
+	doneCh         chan struct{}
+	doneOnce       sync.Once
 }
 
 func (j *job) emit(ctx context.Context, event Event) error {
@@ -347,4 +357,12 @@ func (j *job) state() (bool, adk.AgentCancelFunc) {
 	j.pendingMu.Lock()
 	defer j.pendingMu.Unlock()
 	return j.running, j.cancelFn
+}
+
+func (j *job) markDone() {
+	j.doneOnce.Do(func() {
+		if j.doneCh != nil {
+			close(j.doneCh)
+		}
+	})
 }

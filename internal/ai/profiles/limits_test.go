@@ -30,12 +30,12 @@ func TestProfileMaxTokensRoundTripThroughStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile, ok := reloaded.Profile(overview.Profiles[0].ID)
+	profile, ok := mustProfile(t, reloaded, overview.Profiles[0].ID)
 	if !ok || profile.MaxTokens == nil || *profile.MaxTokens != 4_096 {
 		t.Fatalf("reloaded profile = %+v ok=%v", profile, ok)
 	}
 	*profile.MaxTokens = 1
-	again, _ := reloaded.Profile(overview.Profiles[0].ID)
+	again, _ := mustProfile(t, reloaded, overview.Profiles[0].ID)
 	if *again.MaxTokens != 4_096 {
 		t.Fatalf("manager state aliased: %d", *again.MaxTokens)
 	}
@@ -63,7 +63,7 @@ func TestProfileMaxTokensAbsentInLegacyJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile, ok := manager.Profile("p1")
+	profile, ok := mustProfile(t, manager, "p1")
 	if !ok {
 		t.Fatal("legacy profile not found")
 	}
@@ -99,7 +99,7 @@ func TestProfileCircuitFieldsRoundTripAndClamp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile, ok := reloaded.Profile(saved.ID)
+	profile, ok := mustProfile(t, reloaded, saved.ID)
 	if !ok || profile.CircuitFailureThreshold == nil || *profile.CircuitFailureThreshold != 3 ||
 		profile.CircuitCooldownSeconds == nil || *profile.CircuitCooldownSeconds != 120 {
 		t.Fatalf("reloaded profile = %+v ok=%v", profile, ok)
@@ -138,7 +138,7 @@ func TestManagerCircuitBreakerSharedAcrossClients(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := overview.Profiles[0].ID
-	client, err := manager.ActiveClient()
+	client, err := manager.ActiveClient(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,11 +148,11 @@ func TestManagerCircuitBreakerSharedAcrossClients(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatalf("calls = %d", calls.Load())
 	}
-	status, ok := manager.CircuitStatus(id)
+	status, ok := mustCircuitStatus(t, manager, id)
 	if !ok || status.ConsecutiveFailures != 1 || status.OpenUntil == nil || !status.OpenUntil.After(time.Now()) {
 		t.Fatalf("CircuitStatus() = %+v ok=%v", status, ok)
 	}
-	second, err := manager.ActiveClient()
+	second, err := manager.ActiveClient(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestManagerCircuitBreakerSharedAcrossClients(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatalf("open circuit hit the server: calls = %d", calls.Load())
 	}
-	if _, ok := manager.CircuitStatus("missing"); ok {
+	if _, ok := mustCircuitStatus(t, manager, "missing"); ok {
 		t.Fatal("missing profile reported circuit status")
 	}
 }
@@ -189,7 +189,7 @@ func TestManagerDeleteFailureKeepsCircuitState(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := overview.Profiles[0].ID
-	client, err := manager.ActiveClient()
+	client, err := manager.ActiveClient(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,14 +201,14 @@ func TestManagerDeleteFailureKeepsCircuitState(t *testing.T) {
 		t.Fatal("delete succeeded despite settings failure")
 	}
 	settings.fail = false
-	if _, ok := manager.Profile(id); !ok {
+	if _, ok := mustProfile(t, manager, id); !ok {
 		t.Fatal("profile lost after failed delete")
 	}
-	status, ok := manager.CircuitStatus(id)
+	status, ok := mustCircuitStatus(t, manager, id)
 	if !ok || status.ConsecutiveFailures != 1 || status.OpenUntil == nil || !status.OpenUntil.After(time.Now()) {
 		t.Fatalf("circuit state lost after failed delete: %+v ok=%v", status, ok)
 	}
-	second, err := manager.ActiveClient()
+	second, err := manager.ActiveClient(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestManagerDeleteFailureKeepsCircuitState(t *testing.T) {
 	if _, err := manager.Delete(ctx, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := manager.CircuitStatus(id); ok {
+	if _, ok := mustCircuitStatus(t, manager, id); ok {
 		t.Fatal("circuit state survived successful delete")
 	}
 }

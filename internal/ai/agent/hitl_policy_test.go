@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +13,92 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/cloudwego/eino/components/model"
 )
+
+type hitlTestTimer struct {
+	mu      sync.Mutex
+	due     time.Time
+	fn      func()
+	stopped bool
+	fired   bool
+}
+
+func (t *hitlTestTimer) Stop() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.stopped || t.fired {
+		return false
+	}
+	t.stopped = true
+	return true
+}
+
+func (t *hitlTestTimer) active() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return !t.stopped && !t.fired
+}
+
+func (t *hitlTestTimer) fire() {
+	t.mu.Lock()
+	if t.stopped || t.fired {
+		t.mu.Unlock()
+		return
+	}
+	t.fired = true
+	fn := t.fn
+	t.mu.Unlock()
+	fn()
+}
+
+type hitlTestClock struct {
+	mu     sync.Mutex
+	now    time.Time
+	timers []*hitlTestTimer
+}
+
+func newHITLTestClock() *hitlTestClock {
+	return &hitlTestClock{now: time.Date(2100, time.January, 1, 0, 0, 0, 0, time.UTC)}
+}
+
+func (c *hitlTestClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *hitlTestClock) AfterFunc(delay time.Duration, fn func()) hitl.Timer {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	timer := &hitlTestTimer{due: c.now.Add(delay), fn: fn}
+	c.timers = append(c.timers, timer)
+	return timer
+}
+
+func (c *hitlTestClock) Advance(delta time.Duration) {
+	c.mu.Lock()
+	c.now = c.now.Add(delta)
+	now := c.now
+	timers := append([]*hitlTestTimer(nil), c.timers...)
+	c.mu.Unlock()
+	for _, timer := range timers {
+		if !timer.due.After(now) {
+			timer.fire()
+		}
+	}
+}
+
+func (c *hitlTestClock) activeTimers() int {
+	c.mu.Lock()
+	timers := append([]*hitlTestTimer(nil), c.timers...)
+	c.mu.Unlock()
+	active := 0
+	for _, timer := range timers {
+		if timer.active() {
+			active++
+		}
+	}
+	return active
+}
 
 func hitlPolicyConfig(storage *store.Store, ttl time.Duration) Config {
 	return Config{
@@ -23,13 +111,16 @@ func hitlPolicyConfig(storage *store.Store, ttl time.Duration) Config {
 	}
 }
 
-func TestRunnerHITLTTLConfigDrivesLiveExpiry(t *testing.T) {
+func TestRunnerHITLTTLConfigDrivesExpiry(t *testing.T) {
 	storage := restartStore(t)
-	runner := NewRunner(hitlPolicyConfig(storage, 2*time.Second))
+	clock := newHITLTestClock()
+	config := hitlPolicyConfig(storage, time.Hour)
+	config.Now = clock.Now
+	runner := NewRunner(config)
 	t.Cleanup(func() { _ = runner.Close() })
 	stream := &SliceStream{}
 	response := startTestJob(t, runner, stream, "go")
-	waitEvent(t, stream, "confirmRequired")
+	confirmation := waitEvent(t, stream, "confirmRequired")
 
 	snapshot, err := runner.HITLSnapshot(response.JobID)
 	if err != nil {
@@ -38,10 +129,17 @@ func TestRunnerHITLTTLConfigDrivesLiveExpiry(t *testing.T) {
 	if len(snapshot.Pending) != 1 {
 		t.Fatalf("snapshot = %+v", snapshot)
 	}
-	if window := snapshot.Pending[0].ExpiresAt.Sub(snapshot.Pending[0].CreatedAt); window != 2*time.Second {
+	if !snapshot.Pending[0].CreatedAt.Equal(clock.Now()) {
+		t.Fatalf("request did not use the injected clock: %+v", snapshot.Pending[0])
+	}
+	if window := snapshot.Pending[0].ExpiresAt.Sub(snapshot.Pending[0].CreatedAt); window != time.Hour {
 		t.Fatalf("configured TTL did not reach the hitl manager: expiry window = %v", window)
 	}
 
+	clock.Advance(2 * time.Hour)
+	if err := runner.Confirm(Confirmation{JobID: response.JobID, CallID: confirmation.ID, Nonce: confirmation.Nonce, Decision: "allow"}); !errors.Is(err, ErrConfirmationStale) {
+		t.Fatalf("expired confirmation error = %v", err)
+	}
 	events := waitClosed(t, stream)
 	if done, failed := terminalCounts(events); done != 0 || failed != 1 {
 		t.Fatalf("terminal counts done=%d error=%d events=%+v", done, failed, events)
@@ -60,7 +158,10 @@ func TestRunnerHITLTTLConfigDrivesLiveExpiry(t *testing.T) {
 
 func TestRunnerHITLTTLConfigSurvivesRestartRecovery(t *testing.T) {
 	storage := restartStore(t)
-	runner := NewRunner(hitlPolicyConfig(storage, 150*time.Millisecond))
+	clock := newHITLTestClock()
+	config := hitlPolicyConfig(storage, time.Hour)
+	config.Now = clock.Now
+	runner := NewRunner(config)
 	stream := &SliceStream{}
 	response := startTestJob(t, runner, stream, "go")
 	confirmation := waitEvent(t, stream, "confirmRequired")
@@ -68,8 +169,9 @@ func TestRunnerHITLTTLConfigSurvivesRestartRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	restarted := NewRunner(hitlPolicyConfig(storage, 150*time.Millisecond))
+	restarted := NewRunner(config)
 	t.Cleanup(func() { _ = restarted.Close() })
+	clock.Advance(2 * time.Hour)
 	if err := restarted.RecoverRuns(context.Background()); err != nil {
 		t.Fatal(err)
 	}

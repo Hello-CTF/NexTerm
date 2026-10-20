@@ -2,7 +2,9 @@ package sync
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -10,12 +12,16 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store/model"
+	"gorm.io/gorm/clause"
 )
 
 func putPreferenceSetting(t *testing.T, device *testDevice, key, value string, updatedAt int64) {
 	t.Helper()
-	if _, err := device.db.DB().ExecContext(context.Background(), `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
-ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`, key, value, updatedAt); err != nil {
+	if err := device.db.GORM().WithContext(context.Background()).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "key"}},
+		DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
+	}).Create(&model.Setting{Key: key, Value: value, UpdatedAt: updatedAt}).Error; err != nil {
 		t.Fatal(err)
 	}
 }
@@ -26,7 +32,7 @@ func readPreferenceSetting(t *testing.T, device *testDevice, key string) (string
 	var updatedAt int64
 	err := device.db.DB().QueryRowContext(context.Background(), "SELECT value, updated_at FROM setting WHERE key = ?", key).Scan(&value, &updatedAt)
 	if err != nil {
-		if err.Error() == "sql: no rows in result set" {
+		if errors.Is(err, sql.ErrNoRows) {
 			return "", 0, false
 		}
 		t.Fatal(err)
@@ -311,6 +317,51 @@ func deviceManager(t *testing.T, device *testDevice, ctx context.Context) *guard
 	return manager
 }
 
+func grantRulesForTest(t *testing.T, ctx context.Context, grants *guard.Grants) []guard.GrantRule {
+	t.Helper()
+	rules, err := grants.Rules(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rules
+}
+
+func grantForTest(t *testing.T, ctx context.Context, grants *guard.Grants, deviceID string) (guard.DeviceGrant, bool) {
+	t.Helper()
+	grant, ok, err := grants.Get(ctx, deviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return grant, ok
+}
+
+func grantListForTest(t *testing.T, ctx context.Context, grants *guard.Grants) []guard.DeviceGrant {
+	t.Helper()
+	listed, err := grants.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return listed
+}
+
+func deviceModeForTest(t *testing.T, ctx context.Context, manager *guard.Manager, deviceID string) (guard.Mode, bool) {
+	t.Helper()
+	mode, ok, err := manager.DeviceMode(ctx, deviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return mode, ok
+}
+
+func syncDeviceWithContext(t *testing.T, ctx context.Context, device *testDevice, server *testSyncServer, username, password string) SyncReport {
+	t.Helper()
+	report, err := device.engine.Sync(ctx, device.config(server, username, password))
+	if err != nil {
+		t.Fatalf("sync: %v (warnings=%v)", err, report.Warnings)
+	}
+	return report
+}
+
 // AI grant sync: grants/rules/modes converge across devices with per-entity LWW, revocations propagate via tombstones,
 // re-grants resurrect, and the receiving device's guard evaluation (and its Reload hook contract) picks up applied state.
 func TestEngineAIGrantConverge(t *testing.T) {
@@ -322,8 +373,11 @@ func TestEngineAIGrantConverge(t *testing.T) {
 	for _, device := range []*testDevice{deviceA, deviceB} {
 		enableDeviceAIGrantOptIn(t, device, userID)
 	}
-	ctx := context.Background()
-	userCtx := WithUserID(ctx, userID)
+	userCtx := WithUserID(context.Background(), userID)
+	ctx := userCtx
+	syncDevice := func(t *testing.T, device *testDevice, server *testSyncServer, username, password string) SyncReport {
+		return syncDeviceWithContext(t, userCtx, device, server, username, password)
+	}
 
 	// A configures a device grant, a path rule, and a per-device permission mode.
 	grantsA, err := guard.NewGrants(userCtx, deviceA.db, nil)
@@ -353,7 +407,7 @@ func TestEngineAIGrantConverge(t *testing.T) {
 	if decision := deviceRuleEvaluate(t, deviceB, ctx, "dev-1", "write_file", "/var/log/app.log"); decision.Action != guard.ActionAllow {
 		t.Fatalf("rule must apply on B: %+v", decision)
 	}
-	if mode, ok := deviceManager(t, deviceB, ctx).DeviceMode("dev-1"); !ok || mode != guard.ReadOnly {
+	if mode, ok := deviceModeForTest(t, ctx, deviceManager(t, deviceB, ctx), "dev-1"); !ok || mode != guard.ReadOnly {
 		t.Fatalf("mode must apply on B: %v %v", mode, ok)
 	}
 	assertServerObjectKind(t, server, "alice", "alice-pw-123", "device/dev-1", KindAIGrant)
@@ -422,12 +476,15 @@ func TestEngineAIGrantConverge(t *testing.T) {
 	if decision := deviceRuleEvaluate(t, deviceB, ctx, "dev-1", "write_file", "/var/log/app.log"); decision.Action == guard.ActionAllow {
 		t.Fatal("revoked rule must not allow on B")
 	}
-	if _, ok := deviceManager(t, deviceB, ctx).DeviceMode("dev-1"); ok {
+	if _, ok := deviceModeForTest(t, ctx, deviceManager(t, deviceB, ctx), "dev-1"); ok {
 		t.Fatal("cleared mode must be gone on B")
 	}
 
-	requireDeviceQuiescent(t, deviceA, server, "alice", "alice-pw-123")
-	requireDeviceQuiescent(t, deviceB, server, "alice", "alice-pw-123")
+	for _, device := range []*testDevice{deviceA, deviceB} {
+		if report := syncDeviceWithContext(t, userCtx, device, server, "alice", "alice-pw-123"); report.Pulled+report.Applied+report.Pushed != 0 {
+			t.Fatalf("idle sync not quiescent: %+v", report)
+		}
+	}
 }
 
 // aiGrant opt-in gating: with the kind off, no objects or tombstones are collected; with it on, one object per entity plus tombstones.
@@ -546,7 +603,7 @@ func TestApplyAIGrantEqualRevisionUsesHashTiebreak(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, rule := range grants.Rules() {
+	for _, rule := range grantRulesForTest(t, ctx, grants) {
 		if rule.ID == "r-1" {
 			if rule.CreatedAt != wantCreatedAt {
 				t.Fatalf("rule after conflict createdAt = %d, want %d", rule.CreatedAt, wantCreatedAt)
@@ -590,14 +647,14 @@ func TestApplyAIGrantNormalizesEdgeSpaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	grant, ok := grants.Get("dev-1")
+	grant, ok := grantForTest(t, ctx, grants, "dev-1")
 	if !ok || grant.DeviceID != "dev-1" {
 		t.Fatalf("grant not normalized: %+v %v", grant, ok)
 	}
-	if _, ok := grants.Get(" dev-1 "); ok {
+	if _, ok := grantForTest(t, ctx, grants, " dev-1 "); ok {
 		t.Fatal("edge-space device ID kept as a separate entry")
 	}
-	rules := grants.Rules()
+	rules := grantRulesForTest(t, ctx, grants)
 	if len(rules) != 1 || rules[0].DeviceID != "dev-1" || rules[0].Path != "/var/log/**" {
 		t.Fatalf("rule not normalized: %+v", rules)
 	}
@@ -605,10 +662,10 @@ func TestApplyAIGrantNormalizesEdgeSpaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode, ok := manager.DeviceMode("dev-1"); !ok || mode != guard.ReadOnly {
+	if mode, ok := deviceModeForTest(t, ctx, manager, "dev-1"); !ok || mode != guard.ReadOnly {
 		t.Fatalf("mode not normalized: %v %v", mode, ok)
 	}
-	if _, ok := manager.DeviceMode(" dev-1 "); ok {
+	if _, ok := deviceModeForTest(t, ctx, manager, " dev-1 "); ok {
 		t.Fatal("edge-space device mode kept as a separate entry")
 	}
 
@@ -623,10 +680,10 @@ func TestApplyAIGrantNormalizesEdgeSpaces(t *testing.T) {
 			t.Fatalf("object %s = %+v, want skipped with warning", object.ID, entry)
 		}
 	}
-	if grant, _ := grants.Get("dev-1"); len(grant.Kinds) != 1 || grant.Kinds[0] != guard.GrantKindTerminalWrite {
+	if grant, _ := grantForTest(t, ctx, grants, "dev-1"); len(grant.Kinds) != 1 || grant.Kinds[0] != guard.GrantKindTerminalWrite {
 		t.Fatalf("rejected payload mutated the grant: %+v", grant)
 	}
-	if mode, _ := manager.DeviceMode("dev-1"); mode != guard.ReadOnly {
+	if mode, _ := deviceModeForTest(t, ctx, manager, "dev-1"); mode != guard.ReadOnly {
 		t.Fatalf("rejected payload mutated the mode: %v", mode)
 	}
 
@@ -643,11 +700,11 @@ func TestApplyAIGrantNormalizesEdgeSpaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if grant, ok := grants.Get("dev-1"); !ok || !grant.Covers(guard.GrantKindSessionExec) || grant.UpdatedAt != 200 {
+	if grant, ok := grantForTest(t, ctx, grants, "dev-1"); !ok || !grant.Covers(guard.GrantKindSessionExec) || grant.UpdatedAt != 200 {
 		t.Fatalf("grant after LWW update: %+v %v", grant, ok)
 	}
-	if len(grants.List()) != 1 {
-		t.Fatalf("LWW update duplicated the entry: %+v", grants.List())
+	if len(grantListForTest(t, ctx, grants)) != 1 {
+		t.Fatalf("LWW update duplicated the entry: %+v", grantListForTest(t, ctx, grants))
 	}
 	if applied, _ := engine.applyAIGrantTombstone(ctx, "device/dev-1", 300, &SyncReport{}); !applied {
 		t.Fatal("trimmed tombstone was not applied")
@@ -656,7 +713,7 @@ func TestApplyAIGrantNormalizesEdgeSpaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := grants.Get("dev-1"); ok {
+	if _, ok := grantForTest(t, ctx, grants, "dev-1"); ok {
 		t.Fatal("tombstone did not delete the normalized entry")
 	}
 	if applied, _ := engine.applyAIGrantTombstone(ctx, "mode/dev-1", 300, &SyncReport{}); !applied {
@@ -666,7 +723,7 @@ func TestApplyAIGrantNormalizesEdgeSpaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := manager.DeviceMode("dev-1"); ok {
+	if _, ok := deviceModeForTest(t, ctx, manager, "dev-1"); ok {
 		t.Fatal("mode tombstone did not delete the normalized entry")
 	}
 }

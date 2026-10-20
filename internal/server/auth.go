@@ -7,6 +7,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
+	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
 )
@@ -16,7 +17,7 @@ const mfaEnrollLockedMessage = "管理员已要求启用两步验证：完成 TO
 
 // mfaEnrollmentLockedFor decides whether the given session identity is locked by the mfa_required policy (unbound).
 // reset_required sessions are constrained separately by the password-change flow; the two do not stack (change password first, then bind).
-// The gateway branch has no account session identity, so the policy does not apply.
+// Gateway admission without a session cookie has no account identity; the policy applies only when an identity exists.
 func (s *Server) mfaEnrollmentLockedFor(r *http.Request, identity *account.Identity) (bool, error) {
 	if identity == nil || identity.MFAEnabled || identity.State == account.StateResetRequired {
 		return false, nil
@@ -39,9 +40,17 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		if syncservice.GatewayAuthorized(r, s.gatewayAuthKey) {
-			next.ServeHTTP(w, r)
+		gatewayAuthorized := syncservice.GatewayAuthorized(r, s.gatewayAuthKey)
+		if s.options.Auth == AuthPlatform && !gatewayAuthorized {
+			writeRPCError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, sessionReloginMessage))
 			return
+		}
+		// A gateway-only caller stays anonymous; owner-scoped stores must fail closed rather than inherit shared trust.
+		if gatewayAuthorized {
+			if _, hasSessionCookie := sessionCookie(r); !hasSessionCookie {
+				next.ServeHTTP(w, r)
+				return
+			}
 		}
 		if s.accounts != nil {
 			if cookieToken, ok := sessionCookie(r); ok {
@@ -70,16 +79,16 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 					ctx = ipc.WithRole(ctx, string(identity.Role))
 					ctx = ipc.WithAccountSessionID(ctx, identity.SessionID)
 					ctx = ipc.WithAccountSessionCheck(ctx, func(checkCtx context.Context) error {
-						validationCtx, cancel := context.WithTimeout(context.WithoutCancel(checkCtx), 5*time.Second)
-						defer cancel()
-						current, err := s.accounts.ValidateSession(validationCtx, cookieToken)
-						if err != nil {
-							return err
-						}
-						if current.SessionID != identity.SessionID || current.UserID != identity.UserID {
-							return ipc.NewError(ipc.CodeForbidden, sessionReloginMessage)
-						}
-						return nil
+						return s.validateAccountSession(checkCtx, cookieToken, identity, func() {
+							s.cleanupAccount(checkCtx, identity.UserID, identity.SessionID)
+						})
+					})
+					admit := s.accountExecutionAdmission
+					if admit == nil {
+						admit = s.admitAccountExecution
+					}
+					ctx = execbatch.WithAdmission(ctx, func(admitCtx context.Context, fn func() error) error {
+						return admit(admitCtx, cookieToken, identity, fn)
 					})
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
@@ -88,6 +97,34 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		}
 		writeRPCError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, sessionReloginMessage))
 	})
+}
+
+func (s *Server) validateAccountSession(ctx context.Context, cookieToken string, identity *account.Identity, cleanup func()) error {
+	validationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	current, err := s.accounts.ValidateSession(validationCtx, cookieToken)
+	if err != nil {
+		if confirmedAccountSessionInvalid(err) {
+			cleanup()
+		}
+		return err
+	}
+	if current.SessionID != identity.SessionID || current.UserID != identity.UserID {
+		cleanup()
+		return ipc.NewError(ipc.CodeForbidden, sessionReloginMessage)
+	}
+	return nil
+}
+
+func (s *Server) admitAccountExecution(ctx context.Context, cookieToken string, identity *account.Identity, fn func() error) error {
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
+	if err := s.validateAccountSession(ctx, cookieToken, identity, func() {
+		s.cleanupAccountLocked(ctx, identity.UserID, identity.SessionID)
+	}); err != nil {
+		return err
+	}
+	return fn()
 }
 
 func unsafeAccountMethod(r *http.Request) bool {

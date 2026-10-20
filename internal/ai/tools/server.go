@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"path"
@@ -11,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
@@ -37,12 +39,9 @@ func (r *Registry) fileSystem(ctx context.Context, scope Scope) (base.FileSystem
 	return files.FileSystem(ctx)
 }
 
-func (r *Registry) execCommands(ctx context.Context, scope Scope, raw []byte) Output {
-	var args struct {
-		Commands []string `json:"commands"`
-		Timeout  int      `json:"timeout"`
-	}
-	if err := decode(raw, &args); err != nil {
+func (r *Registry) execCommands(ctx context.Context, jobID string, scope Scope, call Call) Output {
+	var args ExecCommandsArgs
+	if err := decode(call.Args, &args); err != nil {
 		return Fail(err)
 	}
 	if len(args.Commands) == 0 || len(args.Commands) > 20 {
@@ -59,6 +58,13 @@ func (r *Registry) execCommands(ctx context.Context, scope Scope, raw []byte) Ou
 	if args.Timeout < 1 || args.Timeout > 300 {
 		return Fail(invalid("timeout 必须在 1-300 秒之间"))
 	}
+	if len(args.AssetIDs) > 0 || len(args.Tags) > 0 {
+		return r.execCommandsBatch(ctx, jobID, call, args)
+	}
+	return r.execCommandsCurrent(ctx, scope, args)
+}
+
+func (r *Registry) execCommandsCurrent(ctx context.Context, scope Scope, args ExecCommandsArgs) Output {
 	transport, err := r.transport(ctx, scope)
 	if err != nil {
 		return Fail(err)
@@ -118,6 +124,165 @@ func (r *Registry) execCommands(ctx context.Context, scope Scope, raw []byte) Ou
 	text, _, cut := capOutput(output.String())
 	_, modelText, _ := capOutput(modelOutput.String())
 	return Output{OK: true, Text: text, ModelText: modelText, ExitCode: exitCode, Truncated: truncated || cut, ExecFailed: execFailed}
+}
+
+func normalizeExecTargetFilters(assetIDs, tags []string) ([]string, []string, error) {
+	if len(assetIDs) > execbatch.MaxTargets || len(tags) > 32 {
+		return nil, nil, invalid("asset_ids 最多 %d 个，tags 最多 32 个", execbatch.MaxTargets)
+	}
+	normalize := func(values []string) ([]string, error) {
+		result := make([]string, 0, len(values))
+		seen := make(map[string]struct{}, len(values))
+		for _, value := range values {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				return nil, invalid("asset_ids/tags 不能包含空值")
+			}
+			if _, exists := seen[value]; exists {
+				continue
+			}
+			seen[value] = struct{}{}
+			result = append(result, value)
+		}
+		return result, nil
+	}
+	assets, err := normalize(assetIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	labels, err := normalize(tags)
+	if err != nil {
+		return nil, nil, err
+	}
+	return assets, labels, nil
+}
+
+func (r *Registry) execCommandsBatch(ctx context.Context, jobID string, call Call, args ExecCommandsArgs) Output {
+	if r.deps.ResolveExecTargets == nil || r.deps.ExecBatch == nil {
+		return Fail(errors.New("多主机执行未配置"))
+	}
+	assetIDs, tags, err := normalizeExecTargetFilters(args.AssetIDs, args.Tags)
+	if err != nil {
+		return Fail(err)
+	}
+	targets, err := r.deps.ResolveExecTargets(ctx, assetIDs, tags)
+	if err != nil {
+		return Fail(err)
+	}
+	if len(targets.SessionIDs) == 0 || len(targets.SessionIDs) > execbatch.MaxTargets {
+		return Fail(invalid("多主机目标必须包含 1-%d 个已连接 SSH 会话", execbatch.MaxTargets))
+	}
+	seen := make(map[string]struct{}, len(targets.SessionIDs))
+	for _, sessionID := range targets.SessionIDs {
+		if strings.TrimSpace(sessionID) == "" {
+			return Fail(invalid("多主机目标包含空 session ID"))
+		}
+		if _, exists := seen[sessionID]; exists {
+			return Fail(invalid("多主机目标包含重复 session ID %s", sessionID))
+		}
+		seen[sessionID] = struct{}{}
+	}
+	if len(call.ProductionConfirmations) != 0 && len(call.ProductionConfirmations) != len(args.Commands) {
+		return Fail(invalid("生产确认数量与命令数量不一致"))
+	}
+	if targets.Production && len(call.ProductionConfirmations) == 0 {
+		return r.prepareExecBatchProduction(ctx, jobID, call, args, targets)
+	}
+
+	var output strings.Builder
+	exitCode := 0
+	truncated := false
+	execFailed := false
+	for index, command := range args.Commands {
+		if err := ctx.Err(); err != nil {
+			return Fail(err)
+		}
+		request := execBatchRequest(jobID, call, args, targets, command, index)
+		if len(call.ProductionConfirmations) > 0 {
+			request.ProductionConfirmation = &call.ProductionConfirmations[index]
+		}
+		batch, execErr := r.deps.ExecBatch(ctx, request)
+		if execErr != nil {
+			if ctx.Err() != nil {
+				return Fail(ctx.Err())
+			}
+			fmt.Fprintf(&output, "\n第 %d 条命令未执行: %v\n", index+1, execErr)
+			if index > 0 {
+				output.WriteString("此前命令已经执行；未从头重试，请检查各主机状态后再决定下一步\n")
+			}
+			text, cut := capText(output.String())
+			return Output{Text: text, ModelText: text, ExitCode: 1, Truncated: truncated || cut, ExecFailed: true}
+		}
+		fmt.Fprintf(&output, "$ %s\n", command)
+		for _, result := range batch.Results {
+			fmt.Fprintf(&output, "[asset_id=%s session_id=%s status=%s]\n", result.AssetID, result.SessionID, result.Status)
+			stdout, stdoutCut := capText(result.Stdout)
+			stderr, stderrCut := capText(result.Stderr)
+			truncated = truncated || stdoutCut || stderrCut || result.Truncated
+			output.WriteString(stdout)
+			if stderr != "" {
+				output.WriteString("\n[stderr]\n")
+				output.WriteString(stderr)
+			}
+			if result.ExitCode != nil {
+				fmt.Fprintf(&output, "\n[exit_code=%d]\n", *result.ExitCode)
+				if *result.ExitCode != 0 {
+					exitCode = *result.ExitCode
+				}
+			}
+			if result.Error != "" {
+				fmt.Fprintf(&output, "\n[执行失败: %s]\n", result.Error)
+			}
+			if result.Status != execbatch.StatusSuccess {
+				if exitCode == 0 {
+					exitCode = 1
+				}
+				if result.Status != execbatch.StatusExitError {
+					execFailed = true
+				}
+			}
+			output.WriteByte('\n')
+		}
+	}
+	text, cut := capText(output.String())
+	return Output{OK: true, Text: text, ModelText: text, ExitCode: exitCode, Truncated: truncated || cut, ExecFailed: execFailed}
+}
+
+func (r *Registry) prepareExecBatchProduction(ctx context.Context, jobID string, call Call, args ExecCommandsArgs, targets ExecTargetSet) Output {
+	challenge := &ExecBatchProductionChallenge{Confirmations: make([]execbatch.ProductionConfirmation, len(args.Commands))}
+	for index, command := range args.Commands {
+		request := execBatchRequest(jobID, call, args, targets, command, index)
+		_, err := r.deps.ExecBatch(ctx, request)
+		var required *execbatch.ConfirmationRequiredError
+		if !errors.As(err, &required) {
+			if err != nil {
+				return Fail(fmt.Errorf("生产确认预检失败: %w", err))
+			}
+			return Fail(errors.New("生产目标在确认预检期间发生变化，执行状态不确定；请检查各主机状态，未自动重试"))
+		}
+		challenge.Confirmations[index] = execbatch.ProductionConfirmation{
+			Confirmed: true, TargetSetHash: required.TargetSetHash, CommandHash: required.CommandHash,
+		}
+		if index == 0 {
+			challenge.Detail = required.IPCDetail()
+		}
+	}
+	return Output{
+		Text:     fmt.Sprintf("生产环境多主机执行需要确认（%d 个目标，%d 条命令）；尚未执行任何命令", len(targets.SessionIDs), len(args.Commands)),
+		ExitCode: 1, ProductionChallenge: challenge,
+	}
+}
+
+func execBatchRequest(jobID string, call Call, args ExecCommandsArgs, targets ExecTargetSet, command string, index int) execbatch.Request {
+	callID := call.OriginID
+	if callID == "" {
+		callID = call.ID
+	}
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d", jobID, callID, index)))
+	return execbatch.Request{
+		BatchID: fmt.Sprintf("ai-%x", sum[:16]), SessionIDs: targets.SessionIDs, Command: command,
+		TimeoutMS: int64(args.Timeout) * 1000,
+	}
 }
 
 func (r *Registry) readFile(ctx context.Context, jobID string, scope Scope, raw []byte) Output {
@@ -356,15 +521,16 @@ func (r *Registry) resolveTab(ctx context.Context, jobID string, scope Scope, re
 	_, requestScoped := r.deps.Terminal.(TabSessionTerminal)
 	hasResolver := requestScoped || r.deps.TabSession != nil
 	if requested != "" && requested != scope.TabID {
-		if !r.state(jobID).createdTab(requested) {
+		createdSessionID, created := r.state(jobID).createdTab(requested)
+		if !created {
 			return "", ErrCrossScope
 		}
-		if hasResolver && scope.SessionID != "" {
+		if hasResolver {
 			sessionID, err := r.tabSession(ctx, requested)
 			if err != nil {
 				return "", err
 			}
-			if sessionID != scope.SessionID {
+			if sessionID != createdSessionID {
 				return "", ErrCrossScope
 			}
 		}
@@ -480,6 +646,7 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, raw 
 		Enter  bool   `json:"enter"`
 		WaitMS int    `json:"wait_ms"`
 		TabID  string `json:"tab_id"`
+		Paste  bool   `json:"paste"`
 	}
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
@@ -491,27 +658,75 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, raw 
 	if err != nil {
 		return Fail(err)
 	}
-	encoded, err := EncodeKeys(args.Keys, args.Enter)
-	if err != nil {
-		return Fail(err)
+	var encoded []byte
+	if !args.Paste {
+		encoded, err = EncodeKeys(args.Keys, args.Enter)
+		if err != nil {
+			return Fail(err)
+		}
 	}
 	before, err := r.commandState(ctx, tabID)
 	if err != nil {
 		return Fail(err)
 	}
-	if err := r.deps.Terminal.Write(ctx, tabID, encoded); err != nil {
+	if args.Paste {
+		terminal, ok := r.deps.Terminal.(PasteTerminal)
+		if !ok {
+			return Fail(errors.New("该终端不支持原子 paste 写入"))
+		}
+		if err := terminal.WritePaste(ctx, tabID, args.Keys); err != nil {
+			return Fail(err)
+		}
+	} else if err := r.deps.Terminal.Write(ctx, tabID, encoded); err != nil {
 		return Fail(err)
 	}
+	if args.Paste && args.Enter {
+		timer := time.NewTimer(150 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			_ = timer.Stop()
+			return Fail(fmt.Errorf("paste 块已写入，Enter 未发送；请检查屏幕且不要盲重发: %w", ctx.Err()))
+		case <-timer.C:
+		}
+		if err := r.deps.Terminal.Write(ctx, tabID, []byte("\r")); err != nil {
+			return Fail(fmt.Errorf("paste 块已写入，但 Enter 发送失败；请检查屏幕且不要盲重发: %w", err))
+		}
+	}
 	if r.deps.Audit != nil {
-		_ = r.deps.Audit(context.WithoutCancel(ctx), AuditEntry{SessionID: scope.SessionID, AssetID: scope.AssetID, Kind: "takeover", Payload: map[string]any{"keys": "<redacted>", "enter": args.Enter, "tab": tabID}})
+		_ = r.deps.Audit(context.WithoutCancel(ctx), AuditEntry{SessionID: scope.SessionID, AssetID: scope.AssetID, Kind: "takeover", Payload: map[string]any{"keys": "<redacted>", "enter": args.Enter, "paste": args.Paste, "tab": tabID}})
 	}
+	var proofScreen Screen
+	var proofErr error
+	if args.Paste {
+		proofScreen, proofErr = r.deps.Terminal.Snapshot(ctx, tabID)
+	}
+	var result Output
 	if args.WaitMS == 0 {
-		return OK("已发送" + screenAnchorSuffix(ctx, r.deps.Terminal, tabID))
+		result = OK("已发送" + screenAnchorSuffix(ctx, r.deps.Terminal, tabID))
+	} else if _, ok := r.deps.Terminal.(CommandStateTerminal); !ok {
+		result = OK("已发送" + screenAnchorSuffix(ctx, r.deps.Terminal, tabID) + "；该终端不支持 OSC 133 命令跟踪，无法确认命令是否完成，请用 wait_for 校验新输出")
+	} else {
+		result = r.waitCommandFinish(ctx, tabID, before, args.WaitMS)
 	}
-	if _, ok := r.deps.Terminal.(CommandStateTerminal); !ok {
-		return OK("已发送" + screenAnchorSuffix(ctx, r.deps.Terminal, tabID) + "；该终端不支持 OSC 133 命令跟踪，无法确认命令是否完成，请用 wait_for 校验新输出")
+	if args.Paste {
+		result = withSubmissionProof(proofScreen, proofErr, result)
 	}
-	return r.waitCommandFinish(ctx, tabID, before, args.WaitMS)
+	return result
+}
+
+func withSubmissionProof(screen Screen, snapshotErr error, result Output) Output {
+	result.WriteConfirmed = true
+	result.Notes = "write_confirmed acknowledges the terminal input writes only; submitted_seq is the post-write terminal output sequence anchor, not proof that the remote application accepted a turn"
+	if snapshotErr == nil {
+		seq := screen.Seq
+		result.SubmittedSeq = &seq
+		result.Text += fmt.Sprintf("（submitted_seq=%d）", seq)
+	} else {
+		result.Text += "；底层输入写入已确认，但输出序号不可用"
+		result.Notes += "; the output sequence could not be read after the acknowledged writes"
+	}
+	result.Text += "；submitted_seq 是写入后的终端输出序号锚点，不代表远端程序已受理"
+	return result
 }
 
 // screenAnchorSuffix reports the post-write screen sequence so the caller can
@@ -529,23 +744,41 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 		Title      string `json:"title"`
 		Command    string `json:"command"`
 		Background bool   `json:"background"`
+		AssetID    string `json:"asset_id"`
 	}
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
 	}
-	if scope.SessionID == "" {
+	sessionID := scope.SessionID
+	if args.AssetID != "" {
+		if strings.TrimSpace(args.AssetID) != args.AssetID {
+			return Fail(invalid("asset_id 不能包含首尾空白"))
+		}
+		if r.deps.ResolveAssetSession == nil {
+			return Fail(errors.New("按资产创建终端未配置"))
+		}
+		resolved, err := r.deps.ResolveAssetSession(ctx, args.AssetID)
+		if err != nil {
+			return Fail(err)
+		}
+		sessionID = resolved
+	}
+	if sessionID == "" {
 		return Fail(errors.New("当前 AI 作用域没有 sessionId"))
 	}
 	terminal, ok := r.deps.Terminal.(CreateTerminal)
 	if !ok {
 		return Fail(errors.New("终端服务未配置"))
 	}
-	created, err := terminal.Create(ctx, scope.SessionID, CreateTerminalOptions{Title: args.Title, Command: args.Command})
+	created, err := terminal.Create(ctx, sessionID, CreateTerminalOptions{Title: args.Title, Command: args.Command})
 	if err != nil {
 		return Fail(err)
 	}
-	r.state(jobID).rememberCreatedTab(created.TabID)
+	r.state(jobID).rememberCreatedTab(created.TabID, sessionID)
 	detail := fmt.Sprintf("tab_id=%s", created.TabID)
+	if args.AssetID != "" {
+		detail += fmt.Sprintf("，asset_id=%s", args.AssetID)
+	}
 	if created.Title != "" {
 		detail += fmt.Sprintf("，标题「%s」", created.Title)
 	}
@@ -555,7 +788,7 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 	if args.Background {
 		return OK(fmt.Sprintf("已在后台创建分离终端（%s），AI 可在其中工作，用户可在「后台会话」中接管", detail))
 	}
-	return Output{OK: true, Text: fmt.Sprintf("已创建并在前台展示终端标签页（%s），AI 正在其中工作，用户可随时接管输入", detail), Terminal: &CreatedTerminal{TabID: created.TabID, SessionID: scope.SessionID, Title: created.Title}}
+	return Output{OK: true, Text: fmt.Sprintf("已创建并在前台展示终端标签页（%s），AI 正在其中工作，用户可随时接管输入", detail), Terminal: &CreatedTerminal{TabID: created.TabID, SessionID: sessionID, Title: created.Title}}
 }
 
 func (r *Registry) terminalRename(ctx context.Context, jobID string, scope Scope, raw []byte) Output {
@@ -693,9 +926,11 @@ func tailText(screen Screen, maxLines int) string {
 
 func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw []byte, maximumSeconds int) Output {
 	var args struct {
-		Pattern   string `json:"pattern"`
-		TimeoutMS int64  `json:"timeout_ms"`
-		SinceSeq  uint64 `json:"since_seq"`
+		Pattern   *string `json:"pattern"`
+		TimeoutMS int64   `json:"timeout_ms"`
+		SinceSeq  uint64  `json:"since_seq"`
+		TabID     string  `json:"tab_id"`
+		QuietMS   int64   `json:"quiet_ms"`
 	}
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
@@ -706,23 +941,38 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 	if args.TimeoutMS < 1 || args.TimeoutMS > int64(maximumSeconds)*1000 {
 		return Fail(invalid("timeout_ms 超出 1-%d 毫秒范围", maximumSeconds*1000))
 	}
-	regex, err := regexp.Compile(args.Pattern)
+	if args.QuietMS < 0 || args.QuietMS > int64(maximumSeconds)*1000 {
+		return Fail(invalid("quiet_ms 超出 0-%d 毫秒范围", maximumSeconds*1000))
+	}
+	if args.Pattern == nil && args.QuietMS == 0 {
+		return Fail(invalid("pattern 不能为空；仅 quiet_ms 大于 0 时可以省略"))
+	}
+	pattern := ""
+	if args.Pattern != nil {
+		pattern = *args.Pattern
+	}
+	regex, err := regexp.Compile(pattern)
 	if err != nil {
 		return Fail(invalid("正则无效: %v", err))
 	}
-	tabID, err := r.resolveTab(ctx, jobID, scope, "")
+	tabID, err := r.resolveTab(ctx, jobID, scope, args.TabID)
 	if err != nil {
 		return Fail(err)
+	}
+	if args.QuietMS > 0 {
+		if _, ok := r.deps.Terminal.(WaitSnapshotTerminal); !ok {
+			return Fail(errors.New("该终端不支持同步安静快照"))
+		}
 	}
 	waitContext, cancel := context.WithTimeout(ctx, time.Duration(args.TimeoutMS)*time.Millisecond)
 	defer cancel()
 	if args.SinceSeq > 0 {
-		return r.waitForNewOutput(waitContext, tabID, regex, args.SinceSeq)
+		return r.waitForNewOutput(waitContext, tabID, regex, args.SinceSeq, args.QuietMS)
 	}
 	ticker := time.NewTicker(r.deps.pollInterval())
 	defer ticker.Stop()
 	for {
-		screen, snapshotErr := r.deps.Terminal.Snapshot(waitContext, tabID)
+		screen, snapshotErr := r.waitSnapshot(waitContext, tabID, args.QuietMS > 0)
 		if snapshotErr != nil {
 			return Fail(snapshotErr)
 		}
@@ -733,8 +983,8 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 		if len(tail) > 30 {
 			tail = tail[len(tail)-30:]
 		}
-		if regex.MatchString(strings.Join(tail, "\n")) {
-			return OK("模式已出现")
+		if regex.MatchString(strings.Join(tail, "\n")) && (args.QuietMS == 0 || screen.IdleMS >= args.QuietMS) {
+			return OK(waitSatisfiedText(pattern, screen.IdleMS, args.QuietMS))
 		}
 		select {
 		case <-waitContext.Done():
@@ -750,14 +1000,31 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 	}
 }
 
+func waitSatisfiedText(pattern string, idleMS, quietMS int64) string {
+	if quietMS == 0 {
+		return "模式已出现"
+	}
+	if pattern == "" {
+		return fmt.Sprintf("终端已安静 %dms（要求 %dms）", idleMS, quietMS)
+	}
+	return fmt.Sprintf("模式已出现，终端已安静 %dms（要求 %dms）", idleMS, quietMS)
+}
+
+func (r *Registry) waitSnapshot(ctx context.Context, tabID string, synchronized bool) (Screen, error) {
+	if synchronized {
+		return r.deps.Terminal.(WaitSnapshotTerminal).WaitSnapshot(ctx, tabID)
+	}
+	return r.deps.Terminal.Snapshot(ctx, tabID)
+}
+
 // waitForNewOutput matches only output produced after the anchor sequence, so
 // content that was already on screen can never false-match. The scan cursor
 // advances through the new output in bounded windows, carrying an overlap so
 // patterns spanning a window seam still match; every byte after the anchor is
 // scanned at least once (evicted bytes are flagged in the timeout output).
-func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, regex *regexp.Regexp, sinceSeq uint64) Output {
+func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, regex *regexp.Regexp, sinceSeq uint64, quietMS int64) Output {
 	cols, rows := 80, 24
-	if screen, err := r.deps.Terminal.Snapshot(waitContext, tabID); err == nil {
+	if screen, err := r.waitSnapshot(waitContext, tabID, quietMS > 0); err == nil {
 		cols, rows = screen.Cols, screen.Rows
 	}
 	ticker := time.NewTicker(r.deps.pollInterval())
@@ -766,6 +1033,7 @@ func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, r
 	var carry []byte
 	var recent []string
 	gap := false
+	matched := false
 	for {
 		data, start, latest, err := r.outputSince(waitContext, tabID, scanPos, waitScanBytes)
 		if err != nil {
@@ -776,8 +1044,18 @@ func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, r
 		}
 		window := append(carry, data...)
 		rendered := renderOutputDiff(window, cols, rows)
-		if regex.MatchString(strings.Join(rendered, "\n")) {
+		matched = matched || regex.MatchString(strings.Join(rendered, "\n"))
+		if matched && quietMS == 0 {
 			return OK(fmt.Sprintf("模式已出现（新输出，屏幕序号 %d）", latest))
+		}
+		if matched && quietMS > 0 {
+			screen, snapshotErr := r.waitSnapshot(waitContext, tabID, quietMS > 0)
+			if snapshotErr != nil {
+				return Fail(snapshotErr)
+			}
+			if screen.IdleMS >= quietMS {
+				return OK(fmt.Sprintf("%s（新输出，屏幕序号 %d）", waitSatisfiedText(regex.String(), screen.IdleMS, quietMS), latest))
+			}
 		}
 		if len(data) > 0 {
 			recent = rendered

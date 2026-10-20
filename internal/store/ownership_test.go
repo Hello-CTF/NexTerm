@@ -1,22 +1,25 @@
-package store
+package store_test
 
 import (
 	"context"
 	"testing"
 
+	"github.com/Hello-CTF/NexTerm/internal/dbtest"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-func TestUserOwnershipIsolation(t *testing.T) {
-	database := testStore(t)
+func TestUserOwnershipIsolationDatabase(t *testing.T) {
+	database := dbtest.NewFixture(t).OpenStore(t)
+	t.Logf("ownership isolation backend: %s", database.Backend())
 	ctxA := ipc.WithUserID(context.Background(), "user-a")
 	ctxB := ipc.WithUserID(context.Background(), "user-b")
 
-	groupA, err := database.GroupCreate(ctxA, GroupInput{Name: "group-a"})
+	groupA, err := database.GroupCreate(ctxA, store.GroupInput{Name: "group-a"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	groupB, err := database.GroupCreate(ctxB, GroupInput{Name: "group-b"})
+	groupB, err := database.GroupCreate(ctxB, store.GroupInput{Name: "group-b"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,11 +35,11 @@ func TestUserOwnershipIsolation(t *testing.T) {
 		t.Fatalf("user B groups = %+v, err=%v", groupsB, err)
 	}
 
-	credentialA, err := database.CredentialPut(ctxA, CredentialInput{Name: "credential-a", Kind: "password", Nonce: []byte{1}, Blob: []byte{2}})
+	credentialA, err := database.CredentialPut(ctxA, store.CredentialInput{Name: "credential-a", Kind: "password", Nonce: []byte{1}, Blob: []byte{2}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	credentialB, err := database.CredentialPut(ctxB, CredentialInput{Name: "credential-b", Kind: "password", Nonce: []byte{3}, Blob: []byte{4}})
+	credentialB, err := database.CredentialPut(ctxB, store.CredentialInput{Name: "credential-b", Kind: "password", Nonce: []byte{3}, Blob: []byte{4}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,11 +55,11 @@ func TestUserOwnershipIsolation(t *testing.T) {
 		t.Fatalf("user B credentials = %+v, err=%v", credentialsB, err)
 	}
 
-	assetA, err := database.AssetCreate(ctxA, AssetInput{GroupID: &groupA.ID, Kind: "ssh", Name: "asset-a", CredID: &credentialA, OptionsJSON: "{}"})
+	assetA, err := database.AssetCreate(ctxA, store.AssetInput{GroupID: &groupA.ID, Kind: "ssh", Name: "asset-a", CredID: &credentialA, OptionsJSON: "{}"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assetB, err := database.AssetCreate(ctxB, AssetInput{GroupID: &groupB.ID, Kind: "ssh", Name: "asset-b", CredID: &credentialB, OptionsJSON: "{}"})
+	assetB, err := database.AssetCreate(ctxB, store.AssetInput{GroupID: &groupB.ID, Kind: "ssh", Name: "asset-b", CredID: &credentialB, OptionsJSON: "{}"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,10 +160,10 @@ func TestUserOwnershipIsolation(t *testing.T) {
 		t.Fatal("user B deleted user A's conversation")
 	}
 
-	if err := database.RunInsert(ctxA, RunRow{ID: "run-a", ConversationID: conversationA.ID, Status: RunStatusRunning}); err != nil {
+	if err := database.RunInsert(ctxA, store.RunRow{ID: "run-a", ConversationID: conversationA.ID, Status: store.RunStatusRunning}); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.RunInsert(ctxB, RunRow{ID: "run-b", ConversationID: conversationB.ID, Status: RunStatusRunning}); err != nil {
+	if err := database.RunInsert(ctxB, store.RunRow{ID: "run-b", ConversationID: conversationB.ID, Status: store.RunStatusRunning}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.RunGet(ctxB, "run-a"); err == nil {
@@ -170,16 +173,16 @@ func TestUserOwnershipIsolation(t *testing.T) {
 		t.Fatal("user B deleted user A's run")
 	}
 
-	if err := database.TranscriptStart(ctxA, TranscriptRow{ID: "transcript-a", SessionID: "session-a", AssetID: assetA.ID, StartedAt: 1}); err != nil {
+	if err := database.TranscriptStart(ctxA, store.TranscriptRow{ID: "transcript-a", SessionID: "session-a", AssetID: assetA.ID, StartedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.TranscriptStart(ctxB, TranscriptRow{ID: "transcript-b", SessionID: "session-b", AssetID: assetB.ID, StartedAt: 2}); err != nil {
+	if err := database.TranscriptStart(ctxB, store.TranscriptRow{ID: "transcript-b", SessionID: "session-b", AssetID: assetB.ID, StartedAt: 2}); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.TranscriptAppendChunks(ctxA, "transcript-a", []TranscriptChunkRow{{Seq: 0, TabID: "tab-a", TS: 1, Data: []byte("a")}}); err != nil {
+	if err := database.TranscriptAppendChunks(ctxA, "transcript-a", []store.TranscriptChunkRow{{Seq: 0, TabID: "tab-a", TS: 1, Data: []byte("a")}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.TranscriptAppendChunks(ctxB, "transcript-b", []TranscriptChunkRow{{Seq: 0, TabID: "tab-b", TS: 2, Data: []byte("b")}}); err != nil {
+	if err := database.TranscriptAppendChunks(ctxB, "transcript-b", []store.TranscriptChunkRow{{Seq: 0, TabID: "tab-b", TS: 2, Data: []byte("b")}}); err != nil {
 		t.Fatal(err)
 	}
 	transcriptsA, err := database.TranscriptListByAsset(ctxA, assetA.ID, 10)

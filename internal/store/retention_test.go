@@ -148,7 +148,7 @@ func TestRetentionAgeAndCountPreserveActiveAndExternalFiles(t *testing.T) {
 	}
 }
 
-func TestRetentionRollbackLogsAndRecovers(t *testing.T) {
+func TestRetentionFailureLogsAndRecovers(t *testing.T) {
 	ctx := context.Background()
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
@@ -170,7 +170,7 @@ BEGIN SELECT RAISE(ABORT, 'injected retention failure'); END`)
 	if _, err := db.EnforceRetention(ctx, policy); err == nil {
 		t.Fatal("expected injected cleanup failure")
 	}
-	requireTableCount(t, db, "audit_log", 1)
+	requireTableCount(t, db, "audit_log", 0)
 	requireTableCount(t, db, "terminal_recording", 1)
 	status := db.RetentionStatus()
 	if !strings.Contains(status.LastError, "injected retention failure") || status.LastAttemptAt.IsZero() || !status.LastSuccessAt.IsZero() {
@@ -184,7 +184,7 @@ BEGIN SELECT RAISE(ABORT, 'injected retention failure'); END`)
 		t.Fatal(err)
 	}
 	result, err := db.EnforceRetention(ctx, policy)
-	if err != nil || result.AuditDeleted != 1 || result.RecordingsDeleted != 1 {
+	if err != nil || result.AuditDeleted != 0 || result.RecordingsDeleted != 1 {
 		t.Fatalf("recovery result=%+v err=%v", result, err)
 	}
 	requireTableCount(t, db, "audit_log", 0)
@@ -359,5 +359,32 @@ func TestRetentionConcurrentWithRecordingEnd(t *testing.T) {
 	requireRecordingExists(t, db, "expired", false)
 	for i := 0; i < activeCount; i++ {
 		requireRecordingExists(t, db, fmt.Sprintf("active-%d", i), true)
+	}
+}
+
+func TestRetentionBatchLogsAreObservableWithoutContent(t *testing.T) {
+	ctx := context.Background()
+	var logs bytes.Buffer
+	db, err := OpenInMemoryWithOptions(ctx, OpenOptions{Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	old := time.Now().Add(-2 * time.Hour).UnixMilli()
+	insertAuditAt(t, db, old, "sensitive-audit-kind")
+	insertRecordingAt(t, db, "sensitive-recording-id", "sensitive-path.cast", old, &old)
+	if _, err := db.EnforceRetention(ctx, RetentionPolicy{AuditMaxAge: time.Hour, RecordingMaxAge: time.Hour}); err != nil {
+		t.Fatal(err)
+	}
+	output := logs.String()
+	for _, want := range []string{"retention batch committed", "batch=1", "selected=1", "deleted=1", "duration_ms=", "lock_wait_ms="} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("retention logs do not contain %q: %s", want, output)
+		}
+	}
+	for _, sensitive := range []string{"sensitive-audit-kind", "sensitive-recording-id", "sensitive-path.cast"} {
+		if strings.Contains(output, sensitive) {
+			t.Fatalf("retention logs expose %q: %s", sensitive, output)
+		}
 	}
 }

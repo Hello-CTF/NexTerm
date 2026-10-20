@@ -45,7 +45,7 @@ func TestDeviceGrantsDefaultOff(t *testing.T) {
 	if decision.Action != ActionAsk {
 		t.Fatalf("default-off decision = %+v", decision)
 	}
-	if len(grants.List()) != 0 {
+	if len(mustGrantList(t, grants)) != 0 {
 		t.Fatal("grants not empty by default")
 	}
 }
@@ -124,7 +124,7 @@ func TestDeviceGrantRevokeIsImmediate(t *testing.T) {
 	if decision := grants.Evaluate(context.Background(), Config{Mode: ReadWrite}, ruling, nil, "device-a", "send_keys", "run-1"); decision.Action != ActionAsk {
 		t.Fatalf("post-revoke decision = %+v", decision)
 	}
-	if _, ok := grants.Get("device-a"); ok {
+	if _, ok := mustGrant(t, grants, "device-a"); ok {
 		t.Fatal("revoked grant still present")
 	}
 	if err := grants.Revoke(context.Background(), "device-a"); err != nil {
@@ -134,7 +134,7 @@ func TestDeviceGrantRevokeIsImmediate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reloaded.List()) != 0 {
+	if len(mustGrantList(t, reloaded)) != 0 {
 		t.Fatal("revoke not persisted")
 	}
 }
@@ -198,7 +198,7 @@ func TestDeviceGrantPersistenceRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	grant, ok := reloaded.Get("device-a")
+	grant, ok := mustGrant(t, reloaded, "device-a")
 	if !ok || !grant.Covers(GrantKindSessionExec) || grant.Covers(GrantKindTerminalWrite) {
 		t.Fatalf("reloaded grant = %+v", grant)
 	}
@@ -210,7 +210,7 @@ func TestDeviceGrantPersistenceFailureRollsBack(t *testing.T) {
 	if _, err := grants.Grant(context.Background(), "device-a", []GrantKind{GrantKindTerminalWrite}); err == nil {
 		t.Fatal("persist failure ignored")
 	}
-	if len(grants.List()) != 0 {
+	if len(mustGrantList(t, grants)) != 0 {
 		t.Fatal("runtime grant kept after persistence failure")
 	}
 }

@@ -42,7 +42,8 @@ func (s *sessionTerminal) Snapshot(ctx context.Context, tabID string) (Screen, e
 	if seqErr != nil {
 		seq = 0
 	}
-	return Screen{Text: snapshot.Text, Tail: tail, CursorRow: snapshot.CursorRow, CursorCol: snapshot.CursorCol, Cols: snapshot.Cols, Rows: snapshot.Rows, IdleMS: idle, Seq: seq, AltScreen: snapshot.AltScreen}, nil
+	mode, modeErr := s.manager.TerminalModeStateFor(ctx, tabID)
+	return Screen{Text: snapshot.Text, Tail: tail, CursorRow: snapshot.CursorRow, CursorCol: snapshot.CursorCol, Cols: snapshot.Cols, Rows: snapshot.Rows, IdleMS: idle, Seq: seq, AltScreen: snapshot.AltScreen, BracketedPaste: modeErr == nil && mode.BracketedPaste}, nil
 }
 
 func (s *sessionTerminal) Write(ctx context.Context, tabID string, data []byte) error {
@@ -51,6 +52,22 @@ func (s *sessionTerminal) Write(ctx context.Context, tabID string, data []byte) 
 		return err
 	}
 	return s.manager.WriteInternal(ctx, tabID, data)
+}
+
+func (s *sessionTerminal) WritePaste(ctx context.Context, tabID, text string) error {
+	return s.manager.WritePasteFor(sessionRequestContext(ctx), tabID, text)
+}
+
+func (s *sessionTerminal) WaitSnapshot(ctx context.Context, tabID string) (Screen, error) {
+	snapshot, tail, err := s.manager.TerminalWaitSnapshotFor(sessionRequestContext(ctx), tabID)
+	if err != nil {
+		return Screen{}, err
+	}
+	idle := int64(0)
+	if snapshot.LastOutputMsAgo <= math.MaxInt64 {
+		idle = int64(snapshot.LastOutputMsAgo)
+	}
+	return Screen{Text: snapshot.Text, Tail: tail, CursorRow: snapshot.CursorRow, CursorCol: snapshot.CursorCol, Cols: snapshot.Cols, Rows: snapshot.Rows, IdleMS: idle, AltScreen: snapshot.AltScreen}, nil
 }
 
 func (s *sessionTerminal) CommandState(ctx context.Context, tabID string) (CommandState, error) {

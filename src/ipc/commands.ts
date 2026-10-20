@@ -4,6 +4,15 @@ import { describeError } from "../ui/errorText";
 import { authedFetch } from "./serverAuth";
 import { callDesktop } from "./wails";
 import { currentAuthSessionEpoch } from "./authSessionEpoch";
+import { notifyAssetDataChanged } from "./assetEvents";
+import type {
+  ipcContractManifest,
+  IPCCommandName,
+  IPCInput,
+  IPCLegacyCommandName,
+  IPCOutput,
+  IPCTypedCommandName,
+} from "./generated/manifest";
 
 export interface AppError {
   code: string;
@@ -18,7 +27,50 @@ export function toAppError(e: unknown): AppError {
   return { code: "internal", message: describeError(e) };
 }
 
-export async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+type IPCCommandParameter<Command> = 0 extends 1 & Command ? never : Command;
+type IPCEnvelopeArgs<Command extends IPCCommandName> =
+  (typeof ipcContractManifest.commands)[Command]["channel"] extends true
+    ? { channel: unknown; clientId?: string }
+    : { channel?: unknown; clientId?: string };
+type IPCCallArgs<Command extends IPCTypedCommandName> =
+  (typeof ipcContractManifest.commands)[Command]["nested"] extends true
+    ? { args: IPCInput<Command> } & IPCEnvelopeArgs<Command>
+    : IPCInput<Command> extends Record<string, never>
+      ? IPCEnvelopeArgs<Command>
+      : IPCInput<Command> & IPCEnvelopeArgs<Command>;
+type IPCCallParameters<Command extends IPCTypedCommandName> =
+  IPCInput<Command> extends Record<string, never>
+    ? (typeof ipcContractManifest.commands)[Command]["channel"] extends true
+      ? [args: IPCCallArgs<Command>]
+      : [args?: IPCCallArgs<Command>]
+    : [args: IPCCallArgs<Command>];
+type IPCLegacyEnvelopeArgs = { channel?: unknown; clientId?: string };
+type IPCLegacyCallArgs<Command extends IPCLegacyCommandName> =
+  (typeof ipcContractManifest.commands)[Command]["nested"] extends true
+    ? { args: unknown } & IPCLegacyEnvelopeArgs
+    : Record<string, unknown> & IPCLegacyEnvelopeArgs;
+type IPCLegacyCallParameters<Command extends IPCLegacyCommandName> =
+  (typeof ipcContractManifest.commands)[Command]["nested"] extends true
+    ? [args: IPCLegacyCallArgs<Command>]
+    : [args?: IPCLegacyCallArgs<Command>];
+type IPCLegacyInvocation<Command extends IPCLegacyCommandName> = Command extends unknown
+  ? [cmd: Command, ...args: IPCLegacyCallParameters<Command>]
+  : never;
+
+export function call<Command extends IPCTypedCommandName>(
+  cmd: IPCCommandParameter<Command>,
+  ...args: IPCCallParameters<Command>
+): Promise<IPCOutput<Command>>;
+export function call<T>(...args: IPCLegacyInvocation<IPCLegacyCommandName>): Promise<T>;
+export function call<T>(cmd: IPCCommandName, args?: Record<string, unknown>): Promise<T> {
+  return invoke<T>(cmd, args);
+}
+
+export function unsafeCall<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  return invoke<T>(cmd, args);
+}
+
+async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   try {
     if (WEB) {
       return await callWeb<T>(cmd, args);
@@ -106,14 +158,18 @@ async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<
   }
   ensureCurrent();
   let res = await postRpc(requestPayload, getCsrfToken());
+  ensureCurrent();
   let text = await webTransport(res.text());
+  ensureCurrent();
   if (isCsrfRejection(res.status, text)) {
     // The session may have rotated and invalidated the old token: refresh via /auth/me and retry the same request, only once.
     // CSRF rejection happens in middleware before the command handler, so retrying has no duplicate side effects.
     await authApi.me();
     ensureCurrent();
     res = await postRpc(requestPayload, getCsrfToken());
+    ensureCurrent();
     text = await webTransport(res.text());
+    ensureCurrent();
   }
   let body: { ok?: boolean; data?: unknown; error?: unknown } | null = null;
   try {
@@ -188,8 +244,8 @@ export interface SessionInfo {
 }
 
 export const sessionApi = {
-  connect: (assetId: string, acceptHostKey = false) =>
-    call<SessionInfo>("session_connect", { args: { assetId, acceptHostKey } }),
+  connect: (assetId: string) =>
+    call<SessionInfo>("session_connect", { args: { assetId } }),
   connectQuick: (args: {
     host: string;
     port: number;
@@ -224,8 +280,6 @@ export const sessionApi = {
     }),
   lineExec: (tabId: string, line: string) =>
     call<void>("session_line_exec", { tabId, line, clientId: clientId() }),
-  cwd: (sessionId: string) =>
-    call<string | null>("session_cwd", { sessionId }),
 };
 
 export type TerminalShell = "powershell" | "cmd" | "posix" | "unknown";
@@ -257,6 +311,7 @@ export interface LiveTabInfo {
   subscribers: number;
   viewers: number;
   exited: boolean;
+  lastOutputAt?: number;
   lastOutputMsAgo: number;
   title?: string;
 }
@@ -302,6 +357,33 @@ function listTerminal<T>(sessionId?: string, durable?: boolean): Promise<T> {
   return call<T>("terminal_list", args);
 }
 
+export interface BroadcastProductionConfirmation {
+  confirmed: boolean;
+  targetSetHash: string;
+  inputHash: string;
+}
+
+export interface TerminalBroadcastWriteOptions {
+  targetTabIds: string[];
+  productionConfirmation?: BroadcastProductionConfirmation;
+}
+
+export interface BroadcastConfirmationTarget {
+  tabId: string;
+  sessionId: string;
+  sessionName: string;
+  assetId?: string;
+  hostname?: string;
+  environment: string;
+}
+
+export interface BroadcastConfirmationChallenge {
+  kind: "broadcast_production_confirmation";
+  targetSetHash: string;
+  inputHash: string;
+  productionTargets: BroadcastConfirmationTarget[];
+}
+
 export const terminalApi = {
   attach: (sessionId: string, cols: number, rows: number, channel: unknown, durable?: boolean) =>
     call<AttachedTabInfo>("terminal_attach", {
@@ -321,9 +403,26 @@ export const terminalApi = {
       ...(resume ? { fromSeq: resume.seq, fromEpoch: resume.epoch } : {}),
       ...(sessionId === undefined ? {} : { sessionId }),
     }),
-  write: (tabId: string, data: Uint8Array) =>
+  prepareBroadcast: (
+    tabIds: readonly string[],
+    data: Uint8Array,
+    productionConfirmation?: BroadcastProductionConfirmation,
+  ) =>
+    call<void>("terminal_broadcast_prepare", {
+      args: {
+        tabIds: [...tabIds],
+        data: Array.from(data),
+        ...(productionConfirmation ? { productionConfirmation } : {}),
+      },
+    }),
+  write: (tabId: string, data: Uint8Array, broadcast?: TerminalBroadcastWriteOptions) =>
     call<void>("terminal_write", {
-      args: { tabId, data: Array.from(data), clientId: clientId() },
+      args: {
+        tabId,
+        data: Array.from(data),
+        clientId: clientId(),
+        ...(broadcast ? { broadcast } : {}),
+      },
     }),
   resize: (tabId: string, cols: number, rows: number) =>
     call<void>("terminal_resize", { tabId, cols, rows, clientId: clientId() }),
@@ -449,7 +548,7 @@ export const layoutApi = {
 export interface Asset {
   id: string;
   groupId: string | null;
-  kind: "ssh" | "winrm" | "local" | "docker" | "mysql" | "postgres" | "redis";
+  kind: "ssh" | "winrm" | "local" | "docker" | "docker-context" | "kubernetes" | "mysql" | "postgres" | "redis";
   name: string;
   host: string | null;
   port: number | null;
@@ -476,24 +575,35 @@ export interface AssetGroup {
   updatedAt: number;
 }
 
+export interface AssetSearchResponse {
+  assets: Asset[];
+  total: number;
+  truncated: boolean;
+}
+
+async function assetWrite<T>(operation: () => Promise<T>): Promise<T> {
+  const result = await operation();
+  notifyAssetDataChanged();
+  return result;
+}
+
 export const assetApi = {
   list: () => call<Asset[]>("asset_list"),
   get: (id: string) => call<Asset>("asset_get", { id }),
   create: (args: Partial<Asset> & { kind: string; name: string }) =>
-    call<Asset>("asset_create", { args }),
+    assetWrite(() => call<Asset>("asset_create", { args })),
   update: (args: { id: string } & Record<string, unknown>) =>
-    call<Asset>("asset_update", { args }),
-  saveKeyFile: (content: string) =>
-    call<{ path: string }>("asset_save_key_file", { content }),
+    assetWrite(() => call<Asset>("asset_update", { args })),
   readKeyFile: (path: string) => call<string>("asset_read_key_file", { path }),
-  delete: (id: string) => call<void>("asset_delete", { id }),
+  delete: (id: string) => assetWrite(() => call<void>("asset_delete", { id })),
   search: (q: string) => call<Asset[]>("asset_search", { q }),
+  searchMeta: (q: string) => call<AssetSearchResponse>("asset_search_meta", { q }),
   groupList: () => call<AssetGroup[]>("group_list"),
   groupCreate: (name: string, parentId?: string) =>
-    call<AssetGroup>("group_create", { name, parentId }),
+    assetWrite(() => call<AssetGroup>("group_create", { name, parentId })),
   groupUpdate: (id: string, name?: string, parentId?: string | null) =>
-    call<AssetGroup>("group_update", { id, name, parentId }),
-  groupDelete: (id: string) => call<void>("group_delete", { id }),
+    assetWrite(() => call<AssetGroup>("group_update", { id, name, parentId })),
+  groupDelete: (id: string) => assetWrite(() => call<void>("group_delete", { id })),
   snippetList: () => call<import("./types").SnippetDto[]>("snippet_list"),
   snippetCreate: (name: string, body: string, groupId?: string, sort?: number) =>
     call<{ id: string }>("snippet_create", { name, body, groupId, sort }),
@@ -520,10 +630,6 @@ export const assetApi = {
   knownHostAccept: (host: string, port: number, keyType: string, fingerprint: string) =>
     call<void>("known_host_accept", { host, port, keyType, fingerprint }),
   knownHostRemove: (id: string) => call<void>("known_host_remove", { id }),
-  appInfo: () =>
-    call<{ name: string; version: string; vault: import("./types").VaultStatusDto }>(
-      "app_info",
-    ),
 };
 
 function normEntryPath<T extends { path: string }>(e: T): T {
@@ -582,7 +688,9 @@ export const fsApi = {
     path: string,
     contentBase64: string,
     backup = true,
-  ) => call<void>("fs_write", { args: { sessionId, path, contentBase64, backup } }),
+    taskId?: string,
+    attemptId?: string,
+  ) => call<void>("fs_write", { args: { sessionId, path, contentBase64, backup, taskId, attemptId } }),
   mkdir: (sessionId: string, path: string) =>
     call<void>("fs_mkdir", { sessionId, path }),
   rename: (sessionId: string, from: string, to: string) =>
@@ -593,12 +701,47 @@ export const fsApi = {
     call<void>("fs_chmod", { sessionId, path, mode }),
   checksum: (sessionId: string, path: string, algo?: string) =>
     call<string>("fs_checksum", { sessionId, path, algo }),
-  upload: (sessionId: string, localPath: string, remotePath: string, resume?: boolean) =>
-    call<number>("fs_upload", { sessionId, localPath, remotePath, resume }),
-  download: (sessionId: string, remotePath: string, localPath: string) =>
-    call<number>("fs_download", { sessionId, remotePath, localPath }),
-  packDownload: (sessionId: string, remotePath: string, localPath: string) =>
-    call<number>("fs_pack_download", { sessionId, remotePath, localPath }),
+  upload: (
+    sessionId: string,
+    localPath: string,
+    remotePath: string,
+    resume?: boolean,
+    taskId?: string,
+    attemptId?: string,
+  ) => call<number>("fs_upload", { sessionId, localPath, remotePath, resume, taskId, attemptId }),
+  uploadBegin: (args: {
+    sessionId: string;
+    remotePath: string;
+    totalSize: number;
+    chunkSize?: number;
+    taskId: string;
+    attemptId: string;
+  }) => call<{ uploadId: string; chunkSize: number }>("fs_upload_begin", args),
+  uploadChunk: (args: {
+    sessionId: string;
+    uploadId: string;
+    taskId: string;
+    attemptId: string;
+    index: number;
+    size: number;
+    sha256: string;
+    contentBase64: string;
+  }) => call<{ received: number; total: number }>("fs_upload_chunk", args),
+  uploadCommit: (args: { sessionId: string; uploadId: string; taskId: string; attemptId: string }) =>
+    call<number>("fs_upload_commit", args),
+  uploadAbort: (args: { sessionId: string; uploadId: string; taskId: string; attemptId: string }) =>
+    call<void>("fs_upload_abort", args),
+  download: (
+    sessionId: string,
+    remotePath: string,
+    localPath: string,
+    resume?: boolean,
+    taskId?: string,
+    attemptId?: string,
+  ) => call<number>("fs_download", { sessionId, remotePath, localPath, resume, taskId, attemptId }),
+  packDownload: (sessionId: string, remotePath: string, localPath: string, taskId?: string, attemptId?: string) =>
+    call<number>("fs_pack_download", { sessionId, remotePath, localPath, taskId, attemptId }),
+  cancel: (taskId: string, attemptId?: string) => call("fs_cancel", { taskId, attemptId }),
   extract: (sessionId: string, path: string) =>
     call<string>("fs_extract", { sessionId, path }),
 };
@@ -625,11 +768,19 @@ export const localFileApi = {
       path,
       maxBytes,
     }),
+  readRange: (path: string, offset: number, maxBytes?: number) =>
+    call<{
+      path: string;
+      offset: number;
+      size: number;
+      contentBase64: string;
+      truncated: boolean;
+    }>("local_file_read_range", { path, offset, maxBytes }),
 };
 
 export const mountApi = {
   capability: () => call<string | null>("mount_capability"),
-  list: (options: { sessionId?: string; forceRefresh?: boolean; global?: boolean }) =>
+  list: (options: { sessionId: string; forceRefresh?: boolean }) =>
     call<import("./types").MountEntryDto[]>("mount_list", options),
   create: (args: {
     sessionId: string;
@@ -650,6 +801,7 @@ export interface ContainerSummary {
   status: string;
   ports: string;
   composeProject: string | null;
+  composeService?: string | null;
 }
 
 export interface ImageSummary {
@@ -659,6 +811,108 @@ export interface ImageSummary {
   size: string;
   createdSince: string;
 }
+
+export interface ComposeStack {
+  project: string;
+  workingDir: string;
+  configFiles: string[];
+  envPath: string;
+  envExists: boolean;
+  services: string[];
+  readOnly: boolean;
+  reason?: string;
+}
+
+export interface ComposeOverview {
+  cli?: "docker compose" | "docker-compose";
+  available: boolean;
+  message?: string;
+  stacks: ComposeStack[];
+}
+
+export type DockerProductionConfirmation = {
+  confirmed: true;
+  targetSetHash: string;
+  commandHash: string;
+};
+
+export interface DiskCategory {
+  kind: "images" | "containers" | "volumes" | "buildCache";
+  total: number;
+  active: number;
+  sizeBytes: number;
+  reclaimableBytes: number;
+}
+
+export interface DockerContainerUse {
+  id: string;
+  name: string;
+}
+
+export interface DockerDiskUsage {
+  categories: DiskCategory[];
+  images: {
+    id: string;
+    repository: string;
+    tag: string;
+    containers: number;
+    sizeBytes: number;
+    uniqueSizeBytes: number;
+  }[];
+  containers: { id: string; name: string; image: string; status: string; sizeBytes: number }[];
+  volumes: {
+    name: string;
+    driver: string;
+    links: number;
+    sizeBytes: number;
+    containers: DockerContainerUse[];
+  }[];
+  networks: {
+    id: string;
+    name: string;
+    driver: string;
+    scope: string;
+    builtin: boolean;
+    containers: DockerContainerUse[];
+  }[];
+  buildCache: { id: string; type: string; sizeBytes: number; shared: boolean }[];
+}
+
+export type DockerPruneKind = "containers" | "images" | "volumes" | "networks" | "buildCache";
+export interface DockerPruneItem {
+  kind: DockerPruneKind;
+  id: string;
+  name: string;
+  bytes: number;
+}
+export interface DockerPrunePreview {
+  token: string;
+  digest: string;
+  expiresAt: number;
+  items: DockerPruneItem[];
+  totalBytes: number;
+}
+export interface DockerPruneResult {
+  items: { item: DockerPruneItem; output?: string; error?: string }[];
+  freedBytes: number;
+}
+
+export type ComposeRedeployPrepareRequest = {
+  sessionId: string;
+  project: string;
+  path: string;
+  baseContentBase64: string;
+  contentBase64: string;
+  productionConfirmation?: DockerProductionConfirmation;
+};
+
+export type ComposeRedeployAttachRequest = {
+  sessionId: string;
+  project: string;
+  path: string;
+  ticket: string;
+  channel: unknown;
+};
 
 export const dockerApi = {
   overview: (sessionId: string) =>
@@ -704,6 +958,44 @@ export const dockerApi = {
   stats: (sessionId: string) => call<string>("docker_stats", { sessionId }),
   containerListDir: (sessionId: string, containerId: string, path: string) =>
     call<string[]>("docker_container_list_dir", { sessionId, containerId, path }),
+  composeStacks: (sessionId: string) => call<ComposeOverview>("docker_compose_stacks", { sessionId }),
+  composeAction: (
+    sessionId: string,
+    project: string,
+    action: "up" | "down" | "restart" | "pull",
+    productionConfirmation?: DockerProductionConfirmation,
+  ) =>
+    call<string>("docker_compose_action", {
+      sessionId,
+      project,
+      action,
+      ...(productionConfirmation ? { productionConfirmation } : {}),
+    }),
+  composeLogsAttach: (sessionId: string, project: string, tail: number, channel: unknown) =>
+    call<string>("docker_compose_logs_attach", { sessionId, project, tail, channel, clientId: clientId() }),
+  composeRedeployPrepare: (request: ComposeRedeployPrepareRequest) =>
+    call<{ ticket: string; contentHash: string }>("docker_compose_redeploy_prepare", request),
+  composeRedeployAttach: (request: ComposeRedeployAttachRequest) => {
+    const { channel, ...body } = request;
+    return call<string>("docker_compose_redeploy_attach", { ...body, channel, clientId: clientId() });
+  },
+  diskUsage: (sessionId: string) => call<DockerDiskUsage>("docker_disk_usage", { sessionId }),
+  prunePreview: (sessionId: string, kinds: DockerPruneKind[]) =>
+    call<DockerPrunePreview>("docker_prune_preview", { sessionId, kinds }),
+  prune: (
+    sessionId: string,
+    token: string,
+    digest: string,
+    productionConfirmation?: DockerProductionConfirmation,
+  ) =>
+    call<DockerPruneResult>("docker_prune", {
+      sessionId,
+      token,
+      digest,
+      ...(productionConfirmation ? { productionConfirmation } : {}),
+    }),
+  reclaimable: (sessionId: string) =>
+    call<{ totalBytes: number; categories: DiskCategory[] }>("docker_reclaimable", { sessionId }),
 };
 
 export interface QueryResult {
@@ -737,8 +1029,8 @@ export interface TableDescribe {
 }
 
 export const dbApi = {
-  connect: (assetId?: string, inline?: Record<string, unknown>) =>
-    call<{ connId: string }>("db_connect", { args: { assetId, inline } }),
+  connect: (assetId: string) =>
+    call<{ connId: string }>("db_connect", { args: { assetId } }),
   disconnect: (connId: string) => call<void>("db_disconnect", { connId }),
   schemas: (connId: string) => call<string[]>("db_schemas", { connId }),
   tables: (connId: string, schema?: string) =>
@@ -856,6 +1148,19 @@ export const aiApi = {
   }): Promise<TakeoverRunResult> => {
     const { channel, ...body } = args;
     return call<TakeoverRunResult>("ai_takeover_run", { ...body, channel });
+  },
+  takeoverConfirm: (input: AiConfirmationInput) => call<void>("ai_takeover_confirm", { ...input }),
+  takeoverCancel: (jobId: string) => call<void>("ai_takeover_cancel", { jobId }),
+  takeoverPause: (tabId: string, token: string) =>
+    call<void>("ai_takeover_pause", { tabId, token }),
+  takeoverResume: (args: {
+    tabId: string;
+    token: string;
+    jobId: string;
+    channel: unknown;
+  }): Promise<TakeoverRunResult> => {
+    const { channel, ...body } = args;
+    return call<TakeoverRunResult>("ai_takeover_resume", { ...body, channel });
   },
   conversationList: () =>
     call<import("./types").ConversationDto[]>("ai_conversation_list"),

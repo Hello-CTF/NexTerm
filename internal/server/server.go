@@ -49,6 +49,12 @@ type AccountConnectionCloser interface {
 	CloseAccountSession(sessionID string) error
 }
 
+// AccountCleanupFunc receives only trusted owner, cleanup event, and revoked session IDs.
+type AccountCleanupFunc func(ctx context.Context, ownerID, cleanupID string, sessionIDs ...string)
+
+// AccountCleanupPrepareFunc reserves an owner snapshot before revocation; commit and rollback are mutually exclusive.
+type AccountCleanupPrepareFunc func(ctx context.Context, ownerID, cleanupID string) (commit func(sessionIDs ...string), rollback func())
+
 type Config struct {
 	Options    Options
 	Dispatcher *ipc.Dispatcher
@@ -74,14 +80,16 @@ type Config struct {
 	// are mounted under the account routes, and the public data plane is GET /share/preview/{token}. If Spectator also
 	// implements RemoteSessionRegistry (the *session.Manager injected in production does), the
 	// /share/remote-sessions remote session shell management surface is additionally mounted.
-	Previews           *sharing.Service
-	Spectator          PreviewSpectator
-	DB                 DBHealthSource
-	AccountConnections AccountConnectionCloser
-	Version            string
-	MaxRPCBytes        int64
-	Logger             *slog.Logger
-	WebSocket          WebSocketConfig
+	Previews              *sharing.Service
+	Spectator             PreviewSpectator
+	DB                    DBHealthSource
+	AccountConnections    AccountConnectionCloser
+	AccountCleanup        AccountCleanupFunc
+	AccountCleanupPrepare AccountCleanupPrepareFunc
+	Version               string
+	MaxRPCBytes           int64
+	Logger                *slog.Logger
+	WebSocket             WebSocketConfig
 }
 
 type Server struct {
@@ -120,6 +128,11 @@ type Server struct {
 	previewRevalidateInterval time.Duration
 	db                        DBHealthSource
 	accountConnections        AccountConnectionCloser
+	accountCleanup            AccountCleanupFunc
+	accountCleanupPrepare     AccountCleanupPrepareFunc
+	accountRevocationMu       sync.Mutex
+	revokeUserSessions        func(context.Context, string, string, ...func() error) ([]string, error)
+	accountExecutionAdmission func(context.Context, string, *account.Identity, func() error) error
 
 	readGate func()
 }
@@ -173,6 +186,9 @@ func New(config Config) (*Server, error) {
 	}
 	if config.Dispatcher == nil {
 		return nil, fmt.Errorf("RPC dispatcher is required")
+	}
+	if config.AccountCleanup != nil && config.AccountCleanupPrepare == nil {
+		return nil, fmt.Errorf("account cleanup preparation is required when account cleanup is configured")
 	}
 	if config.SyncObjects == nil && config.Accounts == nil {
 		return nil, fmt.Errorf("sync object handler or account service is required")
@@ -269,7 +285,13 @@ func New(config Config) (*Server, error) {
 		previewRevalidateInterval: defaultPreviewRevalidateInterval,
 		db:                        config.DB,
 		accountConnections:        config.AccountConnections,
+		accountCleanup:            config.AccountCleanup,
+		accountCleanupPrepare:     config.AccountCleanupPrepare,
 	}
+	if config.Accounts != nil {
+		s.revokeUserSessions = config.Accounts.RevokeUserSessionsWithIDs
+	}
+	s.accountExecutionAdmission = s.admitAccountExecution
 	if s.environment.Events == nil {
 		s.environment.Events = s.events
 	}
@@ -446,4 +468,9 @@ func (s *Server) CloseContext(ctx context.Context) error {
 		s.closeErr = errors.Join(s.events.Close(), s.sockets.closeAndWait(ctx), fleetErr)
 	})
 	return s.closeErr
+}
+
+func confirmedAccountSessionInvalid(err error) bool {
+	var appErr *ipc.Error
+	return errors.As(err, &appErr) && appErr.Code == ipc.CodeForbidden
 }

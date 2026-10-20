@@ -134,8 +134,30 @@ func (e *Engine) verifySessionDEK(ctx context.Context, config RemoteConfig, sess
 	return nil
 }
 
+type transcriptCacheKey struct {
+	owner          string
+	id             string
+	sessionID      string
+	assetID        string
+	assetName      string
+	assetKind      string
+	startedAt      int64
+	endedAt        int64
+	hasEndedAt     bool
+	bytes          int64
+	chunks         int64
+	truncated      bool
+	contentOmitted bool
+}
+
+type transcriptCacheEntry struct {
+	key         transcriptCacheKey
+	payload     []byte
+	payloadHash string
+}
+
 // Engine is the client engine of the v2 full-payload object protocol: the same local replica stays identical before and after login,
-// login only attaches sync. The engine itself is stateless; the session and DEK are memory-cached only.
+// login only attaches sync. The session and immutable transcript payloads are memory-cached; the local replica remains authoritative.
 type Engine struct {
 	store  *store.Store
 	vault  *vault.Vault
@@ -145,13 +167,20 @@ type Engine struct {
 	sessionMu sync.Mutex
 	session   *remoteSession
 	pending   map[string]*pendingLinkLogin
+
+	transcriptCacheMu sync.RWMutex
+	transcriptCache   map[string]transcriptCacheEntry
+	aiShared          bool
 }
 
 func NewEngine(database *store.Store, credentialVault *vault.Vault, logger *slog.Logger) *Engine {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Engine{store: database, vault: credentialVault, logger: logger, pending: map[string]*pendingLinkLogin{}}
+	return &Engine{
+		store: database, vault: credentialVault, logger: logger, pending: map[string]*pendingLinkLogin{},
+		transcriptCache: map[string]transcriptCacheEntry{}, aiShared: true,
+	}
 }
 
 // kindOptIn is the per-sync-round opt-in snapshot of sync object kinds; the zero value means hard-off.
@@ -483,13 +512,14 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 	if err != nil {
 		return false, err
 	}
+	syncStates, err := e.syncStateMap(ctx, userID)
+	if err != nil {
+		return false, err
+	}
 	unreconciled := make([]string, 0, len(server))
 	for _, entry := range idsResponse.Entries {
-		_, blobHash, found, err := e.syncStateGet(ctx, userID, entry.ID)
-		if err != nil {
-			return false, err
-		}
-		if !found || blobHash != entry.BlobHash {
+		state, found := syncStates[entry.ID]
+		if !found || state.blobHash != entry.BlobHash {
 			unreconciled = append(unreconciled, entry.ID)
 		}
 	}
@@ -508,6 +538,12 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 	if err != nil {
 		return false, err
 	}
+	// Pull/apply updates reconciliation rows. Refresh them in one batch before deciding pushes;
+	// no per-object sync_state queries are needed in either reconciliation loop.
+	syncStates, err = e.syncStateMap(ctx, userID)
+	if err != nil {
+		return false, err
+	}
 	pending := make([]WireObject, 0, len(objects))
 	pendingHashes := make([]string, 0, len(objects))
 	for _, id := range sortObjectsForPush(objects) {
@@ -516,11 +552,9 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 			continue
 		}
 		local := objects[id]
-		payloadHash := objectPayloadHash(local.plaintext)
-		statePayloadHash, stateBlobHash, found, err := e.syncStateGet(ctx, userID, id)
-		if err != nil {
-			return false, err
-		}
+		payloadHash := e.localPayloadHash(ctx, id, local)
+		state, found := syncStates[id]
+		statePayloadHash, stateBlobHash := state.payloadHash, state.blobHash
 		serverEntry, onServer := server[id]
 		if found && statePayloadHash == quarantinedPayloadHash && onServer && stateBlobHash == serverEntry.BlobHash {
 			// A matching undecryptable cloud object needs an explicit repair decision. A changed blob is pulled and evaluated above.
@@ -668,6 +702,31 @@ func (e *Engine) saveCursor(ctx context.Context, userID string, cursor syncCurso
 	return e.store.SettingSet(ctx, cursorSettingKey(userID), string(encoded))
 }
 
+type syncStateSnapshot struct {
+	payloadHash string
+	blobHash    string
+}
+
+func (e *Engine) syncStateMap(ctx context.Context, userID string) (map[string]syncStateSnapshot, error) {
+	state := query.Use(e.store.GORM()).SyncState
+	rows, err := state.WithContext(ctx).Where(state.UserID.Eq(userID)).Find()
+	if err != nil {
+		return nil, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	result := make(map[string]syncStateSnapshot, len(rows))
+	for _, row := range rows {
+		if row == nil {
+			continue
+		}
+		payloadHash := ""
+		if row.PayloadHash != nil {
+			payloadHash = string(row.PayloadHash)
+		}
+		result[row.ObjectID] = syncStateSnapshot{payloadHash: payloadHash, blobHash: hex.EncodeToString(row.BlobHash)}
+	}
+	return result, nil
+}
+
 func (e *Engine) syncStateGet(ctx context.Context, userID, objectID string) (payloadHash string, blobHash string, found bool, returnErr error) {
 	state := query.Use(e.store.GORM()).SyncState
 	row, err := state.WithContext(ctx).Where(state.UserID.Eq(userID), state.ObjectID.Eq(objectID)).First()
@@ -703,11 +762,15 @@ type syncTombstoneRow struct {
 	DeletedAt int64
 }
 
-func (e *Engine) syncTombstoneList(ctx context.Context) ([]syncTombstoneRow, error) {
+// syncTombstoneList can exclude AI rows before querying when an identity-less server caller may only use non-AI sync state.
+func (e *Engine) syncTombstoneList(ctx context.Context, includeAI ...bool) ([]syncTombstoneRow, error) {
 	tombstone := query.Use(e.store.GORM()).SyncTombstone
 	result := []syncTombstoneRow{}
-	err := tombstone.WithContext(ctx).
-		Select(tombstone.ID, tombstone.Kind, tombstone.DeletedAt).
+	statement := tombstone.WithContext(ctx).Select(tombstone.ID, tombstone.Kind, tombstone.DeletedAt)
+	if len(includeAI) > 0 && !includeAI[0] {
+		statement = statement.Where(tombstone.Kind.NotIn(KindAIProfile, KindAIPermission, KindAIGrant))
+	}
+	err := statement.
 		Where(ownerConditions(ctx, tombstone.TableName())...).
 		Order(tombstone.ID).
 		Scan(&result)

@@ -213,7 +213,7 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, op
 			return nil, err
 		}
 	}
-	tombstones, err := e.syncTombstoneList(ctx)
+	tombstones, err := e.syncTombstoneList(ctx, e.aiSharedAccess(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -269,34 +269,83 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, op
 	return objects, nil
 }
 
+func transcriptCacheKeyFor(ctx context.Context, transcript store.TranscriptRow) transcriptCacheKey {
+	key := transcriptCacheKey{
+		owner: ipc.OwnerID(ctx), id: transcript.ID, sessionID: transcript.SessionID,
+		assetID: transcript.AssetID, assetName: transcript.AssetName, assetKind: transcript.AssetKind,
+		startedAt: transcript.StartedAt, bytes: transcript.Bytes, chunks: transcript.Chunks,
+		truncated: transcript.Truncated, contentOmitted: transcript.ContentOmitted,
+	}
+	if transcript.EndedAt != nil {
+		key.hasEndedAt = true
+		key.endedAt = *transcript.EndedAt
+	}
+	return key
+}
+
+func transcriptCacheID(key transcriptCacheKey) string {
+	return key.owner + "\x00" + key.id
+}
+
 func (e *Engine) transcriptPayload(ctx context.Context, transcript store.TranscriptRow) ([]byte, error) {
+	key := transcriptCacheKeyFor(ctx, transcript)
+	cacheID := transcriptCacheID(key)
+	e.transcriptCacheMu.RLock()
+	cached, found := e.transcriptCache[cacheID]
+	e.transcriptCacheMu.RUnlock()
+	if found && cached.key == key {
+		return cached.payload, nil
+	}
+
 	object := transcriptObject{
 		ID: transcript.ID, SessionID: transcript.SessionID, AssetID: transcript.AssetID,
 		AssetName: transcript.AssetName, AssetKind: transcript.AssetKind,
 		StartedAt: transcript.StartedAt, Truncated: transcript.Truncated,
+		Bytes: transcript.Bytes, Chunks: transcript.Chunks,
 	}
 	if transcript.EndedAt != nil {
 		object.EndedAt = *transcript.EndedAt
 	}
+	var payload []byte
+	var err error
 	if transcript.Bytes > syncTranscriptMaxContentBytes {
 		object.ContentOmitted = true
-		object.Bytes = transcript.Bytes
-		object.Chunks = transcript.Chunks
-		return marshalObject(object)
+		payload, err = marshalObject(object)
+	} else {
+		chunks, readErr := e.transcriptChunksAll(ctx, transcript.ID)
+		if readErr != nil {
+			return nil, readErr
+		}
+		object.Content = make([]transcriptChunkObject, 0, len(chunks))
+		for _, chunk := range chunks {
+			object.Content = append(object.Content, transcriptChunkObject{
+				Seq: chunk.Seq, TabID: chunk.TabID, TS: chunk.TS, Kind: chunk.Kind, Data: chunk.Data,
+			})
+		}
+		payload, err = marshalObject(object)
 	}
-	chunks, err := e.transcriptChunksAll(ctx, transcript.ID)
 	if err != nil {
 		return nil, err
 	}
-	object.Content = make([]transcriptChunkObject, 0, len(chunks))
-	for _, chunk := range chunks {
-		object.Content = append(object.Content, transcriptChunkObject{
-			Seq: chunk.Seq, TabID: chunk.TabID, TS: chunk.TS, Kind: chunk.Kind, Data: chunk.Data,
-		})
+	e.transcriptCacheMu.Lock()
+	e.transcriptCache[cacheID] = transcriptCacheEntry{key: key, payload: payload, payloadHash: objectPayloadHash(payload)}
+	e.transcriptCacheMu.Unlock()
+	return payload, nil
+}
+
+// localPayloadHash reuses the hash stored beside an immutable transcript payload. The byte comparison
+// protects against a concurrent cache replacement; all other object kinds retain the existing hash path.
+func (e *Engine) localPayloadHash(ctx context.Context, id string, object localObject) string {
+	if object.kind == KindTranscript {
+		cacheID := ipc.OwnerID(ctx) + "\x00" + id
+		e.transcriptCacheMu.RLock()
+		cached, found := e.transcriptCache[cacheID]
+		e.transcriptCacheMu.RUnlock()
+		if found && bytes.Equal(cached.payload, object.plaintext) {
+			return cached.payloadHash
+		}
 	}
-	object.Bytes = transcript.Bytes
-	object.Chunks = transcript.Chunks
-	return marshalObject(object)
+	return objectPayloadHash(object.plaintext)
 }
 
 func (e *Engine) transcriptChunksAll(ctx context.Context, transcriptID string) ([]store.TranscriptChunkRow, error) {
@@ -1057,6 +1106,10 @@ func (e *Engine) applyKnownHostTombstone(ctx context.Context, objectID string, p
 }
 
 func (e *Engine) applyAIProfileObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
+	if _, err := e.aiOwnerID(ctx); err != nil {
+		report.warnf("AI 模型档案应用需要账号身份: %v", err)
+		return false, false
+	}
 	var payload aiProfileObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
 		report.warnf("AI 模型档案对象数据损坏：%v", err)
@@ -1122,6 +1175,10 @@ func (e *Engine) applyAIProfileObject(ctx context.Context, plaintext []byte, rep
 }
 
 func (e *Engine) applyAIProfileTombstone(ctx context.Context, objectID string, deletedAt int64, report *SyncReport) (bool, bool) {
+	if _, err := e.aiOwnerID(ctx); err != nil {
+		report.warnf("AI 模型档案删除标记需要账号身份: %v", err)
+		return false, false
+	}
 	state, revision, _, err := e.aiProfilesLoad(ctx)
 	if err != nil {
 		report.warnf("无法读取 AI 模型档案 %s: %v", objectID, err)

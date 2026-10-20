@@ -36,7 +36,7 @@ func (s *Store) ConvGet(ctx context.Context, id string) (ConversationRow, error)
 	conversation := query.Use(s.db).ConversationRow
 	row, err := conversation.WithContext(ctx).
 		Where(conversation.ID.Eq(id)).
-		Where(ownerConditions(ctx, conversation.TableName())...).
+		Where(s.aiHistoryOwnerConditions(ctx, conversation.TableName())...).
 		First()
 	if isNoRows(err) {
 		return ConversationRow{}, notFound("会话")
@@ -51,7 +51,7 @@ func (s *Store) ConvList(ctx context.Context) ([]ConversationRow, error) {
 	conversation := query.Use(s.db).ConversationRow
 	result := []ConversationRow{}
 	err := conversation.WithContext(ctx).
-		Where(ownerConditions(ctx, conversation.TableName())...).
+		Where(s.aiHistoryOwnerConditions(ctx, conversation.TableName())...).
 		Order(conversation.UpdatedAt.Desc()).
 		Scan(&result)
 	if err != nil {
@@ -64,7 +64,7 @@ func (s *Store) ConvRename(ctx context.Context, id, title string) error {
 	conversation := query.Use(s.db).ConversationRow
 	_, err := conversation.WithContext(ctx).
 		Where(conversation.ID.Eq(id)).
-		Where(ownerConditions(ctx, conversation.TableName())...).
+		Where(s.aiHistoryOwnerConditions(ctx, conversation.TableName())...).
 		UpdateColumns(map[string]any{"title": title, "updated_at": ids.NowMS()})
 	if err != nil {
 		return dbError(err)
@@ -81,21 +81,21 @@ func (s *Store) ConvDelete(ctx context.Context, id string) error {
 		message := queries.MessageRow
 		if _, err := message.WithContext(ctx).
 			Where(message.ConversationID.Eq(id)).
-			Where(ownerConditions(ctx, message.TableName())...).
+			Where(s.aiHistoryOwnerConditions(ctx, message.TableName())...).
 			Delete(); err != nil {
 			return err
 		}
 		cron := queries.CronJob
 		if _, err := cron.WithContext(ctx).
 			Where(cron.SessionID.Eq(id)).
-			Where(ownerConditions(ctx, cron.TableName())...).
+			Where(s.aiHistoryOwnerConditions(ctx, cron.TableName())...).
 			Delete(); err != nil {
 			return err
 		}
 		conversation := queries.ConversationRow
 		_, err := conversation.WithContext(ctx).
 			Where(conversation.ID.Eq(id)).
-			Where(ownerConditions(ctx, conversation.TableName())...).
+			Where(s.aiHistoryOwnerConditions(ctx, conversation.TableName())...).
 			Delete()
 		return err
 	})
@@ -118,7 +118,7 @@ func (s *Store) MsgInsert(ctx context.Context, conversationID, role string, cont
 		message := queries.MessageRow
 		q := message.WithContext(ctx).
 			Where(message.ConversationID.Eq(conversationID)).
-			Where(ownerConditions(ctx, message.TableName())...)
+			Where(s.aiHistoryOwnerConditions(ctx, message.TableName())...)
 		var maxSeq int64
 		if err := q.UnderlyingDB().Select("COALESCE(MAX(seq), 0)").Scan(&maxSeq).Error; err != nil {
 			return err
@@ -134,7 +134,7 @@ func (s *Store) MsgInsert(ctx context.Context, conversationID, role string, cont
 		conversation := queries.ConversationRow
 		_, err = conversation.WithContext(ctx).
 			Where(conversation.ID.Eq(conversationID)).
-			Where(ownerConditions(ctx, conversation.TableName())...).
+			Where(s.aiHistoryOwnerConditions(ctx, conversation.TableName())...).
 			UpdateColumns(map[string]any{"updated_at": now})
 		return err
 	})
@@ -153,7 +153,7 @@ func (s *Store) MsgTruncateAfter(ctx context.Context, conversationID, messageID 
 		message := queries.MessageRow
 		row, err := message.WithContext(ctx).
 			Where(message.ID.Eq(messageID), message.ConversationID.Eq(conversationID)).
-			Where(ownerConditions(ctx, message.TableName())...).
+			Where(s.aiHistoryOwnerConditions(ctx, message.TableName())...).
 			First()
 		if isNoRows(err) {
 			return notFound("消息")
@@ -163,14 +163,14 @@ func (s *Store) MsgTruncateAfter(ctx context.Context, conversationID, messageID 
 		}
 		if _, err := message.WithContext(ctx).
 			Where(message.ConversationID.Eq(conversationID), message.Seq.Gt(row.Seq)).
-			Where(ownerConditions(ctx, message.TableName())...).
+			Where(s.aiHistoryOwnerConditions(ctx, message.TableName())...).
 			Delete(); err != nil {
 			return err
 		}
 		conversation := queries.ConversationRow
 		_, err = conversation.WithContext(ctx).
 			Where(conversation.ID.Eq(conversationID)).
-			Where(ownerConditions(ctx, conversation.TableName())...).
+			Where(s.aiHistoryOwnerConditions(ctx, conversation.TableName())...).
 			UpdateColumns(map[string]any{"updated_at": ids.NowMS()})
 		return err
 	})
@@ -185,7 +185,7 @@ func (s *Store) MsgList(ctx context.Context, conversationID string) ([]MessageRo
 	result := []MessageRow{}
 	err := message.WithContext(ctx).
 		Where(message.ConversationID.Eq(conversationID)).
-		Where(ownerConditions(ctx, message.TableName())...).
+		Where(s.aiHistoryOwnerConditions(ctx, message.TableName())...).
 		Order(message.Seq).
 		Scan(&result)
 	if err != nil {

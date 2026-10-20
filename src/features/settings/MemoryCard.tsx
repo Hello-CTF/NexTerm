@@ -3,7 +3,6 @@ import {
   memoryApi,
   type MemoryEntry,
   type MemoryIndexEntry,
-  type MemoryScope,
   type MemorySecretPolicy,
   type MemorySettings,
   type MemoryTopicIndex,
@@ -21,8 +20,6 @@ import {
   IconTrash,
   IconXCircle,
 } from "../../ui/icons";
-
-const MEMORY_SCOPE: MemoryScope = { tenant: "local", subject: "default" };
 
 function versionConflict(e: unknown): { expected: number; actual: number } | null {
   const err = toAppError(e);
@@ -85,8 +82,8 @@ export function MemoryCard() {
     setError(null);
     try {
       const [nextSettings, nextTopics] = await Promise.all([
-        memoryApi.settings(MEMORY_SCOPE),
-        memoryApi.index(MEMORY_SCOPE),
+        memoryApi.settings(),
+        memoryApi.index(),
       ]);
       if (!aliveRef.current || gen !== loadGenRef.current) return;
       setSettings(nextSettings);
@@ -109,7 +106,7 @@ export function MemoryCard() {
     if (!settings || settingsBusy) return;
     setSettingsBusy(true);
     try {
-      const updated = await memoryApi.setSettings(MEMORY_SCOPE, settings.version, {
+      const updated = await memoryApi.setSettings(settings.version, {
         [key]: next,
       });
       if (aliveRef.current) setSettings(updated);
@@ -139,7 +136,7 @@ export function MemoryCard() {
     }
     setExpanded((prev) => ({ ...prev, [id]: "loading" }));
     try {
-      const entry = await memoryApi.get(MEMORY_SCOPE, id);
+      const entry = await memoryApi.get(id);
       if (aliveRef.current) setExpanded((prev) => ({ ...prev, [id]: entry }));
     } catch {
       if (aliveRef.current) setExpanded((prev) => ({ ...prev, [id]: "error" }));
@@ -151,7 +148,7 @@ export function MemoryCard() {
     setFormError(null);
     setDraft({ kind: "edit-loading", editingId: entry.id });
     try {
-      const full = await memoryApi.get(MEMORY_SCOPE, entry.id);
+      const full = await memoryApi.get(entry.id);
       if (!aliveRef.current || gen !== editGenRef.current) return;
       setDraft({
         kind: "edit",
@@ -188,14 +185,13 @@ export function MemoryCard() {
     try {
       if (draft.kind === "edit") {
         await memoryApi.edit(
-          MEMORY_SCOPE,
           draft.editingId,
           draft.editingVersion,
           { topic, content, secrets: draft.secrets },
         );
         pushToast("success", "记忆已更新");
       } else {
-        await memoryApi.create(MEMORY_SCOPE, topic, content, draft.secrets);
+        await memoryApi.create(topic, content, draft.secrets);
         pushToast("success", "记忆已保存");
       }
       setDraft(null);
@@ -225,7 +221,7 @@ export function MemoryCard() {
     if (!ok) return;
     setDeletingId(entry.id);
     try {
-      await memoryApi.delete(MEMORY_SCOPE, entry.id, entry.version);
+      await memoryApi.delete(entry.id, entry.version);
       pushToast("success", "记忆已删除");
       setExpanded((prev) => {
         const next = { ...prev };
@@ -486,7 +482,7 @@ export function MemoryCard() {
       )}
 
       <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-2 text-[11px]">
-        记忆按属主隔离存储，并与 AI 运行共用；其他属主无法读取或修改。
+        记忆保存在当前 NexTerm 实例。浏览器账号模式下，记忆按账号隔离：只有当前账号能读写自己的记忆（含后台任务），其他账号不可见；旧全局记忆在升级时归到首个 active 超管账号，不覆盖已有个人记忆。桌面和明确开放部署使用共享记忆。
       </p>
     </section>
   );

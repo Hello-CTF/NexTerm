@@ -62,10 +62,10 @@ func TestDevicePermissionCommandsScopeToDevice(t *testing.T) {
 	if got := permissionOf(t, set.Data); got.Mode != guard.Silent {
 		t.Fatalf("device set response = %+v", got)
 	}
-	if mode, ok := manager.DeviceMode("asset-a"); !ok || mode != guard.Silent {
+	if mode, ok := mustAgentDeviceMode(t, manager, "asset-a"); !ok || mode != guard.Silent {
 		t.Fatalf("DeviceMode = %v %v", mode, ok)
 	}
-	if got := manager.Get(); got.Mode != guard.ReadWrite {
+	if got := mustAgentPermission(t, manager); got.Mode != guard.ReadWrite {
 		t.Fatalf("global config must stay untouched, got %+v", got)
 	}
 
@@ -82,7 +82,7 @@ func TestDevicePermissionCommandsScopeToDevice(t *testing.T) {
 	if !cleared.OK {
 		t.Fatalf("followGlobal failed: %+v", cleared.Error)
 	}
-	if _, ok := manager.DeviceMode("asset-a"); ok {
+	if _, ok := mustAgentDeviceMode(t, manager, "asset-a"); ok {
 		t.Fatal("override not cleared")
 	}
 	if got := permissionOf(t, cleared.Data); got.Mode != guard.ReadWrite {
@@ -98,7 +98,7 @@ func TestDevicePermissionCommandFallbacks(t *testing.T) {
 	if !global.OK || permissionOf(t, global.Data).Mode != guard.ReadOnly {
 		t.Fatalf("global set = %+v", global)
 	}
-	if got := manager.Get(); got.Mode != guard.ReadOnly || len(got.DangerRules) != 1 {
+	if got := mustAgentPermission(t, manager); got.Mode != guard.ReadOnly || len(got.DangerRules) != 1 {
 		t.Fatalf("global set must persist danger rules, got %+v", got)
 	}
 
@@ -111,7 +111,7 @@ func TestDevicePermissionCommandFallbacks(t *testing.T) {
 	if invalid.OK || invalid.Error == nil || !strings.Contains(invalid.Error.Message, "权限模式仅支持") {
 		t.Fatalf("invalid device mode = %+v", invalid)
 	}
-	if _, ok := manager.DeviceMode("asset-a"); ok {
+	if _, ok := mustAgentDeviceMode(t, manager, "asset-a"); ok {
 		t.Fatal("invalid mode must not persist")
 	}
 }
@@ -131,7 +131,7 @@ func TestDevicePermissionRejectsWriteWhenDeviceUnresolvable(t *testing.T) {
 	if response.OK || response.Error == nil || !strings.Contains(response.Error.Message, "无法确定设备身份") {
 		t.Fatalf("scoped set with unresolvable device = %+v", response)
 	}
-	if got := manager.Get(); got.Mode != guard.ReadWrite {
+	if got := mustAgentPermission(t, manager); got.Mode != guard.ReadWrite {
 		t.Fatalf("global config must stay untouched, got %+v", got)
 	}
 

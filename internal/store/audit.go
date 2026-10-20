@@ -8,6 +8,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/outcome"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
 )
 
 const OutcomeAuditKind = "outcome"
@@ -38,6 +39,14 @@ func (a outcomeAuditor) Append(ctx context.Context, record outcome.Record) error
 }
 
 func (s *Store) AuditInsert(ctx context.Context, input AuditInput) error {
+	return s.auditInsert(ctx, s.db, input)
+}
+
+func (s *Store) AuditInsertTx(ctx context.Context, tx *gorm.DB, input AuditInput) error {
+	return s.auditInsert(ctx, tx, input)
+}
+
+func (s *Store) auditInsert(ctx context.Context, db *gorm.DB, input AuditInput) error {
 	payload, err := json.Marshal(input.Payload)
 	if err != nil {
 		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
@@ -46,7 +55,7 @@ func (s *Store) AuditInsert(ctx context.Context, input AuditInput) error {
 		TS: ids.NowMS(), SessionID: input.SessionID, AssetID: input.AssetID, Source: input.Source, Kind: input.Kind,
 		PayloadJSON: string(payload), ExitCode: input.ExitCode, DurationMS: input.DurationMS, OwnerID: ipc.OwnerID(ctx),
 	}
-	if err := query.Use(s.db).AuditRow.WithContext(ctx).Create(&row); err != nil {
+	if err := query.Use(db).AuditRow.WithContext(ctx).Create(&row); err != nil {
 		return dbError(err)
 	}
 	return nil

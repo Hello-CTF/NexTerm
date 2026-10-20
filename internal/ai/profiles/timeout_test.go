@@ -41,7 +41,7 @@ func TestProfileTimeoutFieldsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile, ok := reloaded.Profile(saved.ID)
+	profile, ok := mustProfile(t, reloaded, saved.ID)
 	if !ok || profile.RequestTimeoutSeconds == nil || *profile.RequestTimeoutSeconds != 5 ||
 		profile.IdleTimeoutSeconds == nil || *profile.IdleTimeoutSeconds != 0 {
 		t.Fatalf("reloaded profile = %+v ok=%v", profile, ok)
@@ -81,16 +81,16 @@ func TestProfileLookupReturnsClone(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := overview.Profiles[0].ID
-	profile, ok := manager.Profile(id)
+	profile, ok := mustProfile(t, manager, id)
 	if !ok {
 		t.Fatal("saved profile not found by id")
 	}
 	*profile.RequestTimeoutSeconds = 1
-	again, _ := manager.Profile(id)
+	again, _ := mustProfile(t, manager, id)
 	if *again.RequestTimeoutSeconds != 7 {
 		t.Fatalf("manager state aliased: %d", *again.RequestTimeoutSeconds)
 	}
-	if _, ok := manager.Profile("missing"); ok {
+	if _, ok := mustProfile(t, manager, "missing"); ok {
 		t.Fatal("missing profile found")
 	}
 }
@@ -119,7 +119,7 @@ func TestActiveClientAppliesProfileTimeouts(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	client, err := manager.ActiveClient()
+	client, err := manager.ActiveClient(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestActiveClientAppliesProfileIdleTimeout(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	client, err := manager.ActiveClient()
+	client, err := manager.ActiveClient(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,12 +207,12 @@ func TestManagerConcurrentAccessRace(t *testing.T) {
 				case 1:
 					_, _ = manager.Activate(ctx, id)
 				case 2:
-					_ = manager.Overview()
+					_ = mustOverview(t, manager)
 				case 3:
-					_, _ = manager.ActiveProfile()
-					_, _ = manager.Profile(id)
+					_, _ = mustActiveProfile(t, manager)
+					_, _ = mustProfile(t, manager, id)
 				case 4:
-					_, _ = manager.ActiveClient()
+					_, _ = manager.ActiveClient(ctx)
 				}
 			}
 		}(worker)

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -39,12 +40,28 @@ type state struct {
 	ActiveID *string   `json:"activeId"`
 }
 
+type ownerState struct {
+	state    state
+	circuits map[string]circuitEntry
+}
+
 type Manager struct {
 	settings  Settings
 	protector store.SecretProtector
+	shared    bool
 	mu        sync.RWMutex
-	state     state
-	circuits  map[string]circuitEntry
+	states    map[string]*ownerState
+}
+
+type options struct {
+	shared bool
+}
+
+type Option func(*options)
+
+// WithShared selects the legacy shared state for desktop and explicit open deployments.
+func WithShared(shared bool) Option {
+	return func(options *options) { options.shared = shared }
 }
 
 type circuitEntry struct {
@@ -66,21 +83,23 @@ type loadResult struct {
 	needsSave bool
 }
 
-func NewManager(ctx context.Context, settings Settings) (*Manager, error) {
+func NewManager(ctx context.Context, settings Settings, opts ...Option) (*Manager, error) {
 	if settings == nil {
 		return nil, errors.New("AI profile settings store is nil")
+	}
+	configuration := options{shared: true}
+	for _, apply := range opts {
+		apply(&configuration)
 	}
 	var protector store.SecretProtector
 	if source, ok := settings.(protectorSource); ok {
 		protector = source.SecretProtector()
 	}
-	result, err := load(ctx, settings)
-	if err != nil {
-		return nil, err
-	}
-	manager := &Manager{settings: settings, protector: protector, state: result.state, circuits: map[string]circuitEntry{}}
-	if err := manager.applyLoadResult(ctx, result); err != nil {
-		return nil, err
+	manager := &Manager{settings: settings, protector: protector, shared: configuration.shared, states: map[string]*ownerState{}}
+	if _, err := owner.ID(ctx, manager.shared); err == nil {
+		if err := manager.Reload(ctx); err != nil {
+			return nil, err
+		}
 	}
 	if listener, ok := protector.(unlockListenerSource); ok {
 		listener.AddUnlockListener(manager.reloadOnUnlock)
@@ -88,49 +107,87 @@ func NewManager(ctx context.Context, settings Settings) (*Manager, error) {
 	return manager, nil
 }
 
-func (m *Manager) applyLoadResult(ctx context.Context, result loadResult) error {
-	if !result.needsSave {
-		m.state = result.state
-		return nil
-	}
-	saved, err := save(ctx, m.settings, m.protector, result.state)
-	if err != nil {
-		if !isVaultUnavailable(err) && !store.IsBusy(err) {
-			return err
-		}
-		m.state = result.state
-		return nil
-	}
-	m.state = saved
-	return nil
-}
-
 func (m *Manager) reloadOnUnlock() {
-	if err := m.Reload(context.Background()); err != nil {
+	if !m.shared {
+		return
+	}
+	if err := m.Reload(owner.WithOpenAccess(context.Background())); err != nil {
 		slog.Warn("凭据库解锁后刷新 AI 模型档案失败", "error", err)
 	}
 }
 
-func (m *Manager) Overview() Overview {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.state.overview()
-}
-
-func (m *Manager) ActiveProfile() (Profile, bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	profile, ok := m.state.active()
-	if !ok {
-		return Profile{}, false
+func (m *Manager) stateFor(ctx context.Context) (string, *ownerState, error) {
+	ownerID, err := owner.ID(ctx, m.shared)
+	if err != nil {
+		return "", nil, err
 	}
-	return cloneProfile(profile), true
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry, err := m.stateForLocked(ctx, ownerID)
+	return ownerID, entry, err
 }
 
-func (m *Manager) ActiveConfig() (provider.Config, bool) {
-	profile, ok := m.ActiveProfile()
+func (m *Manager) stateForLocked(ctx context.Context, ownerID string) (*ownerState, error) {
+	if entry, ok := m.states[ownerID]; ok {
+		return entry, nil
+	}
+	result, err := load(ctx, m.settings, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	entry := &ownerState{circuits: map[string]circuitEntry{}}
+	if err := m.applyLoadResultLocked(ctx, ownerID, entry, result); err != nil {
+		return nil, err
+	}
+	m.states[ownerID] = entry
+	return entry, nil
+}
+
+func (m *Manager) applyLoadResultLocked(ctx context.Context, ownerID string, entry *ownerState, result loadResult) error {
+	if !result.needsSave {
+		entry.state = result.state
+		return nil
+	}
+	saved, err := save(ctx, m.settings, m.protector, ownerID, result.state)
+	if err != nil {
+		if !isVaultUnavailable(err) && !store.IsBusy(err) {
+			return err
+		}
+		entry.state = result.state
+		return nil
+	}
+	entry.state = saved
+	return nil
+}
+
+func (m *Manager) Overview(ctx context.Context) (Overview, error) {
+	_, entry, err := m.stateFor(ctx)
+	if err != nil {
+		return Overview{}, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return entry.state.overview(), nil
+}
+
+func (m *Manager) ActiveProfile(ctx context.Context) (Profile, bool, error) {
+	_, entry, err := m.stateFor(ctx)
+	if err != nil {
+		return Profile{}, false, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	profile, ok := entry.state.active()
 	if !ok {
-		return provider.Config{}, false
+		return Profile{}, false, nil
+	}
+	return cloneProfile(profile), true, nil
+}
+
+func (m *Manager) ActiveConfig(ctx context.Context) (provider.Config, bool, error) {
+	profile, ok, err := m.ActiveProfile(ctx)
+	if err != nil || !ok {
+		return provider.Config{}, ok, err
 	}
 	config := profile.ProviderConfig()
 	key, err := m.resolveAPIKey(profile)
@@ -139,12 +196,16 @@ func (m *Manager) ActiveConfig() (provider.Config, bool) {
 	} else {
 		config.APIKey = key
 	}
-	return config, true
+	return config, true, nil
 }
 
-func (m *Manager) ActiveClient(options ...provider.Option) (*provider.Client, error) {
+func (m *Manager) ActiveClient(ctx context.Context, options ...provider.Option) (*provider.Client, error) {
+	ownerID, entry, err := m.stateFor(ctx)
+	if err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
-	profile, ok := m.state.active()
+	profile, ok := entry.state.active()
 	m.mu.RUnlock()
 	if !ok {
 		return nil, ErrNoActiveProfile
@@ -155,19 +216,24 @@ func (m *Manager) ActiveClient(options ...provider.Option) (*provider.Client, er
 		return nil, err
 	}
 	config.APIKey = key
-	clientOptions := append(profile.ClientOptions(), m.circuitOption(profile))
+	clientOptions := append(profile.ClientOptions(), m.circuitOption(ownerID, profile))
 	return provider.NewClient(config, append(clientOptions, options...)...)
 }
 
-func (m *Manager) circuitOption(profile Profile) provider.Option {
+func (m *Manager) circuitOption(ownerID string, profile Profile) provider.Option {
 	threshold, cooldown := profile.CircuitConfig()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if entry, ok := m.circuits[profile.ID]; ok && entry.threshold == threshold && entry.cooldown == cooldown {
-		return provider.WithCircuitBreaker(entry.breaker)
+	entry := m.states[ownerID]
+	if entry == nil {
+		entry = &ownerState{state: emptyState(), circuits: map[string]circuitEntry{}}
+		m.states[ownerID] = entry
+	}
+	if current, ok := entry.circuits[profile.ID]; ok && current.threshold == threshold && current.cooldown == cooldown {
+		return provider.WithCircuitBreaker(current.breaker)
 	}
 	breaker := provider.NewCircuitBreaker(threshold, cooldown)
-	m.circuits[profile.ID] = circuitEntry{breaker: breaker, threshold: threshold, cooldown: cooldown}
+	entry.circuits[profile.ID] = circuitEntry{breaker: breaker, threshold: threshold, cooldown: cooldown}
 	return provider.WithCircuitBreaker(breaker)
 }
 
@@ -176,20 +242,24 @@ type CircuitStatus struct {
 	OpenUntil           *time.Time `json:"openUntil,omitempty"`
 }
 
-func (m *Manager) CircuitStatus(id string) (CircuitStatus, bool) {
+func (m *Manager) CircuitStatus(ctx context.Context, id string) (CircuitStatus, bool, error) {
+	_, entry, err := m.stateFor(ctx)
+	if err != nil {
+		return CircuitStatus{}, false, err
+	}
 	m.mu.RLock()
-	entry, ok := m.circuits[id]
+	current, ok := entry.circuits[id]
 	m.mu.RUnlock()
 	if !ok {
-		return CircuitStatus{}, false
+		return CircuitStatus{}, false, nil
 	}
-	snapshot := entry.breaker.Snapshot()
+	snapshot := current.breaker.Snapshot()
 	status := CircuitStatus{ConsecutiveFailures: snapshot.ConsecutiveFailures}
 	if !snapshot.OpenUntil.IsZero() {
 		openUntil := snapshot.OpenUntil
 		status.OpenUntil = &openUntil
 	}
-	return status, true
+	return status, true, nil
 }
 
 func (m *Manager) resolveAPIKey(profile Profile) (string, error) {
@@ -212,22 +282,30 @@ func (m *Manager) resolveAPIKey(profile Profile) (string, error) {
 	}
 }
 
-func (m *Manager) Profile(id string) (Profile, bool) {
+func (m *Manager) Profile(ctx context.Context, id string) (Profile, bool, error) {
+	_, entry, err := m.stateFor(ctx)
+	if err != nil {
+		return Profile{}, false, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	profile, ok := m.state.find(id)
+	profile, ok := entry.state.find(id)
 	if !ok {
-		return Profile{}, false
+		return Profile{}, false, nil
 	}
-	return cloneProfile(profile), true
+	return cloneProfile(profile), true, nil
 }
 
-func (m *Manager) ClientFor(id string, options ...provider.Option) (*provider.Client, error) {
+func (m *Manager) ClientFor(ctx context.Context, id string, options ...provider.Option) (*provider.Client, error) {
 	if id == "" {
-		return m.ActiveClient(options...)
+		return m.ActiveClient(ctx, options...)
+	}
+	ownerID, entry, err := m.stateFor(ctx)
+	if err != nil {
+		return nil, err
 	}
 	m.mu.RLock()
-	profile, ok := m.state.find(id)
+	profile, ok := entry.state.find(id)
 	m.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrProfileNotFound, id)
@@ -238,20 +316,28 @@ func (m *Manager) ClientFor(id string, options ...provider.Option) (*provider.Cl
 		return nil, err
 	}
 	config.APIKey = key
-	clientOptions := append(profile.ClientOptions(), m.circuitOption(profile))
+	clientOptions := append(profile.ClientOptions(), m.circuitOption(ownerID, profile))
 	return provider.NewClient(config, append(clientOptions, options...)...)
 }
 
 func (m *Manager) Save(ctx context.Context, profile Profile) (Overview, error) {
+	ownerID, err := owner.ID(ctx, m.shared)
+	if err != nil {
+		return Overview{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	next := m.state.clone()
+	entry, err := m.stateForLocked(ctx, ownerID)
+	if err != nil {
+		return Overview{}, err
+	}
+	next := entry.state.clone()
 	profile = profile.Normalized()
 	if profile.ID == "" {
 		profile.ID = ids.New()
 	}
 	if profile.APIKey == MaskedAPIKey || (m.protector != nil && strings.HasPrefix(profile.APIKey, store.SecretEnvelopePrefix)) {
-		if existing, ok := m.state.find(profile.ID); ok {
+		if existing, ok := entry.state.find(profile.ID); ok {
 			profile.APIKey = existing.APIKey
 		} else {
 			profile.APIKey = ""
@@ -269,41 +355,57 @@ func (m *Manager) Save(ctx context.Context, profile Profile) (Overview, error) {
 		next.Profiles = append(next.Profiles, profile)
 	}
 	next.ensureActive()
-	saved, err := save(ctx, m.settings, m.protector, next)
+	saved, err := save(ctx, m.settings, m.protector, ownerID, next)
 	if err != nil {
-		return m.state.overview(), err
+		return entry.state.overview(), err
 	}
-	m.state = saved
-	return m.state.overview(), nil
+	entry.state = saved
+	return entry.state.overview(), nil
 }
 
 func (m *Manager) Activate(ctx context.Context, id string) (Overview, error) {
+	ownerID, err := owner.ID(ctx, m.shared)
+	if err != nil {
+		return Overview{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	entry, err := m.stateForLocked(ctx, ownerID)
+	if err != nil {
+		return Overview{}, err
+	}
 	found := false
-	for _, profile := range m.state.Profiles {
+	for _, profile := range entry.state.Profiles {
 		if profile.ID == id {
 			found = true
 			break
 		}
 	}
 	if !found {
-		return m.state.overview(), fmt.Errorf("%w: %s", ErrProfileNotFound, id)
+		return entry.state.overview(), fmt.Errorf("%w: %s", ErrProfileNotFound, id)
 	}
-	next := m.state.clone()
+	next := entry.state.clone()
 	next.ActiveID = cloneString(&id)
-	saved, err := save(ctx, m.settings, m.protector, next)
+	saved, err := save(ctx, m.settings, m.protector, ownerID, next)
 	if err != nil {
-		return m.state.overview(), err
+		return entry.state.overview(), err
 	}
-	m.state = saved
-	return m.state.overview(), nil
+	entry.state = saved
+	return entry.state.overview(), nil
 }
 
 func (m *Manager) Delete(ctx context.Context, id string) (Overview, error) {
+	ownerID, err := owner.ID(ctx, m.shared)
+	if err != nil {
+		return Overview{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	next := m.state.clone()
+	entry, err := m.stateForLocked(ctx, ownerID)
+	if err != nil {
+		return Overview{}, err
+	}
+	next := entry.state.clone()
 	profiles := make([]Profile, 0, len(next.Profiles))
 	for _, profile := range next.Profiles {
 		if profile.ID != id {
@@ -311,47 +413,55 @@ func (m *Manager) Delete(ctx context.Context, id string) (Overview, error) {
 		}
 	}
 	if len(profiles) == len(next.Profiles) {
-		return m.state.overview(), nil
+		return entry.state.overview(), nil
 	}
 	next.Profiles = profiles
 	next.ensureActive()
 	if deleter, ok := m.settings.(aiProfileSyncDeleter); ok {
-		// Atomic delete: state write-back and delete tombstone in one transaction; on failure the whole tx rolls back (profile remains, retry converges)
 		saved, encoded, err := encodeState(ctx, m.protector, next)
 		if err != nil {
-			return m.state.overview(), err
+			return entry.state.overview(), err
 		}
 		if err := deleter.AIProfilesDeleteTx(ctx, string(encoded), id, ids.NowMS()); err != nil {
-			return m.state.overview(), err
+			return entry.state.overview(), err
 		}
-		m.state = saved
-		delete(m.circuits, id)
-		return m.state.overview(), nil
+		entry.state = saved
+		delete(entry.circuits, id)
+		return entry.state.overview(), nil
 	}
-	saved, err := save(ctx, m.settings, m.protector, next)
+	saved, err := save(ctx, m.settings, m.protector, ownerID, next)
 	if err != nil {
-		return m.state.overview(), err
+		return entry.state.overview(), err
 	}
-	m.state = saved
-	delete(m.circuits, id)
+	entry.state = saved
+	delete(entry.circuits, id)
 	if err := m.recordDeleteTombstone(ctx, id); err != nil {
-		return m.state.overview(), err
+		return entry.state.overview(), err
 	}
-	return m.state.overview(), nil
+	return entry.state.overview(), nil
 }
 
 func (m *Manager) Reload(ctx context.Context) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	result, err := load(ctx, m.settings)
+	ownerID, err := owner.ID(ctx, m.shared)
 	if err != nil {
 		return err
 	}
-	return m.applyLoadResult(ctx, result)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result, err := load(ctx, m.settings, ownerID)
+	if err != nil {
+		return err
+	}
+	entry := m.states[ownerID]
+	if entry == nil {
+		entry = &ownerState{circuits: map[string]circuitEntry{}}
+		m.states[ownerID] = entry
+	}
+	return m.applyLoadResultLocked(ctx, ownerID, entry, result)
 }
 
-func load(ctx context.Context, settings Settings) (loadResult, error) {
-	raw, found, err := settings.SettingGet(ctx, store.AIProfilesSettingKeyForUser(ipc.OwnerID(ctx)))
+func load(ctx context.Context, settings Settings, ownerID string) (loadResult, error) {
+	raw, found, err := settings.SettingGet(ctx, store.AIProfilesSettingKeyForUser(ownerID))
 	if err != nil {
 		return loadResult{}, err
 	}
@@ -372,18 +482,17 @@ func load(ctx context.Context, settings Settings) (loadResult, error) {
 	return loadResult{state: persisted, needsSave: !bytes.Equal(before, after)}, nil
 }
 
-func save(ctx context.Context, settings Settings, protector store.SecretProtector, value state) (state, error) {
+func save(ctx context.Context, settings Settings, protector store.SecretProtector, ownerID string, value state) (state, error) {
 	saved, encoded, err := encodeState(ctx, protector, value)
 	if err != nil {
 		return value, err
 	}
-	if err := settings.SettingSet(ctx, store.AIProfilesSettingKeyForUser(ipc.OwnerID(ctx)), string(encoded)); err != nil {
+	if err := settings.SettingSet(ctx, store.AIProfilesSettingKeyForUser(ownerID), string(encoded)); err != nil {
 		return value, err
 	}
 	return saved, nil
 }
 
-// encodeState normalizes and encrypts the profile state, then encodes it as on-disk JSON (no DB write); save and the atomic delete path share the same form.
 func encodeState(ctx context.Context, protector store.SecretProtector, value state) (state, []byte, error) {
 	value = value.normalized()
 	if protector != nil {

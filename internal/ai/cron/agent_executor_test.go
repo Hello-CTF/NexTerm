@@ -51,6 +51,8 @@ func (f *fakeAgentRunner) Cancel(jobID string) error {
 	return nil
 }
 
+func (f *fakeAgentRunner) Wait(context.Context, string) error { return nil }
+
 func (f *fakeAgentRunner) canceledJobs() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -61,6 +63,7 @@ func testTrigger() Trigger {
 	return Trigger{
 		RunID: "run-1", JobID: "job-1", SessionID: "session-1", Name: "check",
 		Prompt: "inspect the deployment", ScheduledFor: time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC),
+		OwnerKind: OwnerKindOpen,
 	}
 }
 
@@ -68,7 +71,7 @@ func TestAgentExecutorRunsToDone(t *testing.T) {
 	runner := &fakeAgentRunner{emit: func(stream agent.Stream) {
 		_ = stream.Send(context.Background(), agent.Event{Type: "done", Answer: "all healthy"})
 	}}
-	executor := &AgentExecutor{Runner: runner, ScopeFor: func(trigger Trigger) (tools.Scope, error) {
+	executor := &AgentExecutor{Runner: runner, ScopeFor: func(_ context.Context, trigger Trigger) (tools.Scope, error) {
 		return tools.Scope{SessionID: trigger.SessionID, AssetID: "asset-1"}, nil
 	}}
 	if err := executor.Execute(context.Background(), testTrigger()); err != nil {
@@ -93,7 +96,7 @@ func TestAgentExecutorRunsToDone(t *testing.T) {
 
 func TestAgentExecutorFailsHonestlyWhenScopeQueryFails(t *testing.T) {
 	runner := &fakeAgentRunner{}
-	executor := &AgentExecutor{Runner: runner, ScopeFor: func(Trigger) (tools.Scope, error) {
+	executor := &AgentExecutor{Runner: runner, ScopeFor: func(context.Context, Trigger) (tools.Scope, error) {
 		return tools.Scope{}, errors.New("conversation store offline")
 	}}
 	err := executor.Execute(context.Background(), testTrigger())
@@ -114,7 +117,7 @@ func TestAgentExecutorAllowsLegitimatelyEmptyScope(t *testing.T) {
 	runner := &fakeAgentRunner{emit: func(stream agent.Stream) {
 		_ = stream.Send(context.Background(), agent.Event{Type: "done", Answer: "ok"})
 	}}
-	executor := &AgentExecutor{Runner: runner, ScopeFor: func(Trigger) (tools.Scope, error) {
+	executor := &AgentExecutor{Runner: runner, ScopeFor: func(context.Context, Trigger) (tools.Scope, error) {
 		return tools.Scope{}, nil
 	}}
 	if err := executor.Execute(context.Background(), testTrigger()); err != nil {

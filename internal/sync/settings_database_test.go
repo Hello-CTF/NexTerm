@@ -142,7 +142,7 @@ func TestDatabaseApplyAIGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode, ok := manager.DeviceMode("dev-1"); !ok || mode != guard.ReadOnly {
+	if mode, ok := deviceModeForTest(t, ctx, manager, "dev-1"); !ok || mode != guard.ReadOnly {
 		t.Fatalf("mode = %v %v", mode, ok)
 	}
 
@@ -159,14 +159,14 @@ func TestDatabaseApplyAIGrant(t *testing.T) {
 	if decision := grants.Evaluate(ctx, guard.Config{Mode: guard.ReadWrite}, guard.Confirm(guard.KindProcess, "确认"), nil, "dev-1", "send_keys", "run-1"); decision.Action == guard.ActionAllow {
 		t.Fatal("tombstoned grant must not allow")
 	}
-	if len(grants.Rules()) != 0 {
-		t.Fatalf("tombstoned rule kept: %+v", grants.Rules())
+	if len(grantRulesForTest(t, ctx, grants)) != 0 {
+		t.Fatalf("tombstoned rule kept: %+v", grantRulesForTest(t, ctx, grants))
 	}
 	manager, err = guard.NewManager(ctx, instance.db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := manager.DeviceMode("dev-1"); ok {
+	if _, ok := deviceModeForTest(t, ctx, manager, "dev-1"); ok {
 		t.Fatal("tombstoned mode kept")
 	}
 }

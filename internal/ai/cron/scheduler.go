@@ -13,11 +13,12 @@ import (
 )
 
 type Scheduler struct {
-	store    Store
-	executor Executor
-	options  Options
-	ownerID  string
-	errCh    chan error
+	store          Store
+	executor       Executor
+	options        Options
+	ownerID        string
+	errCh          chan error
+	executionSlots chan struct{}
 
 	mu      sync.Mutex
 	running bool
@@ -34,6 +35,9 @@ func NewScheduler(store Store, executor Executor, options Options) (*Scheduler, 
 	}
 	if options.MaxJobsPerSession <= 0 {
 		options.MaxJobsPerSession = DefaultMaxJobsPerSession
+	}
+	if options.MaxConcurrentExecutions <= 0 {
+		options.MaxConcurrentExecutions = DefaultMaxConcurrentExecutions
 	}
 	if options.ExecutionTimeout <= 0 {
 		options.ExecutionTimeout = DefaultExecutionTimeout
@@ -69,6 +73,7 @@ func NewScheduler(store Store, executor Executor, options Options) (*Scheduler, 
 	return &Scheduler{
 		store: store, executor: executor, options: options, ownerID: options.OwnerID,
 		errCh: make(chan error, 1), local: make(map[string]string),
+		executionSlots: make(chan struct{}, options.MaxConcurrentExecutions),
 	}, nil
 }
 
@@ -221,6 +226,7 @@ func (s *Scheduler) load(ctx context.Context) ([]Job, error) {
 }
 
 func (s *Scheduler) Run(ctx context.Context) error {
+	ctx = WithInternalAccess(ctx)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -289,9 +295,10 @@ loop:
 }
 
 func (s *Scheduler) runOnce(ctx context.Context, now time.Time) (int, error) {
-	jobs, err := s.load(ctx)
+	ctx = WithInternalAccess(ctx)
+	jobs, err := s.store.ListDue(ctx, now)
 	if err != nil {
-		return 0, err
+		return 0, storageError("list due", "", err)
 	}
 	started := 0
 	for _, job := range jobs {
@@ -302,6 +309,12 @@ func (s *Scheduler) runOnce(ctx context.Context, now time.Time) (int, error) {
 			continue
 		}
 		if !job.Enabled || !due(job, now) {
+			continue
+		}
+		if err := ownerExecutionError(job.OwnerID, job.OwnerKind, s.options.AllowOwnerlessLegacy); err != nil {
+			if err := s.disableUnexecutable(ctx, job, now, err); err != nil {
+				return started, err
+			}
 			continue
 		}
 		claimed, err := s.claim(ctx, job, now)
@@ -329,6 +342,21 @@ func due(job Job, now time.Time) bool {
 	return !now.Before(dueAt)
 }
 
+func (s *Scheduler) disableUnexecutable(ctx context.Context, job Job, now time.Time, cause error) error {
+	job.Enabled = false
+	job.LastError = boundedError(cause)
+	job.RetryAt = time.Time{}
+	job.CircuitOpenUntil = time.Time{}
+	job.UpdatedAt = now
+	if _, err := s.store.CompareAndSwap(ctx, job, job.Revision); err != nil {
+		if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return storageError("disable unexecutable", job.ID, err)
+	}
+	return nil
+}
+
 func (s *Scheduler) claim(ctx context.Context, job Job, now time.Time) (bool, error) {
 	if s.locallyRunning(job.ID, "") || leaseHeldByAnother(job.Lease, s.ownerID, now) {
 		return false, nil
@@ -353,6 +381,9 @@ func (s *Scheduler) claim(ctx context.Context, job Job, now time.Time) (bool, er
 	if runID == "" {
 		return false, errors.New("cron generated an empty run ID")
 	}
+	if !s.tryAcquireExecutionSlot() {
+		return false, nil
+	}
 	job.Lease = Lease{Owner: s.ownerID, ExpiresAt: now.Add(s.options.LeaseDuration)}
 	job.Run = RunState{
 		ID: runID, ScheduledFor: scheduledFor, StartedAt: now,
@@ -362,6 +393,7 @@ func (s *Scheduler) claim(ctx context.Context, job Job, now time.Time) (bool, er
 	job.UpdatedAt = now
 	stored, err := s.store.CompareAndSwap(ctx, job, job.Revision)
 	if err != nil {
+		s.releaseExecutionSlot()
 		wrapped := storageError("claim", job.ID, err)
 		if errors.Is(wrapped, ErrConflict) || errors.Is(wrapped, ErrNotFound) {
 			return false, nil
@@ -375,6 +407,17 @@ func (s *Scheduler) claim(ctx context.Context, job Job, now time.Time) (bool, er
 	go s.execute(ctx, stored)
 	return true, nil
 }
+
+func (s *Scheduler) tryAcquireExecutionSlot() bool {
+	select {
+	case s.executionSlots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Scheduler) releaseExecutionSlot() { <-s.executionSlots }
 
 func (s *Scheduler) recoverIfAbandoned(ctx context.Context, job Job, now time.Time) error {
 	if s.locallyRunning(job.ID, job.Run.ID) || leaseHeldByAnyone(job.Lease, now) || now.Before(job.Run.Deadline) {
@@ -419,5 +462,8 @@ func (s *Scheduler) emit(err error) {
 		return
 	}
 	s.notify(err)
-	s.errCh <- err
+	select {
+	case s.errCh <- err:
+	default:
+	}
 }

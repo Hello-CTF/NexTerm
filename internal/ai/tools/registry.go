@@ -324,7 +324,7 @@ func (r *Registry) execute(ctx context.Context, jobID string, scope Scope, call 
 func (r *Registry) executeTool(ctx context.Context, jobID string, scope Scope, call Call, preparation *Preparation) Output {
 	switch call.Name {
 	case "exec_commands":
-		return r.execCommands(ctx, scope, call.Args)
+		return r.execCommands(ctx, jobID, scope, call)
 	case "read_file":
 		return r.readFile(ctx, jobID, scope, call.Args)
 	case "write_file", "edit_file":

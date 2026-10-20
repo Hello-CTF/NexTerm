@@ -139,7 +139,7 @@ func (m *Manager) Restore(blob RunBlob) error {
 		m.mu.Lock()
 		m.nonces[request.interrupt.Nonce] = run.id
 		m.mu.Unlock()
-		request.timer = time.AfterFunc(remaining, func() { m.expire(run.id, request.interrupt.ID) })
+		request.timer = m.afterFunc(remaining, func() { m.expire(run.id, request.interrupt.ID) })
 	}
 	switch {
 	case run.hasPendingLocked():

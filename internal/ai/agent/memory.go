@@ -44,11 +44,22 @@ type memoryForgetArgs struct {
 	ExpectedVersion uint64 `json:"expectedVersion" jsonschema:"required"`
 }
 
+func (r *Runner) memoryScope(ctx context.Context) (memory.Scope, error) {
+	if r.config.MemoryScopeFor != nil {
+		return r.config.MemoryScopeFor(ctx)
+	}
+	return r.config.MemoryScope, nil
+}
+
 func (r *Runner) memoryTools(ctx context.Context, planMode bool) ([]tool.BaseTool, error) {
 	if r.config.Memory == nil || planMode {
 		return nil, nil
 	}
-	settings, err := r.config.Memory.Settings(ctx, r.config.MemoryScope)
+	scope, err := r.memoryScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	settings, err := r.config.Memory.Settings(ctx, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +67,6 @@ func (r *Runner) memoryTools(ctx context.Context, planMode bool) ([]tool.BaseToo
 		return nil, nil
 	}
 	store := r.config.Memory
-	scope := r.config.MemoryScope
 	makers := []func() (tool.InvokableTool, error){
 		func() (tool.InvokableTool, error) {
 			return utils.InferTool(memorySaveTool, "Write one long-term operational memory into the semantic memory store (filed by topic; a secret check runs before writing).", func(ctx context.Context, input memorySaveArgs) (tools.Output, error) {

@@ -157,12 +157,17 @@ const (
 	DefaultTerminalRetention = time.Hour
 )
 
+type Timer interface {
+	Stop() bool
+}
+
 type Config struct {
 	Checkpoints       adk.CheckPointStore
 	Store             Store
 	TTL               time.Duration
 	TerminalRetention time.Duration
 	Now               func() time.Time
+	AfterFunc         func(time.Duration, func()) Timer
 	NewNonce          func() (string, error)
 }
 

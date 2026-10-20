@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
@@ -13,10 +14,12 @@ import (
 type recoveryRecord struct {
 	JobID       string `json:"jobId"`
 	TabID       string `json:"tabId"`
+	OwnerID     string `json:"ownerId,omitempty"`
 	AssetID     string `json:"assetId,omitempty"`
 	Instruction string `json:"instruction"`
 	AllowWrite  *bool  `json:"allowWrite,omitempty"`
 	MaxSteps    int    `json:"maxSteps"`
+	Seq         uint64 `json:"seq,omitempty"`
 	PausedAt    int64  `json:"pausedAt"`
 }
 
@@ -29,10 +32,11 @@ func execKey(jobID string) string {
 }
 
 func (m *Manager) persistRecovery(state *runState) {
+	seq := atomic.LoadUint64(&state.seq)
 	record := recoveryRecord{
-		JobID: state.id, TabID: state.args.TabID, AssetID: state.assetID,
+		JobID: state.id, TabID: state.args.TabID, OwnerID: state.owner.ownerID, AssetID: state.assetID,
 		Instruction: state.args.Instruction, AllowWrite: state.args.AllowWrite,
-		MaxSteps: state.args.MaxSteps, PausedAt: m.deps.Now().UnixMilli(),
+		MaxSteps: state.args.MaxSteps, Seq: seq, PausedAt: m.deps.Now().UnixMilli(),
 	}
 	data, err := json.Marshal(record)
 	if err != nil {
@@ -114,7 +118,7 @@ func (d *detachedCheckpoints) Set(ctx context.Context, id string, data []byte) e
 	d.mu.Unlock()
 	if tombstoned {
 		if deleter, ok := d.CheckPointStore.(adk.CheckPointDeleter); ok {
-			_ = deleter.Delete(context.Background(), id)
+			_ = deleter.Delete(context.WithoutCancel(ctx), id)
 		}
 	}
 	return err

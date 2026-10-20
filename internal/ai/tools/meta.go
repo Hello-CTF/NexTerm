@@ -19,7 +19,14 @@ func (r *Registry) listAssets(ctx context.Context) Output {
 	}
 	var output strings.Builder
 	for _, asset := range assets {
-		fmt.Fprintf(&output, "%s [%s] %s %s\n", asset.Name, asset.Kind, asset.Host, asset.Username)
+		fmt.Fprintf(&output, "%s [%s] %s %s", asset.Name, asset.Kind, asset.Host, asset.Username)
+		if asset.ID != "" {
+			fmt.Fprintf(&output, " (asset_id=%s)", asset.ID)
+		}
+		if asset.Tags != "" {
+			fmt.Fprintf(&output, " tags=%q", asset.Tags)
+		}
+		output.WriteByte('\n')
 	}
 	text, truncated := capText(output.String())
 	return Output{OK: true, Text: text, Truncated: truncated}

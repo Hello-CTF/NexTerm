@@ -40,25 +40,50 @@ async function fetchDesktopAccount(): Promise<AccountUser | null> {
 	}
 }
 
-export function useDesktopAccount(): AccountUser | null {
+export interface DesktopAccountIdentity {
+	user: AccountUser | null;
+	status: "resolving" | "resolved";
+}
+
+export function useDesktopAccountIdentity(): DesktopAccountIdentity {
 	const query = useQuery({
 		queryKey: ["sync-link", "identity"],
 		queryFn: fetchDesktopAccount,
 		enabled: DESKTOP,
 		staleTime: 30_000,
 	});
-	return DESKTOP && !query.isFetching ? (query.data ?? null) : null;
+	const resolved = query.isSuccess && !query.isFetching;
+	return {
+		user: DESKTOP && resolved ? (query.data ?? null) : null,
+		status: !DESKTOP || resolved ? "resolved" : "resolving",
+	};
+}
+
+export function useDesktopAccount(): AccountUser | null {
+	return useDesktopAccountIdentity().user;
+}
+
+export interface DesktopAccountScopeIdentity {
+	scope: string | null;
+	status: "resolving" | "resolved";
 }
 
 // Account data is scoped to both the remote server and user. An invalidated link is treated as
 // unknown until its refetch completes, so data from the prior server is never shown during a switch.
-export function useDesktopAccountScope(user: AccountUser | null): string | null {
+export function useDesktopAccountScopeIdentity(user: AccountUser | null): DesktopAccountScopeIdentity {
 	const link = useQuery({
 		queryKey: ["sync-link", "account-scope-link"],
 		queryFn: syncApi.linkGet,
 		enabled: DESKTOP && Boolean(user),
 		staleTime: 30_000,
 	});
-	if (!DESKTOP || !user || !link.isSuccess || link.isFetching || link.data.username !== user.username) return null;
-	return JSON.stringify([link.data.url, user.id, user.username]);
+	if (!DESKTOP || !user) return { scope: null, status: "resolved" };
+	if (!link.isSuccess || link.isFetching || link.data.username !== user.username) {
+		return { scope: null, status: "resolving" };
+	}
+	return { scope: JSON.stringify([link.data.url, user.id, user.username]), status: "resolved" };
+}
+
+export function useDesktopAccountScope(user: AccountUser | null): string | null {
+	return useDesktopAccountScopeIdentity(user).scope;
 }

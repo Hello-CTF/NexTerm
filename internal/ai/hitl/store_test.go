@@ -106,7 +106,8 @@ func TestStoreRestartMarksExpiredPendingHonestly(t *testing.T) {
 	checkpoints := newFakeCheckpoints()
 	checkpoints.put("checkpoint", []byte("checkpoint-one"))
 	blobStore := newFakeRunStore()
-	first, err := NewManager(Config{Checkpoints: checkpoints, Store: blobStore, TTL: 40 * time.Millisecond})
+	clock := newFakeClock()
+	first, err := NewManager(Config{Checkpoints: checkpoints, Store: blobStore, TTL: time.Hour, Now: clock.Now, AfterFunc: clock.AfterFunc})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,13 +121,16 @@ func TestStoreRestartMarksExpiredPendingHonestly(t *testing.T) {
 		t.Fatal(err)
 	}
 	captured := blobStore.snapshot("run")
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
 
-	second, err := NewManager(Config{Checkpoints: checkpoints, Store: blobStore, TTL: 40 * time.Millisecond})
+	second, err := NewManager(Config{Checkpoints: checkpoints, Store: blobStore, TTL: time.Hour, Now: clock.Now, AfterFunc: clock.AfterFunc})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = second.Close() })
-	time.Sleep(60 * time.Millisecond)
+	clock.Advance(2 * time.Hour)
 	if err := second.Restore(captured); err != nil {
 		t.Fatal(err)
 	}

@@ -3,12 +3,12 @@ package store
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
-	"gorm.io/gen/field"
 	"gorm.io/gorm"
 )
 
@@ -26,7 +26,31 @@ func (s *Store) AssetList(ctx context.Context, includeDeleted bool) ([]AssetRow,
 }
 
 func (s *Store) AssetGet(ctx context.Context, id string) (AssetRow, error) {
+	return s.assetGet(ctx, s.db, id)
+}
+
+func (s *Store) AssetGetLive(ctx context.Context, id string) (AssetRow, error) {
 	asset := query.Use(s.db).AssetRow
+	row, err := asset.WithContext(ctx).
+		Where(asset.ID.Eq(id)).
+		Where(asset.DeletedAt.IsNull()).
+		Where(ownerConditions(ctx, asset.TableName())...).
+		First()
+	if isNoRows(err) {
+		return AssetRow{}, notFound("资产")
+	}
+	if err != nil {
+		return AssetRow{}, dbError(err)
+	}
+	return *row, nil
+}
+
+func (s *Store) AssetGetTx(ctx context.Context, tx *gorm.DB, id string) (AssetRow, error) {
+	return s.assetGet(ctx, tx, id)
+}
+
+func (s *Store) assetGet(ctx context.Context, db *gorm.DB, id string) (AssetRow, error) {
+	asset := query.Use(db).AssetRow
 	row, err := asset.WithContext(ctx).
 		Where(asset.ID.Eq(id)).
 		Where(ownerConditions(ctx, asset.TableName())...).
@@ -53,11 +77,25 @@ func (s *Store) AssetOwnerID(ctx context.Context, id string) (string, error) {
 }
 
 func (s *Store) AssetCreate(ctx context.Context, input AssetInput) (AssetRow, error) {
+	if err := validateInventoryCreateOptions(input.OptionsJSON); err != nil {
+		return AssetRow{}, err
+	}
+	return s.assetCreate(ctx, s.db, input)
+}
+
+func (s *Store) AssetCreateTx(ctx context.Context, tx *gorm.DB, input AssetInput) (AssetRow, error) {
+	if err := validateInventoryCreateOptions(input.OptionsJSON); err != nil {
+		return AssetRow{}, err
+	}
+	return s.assetCreate(ctx, tx, input)
+}
+
+func (s *Store) assetCreate(ctx context.Context, db *gorm.DB, input AssetInput) (AssetRow, error) {
 	if strings.TrimSpace(input.Name) == "" {
 		return AssetRow{}, badParam(errString("资产名称不能为空"))
 	}
 	if input.GroupID != nil {
-		if _, err := s.groupReference(ctx, s.db, *input.GroupID); err != nil {
+		if _, err := s.groupReference(ctx, db, *input.GroupID); err != nil {
 			return AssetRow{}, err
 		}
 	}
@@ -66,23 +104,38 @@ func (s *Store) AssetCreate(ctx context.Context, input AssetInput) (AssetRow, er
 	row := AssetRow{
 		ID: id, GroupID: input.GroupID, Kind: input.Kind, Name: strings.TrimSpace(input.Name), Host: input.Host, Port: input.Port,
 		Username: input.Username, AuthKind: input.AuthKind, KeyPath: input.KeyPath, CredID: input.CredID,
-		OptionsJSON: input.OptionsJSON, Tags: input.Tags, Note: input.Note, Sort: input.Sort, CreatedAt: now, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx),
+		OptionsJSON: input.OptionsJSON, Tags: NormalizeAssetTags(input.Tags), Note: input.Note, Sort: input.Sort, CreatedAt: now, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx),
 	}
-	if err := query.Use(s.db).AssetRow.WithContext(ctx).Create(&row); err != nil {
+	if err := query.Use(db).AssetRow.WithContext(ctx).Create(&row); err != nil {
 		return AssetRow{}, dbError(err)
 	}
-	return s.AssetGet(ctx, id)
+	return s.assetGet(ctx, db, id)
+}
+
+var ErrWriteConflict = errors.New("store: write conflict")
+
+func nextWriteVersion(expected int64) int64 {
+	now := ids.NowMS()
+	if now <= expected {
+		return expected + 1
+	}
+	return now
 }
 
 func (s *Store) AssetUpdate(ctx context.Context, id string, patch AssetPatch) (AssetRow, error) {
-	if _, err := s.AssetGet(ctx, id); err != nil {
-		return AssetRow{}, err
-	}
+	return s.assetUpdate(ctx, s.db, id, patch)
+}
+
+func (s *Store) AssetUpdateTx(ctx context.Context, tx *gorm.DB, id string, patch AssetPatch) (AssetRow, error) {
+	return s.assetUpdate(ctx, tx, id, patch)
+}
+
+func (s *Store) assetUpdateValues(ctx context.Context, db *gorm.DB, id string, patch AssetPatch, updatedAt int64) (map[string]any, error) {
 	values := map[string]any{}
 	if patch.GroupID.Set {
 		if patch.GroupID.Value != nil {
-			if _, err := s.groupReference(ctx, s.db, *patch.GroupID.Value); err != nil {
-				return AssetRow{}, err
+			if _, err := s.groupReference(ctx, db, *patch.GroupID.Value); err != nil {
+				return nil, err
 			}
 		}
 		values["group_id"] = patch.GroupID.Value
@@ -112,7 +165,7 @@ func (s *Store) AssetUpdate(ctx context.Context, id string, patch AssetPatch) (A
 		values["options_json"] = *patch.OptionsJSON
 	}
 	if patch.Tags != nil {
-		values["tags"] = *patch.Tags
+		values["tags"] = NormalizeAssetTags(*patch.Tags)
 	}
 	if patch.Note != nil {
 		values["note"] = *patch.Note
@@ -120,16 +173,70 @@ func (s *Store) AssetUpdate(ctx context.Context, id string, patch AssetPatch) (A
 	if patch.Sort != nil {
 		values["sort"] = *patch.Sort
 	}
-	values["updated_at"] = ids.NowMS()
-	asset := query.Use(s.db).AssetRow
-	_, err := asset.WithContext(ctx).
+	values["updated_at"] = updatedAt
+	return values, nil
+}
+
+func (s *Store) assetUpdate(ctx context.Context, db *gorm.DB, id string, patch AssetPatch) (AssetRow, error) {
+	current, err := s.assetGet(ctx, db, id)
+	if err != nil {
+		return AssetRow{}, err
+	}
+	if err := validateInventoryPatch(current, patch); err != nil {
+		return AssetRow{}, err
+	}
+	values, err := s.assetUpdateValues(ctx, db, id, patch, ids.NowMS())
+	if err != nil {
+		return AssetRow{}, err
+	}
+	asset := query.Use(db).AssetRow
+	_, err = asset.WithContext(ctx).
 		Where(asset.ID.Eq(id)).
 		Where(ownerConditions(ctx, asset.TableName())...).
 		UpdateColumns(values)
 	if err != nil {
 		return AssetRow{}, dbError(err)
 	}
-	return s.AssetGet(ctx, id)
+	return s.assetGet(ctx, db, id)
+}
+
+func (s *Store) AssetUpdateCAS(ctx context.Context, db *gorm.DB, id string, expectedUpdatedAt int64, patch AssetPatch) (AssetRow, error) {
+	return s.assetUpdateCAS(ctx, db, id, expectedUpdatedAt, patch, false)
+}
+
+func (s *Store) assetUpdateCAS(ctx context.Context, db *gorm.DB, id string, expectedUpdatedAt int64, patch AssetPatch, sourceSync bool) (AssetRow, error) {
+	current, err := s.assetGet(ctx, db, id)
+	if err != nil {
+		var appErr *ipc.Error
+		if errors.As(err, &appErr) && appErr.Code == ipc.CodeNotFound {
+			return AssetRow{}, ErrWriteConflict
+		}
+		return AssetRow{}, err
+	}
+	if current.UpdatedAt != expectedUpdatedAt || current.DeletedAt != nil {
+		return AssetRow{}, ErrWriteConflict
+	}
+	if !sourceSync {
+		if err := validateInventoryPatch(current, patch); err != nil {
+			return AssetRow{}, err
+		}
+	}
+	values, err := s.assetUpdateValues(ctx, db, id, patch, nextWriteVersion(expectedUpdatedAt))
+	if err != nil {
+		return AssetRow{}, err
+	}
+	asset := query.Use(db).AssetRow
+	info, err := asset.WithContext(ctx).
+		Where(asset.ID.Eq(id), asset.UpdatedAt.Eq(expectedUpdatedAt), asset.DeletedAt.IsNull()).
+		Where(ownerConditions(ctx, asset.TableName())...).
+		UpdateColumns(values)
+	if err != nil {
+		return AssetRow{}, dbError(err)
+	}
+	if info.RowsAffected != 1 {
+		return AssetRow{}, ErrWriteConflict
+	}
+	return s.assetGet(ctx, db, id)
 }
 
 func applyOptional[T any](current **T, patch Optional[T]) {
@@ -190,27 +297,219 @@ func (s *Store) AssetEnsureBuiltinLocal(ctx context.Context) (AssetRow, error) {
 	return s.AssetGet(ctx, BuiltinLocalAssetID)
 }
 
+const AssetSearchLimit = 100
+
+type AssetSearchResult struct {
+	Assets    []AssetRow
+	Total     int
+	Truncated bool
+}
+
 func (s *Store) AssetSearch(ctx context.Context, text string) ([]AssetRow, error) {
-	like := "%" + strings.ToLower(text) + "%"
-	asset := query.Use(s.db).AssetRow
-	matches := field.Or(
-		asset.Name.Lower().Like(like),
-		field.NewUnsafeFieldRaw("lower(coalesce(host,'')) LIKE ?", like),
-		field.NewUnsafeFieldRaw("lower(coalesce(username,'')) LIKE ?", like),
-		asset.Note.Lower().Like(like),
-		asset.Tags.Lower().Like(like),
-	)
-	result := []AssetRow{}
-	err := asset.WithContext(ctx).
-		Where(asset.DeletedAt.IsNull(), matches).
-		Where(ownerConditions(ctx, asset.TableName())...).
-		Order(asset.Sort, asset.Name).
-		Limit(100).
-		Scan(&result)
+	result, err := s.AssetSearchWithMeta(ctx, text)
 	if err != nil {
-		return nil, dbError(err)
+		return nil, err
 	}
+	return result.Assets, nil
+}
+
+func (s *Store) assetSearchSnapshot(ctx context.Context) (assets []AssetRow, groups []AssetGroupRow, err error) {
+	assets = []AssetRow{}
+	groups = []AssetGroupRow{}
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		asset := query.Use(tx).AssetRow
+		if err := asset.WithContext(ctx).
+			Where(asset.DeletedAt.IsNull()).
+			Where(ownerConditions(ctx, asset.TableName())...).
+			Order(asset.Sort, asset.Name).
+			Scan(&assets); err != nil {
+			return dbError(err)
+		}
+		group := query.Use(tx).AssetGroupRow
+		if err := group.WithContext(ctx).
+			Where(ownerConditions(ctx, group.TableName())...).
+			Order(group.Sort, group.Name).
+			Scan(&groups); err != nil {
+			return dbError(err)
+		}
+		return nil
+	})
+	return assets, groups, err
+}
+
+func (s *Store) AssetSearchWithMeta(ctx context.Context, text string) (AssetSearchResult, error) {
+	matcher, exactTag, err := newAssetSearchMatcher(text)
+	if err != nil {
+		return AssetSearchResult{}, err
+	}
+	assets, groups, err := s.assetSearchSnapshot(ctx)
+	if err != nil {
+		return AssetSearchResult{}, err
+	}
+	groupPaths := assetGroupSearchPaths(groups)
+	matches := make([]AssetRow, 0)
+	for _, asset := range assets {
+		if exactTag != nil {
+			if assetHasExactTag(asset.Tags, *exactTag) {
+				matches = append(matches, asset)
+			}
+			continue
+		}
+		fields := []string{asset.Name, assetSearchString(asset.Host), assetSearchString(asset.Username), asset.Note, asset.Tags}
+		if asset.GroupID != nil {
+			fields = append(fields, groupPaths[*asset.GroupID])
+		}
+		if matcher != nil {
+			for _, value := range fields {
+				if matcher.MatchString(value) {
+					matches = append(matches, asset)
+					break
+				}
+			}
+		}
+	}
+	result := AssetSearchResult{Total: len(matches), Truncated: len(matches) > AssetSearchLimit}
+	if len(matches) > AssetSearchLimit {
+		matches = matches[:AssetSearchLimit]
+	}
+	result.Assets = append([]AssetRow{}, matches...)
 	return result, nil
+}
+
+func assetGroupSearchPaths(groups []AssetGroupRow) map[string]string {
+	byID := make(map[string]AssetGroupRow, len(groups))
+	for _, group := range groups {
+		byID[group.ID] = group
+	}
+	paths := make(map[string]string, len(groups))
+	for _, group := range groups {
+		parts := []string{}
+		seen := map[string]bool{}
+		current := group
+		for {
+			if seen[current.ID] {
+				break
+			}
+			seen[current.ID] = true
+			parts = append([]string{current.Name}, parts...)
+			if current.ParentID == nil {
+				break
+			}
+			parent, ok := byID[*current.ParentID]
+			if !ok {
+				break
+			}
+			current = parent
+		}
+		paths[group.ID] = strings.Join(parts, " / ")
+	}
+	return paths
+}
+
+func newAssetSearchMatcher(text string) (*regexp.Regexp, *string, error) {
+	trimmed := strings.TrimSpace(text)
+	lower := strings.ToLower(trimmed)
+	for _, prefix := range []string{"tag:", "tag="} {
+		if strings.HasPrefix(lower, prefix) {
+			value := unescapeAssetSearchText(strings.TrimSpace(trimmed[len(prefix):]))
+			return nil, &value, nil
+		}
+	}
+	var pattern strings.Builder
+	pattern.WriteString("(?is)^.*")
+	escaped := false
+	for _, r := range trimmed {
+		if escaped {
+			pattern.WriteString(regexp.QuoteMeta(string(r)))
+			escaped = false
+			continue
+		}
+		switch r {
+		case '\\':
+			escaped = true
+		case '%':
+			pattern.WriteString(".*")
+		case '_':
+			pattern.WriteString(".")
+		default:
+			pattern.WriteString(regexp.QuoteMeta(string(r)))
+		}
+	}
+	if escaped {
+		pattern.WriteString(regexp.QuoteMeta("\\"))
+	}
+	pattern.WriteString(".*$")
+	matcher, err := regexp.Compile(pattern.String())
+	if err != nil {
+		return nil, nil, badParam(errString("搜索表达式无效"))
+	}
+	return matcher, nil, nil
+}
+
+func unescapeAssetSearchText(text string) string {
+	var result strings.Builder
+	escaped := false
+	for _, r := range text {
+		if escaped {
+			result.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		result.WriteRune(r)
+	}
+	if escaped {
+		result.WriteRune('\\')
+	}
+	return result.String()
+}
+
+func assetHasExactTag(raw, wanted string) bool {
+	if wanted == "" {
+		return false
+	}
+	for _, tag := range AssetTagValues(raw) {
+		if strings.EqualFold(tag, wanted) {
+			return true
+		}
+	}
+	return false
+}
+
+func AssetTagValues(raw string) []string {
+	raw = strings.ReplaceAll(raw, "，", ",")
+	parts := strings.Split(raw, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if tag := strings.TrimSpace(part); tag != "" {
+			result = append(result, tag)
+		}
+	}
+	return result
+}
+
+func NormalizeAssetTags(raw string) string {
+	seen := map[string]bool{}
+	result := make([]string, 0)
+	for _, tag := range AssetTagValues(raw) {
+		key := strings.ToLower(tag)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		result = append(result, tag)
+	}
+	return strings.Join(result, ", ")
+}
+
+func assetSearchString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func (s *Store) AssetUpsert(ctx context.Context, row AssetRow) (bool, error) {
@@ -219,6 +518,31 @@ func (s *Store) AssetUpsert(ctx context.Context, row AssetRow) (bool, error) {
 
 func (s *Store) AssetUpsertTx(ctx context.Context, tx *gorm.DB, row AssetRow) (bool, error) {
 	return s.assetUpsert(ctx, tx, row)
+}
+
+func validateInventoryUpsert(current, incoming AssetRow) error {
+	name := strings.TrimSpace(incoming.Name)
+	patch := AssetPatch{
+		GroupID: inventoryOptional(incoming.GroupID), Name: &name,
+		Host: inventoryOptional(incoming.Host), Port: inventoryOptional(incoming.Port), Username: inventoryOptional(incoming.Username),
+		AuthKind: inventoryOptional(incoming.AuthKind), KeyPath: inventoryOptional(incoming.KeyPath), CredID: inventoryOptional(incoming.CredID),
+		OptionsJSON: &incoming.OptionsJSON,
+	}
+	if err := validateInventoryPatch(current, patch); err != nil {
+		return err
+	}
+	options, err := decodeInventoryOptions(current.OptionsJSON)
+	if err != nil {
+		return badParam(errString("资产现有高级选项不是有效 JSON"))
+	}
+	meta, managed, err := inventoryMetaFromOptions(options)
+	if err != nil {
+		return badParam(errString("资产清单源标记无效"))
+	}
+	if managed && current.Kind != incoming.Kind {
+		return inventoryReadOnly(meta, "类型")
+	}
+	return nil
 }
 
 func (s *Store) assetUpsert(ctx context.Context, db *gorm.DB, row AssetRow) (bool, error) {
@@ -237,13 +561,20 @@ func (s *Store) assetUpsert(ctx context.Context, db *gorm.DB, row AssetRow) (boo
 		}
 	}
 	asset := query.Use(db).AssetRow
-	_, err := asset.WithContext(ctx).
+	current, err := asset.WithContext(ctx).
 		Where(asset.ID.Eq(row.ID)).
 		Where(ownerConditions(ctx, asset.TableName())...).
 		First()
 	exists := err == nil
 	if err != nil && !isNoRows(err) {
 		return false, dbError(err)
+	}
+	if exists {
+		if err := validateInventoryUpsert(*current, row); err != nil {
+			return false, err
+		}
+	} else if err := validateInventoryCreateOptions(row.OptionsJSON); err != nil {
+		return false, err
 	}
 	row.OwnerID = ipc.OwnerID(ctx)
 	row.Name = strings.TrimSpace(row.Name)

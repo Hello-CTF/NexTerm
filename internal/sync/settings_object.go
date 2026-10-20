@@ -119,6 +119,9 @@ func (s *aiProfilesState) remove(id string) bool {
 // aiProfilesLoad reads the ai.models setting; the revision is the setting row's updated_at (all profiles share one LWW clock).
 // found=false means the setting does not exist; callers treat it as empty profiles with revision 0.
 func (e *Engine) aiProfilesLoad(ctx context.Context) (aiProfilesState, int64, bool, error) {
+	if _, err := e.aiOwnerID(ctx); err != nil {
+		return aiProfilesState{}, 0, false, err
+	}
 	setting := query.Use(e.store.GORM()).Setting
 	row, err := setting.WithContext(ctx).Where(setting.Key.Eq(store.AIProfilesSettingKeyForUser(ipc.OwnerID(ctx)))).First()
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -142,6 +145,9 @@ func (e *Engine) aiProfilesLoad(ctx context.Context) (aiProfilesState, int64, bo
 
 // aiProfilesSave writes the ai.models setting back as a whole, preserving the given revision verbatim; clearing the same-ID deletion tombstone happens in the same transaction.
 func (e *Engine) aiProfilesSave(ctx context.Context, state aiProfilesState, updatedAt int64, clearTombstoneID string) error {
+	if _, err := e.aiOwnerID(ctx); err != nil {
+		return err
+	}
 	encoded, err := json.Marshal(state)
 	if err != nil {
 		return ipc.WrapError(ipc.CodeInternal, "无法编码 AI 模型档案", err)
@@ -169,6 +175,9 @@ func (e *Engine) aiProfilesSave(ctx context.Context, state aiProfilesState, upda
 // revealAIProfileKey restores the persisted form to payload plaintext: an empty string passes through, everything else is decrypted via the vault;
 // non-envelope or undecryptable values uniformly report a decryption failure.
 func (e *Engine) revealAIProfileKey(ctx context.Context, stored string) (string, error) {
+	if _, err := e.aiOwnerID(ctx); err != nil {
+		return "", err
+	}
 	if stored == "" {
 		return "", nil
 	}
@@ -180,6 +189,9 @@ func (e *Engine) revealAIProfileKey(ctx context.Context, stored string) (string,
 
 // protectAIProfileKey turns payload plaintext into the persisted envelope; the caller must already have passed requireVault.
 func (e *Engine) protectAIProfileKey(ctx context.Context, plaintext string) (string, error) {
+	if _, err := e.aiOwnerID(ctx); err != nil {
+		return "", err
+	}
 	if plaintext == "" {
 		return "", nil
 	}

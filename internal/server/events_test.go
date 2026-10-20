@@ -466,6 +466,7 @@ func TestEventBrokerCloseDuringFilterDoesNotWaitForDispatch(t *testing.T) {
 	if err := <-emitResult; err != ErrEventBrokerClosed {
 		t.Fatalf("Emit error after Close = %v, want ErrEventBrokerClosed", err)
 	}
+	eventTestAwaitWorker(t, subscriber)
 	select {
 	case <-subscriber.done:
 	default:
@@ -524,6 +525,7 @@ func TestEventBrokerDropDuringFilterDoesNotFailEmit(t *testing.T) {
 	if received := drainReplay(t, fast, 1)[0]; received.ID != 1 {
 		t.Fatalf("fast subscriber ID = %d, want 1", received.ID)
 	}
+	eventTestAwaitWorker(t, slow)
 	select {
 	case data := <-slow.queue:
 		t.Fatalf("dropped subscriber received an event: %s", data)

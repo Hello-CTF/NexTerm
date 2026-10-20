@@ -70,7 +70,7 @@ func TestAddRuleValidation(t *testing.T) {
 	if _, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", time.Now().Add(-time.Minute)); err == nil {
 		t.Fatal("past expiry accepted")
 	}
-	if rules := grants.Rules(); len(rules) != 0 {
+	if rules := mustGrantRules(t, grants); len(rules) != 0 {
 		t.Fatalf("rejected rules persisted: %+v", rules)
 	}
 }
@@ -137,7 +137,7 @@ func TestGrantRuleExpiry(t *testing.T) {
 		t.Fatalf("unexpired rule decision = %+v", decision)
 	}
 	grants.mu.Lock()
-	grants.rules[0].ExpiresAt = grants.now().Add(-time.Millisecond).UnixMilli()
+	grants.states[""].rules[0].ExpiresAt = grants.now().Add(-time.Millisecond).UnixMilli()
 	grants.mu.Unlock()
 	if decision := grants.EvaluateResource(ctx, Config{Mode: ReadWrite}, ruling, nil, "device-a", "exec_commands", "run-1", resource); decision.Action != ActionAsk {
 		t.Fatalf("expired rule decision = %+v", decision)
@@ -180,7 +180,7 @@ func TestGrantRuleAuditAndRevoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rules := reloaded.Rules(); len(rules) != 0 {
+	if rules := mustGrantRules(t, reloaded); len(rules) != 0 {
 		t.Fatalf("rule revoke not persisted: %+v", rules)
 	}
 }
@@ -200,7 +200,7 @@ func TestGrantRuleSameScopeUpdatesInsteadOfDuplicating(t *testing.T) {
 		t.Fatalf("same-scope rule must be updated in place: first=%+v second=%+v", first, second)
 	}
 	grants.mu.Lock()
-	grants.rules[0].ExpiresAt = grants.now().Add(-time.Millisecond).UnixMilli()
+	grants.states[""].rules[0].ExpiresAt = grants.now().Add(-time.Millisecond).UnixMilli()
 	grants.mu.Unlock()
 	revived, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", time.Time{})
 	if err != nil {
@@ -209,7 +209,7 @@ func TestGrantRuleSameScopeUpdatesInsteadOfDuplicating(t *testing.T) {
 	if revived.ID != first.ID {
 		t.Fatalf("expired same-scope rule must be revived, got %+v", revived)
 	}
-	if rules := grants.Rules(); len(rules) != 1 {
+	if rules := mustGrantRules(t, grants); len(rules) != 1 {
 		t.Fatalf("rules duplicated: %+v", rules)
 	}
 	ruling := Confirm(KindWriteFS, "写入或编辑文件")
@@ -229,7 +229,7 @@ func TestGrantRulePersistenceRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rules := reloaded.Rules()
+	rules := mustGrantRules(t, reloaded)
 	if len(rules) != 1 || rules[0].ID != created.ID || rules[0].Path != "/var/log/**" || rules[0].Action != "write_file" {
 		t.Fatalf("reloaded rules = %+v", rules)
 	}

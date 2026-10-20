@@ -140,12 +140,6 @@ func (p *RemoteProxy) ListShareLinks(ctx context.Context) (*RemoteShareLinks, er
 	})
 }
 
-func (p *RemoteProxy) CreateShareLink(ctx context.Context, input RemoteShareLinkInput) (*RemoteShareLink, error) {
-	return remoteGet(ctx, p, func(ctx context.Context, client *remoteClient) (*RemoteShareLink, error) {
-		return client.CreateShareLink(ctx, input)
-	})
-}
-
 func (p *RemoteProxy) RevokeShareLink(ctx context.Context, id string) (RemoteOK, error) {
 	err := p.call(ctx, func(ctx context.Context, client *remoteClient) error {
 		return client.RevokeShareLink(ctx, id)

@@ -19,18 +19,23 @@ type dbPasswordWindowsAPIFuncs struct {
 	sidToString          func(*windows.SID) (string, error)
 }
 
-var dbPasswordWindowsAPI = dbPasswordWindowsAPIFuncs{
-	getNamedSecurityInfo: windows.GetNamedSecurityInfo,
-	getDACL: func(descriptor *windows.SECURITY_DESCRIPTOR) (*windows.ACL, bool, error) {
-		return descriptor.DACL()
-	},
-	currentUserSID: currentDBPasswordUserSID,
-	getAce:         windows.GetAce,
-	sidToString:    dbPasswordSIDString,
+func defaultDBPasswordWindowsAPI() dbPasswordWindowsAPIFuncs {
+	return dbPasswordWindowsAPIFuncs{
+		getNamedSecurityInfo: windows.GetNamedSecurityInfo,
+		getDACL: func(descriptor *windows.SECURITY_DESCRIPTOR) (*windows.ACL, bool, error) {
+			return descriptor.DACL()
+		},
+		currentUserSID: currentDBPasswordUserSID,
+		getAce:         windows.GetAce,
+		sidToString:    dbPasswordSIDString,
+	}
 }
 
 func validateDBPasswordFilePermissions(passwordFile string, _ os.FileInfo) error {
-	api := dbPasswordWindowsAPI
+	return validateDBPasswordFilePermissionsWithAPI(passwordFile, defaultDBPasswordWindowsAPI())
+}
+
+func validateDBPasswordFilePermissionsWithAPI(passwordFile string, api dbPasswordWindowsAPIFuncs) error {
 	descriptor, err := api.getNamedSecurityInfo(passwordFile, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return fmt.Errorf("inspect database password file %s ACL: %w", passwordFile, err)

@@ -6,14 +6,13 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
-func TestResolveDBPasswordWindowsSIDConversionFailures(t *testing.T) {
+func TestValidateDBPasswordFilePermissionsWindowsSIDConversionFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		mutate func(*dbPasswordWindowsAPIFuncs)
@@ -68,10 +67,10 @@ func TestResolveDBPasswordWindowsSIDConversionFailures(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			passwordFile := dbPasswordWindowsTestFile(t)
-			api := stubDBPasswordWindowsAPI(t)
+			api := stubDBPasswordWindowsAPI()
 			tc.mutate(api)
-			password, err := ResolveDBPassword(passwordFile)
-			requireDBPasswordWindowsError(t, password, err, tc.want)
+			err := validateDBPasswordFilePermissionsWithAPI(passwordFile, *api)
+			requireDBPasswordWindowsError(t, "", err, tc.want)
 		})
 	}
 }
@@ -85,7 +84,7 @@ func TestDBPasswordSIDStringRejectsInvalidSID(t *testing.T) {
 	}
 }
 
-func TestResolveDBPasswordWindowsDACLFailures(t *testing.T) {
+func TestValidateDBPasswordFilePermissionsWindowsDACLFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		mutate func(*dbPasswordWindowsAPIFuncs)
@@ -177,10 +176,10 @@ func TestResolveDBPasswordWindowsDACLFailures(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			passwordFile := dbPasswordWindowsTestFile(t)
-			api := stubDBPasswordWindowsAPI(t)
+			api := stubDBPasswordWindowsAPI()
 			tc.mutate(api)
-			password, err := ResolveDBPassword(passwordFile)
-			requireDBPasswordWindowsError(t, password, err, tc.want)
+			err := validateDBPasswordFilePermissionsWithAPI(passwordFile, *api)
+			requireDBPasswordWindowsError(t, "", err, tc.want)
 		})
 	}
 }
@@ -243,17 +242,9 @@ func dbPasswordWindowsTestFile(t *testing.T) string {
 	return passwordFile
 }
 
-var dbPasswordWindowsAPIStubMutex sync.Mutex
-
-func stubDBPasswordWindowsAPI(t *testing.T) *dbPasswordWindowsAPIFuncs {
-	t.Helper()
-	dbPasswordWindowsAPIStubMutex.Lock()
-	original := dbPasswordWindowsAPI
-	t.Cleanup(func() {
-		dbPasswordWindowsAPI = original
-		dbPasswordWindowsAPIStubMutex.Unlock()
-	})
-	return &dbPasswordWindowsAPI
+func stubDBPasswordWindowsAPI() *dbPasswordWindowsAPIFuncs {
+	api := defaultDBPasswordWindowsAPI()
+	return &api
 }
 
 func requireDBPasswordWindowsError(t *testing.T, password string, err error, want string) {

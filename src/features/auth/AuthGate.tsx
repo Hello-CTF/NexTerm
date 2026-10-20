@@ -45,7 +45,7 @@ export function AuthGate() {
   const issue = recoveryIssue ?? pendingRecoveryKey;
   if (issue) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/85 p-4 backdrop-blur-sm">
+      <div className="nx-auth-gate fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/85 p-4 backdrop-blur-sm">
         <div className="nx-card w-full max-w-[420px]">
           <RecoveryKeyScreen
             issue={issue}
@@ -61,7 +61,7 @@ export function AuthGate() {
 
   if (gate === "loading") {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/85 p-4 backdrop-blur-sm">
+      <div className="nx-auth-gate fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/85 p-4 backdrop-blur-sm">
         <div className="nx-card flex w-full max-w-[420px] items-center justify-center">
           <IconRefresh size={18} className="animate-spin text-neutral-400" />
         </div>
@@ -71,7 +71,7 @@ export function AuthGate() {
   if (gate === "ready" || screen === null) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/85 p-4 backdrop-blur-sm">
+    <div className="nx-auth-gate fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/85 p-4 backdrop-blur-sm">
       <div className="nx-card w-full max-w-[420px]">
         {screen === "setup" && <SetupForm />}
         {screen === "login" && (pendingMfa ? <TotpChallengeForm /> : <LoginForm onNavigate={setScreen} registrationOpen={status?.registration_open ?? false} />)}

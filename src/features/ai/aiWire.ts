@@ -1,5 +1,15 @@
 import type { AiAnswerInput, AiConfirmationInput, AiDecision } from "../../ipc/commands";
 
+export const MESSAGE_HISTORY_PAGE_SIZE = 100;
+
+export function messageHistoryStart(messageCount: number, pageSize = MESSAGE_HISTORY_PAGE_SIZE): number {
+  return Math.max(0, messageCount - Math.max(1, pageSize));
+}
+
+export function earlierMessageHistoryStart(currentStart: number, pageSize = MESSAGE_HISTORY_PAGE_SIZE): number {
+  return Math.max(0, currentStart - Math.max(1, pageSize));
+}
+
 export interface AiInteractionRequest {
   jobId: string;
   callId: string;

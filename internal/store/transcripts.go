@@ -597,46 +597,51 @@ func (s *Store) EnforceTranscriptRetention(ctx context.Context, policy Transcrip
 	if err := policy.validate(); err != nil {
 		return result, err
 	}
-	if policy.MaxAge == 0 && policy.MaxCount == 0 {
-		return result, nil
+	if policy.MaxAge > 0 {
+		cutoff := time.Now().Add(-policy.MaxAge).UnixMilli()
+		deleted, err := retentionDeleteBatches(ctx, s, "transcript", "age",
+			func(tx *gorm.DB) ([]TranscriptRow, error) {
+				transcript := query.Use(tx).TranscriptRow
+				rows := make([]TranscriptRow, 0, retentionBatchSize)
+				err := transcript.WithContext(ctx).
+					Where(transcript.EndedAt.IsNotNull(), transcript.EndedAt.Lt(cutoff)).
+					Where(ownerConditions(ctx, transcript.TableName())...).
+					Order(transcript.ID.Asc()).
+					Limit(retentionBatchSize).
+					Scan(&rows)
+				return rows, err
+			},
+			func(tx *gorm.DB, rows []TranscriptRow) (int64, error) {
+				return s.transcriptRetentionDeleteRows(ctx, tx, rows)
+			},
+		)
+		result.Deleted += deleted
+		if err != nil {
+			return result, dbError(err)
+		}
 	}
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		transcript := query.Use(tx).TranscriptRow
-		if policy.MaxAge > 0 {
-			rows := []TranscriptRow{}
-			if err := transcript.WithContext(ctx).
-				Where(transcript.EndedAt.IsNotNull(), transcript.EndedAt.Lt(time.Now().Add(-policy.MaxAge).UnixMilli())).
-				Where(ownerConditions(ctx, transcript.TableName())...).
-				Scan(&rows); err != nil {
-				return err
-			}
-			deleted, err := s.transcriptRetentionDeleteRows(ctx, tx, rows)
-			if err != nil {
-				return err
-			}
-			result.Deleted += deleted
+	if policy.MaxCount > 0 {
+		deleted, err := retentionDeleteBatches(ctx, s, "transcript", "count",
+			func(tx *gorm.DB) ([]TranscriptRow, error) {
+				transcript := query.Use(tx).TranscriptRow
+				rows := make([]TranscriptRow, 0, retentionBatchSize)
+				err := transcript.WithContext(ctx).
+					Where(transcript.EndedAt.IsNotNull()).
+					Where(ownerConditions(ctx, transcript.TableName())...).
+					Order(transcript.EndedAt.Desc(), transcript.ID.Desc()).
+					Limit(retentionBatchSize).
+					Offset(int(policy.MaxCount)).
+					Scan(&rows)
+				return rows, err
+			},
+			func(tx *gorm.DB, rows []TranscriptRow) (int64, error) {
+				return s.transcriptRetentionDeleteRows(ctx, tx, rows)
+			},
+		)
+		result.Deleted += deleted
+		if err != nil {
+			return result, dbError(err)
 		}
-		if policy.MaxCount > 0 {
-			rows := []TranscriptRow{}
-			if err := transcript.WithContext(ctx).
-				Where(transcript.EndedAt.IsNotNull()).
-				Where(ownerConditions(ctx, transcript.TableName())...).
-				Order(transcript.EndedAt.Desc(), transcript.ID.Desc()).
-				Limit(-1).
-				Offset(int(policy.MaxCount)).
-				Scan(&rows); err != nil {
-				return err
-			}
-			deleted, err := s.transcriptRetentionDeleteRows(ctx, tx, rows)
-			if err != nil {
-				return err
-			}
-			result.Deleted += deleted
-		}
-		return nil
-	})
-	if err != nil {
-		return result, dbError(err)
 	}
 	return result, nil
 }

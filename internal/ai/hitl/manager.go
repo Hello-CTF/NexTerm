@@ -29,7 +29,7 @@ const (
 type requestState struct {
 	interrupt Interrupt
 	status    requestStatus
-	timer     *time.Timer
+	timer     Timer
 }
 
 type runState struct {
@@ -58,6 +58,7 @@ type Manager struct {
 	ttl               time.Duration
 	terminalRetention time.Duration
 	now               func() time.Time
+	afterFunc         func(time.Duration, func()) Timer
 	newNonce          func() (string, error)
 
 	mu     sync.RWMutex
@@ -79,6 +80,11 @@ func NewManager(config Config) (*Manager, error) {
 	if config.Now == nil {
 		config.Now = time.Now
 	}
+	if config.AfterFunc == nil {
+		config.AfterFunc = func(delay time.Duration, fn func()) Timer {
+			return time.AfterFunc(delay, fn)
+		}
+	}
 	if config.NewNonce == nil {
 		config.NewNonce = secureNonce
 	}
@@ -88,6 +94,7 @@ func NewManager(config Config) (*Manager, error) {
 		ttl:               config.TTL,
 		terminalRetention: config.TerminalRetention,
 		now:               config.Now,
+		afterFunc:         config.AfterFunc,
 		newNonce:          config.NewNonce,
 		runs:              make(map[string]*runState),
 		nonces:            make(map[string]string),
@@ -232,7 +239,7 @@ func (m *Manager) Interrupt(ctx context.Context, target *adk.InterruptCtx, input
 	event := run.appendEventLocked(EventInterrupted, TerminalInterrupted, requestID, "")
 	interrupt.Sequence = event.Sequence
 	request.interrupt.Sequence = event.Sequence
-	request.timer = time.AfterFunc(m.ttl, func() { m.expire(run.id, requestID) })
+	request.timer = m.afterFunc(m.ttl, func() { m.expire(run.id, requestID) })
 	if err := m.persistLocked(run); err != nil {
 		return Interrupt{}, err
 	}
@@ -524,7 +531,7 @@ func (m *Manager) expire(runID, requestID string) {
 		return
 	}
 	if remaining := request.interrupt.ExpiresAt.Sub(m.now()); remaining > 0 {
-		request.timer = time.AfterFunc(remaining, func() { m.expire(run.id, requestID) })
+		request.timer = m.afterFunc(remaining, func() { m.expire(run.id, requestID) })
 		run.mu.Unlock()
 		return
 	}

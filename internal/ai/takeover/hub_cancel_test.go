@@ -96,14 +96,14 @@ func TestR1TakeoverLateConfirmDuringFinalizationResumes(t *testing.T) {
 	var confirmation agent.Event
 	var response RunResponse
 	var err error
-	previous := takeoverAfterResumeCheck
-	takeoverAfterResumeCheck = func() {
+	previous := h.manager.hooks.afterResumeCheck
+	h.manager.hooks.afterResumeCheck = func() {
 		once.Do(func() {
 			<-ready
 			confirmed <- h.manager.Confirm(agent.Confirmation{JobID: response.JobID, CallID: confirmation.ID, Nonce: confirmation.Nonce, Decision: "allow"})
 		})
 	}
-	t.Cleanup(func() { takeoverAfterResumeCheck = previous })
+	t.Cleanup(func() { h.manager.hooks.afterResumeCheck = previous })
 	response, err = h.manager.Run(context.Background(), RunArgs{TabID: "tab", Instruction: "go"}, agent.StaticStream(stream))
 	if err != nil {
 		t.Fatal(err)
@@ -136,21 +136,21 @@ func TestR1TakeoverLateConfirmDoesNotStartAfterWatchdogCompletes(t *testing.T) {
 	var confirmation agent.Event
 	var response RunResponse
 	var err error
-	previousAfter := takeoverAfterResumeCheck
-	takeoverAfterResumeCheck = func() {
+	previousAfter := h.manager.hooks.afterResumeCheck
+	h.manager.hooks.afterResumeCheck = func() {
 		afterChecks <- struct{}{}
 		once.Do(func() {
 			<-ready
 			confirmed <- h.manager.Confirm(agent.Confirmation{JobID: response.JobID, CallID: confirmation.ID, Nonce: confirmation.Nonce, Decision: "allow"})
 		})
 	}
-	previousBefore := takeoverBeforeResumeStart
-	takeoverBeforeResumeStart = func() {
+	previousBefore := h.manager.hooks.beforeResumeStart
+	h.manager.hooks.beforeResumeStart = func() {
 		h.manager.completeLocked(h.manager.jobs[response.JobID], runResult{answer: "watchdog", reason: "watchdog"})
 	}
 	t.Cleanup(func() {
-		takeoverAfterResumeCheck = previousAfter
-		takeoverBeforeResumeStart = previousBefore
+		h.manager.hooks.afterResumeCheck = previousAfter
+		h.manager.hooks.beforeResumeStart = previousBefore
 	})
 	response, err = h.manager.Run(context.Background(), RunArgs{TabID: "tab", Instruction: "go"}, agent.StaticStream(stream))
 	if err != nil {

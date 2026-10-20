@@ -22,10 +22,12 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/model"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 	"golang.org/x/crypto/argon2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // testSyncServer is a minimal faithful replica of the M116 account routes + v2 sync routes, for end-to-end tests.
@@ -337,10 +339,12 @@ func putDeviceCredential(t *testing.T, device *testDevice, id, name, secret stri
 
 func putDeviceSnippet(t *testing.T, device *testDevice, id, name, body string, updatedAt int64) {
 	t.Helper()
-	if _, err := device.db.DB().ExecContext(context.Background(),
-		`INSERT INTO snippet(id, group_id, name, body, sort, created_at, updated_at) VALUES(?,NULL,?,?,0,?,?)
-ON CONFLICT(id) DO UPDATE SET name=excluded.name, body=excluded.body, updated_at=excluded.updated_at`,
-		id, name, body, 1, updatedAt); err != nil {
+	if err := device.db.GORM().WithContext(context.Background()).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"name", "body", "updated_at"}),
+	}).Create(&model.SnippetRow{
+		ID: id, Name: name, Body: body, Sort: 0, CreatedAt: 1, UpdatedAt: updatedAt,
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 }

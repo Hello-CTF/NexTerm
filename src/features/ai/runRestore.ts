@@ -7,6 +7,7 @@ export interface ResumableRun {
   snapshot: AiHitlSnapshotDto;
 }
 
+export const RUN_RESTORE_LIMIT = 50;
 export const RUN_EVENTS_PAGE_SIZE = 200;
 
 export interface RunEventsFetch {
@@ -14,9 +15,75 @@ export interface RunEventsFetch {
   failed: boolean;
 }
 
+export interface RunEventsReplayOptions {
+  pageSize?: number;
+  shouldContinue?: () => boolean;
+  yieldControl?: () => Promise<void>;
+}
+
+export interface RunEventsReplay {
+  failed: boolean;
+  stopped: boolean;
+}
+
 function eventSeqOrNull(event: AiRunEventDto): number | null {
   const seq = event.seq;
   return typeof seq === "number" && Number.isSafeInteger(seq) && seq >= 1 ? seq : null;
+}
+
+function yieldToMainThread(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+export async function replayRunEventsAfter(
+  fetchPage: (afterSeq: number, limit: number) => Promise<AiRunEventDto[]>,
+  afterSeq: number,
+  applyPage: (events: AiRunEventDto[]) => void | Promise<void>,
+  options: RunEventsReplayOptions = {},
+): Promise<RunEventsReplay> {
+  const pageSize = options.pageSize ?? RUN_EVENTS_PAGE_SIZE;
+  const shouldContinue = options.shouldContinue ?? (() => true);
+  const yieldControl = options.yieldControl ?? yieldToMainThread;
+  let cursor = afterSeq;
+  for (;;) {
+    if (!shouldContinue()) return { failed: false, stopped: true };
+    let page: AiRunEventDto[];
+    try {
+      page = await fetchPage(cursor, pageSize);
+    } catch {
+      return { failed: true, stopped: false };
+    }
+    if (!shouldContinue()) return { failed: false, stopped: true };
+    const pageStart = cursor;
+    const accepted: AiRunEventDto[] = [];
+    let failed = false;
+    for (const event of page) {
+      const seq = eventSeqOrNull(event);
+      if (seq === null) {
+        failed = true;
+        break;
+      }
+      if (seq <= cursor) continue;
+      if (seq !== cursor + 1) {
+        failed = true;
+        break;
+      }
+      accepted.push(event);
+      cursor = seq;
+    }
+    if (accepted.length > 0) {
+      try {
+        await applyPage(accepted);
+      } catch {
+        return { failed: true, stopped: false };
+      }
+    }
+    if (failed) return { failed: true, stopped: false };
+    if (page.length < pageSize) return { failed: false, stopped: false };
+    if (cursor === pageStart) return { failed: true, stopped: false };
+    if (!shouldContinue()) return { failed: false, stopped: true };
+    await yieldControl();
+  }
 }
 
 export async function fetchRunEventsAfter(
@@ -25,26 +92,15 @@ export async function fetchRunEventsAfter(
   pageSize: number = RUN_EVENTS_PAGE_SIZE,
 ): Promise<RunEventsFetch> {
   const events: AiRunEventDto[] = [];
-  let cursor = afterSeq;
-  for (;;) {
-    let page: AiRunEventDto[];
-    try {
-      page = await fetchPage(cursor, pageSize);
-    } catch {
-      return { events, failed: true };
-    }
-    const pageStart = cursor;
-    for (const event of page) {
-      const seq = eventSeqOrNull(event);
-      if (seq === null) return { events, failed: true };
-      if (seq <= cursor) continue;
-      if (seq !== cursor + 1) return { events, failed: true };
-      events.push(event);
-      cursor = seq;
-    }
-    if (page.length < pageSize) return { events, failed: false };
-    if (cursor === pageStart) return { events, failed: true };
-  }
+  const result = await replayRunEventsAfter(
+    fetchPage,
+    afterSeq,
+    (page) => {
+      events.push(...page);
+    },
+    { pageSize },
+  );
+  return { events, failed: result.failed };
 }
 
 export async function latestRunUsage(
@@ -191,9 +247,12 @@ export function pendingDeadline(snapshot: AiHitlSnapshotDto): number | null {
 export async function findResumableRun(
   runs: AiRunDto[],
   snapshotOf: (jobId: string) => Promise<AiHitlSnapshotDto | null>,
+  shouldContinue: () => boolean = () => true,
 ): Promise<ResumableRun | null> {
   for (const run of resumableCandidates(runs)) {
+    if (!shouldContinue()) return null;
     const snapshot = await snapshotOf(run.id);
+    if (!shouldContinue()) return null;
     if (snapshotHasPending(snapshot)) {
       return { run, snapshot };
     }

@@ -37,10 +37,10 @@ func TestClientForResolvesExplicitProfile(t *testing.T) {
 	}
 	active := saveSceneProfile(t, manager, "active-key", "active")
 	scene := saveSceneProfile(t, manager, "scene-key", "scene")
-	if _, err := manager.ClientFor(active.ID); err != nil {
+	if _, err := manager.ClientFor(ctx, active.ID); err != nil {
 		t.Fatalf("active profile client: %v", err)
 	}
-	if _, err := manager.ClientFor(scene.ID); err != nil {
+	if _, err := manager.ClientFor(ctx, scene.ID); err != nil {
 		t.Fatalf("scene profile client: %v", err)
 	}
 }
@@ -53,7 +53,7 @@ func TestClientForEmptyIDFallsBackToActive(t *testing.T) {
 		t.Fatal(err)
 	}
 	saveSceneProfile(t, manager, "active-key", "active")
-	if _, err := manager.ClientFor(""); err != nil {
+	if _, err := manager.ClientFor(ctx, ""); err != nil {
 		t.Fatalf("fallback client: %v", err)
 	}
 }
@@ -65,7 +65,7 @@ func TestClientForUnknownProfileFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	saveSceneProfile(t, manager, "active-key", "active")
-	if _, err := manager.ClientFor("missing-profile"); !errors.Is(err, profiles.ErrProfileNotFound) {
+	if _, err := manager.ClientFor(ctx, "missing-profile"); !errors.Is(err, profiles.ErrProfileNotFound) {
 		t.Fatalf("expected ErrProfileNotFound, got %v", err)
 	}
 }
@@ -86,7 +86,7 @@ func TestClientForDecryptsEnvelopeLikeActiveClient(t *testing.T) {
 	if !strings.Contains(stored, store.SecretEnvelopePrefix) || strings.Contains(stored, "super-secret-key") {
 		t.Fatalf("stored profile is not envelope-encrypted: %s", stored)
 	}
-	client, err := manager.ClientFor(profile.ID)
+	client, err := manager.ClientFor(ctx, profile.ID)
 	if err != nil {
 		t.Fatalf("explicit profile must resolve through the vault like ActiveClient: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestClientForPropagatesVaultLocked(t *testing.T) {
 		t.Fatalf("overview = %+v", overview)
 	}
 	credentialVault.Lock()
-	_, err = manager.ClientFor(overview.Profiles[0].ID)
+	_, err = manager.ClientFor(ctx, overview.Profiles[0].ID)
 	requireIPCCode(t, err, ipc.CodeVaultLocked)
 }
 
@@ -133,16 +133,16 @@ func TestMaskedSentinelRejectedAcrossActiveAndExplicitPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reloaded.ActiveClient(); !errors.Is(err, profiles.ErrProfileKeyUnavailable) {
+	if _, err := reloaded.ActiveClient(ctx); !errors.Is(err, profiles.ErrProfileKeyUnavailable) {
 		t.Fatalf("ActiveClient with masked active key = %v", err)
 	}
-	if _, err := reloaded.ClientFor(""); !errors.Is(err, profiles.ErrProfileKeyUnavailable) {
+	if _, err := reloaded.ClientFor(ctx, ""); !errors.Is(err, profiles.ErrProfileKeyUnavailable) {
 		t.Fatalf("ClientFor(empty) with masked active key = %v", err)
 	}
-	if _, err := reloaded.ClientFor(scene.ID); !errors.Is(err, profiles.ErrProfileKeyUnavailable) {
+	if _, err := reloaded.ClientFor(ctx, scene.ID); !errors.Is(err, profiles.ErrProfileKeyUnavailable) {
 		t.Fatalf("ClientFor(explicit) with masked key = %v", err)
 	}
-	if _, err := reloaded.ClientFor(active.ID); !errors.Is(err, profiles.ErrProfileKeyUnavailable) {
+	if _, err := reloaded.ClientFor(ctx, active.ID); !errors.Is(err, profiles.ErrProfileKeyUnavailable) {
 		t.Fatalf("ClientFor(active ID) with masked key = %v", err)
 	}
 }
@@ -171,10 +171,10 @@ func TestMaskedSentinelRejectedWithUnlockedProtector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reloaded.ClientFor(direct.ID); !errors.Is(err, profiles.ErrProfileKeyUnavailable) {
+	if _, err := reloaded.ClientFor(ctx, direct.ID); !errors.Is(err, profiles.ErrProfileKeyUnavailable) {
 		t.Fatalf("ClientFor(masked with unlocked protector) = %v", err)
 	}
-	if _, err := reloaded.ActiveClient(); !errors.Is(err, profiles.ErrProfileKeyUnavailable) {
+	if _, err := reloaded.ActiveClient(ctx); !errors.Is(err, profiles.ErrProfileKeyUnavailable) {
 		t.Fatalf("ActiveClient(masked with unlocked protector) = %v", err)
 	}
 }

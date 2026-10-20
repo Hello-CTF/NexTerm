@@ -5,7 +5,7 @@
 import { WEB } from "./env";
 import { httpUrl } from "./env";
 import type { AppError } from "./commands";
-import { advanceAuthSessionEpoch } from "./authSessionEpoch";
+import { advanceAuthSessionEpoch, currentAuthSessionEpoch } from "./authSessionEpoch";
 
 export type AccountRole = "superadmin" | "user";
 export type AccountState = "active" | "disabled" | "reset_required";
@@ -180,7 +180,14 @@ function browserClientKind(): "browser" | "mobile" {
   return typeof navigator !== "undefined" && /iPhone|iPad|Android/i.test(navigator.userAgent) ? "mobile" : "browser";
 }
 
+function ensureAuthEpoch(startedEpoch: number): void {
+  if (currentAuthSessionEpoch() !== startedEpoch) {
+    throw new AuthApiError("account_changed", "账号已切换，旧请求已取消", 0);
+  }
+}
+
 export async function request<T>(method: string, path: string, body?: unknown, options: { csrf?: boolean; client?: boolean } = {}): Promise<T> {
+  const startedEpoch = currentAuthSessionEpoch();
   const headers: Record<string, string> = { accept: "application/json" };
   if (body !== undefined) headers["content-type"] = "application/json";
   if (options.csrf && csrfToken) headers["X-NexTerm-CSRF"] = csrfToken;
@@ -193,9 +200,12 @@ export async function request<T>(method: string, path: string, body?: unknown, o
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
   } catch (e) {
+    ensureAuthEpoch(startedEpoch);
     throw new AuthApiError("disconnected", `无法连接服务器: ${e instanceof Error ? e.message : String(e)}`, 0);
   }
+  ensureAuthEpoch(startedEpoch);
   const text = await response.text();
+  ensureAuthEpoch(startedEpoch);
   let payload: unknown = null;
   if (text.length > 0) {
     try {
@@ -241,7 +251,8 @@ function b64(data: Uint8Array): string {
   return btoa(binary);
 }
 
-function rememberSession(session: AccountSession, sequence: number): AccountSession {
+function rememberSession(session: AccountSession, sequence: number, startedEpoch: number): AccountSession {
+  ensureAuthEpoch(startedEpoch);
   if (sequence !== sessionResponseSequence) return session;
   setCsrfToken(session.csrf_token);
   if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
@@ -253,8 +264,9 @@ function rememberSession(session: AccountSession, sequence: number): AccountSess
 function rememberedSessionRequest(
   requestPromise: Promise<AccountSession>,
 ): Promise<AccountSession> {
+  const startedEpoch = currentAuthSessionEpoch();
   const sequence = ++sessionResponseSequence;
-  return requestPromise.then((session) => rememberSession(session, sequence));
+  return requestPromise.then((session) => rememberSession(session, sequence, startedEpoch));
 }
 
 export const authApi = {

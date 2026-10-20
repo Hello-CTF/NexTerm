@@ -2,8 +2,10 @@ package production
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
@@ -11,29 +13,427 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/cron"
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ai/memory"
+	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
 	"github.com/Hello-CTF/NexTerm/internal/ai/subagent"
 	"github.com/Hello-CTF/NexTerm/internal/ai/takeover"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/outcome"
 	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"github.com/cloudwego/eino/components/model"
 )
 
 var productionMemoryScope = memory.Scope{Tenant: "local", Subject: "default"}
 
-type cronAgentRunner struct{ *agent.Runner }
+func productionMemoryScopeFor(desktop bool) func(context.Context) (memory.Scope, error) {
+	return func(ctx context.Context) (memory.Scope, error) {
+		if desktop || owner.OpenAccess(ctx) {
+			return productionMemoryScope, nil
+		}
+		ownerID, err := owner.ID(ctx, false)
+		if err != nil {
+			return memory.Scope{}, err
+		}
+		return memory.Scope{Tenant: "user", Subject: ownerID}, nil
+	}
+}
+
+type cronAgentRunner struct {
+	*agent.Runner
+	open bool
+}
+
+func cronExecutionContext(ctx context.Context, open bool) context.Context {
+	if open && ipc.OwnerID(ctx) == "" {
+		return owner.WithOpenAccess(session.WithOpenAccess(ctx))
+	}
+	return ctx
+}
 
 func (r cronAgentRunner) Start(ctx context.Context, args agent.ChatArgs, factory agent.StreamFactory) (agent.StartResponse, error) {
-	return r.Runner.Start(session.WithOpenAccess(ctx), args, factory)
+	return r.Runner.Start(cronExecutionContext(ctx, r.open), args, factory)
+}
+
+func productionGrantMutationValidator(services *ProductionServices) guard.MutationValidator {
+	return func(ctx context.Context) error {
+		_, err := owner.ID(ctx, services.desktop)
+		return err
+	}
+}
+
+func productionGrantTargetValidator(services *ProductionServices) guard.TargetValidator {
+	return func(ctx context.Context, deviceID string) error {
+		if _, err := owner.ID(ctx, services.desktop); err != nil {
+			return err
+		}
+		if services.desktop || owner.OpenAccess(ctx) {
+			return nil
+		}
+		_, err := services.Store.AssetGet(ctx, deviceID)
+		if err == nil {
+			return nil
+		}
+		if !strings.HasPrefix(deviceID, "device/") {
+			var appErr *ipc.Error
+			if errors.As(err, &appErr) && appErr.Code == ipc.CodeNotFound {
+				return ipc.NewError(ipc.CodeForbidden, "授权资产不存在或不属于当前用户")
+			}
+			return err
+		}
+		userID, ok := ipc.UserIDFromContext(ctx)
+		if !ok {
+			return ipc.NewError(ipc.CodeForbidden, "AI 请求缺少账号身份")
+		}
+		userDevice := query.Use(services.Store.GORM()).UserDevice
+		count, err := userDevice.WithContext(ctx).
+			Where(userDevice.ID.Eq(strings.TrimPrefix(deviceID, "device/")), userDevice.UserID.Eq(userID), userDevice.RevokedAt.IsNull()).
+			Count()
+		if err != nil {
+			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		}
+		if count != 1 {
+			return ipc.NewError(ipc.CodeForbidden, "授权设备不存在或不属于当前用户")
+		}
+		return nil
+	}
+}
+
+func productionScopeError(err error) error {
+	return ipc.WrapError(ipc.CodeForbidden, "AI 终端范围无效或无权访问", err)
+}
+
+type productionScopeDatabase interface {
+	Tables(context.Context, string, string) ([]string, error)
+}
+
+type productionScopeResolver struct {
+	sessions *session.Manager
+	storage  *store.Store
+	database productionScopeDatabase
+	desktop  bool
+}
+
+func productionScopeValidator(services *ProductionServices) *productionScopeResolver {
+	return productionScopeValidatorWith(services.Sessions, services.Store, services.Database, services.desktop)
+}
+
+func productionScopeValidatorWith(sessions *session.Manager, storage *store.Store, database productionScopeDatabase, desktop bool) *productionScopeResolver {
+	return &productionScopeResolver{sessions: sessions, storage: storage, database: database, desktop: desktop}
+}
+
+func (r *productionScopeResolver) ValidateScope(ctx context.Context, scope tools.Scope) error {
+	_, _, err := r.resolve(ctx, scope, false)
+	return err
+}
+
+func (r *productionScopeResolver) ResolveScope(ctx context.Context, conversationID string, scope tools.Scope) (tools.Scope, error) {
+	resolved, changed, err := r.resolve(ctx, scope, conversationID != "")
+	if err != nil || !changed || conversationID == "" {
+		return resolved, err
+	}
+	if err := r.persist(ctx, conversationID, resolved); err != nil {
+		return tools.Scope{}, err
+	}
+	return resolved, nil
+}
+
+func (r *productionScopeResolver) resolve(ctx context.Context, scope tools.Scope, allowMissingSession bool) (tools.Scope, bool, error) {
+	if _, err := owner.ID(ctx, r.desktop); err != nil {
+		return tools.Scope{}, false, err
+	}
+	validationCtx := ctx
+	if ipc.OwnerID(ctx) == "" && (r.desktop || owner.OpenAccess(ctx)) {
+		validationCtx = session.WithOpenAccess(ctx)
+	}
+	sessionID := scope.SessionID
+	if r.sessions == nil && (scope.TabID != "" || sessionID != "") {
+		return tools.Scope{}, false, ipc.NewError(ipc.CodeUnsupported, "终端会话服务未配置")
+	}
+	if r.storage == nil && scope.AssetID != "" && sessionID == "" {
+		return tools.Scope{}, false, ipc.NewError(ipc.CodeUnsupported, "资产存储未配置")
+	}
+	var tabErr error
+	if scope.TabID != "" {
+		tab, err := r.sessions.TabFor(validationCtx, scope.TabID)
+		if err != nil {
+			if !errors.Is(err, session.ErrTabNotFound) || scope.AssetID == "" || sessionID == "" {
+				return tools.Scope{}, false, productionScopeError(err)
+			}
+			tabErr = productionScopeError(err)
+		} else {
+			if sessionID != "" && tab.SessionID != sessionID {
+				return tools.Scope{}, false, ipc.NewError(ipc.CodeForbidden, "AI 终端范围中的 session 与 tab 不匹配")
+			}
+			sessionID = tab.SessionID
+		}
+	}
+	resolved := scope
+	changed := false
+	if sessionID != "" {
+		connected, sessionErr := r.sessions.SessionFor(validationCtx, sessionID)
+		if sessionErr != nil {
+			if !errors.Is(sessionErr, session.ErrSessionNotFound) || scope.AssetID == "" || !allowMissingSession {
+				return tools.Scope{}, false, productionScopeError(sessionErr)
+			}
+		}
+		if sessionErr == nil && scope.AssetID != "" && connected.Asset().ID != scope.AssetID {
+			return tools.Scope{}, false, ipc.NewError(ipc.CodeForbidden, "AI 终端范围中的 asset 与实际 session 不匹配")
+		}
+		if scope.AssetID != "" {
+			if err := r.validateScopeAsset(validationCtx, scope.AssetID); err != nil {
+				return tools.Scope{}, false, err
+			}
+		}
+		if sessionErr == nil && (scope.AssetID == "" || connected.Info().Status == session.StatusConnected) {
+			if tabErr != nil {
+				return tools.Scope{}, false, tabErr
+			}
+			return scope, false, r.validateDatabase(validationCtx, scope.ConnID)
+		}
+		replacement, err := r.liveSessionForAsset(validationCtx, scope.AssetID)
+		if err != nil {
+			return tools.Scope{}, false, err
+		}
+		resolved.SessionID = replacement
+		resolved.TabID = ""
+		changed = true
+	} else if scope.AssetID != "" {
+		if err := r.validateScopeAsset(validationCtx, scope.AssetID); err != nil {
+			return tools.Scope{}, false, err
+		}
+	}
+	return resolved, changed, r.validateDatabase(validationCtx, resolved.ConnID)
+}
+
+func (r *productionScopeResolver) liveSessionForAsset(ctx context.Context, assetID string) (string, error) {
+	if r.storage == nil {
+		return "", ipc.NewError(ipc.CodeUnsupported, "资产存储未配置")
+	}
+	infos, err := r.sessions.ListSessionsFor(ctx)
+	if err != nil {
+		return "", productionScopeError(err)
+	}
+	for _, info := range infos {
+		if info.AssetID != assetID || info.Status != session.StatusConnected {
+			continue
+		}
+		connected, err := r.sessions.SessionFor(ctx, info.ID)
+		if err == nil && connected.Asset().ID == assetID && connected.Info().Status == session.StatusConnected {
+			return info.ID, nil
+		}
+	}
+	return "", ipc.NewError(ipc.CodeDisconnected, "AI 终端范围对应的主机没有当前用户可用的健康在线会话；请先手动连接主机，不会自动连接或恢复旧标签")
+}
+
+func (r *productionScopeResolver) validateScopeAsset(ctx context.Context, assetID string) error {
+	if r.storage == nil {
+		return ipc.NewError(ipc.CodeUnsupported, "资产存储未配置")
+	}
+	if deviceID, ok := strings.CutPrefix(assetID, "device/"); ok {
+		userDevice := query.Use(r.storage.GORM()).UserDevice
+		deviceQuery := userDevice.WithContext(ctx).
+			Where(userDevice.ID.Eq(deviceID), userDevice.RevokedAt.IsNull())
+		if ownerID := ipc.OwnerID(ctx); ownerID != "" {
+			deviceQuery = deviceQuery.Where(userDevice.UserID.Eq(ownerID))
+		}
+		count, err := deviceQuery.Count()
+		if err != nil {
+			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		}
+		if count != 1 {
+			return ipc.NewError(ipc.CodeForbidden, "AI 终端范围中的设备不存在、已撤销或不属于当前用户")
+		}
+		return nil
+	}
+	if _, err := r.storage.AssetGetLive(ctx, assetID); err != nil {
+		return productionScopeError(err)
+	}
+	return nil
+}
+
+func productionAITargetContext(ctx context.Context, desktop bool) (context.Context, error) {
+	if _, err := owner.ID(ctx, desktop); err != nil {
+		return nil, err
+	}
+	if ipc.OwnerID(ctx) == "" && (desktop || owner.OpenAccess(ctx)) {
+		return session.WithOpenAccess(ctx), nil
+	}
+	return ctx, nil
+}
+
+func resolveProductionAssetSession(ctx context.Context, services *ProductionServices, assetID string) (string, error) {
+	if services == nil || services.Store == nil || services.Sessions == nil {
+		return "", ipc.NewError(ipc.CodeUnsupported, "按资产创建终端未配置")
+	}
+	validationCtx, err := productionAITargetContext(ctx, services.desktop)
+	if err != nil {
+		return "", err
+	}
+	expectedKind := session.KindDevice
+	if _, device := strings.CutPrefix(assetID, "device/"); device {
+		if err := productionScopeValidator(services).validateScopeAsset(validationCtx, assetID); err != nil {
+			return "", err
+		}
+	} else {
+		asset, err := services.Store.AssetGetLive(validationCtx, assetID)
+		if err != nil {
+			return "", productionScopeError(err)
+		}
+		expectedKind = asset.Kind
+	}
+	switch expectedKind {
+	case session.KindLocal, session.KindSSH, session.KindDocker, session.KindWinRM, session.KindDevice:
+	default:
+		return "", ipc.NewError(ipc.CodeUnsupported, "该资产类型不支持创建终端")
+	}
+	sessionID, err := productionScopeValidator(services).liveSessionForAsset(validationCtx, assetID)
+	if err != nil {
+		return "", err
+	}
+	connected, err := services.Sessions.SessionFor(validationCtx, sessionID)
+	if err != nil {
+		return "", productionScopeError(err)
+	}
+	info := connected.Info()
+	if connected.Asset().ID != assetID || connected.Asset().Kind != expectedKind || info.Kind != expectedKind {
+		return "", ipc.NewError(ipc.CodeForbidden, "资产与在线会话类型或身份不匹配")
+	}
+	if info.Status != session.StatusConnected {
+		return "", ipc.NewError(ipc.CodeDisconnected, "资产没有健康的在线会话；请先手动连接")
+	}
+	transport, err := services.Sessions.TransportFor(validationCtx, sessionID)
+	if err != nil {
+		return "", productionScopeError(err)
+	}
+	if !transport.IsAlive() {
+		return "", ipc.NewError(ipc.CodeDisconnected, "资产在线会话的传输已断开；请先手动重连")
+	}
+	return sessionID, nil
+}
+
+func resolveProductionExecTargets(ctx context.Context, services *ProductionServices, assetIDs, tags []string) (tools.ExecTargetSet, error) {
+	if services == nil || services.Store == nil || services.Sessions == nil {
+		return tools.ExecTargetSet{}, ipc.NewError(ipc.CodeUnsupported, "多主机执行未配置")
+	}
+	validationCtx, err := productionAITargetContext(ctx, services.desktop)
+	if err != nil {
+		return tools.ExecTargetSet{}, err
+	}
+	candidates := make([]store.AssetRow, 0, len(assetIDs))
+	if len(assetIDs) > 0 {
+		seen := make(map[string]struct{}, len(assetIDs))
+		for _, assetID := range assetIDs {
+			if _, duplicate := seen[assetID]; duplicate {
+				continue
+			}
+			seen[assetID] = struct{}{}
+			asset, err := services.Store.AssetGetLive(validationCtx, assetID)
+			if err != nil {
+				return tools.ExecTargetSet{}, productionScopeError(err)
+			}
+			if asset.Kind != session.KindSSH {
+				return tools.ExecTargetSet{}, ipc.NewError(ipc.CodeUnsupported, "多主机 exec_commands 只支持 SSH 资产: "+assetID)
+			}
+			if !productionAssetMatchesTags(asset, tags) {
+				return tools.ExecTargetSet{}, ipc.NewError(ipc.CodeBadParam, "显式资产不匹配 tags 过滤: "+assetID)
+			}
+			candidates = append(candidates, asset)
+		}
+	} else {
+		assets, err := services.Store.AssetList(validationCtx, false)
+		if err != nil {
+			return tools.ExecTargetSet{}, err
+		}
+		for _, asset := range assets {
+			if asset.Kind == session.KindSSH && productionAssetMatchesTags(asset, tags) {
+				candidates = append(candidates, asset)
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		return tools.ExecTargetSet{}, ipc.NewError(ipc.CodeDisconnected, "没有匹配的当前用户 SSH 资产；不会自动连接")
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].ID < candidates[j].ID })
+	targets := tools.ExecTargetSet{SessionIDs: make([]string, 0, len(candidates))}
+	resolver := productionScopeValidator(services)
+	for _, asset := range candidates {
+		sessionID, err := resolver.liveSessionForAsset(validationCtx, asset.ID)
+		if err != nil {
+			return tools.ExecTargetSet{}, err
+		}
+		connected, err := services.Sessions.SessionFor(validationCtx, sessionID)
+		if err != nil {
+			return tools.ExecTargetSet{}, productionScopeError(err)
+		}
+		if connected.Asset().ID != asset.ID || connected.Asset().Kind != session.KindSSH || connected.Info().Kind != session.KindSSH {
+			return tools.ExecTargetSet{}, ipc.NewError(ipc.CodeForbidden, "多主机目标与在线会话身份或类型不匹配")
+		}
+		targets.SessionIDs = append(targets.SessionIDs, sessionID)
+		targets.Production = targets.Production || store.AssetEnvironment(asset) == "production"
+	}
+	return targets, nil
+}
+
+func productionAssetMatchesTags(asset store.AssetRow, tags []string) bool {
+	for _, wanted := range tags {
+		matched := false
+		for _, actual := range store.AssetTagValues(asset.Tags) {
+			if strings.EqualFold(actual, wanted) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *productionScopeResolver) validateDatabase(ctx context.Context, connID string) error {
+	if connID == "" {
+		return nil
+	}
+	if r.database == nil {
+		return ipc.NewError(ipc.CodeUnsupported, "数据库服务未配置")
+	}
+	_, err := r.database.Tables(ctx, connID, "")
+	return err
+}
+
+func (r *productionScopeResolver) persist(ctx context.Context, conversationID string, scope tools.Scope) error {
+	encoded, err := json.Marshal(map[string]any{"scope": scope})
+	if err != nil {
+		return ipc.WrapError(ipc.CodeInternal, "AI 终端范围编码失败", err)
+	}
+	conversation := query.Use(r.storage.GORM()).ConversationRow
+	update := conversation.WithContext(ctx).Where(conversation.ID.Eq(conversationID))
+	if ownerID := ipc.OwnerID(ctx); ownerID != "" {
+		update = update.Where(conversation.OwnerID.Eq(ownerID))
+	}
+	result, err := update.UpdateColumns(map[string]any{"scope_json": string(encoded), "updated_at": time.Now().UnixMilli()})
+	if err != nil {
+		return ipc.WrapError(ipc.CodeDB, "AI 终端范围持久化失败", err)
+	}
+	if result.RowsAffected != 1 {
+		return ipc.NewError(ipc.CodeNotFound, "AI 会话不存在或无权更新终端范围")
+	}
+	return nil
 }
 
 func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	if services.Store == nil || services.Sessions == nil || services.Profiles == nil {
 		return errors.New("AI runtime requires store, sessions and profiles services")
 	}
-	guardManager, err := guard.NewManager(ctx, services.Store)
+	memoryStore, err := prepareProductionMemory(ctx, services)
+	if err != nil {
+		return err
+	}
+	guardManager, err := guard.NewManager(ctx, services.Store, guard.WithShared(services.desktop), guard.WithTargetValidator(productionGrantTargetValidator(services)))
 	if err != nil {
 		return err
 	}
@@ -52,10 +452,23 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 		return err
 	}
 
-	toolsDeps := tools.WithSession(tools.Dependencies{}, services.Sessions)
+	toolsDeps := tools.WithSession(tools.Dependencies{LocalHistory: services.desktop}, services.Sessions)
 	toolsDeps = tools.WithStore(toolsDeps, services.Store, services.Database)
+	toolsDeps.ResolveAssetSession = func(ctx context.Context, assetID string) (string, error) {
+		return resolveProductionAssetSession(ctx, services, assetID)
+	}
+	toolsDeps.ResolveExecTargets = func(ctx context.Context, assetIDs, tags []string) (tools.ExecTargetSet, error) {
+		return resolveProductionExecTargets(ctx, services, assetIDs, tags)
+	}
+	if services.ExecBatches == nil {
+		services.ExecBatches = newExecBatchService(services.Sessions, services.Store, services.Store, services.Store)
+	}
+	toolsDeps.ExecBatch = func(ctx context.Context, request execbatch.Request) (execbatch.Batch, error) {
+		requestCtx := productionSessionRequestContext(ctx)
+		return services.ExecBatches.Execute(requestCtx, ipc.OwnerID(ctx), request)
+	}
 	toolsDeps.Outcome = outcomeLedger
-	toolsDeps.Reminders = reminderScheduler{scheduler: cronScheduler}
+	toolsDeps.Reminders = reminderScheduler{scheduler: cronScheduler, conversations: services.Store, scopeValidator: productionScopeValidator(services)}
 	toolsDeps.Notify = func(ctx context.Context, text string) error {
 		return ipc.Emit(ctx, services.Events, ipc.TopicAINotification, ipc.AINotificationEvent{OwnerID: tools.NotifyOwnerID(ctx), Text: text})
 	}
@@ -68,7 +481,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 			"action": event.Action, "kinds": event.Kinds, "operation": event.Operation, "runId": event.RunID,
 			"ruleId": event.RuleID, "rulePath": event.RulePath,
 		}})
-	})
+	}, guard.WithShared(services.desktop), guard.WithTargetValidator(productionGrantTargetValidator(services)), guard.WithMutationValidator(productionGrantMutationValidator(services)))
 	if err != nil {
 		return err
 	}
@@ -82,15 +495,6 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	}
 	builder := aicontext.NewBuilder(contextDeps)
 
-	var memoryStore *memory.Store
-	if services.dataDir != "" {
-		store, err := memory.Open(ctx, filepath.Join(services.dataDir, "memory.db"))
-		if err != nil {
-			return err
-		}
-		memoryStore = store
-	}
-
 	runner := agent.NewRunner(agent.Config{
 		Profiles:        services.Profiles,
 		ModelForProfile: aiProfileModelFactory(services.Profiles),
@@ -99,6 +503,8 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 		Permission:      unattendedPermissions(guardManager),
 		Tools:           registry,
 		Context:         builder,
+		ScopeValidator:  productionScopeValidator(services),
+		ScopeResolver:   productionScopeValidator(services),
 		Store:           services.Store,
 		Runs:            services.Store,
 		Checkpoints:     agent.NewStoreCheckpoints(services.Store),
@@ -106,11 +512,12 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 			Model:           subagent.NewProfileModelFactory(services.Profiles),
 			ModelForProfile: subagent.NewProfileModelFactoryByID(services.Profiles),
 		},
-		Memory:      memoryStore,
-		MemoryScope: productionMemoryScope,
-		ServerMode:  !services.desktop,
+		Memory:         memoryStore,
+		MemoryScope:    productionMemoryScope,
+		MemoryScopeFor: productionMemoryScopeFor(services.desktop),
+		ServerMode:     !services.desktop,
 	})
-	if err := runner.RecoverRuns(session.WithOpenAccess(ctx)); err != nil {
+	if err := runner.RecoverRuns(store.WithAIHistoryInternalAccess(owner.WithOpenAccess(session.WithOpenAccess(ctx)))); err != nil {
 		return err
 	}
 
@@ -132,8 +539,8 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	services.Agent = runner
 	services.Takeover = takeoverManager
 
-	cronExecutor.Runner = cronAgentRunner{Runner: services.Agent}
-	services.cron = &cronRuntime{scheduler: cronScheduler, conversations: services.Store, profiles: services.Profiles}
+	cronExecutor.Runner = cronAgentRunner{Runner: services.Agent, open: services.desktop || owner.OpenAccess(ctx)}
+	services.cron = &cronRuntime{scheduler: cronScheduler, conversations: services.Store, profiles: services.Profiles, scopeValidator: productionScopeValidator(services)}
 
 	services.aiRelease = takeover.InstallSessionHooks(services.Sessions, takeoverManager)
 	return nil
@@ -141,10 +548,12 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 
 func aiModelFactory(manager *profiles.Manager) agent.ModelFactory {
 	return func(ctx context.Context) (model.BaseChatModel, uint64, error) {
-		if _, ok := manager.ActiveProfile(); !ok {
+		if _, ok, err := manager.ActiveProfile(ctx); err != nil {
+			return nil, 0, err
+		} else if !ok {
 			return nil, 0, errors.New("尚未选择要使用的 AI 模型档案")
 		}
-		client, err := manager.ActiveClient()
+		client, err := manager.ActiveClient(ctx)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -154,7 +563,7 @@ func aiModelFactory(manager *profiles.Manager) agent.ModelFactory {
 
 func aiProfileModelFactory(manager *profiles.Manager) agent.ProfileModelFactory {
 	return func(ctx context.Context, profileID string) (model.BaseChatModel, uint64, error) {
-		client, err := manager.ClientFor(profileID)
+		client, err := manager.ClientFor(ctx, profileID)
 		if err != nil {
 			return nil, 0, err
 		}

@@ -30,7 +30,7 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 			t.Fatalf("duplicate preference key %q", key)
 		}
 		declared[key] = true
-		if !strings.HasPrefix(key, "appearance.") && !strings.HasPrefix(key, "input.") && !strings.HasPrefix(key, "keybinding.") && !strings.HasPrefix(key, "terminal.") {
+		if !strings.HasPrefix(key, "appearance.") && !strings.HasPrefix(key, "input.") && !strings.HasPrefix(key, "keybinding.") && !strings.HasPrefix(key, "terminal.") && !strings.HasPrefix(key, "project.") {
 			t.Fatalf("unexpected preference key %q", key)
 		}
 	}
@@ -42,9 +42,16 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 		"appearance.themeMode",
 		"input.selectionAutoCopy",
 		"terminal.closeAction",
+		"project.workspaceTemplates",
 		"keybinding.commandPalette",
 		"keybinding.quickConnect",
 		"keybinding.newTerminal",
+		"keybinding.nextWorkspace",
+		"keybinding.previousWorkspace",
+		"keybinding.nextTab",
+		"keybinding.previousTab",
+		"keybinding.focusUpperPane",
+		"keybinding.focusLowerPane",
 		"keybinding.toggleSidebar",
 		"keybinding.toggleAiSidebar",
 		"keybinding.closeTab",
@@ -114,6 +121,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"appearance.themeMode":        `"system"`,
 		"input.selectionAutoCopy":     "true",
 		"terminal.closeAction":        `"kill"`,
+		"project.workspaceTemplates":  `[{"v":1,"name":"project"}]`,
 		"keybinding.closeTab":         `"Mod+Shift+w"`,
 		"keybinding.closeTab:null":    "null",
 		"keybinding.reclaimTakeover":  `"Mod+Shift+s"`,
@@ -138,6 +146,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"appearance.themeMode":        {`"blue"`, "1", "null", "true"},
 		"input.selectionAutoCopy":     {`"true"`, "1", "null"},
 		"terminal.closeAction":        {`"background"`, "1", "null", "true"},
+		"project.workspaceTemplates":  {`{"v":1}`, `"text"`, "null", "[invalid]"},
 		"keybinding.closeTab":         {`"p"`, `"Mod+Mod+p"`, `"Mod+Primary+p"`, "1", "true", `{"key":"Mod+p"}`},
 	}
 	for key, rawStrings := range invalid {
@@ -153,6 +162,80 @@ func TestValidatePreferenceValue(t *testing.T) {
 			t.Fatalf("validatePreferenceValue(%q)=%q want error", key, got)
 		}
 	}
+}
+
+func TestNavigationKeybindingPreferences(t *testing.T) {
+	tests := []struct {
+		key   string
+		input string
+		want  string
+	}{
+		{key: "keybinding.nextWorkspace", input: `"Alt+Mod+ArrowRight"`, want: `"Mod+Alt+ArrowRight"`},
+		{key: "keybinding.previousWorkspace", input: `"Alt+Mod+ArrowLeft"`, want: `"Mod+Alt+ArrowLeft"`},
+		{key: "keybinding.nextTab", input: `"Shift+Mod+]"`, want: `"Mod+Shift+]"`},
+		{key: "keybinding.previousTab", input: `"Shift+Mod+["`, want: `"Mod+Shift+["`},
+		{key: "keybinding.focusUpperPane", input: `"Alt+Mod+ArrowUp"`, want: `"Mod+Alt+ArrowUp"`},
+		{key: "keybinding.focusLowerPane", input: `"Alt+Mod+ArrowDown"`, want: `"Mod+Alt+ArrowDown"`},
+	}
+	for _, test := range tests {
+		t.Run("validate "+test.key, func(t *testing.T) {
+			got, err := validatePreferenceValue(test.key, json.RawMessage(test.input))
+			if err != nil || got != test.want {
+				t.Fatalf("validatePreferenceValue(%q,%s)=(%q,%v) want (%q,nil)", test.key, test.input, got, err, test.want)
+			}
+		})
+	}
+
+	t.Run("set get and clear user overrides", func(t *testing.T) {
+		ctx := context.Background()
+		preferences := testPreferences(t)
+		const userID = "01USERNAVIGATION00000000000"
+		set := make(map[string]json.RawMessage, len(tests))
+		for _, test := range tests {
+			set[test.key] = json.RawMessage(test.input)
+		}
+		updated, err := preferences.UpdateUserOverrides(ctx, userID, set, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(updated) != len(tests) {
+			t.Fatalf("updated override count=%d want %d: %v", len(updated), len(tests), updated)
+		}
+		for _, test := range tests {
+			if got := string(updated[test.key]); got != test.want {
+				t.Errorf("updated override %q=%q want %q", test.key, got, test.want)
+			}
+		}
+
+		stored, err := preferences.UserOverrides(ctx, userID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(stored) != len(tests) {
+			t.Fatalf("stored override count=%d want %d: %v", len(stored), len(tests), stored)
+		}
+		for _, test := range tests {
+			if got := string(stored[test.key]); got != test.want {
+				t.Errorf("stored override %q=%q want %q", test.key, got, test.want)
+			}
+		}
+
+		clear := make([]string, 0, len(tests))
+		for _, test := range tests {
+			clear = append(clear, test.key)
+		}
+		updated, err = preferences.UpdateUserOverrides(ctx, userID, nil, clear)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(updated) != 0 {
+			t.Fatalf("overrides after clear=%v", updated)
+		}
+		stored, err = preferences.UserOverrides(ctx, userID)
+		if err != nil || len(stored) != 0 {
+			t.Fatalf("stored overrides after clear=%v err=%v", stored, err)
+		}
+	})
 }
 
 func TestPreferencesDefaultsUpdateAndClear(t *testing.T) {

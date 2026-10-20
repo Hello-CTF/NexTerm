@@ -9,8 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ai/cron"
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -34,26 +36,85 @@ type conversationLookup interface {
 	ConvGet(ctx context.Context, id string) (store.ConversationRow, error)
 }
 
-func scopeForConversation(lookup conversationLookup) func(cron.Trigger) (tools.Scope, error) {
-	return func(trigger cron.Trigger) (tools.Scope, error) {
-		row, err := lookup.ConvGet(context.Background(), trigger.SessionID)
+func parseConversationScope(scopeJSON string) (tools.Scope, error) {
+	var envelope struct {
+		Scope tools.Scope `json:"scope"`
+	}
+	if err := json.Unmarshal([]byte(scopeJSON), &envelope); err != nil {
+		return tools.Scope{}, err
+	}
+	return envelope.Scope, nil
+}
+
+func scopeFromConversationRow(row store.ConversationRow) (tools.Scope, error) {
+	return parseConversationScope(row.ScopeJSON)
+}
+
+func scopeFromConversationValue(value any) (tools.Scope, error) {
+	encoded, err := json.Marshal(map[string]any{"scope": value})
+	if err != nil {
+		return tools.Scope{}, err
+	}
+	return parseConversationScope(string(encoded))
+}
+
+func validatedConversationScopeRow(ctx context.Context, row store.ConversationRow, validator agent.ScopeValidator) (tools.Scope, error) {
+	scope, err := scopeFromConversationRow(row)
+	if err != nil {
+		return tools.Scope{}, err
+	}
+	if validator != nil {
+		if err := validator.ValidateScope(ctx, scope); err != nil {
+			return tools.Scope{}, err
+		}
+	}
+	return scope, nil
+}
+
+func validatedConversationScope(ctx context.Context, lookup conversationLookup, validator agent.ScopeValidator, conversationID string) (tools.Scope, error) {
+	if lookup == nil {
+		return tools.Scope{}, nil
+	}
+	row, err := lookup.ConvGet(ctx, conversationID)
+	if err != nil {
+		return tools.Scope{}, err
+	}
+	return validatedConversationScopeRow(ctx, row, validator)
+}
+
+func scopeForConversation(lookup conversationLookup, validators ...agent.ScopeValidator) func(context.Context, cron.Trigger) (tools.Scope, error) {
+	return func(ctx context.Context, trigger cron.Trigger) (tools.Scope, error) {
+		if err := ctx.Err(); err != nil {
+			return tools.Scope{}, err
+		}
+		row, err := lookup.ConvGet(ctx, trigger.SessionID)
 		if err != nil {
 			return tools.Scope{}, err
 		}
-		var envelope struct {
-			Scope tools.Scope `json:"scope"`
+		if (trigger.OwnerKind == cron.OwnerKindAccount && row.OwnerID != trigger.OwnerID) ||
+			(trigger.OwnerKind != cron.OwnerKindAccount && row.OwnerID != "") {
+			return tools.Scope{}, cron.ErrForeignScope
 		}
-		if err := json.Unmarshal([]byte(row.ScopeJSON), &envelope); err != nil {
-			return tools.Scope{}, err
+		var validator agent.ScopeValidator
+		if len(validators) != 0 {
+			validator = validators[0]
 		}
-		return envelope.Scope, nil
+		if resolver, ok := validator.(agent.ScopeResolver); ok {
+			scope, err := scopeFromConversationRow(row)
+			if err != nil {
+				return tools.Scope{}, err
+			}
+			return resolver.ResolveScope(ctx, row.ID, scope)
+		}
+		return validatedConversationScopeRow(ctx, row, validator)
 	}
 }
 
 type cronRuntime struct {
-	scheduler     *cron.Scheduler
-	conversations conversationLookup
-	profiles      profileLookup
+	scheduler      *cron.Scheduler
+	conversations  conversationLookup
+	profiles       profileLookup
+	scopeValidator agent.ScopeValidator
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
@@ -61,18 +122,22 @@ type cronRuntime struct {
 }
 
 type profileLookup interface {
-	Profile(id string) (profiles.Profile, bool)
+	Profile(ctx context.Context, id string) (profiles.Profile, bool, error)
 }
 
 func composeCronScheduler(ctx context.Context, services *ProductionServices, options cron.Options) (*cron.Scheduler, *cron.AgentExecutor, error) {
 	if services.Store == nil {
 		return nil, nil, errors.New("cron runtime requires store and agent services")
 	}
-	cronStore, err := cron.NewSQLiteStore(ctx, services.Store.GORM())
+	cronStore, err := cron.NewSQLiteStore(ctx, services.Store.GORM(), cron.WithShared(services.desktop || owner.OpenAccess(ctx)))
 	if err != nil {
 		return nil, nil, err
 	}
-	executor := &cron.AgentExecutor{ScopeFor: scopeForConversation(services.Store)}
+	allowLegacy := services.desktop || owner.OpenAccess(ctx)
+	options.AllowOwnerlessLegacy = allowLegacy
+	executor := &cron.AgentExecutor{
+		ScopeFor: scopeForConversation(services.Store, productionScopeValidator(services)), AllowOwnerlessLegacy: allowLegacy,
+	}
 	if options.OnError == nil {
 		options.OnError = func(err error) {
 			slog.Warn("cron scheduler asynchronous failure", "error", err)
@@ -86,9 +151,16 @@ func composeCronScheduler(ctx context.Context, services *ProductionServices, opt
 	return scheduler, executor, nil
 }
 
-type reminderScheduler struct{ scheduler *cron.Scheduler }
+type reminderScheduler struct {
+	scheduler      *cron.Scheduler
+	conversations  conversationLookup
+	scopeValidator agent.ScopeValidator
+}
 
 func (s reminderScheduler) ScheduleReminder(ctx context.Context, conversationID string, reminder tools.Reminder) (tools.ScheduledReminder, error) {
+	if _, err := validatedConversationScope(ctx, s.conversations, s.scopeValidator, conversationID); err != nil {
+		return tools.ScheduledReminder{}, err
+	}
 	job, err := s.scheduler.Register(ctx, cron.Registration{
 		SessionID: conversationID,
 		Name:      reminderName(reminder.Message),
@@ -221,12 +293,16 @@ func (c *cronRuntime) registerCommands(dispatcher *ipc.Dispatcher) error {
 					return cron.Job{}, ipc.BadParam(errors.New("超时时间不能为负数"))
 				}
 				if c.conversations != nil {
-					if _, err := c.conversations.ConvGet(ctx, input.SessionID); err != nil {
+					if _, err := validatedConversationScope(ctx, c.conversations, c.scopeValidator, input.SessionID); err != nil {
 						return cron.Job{}, cronIPCError(err)
 					}
 				}
 				if input.ModelProfileID != "" && c.profiles != nil {
-					if _, ok := c.profiles.Profile(input.ModelProfileID); !ok {
+					_, ok, err := c.profiles.Profile(ctx, input.ModelProfileID)
+					if err != nil {
+						return cron.Job{}, cronIPCError(err)
+					}
+					if !ok {
 						return cron.Job{}, cronIPCError(profiles.ErrProfileNotFound)
 					}
 				}

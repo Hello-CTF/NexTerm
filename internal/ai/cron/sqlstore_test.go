@@ -42,8 +42,9 @@ func fullTestJob(id, sessionID string, now time.Time) Job {
 		RetryAt: now.Add(time.Minute), CircuitOpenUntil: now.Add(2 * time.Minute),
 		ConsecutiveFailures: 3, LastRunAt: now.Add(-time.Hour), LastScheduledFor: now.Add(-time.Hour),
 		LastCoalesced: true, LastError: "previous failure", ModelProfileID: "profile-1",
-		Lease: Lease{Owner: "owner-1", ExpiresAt: now.Add(20 * time.Second)},
-		Run:   RunState{ID: "run-1", ScheduledFor: now.Add(-time.Minute), StartedAt: now, Deadline: now.Add(time.Minute), Coalesced: true},
+		Lease:     Lease{Owner: "owner-1", ExpiresAt: now.Add(20 * time.Second)},
+		Run:       RunState{ID: "run-1", ScheduledFor: now.Add(-time.Minute), StartedAt: now, Deadline: now.Add(time.Minute), Coalesced: true},
+		OwnerKind: OwnerKindOpen,
 	}
 }
 
@@ -95,7 +96,7 @@ func jobsEqual(a, b Job) bool {
 		a.ConsecutiveFailures == b.ConsecutiveFailures && a.LastRunAt.Equal(b.LastRunAt) &&
 		a.LastScheduledFor.Equal(b.LastScheduledFor) && a.LastCoalesced == b.LastCoalesced && a.LastError == b.LastError &&
 		a.ModelProfileID == b.ModelProfileID &&
-		a.Lease == b.Lease && a.Run == b.Run
+		a.Lease == b.Lease && a.Run == b.Run && a.OwnerID == b.OwnerID && a.OwnerKind == b.OwnerKind
 }
 
 func TestSQLiteStoreCreateEnforcesBoundAndUniqueness(t *testing.T) {

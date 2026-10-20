@@ -64,7 +64,7 @@ func (r *Runner) recoverRun(ctx context.Context, row store.RunRow, blob hitl.Run
 		if row.Status != store.RunStatusInterrupted {
 			_ = r.runs.RunUpdateStatus(ctx, row.ID, store.RunStatusInterrupted)
 		}
-		r.watchRestoredRun(row)
+		r.watchRestoredRun(ctx, row)
 		return
 	}
 	status := store.RunStatusInterrupted
@@ -77,7 +77,7 @@ func (r *Runner) recoverRun(ctx context.Context, row store.RunRow, blob hitl.Run
 	}
 	r.finishRecoveredRun(ctx, row.ID, status, message, retryable)
 	if deleter, ok := r.checkpoints.(adk.CheckPointDeleter); ok {
-		_ = deleter.Delete(context.Background(), row.ID)
+		_ = deleter.Delete(context.WithoutCancel(ctx), row.ID)
 	}
 }
 
@@ -143,7 +143,7 @@ func agentOwnedUsageCallID(channel, callID string) bool {
 	}
 }
 
-func (r *Runner) watchRestoredRun(row store.RunRow) {
+func (r *Runner) watchRestoredRun(ctx context.Context, row store.RunRow) {
 	done, err := r.hitl.Done(row.ID)
 	if err != nil {
 		return
@@ -159,7 +159,7 @@ func (r *Runner) watchRestoredRun(row store.RunRow) {
 		if r.lookupJob(row.ID) != nil {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if current, err := r.runs.RunGet(ctx, row.ID); err == nil && current.FinishedAt != nil {
 			return
@@ -185,12 +185,30 @@ func (r *Runner) watchRestoredRun(row store.RunRow) {
 	}()
 }
 
+type scopeResolutionError struct {
+	err error
+}
+
+func (e *scopeResolutionError) Error() string { return e.err.Error() }
+func (e *scopeResolutionError) Unwrap() error { return e.err }
+
+func restoreJobError(err error) error {
+	var resolutionErr *scopeResolutionError
+	if errors.As(err, &resolutionErr) {
+		return resolutionErr.err
+	}
+	return ErrJobNotFound
+}
+
 func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFactory) (*job, error) {
 	if r.runs == nil {
 		return nil, ErrJobNotFound
 	}
 	if current := r.lookupJob(jobID); current != nil {
 		return current, nil
+	}
+	if err := r.validateExecutionRequest(ctx); err != nil {
+		return nil, err
 	}
 	row, err := r.runs.RunGet(ctx, jobID)
 	if err != nil || row.Status != store.RunStatusInterrupted {
@@ -204,6 +222,15 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 	if err != nil {
 		return nil, ErrJobNotFound
 	}
+	executionCtx := conversationExecutionContext(ctx, conversation.OwnerID)
+	scope, err := scopeFromConversation(conversation.ScopeJSON)
+	if err != nil {
+		return nil, err
+	}
+	scope, err = r.resolveScope(executionCtx, row.ConversationID, scope)
+	if err != nil {
+		return nil, &scopeResolutionError{err: err}
+	}
 	unlock := r.lockConversation(row.ConversationID)
 	defer unlock()
 	stream := Stream(discardStream{})
@@ -216,13 +243,13 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 			stream = opened
 		}
 	}
-	jobContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	jobContext, cancel := context.WithCancel(context.WithoutCancel(executionCtx))
 	jobContext = tools.WithNotifyOwner(jobContext, conversation.OwnerID)
 	deliveryContext, forceCancel := context.WithCancel(context.WithoutCancel(jobContext))
 	current := &job{
 		id:          jobID,
-		ownerID:     row.OwnerID,
-		args:        ChatArgs{ConversationID: row.ConversationID, PlanMode: row.PlanMode, Scope: scopeFromConversation(conversation.ScopeJSON), Source: row.Source, ModelProfileID: row.ProfileID},
+		ownerID:     conversation.OwnerID,
+		args:        ChatArgs{ConversationID: row.ConversationID, PlanMode: row.PlanMode, Scope: scope, Source: row.Source, ModelProfileID: row.ProfileID},
 		ctx:         jobContext,
 		cancel:      cancel,
 		deliveryCtx: deliveryContext,
@@ -231,6 +258,7 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 		memory:      guard.NewMemory(),
 		steer:       steer.NewQueue(r.config.MaxPendingSteers),
 		cancelSync:  newCancelSync(),
+		doneCh:      make(chan struct{}),
 	}
 	if err := r.reserveJobID(jobID); err != nil {
 		cancel()
@@ -277,14 +305,14 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 	return current, nil
 }
 
-func scopeFromConversation(scopeJSON string) tools.Scope {
+func scopeFromConversation(scopeJSON string) (tools.Scope, error) {
 	var envelope struct {
 		Scope tools.Scope `json:"scope"`
 	}
 	if err := json.Unmarshal([]byte(scopeJSON), &envelope); err != nil {
-		return tools.Scope{}
+		return tools.Scope{}, err
 	}
-	return envelope.Scope
+	return envelope.Scope, nil
 }
 
 func (r *Runner) parkForShutdown(current *job) {
@@ -302,15 +330,16 @@ func (r *Runner) parkForShutdown(current *job) {
 				r.appendShutdownErr(err)
 			}
 		}
+		r.releaseJobID(current.id)
+		if r.config.Tools != nil {
+			r.config.Tools.Release(current.id)
+		}
+		current.markDone()
 		r.mu.Lock()
 		if r.jobs[current.id] == current {
 			delete(r.jobs, current.id)
 		}
 		r.mu.Unlock()
-		r.releaseJobID(current.id)
-		if r.config.Tools != nil {
-			r.config.Tools.Release(current.id)
-		}
 		r.wg.Done()
 	})
 }

@@ -11,40 +11,31 @@ import (
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/store/model"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
-type entryRow struct {
-	ID        string `gorm:"column:id;primaryKey"`
-	Tenant    string `gorm:"column:tenant;not null;index:memory_entry_scope_topic,priority:1"`
-	Subject   string `gorm:"column:subject;not null;index:memory_entry_scope_topic,priority:2"`
-	Topic     string `gorm:"column:topic;not null;index:memory_entry_scope_topic,priority:3"`
-	Content   string `gorm:"column:content;not null"`
-	Version   uint64 `gorm:"column:version;not null"`
-	Redacted  bool   `gorm:"column:redacted;not null"`
-	CreatedAt int64  `gorm:"column:created_at;not null"`
-	UpdatedAt int64  `gorm:"column:updated_at;not null"`
-}
-
-func (entryRow) TableName() string { return "memory_entry" }
-
-type settingsRow struct {
-	Tenant           string `gorm:"column:tenant;not null;primaryKey"`
-	Subject          string `gorm:"column:subject;not null;primaryKey"`
-	InjectionEnabled bool   `gorm:"column:injection_enabled;not null"`
-	ToolsEnabled     bool   `gorm:"column:tools_enabled;not null;default:0"`
-	Version          uint64 `gorm:"column:version;not null"`
-	UpdatedAt        int64  `gorm:"column:updated_at;not null"`
-}
-
-func (settingsRow) TableName() string { return "memory_settings" }
+type entryRow = model.MemoryEntry
+type settingsRow = model.MemorySettings
 
 type Store struct {
-	db    *gorm.DB
-	now   func() int64
-	newID func() string
+	db     *gorm.DB
+	now    func() int64
+	newID  func() string
+	ownsDB bool
+}
+
+func NewStore(db *gorm.DB) (*Store, error) {
+	if db == nil {
+		return nil, fmt.Errorf("%w: nil database", ErrInvalidInput)
+	}
+	return newStore(db, false), nil
+}
+
+func newStore(db *gorm.DB, ownsDB bool) *Store {
+	return &Store{db: db, now: ids.NowMS, newID: ids.New, ownsDB: ownsDB}
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -95,7 +86,7 @@ func open(ctx context.Context, dsn string, connections int) (*Store, error) {
 	}
 	sqlDB.SetMaxOpenConns(connections)
 	sqlDB.SetMaxIdleConns(connections)
-	store := &Store{db: db, now: ids.NowMS, newID: ids.New}
+	store := newStore(db, true)
 	if err := store.migrate(ctx); err != nil {
 		_ = sqlDB.Close()
 		return nil, err
@@ -121,6 +112,9 @@ func (s *Store) migrate(ctx context.Context) error {
 }
 
 func (s *Store) Close() error {
+	if !s.ownsDB {
+		return nil
+	}
 	db, err := s.db.DB()
 	if err != nil {
 		return err

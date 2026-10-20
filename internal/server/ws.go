@@ -175,6 +175,9 @@ func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
 		case ipc.TopicLayoutChanged:
 			_, ok := event.Payload.(ipc.LayoutChangedEvent)
 			return ok && event.OwnerID != "" && event.OwnerID == userID
+		case ipc.TopicInventoryChanged:
+			_, ok := event.Payload.(ipc.InventoryChangedEvent)
+			return ok && event.OwnerID != "" && event.OwnerID == userID
 		case ipc.TopicSyncStatus:
 			switch status := event.Payload.(type) {
 			case ipc.SyncStatusEvent:

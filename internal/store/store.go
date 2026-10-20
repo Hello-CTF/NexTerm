@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -24,12 +25,13 @@ import (
 )
 
 type Store struct {
-	backend   Backend
-	db        *gorm.DB
-	sqlDB     *sql.DB
-	keepAlive *sql.Conn
-	logger    *slog.Logger
-	retention retentionState
+	backend         Backend
+	db              *gorm.DB
+	sqlDB           *sql.DB
+	keepAlive       *sql.Conn
+	logger          *slog.Logger
+	retention       retentionState
+	aiHistoryShared atomic.Bool
 
 	protectorMu sync.RWMutex
 	protector   SecretProtector
@@ -134,7 +136,9 @@ func newStore(db *gorm.DB, logger *slog.Logger) *Store {
 	}
 	_ = db.Callback().Create().Before("gorm:create").Register("nexterm:conflict_conditions", preserveConflictConditions)
 	sqlDB, _ := db.DB()
-	return &Store{db: db, sqlDB: sqlDB, logger: logger, backend: BackendSQLite}
+	s := &Store{db: db, sqlDB: sqlDB, logger: logger, backend: BackendSQLite}
+	s.aiHistoryShared.Store(true)
+	return s
 }
 
 func openDB(dsn string, maxConnections int) (*gorm.DB, error) {

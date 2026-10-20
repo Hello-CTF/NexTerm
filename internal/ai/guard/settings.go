@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
@@ -33,72 +34,141 @@ type Settings interface {
 	SettingSet(context.Context, string, string) error
 }
 
-type Manager struct {
-	settings Settings
-	mu       sync.RWMutex
-	config   Config
-	modes    map[string]Mode
+type TargetValidator func(context.Context, string) error
+type MutationValidator func(context.Context) error
+
+type options struct {
+	shared            bool
+	targetValidator   TargetValidator
+	mutationValidator MutationValidator
 }
 
-func NewManager(ctx context.Context, settings Settings) (*Manager, error) {
-	manager := &Manager{settings: settings, config: Config{Mode: ReadWrite, DangerRules: []string{}}, modes: make(map[string]Mode)}
-	if err := manager.load(ctx); err != nil {
-		return nil, err
+type Option func(*options)
+
+func WithShared(shared bool) Option {
+	return func(options *options) { options.shared = shared }
+}
+
+func WithTargetValidator(validator TargetValidator) Option {
+	return func(options *options) { options.targetValidator = validator }
+}
+
+func WithMutationValidator(validator MutationValidator) Option {
+	return func(options *options) { options.mutationValidator = validator }
+}
+
+type permissionState struct {
+	config Config
+	modes  map[string]Mode
+}
+
+type Manager struct {
+	settings        Settings
+	shared          bool
+	targetValidator TargetValidator
+	mu              sync.RWMutex
+	states          map[string]*permissionState
+}
+
+func NewManager(ctx context.Context, settings Settings, opts ...Option) (*Manager, error) {
+	configuration := options{shared: true}
+	for _, apply := range opts {
+		apply(&configuration)
+	}
+	manager := &Manager{settings: settings, shared: configuration.shared, targetValidator: configuration.targetValidator, states: map[string]*permissionState{}}
+	if _, err := owner.ID(ctx, manager.shared); err == nil {
+		if err := manager.Reload(ctx); err != nil {
+			return nil, err
+		}
 	}
 	return manager, nil
 }
 
-func (m *Manager) load(ctx context.Context) error {
-	config := Config{Mode: ReadWrite, DangerRules: []string{}}
-	raw, found, err := m.settings.SettingGet(ctx, PermissionSettingKeyForUser(ctx))
+func loadPermission(ctx context.Context, settings Settings) (permissionState, error) {
+	result := permissionState{config: Config{Mode: ReadWrite, DangerRules: []string{}}, modes: make(map[string]Mode)}
+	raw, found, err := settings.SettingGet(ctx, PermissionSettingKeyForUser(ctx))
 	if err != nil {
-		return err
+		return permissionState{}, err
 	}
 	if found && raw != "" {
-		if err := json.Unmarshal([]byte(raw), &config); err != nil {
-			return err
+		if err := json.Unmarshal([]byte(raw), &result.config); err != nil {
+			return permissionState{}, err
 		}
-		config = config.Normalized()
+		result.config = result.config.Normalized()
 	}
-	modes := make(map[string]Mode)
-	raw, found, err = m.settings.SettingGet(ctx, DevicePermissionSettingKeyForUser(ctx))
+	raw, found, err = settings.SettingGet(ctx, DevicePermissionSettingKeyForUser(ctx))
 	if err != nil {
-		return err
+		return permissionState{}, err
 	}
 	if found && raw != "" {
-		if err := json.Unmarshal([]byte(raw), &modes); err != nil {
-			return err
+		if err := json.Unmarshal([]byte(raw), &result.modes); err != nil {
+			return permissionState{}, err
 		}
-		for deviceID, mode := range modes {
+		for deviceID, mode := range result.modes {
 			if !mode.valid() {
-				delete(modes, deviceID)
+				delete(result.modes, deviceID)
 			}
 		}
 	}
-	m.config = config
-	m.modes = modes
-	return nil
+	return result, nil
 }
 
-func (m *Manager) Snapshot(context.Context) (Config, error) {
+func (m *Manager) stateFor(ctx context.Context) (*permissionState, error) {
+	ownerID, err := owner.ID(ctx, m.shared)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.stateForLocked(ctx, ownerID)
+}
+
+func (m *Manager) stateForLocked(ctx context.Context, ownerID string) (*permissionState, error) {
+	if entry, ok := m.states[ownerID]; ok {
+		return entry, nil
+	}
+	entry, err := loadPermission(ctx, m.settings)
+	if err != nil {
+		return nil, err
+	}
+	m.states[ownerID] = &entry
+	return &entry, nil
+}
+
+func (m *Manager) Snapshot(ctx context.Context) (Config, error) {
+	entry, err := m.stateFor(ctx)
+	if err != nil {
+		return Config{}, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.config.Normalized(), nil
+	return entry.config.Normalized(), nil
 }
 
 func (m *Manager) Reload(ctx context.Context) error {
+	ownerID, err := owner.ID(ctx, m.shared)
+	if err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.load(ctx)
+	entry, err := loadPermission(ctx, m.settings)
+	if err != nil {
+		return err
+	}
+	m.states[ownerID] = &entry
+	return nil
 }
 
-func (m *Manager) Get() Config {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.config.Normalized()
+func (m *Manager) Get(ctx context.Context) (Config, error) {
+	return m.Snapshot(ctx)
 }
 
 func (m *Manager) Set(ctx context.Context, config Config) error {
+	ownerID, err := owner.ID(ctx, m.shared)
+	if err != nil {
+		return err
+	}
 	config = config.Normalized()
 	encoded, err := json.Marshal(config)
 	if err != nil {
@@ -106,10 +176,14 @@ func (m *Manager) Set(ctx context.Context, config Config) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	entry, err := m.stateForLocked(ctx, ownerID)
+	if err != nil {
+		return err
+	}
 	if err := m.settings.SettingSet(ctx, PermissionSettingKeyForUser(ctx), string(encoded)); err != nil {
 		return err
 	}
-	m.config = config
+	entry.config = config
 	return nil
 }
 
@@ -117,26 +191,36 @@ func (m Mode) valid() bool {
 	return m == ReadOnly || m == ReadWrite || m == Silent || m == Unattended
 }
 
-// DeviceMode returns the device's permission mode override; ok is false when there is no override.
-func (m *Manager) DeviceMode(deviceID string) (Mode, bool) {
+func (m *Manager) DeviceMode(ctx context.Context, deviceID string) (Mode, bool, error) {
+	entry, err := m.stateFor(ctx)
+	if err != nil {
+		return "", false, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	mode, ok := m.modes[deviceID]
-	return mode, ok
+	mode, ok := entry.modes[deviceID]
+	return mode, ok, nil
 }
 
-// WithDeviceMode applies the device mode override to the given config; returns it unchanged when there is no override or the device is empty.
-func (m *Manager) WithDeviceMode(config Config, deviceID string) Config {
+func (m *Manager) WithDeviceMode(ctx context.Context, config Config, deviceID string) (Config, error) {
 	if deviceID == "" {
-		return config
+		return config, nil
 	}
-	if mode, ok := m.DeviceMode(deviceID); ok {
+	mode, ok, err := m.DeviceMode(ctx, deviceID)
+	if err != nil {
+		return Config{}, err
+	}
+	if ok {
+		if m.targetValidator != nil {
+			if err := m.targetValidator(ctx, deviceID); err != nil {
+				return Config{}, err
+			}
+		}
 		config.Mode = mode
 	}
-	return config
+	return config, nil
 }
 
-// SetDeviceMode sets the device's permission mode override; an empty mode clears the override, falling back to the global mode.
 func (m *Manager) SetDeviceMode(ctx context.Context, deviceID string, mode Mode) error {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
@@ -145,34 +229,42 @@ func (m *Manager) SetDeviceMode(ctx context.Context, deviceID string, mode Mode)
 	if mode != "" && !mode.valid() {
 		return errors.New("权限模式仅支持 read_only/read_write/silent/unattended")
 	}
+	ownerID, err := owner.ID(ctx, m.shared)
+	if err != nil {
+		return err
+	}
+	if mode != "" && m.targetValidator != nil {
+		if err := m.targetValidator(ctx, deviceID); err != nil {
+			return err
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	previous, existed := m.modes[deviceID]
+	entry, err := m.stateForLocked(ctx, ownerID)
+	if err != nil {
+		return err
+	}
+	_, existed := entry.modes[deviceID]
+	next := make(map[string]Mode, len(entry.modes)+1)
+	for id, value := range entry.modes {
+		next[id] = value
+	}
 	if mode == "" {
 		if !existed {
 			return nil
 		}
-		delete(m.modes, deviceID)
+		delete(next, deviceID)
 	} else {
-		m.modes[deviceID] = mode
+		next[deviceID] = mode
 	}
-	encoded, err := json.Marshal(m.modes)
+	encoded, err := json.Marshal(next)
 	if err != nil {
-		if existed {
-			m.modes[deviceID] = previous
-		} else {
-			delete(m.modes, deviceID)
-		}
 		return err
 	}
 	if err := m.settings.SettingSet(ctx, DevicePermissionSettingKeyForUser(ctx), string(encoded)); err != nil {
-		if existed {
-			m.modes[deviceID] = previous
-		} else {
-			delete(m.modes, deviceID)
-		}
 		return err
 	}
+	entry.modes = next
 	if mode == "" {
 		if err := recordAIGrantTombstone(ctx, m.settings, AIGrantSyncModePrefix+deviceID); err != nil {
 			return err

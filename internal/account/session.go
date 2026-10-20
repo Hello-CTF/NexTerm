@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -272,14 +273,56 @@ func (a *Accounts) RevokeUserSession(ctx context.Context, userID, sessionID stri
 }
 
 func (a *Accounts) RevokeUserSessions(ctx context.Context, userID, exceptSessionID string) (int64, error) {
-	userSession := query.Use(a.db).UserSession
-	q := userSession.WithContext(ctx).Where(userSession.UserID.Eq(userID), userSession.RevokedAt.IsNull())
-	if exceptSessionID != "" {
-		q = q.Where(userSession.ID.Neq(exceptSessionID))
-	}
-	info, err := q.UpdateColumns(map[string]any{"revoked_at": a.now()})
+	sessionIDs, err := a.RevokeUserSessionsWithIDs(ctx, userID, exceptSessionID)
+	return int64(len(sessionIDs)), err
+}
+
+// RevokeUserSessionsWithIDs revokes and returns the exact session set in one account write transaction.
+func (a *Accounts) RevokeUserSessionsWithIDs(ctx context.Context, userID, exceptSessionID string, beforeCommit ...func() error) ([]string, error) {
+	var sessionIDs []string
+	err := a.withBusyRetry(ctx, func() error {
+		sessionIDs = nil
+		return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			userSession := query.Use(tx).UserSession
+			q := userSession.WithContext(ctx).Where(userSession.UserID.Eq(userID), userSession.RevokedAt.IsNull())
+			if exceptSessionID != "" {
+				q = q.Where(userSession.ID.Neq(exceptSessionID))
+			}
+			var rows []store.UserSession
+			if err := q.Select(userSession.ID).Scan(&rows); err != nil {
+				return dbError(err)
+			}
+			ids := make([]string, 0, len(rows))
+			for _, row := range rows {
+				ids = append(ids, row.ID)
+			}
+			if len(ids) == 0 {
+				return nil
+			}
+			for _, prepare := range beforeCommit {
+				if prepare != nil {
+					if err := prepare(); err != nil {
+						return err
+					}
+				}
+			}
+			updateQ := userSession.WithContext(ctx).Where(userSession.UserID.Eq(userID), userSession.RevokedAt.IsNull())
+			if exceptSessionID != "" {
+				updateQ = updateQ.Where(userSession.ID.Neq(exceptSessionID))
+			}
+			info, err := updateQ.UpdateColumns(map[string]any{"revoked_at": a.now()})
+			if err != nil {
+				return dbError(err)
+			}
+			if info.RowsAffected != int64(len(ids)) {
+				return dbError(fmt.Errorf("session revocation set changed during transaction"))
+			}
+			sessionIDs = ids
+			return nil
+		})
+	})
 	if err != nil {
-		return 0, dbError(err)
+		return nil, err
 	}
-	return info.RowsAffected, nil
+	return sessionIDs, nil
 }

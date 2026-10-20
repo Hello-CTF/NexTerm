@@ -369,7 +369,8 @@ func TestExpirationTerminatesAndRejectsLateAnswer(t *testing.T) {
 func TestExpirationTimerTerminatesWithoutSubmission(t *testing.T) {
 	store := newFakeCheckpoints()
 	store.put("checkpoint", []byte("checkpoint-one"))
-	manager, err := NewManager(Config{Checkpoints: store, TTL: 20 * time.Millisecond, NewNonce: func() (string, error) { return "nonce", nil }})
+	clock := newFakeClock()
+	manager, err := NewManager(Config{Checkpoints: store, TTL: time.Minute, Now: clock.Now, AfterFunc: clock.AfterFunc, NewNonce: func() (string, error) { return "nonce", nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,19 +381,13 @@ func TestExpirationTimerTerminatesWithoutSubmission(t *testing.T) {
 	if _, err := manager.Interrupt(context.Background(), &adk.InterruptCtx{ID: "target"}, InterruptInput{RunID: "run", CheckpointID: "checkpoint", CallID: "call", Tool: "exec_commands", Kind: KindConfirm}); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		snapshot, err := manager.Snapshot("run")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if snapshot.Status == RunStatusExpired {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("request did not expire: %+v", snapshot)
-		}
-		time.Sleep(time.Millisecond)
+	clock.Advance(2 * time.Minute)
+	snapshot, err := manager.Snapshot("run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != RunStatusExpired || snapshot.Terminal == nil || snapshot.Terminal.Reason != TerminalExpired {
+		t.Fatalf("snapshot = %+v", snapshot)
 	}
 }
 

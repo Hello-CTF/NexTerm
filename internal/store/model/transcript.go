@@ -77,10 +77,10 @@ type SyncState struct {
 func (SyncState) TableName() string { return "sync_state" }
 
 type MemoryEntry struct {
-	ID        string `gorm:"column:id;primaryKey" json:"id"`
-	Tenant    string `gorm:"column:tenant;not null" json:"tenant"`
-	Subject   string `gorm:"column:subject;not null" json:"subject"`
-	Topic     string `gorm:"column:topic;not null" json:"topic"`
+	ID        string `gorm:"size:64;column:id;primaryKey" json:"id"`
+	Tenant    string `gorm:"size:256;column:tenant;not null;index:memory_entry_scope_topic,priority:1" json:"tenant"`
+	Subject   string `gorm:"size:256;column:subject;not null;index:memory_entry_scope_topic,priority:2" json:"subject"`
+	Topic     string `gorm:"size:256;column:topic;not null;index:memory_entry_scope_topic,priority:3" json:"topic"`
 	Content   string `gorm:"column:content;not null" json:"content"`
 	Version   int64  `gorm:"column:version;not null" json:"version"`
 	Redacted  bool   `gorm:"column:redacted;not null" json:"redacted"`
@@ -91,8 +91,8 @@ type MemoryEntry struct {
 func (MemoryEntry) TableName() string { return "memory_entry" }
 
 type MemorySettings struct {
-	Tenant           string `gorm:"column:tenant;primaryKey" json:"tenant"`
-	Subject          string `gorm:"column:subject;primaryKey" json:"subject"`
+	Tenant           string `gorm:"size:256;column:tenant;primaryKey" json:"tenant"`
+	Subject          string `gorm:"size:256;column:subject;primaryKey" json:"subject"`
 	InjectionEnabled bool   `gorm:"column:injection_enabled;not null" json:"injectionEnabled"`
 	ToolsEnabled     bool   `gorm:"column:tools_enabled;not null;default:0" json:"toolsEnabled"`
 	Version          int64  `gorm:"column:version;not null" json:"version"`

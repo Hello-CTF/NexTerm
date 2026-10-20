@@ -7,14 +7,18 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/model"
+	"gorm.io/gorm/clause"
 )
 
 func putDeviceKnownHost(t *testing.T, device *testDevice, id, host string, port int32, keyType, fingerprint string, addedAt int64) {
 	t.Helper()
-	if _, err := device.db.DB().ExecContext(context.Background(),
-		`INSERT INTO known_host(id, host, port, key_type, fingerprint, added_at) VALUES(?,?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET fingerprint=excluded.fingerprint, added_at=excluded.added_at`,
-		id, host, port, keyType, fingerprint, addedAt); err != nil {
+	if err := device.db.GORM().WithContext(context.Background()).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"fingerprint", "added_at"}),
+	}).Create(&model.KnownHostRow{
+		ID: id, Host: host, Port: port, KeyType: keyType, Fingerprint: fingerprint, AddedAt: addedAt,
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 }

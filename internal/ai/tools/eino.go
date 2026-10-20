@@ -22,6 +22,8 @@ import (
 type ExecCommandsArgs struct {
 	Commands []string `json:"commands" jsonschema:"required"`
 	Timeout  int      `json:"timeout,omitempty"`
+	AssetIDs []string `json:"asset_ids,omitempty"`
+	Tags     []string `json:"tags,omitempty"`
 }
 type ReadFileArgs struct {
 	Path     string `json:"path" jsonschema:"required"`
@@ -49,11 +51,14 @@ type SendKeysArgs struct {
 	Enter  bool   `json:"enter,omitempty"`
 	WaitMS int    `json:"wait_ms,omitempty"`
 	TabID  string `json:"tab_id,omitempty"`
+	Paste  bool   `json:"paste,omitempty"`
 }
 type WaitForArgs struct {
-	Pattern   string `json:"pattern" jsonschema:"required"`
-	TimeoutMS int64  `json:"timeout_ms,omitempty"`
-	SinceSeq  uint64 `json:"since_seq,omitempty"`
+	Pattern   *string `json:"pattern,omitempty"`
+	TimeoutMS int64   `json:"timeout_ms,omitempty"`
+	SinceSeq  uint64  `json:"since_seq,omitempty"`
+	TabID     string  `json:"tab_id,omitempty"`
+	QuietMS   int64   `json:"quiet_ms,omitempty"`
 }
 type EmptyArgs struct{}
 type DockerLogsArgs struct {
@@ -103,6 +108,7 @@ type TerminalCreateArgs struct {
 	Title      string `json:"title,omitempty"`
 	Command    string `json:"command,omitempty"`
 	Background bool   `json:"background,omitempty"`
+	AssetID    string `json:"asset_id,omitempty"`
 }
 type TerminalRenameArgs struct {
 	TabID string `json:"tab_id,omitempty"`
@@ -118,15 +124,15 @@ var einoNames = []string{
 }
 
 var einoDescriptions = map[string]string{
-	"exec_commands":   "Execute shell commands sequentially in the current session (1-20 commands).",
+	"exec_commands":   "Execute shell commands sequentially in the current session (1-20 commands). Optional asset_ids and tags instead select the current owner's already-connected SSH sessions without auto-connecting; tags must all match, and asset_ids plus tags means their intersection. Production targets require confirmation. For a remote SSH/device host, use this tool to inspect that host's shell history; shell_history is limited to the current desktop process OS user in a local scope.",
 	"read_file":       "Read a UTF-8 text file and record the content version for subsequent writes.",
 	"write_file":      "Create a new file atomically without overwriting existing files; overwriting an existing file requires user authorization, keeps a backup, and may overwrite external changes made after confirmation; before writing, the file must be read or confirmed to not exist.",
 	"list_dir":        "List directory contents, at most 500 entries.",
 	"search_files":    "Search by file name glob or file content regex, without going through the shell.",
 	"read_screen":     "Read the visible screen and screen sequence number of the terminal in the current scope; pass since_seq to read only new output after that sequence number, paged by max_bytes; optional tab_id selects a tab created by this task's terminal_create. Includes command state when the terminal supports OSC 133.",
-	"send_keys":       "Send keys to the terminal in the current scope; may include <enter> and <ctrl+c>; returns a screen sequence anchor; optional tab_id selects a tab created by this task's terminal_create. When wait_ms>0 and the terminal supports OSC 133, waits for the command to finish and returns the exit code and screen tail; otherwise returns right after sending and notes that the result is unverified.",
-	"wait_for":        "Wait for the last 30 lines of the current terminal to match a regex; pass since_seq to match only new output after that screen sequence anchor (old content cannot be matched by mistake). Can be canceled by the task.",
-	"shell_history":   "Read the shell history (zsh/bash/fish) of the local machine running NexTerm; returns the newest N entries (default 50, at most 500), redacted. Reads only the local machine and does not sync by default; remote sessions still read the local history and label it explicitly. Requires user confirmation.",
+	"send_keys":       "Send keys to the terminal in the current scope; may include <enter> and <ctrl+c>; returns a screen sequence anchor; optional tab_id selects a tab created by this task's terminal_create. With paste=true, keys are literal text wrapped in bracketed-paste markers when the terminal mode is on, and enter is a separate write; submitted_seq is the post-write output anchor and write_confirmed is only transport acknowledgment, not remote application acceptance. When wait_ms>0 and the terminal supports OSC 133, waits for the command to finish and returns the exit code and screen tail; otherwise returns right after sending and notes that the result is unverified.",
+	"wait_for":        "Wait for the last 30 lines of the current terminal to match a regex; optional tab_id selects a tab created by this task. Pass since_seq to match only new output after that screen sequence anchor. With quiet_ms>0, return only when the pattern also remains satisfied and the terminal has had no output for at least that many milliseconds; pattern may be omitted only for a quiet-only wait. Can be canceled by the task.",
+	"shell_history":   "Read only the shell history (zsh/bash/fish) of the OS user running the current NexTerm desktop process; available only in a desktop local scope or with no remote scope. Returns the newest N entries (default 50, at most 500), redacted. Requires user confirmation. For a remote SSH/device host, use exec_commands on that host instead; never use the desktop user's history as a substitute for remote history.",
 	"docker_ps":       "List Docker containers in the current session.",
 	"docker_logs":     "Read container logs and filter locally by substring.",
 	"docker_exec":     "Execute a command inside a container using sh -c.",
@@ -135,14 +141,14 @@ var einoDescriptions = map[string]string{
 	"db_describe":     "Read MySQL table fields and indexes.",
 	"db_query":        "Execute SQL; write operations must go through permission confirmation.",
 	"redis_scan":      "Run one Redis SCAN starting from cursor 0.",
-	"list_assets":     "List available connection assets.",
+	"list_assets":     "List available connection assets with asset_id and tags for terminal_create and exec_commands targeting.",
 	"ask_user":        "Pause the agent and wait for the user to answer the question.",
 	"edit_file":       "Replace text exactly and keep a backup; existing files are overwritten non-transactionally with user authorization and may overwrite external changes made after confirmation; the file must be read before writing.",
 	"todo_write":      "Replace the full todo list of the current task.",
 	"exit_plan_mode":  "Submit the plan for user review; the plan is not executed automatically.",
 	ReminderTool:      "Create a one-shot reminder (requires user confirmation); when the time comes, the message is delivered to the current conversation; message is the reminder content, and the time is specified by either delay_minutes or at (RFC3339).",
 	NotifyTool:        "Send the user an in-app notification, for long-task completion or matters needing the user's immediate attention; message is the notification content (no more than 200 characters); the content must also be written into the current reply body, because the popup may be missed.",
-	"terminal_create": "Create a new terminal tab in the current session (starts a new shell, requires user confirmation); optional title sets the tab title, optional command is the startup command (supported only by ssh/docker/local/device sessions; it is written verbatim to the new shell's standard input, and when it contains newlines it runs as multiple commands in sequence; unsupported kinds such as winrm are rejected, in which case create the tab first and then send the command with send_keys passing tab_id). Returns the new tab's tab_id; by default the tab is shown in the foreground of the user's workspace, the AI works in it, and the user can take over input at any time; with background=true the tab is created detached in the background instead, and the user can take over in 「后台会话」 (Background Sessions). Either way, send_keys/read_screen with tab_id can later operate the tabs created by this task.",
+	"terminal_create": "Create a new terminal tab in the current session or on optional asset_id (an owner-checked, supported, live session; never auto-connects). Starts a new shell and requires user confirmation; optional title sets the tab title, optional command is the startup command (supported only by ssh/docker/local/device sessions; it is written verbatim to the new shell's standard input, and when it contains newlines it runs as multiple commands in sequence; unsupported kinds such as winrm are rejected, in which case create the tab first and then send the command with send_keys passing tab_id). Returns the new tab's tab_id; by default the tab is shown in the foreground of the user's workspace, the AI works in it, and the user can take over input at any time; with background=true the tab is created detached in the background instead, and the user can take over in 「后台会话」 (Background Sessions). Either way, send_keys/read_screen/wait_for with tab_id can later operate tabs created by this task, including tabs on another owner-checked session.",
 	"terminal_rename": "Rename the terminal tab in the current scope; title is the new title (required), tab_id defaults to the current tab. Custom titles are not overwritten by remote title sequences and are preserved after background session reconnection.",
 }
 
@@ -304,8 +310,10 @@ type InteractionState struct {
 	TerminalCursor int
 	Info           Interaction
 
-	AuthorizationID string
-	Resource        guard.Resource
+	AuthorizationID     string
+	Resource            guard.Resource
+	IsolatedTarget      bool
+	ProductionChallenge *ExecBatchProductionChallenge
 }
 
 func init() {
@@ -451,7 +459,9 @@ func (e *Execution) enabled(name string) bool {
 	}
 	deps := e.Registry.deps
 	switch name {
-	case "exec_commands", "read_file", "write_file", "list_dir", "search_files", "edit_file":
+	case "exec_commands":
+		return e.Scope.SessionID != "" && (deps.Transport != nil || deps.ExecBatch != nil && deps.ResolveExecTargets != nil)
+	case "read_file", "write_file", "list_dir", "search_files", "edit_file":
 		return deps.Transport != nil && e.Scope.SessionID != ""
 	case "read_screen", "send_keys", "wait_for":
 		return deps.Terminal != nil && e.Scope.TabID != ""
@@ -465,7 +475,7 @@ func (e *Execution) enabled(name string) bool {
 		_, ok := deps.Terminal.(CreateTerminal)
 		return ok
 	case "shell_history":
-		return true
+		return e.Registry.shellHistoryScopeError(context.Background(), e.Scope) == nil
 	case "docker_ps":
 		return deps.DockerPS != nil && e.Scope.SessionID != ""
 	case "docker_logs":
@@ -680,6 +690,12 @@ func (e *Execution) runInner(ctx context.Context, name string, input any) (Outpu
 		if data != "allow" && data != "allow_session" && data != "allow_persistent" {
 			return Fail(errors.New("确认结果无效，操作未执行")), nil
 		}
+		if state.ProductionChallenge != nil && data != "allow" {
+			return Fail(errors.New("生产环境多主机执行只允许本次确认，操作未执行")), nil
+		}
+		if state.IsolatedTarget && data == "allow_persistent" {
+			return Fail(errors.New("跨资产操作不能使用当前主机的永久授权，请仅本次确认")), nil
+		}
 		if call.Name == "send_keys" {
 			var input SendKeysArgs
 			if err := json.Unmarshal(call.Args, &input); err != nil {
@@ -716,6 +732,11 @@ func (e *Execution) runInner(ctx context.Context, name string, input any) (Outpu
 			}
 		}
 		call.AuthorizationID = state.AuthorizationID
+		if state.ProductionChallenge != nil {
+			call.OriginID = state.Info.CallID
+			call.ID += ":production"
+			call.ProductionConfirmations = append(call.ProductionConfirmations, state.ProductionChallenge.Confirmations...)
+		}
 		if call.Name == ReminderTool {
 			return e.executeReminder(ctx, call), nil
 		}
@@ -736,9 +757,25 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 	}
 	terminalInput := ""
 	cursor := 0
+	isolatedTarget := false
 	ruling := guard.ClassifyTool(call.Name, call.Args, e.Permission)
 	if call.Name == "shell_history" {
+		if err := e.Registry.shellHistoryScopeError(ctx, e.Scope); err != nil {
+			return Fail(err), nil
+		}
 		ruling = guard.Confirm(shellHistoryKind, "读取本机 shell 历史文件（历史常包含敏感命令，需要确认）")
+	}
+	if call.Name == "terminal_create" {
+		var input TerminalCreateArgs
+		if json.Unmarshal(call.Args, &input) == nil {
+			isolatedTarget = input.AssetID != ""
+		}
+	}
+	if call.Name == "exec_commands" {
+		var input ExecCommandsArgs
+		if json.Unmarshal(call.Args, &input) == nil {
+			isolatedTarget = len(input.AssetIDs) > 0 || len(input.Tags) > 0
+		}
 	}
 	if call.Name == "send_keys" {
 		var input SendKeysArgs
@@ -748,6 +785,13 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 		tabID, err := e.Registry.resolveTab(ctx, e.JobID, e.Scope, input.TabID)
 		if err != nil {
 			return Fail(err), nil
+		}
+		if input.TabID != "" && input.TabID != e.Scope.TabID {
+			sessionID, err := e.Registry.tabSession(ctx, tabID)
+			if err != nil {
+				return Fail(err), nil
+			}
+			isolatedTarget = sessionID != e.Scope.SessionID
 		}
 		screen, err := e.Registry.deps.Terminal.Snapshot(ctx, tabID)
 		if err != nil {
@@ -764,6 +808,17 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 	decision := e.decide(ctx, call, ruling, memory)
 	if forcedConfirm && decision.Action == guard.ActionAllow {
 		decision.Action = guard.ActionAsk
+	}
+	if isolatedTarget && ruling.Risk != guard.Safe && ruling.Risk != guard.Forbidden {
+		reason := "跨资产或多主机操作需要针对本次目标确认，不能沿用当前主机授权"
+		if e.Permission.Mode == guard.ReadOnly || e.Permission.Mode == guard.Unattended {
+			decision.Action = guard.ActionDeny
+		} else {
+			decision.Action = guard.ActionAsk
+		}
+		ruling.Reason = reason
+		decision.Ruling.Reason = reason
+		decision.Reason = reason
 	}
 	if decision.Action == guard.ActionDeny {
 		return Fail(errors.New("权限策略已拒绝: " + decision.Ruling.Reason)), nil
@@ -788,8 +843,8 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 				}
 			}
 		}
-		state := InteractionState{Kind: "confirm", CallID: call.ID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), TerminalInput: terminalInput, TerminalCursor: cursor, Info: info, AuthorizationID: GuardAuthorizationID(decision), Resource: resource}
-		if forcedConfirm {
+		state := InteractionState{Kind: "confirm", CallID: call.ID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), TerminalInput: terminalInput, TerminalCursor: cursor, Info: info, AuthorizationID: GuardAuthorizationID(decision), Resource: resource, IsolatedTarget: isolatedTarget}
+		if forcedConfirm || isolatedTarget {
 			state.MemoryKind = ""
 			state.MemoryKinds = nil
 		}
@@ -800,6 +855,28 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 		return e.executeReminder(ctx, call), nil
 	}
 	result := e.Registry.Execute(ctx, e.JobID, e.Scope, call, preparation)
+	if challenge := result.ProductionChallenge; challenge != nil {
+		if e.Permission.Mode == guard.Unattended {
+			return Fail(errors.New("生产环境多主机执行需要用户确认，无人值守运行禁止此操作")), nil
+		}
+		targets := make([]string, 0, len(challenge.Detail.ProductionTargets))
+		for _, target := range challenge.Detail.ProductionTargets {
+			targets = append(targets, target.SessionName+" ("+target.Environment+")")
+		}
+		reason := result.Text
+		if len(targets) > 0 {
+			reason += "；生产目标：" + strings.Join(targets, ", ")
+		}
+		info := Interaction{Kind: "confirm", CallID: call.ID, Tool: call.Name, Args: string(call.Args), Risk: guard.Danger.String(), Rendered: DisplayCall(call), Reason: reason}
+		if call.Name == "exec_commands" {
+			var input ExecCommandsArgs
+			if json.Unmarshal(call.Args, &input) == nil {
+				info.Commands = input.Commands
+			}
+		}
+		state := InteractionState{Kind: "confirm", CallID: call.ID, Info: info, AuthorizationID: call.AuthorizationID, Resource: resourceForCall(call), IsolatedTarget: true, ProductionChallenge: challenge}
+		return Output{}, tool.StatefulInterrupt(ctx, info, state)
+	}
 	if result.Question != nil {
 		info := Interaction{Kind: "question", CallID: call.ID, Tool: call.Name, Args: string(call.Args), Question: result.Question}
 		state := InteractionState{Kind: "question", CallID: call.ID, Info: info}

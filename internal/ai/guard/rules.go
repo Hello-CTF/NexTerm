@@ -1,13 +1,23 @@
 package guard
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 // GrantRulesSettingKey persists path-level grant rules; it shares the settings storage with device-level grants, so no migration is needed.
 const GrantRulesSettingKey = "ai.grant_rules"
+
+func GrantRulesSettingKeyForUser(ctx context.Context) string {
+	if userID, ok := ipc.UserIDFromContext(ctx); ok {
+		return GrantRulesSettingKey + ".user." + userID
+	}
+	return GrantRulesSettingKey
+}
 
 // Resource describes the action and primary path of a call awaiting authorization, for path-level rule matching.
 type Resource struct {

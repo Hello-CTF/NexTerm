@@ -143,7 +143,7 @@ func TestAllowPersistentWriteFileCreatesRuleAndCovers(t *testing.T) {
 	if len(confirmations) != 2 {
 		t.Fatalf("confirmations = %d, want 2 (second write must be covered by the rule)", len(confirmations))
 	}
-	rules := grants.Rules()
+	rules := mustAgentRules(t, grants)
 	if len(rules) != 1 || rules[0].Action != "write_file" || rules[0].DeviceID != "asset-a" || rules[0].Path != guard.DirPattern(inside) {
 		t.Fatalf("rules = %+v", rules)
 	}
@@ -178,7 +178,7 @@ func TestAllowPersistentRejectedForDanger(t *testing.T) {
 	if result.OK || !strings.Contains(result.Text, "不支持永久授权") {
 		t.Fatalf("result = %+v", result)
 	}
-	if rules := grants.Rules(); len(rules) != 0 {
+	if rules := mustAgentRules(t, grants); len(rules) != 0 {
 		t.Fatalf("danger ruling created a rule: %+v", rules)
 	}
 }
@@ -210,7 +210,7 @@ func TestAllowPersistentFailsClosedWithoutDeviceIdentity(t *testing.T) {
 	if result.OK || !strings.Contains(result.Text, "无法确定设备身份") {
 		t.Fatalf("result = %+v", result)
 	}
-	if rules := grants.Rules(); len(rules) != 0 {
+	if rules := mustAgentRules(t, grants); len(rules) != 0 {
 		t.Fatalf("rule created without device identity: %+v", rules)
 	}
 }

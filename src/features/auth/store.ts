@@ -30,6 +30,12 @@ import { DESKTOP, WEB } from "../../ipc/env";
 import { currentAuthSessionEpoch } from "../../ipc/authSessionEpoch";
 import { createHttpPreferenceStore, registerAccountPreferenceStore } from "../../app/preferences";
 import type { AppError } from "../../ipc/commands";
+import {
+  cleanupDeviceSessions,
+  deviceSessionCleanupMessage,
+  reportDeviceSessionCleanup,
+  type DeviceSessionCleanupFailure,
+} from "../fleet/deviceSessionCleanup";
 
 // syncPreferenceStore registers the account preference store (M140 /auth/preferences) after login/refresh, and unregisters on logout.
 function syncPreferenceStore(loggedIn: boolean): void {
@@ -69,13 +75,15 @@ interface AuthState {
    */
   mfaEnrollmentPassword: string | null;
   error: AppError | null;
+  /** Device cleanup evidence retained across account transitions; login error resets do not clear it. */
+  cleanupError: AppError | null;
 
   refresh: () => Promise<void>;
   login: (username: string, password: string, deviceId?: string) => Promise<void>;
   verifyMfa: (code: string) => Promise<void>;
   cancelMfa: () => void;
   finishMfaEnrollment: () => Promise<void>;
-  logout: () => Promise<void>;
+  logout: (options?: { all?: boolean }) => Promise<void>;
   initSuperadmin: (code: string, username: string, password: string) => Promise<void>;
   register: (username: string, password: string, displayName: string) => Promise<void>;
   completeResetRequired: (tempPassword: string, newPassword: string) => Promise<void>;
@@ -85,6 +93,7 @@ interface AuthState {
   lockDEK: () => void;
   clearPendingRecoveryKey: () => void;
   clearError: () => void;
+  clearCleanupError: () => void;
 }
 
 function zeroize(data: Uint8Array | null): void {
@@ -129,9 +138,30 @@ function isNotFoundError(e: unknown): boolean {
   return false;
 }
 
+function isAccountChangedError(e: unknown): boolean {
+  return e instanceof AuthApiError && e.code === "account_changed";
+}
+
 function toAppError(e: unknown): AppError {
   if (e && typeof e === "object" && "code" in e) return e as AppError;
   return { code: "internal", message: e instanceof Error ? e.message : String(e) };
+}
+
+function logoutFailure(cleanupFailures: DeviceSessionCleanupFailure[], revocationError: unknown): AppError | null {
+  const cleanupMessage = cleanupFailures.length > 0 ? deviceSessionCleanupMessage(cleanupFailures) : "";
+  if (revocationError) {
+    return {
+      code: "logout_failed",
+      message: `本地已退出登录，但服务端退出请求失败：${toAppError(revocationError).message}${cleanupMessage ? `；${cleanupMessage}` : ""}`,
+    };
+  }
+  if (cleanupMessage) {
+    return {
+      code: "cleanup_failed",
+      message: `已退出登录；${cleanupMessage}。服务端已收到退出请求，并按原会话触发补充清理。`,
+    };
+  }
+  return null;
 }
 
 /** Build the full five-part envelope set from a password and (optional) given DEK; generates a fresh DEK when omitted. */
@@ -211,6 +241,7 @@ export const useAuth = create<AuthState>((set, get) => ({
   pendingMfa: null,
   mfaEnrollmentPassword: null,
   error: null,
+  cleanupError: null,
 
   refresh: async () => {
     if (!WEB) {
@@ -246,7 +277,8 @@ export const useAuth = create<AuthState>((set, get) => ({
           set({ gate: "ready", ...(savedDek ? { dek: savedDek } : {}) });
         }
         syncPreferenceStore(true);
-      } catch {
+      } catch (e) {
+        if (isAccountChangedError(e)) return;
         // Platform-hosted mode (Lazycat): the gateway has already authenticated via the platform; exchange the "platform owner" session here.
         // Users see neither login nor the init code - opening the app means being the owner.
         if (status.auth === "platform") {
@@ -260,7 +292,8 @@ export const useAuth = create<AuthState>((set, get) => ({
             });
             syncPreferenceStore(true);
             return;
-          } catch {
+          } catch (e) {
+            if (isAccountChangedError(e)) return;
             // Gateway header missing etc. (e.g. direct port access instead of the platform entry): fall back to anonymous availability; the account card explains why.
           }
         }
@@ -269,6 +302,7 @@ export const useAuth = create<AuthState>((set, get) => ({
         syncPreferenceStore(false);
       }
     } catch (e) {
+      if (isAccountChangedError(e)) return;
       // With auth=off, /auth/status is also 403'd by accountGuard (the message text is a server contract);
       // normalize to the auth=off state so the UI shows "account features disabled" instead of a dead login entry.
       if (e instanceof AuthApiError && e.status === 403 && e.message.includes("--auth=off")) {
@@ -281,14 +315,19 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
 
   login: async (username, password, deviceId) => {
+    if (get().user) await get().logout();
     set({ error: null });
     try {
       const result = await authApi.login(username, password, deviceId);
       if (isMfaChallenge(result)) {
-        set({ pendingMfa: { ticket: result.ticket, username, password, ...(deviceId ? { deviceId } : {}) } });
+        set({
+          pendingMfa: { ticket: result.ticket, username, password, ...(deviceId ? { deviceId } : {}) },
+          error: get().cleanupError,
+        });
         return;
       }
       await finishPasswordLogin(set, result, password);
+      set({ error: get().cleanupError });
     } catch (e) {
       set({ error: toAppError(e) });
       throw e;
@@ -303,7 +342,7 @@ export const useAuth = create<AuthState>((set, get) => ({
     try {
       const session = await authApi.totpLogin(pending.ticket, code);
       await finishPasswordLogin(set, session, pending.password);
-      set({ pendingMfa: null });
+      set({ pendingMfa: null, error: get().cleanupError });
     } catch (e) {
       set({ error: toAppError(e) });
       throw e;
@@ -325,24 +364,42 @@ export const useAuth = create<AuthState>((set, get) => ({
         set({ user: session.user, gate: "ready" });
         syncPreferenceStore(true);
       }
-      set({ mfaEnrollmentPassword: null });
+      set({ mfaEnrollmentPassword: null, error: get().cleanupError });
     } catch (e) {
       set({ error: toAppError(e) });
       throw e;
     }
   },
 
-  logout: async () => {
-    try {
-      await authApi.logout();
-    } catch {
-      // The session may already be invalid; local state is cleared regardless
-    }
+  logout: async (options) => {
+    const logoutEpoch = currentAuthSessionEpoch();
     const logoutUserId = get().user?.id;
+    const logoutDek = get().dek;
+    const cleanupFailures = WEB ? await cleanupDeviceSessions() : [];
+    if (currentAuthSessionEpoch() !== logoutEpoch) return;
+    let revocationError: unknown = null;
+    try {
+      if (options?.all) await authApi.logoutAll();
+      else await authApi.logout();
+    } catch (e) {
+      revocationError = e;
+    }
+    if (currentAuthSessionEpoch() !== logoutEpoch) return;
     if (logoutUserId) clearPersistedDek(logoutUserId);
-    zeroize(get().dek);
+    zeroize(logoutDek);
     setCsrfToken(null);
-    set({ user: null, dek: null, gate: get().status?.auth === "on" ? "login" : "ready", pendingRecoveryKey: null, pendingMfa: null, mfaEnrollmentPassword: null });
+    const error = logoutFailure(cleanupFailures, revocationError);
+    set({
+      user: null,
+      dek: null,
+      gate: get().status?.auth === "on" ? "login" : "ready",
+      pendingRecoveryKey: null,
+      pendingMfa: null,
+      mfaEnrollmentPassword: null,
+      error,
+      cleanupError: cleanupFailures.length > 0 ? error : null,
+    });
+    reportDeviceSessionCleanup(cleanupFailures);
     syncPreferenceStore(false);
   },
 
@@ -470,6 +527,10 @@ export const useAuth = create<AuthState>((set, get) => ({
 
   clearPendingRecoveryKey: () => set({ pendingRecoveryKey: null }),
   clearError: () => set({ error: null }),
+  clearCleanupError: () => {
+    const cleanupError = get().cleanupError;
+    set({ cleanupError: null, ...(get().error === cleanupError ? { error: null } : {}) });
+  },
 }));
 
 // On session expiry (401), notify the gate to re-login; mounted and listened to by AuthGate in main.tsx.
@@ -491,7 +552,7 @@ if (typeof window !== "undefined") {
       pendingRecoveryKey: null,
       pendingMfa: null,
       mfaEnrollmentPassword: null,
-      error: null,
+      error: state.cleanupError,
     });
     syncPreferenceStore(true);
   });

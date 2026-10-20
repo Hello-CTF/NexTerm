@@ -84,21 +84,31 @@ export function useDesktopAutoSync() {
   useEffect(() => {
     if (WEB) return;
     let disposed = false;
-    let unlisten: (() => void) | undefined;
+    const unlisten: (() => void)[] = [];
+    const refreshHealth = () => {
+      if (disposed) return;
+      void qc.invalidateQueries({ queryKey: ["sync-status"] });
+      void qc.invalidateQueries({ queryKey: ["sync-link"] });
+    };
     const wake = () => {
       if (disposed) return;
       useUi.getState().bumpModelProfilesRevision();
       registerAccountPreferenceStore(createHttpPreferenceStore());
       invalidateSyncedViews(qc);
+      refreshHealth();
       void syncApi.wake().catch(() => undefined);
     };
-    void listenEvent("sync://status", wake).then((off) => {
-      if (disposed) off();
-      else unlisten = off;
-    });
+    const subscribe = (topic: string, handler: () => void) => {
+      void listenEvent(topic, handler).then((off) => {
+        if (disposed) off();
+        else unlisten.push(off);
+      }).catch(() => undefined);
+    };
+    subscribe("sync://status", wake);
+    subscribe("sync://round-complete", refreshHealth);
     return () => {
       disposed = true;
-      unlisten?.();
+      for (const off of unlisten) off();
     };
   }, [qc]);
 }

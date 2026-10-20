@@ -21,7 +21,7 @@ func WithStore(deps Dependencies, storage *store.Store, database Database) Depen
 		}
 		assets := make([]Asset, len(rows))
 		for i, row := range rows {
-			asset := Asset{ID: row.ID, Name: row.Name, Kind: row.Kind}
+			asset := Asset{ID: row.ID, Name: row.Name, Kind: row.Kind, Tags: row.Tags}
 			if row.Host != nil {
 				asset.Host = *row.Host
 			}

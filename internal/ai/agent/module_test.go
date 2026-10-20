@@ -255,13 +255,19 @@ func TestJobCancelWithoutIdentityRequiresExplicitOpenAccess(t *testing.T) {
 				t.Fatal(err)
 			}
 			stream := &SliceStream{}
-			started, err := runner.Start(context.Background(), ChatArgs{Message: "go"}, StaticStream(stream))
-			if err != nil {
-				t.Fatal(err)
-			}
 			ctx := context.Background()
 			if test.open {
 				ctx = WithOpenAccess(ctx)
+			}
+			started, err := runner.Start(ctx, ChatArgs{Message: "go"}, StaticStream(stream))
+			if test.serverMode && !test.allowed {
+				if err == nil {
+					t.Fatal("server accepted an unknown identity")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
 			}
 			response := dispatcher.Dispatch(ctx, ipc.Request{Command: "ai_cancel", Args: json.RawMessage(`{"jobId":"` + started.JobID + `"}`)}, ipc.Environment{})
 			if response.OK != test.allowed {

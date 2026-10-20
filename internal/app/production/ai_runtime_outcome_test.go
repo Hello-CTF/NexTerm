@@ -90,7 +90,12 @@ func (s *outcomeScriptServer) ServeHTTP(writer http.ResponseWriter, request *htt
 
 func composeOutcomeRuntime(t *testing.T, command string) (*ProductionServices, *store.Store, *outcomeFakeTransport, string) {
 	t.Helper()
-	ctx := context.Background()
+	services, database, transport, sessionID, _ := composeOutcomeRuntimeContext(t, command, context.Background(), true)
+	return services, database, transport, sessionID
+}
+
+func composeOutcomeRuntimeContext(t *testing.T, command string, ctx context.Context, desktop bool) (*ProductionServices, *store.Store, *outcomeFakeTransport, string, context.Context) {
+	t.Helper()
 	database, err := store.OpenInMemory(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +105,7 @@ func composeOutcomeRuntime(t *testing.T, command string) (*ProductionServices, *
 		t.Fatal(err)
 	}
 	initTestVault(t, ctx, database)
-	profileManager, err := profiles.NewManager(ctx, database)
+	profileManager, err := profiles.NewManager(ctx, database, profiles.WithShared(desktop))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +130,7 @@ func composeOutcomeRuntime(t *testing.T, command string) (*ProductionServices, *
 		t.Fatal(err)
 	}
 
-	services := &ProductionServices{Store: database, Profiles: profileManager, Sessions: sessions}
+	services := &ProductionServices{Store: database, Profiles: profileManager, Sessions: sessions, desktop: desktop}
 	if err := composeAIRuntime(ctx, services); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +139,7 @@ func composeOutcomeRuntime(t *testing.T, command string) (*ProductionServices, *
 		_ = sessions.Close()
 		_ = database.Close()
 	})
-	return services, database, transport, connected.ID
+	return services, database, transport, connected.ID, ctx
 }
 
 func waitOutcomeEvent(t *testing.T, stream *agent.SliceStream, eventType string) agent.Event {
@@ -148,7 +153,7 @@ func waitOutcomeEvent(t *testing.T, stream *agent.SliceStream, eventType string)
 			}
 		}
 		if closed {
-			t.Fatalf("stream closed before event %q", eventType)
+			t.Fatalf("stream closed before event %q: %+v", eventType, events)
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for event %q", eventType)

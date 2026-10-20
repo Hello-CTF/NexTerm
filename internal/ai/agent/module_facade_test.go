@@ -38,7 +38,7 @@ func TestR1ConfigFacadesUseWrappersWithoutZeroingState(t *testing.T) {
 	if !response.OK {
 		t.Fatalf("set permission failed: %+v", response.Error)
 	}
-	config := permissions.Get()
+	config := mustAgentPermission(t, permissions)
 	if config.Mode != guard.ReadOnly || len(config.DangerRules) != 1 || config.DangerRules[0] != "blocked" {
 		t.Fatalf("permission config = %+v", config)
 	}
@@ -46,7 +46,7 @@ func TestR1ConfigFacadesUseWrappersWithoutZeroingState(t *testing.T) {
 	if response.OK {
 		t.Fatal("missing permission config accepted")
 	}
-	if unchanged := permissions.Get(); unchanged.Mode != config.Mode || len(unchanged.DangerRules) != 1 {
+	if unchanged := mustAgentPermission(t, permissions); unchanged.Mode != config.Mode || len(unchanged.DangerRules) != 1 {
 		t.Fatalf("missing config zeroed permissions: %+v", unchanged)
 	}
 }

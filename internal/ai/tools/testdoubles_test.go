@@ -10,6 +10,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/db"
 	"github.com/Hello-CTF/NexTerm/internal/fs/conditional"
+	"github.com/Hello-CTF/NexTerm/internal/terminal"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -202,6 +203,17 @@ func (f *fakeTerminal) Write(_ context.Context, _ string, data []byte) error {
 		hook()
 	}
 	return nil
+}
+
+func (f *fakeTerminal) WritePaste(ctx context.Context, tabID, text string) error {
+	f.mu.Lock()
+	bracketed := f.screen.BracketedPaste
+	f.mu.Unlock()
+	return f.Write(ctx, tabID, terminal.EncodePaste(text, bracketed))
+}
+
+func (f *fakeTerminal) WaitSnapshot(ctx context.Context, tabID string) (Screen, error) {
+	return f.Snapshot(ctx, tabID)
 }
 func (f *fakeTerminal) CommandState(context.Context, string) (CommandState, error) {
 	f.mu.Lock()

@@ -19,19 +19,24 @@ type AgentRunner interface {
 type AgentExecutor struct {
 	Runner AgentRunner
 
-	ScopeFor func(Trigger) (tools.Scope, error)
+	ScopeFor             func(context.Context, Trigger) (tools.Scope, error)
+	AllowOwnerlessLegacy bool
 }
 
 var _ Executor = (*AgentExecutor)(nil)
 
 func (e *AgentExecutor) Execute(ctx context.Context, trigger Trigger) error {
+	if err := ownerExecutionError(trigger.OwnerID, trigger.OwnerKind, e.AllowOwnerlessLegacy); err != nil {
+		return err
+	}
+	ctx = contextWithOwner(ctx, trigger.OwnerID, trigger.OwnerKind)
 	if e.Runner == nil {
 		return errors.New("cron: agent executor has no runner")
 	}
 	stream := newTerminalStream()
 	args := agent.ChatArgs{ConversationID: trigger.SessionID, Message: trigger.Prompt, Source: "cron", ModelProfileID: trigger.ModelProfileID}
 	if e.ScopeFor != nil {
-		scope, err := e.ScopeFor(trigger)
+		scope, err := e.ScopeFor(ctx, trigger)
 		if err != nil {
 			return fmt.Errorf("无法查询会话的终端范围，本次定时运行已终止，请确认会话仍然存在后重试: %w", err)
 		}
@@ -44,12 +49,11 @@ func (e *AgentExecutor) Execute(ctx context.Context, trigger Trigger) error {
 	for {
 		select {
 		case <-ctx.Done():
-
 			_ = e.Runner.Cancel(response.JobID)
-			return ctx.Err()
+			return errors.Join(ctx.Err(), e.waitRun(ctx, response.JobID, stream))
 		case <-stream.signal:
 			if event, closed := stream.outcome(); event != nil {
-				return e.terminalError(response.JobID, *event)
+				return e.terminalError(ctx, response.JobID, *event, stream)
 			} else if closed {
 				return fmt.Errorf("cron: agent run %s ended without a terminal event", response.JobID)
 			}
@@ -57,7 +61,17 @@ func (e *AgentExecutor) Execute(ctx context.Context, trigger Trigger) error {
 	}
 }
 
-func (e *AgentExecutor) terminalError(jobID string, event agent.Event) error {
+func (e *AgentExecutor) waitRun(ctx context.Context, jobID string, stream *terminalStream) error {
+	if waiter, ok := e.Runner.(interface {
+		Wait(context.Context, string) error
+	}); ok {
+		return waiter.Wait(context.WithoutCancel(ctx), jobID)
+	}
+	<-stream.done
+	return nil
+}
+
+func (e *AgentExecutor) terminalError(ctx context.Context, jobID string, event agent.Event, stream *terminalStream) error {
 	switch event.Type {
 	case "done":
 		return nil
@@ -67,21 +81,22 @@ func (e *AgentExecutor) terminalError(jobID string, event agent.Event) error {
 		}
 		return fmt.Errorf("cron: agent run %s failed: %s", jobID, event.Message)
 	default:
-
 		_ = e.Runner.Cancel(jobID)
-		return fmt.Errorf("cron: unattended agent run %s stopped at %s for tool %q: %s", jobID, event.Type, event.Tool, event.Reason)
+		return errors.Join(fmt.Errorf("cron: unattended agent run %s stopped at %s for tool %q: %s", jobID, event.Type, event.Tool, event.Reason), e.waitRun(ctx, jobID, stream))
 	}
 }
 
 type terminalStream struct {
-	mu       sync.Mutex
-	terminal *agent.Event
-	closed   bool
-	signal   chan struct{}
+	mu        sync.Mutex
+	terminal  *agent.Event
+	closed    bool
+	signal    chan struct{}
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 func newTerminalStream() *terminalStream {
-	return &terminalStream{signal: make(chan struct{}, 1)}
+	return &terminalStream{signal: make(chan struct{}, 1), done: make(chan struct{})}
 }
 
 func (s *terminalStream) Send(_ context.Context, event agent.Event) error {
@@ -105,6 +120,7 @@ func (s *terminalStream) Close() error {
 	s.mu.Lock()
 	s.closed = true
 	s.mu.Unlock()
+	s.closeOnce.Do(func() { close(s.done) })
 	select {
 	case s.signal <- struct{}{}:
 	default:

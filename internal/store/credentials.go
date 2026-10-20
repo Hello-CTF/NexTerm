@@ -13,6 +13,14 @@ import (
 const CipherAES256GCM = "aes256gcm-v1"
 
 func (s *Store) CredentialPut(ctx context.Context, input CredentialInput) (string, error) {
+	return s.credentialPut(ctx, s.db, input)
+}
+
+func (s *Store) CredentialPutTx(ctx context.Context, tx *gorm.DB, input CredentialInput) (string, error) {
+	return s.credentialPut(ctx, tx, input)
+}
+
+func (s *Store) credentialPut(ctx context.Context, db *gorm.DB, input CredentialInput) (string, error) {
 	id := input.ID
 	if id == "" {
 		id = ids.New()
@@ -22,14 +30,58 @@ func (s *Store) CredentialPut(ctx context.Context, input CredentialInput) (strin
 		ID: id, Name: input.Name, Kind: input.Kind, Cipher: CipherAES256GCM, Nonce: input.Nonce, Blob: input.Blob,
 		KEKHint: input.KEKHint, CreatedAt: now, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx),
 	}
-	if err := s.upsert(ctx, &row, []string{"name", "kind", "cipher", "nonce", "blob", "kek_hint", "updated_at"}); err != nil {
+	if err := s.upsertWithDB(ctx, db, &row, []string{"name", "kind", "cipher", "nonce", "blob", "kek_hint", "updated_at"}); err != nil {
 		return "", err
 	}
 	return id, nil
 }
 
+func (s *Store) CredentialCreateTx(ctx context.Context, tx *gorm.DB, input CredentialInput) (string, error) {
+	id := input.ID
+	if id == "" {
+		id = ids.New()
+	}
+	now := ids.NowMS()
+	row := CredentialRow{
+		ID: id, Name: input.Name, Kind: input.Kind, Cipher: CipherAES256GCM, Nonce: input.Nonce, Blob: input.Blob,
+		KEKHint: input.KEKHint, CreatedAt: now, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx),
+	}
+	if err := query.Use(tx).CredentialRow.WithContext(ctx).Create(&row); err != nil {
+		return "", dbError(err)
+	}
+	return id, nil
+}
+
+func (s *Store) CredentialUpdateCAS(ctx context.Context, db *gorm.DB, id string, expectedUpdatedAt int64, input CredentialInput) error {
+	values := map[string]any{
+		"name": input.Name, "kind": input.Kind, "cipher": CipherAES256GCM,
+		"nonce": input.Nonce, "blob": input.Blob, "kek_hint": input.KEKHint,
+		"updated_at": nextWriteVersion(expectedUpdatedAt),
+	}
+	credential := query.Use(db).CredentialRow
+	info, err := credential.WithContext(ctx).
+		Where(credential.ID.Eq(id), credential.UpdatedAt.Eq(expectedUpdatedAt)).
+		Where(ownerConditions(ctx, credential.TableName())...).
+		UpdateColumns(values)
+	if err != nil {
+		return dbError(err)
+	}
+	if info.RowsAffected != 1 {
+		return ErrWriteConflict
+	}
+	return nil
+}
+
 func (s *Store) CredentialGetRow(ctx context.Context, id string) (CredentialRow, error) {
-	credential := query.Use(s.db).CredentialRow
+	return s.credentialGetRow(ctx, s.db, id)
+}
+
+func (s *Store) CredentialGetRowTx(ctx context.Context, tx *gorm.DB, id string) (CredentialRow, error) {
+	return s.credentialGetRow(ctx, tx, id)
+}
+
+func (s *Store) credentialGetRow(ctx context.Context, db *gorm.DB, id string) (CredentialRow, error) {
+	credential := query.Use(db).CredentialRow
 	row, err := credential.WithContext(ctx).
 		Where(credential.ID.Eq(id)).
 		Where(ownerConditions(ctx, credential.TableName())...).

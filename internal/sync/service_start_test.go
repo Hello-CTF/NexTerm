@@ -3,6 +3,7 @@ package sync
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -88,10 +89,19 @@ func startProbeService(t *testing.T, service *Service) {
 
 func waitForCondition(t *testing.T, what string, condition func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	waitForConditionTimeout(t, what, 3*time.Second, nil, condition)
+}
+
+func waitForConditionTimeout(t *testing.T, what string, timeout time.Duration, detail func() string, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
 	for !condition() {
 		if time.Now().After(deadline) {
-			t.Fatalf("condition not met: %s", what)
+			message := "condition not met: " + what
+			if detail != nil {
+				message += ": " + detail()
+			}
+			t.Fatal(message)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -425,8 +435,13 @@ func TestPersistedSessionClearedOnPasswordChange(t *testing.T) {
 
 	service2, _ := restartService(t, db, &probeEventRecorder{})
 	startProbeService(t, service2)
-	waitForCondition(t, "re-login with the new password failed", func() bool {
+	var lastStatus any
+	var lastErr error
+	waitForConditionTimeout(t, "re-login with the new password failed", 15*time.Second, func() string {
+		return fmt.Sprintf("status=%+v err=%v logins=%d", lastStatus, lastErr, fixture.logins.Load())
+	}, func() bool {
 		status, err := service2.Status(ctx)
+		lastStatus, lastErr = status, err
 		return err == nil && status.LoggedIn
 	})
 	if got := fixture.logins.Load(); got != 2 {

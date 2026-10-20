@@ -106,6 +106,9 @@ func (e *Engine) applyPlainObjects(ctx context.Context, request ApplyObjectsRequ
 		return ApplyObjectsResult{}, ipc.NewError(ipc.CodeBadParam,
 			fmt.Sprintf("单次应用对象数超过上限 %d", maxApplyObjectsPerCall))
 	}
+	if err := e.preflightAIObjects(ctx, request.Objects); err != nil {
+		return ApplyObjectsResult{}, err
+	}
 	result := ApplyObjectsResult{Objects: make([]ApplyObjectResult, len(request.Objects))}
 	for _, index := range applyObjectOrder(request.Objects) {
 		object := request.Objects[index]

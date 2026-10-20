@@ -1,9 +1,22 @@
 import { clientId } from "./env";
 
-const SERVICE_CALL = "main.Service.Call";
 const CHANNEL_TOPIC_PREFIX = "channel://";
+const DESKTOP_BINARY_TYPE = "nexterm.desktop-binary";
+
+function decodeChannelData(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null) return raw;
+  const payload = raw as { type?: unknown; data?: unknown };
+  if (payload.type !== DESKTOP_BINARY_TYPE || typeof payload.data !== "string") return raw;
+  const decoded = atob(payload.data);
+  const bytes = new Uint8Array(decoded.length);
+  for (let index = 0; index < decoded.length; index += 1) {
+    bytes[index] = decoded.charCodeAt(index);
+  }
+  return bytes;
+}
 
 type WailsRuntime = typeof import("@wailsio/runtime");
+type WailsService = typeof import("./bindings/github.com/Hello-CTF/NexTerm/cmd/nexterm-desktop/service");
 type Unlisten = () => void;
 
 interface WailsResponse {
@@ -13,10 +26,16 @@ interface WailsResponse {
 }
 
 let runtimePromise: Promise<WailsRuntime> | null = null;
+let bindingsPromise: Promise<WailsService> | null = null;
 
 function runtime(): Promise<WailsRuntime> {
   runtimePromise ??= import("@wailsio/runtime");
   return runtimePromise;
+}
+
+function bindings(): Promise<WailsService> {
+  bindingsPromise ??= import("./bindings/github.com/Hello-CTF/NexTerm/cmd/nexterm-desktop/service");
+  return bindingsPromise;
 }
 
 function request(cmd: string, args?: Record<string, unknown>) {
@@ -26,14 +45,14 @@ function request(cmd: string, args?: Record<string, unknown>) {
     cmd,
     args: body,
     ...(channel === undefined ? {} : { channel }),
-    ...(stableClientId === undefined ? {} : { clientId: stableClientId }),
+    ...(typeof stableClientId === "string" ? { clientId: stableClientId } : {}),
   };
 }
 
 export async function callDesktop<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   await Promise.all([...channels.values()].map((channel) => channel.ready));
-  const { Call } = await runtime();
-  const response = (await Call.ByName(SERVICE_CALL, request(cmd, args))) as WailsResponse | null;
+  const { Call } = await bindings();
+  const response = (await Call(request(cmd, args))) as WailsResponse | null;
   if (!response || response.ok !== true) {
     throw response?.error ?? { code: "internal", message: "Wails 返回了无效响应" };
   }
@@ -49,8 +68,8 @@ export async function listenWailsEvent<T>(
 }
 
 export async function consumeDeepLinks(): Promise<string[]> {
-  const { Call } = await runtime();
-  const links = (await Call.ByName("main.Service.ConsumeDeepLinks")) as string[] | null;
+  const { ConsumeDeepLinks } = await bindings();
+  const links = await ConsumeDeepLinks();
   return links ?? [];
 }
 
@@ -86,7 +105,7 @@ export class WailsChannel {
     const { Events } = await runtime();
     if (this.disposed) return;
     this.off = Events.On(`${CHANNEL_TOPIC_PREFIX}${this.id}`, (message) => {
-      if (!this.disposed) this.onmessage(message.data);
+      if (!this.disposed) this.onmessage(decodeChannelData(message.data));
     });
   }
 }

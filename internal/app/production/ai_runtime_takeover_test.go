@@ -168,7 +168,7 @@ func composeTakeoverRuntime(t *testing.T, database *store.Store, providerURL, as
 	if err != nil {
 		t.Fatal(err)
 	}
-	services := &ProductionServices{Store: database, Profiles: profileManager, Sessions: sessions}
+	services := &ProductionServices{Store: database, Profiles: profileManager, Sessions: sessions, desktop: true}
 	if err := composeAIRuntime(ctx, services); err != nil {
 		t.Fatal(err)
 	}

@@ -8,10 +8,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 const DeviceGrantsSettingKey = "ai.device_grants"
+
+func DeviceGrantsSettingKeyForUser(ctx context.Context) string {
+	if userID, ok := ipc.UserIDFromContext(ctx); ok {
+		return DeviceGrantsSettingKey + ".user." + userID
+	}
+	return DeviceGrantsSettingKey
+}
 
 type GrantKind string
 
@@ -83,56 +92,113 @@ type GrantAuditEvent struct {
 
 type GrantAuditor func(context.Context, GrantAuditEvent) error
 
-type Grants struct {
-	settings Settings
-	audit    GrantAuditor
-	now      func() time.Time
-	newID    func() string
-
-	mu     sync.RWMutex
+type grantState struct {
 	grants map[string]DeviceGrant
 	rules  []GrantRule
 }
 
-func NewGrants(ctx context.Context, settings Settings, audit GrantAuditor) (*Grants, error) {
-	manager := &Grants{settings: settings, audit: audit, now: time.Now, newID: ids.New, grants: make(map[string]DeviceGrant)}
-	if err := manager.load(ctx); err != nil {
-		return nil, err
+type Grants struct {
+	settings          Settings
+	audit             GrantAuditor
+	now               func() time.Time
+	newID             func() string
+	shared            bool
+	targetValidator   TargetValidator
+	mutationValidator MutationValidator
+
+	mu     sync.RWMutex
+	states map[string]*grantState
+}
+
+func NewGrants(ctx context.Context, settings Settings, audit GrantAuditor, opts ...Option) (*Grants, error) {
+	configuration := options{shared: true}
+	for _, apply := range opts {
+		apply(&configuration)
+	}
+	manager := &Grants{
+		settings: settings, audit: audit, now: time.Now, newID: ids.New, shared: configuration.shared,
+		targetValidator: configuration.targetValidator, mutationValidator: configuration.mutationValidator, states: map[string]*grantState{},
+	}
+	if _, err := owner.ID(ctx, manager.shared); err == nil {
+		if err := manager.Reload(ctx); err != nil {
+			return nil, err
+		}
 	}
 	return manager, nil
 }
 
-func (g *Grants) load(ctx context.Context) error {
-	raw, found, err := g.settings.SettingGet(ctx, DeviceGrantsSettingKey)
+func loadGrants(ctx context.Context, settings Settings) (grantState, error) {
+	result := grantState{grants: make(map[string]DeviceGrant)}
+	raw, found, err := settings.SettingGet(ctx, DeviceGrantsSettingKeyForUser(ctx))
+	if err != nil {
+		return grantState{}, err
+	}
+	if found && raw != "" {
+		if err := json.Unmarshal([]byte(raw), &result.grants); err != nil {
+			return grantState{}, err
+		}
+	}
+	raw, found, err = settings.SettingGet(ctx, GrantRulesSettingKeyForUser(ctx))
+	if err != nil {
+		return grantState{}, err
+	}
+	if found && raw != "" {
+		if err := json.Unmarshal([]byte(raw), &result.rules); err != nil {
+			return grantState{}, err
+		}
+	}
+	return result, nil
+}
+
+func (g *Grants) stateFor(ctx context.Context) (*grantState, error) {
+	ownerID, err := owner.ID(ctx, g.shared)
+	if err != nil {
+		return nil, err
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.stateForLocked(ctx, ownerID)
+}
+
+func (g *Grants) stateForLocked(ctx context.Context, ownerID string) (*grantState, error) {
+	if entry, ok := g.states[ownerID]; ok {
+		return entry, nil
+	}
+	entry, err := loadGrants(ctx, g.settings)
+	if err != nil {
+		return nil, err
+	}
+	g.states[ownerID] = &entry
+	return &entry, nil
+}
+
+func (g *Grants) Reload(ctx context.Context) error {
+	ownerID, err := owner.ID(ctx, g.shared)
 	if err != nil {
 		return err
 	}
-	grants := make(map[string]DeviceGrant)
-	if found && raw != "" {
-		if err := json.Unmarshal([]byte(raw), &grants); err != nil {
-			return err
-		}
-	}
-	raw, found, err = g.settings.SettingGet(ctx, GrantRulesSettingKey)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	entry, err := loadGrants(ctx, g.settings)
 	if err != nil {
 		return err
 	}
-	var rules []GrantRule
-	if found && raw != "" {
-		if err := json.Unmarshal([]byte(raw), &rules); err != nil {
-			return err
-		}
-	}
-	g.grants = grants
-	g.rules = rules
+	g.states[ownerID] = &entry
 	return nil
 }
 
-// Reload refreshes the in-memory grants and rules from settings after an out-of-band write (e.g. a sync apply).
-func (g *Grants) Reload(ctx context.Context) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.load(ctx)
+func (g *Grants) authorizeMutation(ctx context.Context) error {
+	if g.mutationValidator != nil {
+		return g.mutationValidator(ctx)
+	}
+	return nil
+}
+
+func (g *Grants) authorizeTarget(ctx context.Context, deviceID string) error {
+	if g.targetValidator != nil {
+		return g.targetValidator(ctx, deviceID)
+	}
+	return nil
 }
 
 func (g *Grants) Grant(ctx context.Context, deviceID string, kinds []GrantKind) (DeviceGrant, error) {
@@ -142,6 +208,12 @@ func (g *Grants) Grant(ctx context.Context, deviceID string, kinds []GrantKind) 
 	}
 	if len(kinds) == 0 {
 		return DeviceGrant{}, errors.New("设备授权至少需要一个种类")
+	}
+	if err := g.authorizeMutation(ctx); err != nil {
+		return DeviceGrant{}, err
+	}
+	if err := g.authorizeTarget(ctx, deviceID); err != nil {
+		return DeviceGrant{}, err
 	}
 	seen := make(map[GrantKind]struct{}, len(kinds))
 	normalized := make([]GrantKind, 0, len(kinds))
@@ -156,22 +228,25 @@ func (g *Grants) Grant(ctx context.Context, deviceID string, kinds []GrantKind) 
 		seen[parsed[0]] = struct{}{}
 		normalized = append(normalized, parsed[0])
 	}
-	grant := DeviceGrant{DeviceID: deviceID, Kinds: normalized, UpdatedAt: g.now().UnixMilli()}
-	g.mu.Lock()
-	previous, existed := g.grants[deviceID]
-	g.grants[deviceID] = grant
-	err := g.persistLocked(ctx)
-	if err != nil {
-		if existed {
-			g.grants[deviceID] = previous
-		} else {
-			delete(g.grants, deviceID)
-		}
-	}
-	g.mu.Unlock()
+	ownerID, err := owner.ID(ctx, g.shared)
 	if err != nil {
 		return DeviceGrant{}, err
 	}
+	grant := DeviceGrant{DeviceID: deviceID, Kinds: normalized, UpdatedAt: g.now().UnixMilli()}
+	g.mu.Lock()
+	entry, err := g.stateForLocked(ctx, ownerID)
+	if err != nil {
+		g.mu.Unlock()
+		return DeviceGrant{}, err
+	}
+	next := cloneGrantMap(entry.grants)
+	next[deviceID] = grant
+	if err := g.persistLocked(ctx, next); err != nil {
+		g.mu.Unlock()
+		return DeviceGrant{}, err
+	}
+	entry.grants = next
+	g.mu.Unlock()
 	g.emitAudit(ctx, GrantAuditEvent{Action: "grant", DeviceID: deviceID, Kinds: normalized})
 	return grant, nil
 }
@@ -181,21 +256,34 @@ func (g *Grants) Revoke(ctx context.Context, deviceID string) error {
 	if deviceID == "" {
 		return errors.New("设备授权缺少设备 ID")
 	}
-	g.mu.Lock()
-	previous, ok := g.grants[deviceID]
-	if !ok {
-		g.mu.Unlock()
-		return nil
+	if err := g.authorizeMutation(ctx); err != nil {
+		return err
 	}
-	delete(g.grants, deviceID)
-	err := g.persistLocked(ctx)
-	if err != nil {
-		g.grants[deviceID] = previous
+	if err := g.authorizeTarget(ctx, deviceID); err != nil {
+		return err
 	}
-	g.mu.Unlock()
+	ownerID, err := owner.ID(ctx, g.shared)
 	if err != nil {
 		return err
 	}
+	g.mu.Lock()
+	entry, err := g.stateForLocked(ctx, ownerID)
+	if err != nil {
+		g.mu.Unlock()
+		return err
+	}
+	if _, ok := entry.grants[deviceID]; !ok {
+		g.mu.Unlock()
+		return nil
+	}
+	next := cloneGrantMap(entry.grants)
+	delete(next, deviceID)
+	if err := g.persistLocked(ctx, next); err != nil {
+		g.mu.Unlock()
+		return err
+	}
+	entry.grants = next
+	g.mu.Unlock()
 	if err := recordAIGrantTombstone(ctx, g.settings, AIGrantSyncDevicePrefix+deviceID); err != nil {
 		return err
 	}
@@ -203,8 +291,6 @@ func (g *Grants) Revoke(ctx context.Context, deviceID string) error {
 	return nil
 }
 
-// AddRule adds a path-level grant rule; an existing rule with the same device, action, and scope
-// (even expired) is updated instead of duplicated. A zero expiresAt means a permanent grant.
 func (g *Grants) AddRule(ctx context.Context, deviceID, action, pattern string, expiresAt time.Time) (GrantRule, error) {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
@@ -220,6 +306,12 @@ func (g *Grants) AddRule(ctx context.Context, deviceID, action, pattern string, 
 	if !RuleActionNeedsPath(action) && pattern != "" {
 		return GrantRule{}, errors.New("该动作的规则不支持路径范围")
 	}
+	if err := g.authorizeMutation(ctx); err != nil {
+		return GrantRule{}, err
+	}
+	if err := g.authorizeTarget(ctx, deviceID); err != nil {
+		return GrantRule{}, err
+	}
 	var expiresAtMS int64
 	if !expiresAt.IsZero() {
 		expiresAtMS = expiresAt.UnixMilli()
@@ -227,47 +319,67 @@ func (g *Grants) AddRule(ctx context.Context, deviceID, action, pattern string, 
 			return GrantRule{}, errors.New("授权规则过期时间必须晚于当前时间")
 		}
 	}
+	ownerID, err := owner.ID(ctx, g.shared)
+	if err != nil {
+		return GrantRule{}, err
+	}
 	g.mu.Lock()
+	entry, err := g.stateForLocked(ctx, ownerID)
+	if err != nil {
+		g.mu.Unlock()
+		return GrantRule{}, err
+	}
 	now := g.now().UnixMilli()
-	for index, existing := range g.rules {
+	next := append([]GrantRule(nil), entry.rules...)
+	for index, existing := range next {
 		if existing.DeviceID != deviceID || existing.Action != action || existing.Path != pattern {
 			continue
 		}
-		previous := existing
 		existing.ExpiresAt = expiresAtMS
 		existing.UpdatedAt = now
-		g.rules[index] = existing
-		if err := g.persistRulesLocked(ctx); err != nil {
-			g.rules[index] = previous
+		next[index] = existing
+		if err := g.persistRulesLocked(ctx, next); err != nil {
 			g.mu.Unlock()
 			return GrantRule{}, err
 		}
+		entry.rules = next
 		g.mu.Unlock()
 		g.emitAudit(ctx, GrantAuditEvent{Action: "rule_grant", DeviceID: deviceID, Operation: action, RuleID: existing.ID, RulePath: pattern})
 		return existing, nil
 	}
 	rule := GrantRule{ID: g.newID(), DeviceID: deviceID, Action: action, Path: pattern, ExpiresAt: expiresAtMS, CreatedAt: now, UpdatedAt: now}
-	g.rules = append(g.rules, rule)
-	if err := g.persistRulesLocked(ctx); err != nil {
-		g.rules = g.rules[:len(g.rules)-1]
+	next = append(next, rule)
+	if err := g.persistRulesLocked(ctx, next); err != nil {
 		g.mu.Unlock()
 		return GrantRule{}, err
 	}
+	entry.rules = next
 	g.mu.Unlock()
 	g.emitAudit(ctx, GrantAuditEvent{Action: "rule_grant", DeviceID: deviceID, Operation: action, RuleID: rule.ID, RulePath: pattern})
 	return rule, nil
 }
 
-// RevokeRule revokes a grant rule by ID; unknown IDs succeed idempotently.
 func (g *Grants) RevokeRule(ctx context.Context, ruleID string) error {
 	ruleID = strings.TrimSpace(ruleID)
 	if ruleID == "" {
 		return errors.New("授权规则缺少规则 ID")
 	}
+	if err := g.authorizeMutation(ctx); err != nil {
+		return err
+	}
+	ownerID, err := owner.ID(ctx, g.shared)
+	if err != nil {
+		return err
+	}
 	g.mu.Lock()
+	entry, err := g.stateForLocked(ctx, ownerID)
+	if err != nil {
+		g.mu.Unlock()
+		return err
+	}
 	index := -1
 	var previous GrantRule
-	for i, rule := range g.rules {
+	for i, rule := range entry.rules {
 		if rule.ID == ruleID {
 			index = i
 			previous = rule
@@ -278,15 +390,18 @@ func (g *Grants) RevokeRule(ctx context.Context, ruleID string) error {
 		g.mu.Unlock()
 		return nil
 	}
-	g.rules = append(g.rules[:index], g.rules[index+1:]...)
-	err := g.persistRulesLocked(ctx)
-	if err != nil {
-		g.rules = append(g.rules, previous)
-	}
-	g.mu.Unlock()
-	if err != nil {
+	if err := g.authorizeTarget(ctx, previous.DeviceID); err != nil {
+		g.mu.Unlock()
 		return err
 	}
+	next := append([]GrantRule(nil), entry.rules[:index]...)
+	next = append(next, entry.rules[index+1:]...)
+	if err := g.persistRulesLocked(ctx, next); err != nil {
+		g.mu.Unlock()
+		return err
+	}
+	entry.rules = next
+	g.mu.Unlock()
 	if err := recordAIGrantTombstone(ctx, g.settings, AIGrantSyncRulePrefix+ruleID); err != nil {
 		return err
 	}
@@ -294,21 +409,18 @@ func (g *Grants) RevokeRule(ctx context.Context, ruleID string) error {
 	return nil
 }
 
-// Rules returns all grant rules (including expired ones, annotated by the display layer or lazily cleaned up).
-func (g *Grants) Rules() []GrantRule {
+func (g *Grants) Rules(ctx context.Context) ([]GrantRule, error) {
+	entry, err := g.stateFor(ctx)
+	if err != nil {
+		return nil, err
+	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	result := make([]GrantRule, len(g.rules))
-	copy(result, g.rules)
-	return result
+	return append([]GrantRule(nil), entry.rules...), nil
 }
 
-// matchRule returns the unexpired rule covering the given action and path.
-func (g *Grants) matchRule(deviceID, action, path string) (GrantRule, bool) {
-	now := g.now()
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-	for _, rule := range g.rules {
+func matchRule(entry *grantState, now time.Time, deviceID, action, path string) (GrantRule, bool) {
+	for _, rule := range entry.rules {
 		if rule.DeviceID == deviceID && !rule.Expired(now) && rule.Covers(action, path) {
 			return rule, true
 		}
@@ -316,73 +428,100 @@ func (g *Grants) matchRule(deviceID, action, path string) (GrantRule, bool) {
 	return GrantRule{}, false
 }
 
-func (g *Grants) persistRulesLocked(ctx context.Context) error {
-	encoded, err := json.Marshal(g.rules)
+func (g *Grants) persistRulesLocked(ctx context.Context, rules []GrantRule) error {
+	encoded, err := json.Marshal(rules)
 	if err != nil {
 		return err
 	}
-	return g.settings.SettingSet(ctx, GrantRulesSettingKey, string(encoded))
+	return g.settings.SettingSet(ctx, GrantRulesSettingKeyForUser(ctx), string(encoded))
 }
 
-func (g *Grants) Get(deviceID string) (DeviceGrant, bool) {
+func (g *Grants) Get(ctx context.Context, deviceID string) (DeviceGrant, bool, error) {
+	entry, err := g.stateFor(ctx)
+	if err != nil {
+		return DeviceGrant{}, false, err
+	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	grant, ok := g.grants[deviceID]
+	grant, ok := entry.grants[deviceID]
 	if !ok {
-		return DeviceGrant{}, false
+		return DeviceGrant{}, false, nil
 	}
 	grant.Kinds = append([]GrantKind(nil), grant.Kinds...)
-	return grant, true
+	return grant, true, nil
 }
 
-func (g *Grants) List() []DeviceGrant {
+func (g *Grants) List(ctx context.Context) ([]DeviceGrant, error) {
+	entry, err := g.stateFor(ctx)
+	if err != nil {
+		return nil, err
+	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	result := make([]DeviceGrant, 0, len(g.grants))
-	for _, grant := range g.grants {
+	result := make([]DeviceGrant, 0, len(entry.grants))
+	for _, grant := range entry.grants {
 		grant.Kinds = append([]GrantKind(nil), grant.Kinds...)
 		result = append(result, grant)
 	}
-	return result
+	return result, nil
 }
 
 func (g *Grants) Evaluate(ctx context.Context, config Config, ruling Ruling, memory *Memory, deviceID, operation, runID string) Decision {
 	return g.EvaluateResource(ctx, config, ruling, memory, deviceID, operation, runID, Resource{})
 }
 
-// EvaluateResource layers path-level rules on top of Evaluate: NeedsConfirm rulings match persistent
-// rules first, then this session's remembered path rules, then fall back to device-level grants and
-// the global permission mode. Forbidden is always denied; Danger and Unknowable are never overridden
-// by any grant and keep requiring per-call confirmation.
 func (g *Grants) EvaluateResource(ctx context.Context, config Config, ruling Ruling, memory *Memory, deviceID, operation, runID string, resource Resource) Decision {
 	if ruling.Risk == Forbidden {
 		return Decision{Action: ActionDeny, Ruling: ruling, Reason: ruling.Reason}
 	}
-	if ruling.Risk == NeedsConfirm {
-		action := resource.Action
-		if action == "" {
-			action = operation
+	if ruling.Risk != NeedsConfirm || deviceID == "" {
+		return DecideResource(config, ruling, memory, resource)
+	}
+	entry, err := g.stateFor(ctx)
+	if err != nil {
+		return Decision{Action: ActionDeny, Ruling: ruling, Reason: err.Error()}
+	}
+	action := resource.Action
+	if action == "" {
+		action = operation
+	}
+	g.mu.RLock()
+	rule, ruleOK := matchRule(entry, g.now(), deviceID, action, resource.Path)
+	grant, grantOK := entry.grants[deviceID]
+	grant.Kinds = append([]GrantKind(nil), grant.Kinds...)
+	g.mu.RUnlock()
+	grantCovers := grantOK && grant.Covers(OperationGrantKind(operation))
+	if ruleOK || grantCovers {
+		if err := g.authorizeTarget(ctx, deviceID); err != nil {
+			return Decision{Action: ActionDeny, Ruling: ruling, Reason: err.Error()}
 		}
-		if deviceID != "" {
-			if rule, ok := g.matchRule(deviceID, action, resource.Path); ok {
-				g.emitAudit(ctx, GrantAuditEvent{Action: "use_rule", DeviceID: deviceID, Operation: action, RunID: runID, RuleID: rule.ID, RulePath: rule.Path})
-				return Decision{Action: ActionAllow, Ruling: ruling, Reason: "路径规则授权"}
-			}
-			if grant, ok := g.Get(deviceID); ok && grant.Covers(OperationGrantKind(operation)) {
-				g.emitAudit(ctx, GrantAuditEvent{Action: "use", DeviceID: deviceID, Kinds: grant.Kinds, Operation: operation, RunID: runID})
-				return Decision{Action: ActionAllow, Ruling: ruling, Reason: "设备长期授权"}
-			}
-		}
+	}
+	if ruleOK {
+		g.emitAudit(ctx, GrantAuditEvent{Action: "use_rule", DeviceID: deviceID, Operation: action, RunID: runID, RuleID: rule.ID, RulePath: rule.Path})
+		return Decision{Action: ActionAllow, Ruling: ruling, Reason: "路径规则授权"}
+	}
+	if grantCovers {
+		g.emitAudit(ctx, GrantAuditEvent{Action: "use", DeviceID: deviceID, Kinds: grant.Kinds, Operation: operation, RunID: runID})
+		return Decision{Action: ActionAllow, Ruling: ruling, Reason: "设备长期授权"}
 	}
 	return DecideResource(config, ruling, memory, resource)
 }
 
-func (g *Grants) persistLocked(ctx context.Context) error {
-	encoded, err := json.Marshal(g.grants)
+func (g *Grants) persistLocked(ctx context.Context, grants map[string]DeviceGrant) error {
+	encoded, err := json.Marshal(grants)
 	if err != nil {
 		return err
 	}
-	return g.settings.SettingSet(ctx, DeviceGrantsSettingKey, string(encoded))
+	return g.settings.SettingSet(ctx, DeviceGrantsSettingKeyForUser(ctx), string(encoded))
+}
+
+func cloneGrantMap(grants map[string]DeviceGrant) map[string]DeviceGrant {
+	result := make(map[string]DeviceGrant, len(grants)+1)
+	for id, grant := range grants {
+		grant.Kinds = append([]GrantKind(nil), grant.Kinds...)
+		result[id] = grant
+	}
+	return result
 }
 
 func (g *Grants) emitAudit(ctx context.Context, event GrantAuditEvent) {

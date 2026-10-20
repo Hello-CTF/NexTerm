@@ -65,9 +65,11 @@ function nextRunText(job: CronJob): string | null {
 
 export function CronPanel({
   conversationId,
+  hostName,
   onClose,
 }: {
   conversationId: string;
+  hostName?: string;
   onClose: () => void;
 }) {
   const { pushToast } = useUi();
@@ -437,8 +439,13 @@ export function CronPanel({
           <IconClose size={11} />
         </button>
       </div>
+      {hostName && (
+        <div className="nx-hint mb-1.5 truncate text-[11px]" title={hostName}>
+          绑定主机：{hostName}
+        </div>
+      )}
       <p className="nx-hint mb-2 text-[11px]">
-        到达设定时间后，AI 将基于当前会话自动执行任务。需要人工确认或被禁止的操作会被拒绝，原因记录在「上次错误」中。
+        到达设定时间后，AI 将基于当前会话自动执行任务。需要人工确认或被禁止的操作会被拒绝，原因记录在「上次错误」中。无人值守任务不调用 terminal_create；需要执行 shell 命令时，请在提示词中明确要求使用 exec_commands。
       </p>
 
       {registerOpen && draft ? (

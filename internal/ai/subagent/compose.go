@@ -13,10 +13,12 @@ func NewProfileModelFactory(manager *profiles.Manager) ModelFactory {
 		if manager == nil {
 			return nil, errors.New("subagent profile manager is nil")
 		}
-		if _, ok := manager.ActiveProfile(); !ok {
+		if _, ok, err := manager.ActiveProfile(ctx); err != nil {
+			return nil, err
+		} else if !ok {
 			return nil, errors.New("未配置活动 AI 模型")
 		}
-		client, err := manager.ActiveClient()
+		client, err := manager.ActiveClient(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -30,7 +32,7 @@ func NewProfileModelFactoryByID(manager *profiles.Manager) ProfileModelFactory {
 		if manager == nil {
 			return nil, errors.New("subagent profile manager is nil")
 		}
-		client, err := manager.ClientFor(profileID)
+		client, err := manager.ClientFor(ctx, profileID)
 		if err != nil {
 			return nil, err
 		}

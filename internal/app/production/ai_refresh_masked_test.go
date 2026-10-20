@@ -64,6 +64,7 @@ func TestAIModelRefreshRejectsResidualMaskedKeys(t *testing.T) {
 			}
 		}
 		var state struct {
+			Version  int              `json:"version"`
 			Profiles []map[string]any `json:"profiles"`
 		}
 		if err := json.Unmarshal([]byte(raw), &state); err != nil {

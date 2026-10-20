@@ -158,7 +158,7 @@ func TestComposedCronRuntimeSurvivesRestart(t *testing.T) {
 				return &outcomeFakeTransport{}, nil
 			}),
 		})
-		services := &ProductionServices{Store: database, Profiles: profileManager, Sessions: sessions}
+		services := &ProductionServices{Store: database, Profiles: profileManager, Sessions: sessions, desktop: true}
 		if err := composeAIRuntime(ctx, services); err != nil {
 			t.Fatal(err)
 		}
@@ -398,6 +398,8 @@ func (r *blockingCronAgentRunner) Start(context.Context, agent.ChatArgs, agent.S
 
 func (r *blockingCronAgentRunner) Cancel(string) error { return nil }
 
+func (r *blockingCronAgentRunner) Wait(context.Context, string) error { return nil }
+
 func TestCronRuntimeBoundedShutdown(t *testing.T) {
 	ctx := context.Background()
 	database, err := store.OpenInMemory(ctx)
@@ -554,7 +556,7 @@ func TestCronJobFailureDoesNotEmitAppErrorEvent(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	recorder := &ipcEventRecorder{}
-	services := &ProductionServices{Store: database, Events: recorder}
+	services := &ProductionServices{Store: database, Events: recorder, desktop: true}
 	scheduler, _, err := composeCronScheduler(ctx, services, cron.Options{PollInterval: 10 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)

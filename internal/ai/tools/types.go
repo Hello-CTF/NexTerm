@@ -11,6 +11,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/db"
+	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/outcome"
 	"github.com/Hello-CTF/NexTerm/internal/terminal/shellintegr"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
@@ -52,14 +53,20 @@ type Call struct {
 	Args   json.RawMessage `json:"args"`
 	Reason string          `json:"reason,omitempty"`
 
-	AuthorizationID string `json:"authorizationId,omitempty"`
+	AuthorizationID         string                             `json:"authorizationId,omitempty"`
+	OriginID                string                             `json:"-"`
+	ProductionConfirmations []execbatch.ProductionConfirmation `json:"-"`
 }
 
 type Output struct {
-	OK        bool   `json:"ok"`
-	Text      string `json:"text"`
-	ModelText string `json:"modelText,omitempty"`
-	ExitCode  int    `json:"exitCode"`
+	OK                  bool                          `json:"ok"`
+	Text                string                        `json:"text"`
+	ModelText           string                        `json:"modelText,omitempty"`
+	SubmittedSeq        *uint64                       `json:"submitted_seq,omitempty"`
+	WriteConfirmed      bool                          `json:"write_confirmed,omitempty"`
+	Notes               string                        `json:"notes,omitempty"`
+	ProductionChallenge *ExecBatchProductionChallenge `json:"-"`
+	ExitCode            int                           `json:"exitCode"`
 	// ExitUnknown marks a completed action whose exit code could not be
 	// determined (e.g. a waited-on command still running or a bare OSC 133;D
 	// without a code). It must never be recorded or replayed as exit 0.
@@ -72,6 +79,11 @@ type Output struct {
 	Plan        string           `json:"plan,omitempty"`
 	Question    *Question        `json:"question,omitempty"`
 	Terminal    *CreatedTerminal `json:"terminal,omitempty"`
+}
+
+type ExecBatchProductionChallenge struct {
+	Detail        execbatch.ConfirmationRequiredDetail
+	Confirmations []execbatch.ProductionConfirmation
 }
 
 // CreatedTerminal describes a terminal tab created by terminal_create in
@@ -118,15 +130,16 @@ type Preview struct {
 }
 
 type Screen struct {
-	Text      string
-	Tail      []string
-	CursorRow int
-	CursorCol int
-	Cols      int
-	Rows      int
-	IdleMS    int64
-	Seq       uint64
-	AltScreen bool
+	Text           string
+	Tail           []string
+	CursorRow      int
+	CursorCol      int
+	Cols           int
+	Rows           int
+	IdleMS         int64
+	Seq            uint64
+	AltScreen      bool
+	BracketedPaste bool
 }
 
 type Container struct {
@@ -149,6 +162,7 @@ type Asset struct {
 	Kind     string
 	Host     string
 	Username string
+	Tags     string
 }
 
 type AuditEntry struct {
@@ -169,6 +183,14 @@ type CommandState = shellintegr.CommandState
 type Terminal interface {
 	Snapshot(context.Context, string) (Screen, error)
 	Write(context.Context, string, []byte) error
+}
+
+type WaitSnapshotTerminal interface {
+	WaitSnapshot(context.Context, string) (Screen, error)
+}
+
+type PasteTerminal interface {
+	WritePaste(context.Context, string, string) error
 }
 
 type TabSessionTerminal interface {
@@ -226,10 +248,18 @@ type Database interface {
 	RedisScan(context.Context, string, uint64, string, uint64) (db.RedisScanResult, error)
 }
 
+type ExecTargetSet struct {
+	SessionIDs []string
+	Production bool
+}
+
 type Dependencies struct {
 	Transport           TransportResolver
 	Terminal            Terminal
 	TabSession          func(string) string
+	ResolveAssetSession func(context.Context, string) (string, error)
+	ResolveExecTargets  func(context.Context, []string, []string) (ExecTargetSet, error)
+	ExecBatch           func(context.Context, execbatch.Request) (execbatch.Batch, error)
 	Database            Database
 	ListAssets          func(context.Context) ([]Asset, error)
 	DockerPS            func(context.Context, string) ([]Container, error)
@@ -237,6 +267,7 @@ type Dependencies struct {
 	DockerExec          func(context.Context, string, string, string) (ExecResult, error)
 	DockerAct           func(context.Context, string, string, string) error
 	DockerActionAudited bool
+	LocalHistory        bool
 	Audit               func(context.Context, AuditEntry) error
 	Reminders           ReminderScheduler
 	Notify              func(context.Context, string) error

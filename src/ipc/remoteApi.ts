@@ -4,6 +4,7 @@
 // the RemoteProxy facade in internal/sync (cookie+CSRF held in desktop memory).
 
 import { call } from "./commands";
+import type { RemoteHostShareIdentity } from "./generated/types";
 import type { AccountLink } from "./types";
 import type { FleetBaseURLEntry, FleetDevice, FleetEnrollCode, FleetMetricsResponse } from "./fleetApi";
 import type { HostShareView, ShareLinkView } from "./sharingApi";
@@ -84,12 +85,6 @@ export interface RemotePreviewLinkView {
   last_accessed_at?: number;
 }
 
-// RemoteShareLinkCreateResult is the create-public-link response: the only entry that carries the one-time token;
-// the token is used only to assemble the public URL on the spot - never logged, persisted, or put into web storage.
-export interface RemoteShareLinkCreateResult extends ShareLinkView {
-  token: string;
-}
-
 // RemotePreviewCreateResult is the return of preview_share_create: the desktop relay has already assembled the public url
 // from the account link's server address; the token is held only at creation time, never persisted; sessionId is the remote shell id,
 // which the "active previews" list (remoteSharingApi.previewLinks) uses to filter the current tab's link.
@@ -141,9 +136,6 @@ export const remoteSharingApi = {
 
   links: () => call<{ links: ShareLinkView[] }>("remote_share_link_list"),
 
-  createLink: (input: { deviceId: string; sessionId: string; write: boolean; ttlMs: number }) =>
-    call<RemoteShareLinkCreateResult>("remote_share_link_create", { args: input }),
-
   revokeLink: (id: string) => call<{ ok: boolean }>("remote_share_link_revoke", { args: { id } }),
 
   previewLinks: () => call<{ links: RemotePreviewLinkView[] }>("remote_share_preview_list"),
@@ -176,4 +168,22 @@ export const remoteHealthApi = {
   // serverVersion reads the real server version from /healthz. An empty string means the version is unavailable:
   // callers must hide version-dependent UI, never fabricate a version.
   serverVersion: () => call<string>("remote_healthz"),
+};
+
+export type { RemoteHostShareIdentity };
+
+export const remoteHostShareApi = {
+  identity: async (): Promise<RemoteHostShareIdentity> => {
+    const identity = await call("host_share_identity");
+    if (identity === null) throw new Error("主机分享身份信息不可用");
+    return identity;
+  },
+
+  open: (deviceId: string, streamId: string, channel: { toJSON: () => string | null }) =>
+    call("host_share_terminal_open", { args: { deviceId, streamId }, channel }),
+
+  input: (streamId: string, data: Uint8Array) =>
+    call("host_share_terminal_input", { args: { streamId, data: Array.from(data) } }),
+
+  close: (streamId: string) => call("host_share_terminal_close", { args: { streamId } }),
 };

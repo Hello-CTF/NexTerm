@@ -43,6 +43,8 @@ type Status struct {
 
 type Option func(*Vault)
 
+type autoLockTickerFactory func(time.Duration) (<-chan time.Time, func())
+
 type backgroundContextKey struct{}
 
 func WithBackground(ctx context.Context) context.Context {
@@ -76,12 +78,17 @@ type Vault struct {
 
 	autoLockMu        sync.Mutex
 	autoLockStoreHook func()
+	newAutoLockTicker autoLockTickerFactory
 }
 
 func Load(ctx context.Context, db *store.Store, options ...Option) *Vault {
 	v := &Vault{
 		store: db, protector: systemProtector{}, derive: deriveMasterKey,
 		now: ids.NowMS, mode: ModeNotInit, autoLockMS: defaultAutolock,
+		newAutoLockTicker: func(interval time.Duration) (<-chan time.Time, func()) {
+			ticker := time.NewTicker(interval)
+			return ticker.C, ticker.Stop
+		},
 	}
 	for _, option := range options {
 		option(v)
@@ -495,13 +502,13 @@ func (v *Vault) AutoLockIfIdle() {
 }
 
 func (v *Vault) RunAutoLock(ctx context.Context) {
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
+	ticks, stopTicker := v.newAutoLockTicker(time.Minute)
+	defer stopTicker()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-ticks:
 			v.AutoLockIfIdle()
 		}
 	}

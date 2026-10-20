@@ -20,9 +20,6 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-var takeoverAfterResumeCheck = func() {}
-var takeoverBeforeResumeStart = func() {}
-
 type runResult struct {
 	answer string
 	reason string
@@ -61,7 +58,7 @@ func (m *Manager) runJob(state *runState) {
 			state.installIterationLocked()
 		}
 		state.pendingMu.Unlock()
-		takeoverAfterResumeCheck()
+		m.hooks.afterResumeCheck()
 		defer func() {
 			if resumePaused {
 				return
@@ -72,7 +69,7 @@ func (m *Manager) runJob(state *runState) {
 				state.running = true
 				state.installIterationLocked()
 				state.pendingMu.Unlock()
-				takeoverBeforeResumeStart()
+				m.hooks.beforeResumeStart()
 				state.pendingMu.Lock()
 				if !state.completed {
 					state.pendingMu.Unlock()
@@ -138,6 +135,7 @@ func (m *Manager) runJob(state *runState) {
 			emitCtx, cancel := context.WithTimeout(context.WithoutCancel(state.ctx), time.Second)
 			defer cancel()
 			_ = state.emit(emitCtx, agent.Event{Type: "paused", Reason: "用户暂停", TabID: state.args.TabID})
+			m.persistRecovery(state)
 			state.pendingMu.Lock()
 			state.pauseReady = true
 			state.pendingMu.Unlock()
@@ -516,6 +514,17 @@ type TakeoverDoneArgs struct {
 	Success bool   `json:"success" jsonschema:"required"`
 }
 
+type takeoverSendKeysArgs struct {
+	Keys  string `json:"keys" jsonschema:"required"`
+	Enter bool   `json:"enter,omitempty"`
+	TabID string `json:"tab_id,omitempty"`
+}
+
+type takeoverWaitForArgs struct {
+	Pattern   string `json:"pattern" jsonschema:"required"`
+	TimeoutMS int64  `json:"timeout_ms,omitempty"`
+}
+
 func (e *actionExecution) tools() ([]tool.BaseTool, error) {
 	readScreen, err := utils.InferTool("read_screen", "Read the latest terminal screen at the moment of acting.", func(ctx context.Context, _ tools.EmptyArgs) (tools.Output, error) {
 		return tools.Guarded(ctx, "read_screen", func() (tools.Output, error) {
@@ -525,7 +534,7 @@ func (e *actionExecution) tools() ([]tool.BaseTool, error) {
 	if err != nil {
 		return nil, err
 	}
-	sendKeys, err := utils.InferTool("send_keys", "Send keys; enter or <enter> really submits the command.", func(ctx context.Context, input tools.SendKeysArgs) (tools.Output, error) {
+	sendKeys, err := utils.InferTool("send_keys", "Send keys; enter or <enter> really submits the command.", func(ctx context.Context, input takeoverSendKeysArgs) (tools.Output, error) {
 		return tools.Guarded(ctx, "send_keys", func() (tools.Output, error) {
 			return e.sendKeys(ctx, input)
 		})
@@ -533,7 +542,7 @@ func (e *actionExecution) tools() ([]tool.BaseTool, error) {
 	if err != nil {
 		return nil, err
 	}
-	waitFor, err := utils.InferTool("wait_for", "Wait for the terminal's recent output to match a regex.", func(ctx context.Context, input tools.WaitForArgs) (tools.Output, error) {
+	waitFor, err := utils.InferTool("wait_for", "Wait for the terminal's recent output to match a regex.", func(ctx context.Context, input takeoverWaitForArgs) (tools.Output, error) {
 		return tools.Guarded(ctx, "wait_for", func() (tools.Output, error) {
 			output, err := e.manager.waitFor(ctx, e.state.args.TabID, input.Pattern, input.TimeoutMS)
 			return output, err
@@ -584,7 +593,7 @@ func (e *actionExecution) persistPermanentGrant(ctx context.Context, state tools
 	return err
 }
 
-func (e *actionExecution) sendKeys(ctx context.Context, input tools.SendKeysArgs) (tools.Output, error) {
+func (e *actionExecution) sendKeys(ctx context.Context, input takeoverSendKeysArgs) (tools.Output, error) {
 	if input.TabID != "" {
 		return tools.Fail(errors.New("终端接管只支持向当前接管的终端发送按键")), nil
 	}
@@ -648,7 +657,7 @@ func (e *actionExecution) sendKeys(ctx context.Context, input tools.SendKeysArgs
 	return e.writeKeys(ctx, callID, input)
 }
 
-func (e *actionExecution) writeKeys(ctx context.Context, callID string, input tools.SendKeysArgs) (tools.Output, error) {
+func (e *actionExecution) writeKeys(ctx context.Context, callID string, input takeoverSendKeysArgs) (tools.Output, error) {
 	encoded, err := tools.EncodeKeys(input.Keys, input.Enter)
 	if err != nil {
 		return tools.Fail(err), nil
@@ -688,7 +697,7 @@ func (e *actionExecution) writeKeys(ctx context.Context, callID string, input to
 	return tools.OK("已发送"), nil
 }
 
-func (e *actionExecution) auditWrite(ctx context.Context, callID string, input tools.SendKeysArgs, keyBytes int, replay bool) {
+func (e *actionExecution) auditWrite(ctx context.Context, callID string, input takeoverSendKeysArgs, keyBytes int, replay bool) {
 	if e.manager.deps.Audit == nil {
 		return
 	}

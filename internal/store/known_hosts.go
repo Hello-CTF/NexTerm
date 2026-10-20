@@ -54,6 +54,19 @@ func (s *Store) KnownHostList(ctx context.Context) ([]KnownHostRow, error) {
 	return result, nil
 }
 
+// KnownHostListForMigration is restricted to startup migration, which must map legacy file entries to every explicitly owning ledger row.
+func (s *Store) KnownHostListForMigration(ctx context.Context) ([]KnownHostRow, error) {
+	knownHost := query.Use(s.db).KnownHostRow
+	result := []KnownHostRow{}
+	err := knownHost.WithContext(ctx).
+		Order(knownHost.OwnerID, knownHost.Host, knownHost.Port, knownHost.KeyType, knownHost.Fingerprint, knownHost.ID).
+		Scan(&result)
+	if err != nil {
+		return nil, dbError(err)
+	}
+	return result, nil
+}
+
 func (s *Store) KnownHostRemove(ctx context.Context, id string) error {
 	userID, hasIdentity := SyncOptInUserID(ctx)
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

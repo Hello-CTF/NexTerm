@@ -758,6 +758,15 @@ export function applyAiEvent(
       return accepted({ ...state, todos: (ev.items as TodoRow[]) ?? [] });
     case "planSubmitted":
       return accepted(patchAttempt(state, generation, { planPending: true }));
+    case "paused":
+      if (attempt.kind !== "takeover") return rejected(state);
+      return accepted({
+        ...state,
+        status: { phase: "paused", detail: (ev.reason as string) || "用户暂停" },
+      });
+    case "resumed":
+      if (attempt.kind !== "takeover") return rejected(state);
+      return accepted({ ...state, status: null });
     case "done":
       return accepted(settleOpenTools(finishDone(state, attempt, ev), generation, "未返回结果", "canceled"), "done");
     case "error": {

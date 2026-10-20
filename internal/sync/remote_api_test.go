@@ -72,7 +72,6 @@ func newRemoteAPIFixture(t *testing.T) *remoteAPIFixture {
 	mux.Handle("POST /share/host-shares", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveHostShareCreate))))
 	mux.Handle("POST /share/host-shares/{id}/revoke", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveOK))))
 	mux.Handle("GET /share/links", fixture.session(http.HandlerFunc(fixture.serveShareLinks)))
-	mux.Handle("POST /share/links", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveShareLinkCreate))))
 	mux.Handle("POST /share/links/{id}/revoke", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveOK))))
 	mux.Handle("GET /share/previews", fixture.session(http.HandlerFunc(fixture.servePreviewLinks)))
 	mux.Handle("POST /share/previews/{id}/revoke", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveOK))))
@@ -482,23 +481,6 @@ func (f *remoteAPIFixture) serveShareLinks(w http.ResponseWriter, _ *http.Reques
 	}})
 }
 
-func (f *remoteAPIFixture) serveShareLinkCreate(w http.ResponseWriter, r *http.Request) {
-	var request struct {
-		DeviceID  string `json:"device_id"`
-		SessionID string `json:"session_id"`
-		Write     bool   `json:"write"`
-		TTLMS     int64  `json:"ttl_ms"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeSyncError(w, http.StatusBadRequest, ipc.BadParam(err))
-		return
-	}
-	writeSyncJSON(w, http.StatusOK, map[string]any{
-		"id": "sl-new", "owner_id": "u-1", "device_id": request.DeviceID, "session_id": request.SessionID,
-		"permission": "read", "created_at": 1, "expires_at": 2, "token": "one-shot-token",
-	})
-}
-
 func (f *remoteAPIFixture) servePreviewLinks(w http.ResponseWriter, _ *http.Request) {
 	writeSyncJSON(w, http.StatusOK, map[string]any{"links": []map[string]any{
 		{"id": "pl-1", "owner_id": "u-1", "session_id": "s-1", "created_at": 1, "expires_at": 2},
@@ -666,12 +648,8 @@ func TestRemoteAPITypedMethodsDecode(t *testing.T) {
 	if err != nil || share.Permission != "read_write" || share.RecipientUsername != "bob" {
 		t.Fatalf("host share = %+v, %v", share, err)
 	}
-	link, err := client.CreateShareLink(ctx, RemoteShareLinkInput{DeviceID: "d-1", SessionID: "s-1", TTLMS: 60000})
-	if err != nil || link.Token != "one-shot-token" {
-		t.Fatalf("share link = %+v, %v", link, err)
-	}
 	links, err := client.ListShareLinks(ctx)
-	if err != nil || len(links.Links) != 1 || links.Links[0].Token != "" {
+	if err != nil || len(links.Links) != 1 || links.Links[0].ID != "sl-1" {
 		t.Fatalf("share links = %+v, %v", links, err)
 	}
 	previews, err := client.ListPreviewLinks(ctx)

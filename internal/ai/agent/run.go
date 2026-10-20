@@ -237,7 +237,10 @@ func (r *Runner) initializeEino(current *job) error {
 	}
 	permission = permission.Normalized()
 	if r.config.Permissions != nil {
-		permission = r.config.Permissions.WithDeviceMode(permission, tools.ResolveGrantDeviceID(current.ctx, r.config.Tools, current.args.Scope))
+		permission, err = r.config.Permissions.WithDeviceMode(current.ctx, permission, tools.ResolveGrantDeviceID(current.ctx, r.config.Tools, current.args.Scope))
+		if err != nil {
+			return err
+		}
 	}
 	chatModel, contextWindow, err := r.modelFor(current)
 	if err != nil {
@@ -272,8 +275,11 @@ func (r *Runner) initializeEino(current *job) error {
 	}
 	messages = append(messages, userMessage(current.args))
 	if r.config.Memory != nil {
-
-		injection, err := r.config.Memory.Inject(current.ctx, r.config.MemoryScope, messages, memory.Selection{}, memory.Budget{})
+		scope, err := r.memoryScope(current.ctx)
+		if err != nil {
+			return err
+		}
+		injection, err := r.config.Memory.Inject(current.ctx, scope, messages, memory.Selection{}, memory.Budget{})
 		if err != nil {
 			return err
 		}
@@ -287,7 +293,7 @@ func (r *Runner) initializeEino(current *job) error {
 		}
 		cloned.ConversationID = current.args.ConversationID
 		if cloned.ActiveProfileID == nil {
-			cloned.ActiveProfileID = func() string { return r.profileIDFor(ChatArgs{}) }
+			cloned.ActiveProfileID = func() string { return r.profileIDFor(current.ctx, ChatArgs{}) }
 		}
 		subagents = &cloned
 	}
@@ -297,7 +303,7 @@ func (r *Runner) initializeEino(current *job) error {
 		}
 		_ = current.emit(context.WithoutCancel(ctx), mapSubagentEvent(parentCallID, depth, event))
 	}}
-	einoTools, err := execution.Tools()
+	einoTools, err := executionTools(current.ctx, execution)
 	if err != nil {
 		return err
 	}
@@ -316,10 +322,9 @@ func (r *Runner) initializeEino(current *job) error {
 	}
 	einoTools = append(einoTools, memoryTools...)
 	runtime.input = messages
-	instruction := systemPrompt()
+	instruction := systemPromptFor(current.ctx, current.args.PlanMode)
 	returnDirectly := map[string]bool{}
 	if current.args.PlanMode {
-		instruction = planSystemPrompt()
 		returnDirectly["exit_plan_mode"] = true
 	}
 	chatAgent, err := adk.NewChatModelAgent(current.ctx, &adk.ChatModelAgentConfig{

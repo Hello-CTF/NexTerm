@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 type memoryStore struct {
@@ -28,9 +30,38 @@ func (s *memoryStore) List(ctx context.Context) ([]Job, error) {
 	}
 	jobs := make([]Job, 0, len(s.jobs))
 	for _, job := range s.jobs {
-		jobs = append(jobs, job)
+		if memoryOwnerMatches(ctx, job) {
+			jobs = append(jobs, job)
+		}
 	}
 	return jobs, nil
+}
+
+func (s *memoryStore) ListDue(ctx context.Context, now time.Time) ([]Job, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.failures["list"]; err != nil {
+		return nil, err
+	}
+	jobs := make([]Job, 0, len(s.jobs))
+	for _, job := range s.jobs {
+		if !memoryOwnerMatches(ctx, job) {
+			continue
+		}
+		abandoned := job.Running() && !leaseHeldByAnyone(job.Lease, now) && !now.Before(job.Run.Deadline)
+		if (job.Enabled && !job.Running() && due(job, now)) || abandoned {
+			jobs = append(jobs, job)
+		}
+	}
+	return jobs, nil
+}
+
+func memoryOwnerMatches(ctx context.Context, job Job) bool {
+	ownerID := ipc.OwnerID(ctx)
+	return ownerID == "" || job.OwnerID == ownerID
 }
 
 func (s *memoryStore) Create(ctx context.Context, job Job, maxPerSession int) (Job, error) {
@@ -45,9 +76,10 @@ func (s *memoryStore) Create(ctx context.Context, job Job, maxPerSession int) (J
 	if _, exists := s.jobs[job.ID]; exists {
 		return Job{}, ErrConflict
 	}
+	job.OwnerID, job.OwnerKind = ownerFromContext(ctx)
 	count := 0
 	for _, existing := range s.jobs {
-		if existing.SessionID == job.SessionID {
+		if existing.SessionID == job.SessionID && memoryOwnerMatches(ctx, existing) {
 			count++
 		}
 	}
@@ -69,12 +101,13 @@ func (s *memoryStore) CompareAndSwap(ctx context.Context, job Job, expectedRevis
 		return Job{}, err
 	}
 	current, exists := s.jobs[job.ID]
-	if !exists {
+	if !exists || !memoryOwnerMatches(ctx, current) {
 		return Job{}, ErrNotFound
 	}
 	if current.Revision != expectedRevision || current.SessionID != job.SessionID {
 		return Job{}, ErrConflict
 	}
+	job.OwnerID, job.OwnerKind = current.OwnerID, current.OwnerKind
 	job.Revision = current.Revision + 1
 	s.jobs[job.ID] = job
 	return job, nil
@@ -90,7 +123,7 @@ func (s *memoryStore) Delete(ctx context.Context, sessionID, jobID string, expec
 		return err
 	}
 	current, exists := s.jobs[jobID]
-	if !exists || current.SessionID != sessionID {
+	if !exists || current.SessionID != sessionID || !memoryOwnerMatches(ctx, current) {
 		return ErrNotFound
 	}
 	if current.Revision != expectedRevision {

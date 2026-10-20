@@ -59,7 +59,7 @@ func saveKeyedProfile(t *testing.T, manager *profiles.Manager, name, key string)
 
 func requireClientKey(t *testing.T, manager *profiles.Manager, want string) {
 	t.Helper()
-	client, err := manager.ActiveClient()
+	client, err := manager.ActiveClient(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func requireClientKey(t *testing.T, manager *profiles.Manager, want string) {
 
 func requireLockedClient(t *testing.T, manager *profiles.Manager) {
 	t.Helper()
-	if _, err := manager.ActiveClient(); err == nil {
+	if _, err := manager.ActiveClient(context.Background()); err == nil {
 		t.Fatal("locked vault still produced a provider client")
 	} else {
 		requireIPCCode(t, err, ipc.CodeVaultLocked)
@@ -95,7 +95,7 @@ func TestSaveEncryptsAPIKeyAtRest(t *testing.T) {
 	if !strings.Contains(raw, store.SecretEnvelopePrefix) {
 		t.Fatalf("settings table holds no envelope: %s", raw)
 	}
-	config, ok := manager.ActiveConfig()
+	config, ok := mustActiveConfig(t, manager)
 	if !ok || config.APIKey != "sk-live-secret" {
 		t.Fatalf("active config lost the key: %+v", config)
 	}
@@ -104,7 +104,7 @@ func TestSaveEncryptsAPIKeyAtRest(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireClientKey(t, reloaded, "sk-live-secret")
-	if reloaded.Overview().Profiles[0].APIKey != profiles.MaskedAPIKey {
+	if mustOverview(t, reloaded).Profiles[0].APIKey != profiles.MaskedAPIKey {
 		t.Fatal("reloaded overview leaked api key")
 	}
 }
@@ -127,15 +127,15 @@ func TestPlaintextProfileKeysRejectedUntilResaved(t *testing.T) {
 	if got := storedSetting(t, database, profiles.SettingKey); got != raw {
 		t.Fatal("load must not rewrite a plaintext-keyed store")
 	}
-	if _, err := manager.ActiveClient(); err == nil || !strings.Contains(err.Error(), "解密失败") {
+	if _, err := manager.ActiveClient(context.Background()); err == nil || !strings.Contains(err.Error(), "解密失败") {
 		t.Fatalf("plaintext key must be rejected as undecryptable: %v", err)
 	}
-	config, ok := manager.ActiveConfig()
+	config, ok := mustActiveConfig(t, manager)
 	if !ok || config.APIKey != "" {
 		t.Fatalf("active config must not carry the plaintext key: %+v", config)
 	}
 
-	saved := manager.Overview().Profiles[0]
+	saved := mustOverview(t, manager).Profiles[0]
 	if _, err := manager.Save(ctx, saved); err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestMaskedRoundTripKeepsStoredKey(t *testing.T) {
 	if _, err := manager.Save(ctx, saved); err != nil {
 		t.Fatal(err)
 	}
-	config, ok := manager.ActiveConfig()
+	config, ok := mustActiveConfig(t, manager)
 	if !ok || config.APIKey != "sk-original" {
 		t.Fatalf("masked round trip replaced the key: %+v", config)
 	}
@@ -174,7 +174,7 @@ func TestMaskedRoundTripKeepsStoredKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config, ok = reloaded.ActiveConfig(); !ok || config.APIKey != "sk-original" {
+	if config, ok = mustActiveConfig(t, reloaded); !ok || config.APIKey != "sk-original" {
 		t.Fatalf("reloaded key = %+v", config)
 	}
 }
@@ -196,10 +196,10 @@ func TestLockedStartupWithPlaintextProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("locked startup with plaintext keys must not fail: %v", err)
 	}
-	if _, err := manager.ActiveClient(); err == nil || !strings.Contains(err.Error(), "解密失败") {
+	if _, err := manager.ActiveClient(context.Background()); err == nil || !strings.Contains(err.Error(), "解密失败") {
 		t.Fatalf("locked plaintext profile must report decrypt failure: %v", err)
 	}
-	if got := manager.Overview().Profiles[0].APIKey; got != profiles.MaskedAPIKey {
+	if got := mustOverview(t, manager).Profiles[0].APIKey; got != profiles.MaskedAPIKey {
 		t.Fatalf("locked overview key = %q", got)
 	}
 	if got := storedSetting(t, database, profiles.SettingKey); got != raw {
@@ -209,7 +209,7 @@ func TestLockedStartupWithPlaintextProfile(t *testing.T) {
 	if err := credentialVault.UnlockMaster(ctx, "correct-password"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.ActiveClient(); err == nil || !strings.Contains(err.Error(), "解密失败") {
+	if _, err := manager.ActiveClient(context.Background()); err == nil || !strings.Contains(err.Error(), "解密失败") {
 		t.Fatalf("unlocked plaintext profile must still fail decryption: %v", err)
 	}
 	if got := storedSetting(t, database, profiles.SettingKey); got != raw {
@@ -229,7 +229,7 @@ func TestManagerTracksVaultLockLifecycle(t *testing.T) {
 
 	credentialVault.Lock()
 	requireLockedClient(t, manager)
-	if config, ok := manager.ActiveConfig(); !ok || config.APIKey != "" {
+	if config, ok := mustActiveConfig(t, manager); !ok || config.APIKey != "" {
 		t.Fatalf("locked active config leaked key material: %+v", config)
 	}
 
@@ -328,7 +328,7 @@ func TestClearingAPIKeyRemovesKeyMaterial(t *testing.T) {
 	if strings.Contains(stored, store.SecretEnvelopePrefix) || strings.Contains(stored, "sk-clear-me") {
 		t.Fatalf("cleared key survived: %s", stored)
 	}
-	if got := manager.Overview().Profiles[0].APIKey; got != "" {
+	if got := mustOverview(t, manager).Profiles[0].APIKey; got != "" {
 		t.Fatalf("cleared overview key = %q", got)
 	}
 }
@@ -344,14 +344,14 @@ func TestReloadAdoptsExternalEncryptedSave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := len(reader.Overview().Profiles); got != 0 {
+	if got := len(mustOverview(t, reader).Profiles); got != 0 {
 		t.Fatalf("reader starts with %d profiles", got)
 	}
 	saveKeyedProfile(t, writer, "external", "sk-external")
 	if err := reader.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(reader.Overview().Profiles); got != 1 {
+	if got := len(mustOverview(t, reader).Profiles); got != 1 {
 		t.Fatalf("Reload did not adopt the external save: %d profiles", got)
 	}
 	requireClientKey(t, reader, "sk-external")

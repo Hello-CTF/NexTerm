@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 
@@ -53,11 +52,10 @@ func AutoTitle(message string) string {
 	return line
 }
 
-const titleMaxRunes = 20
-
-var titleGenerationTimeout = 15 * time.Second
-
-var conversationTitleInFlight sync.Map
+const (
+	titleMaxRunes                 = 20
+	defaultTitleGenerationTimeout = 15 * time.Second
+)
 
 func titlePrompt(message string) string {
 	runes := []rune(message)
@@ -94,7 +92,7 @@ func (r *Runner) maybeGenerateConversationTitle(current *job) {
 	if conversationID == "" || message == "" {
 		return
 	}
-	if _, loaded := conversationTitleInFlight.LoadOrStore(conversationID, struct{}{}); loaded {
+	if _, loaded := r.titleInFlight.LoadOrStore(conversationID, struct{}{}); loaded {
 		return
 	}
 	profileID := current.args.ModelProfileID
@@ -107,14 +105,22 @@ func (r *Runner) maybeGenerateConversationTitle(current *job) {
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
-		defer conversationTitleInFlight.Delete(conversationID)
+		defer r.titleInFlight.Delete(conversationID)
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				slog.Warn("conversation title generation panicked", "error", recovered)
 			}
 		}()
-		ctx, cancel := context.WithTimeout(context.Background(), titleGenerationTimeout)
+		parent := current.ctx
+		if parent == nil {
+			parent = context.Background()
+		}
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), r.config.TitleTimeout)
 		defer cancel()
+		if r.closeCtx != nil {
+			stopClose := context.AfterFunc(r.closeCtx, cancel)
+			defer stopClose()
+		}
 		r.generateConversationTitle(ctx, factory, conversationID, message, profileID)
 	}()
 }
@@ -268,7 +274,7 @@ func (r *Runner) RetitleConversation(ctx context.Context, conversationID string)
 		return "", err
 	}
 	prefix, _ := splitTitlePrefix(row.Title)
-	ctx, cancel := context.WithTimeout(ctx, titleGenerationTimeout)
+	ctx, cancel := context.WithTimeout(ctx, r.config.TitleTimeout)
 	defer cancel()
 	started := time.Now()
 	topic, tokensIn, tokensOut, err := generateTitle(ctx, r.config.Model, retitlePrompt(row.Title, prefix, retitleContextLines(rows)))
@@ -285,7 +291,7 @@ func (r *Runner) RetitleConversation(ctx context.Context, conversationID string)
 	if r.runs != nil {
 		profileID := ""
 		if r.config.Profiles != nil {
-			if active, ok := r.config.Profiles.ActiveProfile(); ok {
+			if active, ok, err := r.config.Profiles.ActiveProfile(ctx); err == nil && ok {
 				profileID = active.ID
 			}
 		}
