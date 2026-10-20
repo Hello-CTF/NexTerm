@@ -252,6 +252,9 @@ func TestTargetSetServiceValidationRejectsBeforeStore(t *testing.T) {
 	if _, err := service.Create(ctx, "owner-a", "fleet", []string{" lead"}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("blank-padded session = %v", err)
 	}
+	if _, err := service.Create(ctx, "owner-a", "fleet", []string{strings.Repeat("s", store.ExecTargetSetMaxSessionIDLen+1)}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("oversize session = %v", err)
+	}
 	overflow := make([]string, store.ExecTargetSetMaxTargets+1)
 	for index := range overflow {
 		overflow[index] = strings.Repeat("s", index+1)
@@ -270,6 +273,30 @@ func TestTargetSetServiceValidationRejectsBeforeStore(t *testing.T) {
 	}
 	if fake.calls != 0 {
 		t.Fatalf("store was called %d times for invalid input", fake.calls)
+	}
+}
+
+func TestTargetSetServiceSessionIDLimitBoundary(t *testing.T) {
+	fake := newFakeTargetSetStore()
+	service := NewTargetSetService(fake)
+	ctx := context.Background()
+
+	atLimit := strings.Repeat("s", store.ExecTargetSetMaxSessionIDLen)
+	if _, err := service.Create(ctx, "owner-a", "fleet", []string{atLimit}); err != nil {
+		t.Fatalf("at-limit session id = %v", err)
+	}
+	if fake.calls != 1 {
+		t.Fatalf("at-limit create reached store %d times, want 1", fake.calls)
+	}
+	oversize := strings.Repeat("s", store.ExecTargetSetMaxSessionIDLen+1)
+	if _, err := service.Create(ctx, "owner-a", "fleet", []string{oversize}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("oversize session id create = %v", err)
+	}
+	if err := service.Update(ctx, "owner-a", "set-1", "fleet", []string{oversize}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("oversize session id update = %v", err)
+	}
+	if fake.calls != 1 {
+		t.Fatalf("oversize session id reached the store %d times", fake.calls)
 	}
 }
 

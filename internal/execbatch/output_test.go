@@ -108,6 +108,54 @@ func TestRetainedOutputTrimsUTF8Seams(t *testing.T) {
 	}
 }
 
+func TestRetainedOutputTailSnapshotTrimsSplitRune(t *testing.T) {
+	// A valid stream chunk can end inside a rune; the intermediate snapshot
+	// must stay valid UTF-8 while the held-back bytes wait for completion.
+	output := NewRetainedOutput(OutputRetention{Head: 0, Tail: 4})
+	output.Write([]byte{'a', 'b', 0xe4, 0xb8})
+	snapshot := output.Snapshot()
+	if snapshot.Tail != "ab" {
+		t.Fatalf("tail = %q, want %q", snapshot.Tail, "ab")
+	}
+	if !utf8.ValidString(snapshot.Tail) {
+		t.Fatalf("tail is not valid UTF-8: %+v", snapshot)
+	}
+	if snapshot.DroppedBytes != 2 || !snapshot.Truncated {
+		t.Fatalf("intermediate accounting = %+v", snapshot)
+	}
+
+	// The completing write restores the full content and accounting: only
+	// the 'a' that fell out of the tail window was truly dropped.
+	output.Write([]byte{0xad})
+	snapshot = output.Snapshot()
+	if snapshot.Tail != "b中" {
+		t.Fatalf("completed tail = %q, want %q", snapshot.Tail, "b中")
+	}
+	if !utf8.ValidString(snapshot.Tail) {
+		t.Fatalf("completed tail is not valid UTF-8: %+v", snapshot)
+	}
+	if snapshot.TotalBytes != 5 || snapshot.DroppedBytes != 1 || !snapshot.Truncated {
+		t.Fatalf("completed accounting = %+v", snapshot)
+	}
+}
+
+func TestRetainedOutputSnapshotAfterRuneCompletionAcrossHead(t *testing.T) {
+	// The head bound splits a rune: the snapshot hides both sides of the
+	// seam while the bytes remain accounted for as dropped.
+	output := NewRetainedOutput(OutputRetention{Head: 3, Tail: 8})
+	output.Write([]byte("a中b"))
+	snapshot := output.Snapshot()
+	if snapshot.Head != "a" || snapshot.Tail != "b" {
+		t.Fatalf("snapshot = %+v", snapshot)
+	}
+	if !utf8.ValidString(snapshot.Head) || !utf8.ValidString(snapshot.Tail) {
+		t.Fatalf("snapshot is not valid UTF-8: %+v", snapshot)
+	}
+	if snapshot.DroppedBytes != 3 {
+		t.Fatalf("dropped = %d, want 3 (%+v)", snapshot.DroppedBytes, snapshot)
+	}
+}
+
 func TestRetainedOutputDropsInvalidTrailingBytes(t *testing.T) {
 	output := NewRetainedOutput(OutputRetention{Head: 8, Tail: 0})
 	output.Write([]byte{'a', 'b', 0xff, 0xfe})

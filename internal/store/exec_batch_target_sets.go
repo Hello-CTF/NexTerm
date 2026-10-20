@@ -18,7 +18,7 @@ type ExecTargetSetItemRow = model.ExecTargetSetItemRow
 const (
 	ExecTargetSetMaxNameBytes    = 128
 	ExecTargetSetMaxTargets      = 64
-	execTargetSetMaxSessionIDLen = 191
+	ExecTargetSetMaxSessionIDLen = 191
 )
 
 type ExecTargetSet struct {
@@ -217,7 +217,7 @@ func validateExecTargetSetSessions(sessionIDs []string) error {
 	}
 	seen := make(map[string]struct{}, len(sessionIDs))
 	for _, sessionID := range sessionIDs {
-		if sessionID == "" || len(sessionID) > execTargetSetMaxSessionIDLen || strings.TrimSpace(sessionID) != sessionID {
+		if sessionID == "" || len(sessionID) > ExecTargetSetMaxSessionIDLen || strings.TrimSpace(sessionID) != sessionID {
 			return fmt.Errorf("invalid exec target set session id")
 		}
 		if _, exists := seen[sessionID]; exists {

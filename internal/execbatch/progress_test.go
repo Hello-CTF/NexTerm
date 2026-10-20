@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func progressTestResult(status Status) Result {
@@ -81,9 +82,12 @@ func TestProgressTrackerLifecycleAndEvents(t *testing.T) {
 	if err := tracker.Finish("c", progressTestResult(StatusCanceled), base.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	batch, _ = tracker.Snapshot()
+	batch, targets = tracker.Snapshot()
 	if batch.Phase != ProgressPhaseFinished || batch.Canceled != 1 || batch.FinishedAt != base.Add(2*time.Second).UnixMilli() {
 		t.Fatalf("final snapshot = %+v", batch)
+	}
+	if targets[2].StartedAt != 0 {
+		t.Fatalf("never-started target fabricated StartedAt %d", targets[2].StartedAt)
 	}
 
 	events := tracker.Events(0)
@@ -176,6 +180,70 @@ func TestProgressTrackerRollupCounts(t *testing.T) {
 	batch, _ := tracker.Snapshot()
 	if batch.Phase != ProgressPhaseFinished || batch.Succeeded != 2 || batch.Failed != 3 || batch.Canceled != 1 || batch.Pending != 0 || batch.Running != 0 {
 		t.Fatalf("rollup = %+v", batch)
+	}
+}
+
+func TestProgressTrackerNeverStartedCancellation(t *testing.T) {
+	tracker := NewProgressTracker("batch-1", []string{"queued", "running"})
+	now := time.Unix(1_700_000_000, 0)
+	if err := tracker.Start("running", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := tracker.Finish("running", progressTestResult(StatusSuccess), now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tracker.Finish("queued", progressTestResult(StatusCanceled), now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	batch, targets := tracker.Snapshot()
+	queued := targets[0]
+	if queued.Phase != ProgressPhaseFinished || queued.Status != StatusCanceled {
+		t.Fatalf("queued target = %+v", queued)
+	}
+	if queued.StartedAt != 0 {
+		t.Fatalf("never-started target fabricated StartedAt %d", queued.StartedAt)
+	}
+	if queued.FinishedAt != now.Add(2*time.Second).UnixMilli() {
+		t.Fatalf("queued FinishedAt = %d", queued.FinishedAt)
+	}
+	if batch.Phase != ProgressPhaseFinished || batch.Canceled != 1 || batch.Succeeded != 1 {
+		t.Fatalf("batch = %+v", batch)
+	}
+}
+
+func TestProgressTrackerOutputEventsStayValidUTF8(t *testing.T) {
+	tracker := NewProgressTracker("batch-1", []string{"a"})
+	now := time.Unix(1_700_000_000, 0)
+	if err := tracker.Start("a", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := tracker.WriteStdout("a", []byte{'a', 'b', 0xe4, 0xb8}); err != nil {
+		t.Fatal(err)
+	}
+	events := tracker.Events(0)
+	intermediate := events[len(events)-1]
+	if intermediate.Kind != ProgressEventTargetOutput {
+		t.Fatalf("last event = %+v", intermediate)
+	}
+	stdout := intermediate.Target.Output.Stdout
+	if stdout.Head != "ab" || !utf8.ValidString(stdout.Head) || !utf8.ValidString(stdout.Tail) {
+		t.Fatalf("intermediate snapshot = %+v", stdout)
+	}
+	if err := tracker.WriteStdout("a", []byte{0xad}); err != nil {
+		t.Fatal(err)
+	}
+	events = tracker.Events(intermediate.Seq)
+	completed := events[len(events)-1]
+	stdout = completed.Target.Output.Stdout
+	if stdout.Head != "ab中" || stdout.TotalBytes != 5 || stdout.DroppedBytes != 0 || stdout.Truncated {
+		t.Fatalf("completed snapshot = %+v", stdout)
+	}
+	if err := tracker.Finish("a", progressTestResult(StatusSuccess), now); err != nil {
+		t.Fatal(err)
+	}
+	_, targets := tracker.Snapshot()
+	if targets[0].Output.Stdout.Head != "ab中" {
+		t.Fatalf("final target output = %+v", targets[0].Output.Stdout)
 	}
 }
 

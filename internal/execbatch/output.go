@@ -79,10 +79,13 @@ func (r *RetainedOutput) Write(chunk []byte) {
 }
 
 // Snapshot returns the retained head and tail, trimmed so the head does not
-// end and the tail does not start inside a multi-byte rune.
+// end and the tail neither starts nor ends inside a multi-byte rune. The
+// underlying bytes of an incomplete trailing rune stay buffered, so a later
+// Write that completes the rune restores the full content and accounting;
+// until then DroppedBytes counts the held-back bytes as dropped.
 func (r *RetainedOutput) Snapshot() OutputSnapshot {
 	head := trimIncompleteRunetail(r.head)
-	tail := trimIncompleteRuneHead(r.tail)
+	tail := trimIncompleteRunetail(trimIncompleteRuneHead(r.tail))
 	dropped := r.total - len(head) - len(tail)
 	return OutputSnapshot{
 		Head:         string(head),

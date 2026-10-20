@@ -171,9 +171,11 @@ func (t *ProgressTracker) writeOutput(sessionID string, chunk []byte, stdout boo
 
 // Finish records the final result of one target. Targets that never started
 // (for example unstarted targets of a canceled batch) finish directly from
-// pending with their canceled result, mirroring the service contract. The
-// result's Stdout and Stderr are not copied; the tracker already retains the
-// bounded streams written during execution.
+// pending with their canceled result, mirroring the service contract: their
+// StartedAt stays zero, exactly like the zero startedAt that history
+// persists as NULL for canceledResult. The result's Stdout and Stderr are
+// not copied; the tracker already retains the bounded streams written
+// during execution.
 func (t *ProgressTracker) Finish(sessionID string, result Result, now time.Time) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -191,9 +193,6 @@ func (t *ProgressTracker) Finish(sessionID string, result Result, now time.Time)
 	state.progress.Error = result.Error
 	state.progress.DurationMS = result.DurationMS
 	state.progress.FinishedAt = now.UnixMilli()
-	if state.progress.StartedAt == 0 {
-		state.progress.StartedAt = state.progress.FinishedAt
-	}
 	state.progress.Output = state.output.Snapshot()
 	t.appendEventLocked(ProgressEventTargetFinished, &state.progress)
 	t.finishBatchLocked(now)

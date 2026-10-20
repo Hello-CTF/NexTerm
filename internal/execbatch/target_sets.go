@@ -142,7 +142,7 @@ func validateTargetSetSessionsInput(sessionIDs []string) error {
 	}
 	seen := make(map[string]struct{}, len(sessionIDs))
 	for _, sessionID := range sessionIDs {
-		if sessionID == "" || strings.TrimSpace(sessionID) != sessionID {
+		if sessionID == "" || len(sessionID) > store.ExecTargetSetMaxSessionIDLen || strings.TrimSpace(sessionID) != sessionID {
 			return fmt.Errorf("%w: invalid target set session id", ErrInvalid)
 		}
 		if _, exists := seen[sessionID]; exists {
