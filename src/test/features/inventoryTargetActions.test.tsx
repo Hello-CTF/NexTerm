@@ -13,7 +13,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   return { ...actual, call: mocks.call };
 });
 
-import { InventoryTargetActions } from "../../features/explorer/InventoryTargetActions";
+import { InventoryTargetActions, ResetLiveOperationRegistry } from "../../features/explorer/InventoryTargetActions";
 
 const dockerTarget = { type: "context", name: "prod", dockerEndpoint: "ssh://ops@prod.example" };
 const podTarget = {
@@ -51,6 +51,7 @@ function challenge() {
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
+  ResetLiveOperationRegistry();
   mounted = undefined;
 });
 
@@ -413,7 +414,7 @@ describe("inventory target actions", () => {
     expect(m.container.querySelector('[role="note"]')?.textContent).toContain("执行已取消");
   });
 
-  it("auto-cancels the in-flight exec on target switch with the frozen snapshot", async () => {
+  it("keeps the in-flight exec cancellable on target switch with the frozen snapshot", async () => {
     let rejectA: (reason: unknown) => void = () => {};
     mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { rejectA = reject; }));
     const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
@@ -423,23 +424,31 @@ describe("inventory target actions", () => {
     await flush();
     expect(m.container.textContent).toContain("执行中");
 
-    // Switch target while A is in flight: the old exec is killed on the
-    // backend with its frozen snapshot (original target and operationId).
+    // Switch target while A is in flight: the operation is retained with
+    // its cancel control (same owner), and B cannot start until it settles.
     const otherTarget = { type: "context", name: "other", dockerEndpoint: "ssh://ops@other.example" };
     act(() => m.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: otherTarget, ownerKey: "owner-a" })));
+    await flush();
+    expect(m.container.textContent).toContain("context/other");
+    expect(m.container.textContent).toContain("执行中");
+    expect(mocks.call).toHaveBeenCalledTimes(1);
+    const execButton = () => [...m.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "执行");
+    expect(execButton()?.disabled).toBe(true);
+
+    // The retained operation is cancelled with its frozen snapshot; A
+    // settles as cancelled and B is not polluted by A's late result.
+    clickButton(m.container, "取消执行");
     await flush();
     expect(mocks.call).toHaveBeenCalledTimes(2);
     const cancelArgs = mocks.call.mock.calls[1][1].args;
     expect(cancelArgs.action).toBe("cancel");
     expect(cancelArgs.target).toEqual(dockerTarget);
     expect(cancelArgs.operationId).toBe(mocks.call.mock.calls[0][1].args.operationId);
-
-    // A settles as cancelled on the backend; the new target is not polluted.
     await act(async () => { rejectA({ code: "io", message: "执行已取消", detail: { cancelled: true } }); });
     await flush();
-    expect(m.container.textContent).toContain("context/other");
     expect(m.container.querySelector('[role="status"]')).toBeNull();
     expect(m.container.textContent).not.toContain("执行已取消");
+    expect(execButton()?.disabled).toBe(false);
   });
 
   it("cancel after editing the command input still uses the original request", async () => {
@@ -465,7 +474,7 @@ describe("inventory target actions", () => {
     expect(m.container.querySelector('[role="note"]')?.textContent).toContain("执行已取消");
   });
 
-  it("auto-cancels with the original identity on owner switch and isolates the new owner", async () => {
+  it("keeps the in-flight exec tracked on owner switch and restores cancel for the original owner", async () => {
     let rejectA: (reason: unknown) => void = () => {};
     mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { rejectA = reject; }));
     const m = (mounted = render({ kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
@@ -475,15 +484,29 @@ describe("inventory target actions", () => {
     await flush();
     const operationIdA = mocks.call.mock.calls[0][1].args.operationId;
 
-    // Switch owner while A is in flight: A is killed with its own snapshot
-    // identity, never with owner B's API identity.
+    // Switch to owner B: A's operation stays tracked with the switch-back
+    // note and B cannot cancel it or start a replacement.
     act(() => m.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-b" })));
+    await flush();
+    expect(m.container.textContent).toContain("切换到 owner-a 后可取消");
+    expect(mocks.call).toHaveBeenCalledTimes(1);
+    const execButton = () => [...m.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "执行");
+    expect(execButton()?.disabled).toBe(true);
+
+    // Switch back to owner A: cancel is restored with A's own snapshot
+    // identity and the operation is cancelled.
+    act(() => m.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" })));
+    await flush();
+    clickButton(m.container, "取消执行");
     await flush();
     expect(mocks.call).toHaveBeenCalledTimes(2);
     const cancelArgs = mocks.call.mock.calls[1][1].args;
     expect(cancelArgs.action).toBe("cancel");
     expect(cancelArgs.operationId).toBe(operationIdA);
     expect(cancelArgs.target).toEqual(dockerTarget);
+    await act(async () => { rejectA({ code: "io", message: "执行已取消", detail: { cancelled: true } }); });
+    await flush();
+    expect(execButton()?.disabled).toBe(false);
 
     // B's own launch uses a fresh operationId, never A's.
     mocks.call.mockResolvedValueOnce({ output: "B ok\n", exitCode: 0 });
@@ -493,10 +516,6 @@ describe("inventory target actions", () => {
     await flush();
     expect(mocks.call).toHaveBeenCalledTimes(3);
     expect(mocks.call.mock.calls[2][1].args.operationId).not.toBe(operationIdA);
-
-    await act(async () => { rejectA({ code: "io", message: "执行已取消", detail: { cancelled: true } }); });
-    await flush();
-    await waitFor(() => expect(m.container.textContent).toContain("B ok"));
   });
 
   it("keeps cancel and ignore-results as distinct actions", async () => {
@@ -535,10 +554,134 @@ describe("inventory target actions", () => {
     await flush();
     expect(mocks.call).toHaveBeenCalledTimes(3);
     expect(mocks.call.mock.calls[2][1].args.action).toBe("cancel");
-    expect(m.container.querySelector('[role="note"]')).toBeNull();
     await act(async () => { settleA(false); });
     await flush();
     expect(m.container.querySelector('[role="note"]')?.textContent).toContain("执行已取消");
+  });
+
+  it("cancel transport failure surfaces the error and offers retry", async () => {
+    let rejectExec: (reason: unknown) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { rejectExec = reject; }));
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+
+    // The cancel IPC fails: the error is visible and retryable, and the
+    // operation is not silently dropped.
+    mocks.call.mockRejectedValueOnce(new Error("transport down"));
+    clickButton(m.container, "取消执行");
+    await flush();
+    expect(m.container.textContent).toContain("取消失败");
+    expect(m.container.textContent).toContain("transport down");
+    const retryButton = () => [...m.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "重试取消");
+    expect(retryButton()).not.toBeUndefined();
+    const execButton = () => [...m.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "执行");
+    expect(execButton()?.disabled).toBe(true);
+
+    // Retry succeeds; the original exec settles as cancelled.
+    mocks.call.mockResolvedValueOnce({});
+    clickButton(m.container, "重试取消");
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(3);
+    await act(async () => { rejectExec({ code: "io", message: "执行已取消", detail: { cancelled: true } }); });
+    await flush();
+    expect(m.container.querySelector('[role="note"]')?.textContent).toContain("执行已取消");
+    expect(execButton()?.disabled).toBe(false);
+  });
+
+  it("cancel pending retains the snapshot and blocks replacement until settle", async () => {
+    let rejectExec: (reason: unknown) => void = () => {};
+    let resolveCancel: (value: unknown) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { rejectExec = reject; }));
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+
+    // The cancel IPC is slow: the pending state is visible, the snapshot
+    // and cancel control are retained, and no replacement is allowed.
+    mocks.call.mockImplementationOnce(() => new Promise((resolve) => { resolveCancel = resolve; }));
+    clickButton(m.container, "取消执行");
+    await flush();
+    expect(m.container.textContent).toContain("取消中");
+    const execButton = () => [...m.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "执行");
+    expect(execButton()?.disabled).toBe(true);
+
+    // The cancel resolves; the original exec settles as cancelled.
+    await act(async () => { resolveCancel({}); });
+    await flush();
+    await act(async () => { rejectExec({ code: "io", message: "执行已取消", detail: { cancelled: true } }); });
+    await flush();
+    expect(m.container.querySelector('[role="note"]')?.textContent).toContain("执行已取消");
+    expect(execButton()?.disabled).toBe(false);
+  });
+
+  it("ignore then target switch keeps the operation cancellable and B isolated", async () => {
+    let rejectA: (reason: unknown) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { rejectA = reject; }));
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+    clickButton(m.container, "忽略结果");
+    await flush();
+    expect(m.container.textContent).toContain("命令仍在目标上执行");
+
+    // Switch target: the ignored operation stays live and cancellable with
+    // its frozen snapshot; the new target cannot start a replacement.
+    const otherTarget = { type: "context", name: "other", dockerEndpoint: "ssh://ops@other.example" };
+    act(() => m.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: otherTarget, ownerKey: "owner-a" })));
+    await flush();
+    expect(m.container.textContent).toContain("命令仍在目标上执行");
+    const execButton = () => [...m.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "执行");
+    expect(execButton()?.disabled).toBe(true);
+
+    // The ignored operation is cancelled with its frozen snapshot; A
+    // settles as cancelled and B is not polluted.
+    clickButton(m.container, "取消执行");
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(2);
+    expect(mocks.call.mock.calls[1][1].args.action).toBe("cancel");
+    expect(mocks.call.mock.calls[1][1].args.operationId).toBe(mocks.call.mock.calls[0][1].args.operationId);
+    await act(async () => { rejectA({ code: "io", message: "执行已取消", detail: { cancelled: true } }); });
+    await flush();
+    expect(m.container.textContent).not.toContain("执行已取消");
+    expect(execButton()?.disabled).toBe(false);
+  });
+
+  it("ignore then unmount restores the operation and cancel on remount", async () => {
+    let rejectA: (reason: unknown) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { rejectA = reject; }));
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+    clickButton(m.container, "忽略结果");
+    await flush();
+
+    // Unmount with the ignored operation live: it is kept in the
+    // owner-isolated registry, and a remount with the same owner restores
+    // it with its cancel control.
+    act(() => m.unmount());
+    const m2 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    mounted = m2;
+    await flush();
+    expect(m2.container.textContent).toContain("命令仍在目标上执行");
+
+    // The restored operation is cancelled with its frozen snapshot.
+    clickButton(m2.container, "取消执行");
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(2);
+    expect(mocks.call.mock.calls[1][1].args.action).toBe("cancel");
+    expect(mocks.call.mock.calls[1][1].args.operationId).toBe(mocks.call.mock.calls[0][1].args.operationId);
+    await act(async () => { rejectA({ code: "io", message: "执行已取消", detail: { cancelled: true } }); });
+    await flush();
+    expect(m2.container.querySelector('[role="note"]')?.textContent).toContain("执行已取消");
   });
 
   it("invalidates the in-flight request and resets target state on a same-owner target switch", async () => {

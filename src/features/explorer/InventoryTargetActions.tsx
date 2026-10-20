@@ -55,6 +55,51 @@ function targetIdentity(kind: string, target: Record<string, unknown>): string {
   ].join("/");
 }
 
+// LiveOperation is the in-flight lifecycle of one exec, tracked
+// independently of the busy/ignored display state. The snapshot is bound to
+// the owner and target it was launched with, so cancel only ever addresses
+// that exact instance under that owner.
+interface LiveOperation {
+  snapshot: InventoryTargetExecRequest;
+  ownerKey: string;
+  identity: string;
+  status: "running" | "ignored" | "cancel-pending" | "cancel-failed";
+  cancelError?: string;
+  settled?: boolean;
+  outcome?: "cancelled" | "result" | "failure";
+  result?: InventoryTargetExecResponse;
+  failure?: { message: string; exitCode?: number; output?: string };
+  onSettle?: () => void;
+}
+
+// The registry keeps live operations visible across unmounts in an
+// owner-isolated, bounded way: a remount with the same owner restores the
+// operation and its cancel control, while the exec's own settle clears it.
+const LIVE_REGISTRY_LIMIT = 32;
+const liveOperationRegistry = new Map<string, LiveOperation>();
+
+function registryStore(op: LiveOperation) {
+  liveOperationRegistry.set(op.ownerKey, op);
+  if (liveOperationRegistry.size > LIVE_REGISTRY_LIMIT) {
+    const oldest = liveOperationRegistry.keys().next().value;
+    if (oldest !== undefined) liveOperationRegistry.delete(oldest);
+  }
+}
+
+function registryDelete(ownerKey: string) {
+  liveOperationRegistry.delete(ownerKey);
+}
+
+function registryGet(ownerKey: string): LiveOperation | null {
+  return liveOperationRegistry.get(ownerKey) ?? null;
+}
+
+// ResetLiveOperationRegistry clears the cross-unmount registry; it exists
+// for tests so each case starts without another case's live operation.
+export function ResetLiveOperationRegistry() {
+  liveOperationRegistry.clear();
+}
+
 export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], requireSession = false }: InventoryTargetActionsProps) {
   const executable = targetExecutable(kind, target);
   const isPod = kind === "kubernetes" && target.type === "pod";
@@ -68,54 +113,59 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
   const [container, setContainer] = useState(isPod ? stringField(target, "container") : "");
   const [sessionId, setSessionId] = useState("");
   const [busy, setBusy] = useState(false);
-  const busyRef = useRef(false);
-  busyRef.current = busy;
   const [result, setResult] = useState<InventoryTargetExecResponse | null>(null);
   const [failure, setFailure] = useState<{ message: string; exitCode?: number; output?: string } | null>(null);
   const [production, setProduction] = useState<{ challenge: DockerConfirmationChallenge; command: string } | null>(null);
-  const [ignoredNotice, setIgnoredNotice] = useState<"running" | "done" | null>(null);
   const [cancelled, setCancelled] = useState(false);
+  const [ignoredDone, setIgnoredDone] = useState(false);
   const generationRef = useRef(0);
-  const ignoredGenRef = useRef<number | null>(null);
-  const launchSnapshotRef = useRef<InventoryTargetExecRequest | null>(null);
+  // The live operation lives in a ref so its identity stays stable across
+  // renders, mutations, and the registry; a version counter drives renders.
+  const liveOpRef = useRef<LiveOperation | null>(null);
+  const [, setLiveOpVersion] = useState(0);
+  const bumpLiveOp = () => setLiveOpVersion((version) => version + 1);
 
   useEffect(() => {
-    // A target or owner switch must not leave the in-flight exec running
-    // and uncancellable: kill it on the backend with its frozen snapshot
-    // (original target and operationId), then reset the target state. The
-    // old exec settles as cancelled and never pollutes the new state.
-    const snapshot = launchSnapshotRef.current;
-    if (busyRef.current && snapshot !== null) {
-      void inventoryTargetApi.cancelExec(snapshot).catch(() => undefined);
-    }
     generationRef.current++;
-    ignoredGenRef.current = null;
-    launchSnapshotRef.current = null;
-    setBusy(false);
-    setResult(null);
-    setFailure(null);
-    setProduction(null);
-    setIgnoredNotice(null);
-    setCancelled(false);
+    // A remount with the same owner restores the live operation and its
+    // cancel control; a different owner never sees another owner's op.
+    if (liveOpRef.current === null) {
+      const restored = registryGet(ownerKey);
+      if (restored !== null && !restored.settled) {
+        restored.onSettle = () => {
+          liveOpRef.current = null;
+          if (restored.outcome === "cancelled") setCancelled(true);
+          else if (restored.outcome === "result" && restored.result) setResult(restored.result);
+          else if (restored.outcome === "failure" && restored.failure) setFailure(restored.failure);
+          bumpLiveOp();
+        };
+        liveOpRef.current = restored;
+        bumpLiveOp();
+      }
+    }
+    // Reset target-scoped form state for the new identity/owner, but keep
+    // the live operation tracked with its cancel control.
     setContainer(targetRef.current.type === "pod" ? stringField(targetRef.current, "container") : "");
     setSessionId("");
   }, [ownerKey, identity]);
 
-  // Unmount must not leave an in-flight exec running either.
+  // Unmount keeps the live operation in the owner-isolated registry so a
+  // remount can see it and retry the cancel; the exec's own settle clears
+  // the registry entry.
   useEffect(() => {
     return () => {
-      const snapshot = launchSnapshotRef.current;
-      if (snapshot !== null && busyRef.current) {
-        void inventoryTargetApi.cancelExec(snapshot).catch(() => undefined);
+      const op = liveOpRef.current;
+      if (op !== null && !op.settled) {
+        registryStore(op);
       }
     };
   }, []);
 
   const run = async (confirmation?: DockerProductionConfirmation) => {
-    // An ignored command is still running on the target; starting another
-    // one now would repeat side effects and drop its settle tracking. The
-    // tracked ignored generation is the authority, not the notice text.
-    if (busy || ignoredGenRef.current !== null) return;
+    // A live operation blocks a replacement until it settles; an ignored
+    // operation that already settled blocks until its done notice is
+    // cleared, so a retry is never blind.
+    if (busy || liveOpRef.current !== null || ignoredDone) return;
     const argv = command.trim() ? command.trim().split(/\s+/) : [];
     if (argv.length === 0) {
       setFailure({ message: "请输入要执行的命令" });
@@ -131,15 +181,14 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
       return;
     }
     const generation = generationRef.current;
-    ignoredGenRef.current = null;
-    setIgnoredNotice(null);
     setCancelled(false);
+    setIgnoredDone(false);
     setBusy(true);
     setResult(null);
     setFailure(null);
     // Each launch freezes an immutable snapshot of the full request
-    // identity; retry gets a fresh one, and cancel reads only the
-    // snapshot, never editable current input.
+    // identity bound to the launching owner and target; cancel addresses
+    // exactly that instance.
     const operationId = globalThis.crypto.randomUUID();
     const snapshot: InventoryTargetExecRequest = {
       kind,
@@ -151,20 +200,20 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
       operationId,
       confirmation,
     };
-    launchSnapshotRef.current = snapshot;
+    const op: LiveOperation = { snapshot, ownerKey, identity, status: "running" };
+    liveOpRef.current = op;
+    registryStore(op);
+    bumpLiveOp();
     try {
       const response = await inventoryTargetApi.execTarget(snapshot);
-      if (generation !== generationRef.current) {
-        if (generation === ignoredGenRef.current) setIgnoredNotice("done");
-        return;
-      }
+      op.result = response;
+      op.outcome = "result";
+      if (generation !== generationRef.current) return;
       setResult(response);
     } catch (cause) {
-      if (generation !== generationRef.current) {
-        if (generation === ignoredGenRef.current) setIgnoredNotice("done");
-        return;
-      }
       if (inventoryExecCancelled(cause)) {
+        op.outcome = "cancelled";
+        if (generation !== generationRef.current) return;
         setCancelled(true);
         return;
       }
@@ -175,54 +224,79 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
       }
       const exitFailure = inventoryExecFailure(cause);
       if (exitFailure) {
-        setFailure({
+        op.outcome = "failure";
+        op.failure = {
           message: `命令已执行但返回非零退出码（${exitFailure.exitCode}）`,
           exitCode: exitFailure.exitCode,
           output: exitFailure.output,
-        });
+        };
+        if (generation !== generationRef.current) return;
+        setFailure(op.failure);
         return;
       }
-      setFailure({ message: describeError(cause) });
+      op.outcome = "failure";
+      op.failure = { message: describeError(cause) };
+      if (generation !== generationRef.current) return;
+      setFailure(op.failure);
     } finally {
-      if (generation === generationRef.current) setBusy(false);
+      // The operation's lifecycle ends only when the exec itself settles;
+      // until then its snapshot and cancel control are retained. The busy
+      // display clears on settle regardless of generation; only the
+      // outcome display is generation-gated.
+      if (liveOpRef.current === op) {
+        op.settled = true;
+        liveOpRef.current = null;
+        registryDelete(op.ownerKey);
+        if (op.status === "ignored") setIgnoredDone(true);
+        bumpLiveOp();
+      }
+      op.onSettle?.();
+      setBusy(false);
     }
   };
 
-  // The typed IPC has no abort handle, so an in-flight command cannot be
-  // cancelled here; ignoring only discards its result while the command
-  // keeps running on the target.
+  // Ignoring discards the response while the command keeps running on the
+  // target; the operation stays live and tracked until it settles.
   const ignoreResults = () => {
-    ignoredGenRef.current = generationRef.current;
+    const op = liveOpRef.current;
+    if (op === null || op.status !== "running") return;
     generationRef.current++;
-    setIgnoredNotice("running");
+    op.status = "ignored";
     setBusy(false);
     setResult(null);
     setFailure(null);
+    bumpLiveOp();
   };
 
   // Real cancellation: the backend kills the in-flight command, so retry
   // is safe once the cancelled contract settles. This is distinct from
   // ignoring a result, which leaves the command running. The cancel reads
-  // only the frozen launch snapshot, never editable current input.
+  // only the frozen launch snapshot, and only under the launching owner.
   const cancelExecution = async () => {
-    if (!busy) return;
-    const snapshot = launchSnapshotRef.current;
-    if (snapshot === null) return;
+    const op = liveOpRef.current;
+    if (op === null || op.ownerKey !== ownerKey || op.status === "cancel-pending") return;
+    op.status = "cancel-pending";
+    op.cancelError = undefined;
+    bumpLiveOp();
     try {
-      await inventoryTargetApi.cancelExec(snapshot);
-    } catch {
-      // the exec request itself reports the cancellation outcome
+      await inventoryTargetApi.cancelExec(op.snapshot);
+      // The original exec settles as cancelled; its finally clears the op.
+    } catch (cause) {
+      op.status = "cancel-failed";
+      op.cancelError = describeError(cause);
+      bumpLiveOp();
     }
   };
 
   const clearSettled = () => {
-    ignoredGenRef.current = null;
-    setIgnoredNotice(null);
     setResult(null);
     setFailure(null);
     setProduction(null);
     setCancelled(false);
+    setIgnoredDone(false);
   };
+
+  const liveOp = liveOpRef.current;
 
   return (
     <div className="flex flex-col gap-2">
@@ -288,12 +362,17 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
             </label>
           )}
           <div className="flex gap-2">
-            <button type="button" className="nx-btn nx-btn-primary nx-btn-xs" disabled={busy || ignoredGenRef.current !== null} onClick={() => void run()}>
+            <button type="button" className="nx-btn nx-btn-primary nx-btn-xs" disabled={busy || liveOp !== null || ignoredDone} onClick={() => void run()}>
               执行
             </button>
-            {busy && (
+            {busy && liveOp !== null && liveOp.status === "running" && (
               <>
-                <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void cancelExecution()}>
+                <button
+                  type="button"
+                  className="nx-btn nx-btn-ghost nx-btn-xs"
+                  disabled={liveOp.ownerKey !== ownerKey}
+                  onClick={() => void cancelExecution()}
+                >
                   取消执行
                 </button>
                 <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={ignoreResults}>
@@ -301,21 +380,39 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
                 </button>
               </>
             )}
-            {(result || failure || cancelled || ignoredNotice === "done") && (
+            {(result || failure || cancelled || ignoredDone) && (
               <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={clearSettled}>
                 清除
               </button>
             )}
           </div>
           {busy && <div className="text-[11px] text-neutral-400">执行中…</div>}
+          {busy && liveOp !== null && liveOp.ownerKey !== ownerKey && (
+            <div role="note" className="text-[11px] text-amber-300">
+              操作仍在目标上执行；切换到 {liveOp.ownerKey} 后可取消
+            </div>
+          )}
           {cancelled && (
             <div role="note" className="text-[11px] text-neutral-300">执行已取消</div>
           )}
-          {ignoredNotice && (
+          {ignoredDone && (
+            <div role="note" className="text-[11px] text-neutral-300">命令已结束；结果已忽略</div>
+          )}
+          {liveOp !== null && !liveOp.settled && liveOp.status !== "running" && (
             <div role="note" className="text-[11px] text-amber-300">
-              {ignoredNotice === "running"
-                ? "命令仍在目标上执行；结果已忽略，不代表命令已停止"
-                : "命令已结束；结果已忽略"}
+              {liveOp.ownerKey !== ownerKey
+                ? `操作仍在目标上执行；切换到 ${liveOp.ownerKey} 后可取消`
+                : liveOp.status === "ignored"
+                  ? "命令仍在目标上执行；结果已忽略，不代表命令已停止"
+                  : liveOp.status === "cancel-failed"
+                    ? `取消失败：${liveOp.cancelError}；命令仍在目标上执行`
+                    : "命令仍在目标上执行"}
+              {liveOp.ownerKey === ownerKey && liveOp.status !== "cancel-pending" && (
+                <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void cancelExecution()}>
+                  {liveOp.status === "cancel-failed" ? "重试取消" : "取消执行"}
+                </button>
+              )}
+              {liveOp.status === "cancel-pending" && <span>取消中…</span>}
             </div>
           )}
           {result && (
