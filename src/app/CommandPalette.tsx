@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUi, connectAsset, nextTabId, openTerminalTab, requestKillTab, type Workspace } from "./store";
 import { formatBinding, useKeybindings, type KeybindingActionId } from "./keybindings";
@@ -85,8 +85,8 @@ export function CommandPalette({
   const [cursor, setCursor] = useState(0);
   const assetsQuery = useQuery({ queryKey: ["assets"], queryFn: () => assetApi.list(), retry: false });
   const snippetsQuery = useQuery({ queryKey: ["snippets"], queryFn: () => assetApi.snippetList(), retry: false });
-  const assets = assetsQuery.data ?? [];
-  const snippets = snippetsQuery.data ?? [];
+  const assets = useMemo(() => assetsQuery.data ?? [], [assetsQuery.data]);
+  const snippets = useMemo(() => snippetsQuery.data ?? [], [snippetsQuery.data]);
   const assetError = assetsQuery.isError ? `资产列表加载失败：${describeError(assetsQuery.error)}` : "";
   const snippetError = snippetsQuery.isError ? `片段列表加载失败：${describeError(snippetsQuery.error)}` : "";
   const { hiddenIds, showHidden } = useAssetVisibility();
@@ -100,11 +100,11 @@ export function CommandPalette({
   const helpId = useId();
   const layer = useOverlayFocus(true, modalRef, { initialFocus: () => inputRef.current });
   const bindings = useKeybindings();
-  const keyHint = (id: KeybindingActionId, description?: string): string | undefined => {
+  const keyHint = useCallback((id: KeybindingActionId, description?: string): string | undefined => {
     const binding = bindings[id];
     if (!binding) return description;
     return description ? `${formatBinding(binding)} · ${description}` : formatBinding(binding);
-  };
+  }, [bindings]);
 
   useEffect(() => {
     if (probedRef.current || assets.length === 0) return;
@@ -116,7 +116,7 @@ export function CommandPalette({
     if (ids.length > 0) void useAssetReachability.getState().probe(ids);
   }, [assets, hiddenIds, showHidden]);
 
-  const runClone = async (asset: Asset) => {
+  const runClone = useCallback(async (asset: Asset) => {
     try {
       const created = await cloneAsset(asset);
       if (!created) return;
@@ -125,17 +125,17 @@ export function CommandPalette({
     } catch (e) {
       pushToast("error", `克隆失败：${describeError(e)}`);
     }
-  };
+  }, [qc, pushToast]);
 
-  const hideAsset = (asset: Asset) => {
+  const hideAsset = useCallback((asset: Asset) => {
     useAssetVisibility.getState().hide(asset.id);
     pushToast("info", `已隐藏「${asset.name}」— 资产树眼睛按钮可找回`);
-  };
+  }, [pushToast]);
 
-  const unhideAsset = (asset: Asset) => {
+  const unhideAsset = useCallback((asset: Asset) => {
     useAssetVisibility.getState().unhide(asset.id);
     pushToast("info", `已取消隐藏「${asset.name}」`);
-  };
+  }, [pushToast]);
 
   const actions = useMemo<Action[]>(() => {
     const currentWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ??
@@ -418,13 +418,17 @@ export function CommandPalette({
     onOpenFiles,
     onEditAsset,
     onQuickConnect,
-    bindings,
     themeMode,
     setThemeMode,
     reachEntries,
     connectingAssetIds,
     workspaces,
     activeWorkspaceId,
+    hideAsset,
+    keyHint,
+    qc,
+    runClone,
+    unhideAsset,
   ]);
 
   const filtered = actions.filter((action) =>

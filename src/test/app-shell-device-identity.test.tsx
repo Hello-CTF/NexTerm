@@ -44,7 +44,7 @@ vi.mock("../app/layout", () => ({
 	subscribeLayoutRestore: () => () => {},
 	undoLayoutRestore: vi.fn(),
 }));
-vi.mock("../app/unread", () => ({ startUnreadTracking: () => {} }));
+vi.mock("../app/unread", () => ({ startUnreadTracking: () => {}, resetUnreadTracking: () => {} }));
 vi.mock("../features/settings/useWebAutoSync", () => ({
 	useDesktopAutoSync: () => {},
 	useWebAutoSync: () => {},

@@ -160,6 +160,40 @@ describe("open project orchestration", () => {
     expect(useUi.getState().workspaces[0]).toBe(current);
   });
 
+  it("restores only the missing subset and keeps the already-connected member untouched", async () => {
+    const template = makeTemplate(["ws-1", "ws-2"]);
+    const existing = hostWorkspace("ws-1", { restorePending: undefined });
+    useUi.setState({
+      workspaces: [existing],
+      sessions: [connectedSession("ws-1")],
+    });
+    const reconnectWorkspace = vi.fn(async (id: string): Promise<ConnectOutcome> => {
+      succeed(id);
+      return { ok: true };
+    });
+
+    const result = await openProjectTemplate(template, {
+      reconnectWorkspace,
+      listForwardRules: async () => [],
+      executeCommands: async () => [],
+    });
+
+    // Only the missing subset reconnects; the connected member reports success without a reconnect.
+    expect(reconnectWorkspace).toHaveBeenCalledTimes(1);
+    expect(reconnectWorkspace).toHaveBeenCalledWith("ws-2", { preserveUserFocus: true });
+    expect(result.workspaces["ws-1"]).toEqual({ status: "success" });
+    expect(result.workspaces["ws-2"]?.status).toBe("success");
+    expect(Object.keys(result.workspaces).sort()).toEqual(["ws-1", "ws-2"]);
+
+    const workspaces = useUi.getState().workspaces;
+    const kept = workspaces.find((workspace) => workspace.id === "ws-1");
+    expect(kept?.sessionId).toBe("session-ws-1");
+    expect(kept?.restorePending).toBeUndefined();
+    const added = workspaces.find((workspace) => workspace.id === "ws-2");
+    expect(added?.sessionId).toBe("session-ws-2");
+    expect(added?.restorePending).toBeUndefined();
+  });
+
   it("keeps a failed connection attached to its workspace and does not start its forward", async () => {
     const template = makeTemplate(["ws-1", "ws-2"]);
     const startForwardRule = vi.fn(async () => undefined);

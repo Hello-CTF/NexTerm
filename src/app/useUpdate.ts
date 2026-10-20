@@ -167,7 +167,7 @@ export function updateInstallAllowed(status: UpdateStatusDto | null): boolean {
 let progressRefs = 0;
 let progressOff: (() => void) | null = null;
 
-function acquireProgressListener(): () => void {
+export function acquireProgressListener(): () => void {
   progressRefs += 1;
   let released = false;
   if (progressRefs === 1) {
@@ -176,6 +176,8 @@ function acquireProgressListener(): () => void {
     }).then((off) => {
       if (released) off();
       else progressOff = off;
+    }).catch((error: unknown) => {
+      console.warn("[NexTerm] Failed to subscribe update progress", error);
     });
   }
   return () => {

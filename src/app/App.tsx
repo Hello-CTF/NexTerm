@@ -54,16 +54,15 @@ import {
   type FrameCoalescer,
 } from "../ui/ResizeHandle";
 import {
-  advanceLayoutAccount,
   finishLayoutRestore,
   layoutBootstrapped,
   layoutRestoreStatus,
-  onRemoteChange,
   reviewPendingLayoutRestore,
   startLayoutSync,
   subscribeLayoutRestore,
   undoLayoutRestore,
 } from "./layout";
+import { wireAccountSwitchCleanup } from "./accountSwitch";
 import { startUnreadTracking } from "./unread";
 import { useTabUnread } from "./unreadStore";
 import { useEdgeGestures } from "./edgeGestures";
@@ -103,7 +102,6 @@ import { BackgroundSessions } from "../features/terminal/BackgroundSessions";
 import { WorkspaceRestoreBanner } from "../features/terminal/WorkspaceRestoreBanner";
 import { TranscriptHistoryPanel } from "../features/terminal/TranscriptHistoryPanel";
 import { FileBrowser } from "../features/files/FileBrowser";
-import { resetTransferQueue } from "../features/files/transferStore";
 import { FileTree } from "../features/files/FileTree";
 import { fileVisual } from "../features/files/fileTypes";
 import { MountPanel } from "../features/files/MountPanel";
@@ -130,14 +128,13 @@ import { TakeoverBanner } from "./TakeoverBanner";
 import { UpdateBanner } from "./UpdateBanner";
 import { DekUnlockBanner } from "./DekUnlockBanner";
 import { DeviceSessionBoundary } from "../features/fleet/DeviceSessionBoundary";
-import { cleanupDeviceSessions, reportDeviceSessionCleanup } from "../features/fleet/deviceSessionCleanup";
 import { getUpdateState } from "./useUpdate";
 import { promptUpdateIfNeeded } from "./updatePrompt";
 import { PromptModal } from "../ui/PromptModal";
 import { DialogHost, isEditableTarget } from "../ui/DialogHost";
 import { ResizeHandle } from "../ui/ResizeHandle";
 import { ErrorBoundary } from "../ui/ErrorBoundary";
-import { registerPromptHandler, registerDialogHandlers, promptText, type ChoiceResult } from "../ui/dialogs";
+import { registerPromptHandler, registerDialogHandlers, registerDialogEpochSource, promptText, type ChoiceResult } from "../ui/dialogs";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../ui/ContextMenu";
 import {
   IconActivity,
@@ -538,22 +535,8 @@ function LazyDevicesView() {
   return <View />;
 }
 
-// Account-level query keys, aligned with the queryKeys of AssetTree/CredentialsSidebar/CredentialsPanel
-// (assets/groups/credentials/snippets/search/vault status/forwards). Reset together on auth transitions: before login
-// these requests all hit 401 (grouped assets hidden), and on account switch the previous session's cache must not leak into the next.
-const ACCOUNT_QUERY_KEYS = [
-  ["assets"],
-  ["groups"],
-  ["credentials"],
-  ["snippets"],
-  ["asset-search"],
-  ["vault-status"],
-  ["forwards"],
-  ["forwardEnv"],
-  ["exec-batch-history"],
-  ["exec-batch-history-detail"],
-] as const;
-
+// Account-level auth-transition cleanup lives in ./accountSwitch so it can be exercised
+// without mounting the shell; see wireAccountSwitchCleanup for the query-key set and ordering.
 type SyncStatusWithHealth = import("../ipc/types").SyncStatus & {
   warnings?: string[];
   paused?: boolean;
@@ -627,6 +610,7 @@ function AppShell() {
     rightWidth,
     setRightWidth,
     aiAccountEpoch,
+    accountEpoch,
     toasts,
     dismissToast,
     pushToast,
@@ -1248,6 +1232,7 @@ function AppShell() {
         openTextPrompt({ message, value, ...options, resolve });
       });
     });
+    registerDialogEpochSource(() => useUi.getState().accountEpoch);
   }, []);
 
   useEffect(() => {
@@ -1357,43 +1342,9 @@ function AppShell() {
   }, []);
 
   // With auth=on, when login/register/init brings the gate to ready, account-level requests issued while mounted behind the gate
-  // all hit 401; resetQueries cancels in-flight old fetches and refetches (invalidateQueries joins the old fetch when data is empty,
-  // and the 401 still lands). The reverse direction (logout/session expiry back to login) resets the same key set and clears the session
-  // list, SQL runtime, and vault state, so the previous session's data cannot leak into the next account. Toasts are not all cleared on ready:
+  // all hit 401; the wiring resets those query keys and clears account-scoped caches on switches. Toasts are not all cleared on ready:
   // the 8s/3.5s auto-dismiss already bounds their lifetime, and terminal/file/AI and non-401 errors remain valid feedback after login.
-  useEffect(() => {
-    if (!WEB) return;
-    let cancelled = false;
-    let unsubscribe: (() => void) | undefined;
-    void import("../features/auth/store").then((m) => {
-      if (cancelled) return;
-      unsubscribe = m.useAuth.subscribe((s, prev) => {
-        const accountChanged = s.user?.id !== prev.user?.id;
-        if (accountChanged) {
-          useUi.getState().resetAiAccount();
-          advanceLayoutAccount();
-          if (prev.user) void cleanupDeviceSessions().then(reportDeviceSessionCleanup);
-          useUi.getState().resetAccountWorkspaces();
-          if (s.gate === "ready") onRemoteChange(null);
-          for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
-        }
-        if (accountChanged || (prev.gate === "ready" && s.gate === "login")) resetTransferQueue();
-        if (s.gate === prev.gate) return;
-        if (s.gate === "ready" && prev.gate !== "loading") {
-          onRemoteChange(null);
-          if (!accountChanged) for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
-          void useUi.getState().resyncSessions({ silent: true });
-        } else if (prev.gate === "ready" && s.gate === "login") {
-          if (!accountChanged) for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
-          if (!accountChanged) useUi.getState().resetSessions({ clearWorkspaceRuntime: true });
-        }
-      });
-    });
-    return () => {
-      cancelled = true;
-      unsubscribe?.();
-    };
-  }, [queryClient]);
+  useEffect(() => wireAccountSwitchCleanup(queryClient), [queryClient]);
 
   useEffect(() => {
     if (bootLocalTried) return;
@@ -1781,7 +1732,9 @@ function AppShell() {
               ) : leftMode === "files" && ws?.sessionId ? (
                 <FileTree key={ws.sessionId} sessionId={ws.sessionId} />
               ) : (
-                <AssetTree />
+                // Keyed by account epoch: on account switch the tree remounts so template, runbook,
+                // inventory discovery/watch, and bulk panels never show the previous account's state.
+                <AssetTree key={accountEpoch} />
               )}
               <ResizeHandle
                 side="left"
@@ -1797,9 +1750,9 @@ function AppShell() {
           <main id="nx-main" tabIndex={-1} className="nx-workspace-main min-w-0 flex-1">
             {workspaces.length === 0 ? (
               sessions.length > 0 ? (
-                <WorkspaceEmpty onNew={openNewTerminal} />
+                <WorkspaceEmpty onNew={() => void openNewTerminal()} />
               ) : (
-                <EmptyState onLocal={openLocalTerminal} onPalette={() => setPaletteOpen(true)} />
+                <EmptyState onLocal={() => void openLocalTerminal()} onPalette={() => setPaletteOpen(true)} />
               )
             ) : (
               <>
@@ -1827,7 +1780,7 @@ function AppShell() {
                         else if (viewport.splitAllowed) splitWorkspace(w.id);
                       }}
                       onActivate={() => setActivePane(p.id, w.id)}
-                      onNewTerminal={openNewTerminal}
+                      onNewTerminal={() => void openNewTerminal()}
                       leftOpen={leftDockOpen}
                       onToggleLeft={() => setLeftOpen(!leftDockOpen)}
                     />

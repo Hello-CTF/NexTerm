@@ -10,7 +10,7 @@ vi.mock("../../ipc/commands", () => ({
 }));
 
 import { sessionApi, terminalApi, type SessionInfo } from "../../ipc/commands";
-import { useUi } from "../../app/store";
+import { sanitizeWorkspaceProblemText, useUi } from "../../app/store";
 import { deferred } from "./reactTestUtils";
 
 function session(id: string, status: SessionInfo["status"]): SessionInfo {
@@ -81,6 +81,132 @@ describe("resyncSessions", () => {
     expect(toasts).toHaveLength(1);
     expect(toasts[0].id).not.toBe(firstId);
     expect(toasts[0].text).toContain("刷新会话列表失败");
+  });
+
+  it("applies only the latest of two overlapping resyncs", async () => {
+    const stale = deferred<SessionInfo[]>();
+    vi.mocked(sessionApi.list)
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValueOnce([session("fresh", "connected")]);
+
+    const first = useUi.getState().resyncSessions();
+    await useUi.getState().resyncSessions();
+    stale.resolve([session("stale", "failed")]);
+    await first;
+
+    expect(useUi.getState().sessions).toEqual([session("fresh", "connected")]);
+  });
+
+  it("neither toasts nor flags failure for a superseded resync that fails late", async () => {
+    const stale = deferred<SessionInfo[]>();
+    vi.mocked(sessionApi.list)
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValueOnce([]);
+
+    const first = useUi.getState().resyncSessions();
+    await useUi.getState().resyncSessions();
+    stale.reject(new Error("down"));
+    await first;
+
+    expect(useUi.getState().sessionResyncFailed).toBe(false);
+    expect(useUi.getState().toasts).toEqual([]);
+  });
+});
+
+describe("sanitizeWorkspaceProblemText", () => {
+  it("redacts URL credentials, env assignments, and secrets on 32KiB and 1MiB inputs", () => {
+    for (const size of [32 * 1024, 1024 * 1024]) {
+      const text = `.env scheme://user:secret@${"a".repeat(size)} FOO=bar ${"b".repeat(size)} password=hunter2`;
+      const sanitized = sanitizeWorkspaceProblemText(text);
+      expect(sanitized).toContain("scheme://user:[REDACTED]@");
+      expect(sanitized).not.toContain(":secret@");
+      expect(sanitized).toContain("FOO=[REDACTED]");
+      expect(sanitized).toContain("password=[REDACTED]");
+      expect(sanitized).not.toContain("hunter2");
+    }
+  });
+
+  it("keeps env-assignment redaction semantics on quoted and unquoted values", () => {
+    const sanitized = sanitizeWorkspaceProblemText(
+      '.env A="" B=\'x\' C=bare D="unclosed E=, F=; G=hunter2',
+    );
+    expect(sanitized).toContain('A=[REDACTED]');
+    expect(sanitized).toContain('B=[REDACTED]');
+    expect(sanitized).toContain('C=[REDACTED]');
+    expect(sanitized).toContain('D=[REDACTED]');
+    expect(sanitized).not.toContain("hunter2");
+  });
+
+  it("redacts scheme suffixes after digit and punctuation prefixes like the old unanchored regex", () => {
+    for (const input of [
+      "1http://user:secret@host",
+      ".http://user:secret@host",
+      "-http://user:secret@host",
+      "+http://user:secret@host",
+      "9scheme+x://user:secret@host",
+    ]) {
+      const sanitized = sanitizeWorkspaceProblemText(input);
+      expect(sanitized).toContain("user:[REDACTED]@host");
+      expect(sanitized).not.toContain(":secret@");
+    }
+  });
+
+  it("redacts env assignments across full JavaScript whitespace including Unicode spaces", () => {
+    const sanitized = sanitizeWorkspaceProblemText(".env A = secret B = hunter2 C  =  hunter3");
+    expect(sanitized).toContain("A = [REDACTED]");
+    expect(sanitized).toContain("B = [REDACTED]");
+    expect(sanitized).toContain("C  =  [REDACTED]");
+    expect(sanitized).not.toContain("hunter2");
+    expect(sanitized).not.toContain("hunter3");
+  });
+
+  it("falls back to the unquoted scan for unclosed quotes instead of consuming to EOF", () => {
+    const sanitized = sanitizeWorkspaceProblemText(
+      '.env A="unclosed tail B=secret C=public-diagnostics D=, E=; F=hunter2',
+    );
+    // The unclosed quoted value redacts only up to the first delimiter; later text survives.
+    expect(sanitized).toContain("A=[REDACTED] tail");
+    expect(sanitized).toContain("B=[REDACTED]");
+    expect(sanitized).toContain("C=[REDACTED]");
+    expect(sanitized).toContain("D=,");
+    expect(sanitized).toContain("E=;");
+    expect(sanitized).not.toContain("hunter2");
+    expect(sanitized).not.toContain("secret");
+    expect(sanitized).not.toContain("public-diagnostics");
+  });
+
+  it("redacts long values without length truncation", () => {
+    const longPassword = "p".repeat(4096);
+    const longValue = "v".repeat(4096);
+    const sanitized = sanitizeWorkspaceProblemText(
+      `scheme://user:${longPassword}@host .env A=${longValue}`,
+    );
+    expect(sanitized).toContain("user:[REDACTED]@host");
+    expect(sanitized).not.toContain(longPassword);
+    expect(sanitized).toContain("A=[REDACTED]");
+    expect(sanitized).not.toContain(longValue);
+  });
+
+  it("scales linearly on long unseparated input instead of regressing to quadratic backtracking", () => {
+    const makeInput = (n: number) => `.env ${"a".repeat(n)}`;
+    // Minimum-of-N per size: the fastest run approximates the true cost, so scheduler hiccups
+    // on the larger measurement cannot masquerade as superlinearity (a real quadratic would
+    // show up in every run). Warm-up first so JIT compilation is not measured.
+    const measure = (n: number) => {
+      let best = Infinity;
+      for (let i = 0; i < 5; i++) {
+        const t0 = performance.now();
+        sanitizeWorkspaceProblemText(makeInput(n));
+        best = Math.min(best, performance.now() - t0);
+      }
+      return best;
+    };
+    measure(16 * 1024);
+    const small = Math.max(measure(32 * 1024), 0.01);
+    const large = measure(256 * 1024);
+    // 8x input: linear scales about 8x, the old quadratic patterns scaled about 64x.
+    // 24 leaves wide headroom while still failing any quadratic regression.
+    expect(large / small).toBeLessThan(24);
   });
 });
 

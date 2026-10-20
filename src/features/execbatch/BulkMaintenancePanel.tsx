@@ -57,6 +57,40 @@ function markerLines(result: ExecBatchResult): Set<string> {
   return new Set(result.stdout.split(/\r?\n/).map((line) => line.trim().split(/\s+/, 1)[0]));
 }
 
+// Accurate per-class labels for the real handshake probe (network/host-key/auth/vault/config);
+// anything unmapped stays visible as the raw kind instead of being mislabeled.
+const PROBE_KIND_LABELS: Record<string, string> = {
+  network: "网络不可达",
+  unreachable: "主机不可达",
+  refused: "连接被拒绝",
+  dns: "DNS 解析失败",
+  timeout: "连接超时",
+  host_key_pending: "主机密钥待确认",
+  host_key_changed: "主机密钥已变更",
+  auth: "认证失败",
+  vault: "凭据库不可用",
+  config: "配置无效",
+  proxy: "跳板/代理连接失败",
+  handshake: "握手失败",
+  canceled: "已取消",
+  not_found: "资产不存在",
+  unsupported: "不支持探测",
+  internal: "内部错误",
+};
+
+function probeFailureLabel(kind: string | undefined): string {
+  if (!kind) return "连接失败";
+  return PROBE_KIND_LABELS[kind] ?? `连接失败（${kind}）`;
+}
+
+// SSH and Docker assets get a real host-key+credential handshake (M13); other kinds keep the
+// TCP reachability probe, which says nothing about authentication.
+function probeSuccessLabel(assetKind: string | undefined): string {
+  if (assetKind === "ssh" || assetKind === "docker") return "SSH 握手成功";
+  if (assetKind === "local") return "本地可用";
+  return "TCP 连接可达";
+}
+
 function deployResult(result: ExecBatchResult): { ok: boolean; detail: string } {
   if (result.status !== "success") {
     return { ok: false, detail: result.error || result.stderr || `执行失败（${result.status}）` };
@@ -282,12 +316,17 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
     setBusy("login");
     try {
       const response = await maintenanceApi.testLogin(selectedAssets.map((asset) => asset.id));
-      setLoginResults(response.results.map((result) => ({
-        assetId: result.assetId,
-        label: resultLabel(result.assetId),
-        ok: result.reachable,
-        detail: result.reachable ? `连接可达（${result.durationMs} ms）` : `${result.kind || "连接失败"}：${result.error || "不可达"}`,
-      })));
+      setLoginResults(response.results.map((result) => {
+        const asset = assets.find((candidate) => candidate.id === result.assetId);
+        return {
+          assetId: result.assetId,
+          label: resultLabel(result.assetId),
+          ok: result.reachable,
+          detail: result.reachable
+            ? `${probeSuccessLabel(asset?.kind)}（${result.durationMs} ms）`
+            : `${probeFailureLabel(result.kind)}：${result.error || "不可达"}`,
+        };
+      }));
     } catch (cause) {
       setError(describeError(cause));
     } finally {
@@ -391,7 +430,7 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
 
         <details className="rounded border border-neutral-800/70 p-2.5">
           <summary className="cursor-pointer text-[12px] font-medium text-neutral-200"><IconPlug size={12} className="mr-1 inline" />test login</summary>
-          <div className="mt-2 text-[10px] text-neutral-500">复用 asset_probe_batch 的连接可达性探测，不新建或重连会话；此结果不代表凭据已完成认证。</div>
+          <div className="mt-2 text-[10px] text-neutral-500">SSH 与 Docker 资产执行真实 host-key+凭据握手（不注册会话、不自动接受未知主机密钥）；其他资产仅 TCP 可达性探测，不代表凭据已认证。</div>
           <button type="button" className="nx-btn mt-3" disabled={busy !== null} onClick={() => void testLogin()}>
             {busy === "login" ? "正在测试…" : "test login / 连接测试"}
           </button>

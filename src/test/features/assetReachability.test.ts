@@ -139,6 +139,40 @@ describe("assetReachability overlapping batches", () => {
   });
 });
 
+describe("assetReachability reset isolation", () => {
+  it("a late response from before reset never overwrites the post-reset owner's entry for the same asset", async () => {
+    const p1 = probe(["shared-asset"]);
+    useAssetReachability.getState().reset();
+    const p2 = probe(["shared-asset"]);
+    expect(mocks.probeBatch).toHaveBeenCalledTimes(2);
+
+    calls[1].resolve({ results: [result("shared-asset", true)] });
+    await p2;
+    expect(entryOf("shared-asset")?.state).toBe("reachable");
+
+    calls[0].resolve({ results: [result("shared-asset", false, { error: "account-a-late" })] });
+    await p1;
+
+    expect(entryOf("shared-asset")?.state).toBe("reachable");
+    expect(entryOf("shared-asset")?.error).toBeUndefined();
+    expect(useAssetReachability.getState().batchError).toBeNull();
+  });
+
+  it("a late rejection from before reset never writes the post-reset owner's batchError", async () => {
+    const p1 = probe(["shared-asset"]);
+    useAssetReachability.getState().reset();
+    const p2 = probe(["shared-asset"]);
+    calls[1].resolve({ results: [result("shared-asset", true)] });
+    await p2;
+
+    calls[0].reject({ code: "io", message: "account-a-late" });
+    await p1;
+
+    expect(entryOf("shared-asset")?.state).toBe("reachable");
+    expect(useAssetReachability.getState().batchError).toBeNull();
+  });
+});
+
 describe("probeAssetReachability in-flight request sharing", () => {
   it("a manual probe waits for an in-flight automatic batch instead of issuing a duplicate request", async () => {
     const p1 = probe(["a", "b"]);

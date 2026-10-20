@@ -49,9 +49,9 @@ export async function flush(): Promise<void> {
   });
 }
 
-export async function waitFor(assertion: () => void): Promise<void> {
+export async function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
   await act(async () => {
-    await vi.waitFor(assertion);
+    await vi.waitFor(assertion, { timeout });
   });
 }
 

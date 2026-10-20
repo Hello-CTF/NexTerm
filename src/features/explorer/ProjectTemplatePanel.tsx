@@ -33,6 +33,7 @@ export function ProjectTemplatePanel({ groups }: { groups: readonly AssetGroup[]
   const inventory = useUi((state) => state.projectInventory);
   const setActiveProject = useUi((state) => state.setActiveProject);
   const pushToast = useUi((state) => state.pushToast);
+  const accountEpoch = useUi((state) => state.accountEpoch);
   const [expanded, setExpanded] = useState(false);
   const [templates, setTemplates] = useState<ProjectTemplate[]>([]);
   const [draft, setDraft] = useState<ProjectTemplateDraft | null>(null);
@@ -59,14 +60,19 @@ export function ProjectTemplatePanel({ groups }: { groups: readonly AssetGroup[]
     setTemplates(items);
   };
 
-  const run = (operation: () => Promise<void>): void => {
+  // Mutations are account-scoped: every await re-checks the captured epoch, so a late
+  // completion after an account switch never reaches the new owner's repository or UI.
+  const isStale = (epoch: number) => useUi.getState().accountEpoch !== epoch;
+
+  const run = (operation: (epoch: number) => Promise<void>): void => {
     if (busy) return;
+    const epoch = accountEpoch;
     setBusy(true);
     setError(null);
-    void operation().catch((cause) => {
-      setError(describeError(cause));
+    void operation(epoch).catch((cause) => {
+      if (!isStale(epoch)) setError(describeError(cause));
     }).finally(() => {
-      setBusy(false);
+      if (!isStale(epoch)) setBusy(false);
     });
   };
 
@@ -88,26 +94,33 @@ export function ProjectTemplatePanel({ groups }: { groups: readonly AssetGroup[]
     setDraft(captured);
   };
 
-  const save = () => run(async () => {
+  const save = () => run(async (epoch) => {
     if (!draft) return;
     const template = createProjectTemplate(draft, { id: templateId() });
     await createProjectTemplateRepository().create(template);
+    if (isStale(epoch)) return;
     setDraft(null);
     await reload();
+    if (isStale(epoch)) return;
     pushToast("success", `项目模板「${template.name}」已保存`);
   });
 
-  const rename = (template: ProjectTemplate) => run(async () => {
+  const rename = (template: ProjectTemplate) => run(async (epoch) => {
     const name = await promptText("重命名项目模板", template.name);
     if (name === null || name.trim() === template.name) return;
+    if (isStale(epoch)) return;
     await createProjectTemplateRepository().rename(template.id, name);
+    if (isStale(epoch)) return;
     await reload();
   });
 
-  const remove = (template: ProjectTemplate) => run(async () => {
+  const remove = (template: ProjectTemplate) => run(async (epoch) => {
     if (!(await ask(`删除项目模板「${template.name}」？\n已打开的工作区和后台终端不受影响。`, { kind: "warning" }))) return;
+    if (isStale(epoch)) return;
     await createProjectTemplateRepository().delete(template.id);
+    if (isStale(epoch)) return;
     await reload();
+    if (isStale(epoch)) return;
     pushToast("success", "项目模板已删除");
   });
 
@@ -119,8 +132,9 @@ export function ProjectTemplatePanel({ groups }: { groups: readonly AssetGroup[]
     setProductionPrompt(null);
   };
 
-  const open = (template: ProjectTemplate) => run(async () => {
+  const open = (template: ProjectTemplate) => run(async (epoch) => {
     const result = await openProjectTemplate(template, { commandDependencies: { confirmProduction } });
+    if (isStale(epoch)) return;
     const failedWorkspaces = Object.values(result.workspaces).filter((item) => item.status === "failed").length;
     const failedForwards = result.forwards.filter((item) => item.status === "failed").length;
     const failedCommands = result.commands.filter((item) => item.status === "failed").length;
@@ -133,9 +147,10 @@ export function ProjectTemplatePanel({ groups }: { groups: readonly AssetGroup[]
     );
   });
 
-  const closeCurrent = () => run(async () => {
+  const closeCurrent = () => run(async (epoch) => {
     if (activeProject === ALL_PROJECTS || !inventory) return;
     const results = await closeProject(activeProject as TemplateProjectFocus, inventory);
+    if (isStale(epoch)) return;
     const failed = results.filter((item) => !item.closed);
     pushToast(
       failed.length > 0 ? "error" : "success",

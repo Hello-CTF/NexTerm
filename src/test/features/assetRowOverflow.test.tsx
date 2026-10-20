@@ -152,7 +152,7 @@ function setRowWidths(row: HTMLElement, available: number, nameWidth: number, id
   Object.defineProperty(area, "clientWidth", { configurable: true, value: available });
   name.getBoundingClientRect = () => ({ width: nameWidth }) as DOMRect;
   identity.getBoundingClientRect = () => ({ width: identityWidth }) as DOMRect;
-  act(() => window.dispatchEvent(new Event("resize")));
+  void act(() => window.dispatchEvent(new Event("resize")));
 }
 
 let mounted: MountedView | undefined;

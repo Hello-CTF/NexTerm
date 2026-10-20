@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -319,16 +320,16 @@ function ToastAnnouncer() {
 export function DialogHost() {
   const dialog = useUi((state) => state.appDialog);
   const choice = useUi((state) => state.appChoice);
-  const close = (value: boolean) => {
+  const close = useCallback((value: boolean) => {
     if (!dialog || useUi.getState().appDialog !== dialog) return;
     useUi.setState({ appDialog: null });
     dialog.resolve(value);
-  };
-  const closeChoice = (value: string | null, remember = false) => {
+  }, [dialog]);
+  const closeChoice = useCallback((value: string | null, remember = false) => {
     if (!choice || useUi.getState().appChoice !== choice) return;
     useUi.setState({ appChoice: null });
     choice.resolve(value, remember);
-  };
+  }, [choice]);
   const active = choice ?? dialog;
   const modalRef = useRef<HTMLDivElement>(null);
   const initialButtonRef = useRef<HTMLButtonElement>(null);

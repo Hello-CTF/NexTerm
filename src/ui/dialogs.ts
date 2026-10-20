@@ -48,28 +48,58 @@ interface DialogHandlers {
 
 let handlers: DialogHandlers | null = null;
 
-type DeferredTask = () => void;
+// The account epoch is injected instead of imported from the app store: a static store import
+// here would make this module part of the store's import cycle and break module mocking for
+// dynamic importers.
+let accountEpochSource: () => number = () => 0;
 
+export function registerDialogEpochSource(source: () => number): void {
+  accountEpochSource = source;
+}
+
+type DeferredTask = {
+  start: () => void;
+  cancel: () => void;
+  epoch: number;
+};
+
+// Dialog queues are account-generation aware: a queued task only starts while its account
+// epoch is current. When the active request settles (including via cancelAccountDialogs on an
+// account switch), every stale queued task is settled with its cancellation result and dropped,
+// so no queued dialog can open or mutate across the boundary.
 function createDeferredQueue() {
   let running = false;
   const pending: DeferredTask[] = [];
-  return <T>(start: () => Promise<T>): Promise<T> =>
+  const advance = () => {
+    running = false;
+    for (;;) {
+      const next = pending.shift();
+      if (!next) return;
+      if (next.epoch === accountEpochSource()) {
+        next.start();
+        return;
+      }
+      next.cancel();
+    }
+  };
+  return <T>(start: () => Promise<T>, cancel: () => T): Promise<T> =>
     new Promise<T>((resolve, reject) => {
-      const run = () => {
-        running = true;
-        let result: Promise<T>;
-        try {
-          result = start();
-        } catch (error) {
-          result = Promise.reject(error);
-        }
-        result.then(resolve, reject).finally(() => {
-          running = false;
-          pending.shift()?.();
-        });
+      const task: DeferredTask = {
+        start: () => {
+          running = true;
+          let result: Promise<T>;
+          try {
+            result = start();
+          } catch (error) {
+            result = Promise.reject(error);
+          }
+          result.then(resolve, reject).finally(advance);
+        },
+        cancel: () => resolve(cancel()),
+        epoch: accountEpochSource(),
       };
-      if (running) pending.push(run);
-      else run();
+      if (running) pending.push(task);
+      else task.start();
     });
 }
 
@@ -97,25 +127,25 @@ const nativeMessage: MessageFn = NATIVE_BROWSER_DIALOG
 export const ask: AskFn = (message, options) => {
   if (!handlers) return nativeAsk(message, options);
   const current = handlers;
-  return deferDialog(() => current.ask(message, options));
+  return deferDialog(() => current.ask(message, options), () => false);
 };
 
 export const confirmDialog: ConfirmFn = (message) => {
   if (!handlers) return nativeConfirm(message);
   const current = handlers;
-  return deferDialog(() => current.confirm(message));
+  return deferDialog(() => current.confirm(message), () => false);
 };
 
 export const messageBox: MessageFn = (message) => {
   if (!handlers) return nativeMessage(message);
   const current = handlers;
-  return deferDialog(() => current.message(message));
+  return deferDialog(() => current.message(message), () => undefined);
 };
 
 export function askChoiceRemember(message: string, options: ChoiceOptions): Promise<ChoiceResult | null> {
   if (!handlers) return Promise.resolve(null);
   const current = handlers;
-  return deferDialog(() => current.choose(message, options));
+  return deferDialog(() => current.choose(message, options), () => null);
 }
 
 export function askChoice(message: string, options: ChoiceOptions): Promise<string | null> {
@@ -193,5 +223,5 @@ export function promptText(
     return Promise.resolve(NATIVE_BROWSER_DIALOG ? window.prompt(message, value) : null);
   }
   const current = promptHandler;
-  return deferPrompt(() => current(message, value, options));
+  return deferPrompt(() => current(message, value, options), () => null);
 }

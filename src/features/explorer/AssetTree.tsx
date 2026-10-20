@@ -517,7 +517,7 @@ export function AssetTree() {
       return;
     }
     if (treeVirtualized) treeVirtualizer.scrollToIndex(index, { align: "auto" });
-  });
+  }, [restoreFocusId, query, treeItems, treeVirtualized, treeVirtualizer]);
 
   const onClone = async (a: Asset) => {
     try {
@@ -554,12 +554,17 @@ export function AssetTree() {
   const onConnectAsUser = async (a: Asset) => {
     const host = a.host?.trim();
     if (!host) return;
+    const epoch = useUi.getState().accountEpoch;
     const username = (await promptText(`用其他用户名连接「${a.name}」`, a.username ?? ""))?.trim();
-    if (!username) return;
+    if (!username || useUi.getState().accountEpoch !== epoch) return;
     void connectQuickTarget({ host, port: a.port ?? 22, username });
   };
 
-  const runDeleteAsset = async (a: Asset, mode: "keep" | "disconnect" | "close" = "keep") => {
+  const runDeleteAsset = async (a: Asset, epoch: number, mode: "keep" | "disconnect" | "close" = "keep") => {
+    // The confirmed delete is account-scoped: after every await, a changed epoch aborts the
+    // flow before the next RPC/cache/UI side effect — most importantly before assetApi.delete,
+    // which a late disconnect resolution would otherwise issue under the new account.
+    const stale = () => useUi.getState().accountEpoch !== epoch;
     setAssetError(null);
     let closedWorkspaceCount = 0;
     try {
@@ -567,18 +572,25 @@ export function AssetTree() {
         const sessionIds = useUi.getState().sessions
           .filter((s) => s.assetId === a.id && s.status !== "disconnected" && s.status !== "failed")
           .map((s) => s.id);
-        for (const id of sessionIds) await sessionApi.disconnect(id);
+        for (const id of sessionIds) {
+          await sessionApi.disconnect(id);
+          if (stale()) return;
+        }
         await useUi.getState().resyncSessions({ silent: true });
+        if (stale()) return;
       }
       if (mode === "close") {
         const workspaceIds = useUi.getState().workspaces.filter((w) => w.assetId === a.id).map((w) => w.id);
         for (const id of workspaceIds) {
           if (!useUi.getState().workspaces.some((w) => w.id === id)) continue;
           if (!(await useUi.getState().closeWorkspace(id))) return;
+          if (stale()) return;
           closedWorkspaceCount++;
         }
       }
+      if (stale()) return;
       await assetApi.delete(a.id);
+      if (stale()) return;
       if (mode !== "close") useUi.getState().markDeletedAssetWorkspaces(a.id);
       unhide(a.id);
       void qc.invalidateQueries({ queryKey: ["assets"] });
@@ -586,6 +598,7 @@ export function AssetTree() {
       void qc.invalidateQueries({ queryKey: ["credentials"] });
       pushToast("info", "已删除");
     } catch (e) {
+      if (stale()) return;
       const detail = closedWorkspaceCount > 0
         ? `${describeError(e)}；已关闭的工作区可从资产列表重新打开`
         : describeError(e);
@@ -594,6 +607,7 @@ export function AssetTree() {
   };
 
   const onDelete = async (a: Asset) => {
+    const epoch = useUi.getState().accountEpoch;
     const state = useUi.getState();
     const workspaces = state.workspaces.filter((w) => w.assetId === a.id);
     const liveSessions = state.sessions.filter((s) =>
@@ -615,11 +629,12 @@ export function AssetTree() {
         },
       );
       if (action !== "keep" && action !== "disconnect" && action !== "close") return;
-      await runDeleteAsset(a, action);
+      if (useUi.getState().accountEpoch !== epoch) return;
+      await runDeleteAsset(a, epoch, action);
       return;
     }
     const ok = await ask(`删除资产「${a.name}」？\n\n资产会从列表移除；关联的凭据会保留，已产生的终端历史仍可查看。`, { kind: "warning" });
-    if (ok) await runDeleteAsset(a);
+    if (ok && useUi.getState().accountEpoch === epoch) await runDeleteAsset(a, epoch);
   };
 
   const moveAsset = async (assetId: string, groupId: string | null) => {
@@ -677,16 +692,21 @@ export function AssetTree() {
     return next;
   });
 
-  const runDeleteGroup = async (g: AssetGroup) => {
+  const runDeleteGroup = async (g: AssetGroup, epoch: number) => {
+    // The confirmed group delete is account-scoped: a late resolution after a switch must not
+    // settle UI or invalidations in the new account.
+    const stale = () => useUi.getState().accountEpoch !== epoch;
     setGroupBusyId(g.id);
     setGroupError(null);
     try {
       await assetApi.groupDelete(g.id);
+      if (stale()) return;
       void qc.invalidateQueries({ queryKey: ["groups"] });
       void qc.invalidateQueries({ queryKey: ["assets"] });
       void qc.invalidateQueries({ queryKey: ["asset-search"] });
       pushToast("info", "已删除分组");
     } catch (e) {
+      if (stale()) return;
       setGroupError({ id: g.id, message: describeError(e), action: "删除" });
     } finally {
       setGroupBusyId(null);
@@ -695,23 +715,29 @@ export function AssetTree() {
 
   const deleteGroup = async (g: AssetGroup) => {
     if (groupBusyId) return;
+    const epoch = useUi.getState().accountEpoch;
     const ok = await ask(`删除分组「${g.name}」？\n组内资产会移到「未分组」；子分组会被一并删除。`, {
       kind: "warning",
     });
-    if (!ok) return;
-    await runDeleteGroup(g);
+    if (!ok || useUi.getState().accountEpoch !== epoch) return;
+    await runDeleteGroup(g, epoch);
   };
 
   const repairGroup = async (g: AssetGroup) => {
     if (groupBusyId) return;
+    const epoch = useUi.getState().accountEpoch;
+    const stale = () => useUi.getState().accountEpoch !== epoch;
     setGroupBusyId(g.id);
     setGroupError(null);
     try {
       await assetApi.groupUpdate(g.id, undefined, null);
+      if (stale()) return;
       await qc.invalidateQueries({ queryKey: ["groups"] });
+      if (stale()) return;
       void qc.invalidateQueries({ queryKey: ["asset-search"] });
       pushToast("success", `已将「${g.name}」移到根目录`);
     } catch (e) {
+      if (stale()) return;
       setGroupError({ id: g.id, message: describeError(e), action: "修复" });
     } finally {
       setGroupBusyId(null);
@@ -818,7 +844,7 @@ export function AssetTree() {
       onEdit={() => setEditingAsset(asset)}
       onMore={(x, y, full) => setRowMenu({ x, y, asset, full })}
       error={assetError?.id === asset.id ? assetError.message : null}
-      onRetry={() => void runDeleteAsset(asset, assetError?.mode)}
+      onRetry={() => void runDeleteAsset(asset, useUi.getState().accountEpoch, assetError?.mode)}
       onDismissError={() => setAssetError(null)}
       moveError={moveErrors[asset.id]}
       movingTarget={movingTargets[asset.id]}
@@ -872,10 +898,10 @@ export function AssetTree() {
         onRename={() => setRenamingGroup(group)}
         onDeleteGroup={() => void deleteGroup(group)}
         onRepair={() => void repairGroup(group)}
-        onRetry={() => void (groupError?.id === group.id && groupError.action === "修复" ? repairGroup(group) : runDeleteGroup(group))}
+        onRetry={() => void (groupError?.id === group.id && groupError.action === "修复" ? repairGroup(group) : runDeleteGroup(group, useUi.getState().accountEpoch))}
         onDismissError={() => setGroupError(null)}
         assetError={assetError}
-        onRetryAssetDelete={(asset) => void runDeleteAsset(asset, assetError?.mode)}
+        onRetryAssetDelete={(asset) => void runDeleteAsset(asset, useUi.getState().accountEpoch, assetError?.mode)}
         onDismissAssetError={() => setAssetError(null)}
         moveErrors={moveErrors}
         movingTargets={movingTargets}
@@ -1542,7 +1568,7 @@ function GroupNode({
     if (!list || !scroller) return;
     const next = list.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
     setAssetsScrollMargin((current) => (Math.abs(current - next) < 1 ? current : next));
-  });
+  }, [virtualizeAssets, open, getTreeScrollElement]);
   useEffect(() => {
     if (!restoreFocusId || !virtualizeAssets || !open) return;
     const index = assets.findIndex((asset) => asset.id === restoreFocusId);
@@ -2166,7 +2192,7 @@ export function AssetEditor({
     if (keyOriginTouchedRef.current || !boundIsRefKey) return;
     setKeyOrigin("ref");
     if (!keyPath && boundCred?.refPath) setKeyPath(boundCred.refPath);
-  }, [boundIsRefKey, boundCred?.refPath]);
+  }, [boundIsRefKey, boundCred?.refPath, keyPath]);
 
   const isDb = DATABASE_ASSET_KINDS.has(groupKind);
   const keyAuth = authKind === "key";
@@ -2251,6 +2277,11 @@ export function AssetEditor({
 
   const save = async () => {
     if (savingRef.current) return;
+    // The save is account-scoped: after every await, a changed epoch aborts the flow before
+    // the next RPC/cache/UI side effect — a credential or asset written after a switch would
+    // otherwise land in the new account.
+    const epoch = useUi.getState().accountEpoch;
+    const stale = () => useUi.getState().accountEpoch !== epoch;
     if (kind === "asset" && groupKind !== "local" && !inventoryOnly) {
       const nextHostError = validateAssetHost(hostRef.current);
       const nextPortError = validateAssetPort(portRef.current);
@@ -2272,6 +2303,7 @@ export function AssetEditor({
       if (kind === "group") {
         if (groupId) await assetApi.groupCreate(name, groupId);
         else await assetApi.groupCreate(name);
+        if (stale()) return;
         onSaved();
         return;
       }
@@ -2281,6 +2313,7 @@ export function AssetEditor({
         (keyAuth && keyOrigin === "vault" && vaultMode === "new")
       );
       if (willWriteVault && !(await ensureVaultReady("保存凭据前需要解锁凭据库"))) return;
+      if (stale()) return;
       let finalKeyPath: string | null = null;
       let credId: string | null = null;
       const reuseCredId = boundIsVaultKey ? (initial?.credId ?? undefined) : undefined;
@@ -2301,6 +2334,7 @@ export function AssetEditor({
               source: "file",
               ...(passphrase ? { passphrase } : {}),
             });
+            if (stale()) return;
             credId = res.id;
             finalKeyPath = null;
           } else {
@@ -2331,11 +2365,13 @@ export function AssetEditor({
                   { path: keyPath.trim(), content: inlineKeyContent },
                   assetApi.readKeyFile,
                 );
+          if (stale()) return;
           const res = await vaultApi.setCredential(credLabel, "private_key", content, {
             id: reuseCredId,
             source: "inline",
             ...(passphrase ? { passphrase } : {}),
           });
+          if (stale()) return;
           credId = res.id;
           finalKeyPath = null;
         }
@@ -2346,6 +2382,7 @@ export function AssetEditor({
             credKind,
             password,
           );
+          if (stale()) return;
           credId = res.id;
         }
       } else if (credChoice !== "none") {
@@ -2382,12 +2419,14 @@ export function AssetEditor({
       const saved = initial
         ? await assetApi.update({ id: initial.id, ...fields })
         : await assetApi.create(fields);
+      if (stale()) return;
       onSaved(saved);
     } catch (e) {
+      if (stale()) return;
       setSaveError(describeError(e));
     } finally {
       savingRef.current = false;
-      setSaving(false);
+      if (!stale()) setSaving(false);
     }
   };
 

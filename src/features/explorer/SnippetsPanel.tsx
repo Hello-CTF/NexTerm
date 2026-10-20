@@ -82,8 +82,9 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
 
   const run = async (s: Snippet, action: "insert" | "execute") => {
     if (prompting) return;
+    const epoch = useUi.getState().accountEpoch;
     const body = await prepareBody(s);
-    if (body === null) return;
+    if (body === null || useUi.getState().accountEpoch !== epoch) return;
     const rendered = { ...s, body };
     if (await (action === "insert" ? insertSnippet(rendered) : executeSnippet(rendered))) onClose();
   };
@@ -94,8 +95,11 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
 
   const remove = async (s: Snippet) => {
     if (deletingId) return;
+    // The confirmation is account-scoped: a late resolve after an account switch must not
+    // delete the snippet under the new account.
+    const epoch = useUi.getState().accountEpoch;
     const ok = await ask(`删除片段「${s.name}」？此操作不可恢复。`, { kind: "warning" });
-    if (!ok) return;
+    if (!ok || useUi.getState().accountEpoch !== epoch) return;
     setDeletingId(s.id);
     try {
       await assetApi.snippetDelete(s.id);

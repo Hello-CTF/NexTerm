@@ -82,7 +82,7 @@ vi.mock("../features/explorer/AssetTree", () => ({ AssetTree: () => null }));
 vi.mock("../app/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 vi.mock("../app/UpdateBanner", () => ({ UpdateBanner: () => null }));
-vi.mock("../app/unread", () => ({ startUnreadTracking: () => {} }));
+vi.mock("../app/unread", () => ({ startUnreadTracking: () => {}, resetUnreadTracking: () => {} }));
 
 import App from "../app/App";
 import { useUi } from "../app/store";

@@ -390,6 +390,8 @@ interface UiState {
   setTakeover: (t: TakeoverState | null) => void;
   aiBoards: Record<string, AiBoard>;
   aiAccountEpoch: number;
+  accountEpoch: number;
+  advanceAccountEpoch: () => void;
   workspaceRuntime: Record<string, WorkspaceRuntime>;
   workspaceRuntimeEpoch: number;
   connectionProblems: Record<string, WorkspaceProblem>;
@@ -428,6 +430,7 @@ interface UiState {
   appChoice: AppChoiceState | null;
   openAppChoice: (c: AppChoiceState) => void;
   closeAppChoice: (v: string | null) => void;
+  cancelAccountDialogs: () => void;
 
   setLeftOpen: (v: boolean) => void;
   setLeftMode: (m: LeftMode) => void;
@@ -528,15 +531,120 @@ const WORKSPACE_PROBLEM_LIMIT = 50;
 const WORKSPACE_PROBLEM_DETAIL_BYTES = 16 * 1024;
 const PROBLEM_REDACTED = "[REDACTED]";
 const PRIVATE_KEY_BLOCK = /-----BEGIN [^-]+-----[\s\S]*?-----END [^-]+-----/g;
-const URL_CREDENTIAL = /([a-z][a-z0-9+.-]*:\/\/[^/@\s:]*):([^/@\s]+)@/gi;
 const BEARER_TOKEN = /\b(Bearer\s+)([^\s]+)/gi;
 const SENSITIVE_ASSIGNMENT =
   /(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential|authorization)(\s*["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
 const SENSITIVE_CLI_OPTION =
   /((?:--(?:password|passwd|pwd|secret|token|api-key|access-key)|-p)(?:=|\s+)?)("[^"]*"|'[^']*'|[^\s,;]+)/gi;
 const ENV_ASSIGNMENT = /^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)(.*)$/gm;
-const ENV_ASSIGNMENT_ANY = /([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)("[^"]*"|'[^']*'|[^\s,;]+)/g;
 const SENSITIVE_ENV_NAME = /password|passwd|pwd|secret|token|credential|authorization|api[_-]?key|access[_-]?key|private[_-]?key/i;
+
+function isWhitespace(char: string): boolean {
+  // Full JavaScript \s semantics, including Unicode spaces such as NBSP.
+  return /\s/.test(char);
+}
+
+// Linear replacement for the old quadratic URL credential pattern: scheme positions are found
+// with indexOf, and the scheme token is the longest suffix of the contiguous scheme-character
+// run that starts at a letter — the old unanchored regex matched valid scheme suffixes after
+// digits and punctuation too (1http://, .http://, -http://, +http:// all redacted).
+function redactUrlCredentials(text: string): string {
+  let result = "";
+  let last = 0;
+  let searchFrom = 0;
+  for (;;) {
+    const schemeEnd = text.indexOf("://", searchFrom);
+    if (schemeEnd < 0) break;
+    let runStart = schemeEnd - 1;
+    while (runStart >= 0 && /[a-z0-9+.-]/i.test(text[runStart] as string)) runStart--;
+    runStart++;
+    let schemeStart = runStart;
+    while (schemeStart < schemeEnd && !/[a-z]/i.test(text[schemeStart] as string)) schemeStart++;
+    if (schemeStart >= schemeEnd) {
+      searchFrom = schemeEnd + 3;
+      continue;
+    }
+    const userStart = schemeEnd + 3;
+    let colon = -1;
+    for (let i = userStart; i < text.length; i++) {
+      const c = text[i] as string;
+      if (c === ":") {
+        colon = i;
+        break;
+      }
+      if (c === "/" || c === "@" || isWhitespace(c)) break;
+    }
+    if (colon < 0) {
+      searchFrom = schemeEnd + 3;
+      continue;
+    }
+    let at = -1;
+    for (let i = colon + 1; i < text.length; i++) {
+      const c = text[i] as string;
+      if (c === "@") {
+        at = i;
+        break;
+      }
+      if (c === "/" || isWhitespace(c)) break;
+    }
+    if (at < 0) {
+      searchFrom = schemeEnd + 3;
+      continue;
+    }
+    result += text.slice(last, colon + 1) + PROBLEM_REDACTED;
+    last = at;
+    searchFrom = at;
+  }
+  return result + text.slice(last);
+}
+
+// Linear replacement for the old quadratic env-assignment pattern: each maximal identifier run is
+// visited once, and a match is only possible at its first character. Values follow the original
+// quoted/unquoted alternatives, including empty quoted strings.
+function redactEnvAssignments(text: string): string {
+  let result = "";
+  let last = 0;
+  let i = 0;
+  while (i < text.length) {
+    const start = text[i] as string;
+    if (!/[A-Za-z_]/.test(start)) {
+      i++;
+      continue;
+    }
+    let j = i + 1;
+    while (j < text.length && /[A-Za-z0-9_]/.test(text[j] as string)) j++;
+    let k = j;
+    while (k < text.length && isWhitespace(text[k] as string)) k++;
+    if (text[k] !== "=") {
+      i = j;
+      continue;
+    }
+    k++;
+    while (k < text.length && isWhitespace(text[k] as string)) k++;
+    const quote = text[k];
+    let end = k;
+    if (quote === "\"" || quote === "'") {
+      const close = text.indexOf(quote, k + 1);
+      if (close >= 0) {
+        end = close + 1;
+      } else {
+        // No closing quote: the original unquoted alternative takes over from the opening
+        // quote and stops at the first whitespace/comma/semicolon, never consuming to EOF.
+        while (end < text.length && !/[\s,;]/.test(text[end] as string)) end++;
+      }
+    } else {
+      while (end < text.length && !/[\s,;]/.test(text[end] as string)) end++;
+    }
+    if (end === k) {
+      i = j;
+      continue;
+    }
+    result += text.slice(last, k) + PROBLEM_REDACTED;
+    last = end;
+    i = end;
+  }
+  return result + text.slice(last);
+}
 
 function boundedUtf8(text: string, maxBytes: number): { text: string; truncated: boolean } {
   let bytes = 0;
@@ -562,23 +670,21 @@ export function getWorkspaceProblemResetGeneration(): number {
 
 export function sanitizeWorkspaceProblemText(text: string): string {
   const allEnv = text.toLowerCase().includes(".env");
-  const sanitized = text
-    .replace(PRIVATE_KEY_BLOCK, PROBLEM_REDACTED)
-    .replace(URL_CREDENTIAL, (_match, schemeAndUser: string) => `${schemeAndUser}:${PROBLEM_REDACTED}@`)
-    .replace(BEARER_TOKEN, (_match, prefix: string) => `${prefix}${PROBLEM_REDACTED}`)
-    .replace(
-      SENSITIVE_ASSIGNMENT,
-      (_match, name: string, separator: string) => `${name}${separator}${PROBLEM_REDACTED}`,
-    )
-    .replace(
-      SENSITIVE_CLI_OPTION,
-      (_match, option: string) => `${option}${PROBLEM_REDACTED}`,
-    );
+  const sanitized = redactUrlCredentials(
+    text
+      .replace(PRIVATE_KEY_BLOCK, PROBLEM_REDACTED)
+      .replace(BEARER_TOKEN, (_match, prefix: string) => `${prefix}${PROBLEM_REDACTED}`)
+      .replace(
+        SENSITIVE_ASSIGNMENT,
+        (_match, name: string, separator: string) => `${name}${separator}${PROBLEM_REDACTED}`,
+      )
+      .replace(
+        SENSITIVE_CLI_OPTION,
+        (_match, option: string) => `${option}${PROBLEM_REDACTED}`,
+      ),
+  );
   if (allEnv) {
-    return sanitized.replace(
-      ENV_ASSIGNMENT_ANY,
-      (_match, name: string, separator: string) => `${name}${separator}${PROBLEM_REDACTED}`,
-    );
+    return redactEnvAssignments(sanitized);
   }
   return sanitized.replace(
     ENV_ASSIGNMENT,
@@ -636,7 +742,48 @@ function withoutConnectionProblem(
 
 // Auth guard for the session list: when login/logout switches accounts, in-flight old requests may arrive late and must not write back over the new session data.
 let sessionsEpoch = 0;
+let sessionsRequestSeq = 0;
 const abnormalDisconnectNotices = new Set<string>();
+
+// Latest status-event evidence per session: backend status events carry a monotonically increasing
+// version, so a manual reconnect can tell a stale pre-reconnect list frame from a fresh one. Engagement
+// (connecting/reconnecting) is tracked as its own high-water mark so a later terminal event cannot erase
+// the proof that the current attempt engaged. Cleared with the sessions.
+export interface SessionStatusEvidence {
+  version: number;
+  status: SessionInfo["status"];
+  error: string | null;
+  errorCode: string | null;
+  attempt: number | undefined;
+  nextRetryAt: string | number | null | undefined;
+  engagedVersion: number;
+}
+
+const sessionStatusEvidenceMap = new Map<string, SessionStatusEvidence>();
+
+export function sessionStatusEvidence(sessionId: string): SessionStatusEvidence | undefined {
+  return sessionStatusEvidenceMap.get(sessionId);
+}
+
+function trackSessionStatusEvidence(p: SessionStatusEvent): void {
+  if (typeof p.version !== "number" || !Number.isFinite(p.version) || p.version <= 0) return;
+  const previous = sessionStatusEvidenceMap.get(p.sessionId);
+  if (previous && previous.version >= p.version) return;
+  const status = p.status as SessionInfo["status"];
+  const engagedVersion = Math.max(
+    previous?.engagedVersion ?? 0,
+    status === "connecting" || status === "reconnecting" ? p.version : 0,
+  );
+  sessionStatusEvidenceMap.set(p.sessionId, {
+    version: p.version,
+    status,
+    error: p.error ?? null,
+    errorCode: p.errorCode ?? null,
+    attempt: p.attempt,
+    nextRetryAt: p.nextRetryAt,
+    engagedVersion,
+  });
+}
 
 const LEFT_MIN = 180;
 const LEFT_MAX = 560;
@@ -867,6 +1014,8 @@ export const useUi = create<UiState>((set, get) => ({
   takeover: restoredTakeover,
   aiBoards: {},
   aiAccountEpoch: 0,
+  accountEpoch: 0,
+  advanceAccountEpoch: () => set((state) => ({ accountEpoch: state.accountEpoch + 1 })),
   workspaceRuntime: {},
   workspaceRuntimeEpoch: 0,
   connectionProblems: {},
@@ -884,6 +1033,13 @@ export const useUi = create<UiState>((set, get) => ({
     const cur = get().textPrompt;
     cur?.resolve(v);
     set({ textPrompt: null });
+  },
+  cancelAccountDialogs: () => {
+    // Settle, don't just clear: an account switch must resolve pending ask/choice/prompt
+    // promises with a cancel result so their callers never mutate across the boundary.
+    get().closeTextPrompt(null);
+    get().closeAppDialog(false);
+    get().closeAppChoice(null);
   },
   aiRulePrefill: null,
   setAiRulePrefill: (v) => set({ aiRulePrefill: v }),
@@ -1553,18 +1709,20 @@ export const useUi = create<UiState>((set, get) => ({
   dismissWorkspaceRestoreBanner: () => set({ workspaceRestoreDismissed: true }),
   resyncSessions: async (options) => {
     const epoch = sessionsEpoch;
+    const seq = ++sessionsRequestSeq;
     try {
       const list = await sessionApi.list();
-      if (epoch !== sessionsEpoch) return;
+      // Latest-only: a superseded response (older request landing late) must not overwrite newer data.
+      if (epoch !== sessionsEpoch || seq !== sessionsRequestSeq) return;
       set({ sessions: list, sessionResyncFailed: false });
     } catch (e) {
+      if (epoch !== sessionsEpoch || seq !== sessionsRequestSeq || options?.silent) return;
       console.error("[NexTerm] Failed to refresh session list", e);
-      if (epoch !== sessionsEpoch || options?.silent) return;
       if (get().sessionResyncFailed) return;
       set({ sessionResyncFailed: true });
       get().pushToast("error", `刷新会话列表失败：${describeError(e)}`);
     } finally {
-      if (epoch === sessionsEpoch) set({ sessionResyncCompleted: true });
+      if (epoch === sessionsEpoch && seq === sessionsRequestSeq) set({ sessionResyncCompleted: true });
     }
   },
   resetSessions: (options) => {
@@ -1573,6 +1731,8 @@ export const useUi = create<UiState>((set, get) => ({
     workspaceProblemResetGeneration += 1;
     recordingsEpoch += 1;
     abnormalDisconnectNotices.clear();
+    sessionStatusEvidenceMap.clear();
+    get().cancelAccountDialogs();
     set((state) => ({
       sessions: [],
       recordings: {},
@@ -1596,6 +1756,8 @@ export const useUi = create<UiState>((set, get) => ({
     workspaceProblemResetGeneration += 1;
     recordingsEpoch += 1;
     abnormalDisconnectNotices.clear();
+    sessionStatusEvidenceMap.clear();
+    get().cancelAccountDialogs();
     set((state) => ({
       sessions: [],
       recordings: {},
@@ -2740,6 +2902,7 @@ export function sessionReconnectStatusText(
 const retryableSessionErrorCodes = new Set(["ssh", "timeout", "disconnected"]);
 
 export function applySessionStatusEvent(p: SessionStatusEvent): void {
+  trackSessionStatusEvidence(p);
   const state = useUi.getState();
   const current = state.sessions.find((session) => session.id === p.sessionId);
   const attempt = p.attempt ?? current?.attempt ?? 0;
@@ -2790,8 +2953,13 @@ async function reconnectSessionAfterDisconnect(sessionId: string): Promise<void>
     state.pushToast("error", "重连失败：会话已不存在，请刷新会话列表");
     return;
   }
+  // Route through the target-aware workspace reconnect so the connection problem settles against
+  // the workspace target: success clears it, failure records it, a canceled attempt adds nothing.
+  const workspace = state.workspaces.find((item) => item.sessionId === sessionId);
   try {
-    const fresh = await reconnectSessionAndWait(session);
+    const fresh = workspace
+      ? await reconnectWorkspaceSession(workspace, session)
+      : await reconnectSessionAndWait(session);
     if (!fresh) return;
     const latest = useUi.getState();
     latest.setSessions([...latest.sessions.filter((item) => item.id !== fresh.id), fresh]);
@@ -4274,7 +4442,9 @@ export interface SessionReconnectError extends Error {
   nextRetryAt?: string | number | null;
 }
 
-function reconnectPollingError(session: SessionRuntimeInfo): SessionReconnectError {
+function reconnectPollingError(
+  session: Pick<SessionRuntimeInfo, "status" | "error" | "errorCode" | "attempt" | "nextRetryAt">,
+): SessionReconnectError {
   const error = new Error(session.error || `会话${sessionStatusText(session.status)}`) as SessionReconnectError;
   if (session.errorCode) error.code = session.errorCode;
   if (session.attempt !== undefined) error.attempt = session.attempt;
@@ -4288,6 +4458,29 @@ async function runReconnectAndWait(
   intervalMs: number,
   isCurrent: () => boolean,
 ): Promise<SessionInfo | null> {
+  // Events observed from here on are fresh evidence for this reconnect attempt; anything tracked
+  // earlier belongs to the previous generation and must not settle the wait.
+  const startEvidence = sessionStatusEvidence(session.id);
+  const startVersion = startEvidence?.version ?? 0;
+  const latestEvidence = () => sessionStatusEvidence(session.id);
+  const hasFreshEvidence = (status: string) => {
+    const evidence = latestEvidence();
+    return evidence !== undefined && evidence.version > startVersion && evidence.status === status;
+  };
+  // Engagement is tracked separately from the latest status: a terminal event that arrives after
+  // the reconnecting event must not erase the proof that this attempt engaged.
+  const engagedAfterStart = () => (latestEvidence()?.engagedVersion ?? 0) > startVersion;
+  // A post-start terminal event is fresh terminal evidence on its own: surface its typed error
+  // immediately instead of waiting for a list frame to observe engagement (or the six-minute timeout).
+  const freshTerminalEvidence = () => {
+    const evidence = latestEvidence();
+    if (!evidence || evidence.version <= startVersion) return undefined;
+    return evidence.status === "failed" || evidence.status === "disconnected" ? evidence : undefined;
+  };
+  // A stale connected list frame can only exist when the previous generation was still alive at
+  // reconnect start; a session that was already disconnected/failed has no live frame to mistake.
+  const startStatus = startEvidence?.status ?? session.status;
+  const staleConnectedPossible = startStatus === "connected" || startStatus === "connecting" || startStatus === "reconnecting";
   if (!isCurrent()) return null;
   try {
     if (!(await confirmHostKeyIfNeeded(session.assetId ?? "", session.kind, isCurrent))) return null;
@@ -4308,7 +4501,11 @@ async function runReconnectAndWait(
   const deadline = Date.now() + timeoutMs;
   // session_reconnect returns first and the backend goroutine sets reconnecting afterwards, so the first list may read the pre-start
   // stale disconnected/failed; only a terminal state seen after connecting/reconnecting counts as failure.
+  // A stale connected first frame is ignored the same way: only a connecting/reconnecting transition,
+  // fresh status-event evidence (a newer event version, e.g. when joining an in-flight reconnect),
+  // or a later live list makes connected count as success.
   let enteredReconnect = false;
+  let polls = 0;
   for (;;) {
     if (!isCurrent()) return null;
     let list: SessionRuntimeInfo[];
@@ -4319,11 +4516,15 @@ async function runReconnectAndWait(
       throw error;
     }
     if (!isCurrent()) return null;
+    polls += 1;
     const current = list.find((s) => s.id === session.id);
-    if (current?.status === "connected") return current;
-    if (current?.status === "connecting" || current?.status === "reconnecting") {
-      enteredReconnect = true;
-    } else if (current && enteredReconnect) {
+    if (current?.status === "connecting" || current?.status === "reconnecting") enteredReconnect = true;
+    if (engagedAfterStart()) enteredReconnect = true;
+    const terminalEvidence = freshTerminalEvidence();
+    if (terminalEvidence) throw reconnectPollingError(terminalEvidence);
+    if (current?.status === "connected") {
+      if (enteredReconnect || polls > 1 || !staleConnectedPossible || hasFreshEvidence("connected")) return current;
+    } else if (current && current.status !== "connecting" && current.status !== "reconnecting" && enteredReconnect) {
       throw reconnectPollingError(current);
     }
     if (Date.now() >= deadline) throw new Error("重连超时，请检查网络后重试");

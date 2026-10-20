@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, Fragment } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, deferred, flush, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
+import { click, clickButton, deferred, flush, flushUntil, mount, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
 import { notifyAssetDataChanged } from "../../ipc/assetEvents";
 import type { SshImportPreviewDto } from "../../ipc/types";
 
@@ -168,7 +168,7 @@ vi.mock("../../app/layout", () => ({
   subscribeLayoutRestore: () => () => {},
   undoLayoutRestore: vi.fn(),
 }));
-vi.mock("../../app/unread", () => ({ startUnreadTracking: () => {} }));
+vi.mock("../../app/unread", () => ({ startUnreadTracking: () => {}, resetUnreadTracking: () => {} }));
 vi.mock("../../app/useUpdate", () => ({ getUpdateState: () => ({ check: vi.fn().mockResolvedValue(null) }) }));
 vi.mock("../../app/updatePrompt", () => ({ promptUpdateIfNeeded: vi.fn() }));
 vi.mock("../../features/settings/useWebAutoSync", () => ({
@@ -204,10 +204,13 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
 });
 
 vi.mock("../../features/terminal/XtermView", async () => {
-  const { useEffect } = await import("react");
+  const { useEffect, useRef } = await import("react");
   return {
     XtermView: (props: Record<string, unknown>) => {
+      const attachFiredRef = useRef(false);
       useEffect(() => {
+        if (attachFiredRef.current) return;
+        attachFiredRef.current = true;
         (props.onHandle as ((handle: unknown) => void) | undefined)?.({
           copyBlock: () => "",
           scrollToBlock: () => {},
@@ -221,7 +224,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
         });
         mocks.attachSeq += 1;
         (props.onAttach as ((id: string) => void) | undefined)?.(`kernel-${mocks.attachSeq}`);
-      }, []);
+      }, [props.onAttach, props.onHandle]);
       return <div className="h-full w-full min-h-0" />;
     },
   };
@@ -389,8 +392,19 @@ async function reconnectAndExpectStaleCleared(): Promise<void> {
   const button = document.querySelector<HTMLButtonElement>('button[title="使用当前资产配置重连"]');
   expect(button).not.toBeNull();
   mocks.stale = false;
+  // The manual reconnect must observe the session engage before the connected frame counts as fresh.
+  let engaged = false;
+  mocks.sessionList.mockImplementation(() => {
+    if (!engaged) {
+      engaged = true;
+      return Promise.resolve(sessionRows(false).map((row) => ({ ...row, status: "reconnecting" as const })));
+    }
+    return Promise.resolve(sessionRows(mocks.stale));
+  });
   click(button!);
-  await flushUntil(() => !(document.body.textContent?.includes("配置已修改，重连后生效") ?? false));
+  // The reconnect settles the session list first; the stale banner follows the store, not the poll.
+  await waitFor(() => expect(useUi.getState().sessions[0]?.staleConfig).toBe(false), 3_000);
+  expect(document.body.textContent).not.toContain("配置已修改，重连后生效");
   expect(mocks.sessionReconnect).toHaveBeenCalledWith("s1");
 }
 

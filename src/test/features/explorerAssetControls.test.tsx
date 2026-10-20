@@ -27,9 +27,13 @@ const mocks = vi.hoisted(() => ({
   snippetUpdate: vi.fn(),
   snippetDelete: vi.fn(),
   listCredentials: vi.fn(),
+  vaultStatus: vi.fn(),
+  setCredential: vi.fn(),
+  createAsset: vi.fn(),
   probe: vi.fn(),
   write: vi.fn(),
   assetDelete: vi.fn(),
+  disconnect: vi.fn(),
   ask: vi.fn(),
   realAsk: null as null | ((message: string, options?: { title?: string; kind?: "info" | "warning" | "error" }) => Promise<boolean>),
   pickKeyFile: vi.fn(),
@@ -57,6 +61,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       list: mocks.list,
       search: vi.fn(),
       update: mocks.update,
+      create: mocks.createAsset,
       delete: mocks.assetDelete,
       groupList: mocks.groupList,
       groupCreate: mocks.groupCreate,
@@ -70,12 +75,14 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     },
     vaultApi: {
       listCredentials: mocks.listCredentials,
-      setCredential: vi.fn(),
+      setCredential: mocks.setCredential,
+      status: mocks.vaultStatus,
     },
     sessionApi: {
       probe: mocks.probe,
       connect: vi.fn(),
       list: vi.fn(),
+      disconnect: mocks.disconnect,
     },
     terminalApi: { write: mocks.write },
     dbApi: {},
@@ -222,8 +229,7 @@ describe("asset group controls", () => {
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() => expect(mounted!.container.textContent).toContain("生产"));
     const row = mounted.container.querySelector<HTMLElement>('[role="treeitem"][aria-expanded]')!;
-    act(() => row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
-    const childAction = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((item) => item.textContent?.includes("新建子分组"));
+    void act(() => row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));    const childAction = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((item) => item.textContent?.includes("新建子分组"));
     expect(childAction).toBeTruthy();
     click(childAction!);
     const modal = mounted.container.querySelector(".nx-modal")!;
@@ -426,7 +432,7 @@ describe("asset group controls", () => {
     Object.defineProperty(drop, "dataTransfer", {
       value: { types: ["application/x-nexterm-asset"], getData: () => assetId },
     });
-    act(() => target.dispatchEvent(drop));
+    void act(() => target.dispatchEvent(drop));
   }
 
   it("keeps a failed move in its original group and retries the same target", async () => {
@@ -1188,6 +1194,157 @@ describe("asset delete confirmation (R42 audit pin, real DialogHost)", () => {
     expect(modal2.getAttribute("role")).toBe("alertdialog");
     await closeModal(modal2, "确定");
     await waitFor(() => expect(mocks.assetDelete).toHaveBeenCalledWith("a1"));
+  });
+
+  it("does not delete in B when A's confirmed disconnect-mode delete resolves its disconnect after a switch", async () => {
+    // Register a real choose handler so the delete-with-sessions choice dialog opens for real.
+    registerDialogHandlers({
+      ask: (message, options) =>
+        new Promise<boolean>((resolve) => {
+          useUi.getState().openAppDialog({
+            kind: "ask",
+            message,
+            title: options?.title,
+            level: dialogLevelForKind(options?.kind),
+            resolve,
+          });
+        }),
+      confirm: (message) =>
+        new Promise<boolean>((resolve) => {
+          useUi.getState().openAppDialog({ kind: "confirm", message, level: "warning", resolve });
+        }),
+      message: (message) =>
+        new Promise<void>((resolve) => {
+          useUi
+            .getState()
+            .openAppDialog({ kind: "message", message, level: "info", resolve: () => resolve() });
+        }),
+      choose: (message, options) =>
+        new Promise<{ key: string; remember: boolean } | null>((resolve) => {
+          useUi.getState().openAppChoice({
+            title: options?.title ?? "请选择",
+            message,
+            options: options?.choices ?? [],
+            level: options?.level ?? "warning",
+            rememberLabel: options?.rememberLabel,
+            resolve: (key, remember) => resolve(key === null ? null : { key, remember }),
+          });
+        }),
+    });
+    useUi.setState({
+      appDialog: null,
+      appChoice: null,
+      accountEpoch: 0,
+      sessions: [{ id: "s-a", assetId: "a1", name: "web-1", kind: "ssh", status: "connected", tabs: [], createdAt: 1 }],
+    });
+    mocks.list.mockResolvedValue([{
+      id: "a1",
+      groupId: null,
+      kind: "ssh",
+      name: "web-1",
+      host: "10.0.0.8",
+      port: 22,
+      username: "root",
+      authKind: "password",
+      keyPath: null,
+      credId: null,
+      options: {},
+      tags: "",
+      note: "",
+      sort: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      deletedAt: null,
+      builtin: false,
+    }]);
+    mounted = mountWithClient(
+      createElement("div", null, createElement(AssetTree), createElement(DialogHost)),
+    );
+    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+
+    // A confirms "断开会话并删除资产"; the disconnect RPC stays pending across the switch.
+    let resolveDisconnect!: () => void;
+    mocks.disconnect.mockImplementation(() => new Promise<void>((resolve) => {
+      resolveDisconnect = resolve;
+    }));
+    click(buttonByTitle(mounted.container, "删除"));
+    await waitFor(() => expect(mounted!.container.querySelector(".nx-modal")).not.toBeNull());
+    const disconnectOption = [...mounted!.container.querySelectorAll<HTMLButtonElement>(".nx-modal button")]
+      .find((button) => button.textContent?.includes("断开会话并删除资产"));
+    if (!disconnectOption) throw new Error("disconnect option not found");
+    click(disconnectOption);
+    await waitFor(() => expect(mocks.disconnect).toHaveBeenCalledWith("s-a"));
+
+    // Account switch: bump the epoch, reset workspaces, and unmount A before the disconnect resolves.
+    act(() => {
+      useUi.getState().advanceAccountEpoch();
+      useUi.getState().resetAccountWorkspaces();
+    });
+    mounted?.unmount();
+    resolveDisconnect();
+    await flush();
+
+    expect(mocks.assetDelete).not.toHaveBeenCalled();
+  });
+});
+
+describe("asset editor save across an account switch", () => {
+  async function fillAndSave(): Promise<void> {
+    await mountEditor();
+    const name = mounted!.container.querySelector<HTMLInputElement>('input[placeholder="web-01"]');
+    if (!name) throw new Error("Name input not found");
+    setInputValue(name, "A production");
+    await setHost("10.0.0.8");
+    const password = [
+      ...mounted!.container.querySelectorAll<HTMLInputElement>('input[type="password"]'),
+    ][0];
+    if (!password) throw new Error("Password input not found");
+    setInputValue(password, "a-secret");
+    clickButton(mounted!.container, "保存");
+  }
+
+  it("does not write A's credential or asset into B when the vault status resolves after a switch", async () => {
+    useUi.setState({ accountEpoch: 0 });
+    const status = deferred<{ initialized: boolean; unlocked: boolean }>();
+    mocks.vaultStatus.mockReturnValue(status.promise);
+    mocks.setCredential.mockResolvedValue({ id: "cred-a" });
+    mocks.createAsset.mockResolvedValue({ id: "a-new" });
+    await fillAndSave();
+    await waitFor(() => expect(mounted!.container.textContent).toContain("保存中"));
+
+    // Account switch while the vault status fetch is still in flight.
+    act(() => {
+      useUi.getState().advanceAccountEpoch();
+      useUi.getState().resetAccountWorkspaces();
+    });
+    mounted?.unmount();
+    status.resolve({ initialized: true, unlocked: true });
+    await flush();
+
+    expect(mocks.setCredential).not.toHaveBeenCalled();
+    expect(mocks.createAsset).not.toHaveBeenCalled();
+  });
+
+  it("does not create A's asset in B when the credential write resolves after a switch", async () => {
+    useUi.setState({ accountEpoch: 0 });
+    const cred = deferred<{ id: string }>();
+    mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
+    mocks.setCredential.mockReturnValue(cred.promise);
+    mocks.createAsset.mockResolvedValue({ id: "a-new" });
+    await fillAndSave();
+    await waitFor(() => expect(mocks.setCredential).toHaveBeenCalledTimes(1));
+    expect(mocks.setCredential.mock.calls[0]?.[0]).toBe("A production");
+
+    // Account switch while the credential write is still in flight.
+    act(() => {
+      useUi.getState().advanceAccountEpoch();
+      useUi.getState().resetAccountWorkspaces();
+    });
+    mounted?.unmount();
+    cred.resolve({ id: "cred-b" });
+    await flush();
+
+    expect(mocks.createAsset).not.toHaveBeenCalled();
   });
 });
 

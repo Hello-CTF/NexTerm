@@ -222,11 +222,54 @@ describe("BulkMaintenancePanel", () => {
 
     clickButton(mounted!.container, "test login / 连接测试");
     await flushUntil(() => mocks.testLogin.mock.calls.length === 1
-      && (mounted?.container.textContent.includes("连接可达（12 ms）") ?? false));
+      && (mounted?.container.textContent.includes("SSH 握手成功（12 ms）") ?? false));
     expect(mocks.testLogin).toHaveBeenCalledWith(["a", "b"]);
     const loginResults = mounted!.container.querySelector('[aria-label="test login 逐目标结果"]');
-    expect(loginResults?.querySelector('[data-asset-id="a"]')?.textContent).toContain("连接可达（12 ms）");
-    expect(loginResults?.querySelector('[data-asset-id="b"]')?.textContent).toContain("refused：connection refused");
+    expect(loginResults?.querySelector('[data-asset-id="a"]')?.textContent).toContain("SSH 握手成功（12 ms）");
+    expect(loginResults?.querySelector('[data-asset-id="b"]')?.textContent).toContain("连接被拒绝：connection refused");
+  });
+
+  it("presents each test-login failure class accurately instead of raw kinds", async () => {
+    const more = [asset("c", "host-c", 30), asset("d", "host-d", 40), asset("e", "host-e", 50), asset("f", "host-f", 60)];
+    mocks.assetList.mockResolvedValue([...assets, ...more].map((item) => ({ ...item })));
+    mocks.testLogin.mockResolvedValue({
+      results: [
+        { assetId: "a", reachable: false, kind: "network", error: "dial tcp: no route to host", durationMs: 5 },
+        { assetId: "b", reachable: false, kind: "host_key_changed", error: "host key mismatch", durationMs: 6 },
+        { assetId: "c", reachable: false, kind: "auth", error: "permission denied", durationMs: 7 },
+        { assetId: "d", reachable: false, kind: "vault", error: "凭据库已锁定", durationMs: 8 },
+        { assetId: "e", reachable: false, kind: "config", error: "asset host is required", durationMs: 9 },
+        {
+          assetId: "f",
+          reachable: false,
+          kind: "host_key_pending",
+          error: "首次连接 f.example.com:22 需要确认主机指纹（SHA256:pending），请与服务器管理员核对后确认是否信任该主机",
+          durationMs: 10,
+        },
+      ],
+    });
+    await mountPanel();
+    for (const id of ["a", "b", "c", "d", "e", "f"]) click(target(id));
+    clickButton(mounted!.container, "test login / 连接测试");
+    await flushUntil(() => mocks.testLogin.mock.calls.length === 1
+      && (mounted?.container.textContent.includes("凭据库不可用：凭据库已锁定") ?? false));
+    const loginResults = mounted!.container.querySelector('[aria-label="test login 逐目标结果"]');
+    expect(loginResults?.querySelector('[data-asset-id="a"]')?.textContent).toContain("网络不可达：dial tcp: no route to host");
+    expect(loginResults?.querySelector('[data-asset-id="b"]')?.textContent).toContain("主机密钥已变更：host key mismatch");
+    expect(loginResults?.querySelector('[data-asset-id="c"]')?.textContent).toContain("认证失败：permission denied");
+    expect(loginResults?.querySelector('[data-asset-id="d"]')?.textContent).toContain("凭据库不可用：凭据库已锁定");
+    expect(loginResults?.querySelector('[data-asset-id="e"]')?.textContent).toContain("配置无效：asset host is required");
+    // A pending host key keeps its own class with the actionable backend guidance; the
+    // panel never auto-accepts it (the result row offers no trust action).
+    const pendingRow = loginResults?.querySelector('[data-asset-id="f"]');
+    expect(pendingRow?.textContent).toContain("主机密钥待确认：首次连接 f.example.com:22 需要确认主机指纹（SHA256:pending），请与服务器管理员核对后确认是否信任该主机");
+    expect(pendingRow?.querySelector("button")).toBeNull();
+    for (const raw of ["network：", "host_key_changed：", "host_key_pending：", "auth：", "vault：", "config："]) {
+      expect(mounted!.container.textContent).not.toContain(raw);
+    }
+    // SSH assets get a real handshake, not a "TCP reachable / unauthenticated" label.
+    expect(mounted!.container.textContent).toContain("真实 host-key+凭据握手");
+    expect(mounted!.container.textContent).not.toContain("不代表凭据已完成认证");
   });
 
   it("requires production confirmation before retrying deploy with bound hashes", async () => {

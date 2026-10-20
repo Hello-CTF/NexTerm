@@ -80,7 +80,7 @@ export function QuickConnect({
   const helpId = useId();
   const layer = useOverlayFocus(true, modalRef, { initialFocus: () => inputRef.current });
 
-  const assets = assetsQuery.data ?? [];
+  const assets = useMemo(() => assetsQuery.data ?? [], [assetsQuery.data]);
   const hiddenDatabaseCount = assets.filter(
     (asset) => dbKindOf(asset.kind) !== null && hiddenIds.includes(asset.id),
   ).length;
