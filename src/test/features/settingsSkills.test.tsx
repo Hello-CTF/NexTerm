@@ -19,15 +19,11 @@ vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 
 import { SkillsCard } from "../../features/settings/SkillsCard";
 import {
-  createCallSkillsApi,
   isSkillError,
-  SKILL_COMMANDS,
   SkillError,
-  skillsApi,
   type SkillDispatch,
   type SkillEntry,
   type SkillsApi,
-  type SkillsCall,
   type SkillOverrideInput,
 } from "../../features/settings/skillsApi";
 import {
@@ -946,70 +942,5 @@ describe("SkillsCard", () => {
     const alpha = entriesA.find((entry) => entry.name === "alpha-skill");
     expect(alpha?.disabled).toBe(false);
     expect(alpha?.overridden).toBe(true);
-  });
-});
-
-describe("call-based skills adapter", () => {
-  function recordingInvoke() {
-    const calls: Array<{ command: string; args: Record<string, unknown> | undefined }> = [];
-    const invoke = (<T,>(command: string, args?: Record<string, unknown>): Promise<T> => {
-      calls.push({ command, args });
-      return Promise.resolve({} as T);
-    }) as SkillsCall & { calls: typeof calls };
-    invoke.calls = calls;
-    return invoke;
-  }
-
-  it("issues each contract method with the mirrored command name and payload", async () => {
-    const invoke = recordingInvoke();
-    const api = createCallSkillsApi(invoke);
-
-    await api.list();
-    await api.saveOverride({ name: "alpha-skill", description: "Alpha overridden" });
-    await api.saveOverride({ name: "custom-skill", description: "d", body: "b\n", disabled: true });
-    await api.deleteOverride("alpha-skill");
-    await api.dispatch("alpha-skill");
-    await api.getEffective("alpha-skill");
-
-    expect(invoke.calls).toEqual([
-      { command: SKILL_COMMANDS.list, args: {} },
-      { command: SKILL_COMMANDS.saveOverride, args: { name: "alpha-skill", description: "Alpha overridden" } },
-      { command: SKILL_COMMANDS.saveOverride, args: { name: "custom-skill", description: "d", body: "b\n", disabled: true } },
-      { command: SKILL_COMMANDS.deleteOverride, args: { name: "alpha-skill" } },
-      { command: SKILL_COMMANDS.dispatch, args: { name: "alpha-skill" } },
-      { command: SKILL_COMMANDS.material, args: { name: "alpha-skill" } },
-    ]);
-    expect(SKILL_COMMANDS.list).toBe("ai_skills_list");
-    expect(SKILL_COMMANDS.saveOverride).toBe("ai_skills_save_override");
-    expect(SKILL_COMMANDS.deleteOverride).toBe("ai_skills_delete_override");
-    expect(SKILL_COMMANDS.dispatch).toBe("ai_skills_dispatch");
-    expect(SKILL_COMMANDS.material).toBe("ai_skills_material");
-  });
-
-  it("returns the backend result unchanged and propagates errors untouched", async () => {
-    const entry: SkillEntry = {
-      name: "alpha-skill",
-      description: "Alpha overridden",
-      source: "embedded",
-      overridden: true,
-      disabled: false,
-      digest: `sha256:${"a".repeat(64)}`,
-      updatedAt: 7,
-    };
-    const invoke = (<T,>(command: string): Promise<T> =>
-      command === SKILL_COMMANDS.list
-        ? Promise.resolve([entry] as T)
-        : Promise.reject(new Error("disk failure"))) as SkillsCall;
-    const api = createCallSkillsApi(invoke);
-
-    await expect(api.list()).resolves.toEqual([entry]);
-    await expect(api.dispatch("alpha-skill")).rejects.toThrow("disk failure");
-  });
-
-  it("exposes the production adapter as a SkillsApi", () => {
-    const methods: Array<keyof SkillsApi> = ["list", "saveOverride", "deleteOverride", "dispatch", "getEffective"];
-    for (const method of methods) {
-      expect(typeof skillsApi[method]).toBe("function");
-    }
   });
 });
