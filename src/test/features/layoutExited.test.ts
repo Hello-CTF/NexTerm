@@ -10,12 +10,14 @@ const mocks = vi.hoisted(() => ({
   layoutPut: vi.fn(),
   listLive: vi.fn(),
   listDurable: vi.fn(),
+  listSessions: vi.fn(),
 }));
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const { createCommandsMock } = await import("../helpers/mockCommands");
   return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
     layoutApi: { get: mocks.layoutGet, put: mocks.layoutPut },
     terminalApi: { closeTab: mocks.closeTab, listLive: mocks.listLive, listDurable: mocks.listDurable },
+    sessionApi: { list: mocks.listSessions },
   });
 });
 vi.mock("../../ipc/events", () => ({ listenEvent: vi.fn() }));
@@ -92,6 +94,7 @@ describe("remote layout preserves exited terminal state", () => {
     setTerminalCloseAction("detach");
     mocks.listLive.mockResolvedValue([]);
     mocks.listDurable.mockResolvedValue([]);
+    mocks.listSessions.mockResolvedValue([]);
     mocks.layoutPut.mockResolvedValue({ saved: true, revision: 1, conflict: false });
   });
   afterEach(() => resetLayoutSyncForTest());
@@ -169,6 +172,34 @@ describe("remote layout preserves exited terminal state", () => {
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "detach", "s");
     expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-terminal", "kill", "s");
     expect(toastText()).toContain("已转入后台");
+  });
+
+  it("close paths resync the session list from the backend and apply the result", async () => {
+    const refreshed = [
+      {
+        id: "s-refreshed",
+        assetId: "a1",
+        name: "web-01",
+        kind: "ssh",
+        status: "connected",
+        tabs: [],
+        createdAt: 0,
+        staleConfig: false,
+      },
+    ];
+    mocks.listSessions.mockResolvedValue(refreshed);
+    const exitedTab = { ...terminal(), exited: true };
+    seed([{ id: "pane", tabs: [exitedTab] }]);
+    applyAttachedCapabilities();
+    mocks.listLive.mockResolvedValue([liveTab("kernel-terminal")]);
+
+    await requestCloseTab(exitedTab.id);
+    await flushAsync();
+
+    expect(mocks.listSessions).toHaveBeenCalled();
+    expect(useUi.getState().sessions).toEqual(refreshed);
+    expect(useUi.getState().sessionResyncCompleted).toBe(true);
+    expect(useUi.getState().sessionResyncFailed).toBe(false);
   });
 
   it("after serializeLayout → onRemoteChange, a current durable-dead tab uses default cleanup", async () => {

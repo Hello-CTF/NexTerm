@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -421,6 +422,8 @@ func TestGateRefreshSerializationPreventsStaleOverwrite(t *testing.T) {
 	current := testGrant(PermissionRead, expiresAt)
 	firstStarted := make(chan struct{})
 	releaseFirst := make(chan struct{})
+	secondStarted := make(chan struct{})
+	secondRecheckStarted := make(chan struct{})
 	var calls atomic.Int32
 	gate := NewGate(testGrant(PermissionReadWrite, expiresAt), WithRecheck(func(ctx context.Context, grant *Grant) (*Grant, error) {
 		if calls.Add(1) == 1 {
@@ -428,6 +431,7 @@ func TestGateRefreshSerializationPreventsStaleOverwrite(t *testing.T) {
 			<-releaseFirst
 			return stale, nil
 		}
+		close(secondRecheckStarted)
 		return current, nil
 	}))
 	defer func() {
@@ -442,15 +446,33 @@ func TestGateRefreshSerializationPreventsStaleOverwrite(t *testing.T) {
 	go func() { firstDone <- gate.Check(context.Background()) }()
 	<-firstStarted
 	secondDone := make(chan error, 1)
-	secondStarted := make(chan struct{})
 	go func() { close(secondStarted); secondDone <- gate.CheckFresh(context.Background()) }()
 	<-secondStarted
+	// A Go mutex does not expose its wait queue, so "the second check is
+	// blocked on the refresh critical section" cannot be observed directly.
+	// What the serialization contract does guarantee is observable: while the
+	// first recheck holds refreshMu, the second check cannot make progress.
+	// Yield so the second goroutine reaches the critical section, then prove
+	// its recheck has not run before releasing the first one; without
+	// refreshMu serialization it would have fired by now and the gate would
+	// be one refresh behind.
+	runtime.Gosched()
+	select {
+	case <-secondRecheckStarted:
+		t.Fatal("second refresh ran while the first refresh was still in flight")
+	default:
+	}
 	close(releaseFirst)
 	if err := <-firstDone; err != nil {
 		t.Fatal(err)
 	}
 	if err := <-secondDone; err != nil {
 		t.Fatal(err)
+	}
+	select {
+	case <-secondRecheckStarted:
+	default:
+		t.Fatal("second refresh never ran")
 	}
 	if permission := gate.Grant().Permission; permission != PermissionRead {
 		t.Fatalf("stale refresh overwrote current grant: permission = %q", permission)
