@@ -635,6 +635,61 @@ func TestProductionHostKeyReconcileRemovesOrphanMirrorFile(t *testing.T) {
 	requireKnownHostOwnerTestKey(t, restarted, ownerB, keyB)
 }
 
+func TestProductionHostKeyLegacyMigrationWaitsForSuperadmin(t *testing.T) {
+	ctx := context.Background()
+	database := newKnownHostOwnerTestDB(t)
+	legacy := knownHostOwnerTestKey("waiting.test", "SHA256:waiting", "waiting-key")
+	path := filepath.Join(t.TempDir(), "known_hosts.json")
+	if err := writeProductionHostKeyFile(path, productionHostKeyFile{Version: 1, Keys: []ssh.HostKey{legacy}}); err != nil {
+		t.Fatal(err)
+	}
+	// No active superadmin: the whole batch is postponed — nothing imported, no backup, no marker.
+	keys, err := newProductionHostKeyStore(ctx, path, database, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keys.migration.Skipped != 1 || keys.migration.Copied != 0 || keys.migration.BackupCreated {
+		t.Fatalf("postponed migration report = %+v", keys.migration)
+	}
+	if rows, err := database.KnownHostListForMigration(ctx); err != nil || len(rows) != 0 {
+		t.Fatalf("postponed batch imported rows: %+v, %v", rows, err)
+	}
+	if _, err := os.Stat(path + ".owner-import-done"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("postponed batch wrote the marker: %v", err)
+	}
+	if _, err := os.Stat(path + ".pre-owner-migration.bak"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("postponed batch created the backup: %v", err)
+	}
+	// An active superadmin appears: the next startup completes the import and writes the marker.
+	putKnownHostOwnerTestUser(t, database, "admin", "superadmin", "active", 1)
+	admin := ipc.WithUserID(ctx, "admin")
+	reloaded, err := newProductionHostKeyStore(ctx, path, database, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.migration.Copied != 1 || reloaded.migration.Skipped != 0 {
+		t.Fatalf("completed migration report = %+v", reloaded.migration)
+	}
+	if _, err := os.Stat(path + ".owner-import-done"); err != nil {
+		t.Fatalf("completed batch did not write the marker: %v", err)
+	}
+	requireKnownHostOwnerTestKey(t, reloaded, admin, legacy)
+	// A revocation after the completed import does not resurrect on restart.
+	rows, err := database.KnownHostList(admin)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("admin rows = %+v, %v", rows, err)
+	}
+	if err := database.KnownHostRemove(admin, rows[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newProductionHostKeyStore(ctx, path, database, false); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := database.KnownHostList(admin); err != nil || len(rows) != 0 {
+		t.Fatalf("revoked key resurrected after completed import: %+v, %v", rows, err)
+	}
+}
+
 func breakKnownHostMirror(t *testing.T, keys *productionHostKeyStore, ctx context.Context) string {
 	t.Helper()
 	keys.mu.Lock()

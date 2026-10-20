@@ -229,41 +229,35 @@ func (s *productionHostKeyStore) ApprovedHostKeys(ctx context.Context, host stri
 }
 
 // PutHostKey commits the ledger first and the mirror second. A failed mirror write compensates the ledger,
-// so the database stays the single source of truth and the mirror never runs ahead of it.
+// so the database stays the single source of truth and the mirror never runs ahead of it. The ledger accept
+// atomically captures the actual previous row, and the compensation is conditional on the accepted outcome:
+// an interleaved independent trust decision can never be rolled back by mistake.
 func (s *productionHostKeyStore) PutHostKey(ctx context.Context, key ssh.HostKey, replace bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, err := s.requestOwner(ctx); err != nil {
 		return err
 	}
-	previous, existed, err := s.database.KnownHostGet(ctx, key.Host, int32(key.Port), key.KeyType)
-	if err != nil {
-		return err
-	}
-	if existed && !replace && previous.Fingerprint != key.Fingerprint {
-		return ssh.ErrHostKeyConflict
-	}
 	files, _, err := s.fileFor(ctx)
 	if err != nil {
 		return err
 	}
-	accepted, err := s.database.KnownHostAcceptWithKey(ctx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint, key.Key)
+	accepted, previous, err := s.database.KnownHostAcceptForMirror(ctx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint, key.Key, replace)
+	if errors.Is(err, store.ErrKnownHostConflict) {
+		return ssh.ErrHostKeyConflict
+	}
 	if err != nil {
 		return err
 	}
 	mirrorReplace := replace
-	if !mirrorReplace && existed && previous.Fingerprint == key.Fingerprint {
+	if !mirrorReplace && previous != nil && previous.Fingerprint == key.Fingerprint {
 		// The ledger already trusts exactly this key, so a different-key mirror entry for the same endpoint
 		// is a stale leftover (for example a replacement confirmed through the fingerprint-only IPC path);
 		// overwrite it instead of failing on a conflict the ledger has already resolved.
 		mirrorReplace = true
 	}
 	if err := files.PutHostKey(ctx, key, mirrorReplace); err != nil {
-		var rollback *store.KnownHostRow
-		if existed {
-			rollback = &previous
-		}
-		if _, compensateErr := s.database.KnownHostCompensateAccept(ctx, key.Host, int32(key.Port), key.KeyType, accepted, rollback); compensateErr != nil {
+		if _, compensateErr := s.database.KnownHostCompensateAccept(ctx, key.Host, int32(key.Port), key.KeyType, accepted, previous); compensateErr != nil {
 			return errors.Join(err, fmt.Errorf("compensate SSH host key ledger: %w", compensateErr))
 		}
 		return err
@@ -289,10 +283,6 @@ func (s *productionHostKeyStore) migrateLegacy(ctx context.Context) (productionH
 	if err != nil || !existed {
 		return report, err
 	}
-	report.BackupCreated, err = backupLegacyProductionHostKeyFile(s.path, data)
-	if err != nil {
-		return report, err
-	}
 	keys, err := s.files.HostKeySnapshot(ctx)
 	if err != nil {
 		return report, err
@@ -309,23 +299,39 @@ func (s *productionHostKeyStore) migrateLegacy(ctx context.Context) (productionH
 		identity := productionHostKeyIdentity{host: row.Host, port: int(row.Port), keyType: row.KeyType, fingerprint: row.Fingerprint}
 		owners[identity] = append(owners[identity], row.OwnerID)
 	}
+	// Preflight: postpone the whole batch while any legacy entry has no owning ledger row and no active
+	// superadmin exists to receive it. The marker is never written for a postponed batch — a later startup
+	// retries once an administrator appears — and a partially imported batch can never mix with later
+	// revocations, which is why "skip the leftovers and still mark done" is not an option.
 	fallbackOwner := ""
 	fallbackResolved := false
 	for _, key := range keys {
 		identity := productionHostKeyIdentity{host: key.Host, port: key.Port, keyType: key.KeyType, fingerprint: key.Fingerprint}
+		if len(owners[identity]) > 0 {
+			continue
+		}
+		if !fallbackResolved {
+			fallbackOwner, err = s.firstActiveSuperadmin(ctx)
+			fallbackResolved = true
+			if err != nil {
+				return report, err
+			}
+		}
+		if fallbackOwner == "" {
+			report.Skipped++
+		}
+	}
+	if report.Skipped > 0 {
+		return report, nil
+	}
+	report.BackupCreated, err = backupLegacyProductionHostKeyFile(s.path, data)
+	if err != nil {
+		return report, err
+	}
+	for _, key := range keys {
+		identity := productionHostKeyIdentity{host: key.Host, port: key.Port, keyType: key.KeyType, fingerprint: key.Fingerprint}
 		mappedOwners := owners[identity]
 		if len(mappedOwners) == 0 {
-			if !fallbackResolved {
-				fallbackOwner, err = s.firstActiveSuperadmin(ctx)
-				fallbackResolved = true
-				if err != nil {
-					return report, err
-				}
-			}
-			if fallbackOwner == "" {
-				report.Skipped++
-				continue
-			}
 			mappedOwners = []string{fallbackOwner}
 		}
 		sort.Strings(mappedOwners)

@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
+	"errors"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store/model"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -68,6 +70,56 @@ func (s *Store) KnownHostAccept(ctx context.Context, host string, port int32, ke
 		return dbError(err)
 	}
 	return nil
+}
+
+// ErrKnownHostConflict reports an accept that would replace a trusted key without the replace flag.
+var ErrKnownHostConflict = errors.New("SSH host key store conflict")
+
+// KnownHostAcceptForMirror atomically reads the current row and applies the accept in one transaction,
+// returning the exact accepted outcome and the actual previous row (nil when none existed). The caller
+// uses the returned pair for mirror-failure compensation: the accepted outcome as the CAS identity and
+// the actual previous as the only legitimate rollback target, so an interleaved independent decision can
+// never be rolled back by mistake. Without replace, an existing row with a different fingerprint fails
+// with ErrKnownHostConflict.
+func (s *Store) KnownHostAcceptForMirror(ctx context.Context, host string, port int32, keyType, fingerprint, key string, replace bool) (KnownHostRow, *KnownHostRow, error) {
+	var accepted KnownHostRow
+	var previous *KnownHostRow
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		queries := query.Use(tx)
+		knownHost := queries.KnownHostRow
+		scope := knownHost.WithContext(ctx).
+			Where(knownHost.Host.Eq(host), knownHost.Port.Eq(port), knownHost.KeyType.Eq(keyType)).
+			Where(ownerConditions(ctx, knownHost.TableName())...)
+		var row *model.KnownHostRow
+		var err error
+		if tx.Dialector.Name() == "postgres" || tx.Dialector.Name() == "mysql" {
+			row, err = scope.Clauses(clause.Locking{Strength: "UPDATE"}).First()
+		} else {
+			row, err = scope.First()
+		}
+		if err != nil && !isNoRows(err) {
+			return err
+		}
+		if err == nil {
+			previousRow := *row
+			previous = &previousRow
+			if !replace && previousRow.Fingerprint != fingerprint {
+				return ErrKnownHostConflict
+			}
+		}
+		accepted = KnownHostRow{ID: ids.New(), Host: host, Port: port, KeyType: keyType, Fingerprint: fingerprint, Key: key, AddedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)}
+		return knownHost.WithContext(ctx).
+			Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "owner_id"}, {Name: "host"}, {Name: "port"}, {Name: "key_type"}},
+				DoUpdates: clause.AssignmentColumns([]string{"fingerprint", "key", "added_at"}),
+				Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+			}).
+			Create(&accepted)
+	})
+	if err != nil {
+		return KnownHostRow{}, nil, dbError(err)
+	}
+	return accepted, previous, nil
 }
 
 // KnownHostFillKeyMaterial completes recorded key material for an already trusted endpoint without touching

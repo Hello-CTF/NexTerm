@@ -2,10 +2,12 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/dbtest"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 func TestKnownHostMigrationReadDatabase(t *testing.T) {
@@ -205,6 +207,51 @@ func TestKnownHostCompensateAcceptSkipsNewerDecisionDatabase(t *testing.T) {
 	}
 	if _, found, err := database.KnownHostGet(ownerA, "interleave.test", 22, "ssh-ed25519"); err != nil || found {
 		t.Fatalf("current-state compensation left a row: found=%v err=%v", found, err)
+	}
+}
+
+func TestKnownHostAcceptForMirrorAtomicDatabase(t *testing.T) {
+	database := dbtest.NewFixture(t).OpenStore(t)
+	ctx := context.Background()
+	ownerA := ipc.WithUserID(ctx, "atomic-owner-a")
+	// previous=nil with an interleaved independent accept after this accept: the compensation must skip.
+	acceptedA, previous, err := database.KnownHostAcceptForMirror(ownerA, "atomic.test", 22, "ssh-ed25519", "SHA256:a", "YS1rZXk=", false)
+	if err != nil || previous != nil {
+		t.Fatalf("first accept = %+v, %+v, %v", acceptedA, previous, err)
+	}
+	if _, err := database.KnownHostAcceptWithKey(ownerA, "atomic.test", 22, "ssh-ed25519", "SHA256:b", "Yi1rZXk="); err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := database.KnownHostCompensateAccept(ownerA, "atomic.test", 22, "ssh-ed25519", acceptedA, nil); err != nil || applied {
+		t.Fatalf("interleaved insert compensation applied=%v err=%v", applied, err)
+	}
+	if row, found, err := database.KnownHostGet(ownerA, "atomic.test", 22, "ssh-ed25519"); err != nil || !found || row.Fingerprint != "SHA256:b" {
+		t.Fatalf("interleaved decision = %+v, %v, %v", row, found, err)
+	}
+	// An independent accept between the previous read and this accept becomes the actual previous:
+	// the compensation restores it, not the state from before it.
+	if _, err := database.KnownHostAcceptWithKey(ownerA, "atomic.test", 22, "ssh-ed25519", "SHA256:c", "Yy1rZXk="); err != nil {
+		t.Fatal(err)
+	}
+	acceptedD, previousC, err := database.KnownHostAcceptForMirror(ownerA, "atomic.test", 22, "ssh-ed25519", "SHA256:d", "ZC1rZXk=", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if previousC == nil || previousC.Fingerprint != "SHA256:c" || previousC.Key != "Yy1rZXk=" {
+		t.Fatalf("actual previous = %+v, want the interleaved C row", previousC)
+	}
+	if applied, err := database.KnownHostCompensateAccept(ownerA, "atomic.test", 22, "ssh-ed25519", acceptedD, previousC); err != nil || !applied {
+		t.Fatalf("replacement compensation applied=%v err=%v", applied, err)
+	}
+	if row, found, err := database.KnownHostGet(ownerA, "atomic.test", 22, "ssh-ed25519"); err != nil || !found || row.Fingerprint != "SHA256:c" || row.Key != "Yy1rZXk=" || row.AddedAt != previousC.AddedAt {
+		t.Fatalf("restored row = %+v, %v, %v", row, found, err)
+	}
+	// Without replace, an existing row with a different fingerprint fails with ErrKnownHostConflict and stays untouched.
+	if _, _, err := database.KnownHostAcceptForMirror(ownerA, "atomic.test", 22, "ssh-ed25519", "SHA256:e", "ZS1rZXk=", false); !errors.Is(err, store.ErrKnownHostConflict) {
+		t.Fatalf("conflicting accept error = %v", err)
+	}
+	if row, _, _ := database.KnownHostGet(ownerA, "atomic.test", 22, "ssh-ed25519"); row.Fingerprint != "SHA256:c" || row.Key != "Yy1rZXk=" {
+		t.Fatalf("conflicting accept changed the row: %+v", row)
 	}
 }
 
