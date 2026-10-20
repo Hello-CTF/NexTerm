@@ -46,7 +46,9 @@ func (s *Store) AgentOutcomeBegin(ctx context.Context, row AgentOutcomeRow) (Age
 	if result.Error != nil {
 		if IsUniqueErr(result.Error) {
 			var stored AgentOutcomeRow
-			if err := s.db.WithContext(ctx).Where("owner_id = ? AND operation_id = ?", row.OwnerID, row.OperationID).First(&stored).Error; err != nil {
+			if err := s.inEvidenceWinnerRead(ctx, func() error {
+				return s.db.WithContext(ctx).Where("owner_id = ? AND operation_id = ?", row.OwnerID, row.OperationID).First(&stored).Error
+			}); err != nil {
 				return AgentOutcomeRow{}, false, dbError(err)
 			}
 			return stored, false, nil

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/dbtest"
@@ -75,5 +76,56 @@ func TestAgentEvidenceContractsDatabase(t *testing.T) {
 	envelopeHash, _, err = db.EvidenceAnchor(ctxA, "cap-1", "head-1")
 	if err != nil || envelopeHash != "envelope-1" {
 		t.Fatalf("owner A anchor disturbed: %q err=%v", envelopeHash, err)
+	}
+}
+
+// TestAgentEvidenceSignerKeyConcurrentFirstUseDatabase exercises the
+// first-use creation race on every real configured backend: concurrent
+// callers of the same owner's initial EvidenceSignerKey must all obtain the
+// single persisted winner key, never a not-found error.
+func TestAgentEvidenceSignerKeyConcurrentFirstUseDatabase(t *testing.T) {
+	db := dbtest.NewFixture(t).OpenStore(t)
+	ctx := ipc.WithUserID(context.Background(), "evidence-race-owner")
+
+	const workers = 16
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	keys := make(chan []byte, workers)
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			key, err := db.EvidenceSignerKey(ctx)
+			if err != nil {
+				errs <- err
+				return
+			}
+			keys <- key
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(keys)
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent first use failed: %v", err)
+	}
+	var winner []byte
+	received := 0
+	for key := range keys {
+		if len(key) == 0 {
+			t.Fatal("caller received an empty key")
+		}
+		if winner == nil {
+			winner = key
+		} else if !bytes.Equal(winner, key) {
+			t.Fatal("callers received different signer keys")
+		}
+		received++
+	}
+	if received != workers {
+		t.Fatalf("received %d keys, want %d", received, workers)
 	}
 }

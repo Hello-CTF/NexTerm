@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
@@ -14,12 +15,19 @@ const captureRegistryBound = 64
 
 // newJobCapture starts the evidence capture for a job through the
 // recorder-side seal authority, or nil when evidence is not configured.
+// Every recording incarnation gets an independent capture identity: a
+// restored job records a fresh incarnation of the same job, and two
+// incarnations of one job can produce identical event chains (a
+// no-output recording seals only the deterministic lifecycle marker), so a
+// shared capture ID would make the later legitimate anchor collide with
+// the earlier one. The job ID stays the traceable prefix and the capture's
+// JobID field.
 func (r *Runner) newJobCapture(jobID, conversationID string) *Capture {
 	recorder := r.evidenceRecorder()
 	if recorder == nil {
 		return nil
 	}
-	return recorder.NewRecording(jobID, conversationID, jobID, time.Now().UnixMilli())
+	return recorder.NewRecording(jobID+":"+ids.New(), conversationID, jobID, time.Now().UnixMilli())
 }
 
 // recordToolResult appends one tool result to the job's evidence capture.
