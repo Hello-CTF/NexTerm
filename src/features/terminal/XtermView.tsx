@@ -15,7 +15,7 @@ import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
 import { matchAppKeybinding } from "../../app/keybindings";
 import { useUi } from "../../app/store";
 import {
-  resetTerminalView,
+  resetTerminalLinesBelow,
   setTerminalLinesBelow,
   useTerminalLinesBelow,
 } from "../../app/terminalViewStore";
@@ -73,6 +73,12 @@ export interface TerminalHandle {
 export interface XtermViewProps {
   sessionId: string;
   tabId: string;
+  // The stable per-pane key the scrollback badge state is stored under. TerminalPane
+  // passes its workspace storeTabId: the kernel tab id is unknown ("pending") until the
+  // attach response, and that placeholder is shared by every attaching tab, so it must
+  // never key store state. With a stable viewTabId there is no key switch at attach and
+  // the current value carries over by construction. Falls back to tabId when absent.
+  viewTabId?: string;
   winrm?: boolean;
   containerId?: string;
   resumeTabId?: string;
@@ -130,8 +136,9 @@ export function XtermView(props: XtermViewProps) {
   const gridRef = useRef<TerminalGridCoordinator | null>(null);
   const onGeometryRef = useRef<(() => void) | null>(null);
   const kernelTabIdRef = useRef<string>("");
-  const tabIdRef = useRef(props.tabId);
-  tabIdRef.current = props.tabId;
+  const viewKey = props.viewTabId ?? props.tabId;
+  const viewKeyRef = useRef(viewKey);
+  viewKeyRef.current = viewKey;
   const [selectionBar, setSelectionBar] = useState<{ x: number; y: number } | null>(null);
   const reattachRef = useRef<(() => void) | null>(null);
   const previousSessionConnected = useRef(props.sessionConnected === true);
@@ -259,7 +266,7 @@ export function XtermView(props: XtermViewProps) {
       const below = Math.max(0, buffer.baseY - buffer.viewportY);
       // The root view store dedups unchanged values: only a real change notifies
       // the badge's precise selector.
-      setTerminalLinesBelow(tabIdRef.current, below);
+      setTerminalLinesBelow(viewKeyRef.current, below);
     };
     // Scroll and write-completion signals are high-frequency: they only mark
     // the UI dirty, and the buffer read plus store update runs once per
@@ -1218,10 +1225,10 @@ export function XtermView(props: XtermViewProps) {
     if (!wasConnected && connected) reattachRef.current?.();
   }, [props.sessionConnected]);
 
-  // The scrollback badge lives in the root view store: drop this tab's entry when the
-  // view unmounts or the kernel tab id changes, so a closed tab (and the pre-attach
-  // "pending" key) never leaks a stale value into the next mount.
-  useEffect(() => () => resetTerminalView(props.tabId), [props.tabId]);
+  // The scrollback badge lives in the root view store: drop this pane's entry when the
+  // view unmounts or its view key changes, so a closed tab never leaks a stale value.
+  // Only linesBelow is cleared here — the tab's OSC title outlives a terminal remount.
+  useEffect(() => () => resetTerminalLinesBelow(viewKey), [viewKey]);
 
   useEffect(() => {
     const applyAppearance = () => {
@@ -1293,7 +1300,7 @@ export function XtermView(props: XtermViewProps) {
           onSelectAll={() => termRef.current?.selectAll()}
         />
       )}
-      <LinesBelowBadge tabId={props.tabId} onJump={scrollToBottom} />
+      <LinesBelowBadge tabId={viewKey} onJump={scrollToBottom} />
     </div>
   );
 }

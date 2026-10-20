@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Profiler, act, createElement } from "react";
-import { flushMacrotask, mount, type MountedView } from "./features/reactTestUtils";
+import { deferred, flushMacrotask, mount, type MountedView } from "./features/reactTestUtils";
 
 interface FakeTerminal {
   cols: number;
@@ -24,6 +24,7 @@ interface FakeTerminal {
 const harness = vi.hoisted(() => ({
   terminals: [] as unknown[],
   channel: null as { onBytes?: (bytes: Uint8Array) => void; onControl?: (control: unknown) => void } | null,
+  channels: [] as { onBytes?: (bytes: Uint8Array) => void; onControl?: (control: unknown) => void }[],
   reopenCb: null as (() => void) | null,
   feedInput: vi.fn(),
   feedOSC133: vi.fn(),
@@ -163,7 +164,9 @@ vi.mock("../ipc/events", () => ({
     onBytes: (bytes: Uint8Array) => void,
     onControl?: (control: unknown) => void,
   ) => {
-    harness.channel = { onBytes, onControl };
+    const entry = { onBytes, onControl };
+    harness.channel = entry;
+    harness.channels.push(entry);
     return {};
   },
   disposeChannel: vi.fn(),
@@ -220,6 +223,12 @@ function buttonText(): string {
   return [...(mounted?.container.querySelectorAll("button") ?? [])]
     .map((b) => b.textContent ?? "")
     .join(" ");
+}
+
+function buttonOccurrences(text: string): number {
+  return [...(mounted?.container.querySelectorAll("button") ?? [])]
+    .map((b) => b.textContent ?? "")
+    .filter((t) => t.includes(text)).length;
 }
 
 // Counts every render of the XtermView element driven from above: with the view state
@@ -287,6 +296,7 @@ beforeEach(() => {
   act(() => resetTerminalView());
   harness.terminals.length = 0;
   harness.channel = null;
+  harness.channels.length = 0;
   harness.reopenCb = null;
   harness.attach.mockResolvedValue({
     tabId: "kernel-1",
@@ -2986,6 +2996,96 @@ describe("XtermView render coalescing (T-09 component portion)", () => {
     expect(getTerminalLinesBelow("tab-2")).toBe(70);
     expect(getTerminalLinesBelow("tab-1")).toBe(0);
     expect(xtermViewRenders.get("tab-1")).toBe(rendersBefore);
+  });
+
+  it("concurrent attaching tabs: pre-response replay/scroll stays per-tab and survives the attach transition", async () => {
+    // Both panes hang in the shared "pending" placeholder phase (the attach RPC has
+    // not returned), exactly as TerminalPane renders them before kernelTabId arrives.
+    const attachA = deferred<Record<string, unknown>>();
+    const attachB = deferred<Record<string, unknown>>();
+    harness.attach
+      .mockImplementationOnce(() => attachA.promise)
+      .mockImplementationOnce(() => attachB.promise);
+    stubFrames();
+    let commitsA = 0;
+    let commitsB = 0;
+    const onAttachA = vi.fn();
+    const onAttachB = vi.fn();
+    const renderViews = (tabIdA: string, tabIdB: string) =>
+      createElement(
+        "div",
+        null,
+        createElement(
+          Profiler,
+          { id: "view-a", onRender: () => { commitsA += 1; } },
+          createElement(XtermView, { sessionId: "session-1", tabId: tabIdA, viewTabId: "tab-a", onAttach: onAttachA }),
+        ),
+        createElement(
+          Profiler,
+          { id: "view-b", onRender: () => { commitsB += 1; } },
+          createElement(XtermView, { sessionId: "session-2", tabId: tabIdB, viewTabId: "tab-b", onAttach: onAttachB }),
+        ),
+      );
+    mounted = mount(renderViews("pending", "pending"));
+    // The attach timers fire but both RPCs stay in flight.
+    await act(async () => {
+      await flushMacrotask();
+    });
+    expect(harness.attach).toHaveBeenCalledTimes(2);
+    expect(harness.channels).toHaveLength(2);
+
+    // Pre-response replay on A: an anchor frame plus replayed output, then a scroll
+    // leaving the viewport 90 lines above the bottom — all before any attach
+    // response. B receives nothing.
+    const tA = harness.terminals[0] as FakeTerminal;
+    act(() => {
+      harness.channels[0]?.onControl?.({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0, attachmentId: 11 });
+    });
+    act(() => {
+      harness.channels[0]?.onBytes?.(enc.encode("replayed output\r\n"));
+    });
+    tA.buffer.active.baseY = 100;
+    tA.buffer.active.viewportY = 10;
+    const commitsABefore = commitsA;
+    const commitsBBefore = commitsB;
+    act(() => tA.handlers.scroll?.());
+    act(() => runFrames());
+
+    // Isolation: only A's per-pane key was written; B's key, badge, and render
+    // count are untouched even though both panes share the "pending" placeholder.
+    expect(getTerminalLinesBelow("tab-a")).toBe(90);
+    expect(getTerminalLinesBelow("tab-b")).toBe(0);
+    expect(commitsA).toBe(commitsABefore + 1);
+    expect(commitsB).toBe(commitsBBefore);
+    expect(buttonOccurrences("90 行")).toBe(1);
+
+    // A's attach response lands and the pane switches tabId to the real kernel id:
+    // the current value must carry over with no reset and no new signal.
+    await act(async () => {
+      attachA.resolve({ tabId: "kernel-1", cols: 80, rows: 30, controller: "me", subscribers: 1, viewers: 1, exited: false, shell: "unknown", retainable: true, ephemeral: false, attachmentId: 11 });
+      await flushMacrotask();
+    });
+    expect(onAttachA).toHaveBeenCalledWith("kernel-1");
+    await act(async () => {
+      mounted!.root.render(renderViews("kernel-1", "pending"));
+      await flushMacrotask();
+    });
+    expect(getTerminalLinesBelow("tab-a")).toBe(90);
+    expect(buttonOccurrences("90 行")).toBe(1);
+
+    // B attaches afterwards and still shows nothing: A's pre-response state never
+    // leaked into B's key at any point of the lifecycle.
+    await act(async () => {
+      attachB.resolve({ tabId: "kernel-2", cols: 80, rows: 30, controller: "me", subscribers: 1, viewers: 1, exited: false, shell: "unknown", retainable: true, ephemeral: false, attachmentId: 12 });
+      await flushMacrotask();
+    });
+    await act(async () => {
+      mounted!.root.render(renderViews("kernel-1", "kernel-2"));
+      await flushMacrotask();
+    });
+    expect(onAttachB).toHaveBeenCalledWith("kernel-2");
+    expect(getTerminalLinesBelow("tab-b")).toBe(0);
+    expect(buttonOccurrences("90 行")).toBe(1);
   });
 
   it("realistic burst: 600 scroll events, cycling OSC titles, and streaming output coalesce to one commit per frame", async () => {

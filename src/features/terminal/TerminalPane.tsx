@@ -1759,6 +1759,7 @@ export function TerminalPane({
               key={epoch}
               sessionId={sessionId}
               tabId={kernelTabId ?? "pending"}
+              viewTabId={storeTabId}
               winrm={effectiveWinrm}
               containerId={containerId}
               resumeTabId={resumeRef.current}

@@ -4,9 +4,10 @@ import { applyRemoteTabTitle, sanitizeRemoteTabTitle } from "./store";
 // Per-terminal view state that changes at output frequency (scrollback position, remote title).
 // Components subscribe through the narrow selectors below so a burst on one tab re-renders only
 // that tab's chrome; unchanged values are no-ops and never trigger a render.
-// linesBelow is keyed by the kernel tab id (the terminal's own identity), titles by the
-// workspace storeTabId (the id applyRemoteTabTitle and the tab strip know); the two key
-// spaces are disjoint, so a per-tab reset never clears the other kind's live entry.
+// titles is keyed by the workspace storeTabId (the id applyRemoteTabTitle and the tab strip
+// know); linesBelow is keyed by the owning pane's stable view id (the storeTabId TerminalPane
+// passes as viewTabId — never the shared pre-attach "pending" placeholder), so concurrent
+// attaching tabs cannot contaminate each other and the value survives the attach transition.
 interface TerminalViewState {
   linesBelow: Record<string, number>;
   titles: Record<string, string>;
@@ -59,6 +60,17 @@ export function resetTerminalView(tabId?: string): void {
     delete linesBelow[tabId];
     delete titles[tabId];
     return { linesBelow, titles };
+  });
+}
+
+// The narrow reset for the scrollback owner (XtermView): a terminal remount clears only
+// its own linesBelow entry, never the tab's OSC title, which outlives the terminal.
+export function resetTerminalLinesBelow(tabId: string): void {
+  useTerminalViewStore.setState((state) => {
+    if (state.linesBelow[tabId] === undefined) return state;
+    const linesBelow = { ...state.linesBelow };
+    delete linesBelow[tabId];
+    return { linesBelow };
   });
 }
 
