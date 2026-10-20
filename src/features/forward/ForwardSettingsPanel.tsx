@@ -16,15 +16,25 @@ interface SettingsSnapshot {
   error: string | null;
 }
 
+interface BusyOp {
+  generation: number;
+  opId: number;
+  key: string;
+}
+
 // The panel isolates every read and write by API/account generation: a new
 // generation clears the previous snapshot immediately (old controls stay
 // hidden and disabled until the new generation loads), and late completions
-// only land when their originating generation is still current.
+// only land when their originating generation is still current. Busy state
+// belongs to one operation at a time — a write's finally may only clear its
+// own operation, so a previous generation's late completion can never unlock
+// the current generation's in-flight write.
 export function ForwardSettingsPanel() {
   const api = useForwardSettingsApi();
   const [snapshot, setSnapshot] = useState<SettingsSnapshot | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useState<BusyOp | null>(null);
   const generationRef = useRef(0);
+  const opSeqRef = useRef(0);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -57,56 +67,73 @@ export function ForwardSettingsPanel() {
   const recovery = loaded ? snapshot.recovery : null;
   const error = loaded ? snapshot.error : null;
 
+  const beginOp = (key: string): BusyOp | null => {
+    if (busy !== null) return null;
+    const op: BusyOp = { generation: generationRef.current, opId: ++opSeqRef.current, key };
+    setBusy(op);
+    return op;
+  };
+
+  const isCurrentOp = (op: BusyOp): boolean =>
+    mountedRef.current && generationRef.current === op.generation && opSeqRef.current === op.opId;
+
+  const endOp = (op: BusyOp): void => {
+    if (!mountedRef.current) return;
+    setBusy((current) =>
+      current && current.generation === op.generation && current.opId === op.opId ? null : current,
+    );
+  };
+
   const toggleAutoStart = async (rule: ForwardRuleSettings, next: boolean) => {
     if (!isAutoStartEligible(rule)) return;
-    const generation = generationRef.current;
-    setBusy(rule.id);
+    const op = beginOp(rule.id);
+    if (op === null) return;
     try {
       await api.setRuleAutoStart(rule.id, next);
-      if (generationRef.current !== generation || !mountedRef.current) return;
+      if (!isCurrentOp(op)) return;
       setSnapshot((current) =>
         current && current.api === api
           ? { ...current, rules: current.rules.map((r) => (r.id === rule.id ? { ...r, autoStart: next } : r)) }
           : current,
       );
     } catch (e) {
-      if (generationRef.current !== generation || !mountedRef.current) return;
+      if (!isCurrentOp(op)) return;
       setSnapshot((current) => (current && current.api === api ? { ...current, error: describeError(e) } : current));
     } finally {
-      if (mountedRef.current) setBusy(null);
+      endOp(op);
     }
   };
 
   const toggleRecovery = async (enabled: boolean) => {
     if (recovery === null) return;
-    const generation = generationRef.current;
-    setBusy("recovery");
+    const op = beginOp("recovery");
+    if (op === null) return;
     try {
       await api.setRecoverySettings({ ...recovery, enabled });
-      if (generationRef.current !== generation || !mountedRef.current) return;
+      if (!isCurrentOp(op)) return;
       setSnapshot((current) =>
         current && current.api === api ? { ...current, recovery: { ...current.recovery, enabled } } : current,
       );
     } catch (e) {
-      if (generationRef.current !== generation || !mountedRef.current) return;
+      if (!isCurrentOp(op)) return;
       setSnapshot((current) => (current && current.api === api ? { ...current, error: describeError(e) } : current));
     } finally {
-      if (mountedRef.current) setBusy(null);
+      endOp(op);
     }
   };
 
   const recoverNow = async () => {
     if (recovery === null || !recovery.enabled) return;
-    const generation = generationRef.current;
-    setBusy("recover");
+    const op = beginOp("recover");
+    if (op === null) return;
     try {
       await api.recoverNow();
-      if (generationRef.current !== generation || !mountedRef.current) return;
+      if (!isCurrentOp(op)) return;
     } catch (e) {
-      if (generationRef.current !== generation || !mountedRef.current) return;
+      if (!isCurrentOp(op)) return;
       setSnapshot((current) => (current && current.api === api ? { ...current, error: describeError(e) } : current));
     } finally {
-      if (mountedRef.current) setBusy(null);
+      endOp(op);
     }
   };
 

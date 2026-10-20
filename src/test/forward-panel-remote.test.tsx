@@ -563,3 +563,79 @@ describe("Forward settings generations and eligibility", () => {
     );
   });
 });
+
+describe("Forward settings write ownership", () => {
+  let settingsMounted: MountedView | undefined;
+  beforeEach(() => {
+    settingsMounted = undefined;
+  });
+  afterEach(() => {
+    settingsMounted?.unmount();
+    settingsMounted = undefined;
+  });
+
+  it("does not let the previous generation's late completion unlock the current generation's in-flight write", async () => {
+    const writeA = deferred<void>();
+    const apiA = fakeSettingsApi({
+      setRecoverySettings: vi.fn().mockReturnValue(writeA.promise),
+    });
+    settingsMounted = mountSettings(apiA);
+    await waitFor(() => expect(apiA.getRecoverySettings).toHaveBeenCalledOnce());
+    click(settingsSwitch(settingsMounted.container, "启动时自动恢复转发"));
+    await waitFor(() => expect(apiA.setRecoverySettings).toHaveBeenCalledOnce());
+
+    const writeB = deferred<void>();
+    const apiB = fakeSettingsApi({
+      setRecoverySettings: vi.fn().mockReturnValue(writeB.promise),
+    });
+    rerenderSettings(settingsMounted, apiB);
+    await waitFor(() => expect(apiB.getRecoverySettings).toHaveBeenCalledOnce());
+    expect(settingsSwitch(settingsMounted.container, "启动时自动恢复转发").getAttribute("aria-checked")).toBe("false");
+
+    click(settingsSwitch(settingsMounted.container, "启动时自动恢复转发"));
+    await waitFor(() => expect(apiB.setRecoverySettings).toHaveBeenCalledOnce());
+    expect(settingsSwitch(settingsMounted.container, "启动时自动恢复转发").disabled).toBe(true);
+
+    writeA.resolve(undefined);
+    await flush();
+    expect(settingsSwitch(settingsMounted.container, "启动时自动恢复转发").disabled).toBe(true);
+    click(settingsSwitch(settingsMounted.container, "启动时自动恢复转发"));
+    await flush();
+    expect(apiB.setRecoverySettings).toHaveBeenCalledTimes(1);
+
+    writeB.resolve(undefined);
+    await act(async () => {
+      await writeB.promise;
+    });
+    await waitFor(() =>
+      expect(settingsSwitch(settingsMounted!.container, "启动时自动恢复转发").disabled).toBe(false),
+    );
+    expect(settingsSwitch(settingsMounted.container, "启动时自动恢复转发").getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("serializes same-generation writes so a second submit cannot start while one is in flight", async () => {
+    const write = deferred<void>();
+    const api = fakeSettingsApi({
+      setRecoverySettings: vi.fn().mockReturnValue(write.promise),
+    });
+    settingsMounted = mountSettings(api);
+    await waitFor(() => expect(api.getRecoverySettings).toHaveBeenCalledOnce());
+
+    const toggle = settingsSwitch(settingsMounted.container, "启动时自动恢复转发");
+    click(toggle);
+    await waitFor(() => expect(api.setRecoverySettings).toHaveBeenCalledTimes(1));
+    expect(toggle.disabled).toBe(true);
+    click(toggle);
+    await flush();
+    expect(api.setRecoverySettings).toHaveBeenCalledTimes(1);
+
+    write.resolve(undefined);
+    await act(async () => {
+      await write.promise;
+    });
+    await waitFor(() =>
+      expect(settingsSwitch(settingsMounted!.container, "启动时自动恢复转发").disabled).toBe(false),
+    );
+    expect(settingsSwitch(settingsMounted.container, "启动时自动恢复转发").getAttribute("aria-checked")).toBe("true");
+  });
+});
