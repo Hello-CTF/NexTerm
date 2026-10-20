@@ -979,3 +979,187 @@ func TestTranscriptRetentionCountReorderSkipsDeleteAndTombstoneDatabase(t *testi
 	}
 	requireTranscriptTombstoneDatabase(t, db, "retention-reorder-k", false)
 }
+
+// A sync opt-in flip that commits after selection but before the guarded
+// delete must skip this round: deleting on the stale snapshot's flag would
+// remove an opted-in row without its tombstone, so the remote copy is never
+// cleared and no later run can repair it. The next round deletes the row
+// under its new state and writes the tombstone then. SQLite cannot express
+// the select-then-flip window with two concurrent writers.
+//
+//dbtest:backend postgres,mysql,mariadb
+func TestTranscriptRetentionOptInFlipSkipsDeleteUntilNextRoundDatabase(t *testing.T) {
+	switch strings.ToLower(os.Getenv("NEXTERM_TEST_DB_BACKEND")) {
+	case "postgres", "mysql", "mariadb":
+	default:
+		t.Skip("the select-then-flip window is not constructible on SQLite")
+	}
+	ctx := context.Background()
+	ctxA := ipc.WithUserID(ctx, "owner-a")
+	db := dbtest.NewFixture(t).OpenStore(t)
+
+	old := time.Now().Add(-2 * time.Hour).UnixMilli()
+	row := store.TranscriptRow{ID: "retention-optin-flip", SessionID: "sess-flip", AssetID: "asset-1", StartedAt: old - 1, EndedAt: &old, SyncOptIn: false, OwnerID: "owner-a"}
+	if err := db.GORM().Create(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	reached := make(chan struct{})
+	resume := make(chan struct{})
+	var resumeOnce sync.Once
+	resumeNow := func() { resumeOnce.Do(func() { close(resume) }) }
+	defer resumeNow()
+	var reachedOnce sync.Once
+	if err := db.GORM().Callback().Delete().Before("gorm:delete").Register("test:pause-transcript-optin-retention", func(tx *gorm.DB) {
+		if tx.Statement.Table != "transcript" {
+			return
+		}
+		reachedOnce.Do(func() { close(reached) })
+		<-resume
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	type retentionOutcome struct {
+		result store.TranscriptRetentionResult
+		err    error
+	}
+	done := make(chan retentionOutcome, 1)
+	go func() {
+		result, err := db.EnforceTranscriptRetention(ctx, store.TranscriptRetentionPolicy{MaxAge: time.Hour})
+		done <- retentionOutcome{result: result, err: err}
+	}()
+
+	<-reached
+	if err := db.TranscriptSetSyncOptIn(ctxA, "retention-optin-flip", true); err != nil {
+		t.Fatal(err)
+	}
+	resumeNow()
+
+	got := <-done
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	if got.result.Deleted != 0 {
+		t.Fatalf("retention deleted = %d, want the flipped row to survive this round", got.result.Deleted)
+	}
+	survivor, err := db.TranscriptGet(ctx, "retention-optin-flip")
+	if err != nil {
+		t.Fatalf("opted-in transcript must survive the flip round: %v", err)
+	}
+	if !survivor.SyncOptIn {
+		t.Fatal("surviving transcript must remain opted in")
+	}
+	requireTranscriptTombstoneDatabase(t, db, "retention-optin-flip", false)
+
+	// The next round deletes the row under its new state and writes the
+	// tombstone then.
+	second, err := db.EnforceTranscriptRetention(ctx, store.TranscriptRetentionPolicy{MaxAge: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Deleted != 1 {
+		t.Fatalf("second-round deletion = %d, want 1", second.Deleted)
+	}
+	requireTranscriptTombstoneDatabase(t, db, "retention-optin-flip", true)
+}
+
+// The opt-out direction: the selection snapshot says opted-in, but the row is
+// opted out before the delete. The flip already wrote its own tombstone, so
+// this round must skip; the next round deletes the now-unopted row without
+// writing another tombstone.
+//
+//dbtest:backend postgres,mysql,mariadb
+func TestTranscriptRetentionOptOutFlipSkipsDeleteUntilNextRoundDatabase(t *testing.T) {
+	switch strings.ToLower(os.Getenv("NEXTERM_TEST_DB_BACKEND")) {
+	case "postgres", "mysql", "mariadb":
+	default:
+		t.Skip("the select-then-flip window is not constructible on SQLite")
+	}
+	ctx := context.Background()
+	ctxA := ipc.WithUserID(ctx, "owner-a")
+	db := dbtest.NewFixture(t).OpenStore(t)
+
+	now := time.Now().UnixMilli()
+	old := now - 2*time.Hour.Milliseconds()
+	keeper := now - 30*time.Minute.Milliseconds()
+	insertSynced := func(id string, endedAt int64, content string) {
+		t.Helper()
+		row := store.TranscriptRow{ID: id, SessionID: "sess-" + id, AssetID: "asset-1", StartedAt: endedAt - 10, EndedAt: &endedAt, Bytes: int64(len(content)), Chunks: 1}
+		chunks := []store.TranscriptChunkRow{{Seq: 0, TabID: "tab-1", TS: endedAt, Data: []byte(content)}}
+		if err := db.TranscriptInsertSynced(ctxA, row, chunks); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insertSynced("retention-optout-keeper", keeper, "keeper content")
+	insertSynced("retention-optout-flip", old, "flip content")
+
+	reached := make(chan struct{})
+	resume := make(chan struct{})
+	var resumeOnce sync.Once
+	resumeNow := func() { resumeOnce.Do(func() { close(resume) }) }
+	defer resumeNow()
+	var reachedOnce sync.Once
+	if err := db.GORM().Callback().Delete().Before("gorm:delete").Register("test:pause-transcript-optout-retention", func(tx *gorm.DB) {
+		if tx.Statement.Table != "transcript" {
+			return
+		}
+		reachedOnce.Do(func() { close(reached) })
+		<-resume
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	type retentionOutcome struct {
+		result store.TranscriptRetentionResult
+		err    error
+	}
+	done := make(chan retentionOutcome, 1)
+	go func() {
+		result, err := db.EnforceTranscriptRetention(ctx, store.TranscriptRetentionPolicy{MaxCount: 1})
+		done <- retentionOutcome{result: result, err: err}
+	}()
+
+	<-reached
+	if err := db.TranscriptSetSyncOptIn(ctxA, "retention-optout-flip", false); err != nil {
+		t.Fatal(err)
+	}
+	resumeNow()
+
+	got := <-done
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	if got.result.Deleted != 0 {
+		t.Fatalf("retention deleted = %d, want the flipped row to survive this round", got.result.Deleted)
+	}
+	survivor, err := db.TranscriptGet(ctx, "retention-optout-flip")
+	if err != nil {
+		t.Fatalf("opted-out transcript must survive the flip round: %v", err)
+	}
+	if survivor.SyncOptIn {
+		t.Fatal("surviving transcript must remain opted out")
+	}
+	// The flip wrote the tombstone; retention must not add another.
+	requireTranscriptTombstoneDatabase(t, db, "retention-optout-flip", true)
+
+	second, err := db.EnforceTranscriptRetention(ctx, store.TranscriptRetentionPolicy{MaxCount: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Deleted != 1 {
+		t.Fatalf("second-round deletion = %d, want 1", second.Deleted)
+	}
+	if _, err := db.TranscriptGet(ctx, "retention-optout-flip"); err == nil {
+		t.Fatal("second round must delete the opted-out row")
+	}
+	var tombstones int64
+	if err := db.GORM().Model(&store.SyncTombstone{}).
+		Where("owner_id = ? AND id = ? AND kind = ?", "owner-a", "retention-optout-flip", "transcript").
+		Count(&tombstones).Error; err != nil {
+		t.Fatal(err)
+	}
+	if tombstones != 1 {
+		t.Fatalf("tombstones for the opted-out row = %d, want only the flip's own tombstone", tombstones)
+	}
+}

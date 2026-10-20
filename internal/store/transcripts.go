@@ -833,11 +833,12 @@ type transcriptRetentionRowGuard func(query *gorm.DB, row TranscriptRow) *gorm.D
 // at a time and tombstones only the rows that delete actually removed, under
 // each row's own owner and in the same transaction, so a background run
 // without an owner in the context still attributes deletions to the correct
-// sync scope. A concurrent same-owner refresh that lands between selection and
-// delete either makes the row ineligible — the guard skips it and no tombstone
-// is written, so sync never pushes a deletion for live content — or keeps it
-// eligible, in which case the row is deleted and tombstoned together, never
-// one without the other.
+// sync scope. The guard re-checks retention eligibility against the latest
+// committed row on every backend, including the sync opt-in flag: a row whose
+// flag flipped after selection is skipped this round — the next round deletes
+// it under its new state, writing or omitting the tombstone accordingly — so
+// an opted-in row is never deleted without its tombstone. Rows that stay
+// eligible are deleted and tombstoned together, never one without the other.
 func (s *Store) transcriptRetentionDeleteRows(ctx context.Context, tx *gorm.DB, rows []TranscriptRow, guard transcriptRetentionRowGuard) (int64, error) {
 	if len(rows) == 0 {
 		return 0, nil
@@ -846,7 +847,8 @@ func (s *Store) transcriptRetentionDeleteRows(ctx context.Context, tx *gorm.DB, 
 	tombstones := make([]*SyncTombstone, 0, len(rows))
 	var deleted int64
 	for _, row := range rows {
-		info := guard(tx.WithContext(ctx).Where("id = ? AND owner_id = ? AND ended_at IS NOT NULL", row.ID, row.OwnerID), row).
+		info := guard(tx.WithContext(ctx).
+			Where("id = ? AND owner_id = ? AND ended_at IS NOT NULL AND sync_opt_in = ?", row.ID, row.OwnerID, row.SyncOptIn), row).
 			Delete(&TranscriptRow{})
 		if info.Error != nil {
 			return 0, info.Error
