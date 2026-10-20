@@ -7,12 +7,15 @@ import {
   type InventorySource,
   type InventorySyncDTO,
 } from "../../ipc/inventoryApi";
+import { WEB } from "../../ipc/env";
 import { useUi } from "../../app/store";
+import { useAuth } from "../auth/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { IconAlert, IconLoader, IconServer, IconXCircle } from "../../ui/icons";
-import { inventorySourceLabel, inventoryTargetText } from "./inventory";
+import { inventoryExecTarget, inventorySourceLabel, inventoryTargetText } from "./inventory";
+import { InventoryTargetActions, targetExecutable, type InventoryTargetSession } from "./InventoryTargetActions";
 
 const SOURCE_ORDER: InventorySource[] = ["ssh-config", "docker-context", "kubernetes"];
 const SOURCE_LABEL: Record<InventorySource, string> = {
@@ -44,11 +47,20 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
   const [result, setResult] = useState<InventorySyncDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
+  const [execKey, setExecKey] = useState<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const pathRef = useRef<HTMLInputElement>(null);
   const titleId = useId();
   const pathId = useId();
   const layer = useOverlayFocus(true, modalRef, { initialFocus: () => pathRef.current });
+
+  // The exec target actions bind every operation to the account that
+  // launched it: the owner key matches the IPC owner derivation (the
+  // account's user id, or the shared desktop default when ownerless), and
+  // the session select offers the account's own Docker-host sessions.
+  const user = useAuth((state) => state.user);
+  const ownerKey = user?.id ?? "default";
+  const sessions = useUi((state) => state.sessions);
 
   // Async completions must not outlive the account that started them: after every await, shared
   // side effects (query-cache writes, invalidations, refetches) require the dialog to still be
@@ -159,6 +171,9 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
   }, [watching, watchedPath, watchedGroupId]);
   const items = discovery?.items ?? [];
   const selectedCount = source === "ssh-config" ? items.length : selected.size;
+  const dockerSessions: InventoryTargetSession[] = sessions
+    .filter((session) => session.kind === "docker")
+    .map((session) => ({ id: session.id, name: session.name, assetId: session.assetId }));
 
   return (
     <div className="nx-overlay" onClick={busy ? undefined : onClose}>
@@ -198,6 +213,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
                   setSelected(new Set());
                   setResult(null);
                   setError(null);
+                  setExecKey(null);
                 }}
               >
                 {SOURCE_LABEL[item]}
@@ -272,32 +288,59 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
                 <div className="flex max-h-[320px] flex-col gap-1.5 overflow-y-auto">
                   {items.map((item) => {
                     const target = inventoryTargetText(item.options);
+                    const execTarget = inventoryExecTarget(item.options);
+                    const executable = execTarget !== null && targetExecutable(item.kind, execTarget);
                     return (
-                      <label key={item.key} className="flex items-start gap-2 rounded-md border border-neutral-800/70 bg-neutral-950/40 px-3 py-2 text-[12px]">
-                        {source !== "ssh-config" ? (
-                          <input
-                            type="checkbox"
-                            className="mt-0.5 shrink-0"
-                            aria-label={`选择清单项 ${item.name}`}
-                            checked={selected.has(item.key)}
-                            onChange={(event) => {
-                              setSelected((current) => {
-                                const next = new Set(current);
-                                if (event.target.checked) next.add(item.key);
-                                else next.delete(item.key);
-                                return next;
-                              });
-                            }}
-                          />
-                        ) : <span className="w-3 shrink-0" />}
-                        <span className="min-w-0 flex-1">
-                          <span className="break-all font-mono text-neutral-100">{item.name}</span>
-                          <span className="ml-2 text-neutral-500">{item.kind}</span>
-                          <div className="mt-0.5 break-all text-[11px] text-neutral-500">
-                            {item.host || target || "仅清单记录"}
+                      <div key={item.key} className="rounded-md border border-neutral-800/70 bg-neutral-950/40">
+                        <div className="flex items-start gap-2 px-3 py-2 text-[12px]">
+                          <label className="flex min-w-0 flex-1 items-start gap-2">
+                            {source !== "ssh-config" ? (
+                              <input
+                                type="checkbox"
+                                className="mt-0.5 shrink-0"
+                                aria-label={`选择清单项 ${item.name}`}
+                                checked={selected.has(item.key)}
+                                onChange={(event) => {
+                                  setSelected((current) => {
+                                    const next = new Set(current);
+                                    if (event.target.checked) next.add(item.key);
+                                    else next.delete(item.key);
+                                    return next;
+                                  });
+                                }}
+                              />
+                            ) : <span className="w-3 shrink-0" />}
+                            <span className="min-w-0 flex-1">
+                              <span className="break-all font-mono text-neutral-100">{item.name}</span>
+                              <span className="ml-2 text-neutral-500">{item.kind}</span>
+                              <div className="mt-0.5 break-all text-[11px] text-neutral-500">
+                                {item.host || target || "仅清单记录"}
+                              </div>
+                            </span>
+                          </label>
+                          {executable && (
+                            <button
+                              type="button"
+                              className="nx-link shrink-0"
+                              aria-expanded={execKey === item.key}
+                              onClick={() => setExecKey((current) => (current === item.key ? null : item.key))}
+                            >
+                              {execKey === item.key ? "收起" : "执行命令"}
+                            </button>
+                          )}
+                        </div>
+                        {executable && execKey === item.key && (
+                          <div className="border-t border-neutral-800/70 px-3 py-2">
+                            <InventoryTargetActions
+                              kind={item.kind}
+                              target={execTarget}
+                              ownerKey={ownerKey}
+                              sessions={dockerSessions}
+                              requireSession={WEB && item.kind === "docker-context"}
+                            />
                           </div>
-                        </span>
-                      </label>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
