@@ -59,11 +59,19 @@ disk or logs. Two provisioning modes are supported:
   only; there is deliberately no command-line flag, because argv is
   visible to other processes.
 
-When the bootstrap does not run (staged `--root` installs, `auth=off` or
-`auth=platform` deployments) or an initialization code was already issued,
-finish setup with the one-time code from the server log instead. A failed
-bootstrap aborts the first install before the service starts, so fixing
-the problem and re-running resumes and retries it.
+The bootstrap runs as the `nexterm` service user: everything it creates
+is born with the right ownership, a data directory the service cannot
+write fails closed during the install, and pre-existing files in a
+custom data directory are never touched (the installer performs no
+recursive ownership changes). When the bootstrap does not run (staged
+`--root` installs, `auth=off` or `auth=platform` deployments), finish
+setup with the one-time code from the server log instead. If an init
+code was already issued and cannot be proven usable (for example a
+previous attempt failed to clean up its own code), the first install
+keeps failing with recovery guidance instead of starting an
+uninitialized service and reporting success. A failed bootstrap aborts
+the first install before the service starts, so fixing the problem and
+re-running resumes and retries it.
 
 An upgrade (detected from an existing `/opt/nexterm/nexterm-server`,
 `/etc/nexterm/*.env` or unit) replaces binaries, web assets and units, and:

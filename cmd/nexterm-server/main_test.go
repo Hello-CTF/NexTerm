@@ -1318,3 +1318,137 @@ func TestInitAdminBinaryEndToEnd(t *testing.T) {
 		t.Fatalf("supplied password reached the failure output: %q", combined)
 	}
 }
+
+type initAdminLoginView struct {
+	State              string `json:"state"`
+	MustChangePassword bool   `json:"must_change_password"`
+}
+
+func loginInitAdminSession(t *testing.T, client *http.Client, address, username, password string) (*accountSession, initAdminLoginView) {
+	t.Helper()
+	payload, err := json.Marshal(map[string]any{"username": username, "password": password})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodPost, "http://"+address+"/auth/login", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("login status = %d: %s", response.StatusCode, body)
+	}
+	var body struct {
+		User struct {
+			ID string `json:"id"`
+			initAdminLoginView
+		} `json:"user"`
+		CSRFToken string `json:"csrf_token"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	session := &accountSession{csrf: body.CSRFToken, userID: body.User.ID}
+	for _, cookie := range response.Cookies() {
+		if cookie.Name == "nexterm_session" {
+			session.cookie = cookie
+		}
+	}
+	if session.cookie == nil || session.csrf == "" || session.userID == "" {
+		t.Fatalf("login session incomplete: %+v", session)
+	}
+	return session, body.User.initAdminLoginView
+}
+
+func getInitAdminPath(t *testing.T, client *http.Client, address, path string, session *accountSession, expectedStatus int) map[string]any {
+	t.Helper()
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+address+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.AddCookie(session.cookie)
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != expectedStatus {
+		t.Fatalf("%s status = %d, want %d: %s", path, response.StatusCode, expectedStatus, body)
+	}
+	var decoded map[string]any
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &decoded); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+	}
+	return decoded
+}
+
+// TestInitAdminHTTPEndToEnd drives the installer-created admin through the
+// real HTTP surface: the random policy lands in reset_required with the API
+// locked down until the forced password change (fresh envelopes, the browser
+// flow), while the supplied policy logs in active with no forced rotation and
+// no stored DEK.
+func TestInitAdminHTTPEndToEnd(t *testing.T) {
+	binary := buildServerBinary(t)
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	randomDir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	if code := runInitAdmin([]string{"--data-dir", randomDir}, initAdminTestGetenv(nil), &stdout, &stderr); code != 0 {
+		t.Fatalf("init-admin exit = %d, stderr: %s", code, stderr.String())
+	}
+	password := parseInitAdminPassword(t, stdout.String())
+	process, address := startServerProcess(t, binary, randomDir, false, "--auth=on")
+	defer process.stop(t)
+	waitForHealth(t, process, address)
+
+	session, view := loginInitAdminSession(t, client, address, "admin", password)
+	if view.State != string(account.StateResetRequired) || !view.MustChangePassword {
+		t.Fatalf("random-policy login view: %+v", view)
+	}
+	getInitAdminPath(t, client, address, "/auth/devices", session, http.StatusForbidden)
+
+	_, envelopes, _, err := vault.GenerateUserDEKEnvelopes("synthetic-password-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestAccountJSON(t, client, address, "/auth/password", map[string]any{
+		"old_password": password, "new_password": "synthetic-password-2",
+		"dek_envelope": envelopes.DEKEnvelope, "kdf_salt": envelopes.KDFSalt, "kdf_params": envelopes.KDFParams,
+		"recovery_envelope": envelopes.RecoveryEnvelope, "recovery_hash": envelopes.RecoveryHash,
+	}, session, http.StatusOK)
+	me := getInitAdminPath(t, client, address, "/auth/me", session, http.StatusOK)
+	user := me["user"].(map[string]any)
+	if user["state"] != string(account.StateActive) || user["must_change_password"] != false {
+		t.Fatalf("post-change user: %v", user)
+	}
+	getInitAdminPath(t, client, address, "/auth/dek", session, http.StatusOK)
+	getInitAdminPath(t, client, address, "/auth/devices", session, http.StatusOK)
+
+	suppliedDir := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	getenv := initAdminTestGetenv(map[string]string{"NEXTERM_ADMIN_PASSWORD": "synthetic-password-1"})
+	if code := runInitAdmin([]string{"--data-dir", suppliedDir}, getenv, &stdout, &stderr); code != 0 {
+		t.Fatalf("init-admin exit = %d, stderr: %s", code, stderr.String())
+	}
+	suppliedProcess, suppliedAddress := startServerProcess(t, binary, suppliedDir, false, "--auth=on")
+	defer suppliedProcess.stop(t)
+	waitForHealth(t, suppliedProcess, suppliedAddress)
+	suppliedSession, suppliedView := loginInitAdminSession(t, client, suppliedAddress, "admin", "synthetic-password-1")
+	if suppliedView.State != string(account.StateActive) || suppliedView.MustChangePassword {
+		t.Fatalf("supplied-policy login view: %+v", suppliedView)
+	}
+	getInitAdminPath(t, client, suppliedAddress, "/auth/dek", suppliedSession, http.StatusNotFound)
+}

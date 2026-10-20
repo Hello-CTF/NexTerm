@@ -79,10 +79,21 @@ material is touched. Coverage:
      is enabled, its stdout (the initial password) reaches the installer
      console only after a successful create, upgrades and re-runs never
      invoke it, an already-initialized store (exit 3) stays silent, a failed
-     create (exit 1) aborts the install so a re-run resumes and retries, the
-     supplied password is only passed through the environment and never
-     echoed by the installer itself, auth off/platform and staged roots skip
-     the bootstrap, and --no-enable still bootstraps. Live systemd, live
+     create (exit 1) aborts the install so a re-run resumes and retries, an
+     already-issued init code the bootstrap cannot prove usable (exit 4)
+     keeps the install failed with the incomplete marker instead of starting
+     an uninitialized service, the child environment always matches the
+     service's effective database configuration (explicit env-file values,
+     empty ones included, win over ambient pollution), the supplied password
+     is only passed through the environment and never echoed by the installer
+     itself, auth off/platform and staged roots skip the bootstrap, and
+     --no-enable still bootstraps.
+  19. Real-root bootstrap leg (runs only as root on Linux with
+     NEXTERM_TEST_REAL_ROOT_INSTALL=1; mutates the system, so disposable
+     containers only): the bootstrap executes as the nexterm service user via
+     runuser, files it creates are born service-owned, and pre-existing
+     top-level and nested files in a custom data directory keep their
+     original owners (no recursive ownership changes). Live systemd, live
      distribution and LazyCat injection runs remain outside this suite.
 
     python3 scripts/test-systemd-install.py
@@ -93,6 +104,7 @@ from __future__ import annotations
 import itertools
 import os
 import pathlib
+import platform
 import shutil
 import stat
 import subprocess
@@ -219,12 +231,18 @@ INIT_ADMIN_STUB = """#!/bin/sh
 printf '%s\\n' "$*" >> "$INIT_ADMIN_LOG"
 printf 'init-admin\\n' >> "$SYSTEMCTL_LOG"
 {
+  printf 'RUNUSER_USER=%s\\n' "$(id -un)"
   printf 'NEXTERM_AUTH=%s\\n' "${NEXTERM_AUTH:-}"
   printf 'NEXTERM_DATA_DIR=%s\\n' "${NEXTERM_DATA_DIR:-}"
   printf 'NEXTERM_DB=%s\\n' "${NEXTERM_DB:-}"
+  printf 'NEXTERM_DB_DSN=%s\\n' "${NEXTERM_DB_DSN:-}"
+  printf 'NEXTERM_DB_PASSWORD_FILE=%s\\n' "${NEXTERM_DB_PASSWORD_FILE:-}"
   printf 'NEXTERM_ADMIN_USERNAME=%s\\n' "${NEXTERM_ADMIN_USERNAME:-}"
   printf 'NEXTERM_ADMIN_PASSWORD=%s\\n' "${NEXTERM_ADMIN_PASSWORD:-}"
 } >> "$INIT_ADMIN_ENV_LOG"
+if [ "${INIT_ADMIN_TOUCH_DATA:-0}" = "1" ]; then
+  : > "$NEXTERM_DATA_DIR/data.db"
+fi
 if [ -n "${INIT_ADMIN_STDOUT:-}" ]; then
   printf '%s\\n' "$INIT_ADMIN_STDOUT"
 fi
@@ -302,10 +320,13 @@ def run_install(payload: pathlib.Path, root: pathlib.Path, stubs: pathlib.Path, 
                 args: tuple[str, ...] = (), fail_at: str = "", active: str = "",
                 uname: str = "", systemd: str = "run", os_release: str | None = "default",
                 fail_start: bool = False, init_admin: bool = False, init_admin_exit: int = 0,
-                init_admin_stdout: str = "", admin_password: str | None = None) -> subprocess.CompletedProcess:
+                init_admin_stdout: str = "", admin_password: str | None = None,
+                ambient: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     seed_platform(root, systemd, os_release)
     env = dict(os.environ)
     env["PATH"] = f"{stubs}:{env['PATH']}"
+    if ambient:
+        env.update(ambient)
     env["SYSTEMCTL_LOG"] = str(base / "systemctl.log")
     env["OPENSSL_LOG"] = str(base / "openssl.log")
     env["USERADD_LOG"] = str(base / "useradd.log")
@@ -2452,6 +2473,152 @@ def test_no_enable_still_bootstraps() -> None:
         assert not [c for c in calls if c.startswith("enable")], calls
 
 
+def test_bootstrap_db_env_unconditional_overrides_ambient() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        example = payload / "nexterm.env.example"
+        example.write_text(example.read_text().replace(
+            "NEXTERM_DB=sqlite", "NEXTERM_DB=\nNEXTERM_DB_DSN=\nNEXTERM_DB_PASSWORD_FILE="))
+        result = run_install(payload, root, stubs, base, init_admin=True, ambient={
+            "NEXTERM_DB": "postgres",
+            "NEXTERM_DB_DSN": "postgres://db.example/nexterm",
+            "NEXTERM_DB_PASSWORD_FILE": "/root/db-password",
+        })
+        assert result.returncode == 0, result.stderr
+        envlog = init_admin_env(base)
+        assert envlog["NEXTERM_DB"] == "", f"the service resolves an empty NEXTERM_DB to sqlite; the child must see the same: {envlog}"
+        assert envlog["NEXTERM_DB_DSN"] == "", envlog
+        assert envlog["NEXTERM_DB_PASSWORD_FILE"] == "", envlog
+        combined = result.stdout + result.stderr
+        assert "postgres://db.example/nexterm" not in combined, "ambient DSN must never reach the console"
+        assert "/root/db-password" not in combined, "ambient password-file path must never reach the console"
+
+
+def test_bootstrap_db_env_from_file_wins_over_ambient() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        example = payload / "nexterm.env.example"
+        example.write_text(example.read_text().replace(
+            "NEXTERM_DB=sqlite", "NEXTERM_DB=postgres\nNEXTERM_DB_DSN=postgres://db.example/nexterm"))
+        result = run_install(payload, root, stubs, base, init_admin=True, ambient={
+            "NEXTERM_DB": "sqlite",
+            "NEXTERM_DB_DSN": "",
+        })
+        assert result.returncode == 0, result.stderr
+        envlog = init_admin_env(base)
+        assert envlog["NEXTERM_DB"] == "postgres", envlog
+        assert envlog["NEXTERM_DB_DSN"] == "postgres://db.example/nexterm", envlog
+
+
+def test_bootstrap_exit4_keeps_install_failed() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        failed = run_install(payload, root, stubs, base, init_admin=True, init_admin_exit=1)
+        assert failed.returncode != 0, failed.stdout
+        assert (root / "opt/nexterm/.install-incomplete").exists(), "the failed create keeps the incomplete marker"
+
+        blocked = run_install(payload, root, stubs, base, init_admin=True, init_admin_exit=4)
+        assert blocked.returncode != 0, "an unprovable init code must keep the first install failed"
+        assert "super-admin bootstrap found an already-issued one-time init code" in blocked.stderr, blocked.stderr
+        assert "初始密码" not in blocked.stdout, blocked.stdout
+        assert (root / "opt/nexterm/.install-incomplete").exists(), "the incomplete marker must survive the exit-4 run"
+        calls = systemctl_calls(base)
+        assert "enable --now nexterm-server.service" not in calls, f"the service must not start on an exit-4 run: {calls}"
+
+        retry = run_install(payload, root, stubs, base, init_admin=True,
+                            init_admin_stdout="nexterm-server: 初始密码: recovered-password-12345（仅显示一次）")
+        assert retry.returncode == 0, retry.stderr
+        assert "recovered-password-12345" in retry.stdout, retry.stdout
+        assert not (root / "opt/nexterm/.install-incomplete").exists()
+
+
+def owner(path: pathlib.Path) -> tuple[int, int]:
+    info = os.stat(path)
+    return info.st_uid, info.st_gid
+
+
+def test_real_root_bootstrap_preserves_custom_data_dir_ownership() -> None:
+    if os.geteuid() != 0 or platform.system() != "Linux" or os.environ.get("NEXTERM_TEST_REAL_ROOT_INSTALL") != "1":
+        print("skip   test_real_root_bootstrap_preserves_custom_data_dir_ownership (needs root on Linux plus NEXTERM_TEST_REAL_ROOT_INSTALL=1; mutates the system: disposable containers only)")
+        return
+    for path in ("/opt/nexterm", "/etc/nexterm", "/var/lib/nexterm"):
+        if os.path.exists(path):
+            raise AssertionError(f"refusing the real-root leg on a system with an existing install: {path}")
+    import pwd
+
+    nexterm = pwd.getpwnam("nexterm") if any(line.startswith("nexterm:") for line in open("/etc/passwd")) else None
+    created_user = False
+    created_run_dir = False
+    try:
+        if nexterm is None:
+            subprocess.run(["useradd", "--system", "--user-group", "--home-dir", "/var/lib/nexterm",
+                            "--shell", "/usr/sbin/nologin", "nexterm"], check=True)
+            nexterm = pwd.getpwnam("nexterm")
+            created_user = True
+        if not os.path.isdir("/run/systemd/system"):
+            os.makedirs("/run/systemd/system")
+            created_run_dir = True
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            os.chmod(base, 0o777)
+            stubs = make_stubs(base)
+            custom = base / "custom-data"
+            (custom / "nested").mkdir(parents=True)
+            (custom / "preexisting-top.txt").write_text("top\n")
+            (custom / "nested" / "nested.txt").write_text("nested\n")
+            subprocess.run(["chown", "-R", "12345:12345", str(custom / "nested")], check=True)
+            subprocess.run(["chown", "12345:12345", str(custom / "preexisting-top.txt")], check=True)
+            subprocess.run(["chown", "nexterm:nexterm", str(custom)], check=True)
+            os.chmod(custom, 0o755)
+            payload = make_payload(base, "v1")
+            example = payload / "nexterm.env.example"
+            example.write_text(example.read_text().replace("NEXTERM_DATA_DIR=/var/lib/nexterm", f"NEXTERM_DATA_DIR={custom}"))
+            env = dict(os.environ)
+            env["PATH"] = f"{stubs}:{env['PATH']}"
+            env["SYSTEMCTL_LOG"] = str(base / "systemctl.log")
+            env["OPENSSL_LOG"] = str(base / "openssl.log")
+            env["USERADD_LOG"] = str(base / "useradd.log")
+            env["INIT_ADMIN_LOG"] = str(base / "init-admin.log")
+            env["INIT_ADMIN_ENV_LOG"] = str(base / "init-admin-env.log")
+            env["NEXTERM_INSTALL_SYSTEMCTL"] = str(stubs / "systemctl")
+            env["NEXTERM_INSTALL_UNAME"] = str(stubs / "uname")
+            env["NEXTERM_INSTALL_INIT_ADMIN"] = str(stubs / "init-admin")
+            env["INIT_ADMIN_TOUCH_DATA"] = "1"
+            env["FAKE_ACTIVE_UNITS"] = ""
+            state = base / "systemctl-state-realroot"
+            state.write_text("")
+            env["SYSTEMCTL_STATE"] = str(state)
+            result = subprocess.run(["/bin/bash", str(SCRIPT), "--source", str(payload)], capture_output=True, text=True, env=env, timeout=120)
+            assert result.returncode == 0, result.stderr
+            assert "mode: first install" in result.stdout, result.stdout
+            envlog = init_admin_env(base)
+            assert envlog.get("RUNUSER_USER") == "nexterm", f"the bootstrap must run as the service user: {envlog}"
+            assert envlog["NEXTERM_DATA_DIR"] == str(custom), envlog
+            assert (custom / "data.db").exists(), "the bootstrap must create the database"
+            assert owner(custom / "data.db") == (nexterm.pw_uid, nexterm.pw_gid), "the database must be born service-owned"
+            assert owner(custom / "preexisting-top.txt") == (12345, 12345), "pre-existing top-level file must keep its owner"
+            assert owner(custom / "nested") == (12345, 12345), "pre-existing nested directory must keep its owner"
+            assert owner(custom / "nested" / "nested.txt") == (12345, 12345), "pre-existing nested file must keep its owner"
+            calls = systemctl_calls(base)
+            assert "enable --now nexterm-server.service" in calls, calls
+    finally:
+        for path in ("/opt/nexterm", "/etc/nexterm", "/var/lib/nexterm"):
+            shutil.rmtree(path, ignore_errors=True)
+        if created_run_dir:
+            shutil.rmtree("/run/systemd/system", ignore_errors=True)
+        if created_user:
+            subprocess.run(["userdel", "nexterm"], capture_output=True)
+
+
 def test_real_server_archive_smoke() -> None:
     archive_dir = ROOT / "target/release-assets"
     candidates = sorted(archive_dir.glob("NexTerm-server_*_linux_*.tar.gz")) if archive_dir.is_dir() else []
@@ -2599,6 +2766,10 @@ def main() -> int:
         test_bootstrap_skipped_when_auth_off,
         test_bootstrap_skipped_on_staged_root_without_hook,
         test_no_enable_still_bootstraps,
+        test_bootstrap_db_env_unconditional_overrides_ambient,
+        test_bootstrap_db_env_from_file_wins_over_ambient,
+        test_bootstrap_exit4_keeps_install_failed,
+        test_real_root_bootstrap_preserves_custom_data_dir_ownership,
         test_real_server_archive_smoke,
     ]
     for test in tests:

@@ -33,9 +33,14 @@ forced rotation), e.g. for LazyCat-style install systems;
 NEXTERM_ADMIN_USERNAME overrides the default name "admin". The password
 travels via the environment only: it is never written to env files, disk
 or logs. Nothing account-related is printed on upgrades, existing
-accounts or re-runs. When the bootstrap is skipped (staged --root
-installs, auth off/platform modes) or an init code was already issued,
-finish setup with the one-time code from the server log instead.
+accounts or re-runs. The bootstrap runs as the nexterm service user, so
+everything it creates is born with the right ownership and a data
+directory the service cannot write fails closed; pre-existing files in a
+custom data directory are never touched. When the bootstrap is skipped
+(staged --root installs, auth off/platform modes) finish setup with the
+one-time code from the server log instead. If an init code was already
+issued and cannot be proven usable, the first install keeps failing
+(with recovery guidance) rather than starting an uninitialized service.
 
 An upgrade replaces binaries, web assets and units, but preserves
 /etc/nexterm/nexterm.env, /etc/nexterm/onlyserver.env and the effective
@@ -1104,26 +1109,31 @@ bootstrap_admin() {
     effective="$data_dir"
   fi
   effective="$(lex_clean "$effective")"
-  child_env=(NEXTERM_AUTH="$auth" NEXTERM_DATA_DIR="$effective")
-  [ -n "$db" ] && child_env+=(NEXTERM_DB="$db")
-  [ -n "$dsn" ] && child_env+=(NEXTERM_DB_DSN="$dsn")
-  [ -n "$dbpw" ] && child_env+=(NEXTERM_DB_PASSWORD_FILE="$dbpw")
+  [ "$effective" != "/" ] || die "refusing to bootstrap with dangerous data directory $effective"
+  # Every variable init-admin reads is set explicitly from the effective env
+  # file — including empty values, which the server resolves to its defaults
+  # — so an ambient environment can never point the bootstrap at a different
+  # database than the service will use.
+  child_env=(NEXTERM_AUTH="$auth" NEXTERM_DATA_DIR="$effective" NEXTERM_DB="$db" NEXTERM_DB_DSN="$dsn" NEXTERM_DB_PASSWORD_FILE="$dbpw")
   [ -n "${NEXTERM_ADMIN_USERNAME:-}" ] && child_env+=(NEXTERM_ADMIN_USERNAME="$NEXTERM_ADMIN_USERNAME")
   [ -n "${NEXTERM_ADMIN_PASSWORD:-}" ] && child_env+=(NEXTERM_ADMIN_PASSWORD="$NEXTERM_ADMIN_PASSWORD")
   local server_bin="$OPT_DIR/nexterm-server"
   [ -n "${NEXTERM_INSTALL_INIT_ADMIN:-}" ] && server_bin="$NEXTERM_INSTALL_INIT_ADMIN"
   log "creating the super-admin account (first install)"
   rc=0
-  env "${child_env[@]}" "$server_bin" init-admin || rc=$?
-  # The bootstrap ran as root against the service's data directory; hand
-  # ownership back to the service user for everything it may have created.
-  if [ "$REAL_ROOT" -eq 1 ] && [ -d "$effective" ]; then
-    chown -R nexterm:nexterm "$effective"
+  if [ "$REAL_ROOT" -eq 1 ]; then
+    # Run the bootstrap as the service user: everything it creates is then
+    # born with the right ownership, and a data directory the nexterm user
+    # cannot write fails closed here instead of breaking the service later.
+    command -v runuser >/dev/null 2>&1 || die "runuser not found (required to run the super-admin bootstrap as the nexterm user)"
+    runuser -u nexterm -- env "${child_env[@]}" "$server_bin" init-admin || rc=$?
+  else
+    env "${child_env[@]}" "$server_bin" init-admin || rc=$?
   fi
   case "$rc" in
     0) log "super-admin created; the initial password printed above is shown only once" ;;
     3) log "super-admin bootstrap skipped: the account system is already initialized" ;;
-    4) log "super-admin bootstrap skipped: an initialization code was already issued; finish setup with the one-time code from the server log (journalctl -u $SERVER_UNIT)" ;;
+    4) die "super-admin bootstrap found an already-issued one-time init code it cannot prove usable (leftover from an interrupted attempt, or issued by a running server); if a server printed the code, finish initialization in the browser with it, otherwise clear auth.init_code in the server setting table, then re-run (the first install resumes)" ;;
     *) die "super-admin bootstrap failed; fix the problem reported above and re-run (the first install resumes)" ;;
   esac
 }
