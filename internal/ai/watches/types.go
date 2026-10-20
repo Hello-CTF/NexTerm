@@ -29,6 +29,9 @@ const (
 	// DefaultMaxExcerptBytes bounds the untrusted output excerpt copied into
 	// an event; larger matches are truncated with a visible marker.
 	DefaultMaxExcerptBytes = 4096
+	// DefaultMaxCarryBytes bounds the durable partial-match overlap retained
+	// per watch across chunk boundaries and restarts.
+	DefaultMaxCarryBytes = 4096
 )
 
 var (
@@ -78,11 +81,13 @@ type Watch struct {
 	OwnerID     string
 	TargetID    string
 	Identity    string
+	Generation  uint64
 	Name        string
 	Condition   Condition
 	Status      Status
 	Repeat      bool
 	AnchorSeq   int64
+	Carry       []byte
 	FireSeq     int64
 	Revision    uint64
 	DeliveryID  string
@@ -99,8 +104,9 @@ type Watch struct {
 func watchFromRow(row model.AgentWatchRow) Watch {
 	watch := Watch{
 		ID: row.ID, OwnerID: row.OwnerID, TargetID: row.TargetID, Identity: row.Identity,
-		Name: row.Name, Status: Status(row.Status), Repeat: row.Repeat,
-		AnchorSeq: row.AnchorSeq, FireSeq: row.FireSeq, Revision: row.Revision,
+		Generation: row.Generation, Name: row.Name, Status: Status(row.Status), Repeat: row.Repeat,
+		AnchorSeq: row.AnchorSeq, Carry: append([]byte(nil), row.CarryBlob...),
+		FireSeq: row.FireSeq, Revision: row.Revision,
 		DeliveryID: row.DeliveryID, RunID: row.RunID,
 		MatchedFrom: row.MatchedFrom, MatchedTo: row.MatchedTo,
 		Excerpt: row.Excerpt, LastError: row.LastError,

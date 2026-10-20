@@ -2,6 +2,7 @@ package watches
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -52,7 +53,7 @@ func TestRestartResumesAnchorWithoutSkippingOrRefiring(t *testing.T) {
 		t.Fatal(err)
 	}
 	reloaded, err := engine.Get(ctx, watch.ID)
-	if err != nil || reloaded.Status != StatusArmed || reloaded.AnchorSeq != 2 {
+	if err != nil || reloaded.Status != StatusArmed || reloaded.AnchorSeq != 0 || string(reloaded.Carry) != "ab" {
 		t.Fatalf("reloaded watch = %+v, %v", reloaded, err)
 	}
 	events, err := engine.Observe(ctx, "target-1", "identity-1", 2, []byte("ready"))
@@ -159,6 +160,128 @@ func TestRestartDoesNotDoubleFire(t *testing.T) {
 	pending, err := backend.AgentWatchEventPendingList(ctx, 10)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending after restart = %+v, %v; want exactly 1", pending, err)
+	}
+}
+
+func TestRestartSplitMatchSurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "watch.db")
+	clock := newTestClock()
+	ctx := ownerCtx("owner-a")
+
+	backend := openRestartStore(t, path)
+	engine := newRestartEngine(t, backend, clock)
+	mustCreate(t, engine, ctx, "target-1", containsCondition("ready"))
+	// A partial pattern is in flight when the process "restarts".
+	if _, err := engine.Observe(ctx, "target-1", "identity-1", 0, []byte("re")); err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	backend = openRestartStore(t, path)
+	defer backend.Close()
+	engine = newRestartEngine(t, backend, clock)
+	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
+		t.Fatal(err)
+	}
+	events, err := engine.Observe(ctx, "target-1", "identity-1", 2, []byte("ady"))
+	if err != nil || len(events) != 1 {
+		t.Fatalf("split match after restart = %+v, %v", events, err)
+	}
+	if events[0].MatchedFrom != 0 || events[0].MatchedTo != 5 {
+		t.Fatalf("split match after restart = %d..%d; want 0..5", events[0].MatchedFrom, events[0].MatchedTo)
+	}
+}
+
+func TestRestartPermanentDetachAfterRestartSettles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "watch.db")
+	clock := newTestClock()
+	ctx := ownerCtx("owner-a")
+
+	backend := openRestartStore(t, path)
+	engine := newRestartEngine(t, backend, clock)
+	watch := mustCreate(t, engine, ctx, "target-1", containsCondition("ready"))
+	if err := backend.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The fresh engine has no local bindings; the durable target row must
+	// still distinguish the valid permanent detach and settle the watch.
+	backend = openRestartStore(t, path)
+	defer backend.Close()
+	engine = newRestartEngine(t, backend, clock)
+	if err := engine.Detach(ctx, "target-1", "identity-1", true); err != nil {
+		t.Fatalf("permanent detach after restart: %v", err)
+	}
+	after, err := engine.Get(ctx, watch.ID)
+	if err != nil || after.Status != StatusUnverifiable {
+		t.Fatalf("watch after restarted permanent detach = %+v, %v", after, err)
+	}
+	if _, err := engine.Observe(ctx, "target-1", "identity-1", 0, []byte("ready")); !errors.Is(err, ErrDetached) {
+		t.Fatalf("observe after restarted detach = %v; want ErrDetached", err)
+	}
+	if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1", Condition: containsCondition("ready")}); !errors.Is(err, ErrDetached) {
+		t.Fatalf("create after restarted detach = %v; want ErrDetached", err)
+	}
+}
+
+func TestRestartStaleDetachAfterRestartIsNoop(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "watch.db")
+	clock := newTestClock()
+	ctx := ownerCtx("owner-a")
+
+	backend := openRestartStore(t, path)
+	engine := newRestartEngine(t, backend, clock)
+	mustCreate(t, engine, ctx, "target-1", containsCondition("ready"))
+	if err := backend.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	backend = openRestartStore(t, path)
+	defer backend.Close()
+	engine = newRestartEngine(t, backend, clock)
+	// The new incarnation replaces the old one; a detach carrying the old
+	// identity afterwards must be rejected as stale.
+	if err := engine.Attach(ctx, "target-1", "identity-2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Detach(ctx, "target-1", "identity-1", true); err != nil {
+		t.Fatalf("stale detach after restart: %v", err)
+	}
+	watch, err := engine.Create(ctx, CreateParams{TargetID: "target-1", Condition: containsCondition("ready")})
+	if err != nil || watch.Identity != "identity-2" {
+		t.Fatalf("create after stale detach = %+v, %v", watch, err)
+	}
+	events, err := engine.Observe(ctx, "target-1", "identity-2", 0, []byte("ready"))
+	if err != nil || len(events) != 1 {
+		t.Fatalf("observe after stale detach = %+v, %v", events, err)
+	}
+}
+
+func TestRestartIdentityReplacementSettlesImmediately(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "watch.db")
+	clock := newTestClock()
+	ctx := ownerCtx("owner-a")
+
+	backend := openRestartStore(t, path)
+	engine := newRestartEngine(t, backend, clock)
+	old := mustCreate(t, engine, ctx, "target-1", containsCondition("ready"))
+	if err := backend.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	backend = openRestartStore(t, path)
+	defer backend.Close()
+	engine = newRestartEngine(t, backend, clock)
+	// Replacement after restart settles the old incarnation without waiting
+	// for a later Observe.
+	if err := engine.Attach(ctx, "target-1", "identity-2"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := engine.Get(ctx, old.ID)
+	if err != nil || after.Status != StatusUnverifiable {
+		t.Fatalf("old watch after restarted replacement = %+v, %v", after, err)
 	}
 }
 

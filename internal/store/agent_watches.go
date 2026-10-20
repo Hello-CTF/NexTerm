@@ -9,6 +9,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Agent watch persistence. The watch condition row and its outbox event are
@@ -27,6 +28,10 @@ const (
 	AgentWatchEventPending   = "pending"
 	AgentWatchEventAcked     = "acked"
 	AgentWatchEventCancelled = "cancelled"
+
+	// agentWatchMaxCarryBytes hard-bounds the persisted partial-match overlap
+	// so a hostile or buggy writer cannot grow watch rows without limit.
+	agentWatchMaxCarryBytes = 65536
 )
 
 var (
@@ -34,10 +39,128 @@ var (
 	ErrAgentWatchConflict = errors.New("agent watch revision conflict")
 	ErrAgentWatchIdentity = errors.New("agent watch identity mismatch")
 	ErrAgentWatchState    = errors.New("agent watch state conflict")
+	ErrAgentWatchDetached = errors.New("agent watch target detached")
 )
 
 func agentWatchOwnerScope(ctx context.Context, db *gorm.DB, column string) *gorm.DB {
 	return db.Where(column+" = ?", ipc.OwnerID(ctx))
+}
+
+// agentWatchTargetForUpdate locks the durable target row inside the caller's
+// transaction. SQLite serializes writers through the immediate transaction,
+// so the explicit row lock is only issued on the other backends.
+func (s *Store) agentWatchTargetForUpdate(ctx context.Context, db *gorm.DB, targetID string) (model.AgentWatchTargetRow, bool, error) {
+	var row model.AgentWatchTargetRow
+	query := agentWatchOwnerScope(ctx, db.Where("target_id = ?", targetID), "owner_id")
+	if s.backend != BackendSQLite {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	err := query.First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return row, false, nil
+	}
+	if err != nil {
+		return row, false, dbError(err)
+	}
+	return row, true, nil
+}
+
+// AgentWatchTargetAttach durably binds the target to an identity incarnation
+// and returns the current generation. Attaching with a different identity —
+// or reattaching after a permanent detach — settles every armed watch of the
+// previous incarnation and bumps the durable generation in the same
+// transaction, so the invalidation survives restarts and stale attachments
+// cannot resurrect old watches.
+func (s *Store) AgentWatchTargetAttach(ctx context.Context, targetID, identity string, now int64) (model.AgentWatchTargetRow, error) {
+	if targetID == "" || identity == "" {
+		return model.AgentWatchTargetRow{}, badParam(fmt.Errorf("agent watch 目标与身份不能为空"))
+	}
+	var out model.AgentWatchTargetRow
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		row, found, err := s.agentWatchTargetForUpdate(ctx, tx, targetID)
+		if err != nil {
+			return err
+		}
+		if !found {
+			out = model.AgentWatchTargetRow{TargetID: targetID, OwnerID: ipc.OwnerID(ctx), Identity: identity, Generation: 1, UpdatedAt: now}
+			if err := tx.Create(&out).Error; err != nil {
+				if IsUniqueErr(err) {
+					return fmt.Errorf("agent watch target %s: %w", targetID, ErrAgentWatchConflict)
+				}
+				return dbError(err)
+			}
+			return nil
+		}
+		if row.Identity == identity && !row.Gone {
+			out = row
+			return nil
+		}
+		generation := row.Generation + 1
+		if err := s.settleAgentWatchTargetWatches(ctx, tx, targetID, row.OwnerID, generation, "target identity replaced", now); err != nil {
+			return err
+		}
+		if err := tx.Model(&model.AgentWatchTargetRow{}).
+			Where("target_id = ? AND owner_id = ?", targetID, row.OwnerID).
+			Updates(map[string]any{"identity": identity, "generation": generation, "gone": false, "updated_at": now}).Error; err != nil {
+			return dbError(err)
+		}
+		row.Identity, row.Generation, row.Gone, row.UpdatedAt = identity, generation, false, now
+		out = row
+		return nil
+	})
+	return out, err
+}
+
+// AgentWatchTargetDetach permanently detaches the target. The detach is
+// durable: the target row records the gone state and a bumped generation, so
+// after a restart the detach is still honored and a stale detach carrying an
+// older identity is rejected as a no-op. Store failures roll the transaction
+// back and propagate as retryable errors — a detach never reports success
+// while watches remain armed.
+func (s *Store) AgentWatchTargetDetach(ctx context.Context, targetID, identity string, now int64) (bool, error) {
+	settled := false
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		row, found, err := s.agentWatchTargetForUpdate(ctx, tx, targetID)
+		if err != nil {
+			return err
+		}
+		if !found || row.Identity != identity || row.Gone {
+			return nil
+		}
+		generation := row.Generation + 1
+		if err := s.settleAgentWatchTargetWatches(ctx, tx, targetID, row.OwnerID, generation, "target detached permanently", now); err != nil {
+			return err
+		}
+		if err := tx.Model(&model.AgentWatchTargetRow{}).
+			Where("target_id = ? AND owner_id = ?", targetID, row.OwnerID).
+			Updates(map[string]any{"generation": generation, "gone": true, "updated_at": now}).Error; err != nil {
+			return dbError(err)
+		}
+		settled = true
+		return nil
+	})
+	return settled, err
+}
+
+func (s *Store) AgentWatchTargetGet(ctx context.Context, targetID string) (model.AgentWatchTargetRow, error) {
+	var row model.AgentWatchTargetRow
+	err := agentWatchOwnerScope(ctx, s.db.WithContext(ctx).Where("target_id = ?", targetID), "owner_id").First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return row, ErrAgentWatchNotFound
+	}
+	if err != nil {
+		return row, dbError(err)
+	}
+	return row, nil
+}
+
+// settleAgentWatchTargetWatches marks every armed watch of an older
+// generation unverifiable; watches of the current incarnation never match
+// output they cannot vouch for.
+func (s *Store) settleAgentWatchTargetWatches(ctx context.Context, tx *gorm.DB, targetID, ownerID string, generation uint64, cause string, now int64) error {
+	return tx.Model(&model.AgentWatchRow{}).
+		Where("target_id = ? AND owner_id = ? AND status = ? AND generation < ?", targetID, ownerID, AgentWatchStatusArmed, generation).
+		Updates(map[string]any{"status": AgentWatchStatusUnverifiable, "last_error": cause, "revision": gorm.Expr("revision + 1"), "updated_at": now}).Error
 }
 
 func (s *Store) agentWatchByID(ctx context.Context, db *gorm.DB, watchID string) (model.AgentWatchRow, error) {
@@ -64,6 +187,11 @@ func (s *Store) agentWatchEventByID(ctx context.Context, db *gorm.DB, deliveryID
 	return row, nil
 }
 
+// AgentWatchCreate inserts an armed watch bound to the target's current
+// durable identity and generation. Creation locks the target row, so it
+// serializes with permanent invalidation: a create either lands before the
+// invalidation and is settled by it, or fails with ErrAgentWatchDetached
+// after the target went away — it can never escape as an armed orphan.
 func (s *Store) AgentWatchCreate(ctx context.Context, row model.AgentWatchRow) (model.AgentWatchRow, error) {
 	if row.ID == "" {
 		return model.AgentWatchRow{}, badParam(fmt.Errorf("agent watch 缺少 ID"))
@@ -71,23 +199,35 @@ func (s *Store) AgentWatchCreate(ctx context.Context, row model.AgentWatchRow) (
 	if row.TargetID == "" {
 		return model.AgentWatchRow{}, badParam(fmt.Errorf("agent watch 缺少目标"))
 	}
-	if row.Identity == "" {
-		return model.AgentWatchRow{}, badParam(fmt.Errorf("agent watch 缺少身份绑定"))
-	}
 	if !json.Valid([]byte(row.ConditionJSON)) {
 		return model.AgentWatchRow{}, badParam(fmt.Errorf("agent watch 条件不是有效 JSON"))
 	}
-	row.OwnerID = ipc.OwnerID(ctx)
-	row.Status = AgentWatchStatusArmed
-	row.Revision = 1
-	row.DeliveryID = ""
-	row.RunID = ""
-	row.LastError = ""
-	if err := s.db.WithContext(ctx).Create(&row).Error; err != nil {
-		if IsUniqueErr(err) {
-			return model.AgentWatchRow{}, fmt.Errorf("agent watch %s: %w", row.ID, ErrAgentWatchConflict)
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		target, found, err := s.agentWatchTargetForUpdate(ctx, tx, row.TargetID)
+		if err != nil {
+			return err
 		}
-		return model.AgentWatchRow{}, dbError(err)
+		if !found || target.Gone {
+			return fmt.Errorf("agent watch target %s: %w", row.TargetID, ErrAgentWatchDetached)
+		}
+		row.OwnerID = ipc.OwnerID(ctx)
+		row.Identity = target.Identity
+		row.Generation = target.Generation
+		row.Status = AgentWatchStatusArmed
+		row.Revision = 1
+		row.DeliveryID = ""
+		row.RunID = ""
+		row.LastError = ""
+		if err := tx.Create(&row).Error; err != nil {
+			if IsUniqueErr(err) {
+				return fmt.Errorf("agent watch %s: %w", row.ID, ErrAgentWatchConflict)
+			}
+			return dbError(err)
+		}
+		return nil
+	})
+	if err != nil {
+		return model.AgentWatchRow{}, err
 	}
 	return row, nil
 }
@@ -106,11 +246,26 @@ func (s *Store) AgentWatchListByTarget(ctx context.Context, targetID string) ([]
 	return rows, nil
 }
 
-// AgentWatchAdvance moves the output anchor of an armed watch without firing.
-// The anchor never regresses; identity must still match the binding.
-func (s *Store) AgentWatchAdvance(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq, now int64) (model.AgentWatchRow, error) {
+func agentWatchCarry(carry []byte) ([]byte, error) {
+	if len(carry) > agentWatchMaxCarryBytes {
+		return nil, badParam(fmt.Errorf("agent watch overlap 超过 %d 字节", agentWatchMaxCarryBytes))
+	}
+	if len(carry) == 0 {
+		return nil, nil
+	}
+	return carry, nil
+}
+
+// AgentWatchAdvance persists the new anchor and the bounded overlap that
+// preserves partial matches across chunk boundaries. The anchor never
+// regresses; identity and armed state must still match.
+func (s *Store) AgentWatchAdvance(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq int64, carry []byte, now int64) (model.AgentWatchRow, error) {
+	carry, err := agentWatchCarry(carry)
+	if err != nil {
+		return model.AgentWatchRow{}, err
+	}
 	var updated model.AgentWatchRow
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		watch, err := s.agentWatchByID(ctx, tx, watchID)
 		if err != nil {
 			return err
@@ -129,7 +284,45 @@ func (s *Store) AgentWatchAdvance(ctx context.Context, watchID string, expectedR
 		}
 		info := tx.Model(&model.AgentWatchRow{}).
 			Where("id = ? AND owner_id = ? AND revision = ?", watch.ID, watch.OwnerID, expectedRevision).
-			Updates(map[string]any{"anchor_seq": anchorSeq, "revision": expectedRevision + 1, "updated_at": now})
+			Updates(map[string]any{"anchor_seq": anchorSeq, "carry_blob": carry, "revision": expectedRevision + 1, "updated_at": now})
+		if info.Error != nil {
+			return dbError(info.Error)
+		}
+		if info.RowsAffected != 1 {
+			return fmt.Errorf("agent watch %s: %w", watchID, ErrAgentWatchConflict)
+		}
+		updated, err = s.agentWatchByID(ctx, tx, watchID)
+		return err
+	})
+	return updated, err
+}
+
+// AgentWatchConsume slides the anchor of a matched repeat watch over output
+// that arrived while the fire was awaiting acknowledgement; the suspended
+// watch intentionally skips matching, but consuming the stream keeps its
+// anchor current so re-arming never sees a false output gap.
+func (s *Store) AgentWatchConsume(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq, now int64) (model.AgentWatchRow, error) {
+	var updated model.AgentWatchRow
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		watch, err := s.agentWatchByID(ctx, tx, watchID)
+		if err != nil {
+			return err
+		}
+		if watch.Revision != expectedRevision {
+			return fmt.Errorf("agent watch %s revision %d != %d: %w", watchID, watch.Revision, expectedRevision, ErrAgentWatchConflict)
+		}
+		if watch.Status != AgentWatchStatusMatched || !watch.Repeat {
+			return fmt.Errorf("agent watch %s status %s: %w", watchID, watch.Status, ErrAgentWatchState)
+		}
+		if watch.Identity != identity {
+			return fmt.Errorf("agent watch %s identity: %w", watchID, ErrAgentWatchIdentity)
+		}
+		if anchorSeq < watch.AnchorSeq {
+			return fmt.Errorf("agent watch %s anchor %d < %d: %w", watchID, anchorSeq, watch.AnchorSeq, ErrAgentWatchConflict)
+		}
+		info := tx.Model(&model.AgentWatchRow{}).
+			Where("id = ? AND owner_id = ? AND revision = ?", watch.ID, watch.OwnerID, expectedRevision).
+			Updates(map[string]any{"anchor_seq": anchorSeq, "carry_blob": nil, "revision": expectedRevision + 1, "updated_at": now})
 		if info.Error != nil {
 			return dbError(info.Error)
 		}
@@ -162,9 +355,10 @@ type AgentWatchFireParams struct {
 }
 
 // AgentWatchFire transitions an armed watch to matched and inserts the outbox
-// event in one transaction. The outbox primary key and the unique
-// (watch_id, fire_seq) pair make the same logical fire idempotent and reject
-// double fires with fresh IDs.
+// event in one transaction; the persisted overlap is cleared because the
+// fired match can no longer participate in a future one. The outbox primary
+// key and the unique (watch_id, fire_seq) pair make the same logical fire
+// idempotent and reject double fires with fresh IDs.
 func (s *Store) AgentWatchFire(ctx context.Context, params AgentWatchFireParams) (model.AgentWatchOutboxRow, error) {
 	if params.DeliveryID == "" || params.RunID == "" {
 		return model.AgentWatchOutboxRow{}, badParam(fmt.Errorf("agent watch 触发缺少固定的 DeliveryID/RunID"))
@@ -205,6 +399,7 @@ func (s *Store) AgentWatchFire(ctx context.Context, params AgentWatchFireParams)
 			Updates(map[string]any{
 				"status":       AgentWatchStatusMatched,
 				"anchor_seq":   params.AnchorSeq,
+				"carry_blob":   nil,
 				"fire_seq":     fireSeq,
 				"delivery_id":  params.DeliveryID,
 				"run_id":       params.RunID,

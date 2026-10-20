@@ -20,11 +20,15 @@ type Store interface {
 	AgentWatchCreate(ctx context.Context, row model.AgentWatchRow) (model.AgentWatchRow, error)
 	AgentWatchGet(ctx context.Context, watchID string) (model.AgentWatchRow, error)
 	AgentWatchListByTarget(ctx context.Context, targetID string) ([]model.AgentWatchRow, error)
-	AgentWatchAdvance(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq, now int64) (model.AgentWatchRow, error)
+	AgentWatchAdvance(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq int64, carry []byte, now int64) (model.AgentWatchRow, error)
+	AgentWatchConsume(ctx context.Context, watchID string, expectedRevision uint64, identity string, anchorSeq, now int64) (model.AgentWatchRow, error)
 	AgentWatchFire(ctx context.Context, params store.AgentWatchFireParams) (model.AgentWatchOutboxRow, error)
 	AgentWatchCancel(ctx context.Context, watchID string, expectedRevision uint64, now int64) (model.AgentWatchRow, error)
 	AgentWatchMarkUnverifiable(ctx context.Context, watchID string, expectedRevision uint64, cause string, now int64) (model.AgentWatchRow, error)
 	AgentWatchExpireDue(ctx context.Context, now int64) (int64, error)
+	AgentWatchTargetAttach(ctx context.Context, targetID, identity string, now int64) (model.AgentWatchTargetRow, error)
+	AgentWatchTargetDetach(ctx context.Context, targetID, identity string, now int64) (bool, error)
+	AgentWatchTargetGet(ctx context.Context, targetID string) (model.AgentWatchTargetRow, error)
 	AgentWatchEventPendingList(ctx context.Context, limit int) ([]model.AgentWatchOutboxRow, error)
 	AgentWatchEventAck(ctx context.Context, deliveryID string, expectedRevision uint64, now int64) (model.AgentWatchOutboxRow, error)
 }
@@ -33,6 +37,11 @@ type Options struct {
 	Now             func() time.Time
 	NewID           func() string
 	MaxExcerptBytes int
+	// MaxCarryBytes bounds the durable partial-match overlap retained per
+	// watch; conditions whose partial participation exceeds it may miss
+	// matches split beyond the window, so it trades memory for split
+	// coverage. The store enforces a hard ceiling.
+	MaxCarryBytes int
 }
 
 func (o *Options) withDefaults() {
@@ -45,24 +54,33 @@ func (o *Options) withDefaults() {
 	if o.MaxExcerptBytes <= 0 {
 		o.MaxExcerptBytes = DefaultMaxExcerptBytes
 	}
+	if o.MaxCarryBytes <= 0 {
+		o.MaxCarryBytes = DefaultMaxCarryBytes
+	}
 }
 
+// targetBinding is an immutable snapshot of one target's local mirror: the
+// durable identity/generation cached at the last successful attach or
+// detach, plus the process-local transport attachment. Values are copied in
+// and out under the engine lock, so readers never share mutable state with
+// writers.
 type targetBinding struct {
-	identity string
-	attached bool
+	identity   string
+	generation uint64
+	attached   bool
 }
 
-// Engine owns the in-memory target identity bindings; every watch condition,
-// anchor and outbox event is durable in the Store so a restart resumes from
-// persisted state without re-firing or skipping output. An Engine belongs to
-// one owner runtime: bindings describe that runtime's targets, while every
-// persisted query is owner-scoped through the context.
+// Engine mirrors the durable target lifecycle state in memory for fast
+// chunk-time checks; every watch condition, anchor, carry overlap and outbox
+// event is durable in the Store, and target incarnation changes only through
+// the store's serialized transactions, so a restart or a concurrent engine
+// cannot resurrect stale identities or lose invalidations.
 type Engine struct {
 	store Store
 	opts  Options
 
 	mu      sync.Mutex
-	targets map[string]*targetBinding
+	targets map[string]targetBinding
 }
 
 func New(store Store, options Options) (*Engine, error) {
@@ -70,70 +88,69 @@ func New(store Store, options Options) (*Engine, error) {
 		return nil, errors.New("watches: store is nil")
 	}
 	options.withDefaults()
-	return &Engine{store: store, opts: options, targets: map[string]*targetBinding{}}, nil
+	return &Engine{store: store, opts: options, targets: map[string]targetBinding{}}, nil
 }
 
-// Attach binds a target to its current identity. Reattaching with a different
-// identity means the previous incarnation is gone: watches bound to the old
-// identity become unverifiable instead of matching output they cannot vouch
-// for, and new watches bind to the new identity.
+func (e *Engine) binding(targetID string) (targetBinding, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	binding, ok := e.targets[targetID]
+	return binding, ok
+}
+
+func (e *Engine) setBinding(targetID string, binding targetBinding) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.targets[targetID] = binding
+}
+
+// Attach durably binds the target to its current identity incarnation and
+// mirrors the result locally. Reattaching with a different identity — or
+// after a completed permanent detach — settles the previous incarnation's
+// watches in the store transaction, so the invalidation is restart-safe.
 func (e *Engine) Attach(ctx context.Context, targetID, identity string) error {
 	targetID = strings.TrimSpace(targetID)
 	identity = strings.TrimSpace(identity)
 	if targetID == "" || identity == "" {
 		return fmt.Errorf("%w: 目标与身份不能为空", ErrIdentityMismatch)
 	}
-	e.mu.Lock()
-	previous := e.targets[targetID]
-	if previous != nil && previous.identity == identity {
-		previous.attached = true
-		e.mu.Unlock()
-		return nil
+	row, err := e.store.AgentWatchTargetAttach(ctx, targetID, identity, e.opts.Now().UnixMilli())
+	if err != nil {
+		if errors.Is(err, store.ErrAgentWatchConflict) {
+			return fmt.Errorf("target %s: %w", targetID, ErrConflict)
+		}
+		return err
 	}
-	e.targets[targetID] = &targetBinding{identity: identity, attached: true}
-	e.mu.Unlock()
-	if previous != nil && previous.identity != "" {
-		e.invalidateTargetWatches(ctx, targetID, previous.identity, "target identity replaced")
-	}
+	e.setBinding(targetID, targetBinding{identity: row.Identity, generation: row.Generation, attached: true})
 	return nil
 }
 
 // Detach records that a target went away. A reversible detach (transport
-// drop) pauses evaluation while keeping watches armed for the same identity;
-// a permanent detach (replaced or gone) settles the target's watches as
-// unverifiable. A detach carrying a stale identity is a no-op so a late
-// disconnect cannot tear down a newer attachment.
+// drop) is process-local state: evaluation pauses while watches stay armed
+// for the same durable identity. A permanent detach is durable — the store
+// settles the incarnation's watches and records the gone state — so it stays
+// effective after a restart, and a stale detach carrying an older identity is
+// rejected as a no-op. Store failures propagate as retryable errors.
 func (e *Engine) Detach(ctx context.Context, targetID, identity string, permanent bool) error {
-	e.mu.Lock()
-	binding := e.targets[targetID]
-	if binding == nil || binding.identity != identity {
+	if permanent {
+		if _, err := e.store.AgentWatchTargetDetach(ctx, targetID, identity, e.opts.Now().UnixMilli()); err != nil {
+			return err
+		}
+		e.mu.Lock()
+		// A stale detach must not tear down a newer local attachment.
+		if binding, ok := e.targets[targetID]; !ok || binding.identity == identity {
+			delete(e.targets, targetID)
+		}
 		e.mu.Unlock()
 		return nil
 	}
-	if permanent {
-		delete(e.targets, targetID)
-	} else {
+	e.mu.Lock()
+	if binding, ok := e.targets[targetID]; ok && binding.identity == identity {
 		binding.attached = false
+		e.targets[targetID] = binding
 	}
 	e.mu.Unlock()
-	if permanent {
-		e.invalidateTargetWatches(ctx, targetID, identity, "target disconnected permanently")
-	}
 	return nil
-}
-
-func (e *Engine) invalidateTargetWatches(ctx context.Context, targetID, identity, cause string) {
-	rows, err := e.store.AgentWatchListByTarget(ctx, targetID)
-	if err != nil {
-		return
-	}
-	now := e.opts.Now().UnixMilli()
-	for _, row := range rows {
-		if row.Identity != identity || Status(row.Status) != StatusArmed {
-			continue
-		}
-		_, _ = e.store.AgentWatchMarkUnverifiable(ctx, row.ID, row.Revision, cause, now)
-	}
 }
 
 // CreateParams registers a new armed watch on an attached target.
@@ -155,10 +172,8 @@ func (e *Engine) Create(ctx context.Context, params CreateParams) (Watch, error)
 	if params.TargetID == "" {
 		return Watch{}, fmt.Errorf("%w: 目标不能为空", ErrInvalidCondition)
 	}
-	e.mu.Lock()
-	binding := e.targets[params.TargetID]
-	e.mu.Unlock()
-	if binding == nil || !binding.attached {
+	binding, ok := e.binding(params.TargetID)
+	if !ok || !binding.attached {
 		return Watch{}, ErrDetached
 	}
 	if params.ID == "" {
@@ -170,13 +185,16 @@ func (e *Engine) Create(ctx context.Context, params CreateParams) (Watch, error)
 	}
 	now := e.opts.Now()
 	row, err := e.store.AgentWatchCreate(ctx, model.AgentWatchRow{
-		ID: params.ID, TargetID: params.TargetID, Identity: binding.identity,
+		ID: params.ID, TargetID: params.TargetID,
 		Name: strings.TrimSpace(params.Name), ConditionJSON: string(conditionJSON),
 		Repeat: params.Repeat, AnchorSeq: params.AnchorSeq,
 		CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli(),
 		ExpiresAt: optionalMillis(params.ExpiresAt),
 	})
 	if err != nil {
+		if errors.Is(err, store.ErrAgentWatchDetached) {
+			return Watch{}, ErrDetached
+		}
 		if errors.Is(err, store.ErrAgentWatchConflict) {
 			return Watch{}, fmt.Errorf("watch %s: %w", params.ID, ErrConflict)
 		}
@@ -223,109 +241,176 @@ func (e *Engine) Cancel(ctx context.Context, watchID string, expectedRevision ui
 }
 
 // Observe evaluates a chunk of target output covering stream positions
-// [fromSeq, fromSeq+len(data)) against every armed watch of the target. Each
-// watch advances independently: a match fires the watch with caller-fixed
-// DeliveryID/RunID (watch transition and outbox row commit in one
-// transaction), a miss advances its anchor, and a lost output gap or identity
-// change settles it as unverifiable so it never matches unverifiable data.
-// Redelivered overlapping chunks are safe: anchors make re-evaluation a
-// no-op.
+// [fromSeq, fromSeq+len(data)) against every armed watch of the target.
+// Matches split across arbitrary chunk boundaries still fire: each watch
+// persists a bounded overlap (carry) of bytes that may still participate in
+// a future match, and the overlap is re-evaluated together with the new
+// bytes, so redelivered chunks never double-count the seam and a restart
+// resumes mid-pattern. Each watch advances independently: a match fires the
+// watch with caller-fixed DeliveryID/RunID (watch transition and outbox row
+// commit in one transaction), a miss slides the anchor and overlap forward,
+// and a lost output gap settles the watch as unverifiable so it never
+// matches unverifiable data. Store failures propagate as retryable errors;
+// the anchor/overlap make retried chunks safe.
 func (e *Engine) Observe(ctx context.Context, targetID, identity string, fromSeq int64, data []byte) ([]Event, error) {
 	if len(data) == 0 {
 		return nil, nil
 	}
-	e.mu.Lock()
-	binding := e.targets[targetID]
-	e.mu.Unlock()
-	if binding == nil || !binding.attached {
+	binding, ok := e.binding(targetID)
+	if !ok || !binding.attached {
 		return nil, ErrDetached
 	}
 	if binding.identity != identity {
 		return nil, ErrIdentityMismatch
 	}
-	toSeq := fromSeq + int64(len(data))
 	rows, err := e.store.AgentWatchListByTarget(ctx, targetID)
 	if err != nil {
 		return nil, err
 	}
+	current, err := e.refreshStaleBinding(ctx, targetID, identity, binding, rows)
+	if err != nil {
+		return nil, err
+	}
+	toSeq := fromSeq + int64(len(data))
 	now := e.opts.Now()
 	var fired []Event
 	for _, row := range rows {
-		if Status(row.Status) != StatusArmed {
+		if row.Generation < current {
+			if Status(row.Status) == StatusArmed {
+				if err := e.markUnverifiable(ctx, row, "superseded by a newer target generation"); err != nil {
+					return fired, err
+				}
+			}
 			continue
 		}
-		event, err := e.observeWatch(ctx, row, identity, fromSeq, toSeq, data, now)
-		if err != nil {
-			return fired, err
-		}
-		if event != nil {
-			fired = append(fired, *event)
+		switch Status(row.Status) {
+		case StatusArmed:
+			event, err := e.observeWatch(ctx, row, identity, fromSeq, toSeq, data, now)
+			if err != nil {
+				return fired, err
+			}
+			if event != nil {
+				fired = append(fired, *event)
+			}
+		case StatusMatched:
+			// A repeat watch awaiting acknowledgement skips matching but
+			// consumes the stream so re-arming never sees a false gap.
+			if row.Repeat {
+				if err := e.consumeWatch(ctx, row, identity, fromSeq, toSeq, now); err != nil {
+					return fired, err
+				}
+			}
 		}
 	}
 	return fired, nil
 }
 
+// refreshStaleBinding detects a newer durable generation among the listed
+// watches and reconciles the local mirror. A stale presenter never settles
+// the newer incarnation's watches: it is rejected with ErrDetached instead.
+func (e *Engine) refreshStaleBinding(ctx context.Context, targetID, identity string, binding targetBinding, rows []model.AgentWatchRow) (uint64, error) {
+	for _, row := range rows {
+		if row.Generation > binding.generation {
+			durable, err := e.store.AgentWatchTargetGet(ctx, targetID)
+			if err != nil {
+				if errors.Is(err, store.ErrAgentWatchNotFound) {
+					return 0, ErrDetached
+				}
+				return 0, err
+			}
+			if durable.Identity != identity || durable.Gone {
+				return 0, ErrDetached
+			}
+			e.setBinding(targetID, targetBinding{identity: durable.Identity, generation: durable.Generation, attached: true})
+			return durable.Generation, nil
+		}
+	}
+	return binding.generation, nil
+}
+
 func (e *Engine) observeWatch(ctx context.Context, row model.AgentWatchRow, identity string, fromSeq, toSeq int64, data []byte, now time.Time) (*Event, error) {
-	if row.Identity != identity {
-		e.markUnverifiable(ctx, row, "watch identity no longer attached")
-		return nil, nil
+	lastEvaluated := row.AnchorSeq + int64(len(row.CarryBlob))
+	if fromSeq > lastEvaluated {
+		return nil, e.markUnverifiable(ctx, row, fmt.Sprintf("output gap: evaluated %d, chunk starts %d", lastEvaluated, fromSeq))
 	}
-	if row.AnchorSeq < fromSeq {
-		e.markUnverifiable(ctx, row, fmt.Sprintf("output gap: anchor %d, chunk starts %d", row.AnchorSeq, fromSeq))
-		return nil, nil
-	}
-	if row.AnchorSeq >= toSeq {
+	if toSeq <= lastEvaluated {
 		return nil, nil
 	}
 	var condition Condition
 	if err := json.Unmarshal([]byte(row.ConditionJSON), &condition); err != nil {
-		e.markUnverifiable(ctx, row, "stored condition is unreadable")
-		return nil, nil
+		return nil, e.markUnverifiable(ctx, row, "stored condition is unreadable")
 	}
 	if err := condition.Validate(); err != nil {
-		e.markUnverifiable(ctx, row, "stored condition is invalid")
-		return nil, nil
+		return nil, e.markUnverifiable(ctx, row, "stored condition is invalid")
 	}
-	chunk := data[row.AnchorSeq-fromSeq:]
-	matched, relFrom, relTo, excerpt := condition.Evaluate(chunk, e.opts.MaxExcerptBytes)
-	if !matched {
-		if _, err := e.store.AgentWatchAdvance(ctx, row.ID, row.Revision, identity, toSeq, now.UnixMilli()); err != nil && !isBenignWatchRace(err) {
+	// Only bytes beyond the evaluated position are new; the persisted
+	// overlap already covers [anchor, lastEvaluated).
+	buffer := make([]byte, 0, len(row.CarryBlob)+int(toSeq-lastEvaluated))
+	buffer = append(buffer, row.CarryBlob...)
+	buffer = append(buffer, data[lastEvaluated-fromSeq:]...)
+	matched, relFrom, relTo, excerpt := condition.Evaluate(buffer, e.opts.MaxExcerptBytes)
+	if matched {
+		deliveryID := e.opts.NewID()
+		runID := e.opts.NewID()
+		event := Event{
+			Kind: EventKind, DeliveryID: deliveryID, RunID: runID,
+			WatchID: row.ID, TargetID: row.TargetID, Identity: identity, Name: row.Name,
+			Condition:   condition,
+			MatchedFrom: row.AnchorSeq + relFrom,
+			MatchedTo:   row.AnchorSeq + relTo,
+			Excerpt:     excerpt,
+			FiredAt:     now.UnixMilli(),
+		}
+		eventJSON, err := json.Marshal(event)
+		if err != nil {
+			return nil, fmt.Errorf("encode watch event: %w", err)
+		}
+		if _, err := e.store.AgentWatchFire(ctx, store.AgentWatchFireParams{
+			WatchID: row.ID, ExpectedRevision: row.Revision, Identity: identity,
+			DeliveryID: deliveryID, RunID: runID,
+			AnchorSeq: toSeq, MatchedFrom: event.MatchedFrom, MatchedTo: event.MatchedTo,
+			Excerpt: excerpt, EventKind: EventKind, EventJSON: string(eventJSON),
+			Now: now.UnixMilli(),
+		}); err != nil {
+			if isBenignWatchRace(err) || errors.Is(err, store.ErrAgentWatchIdentity) {
+				return nil, nil
+			}
 			return nil, err
 		}
-		return nil, nil
+		return &event, nil
 	}
-	deliveryID := e.opts.NewID()
-	runID := e.opts.NewID()
-	event := Event{
-		Kind: EventKind, DeliveryID: deliveryID, RunID: runID,
-		WatchID: row.ID, TargetID: row.TargetID, Identity: identity, Name: row.Name,
-		Condition:   condition,
-		MatchedFrom: row.AnchorSeq + relFrom,
-		MatchedTo:   row.AnchorSeq + relTo,
-		Excerpt:     excerpt,
-		FiredAt:     now.UnixMilli(),
-	}
-	eventJSON, err := json.Marshal(event)
-	if err != nil {
-		return nil, fmt.Errorf("encode watch event: %w", err)
-	}
-	if _, err := e.store.AgentWatchFire(ctx, store.AgentWatchFireParams{
-		WatchID: row.ID, ExpectedRevision: row.Revision, Identity: identity,
-		DeliveryID: deliveryID, RunID: runID,
-		AnchorSeq: toSeq, MatchedFrom: event.MatchedFrom, MatchedTo: event.MatchedTo,
-		Excerpt: excerpt, EventKind: EventKind, EventJSON: string(eventJSON),
-		Now: now.UnixMilli(),
-	}); err != nil {
-		if isBenignWatchRace(err) || errors.Is(err, store.ErrAgentWatchIdentity) {
-			return nil, nil
-		}
+	carryLen := condition.carryBound(e.opts.MaxCarryBytes, len(buffer))
+	newAnchor := toSeq - int64(carryLen)
+	newCarry := append([]byte(nil), buffer[len(buffer)-carryLen:]...)
+	if _, err := e.store.AgentWatchAdvance(ctx, row.ID, row.Revision, identity, newAnchor, newCarry, now.UnixMilli()); err != nil && !isBenignWatchRace(err) {
 		return nil, err
 	}
-	return &event, nil
+	return nil, nil
 }
 
-func (e *Engine) markUnverifiable(ctx context.Context, row model.AgentWatchRow, cause string) {
-	_, _ = e.store.AgentWatchMarkUnverifiable(ctx, row.ID, row.Revision, cause, e.opts.Now().UnixMilli())
+func (e *Engine) consumeWatch(ctx context.Context, row model.AgentWatchRow, identity string, fromSeq, toSeq int64, now time.Time) error {
+	lastEvaluated := row.AnchorSeq + int64(len(row.CarryBlob))
+	if fromSeq > lastEvaluated {
+		return e.markUnverifiable(ctx, row, fmt.Sprintf("output gap: evaluated %d, chunk starts %d", lastEvaluated, fromSeq))
+	}
+	if toSeq <= lastEvaluated {
+		return nil
+	}
+	if _, err := e.store.AgentWatchConsume(ctx, row.ID, row.Revision, identity, toSeq, now.UnixMilli()); err != nil && !isBenignWatchRace(err) {
+		return err
+	}
+	return nil
+}
+
+// markUnverifiable settles a watch whose data can no longer be verified.
+// CAS races mean another worker already settled it; any other store failure
+// propagates so the caller retries instead of silently leaving the watch
+// armed.
+func (e *Engine) markUnverifiable(ctx context.Context, row model.AgentWatchRow, cause string) error {
+	if _, err := e.store.AgentWatchMarkUnverifiable(ctx, row.ID, row.Revision, cause, e.opts.Now().UnixMilli()); err != nil && !isBenignWatchRace(err) {
+		return err
+	}
+	return nil
 }
 
 func isBenignWatchRace(err error) bool {

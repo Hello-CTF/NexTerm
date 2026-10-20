@@ -31,6 +31,41 @@ func (c Condition) Validate() error {
 	}
 }
 
+// carryBound returns how many trailing bytes of an evaluated buffer must be
+// retained so a match split across an arbitrary chunk boundary still fires
+// later: a partial pattern inside the window is re-evaluated together with
+// the next chunk. The window is bounded by capacity and by the condition's
+// own partial-match participation, so buffering never grows without limit.
+func (c Condition) carryBound(capacity, bufferLen int) int {
+	if capacity <= 0 || bufferLen <= 0 {
+		return 0
+	}
+	bound := c.maxCarry(capacity)
+	if bound > bufferLen {
+		bound = bufferLen
+	}
+	return bound
+}
+
+// maxCarry is the condition's partial-match participation capped at
+// capacity: exact for literal contains patterns, and a conservative
+// prefix-participation bound for regular expressions (unbounded repetition
+// clamps to capacity).
+func (c Condition) maxCarry(capacity int) int {
+	switch c.Type {
+	case ConditionContains:
+		return min(capacity, len(c.Pattern)-1)
+	case ConditionRegex:
+		bound, finite := regexPrefixParticipation(c.Pattern, int64(capacity))
+		if !finite || bound >= int64(capacity) {
+			return capacity
+		}
+		return int(bound)
+	default:
+		return 0
+	}
+}
+
 // Evaluate reports whether data matches the condition and, on a match, the
 // byte range within data plus a bounded excerpt of the containing line. The
 // excerpt is untrusted output data and is capped for the event envelope.
