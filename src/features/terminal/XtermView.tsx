@@ -102,6 +102,7 @@ export interface XtermViewProps {
 }
 
 export function XtermView(props: XtermViewProps) {
+  const { sessionId, containerId, resumeTabId, visible, canResize, winrm } = props;
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const gridRef = useRef<TerminalGridCoordinator | null>(null);
@@ -124,6 +125,7 @@ export function XtermView(props: XtermViewProps) {
   const onSelectionCopyRef = useRef(props.onSelectionCopy);
   const onPasteImagesRef = useRef(props.onPasteImages);
   const onRequestPasteRef = useRef(props.onRequestPaste);
+  const registerSearchRef = useRef(props.registerSearch);
   onBlocksRef.current = props.onBlocks;
   onHandleRef.current = props.onHandle;
   onAttachRef.current = props.onAttach;
@@ -137,6 +139,7 @@ export function XtermView(props: XtermViewProps) {
   onSelectionCopyRef.current = props.onSelectionCopy;
   onPasteImagesRef.current = props.onPasteImages;
   onRequestPasteRef.current = props.onRequestPaste;
+  registerSearchRef.current = props.registerSearch;
 
   const fitIfSized = (afterClaim = false, final = false): boolean => {
     const host = hostRef.current;
@@ -196,12 +199,12 @@ export function XtermView(props: XtermViewProps) {
 
     let kernelTabId = "";
     let disposed = false;
-    const attachedAssetId = useUi.getState().sessions.find((session) => session.id === props.sessionId)?.assetId;
+    const attachedAssetId = useUi.getState().sessions.find((session) => session.id === sessionId)?.assetId;
     const applyGrid = (grid: TerminalGrid) => resizeTerminalToGridPreservingSelection(term, grid);
     const coordinator = new TerminalGridCoordinator(
       productionGridRuntime,
       applyGrid,
-      { visible: props.visible !== false, canResize: props.canResize !== false },
+      { visible: visible !== false, canResize: canResize !== false },
     );
     gridRef.current = coordinator;
     fitIfSized();
@@ -285,7 +288,7 @@ export function XtermView(props: XtermViewProps) {
     // bounded replay) and the reopen resumes via attachTab/ResumeExec.
     const pauseUpstream = () => {
       if (!kernelTabId) return;
-      if (props.containerId) {
+      if (containerId) {
         void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);
         return;
       }
@@ -306,7 +309,7 @@ export function XtermView(props: XtermViewProps) {
       });
     };
     const resumeUpstream = () => {
-      if (props.containerId || !kernelTabId) return;
+      if (containerId || !kernelTabId) return;
       const channelId = channelIdOf(channel);
       if (!channelId) return;
       void call("terminal_resume", { tabId: kernelTabId, channelId }).catch(() => undefined);
@@ -331,7 +334,7 @@ export function XtermView(props: XtermViewProps) {
       const nowMs = Date.now();
       if (nowMs - lastRefuseToastAt > 10_000) {
         lastRefuseToastAt = nowMs;
-        const replayable = props.containerId || ephemeral !== true;
+        const replayable = containerId || ephemeral !== true;
         useUi
           .getState()
           .pushToast(
@@ -368,7 +371,7 @@ export function XtermView(props: XtermViewProps) {
             // Lift a refusal episode for tab kinds without an anchor-driven
             // recovery (docker exec, ephemeral local/WinRM); durable tabs end
             // the episode at the next anchor instead.
-            if (props.containerId || ephemeral === true) streamWriter.beginAttachment();
+            if (containerId || ephemeral === true) streamWriter.beginAttachment();
             resumeUpstream();
           }
         },
@@ -488,7 +491,7 @@ export function XtermView(props: XtermViewProps) {
     let attaching = false;
     const doAttach = async () => {
       if (disposed || kernelTabId || attaching) return;
-      const resume = props.resumeTabId;
+      const resume = resumeTabId;
       const dimensions = coordinator.desiredGrid();
       if (!resume && !dimensions) return;
       attaching = true;
@@ -497,7 +500,7 @@ export function XtermView(props: XtermViewProps) {
         let id: string;
         let fallbackNotice: string | undefined;
         if (resume) {
-          const info = await terminalApi.attachTab(resume, channel, -1, undefined, props.containerId ? undefined : props.sessionId);
+          const info = await terminalApi.attachTab(resume, channel, -1, undefined, containerId ? undefined : sessionId);
           id = info.tabId;
           if (disposed) {
             void terminalApi.detach(id, channelIdOf(channel)).catch(() => undefined);
@@ -517,11 +520,11 @@ export function XtermView(props: XtermViewProps) {
             retainable: info.retainable,
             ephemeral: info.ephemeral,
           });
-        } else if (props.containerId) {
+        } else if (containerId) {
           if (!dimensions) return;
           id = await dockerApi.execAttach(
-            props.sessionId,
-            props.containerId,
+            sessionId,
+            containerId,
             dimensions.cols,
             dimensions.rows,
             channel,
@@ -535,10 +538,10 @@ export function XtermView(props: XtermViewProps) {
             shell: "unknown",
             retainable: false,
           });
-        } else if (props.winrm) {
+        } else if (winrm) {
           if (!dimensions) return;
           id = await import("../../ipc/commands").then((m) =>
-            m.sessionApi.openLineTab(props.sessionId, dimensions.cols, dimensions.rows, channel),
+            m.sessionApi.openLineTab(sessionId, dimensions.cols, dimensions.rows, channel),
           );
           reportAttachInfo({
             tabId: id,
@@ -551,7 +554,7 @@ export function XtermView(props: XtermViewProps) {
           });
         } else {
           if (!dimensions) return;
-          const info = await terminalApi.attach(props.sessionId, dimensions.cols, dimensions.rows, channel);
+          const info = await terminalApi.attach(sessionId, dimensions.cols, dimensions.rows, channel);
           id = info.tabId;
           fallbackNotice = info.fallbackNotice;
           reportAttachInfo({
@@ -571,10 +574,10 @@ export function XtermView(props: XtermViewProps) {
           void terminalApi.detach(id, channelIdOf(channel)).catch(() => undefined);
           return;
         }
-        if (props.containerId) {
-          const current = useUi.getState().sessions.find((session) => session.id === props.sessionId);
+        if (containerId) {
+          const current = useUi.getState().sessions.find((session) => session.id === sessionId);
           if ((attachedAssetId !== undefined && (!current || current.assetId !== attachedAssetId)) || (current && current.status !== "connected")) {
-            void terminalApi.closeTab(id, "kill", props.sessionId).catch(() => undefined);
+            void terminalApi.closeTab(id, "kill", sessionId).catch(() => undefined);
             onAttachFailedRef.current?.("interrupted");
             return;
           }
@@ -602,7 +605,7 @@ export function XtermView(props: XtermViewProps) {
     const reattachOnReopen = () => {
       const id = kernelTabId;
       if (!id || reattaching) return;
-      const resume = props.containerId
+      const resume = containerId
         ? undefined
         : streamAnchor
           ? {
@@ -613,7 +616,7 @@ export function XtermView(props: XtermViewProps) {
       reattaching = true;
       void (async () => {
         try {
-          if (props.containerId) {
+          if (containerId) {
             // Docker exec replays synchronously inside the attach RPC, before
             // its response: end the refusal episode up front so the replay is
             // accepted. Session tabs end the episode at the anchor frame
@@ -621,8 +624,8 @@ export function XtermView(props: XtermViewProps) {
             streamWriter.beginAttachment();
           }
           const info = resume
-            ? await terminalApi.attachTab(id, channel, -1, resume, props.containerId ? undefined : props.sessionId)
-            : await terminalApi.attachTab(id, channel, -1, undefined, props.containerId ? undefined : props.sessionId);
+            ? await terminalApi.attachTab(id, channel, -1, resume, containerId ? undefined : sessionId)
+            : await terminalApi.attachTab(id, channel, -1, undefined, containerId ? undefined : sessionId);
           if (disposed) {
             void terminalApi.detach(info.tabId, channelIdOf(channel)).catch(() => undefined);
             return;
@@ -650,7 +653,7 @@ export function XtermView(props: XtermViewProps) {
           onAttachRef.current?.(info.tabId);
         } catch (e) {
           if (disposed) return;
-          if (props.containerId) {
+          if (containerId) {
             // Docker exec streams resume through attachTab/ResumeExec; when
             // that fails the stream is gone or completed, so surface the
             // accurate terminal state instead of a frozen view.
@@ -749,7 +752,7 @@ export function XtermView(props: XtermViewProps) {
     pasteHost.addEventListener("paste", onPasteCapture, true);
     pasteHost.addEventListener("dragover", onDragOver);
     pasteHost.addEventListener("drop", onDropCapture, true);
-    props.registerSearch?.({
+    registerSearchRef.current?.({
       findNext: (t) => search.findNext(t),
       findPrevious: (t) => search.findPrevious(t),
     });
@@ -822,7 +825,7 @@ export function XtermView(props: XtermViewProps) {
       term.dispose();
       termRef.current = null;
     };
-  }, [props.sessionId, props.containerId, props.resumeTabId]);
+  }, [sessionId, containerId, resumeTabId, visible, canResize, winrm]);
 
   useEffect(() => {
     const connected = props.sessionConnected === true;

@@ -80,14 +80,18 @@ vi.mock("../../features/terminal/CommandBlockPanel", () => ({ CommandBlockPanel:
 vi.mock("../../features/terminal/TerminalKeysBar", () => ({ TerminalKeysBar: () => null }));
 
 vi.mock("../../features/terminal/XtermView", async () => {
-  const { useEffect } = await import("react");
+  const { useEffect, useRef } = await import("react");
   return {
     XtermView: (props: Record<string, unknown>) => {
+      const onAttachInfoRef = useRef(props.onAttachInfo);
+      const onAttachRef = useRef(props.onAttach);
+      onAttachInfoRef.current = props.onAttachInfo;
+      onAttachRef.current = props.onAttach;
       harness.attachInfo = props.onAttachInfo as typeof harness.attachInfo;
       harness.onAttach = props.onAttach as typeof harness.onAttach;
       useEffect(() => {
         if (harness.attachShell) {
-          (props.onAttachInfo as ((info: unknown) => void) | undefined)?.({
+          (onAttachInfoRef.current as ((info: unknown) => void) | undefined)?.({
             tabId: "kernel-1",
             controller: "me",
             subscribers: 1,
@@ -97,7 +101,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
             retainable: harness.attachRetainable ?? undefined,
           });
         }
-        (props.onAttach as ((id: string) => void) | undefined)?.("kernel-1");
+        (onAttachRef.current as ((id: string) => void) | undefined)?.("kernel-1");
       }, []);
       return <div className="h-full w-full min-h-0" />;
     },

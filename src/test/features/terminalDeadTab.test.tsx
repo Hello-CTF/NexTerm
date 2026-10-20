@@ -76,12 +76,14 @@ const harness = vi.hoisted(() => ({
 }));
 
 vi.mock("../../features/terminal/XtermView", async () => {
-  const { useEffect } = await import("react");
+  const { useEffect, useRef } = await import("react");
   return {
     XtermView: (props: Record<string, unknown>) => {
       harness.props = props;
+      const onHandleRef = useRef(props.onHandle);
+      onHandleRef.current = props.onHandle;
       useEffect(() => {
-        (props.onHandle as ((handle: unknown) => void) | undefined)?.({
+        (onHandleRef.current as ((handle: unknown) => void) | undefined)?.({
           copyBlock: () => "",
           scrollToBlock: () => {},
           navigateBlock: () => null,
