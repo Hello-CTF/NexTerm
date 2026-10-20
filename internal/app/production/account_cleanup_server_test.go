@@ -334,3 +334,139 @@ func TestAccountServerExpiredSessionCleanupRetriesAfterSnapshotFailure(t *testin
 	requireAccountCleanupTab(t, ownerA, fixture.rig.manager, tabA.ID, false)
 	requireAccountCleanupStatus(t, ownerA, fixture.rig.manager, deviceA.ID, session.StatusDisconnected)
 }
+
+func TestAccountServerLogoutAbortsWhenCleanupSnapshotFails(t *testing.T) {
+	fixture := newAccountCleanupHTTPFixture(t)
+	aliceID, _ := fixture.initUsers(t)
+	alice := fixture.login(t, "alice", "password-alice")
+	ownerA := ipc.WithUserID(t.Context(), aliceID)
+	deviceA, tabA := fixture.rig.open(t, ownerA, session.Asset{ID: "device/a", Kind: session.KindDevice})
+
+	fixture.application.accountCleanup.listOwnerSessions = func(context.Context, string) ([]session.SessionInfo, error) {
+		return nil, errors.New("injected listing failure")
+	}
+	call := fixture.call(t, http.MethodPost, "/auth/logout", nil, alice)
+	if call.status != http.StatusInternalServerError {
+		t.Fatalf("logout with a failed cleanup snapshot status = %d body = %v, want 500", call.status, call.body)
+	}
+	// The abort must not revoke the session and must not touch the device.
+	if _, err := fixture.accounts.ValidateSession(context.Background(), alice.cookie.Value); err != nil {
+		t.Fatalf("logout aborted but the session was revoked: %v", err)
+	}
+	requireAccountCleanupTab(t, ownerA, fixture.rig.manager, tabA.ID, true)
+	requireAccountCleanupStatus(t, ownerA, fixture.rig.manager, deviceA.ID, session.StatusConnected)
+
+	// The same event retries once the read recovers: full logout and cleanup.
+	fixture.application.accountCleanup.listOwnerSessions = nil
+	call = fixture.call(t, http.MethodPost, "/auth/logout", nil, alice)
+	if call.status != http.StatusOK {
+		t.Fatalf("logout retry status = %d body = %v", call.status, call.body)
+	}
+	if _, err := fixture.accounts.ValidateSession(context.Background(), alice.cookie.Value); err == nil {
+		t.Fatal("logout retry did not revoke the session")
+	}
+	requireAccountCleanupTab(t, ownerA, fixture.rig.manager, tabA.ID, false)
+	requireAccountCleanupStatus(t, ownerA, fixture.rig.manager, deviceA.ID, session.StatusDisconnected)
+}
+
+func TestAccountServerLogoutAllAbortsWhenCleanupSnapshotFails(t *testing.T) {
+	fixture := newAccountCleanupHTTPFixture(t)
+	aliceID, _ := fixture.initUsers(t)
+	alice := fixture.login(t, "alice", "password-alice")
+	alice2 := fixture.login(t, "alice", "password-alice")
+	ownerA := ipc.WithUserID(t.Context(), aliceID)
+	deviceA, tabA := fixture.rig.open(t, ownerA, session.Asset{ID: "device/a", Kind: session.KindDevice})
+
+	fixture.application.accountCleanup.cutoffBound = func(context.Context, string, string) (*time.Time, error) {
+		return nil, errors.New("injected cutoff failure")
+	}
+	call := fixture.call(t, http.MethodPost, "/auth/logout-all", nil, alice)
+	if call.status != http.StatusInternalServerError {
+		t.Fatalf("logout-all with a failed cleanup snapshot status = %d body = %v, want 500", call.status, call.body)
+	}
+	// The abort must not revoke any session and must not touch the device.
+	if _, err := fixture.accounts.ValidateSession(context.Background(), alice.cookie.Value); err != nil {
+		t.Fatalf("logout-all aborted but alice's session was revoked: %v", err)
+	}
+	requireAccountCleanupTab(t, ownerA, fixture.rig.manager, tabA.ID, true)
+	requireAccountCleanupStatus(t, ownerA, fixture.rig.manager, deviceA.ID, session.StatusConnected)
+
+	fixture.application.accountCleanup.cutoffBound = nil
+	call = fixture.call(t, http.MethodPost, "/auth/logout-all", nil, alice)
+	if call.status != http.StatusOK {
+		t.Fatalf("logout-all retry status = %d body = %v", call.status, call.body)
+	}
+	if _, err := fixture.accounts.ValidateSession(context.Background(), alice.cookie.Value); err == nil {
+		t.Fatal("logout-all retry did not revoke alice's session")
+	}
+	if _, err := fixture.accounts.ValidateSession(context.Background(), alice2.cookie.Value); err == nil {
+		t.Fatal("logout-all retry did not revoke alice's second session")
+	}
+	requireAccountCleanupTab(t, ownerA, fixture.rig.manager, tabA.ID, false)
+	requireAccountCleanupStatus(t, ownerA, fixture.rig.manager, deviceA.ID, session.StatusDisconnected)
+}
+
+func TestAccountServerSessionRevokeAbortsWhenCleanupSnapshotFails(t *testing.T) {
+	fixture := newAccountCleanupHTTPFixture(t)
+	aliceID, _ := fixture.initUsers(t)
+	alice := fixture.login(t, "alice", "password-alice")
+	other := fixture.login(t, "alice", "password-alice")
+	ownerA := ipc.WithUserID(t.Context(), aliceID)
+	deviceA, tabA := fixture.rig.open(t, ownerA, session.Asset{ID: "device/a", Kind: session.KindDevice})
+
+	otherID := currentCleanupSessionID(t, fixture, other)
+
+	fixture.application.accountCleanup.listOwnerSessions = func(context.Context, string) ([]session.SessionInfo, error) {
+		return nil, errors.New("injected listing failure")
+	}
+	call := fixture.call(t, http.MethodDelete, "/auth/sessions/"+otherID, nil, alice)
+	if call.status != http.StatusInternalServerError {
+		t.Fatalf("session revoke with a failed cleanup snapshot status = %d body = %v, want 500", call.status, call.body)
+	}
+	if _, err := fixture.accounts.ValidateSession(context.Background(), other.cookie.Value); err != nil {
+		t.Fatalf("session revoke aborted but the target session was revoked: %v", err)
+	}
+	requireAccountCleanupTab(t, ownerA, fixture.rig.manager, tabA.ID, true)
+	requireAccountCleanupStatus(t, ownerA, fixture.rig.manager, deviceA.ID, session.StatusConnected)
+
+	fixture.application.accountCleanup.listOwnerSessions = nil
+	call = fixture.call(t, http.MethodDelete, "/auth/sessions/"+otherID, nil, alice)
+	if call.status != http.StatusOK {
+		t.Fatalf("session revoke retry status = %d body = %v", call.status, call.body)
+	}
+	if _, err := fixture.accounts.ValidateSession(context.Background(), other.cookie.Value); err == nil {
+		t.Fatal("session revoke retry did not revoke the target session")
+	}
+	requireAccountCleanupTab(t, ownerA, fixture.rig.manager, tabA.ID, false)
+	requireAccountCleanupStatus(t, ownerA, fixture.rig.manager, deviceA.ID, session.StatusDisconnected)
+}
+
+func currentCleanupSessionID(t *testing.T, fixture *accountCleanupHTTPFixture, session *accountCleanupHTTPSession) string {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodGet, fixture.http.URL+"/auth/sessions", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.AddCookie(session.cookie)
+	response, err := fixture.http.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var decoded struct {
+		Sessions []struct {
+			ID      string `json:"id"`
+			Current bool   `json:"current"`
+		} `json:"sessions"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range decoded.Sessions {
+		if row.Current {
+			return row.ID
+		}
+	}
+	t.Fatal("current session not found")
+	return ""
+}

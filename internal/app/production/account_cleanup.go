@@ -36,14 +36,26 @@ type accountCleanupState struct {
 	listOwnerSessions func(ctx context.Context, ownerID string) ([]session.SessionInfo, error)
 }
 
-func (p *Production) CleanupAccount(ctx context.Context, ownerID, cleanupID string, sessionIDs ...string) {
-	commit, _ := p.PrepareAccountCleanup(ctx, ownerID, cleanupID)
+// CleanupAccount runs the cleanup for an already-committed revocation (the
+// natural-expiry deferred path). A snapshot read failure is returned explicitly:
+// nothing is committed, the event stays absent, and a later trigger with the
+// same event id retries the snapshot.
+func (p *Production) CleanupAccount(ctx context.Context, ownerID, cleanupID string, sessionIDs ...string) error {
+	commit, _, err := p.PrepareAccountCleanup(ctx, ownerID, cleanupID)
+	if err != nil {
+		return err
+	}
 	commit(sessionIDs...)
+	return nil
 }
 
-func (p *Production) PrepareAccountCleanup(ctx context.Context, ownerID, cleanupID string) (func(...string), func()) {
+// PrepareAccountCleanup reserves the owner snapshot before revocation. The
+// snapshot's generation-bound or owner-listing read failure is returned
+// explicitly so the caller can abort: nothing is committed (no empty event,
+// never an unbounded sweep), and a same-event retry takes a fresh snapshot.
+func (p *Production) PrepareAccountCleanup(ctx context.Context, ownerID, cleanupID string) (func(...string), func(), error) {
 	if p == nil || ownerID == "" || cleanupID == "" {
-		return func(...string) {}, func() {}
+		return func(...string) {}, func() {}, nil
 	}
 	ctx = context.WithoutCancel(ctx)
 	commitBatches := func(...string) {}
@@ -53,12 +65,8 @@ func (p *Production) PrepareAccountCleanup(ctx context.Context, ownerID, cleanup
 	}
 	key, event, err := p.prepareAccountDeviceSnapshot(ctx, ownerID, cleanupID)
 	if err != nil {
-		// The generation bound or the owner device listing could not be read.
-		// Never commit an empty or unbounded cleanup: roll the reservation back
-		// and leave the event absent so a same-event retry takes a fresh snapshot.
 		rollbackBatches()
-		slog.Warn("account device cleanup snapshot failed; cleanup deferred for same-event retry", "owner", ownerID, "event", cleanupID, "error", err)
-		return func(...string) {}, func() {}
+		return func(...string) {}, func() {}, err
 	}
 	return func(sessionIDs ...string) {
 			if !p.commitAccountDeviceSnapshot(key, event, sessionIDs) {
@@ -73,7 +81,7 @@ func (p *Production) PrepareAccountCleanup(ctx context.Context, ownerID, cleanup
 			if p.rollbackAccountDeviceSnapshot(key, event) {
 				rollbackBatches()
 			}
-		}
+		}, nil
 }
 
 func (p *Production) prepareAccountDeviceSnapshot(ctx context.Context, ownerID, cleanupID string) (accountCleanupKey, *accountCleanupEvent, error) {

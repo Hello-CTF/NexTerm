@@ -50,10 +50,14 @@ type AccountConnectionCloser interface {
 }
 
 // AccountCleanupFunc receives only trusted owner, cleanup event, and revoked session IDs.
-type AccountCleanupFunc func(ctx context.Context, ownerID, cleanupID string, sessionIDs ...string)
+// A snapshot read failure is returned explicitly so the deferred (natural-expiry)
+// path records the failure instead of treating it as a successful cleanup.
+type AccountCleanupFunc func(ctx context.Context, ownerID, cleanupID string, sessionIDs ...string) error
 
 // AccountCleanupPrepareFunc reserves an owner snapshot before revocation; commit and rollback are mutually exclusive.
-type AccountCleanupPrepareFunc func(ctx context.Context, ownerID, cleanupID string) (commit func(sessionIDs ...string), rollback func())
+// A snapshot read failure is returned explicitly so the caller aborts without
+// committing an empty event and can retry with the same event id.
+type AccountCleanupPrepareFunc func(ctx context.Context, ownerID, cleanupID string) (commit func(sessionIDs ...string), rollback func(), err error)
 
 type Config struct {
 	Options    Options

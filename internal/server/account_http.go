@@ -499,7 +499,13 @@ func (s *Server) serveAccountLogout(w http.ResponseWriter, r *http.Request) {
 	err := func() error {
 		s.accountRevocationMu.Lock()
 		defer s.accountRevocationMu.Unlock()
-		commit, rollback := s.prepareAccountCleanup(r.Context(), identity.UserID, identity.SessionID)
+		commit, rollback, prepareErr := s.prepareAccountCleanup(r.Context(), identity.UserID, identity.SessionID)
+		if prepareErr != nil {
+			// The snapshot read failed: abort without revoking so the user can
+			// retry the whole logout with the same event id once it recovers.
+			rollback()
+			return prepareErr
+		}
 		if err := s.accounts.RevokeSession(r.Context(), identity.SessionID); err != nil {
 			rollback()
 			return err
@@ -523,9 +529,13 @@ func (s *Server) serveAccountLogoutAll(w http.ResponseWriter, r *http.Request) {
 		defer s.accountRevocationMu.Unlock()
 		var commit func(...string)
 		rollback := func() {}
+		// The prepare failure aborts the revocation transaction itself: no
+		// session is revoked, and the whole logout-all retries with the same
+		// event id once the snapshot read recovers.
 		sessionIDs, err := s.revokeUserSessions(r.Context(), identity.UserID, "", func() error {
-			commit, rollback = s.prepareAccountCleanup(r.Context(), identity.UserID, "logout-all:"+identity.SessionID)
-			return nil
+			var prepareErr error
+			commit, rollback, prepareErr = s.prepareAccountCleanup(r.Context(), identity.UserID, "logout-all:"+identity.SessionID)
+			return prepareErr
 		})
 		if err != nil {
 			rollback()
@@ -583,7 +593,13 @@ func (s *Server) serveAccountSessionRevoke(w http.ResponseWriter, r *http.Reques
 	err := func() error {
 		s.accountRevocationMu.Lock()
 		defer s.accountRevocationMu.Unlock()
-		commit, rollback := s.prepareAccountCleanup(r.Context(), identity.UserID, sessionID)
+		commit, rollback, prepareErr := s.prepareAccountCleanup(r.Context(), identity.UserID, sessionID)
+		if prepareErr != nil {
+			// The snapshot read failed: abort without revoking so the revoke
+			// retries with the same event id once the read recovers.
+			rollback()
+			return prepareErr
+		}
 		if err := s.accounts.RevokeUserSession(r.Context(), identity.UserID, sessionID); err != nil {
 			rollback()
 			return err
@@ -612,12 +628,17 @@ func (s *Server) cleanupAccountLocked(ctx context.Context, ownerID, cleanupID st
 	if s.accountCleanup == nil || ownerID == "" || cleanupID == "" {
 		return
 	}
-	s.accountCleanup(context.WithoutCancel(ctx), ownerID, cleanupID, sessionIDs...)
+	// The deferred (natural-expiry) path records a snapshot read failure as an
+	// error instead of treating the cleanup as done; the event stays absent so
+	// the next revalidation of the same session retries it.
+	if err := s.accountCleanup(context.WithoutCancel(ctx), ownerID, cleanupID, sessionIDs...); err != nil {
+		s.logger.Error("account cleanup failed; same-event retry remains available", "owner", ownerID, "event", cleanupID, "error", err)
+	}
 }
 
-func (s *Server) prepareAccountCleanup(ctx context.Context, ownerID, cleanupID string) (func(...string), func()) {
+func (s *Server) prepareAccountCleanup(ctx context.Context, ownerID, cleanupID string) (func(...string), func(), error) {
 	if s.accountCleanupPrepare == nil {
-		return func(...string) {}, func() {}
+		return func(...string) {}, func() {}, nil
 	}
 	return s.accountCleanupPrepare(context.WithoutCancel(ctx), ownerID, cleanupID)
 }

@@ -239,7 +239,10 @@ func TestProductionAccountCleanupPreparedSnapshotExcludesNewSessions(t *testing.
 	application := &Production{Services: ProductionServices{Sessions: rig.manager}}
 	owner := ipc.WithUserID(t.Context(), "owner-a")
 	oldSession, oldTab := rig.open(t, owner, session.Asset{ID: "device/old", Kind: session.KindDevice})
-	commit, _ := application.PrepareAccountCleanup(context.Background(), "owner-a", "logout-all:login-1")
+	commit, _, err := application.PrepareAccountCleanup(context.Background(), "owner-a", "logout-all:login-1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	newSession, newTab := rig.open(t, owner, session.Asset{ID: "device/new", Kind: session.KindDevice})
 
 	commit("login-1", "login-2")
@@ -259,7 +262,10 @@ func TestProductionAccountCleanupRollbackAllowsRetry(t *testing.T) {
 	application := &Production{Services: ProductionServices{Sessions: rig.manager}}
 	owner := ipc.WithUserID(t.Context(), "owner-a")
 	connected, tab := rig.open(t, owner, session.Asset{ID: "device/retry", Kind: session.KindDevice})
-	commit, rollback := application.PrepareAccountCleanup(context.Background(), "owner-a", "login-retry")
+	commit, rollback, err := application.PrepareAccountCleanup(context.Background(), "owner-a", "login-retry")
+	if err != nil {
+		t.Fatal(err)
+	}
 	rollback()
 	commit("login-retry")
 	requireAccountCleanupTab(t, owner, rig.manager, tab.ID, true)
@@ -303,8 +309,11 @@ func TestProductionAccountCleanupSnapshotReadFailureRollsBackAndRetries(t *testi
 			connected, tab := rig.open(t, owner, session.Asset{ID: "device/a", Kind: session.KindDevice})
 
 			test.inject(&application.accountCleanup)
-			// The failed prepare must not commit an event and must not touch any device.
-			application.CleanupAccount(context.Background(), "owner-a", "login-a", "login-a")
+			// The failed prepare must return the read failure explicitly, must
+			// not commit an event, and must not touch any device.
+			if err := application.CleanupAccount(context.Background(), "owner-a", "login-a", "login-a"); err == nil {
+				t.Fatal("CleanupAccount swallowed the snapshot read failure")
+			}
 			requireAccountCleanupTab(t, owner, rig.manager, tab.ID, true)
 			requireAccountCleanupStatus(t, owner, rig.manager, connected.ID, session.StatusConnected)
 

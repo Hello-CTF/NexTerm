@@ -719,11 +719,12 @@ func TestAIDualAccountTakeoverOverRPC(t *testing.T) {
 
 	// Documented boundary: the gateway-only caller must fail closed here, but
 	// the takeover manager currently accepts identity-less ownership on an
-	// unattended tab (the session snapshot escalates to open access). Filed
-	// with the tower (gateway identity-less takeover enter); the fix belongs
-	// to internal/ai/takeover, outside M17 scope. Re-enable once it lands.
+	// unattended tab (the session snapshot escalates to open access). The fix
+	// is owned by M27/M26/M6 (takeover owner check); once those land, enable
+	// this subtest and prove the 403, the absent banner, and the absence of a
+	// persistent empty-owner ownership.
 	t.Run("gatewayEnterFailsClosed", func(t *testing.T) {
-		t.Skip("known defect filed to tower: gateway caller can enter takeover on an unattended tab; fix owned by internal/ai/takeover")
+		t.Skip("blocked on M27/M26/M6 takeover owner-check fixes; then prove 403, no banner, no persistent empty-owner")
 		gatewayEnter := fixture.gatewayRPC(t, "ai_takeover_enter", map[string]any{"tabId": tab.ID})
 		requireAIDualFailed(t, gatewayEnter, "gateway ai_takeover_enter")
 		requireAIDualForbiddenCode(t, gatewayEnter, "gateway ai_takeover_enter")

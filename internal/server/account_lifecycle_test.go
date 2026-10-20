@@ -18,10 +18,11 @@ type accountCleanupRecorder struct {
 	owners []string
 }
 
-func (r *accountCleanupRecorder) record(_ context.Context, ownerID, _ string, _ ...string) {
+func (r *accountCleanupRecorder) record(_ context.Context, ownerID, _ string, _ ...string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.owners = append(r.owners, ownerID)
+	return nil
 }
 
 func (r *accountCleanupRecorder) snapshot() []string {
@@ -56,8 +57,8 @@ func newAccountCleanupFixture(t *testing.T, cleanup AccountCleanupFunc) *account
 	accounts := account.New(database.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
 	config.Accounts = accounts
 	config.AccountCleanup = cleanup
-	config.AccountCleanupPrepare = func(ctx context.Context, ownerID, cleanupID string) (func(...string), func()) {
-		return func(sessionIDs ...string) { cleanup(ctx, ownerID, cleanupID, sessionIDs...) }, func() {}
+	config.AccountCleanupPrepare = func(ctx context.Context, ownerID, cleanupID string) (func(...string), func(), error) {
+		return func(sessionIDs ...string) { _ = cleanup(ctx, ownerID, cleanupID, sessionIDs...) }, func() {}, nil
 	}
 	server, httpServer := newTestHTTP(t, config)
 	return &accountFixture{
