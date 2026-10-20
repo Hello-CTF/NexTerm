@@ -9,27 +9,59 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/dbtest"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
+	"gorm.io/gorm"
 )
 
-// raceInsertUserDEKEnvelopes releases two racers at the same instant; the
-// account write mutex serializes their INSERTs, and the unique constraint on
-// user_id decides the loser with ErrDEKEnvelopesExist — exactly one success
-// and one conflict regardless of driver RowsAffected/clientFoundRows
-// semantics.
-func raceInsertUserDEKEnvelopes(t *testing.T, a *Accounts, userID string, first, second *vault.UserDEKEnvelopes) (successes, conflicts int) {
+// gateBeforeCreate pauses every CREATE on the user_dek table until both racers
+// have arrived, so the two INSERTs hit the unique constraint at the same
+// instant. Setup creates on other tables pass through untouched.
+func gateBeforeCreate(t *testing.T, db *gorm.DB, arrived chan<- struct{}, release <-chan struct{}) {
 	t.Helper()
+	db.Callback().Create().Before("gorm:create").Register("test:dek_gate", func(tx *gorm.DB) {
+		if tx.Statement.Table != "user_dek" {
+			return
+		}
+		arrived <- struct{}{}
+		<-release
+	})
+	t.Cleanup(func() {
+		db.Callback().Create().Remove("test:dek_gate")
+	})
+}
+
+// raceInsertUserDEKEnvelopes runs the same envelope upload through two
+// independent Accounts instances (each with its own write mutex, so nothing
+// serializes the racers before the database) and releases them at the same
+// instant through the gate above. The unique constraint on user_id alone must
+// decide the loser with ErrDEKEnvelopesExist — exactly one success and one
+// conflict, never two successes and never a RowsAffected/clientFoundRows
+// dependent outcome.
+func raceInsertUserDEKEnvelopes(t *testing.T, first, second *Accounts, userID string, firstEnvelope, secondEnvelope *vault.UserDEKEnvelopes) (successes, conflicts int) {
+	t.Helper()
+	arrived := make(chan struct{}, 2)
+	release := make(chan struct{})
+	gateBeforeCreate(t, first.db, arrived, release)
+
 	start := make(chan struct{})
 	results := make(chan error, 2)
 	var wg sync.WaitGroup
-	for _, envelopes := range []*vault.UserDEKEnvelopes{first, second} {
+	racers := []struct {
+		accounts  *Accounts
+		envelopes *vault.UserDEKEnvelopes
+	}{{first, firstEnvelope}, {second, secondEnvelope}}
+	for _, racer := range racers {
 		wg.Add(1)
-		go func(envelopes *vault.UserDEKEnvelopes) {
+		go func(accounts *Accounts, envelopes *vault.UserDEKEnvelopes) {
 			defer wg.Done()
 			<-start
-			results <- a.InsertUserDEKEnvelopes(context.Background(), userID, envelopes)
-		}(envelopes)
+			results <- accounts.InsertUserDEKEnvelopes(context.Background(), userID, envelopes)
+		}(racer.accounts, racer.envelopes)
 	}
 	close(start)
+	for range 2 {
+		<-arrived
+	}
+	close(release)
 	wg.Wait()
 	close(results)
 	for err := range results {
@@ -44,15 +76,15 @@ func raceInsertUserDEKEnvelopes(t *testing.T, a *Accounts, userID string, first,
 	return successes, conflicts
 }
 
-// Two concurrent first uploads with identical content: the unique constraint
-// on user_id decides the winner — exactly one success and one
-// ErrDEKEnvelopesExist, never two successes, regardless of driver
-// RowsAffected/clientFoundRows semantics.
+// Two concurrent first uploads with identical content through independent
+// connections: exactly one success and one ErrDEKEnvelopesExist, never two
+// successes, regardless of driver RowsAffected/clientFoundRows semantics.
 func TestInsertUserDEKEnvelopesConcurrentIdenticalBarrier(t *testing.T) {
 	database := dbtest.NewFixture(t).OpenStore(t)
-	a := New(database.GORM())
+	first := New(database.GORM())
+	second := New(database.GORM())
 	ctx := context.Background()
-	user, err := a.CreateUser(ctx, "race-identical", "", "synthetic-password-1")
+	user, err := first.CreateUser(ctx, "race-identical", "", "synthetic-password-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,11 +93,11 @@ func TestInsertUserDEKEnvelopesConcurrentIdenticalBarrier(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	successes, conflicts := raceInsertUserDEKEnvelopes(t, a, user.ID, envelopes, envelopes)
+	successes, conflicts := raceInsertUserDEKEnvelopes(t, first, second, user.ID, envelopes, envelopes)
 	if successes != 1 || conflicts != 1 {
 		t.Fatalf("identical concurrent upload: successes = %d, conflicts = %d, want exactly 1 and 1", successes, conflicts)
 	}
-	stored, err := a.GetUserDEKEnvelopes(ctx, user.ID)
+	stored, err := first.GetUserDEKEnvelopes(ctx, user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,52 +108,54 @@ func TestInsertUserDEKEnvelopesConcurrentIdenticalBarrier(t *testing.T) {
 		stored.RecoveryHash != envelopes.RecoveryHash {
 		t.Fatal("stored envelopes mismatch: the winner's content changed")
 	}
-	if epoch := a.Epoch(user.ID); epoch != 0 {
+	if epoch := first.Epoch(user.ID); epoch != 0 {
 		t.Fatalf("epoch moved to %d, want 0 (no revocation)", epoch)
 	}
 }
 
-// Two concurrent first uploads with different content: exactly one success and
-// one conflict, and the stored row is one complete submitted set, never a mix.
+// Two concurrent first uploads with different content through independent
+// connections: exactly one success and one conflict, and the stored row is one
+// complete submitted set, never a mix.
 func TestInsertUserDEKEnvelopesConcurrentDifferentBarrier(t *testing.T) {
 	database := dbtest.NewFixture(t).OpenStore(t)
-	a := New(database.GORM())
+	first := New(database.GORM())
+	second := New(database.GORM())
 	ctx := context.Background()
-	user, err := a.CreateUser(ctx, "race-different", "", "synthetic-password-1")
+	user, err := first.CreateUser(ctx, "race-different", "", "synthetic-password-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, first, _, err := vault.GenerateUserDEKEnvelopes("synthetic-password-1")
+	_, firstEnvelope, _, err := vault.GenerateUserDEKEnvelopes("synthetic-password-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, second, _, err := vault.GenerateUserDEKEnvelopes("synthetic-password-2")
+	_, secondEnvelope, _, err := vault.GenerateUserDEKEnvelopes("synthetic-password-2")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	successes, conflicts := raceInsertUserDEKEnvelopes(t, a, user.ID, first, second)
+	successes, conflicts := raceInsertUserDEKEnvelopes(t, first, second, user.ID, firstEnvelope, secondEnvelope)
 	if successes != 1 || conflicts != 1 {
 		t.Fatalf("different concurrent upload: successes = %d, conflicts = %d, want exactly 1 and 1", successes, conflicts)
 	}
-	stored, err := a.GetUserDEKEnvelopes(ctx, user.ID)
+	stored, err := first.GetUserDEKEnvelopes(ctx, user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	matchesFirst := bytes.Equal(stored.DEKEnvelope, first.DEKEnvelope) &&
-		bytes.Equal(stored.KDFSalt, first.KDFSalt) &&
-		stored.KDFParams == first.KDFParams &&
-		bytes.Equal(stored.RecoveryEnvelope, first.RecoveryEnvelope) &&
-		stored.RecoveryHash == first.RecoveryHash
-	matchesSecond := bytes.Equal(stored.DEKEnvelope, second.DEKEnvelope) &&
-		bytes.Equal(stored.KDFSalt, second.KDFSalt) &&
-		stored.KDFParams == second.KDFParams &&
-		bytes.Equal(stored.RecoveryEnvelope, second.RecoveryEnvelope) &&
-		stored.RecoveryHash == second.RecoveryHash
+	matchesFirst := bytes.Equal(stored.DEKEnvelope, firstEnvelope.DEKEnvelope) &&
+		bytes.Equal(stored.KDFSalt, firstEnvelope.KDFSalt) &&
+		stored.KDFParams == firstEnvelope.KDFParams &&
+		bytes.Equal(stored.RecoveryEnvelope, firstEnvelope.RecoveryEnvelope) &&
+		stored.RecoveryHash == firstEnvelope.RecoveryHash
+	matchesSecond := bytes.Equal(stored.DEKEnvelope, secondEnvelope.DEKEnvelope) &&
+		bytes.Equal(stored.KDFSalt, secondEnvelope.KDFSalt) &&
+		stored.KDFParams == secondEnvelope.KDFParams &&
+		bytes.Equal(stored.RecoveryEnvelope, secondEnvelope.RecoveryEnvelope) &&
+		stored.RecoveryHash == secondEnvelope.RecoveryHash
 	if !matchesFirst && !matchesSecond {
 		t.Fatal("stored envelopes are a mix of the two submitted sets, not one complete winner")
 	}
-	if epoch := a.Epoch(user.ID); epoch != 0 {
+	if epoch := first.Epoch(user.ID); epoch != 0 {
 		t.Fatalf("epoch moved to %d, want 0 (no revocation)", epoch)
 	}
 }

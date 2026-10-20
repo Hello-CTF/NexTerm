@@ -55,9 +55,11 @@ func (a *Accounts) InsertUserDEKEnvelopes(ctx context.Context, userID string, en
 	// the unique-conflict error is the deterministic conflict signal — never
 	// RowsAffected or clientFoundRows semantics. The busy retry also covers
 	// SQLite's single-writer contention so a concurrent loser reaches the
-	// unique error instead of a transient lock error.
+	// unique error instead of a transient lock error. Skipping the default
+	// transaction keeps a single-row insert atomic while avoiding SQLite's
+	// read-lock-to-write escalation deadlock between concurrent racers.
 	err := a.withBusyRetry(ctx, func() error {
-		if err := a.db.WithContext(ctx).Create(row).Error; err != nil {
+		if err := a.db.WithContext(ctx).Session(&gorm.Session{SkipDefaultTransaction: true}).Create(row).Error; err != nil {
 			if store.IsUniqueErr(err) {
 				return ipc.WrapError(ipc.CodeBadParam, ErrDEKEnvelopesExist.Error(), ErrDEKEnvelopesExist)
 			}
