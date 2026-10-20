@@ -138,6 +138,7 @@ type attachedTabDTO struct {
 	Title          string  `json:"title,omitempty"`
 	Shell          string  `json:"shell"`
 	FallbackNotice string  `json:"fallbackNotice,omitempty"`
+	AttachmentID   uint64  `json:"attachmentId,omitempty"`
 }
 
 type renameTerminalRequest struct {
@@ -205,6 +206,9 @@ type terminalStreamAckRequest struct {
 	TabID     string `json:"tabId"`
 	ChannelID string `json:"channelId"`
 	ClientID  string `json:"clientId"`
+	// AttachmentID is the unique incarnation of this attachment, established
+	// at attach time; a stale report from a previous incarnation is rejected.
+	AttachmentID uint64 `json:"attachmentId"`
 	// AcceptedBytes is the client's absolute accepted stream offset for this
 	// channel; it opens the recovery ring's retention floor. The floor only
 	// advances.
@@ -386,11 +390,11 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "session_open_line_tab", func(ctx context.Context, call *ipc.Call, input openTerminalRequest) (string, error) {
+			return ipc.Register(dispatcher, "session_open_line_tab", func(ctx context.Context, call *ipc.Call, input openTerminalRequest) (attachedTabDTO, error) {
 				ctx = productionSessionRequestContext(ctx)
 				bridged, err := s.bridge.bridge(call.Channel.ID)
 				if err != nil {
-					return "", terminalIPCError(err)
+					return attachedTabDTO{}, terminalIPCError(err)
 				}
 				info, err := s.sessions.OpenTabFor(context.WithoutCancel(ctx), session.OpenTabOptions{
 					SessionID: input.SessionID, ClientID: call.ClientID, ChannelID: call.Channel.ID,
@@ -400,8 +404,9 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					if bridged {
 						s.bridge.Unbridge(call.Channel.ID)
 					}
+					return attachedTabDTO{}, terminalIPCError(err)
 				}
-				return info.ID, terminalIPCError(err)
+				return attachedSessionTab(info), nil
 			})
 		},
 		func() error {
@@ -643,8 +648,20 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			// RPC. The caller must own the tab and be its controller.
 			return ipc.Register(dispatcher, "terminal_stream_ack", func(ctx context.Context, call *ipc.Call, input terminalStreamAckRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
-				client := gridRequestClient(call.ClientID, input.ClientID)
-				return nil, terminalIPCError(s.sessions.StreamAckFor(ctx, input.TabID, input.ChannelID, client, input.AcceptedBytes))
+				// The trusted caller is bound to the attachment: when both the
+				// environment and the payload name a caller, they must agree; a
+				// payload cannot override the environment caller.
+				if call.ClientID != "" && input.ClientID != "" && call.ClientID != input.ClientID {
+					return nil, terminalIPCError(session.ErrForbidden)
+				}
+				client := call.ClientID
+				if client == "" {
+					client = input.ClientID
+				}
+				if client == "" {
+					return nil, terminalIPCError(session.ErrForbidden)
+				}
+				return nil, terminalIPCError(s.sessions.StreamAckFor(ctx, input.TabID, input.ChannelID, client, input.AttachmentID, input.AcceptedBytes))
 			})
 		},
 		func() error {
@@ -1082,6 +1099,7 @@ func attachedSessionTab(info session.TabInfo) attachedTabDTO {
 		TabID: info.ID, SessionID: info.SessionID, Cols: info.Cols, Rows: info.Rows,
 		Controller: nullableProductionString(info.Controller), Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
 		Retainable: info.Retainable, Ephemeral: info.Ephemeral, Encoding: info.Encoding, Title: info.Title, Shell: string(info.Shell), FallbackNotice: info.FallbackNotice,
+		AttachmentID: info.AttachmentID,
 	}
 }
 

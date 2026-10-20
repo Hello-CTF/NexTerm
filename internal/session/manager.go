@@ -39,6 +39,7 @@ type Manager struct {
 	channelIncarnations    map[string]uint64
 	channelOwners          map[string]channelOwnerRegistration
 	channelOwnerGeneration uint64
+	nextAttachmentId       uint64
 	sessionOwners          map[string]string
 	tabOwners              map[string]string
 	controlOwners          map[*recordingControlQueue]string

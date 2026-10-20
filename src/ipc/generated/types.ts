@@ -568,5 +568,6 @@ export type TerminalStreamAckRequest = {
   tabId: string;
   channelId: string;
   clientId: string;
+  attachmentId: number;
   acceptedBytes: number;
 };

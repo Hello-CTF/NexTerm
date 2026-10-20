@@ -858,7 +858,7 @@ func TestRecoverChannelForFloorStallsBeforeDelayedRPC(t *testing.T) {
 	const acceptedB = 16 << 20
 	// B reports its accepted offset through the typed control path: the floor
 	// opens at 16 MiB without waiting for the pause/recover RPCs.
-	if err := manager.StreamAckFor(context.Background(), info.ID, "b-1", "client-b", acceptedB); err != nil {
+	if err := manager.StreamAckFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), acceptedB); err != nil {
 		t.Fatal(err)
 	}
 

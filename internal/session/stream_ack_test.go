@@ -7,6 +7,22 @@ import (
 	"testing"
 )
 
+// attachmentIdFor returns the current incarnation of the channel's attachment.
+func attachmentIdFor(t *testing.T, manager *Manager, tabID, channelID string) uint64 {
+	t.Helper()
+	tab, err := manager.Tab(tabID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab.mu.Lock()
+	defer tab.mu.Unlock()
+	subscriber, ok := tab.subscribers[channelID]
+	if !ok {
+		t.Fatalf("channel %s not attached", channelID)
+	}
+	return subscriber.attachmentId
+}
+
 // An out-of-order ACK must never regress the retention floor: the floor is
 // monotonic per channel, so a stale report is ignored.
 func TestStreamAckFloorIsMonotonic(t *testing.T) {
@@ -35,12 +51,12 @@ func TestStreamAckFloorIsMonotonic(t *testing.T) {
 		}
 	}
 
-	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", 8<<20); err != nil {
+	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), 8<<20); err != nil {
 		t.Fatal(err)
 	}
 	// A newer request completes first, then an older one lands late: the floor
 	// must stay at the higher offset.
-	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", 4<<20); err != nil {
+	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), 4<<20); err != nil {
 		t.Fatal(err)
 	}
 	if got := tab.recovery.floor; got != 8<<20 {
@@ -84,10 +100,10 @@ func TestStreamAckDualChannelIndependentOffsets(t *testing.T) {
 		}
 	}
 
-	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", 8<<20); err != nil {
+	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), 8<<20); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.StreamAckFor(context.Background(), info.ID, "b-1", "client-a", 4<<20); err != nil {
+	if err := manager.StreamAckFor(context.Background(), info.ID, "b-1", "client-a", attachmentIdFor(t, manager, info.ID, "b-1"), 4<<20); err != nil {
 		t.Fatal(err)
 	}
 	if got := tab.subscribers["a-1"].episodeFloor; got != 8<<20 {
@@ -163,7 +179,7 @@ func TestStreamAckDoesNotTriggerUserInputHook(t *testing.T) {
 	hookCalls := 0
 	manager.SetUserInputHook(func(string) { hookCalls++ })
 
-	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", 1<<20); err != nil {
+	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), 1<<20); err != nil {
 		t.Fatal(err)
 	}
 	if hookCalls != 0 {
@@ -196,7 +212,7 @@ func TestStreamAckCrossClientChannelForbidden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = manager.StreamAckFor(context.Background(), info.ID, "b-1", "client-a", 8<<20)
+	err = manager.StreamAckFor(context.Background(), info.ID, "b-1", "client-a", attachmentIdFor(t, manager, info.ID, "b-1"), 8<<20)
 	if !errors.Is(err, ErrForbidden) {
 		t.Fatalf("cross-client ACK = %v, want ErrForbidden", err)
 	}
@@ -215,7 +231,7 @@ func TestStreamAckUnknownChannelForbidden(t *testing.T) {
 	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
 		t.Fatal(err)
 	}
-	err = manager.StreamAckFor(context.Background(), info.ID, "nope", "client-a", 8<<20)
+	err = manager.StreamAckFor(context.Background(), info.ID, "nope", "client-a", 0, 8<<20)
 	if !errors.Is(err, ErrTabNotFound) {
 		t.Fatalf("unknown-channel ACK = %v, want ErrTabNotFound", err)
 	}
@@ -259,7 +275,7 @@ func TestStreamAckObserverOwnChannelFloor(t *testing.T) {
 		}
 	}
 	const acceptedB = 16 << 20
-	if err := manager.StreamAckFor(context.Background(), info.ID, "b-1", "client-b", acceptedB); err != nil {
+	if err := manager.StreamAckFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), acceptedB); err != nil {
 		t.Fatalf("observer own-channel ACK = %v, want nil", err)
 	}
 	if got := tab.subscribers["b-1"].episodeFloor; got != acceptedB {
@@ -282,7 +298,7 @@ func TestStreamAckNegativeRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", -1)
+	err = manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), -1)
 	if !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("negative ACK = %v, want ErrInvalidOptions", err)
 	}
@@ -305,7 +321,7 @@ func TestStreamAckFutureClampedToFlushed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", 64<<20); err != nil {
+	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), 64<<20); err != nil {
 		t.Fatal(err)
 	}
 	if got := tab.subscribers["a-1"].episodeFloor; got != 0 {
@@ -362,7 +378,7 @@ func TestStreamAckLateStaleACKIgnored(t *testing.T) {
 			t.Fatalf("chunk %d mismatch", i)
 		}
 	}
-	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", 8<<20); err != nil {
+	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), 8<<20); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.ResumeChannelFor(context.Background(), "a-1"); err != nil {
@@ -372,7 +388,7 @@ func TestStreamAckLateStaleACKIgnored(t *testing.T) {
 		t.Fatalf("floor after resume = %d, want -1 (cleared)", got)
 	}
 	// A late stale ACK from before the resume must not reopen the old floor.
-	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", 4<<20); err != nil {
+	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", attachmentIdFor(t, manager, info.ID, "a-1"), 4<<20); err != nil {
 		t.Fatal(err)
 	}
 	if got := tab.recovery.floor; got != -1 {
@@ -380,5 +396,68 @@ func TestStreamAckLateStaleACKIgnored(t *testing.T) {
 	}
 	if got := tab.subscribers["a-1"].floorHighWater; got != 8<<20 {
 		t.Fatalf("floorHighWater = %d, want 8 MiB (unchanged)", got)
+	}
+}
+
+// A late ACK from a previous incarnation of the same channel is rejected: the
+// attachmentId is bound to the current incarnation, so an old report can
+// never reopen the floor or suppress a new lower-but-real offset.
+func TestStreamAckReattachOldIncarnationRejected(t *testing.T) {
+	manager, connector, _, connected := openOpenTestSession(t, KindLocal)
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+		t.Fatal(err)
+	}
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel := connector.transport(0).channel(0)
+	receiver := bindTestReceiver(t, manager, "a-1")
+	drainAttachHeader(t, receiver)
+	for i := 0; i < 128; i++ {
+		chunk := bytes.Repeat([]byte{byte('a' + i%26)}, 64<<10)
+		if err := channel.emit(chunk); err != nil {
+			t.Fatal(err)
+		}
+		if got := readFramesUntil(t, receiver, len(chunk)); !bytes.Equal(got, chunk) {
+			t.Fatalf("chunk %d mismatch", i)
+		}
+	}
+	oldAttachmentId := attachmentIdFor(t, manager, info.ID, "a-1")
+
+	// Re-attach the same channel: a new incarnation takes over.
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+		t.Fatal(err)
+	}
+	newAttachmentId := attachmentIdFor(t, manager, info.ID, "a-1")
+	if newAttachmentId == oldAttachmentId {
+		t.Fatal("re-attach did not create a new incarnation")
+	}
+
+	// The old incarnation's ACK is rejected, whether it arrives before or
+	// after a new-incarnation ACK.
+	err = manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", oldAttachmentId, 8<<20)
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("old-incarnation ACK = %v, want ErrForbidden", err)
+	}
+	if got := tab.recovery.floor; got != -1 {
+		t.Fatalf("floor after old-incarnation ACK = %d, want -1 (rejected)", got)
+	}
+	if err := manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", newAttachmentId, 4<<20); err != nil {
+		t.Fatal(err)
+	}
+	if got := tab.recovery.floor; got != 4<<20 {
+		t.Fatalf("floor after new-incarnation ACK = %d, want 4 MiB (accepted)", got)
+	}
+	err = manager.StreamAckFor(context.Background(), info.ID, "a-1", "client-a", oldAttachmentId, 8<<20)
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("late old-incarnation ACK = %v, want ErrForbidden", err)
+	}
+	if got := tab.recovery.floor; got != 4<<20 {
+		t.Fatalf("floor after late old-incarnation ACK = %d, want 4 MiB (unchanged)", got)
 	}
 }

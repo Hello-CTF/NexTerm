@@ -30,6 +30,10 @@ type subscriber struct {
 	producer *hub.Producer
 	co       *outCoalescer
 	paused   bool
+	// attachmentId is the unique incarnation of this attachment, established
+	// at attach time and bound to the ACK and the floor high-water, so a late
+	// report from a previous incarnation of the same channel is rejected.
+	attachmentId uint64
 	// flushedOffset is the absolute stream offset (recovery-ring coordinates)
 	// of the next byte to flush to this subscriber. It advances with every
 	// fanout enqueue, so a saturated client's refused suffix is
@@ -802,8 +806,10 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	if tab.recovery != nil {
 		flushedOffset = tab.recovery.currentOffset()
 	}
+	m.nextAttachmentId++
+	attachmentId := m.nextAttachmentId
 	tab.subscribers[options.ChannelID] = subscriber{
-		client: client, producer: producer, co: co, flushedOffset: flushedOffset, episodeFloor: -1, floorHighWater: -1,
+		client: client, producer: producer, co: co, attachmentId: attachmentId, flushedOffset: flushedOffset, episodeFloor: -1, floorHighWater: -1,
 	}
 	if tab.controller == "" {
 		if tab.controlled && tab.grid != nil {
@@ -818,6 +824,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	}
 	m.attachSubscriberOutput(tab, options.ChannelID, incarnation, producer, co)
 	info := tab.infoLocked()
+	info.AttachmentID = attachmentId
 	event := tab.controlEventLocked()
 	tab.mu.Unlock()
 	m.mu.Unlock()
@@ -1229,24 +1236,29 @@ func parseStreamAck(data []byte) (int64, bool) {
 }
 
 // StreamAckFor applies the client's accepted-offset ACK to the retention
-// floor of one of its channels. The channel must be attached to the tab and
-// its attached client must match the caller, so an ACK can never be routed to
-// another client's channel or to an unknown channel; a legitimate observer
-// can ACK its own channel and establish its floor. The offset must be
-// non-negative and is clamped to the channel's flushed offset, and the floor
-// only advances: a stale or out-of-order report can never regress it.
-func (m *Manager) StreamAckFor(ctx context.Context, tabID, channelID, client string, acceptedBytes int64) error {
+// floor of one of its channels. The channel must be attached to the tab, its
+// attached client must match the caller, and the report's attachmentId must
+// match the channel's current incarnation — a late report from a previous
+// incarnation of the same channel is rejected, never reopening the floor or
+// suppressing a new lower-but-real offset. The offset must be non-negative
+// and is clamped to the channel's flushed offset, and the floor only
+// advances. The lookup, the client/incarnation/offset checks, and the floor
+// write are atomic in one critical section for the same attachment.
+func (m *Manager) StreamAckFor(ctx context.Context, tabID, channelID, client string, attachmentID uint64, acceptedBytes int64) error {
 	tab, err := m.TabFor(ctx, tabID)
 	if err != nil {
 		return err
 	}
 	tab.mu.Lock()
+	defer tab.mu.Unlock()
 	subscriber, ok := tab.subscribers[channelID]
-	tab.mu.Unlock()
 	if !ok {
 		return ErrTabNotFound
 	}
 	if subscriber.client != clientID(client) {
+		return ErrForbidden
+	}
+	if subscriber.attachmentId != attachmentID {
 		return ErrForbidden
 	}
 	if acceptedBytes < 0 {
@@ -1255,9 +1267,7 @@ func (m *Manager) StreamAckFor(ctx context.Context, tabID, channelID, client str
 	if acceptedBytes > subscriber.flushedOffset {
 		acceptedBytes = subscriber.flushedOffset
 	}
-	tab.mu.Lock()
 	tab.setEpisodeFloorLocked(channelID, acceptedBytes)
-	tab.mu.Unlock()
 	return nil
 }
 

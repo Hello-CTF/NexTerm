@@ -220,6 +220,9 @@ type TabInfo struct {
 	LastOutputAt    int64  `json:"lastOutputAt,omitempty"`
 	LastOutputMSAgo int64  `json:"-"`
 	FallbackNotice  string `json:"-"`
+	// AttachmentID is the unique incarnation of this attachment, established
+	// at attach time and bound to the ACK and the floor high-water.
+	AttachmentID uint64 `json:"attachmentId,omitempty"`
 }
 
 func (t TabInfo) MarshalJSON() ([]byte, error) {
