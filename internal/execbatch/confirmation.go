@@ -42,7 +42,7 @@ type ConfirmationRequiredDetail struct {
 	BatchID                  string               `json:"batchId"`
 	TargetSetHash            string               `json:"targetSetHash"`
 	CommandHash              string               `json:"commandHash"`
-	RequiredEnvironmentNames []string             `json:"requiredEnvironmentNames"`
+	RequiredEnvironmentNames []string             `json:"requiredEnvironmentNames,omitempty"`
 	ProductionTargets        []ConfirmationTarget `json:"productionTargets"`
 }
 
