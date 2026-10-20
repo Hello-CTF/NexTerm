@@ -956,6 +956,16 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "production_settings_get": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
+    "production_settings_set": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
     "redis_command": {
       nested: false,
       channel: false,
@@ -1783,6 +1793,8 @@ export const ipcContractManifest = {
     "mount_remove",
     "preview_share_active",
     "preview_share_create",
+    "production_settings_get",
+    "production_settings_set",
     "redis_command",
     "redis_inspect",
     "redis_scan",

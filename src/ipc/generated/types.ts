@@ -66,6 +66,7 @@ export type ConfirmationRequiredDetail = {
   batchId: string;
   targetSetHash: string;
   commandHash: string;
+  requiredEnvironmentNames: string[];
   productionTargets: ConfirmationTarget[];
 };
 
@@ -91,6 +92,7 @@ export type DockerProductionConfirmation = {
   confirmed: boolean;
   targetSetHash: string;
   commandHash: string;
+  environmentNames?: string[];
 };
 
 export type ExecBatch = {
@@ -471,6 +473,7 @@ export type ProductionConfirmation = {
   confirmed: boolean;
   targetSetHash: string;
   commandHash: string;
+  environmentNames?: string[];
 };
 
 export type RemoteHostShareIdentity = {
