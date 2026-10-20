@@ -42,7 +42,10 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
   // while the current owner's list is still in flight.
   const [entries, setEntries] = useState<{ api: SkillsApi; items: SkillEntry[] } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // The list error is tagged the same way: a failure from a previous owner
+  // never renders under the next owner's api, not even on the first
+  // committed frame after a swap.
+  const [errorState, setErrorState] = useState<{ api: SkillsApi; message: string } | null>(null);
 
   // Drafts are tagged the same way: an editor opened for a previous owner
   // is not part of the render under the next owner's api, even before
@@ -60,6 +63,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
   const [busyName, setBusyName] = useState<string | null>(null);
 
   const visibleEntries = entries !== null && entries.api === api ? entries.items : null;
+  const error = errorState !== null && errorState.api === api ? errorState.message : null;
 
   // Latest owner, assigned during render so owner checks see a swap in the
   // same commit — passive effects run too late for this.
@@ -91,20 +95,25 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
   }, [api, setDraft]);
 
   const reload = useCallback(async () => {
+    // A refresh/retry callback retained from a previous owner must not
+    // touch the current owner's load generation or backend: reject the
+    // stale captured api before incrementing the shared generation or
+    // issuing any call.
+    if (apiRef.current !== api) return;
     const gen = ++loadGenRef.current;
     const epoch = epochRef.current;
     setLoading(true);
-    setError(null);
+    setErrorState(null);
     try {
       const next = await api.list();
-      if (!aliveRef.current || gen !== loadGenRef.current || epoch !== epochRef.current) return;
+      if (!aliveRef.current || gen !== loadGenRef.current || epoch !== epochRef.current || apiRef.current !== api) return;
       setEntries({ api, items: next });
     } catch (e) {
-      if (!aliveRef.current || gen !== loadGenRef.current || epoch !== epochRef.current) return;
+      if (!aliveRef.current || gen !== loadGenRef.current || epoch !== epochRef.current || apiRef.current !== api) return;
       setEntries(null);
-      setError(describeError(e));
+      setErrorState({ api, message: describeError(e) });
     } finally {
-      if (aliveRef.current && gen === loadGenRef.current) setLoading(false);
+      if (aliveRef.current && gen === loadGenRef.current && apiRef.current === api) setLoading(false);
     }
   }, [api]);
 
