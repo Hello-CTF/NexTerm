@@ -37,6 +37,10 @@ func kubernetesDiscoveryOutputs() map[string][]byte {
 	}
 }
 
+func dockerDiscoveryOutput() []byte {
+	return []byte("{\"Name\":\"prod\",\"DockerEndpoint\":\"ssh://ops@prod\",\"Current\":true}\n")
+}
+
 func requireInventoryIPCError(t *testing.T, response ipc.Response, code ipc.Code) {
 	t.Helper()
 	if response.OK {
@@ -47,16 +51,57 @@ func requireInventoryIPCError(t *testing.T, response ipc.Response, code ipc.Code
 	}
 }
 
+func newInventoryExecDispatcher(t *testing.T, service *inventoryService) *ipc.Dispatcher {
+	t.Helper()
+	dispatcher := ipc.NewDispatcher()
+	if err := service.registerCommands(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	return dispatcher
+}
+
+func inventoryDockerExecRequest() inventoryTargetExecRequest {
+	return inventoryTargetExecRequest{
+		Kind:      "docker-context",
+		Target:    map[string]any{"type": "context", "name": "prod"},
+		Action:    "exec",
+		Container: "web",
+		Command:   []string{"uname", "-a"},
+	}
+}
+
+func inventoryKubernetesExecRequest() inventoryTargetExecRequest {
+	return inventoryTargetExecRequest{
+		Kind: "kubernetes",
+		Target: map[string]any{
+			"type": "pod", "context": "staging", "namespace": "ops", "pod": "api-0", "container": "app",
+		},
+		Action:  "exec",
+		Command: []string{"uname", "-a"},
+	}
+}
+
+func importDockerContext(t *testing.T, dispatcher *ipc.Dispatcher, ctx context.Context, runner *recordingInventoryRunner) {
+	t.Helper()
+	if runner.outputs == nil {
+		runner.outputs = map[string][]byte{}
+	}
+	runner.outputs["docker context ls --format {{json .}}"] = dockerDiscoveryOutput()
+	keys := []string{"context/prod"}
+	var synced inventorySyncDTO
+	dispatchInventoryTest(t, dispatcher, ctx, "inventory_sync", inventorySyncRequest{Source: store.InventorySourceDockerContext, Keys: &keys}, &synced)
+	if synced.Created != 1 {
+		t.Fatalf("docker context import = %+v", synced)
+	}
+}
+
 func TestInventoryServerKubernetesDiscoveryRequiresAuthorization(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	service, _ := newInventoryTestService(t, false)
 	runner := &recordingInventoryRunner{outputs: kubernetesDiscoveryOutputs()}
 	service.runner = runner
-	denied := ipc.NewDispatcher()
-	if err := service.registerCommands(denied); err != nil {
-		t.Fatal(err)
-	}
+	denied := newInventoryExecDispatcher(t, service)
 	ctx := ipc.WithUserID(context.Background(), "owner-a")
 	response := dispatchInventoryTest(t, denied, ctx, "inventory_discover", inventoryDiscoverRequest{Source: store.InventorySourceKubernetes}, nil)
 	requireInventoryIPCError(t, response, ipc.CodeForbidden)
@@ -67,10 +112,7 @@ func TestInventoryServerKubernetesDiscoveryRequiresAuthorization(t *testing.T) {
 	t.Setenv(inventoryKubeconfigEnv, "1")
 	allowed, _ := newInventoryTestService(t, false)
 	allowed.runner = runner
-	granted := ipc.NewDispatcher()
-	if err := allowed.registerCommands(granted); err != nil {
-		t.Fatal(err)
-	}
+	granted := newInventoryExecDispatcher(t, allowed)
 	var discovery inventoryDiscoveryDTO
 	dispatchInventoryTest(t, granted, ctx, "inventory_discover", inventoryDiscoverRequest{Source: store.InventorySourceKubernetes}, &discovery)
 	if len(discovery.Items) != 2 {
@@ -82,10 +124,7 @@ func TestInventoryDesktopKubernetesDiscoveryUnchanged(t *testing.T) {
 	service, _ := newInventoryTestService(t, true)
 	runner := &recordingInventoryRunner{outputs: kubernetesDiscoveryOutputs()}
 	service.runner = runner
-	dispatcher := ipc.NewDispatcher()
-	if err := service.registerCommands(dispatcher); err != nil {
-		t.Fatal(err)
-	}
+	dispatcher := newInventoryExecDispatcher(t, service)
 	ctx := ipc.WithUserID(context.Background(), "owner-a")
 	var discovery inventoryDiscoveryDTO
 	dispatchInventoryTest(t, dispatcher, ctx, "inventory_discover", inventoryDiscoverRequest{Source: store.InventorySourceKubernetes}, &discovery)
@@ -94,76 +133,189 @@ func TestInventoryDesktopKubernetesDiscoveryUnchanged(t *testing.T) {
 	}
 }
 
-func TestInventoryTargetExecIPC(t *testing.T) {
-	dockerRequest := inventoryTargetExecRequest{
-		Kind:   "docker-context",
-		Target: map[string]any{"type": "context", "name": "prod"},
-		Action: []string{"exec", "web", "true"},
+func TestInventoryTargetExecDockerDesktopRunsAllowlistedExec(t *testing.T) {
+	service, database := newInventoryTestService(t, true)
+	runner := &recordingInventoryRunner{outputs: map[string][]byte{
+		"docker --context prod exec web uname -a": []byte("Linux\n"),
+	}}
+	service.runner = runner
+	dispatcher := newInventoryExecDispatcher(t, service)
+	var result inventoryTargetExecResponse
+	dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", inventoryDockerExecRequest(), &result)
+	if result.Output != "Linux\n" {
+		t.Fatalf("output = %q", result.Output)
 	}
-	kubernetesRequest := inventoryTargetExecRequest{
-		Kind: "kubernetes",
-		Target: map[string]any{
-			"type": "pod", "context": "staging", "namespace": "ops", "pod": "api-0", "container": "app",
-		},
-		Action: []string{"uname", "-a"},
+	want := []string{"docker", "--context", "prod", "exec", "web", "uname", "-a"}
+	if len(runner.calls) != 1 || strings.Join(runner.calls[0], " ") != strings.Join(want, " ") {
+		t.Fatalf("calls = %+v, want %+v", runner.calls, want)
+	}
+	rows, err := database.AuditQuery(context.Background(), store.AuditQuery{Limit: 10})
+	if err != nil || len(rows) != 1 || rows[0].Kind != "inventory_target_exec" {
+		t.Fatalf("exec audit rows = %+v, err=%v", rows, err)
+	}
+}
+
+func TestInventoryTargetExecDockerServerRequiresOwnedImport(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	service, _ := newInventoryTestService(t, false)
+	runner := &recordingInventoryRunner{outputs: map[string][]byte{}}
+	service.runner = runner
+	dispatcher := newInventoryExecDispatcher(t, service)
+	ctxA := ipc.WithUserID(context.Background(), "owner-a")
+	ctxB := ipc.WithUserID(context.Background(), "owner-b")
+
+	response := dispatchInventoryTest(t, dispatcher, ctxA, "inventory_target_exec", inventoryDockerExecRequest(), nil)
+	requireInventoryIPCError(t, response, ipc.CodeForbidden)
+	if len(runner.calls) != 0 {
+		t.Fatalf("unauthorized exec ran commands: %+v", runner.calls)
 	}
 
-	t.Run("docker context target is actionable", func(t *testing.T) {
-		service, _ := newInventoryTestService(t, true)
-		runner := &recordingInventoryRunner{outputs: map[string][]byte{
-			"docker --context prod exec web true": []byte("ok\n"),
-		}}
-		service.runner = runner
-		dispatcher := ipc.NewDispatcher()
-		if err := service.registerCommands(dispatcher); err != nil {
-			t.Fatal(err)
-		}
-		var result inventoryTargetExecResponse
-		dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", dockerRequest, &result)
-		if result.Output != "ok\n" {
-			t.Fatalf("output = %q", result.Output)
-		}
-		want := []string{"docker", "--context", "prod", "exec", "web", "true"}
-		if len(runner.calls) != 1 || strings.Join(runner.calls[0], " ") != strings.Join(want, " ") {
-			t.Fatalf("calls = %+v", runner.calls)
-		}
-	})
+	importDockerContext(t, dispatcher, ctxA, runner)
+	runner.outputs["docker --context prod exec web uname -a"] = []byte("Linux\n")
+	var result inventoryTargetExecResponse
+	dispatchInventoryTest(t, dispatcher, ctxA, "inventory_target_exec", inventoryDockerExecRequest(), &result)
+	if result.Output != "Linux\n" {
+		t.Fatalf("owner exec output = %q", result.Output)
+	}
 
-	t.Run("desktop kubernetes target keeps working without authorization", func(t *testing.T) {
+	before := len(runner.calls)
+	response = dispatchInventoryTest(t, dispatcher, ctxB, "inventory_target_exec", inventoryDockerExecRequest(), nil)
+	requireInventoryIPCError(t, response, ipc.CodeForbidden)
+	if len(runner.calls) != before {
+		t.Fatalf("cross-owner exec ran commands: %+v", runner.calls[before:])
+	}
+}
+
+func TestInventoryTargetExecRejectsHighRiskAndInvalidRequests(t *testing.T) {
+	service, _ := newInventoryTestService(t, true)
+	runner := &recordingInventoryRunner{outputs: map[string][]byte{}}
+	service.runner = runner
+	dispatcher := newInventoryExecDispatcher(t, service)
+	for _, action := range []string{"run", "cp", "context use", "build", "rmi", "push", "restart", ""} {
+		request := inventoryDockerExecRequest()
+		request.Action = action
+		response := dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", request, nil)
+		requireInventoryIPCError(t, response, ipc.CodeBadParam)
+	}
+	noContainer := inventoryDockerExecRequest()
+	noContainer.Container = ""
+	response := dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", noContainer, nil)
+	requireInventoryIPCError(t, response, ipc.CodeBadParam)
+	noCommand := inventoryDockerExecRequest()
+	noCommand.Command = nil
+	response = dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", noCommand, nil)
+	requireInventoryIPCError(t, response, ipc.CodeBadParam)
+	injection := inventoryDockerExecRequest()
+	injection.Container = "--privileged"
+	response = dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", injection, nil)
+	requireInventoryIPCError(t, response, ipc.CodeBadParam)
+	if len(runner.calls) != 0 {
+		t.Fatalf("rejected requests ran commands: %+v", runner.calls)
+	}
+}
+
+func TestInventoryTargetExecDockerServerProductionConfirmation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	service, database := newInventoryTestService(t, false)
+	runner := &recordingInventoryRunner{outputs: map[string][]byte{}}
+	service.runner = runner
+	dispatcher := newInventoryExecDispatcher(t, service)
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	importDockerContext(t, dispatcher, ctx, runner)
+
+	asset, found, err := inventoryAssetByName(database, ctx, "prod")
+	if err != nil || !found {
+		t.Fatalf("imported asset = %+v, found=%v, err=%v", asset, found, err)
+	}
+	tags := "env:production"
+	if _, err := database.AssetUpdate(ctx, asset.ID, store.AssetPatch{Tags: &tags}); err != nil {
+		t.Fatal(err)
+	}
+
+	response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", inventoryDockerExecRequest(), nil)
+	requireInventoryIPCError(t, response, ipc.CodeNeedsConfirm)
+	if response.Error.Detail == nil {
+		t.Fatal("confirmation detail missing")
+	}
+	detailJSON, err := json.Marshal(response.Error.Detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var detail dockerConfirmationRequiredDetail
+	if err := json.Unmarshal(detailJSON, &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.Kind != dockerProductionConfirmationKind || detail.TargetSetHash == "" || detail.CommandHash == "" {
+		t.Fatalf("confirmation detail = %+v", detail)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("unconfirmed exec ran commands: %+v", runner.calls)
+	}
+
+	wrong := inventoryDockerExecRequest()
+	wrong.Confirmation = &dockerProductionConfirmation{Confirmed: true, TargetSetHash: "wrong", CommandHash: "wrong"}
+	response = dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", wrong, nil)
+	requireInventoryIPCError(t, response, ipc.CodeNeedsConfirm)
+
+	runner.outputs["docker --context prod exec web uname -a"] = []byte("Linux\n")
+	confirmed := inventoryDockerExecRequest()
+	confirmed.Confirmation = &dockerProductionConfirmation{Confirmed: true, TargetSetHash: detail.TargetSetHash, CommandHash: detail.CommandHash}
+	var result inventoryTargetExecResponse
+	dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", confirmed, &result)
+	if result.Output != "Linux\n" {
+		t.Fatalf("confirmed exec output = %q", result.Output)
+	}
+
+	rows, err := database.AuditQuery(ctx, store.AuditQuery{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var confirmationAudit, execAudit bool
+	for _, row := range rows {
+		if row.Kind == dockerProductionConfirmationKind {
+			confirmationAudit = true
+		}
+		if row.Kind == "inventory_target_exec" {
+			execAudit = true
+		}
+	}
+	if !confirmationAudit || !execAudit {
+		t.Fatalf("audit rows = %+v", rows)
+	}
+}
+
+func TestInventoryTargetExecKubernetes(t *testing.T) {
+	t.Run("desktop runs without authorization", func(t *testing.T) {
 		service, _ := newInventoryTestService(t, true)
 		runner := &recordingInventoryRunner{outputs: map[string][]byte{
 			"kubectl --context staging exec -n ops api-0 -c app -- uname -a": []byte("Linux\n"),
 		}}
 		service.runner = runner
-		dispatcher := ipc.NewDispatcher()
-		if err := service.registerCommands(dispatcher); err != nil {
-			t.Fatal(err)
-		}
+		dispatcher := newInventoryExecDispatcher(t, service)
 		var result inventoryTargetExecResponse
-		dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", kubernetesRequest, &result)
+		dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", inventoryKubernetesExecRequest(), &result)
 		if result.Output != "Linux\n" {
 			t.Fatalf("output = %q", result.Output)
 		}
 	})
 
-	t.Run("server kubernetes target requires authorization", func(t *testing.T) {
+	t.Run("server requires kubeconfig authorization", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
 		service, _ := newInventoryTestService(t, false)
 		runner := &recordingInventoryRunner{outputs: map[string][]byte{}}
 		service.runner = runner
-		dispatcher := ipc.NewDispatcher()
-		if err := service.registerCommands(dispatcher); err != nil {
-			t.Fatal(err)
-		}
-		response := dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", kubernetesRequest, nil)
+		dispatcher := newInventoryExecDispatcher(t, service)
+		response := dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", inventoryKubernetesExecRequest(), nil)
 		requireInventoryIPCError(t, response, ipc.CodeForbidden)
 		if len(runner.calls) != 0 {
 			t.Fatalf("denied exec ran commands: %+v", runner.calls)
 		}
 	})
 
-	t.Run("server kubernetes target runs once authorized", func(t *testing.T) {
+	t.Run("server runs once authorized", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
 		t.Setenv(inventoryKubeconfigEnv, "1")
@@ -172,53 +324,41 @@ func TestInventoryTargetExecIPC(t *testing.T) {
 			"kubectl --context staging exec -n ops api-0 -c app -- uname -a": []byte("Linux\n"),
 		}}
 		service.runner = runner
-		dispatcher := ipc.NewDispatcher()
-		if err := service.registerCommands(dispatcher); err != nil {
-			t.Fatal(err)
-		}
+		dispatcher := newInventoryExecDispatcher(t, service)
 		var result inventoryTargetExecResponse
-		dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", kubernetesRequest, &result)
+		dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", inventoryKubernetesExecRequest(), &result)
 		if result.Output != "Linux\n" || len(runner.calls) != 1 {
 			t.Fatalf("result = %+v calls = %+v", result, runner.calls)
 		}
 	})
 
-	t.Run("invalid targets are rejected before running", func(t *testing.T) {
-		service, _ := newInventoryTestService(t, true)
+	t.Run("server rejects high-risk actions", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv(inventoryKubeconfigEnv, "1")
+		service, _ := newInventoryTestService(t, false)
 		runner := &recordingInventoryRunner{outputs: map[string][]byte{}}
 		service.runner = runner
-		dispatcher := ipc.NewDispatcher()
-		if err := service.registerCommands(dispatcher); err != nil {
-			t.Fatal(err)
+		dispatcher := newInventoryExecDispatcher(t, service)
+		for _, action := range []string{"run", "cp", "delete", "apply", ""} {
+			request := inventoryKubernetesExecRequest()
+			request.Action = action
+			response := dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", request, nil)
+			requireInventoryIPCError(t, response, ipc.CodeBadParam)
 		}
-		invalid := dockerRequest
-		invalid.Kind = "ssh"
-		response := dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", invalid, nil)
-		requireInventoryIPCError(t, response, ipc.CodeBadParam)
-		empty := dockerRequest
-		empty.Action = nil
-		response = dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", empty, nil)
-		requireInventoryIPCError(t, response, ipc.CodeBadParam)
-		injection := dockerRequest
-		injection.Action = []string{"--context", "evil", "ps"}
-		response = dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", injection, nil)
-		requireInventoryIPCError(t, response, ipc.CodeBadParam)
 		if len(runner.calls) != 0 {
 			t.Fatalf("rejected requests ran commands: %+v", runner.calls)
 		}
 	})
 
-	t.Run("command failures surface the underlying error", func(t *testing.T) {
+	t.Run("command failure surfaces the underlying error", func(t *testing.T) {
 		service, _ := newInventoryTestService(t, true)
 		runner := &recordingInventoryRunner{errors: map[string]error{
-			"docker --context prod exec web true": errors.New("container not running"),
+			"docker --context prod exec web uname -a": errors.New("container not running"),
 		}}
 		service.runner = runner
-		dispatcher := ipc.NewDispatcher()
-		if err := service.registerCommands(dispatcher); err != nil {
-			t.Fatal(err)
-		}
-		response := dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", dockerRequest, nil)
+		dispatcher := newInventoryExecDispatcher(t, service)
+		response := dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_target_exec", inventoryDockerExecRequest(), nil)
 		if response.OK {
 			t.Fatal("failing exec was accepted")
 		}
@@ -228,9 +368,9 @@ func TestInventoryTargetExecIPC(t *testing.T) {
 	})
 }
 
-func newInventoryServiceForTest(t *testing.T, database *store.Store, desktop bool) *inventoryService {
+func newInventoryServiceForTest(t *testing.T, database *store.Store, desktop bool, dataDir string) *inventoryService {
 	t.Helper()
-	service := newInventoryService(database, nil, desktop, withInventoryWatchInterval(20*time.Millisecond))
+	service := newInventoryService(database, nil, desktop, dataDir, withInventoryWatchInterval(20*time.Millisecond))
 	t.Cleanup(func() { _ = service.Shutdown(context.Background()) })
 	return service
 }
@@ -265,7 +405,6 @@ func TestInventoryServerSSHWatchPersistsAndRestores(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	dataDir := t.TempDir()
-	t.Setenv("NEXTERM_DATA_DIR", dataDir)
 	database, err := store.OpenInMemory(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -279,11 +418,8 @@ func TestInventoryServerSSHWatchPersistsAndRestores(t *testing.T) {
 	ctxA := ipc.WithUserID(context.Background(), "owner-a")
 	ctxB := ipc.WithUserID(context.Background(), "owner-b")
 
-	first := newInventoryServiceForTest(t, database, false)
-	dispatcher := ipc.NewDispatcher()
-	if err := first.registerCommands(dispatcher); err != nil {
-		t.Fatal(err)
-	}
+	first := newInventoryServiceForTest(t, database, false, dataDir)
+	dispatcher := newInventoryExecDispatcher(t, first)
 	enabled := true
 	var statusA inventorySSHWatchDTO
 	dispatchInventoryTest(t, dispatcher, ctxA, "inventory_ssh_watch", inventorySSHWatchRequest{Enabled: &enabled, Path: pathA}, &statusA)
@@ -304,7 +440,7 @@ func TestInventoryServerSSHWatchPersistsAndRestores(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	second := newInventoryServiceForTest(t, database, false)
+	second := newInventoryServiceForTest(t, database, false, dataDir)
 	if err := second.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -318,10 +454,7 @@ func TestInventoryServerSSHWatchPersistsAndRestores(t *testing.T) {
 	}
 
 	disabled := false
-	dispatcher2 := ipc.NewDispatcher()
-	if err := second.registerCommands(dispatcher2); err != nil {
-		t.Fatal(err)
-	}
+	dispatcher2 := newInventoryExecDispatcher(t, second)
 	dispatchInventoryTest(t, dispatcher2, ctxA, "inventory_ssh_watch", inventorySSHWatchRequest{Enabled: &disabled}, &statusA)
 	if statusA.Watching {
 		t.Fatal("owner-a watch still active after stop")
@@ -342,8 +475,12 @@ func TestInventoryServerSSHWatchStartFailureIsNotPersisted(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	dataDir := t.TempDir()
-	t.Setenv("NEXTERM_DATA_DIR", dataDir)
-	service, _ := newInventoryTestService(t, false)
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	service := newInventoryServiceForTest(t, database, false, dataDir)
 	ctx := ipc.WithUserID(context.Background(), "owner-a")
 	broken := filepath.Join(home, ".ssh", "broken")
 	if err := os.MkdirAll(broken, 0o700); err != nil {
@@ -362,8 +499,12 @@ func TestInventoryServerSSHWatchStartFailureIsNotPersisted(t *testing.T) {
 
 func TestInventoryDesktopWatchDoesNotPersist(t *testing.T) {
 	dataDir := t.TempDir()
-	t.Setenv("NEXTERM_DATA_DIR", dataDir)
-	service, _ := newInventoryTestService(t, true)
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	service := newInventoryServiceForTest(t, database, true, dataDir)
 	ctx := ipc.WithUserID(context.Background(), "owner-a")
 	path := filepath.Join(t.TempDir(), "config")
 	writeInventoryTestFile(t, path, "Host alpha\n  HostName 10.0.0.1\n")
@@ -376,6 +517,34 @@ func TestInventoryDesktopWatchDoesNotPersist(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dataDir, "inventory-ssh-watches.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("desktop watch persisted to disk: %v", err)
 	}
+}
+
+func TestInventoryServerWatchStoreRequiresDataDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	service := newInventoryService(database, nil, false, "")
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	path := filepath.Join(home, ".ssh", "config")
+	writeInventoryTestFile(t, path, "Host alpha\n  HostName 10.0.0.1\n")
+	if _, err := service.startWatch(ctx, path, ""); err == nil || !strings.Contains(err.Error(), "数据目录") {
+		t.Fatalf("startWatch with an empty data dir must fail visibly: %v", err)
+	}
+	if status := service.watchStatus(ctx); status.Watching {
+		t.Fatal("watch is active despite the missing data dir")
+	}
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatalf("restore without a data dir must be a no-op: %v", err)
+	}
+	desktop := newInventoryService(database, nil, true, "")
+	if _, err := desktop.startWatch(ctx, path, ""); err != nil {
+		t.Fatalf("desktop inventory service must not require a data dir: %v", err)
+	}
+	_ = desktop.Shutdown(context.Background())
 }
 
 var _ fleetinventory.CommandRunner = (*recordingInventoryRunner)(nil)

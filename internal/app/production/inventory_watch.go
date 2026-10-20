@@ -10,7 +10,6 @@ import (
 
 	fleetinventory "github.com/Hello-CTF/NexTerm/internal/fleet/inventory"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
-	"github.com/Hello-CTF/NexTerm/internal/platform"
 	"github.com/Hello-CTF/NexTerm/internal/sshconfig"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
@@ -50,14 +49,15 @@ type inventoryService struct {
 	sshLimits      sshconfig.Limits
 	kubeconfigGate fleetinventory.KubeconfigAuthorizer
 
-	configureMu  sync.Mutex
-	mu           sync.Mutex
-	watchManager *fleetinventory.WatchManager
-	watchResults map[string]inventorySyncDTO
-	closed       bool
+	configureMu   sync.Mutex
+	mu            sync.Mutex
+	watchManager  *fleetinventory.WatchManager // nil when watchStoreErr is set
+	watchStoreErr error
+	watchResults  map[string]inventorySyncDTO
+	closed        bool
 }
 
-func newInventoryService(database *store.Store, events ipc.Emitter, desktop bool, options ...inventoryServiceOption) *inventoryService {
+func newInventoryService(database *store.Store, events ipc.Emitter, desktop bool, dataDir string, options ...inventoryServiceOption) *inventoryService {
 	service := &inventoryService{
 		database: database, runner: fleetinventory.ExecRunner{}, desktop: desktop, events: events,
 		watchInterval:  defaultInventoryWatchInterval,
@@ -67,11 +67,17 @@ func newInventoryService(database *store.Store, events ipc.Emitter, desktop bool
 	for _, option := range options {
 		option(service)
 	}
+	watchStore, err := inventoryWatchStore(desktop, dataDir)
+	if err != nil {
+		service.watchStoreErr = err
+		return service
+	}
 	manager, err := fleetinventory.NewWatchManager(
-		inventoryWatchStore(desktop), service.syncSSHWatch, fleetinventory.WithWatchInterval(service.watchInterval),
+		watchStore, service.syncSSHWatch, fleetinventory.WithWatchInterval(service.watchInterval),
 	)
 	if err != nil {
-		panic(err)
+		service.watchStoreErr = err
+		return service
 	}
 	service.watchManager = manager
 	return service
@@ -89,15 +95,16 @@ func inventoryKubeconfigGate(desktop bool) fleetinventory.KubeconfigAuthorizer {
 
 // inventoryWatchStore persists per-owner SSH watches on the server data dir;
 // desktop keeps watches in memory so persistence stays a server capability.
-func inventoryWatchStore(desktop bool) fleetinventory.WatchStore {
+// A server without a resolvable data dir is a visible error, never a silent
+// in-memory fallback.
+func inventoryWatchStore(desktop bool, dataDir string) (fleetinventory.WatchStore, error) {
 	if desktop {
-		return fleetinventory.NewMemoryWatchStore()
+		return fleetinventory.NewMemoryWatchStore(), nil
 	}
-	paths, err := platform.ServerPaths("")
-	if err != nil || paths.DataDir == "" {
-		return fleetinventory.NewMemoryWatchStore()
+	if strings.TrimSpace(dataDir) == "" {
+		return nil, ipc.NewError(ipc.CodeUnsupported, "服务端模式缺少数据目录，无法持久化 SSH 清单 watch")
 	}
-	return fleetinventory.NewFileWatchStore(filepath.Join(paths.DataDir, inventoryWatchStoreFileName))
+	return fleetinventory.NewFileWatchStore(filepath.Join(dataDir, inventoryWatchStoreFileName)), nil
 }
 
 // syncSSHWatch runs one SSH config synchronization for a persisted watch and
@@ -122,10 +129,15 @@ func (s *inventoryService) syncSSHWatch(ctx context.Context, watch fleetinventor
 	return watch, nil
 }
 
-// Start restores the persisted per-owner SSH watches.
+// Start restores the persisted per-owner SSH watches. Without a resolvable
+// server data dir there is nothing to restore; enabling a watch then fails
+// visibly through startWatch.
 func (s *inventoryService) Start(ctx context.Context) error {
 	s.configureMu.Lock()
 	defer s.configureMu.Unlock()
+	if s.watchStoreErr != nil {
+		return nil
+	}
 	return s.watchManager.Restore(ctx)
 }
 
@@ -133,6 +145,9 @@ func (s *inventoryService) Shutdown(ctx context.Context) error {
 	s.configureMu.Lock()
 	defer s.configureMu.Unlock()
 	s.closed = true
+	if s.watchManager == nil {
+		return nil
+	}
 	err := s.watchManager.Shutdown(ctx)
 	s.mu.Lock()
 	s.watchResults = map[string]inventorySyncDTO{}
@@ -142,6 +157,9 @@ func (s *inventoryService) Shutdown(ctx context.Context) error {
 
 func (s *inventoryService) watchStatus(ctx context.Context) inventorySSHWatchDTO {
 	ownerID := inventoryOwnerID(ctx)
+	if s.watchManager == nil {
+		return inventorySSHWatchDTO{Watching: false, Path: effectiveInventorySSHPath("")}
+	}
 	status, active := s.watchManager.Status(ownerID)
 	if !active {
 		return inventorySSHWatchDTO{Watching: false, Path: effectiveInventorySSHPath("")}
@@ -168,6 +186,9 @@ func (s *inventoryService) stopWatch(ctx context.Context, ownerID string) error 
 	if ownerID == "" {
 		ownerID = inventoryDefaultOwnerID
 	}
+	if s.watchManager == nil {
+		return nil
+	}
 	if err := s.watchManager.Stop(ctx, ownerID); err != nil {
 		return err
 	}
@@ -182,6 +203,9 @@ func (s *inventoryService) startWatch(ctx context.Context, path, groupID string)
 	defer s.configureMu.Unlock()
 	if s.closed {
 		return inventorySSHWatchDTO{}, ipc.NewError(ipc.CodeUnsupported, "清单服务已关闭")
+	}
+	if s.watchStoreErr != nil {
+		return inventorySSHWatchDTO{}, s.watchStoreErr
 	}
 	path = effectiveInventorySSHPath(path)
 	if _, err := s.watchManager.Start(ctx, inventoryOwnerID(ctx), path, groupID); err != nil {

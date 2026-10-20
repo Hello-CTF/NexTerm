@@ -25,12 +25,11 @@ func (f inventoryRunnerFunc) Output(ctx context.Context, name string, args ...st
 
 func newInventoryTestService(t *testing.T, desktop bool) (*inventoryService, *store.Store) {
 	t.Helper()
-	t.Setenv("NEXTERM_DATA_DIR", t.TempDir())
 	database, err := store.OpenInMemory(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := newInventoryService(database, nil, desktop, withInventoryWatchInterval(20*time.Millisecond))
+	service := newInventoryService(database, nil, desktop, t.TempDir(), withInventoryWatchInterval(20*time.Millisecond))
 	t.Cleanup(func() {
 		_ = service.Shutdown(context.Background())
 		_ = database.Close()

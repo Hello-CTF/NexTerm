@@ -38,7 +38,12 @@ func TestRealDockerContextTargets(t *testing.T) {
 	if resolved == nil {
 		t.Fatalf("docker context %q not found in %+v", contextName, candidates)
 	}
-	if _, err := RunTarget(ctx, nil, *resolved, "ps"); err != nil {
+	container := os.Getenv("NEXTERM_DOCKER_TEST_CONTAINER")
+	if container == "" {
+		t.Log("NEXTERM_DOCKER_TEST_CONTAINER is empty; skipping docker exec verification")
+		return
+	}
+	if _, err := RunTarget(ctx, nil, *resolved, TargetExecAction{Container: container, Command: []string{"true"}}); err != nil {
 		t.Fatalf("docker context %q is not actionable: %v", contextName, err)
 	}
 }
@@ -65,7 +70,7 @@ func TestRealKubernetesTargets(t *testing.T) {
 	target := Target{Kind: KubernetesKind, Kubernetes: &KubernetesTarget{
 		Namespace: parts[0], Pod: parts[1], Container: parts[2],
 	}}
-	output, err := RunTargetGated(ctx, nil, KubeconfigAllowed(true), target, "printf", "nexterm-k8s-e2e")
+	output, err := RunTargetGated(ctx, nil, KubeconfigAllowed(true), target, TargetExecAction{Command: []string{"printf", "nexterm-k8s-e2e"}})
 	if err != nil {
 		t.Fatal(err)
 	}

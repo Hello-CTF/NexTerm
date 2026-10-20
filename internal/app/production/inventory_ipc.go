@@ -2,6 +2,7 @@ package production
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -77,14 +78,23 @@ type inventorySSHWatchDTO struct {
 }
 
 type inventoryTargetExecRequest struct {
-	Kind   string         `json:"kind"`
-	Target map[string]any `json:"target"`
-	Action []string       `json:"action"`
+	Kind      string         `json:"kind"`
+	Target    map[string]any `json:"target"`
+	Action    string         `json:"action"`
+	Container string         `json:"container,omitempty"`
+	Command   []string       `json:"command"`
+	// Confirmation carries the production confirmation hashes when the
+	// imported docker-context asset is tagged as a production environment.
+	Confirmation *dockerProductionConfirmation `json:"confirmation,omitempty"`
 }
 
 type inventoryTargetExecResponse struct {
 	Output string `json:"output"`
 }
+
+// inventoryTargetActionExec is the only target action the IPC exposes;
+// free-form Docker or kubectl argv is deliberately not representable.
+const inventoryTargetActionExec = "exec"
 
 func inventorySyncDTOFromStore(result store.InventorySyncResult, warnings []string) inventorySyncDTO {
 	if warnings == nil {
@@ -348,27 +358,109 @@ func (s *inventoryService) sync(ctx context.Context, input inventorySyncRequest)
 }
 
 func (s *inventoryService) execTarget(ctx context.Context, input inventoryTargetExecRequest) (inventoryTargetExecResponse, error) {
+	if input.Action != inventoryTargetActionExec {
+		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("不支持的目标动作 %q，仅支持 %q", input.Action, inventoryTargetActionExec))
+	}
 	candidate := fleetinventory.Candidate{Kind: input.Kind, Options: map[string]any{"inventoryTarget": input.Target}}
 	target, err := fleetinventory.ResolveTarget(candidate)
 	if err != nil {
 		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeBadParam, err.Error())
 	}
+	if !s.desktop && target.Docker != nil {
+		asset, err := s.ownedDockerContextAsset(ctx, target.Docker.Name)
+		if err != nil {
+			return inventoryTargetExecResponse{}, err
+		}
+		if err := s.confirmInventoryDockerExec(ctx, asset, target.Docker.Name, input.Confirmation); err != nil {
+			return inventoryTargetExecResponse{}, err
+		}
+	}
 	execCtx, cancel := context.WithTimeout(ctx, inventoryTargetExecTimeout)
 	defer cancel()
-	output, err := fleetinventory.RunTargetGated(execCtx, s.runner, s.kubeconfigGate, target, input.Action...)
-	if err != nil {
+	output, execErr := fleetinventory.RunTargetGated(execCtx, s.runner, s.kubeconfigGate, target, fleetinventory.TargetExecAction{
+		Container: input.Container, Command: input.Command,
+	})
+	s.auditTargetExec(ctx, input, target, execErr)
+	if execErr != nil {
 		switch {
-		case errors.Is(err, fleetinventory.ErrKubeconfigNotAuthorized):
-			return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeForbidden, err.Error())
-		case errors.Is(err, fleetinventory.ErrEmptyAction),
-			errors.Is(err, fleetinventory.ErrNotExecutable),
-			errors.Is(err, fleetinventory.ErrInvalidTarget):
-			return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeBadParam, err.Error())
+		case errors.Is(execErr, fleetinventory.ErrKubeconfigNotAuthorized):
+			return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeForbidden, execErr.Error())
+		case errors.Is(execErr, fleetinventory.ErrEmptyAction),
+			errors.Is(execErr, fleetinventory.ErrNotExecutable),
+			errors.Is(execErr, fleetinventory.ErrInvalidTarget):
+			return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeBadParam, execErr.Error())
 		default:
-			return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeIO, err.Error())
+			return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeIO, execErr.Error())
 		}
 	}
 	return inventoryTargetExecResponse{Output: string(output)}, nil
+}
+
+// ownedDockerContextAsset resolves the caller's imported docker-context
+// asset; acting on a context the caller did not import is cross-owner access.
+func (s *inventoryService) ownedDockerContextAsset(ctx context.Context, contextName string) (store.AssetRow, error) {
+	assets, err := s.database.AssetList(ctx, false)
+	if err != nil {
+		return store.AssetRow{}, err
+	}
+	wantKey := "context/" + contextName
+	for _, asset := range assets {
+		if asset.Kind != fleetinventory.DockerContextKind {
+			continue
+		}
+		var options struct {
+			Inventory *struct {
+				Source string `json:"source"`
+				Key    string `json:"key"`
+			} `json:"inventory"`
+		}
+		if err := json.Unmarshal([]byte(asset.OptionsJSON), &options); err != nil {
+			continue
+		}
+		if options.Inventory != nil && options.Inventory.Source == store.InventorySourceDockerContext && options.Inventory.Key == wantKey {
+			return asset, nil
+		}
+	}
+	return store.AssetRow{}, ipc.NewError(ipc.CodeForbidden, fmt.Sprintf("Docker context %q 未导入为当前账号的清单资产", contextName))
+}
+
+// confirmInventoryDockerExec reuses the docker production confirmation flow:
+// assets tagged as production require explicit confirmation, and the
+// confirmation is audited before the exec runs.
+func (s *inventoryService) confirmInventoryDockerExec(ctx context.Context, asset store.AssetRow, contextName string, confirmation *dockerProductionConfirmation) error {
+	target := dockerConfirmationTarget{AssetID: asset.ID, Environment: store.AssetEnvironment(asset)}
+	if asset.Host != nil {
+		target.Hostname = *asset.Host
+	}
+	operation := dockerMutationOperation{Kind: "inventory_target_exec", Project: contextName}
+	challenge := newDockerProductionChallenge(target, operation)
+	if err := validateDockerProductionConfirmation(confirmation, challenge); err != nil {
+		return dockerMutationIPCError(err)
+	}
+	if challenge == nil {
+		return nil
+	}
+	auditCtx, cancel := context.WithTimeout(ipc.WithUserID(context.WithoutCancel(ctx), ipc.OwnerID(ctx)), 5*time.Second)
+	defer cancel()
+	return s.database.AuditInsert(auditCtx, newDockerConfirmationAuditInput(ctx, target, challenge, operation, time.Now().UnixMilli()))
+}
+
+func (s *inventoryService) auditTargetExec(ctx context.Context, input inventoryTargetExecRequest, target fleetinventory.Target, execErr error) {
+	payload := map[string]any{
+		"kind": input.Kind, "action": input.Action, "container": input.Container, "command": input.Command,
+	}
+	switch {
+	case target.Docker != nil:
+		payload["target"] = "context/" + target.Docker.Name
+	case target.Kubernetes != nil:
+		payload["target"] = target.Kubernetes.Namespace + "/" + target.Kubernetes.Pod
+	}
+	if execErr != nil {
+		payload["error"] = execErr.Error()
+	}
+	auditCtx, cancel := context.WithTimeout(ipc.WithUserID(context.WithoutCancel(ctx), ipc.OwnerID(ctx)), 5*time.Second)
+	defer cancel()
+	_ = s.database.AuditInsert(auditCtx, store.AuditInput{Source: "user", Kind: "inventory_target_exec", Payload: payload})
 }
 
 func (s *inventoryService) registerCommands(dispatcher *ipc.Dispatcher) error {

@@ -110,11 +110,20 @@ func targetString(fields map[string]any, key string) string {
 	return strings.TrimSpace(value)
 }
 
-// Command returns the binary and argv that run action on the target. The
-// action is the Docker subcommand for a Docker context target and the
-// in-pod command for a Kubernetes pod target.
-func (t Target) Command(action ...string) (string, []string, error) {
-	if len(action) == 0 {
+// TargetExecAction runs a command inside the target's container or pod. It
+// is the only action the inventory target API exposes: free-form Docker or
+// kubectl argv is deliberately not representable.
+type TargetExecAction struct {
+	// Container is the container name or ID. Required for Docker context
+	// targets; optional override for Kubernetes pod targets.
+	Container string
+	// Command is the argv executed inside the container or pod.
+	Command []string
+}
+
+// ExecCommand returns the binary and argv that run action on the target.
+func (t Target) ExecCommand(action TargetExecAction) (string, []string, error) {
+	if len(action.Command) == 0 {
 		return "", nil, ErrEmptyAction
 	}
 	switch {
@@ -122,12 +131,16 @@ func (t Target) Command(action ...string) (string, []string, error) {
 		if err := validateTargetValue("docker context", t.Docker.Name); err != nil {
 			return "", nil, err
 		}
-		if strings.HasPrefix(action[0], "-") {
-			return "", nil, fmt.Errorf("%w: docker context action must not start with a flag: %q", ErrInvalidTarget, action[0])
+		container := strings.TrimSpace(action.Container)
+		if container == "" {
+			return "", nil, fmt.Errorf("%w: docker context exec requires a container", ErrInvalidTarget)
 		}
-		args := make([]string, 0, len(action)+2)
-		args = append(args, "--context", t.Docker.Name)
-		return "docker", append(args, action...), nil
+		if err := validateTargetValue("docker container", container); err != nil {
+			return "", nil, err
+		}
+		args := make([]string, 0, len(action.Command)+4)
+		args = append(args, "--context", t.Docker.Name, "exec", container)
+		return "docker", append(args, action.Command...), nil
 	case t.Kubernetes != nil:
 		kubernetes := t.Kubernetes
 		if kubernetes.Pod == "" {
@@ -149,21 +162,25 @@ func (t Target) Command(action ...string) (string, []string, error) {
 				return "", nil, err
 			}
 		}
-		if kubernetes.Container != "" {
-			if err := validateTargetValue("kubernetes container", kubernetes.Container); err != nil {
+		container := strings.TrimSpace(action.Container)
+		if container == "" {
+			container = kubernetes.Container
+		}
+		if container != "" {
+			if err := validateTargetValue("kubernetes container", container); err != nil {
 				return "", nil, err
 			}
 		}
-		args := make([]string, 0, len(action)+10)
+		args := make([]string, 0, len(action.Command)+10)
 		if kubernetes.Context != "" {
 			args = append(args, "--context", kubernetes.Context)
 		}
 		args = append(args, "exec", "-n", kubernetes.Namespace, kubernetes.Pod)
-		if kubernetes.Container != "" {
-			args = append(args, "-c", kubernetes.Container)
+		if container != "" {
+			args = append(args, "-c", container)
 		}
 		args = append(args, "--")
-		return "kubectl", append(args, action...), nil
+		return "kubectl", append(args, action.Command...), nil
 	default:
 		return "", nil, ErrNotExecutable
 	}
@@ -177,11 +194,11 @@ func validateTargetValue(name, value string) error {
 }
 
 // RunTarget executes action on the target through runner.
-func RunTarget(ctx context.Context, runner CommandRunner, target Target, action ...string) ([]byte, error) {
+func RunTarget(ctx context.Context, runner CommandRunner, target Target, action TargetExecAction) ([]byte, error) {
 	if runner == nil {
 		runner = ExecRunner{}
 	}
-	name, args, err := target.Command(action...)
+	name, args, err := target.ExecCommand(action)
 	if err != nil {
 		return nil, err
 	}
@@ -194,13 +211,13 @@ func RunTarget(ctx context.Context, runner CommandRunner, target Target, action 
 
 // RunTargetGated executes action on the target after requiring explicit
 // authorization whenever the target reads the server-local kubeconfig.
-func RunTargetGated(ctx context.Context, runner CommandRunner, gate KubeconfigAuthorizer, target Target, action ...string) ([]byte, error) {
+func RunTargetGated(ctx context.Context, runner CommandRunner, gate KubeconfigAuthorizer, target Target, action TargetExecAction) ([]byte, error) {
 	if target.Kubernetes != nil {
 		if err := requireKubeconfig(ctx, gate); err != nil {
 			return nil, err
 		}
 	}
-	return RunTarget(ctx, runner, target, action...)
+	return RunTarget(ctx, runner, target, action)
 }
 
 // DiscoverKubernetesGated runs Kubernetes discovery only after the gate

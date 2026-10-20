@@ -87,6 +87,12 @@ export type DeployPublicKeyRequest = {
   productionConfirmation?: ProductionConfirmation | null;
 };
 
+export type DockerProductionConfirmation = {
+  confirmed: boolean;
+  targetSetHash: string;
+  commandHash: string;
+};
+
 export type ExecBatch = {
   batchId: string;
   command: string;
@@ -407,7 +413,10 @@ export type InventorySyncRequest = {
 export type InventoryTargetExecRequest = {
   kind: string;
   target: Record<string, unknown>;
-  action: string[];
+  action: string;
+  container?: string;
+  command: string[];
+  confirmation?: DockerProductionConfirmation | null;
 };
 
 export type InventoryTargetExecResponse = {

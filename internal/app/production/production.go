@@ -119,7 +119,7 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 		config.RetentionStatus = services.Retention.Status
 	}
 	if services.inventory == nil && services.Store != nil {
-		services.inventory = newInventoryService(services.Store, services.Events, services.desktop)
+		services.inventory = newInventoryService(services.Store, services.Events, services.desktop, services.dataDir)
 	}
 	config.Modules = append(productionModules(services), config.Modules...)
 	application, err := core.New(config)
