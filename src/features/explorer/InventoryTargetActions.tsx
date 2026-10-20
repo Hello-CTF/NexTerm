@@ -104,10 +104,10 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
   const outcome = liveOperationStore.getOutcome(ownerKey, identity);
   const derivedOutcomeRef = useRef<LiveOperation | null>(null);
   derivedOutcomeRef.current = outcome;
-  const ignoredDone = outcome !== null && outcome.status === "ignored";
-  const result = !ignoredDone && outcome?.outcome === "result" ? outcome.result ?? null : null;
-  const failure = !ignoredDone && outcome?.outcome === "failure" ? outcome.failure ?? null : null;
-  const cancelled = !ignoredDone && outcome?.outcome === "cancelled";
+  const ignoredDone = outcome !== null && outcome.ignored === true && outcome.outcome !== "cancelled";
+  const result = outcome?.outcome === "result" && outcome.ignored !== true ? outcome.result ?? null : null;
+  const failure = outcome?.outcome === "failure" && outcome.ignored !== true ? outcome.failure ?? null : null;
+  const cancelled = outcome?.outcome === "cancelled";
 
   // On mount and on owner/target switch, reset the target-scoped form
   // state and restore the owner+target's single unsettled operation, which
@@ -149,14 +149,26 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
     };
   }, [liveOpRef.current?.snapshot.operationId, ownerKey, identity]);
 
-  // Subscribe to the owner+target's outcome channel: a settle or clear
-  // anywhere re-renders the derived outcome. The atomic read reconciles an
-  // outcome that settled or was cleared between the render and this
-  // subscription.
+  // Subscribe to the owner+target's outcome channel: an operation start
+  // is adopted with full control, a settle or clear anywhere re-renders
+  // the derived outcome, and a settle clears any stale pre-IPC rejection
+  // hint so it never coexists with a result. The atomic read adopts the
+  // identity's current unsettled operation and reconciles an outcome that
+  // changed between the render and this subscription.
   useEffect(() => {
-    const { outcome: current, unsubscribe } = liveOperationStore.subscribeOutcome(ownerKey, identity, () => {
+    const { operation, outcome: current, unsubscribe } = liveOperationStore.subscribeOutcome(ownerKey, identity, (event) => {
+      if (event.type === "start" && liveOpRef.current === null) {
+        liveOpRef.current = event.operation;
+      }
+      if (event.type === "settle") {
+        setInputError(null);
+      }
       bumpLiveOp();
     });
+    if (liveOpRef.current === null && operation !== null) {
+      liveOpRef.current = operation;
+      bumpLiveOp();
+    }
     if (derivedOutcomeRef.current !== current) {
       bumpLiveOp();
     }
@@ -265,13 +277,14 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
 
   // Ignoring discards the response while the command keeps running on the
   // target; the operation stays live and tracked until it settles. Ignore
-  // is an operation-level behavior, so every subscribed view is notified
-  // and shows the same ignored state.
+  // is an operation-level latch orthogonal to the cancel lifecycle, so
+  // cancel pending/failure/retry never clears it and the settle hides the
+  // output; every subscribed view is notified and shows the same state.
   const ignoreResults = () => {
     const op = liveOpRef.current;
-    if (op === null || op.status !== "running") return;
+    if (op === null || op.status !== "running" || op.ignored === true) return;
     generationRef.current++;
-    op.status = "ignored";
+    op.ignored = true;
     liveOperationStore.notifyIgnore(op);
     setBusy(false);
     bumpLiveOp();
@@ -300,7 +313,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
         new Promise((_, reject) => setTimeout(() => reject(new Error("取消请求超时，结果未知")), cancelTimeoutMs)),
       ]);
     } catch (cause) {
-      if (op.cancelSeq !== seq) return;
+      if (op.settled || op.cancelSeq !== seq) return;
       op.status = "cancel-failed";
       op.cancelError = describeError(cause);
       liveOperationStore.notifyCancel(op);
@@ -321,12 +334,15 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
   const liveOp = liveOpRef.current;
   // Cancel control and the running notice derive from the live operation's
   // status, not from the busy display flag, so a restored operation always
-  // has the right entries.
-  const isRunning = liveOp !== null && !liveOp.settled && liveOp.status === "running";
-  const isIgnore = liveOp !== null && !liveOp.settled && liveOp.status === "ignored";
-  const isCancelPending = liveOp !== null && !liveOp.settled && liveOp.status === "cancel-pending";
-  const isCancelFailed = liveOp !== null && !liveOp.settled && liveOp.status === "cancel-failed";
-  const canCancel = liveOp !== null && !liveOp.settled && liveOp.ownerKey === ownerKey && !isCancelPending;
+  // has the right entries. The ignored latch is orthogonal to the cancel
+  // status: it hides the running notice while the command runs ignored and
+  // keeps the output hidden at settle.
+  const isLive = liveOp !== null && !liveOp.settled;
+  const isRunning = isLive && liveOp.status === "running";
+  const isIgnored = isLive && liveOp.ignored === true;
+  const isCancelPending = isLive && liveOp.status === "cancel-pending";
+  const isCancelFailed = isLive && liveOp.status === "cancel-failed";
+  const canCancel = isLive && liveOp.ownerKey === ownerKey && !isCancelPending;
 
   return (
     <div className="flex flex-col gap-2">
@@ -395,12 +411,12 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
             <button type="button" className="nx-btn nx-btn-primary nx-btn-xs" disabled={liveOp !== null || ignoredDone} onClick={() => void run()}>
               执行
             </button>
-            {(isRunning || isIgnore || isCancelFailed) && canCancel && (
+            {(isRunning || isCancelFailed) && canCancel && (
               <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void cancelExecution()}>
                 {isCancelFailed ? "重试取消" : "取消执行"}
               </button>
             )}
-            {isRunning && (
+            {isRunning && !isIgnored && (
               <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={ignoreResults}>
                 忽略结果
               </button>
@@ -411,13 +427,13 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
               </button>
             )}
           </div>
-          {(isRunning || isCancelPending || isCancelFailed) && <div className="text-[11px] text-neutral-400">执行中…</div>}
+          {(isCancelPending || isCancelFailed || (isRunning && !isIgnored)) && <div className="text-[11px] text-neutral-400">执行中…</div>}
           {liveOp !== null && liveOp.ownerKey !== ownerKey && (
             <div role="note" className="text-[11px] text-amber-300">
               操作仍在目标上执行；切换到 {liveOp.ownerKey} 后可取消
             </div>
           )}
-          {isIgnore && (
+          {isIgnored && !isCancelPending && !isCancelFailed && (
             <div role="note" className="text-[11px] text-amber-300">
               命令仍在目标上执行；结果已忽略，不代表命令已停止
             </div>

@@ -4,7 +4,7 @@ import type { InventoryTargetExecRequest } from "../../ipc/generated/types";
 // bound to the launching owner and target. The store owns the registry and
 // the subscriber notifications; React components only adapt to it.
 
-export type LiveOperationStatus = "running" | "ignored" | "cancel-pending" | "cancel-failed";
+export type LiveOperationStatus = "running" | "cancel-pending" | "cancel-failed";
 export type LiveOperationOutcome = "cancelled" | "result" | "failure";
 
 export interface LiveOperation {
@@ -12,6 +12,10 @@ export interface LiveOperation {
   ownerKey: string;
   identity: string;
   status: LiveOperationStatus;
+  // ignored is an operation-level latch orthogonal to the cancel status:
+  // once set, the output stays hidden and the settle shows the ignored
+  // done notice no matter how the cancel lifecycle ends.
+  ignored?: boolean;
   cancelError?: string;
   // cancelSeq is the operation-level cancel sequence: a late settle of an
   // earlier cancel never overwrites the state of a newer retry, no matter
@@ -23,7 +27,7 @@ export interface LiveOperation {
   failure?: { message: string; exitCode?: number; output?: string };
 }
 
-export type LiveOperationEventType = "settle" | "cancel" | "ignore" | "clear";
+export type LiveOperationEventType = "start" | "settle" | "cancel" | "ignore" | "clear";
 
 export interface LiveOperationEvent {
   type: LiveOperationEventType;
@@ -35,14 +39,14 @@ export type Unsubscribe = () => void;
 const LIVE_REGISTRY_LIMIT = 32;
 
 // LiveOperationStore keeps operations in a per-owner {ownerKey,
-// operationId} namespace and notifies subscribers of settle, cancel,
-// ignore, and clear events. Per owner and target identity at most one
-// unsettled operation exists: a second exec is rejected visibly before any
-// call. Settled outcomes are retained in the namespace until a user
-// explicitly clears them and are replayed idempotently to every current and
-// future view of that owner and target. At capacity new operations are
-// rejected visibly — live operations and retained outcomes are never
-// silently evicted.
+// operationId} namespace and notifies subscribers of start, settle,
+// cancel, ignore, and clear events. Per owner and target identity at most
+// one unsettled operation exists: a second exec is rejected visibly before
+// any call. An identity has a single current outcome: it is retained until
+// a user explicitly clears it or a new launch acks and replaces it, and it
+// is replayed idempotently to every current and future view of that owner
+// and target. At capacity new operations are rejected visibly — live
+// operations and retained outcomes are never silently evicted.
 class LiveOperationStore {
   private registry = new Map<string, Map<string, LiveOperation>>();
   private opSubscribers = new Map<string, Map<number, (event: LiveOperationEvent) => void>>();
@@ -59,8 +63,10 @@ class LiveOperationStore {
 
   // store registers an operation. An unsettled operation with the same
   // owner and target identity blocks a replacement with a visible error
-  // before any call is made; at capacity the same happens. Entries leave
-  // the registry only through an explicit removal, never through eviction.
+  // before any call is made; at capacity the same happens. Both rejections
+  // precede any mutation, so a rejected launch never clears the old
+  // outcome. A successful launch acks the identity's single current
+  // outcome, replaces it, and notifies views of the clear and the start.
   store(op: LiveOperation): Error | null {
     let ownerOps = this.registry.get(op.ownerKey);
     if (!ownerOps) {
@@ -72,10 +78,25 @@ class LiveOperationStore {
         return new Error("该目标已有在途操作，请等待其结束");
       }
     }
-    if (ownerOps.size >= LIVE_REGISTRY_LIMIT && !ownerOps.has(op.snapshot.operationId)) {
+    let currentOutcome: LiveOperation | null = null;
+    for (const existing of ownerOps.values()) {
+      if (existing.settled && existing.identity === op.identity) {
+        currentOutcome = existing;
+        break;
+      }
+    }
+    const effectiveSize = ownerOps.size - (currentOutcome === null ? 0 : 1);
+    if (effectiveSize >= LIVE_REGISTRY_LIMIT && !ownerOps.has(op.snapshot.operationId)) {
       return new Error("该所有者的操作记录已达上限，请清除已完成的结果");
     }
+    if (currentOutcome !== null) {
+      ownerOps.delete(currentOutcome.snapshot.operationId);
+      const clearEvent: LiveOperationEvent = { type: "clear", operation: currentOutcome };
+      this.emitOp(currentOutcome.ownerKey, currentOutcome.snapshot.operationId, clearEvent);
+      this.emitOutcome(currentOutcome.ownerKey, currentOutcome.identity, clearEvent);
+    }
     ownerOps.set(op.snapshot.operationId, op);
+    this.emitOutcome(op.ownerKey, op.identity, { type: "start", operation: op });
     return null;
   }
 
@@ -105,8 +126,9 @@ class LiveOperationStore {
     return null;
   }
 
-  // getOutcome returns the latest settled outcome retained for the owner
-  // and identity; outcomes stay until a user explicitly clears them.
+  // getOutcome returns the identity's single current outcome: the latest
+  // settled operation, which stays until a user explicitly clears it or a
+  // new launch acks and replaces it.
   getOutcome(ownerKey: string, identity: string): LiveOperation | null {
     const ownerOps = this.registry.get(ownerKey);
     if (!ownerOps) return null;
@@ -146,8 +168,8 @@ class LiveOperationStore {
   }
 
   // subscribeOutcome reads the identity's current unsettled operation and
-  // retained outcome and atomically registers the listener for settle and
-  // clear notifications of that identity.
+  // current outcome and atomically registers the listener for start,
+  // settle, and clear notifications of that identity.
   subscribeOutcome(
     ownerKey: string,
     identity: string,
@@ -191,9 +213,10 @@ class LiveOperationStore {
   }
 
   // markSettled records the operation's outcome and notifies every
-  // subscriber. The settled operation is retained in the registry until a
-  // user explicitly clears it, so the outcome is replayed idempotently to
-  // every current and future view of the owner and target.
+  // subscriber. The settled operation becomes the identity's current
+  // outcome and is retained in the registry until a user explicitly clears
+  // it or a new launch acks it, so it is replayed idempotently to every
+  // current and future view of the owner and target.
   markSettled(op: LiveOperation): void {
     op.settled = true;
     const event: LiveOperationEvent = { type: "settle", operation: op };
@@ -207,8 +230,8 @@ class LiveOperationStore {
     this.emitOp(op.ownerKey, op.snapshot.operationId, { type: "cancel", operation: op });
   }
 
-  // notifyIgnore delivers the operation-level ignore to every current
-  // subscriber, so all views show the same ignored state.
+  // notifyIgnore delivers the operation-level ignore latch to every
+  // current subscriber, so all views show the same ignored state.
   notifyIgnore(op: LiveOperation): void {
     this.emitOp(op.ownerKey, op.snapshot.operationId, { type: "ignore", operation: op });
   }

@@ -1245,7 +1245,7 @@ describe("inventory target actions", () => {
     expect(retry.operationId).not.toBe(mocks.call.mock.calls[0][1].args.operationId);
   });
 
-  it("visibly rejects a second exec on the same owner/target while one is unsettled", async () => {
+  it("shares one operation across same-target views and blocks the second exec", async () => {
     mocks.call.mockImplementation(() => new Promise(() => {}));
     const viewA = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
     const viewB = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
@@ -1257,14 +1257,17 @@ describe("inventory target actions", () => {
     await flush();
     expect(mocks.call).toHaveBeenCalledTimes(1);
 
-    // B was mounted before the launch and holds no local operation; its
-    // replacement attempt is rejected visibly before any call.
+    // B was mounted before the launch: it adopts the same operation with
+    // the running notice, and its execute entry is blocked — the second
+    // exec never reaches the store's pre-IPC rejection.
+    expect(viewB.container.textContent).toContain("执行中");
+    const execButton = () => [...viewB.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "执行");
+    expect(execButton()?.disabled).toBe(true);
     setInputValue(viewB.container.querySelector('input[aria-label="命令"]')!, "false");
     setInputValue(viewB.container.querySelector('input[aria-label="容器"]')!, "web");
     clickButton(viewB.container, "执行");
     await flush();
     expect(mocks.call).toHaveBeenCalledTimes(1);
-    expect(viewB.container.textContent).toContain("该目标已有在途操作");
     expect(viewA.container.textContent).toContain("执行中");
   });
 
@@ -1428,5 +1431,219 @@ describe("inventory target actions", () => {
     expect(viewB.container.textContent).not.toContain("IGNORED-SECRET");
     expect(note(viewA.container)).toContain("命令已结束");
     expect(note(viewB.container)).toContain("命令已结束");
+  });
+
+  it("keeps the ignored latch through a failed cancel and hides the natural result", async () => {
+    let resolveA: (value: { output: string; exitCode: number }) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveA = resolve; }));
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+    clickButton(m.container, "忽略结果");
+    await flush();
+
+    // The cancel fails; the ignored latch must survive the cancel state.
+    mocks.call.mockRejectedValueOnce(new Error("cancel unavailable"));
+    clickButton(m.container, "取消执行");
+    await flush();
+    expect(m.container.textContent).toContain("取消失败");
+
+    // The command then completes naturally: the output stays hidden and
+    // the ignored-done notice shows.
+    await act(async () => { resolveA({ output: "IGNORED-SECRET\n", exitCode: 0 }); });
+    await flush();
+    expect(m.container.textContent).not.toContain("IGNORED-SECRET");
+    expect(m.container.textContent).not.toContain("退出码 0");
+    expect(m.container.querySelector('[role="note"]')?.textContent).toContain("命令已结束；结果已忽略");
+  });
+
+  it("keeps the ignored latch when the command completes while a cancel is pending", async () => {
+    let resolveA: (value: { output: string; exitCode: number }) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveA = resolve; }));
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+    clickButton(m.container, "忽略结果");
+    await flush();
+    SetCancelTimeoutForTest(50);
+    mocks.call.mockImplementationOnce(() => new Promise(() => {}));
+    clickButton(m.container, "取消执行");
+    await flush();
+    expect(m.container.textContent).toContain("取消中");
+
+    // The command completes naturally before the cancel settles; the late
+    // cancel timeout must not disturb the ignored outcome.
+    await act(async () => { resolveA({ output: "IGNORED-SECRET\n", exitCode: 0 }); });
+    await flush();
+    expect(m.container.textContent).not.toContain("IGNORED-SECRET");
+    expect(m.container.querySelector('[role="note"]')?.textContent).toContain("命令已结束；结果已忽略");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+    await flush();
+    expect(m.container.textContent).toContain("命令已结束；结果已忽略");
+    expect(m.container.textContent).not.toContain("IGNORED-SECRET");
+  });
+
+  it("keeps the ignored latch through a cancel timeout and hides the natural result", async () => {
+    let resolveA: (value: { output: string; exitCode: number }) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveA = resolve; }));
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+    clickButton(m.container, "忽略结果");
+    await flush();
+    SetCancelTimeoutForTest(50);
+    mocks.call.mockImplementationOnce(() => new Promise(() => {}));
+    clickButton(m.container, "取消执行");
+    await flush();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+    await flush();
+    expect(m.container.textContent).toContain("取消失败");
+
+    // The command then completes naturally: the output stays hidden and
+    // the ignored-done notice shows.
+    await act(async () => { resolveA({ output: "IGNORED-SECRET\n", exitCode: 0 }); });
+    await flush();
+    expect(m.container.textContent).not.toContain("IGNORED-SECRET");
+    expect(m.container.textContent).not.toContain("退出码 0");
+    expect(m.container.querySelector('[role="note"]')?.textContent).toContain("命令已结束；结果已忽略");
+  });
+
+  it("keeps the ignored latch across restore and multiple views through a failed cancel", async () => {
+    let resolveA: (value: { output: string; exitCode: number }) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveA = resolve; }));
+    const m1 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    setInputValue(m1.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m1.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m1.container, "执行");
+    await flush();
+    clickButton(m1.container, "忽略结果");
+    await flush();
+    act(() => m1.unmount());
+
+    // The restored operation keeps the latch on every view.
+    const viewA = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    const viewB = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    mounted = viewB;
+    await flush();
+    const note = (container: HTMLElement) => container.querySelector('[role="note"]')?.textContent;
+    expect(note(viewA.container)).toContain("命令仍在目标上执行");
+    expect(note(viewB.container)).toContain("命令仍在目标上执行");
+
+    // A cancel from one view fails; the natural result stays hidden on all.
+    mocks.call.mockRejectedValueOnce(new Error("cancel unavailable"));
+    clickButton(viewB.container, "取消执行");
+    await flush();
+    expect(viewB.container.textContent).toContain("取消失败");
+    await act(async () => { resolveA({ output: "IGNORED-SECRET\n", exitCode: 0 }); });
+    await flush();
+    expect(viewA.container.textContent).not.toContain("IGNORED-SECRET");
+    expect(viewB.container.textContent).not.toContain("IGNORED-SECRET");
+    expect(note(viewA.container)).toContain("命令已结束；结果已忽略");
+    expect(note(viewB.container)).toContain("命令已结束；结果已忽略");
+  });
+
+  it("adopts a sibling's launch with full control and clears the pre-IPC error on settle", async () => {
+    let rejectExec: (reason: unknown) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { rejectExec = reject; }));
+    const viewA = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    const viewB = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    mounted = viewB;
+    await flush();
+    // B shows a pre-IPC validation error first.
+    setInputValue(viewB.container.querySelector('input[aria-label="命令"]')!, "true");
+    clickButton(viewB.container, "执行");
+    await flush();
+    expect(viewB.container.textContent).toContain("请输入容器名");
+
+    // A launches; B adopts the operation with running/cancel/ignore control.
+    setInputValue(viewA.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(viewA.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(viewA.container, "执行");
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(1);
+    expect(viewB.container.textContent).toContain("执行中");
+    const cancelButton = (container: HTMLElement) => [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "取消执行");
+    const ignoreButton = (container: HTMLElement) => [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "忽略结果");
+    const execButton = () => [...viewB.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "执行");
+    expect(cancelButton(viewB.container)).not.toBeUndefined();
+    expect(ignoreButton(viewB.container)).not.toBeUndefined();
+    expect(execButton()?.disabled).toBe(true);
+
+    // The launcher unmounts; the survivor keeps control and cancels with
+    // the frozen snapshot.
+    act(() => viewA.unmount());
+    await flush();
+    expect(viewB.container.textContent).toContain("执行中");
+    clickButton(viewB.container, "取消执行");
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(2);
+    expect(mocks.call.mock.calls[1][1].args.operationId).toBe(mocks.call.mock.calls[0][1].args.operationId);
+
+    // The settle shows the outcome on the survivor and clears the stale
+    // pre-IPC error; the two never coexist.
+    await act(async () => { rejectExec({ code: "io", message: "执行已取消", detail: { cancelled: true } }); });
+    await flush();
+    expect(viewB.container.querySelector('[role="note"]')?.textContent).toContain("执行已取消");
+    expect(viewB.container.textContent).not.toContain("请输入容器名");
+  });
+
+  it("replaces the current outcome on a new launch without clearing", async () => {
+    mocks.call.mockResolvedValueOnce({ output: "A-RESULT\n", exitCode: 0 });
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+    await waitFor(() => expect(m.container.textContent).toContain("A-RESULT"));
+
+    // Launch B without clearing A's outcome: the new launch acks the old
+    // current outcome, so it is not shown while B runs.
+    let resolveB: (value: { output: string; exitCode: number }) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveB = resolve; }));
+    clickButton(m.container, "执行");
+    await flush();
+    expect(m.container.textContent).toContain("执行中");
+    expect(m.container.querySelector('[role="status"]')).toBeNull();
+    expect(m.container.textContent).not.toContain("A-RESULT");
+
+    // B settles; clearing B's outcome does not revive A's.
+    await act(async () => { resolveB({ output: "B-RESULT\n", exitCode: 0 }); });
+    await flush();
+    expect(m.container.textContent).toContain("B-RESULT");
+    expect(m.container.textContent).not.toContain("A-RESULT");
+    clickButton(m.container, "清除");
+    await flush();
+    expect(m.container.querySelector('[role="status"]')).toBeNull();
+    expect(m.container.textContent).not.toContain("B-RESULT");
+    expect(m.container.textContent).not.toContain("A-RESULT");
+  });
+
+  it("clears each outcome sequentially without reviving older ones", async () => {
+    mocks.call.mockResolvedValueOnce({ output: "FIRST\n", exitCode: 0 });
+    mocks.call.mockResolvedValueOnce({ output: "SECOND\n", exitCode: 0 });
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+    await waitFor(() => expect(m.container.textContent).toContain("FIRST"));
+    clickButton(m.container, "清除");
+    await flush();
+    expect(m.container.textContent).not.toContain("FIRST");
+
+    clickButton(m.container, "执行");
+    await flush();
+    await waitFor(() => expect(m.container.textContent).toContain("SECOND"));
+    expect(m.container.textContent).not.toContain("FIRST");
+    clickButton(m.container, "清除");
+    await flush();
+    expect(m.container.textContent).not.toContain("SECOND");
+    expect(m.container.textContent).not.toContain("FIRST");
   });
 });
