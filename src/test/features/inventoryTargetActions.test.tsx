@@ -362,6 +362,57 @@ describe("inventory target actions", () => {
     expect(m.container.querySelector('[role="note"]')).toBeNull();
   });
 
+  it("cancel after editing the container input still cancels the original exec", async () => {
+    let rejectExec: (reason: unknown) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { rejectExec = reject; }));
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "other");
+    clickButton(m.container, "取消执行");
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(2);
+    const cancelArgs = mocks.call.mock.calls[1][1].args;
+    // The cancel reads the frozen launch snapshot, not the edited input.
+    expect(cancelArgs.container).toBe("web");
+    expect(cancelArgs.operationId).toBe(mocks.call.mock.calls[0][1].args.operationId);
+
+    await act(async () => { rejectExec({ code: "io", message: "执行已取消", detail: { cancelled: true } }); });
+    await flush();
+    expect(m.container.querySelector('[role="note"]')?.textContent).toContain("执行已取消");
+  });
+
+  it("cancel after editing the session selection still cancels the original exec", async () => {
+    let rejectExec: (reason: unknown) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { rejectExec = reject; }));
+    const m = (mounted = render({
+      kind: "docker-context",
+      target: dockerTarget,
+      requireSession: true,
+      sessions: [{ id: "sess-1", name: "prod-host" }, { id: "sess-2", name: "other-host" }],
+    }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    setSelectValue(m.container.querySelector('select[aria-label="受管会话"]')!, "sess-1");
+    clickButton(m.container, "执行");
+    await flush();
+
+    setSelectValue(m.container.querySelector('select[aria-label="受管会话"]')!, "sess-2");
+    clickButton(m.container, "取消执行");
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(2);
+    const cancelArgs = mocks.call.mock.calls[1][1].args;
+    expect(cancelArgs.sessionId).toBe("sess-1");
+    expect(cancelArgs.operationId).toBe(mocks.call.mock.calls[0][1].args.operationId);
+
+    await act(async () => { rejectExec({ code: "io", message: "执行已取消", detail: { cancelled: true } }); });
+    await flush();
+    expect(m.container.querySelector('[role="note"]')?.textContent).toContain("执行已取消");
+  });
+
   it("keeps cancel and ignore-results as distinct actions", async () => {
     let settleA: (resolve: boolean) => void = () => {};
     mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve, reject) => { settleA = (ok) => (ok ? resolve({ output: "A\n", exitCode: 0 }) : reject({ code: "io", message: "执行已取消", detail: { cancelled: true } })); }));

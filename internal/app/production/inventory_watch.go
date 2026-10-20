@@ -79,16 +79,22 @@ type inventoryService struct {
 	closed        bool
 
 	execMu            sync.Mutex
-	execCancels       map[string]*inventoryExecHandle // operationId → in-flight exec
-	execTombstones    map[string]struct{}             // operationIds that received a cancel
-	execTombstoneFIFO []string                        // bounded FIFO eviction order
+	execCancels       map[inventoryExecKey]*inventoryExecHandle // {owner,operationId} → in-flight exec
+	execTombstones    map[inventoryExecKey]struct{}
+	execTombstoneFIFO []inventoryExecKey // bounded per-owner FIFO eviction order
+}
+
+// inventoryExecKey is the composite namespace of an exec: operationIds are
+// only unique per owner, so two owners can run the same ID independently.
+type inventoryExecKey struct {
+	ownerID     string
+	operationID string
 }
 
 // inventoryExecHandle tracks one in-flight target exec so the owner can
 // cancel exactly that instance through the cancel action.
 type inventoryExecHandle struct {
 	cancel    context.CancelFunc
-	ownerID   string
 	kind      string
 	targetKey string
 	container string
@@ -101,8 +107,8 @@ func newInventoryService(database *store.Store, events ipc.Emitter, desktop bool
 		watchInterval:  defaultInventoryWatchInterval,
 		kubeconfigGate: inventoryKubeconfigGate(desktop),
 		watchResults:   map[string]inventorySyncDTO{},
-		execCancels:    map[string]*inventoryExecHandle{},
-		execTombstones: map[string]struct{}{},
+		execCancels:    map[inventoryExecKey]*inventoryExecHandle{},
+		execTombstones: map[inventoryExecKey]struct{}{},
 	}
 	for _, option := range options {
 		option(service)

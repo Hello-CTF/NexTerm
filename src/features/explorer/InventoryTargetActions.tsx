@@ -4,7 +4,7 @@ import { describeError } from "../../ui/errorText";
 import { dockerConfirmation, getDockerConfirmationChallenge, type DockerConfirmationChallenge } from "../docker/productionGuard";
 import { inventoryExecCancelled, inventoryExecFailure, inventoryTargetApi } from "./inventoryTargetApi";
 import type { DockerProductionConfirmation } from "../../ipc/commands";
-import type { InventoryTargetExecResponse } from "../../ipc/generated/types";
+import type { InventoryTargetExecRequest, InventoryTargetExecResponse } from "../../ipc/generated/types";
 
 export interface InventoryTargetSession {
   id: string;
@@ -75,7 +75,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
   const [cancelled, setCancelled] = useState(false);
   const generationRef = useRef(0);
   const ignoredGenRef = useRef<number | null>(null);
-  const operationIdRef = useRef<string>("");
+  const launchSnapshotRef = useRef<InventoryTargetExecRequest | null>(null);
 
   useEffect(() => {
     generationRef.current++;
@@ -116,21 +116,23 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
     setBusy(true);
     setResult(null);
     setFailure(null);
-    // Each launch freezes a fresh, caller-generated operation identity;
-    // retry gets a new one, and cancel addresses exactly this instance.
+    // Each launch freezes an immutable snapshot of the full request
+    // identity; retry gets a fresh one, and cancel reads only the
+    // snapshot, never editable current input.
     const operationId = globalThis.crypto.randomUUID();
-    operationIdRef.current = operationId;
+    const snapshot: InventoryTargetExecRequest = {
+      kind,
+      target,
+      action: "exec",
+      container: resolvedContainer === "" ? undefined : resolvedContainer,
+      command: argv,
+      sessionId: sessionId === "" ? undefined : sessionId,
+      operationId,
+      confirmation,
+    };
+    launchSnapshotRef.current = snapshot;
     try {
-      const response = await inventoryTargetApi.execTarget({
-        kind,
-        target,
-        action: "exec",
-        container: resolvedContainer === "" ? undefined : resolvedContainer,
-        command: argv,
-        sessionId: sessionId === "" ? undefined : sessionId,
-        operationId,
-        confirmation,
-      });
+      const response = await inventoryTargetApi.execTarget(snapshot);
       if (generation !== generationRef.current) {
         if (generation === ignoredGenRef.current) setIgnoredNotice("done");
         return;
@@ -179,21 +181,14 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
 
   // Real cancellation: the backend kills the in-flight command, so retry
   // is safe once the cancelled contract settles. This is distinct from
-  // ignoring a result, which leaves the command running. The cancel
-  // addresses the frozen launch identity, not editable current input.
+  // ignoring a result, which leaves the command running. The cancel reads
+  // only the frozen launch snapshot, never editable current input.
   const cancelExecution = async () => {
     if (!busy) return;
-    const argv = command.trim() ? command.trim().split(/\s+/) : [];
+    const snapshot = launchSnapshotRef.current;
+    if (snapshot === null) return;
     try {
-      await inventoryTargetApi.cancelExec({
-        kind,
-        target,
-        action: "cancel",
-        container: container.trim() === "" ? undefined : container.trim(),
-        command: argv,
-        sessionId: sessionId === "" ? undefined : sessionId,
-        operationId: operationIdRef.current,
-      });
+      await inventoryTargetApi.cancelExec(snapshot);
     } catch {
       // the exec request itself reports the cancellation outcome
     }

@@ -131,80 +131,112 @@ func validateInventoryOperationID(operationID string) error {
 	return nil
 }
 
-func inventoryTargetKey(kind string, target fleetinventory.Target) string {
+// inventoryTargetKey returns the canonical identity of a target. For a
+// Kubernetes pod it includes the context, namespace, pod, and the resolved
+// effective container (override or the target's default), so the same
+// namespace/pod across contexts or with different default containers never
+// collides.
+func inventoryTargetKey(kind string, target fleetinventory.Target, container string) string {
 	switch {
 	case target.Docker != nil:
 		return "context/" + target.Docker.Name
 	case target.Kubernetes != nil:
-		if target.Kubernetes.Pod != "" {
-			return target.Kubernetes.Namespace + "/" + target.Kubernetes.Pod
+		kubernetes := target.Kubernetes
+		if kubernetes.Pod != "" {
+			effective := strings.TrimSpace(container)
+			if effective == "" {
+				effective = kubernetes.Container
+			}
+			return kubernetes.Context + "/" + kubernetes.Namespace + "/" + kubernetes.Pod + "/" + effective
 		}
-		return "context/" + target.Kubernetes.Context
+		return "context/" + kubernetes.Context
 	default:
 		return kind
 	}
 }
 
-// registerExec binds an in-flight exec to its unique operationId. Starting
-// an operationId that is already in flight is rejected, and a tombstone
-// from an earlier cancel blocks the operation from starting at all.
-func (s *inventoryService) registerExec(operationID string, handle *inventoryExecHandle) error {
+// registerExec binds an in-flight exec to its {owner, operationId}
+// namespace. Starting an operationId that is already in flight for that
+// owner is rejected, and a tombstone from an earlier cancel blocks the
+// operation from starting at all.
+func (s *inventoryService) registerExec(key inventoryExecKey, handle *inventoryExecHandle) error {
 	s.execMu.Lock()
 	defer s.execMu.Unlock()
-	if _, tombstoned := s.execTombstones[operationID]; tombstoned {
-		return ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("operation %q 已被取消，不能重复启动", operationID))
+	if _, tombstoned := s.execTombstones[key]; tombstoned {
+		return ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("operation %q 已被取消，不能重复启动", key.operationID))
 	}
-	if _, exists := s.execCancels[operationID]; exists {
-		return ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("operationId %q 已在使用中", operationID))
+	if _, exists := s.execCancels[key]; exists {
+		return ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("operationId %q 已在使用中", key.operationID))
 	}
-	s.execCancels[operationID] = handle
+	s.execCancels[key] = handle
 	return nil
 }
 
-func (s *inventoryService) unregisterExec(operationID string, handle *inventoryExecHandle) {
+func (s *inventoryService) unregisterExec(key inventoryExecKey, handle *inventoryExecHandle) {
 	s.execMu.Lock()
 	defer s.execMu.Unlock()
-	if s.execCancels[operationID] == handle {
-		delete(s.execCancels, operationID)
+	if s.execCancels[key] == handle {
+		delete(s.execCancels, key)
 	}
 }
 
-func (s *inventoryService) addExecTombstone(operationID string) {
-	s.execTombstones[operationID] = struct{}{}
-	s.execTombstoneFIFO = append(s.execTombstoneFIFO, operationID)
-	if len(s.execTombstoneFIFO) > inventoryExecTombstoneLimit {
-		evict := s.execTombstoneFIFO[0]
-		s.execTombstoneFIFO = s.execTombstoneFIFO[1:]
-		delete(s.execTombstones, evict)
+// addExecTombstone records a cancelled operationId under its owner's
+// namespace. Existing tombstones are not re-queued, so a duplicate cancel
+// can never evict the protection it just wrote, and each owner's capacity
+// is bounded independently so one owner's flood cannot evict another's
+// protection.
+func (s *inventoryService) addExecTombstone(key inventoryExecKey) {
+	if _, exists := s.execTombstones[key]; exists {
+		return
+	}
+	s.execTombstones[key] = struct{}{}
+	s.execTombstoneFIFO = append(s.execTombstoneFIFO, key)
+	ownerCount := 0
+	for _, entry := range s.execTombstoneFIFO {
+		if entry.ownerID == key.ownerID {
+			ownerCount++
+		}
+	}
+	if ownerCount > inventoryExecTombstoneLimit {
+		for index, entry := range s.execTombstoneFIFO {
+			if entry.ownerID == key.ownerID {
+				delete(s.execTombstones, entry)
+				s.execTombstoneFIFO = append(s.execTombstoneFIFO[:index], s.execTombstoneFIFO[index+1:]...)
+				break
+			}
+		}
 	}
 }
 
 // cancelTargetExec cancels exactly the in-flight exec identified by the
-// request's operationId. A cancel whose handle is gone (settled or never
-// started) leaves a tombstone so the operation cannot start later; a
-// cancel whose owner or launch metadata does not match is a no-op.
+// caller's namespace and the request's operationId. A cancel whose handle
+// is gone (settled or never started) leaves a tombstone so the operation
+// cannot start later; a cancel whose launch metadata does not match the
+// handle is a no-op and never tombstones the legitimate instance.
 func (s *inventoryService) cancelTargetExec(ctx context.Context, input inventoryTargetExecRequest) (inventoryTargetExecResponse, error) {
 	operationID := strings.TrimSpace(input.OperationID)
 	if err := validateInventoryOperationID(operationID); err != nil {
 		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeBadParam, err.Error())
 	}
-	ownerID := inventoryOwnerID(ctx)
+	key := inventoryExecKey{ownerID: inventoryOwnerID(ctx), operationID: operationID}
 	targetKey := ""
 	candidate := fleetinventory.Candidate{Kind: input.Kind, Options: map[string]any{"inventoryTarget": input.Target}}
 	if target, err := fleetinventory.ResolveTarget(candidate); err == nil {
-		targetKey = inventoryTargetKey(input.Kind, target)
+		targetKey = inventoryTargetKey(input.Kind, target, input.Container)
 	}
 	s.execMu.Lock()
-	handle := s.execCancels[operationID]
-	if handle != nil && (handle.ownerID != ownerID || handle.kind != input.Kind || handle.targetKey != targetKey ||
+	handle := s.execCancels[key]
+	if handle != nil && (handle.kind != input.Kind || handle.targetKey != targetKey ||
 		handle.container != strings.TrimSpace(input.Container) || handle.sessionID != strings.TrimSpace(input.SessionID)) {
 		handle = nil
 	}
 	if handle != nil {
 		handle.cancel()
-		delete(s.execCancels, operationID)
+		delete(s.execCancels, key)
+		s.addExecTombstone(key)
+	} else if _, exists := s.execCancels[key]; !exists {
+		s.addExecTombstone(key)
 	}
-	s.addExecTombstone(operationID)
 	s.execMu.Unlock()
 	return inventoryTargetExecResponse{}, nil
 }
@@ -493,16 +525,16 @@ func (s *inventoryService) execTarget(ctx context.Context, input inventoryTarget
 	defer cancel()
 	handle := &inventoryExecHandle{
 		cancel:    cancel,
-		ownerID:   inventoryOwnerID(ctx),
 		kind:      input.Kind,
-		targetKey: inventoryTargetKey(input.Kind, target),
+		targetKey: inventoryTargetKey(input.Kind, target, input.Container),
 		container: strings.TrimSpace(input.Container),
 		sessionID: strings.TrimSpace(input.SessionID),
 	}
-	if err := s.registerExec(operationID, handle); err != nil {
+	key := inventoryExecKey{ownerID: inventoryOwnerID(ctx), operationID: operationID}
+	if err := s.registerExec(key, handle); err != nil {
 		return inventoryTargetExecResponse{}, err
 	}
-	defer s.unregisterExec(operationID, handle)
+	defer s.unregisterExec(key, handle)
 	output, execErr := fleetinventory.RunTargetGated(execCtx, s.runner, s.kubeconfigGate, target, fleetinventory.TargetExecAction{
 		Container: input.Container, Command: input.Command,
 	})
@@ -571,17 +603,16 @@ func (s *inventoryService) execDockerTargetViaSession(ctx context.Context, input
 	defer cancel()
 	handle := &inventoryExecHandle{
 		cancel:    cancel,
-		ownerID:   inventoryOwnerID(ctx),
 		kind:      input.Kind,
-		targetKey: inventoryTargetKey(input.Kind, target),
+		targetKey: inventoryTargetKey(input.Kind, target, container),
 		container: container,
 		sessionID: sessionID,
 	}
-	operationID := strings.TrimSpace(input.OperationID)
-	if err := s.registerExec(operationID, handle); err != nil {
+	key := inventoryExecKey{ownerID: inventoryOwnerID(ctx), operationID: strings.TrimSpace(input.OperationID)}
+	if err := s.registerExec(key, handle); err != nil {
 		return inventoryTargetExecResponse{}, err
 	}
-	defer s.unregisterExec(operationID, handle)
+	defer s.unregisterExec(key, handle)
 	result, execErr := s.docker.Exec(execCtx, docker.ExecRequest{
 		SessionID: sessionID, Container: container, Command: inventoryShellJoin(input.Command),
 	})
