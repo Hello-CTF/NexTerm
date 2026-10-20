@@ -27,6 +27,7 @@ type tabFakeTerminal struct {
 	createErr        error
 	created          []CreatedTab
 	renamed          [][2]string
+	sessionAssets    map[string]AssetIdentity
 	snapshotErr      error
 	snapshotCalls    int
 	snapshotErrAfter int
@@ -51,10 +52,11 @@ type pasteSubmitCall struct {
 
 func newTabFake(tabs ...*tabFakeTab) *tabFakeTerminal {
 	fake := &tabFakeTerminal{
-		tabs:    make(map[string]*tabFakeTab, len(tabs)),
-		writes:  make(map[string][][]byte),
-		pastes:  make(map[string][]string),
-		created: []CreatedTab{},
+		tabs:          make(map[string]*tabFakeTab, len(tabs)),
+		writes:        make(map[string][][]byte),
+		pastes:        make(map[string][]string),
+		created:       []CreatedTab{},
+		sessionAssets: make(map[string]AssetIdentity),
 	}
 	for _, tab := range tabs {
 		fake.tabs[tab.detail.TabID] = tab
@@ -192,6 +194,23 @@ func (f *tabFakeTerminal) Create(_ context.Context, sessionID string, options Cr
 	}
 	f.created = append(f.created, created)
 	return created, nil
+}
+
+// bindSessionAsset registers the asset identity a session is bound to, so
+// tests can exercise the execution-time identity re-validation.
+func (f *tabFakeTerminal) bindSessionAsset(sessionID string, identity AssetIdentity) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sessionAssets[sessionID] = identity
+}
+
+// SessionAssetIdentity reports the identity bound via bindSessionAsset; a
+// session without a registered binding reports no asset, mirroring a local
+// session in production.
+func (f *tabFakeTerminal) SessionAssetIdentity(_ context.Context, sessionID string) (AssetIdentity, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.sessionAssets[sessionID], nil
 }
 
 func (f *tabFakeTerminal) Rename(_ context.Context, tabID, title string) error {
@@ -490,6 +509,7 @@ func TestTerminalCreateConnectStages(t *testing.T) {
 	t.Run("create failure after connect names residual session", func(t *testing.T) {
 		fake := newTabFake()
 		fake.createErr = errors.New("shell 启动失败")
+		fake.bindSessionAsset("s9", AssetIdentity{AssetID: "a1", ConfigFingerprint: "fp-a1"})
 		registry := p1Registry(fake)
 		registry.deps.ResolveAssetSession = func(context.Context, string) (string, error) { return "", resolveErr }
 		registry.deps.AssetConnector = &fakeConnector{sessionID: "s9"}
@@ -501,7 +521,9 @@ func TestTerminalCreateConnectStages(t *testing.T) {
 	})
 
 	t.Run("connect then create succeeds", func(t *testing.T) {
-		registry := p1Registry(newTabFake())
+		fake := newTabFake()
+		fake.bindSessionAsset("s9", AssetIdentity{AssetID: "a1", ConfigFingerprint: "fp-a1"})
+		registry := p1Registry(fake)
 		registry.deps.ResolveAssetSession = func(context.Context, string) (string, error) { return "", resolveErr }
 		registry.deps.AssetConnector = &fakeConnector{sessionID: "s9"}
 		result := registry.Execute(context.Background(), "job", Scope{SessionID: "s1", TabID: "t1"},

@@ -133,7 +133,9 @@ func TestTerminalCreateOnlyNotConnectedTriggersConnect(t *testing.T) {
 
 	t.Run("not connected connects", func(t *testing.T) {
 		connector := &residualConnector{sessionID: "s9"}
-		registry := p1Registry(newTabFake(fakeTab("t1", "s1", "$ ", 0)))
+		fake := newTabFake(fakeTab("t1", "s1", "$ ", 0))
+		fake.bindSessionAsset("s9", AssetIdentity{AssetID: "a1", ConfigFingerprint: "fp-a1"})
+		registry := p1Registry(fake)
 		registry.deps.ResolveAssetSession = func(context.Context, string) (string, error) {
 			return "", fmt.Errorf("资产未连接: %w", ErrNoLiveSession)
 		}

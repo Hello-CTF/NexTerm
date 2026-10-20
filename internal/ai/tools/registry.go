@@ -189,7 +189,13 @@ func (r *Registry) Execute(ctx context.Context, jobID string, scope Scope, call 
 		return Fail(ctx.Err())
 	}
 	if r.deps.Outcome != nil && call.AuthorizationID != "" && sideEffectKind(call.Name) != "" {
-		call.AssetIdentities = r.resolveCallAssetIdentities(ctx, call)
+		identities, err := r.resolveCallAssetIdentities(ctx, call)
+		if err != nil {
+			// A configured identity resolver that fails must fail visibly:
+			// never write or replay an identity-less record.
+			return Fail(fmt.Errorf("身份解析失败: %w", err))
+		}
+		call.AssetIdentities = identities
 		result = r.executeRecorded(ctx, jobID, scope, call, preparation)
 	} else {
 		result = r.execute(ctx, jobID, scope, call, preparation)
@@ -210,6 +216,8 @@ func sideEffectKind(name string) outcome.Kind {
 		return outcome.KindFile
 	case "db_query":
 		return outcome.KindDatabase
+	case "terminal_create":
+		return outcome.KindCommand
 	default:
 		return ""
 	}
@@ -236,35 +244,37 @@ func OutcomeKeyWithIdentity(jobID, callID string, identities []AssetIdentity) st
 }
 
 // resolveCallAssetIdentities pre-resolves the immutable asset identities for
-// asset-targeted mutations so the outcome key binds to them. It returns nil
-// when the call is not asset-targeted or identity resolution is unavailable
-// — the tool then marks the operation as identity-unverifiable.
-func (r *Registry) resolveCallAssetIdentities(ctx context.Context, call Call) []AssetIdentity {
+// asset-targeted mutations so the outcome key binds to them and the tool
+// re-validates the same identities at execution time instead of resolving
+// again. It returns an error when a configured resolver fails — the call
+// then fails visibly instead of writing or replaying an identity-less
+// record.
+func (r *Registry) resolveCallAssetIdentities(ctx context.Context, call Call) ([]AssetIdentity, error) {
 	switch call.Name {
 	case "terminal_create":
 		var args struct {
 			AssetID string `json:"asset_id"`
 		}
 		if json.Unmarshal(call.Args, &args) != nil || args.AssetID == "" || r.deps.ResolveAssetSessionIdentity == nil {
-			return nil
+			return nil, nil
 		}
 		_, identity, err := r.deps.ResolveAssetSessionIdentity(ctx, args.AssetID)
 		if err != nil {
-			return nil
+			return nil, err
 		}
-		return []AssetIdentity{identity}
+		return []AssetIdentity{identity}, nil
 	case "exec_commands":
 		var args ExecCommandsArgs
 		if json.Unmarshal(call.Args, &args) != nil || len(args.AssetIDs) == 0 && len(args.Tags) == 0 || r.deps.ResolveExecTargetIdentities == nil {
-			return nil
+			return nil, nil
 		}
 		_, identities, err := r.deps.ResolveExecTargetIdentities(ctx, args.AssetIDs, args.Tags)
 		if err != nil {
-			return nil
+			return nil, err
 		}
-		return identities
+		return identities, nil
 	}
-	return nil
+	return nil, nil
 }
 
 func GuardAuthorizationID(decision guard.Decision) string {

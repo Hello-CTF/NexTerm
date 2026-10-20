@@ -174,6 +174,17 @@ func (r *Registry) execCommandsBatch(ctx context.Context, jobID string, call Cal
 		if err != nil {
 			return Fail(err)
 		}
+		// Validate the tool's own resolution first: exactly one non-empty
+		// identity per target session before anything else runs.
+		if failure, checkErr := r.validateTargetIdentityCardinality(targets.SessionIDs, identities); checkErr != nil {
+			return failure
+		}
+		if len(call.AssetIdentities) > 0 {
+			// The pre-resolved identities bound to the operation key are
+			// authoritative for validation; the tool's own resolution only
+			// supplies the session targets.
+			identities = call.AssetIdentities
+		}
 		// Re-validate every target's bound identity at execution time, and
 		// the identity set bound to the operation key: a replaced asset
 		// never receives the mutation and the old result is never attributed
@@ -1111,6 +1122,12 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 			return Fail(errors.New("按资产创建终端未配置"))
 		}
 		resolved, identity, resolveErr := r.resolveAssetSessionForCreate(ctx, args.AssetID, &identityNote)
+		if len(call.AssetIdentities) > 0 {
+			// The pre-resolved identity bound to the operation key is
+			// authoritative for validation; the tool's own resolution only
+			// supplies the session target.
+			identity = call.AssetIdentities[0]
+		}
 		if resolveErr != nil {
 			// Connecting is an uncertain mutation that leaves a residual
 			// session behind, so it happens only on explicit opt-in and only
@@ -1133,6 +1150,21 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 			}
 			sessionID = connectedID
 			connected = true
+			// Re-validate the connected session's identity before creating:
+			// the connector must have attached the requested asset, and the
+			// connected identity is bound into the operation. A mismatch or
+			// a replaced asset fails closed with the residual session and
+			// operation ID visible.
+			connectedIdentity, identityErr := r.connectedSessionAssetIdentity(ctx, sessionID, args.AssetID)
+			if identityErr != nil {
+				failure := Fail(identityErr)
+				failure.Text += fmt.Sprintf("；已建立的会话 session_id=%s 作为残留资源保留（未自动清理）", sessionID)
+				failure.OperationID = operation
+				return failure
+			}
+			if len(call.AssetIdentities) == 0 {
+				call.AssetIdentities = []AssetIdentity{connectedIdentity}
+			}
 		} else {
 			sessionID = resolved
 			// Re-validate the resolved identity at execution time: the
@@ -1216,17 +1248,62 @@ func (r *Registry) validateExecutionAssetIdentity(ctx context.Context, sessionID
 	return Output{}, nil
 }
 
-// validateExecutionTargetIdentities re-validates each batch target's bound
-// identity at execution time and the identity set bound to the operation
-// key. A replaced asset fails closed instead of receiving the mutation.
+// connectedSessionAssetIdentity fetches the connected session's identity and
+// requires it to name the requested asset: a connector that attached a
+// different asset fails closed instead of creating a tab on the wrong one.
+// When the terminal cannot report the session identity, the operation is
+// explicitly marked unverifiable rather than silently accepted.
+func (r *Registry) connectedSessionAssetIdentity(ctx context.Context, sessionID, assetID string) (AssetIdentity, error) {
+	checker, ok := r.deps.Terminal.(SessionAssetIdentityResolver)
+	if !ok {
+		return AssetIdentity{}, fmt.Errorf("资产身份不可验证（终端不支持会话身份读取）: %w", ErrAssetIdentityChanged)
+	}
+	identity, err := checker.SessionAssetIdentity(ctx, sessionID)
+	if err != nil {
+		return AssetIdentity{}, fmt.Errorf("资产身份校验失败: %w", err)
+	}
+	if identity.AssetID != assetID {
+		return AssetIdentity{}, fmt.Errorf("连接建立的会话属于资产 %s 而非请求的 %s: %w", identity.AssetID, assetID, ErrAssetIdentityChanged)
+	}
+	return identity, nil
+}
+
+// validateTargetIdentityCardinality requires exactly one non-empty identity
+// per target session from the tool's own resolution, before anything else
+// runs: a missing, extra, or empty identity fails closed with zero execution.
+func (r *Registry) validateTargetIdentityCardinality(sessionIDs []string, identities []AssetIdentity) (Output, error) {
+	if len(identities) != len(sessionIDs) {
+		return Fail(fmt.Errorf("目标身份数量与会话数量不一致（%d 个会话，%d 个身份），未执行", len(sessionIDs), len(identities))), ErrAssetIdentityChanged
+	}
+	for index, identity := range identities {
+		if identity.AssetID == "" || identity.ConfigFingerprint == "" {
+			return Fail(fmt.Errorf("目标 %s 的资产身份为空，未执行", sessionIDs[index])), ErrAssetIdentityChanged
+		}
+	}
+	return Output{}, nil
+}
+
+// validateExecutionTargetIdentities re-validates the batch identity set at
+// execution time: exactly one non-empty identity per target session, and a
+// multiset match with the identity set bound to the operation key. A
+// missing, extra, duplicate, or empty identity fails closed before any
+// checker or execution.
 func (r *Registry) validateExecutionTargetIdentities(ctx context.Context, sessionIDs []string, resolved, bound []AssetIdentity) (Output, error) {
+	if len(resolved) != len(sessionIDs) {
+		return Fail(fmt.Errorf("目标身份数量与会话数量不一致（%d 个会话，%d 个身份），未执行", len(sessionIDs), len(resolved))), ErrAssetIdentityChanged
+	}
+	for index, identity := range resolved {
+		if identity.AssetID == "" || identity.ConfigFingerprint == "" {
+			return Fail(fmt.Errorf("目标 %s 的资产身份为空，未执行", sessionIDs[index])), ErrAssetIdentityChanged
+		}
+	}
 	if checker, ok := r.deps.Terminal.(SessionAssetIdentityResolver); ok {
 		for index, sessionID := range sessionIDs {
 			boundIdentity, err := checker.SessionAssetIdentity(ctx, sessionID)
 			if err != nil {
 				return Fail(fmt.Errorf("资产身份校验失败: %w", err)), err
 			}
-			if index < len(resolved) && boundIdentity != resolved[index] {
+			if boundIdentity != resolved[index] {
 				return Fail(fmt.Errorf("目标资产在解析与执行之间被替换（%s → %s），未执行", resolved[index].AssetID, boundIdentity.AssetID)), ErrAssetIdentityChanged
 			}
 		}
@@ -1237,16 +1314,21 @@ func (r *Registry) validateExecutionTargetIdentities(ctx context.Context, sessio
 	return Output{}, nil
 }
 
+// assetIdentitySetsEqual compares two identity sets as multisets: every
+// identity appears the same number of times on both sides.
 func assetIdentitySetsEqual(a, b []AssetIdentity) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	seen := make(map[AssetIdentity]struct{}, len(a))
+	counts := make(map[AssetIdentity]int, len(a))
 	for _, identity := range a {
-		seen[identity] = struct{}{}
+		counts[identity]++
 	}
 	for _, identity := range b {
-		if _, ok := seen[identity]; !ok {
+		counts[identity]--
+	}
+	for _, count := range counts {
+		if count != 0 {
 			return false
 		}
 	}
