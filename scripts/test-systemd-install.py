@@ -2583,13 +2583,73 @@ def owner(path: pathlib.Path) -> tuple[int, int]:
     return info.st_uid, info.st_gid
 
 
+REAL_ROOT_GUARD_PATHS = (
+    "/opt/nexterm",
+    "/etc/nexterm",
+    "/var/lib/nexterm",
+    "/etc/systemd/system/nexterm-server.service",
+    "/etc/systemd/system/nexterm-onlyserver.service",
+    "/usr/lib/systemd/system/nexterm-server.service",
+    "/usr/lib/systemd/system/nexterm-onlyserver.service",
+    "/lib/systemd/system/nexterm-server.service",
+    "/lib/systemd/system/nexterm-onlyserver.service",
+)
+
+REAL_ROOT_UNIT_PATHS = REAL_ROOT_GUARD_PATHS[3:]
+
+
+def require_pristine_real_root() -> None:
+    # refuse before any mutation: the real-root legs overwrite or delete
+    # these paths (the installer also removes lower-priority legacy unit
+    # copies), so they may only run when every one of them is absent
+    for path in REAL_ROOT_GUARD_PATHS:
+        if os.path.exists(path):
+            raise AssertionError(
+                f"refusing the real-root leg: {path} already exists; these legs mutate system paths and only run on a pristine system (disposable containers)")
+
+
+def test_real_root_legs_refuse_preexisting_units() -> None:
+    if (os.geteuid() != 0 or platform.system() != "Linux"
+            or os.environ.get("NEXTERM_TEST_REAL_ROOT_INSTALL") != "1"
+            or not os.environ.get("NEXTERM_TEST_POSTGRES_DSN")
+            or not os.environ.get("NEXTERM_TEST_SERVER_BINARY")
+            or not shutil.which("psql")):
+        print("skip   test_real_root_legs_refuse_preexisting_units (needs root on Linux, NEXTERM_TEST_REAL_ROOT_INSTALL=1, psql, NEXTERM_TEST_POSTGRES_DSN and NEXTERM_TEST_SERVER_BINARY; mutates the system: disposable containers only)")
+        return
+    sentinel = "sentinel: pre-existing unit, must survive\n"
+    created: list[str] = []
+    seen: set[str] = set()
+    try:
+        for path in REAL_ROOT_UNIT_PATHS:
+            real = os.path.realpath(path)
+            if real in seen:
+                continue
+            seen.add(real)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as handle:
+                handle.write(sentinel)
+            created.append(path)
+        for leg in (test_real_root_postgres_relative_db_password_file,
+                    test_real_root_bootstrap_preserves_custom_data_dir_ownership):
+            try:
+                leg()
+            except AssertionError as error:
+                assert "refusing the real-root leg" in str(error), str(error)
+            else:
+                raise AssertionError(f"{leg.__name__} must refuse to run with pre-existing unit files")
+            for path in created:
+                assert os.path.exists(path), f"{leg.__name__} deleted a pre-existing unit file: {path}"
+                assert read(pathlib.Path(path)) == sentinel, path
+    finally:
+        for path in created:
+            os.unlink(path)
+
+
 def test_real_root_bootstrap_preserves_custom_data_dir_ownership() -> None:
     if os.geteuid() != 0 or platform.system() != "Linux" or os.environ.get("NEXTERM_TEST_REAL_ROOT_INSTALL") != "1":
         print("skip   test_real_root_bootstrap_preserves_custom_data_dir_ownership (needs root on Linux plus NEXTERM_TEST_REAL_ROOT_INSTALL=1; mutates the system: disposable containers only)")
         return
-    for path in ("/opt/nexterm", "/etc/nexterm", "/var/lib/nexterm"):
-        if os.path.exists(path):
-            raise AssertionError(f"refusing the real-root leg on a system with an existing install: {path}")
+    require_pristine_real_root()
     import pwd
 
     nexterm = pwd.getpwnam("nexterm") if any(line.startswith("nexterm:") for line in open("/etc/passwd")) else None
@@ -2969,9 +3029,7 @@ def test_real_root_postgres_relative_db_password_file() -> None:
             or not dsn_base or not binary or not shutil.which("psql")):
         print("skip   test_real_root_postgres_relative_db_password_file (needs root on Linux, NEXTERM_TEST_REAL_ROOT_INSTALL=1, psql, NEXTERM_TEST_POSTGRES_DSN and NEXTERM_TEST_SERVER_BINARY; mutates the system: disposable containers only)")
         return
-    for path in ("/opt/nexterm", "/etc/nexterm", "/var/lib/nexterm"):
-        if os.path.exists(path):
-            raise AssertionError(f"refusing the real-root leg on a system with an existing install: {path}")
+    require_pristine_real_root()
     import re
 
     match = re.match(r"^postgres(?:ql)?://([^:@/]+)(?::([^@/]*))?@([^/:]+)(?::(\d+))?/", dsn_base)
@@ -3224,6 +3282,7 @@ def main() -> int:
         test_bootstrap_runs_in_service_working_directory,
         test_bootstrap_env_file_single_char_key,
         test_bootstrap_real_postgres_database_isolation,
+        test_real_root_legs_refuse_preexisting_units,
         test_real_root_postgres_relative_db_password_file,
         test_real_root_bootstrap_preserves_custom_data_dir_ownership,
         test_real_server_archive_smoke,
