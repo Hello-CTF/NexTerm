@@ -172,9 +172,49 @@ capture_legacy_values() {
 }
 
 env_get() {
-  local line
-  line="$(grep -m1 "^$2=" "$1" || true)"
-  printf '%s' "${line#"$2"=}"
+  local file="$1" key="$2" line value="" found=0 first last
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "$key"=*) value="${line#"$key"=}"; found=1 ;;
+    esac
+  done < "$file"
+  [ "$found" -eq 1 ] || return 0
+  if [ "${#value}" -ge 2 ]; then
+    first="${value%"${value#?}"}"
+    last="${value#"${value%?}"}"
+    if { [ "$first" = '"' ] && [ "$last" = '"' ]; } || { [ "$first" = "'" ] && [ "$last" = "'" ]; }; then
+      value="${value#?}"
+      value="${value%?}"
+    elif [ "$first" = '"' ] || [ "$first" = "'" ]; then
+      return 1
+    fi
+  elif [ "$value" = '"' ] || [ "$value" = "'" ]; then
+    return 1
+  fi
+  printf '%s' "$value"
+}
+
+transaction_pending() { [ -f "$BACKUP_DIR/pending" ]; }
+
+transaction_state_get() {
+  local key="$1" line
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "$key"=*) printf '%s' "${line#"$key"=}"; return 0 ;;
+    esac
+  done < "$BACKUP_DIR/transaction"
+  return 1
+}
+
+pick_effective_unit() {
+  local unit="$1" base="$2" d
+  for d in "etc/systemd/system" "usr/lib/systemd/system" "lib/systemd/system"; do
+    if [ -f "$base/$d/$unit" ]; then
+      printf '%s' "$base/$d/$unit"
+      return 0
+    fi
+  done
+  return 1
 }
 
 physical_path() {
@@ -254,6 +294,14 @@ backup_current() {
   for unit in $ACTIVE_UNITS; do
     printf '%s\n' "$unit" >> "$BACKUP_DIR/active-units"
   done
+  : > "$BACKUP_DIR/transaction"
+  for d in nexterm onlyserver; do
+    if [ -f "$ETC_DIR/$d.env" ]; then
+      printf 'env_preexisted.%s=1\n' "$d" >> "$BACKUP_DIR/transaction"
+    else
+      printf 'env_preexisted.%s=0\n' "$d" >> "$BACKUP_DIR/transaction"
+    fi
+  done
   : > "$BACKUP_DIR/pending"
   log "saved previous payload to $BACKUP_DIR"
 }
@@ -279,21 +327,23 @@ install_web() {
 
 install_units() {
   fail_at units
-  local unit d legacy_src
+  local unit d effective base
+  if transaction_pending; then
+    base="$BACKUP_DIR/units"
+  else
+    base="$ROOT_PREFIX"
+  fi
   for unit in $UNITS; do
-    legacy_src=""
-    for d in "$UNIT_DIR" "$ROOT_PREFIX/usr/lib/systemd/system" "$ROOT_PREFIX/lib/systemd/system"; do
-      if [ -f "$d/$unit" ] && is_legacy_unit "$d/$unit"; then
-        legacy_src="$d/$unit"
-        break
+    effective="$(pick_effective_unit "$unit" "$base" || true)"
+    if [ -n "$effective" ] && is_legacy_unit "$effective"; then
+      if transaction_pending; then
+        log "recovering legacy unit settings for $unit from the rollback backup (interrupted upgrade)"
       fi
-    done
-    if [ -n "$legacy_src" ]; then
       log "migrating legacy unit $unit (inline ExecStart flags move to the ${ETC_DIR#$ROOT_PREFIX} env files)"
       if [ "$unit" = "$SERVER_UNIT" ]; then
-        SERVER_LEGACY_VALUES="$(capture_legacy_values "$legacy_src")"
+        SERVER_LEGACY_VALUES="$(capture_legacy_values "$effective")"
       else
-        ONLYSERVER_LEGACY_VALUES="$(capture_legacy_values "$legacy_src")"
+        ONLYSERVER_LEGACY_VALUES="$(capture_legacy_values "$effective")"
       fi
     fi
     install -m 0644 "$SOURCE_DIR/$unit" "$UNIT_DIR/$unit"
@@ -308,15 +358,23 @@ install_units() {
 
 ensure_env_files() {
   fail_at env
-  local name env_file example legacy line key
+  local name env_file example legacy line key pre_existed
   for name in nexterm onlyserver; do
     env_file="$ETC_DIR/$name.env"
     example="$SOURCE_DIR/$name.env.example"
-    if [ -f "$env_file" ]; then
-      if [ "$name" = "nexterm" ]; then NEXTERM_ENV_PREEXISTED=1; else ONLYSERVER_ENV_PREEXISTED=1; fi
+    if transaction_pending; then
+      if ! pre_existed="$(transaction_state_get "env_preexisted.$name")"; then
+        die "rollback backup state is incomplete (missing env_preexisted.$name); inspect $BACKUP_DIR or remove it and re-run"
+      fi
+    elif [ -f "$env_file" ]; then
+      pre_existed=1
+    else
+      pre_existed=0
+    fi
+    if [ "$name" = "nexterm" ]; then NEXTERM_ENV_PREEXISTED="$pre_existed"; else ONLYSERVER_ENV_PREEXISTED="$pre_existed"; fi
+    if [ "$pre_existed" -eq 1 ]; then
       log "preserving existing ${env_file#$ROOT_PREFIX}"
     else
-      if [ "$name" = "nexterm" ]; then NEXTERM_ENV_PREEXISTED=0; else ONLYSERVER_ENV_PREEXISTED=0; fi
       install -m 0600 "$example" "$env_file"
       log "installed ${env_file#$ROOT_PREFIX} with safe defaults"
     fi
@@ -349,8 +407,12 @@ ensure_master_key() {
   for name in nexterm onlyserver; do
     env_file="$ETC_DIR/$name.env"
     if [ "$name" = "nexterm" ]; then pre_existed="$NEXTERM_ENV_PREEXISTED"; else pre_existed="$ONLYSERVER_ENV_PREEXISTED"; fi
-    configured="$(env_get "$env_file" NEXTERM_MASTER_KEY_FILE)"
-    data_dir="$(env_get "$env_file" NEXTERM_DATA_DIR)"
+    if ! configured="$(env_get "$env_file" NEXTERM_MASTER_KEY_FILE)"; then
+      die "cannot parse NEXTERM_MASTER_KEY_FILE in ${env_file#$ROOT_PREFIX} (unbalanced quotes); fix the file and re-run"
+    fi
+    if ! data_dir="$(env_get "$env_file" NEXTERM_DATA_DIR)"; then
+      die "cannot parse NEXTERM_DATA_DIR in ${env_file#$ROOT_PREFIX} (unbalanced quotes); fix the file and re-run"
+    fi
     [ -n "$data_dir" ] || data_dir="${DATA_DIR#$ROOT_PREFIX}"
     data_dir_key="$data_dir/master.key"
     if [ "$pre_existed" -eq 1 ] && [ -n "$configured" ]; then

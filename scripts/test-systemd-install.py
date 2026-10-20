@@ -21,12 +21,18 @@ material is touched. Coverage:
      only when none exists
   7. Rollback restores the previous payload and units, keeps env and master key,
      consumes the backup; a retry after a failed upgrade preserves the original
-     rollback backup and active-unit state
+     rollback backup and active-unit state, recovers legacy unit settings from the
+     backup, and keeps env files created by the failed attempt from being treated
+     as explicit configuration
   8. NEXTERM_INSTALL_FAIL_AT aborts at the named step and leaves the previous
      payload, env and master key intact; a failed first install resumes and
      enables/starts the unit on retry
-  9. Upgrade with no active unit never restarts or enables anything
-  10. --no-enable skips enable --now on first install; missing payload fails closed
+  9. Env parsing follows systemd EnvironmentFile semantics: last duplicate
+     assignment wins, matching quotes are stripped, unbalanced quotes fail closed
+     before any key generation; unit selection follows systemd priority so a
+     lower-priority legacy copy never overrides the effective /etc unit
+  10. Upgrade with no active unit never restarts or enables anything
+  11. --no-enable skips enable --now on first install; missing payload fails closed
 
     python3 scripts/test-systemd-install.py
 """
@@ -536,6 +542,148 @@ def test_failure_injection_leaves_previous_payload_intact() -> None:
         assert read(binary) == read(payload_v1 / "nexterm-server"), "rollback must restore v1"
 
 
+def test_failed_masterkey_retry_preserves_data_dir_key() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        legacy_bin = root / "opt/nexterm/nexterm-server"
+        legacy_bin.parent.mkdir(parents=True)
+        legacy_bin.write_text("# fake nexterm-server v0\n")
+        data_key = root / "var/lib/nexterm/master.key"
+        data_key.parent.mkdir(parents=True)
+        data_key.write_text("data-dir-key-material\n")
+        payload_v2 = make_payload(base, "v2")
+
+        failed = run_install(payload_v2, root, stubs, base, fail_at="masterkey")
+        assert failed.returncode != 0, "injected failure must abort"
+        assert (root / "etc/nexterm/nexterm.env").exists(), "the failed attempt already installed the example env"
+        assert not (root / "etc/nexterm/master.key").exists(), "the failed attempt must not generate a key"
+
+        retry = run_install(payload_v2, root, stubs, base)
+        assert retry.returncode == 0, retry.stderr
+        assert "preserving rollback backup" in retry.stdout, retry.stdout
+        assert read(data_key) == "data-dir-key-material\n", "data-dir key must be untouched"
+        assert not (root / "etc/nexterm/master.key").exists(), "retry must not generate a new /etc key"
+        for env in ENVS:
+            values = env_values(root / "etc/nexterm" / env)
+            assert values["NEXTERM_MASTER_KEY_FILE"] == "/var/lib/nexterm/master.key", (env, values)
+
+
+def test_failed_env_retry_recovers_legacy_values() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        legacy_bin = root / "opt/nexterm/nexterm-server"
+        legacy_bin.parent.mkdir(parents=True)
+        legacy_bin.write_text("# fake nexterm-server v0\n")
+        (root / "etc/systemd/system").mkdir(parents=True)
+        (root / "etc/systemd/system/nexterm-server.service").write_text(LEGACY_UNIT_NON_DEFAULT)
+        data_key = root / "srv/nexterm-data/master.key"
+        data_key.parent.mkdir(parents=True)
+        data_key.write_text("srv-data-key\n")
+        payload_v2 = make_payload(base, "v2")
+
+        failed = run_install(payload_v2, root, stubs, base, fail_at="env")
+        assert failed.returncode != 0, "injected failure must abort"
+        assert read(root / "etc/systemd/system/nexterm-server.service") == read(SYSTEMD_DIR / "nexterm-server.service"), "the failed attempt already replaced the unit"
+
+        retry = run_install(payload_v2, root, stubs, base)
+        assert retry.returncode == 0, retry.stderr
+        assert "recovering legacy unit settings" in retry.stdout, retry.stdout
+        values = env_values(root / "etc/nexterm/nexterm.env")
+        assert values["NEXTERM_LISTEN"] == "0.0.0.0:9000", values
+        assert values["NEXTERM_AUTH"] == "off", values
+        assert values["NEXTERM_DATA_DIR"] == "/srv/nexterm-data", values
+        assert values["NEXTERM_WEB_ROOT"] == "/srv/nexterm-web", values
+        assert values["NEXTERM_MASTER_KEY_FILE"] == "/srv/nexterm-data/master.key", values
+        assert read(data_key) == "srv-data-key\n", "recovered data-dir key must be adopted, not regenerated"
+
+
+def test_quoted_data_dir_and_duplicate_assignments() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        seed_first_install(base, stubs, root)
+        env_file = root / "etc/nexterm/nexterm.env"
+        env_file.write_text(
+            "NEXTERM_LISTEN=127.0.0.1:8080\nNEXTERM_AUTH=on\n"
+            "NEXTERM_DATA_DIR=/bogus\nNEXTERM_DATA_DIR=\"/srv/nexterm-data\"\n"
+            "NEXTERM_WEB_ROOT=/opt/nexterm/web\nNEXTERM_DB=sqlite\n"
+        )
+        data_key = root / "srv/nexterm-data/master.key"
+        data_key.parent.mkdir(parents=True)
+        data_key.write_text("quoted-key\n")
+        payload_v2 = make_payload(base, "v2")
+        result = run_install(payload_v2, root, stubs, base)
+        assert result.returncode == 0, result.stderr
+        values = env_values(env_file)
+        assert values["NEXTERM_MASTER_KEY_FILE"] == "/srv/nexterm-data/master.key", "last assignment wins and quotes are stripped"
+        assert read(data_key) == "quoted-key\n", "quoted data-dir key must be adopted"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        seed_first_install(base, stubs, root)
+        env_file = root / "etc/nexterm/nexterm.env"
+        env_file.write_text(
+            "NEXTERM_LISTEN=127.0.0.1:8080\nNEXTERM_AUTH=on\n"
+            "NEXTERM_DATA_DIR=\"/srv/nexterm-data\n"
+            "NEXTERM_WEB_ROOT=/opt/nexterm/web\nNEXTERM_DB=sqlite\n"
+        )
+        payload_v2 = make_payload(base, "v2")
+        failed = run_install(payload_v2, root, stubs, base)
+        assert failed.returncode != 0, "unbalanced quotes must fail closed"
+        assert "cannot parse NEXTERM_DATA_DIR" in failed.stderr, failed.stderr
+
+
+def test_lower_priority_legacy_unit_does_not_override_etc() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        seed_first_install(base, stubs, root)
+        (root / "etc/nexterm/nexterm.env").write_text(
+            "NEXTERM_LISTEN=127.0.0.1:9000\nNEXTERM_AUTH=on\n"
+            "NEXTERM_DATA_DIR=/var/lib/nexterm\nNEXTERM_WEB_ROOT=/opt/nexterm/web\n"
+            "NEXTERM_MASTER_KEY_FILE=/etc/nexterm/master.key\nNEXTERM_DB=sqlite\n"
+        )
+        lib_dir = root / "usr/lib/systemd/system"
+        lib_dir.mkdir(parents=True)
+        (lib_dir / "nexterm-server.service").write_text(LEGACY_UNIT_NON_DEFAULT)
+        payload_v2 = make_payload(base, "v2")
+        result = run_install(payload_v2, root, stubs, base)
+        assert result.returncode == 0, result.stderr
+        values = env_values(root / "etc/nexterm/nexterm.env")
+        assert values["NEXTERM_LISTEN"] == "127.0.0.1:9000", "the effective /etc unit wins over the lower-priority copy"
+        assert values["NEXTERM_AUTH"] == "on", values
+        assert not (lib_dir / "nexterm-server.service").exists(), "lower-priority copy must still be removed"
+        assert "migrating legacy unit" not in result.stdout, "lower-priority legacy values must not be applied"
+        backup_units = root / "opt/nexterm/.rollback/units"
+        assert read(backup_units / "usr/lib/systemd/system/nexterm-server.service") == LEGACY_UNIT_NON_DEFAULT
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        seed_first_install(base, stubs, root)
+        (root / "etc/systemd/system/nexterm-server.service").write_text(LEGACY_UNIT_NON_DEFAULT)
+        other_legacy = LEGACY_UNIT_NON_DEFAULT.replace("0.0.0.0:9000", "0.0.0.0:9001").replace("/srv/nexterm-data", "/srv/other-data")
+        lib_dir = root / "usr/lib/systemd/system"
+        lib_dir.mkdir(parents=True)
+        (lib_dir / "nexterm-server.service").write_text(other_legacy)
+        payload_v2 = make_payload(base, "v2")
+        result = run_install(payload_v2, root, stubs, base)
+        assert result.returncode == 0, result.stderr
+        values = env_values(root / "etc/nexterm/nexterm.env")
+        assert values["NEXTERM_LISTEN"] == "0.0.0.0:9000", "only the effective /etc unit's values migrate"
+        assert values["NEXTERM_DATA_DIR"] == "/srv/nexterm-data", values
+        assert not (lib_dir / "nexterm-server.service").exists(), "lower-priority copy must still be removed"
+
+
 def test_failed_upgrade_retry_preserves_rollback() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         base = pathlib.Path(tmp)
@@ -632,6 +780,10 @@ def main() -> int:
         test_backfill_without_trailing_newline,
         test_rollback_restores_previous_payload,
         test_failure_injection_leaves_previous_payload_intact,
+        test_failed_masterkey_retry_preserves_data_dir_key,
+        test_failed_env_retry_recovers_legacy_values,
+        test_quoted_data_dir_and_duplicate_assignments,
+        test_lower_priority_legacy_unit_does_not_override_etc,
         test_failed_upgrade_retry_preserves_rollback,
         test_first_install_failure_at_env_is_recoverable,
         test_upgrade_no_active_unit_never_restarts,
