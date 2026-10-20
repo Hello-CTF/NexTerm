@@ -7,6 +7,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
@@ -19,7 +21,7 @@ func (s *Service) startHistory(ctx context.Context, ownerID string, request Requ
 	if s.history == nil {
 		return
 	}
-	row := historyBatchRow(ownerID, request, started, targets, store.ExecBatchStatusRunning, nil)
+	row := historyBatchRow(ctx, s.productionSettings, ownerID, request, started, targets, store.ExecBatchStatusRunning, nil)
 	s.saveHistory(ctx, ownerID, row, nil)
 }
 
@@ -29,7 +31,7 @@ func (s *Service) finishWithHistory(ctx context.Context, ownerID string, request
 		return batch
 	}
 	finishedAt := batch.FinishedAt
-	row := historyBatchRow(ownerID, request, started, targets, historyBatchStatus(results), &finishedAt)
+	row := historyBatchRow(ctx, s.productionSettings, ownerID, request, started, targets, historyBatchStatus(results), &finishedAt)
 	s.saveHistory(ctx, ownerID, row, historyResultRows(batch))
 	return batch
 }
@@ -42,10 +44,10 @@ func (s *Service) saveHistory(ctx context.Context, ownerID string, row store.Exe
 	}
 }
 
-func historyBatchRow(ownerID string, request Request, started time.Time, targets []Target, status string, finishedAt *int64) store.ExecBatchRow {
+func historyBatchRow(ctx context.Context, productionSettings guard.Settings, ownerID string, request Request, started time.Time, targets []Target, status string, finishedAt *int64) store.ExecBatchRow {
 	row := store.ExecBatchRow{
 		ID: request.BatchID, CommandHash: commandDigest(request.Command), TargetSetHash: historyTargetSetHash(request.BatchID, ownerID, targets),
-		Status: status, TargetCount: int32(len(targets)), Production: historyProduction(targets),
+		Status: status, TargetCount: int32(len(targets)), Production: historyProduction(ctx, productionSettings, ownerID, targets),
 		StartedAt: started.UnixMilli(), FinishedAt: finishedAt,
 	}
 	if request.Runbook != nil {
@@ -83,9 +85,17 @@ func historyTargetSetHash(batchID, ownerID string, targets []Target) string {
 	return digest("target-set-v2", canonical)
 }
 
-func historyProduction(targets []Target) bool {
+// historyProduction classifies targets with the same owner-aware configurable
+// production environment list as the confirmation challenge, so a confirmed
+// custom-production batch is stored with the matching production marker.
+func historyProduction(ctx context.Context, settings guard.Settings, ownerID string, targets []Target) bool {
+	classificationCtx := ctx
+	if ownerID != "" {
+		classificationCtx = ipc.WithUserID(ctx, ownerID)
+	}
 	for _, target := range targets {
-		if isProductionEnvironment(target.Environment) {
+		production, err := guard.IsProductionEnvironment(classificationCtx, settings, target.Environment)
+		if err == nil && production {
 			return true
 		}
 	}

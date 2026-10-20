@@ -182,13 +182,6 @@ func execAuditContext(ctx context.Context, ownerID string) context.Context {
 	return ipc.WithUserID(context.WithoutCancel(ctx), ownerID)
 }
 
-// isProductionEnvironment backs the history row's Production flag with the
-// built-in names; production write challenges use the owner's configured list
-// via guard.IsProductionEnvironment instead.
-func isProductionEnvironment(environment string) bool {
-	return guard.IsBuiltInProductionEnvironment(environment)
-}
-
 func commandDigest(command string) string {
 	return digest("command-v1", []byte(command))
 }

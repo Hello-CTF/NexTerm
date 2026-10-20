@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -15,7 +17,9 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 type cronConnectFixture struct {
@@ -416,5 +420,99 @@ func TestCronExecutorConnectRejectionStaysHonest(t *testing.T) {
 	}
 	if sessions, err := fixture.services.Sessions.ListSessionsFor(fixture.owner); err != nil || len(sessions) != 0 {
 		t.Fatalf("rejected connect dialed %d sessions: %v", len(sessions), err)
+	}
+}
+
+func TestCronConnectDialRejectsStoredAutoAcceptWithActuallyUnknownKey(t *testing.T) {
+	production := newHostKeyTestProduction(t)
+	ctx := context.Background()
+	server := newHostKeyTestServer(t)
+	// The asset stores auto-accept, and the trust database holds an approval
+	// for a DIFFERENT key, so the key the server presents is actually unknown.
+	assetID := createConnectorTestAsset(t, production, "stored-auto-accept", "127.0.0.1", server.port(), "password", "",
+		`{"password":"host-key-test-secret","autoAcceptUnknownHost":true}`)
+	const foreignFingerprint = "SHA256:bm90LXRoZS1yZWFsLWtleQ=="
+	if err := production.Services.Store.KnownHostAccept(ctx, "127.0.0.1", int32(server.port()), "ssh-ed25519", foreignFingerprint); err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Services.Store.SettingSet(ctx, cron.ConnectOptInSettingKey, "true"); err != nil {
+		t.Fatal(err)
+	}
+	connector := newCronConnector(&production.Services)
+	trigger := cron.Trigger{RunID: "run-1", JobID: "job-1", OwnerKind: cron.OwnerKindOpen}
+	if _, err := connector.Connect(ctx, trigger, assetID); !errors.Is(err, ssh.ErrHostKeyPending) {
+		t.Fatalf("connect error = %v, want host key pending", err)
+	}
+	keys, err := production.Services.Store.KnownHostList(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 1 || keys[0].Fingerprint != foreignFingerprint {
+		t.Fatalf("trust store changed: %+v", keys)
+	}
+	if sessions, err := production.Services.Sessions.ListSessionsFor(ctx); err != nil || len(sessions) != 0 {
+		t.Fatalf("rejected connect created %d sessions: %v", len(sessions), err)
+	}
+}
+
+func TestPlainConnectKeepsStoredAutoAcceptBehavior(t *testing.T) {
+	production := newHostKeyTestProduction(t)
+	ctx := context.Background()
+	server := newHostKeyTestServer(t)
+	assetID := createConnectorTestAsset(t, production, "stored-auto-accept", "127.0.0.1", server.port(), "password", "",
+		`{"password":"host-key-test-secret","autoAcceptUnknownHost":true}`)
+	row, err := production.Services.Store.AssetGetLive(ctx, assetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset, err := productionSessionAsset(row, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	connected, err := production.Services.Sessions.ConnectFor(ctx, asset)
+	if err != nil {
+		t.Fatalf("interactive connect with stored auto-accept = %v", err)
+	}
+	if connected == nil || connected.ID == "" {
+		t.Fatal("interactive connect returned no session")
+	}
+}
+
+func TestCronConnectDialRejectsUnknownJumpHop(t *testing.T) {
+	production := newHostKeyTestProduction(t)
+	ctx := context.Background()
+	jump := newSSHConnectorServer(t, nil)
+	target := newHostKeyTestServer(t)
+	targetKey := (*target.signer.Load()).PublicKey()
+	if err := production.Services.Store.KnownHostAccept(ctx, "127.0.0.1", int32(target.port()), targetKey.Type(), gossh.FingerprintSHA256(targetKey)); err != nil {
+		t.Fatal(err)
+	}
+	jumpAssetID := createConnectorTestAsset(t, production, "jump", "127.0.0.1", jump.port(), "password", "",
+		`{"password":"secret","autoAcceptUnknownHost":true}`)
+	targetAssetID := createConnectorTestAsset(t, production, "target", "127.0.0.1", target.port(), "password", "",
+		`{"password":"host-key-test-secret","jumpAssetId":"`+jumpAssetID+`"}`)
+	if err := production.Services.Store.SettingSet(ctx, cron.ConnectOptInSettingKey, "true"); err != nil {
+		t.Fatal(err)
+	}
+	connector := newCronConnector(&production.Services)
+	trigger := cron.Trigger{RunID: "run-1", JobID: "job-1", OwnerKind: cron.OwnerKindOpen}
+	_, err := connector.Connect(ctx, trigger, targetAssetID)
+	if !errors.Is(err, ssh.ErrHostKeyPending) {
+		t.Fatalf("connect error = %v, want host key pending for the jump hop", err)
+	}
+	if !strings.Contains(err.Error(), strconv.Itoa(jump.port())) {
+		t.Fatalf("connect error does not name the jump hop: %v", err)
+	}
+	keys, err := production.Services.Store.KnownHostList(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range keys {
+		if int(key.Port) == jump.port() {
+			t.Fatalf("unknown jump key was trusted: %+v", key)
+		}
+	}
+	if sessions, err := production.Services.Sessions.ListSessionsFor(ctx); err != nil || len(sessions) != 0 {
+		t.Fatalf("rejected jump connect created %d sessions: %v", len(sessions), err)
 	}
 }

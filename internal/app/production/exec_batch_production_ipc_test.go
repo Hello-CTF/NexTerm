@@ -187,4 +187,13 @@ func TestProductionConstructionWiresRunbookAndProductionSettings(t *testing.T) {
 	if len(batch.Results) != 1 || batch.Results[0].Status != execbatch.StatusSuccess || execCalls.Load() != 1 {
 		t.Fatalf("wired live batch = %+v, exec calls = %d", batch.Results, execCalls.Load())
 	}
+	// The execution history carries the same production marker as the
+	// confirmation challenge for the configured environment name.
+	history, err := database.ExecBatchHistoryGet(owner, request.BatchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !history.Batch.Production {
+		t.Fatalf("configured production history marker = %+v", history.Batch)
+	}
 }

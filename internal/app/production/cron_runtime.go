@@ -255,9 +255,13 @@ func (e cronConnectEvidence) ProductionConfirmed(ctx context.Context, _ cron.Tri
 	return cronConnectSetting(ctx, e.services.Store, cron.ConnectProductionOptInSettingKeyForUser(ctx))
 }
 
-// cronConnectDial dials the asset with host-key verification left to the
-// connector (acceptHostKey is always false, so unknown keys are never
-// auto-accepted).
+// cronConnectDial dials the asset with strict host-key verification forced on
+// every hop: auto-accepting unknown host keys is disabled even when stored
+// asset options enable it, so unknown or changed keys are never auto-accepted
+// and rejection adds no new trust. The strict mark travels with the asset
+// options because the session manager detaches the connect context from the
+// caller; interactive connects do not set it and keep their configured
+// behavior.
 func cronConnectDial(services *ProductionServices) func(context.Context, cron.Trigger, string) (string, error) {
 	return func(ctx context.Context, trigger cron.Trigger, assetID string) (string, error) {
 		if services.Store == nil || services.Sessions == nil {
@@ -270,6 +274,9 @@ func cronConnectDial(services *ProductionServices) func(context.Context, cron.Tr
 		asset, err := productionSessionAsset(row, false, trigger.OwnerID)
 		if err != nil {
 			return "", err
+		}
+		if options, ok := asset.Options.(map[string]any); ok {
+			options["strictHostKey"] = true
 		}
 		connected, err := services.Sessions.ConnectFor(ctx, asset)
 		if err != nil {
