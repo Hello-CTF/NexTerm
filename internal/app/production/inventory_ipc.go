@@ -433,6 +433,12 @@ func (s *inventoryService) execDockerTargetViaSession(ctx context.Context, input
 	if err != nil {
 		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeForbidden, "受管会话资产不可用")
 	}
+	// The endpoint check must bind the actual connection target: when the
+	// live asset's config fingerprint diverges from the session snapshot,
+	// the session still points at the old host and must be reconnected.
+	if productionAssetConfigFingerprint(assetRow) != connected.Asset().ConfigFingerprint {
+		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeForbidden, "受管会话配置已过期，请重新连接后重试")
+	}
 	endpoint, err := fleetinventory.ParseDockerEndpoint(target.Docker.Endpoint)
 	if err != nil || !dockerEndpointMatchesAsset(endpoint, assetRow) {
 		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeForbidden, fmt.Sprintf("Docker context %q 的端点与受管会话资产不匹配", target.Docker.Name))
@@ -477,16 +483,21 @@ func dockerEndpointMatchesAsset(endpoint fleetinventory.DockerEndpoint, asset st
 		if endpoint.Username != "" && (asset.Username == nil || *asset.Username != endpoint.Username) {
 			return false
 		}
+		// An ssh endpoint without a port means SSH port 22; normalize both
+		// sides to the effective SSH port and compare numerically.
+		endpointPort := 22
 		if endpoint.Port != "" {
-			assetPort := 22
-			if asset.Port != nil {
-				assetPort = int(*asset.Port)
-			}
-			if strconv.Itoa(assetPort) != endpoint.Port {
+			parsed, err := strconv.Atoi(endpoint.Port)
+			if err != nil || parsed <= 0 || parsed > 65535 {
 				return false
 			}
+			endpointPort = parsed
 		}
-		return true
+		assetPort := 22
+		if asset.Port != nil {
+			assetPort = int(*asset.Port)
+		}
+		return endpointPort == assetPort
 	case "tcp":
 		return true
 	default:

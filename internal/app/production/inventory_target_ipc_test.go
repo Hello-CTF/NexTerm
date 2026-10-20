@@ -80,10 +80,12 @@ func newInventorySessionManager(t *testing.T) *session.Manager {
 	return manager
 }
 
-func connectInventoryTestSession(t *testing.T, manager *session.Manager, ownerID, assetID string) *session.Session {
+func connectInventoryTestSession(t *testing.T, manager *session.Manager, ownerID string, asset store.AssetRow) *session.Session {
 	t.Helper()
 	ctx := ipc.WithUserID(context.Background(), ownerID)
-	connected, err := manager.ConnectFor(ctx, session.Asset{ID: assetID, Kind: session.KindSSH})
+	connected, err := manager.ConnectFor(ctx, session.Asset{
+		ID: asset.ID, Kind: session.KindSSH, ConfigFingerprint: productionAssetConfigFingerprint(asset),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,9 +222,9 @@ func TestInventoryTargetExecDockerServerRequiresManagedSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessionA := connectInventoryTestSession(t, manager, "owner-a", assetA.ID)
-	sessionB := connectInventoryTestSession(t, manager, "owner-b", assetB.ID)
-	sessionOther := connectInventoryTestSession(t, manager, "owner-a", otherAsset.ID)
+	sessionA := connectInventoryTestSession(t, manager, "owner-a", assetA)
+	sessionB := connectInventoryTestSession(t, manager, "owner-b", assetB)
+	sessionOther := connectInventoryTestSession(t, manager, "owner-a", otherAsset)
 
 	// Import stays available for target resolution but grants no exec rights.
 	importDockerContext(t, dispatcher, ctxA, runner)
@@ -311,8 +313,8 @@ func TestInventoryTargetExecDockerServerEndpointSchemes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	connected := connectInventoryTestSession(t, manager, "owner-a", asset.ID)
-	jumpConnected := connectInventoryTestSession(t, manager, "owner-a", jumpAsset.ID)
+	connected := connectInventoryTestSession(t, manager, "owner-a", asset)
+	jumpConnected := connectInventoryTestSession(t, manager, "owner-a", jumpAsset)
 
 	// A TCP Docker daemon port is not the session transport port: the same
 	// host through an own session is allowed even though 2375 != 22.
@@ -346,12 +348,97 @@ func TestInventoryTargetExecDockerServerEndpointSchemes(t *testing.T) {
 		t.Fatalf("ssh wrong-port exec reached the backend: %+v", executor.calls)
 	}
 
+	// A no-port endpoint means SSH port 22 and must not match a 2222 asset.
+	noPort := inventoryDockerExecRequest()
+	noPort.SessionID = jumpConnected.ID
+	response = dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", noPort, nil)
+	requireInventoryIPCError(t, response, ipc.CodeForbidden)
+	if len(executor.calls) != 0 {
+		t.Fatalf("no-port endpoint matched a 2222 asset: %+v", executor.calls)
+	}
+
+	// The same no-port endpoint matches port-22 and default-port assets.
+	noPort.SessionID = connected.ID
+	dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", noPort, &result)
+	if len(executor.calls) != 1 {
+		t.Fatalf("no-port endpoint on port-22 asset calls = %+v", executor.calls)
+	}
+	defaultPortAsset, err := database.AssetCreate(ctx, store.AssetInput{Kind: "ssh", Name: "default-port", Host: stringPointerForInventory("prod.example"), Username: optionalString("ops")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultConnected := connectInventoryTestSession(t, manager, "owner-a", defaultPortAsset)
+	executor.calls = nil
+	noPort.SessionID = defaultConnected.ID
+	dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", noPort, &result)
+	if len(executor.calls) != 1 {
+		t.Fatalf("no-port endpoint on default-port asset calls = %+v", executor.calls)
+	}
+
 	// The matching SSH port on the same host is allowed.
+	executor.calls = nil
 	sshRightPort := sshWrongPort
 	sshRightPort.SessionID = jumpConnected.ID
 	dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", sshRightPort, &result)
 	if len(executor.calls) != 1 {
 		t.Fatalf("ssh matching-port exec calls = %+v", executor.calls)
+	}
+}
+
+func TestInventoryTargetExecDockerServerStaleSessionRequiresReconnect(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	manager := newInventorySessionManager(t)
+	executor := &fakeInventoryDockerExecutor{result: docker.ExecResult{Output: "Linux\n"}}
+	service := newInventoryService(database, nil, false, t.TempDir(),
+		withInventoryWatchInterval(20*time.Millisecond), withInventoryDockerAccess(manager, executor))
+	t.Cleanup(func() { _ = service.Shutdown(context.Background()) })
+	runner := &recordingInventoryRunner{outputs: map[string][]byte{}}
+	service.runner = runner
+	dispatcher := newInventoryExecDispatcher(t, service)
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+
+	asset, err := database.AssetCreate(ctx, store.AssetInput{Kind: "ssh", Name: "prod-host", Host: stringPointerForInventory("old.example"), Username: optionalString("ops")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := connectInventoryTestSession(t, manager, "owner-a", asset)
+	newHost := "new.example"
+	if _, err := database.AssetUpdate(ctx, asset.ID, store.AssetPatch{Host: store.Value(newHost)}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The live asset matches the new endpoint, but the connected session
+	// still points at the old host: fail closed and require reconnect.
+	request := inventoryDockerExecRequest()
+	request.Target = map[string]any{"type": "context", "name": "prod", "dockerEndpoint": "ssh://ops@new.example"}
+	request.SessionID = stale.ID
+	response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", request, nil)
+	requireInventoryIPCError(t, response, ipc.CodeForbidden)
+	if len(executor.calls) != 0 {
+		t.Fatalf("stale session exec reached the backend: %+v", executor.calls)
+	}
+
+	// After a manual reconnect the new session carries the new config and
+	// the same request is allowed.
+	if err := manager.Disconnect(stale.ID); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := database.AssetGetLive(ctx, asset.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconnected := connectInventoryTestSession(t, manager, "owner-a", updated)
+	request.SessionID = reconnected.ID
+	var result inventoryTargetExecResponse
+	dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", request, &result)
+	if result.Output != "Linux\n" || len(executor.calls) != 1 || executor.calls[0].SessionID != reconnected.ID {
+		t.Fatalf("reconnected exec = %+v calls=%+v", result, executor.calls)
 	}
 }
 
@@ -376,7 +463,7 @@ func TestInventoryTargetExecExitCodeContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	connected := connectInventoryTestSession(t, manager, "owner-a", asset.ID)
+	connected := connectInventoryTestSession(t, manager, "owner-a", asset)
 
 	requireExecFailure := func(response ipc.Response, exitCode int, output string) {
 		t.Helper()
@@ -506,7 +593,7 @@ func TestInventoryTargetExecDockerServerProductionConfirmation(t *testing.T) {
 	if _, err := database.AssetUpdate(ctx, asset.ID, store.AssetPatch{Tags: &tags}); err != nil {
 		t.Fatal(err)
 	}
-	connected := connectInventoryTestSession(t, manager, "owner-a", asset.ID)
+	connected := connectInventoryTestSession(t, manager, "owner-a", asset)
 	request := inventoryDockerExecRequest()
 	request.SessionID = connected.ID
 
