@@ -9,6 +9,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store/model"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -22,6 +23,9 @@ type ForwardRuleInput struct {
 	ListenPort int32  `json:"listenPort"`
 	TargetHost string `json:"targetHost"`
 	TargetPort int32  `json:"targetPort"`
+	// AutoStart stays out of the IPC JSON surface until the forward contract
+	// regeneration lands; startup recovery already persists and honors it.
+	AutoStart bool `json:"-"`
 }
 
 func normalizeForwardRuleInput(input ForwardRuleInput) (ForwardRuleInput, error) {
@@ -49,20 +53,21 @@ func normalizeForwardRuleInput(input ForwardRuleInput) (ForwardRuleInput, error)
 }
 
 func forwardRuleAssetAvailable(ctx context.Context, db *gorm.DB, assetID string) error {
-	var asset AssetRow
-	err := db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ?", assetID).
-		First(&asset).Error
+	asset := query.Use(db).AssetRow
+	row, err := asset.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where(asset.ID.Eq(assetID)).
+		First()
 	if isNoRows(err) {
 		return badParam(errString("转发资产不存在"))
 	}
 	if err != nil {
 		return dbError(err)
 	}
-	if asset.OwnerID != ipc.OwnerID(ctx) {
+	if row.OwnerID != ipc.OwnerID(ctx) {
 		return ipc.NewError(ipc.CodeForbidden, "转发资产不属于当前用户")
 	}
-	if asset.DeletedAt != nil {
+	if row.DeletedAt != nil {
 		return badParam(errString("转发资产已删除，不能保存或启动规则"))
 	}
 	return nil
@@ -76,12 +81,39 @@ func (s *Store) ForwardRuleAssetAvailable(ctx context.Context, assetID string) e
 	return forwardRuleAssetAvailable(ctx, s.db, assetID)
 }
 
+// ForwardRuleAssetEnvironment reports the canonical environment of the asset a
+// rule points at; startup recovery uses it to skip production assets.
+func (s *Store) ForwardRuleAssetEnvironment(ctx context.Context, assetID string) (string, error) {
+	assetID = strings.TrimSpace(assetID)
+	if assetID == "" {
+		return "", badParam(errString("转发资产不能为空"))
+	}
+	asset := query.Use(s.db).AssetRow
+	row, err := asset.WithContext(ctx).
+		Where(asset.ID.Eq(assetID)).
+		First()
+	if isNoRows(err) {
+		return "", badParam(errString("转发资产不存在"))
+	}
+	if err != nil {
+		return "", dbError(err)
+	}
+	if row.OwnerID != ipc.OwnerID(ctx) {
+		return "", ipc.NewError(ipc.CodeForbidden, "转发资产不属于当前用户")
+	}
+	if row.DeletedAt != nil {
+		return "", badParam(errString("转发资产已删除，不能保存或启动规则"))
+	}
+	return AssetEnvironment(*row), nil
+}
+
 func (s *Store) ForwardRuleList(ctx context.Context) ([]ForwardRuleRow, error) {
+	rule := query.Use(s.db).ForwardRuleRow
 	rows := []ForwardRuleRow{}
-	err := s.db.WithContext(ctx).
-		Where("owner_id = ?", ipc.OwnerID(ctx)).
-		Order("created_at").Order("id").
-		Find(&rows).Error
+	err := rule.WithContext(ctx).
+		Where(rule.OwnerID.Eq(ipc.OwnerID(ctx))).
+		Order(rule.CreatedAt, rule.ID).
+		Scan(&rows)
 	if err != nil {
 		return nil, dbError(err)
 	}
@@ -89,17 +121,17 @@ func (s *Store) ForwardRuleList(ctx context.Context) ([]ForwardRuleRow, error) {
 }
 
 func (s *Store) ForwardRuleGet(ctx context.Context, id string) (ForwardRuleRow, error) {
-	var row ForwardRuleRow
-	err := s.db.WithContext(ctx).
-		Where("id = ? AND owner_id = ?", strings.TrimSpace(id), ipc.OwnerID(ctx)).
-		First(&row).Error
+	rule := query.Use(s.db).ForwardRuleRow
+	row, err := rule.WithContext(ctx).
+		Where(rule.ID.Eq(strings.TrimSpace(id)), rule.OwnerID.Eq(ipc.OwnerID(ctx))).
+		First()
 	if isNoRows(err) {
 		return ForwardRuleRow{}, notFound("转发规则")
 	}
 	if err != nil {
 		return ForwardRuleRow{}, dbError(err)
 	}
-	return row, nil
+	return *row, nil
 }
 
 func (s *Store) ForwardRuleSave(ctx context.Context, input ForwardRuleInput) (ForwardRuleRow, error) {
@@ -121,13 +153,14 @@ func (s *Store) forwardRuleCreate(ctx context.Context, input ForwardRuleInput) (
 	row := ForwardRuleRow{
 		ID: ids.New(), OwnerID: ipc.OwnerID(ctx), AssetID: input.AssetID, Name: input.Name,
 		ListenPort: input.ListenPort, TargetHost: input.TargetHost, TargetPort: input.TargetPort,
+		AutoStart: input.AutoStart,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := forwardRuleAssetAvailable(ctx, tx, input.AssetID); err != nil {
 			return err
 		}
-		return tx.Create(&row).Error
+		return query.Use(tx).ForwardRuleRow.WithContext(ctx).Create(&row)
 	})
 	if err != nil {
 		return ForwardRuleRow{}, dbError(err)
@@ -138,29 +171,39 @@ func (s *Store) forwardRuleCreate(ctx context.Context, input ForwardRuleInput) (
 func (s *Store) forwardRuleUpdate(ctx context.Context, input ForwardRuleInput) (ForwardRuleRow, error) {
 	var row ForwardRuleRow
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id = ? AND owner_id = ?", input.ID, ipc.OwnerID(ctx)).
-			First(&row).Error
-		if isNoRows(err) {
+		rule := query.Use(tx).ForwardRuleRow
+		if _, err := rule.WithContext(ctx).
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where(rule.ID.Eq(input.ID), rule.OwnerID.Eq(ipc.OwnerID(ctx))).
+			First(); isNoRows(err) {
 			return notFound("转发规则")
-		}
-		if err != nil {
+		} else if err != nil {
 			return err
 		}
 		if err := forwardRuleAssetAvailable(ctx, tx, input.AssetID); err != nil {
 			return err
 		}
-		values := map[string]any{
-			"asset_id": input.AssetID, "name": input.Name, "listen_port": input.ListenPort,
-			"target_host": input.TargetHost, "target_port": input.TargetPort, "updated_at": ids.NowMS(),
+		if _, err := rule.WithContext(ctx).
+			Where(rule.ID.Eq(input.ID), rule.OwnerID.Eq(ipc.OwnerID(ctx))).
+			UpdateSimple(
+				rule.AssetID.Value(input.AssetID),
+				rule.Name.Value(input.Name),
+				rule.ListenPort.Value(input.ListenPort),
+				rule.TargetHost.Value(input.TargetHost),
+				rule.TargetPort.Value(input.TargetPort),
+				rule.AutoStart.Value(input.AutoStart),
+				rule.UpdatedAt.Value(ids.NowMS()),
+			); err != nil {
+			return err
 		}
-		result := tx.Model(&ForwardRuleRow{}).
-			Where("id = ? AND owner_id = ?", input.ID, ipc.OwnerID(ctx)).
-			Updates(values)
-		if result.Error != nil {
-			return result.Error
+		updated, err := rule.WithContext(ctx).
+			Where(rule.ID.Eq(input.ID), rule.OwnerID.Eq(ipc.OwnerID(ctx))).
+			First()
+		if err != nil {
+			return err
 		}
-		return tx.Where("id = ? AND owner_id = ?", input.ID, ipc.OwnerID(ctx)).First(&row).Error
+		row = *updated
+		return nil
 	})
 	if err != nil {
 		return ForwardRuleRow{}, dbError(err)
@@ -169,13 +212,14 @@ func (s *Store) forwardRuleUpdate(ctx context.Context, input ForwardRuleInput) (
 }
 
 func (s *Store) ForwardRuleDelete(ctx context.Context, id string) error {
-	result := s.db.WithContext(ctx).
-		Where("id = ? AND owner_id = ?", strings.TrimSpace(id), ipc.OwnerID(ctx)).
-		Delete(&ForwardRuleRow{})
-	if result.Error != nil {
-		return dbError(result.Error)
+	rule := query.Use(s.db).ForwardRuleRow
+	info, err := rule.WithContext(ctx).
+		Where(rule.ID.Eq(strings.TrimSpace(id)), rule.OwnerID.Eq(ipc.OwnerID(ctx))).
+		Delete()
+	if err != nil {
+		return dbError(err)
 	}
-	if result.RowsAffected == 0 {
+	if info.RowsAffected == 0 {
 		return notFound("转发规则")
 	}
 	return nil
