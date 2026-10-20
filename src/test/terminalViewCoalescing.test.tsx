@@ -36,6 +36,7 @@ const harness = vi.hoisted(() => ({
   pushToast: vi.fn(),
   call: vi.fn(),
   execAttach: vi.fn(),
+  openLineTab: vi.fn(),
 }));
 
 vi.mock("@xterm/xterm", () => ({
@@ -152,7 +153,7 @@ vi.mock("../ipc/commands", () => ({
     write: harness.write,
   },
   dockerApi: { execAttach: harness.execAttach },
-  sessionApi: { openLineTab: vi.fn() },
+  sessionApi: { openLineTab: harness.openLineTab },
   call: harness.call,
 }));
 
@@ -298,6 +299,7 @@ beforeEach(() => {
   harness.write.mockResolvedValue(undefined);
   harness.call.mockReset().mockResolvedValue(undefined);
   harness.execAttach.mockReset().mockResolvedValue("kernel-1");
+  harness.openLineTab.mockReset().mockResolvedValue("kernel-1");
 });
 
 afterEach(() => {
@@ -568,6 +570,67 @@ describe("XtermView stream wiring", () => {
     });
     act(() => harness.channel?.onBytes?.(chunk));
     act(() => t.drainWrites());
+    expect(t.writeLog.length).toBe(5);
+    const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
+    expect(total).toBe(5 * (4 << 20));
+    vi.useRealTimers();
+  });
+
+  it("winrm line tabs: a failed pause recovers the refused suffix instead of detaching", async () => {
+    // Production-shaped WinRM overflow: the first attach goes through
+    // session_open_line_tab, whose tab is ephemeral. A cap refusal must take
+    // the recovery path — an ordinary detach here would reap the line tab's
+    // process — and the full sequence stays contiguous.
+    harness.call.mockImplementation((command: string) =>
+      command === "terminal_pause"
+        ? Promise.reject(new Error("no such command"))
+        : Promise.resolve(undefined),
+    );
+    vi.useFakeTimers();
+    await show({ winrm: true });
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    act(() => harness.channel?.onBytes?.(chunk));
+    expect(harness.openLineTab).toHaveBeenCalledWith("session-1", 80, 30, expect.anything());
+    expect(harness.call).toHaveBeenCalledWith("terminal_pause", {
+      tabId: "kernel-1",
+      channelId: "channel-1",
+    });
+    // The pause RPC failed every retry: the client redelivers the refused
+    // suffix from the tab's recovery ring. An ordinary detach would reap the
+    // line tab's process, so it must never be called.
+    expect(harness.detach).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(harness.call).toHaveBeenCalledWith("terminal_recover", {
+      tabId: "kernel-1",
+      channelId: "channel-1",
+      acceptedBytes: 4 * (4 << 20),
+    });
+    // The synthetic anchor ends the episode; the refused chunk is restored
+    // behind it in order, still with no detach (no reap).
+    act(() => t.drainWrites());
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "recovery-kernel-1",
+      streamSeq: 4 * (4 << 20),
+      controlBytes: 0,
+    });
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    expect(harness.detach).not.toHaveBeenCalled();
+    // The pause-failure toast may fire, but the recovery itself must not
+    // report unrecoverable output: the replay restored the full sequence.
+    expect(harness.pushToast).not.toHaveBeenCalledWith(
+      "error",
+      "终端输出积压过长，早期输出无法恢复，画面可能不完整",
+    );
     expect(t.writeLog.length).toBe(5);
     const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
     expect(total).toBe(5 * (4 << 20));

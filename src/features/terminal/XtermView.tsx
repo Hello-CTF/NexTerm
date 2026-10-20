@@ -320,13 +320,27 @@ export function XtermView(props: XtermViewProps) {
         // Ephemeral local/WinRM tabs: never detach (it would reap the PTY).
         // Redeliver the refused suffix from the tab's recovery ring instead;
         // the replay arrives with a synthetic anchor that ends the episode.
+        // Report the accepted offset in absolute stream coordinates — the
+        // last anchor's streamSeq plus the bytes accepted since it — so the
+        // server's recovery ring replays exactly the refused suffix, not the
+        // bytes a paused coalescer still holds for the resume flush.
         const channelId = channelIdOf(channel);
         if (!channelId) return;
+        const acceptedOffset = streamAnchor
+          ? streamAnchor.seq + Math.max(0, streamBytes - streamAnchor.control)
+          : streamBytes;
         void call("terminal_recover", {
           tabId: kernelTabId,
           channelId,
-          acceptedBytes: streamBytes,
-        }).catch(() => undefined);
+          acceptedBytes: acceptedOffset,
+        }).catch(() => {
+          // The recovery could not redeliver the refused suffix whole (the
+          // accepted offset fell out of the server's bounded recovery
+          // window): the view is missing output and cannot silently
+          // resync, so surface the accurate state instead of a false
+          // "recovering" notice.
+          useUi.getState().pushToast("error", "终端输出积压过长，早期输出无法恢复，画面可能不完整");
+        });
       } else if (kernelTabId) {
         // Durable tabs: the resume anchor replays refused bytes in order.
         void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);
@@ -551,6 +565,10 @@ export function XtermView(props: XtermViewProps) {
             exited: false,
             shell: "unknown",
             retainable: false,
+            // session_open_line_tab creates an Ephemeral tab: a cap refusal
+            // must take the recovery path, never the ordinary detach that
+            // reaps the line tab's process.
+            ephemeral: true,
           });
         } else {
           if (!dimensions) return;
