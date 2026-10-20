@@ -71,3 +71,15 @@ func (a *Accounts) Epoch(userID string) uint64 {
 func (a *Accounts) CheckEpoch(userID string, epoch uint64) bool {
 	return a.epochs.check(userID, epoch)
 }
+
+// BumpEpoch advances the account's async-boundary generation.
+func (a *Accounts) BumpEpoch(userID string) uint64 {
+	return a.epochs.bump(userID)
+}
+
+// RevocationMu returns the shared async-boundary mutex. Server and fleet
+// revocation paths serialize on it so an epoch bump cannot land inside another
+// boundary's check-to-commit window.
+func (a *Accounts) RevocationMu() *sync.Mutex {
+	return &a.revocationMu
+}

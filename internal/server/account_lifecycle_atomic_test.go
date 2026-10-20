@@ -93,7 +93,7 @@ func (g *accountAtomicGate) wait(t *testing.T, session *accountTestSession) acco
 			t.Fatalf("old request status = %d body = %v", call.status, call.body)
 		}
 		return call
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("old request did not finish revalidation")
 		return accountCall{}
 	}

@@ -134,7 +134,7 @@ type Server struct {
 	accountConnections        AccountConnectionCloser
 	accountCleanup            AccountCleanupFunc
 	accountCleanupPrepare     AccountCleanupPrepareFunc
-	accountRevocationMu       sync.Mutex
+	accountRevocationMu       *sync.Mutex
 	revokeUserSessions        func(context.Context, string, string, ...func() error) ([]string, error)
 	accountExecutionAdmission func(context.Context, string, *account.Identity, func() error) error
 
@@ -294,6 +294,11 @@ func New(config Config) (*Server, error) {
 	}
 	if config.Accounts != nil {
 		s.revokeUserSessions = config.Accounts.RevokeUserSessionsWithIDs
+		// The revocation boundary is shared with the account layer so fleet-side
+		// revocations bump the same epoch inside the same critical section.
+		s.accountRevocationMu = config.Accounts.RevocationMu()
+	} else {
+		s.accountRevocationMu = &sync.Mutex{}
 	}
 	s.accountExecutionAdmission = s.admitAccountExecution
 	if s.environment.Events == nil {

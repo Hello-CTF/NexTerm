@@ -128,6 +128,8 @@ func (s *Server) serveAccountTOTPLogin(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
 	s.writeAccountSession(w, r, user, entry.deviceID, entry.epoch)
 }
 

@@ -18,6 +18,11 @@ type Accounts struct {
 	totpKeyPath string
 	writeMu     sync.Mutex
 	epochs      *epochTracker
+	// revocationMu is the shared async-boundary mutex: session issuance,
+	// revocation, password changes, resets, disables, device revocations, and
+	// the TOTP/DEK/MFA generation checks all serialize on it, so an epoch bump
+	// cannot land inside another boundary's check-to-commit window.
+	revocationMu sync.Mutex
 }
 
 // userTable centralizes the account table name for future storage backend changes.

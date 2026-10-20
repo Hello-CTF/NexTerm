@@ -58,30 +58,27 @@ func TestAccountLoginEpochRecheckAfterRevocation(t *testing.T) {
 func TestAccountLoginIssuanceWaitsForInFlightRevocation(t *testing.T) {
 	fixture := newAccountFixture(t, AuthOn)
 	_, _ = fixture.initSuperadmin(t, "alice", "password-alice")
-	user, err := fixture.accounts.Authenticate(context.Background(), "alice", "password-alice")
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	fixture.server.accountRevocationMu.Lock()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		recorder := httptest.NewRecorder()
-		request := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
-		fixture.server.writeAccountSession(recorder, request, user, "", fixture.accounts.Epoch(user.ID))
+		request := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(`{"username":"alice","password":"password-alice"}`))
+		request.Header.Set("Content-Type", "application/json")
+		fixture.server.serveAccountLogin(recorder, request)
 	}()
 	select {
 	case <-done:
 		fixture.server.accountRevocationMu.Unlock()
-		t.Fatal("session issuance did not wait for the in-flight revocation")
+		t.Fatal("login did not wait for the in-flight revocation")
 	case <-time.After(100 * time.Millisecond):
 	}
 	fixture.server.accountRevocationMu.Unlock()
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("session issuance did not resume after the revocation lock was released")
+	case <-time.After(10 * time.Second):
+		t.Fatal("login did not resume after the revocation lock was released")
 	}
 }
 
@@ -295,5 +292,195 @@ func TestAccountTOTPConfirmEpochCheckCommitAtomic(t *testing.T) {
 	status := fixture.call(t, http.MethodGet, "/auth/totp", nil, second, "", nil)
 	if status.status != http.StatusOK || status.body["enabled"] != true {
 		t.Fatalf("TOTP state after the atomic confirm = %v", status.body)
+	}
+}
+
+// Admin disable shares the revocation boundary with the TOTP confirm: a
+// disable attempted mid-confirm is serialized to after the commit, and a
+// disable that completed first fails the stale confirm with TOTP unchanged.
+func TestAccountTOTPConfirmEpochAdminDisableAtomic(t *testing.T) {
+	fixture := newAccountFixture(t, AuthOn)
+	_, _ = fixture.initSuperadmin(t, "alice", "password-alice")
+	adminSession := fixture.login(t, "alice", "password-alice")
+	fixture.createUser(t, "root", "password-a1")
+	target := fixture.login(t, "root", "password-a1")
+	targetID := target.user["id"].(string)
+
+	setup := fixture.call(t, http.MethodPost, "/auth/totp/setup", map[string]any{}, target, target.csrf, nil)
+	if setup.status != http.StatusOK {
+		t.Fatalf("setup status = %d body = %v", setup.status, setup.body)
+	}
+	secret, _ := setup.body["secret"].(string)
+
+	confirmEntered := make(chan struct{})
+	releaseConfirm := make(chan struct{})
+	restoreGate := account.SetTOTPConfirmGateForTest(func(context.Context, string) {
+		close(confirmEntered)
+		<-releaseConfirm
+	})
+	defer restoreGate()
+
+	confirmDone := make(chan accountCall, 1)
+	go func() {
+		confirmDone <- fixture.call(t, http.MethodPost, "/auth/totp/confirm", map[string]any{"code": testTOTPCode(t, secret, time.Now().Unix())}, target, target.csrf, nil)
+	}()
+	select {
+	case <-confirmEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("confirm did not reach the epoch-check gate")
+	}
+
+	// The admin disable attempted now must wait for the in-flight confirm.
+	disableDone := make(chan accountCall, 1)
+	go func() {
+		disableDone <- fixture.call(t, http.MethodPost, "/admin/users/"+targetID+"/disable", nil, adminSession, adminSession.csrf, nil)
+	}()
+	select {
+	case call := <-disableDone:
+		t.Fatalf("admin disable completed mid-confirm (epoch window is not atomic): %v", call.body)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(releaseConfirm)
+	confirm := <-confirmDone
+	if confirm.status != http.StatusOK {
+		t.Fatalf("in-flight confirm status = %d body = %v", confirm.status, confirm.body)
+	}
+	if codes, _ := confirm.body["recovery_codes"].([]any); len(codes) != 8 {
+		t.Fatalf("in-flight confirm returned no recovery codes: %v", confirm.body)
+	}
+	disable := <-disableDone
+	if disable.status != http.StatusOK {
+		t.Fatalf("admin disable after confirm status = %d body = %v", disable.status, disable.body)
+	}
+	if enabled, err := fixture.accounts.TOTPEnabled(context.Background(), targetID); err != nil || !enabled {
+		t.Fatalf("TOTP enabled after the atomic confirm = %v, %v", enabled, err)
+	}
+}
+
+func TestAccountTOTPConfirmEpochAdminDisableFirstFails(t *testing.T) {
+	fixture := newAccountFixture(t, AuthOn)
+	_, _ = fixture.initSuperadmin(t, "alice", "password-alice")
+	adminSession := fixture.login(t, "alice", "password-alice")
+	fixture.createUser(t, "root", "password-a1")
+	target := fixture.login(t, "root", "password-a1")
+	targetID := target.user["id"].(string)
+
+	setup := fixture.call(t, http.MethodPost, "/auth/totp/setup", map[string]any{}, target, target.csrf, nil)
+	if setup.status != http.StatusOK {
+		t.Fatalf("setup status = %d body = %v", setup.status, setup.body)
+	}
+	secret, _ := setup.body["secret"].(string)
+
+	// The admin disable completes first: the pending binding's generation is gone.
+	disable := fixture.call(t, http.MethodPost, "/admin/users/"+targetID+"/disable", nil, adminSession, adminSession.csrf, nil)
+	if disable.status != http.StatusOK {
+		t.Fatalf("admin disable status = %d body = %v", disable.status, disable.body)
+	}
+
+	// The stale confirm with a valid code must fail closed with no new recovery codes.
+	confirm := fixture.call(t, http.MethodPost, "/auth/totp/confirm", map[string]any{"code": testTOTPCode(t, secret, time.Now().Unix())}, target, target.csrf, nil)
+	if confirm.status == http.StatusOK {
+		t.Fatalf("stale-generation TOTP confirm succeeded: %v", confirm.body)
+	}
+	if _, present := confirm.body["recovery_codes"]; present {
+		t.Fatalf("stale-generation confirm returned recovery codes: %v", confirm.body)
+	}
+	if enabled, err := fixture.accounts.TOTPEnabled(context.Background(), targetID); err != nil || enabled {
+		t.Fatalf("stale-generation confirm changed TOTP state: enabled=%v err=%v", enabled, err)
+	}
+}
+
+// A password change that completed before the login's Authenticate fails the
+// old-password login closed; the new password still works.
+func TestAccountLoginAfterPasswordChangeFails(t *testing.T) {
+	fixture := newAccountFixture(t, AuthOn)
+	alice, _ := fixture.initSuperadmin(t, "alice", "password-alice")
+	aliceSession := fixture.login(t, "alice", "password-alice")
+	_ = aliceSession
+
+	body, _, _ := envelopeBody(t, "password-alice-2")
+	change := fixture.call(t, http.MethodPost, "/auth/password", mergeBody(body, map[string]any{
+		"old_password": "password-alice", "new_password": "password-alice-2",
+	}), aliceSession, aliceSession.csrf, nil)
+	if change.status != http.StatusOK {
+		t.Fatalf("password change status = %d body = %v", change.status, change.body)
+	}
+
+	// The old password no longer authenticates (checked at the account layer to
+	// avoid tripping the HTTP login throttle).
+	if _, err := fixture.accounts.Authenticate(context.Background(), "alice", "password-alice"); err == nil {
+		t.Fatal("old password still authenticates after the change")
+	}
+	fresh := fixture.login(t, "alice", "password-alice-2")
+	if fresh.user["id"] != alice.user["id"] {
+		t.Fatalf("new-password login user = %v, want %s", fresh.user["id"], alice.user["id"])
+	}
+}
+
+// The login's epoch is captured at the authentication boundary under the
+// revocation lock: a password change attempted mid-login is serialized to
+// after the issuance, never landing between Authenticate and the epoch capture.
+func TestAccountLoginEpochCapturedAtAuthenticationAtomic(t *testing.T) {
+	fixture := newAccountFixture(t, AuthOn)
+	fixture.initSuperadmin(t, "alice", "password-alice")
+	aliceSession := fixture.login(t, "alice", "password-alice")
+
+	loginEntered := make(chan struct{})
+	releaseLogin := make(chan struct{})
+	restoreGate := SetAccountLoginGateForTest(func(context.Context, *account.User) {
+		close(loginEntered)
+		<-releaseLogin
+	})
+	defer restoreGate()
+
+	loginDone := make(chan accountCall, 1)
+	go func() {
+		loginDone <- fixture.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "alice", "password": "password-alice"}, nil, "", nil)
+	}()
+	select {
+	case <-loginEntered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("login did not reach the post-authenticate gate")
+	}
+
+	// A password change attempted now must wait for the in-flight login.
+	body, _, _ := envelopeBody(t, "password-alice-2")
+	changeDone := make(chan accountCall, 1)
+	go func() {
+		changeDone <- fixture.call(t, http.MethodPost, "/auth/password", mergeBody(body, map[string]any{
+			"old_password": "password-alice", "new_password": "password-alice-2",
+		}), aliceSession, aliceSession.csrf, nil)
+	}()
+	select {
+	case call := <-changeDone:
+		t.Fatalf("password change completed mid-login (epoch window is not atomic): %v", call.body)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(releaseLogin)
+	login := <-loginDone
+	if login.status != http.StatusOK {
+		t.Fatalf("in-flight login status = %d body = %v", login.status, login.body)
+	}
+	change := <-changeDone
+	if change.status != http.StatusOK {
+		t.Fatalf("password change after login status = %d body = %v", change.status, change.body)
+	}
+	// The password change revoked every session except its own, including the
+	// just-issued login session.
+	var revoked bool
+	for _, cookie := range login.cookies {
+		if cookie.Name == sessionCookieName {
+			if _, err := fixture.accounts.ValidateSession(context.Background(), cookie.Value); err != nil {
+				revoked = true
+			}
+		}
+	}
+	if !revoked {
+		t.Fatal("password change after the login did not revoke the new session")
+	}
+	if _, err := fixture.accounts.ValidateSession(context.Background(), aliceSession.cookie.Value); err != nil {
+		t.Fatalf("password change revoked its own session: %v", err)
 	}
 }

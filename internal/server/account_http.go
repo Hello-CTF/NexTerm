@@ -263,15 +263,24 @@ func (s *Server) newAccountSessionView(r *http.Request, user *account.User, sess
 	return accountSessionView{User: view, CSRFToken: accountCSRFToken(sessionID), MFARequired: required}, nil
 }
 
-// writeAccountSession issues the session under the revocation lock, so a login
-// waits for any in-flight logout or revocation ("login waits for the old
-// logout"). The epoch re-check afterwards fails the issuance closed when a
-// revocation, password change, reset, or disable committed while the login was
-// authenticating or waiting: the authentication no longer reflects the
-// account's current generation.
+// accountLoginGate, when non-nil, runs after a successful Authenticate and
+// before the epoch capture. Tests use it to interpose a password change
+// mid-login.
+var accountLoginGate func(ctx context.Context, user *account.User)
+
+// SetAccountLoginGateForTest installs accountLoginGate and returns a restore
+// function. It exists for tests only.
+func SetAccountLoginGateForTest(gate func(ctx context.Context, user *account.User)) (restore func()) {
+	previous := accountLoginGate
+	accountLoginGate = gate
+	return func() { accountLoginGate = previous }
+}
+
+// writeAccountSession issues the session under the caller-held revocation lock
+// (the account async-boundary mutex). The epoch re-check fails the issuance
+// closed when a revocation, password change, reset, or disable committed after
+// the caller captured the generation at the authentication boundary.
 func (s *Server) writeAccountSession(w http.ResponseWriter, r *http.Request, user *account.User, deviceID string, epoch uint64) {
-	s.accountRevocationMu.Lock()
-	defer s.accountRevocationMu.Unlock()
 	if !s.accounts.CheckEpoch(user.ID, epoch) {
 		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "账号状态已变更，请重新登录"))
 		return
@@ -318,6 +327,8 @@ func (s *Server) serveAccountInit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.accountThrottle.init.RecordSuccess(key)
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
 	s.writeAccountSession(w, r, user, "", s.accounts.Epoch(user.ID))
 }
 
@@ -355,6 +366,8 @@ func (s *Server) servePlatformSession(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
 	s.writeAccountSession(w, r, owner, "", s.accounts.Epoch(owner.ID))
 }
 
@@ -375,6 +388,12 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "登录尝试过于频繁，请稍后再试"))
 		return
 	}
+	// The whole authentication flow runs under the revocation lock: the epoch
+	// is captured at the authentication boundary, so a password change or
+	// revocation that lands after it fails the issuance check closed instead of
+	// signing a new session with stale credentials.
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
 	user, err := s.accounts.Authenticate(r.Context(), request.Username, request.Password)
 	if err != nil {
 		s.accountThrottle.login.RecordFailure(key)
@@ -382,6 +401,9 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.accountThrottle.login.RecordSuccess(key)
+	if accountLoginGate != nil {
+		accountLoginGate(r.Context(), user)
+	}
 	epoch := s.accounts.Epoch(user.ID)
 	mfaEnabled, err := s.accounts.TOTPEnabled(r.Context(), user.ID)
 	if err != nil {
@@ -437,6 +459,8 @@ func (s *Server) serveAccountRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.accountThrottle.register.RecordSuccess(key)
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
 	s.writeAccountSession(w, r, user, "", s.accounts.Epoch(user.ID))
 }
 
@@ -813,6 +837,10 @@ func (s *Server) serveAdminUserDisable(w http.ResponseWriter, r *http.Request) {
 		writeAccountError(w, http.StatusBadRequest, ipc.NewError(ipc.CodeBadParam, "不能禁用当前登录账号"))
 		return
 	}
+	// Serialize with logins and envelope uploads: the disable revokes sessions
+	// and bumps the account epoch as one atomic generation change.
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
 	if err := s.accounts.SetUserDisabled(r.Context(), target, true); err != nil {
 		writeAccountFailure(w, err)
 		return
