@@ -88,6 +88,8 @@ INCOMPLETE_MARKER="$OPT_DIR/.install-incomplete"
 FIRST_INSTALL_STATE="$OPT_DIR/.install-transaction"
 MIGRATED_KEY_FILE_NEXTERM=0
 MIGRATED_KEY_FILE_ONLYSERVER=0
+WORKING_DIR_NEXTERM="/var/lib/nexterm"
+WORKING_DIR_ONLYSERVER="/var/lib/nexterm"
 
 log() { printf 'install: %s\n' "$*"; }
 die() { printf 'install: error: %s\n' "$*" >&2; exit 1; }
@@ -125,6 +127,7 @@ is_legacy_unit() {
 legacy_exec_line() {
   local file="$1" line acc="" continuing=0
   while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%"${line##*[![:blank:]]}"}"
     case "$line" in
       ExecStart=*) acc="${line#ExecStart=}"; continuing=1 ;;
       *) if [ "$continuing" -eq 1 ]; then acc="$acc $line"; fi ;;
@@ -136,27 +139,62 @@ legacy_exec_line() {
       esac
     fi
     if [ "$continuing" -eq 0 ] && [ -n "$acc" ]; then break; fi
-  done < "$file"
+  done < <(tr -d '\r' < "$file")
   printf '%s' "$acc"
 }
 
-legacy_flag_value() {
-  local want="--$2"
-  set -f
-  set -- $1
-  set +f
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      "$want")
-        if [ $# -ge 2 ]; then printf '%s' "$2"; fi
-        return 0 ;;
-      "$want"=*)
-        printf '%s' "${1#"$want"=}"
-        return 0 ;;
+systemd_split() {
+  local input="$1" token="" state=plain c
+  local i=0 len=${#input}
+  while [ "$i" -lt "$len" ]; do
+    c="${input:$i:1}"
+    case "$state" in
+      plain)
+        case "$c" in
+          ' '|$'\t')
+            if [ -n "$token" ]; then printf '%s\n' "$token"; token=""; fi
+            ;;
+          "'") state=single ;;
+          '"') state=double ;;
+          \\) state=escape ;;
+          *) token="$token$c" ;;
+        esac
+        ;;
+      single)
+        if [ "$c" = "'" ]; then state=plain; else token="$token$c"; fi
+        ;;
+      double)
+        case "$c" in
+          '"') state=plain ;;
+          \\) state=double_escape ;;
+          *) token="$token$c" ;;
+        esac
+        ;;
+      escape)
+        token="$token$c"; state=plain ;;
+      double_escape)
+        case "$c" in
+          '$'|'`'|'"'|\\) token="$token$c" ;;
+          *) token="$token\\$c" ;;
+        esac
+        state=double ;;
     esac
-    shift
+    i=$((i + 1))
   done
-  return 1
+  if [ "$state" != "plain" ]; then return 1; fi
+  if [ -n "$token" ]; then printf '%s\n' "$token"; fi
+  return 0
+}
+
+legacy_flag_value() {
+  local exec_line="$1" want="--$2" tokens
+  if ! tokens="$(systemd_split "$exec_line")"; then
+    return 2
+  fi
+  printf '%s\n' "$tokens" | awk -v want="$want" '
+    $0 == want { if ((getline nxt) > 0) print nxt; exit 0 }
+    index($0, want "=") == 1 { print substr($0, length(want) + 2); exit 0 }
+  '
 }
 
 capture_legacy_values() {
@@ -164,7 +202,7 @@ capture_legacy_values() {
   exec_line="$(legacy_exec_line "$file")"
   [ -n "$exec_line" ] || return 0
   for flag in listen auth data-dir web-root master-key-file; do
-    value="$(legacy_flag_value "$exec_line" "$flag" || true)"
+    value="$(legacy_flag_value "$exec_line" "$flag")" || return 2
     [ -n "$value" ] || continue
     case "$flag" in
       listen) key=NEXTERM_LISTEN ;;
@@ -188,7 +226,7 @@ env_get() {
         rest="${line#"$key"}"
         value="${rest#*=}"; found=1 ;;
     esac
-  done < "$file"
+  done < <(tr '\r' '\n' < "$file")
   [ "$found" -eq 1 ] || return 0
   value="$(printf '%s' "$value" | sed -e 's/^[[:blank:]]*//' -e 's/[[:blank:]]*$//')"
   case "$value" in *\\*) return 1 ;; esac
@@ -265,10 +303,42 @@ pick_effective_unit() {
   return 1
 }
 
-physical_path() {
-  local path="$ROOT_PREFIX$1"
-  case "$path" in //*) path="${path#?}" ;; esac
-  printf '%s' "$path"
+unit_working_dir() {
+  local file="$1" line value
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      WorkingDirectory=*)
+        value="${line#WorkingDirectory=}"
+        value="$(printf '%s' "$value" | sed -e 's/^[[:blank:]]*//' -e 's/[[:blank:]]*$//')"
+        if [ -n "$value" ]; then printf '%s' "$value"; else printf '/'; fi
+        return 0
+        ;;
+    esac
+  done < <(tr -d '\r' < "$file")
+  printf '/'
+}
+
+join_path() {
+  case "$1" in
+    /) printf '/%s' "$2" ;;
+    *) printf '%s/%s' "$1" "$2" ;;
+  esac
+}
+
+resolve_path() {
+  # $1 = logical path; absolute paths map under the staged root, relative
+  # paths resolve against the effective unit working directory
+  local logical="$1" wd="$2" physical
+  case "$logical" in
+    /*) physical="$ROOT_PREFIX$logical" ;;
+    *) physical="$ROOT_PREFIX$(join_path "$wd" "$logical")" ;;
+  esac
+  case "$physical" in //*) physical="${physical#?}" ;; esac
+  printf '%s' "$physical"
+}
+
+dir_has_content() {
+  [ -d "$1" ] && [ -n "$(ls -A "$1" 2>/dev/null)" ]
 }
 
 env_has_key() {
@@ -279,7 +349,7 @@ env_has_key() {
       "$key"=*|"$key"[[:blank:]]*=*)
         return 0 ;;
     esac
-  done < "$file"
+  done < <(tr '\r' '\n' < "$file")
   return 1
 }
 
@@ -301,7 +371,7 @@ env_set() {
           printf '%s=%s\n' "$key" "$value" ;;
         *) printf '%s\n' "$line" ;;
       esac
-    done < "$file" > "$tmp"
+    done < <(tr '\r' '\n' < "$file") > "$tmp"
     cat "$tmp" > "$file"
     rm -f "$tmp"
   else
@@ -389,7 +459,7 @@ install_web() {
 
 install_units() {
   fail_at units
-  local unit d effective base
+  local unit d effective base wd
   if transaction_pending; then
     base="$BACKUP_DIR/units"
   else
@@ -397,17 +467,28 @@ install_units() {
   fi
   for unit in $UNITS; do
     effective="$(pick_effective_unit "$unit" "$base" || true)"
-    if [ -n "$effective" ] && is_legacy_unit "$effective"; then
+    [ -n "$effective" ] || continue
+    wd="$(unit_working_dir "$effective")"
+    if [ "$unit" = "$SERVER_UNIT" ]; then
+      WORKING_DIR_NEXTERM="$wd"
+    else
+      WORKING_DIR_ONLYSERVER="$wd"
+    fi
+    if is_legacy_unit "$effective"; then
       if transaction_pending; then
         log "recovering legacy unit settings for $unit from the rollback backup (interrupted upgrade)"
       fi
       log "migrating legacy unit $unit (inline ExecStart flags move to the ${ETC_DIR#$ROOT_PREFIX} env files)"
       if [ "$unit" = "$SERVER_UNIT" ]; then
-        SERVER_LEGACY_VALUES="$(capture_legacy_values "$effective")"
+        SERVER_LEGACY_VALUES="$(capture_legacy_values "$effective")" ||
+          die "cannot parse the legacy ExecStart in ${effective#$ROOT_PREFIX} (unsupported quoting); fix the unit or restore it from the rollback backup and re-run"
       else
-        ONLYSERVER_LEGACY_VALUES="$(capture_legacy_values "$effective")"
+        ONLYSERVER_LEGACY_VALUES="$(capture_legacy_values "$effective")" ||
+          die "cannot parse the legacy ExecStart in ${effective#$ROOT_PREFIX} (unsupported quoting); fix the unit or restore it from the rollback backup and re-run"
       fi
     fi
+  done
+  for unit in $UNITS; do
     install -m 0644 "$SOURCE_DIR/$unit" "$UNIT_DIR/$unit"
     for d in "$ROOT_PREFIX/usr/lib/systemd/system" "$ROOT_PREFIX/lib/systemd/system"; do
       if [ -f "$d/$unit" ]; then
@@ -420,7 +501,7 @@ install_units() {
 
 ensure_env_files() {
   fail_at env
-  local name env_file example legacy line key pre_existed record_file
+  local name env_file example legacy line key pre_existed record_file wd data_dir_migrated data_dir_value configured_key_value
   for name in nexterm onlyserver; do
     env_file="$ETC_DIR/$name.env"
     example="$SOURCE_DIR/$name.env.example"
@@ -455,7 +536,7 @@ $legacy
 EOF
     fi
     for key in $ENV_KEYS; do
-      if [ "$key" = "NEXTERM_MASTER_KEY_FILE" ]; then continue; fi
+      if [ "$key" = "NEXTERM_MASTER_KEY_FILE" ] || [ "$key" = "NEXTERM_DATA_DIR" ]; then continue; fi
       line="$(grep -m1 "^$key=" "$example" || true)"
       [ -n "$line" ] || continue
       if ! env_has_key "$env_file" "$key"; then
@@ -463,20 +544,53 @@ EOF
         log "backfilled $key in ${env_file#$ROOT_PREFIX} (was absent; applied the example default)"
       fi
     done
+    if [ "$name" = "nexterm" ]; then wd="$WORKING_DIR_NEXTERM"; else wd="$WORKING_DIR_ONLYSERVER"; fi
+    case "$legacy" in *NEXTERM_DATA_DIR=*) data_dir_migrated=1 ;; *) data_dir_migrated=0 ;; esac
+    if [ "$MODE" = "upgrade" ] && [ "$data_dir_migrated" -eq 0 ]; then
+      if [ "$pre_existed" -eq 1 ] && ! env_has_key "$env_file" NEXTERM_DATA_DIR; then
+        env_set "$env_file" NEXTERM_DATA_DIR "$(join_path "$wd" data)"
+        log "pinned NEXTERM_DATA_DIR=$(join_path "$wd" data) in ${env_file#$ROOT_PREFIX} (the previous effective location)"
+      elif [ "$pre_existed" -eq 0 ] && dir_has_content "$(resolve_path data "$wd")"; then
+        env_set "$env_file" NEXTERM_DATA_DIR "$(join_path "$wd" data)"
+        log "pinned NEXTERM_DATA_DIR=$(join_path "$wd" data) in ${env_file#$ROOT_PREFIX} (existing data at the previous fallback location)"
+      fi
+    fi
+    if [ "$MODE" = "first" ] && dir_has_content "$(resolve_path data "$wd")"; then
+      if [ "$pre_existed" -eq 0 ] || ! env_has_key "$env_file" NEXTERM_DATA_DIR; then
+        env_set "$env_file" NEXTERM_DATA_DIR "$(join_path "$wd" data)"
+        log "pinned NEXTERM_DATA_DIR=$(join_path "$wd" data) in ${env_file#$ROOT_PREFIX} (existing data at the fallback location)"
+      fi
+    fi
+    if ! data_dir_value="$(env_get "$env_file" NEXTERM_DATA_DIR)"; then
+      die "cannot parse NEXTERM_DATA_DIR in ${env_file#$ROOT_PREFIX} (unsupported EnvironmentFile syntax); fix the file and re-run"
+    fi
+    if [ -n "$data_dir_value" ] && [ "${data_dir_value#/}" = "$data_dir_value" ] && [ "$wd" != "/var/lib/nexterm" ]; then
+      env_set "$env_file" NEXTERM_DATA_DIR "$(join_path "$wd" "$data_dir_value")"
+      log "absolutized relative NEXTERM_DATA_DIR against the previous working directory $wd"
+    fi
+    if ! configured_key_value="$(env_get "$env_file" NEXTERM_MASTER_KEY_FILE)"; then
+      die "cannot parse NEXTERM_MASTER_KEY_FILE in ${env_file#$ROOT_PREFIX} (unsupported EnvironmentFile syntax); fix the file and re-run"
+    fi
+    if [ -n "$configured_key_value" ] && [ "${configured_key_value#/}" = "$configured_key_value" ] && [ "$wd" != "/var/lib/nexterm" ]; then
+      env_set "$env_file" NEXTERM_MASTER_KEY_FILE "$(join_path "$wd" "$configured_key_value")"
+      log "absolutized relative NEXTERM_MASTER_KEY_FILE against the previous working directory $wd"
+    fi
   done
 }
 
 ensure_master_key() {
   fail_at masterkey
-  local env_file configured data_dir data_dir_key key_file physical parent name pre_existed migrated_key
+  local env_file configured data_dir data_dir_key key_file physical parent name pre_existed migrated_key wd
   for name in nexterm onlyserver; do
     env_file="$ETC_DIR/$name.env"
     if [ "$name" = "nexterm" ]; then
       pre_existed="$NEXTERM_ENV_PREEXISTED"
       migrated_key="$MIGRATED_KEY_FILE_NEXTERM"
+      wd="$WORKING_DIR_NEXTERM"
     else
       pre_existed="$ONLYSERVER_ENV_PREEXISTED"
       migrated_key="$MIGRATED_KEY_FILE_ONLYSERVER"
+      wd="$WORKING_DIR_ONLYSERVER"
     fi
     if ! configured="$(env_get "$env_file" NEXTERM_MASTER_KEY_FILE)"; then
       die "cannot parse NEXTERM_MASTER_KEY_FILE in ${env_file#$ROOT_PREFIX} (unsupported EnvironmentFile syntax); fix the file and re-run"
@@ -484,17 +598,21 @@ ensure_master_key() {
     if ! data_dir="$(env_get "$env_file" NEXTERM_DATA_DIR)"; then
       die "cannot parse NEXTERM_DATA_DIR in ${env_file#$ROOT_PREFIX} (unsupported EnvironmentFile syntax); fix the file and re-run"
     fi
-    [ -n "$data_dir" ] || data_dir="${DATA_DIR#$ROOT_PREFIX}"
+    if [ -z "$data_dir" ]; then
+      data_dir="$(join_path "$wd" data)"
+    elif [ "${data_dir#/}" = "$data_dir" ]; then
+      data_dir="$(join_path "$wd" "$data_dir")"
+    fi
     data_dir_key="$data_dir/master.key"
     if [ -n "$configured" ] && { [ "$pre_existed" -eq 1 ] || [ "$migrated_key" -eq 1 ]; }; then
       key_file="$configured"
-    elif [ -f "$(physical_path "$data_dir_key")" ]; then
+    elif [ -f "$(resolve_path "$data_dir_key" "$wd")" ]; then
       key_file="$data_dir_key"
       log "adopting existing data-directory master key $data_dir_key for ${env_file#$ROOT_PREFIX}"
     else
       key_file="/etc/nexterm/master.key"
     fi
-    physical="$(physical_path "$key_file")"
+    physical="$(resolve_path "$key_file" "$wd")"
     if [ -f "$physical" ]; then
       log "preserving existing master key $key_file"
     else

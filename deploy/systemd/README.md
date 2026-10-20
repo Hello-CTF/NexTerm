@@ -23,27 +23,36 @@ An upgrade (detected from an existing `/opt/nexterm/nexterm-server`,
 
 - preserves `/etc/nexterm/nexterm.env` and
   `/etc/nexterm/onlyserver.env`; existing values are never rewritten.
-  Values are read with systemd `EnvironmentFile` semantics: surrounding
-  whitespace is trimmed, the last duplicate assignment wins, and matching
-  quotes are stripped; unsupported quoting aborts the run before any key
-  is generated;
+  Values are read with systemd `EnvironmentFile` semantics: CRLF line
+  endings are accepted, surrounding whitespace is trimmed, the last
+  duplicate assignment wins, and matching quotes are stripped;
+  unsupported quoting aborts the run before any key is generated;
 - preserves the effective master key: an explicit `NEXTERM_MASTER_KEY_FILE`
   setting wins, then an existing `<data-dir>/master.key`, then
   `/etc/nexterm/master.key`. A new key is generated only when none exists,
-  so credentials encrypted under an existing key stay decryptable;
-- backfills any missing `NEXTERM_LISTEN`, `NEXTERM_AUTH`,
-  `NEXTERM_DATA_DIR` or `NEXTERM_WEB_ROOT` key with the safe default from
-  the shipped example, so an install that predates the env files never
-  falls back to the built-in `0.0.0.0:8080` listener;
+  so credentials encrypted under an existing key stay decryptable. A
+  missing or empty `NEXTERM_DATA_DIR` resolves the way the server
+  resolves it — `<unit WorkingDirectory>/data` — and relative paths
+  resolve against the effective unit's working directory;
+- backfills any missing `NEXTERM_LISTEN`, `NEXTERM_AUTH` or
+  `NEXTERM_WEB_ROOT` key with the safe default from the shipped example,
+  so an install that predates the env files never falls back to the
+  built-in `0.0.0.0:8080` listener. `NEXTERM_DATA_DIR` is pinned to the
+  previous effective location on upgrades when the fallback directory
+  holds data, so an existing database is never moved to the example
+  location;
 - migrates legacy units (older releases kept `--listen`, `--auth`,
   `--data-dir`, `--web-root` and `--master-key-file` flags in
   `ExecStart`): explicit flag values move into the corresponding env
   files (they were the effective settings; a migrated
   `--master-key-file` becomes an explicit `NEXTERM_MASTER_KEY_FILE` that
-  wins over the data-dir fallback). Only the effective unit per systemd
-  priority (`/etc/systemd/system/`, then `/usr/lib/systemd/system/`,
-  then `/lib/systemd/system/`) is consulted; lower-priority copies are
-  removed without applying their values;
+  wins over the data-dir fallback). ExecStart values are tokenized with
+  systemd quote/escape rules, so quoted paths migrate intact; an
+  unparseable legacy unit aborts the run before anything is replaced.
+  Only the effective unit per systemd priority (`/etc/systemd/system/`,
+  then `/usr/lib/systemd/system/`, then `/lib/systemd/system/`) is
+  consulted; lower-priority copies are removed without applying their
+  values;
 - saves the previous payload to `/opt/nexterm/.rollback` and restarts only
   the units that were active. An interrupted upgrade keeps that original
   backup across retries, records whether each env file predates the
