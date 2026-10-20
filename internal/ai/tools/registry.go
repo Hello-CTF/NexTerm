@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
@@ -187,6 +189,7 @@ func (r *Registry) Execute(ctx context.Context, jobID string, scope Scope, call 
 		return Fail(ctx.Err())
 	}
 	if r.deps.Outcome != nil && call.AuthorizationID != "" && sideEffectKind(call.Name) != "" {
+		call.AssetIdentities = r.resolveCallAssetIdentities(ctx, call)
 		result = r.executeRecorded(ctx, jobID, scope, call, preparation)
 	} else {
 		result = r.execute(ctx, jobID, scope, call, preparation)
@@ -216,6 +219,54 @@ func OutcomeKey(jobID, callID string) string {
 	return strconv.Itoa(len(jobID)) + ":" + jobID + callID
 }
 
+// OutcomeKeyWithIdentity binds the outcome key to the resolved asset
+// identities: a retry against the same configuration replays the recorded
+// result, while a replaced or reconfigured asset yields a different key and
+// executes fresh instead of returning the old asset's result.
+func OutcomeKeyWithIdentity(jobID, callID string, identities []AssetIdentity) string {
+	if len(identities) == 0 {
+		return OutcomeKey(jobID, callID)
+	}
+	fingerprints := make([]string, 0, len(identities))
+	for _, identity := range identities {
+		fingerprints = append(fingerprints, identity.AssetID+"@"+identity.ConfigFingerprint)
+	}
+	sort.Strings(fingerprints)
+	return OutcomeKey(jobID, callID) + "|" + strings.Join(fingerprints, ",")
+}
+
+// resolveCallAssetIdentities pre-resolves the immutable asset identities for
+// asset-targeted mutations so the outcome key binds to them. It returns nil
+// when the call is not asset-targeted or identity resolution is unavailable
+// — the tool then marks the operation as identity-unverifiable.
+func (r *Registry) resolveCallAssetIdentities(ctx context.Context, call Call) []AssetIdentity {
+	switch call.Name {
+	case "terminal_create":
+		var args struct {
+			AssetID string `json:"asset_id"`
+		}
+		if json.Unmarshal(call.Args, &args) != nil || args.AssetID == "" || r.deps.ResolveAssetSessionIdentity == nil {
+			return nil
+		}
+		_, identity, err := r.deps.ResolveAssetSessionIdentity(ctx, args.AssetID)
+		if err != nil {
+			return nil
+		}
+		return []AssetIdentity{identity}
+	case "exec_commands":
+		var args ExecCommandsArgs
+		if json.Unmarshal(call.Args, &args) != nil || len(args.AssetIDs) == 0 && len(args.Tags) == 0 || r.deps.ResolveExecTargetIdentities == nil {
+			return nil
+		}
+		_, identities, err := r.deps.ResolveExecTargetIdentities(ctx, args.AssetIDs, args.Tags)
+		if err != nil {
+			return nil
+		}
+		return identities
+	}
+	return nil
+}
+
 func GuardAuthorizationID(decision guard.Decision) string {
 	encoded, err := json.Marshal(decision)
 	if err != nil {
@@ -227,7 +278,7 @@ func GuardAuthorizationID(decision guard.Decision) string {
 
 func (r *Registry) executeRecorded(ctx context.Context, jobID string, scope Scope, call Call, preparation *Preparation) Output {
 	request := outcome.Request{
-		IdempotenceKey:  OutcomeKey(jobID, call.ID),
+		IdempotenceKey:  OutcomeKeyWithIdentity(jobID, call.ID, call.AssetIdentities),
 		AuthorizationID: call.AuthorizationID,
 		Kind:            sideEffectKind(call.Name),
 		Arguments:       call.Args,

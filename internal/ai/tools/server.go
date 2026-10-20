@@ -159,16 +159,34 @@ func normalizeExecTargetFilters(assetIDs, tags []string) ([]string, []string, er
 }
 
 func (r *Registry) execCommandsBatch(ctx context.Context, jobID string, call Call, args ExecCommandsArgs) Output {
-	if r.deps.ResolveExecTargets == nil || r.deps.ExecBatch == nil {
+	if (r.deps.ResolveExecTargets == nil && r.deps.ResolveExecTargetIdentities == nil) || r.deps.ExecBatch == nil {
 		return Fail(errors.New("多主机执行未配置"))
 	}
 	assetIDs, tags, err := normalizeExecTargetFilters(args.AssetIDs, args.Tags)
 	if err != nil {
 		return Fail(err)
 	}
-	targets, err := r.deps.ResolveExecTargets(ctx, assetIDs, tags)
-	if err != nil {
-		return Fail(err)
+	identityNote := ""
+	var targets ExecTargetSet
+	if r.deps.ResolveExecTargetIdentities != nil {
+		var identities []AssetIdentity
+		targets, identities, err = r.deps.ResolveExecTargetIdentities(ctx, assetIDs, tags)
+		if err != nil {
+			return Fail(err)
+		}
+		// Re-validate every target's bound identity at execution time, and
+		// the identity set bound to the operation key: a replaced asset
+		// never receives the mutation and the old result is never attributed
+		// to it.
+		if failure, checkErr := r.validateExecutionTargetIdentities(ctx, targets.SessionIDs, identities, call.AssetIdentities); checkErr != nil {
+			return failure
+		}
+	} else {
+		identityNote = "；资产身份不可验证（未配置身份解析，操作未绑定资产身份）"
+		targets, err = r.deps.ResolveExecTargets(ctx, assetIDs, tags)
+		if err != nil {
+			return Fail(err)
+		}
 	}
 	if len(targets.SessionIDs) == 0 || len(targets.SessionIDs) > execbatch.MaxTargets {
 		return Fail(invalid("多主机目标必须包含 1-%d 个已连接 SSH 会话", execbatch.MaxTargets))
@@ -246,7 +264,7 @@ func (r *Registry) execCommandsBatch(ctx context.Context, jobID string, call Cal
 		}
 	}
 	text, cut := capText(output.String())
-	return Output{OK: true, Text: text, ModelText: text, ExitCode: exitCode, Truncated: truncated || cut, ExecFailed: execFailed}
+	return Output{OK: true, Text: text + identityNote, ModelText: text, ExitCode: exitCode, Truncated: truncated || cut, ExecFailed: execFailed, Notes: identityNote}
 }
 
 func (r *Registry) prepareExecBatchProduction(ctx context.Context, jobID string, call Call, args ExecCommandsArgs, targets ExecTargetSet) Output {
@@ -1084,28 +1102,29 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 	sessionID := scope.SessionID
 	connected := false
 	operation := operationID(jobID, call.ID, "terminal_create")
+	identityNote := ""
 	if args.AssetID != "" {
 		if strings.TrimSpace(args.AssetID) != args.AssetID {
 			return Fail(invalid("asset_id 不能包含首尾空白"))
 		}
-		if r.deps.ResolveAssetSession == nil {
+		if r.deps.ResolveAssetSession == nil && r.deps.ResolveAssetSessionIdentity == nil {
 			return Fail(errors.New("按资产创建终端未配置"))
 		}
-		resolved, err := r.deps.ResolveAssetSession(ctx, args.AssetID)
-		if err != nil {
+		resolved, identity, resolveErr := r.resolveAssetSessionForCreate(ctx, args.AssetID, &identityNote)
+		if resolveErr != nil {
 			// Connecting is an uncertain mutation that leaves a residual
 			// session behind, so it happens only on explicit opt-in and only
 			// for an explicit not-connected verdict; forbidden, unsupported,
 			// and transient resolver failures propagate untouched.
-			if !args.Connect || !errors.Is(err, ErrNoLiveSession) {
-				return Fail(err)
+			if !args.Connect || !errors.Is(resolveErr, ErrNoLiveSession) {
+				return Fail(resolveErr)
 			}
 			if r.deps.AssetConnector == nil {
-				return Fail(fmt.Errorf("解析资产会话失败: %v；未配置资产连接建立（connect=true 需要环境支持）", err))
+				return Fail(fmt.Errorf("解析资产会话失败: %v；未配置资产连接建立（connect=true 需要环境支持）", resolveErr))
 			}
 			connectedID, connectErr := r.deps.AssetConnector.ConnectAsset(ctx, args.AssetID)
 			if connectErr != nil {
-				failure := Fail(fmt.Errorf("解析资产会话失败: %v；建立新连接失败: %w", err, connectErr))
+				failure := Fail(fmt.Errorf("解析资产会话失败: %v；建立新连接失败: %w", resolveErr, connectErr))
 				if connectedID != "" {
 					failure.Text += fmt.Sprintf("；已建立的会话 session_id=%s 作为残留资源保留（未自动清理）", connectedID)
 				}
@@ -1116,6 +1135,13 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 			connected = true
 		} else {
 			sessionID = resolved
+			// Re-validate the resolved identity at execution time: the
+			// session's bound identity must match, and so must the identity
+			// bound to the operation key. A replaced asset never receives the
+			// mutation and the old result is never attributed to it.
+			if failure, checkErr := r.validateExecutionAssetIdentity(ctx, sessionID, identity, call.AssetIdentities); checkErr != nil {
+				return failure
+			}
 		}
 	}
 	if sessionID == "" {
@@ -1149,10 +1175,82 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 		detail += "，启动命令已发送"
 	}
 	if args.Background {
-		return Output{OK: true, Text: fmt.Sprintf("已在后台创建分离终端（%s），AI 可在其中工作，用户可在「后台会话」中接管", detail), OperationID: operation}
+		return Output{OK: true, Text: fmt.Sprintf("已在后台创建分离终端（%s），AI 可在其中工作，用户可在「后台会话」中接管%s", detail, identityNote), OperationID: operation, Notes: identityNote}
 	}
-	return Output{OK: true, Text: fmt.Sprintf("已创建并在前台展示终端标签页（%s），AI 正在其中工作，用户可随时接管输入", detail), OperationID: operation,
+	return Output{OK: true, Text: fmt.Sprintf("已创建并在前台展示终端标签页（%s），AI 正在其中工作，用户可随时接管输入%s", detail, identityNote), OperationID: operation, Notes: identityNote,
 		Terminal: &CreatedTerminal{TabID: created.TabID, SessionID: sessionID, Title: created.Title, Handle: handle}}
+}
+
+// resolveAssetSessionForCreate resolves the asset's live session, preferring
+// the identity-aware resolver so the operation can bind to and re-validate
+// the immutable asset identity. When only the plain resolver exists, it
+// notes that the asset identity is unverifiable for this operation.
+func (r *Registry) resolveAssetSessionForCreate(ctx context.Context, assetID string, identityNote *string) (string, AssetIdentity, error) {
+	if r.deps.ResolveAssetSessionIdentity != nil {
+		sessionID, identity, err := r.deps.ResolveAssetSessionIdentity(ctx, assetID)
+		return sessionID, identity, err
+	}
+	*identityNote = "；资产身份不可验证（未配置身份解析，操作未绑定资产身份）"
+	sessionID, err := r.deps.ResolveAssetSession(ctx, assetID)
+	return sessionID, AssetIdentity{}, err
+}
+
+// validateExecutionAssetIdentity re-validates the resolved identity at
+// execution time: the session's bound identity must match the resolved
+// identity, and the pre-resolved identity bound to the operation key must
+// match too. A replaced asset fails closed instead of receiving the
+// mutation or the old result.
+func (r *Registry) validateExecutionAssetIdentity(ctx context.Context, sessionID string, resolved AssetIdentity, bound []AssetIdentity) (Output, error) {
+	if checker, ok := r.deps.Terminal.(SessionAssetIdentityResolver); ok {
+		boundIdentity, err := checker.SessionAssetIdentity(ctx, sessionID)
+		if err != nil {
+			return Fail(fmt.Errorf("资产身份校验失败: %w", err)), err
+		}
+		if boundIdentity != resolved {
+			return Fail(fmt.Errorf("资产在解析与执行之间被替换（%s → %s），未执行", resolved.AssetID, boundIdentity.AssetID)), ErrAssetIdentityChanged
+		}
+	}
+	if len(bound) > 0 && bound[0] != resolved {
+		return Fail(errors.New("资产在操作记录与执行之间被替换，未执行")), ErrAssetIdentityChanged
+	}
+	return Output{}, nil
+}
+
+// validateExecutionTargetIdentities re-validates each batch target's bound
+// identity at execution time and the identity set bound to the operation
+// key. A replaced asset fails closed instead of receiving the mutation.
+func (r *Registry) validateExecutionTargetIdentities(ctx context.Context, sessionIDs []string, resolved, bound []AssetIdentity) (Output, error) {
+	if checker, ok := r.deps.Terminal.(SessionAssetIdentityResolver); ok {
+		for index, sessionID := range sessionIDs {
+			boundIdentity, err := checker.SessionAssetIdentity(ctx, sessionID)
+			if err != nil {
+				return Fail(fmt.Errorf("资产身份校验失败: %w", err)), err
+			}
+			if index < len(resolved) && boundIdentity != resolved[index] {
+				return Fail(fmt.Errorf("目标资产在解析与执行之间被替换（%s → %s），未执行", resolved[index].AssetID, boundIdentity.AssetID)), ErrAssetIdentityChanged
+			}
+		}
+	}
+	if len(bound) > 0 && !assetIdentitySetsEqual(bound, resolved) {
+		return Fail(errors.New("目标资产在操作记录与执行之间被替换，未执行")), ErrAssetIdentityChanged
+	}
+	return Output{}, nil
+}
+
+func assetIdentitySetsEqual(a, b []AssetIdentity) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[AssetIdentity]struct{}, len(a))
+	for _, identity := range a {
+		seen[identity] = struct{}{}
+	}
+	for _, identity := range b {
+		if _, ok := seen[identity]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *Registry) terminalRename(ctx context.Context, jobID string, scope Scope, raw []byte) Output {

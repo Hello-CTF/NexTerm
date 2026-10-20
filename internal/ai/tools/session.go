@@ -124,6 +124,18 @@ func (s *sessionTerminal) Rename(ctx context.Context, tabID, title string) error
 	return err
 }
 
+// SessionAssetIdentity reports the immutable asset identity the session is
+// currently bound to (asset ID plus config fingerprint), so mutation tools
+// can re-validate a resolved identity at execution time.
+func (s *sessionTerminal) SessionAssetIdentity(ctx context.Context, sessionID string) (AssetIdentity, error) {
+	current, err := s.manager.SessionFor(sessionRequestContext(ctx), sessionID)
+	if err != nil {
+		return AssetIdentity{}, err
+	}
+	asset := current.Asset()
+	return AssetIdentity{AssetID: asset.ID, ConfigFingerprint: asset.ConfigFingerprint}, nil
+}
+
 // ListTerminalTabs enumerates the tabs visible to the caller with the exact
 // handle each is addressed by; the asset kind is resolved server-side so
 // privacy decisions never depend on client-supplied fields.

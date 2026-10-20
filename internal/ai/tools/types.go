@@ -50,6 +50,12 @@ var (
 	// may establish a new connection on explicit opt-in. Forbidden,
 	// unsupported, and transient resolver failures never trigger connect.
 	ErrNoLiveSession = errors.New("资产当前没有活动会话")
+	// ErrAssetIdentityChanged marks a resolved asset identity that no
+	// longer matches the session's bound identity at execution time: the
+	// asset was replaced, reconfigured, or revoked between resolution and
+	// execution, so the mutation fails closed instead of landing on the
+	// wrong asset or attributing the old result to it.
+	ErrAssetIdentityChanged = errors.New("资产身份在解析与执行之间已变化")
 )
 
 type Scope struct {
@@ -74,6 +80,12 @@ type Call struct {
 	AuthorizationID         string                             `json:"authorizationId,omitempty"`
 	OriginID                string                             `json:"-"`
 	ProductionConfirmations []execbatch.ProductionConfirmation `json:"-"`
+	// AssetIdentities carries the immutable asset identities resolved before
+	// execution for asset-targeted mutations: the outcome key binds to them,
+	// and the tool re-validates them at execution time. Empty when identity
+	// resolution is unavailable — the result then marks the operation as
+	// identity-unverifiable instead of claiming a binding that does not exist.
+	AssetIdentities []AssetIdentity `json:"-"`
 }
 
 type Output struct {
@@ -382,6 +394,22 @@ type PasteLiteralTerminal interface {
 	WritePasteLiteral(ctx context.Context, tabID, text string) error
 }
 
+// AssetIdentity is the immutable identity of an asset's configuration: its
+// ID plus the config fingerprint the live session was connected with. A
+// replaced or reconfigured asset yields a different identity, so binding an
+// operation to it never attributes the old result to the new asset.
+type AssetIdentity struct {
+	AssetID           string
+	ConfigFingerprint string
+}
+
+// SessionAssetIdentityResolver reports the immutable asset identity a
+// session is currently bound to, so mutation tools can re-validate the
+// resolved identity at execution time.
+type SessionAssetIdentityResolver interface {
+	SessionAssetIdentity(ctx context.Context, sessionID string) (AssetIdentity, error)
+}
+
 // AssetConnector is the optional dependency that connects an asset and
 // returns the live session ID. Connecting is an uncertain mutation: the
 // implementation reports the session it created so failures after a
@@ -408,20 +436,29 @@ type Dependencies struct {
 	TabSession          func(string) string
 	ResolveAssetSession func(context.Context, string) (string, error)
 	ResolveExecTargets  func(context.Context, []string, []string) (ExecTargetSet, error)
-	ExecBatch           func(context.Context, execbatch.Request) (execbatch.Batch, error)
-	AssetConnector      AssetConnector
-	Database            Database
-	ListAssets          func(context.Context) ([]Asset, error)
-	DockerPS            func(context.Context, string) ([]Container, error)
-	DockerLogs          func(context.Context, string, string, int, string) (string, error)
-	DockerExec          func(context.Context, string, string, string) (ExecResult, error)
-	DockerAct           func(context.Context, string, string, string) error
-	DockerActionAudited bool
-	LocalHistory        bool
-	Audit               func(context.Context, AuditEntry) error
-	Reminders           ReminderScheduler
-	Notify              func(context.Context, string) error
-	Grants              *guard.Grants
+	// ResolveAssetSessionIdentity resolves an asset to its live session and
+	// the immutable identity the session is bound to (asset ID plus config
+	// fingerprint). Production wiring implements it with the asset row's
+	// config fingerprint; when absent, mutation tools cannot bind or
+	// re-validate the asset identity and mark the operation unverifiable.
+	ResolveAssetSessionIdentity func(context.Context, string) (string, AssetIdentity, error)
+	// ResolveExecTargetIdentities resolves batch targets to sessions and the
+	// immutable identity each session is bound to.
+	ResolveExecTargetIdentities func(context.Context, []string, []string) (ExecTargetSet, []AssetIdentity, error)
+	ExecBatch                   func(context.Context, execbatch.Request) (execbatch.Batch, error)
+	AssetConnector              AssetConnector
+	Database                    Database
+	ListAssets                  func(context.Context) ([]Asset, error)
+	DockerPS                    func(context.Context, string) ([]Container, error)
+	DockerLogs                  func(context.Context, string, string, int, string) (string, error)
+	DockerExec                  func(context.Context, string, string, string) (ExecResult, error)
+	DockerAct                   func(context.Context, string, string, string) error
+	DockerActionAudited         bool
+	LocalHistory                bool
+	Audit                       func(context.Context, AuditEntry) error
+	Reminders                   ReminderScheduler
+	Notify                      func(context.Context, string) error
+	Grants                      *guard.Grants
 
 	Outcome      *outcome.Ledger
 	Now          func() time.Time
