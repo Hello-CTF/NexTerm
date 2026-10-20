@@ -2601,21 +2601,22 @@ REAL_ROOT_UNIT_PATHS = REAL_ROOT_GUARD_PATHS[3:]
 def require_pristine_real_root() -> None:
     # refuse before any mutation: the real-root legs overwrite or delete
     # these paths (the installer also removes lower-priority legacy unit
-    # copies), so they may only run when every one of them is absent
+    # copies), so they may only run when every one of them is absent.
+    # lexists: a dangling symlink is an existing directory entry too.
     for path in REAL_ROOT_GUARD_PATHS:
-        if os.path.exists(path):
+        if os.path.lexists(path):
             raise AssertionError(
                 f"refusing the real-root leg: {path} already exists; these legs mutate system paths and only run on a pristine system (disposable containers)")
 
 
-def test_real_root_legs_refuse_preexisting_units() -> None:
-    if (os.geteuid() != 0 or platform.system() != "Linux"
-            or os.environ.get("NEXTERM_TEST_REAL_ROOT_INSTALL") != "1"
-            or not os.environ.get("NEXTERM_TEST_POSTGRES_DSN")
-            or not os.environ.get("NEXTERM_TEST_SERVER_BINARY")
-            or not shutil.which("psql")):
-        print("skip   test_real_root_legs_refuse_preexisting_units (needs root on Linux, NEXTERM_TEST_REAL_ROOT_INSTALL=1, psql, NEXTERM_TEST_POSTGRES_DSN and NEXTERM_TEST_SERVER_BINARY; mutates the system: disposable containers only)")
-        return
+def assert_sentinel_regression() -> None:
+    # the sentinel regression itself refuses before any write when a
+    # guarded unit path already exists, creates sentinels exclusively
+    # (never truncates or follows anything), and cleans up only the paths
+    # it provably created
+    for path in REAL_ROOT_UNIT_PATHS:
+        if os.path.lexists(path):
+            raise AssertionError(f"the sentinel regression refuses to run: {path} already exists")
     sentinel = "sentinel: pre-existing unit, must survive\n"
     created: list[str] = []
     seen: set[str] = set()
@@ -2625,8 +2626,7 @@ def test_real_root_legs_refuse_preexisting_units() -> None:
             if real in seen:
                 continue
             seen.add(real)
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w") as handle:
+            with open(path, "x") as handle:
                 handle.write(sentinel)
             created.append(path)
         for leg in (test_real_root_postgres_relative_db_password_file,
@@ -2643,6 +2643,51 @@ def test_real_root_legs_refuse_preexisting_units() -> None:
     finally:
         for path in created:
             os.unlink(path)
+
+
+def test_real_root_legs_refuse_preexisting_units() -> None:
+    if (os.geteuid() != 0 or platform.system() != "Linux"
+            or os.environ.get("NEXTERM_TEST_REAL_ROOT_INSTALL") != "1"
+            or not os.environ.get("NEXTERM_TEST_POSTGRES_DSN")
+            or not os.environ.get("NEXTERM_TEST_SERVER_BINARY")
+            or not shutil.which("psql")):
+        print("skip   test_real_root_legs_refuse_preexisting_units (needs root on Linux, NEXTERM_TEST_REAL_ROOT_INSTALL=1, psql, NEXTERM_TEST_POSTGRES_DSN and NEXTERM_TEST_SERVER_BINARY; mutates the system: disposable containers only)")
+        return
+    unit_file, unit_link = REAL_ROOT_UNIT_PATHS[0], REAL_ROOT_UNIT_PATHS[1]
+    # Phase A: the sentinel regression itself must refuse a pre-existing
+    # unit before writing anything and preserve it byte for byte.
+    preexisting = "pre-existing unit from another install\n"
+    with open(unit_file, "x") as handle:
+        handle.write(preexisting)
+    try:
+        try:
+            assert_sentinel_regression()
+        except AssertionError as error:
+            assert "refuses to run" in str(error), str(error)
+        else:
+            raise AssertionError("the sentinel regression must refuse a pre-existing unit file")
+        assert read(pathlib.Path(unit_file)) == preexisting, "the pre-existing unit was modified"
+    finally:
+        os.unlink(unit_file)
+    # Phase B: a dangling unit symlink must stop both legs, preserving the
+    # link and its (absent) target.
+    dangling_target = "/nonexistent-nexterm-sentinel-target"
+    os.symlink(dangling_target, unit_link)
+    try:
+        for leg in (test_real_root_postgres_relative_db_password_file,
+                    test_real_root_bootstrap_preserves_custom_data_dir_ownership):
+            try:
+                leg()
+            except AssertionError as error:
+                assert "refusing the real-root leg" in str(error), str(error)
+            else:
+                raise AssertionError(f"{leg.__name__} must refuse a dangling unit symlink")
+            assert os.path.islink(unit_link) and os.readlink(unit_link) == dangling_target, "the dangling symlink was modified"
+            assert not os.path.exists(dangling_target)
+    finally:
+        os.unlink(unit_link)
+    # Phase C: on a pristine system the sentinel regression passes.
+    assert_sentinel_regression()
 
 
 def test_real_root_bootstrap_preserves_custom_data_dir_ownership() -> None:
