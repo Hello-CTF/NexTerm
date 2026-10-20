@@ -6,6 +6,12 @@ import { flush } from "./reactTestUtils";
 
 const mountedRoots = vi.hoisted(() => [] as Array<{ unmount: () => void }>);
 
+// The route decision under test is main.tsx's token parsing and branch selection; the full
+// App bundle (xterm and every feature) is a heavy leaf no case's assertions touch, so it is
+// layered out — cold transform per case drops from ~21s to a few seconds without changing
+// any route behavior.
+vi.mock("../../app/App", () => ({ default: () => null }));
+
 vi.mock("react-dom/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-dom/client")>();
   return {
