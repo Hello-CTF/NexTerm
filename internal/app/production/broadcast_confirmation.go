@@ -143,9 +143,9 @@ func (s *terminalCommandService) surfaceServices() *ProductionServices {
 // gate; without an opt-in the pre-R-07 behavior is kept (the write fails
 // downstream as before). It returns nil without error when no opt-in exists.
 // The gate is evidence-only here: a dropped session already exists, so the
-// actual redial is the in-place reconnect with the strict asset, which
-// verifies host keys again, and the caller gets the session back once it is
-// connected.
+// actual redial is the single-attempt in-place reconnect with the strict
+// asset, which verifies host keys again and returns the actual dial error —
+// never a background retry.
 func (s *terminalCommandService) connectDroppedBroadcastSession(ctx context.Context, sessionID, assetID string) (*session.Session, error) {
 	if err := authorizeSurfaceConnect(ctx, s.surfaceServices(), BroadcastConnectOptInSettingKeyForUser, BroadcastConnectProductionOptInSettingKeyForUser, ipc.OwnerID(ctx), assetID); err != nil {
 		if !errors.Is(err, guard.ErrConnectOptInRequired) {
@@ -164,23 +164,10 @@ func (s *terminalCommandService) connectDroppedBroadcastSession(ctx context.Cont
 	if options, ok := asset.Options.(map[string]any); ok {
 		options["strictHostKey"] = true
 	}
-	if err := s.sessions.StartReconnectWithAssetFor(ctx, sessionID, asset); err != nil {
+	if err := s.sessions.ReconnectOnceFor(ctx, sessionID, asset); err != nil {
 		return nil, err
 	}
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		connected, err := s.sessions.SessionFor(ctx, sessionID)
-		if err != nil {
-			return nil, err
-		}
-		if connected.Info().Status == session.StatusConnected {
-			return connected, nil
-		}
-		if time.Now().After(deadline) {
-			return nil, session.ErrDisconnected
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	return s.sessions.SessionFor(ctx, sessionID)
 }
 
 func (s *terminalCommandService) resolveBroadcastTarget(ctx context.Context, tabID string) (broadcastConfirmationTarget, error) {
@@ -365,6 +352,20 @@ func broadcastConfirmationIPCError(err error) error {
 	}
 	if errors.Is(err, errBroadcastStaleProductionConfirmation) {
 		return ipc.WrapError(ipc.Code("conflict"), "生产确认已 stale，请重新 preflight：目标或环境已变化，请移除旧确认后重试", err)
+	}
+	// R-07 connect-gate denials are actionable authorization outcomes, not
+	// internal faults: surface each with a distinct code and visible reason.
+	if errors.Is(err, guard.ErrConnectHostKeyUnknown) || errors.Is(err, guard.ErrConnectHostKeyChanged) {
+		return ipc.WrapError(ipc.CodeHostKeyPending, err.Error(), err)
+	}
+	if errors.Is(err, guard.ErrConnectVaultUnavailable) {
+		return ipc.WrapError(ipc.CodeVaultLocked, err.Error(), err)
+	}
+	if errors.Is(err, guard.ErrConnectProductionConfirmationRequired) {
+		return ipc.WrapError(ipc.CodeNeedsConfirm, err.Error(), err)
+	}
+	if errors.Is(err, guard.ErrConnectOwnerMismatch) {
+		return ipc.WrapError(ipc.CodeForbidden, err.Error(), err)
 	}
 	return terminalIPCError(err)
 }

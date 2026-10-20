@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -18,6 +19,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
 type broadcastGateChannel struct {
@@ -120,10 +123,16 @@ type broadcastGateConnector struct {
 	mu         sync.Mutex
 	transports map[string]*broadcastGateTransport
 	dials      atomic.Int32
+	connectErr func(assetID string, call int32) error
 }
 
 func (c *broadcastGateConnector) Connect(_ context.Context, asset session.Asset, generation uint64) (base.Transport, error) {
-	c.dials.Add(1)
+	call := c.dials.Add(1)
+	if c.connectErr != nil {
+		if err := c.connectErr(asset.ID, call); err != nil {
+			return nil, err
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	transport := newBroadcastGateTransport(asset.Kind, generation)
@@ -605,4 +614,98 @@ func newBroadcastFixtureHostKeys(t *testing.T, fixture *broadcastGateFixture) *p
 		t.Fatal(err)
 	}
 	return hostKeys
+}
+
+func TestBroadcastReconnectFailureDialsOnceWithoutBackgroundRetry(t *testing.T) {
+	fixture := newBroadcastGateFixture(t)
+	fixture.service.hostKeys = newBroadcastFixtureHostKeys(t, fixture)
+	if err := fixture.database.KnownHostAccept(fixture.ctx, "api.staging.example", 22, "ssh-ed25519", "SHA256:staging"); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.database.SettingSet(fixture.ctx, BroadcastConnectOptInSettingKeyForUser(fixture.ctx), "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.manager.Disconnect(fixture.staging.sessionID); err != nil {
+		t.Fatal(err)
+	}
+	connectErr := &ssh.ConnectError{Kind: ssh.ErrorKindNetwork, Err: errors.New("temporary failure")}
+	fixture.connector.connectErr = func(string, int32) error { return connectErr }
+	initialCalls := fixture.connector.dials.Load()
+
+	response := fixture.prepare([]string{fixture.staging.tabID}, "hostname\n")
+	if response.OK || response.Error == nil {
+		t.Fatalf("retryable failure resolve = %+v, want the dial error", response)
+	}
+	if !strings.Contains(response.Error.Message, "网络连接失败") || strings.Contains(response.Error.Message, "内部错误") {
+		t.Fatalf("resolve error = %+v, want the actual dial error propagated", response.Error)
+	}
+	if got := fixture.connector.dials.Load(); got != initialCalls+1 {
+		t.Fatalf("reconnect dialed %d times, want exactly one (%d)", got-initialCalls, initialCalls+1)
+	}
+	// The retryable failure must not schedule any background retry.
+	time.Sleep(100 * time.Millisecond)
+	if got := fixture.connector.dials.Load(); got != initialCalls+1 {
+		t.Fatalf("background dial after return: %d calls", got-initialCalls)
+	}
+}
+
+func TestBroadcastConnectGateIPCErrorClassification(t *testing.T) {
+	fixture := newBroadcastGateFixture(t)
+	fixture.service.hostKeys = newBroadcastFixtureHostKeys(t, fixture)
+	if err := fixture.database.SettingSet(fixture.ctx, BroadcastConnectOptInSettingKeyForUser(fixture.ctx), "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	unknown := fixture.openTarget(t, "Unknown API", "api.unknown.example", "")
+	if err := fixture.manager.Disconnect(unknown.sessionID); err != nil {
+		t.Fatal(err)
+	}
+	response := fixture.prepare([]string{unknown.tabID}, "hostname\n")
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeHostKeyPending ||
+		!strings.Contains(response.Error.Message, guard.ErrConnectHostKeyUnknown.Error()) {
+		t.Fatalf("unknown host key response = %+v", response)
+	}
+
+	credentialID, err := fixture.database.CredentialPut(fixture.ctx, store.CredentialInput{
+		Name: "key", Kind: vault.KindPrivateKey, Nonce: []byte{1}, Blob: []byte{2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked := fixture.openTarget(t, "Locked API", "api.locked.example", "")
+	if _, err := fixture.database.AssetUpdate(fixture.ctx, locked.assetID, store.AssetPatch{CredID: store.Value(credentialID)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.database.KnownHostAccept(fixture.ctx, "api.locked.example", 22, "ssh-ed25519", "SHA256:locked"); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.manager.Disconnect(locked.sessionID); err != nil {
+		t.Fatal(err)
+	}
+	response = fixture.prepare([]string{locked.tabID}, "hostname\n")
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeVaultLocked ||
+		!strings.Contains(response.Error.Message, guard.ErrConnectVaultUnavailable.Error()) {
+		t.Fatalf("vault unavailable response = %+v", response)
+	}
+
+	production := fixture.openTarget(t, "Production API", "api.production2.example", "env:production")
+	if err := fixture.database.KnownHostAccept(fixture.ctx, "api.production2.example", 22, "ssh-ed25519", "SHA256:production2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.manager.Disconnect(production.sessionID); err != nil {
+		t.Fatal(err)
+	}
+	response = fixture.prepare([]string{production.tabID}, "hostname\n")
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNeedsConfirm ||
+		!strings.Contains(response.Error.Message, guard.ErrConnectProductionConfirmationRequired.Error()) {
+		t.Fatalf("production unconfirmed response = %+v", response)
+	}
+
+	other := ipc.WithUserID(t.Context(), "broadcast-other")
+	response = dispatchBroadcastTest(fixture.dispatcher, other, "terminal_broadcast_prepare", terminalBroadcastPrepareRequest{
+		TabIDs: []string{fixture.staging.tabID}, Data: broadcastTestInts("hostname\n"),
+	})
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
+		t.Fatalf("cross-owner response = %+v", response)
+	}
 }
