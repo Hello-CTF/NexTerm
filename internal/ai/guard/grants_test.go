@@ -71,7 +71,7 @@ func TestDeviceGrantKindsRestricted(t *testing.T) {
 		"terminal_rename": "",
 		"docker_control":  "",
 		"docker_exec":     "",
-		"db_query":        "",
+		"db_query":        GrantKindDBQuery,
 		"write_file":      "",
 		"send_reminder":   "",
 		"read_screen":     "",

@@ -8,9 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
@@ -24,6 +24,9 @@ type ProductionConfirmation struct {
 	Confirmed     bool   `json:"confirmed"`
 	TargetSetHash string `json:"targetSetHash"`
 	CommandHash   string `json:"commandHash"`
+	// EnvironmentNames are the actual environment names the user typed back;
+	// every required production environment name must be present.
+	EnvironmentNames []string `json:"environmentNames,omitempty"`
 }
 
 type ConfirmationTarget struct {
@@ -35,18 +38,20 @@ type ConfirmationTarget struct {
 }
 
 type ConfirmationRequiredDetail struct {
-	Kind              string               `json:"kind"`
-	BatchID           string               `json:"batchId"`
-	TargetSetHash     string               `json:"targetSetHash"`
-	CommandHash       string               `json:"commandHash"`
-	ProductionTargets []ConfirmationTarget `json:"productionTargets"`
+	Kind                     string               `json:"kind"`
+	BatchID                  string               `json:"batchId"`
+	TargetSetHash            string               `json:"targetSetHash"`
+	CommandHash              string               `json:"commandHash"`
+	RequiredEnvironmentNames []string             `json:"requiredEnvironmentNames,omitempty"`
+	ProductionTargets        []ConfirmationTarget `json:"productionTargets"`
 }
 
 type ConfirmationRequiredError struct {
-	BatchID           string
-	TargetSetHash     string
-	CommandHash       string
-	ProductionTargets []ConfirmationTarget
+	BatchID                  string
+	TargetSetHash            string
+	CommandHash              string
+	RequiredEnvironmentNames []string
+	ProductionTargets        []ConfirmationTarget
 }
 
 func (e *ConfirmationRequiredError) Error() string {
@@ -60,15 +65,18 @@ func (e *ConfirmationRequiredError) Unwrap() error {
 func (e *ConfirmationRequiredError) IPCDetail() ConfirmationRequiredDetail {
 	return ConfirmationRequiredDetail{
 		Kind: ConfirmationRequiredKind, BatchID: e.BatchID, TargetSetHash: e.TargetSetHash,
-		CommandHash: e.CommandHash, ProductionTargets: append([]ConfirmationTarget(nil), e.ProductionTargets...),
+		CommandHash:              e.CommandHash,
+		RequiredEnvironmentNames: append([]string(nil), e.RequiredEnvironmentNames...),
+		ProductionTargets:        append([]ConfirmationTarget(nil), e.ProductionTargets...),
 	}
 }
 
 type productionChallenge struct {
-	batchID           string
-	targetSetHash     string
-	commandHash       string
-	productionTargets []ConfirmationTarget
+	batchID                  string
+	targetSetHash            string
+	commandHash              string
+	requiredEnvironmentNames []string
+	productionTargets        []ConfirmationTarget
 }
 
 type productionConfirmationAuditPayload struct {
@@ -76,25 +84,69 @@ type productionConfirmationAuditPayload struct {
 	BatchID           string               `json:"batchId"`
 	TargetSetHash     string               `json:"targetSetHash"`
 	CommandHash       string               `json:"commandHash"`
+	EnvironmentNames  []string             `json:"environmentNames"`
 	ConfirmedAt       int64                `json:"confirmedAt"`
 	ProductionTargets []ConfirmationTarget `json:"productionTargets"`
 }
 
-func newProductionChallenge(batchID, command string, targets []Target) *productionChallenge {
-	allTargets := make([]ConfirmationTarget, 0, len(targets))
-	productionTargets := make([]ConfirmationTarget, 0)
+// productionClassification is the single per-batch production classification:
+// the challenge and the running/finished history rows reuse it, so a canceled
+// run never re-reads the owner's settings and a read error never degrades the
+// marker to false.
+type productionClassification struct {
+	productionTargets        []ConfirmationTarget
+	requiredEnvironmentNames []string
+}
+
+func (c *productionClassification) production() bool {
+	return c != nil && len(c.productionTargets) != 0
+}
+
+// classifyProductionTargets classifies targets through the owner's configured
+// production environment list with a detached, owner-bound context that stays
+// readable after cancellation; a settings read error fails the batch instead
+// of silently degrading to non-production.
+func (s *Service) classifyProductionTargets(ctx context.Context, ownerID string, targets []Target) (*productionClassification, error) {
+	classificationCtx := context.WithoutCancel(ctx)
+	if ownerID != "" {
+		classificationCtx = ipc.WithUserID(classificationCtx, ownerID)
+	}
+	result := &productionClassification{}
 	for _, target := range targets {
-		item := ConfirmationTarget{
-			SessionID: target.SessionID, SessionName: target.SessionName, AssetID: target.AssetID,
-			Hostname: target.Hostname, Environment: target.Environment,
+		production, err := guard.IsProductionEnvironment(classificationCtx, s.productionSettings, target.Environment)
+		if err != nil {
+			return nil, err
 		}
-		allTargets = append(allTargets, item)
-		if isProductionEnvironment(target.Environment) {
-			productionTargets = append(productionTargets, item)
+		if production {
+			result.productionTargets = append(result.productionTargets, ConfirmationTarget{
+				SessionID: target.SessionID, SessionName: target.SessionName, AssetID: target.AssetID,
+				Hostname: target.Hostname, Environment: target.Environment,
+			})
+			result.requiredEnvironmentNames = append(result.requiredEnvironmentNames, target.Environment)
 		}
 	}
-	if len(productionTargets) == 0 {
+	if len(result.productionTargets) == 0 {
+		return result, nil
+	}
+	sort.Slice(result.productionTargets, func(i, j int) bool {
+		return result.productionTargets[i].SessionID < result.productionTargets[j].SessionID
+	})
+	result.requiredEnvironmentNames = guard.ProductionEnvironmentNames(result.requiredEnvironmentNames)
+	return result, nil
+}
+
+// newProductionChallenge binds the confirmed target set, owner, and command
+// into the challenge hashes from the single batch classification.
+func newProductionChallenge(batchID, ownerID, command string, targets []Target, classification *productionClassification) *productionChallenge {
+	if !classification.production() {
 		return nil
+	}
+	allTargets := make([]ConfirmationTarget, 0, len(targets))
+	for _, target := range targets {
+		allTargets = append(allTargets, ConfirmationTarget{
+			SessionID: target.SessionID, SessionName: target.SessionName, AssetID: target.AssetID,
+			Hostname: target.Hostname, Environment: target.Environment,
+		})
 	}
 	sort.Slice(allTargets, func(i, j int) bool {
 		if allTargets[i].SessionID == allTargets[j].SessionID {
@@ -102,16 +154,15 @@ func newProductionChallenge(batchID, command string, targets []Target) *producti
 		}
 		return allTargets[i].SessionID < allTargets[j].SessionID
 	})
-	sort.Slice(productionTargets, func(i, j int) bool {
-		return productionTargets[i].SessionID < productionTargets[j].SessionID
-	})
 	canonical, _ := json.Marshal(struct {
 		BatchID string               `json:"batchId"`
+		OwnerID string               `json:"ownerId"`
 		Targets []ConfirmationTarget `json:"targets"`
-	}{BatchID: batchID, Targets: allTargets})
+	}{BatchID: batchID, OwnerID: ownerID, Targets: allTargets})
 	return &productionChallenge{
 		batchID: batchID, targetSetHash: digest("target-set-v2", canonical), commandHash: commandDigest(command),
-		productionTargets: productionTargets,
+		requiredEnvironmentNames: append([]string(nil), classification.requiredEnvironmentNames...),
+		productionTargets:        append([]ConfirmationTarget(nil), classification.productionTargets...),
 	}
 }
 
@@ -123,12 +174,14 @@ func validateProductionConfirmation(confirmation *ProductionConfirmation, challe
 		return nil
 	}
 	if confirmation != nil && confirmation.Confirmed &&
-		confirmation.TargetSetHash == challenge.targetSetHash && confirmation.CommandHash == challenge.commandHash {
+		confirmation.TargetSetHash == challenge.targetSetHash && confirmation.CommandHash == challenge.commandHash &&
+		guard.EnvironmentNamesMatch(confirmation.EnvironmentNames, challenge.requiredEnvironmentNames) {
 		return nil
 	}
 	return &ConfirmationRequiredError{
 		BatchID: challenge.batchID, TargetSetHash: challenge.targetSetHash, CommandHash: challenge.commandHash,
-		ProductionTargets: append([]ConfirmationTarget(nil), challenge.productionTargets...),
+		RequiredEnvironmentNames: append([]string(nil), challenge.requiredEnvironmentNames...),
+		ProductionTargets:        append([]ConfirmationTarget(nil), challenge.productionTargets...),
 	}
 }
 
@@ -145,7 +198,8 @@ func (s *Service) auditProductionConfirmation(ctx context.Context, ownerID strin
 		Source: "user", Kind: "exec_batch_production_confirmation",
 		Payload: productionConfirmationAuditPayload{
 			OwnerID: ownerID, BatchID: request.BatchID, TargetSetHash: challenge.targetSetHash,
-			CommandHash: challenge.commandHash, ConfirmedAt: s.now().UnixMilli(),
+			CommandHash: challenge.commandHash, EnvironmentNames: append([]string(nil), challenge.requiredEnvironmentNames...),
+			ConfirmedAt:       s.now().UnixMilli(),
 			ProductionTargets: append([]ConfirmationTarget(nil), challenge.productionTargets...),
 		},
 	})
@@ -153,10 +207,6 @@ func (s *Service) auditProductionConfirmation(ctx context.Context, ownerID strin
 
 func execAuditContext(ctx context.Context, ownerID string) context.Context {
 	return ipc.WithUserID(context.WithoutCancel(ctx), ownerID)
-}
-
-func isProductionEnvironment(environment string) bool {
-	return strings.EqualFold(environment, "production") || strings.EqualFold(environment, "prod")
 }
 
 func commandDigest(command string) string {

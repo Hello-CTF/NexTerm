@@ -908,6 +908,18 @@
       "channel": false,
       "stream": "none"
     },
+    "production_settings_get": {
+      "scope": "production",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "production_settings_set": {
+      "scope": "production",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "redis_command": {
       "nested": false,
       "channel": false,

@@ -179,6 +179,41 @@ func TestLegacyCommandRatchet(t *testing.T) {
 	}
 }
 
+// The production settings commands are a typed scope: they carry DTO metadata
+// and stay out of the legacy surface, so the ratchet holds at 265 without
+// hiding any other registration.
+func TestProductionSettingsCommandsAreTypedScope(t *testing.T) {
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	for _, name := range []string{"production_settings_get", "production_settings_set"} {
+		command, ok := commands[name]
+		if !ok {
+			t.Fatalf("production settings command %q is missing", name)
+		}
+		if command.Scope != "production" {
+			t.Fatalf("command %q scope = %q, want production", name, command.Scope)
+		}
+		if command.Input == nil || command.Output == nil {
+			t.Fatalf("command %q must carry DTO metadata: %+v", name, command)
+		}
+	}
+	if got := typeIdentifier(commands["production_settings_get"].Output); got != "github.com/Hello-CTF/NexTerm/internal/app/production.productionSettingsDTO" {
+		t.Fatalf("production_settings_get output = %q", got)
+	}
+	if got := typeIdentifier(commands["production_settings_set"].Input); got != "github.com/Hello-CTF/NexTerm/internal/app/production.productionSettingsUpdateRequest" {
+		t.Fatalf("production_settings_set input = %q", got)
+	}
+	legacy := 0
+	for _, command := range generated.commands {
+		if command.Input == nil {
+			legacy++
+		}
+	}
+	if legacy > legacyCommandLimit {
+		t.Fatalf("legacy count %d exceeds ratchet %d after typing production settings", legacy, legacyCommandLimit)
+	}
+}
+
 // The published contract is derived from the production wiring: a command
 // enters the manifest only when its registration package is reachable from a
 // shipped binary. Registration-ready packages that no binary imports yet are

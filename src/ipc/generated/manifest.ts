@@ -956,6 +956,22 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "production_settings_get": {
+      scope: "production",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.productionSettingsDTO", ts: "ProductionSettingsDTO" },
+    },
+    "production_settings_set": {
+      scope: "production",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.productionSettingsUpdateRequest", ts: "ProductionSettingsUpdateRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.productionSettingsDTO", ts: "ProductionSettingsDTO" },
+    },
     "redis_command": {
       nested: false,
       channel: false,
@@ -1994,6 +2010,14 @@ export interface IPCCommandTypeMap {
   "inventory_target_exec": {
     input: contractTypes.InventoryTargetExecRequest;
     output: contractTypes.InventoryTargetExecResponse;
+  };
+  "production_settings_get": {
+    input: Record<string, never>;
+    output: contractTypes.ProductionSettingsDTO;
+  };
+  "production_settings_set": {
+    input: contractTypes.ProductionSettingsUpdateRequest;
+    output: contractTypes.ProductionSettingsDTO;
   };
   "runbook_run_advance": {
     input: contractTypes.AdvanceRequest;

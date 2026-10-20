@@ -15,21 +15,21 @@ type History interface {
 	ExecBatchHistorySave(context.Context, store.ExecBatchRow, []store.ExecBatchResultRow) error
 }
 
-func (s *Service) startHistory(ctx context.Context, ownerID string, request Request, started time.Time, targets []Target) {
+func (s *Service) startHistory(ctx context.Context, ownerID string, request Request, started time.Time, targets []Target, production bool) {
 	if s.history == nil {
 		return
 	}
-	row := historyBatchRow(request, started, targets, store.ExecBatchStatusRunning, nil)
+	row := historyBatchRow(ownerID, request, started, targets, store.ExecBatchStatusRunning, nil, production)
 	s.saveHistory(ctx, ownerID, row, nil)
 }
 
-func (s *Service) finishWithHistory(ctx context.Context, ownerID string, request Request, started time.Time, targets []Target, results []Result) Batch {
+func (s *Service) finishWithHistory(ctx context.Context, ownerID string, request Request, started time.Time, targets []Target, results []Result, production bool) Batch {
 	batch := s.finishedBatch(request, started, results)
 	if s.history == nil {
 		return batch
 	}
 	finishedAt := batch.FinishedAt
-	row := historyBatchRow(request, started, targets, historyBatchStatus(results), &finishedAt)
+	row := historyBatchRow(ownerID, request, started, targets, historyBatchStatus(results), &finishedAt, production)
 	s.saveHistory(ctx, ownerID, row, historyResultRows(batch))
 	return batch
 }
@@ -42,10 +42,10 @@ func (s *Service) saveHistory(ctx context.Context, ownerID string, row store.Exe
 	}
 }
 
-func historyBatchRow(request Request, started time.Time, targets []Target, status string, finishedAt *int64) store.ExecBatchRow {
+func historyBatchRow(ownerID string, request Request, started time.Time, targets []Target, status string, finishedAt *int64, production bool) store.ExecBatchRow {
 	row := store.ExecBatchRow{
-		ID: request.BatchID, CommandHash: commandDigest(request.Command), TargetSetHash: historyTargetSetHash(request.BatchID, targets),
-		Status: status, TargetCount: int32(len(targets)), Production: historyProduction(targets),
+		ID: request.BatchID, CommandHash: commandDigest(request.Command), TargetSetHash: historyTargetSetHash(request.BatchID, ownerID, targets),
+		Status: status, TargetCount: int32(len(targets)), Production: production,
 		StartedAt: started.UnixMilli(), FinishedAt: finishedAt,
 	}
 	if request.Runbook != nil {
@@ -59,7 +59,9 @@ func historyBatchRow(request Request, started time.Time, targets []Target, statu
 	return row
 }
 
-func historyTargetSetHash(batchID string, targets []Target) string {
+// historyTargetSetHash mirrors the production challenge canonical: the owner ID
+// is bound into the hash so history rows and confirmation details stay correlated.
+func historyTargetSetHash(batchID, ownerID string, targets []Target) string {
 	allTargets := make([]ConfirmationTarget, 0, len(targets))
 	for _, target := range targets {
 		allTargets = append(allTargets, ConfirmationTarget{
@@ -75,18 +77,10 @@ func historyTargetSetHash(batchID string, targets []Target) string {
 	})
 	canonical, _ := json.Marshal(struct {
 		BatchID string               `json:"batchId"`
+		OwnerID string               `json:"ownerId"`
 		Targets []ConfirmationTarget `json:"targets"`
-	}{BatchID: batchID, Targets: allTargets})
+	}{BatchID: batchID, OwnerID: ownerID, Targets: allTargets})
 	return digest("target-set-v2", canonical)
-}
-
-func historyProduction(targets []Target) bool {
-	for _, target := range targets {
-		if isProductionEnvironment(target.Environment) {
-			return true
-		}
-	}
-	return false
 }
 
 func historyBatchStatus(results []Result) string {

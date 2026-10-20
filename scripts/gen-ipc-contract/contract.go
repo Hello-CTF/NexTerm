@@ -28,6 +28,7 @@ var contractScopes = []scopeSpec{
 	{name: "forward-rule", prefixes: []string{"forward_rule_"}},
 	{name: "services", prefixes: []string{"services_"}},
 	{name: "inventory", prefixes: []string{"inventory_"}},
+	{name: "production", prefixes: []string{"production_"}},
 	{name: "fs-cancel", commands: []string{"fs_cancel"}},
 	{name: "terminal-stream", commands: []string{"terminal_pause", "terminal_recover", "terminal_resume", "terminal_stream_ack"}},
 	{name: "memory-owner", deferred: true},

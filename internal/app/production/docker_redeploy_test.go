@@ -154,6 +154,7 @@ func TestComposeRedeployIPCConfirmsActualBytesBeforeWrite(t *testing.T) {
 	}
 	request.ProductionConfirmation = &dockerProductionConfirmation{
 		Confirmed: true, TargetSetHash: challenge.TargetSetHash, CommandHash: challenge.CommandHash,
+		EnvironmentNames: challenge.RequiredEnvironmentNames,
 	}
 	response = dispatchExecBatchTest(fixture.dispatcher, fixture.ctx, "docker_compose_redeploy_prepare", request)
 	if !response.OK {
@@ -197,6 +198,7 @@ func TestComposeRedeployIPCConfirmsActualBytesBeforeWrite(t *testing.T) {
 	fixture.write(t, "external\n")
 	changed.ProductionConfirmation = &dockerProductionConfirmation{
 		Confirmed: true, TargetSetHash: challenge.TargetSetHash, CommandHash: challenge.CommandHash,
+		EnvironmentNames: challenge.RequiredEnvironmentNames,
 	}
 	response = dispatchExecBatchTest(fixture.dispatcher, fixture.ctx, "docker_compose_redeploy_prepare", changed)
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam || fixture.content(t) != "external\n" {
@@ -210,7 +212,10 @@ func TestComposeRedeployIPCConfirmsActualBytesBeforeWrite(t *testing.T) {
 func TestDockerConfirmationAuditOmitsPruneCapabilities(t *testing.T) {
 	target := dockerConfirmationTarget{SessionID: "s1", AssetID: "asset-1", Environment: "production"}
 	operation := dockerMutationOperation{Kind: "prune", PreviewToken: "secret-preview-token", PreviewDigest: "secret-preview-digest"}
-	challenge := newDockerProductionChallenge(target, operation)
+	challenge, err := newDockerProductionChallenge(target, operation, builtInProductionClassifier)
+	if err != nil {
+		t.Fatal(err)
+	}
 	input := newDockerConfirmationAuditInput(ipc.WithUserID(t.Context(), "owner"), target, challenge, operation, 123)
 	encoded, err := json.Marshal(input)
 	if err != nil {

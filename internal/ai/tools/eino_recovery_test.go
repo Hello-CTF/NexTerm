@@ -67,7 +67,12 @@ func (m *recoveryModel) Stream(context.Context, []*schema.Message, ...model.Opti
 	return schema.StreamReaderFromArray([]*schema.Message{m.next()}), nil
 }
 
-func TestEinoHITLOutcomeProductionResumeExecutesExactlyOnce(t *testing.T) {
+// TestEinoHITLOutcomeProductionResumeWithoutEnvironmentNamesRejected pins the
+// fail-closed contract: a production resume whose confirmations omit the typed
+// environment names executes nothing, the rejection is recorded, and the
+// consumed request still cannot be replayed. The typed-name success path
+// arrives with the real HITL name collection.
+func TestEinoHITLOutcomeProductionResumeWithoutEnvironmentNamesRejected(t *testing.T) {
 	const arguments = `{"commands":["echo one"],"asset_ids":["asset-prod"]}`
 	transport := successfulBatchTransport()
 	service := batchToolService(map[string]execbatch.Target{"session-prod": batchTarget(transport, "asset-prod", "production")}, &batchAuditRecorder{})
@@ -160,11 +165,11 @@ func TestEinoHITLOutcomeProductionResumeExecutesExactlyOnce(t *testing.T) {
 			completed = event.Output.MessageOutput.Message.Content
 		}
 	}
-	if completed != "finished" || transport.calls() != 1 {
+	if completed != "finished" || transport.calls() != 0 {
 		t.Fatalf("completed = %q, commands = %v", completed, transport.execCalls)
 	}
-	if record := recordedOutcome(t, sqliteStore, OutcomeKey("job", "call-exec:production")); record.Outcome != outcome.OutcomeAccepted {
-		t.Fatalf("confirmed outcome = %+v", record)
+	if record := recordedOutcome(t, sqliteStore, OutcomeKey("job", "call-exec:production")); record.Outcome != outcome.OutcomeUnknown {
+		t.Fatalf("rejected resume outcome = %+v", record)
 	}
 	if _, _, err := manager.Resume(context.Background(), runner, hitl.Answer{
 		ID: "answer", RunID: request.RunID, RequestID: request.ID, CheckpointID: request.CheckpointID,
@@ -173,7 +178,7 @@ func TestEinoHITLOutcomeProductionResumeExecutesExactlyOnce(t *testing.T) {
 	}); !errors.Is(err, hitl.ErrRequestConsumed) {
 		t.Fatalf("duplicate resume error = %v", err)
 	}
-	if transport.calls() != 1 {
+	if transport.calls() != 0 {
 		t.Fatalf("duplicate resume executed commands: %v", transport.execCalls)
 	}
 }

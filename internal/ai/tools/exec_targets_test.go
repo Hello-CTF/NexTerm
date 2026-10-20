@@ -90,7 +90,11 @@ func TestExecCommandsByAssetsAndTagsUsesBatchForEveryCommand(t *testing.T) {
 	}
 }
 
-func TestExecCommandsProductionChallengeThenConfirmedExecutesOnce(t *testing.T) {
+// TestExecCommandsProductionChallengeMissingEnvironmentNamesRejected pins the
+// fail-closed contract: a resumed production call whose confirmations omit the
+// typed environment names is rejected and nothing executes. The typed-name
+// success path arrives with the real HITL name collection.
+func TestExecCommandsProductionChallengeMissingEnvironmentNamesRejected(t *testing.T) {
 	transport := successfulBatchTransport()
 	auditor := &batchAuditRecorder{}
 	service := batchToolService(map[string]execbatch.Target{
@@ -117,14 +121,14 @@ func TestExecCommandsProductionChallengeThenConfirmedExecutesOnce(t *testing.T) 
 	confirmed.OriginID = call.ID
 	confirmed.ProductionConfirmations = challenged.ProductionChallenge.Confirmations
 	result := registry.Execute(context.Background(), "job", Scope{}, confirmed, nil)
-	if !result.OK {
-		t.Fatalf("confirmed production exec = %+v", result)
+	if result.OK {
+		t.Fatalf("production exec without typed environment names = %+v", result)
 	}
-	if got := transport.execCalls; strings.Join(got, ",") != "echo one,echo two" {
-		t.Fatalf("confirmed commands = %v", got)
+	if !strings.Contains(result.Text, "production confirmation required") {
+		t.Fatalf("rejection must name the missing confirmation: %+v", result)
 	}
-	if auditor.count() == 0 {
-		t.Fatal("confirmed production execution was not audited")
+	if transport.calls() != 0 || auditor.count() != 0 {
+		t.Fatalf("rejected execution happened: commands=%v audits=%d", transport.execCalls, auditor.count())
 	}
 }
 

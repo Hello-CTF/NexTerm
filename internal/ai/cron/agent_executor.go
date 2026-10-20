@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
@@ -21,6 +22,10 @@ type AgentExecutor struct {
 
 	ScopeFor             func(context.Context, Trigger) (tools.Scope, error)
 	AllowOwnerlessLegacy bool
+	// Connect, when non-nil, authorizes and dials a disconnected scope asset
+	// before the run starts; a nil connector keeps the fail-without-connecting
+	// behavior for disconnected assets.
+	Connect *Connector
 }
 
 var _ Executor = (*AgentExecutor)(nil)
@@ -41,7 +46,10 @@ func (e *AgentExecutor) Execute(ctx context.Context, trigger Trigger) error {
 	if e.ScopeFor != nil {
 		scope, err := e.ScopeFor(ctx, trigger)
 		if err != nil {
-			return fmt.Errorf("无法查询会话的终端范围，本次定时运行已终止，请确认会话仍然存在后重试: %w", err)
+			scope, err = e.connectDisconnectedScope(ctx, trigger, err)
+			if err != nil {
+				return fmt.Errorf("无法查询会话的终端范围，本次定时运行已终止，请确认会话仍然存在后重试: %w", err)
+			}
 		}
 		args.Scope = scope
 	}
@@ -66,6 +74,25 @@ func (e *AgentExecutor) Execute(ctx context.Context, trigger Trigger) error {
 			}
 		}
 	}
+}
+
+// connectDisconnectedScope applies the opt-in connect flow when scope
+// resolution reports a disconnected asset: it authorizes and dials the asset
+// once, then retries the scope query a single time. Without an explicit
+// opt-in the run keeps the original disconnected failure; every other scope
+// failure stays on the original path.
+func (e *AgentExecutor) connectDisconnectedScope(ctx context.Context, trigger Trigger, scopeErr error) (tools.Scope, error) {
+	var disconnected *AssetDisconnectedError
+	if e.Connect == nil || !errors.As(scopeErr, &disconnected) || strings.TrimSpace(disconnected.AssetID) == "" {
+		return tools.Scope{}, scopeErr
+	}
+	if _, err := e.Connect.Connect(ctx, trigger, disconnected.AssetID); err != nil {
+		if errors.Is(err, guard.ErrConnectOptInRequired) {
+			return tools.Scope{}, scopeErr
+		}
+		return tools.Scope{}, err
+	}
+	return e.ScopeFor(ctx, trigger)
 }
 
 func (e *AgentExecutor) waitRun(ctx context.Context, jobID string, stream *terminalStream) error {

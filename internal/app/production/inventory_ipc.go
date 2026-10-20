@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/docker"
 	fleetinventory "github.com/Hello-CTF/NexTerm/internal/fleet/inventory"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -716,7 +717,10 @@ func (s *inventoryService) confirmInventoryDockerExec(ctx context.Context, conne
 		Path:        container,
 		ContentHash: dockerConfirmationDigest("command-v1", canonicalInventoryCommand(command)),
 	}
-	challenge := newDockerProductionChallenge(target, operation)
+	challenge, err := newDockerProductionChallenge(target, operation, s.classifyProductionEnvironments(ctx))
+	if err != nil {
+		return err
+	}
 	if err := validateDockerProductionConfirmation(confirmation, challenge); err != nil {
 		return dockerMutationIPCError(err)
 	}
@@ -726,6 +730,21 @@ func (s *inventoryService) confirmInventoryDockerExec(ctx context.Context, conne
 	auditCtx, cancel := context.WithTimeout(ipc.WithUserID(context.WithoutCancel(ctx), ipc.OwnerID(ctx)), 5*time.Second)
 	defer cancel()
 	return s.database.AuditInsert(auditCtx, newDockerConfirmationAuditInput(ctx, target, challenge, operation, time.Now().UnixMilli()))
+}
+
+// classifyProductionEnvironments resolves whether an asset environment counts
+// as production for the requesting owner: the built-in names plus the owner's
+// configured additions. A nil asset store degrades to the built-in names.
+func (s *inventoryService) classifyProductionEnvironments(ctx context.Context) productionEnvironmentClassifier {
+	return func(environment string) (bool, error) {
+		if strings.TrimSpace(environment) == "" {
+			return false, nil
+		}
+		if s.database == nil {
+			return guard.IsBuiltInProductionEnvironment(environment), nil
+		}
+		return guard.IsProductionEnvironment(ctx, s.database, environment)
+	}
 }
 
 func canonicalInventoryCommand(command []string) []byte {

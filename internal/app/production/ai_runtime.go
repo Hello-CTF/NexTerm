@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -360,10 +361,20 @@ func resolveProductionExecTargets(ctx context.Context, services *ProductionServi
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].ID < candidates[j].ID })
 	targets := tools.ExecTargetSet{SessionIDs: make([]string, 0, len(candidates))}
 	resolver := productionScopeValidator(services)
+	connect := newSurfaceConnector(services, TargetSetConnectOptInSettingKeyForUser, TargetSetConnectProductionOptInSettingKeyForUser)
 	for _, asset := range candidates {
 		sessionID, err := resolver.liveSessionForAsset(validationCtx, asset.ID)
 		if err != nil {
-			return tools.ExecTargetSet{}, err
+			// R-07: a disconnected asset is connected only with the target-set
+			// surface's explicit opt-in and every authorization gate; the
+			// decline keeps the original no-auto-connect error.
+			if _, connectErr := connectSurfaceAsset(validationCtx, connect, ipc.OwnerID(validationCtx), asset.ID, err); connectErr != nil {
+				return tools.ExecTargetSet{}, connectErr
+			}
+			sessionID, err = resolver.liveSessionForAsset(validationCtx, asset.ID)
+			if err != nil {
+				return tools.ExecTargetSet{}, err
+			}
 		}
 		connected, err := services.Sessions.SessionFor(validationCtx, sessionID)
 		if err != nil {
@@ -373,7 +384,11 @@ func resolveProductionExecTargets(ctx context.Context, services *ProductionServi
 			return tools.ExecTargetSet{}, ipc.NewError(ipc.CodeForbidden, "多主机目标与在线会话身份或类型不匹配")
 		}
 		targets.SessionIDs = append(targets.SessionIDs, sessionID)
-		targets.Production = targets.Production || store.AssetEnvironment(asset) == "production"
+		production, err := guard.IsProductionEnvironment(validationCtx, services.Store, store.AssetEnvironment(asset))
+		if err != nil {
+			return tools.ExecTargetSet{}, fmt.Errorf("resolve production classification for %s: %w", asset.ID, err)
+		}
+		targets.Production = targets.Production || production
 	}
 	return targets, nil
 }
@@ -461,7 +476,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 		return resolveProductionExecTargets(ctx, services, assetIDs, tags)
 	}
 	if services.ExecBatches == nil {
-		services.ExecBatches = newExecBatchService(services.Sessions, services.Store, services.Store, services.Store)
+		services.ExecBatches = newExecBatchServiceWithSettings(services.Sessions, services.Store, services.Store, services.Store, services.Store)
 	}
 	toolsDeps.ExecBatch = func(ctx context.Context, request execbatch.Request) (execbatch.Batch, error) {
 		requestCtx := productionSessionRequestContext(ctx)

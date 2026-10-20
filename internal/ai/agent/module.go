@@ -58,19 +58,22 @@ func agentIPCError(err error) error {
 	case errors.Is(err, ErrSteerQueueFull):
 		return ipc.WrapError(ipc.CodeBadParam, ErrSteerQueueFull.Error(), err)
 	}
+	switch {
+	case errors.Is(err, guard.ErrGrantKindsRequired),
+		errors.Is(err, guard.ErrInvalidGrantKind),
+		errors.Is(err, guard.ErrGrantDeviceRequired),
+		errors.Is(err, guard.ErrRuleDeviceRequired),
+		errors.Is(err, guard.ErrRuleActionUnsupported),
+		errors.Is(err, guard.ErrRulePathRequired),
+		errors.Is(err, guard.ErrRulePathUnsupported),
+		errors.Is(err, guard.ErrRuleExpiryInvalid),
+		errors.Is(err, guard.ErrRuleIDRequired),
+		errors.Is(err, guard.ErrDeviceModeInvalid),
+		errors.Is(err, guard.ErrDeviceModeDeviceRequired):
+		return ipc.WrapError(ipc.CodeBadParam, err.Error(), err)
+	}
 	switch err.Error() {
 	case "AI 补充指令不能为空",
-		"权限模式仅支持 read_only/read_write/silent/unattended",
-		"设备权限模式缺少设备 ID",
-		"设备授权至少需要一个种类",
-		"设备授权种类仅支持 terminal_write/session_exec",
-		"设备授权缺少设备 ID",
-		"授权规则缺少设备 ID",
-		"授权规则动作仅支持 write_file/edit_file/exec_commands/send_keys",
-		"文件写入规则必须限定路径范围",
-		"该动作的规则不支持路径范围",
-		"授权规则过期时间必须晚于当前时间",
-		"授权规则缺少规则 ID",
 		"只能编辑用户消息",
 		"无法确定设备身份，不能清除设备模式",
 		"无法确定设备身份, 权限未保存; 请重新连接后再试",

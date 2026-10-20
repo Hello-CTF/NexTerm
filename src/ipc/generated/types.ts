@@ -66,6 +66,7 @@ export type ConfirmationRequiredDetail = {
   batchId: string;
   targetSetHash: string;
   commandHash: string;
+  requiredEnvironmentNames?: string[];
   productionTargets: ConfirmationTarget[];
 };
 
@@ -91,6 +92,7 @@ export type DockerProductionConfirmation = {
   confirmed: boolean;
   targetSetHash: string;
   commandHash: string;
+  environmentNames?: string[];
 };
 
 export type ExecBatch = {
@@ -471,6 +473,27 @@ export type ProductionConfirmation = {
   confirmed: boolean;
   targetSetHash: string;
   commandHash: string;
+  environmentNames?: string[];
+};
+
+export type ProductionSettingsDTO = {
+  productionEnvironments: string[];
+  cronConnectOptIn: boolean;
+  cronConnectProductionOptIn: boolean;
+  broadcastConnectOptIn: boolean;
+  broadcastConnectProductionOptIn: boolean;
+  targetSetConnectOptIn: boolean;
+  targetSetConnectProductionOptIn: boolean;
+};
+
+export type ProductionSettingsUpdateRequest = {
+  productionEnvironments?: string[] | null;
+  cronConnectOptIn?: boolean | null;
+  cronConnectProductionOptIn?: boolean | null;
+  broadcastConnectOptIn?: boolean | null;
+  broadcastConnectProductionOptIn?: boolean | null;
+  targetSetConnectOptIn?: boolean | null;
+  targetSetConnectProductionOptIn?: boolean | null;
 };
 
 export type RemoteHostShareIdentity = {

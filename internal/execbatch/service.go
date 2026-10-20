@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
@@ -31,15 +32,19 @@ type Config struct {
 	Now         func() time.Time
 	OnError     func(error)
 	OutputLimit int64
+	// ProductionSettings reads the per-owner production environment
+	// configuration; nil classifies with the built-in production names only.
+	ProductionSettings guard.Settings
 }
 
 type Service struct {
-	resolver    Resolver
-	auditor     Auditor
-	history     History
-	now         func() time.Time
-	onError     func(error)
-	outputLimit int64
+	resolver           Resolver
+	auditor            Auditor
+	history            History
+	now                func() time.Time
+	onError            func(error)
+	outputLimit        int64
+	productionSettings guard.Settings
 
 	beforeCleanupCommit   func(accountCleanupKey) error
 	mu                    sync.Mutex
@@ -105,6 +110,7 @@ func New(config Config) *Service {
 		pendingCancels:        make(map[pendingCancelKey]time.Time),
 		accountCleanups:       make(map[accountCleanupKey]*accountCleanupEvent),
 		accountCleanupAliases: make(map[accountCleanupKey]accountCleanupKey),
+		productionSettings:    config.ProductionSettings,
 	}
 }
 
@@ -151,25 +157,29 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 
 	started := s.now()
 	targets, failures := s.preflight(runCtx, request.SessionIDs)
+	classification, err := s.classifyProductionTargets(ctx, ownerID, targets)
+	if err != nil {
+		return Batch{}, fmt.Errorf("classify production targets: %w", err)
+	}
 	if runCtx.Err() != nil {
-		return s.finishWithHistory(runCtx, ownerID, request, started, targets, canceledResults(request.SessionIDs, targets)), nil
+		return s.finishWithHistory(runCtx, ownerID, request, started, targets, canceledResults(request.SessionIDs, targets), classification.production()), nil
 	}
 	if len(failures) > 0 {
 		preflightErr := &PreflightError{Failures: failures}
 		if request.Runbook != nil {
-			batch := s.finishWithHistory(runCtx, ownerID, request, started, targets, preflightFailureResults(request.SessionIDs, targets, failures))
+			batch := s.finishWithHistory(runCtx, ownerID, request, started, targets, preflightFailureResults(request.SessionIDs, targets, failures), classification.production())
 			return batch, preflightErr
 		}
 		return Batch{}, preflightErr
 	}
-	challenge := newProductionChallenge(request.BatchID, request.Command, targets)
+	challenge := newProductionChallenge(request.BatchID, ownerID, request.Command, targets, classification)
 	if err := validateProductionConfirmation(request.ProductionConfirmation, challenge); err != nil {
 		return Batch{}, err
 	}
 	if err := s.auditProductionConfirmation(runCtx, ownerID, request, challenge); err != nil {
 		return Batch{}, fmt.Errorf("record exec batch production confirmation: %w", err)
 	}
-	s.startHistory(runCtx, ownerID, request, started, targets)
+	s.startHistory(runCtx, ownerID, request, started, targets, classification.production())
 
 	results := make([]Result, len(targets))
 	jobs := make(chan int, len(targets))
@@ -199,7 +209,7 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 		}()
 	}
 	workers.Wait()
-	return s.finishWithHistory(runCtx, ownerID, request, started, targets, results), nil
+	return s.finishWithHistory(runCtx, ownerID, request, started, targets, results, classification.production()), nil
 }
 
 // Cancel sets canceling under this same mutex before waiting, so no Add can race its Wait.

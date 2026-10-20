@@ -180,6 +180,7 @@ func TestExecuteProductionConfirmationCannotBeReplayedForAnotherBatch(t *testing
 
 	request.ProductionConfirmation = &ProductionConfirmation{
 		Confirmed: true, TargetSetHash: detailB.TargetSetHash, CommandHash: detailB.CommandHash,
+		EnvironmentNames: detailB.RequiredEnvironmentNames,
 	}
 	if _, err := service.Execute(t.Context(), "owner-a", request); err != nil {
 		t.Fatalf("batch-bound confirmation failed: %v", err)
@@ -198,6 +199,7 @@ func TestExecuteProductionCorrectConfirmationAuditsHashedMetadata(t *testing.T) 
 	request.SessionIDs = []string{"staging", "prod"}
 	request.ProductionConfirmation = &ProductionConfirmation{
 		Confirmed: true, TargetSetHash: detail.TargetSetHash, CommandHash: detail.CommandHash,
+		EnvironmentNames: detail.RequiredEnvironmentNames,
 	}
 	batch, err := service.Execute(t.Context(), "owner-a", request)
 	if err != nil {
@@ -267,6 +269,7 @@ func TestExecuteMixedProductionBatchRedactsEveryExecutionAudit(t *testing.T) {
 	detail := requireProductionChallenge(t, service, request)
 	request.ProductionConfirmation = &ProductionConfirmation{
 		Confirmed: true, TargetSetHash: detail.TargetSetHash, CommandHash: detail.CommandHash,
+		EnvironmentNames: detail.RequiredEnvironmentNames,
 	}
 	if _, err := service.Execute(t.Context(), "owner-a", request); err != nil {
 		t.Fatal(err)
@@ -340,6 +343,7 @@ func TestExecuteProductionConfirmationAuditFailureStopsExecution(t *testing.T) {
 	detail := requireProductionChallenge(t, service, request)
 	request.ProductionConfirmation = &ProductionConfirmation{
 		Confirmed: true, TargetSetHash: detail.TargetSetHash, CommandHash: detail.CommandHash,
+		EnvironmentNames: detail.RequiredEnvironmentNames,
 	}
 	if _, err := service.Execute(t.Context(), "owner-a", request); err == nil || !strings.Contains(err.Error(), "audit unavailable") {
 		t.Fatalf("confirmation audit failure = %v", err)

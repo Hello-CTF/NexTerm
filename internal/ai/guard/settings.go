@@ -15,6 +15,13 @@ const PermissionSettingKey = "ai.permission"
 
 const DevicePermissionSettingKey = "ai.device_permission"
 
+// Sentinel validation errors for device permission modes; IPC layers classify
+// them with errors.Is instead of matching error text.
+var (
+	ErrDeviceModeInvalid        = errors.New("权限模式仅支持 read_only/read_write/silent/unattended")
+	ErrDeviceModeDeviceRequired = errors.New("设备权限模式缺少设备 ID")
+)
+
 func PermissionSettingKeyForUser(ctx context.Context) string {
 	if userID, ok := ipc.UserIDFromContext(ctx); ok {
 		return PermissionSettingKey + ".user." + userID
@@ -224,10 +231,10 @@ func (m *Manager) WithDeviceMode(ctx context.Context, config Config, deviceID st
 func (m *Manager) SetDeviceMode(ctx context.Context, deviceID string, mode Mode) error {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
-		return errors.New("设备权限模式缺少设备 ID")
+		return ErrDeviceModeDeviceRequired
 	}
 	if mode != "" && !mode.valid() {
-		return errors.New("权限模式仅支持 read_only/read_write/silent/unattended")
+		return ErrDeviceModeInvalid
 	}
 	ownerID, err := owner.ID(ctx, m.shared)
 	if err != nil {

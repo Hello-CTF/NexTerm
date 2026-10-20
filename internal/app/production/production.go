@@ -52,6 +52,7 @@ type ProductionServices struct {
 	Mount            *mount.Service
 	Sessions         *session.Manager
 	ExecBatches      *execbatch.Service
+	Runbook          *runbookIPCService
 	Forward          *forward.Service
 	Docker           *docker.Service
 	Retention        *RetentionRunner
@@ -100,7 +101,10 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 			auditor = services.Store
 			history = services.Store
 		}
-		services.ExecBatches = newExecBatchService(services.Sessions, services.Store, auditor, history)
+		services.ExecBatches = newExecBatchServiceWithSettings(services.Sessions, services.Store, auditor, services.Store, history)
+	}
+	if services.Runbook == nil && services.Sessions != nil {
+		services.Runbook = newProductionRunbookIPC(services.ExecBatches, services.Store)
 	}
 	if services.channelBridge == nil {
 		services.channelBridge = newTerminalBridge(services.Sessions, config.Streams)
@@ -152,6 +156,12 @@ func productionModules(services ProductionServices) []Module {
 				return nil
 			},
 			Component: closeStoreComponent(services.Store, services.Agent),
+		})
+		modules = append(modules, Module{
+			Name: "production-settings",
+			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+				return registerProductionSettingsCommands(dispatcher, services.Store)
+			},
 		})
 	}
 	if services.inventory != nil {
@@ -220,7 +230,10 @@ func productionModules(services ProductionServices) []Module {
 	}
 	if services.Sessions != nil {
 		logTails := newLogTailIPCService(services.Sessions, services.desktop)
-		runbookIPC := newProductionRunbookIPC(services.ExecBatches, services.Store)
+		runbookIPC := services.Runbook
+		if runbookIPC == nil {
+			runbookIPC = newProductionRunbookIPC(services.ExecBatches, services.Store)
+		}
 		modules = append(modules, Module{
 			Name: "session",
 			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {

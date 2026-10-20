@@ -1138,7 +1138,7 @@ func TestInventoryTargetExecDockerServerProductionConfirmation(t *testing.T) {
 	}
 
 	confirmed := request
-	confirmed.Confirmation = &dockerProductionConfirmation{Confirmed: true, TargetSetHash: detail.TargetSetHash, CommandHash: detail.CommandHash}
+	confirmed.Confirmation = &dockerProductionConfirmation{Confirmed: true, TargetSetHash: detail.TargetSetHash, CommandHash: detail.CommandHash, EnvironmentNames: detail.RequiredEnvironmentNames}
 	var result inventoryTargetExecResponse
 	dispatchInventoryTest(t, dispatcher, ctx, "inventory_target_exec", confirmed, &result)
 	if result.Output != "Linux\n" {
