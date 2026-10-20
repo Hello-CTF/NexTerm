@@ -50,8 +50,11 @@ export function SavedTargetSets({
   // generationRef is the latest-request marker: list responses and failures
   // only commit while their generation is still current, so a slow response
   // from a previous API/owner or from before a mutation can never overwrite
-  // newer state.
+  // newer state. apiRef carries the latest API identity so mutation
+  // continuations can tell they no longer belong to the current owner.
   const generationRef = useRef(0);
+  const apiRef = useRef(api);
+  apiRef.current = api;
 
   const reload = useCallback(async () => {
     const generation = ++generationRef.current;
@@ -78,6 +81,8 @@ export function SavedTargetSets({
   }, [api, reload]);
 
   const run = async (action: () => Promise<unknown>) => {
+    const runApi = api;
+    const runGeneration = generationRef.current;
     setBusy(true);
     setError(null);
     // Invalidate reads that started before the mutation so a late stale
@@ -85,8 +90,18 @@ export function SavedTargetSets({
     generationRef.current++;
     try {
       await action();
+      // The continuation belongs to the API that started the mutation. After
+      // an API switch or a newer mutation it must not start a reload — the
+      // old closure's reload would preempt the current owner's in-flight
+      // list or hide it behind a permanent loading state.
+      if (apiRef.current !== runApi || generationRef.current !== runGeneration + 1) {
+        return;
+      }
       await reload();
     } catch (cause) {
+      if (apiRef.current !== runApi) {
+        return;
+      }
       setError(describeError(cause));
     } finally {
       setBusy(false);

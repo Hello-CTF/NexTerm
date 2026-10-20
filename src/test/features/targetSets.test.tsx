@@ -272,4 +272,56 @@ describe("SavedTargetSets", () => {
     expect(mounted.container.textContent).toContain("cache");
     expect(mounted.container.textContent).not.toContain("web");
   });
+
+  it("does not let a stale mutation reload replace the new owner's list", async () => {
+    const createA = deferred<SavedTargetSet>();
+    const listB = deferred<SavedTargetSet[]>();
+    const apiA = fakeApi({ create: vi.fn(() => createA.promise) });
+    const apiB = fakeApi({ list: vi.fn(() => listB.promise) });
+    mounted = await mountLoaded(apiA, { selectedIds: ["s1"] });
+
+    const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='目标集名称']");
+    if (!input) throw new Error("name input missing");
+    setInputValue(input, "cache");
+    clickButton(mounted.container, "保存当前选择");
+    await flushUntil(() => (apiA.create as ReturnType<typeof vi.fn>).mock.calls.length === 1);
+
+    rerenderSets(mounted, apiB);
+    await act(async () => {
+      listB.resolve([{ id: "b1", name: "owner-b-set", sessionIds: ["s1"], createdAt: 1, updatedAt: 1 }]);
+    });
+    expect(mounted.container.textContent).toContain("owner-b-set");
+
+    await act(async () => {
+      createA.resolve({ id: "a-new", name: "cache", sessionIds: ["s1"], createdAt: 2, updatedAt: 2 });
+    });
+    expect(mounted.container.textContent).toContain("owner-b-set");
+    expect(mounted.container.textContent).not.toContain("加载中");
+    expect(apiA.list).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not preempt the new owner's in-flight list with a stale mutation reload", async () => {
+    const createA = deferred<SavedTargetSet>();
+    const listB = deferred<SavedTargetSet[]>();
+    const apiA = fakeApi({ create: vi.fn(() => createA.promise) });
+    const apiB = fakeApi({ list: vi.fn(() => listB.promise) });
+    mounted = await mountLoaded(apiA, { selectedIds: ["s1"] });
+
+    const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='目标集名称']");
+    if (!input) throw new Error("name input missing");
+    setInputValue(input, "cache");
+    clickButton(mounted.container, "保存当前选择");
+    await flushUntil(() => (apiA.create as ReturnType<typeof vi.fn>).mock.calls.length === 1);
+
+    rerenderSets(mounted, apiB);
+    await act(async () => {
+      createA.resolve({ id: "a-new", name: "cache", sessionIds: ["s1"], createdAt: 2, updatedAt: 2 });
+    });
+    await act(async () => {
+      listB.resolve([{ id: "b1", name: "owner-b-set", sessionIds: ["s1"], createdAt: 1, updatedAt: 1 }]);
+    });
+    expect(mounted.container.textContent).toContain("owner-b-set");
+    expect(mounted.container.textContent).not.toContain("加载中");
+    expect(apiA.list).toHaveBeenCalledTimes(1);
+  });
 });
