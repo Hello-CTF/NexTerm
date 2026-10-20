@@ -8,7 +8,7 @@ import "@xterm/xterm/css/xterm.css";
 import { channelIdOf, createBinaryChannel, disposeChannel, onChannelReopen } from "../../ipc/events";
 import { WEB } from "../../ipc/env";
 import { openExternalURL } from "../../ipc/wails";
-import { dockerApi, terminalApi } from "../../ipc/commands";
+import { dockerApi, terminalApi, unsafeCall } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { IconArrowDown } from "../../ui/icons";
 import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
@@ -22,7 +22,6 @@ import {
 } from "../../app/preferences";
 import { xtermThemeFor } from "./xtermTheme";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
-import { createOscStreamFilter } from "./oscStream";
 import {
   createTerminalStreamWriter,
   STREAM_HIGH_WATER_BYTES,
@@ -261,7 +260,59 @@ export function XtermView(props: XtermViewProps) {
       dimensions: () => ({ cols: term.cols, rows: term.rows }),
     });
 
-    let oscFilter = createOscStreamFilter();
+    let retainable: boolean | undefined;
+    const reportAttachInfo = (info: {
+      tabId: string;
+      controller: string | null;
+      subscribers: number;
+      viewers: number;
+      exited: boolean;
+      retainable?: boolean;
+      encoding?: string;
+      title?: string;
+      shell?: "powershell" | "cmd" | "posix" | "unknown";
+    }) => {
+      retainable = info.retainable;
+      onAttachInfoRef.current?.(info);
+    };
+    // Producer backpressure: a paused writer asks the server to stop feeding
+    // this channel (terminal_pause/resume) and the feed resumes when the
+    // backlog drains — non-destructive for every session tab kind, including
+    // ephemeral local/WinRM tabs whose PTY a detach would reap. Docker exec
+    // streams pause through the existing hub backpressure: detaching routes
+    // to DetachStream (the exec keeps running, output accumulates in the
+    // bounded replay) and the reopen resumes via attachTab/ResumeExec.
+    const pauseUpstream = () => {
+      if (!kernelTabId) return;
+      if (props.containerId) {
+        void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);
+        return;
+      }
+      void unsafeCall("terminal_pause", { tabId: kernelTabId, channelId: channelIdOf(channel) }).catch(
+        () => undefined,
+      );
+    };
+    const resumeUpstream = () => {
+      if (props.containerId || !kernelTabId) return;
+      void unsafeCall("terminal_resume", { tabId: kernelTabId, channelId: channelIdOf(channel) }).catch(
+        () => undefined,
+      );
+    };
+    let lastRefuseToastAt = 0;
+    const refuseStream = () => {
+      if (retainable === true && kernelTabId) {
+        // Durable tabs: the resume anchor replays refused bytes in order.
+        void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);
+      }
+      // Ephemeral local/WinRM tabs must not detach (it would reap the PTY),
+      // and docker exec streams already detached through pauseUpstream; the
+      // episode lifts at the low watermark or the next attachment boundary.
+      const nowMs = Date.now();
+      if (nowMs - lastRefuseToastAt > 10_000) {
+        lastRefuseToastAt = nowMs;
+        useUi.getState().pushToast("info", "终端输出积压，正在重新同步，画面将自动恢复");
+      }
+    };
     const streamWriter = createTerminalStreamWriter(
       term,
       (event) => {
@@ -272,7 +323,7 @@ export function XtermView(props: XtermViewProps) {
       {
         highWaterBytes: STREAM_HIGH_WATER_BYTES,
         lowWaterBytes: STREAM_LOW_WATER_BYTES,
-        onPausedChange: (paused, stats) =>
+        onPausedChange: (paused, stats) => {
           onStreamBacklogRef.current?.(
             paused
               ? {
@@ -281,7 +332,18 @@ export function XtermView(props: XtermViewProps) {
                   oldestPendingAgeMs: stats.oldestPendingAgeMs,
                 }
               : null,
-          ),
+          );
+          if (paused) {
+            pauseUpstream();
+          } else {
+            // Lift a refusal episode for tab kinds without an anchor-driven
+            // recovery (docker exec, ephemeral local/WinRM); durable tabs end
+            // the episode at the next anchor instead.
+            if (props.containerId || retainable !== true) streamWriter.beginAttachment();
+            resumeUpstream();
+          }
+        },
+        onRefused: () => refuseStream(),
         onWritten: scheduleUiFlush,
       },
     );
@@ -326,29 +388,6 @@ export function XtermView(props: XtermViewProps) {
     const writeExpiredNotice = () => {
       streamWriter.writeLocalText("\x1b[33m[输出历史已过期，已刷新屏幕]\x1b[0m\n");
     };
-    // Hard backpressure: when the writer's FIFO is saturated, refuse the chunk
-    // (it never enters the filter or the byte accounting) and detach the
-    // channel. The detach closes the server-side stream, and the existing
-    // reopen → reattach-with-resume path replays from the last accepted byte,
-    // so refused bytes are redelivered in order once the FIFO drains — the
-    // queue stays bounded and no byte is lost. Container exec streams have no
-    // resume path; there the server's own slow-consumer kick stays the
-    // enforcement and refusal alone bounds the client.
-    let refusing = false;
-    let lastRefuseToastAt = 0;
-    const refuseStream = () => {
-      if (!refusing) {
-        refusing = true;
-        if (!props.containerId && kernelTabId) {
-          void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);
-        }
-      }
-      const nowMs = Date.now();
-      if (nowMs - lastRefuseToastAt > 10_000) {
-        lastRefuseToastAt = nowMs;
-        useUi.getState().pushToast("info", "终端输出积压，已暂停接收并重新同步，画面将自动恢复");
-      }
-    };
     const channel = createBinaryChannel(
       (bytes) => {
         let out = bytes;
@@ -364,18 +403,13 @@ export function XtermView(props: XtermViewProps) {
             skipLeading = 0;
           }
         }
-        if (out.length > 0 && (refusing || !streamWriter.canAccept(out.length))) {
+        if (out.length > 0 && !streamWriter.pushBytes(out)) {
           // Refused bytes are not counted in streamBytes: the resume anchor
           // must point at the last accepted byte so the replay resends them.
-          // Refusal is sticky for the whole episode (until the reattach
-          // succeeds) so the accepted prefix stays contiguous and the replay
-          // redelivers exactly the refused suffix in stream order.
+          // The refusal episode is sticky inside the writer until the next
+          // attachment boundary, keeping the accepted prefix contiguous.
           streamBytes += skipped;
-          refuseStream();
           return;
-        }
-        if (out.length > 0) {
-          streamWriter.write(oscFilter.push(out));
         }
         streamBytes += bytes.length;
         if (expiredNoticePending && streamBytes >= (streamAnchor?.control ?? 0)) {
@@ -384,9 +418,13 @@ export function XtermView(props: XtermViewProps) {
         }
       },
       (control) => {
+        // Every anchor opens a new attachment stream boundary: the refusal
+        // episode ends here, not on the attach RPC response, so replay bytes
+        // that arrive before the response is processed are still accepted.
+        streamWriter.beginAttachment();
         if (control.expired) {
           term.clearSelection();
-          oscFilter = createOscStreamFilter();
+          streamWriter.resetStream();
           blocks.clear();
           // History is gone: write callbacks still queued from the previous
           // attachment must not dispatch their OSC events into the fresh
@@ -438,7 +476,7 @@ export function XtermView(props: XtermViewProps) {
           }
           initialGrid = { cols: info.cols, rows: info.rows };
           applyRemoteDimensions(info.cols, info.rows);
-          onAttachInfoRef.current?.({
+          reportAttachInfo({
             tabId: info.tabId,
             controller: info.controller,
             subscribers: info.subscribers,
@@ -458,7 +496,7 @@ export function XtermView(props: XtermViewProps) {
             dimensions.rows,
             channel,
           );
-          onAttachInfoRef.current?.({
+          reportAttachInfo({
             tabId: id,
             controller: null,
             subscribers: 1,
@@ -472,7 +510,7 @@ export function XtermView(props: XtermViewProps) {
           id = await import("../../ipc/commands").then((m) =>
             m.sessionApi.openLineTab(props.sessionId, dimensions.cols, dimensions.rows, channel),
           );
-          onAttachInfoRef.current?.({
+          reportAttachInfo({
             tabId: id,
             controller: null,
             subscribers: 1,
@@ -486,7 +524,7 @@ export function XtermView(props: XtermViewProps) {
           const info = await terminalApi.attach(props.sessionId, dimensions.cols, dimensions.rows, channel);
           id = info.tabId;
           fallbackNotice = info.fallbackNotice;
-          onAttachInfoRef.current?.({
+          reportAttachInfo({
             tabId: info.tabId,
             controller: info.controller,
             subscribers: info.subscribers,
@@ -533,17 +571,14 @@ export function XtermView(props: XtermViewProps) {
     const reattachOnReopen = () => {
       const id = kernelTabId;
       if (!id || reattaching) return;
-      if (props.containerId) {
-        kernelTabId = "";
-        onAttachFailedRef.current?.("interrupted");
-        return;
-      }
-      const resume = streamAnchor
-        ? {
-            seq: streamAnchor.seq + Math.max(0, streamBytes - streamAnchor.control),
-            epoch: streamAnchor.epoch,
-          }
-        : undefined;
+      const resume = props.containerId
+        ? undefined
+        : streamAnchor
+          ? {
+              seq: streamAnchor.seq + Math.max(0, streamBytes - streamAnchor.control),
+              epoch: streamAnchor.epoch,
+            }
+          : undefined;
       reattaching = true;
       void (async () => {
         try {
@@ -556,12 +591,13 @@ export function XtermView(props: XtermViewProps) {
           }
           kernelTabId = info.tabId;
           kernelTabIdRef.current = info.tabId;
-          // The backpressure episode ends here: the replay from the resume
-          // anchor redelivers everything the saturated FIFO refused.
-          refusing = false;
+          // The backpressure episode ends at the attachment boundary: the
+          // resume replay (anchor for session tabs, bounded replay for docker
+          // exec) redelivers everything the saturated FIFO refused.
+          streamWriter.beginAttachment();
           applyRemoteDimensions(info.cols, info.rows);
           coordinator.attach(info.tabId, { cols: info.cols, rows: info.rows }, true);
-          onAttachInfoRef.current?.({
+          reportAttachInfo({
             tabId: info.tabId,
             controller: info.controller,
             subscribers: info.subscribers,
@@ -575,6 +611,14 @@ export function XtermView(props: XtermViewProps) {
           onAttachRef.current?.(info.tabId);
         } catch (e) {
           if (disposed) return;
+          if (props.containerId) {
+            // Docker exec streams resume through attachTab/ResumeExec; when
+            // that fails the stream is gone or completed, so surface the
+            // accurate terminal state instead of a frozen view.
+            kernelTabId = "";
+            onAttachFailedRef.current?.("interrupted");
+            return;
+          }
           if ((e as { code?: string } | null)?.code === "not_found") {
             onAttachFailedRef.current?.("not_found");
           }

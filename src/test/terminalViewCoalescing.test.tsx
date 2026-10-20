@@ -34,6 +34,8 @@ const harness = vi.hoisted(() => ({
   setVisible: vi.fn(),
   write: vi.fn(),
   pushToast: vi.fn(),
+  unsafeCall: vi.fn(),
+  execAttach: vi.fn(),
 }));
 
 vi.mock("@xterm/xterm", () => ({
@@ -149,8 +151,9 @@ vi.mock("../ipc/commands", () => ({
     setVisible: harness.setVisible,
     write: harness.write,
   },
-  dockerApi: { execAttach: vi.fn() },
+  dockerApi: { execAttach: harness.execAttach },
   sessionApi: { openLineTab: vi.fn() },
+  unsafeCall: harness.unsafeCall,
 }));
 
 vi.mock("../ipc/events", () => ({
@@ -276,7 +279,7 @@ beforeEach(() => {
     viewers: 1,
     exited: false,
     shell: "unknown",
-    retainable: false,
+    retainable: true,
   });
   harness.attachTab.mockResolvedValue({
     tabId: "kernel-1",
@@ -286,10 +289,13 @@ beforeEach(() => {
     subscribers: 1,
     viewers: 1,
     exited: false,
+    retainable: true,
   });
   harness.detach.mockResolvedValue(undefined);
   harness.setVisible.mockResolvedValue(undefined);
   harness.write.mockResolvedValue(undefined);
+  harness.unsafeCall.mockReset().mockResolvedValue(undefined);
+  harness.execAttach.mockReset().mockResolvedValue("kernel-1");
 });
 
 afterEach(() => {
@@ -378,18 +384,28 @@ describe("XtermView stream wiring", () => {
     }
     expect(harness.detach).not.toHaveBeenCalled();
     expect(harness.pushToast).not.toHaveBeenCalled();
+    // The high watermark asked the server to pause the feed.
+    expect(harness.unsafeCall).toHaveBeenCalledWith("terminal_pause", {
+      tabId: "kernel-1",
+      channelId: "channel-1",
+    });
     // The fifth chunk is refused: it never enters the FIFO or the accounting.
     act(() => harness.channel?.onBytes?.(chunk));
     expect(harness.detach).toHaveBeenCalledTimes(1);
     expect(harness.detach).toHaveBeenCalledWith("kernel-1", "channel-1");
     expect(harness.pushToast).toHaveBeenCalledWith("info", expect.stringContaining("重新同步"));
     // Refusal is sticky: even after the FIFO drains, new chunks are refused
-    // until the reattach succeeds, so the accepted prefix stays contiguous.
+    // until the attachment boundary, so the accepted prefix stays contiguous.
     act(() => t.drainWrites());
     expect(t.writeLog.length).toBe(4);
     act(() => harness.channel?.onBytes?.(new Uint8Array(1024).fill(0x62)));
     expect(t.writeLog.length).toBe(4);
     expect(harness.detach).toHaveBeenCalledTimes(1);
+    // Draining asked the server to resume the feed.
+    expect(harness.unsafeCall).toHaveBeenCalledWith("terminal_resume", {
+      tabId: "kernel-1",
+      channelId: "channel-1",
+    });
     // Transport reopen → reattach with a resume anchor at the last accepted
     // byte; the refused suffix will be replayed from there.
     await act(async () => {
@@ -406,6 +422,112 @@ describe("XtermView stream wiring", () => {
     );
     // The replay redelivers the refused chunk: accepted and rendered in order.
     act(() => harness.channel?.onBytes?.(chunk));
+    act(() => t.drainWrites());
+    expect(t.writeLog.length).toBe(5);
+    const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
+    expect(total).toBe(5 * (4 << 20));
+  });
+
+  it("accepts replay that arrives before the attach response (attachment boundary, not response timing)", async () => {
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    act(() => harness.channel?.onBytes?.(chunk));
+    expect(harness.detach).toHaveBeenCalledTimes(1);
+    act(() => t.drainWrites());
+    // The reattach RPC stays in flight while the anchor and replay arrive.
+    let finish: ((value: unknown) => void) | undefined;
+    harness.attachTab.mockImplementation(
+      () => new Promise((resolve) => { finish = resolve; }),
+    );
+    act(() => harness.reopenCb?.());
+    // The anchor frame marks the attachment stream boundary: the episode
+    // ends here even though the attach response has not been processed.
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 4 * (4 << 20), controlBytes: 0 });
+    const replay = new Uint8Array(4 << 20).fill(0x62);
+    act(() => harness.channel?.onBytes?.(replay));
+    act(() => t.drainWrites());
+    finish?.({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      retainable: true,
+    });
+    await act(async () => {
+      await flushMacrotask();
+    });
+    // The replay was accepted before the response and rendered in order:
+    // four original chunks plus the replayed chunk.
+    expect(t.writeLog.length).toBe(5);
+    const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
+    expect(total).toBe(5 * (4 << 20));
+  });
+
+  it("ephemeral tabs never detach on refusal: the episode lifts at the low watermark", async () => {
+    harness.attach.mockResolvedValue({
+      tabId: "kernel-1",
+      cols: 80,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell: "unknown",
+      retainable: false,
+    });
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    act(() => harness.channel?.onBytes?.(chunk));
+    // Refusal on an ephemeral local/WinRM tab must not reap the PTY.
+    expect(harness.detach).not.toHaveBeenCalled();
+    expect(harness.pushToast).toHaveBeenCalledWith("info", expect.stringContaining("重新同步"));
+    // Once the backlog drains below the low watermark the episode lifts and
+    // output flows again — no detach, no reap, no frozen terminal.
+    act(() => t.drainWrites());
+    act(() => harness.channel?.onBytes?.(new Uint8Array(1024).fill(0x63)));
+    act(() => t.drainWrites());
+    expect(t.writeLog.length).toBe(5);
+  });
+
+  it("docker exec pauses via detach and resumes through attachTab/ResumeExec", async () => {
+    await show({ containerId: "container-1" });
+    await attachOk();
+    const t = term();
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    for (let i = 0; i < 4; i += 1) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    // The high watermark pauses the exec stream through DetachStream.
+    expect(harness.detach).toHaveBeenCalledWith("kernel-1", "channel-1");
+    act(() => harness.channel?.onBytes?.(chunk));
+    expect(harness.pushToast).toHaveBeenCalledWith("info", expect.stringContaining("重新同步"));
+    act(() => t.drainWrites());
+    // The reopen resumes the exec through attachTab/ResumeExec, which
+    // replays the bounded backlog; the episode ends at that boundary.
+    harness.attachTab.mockClear();
+    await act(async () => {
+      harness.reopenCb?.();
+      await flushMacrotask();
+      await flushMacrotask();
+    });
+    expect(harness.attachTab).toHaveBeenCalledWith("kernel-1", expect.anything(), -1, undefined, undefined);
+    const replay = new Uint8Array(4 << 20).fill(0x62);
+    act(() => harness.channel?.onBytes?.(replay));
     act(() => t.drainWrites());
     expect(t.writeLog.length).toBe(5);
     const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);

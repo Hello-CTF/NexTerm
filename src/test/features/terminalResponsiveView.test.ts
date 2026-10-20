@@ -575,6 +575,7 @@ describe("XtermView terminal interaction", () => {
       term.buffer.active.viewportY = 20;
       term.fireScroll();
     });
+    await flushWork();
     const button = container?.querySelector("button");
     expect(button?.textContent).toContain("回到底部");
     expect(button?.textContent).toContain("30");
@@ -588,6 +589,7 @@ describe("XtermView terminal interaction", () => {
       term.buffer.active.viewportY = term.buffer.active.baseY;
       term.fireScroll();
     });
+    await flushWork();
     expect(container?.querySelector("button")).toBeNull();
   });
 
@@ -599,12 +601,14 @@ describe("XtermView terminal interaction", () => {
       term.buffer.active.viewportY = 44;
       term.fireScroll();
     });
+    await flushWork();
     expect(container?.querySelector("button")?.textContent).toContain("6");
 
     await act(async () => {
       term.buffer.active.baseY = 58;
       harness.channels[0]?.onBytes(new Uint8Array([104, 105]));
     });
+    await flushWork();
     expect(container?.querySelector("button")?.textContent).toContain("14");
   });
 
@@ -696,21 +700,26 @@ describe("XtermView stream anchors", () => {
     await show(props());
     const channel = harness.channels[0];
     const term = harness.terminals[0];
-    const notices: string[] = [];
-    term.writeln = (line) => {
-      notices.push(String(line));
+    const writes: string[] = [];
+    term.write = (data, callback) => {
+      writes.push(typeof data === "string" ? data : `<${(data as Uint8Array).length} bytes>`);
+      callback?.();
     };
 
     act(() => {
       channel.onControl?.(anchor({ streamSeq: 0, controlBytes: 11, expired: true }));
     });
-    expect(notices).toEqual([]);
+    expect(writes).toEqual([]);
 
     act(() => {
       channel.onBytes(new Uint8Array(11));
       channel.onBytes(new Uint8Array([65]));
     });
-    expect(notices).toEqual(["\x1b[33m[输出历史已过期，已刷新屏幕]\x1b[0m"]);
+    expect(writes).toEqual([
+      "<11 bytes>",
+      "<51 bytes>",
+      "<1 bytes>",
+    ]);
   });
 
   it("reopens without a resume anchor when the stream never carried one", async () => {
@@ -791,7 +800,11 @@ describe("XtermView stream anchors", () => {
     });
 
     expect(harness.blockClearCount).toBe(1);
-    expect(written).toEqual(Array.from(new TextEncoder().encode(replay + "\x07")));
+    expect(written).toEqual([
+      ...Array.from(new TextEncoder().encode(replay)),
+      ...Array.from(new TextEncoder().encode("\x1b[33m[输出历史已过期，已刷新屏幕]\x1b[0m\n")),
+      7,
+    ]);
     expect(notifications).not.toHaveBeenCalled();
   });
 

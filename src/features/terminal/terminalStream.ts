@@ -1,4 +1,4 @@
-import type { OscStreamEvent, OscStreamSegment } from "./oscStream";
+import { createOscStreamFilter, type OscStreamEvent, type OscStreamFilter, type OscStreamSegment } from "./oscStream";
 
 // Parsed watermarks for the terminal write pipeline. Bytes handed to xterm
 // whose write callbacks have not fired yet are the parsed backlog: past the
@@ -8,13 +8,15 @@ import type { OscStreamEvent, OscStreamSegment } from "./oscStream";
 // bytes wait in the writer's FIFO instead of growing xterm's own write
 // buffer, and no accepted byte is ever dropped or reordered.
 //
-// The FIFO itself is hard-bounded by maxPendingBytes: a write whose text
-// would push pending bytes past the cap is refused atomically (nothing is
-// enqueued or dispatched, the caller keeps its byte offset, and refusedBytes
-// records the total). The caller is expected to stop the producer — XtermView
-// detaches the channel so the existing reopen + resume-replay redelivers the
-// refused bytes in order — so the queue can never grow unboundedly and no
-// byte is lost. Local notices bypass the cap: they are a few dozen bytes of
+// The FIFO itself is hard-bounded by maxPendingBytes. Acceptance is
+// transactional at the stream-byte level: pushBytes refuses a chunk whole
+// before the OSC filter or any queue state advances, so a refused chunk
+// leaves no trace — the caller keeps its byte offset (streamBytes must not
+// advance) and the server's resume replay redelivers the chunk in order.
+// Refusal is sticky for the whole episode: everything is refused until
+// beginAttachment() marks the next attachment's stream boundary, keeping the
+// accepted prefix contiguous so the replayed suffix joins it in original
+// stream order. Local notices bypass the cap: they are a few dozen bytes of
 // UI chrome that must always render.
 export const STREAM_HIGH_WATER_BYTES = 4 << 20;
 export const STREAM_LOW_WATER_BYTES = 1 << 20;
@@ -40,6 +42,7 @@ export interface TerminalStreamWriterOptions {
   maxPendingBytes?: number;
   now?: () => number;
   onPausedChange?: (paused: boolean, stats: TerminalStreamStats) => void;
+  onRefused?: (stats: TerminalStreamStats) => void;
   onWritten?: () => void;
 }
 
@@ -52,9 +55,12 @@ interface WriteUnit {
 }
 
 export interface TerminalStreamWriter {
+  pushBytes: (bytes: Uint8Array) => boolean;
   write: (segments: OscStreamSegment[]) => boolean;
   canAccept: (bytes: number) => boolean;
   writeLocalText: (data: string) => void;
+  beginAttachment: () => void;
+  resetStream: () => void;
   nextGeneration: () => number;
   stats: () => TerminalStreamStats;
 }
@@ -79,6 +85,8 @@ export function createTerminalStreamWriter(
   }
   const now = options.now ?? Date.now;
   const encoder = new TextEncoder();
+  let filter: OscStreamFilter = createOscStreamFilter();
+  let episode = false;
   const queue: WriteUnit[] = [];
   const inFlight: WriteUnit[] = [];
   let queuedBytes = 0;
@@ -167,6 +175,15 @@ export function createTerminalStreamWriter(
   const canAccept = (bytes: number): boolean =>
     bytes <= 0 || pendingBytes() + bytes <= maxPendingBytes;
 
+  const refuse = (incoming: number): boolean => {
+    refusedBytes += incoming;
+    if (!episode) {
+      episode = true;
+      options.onRefused?.(stats());
+    }
+    return false;
+  };
+
   const write = (segments: OscStreamSegment[]): boolean => {
     let incoming = 0;
     for (const segment of segments) {
@@ -175,9 +192,8 @@ export function createTerminalStreamWriter(
     // Atomic refusal: a batch that would push pending bytes past the hard cap
     // is rejected whole — nothing is enqueued and no event is dispatched, so
     // the caller can recover the exact byte range later (resume replay).
-    if (incoming > 0 && !canAccept(incoming)) {
-      refusedBytes += incoming;
-      return false;
+    if (episode || (incoming > 0 && !canAccept(incoming))) {
+      return refuse(incoming);
     }
     for (const segment of segments) {
       if (segment.kind === "event") {
@@ -200,6 +216,18 @@ export function createTerminalStreamWriter(
     return true;
   };
 
+  // pushBytes is the transactional stream entry: the chunk is accepted or
+  // refused whole, and only acceptance lets the OSC filter see it. A refused
+  // chunk leaves the filter, the queue, and the caller's byte offset exactly
+  // as they were, so the resume replay can redeliver it in order.
+  const pushBytes = (bytes: Uint8Array): boolean => {
+    if (bytes.length === 0) return true;
+    if (episode || !canAccept(bytes.length)) {
+      return refuse(bytes.length);
+    }
+    return write(filter.push(bytes));
+  };
+
   const writeLocalText = (data: string) => {
     // Local notices bypass the cap: they are a few dozen bytes of UI chrome
     // that must always render, and they carry no stream-sequence bytes.
@@ -207,10 +235,32 @@ export function createTerminalStreamWriter(
     pump();
   };
 
+  // beginAttachment marks the next attachment's stream boundary: the refusal
+  // episode ends here, not on any RPC response, so replay bytes that arrive
+  // before the attach response is processed are still accepted.
+  const beginAttachment = () => {
+    episode = false;
+  };
+
+  // resetStream drops partial OSC state (an expired anchor means the screen
+  // was rebuilt; the replay starts a fresh byte stream).
+  const resetStream = () => {
+    filter = createOscStreamFilter();
+  };
+
   const nextGeneration = () => {
     generation += 1;
     return generation;
   };
 
-  return { write, canAccept, writeLocalText, nextGeneration, stats };
+  return {
+    pushBytes,
+    write,
+    canAccept,
+    writeLocalText,
+    beginAttachment,
+    resetStream,
+    nextGeneration,
+    stats,
+  };
 }

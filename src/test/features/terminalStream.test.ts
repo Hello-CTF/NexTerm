@@ -58,6 +58,7 @@ function setup(options?: {
   const h = fakeTerm();
   const events: OscStreamEvent[] = [];
   const pauses: boolean[] = [];
+  const refusals: number[] = [];
   const writer = createTerminalStreamWriter(
     h.term,
     (event) => events.push(event),
@@ -67,9 +68,10 @@ function setup(options?: {
       maxPendingBytes: options?.maxPendingBytes,
       now: options?.now,
       onPausedChange: (paused) => pauses.push(paused),
+      onRefused: () => refusals.push(1),
     },
   );
-  return { ...h, events, pauses, writer };
+  return { ...h, events, pauses, refusals, writer };
 }
 
 async function drainWriter(writer: TerminalStreamWriter, term: Terminal) {
@@ -332,10 +334,12 @@ describe("terminal stream writer bounded FIFO (T-03 hard backpressure)", () => {
       h.writer.write([text("dddd")]);
       maxPending = Math.max(maxPending, h.writer.stats().pendingBytes);
     }
-    // 100 sustained writes never pushed pending past the cap.
+    // 100 sustained writes never pushed pending past the cap, and the whole
+    // overflow collapsed into a single refusal episode.
     expect(maxPending).toBe(12);
     expect(h.writer.stats().pendingBytes).toBe(12);
     expect(h.writer.stats().refusedBytes).toBe(400);
+    expect(h.refusals.length).toBe(1);
     expect(h.writes.length).toBe(1);
   });
 
@@ -354,24 +358,66 @@ describe("terminal stream writer bounded FIFO (T-03 hard backpressure)", () => {
     expect(h.writer.stats().refusedBytes).toBe(8);
   });
 
-  it("re-feeding refused chunks after drain loses nothing and preserves order", () => {
+  it("re-feeding the refused suffix in original order restores the contiguous stream", () => {
     const h = setup({ highWaterBytes: 4, lowWaterBytes: 2, maxPendingBytes: 10 });
     h.writer.write([text("aaaa")]);
     h.writer.write([text("bbbb")]);
-    const refused: string[] = [];
-    for (const chunk of ["cccc", "ddd", "ee"]) {
-      if (!h.writer.write([text(chunk)])) refused.push(chunk);
-    }
-    expect(refused).toEqual(["cccc", "ddd"]);
+    // The cap is full: every later chunk is refused, and refusal is sticky,
+    // so nothing accepted can slip in behind the refused suffix.
+    expect(h.writer.write([text("cccc")])).toBe(false);
+    expect(h.writer.write([text("ddd")])).toBe(false);
+    expect(h.writer.write([text("ee")])).toBe(false);
     h.drain();
-    expect(h.writtenText()).toBe("aaaabbbbee");
-    // Simulate the resume replay redelivering the refused suffix in order.
-    for (const chunk of refused) {
+    expect(h.writtenText()).toBe("aaaabbbb");
+    // The attachment boundary ends the episode; the replay redelivers the
+    // refused suffix in its original order and the stream is contiguous.
+    h.writer.beginAttachment();
+    for (const chunk of ["cccc", "ddd", "ee"]) {
       expect(h.writer.write([text(chunk)])).toBe(true);
     }
     h.drain();
-    expect(h.writtenText()).toBe("aaaabbbbeeccccddd");
-    expect(h.writer.stats().refusedBytes).toBe(7);
+    expect(h.writtenText()).toBe("aaaabbbbccccdddee");
+    expect(h.writer.stats().refusedBytes).toBe(9);
+  });
+
+  it("pushBytes is transactional: a refused chunk never reaches the OSC filter", () => {
+    const h = setup({ highWaterBytes: 8, lowWaterBytes: 4, maxPendingBytes: 24 });
+    // Text first, then a partial OSC sequence the filter holds back; only
+    // the text counts toward the writer's pending bytes.
+    expect(h.writer.pushBytes(enc.encode("0123456789ab"))).toBe(true);
+    expect(h.writer.pushBytes(enc.encode("\x1b]9;part"))).toBe(true);
+    expect(h.writer.stats().pendingBytes).toBe(12);
+    // This chunk would complete the sequence, but it does not fit the cap:
+    // it is refused whole and the filter's partial state stays intact.
+    const completion = " done\x07" + "t".repeat(10);
+    expect(h.writer.pushBytes(enc.encode(completion))).toBe(false);
+    expect(h.events).toEqual([]);
+    h.writer.beginAttachment();
+    h.drain();
+    // The replay redelivers the same completion: the sequence completes
+    // exactly once and the stream stays in order.
+    expect(h.writer.pushBytes(enc.encode(completion))).toBe(true);
+    h.drain();
+    expect(h.events).toEqual([{ kind: "notification", body: "part done" }]);
+    expect(h.writtenText()).toBe("0123456789ab" + "t".repeat(10));
+  });
+
+  it("the refusal episode is sticky until beginAttachment", () => {
+    const h = setup({ highWaterBytes: 4, lowWaterBytes: 2, maxPendingBytes: 6 });
+    h.writer.write([text("aaaa")]);
+    h.writer.write([text("bb")]);
+    expect(h.writer.write([text("cc")])).toBe(false);
+    expect(h.refusals.length).toBe(1);
+    h.drain();
+    // Still refused even with room: the episode ends only at the attachment
+    // boundary, so the accepted prefix stays contiguous.
+    expect(h.writer.write([text("cc")])).toBe(false);
+    expect(h.refusals.length).toBe(1);
+    h.writer.beginAttachment();
+    expect(h.writer.write([text("cc")])).toBe(true);
+    h.drain();
+    expect(h.writtenText()).toBe("aaaabbcc");
+    expect(h.refusals.length).toBe(1);
   });
 
   it("event-only batches are always accepted even when the FIFO is full", () => {
@@ -419,8 +465,9 @@ describe("terminal stream writer bounded FIFO (T-03 hard backpressure)", () => {
     expect(maxPending).toBeLessThanOrEqual(16384);
     expect(writer.stats().refusedBytes).toBe(refused.length * line.length);
     await drainWriter(writer, term);
-    // Replay the refused suffix in bounded slices: every byte arrives in
-    // order, nothing is lost.
+    // The attachment boundary ends the episode; the replay redelivers the
+    // refused suffix in bounded slices: every byte arrives, nothing is lost.
+    writer.beginAttachment();
     let replayed = 0;
     while (replayed < refused.length) {
       const slice = refused.slice(replayed, replayed + 1000);
