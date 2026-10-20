@@ -65,7 +65,7 @@ import {
 import { wireAccountSwitchCleanup } from "./accountSwitch";
 import { startUnreadTracking } from "./unread";
 import { useTabUnread } from "./unreadStore";
-import { resetTerminalView, useTerminalTabTitle } from "./terminalViewStore";
+import { applyAuthoritativeTabTitle, useTerminalTabTitle } from "./terminalViewStore";
 import { useEdgeGestures } from "./edgeGestures";
 import {
   formatBinding,
@@ -2004,7 +2004,6 @@ function PaneGroup({
   onToggleLeft,
 }: PaneGroupProps) {
   const setActiveTab = useUi((s) => s.setActiveTab);
-  const updateTab = useUi((s) => s.updateTab);
   const moveTabInPane = useUi((s) => s.moveTabInPane);
   const moveTab = (fromIndex: number, toIndex: number) =>
     moveTabInPane(pane.id, fromIndex, toIndex);
@@ -2025,14 +2024,12 @@ function PaneGroup({
       if (!trimmed) return;
       const tabId = pane.tabs.find((t) => t.id === id)?.tabId;
       if (!tabId) {
-        updateTab(id, { title: trimmed, renamedByUser: true });
-        resetTerminalView(id);
+        applyAuthoritativeTabTitle(id, trimmed);
         return;
       }
       try {
         const info = await terminalApi.renameTab(tabId, trimmed);
-        updateTab(id, { title: info.title || trimmed, renamedByUser: true });
-        resetTerminalView(id);
+        applyAuthoritativeTabTitle(id, info.title || trimmed);
         return;
       } catch (error) {
         draft = trimmed;

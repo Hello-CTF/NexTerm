@@ -31,7 +31,7 @@ import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type 
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
 import { takePendingDirectory, sessionStatusText, connectProgressText, reconnectWorkspaceSession, reconnectDeadHost, isSessionReconnectPending, requestCloseTab, useUi, type BroadcastState, type Workspace } from "../../app/store";
-import { applyRemoteTabTitleToView, resetTerminalView } from "../../app/terminalViewStore";
+import { applyRemoteTabTitleToView, resetTerminalTabTitle, resetTerminalView } from "../../app/terminalViewStore";
 import { directoryCommandFor } from "../files/pathUtils";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
 import { modHint } from "../../app/platform";
@@ -149,9 +149,9 @@ function applyBackendTabTitle(storeTabId: string, title: string): void {
       if (tab.title !== title || tab.renamedByUser !== true) {
         st.updateTab(storeTabId, { title, renamedByUser: true });
       }
-      // The custom title rules the tab strip: drop any OSC-derived view title so
-      // precise-selector chrome falls back to the authoritative tab title.
-      resetTerminalView(storeTabId);
+      // The custom title rules the tab strip: drop only the OSC-derived view title —
+      // the scrollback badge state under the same key must survive control snapshots.
+      resetTerminalTabTitle(storeTabId);
       return;
     }
   }

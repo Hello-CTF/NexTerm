@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { applyRemoteTabTitle, sanitizeRemoteTabTitle } from "./store";
+import { applyRemoteTabTitle, sanitizeRemoteTabTitle, useUi } from "./store";
 
 // Per-terminal view state that changes at output frequency (scrollback position, remote title).
 // Components subscribe through the narrow selectors below so a burst on one tab re-renders only
@@ -63,6 +63,19 @@ export function resetTerminalView(tabId?: string): void {
   });
 }
 
+// The narrow reset for title-owning paths (user rename, backend custom title): only the
+// OSC-derived view title is dropped; the scrollback badge state under the same key and
+// every other tab's entries are untouched. resetTerminalView stays the whole-tab
+// teardown for unmount and account cleanup.
+export function resetTerminalTabTitle(tabId: string): void {
+  useTerminalViewStore.setState((state) => {
+    if (state.titles[tabId] === undefined) return state;
+    const titles = { ...state.titles };
+    delete titles[tabId];
+    return { titles };
+  });
+}
+
 // The narrow reset for the scrollback owner (XtermView): a terminal remount clears only
 // its own linesBelow entry, never the tab's OSC title, which outlives the terminal.
 export function resetTerminalLinesBelow(tabId: string): void {
@@ -72,6 +85,14 @@ export function resetTerminalLinesBelow(tabId: string): void {
     delete linesBelow[tabId];
     return { linesBelow };
   });
+}
+
+// An authoritative custom title (a user rename or a backend-owned title) lands on the
+// workspace tab with renamedByUser — locking out OSC title updates — and clears only
+// the OSC-derived view title: the scrollback badge under the same key must survive.
+export function applyAuthoritativeTabTitle(tabId: string, title: string): void {
+  useUi.getState().updateTab(tabId, { title, renamedByUser: true });
+  resetTerminalTabTitle(tabId);
 }
 
 // The OSC title path writes through the authoritative workspace-store application first:
