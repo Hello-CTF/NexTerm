@@ -133,7 +133,13 @@ func (s *inventoryService) sshConfigItems(ctx context.Context, path string) ([]s
 	if err := guardInventoryServerPath(path, s.desktop); err != nil {
 		return nil, nil, err
 	}
-	parsed, err := sshconfig.Parse(path, s.sshLimits)
+	limits := s.sshLimits
+	if !s.desktop {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			limits.RootDir = filepath.Join(home, ".ssh")
+		}
+	}
+	parsed, err := sshconfig.Parse(path, limits)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []store.InventoryItem{}, []string{}, nil
@@ -144,7 +150,8 @@ func (s *inventoryService) sshConfigItems(ctx context.Context, path string) ([]s
 		return nil, nil, ipc.NewError(ipc.CodeBadParam, "SSH 配置快照不完整（超出解析上限），已保留上次有效清单")
 	}
 	for _, diagnostic := range parsed.Diagnostics {
-		if diagnostic.Code == "include-depth-exceeded" || diagnostic.Code == "file-too-large" {
+		switch diagnostic.Code {
+		case "include-depth-exceeded", "file-too-large", "include-out-of-bounds":
 			return nil, nil, ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("SSH 配置快照不完整（%s: %s），已保留上次有效清单", diagnostic.Code, diagnostic.Source))
 		}
 	}
