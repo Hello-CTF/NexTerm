@@ -82,6 +82,7 @@ const (
 // blocking the terminal. Stop drains the queue with a bounded wait, then
 // abandons it explicitly.
 type recording struct {
+	tab        *Tab
 	file       io.WriteCloser
 	path       string
 	generation uint64
@@ -100,8 +101,10 @@ type recording struct {
 	done     chan struct{}
 	wake     chan struct{}
 
-	// onFailure runs once on the writer goroutine after a failed recording
-	// has fully drained and closed its file; it emits the failure status.
+	// onFailure runs once after the failure status has been claimed and
+	// enqueued; it drains the notification queue. The interaction path
+	// invokes it on its own goroutine so handlers never run on the output
+	// path.
 	onFailure func()
 
 	closeOnce sync.Once
@@ -117,14 +120,12 @@ func newRecording(tab *Tab, file io.WriteCloser, path string, generation uint64,
 		maxBytes = defaultRecordingQueueBytes
 	}
 	rec := &recording{
+		tab:  tab,
 		file: file, path: path, generation: generation,
 		maxChunks: maxChunks, maxBytes: maxBytes,
 		done: make(chan struct{}), wake: make(chan struct{}, 1), closeDone: make(chan struct{}),
 	}
-	rec.onFailure = func() {
-		tab.enqueueRecordingNotification(rec.status(tab.id))
-		tab.drainRecordingNotifications()
-	}
+	rec.onFailure = tab.drainRecordingNotifications
 	go rec.run()
 	return rec
 }
@@ -150,7 +151,7 @@ func (r *recording) run() {
 	}
 	failed := r.err != nil
 	r.mu.Unlock()
-	if failed && r.onFailure != nil && r.claimNotify() {
+	if failed && r.claimFailureNotify() && r.onFailure != nil {
 		r.onFailure()
 	}
 }
@@ -200,8 +201,9 @@ func (r *recording) write(chunk []byte) {
 
 // enqueue accepts a chunk without blocking; a full queue fails the recording
 // with ErrRecordingSaturated and counts the rejected chunk as dropped. The
-// failure transition is published immediately: the claim happens here on the
-// interaction path, the notification runs on its own goroutine.
+// failure transition is published immediately: the parked writer is woken so
+// it can finalize on its own, and the claim plus enqueue happen together on
+// the interaction path — only the drain runs on its own goroutine.
 func (r *recording) enqueue(p []byte) {
 	r.mu.Lock()
 	if r.err != nil || r.closed {
@@ -213,7 +215,8 @@ func (r *recording) enqueue(p []byte) {
 		r.err = ErrRecordingSaturated
 		r.dropped += uint64(len(p))
 		r.mu.Unlock()
-		if r.claimNotify() {
+		r.signalWake()
+		if r.claimFailureNotify() {
 			go r.onFailure()
 		}
 		return
@@ -277,10 +280,11 @@ func (r *recording) abandon(timeout time.Duration) {
 }
 
 // terminate stops a failed recording without waiting for its writer: the
-// queue is discarded and the file close is initiated best-effort so a stuck
-// write is interrupted. Unlike the healthy drain path this never waits,
-// because a reentrant notification handler may be running on the writer
-// goroutine itself.
+// queue is discarded, the parked writer is woken so its goroutine and done
+// converge, and the file close is initiated best-effort so a stuck write is
+// interrupted. Unlike the healthy drain path this never waits, because a
+// reentrant notification handler may be running on the writer goroutine
+// itself.
 func (r *recording) terminate() {
 	select {
 	case <-r.done:
@@ -291,6 +295,7 @@ func (r *recording) terminate() {
 	r.closed = true
 	r.discardQueueLocked()
 	r.mu.Unlock()
+	r.signalWake()
 	r.requestClose()
 }
 
@@ -315,15 +320,20 @@ func (r *recording) failed() bool {
 	return r.err != nil
 }
 
-// claimNotify reports whether the caller should emit the failure
-// notification, so the writer and a concurrent stop emit it exactly once.
-func (r *recording) claimNotify() bool {
+// claimFailureNotify atomically claims the one-shot failure notification and
+// appends it to the tab's ordered notification queue before releasing r.mu:
+// whichever side wins the claim, the failure is queued before any newer
+// lifecycle status can be appended, so a replacement start can never publish
+// the next generation's Running ahead of this failure. The caller (or, on the
+// interaction path, a dedicated goroutine) drains the queue.
+func (r *recording) claimFailureNotify() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.notified {
 		return false
 	}
 	r.notified = true
+	r.tab.enqueueRecordingNotification(r.statusLocked(r.tab.id))
 	return true
 }
 
@@ -336,6 +346,11 @@ func (r *recording) counts() (written, dropped uint64, err error) {
 func (r *recording) status(tabID string) RecordingStatus {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.statusLocked(tabID)
+}
+
+// statusLocked builds the status snapshot; r.mu must be held.
+func (r *recording) statusLocked(tabID string) RecordingStatus {
 	status := RecordingStatus{
 		TabID: tabID, State: RecordingRunning, Bytes: r.bytes,
 		Path: r.path, Generation: r.generation, Dropped: r.dropped,
@@ -833,9 +848,7 @@ func (t *Tab) stopRecording(rec *recording) (uint64, error) {
 	if rec.failed() {
 		rec.terminate()
 		n, _, err := rec.counts()
-		if rec.claimNotify() {
-			t.enqueueRecordingNotification(rec.status(t.id))
-		}
+		rec.claimFailureNotify()
 		return n, err
 	}
 	rec.stop()
@@ -852,9 +865,7 @@ func (t *Tab) stopRecording(rec *recording) (uint64, error) {
 	}
 	t.recMu.Unlock()
 	if err != nil {
-		if rec.claimNotify() {
-			t.enqueueRecordingNotification(status)
-		}
+		rec.claimFailureNotify()
 		return n, err
 	}
 	t.enqueueRecordingNotification(status)
