@@ -176,6 +176,10 @@ func (s *Server) serveAccountTOTPSetup(w http.ResponseWriter, r *http.Request) {
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "尝试过于频繁，请稍后再试"))
 		return
 	}
+	// Serialize with revocations: the pending binding's epoch note and the
+	// setup write must not interleave with a revocation bump.
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
 	secret, uri, err := s.accounts.BeginTOTPSetup(r.Context(), identity.UserID, request.Reverify)
 	if err != nil {
 		// A missing re-verification credential is a client flow problem and is not counted toward brute-force throttling; only wrong credentials count.
@@ -206,6 +210,11 @@ func (s *Server) serveAccountTOTPConfirm(w http.ResponseWriter, r *http.Request)
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "尝试过于频繁，请稍后再试"))
 		return
 	}
+	// Serialize with revocations: the pending-epoch check and the confirm
+	// transaction must span the same boundary as an epoch bump, so a
+	// revocation cannot land between the check and the commit.
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
 	codes, err := s.accounts.ConfirmTOTPSetup(r.Context(), identity.UserID, request.Code)
 	if err != nil {
 		s.accountThrottle.mfa.RecordFailure(key)

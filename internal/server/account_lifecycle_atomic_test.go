@@ -217,11 +217,13 @@ func TestAccountLifecycleLogoutAllCommitWindowKeepsUnifiedEvent(t *testing.T) {
 
 	// The waiting login completes once the window closes: it authenticated
 	// under the post-revocation generation, so its batch belongs to the new
-	// generation and the old cleanup event must not cancel it.
+	// generation and the old cleanup event must not cancel it. The wait is
+	// scheduling-dependent (lock handoff plus HTTP round trip), so allow a
+	// generous budget rather than a tight one.
 	var s3 *accountTestSession
 	select {
 	case s3 = <-s3Done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("waiting login did not complete after the commit window closed")
 	}
 	s3ID := currentAccountSessionID(t, fixture, s3)

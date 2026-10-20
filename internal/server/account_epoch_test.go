@@ -229,3 +229,71 @@ func TestAccountTOTPSetupConfirmEpochRecheck(t *testing.T) {
 		t.Fatalf("stale-generation confirm changed TOTP state: %v", status.body)
 	}
 }
+
+// The confirm's epoch check and its transaction commit span the same
+// revocation boundary as an epoch bump: a revocation attempted mid-confirm is
+// serialized to after the commit, never landing between the check and the
+// commit.
+func TestAccountTOTPConfirmEpochCheckCommitAtomic(t *testing.T) {
+	fixture := newAccountFixture(t, AuthOn)
+	fixture.createUser(t, "root", "password-a1")
+	first := fixture.login(t, "root", "password-a1")
+	second := fixture.login(t, "root", "password-a1")
+
+	setup := fixture.call(t, http.MethodPost, "/auth/totp/setup", map[string]any{}, first, first.csrf, nil)
+	if setup.status != http.StatusOK {
+		t.Fatalf("setup status = %d body = %v", setup.status, setup.body)
+	}
+	secret, _ := setup.body["secret"].(string)
+
+	confirmEntered := make(chan struct{})
+	releaseConfirm := make(chan struct{})
+	restoreGate := account.SetTOTPConfirmGateForTest(func(context.Context, string) {
+		close(confirmEntered)
+		<-releaseConfirm
+	})
+	defer restoreGate()
+
+	confirmDone := make(chan accountCall, 1)
+	go func() {
+		confirmDone <- fixture.call(t, http.MethodPost, "/auth/totp/confirm", map[string]any{"code": testTOTPCode(t, secret, time.Now().Unix())}, second, second.csrf, nil)
+	}()
+	select {
+	case <-confirmEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("confirm did not reach the epoch-check gate")
+	}
+
+	// A revocation attempted now must wait for the in-flight confirm; it cannot
+	// land between the epoch check and the commit.
+	firstSessionID := currentAccountSessionID(t, fixture, first)
+	revokeDone := make(chan accountCall, 1)
+	go func() {
+		revokeDone <- fixture.call(t, http.MethodDelete, "/auth/sessions/"+firstSessionID, nil, first, first.csrf, nil)
+	}()
+	select {
+	case call := <-revokeDone:
+		t.Fatalf("revocation completed mid-confirm (epoch window is not atomic): %v", call.body)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(releaseConfirm)
+	confirm := <-confirmDone
+	if confirm.status != http.StatusOK {
+		t.Fatalf("in-flight confirm status = %d body = %v", confirm.status, confirm.body)
+	}
+	if codes, _ := confirm.body["recovery_codes"].([]any); len(codes) != 8 {
+		t.Fatalf("in-flight confirm returned no recovery codes: %v", confirm.body)
+	}
+	revoke := <-revokeDone
+	if revoke.status != http.StatusOK {
+		t.Fatalf("revocation after confirm status = %d body = %v", revoke.status, revoke.body)
+	}
+	if _, err := fixture.accounts.ValidateSession(context.Background(), first.cookie.Value); err == nil {
+		t.Fatal("revocation after the confirm did not revoke the first session")
+	}
+	status := fixture.call(t, http.MethodGet, "/auth/totp", nil, second, "", nil)
+	if status.status != http.StatusOK || status.body["enabled"] != true {
+		t.Fatalf("TOTP state after the atomic confirm = %v", status.body)
+	}
+}

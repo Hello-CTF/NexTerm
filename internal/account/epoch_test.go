@@ -2,7 +2,10 @@ package account
 
 import (
 	"context"
+	"errors"
 	"testing"
+
+	"gorm.io/gorm"
 )
 
 func TestAccountEpochBumpEvents(t *testing.T) {
@@ -134,5 +137,48 @@ func TestTOTPSetupConfirmEpochBinding(t *testing.T) {
 	}
 	if _, err := a.ConfirmTOTPSetup(ctx, user.ID, totpCodeForTest(t, secret2, *now/1000)); err != nil {
 		t.Fatalf("fresh-generation TOTP confirm failed: %v", err)
+	}
+}
+
+// A failed owner read aborts the revocation instead of silently skipping the
+// epoch bump after the revoke already committed: the session stays active, the
+// epoch is untouched, and the retry after recovery revokes and bumps (so a
+// login, MFA, or DEK boundary captured before the bump fails closed).
+func TestRevokeSessionOwnerReadFailureAbortsRevocation(t *testing.T) {
+	a, _ := testAccounts(t)
+	ctx := context.Background()
+	user, err := a.CreateUser(ctx, "alice", "", "password-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, session, err := a.IssueSession(ctx, user.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	epoch := a.Epoch(user.ID)
+
+	original := accountSessionOwnerRead
+	accountSessionOwnerRead = func(context.Context, *gorm.DB, string) (string, error) {
+		return "", errors.New("injected owner read failure")
+	}
+	if err := a.RevokeSession(ctx, session.ID); err == nil {
+		t.Fatal("RevokeSession swallowed the owner-read failure")
+	}
+	if !a.CheckEpoch(user.ID, epoch) {
+		t.Fatal("failed revocation bumped the epoch")
+	}
+	if _, err := a.ValidateSession(ctx, token); err != nil {
+		t.Fatalf("failed revocation revoked the session: %v", err)
+	}
+
+	accountSessionOwnerRead = original
+	if err := a.RevokeSession(ctx, session.ID); err != nil {
+		t.Fatalf("RevokeSession retry = %v", err)
+	}
+	if a.CheckEpoch(user.ID, epoch) {
+		t.Fatal("successful revocation did not bump the epoch")
+	}
+	if _, err := a.ValidateSession(ctx, token); err == nil {
+		t.Fatal("successful revocation left the session active")
 	}
 }

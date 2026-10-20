@@ -45,6 +45,18 @@ var (
 	totpSecretAAD      = []byte("nexterm/go/user-totp/v1")
 )
 
+// totpConfirmGate, when non-nil, runs after the pending-epoch check and before
+// the confirm transaction. Tests use it to interpose a revocation mid-confirm.
+var totpConfirmGate func(ctx context.Context, userID string)
+
+// SetTOTPConfirmGateForTest installs totpConfirmGate and returns a restore
+// function. It exists for tests only.
+func SetTOTPConfirmGateForTest(gate func(ctx context.Context, userID string)) (restore func()) {
+	previous := totpConfirmGate
+	totpConfirmGate = gate
+	return func() { totpConfirmGate = previous }
+}
+
 func generateTOTPSecret() ([]byte, error) {
 	secret := make([]byte, totpSecretBytes)
 	if _, err := rand.Read(secret); err != nil {
@@ -289,6 +301,9 @@ func (a *Accounts) ConfirmTOTPSetup(ctx context.Context, userID, code string) ([
 	// revocation, reset, or disable in between invalidates the confirm.
 	if !a.epochs.checkPending(userID) {
 		return nil, ipc.NewError(ipc.CodeBadParam, "参数错误：绑定已失效，请重新开始")
+	}
+	if totpConfirmGate != nil {
+		totpConfirmGate(ctx, userID)
 	}
 	pending := row.PendingSecretEnvelope
 	secret, err := a.openTOTPSecret(userID, pending)

@@ -50,16 +50,24 @@ func TestEventBrokerFilteredPendingOverflowDropsAndResyncs(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	results := make(chan error, 6)
-	for seq := 1; seq <= 6; seq++ {
-		go func(seq int) {
-			results <- broker.Emit(ctx, ipc.Event{Event: ipc.TopicSessionStatus, Payload: map[string]int{"seq": seq}})
-		}(seq)
-	}
+	// Start one Emit first and wait until the worker is inside the filter, so
+	// the overflow below cannot race the worker's first evaluation.
+	first := make(chan error, 1)
+	go func() {
+		first <- broker.Emit(ctx, ipc.Event{Event: ipc.TopicSessionStatus, Payload: map[string]int{"seq": 1}})
+	}()
 	select {
 	case <-gate.started:
 	case <-ctx.Done():
 		t.Fatal("first Emit did not reach the filter")
+	}
+	// The worker is parked inside the first filter evaluation; the next
+	// 2*QueueSize-1 fills the pending backlog and the last one overflows it.
+	results := make(chan error, 5)
+	for seq := 2; seq <= 6; seq++ {
+		go func(seq int) {
+			results <- broker.Emit(ctx, ipc.Event{Event: ipc.TopicSessionStatus, Payload: map[string]int{"seq": seq}})
+		}(seq)
 	}
 	// The overflow drop must not wait for the parked backlog.
 	select {
@@ -72,7 +80,15 @@ func TestEventBrokerFilteredPendingOverflowDropsAndResyncs(t *testing.T) {
 	}
 	// Unblock: the retained backlog drains exactly once (no double-complete panic).
 	gate.unblock()
-	for seq := 1; seq <= 6; seq++ {
+	select {
+	case err := <-first:
+		if err != nil {
+			t.Fatalf("first Emit = %v, want nil (event stays buffered)", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first Emit did not complete after unblock")
+	}
+	for seq := 2; seq <= 6; seq++ {
 		select {
 		case err := <-results:
 			if err != nil {
@@ -108,18 +124,24 @@ func TestEventBrokerFilteredSlowConsumerDeliversFIFOInOrder(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	results := make(chan error, 5)
-	for seq := 1; seq <= 5; seq++ {
-		go func(seq int) {
-			results <- broker.Emit(ctx, ipc.Event{Event: ipc.TopicSessionStatus, Payload: map[string]int{"seq": seq}})
-		}(seq)
-	}
+	// Start one Emit first and wait until the worker is inside the filter, so
+	// the backlog below cannot race the worker's first evaluation.
+	first := make(chan error, 1)
+	go func() {
+		first <- broker.Emit(ctx, ipc.Event{Event: ipc.TopicSessionStatus, Payload: map[string]int{"seq": 1}})
+	}()
 	select {
 	case <-gate.started:
 	case <-ctx.Done():
 		t.Fatal("first Emit did not reach the filter")
 	}
 	// The worker is parked; the rest of the backlog stays pending, not stalled.
+	results := make(chan error, 4)
+	for seq := 2; seq <= 5; seq++ {
+		go func(seq int) {
+			results <- broker.Emit(ctx, ipc.Event{Event: ipc.TopicSessionStatus, Payload: map[string]int{"seq": seq}})
+		}(seq)
+	}
 	for seq := 2; seq <= 5; seq++ {
 		select {
 		case err := <-results:
@@ -128,7 +150,15 @@ func TestEventBrokerFilteredSlowConsumerDeliversFIFOInOrder(t *testing.T) {
 		}
 	}
 	gate.unblock()
-	for seq := 1; seq <= 5; seq++ {
+	select {
+	case err := <-first:
+		if err != nil {
+			t.Fatalf("first Emit = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first Emit did not complete after unblock")
+	}
+	for seq := 2; seq <= 5; seq++ {
 		select {
 		case err := <-results:
 			if err != nil {
