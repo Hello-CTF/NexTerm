@@ -3,6 +3,8 @@ package store_test
 import (
 	"context"
 	"errors"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/dbtest"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"gorm.io/gorm"
 )
 
 func TestTranscriptAppendChunksDurableOffsetDatabase(t *testing.T) {
@@ -686,4 +689,197 @@ func TestTranscriptInsertSyncedOwnerlessLegacyConcurrentClaimDatabase(t *testing
 	errs := runOwnerlessMixedRace(t, db, legacy.ID, calls)
 	requireOwnerlessOutcome(t, errs[1])
 	requireOwnerlessMixedOutcome(t, db, legacy.ID)
+}
+
+// A same-owner sync refresh that commits after background retention selected a
+// row but before its guarded delete keeps the row alive: the guard skips the
+// refreshed row, so retention must not tombstone it either — sync collects
+// transcript tombstones, and one for a surviving row would push the deletion
+// of live content. A refresh that keeps the identical old ended_at stays
+// retention-eligible and is deleted together with its tombstone, never one
+// without the other. The select-then-refresh window needs two concurrent
+// writers, which SQLite's single-writer transactions cannot express
+// (constructible on PostgreSQL, MySQL, and MariaDB).
+//
+//dbtest:backend postgres,mysql,mariadb
+func TestTranscriptRetentionRefreshedRowSkipsDeleteAndTombstoneDatabase(t *testing.T) {
+	switch strings.ToLower(os.Getenv("NEXTERM_TEST_DB_BACKEND")) {
+	case "postgres", "mysql", "mariadb":
+	default:
+		t.Skip("the select-then-refresh window is not constructible on SQLite")
+	}
+	ctx := context.Background()
+	ctxA := ipc.WithUserID(ctx, "owner-a")
+	db := dbtest.NewFixture(t).OpenStore(t)
+
+	now := time.Now().UnixMilli()
+	old := now - 2*time.Hour.Milliseconds()
+	refreshed := now - time.Minute.Milliseconds()
+	insertSynced := func(id string, endedAt int64, content string) {
+		t.Helper()
+		row := store.TranscriptRow{ID: id, SessionID: "sess-" + id, AssetID: "asset-1", StartedAt: endedAt - 10, EndedAt: &endedAt, Bytes: int64(len(content)), Chunks: 1}
+		chunks := []store.TranscriptChunkRow{{Seq: 0, TabID: "tab-1", TS: endedAt, Data: []byte(content)}}
+		if err := db.TranscriptInsertSynced(ctxA, row, chunks); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insertSynced("retention-refresh-recent", old, "stale content")
+	insertSynced("retention-refresh-same-ms", old, "same-ms content")
+
+	// Pause retention after selection, immediately before its first guarded
+	// delete, so both refreshes commit inside the window.
+	reached := make(chan struct{})
+	resume := make(chan struct{})
+	var resumeOnce sync.Once
+	resumeNow := func() { resumeOnce.Do(func() { close(resume) }) }
+	defer resumeNow()
+	var reachedOnce sync.Once
+	if err := db.GORM().Callback().Delete().Before("gorm:delete").Register("test:pause-transcript-retention", func(tx *gorm.DB) {
+		if tx.Statement.Table != "transcript" {
+			return
+		}
+		reachedOnce.Do(func() { close(reached) })
+		<-resume
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	type retentionOutcome struct {
+		result store.TranscriptRetentionResult
+		err    error
+	}
+	done := make(chan retentionOutcome, 1)
+	go func() {
+		result, err := db.EnforceTranscriptRetention(ctx, store.TranscriptRetentionPolicy{MaxAge: time.Hour})
+		done <- retentionOutcome{result: result, err: err}
+	}()
+
+	<-reached
+	insertSynced("retention-refresh-recent", refreshed, "refreshed content")
+	insertSynced("retention-refresh-same-ms", old, "same-ms refreshed content")
+	resumeNow()
+
+	got := <-done
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	if got.result.Deleted != 1 {
+		t.Fatalf("retention deleted = %d, want only the same-ended_at row", got.result.Deleted)
+	}
+
+	// The recently refreshed row survives with its refreshed content and no
+	// tombstone, so sync has nothing to delete for it.
+	row, err := db.TranscriptGet(ctx, "retention-refresh-recent")
+	if err != nil {
+		t.Fatalf("refreshed transcript must survive retention: %v", err)
+	}
+	if row.EndedAt == nil || *row.EndedAt != refreshed {
+		t.Fatalf("refreshed transcript ended_at = %v, want %d", row.EndedAt, refreshed)
+	}
+	requireTranscriptTombstoneDatabase(t, db, "retention-refresh-recent", false)
+	matches, err := db.TranscriptSearch(ctx, "retention-refresh-recent", []byte("refreshed content"), 0, 0)
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("refreshed content must be searchable: matches=%v err=%v", matches, err)
+	}
+
+	// The same-ended_at refresh stayed retention-eligible: deleted and
+	// tombstoned together in the same transaction.
+	if _, err := db.TranscriptGet(ctx, "retention-refresh-same-ms"); err == nil {
+		t.Fatal("same-ended_at refresh must stay retention-eligible")
+	}
+	requireTranscriptTombstoneDatabase(t, db, "retention-refresh-same-ms", true)
+}
+
+func requireTranscriptTombstoneDatabase(t *testing.T, db *store.Store, id string, want bool) {
+	t.Helper()
+	var count int64
+	if err := db.GORM().Model(&store.SyncTombstone{}).
+		Where("owner_id = ? AND id = ? AND kind = ?", "owner-a", id, "transcript").
+		Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if (count == 1) != want {
+		t.Fatalf("transcript %s tombstone exists = %v, want %v", id, count == 1, want)
+	}
+}
+
+// The count keep window is re-read when the delete executes: a same-owner
+// refresh that promotes a selected row into the window after selection must
+// survive without a tombstone, exactly like the age-path guard. SQLite cannot
+// express the select-then-refresh window with two concurrent writers.
+//
+//dbtest:backend postgres,mysql,mariadb
+func TestTranscriptRetentionCountRefreshedRowSkipsDeleteAndTombstoneDatabase(t *testing.T) {
+	switch strings.ToLower(os.Getenv("NEXTERM_TEST_DB_BACKEND")) {
+	case "postgres", "mysql", "mariadb":
+	default:
+		t.Skip("the select-then-refresh window is not constructible on SQLite")
+	}
+	ctx := context.Background()
+	ctxA := ipc.WithUserID(ctx, "owner-a")
+	db := dbtest.NewFixture(t).OpenStore(t)
+
+	now := time.Now().UnixMilli()
+	old := now - 2*time.Hour.Milliseconds()
+	keeper := now - 30*time.Minute.Milliseconds()
+	refreshed := now - time.Minute.Milliseconds()
+	insertSynced := func(id string, endedAt int64, content string) {
+		t.Helper()
+		row := store.TranscriptRow{ID: id, SessionID: "sess-" + id, AssetID: "asset-1", StartedAt: endedAt - 10, EndedAt: &endedAt, Bytes: int64(len(content)), Chunks: 1}
+		chunks := []store.TranscriptChunkRow{{Seq: 0, TabID: "tab-1", TS: endedAt, Data: []byte(content)}}
+		if err := db.TranscriptInsertSynced(ctxA, row, chunks); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insertSynced("retention-count-keeper", keeper, "keeper content")
+	insertSynced("retention-count-victim", old, "stale content")
+
+	reached := make(chan struct{})
+	resume := make(chan struct{})
+	var resumeOnce sync.Once
+	resumeNow := func() { resumeOnce.Do(func() { close(resume) }) }
+	defer resumeNow()
+	var reachedOnce sync.Once
+	if err := db.GORM().Callback().Delete().Before("gorm:delete").Register("test:pause-transcript-count-retention", func(tx *gorm.DB) {
+		if tx.Statement.Table != "transcript" {
+			return
+		}
+		reachedOnce.Do(func() { close(reached) })
+		<-resume
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	type retentionOutcome struct {
+		result store.TranscriptRetentionResult
+		err    error
+	}
+	done := make(chan retentionOutcome, 1)
+	go func() {
+		result, err := db.EnforceTranscriptRetention(ctx, store.TranscriptRetentionPolicy{MaxCount: 1})
+		done <- retentionOutcome{result: result, err: err}
+	}()
+
+	<-reached
+	insertSynced("retention-count-victim", refreshed, "refreshed content")
+	resumeNow()
+
+	got := <-done
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	if got.result.Deleted != 0 {
+		t.Fatalf("retention deleted = %d, want the promoted row to survive", got.result.Deleted)
+	}
+	row, err := db.TranscriptGet(ctx, "retention-count-victim")
+	if err != nil {
+		t.Fatalf("promoted transcript must survive count retention: %v", err)
+	}
+	if row.EndedAt == nil || *row.EndedAt != refreshed {
+		t.Fatalf("promoted transcript ended_at = %v, want %d", row.EndedAt, refreshed)
+	}
+	requireTranscriptTombstoneDatabase(t, db, "retention-count-victim", false)
+	if _, err := db.TranscriptGet(ctx, "retention-count-keeper"); err != nil {
+		t.Fatalf("keeper transcript must survive count retention: %v", err)
+	}
 }
