@@ -190,6 +190,27 @@ describe("closeTab captures restorable entries", () => {
     expect(stackEntries()).toEqual([]);
   });
 
+  it("records a remote default close answered with not_found as a plain terminal, never a live detached entry", async () => {
+    seedWorkspace([terminalTab("t1")]);
+    mocks.closeTab.mockRejectedValue({ code: "not_found", message: "gone" });
+
+    await expect(useUi.getState().closeTab("t1")).resolves.toBe(true);
+
+    expect(findTab("t1")).toBeUndefined();
+    expect(stackEntries()[0]?.kind).toBe("terminal");
+    expect(stackEntries()[0]?.tabId).toBeUndefined();
+  });
+
+  it("records an explicit detach answered with not_found as a plain terminal, not a detached-terminal", async () => {
+    seedWorkspace([terminalTab("t1")]);
+    mocks.closeTab.mockRejectedValue({ code: "not_found", message: "gone" });
+
+    await expect(useUi.getState().closeTab("t1", "detach")).resolves.toBe(true);
+
+    expect(stackEntries()[0]?.kind).toBe("terminal");
+    expect(stackEntries()[0]?.tabId).toBeUndefined();
+  });
+
   it("dedupes a duplicate close of the same logical target and moves it to the top", async () => {
     seedWorkspace([terminalTab("t1"), fileTab("f1")]);
     await useUi.getState().closeTab("t1", "kill");
@@ -311,6 +332,41 @@ describe("restoreClosedTab applies the reviewed restore modes", () => {
 
     const owner = useUi.getState().workspaces.find((w) => w.id === "ws-2");
     expect(owner?.panes[0]?.tabs.some((tab) => tab.id === "f1")).toBe(true);
+  });
+
+  it("pins a reattach to the session the process is bound to, never to a re-bound workspace", async () => {
+    seedWorkspace([terminalTab("t1")]);
+    await useUi.getState().closeTab("t1", "detach");
+    expect(stackEntries()[0]?.sessionId).toBe("s1");
+
+    // The original workspace rebinds to a new session; both sessions stay connected.
+    useUi.getState().updateWorkspaceSession("ws-1", "s2");
+    useUi.setState({ sessions: [sessionInfo(), sessionInfo({ id: "s2", assetId: "asset-2" })] });
+
+    await expect(restoreClosedTab()).resolves.toBe(true);
+
+    const restored = findTab("t1");
+    expect(restored?.sessionId).toBe("s1");
+    expect(restored?.tabId).toBe("kernel-t1");
+    const owner = useUi.getState().workspaces.find((w) => w.panes.some((p) => p.tabs.some((t) => t.id === "t1")));
+    expect(owner?.sessionId).toBe("s1");
+    expect(owner?.id).not.toBe("ws-1");
+    expect(useUi.getState().workspaces.find((w) => w.id === "ws-1")?.sessionId).toBe("s2");
+  });
+
+  it("keeps the entry retryable when the restored tab cannot be placed", async () => {
+    seedWorkspace([terminalTab("t1")]);
+    await useUi.getState().closeTab("t1", "kill");
+    const addTab = useUi.getState().addTab;
+    useUi.setState({ addTab: () => {} });
+    try {
+      await expect(restoreClosedTab()).resolves.toBe(false);
+    } finally {
+      useUi.setState({ addTab });
+    }
+
+    expect(stackEntries()).toHaveLength(1);
+    expect(stackEntries()[0]?.kind).toBe("terminal");
   });
 
   it("returns false when the stack is empty", async () => {

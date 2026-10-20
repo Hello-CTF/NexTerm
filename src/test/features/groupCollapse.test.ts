@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PROJECT_GROUP_COLLAPSE_LIMIT } from "../../app/projectFocus";
 import { useGroupCollapse } from "../../features/explorer/groupCollapse";
@@ -82,6 +82,31 @@ describe("legacy global collapse migration", () => {
     useGroupCollapse.getState().resetForTest();
     useGroupCollapse.getState().ensureAccount("account-b");
     expect(useGroupCollapse.getState().collapsedIds).toEqual(["g1"]);
+    expect(window.localStorage.getItem(LEGACY_KEY)).toBeNull();
+  });
+
+  it("keeps the legacy key when the per-account write fails and migrates on a later success", () => {
+    window.localStorage.setItem(LEGACY_KEY, JSON.stringify(["g1"]));
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("quota exceeded", "QuotaExceededError");
+    });
+
+    useGroupCollapse.getState().ensureAccount("account-a");
+
+    // The in-memory state is still usable this session, but the migration is not
+    // consumed: the legacy key stays and no per-account value is claimed on disk.
+    expect(useGroupCollapse.getState().collapsedIds).toEqual(["g1"]);
+    expect(window.localStorage.getItem(LEGACY_KEY)).not.toBeNull();
+    expect(window.localStorage.getItem(storageKey("account-a"))).toBeNull();
+
+    setItem.mockRestore();
+    useGroupCollapse.getState().resetForTest();
+    useGroupCollapse.getState().ensureAccount("account-a");
+
+    expect(JSON.parse(window.localStorage.getItem(storageKey("account-a")) ?? "null")).toEqual({
+      v: 1,
+      collapsed: ["g1"],
+    });
     expect(window.localStorage.getItem(LEGACY_KEY)).toBeNull();
   });
 

@@ -35,21 +35,24 @@ function load(accountId: string): string[] {
     if (raw !== null) return parseProjectGroupCollapse(raw);
     const legacy = loadLegacy();
     if (legacy === null) return [];
-    // One-time migration: only the first account without its own state consumes the
-    // legacy list; it is persisted under that account's key before the legacy key is
-    // removed, so a second account can never resurrect the previous account's state.
-    save(accountId, legacy);
-    window.localStorage.removeItem(LEGACY_KEY);
+    // One-time migration, write-before-delete: the legacy key is only removed after the
+    // per-account value is confirmed on disk, so a failed write keeps the legacy key and
+    // the migration is retried on a later boot instead of being silently consumed.
+    if (save(accountId, legacy)) {
+      window.localStorage.removeItem(LEGACY_KEY);
+    }
     return legacy;
   } catch {
     return [];
   }
 }
 
-function save(accountId: string, ids: string[]): void {
+function save(accountId: string, ids: string[]): boolean {
   try {
     window.localStorage.setItem(storageKey(accountId), serializeProjectGroupCollapse(ids));
+    return true;
   } catch {
+    return false;
   }
 }
 

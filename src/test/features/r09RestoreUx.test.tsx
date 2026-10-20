@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, type MountedView } from "./reactTestUtils";
+import { click, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   vaultStatus: vi.fn(),
   connectAsset: vi.fn(),
   connectLocal: vi.fn(),
+  sessionConnect: vi.fn(),
   dbConnect: vi.fn(),
   updateCheck: vi.fn(),
   closeWindow: vi.fn(),
@@ -20,6 +21,10 @@ const mocks = vi.hoisted(() => ({
   banners: { takeover: false, update: false, dek: false },
   terminalPaneProps: [] as { storeTabId: string; resumeTabId?: string }[],
   closeTab: vi.fn(),
+  fsRoots: vi.fn(),
+  fsList: vi.fn(),
+  fsRead: vi.fn(),
+  fsReadRange: vi.fn(),
 }));
 
 vi.mock("../../app/store", async (importOriginal) => {
@@ -53,9 +58,10 @@ vi.mock("../../ipc/commands", () => ({
   sessionApi: {
     list: mocks.sessionList,
     connectLocal: mocks.connectLocal,
-    connect: vi.fn(),
+    connect: mocks.sessionConnect,
     reconnect: vi.fn(),
     probe: vi.fn(),
+    lineExec: vi.fn(),
   },
   vaultApi: { status: mocks.vaultStatus, listCredentials: vi.fn() },
   syncApi: {
@@ -68,8 +74,29 @@ vi.mock("../../ipc/commands", () => ({
       lastError: null,
     }),
   },
-  terminalApi: { closeTab: mocks.closeTab, listLive: vi.fn(async () => []) },
+  terminalApi: { closeTab: mocks.closeTab, listLive: vi.fn(async () => []), write: vi.fn() },
   dbApi: { connect: mocks.dbConnect },
+  fsApi: {
+    roots: mocks.fsRoots,
+    list: mocks.fsList,
+    read: mocks.fsRead,
+    readRange: mocks.fsReadRange,
+    write: vi.fn(),
+    rename: vi.fn(),
+    chmod: vi.fn(),
+    checksum: vi.fn(),
+    mkdir: vi.fn(),
+    delete: vi.fn(),
+    upload: vi.fn(),
+    download: vi.fn(),
+    packDownload: vi.fn(),
+    extract: vi.fn(),
+  },
+  localFileApi: {},
+  toAppError: (e: { code?: string; message?: string } | null) => ({
+    code: e?.code,
+    message: e?.message ?? "错误",
+  }),
 }));
 vi.mock("../../ipc/wails", () => ({
   closeWindow: mocks.closeWindow,
@@ -105,11 +132,8 @@ vi.mock("../../features/terminal/TerminalPane", () => ({
 }));
 vi.mock("../../features/terminal/BackgroundSessions", () => ({ BackgroundSessions: () => null }));
 vi.mock("../../features/terminal/TranscriptHistoryPanel", () => ({ TranscriptHistoryPanel: () => null }));
-vi.mock("../../features/files/FileBrowser", () => ({ FileBrowser: () => null }));
 vi.mock("../../features/files/FileTree", () => ({ FileTree: () => null }));
 vi.mock("../../features/files/MountPanel", () => ({ MountPanel: () => null }));
-vi.mock("../../features/files/FileEditor", () => ({ FileEditor: () => null }));
-vi.mock("../../features/files/LogViewer", () => ({ LogViewer: () => null }));
 vi.mock("../../features/forward/ForwardPanel", () => ({ ForwardPanel: () => null }));
 vi.mock("../../features/docker/DockerPanel", () => ({ DockerPanel: () => null }));
 vi.mock("../../features/db/DbPanel", () => ({ DbPanel: () => null }));
@@ -130,6 +154,78 @@ vi.mock("../../app/UpdateBanner", () => ({
 vi.mock("../../app/DekUnlockBanner", () => ({
   DekUnlockBanner: () => (mocks.banners.dek ? <div data-testid="dek-banner" /> : null),
 }));
+
+// The real FileBrowser/FileEditor/LogViewer mount in these tests; only their
+// measurement/editor primitives and the clipboard are stubbed, while every fs/session
+// call goes through the spies in the ipc/commands mock above.
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getVirtualItems: () =>
+      Array.from({ length: count }, (_, i) => ({ index: i, start: i * 30, size: 30, key: i })),
+    getTotalSize: () => count * 30,
+  }),
+}));
+vi.mock("../../ui/clipboard", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ui/clipboard")>();
+  return { ...actual, copyText: vi.fn(async () => undefined) };
+});
+vi.mock("@codemirror/state", () => {
+  class Doc {
+    constructor(private readonly text: string) {}
+    toString() {
+      return this.text;
+    }
+    get length() {
+      return this.text.length;
+    }
+  }
+  class Compartment {
+    of(extension: unknown) {
+      return { compartment: this, extension };
+    }
+    reconfigure(extension: unknown) {
+      return { compartment: this, extension };
+    }
+  }
+  return {
+    Compartment,
+    EditorState: {
+      create: ({ doc, extensions }: { doc: string; extensions: unknown[] }) => ({
+        doc: new Doc(doc),
+        extensions,
+      }),
+    },
+    Prec: { highest: (extension: unknown) => extension },
+  };
+});
+vi.mock("@codemirror/view", () => {
+  class EditorView {
+    static updateListener = {
+      of: (listener: unknown) => ({ codeMirrorListener: listener }),
+    };
+    constructor(config: { state: unknown }) {
+      void config;
+    }
+    destroy() {}
+  }
+  return { EditorView, keymap: { of: (bindings: unknown) => bindings } };
+});
+vi.mock("codemirror", () => ({ basicSetup: [] }));
+vi.mock("@codemirror/commands", () => ({
+  indentWithTab: {},
+  redo: vi.fn(),
+  undo: vi.fn(),
+}));
+vi.mock("@codemirror/search", () => ({ search: () => [], openSearchPanel: vi.fn() }));
+vi.mock("@codemirror/language", () => ({ StreamLanguage: { define: (mode: unknown) => mode } }));
+vi.mock("@codemirror/lang-sql", () => ({ sql: () => [] }));
+vi.mock("@codemirror/legacy-modes/mode/shell", () => ({ shell: {} }));
+vi.mock("@codemirror/legacy-modes/mode/nginx", () => ({ nginx: {} }));
+vi.mock("@codemirror/legacy-modes/mode/yaml", () => ({ yaml: {} }));
+vi.mock("@codemirror/legacy-modes/mode/properties", () => ({ properties: {} }));
+vi.mock("@codemirror/legacy-modes/mode/javascript", () => ({ javascript: {} }));
+vi.mock("@codemirror/legacy-modes/mode/python", () => ({ python: {} }));
+vi.mock("../../ui/editorTheme", () => ({ nxHighlight: [] }));
 
 import App from "../../app/App";
 import { closedTabEntryFromTab, useClosedTabs } from "../../app/closedTabs";
@@ -212,6 +308,15 @@ beforeEach(() => {
   mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
   mocks.connectAsset.mockResolvedValue({ ok: true });
   mocks.closeTab.mockResolvedValue(undefined);
+  mocks.fsRoots.mockResolvedValue({ pathStyle: "unknown", roots: [], homePath: null, supported: false });
+  mocks.fsList.mockResolvedValue([]);
+  mocks.fsReadRange.mockResolvedValue({ offset: 0, size: 0, contentBase64: "", truncated: false });
+  mocks.fsRead.mockImplementation(async (_sessionId: string, path: string) => ({
+    path,
+    size: 8,
+    contentBase64: btoa("original"),
+    modifiedAt: 1,
+  }));
   useUi.setState({
     sessions: [sessionOf("s1")],
     toasts: [],
@@ -302,6 +407,121 @@ describe("closed-tab restore UX", () => {
 
     await expect(restoreClosedTab()).resolves.toBe(false);
     expect(findTab("t1")).toBeUndefined();
+  });
+});
+
+describe("restorePending file and log tabs mount only after an explicit reconnect", () => {
+  function reconnectButton(): HTMLButtonElement {
+    const button = [...(mounted?.container.querySelectorAll("button") ?? [])].find(
+      (candidate) => candidate.textContent?.trim() === "重新连接",
+    );
+    if (!button) throw new Error("Reconnect button not found");
+    return button;
+  }
+
+  it("files editor: placeholder first, no fs read and no auto reconnect before the click", async () => {
+    const pending: AppTab = {
+      id: "f1",
+      kind: "files",
+      title: "f1.txt",
+      sessionId: "s1",
+      path: "/a/f1.txt",
+      closable: true,
+      restorePending: true,
+    };
+    useUi.setState({ workspaces: [hostWorkspace("ws-1", "s1", [pending])] });
+    mounted = mountApp();
+    await flush();
+
+    expect(mounted?.container.textContent).toContain("不会自动重新打开");
+    expect(mocks.fsRead).not.toHaveBeenCalled();
+    expect(mocks.fsReadRange).not.toHaveBeenCalled();
+    expect(mocks.sessionConnect).not.toHaveBeenCalled();
+
+    click(reconnectButton());
+    await flush();
+
+    expect(findTab("f1")?.restorePending).toBeUndefined();
+    await waitFor(() => expect(mocks.fsRead).toHaveBeenCalled());
+    expect(mocks.sessionConnect).not.toHaveBeenCalled();
+  });
+
+  it("log viewer: placeholder first, readRange only after the explicit reconnect", async () => {
+    const pending: AppTab = {
+      id: "log-1",
+      kind: "log",
+      title: "app.log",
+      sessionId: "s1",
+      path: "/var/log/app.log",
+      closable: true,
+      restorePending: true,
+    };
+    useUi.setState({ workspaces: [hostWorkspace("ws-1", "s1", [pending])] });
+    mounted = mountApp();
+    await flush();
+
+    expect(mounted?.container.textContent).toContain("不会自动重新打开");
+    expect(mocks.fsReadRange).not.toHaveBeenCalled();
+    expect(mocks.sessionConnect).not.toHaveBeenCalled();
+
+    click(reconnectButton());
+    await flush();
+
+    expect(findTab("log-1")?.restorePending).toBeUndefined();
+    await waitFor(() => expect(mocks.fsReadRange).toHaveBeenCalled());
+  });
+
+  it("files browser: placeholder first, roots/list only after the explicit reconnect", async () => {
+    const pending: AppTab = {
+      id: "files-s1",
+      kind: "files",
+      title: "文件",
+      sessionId: "s1",
+      closable: true,
+      restorePending: true,
+    };
+    useUi.setState({ workspaces: [hostWorkspace("ws-1", "s1", [pending])] });
+    mounted = mountApp();
+    await flush();
+
+    expect(mounted?.container.textContent).toContain("不会自动重新打开");
+    expect(mocks.fsRoots).not.toHaveBeenCalled();
+    expect(mocks.fsList).not.toHaveBeenCalled();
+    expect(mocks.sessionConnect).not.toHaveBeenCalled();
+
+    click(reconnectButton());
+    await flush();
+
+    expect(findTab("files-s1")?.restorePending).toBeUndefined();
+    await waitFor(() => expect(mocks.fsRoots).toHaveBeenCalled());
+    await waitFor(() => expect(mocks.fsList).toHaveBeenCalled());
+  });
+
+  it("deletedTarget keeps the placeholder, reports the failure, and never mounts the editor", async () => {
+    const pending: AppTab = {
+      id: "f1",
+      kind: "files",
+      title: "f1.txt",
+      sessionId: "s1",
+      path: "/a/f1.txt",
+      closable: true,
+      restorePending: true,
+    };
+    useUi.setState({
+      workspaces: [{ ...hostWorkspace("ws-1", "s1", [pending]), deletedTarget: true }],
+    });
+    mounted = mountApp();
+    await flush();
+
+    expect(mounted?.container.textContent).toContain("不会自动重新打开");
+    click(reconnectButton());
+    await flush();
+
+    expect(useUi.getState().toasts.some((toast) => toast.text.includes("已删除"))).toBe(true);
+    expect(mounted?.container.textContent).toContain("不会自动重新打开");
+    expect(findTab("f1")?.restorePending).toBe(true);
+    expect(mocks.fsRead).not.toHaveBeenCalled();
+    expect(mocks.fsReadRange).not.toHaveBeenCalled();
   });
 });
 

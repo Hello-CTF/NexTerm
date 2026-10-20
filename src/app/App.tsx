@@ -2438,6 +2438,29 @@ function isSessionAlive(status: string): boolean {
   return status === "connected" || status === "connecting" || status === "reconnecting";
 }
 
+// Shared manual-restore placeholder for restorePending tabs: nothing mounts and no
+// connection is dialed until the user explicitly reconnects via reconnectRestoredTab.
+function RestoredTabPlaceholder({ tab, onClose }: { tab: AppTab; onClose: () => void }) {
+  const reopen = () => {
+    void reconnectRestoredTab(tab.id).then((result) => {
+      if (!result.ok && result.error) useUi.getState().pushToast("error", result.error);
+    });
+  };
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-neutral-400">
+      <span>
+        {tab.kind === "terminal"
+          ? "旧终端进程已结束，不会自动重新连接。"
+          : "旧文件目标已恢复，连接尚未启动，不会自动重新打开。"}
+      </span>
+      <div className="flex items-center gap-2">
+        <button type="button" className="nx-btn nx-btn-outline" onClick={reopen}>重新连接</button>
+        <button type="button" className="nx-btn nx-btn-outline" onClick={onClose}>关闭标签</button>
+      </div>
+    </div>
+  );
+}
+
 const PaneForTab = memo(function PaneForTab({
   tab,
   active,
@@ -2468,26 +2491,8 @@ const PaneForTab = memo(function PaneForTab({
       </div>
     );
   }
-  if (tab.kind === "terminal" && tab.restorePending) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-neutral-400">
-        <span>旧终端进程已结束，不会自动重新连接。</span>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            className="nx-btn nx-btn-outline"
-            onClick={() => {
-              void reconnectRestoredTab(tab.id).then((result) => {
-                if (!result.ok && result.error) useUi.getState().pushToast("error", result.error);
-              });
-            }}
-          >
-            重新连接
-          </button>
-          <button type="button" className="nx-btn nx-btn-outline" onClick={close}>关闭标签</button>
-        </div>
-      </div>
-    );
+  if (tab.restorePending && (tab.kind === "terminal" || tab.kind === "files" || tab.kind === "log")) {
+    return <RestoredTabPlaceholder tab={tab} onClose={close} />;
   }
   switch (tab.kind) {
     case "terminal":
