@@ -1,45 +1,105 @@
 /** @vitest-environment jsdom */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
-const KEY = "nexterm.collapsedAssetGroups.v1";
+import { PROJECT_GROUP_COLLAPSE_LIMIT } from "../../app/projectFocus";
+import { useGroupCollapse } from "../../features/explorer/groupCollapse";
 
-async function loadStore() {
-  vi.resetModules();
-  return import("../../features/explorer/groupCollapse");
-}
+const LEGACY_KEY = "nexterm.collapsedAssetGroups.v1";
+const storageKey = (accountId: string) => `nexterm:collapsed-groups-v1:${encodeURIComponent(accountId)}`;
 
 beforeEach(() => {
-  localStorage.clear();
+  window.localStorage.clear();
+  useGroupCollapse.getState().resetForTest();
 });
 
-describe("group collapse persistence", () => {
-  it("starts expanded and toggles into localStorage", async () => {
-    const { useGroupCollapse } = await loadStore();
-    expect(useGroupCollapse.getState().collapsedIds).toEqual([]);
+describe("legacy global collapse migration", () => {
+  it("migrates valid legacy ids to the first signed-in account and removes the legacy key", () => {
+    window.localStorage.setItem(LEGACY_KEY, JSON.stringify(["g1", "g2"]));
 
-    useGroupCollapse.getState().toggle("g1");
-    expect(useGroupCollapse.getState().collapsedIds).toEqual(["g1"]);
-    expect(JSON.parse(localStorage.getItem(KEY) ?? "null")).toEqual(["g1"]);
+    useGroupCollapse.getState().ensureAccount("account-a");
 
-    useGroupCollapse.getState().toggle("g1");
-    expect(useGroupCollapse.getState().collapsedIds).toEqual([]);
-    expect(JSON.parse(localStorage.getItem(KEY) ?? "null")).toEqual([]);
+    expect(useGroupCollapse.getState().collapsedIds).toEqual(["g1", "g2"]);
+    expect(window.localStorage.getItem(LEGACY_KEY)).toBeNull();
+    expect(JSON.parse(window.localStorage.getItem(storageKey("account-a")) ?? "null")).toEqual({
+      v: 1,
+      collapsed: ["g1", "g2"],
+    });
   });
 
-  it("restores collapsed ids from localStorage", async () => {
-    localStorage.setItem(KEY, JSON.stringify(["g9"]));
-    const { useGroupCollapse } = await loadStore();
+  it("does not resurrect the legacy list for a second account", () => {
+    window.localStorage.setItem(LEGACY_KEY, JSON.stringify(["g1"]));
+
+    useGroupCollapse.getState().ensureAccount("account-a");
+    useGroupCollapse.getState().resetForTest();
+    useGroupCollapse.getState().ensureAccount("account-b");
+
+    expect(useGroupCollapse.getState().collapsedIds).toEqual([]);
+    expect(window.localStorage.getItem(LEGACY_KEY)).toBeNull();
+  });
+
+  it("keeps the legacy mixed-item semantics: non-string entries are dropped", () => {
+    window.localStorage.setItem(LEGACY_KEY, JSON.stringify([1, "g2", null, "g2"]));
+
+    useGroupCollapse.getState().ensureAccount("account-a");
+
+    expect(useGroupCollapse.getState().collapsedIds).toEqual(["g2"]);
+  });
+
+  it("keeps the legacy malformed-payload semantics: degrades to an empty list and is consumed", () => {
+    window.localStorage.setItem(LEGACY_KEY, "not-json");
+
+    useGroupCollapse.getState().ensureAccount("account-a");
+
+    expect(useGroupCollapse.getState().collapsedIds).toEqual([]);
+    expect(window.localStorage.getItem(LEGACY_KEY)).toBeNull();
+    useGroupCollapse.getState().resetForTest();
+    useGroupCollapse.getState().ensureAccount("account-b");
+    expect(useGroupCollapse.getState().collapsedIds).toEqual([]);
+  });
+
+  it("bounds the migrated legacy list at the reviewed limit", () => {
+    const legacy = Array.from({ length: PROJECT_GROUP_COLLAPSE_LIMIT + 5 }, (_, index) => `g${index}`);
+    window.localStorage.setItem(LEGACY_KEY, JSON.stringify(legacy));
+
+    useGroupCollapse.getState().ensureAccount("account-a");
+
+    const collapsed = useGroupCollapse.getState().collapsedIds;
+    expect(collapsed).toHaveLength(PROJECT_GROUP_COLLAPSE_LIMIT);
+    expect(collapsed).not.toContain("g0");
+    expect(collapsed[collapsed.length - 1]).toBe(`g${PROJECT_GROUP_COLLAPSE_LIMIT + 4}`);
+  });
+
+  it("prefers the per-account key over the legacy list and leaves the legacy key for the account that still needs it", () => {
+    window.localStorage.setItem(storageKey("account-a"), JSON.stringify({ v: 1, collapsed: ["g9"] }));
+    window.localStorage.setItem(LEGACY_KEY, JSON.stringify(["g1"]));
+
+    useGroupCollapse.getState().ensureAccount("account-a");
+
     expect(useGroupCollapse.getState().collapsedIds).toEqual(["g9"]);
+    expect(window.localStorage.getItem(LEGACY_KEY)).not.toBeNull();
+
+    useGroupCollapse.getState().resetForTest();
+    useGroupCollapse.getState().ensureAccount("account-b");
+    expect(useGroupCollapse.getState().collapsedIds).toEqual(["g1"]);
+    expect(window.localStorage.getItem(LEGACY_KEY)).toBeNull();
   });
 
-  it("ignores malformed stored values", async () => {
-    localStorage.setItem(KEY, "not-json");
-    const { useGroupCollapse } = await loadStore();
-    expect(useGroupCollapse.getState().collapsedIds).toEqual([]);
+  it("keeps reload and toggle working on the migrated per-account state", () => {
+    window.localStorage.setItem(LEGACY_KEY, JSON.stringify(["g1", "g2"]));
+    useGroupCollapse.getState().ensureAccount("account-a");
 
-    localStorage.setItem(KEY, JSON.stringify([1, "g2", null]));
-    const again = await loadStore();
-    expect(again.useGroupCollapse.getState().collapsedIds).toEqual(["g2"]);
+    useGroupCollapse.getState().toggle("g1");
+    expect(useGroupCollapse.getState().collapsedIds).toEqual(["g2"]);
+
+    useGroupCollapse.getState().resetForTest();
+    useGroupCollapse.getState().ensureAccount("account-a");
+    expect(useGroupCollapse.getState().collapsedIds).toEqual(["g2"]);
+
+    useGroupCollapse.getState().toggle("g3");
+    expect(JSON.parse(window.localStorage.getItem(storageKey("account-a")) ?? "null")).toEqual({
+      v: 1,
+      collapsed: ["g2", "g3"],
+    });
   });
 });

@@ -1,3 +1,5 @@
+import { create } from "zustand";
+
 import type { AppTab } from "./store";
 
 export const CLOSED_TAB_STACK_LIMIT = 20;
@@ -271,3 +273,74 @@ export function deserializeClosedTabStack(raw: string, accountId: string): Close
     entries,
   };
 }
+
+const CLOSED_TAB_STORAGE_PREFIX = "nexterm:closed-tabs-v1:";
+
+function closedTabStorageKey(accountId: string): string {
+  return `${CLOSED_TAB_STORAGE_PREFIX}${encodeURIComponent(accountId)}`;
+}
+
+function loadPersistedClosedTabStack(accountId: string): ClosedTabStack {
+  try {
+    const raw = window.localStorage.getItem(closedTabStorageKey(accountId));
+    if (!raw) return createClosedTabStack(accountId);
+    return deserializeClosedTabStack(raw, accountId);
+  } catch {
+    return createClosedTabStack(accountId);
+  }
+}
+
+function persistClosedTabStack(stack: ClosedTabStack): void {
+  try {
+    window.localStorage.setItem(closedTabStorageKey(stack.accountId), serializeClosedTabStack(stack));
+  } catch {
+  }
+}
+
+interface ClosedTabsState {
+  stack: ClosedTabStack;
+  // ensureAccount is called at layout boot and on every account switch; it is a no-op
+  // while the account is unchanged so in-flight captures keep their generation guard.
+  ensureAccount: (accountId: string) => void;
+  // capture rejects entries stamped with a stale generation so a close that resolves
+  // after an account switch can never write into the next account's stack.
+  capture: (entry: ClosedTabEntry, expectedGeneration: number) => boolean;
+  restore: (key?: string) => RestoredClosedTab | null;
+  resetForTest: () => void;
+}
+
+export const useClosedTabs = create<ClosedTabsState>((set, get) => ({
+  stack: createClosedTabStack(""),
+  ensureAccount: (accountId) => {
+    const { stack } = get();
+    if (stack.accountId === accountId) return;
+    const switched = switchClosedTabAccount(stack, accountId);
+    const persisted = loadPersistedClosedTabStack(accountId);
+    set({
+      stack: {
+        ...switched,
+        generation: Math.max(switched.generation, persisted.generation),
+        nextSeq: Math.max(switched.nextSeq, persisted.nextSeq),
+        entries: persisted.entries,
+      },
+    });
+  },
+  capture: (entry, expectedGeneration) => {
+    const { stack } = get();
+    if (stack.generation !== expectedGeneration) return false;
+    const next = pushClosedTab(stack, entry);
+    if (next === stack) return false;
+    set({ stack: next });
+    persistClosedTabStack(next);
+    return true;
+  },
+  restore: (key) => {
+    const { stack } = get();
+    const result = key === undefined ? restoreMostRecentClosedTab(stack) : restoreClosedTab(stack, key);
+    if (!result.restored) return null;
+    set({ stack: result.stack });
+    persistClosedTabStack(result.stack);
+    return result.restored;
+  },
+  resetForTest: () => set({ stack: createClosedTabStack("") }),
+}));

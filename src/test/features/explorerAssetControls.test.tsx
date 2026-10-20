@@ -526,7 +526,7 @@ describe("asset group controls", () => {
     click(groupToggle(mounted!.container));
     await flush();
     expect(mounted!.container.textContent).not.toContain("web-1");
-    expect(JSON.parse(localStorage.getItem("nexterm.collapsedAssetGroups.v1") ?? "null")).toEqual(["g1"]);
+    expect(JSON.parse(localStorage.getItem("nexterm:collapsed-groups-v1:") ?? "null")).toEqual({ v: 1, collapsed: ["g1"] });
 
     mounted.unmount();
     mounted = mountWithClient(createElement(AssetTree));

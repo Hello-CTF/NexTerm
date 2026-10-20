@@ -25,6 +25,8 @@ import {
   requestCloseTab,
   requestCloseTabs,
   requestKillTab,
+  reconnectRestoredTab,
+  restoreClosedTab,
   closeTabHint,
   closeActionHint,
   isSessionReconnectPending,
@@ -63,6 +65,7 @@ import {
   undoLayoutRestore,
 } from "./layout";
 import { wireAccountSwitchCleanup } from "./accountSwitch";
+import { useClosedTabs } from "./closedTabs";
 import { startUnreadTracking } from "./unread";
 import { useTabUnread } from "./unreadStore";
 import { applyAuthoritativeTabTitle, useTerminalTabTitle } from "./terminalViewStore";
@@ -85,6 +88,7 @@ import {
   isMac,
   isMobile,
   isWailsDragRegionTarget,
+  modHint,
   useLandscapeFullScreen,
   wailsDragRegionStyle,
   wailsNoDragRegionStyle,
@@ -627,6 +631,7 @@ function AppShell() {
     pushToast,
     connectFocusRevision,
   } = useUi();
+  const closedTabEntries = useClosedTabs((s) => s.stack.entries);
 
   const visibleWorkspaces = useMemo(
     () => focusedWorkspaces({ workspaces, activeWorkspaceId, activeProject, projectInventory }),
@@ -1140,15 +1145,34 @@ function AppShell() {
           onSelect: () => void closeAllWorkspaces(),
         });
       }
+      items.push({ kind: "separator" });
+      const latestClosed = closedTabEntries[0];
+      items.push({
+        kind: "item",
+        label: "恢复关闭的标签",
+        icon: <IconHistory size={12} />,
+        hint: latestClosed?.title,
+        accel: `${modHint()}+Shift+T`,
+        disabled: !latestClosed,
+        onSelect: () => void restoreClosedTab(),
+      });
       setWsMenu({ x: rect.left, y: rect.bottom + 4, title: "工作区", items });
     },
-    [visibleWorkspaces, workspaces, sessions, setActiveWorkspace, closeWorkspace, closeAllWorkspaces],
+    [visibleWorkspaces, workspaces, sessions, setActiveWorkspace, closeWorkspace, closeAllWorkspaces, closedTabEntries],
   );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const hit = matchAppKeybinding(e);
-      if (!hit) return;
+      if (!hit) {
+        // Restore-closed-tab is a fixed Mod+Shift+T (same as the switcher menu accel); it is
+        // intentionally outside the rebindable keybinding set.
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "t") {
+          e.preventDefault();
+          void restoreClosedTab();
+        }
+        return;
+      }
       switch (hit.action) {
         case "commandPalette":
           e.preventDefault();
@@ -1672,6 +1696,14 @@ function AppShell() {
             groups={groupsQuery.data ?? []}
             sessions={sessions}
             onSelect={setActiveWorkspace}
+            onReorder={(dragId, overId, before) => {
+              const current = useUi.getState();
+              const from = current.workspaces.findIndex((workspace) => workspace.id === dragId);
+              const over = current.workspaces.findIndex((workspace) => workspace.id === overId);
+              if (from < 0 || over < 0) return;
+              const to = before ? (from < over ? over - 1 : over) : from < over ? over : over + 1;
+              current.moveWorkspace(from, to);
+            }}
           />
           <TakeoverBanner />
           <UpdateBanner onOpenSettings={openSettings} />
@@ -2433,6 +2465,27 @@ const PaneForTab = memo(function PaneForTab({
       <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-neutral-400">
         <span>旧容器终端不会自动重新执行。请在 Docker 容器列表中重新打开。</span>
         <button type="button" className="nx-btn nx-btn-outline" onClick={close}>关闭旧标签</button>
+      </div>
+    );
+  }
+  if (tab.kind === "terminal" && tab.restorePending) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-neutral-400">
+        <span>旧终端进程已结束，不会自动重新连接。</span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="nx-btn nx-btn-outline"
+            onClick={() => {
+              void reconnectRestoredTab(tab.id).then((result) => {
+                if (!result.ok && result.error) useUi.getState().pushToast("error", result.error);
+              });
+            }}
+          >
+            重新连接
+          </button>
+          <button type="button" className="nx-btn nx-btn-outline" onClick={close}>关闭标签</button>
+        </div>
       </div>
     );
   }

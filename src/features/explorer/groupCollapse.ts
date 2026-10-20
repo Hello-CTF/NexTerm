@@ -1,37 +1,80 @@
 import { create } from "zustand";
 
-const KEY = "nexterm.collapsedAssetGroups.v1";
+import {
+  parseProjectGroupCollapse,
+  sanitizeProjectGroupCollapse,
+  serializeProjectGroupCollapse,
+  toggleProjectGroupCollapse,
+} from "../../app/projectFocus";
 
-function load(): string[] {
+const STORAGE_PREFIX = "nexterm:collapsed-groups-v1:";
+const LEGACY_KEY = "nexterm.collapsedAssetGroups.v1";
+
+function storageKey(accountId: string): string {
+  return `${STORAGE_PREFIX}${encodeURIComponent(accountId)}`;
+}
+
+// loadLegacy reads the pre-per-account global list with its original semantics
+// (non-array or malformed JSON degrade to an empty list, non-string items are dropped).
+function loadLegacy(): string[] | null {
   try {
-    const raw = localStorage.getItem(KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+    const raw = window.localStorage.getItem(LEGACY_KEY);
+    if (raw === null) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return sanitizeProjectGroupCollapse(parsed.filter((x): x is string => typeof x === "string"));
   } catch {
     return [];
   }
 }
 
-function save(ids: string[]): void {
+function load(accountId: string): string[] {
   try {
-    localStorage.setItem(KEY, JSON.stringify(ids));
+    const raw = window.localStorage.getItem(storageKey(accountId));
+    // The per-account key is authoritative whenever it exists, even when corrupt.
+    if (raw !== null) return parseProjectGroupCollapse(raw);
+    const legacy = loadLegacy();
+    if (legacy === null) return [];
+    // One-time migration: only the first account without its own state consumes the
+    // legacy list; it is persisted under that account's key before the legacy key is
+    // removed, so a second account can never resurrect the previous account's state.
+    save(accountId, legacy);
+    window.localStorage.removeItem(LEGACY_KEY);
+    return legacy;
+  } catch {
+    return [];
+  }
+}
+
+function save(accountId: string, ids: string[]): void {
+  try {
+    window.localStorage.setItem(storageKey(accountId), serializeProjectGroupCollapse(ids));
   } catch {
   }
 }
 
 interface GroupCollapseState {
+  accountId: string;
   collapsedIds: string[];
+  // ensureAccount is called at layout boot and on every account switch; collapse state
+  // is persisted per account so one account's groups never leak into the next.
+  ensureAccount: (accountId: string) => void;
   toggle: (id: string) => void;
+  resetForTest: () => void;
 }
 
-export const useGroupCollapse = create<GroupCollapseState>((set) => ({
-  collapsedIds: load(),
+export const useGroupCollapse = create<GroupCollapseState>((set, get) => ({
+  accountId: "",
+  collapsedIds: [],
+  ensureAccount: (accountId) => {
+    if (get().accountId === accountId) return;
+    set({ accountId, collapsedIds: load(accountId) });
+  },
   toggle: (id) =>
     set((s) => {
-      const collapsedIds = s.collapsedIds.includes(id)
-        ? s.collapsedIds.filter((x) => x !== id)
-        : [...s.collapsedIds, id];
-      save(collapsedIds);
+      const collapsedIds = toggleProjectGroupCollapse(s.collapsedIds, id);
+      save(s.accountId, collapsedIds);
       return { collapsedIds };
     }),
+  resetForTest: () => set({ accountId: "", collapsedIds: [] }),
 }));
