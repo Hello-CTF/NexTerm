@@ -130,11 +130,21 @@ func mapTargetStreamError(result *Result, err error) {
 }
 
 // streamTargetOutput consumes the live channel until both streams end and
-// the command exits, forwarding every chunk into the tracker.
+// the command exits, forwarding every chunk into the tracker. Batch
+// commands carry no stdin input, so the write side closes immediately and
+// EOF-driven commands observe the same EOF as one-shot Exec. On a normal
+// exit or a remote ExitError the copies drain to EOF before the channel is
+// closed; an early close is only used to unblock the copies after a
+// cancellation or transport failure, and it never touches the shared
+// transport or any other exec channel.
 func streamTargetOutput(ctx context.Context, tracker *ProgressTracker, target Target, command string, timeout time.Duration, stream base.ExecStreamTransport) targetStreamOutcome {
 	channel, err := stream.OpenExec(ctx, command, base.ExecOptions{Timeout: timeout, ExpectedGeneration: target.Generation})
 	if err != nil {
 		return targetStreamOutcome{err: err}
+	}
+	if err := channel.CloseWrite(); err != nil {
+		_ = channel.Close()
+		return targetStreamOutcome{err: fmt.Errorf("close exec stdin: %w", err)}
 	}
 	var stdoutErr, stderrErr error
 	var copies sync.WaitGroup
@@ -148,8 +158,15 @@ func streamTargetOutput(ctx context.Context, tracker *ProgressTracker, target Ta
 		stdoutErr = copyStreamToTracker(tracker, target.SessionID, channel, true)
 	}()
 	waitErr := channel.Wait(ctx)
-	_ = channel.Close()
+	var exitErr *base.ExitError
+	if waitErr != nil && !errors.As(waitErr, &exitErr) {
+		// Cancellation or transport failure: close early so the copies
+		// unblock; the context error below still decides the status.
+		_ = channel.Close()
+	}
 	copies.Wait()
+	waitErr = channel.Wait(ctx)
+	_ = channel.Close()
 
 	switch {
 	case ctx.Err() != nil:
