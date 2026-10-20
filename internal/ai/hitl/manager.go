@@ -184,6 +184,12 @@ func (m *Manager) Interrupt(ctx context.Context, target *adk.InterruptCtx, input
 	if run.terminal != nil {
 		return Interrupt{}, ErrRunFinished
 	}
+	// A rollback or sweep can unregister the run while this call waited on
+	// run.mu: fail closed instead of recording a request on a detached run
+	// and persisting it.
+	if !m.registeredLocked(input.RunID, run) {
+		return Interrupt{}, ErrRunNotFound
+	}
 	if run.checkpointID != input.CheckpointID {
 		return Interrupt{}, ErrCheckpointChanged
 	}
@@ -279,6 +285,13 @@ func (m *Manager) Resume(ctx context.Context, resumer Resumer, answer Answer, op
 	if run.terminal != nil {
 		run.mu.Unlock()
 		return Resume{}, nil, ErrRunFinished
+	}
+	// A rollback or sweep can unregister the run while this call waited on
+	// run.mu: fail closed instead of persisting state changes and starting
+	// the resumer for a detached run.
+	if !m.registeredLocked(answer.RunID, run) {
+		run.mu.Unlock()
+		return Resume{}, nil, ErrRunNotFound
 	}
 	if run.checkpointID != answer.CheckpointID {
 		run.mu.Unlock()
@@ -509,6 +522,13 @@ func (m *Manager) finish(run *runState, reason TerminalReason, message string, c
 		}
 		return terminal, ErrRunFinished
 	}
+	// A rollback or sweep can unregister the run while this call waited on
+	// run.mu: fail closed instead of writing a detached run's terminal blob
+	// or deleting its checkpoint.
+	if !m.registeredLocked(run.id, run) {
+		run.mu.Unlock()
+		return Event{}, ErrRunNotFound
+	}
 	status := map[TerminalReason]RunStatus{
 		TerminalCompleted: RunStatusCompleted,
 		TerminalCanceled:  RunStatusCanceled,
@@ -565,12 +585,8 @@ func (m *Manager) expire(runID, requestID string) {
 	run.mu.Lock()
 	m.mu.RLock()
 	closed := m.closed
-	// A started timer callback cannot be recalled when a restore rolls back
-	// or a terminal run is swept: fail closed on a detached run instead of
-	// finishing it and rewriting its blob or deleting its checkpoint.
-	registered := m.runs[runID] == run
 	m.mu.RUnlock()
-	if closed || !registered || run.terminal != nil {
+	if closed || !m.registeredLocked(runID, run) || run.terminal != nil {
 		run.mu.Unlock()
 		return
 	}
@@ -780,6 +796,19 @@ func (m *Manager) run(runID string) (*runState, error) {
 		return nil, ErrRunNotFound
 	}
 	return run, nil
+}
+
+// registeredLocked reports whether run is still the run registered under
+// runID. The caller must hold run.mu; the manager read lock is taken in the
+// established run.mu → m.mu order. A restore rollback or a terminal sweep
+// can unregister a run while an entry point waits on run.mu, and a started
+// caller cannot be recalled: every entry point re-verifies registration
+// after acquiring run.mu and before any state change, persist, resumer
+// start, or checkpoint delete, and fails closed on a detached run.
+func (m *Manager) registeredLocked(runID string, run *runState) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.runs[runID] == run
 }
 
 func (m *Manager) Close() error {
