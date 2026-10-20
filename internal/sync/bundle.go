@@ -731,6 +731,10 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 	createdFlags := make([]bool, len(preparedAssets))
 	conflicted := make([]bool, len(preparedAssets))
 	compensatedCredIDs := map[string]bool{}
+	// credWriteResults records which credentials this import actually wrote: a
+	// conflict-skipped credential keeps a later local write and must be neither
+	// compensated nor counted as imported.
+	credWriteResults := map[string]bool{}
 	// Credentials and assets share one transaction: an asset-save failure rolls the
 	// credential creates/updates back instead of leaving them orphaned.
 	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
@@ -739,8 +743,12 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			// credential (a later local write is never overwritten) and to must-not-exist
 			// for a new one. A conflict is recorded per-credential and skipped, never
 			// overwriting the later local write.
-			if err := s.importCredentialTx(ctx, tx, cred, priorCredRows[cred.id], &report, warnf); err != nil {
+			written, err := s.importCredentialTx(ctx, tx, cred, priorCredRows[cred.id], &report, warnf)
+			if err != nil {
 				return err
+			}
+			if written {
+				credWriteResults[cred.id] = true
 			}
 		}
 		for index, entry := range preparedAssets {
@@ -785,8 +793,9 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			}
 			credID := *entry.row.CredID
 			// Only a credential this import actually upserted can be compensated: one that
-			// is absent from bundle.Creds was never written here and must survive untouched.
-			if !seenCredIDs[credID] || writtenCredRefs[credID] || compensatedCredIDs[credID] {
+			// is absent from bundle.Creds was never written here, and a conflict-skipped
+			// one holds a later local write — both must survive untouched.
+			if !credWriteResults[credID] || writtenCredRefs[credID] || compensatedCredIDs[credID] {
 				continue
 			}
 			compensatedCredIDs[credID] = true
@@ -800,7 +809,7 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		return ImportReport{}, err
 	}
 	for _, cred := range preparedCreds {
-		if compensatedCredIDs[cred.id] {
+		if compensatedCredIDs[cred.id] || !credWriteResults[cred.id] {
 			continue
 		}
 		if cred.exists {
@@ -912,20 +921,22 @@ func (s *Service) importAssetTx(ctx context.Context, tx *gorm.DB, index int, row
 
 // importCredentialTx writes one prepared credential inside the import transaction with a
 // savepoint: a conflict (the credential changed after the snapshot) is recorded and the
-// credential is skipped, never overwriting the later local write.
-func (s *Service) importCredentialTx(ctx context.Context, tx *gorm.DB, cred preparedCred, snapshot *store.CredentialRow, report *ImportReport, warnf func(string, ...any)) error {
+// credential is skipped, never overwriting the later local write. It reports whether the
+// write actually landed; a conflict-skipped credential reports false so the caller keeps
+// it out of compensation and out of the imported counts.
+func (s *Service) importCredentialTx(ctx context.Context, tx *gorm.DB, cred preparedCred, snapshot *store.CredentialRow, report *ImportReport, warnf func(string, ...any)) (bool, error) {
 	savepoint := fmt.Sprintf("import_credential_%s", cred.id)
 	if err := tx.SavePoint(savepoint).Error; err != nil {
-		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		return false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	err := s.engine.credentialUpsertTxBound(ctx, tx, credentialObject{
 		ID: cred.id, Name: cred.name, Kind: cred.kind, UpdatedAt: cred.updatedAt,
 	}, cred.nonce, cred.blob, snapshot)
 	if err == nil {
-		return nil
+		return true, nil
 	}
 	if rollbackErr := tx.RollbackTo(savepoint).Error; rollbackErr != nil {
-		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+rollbackErr.Error(), rollbackErr)
+		return false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+rollbackErr.Error(), rollbackErr)
 	}
 	if errors.Is(err, store.ErrWriteConflict) {
 		report.Conflicts++
@@ -933,9 +944,9 @@ func (s *Service) importCredentialTx(ctx context.Context, tx *gorm.DB, cred prep
 			Kind: "credential", ID: cred.id, Name: cred.name,
 		})
 		warnf("凭据 %s 在导入决策后已被本机更新，已跳过（可重新导入覆盖）", cred.id)
-		return nil
+		return false, nil
 	}
-	return err
+	return false, err
 }
 
 // compensateCredentialTx rolls one credential back to its pre-import state after the only

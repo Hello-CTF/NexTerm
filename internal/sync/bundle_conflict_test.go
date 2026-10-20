@@ -10,26 +10,38 @@ import (
 	"gorm.io/gorm"
 )
 
-// interleaveAssetEdit registers a one-shot hook that lands a local edit on the asset
-// between the import's snapshot read and its write. The hook fires on a First-based
-// preparation query (which releases its connection before the callback runs, so the
-// interleaved write can never deadlock on the two-connection pool).
-func interleaveAssetEdit(t *testing.T, instance *testInstance, hookTable, host string, updatedAt int64, assetID string) {
+// interleaveOnceOnTableQuery registers a one-shot hook that fires after the first query
+// against hookTable and runs hook. The hook fires on a First-based preparation query
+// (which releases its connection before the callback runs, so an interleaved write can
+// never deadlock on the two-connection pool). Both identifier quote styles are matched so
+// the helper works on SQLite/MySQL/MariaDB (backticks) and PostgreSQL (double quotes).
+func interleaveOnceOnTableQuery(t *testing.T, instance *testInstance, hookTable string, hook func()) {
 	t.Helper()
 	fired := false
 	if err := instance.db.GORM().Callback().Query().After("gorm:query").Register("test:import-interleave-"+hookTable, func(tx *gorm.DB) {
-		if fired || !strings.Contains(tx.Statement.SQL.String(), "FROM `"+hookTable+"`") {
+		sql := tx.Statement.SQL.String()
+		if fired || !strings.Contains(sql, "`"+hookTable+"`") && !strings.Contains(sql, `"`+hookTable+`"`) {
 			return
 		}
 		fired = true
-		if _, err := instance.db.DB().ExecContext(context.Background(),
-			"UPDATE asset SET host = ?, updated_at = ? WHERE id = ?", host, updatedAt, assetID); err != nil {
-			t.Errorf("interleaved edit: %v", err)
-		}
+		hook()
 	}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = instance.db.GORM().Callback().Query().Remove("test:import-interleave-" + hookTable) })
+}
+
+// interleaveAssetEdit registers a one-shot hook that lands a local edit on the asset
+// between the import's snapshot read and its write.
+func interleaveAssetEdit(t *testing.T, instance *testInstance, hookTable, host string, updatedAt int64, assetID string) {
+	t.Helper()
+	interleaveOnceOnTableQuery(t, instance, hookTable, func() {
+		if err := instance.db.GORM().WithContext(context.Background()).
+			Model(&store.AssetRow{}).Where("id = ?", assetID).
+			Updates(map[string]any{"host": host, "updated_at": updatedAt}).Error; err != nil {
+			t.Errorf("interleaved edit: %v", err)
+		}
+	})
 }
 
 // R-16 pre-planner interleaving: a local edit landing between the import's snapshot and
