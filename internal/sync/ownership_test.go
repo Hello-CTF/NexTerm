@@ -50,10 +50,10 @@ func TestImportAndKnownHostOwnershipIsolation(t *testing.T) {
 
 	payloadA := knownHostObject{ID: ids.New(), Host: "shared.example.com", Port: 22, KeyType: "ssh-ed25519", Fingerprint: "SHA256:a", AddedAt: 1}
 	payloadB := knownHostObject{ID: ids.New(), Host: "shared.example.com", Port: 22, KeyType: "ssh-ed25519", Fingerprint: "SHA256:b", AddedAt: 2}
-	if err := instance.service.engine.knownHostUpsert(ctxA, payloadA, ""); err != nil {
+	if err := instance.service.engine.knownHostUpsert(ctxA, payloadA, "", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := instance.service.engine.knownHostUpsert(ctxB, payloadB, ""); err != nil {
+	if err := instance.service.engine.knownHostUpsert(ctxB, payloadB, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	knownA, foundA, err := instance.db.KnownHostGet(ctxA, payloadA.Host, payloadA.Port, payloadA.KeyType)

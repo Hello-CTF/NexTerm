@@ -810,21 +810,28 @@ func (e *Engine) syncTombstonePut(ctx context.Context, objectID, kind string, de
 
 // snippetUpsert mirrors store.GroupUpsert semantics: idempotent write by ID preserving the peer revision,
 // clearing the same-ID deletion tombstone in the same transaction: once a newer snippet beats an old tombstone, no tombstone that could roll back the object may remain.
-func (e *Engine) snippetUpsert(ctx context.Context, row store.SnippetRow) error {
+// The write binds to the snapshot the LWW decision was made on (nil for a snippet that did not exist locally).
+func (e *Engine) snippetUpsert(ctx context.Context, row store.SnippetRow, snapshot *store.SnippetRow) error {
 	return e.store.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return e.snippetUpsertTx(ctx, tx, row)
+		return e.snippetUpsertTxBound(ctx, tx, row, snapshot)
 	})
 }
 
-// snippetUpsertTx is the in-transaction version of snippetUpsert, letting ImportBundle merge multiple writes of one object class into the same transaction.
-func (e *Engine) snippetUpsertTx(ctx context.Context, tx *gorm.DB, row store.SnippetRow) error {
+// snippetUpsertTxBound writes one snippet inside a transaction with the write bound to
+// the caller's snapshot: the planner's equal-revision winner lands while a concurrent
+// local write is never overwritten (the conflict leaves the object unreconciled for the
+// next round). The explicit bundle import passes the pre-import snapshot (or the earlier
+// in-bundle entry's content for duplicate IDs).
+func (e *Engine) snippetUpsertTxBound(ctx context.Context, tx *gorm.DB, row store.SnippetRow, snapshot *store.SnippetRow) error {
 	row.OwnerID = ipc.OwnerID(ctx)
-	if err := tx.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"group_id", "name", "body", "sort", "updated_at"}),
-		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
-	}).Create(&row).Error; err != nil {
-		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	if snapshot == nil {
+		if err := store.UpsertOwnerGuardedExpected(ctx, tx, &row, []string{"group_id", "name", "body", "sort", "updated_at"}, 0); err != nil {
+			return err
+		}
+	} else {
+		if _, err := store.UpsertOwnerGuardedExpectedContent(ctx, tx, &row, []string{"group_id", "name", "body", "sort", "updated_at"}, snapshot); err != nil {
+			return err
+		}
 	}
 	tombstone := query.Use(tx).SyncTombstone
 	if _, err := tombstone.WithContext(ctx).

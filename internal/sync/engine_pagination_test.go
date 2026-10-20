@@ -18,7 +18,7 @@ func TestEngineDrainsPaginationBeforePush(t *testing.T) {
 	deviceB := newTestDevice(t)
 	ctx := context.Background()
 
-	bigBody := strings.Repeat("x", 600<<10)
+	bigBody := strings.Repeat("x", 400<<10)
 	snippet1 := ids.New()
 	snippet2 := ids.New()
 	putDeviceSnippet(t, deviceA, snippet1, "大片段一", bigBody, 100)
