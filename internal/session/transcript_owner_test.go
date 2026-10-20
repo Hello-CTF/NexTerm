@@ -133,8 +133,8 @@ func (s *ownerScopedStore) DeleteDurableTabTitleContext(ctx context.Context, tab
 }
 
 var (
-	_ DurableTranscriptOffsetStore        = (*ownerScopedStore)(nil)
-	_ DurableTabTitleStore                = (*ownerScopedStore)(nil)
+	_ DurableTranscriptOffsetStore            = (*ownerScopedStore)(nil)
+	_ DurableTabTitleStore                    = (*ownerScopedStore)(nil)
 	_ OwnerScopedDurableTranscriptOffsetStore = (*ownerScopedStore)(nil)
 	_ OwnerScopedDurableTabTitleStore         = (*ownerScopedStore)(nil)
 )
