@@ -408,6 +408,24 @@ describe("fleet health tab identity across workspaces", () => {
     expect(surviving && isFleetHealthTab(surviving)).toBe(true);
   });
 
+  it("keeps multiple instances in one workspace distinct for close and activation", async () => {
+    const firstId = createFleetHealthTabId();
+    openFleetHealthInActiveWorkspace(firstId);
+    const secondId = createFleetHealthTabId();
+    openFleetHealthInActiveWorkspace(secondId);
+
+    expect(paneTabIds("ws-1")).toEqual([firstId, secondId]);
+    expect(activeTabOf("ws-1")).toBe(secondId);
+
+    useUi.getState().setActiveTab(firstId);
+    expect(activeTabOf("ws-1")).toBe(firstId);
+    expect(useUi.getState().activeWorkspaceId).toBe("ws-1");
+
+    await expect(useUi.getState().closeTab(firstId)).resolves.toBe(true);
+    expect(paneTabIds("ws-1")).toEqual([secondId]);
+    expect(activeTabOf("ws-1")).toBe(secondId);
+  });
+
   it("keeps a legacy fixed-ID tab activatable, closable and renderable", async () => {
     useUi.setState({ activeWorkspaceId: "ws-2" });
     openFleetHealthInActiveWorkspace(FLEET_HEALTH_TAB_ID);

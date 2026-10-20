@@ -21,6 +21,7 @@ import { baseName } from "../features/files/pathUtils";
 import { aiTabRunControls, confirmAiRunCancellation, runningAiTabs as getRunningAiTabs, clearAiTabRun, clearAiTabRuns, type AiCloseTab } from "../features/ai/runOwnership";
 import { splitAllowedForHeight, workspaceViewport } from "../features/terminal/workspaceLayout";
 import { useConnectHistory } from "../features/explorer/connectHistory";
+import { isFleetHealthTabId } from "../features/fleet/fleetHealthTab";
 import {
   getResolvedTheme,
   getThemeMode,
@@ -2429,7 +2430,9 @@ function sameTab(t: AppTab, tab: AppTab, caseInsensitive = false): boolean {
     t.connId === tab.connId &&
     !t.tabId &&
     !tab.tabId &&
-    t.path === tab.path
+    t.path === tab.path &&
+    !isFleetHealthTabId(t.id) &&
+    !isFleetHealthTabId(tab.id)
   );
 }
 
