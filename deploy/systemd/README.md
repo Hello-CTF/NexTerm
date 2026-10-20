@@ -21,23 +21,29 @@ without starting the service.
 An upgrade (detected from an existing `/opt/nexterm/nexterm-server`,
 `/etc/nexterm/*.env` or unit) replaces binaries, web assets and units, and:
 
-- preserves `/etc/nexterm/nexterm.env`, `/etc/nexterm/onlyserver.env` and
-  `/etc/nexterm/master.key` byte for byte;
+- preserves `/etc/nexterm/nexterm.env` and
+  `/etc/nexterm/onlyserver.env`; existing values are never rewritten;
+- preserves the effective master key: an explicit `NEXTERM_MASTER_KEY_FILE`
+  setting wins, then an existing `<data-dir>/master.key`, then
+  `/etc/nexterm/master.key`. A new key is generated only when none exists,
+  so credentials encrypted under an existing key stay decryptable;
 - backfills any missing `NEXTERM_LISTEN`, `NEXTERM_AUTH`,
-  `NEXTERM_DATA_DIR`, `NEXTERM_WEB_ROOT` or `NEXTERM_MASTER_KEY_FILE` key
-  with the safe default from the shipped example, so an install that
-  predates the env files never falls back to the built-in `0.0.0.0:8080`
-  listener;
+  `NEXTERM_DATA_DIR` or `NEXTERM_WEB_ROOT` key with the safe default from
+  the shipped example, so an install that predates the env files never
+  falls back to the built-in `0.0.0.0:8080` listener;
 - migrates legacy units (older releases kept `--listen`, `--auth`,
-  `--data-dir` and `--web-root` flags in `ExecStart`) to the env-driven
-  units, and removes stray copies under `/usr/lib/systemd/system/` or
-  `/lib/systemd/system/`;
+  `--data-dir` and `--web-root` flags in `ExecStart`): explicit flag
+  values move into the corresponding env files (they were the effective
+  settings), stray copies under `/usr/lib/systemd/system/` or
+  `/lib/systemd/system/` are removed;
 - saves the previous payload to `/opt/nexterm/.rollback` and restarts only
-  the units that were active.
+  the units that were active. An interrupted upgrade keeps that original
+  backup across retries, so a retry never overwrites the rollback point.
 
 Options: `--source DIR` (payload directory, default the script's own),
 `--root DIR` (staged install prefix, for testing), `--rollback`,
-`--no-enable`.
+`--no-enable`. An interrupted first install is resumed by re-running the
+script and finishes with `enable --now`.
 
 Keep both helpers beside `nexterm-server`. On the server's own
 architecture, verify the matching helper before enabling the service; it
@@ -74,9 +80,13 @@ so a second consecutive rollback fails.
 
 ## Master key
 
-`install.sh` generates `/etc/nexterm/master.key` when it is absent and never
-replaces an existing one. Back it up with `/var/lib/nexterm`; it cannot be
-recreated after credentials have been encrypted.
+`install.sh` preserves the effective master key across installs and
+upgrades: an explicit `NEXTERM_MASTER_KEY_FILE` setting wins, then an
+existing `<data-dir>/master.key` (the server's own default location), then
+`/etc/nexterm/master.key`. A new key is generated only when none exists,
+and an existing key is never replaced. Back the key up together with
+`/var/lib/nexterm`; it cannot be recreated after credentials have been
+encrypted.
 
 ## Database settings
 

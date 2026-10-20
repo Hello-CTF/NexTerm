@@ -18,13 +18,18 @@ files with safe defaults (loopback listen, auth on), generates
 /etc/nexterm/master.key, then enables and starts nexterm-server.
 
 An upgrade replaces binaries, web assets and units, but preserves
-/etc/nexterm/nexterm.env, /etc/nexterm/onlyserver.env and
-/etc/nexterm/master.key, backfills missing environment keys with the safe
-defaults from the shipped examples, migrates legacy units (inline
-ExecStart flags, copies under /usr/lib/systemd/system or
-/lib/systemd/system) to the canonical env-driven units, saves the previous
-payload to /opt/nexterm/.rollback, and restarts only units that were
-active.
+/etc/nexterm/nexterm.env, /etc/nexterm/onlyserver.env and the effective
+master key (an explicit NEXTERM_MASTER_KEY_FILE, an existing
+<data-dir>/master.key, or /etc/nexterm/master.key, in that order; a new
+key is generated only when none exists). Missing environment keys are
+backfilled with the safe defaults from the shipped examples, explicit
+legacy unit flags (--listen, --auth, --data-dir, --web-root) are migrated
+into the env files instead of being discarded, legacy unit copies under
+/usr/lib/systemd/system or /lib/systemd/system are removed, the previous
+payload is saved to /opt/nexterm/.rollback, and only units that were
+active are restarted. An interrupted upgrade keeps its original rollback
+backup across retries; an interrupted first install resumes and finishes
+with enable --now.
 
 Options:
   --source DIR   release payload directory (default: this script's directory)
@@ -73,6 +78,9 @@ REAL_ROOT=0
 SYSTEMCTL="${NEXTERM_INSTALL_SYSTEMCTL:-systemctl}"
 MODE="first"
 ACTIVE_UNITS=""
+SERVER_LEGACY_VALUES=""
+ONLYSERVER_LEGACY_VALUES=""
+INCOMPLETE_MARKER="$OPT_DIR/.install-incomplete"
 
 log() { printf 'install: %s\n' "$*"; }
 die() { printf 'install: error: %s\n' "$*" >&2; exit 1; }
@@ -107,6 +115,96 @@ is_legacy_unit() {
     grep -qE '^[[:space:]]*--(listen|auth|data-dir|web-root)([[:space:]=]|$)' "$1"
 }
 
+legacy_exec_line() {
+  local file="$1" line acc="" continuing=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ExecStart=*) acc="${line#ExecStart=}"; continuing=1 ;;
+      *) if [ "$continuing" -eq 1 ]; then acc="$acc $line"; fi ;;
+    esac
+    if [ "$continuing" -eq 1 ]; then
+      case "$acc" in
+        *\\) acc="${acc%\\}" ;;
+        *) continuing=0 ;;
+      esac
+    fi
+    if [ "$continuing" -eq 0 ] && [ -n "$acc" ]; then break; fi
+  done < "$file"
+  printf '%s' "$acc"
+}
+
+legacy_flag_value() {
+  local want="--$2"
+  set -f
+  set -- $1
+  set +f
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      "$want")
+        if [ $# -ge 2 ]; then printf '%s' "$2"; fi
+        return 0 ;;
+      "$want"=*)
+        printf '%s' "${1#"$want"=}"
+        return 0 ;;
+    esac
+    shift
+  done
+  return 1
+}
+
+capture_legacy_values() {
+  local file="$1" exec_line flag key value
+  exec_line="$(legacy_exec_line "$file")"
+  [ -n "$exec_line" ] || return 0
+  for flag in listen auth data-dir web-root; do
+    value="$(legacy_flag_value "$exec_line" "$flag" || true)"
+    [ -n "$value" ] || continue
+    case "$flag" in
+      listen) key=NEXTERM_LISTEN ;;
+      auth) key=NEXTERM_AUTH ;;
+      data-dir) key=NEXTERM_DATA_DIR ;;
+      web-root) key=NEXTERM_WEB_ROOT ;;
+    esac
+    printf '%s=%s\n' "$key" "$value"
+  done
+}
+
+env_get() {
+  local line
+  line="$(grep -m1 "^$2=" "$1" || true)"
+  printf '%s' "${line#"$2"=}"
+}
+
+physical_path() {
+  local path="$ROOT_PREFIX$1"
+  case "$path" in //*) path="${path#?}" ;; esac
+  printf '%s' "$path"
+}
+
+env_append() {
+  local file="$1" line="$2"
+  if [ -s "$file" ] && [ -n "$(tail -c 1 "$file")" ]; then
+    printf '\n' >> "$file"
+  fi
+  printf '%s\n' "$line" >> "$file"
+}
+
+env_set() {
+  local file="$1" key="$2" value="$3" tmp="$1.nexterm-new" line
+  if grep -q "^$key=" "$file"; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        "$key"=*) printf '%s=%s\n' "$key" "$value" ;;
+        *) printf '%s\n' "$line" ;;
+      esac
+    done < "$file" > "$tmp"
+    cat "$tmp" > "$file"
+    rm -f "$tmp"
+  else
+    env_append "$file" "$key=$value"
+  fi
+}
+
 ensure_user() {
   fail_at user
   if [ "$REAL_ROOT" -ne 1 ]; then
@@ -130,6 +228,10 @@ ensure_dirs() {
 
 backup_current() {
   fail_at backup
+  if [ -f "$BACKUP_DIR/pending" ]; then
+    log "preserving rollback backup from the interrupted upgrade (retry keeps the original payload and active-unit state)"
+    return 0
+  fi
   rm -rf "$BACKUP_DIR"
   install -d -m 0700 "$BACKUP_DIR"
   local f unit d rel
@@ -150,6 +252,7 @@ backup_current() {
   for unit in $ACTIVE_UNITS; do
     printf '%s\n' "$unit" >> "$BACKUP_DIR/active-units"
   done
+  : > "$BACKUP_DIR/pending"
   log "saved previous payload to $BACKUP_DIR"
 }
 
@@ -174,10 +277,22 @@ install_web() {
 
 install_units() {
   fail_at units
-  local unit d
+  local unit d legacy_src
   for unit in $UNITS; do
-    if [ -f "$UNIT_DIR/$unit" ] && is_legacy_unit "$UNIT_DIR/$unit"; then
-      log "migrating legacy unit $unit (inline ExecStart flags move to the $ETC_DIR env files)"
+    legacy_src=""
+    for d in "$UNIT_DIR" "$ROOT_PREFIX/usr/lib/systemd/system" "$ROOT_PREFIX/lib/systemd/system"; do
+      if [ -f "$d/$unit" ] && is_legacy_unit "$d/$unit"; then
+        legacy_src="$d/$unit"
+        break
+      fi
+    done
+    if [ -n "$legacy_src" ]; then
+      log "migrating legacy unit $unit (inline ExecStart flags move to the ${ETC_DIR#$ROOT_PREFIX} env files)"
+      if [ "$unit" = "$SERVER_UNIT" ]; then
+        SERVER_LEGACY_VALUES="$(capture_legacy_values "$legacy_src")"
+      else
+        ONLYSERVER_LEGACY_VALUES="$(capture_legacy_values "$legacy_src")"
+      fi
     fi
     install -m 0644 "$SOURCE_DIR/$unit" "$UNIT_DIR/$unit"
     for d in "$ROOT_PREFIX/usr/lib/systemd/system" "$ROOT_PREFIX/lib/systemd/system"; do
@@ -191,7 +306,7 @@ install_units() {
 
 ensure_env_files() {
   fail_at env
-  local name env_file example key line
+  local name env_file example legacy line key
   for name in nexterm onlyserver; do
     env_file="$ETC_DIR/$name.env"
     example="$SOURCE_DIR/$name.env.example"
@@ -201,11 +316,23 @@ ensure_env_files() {
       install -m 0600 "$example" "$env_file"
       log "installed ${env_file#$ROOT_PREFIX} with safe defaults"
     fi
+    if [ "$name" = "nexterm" ]; then legacy="$SERVER_LEGACY_VALUES"; else legacy="$ONLYSERVER_LEGACY_VALUES"; fi
+    if [ -n "$legacy" ]; then
+      while IFS= read -r line || [ -n "$line" ]; do
+        [ -n "$line" ] || continue
+        key="${line%%=*}"
+        env_set "$env_file" "$key" "${line#*=}"
+        log "migrated legacy unit setting $key=${line#*=} into ${env_file#$ROOT_PREFIX}"
+      done <<EOF
+$legacy
+EOF
+    fi
     for key in $ENV_KEYS; do
+      if [ "$key" = "NEXTERM_MASTER_KEY_FILE" ]; then continue; fi
       line="$(grep -m1 "^$key=" "$example" || true)"
       [ -n "$line" ] || continue
       if ! grep -q "^$key=" "$env_file"; then
-        printf '%s\n' "$line" >> "$env_file"
+        env_append "$env_file" "$line"
         log "backfilled $key in ${env_file#$ROOT_PREFIX} (was absent; applied the example default)"
       fi
     done
@@ -214,21 +341,43 @@ ensure_env_files() {
 
 ensure_master_key() {
   fail_at masterkey
-  local key_file="$ETC_DIR/master.key"
-  if [ -f "$key_file" ]; then
-    log "preserving existing ${key_file#$ROOT_PREFIX}"
-    return 0
-  fi
-  command -v openssl >/dev/null 2>&1 || die "openssl is required to generate ${key_file#$ROOT_PREFIX}"
-  (umask 077; openssl rand -hex 32 > "$key_file")
-  if [ "$REAL_ROOT" -eq 1 ]; then
-    chown nexterm:nexterm "$key_file"
-  fi
-  chmod 0600 "$key_file"
-  if [ "$MODE" = "upgrade" ]; then
-    log "WARNING: ${key_file#$ROOT_PREFIX} was missing and has been regenerated; credentials encrypted under an older key cannot be recovered"
-  fi
-  log "generated ${key_file#$ROOT_PREFIX} (back it up with ${DATA_DIR#$ROOT_PREFIX}; it cannot be recreated)"
+  local env_file configured data_dir data_dir_key key_file physical parent name
+  for name in nexterm onlyserver; do
+    env_file="$ETC_DIR/$name.env"
+    configured="$(env_get "$env_file" NEXTERM_MASTER_KEY_FILE)"
+    data_dir="$(env_get "$env_file" NEXTERM_DATA_DIR)"
+    [ -n "$data_dir" ] || data_dir="${DATA_DIR#$ROOT_PREFIX}"
+    data_dir_key="$data_dir/master.key"
+    if [ -n "$configured" ]; then
+      key_file="$configured"
+    elif [ -f "$(physical_path "$data_dir_key")" ]; then
+      key_file="$data_dir_key"
+      log "adopting existing data-directory master key $data_dir_key for ${env_file#$ROOT_PREFIX}"
+    else
+      key_file="/etc/nexterm/master.key"
+    fi
+    physical="$(physical_path "$key_file")"
+    if [ -f "$physical" ]; then
+      log "preserving existing master key $key_file"
+    else
+      command -v openssl >/dev/null 2>&1 || die "openssl is required to generate $key_file"
+      parent="$(dirname "$physical")"
+      if [ ! -d "$parent" ]; then install -d -m 0700 "$parent"; fi
+      (umask 077; openssl rand -hex 32 > "$physical")
+      if [ "$REAL_ROOT" -eq 1 ]; then
+        chown nexterm:nexterm "$physical"
+      fi
+      chmod 0600 "$physical"
+      if [ "$MODE" = "upgrade" ]; then
+        log "WARNING: $key_file was missing and has been regenerated; credentials encrypted under an older key cannot be recovered"
+      fi
+      log "generated $key_file (back it up with ${DATA_DIR#$ROOT_PREFIX}; it cannot be recreated)"
+    fi
+    if ! grep -q "^NEXTERM_MASTER_KEY_FILE=" "$env_file"; then
+      env_append "$env_file" "NEXTERM_MASTER_KEY_FILE=$key_file"
+      log "configured NEXTERM_MASTER_KEY_FILE=$key_file in ${env_file#$ROOT_PREFIX}"
+    fi
+  done
 }
 
 reload_systemd() {
@@ -269,8 +418,10 @@ run_install() {
   require_root_when_real
 
   MODE=first
-  if [ -f "$OPT_DIR/nexterm-server" ] || [ -f "$ETC_DIR/nexterm.env" ] || [ -f "$ETC_DIR/onlyserver.env" ] ||
-     [ -f "$UNIT_DIR/$SERVER_UNIT" ] || [ -f "$UNIT_DIR/$ONLYSERVER_UNIT" ]; then
+  if [ -f "$INCOMPLETE_MARKER" ]; then
+    log "resuming incomplete first install (previous attempt did not finish)"
+  elif [ -f "$OPT_DIR/nexterm-server" ] || [ -f "$ETC_DIR/nexterm.env" ] || [ -f "$ETC_DIR/onlyserver.env" ] ||
+       [ -f "$UNIT_DIR/$SERVER_UNIT" ] || [ -f "$UNIT_DIR/$ONLYSERVER_UNIT" ]; then
     MODE=upgrade
   fi
   log "mode: $MODE install"
@@ -281,6 +432,7 @@ run_install() {
     capture_active_units
     backup_current
   else
+    : > "$INCOMPLETE_MARKER"
     ACTIVE_UNITS=""
   fi
   install_binaries
@@ -290,6 +442,7 @@ run_install() {
   ensure_master_key
   reload_systemd
   manage_services
+  rm -f "$INCOMPLETE_MARKER" "$BACKUP_DIR/pending"
   log "done"
 }
 
