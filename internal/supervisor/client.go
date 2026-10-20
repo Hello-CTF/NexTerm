@@ -446,6 +446,11 @@ type Stream struct {
 	closed    chan struct{}
 	closeOnce sync.Once
 	closeErr  error
+
+	// tokenWaitHook, when non-nil, runs after the initial ctx check and
+	// immediately before requestRaw blocks acquiring the request token.
+	// Tests use it to observe the token wait deterministically.
+	tokenWaitHook func()
 }
 
 func (s *Stream) Info() Info {
@@ -650,6 +655,9 @@ func (s *Stream) request(ctx context.Context, kind frameType, message any) (fram
 func (s *Stream) requestRaw(ctx context.Context, kind frameType, payload []byte) (frameType, []byte, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, nil, context.Cause(ctx)
+	}
+	if s.tokenWaitHook != nil {
+		s.tokenWaitHook()
 	}
 	select {
 	case s.reqToken <- struct{}{}:

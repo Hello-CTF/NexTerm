@@ -357,11 +357,22 @@ func TestStreamRequestCancelWhileQueuedSendsNothing(t *testing.T) {
 		t.Fatal("server did not receive the first Write")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	// Deterministic entry into the token wait: the hook runs after the
+	// initial ctx check and immediately before the token select, while the
+	// first Write still holds the token.
+	enteredWait := make(chan struct{})
+	var waitOnce sync.Once
+	stream.tokenWaitHook = func() { waitOnce.Do(func() { close(enteredWait) }) }
 	queuedErr := make(chan error, 1)
 	go func() {
 		_, err := stream.WriteContext(ctx, []byte("queued"))
 		queuedErr <- err
 	}()
+	select {
+	case <-enteredWait:
+	case <-time.After(5 * time.Second):
+		t.Fatal("queued WriteContext never reached the token wait")
+	}
 	cancel()
 	select {
 	case err := <-queuedErr:
@@ -371,6 +382,8 @@ func TestStreamRequestCancelWhileQueuedSendsNothing(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("queued WriteContext never returned after cancel")
 	}
+	// The queued request returned before releaseFirst: it woke on the ctx
+	// while the token was still held, so its frame never reached the wire.
 	close(releaseFirst)
 	select {
 	case err := <-firstErr:
