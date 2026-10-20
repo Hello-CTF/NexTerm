@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, flush, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
+import { click, clickButton, flush, mount, setInputValue, waitFor, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   forwardEnv: vi.fn(),
@@ -32,6 +32,13 @@ vi.mock("../ipc/commands", async (importOriginal) => {
 vi.mock("../ui/dialogs", () => ({ ask: mocks.ask }));
 
 import { ForwardPanel } from "../features/forward/ForwardPanel";
+import { ForwardSettingsPanel } from "../features/forward/ForwardSettingsPanel";
+import {
+  ForwardSettingsApiProvider,
+  type ForwardRecoverySettings,
+  type ForwardRuleSettings,
+  type ForwardSettingsApi,
+} from "../features/forward/forwardSettingsApi";
 import { useUi } from "../app/store";
 
 let mounted: MountedView | undefined;
@@ -257,5 +264,120 @@ describe("ForwardPanel remote forwarding (-R)", () => {
     expect(mocks.forwardRemove).toHaveBeenCalledWith("f1");
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("停止失败"));
     expect(mocks.toast).not.toHaveBeenCalledWith("success", expect.anything());
+  });
+});
+
+function fakeSettingsRules(): ForwardRuleSettings[] {
+  return [
+    {
+      id: "rule-a", assetId: "asset-1", name: "database", listenPort: 13306,
+      targetHost: "db.internal", targetPort: 5432, autoStart: false, status: "stopped",
+    },
+    {
+      id: "rule-b", assetId: "asset-1", name: "cache", listenPort: 16379,
+      targetHost: "cache.internal", targetPort: 6379, autoStart: true, status: "stopped",
+    },
+  ];
+}
+
+function fakeSettingsApi(overrides: Partial<ForwardSettingsApi> = {}) {
+  return {
+    listRules: vi.fn().mockResolvedValue(fakeSettingsRules()),
+    setRuleAutoStart: vi.fn().mockResolvedValue(undefined),
+    getRecoverySettings: vi.fn().mockResolvedValue({
+      enabled: false,
+      maxConcurrentConnections: 4,
+      skipProduction: true,
+    } satisfies ForwardRecoverySettings),
+    setRecoverySettings: vi.fn().mockResolvedValue(undefined),
+    recoverNow: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  };
+}
+
+function mountSettings(api: ForwardSettingsApi): MountedView {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return mount(
+    createElement(
+      QueryClientProvider,
+      { client },
+      createElement(ForwardSettingsApiProvider, { api }, createElement(ForwardSettingsPanel)),
+    ),
+  );
+}
+
+function settingsSwitch(container: HTMLElement, label: string): HTMLButtonElement {
+  const button = container.querySelector<HTMLButtonElement>(`button[role="switch"][aria-label="${label}"]`);
+  if (!button) throw new Error(`settings switch not found: ${label}`);
+  return button;
+}
+
+describe("Forward settings", () => {
+  let settingsMounted: MountedView | undefined;
+  beforeEach(() => {
+    settingsMounted = undefined;
+  });
+  afterEach(() => {
+    settingsMounted?.unmount();
+    settingsMounted = undefined;
+  });
+
+  it("renders saved rules with their autoStart state and toggles it through the injected API", async () => {
+    const api = fakeSettingsApi();
+    settingsMounted = mountSettings(api);
+    await waitFor(() => expect(api.listRules).toHaveBeenCalledOnce());
+
+    const off = settingsSwitch(settingsMounted.container, "自动启动 database");
+    const on = settingsSwitch(settingsMounted.container, "自动启动 cache");
+    expect(off.getAttribute("aria-checked")).toBe("false");
+    expect(on.getAttribute("aria-checked")).toBe("true");
+    expect(settingsMounted.container.textContent).toContain("127.0.0.1:13306 → db.internal:5432");
+    expect(settingsMounted.container.textContent).toContain("127.0.0.1:16379 → cache.internal:6379");
+
+    clickButton(settingsMounted.container, "已关闭");
+    await waitFor(() => expect(api.setRuleAutoStart).toHaveBeenCalledWith("rule-a", true));
+    expect(settingsSwitch(settingsMounted.container, "自动启动 database").getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("presents startup recovery as default-off with the real concurrency cap and production skip", async () => {
+    const api = fakeSettingsApi();
+    settingsMounted = mountSettings(api);
+    await waitFor(() => expect(api.getRecoverySettings).toHaveBeenCalledOnce());
+
+    const toggle = settingsSwitch(settingsMounted.container, "启动时自动恢复转发");
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(settingsMounted.container.textContent).toContain("默认关闭");
+    expect(settingsMounted.container.textContent).toContain("最多同时建立 4 个设备连接");
+    expect(settingsMounted.container.textContent).toContain("自动跳过生产项目资产");
+    expect(settingsMounted.container.textContent).toContain("仅本地固定端口转发，只监听 127.0.0.1");
+    expect(settingsMounted.container.textContent).toContain("SOCKS5、远程转发和公共监听不支持自动启动");
+  });
+
+  it("enabling startup recovery persists enabled with the real semantics through the injected API", async () => {
+    const api = fakeSettingsApi();
+    settingsMounted = mountSettings(api);
+    await waitFor(() => expect(api.getRecoverySettings).toHaveBeenCalledOnce());
+
+    click(settingsSwitch(settingsMounted.container, "启动时自动恢复转发"));
+    await waitFor(() =>
+      expect(api.setRecoverySettings).toHaveBeenCalledWith({
+        enabled: true,
+        maxConcurrentConnections: 4,
+        skipProduction: true,
+      }),
+    );
+    expect(settingsSwitch(settingsMounted.container, "启动时自动恢复转发").getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("offers recover-now only when startup recovery is enabled and calls the injected API", async () => {
+    const api = fakeSettingsApi();
+    settingsMounted = mountSettings(api);
+    await waitFor(() => expect(api.getRecoverySettings).toHaveBeenCalledOnce());
+    expect([...settingsMounted.container.querySelectorAll("button")].some((b) => b.textContent?.trim() === "立即恢复")).toBe(false);
+
+    click(settingsSwitch(settingsMounted.container, "启动时自动恢复转发"));
+    await waitFor(() => expect(api.setRecoverySettings).toHaveBeenCalledOnce());
+    clickButton(settingsMounted.container, "立即恢复");
+    await waitFor(() => expect(api.recoverNow).toHaveBeenCalledOnce());
   });
 });
