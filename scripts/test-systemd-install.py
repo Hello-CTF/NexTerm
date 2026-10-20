@@ -234,7 +234,6 @@ exit 0
 
 INIT_ADMIN_STUB = """#!/bin/sh
 printf '%s\\n' "$*" >> "$INIT_ADMIN_LOG"
-printf 'init-admin\\n' >> "$SYSTEMCTL_LOG"
 {
   printf 'RUNUSER_USER=%s\\n' "$(id -un)"
   printf 'NEXTERM_AUTH=%s\\n' "${NEXTERM_AUTH:-}"
@@ -244,6 +243,13 @@ printf 'init-admin\\n' >> "$SYSTEMCTL_LOG"
   printf 'NEXTERM_DB_PASSWORD_FILE=%s\\n' "${NEXTERM_DB_PASSWORD_FILE:-}"
   printf 'NEXTERM_ADMIN_USERNAME=%s\\n' "${NEXTERM_ADMIN_USERNAME:-}"
   printf 'NEXTERM_ADMIN_PASSWORD=%s\\n' "${NEXTERM_ADMIN_PASSWORD:-}"
+  printf 'PGDATABASE=%s\\n' "${PGDATABASE:-}"
+  printf 'PGPASSWORD=%s\\n' "${PGPASSWORD:-}"
+  printf 'PGHOST=%s\\n' "${PGHOST:-}"
+  printf 'PGPORT=%s\\n' "${PGPORT:-}"
+  printf 'PGUSER=%s\\n' "${PGUSER:-}"
+  printf 'PGSSLMODE=%s\\n' "${PGSSLMODE:-}"
+  printf 'HOME=%s\\n' "${HOME:-}"
 } >> "$INIT_ADMIN_ENV_LOG"
 if [ "${INIT_ADMIN_TOUCH_DATA:-0}" = "1" ]; then
   : > "$NEXTERM_DATA_DIR/data.db"
@@ -328,7 +334,7 @@ def make_install_env(base: pathlib.Path, stubs: pathlib.Path, *, fail_at: str = 
                      uname: str = "", fail_start: bool = False, init_admin: bool = False,
                      init_admin_exit: int = 0, init_admin_stdout: str = "",
                      admin_password: str | None = None, ambient: dict[str, str] | None = None,
-                     init_admin_block: float = 0) -> dict[str, str]:
+                     init_admin_block: float = 0, init_admin_cmd: str | None = None) -> dict[str, str]:
     env = dict(os.environ)
     env["PATH"] = f"{stubs}:{env['PATH']}"
     if ambient:
@@ -353,7 +359,9 @@ def make_install_env(base: pathlib.Path, stubs: pathlib.Path, *, fail_at: str = 
         env["NEXTERM_INSTALL_FAIL_AT"] = fail_at
     else:
         env.pop("NEXTERM_INSTALL_FAIL_AT", None)
-    if init_admin:
+    if init_admin_cmd is not None:
+        env["NEXTERM_INSTALL_INIT_ADMIN"] = init_admin_cmd
+    elif init_admin:
         env["NEXTERM_INSTALL_INIT_ADMIN"] = str(stubs / "init-admin")
         env["INIT_ADMIN_LOG"] = str(base / "init-admin.log")
         env["INIT_ADMIN_ENV_LOG"] = str(base / "init-admin-env.log")
@@ -382,12 +390,13 @@ def run_install(payload: pathlib.Path, root: pathlib.Path, stubs: pathlib.Path, 
                 uname: str = "", systemd: str = "run", os_release: str | None = "default",
                 fail_start: bool = False, init_admin: bool = False, init_admin_exit: int = 0,
                 init_admin_stdout: str = "", admin_password: str | None = None,
-                ambient: dict[str, str] | None = None, init_admin_block: float = 0) -> subprocess.CompletedProcess:
+                ambient: dict[str, str] | None = None, init_admin_block: float = 0,
+                init_admin_cmd: str | None = None) -> subprocess.CompletedProcess:
     seed_platform(root, systemd, os_release)
     env = make_install_env(base, stubs, fail_at=fail_at, active=active, uname=uname,
                            fail_start=fail_start, init_admin=init_admin, init_admin_exit=init_admin_exit,
                            init_admin_stdout=init_admin_stdout, admin_password=admin_password,
-                           ambient=ambient, init_admin_block=init_admin_block)
+                           ambient=ambient, init_admin_block=init_admin_block, init_admin_cmd=init_admin_cmd)
     return subprocess.run(
         ["/bin/bash", str(SCRIPT), "--root", str(root), "--source", str(payload), *args],
         capture_output=True, text=True, env=env, timeout=60,
@@ -2368,9 +2377,10 @@ def test_first_install_bootstrap_prints_password_before_service_start() -> None:
         assert envlog["NEXTERM_DB"] == "sqlite", envlog
         assert envlog["NEXTERM_ADMIN_PASSWORD"] == "", envlog
         assert envlog["NEXTERM_ADMIN_USERNAME"] == "", envlog
+        assert result.stdout.index("初始密码: ") < result.stdout.index("enabled and started nexterm-server.service"), \
+            "the password must reach the console before the service starts"
         calls = systemctl_calls(base)
-        assert "init-admin" in calls and "enable --now nexterm-server.service" in calls, calls
-        assert calls.index("init-admin") < calls.index("enable --now nexterm-server.service"), calls
+        assert "enable --now nexterm-server.service" in calls, calls
 
 
 def test_bootstrap_supplied_password_passthrough() -> None:
@@ -2421,9 +2431,9 @@ def test_bootstrap_failed_create_retry() -> None:
         assert "resuming incomplete first install" in retry.stdout, retry.stdout
         assert "retry-password-12345" in retry.stdout, retry.stdout
         assert not (root / "opt/nexterm/.install-incomplete").exists(), "the successful retry clears the marker"
-        calls = systemctl_calls(base)
-        assert calls.count("init-admin") == 2, calls
-        assert calls.index("init-admin", calls.index("init-admin") + 1) < calls.index("enable --now nexterm-server.service"), calls
+        assert init_admin_calls(base) == ["init-admin", "init-admin"], init_admin_calls(base)
+        assert retry.stdout.index("初始密码: ") < retry.stdout.index("enabled and started nexterm-server.service"), \
+            "the retry must print the password before the service starts"
 
 
 def test_bootstrap_existing_account_silence() -> None:
@@ -2777,6 +2787,126 @@ def test_bootstrap_secrets_never_in_proc_cmdline() -> None:
         assert envlog["NEXTERM_ADMIN_PASSWORD"] == "synthetic-password-1", envlog
 
 
+def test_bootstrap_scrubs_ambient_pg_env() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        example = payload / "nexterm.env.example"
+        example.write_text(example.read_text().replace(
+            "NEXTERM_DB=sqlite", "NEXTERM_DB=postgres\nNEXTERM_DB_DSN=postgres://nexterm@db.example/nexterm"))
+        result = run_install(payload, root, stubs, base, init_admin=True, ambient={
+            "PGDATABASE": "ambientdb",
+            "PGPASSWORD": "ambient-secret",
+            "PGSSLMODE": "disable",
+            "PGHOST": "ambient.example",
+            "PGPORT": "5433",
+            "PGUSER": "ambient",
+        })
+        assert result.returncode == 0, result.stderr
+        envlog = init_admin_env(base)
+        assert envlog["NEXTERM_DB"] == "postgres", envlog
+        assert envlog["NEXTERM_DB_DSN"] == "postgres://nexterm@db.example/nexterm", envlog
+        for key in ("PGDATABASE", "PGPASSWORD", "PGSSLMODE", "PGHOST", "PGPORT", "PGUSER"):
+            assert envlog[key] == "", f"ambient {key} must be scrubbed from the bootstrap environment: {envlog}"
+        assert envlog["HOME"] == "/var/lib/nexterm", envlog
+        assert "ambient-secret" not in result.stdout + result.stderr
+
+
+def test_bootstrap_env_file_pg_values_pass_through() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        payload = make_payload(base, "v1")
+        example = payload / "nexterm.env.example"
+        example.write_text(example.read_text().replace(
+            "NEXTERM_DB=sqlite",
+            "NEXTERM_DB=postgres\nNEXTERM_DB_DSN=postgres://nexterm@db.example/nexterm\n"
+            "PGDATABASE=fromfile\nPGSSLMODE=verify-full\nPGHOST=pg.internal"))
+        result = run_install(payload, root, stubs, base, init_admin=True, ambient={
+            "PGDATABASE": "ambientdb",
+            "PGSSLMODE": "disable",
+            "PGHOST": "ambient.example",
+        })
+        assert result.returncode == 0, result.stderr
+        envlog = init_admin_env(base)
+        assert envlog["PGDATABASE"] == "fromfile", envlog
+        assert envlog["PGSSLMODE"] == "verify-full", envlog
+        assert envlog["PGHOST"] == "pg.internal", envlog
+
+
+def test_bootstrap_real_postgres_database_isolation() -> None:
+    dsn_base = os.environ.get("NEXTERM_TEST_POSTGRES_DSN", "")
+    binary = os.environ.get("NEXTERM_TEST_SERVER_BINARY", "")
+    if platform.system() != "Linux" or not dsn_base or not binary or not shutil.which("psql"):
+        print("skip   test_bootstrap_real_postgres_database_isolation (needs Linux, psql, NEXTERM_TEST_POSTGRES_DSN and NEXTERM_TEST_SERVER_BINARY)")
+        return
+    import re
+
+    match = re.match(r"^postgres(?:ql)?://([^:@/]+)(?::([^@/]*))?@([^/:]+)(?::(\d+))?/", dsn_base)
+    assert match, f"cannot parse NEXTERM_TEST_POSTGRES_DSN: {dsn_base!r}"
+    user, password, host, port = match.groups()
+    port = port or "5432"
+
+    def psql(dbname: str, sql: str) -> str:
+        dsn = f"postgres://{user}:{password}@{host}:{port}/{dbname}"
+        result = subprocess.run(["psql", dsn, "-tAc", sql], capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, f"psql {sql!r} on {dbname}: {result.stderr}"
+        return result.stdout.strip()
+
+    def app_user_count(dbname: str) -> int:
+        dsn = f"postgres://{user}:{password}@{host}:{port}/{dbname}"
+        result = subprocess.run(["psql", dsn, "-tAc", "SELECT count(*) FROM app_user"], capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            assert "does not exist" in result.stderr, result.stderr
+            return 0
+        return int(result.stdout.strip())
+
+    created: list[str] = []
+
+    def fresh_db(name: str) -> str:
+        psql("postgres", f"DROP DATABASE IF EXISTS {name}")
+        psql("postgres", f"CREATE DATABASE {name}")
+        created.append(name)
+        return name
+
+    try:
+        for case in ("env-file PGDATABASE wins", "DSN dbname wins", "env-file PGPASSWORD wins"):
+            db_a = fresh_db(f"nexterm_boot_a_{len(created)}")
+            db_b = fresh_db(f"nexterm_boot_b_{len(created)}")
+            if case == "env-file PGDATABASE wins":
+                dsn = f"postgres://{user}:{password}@{host}:{port}/"
+                file_extra = f"PGDATABASE={db_a}\n"
+                ambient = {"PGDATABASE": db_b}
+            elif case == "DSN dbname wins":
+                dsn = f"postgres://{user}:{password}@{host}:{port}/{db_a}"
+                file_extra = ""
+                ambient = {"PGDATABASE": db_b}
+            else:
+                dsn = f"postgres://{user}@{host}:{port}/{db_a}"
+                file_extra = f"PGPASSWORD={password}\n"
+                ambient = {"PGPASSWORD": "wrong-password"}
+            with tempfile.TemporaryDirectory() as tmp:
+                base = pathlib.Path(tmp)
+                stubs = make_stubs(base)
+                root = base / "root"
+                payload = make_payload(base, "v1")
+                example = payload / "nexterm.env.example"
+                example.write_text(example.read_text().replace(
+                    "NEXTERM_DB=sqlite", f"NEXTERM_DB=postgres\nNEXTERM_DB_DSN={dsn}\n{file_extra}"))
+                result = run_install(payload, root, stubs, base, ambient=ambient,
+                                     init_admin_cmd=binary)
+                assert result.returncode == 0, (case, result.stderr)
+                assert "初始密码: " in result.stdout, (case, result.stdout)
+            assert app_user_count(db_a) == 1, f"{case}: the admin must be created in the service database"
+            assert app_user_count(db_b) == 0, f"{case}: the admin must not be created in the ambient database"
+    finally:
+        for name in created:
+            psql("postgres", f"DROP DATABASE IF EXISTS {name}")
+
+
 def test_real_server_archive_smoke() -> None:
     archive_dir = ROOT / "target/release-assets"
     candidates = sorted(archive_dir.glob("NexTerm-server_*_linux_*.tar.gz")) if archive_dir.is_dir() else []
@@ -2929,6 +3059,9 @@ def main() -> int:
         test_bootstrap_exit4_keeps_install_failed,
         test_bootstrap_never_uses_env_argv,
         test_bootstrap_secrets_never_in_proc_cmdline,
+        test_bootstrap_scrubs_ambient_pg_env,
+        test_bootstrap_env_file_pg_values_pass_through,
+        test_bootstrap_real_postgres_database_isolation,
         test_real_root_bootstrap_preserves_custom_data_dir_ownership,
         test_real_server_archive_smoke,
     ]

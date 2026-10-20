@@ -64,15 +64,20 @@ The bootstrap runs as the `nexterm` service user: everything it creates
 is born with the right ownership, a data directory the service cannot
 write fails closed during the install, and pre-existing files in a
 custom data directory are never touched (the installer performs no
-recursive ownership changes). When the bootstrap does not run (staged
-`--root` installs, `auth=off` or `auth=platform` deployments), finish
-setup with the one-time code from the server log instead. If an init
-code was already issued and cannot be proven usable (for example a
-previous attempt failed to clean up its own code), the first install
-keeps failing with recovery guidance instead of starting an
-uninitialized service and reporting success. A failed bootstrap aborts
-the first install before the service starts, so fixing the problem and
-re-running resumes and retries it.
+recursive ownership changes). Its environment is scrubbed to a whitelist
+mirroring the service's effective configuration — the unit's `HOME` and
+every key from the env file, including `PG*` values the file sets
+explicitly — so ambient variables such as `PGDATABASE` or `PGPASSWORD`
+can never point the bootstrap at a different database or credential than
+the service uses. When the bootstrap does not run (staged `--root`
+installs, `auth=off` or `auth=platform` deployments), finish setup with
+the one-time code from the server log instead. If an init code was
+already issued and cannot be proven usable (for example a previous
+attempt failed to clean up its own code), the first install keeps
+failing with recovery guidance instead of starting an uninitialized
+service and reporting success. A failed bootstrap aborts the first
+install before the service starts, so fixing the problem and re-running
+resumes and retries it.
 
 An upgrade (detected from an existing `/opt/nexterm/nexterm-server`,
 `/etc/nexterm/*.env` or unit) replaces binaries, web assets and units, and:

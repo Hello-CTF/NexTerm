@@ -37,7 +37,12 @@ env files, disk or logs. Nothing account-related is printed on upgrades, existin
 accounts or re-runs. The bootstrap runs as the nexterm service user, so
 everything it creates is born with the right ownership and a data
 directory the service cannot write fails closed; pre-existing files in a
-custom data directory are never touched. When the bootstrap is skipped
+custom data directory are never touched. The bootstrap environment is
+scrubbed to a whitelist that mirrors the service's effective
+configuration — the unit's HOME and every key from the env file,
+including PG* values the file sets explicitly — so ambient variables
+such as PGDATABASE or PGPASSWORD can never point it at a different
+database or credential than the service uses. When the bootstrap is skipped
 (staged --root installs, auth off/platform modes) finish setup with the
 one-time code from the server log instead. If an init code was already
 issued and cannot be proven usable, the first install keeps failing
@@ -623,6 +628,25 @@ env_get() {
   env_parse_value "$value"
 }
 
+env_file_keys() {
+  # print the assignment key of every non-comment logical line, in order;
+  # used to mirror the service's effective environment exactly
+  local file="$1" line key
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line#"${line%%[![:blank:]]*}"}"
+    case "$line" in
+      ''|'#'*|';'*) continue ;;
+      *[=]*) ;;
+      *) continue ;;
+    esac
+    key="${line%%=*}"
+    key="${key%"${key##*[![:blank:]]}"}"
+    case "$key" in
+      [A-Za-z_][A-Za-z0-9_]*) printf '%s\n' "$key" ;;
+    esac
+  done < <(tr '\r' '\n' < "$file" | env_join_continuations)
+}
+
 transaction_pending() { [ -f "$BACKUP_DIR/pending" ]; }
 
 transaction_state_get() {
@@ -1087,7 +1111,7 @@ bootstrap_admin() {
     log "skipping super-admin bootstrap (staged root $ROOT_PREFIX)"
     return 0
   fi
-  local env_file="$ETC_DIR/nexterm.env" auth data_dir db dsn dbpw effective rc
+  local env_file="$ETC_DIR/nexterm.env" auth data_dir db dsn dbpw effective rc env_keys server_home admin_user admin_pass key
   auth="$(env_get "$env_file" NEXTERM_AUTH)"
   case "$auth" in
     ""|on|loopback) ;;
@@ -1110,6 +1134,15 @@ bootstrap_admin() {
   fi
   effective="$(lex_clean "$effective")"
   [ "$effective" != "/" ] || die "refusing to bootstrap with dangerous data directory $effective"
+  # The service's own HOME comes from the unit's Environment= line.
+  server_home="$(grep -m1 '^Environment=HOME=' "$UNIT_DIR/$SERVER_UNIT" | sed 's/^Environment=HOME=//' || true)"
+  [ -n "$server_home" ] || server_home="/var/lib/nexterm"
+  # The whitelist mirrors the service's effective environment: every key of
+  # the env file (systemd applies EnvironmentFile to the service verbatim),
+  # the unit's HOME, and the intentionally injected admin variables.
+  env_keys="$(env_file_keys "$env_file")"
+  admin_user="${NEXTERM_ADMIN_USERNAME:-}"
+  admin_pass="${NEXTERM_ADMIN_PASSWORD:-}"
   local server_bin="$OPT_DIR/nexterm-server"
   [ -n "${NEXTERM_INSTALL_INIT_ADMIN:-}" ] && server_bin="$NEXTERM_INSTALL_INIT_ADMIN"
   if [ "$REAL_ROOT" -eq 1 ]; then
@@ -1120,17 +1153,31 @@ bootstrap_admin() {
   fi
   log "creating the super-admin account (first install)"
   rc=0
-  # Every variable init-admin reads is exported explicitly from the effective
-  # env file — including empty values, which the server resolves to its
-  # defaults — so an ambient environment can never point the bootstrap at a
-  # different database than the service will use. Secrets travel through the
-  # process environment only: argv is world-readable via /proc/<pid>/cmdline.
-  # The exports live in a subshell so the rest of the installer never carries
-  # the admin variables.
+  # The bootstrap runs in a scrubbed environment: ambient variables (PG*,
+  # LD_*, ...) never reach the child, so it sees exactly what the service
+  # would see and cannot land in a different database. Secrets travel
+  # through the process environment only: argv is world-readable via
+  # /proc/<pid>/cmdline. The scrub and exports live in a subshell so the
+  # rest of the installer never carries the admin variables.
   (
-    export NEXTERM_AUTH="$auth" NEXTERM_DATA_DIR="$effective" NEXTERM_DB="$db" NEXTERM_DB_DSN="$dsn" NEXTERM_DB_PASSWORD_FILE="$dbpw"
-    if [ -n "${NEXTERM_ADMIN_USERNAME:-}" ]; then export NEXTERM_ADMIN_USERNAME; fi
-    if [ -n "${NEXTERM_ADMIN_PASSWORD:-}" ]; then export NEXTERM_ADMIN_PASSWORD; fi
+    while IFS= read -r line; do
+      case "$line" in
+        "declare -x "*) ;;
+        *) continue ;;
+      esac
+      name="${line#declare -x }"
+      name="${name%%=*}"
+      case "$name" in
+        PATH|INIT_ADMIN_*) ;;
+        *) unset "$name" 2>/dev/null || true ;;
+      esac
+    done < <(export -p)
+    export HOME="$server_home"
+    for key in $env_keys; do
+      export "$key=$(env_get "$env_file" "$key")"
+    done
+    if [ -n "$admin_user" ]; then export NEXTERM_ADMIN_USERNAME="$admin_user"; fi
+    if [ -n "$admin_pass" ]; then export NEXTERM_ADMIN_PASSWORD="$admin_pass"; fi
     if [ "$REAL_ROOT" -eq 1 ]; then
       exec runuser --preserve-environment -u nexterm -- "$server_bin" init-admin
     fi
