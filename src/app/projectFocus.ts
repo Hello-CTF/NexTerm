@@ -130,3 +130,48 @@ export function projectFocusLabel(focus: ProjectFocus, groups: readonly AssetGro
   const id = projectGroupId(focus);
   return groups.find((group) => group.id === id && group.parentId === null)?.name ?? "未知项目";
 }
+
+export const PROJECT_GROUP_COLLAPSE_LIMIT = 256;
+
+const PROJECT_GROUP_COLLAPSE_VERSION = 1;
+
+export function sanitizeProjectGroupCollapse(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const latest = new Map<string, true>();
+  for (const value of raw) {
+    if (typeof value === "string" && value.length > 0) {
+      latest.delete(value);
+      latest.set(value, true);
+    }
+  }
+  return [...latest.keys()].slice(-PROJECT_GROUP_COLLAPSE_LIMIT);
+}
+
+export function serializeProjectGroupCollapse(collapsed: readonly string[]): string {
+  return JSON.stringify({ v: PROJECT_GROUP_COLLAPSE_VERSION, collapsed: sanitizeProjectGroupCollapse(collapsed) });
+}
+
+export function parseProjectGroupCollapse(text: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return [];
+  const payload = parsed as Record<string, unknown>;
+  if (payload.v !== PROJECT_GROUP_COLLAPSE_VERSION) return [];
+  return sanitizeProjectGroupCollapse(payload.collapsed);
+}
+
+export function isProjectGroupCollapsed(collapsed: readonly string[], groupId: string): boolean {
+  return collapsed.includes(groupId);
+}
+
+export function toggleProjectGroupCollapse(collapsed: readonly string[], groupId: string): string[] {
+  if (!groupId) return [...collapsed];
+  const next = collapsed.includes(groupId)
+    ? collapsed.filter((id) => id !== groupId)
+    : [...collapsed, groupId];
+  return next.slice(-PROJECT_GROUP_COLLAPSE_LIMIT);
+}
