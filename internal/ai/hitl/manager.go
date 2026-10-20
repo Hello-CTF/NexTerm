@@ -565,8 +565,12 @@ func (m *Manager) expire(runID, requestID string) {
 	run.mu.Lock()
 	m.mu.RLock()
 	closed := m.closed
+	// A started timer callback cannot be recalled when a restore rolls back
+	// or a terminal run is swept: fail closed on a detached run instead of
+	// finishing it and rewriting its blob or deleting its checkpoint.
+	registered := m.runs[runID] == run
 	m.mu.RUnlock()
-	if closed || run.terminal != nil {
+	if closed || !registered || run.terminal != nil {
 		run.mu.Unlock()
 		return
 	}
