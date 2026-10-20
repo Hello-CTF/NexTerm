@@ -195,9 +195,19 @@ export function restoreMostRecentClosedTab(stack: ClosedTabStack): {
   return restoreClosedTab(stack, latest.key);
 }
 
+// Generations must stay unique across an account switch so stale callbacks from a
+// previous epoch are never accepted again; once the safe-integer space is exhausted
+// no fresh generation exists, so fail closed instead of wrapping or reusing one.
+function nextGeneration(generation: number): number {
+  if (!Number.isSafeInteger(generation) || generation >= Number.MAX_SAFE_INTEGER) {
+    throw new RangeError("closed-tab account generation exhausted");
+  }
+  return generation + 1;
+}
+
 export function switchClosedTabAccount(stack: ClosedTabStack, accountId: string): ClosedTabStack {
   if (accountId === stack.accountId) return stack;
-  return { accountId, generation: stack.generation + 1, nextSeq: stack.nextSeq, entries: [] };
+  return { accountId, generation: nextGeneration(stack.generation), nextSeq: stack.nextSeq, entries: [] };
 }
 
 interface ClosedTabStackPayload {
@@ -237,7 +247,7 @@ export function deserializeClosedTabStack(raw: string, accountId: string): Close
   }
   const generation = nonNegativeInt(payload.generation, 0);
   if (payload.accountId !== accountId) {
-    return { accountId, generation: generation + 1, nextSeq: 1, entries: [] };
+    return { accountId, generation: nextGeneration(generation), nextSeq: 1, entries: [] };
   }
   const rawEntries = Array.isArray(payload.entries) ? payload.entries : [];
   const seenKeys = new Set<string>();

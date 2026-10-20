@@ -327,6 +327,18 @@ describe("per-account generation isolation", () => {
     const afterSwitch = pushClosedTab(switched, entryFrom(terminalTab({ id: "tab-2" })));
     expect(afterSwitch.entries[0]?.seq).toBeGreaterThan(stack.entries[0]?.seq ?? 0);
   });
+
+  it("fails closed on consecutive switches once the generation ceiling is reached", () => {
+    const atCeiling = switchClosedTabAccount(createClosedTabStack("account-1", Number.MAX_SAFE_INTEGER - 1), "account-2");
+    expect(atCeiling.generation).toBe(Number.MAX_SAFE_INTEGER);
+    expect(atCeiling.entries).toEqual([]);
+
+    expect(() => switchClosedTabAccount(atCeiling, "account-3")).toThrow(RangeError);
+    expect(() =>
+      switchClosedTabAccount(createClosedTabStack("account-1", Number.MAX_SAFE_INTEGER), "account-2"),
+    ).toThrow(RangeError);
+    expect(switchClosedTabAccount(atCeiling, "account-2")).toBe(atCeiling);
+  });
 });
 
 describe("closed-tab stack serialization", () => {
@@ -359,6 +371,29 @@ describe("closed-tab stack serialization", () => {
     expect(restored.accountId).toBe("account-2");
     expect(restored.entries).toEqual([]);
     expect(restored.generation).toBe(stack.generation + 1);
+  });
+
+  it("fails closed on a foreign account payload at the generation ceiling", () => {
+    const atCeiling = serializeClosedTabStack(createClosedTabStack("account-1", Number.MAX_SAFE_INTEGER));
+    expect(() => deserializeClosedTabStack(atCeiling, "account-2")).toThrow(RangeError);
+
+    const oneBelow = serializeClosedTabStack(createClosedTabStack("account-1", Number.MAX_SAFE_INTEGER - 1));
+    const isolated = deserializeClosedTabStack(oneBelow, "account-2");
+    expect(isolated.accountId).toBe("account-2");
+    expect(isolated.entries).toEqual([]);
+    expect(isolated.generation).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+  it("round-trips a stack at the generation ceiling without losing the generation", () => {
+    let stack = createClosedTabStack("account-1", Number.MAX_SAFE_INTEGER);
+    stack = pushClosedTab(stack, entryFrom(terminalTab({ id: "tab-1" })));
+    const restored = deserializeClosedTabStack(serializeClosedTabStack(stack), "account-1");
+    expect(restored).toEqual(stack);
+    expect(restored.generation).toBe(Number.MAX_SAFE_INTEGER);
+
+    const switched = switchClosedTabAccount(createClosedTabStack("account-1", Number.MAX_SAFE_INTEGER - 1), "account-2");
+    const roundTripped = deserializeClosedTabStack(serializeClosedTabStack(switched), "account-2");
+    expect(roundTripped.generation).toBe(Number.MAX_SAFE_INTEGER);
   });
 
   it("drops invalid entries and caps the stack at 20 entries on deserialize", () => {
