@@ -71,8 +71,6 @@ export function MemoryCard() {
     aliveRef.current = true;
     return () => {
       aliveRef.current = false;
-      loadGenRef.current++;
-      editGenRef.current++;
     };
   }, []);
 
