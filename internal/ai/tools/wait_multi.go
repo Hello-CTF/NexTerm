@@ -88,14 +88,14 @@ func (r *Registry) waitForTabs(waitContext context.Context, jobID string, scope 
 	ticker := time.NewTicker(r.deps.pollInterval())
 	defer ticker.Stop()
 	quietOnly := regex == nil && lines == 0
-	for {
+	evaluate := func(rescan bool) int {
 		satisfied := 0
 		for _, target := range targets {
 			// The pattern/lines condition latches, but quiet is re-evaluated
-			// for every matched tab each round: a previously satisfied tab
-			// that became busy or whose snapshot fails is revoked, so an
-			// all-mode return never rests on a stale idle verdict.
-			if !target.matched {
+			// for every matched tab each pass: a previously satisfied tab
+			// that became busy or whose snapshot fails is revoked, so a
+			// success return never rests on a stale idle verdict.
+			if rescan && !target.matched {
 				r.scanWaitTarget(waitContext, target, regex, lines)
 			}
 			if quietMS > 0 && target.matched {
@@ -119,11 +119,22 @@ func (r *Registry) waitForTabs(waitContext context.Context, jobID string, scope 
 				satisfied++
 			}
 		}
+		return satisfied
+	}
+	for {
+		satisfied := evaluate(true)
+		// Before any success return, re-verify the whole group's quiet state
+		// so a tab that became busy during a later tab's snapshot in the
+		// same round is revoked instead of resting the return on stale idle.
 		if satisfied > 0 && mode == "any" {
-			return r.waitTabsResult(waitContext, targets, mode, true, false)
+			if final := evaluate(false); final > 0 {
+				return r.waitTabsResult(waitContext, targets, mode, true, false)
+			}
 		}
 		if satisfied == len(targets) {
-			return r.waitTabsResult(waitContext, targets, mode, true, false)
+			if final := evaluate(false); final == len(targets) {
+				return r.waitTabsResult(waitContext, targets, mode, true, false)
+			}
 		}
 		select {
 		case <-waitContext.Done():

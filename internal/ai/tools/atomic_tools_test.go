@@ -73,29 +73,35 @@ func TestWaitForQuietContinuousOutputTimeoutCancelAndZeroOutput(t *testing.T) {
 			t.Fatal(err)
 		}
 		startClock := fixture.clock.Load()
-		// Drive the fixture clock and the tab's output from the wait's own
-		// polls instead of wall time: every snapshot advances the clock and
-		// feeds the tab model directly (no pump round-trip), so the quiet
-		// threshold can never be reached regardless of scheduling.
+		// Every snapshot advances the fake clock and feeds the tab model
+		// directly, so the quiet threshold can never be reached. Once the
+		// fake clock crosses quiet_ms (6 snapshots × 10ms = 60ms > 50ms),
+		// the wait is canceled in a controlled way: it must NOT have
+		// succeeded by then, proving continuous output defeats quiet even
+		// past the threshold.
+		ctx, cancel := context.WithCancel(trustedContext())
 		var armHook func()
+		snapshots := 0
 		armHook = func() {
+			snapshots++
 			fixture.clock.Add(10)
 			fixture.terminal().Feed([]byte("noise\r\n"))
+			if snapshots == 6 {
+				cancel()
+			}
 			fixture.setSnapshotHook(armHook)
 		}
 		fixture.setSnapshotHook(armHook)
-		result := fixture.registry().Execute(trustedContext(), "job", fixture.scope(), Call{ID: "continuous", Name: "wait_for", Args: json.RawMessage(`{"pattern":"READY","quiet_ms":50,"timeout_ms":60}`)}, nil)
+		result := fixture.registry().Execute(ctx, "job", fixture.scope(), Call{ID: "continuous", Name: "wait_for", Args: json.RawMessage(`{"pattern":"READY","quiet_ms":50,"timeout_ms":60000}`)}, nil)
 		fixture.setSnapshotHook(nil)
-		timedOut := strings.Contains(result.Text, "等待超时") || strings.Contains(result.Text, context.DeadlineExceeded.Error())
-		if result.OK || result.ExitCode != 1 || !timedOut || strings.Contains(result.Text, "模式已出现") {
+		if result.OK || !strings.Contains(result.Text, context.Canceled.Error()) {
 			t.Fatalf("continuous output result = %+v", result)
 		}
-		// The behavioral precondition is the timeout itself: the fake clock
-		// advanced well past the quiet threshold while the noise kept
-		// resetting idle, so quiet was never satisfied. No fixed minimum
-		// poll count is asserted — that would be wall-clock sensitive.
-		if advanced := fixture.clock.Load() - startClock; advanced < 10 {
-			t.Fatalf("wait never polled the terminal: advanced %dms", advanced)
+		if strings.Contains(result.Text, "模式已出现") {
+			t.Fatalf("quiet satisfied despite continuous output: %+v", result)
+		}
+		if advanced := fixture.clock.Load() - startClock; advanced < 60 {
+			t.Fatalf("fake clock advanced only %dms, below quiet_ms=50", advanced)
 		}
 	})
 

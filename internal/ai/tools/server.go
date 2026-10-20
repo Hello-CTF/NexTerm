@@ -536,7 +536,15 @@ func (r *Registry) resolveTab(ctx context.Context, jobID string, scope Scope, re
 			if hasResolver {
 				sessionID, err := r.tabSession(ctx, requested)
 				if err != nil {
+					if errors.Is(err, session.ErrTabNotFound) {
+						return "", ErrTerminalGone
+					}
 					return "", err
+				}
+				// An empty identity is a verified absence, the same contract
+				// as handle resolution — never a cross-scope verdict.
+				if sessionID == "" {
+					return "", ErrTerminalGone
 				}
 				if sessionID != createdSessionID {
 					return "", ErrCrossScope

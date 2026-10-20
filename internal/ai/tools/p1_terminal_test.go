@@ -30,6 +30,7 @@ type tabFakeTerminal struct {
 	snapshotErr      error
 	snapshotCalls    int
 	snapshotErrAfter int
+	snapshotHook     func(tabID string)
 	outputSinceHook  func(tabID string)
 }
 
@@ -73,11 +74,18 @@ func (f *tabFakeTerminal) tab(tabID string) (*tabFakeTab, error) {
 
 func (f *tabFakeTerminal) Snapshot(_ context.Context, tabID string) (Screen, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.snapshotCalls++
 	if f.snapshotErr != nil && f.snapshotCalls > f.snapshotErrAfter {
+		f.mu.Unlock()
 		return Screen{}, f.snapshotErr
 	}
+	hook := f.snapshotHook
+	f.mu.Unlock()
+	if hook != nil {
+		hook(tabID)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	tab, ok := f.tabs[tabID]
 	if !ok {
 		return Screen{}, fmt.Errorf("tab %s not found", tabID)
