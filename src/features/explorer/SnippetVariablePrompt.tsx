@@ -148,30 +148,35 @@ export function useSnippetVariablePrompt(): {
   promptElement: ReactNode;
   prompting: boolean;
 } {
-  const [request, setRequest] = useState<PromptRequest | null>(null);
+  const queueRef = useRef<PromptRequest[]>([]);
+  const [active, setActive] = useState<PromptRequest | null>(null);
   const nextId = useRef(0);
   const promptForValues = useCallback((title: string, variables: readonly SnippetVariable[]) => {
     if (variables.length === 0) return Promise.resolve<SnippetVariableValues>({});
+    // Concurrent callers queue FIFO: a later prompt never overwrites an unanswered one.
     return new Promise<SnippetVariableValues | null>((resolve) => {
       nextId.current += 1;
-      setRequest({ id: nextId.current, title, variables, resolve });
+      const request: PromptRequest = { id: nextId.current, title, variables, resolve };
+      queueRef.current = [...queueRef.current, request];
+      setActive((current) => current ?? request);
     });
   }, []);
 
   const finish = (values: SnippetVariableValues | null) => {
-    if (!request) return;
-    setRequest(null);
-    request.resolve(values);
+    const [head, ...rest] = queueRef.current;
+    queueRef.current = rest;
+    head?.resolve(values);
+    setActive(rest[0] ?? null);
   };
 
   return {
     promptForValues,
-    prompting: request !== null,
-    promptElement: request ? (
+    prompting: active !== null,
+    promptElement: active ? (
       <SnippetVariablePrompt
-        key={request.id}
-        title={request.title}
-        variables={request.variables}
+        key={active.id}
+        title={active.title}
+        variables={active.variables}
         onSubmit={finish}
         onCancel={() => finish(null)}
       />

@@ -194,6 +194,45 @@ describe("ExecBatchHistory", () => {
     expect(mocks.historyGet).toHaveBeenCalledTimes(1);
   });
 
+  it("renders mixed-workspace execution details per target", async () => {
+    mocks.historyGet.mockResolvedValue({
+      batch,
+      results: [
+        {
+          ...detail.results[0]!,
+          sessionId: "session-ws-1",
+          sessionName: "web-01",
+          status: "success",
+          exitCode: 0,
+          errorKind: "",
+          durationMs: 120,
+        },
+        {
+          ...detail.results[0]!,
+          sessionId: "session-ws-2",
+          sessionName: "db-01",
+          status: "transport_error",
+          exitCode: null,
+          errorKind: "transport",
+          durationMs: 30000,
+        },
+      ],
+    });
+
+    await openHistory();
+    clickButton(mounted!.container, "查看矩阵");
+    await flushUntil(() => text().includes("历史结果矩阵"));
+
+    const rows = [...mounted!.container.querySelectorAll('[data-testid="exec-batch-history-matrix"] tbody tr')];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.textContent).toContain("web-01");
+    expect(rows[0]!.textContent).toContain("成功");
+    expect(rows[0]!.textContent).toContain("120 ms");
+    expect(rows[1]!.textContent).toContain("db-01");
+    expect(rows[1]!.textContent).toContain("传输错误");
+    expect(rows[1]!.textContent).toContain("30000 ms");
+  });
+
   it("hides stale list and matrix data when a refresh fails", async () => {
     mocks.historyGet.mockResolvedValue(detailWithTarget("account-a-target"));
     await openHistory();

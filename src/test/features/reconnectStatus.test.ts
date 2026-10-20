@@ -56,7 +56,8 @@ beforeEach(() => {
   });
   mocks.sessionReconnect.mockResolvedValue(true);
   mocks.probeHostKey.mockResolvedValue({ state: "known" });
-  mocks.sessionList.mockResolvedValue([session("connected")]);
+  // A manual reconnect must observe the session engage before the connected frame counts as fresh.
+  mocks.sessionList.mockResolvedValueOnce([session("reconnecting")]).mockResolvedValue([session("connected")]);
 });
 
 describe("session reconnect status", () => {

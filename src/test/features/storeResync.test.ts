@@ -82,6 +82,35 @@ describe("resyncSessions", () => {
     expect(toasts[0].id).not.toBe(firstId);
     expect(toasts[0].text).toContain("刷新会话列表失败");
   });
+
+  it("applies only the latest of two overlapping resyncs", async () => {
+    const stale = deferred<SessionInfo[]>();
+    vi.mocked(sessionApi.list)
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValueOnce([session("fresh", "connected")]);
+
+    const first = useUi.getState().resyncSessions();
+    await useUi.getState().resyncSessions();
+    stale.resolve([session("stale", "failed")]);
+    await first;
+
+    expect(useUi.getState().sessions).toEqual([session("fresh", "connected")]);
+  });
+
+  it("neither toasts nor flags failure for a superseded resync that fails late", async () => {
+    const stale = deferred<SessionInfo[]>();
+    vi.mocked(sessionApi.list)
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValueOnce([]);
+
+    const first = useUi.getState().resyncSessions();
+    await useUi.getState().resyncSessions();
+    stale.reject(new Error("down"));
+    await first;
+
+    expect(useUi.getState().sessionResyncFailed).toBe(false);
+    expect(useUi.getState().toasts).toEqual([]);
+  });
 });
 
 describe("recording resync", () => {

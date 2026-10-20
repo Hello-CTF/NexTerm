@@ -1380,6 +1380,14 @@ export function onRemoteChange(payload: { revision?: number } | null) {
   void pullLatest("remote");
 }
 
+export async function subscribeLayoutChanged(): Promise<void> {
+  try {
+    await listenEvent<{ revision?: number }>(LAYOUT_CHANGED, onRemoteChange);
+  } catch (error) {
+    console.warn("[NexTerm] Failed to subscribe layout changes", error);
+  }
+}
+
 export function startLayoutSync(): void {
   if (started) return;
   started = true;
@@ -1396,6 +1404,6 @@ export function startLayoutSync(): void {
       resolveBootstrap();
     }
     useUi.subscribe(onStoreChange);
-    await listenEvent<{ revision?: number }>(LAYOUT_CHANGED, onRemoteChange);
+    void subscribeLayoutChanged();
   })();
 }

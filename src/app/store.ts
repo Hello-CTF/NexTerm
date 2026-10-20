@@ -390,6 +390,8 @@ interface UiState {
   setTakeover: (t: TakeoverState | null) => void;
   aiBoards: Record<string, AiBoard>;
   aiAccountEpoch: number;
+  accountEpoch: number;
+  advanceAccountEpoch: () => void;
   workspaceRuntime: Record<string, WorkspaceRuntime>;
   workspaceRuntimeEpoch: number;
   connectionProblems: Record<string, WorkspaceProblem>;
@@ -636,7 +638,23 @@ function withoutConnectionProblem(
 
 // Auth guard for the session list: when login/logout switches accounts, in-flight old requests may arrive late and must not write back over the new session data.
 let sessionsEpoch = 0;
+let sessionsRequestSeq = 0;
 const abnormalDisconnectNotices = new Set<string>();
+
+// Latest status-event evidence per session: backend status events carry a monotonically increasing
+// version, so a manual reconnect can tell a stale pre-reconnect list frame from a fresh one. Cleared with the sessions.
+const sessionStatusEvidenceMap = new Map<string, { version: number; status: string }>();
+
+export function sessionStatusEvidence(sessionId: string): { version: number; status: string } | undefined {
+  return sessionStatusEvidenceMap.get(sessionId);
+}
+
+function trackSessionStatusEvidence(p: SessionStatusEvent): void {
+  if (typeof p.version !== "number" || !Number.isFinite(p.version) || p.version <= 0) return;
+  const previous = sessionStatusEvidenceMap.get(p.sessionId);
+  if (previous && previous.version >= p.version) return;
+  sessionStatusEvidenceMap.set(p.sessionId, { version: p.version, status: p.status });
+}
 
 const LEFT_MIN = 180;
 const LEFT_MAX = 560;
@@ -867,6 +885,8 @@ export const useUi = create<UiState>((set, get) => ({
   takeover: restoredTakeover,
   aiBoards: {},
   aiAccountEpoch: 0,
+  accountEpoch: 0,
+  advanceAccountEpoch: () => set((state) => ({ accountEpoch: state.accountEpoch + 1 })),
   workspaceRuntime: {},
   workspaceRuntimeEpoch: 0,
   connectionProblems: {},
@@ -1553,18 +1573,20 @@ export const useUi = create<UiState>((set, get) => ({
   dismissWorkspaceRestoreBanner: () => set({ workspaceRestoreDismissed: true }),
   resyncSessions: async (options) => {
     const epoch = sessionsEpoch;
+    const seq = ++sessionsRequestSeq;
     try {
       const list = await sessionApi.list();
-      if (epoch !== sessionsEpoch) return;
+      // Latest-only: a superseded response (older request landing late) must not overwrite newer data.
+      if (epoch !== sessionsEpoch || seq !== sessionsRequestSeq) return;
       set({ sessions: list, sessionResyncFailed: false });
     } catch (e) {
+      if (epoch !== sessionsEpoch || seq !== sessionsRequestSeq || options?.silent) return;
       console.error("[NexTerm] Failed to refresh session list", e);
-      if (epoch !== sessionsEpoch || options?.silent) return;
       if (get().sessionResyncFailed) return;
       set({ sessionResyncFailed: true });
       get().pushToast("error", `刷新会话列表失败：${describeError(e)}`);
     } finally {
-      if (epoch === sessionsEpoch) set({ sessionResyncCompleted: true });
+      if (epoch === sessionsEpoch && seq === sessionsRequestSeq) set({ sessionResyncCompleted: true });
     }
   },
   resetSessions: (options) => {
@@ -1573,6 +1595,7 @@ export const useUi = create<UiState>((set, get) => ({
     workspaceProblemResetGeneration += 1;
     recordingsEpoch += 1;
     abnormalDisconnectNotices.clear();
+    sessionStatusEvidenceMap.clear();
     set((state) => ({
       sessions: [],
       recordings: {},
@@ -1596,6 +1619,7 @@ export const useUi = create<UiState>((set, get) => ({
     workspaceProblemResetGeneration += 1;
     recordingsEpoch += 1;
     abnormalDisconnectNotices.clear();
+    sessionStatusEvidenceMap.clear();
     set((state) => ({
       sessions: [],
       recordings: {},
@@ -2740,6 +2764,7 @@ export function sessionReconnectStatusText(
 const retryableSessionErrorCodes = new Set(["ssh", "timeout", "disconnected"]);
 
 export function applySessionStatusEvent(p: SessionStatusEvent): void {
+  trackSessionStatusEvidence(p);
   const state = useUi.getState();
   const current = state.sessions.find((session) => session.id === p.sessionId);
   const attempt = p.attempt ?? current?.attempt ?? 0;
@@ -2790,8 +2815,13 @@ async function reconnectSessionAfterDisconnect(sessionId: string): Promise<void>
     state.pushToast("error", "重连失败：会话已不存在，请刷新会话列表");
     return;
   }
+  // Route through the target-aware workspace reconnect so the connection problem settles against
+  // the workspace target: success clears it, failure records it, a canceled attempt adds nothing.
+  const workspace = state.workspaces.find((item) => item.sessionId === sessionId);
   try {
-    const fresh = await reconnectSessionAndWait(session);
+    const fresh = workspace
+      ? await reconnectWorkspaceSession(workspace, session)
+      : await reconnectSessionAndWait(session);
     if (!fresh) return;
     const latest = useUi.getState();
     latest.setSessions([...latest.sessions.filter((item) => item.id !== fresh.id), fresh]);
@@ -4288,6 +4318,18 @@ async function runReconnectAndWait(
   intervalMs: number,
   isCurrent: () => boolean,
 ): Promise<SessionInfo | null> {
+  // Events observed from here on are fresh evidence for this reconnect attempt; anything tracked
+  // earlier belongs to the previous generation and must not settle the wait.
+  const startEvidence = sessionStatusEvidence(session.id);
+  const startVersion = startEvidence?.version ?? 0;
+  const hasFreshEvidence = (status: string) => {
+    const evidence = sessionStatusEvidence(session.id);
+    return evidence !== undefined && evidence.version > startVersion && evidence.status === status;
+  };
+  // A stale connected list frame can only exist when the previous generation was still alive at
+  // reconnect start; a session that was already disconnected/failed has no live frame to mistake.
+  const startStatus = startEvidence?.status ?? session.status;
+  const staleConnectedPossible = startStatus === "connected" || startStatus === "connecting" || startStatus === "reconnecting";
   if (!isCurrent()) return null;
   try {
     if (!(await confirmHostKeyIfNeeded(session.assetId ?? "", session.kind, isCurrent))) return null;
@@ -4308,7 +4350,11 @@ async function runReconnectAndWait(
   const deadline = Date.now() + timeoutMs;
   // session_reconnect returns first and the backend goroutine sets reconnecting afterwards, so the first list may read the pre-start
   // stale disconnected/failed; only a terminal state seen after connecting/reconnecting counts as failure.
+  // A stale connected first frame is ignored the same way: only a connecting/reconnecting transition,
+  // fresh status-event evidence (a newer event version, e.g. when joining an in-flight reconnect),
+  // or a later live list makes connected count as success.
   let enteredReconnect = false;
+  let polls = 0;
   for (;;) {
     if (!isCurrent()) return null;
     let list: SessionRuntimeInfo[];
@@ -4319,11 +4365,13 @@ async function runReconnectAndWait(
       throw error;
     }
     if (!isCurrent()) return null;
+    polls += 1;
     const current = list.find((s) => s.id === session.id);
-    if (current?.status === "connected") return current;
-    if (current?.status === "connecting" || current?.status === "reconnecting") {
-      enteredReconnect = true;
-    } else if (current && enteredReconnect) {
+    if (current?.status === "connecting" || current?.status === "reconnecting") enteredReconnect = true;
+    if (hasFreshEvidence("connecting") || hasFreshEvidence("reconnecting")) enteredReconnect = true;
+    if (current?.status === "connected") {
+      if (enteredReconnect || polls > 1 || !staleConnectedPossible || hasFreshEvidence("connected")) return current;
+    } else if (current && current.status !== "connecting" && current.status !== "reconnecting" && enteredReconnect) {
       throw reconnectPollingError(current);
     }
     if (Date.now() >= deadline) throw new Error("重连超时，请检查网络后重试");
