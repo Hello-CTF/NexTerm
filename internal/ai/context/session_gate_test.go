@@ -48,6 +48,9 @@ func TestContextSessionGatewayIdentityLessDenied(t *testing.T) {
 	if _, err := deps.Tail(ctx, registered.ID, 10); !errors.Is(err, session.ErrForbidden) {
 		t.Fatalf("tail err = %v", err)
 	}
+	if _, err := deps.TabDetail(ctx, registered.ID); !errors.Is(err, session.ErrForbidden) {
+		t.Fatalf("tab detail err = %v", err)
+	}
 	if _, err := deps.Session(ctx, registered.SessionID); !errors.Is(err, session.ErrForbidden) {
 		t.Fatalf("session err = %v", err)
 	}
@@ -63,6 +66,9 @@ func TestContextSessionGatewayIdentityLessDenied(t *testing.T) {
 	if _, err := deps.Tail(marked, registered.ID, 10); err != nil {
 		t.Fatalf("marked tail err = %v", err)
 	}
+	if detail, err := deps.TabDetail(marked, registered.ID); err != nil || detail.TabID != registered.ID {
+		t.Fatalf("marked tab detail = %+v err=%v", detail, err)
+	}
 	if brief, err := deps.Session(marked, registered.SessionID); err != nil || brief.Kind != session.KindRemote {
 		t.Fatalf("marked session = %+v err=%v", brief, err)
 	}
@@ -73,6 +79,9 @@ func TestContextSessionGatewayIdentityLessDenied(t *testing.T) {
 	}
 	if _, err := deps.Tail(ipc.WithUserID(context.Background(), "u2"), registered.ID, 10); !errors.Is(err, session.ErrForbidden) {
 		t.Fatalf("cross-account tail err = %v", err)
+	}
+	if _, err := deps.TabDetail(ipc.WithUserID(context.Background(), "u2"), registered.ID); !errors.Is(err, session.ErrForbidden) {
+		t.Fatalf("cross-account tab detail err = %v", err)
 	}
 	if _, err := deps.Screen(ipc.WithUserID(context.Background(), "u1"), registered.ID); err != nil {
 		t.Fatalf("owner screen err = %v", err)
