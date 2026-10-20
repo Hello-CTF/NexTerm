@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, createElement } from "react";
+import { act, createElement, StrictMode } from "react";
 import { clickButton, flush, mount, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
@@ -925,5 +925,229 @@ describe("inventory target actions", () => {
     await act(async () => { rejectExec({ code: "io", message: "执行已取消", detail: { cancelled: true } }); });
     await flush();
     expect(m.container.querySelector('[role="note"]')?.textContent).toContain("执行已取消");
+  });
+
+  it("does not leak an owner-only switched result after remount", async () => {
+    let resolveA: (value: { output: string; exitCode: number }) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveA = resolve; }));
+    const m1 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    setInputValue(m1.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m1.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m1.container, "执行");
+    await flush();
+    act(() => m1.unmount());
+
+    // Remount to install the restore callback, then switch owner only.
+    const m2 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    mounted = m2;
+    await flush();
+    act(() => m2.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-b" })));
+    await act(async () => { resolveA({ output: "A-OWNER-ONLY-SECRET\n", exitCode: 0 }); });
+    await flush();
+    expect(m2.container.textContent).not.toContain("A-OWNER-ONLY-SECRET");
+  });
+
+  it("notifies all restore views of a settle, not just the last subscriber", async () => {
+    let resolveA: (value: { output: string; exitCode: number }) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveA = resolve; }));
+    const m1 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    setInputValue(m1.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m1.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m1.container, "执行");
+    await flush();
+    act(() => m1.unmount());
+
+    // Two restore views of the same owner and target both receive the settle.
+    const viewA = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    const viewB = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    mounted = viewB;
+    await flush();
+    await act(async () => { resolveA({ output: "shared result\n", exitCode: 0 }); });
+    await flush();
+    expect(viewA.container.textContent).toContain("shared result");
+    expect(viewB.container.textContent).toContain("shared result");
+
+    // Out-of-order unsubscribe: closing the first view does not affect the second.
+    act(() => viewA.unmount());
+    await flush();
+    expect(viewB.container.textContent).toContain("shared result");
+  });
+
+  it("preserves the ignored-done notice when settling with no mounted view", async () => {
+    let resolveA: (value: { output: string; exitCode: number }) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveA = resolve; }));
+    const m1 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    setInputValue(m1.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m1.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m1.container, "执行");
+    await flush();
+    clickButton(m1.container, "忽略结果");
+    await flush();
+    act(() => m1.unmount());
+
+    // A settles naturally with no mounted view; the ignored-done notice is
+    // preserved for the remount instead of being lost.
+    await act(async () => { resolveA({ output: "ignored secret\n", exitCode: 0 }); });
+    await flush();
+    const m2 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    mounted = m2;
+    await flush();
+    expect(m2.container.textContent).toContain("命令已结束；结果已忽略");
+    expect(m2.container.textContent).not.toContain("ignored secret");
+  });
+
+  it("notifies a remounted view of a cancel timeout with a retry entry", async () => {
+    let rejectExec: (reason: unknown) => void = () => {};
+    let rejectCancel: (reason: unknown) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { rejectExec = reject; }));
+    const m1 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    setInputValue(m1.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m1.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m1.container, "执行");
+    await flush();
+
+    // Send a permanently pending cancel, then unmount before it settles.
+    SetCancelTimeoutForTest(50);
+    mocks.call.mockImplementationOnce(() => new Promise((_, reject) => { rejectCancel = reject; }));
+    clickButton(m1.container, "取消执行");
+    await flush();
+    act(() => m1.unmount());
+
+    // The remounted view shows cancel-pending, then the timeout with retry.
+    const m2 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    mounted = m2;
+    await flush();
+    expect(m2.container.textContent).toContain("取消中");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+    await flush();
+    expect(m2.container.textContent).toContain("取消失败");
+    const retryButton = () => [...m2.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "重试取消");
+    expect(retryButton()).not.toBeUndefined();
+
+    // Retry succeeds; a late reject of the first cancel is ignored by the
+    // operation-level sequence and does not clobber the retry state.
+    mocks.call.mockResolvedValueOnce({});
+    clickButton(m2.container, "重试取消");
+    await flush();
+    await act(async () => { rejectCancel(new Error("late cancel reject")); });
+    await flush();
+    expect(m2.container.textContent).toContain("取消中");
+    expect(m2.container.textContent).not.toContain("取消失败");
+
+    // The original exec settles as cancelled.
+    await act(async () => { rejectExec({ code: "io", message: "执行已取消", detail: { cancelled: true } }); });
+    await flush();
+    expect(m2.container.querySelector('[role="note"]')?.textContent).toContain("执行已取消");
+  });
+
+  it("does not leak an owner-only switched failure after remount", async () => {
+    let rejectA: (reason: unknown) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { rejectA = reject; }));
+    const m1 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    setInputValue(m1.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m1.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m1.container, "执行");
+    await flush();
+    act(() => m1.unmount());
+
+    // Remount to install the restore subscription, then switch owner only.
+    const m2 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    mounted = m2;
+    await flush();
+    act(() => m2.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-b" })));
+    await act(async () => { rejectA(new Error("A-FAILURE-SECRET")); });
+    await flush();
+    expect(m2.container.textContent).not.toContain("A-FAILURE-SECRET");
+    expect(m2.container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("does not leak an owner-only switched cancelled settle after remount", async () => {
+    let rejectA: (reason: unknown) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((_, reject) => { rejectA = reject; }));
+    const m1 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    setInputValue(m1.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m1.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m1.container, "执行");
+    await flush();
+    act(() => m1.unmount());
+
+    const m2 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    mounted = m2;
+    await flush();
+    act(() => m2.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-b" })));
+    await act(async () => { rejectA({ code: "io", message: "执行已取消", detail: { cancelled: true } }); });
+    await flush();
+    expect(m2.container.textContent).not.toContain("执行已取消");
+  });
+
+  it("restores the original owner's outcome after switching back", async () => {
+    let resolveA: (value: { output: string; exitCode: number }) => void = () => {};
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveA = resolve; }));
+    const m1 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    setInputValue(m1.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m1.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m1.container, "执行");
+    await flush();
+    act(() => m1.unmount());
+
+    // The settle lands while the remounted view is switched to owner B and
+    // is not rendered there; switching back to owner A replays it.
+    const m2 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    mounted = m2;
+    await flush();
+    act(() => m2.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-b" })));
+    await act(async () => { resolveA({ output: "A-RESTORED\n", exitCode: 0 }); });
+    await flush();
+    expect(m2.container.textContent).not.toContain("A-RESTORED");
+
+    act(() => m2.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" })));
+    await flush();
+    expect(m2.container.textContent).toContain("A-RESTORED");
+    expect(m2.container.textContent).toContain("退出码 0");
+  });
+
+  it("restores a running operation under StrictMode double subscription", async () => {
+    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>(() => {}));
+    const m1 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
+    setInputValue(m1.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m1.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m1.container, "执行");
+    await flush();
+    act(() => m1.unmount());
+
+    // StrictMode replays effects: the first subscribe/unsubscribe cycle must
+    // not detach the replayed subscription, and exec still happened once.
+    const m2 = mount(createElement(StrictMode, null, createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" })));
+    mounted = m2;
+    await flush();
+    expect(mocks.call).toHaveBeenCalledTimes(1);
+    expect(m2.container.textContent).toContain("执行中");
+    const cancelButton = () => [...m2.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "取消执行");
+    expect(cancelButton()).not.toBeUndefined();
+    expect(cancelButton()?.disabled).toBe(false);
+  });
+
+  it("recycles a settled operation when the owner is at capacity", async () => {
+    mocks.call.mockResolvedValueOnce({ output: "done\n", exitCode: 0 });
+    mocks.call.mockImplementation(() => new Promise(() => {}));
+    // 31 never-settling operations plus one that settles and stays retained.
+    for (let index = 0; index < 32; index++) {
+      const target = { type: "context", name: `ctx-${index}`, dockerEndpoint: "ssh://ops@prod.example" };
+      const m = mount(createElement(InventoryTargetActions, { kind: "docker-context", target, ownerKey: "owner-a" }));
+      setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+      setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+      clickButton(m.container, "执行");
+      await flush();
+      act(() => m.unmount());
+    }
+    const otherTarget = { type: "context", name: "other", dockerEndpoint: "ssh://ops@other.example" };
+    const m33 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: otherTarget, ownerKey: "owner-a" }));
+    mounted = m33;
+    setInputValue(m33.container.querySelector('input[aria-label="命令"]')!, "true");
+    setInputValue(m33.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m33.container, "执行");
+    await flush();
+    expect(m33.container.textContent).not.toContain("在途操作已达上限");
+    expect(mocks.call).toHaveBeenCalledTimes(33);
   });
 });

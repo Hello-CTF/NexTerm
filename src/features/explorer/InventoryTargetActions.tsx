@@ -5,6 +5,8 @@ import { dockerConfirmation, getDockerConfirmationChallenge, type DockerConfirma
 import { inventoryExecCancelled, inventoryExecFailure, inventoryTargetApi } from "./inventoryTargetApi";
 import type { DockerProductionConfirmation } from "../../ipc/commands";
 import type { InventoryTargetExecRequest, InventoryTargetExecResponse } from "../../ipc/generated/types";
+import type { LiveOperation } from "./inventoryLiveOperationStore";
+import { liveOperationStore } from "./inventoryLiveOperationStore";
 
 export interface InventoryTargetSession {
   id: string;
@@ -55,32 +57,11 @@ function targetIdentity(kind: string, target: Record<string, unknown>): string {
   ].join("/");
 }
 
-// LiveOperation is the in-flight lifecycle of one exec, tracked
-// independently of the busy/ignored display state. The snapshot is bound to
-// the owner and target it was launched with, so cancel only ever addresses
-// that exact instance under that owner.
-interface LiveOperation {
-  snapshot: InventoryTargetExecRequest;
-  ownerKey: string;
-  identity: string;
-  status: "running" | "ignored" | "cancel-pending" | "cancel-failed";
-  cancelError?: string;
-  settled?: boolean;
-  outcome?: "cancelled" | "result" | "failure";
-  result?: InventoryTargetExecResponse;
-  failure?: { message: string; exitCode?: number; output?: string };
-  onSettle?: () => void;
+// ResetLiveOperationRegistry clears the operation store; it exists for
+// tests so each case starts without another case's live operation.
+export function ResetLiveOperationRegistry() {
+  liveOperationStore.reset();
 }
-
-// The registry keeps live operations visible across unmounts in an
-// owner-isolated, bounded way. It is keyed by {ownerKey, operationId}, so
-// two owners never evict each other and one owner's operations never
-// overwrite or mis-delete another's. Unsettled operations are never
-// evicted: at capacity only settled entries are recycled, and a new exec
-// beyond capacity is rejected visibly before any call is made.
-const LIVE_REGISTRY_LIMIT = 32;
-let cancelTimeoutMs = 10000;
-const liveOperationRegistry = new Map<string, Map<string, LiveOperation>>();
 
 // SetCancelTimeoutForTest overrides the cancel timeout; it exists for tests
 // so they do not wait the full production timeout.
@@ -88,40 +69,7 @@ export function SetCancelTimeoutForTest(ms: number) {
   cancelTimeoutMs = ms;
 }
 
-function registryStore(op: LiveOperation): Error | null {
-  let ownerOps = liveOperationRegistry.get(op.ownerKey);
-  if (!ownerOps) {
-    ownerOps = new Map();
-    liveOperationRegistry.set(op.ownerKey, ownerOps);
-  }
-  if (ownerOps.size >= LIVE_REGISTRY_LIMIT && !ownerOps.has(op.snapshot.operationId)) {
-    for (const [id, existing] of ownerOps) {
-      if (existing.settled) {
-        ownerOps.delete(id);
-        break;
-      }
-    }
-    if (ownerOps.size >= LIVE_REGISTRY_LIMIT) {
-      return new Error("该所有者的在途操作已达上限，请等待现有操作结束");
-    }
-  }
-  ownerOps.set(op.snapshot.operationId, op);
-  return null;
-}
-
-function registryDelete(ownerKey: string, operationId: string) {
-  const ownerOps = liveOperationRegistry.get(ownerKey);
-  if (ownerOps) {
-    ownerOps.delete(operationId);
-    if (ownerOps.size === 0) liveOperationRegistry.delete(ownerKey);
-  }
-}
-
-// ResetLiveOperationRegistry clears the cross-unmount registry; it exists
-// for tests so each case starts without another case's live operation.
-export function ResetLiveOperationRegistry() {
-  liveOperationRegistry.clear();
-}
+let cancelTimeoutMs = 10000;
 
 export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], requireSession = false }: InventoryTargetActionsProps) {
   const executable = targetExecutable(kind, target);
@@ -134,6 +82,8 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
   targetRef.current = target;
   const identityRef = useRef(identity);
   identityRef.current = identity;
+  const ownerRef = useRef(ownerKey);
+  ownerRef.current = ownerKey;
   const [command, setCommand] = useState("");
   const [container, setContainer] = useState(isPod ? stringField(target, "container") : "");
   const [sessionId, setSessionId] = useState("");
@@ -144,48 +94,18 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
   const [cancelled, setCancelled] = useState(false);
   const [ignoredDone, setIgnoredDone] = useState(false);
   const generationRef = useRef(0);
-  const cancelSeqRef = useRef(0);
   // The live operation lives in a ref so its identity stays stable across
-  // renders, mutations, and the registry; a version counter drives renders.
+  // renders, mutations, and the store; a version counter drives renders.
   const liveOpRef = useRef<LiveOperation | null>(null);
   const [, setLiveOpVersion] = useState(0);
   const bumpLiveOp = () => setLiveOpVersion((version) => version + 1);
 
+  // On mount and on owner/target switch, reset the target-scoped form
+  // state, restore a live operation for the current owner and target from
+  // the store, and replay a settled outcome kept for this owner and target.
+  // A live operation stays tracked across switches with its cancel control.
   useEffect(() => {
     generationRef.current++;
-    // A remount with the same owner and target restores the live operation
-    // and its cancel control; a different owner or target never sees it.
-    if (liveOpRef.current === null) {
-      const ownerOps = liveOperationRegistry.get(ownerKey);
-      if (ownerOps) {
-        for (const [, restored] of ownerOps) {
-          if (restored.settled || restored.identity !== identityRef.current) continue;
-          restored.onSettle = () => {
-            if (liveOpRef.current !== restored) return;
-            liveOpRef.current = null;
-            if (ownerKey !== restored.ownerKey || identityRef.current !== restored.identity) {
-              bumpLiveOp();
-              return;
-            }
-            if (restored.status === "ignored") {
-              setIgnoredDone(true);
-            } else if (restored.outcome === "cancelled") {
-              setCancelled(true);
-            } else if (restored.outcome === "result" && restored.result) {
-              setResult(restored.result);
-            } else if (restored.outcome === "failure" && restored.failure) {
-              setFailure(restored.failure);
-            }
-            bumpLiveOp();
-          };
-          liveOpRef.current = restored;
-          bumpLiveOp();
-          break;
-        }
-      }
-    }
-    // Reset target-scoped form state for the new identity/owner, but keep
-    // the live operation tracked with its cancel control.
     setResult(null);
     setFailure(null);
     setCancelled(false);
@@ -193,19 +113,79 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
     setProduction(null);
     setContainer(targetRef.current.type === "pod" ? stringField(targetRef.current, "container") : "");
     setSessionId("");
+    const ownerOps = liveOperationStore.getOwnerLive(ownerKey);
+    if (ownerOps === null) return;
+    for (const [, candidate] of ownerOps) {
+      if (candidate.settled || candidate.identity !== identityRef.current) continue;
+      liveOpRef.current = candidate;
+      bumpLiveOp();
+      break;
+    }
+    for (const [, candidate] of ownerOps) {
+      if (!candidate.settled || candidate.identity !== identityRef.current) continue;
+      if (candidate.status === "ignored") {
+        setIgnoredDone(true);
+      } else if (candidate.outcome === "cancelled") {
+        setCancelled(true);
+      } else if (candidate.outcome === "result" && candidate.result) {
+        setResult(candidate.result);
+      } else if (candidate.outcome === "failure" && candidate.failure) {
+        setFailure(candidate.failure);
+      }
+      liveOperationStore.consumeSettled(candidate.ownerKey, candidate.snapshot.operationId);
+      break;
+    }
   }, [ownerKey, identity]);
 
-  // Unmount keeps the live operation in the owner-isolated registry so a
-  // remount can see it and retry the cancel; the exec's own settle clears
-  // the registry entry.
+  // Subscribe to the tracked operation's notifications. Settle and
+  // cancel-state changes go to every subscriber; each subscriber filters
+  // them by its current owner and target identity at emit time, so a
+  // switched view never renders another owner's outcome. The subscribe read
+  // is atomic with the registration, and an operation that settled or was
+  // consumed between the restore scan and this subscription is reconciled
+  // on the spot instead of leaving a stuck running notice.
   useEffect(() => {
-    return () => {
-      const op = liveOpRef.current;
-      if (op !== null && !op.settled) {
-        registryStore(op);
+    const op = liveOpRef.current;
+    if (op === null) return;
+    const deliverSettle = (settled: LiveOperation) => {
+      liveOpRef.current = null;
+      if (settled.status === "ignored") {
+        setIgnoredDone(true);
+      } else if (settled.outcome === "cancelled") {
+        setCancelled(true);
+      } else if (settled.outcome === "result" && settled.result) {
+        setResult(settled.result);
+      } else if (settled.outcome === "failure" && settled.failure) {
+        setFailure(settled.failure);
       }
     };
-  }, []);
+    const { operation, unsubscribe } = liveOperationStore.subscribe(op.ownerKey, op.snapshot.operationId, (event) => {
+      if (liveOpRef.current !== event.operation) return;
+      if (ownerRef.current !== event.operation.ownerKey || identityRef.current !== event.operation.identity) {
+        liveOpRef.current = null;
+        bumpLiveOp();
+        return;
+      }
+      if (event.type === "settle") {
+        deliverSettle(event.operation);
+      }
+      bumpLiveOp();
+    });
+    if (operation === null) {
+      liveOpRef.current = null;
+      bumpLiveOp();
+    } else if (operation.settled) {
+      if (ownerRef.current === operation.ownerKey && identityRef.current === operation.identity) {
+        deliverSettle(operation);
+      } else {
+        liveOpRef.current = null;
+      }
+      bumpLiveOp();
+    }
+    return () => {
+      unsubscribe();
+    };
+  }, [liveOpRef.current?.snapshot.operationId, ownerKey, identity]);
 
   const run = async (confirmation?: DockerProductionConfirmation) => {
     // A live operation blocks a replacement until it settles; an ignored
@@ -248,7 +228,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
     };
     const op: LiveOperation = { snapshot, ownerKey, identity, status: "running" };
     // At capacity the new exec is rejected visibly before any call is made.
-    const capacityError = registryStore(op);
+    const capacityError = liveOperationStore.store(op);
     if (capacityError !== null) {
       setFailure({ message: capacityError.message });
       setBusy(false);
@@ -271,6 +251,9 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
       }
       const challenge = getDockerConfirmationChallenge(cause);
       if (challenge) {
+        // The challenge ends this operation's lifecycle without an exec
+        // outcome; drop its registry entry so no stale record is replayed.
+        liveOperationStore.delete(op.ownerKey, op.snapshot.operationId);
         setProduction({ challenge, command: command.trim() });
         return;
       }
@@ -292,17 +275,17 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
       setFailure(op.failure);
     } finally {
       // The operation's lifecycle ends only when the exec itself settles;
-      // until then its snapshot and cancel control are retained. The busy
-      // display clears on settle regardless of generation; only the
-      // outcome display is generation-gated.
+      // until then its snapshot and cancel control are retained. Settling
+      // notifies every subscriber, and the registry keeps the settled
+      // operation until a subscriber consumes it, so no outcome is lost
+      // between an unmount and a remount. The busy display clears on
+      // settle regardless of generation; only the outcome display is
+      // generation-gated.
+      liveOperationStore.markSettled(op);
       if (liveOpRef.current === op) {
-        op.settled = true;
         liveOpRef.current = null;
-        registryDelete(op.ownerKey, op.snapshot.operationId);
         if (op.status === "ignored") setIgnoredDone(true);
-        bumpLiveOp();
       }
-      op.onSettle?.();
       setBusy(false);
     }
   };
@@ -325,24 +308,28 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
   // ignoring a result, which leaves the command running. The cancel reads
   // only the frozen launch snapshot, and only under the launching owner.
   // A permanently pending cancel times out into a retryable cancel-failed;
-  // late settles are handled by request sequence.
+  // late settles are handled by the operation-level cancel sequence.
   const cancelExecution = async () => {
     const op = liveOpRef.current;
     if (op === null || op.ownerKey !== ownerKey || op.status === "cancel-pending") return;
-    const seq = ++cancelSeqRef.current;
+    // The cancel sequence belongs to the operation, not the component
+    // instance, so a late reject of an earlier cancel never clobbers the
+    // state of a retry issued from another view.
+    const seq = (op.cancelSeq ?? 0) + 1;
+    op.cancelSeq = seq;
     op.status = "cancel-pending";
     op.cancelError = undefined;
-    bumpLiveOp();
+    liveOperationStore.notifyCancel(op);
     try {
       await Promise.race([
         inventoryTargetApi.cancelExec(op.snapshot),
         new Promise((_, reject) => setTimeout(() => reject(new Error("取消请求超时，结果未知")), cancelTimeoutMs)),
       ]);
     } catch (cause) {
-      if (seq !== cancelSeqRef.current) return;
+      if (op.cancelSeq !== seq) return;
       op.status = "cancel-failed";
       op.cancelError = describeError(cause);
-      bumpLiveOp();
+      liveOperationStore.notifyCancel(op);
     }
   };
 
