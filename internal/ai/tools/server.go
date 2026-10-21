@@ -171,28 +171,37 @@ func (r *Registry) execCommandsBatch(ctx context.Context, jobID string, call Cal
 	if r.deps.ResolveExecTargetIdentities != nil {
 		var identities []AssetIdentity
 		targets, identities, err = r.deps.ResolveExecTargetIdentities(ctx, assetIDs, tags)
+		if errors.Is(err, ErrAssetIdentityUnverifiable) {
+			// The batch's identity genuinely cannot be evidenced (a target
+			// session without an identity source): run unbound on the
+			// visibly unverifiable path instead of failing the batch.
+			identityNote = "；资产身份不可验证（未配置身份解析，操作未绑定资产身份）"
+			targets, err = r.deps.ResolveExecTargets(ctx, assetIDs, tags)
+		}
 		if err != nil {
 			return Fail(err)
 		}
-		// Validate the tool's own resolution first: exactly one complete
-		// identity per target session, no duplicates, before anything else
-		// runs.
-		if err := validateTargetIdentitySet(targets.SessionIDs, identities); err != nil {
-			return Fail(err)
-		}
-		if len(call.AssetIdentities) > 0 {
-			// The pre-resolved identities bound to the operation key stay a
-			// separate sequence: validate them independently and require
-			// both sequences to agree per index and as multisets.
-			if err := validateBoundTargetIdentities(targets.SessionIDs, identities, call.AssetIdentities); err != nil {
+		if identityNote == "" {
+			// Validate the tool's own resolution first: exactly one complete
+			// identity per target session, no duplicates, before anything else
+			// runs.
+			if err := validateTargetIdentitySet(targets.SessionIDs, identities); err != nil {
 				return Fail(err)
 			}
-		}
-		// Re-validate every target's currently bound identity at execution
-		// time: a replaced asset never receives the mutation and the old
-		// result is never attributed to it.
-		if failure, checkErr := r.validateExecutionTargetIdentities(ctx, targets.SessionIDs, identities); checkErr != nil {
-			return failure
+			if len(call.AssetIdentities) > 0 {
+				// The pre-resolved identities bound to the operation key stay a
+				// separate sequence: validate them independently and require
+				// both sequences to agree per index and as multisets.
+				if err := validateBoundTargetIdentities(targets.SessionIDs, identities, call.AssetIdentities); err != nil {
+					return Fail(err)
+				}
+			}
+			// Re-validate every target's currently bound identity at execution
+			// time: a replaced asset never receives the mutation and the old
+			// result is never attributed to it.
+			if failure, checkErr := r.validateExecutionTargetIdentities(ctx, targets.SessionIDs, identities); checkErr != nil {
+				return failure
+			}
 		}
 	} else {
 		identityNote = "；资产身份不可验证（未配置身份解析，操作未绑定资产身份）"
@@ -957,6 +966,14 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, call
 			// The same-lock implementer owns the in-lock literal-newline guard.
 			literalGuarded = true
 			err = submitter.WritePasteSubmit(ctx, tabID, args.Keys, args.Enter, delay)
+			if err != nil && args.Enter && !errors.Is(err, session.ErrPasteGuarded) && !errors.Is(err, session.ErrUnsupported) && !errors.Is(err, session.ErrTabNotFound) {
+				// The paste block may already be written while the Enter
+				// never left — a write failure, a mode flip, a close, or a
+				// cancellation during the submit delay all land here. The
+				// caller must verify the screen instead of retrying blindly;
+				// the operation ID on the failure marks the uncertainty.
+				err = fmt.Errorf("paste 与 Enter 在同一把写锁内提交，paste 块可能已写入而 Enter 未发送；请检查屏幕且不要盲重发: %w", err)
+			}
 		} else {
 			sameLockSubmit = false
 			err = r.writePasteSplit(ctx, tabID, args.Keys, args.Enter, delay)
@@ -1236,12 +1253,15 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 
 // resolveAssetSessionForCreate resolves the asset's live session, preferring
 // the identity-aware resolver so the operation can bind to and re-validate
-// the immutable asset identity. When only the plain resolver exists, it
+// the immutable asset identity. When only the plain resolver exists — or the
+// identity genuinely cannot be evidenced (device or inline session) — it
 // notes that the asset identity is unverifiable for this operation.
 func (r *Registry) resolveAssetSessionForCreate(ctx context.Context, assetID string, identityNote *string) (string, AssetIdentity, error) {
 	if r.deps.ResolveAssetSessionIdentity != nil {
 		sessionID, identity, err := r.deps.ResolveAssetSessionIdentity(ctx, assetID)
-		return sessionID, identity, err
+		if err == nil || !errors.Is(err, ErrAssetIdentityUnverifiable) {
+			return sessionID, identity, err
+		}
 	}
 	*identityNote = "；资产身份不可验证（未配置身份解析，操作未绑定资产身份）"
 	sessionID, err := r.deps.ResolveAssetSession(ctx, assetID)
@@ -1252,9 +1272,13 @@ func (r *Registry) resolveAssetSessionForCreate(ctx context.Context, assetID str
 // execution time: the session's bound identity must match the resolved
 // identity, and the pre-resolved identity bound to the operation key must
 // match too. A replaced asset fails closed instead of receiving the
-// mutation or the old result.
+// mutation or the old result. An unevidenced resolved identity (the
+// unverifiable path) has nothing to compare against: the operation carries
+// its unverifiable mark and no mismatch is invented — but a bound identity
+// still requires an exact match, so an operation recorded against a
+// specific identity never lands on an unverifiable session.
 func (r *Registry) validateExecutionAssetIdentity(ctx context.Context, sessionID string, resolved AssetIdentity, bound []AssetIdentity) (Output, error) {
-	if checker, ok := r.deps.Terminal.(SessionAssetIdentityResolver); ok {
+	if checker, ok := r.deps.Terminal.(SessionAssetIdentityResolver); ok && resolved.AssetID != "" && resolved.ConfigFingerprint != "" {
 		boundIdentity, err := checker.SessionAssetIdentity(ctx, sessionID)
 		if err != nil {
 			return Fail(fmt.Errorf("资产身份校验失败: %w", err)), err

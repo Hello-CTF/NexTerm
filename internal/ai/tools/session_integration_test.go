@@ -126,14 +126,15 @@ func TestSendKeysSessionPasteUsesLiteralGuard(t *testing.T) {
 	if !result.OK {
 		t.Fatalf("paste send_keys = %+v", result)
 	}
-	// The write-lock guarded literal paste is now wired, so the on→off
-	// mode-flip window note is gone; the paste-submit capability has not
-	// merged, so the split-write note stays.
+	// The write-lock guarded literal paste is wired, so the on→off mode-flip
+	// window note is gone; the combined paste-submit capability is wired too,
+	// so the paste and the Enter land under one write lock and the
+	// split-write note is gone as well.
 	if strings.Contains(result.Text, "on→off 切换窗口未覆盖") || strings.Contains(result.Notes, "on→off") {
 		t.Fatalf("stale mode-flip degradation note: %+v", result)
 	}
-	if !strings.Contains(result.Text, "分次写入") {
-		t.Fatalf("split-write note missing: %+v", result)
+	if strings.Contains(result.Text, "分次写入") || strings.Contains(result.Notes, "separate writes") {
+		t.Fatalf("stale split-write degradation note: %+v", result)
 	}
 	writes := fixture.channel.successfulWrites()
 	if len(writes) != 2 || string(writes[0]) != "\x1b[200~line1\nline2\x1b[201~" || string(writes[1]) != "\r" {

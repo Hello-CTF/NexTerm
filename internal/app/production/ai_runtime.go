@@ -445,6 +445,14 @@ func resolveProductionAssetSession(ctx context.Context, services *ProductionServ
 	}
 	sessionID, err := productionScopeValidator(services).liveSessionForAsset(validationCtx, assetID)
 	if err != nil {
+		// The explicit not-connected verdict maps to the tools layer's
+		// ErrNoLiveSession, so terminal_create connect=true can dial through
+		// the R-07 gates; forbidden, unsupported, and transient failures
+		// propagate untouched and never trigger a connect.
+		var appErr *ipc.Error
+		if errors.As(err, &appErr) && appErr.Code == ipc.CodeDisconnected {
+			return "", ipc.WrapError(ipc.CodeDisconnected, appErr.Error(), tools.ErrNoLiveSession)
+		}
 		return "", err
 	}
 	connected, err := services.Sessions.SessionFor(validationCtx, sessionID)
@@ -598,6 +606,50 @@ func (r *productionScopeResolver) persist(ctx context.Context, conversationID st
 // the grant branch.
 var _ tools.ConnAssetIdentity = (*db.Service)(nil)
 
+// Per-user explicit opt-in settings for the AI terminal_create connect
+// surface. The surface has its own pair — the cron, broadcast, and
+// target-set opt-ins never authorize an AI terminal connect — and both
+// default to off.
+const (
+	aiTerminalConnectOptInSettingKey           = "ai.terminal_connect_opt_in"
+	aiTerminalConnectProductionOptInSettingKey = "ai.terminal_connect_production"
+)
+
+func aiTerminalConnectOptInSettingKeyForUser(ctx context.Context) string {
+	return connectOptInSettingKeyForUser(ctx, aiTerminalConnectOptInSettingKey)
+}
+
+func aiTerminalConnectProductionOptInSettingKeyForUser(ctx context.Context) string {
+	return connectOptInSettingKeyForUser(ctx, aiTerminalConnectProductionOptInSettingKey)
+}
+
+// aiTerminalAssetConnector adapts the R-07 surface connect gate to the tools
+// AssetConnector contract for terminal_create connect=true: the per-user
+// opt-in, owner match, known-host-key verdict, vault readiness, and
+// production confirmation all pass guard.AuthorizeConnect before the strict
+// host-key dial, which never auto-accepts unknown or changed keys. A
+// declined or unverifiable gate fails closed with its sentinel error instead
+// of connecting.
+type aiTerminalAssetConnector struct {
+	services  *ProductionServices
+	connector *cron.Connector
+}
+
+func newAITerminalAssetConnector(services *ProductionServices) *aiTerminalAssetConnector {
+	return &aiTerminalAssetConnector{
+		services:  services,
+		connector: newSurfaceConnector(services, aiTerminalConnectOptInSettingKeyForUser, aiTerminalConnectProductionOptInSettingKeyForUser),
+	}
+}
+
+func (c *aiTerminalAssetConnector) ConnectAsset(ctx context.Context, assetID string) (string, error) {
+	validationCtx, err := productionAITargetContext(ctx, c.services.desktop)
+	if err != nil {
+		return "", err
+	}
+	return c.connector.Connect(validationCtx, cron.Trigger{OwnerID: ipc.OwnerID(validationCtx)}, assetID)
+}
+
 func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	if services.Store == nil || services.Sessions == nil || services.Profiles == nil {
 		return errors.New("AI runtime requires store, sessions and profiles services")
@@ -641,6 +693,11 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 		return services.ExecBatches.Execute(requestCtx, ipc.OwnerID(ctx), request)
 	}
 	toolsDeps.Outcome = outcomeLedger
+	// terminal_create connect=true connects through the R-07 surface gate:
+	// the same opt-in, owner, known-host-key, vault, and production
+	// confirmation evidence as the other connect surfaces, with the AI
+	// terminal surface's own per-user settings.
+	toolsDeps.AssetConnector = newAITerminalAssetConnector(services)
 	toolsDeps.Reminders = reminderScheduler{scheduler: cronScheduler, conversations: services.Store, scopeValidator: productionScopeValidator(services)}
 	// The skills backend is the single services-level manager: the ai-skills
 	// IPC module registers the same instance, so the load_skill tool and the

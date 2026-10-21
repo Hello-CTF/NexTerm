@@ -243,6 +243,30 @@ type job struct {
 	completed      bool
 	doneCh         chan struct{}
 	doneOnce       sync.Once
+
+	// callHandles remembers the roster handle resolved for each tool call of
+	// this run, so the toolResult event carries the same reference the
+	// toolCall event did.
+	callHandlesMu sync.Mutex
+	callHandles   map[string]string
+}
+
+func (j *job) rememberCallHandle(callID, handle string) {
+	if callID == "" || handle == "" {
+		return
+	}
+	j.callHandlesMu.Lock()
+	defer j.callHandlesMu.Unlock()
+	if j.callHandles == nil {
+		j.callHandles = make(map[string]string)
+	}
+	j.callHandles[callID] = handle
+}
+
+func (j *job) callHandle(callID string) string {
+	j.callHandlesMu.Lock()
+	defer j.callHandlesMu.Unlock()
+	return j.callHandles[callID]
 }
 
 func (j *job) emit(ctx context.Context, event Event) error {

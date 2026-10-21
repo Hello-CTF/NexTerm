@@ -53,3 +53,43 @@ func TestEventGoldenJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestEventHandleMarshaling(t *testing.T) {
+	// A verified roster target carries its permanent handle; every other
+	// event omits the field entirely, so the UI never joins on a fabricated
+	// or empty reference.
+	withHandle := []Event{
+		{Type: "toolCall", ID: "c1", Name: "send_keys", Handle: "handle-a"},
+		{Type: "toolResult", ID: "c1", OK: true, Handle: "handle-a"},
+	}
+	for _, event := range withHandle {
+		encoded, err := json.Marshal(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(encoded, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload["handle"] != "handle-a" {
+			t.Errorf("%s lost the roster handle: %s", event.Type, encoded)
+		}
+	}
+	withoutHandle := []Event{
+		{Type: "toolCall", ID: "c2", Name: "read_screen"},
+		{Type: "toolResult", ID: "c2", OK: true},
+	}
+	for _, event := range withoutHandle {
+		encoded, err := json.Marshal(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(encoded, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if _, present := payload["handle"]; present {
+			t.Errorf("%s emitted an empty handle: %s", event.Type, encoded)
+		}
+	}
+}

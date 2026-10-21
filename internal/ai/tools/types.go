@@ -51,6 +51,14 @@ var (
 	// may establish a new connection on explicit opt-in. Forbidden,
 	// unsupported, and transient resolver failures never trigger connect.
 	ErrNoLiveSession = errors.New("资产当前没有活动会话")
+	// ErrAssetIdentityUnverifiable marks the resolver verdict that the
+	// target's immutable asset identity genuinely cannot be evidenced — for
+	// example a device or inline session with no config fingerprint source.
+	// The registry keeps the visibly unverifiable path for that operation
+	// (the result marks the identity as unverifiable and the outcome binds
+	// no identity) instead of failing it, the same contract as a registry
+	// without a configured identity resolver.
+	ErrAssetIdentityUnverifiable = errors.New("资产身份不可验证")
 	// ErrAssetIdentityChanged marks a resolved asset identity that no
 	// longer matches the session's bound identity at execution time: the
 	// asset was replaced, reconfigured, or revoked between resolution and
@@ -369,23 +377,30 @@ type TabDetailTerminal interface {
 }
 
 // TabQuietState is one tab's quiet reading at a point in the terminal's
-// state: idle milliseconds and a version that bumps on any output or
-// lifecycle change to the tab. Two group snapshots whose per-tab versions
-// all match describe one consistent state.
+// state: idle milliseconds, a version that bumps on any output or lifecycle
+// change to the tab, whether the tab is closed, and the unique incarnation
+// of this tab's creation. Two group snapshots whose per-tab versions and
+// incarnations all match describe one consistent state; a recreated tab's
+// incarnation never matches the original's, so a same-ID same-version
+// reading from a different incarnation is never mistaken for the same tab.
+// A closed tab never counts as quietly satisfied.
 type TabQuietState struct {
-	TabID   string
-	IdleMS  int64
-	Version uint64
+	TabID       string
+	IdleMS      int64
+	Version     uint64
+	Closed      bool
+	Incarnation uint64
 }
 
 // QuietGroupSnapshotTerminal is the optional Terminal extension that reads
 // the quiet state of a set of tabs in one consistent snapshot with per-tab
-// versions. The close/error contract: the response must contain exactly
-// one state per requested tab ID — every requested tab present exactly
-// once, no extras — or a non-nil error; callers reject incomplete rosters
-// and never treat them as a success. Terminals that cannot provide a
-// consistent multi-tab read do not implement it; multi-tab quiet waits
-// then degrade to a best-effort serial scan and say so in the result notes.
+// versions and creation incarnations. The close/error contract: the response
+// must contain exactly one state per requested tab ID — every requested tab
+// present exactly once, no extras — or a non-nil error; callers reject
+// incomplete rosters and never treat them as a success. Terminals that
+// cannot provide a consistent multi-tab read do not implement it; multi-tab
+// quiet waits then degrade to a best-effort serial scan and say so in the
+// result notes.
 type QuietGroupSnapshotTerminal interface {
 	QuietGroupSnapshot(ctx context.Context, tabIDs []string) ([]TabQuietState, error)
 }
@@ -542,10 +557,18 @@ type Dependencies struct {
 	// the immutable identity the session is bound to (asset ID plus config
 	// fingerprint). Production wiring implements it with the asset row's
 	// config fingerprint; when absent, mutation tools cannot bind or
-	// re-validate the asset identity and mark the operation unverifiable.
+	// re-validate the asset identity and mark the operation unverifiable. A
+	// resolver may return ErrAssetIdentityUnverifiable when the target's
+	// identity genuinely cannot be evidenced (device or inline session):
+	// the operation then keeps the same visibly unverifiable path instead
+	// of failing.
 	ResolveAssetSessionIdentity func(context.Context, string) (string, AssetIdentity, error)
 	// ResolveExecTargetIdentities resolves batch targets to sessions and the
-	// immutable identity each session is bound to.
+	// immutable identity each session is bound to. Like
+	// ResolveAssetSessionIdentity, it may return
+	// ErrAssetIdentityUnverifiable when a target's identity genuinely cannot
+	// be evidenced: the batch then runs unbound on the visibly unverifiable
+	// path instead of failing.
 	ResolveExecTargetIdentities func(context.Context, []string, []string) (ExecTargetSet, []AssetIdentity, error)
 	ExecBatch                   func(context.Context, execbatch.Request) (execbatch.Batch, error)
 	AssetConnector              AssetConnector
