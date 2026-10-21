@@ -16,15 +16,17 @@ import {
 import { createProjectTemplateRepository } from "../../app/projectTemplateStore";
 import { closeProject, openProjectTemplate } from "../../app/projectTemplateActions";
 import type { AssetGroup } from "../../ipc/commands";
-import type { BroadcastConfirmationChallenge } from "../../ipc/commands";
+import type { BroadcastProductionChallenge } from "../production/productionChallenge";
 import { ask, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { ProductionConfirmationDialog } from "../execbatch/ProductionConfirmationDialog";
 
 interface ProductionPrompt {
-  challenge: BroadcastConfirmationChallenge;
+  challenge: BroadcastProductionChallenge;
   command: string;
-  resolve(confirmed: boolean): void;
+  // Resolves the typed per-target environment names on confirm (an empty
+  // array for the legacy acknowledge flow), or null on cancel.
+  resolve(environmentNames: string[] | null): void;
 }
 
 export function ProjectTemplatePanel({ groups }: { groups: readonly AssetGroup[] }) {
@@ -124,16 +126,21 @@ export function ProjectTemplatePanel({ groups }: { groups: readonly AssetGroup[]
     pushToast("success", "项目模板已删除");
   });
 
-  const confirmProduction = (challenge: BroadcastConfirmationChallenge, command: string) =>
-    new Promise<boolean>((resolve) => setProductionPrompt({ challenge, command, resolve }));
+  const confirmProductionEnvironmentNames = (challenge: BroadcastProductionChallenge, command: string) =>
+    new Promise<string[] | null>((resolve) => setProductionPrompt({ challenge, command, resolve }));
 
-  const finishProductionPrompt = (confirmed: boolean) => {
-    productionPrompt?.resolve(confirmed);
+  // Legacy acknowledge-only challenges keep the boolean dep: confirmed is any
+  // non-null resolution, canceled is null.
+  const confirmProduction = (challenge: BroadcastProductionChallenge, command: string) =>
+    confirmProductionEnvironmentNames(challenge, command).then((environmentNames) => environmentNames !== null);
+
+  const finishProductionPrompt = (environmentNames: string[] | null) => {
+    productionPrompt?.resolve(environmentNames);
     setProductionPrompt(null);
   };
 
   const open = (template: ProjectTemplate) => run(async (epoch) => {
-    const result = await openProjectTemplate(template, { commandDependencies: { confirmProduction } });
+    const result = await openProjectTemplate(template, { commandDependencies: { confirmProduction, confirmProductionEnvironmentNames } });
     if (isStale(epoch)) return;
     const failedWorkspaces = Object.values(result.workspaces).filter((item) => item.status === "failed").length;
     const failedForwards = result.forwards.filter((item) => item.status === "failed").length;
@@ -247,8 +254,8 @@ export function ProjectTemplatePanel({ groups }: { groups: readonly AssetGroup[]
           challenge={productionPrompt.challenge}
           contentHash={productionPrompt.challenge.inputHash}
           command={productionPrompt.command}
-          onCancel={() => finishProductionPrompt(false)}
-          onConfirm={() => finishProductionPrompt(true)}
+          onCancel={() => finishProductionPrompt(null)}
+          onConfirm={(environmentNames) => finishProductionPrompt(environmentNames ?? [])}
         />
       )}
     </section>
