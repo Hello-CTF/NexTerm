@@ -3,7 +3,9 @@
  * semantics of the Go service in internal/ai/skills — per-owner override
  * isolation, partial override inheritance, disable and delete fallback,
  * custom-skill validation, and sha256 digests over the exact dispatched
- * material — so the UI and its tests run before the real IPC backend lands.
+ * material — so the UI and its tests run without a live backend. The
+ * production backend is productionSkillsApi in ./skillsApi (typed
+ * ai_skills_* IPC); this mock is a test double only.
  */
 import {
   isValidSkillName,
