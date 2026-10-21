@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -31,6 +32,56 @@ type TranscriptMatch struct {
 	Seq     int64
 	TS      int64
 	Preview []byte
+}
+
+// transcriptChunksOrdered reports whether chunk timestamps are
+// non-decreasing along the seq order — the write invariant behind the
+// seek's bounded block-max-TS index.
+func transcriptChunksOrdered(chunks []TranscriptChunkRow) bool {
+	ordered := append([]TranscriptChunkRow(nil), chunks...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Seq < ordered[j].Seq })
+	for index := 1; index < len(ordered); index++ {
+		if ordered[index].TS < ordered[index-1].TS {
+			return false
+		}
+	}
+	return true
+}
+
+// transcriptFirstTimestamp returns the timestamp of the batch's smallest-seq
+// chunk.
+func transcriptFirstTimestamp(chunks []TranscriptChunkRow) int64 {
+	first := chunks[0]
+	for _, chunk := range chunks[1:] {
+		if chunk.Seq < first.Seq {
+			first = chunk
+		}
+	}
+	return first.TS
+}
+
+// transcriptNewestBlockTS reads the newest stored block's timestamp for the
+// append-order guard. On the service backends the read locks the newest row
+// so a concurrent append cannot interleave a timestamp disorder; SQLite
+// serializes writers by itself.
+func (s *Store) transcriptNewestBlockTS(ctx context.Context, tx *gorm.DB, transcriptID string) (int64, bool, error) {
+	newest := tx.WithContext(ctx).Model(&TranscriptChunkRow{}).
+		Select("ts").
+		Where("transcript_id = ?", transcriptID).
+		Order("seq DESC").
+		Limit(1)
+	if s.backend == BackendMySQL || s.backend == BackendMariaDB || s.backend == BackendPostgres {
+		newest = newest.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var ts int64
+	result := newest.Scan(&ts)
+	if result.Error != nil {
+		return 0, false, dbError(result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return 0, false, nil
+	}
+	return ts, true, nil
 }
 
 type TranscriptHostRow struct {
@@ -86,6 +137,14 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 	if _, err := s.TranscriptGet(ctx, transcriptID); err != nil {
 		return err
 	}
+	// The timestamp-order invariant: chunk timestamps are non-decreasing
+	// along the seq order, so the seek's bounded block-max-TS index is sound
+	// for every transcript written through this store. A violating append is
+	// rejected before any state changes.
+	if !transcriptChunksOrdered(chunks) {
+		return badParam(fmt.Errorf("transcript chunk timestamps must be non-decreasing"))
+	}
+	firstTS := transcriptFirstTimestamp(chunks)
 	blocks, err := encodeTranscriptChunks(chunks)
 	if err != nil {
 		return err
@@ -98,8 +157,20 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 		totalStoredBytes += int64(len(block.Data))
 	}
 	totalChunks := int64(len(chunks))
+	wasEmpty := false
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		queries := query.Use(tx)
+		// The batch's first timestamp must not step below the newest stored
+		// block's timestamp; the read locks the newest row on the service
+		// backends so a concurrent append cannot interleave a disorder.
+		newestTS, hasNewest, err := s.transcriptNewestBlockTS(ctx, tx, transcriptID)
+		if err != nil {
+			return err
+		}
+		if hasNewest && newestTS > firstTS {
+			return badParam(fmt.Errorf("transcript chunk timestamps must be non-decreasing"))
+		}
+		wasEmpty = !hasNewest
 		for _, chunk := range blocks {
 			chunk.TranscriptID = transcriptID
 			chunk.OwnerID = ipc.OwnerID(ctx)
@@ -155,6 +226,12 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 	})
 	if err != nil {
 		return dbError(err)
+	}
+	if wasEmpty {
+		// The transcript's first chunks established the invariant from a
+		// verified-ordered batch, so later seeks can use the bounded index
+		// without a validation scan.
+		transcriptOrderMark(transcriptID, transcriptOrderOrdered)
 	}
 	return nil
 }
@@ -394,6 +471,11 @@ func (s *Store) TranscriptListOptedIn(ctx context.Context) ([]TranscriptRow, err
 }
 
 func (s *Store) TranscriptReplaceContent(ctx context.Context, transcriptID string, bytes, chunks int64, truncated bool, content []TranscriptChunkRow) error {
+	// The replacement becomes the transcript's whole content, so it must
+	// itself satisfy the timestamp-order invariant.
+	if !transcriptChunksOrdered(content) {
+		return badParam(fmt.Errorf("transcript chunk timestamps must be non-decreasing"))
+	}
 	blocks, err := encodeTranscriptChunks(content)
 	if err != nil {
 		return err
@@ -434,6 +516,7 @@ func (s *Store) TranscriptReplaceContent(ctx context.Context, transcriptID strin
 	if err != nil {
 		return dbError(err)
 	}
+	transcriptOrderMark(transcriptID, transcriptOrderOrdered)
 	return nil
 }
 
@@ -490,6 +573,11 @@ func (s *Store) TranscriptSetSyncOptIn(ctx context.Context, id string, optIn boo
 func (s *Store) TranscriptInsertSynced(ctx context.Context, row TranscriptRow, chunks []TranscriptChunkRow) error {
 	if row.EndedAt == nil {
 		return badParam(fmt.Errorf("synced transcript must be ended"))
+	}
+	// The synced content becomes the whole transcript, so it must itself
+	// satisfy the timestamp-order invariant.
+	if !transcriptChunksOrdered(chunks) {
+		return badParam(fmt.Errorf("transcript chunk timestamps must be non-decreasing"))
 	}
 	blocks, err := encodeTranscriptChunks(chunks)
 	if err != nil {
@@ -587,6 +675,7 @@ func (s *Store) TranscriptInsertSynced(ctx context.Context, row TranscriptRow, c
 	if err != nil {
 		return dbError(err)
 	}
+	transcriptOrderMark(row.ID, transcriptOrderOrdered)
 	return nil
 }
 

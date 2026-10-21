@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/dbtest"
@@ -224,45 +225,100 @@ func TestTranscriptPageHoleAndOffsetStartDatabase(t *testing.T) {
 	}
 }
 
-// Out-of-order timestamps resolve to the first qualifying chunk by seq on
-// every backend: the seek needs no timestamp-ordering assumption.
-func TestTranscriptSeekToTimeDisorderDatabase(t *testing.T) {
+// A distant seek on a transcript far beyond the old scan budget resolves
+// through the bounded index on every backend: the last block's timestamp is
+// found with no budget error, and a past-end time yields the tail page.
+func TestTranscriptSeekLargeTranscriptDatabase(t *testing.T) {
 	ctx := context.Background()
 	db := dbtest.NewFixture(t).OpenStore(t)
 
-	id := "pg-seek-disorder-transcript"
+	id := "pg-seek-large-transcript"
 	if err := db.TranscriptStart(ctx, store.TranscriptRow{ID: id, SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000}); err != nil {
 		t.Fatal(err)
 	}
-	chunks := make([]store.TranscriptChunkRow, 0, 600)
-	for seq := 0; seq < 600; seq++ {
-		ts := int64(1000 + seq)
-		switch {
-		case seq == 300:
-			ts = 9999 // out-of-order spike
-		case seq == 301:
-			ts = 500 // out-of-order dip
-		case seq%7 != 0:
-			ts = int64(1000 + seq - seq%7)
+	const total = 4097 * 256
+	chunks := make([]store.TranscriptChunkRow, 0, 65536)
+	flush := func() {
+		if len(chunks) == 0 {
+			return
 		}
-		chunks = append(chunks, store.TranscriptChunkRow{Seq: int64(seq), TabID: "tab-a", TS: ts, Data: []byte("x")})
+		if err := db.TranscriptAppendChunks(ctx, id, chunks); err != nil {
+			t.Fatal(err)
+		}
+		chunks = chunks[:0]
 	}
-	appendPagedDatabaseChunks(t, db, id, chunks)
+	for seq := 0; seq < total; seq++ {
+		chunks = append(chunks, store.TranscriptChunkRow{Seq: int64(seq), TabID: "tab-a", TS: int64(1000 + seq), Data: []byte("x")})
+		if len(chunks) == 65536 {
+			flush()
+		}
+	}
+	flush()
 
-	// The spike at seq 300 is the first qualifying chunk for at=5000.
-	spike, err := db.TranscriptSeekToTimePage(ctx, id, 5000, 4096)
+	// The timestamp inside the final (4097th) block is found exactly.
+	page, err := db.TranscriptSeekToTimePage(ctx, id, 1000+total-10, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spike.Chunks) == 0 || spike.Chunks[0].Seq != 300 {
-		t.Fatalf("spike seek = %+v, want the page starting at seq 300", spike.Chunks)
+	if len(page.Chunks) == 0 || page.Chunks[0].Seq != total-10 {
+		t.Fatalf("late seek starts at %+v, want seq %d", page.Chunks, total-10)
 	}
-	// The dip at seq 301 is skipped for at=1000: seq 0 qualifies first.
-	opening, err := db.TranscriptSeekToTimePage(ctx, id, 1000, 4096)
+	// A mid-transcript time resolves through the bounded index as well.
+	mid, err := db.TranscriptSeekToTimePage(ctx, id, 1000+3000*256, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(opening.Chunks) == 0 || opening.Chunks[0].Seq != 0 {
-		t.Fatalf("opening seek = %+v, want the page starting at seq 0", opening.Chunks)
+	if len(mid.Chunks) == 0 || mid.Chunks[0].Seq != 3000*256 {
+		t.Fatalf("mid seek starts at %+v, want seq %d", mid.Chunks, 3000*256)
+	}
+	// A past-end time yields the tail page, never an unsupported error.
+	tail, err := db.TranscriptSeekToTimePage(ctx, id, 1000+total+1000, 4096)
+	if err != nil {
+		t.Fatalf("past-end seek: %v", err)
+	}
+	if len(tail.Chunks) == 0 || tail.LastSeq != total-1 || tail.HasAfter {
+		t.Fatalf("past-end seek = %+v, want the tail page", tail)
+	}
+}
+
+// The first-screen tail read is inclusive on every backend: a chunk stored
+// at the maximum seq belongs to the tail page, never dropped by the
+// exclusive cursor.
+func TestTranscriptFirstScreenMaxSeqDatabase(t *testing.T) {
+	ctx := context.Background()
+	db := dbtest.NewFixture(t).OpenStore(t)
+
+	id := "pg-max-seq-transcript"
+	if err := db.TranscriptStart(ctx, store.TranscriptRow{ID: id, SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000}); err != nil {
+		t.Fatal(err)
+	}
+	appendPagedDatabaseChunks(t, db, id, []store.TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-a", TS: 1000, Data: []byte("a")},
+		{Seq: 1, TabID: "tab-a", TS: 1001, Data: []byte("b")},
+	})
+	appendPagedDatabaseChunks(t, db, id, []store.TranscriptChunkRow{
+		{Seq: int64(math.MaxInt64 - 1), TabID: "tab-a", TS: 1002, Data: []byte("c")},
+		{Seq: int64(math.MaxInt64), TabID: "tab-a", TS: 1003, Data: []byte("d")},
+	})
+
+	tail, err := db.TranscriptFirstScreenPage(ctx, id, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tail.Chunks) != 3 || tail.Chunks[2].Seq != int64(math.MaxInt64) {
+		t.Fatalf("tail page = %+v, want the max-seq chunk included", tail.Chunks)
+	}
+	if !tail.HasBefore || tail.HasAfter {
+		t.Fatalf("tail page neighbors = before %v after %v, want true/false", tail.HasBefore, tail.HasAfter)
+	}
+	exclusive, err := db.TranscriptPageBefore(ctx, id, int64(math.MaxInt64), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(exclusive.Chunks) != 3 || exclusive.Chunks[2].Seq != int64(math.MaxInt64-1) {
+		t.Fatalf("exclusive page = %+v, want seqs 0, 1, and max-1", exclusive.Chunks)
+	}
+	if !exclusive.HasAfter {
+		t.Fatal("exclusive page must report the max-seq chunk as later history")
 	}
 }
