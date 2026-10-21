@@ -228,3 +228,108 @@ func TestRosterEpisodeBindingFailsClosedWithoutBinding(t *testing.T) {
 		t.Fatal("unbound row resolved an asset")
 	}
 }
+
+// A reconnect replaces the channel and can refresh the asset, but the
+// non-durable episode is only minted at registration: a row bound before
+// the reconnect must not report the replacement runtime as connected nor
+// resolve its asset.
+func TestRosterEpisodeBindingReconnectWithAssetChangeFailsClosed(t *testing.T) {
+	database, manager, ctx := newEpisodeFixture(t)
+	connected, err := manager.ConnectFor(ctx, session.Asset{ID: "asset-1", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	episodeA := openEpisodeTab(t, manager, ctx, connected.Info().ID, "tab-rc")
+	roster := NewRoster(database, NewSessionRosterProbe(database, manager))
+	entry, err := roster.Provision(ctx, "conv-1", "handle-rc", "", "tab-rc", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := roster.Attach(ctx, "handle-rc", "job-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The reconnect replaces the channel and refreshes the asset to asset-2.
+	if err := manager.ReconnectOnceFor(ctx, connected.Info().ID, session.Asset{ID: "asset-2", Kind: session.KindSSH}); err != nil {
+		t.Fatal(err)
+	}
+	if got := connected.Asset().ID; got != "asset-2" {
+		t.Fatalf("session asset after reconnect = %q", got)
+	}
+	// Setup guard: this test targets the gap where a non-durable reconnect
+	// does not advance the episode. Once the session package advances it,
+	// the probe must start failing closed on its own.
+	if after, _ := manager.RosterRuntimeIncarnation(ctx, "tab-rc"); after != episodeA {
+		t.Fatalf("test setup: reconnect advanced the episode %q → %q (the session-side fix landed; flip this test to the fixed behavior)", episodeA, after)
+	}
+
+	probe := NewSessionRosterProbe(database, manager)
+	status, err := probe.ProbeRosterRuntime(ctx, "handle-rc", entry.Incarnation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Kind == RosterRuntimeConnected {
+		t.Fatalf("row bound before the reconnect reported the replacement runtime as connected: %+v", status)
+	}
+	if assetID, err := probe.ResolveRosterAsset(ctx, "handle-rc", entry.Incarnation); err == nil && assetID == "asset-2" {
+		t.Fatal("row bound before the reconnect resolved the replacement runtime's asset")
+	}
+}
+
+// The first attach must not bind mixed state: when the tab is replaced
+// between the tab read and the episode read, the connected classification
+// and the bound episode come from different runtimes. The probe must fail
+// closed instead of binding the replacement on the stale session's answer.
+func TestRosterEpisodeBindingFirstAttachRejectsMixedSnapshot(t *testing.T) {
+	database, manager, ctx := newEpisodeFixture(t)
+	connectedA, err := manager.ConnectFor(ctx, session.Asset{ID: "asset-1", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	openEpisodeTab(t, manager, ctx, connectedA.Info().ID, "tab-mix")
+	connectedB, err := manager.ConnectFor(ctx, session.Asset{ID: "asset-2", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Disconnect(connectedB.Info().ID); err != nil {
+		t.Fatal(err)
+	}
+
+	roster := NewRoster(database, NewSessionRosterProbe(database, manager))
+	if _, err := roster.Provision(ctx, "conv-1", "handle-mix", "", "tab-mix", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Replace the tab between the probe's tab read and its episode read:
+	// the tab read returns the old tab on the connected session A, the
+	// episode read then evidences the replacement on disconnected session B.
+	probe := NewSessionRosterProbe(database, manager)
+	probe.tabFor = func(ctx context.Context, tabID string) (*session.Tab, error) {
+		tab, err := manager.TabFor(ctx, tabID)
+		if err != nil {
+			return nil, err
+		}
+		if err := manager.CloseTab(tabID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := manager.OpenTab(ctx, session.OpenTabOptions{SessionID: connectedB.Info().ID, TabID: tabID, ClientID: "client-b", ChannelID: "channel-b", Cols: 80, Rows: 24}); err != nil {
+			t.Fatal(err)
+		}
+		return tab, nil
+	}
+
+	attachment, err := roster.Attach(ctx, "handle-mix", "job-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attachment.Resolution == RosterResolutionConnected {
+		t.Fatalf("first attach bound mixed state as connected: %+v", attachment)
+	}
+	row, err := database.AgentRosterGetByHandle(ctx, "handle-mix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound := rosterRecordedEpisode(row); bound != "" {
+		t.Fatalf("first attach bound the replacement episode %q on the stale session's answer", bound)
+	}
+}

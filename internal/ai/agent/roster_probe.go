@@ -31,10 +31,27 @@ type RosterRuntimeIncarnationReader interface {
 type SessionRosterProbe struct {
 	store    RosterStore
 	sessions *session.Manager
+	// read seams defaulting to the real manager reads; tests override them
+	// to drive replacements between the reads deterministically.
+	tabFor     func(context.Context, string) (*session.Tab, error)
+	sessionFor func(context.Context, string) (*session.Session, error)
+	episode    func(context.Context, string) (string, bool)
 }
 
 func NewSessionRosterProbe(store RosterStore, sessions *session.Manager) *SessionRosterProbe {
-	return &SessionRosterProbe{store: store, sessions: sessions}
+	return &SessionRosterProbe{
+		store:      store,
+		sessions:   sessions,
+		tabFor:     sessions.TabFor,
+		sessionFor: sessions.SessionFor,
+		episode: func(ctx context.Context, tabID string) (string, bool) {
+			reader, ok := any(sessions).(RosterRuntimeIncarnationReader)
+			if !ok {
+				return "", false
+			}
+			return reader.RosterRuntimeIncarnation(ctx, tabID)
+		},
+	}
 }
 
 func (p *SessionRosterProbe) ProbeRosterRuntime(ctx context.Context, handle, incarnation string) (RosterRuntimeStatus, error) {
@@ -68,7 +85,7 @@ func (p *SessionRosterProbe) ProbeRosterRuntime(ctx context.Context, handle, inc
 //     and the episode is re-read afterwards: a replacement landing during
 //     the read fails closed instead of answering from two episodes.
 func (p *SessionRosterProbe) probeRow(ctx context.Context, row store.AgentRosterRow) RosterRuntimeStatus {
-	tab, err := p.sessions.TabFor(ctx, row.TabID)
+	tab, err := p.tabFor(ctx, row.TabID)
 	if err != nil {
 		return RosterRuntimeStatus{Kind: RosterRuntimeUnverifiable}
 	}
@@ -83,7 +100,7 @@ func (p *SessionRosterProbe) probeRow(ctx context.Context, row store.AgentRoster
 	if recorded != "" && recorded != episode {
 		return RosterRuntimeStatus{Kind: RosterRuntimeReplaced, CurrentIncarnation: episode, ObservedIncarnation: episode}
 	}
-	connected, err := p.sessions.SessionFor(ctx, tab.SessionID)
+	connected, err := p.sessionFor(ctx, tab.SessionID)
 	if err != nil {
 		return RosterRuntimeStatus{Kind: RosterRuntimeUnverifiable, ObservedIncarnation: episode}
 	}
@@ -124,11 +141,11 @@ func (p *SessionRosterProbe) ResolveRosterAsset(ctx context.Context, handle, inc
 	if recorded != episode {
 		return "", ipc.NewError(ipc.Code("conflict"), "roster 运行时已被替换")
 	}
-	tab, err := p.sessions.TabFor(ctx, row.TabID)
+	tab, err := p.tabFor(ctx, row.TabID)
 	if err != nil {
 		return "", err
 	}
-	connected, err := p.sessions.SessionFor(ctx, tab.SessionID)
+	connected, err := p.sessionFor(ctx, tab.SessionID)
 	if err != nil {
 		return "", err
 	}
@@ -150,9 +167,5 @@ func (p *SessionRosterProbe) observedEpisode(ctx context.Context, tabID string) 
 
 // observedEpisodeOk is observedEpisode with the evidence flag.
 func (p *SessionRosterProbe) observedEpisodeOk(ctx context.Context, tabID string) (string, bool) {
-	reader, ok := any(p.sessions).(RosterRuntimeIncarnationReader)
-	if !ok {
-		return "", false
-	}
-	return reader.RosterRuntimeIncarnation(ctx, tabID)
+	return p.episode(ctx, tabID)
 }
