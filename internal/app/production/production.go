@@ -253,6 +253,14 @@ func productionModules(services ProductionServices) []Module {
 				if err := registerExecBatchCommands(dispatcher, services.ExecBatches, services.Store); err != nil {
 					return err
 				}
+				if services.Store != nil {
+					if err := registerTargetSetCommands(dispatcher, execbatch.NewTargetSetService(services.Store)); err != nil {
+						return err
+					}
+				}
+				if err := registerExecBatchProgressCommands(dispatcher, services.ExecBatches); err != nil {
+					return err
+				}
 				if err := registerExecBatchHealthCommands(dispatcher, services.ExecBatches, services.terminalCommands, services.Store); err != nil {
 					return err
 				}

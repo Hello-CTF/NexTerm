@@ -41,3 +41,23 @@ type ExecBatchResultRow struct {
 }
 
 func (ExecBatchResultRow) TableName() string { return "exec_batch_result" }
+
+type ExecTargetSetRow struct {
+	OwnerID   string `gorm:"column:owner_id;size:191;primaryKey;default:''" json:"-"`
+	ID        string `gorm:"column:id;size:128;primaryKey" json:"id"`
+	Name      string `gorm:"column:name;size:191;not null" json:"name"`
+	CreatedAt int64  `gorm:"column:created_at;not null" json:"createdAt"`
+	UpdatedAt int64  `gorm:"column:updated_at;not null" json:"updatedAt"`
+}
+
+func (ExecTargetSetRow) TableName() string { return "exec_target_set" }
+
+type ExecTargetSetItemRow struct {
+	OwnerID     string           `gorm:"column:owner_id;size:191;primaryKey;default:'';index:idx_exec_target_set_item_set,priority:1" json:"-"`
+	TargetSetID string           `gorm:"column:target_set_id;size:128;primaryKey;index:idx_exec_target_set_item_set,priority:2" json:"-"`
+	SessionID   string           `gorm:"column:session_id;size:191;primaryKey" json:"sessionId"`
+	Position    int32            `gorm:"column:position;not null;index:idx_exec_target_set_item_set,priority:3" json:"position"`
+	TargetSet   ExecTargetSetRow `gorm:"foreignKey:OwnerID,TargetSetID;references:OwnerID,ID;constraint:OnDelete:CASCADE" json:"-"`
+}
+
+func (ExecTargetSetItemRow) TableName() string { return "exec_target_set_item" }

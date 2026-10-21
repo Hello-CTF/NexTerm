@@ -51,6 +51,16 @@ type Config struct {
 	ProductionSettings guard.Settings
 }
 
+// batchProgressTTL bounds how long a finished batch's terminal progress
+// snapshot stays readable after completion, so progress consumers can
+// always observe the terminal transition without unbounded retention.
+const batchProgressTTL = 10 * time.Minute
+
+type finishedProgressEntry struct {
+	tracker   *ProgressTracker
+	expiresAt time.Time
+}
+
 type Service struct {
 	resolver           Resolver
 	auditor            Auditor
@@ -63,6 +73,7 @@ type Service struct {
 	beforeCleanupCommit   func(accountCleanupKey) error
 	mu                    sync.Mutex
 	batches               map[batchKey]*activeBatch
+	finishedProgress      map[batchKey]finishedProgressEntry
 	pendingCancels        map[pendingCancelKey]time.Time
 	accountCleanups       map[accountCleanupKey]*accountCleanupEvent
 	accountCleanupAliases map[accountCleanupKey]accountCleanupKey
@@ -79,6 +90,7 @@ type activeBatch struct {
 	cancel     context.CancelFunc
 	canceling  bool
 	executions sync.WaitGroup
+	progress   *ProgressTracker
 }
 
 type pendingCancelKey struct {
@@ -122,6 +134,7 @@ func New(config Config) *Service {
 	return &Service{
 		resolver: config.Resolver, auditor: config.Auditor, history: config.History, now: now, onError: onError,
 		outputLimit: outputLimit, batches: make(map[batchKey]*activeBatch),
+		finishedProgress:      make(map[batchKey]finishedProgressEntry),
 		pendingCancels:        make(map[pendingCancelKey]time.Time),
 		accountCleanups:       make(map[accountCleanupKey]*accountCleanupEvent),
 		accountCleanupAliases: make(map[accountCleanupKey]accountCleanupKey),
@@ -165,6 +178,14 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 		s.mu.Lock()
 		if s.batches[key] == active {
 			delete(s.batches, key)
+			if active.progress != nil {
+				// Keep the terminal snapshot readable for a bounded TTL so
+				// progress consumers always observe the finished transition.
+				s.purgeFinishedProgressLocked(s.now())
+				s.finishedProgress[key] = finishedProgressEntry{
+					tracker: active.progress, expiresAt: s.now().Add(batchProgressTTL),
+				}
+			}
 		}
 		s.mu.Unlock()
 		cancel()
@@ -195,6 +216,12 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 		return Batch{}, fmt.Errorf("record exec batch production confirmation: %w", err)
 	}
 	s.startHistory(runCtx, ownerID, request, started, targets, classification.production())
+	tracker := NewProgressTracker(request.BatchID, request.SessionIDs)
+	// Publish the fully constructed tracker under the service mutex so
+	// progress readers never observe it mid-construction.
+	s.mu.Lock()
+	active.progress = tracker
+	s.mu.Unlock()
 
 	results := make([]Result, len(targets))
 	jobs := make(chan int, len(targets))
@@ -214,17 +241,78 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 				target := targets[index]
 				if !s.beginExecution(runCtx, active) {
 					results[index] = canceledResult(target)
+					_ = tracker.Finish(target.SessionID, results[index], s.now())
 					continue
 				}
 				results[index] = func() Result {
 					defer active.executions.Done()
-					return s.executeTarget(runCtx, ownerID, request, target, timeout, challenge)
+					result, err := ExecuteTargetStreamCaptured(runCtx, tracker, target, request.Command, TargetStreamOptions{
+						Timeout: timeout, Now: s.now, OutputLimit: s.outputLimit,
+					})
+					if err != nil {
+						result = streamFailureResult(target, s.now(), err)
+					}
+					s.audit(ctx, ownerID, request, result, target.Environment, challenge)
+					return result
 				}()
 			}
 		}()
 	}
 	workers.Wait()
 	return s.finishWithHistory(runCtx, ownerID, request, started, targets, results, classification.production()), nil
+}
+
+// streamFailureResult maps an internal streaming-driver fault to a finished
+// target result so every slot of the results slice is always populated.
+func streamFailureResult(target Target, now time.Time, err error) Result {
+	return Result{
+		SessionID: target.SessionID, SessionName: target.SessionName, AssetID: target.AssetID,
+		Status: StatusTransportError, Error: err.Error(),
+		startedAt: now, finishedAt: now, environment: target.Environment,
+	}
+}
+
+// Rerun executes the failed targets of a finished batch as a new batch,
+// preserving the original command, timeout, and concurrency. The production
+// confirmation is deliberately not carried over: production targets must
+// re-confirm through the normal Execute flow.
+func (s *Service) Rerun(ctx context.Context, ownerID string, original Request, results []Result, newBatchID string) (Batch, error) {
+	return ExecuteRerun(ctx, s, ownerID, original, results, newBatchID)
+}
+
+// BatchProgress returns the progress snapshot of a batch: the live snapshot
+// while it runs, or the terminal snapshot for a bounded TTL after
+// completion. Progress for older batches is served by the history store.
+func (s *Service) BatchProgress(ownerID, batchID string) (BatchProgress, []TargetProgress, bool) {
+	s.mu.Lock()
+	active := s.batches[batchKey{ownerID: ownerID, batchID: batchID}]
+	var tracker *ProgressTracker
+	if active != nil {
+		tracker = active.progress
+	} else {
+		key := batchKey{ownerID: ownerID, batchID: batchID}
+		if entry, exists := s.finishedProgress[key]; exists {
+			if entry.expiresAt.After(s.now()) {
+				tracker = entry.tracker
+			} else {
+				delete(s.finishedProgress, key)
+			}
+		}
+	}
+	s.mu.Unlock()
+	if tracker == nil {
+		return BatchProgress{}, nil, false
+	}
+	batch, targets := tracker.Snapshot()
+	return batch, targets, true
+}
+
+func (s *Service) purgeFinishedProgressLocked(now time.Time) {
+	for key, entry := range s.finishedProgress {
+		if !entry.expiresAt.After(now) {
+			delete(s.finishedProgress, key)
+		}
+	}
 }
 
 // Cancel sets canceling under this same mutex before waiting, so no Add can race its Wait.
@@ -542,12 +630,6 @@ func (s *Service) preflight(ctx context.Context, sessionIDs []string) ([]Target,
 		targets[index] = target
 	}
 	return targets, failures
-}
-
-func (s *Service) executeTarget(ctx context.Context, ownerID string, request Request, target Target, timeout time.Duration, challenge *productionChallenge) Result {
-	result := s.executeTargetTransport(ctx, request, target, timeout)
-	s.audit(ctx, ownerID, request, result, target.Environment, challenge)
-	return result
 }
 
 func (s *Service) executeTargetTransport(ctx context.Context, request Request, target Target, timeout time.Duration) Result {

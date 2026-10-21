@@ -570,6 +570,22 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/store.ExecBatchHistoryQuery", ts: "ExecBatchHistoryQuery" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/store.ExecBatchHistoryPage", ts: "ExecBatchHistoryPage" },
     },
+    "exec_batch_progress": {
+      scope: "exec-batch",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.execBatchProgressRequest", ts: "ExecBatchProgressRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.execBatchProgressSnapshot", ts: "ExecBatchProgressSnapshot" },
+    },
+    "exec_batch_rerun": {
+      scope: "exec-batch",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.execBatchRerunRequest", ts: "ExecBatchRerunRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/execbatch.Batch", ts: "ExecBatch" },
+    },
     "exec_batch_test_login": {
       scope: "exec-batch",
       nested: true,
@@ -1407,6 +1423,46 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "target_set_create": {
+      scope: "target-set",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.targetSetCreateRequest", ts: "TargetSetCreateRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/store.ExecTargetSet", ts: "ExecTargetSet" },
+    },
+    "target_set_delete": {
+      scope: "target-set",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.targetSetReferenceRequest", ts: "TargetSetReferenceRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
+    "target_set_get": {
+      scope: "target-set",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.targetSetReferenceRequest", ts: "TargetSetReferenceRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/store.ExecTargetSet", ts: "ExecTargetSet" },
+    },
+    "target_set_list": {
+      scope: "target-set",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/store.ExecTargetSet", ts: "ExecTargetSet[]" },
+    },
+    "target_set_update": {
+      scope: "target-set",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.targetSetUpdateRequest", ts: "TargetSetUpdateRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
     "terminal_attach": {
       nested: false,
       channel: true,
@@ -1951,6 +2007,14 @@ export interface IPCCommandTypeMap {
     input: contractTypes.ExecBatchHistoryQuery;
     output: contractTypes.ExecBatchHistoryPage;
   };
+  "exec_batch_progress": {
+    input: contractTypes.ExecBatchProgressRequest;
+    output: contractTypes.ExecBatchProgressSnapshot;
+  };
+  "exec_batch_rerun": {
+    input: contractTypes.ExecBatchRerunRequest;
+    output: contractTypes.ExecBatch;
+  };
   "exec_batch_test_login": {
     input: contractTypes.AssetProbeBatchRequest;
     output: contractTypes.AssetProbeBatchDTO;
@@ -2058,6 +2122,26 @@ export interface IPCCommandTypeMap {
   "services_list": {
     input: contractTypes.ListRequest;
     output: contractTypes.ServiceOperationBatch;
+  };
+  "target_set_create": {
+    input: contractTypes.TargetSetCreateRequest;
+    output: contractTypes.ExecTargetSet;
+  };
+  "target_set_delete": {
+    input: contractTypes.TargetSetReferenceRequest;
+    output: unknown;
+  };
+  "target_set_get": {
+    input: contractTypes.TargetSetReferenceRequest;
+    output: contractTypes.ExecTargetSet;
+  };
+  "target_set_list": {
+    input: Record<string, never>;
+    output: contractTypes.ExecTargetSet[];
+  };
+  "target_set_update": {
+    input: contractTypes.TargetSetUpdateRequest;
+    output: unknown;
   };
   "terminal_pause": {
     input: contractTypes.TerminalPauseRequest;

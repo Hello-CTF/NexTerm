@@ -9,6 +9,7 @@ import {
   click,
   clickButton,
   deferred,
+  flush,
   flushMacrotask,
   flushUntil,
   mountWithClient,
@@ -23,10 +24,31 @@ const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
 }));
 
-vi.mock("../../ipc/commands", async () => {
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/commands")>();
   const { createFakeApi } = await import("../helpers/createFakeApi");
   return createFakeApi({
-    call: vi.fn(),
+    ...actual,
+    call: vi.fn((command: string, _args?: unknown) => {
+      if (command === "target_set_list") return Promise.resolve([]);
+      if (command === "exec_batch_progress") {
+        return Promise.resolve({
+          batch: { batchId: "batch-ui-test", phase: "running", total: 1, pending: 0, running: 1, succeeded: 0, failed: 0, canceled: 0 },
+          targets: [
+            {
+              sessionId: "s1",
+              position: 0,
+              phase: "running",
+              output: {
+                stdout: { head: "", tail: "", totalBytes: 0, droppedBytes: 0, truncated: false },
+                stderr: { head: "", tail: "", totalBytes: 0, droppedBytes: 0, truncated: false },
+              },
+            },
+          ],
+        });
+      }
+      return Promise.resolve(undefined);
+    }),
     assetApi: { list: mocks.assetList },
     dbApi: {},
     vaultApi: {},
@@ -188,6 +210,7 @@ describe("ExecBatchPanel", () => {
     };
     mocks.execute.mockResolvedValue(batch);
     mounted = mountPanel();
+    await flush();
     expect(visibleTargetIds()).toEqual(["s1", "s2", "s6"]);
     expect(text()).toContain("ssh-one");
     expect(text()).toContain("ssh-two");
@@ -228,9 +251,11 @@ describe("ExecBatchPanel", () => {
     const pending = deferred<ExecBatch>();
     mocks.execute.mockReturnValue(pending.promise);
     mounted = mountPanel([sessions[0]]);
+    await flush();
     click(targetCheckboxes()[0]);
     setInputValue(commandInput(), "sleep 60");
     clickButton(panel().container, "执行");
+    await flush();
     await flushUntil(() => text().includes("正在执行批次 batch-ui-test"));
 
     clickButton(panel().container, "取消本批次");
@@ -646,6 +671,7 @@ describe("ExecBatchPanel", () => {
         results: [],
       });
     mounted = mountPanel([sessions[0]]);
+    await flush();
     click(targetCheckbox("s1"));
     setInputValue(commandInput(), "deploy {{service}}");
     clickButton(panel().container, "执行");
@@ -680,6 +706,7 @@ describe("ExecBatchPanel", () => {
 
   it("reports unknown variables without opening a prompt or executing", async () => {
     mounted = mountPanel([sessions[0]]);
+    await flush();
     click(targetCheckbox("s1"));
     setInputValue(commandInput(), "echo {{asset.environment}}");
     clickButton(panel().container, "执行");
