@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	osexec "os/exec"
 	"regexp"
 	"runtime"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/pty"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/local"
 )
@@ -851,7 +853,7 @@ func TestRealLocalPTYExplicitBackgroundCleanupRaceReplayInputAndKill(t *testing.
 	if childGroup == shellGroup {
 		t.Fatalf("default job control did not separate groups: shell=%d child=%d", shellGroup, childGroup)
 	}
-	t.Cleanup(func() { _ = osexec.Command("kill", "-KILL", "-"+strconv.Itoa(childGroup)).Run() })
+	t.Cleanup(func() { realLocalBackgroundGroupCleanup(childGroup, shellGroup) })
 	if !processPresent(pid) || !processPresent(child) {
 		t.Fatalf("real processes before cleanup: shell=%d child=%d", pid, child)
 	}
@@ -1001,6 +1003,64 @@ func realLocalProcessPresent(pid int, snapshots ...func() ([]byte, error)) (bool
 	return len(state) > 0 && state[0] != 'Z', nil
 }
 
+// realLocalBackgroundGroupCleanup kills the background job's process group,
+// but only while a fresh process snapshot still proves the group belongs to
+// the child; an unverifiable or unsafe target is left alone rather than risk
+// signaling the test runner or an unrelated group.
+func realLocalBackgroundGroupCleanup(childGroup, shellGroup int) {
+	output, err := realLocalProcessSnapshot()
+	if err != nil {
+		return
+	}
+	if !realLocalBackgroundGroupKillSafe(output, childGroup, shellGroup, os.Getpid()) {
+		return
+	}
+	_ = realLocalBackgroundGroupKillCommand(childGroup).Run()
+}
+
+// realLocalBackgroundGroupKillCommand builds the process group kill. The "--"
+// is mandatory: procps kill reads a bare negative operand as options and then
+// signals its own process group via kill(0), wiping out the test runner.
+func realLocalBackgroundGroupKillCommand(childGroup int) *osexec.Cmd {
+	return osexec.Command("kill", "-KILL", "--", "-"+strconv.Itoa(childGroup))
+}
+
+// realLocalBackgroundGroupKillSafe reports whether a SIGKILL to -childGroup
+// provably targets only the background job's own process group. The captured
+// group must be valid, distinct from the shell's group and from the test
+// runner's own group, and a process must still hold the group leader slot
+// under the child's PID so a recycled ID cannot point the kill at strangers.
+func realLocalBackgroundGroupKillSafe(snapshot []byte, childGroup, shellGroup, selfPID int) bool {
+	if childGroup <= 1 || childGroup == shellGroup {
+		return false
+	}
+	selfGroup := 0
+	leaderHeld := false
+	selfText := strconv.Itoa(selfPID)
+	leaderText := strconv.Itoa(childGroup)
+	for _, line := range bytes.Split(snapshot, []byte("\n")) {
+		fields := bytes.Fields(line)
+		if len(fields) != 3 {
+			continue
+		}
+		switch string(fields[0]) {
+		case selfText:
+			group, err := strconv.Atoi(string(fields[1]))
+			if err != nil {
+				return false
+			}
+			selfGroup = group
+		case leaderText:
+			group, err := strconv.Atoi(string(fields[1]))
+			if err != nil || group != childGroup {
+				return false
+			}
+			leaderHeld = true
+		}
+	}
+	return leaderHeld && selfGroup > 0 && childGroup != selfGroup
+}
+
 func TestRealLocalProcessPresentReportsSnapshotFailure(t *testing.T) {
 	injected := errors.New("injected process snapshot failure")
 	present, err := realLocalProcessPresent(1, func() ([]byte, error) { return nil, injected })
@@ -1010,6 +1070,150 @@ func TestRealLocalProcessPresentReportsSnapshotFailure(t *testing.T) {
 	if present {
 		t.Fatal("processPresent returned present after snapshot failure")
 	}
+}
+
+func TestRealLocalBackgroundGroupKillSafeVerifiesTargets(t *testing.T) {
+	const (
+		selfPID    = 9001
+		shellGroup = 4200
+		childGroup = 4300
+	)
+	verified := []byte(" 9001  4100 Ss\n 9100  4100 S\n 4200  4200 Ss\n 4300  4300 S\n")
+	tests := []struct {
+		name       string
+		snapshot   []byte
+		childGroup int
+		shellGroup int
+		want       bool
+	}{
+		{
+			name:       "verified child group is killable",
+			snapshot:   verified,
+			childGroup: childGroup,
+			shellGroup: shellGroup,
+			want:       true,
+		},
+		{
+			name:       "zombie leader still holds the group ID",
+			snapshot:   []byte(" 9001  4100 Ss\n 4300  4300 Z\n"),
+			childGroup: childGroup,
+			shellGroup: shellGroup,
+			want:       true,
+		},
+		{
+			name:       "refuses the test runner group",
+			snapshot:   []byte(" 9001  4300 Ss\n 9100  4300 S\n 4300  4300 Ss\n"),
+			childGroup: childGroup,
+			shellGroup: shellGroup,
+			want:       false,
+		},
+		{
+			name:       "refuses the shell group",
+			snapshot:   verified,
+			childGroup: shellGroup,
+			shellGroup: shellGroup,
+			want:       false,
+		},
+		{
+			name:       "refuses the init group",
+			snapshot:   verified,
+			childGroup: 1,
+			shellGroup: shellGroup,
+			want:       false,
+		},
+		{
+			name:       "refuses a zero group",
+			snapshot:   verified,
+			childGroup: 0,
+			shellGroup: shellGroup,
+			want:       false,
+		},
+		{
+			name:       "refuses when the leader is gone",
+			snapshot:   []byte(" 9001  4100 Ss\n 4200  4200 Ss\n"),
+			childGroup: childGroup,
+			shellGroup: shellGroup,
+			want:       false,
+		},
+		{
+			name:       "refuses a leader ID recycled into another group",
+			snapshot:   []byte(" 9001  4100 Ss\n 4300  4400 S\n"),
+			childGroup: childGroup,
+			shellGroup: shellGroup,
+			want:       false,
+		},
+		{
+			name:       "refuses when the test runner is missing from the snapshot",
+			snapshot:   []byte(" 4200  4200 Ss\n 4300  4300 S\n"),
+			childGroup: childGroup,
+			shellGroup: shellGroup,
+			want:       false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := realLocalBackgroundGroupKillSafe(test.snapshot, test.childGroup, test.shellGroup, selfPID); got != test.want {
+				t.Fatalf("killSafe(%d, %d) = %v, want %v", test.childGroup, test.shellGroup, got, test.want)
+			}
+		})
+	}
+}
+
+func TestRealLocalBackgroundGroupKillCommandSeparatesOperands(t *testing.T) {
+	args := realLocalBackgroundGroupKillCommand(4321).Args
+	if len(args) != 4 || args[0] != "kill" || args[1] != "-KILL" || args[2] != "--" || args[3] != "-4321" {
+		t.Fatalf("kill command args = %v, want [kill -KILL -- -4321]", args)
+	}
+}
+
+func TestRealLocalBackgroundGroupCleanupKillsOnlyVerifiedHelperGroup(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("real process group cleanup test requires unix kill semantics")
+	}
+	cmd := osexec.Command("sleep", "30")
+	process, err := pty.StartProcess(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = process.Kill() })
+	pid := cmd.Process.Pid
+	group, state, err := realLocalProcessInfo(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state == "" {
+		t.Fatalf("helper process %d was not found", pid)
+	}
+	if group != pid {
+		t.Fatalf("helper process %d is not its own group leader: group=%d", pid, group)
+	}
+	selfGroup, _, err := realLocalProcessInfo(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selfGroup <= 0 {
+		t.Fatalf("test runner process group = %d, want a positive group", selfGroup)
+	}
+	if realLocalBackgroundGroupKillSafe(mustRealLocalSnapshot(t), selfGroup, selfGroup+1, os.Getpid()) {
+		t.Fatal("killSafe accepted the test runner's own process group")
+	}
+	realLocalBackgroundGroupCleanup(pid, pid+1)
+	waitForRealLocalCondition(t, func() bool {
+		present, err := realLocalProcessPresent(pid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return !present
+	})
+}
+
+func mustRealLocalSnapshot(t *testing.T) []byte {
+	t.Helper()
+	output, err := realLocalProcessSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return output
 }
 
 type lockedWriteLog struct {
