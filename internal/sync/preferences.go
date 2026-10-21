@@ -281,6 +281,36 @@ func (e *Engine) applyAIGrantObject(ctx context.Context, objectID string, plaint
 	}
 }
 
+// decodeAIGrantDeviceRecords decodes the persisted device grant map record by record with the guard's
+// own permanence rule (the same normalization guard.loadGrants applies on reads): only records written
+// before the marker existed (absent permanence) default to permanent, and an explicit marker is kept
+// verbatim. Every whole-row rewrite of the map must decode through here so bystander records keep their
+// durable permanence instead of silently adopting the zero value.
+func decodeAIGrantDeviceRecords(value string) (map[string]guard.DeviceGrant, error) {
+	grants := map[string]guard.DeviceGrant{}
+	var records map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(value), &records); err != nil {
+		return nil, err
+	}
+	for id, item := range records {
+		var grant guard.DeviceGrant
+		if err := json.Unmarshal(item, &grant); err != nil {
+			return nil, err
+		}
+		var marker struct {
+			Permanent *bool `json:"permanent"`
+		}
+		if err := json.Unmarshal(item, &marker); err != nil {
+			return nil, err
+		}
+		if marker.Permanent == nil {
+			grant.Permanent = true
+		}
+		grants[id] = grant
+	}
+	return grants, nil
+}
+
 func (e *Engine) applyAIGrantDevice(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	if _, err := e.aiOwnerID(ctx); err != nil {
 		report.warnf("AI 授权应用需要账号身份: %v", err)
@@ -320,12 +350,10 @@ func (e *Engine) applyAIGrantDevice(ctx context.Context, plaintext []byte, repor
 	}
 	grants := map[string]guard.DeviceGrant{}
 	if found && value != "" {
-		if err := json.Unmarshal([]byte(value), &grants); err != nil {
+		grants, err = decodeAIGrantDeviceRecords(value)
+		if err != nil {
 			report.warnf("AI 设备授权数据损坏: %v", err)
 			return false, false
-		}
-		if grants == nil {
-			grants = map[string]guard.DeviceGrant{}
 		}
 	}
 	local, exists := grants[payload.DeviceID]
@@ -556,7 +584,8 @@ func (e *Engine) applyAIGrantDeviceTombstone(ctx context.Context, objectID strin
 	}
 	grants := map[string]guard.DeviceGrant{}
 	if found && value != "" {
-		if err := json.Unmarshal([]byte(value), &grants); err != nil {
+		grants, err = decodeAIGrantDeviceRecords(value)
+		if err != nil {
 			report.warnf("AI 设备授权数据损坏: %v", err)
 			return false, false
 		}
