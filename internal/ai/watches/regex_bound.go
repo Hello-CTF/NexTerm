@@ -417,11 +417,15 @@ func alwaysEmpty(re *syntax.Regexp) bool {
 }
 
 // canMatchEmpty reports whether the subexpression can match the empty
-// string while also being able to consume input — a nullable-consuming
-// suffix such as .*, (?:x)?, a* or x{0,2}.
+// string: nullable-consuming suffixes (.*, (?:x)?, a*, x{0,2}) and
+// zero-width assertions (^, $, \b, …). The concat walk steps over these
+// to find the subexpression that grounds the match's right edge; the
+// dependency recursion then decides whether the suffix hides a
+// right-context assertion.
 func canMatchEmpty(re *syntax.Regexp) bool {
 	switch re.Op {
-	case syntax.OpEmptyMatch:
+	case syntax.OpEmptyMatch, syntax.OpBeginLine, syntax.OpBeginText,
+		syntax.OpEndLine, syntax.OpEndText, syntax.OpWordBoundary, syntax.OpNoWordBoundary:
 		return true
 	case syntax.OpLiteral:
 		return len(re.Rune) == 0
