@@ -19,6 +19,10 @@ const streamCopyBuffer = 32 << 10
 type TargetStreamOptions struct {
 	Timeout time.Duration
 	Now     func() time.Time
+	// OutputLimit caps the captured full output for the final Result;
+	// DefaultOutputLimit when unset. The progress retention bounds apply
+	// independently of this limit.
+	OutputLimit int64
 }
 
 // targetStreamOutcome carries the execution side of a streamed target; the
@@ -43,6 +47,57 @@ type targetStreamOutcome struct {
 // service contract: a canceled context finishes the target with
 // StatusCanceled, a deadline with StatusTimeout.
 func ExecuteTargetStream(ctx context.Context, tracker *ProgressTracker, target Target, command string, options TargetStreamOptions) (Result, error) {
+	return executeTargetStream(ctx, tracker, target, command, options, nil)
+}
+
+// ExecuteTargetStreamCaptured is ExecuteTargetStream plus a write-time
+// capped capture of the full output for the final Result, mirroring the
+// service's one-shot output contract: Stdout and Stderr hold the first
+// OutputLimit bytes of each stream (rune-safe), and Truncated reports the
+// capture cap rather than the progress retention.
+func ExecuteTargetStreamCaptured(ctx context.Context, tracker *ProgressTracker, target Target, command string, options TargetStreamOptions) (Result, error) {
+	limit := options.OutputLimit
+	if limit <= 0 {
+		limit = DefaultOutputLimit
+	}
+	return executeTargetStream(ctx, tracker, target, command, options, newStreamCapture(limit))
+}
+
+// streamCapture collects the full output for the final Result under a
+// write-time cap so an unbounded stream cannot grow memory.
+type streamCapture struct {
+	stdout streamLimitedBuffer
+	stderr streamLimitedBuffer
+}
+
+type streamLimitedBuffer struct {
+	buffer    []byte
+	limit     int64
+	truncated bool
+}
+
+func newStreamCapture(limit int64) *streamCapture {
+	return &streamCapture{
+		stdout: streamLimitedBuffer{limit: limit},
+		stderr: streamLimitedBuffer{limit: limit},
+	}
+}
+
+func (b *streamLimitedBuffer) Write(p []byte) {
+	if b.truncated || int64(len(b.buffer)) >= b.limit {
+		b.truncated = true
+		return
+	}
+	room := b.limit - int64(len(b.buffer))
+	if int64(len(p)) > room {
+		b.buffer = append(b.buffer, p[:room]...)
+		b.truncated = true
+		return
+	}
+	b.buffer = append(b.buffer, p...)
+}
+
+func executeTargetStream(ctx context.Context, tracker *ProgressTracker, target Target, command string, options TargetStreamOptions, capture *streamCapture) (Result, error) {
 	if tracker == nil {
 		return Result{}, fmt.Errorf("%w: nil progress tracker", ErrInvalid)
 	}
@@ -64,7 +119,7 @@ func ExecuteTargetStream(ctx context.Context, tracker *ProgressTracker, target T
 	if err := tracker.Start(target.SessionID, started); err != nil {
 		return Result{}, err
 	}
-	result := streamTargetResult(ctx, tracker, target, command, timeout, started)
+	result := streamTargetResult(ctx, tracker, target, command, timeout, started, capture)
 	result.finishedAt = now()
 	result.DurationMS = result.finishedAt.Sub(started).Milliseconds()
 	if err := tracker.Finish(target.SessionID, result, result.finishedAt); err != nil {
@@ -73,7 +128,7 @@ func ExecuteTargetStream(ctx context.Context, tracker *ProgressTracker, target T
 	return result, nil
 }
 
-func streamTargetResult(ctx context.Context, tracker *ProgressTracker, target Target, command string, timeout time.Duration, started time.Time) Result {
+func streamTargetResult(ctx context.Context, tracker *ProgressTracker, target Target, command string, timeout time.Duration, started time.Time, capture *streamCapture) Result {
 	result := Result{
 		SessionID: target.SessionID, SessionName: target.SessionName, AssetID: target.AssetID,
 		startedAt: started, environment: target.Environment,
@@ -83,14 +138,24 @@ func streamTargetResult(ctx context.Context, tracker *ProgressTracker, target Ta
 
 	var outcome targetStreamOutcome
 	if stream, ok := target.Transport.(base.ExecStreamTransport); ok {
-		outcome = streamTargetOutput(opCtx, tracker, target, command, timeout, stream)
+		outcome = streamTargetOutput(opCtx, tracker, target, command, timeout, stream, capture)
 	} else {
-		outcome = forwardOneShotOutput(opCtx, tracker, target, command, timeout)
+		outcome = forwardOneShotOutput(opCtx, tracker, target, command, timeout, capture)
+	}
+	if capture != nil {
+		result.Stdout, _ = capOutput(string(capture.stdout.buffer), capture.stdout.limit)
+		result.Stderr, _ = capOutput(string(capture.stderr.buffer), capture.stderr.limit)
+		result.Truncated = outcome.stdoutTruncated || outcome.stderrTruncated ||
+			capture.stdout.truncated || capture.stderr.truncated
+		return resultWithMappedStatus(&result, opCtx, outcome)
 	}
 	snapshot := targetStreamSnapshot(tracker, target.SessionID)
 	result.Truncated = outcome.stdoutTruncated || outcome.stderrTruncated ||
 		snapshot.Stdout.Truncated || snapshot.Stderr.Truncated
+	return resultWithMappedStatus(&result, opCtx, outcome)
+}
 
+func resultWithMappedStatus(result *Result, opCtx context.Context, outcome targetStreamOutcome) Result {
 	switch opErr := opCtx.Err(); {
 	case opErr != nil:
 		result.Error = opErr.Error()
@@ -104,9 +169,9 @@ func streamTargetResult(ctx context.Context, tracker *ProgressTracker, target Ta
 		code := 0
 		result.ExitCode = &code
 	default:
-		mapTargetStreamError(&result, outcome.err)
+		mapTargetStreamError(result, outcome.err)
 	}
-	return result
+	return *result
 }
 
 func mapTargetStreamError(result *Result, err error) {
@@ -137,7 +202,7 @@ func mapTargetStreamError(result *Result, err error) {
 // closed; an early close is only used to unblock the copies after a
 // cancellation or transport failure, and it never touches the shared
 // transport or any other exec channel.
-func streamTargetOutput(ctx context.Context, tracker *ProgressTracker, target Target, command string, timeout time.Duration, stream base.ExecStreamTransport) targetStreamOutcome {
+func streamTargetOutput(ctx context.Context, tracker *ProgressTracker, target Target, command string, timeout time.Duration, stream base.ExecStreamTransport, capture *streamCapture) targetStreamOutcome {
 	channel, err := stream.OpenExec(ctx, command, base.ExecOptions{Timeout: timeout, ExpectedGeneration: target.Generation})
 	if err != nil {
 		return targetStreamOutcome{err: err}
@@ -151,11 +216,11 @@ func streamTargetOutput(ctx context.Context, tracker *ProgressTracker, target Ta
 	copies.Add(2)
 	go func() {
 		defer copies.Done()
-		stderrErr = copyStreamToTracker(tracker, target.SessionID, channel.Stderr(), false)
+		stderrErr = copyStreamToTracker(tracker, target.SessionID, channel.Stderr(), false, capture)
 	}()
 	go func() {
 		defer copies.Done()
-		stdoutErr = copyStreamToTracker(tracker, target.SessionID, channel, true)
+		stdoutErr = copyStreamToTracker(tracker, target.SessionID, channel, true, capture)
 	}()
 	waitErr := channel.Wait(ctx)
 	var exitErr *base.ExitError
@@ -183,15 +248,23 @@ func streamTargetOutput(ctx context.Context, tracker *ProgressTracker, target Ta
 // forwardOneShotOutput runs the request/response fallback for transports
 // without streaming support and forwards the full output through the
 // tracker's bounded retention as one chunk per stream.
-func forwardOneShotOutput(ctx context.Context, tracker *ProgressTracker, target Target, command string, timeout time.Duration) targetStreamOutcome {
-	execResult, execErr := target.Transport.Exec(ctx, command, base.ExecOptions{
-		Timeout: timeout, ExpectedGeneration: target.Generation,
-	})
+func forwardOneShotOutput(ctx context.Context, tracker *ProgressTracker, target Target, command string, timeout time.Duration, capture *streamCapture) targetStreamOutcome {
+	options := base.ExecOptions{Timeout: timeout, ExpectedGeneration: target.Generation}
+	if capture != nil {
+		options.Limits = base.OutputLimits{Stdout: capture.stdout.limit, Stderr: capture.stderr.limit}
+	}
+	execResult, execErr := target.Transport.Exec(ctx, command, options)
 	if execResult.Stdout != "" {
 		_ = tracker.WriteStdout(target.SessionID, []byte(execResult.Stdout))
+		if capture != nil {
+			capture.stdout.Write([]byte(execResult.Stdout))
+		}
 	}
 	if execResult.Stderr != "" {
 		_ = tracker.WriteStderr(target.SessionID, []byte(execResult.Stderr))
+		if capture != nil {
+			capture.stderr.Write([]byte(execResult.Stderr))
+		}
 	}
 	outcome := targetStreamOutcome{stdoutTruncated: execResult.Truncated, stderrTruncated: execResult.Truncated, err: execErr}
 	switch {
@@ -203,7 +276,7 @@ func forwardOneShotOutput(ctx context.Context, tracker *ProgressTracker, target 
 	return outcome
 }
 
-func copyStreamToTracker(tracker *ProgressTracker, sessionID string, reader io.Reader, stdout bool) error {
+func copyStreamToTracker(tracker *ProgressTracker, sessionID string, reader io.Reader, stdout bool, capture *streamCapture) error {
 	buffer := make([]byte, streamCopyBuffer)
 	for {
 		count, err := reader.Read(buffer)
@@ -213,8 +286,14 @@ func copyStreamToTracker(tracker *ProgressTracker, sessionID string, reader io.R
 			var writeErr error
 			if stdout {
 				writeErr = tracker.WriteStdout(sessionID, chunk)
+				if capture != nil {
+					capture.stdout.Write(chunk)
+				}
 			} else {
 				writeErr = tracker.WriteStderr(sessionID, chunk)
+				if capture != nil {
+					capture.stderr.Write(chunk)
+				}
 			}
 			if writeErr != nil {
 				return writeErr

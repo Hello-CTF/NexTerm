@@ -79,6 +79,7 @@ type activeBatch struct {
 	cancel     context.CancelFunc
 	canceling  bool
 	executions sync.WaitGroup
+	progress   *ProgressTracker
 }
 
 type pendingCancelKey struct {
@@ -195,6 +196,8 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 		return Batch{}, fmt.Errorf("record exec batch production confirmation: %w", err)
 	}
 	s.startHistory(runCtx, ownerID, request, started, targets, classification.production())
+	tracker := NewProgressTracker(request.BatchID, request.SessionIDs)
+	active.progress = tracker
 
 	results := make([]Result, len(targets))
 	jobs := make(chan int, len(targets))
@@ -214,17 +217,57 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 				target := targets[index]
 				if !s.beginExecution(runCtx, active) {
 					results[index] = canceledResult(target)
+					_ = tracker.Finish(target.SessionID, results[index], s.now())
 					continue
 				}
 				results[index] = func() Result {
 					defer active.executions.Done()
-					return s.executeTarget(runCtx, ownerID, request, target, timeout, challenge)
+					result, err := ExecuteTargetStreamCaptured(runCtx, tracker, target, request.Command, TargetStreamOptions{
+						Timeout: timeout, Now: s.now, OutputLimit: s.outputLimit,
+					})
+					if err != nil {
+						result = streamFailureResult(target, s.now(), err)
+					}
+					s.audit(ctx, ownerID, request, result, target.Environment, challenge)
+					return result
 				}()
 			}
 		}()
 	}
 	workers.Wait()
 	return s.finishWithHistory(runCtx, ownerID, request, started, targets, results, classification.production()), nil
+}
+
+// streamFailureResult maps an internal streaming-driver fault to a finished
+// target result so every slot of the results slice is always populated.
+func streamFailureResult(target Target, now time.Time, err error) Result {
+	return Result{
+		SessionID: target.SessionID, SessionName: target.SessionName, AssetID: target.AssetID,
+		Status: StatusTransportError, Error: err.Error(),
+		startedAt: now, finishedAt: now, environment: target.Environment,
+	}
+}
+
+// Rerun executes the failed targets of a finished batch as a new batch,
+// preserving the original command, timeout, and concurrency. The production
+// confirmation is deliberately not carried over: production targets must
+// re-confirm through the normal Execute flow.
+func (s *Service) Rerun(ctx context.Context, ownerID string, original Request, results []Result, newBatchID string) (Batch, error) {
+	return ExecuteRerun(ctx, s, ownerID, original, results, newBatchID)
+}
+
+// BatchProgress returns the live progress snapshot of an active batch.
+// Progress exists only while the batch is running; finished batches are
+// served by the history store.
+func (s *Service) BatchProgress(ownerID, batchID string) (BatchProgress, []TargetProgress, bool) {
+	s.mu.Lock()
+	active := s.batches[batchKey{ownerID: ownerID, batchID: batchID}]
+	s.mu.Unlock()
+	if active == nil || active.progress == nil {
+		return BatchProgress{}, nil, false
+	}
+	batch, targets := active.progress.Snapshot()
+	return batch, targets, true
 }
 
 // Cancel sets canceling under this same mutex before waiting, so no Add can race its Wait.
@@ -542,12 +585,6 @@ func (s *Service) preflight(ctx context.Context, sessionIDs []string) ([]Target,
 		targets[index] = target
 	}
 	return targets, failures
-}
-
-func (s *Service) executeTarget(ctx context.Context, ownerID string, request Request, target Target, timeout time.Duration, challenge *productionChallenge) Result {
-	result := s.executeTargetTransport(ctx, request, target, timeout)
-	s.audit(ctx, ownerID, request, result, target.Environment, challenge)
-	return result
 }
 
 func (s *Service) executeTargetTransport(ctx context.Context, request Request, target Target, timeout time.Duration) Result {
