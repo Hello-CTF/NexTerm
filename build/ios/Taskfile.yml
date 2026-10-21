@@ -23,7 +23,10 @@ vars:
   PROVISIONING_PROFILE: '{{.PROVISIONING_PROFILE | default ""}}'
   # Optional entitlements applied at codesign time (generated default below)
   ENTITLEMENTS_FILE: '{{.ENTITLEMENTS_FILE | default "build/ios/entitlements.plist"}}'
-  # SDK_PATH is computed lazily at task-level to avoid errors on non-macOS systems
+  # SDK_PATH is computed lazily at task-level, and only when xcrun exists, so
+  # `task ios:package --dry` can resolve the task graph on non-macOS systems
+  # (go-task evaluates `sh:` vars even with --dry). A present-but-broken xcrun
+  # still fails the evaluation, keeping the real iOS build requirement intact.
 
 tasks:
   install:deps:
@@ -53,7 +56,7 @@ tasks:
       DEFAULT_OUTPUT: '{{.BIN_DIR}}/{{.APP_NAME}}'
       OUTPUT: '{{ .OUTPUT | default .DEFAULT_OUTPUT }}'
       SDK_PATH:
-        sh: xcrun --sdk {{.IOS_SDK}} --show-sdk-path
+        sh: 'if command -v xcrun >/dev/null 2>&1; then xcrun --sdk {{.IOS_SDK}} --show-sdk-path; fi'
     env:
       GOOS: ios
       CGO_ENABLED: 1
@@ -92,7 +95,7 @@ tasks:
     summary: Link the iOS executable from the Go archive and main.m
     vars:
       SDK_PATH:
-        sh: xcrun --sdk {{.IOS_SDK}} --show-sdk-path
+        sh: 'if command -v xcrun >/dev/null 2>&1; then xcrun --sdk {{.IOS_SDK}} --show-sdk-path; fi'
     cmds:
       - |
         MAIN_M=build/ios/main.m
@@ -252,7 +255,7 @@ tasks:
       - frontend/bindings/**/*
     vars:
       SDK_PATH:
-        sh: xcrun --sdk {{.IOS_SDK}} --show-sdk-path
+        sh: 'if command -v xcrun >/dev/null 2>&1; then xcrun --sdk {{.IOS_SDK}} --show-sdk-path; fi'
     cmds:
       - wails3 generate bindings -f '{{.BUILD_FLAGS}}' -clean=true
     env:

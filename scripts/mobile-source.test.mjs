@@ -297,6 +297,69 @@ test("release package tasks compile every architecture with production tags", ()
   }
 });
 
+function resolveTool(name) {
+  for (const dir of (process.env.PATH || "").split(path.delimiter)) {
+    if (!dir) continue;
+    const candidate = path.join(dir, name);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch {
+      // keep looking
+    }
+  }
+  assert.fail(`${name} not found in PATH`);
+}
+
+// A PATH with just the tools the ios:package graph resolves, so tests control
+// whether xcrun exists at all. `xcrun: "broken"` installs a failing stub
+// instead of leaving xcrun missing.
+function toolchainBin(t, { xcrun } = {}) {
+  const bin = fixture(t, "nexterm-mobile-path-");
+  const runner = taskRunner();
+  assert.ok(runner, "a go-task runner is required (install task or the pinned wails3 CLI)");
+  for (const tool of ["node", "git", "uname", "tail", "sort", runner[0]]) {
+    fs.symlinkSync(resolveTool(tool), path.join(bin, tool));
+  }
+  if (xcrun === "broken") {
+    fs.writeFileSync(path.join(bin, "xcrun"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  }
+  return { bin, runner };
+}
+
+function dryRunIosPackage(bin, runner) {
+  return spawnSync(runner[0], [...runner.slice(1), "ios:package", "--dry"], {
+    cwd: ROOT,
+    env: { ...process.env, PATH: bin, NEXTERM_RELEASE_VERSION: "1.2.3" },
+    encoding: "utf8",
+  });
+}
+
+// go-task resolves `sh:` variables even with --dry, so on Linux — where the
+// macOS-only xcrun does not exist — `ios:package --dry` used to die with
+// exit status 127 before printing the task graph. A PATH without xcrun
+// reproduces that environment on any host; the dry run must still succeed
+// and still plan the same production build. Real xcrun failures on macOS
+// keep failing and stay covered by the full-PATH package test above.
+test("ios package dry run does not require the macOS-only xcrun toolchain", (t) => {
+  const { bin, runner } = toolchainBin(t);
+  const result = dryRunIosPackage(bin, runner);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const builds = `${result.stdout}\n${result.stderr}`.split(/\r?\n/).filter((line) => line.includes("go build -buildmode="));
+  assert.equal(builds.length, 1, "expected exactly one go build line");
+  assert.ok(builds[0].includes("-tags production,"), builds[0]);
+  assert.ok(!builds[0].includes(",debug"), builds[0]);
+});
+
+// The missing-xcrun tolerance must not mask a broken toolchain: when xcrun
+// exists but fails, SDK discovery has to keep failing the task.
+test("ios package dry run still fails when xcrun exists but errors", (t) => {
+  const { bin, runner } = toolchainBin(t, { xcrun: "broken" });
+  const result = dryRunIosPackage(bin, runner);
+  assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(`${result.stdout}\n${result.stderr}`, /xcrun --sdk iphonesimulator --show-sdk-path/);
+});
+
 test("android overlay generation refreshes the stamp across cached runs", (t) => {
   const root = isolatedRepo(t);
   const run = (version) => {
