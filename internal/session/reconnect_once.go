@@ -117,7 +117,25 @@ func (m *Manager) reconnectOnce(ctx context.Context, session *Session, generatio
 	if err == nil {
 		var opened map[*Tab]*replacementChannel
 		var gone map[*Tab]struct{}
-		opened, gone, err = m.openReplacementChannels(ctx, session, handle, generation)
+		// Replacement channels must outlive the attempt: every transport
+		// binds an opened channel's lifetime to the context it receives,
+		// so opening with the caller's context tore the fresh channels
+		// down when the caller's context ended (the RPC return included).
+		// Open them under a context scoped to the session's lifetime
+		// instead: the caller's context cancels it only while the opens
+		// are in flight, so a blocked open still aborts on cancellation,
+		// and once the opens complete, a committed channel lives until
+		// the session ends.
+		session.mu.Lock()
+		channelCtx := session.ctx
+		session.mu.Unlock()
+		openCtx, cancelOpen := context.WithCancel(channelCtx)
+		stop := context.AfterFunc(ctx, cancelOpen)
+		opened, gone, err = m.openReplacementChannels(openCtx, session, handle, generation)
+		stop()
+		if err == nil && ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		if err == nil {
 			committed, commitErr := m.commitReconnect(session, handle, opened, gone, generation)
 			if committed {
@@ -125,6 +143,9 @@ func (m *Manager) reconnectOnce(ctx context.Context, session *Session, generatio
 			}
 			err = commitErr
 		}
+		// Every path short of a committed reconnect releases the scoped
+		// open context and closes the replacements explicitly.
+		cancelOpen()
 		for _, replacement := range opened {
 			_ = replacement.channel.Close()
 		}
