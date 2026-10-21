@@ -244,6 +244,33 @@ describe("ProductionConfirmationDialog typed environment confirmation", () => {
     setInputValue(environmentInput("one.prod.internal"), "production");
     expect(confirm.disabled).toBe(false);
   });
+
+  it("locks confirmation with a visible error when required environment names are missing", () => {
+    const onConfirm = vi.fn();
+    mounted = mountWithClient(
+      createElement(ProductionConfirmationDialog, {
+        challenge: {
+          targetSetHash: "a".repeat(64),
+          productionTargets: [
+            { sessionId: "s1", sessionName: "one", hostname: "one.prod.internal", environment: "production" },
+          ],
+        },
+        contentHash: "b".repeat(64),
+        command: "deploy --safe",
+        onCancel: () => undefined,
+        onConfirm,
+      }),
+    );
+
+    expect(dialog().textContent).toContain("缺少必需的环境名");
+    const confirm = [...dialog().querySelectorAll<HTMLButtonElement>("button")].find(
+      (candidate) => candidate.textContent?.trim() === "确认执行（1）",
+    );
+    if (!confirm) throw new Error("confirm button not found");
+    setInputValue(environmentInput("one.prod.internal"), "production");
+    expect(confirm.disabled).toBe(true);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
 });
 
 describe("ExecBatchPanel typed production confirmation", () => {

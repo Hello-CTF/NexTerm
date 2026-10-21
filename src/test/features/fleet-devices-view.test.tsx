@@ -190,7 +190,15 @@ function fleetHandler(overrides?: {
       return { payload: overrides?.baseUrls ?? { base_urls: BASE_URLS } };
     }
     if (url === "/fleet/devices/d-1/metrics" && method === "GET") {
-      return { payload: overrides?.metrics ?? { samples: METRICS_SAMPLES } };
+      return {
+        payload: overrides?.metrics ?? {
+          samples: METRICS_SAMPLES,
+          latest: METRICS_SAMPLES[METRICS_SAMPLES.length - 1],
+          windowStart: METRICS_SAMPLES[0].ts,
+          windowEnd: NOW,
+          sampleCount: METRICS_SAMPLES.length,
+        },
+      };
     }
     if (url === "/device/enroll-codes" && method === "POST") {
       return { payload: overrides?.enrollCode ?? { code: "fleet-code-1", expires_at: NOW + 900_000 } };
@@ -453,6 +461,25 @@ describe("Device management view - device list and metrics", () => {
     expect(container.textContent).toContain(formatTime(latest.ts));
   });
 
+  it("reports a valid empty window with an independent latest outside it as zero samples", async () => {
+    const latest = metricAt(NOW + 60_000, 66);
+    route(() => ({
+      payload: {
+        samples: [],
+        latest,
+        windowStart: NOW - 3600_000,
+        windowEnd: NOW,
+      },
+    }));
+    const container = mountMetrics();
+    await flushUntil(() => container.textContent?.includes(formatTime(latest.ts)) ?? false);
+
+    expect(container.textContent).toContain("66.0%");
+    expect(container.textContent).toContain("当前时间窗口没有采样点");
+    expect(container.textContent).toContain("共 0 个采样点");
+    expect(container.textContent).not.toContain("采样数未知");
+  });
+
   it("keeps independent latest visible when the trend fails", async () => {
     route(() => ({
       payload: {
@@ -469,6 +496,7 @@ describe("Device management view - device list and metrics", () => {
     expect(container.textContent).toContain("66.0%");
     expect(container.textContent).toContain("趋势加载失败");
     expect(container.textContent).toContain("context deadline exceeded");
+    expect(container.textContent).toContain("采样数未知");
     expect(container.textContent).not.toContain("设备离线，没有近期指标");
     expect(container.textContent).not.toContain("共 0 个采样点");
   });
@@ -530,7 +558,17 @@ describe("Device management view - device list and metrics", () => {
   });
 
   it("does not show a previous device sample while switching or resolving out of order", async () => {
-    route(() => ({ payload: { samples: [metricAt(NOW - 60_000, 11)] } }));
+    const currentResponse = (ts: number, cpu: number) => {
+      const latest = metricAt(ts, cpu);
+      return {
+        samples: [latest],
+        latest,
+        windowStart: NOW - 3600_000,
+        windowEnd: NOW,
+        sampleCount: 1,
+      };
+    };
+    route(() => ({ payload: currentResponse(NOW - 60_000, 11) }));
     const container = mountMetrics();
     await flushUntil(() => container.textContent?.includes("11.0%") ?? false);
 
@@ -544,20 +582,22 @@ describe("Device management view - device list and metrics", () => {
     });
 
     expect(container.textContent).not.toContain("11.0%");
-    nextRequest.resolve(jsonResponse({ samples: [metricAt(NOW - 30_000, 22)] }));
+    nextRequest.resolve(jsonResponse(currentResponse(NOW - 30_000, 22)));
     await flushUntil(() => container.textContent?.includes("22.0%") ?? false);
-    oldRequest.resolve(jsonResponse({ samples: [metricAt(NOW - 10_000, 33)] }));
+    oldRequest.resolve(jsonResponse(currentResponse(NOW - 10_000, 33)));
     await flush();
     expect(container.textContent).toContain("22.0%");
     expect(container.textContent).not.toContain("33.0%");
   });
 
-  it("marks legacy responses as having an unverified window", async () => {
+  it("does not infer latest samples or window metadata from a samples-only response", async () => {
     route(() => ({ payload: { samples: [metricAt(NOW - 60_000, 12.5)] } }));
     const container = mountMetrics();
-    await flushUntil(() => container.textContent?.includes("12.5%") ?? false);
+    await flushUntil(() => container.textContent?.includes("设备还没有上报指标") ?? false);
 
-    expect(container.textContent).toContain("窗口完整性未知");
+    expect(container.textContent).not.toContain("12.5%");
+    expect(container.textContent).not.toContain("趋势窗口");
+    expect(container.textContent).not.toContain("窗口完整性未知");
   });
 
   it("keeps the offline empty state distinct from a trend error", async () => {

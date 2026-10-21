@@ -235,14 +235,6 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
 
   const sessionGone =
     rootsSessionGone || (entries.isError && fsErrorResource(entries.error) === "session");
-  const legacyNotFound =
-    entries.isError &&
-    fsErrorResource(entries.error) === null &&
-    (entries.error as { code?: string }).code === "not_found";
-  const legacyRootsNotFound =
-    rootsQuery.isError &&
-    fsErrorResource(rootsQuery.error) === null &&
-    (rootsQuery.error as { code?: string }).code === "not_found";
   const goneHint = "会话已在服务端删除，请重新连接这台主机";
   const [reconnecting, setReconnecting] = useState(false);
 
@@ -1023,7 +1015,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
                     重试
                   </button>
                 )}
-                {(rootsSessionGone || legacyRootsNotFound) && (
+                {rootsSessionGone && (
                   <button
                     className="nx-link mt-1 text-[11px]"
                     disabled={reconnecting}
@@ -1063,7 +1055,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
                     重试
                   </button>
                 )}
-                {(sessionGone || legacyNotFound) && (
+                {sessionGone && (
                   <button
                     className="nx-link mt-1 text-[11px]"
                     disabled={reconnecting}

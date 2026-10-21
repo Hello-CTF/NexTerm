@@ -88,7 +88,6 @@ function dependencies(events: string[]): Partial<ProjectCommandDependencies> {
     write: vi.fn(async (tabId) => {
       events.push(`write:${tabId}`);
     }),
-    confirmProduction: vi.fn(async () => false),
   };
 }
 
@@ -114,18 +113,19 @@ describe("project template startup commands", () => {
     expect(new TextDecoder().decode(firstWrite[1])).toBe("cd /srv/app\r");
   });
 
-  it("binds production confirmation to the challenged input and target before writing", async () => {
+  it("binds production confirmation to the challenged input, target, and typed environment names", async () => {
     const template = seed();
     template.startupCommands = { "tab-1": "docker compose logs -f" };
-    const challenge: BroadcastConfirmationChallenge = {
+    const challenge: BroadcastConfirmationChallenge & { requiredEnvironmentNames: string[] } = {
       kind: "broadcast_production_confirmation",
       targetSetHash: "a".repeat(64),
       inputHash: "b".repeat(64),
+      requiredEnvironmentNames: ["production"],
       productionTargets: [{
         tabId: "kernel-tab-1", sessionId: "session-1", sessionName: "prod", environment: "production",
       }],
     };
-    const confirmProduction = vi.fn(async () => true);
+    const confirmProductionEnvironmentNames = vi.fn(async () => ["production"]);
     const prepare = vi.fn()
       .mockRejectedValueOnce({ code: "needs_confirm", detail: challenge })
       .mockResolvedValue(undefined);
@@ -135,19 +135,43 @@ describe("project template startup commands", () => {
       claim: async () => null,
       prepare,
       write,
-      confirmProduction,
+      confirmProductionEnvironmentNames,
     });
 
     expect(results[0].status).toBe("sent");
-    expect(confirmProduction).toHaveBeenCalledWith(challenge, "docker compose logs -f");
+    expect(confirmProductionEnvironmentNames).toHaveBeenCalledWith(challenge, "docker compose logs -f");
     expect(prepare).toHaveBeenCalledTimes(2);
     expect(prepare.mock.calls[1][2]).toEqual({
       confirmed: true, targetSetHash: challenge.targetSetHash, inputHash: challenge.inputHash,
+      environmentNames: ["production"],
     });
     expect(write.mock.calls[0][2]).toEqual(prepare.mock.calls[1][2]);
   });
 
   it("does not write a production command when confirmation is canceled", async () => {
+    const template = seed();
+    template.startupCommands = { "tab-1": "tail -f prod.log" };
+    const challenge: BroadcastConfirmationChallenge & { requiredEnvironmentNames: string[] } = {
+      kind: "broadcast_production_confirmation",
+      targetSetHash: "c".repeat(64),
+      inputHash: "d".repeat(64),
+      requiredEnvironmentNames: ["production"],
+      productionTargets: [{ tabId: "kernel-tab-1", sessionId: "session-1", sessionName: "prod", environment: "production" }],
+    };
+    const write = vi.fn(async () => undefined);
+    const results = await executeProjectTemplateCommands(template, new Map([["tab-1", "tab-1"]]), {
+      createTab: async () => attached("kernel-tab-1"),
+      claim: async () => null,
+      prepare: vi.fn(async () => { throw { code: "needs_confirm", detail: challenge }; }),
+      write,
+      confirmProductionEnvironmentNames: vi.fn(async () => null),
+    });
+
+    expect(results[0]).toMatchObject({ status: "canceled" });
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("fails closed without writing when a challenge omits required environment names", async () => {
     const template = seed();
     template.startupCommands = { "tab-1": "tail -f prod.log" };
     const challenge: BroadcastConfirmationChallenge = {
@@ -157,15 +181,42 @@ describe("project template startup commands", () => {
       productionTargets: [{ tabId: "kernel-tab-1", sessionId: "session-1", sessionName: "prod", environment: "production" }],
     };
     const write = vi.fn(async () => undefined);
+    const confirmProductionEnvironmentNames = vi.fn(async () => ["production"]);
     const results = await executeProjectTemplateCommands(template, new Map([["tab-1", "tab-1"]]), {
       createTab: async () => attached("kernel-tab-1"),
       claim: async () => null,
       prepare: vi.fn(async () => { throw { code: "needs_confirm", detail: challenge }; }),
       write,
-      confirmProduction: vi.fn(async () => false),
+      confirmProductionEnvironmentNames,
     });
 
-    expect(results[0]).toMatchObject({ status: "canceled" });
+    expect(results[0]).toMatchObject({ status: "failed" });
+    expect(confirmProductionEnvironmentNames).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("fails closed without retrying when confirmation returns no environment names", async () => {
+    const template = seed();
+    template.startupCommands = { "tab-1": "tail -f prod.log" };
+    const challenge: BroadcastConfirmationChallenge & { requiredEnvironmentNames: string[] } = {
+      kind: "broadcast_production_confirmation",
+      targetSetHash: "c".repeat(64),
+      inputHash: "d".repeat(64),
+      requiredEnvironmentNames: ["production"],
+      productionTargets: [{ tabId: "kernel-tab-1", sessionId: "session-1", sessionName: "prod", environment: "production" }],
+    };
+    const prepare = vi.fn(async () => { throw { code: "needs_confirm", detail: challenge }; });
+    const write = vi.fn(async () => undefined);
+    const results = await executeProjectTemplateCommands(template, new Map([["tab-1", "tab-1"]]), {
+      createTab: async () => attached("kernel-tab-1"),
+      claim: async () => null,
+      prepare,
+      write,
+      confirmProductionEnvironmentNames: vi.fn(async () => []),
+    });
+
+    expect(results[0]).toMatchObject({ status: "failed" });
+    expect(prepare).toHaveBeenCalledTimes(1);
     expect(write).not.toHaveBeenCalled();
   });
 

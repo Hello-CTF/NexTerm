@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, StrictMode } from "react";
-import { click, flush, flushMacrotask, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
+import { click, flush, flushMacrotask, flushUntil, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
 
 const harness = vi.hoisted(() => ({
   handlers: new Map<string, (payload: unknown) => void>(),
@@ -240,6 +240,7 @@ function broadcastChallengeError() {
       kind: "broadcast_production_confirmation",
       targetSetHash: "a".repeat(64),
       inputHash: "b".repeat(64),
+      requiredEnvironmentNames: ["production"],
       productionTargets: [
         { tabId: "kernel-1", sessionId: "s1", sessionName: "one", hostname: "one.production.internal", environment: "production" },
         { tabId: "kernel-2", sessionId: "s2", sessionName: "two", hostname: "two.production.internal", environment: "production" },
@@ -419,13 +420,15 @@ describe("terminal command broadcast", () => {
     expect(harness.prepareBroadcast.mock.calls[0][2]).toBeUndefined();
     expect(new TextDecoder().decode(harness.prepareBroadcast.mock.calls[0][1])).toBe("deploy --safe\n");
 
-    const acknowledgement = dialog.querySelector<HTMLInputElement>('input[aria-label="确认生产环境风险"]');
+    const firstEnvironment = dialog.querySelector<HTMLInputElement>('input[aria-label="输入环境名 one.production.internal"]');
+    const secondEnvironment = dialog.querySelector<HTMLInputElement>('input[aria-label="输入环境名 two.production.internal"]');
     const confirm = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(
       (button) => button.textContent?.trim() === "确认广播（2）",
     );
-    if (!acknowledgement || !confirm) throw new Error("broadcast confirmation controls not found");
+    if (!firstEnvironment || !secondEnvironment || !confirm) throw new Error("broadcast confirmation controls not found");
     expect(confirm.disabled).toBe(true);
-    click(acknowledgement);
+    setInputValue(firstEnvironment, "production");
+    setInputValue(secondEnvironment, "production");
     expect(confirm.disabled).toBe(false);
     click(confirm);
     await flushUntil(
@@ -437,6 +440,7 @@ describe("terminal command broadcast", () => {
       confirmed: true,
       targetSetHash: "a".repeat(64),
       inputHash: "b".repeat(64),
+      environmentNames: ["production"],
     };
     expect(harness.prepareBroadcast).toHaveBeenCalledTimes(2);
     expect(harness.prepareBroadcast.mock.calls[1][2]).toEqual(productionConfirmation);
@@ -485,12 +489,14 @@ describe("terminal command broadcast", () => {
     await flushUntil(() => document.body.querySelector('[role="dialog"][aria-label="确认生产环境广播"]') !== null);
 
     const dialog = broadcastProductionDialog();
-    const acknowledgement = dialog.querySelector<HTMLInputElement>('input[aria-label="确认生产环境风险"]');
+    const firstEnvironment = dialog.querySelector<HTMLInputElement>('input[aria-label="输入环境名 one.production.internal"]');
+    const secondEnvironment = dialog.querySelector<HTMLInputElement>('input[aria-label="输入环境名 two.production.internal"]');
     const confirm = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(
       (button) => button.textContent?.trim() === "确认广播（2）",
     );
-    if (!acknowledgement || !confirm) throw new Error("broadcast confirmation controls not found");
-    click(acknowledgement);
+    if (!firstEnvironment || !secondEnvironment || !confirm) throw new Error("broadcast confirmation controls not found");
+    setInputValue(firstEnvironment, "production");
+    setInputValue(secondEnvironment, "production");
     click(confirm);
     await flushUntil(() => harness.prepareBroadcast.mock.calls.length === 2);
     const cancel = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(

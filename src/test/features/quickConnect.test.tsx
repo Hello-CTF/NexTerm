@@ -756,7 +756,7 @@ describe("QuickConnect ad-hoc connections", () => {
       .mockRejectedValueOnce({
         code: "host_key_pending",
         message: "host key confirmation required",
-        detail: { host: "example.com", port: 2222, keyType: "ssh-ed25519", fingerprint: "SHA256:abc" },
+        detail: { host: "example.com", port: 2222, keyType: "ssh-ed25519", fingerprint: "SHA256:abc", key: "ZmFrZS1xdWljay1rZXk=" },
       })
       .mockResolvedValueOnce(QUICK_SESSION);
     const onClose = vi.fn();
@@ -771,6 +771,7 @@ describe("QuickConnect ad-hoc connections", () => {
       2222,
       "ssh-ed25519",
       "SHA256:abc",
+      "ZmFrZS1xdWljay1rZXk=",
     );
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(mocks.sessionConnectQuick).toHaveBeenCalledTimes(2);
@@ -1012,7 +1013,7 @@ describe("QuickConnect first connection and returning paths", () => {
       .mockRejectedValueOnce({
         code: "host_key_pending",
         message: "host key confirmation required",
-        detail: { host: "example.com", port: 2222, keyType: "ssh-ed25519", fingerprint: "SHA256:abc" },
+        detail: { host: "example.com", port: 2222, keyType: "ssh-ed25519", fingerprint: "SHA256:abc", key: "ZmFrZS1xdWljay1rZXk=" },
       })
       .mockResolvedValueOnce({ ...SESSION, id: "s-new", assetId: "a-new", name: "example.com:2222" });
     const onClose = vi.fn();
@@ -1034,6 +1035,7 @@ describe("QuickConnect first connection and returning paths", () => {
       2222,
       "ssh-ed25519",
       "SHA256:abc",
+      "ZmFrZS1xdWljay1rZXk=",
     );
     await waitFor(() => expect(mocks.sessionConnect).toHaveBeenCalledTimes(2));
     expect(mocks.sessionConnect).toHaveBeenLastCalledWith("a-new");

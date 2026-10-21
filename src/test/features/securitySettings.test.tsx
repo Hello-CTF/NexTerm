@@ -983,6 +983,7 @@ describe("connectAsset host-key confirmation", () => {
     port: 22,
     keyType: "ssh-ed25519",
     fingerprint: "SHA256:newfp",
+    key: "ZmFrZS1zZWN1cml0eS1rZXk=",
     changed: false,
   };
   const sessionInfo = {
@@ -1024,6 +1025,7 @@ describe("connectAsset host-key confirmation", () => {
       22,
       "ssh-ed25519",
       "SHA256:newfp",
+      "ZmFrZS1zZWN1cml0eS1rZXk=",
     );
     expect(mocks.sessionConnect).toHaveBeenCalledTimes(2);
     expect(mocks.sessionConnect).toHaveBeenLastCalledWith("asset-1");
@@ -1075,6 +1077,7 @@ describe("connectAsset host-key confirmation", () => {
       22,
       "ssh-ed25519",
       "SHA256:newfp",
+      "ZmFrZS1zZWN1cml0eS1rZXk=",
     );
     expect(mocks.sessionConnect).toHaveBeenLastCalledWith("asset-1");
   });
@@ -1112,6 +1115,7 @@ describe("connectAsset host-key confirmation", () => {
       22,
       "ssh-ed25519",
       "SHA256:newfp",
+      "ZmFrZS1zZWN1cml0eS1rZXk=",
     );
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.any(String));
   });

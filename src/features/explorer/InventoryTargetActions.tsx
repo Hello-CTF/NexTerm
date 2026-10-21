@@ -479,7 +479,6 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
           challenge={production.challenge}
           contentHash={production.challenge.commandHash}
           command={production.command}
-          typedPhrase="production"
           onCancel={() => setProduction(null)}
           onConfirm={(environmentNames) => {
             const current = production;

@@ -33,7 +33,7 @@ function ws(panes: Pane[]): Workspace {
   };
 }
 
-function live(tabId: string, lastOutputMsAgo: number, lastOutputAt?: number): LiveTabInfo {
+function live(tabId: string, lastOutputAt: number, lastOutputMsAgo = 0): LiveTabInfo {
   return {
     tabId,
     sessionId: "s",
@@ -45,9 +45,14 @@ function live(tabId: string, lastOutputMsAgo: number, lastOutputAt?: number): Li
     subscribers: 1,
     viewers: 1,
     exited: false,
+    lastOutputAt,
     lastOutputMsAgo,
-    ...(lastOutputAt === undefined ? {} : { lastOutputAt }),
   };
+}
+
+function liveWithoutTimestamp(tabId: string, lastOutputMsAgo: number): LiveTabInfo {
+  const { lastOutputAt: _lastOutputAt, ...ageOnly } = live(tabId, 0, lastOutputMsAgo);
+  return ageOnly;
 }
 
 function tabById(id: string): AppTab | undefined {
@@ -77,11 +82,11 @@ describe("background tab unread markers", () => {
   });
 
   it("marks background tabs without changing workspace or tab references", async () => {
-    mocks.listLive.mockResolvedValue([live("T1", 1000), live("T2", 1000)]);
+    mocks.listLive.mockResolvedValue([live("T1", 1000, 1000), live("T2", 1000, 1000)]);
     await pollUnreadTabsOnce();
     const before = useUi.getState().workspaces;
     const target = tabById("t2");
-    mocks.listLive.mockResolvedValue([live("T1", 50), live("T2", 80)]);
+    mocks.listLive.mockResolvedValue([live("T1", 1000, 50), live("T2", 1080, 80)]);
     await pollUnreadTabsOnce();
     expect(isTabUnread("t1")).toBe(false);
     expect(isTabUnread("t2")).toBe(true);
@@ -92,35 +97,44 @@ describe("background tab unread markers", () => {
   it("uses the absolute output timestamp even when the relative age increases", async () => {
     mocks.listLive.mockResolvedValue([live("T1", 1000, 1000), live("T2", 1000, 1000)]);
     await pollUnreadTabsOnce();
-    mocks.listLive.mockResolvedValue([live("T1", 3000, 2000), live("T2", 3000, 2000)]);
+    mocks.listLive.mockResolvedValue([live("T1", 2000, 3000), live("T2", 2000, 3000)]);
     await pollUnreadTabsOnce();
     expect(isTabUnread("t1")).toBe(false);
     expect(isTabUnread("t2")).toBe(true);
   });
 
   it("detects the first output after an explicit zero timestamp", async () => {
-    mocks.listLive.mockResolvedValue([live("T1", 0, 0), live("T2", 0, 0)]);
+    mocks.listLive.mockResolvedValue([live("T1", 0), live("T2", 0)]);
     await pollUnreadTabsOnce();
-    mocks.listLive.mockResolvedValue([live("T1", 0, 1000), live("T2", 0, 2000)]);
+    mocks.listLive.mockResolvedValue([live("T1", 1000), live("T2", 2000)]);
     await pollUnreadTabsOnce();
     expect(isTabUnread("t1")).toBe(false);
     expect(isTabUnread("t2")).toBe(true);
   });
 
   it("does not mark tabs or touch state without new output", async () => {
-    mocks.listLive.mockResolvedValue([live("T1", 1000), live("T2", 1000)]);
+    mocks.listLive.mockResolvedValue([live("T1", 1000, 1000), live("T2", 1000, 1000)]);
     await pollUnreadTabsOnce();
-    mocks.listLive.mockResolvedValue([live("T1", 3000), live("T2", 3000)]);
+    mocks.listLive.mockResolvedValue([live("T1", 1000, 3000), live("T2", 1000, 3000)]);
     const before = useUi.getState().workspaces;
     await pollUnreadTabsOnce();
     expect(isTabUnread("t2")).toBe(false);
     expect(useUi.getState().workspaces).toBe(before);
   });
 
-  it("clears the unread marker when a tab is activated", async () => {
-    mocks.listLive.mockResolvedValue([live("T2", 1000)]);
+  it("does not treat relative-age-only responses as the current output contract", async () => {
+    mocks.listLive.mockResolvedValue([liveWithoutTimestamp("T1", 1000), liveWithoutTimestamp("T2", 1000)]);
     await pollUnreadTabsOnce();
-    mocks.listLive.mockResolvedValue([live("T2", 80)]);
+    mocks.listLive.mockResolvedValue([liveWithoutTimestamp("T1", 50), liveWithoutTimestamp("T2", 80)]);
+    await pollUnreadTabsOnce();
+    expect(isTabUnread("t1")).toBe(false);
+    expect(isTabUnread("t2")).toBe(false);
+  });
+
+  it("clears the unread marker when a tab is activated", async () => {
+    mocks.listLive.mockResolvedValue([live("T2", 1000, 1000)]);
+    await pollUnreadTabsOnce();
+    mocks.listLive.mockResolvedValue([live("T2", 1080, 80)]);
     await pollUnreadTabsOnce();
     expect(isTabUnread("t2")).toBe(true);
 
@@ -136,9 +150,9 @@ describe("background tab unread markers", () => {
   });
 
   it("clears stale markers on the next poll after activation outside setActiveTab", async () => {
-    mocks.listLive.mockResolvedValue([live("T2", 1000)]);
+    mocks.listLive.mockResolvedValue([live("T2", 1000, 1000)]);
     await pollUnreadTabsOnce();
-    mocks.listLive.mockResolvedValue([live("T2", 80)]);
+    mocks.listLive.mockResolvedValue([live("T2", 1080, 80)]);
     await pollUnreadTabsOnce();
     expect(isTabUnread("t2")).toBe(true);
 
@@ -168,9 +182,9 @@ describe("background tab unread markers", () => {
         },
       ],
     }));
-    mocks.listLive.mockResolvedValue([live("T9", 1000)]);
+    mocks.listLive.mockResolvedValue([live("T9", 1000, 1000)]);
     await pollUnreadTabsOnce();
-    mocks.listLive.mockResolvedValue([live("T9", 80)]);
+    mocks.listLive.mockResolvedValue([live("T9", 1080, 80)]);
     await pollUnreadTabsOnce();
     expect(isTabUnread("t9")).toBe(true);
 

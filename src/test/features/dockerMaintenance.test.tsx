@@ -124,18 +124,6 @@ function mountWithClient(node: ReactNode): MountedView {
   return mount(createElement(QueryClientProvider, { client }, node));
 }
 
-async function typeProductionAndConfirm() {
-  const input = document.body.querySelector<HTMLInputElement>('input[aria-label="输入生产环境确认文字"]');
-  if (!input) throw new Error("production input not found");
-  const confirm = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("确认执行"));
-  if (!confirm) throw new Error("production confirm not found");
-  expect(confirm.disabled).toBe(true);
-  setInputValue(input, "production");
-  expect(confirm.disabled).toBe(false);
-  clickButton(document.body, "确认执行（1）");
-  await flush();
-}
-
 async function typeEnvironmentNameAndConfirm() {
   const input = document.body.querySelector<HTMLInputElement>('input[aria-label="输入环境名 production"]');
   if (!input) throw new Error("environment input not found");
@@ -187,21 +175,17 @@ describe("Compose stack grouping and production actions", () => {
     expect(groups[2].containers[0].id).toBe("plain");
   });
 
-  it("requires typed production confirmation before down", async () => {
-    mocks.composeAction.mockRejectedValueOnce(challenge()).mockResolvedValueOnce("down done");
+  it("rejects a down challenge without environment names and does not retry", async () => {
+    mocks.composeAction.mockRejectedValueOnce(challenge());
     const mounted = mountWithClient(createElement(ComposeStackHeader, { sessionId: "s1", project: "shop", stack, onChanged: vi.fn() }));
     clickButton(mounted.container, "down");
     await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(mocks.composeAction).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(document.body.querySelector('input[aria-label="输入生产环境确认文字"]')).not.toBeNull());
-    await typeProductionAndConfirm();
-    await waitFor(() => expect(mocks.composeAction).toHaveBeenCalledTimes(2));
-    expect(mocks.composeAction.mock.calls[1][3]).toEqual({
-      confirmed: true,
-      targetSetHash: "a".repeat(64),
-      commandHash: "b".repeat(64),
-    });
-    await waitFor(() => expect(mounted.container.textContent).toContain("down done"));
+    await flush();
+
+    expect(document.body.querySelector('input[aria-label="输入生产环境确认文字"]')).toBeNull();
+    expect(document.body.querySelector('input[aria-label="输入环境名 production"]')).toBeNull();
+    expect(mocks.composeAction).toHaveBeenCalledTimes(1);
     mounted.unmount();
   });
 
@@ -227,7 +211,7 @@ describe("Compose stack grouping and production actions", () => {
 
 describe("Compose edit and redeploy", () => {
   it("shows diff and completes production guard before writing and streaming up", async () => {
-    mocks.composePrepare.mockRejectedValueOnce(challenge());
+    mocks.composePrepare.mockRejectedValueOnce(typedChallenge());
     const mounted = mountWithClient(createElement(ComposeEditor, { sessionId: "s1", stack, onClose: vi.fn(), onChanged: vi.fn() }));
     clickButton(document.body, "trigger-save");
     await waitFor(() => expect(mocks.saveCalled).toBe(1));
@@ -239,10 +223,10 @@ describe("Compose edit and redeploy", () => {
 
     clickButton(document.body, "保存并 up -d");
     await waitFor(() => expect(mocks.composePrepare).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(document.body.querySelector('input[aria-label="输入生产环境确认文字"]')).not.toBeNull());
+    await waitFor(() => expect(document.body.querySelector('input[aria-label="输入环境名 production"]')).not.toBeNull());
     expect(mocks.fsWrite).not.toHaveBeenCalled();
     expect(mocks.composeAttach).not.toHaveBeenCalled();
-    await typeProductionAndConfirm();
+    await typeEnvironmentNameAndConfirm();
     await waitFor(() => expect(mocks.composePrepare).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(mocks.composeAttach).toHaveBeenCalledTimes(1));
     expect(mocks.fsWrite).not.toHaveBeenCalled();
@@ -256,6 +240,7 @@ describe("Compose edit and redeploy", () => {
         confirmed: true,
         targetSetHash: "a".repeat(64),
         commandHash: "b".repeat(64),
+        environmentNames: ["production"],
       },
     });
     expect(mocks.composeAttach.mock.calls[0][0]).toMatchObject({
@@ -377,7 +362,7 @@ describe("Compose edit and redeploy", () => {
 });
 
 describe("Docker disk prune", () => {
-  it("previews exact items and binds typed confirmation to the same token", async () => {
+  it("previews exact items and rejects a challenge without environment names without retrying", async () => {
     const preview: DockerPrunePreview = {
       token: "preview-token",
       digest: "c".repeat(64),
@@ -398,9 +383,7 @@ describe("Docker disk prune", () => {
       buildCache: [],
     });
     mocks.prunePreview.mockResolvedValue(preview);
-    mocks.prune.mockRejectedValueOnce(challenge()).mockResolvedValueOnce({
-      items: [{ item: preview.items[0], output: "removed" }], freedBytes: 2048,
-    });
+    mocks.prune.mockRejectedValueOnce(challenge());
     const mounted = mountWithClient(createElement(DockerDiskPanel, { sessionId: "s1", visible: true }));
     await waitFor(() => expect(mounted.container.textContent).toContain("orphan"));
     clickButton(mounted.container, "生成精确预览");
@@ -414,15 +397,14 @@ describe("Docker disk prune", () => {
     });
     clickButton(mounted.container, "确认删除预览项");
     await waitFor(() => expect(mocks.prune).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(document.body.querySelector('input[aria-label="输入生产环境确认文字"]')).not.toBeNull());
+    await flush();
+
+    expect(mounted.container.textContent).toContain("prune 执行失败");
+    expect(mocks.prune).toHaveBeenCalledTimes(1);
     expect(mocks.prune).toHaveBeenCalledWith("s1", "preview-token", "c".repeat(64), undefined);
-    await typeProductionAndConfirm();
-    await waitFor(() => expect(mocks.prune).toHaveBeenCalledTimes(2));
-    expect(mocks.prune.mock.calls[1]).toEqual([
-      "s1", "preview-token", "c".repeat(64),
-      { confirmed: true, targetSetHash: "a".repeat(64), commandHash: "b".repeat(64) },
-    ]);
-    await waitFor(() => expect(mounted.container.textContent).toContain("成功项释放"));
+    expect(document.body.querySelector('input[aria-label="输入生产环境确认文字"]')).toBeNull();
+    expect(document.body.querySelector('input[aria-label="输入环境名 production"]')).toBeNull();
+    expect(mounted.container.textContent).not.toContain("成功项释放");
     mounted.unmount();
   });
 

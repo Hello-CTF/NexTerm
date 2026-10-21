@@ -62,14 +62,15 @@ describe("typed IPC call contract", () => {
   // timeout loosening.
   const COMPILE_BUDGET_MS = 30_000;
 
-  it("rejects unknown, dynamic and incorrectly shaped calls while preserving legacy and unsafe paths", () => {
+  it("rejects unknown, dynamic and incorrectly shaped calls while preserving current legacy-command overloads", () => {
     const probe = resolve("src/test/__ipc_typed_contract_probe.ts");
     const source = `
-import { call, unsafeCall } from "../ipc/commands";
+import { call } from "../ipc/commands";
+import * as commands from "../ipc/commands";
 const dynamic: string = "exec_batch_execute";
 // @ts-expect-error unknown commands are rejected
 void call("definitely_unknown");
-// @ts-expect-error dynamic strings require the explicit escape hatch
+// @ts-expect-error dynamic strings are rejected
 void call(dynamic);
 // @ts-expect-error generated input fields are checked
 void call("exec_batch_execute", { batchID: "b", sessionIds: ["s"], command: "pwd" });
@@ -90,7 +91,8 @@ void call("host_share_terminal_open", {
   channel: { toJSON: () => null },
 });
 void call<string>("app_platform");
-void unsafeCall(dynamic);
+// @ts-expect-error the current facade has no dynamic-command escape hatch
+void commands.unsafeCall(dynamic);
 `;
     const diagnostics = compile([probe], { [probe]: source });
     expect(diagnostics, formatted(diagnostics)).toEqual([]);

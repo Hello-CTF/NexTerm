@@ -298,6 +298,7 @@ describe("RunbookPanel", () => {
       next.productionCommand = "echo api-a one";
       next.productionChallenge = {
         kind: "exec_batch_production_confirmation", batchId: "batch-prod", targetSetHash, commandHash,
+        requiredEnvironmentNames: ["production"],
         productionTargets: [{ sessionId: "s1", sessionName: "ssh-s1", environment: "production" }],
       };
       currentState = next;
@@ -319,13 +320,15 @@ describe("RunbookPanel", () => {
     expect(text()).not.toContain("确认并执行第 1 步");
     const dialog = document.body.querySelector<HTMLElement>('[aria-label="确认生产环境执行"]')!;
     expect(dialog.textContent).toContain("echo api-a one");
-    click(dialog.querySelector('input[aria-label="确认生产环境风险"]')!);
+    const environmentInput = dialog.querySelector<HTMLInputElement>('input[aria-label="输入环境名 ssh-s1"]');
+    if (!environmentInput) throw new Error("typed environment input not found");
+    setInputValue(environmentInput, "production");
     clickButton(dialog, "确认执行（1）");
     await flushUntil(() => text().includes("查看本次运行历史"));
     expect(mocks.advance).toHaveBeenCalledTimes(2);
     expect(mocks.advance.mock.calls[1][0]).toMatchObject({
       stepNumber: 1,
-      productionConfirmation: { confirmed: true, targetSetHash, commandHash },
+      productionConfirmation: { confirmed: true, targetSetHash, commandHash, environmentNames: ["production"] },
     });
     expect(mocks.start.mock.calls[0][0]).toMatchObject({ confirmationPolicy: "production_only" });
   });

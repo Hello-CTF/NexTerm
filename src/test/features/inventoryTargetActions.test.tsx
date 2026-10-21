@@ -43,6 +43,7 @@ function challengeFor(sessionName: string) {
       kind: "docker_production_confirmation",
       targetSetHash: "a".repeat(64),
       commandHash: "b".repeat(64),
+      requiredEnvironmentNames: ["production"],
       productionTargets: [{ sessionId: "s1", sessionName, environment: "production" }],
     },
   };
@@ -50,6 +51,11 @@ function challengeFor(sessionName: string) {
 
 function challenge() {
   return challengeFor("production");
+}
+
+function challengeWithoutNames() {
+  const { requiredEnvironmentNames: _missing, ...detail } = challenge().detail;
+  return { code: "needs_confirm", detail };
 }
 
 beforeEach(() => {
@@ -148,33 +154,18 @@ describe("inventory target actions", () => {
     expect(mocks.call.mock.calls[0][1].args.sessionId).toBe("sess-1");
   });
 
-  it("runs the production confirmation flow and retries with the hashes", async () => {
-    mocks.call.mockRejectedValueOnce(challenge()).mockResolvedValueOnce({ output: "ok\n", exitCode: 0 });
+  it("rejects a production challenge without environment names and does not retry", async () => {
+    mocks.call.mockRejectedValueOnce(challengeWithoutNames());
     const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
     setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "uname -a");
     setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
     clickButton(m.container, "执行");
     await flush();
 
-    const input = document.body.querySelector<HTMLInputElement>('input[aria-label="输入生产环境确认文字"]');
-    expect(input).not.toBeNull();
-    const confirm = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("确认执行"));
-    expect(confirm?.disabled).toBe(true);
-    setInputValue(input!, "production");
-    expect(confirm?.disabled).toBe(false);
-    act(() => confirm!.click());
-    await flush();
-
-    expect(mocks.call).toHaveBeenCalledTimes(2);
-    const retry = mocks.call.mock.calls[1][1].args;
-    expect(retry.confirmation).toEqual({
-      confirmed: true,
-      targetSetHash: "a".repeat(64),
-      commandHash: "b".repeat(64),
-    });
-    expect(retry.command).toEqual(["uname", "-a"]);
-    expect(retry.container).toBe("web");
-    await waitFor(() => expect(m.container.textContent).toContain("ok"));
+    expect(document.body.querySelector('input[aria-label="输入生产环境确认文字"]')).toBeNull();
+    expect(document.body.querySelector('input[aria-label="输入环境名 production"]')).toBeNull();
+    expect(mocks.call).toHaveBeenCalledTimes(1);
+    expect(m.container.textContent).not.toContain("退出码 0");
   });
 
   it("retries the M15 typed challenge with the typed environment names and a fresh operationId", async () => {
@@ -226,12 +217,12 @@ describe("inventory target actions", () => {
     setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
     clickButton(m.container, "执行");
     await flush();
-    expect(document.body.querySelector('input[aria-label="输入生产环境确认文字"]')).not.toBeNull();
+    expect(document.body.querySelector('input[aria-label="输入环境名 production"]')).not.toBeNull();
 
     const cancel = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("取消"));
     act(() => cancel!.click());
     await flush();
-    expect(document.body.querySelector('input[aria-label="输入生产环境确认文字"]')).toBeNull();
+    expect(document.body.querySelector('input[aria-label="输入环境名 production"]')).toBeNull();
     expect(mocks.call).toHaveBeenCalledTimes(1);
     expect(m.container.textContent).not.toContain("退出码");
   });
@@ -1269,7 +1260,7 @@ describe("inventory target actions", () => {
     expect(dialog?.textContent).toContain("uname -a");
     expect(dialog?.textContent).not.toContain("rm -rf");
 
-    const input = document.body.querySelector<HTMLInputElement>('input[aria-label="输入生产环境确认文字"]');
+    const input = document.body.querySelector<HTMLInputElement>('input[aria-label="输入环境名 production"]');
     setInputValue(input!, "production");
     const confirm = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("确认执行"));
     act(() => confirm!.click());
@@ -1283,6 +1274,7 @@ describe("inventory target actions", () => {
       confirmed: true,
       targetSetHash: "a".repeat(64),
       commandHash: "b".repeat(64),
+      environmentNames: ["production"],
     });
     expect(retry.operationId).not.toBe(mocks.call.mock.calls[0][1].args.operationId);
   });
@@ -1502,31 +1494,36 @@ describe("inventory target actions", () => {
   });
 
   it("keeps the ignored latch when the command completes while a cancel is pending", async () => {
-    let resolveA: (value: { output: string; exitCode: number }) => void = () => {};
-    mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveA = resolve; }));
-    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
-    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
-    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
-    clickButton(m.container, "执行");
-    await flush();
-    clickButton(m.container, "忽略结果");
-    await flush();
-    SetCancelTimeoutForTest(50);
-    mocks.call.mockImplementationOnce(() => new Promise(() => {}));
-    clickButton(m.container, "取消执行");
-    await flush();
-    expect(m.container.textContent).toContain("取消中");
+    vi.useFakeTimers();
+    try {
+      let resolveA: (value: { output: string; exitCode: number }) => void = () => {};
+      mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveA = resolve; }));
+      const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+      setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
+      setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+      clickButton(m.container, "执行");
+      await flush();
+      clickButton(m.container, "忽略结果");
+      await flush();
+      SetCancelTimeoutForTest(50);
+      mocks.call.mockImplementationOnce(() => new Promise(() => {}));
+      clickButton(m.container, "取消执行");
+      await flush();
+      expect(m.container.textContent).toContain("取消中");
 
-    // The command completes naturally before the cancel settles; the late
-    // cancel timeout must not disturb the ignored outcome.
-    await act(async () => { resolveA({ output: "IGNORED-SECRET\n", exitCode: 0 }); });
-    await flush();
-    expect(m.container.textContent).not.toContain("IGNORED-SECRET");
-    expect(m.container.querySelector('[role="note"]')?.textContent).toContain("命令已结束；结果已忽略");
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
-    await flush();
-    expect(m.container.textContent).toContain("命令已结束；结果已忽略");
-    expect(m.container.textContent).not.toContain("IGNORED-SECRET");
+      // The command completes naturally before the cancel settles; the late
+      // cancel timeout must not disturb the ignored outcome.
+      await act(async () => { resolveA({ output: "IGNORED-SECRET\n", exitCode: 0 }); });
+      await flush();
+      expect(m.container.textContent).not.toContain("IGNORED-SECRET");
+      expect(m.container.querySelector('[role="note"]')?.textContent).toContain("命令已结束；结果已忽略");
+      await act(async () => { await vi.advanceTimersByTimeAsync(60); });
+      await flush();
+      expect(m.container.textContent).toContain("命令已结束；结果已忽略");
+      expect(m.container.textContent).not.toContain("IGNORED-SECRET");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps the ignored latch through a cancel timeout and hides the natural result", async () => {

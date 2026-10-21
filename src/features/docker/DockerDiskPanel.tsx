@@ -237,7 +237,6 @@ export function DockerDiskPanel({ sessionId, visible }: { sessionId: string; vis
           challenge={production.challenge}
           contentHash={production.challenge.commandHash}
           command={`docker prune · ${production.preview.items.length} 项 · ${formatDockerBytes(production.preview.totalBytes)}`}
-          typedPhrase="production"
           onCancel={() => setProduction(null)}
           onConfirm={(environmentNames) => {
             const current = production;

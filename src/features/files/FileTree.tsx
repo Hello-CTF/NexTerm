@@ -201,7 +201,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
   }, [dirs, results]);
 
   const dirErrors = useMemo(() => {
-    const map = new Map<string, { message: string; gone: boolean; legacy: boolean }>();
+    const map = new Map<string, { message: string; gone: boolean }>();
     dirs.forEach((dir, i) => {
       const err = results[i]?.error;
       if (err) {
@@ -209,7 +209,6 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
         map.set(dir, {
           message: describeError(err),
           gone: resource === "session",
-          legacy: resource === null && (err as { code?: string }).code === "not_found",
         });
       }
     });
@@ -218,10 +217,6 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
 
   const sessionGone =
     rootsSessionGone || results.some((result) => fsErrorResource(result.error) === "session");
-  const legacyRootsNotFound =
-    rootsQuery.isError &&
-    fsErrorResource(rootsQuery.error) === null &&
-    (rootsQuery.error as { code?: string }).code === "not_found";
   const goneHint = "会话已在服务端删除，请重新连接这台主机";
   const [reconnecting, setReconnecting] = useState(false);
 
@@ -267,7 +262,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     const out: {
       entry?: FileEntryDto;
       depth: number;
-      error?: { message: string; gone: boolean; legacy: boolean };
+      error?: { message: string; gone: boolean };
       dir: string;
       rootEntry?: boolean;
     }[] = [];
@@ -1091,7 +1086,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
                     重试
                   </button>
                 )}
-                {(rootsSessionGone || legacyRootsNotFound) && (
+                {rootsSessionGone && (
                   <button
                     className="nx-link mt-0.5 text-[11px]"
                     disabled={reconnecting}
@@ -1125,7 +1120,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
                         重试
                       </button>
                     )}
-                    {(error.gone || error.legacy) && (
+                    {error.gone && (
                       <button
                         className="nx-link mt-0.5 text-[11px]"
                         disabled={reconnecting}

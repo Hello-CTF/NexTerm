@@ -66,10 +66,6 @@ export function call<T>(cmd: IPCCommandName, args?: Record<string, unknown>): Pr
   return invoke<T>(cmd, args);
 }
 
-export function unsafeCall<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  return invoke<T>(cmd, args);
-}
-
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   try {
     if (WEB) {

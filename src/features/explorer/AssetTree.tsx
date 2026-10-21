@@ -350,11 +350,7 @@ export function AssetTree() {
   });
   const results = useQuery({
     queryKey: ["asset-search", query],
-    queryFn: async () => {
-      if (typeof assetApi.searchMeta === "function") return assetApi.searchMeta(query);
-      const legacy = await assetApi.search(query);
-      return { assets: legacy, total: legacy.length, truncated: false };
-    },
+    queryFn: () => assetApi.searchMeta(query),
     enabled: query.trim().length > 0,
   });
 

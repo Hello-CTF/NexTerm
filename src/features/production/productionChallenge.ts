@@ -1,9 +1,7 @@
-// Parsers for the R-01 production confirmation challenges raised by the
-// exec-batch and broadcast surfaces. The M15 backend detail always carries
-// requiredEnvironmentNames (the sorted distinct environment names a
-// confirmation must type back); challenges without the field are legacy
-// contracts that keep the acknowledge-only flow. Parsing fails closed on any
-// unexpected shape, mirroring the stricter ipc-side validators.
+// Parsers for current production confirmation challenges raised by the
+// exec-batch, broadcast, and docker surfaces. Every challenge carries the
+// sorted distinct environment names a confirmation must type back. Parsing
+// fails closed on any unexpected shape, mirroring the ipc-side validators.
 
 import type { EnvironmentConfirmationChallenge } from "./environmentConfirmation";
 
@@ -20,7 +18,7 @@ export interface ProductionChallengeTarget {
 
 interface ProductionChallengeBase {
   targetSetHash: string;
-  requiredEnvironmentNames?: string[];
+  requiredEnvironmentNames: string[];
   productionTargets: ProductionChallengeTarget[];
 }
 
@@ -42,10 +40,9 @@ export interface DockerProductionChallenge extends ProductionChallengeBase {
 
 export type ProductionChallenge = ExecBatchProductionChallenge | BroadcastProductionChallenge | DockerProductionChallenge;
 
-// BroadcastProductionConfirmation in ipc/commands predates the typed-name
-// contract; the extended shape is structurally assignable to it, so the extra
-// field flows through the legacy terminal_write/broadcast_prepare envelope
-// without editing the hand-written IPC module.
+// This extended shape is structurally assignable to BroadcastProductionConfirmation
+// in ipc/commands, so typed environment names flow through the current
+// terminal_write/broadcast_prepare envelope.
 export interface BroadcastEnvironmentConfirmation {
   confirmed: boolean;
   targetSetHash: string;
@@ -89,8 +86,7 @@ function parseTargets(value: unknown, requireTabId: boolean): ProductionChalleng
   return targets;
 }
 
-function parseRequiredEnvironmentNames(value: unknown): string[] | undefined | null {
-  if (value === undefined) return undefined;
+function parseRequiredEnvironmentNames(value: unknown): string[] | null {
   if (!Array.isArray(value) || value.length === 0) return null;
   for (const name of value) {
     if (typeof name !== "string" || name.trim() === "") return null;
@@ -127,7 +123,7 @@ export function getProductionChallenge(cause: unknown, kind: ProductionChallenge
       batchId: detail.batchId,
       targetSetHash: detail.targetSetHash,
       commandHash: detail.commandHash,
-      ...(requiredEnvironmentNames ? { requiredEnvironmentNames } : {}),
+      requiredEnvironmentNames,
       productionTargets,
     };
   }
@@ -140,7 +136,7 @@ export function getProductionChallenge(cause: unknown, kind: ProductionChallenge
       kind,
       targetSetHash: detail.targetSetHash,
       commandHash: detail.commandHash,
-      ...(requiredEnvironmentNames ? { requiredEnvironmentNames } : {}),
+      requiredEnvironmentNames,
       productionTargets,
     };
   }
@@ -151,7 +147,7 @@ export function getProductionChallenge(cause: unknown, kind: ProductionChallenge
     kind,
     targetSetHash: detail.targetSetHash,
     inputHash: detail.inputHash,
-    ...(requiredEnvironmentNames ? { requiredEnvironmentNames } : {}),
+    requiredEnvironmentNames,
     productionTargets,
   };
 }
@@ -159,7 +155,7 @@ export function getProductionChallenge(cause: unknown, kind: ProductionChallenge
 export function toEnvironmentConfirmationChallenge(challenge: ProductionChallenge): EnvironmentConfirmationChallenge {
   return {
     targetSetHash: challenge.targetSetHash,
-    requiredEnvironmentNames: challenge.requiredEnvironmentNames ?? [],
+    requiredEnvironmentNames: challenge.requiredEnvironmentNames,
     productionTargets: challenge.productionTargets,
   };
 }

@@ -122,6 +122,7 @@ const CHANGED_HOST_KEY = {
     port: 22,
     keyType: "ssh-ed25519",
     fingerprint: "SHA256:new",
+    key: "ZmFrZS1ob3N0LWtleQ==",
     changed: true,
     known: [{ keyType: "ssh-ed25519", fingerprint: "SHA256:old" }],
   },
@@ -553,7 +554,7 @@ describe("FileBrowser deleted sessions", () => {
     mounted = mountFromStore();
 
     await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
-    expect(mocks.knownHostAccept).toHaveBeenCalledWith("127.0.0.1", 22, "ssh-ed25519", "SHA256:new");
+    expect(mocks.knownHostAccept).toHaveBeenCalledWith("127.0.0.1", 22, "ssh-ed25519", "SHA256:new", "ZmFrZS1ob3N0LWtleQ==");
     expect(mocks.connect).toHaveBeenCalledTimes(2);
     expect(storeTabSessionId()).toBe("s2");
     const st = useUi.getState();
@@ -868,7 +869,7 @@ describe("FileBrowser Windows roots and navigation", () => {
     expect(mocks.list).not.toHaveBeenCalledWith(SID, "D:relative");
   });
 
-  it("does not auto-reconnect a legacy unclassified not_found and keeps retry and manual recovery", async () => {
+  it("treats an unclassified not_found as an ordinary error without automatic or manual reconnect", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.list.mockRejectedValue(LEGACY_NOT_FOUND);
     mounted = mountFromStore();
@@ -878,7 +879,7 @@ describe("FileBrowser Windows roots and navigation", () => {
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(panel()?.textContent).not.toContain("会话已在服务端删除");
     expect(buttonTexts()).toContain("重试");
-    expect(buttonTexts()).toContain("重新连接这台主机");
+    expect(buttonTexts()).not.toContain("重新连接这台主机");
     expect(toolbarButton("上传")?.disabled).toBe(false);
   });
 

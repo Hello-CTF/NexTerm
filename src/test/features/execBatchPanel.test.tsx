@@ -457,7 +457,7 @@ describe("ExecBatchPanel", () => {
           batchId: "batch-ui-test",
           targetSetHash,
           commandHash,
-          productionTargets: [
+          requiredEnvironmentNames: ["production"], productionTargets: [
             { sessionId: "s1", sessionName: "ssh-one", hostname: "api.prod.internal", environment: "production" },
             { sessionId: "s2", sessionName: "ssh-two", hostname: "db.prod.internal", environment: "production" },
           ],
@@ -485,10 +485,12 @@ describe("ExecBatchPanel", () => {
     const confirm = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(
       (button) => button.textContent?.trim() === "确认执行（2）",
     );
-    const acknowledgement = dialog.querySelector<HTMLInputElement>('input[aria-label="确认生产环境风险"]');
-    if (!confirm || !acknowledgement) throw new Error("production confirmation controls not found");
+    const firstEnvironment = dialog.querySelector<HTMLInputElement>('input[aria-label="输入环境名 api.prod.internal"]');
+    const secondEnvironment = dialog.querySelector<HTMLInputElement>('input[aria-label="输入环境名 db.prod.internal"]');
+    if (!confirm || !firstEnvironment || !secondEnvironment) throw new Error("production confirmation controls not found");
     expect(confirm.disabled).toBe(true);
-    click(acknowledgement);
+    setInputValue(firstEnvironment, "production");
+    setInputValue(secondEnvironment, "production");
     expect(confirm.disabled).toBe(false);
     click(confirm);
 
@@ -499,7 +501,7 @@ describe("ExecBatchPanel", () => {
       command: "deploy --safe",
       timeoutMs: 30000,
       maxConcurrent: 4,
-      productionConfirmation: { confirmed: true, targetSetHash, commandHash },
+      productionConfirmation: { confirmed: true, targetSetHash, commandHash, environmentNames: ["production"] },
     });
   });
 
@@ -518,7 +520,7 @@ describe("ExecBatchPanel", () => {
         batchId: "batch-ui-test",
         targetSetHash: "a".repeat(64),
         commandHash,
-        productionTargets: [
+        requiredEnvironmentNames: ["production"], productionTargets: [
           { sessionId: "s1", sessionName: "ssh-one", hostname: "api.prod.internal", environment: "production" },
         ],
       },
@@ -570,7 +572,7 @@ describe("ExecBatchPanel", () => {
         batchId: "batch-ui-test",
         targetSetHash: "a".repeat(64),
         commandHash: "c".repeat(64),
-        productionTargets: [
+        requiredEnvironmentNames: ["production"], productionTargets: [
           { sessionId: "s1", sessionName: "ssh-one", hostname: "api.prod.internal", environment: "production" },
         ],
       },
@@ -658,7 +660,7 @@ describe("ExecBatchPanel", () => {
           batchId: "batch-ui-test",
           targetSetHash,
           commandHash,
-          productionTargets: [
+          requiredEnvironmentNames: ["production"], productionTargets: [
             { sessionId: "s1", sessionName: "ssh-one", hostname: "api.prod.internal", environment: "production" },
           ],
         },
@@ -686,12 +688,12 @@ describe("ExecBatchPanel", () => {
     expect(mocks.execute.mock.calls[0][0]).toMatchObject({ command: rendered });
     expect(dialog.textContent).toContain(rendered);
     expect(dialog.textContent).not.toContain("{{service}}");
-    const acknowledgement = dialog.querySelector<HTMLInputElement>('input[aria-label="确认生产环境风险"]');
+    const environmentInput = dialog.querySelector<HTMLInputElement>('input[aria-label="输入环境名 api.prod.internal"]');
     const confirm = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(
       (button) => button.textContent?.trim() === "确认执行（1）",
     );
-    if (!acknowledgement || !confirm) throw new Error("production confirmation controls not found");
-    click(acknowledgement);
+    if (!environmentInput || !confirm) throw new Error("production confirmation controls not found");
+    setInputValue(environmentInput, "production");
     click(confirm);
     await flushUntil(() => mocks.execute.mock.calls.length === 2 && text().includes("结果矩阵"));
     expect(mocks.execute).toHaveBeenNthCalledWith(2, {
@@ -700,7 +702,7 @@ describe("ExecBatchPanel", () => {
       command: rendered,
       timeoutMs: 30000,
       maxConcurrent: 4,
-      productionConfirmation: { confirmed: true, targetSetHash, commandHash },
+      productionConfirmation: { confirmed: true, targetSetHash, commandHash, environmentNames: ["production"] },
     });
   });
 

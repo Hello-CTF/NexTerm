@@ -284,6 +284,7 @@ describe("BulkMaintenancePanel", () => {
           batchId: "maintenance-batch",
           targetSetHash,
           commandHash,
+          requiredEnvironmentNames: ["production"],
           productionTargets: [{ sessionId: "s-a", sessionName: "session-a", environment: "production" }],
         },
       })
@@ -299,7 +300,9 @@ describe("BulkMaintenancePanel", () => {
 
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"][aria-label="确认生产环境执行"]');
     if (!dialog) throw new Error("production dialog not found");
-    click(dialog.querySelector('input[aria-label="确认生产环境风险"]')!);
+    const environmentInput = dialog.querySelector<HTMLInputElement>('input[aria-label="输入环境名 session-a"]');
+    if (!environmentInput) throw new Error("typed environment input not found");
+    setInputValue(environmentInput, "production");
     clickButton(dialog, "确认执行（1）");
     await flushUntil(() => mocks.deploy.mock.calls.length === 2
       && (mounted?.container.textContent.includes("原文件已创建只读备份") ?? false));
@@ -307,6 +310,7 @@ describe("BulkMaintenancePanel", () => {
       confirmed: true,
       targetSetHash,
       commandHash,
+      environmentNames: ["production"],
     });
   });
 });

@@ -9,7 +9,6 @@ let timer: number | undefined;
 let inFlight: Promise<void> | null = null;
 let trackingEpoch = 0;
 const lastOutputAt = new Map<string, number>();
-const legacyLastOutputMsAgo = new Map<string, number>();
 
 function collectTracked(): { storeIdByTabId: Map<string, string>; backgroundIds: Set<string>; foregroundIds: Set<string> } {
   const storeIdByTabId = new Map<string, string>();
@@ -30,15 +29,12 @@ function collectTracked(): { storeIdByTabId: Map<string, string>; backgroundIds:
 }
 
 // The first poll only builds a baseline without marking: restored layouts may have daemon terminals that just produced output, avoiding all dots lighting up at startup.
-// New responses use the absolute output timestamp, including the zero-to-first-output transition. Older servers retain the age-based fallback.
+// Absolute output timestamps include the zero-to-first-output transition and do not depend on response timing.
 async function doPollUnreadTabsOnce(): Promise<void> {
   const epoch = trackingEpoch;
   const { storeIdByTabId, backgroundIds, foregroundIds } = collectTracked();
   for (const tabId of [...lastOutputAt.keys()]) {
     if (!storeIdByTabId.has(tabId)) lastOutputAt.delete(tabId);
-  }
-  for (const tabId of [...legacyLastOutputMsAgo.keys()]) {
-    if (!storeIdByTabId.has(tabId)) legacyLastOutputMsAgo.delete(tabId);
   }
   if (storeIdByTabId.size === 0) return;
   let live;
@@ -52,18 +48,10 @@ async function doPollUnreadTabsOnce(): Promise<void> {
   const mark = new Set<string>();
   for (const info of live) {
     const storeId = storeIdByTabId.get(info.tabId);
-    if (!storeId) continue;
-    if (info.lastOutputAt !== undefined) {
-      const prev = lastOutputAt.get(info.tabId);
-      lastOutputAt.set(info.tabId, info.lastOutputAt);
-      legacyLastOutputMsAgo.delete(info.tabId);
-      if (prev !== undefined && info.lastOutputAt > prev && backgroundIds.has(storeId)) mark.add(storeId);
-      continue;
-    }
-    const prev = legacyLastOutputMsAgo.get(info.tabId);
-    legacyLastOutputMsAgo.set(info.tabId, info.lastOutputMsAgo);
-    lastOutputAt.delete(info.tabId);
-    if (prev !== undefined && info.lastOutputMsAgo < prev && backgroundIds.has(storeId)) mark.add(storeId);
+    if (!storeId || typeof info.lastOutputAt !== "number") continue;
+    const prev = lastOutputAt.get(info.tabId);
+    lastOutputAt.set(info.tabId, info.lastOutputAt);
+    if (prev !== undefined && info.lastOutputAt > prev && backgroundIds.has(storeId)) mark.add(storeId);
   }
   // Stale marks on activated tabs are cleared too, covering activation paths that bypass setActiveTab such as addTab focus/close succession.
   const state = useUi.getState();
@@ -135,7 +123,6 @@ export function stopUnreadTrackingForTest(): void {
 export function resetUnreadTracking(): void {
   trackingEpoch += 1;
   lastOutputAt.clear();
-  legacyLastOutputMsAgo.clear();
   resetUnreadTabs();
 }
 

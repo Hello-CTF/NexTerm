@@ -163,6 +163,7 @@ describe("ServicesPanel", () => {
       code: "needs_confirm",
       detail: {
         kind: "exec_batch_production_confirmation", batchId: "batch-1", targetSetHash, commandHash,
+        requiredEnvironmentNames: ["production"],
         productionTargets: [{ sessionId: "s1", sessionName: "web-one", environment: "production" }],
       },
     }).mockResolvedValueOnce(batch([]));
@@ -176,11 +177,13 @@ describe("ServicesPanel", () => {
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"][aria-label="确认生产环境执行"]');
     if (!dialog) throw new Error("production dialog not found");
     expect(dialog.textContent).toContain("systemctl restart -- nginx.service");
-    click(dialog.querySelector<HTMLInputElement>('input[aria-label="确认生产环境风险"]')!);
+    const environmentInput = dialog.querySelector<HTMLInputElement>('input[aria-label="输入环境名 web-one"]');
+    if (!environmentInput) throw new Error("typed environment input not found");
+    setInputValue(environmentInput, "production");
     clickButton(dialog, "确认执行（1）");
     await flushUntil(() => mocks.action.mock.calls.length === 2);
     expect(mocks.action.mock.calls[1][0]).toMatchObject({
-      batchId: "batch-1", productionConfirmation: { confirmed: true, targetSetHash, commandHash },
+      batchId: "batch-1", productionConfirmation: { confirmed: true, targetSetHash, commandHash, environmentNames: ["production"] },
     });
     await flushUntil(() =>
       panel().container.textContent?.includes("服务操作逐目标结果") === true &&
