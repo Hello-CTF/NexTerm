@@ -5,9 +5,11 @@ package production
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -394,4 +396,141 @@ func waitForLogCount(t *testing.T, logs *syncedLogBuffer, message string, count 
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("log never reached %d %q entries: %s", count, message, logs.String())
+}
+
+func waitForFlushErrors(t *testing.T, writer *transcriptWriter, count uint64) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if writer.statsSnapshot().flushErrors >= count {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("writer did not reach %d flush errors: %+v", count, writer.statsSnapshot())
+}
+
+// startFailStore wraps the real store and fails the first TranscriptStart
+// calls so tests can drive the deferred-drop path through the real queue and
+// real rows; everything else delegates unchanged.
+type startFailStore struct {
+	*store.Store
+	remaining atomic.Int64
+}
+
+func (s *startFailStore) TranscriptStart(ctx context.Context, row store.TranscriptRow) error {
+	if s.remaining.Add(-1) >= 0 {
+		return errors.New("injected transcript start failure")
+	}
+	return s.Store.TranscriptStart(ctx, row)
+}
+
+// A queue-full drop marker must inherit the trusted owner: under RequireOwner,
+// a Start failure defers the drop state, and the deferred flush — a successful
+// retry or the session End — still writes the omission marker, the truncated
+// flag, and the durable freeze under that owner instead of failing closed.
+func TestTranscriptWriterDropMarkerInheritsOwner(t *testing.T) {
+	newStartFailureWriter := func(t *testing.T, sessionID string) (*transcriptWriter, *store.Store) {
+		t.Helper()
+		ctx := context.Background()
+		database, err := store.OpenInMemory(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		failures := &startFailStore{Store: database}
+		failures.remaining.Store(1)
+		writer := newTranscriptWriter(transcriptWriterConfig{
+			Database: failures, Logger: discardTranscriptLogger(), QueueMaxBytes: 4096, RequireOwner: true,
+		})
+		ownerA := transcriptOwnerContext("owner-a")
+		writer.SessionStarted(ownerA, transcriptIdentity(sessionID))
+		payload := bytes.Repeat([]byte("y"), 1024)
+		for index := 0; index < 64; index++ {
+			writer.SessionOutput(ownerA, "durable-tab", sessionID, "tab-1", payload)
+		}
+		if err := writer.Start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		waitForFlushErrors(t, writer, 1)
+		return writer, database
+	}
+
+	t.Run("successful retry keeps marker truncation and durable freeze", func(t *testing.T) {
+		writer, database := newStartFailureWriter(t, "session-retry")
+		ownerA := transcriptOwnerContext("owner-a")
+		writer.SessionStarted(ownerA, transcriptIdentity("session-retry"))
+		writer.SessionOutput(ownerA, "durable-tab", "session-retry", "tab-1", []byte("post-retry-output\r\n"))
+		writer.SessionEnded(ownerA, "session-retry")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := writer.Shutdown(shutdownCtx); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = database.Close() }()
+
+		rows, err := database.TranscriptListByAsset(ownerA, "asset-1", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("expected exactly one retried transcript, got %+v", rows)
+		}
+		row := rows[0]
+		if row.OwnerID != "owner-a" {
+			t.Fatalf("transcript owner = %q, want owner-a", row.OwnerID)
+		}
+		if !row.Truncated || row.EndedAt == nil {
+			t.Fatalf("the drop must truncate the retried period: %+v", row)
+		}
+		chunks := readTranscriptAll(t, database, row.ID)
+		marker, postRetry := false, false
+		for _, chunk := range chunks {
+			if bytes.Contains(chunk.Data, []byte("omitted 60 chunk(s)")) {
+				marker = true
+			}
+			if bytes.Contains(chunk.Data, []byte("post-retry-output")) {
+				postRetry = true
+			}
+		}
+		if !marker {
+			t.Fatalf("the omission marker must survive the owner-scoped deferred path: %+v", chunks)
+		}
+		if !postRetry {
+			t.Fatalf("post-retry output must still be recorded: %+v", chunks)
+		}
+		if offset, err := database.DurableTranscriptOffsetGet(ownerA, "durable-tab"); err != nil || offset != 0 {
+			t.Fatalf("the dropped durable id must stay frozen (offset = %d err=%v, want 0)", offset, err)
+		}
+	})
+
+	t.Run("end flushes the deferred marker under the owner", func(t *testing.T) {
+		writer, database := newStartFailureWriter(t, "session-deferred")
+		ownerA := transcriptOwnerContext("owner-a")
+		writer.SessionEnded(ownerA, "session-deferred")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := writer.Shutdown(shutdownCtx); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = database.Close() }()
+
+		rows, err := database.TranscriptListByAsset(ownerA, "asset-1", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("the deferred drop must still produce a transcript, got %+v", rows)
+		}
+		row := rows[0]
+		if row.OwnerID != "owner-a" || !row.Truncated || row.EndedAt == nil {
+			t.Fatalf("deferred transcript state = %+v, want owner-a, truncated, ended", row)
+		}
+		chunks := readTranscriptAll(t, database, row.ID)
+		if len(chunks) != 1 || !bytes.Contains(chunks[0].Data, []byte("omitted 60 chunk(s)")) {
+			t.Fatalf("the deferred transcript must carry exactly its omission marker: %+v", chunks)
+		}
+		if offset, err := database.DurableTranscriptOffsetGet(ownerA, "durable-tab"); err != nil || offset != 0 {
+			t.Fatalf("the dropped durable id must stay frozen (offset = %d err=%v, want 0)", offset, err)
+		}
+	})
 }

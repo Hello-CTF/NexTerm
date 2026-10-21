@@ -371,7 +371,7 @@ func (w *transcriptWriter) dropChunkLocked(item transcriptItem) bool {
 	if item.durableID != "" {
 		drop.durableIDs[item.durableID] = struct{}{}
 	}
-	w.queue = append(w.queue, transcriptItem{kind: transcriptItemDrop, sessionID: item.sessionID, drop: drop})
+	w.queue = append(w.queue, transcriptItem{kind: transcriptItemDrop, sessionID: item.sessionID, ownerID: item.ownerID, drop: drop})
 	w.activeDrops[item.sessionID] = len(w.queue) - 1
 	return true
 }
