@@ -448,7 +448,7 @@ func beginDurableRename(ctx context.Context, tab *Tab, provider base.DurableProv
 	if found && descriptor.Incarnation != tab.durableIdentity.Incarnation {
 		tab.durableIdentity = base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation}
 		tab.title = descriptor.Title
-		tab.titleCustom = true
+		tab.titleCustom = descriptor.Title != ""
 		tab.metadataRevision = descriptor.MetadataRevision
 	}
 	for id, attempt := range tab.renameAttempts {
@@ -492,7 +492,7 @@ func (m *Manager) finishDurableRename(ctx context.Context, tab *Tab, provider ba
 				return TabInfo{}, ErrTabClosed
 			}
 			tab.title = result.Title
-			tab.titleCustom = true
+			tab.titleCustom = result.Title != ""
 			tab.metadataRevision = result.MetadataRevision
 			attempt.resultTitle = result.Title
 			attempt.resultMetadataRevision = result.MetadataRevision
@@ -517,7 +517,7 @@ func (m *Manager) finishDurableRename(ctx context.Context, tab *Tab, provider ba
 		tab.mu.Lock()
 		if !tab.closed && !tab.destroying {
 			tab.title = conflict.CurrentTitle
-			tab.titleCustom = true
+			tab.titleCustom = conflict.CurrentTitle != ""
 			tab.metadataRevision = conflict.CurrentMetadataRevision
 			event := tab.controlEventLocked()
 			tab.mu.Unlock()
@@ -539,7 +539,7 @@ func (m *Manager) finishDurableRename(ctx context.Context, tab *Tab, provider ba
 			if !tab.closed && !tab.destroying {
 				tab.durableIdentity = base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation}
 				tab.title = descriptor.Title
-				tab.titleCustom = true
+				tab.titleCustom = descriptor.Title != ""
 				tab.metadataRevision = descriptor.MetadataRevision
 				event := tab.controlEventLocked()
 				tab.mu.Unlock()

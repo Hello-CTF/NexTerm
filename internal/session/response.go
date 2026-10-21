@@ -82,7 +82,7 @@ func (m *Manager) startResponses(tab *Tab) bool {
 					if err != nil {
 						continue
 					}
-					_ = writeAll(channel, item.data)
+					_ = writeChannelContext(tab.ctx, channel, item.data)
 					release()
 				}
 				continue

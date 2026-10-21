@@ -68,6 +68,9 @@ type fakeTransport struct {
 	execs    []string
 	writeErr error
 	closeErr error
+	// channelDecorator, when set, wraps every channel the transport opens
+	// (e.g. to add the context-write capability).
+	channelDecorator func(*fakeChannel) base.Channel
 }
 
 func newFakeTransport(kind string, generation uint64) *fakeTransport {
@@ -109,7 +112,11 @@ func (t *fakeTransport) OpenPTY(_ context.Context, options base.PTYOptions) (bas
 	t.mu.Lock()
 	t.channels = append(t.channels, channel)
 	t.options = append(t.options, options)
+	decorator := t.channelDecorator
 	t.mu.Unlock()
+	if decorator != nil {
+		return decorator(channel), nil
+	}
 	return channel, nil
 }
 
@@ -314,6 +321,7 @@ type fakeTerminal struct {
 	bracketedGen   uint64
 	title          string
 	quiet          terminal.TabQuietState
+	quietHookFunc  func()
 }
 
 // setBracketedPaste flips the reported bracketed-paste mode and bumps its
@@ -347,7 +355,21 @@ func (t *fakeTerminal) setQuiet(idleMS int64, version uint64, closed bool) {
 	t.mu.Unlock()
 }
 
+// quietHook, when set, runs at the start of every QuietState read outside
+// the terminal lock, letting tests interleave lifecycle events mid-snapshot.
+func (t *fakeTerminal) quietHook(hook func()) {
+	t.mu.Lock()
+	t.quietHookFunc = hook
+	t.mu.Unlock()
+}
+
 func (t *fakeTerminal) QuietState() terminal.TabQuietState {
+	t.mu.Lock()
+	hook := t.quietHookFunc
+	t.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.quiet

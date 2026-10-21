@@ -91,7 +91,7 @@ func (m *Manager) WriteGuest(ctx context.Context, tabID, guest string, data []by
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := writeAll(channel, data); err != nil {
+	if err := writeChannelContext(ctx, channel, data); err != nil {
 		return err
 	}
 	m.transcriptInput(ctx, tab, data)

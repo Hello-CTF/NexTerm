@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -78,6 +79,82 @@ func TestQuietGroupSnapshotReportsTerminalClosed(t *testing.T) {
 	}
 	if len(states) != 1 || !states[0].Closed {
 		t.Fatalf("states = %+v, want one closed tab state", states)
+	}
+}
+
+// A tab whose quiet version advances between the two consistency reads is
+// re-read, never reported with a stale version paired to a newer state.
+func TestQuietGroupSnapshotRetriesVersionChange(t *testing.T) {
+	manager, _, terminals, session := openOpenTestSession(t, KindSSH)
+	tab := openTestTab(t, manager, session, "client-a", "a-1")
+	term := terminals.terminal(tab.ID)
+	term.setQuiet(10, 5, false)
+	var calls atomic.Int32
+	term.quietHook(func() {
+		if calls.Add(1) == 2 {
+			term.setQuiet(10, 6, false)
+		}
+	})
+	states, err := manager.QuietGroupSnapshot(context.Background(), []string{tab.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != 1 || states[0].Version != 6 {
+		t.Fatalf("states = %+v, want the re-read version 6", states)
+	}
+	if calls.Load() < 3 {
+		t.Fatalf("QuietState calls = %d, want a re-read after the version change", calls.Load())
+	}
+}
+
+// A tab removed between the consistency reads must never be reported with a
+// stale state: the whole snapshot fails closed.
+func TestQuietGroupSnapshotFailsOnInterleavedRemove(t *testing.T) {
+	manager, _, terminals, session := openOpenTestSession(t, KindSSH)
+	tab := openTestTab(t, manager, session, "client-a", "a-1")
+	term := terminals.terminal(tab.ID)
+	term.setQuiet(10, 5, false)
+	var calls atomic.Int32
+	term.quietHook(func() {
+		if calls.Add(1) == 2 {
+			if err := manager.CloseTab(tab.ID); err != nil {
+				t.Errorf("CloseTab: %v", err)
+			}
+		}
+	})
+	if _, err := manager.QuietGroupSnapshot(context.Background(), []string{tab.ID}); !errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("snapshot = %v, want ErrTabNotFound after the interleaved remove", err)
+	}
+}
+
+// A tab removed and recreated under the same ID between the consistency
+// reads is re-resolved: the snapshot reports the new incarnation's state,
+// never the removed one's.
+func TestQuietGroupSnapshotRechecksIncarnation(t *testing.T) {
+	manager, _, terminals, session := openOpenTestSession(t, KindSSH)
+	tab := openTestTab(t, manager, session, "client-a", "a-1")
+	term := terminals.terminal(tab.ID)
+	term.setQuiet(10, 5, false)
+	var calls atomic.Int32
+	term.quietHook(func() {
+		if calls.Add(1) == 2 {
+			if err := manager.CloseTab(tab.ID); err != nil {
+				t.Errorf("CloseTab: %v", err)
+			}
+			if _, err := manager.OpenTab(context.Background(), OpenTabOptions{
+				TabID: tab.ID, SessionID: session.ID, ClientID: "client-a", ChannelID: "a-2", Cols: 80, Rows: 24,
+			}); err != nil {
+				t.Errorf("recreate tab: %v", err)
+			}
+			terminals.terminal(tab.ID).setQuiet(20, 99, false)
+		}
+	})
+	states, err := manager.QuietGroupSnapshot(context.Background(), []string{tab.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != 1 || states[0].Version != 99 {
+		t.Fatalf("states = %+v, want the recreated tab's version 99, never the removed tab's state", states)
 	}
 }
 

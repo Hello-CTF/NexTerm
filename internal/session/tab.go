@@ -477,7 +477,10 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		}
 		if options.Durable.CanonicalMetadata {
 			tab.title = options.Durable.Title
-			tab.titleCustom = true
+			// Only a real custom title latches the precedence over the OSC
+			// dynamic title; the default empty canonical title must not
+			// lock the OSC title out for the tab's lifetime.
+			tab.titleCustom = options.Durable.Title != ""
 		} else if title := m.durableTabTitle(ownerCtx(context.Background(), session.userID), tabID); title != "" {
 			tab.title = title
 			tab.titleCustom = true
@@ -539,7 +542,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		return TabInfo{}, errors.Join(ErrSessionClosed, m.closeTab(tab, destroyOnFailure))
 	}
 	if (options.Durable == nil || !options.Durable.Recover) && startupCommand != "" && startupCommandSupported(kind) {
-		_ = writeAll(channel, []byte(startupCommand+"\n"))
+		_ = writeChannelContext(ctx, channel, []byte(startupCommand+"\n"))
 	}
 	if fallbackCause != nil {
 		if options.Detached {
@@ -627,7 +630,7 @@ func (m *Manager) CreateTab(ctx context.Context, options CreateTabOptions) (TabI
 		if exited || channel == nil {
 			return TabInfo{}, errors.Join(ErrTabClosed, m.CloseTab(info.ID))
 		}
-		if err := writeAll(channel, []byte(options.Command+"\n")); err != nil {
+		if err := writeChannelContext(ctx, channel, []byte(options.Command+"\n")); err != nil {
 			return TabInfo{}, errors.Join(err, m.CloseTab(info.ID))
 		}
 	}
@@ -1383,7 +1386,7 @@ func (m *Manager) Write(ctx context.Context, tabID, client string, data []byte) 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := writeAll(channel, data); err != nil {
+	if err := writeChannelContext(ctx, channel, data); err != nil {
 		return err
 	}
 	m.transcriptInput(ctx, tab, data)
