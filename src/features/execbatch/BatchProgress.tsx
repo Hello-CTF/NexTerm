@@ -120,10 +120,17 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
   startupGraceMs = 10000,
 }, ref) {
   const [snapshot, setSnapshot] = useState<BatchProgressSnapshot | null>(null);
-  const [finalBatch, setFinalBatch] = useState<BatchFinalResult | null>(null);
+  const [finalBatch, setFinalBatch] = useState<{
+    forApi: BatchProgressApi;
+    batchId: string;
+    batch: BatchFinalResult;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [activeBatchId, setActiveBatchId] = useState(batchId);
+  // pollGeneration restarts the polling effect on every rerun, even when the
+  // batch ID is unchanged: a stopped effect must not survive a new attempt.
+  const [pollGeneration, setPollGeneration] = useState(0);
   const onFinishedRef = useRef(onFinished);
   onFinishedRef.current = onFinished;
   // rerunPendingRef marks the startup window of a rerun: the new batch's
@@ -161,7 +168,9 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
 
   useEffect(() => {
     // Only the latest poll response commits: a slow response from a previous
-    // batchId or API must never overwrite the current snapshot.
+    // batchId or API must never overwrite the current snapshot. The effect
+    // restarts on every pollGeneration bump (a new rerun), so a previously
+    // stopped poll never survives a new attempt.
     let stopped = false;
     let generation = 0;
     startupGraceUntilRef.current = Date.now() + startupGraceMs;
@@ -193,8 +202,9 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
           // snapshot expired), the startup grace expired without a snapshot,
           // or no rerun is pending: an admitted batch's tracker is published
           // shortly after admission, and a pending rerun's tracker follows
-          // the same path.
-          const startupGrace = !observedRef.current && Date.now() <= startupGraceUntilRef.current;
+          // the same path. The boundary is strict so a zero grace stops at
+          // the first response.
+          const startupGrace = !observedRef.current && Date.now() < startupGraceUntilRef.current;
           if (!startupGrace && !rerunPendingRef.current) {
             stopped = true;
           }
@@ -210,7 +220,7 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
       generation++;
       clearInterval(timer);
     };
-  }, [api, activeBatchId, pollIntervalMs, startupGraceMs]);
+  }, [api, activeBatchId, pollIntervalMs, startupGraceMs, pollGeneration]);
 
   const cancel = () => {
     if (busy) return;
@@ -239,12 +249,18 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
     onRerunStart?.(request.batchId);
     rerunPendingRef.current = true;
     setActiveBatchId(request.batchId);
+    // Keep the identity ref in sync at mutation time: the rerun's promise
+    // continuations may run before the re-render that refreshes it.
+    activeBatchIdRef.current = request.batchId;
     setFinalBatch(null);
+    // Restart polling for the new attempt even when the batch ID is
+    // unchanged: a previously stopped effect must not survive a new rerun.
+    setPollGeneration((generation) => generation + 1);
     void api
       .rerun(request)
       .then((finalBatch) => {
         if (!isCurrentRerun()) return;
-        setFinalBatch(finalBatch);
+        setFinalBatch({ forApi: rerunApi, batchId: rerunBatchId, batch: finalBatch });
       })
       .catch((cause: unknown) => {
         if (!isCurrentRerun()) return;
@@ -279,6 +295,14 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
   const rerunWithRef = useRef(rerunWith);
   rerunWithRef.current = rerunWith;
   useImperativeHandle(ref, () => ({ rerun: (request) => rerunWithRef.current(request) }), []);
+
+  // The final batch renders only for the API identity and batch that
+  // produced it: an API or batch switch hides it synchronously, so the
+  // previous owner's output never mixes into the new view.
+  const visibleFinalBatch =
+    finalBatch !== null && finalBatch.forApi === api && finalBatch.batchId === activeBatchId
+      ? finalBatch.batch
+      : null;
 
   return (
     <fieldset className="min-w-0">
@@ -333,11 +357,11 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
           </ul>
         </div>
       )}
-      {finalBatch !== null && (
+      {visibleFinalBatch !== null && (
         <div className="flex flex-col gap-2">
-          <div className="text-[11px] text-neutral-400">批次 {finalBatch.batchId} 已结束</div>
+          <div className="text-[11px] text-neutral-400">批次 {visibleFinalBatch.batchId} 已结束</div>
           <ul className="grid max-h-64 grid-cols-1 gap-1 overflow-y-auto rounded border border-neutral-800/70 p-2">
-            {finalBatch.results.map((result) => (
+            {visibleFinalBatch.results.map((result) => (
               <li key={result.sessionId} className="min-w-0 px-1.5 py-1 text-[11px]">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <span className="truncate font-medium text-neutral-200" title={result.sessionId}>
