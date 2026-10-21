@@ -85,10 +85,12 @@ func NewRunner(config Config) *Runner {
 	manager := config.HITL
 	if manager == nil {
 		hitlConfig := hitl.Config{
-			Checkpoints:       config.Checkpoints,
-			TTL:               config.HITLTTL,
-			TerminalRetention: config.HITLTerminalRetention,
-			Now:               config.Now,
+			Checkpoints:         config.Checkpoints,
+			TTL:                 config.HITLTTL,
+			TerminalRetention:   config.HITLTerminalRetention,
+			Now:                 config.Now,
+			AssetResolver:       config.HITLAssetResolver,
+			EnvironmentResolver: config.HITLEnvironmentResolver,
 		}
 		if config.Runs != nil {
 			hitlConfig.Store = hitlStoreBridge{config.Runs}
@@ -444,15 +446,16 @@ func (r *Runner) ConfirmStreamContext(ctx context.Context, confirmation Confirma
 		return err
 	}
 	answer := hitl.Answer{
-		ID:           r.config.NewID(),
-		RunID:        current.id,
-		RequestID:    request.ID,
-		CheckpointID: request.CheckpointID,
-		TargetID:     request.TargetID,
-		CallID:       request.CallID,
-		Nonce:        confirmation.Nonce,
-		Parameters:   request.Parameters,
-		Decision:     hitl.Decision(confirmation.Decision),
+		ID:               r.config.NewID(),
+		RunID:            current.id,
+		RequestID:        request.ID,
+		CheckpointID:     request.CheckpointID,
+		TargetID:         request.TargetID,
+		CallID:           request.CallID,
+		Nonce:            confirmation.Nonce,
+		Parameters:       request.Parameters,
+		Decision:         hitl.Decision(confirmation.Decision),
+		EnvironmentNames: confirmation.EnvironmentNames,
 	}
 	return r.resumeWithAnswer(current, answer)
 }
@@ -585,6 +588,8 @@ func mapResumeError(err error) error {
 	case errors.Is(err, hitl.ErrRunFinished), errors.Is(err, hitl.ErrRunNotFound), errors.Is(err, hitl.ErrManagerClosed):
 		return fmt.Errorf("%w: %w", ErrJobNotFound, err)
 	case errors.Is(err, hitl.ErrInvalidArgument):
+		return fmt.Errorf("%w: %w", ErrInvalidConfirmation, err)
+	case errors.Is(err, hitl.ErrEnvironmentNamesMismatch):
 		return fmt.Errorf("%w: %w", ErrInvalidConfirmation, err)
 	default:
 		return fmt.Errorf("%w: %w", ErrConfirmationStale, err)

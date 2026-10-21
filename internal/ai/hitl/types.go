@@ -72,6 +72,10 @@ var (
 	ErrAnswerReused       = errors.New("hitl: answer ID belongs to another request")
 	ErrAssetMismatch      = errors.New("hitl: asset identity does not match the request evidence")
 	ErrAssetUnknown       = errors.New("hitl: asset identity evidence is unavailable")
+	// ErrEnvironmentNamesMismatch rejects a confirmation whose typed
+	// environment names do not equal the challenge's required set: missing,
+	// wrong, or extra names all fail closed before any execution.
+	ErrEnvironmentNamesMismatch = errors.New("hitl: environment names do not match the challenge")
 	// ErrRestorePersist reports a retryable persistence failure during
 	// restore: the in-memory registration was rolled back and the persisted
 	// blob, run row, and checkpoint stay untouched for the next recovery.
@@ -114,6 +118,11 @@ type Interrupt struct {
 	// AssetID is the real asset identity the request evidence was produced on,
 	// resolved server-side; empty means unknown.
 	AssetID string `json:"assetId,omitempty"`
+	// RequiredEnvironmentNames are the production environment names a
+	// confirmation must type back, resolved from the real target asset
+	// through the configurable production classification; empty means the
+	// target is not production-classified and no names may be sent.
+	RequiredEnvironmentNames []string `json:"requiredEnvironmentNames,omitempty"`
 }
 
 type Answer struct {
@@ -131,6 +140,10 @@ type Answer struct {
 	// presented for; it is a claim checked against the request evidence, never
 	// trusted as the source of truth.
 	AssetID string `json:"assetId,omitempty"`
+	// EnvironmentNames are the actual environment names the user typed back;
+	// they are a claim validated against the request's required names, never
+	// auto-echoed from the challenge.
+	EnvironmentNames []string `json:"environmentNames,omitempty"`
 }
 
 type Resume struct {
@@ -190,6 +203,13 @@ type Config struct {
 	// asset binding is disabled and all asset identities remain unknown.
 	// It is called with the run lock held and must not call back into the Manager.
 	AssetResolver func(context.Context, string) (string, error)
+	// EnvironmentResolver resolves the production environment names a
+	// confirmation must type back for the run's target asset, from the
+	// request owner and the real asset through the configurable production
+	// classification; it returns nil for non-production targets. When nil,
+	// no environment challenge is issued. It is called with the run lock
+	// held and must not call back into the Manager.
+	EnvironmentResolver func(context.Context, string) ([]string, error)
 }
 
 type Resumer interface {

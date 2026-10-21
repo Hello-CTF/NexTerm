@@ -112,14 +112,15 @@ type grantState struct {
 }
 
 type Grants struct {
-	settings          Settings
-	audit             GrantAuditor
-	now               func() time.Time
-	newID             func() string
-	shared            bool
-	targetValidator   TargetValidator
-	mutationValidator MutationValidator
-	conns             *connAssetRegistry
+	settings            Settings
+	audit               GrantAuditor
+	now                 func() time.Time
+	newID               func() string
+	shared              bool
+	targetValidator     TargetValidator
+	mutationValidator   MutationValidator
+	environmentResolver EnvironmentResolver
+	conns               *connAssetRegistry
 
 	mu     sync.RWMutex
 	states map[string]*grantState
@@ -133,8 +134,9 @@ func NewGrants(ctx context.Context, settings Settings, audit GrantAuditor, opts 
 	manager := &Grants{
 		settings: settings, audit: audit, now: time.Now, newID: ids.New, shared: configuration.shared,
 		targetValidator: configuration.targetValidator, mutationValidator: configuration.mutationValidator,
-		conns:  newConnAssetRegistry(configuration.shared),
-		states: map[string]*grantState{},
+		environmentResolver: configuration.environmentResolver,
+		conns:               newConnAssetRegistry(configuration.shared),
+		states:              map[string]*grantState{},
 	}
 	if _, err := owner.ID(ctx, manager.shared); err == nil {
 		if err := manager.Reload(ctx); err != nil {
@@ -508,6 +510,24 @@ func (g *Grants) Evaluate(ctx context.Context, config Config, ruling Ruling, mem
 func (g *Grants) EvaluateResource(ctx context.Context, config Config, ruling Ruling, memory *Memory, deviceID, operation, runID string, resource Resource) Decision {
 	if ruling.Risk == Forbidden {
 		return Decision{Action: ActionDeny, Ruling: ruling, Reason: ruling.Reason}
+	}
+	// The production classification is resolved from the request owner and the
+	// real target asset through the owner's configured list, never from
+	// client claims; a resolver failure denies visibly instead of letting a
+	// production target pass as unclassified.
+	if deviceID != "" && resource.Environment == "" && g.environmentResolver != nil {
+		environment, err := g.environmentResolver(ctx, deviceID)
+		if err != nil {
+			return Decision{Action: ActionDeny, Ruling: ruling, Reason: err.Error()}
+		}
+		if environment != "" {
+			production, err := IsProductionEnvironment(ctx, g.settings, environment)
+			if err != nil {
+				return Decision{Action: ActionDeny, Ruling: ruling, Reason: err.Error()}
+			}
+			resource.Environment = environment
+			resource.Production = production
+		}
 	}
 	if ruling.Risk != NeedsConfirm || deviceID == "" {
 		return DecideResource(config, ruling, memory, resource)

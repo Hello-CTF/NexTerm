@@ -44,10 +44,16 @@ type Settings interface {
 type TargetValidator func(context.Context, string) error
 type MutationValidator func(context.Context) error
 
+// EnvironmentResolver resolves the environment name of a target asset from
+// server-side state; it is the only source of environment evidence for the
+// production classification, never client claims.
+type EnvironmentResolver func(context.Context, string) (string, error)
+
 type options struct {
-	shared            bool
-	targetValidator   TargetValidator
-	mutationValidator MutationValidator
+	shared              bool
+	targetValidator     TargetValidator
+	mutationValidator   MutationValidator
+	environmentResolver EnvironmentResolver
 }
 
 type Option func(*options)
@@ -62,6 +68,10 @@ func WithTargetValidator(validator TargetValidator) Option {
 
 func WithMutationValidator(validator MutationValidator) Option {
 	return func(options *options) { options.mutationValidator = validator }
+}
+
+func WithEnvironmentResolver(resolver EnvironmentResolver) Option {
+	return func(options *options) { options.environmentResolver = resolver }
 }
 
 type permissionState struct {

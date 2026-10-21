@@ -126,6 +126,91 @@ func productionScopeValidatorWith(sessions *session.Manager, storage *store.Stor
 	return &productionScopeResolver{sessions: sessions, storage: storage, database: database, desktop: desktop}
 }
 
+// aiRunAssetResolver resolves a run's real target asset identity from
+// server-side state: the run's conversation scope pins the session, and the
+// session's connected asset is the only trusted identity. An unresolvable
+// session or asset resolves to empty, which keeps asset evidence unknown.
+func aiRunAssetResolver(services *ProductionServices) func(context.Context, string) (string, error) {
+	return func(ctx context.Context, runID string) (string, error) {
+		row, err := services.Store.RunGet(ctx, runID)
+		if err != nil {
+			return "", err
+		}
+		conversation, err := services.Store.ConvGet(ctx, row.ConversationID)
+		if err != nil {
+			return "", err
+		}
+		var envelope struct {
+			Scope tools.Scope `json:"scope"`
+		}
+		if err := json.Unmarshal([]byte(conversation.ScopeJSON), &envelope); err != nil {
+			return "", err
+		}
+		sessionID := envelope.Scope.SessionID
+		if sessionID == "" && envelope.Scope.TabID != "" {
+			tab, err := services.Sessions.TabFor(ctx, envelope.Scope.TabID)
+			if err != nil {
+				return "", err
+			}
+			sessionID = tab.SessionID
+		}
+		if sessionID == "" {
+			return "", nil
+		}
+		connected, err := services.Sessions.SessionFor(ctx, sessionID)
+		if err != nil {
+			return "", err
+		}
+		return connected.Asset().ID, nil
+	}
+}
+
+// aiAssetEnvironmentResolver resolves a target asset's environment name from
+// the authoritative asset row, never from client claims. A synthetic or
+// session-only asset has no store environment: it stays unclassified rather
+// than failing the evaluation.
+func aiAssetEnvironmentResolver(services *ProductionServices) func(context.Context, string) (string, error) {
+	return func(ctx context.Context, assetID string) (string, error) {
+		if assetID == "" {
+			return "", nil
+		}
+		asset, err := services.Store.AssetGetLive(ctx, assetID)
+		if err != nil {
+			var appErr *ipc.Error
+			if errors.As(err, &appErr) && appErr.Code == ipc.CodeNotFound {
+				return "", nil
+			}
+			return "", err
+		}
+		return store.AssetEnvironment(asset), nil
+	}
+}
+
+// aiRequiredEnvironmentNames resolves the production environment names a
+// confirmation must type back for a target asset, from the request owner and
+// the real asset through the configurable production classification;
+// non-production targets get no challenge.
+func aiRequiredEnvironmentNames(services *ProductionServices) func(context.Context, string) ([]string, error) {
+	environmentOf := aiAssetEnvironmentResolver(services)
+	return func(ctx context.Context, assetID string) ([]string, error) {
+		environment, err := environmentOf(ctx, assetID)
+		if err != nil {
+			return nil, err
+		}
+		if environment == "" {
+			return nil, nil
+		}
+		production, err := guard.IsProductionEnvironment(ctx, services.Store, environment)
+		if err != nil {
+			return nil, err
+		}
+		if !production {
+			return nil, nil
+		}
+		return guard.ProductionEnvironmentNames([]string{environment}), nil
+	}
+}
+
 func (r *productionScopeResolver) ValidateScope(ctx context.Context, scope tools.Scope) error {
 	_, _, err := r.resolve(ctx, scope, false)
 	return err
@@ -496,7 +581,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 			"action": event.Action, "kinds": event.Kinds, "operation": event.Operation, "runId": event.RunID,
 			"ruleId": event.RuleID, "rulePath": event.RulePath,
 		}})
-	}, guard.WithShared(services.desktop), guard.WithTargetValidator(productionGrantTargetValidator(services)), guard.WithMutationValidator(productionGrantMutationValidator(services)))
+	}, guard.WithShared(services.desktop), guard.WithTargetValidator(productionGrantTargetValidator(services)), guard.WithMutationValidator(productionGrantMutationValidator(services)), guard.WithEnvironmentResolver(aiAssetEnvironmentResolver(services)))
 	if err != nil {
 		return err
 	}
@@ -531,6 +616,9 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 		MemoryScope:    productionMemoryScope,
 		MemoryScopeFor: productionMemoryScopeFor(services.desktop),
 		ServerMode:     !services.desktop,
+
+		HITLAssetResolver:       aiRunAssetResolver(services),
+		HITLEnvironmentResolver: aiRequiredEnvironmentNames(services),
 	})
 	if err := runner.RecoverRuns(store.WithAIHistoryInternalAccess(owner.WithOpenAccess(session.WithOpenAccess(ctx)))); err != nil {
 		return err
