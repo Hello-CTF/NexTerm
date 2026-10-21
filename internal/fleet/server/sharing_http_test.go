@@ -80,6 +80,7 @@ func startShareTestAgent(t *testing.T, f *httpFixture, owner *account.User, name
 	control := dialDeviceWS(t, f)
 	if response := helloDevice(t, control, agent.HelloMessage{
 		Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: deviceID, Secret: secret, StateDigest: digest,
+		Capabilities: []string{agent.PurposeTerminal},
 	}); response.Type != "hello_ok" {
 		t.Fatalf("control hello = %+v", response)
 	}

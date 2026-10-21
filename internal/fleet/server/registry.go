@@ -28,8 +28,8 @@ type controlChannel struct {
 	// the managed-share data path uses it to pass the bridge helper's hello verification. The digest is carried by the hello
 	// authenticated with device credentials and contains no credential material.
 	stateDigest string
-	// capabilities are the bridge purposes advertised in the agent hello; old agents report none and are
-	// limited to implicit terminal bridges by the RequestBridge purpose gate.
+	// capabilities are the bridge purposes advertised in the agent hello; requests fail closed
+	// when the required purpose is absent.
 	capabilities []string
 }
 
@@ -175,9 +175,8 @@ func (r *Registry) KickDevice(deviceID string) {
 
 // RequestBridge requests a bridge over the device control channel and waits for the agent's outbound dial to pair,
 // returning a net.Conn carrying the supervisor protocol byte stream (binary frames, byte-transparent).
-// purpose selects the bridge service: empty or "terminal" is the supervisor terminal stream every agent serves;
-// any other purpose is rejected with errPurposeUnsupported unless the agent advertised it in hello capabilities,
-// which keeps old agents from mis-handling a purpose bridge as terminal.
+// purpose selects the bridge service: empty or "terminal" selects the supervisor terminal stream;
+// every purpose is rejected with errPurposeUnsupported unless the agent advertised it in hello capabilities.
 // When the waiter's ctx is canceled or times out it abandons: the conn's ownership is decided against deliver under the same lock,
 // an already-delivered conn is taken out and closed, and after the abandoned mark later delivers close the connection instead,
 // so neither conn/goroutine nor the agent-side WS and helper subprocess ever leak.
@@ -237,11 +236,11 @@ func (r *Registry) RequestBridge(ctx context.Context, deviceID, purpose string) 
 	return nil, errDeviceOffline
 }
 
-// servesPurpose reports whether an agent with the advertised capabilities serves a bridge purpose:
-// terminal is implicit (old agents predate capability advertisement), any other purpose must be advertised.
+// servesPurpose reports whether an agent advertised the requested bridge purpose.
+// An empty purpose selects terminal, but every purpose requires an explicit capability.
 func servesPurpose(capabilities []string, purpose string) bool {
-	if purpose == "" || purpose == agent.PurposeTerminal {
-		return true
+	if purpose == "" {
+		purpose = agent.PurposeTerminal
 	}
 	for _, capability := range capabilities {
 		if capability == purpose {
