@@ -49,12 +49,12 @@ func (r *transcriptRecorder) SessionStarted(_ context.Context, info TranscriptIn
 	r.started = append(r.started, info)
 }
 
-func (r *transcriptRecorder) SessionOutput(_ context.Context, durableID, sessionID, tabID string, data []byte) {
+func (r *transcriptRecorder) SessionOutput(ctx context.Context, durableID, sessionID, tabID string, data []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.outputs = append(r.outputs, recorderOutput{sessionID: sessionID, tabID: tabID, data: append([]byte(nil), data...)})
 	if durableID != "" && r.offsets != nil {
-		r.offsets.PersistDurableTranscriptOffset(durableID, r.offsets.DurableTranscriptCatchUpBytes(durableID)+int64(len(data)))
+		r.offsets.PersistDurableTranscriptOffsetContext(ctx, durableID, r.offsets.DurableTranscriptCatchUpBytesContext(ctx, durableID)+int64(len(data)))
 	}
 }
 
@@ -363,7 +363,7 @@ func (p *transcriptDurableProvider) Attach(_ context.Context, id string) (base.D
 	return attachment, nil
 }
 
-func (p *transcriptDurableProvider) DurableTranscriptCatchUpBytes(tabID string) int64 {
+func (p *transcriptDurableProvider) DurableTranscriptCatchUpBytesContext(_ context.Context, tabID string) int64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if record := p.records[tabID]; record != nil {
@@ -372,7 +372,7 @@ func (p *transcriptDurableProvider) DurableTranscriptCatchUpBytes(tabID string) 
 	return 0
 }
 
-func (p *transcriptDurableProvider) PersistDurableTranscriptOffset(tabID string, offset int64) {
+func (p *transcriptDurableProvider) PersistDurableTranscriptOffsetContext(_ context.Context, tabID string, offset int64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if record := p.records[tabID]; record != nil {
@@ -380,26 +380,12 @@ func (p *transcriptDurableProvider) PersistDurableTranscriptOffset(tabID string,
 	}
 }
 
-func (p *transcriptDurableProvider) DeleteDurableTranscriptOffset(tabID string) {
+func (p *transcriptDurableProvider) DeleteDurableTranscriptOffsetContext(_ context.Context, tabID string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if record := p.records[tabID]; record != nil {
 		record.transcribed = 0
 	}
-}
-
-// Owner-scoped variants: the in-memory fake has no owner column, so they
-// delegate to the legacy methods and keep every store path exercised.
-func (p *transcriptDurableProvider) DurableTranscriptCatchUpBytesContext(ctx context.Context, tabID string) int64 {
-	return p.DurableTranscriptCatchUpBytes(tabID)
-}
-
-func (p *transcriptDurableProvider) PersistDurableTranscriptOffsetContext(ctx context.Context, tabID string, offset int64) {
-	p.PersistDurableTranscriptOffset(tabID, offset)
-}
-
-func (p *transcriptDurableProvider) DeleteDurableTranscriptOffsetContext(ctx context.Context, tabID string) {
-	p.DeleteDurableTranscriptOffset(tabID)
 }
 
 func (p *transcriptDurableProvider) channel(id string) *fakeChannel {
@@ -422,7 +408,7 @@ func TestTranscriptDurableRecoveryCatchUpNotRecorded(t *testing.T) {
 	firstRecorder := &transcriptRecorder{}
 	first := NewManager(Config{
 		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
-		Durable: provider, Transcripts: firstRecorder,
+		Durable: provider, TranscriptOffsets: provider, Transcripts: firstRecorder,
 	})
 	connected, err := first.Connect(context.Background(), Asset{ID: "asset-local", Name: "当前设备", Kind: KindLocal})
 	if err != nil {
@@ -453,7 +439,7 @@ func TestTranscriptDurableRecoveryCatchUpNotRecorded(t *testing.T) {
 	secondRecorder := &transcriptRecorder{}
 	second := NewManager(Config{
 		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
-		Durable: provider, Transcripts: secondRecorder,
+		Durable: provider, TranscriptOffsets: provider, Transcripts: secondRecorder,
 	})
 	t.Cleanup(func() { _ = second.Close() })
 	recovered, err := second.Connect(context.Background(), Asset{ID: "asset-local", Name: "当前设备", Kind: KindLocal})
@@ -498,7 +484,7 @@ func TestTranscriptDurableRecoveryCatchUpLogsPrefixSkip(t *testing.T) {
 	firstRecorder := &transcriptRecorder{}
 	first := NewManager(Config{
 		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
-		Durable: provider, Transcripts: firstRecorder, Logger: logger,
+		Durable: provider, TranscriptOffsets: provider, Transcripts: firstRecorder, Logger: logger,
 	})
 	connected, err := first.Connect(context.Background(), Asset{ID: "asset-local", Name: "当前设备", Kind: KindLocal})
 	if err != nil {
@@ -526,7 +512,7 @@ func TestTranscriptDurableRecoveryCatchUpLogsPrefixSkip(t *testing.T) {
 	secondRecorder := &transcriptRecorder{}
 	second := NewManager(Config{
 		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
-		Durable: provider, Transcripts: secondRecorder, Logger: logger,
+		Durable: provider, TranscriptOffsets: provider, Transcripts: secondRecorder, Logger: logger,
 	})
 	t.Cleanup(func() { _ = second.Close() })
 	recovered, err := second.Connect(context.Background(), Asset{ID: "asset-local", Name: "当前设备", Kind: KindLocal})
@@ -554,7 +540,7 @@ func TestTranscriptDurableRecoveryRepeatedNoDuplication(t *testing.T) {
 	firstRecorder := &transcriptRecorder{}
 	first := NewManager(Config{
 		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
-		Durable: provider, Transcripts: firstRecorder,
+		Durable: provider, TranscriptOffsets: provider, Transcripts: firstRecorder,
 	})
 	connected, err := first.Connect(context.Background(), Asset{ID: "asset-local", Name: "当前设备", Kind: KindLocal})
 	if err != nil {
@@ -585,7 +571,7 @@ func TestTranscriptDurableRecoveryRepeatedNoDuplication(t *testing.T) {
 		recorder := &transcriptRecorder{}
 		manager := NewManager(Config{
 			Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
-			Durable: provider, Transcripts: recorder,
+			Durable: provider, TranscriptOffsets: provider, Transcripts: recorder,
 		})
 		recovered, err := manager.Connect(context.Background(), Asset{ID: "asset-local", Name: "当前设备", Kind: KindLocal})
 		if err != nil {
@@ -618,7 +604,7 @@ func TestTranscriptDurableOffsetDeletedOnKill(t *testing.T) {
 	recorder := &transcriptRecorder{}
 	manager := NewManager(Config{
 		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
-		Durable: provider, Transcripts: recorder,
+		Durable: provider, TranscriptOffsets: provider, Transcripts: recorder,
 	})
 	t.Cleanup(func() { _ = manager.Close() })
 	connected, err := manager.Connect(context.Background(), Asset{ID: "asset-local", Name: "当前设备", Kind: KindLocal})
@@ -635,12 +621,12 @@ func TestTranscriptDurableOffsetDeletedOnKill(t *testing.T) {
 	if err := provider.channel(info.ID).emit([]byte("recorded-before-kill\r\n")); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return provider.DurableTranscriptCatchUpBytes(info.ID) > 0 })
+	waitFor(t, func() bool { return provider.DurableTranscriptCatchUpBytesContext(context.Background(), info.ID) > 0 })
 
 	if err := manager.CloseTab(info.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := provider.DurableTranscriptCatchUpBytes(info.ID); got != 0 {
+	if got := provider.DurableTranscriptCatchUpBytesContext(context.Background(), info.ID); got != 0 {
 		t.Fatalf("kill must clear the durable transcript offset, got %d", got)
 	}
 }
@@ -674,7 +660,7 @@ func TestTranscriptDurableOffsetDeletedWhenGoneOnReconnect(t *testing.T) {
 	if err := attachment.emit([]byte("recorded-before-drop\r\n")); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return provider.DurableTranscriptCatchUpBytes(info.ID) > 0 })
+	waitFor(t, func() bool { return provider.DurableTranscriptCatchUpBytesContext(context.Background(), info.ID) > 0 })
 
 	provider.mu.Lock()
 	provider.records[info.ID].killed = 1
@@ -682,7 +668,7 @@ func TestTranscriptDurableOffsetDeletedWhenGoneOnReconnect(t *testing.T) {
 	if err := manager.Reconnect(context.Background(), connected.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := provider.DurableTranscriptCatchUpBytes(info.ID); got != 0 {
+	if got := provider.DurableTranscriptCatchUpBytesContext(context.Background(), info.ID); got != 0 {
 		t.Fatalf("a durable confirmed gone on reconnect must clear the transcript offset, got %d", got)
 	}
 }

@@ -10,9 +10,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-// ownerScopedStore implements both the legacy and the owner-scoped durable
-// offset/title interfaces. It records which owner every call carried so tests
-// can assert isolation, and keeps per-owner rows to prove no cross-owner leak.
+// ownerScopedStore records which owner every call carried and keeps per-owner
+// rows to prove no cross-owner leak.
 type ownerScopedStore struct {
 	mu      sync.Mutex
 	offsets map[string]map[string]int64
@@ -39,44 +38,6 @@ func (s *ownerScopedStore) ownerCalls(op, owner string) int {
 		}
 	}
 	return count
-}
-
-func (s *ownerScopedStore) DurableTranscriptCatchUpBytes(tabID string) int64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.record("catchup", "legacy")
-	return 0
-}
-
-func (s *ownerScopedStore) PersistDurableTranscriptOffset(tabID string, offset int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.record("persist", "legacy")
-}
-
-func (s *ownerScopedStore) DeleteDurableTranscriptOffset(tabID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.record("delete", "legacy")
-}
-
-func (s *ownerScopedStore) DurableTabTitle(tabID string) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.record("title", "legacy")
-	return ""
-}
-
-func (s *ownerScopedStore) PersistDurableTabTitle(tabID, title string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.record("title-write", "legacy")
-}
-
-func (s *ownerScopedStore) DeleteDurableTabTitle(tabID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.record("title-delete", "legacy")
 }
 
 func (s *ownerScopedStore) DurableTranscriptCatchUpBytesContext(ctx context.Context, tabID string) int64 {
@@ -134,8 +95,6 @@ func (s *ownerScopedStore) DeleteDurableTabTitleContext(ctx context.Context, tab
 }
 
 var (
-	_ DurableTranscriptOffsetStore            = (*ownerScopedStore)(nil)
-	_ DurableTabTitleStore                    = (*ownerScopedStore)(nil)
 	_ OwnerScopedDurableTranscriptOffsetStore = (*ownerScopedStore)(nil)
 	_ OwnerScopedDurableTabTitleStore         = (*ownerScopedStore)(nil)
 )
@@ -286,63 +245,67 @@ func TestDurableOffsetCatchUpIsOwnerScoped(t *testing.T) {
 	}
 }
 
-func TestLegacyDurableStoreFailsClosedOnNonOpenServer(t *testing.T) {
+func TestContextDurableStoreWorksWithEmptyOwner(t *testing.T) {
 	provider := newFakeDurableProvider()
-	legacy := &legacyOnlyStore{}
-	manager := NewManager(Config{
-		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
-		DurableResolver:   &countingResolver{provider: provider},
-		TranscriptOffsets: legacy,
-		TabTitles:         legacy,
-	})
-	t.Cleanup(func() { _ = manager.Close() })
-	session, err := manager.Connect(requestTestUser("owner-a"), Asset{ID: "asset", Kind: KindSSH})
+	store := newOwnerScopedStore()
+	newManager := func() *Manager {
+		manager := NewManager(Config{
+			Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
+			DurableResolver:   &countingResolver{provider: provider},
+			TranscriptOffsets: store,
+			TabTitles:         store,
+			OpenAccess:        true,
+		})
+		t.Cleanup(func() { _ = manager.Close() })
+		return manager
+	}
+	manager := newManager()
+	connected, err := manager.Connect(context.Background(), Asset{ID: "asset", Kind: KindSSH})
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	const tabID = "legacy-durable"
-	if _, err := manager.OpenTab(requestTestUser("owner-a"), OpenTabOptions{
-		TabID: tabID, SessionID: session.ID, ClientID: "client-a", ChannelID: "a-1", Cols: 80, Rows: 24,
-		Durable: &DurableTabOptions{Command: []string{"/bin/sh"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if len(legacy.calls) != 0 {
-		t.Fatalf("legacy store received ownerless calls on a non-open server: %v", legacy.calls)
-	}
-	if _, err := manager.RenameTab(requestTestUser("owner-a"), tabID, "title"); err != nil {
-		t.Fatal(err)
-	}
-	if len(legacy.calls) != 0 {
-		t.Fatalf("legacy store received ownerless calls on rename: %v", legacy.calls)
-	}
-}
-
-func TestLegacyDurableStoreWorksOnOpenDeployment(t *testing.T) {
-	provider := newFakeDurableProvider()
-	legacy := &legacyOnlyStore{}
-	manager := NewManager(Config{
-		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
-		DurableResolver:   &countingResolver{provider: provider},
-		TranscriptOffsets: legacy,
-		TabTitles:         legacy,
-		OpenAccess:        true,
-	})
-	t.Cleanup(func() { _ = manager.Close() })
-	session, err := manager.Connect(context.Background(), Asset{ID: "asset", Kind: KindSSH})
-	if err != nil {
-		t.Fatal(err)
-	}
-	const tabID = "legacy-open-durable"
+	const tabID = "context-open-durable"
 	if _, err := manager.OpenTab(context.Background(), OpenTabOptions{
-		TabID: tabID, SessionID: session.ID, ClientID: "client-a", ChannelID: "a-1", Cols: 80, Rows: 24,
+		TabID: tabID, SessionID: connected.ID, ClientID: "client-a", ChannelID: "a-1", Cols: 80, Rows: 24,
 		Durable: &DurableTabOptions{Command: []string{"/bin/sh"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(legacy.calls) == 0 {
-		t.Fatal("open deployment did not reach the legacy store")
+	if _, err := manager.RenameTab(context.Background(), tabID, "open-title"); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.titles[""][tabID]; got != "open-title" {
+		t.Fatalf("empty-owner title = %q, want open-title", got)
+	}
+	if err := manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	recoveredManager := newManager()
+	recoveredSession, err := recoveredManager.Connect(context.Background(), Asset{ID: "asset-recovered", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := recoveredManager.RecoverRemoteDurable(context.Background(), tabID, OpenTabOptions{
+		SessionID: recoveredSession.ID, ClientID: "client-b", ChannelID: "b-1", Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Title != "open-title" {
+		t.Fatalf("empty-owner recovered title = %q, want open-title", recovered.Title)
+	}
+	if store.ownerCalls("catchup", "") == 0 || store.ownerCalls("title", "") == 0 {
+		t.Fatalf("empty-owner recovery did not use Context reads: %v", store.calls)
+	}
+	if err := recoveredManager.CloseTab(tabID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.titles[""][tabID]; ok {
+		t.Fatal("empty-owner title survived durable close")
+	}
+	if _, ok := store.offsets[""][tabID]; ok {
+		t.Fatal("empty-owner offset survived durable close")
 	}
 }
 
@@ -393,56 +356,7 @@ func TestReconnectSecondPeriodCarriesOwner(t *testing.T) {
 	}
 }
 
-// legacyOnlyStore implements only the legacy interfaces, so a non-open server
-// must fail closed rather than call it ownerless.
-type legacyOnlyStore struct {
-	mu    sync.Mutex
-	calls []string
-}
-
-func (s *legacyOnlyStore) DurableTranscriptCatchUpBytes(tabID string) int64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.calls = append(s.calls, "catchup")
-	return 0
-}
-
-func (s *legacyOnlyStore) PersistDurableTranscriptOffset(tabID string, offset int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.calls = append(s.calls, "persist")
-}
-
-func (s *legacyOnlyStore) DeleteDurableTranscriptOffset(tabID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.calls = append(s.calls, "delete")
-}
-
-func (s *legacyOnlyStore) DurableTabTitle(tabID string) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.calls = append(s.calls, "title")
-	return ""
-}
-
-func (s *legacyOnlyStore) PersistDurableTabTitle(tabID, title string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.calls = append(s.calls, "title-write")
-}
-
-func (s *legacyOnlyStore) DeleteDurableTabTitle(tabID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.calls = append(s.calls, "title-delete")
-}
-
-var (
-	_ DurableTranscriptOffsetStore = (*legacyOnlyStore)(nil)
-	_ DurableTabTitleStore         = (*legacyOnlyStore)(nil)
-	_ base.DurableProvider         = (*fakeDurableProvider)(nil)
-)
+var _ base.DurableProvider = (*fakeDurableProvider)(nil)
 
 // ownerRecordingSink records the owner every sink call carried so tests can
 // prove the manager stamps the trusted session owner onto the transcript

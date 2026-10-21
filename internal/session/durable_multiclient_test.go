@@ -460,7 +460,7 @@ func TestRecoverRemoteDurableFallsBackToLocalTitleOnlyWithoutMetadata(t *testing
 	}
 	legacy := &legacyMetadataDurableProvider{DurableProvider: provider, DurableDescriptorLister: provider, DurableIdentityAttacher: provider}
 	localTitles := newFakeDurableProvider()
-	localTitles.PersistDurableTabTitle(tabID, "local-fallback")
+	localTitles.PersistDurableTabTitleContext(context.Background(), tabID, "local-fallback")
 	manager := NewManager(Config{
 		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), TabTitles: localTitles,
 		DurableResolver: DurableResolverFunc(func(context.Context, base.Transport) (base.DurableProvider, error) {
@@ -579,7 +579,7 @@ func TestCloseTabSerializeFallbackRename(t *testing.T) {
 		}()
 		close(start)
 		wg.Wait()
-		if got := provider.DurableTabTitle(info.ID); got != "" {
+		if got := provider.DurableTabTitleContext(context.Background(), info.ID); got != "" {
 			t.Fatalf("fallback title survived close: %q", got)
 		}
 	}
