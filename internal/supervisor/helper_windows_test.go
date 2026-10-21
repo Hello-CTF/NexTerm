@@ -74,7 +74,11 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == HelperCommand {
 		os.Exit(RunHelperCLI(os.Args[2:]))
 	}
-	goleak.VerifyTestMain(m)
+	// go-winio starts its IO completion processor once per process on first
+	// use (initIO) and it lives until process exit by design, exactly like
+	// the runtime's own background goroutines; it is not a test leak.
+	goleak.VerifyTestMain(m,
+		goleak.IgnoreAnyFunction("github.com/Microsoft/go-winio.ioCompletionProcessor"))
 }
 
 func TestSessionEnvWindowsPassthrough(t *testing.T) {
