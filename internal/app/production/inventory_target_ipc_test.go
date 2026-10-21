@@ -1167,8 +1167,14 @@ func TestInventoryTargetExecDockerServerProductionConfirmation(t *testing.T) {
 }
 
 func TestInventoryTargetExecKubernetes(t *testing.T) {
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
 	t.Run("desktop runs without authorization", func(t *testing.T) {
-		service, _ := newInventoryTestService(t, true)
+		service := newInventoryServiceForTest(t, database, true, t.TempDir())
 		runner := &recordingInventoryRunner{outputs: map[string][]byte{
 			"kubectl --context staging exec -n ops api-0 -c app -- uname -a": []byte("Linux\n"),
 		}}
@@ -1184,7 +1190,7 @@ func TestInventoryTargetExecKubernetes(t *testing.T) {
 	t.Run("server requires kubeconfig authorization", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
-		service, _ := newInventoryTestService(t, false)
+		service := newInventoryServiceForTest(t, database, false, t.TempDir())
 		runner := &recordingInventoryRunner{outputs: map[string][]byte{}}
 		service.runner = runner
 		dispatcher := newInventoryExecDispatcher(t, service)
@@ -1199,7 +1205,7 @@ func TestInventoryTargetExecKubernetes(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
 		t.Setenv(inventoryKubeconfigEnv, "1")
-		service, _ := newInventoryTestService(t, false)
+		service := newInventoryServiceForTest(t, database, false, t.TempDir())
 		runner := &recordingInventoryRunner{outputs: map[string][]byte{
 			"kubectl --context staging exec -n ops api-0 -c app -- uname -a": []byte("Linux\n"),
 		}}
@@ -1216,7 +1222,7 @@ func TestInventoryTargetExecKubernetes(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
 		t.Setenv(inventoryKubeconfigEnv, "1")
-		service, _ := newInventoryTestService(t, false)
+		service := newInventoryServiceForTest(t, database, false, t.TempDir())
 		runner := &recordingInventoryRunner{outputs: map[string][]byte{}}
 		service.runner = runner
 		dispatcher := newInventoryExecDispatcher(t, service)
@@ -1232,7 +1238,7 @@ func TestInventoryTargetExecKubernetes(t *testing.T) {
 	})
 
 	t.Run("command failure surfaces the underlying error", func(t *testing.T) {
-		service, _ := newInventoryTestService(t, true)
+		service := newInventoryServiceForTest(t, database, true, t.TempDir())
 		runner := &recordingInventoryRunner{errors: map[string]error{
 			"docker --context prod exec web uname -a": errors.New("container not running"),
 		}}

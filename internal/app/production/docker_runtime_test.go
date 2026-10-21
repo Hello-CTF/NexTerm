@@ -39,6 +39,11 @@ func TestDockerFallbackShellSelection(t *testing.T) {
 		powerShellCommand = `docker 'restart' 'a''b'`
 		posixCommand      = `docker 'restart' 'a'"'"'b'`
 	)
+	database, err := store.OpenInMemory(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
 	for _, testCase := range []struct {
 		name        string
 		asset       session.Asset
@@ -60,10 +65,6 @@ func TestDockerFallbackShellSelection(t *testing.T) {
 				return transport, nil
 			})
 			manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
-			database, err := store.OpenInMemory(t.Context())
-			if err != nil {
-				t.Fatal(err)
-			}
 			service := newProductionDockerService(manager, database)
 			connected, err := manager.Connect(t.Context(), testCase.asset)
 			if err != nil {

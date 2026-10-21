@@ -215,7 +215,7 @@ func assertOnlyPrefixPersisted(t *testing.T, path string) {
 // unflushed tail stays suppressed and the durable offset does not advance.
 func TestTranscriptWriterShutdownJoinsInflightFlushUnderLock(t *testing.T) {
 	ctx := context.Background()
-	writer, database, gated, path := newInflightFlushFixture(t, 2*time.Second)
+	writer, database, gated, path := newInflightFlushFixture(t, 600*time.Millisecond)
 	locker, lockConn := flushPrefixAndLock(t, writer, database, path)
 	t.Cleanup(func() { _ = database.Close() })
 	startGatedTailFlush(t, writer, gated)
