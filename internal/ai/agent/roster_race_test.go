@@ -223,3 +223,85 @@ func TestRosterConcurrentAttachAndReconcile(t *testing.T) {
 		t.Fatalf("state after concurrent attach/reconcile = %s", stored.State)
 	}
 }
+
+// Concurrent renames race with a lifecycle transition: the alias CAS never
+// disturbs the state machine, every writer with the current identity lands
+// exactly one final alias, and stale identities always conflict.
+func TestRosterConcurrentRenameAndLifecycle(t *testing.T) {
+	ctx := rosterOwnerContext("owner-a")
+	fake := newFakeRosterStore()
+	probe := newFakeRosterProbe()
+	probe.set("handle-a", RosterRuntimeConnected, "")
+	roster := newTestRoster(fake, probe)
+	entry, err := roster.Provision(ctx, "conv-1", "handle-a", "", "tab-a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := roster.Activate(ctx, entry.ID, rosterIdentityOf(entry), "job-0"); err != nil {
+		t.Fatal(err)
+	}
+
+	const renamers = 6
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make(chan error, renamers+2)
+	for i := 0; i < renamers; i++ {
+		wg.Add(1)
+		go func(alias int) {
+			defer wg.Done()
+			<-start
+			renamed, err := roster.Rename(ctx, "handle-a", rosterIdentityOf(entry), fmt.Sprintf("alias-%d", alias))
+			if err == nil && renamed.Handle != "handle-a" {
+				err = fmt.Errorf("handle changed to %q", renamed.Handle)
+			}
+			errs <- err
+		}(i)
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		_, err := roster.RequestRelease(ctx, "handle-a", rosterIdentityOf(entry))
+		errs <- err
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		// A stale identity must conflict no matter when it lands.
+		_, err := roster.Rename(ctx, "handle-a", RosterIdentity{CreatedAt: entry.CreatedAt, Incarnation: "inc-stale"}, "alias-stale")
+		if errors.Is(err, ErrRosterIdentityConflict) {
+			err = nil
+		}
+		errs <- err
+	}()
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	stored, err := fake.AgentRosterGetByHandle(ctx, "handle-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliasOK := false
+	for i := 0; i < renamers; i++ {
+		if stored.Alias == fmt.Sprintf("alias-%d", i) {
+			aliasOK = true
+		}
+	}
+	if !aliasOK {
+		t.Fatalf("final alias %q is not one of the concurrent renames", stored.Alias)
+	}
+	switch RosterState(stored.State) {
+	case RosterStateActive, RosterStateReleasePending:
+	default:
+		t.Fatalf("concurrent rename/release produced invalid state %s", stored.State)
+	}
+	if stored.Incarnation != entry.Incarnation || stored.Handle != "handle-a" {
+		t.Fatalf("concurrent renames disturbed the durable identity: %+v", stored)
+	}
+}

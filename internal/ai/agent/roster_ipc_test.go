@@ -3,11 +3,14 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 func rosterIPCDispatch(t *testing.T, runner *Runner, ctx context.Context, command, args string) ipc.Response {
@@ -168,5 +171,155 @@ func TestRosterIPCWithoutRosterIsUnsupported(t *testing.T) {
 	response := rosterIPCDispatch(t, runner, ctx, "ai_roster_list", `{}`)
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
 		t.Fatalf("ai_roster_list without roster = %+v", response)
+	}
+}
+
+func TestRosterIPCRenameBindsExactOwnerIdentity(t *testing.T) {
+	database, manager := newRosterProbeFixture(t)
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	tab, err := manager.RegisterRemoteSession(ctx, session.RemoteSessionOptions{OwnerID: "owner-a", AssetID: "asset-1", Title: "agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	roster := NewRoster(database, NewSessionRosterProbe(database, manager))
+	provisioned, err := roster.Provision(ctx, "conv-1", "handle-a", "alias-before", tab.ID, map[string]any{"origin": "synthetic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := NewRunner(Config{Store: database, Roster: roster})
+	t.Cleanup(func() { _ = runner.Close() })
+
+	// A stale durable identity is a conflict, never a write.
+	stale := rosterIPCDispatch(t, runner, ctx, "ai_roster_rename", `{"handle":"handle-a","alias":"alias-after","createdAt":`+jsonNumber(provisioned.CreatedAt)+`,"incarnation":"stale"}`)
+	if stale.OK || stale.Error == nil || stale.Error.Code != ipc.Code("conflict") {
+		t.Fatalf("stale rename = %+v", stale)
+	}
+	// A foreign owner never resolves the handle.
+	foreign := rosterIPCDispatch(t, runner, ipc.WithUserID(context.Background(), "owner-b"), "ai_roster_rename", `{"handle":"handle-a","alias":"alias-after","createdAt":`+jsonNumber(provisioned.CreatedAt)+`,"incarnation":"`+provisioned.Incarnation+`"}`)
+	if foreign.OK || foreign.Error == nil || foreign.Error.Code != ipc.CodeNotFound {
+		t.Fatalf("foreign rename = %+v", foreign)
+	}
+
+	// The caller's own saved identity renames: only the alias changes.
+	renamed := rosterIPCDispatch(t, runner, ctx, "ai_roster_rename", `{"handle":"handle-a","alias":"alias-after","createdAt":`+jsonNumber(provisioned.CreatedAt)+`,"incarnation":"`+provisioned.Incarnation+`"}`)
+	if !renamed.OK {
+		t.Fatalf("ai_roster_rename = %+v", renamed.Error)
+	}
+	var entry RosterEntry
+	if err := json.Unmarshal(renamed.Data, &entry); err != nil {
+		t.Fatal(err)
+	}
+	if entry.Alias != "alias-after" || entry.Handle != "handle-a" || entry.Incarnation != provisioned.Incarnation {
+		t.Fatalf("renamed entry = %+v", entry)
+	}
+	stored, err := database.AgentRosterGetByHandle(ctx, "handle-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Alias != "alias-after" || !strings.Contains(stored.MetadataJSON, `"origin":"synthetic"`) {
+		t.Fatalf("stored row = %+v", stored)
+	}
+
+	// The roster-free runner answers unsupported rather than inventing a row.
+	bare, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = bare.Close() })
+	bareRunner := NewRunner(Config{Store: bare})
+	t.Cleanup(func() { _ = bareRunner.Close() })
+	unsupported := rosterIPCDispatch(t, bareRunner, ctx, "ai_roster_rename", `{"handle":"handle-a","alias":"x","createdAt":1,"incarnation":"i"}`)
+	if unsupported.OK || unsupported.Error == nil || unsupported.Error.Code != ipc.CodeUnsupported {
+		t.Fatalf("ai_roster_rename without roster = %+v", unsupported)
+	}
+}
+
+// The roster list and attach responses carry the verifiable host and working
+// directory from server-side snapshots: the configured store asset host and
+// the tab's own OSC 7 report — never the asset name or a fabricated path.
+func TestRosterIPCCarriesHostAndCwdEvidence(t *testing.T) {
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	asset, err := database.AssetCreate(ctx, store.AssetInput{Kind: "ssh", Name: "prod-host", Host: rosterStringPtr("prod.example")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := &probeFakeTransport{}
+	manager := session.NewManager(session.Config{
+		IdleTimeout: -1,
+		Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
+			return transport, nil
+		}),
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.ConnectFor(ctx, session.Asset{ID: asset.ID, Name: asset.Name, Kind: session.KindSSH, StoreBacked: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab, err := manager.OpenTab(ctx, session.OpenTabOptions{SessionID: connected.Info().ID, ClientID: "client", ChannelID: "channel", Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport.lastChannel().emit([]byte("\x1b]7;file://prod/srv/app\x07"))
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		snapshot, ok := manager.RosterRuntimeSnapshot(ctx, tab.ID)
+		if ok && snapshot.Cwd == "/srv/app" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("snapshot never carried the OSC 7 cwd")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	roster := NewRoster(database, NewSessionRosterProbe(database, manager))
+	if _, err := roster.Provision(ctx, "conv-1", "handle-a", "agent-a", tab.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewRunner(Config{Store: database, Roster: roster})
+	t.Cleanup(func() { _ = runner.Close() })
+
+	attached := rosterIPCDispatch(t, runner, ctx, "ai_roster_attach", `{"handle":"handle-a","jobId":"job-1"}`)
+	if !attached.OK {
+		t.Fatalf("ai_roster_attach = %+v", attached.Error)
+	}
+	var attachment RosterAttachmentDTO
+	if err := json.Unmarshal(attached.Data, &attachment); err != nil {
+		t.Fatal(err)
+	}
+	if attachment.Host != "prod.example" || attachment.Cwd != "/srv/app" {
+		t.Fatalf("attach target evidence = %q/%q", attachment.Host, attachment.Cwd)
+	}
+
+	listed := rosterIPCDispatch(t, runner, ctx, "ai_roster_list", `{"conversationId":"conv-1"}`)
+	if !listed.OK {
+		t.Fatalf("ai_roster_list = %+v", listed.Error)
+	}
+	var entries []RosterListEntry
+	if err := json.Unmarshal(listed.Data, &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("listed = %+v", entries)
+	}
+	if entries[0].Host != "prod.example" || entries[0].Cwd != "/srv/app" {
+		t.Fatalf("list target evidence = %q/%q", entries[0].Host, entries[0].Cwd)
+	}
+
+	// A foreign owner never observes the evidence.
+	foreignListed := rosterIPCDispatch(t, runner, ipc.WithUserID(context.Background(), "owner-b"), "ai_roster_list", `{"conversationId":"conv-1"}`)
+	if !foreignListed.OK {
+		t.Fatalf("foreign ai_roster_list = %+v", foreignListed.Error)
+	}
+	var foreignEntries []RosterListEntry
+	if err := json.Unmarshal(foreignListed.Data, &foreignEntries); err != nil {
+		t.Fatal(err)
+	}
+	if len(foreignEntries) != 0 {
+		t.Fatalf("foreign owner listed %+v", foreignEntries)
 	}
 }

@@ -10,20 +10,28 @@ import (
 // RosterListEntry is one roster row enriched with live runtime evidence: the
 // probe-classified presence and the real target asset resolved from
 // server-side session state. An empty AssetID means the asset is honestly
-// unknown — never a client-claimed identity.
+// unknown — never a client-claimed identity. Host and Cwd carry the
+// verifiable target evidence (configured store-asset host, OSC-7-reported
+// directory); empty means unknown, never a substituted asset name or a
+// fabricated path.
 type RosterListEntry struct {
 	Entry    RosterEntry      `json:"entry"`
 	Presence RosterResolution `json:"presence"`
 	AssetID  string           `json:"assetId"`
+	Host     string           `json:"host"`
+	Cwd      string           `json:"cwd"`
 }
 
 // RosterAttachmentDTO is the attach outcome plus the real target-asset
-// evidence resolved from the runtime the handle bound to.
+// evidence resolved from the runtime the handle bound to. Host and Cwd follow
+// the same unknown-when-unverifiable contract as the list enrichment.
 type RosterAttachmentDTO struct {
 	Entry              RosterEntry      `json:"entry"`
 	Resolution         RosterResolution `json:"resolution"`
 	CurrentIncarnation string           `json:"currentIncarnation,omitempty"`
 	AssetID            string           `json:"assetId"`
+	Host               string           `json:"host"`
+	Cwd                string           `json:"cwd"`
 }
 
 // rosterAssetResolver is the optional probe capability behind asset evidence.
@@ -31,6 +39,13 @@ type RosterAttachmentDTO struct {
 // closed instead of resolving whatever the handle now points at.
 type rosterAssetResolver interface {
 	ResolveRosterAsset(ctx context.Context, handle, incarnation string) (string, error)
+}
+
+// rosterTargetResolver is the optional probe capability behind host and
+// working-directory evidence, under the same fail-closed identity contract as
+// the asset resolver.
+type rosterTargetResolver interface {
+	ResolveRosterTarget(ctx context.Context, handle, incarnation string) (RosterTargetEvidence, error)
 }
 
 // RegisterRosterCommands registers the roster IPC surface backed by the
@@ -52,10 +67,13 @@ func (r *Runner) RegisterRosterCommands(dispatcher *ipc.Dispatcher) error {
 				}
 				listed := make([]RosterListEntry, 0, len(entries))
 				for _, entry := range entries {
+					target := r.rosterTargetEvidence(ctx, entry.Handle, entry.Incarnation)
 					listed = append(listed, RosterListEntry{
 						Entry:    entry,
 						Presence: r.rosterPresence(ctx, entry),
 						AssetID:  r.rosterAssetEvidence(ctx, entry.Handle, entry.Incarnation),
+						Host:     target.Host,
+						Cwd:      target.Cwd,
 					})
 				}
 				return listed, nil
@@ -76,12 +94,31 @@ func (r *Runner) RegisterRosterCommands(dispatcher *ipc.Dispatcher) error {
 				if err != nil {
 					return RosterAttachmentDTO{}, err
 				}
+				target := r.rosterTargetEvidence(ctx, args.Handle, attachment.Entry.Incarnation)
 				return RosterAttachmentDTO{
 					Entry:              attachment.Entry,
 					Resolution:         attachment.Resolution,
 					CurrentIncarnation: attachment.CurrentIncarnation,
 					AssetID:            r.rosterAssetEvidence(ctx, args.Handle, attachment.Entry.Incarnation),
+					Host:               target.Host,
+					Cwd:                target.Cwd,
 				}, nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_roster_rename", func(ctx context.Context, _ *ipc.Call, args struct {
+				Handle      string `json:"handle"`
+				Alias       string `json:"alias"`
+				CreatedAt   int64  `json:"createdAt"`
+				Incarnation string `json:"incarnation"`
+			}) (RosterEntry, error) {
+				if r.config.Roster == nil {
+					return RosterEntry{}, ipc.NewError(ipc.CodeUnsupported, "AI roster 未配置")
+				}
+				if strings.TrimSpace(args.Handle) == "" {
+					return RosterEntry{}, ipc.NewError(ipc.CodeBadParam, "roster handle 不能为空")
+				}
+				return r.config.Roster.Rename(ctx, args.Handle, RosterIdentity{CreatedAt: args.CreatedAt, Incarnation: args.Incarnation}, args.Alias)
 			})
 		},
 		func() error {
@@ -175,4 +212,20 @@ func (r *Runner) rosterAssetEvidence(ctx context.Context, handle, incarnation st
 		return ""
 	}
 	return assetID
+}
+
+// rosterTargetEvidence resolves the verifiable host and working directory
+// through the probe's optional resolver under the same identity binding as
+// the asset evidence; every unresolvable input stays honestly unknown (empty)
+// rather than borrowing the asset name or inventing a directory.
+func (r *Runner) rosterTargetEvidence(ctx context.Context, handle, incarnation string) RosterTargetEvidence {
+	resolver, ok := r.config.Roster.Probe().(rosterTargetResolver)
+	if !ok {
+		return RosterTargetEvidence{}
+	}
+	evidence, err := resolver.ResolveRosterTarget(ctx, handle, incarnation)
+	if err != nil {
+		return RosterTargetEvidence{}
+	}
+	return evidence
 }

@@ -19,6 +19,10 @@ type RosterRuntimeSnapshot struct {
 	Exited    bool
 	Status    Status
 	Asset     Asset
+	// Cwd is the tab's working directory as reported by the runtime's own
+	// OSC 7 sequences; it is empty when the runtime never reported one, which
+	// callers must surface as unknown rather than fabricating a directory.
+	Cwd string
 }
 
 // RosterRuntimeSnapshot returns the tab's same-source runtime snapshot. The
@@ -49,6 +53,7 @@ func (m *Manager) RosterRuntimeSnapshot(ctx context.Context, tabID string) (Rost
 		Exited:    tab.exited,
 		Status:    session.status,
 		Asset:     session.Asset(),
+		Cwd:       tab.cwd,
 	}, true
 }
 

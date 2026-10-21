@@ -1745,7 +1745,7 @@ func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []
 	tab.mu.Unlock()
 	tab.terminal.Feed(data)
 	m.transcriptOutput(feedCtx, tab, data)
-	if _, changed := tab.observeCWD(data); changed {
+	if _, changed := tab.observeCWD(data, generation); changed {
 		tab.mu.Lock()
 		event := tab.controlEventLocked()
 		tab.mu.Unlock()
