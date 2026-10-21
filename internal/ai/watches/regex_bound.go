@@ -418,7 +418,7 @@ func alwaysEmpty(re *syntax.Regexp) bool {
 
 // canMatchEmpty reports whether the subexpression can match the empty
 // string while also being able to consume input — a nullable-consuming
-// suffix such as .*, (?:x)? or a*.
+// suffix such as .*, (?:x)?, a* or x{0,2}.
 func canMatchEmpty(re *syntax.Regexp) bool {
 	switch re.Op {
 	case syntax.OpEmptyMatch:
@@ -445,8 +445,10 @@ func canMatchEmpty(re *syntax.Regexp) bool {
 		return false
 	case syntax.OpStar, syntax.OpQuest:
 		return true
-	case syntax.OpPlus, syntax.OpRepeat:
+	case syntax.OpPlus:
 		return canMatchEmpty(re.Sub[0])
+	case syntax.OpRepeat:
+		return re.Min == 0 || canMatchEmpty(re.Sub[0])
 	default:
 		return false
 	}
