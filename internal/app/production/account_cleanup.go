@@ -184,6 +184,11 @@ func (p *Production) prepareAccountDeviceSnapshot(ctx context.Context, ownerID, 
 		state.events = make(map[accountCleanupKey]*accountCleanupEvent)
 		state.aliases = make(map[accountCleanupKey]accountCleanupKey)
 	}
+	// Retention applies on every prepare path, including same-event replays:
+	// a canonical that outlived the TTL or the caps is evicted here, so the
+	// replay below re-derives a bounded snapshot instead of deduping against
+	// a stale marker forever.
+	state.purgeCommittedLocked(state.nowTime())
 	if canonical, ok := state.aliases[key]; ok {
 		key = canonical
 	}
@@ -412,6 +417,16 @@ func (p *Production) accountCleanupCutoff(ctx context.Context, ownerID, cleanupI
 	return &cutoff, nil
 }
 
+// accountCleanupAtOrBeforeGeneration reports whether t belongs to the
+// cleanup generation at or before the cutoff. The durable cutoff carries
+// millisecond resolution while session, run, and batch clocks may carry
+// sub-millisecond fractions, so the comparison is normalized to
+// milliseconds (same-millisecond inclusive, fail-closed) without mutating
+// the stored timestamps.
+func accountCleanupAtOrBeforeGeneration(t, cutoff time.Time) bool {
+	return !t.Truncate(time.Millisecond).After(cutoff.Truncate(time.Millisecond))
+}
+
 // accountDeviceSnapshot lists the owner's device sessions created at or before
 // the cleanup event's generation bound; the same-millisecond boundary is
 // inclusive (fail-closed). A failed listing read is returned explicitly: the
@@ -432,7 +447,7 @@ func (p *Production) accountDeviceSnapshot(ctx context.Context, ownerID string, 
 	}
 	devices := make([]session.SessionInfo, 0, len(infos))
 	for _, info := range infos {
-		if info.Kind != session.KindDevice || cutoff != nil && info.CreatedAt.After(*cutoff) {
+		if info.Kind != session.KindDevice || cutoff != nil && !accountCleanupAtOrBeforeGeneration(info.CreatedAt, *cutoff) {
 			continue
 		}
 		info.Tabs = append([]string(nil), info.Tabs...)

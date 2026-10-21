@@ -253,20 +253,22 @@ func (s *runbookIPCService) activeRunCountLocked(ownerID string) int {
 // PrepareOwnerCleanup snapshots the owner's live runs without canceling them; commit and rollback are mutually exclusive.
 // A non-nil cutoff bounds the snapshot to runs started at or before the cleanup generation's terminal
 // instant (same-millisecond inclusive), so a late cleanup of an evicted event cannot cancel new-generation runs.
+// The reservation pins the entry pointers, and the commit only removes and cancels an entry while it is
+// still the reserved one: a same-ID replacement started after the reservation is never touched.
 func (s *runbookIPCService) PrepareOwnerCleanup(ctx context.Context, ownerID, eventID string, cutoff *time.Time) (func(...string), func()) {
 	if ownerID == "" || eventID == "" {
 		return func(...string) {}, func() {}
 	}
 	s.mu.Lock()
-	snapshot := make([]runbookRunKey, 0, len(s.runs))
+	snapshot := make(map[runbookRunKey]*runbookRunEntry, len(s.runs))
 	for key, entry := range s.runs {
 		if key.ownerID != ownerID {
 			continue
 		}
-		if cutoff != nil && entry.startedAt.After(*cutoff) {
+		if cutoff != nil && !accountCleanupAtOrBeforeGeneration(entry.startedAt, *cutoff) {
 			continue
 		}
-		snapshot = append(snapshot, key)
+		snapshot[key] = entry
 	}
 	s.mu.Unlock()
 	var once sync.Once
@@ -274,9 +276,9 @@ func (s *runbookIPCService) PrepareOwnerCleanup(ctx context.Context, ownerID, ev
 		once.Do(func() {
 			s.mu.Lock()
 			entries := make(map[runbookRunKey]*runbookRunEntry, len(snapshot))
-			for _, key := range snapshot {
-				if entry := s.runs[key]; entry != nil {
-					entries[key] = entry
+			for key, reserved := range snapshot {
+				if s.runs[key] == reserved {
+					entries[key] = reserved
 					delete(s.runs, key)
 				}
 			}

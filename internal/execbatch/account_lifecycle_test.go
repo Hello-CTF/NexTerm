@@ -489,3 +489,34 @@ func TestOwnerCleanupAliasCapEvictsOldestFirst(t *testing.T) {
 		t.Fatal("alias cap evicted more than the oldest alias")
 	}
 }
+
+// The cutoff carries millisecond resolution; a batch started 500µs into the
+// cutoff millisecond belongs to the terminal generation and is canceled.
+func TestOwnerCleanupSnapshotSameMillisecondInclusiveSubMillisecond(t *testing.T) {
+	cutoffBase := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	started := make(chan context.Context, 1)
+	resolver := &fakeResolver{targets: map[string]Target{
+		"target": targetFor("target", newFakeTransport(func(ctx context.Context, _ string, _ base.ExecOptions) (base.ExecResult, error) {
+			started <- ctx
+			<-ctx.Done()
+			return base.ExecResult{}, ctx.Err()
+		})),
+	}}
+	service := New(Config{Resolver: resolver, Now: func() time.Time { return cutoffBase.Add(500 * time.Microsecond) }})
+	go func() {
+		_, _ = service.Execute(t.Context(), "owner-a", Request{BatchID: "batch-sub-ms", SessionIDs: []string{"target"}, Command: "wait"})
+	}()
+	var execCtx context.Context
+	select {
+	case execCtx = <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("batch did not start")
+	}
+	cutoff := cutoffBase
+	service.CancelOwner(t.Context(), "owner-a", "session-s1", &cutoff)
+	select {
+	case <-execCtx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("batch started in the cutoff millisecond was not canceled")
+	}
+}

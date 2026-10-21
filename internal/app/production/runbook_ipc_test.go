@@ -822,3 +822,72 @@ func TestRunbookIPCTerminalStateConcurrentResponsesNeverRevert(t *testing.T) {
 		t.Fatal("concurrent responses reverted a terminal entry to active")
 	}
 }
+
+// A reservation pins the entry pointers: after the reserved entry is replaced
+// (same owner/runID re-registered), the stale commit must not delete or cancel
+// the replacement or its active batch.
+func TestRunbookIPCPrepareOwnerCleanupSkipsReplacedRuns(t *testing.T) {
+	executor := newRunbookIPCExecutor("run-aba:s01:g01")
+	service := newRunbookIPCService(executor)
+	dispatcher := ipc.NewDispatcher()
+	if err := service.register(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	ownerA := ipc.WithUserID(t.Context(), "owner-a")
+
+	runbookIPCStartRun(t, dispatcher, ownerA, "run-aba", "aba")
+	staleCommit, _ := service.PrepareOwnerCleanup(t.Context(), "owner-a", "event-stale", nil)
+
+	// The reserved entry is replaced: a second reservation commits and cancels it.
+	freshCommit, _ := service.PrepareOwnerCleanup(t.Context(), "owner-a", "event-fresh", nil)
+	freshCommit()
+
+	// A new run with the same ID starts and reaches an active (blocked) batch.
+	runbookIPCStartRun(t, dispatcher, ownerA, "run-aba", "aba")
+	advance := runbookIPCAdvanceAsync(dispatcher, ownerA, "run-aba")
+	select {
+	case <-executor.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("replacement run did not start executing")
+	}
+
+	// The stale reservation must not touch the replacement or its batch.
+	staleCommit()
+	decodeExecBatchTest[runbook.RunState](t, runbookIPCGetRun(t, dispatcher, ownerA, "run-aba"))
+	select {
+	case response := <-advance:
+		state := decodeExecBatchTest[runbook.RunState](t, response)
+		t.Fatalf("stale commit canceled the replacement run: %+v", state)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	finalCommit, _ := service.PrepareOwnerCleanup(t.Context(), "owner-a", "event-final", nil)
+	finalCommit()
+	select {
+	case response := <-advance:
+		if state := decodeExecBatchTest[runbook.RunState](t, response); state.Status != runbook.RunCanceled {
+			t.Fatalf("replacement run final state = %+v, want canceled", state)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("replacement run did not finish")
+	}
+}
+
+// The cutoff carries millisecond resolution; a run started 500µs into the
+// cutoff millisecond belongs to the terminal generation and is canceled.
+func TestRunbookIPCPrepareOwnerCleanupSameMillisecondInclusive(t *testing.T) {
+	base := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	service := newRunbookIPCService(newRunbookIPCExecutor())
+	service.now = func() time.Time { return base.Add(500 * time.Microsecond) }
+	dispatcher := ipc.NewDispatcher()
+	if err := service.register(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	ownerA := ipc.WithUserID(t.Context(), "owner-a")
+	runbookIPCStartRun(t, dispatcher, ownerA, "run-sub-ms", "sub-ms")
+
+	cutoff := base
+	commit, _ := service.PrepareOwnerCleanup(t.Context(), "owner-a", "event", &cutoff)
+	commit()
+	requireRunbookIPCNotFound(t, runbookIPCGetRun(t, dispatcher, ownerA, "run-sub-ms"))
+}

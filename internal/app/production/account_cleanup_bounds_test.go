@@ -623,3 +623,130 @@ func TestAccountCleanupCommitDetachesPayloadBeforeEviction(t *testing.T) {
 		t.Fatalf("terminal close count = %d, want exactly 1", got)
 	}
 }
+
+// A same-event replay must apply retention too: after the TTL the stale
+// marker and its aliases are evicted, and the replay commits a fresh event
+// (bounded by the durable generation bound) instead of deduping forever.
+func TestAccountCleanupSameEventReplayAppliesRetentionTTL(t *testing.T) {
+	clock := newAccountCleanupClock()
+	rig := newAccountCleanupRig(t, func(config *session.Config) { config.Now = clock.Now })
+	application := &Production{Services: ProductionServices{Sessions: rig.manager}}
+	application.accountCleanup.now = clock.Now
+	if err := application.CleanupAccount(context.Background(), "owner-a", "login-a", "session-a"); err != nil {
+		t.Fatal(err)
+	}
+	first := cleanupStateEvent(t, application, "owner-a", "login-a")
+	if first == nil || !first.committed {
+		t.Fatal("first cleanup did not commit the event")
+	}
+	clock.Advance(accountCleanupEventTTL + time.Millisecond)
+	if err := application.CleanupAccount(context.Background(), "owner-a", "login-a", "session-b"); err != nil {
+		t.Fatal(err)
+	}
+	event := cleanupStateEvent(t, application, "owner-a", "login-a")
+	if event == nil || !event.committed {
+		t.Fatal("replay did not commit a fresh event")
+	}
+	if !event.committedAt.After(first.committedAt) {
+		t.Fatalf("replay deduped against the stale marker: committedAt = %v, first commit = %v", event.committedAt, first.committedAt)
+	}
+	application.accountCleanup.mu.Lock()
+	defer application.accountCleanup.mu.Unlock()
+	if _, exists := application.accountCleanup.aliases[accountCleanupKey{ownerID: "owner-a", eventID: "session-a"}]; exists {
+		t.Fatal("stale alias outlived the retention TTL")
+	}
+	if _, exists := application.accountCleanup.aliases[accountCleanupKey{ownerID: "owner-a", eventID: "session-b"}]; !exists {
+		t.Fatal("fresh alias missing after the replay")
+	}
+}
+
+// Same-event replays register aliases, so the per-owner alias cap must apply
+// on the replay path itself, not only on new-event inserts.
+func TestAccountCleanupSameEventReplayAppliesAliasCap(t *testing.T) {
+	clock := newAccountCleanupClock()
+	rig := newAccountCleanupRig(t, func(config *session.Config) { config.Now = clock.Now })
+	application := &Production{Services: ProductionServices{Sessions: rig.manager}}
+	application.accountCleanup.now = clock.Now
+	if err := application.CleanupAccount(context.Background(), "owner-a", "login-a", "alias-000"); err != nil {
+		t.Fatal(err)
+	}
+	for index := 1; index <= maxAccountCleanupAliasesPerOwner+4; index++ {
+		clock.Advance(time.Millisecond)
+		if err := application.CleanupAccount(context.Background(), "owner-a", "login-a", fmt.Sprintf("alias-%03d", index)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	application.accountCleanup.mu.Lock()
+	defer application.accountCleanup.mu.Unlock()
+	if count := len(application.accountCleanup.aliases); count > maxAccountCleanupAliasesPerOwner+1 {
+		t.Fatalf("aliases = %d, want at most %d after same-event replays", count, maxAccountCleanupAliasesPerOwner+1)
+	}
+	if _, exists := application.accountCleanup.aliases[accountCleanupKey{ownerID: "owner-a", eventID: "alias-000"}]; exists {
+		t.Fatal("per-owner alias cap was not applied on the replay path")
+	}
+	if _, exists := application.accountCleanup.aliases[accountCleanupKey{ownerID: "owner-a", eventID: "alias-260"}]; !exists {
+		t.Fatal("newest alias missing after same-event replays")
+	}
+}
+
+// The deterministic global alias cap also applies on the replay path: the
+// oldest canonical's aliases are evicted first, owners otherwise isolated.
+func TestAccountCleanupReplayAppliesGlobalAliasCap(t *testing.T) {
+	clock := newAccountCleanupClock()
+	application := &Production{Services: ProductionServices{}}
+	application.accountCleanup.now = clock.Now
+	state := &application.accountCleanup
+	owners := maxAccountCleanupAliases/maxAccountCleanupAliasesPerOwner + 1
+	state.mu.Lock()
+	state.events = make(map[accountCleanupKey]*accountCleanupEvent)
+	state.aliases = make(map[accountCleanupKey]accountCleanupKey)
+	for owner := 0; owner < owners; owner++ {
+		clock.Advance(time.Millisecond)
+		canonical := accountCleanupKey{ownerID: fmt.Sprintf("owner-%02d", owner), eventID: "event"}
+		state.events[canonical] = &accountCleanupEvent{committed: true, committedAt: clock.Now()}
+		for index := 0; index < maxAccountCleanupAliasesPerOwner; index++ {
+			state.aliases[accountCleanupKey{ownerID: canonical.ownerID, eventID: fmt.Sprintf("alias-%03d", index)}] = canonical
+		}
+	}
+	state.mu.Unlock()
+
+	// A replay of an existing (oldest) event applies the global cap.
+	if _, _, err := application.PrepareAccountCleanup(context.Background(), "owner-00", "event"); err != nil {
+		t.Fatal(err)
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if count := len(state.aliases); count != maxAccountCleanupAliases {
+		t.Fatalf("aliases = %d, want %d", count, maxAccountCleanupAliases)
+	}
+	if _, exists := state.aliases[accountCleanupKey{ownerID: "owner-00", eventID: "alias-000"}]; exists {
+		t.Fatal("oldest canonical's aliases were not evicted at the global cap")
+	}
+	if _, exists := state.aliases[accountCleanupKey{ownerID: "owner-01", eventID: "alias-000"}]; !exists {
+		t.Fatal("global alias cap evicted more than the oldest canonical's aliases")
+	}
+}
+
+// The cutoff carries millisecond resolution; a device created 500µs into the
+// cutoff millisecond belongs to the terminal generation and is cleaned.
+func TestAccountCleanupSubMillisecondCutoffInclusive(t *testing.T) {
+	clock := newAccountCleanupClock()
+	subMillisecond := func() time.Time { return time.UnixMilli(clock.NowMS()).Add(500 * time.Microsecond) }
+	rig := newAccountCleanupRig(t, func(config *session.Config) { config.Now = subMillisecond })
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	application := &Production{Services: ProductionServices{Sessions: rig.manager, Store: database}}
+	owner := ipc.WithUserID(t.Context(), "owner-a")
+	sessionID := "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+	seedAccountSessionRow(t, database, "owner-a", sessionID, clock.NowMS(), 0)
+
+	connected, tab := rig.open(t, owner, session.Asset{ID: "device/sub-ms", Kind: session.KindDevice})
+	if err := application.CleanupAccount(context.Background(), "owner-a", sessionID, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	requireAccountCleanupTab(t, owner, rig.manager, tab.ID, false)
+	requireAccountCleanupStatus(t, owner, rig.manager, connected.ID, session.StatusDisconnected)
+}

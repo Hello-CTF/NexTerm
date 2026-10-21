@@ -273,6 +273,15 @@ type accountCleanupEvent struct {
 	aborted     bool
 }
 
+// accountCleanupAtOrBeforeGeneration reports whether t belongs to the
+// cleanup generation at or before the cutoff. The durable cutoff carries
+// millisecond resolution while batch clocks may carry sub-millisecond
+// fractions, so the comparison is normalized to milliseconds
+// (same-millisecond inclusive, fail-closed) without mutating timestamps.
+func accountCleanupAtOrBeforeGeneration(t, cutoff time.Time) bool {
+	return !t.Truncate(time.Millisecond).After(cutoff.Truncate(time.Millisecond))
+}
+
 // PrepareOwnerCleanup reserves an event and its current owner snapshot without
 // canceling it; commit and rollback are mutually exclusive. A non-nil cutoff
 // bounds the snapshot to batches that started at or before the cleanup
@@ -284,6 +293,9 @@ func (s *Service) PrepareOwnerCleanup(_ context.Context, ownerID, eventID string
 	}
 	key := accountCleanupKey{ownerID: ownerID, eventID: eventID}
 	s.mu.Lock()
+	// Retention applies on every prepare path, including same-event replays,
+	// so a replay cannot keep a stale marker or unbounded aliases alive.
+	s.purgeAccountCleanupsLocked(s.now())
 	if canonical, exists := s.accountCleanupAliases[key]; exists {
 		key = canonical
 	}
@@ -294,7 +306,7 @@ func (s *Service) PrepareOwnerCleanup(_ context.Context, ownerID, eventID string
 			if active.ownerID != ownerID {
 				continue
 			}
-			if cutoff != nil && active.startedAt.After(*cutoff) {
+			if cutoff != nil && !accountCleanupAtOrBeforeGeneration(active.startedAt, *cutoff) {
 				continue
 			}
 			event.batches = append(event.batches, active)
