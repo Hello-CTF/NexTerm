@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/sshconfig"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
@@ -337,7 +337,7 @@ func registerStoreCommandsWithHostKeyMode(dispatcher *ipc.Dispatcher, database *
 				if !desktop {
 					return "", ipc.NewError(ipc.CodeUnsupported, "读取本地密钥文件只在桌面端可用")
 				}
-				file, err := os.Open(input.Path)
+				file, err := sshconfig.OpenSharedDelete(input.Path)
 				if err != nil {
 					return "", err
 				}
