@@ -172,11 +172,28 @@ func (r *Registry) execCommandsBatch(ctx context.Context, jobID string, call Cal
 		var identities []AssetIdentity
 		targets, identities, err = r.deps.ResolveExecTargetIdentities(ctx, assetIDs, tags)
 		if errors.Is(err, ErrAssetIdentityUnverifiable) {
-			// The batch's identity genuinely cannot be evidenced (a target
-			// session without an identity source): run unbound on the
-			// visibly unverifiable path instead of failing the batch.
+			// A call already bound to identities must never degrade: the
+			// bound identity requires an exact match, so an unverifiable
+			// target fails closed instead of executing under the old
+			// identity.
+			if len(call.AssetIdentities) > 0 {
+				return Fail(fmt.Errorf("目标资产身份已不可验证，与操作绑定身份不一致: %w", ErrAssetIdentityChanged))
+			}
+			// The batch's identity genuinely cannot be evidenced: it runs
+			// unbound on the visibly unverifiable path — on the targets the
+			// identity resolver itself resolved when it has them, else on the
+			// plain resolver, never on a nil call.
 			identityNote = "；资产身份不可验证（未配置身份解析，操作未绑定资产身份）"
-			targets, err = r.deps.ResolveExecTargets(ctx, assetIDs, tags)
+			if len(targets.SessionIDs) == 0 {
+				if r.deps.ResolveExecTargets == nil {
+					return Fail(errors.New("资产身份不可验证且未配置多主机目标解析"))
+				}
+				targets, err = r.deps.ResolveExecTargets(ctx, assetIDs, tags)
+			} else {
+				// The identity resolver's own targets carry the batch; the
+				// verdict is consumed, not propagated as a failure.
+				err = nil
+			}
 		}
 		if err != nil {
 			return Fail(err)
@@ -1253,15 +1270,24 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 
 // resolveAssetSessionForCreate resolves the asset's live session, preferring
 // the identity-aware resolver so the operation can bind to and re-validate
-// the immutable asset identity. When only the plain resolver exists — or the
-// identity genuinely cannot be evidenced (device or inline session) — it
-// notes that the asset identity is unverifiable for this operation.
+// the immutable asset identity. When the identity genuinely cannot be
+// evidenced (device or inline session), the session the identity resolver
+// itself resolved carries the operation with the unverifiable note; a
+// resolver that resolved nothing and no configured plain resolver produce a
+// visible error, never a nil call.
 func (r *Registry) resolveAssetSessionForCreate(ctx context.Context, assetID string, identityNote *string) (string, AssetIdentity, error) {
 	if r.deps.ResolveAssetSessionIdentity != nil {
 		sessionID, identity, err := r.deps.ResolveAssetSessionIdentity(ctx, assetID)
 		if err == nil || !errors.Is(err, ErrAssetIdentityUnverifiable) {
 			return sessionID, identity, err
 		}
+		if sessionID != "" {
+			*identityNote = "；资产身份不可验证（目标会话无资产身份举证，操作未绑定资产身份）"
+			return sessionID, AssetIdentity{}, nil
+		}
+	}
+	if r.deps.ResolveAssetSession == nil {
+		return "", AssetIdentity{}, errors.New("资产身份不可验证且未配置资产会话解析")
 	}
 	*identityNote = "；资产身份不可验证（未配置身份解析，操作未绑定资产身份）"
 	sessionID, err := r.deps.ResolveAssetSession(ctx, assetID)

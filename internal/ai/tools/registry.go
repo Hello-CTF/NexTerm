@@ -70,9 +70,9 @@ func composeAssetIdentityResolvers(deps Dependencies) Dependencies {
 			}
 			if identity.AssetID == "" || identity.ConfigFingerprint == "" {
 				// A session without an identity source (device, inline)
-				// resolves to the honest unverifiable verdict, never an
-				// invented identity.
-				return "", AssetIdentity{}, ErrAssetIdentityUnverifiable
+				// resolves to the honest unverifiable verdict — carrying the
+				// resolved session with it, never an invented identity.
+				return sessionID, AssetIdentity{}, ErrAssetIdentityUnverifiable
 			}
 			return sessionID, identity, nil
 		}
@@ -92,8 +92,9 @@ func composeAssetIdentityResolvers(deps Dependencies) Dependencies {
 				}
 				if identity.AssetID == "" || identity.ConfigFingerprint == "" {
 					// One unevidenced target unbinds the whole batch: it runs
-					// on the honest unverifiable path instead.
-					return ExecTargetSet{}, nil, ErrAssetIdentityUnverifiable
+					// on the honest unverifiable path instead — carrying the
+					// resolved targets with the verdict.
+					return targets, nil, ErrAssetIdentityUnverifiable
 				}
 				resolved = append(resolved, identity)
 			}
@@ -401,6 +402,14 @@ func (r *Registry) bindCallAssetIdentities(ctx context.Context, jobID string, ca
 		targets, identities, err := r.deps.ResolveExecTargetIdentities(ctx, assetIDs, tags)
 		if err != nil {
 			if errors.Is(err, ErrAssetIdentityUnverifiable) {
+				// A call already bound to identities must never degrade: the
+				// bound identity requires an exact match, so an unverifiable
+				// target fails closed instead of executing on, recording
+				// against, or replaying under the old identity.
+				if len(call.AssetIdentities) > 0 {
+					failure := Fail(fmt.Errorf("身份解析失败: 目标资产身份已不可验证，与操作绑定身份不一致: %w", ErrAssetIdentityChanged))
+					return &failure
+				}
 				// The batch's identity genuinely cannot be evidenced: it
 				// runs unbound and the result marks it unverifiable, the
 				// same contract as a registry without the identity resolver.
@@ -468,8 +477,15 @@ func (r *Registry) bindTerminalCreateIdentity(ctx context.Context, jobID string,
 			return nil
 		}
 		// The target's identity genuinely cannot be evidenced (device or
-		// inline session): fall through to the plain-resolver path, which
-		// keeps the operation visibly unverifiable instead of failing it.
+		// inline session): a call already bound to an identity must never
+		// degrade — the bound identity requires an exact match, so it fails
+		// closed instead of executing on or recording against the
+		// unverifiable target. Only an originally unbound call falls through
+		// to the plain-resolver path, which keeps it visibly unverifiable.
+		if len(call.AssetIdentities) > 0 {
+			failure := Fail(fmt.Errorf("身份解析失败: 资产 %s 的身份已不可验证，与操作绑定身份不一致: %w", assetID, ErrAssetIdentityChanged))
+			return &failure
+		}
 	}
 	if r.deps.ResolveAssetSession == nil {
 		return nil
@@ -803,6 +819,19 @@ func (r *Registry) replayDurableCreate(ctx context.Context, jobID string, call *
 		failure := Fail(fmt.Errorf("调用与已记录的执行冲突（授权或参数不一致）: %w", outcome.ErrIdempotenceConflict))
 		failure.OperationID = operation
 		return &failure, true
+	}
+	// A record bound to a specific identity must never replay when the
+	// current target can no longer evidence one: the replay cannot certify
+	// the binding still holds, so it fails closed instead of returning the
+	// old result for an unverifiable target. A vacated session (no live
+	// session at all) is not this verdict — replay stays the no-side-effect
+	// path there.
+	if len(recorded.Identities) > 0 && r.deps.ResolveAssetSessionIdentity != nil {
+		if _, _, err := r.deps.ResolveAssetSessionIdentity(ctx, recorded.Identities[0].AssetID); errors.Is(err, ErrAssetIdentityUnverifiable) {
+			failure := Fail(fmt.Errorf("资产 %s 的身份已不可验证，与已记录执行的绑定身份不一致: %w", recorded.Identities[0].AssetID, ErrAssetIdentityChanged))
+			failure.OperationID = operation
+			return &failure, true
+		}
 	}
 	if record.State != "succeeded" || r.durableCreateStale(ctx, recorded) {
 		return nil, false

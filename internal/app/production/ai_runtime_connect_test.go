@@ -14,6 +14,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
@@ -67,16 +68,24 @@ func (c *connectFakeChannel) ID() string         { return c.id }
 func (c *connectFakeChannel) Generation() uint64 { return 1 }
 
 // connectFakeTransport serves both the exec path and PTY-backed local tab
-// creation; every channel is tracked so Close tears the runtime down.
+// creation; every channel is tracked so Close tears the runtime down, and
+// the alive flag lets tests flip a live session's transport dead.
 type connectFakeTransport struct {
 	mu       sync.Mutex
 	channels []*connectFakeChannel
 	opens    int
+	alive    atomic.Bool
+}
+
+func newConnectFakeTransport() *connectFakeTransport {
+	transport := &connectFakeTransport{}
+	transport.alive.Store(true)
+	return transport
 }
 
 func (t *connectFakeTransport) Kind() string       { return session.KindLocal }
 func (t *connectFakeTransport) Generation() uint64 { return 1 }
-func (t *connectFakeTransport) IsAlive() bool      { return true }
+func (t *connectFakeTransport) IsAlive() bool      { return t.alive.Load() }
 func (t *connectFakeTransport) Ping(context.Context) (time.Duration, error) {
 	return 0, nil
 }
@@ -93,12 +102,38 @@ func (t *connectFakeTransport) OpenPTY(context.Context, base.PTYOptions) (base.C
 	return channel, nil
 }
 func (t *connectFakeTransport) Close() error {
+	t.alive.Store(false)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for _, channel := range t.channels {
 		_ = channel.Close()
 	}
 	return nil
+}
+
+// connectTransportLog records every transport the harness dial produced, in
+// order, so tests can kill a specific session's transport and count dials.
+type connectTransportLog struct {
+	mu   sync.Mutex
+	list []*connectFakeTransport
+}
+
+func (l *connectTransportLog) add(transport *connectFakeTransport) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.list = append(l.list, transport)
+}
+
+func (l *connectTransportLog) count() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.list)
+}
+
+func (l *connectTransportLog) at(index int) *connectFakeTransport {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.list[index]
 }
 
 // The production terminal_create connect=true flow: the AI terminal surface
@@ -108,8 +143,9 @@ func (t *connectFakeTransport) Close() error {
 
 // composeConnectRuntime builds a file-backed production runtime with real
 // tab support; reopening the same path with a fresh session manager leaves
-// only the durable rows carrying over, which is the restart boundary.
-func composeConnectRuntime(t *testing.T, ctx context.Context, path string, dials *atomic.Int64) (*ProductionServices, *store.Store, string) {
+// only the durable rows carrying over, which is the restart boundary. Every
+// dial is recorded in the log.
+func composeConnectRuntime(t *testing.T, ctx context.Context, path string, dials *connectTransportLog) (*ProductionServices, *store.Store, string) {
 	t.Helper()
 	database, err := store.Open(ctx, path)
 	if err != nil {
@@ -146,8 +182,9 @@ func composeConnectRuntime(t *testing.T, ctx context.Context, path string, dials
 	sessions := session.NewManager(session.Config{
 		OpenAccess: true,
 		Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
-			dials.Add(1)
-			return &connectFakeTransport{}, nil
+			transport := newConnectFakeTransport()
+			dials.add(transport)
+			return transport, nil
 		}),
 		Terminals: session.TerminalFactoryFunc(func(config session.TerminalConfig) (session.TerminalState, error) {
 			return terminal.NewTab(config.TabID, config.SessionID, int(config.Cols), int(config.Rows), terminal.UTF8), nil
@@ -165,6 +202,22 @@ func composeConnectRuntime(t *testing.T, ctx context.Context, path string, dials
 	return services, database, assetID
 }
 
+// enableAiTerminalConnectOptIn turns the AI terminal connect opt-in on
+// through the public production_settings_set IPC — the same path a user
+// takes — never by writing the store directly.
+func enableAiTerminalConnectOptIn(t *testing.T, ctx context.Context, database *store.Store) {
+	t.Helper()
+	dispatcher := ipc.NewDispatcher()
+	if err := registerProductionSettingsCommands(dispatcher, database); err != nil {
+		t.Fatal(err)
+	}
+	enabled := true
+	response := dispatchExecBatchTest(dispatcher, ctx, "production_settings_set", productionSettingsUpdateRequest{AiTerminalConnectOptIn: &enabled})
+	if !response.OK {
+		t.Fatalf("production_settings_set = %+v", response)
+	}
+}
+
 func connectCreateCall(assetID string) tools.Call {
 	return tools.Call{ID: "c", Name: "terminal_create",
 		Args: json.RawMessage(`{"asset_id":"` + assetID + `","connect":true}`), AuthorizationID: "guard:test"}
@@ -172,8 +225,8 @@ func connectCreateCall(assetID string) tools.Call {
 
 func TestProductionTerminalConnectRequiresOptIn(t *testing.T) {
 	ctx := context.Background()
-	var dials atomic.Int64
-	services, _, assetID := composeConnectRuntime(t, ctx, filepath.Join(t.TempDir(), "connect.db"), &dials)
+	dials := &connectTransportLog{}
+	services, _, assetID := composeConnectRuntime(t, ctx, filepath.Join(t.TempDir(), "connect.db"), dials)
 
 	result := services.Agent.ToolsRegistry().Execute(ctx, "job", tools.Scope{}, connectCreateCall(assetID), nil)
 	if result.OK {
@@ -185,18 +238,16 @@ func TestProductionTerminalConnectRequiresOptIn(t *testing.T) {
 	if !strings.Contains(result.Text, "opt-in") {
 		t.Fatalf("opt-in decline not surfaced: %+v", result)
 	}
-	if got := dials.Load(); got != 0 {
+	if got := dials.count(); got != 0 {
 		t.Fatalf("declined connect dialed %d times", got)
 	}
 }
 
 func TestProductionTerminalConnectRecordsDurableOutcome(t *testing.T) {
 	ctx := context.Background()
-	var dials atomic.Int64
-	services, database, assetID := composeConnectRuntime(t, ctx, filepath.Join(t.TempDir(), "connect.db"), &dials)
-	if err := database.SettingSet(ctx, aiTerminalConnectOptInSettingKeyForUser(ctx), "true"); err != nil {
-		t.Fatal(err)
-	}
+	dials := &connectTransportLog{}
+	services, database, assetID := composeConnectRuntime(t, ctx, filepath.Join(t.TempDir(), "connect.db"), dials)
+	enableAiTerminalConnectOptIn(t, ctx, database)
 
 	registry := services.Agent.ToolsRegistry()
 	result := registry.Execute(ctx, "job", tools.Scope{}, connectCreateCall(assetID), nil)
@@ -236,18 +287,16 @@ func TestProductionTerminalConnectRecordsDurableOutcome(t *testing.T) {
 func TestProductionTerminalConnectOutcomeSurvivesRestart(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "connect.db")
-	var dials atomic.Int64
-	services, database, assetID := composeConnectRuntime(t, ctx, path, &dials)
-	if err := database.SettingSet(ctx, aiTerminalConnectOptInSettingKeyForUser(ctx), "true"); err != nil {
-		t.Fatal(err)
-	}
+	dials := &connectTransportLog{}
+	services, database, assetID := composeConnectRuntime(t, ctx, path, dials)
+	enableAiTerminalConnectOptIn(t, ctx, database)
 
 	call := connectCreateCall(assetID)
 	first := services.Agent.ToolsRegistry().Execute(ctx, "job", tools.Scope{}, call, nil)
 	if !first.OK || first.OperationID == "" {
 		t.Fatalf("first connected create = %+v", first)
 	}
-	if got := dials.Load(); got != 1 {
+	if got := dials.count(); got != 1 {
 		t.Fatalf("first create dialed %d times", got)
 	}
 	// Close the whole runtime: sessions, AI runtime, and the store handle —
@@ -256,7 +305,7 @@ func TestProductionTerminalConnectOutcomeSurvivesRestart(t *testing.T) {
 	_ = services.Sessions.Close()
 	_ = database.Close()
 
-	restored, _, restoredAssetID := composeConnectRuntime(t, ctx, path, &dials)
+	restored, _, restoredAssetID := composeConnectRuntime(t, ctx, path, dials)
 	if restoredAssetID != assetID {
 		t.Fatalf("asset identity changed across restart: %s vs %s", restoredAssetID, assetID)
 	}
@@ -274,7 +323,68 @@ func TestProductionTerminalConnectOutcomeSurvivesRestart(t *testing.T) {
 	if !second.OK || !strings.Contains(second.Text, "调用已执行过") {
 		t.Fatalf("post-restart retry did not replay: %+v", second)
 	}
-	if got := dials.Load(); got != 1 {
+	if got := dials.count(); got != 1 {
 		t.Fatalf("post-restart retry reconnected: dials=%d", got)
+	}
+}
+
+// A resolved session whose transport died is the same definite not-connected
+// verdict as having no live session: connect=true enters the R-07 gated
+// connector (declined without the opt-in), and once the user enables the AI
+// terminal opt-in through the public settings IPC the redial succeeds.
+// Unknown or forbidden assets never reach the dialer.
+func TestProductionTerminalConnectDeadTransportDialsThroughPublicOptIn(t *testing.T) {
+	ctx := context.Background()
+	dials := &connectTransportLog{}
+	services, database, assetID := composeConnectRuntime(t, ctx, filepath.Join(t.TempDir(), "connect.db"), dials)
+
+	// The asset starts connected with a complete bound identity.
+	initial, err := services.Sessions.ConnectFor(ctx, session.Asset{ID: assetID, Kind: session.KindLocal, StoreBacked: true, ConfigFingerprint: "fp-initial"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := dials.count(); got != 1 {
+		t.Fatalf("initial connect dialed %d times", got)
+	}
+	// The transport dies: the resolver's verdict must be the not-connected
+	// sentinel so connect=true reaches the gated connector.
+	dials.at(0).alive.Store(false)
+	registry := services.Agent.ToolsRegistry()
+	declined := registry.Execute(ctx, "job", tools.Scope{}, connectCreateCall(assetID), nil)
+	if declined.OK {
+		t.Fatalf("connect without opt-in succeeded on a dead transport: %+v", declined)
+	}
+	if strings.Contains(declined.Text, "请手动重连") || strings.Contains(declined.Text, "请先手动连接") {
+		t.Fatalf("dead transport still told to reconnect manually: %+v", declined)
+	}
+	if !strings.Contains(declined.Text, "opt-in") {
+		t.Fatalf("dead-transport connect did not reach the opt-in gate: %+v", declined)
+	}
+	if got := dials.count(); got != 1 {
+		t.Fatalf("declined connect dialed: %d", got)
+	}
+	// Unknown assets never reach the dialer at all.
+	unknown := registry.Execute(ctx, "job", tools.Scope{}, connectCreateCall("asset-missing"), nil)
+	if unknown.OK || strings.Contains(unknown.Text, "opt-in") {
+		t.Fatalf("unknown asset reached the connector: %+v", unknown)
+	}
+	if got := dials.count(); got != 1 {
+		t.Fatalf("unknown asset dialed: %d", got)
+	}
+	// The user enables the surface opt-in through the public settings IPC:
+	// the gated connect path completes. Manager.Connect reuses the existing
+	// session record for the asset (the session layer's established
+	// contract, shared by every R-07 surface), so no second dial happens;
+	// the created tab rides the manager-resolved session.
+	enableAiTerminalConnectOptIn(t, ctx, database)
+	created := registry.Execute(ctx, "job-2", tools.Scope{}, connectCreateCall(assetID), nil)
+	if !created.OK {
+		t.Fatalf("dead-transport connect after public opt-in = %+v", created)
+	}
+	if got := dials.count(); got != 1 {
+		t.Fatalf("Manager.Connect reuse semantics changed: dials=%d", got)
+	}
+	if created.CreatedTab == nil || created.CreatedTab.SessionID != initial.ID {
+		t.Fatalf("created tab not on the manager-resolved session: %+v", created.CreatedTab)
 	}
 }

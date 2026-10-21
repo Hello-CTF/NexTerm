@@ -59,7 +59,8 @@ func TestProductionSettingsDefaultOff(t *testing.T) {
 	}
 	if settings.CronConnectOptIn || settings.CronConnectProductionOptIn ||
 		settings.BroadcastConnectOptIn || settings.BroadcastConnectProductionOptIn ||
-		settings.TargetSetConnectOptIn || settings.TargetSetConnectProductionOptIn {
+		settings.TargetSetConnectOptIn || settings.TargetSetConnectProductionOptIn ||
+		settings.AiTerminalConnectOptIn || settings.AiTerminalConnectProductionOptIn {
 		t.Fatalf("default opt-ins are not all off: %+v", settings)
 	}
 }
@@ -100,7 +101,8 @@ func TestProductionSettingsSetAndGet(t *testing.T) {
 	if !settings.CronConnectOptIn || !settings.TargetSetConnectOptIn {
 		t.Fatalf("saved opt-ins = %+v", settings)
 	}
-	if settings.CronConnectProductionOptIn || settings.BroadcastConnectOptIn || settings.BroadcastConnectProductionOptIn || settings.TargetSetConnectProductionOptIn {
+	if settings.CronConnectProductionOptIn || settings.BroadcastConnectOptIn || settings.BroadcastConnectProductionOptIn || settings.TargetSetConnectProductionOptIn ||
+		settings.AiTerminalConnectOptIn || settings.AiTerminalConnectProductionOptIn {
 		t.Fatalf("unset opt-ins changed: %+v", settings)
 	}
 	// Built-in production/prod still apply alongside the configured list.
@@ -182,4 +184,34 @@ func manyEnvironmentNames(count int) []string {
 		names[index] = strings.Repeat("x", index+1)
 	}
 	return names
+}
+
+// The AI terminal connect surface is configurable per owner through the same
+// public settings IPC: the patch persists to the surface's own per-user keys
+// and never touches the other surfaces' opt-ins.
+func TestProductionSettingsAiTerminalConnectOptInRoundTrip(t *testing.T) {
+	fixture := newProductionSettingsFixture(t)
+	response := fixture.set(t, fixture.owner, productionSettingsUpdateRequest{
+		AiTerminalConnectOptIn:           boolPointer(true),
+		AiTerminalConnectProductionOptIn: boolPointer(true),
+	})
+	var settings productionSettingsDTO
+	requireStoreTestResponse(t, response, &settings)
+	if !settings.AiTerminalConnectOptIn || !settings.AiTerminalConnectProductionOptIn {
+		t.Fatalf("saved AI terminal opt-ins = %+v", settings)
+	}
+	if settings.CronConnectOptIn || settings.BroadcastConnectOptIn || settings.TargetSetConnectOptIn {
+		t.Fatalf("other surfaces changed by the AI terminal patch: %+v", settings)
+	}
+	// The AI terminal connector reads the same per-user keys.
+	if optIn, err := cronConnectSetting(fixture.owner, fixture.database, aiTerminalConnectOptInSettingKeyForUser(fixture.owner)); err != nil || !optIn {
+		t.Fatalf("AI terminal opt-in not persisted: %v, %v", optIn, err)
+	}
+	if optIn, err := cronConnectSetting(fixture.owner, fixture.database, aiTerminalConnectProductionOptInSettingKeyForUser(fixture.owner)); err != nil || !optIn {
+		t.Fatalf("AI terminal production opt-in not persisted: %v, %v", optIn, err)
+	}
+	other := fixture.get(t, fixture.other)
+	if other.AiTerminalConnectOptIn || other.AiTerminalConnectProductionOptIn {
+		t.Fatalf("cross-owner AI terminal opt-ins leaked: %+v", other)
+	}
 }

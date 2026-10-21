@@ -463,15 +463,19 @@ func resolveProductionAssetSession(ctx context.Context, services *ProductionServ
 	if connected.Asset().ID != assetID || connected.Asset().Kind != expectedKind || info.Kind != expectedKind {
 		return "", ipc.NewError(ipc.CodeForbidden, "资产与在线会话类型或身份不匹配")
 	}
+	// A resolved session that is no longer connected, or whose transport is
+	// dead, is the same definite not-connected verdict as having no live
+	// session at all: terminal_create connect=true may dial through the R-07
+	// gates instead of being told to reconnect manually.
 	if info.Status != session.StatusConnected {
-		return "", ipc.NewError(ipc.CodeDisconnected, "资产没有健康的在线会话；请先手动连接")
+		return "", ipc.WrapError(ipc.CodeDisconnected, "资产没有健康的在线会话", tools.ErrNoLiveSession)
 	}
 	transport, err := services.Sessions.TransportFor(validationCtx, sessionID)
 	if err != nil {
 		return "", productionScopeError(err)
 	}
 	if !transport.IsAlive() {
-		return "", ipc.NewError(ipc.CodeDisconnected, "资产在线会话的传输已断开；请先手动重连")
+		return "", ipc.WrapError(ipc.CodeDisconnected, "资产在线会话的传输已断开", tools.ErrNoLiveSession)
 	}
 	return sessionID, nil
 }

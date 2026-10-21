@@ -41,6 +41,8 @@ const DEFAULT_DTO = {
   broadcastConnectProductionOptIn: false,
   targetSetConnectOptIn: false,
   targetSetConnectProductionOptIn: false,
+  aiTerminalConnectOptIn: false,
+  aiTerminalConnectProductionOptIn: false,
 };
 
 let mounted: MountedView | undefined;
@@ -184,7 +186,7 @@ describe("ProductionSettingsPanel", () => {
 
     expect(mocks.call).toHaveBeenCalledWith("production_settings_get");
     const toggles = [...mounted.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
-    expect(toggles).toHaveLength(6);
+    expect(toggles).toHaveLength(8);
     expect(toggles.every((toggle) => !toggle.checked)).toBe(true);
   });
 
@@ -199,6 +201,24 @@ describe("ProductionSettingsPanel", () => {
     await flushUntil(() => mocks.call.mock.calls.some(([cmd]) => cmd === "production_settings_set"));
     expect(mocks.call).toHaveBeenCalledWith("production_settings_set", { broadcastConnectProductionOptIn: true });
     await flushUntil(() => mounted!.container.querySelector<HTMLInputElement>('input[aria-label="广播连接生产环境资产"]')?.checked === true);
+  });
+
+  it("saves the AI terminal connect opt-ins as explicit patches", async () => {
+    mounted = mount(createElement(ProductionSettingsPanel));
+    await flush();
+    await flushUntil(() => mounted!.container.querySelector('input[aria-label="AI 终端连接未连接资产"]') !== null);
+
+    const toggle = mounted.container.querySelector<HTMLInputElement>('input[aria-label="AI 终端连接未连接资产"]');
+    if (!toggle) throw new Error("AI terminal opt-in toggle not found");
+    await clickAndFlush(toggle);
+    await flushUntil(() => mocks.call.mock.calls.some(([cmd]) => cmd === "production_settings_set"));
+    expect(mocks.call).toHaveBeenCalledWith("production_settings_set", { aiTerminalConnectOptIn: true });
+    await flushUntil(() => mounted!.container.querySelector<HTMLInputElement>('input[aria-label="AI 终端连接未连接资产"]')?.checked === true);
+
+    const productionToggle = mounted.container.querySelector<HTMLInputElement>('input[aria-label="AI 终端连接生产环境资产"]');
+    if (!productionToggle) throw new Error("AI terminal production opt-in toggle not found");
+    await clickAndFlush(productionToggle);
+    expect(mocks.call).toHaveBeenCalledWith("production_settings_set", { aiTerminalConnectProductionOptIn: true });
   });
 
   it("adds and removes environment names and saves the whole list", async () => {
