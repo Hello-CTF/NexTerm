@@ -8,14 +8,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-// RosterRuntimeIncarnationReader is the real per-tab runtime incarnation
-// surface provided by the session package (session.Manager): it identifies
-// the runtime episode a tab currently hosts, so presence and asset evidence
-// bind to one incarnation and a replaced runtime is authoritatively detected.
-type RosterRuntimeIncarnationReader interface {
-	RosterRuntimeIncarnation(ctx context.Context, tabID string) (string, bool)
-}
-
 // SessionRosterProbe is the production RosterRuntimeProbe: it classifies a
 // handle's runtime from the real session manager, so roster presence and
 // target-asset evidence come from server-side state and never from client
@@ -31,26 +23,16 @@ type RosterRuntimeIncarnationReader interface {
 type SessionRosterProbe struct {
 	store    RosterStore
 	sessions *session.Manager
-	// read seams defaulting to the real manager reads; tests override them
-	// to drive replacements between the reads deterministically.
-	tabFor     func(context.Context, string) (*session.Tab, error)
-	sessionFor func(context.Context, string) (*session.Session, error)
-	episode    func(context.Context, string) (string, bool)
+	// snapshot reads the tab's same-source runtime snapshot; tests override
+	// it to drive replacements between the reads deterministically.
+	snapshot func(context.Context, string) (session.RosterRuntimeSnapshot, bool)
 }
 
 func NewSessionRosterProbe(store RosterStore, sessions *session.Manager) *SessionRosterProbe {
 	return &SessionRosterProbe{
-		store:      store,
-		sessions:   sessions,
-		tabFor:     sessions.TabFor,
-		sessionFor: sessions.SessionFor,
-		episode: func(ctx context.Context, tabID string) (string, bool) {
-			reader, ok := any(sessions).(RosterRuntimeIncarnationReader)
-			if !ok {
-				return "", false
-			}
-			return reader.RosterRuntimeIncarnation(ctx, tabID)
-		},
+		store:    store,
+		sessions: sessions,
+		snapshot: sessions.RosterRuntimeSnapshot,
 	}
 }
 
@@ -71,56 +53,52 @@ func (p *SessionRosterProbe) ProbeRosterRuntime(ctx context.Context, handle, inc
 }
 
 // probeRow classifies the row's runtime against the row's persisted episode
-// binding:
+// binding, reading the session package's same-source runtime snapshot so the
+// session identity, the episode evidence, the exited flag, the connectivity
+// status, and the asset all come from one critical section:
 //  1. The tab's own exit state is authoritative and comes first (the
 //     preserved exited contract): an exited runtime reports exited
 //     regardless of the binding.
-//  2. The current episode is read from the session manager's real
-//     incarnation surface; an unevidenced episode fails closed to
-//     unverifiable, never to replaced.
+//  2. An unevidenced episode fails closed to unverifiable, never to
+//     replaced.
 //  3. A recorded binding that no longer matches is a proven replacement:
-//     replaced carries the observed episode as authoritative evidence, never
-//     a fabricated one.
+//     replaced carries the snapshot's episode as authoritative evidence,
+//     never a fabricated one.
 //  4. A matching (or not-yet-recorded) binding classifies the live state,
-//     and the episode is re-read afterwards: a replacement landing during
-//     the read fails closed instead of answering from two episodes.
+//     and the snapshot is re-read afterwards: a replacement landing during
+//     the read fails closed instead of answering from two runtimes.
 func (p *SessionRosterProbe) probeRow(ctx context.Context, row store.AgentRosterRow) RosterRuntimeStatus {
-	tab, err := p.tabFor(ctx, row.TabID)
-	if err != nil {
-		return RosterRuntimeStatus{Kind: RosterRuntimeUnverifiable}
-	}
-	if tab.Info().Exited {
-		return RosterRuntimeStatus{Kind: RosterRuntimeExited, ObservedIncarnation: p.observedEpisode(ctx, row.TabID)}
-	}
-	episode, ok := p.observedEpisodeOk(ctx, row.TabID)
+	snapshot, ok := p.snapshot(ctx, row.TabID)
 	if !ok {
 		return RosterRuntimeStatus{Kind: RosterRuntimeUnverifiable}
 	}
-	recorded := rosterRecordedEpisode(row)
-	if recorded != "" && recorded != episode {
-		return RosterRuntimeStatus{Kind: RosterRuntimeReplaced, CurrentIncarnation: episode, ObservedIncarnation: episode}
+	if snapshot.Exited {
+		return RosterRuntimeStatus{Kind: RosterRuntimeExited, ObservedIncarnation: snapshot.Episode}
 	}
-	connected, err := p.sessionFor(ctx, tab.SessionID)
-	if err != nil {
-		return RosterRuntimeStatus{Kind: RosterRuntimeUnverifiable, ObservedIncarnation: episode}
-	}
-	kind := RosterRuntimeDisconnected
-	if connected.Info().Status == session.StatusConnected {
-		kind = RosterRuntimeConnected
-	}
-	after, ok := p.observedEpisodeOk(ctx, row.TabID)
-	if !ok || after != episode {
+	if !snapshot.EpisodeOK {
 		return RosterRuntimeStatus{Kind: RosterRuntimeUnverifiable}
 	}
-	return RosterRuntimeStatus{Kind: kind, ObservedIncarnation: episode, BindingValid: recorded == episode}
+	recorded := rosterRecordedEpisode(row)
+	if recorded != "" && recorded != snapshot.Episode {
+		return RosterRuntimeStatus{Kind: RosterRuntimeReplaced, CurrentIncarnation: snapshot.Episode, ObservedIncarnation: snapshot.Episode}
+	}
+	kind := RosterRuntimeDisconnected
+	if snapshot.Status == session.StatusConnected {
+		kind = RosterRuntimeConnected
+	}
+	after, ok := p.snapshot(ctx, row.TabID)
+	if !ok || after.Episode != snapshot.Episode || after.SessionID != snapshot.SessionID {
+		return RosterRuntimeStatus{Kind: RosterRuntimeUnverifiable}
+	}
+	return RosterRuntimeStatus{Kind: kind, ObservedIncarnation: snapshot.Episode, BindingValid: recorded == snapshot.Episode}
 }
 
 // ResolveRosterAsset resolves the real target asset identity behind the
-// handle's runtime from the connected session, and only when the row's
-// recorded episode binding matches the currently evidenced episode: an
+// handle's runtime from the snapshot's same-source asset field, and only when
+// the row's recorded episode binding matches the snapshot's episode: an
 // unbound row, a stale identity, or a replaced runtime fails closed, and
 // callers surface that as unknown evidence rather than substituting a
-// client-claimed identity. The episode is re-read after the resolution so a
+// client-claimed identity. The snapshot is re-read after the resolution so a
 // replacement landing mid-read never resolves the new runtime's asset.
 func (p *SessionRosterProbe) ResolveRosterAsset(ctx context.Context, handle, incarnation string) (string, error) {
 	row, err := p.store.AgentRosterGetByHandle(ctx, handle)
@@ -130,42 +108,24 @@ func (p *SessionRosterProbe) ResolveRosterAsset(ctx context.Context, handle, inc
 	if incarnation != "" && row.Incarnation != incarnation {
 		return "", ipc.NewError(ipc.Code("conflict"), "roster 精确身份不匹配")
 	}
-	episode, ok := p.observedEpisodeOk(ctx, row.TabID)
+	snapshot, ok := p.snapshot(ctx, row.TabID)
 	if !ok {
+		return "", ipc.NewError(ipc.CodeNotFound, "roster 运行时无法举证")
+	}
+	if !snapshot.EpisodeOK {
 		return "", ipc.NewError(ipc.CodeNotFound, "roster 运行时 episode 无法举证")
 	}
 	recorded := rosterRecordedEpisode(row)
 	if recorded == "" {
 		return "", ipc.NewError(ipc.Code("conflict"), "roster 缺少运行时 episode 绑定")
 	}
-	if recorded != episode {
+	if recorded != snapshot.Episode {
 		return "", ipc.NewError(ipc.Code("conflict"), "roster 运行时已被替换")
 	}
-	tab, err := p.tabFor(ctx, row.TabID)
-	if err != nil {
-		return "", err
-	}
-	connected, err := p.sessionFor(ctx, tab.SessionID)
-	if err != nil {
-		return "", err
-	}
-	assetID := connected.Asset().ID
-	after, ok := p.observedEpisodeOk(ctx, row.TabID)
-	if !ok || after != episode {
+	assetID := snapshot.Asset.ID
+	after, ok := p.snapshot(ctx, row.TabID)
+	if !ok || after.Episode != snapshot.Episode || after.SessionID != snapshot.SessionID {
 		return "", ipc.NewError(ipc.Code("conflict"), "roster 运行时在读取期间被替换")
 	}
 	return assetID, nil
-}
-
-// observedEpisode reads the tab's current runtime episode from the session
-// manager's incarnation surface, empty when the surface is unavailable or the
-// episode cannot be evidenced.
-func (p *SessionRosterProbe) observedEpisode(ctx context.Context, tabID string) string {
-	episode, _ := p.observedEpisodeOk(ctx, tabID)
-	return episode
-}
-
-// observedEpisodeOk is observedEpisode with the evidence flag.
-func (p *SessionRosterProbe) observedEpisodeOk(ctx context.Context, tabID string) (string, bool) {
-	return p.episode(ctx, tabID)
 }

@@ -249,18 +249,17 @@ func TestRosterEpisodeBindingReconnectWithAssetChangeFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The reconnect replaces the channel and refreshes the asset to asset-2.
+	// The reconnect replaces the channel, refreshes the asset to asset-2, and
+	// advances the episode.
 	if err := manager.ReconnectOnceFor(ctx, connected.Info().ID, session.Asset{ID: "asset-2", Kind: session.KindSSH}); err != nil {
 		t.Fatal(err)
 	}
 	if got := connected.Asset().ID; got != "asset-2" {
 		t.Fatalf("session asset after reconnect = %q", got)
 	}
-	// Setup guard: this test targets the gap where a non-durable reconnect
-	// does not advance the episode. Once the session package advances it,
-	// the probe must start failing closed on its own.
-	if after, _ := manager.RosterRuntimeIncarnation(ctx, "tab-rc"); after != episodeA {
-		t.Fatalf("test setup: reconnect advanced the episode %q → %q (the session-side fix landed; flip this test to the fixed behavior)", episodeA, after)
+	episodeAfter, _ := manager.RosterRuntimeIncarnation(ctx, "tab-rc")
+	if episodeAfter == episodeA {
+		t.Fatal("test setup: reconnect did not advance the episode")
 	}
 
 	probe := NewSessionRosterProbe(database, manager)
@@ -271,15 +270,18 @@ func TestRosterEpisodeBindingReconnectWithAssetChangeFailsClosed(t *testing.T) {
 	if status.Kind == RosterRuntimeConnected {
 		t.Fatalf("row bound before the reconnect reported the replacement runtime as connected: %+v", status)
 	}
+	if status.Kind == RosterRuntimeReplaced && status.CurrentIncarnation != episodeAfter {
+		t.Fatalf("replaced evidence = %+v, want the advanced episode %q", status, episodeAfter)
+	}
 	if assetID, err := probe.ResolveRosterAsset(ctx, "handle-rc", entry.Incarnation); err == nil && assetID == "asset-2" {
 		t.Fatal("row bound before the reconnect resolved the replacement runtime's asset")
 	}
 }
 
-// The first attach must not bind mixed state: when the tab is replaced
-// between the tab read and the episode read, the connected classification
-// and the bound episode come from different runtimes. The probe must fail
-// closed instead of binding the replacement on the stale session's answer.
+// The first attach must not bind mixed state: when the tab is replaced after
+// the first same-source snapshot read, the revalidation read evidences the
+// replacement runtime, and the probe must fail closed instead of binding it
+// on the stale snapshot's answer.
 func TestRosterEpisodeBindingFirstAttachRejectsMixedSnapshot(t *testing.T) {
 	database, manager, ctx := newEpisodeFixture(t)
 	connectedA, err := manager.ConnectFor(ctx, session.Asset{ID: "asset-1", Kind: session.KindSSH})
@@ -291,31 +293,33 @@ func TestRosterEpisodeBindingFirstAttachRejectsMixedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.Disconnect(connectedB.Info().ID); err != nil {
-		t.Fatal(err)
-	}
 
-	roster := NewRoster(database, NewSessionRosterProbe(database, manager))
+	// Replace the tab after the probe's first same-source snapshot read: the
+	// revalidation read then evidences the replacement runtime on the
+	// disconnected session B, so the first attach must fail closed instead of
+	// binding the mixed state.
+	probe := NewSessionRosterProbe(database, manager)
+	probe.snapshot = func(ctx context.Context, tabID string) (session.RosterRuntimeSnapshot, bool) {
+		snapshot, ok := manager.RosterRuntimeSnapshot(ctx, tabID)
+		if !ok {
+			return session.RosterRuntimeSnapshot{}, false
+		}
+		if snapshot.SessionID == connectedA.Info().ID {
+			if err := manager.CloseTab(tabID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := manager.OpenTab(ctx, session.OpenTabOptions{SessionID: connectedB.Info().ID, TabID: tabID, ClientID: "client-b", ChannelID: "channel-b", Cols: 80, Rows: 24}); err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.Disconnect(connectedB.Info().ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return snapshot, true
+	}
+	roster := NewRoster(database, probe)
 	if _, err := roster.Provision(ctx, "conv-1", "handle-mix", "", "tab-mix", nil); err != nil {
 		t.Fatal(err)
-	}
-
-	// Replace the tab between the probe's tab read and its episode read:
-	// the tab read returns the old tab on the connected session A, the
-	// episode read then evidences the replacement on disconnected session B.
-	probe := NewSessionRosterProbe(database, manager)
-	probe.tabFor = func(ctx context.Context, tabID string) (*session.Tab, error) {
-		tab, err := manager.TabFor(ctx, tabID)
-		if err != nil {
-			return nil, err
-		}
-		if err := manager.CloseTab(tabID); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := manager.OpenTab(ctx, session.OpenTabOptions{SessionID: connectedB.Info().ID, TabID: tabID, ClientID: "client-b", ChannelID: "channel-b", Cols: 80, Rows: 24}); err != nil {
-			t.Fatal(err)
-		}
-		return tab, nil
 	}
 
 	attachment, err := roster.Attach(ctx, "handle-mix", "job-1")
