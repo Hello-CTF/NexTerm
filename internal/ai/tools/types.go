@@ -467,9 +467,11 @@ type DurableOutcomeLedger interface {
 	// ClaimOutcome atomically claims the base-operation family for a new
 	// attempt: it succeeds only when no in-flight attempt holds the family,
 	// so concurrent callers across processes cannot both be admitted before
-	// connecting. A false result means another attempt holds the family and
-	// the caller must adjudicate its records instead of starting a new one.
-	ClaimOutcome(ctx context.Context, family, kind string) (bool, error)
+	// connecting. It returns the claim row's ID so the caller can tell its
+	// own in-flight row from any other. A false result means another attempt
+	// holds the family and the caller must adjudicate its records instead of
+	// starting a new one.
+	ClaimOutcome(ctx context.Context, family, kind string) (claimID string, claimed bool, err error)
 	// ProgressOutcome persists the attempt's progress residual immediately
 	// after a connect returns, so a crash before the final completion still
 	// leaves the residual session recoverable.
@@ -478,6 +480,10 @@ type DurableOutcomeLedger interface {
 	// the family claim in one transaction. The attempt's OperationID is the
 	// random-nonce history ID.
 	CompleteOutcome(ctx context.Context, family string, attempt OutcomeAttempt) error
+	// ReleaseOutcome releases the family claim without writing a history
+	// row, for the abort path where a terminal record was found after the
+	// claim.
+	ReleaseOutcome(ctx context.Context, family string) error
 	OutcomeResult(ctx context.Context, operationID string) (OutcomeAttempt, error)
 }
 

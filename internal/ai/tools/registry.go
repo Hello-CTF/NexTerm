@@ -532,6 +532,11 @@ func (r *Registry) recordStaleAfterReconfigure(ctx context.Context, binding asse
 	return true
 }
 
+// durableOutcomeWriteTimeout bounds the durable ledger's progress and
+// completion writes so a canceled or hung caller context cannot strand the
+// residual write or the final record.
+const durableOutcomeWriteTimeout = 5 * time.Second
+
 // callTargetsAsset reports whether the call targets an explicit asset.
 func callTargetsAsset(call Call) bool {
 	var args struct {
@@ -605,7 +610,7 @@ func (r *Registry) adjudicateAndBeginDurableCreate(ctx context.Context, jobID st
 		// The record is stale (the asset was reconfigured) or finally
 		// failed: a fresh attempt proceeds.
 	}
-	claimed, err := r.deps.DurableOutcomes.ClaimOutcome(ctx, operation, "terminal_create")
+	claimID, claimed, err := r.deps.DurableOutcomes.ClaimOutcome(ctx, operation, "terminal_create")
 	if err != nil {
 		failure := Fail(fmt.Errorf("执行记录登记失败: %w", err))
 		return nil, &failure
@@ -627,10 +632,57 @@ func (r *Registry) adjudicateAndBeginDurableCreate(ctx context.Context, jobID st
 		failure.OperationID = operation
 		return nil, &failure
 	}
+	// The claim is held, so the family is frozen against other attempts —
+	// but the first adjudication may have raced with an attempt that
+	// completed and released between that read and this claim. Re-adjudicate
+	// before any side effect: a terminal record that landed in the window
+	// replays (or conflicts) instead of executing a duplicate, and anything
+	// other than this caller's own in-flight row aborts safely.
+	adjudication, err = r.deps.DurableOutcomes.AdjudicateOutcome(ctx, operation)
+	if err != nil {
+		failure := Fail(fmt.Errorf("执行记录裁定查询失败: %w", err))
+		r.abortDurableClaim(ctx, operation, &failure)
+		return nil, &failure
+	}
+	switch {
+	case adjudication.Conflict:
+		failure := Fail(errors.New("相同调用存在冲突的执行记录，未重复执行"))
+		failure.OperationID = operation
+		r.abortDurableClaim(ctx, operation, &failure)
+		return nil, &failure
+	case adjudication.Pending != nil && adjudication.Pending.OperationID != claimID:
+		failure := Fail(errors.New("相同调用已有未完成的执行记录（state=initiated），未重复执行"))
+		failure.OperationID = operation
+		if adjudication.Pending.ResidualSessionID != "" {
+			failure.Text += fmt.Sprintf("；残留会话 session_id=%s（未自动清理）", adjudication.Pending.ResidualSessionID)
+			failure.Notes += fmt.Sprintf("；残留会话 session_id=%s（未自动清理）", adjudication.Pending.ResidualSessionID)
+		}
+		r.abortDurableClaim(ctx, operation, &failure)
+		return nil, &failure
+	case adjudication.Terminal != nil:
+		if output, done := r.replayDurableCreate(ctx, jobID, call, adjudication.Terminal); done {
+			r.abortDurableClaim(ctx, operation, output)
+			return nil, output
+		}
+		// The record is stale (the asset was reconfigured) or finally
+		// failed: this caller's fresh attempt proceeds.
+	}
 	attempt := operation + ":" + newOutcomeAttemptNonce()
 	return func(result *Output, stage string) {
-		r.completeDurableCreate(context.WithoutCancel(ctx), operation, attempt, call, result, stage)
+		writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), durableOutcomeWriteTimeout)
+		defer cancel()
+		r.completeDurableCreate(writeCtx, operation, attempt, call, result, stage)
 	}, nil
+}
+
+// abortDurableClaim releases the family claim on an abort path; a release
+// failure is appended to the result instead of hidden.
+func (r *Registry) abortDurableClaim(ctx context.Context, family string, result *Output) {
+	if err := r.deps.DurableOutcomes.ReleaseOutcome(ctx, family); err != nil {
+		note := fmt.Sprintf("；durable 执行记录释放失败: %v", err)
+		result.Text += note
+		result.Notes += note
+	}
 }
 
 // replayDurableCreate returns the recorded result of a finished attempt when

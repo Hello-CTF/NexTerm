@@ -164,6 +164,12 @@ func (s *Store) AgentOutcomeComplete(ctx context.Context, operationID string, up
 // serialize into exactly one winner without a schema change.
 const agentOutcomeClaimSuffix = ":claim"
 
+// AgentOutcomeClaimRowID returns the in-flight claim row's operation ID for
+// one operation family.
+func AgentOutcomeClaimRowID(family string) string {
+	return family + agentOutcomeClaimSuffix
+}
+
 // AgentOutcomeClaimAttempt atomically claims one operation family for a new
 // attempt by inserting the family's single in-flight row. It reports whether
 // this caller won the claim: a false result with a nil error means another
@@ -179,7 +185,7 @@ func (s *Store) AgentOutcomeClaimAttempt(ctx context.Context, family, kind strin
 		return false, ipc.NewError(ipc.CodeBadParam, "outcome kind 不能为空")
 	}
 	row := AgentOutcomeRow{
-		OperationID: family + agentOutcomeClaimSuffix, Kind: kind, State: AgentOutcomeStateInitiated,
+		OperationID: AgentOutcomeClaimRowID(family), Kind: kind, State: AgentOutcomeStateInitiated,
 		OwnerID: ipc.OwnerID(ctx),
 	}
 	now := ids.NowMS()
@@ -205,8 +211,27 @@ func (s *Store) AgentOutcomeProgress(ctx context.Context, family, residualSessio
 		return ipc.NewError(ipc.CodeBadParam, "outcome family 不能为空")
 	}
 	result := s.db.WithContext(ctx).Model(&AgentOutcomeRow{}).
-		Where("owner_id = ? AND operation_id = ? AND state = ?", ipc.OwnerID(ctx), family+agentOutcomeClaimSuffix, AgentOutcomeStateInitiated).
+		Where("owner_id = ? AND operation_id = ? AND state = ?", ipc.OwnerID(ctx), AgentOutcomeClaimRowID(family), AgentOutcomeStateInitiated).
 		Updates(map[string]any{"residual_session_id": residualSessionID, "updated_at": ids.NowMS()})
+	if result.Error != nil {
+		return dbError(result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return notFound("outcome 进行中的尝试记录")
+	}
+	return nil
+}
+
+// AgentOutcomeReleaseClaim deletes the family's in-flight claim row without
+// writing a history row, for the abort path where the caller claimed the
+// family but must stand down — for example because a terminal record landed
+// between its adjudication and its claim.
+func (s *Store) AgentOutcomeReleaseClaim(ctx context.Context, family string) error {
+	if strings.TrimSpace(family) == "" {
+		return ipc.NewError(ipc.CodeBadParam, "outcome family 不能为空")
+	}
+	result := s.db.WithContext(ctx).Where("owner_id = ? AND operation_id = ?", ipc.OwnerID(ctx), AgentOutcomeClaimRowID(family)).
+		Delete(&AgentOutcomeRow{})
 	if result.Error != nil {
 		return dbError(result.Error)
 	}
@@ -253,7 +278,7 @@ func (s *Store) AgentOutcomeCompleteAttempt(ctx context.Context, family string, 
 				return dbError(result.Error)
 			}
 		}
-		if result := tx.Where("owner_id = ? AND operation_id = ?", ipc.OwnerID(ctx), family+agentOutcomeClaimSuffix).
+		if result := tx.Where("owner_id = ? AND operation_id = ?", ipc.OwnerID(ctx), AgentOutcomeClaimRowID(family)).
 			Delete(&AgentOutcomeRow{}); result.Error != nil {
 			return dbError(result.Error)
 		}

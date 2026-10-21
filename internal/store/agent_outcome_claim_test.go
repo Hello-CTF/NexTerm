@@ -107,4 +107,19 @@ func TestAgentOutcomeClaimAttemptDatabase(t *testing.T) {
 	if rows, err := db.AgentOutcomeListByPrefix(ctxB, "op-family-1", 0); err != nil || len(rows) != 1 {
 		t.Fatalf("cross-owner rows = %+v err=%v", rows, err)
 	}
+
+	// The abort release deletes the claim without a history row, so the
+	// family's next attempt claims cleanly.
+	if won, err := db.AgentOutcomeClaimAttempt(ctxA, "op-family-2", "terminal_create"); err != nil || !won {
+		t.Fatalf("claim for release = %t err=%v", won, err)
+	}
+	if err := db.AgentOutcomeReleaseClaim(ctxA, "op-family-2"); err != nil {
+		t.Fatal(err)
+	}
+	if won, err := db.AgentOutcomeClaimAttempt(ctxA, "op-family-2", "terminal_create"); err != nil || !won {
+		t.Fatalf("claim after release = %t err=%v", won, err)
+	}
+	if err := db.AgentOutcomeReleaseClaim(ctxA, "op-family-missing"); err == nil {
+		t.Fatal("release of a missing claim succeeded")
+	}
 }

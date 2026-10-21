@@ -1347,12 +1347,16 @@ func (r *Registry) connectAssetSession(ctx context.Context, jobID string, call C
 // progressDurableConnectResidual persists the attempt's progress residual on
 // the durable ledger the moment a connect returns, before identity
 // verification and the create. It only runs for recorded operations, whose
-// claim row exists; non-recorded calls have no claim to update.
+// claim row exists; non-recorded calls have no claim to update. The write
+// runs on a detached context with a bounded timeout: the connect may have
+// outlived the caller's patience, but the residual must still land.
 func (r *Registry) progressDurableConnectResidual(ctx context.Context, jobID string, call Call, sessionID string) error {
 	if r.deps.DurableOutcomes == nil || sessionID == "" || r.deps.Outcome == nil || call.AuthorizationID == "" {
 		return nil
 	}
-	return r.deps.DurableOutcomes.ProgressOutcome(ctx, operationID(jobID, call.ID, "terminal_create"), sessionID)
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), durableOutcomeWriteTimeout)
+	defer cancel()
+	return r.deps.DurableOutcomes.ProgressOutcome(writeCtx, operationID(jobID, call.ID, "terminal_create"), sessionID)
 }
 
 // validateTargetIdentitySet requires exactly one complete identity per

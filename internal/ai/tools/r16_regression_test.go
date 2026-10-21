@@ -8,6 +8,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,6 +33,12 @@ type r16DurableOutcomes struct {
 	// completeErr, when set, fails the completion write to simulate a crash
 	// between the connect and the final record.
 	completeErr error
+	// claimStarted is closed on the first ClaimOutcome call; claimGate, when
+	// set, blocks every ClaimOutcome until it closes — together they park a
+	// caller between its first adjudication and its claim.
+	claimStarted chan struct{}
+	claimGate    chan struct{}
+	claimOnce    sync.Once
 }
 
 func newR16DurableOutcomes(t *testing.T, database *store.Store) *r16DurableOutcomes {
@@ -39,12 +46,23 @@ func newR16DurableOutcomes(t *testing.T, database *store.Store) *r16DurableOutco
 	return &r16DurableOutcomes{store: database, now: func() int64 { return time.Now().UnixMilli() }}
 }
 
-func (f *r16DurableOutcomes) ClaimOutcome(ctx context.Context, family, kind string) (bool, error) {
-	return f.store.AgentOutcomeClaimAttempt(ctx, family, kind)
+func (f *r16DurableOutcomes) ClaimOutcome(ctx context.Context, family, kind string) (string, bool, error) {
+	if f.claimStarted != nil {
+		f.claimOnce.Do(func() { close(f.claimStarted) })
+	}
+	if f.claimGate != nil {
+		<-f.claimGate
+	}
+	claimed, err := f.store.AgentOutcomeClaimAttempt(ctx, family, kind)
+	return store.AgentOutcomeClaimRowID(family), claimed, err
 }
 
 func (f *r16DurableOutcomes) ProgressOutcome(ctx context.Context, family, residualSessionID string) error {
 	return f.store.AgentOutcomeProgress(ctx, family, residualSessionID)
+}
+
+func (f *r16DurableOutcomes) ReleaseOutcome(ctx context.Context, family string) error {
+	return f.store.AgentOutcomeReleaseClaim(ctx, family)
 }
 
 func (f *r16DurableOutcomes) CompleteOutcome(ctx context.Context, family string, attempt OutcomeAttempt) error {
