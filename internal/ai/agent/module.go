@@ -152,6 +152,23 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			})
 		},
 		func() error {
+			return ipc.Register(dispatcher, "ai_run_history", func(ctx context.Context, _ *ipc.Call, args struct {
+				ConversationID string `json:"conversationId"`
+				Filter         string `json:"filter"`
+				Cursor         string `json:"cursor"`
+				Limit          int    `json:"limit"`
+			}) (RunHistoryPage, error) {
+				return r.RunHistory(ctx, args.ConversationID, args.Filter, args.Cursor, args.Limit)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_run_recovery_summary", func(ctx context.Context, _ *ipc.Call, args struct {
+				ConversationID string `json:"conversationId"`
+			}) (*ConversationRecoverySummary, error) {
+				return r.ConversationRecoverySummary(ctx, args.ConversationID)
+			})
+		},
+		func() error {
 			return ipc.Register(dispatcher, "ai_run_events", func(ctx context.Context, _ *ipc.Call, args struct {
 				JobID    string `json:"jobId"`
 				AfterSeq uint64 `json:"afterSeq"`
@@ -323,6 +340,9 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 		if err := register(); err != nil {
 			return err
 		}
+	}
+	if err := r.RegisterRosterCommands(dispatcher); err != nil {
+		return err
 	}
 	if r.config.Memory != nil {
 		if err := r.registerMemoryCommands(dispatcher); err != nil {
