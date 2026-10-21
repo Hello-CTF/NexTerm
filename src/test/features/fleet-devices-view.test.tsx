@@ -461,6 +461,25 @@ describe("Device management view - device list and metrics", () => {
     expect(container.textContent).toContain(formatTime(latest.ts));
   });
 
+  it("reports a valid empty window with an independent latest outside it as zero samples", async () => {
+    const latest = metricAt(NOW + 60_000, 66);
+    route(() => ({
+      payload: {
+        samples: [],
+        latest,
+        windowStart: NOW - 3600_000,
+        windowEnd: NOW,
+      },
+    }));
+    const container = mountMetrics();
+    await flushUntil(() => container.textContent?.includes(formatTime(latest.ts)) ?? false);
+
+    expect(container.textContent).toContain("66.0%");
+    expect(container.textContent).toContain("当前时间窗口没有采样点");
+    expect(container.textContent).toContain("共 0 个采样点");
+    expect(container.textContent).not.toContain("采样数未知");
+  });
+
   it("keeps independent latest visible when the trend fails", async () => {
     route(() => ({
       payload: {
@@ -477,6 +496,7 @@ describe("Device management view - device list and metrics", () => {
     expect(container.textContent).toContain("66.0%");
     expect(container.textContent).toContain("趋势加载失败");
     expect(container.textContent).toContain("context deadline exceeded");
+    expect(container.textContent).toContain("采样数未知");
     expect(container.textContent).not.toContain("设备离线，没有近期指标");
     expect(container.textContent).not.toContain("共 0 个采样点");
   });

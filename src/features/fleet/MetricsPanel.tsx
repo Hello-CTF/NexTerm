@@ -111,7 +111,8 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
   const windowStart = data?.windowStart;
   const windowEnd = data?.windowEnd;
   const hasWindow = windowStart !== undefined && windowEnd !== undefined;
-  const sampleCount = data?.sampleCount;
+  const sampleCount = data?.sampleCount ??
+    (latest !== undefined && hasWindow && samples.length === 0 && !data?.seriesError ? 0 : undefined);
   const referenceTime = Date.now();
   const stale = referenceTime - latest.ts > gapThreshold;
   const staleText = `${online ? "指标过期" : "设备离线，指标过期"} · 过期阈值 ${formatUptime(gapThreshold / 1000)}`;
