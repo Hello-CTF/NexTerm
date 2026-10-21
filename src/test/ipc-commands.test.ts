@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import type { DockerProductionConfirmation } from "../ipc/commands";
+import type { DockerProductionConfirmation as GeneratedDockerProductionConfirmation } from "../ipc/generated/types";
 import { createWailsMock, type WailsMock } from "./wailsMock";
 
 let runtime: WailsMock;
@@ -19,6 +21,69 @@ function requestAt(index = 0): Record<string, unknown> {
 }
 
 describe("desktop command envelopes", () => {
+  it("aligns the Docker confirmation facade with the shared DTO without widening confirmed", () => {
+    expectTypeOf<Omit<DockerProductionConfirmation, "confirmed">>().toEqualTypeOf<
+      Omit<GeneratedDockerProductionConfirmation, "confirmed">
+    >();
+    expectTypeOf<DockerProductionConfirmation["confirmed"]>().toEqualTypeOf<true>();
+    if (false) {
+      const rejected: DockerProductionConfirmation = {
+        // @ts-expect-error the facade requires explicit production confirmation
+        confirmed: false,
+        targetSetHash: "a".repeat(64),
+        commandHash: "b".repeat(64),
+      };
+      void rejected;
+    }
+  });
+
+  it("preserves the full Docker confirmation in compose, redeploy, and prune envelopes", async () => {
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: null });
+    const { dockerApi } = await import("../ipc/commands");
+    const productionConfirmation = {
+      confirmed: true,
+      targetSetHash: "a".repeat(64),
+      commandHash: "b".repeat(64),
+      environmentNames: ["production", "staging"],
+    } satisfies DockerProductionConfirmation;
+
+    await dockerApi.composeAction("s1", "shop", "down", productionConfirmation);
+    await dockerApi.composeRedeployPrepare({
+      sessionId: "s1",
+      project: "shop",
+      path: "/srv/shop/compose.yml",
+      baseContentBase64: "b2xk",
+      contentBase64: "bmV3",
+      productionConfirmation,
+    });
+    await dockerApi.prune("s1", "preview-token", "c".repeat(64), productionConfirmation);
+
+    expect(requestAt(0)).toEqual({
+      cmd: "docker_compose_action",
+      args: { sessionId: "s1", project: "shop", action: "down", productionConfirmation },
+    });
+    expect(requestAt(1)).toEqual({
+      cmd: "docker_compose_redeploy_prepare",
+      args: {
+        sessionId: "s1",
+        project: "shop",
+        path: "/srv/shop/compose.yml",
+        baseContentBase64: "b2xk",
+        contentBase64: "bmV3",
+        productionConfirmation,
+      },
+    });
+    expect(requestAt(2)).toEqual({
+      cmd: "docker_prune",
+      args: {
+        sessionId: "s1",
+        token: "preview-token",
+        digest: "c".repeat(64),
+        productionConfirmation,
+      },
+    });
+  });
+
   it("sends args:null for commands without parameters", async () => {
     runtime.Call.ByName.mockResolvedValue({ ok: true, data: "macos" });
     const { systemApi } = await import("../ipc/commands");
