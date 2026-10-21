@@ -213,7 +213,7 @@ func TestConfirmationLifecycleAndStableReplay(t *testing.T) {
 		t.Fatalf("resume calls = %d", h.resumer.count())
 	}
 	call := h.resumer.call(0)
-	if call.checkpointID != "checkpoint" || call.ctxErr != nil || call.params.Targets["target-one"] != "allow" || len(call.params.Targets) != 1 {
+	if call.checkpointID != "checkpoint" || call.ctxErr != nil || call.params.Targets["target-one"] != `{"decision":"allow"}` || len(call.params.Targets) != 1 {
 		t.Fatalf("unexpected Eino resume: %+v", call)
 	}
 	terminal, err := h.manager.Finish("run", TerminalCompleted, nil)
@@ -290,7 +290,7 @@ func TestNewCheckpointAndToolCallInvalidateLateAnswers(t *testing.T) {
 	if _, _, err := h.manager.Resume(context.Background(), h.resumer, answerFor("second-answer", second)); err != nil {
 		t.Fatal(err)
 	}
-	if h.resumer.count() != 1 || h.resumer.call(0).params.Targets["target-two"] != "allow" {
+	if h.resumer.count() != 1 || h.resumer.call(0).params.Targets["target-two"] != `{"decision":"allow"}` {
 		t.Fatalf("resume calls = %+v", h.resumer.calls)
 	}
 }

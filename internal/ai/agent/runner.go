@@ -39,6 +39,9 @@ type Runner struct {
 	shutdownErrs []error
 	wg           sync.WaitGroup
 
+	captures     map[string]*Capture
+	captureOrder []string
+
 	conversationLocks sync.Map
 	titleInFlight     sync.Map
 }
@@ -82,10 +85,12 @@ func NewRunner(config Config) *Runner {
 	manager := config.HITL
 	if manager == nil {
 		hitlConfig := hitl.Config{
-			Checkpoints:       config.Checkpoints,
-			TTL:               config.HITLTTL,
-			TerminalRetention: config.HITLTerminalRetention,
-			Now:               config.Now,
+			Checkpoints:         config.Checkpoints,
+			TTL:                 config.HITLTTL,
+			TerminalRetention:   config.HITLTerminalRetention,
+			Now:                 config.Now,
+			AssetResolver:       config.HITLAssetResolver,
+			EnvironmentResolver: config.HITLEnvironmentResolver,
 		}
 		if config.Runs != nil {
 			hitlConfig.Store = hitlStoreBridge{config.Runs}
@@ -97,7 +102,7 @@ func NewRunner(config Config) *Runner {
 		}
 	}
 	closeCtx, closeCancel := context.WithCancel(context.Background())
-	return &Runner{config: config, store: config.Store, runs: config.Runs, checkpoints: config.Checkpoints, hitl: manager, closeCtx: closeCtx, closeCancel: closeCancel, jobs: make(map[string]*job), reservedJobs: make(map[string]struct{})}
+	return &Runner{config: config, store: config.Store, runs: config.Runs, checkpoints: config.Checkpoints, hitl: manager, closeCtx: closeCtx, closeCancel: closeCancel, jobs: make(map[string]*job), reservedJobs: make(map[string]struct{}), captures: make(map[string]*Capture)}
 }
 
 func (r *Runner) reserveJobID(jobID string) error {
@@ -232,6 +237,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 	}
 	stream = r.wrapStream(stream, jobID)
 	current := &job{id: jobID, ownerID: ownerID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, memory: guard.NewMemory(), steer: steer.NewQueue(r.config.MaxPendingSteers), running: true, cancelSync: newCancelSync(), doneCh: make(chan struct{})}
+	current.capture = r.newJobCapture(jobID, conversationID)
 	r.mu.Lock()
 	if r.closed || r.jobs[jobID] != nil {
 		r.mu.Unlock()
@@ -440,15 +446,16 @@ func (r *Runner) ConfirmStreamContext(ctx context.Context, confirmation Confirma
 		return err
 	}
 	answer := hitl.Answer{
-		ID:           r.config.NewID(),
-		RunID:        current.id,
-		RequestID:    request.ID,
-		CheckpointID: request.CheckpointID,
-		TargetID:     request.TargetID,
-		CallID:       request.CallID,
-		Nonce:        confirmation.Nonce,
-		Parameters:   request.Parameters,
-		Decision:     hitl.Decision(confirmation.Decision),
+		ID:               r.config.NewID(),
+		RunID:            current.id,
+		RequestID:        request.ID,
+		CheckpointID:     request.CheckpointID,
+		TargetID:         request.TargetID,
+		CallID:           request.CallID,
+		Nonce:            confirmation.Nonce,
+		Parameters:       request.Parameters,
+		Decision:         hitl.Decision(confirmation.Decision),
+		EnvironmentNames: confirmation.EnvironmentNames,
 	}
 	return r.resumeWithAnswer(current, answer)
 }
@@ -582,6 +589,8 @@ func mapResumeError(err error) error {
 		return fmt.Errorf("%w: %w", ErrJobNotFound, err)
 	case errors.Is(err, hitl.ErrInvalidArgument):
 		return fmt.Errorf("%w: %w", ErrInvalidConfirmation, err)
+	case errors.Is(err, hitl.ErrEnvironmentNamesMismatch):
+		return fmt.Errorf("%w: %w", ErrInvalidConfirmation, err)
 	default:
 		return fmt.Errorf("%w: %w", ErrConfirmationStale, err)
 	}
@@ -675,6 +684,10 @@ func isCancellation(err error) bool {
 }
 
 func (r *Runner) finishRun(current *job, answer string, turns int, total usage.Usage, terminalErr error, terminal hitl.Event) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(current.ctx), 5*time.Second)
+	defer cancel()
+	r.recordRunAnswer(current, answer)
+	r.sealJobCapture(ctx, current)
 	if r.runs == nil {
 		return nil
 	}
@@ -701,11 +714,10 @@ func (r *Runner) finishRun(current *job, answer string, turns int, total usage.U
 			}
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(current.ctx), 5*time.Second)
-	defer cancel()
-	return r.runs.RunFinishUsage(ctx, current.id, status, answer, message, turns,
+	err := r.runs.RunFinishUsage(ctx, current.id, status, answer, message, turns,
 		usage.SaturatingInt64(total.PromptTokens), usage.SaturatingInt64(total.CompletionTokens),
 		usage.SaturatingInt64(total.CacheCreationTokens), usage.SaturatingInt64(uint64(max(total.LatencyMS, 0))))
+	return err
 }
 
 func (r *Runner) updateRunStatus(current *job, status string) {

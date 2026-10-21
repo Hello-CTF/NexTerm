@@ -17,7 +17,7 @@ func TestAllowPersistentDecisionResumesConfirm(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := h.resumer.call(0)
-	if call.params.Targets["target-one"] != "allow_persistent" {
+	if call.params.Targets["target-one"] != `{"decision":"allow_persistent"}` {
 		t.Fatalf("resume value = %v", call.params.Targets)
 	}
 }

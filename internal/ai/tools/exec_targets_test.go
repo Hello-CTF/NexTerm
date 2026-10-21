@@ -93,7 +93,8 @@ func TestExecCommandsByAssetsAndTagsUsesBatchForEveryCommand(t *testing.T) {
 // TestExecCommandsProductionChallengeMissingEnvironmentNamesRejected pins the
 // fail-closed contract: a resumed production call whose confirmations omit the
 // typed environment names is rejected and nothing executes. The typed-name
-// success path arrives with the real HITL name collection.
+// success path is covered end to end by the agent-level production exec
+// regressions.
 func TestExecCommandsProductionChallengeMissingEnvironmentNamesRejected(t *testing.T) {
 	transport := successfulBatchTransport()
 	auditor := &batchAuditRecorder{}

@@ -94,12 +94,20 @@ type Config struct {
 	HITL                  *hitl.Manager
 	HITLTTL               time.Duration
 	HITLTerminalRetention time.Duration
-	Now                   func() time.Time
-	Subagents             *tools.SubagentConfig
-	NewID                 func() string
-	MaxTurns              int
-	MaxImages             int
-	MaxImageBytes         int
+	// HITLAssetResolver resolves a run's real asset identity from
+	// server-side state; nil disables asset evidence binding.
+	HITLAssetResolver func(context.Context, string) (string, error)
+	// HITLEnvironmentResolver resolves the production environment names a
+	// confirmation must type back for the run's target asset, from the
+	// request owner and the real asset through the configurable production
+	// classification; nil issues no environment challenge.
+	HITLEnvironmentResolver func(context.Context, string) ([]string, error)
+	Now                     func() time.Time
+	Subagents               *tools.SubagentConfig
+	NewID                   func() string
+	MaxTurns                int
+	MaxImages               int
+	MaxImageBytes           int
 
 	MaxPendingSteers int
 
@@ -143,6 +151,10 @@ type Confirmation struct {
 	CallID   string `json:"callId"`
 	Nonce    string `json:"nonce"`
 	Decision string `json:"decision"`
+	// EnvironmentNames are the actual environment names the user typed back
+	// for a production-classified target; they are validated against the
+	// challenge's required names at resume and are never auto-echoed.
+	EnvironmentNames []string `json:"environmentNames,omitempty"`
 }
 
 type Answer struct {
@@ -206,6 +218,7 @@ type job struct {
 	eino        *einoRuntime
 	cancelFn    adk.AgentCancelFunc
 	cancelSync  *cancelSync
+	capture     *Capture
 
 	steer *steer.Queue
 

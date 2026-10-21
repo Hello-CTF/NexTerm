@@ -714,13 +714,14 @@ func (r *Runner) handleInterrupt(current *job, contexts []*adk.InterruptCtx) err
 			return err
 		}
 		request, err := r.hitl.Interrupt(current.ctx, context, hitl.InterruptInput{
-			RunID:        current.id,
-			CheckpointID: current.id,
-			CallID:       interaction.CallID,
-			Tool:         interaction.Tool,
-			Kind:         kind,
-			Parameters:   json.RawMessage(interaction.Args),
-			Question:     question,
+			RunID:                    current.id,
+			CheckpointID:             current.id,
+			CallID:                   interaction.CallID,
+			Tool:                     interaction.Tool,
+			Kind:                     kind,
+			Parameters:               json.RawMessage(interaction.Args),
+			Question:                 question,
+			RequiredEnvironmentNames: interaction.RequiredEnvironmentNames,
 		})
 		if err != nil {
 			return err
@@ -729,7 +730,7 @@ func (r *Runner) handleInterrupt(current *job, contexts []*adk.InterruptCtx) err
 		args := hitl.WithNonce(json.RawMessage(interaction.Args), request.Nonce)
 		switch kind {
 		case hitl.KindConfirm:
-			if err := current.emit(current.ctx, Event{Type: "confirmRequired", ID: interaction.CallID, Tool: interaction.Tool, Args: args, Nonce: request.Nonce, Risk: interaction.Risk, Rendered: interaction.Rendered, Reason: interaction.Reason, Preview: interaction.Preview, Commands: interaction.Commands, RulePattern: interaction.RulePattern, RequestID: request.ID, Attempt: request.Attempt}); err != nil {
+			if err := current.emit(current.ctx, Event{Type: "confirmRequired", ID: interaction.CallID, Tool: interaction.Tool, Args: args, Nonce: request.Nonce, Risk: interaction.Risk, Rendered: interaction.Rendered, Reason: interaction.Reason, Preview: interaction.Preview, Commands: interaction.Commands, RulePattern: interaction.RulePattern, RequestID: request.ID, Attempt: request.Attempt, RequiredEnvironmentNames: request.RequiredEnvironmentNames}); err != nil {
 				return err
 			}
 		case hitl.KindQuestion:

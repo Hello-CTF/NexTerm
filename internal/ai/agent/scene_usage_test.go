@@ -122,7 +122,7 @@ func TestRecoveredRunKeepsJournaledUsage(t *testing.T) {
 		return &fakeModel{steps: []fakeStep{{chunks: []*schema.Message{schema.AssistantMessage("x", nil)}}}}, 32768, nil
 	}})
 	t.Cleanup(func() { _ = runner.Close() })
-	runner.finishRecoveredRun(context.Background(), "run-recover", store.RunStatusInterrupted, "AI 任务因应用重启而中断", true)
+	runner.finishRecoveredRun(context.Background(), store.RunRow{ID: "run-recover", Status: store.RunStatusRunning}, store.RunStatusInterrupted, "AI 任务因应用重启而中断", true)
 	row, err := storage.RunGet(context.Background(), "run-recover")
 	if err != nil {
 		t.Fatal(err)
@@ -335,7 +335,7 @@ func TestRecoveredUsageSaturatesInsteadOfWrapping(t *testing.T) {
 	}
 	runner := NewRunner(Config{Store: storage, Runs: storage})
 	t.Cleanup(func() { _ = runner.Close() })
-	runner.finishRecoveredRun(context.Background(), "run-saturate", store.RunStatusInterrupted, "interrupted", true)
+	runner.finishRecoveredRun(context.Background(), store.RunRow{ID: "run-saturate", Status: store.RunStatusRunning}, store.RunStatusInterrupted, "interrupted", true)
 	row, err := storage.RunGet(context.Background(), "run-saturate")
 	if err != nil {
 		t.Fatal(err)

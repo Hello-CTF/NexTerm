@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/steer"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/cloudwego/eino/adk"
 )
@@ -20,7 +23,14 @@ func (r *Runner) RecoverRuns(ctx context.Context) error {
 	if r.runs == nil {
 		return nil
 	}
-	active, err := r.runs.RunsActive(ctx)
+	// Recovery writes require the atomic expected-status event+finish
+	// capability: without it the lifecycle guard is gone and a resumed
+	// run could be terminally written, so the scan refuses visibly
+	// instead of downgrading.
+	if _, ok := r.atomicFinisher(); !ok {
+		return ipc.NewError(ipc.CodeUnsupported, "AI 运行存储缺少条件完成能力")
+	}
+	active, err := r.activeRuns(ctx)
 	if err != nil {
 		return err
 	}
@@ -35,8 +45,11 @@ func (r *Runner) RecoverRuns(ctx context.Context) error {
 	for _, blob := range blobs {
 		byID[blob.ID] = blob
 	}
+	var recoverErrs []error
 	for _, row := range active {
-		r.recoverRun(ctx, row, byID[row.ID])
+		if err := r.recoverRun(ctx, row, byID[row.ID]); err != nil {
+			recoverErrs = append(recoverErrs, err)
+		}
 	}
 	for _, blob := range blobs {
 		if _, err := r.runs.RunGet(ctx, blob.ID); err != nil {
@@ -46,26 +59,72 @@ func (r *Runner) RecoverRuns(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
+	return errors.Join(recoverErrs...)
 }
 
-func (r *Runner) recoverRun(ctx context.Context, row store.RunRow, blob hitl.RunBlob) {
+// activeRuns returns the owner's unfinished running and interrupted runs.
+// When the store supports keyset paging it is used, so more than fifty
+// active runs recover exactly like a handful and retained finished
+// history is never refetched; otherwise it falls back to the legacy
+// unpaged query.
+func (r *Runner) activeRuns(ctx context.Context) ([]store.RunRow, error) {
+	pager, ok := r.runs.(activeRunPager)
+	if !ok {
+		return r.runs.RunsActive(ctx)
+	}
+	var runs []store.RunRow
+	var cursor *store.RunCursor
+	for {
+		page, err := pager.RunPage(ctx, store.RunPageFilter{
+			Statuses:       []string{store.RunStatusRunning, store.RunStatusInterrupted},
+			UnfinishedOnly: true,
+			After:          cursor,
+			Limit:          runRecoveryPageSize,
+		})
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, page.Runs...)
+		if page.NextCursor == nil {
+			return runs, nil
+		}
+		cursor = page.NextCursor
+	}
+}
+
+func (r *Runner) recoverRun(ctx context.Context, row store.RunRow, blob hitl.RunBlob) error {
 	restored := false
 	var snapshot hitl.Snapshot
 	if len(blob.Data) > 0 {
-		if err := r.hitl.Restore(blob); err == nil || errors.Is(err, hitl.ErrRunExists) {
+		err := r.hitl.Restore(blob)
+		switch {
+		case err == nil || errors.Is(err, hitl.ErrRunExists):
 			if current, err := r.hitl.Snapshot(row.ID); err == nil {
 				restored = true
 				snapshot = current
 			}
+		case errors.Is(err, hitl.ErrInvalidArgument):
+			// Explicitly unrecoverable input: terminalize below.
+		default:
+			// A retryable persistence failure: keep the active row, blob,
+			// and checkpoint untouched for the next recovery and surface
+			// the error instead of converting it into permanent data loss.
+			return fmt.Errorf("AI 恢复运行 %s 失败: %w", row.ID, err)
 		}
 	}
 	if restored && snapshot.Terminal == nil && len(snapshot.Pending) > 0 {
 		if row.Status != store.RunStatusInterrupted {
-			_ = r.runs.RunUpdateStatus(ctx, row.ID, store.RunStatusInterrupted)
+			if err := r.runs.RunUpdateStatus(ctx, row.ID, store.RunStatusInterrupted); err != nil {
+				slog.Warn("AI 恢复中断状态写入失败", "run", row.ID, "error", err)
+			} else {
+				// Carry the transition into the recovery state: the watch
+				// and its terminal finish must expect the new status, not
+				// the stale scanned one.
+				row.Status = store.RunStatusInterrupted
+			}
 		}
 		r.watchRestoredRun(ctx, row)
-		return
+		return nil
 	}
 	status := store.RunStatusInterrupted
 	message := "AI 任务因应用重启而中断"
@@ -75,27 +134,36 @@ func (r *Runner) recoverRun(ctx context.Context, row store.RunRow, blob hitl.Run
 		message = "AI 确认请求已过期，请重新发送"
 		retryable = false
 	}
-	r.finishRecoveredRun(ctx, row.ID, status, message, retryable)
+	r.finishRecoveredRun(ctx, row, status, message, retryable)
 	if deleter, ok := r.checkpoints.(adk.CheckPointDeleter); ok {
 		_ = deleter.Delete(context.WithoutCancel(ctx), row.ID)
 	}
+	return nil
 }
 
-func (r *Runner) finishRecoveredRun(ctx context.Context, runID, status, message string, retryable bool) {
+func (r *Runner) finishRecoveredRun(ctx context.Context, row store.RunRow, status, message string, retryable bool) {
 	eventType := "error"
 	event := Event{Type: "error", Message: message, Retryable: retryable}
 	if status == store.RunStatusCanceled {
 		eventType = "canceled"
 		event = Event{Type: "canceled", Message: message}
 	}
-	_, _ = r.runs.RunAppendEvent(ctx, runID, eventType, func(seq uint64) ([]byte, error) {
-		event.Seq = seq
-		return json.Marshal(event)
-	})
-	total := r.recoveredUsage(ctx, runID)
-	_ = r.runs.RunFinishUsage(ctx, runID, status, "", message, 0,
+	finisher, ok := r.atomicFinisher()
+	if !ok {
+		slog.Warn("AI 运行存储缺少条件完成能力", "run", row.ID)
+		return
+	}
+	total := r.recoveredUsage(ctx, row.ID)
+	// The event and the conditional finish are one atomic operation: a
+	// no-op appends nothing and leaves no partial terminal history.
+	if _, err := finisher.RunFinishWithEventIfStatus(ctx, row.ID, row.Status, status, "", message, 0,
 		usage.SaturatingInt64(total.PromptTokens), usage.SaturatingInt64(total.CompletionTokens),
-		usage.SaturatingInt64(total.CacheCreationTokens), total.LatencyMS)
+		usage.SaturatingInt64(total.CacheCreationTokens), total.LatencyMS, eventType, func(seq uint64) ([]byte, error) {
+			event.Seq = seq
+			return json.Marshal(event)
+		}); err != nil {
+		slog.Warn("AI 恢复完成状态写入失败", "run", row.ID, "error", err)
+	}
 }
 
 func (r *Runner) recoveredUsage(ctx context.Context, runID string) usage.Usage {
@@ -181,7 +249,7 @@ func (r *Runner) watchRestoredRun(ctx context.Context, row store.RunRow) {
 			message = ""
 		}
 		retryable := status == store.RunStatusFailed || status == store.RunStatusInterrupted
-		r.finishRecoveredRun(ctx, row.ID, status, message, retryable)
+		r.finishRecoveredRun(ctx, row, status, message, retryable)
 	}()
 }
 
@@ -260,6 +328,7 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 		cancelSync:  newCancelSync(),
 		doneCh:      make(chan struct{}),
 	}
+	current.capture = r.newJobCapture(jobID, row.ConversationID)
 	if err := r.reserveJobID(jobID); err != nil {
 		cancel()
 		forceCancel()
@@ -322,6 +391,7 @@ func (r *Runner) parkForShutdown(current *job) {
 		if current.forceCancel != nil {
 			current.forceCancel()
 		}
+		r.sealJobCapture(context.WithoutCancel(current.ctx), current)
 		current.pendingMu.Lock()
 		manager := current.subagents
 		current.pendingMu.Unlock()

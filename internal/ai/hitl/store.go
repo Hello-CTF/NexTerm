@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 type RunBlob struct {
-	ID   string
-	Data []byte
+	ID      string
+	OwnerID string
+	Data    []byte
 }
 
 type Store interface {
@@ -26,6 +29,7 @@ type requestRecord struct {
 type runRecord struct {
 	ID           string            `json:"id"`
 	CheckpointID string            `json:"checkpointId"`
+	OwnerID      string            `json:"ownerId,omitempty"`
 	Status       RunStatus         `json:"status"`
 	Attempt      uint64            `json:"attempt"`
 	Sequence     uint64            `json:"sequence"`
@@ -39,6 +43,7 @@ func (run *runState) record() runRecord {
 	record := runRecord{
 		ID:           run.id,
 		CheckpointID: run.checkpointID,
+		OwnerID:      run.ownerID,
 		Status:       run.status,
 		Attempt:      run.attempt,
 		Sequence:     run.sequence,
@@ -83,9 +88,22 @@ func (m *Manager) Restore(blob RunBlob) error {
 		return ErrInvalidArgument
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
+	// The restored run must keep persisting under the owner that wrote the
+	// blob: owner-guarded stores reject an owner-less rewrite of an owned
+	// row. The persisted row's owner is authoritative; blobs written before
+	// the owner field existed have no ownerId and fall back to it, while
+	// ownerless desktop rows stay ownerless.
+	owner := blob.OwnerID
+	if owner == "" {
+		owner = record.OwnerID
+	}
+	if owner != "" {
+		runCtx = ipc.WithUserID(runCtx, owner)
+	}
 	run := &runState{
 		id:           record.ID,
 		checkpointID: record.CheckpointID,
+		ownerID:      owner,
 		ctx:          runCtx,
 		cancel:       cancel,
 		status:       record.Status,
@@ -157,5 +175,22 @@ func (m *Manager) Restore(blob RunBlob) error {
 		run.finishedAt = now
 		run.cancel()
 	}
-	return m.persistLocked(run)
+	if err := m.persistLocked(run); err != nil {
+		// A retryable persistence failure must not leave a ghost run,
+		// nonce, or timer registered: roll the in-memory registration back
+		// so the persisted blob stays the untouched retry input and the
+		// next recovery starts clean.
+		for _, request := range run.requests {
+			if request.timer != nil {
+				request.timer.Stop()
+			}
+			m.releaseNonces(request.interrupt.Nonce)
+		}
+		m.mu.Lock()
+		delete(m.runs, record.ID)
+		m.mu.Unlock()
+		run.cancel()
+		return fmt.Errorf("%w: %v", ErrRestorePersist, err)
+	}
+	return nil
 }

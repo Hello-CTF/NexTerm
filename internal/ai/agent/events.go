@@ -9,61 +9,64 @@ import (
 )
 
 type Event struct {
-	Type                string
-	Seq                 uint64
-	Phase               string
-	Detail              *string
-	Turn                int
-	Text                string
-	Tool                string
-	Chars               int
-	ID                  string
-	Name                string
-	Args                json.RawMessage
-	Nonce               string
-	Display             string
-	OK                  bool
-	Summary             string
-	Truncated           bool
-	ExitCode            int
-	Panic               bool
-	Risk                string
-	Rendered            string
-	Reason              string
-	Preview             *tools.Preview
-	Question            *tools.Question
-	Terminal            *tools.CreatedTerminal
-	Commands            []string
-	RulePattern         string
-	RequestID           string
-	Attempt             uint64
-	TabID               string
-	Path                string
-	Before              string
-	After               string
-	PromptTokens        uint64
-	CompletionTokens    uint64
-	CachedTokens        uint64
-	CacheCreationTokens uint64
-	LatencyMS           int64
-	ContextWindow       uint64
-	Model               string
-	RunID               string
-	CallID              string
-	Channel             string
-	Items               []tools.TodoItem
-	Plan                string
-	Answer              string
-	Turns               int
-	TokensIn            uint64
-	TokensOut           uint64
-	Message             string
-	Retryable           bool
-	MaxIterations       bool
-	ParentCallID        string
-	SubagentID          string
-	Depth               int
-	Status              string
+	Type        string
+	Seq         uint64
+	Phase       string
+	Detail      *string
+	Turn        int
+	Text        string
+	Tool        string
+	Chars       int
+	ID          string
+	Name        string
+	Args        json.RawMessage
+	Nonce       string
+	Display     string
+	OK          bool
+	Summary     string
+	Truncated   bool
+	ExitCode    int
+	Panic       bool
+	Risk        string
+	Rendered    string
+	Reason      string
+	Preview     *tools.Preview
+	Question    *tools.Question
+	Terminal    *tools.CreatedTerminal
+	Commands    []string
+	RulePattern string
+	RequestID   string
+	Attempt     uint64
+	// RequiredEnvironmentNames are the production environment names the
+	// confirmation must type back, resolved from the real target asset.
+	RequiredEnvironmentNames []string
+	TabID                    string
+	Path                     string
+	Before                   string
+	After                    string
+	PromptTokens             uint64
+	CompletionTokens         uint64
+	CachedTokens             uint64
+	CacheCreationTokens      uint64
+	LatencyMS                int64
+	ContextWindow            uint64
+	Model                    string
+	RunID                    string
+	CallID                   string
+	Channel                  string
+	Items                    []tools.TodoItem
+	Plan                     string
+	Answer                   string
+	Turns                    int
+	TokensIn                 uint64
+	TokensOut                uint64
+	Message                  string
+	Retryable                bool
+	MaxIterations            bool
+	ParentCallID             string
+	SubagentID               string
+	Depth                    int
+	Status                   string
 }
 
 func (e Event) MarshalJSON() ([]byte, error) {
@@ -97,6 +100,9 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		}
 		payload["confirmationNonce"] = e.Nonce
 		payload["requestId"], payload["attempt"] = e.RequestID, e.Attempt
+		if len(e.RequiredEnvironmentNames) != 0 {
+			payload["requiredEnvironmentNames"] = e.RequiredEnvironmentNames
+		}
 	case "questionRequired":
 		payload["id"], payload["question"], payload["confirmationNonce"] = e.ID, e.Question, e.Nonce
 		payload["requestId"], payload["attempt"] = e.RequestID, e.Attempt
