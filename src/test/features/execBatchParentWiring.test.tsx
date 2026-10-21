@@ -78,17 +78,17 @@ function session(id: string, name: string): SessionInfo {
   return { id, assetId: `asset-${id}`, name, kind: "ssh", status: "connected", tabs: [], createdAt: 0 };
 }
 
-const progressSnapshot = (batchId: string, failed: number) => ({
+const progressSnapshot = (batchId: string, failed: number, phase = "finished") => ({
   batch: {
     batchId,
-    phase: "finished",
+    phase,
     total: 2,
     pending: 0,
-    running: 0,
+    running: phase === "running" ? 1 : 0,
     succeeded: 2 - failed,
     failed,
     canceled: 0,
-    finishedAt: 2,
+    finishedAt: phase === "finished" ? 2 : undefined,
   },
   targets: [
     {
@@ -130,6 +130,7 @@ beforeEach(() => {
   mocks.cancel.mockReset();
   mocks.createId.mockReset();
   mocks.createId.mockReturnValue("batch-1");
+  mocks.cancel.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -138,8 +139,13 @@ afterEach(() => {
   useAuth.setState({ user: null });
 });
 
-function mountPanel() {
-  mounted = mountWithClient(createElement(ExecBatchPanel, { sessions: [session("s1", "alpha"), session("s2", "beta")] }));
+function mountPanel(options: { progressPollIntervalMs?: number } = {}) {
+  mounted = mountWithClient(
+    createElement(ExecBatchPanel, {
+      sessions: [session("s1", "alpha"), session("s2", "beta")],
+      progressPollIntervalMs: options.progressPollIntervalMs,
+    }),
+  );
   return mounted;
 }
 
@@ -319,6 +325,100 @@ describe("ExecBatchPanel progress and rerun wiring", () => {
         environmentNames: ["production"],
       },
     });
+  });
+
+  it("keeps progress polling through the ordinary execute startup window", async () => {
+    const executeCall = deferred<unknown>();
+    mocks.execute.mockReturnValue(executeCall.promise);
+    let progressCalls = 0;
+    mocks.call.mockImplementation((command: string, _args?: unknown) => {
+      if (command === "target_set_list") return Promise.resolve([]);
+      if (command === "exec_batch_progress") {
+        progressCalls += 1;
+        if (progressCalls === 1) {
+          return Promise.reject({ code: "not_found", message: "批量执行不存在或已结束" });
+        }
+        return Promise.resolve(progressSnapshot("batch-1", 0, "running"));
+      }
+      return Promise.resolve(undefined);
+    });
+    const view = mountPanel({ progressPollIntervalMs: 5 });
+    const commandInput = view.container.querySelector<HTMLInputElement>("input[aria-label='批量执行命令']");
+    if (!commandInput) throw new Error("command input missing");
+    setInputValue(commandInput, "uname -a");
+    const checkbox = view.container.querySelector<HTMLInputElement>("input[aria-label='选择目标 alpha']");
+    if (!checkbox) throw new Error("target checkbox missing");
+    click(checkbox);
+    clickButton(view.container, "执行");
+
+    // The first progress poll sees the pre-tracker not_found; the startup
+    // grace keeps polling and renders the running snapshot.
+    await flushUntil(() => progressCalls >= 2);
+    await flushUntil(() => view.container.textContent?.includes("取消执行") ?? false);
+    await act(async () => {
+      executeCall.resolve(undefined);
+    });
+  });
+
+  it("routes the confirmed retry through the panel continuation with live progress and final output", async () => {
+    const detail = {
+      kind: "exec_batch_production_confirmation",
+      batchId: "batch-2",
+      targetSetHash: "a".repeat(64),
+      commandHash: "b".repeat(64),
+      requiredEnvironmentNames: ["production"],
+      productionTargets: [
+        { sessionId: "s2", sessionName: "beta", environment: "production", hostname: "api.production.example" },
+      ],
+    };
+    const rerunCall = deferred<unknown>();
+    mocks.createId.mockReturnValueOnce("batch-1").mockReturnValue("batch-2");
+    mocks.call.mockImplementation((command: string, args?: unknown) => {
+      if (command === "target_set_list") return Promise.resolve([]);
+      if (command === "exec_batch_progress") {
+        const batchId = (args as { batchId?: string } | undefined)?.batchId;
+        if (batchId === "batch-2") return Promise.resolve(progressSnapshot("batch-2", 0, "running"));
+        return Promise.resolve(progressSnapshot("batch-1", 1));
+      }
+      if (command === "exec_batch_rerun") {
+        if (!(args as { productionConfirmation?: unknown } | undefined)?.productionConfirmation) {
+          return Promise.reject({ code: "needs_confirm", message: "生产环境批量执行需要显式确认", detail });
+        }
+        return rerunCall.promise;
+      }
+      return Promise.resolve(undefined);
+    });
+    const view = await runExecuteWithResults([
+      { sessionId: "s1", status: "success" },
+      { sessionId: "s2", status: "exit_error" },
+    ]);
+    await flushUntil(() => view.container.textContent?.includes("重跑失败目标") ?? false);
+    clickButton(view.container, "重跑失败目标");
+    await flushUntil(() => document.body.querySelector("[role='dialog']") !== null);
+
+    const envInput = document.body.querySelector<HTMLInputElement>("input[aria-label='输入环境名 api.production.example']");
+    if (!envInput) throw new Error("environment input missing");
+    setInputValue(envInput, "production");
+    const confirm = [...document.body.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "确认执行（1）",
+    );
+    if (!confirm) throw new Error("confirm button missing");
+    click(confirm);
+
+    // The confirmed retry runs through the panel continuation: the new
+    // batch's live progress renders while the retry is pending.
+    await flushUntil(() => view.container.textContent?.includes("取消执行") ?? false);
+    await act(async () => {
+      rerunCall.resolve({
+        batchId: "batch-2",
+        command: "uname -a",
+        startedAt: 3,
+        finishedAt: 4,
+        results: [{ sessionId: "s2", status: "success", stdout: "confirmed-fixed" }],
+      });
+    });
+    await flushUntil(() => view.container.textContent?.includes("confirmed-fixed") ?? false);
+    expect(view.container.textContent).toContain("批次 batch-2 已结束");
   });
 
   it("drops a stale saved-set response after an account switch", async () => {

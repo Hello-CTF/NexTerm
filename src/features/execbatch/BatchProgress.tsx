@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { call, toAppError } from "../../ipc/commands";
 import type { ProductionConfirmation } from "../../ipc/generated/types";
 import { describeError } from "../../ui/errorText";
@@ -92,17 +92,11 @@ export const liveBatchProgressApi: BatchProgressApi = {
   rerun: (request) => call("exec_batch_rerun", request),
 };
 
-export function BatchProgressPanel({
-  api,
-  batchId,
-  original,
-  onConfirmationRequired,
-  onRerunStart,
-  onFinished,
-  pollIntervalMs = 1000,
-  newBatchId = () => globalThis.crypto.randomUUID(),
-  rerunDisabled = false,
-}: {
+export interface BatchProgressHandle {
+  rerun: (request: BatchRerunRequest) => void;
+}
+
+export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
   api: BatchProgressApi;
   batchId: string;
   original: { command: string; timeoutMs?: number; maxConcurrent?: number };
@@ -112,7 +106,19 @@ export function BatchProgressPanel({
   pollIntervalMs?: number;
   newBatchId?: () => string;
   rerunDisabled?: boolean;
-}) {
+  startupGraceMs?: number;
+}>(function BatchProgressPanel({
+  api,
+  batchId,
+  original,
+  onConfirmationRequired,
+  onRerunStart,
+  onFinished,
+  pollIntervalMs = 1000,
+  newBatchId = () => globalThis.crypto.randomUUID(),
+  rerunDisabled = false,
+  startupGraceMs = 10000,
+}, ref) {
   const [snapshot, setSnapshot] = useState<BatchProgressSnapshot | null>(null);
   const [finalBatch, setFinalBatch] = useState<BatchFinalResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -128,6 +134,11 @@ export function BatchProgressPanel({
   const apiRef = useRef(api);
   const activeBatchIdRef = useRef(activeBatchId);
   activeBatchIdRef.current = activeBatchId;
+  // The startup grace covers the ordinary execute window between the active
+  // batch being admitted and its tracker being published: not_found is a
+  // temporary absence until the grace expires or a snapshot was observed.
+  const startupGraceUntilRef = useRef(0);
+  const observedRef = useRef(false);
   if (apiRef.current !== api) {
     apiRef.current = api;
     rerunGenerationRef.current++;
@@ -153,6 +164,8 @@ export function BatchProgressPanel({
     // batchId or API must never overwrite the current snapshot.
     let stopped = false;
     let generation = 0;
+    startupGraceUntilRef.current = Date.now() + startupGraceMs;
+    observedRef.current = false;
     const poll = async () => {
       if (stopped) return;
       const current = ++generation;
@@ -164,6 +177,7 @@ export function BatchProgressPanel({
           stopped = true;
           return;
         }
+        observedRef.current = true;
         setSnapshot(next);
         setError(null);
         if (next.batch.phase === "finished") {
@@ -174,10 +188,16 @@ export function BatchProgressPanel({
         if (stopped || current !== generation) return;
         const appError = toAppError(cause);
         setError(appError.message);
-        if (appError.code === "not_found" && !rerunPendingRef.current) {
-          // Terminal absence: the batch is unknown or its snapshot expired.
-          // While a rerun is pending, not_found is a temporary absence.
-          stopped = true;
+        if (appError.code === "not_found") {
+          // Terminal absence only when the batch was already observed (its
+          // snapshot expired), the startup grace expired without a snapshot,
+          // or no rerun is pending: an admitted batch's tracker is published
+          // shortly after admission, and a pending rerun's tracker follows
+          // the same path.
+          const startupGrace = !observedRef.current && Date.now() <= startupGraceUntilRef.current;
+          if (!startupGrace && !rerunPendingRef.current) {
+            stopped = true;
+          }
         }
       }
     };
@@ -190,7 +210,7 @@ export function BatchProgressPanel({
       generation++;
       clearInterval(timer);
     };
-  }, [api, activeBatchId, pollIntervalMs]);
+  }, [api, activeBatchId, pollIntervalMs, startupGraceMs]);
 
   const cancel = () => {
     if (busy) return;
@@ -202,15 +222,8 @@ export function BatchProgressPanel({
       .finally(() => setBusy(false));
   };
 
-  const rerun = () => {
-    if (snapshot === null || busy) return;
-    const request: BatchRerunRequest = {
-      batchId: newBatchId(),
-      command: original.command,
-      timeoutMs: original.timeoutMs,
-      maxConcurrent: original.maxConcurrent,
-      results: snapshot.targets.map((target) => ({ sessionId: target.sessionId, status: target.status ?? "" })),
-    };
+  const rerunWith = (request: BatchRerunRequest) => {
+    if (busy) return;
     const rerunGeneration = ++rerunGenerationRef.current;
     const rerunApi = api;
     const rerunBatchId = request.batchId;
@@ -247,6 +260,25 @@ export function BatchProgressPanel({
         setBusy(false);
       });
   };
+
+  const rerun = () => {
+    if (snapshot === null) return;
+    rerunWith({
+      batchId: newBatchId(),
+      command: original.command,
+      timeoutMs: original.timeoutMs,
+      maxConcurrent: original.maxConcurrent,
+      results: snapshot.targets.map((target) => ({ sessionId: target.sessionId, status: target.status ?? "" })),
+    });
+  };
+
+  // The parent drives confirmed reruns through the same continuation so the
+  // generation/API/batch guards, startup polling, and final-batch rendering
+  // apply exactly as they do for the button path. The handle stays stable
+  // and calls the latest rerunWith through a ref.
+  const rerunWithRef = useRef(rerunWith);
+  rerunWithRef.current = rerunWith;
+  useImperativeHandle(ref, () => ({ rerun: (request) => rerunWithRef.current(request) }), []);
 
   return (
     <fieldset className="min-w-0">
@@ -337,7 +369,7 @@ export function BatchProgressPanel({
       )}
     </fieldset>
   );
-}
+});
 
 function isProgressSnapshot(value: unknown): value is BatchProgressSnapshot {
   if (value === null || typeof value !== "object") return false;

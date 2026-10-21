@@ -113,6 +113,7 @@ function progressElement(
     onRerunStart?: (batchId: string) => void;
     pollIntervalMs?: number;
     newBatchId?: () => string;
+    startupGraceMs?: number;
   } = {},
 ) {
   return createElement(BatchProgressPanel, {
@@ -123,6 +124,7 @@ function progressElement(
     onRerunStart: options.onRerunStart,
     pollIntervalMs: options.pollIntervalMs ?? 5,
     newBatchId: options.newBatchId ?? (() => "batch-2"),
+    startupGraceMs: options.startupGraceMs,
   });
 }
 
@@ -360,11 +362,58 @@ describe("BatchProgressPanel", () => {
     await flush();
   });
 
+  it("keeps polling through the ordinary execute startup not_found window", async () => {
+    let calls = 0;
+    const api = fakeApi({
+      progress: vi.fn(() => {
+        calls += 1;
+        if (calls === 1) {
+          return Promise.reject({ code: "not_found", message: "批量执行不存在或已结束" });
+        }
+        return Promise.resolve(snapshot({ phase: "running", succeeded: 0, failed: 0, canceled: 0 }));
+      }),
+    });
+    mounted = mount(progressElement(api, { startupGraceMs: 60_000 }));
+    // The first poll sees the pre-tracker not_found; the startup grace keeps
+    // polling and renders the running snapshot once the tracker publishes.
+    await flushUntil(() => mounted?.container.textContent?.includes("取消执行") ?? false);
+    expect(calls).toBeGreaterThanOrEqual(2);
+  });
+
+  it("stops polling an unknown batch once the startup grace expires", async () => {
+    const api = fakeApi({
+      progress: vi.fn().mockRejectedValue({ code: "not_found", message: "批量执行不存在或已结束" }),
+    });
+    mounted = mount(progressElement(api, { startupGraceMs: 25, pollIntervalMs: 5 }));
+    await flushUntil(() => mounted?.container.querySelector("[role='alert']") !== null);
+    await flushUntil(() => (api.progress as ReturnType<typeof vi.fn>).mock.calls.length >= 2);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 45));
+    });
+    const calls = (api.progress as ReturnType<typeof vi.fn>).mock.calls.length;
+    await flush();
+    expect((api.progress as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
+  });
+
+  it("stops immediately when an observed batch later returns not_found", async () => {
+    const api = fakeApi({
+      progress: vi
+        .fn()
+        .mockResolvedValueOnce(snapshot({ phase: "running", succeeded: 0, failed: 0, canceled: 0 }))
+        .mockRejectedValueOnce({ code: "not_found", message: "批量执行不存在或已结束" }),
+    });
+    mounted = mount(progressElement(api, { startupGraceMs: 60_000 }));
+    await flushUntil(() => mounted?.container.querySelector("[role='alert']") !== null);
+    const calls = (api.progress as ReturnType<typeof vi.fn>).mock.calls.length;
+    await flush();
+    expect((api.progress as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
+  });
+
   it("stops polling when the batch is not found", async () => {
     const api = fakeApi({
       progress: vi.fn().mockRejectedValue({ code: "not_found", message: "批量执行不存在或已结束" }),
     });
-    mounted = mount(progressElement(api));
+    mounted = mount(progressElement(api, { startupGraceMs: 0 }));
     await flushUntil(() => mounted?.container.querySelector("[role='alert']") !== null);
     expect(mounted.container.querySelector("[role='alert']")?.textContent).toContain("批量执行不存在或已结束");
     await flush();

@@ -62,7 +62,9 @@ func TestExecuteTargetStreamLocalStdinEOFSucceeds(t *testing.T) {
 	tracker := NewProgressTracker("batch-1", []string{"host-0"})
 	target := Target{SessionID: "host-0", SessionName: "host-0", Transport: transport, Generation: transport.Generation()}
 
-	result, err := ExecuteTargetStream(context.Background(), tracker, target, "cat; printf 'REVIEW-DONE'", TargetStreamOptions{Timeout: 100 * time.Millisecond})
+	// The timeout only bounds a genuine hang: the assertion is that CloseWrite
+	// lets cat observe EOF and complete, not that it schedules within 100ms.
+	result, err := ExecuteTargetStream(context.Background(), tracker, target, "cat; printf 'REVIEW-DONE'", TargetStreamOptions{Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}

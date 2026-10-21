@@ -25,7 +25,7 @@ import { ServicesPanel } from "../services/ServicesPanel";
 import { ExecBatchHistory } from "./ExecBatchHistory";
 import { TargetSetPicker, type TargetSetPickerTarget } from "./TargetSetPicker";
 import { SavedTargetSets } from "./SavedTargetSets";
-import { BatchProgressPanel, liveBatchProgressApi, type BatchRerunRequest } from "./BatchProgress";
+import { BatchProgressPanel, liveBatchProgressApi, type BatchProgressHandle, type BatchRerunRequest } from "./BatchProgress";
 
 const MAX_TARGETS = 64;
 const MAX_CONCURRENT = 32;
@@ -130,7 +130,7 @@ function ResultOutput({ result }: { result: ExecBatchResult }) {
   );
 }
 
-export function ExecBatchPanel({ sessions }: { sessions: SessionInfo[] }) {
+export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions: SessionInfo[]; progressPollIntervalMs?: number }) {
   const workspaces = useUi((state) => state.workspaces);
   const assetsQuery = useQuery({ queryKey: ["assets"], queryFn: () => assetApi.list(), retry: false });
   const targets = useMemo(
@@ -158,6 +158,7 @@ export function ExecBatchPanel({ sessions }: { sessions: SessionInfo[] }) {
   } | null>(null);
   const activeRef = useRef<string | null>(null);
   const executionPlanRef = useRef<ExecutionPlan | null>(null);
+  const progressRef = useRef<BatchProgressHandle>(null);
   const { promptForValues, promptElement, prompting } = useSnippetVariablePrompt();
   const accountID = useAuth((state) => state.user?.id ?? null);
   // Rebuild the API identity on account switch so the saved-sets guards
@@ -389,20 +390,18 @@ export function ExecBatchPanel({ sessions }: { sessions: SessionInfo[] }) {
     const pending = rerunConfirmation;
     if (!pending) return;
     setRerunConfirmation(null);
-    void liveBatchProgressApi
-      .rerun({
-        ...pending.request,
-        productionConfirmation: {
-          confirmed: true,
-          targetSetHash: pending.challenge.targetSetHash,
-          commandHash: pending.challenge.commandHash,
-          ...(environmentNames ? { environmentNames } : {}),
-        },
-      })
-      .then(() => {
-        handleRerunStart(pending.request.batchId);
-      })
-      .catch((cause: unknown) => setError(describeError(cause)));
+    // Retry through the progress panel's own rerun continuation so the
+    // generation/API/batch guards, startup polling, and final-batch
+    // rendering apply exactly as they do for the button path.
+    progressRef.current?.rerun({
+      ...pending.request,
+      productionConfirmation: {
+        confirmed: true,
+        targetSetHash: pending.challenge.targetSetHash,
+        commandHash: pending.challenge.commandHash,
+        ...(environmentNames ? { environmentNames } : {}),
+      },
+    });
   };
 
   const cancel = async () => {
@@ -560,8 +559,10 @@ export function ExecBatchPanel({ sessions }: { sessions: SessionInfo[] }) {
       {progressBatchId !== null && (
         <div className="border-t border-neutral-800/70 px-3 py-2">
           <BatchProgressPanel
+            ref={progressRef}
             api={liveBatchProgressApi}
             batchId={progressBatchId}
+            pollIntervalMs={progressPollIntervalMs}
             original={{
               command: progressCommand,
               timeoutMs: Number(timeoutSeconds) * 1000,
