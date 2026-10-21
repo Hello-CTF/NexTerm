@@ -104,13 +104,14 @@ export function CronPanel({
 
   const aliveRef = useRef(true);
   const loadGenRef = useRef(0);
+  const invalidatePendingLoads = useCallback(() => {
+    aliveRef.current = false;
+    loadGenRef.current++;
+  }, []);
   useEffect(() => {
     aliveRef.current = true;
-    return () => {
-      aliveRef.current = false;
-      loadGenRef.current++;
-    };
-  }, []);
+    return invalidatePendingLoads;
+  }, [invalidatePendingLoads]);
 
   const loadProfiles = useCallback(async () => {
     try {
