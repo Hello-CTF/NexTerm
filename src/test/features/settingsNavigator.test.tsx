@@ -81,7 +81,7 @@ function tocToggle(): HTMLButtonElement {
 }
 
 const SECTION_LABELS = [
-  "外观", "终端", "AI 模型", "AI 拦截", "长期记忆",
+  "外观", "终端", "AI 模型", "AI 拦截", "AI 技能", "长期记忆",
   "凭据保护", "已知主机", "生产安全", "账号同步", "资产包", "分享", "快捷键",
 ];
 

@@ -314,6 +314,38 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "ai_watch_cancel": {
+      scope: "ai-watch",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{WatchID string \"json:\\\"watchId\\\"\"; ExpectedRevision uint64 \"json:\\\"expectedRevision\\\"\"}", ts: "{\n  watchId: string;\n  expectedRevision: number;\n}" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.WatchSummary", ts: "WatchSummary" },
+    },
+    "ai_watch_create": {
+      scope: "ai-watch",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{TargetID string \"json:\\\"targetId\\\"\"; Name string \"json:\\\"name\\\"\"; Condition github.com/Hello-CTF/NexTerm/internal/app/production.WatchConditionDTO \"json:\\\"condition\\\"\"; Repeat bool \"json:\\\"repeat\\\"\"; ExpiresAt int64 \"json:\\\"expiresAt\\\"\"}", ts: "{\n  targetId: string;\n  name: string;\n  condition: WatchConditionDTO;\n  repeat: boolean;\n  expiresAt: number;\n}" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.WatchSummary", ts: "WatchSummary" },
+    },
+    "ai_watch_list": {
+      scope: "ai-watch",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.WatchSummary", ts: "WatchSummary[]" },
+    },
+    "ai_watch_targets": {
+      scope: "ai-watch",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.WatchTargetSummary", ts: "WatchTargetSummary[]" },
+    },
     "app_info": {
       nested: false,
       channel: false,
@@ -2164,6 +2196,31 @@ export interface IPCCommandTypeMap {
   "ai_skills_save_override": {
     input: contractTypes.OverrideInput;
     output: contractTypes.Entry;
+  };
+  "ai_watch_cancel": {
+    input: {
+  watchId: string;
+  expectedRevision: number;
+};
+    output: contractTypes.WatchSummary;
+  };
+  "ai_watch_create": {
+    input: {
+  targetId: string;
+  name: string;
+  condition: contractTypes.WatchConditionDTO;
+  repeat: boolean;
+  expiresAt: number;
+};
+    output: contractTypes.WatchSummary;
+  };
+  "ai_watch_list": {
+    input: Record<string, never>;
+    output: contractTypes.WatchSummary[];
+  };
+  "ai_watch_targets": {
+    input: Record<string, never>;
+    output: contractTypes.WatchTargetSummary[];
   };
   "exec_batch_asset_edit": {
     input: contractTypes.AssetBulkEditIPCRequest;

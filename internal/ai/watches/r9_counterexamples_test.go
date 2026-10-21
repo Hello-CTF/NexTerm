@@ -129,9 +129,7 @@ func TestExecutorWatchCreatedAtUTF8SplitDoesNotPanic(t *testing.T) {
 		{data: []byte{0x8C}},
 		{data: []byte("ready")},
 	}}
-	if err := executor.AttachTarget(ctx, "target-1", "identity-1", source); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, executor, ctx, "target-1", "identity-1", source)
 	watch, err := executor.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("ready")})
 	if err != nil {
 		t.Fatal(err)
@@ -156,9 +154,7 @@ func TestExecutorRestartResumesMatchedRepeat(t *testing.T) {
 	first := newTestExecutor(t, backend, newChanSink())
 	gate := make(chan struct{})
 	source := &scriptSource{gate: gate, steps: []scriptStep{{data: []byte("ready")}}}
-	if err := first.AttachTarget(ctx, "target-1", "identity-1", source); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, first, ctx, "target-1", "identity-1", source)
 	watch, err := first.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("ready"), Repeat: true})
 	if err != nil {
 		t.Fatal(err)
@@ -192,9 +188,7 @@ func TestExecutorRestartResumesMatchedRepeat(t *testing.T) {
 		{data: []byte("XX")},
 		{data: []byte("ready")},
 	}}
-	if err := second.AttachTarget(ctx, "target-1", "identity-1", secondSource); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, second, ctx, "target-1", "identity-1", secondSource)
 	// The runner consumes XX while the watch is matched; the ack re-arms it,
 	// and only then does the second ready flow.
 	if _, err := second.DispatchOnce(ctx); err != nil {
@@ -238,9 +232,7 @@ func TestExecutorDetachRetryAfterFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := &scriptSource{gate: make(chan struct{}), steps: []scriptStep{{data: []byte("ready")}}}
-	if err := executor.AttachTarget(ctx, "target-1", "identity-1", source); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, executor, ctx, "target-1", "identity-1", source)
 	watch, err := executor.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("ready")})
 	if err != nil {
 		t.Fatal(err)
@@ -288,9 +280,7 @@ func TestExecutorEOFFaultInjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := &scriptSource{steps: []scriptStep{{data: []byte("ready")}}}
-	if err := executor.AttachTarget(ctx, "target-1", "identity-1", source); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, executor, ctx, "target-1", "identity-1", source)
 	if _, err := executor.Watch(ctx, WatchParams{TargetID: "target-1",
 		Condition: Condition{Type: ConditionRegex, Pattern: `ready$`}}); err != nil {
 		t.Fatal(err)

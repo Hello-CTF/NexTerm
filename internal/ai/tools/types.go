@@ -505,6 +505,15 @@ type ExecTargetSet struct {
 	Production bool
 }
 
+// SkillLoader is the skills-service seam consumed by the read-only
+// load_skill tool. The skills Manager implements it; the interface lives
+// here so the registry can expose the tool without importing the skills
+// package.
+type SkillLoader interface {
+	LoadSkillSchema() Schema
+	LoadSkill(context.Context, json.RawMessage) Output
+}
+
 type Dependencies struct {
 	Transport           TransportResolver
 	Terminal            Terminal
@@ -534,6 +543,10 @@ type Dependencies struct {
 	Reminders                   ReminderScheduler
 	Notify                      func(context.Context, string) error
 	Grants                      *guard.Grants
+	// Skills is the optional owner-scoped skills backend. When configured,
+	// the registry exposes the read-only load_skill tool backed by it; nil
+	// keeps the tool unavailable.
+	Skills SkillLoader
 
 	Outcome *outcome.Ledger
 	// DurableOutcomes is the optional durable, owner-scoped outcome ledger

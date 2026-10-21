@@ -16,6 +16,8 @@ import { KnownHostsCard } from "./KnownHostsCard";
 import { MemoryCard } from "./MemoryCard";
 import { ProductionSettingsPanel } from "../production/ProductionSettingsPanel";
 import { ShortcutsCard } from "./ShortcutsCard";
+import { SkillsCard } from "./SkillsCard";
+import { productionSkillsApi } from "./skillsApi";
 import { SyncCard } from "./SyncCard";
 import { SyncBundleCard } from "./SyncBundleCard";
 import { ShareCard } from "./ShareCard";
@@ -34,6 +36,7 @@ import {
   IconCommand,
   IconDownload,
   IconGlobe,
+  IconLayers,
   IconLock,
   IconMonitor,
   IconPlus,
@@ -54,6 +57,7 @@ const SETTINGS_SECTIONS = [
   { id: "settings-terminal", label: "终端", icon: IconTerminal },
   { id: "settings-ai-model", label: "AI 模型", icon: IconSparkles },
   { id: "settings-ai-rules", label: "AI 拦截", icon: IconShield },
+  { id: "settings-ai-skills", label: "AI 技能", icon: IconLayers },
   { id: "settings-memory", label: "长期记忆", icon: IconBot },
   { id: "settings-vault", label: "凭据保护", icon: IconLock },
   { id: "settings-known-hosts", label: "已知主机", icon: IconShieldCheck },
@@ -718,6 +722,10 @@ export function SettingsView() {
             不可逆操作（格式化磁盘、清空系统目录、删除数据库）会直接拒绝。
           </p>
         </section>
+
+        <div id="settings-ai-skills" className="scroll-mt-12">
+          <SkillsCard api={productionSkillsApi} />
+        </div>
 
         <div id="settings-memory" className="scroll-mt-12">
           <MemoryCard />

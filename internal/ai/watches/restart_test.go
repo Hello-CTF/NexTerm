@@ -49,9 +49,7 @@ func TestRestartResumesAnchorWithoutSkippingOrRefiring(t *testing.T) {
 	backend = openRestartStore(t, path)
 	defer backend.Close()
 	engine = newRestartEngine(t, backend, clock)
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	reloaded, err := engine.Get(ctx, watch.ID)
 	if err != nil || reloaded.Status != StatusArmed || reloaded.AnchorSeq != 2 || len(reloaded.Carry) != 0 {
 		t.Fatalf("reloaded watch = %+v, %v", reloaded, err)
@@ -149,9 +147,7 @@ func TestRestartDoesNotDoubleFire(t *testing.T) {
 	backend = openRestartStore(t, path)
 	defer backend.Close()
 	engine = newRestartEngine(t, backend, clock)
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	// The same chunk redelivered after a restart must not fire again.
 	events, err := engine.Observe(ctx, "target-1", "identity-1", 0, []byte("ready"))
 	if err != nil || len(events) != 0 {
@@ -182,9 +178,7 @@ func TestRestartSplitMatchSurvivesRestart(t *testing.T) {
 	backend = openRestartStore(t, path)
 	defer backend.Close()
 	engine = newRestartEngine(t, backend, clock)
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	events, err := engine.Observe(ctx, "target-1", "identity-1", 2, []byte("ady"))
 	if err != nil || len(events) != 1 {
 		t.Fatalf("split match after restart = %+v, %v", events, err)
@@ -215,9 +209,7 @@ func TestRestartPermanentDetachAfterRestartSettles(t *testing.T) {
 	if err := engine.Detach(ctx, "target-1", "identity-1", true); !errors.Is(err, ErrDetached) {
 		t.Fatalf("permanent detach without credential = %v; want ErrDetached", err)
 	}
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	if err := engine.Detach(ctx, "target-1", "identity-1", true); err != nil {
 		t.Fatalf("permanent detach after restart: %v", err)
 	}
@@ -250,9 +242,7 @@ func TestRestartStaleDetachAfterRestartIsNoop(t *testing.T) {
 	engine = newRestartEngine(t, backend, clock)
 	// The new incarnation replaces the old one; a detach carrying the old
 	// identity afterwards must be rejected as stale.
-	if err := engine.Attach(ctx, "target-1", "identity-2"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-2")
 	if err := engine.Detach(ctx, "target-1", "identity-1", true); err != nil {
 		t.Fatalf("stale detach after restart: %v", err)
 	}
@@ -283,9 +273,7 @@ func TestRestartIdentityReplacementSettlesImmediately(t *testing.T) {
 	engine = newRestartEngine(t, backend, clock)
 	// Replacement after restart settles the old incarnation without waiting
 	// for a later Observe.
-	if err := engine.Attach(ctx, "target-1", "identity-2"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-2")
 	after, err := engine.Get(ctx, old.ID)
 	if err != nil || after.Status != StatusUnverifiable {
 		t.Fatalf("old watch after restarted replacement = %+v, %v", after, err)
@@ -299,9 +287,7 @@ func TestRestartSplitRuneSurvivesRestart(t *testing.T) {
 
 	backend := openRestartStore(t, path)
 	engine := newRestartEngine(t, backend, clock)
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1",
 		Condition: Condition{Type: ConditionRegex, Pattern: `[界x]`}}); err != nil {
 		t.Fatal(err)
@@ -317,9 +303,7 @@ func TestRestartSplitRuneSurvivesRestart(t *testing.T) {
 	backend = openRestartStore(t, path)
 	defer backend.Close()
 	engine = newRestartEngine(t, backend, clock)
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	events, err := engine.Observe(ctx, "target-1", "identity-1", 1, []byte{0x95, 0x8C})
 	if err != nil || len(events) != 1 {
 		t.Fatalf("split rune after restart = %+v, %v; want one fire", events, err)
@@ -354,9 +338,7 @@ func TestRestartKeepsUnverifiableTerminal(t *testing.T) {
 	backend = openRestartStore(t, path)
 	defer backend.Close()
 	engine = newRestartEngine(t, backend, clock)
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	after, err := engine.Get(ctx, watch.ID)
 	if err != nil || after.Status != StatusUnverifiable {
 		t.Fatalf("after restart = %+v, %v", after, err)

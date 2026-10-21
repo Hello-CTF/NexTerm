@@ -69,12 +69,16 @@ func (s *Store) agentWatchTargetForUpdate(ctx context.Context, db *gorm.DB, targ
 }
 
 // AgentWatchTargetAttach durably binds the target to an identity incarnation
-// and returns the current generation. Attaching with a different identity —
-// or reattaching after a permanent detach — settles every armed watch of the
-// previous incarnation and bumps the durable generation in the same
-// transaction, so the invalidation survives restarts and stale attachments
-// cannot resurrect old watches.
-func (s *Store) AgentWatchTargetAttach(ctx context.Context, targetID, identity string, now int64) (model.AgentWatchTargetRow, error) {
+// and returns the current generation. The expected generation is the
+// incarnation fence, checked against the locked durable row in the same
+// transaction: zero requires the row to be absent (a first attach), and any
+// other value must match the row's current generation, so a stale presenter
+// — in this process or another — can never roll a newer incarnation back.
+// Attaching with a different identity — or reattaching after a permanent
+// detach — settles every armed watch of the previous incarnation and bumps
+// the durable generation in the same transaction, so the invalidation
+// survives restarts and stale attachments cannot resurrect old watches.
+func (s *Store) AgentWatchTargetAttach(ctx context.Context, targetID, identity string, expectedGeneration uint64, now int64) (model.AgentWatchTargetRow, error) {
 	if targetID == "" || identity == "" {
 		return model.AgentWatchTargetRow{}, badParam(fmt.Errorf("agent watch 目标与身份不能为空"))
 	}
@@ -85,6 +89,9 @@ func (s *Store) AgentWatchTargetAttach(ctx context.Context, targetID, identity s
 			return err
 		}
 		if !found {
+			if expectedGeneration != 0 {
+				return fmt.Errorf("agent watch target %s 代际已推进: %w", targetID, ErrAgentWatchConflict)
+			}
 			out = model.AgentWatchTargetRow{TargetID: targetID, OwnerID: ipc.OwnerID(ctx), Identity: identity, Generation: 1, UpdatedAt: now}
 			if err := tx.Create(&out).Error; err != nil {
 				if IsUniqueErr(err) {
@@ -93,6 +100,9 @@ func (s *Store) AgentWatchTargetAttach(ctx context.Context, targetID, identity s
 				return dbError(err)
 			}
 			return nil
+		}
+		if row.Generation != expectedGeneration {
+			return fmt.Errorf("agent watch target %s 代际已推进: %w", targetID, ErrAgentWatchConflict)
 		}
 		if row.Identity == identity && !row.Gone {
 			out = row
@@ -156,6 +166,20 @@ func (s *Store) AgentWatchTargetGet(ctx context.Context, targetID string) (model
 		return row, dbError(err)
 	}
 	return row, nil
+}
+
+// AgentWatchTargetListByOwner returns the caller's durable target rows,
+// oldest first. The production watch service uses it to re-attach live
+// targets after a restart and to render the target list; cross-owner rows
+// are never returned.
+func (s *Store) AgentWatchTargetListByOwner(ctx context.Context) ([]model.AgentWatchTargetRow, error) {
+	rows := []model.AgentWatchTargetRow{}
+	err := agentWatchOwnerScope(ctx, s.db.WithContext(ctx), "owner_id").
+		Order("updated_at ASC, target_id ASC").Find(&rows).Error
+	if err != nil {
+		return nil, dbError(err)
+	}
+	return rows, nil
 }
 
 // settleAgentWatchTargetWatches marks every armed watch of an older
@@ -250,6 +274,19 @@ func (s *Store) AgentWatchGet(ctx context.Context, watchID string) (model.AgentW
 func (s *Store) AgentWatchListByTarget(ctx context.Context, targetID string) ([]model.AgentWatchRow, error) {
 	rows := []model.AgentWatchRow{}
 	err := agentWatchOwnerScope(ctx, s.db.WithContext(ctx).Where("target_id = ?", targetID), "owner_id").
+		Order("created_at ASC, id ASC").Find(&rows).Error
+	if err != nil {
+		return nil, dbError(err)
+	}
+	return rows, nil
+}
+
+// AgentWatchListByOwner returns the caller's watch rows across every target,
+// oldest first. The watch IPC list and the production restart scan are
+// owner-scoped through the same owner condition as every other watch query.
+func (s *Store) AgentWatchListByOwner(ctx context.Context) ([]model.AgentWatchRow, error) {
+	rows := []model.AgentWatchRow{}
+	err := agentWatchOwnerScope(ctx, s.db.WithContext(ctx), "owner_id").
 		Order("created_at ASC, id ASC").Find(&rows).Error
 	if err != nil {
 		return nil, dbError(err)

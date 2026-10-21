@@ -33,9 +33,7 @@ func (s *gateStore) AgentWatchConsume(ctx context.Context, watchID string, expec
 func TestObserveSplitRuneCharClassAcrossChunks(t *testing.T) {
 	engine, _ := newTestEngine(t, newTestClock())
 	ctx := ownerCtx("owner-a")
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1",
 		Condition: Condition{Type: ConditionRegex, Pattern: `[界x]`}}); err != nil {
 		t.Fatal(err)
@@ -57,9 +55,7 @@ func TestObserveSplitRuneCharClassAcrossChunks(t *testing.T) {
 func TestObserveDotDoesNotFireOnPartialRune(t *testing.T) {
 	engine, _ := newTestEngine(t, newTestClock())
 	ctx := ownerCtx("owner-a")
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1",
 		Condition: Condition{Type: ConditionRegex, Pattern: `.`}}); err != nil {
 		t.Fatal(err)
@@ -81,9 +77,7 @@ func TestObserveDotDoesNotFireOnPartialRune(t *testing.T) {
 func TestObserveSplitCaseFoldedLiteralAcrossChunks(t *testing.T) {
 	engine, _ := newTestEngine(t, newTestClock())
 	ctx := ownerCtx("owner-a")
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1",
 		Condition: Condition{Type: ConditionRegex, Pattern: `(?i)ready`}}); err != nil {
 		t.Fatal(err)
@@ -114,9 +108,7 @@ func TestRuneTailPreservedEvenBelowCarryCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := ownerCtx("owner-a")
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1",
 		Condition: Condition{Type: ConditionRegex, Pattern: `[界x]`}}); err != nil {
 		t.Fatal(err)
@@ -136,21 +128,15 @@ func TestTwoOwnersSameTargetSameIdentityIndependentGenerations(t *testing.T) {
 	ctxB := ownerCtx("owner-b")
 	// Owner B attaches the shared target first and arms a watch at
 	// generation 1.
-	if err := engine.Attach(ctxB, "target-1", "same"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctxB, "target-1", "same")
 	watchB, err := engine.Create(ctxB, CreateParams{TargetID: "target-1", Condition: containsCondition("ready")})
 	if err != nil || watchB.Generation != 1 {
 		t.Fatalf("watch B = %+v, %v", watchB, err)
 	}
 	// Owner A then churns its own incarnation of the same target to
 	// generation 2 under the same identity string.
-	if err := engine.Attach(ctxA, "target-1", "a"); err != nil {
-		t.Fatal(err)
-	}
-	if err := engine.Attach(ctxA, "target-1", "same"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctxA, "target-1", "a")
+	attachEngine(t, engine, ctxA, "target-1", "same")
 	// B's observe must be evaluated against B's own mirror: A's newer
 	// generation must never settle B's watch.
 	events, err := engine.Observe(ctxB, "target-1", "same", 0, []byte("ready"))
@@ -178,20 +164,14 @@ func TestSameIdentityPresenterCannotAdoptReincarnation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stale.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, stale, ctx, "target-1", "identity-1")
 	// The current incarnation permanently detaches and then re-attaches,
 	// producing a new generation under the same identity string.
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	if err := engine.Detach(ctx, "target-1", "identity-1", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	fresh, err := engine.Create(ctx, CreateParams{TargetID: "target-1", Condition: containsCondition("ready")})
 	if err != nil {
 		t.Fatal(err)
@@ -204,9 +184,7 @@ func TestSameIdentityPresenterCannotAdoptReincarnation(t *testing.T) {
 	if after, err := engine.Get(ctx, fresh.ID); err != nil || after.Status != StatusArmed {
 		t.Fatalf("fresh watch after revoked observe = %+v, %v", after, err)
 	}
-	if err := stale.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, stale, ctx, "target-1", "identity-1")
 	events, err := stale.Observe(ctx, "target-1", "identity-1", 0, []byte("ready"))
 	if err != nil || len(events) != 1 {
 		t.Fatalf("explicitly re-attached observe = %+v, %v", events, err)
@@ -226,9 +204,7 @@ func TestAckDuringConsumeReloadsAndReEvaluates(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := ownerCtx("owner-a")
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	watch, err := engine.Create(ctx, CreateParams{TargetID: "target-1", Condition: containsCondition("ready"), Repeat: true})
 	if err != nil {
 		t.Fatal(err)

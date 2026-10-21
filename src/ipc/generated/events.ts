@@ -3,6 +3,7 @@
 export const ipcEventTopics = {
   "aiEvent": "ai://event",
   "aiNotification": "ai://notification",
+  "aiWatchToolData": "ai://watch-tool-data",
   "appError": "app://error",
   "connectProgress": "session://connect-progress",
   "deepLink": "app://deep-link",

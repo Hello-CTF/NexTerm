@@ -27,7 +27,7 @@ type Store interface {
 	AgentWatchCancel(ctx context.Context, watchID string, expectedRevision uint64, now int64) (model.AgentWatchRow, error)
 	AgentWatchMarkUnverifiable(ctx context.Context, watchID string, expectedRevision uint64, cause string, now int64) (model.AgentWatchRow, error)
 	AgentWatchExpireDue(ctx context.Context, now int64) (int64, error)
-	AgentWatchTargetAttach(ctx context.Context, targetID, identity string, now int64) (model.AgentWatchTargetRow, error)
+	AgentWatchTargetAttach(ctx context.Context, targetID, identity string, expectedGeneration uint64, now int64) (model.AgentWatchTargetRow, error)
 	AgentWatchTargetDetach(ctx context.Context, targetID, identity string, generation uint64, now int64) (bool, error)
 	AgentWatchTargetGet(ctx context.Context, targetID string) (model.AgentWatchTargetRow, error)
 	AgentWatchEventPendingList(ctx context.Context, limit int) ([]model.AgentWatchOutboxRow, error)
@@ -133,16 +133,19 @@ func (e *Engine) setBinding(key targetKey, binding targetBinding) {
 
 // Attach durably binds the target to its current identity incarnation and
 // mirrors the result locally; an explicit successful Attach is the only way
-// a local mirror advances. Reattaching with a different identity — or after
-// a completed permanent detach — settles the previous incarnation's watches
-// in the store transaction, so the invalidation is restart-safe.
-func (e *Engine) Attach(ctx context.Context, targetID, identity string) error {
+// a local mirror advances. The expected generation is the incarnation fence
+// the store checks against the locked durable row in the same transaction —
+// a stale presenter fails instead of rolling a newer incarnation back.
+// Reattaching with a different identity — or after a completed permanent
+// detach — settles the previous incarnation's watches in the store
+// transaction, so the invalidation is restart-safe.
+func (e *Engine) Attach(ctx context.Context, targetID, identity string, expectedGeneration uint64) error {
 	targetID = strings.TrimSpace(targetID)
 	identity = strings.TrimSpace(identity)
 	if targetID == "" || identity == "" {
 		return fmt.Errorf("%w: 目标与身份不能为空", ErrIdentityMismatch)
 	}
-	row, err := e.store.AgentWatchTargetAttach(ctx, targetID, identity, e.opts.Now().UnixMilli())
+	row, err := e.store.AgentWatchTargetAttach(ctx, targetID, identity, expectedGeneration, e.opts.Now().UnixMilli())
 	if err != nil {
 		if errors.Is(err, store.ErrAgentWatchConflict) {
 			return fmt.Errorf("target %s: %w", targetID, ErrConflict)

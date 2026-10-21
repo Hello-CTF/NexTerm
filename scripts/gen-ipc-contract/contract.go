@@ -31,6 +31,7 @@ var contractScopes = []scopeSpec{
 	{name: "inventory", prefixes: []string{"inventory_"}},
 	{name: "production", prefixes: []string{"production_"}},
 	{name: "ai-roster", prefixes: []string{"ai_roster_"}},
+	{name: "ai-watch", prefixes: []string{"ai_watch_"}},
 	{name: "ai-run", commands: []string{"ai_run_history", "ai_run_recovery_summary"}},
 	{name: "ai-skills", prefixes: []string{"ai_skills_"}},
 	{name: "fs-cancel", commands: []string{"fs_cancel"}},

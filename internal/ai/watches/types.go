@@ -90,6 +90,14 @@ func NewToolData(event Event) ToolData {
 	return ToolData{Channel: "tool", Untrusted: true, Event: event}
 }
 
+// ToolDataEvent is the UI notification payload for one delivered watch event.
+// OwnerID is the subscriber filter on the server, and the desktop delivers
+// locally when it has no identity — the same convention as AI notifications.
+type ToolDataEvent struct {
+	OwnerID string   `json:"ownerId"`
+	Data    ToolData `json:"data"`
+}
+
 // Watch is the engine-level view of a persisted watch condition.
 type Watch struct {
 	ID          string

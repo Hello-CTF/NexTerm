@@ -11,9 +11,7 @@ import (
 
 func mustAttach(t *testing.T, engine *Engine, ctx context.Context, target, identity string) {
 	t.Helper()
-	if err := engine.Attach(ctx, target, identity); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, target, identity)
 }
 
 func mustCreateRepeat(t *testing.T, engine *Engine, ctx context.Context, target, pattern string) Watch {

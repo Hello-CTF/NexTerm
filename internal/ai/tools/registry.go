@@ -33,7 +33,11 @@ type Registry struct {
 }
 
 func NewRegistry(deps Dependencies) *Registry {
-	return &Registry{deps: deps, jobs: make(map[string]*jobState), schemas: toolSchemas(), flights: make(map[string]struct{})}
+	schemas := toolSchemas()
+	if deps.Skills != nil {
+		schemas = append(schemas, deps.Skills.LoadSkillSchema())
+	}
+	return &Registry{deps: deps, jobs: make(map[string]*jobState), schemas: schemas, flights: make(map[string]struct{})}
 }
 
 // acquireOperationFlight marks the operation in-flight until the returned
@@ -54,7 +58,7 @@ func (r *Registry) acquireOperationFlight(key string) (release func(), acquired 
 
 func PlanAllowed(name string) bool {
 	switch name {
-	case "read_file", "list_dir", "search_files", "read_screen", "wait_for", "terminal_list", "operation_result", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode", NotifyTool:
+	case "read_file", "list_dir", "search_files", "read_screen", "wait_for", "terminal_list", "operation_result", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode", "load_skill", NotifyTool:
 		return true
 	default:
 		return false
@@ -1033,6 +1037,11 @@ func (r *Registry) executeTool(ctx context.Context, jobID string, scope Scope, c
 		return r.exitPlanMode(jobID, call.Args)
 	case NotifyTool:
 		return r.notify(ctx, call.Args)
+	case "load_skill":
+		if r.deps.Skills == nil {
+			return Fail(fmt.Errorf("未知工具 %s", call.Name))
+		}
+		return r.deps.Skills.LoadSkill(ctx, call.Args)
 	default:
 		return Fail(fmt.Errorf("未知工具 %s", call.Name))
 	}

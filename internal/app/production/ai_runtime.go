@@ -602,6 +602,14 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	}
 	toolsDeps.Outcome = outcomeLedger
 	toolsDeps.Reminders = reminderScheduler{scheduler: cronScheduler, conversations: services.Store, scopeValidator: productionScopeValidator(services)}
+	// The skills backend is the single services-level manager: the ai-skills
+	// IPC module registers the same instance, so the load_skill tool and the
+	// IPC surface share per-owner state instead of splitting two managers. A
+	// typed nil must never reach the interface field: without a manager the
+	// seam stays unset and load_skill is honestly unavailable.
+	if services.Skills != nil {
+		toolsDeps.Skills = services.Skills
+	}
 	toolsDeps.Notify = func(ctx context.Context, text string) error {
 		return ipc.Emit(ctx, services.Events, ipc.TopicAINotification, ipc.AINotificationEvent{OwnerID: tools.NotifyOwnerID(ctx), Text: text})
 	}
@@ -684,6 +692,11 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	services.cron = &cronRuntime{scheduler: cronScheduler, conversations: services.Store, profiles: services.Profiles, scopeValidator: productionScopeValidator(services)}
 
 	services.aiRelease = takeover.InstallSessionHooks(services.Sessions, takeoverManager)
+
+	// The watch service shares the AI runtime's roster and store: executors
+	// start lazily per owner, and session events drive the lifecycle
+	// reconcile through the emitter hook installed in the builder.
+	services.watches = newWatchService(services.Store, services.Sessions, services.Events, roster, nil)
 	return nil
 }
 
@@ -713,6 +726,10 @@ func aiProfileModelFactory(manager *profiles.Manager) agent.ProfileModelFactory 
 }
 
 func (s *ProductionServices) closeAIRuntime() {
+	if s.watches != nil {
+		_ = s.watches.Shutdown(context.Background())
+		s.watches = nil
+	}
 	if s.cron != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

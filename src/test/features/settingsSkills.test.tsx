@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vite
 import { createElement } from "react";
 import { act } from "react";
 import { flushSync } from "react-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   click,
   clickButton,
@@ -14,12 +15,30 @@ import {
   type MountedView,
 } from "./reactTestUtils";
 
-const mocks = vi.hoisted(() => ({ ask: vi.fn() }));
+const mocks = vi.hoisted(() => {
+  (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
+  return { ask: vi.fn(), call: vi.fn() };
+});
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
+vi.mock("../../ipc/commands", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../ipc/commands")>()),
+  call: mocks.call,
+}));
+vi.mock("../../features/settings/MemoryCard", () => ({ MemoryCard: () => null }));
+vi.mock("../../features/settings/KnownHostsCard", () => ({ KnownHostsCard: () => null }));
+vi.mock("../../features/settings/SyncCard", () => ({ SyncCard: () => null }));
+vi.mock("../../features/settings/AppearanceCard", () => ({ AppearanceCard: () => null }));
+vi.mock("../../features/settings/SyncBundleCard", () => ({ SyncBundleCard: () => null }));
+vi.mock("../../features/settings/ShareCard", () => ({ ShareCard: () => null }));
+vi.mock("../../features/settings/ShortcutsCard", () => ({ ShortcutsCard: () => null }));
+vi.mock("../../features/production/ProductionSettingsPanel", () => ({ ProductionSettingsPanel: () => null }));
+vi.mock("../../features/ai/ModelPanel", () => ({ ModelManager: () => null }));
 
 import { SkillsCard } from "../../features/settings/SkillsCard";
+import { SettingsView } from "../../features/settings/SettingsView";
 import {
   isSkillError,
+  productionSkillsApi,
   SkillError,
   type SkillDispatch,
   type SkillEntry,
@@ -36,6 +55,25 @@ const EMBEDDED: SkillSeed[] = [
   { name: "alpha-skill", description: "Alpha synthetic skill", body: "alpha body\n" },
   { name: "beta-skill", description: "Beta synthetic skill", body: "beta body\n" },
 ];
+
+// The exact wire shape the generated contract types declare for
+// ai_skills_* payloads (see src/ipc/generated/types.ts).
+const WIRE_ENTRY = {
+  name: "alpha-skill",
+  description: "Alpha overridden",
+  source: "embedded",
+  overridden: true,
+  disabled: false,
+  digest: `sha256:${"a".repeat(64)}`,
+  updatedAt: 1729000000000,
+  override: {
+    name: "alpha-skill",
+    description: "Alpha overridden",
+    body: null,
+    disabled: false,
+    updatedAt: 1729000000000,
+  },
+};
 
 interface SpiedApi {
   list: Mock<SkillsApi["list"]>;
@@ -1102,5 +1140,127 @@ describe("SkillsCard", () => {
     const text = mounted.container.textContent ?? "";
     expect(text).not.toContain("stale owner A explosion");
     expect(text).not.toContain("Alpha overridden by A");
+  });
+});
+
+describe("production skills API", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("maps wire entries to the UI contract, with null override fields becoming absent", async () => {
+    mocks.call.mockResolvedValue([WIRE_ENTRY]);
+    const entries = await productionSkillsApi.list();
+    expect(mocks.call).toHaveBeenCalledWith("ai_skills_list");
+    expect(entries).toEqual([
+      {
+        name: "alpha-skill",
+        description: "Alpha overridden",
+        source: "embedded",
+        overridden: true,
+        disabled: false,
+        digest: `sha256:${"a".repeat(64)}`,
+        updatedAt: 1729000000000,
+        override: {
+          name: "alpha-skill",
+          description: "Alpha overridden",
+          body: undefined,
+          disabled: false,
+          updatedAt: 1729000000000,
+        },
+      },
+    ]);
+  });
+
+  it("sends only the set optional fields in the override payload", async () => {
+    mocks.call.mockResolvedValue(WIRE_ENTRY);
+    await productionSkillsApi.saveOverride({
+      name: "alpha-skill",
+      description: "Alpha overridden",
+      disabled: false,
+    });
+    expect(mocks.call).toHaveBeenCalledWith("ai_skills_save_override", {
+      name: "alpha-skill",
+      description: "Alpha overridden",
+      disabled: false,
+    });
+    await productionSkillsApi.saveOverride({ name: "alpha-skill", body: "body v2\n" });
+    expect(mocks.call).toHaveBeenLastCalledWith("ai_skills_save_override", {
+      name: "alpha-skill",
+      body: "body v2\n",
+    });
+  });
+
+  it("routes dispatch and settings reads to their distinct commands", async () => {
+    mocks.call.mockResolvedValue({
+      name: "alpha-skill",
+      description: "d",
+      body: "b\n",
+      digest: "sha256:x",
+      source: "custom",
+    });
+    const dispatch = await productionSkillsApi.dispatch("alpha-skill");
+    expect(mocks.call).toHaveBeenCalledWith("ai_skills_dispatch", { name: "alpha-skill" });
+    expect(dispatch.source).toBe("custom");
+    await productionSkillsApi.getEffective("alpha-skill");
+    expect(mocks.call).toHaveBeenLastCalledWith("ai_skills_material", { name: "alpha-skill" });
+    await productionSkillsApi.deleteOverride("alpha-skill");
+    expect(mocks.call).toHaveBeenLastCalledWith("ai_skills_delete_override", {
+      name: "alpha-skill",
+    });
+  });
+
+  it("maps IPC error codes to SkillError and rethrows foreign failures unchanged", async () => {
+    mocks.call.mockRejectedValueOnce({ code: "not_found", message: "AI 技能不存在: x" });
+    await expectSkillError(productionSkillsApi.dispatch("x"), "not_found");
+    mocks.call.mockRejectedValueOnce({
+      code: "bad_param",
+      message: "AI 技能已被禁用，请在设置中启用后重试: x",
+    });
+    await expectSkillError(productionSkillsApi.dispatch("x"), "invalid_param");
+    const foreign = { code: "forbidden", message: "AI 请求缺少账号身份" };
+    mocks.call.mockRejectedValueOnce(foreign);
+    await expect(productionSkillsApi.list()).rejects.toBe(foreign);
+  });
+});
+
+describe("SettingsView skills navigation", () => {
+  let mounted: MountedView | undefined;
+  let client: QueryClient | undefined;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    document.body.replaceChildren();
+    mocks.call.mockImplementation(async (cmd: string) => {
+      if (cmd === "ai_skills_list") return [WIRE_ENTRY];
+      if (cmd === "vault_status") {
+        return { initialized: true, mode: "master", unlocked: true, autoLockMinutes: 30 };
+      }
+      if (cmd === "ai_get_permission") return { mode: "read_write", dangerRules: [] };
+      throw { code: "internal", message: `unmocked command ${cmd}` };
+    });
+  });
+  afterEach(() => {
+    mounted?.unmount();
+    mounted = undefined;
+  });
+
+  it("shows the AI skills section and loads it through the production API", async () => {
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mounted = mount(createElement(QueryClientProvider, { client }, createElement(SettingsView)));
+
+    const navLabels = [
+      ...mounted.container.querySelectorAll(
+        "[data-testid='settings-nav-toc'] button, [data-testid='settings-nav-chips'] button",
+      ),
+    ].map((button) => button.textContent?.trim());
+    expect(navLabels).toContain("AI 技能");
+    const section = mounted.container.querySelector("#settings-ai-skills");
+    expect(section).not.toBeNull();
+
+    await flushUntil(() => mocks.call.mock.calls.some((call) => call[0] === "ai_skills_list"));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("alpha-skill"));
+    expect(section!.textContent).toContain("已覆盖");
+    expect(mocks.call).toHaveBeenCalledWith("ai_skills_list");
   });
 });

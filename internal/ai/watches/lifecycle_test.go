@@ -77,9 +77,7 @@ func TestObserveSplitContainsAcrossChunksFires(t *testing.T) {
 func TestObserveSplitRegexAcrossChunksFires(t *testing.T) {
 	engine, _ := newTestEngine(t, newTestClock())
 	ctx := ownerCtx("owner-a")
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1",
 		Condition: Condition{Type: ConditionRegex, Pattern: `error \d+`}}); err != nil {
 		t.Fatal(err)
@@ -225,13 +223,9 @@ func TestStalePresenterDoesNotSettleNewIncarnation(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := mustCreate(t, engine, ctx, "target-1", containsCondition("ready"))
-	if err := stale.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, stale, ctx, "target-1", "identity-1")
 	// A new incarnation replaces the identity and settles the old watch.
-	if err := engine.Attach(ctx, "target-1", "identity-2"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-2")
 	if after, err := engine.Get(ctx, old.ID); err != nil || after.Status != StatusUnverifiable {
 		t.Fatalf("old watch after replacement = %+v, %v", after, err)
 	}
@@ -248,9 +242,7 @@ func TestStalePresenterDoesNotSettleNewIncarnation(t *testing.T) {
 		t.Fatalf("fresh watch after stale observe = %+v, %v", after, err)
 	}
 	// The stale engine can re-attach and then evaluate normally.
-	if err := stale.Attach(ctx, "target-1", "identity-2"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, stale, ctx, "target-1", "identity-2")
 	events, err := stale.Observe(ctx, "target-1", "identity-2", 0, []byte("ready"))
 	if err != nil || len(events) != 1 {
 		t.Fatalf("reattached observe = %+v, %v", events, err)
@@ -260,9 +252,7 @@ func TestStalePresenterDoesNotSettleNewIncarnation(t *testing.T) {
 func TestRepeatWatchConsumesStreamWhileMatched(t *testing.T) {
 	engine, backend := newTestEngine(t, newTestClock())
 	ctx := ownerCtx("owner-a")
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	watch, err := engine.Create(ctx, CreateParams{TargetID: "target-1", Condition: containsCondition("ready"), Repeat: true})
 	if err != nil {
 		t.Fatal(err)
@@ -318,7 +308,8 @@ func TestConcurrentLifecycleHammer(t *testing.T) {
 			target := "target-1"
 			identity := []string{"identity-1", "identity-2"}[worker%2]
 			for round := 0; round < 32; round++ {
-				record(engine.Attach(ctx, target, identity))
+				_, fence, _ := engine.Credential(ctx, target)
+				record(engine.Attach(ctx, target, identity, fence))
 				_, err := engine.Create(ctx, CreateParams{TargetID: target, Condition: containsCondition("ready")})
 				record(err)
 				_, err = engine.Observe(ctx, target, identity, 0, []byte("ready"))
@@ -334,9 +325,7 @@ func TestConcurrentLifecycleHammer(t *testing.T) {
 		t.Fatalf("unexpected lifecycle errors: %v", errs)
 	}
 	// Quiesce: attach once and verify persisted state stays coherent.
-	if err := engine.Attach(ctx, "target-1", "identity-final"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-final")
 	watches, err := engine.ListByTarget(ctx, "target-1")
 	if err != nil {
 		t.Fatal(err)

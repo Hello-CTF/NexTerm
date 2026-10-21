@@ -858,3 +858,29 @@ export type TerminalStreamAckRequest = {
   attachmentId: number;
   acceptedBytes: number;
 };
+
+export type WatchConditionDTO = {
+  type: string;
+  pattern: string;
+};
+
+export type WatchSummary = {
+  id: string;
+  targetId: string;
+  name: string;
+  condition: WatchConditionDTO;
+  status: string;
+  repeat: boolean;
+  anchorSeq: number;
+  generation: number;
+  revision: number;
+  lastError?: string;
+  updatedAt: number;
+};
+
+export type WatchTargetSummary = {
+  targetId: string;
+  identity: string;
+  state: string;
+  evidence?: string;
+};

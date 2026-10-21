@@ -7,6 +7,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
+	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
 	"github.com/Hello-CTF/NexTerm/internal/ai/takeover"
 	core "github.com/Hello-CTF/NexTerm/internal/app"
 	"github.com/Hello-CTF/NexTerm/internal/db"
@@ -44,21 +45,25 @@ type ScreenInsets struct {
 }
 
 type ProductionServices struct {
-	Store            *store.Store
-	Vault            *vault.Vault
-	Sync             *syncservice.Service
-	Profiles         *profiles.Manager
-	Database         *db.Service
-	Mount            *mount.Service
-	Sessions         *session.Manager
-	ExecBatches      *execbatch.Service
-	Runbook          *runbookIPCService
-	Forward          *forward.Service
-	Docker           *docker.Service
-	Retention        *RetentionRunner
-	Guard            *guard.Manager
-	Agent            *agent.Runner
-	Takeover         *takeover.Manager
+	Store       *store.Store
+	Vault       *vault.Vault
+	Sync        *syncservice.Service
+	Profiles    *profiles.Manager
+	Database    *db.Service
+	Mount       *mount.Service
+	Sessions    *session.Manager
+	ExecBatches *execbatch.Service
+	Runbook     *runbookIPCService
+	Forward     *forward.Service
+	Docker      *docker.Service
+	Retention   *RetentionRunner
+	Guard       *guard.Manager
+	Agent       *agent.Runner
+	Takeover    *takeover.Manager
+	// Skills is the single skills manager instance shared by the ai-skills
+	// IPC surface and the agent tools registry (load_skill), so per-owner
+	// caches and overrides never split across two managers.
+	Skills           *skills.Manager
 	Events           ipc.Emitter
 	Update           *update.Manager
 	ScreenInsets     func(context.Context) (ScreenInsets, error)
@@ -74,6 +79,7 @@ type ProductionServices struct {
 	hostKeysShared   bool
 	aiRelease        func()
 	cron             *cronRuntime
+	watches          *watchService
 	Transcripts      *transcriptWriter
 	aiRetention      *aiRetentionComponent
 	inventory        *inventoryService

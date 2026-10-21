@@ -32,6 +32,7 @@ export const EVENTS = {
   dockerStats: "docker://stats",
   aiEvent: "ai://event",
   aiNotification: "ai://notification",
+  aiWatchToolData: "ai://watch-tool-data",
   appError: "app://error",
   deepLink: "app://deep-link",
   deviceStatus: "device://status",

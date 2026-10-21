@@ -195,6 +195,9 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 					}
 				}
 			}
+			if services.watches != nil {
+				services.watches.onSessionEvent(ctx, event)
+			}
 			return emitter.EmitSessionEvent(ctx, event)
 		}),
 	})
@@ -340,19 +343,24 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 			},
 		}
 	}
-	if err := composeAIRuntime(ctx, &services); err != nil {
-		services.closeAIRuntime()
-		return nil, err
-	}
+	// The skills manager is built before the AI runtime so composeAIRuntime
+	// can hand the very same instance to the tools registry (load_skill) that
+	// the ai-skills IPC module later registers: one manager, one per-owner
+	// cache, no split state.
 	skillsManager, err := skills.NewManager(ctx, database, skills.WithShared(config.Desktop || owner.OpenAccess(ctx)))
 	if err != nil {
+		return nil, err
+	}
+	services.Skills = skillsManager
+	if err := composeAIRuntime(ctx, &services); err != nil {
 		services.closeAIRuntime()
 		return nil, err
 	}
 	config.Config.Modules = append([]Module{
 		{Name: "ai-skills", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
-			return skills.RegisterIPC(dispatcher, skillsManager)
+			return skills.RegisterIPC(dispatcher, services.Skills)
 		}},
+		{Name: "watch", RegisterCommands: services.watches.registerCommands, Component: services.watches},
 		{Name: "forward-runtime", RegisterCommands: forwardRuntime.registerCommands, Component: forwardRuntime},
 	}, config.Config.Modules...)
 	production, err := NewProductionWithServices(config.Config, services)
