@@ -373,7 +373,10 @@ func (r *Registry) bindTerminalCreateIdentity(ctx context.Context, jobID string,
 		// Before any ConnectAsset, adjudicate the operation's existing
 		// outcome records through the stable operation→identity mapping: a
 		// finished record replays directly, a non-terminal one fails
-		// visibly, and only the certain fresh-execution case connects.
+		// visibly, and only the certain fresh-execution cases connect —
+		// including a durable-certified fresh attempt after a failure,
+		// whose idempotency scope keeps the old finished record from
+		// short-circuiting the reconnect.
 		if output, adjudicated := r.adjudicateRecordedCreate(ctx, jobID, call); adjudicated {
 			return output
 		}
@@ -428,7 +431,11 @@ func (r *Registry) bindTerminalCreateIdentity(ctx context.Context, jobID string,
 // replays directly (naming the originally connected session), a pending or
 // running record fails visibly without reconnecting, and a record made under
 // a different authorization surfaces the conflict. Only the certain
-// fresh-execution case — no record at all — proceeds to connect.
+// fresh-execution cases proceed to connect: no record at all, a record the
+// durable ledger has already judged stale, or — when the durable ledger has
+// certified this call as a fresh attempt after a failure and set its
+// idempotency scope — a binding-matching finished record, which belongs to
+// the previous attempt and must not short-circuit the fresh effect.
 func (r *Registry) adjudicateRecordedCreate(ctx context.Context, jobID string, call *Call) (*Output, bool) {
 	binding, _ := r.state(jobID).assetOperation(call.ID)
 	candidates := make([][]AssetIdentity, 0, len(binding.identities)+1)
@@ -462,6 +469,13 @@ func (r *Registry) adjudicateRecordedCreate(ctx context.Context, jobID string, c
 		}
 		switch record.State {
 		case outcome.ExecutionFinished:
+			if call.IdempotencyScope != "" {
+				// The durable ledger certified this call as a fresh attempt
+				// after a failure on the same identity and this caller holds
+				// the family claim: the previous attempt's finished record
+				// must not replay — the fresh connect proceeds.
+				continue
+			}
 			if r.recordStaleAfterReconfigure(ctx, binding, identities) {
 				// The originally bound session now reports a different
 				// complete identity: the asset was reconfigured, so this
