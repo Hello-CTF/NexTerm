@@ -19,6 +19,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/subagent"
 	"github.com/Hello-CTF/NexTerm/internal/ai/takeover"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/db"
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/outcome"
@@ -127,9 +128,11 @@ func productionScopeValidatorWith(sessions *session.Manager, storage *store.Stor
 }
 
 // aiRunAssetResolver resolves a run's real target asset identity from
-// server-side state: the run's conversation scope pins the session, and the
-// session's connected asset is the only trusted identity. An unresolvable
-// session or asset resolves to empty, which keeps asset evidence unknown.
+// server-side state: a terminal scope pins the session and the session's
+// connected asset is the trusted identity, while a database scope pins the
+// connection and the connection's live DB asset (never the tunnel viaAssetId)
+// is the trusted identity. An unresolvable session or connection resolves to
+// empty, which keeps asset evidence unknown and confirmations fail-closed.
 func aiRunAssetResolver(services *ProductionServices) func(context.Context, string) (string, error) {
 	return func(ctx context.Context, runID string) (string, error) {
 		row, err := services.Store.RunGet(ctx, runID)
@@ -155,7 +158,20 @@ func aiRunAssetResolver(services *ProductionServices) func(context.Context, stri
 			sessionID = tab.SessionID
 		}
 		if sessionID == "" {
-			return "", nil
+			// A database-scoped conversation has no terminal session: the run's
+			// real target identity is the asset the connection belongs to,
+			// resolved live and owner-scoped through the database service. An
+			// SSH tunnel viaAssetId is transport-only, and inline, stale, or
+			// foreign-owner connections honestly resolve to none — no identity
+			// is invented for them, so confirmations stay fail-closed.
+			if services.Database == nil || envelope.Scope.ConnID == "" {
+				return "", nil
+			}
+			assetID, ok := services.Database.AssetIDOf(ctx, envelope.Scope.ConnID)
+			if !ok {
+				return "", nil
+			}
+			return assetID, nil
 		}
 		connected, err := services.Sessions.SessionFor(ctx, sessionID)
 		if err != nil {
@@ -557,6 +573,12 @@ func (r *productionScopeResolver) persist(ctx context.Context, conversationID st
 	}
 	return nil
 }
+
+// The production database service must keep satisfying the tools connection
+// identity seam: AI database grant evaluation resolves the real DB asset of a
+// connection through it, so a method-set drift here would silently disable
+// the grant branch.
+var _ tools.ConnAssetIdentity = (*db.Service)(nil)
 
 func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	if services.Store == nil || services.Sessions == nil || services.Profiles == nil {

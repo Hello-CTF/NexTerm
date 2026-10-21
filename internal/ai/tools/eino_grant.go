@@ -17,6 +17,26 @@ type SessionAssetTerminal interface {
 	SessionAssetID(context.Context, string) (string, error)
 }
 
+// ConnAssetIdentity resolves the real current database asset identity of a
+// live connection for owner-scoped grant evaluation. Production wiring
+// implements it with db.Service.AssetIDOf: the identity is the DB asset the
+// connection was resolved from at connect time; an SSH tunnel viaAssetId is
+// transport-only, and inline connections honestly resolve to none.
+type ConnAssetIdentity interface {
+	AssetIDOf(context.Context, string) (string, bool)
+}
+
+// dbGrantCall reports whether the call's grant identity comes from the scope's
+// database connection rather than from the session asset.
+func dbGrantCall(name string) bool {
+	switch name {
+	case "db_list_tables", "db_describe", "db_query", "redis_scan":
+		return true
+	default:
+		return false
+	}
+}
+
 // ResolveGrantDeviceID resolves the server-side asset identity of an
 // execution scope: the scope session itself, or the session owning the scope
 // tab. Missing server support or resolution failures resolve to empty, which
@@ -130,10 +150,39 @@ func (e *Execution) persistPermanentGrant(ctx context.Context, state Interaction
 // the persistent device grant for the enumerated terminal_write/session_exec
 // operations, then the global permission mode. A nil grants manager keeps the
 // plain global-mode evaluation, so device grants stay off unless configured.
+// Database calls take the connection branch: their identity is the real DB
+// asset behind the scope's connection, never the session asset.
 func (e *Execution) decide(ctx context.Context, call Call, ruling guard.Ruling, memory *guard.Memory) guard.Decision {
 	resource := resourceForCall(call)
 	if e.Registry == nil || e.Registry.deps.Grants == nil {
 		return guard.DecideResource(e.Permission, ruling, memory, resource)
 	}
+	if dbGrantCall(call.Name) {
+		return e.decideDB(ctx, call, ruling, memory, resource)
+	}
 	return e.Registry.deps.Grants.EvaluateResource(ctx, e.Permission, ruling, memory, e.grantDeviceID(ctx), call.Name, e.JobID, resource)
+}
+
+// decideDB evaluates a database tool call against the grants of the asset the
+// scope's connection really belongs to. The identity resolves live at use time
+// through the server-side connection service: a connection whose asset
+// identity cannot be resolved (inline configuration, a stale or cross-owner
+// handle, or a backend without identity support) gets no grant branch — the
+// previous binding is dropped and the plain permission mode applies, so an
+// unbound connId never inherits another asset's grant and an inline
+// connection never gains an invented identity.
+func (e *Execution) decideDB(ctx context.Context, call Call, ruling guard.Ruling, memory *guard.Memory, resource guard.Resource) guard.Decision {
+	grants := e.Registry.deps.Grants
+	connID := strings.TrimSpace(e.Scope.ConnID)
+	identity, ok := e.Registry.deps.Database.(ConnAssetIdentity)
+	if ok && connID != "" {
+		if assetID, found := identity.AssetIDOf(ctx, connID); found && strings.TrimSpace(assetID) != "" {
+			if err := grants.BindConnAsset(ctx, connID, assetID); err != nil {
+				return guard.Decision{Action: guard.ActionDeny, Ruling: ruling, Reason: err.Error()}
+			}
+			return grants.EvaluateDBResource(ctx, e.Permission, ruling, memory, connID, call.Name, e.JobID, resource)
+		}
+		grants.UnbindConnAsset(ctx, connID)
+	}
+	return grants.EvaluateResource(ctx, e.Permission, ruling, memory, "", call.Name, e.JobID, resource)
 }
