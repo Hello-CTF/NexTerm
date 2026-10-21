@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -512,6 +513,23 @@ type ExecTargetSet struct {
 type SkillLoader interface {
 	LoadSkillSchema() Schema
 	LoadSkill(context.Context, json.RawMessage) Output
+}
+
+// skillLoaderConfigured reports whether a skills backend is actually
+// present. A nil interface and an interface holding a typed-nil pointer
+// both mean "no backend": the first would fabricate an unavailable tool,
+// the second would panic on first use.
+func skillLoaderConfigured(loader SkillLoader) bool {
+	if loader == nil {
+		return false
+	}
+	value := reflect.ValueOf(loader)
+	switch value.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Func, reflect.Interface, reflect.Slice, reflect.Chan:
+		return !value.IsNil()
+	default:
+		return true
+	}
 }
 
 type Dependencies struct {
