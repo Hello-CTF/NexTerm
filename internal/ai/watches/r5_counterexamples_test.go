@@ -2,7 +2,6 @@ package watches
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -19,59 +18,8 @@ func TestConcatZeroRepeatSplitMatch(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			run := func(t *testing.T, chunks []string, reopen bool) []Event {
-				clock := newTestClock()
-				ctx := ownerCtx("owner-a")
-				restartPath := filepath.Join(t.TempDir(), "watch.db")
-				var backend *store.Store
-				if reopen {
-					backend = openRestartStore(t, restartPath)
-				} else {
-					var err error
-					backend, err = store.OpenInMemory(context.Background())
-					if err != nil {
-						t.Fatal(err)
-					}
-				}
-				t.Cleanup(func() { _ = backend.Close() })
-				newEngine := func() *Engine {
-					engine, err := New(backend, Options{Now: clock.Now})
-					if err != nil {
-						t.Fatal(err)
-					}
-					mustAttach(t, engine, ctx, "target-1", "identity-1")
-					return engine
-				}
-				engine := newEngine()
-				if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1",
-					Condition: Condition{Type: ConditionRegex, Pattern: testCase.pattern}}); err != nil {
-					t.Fatal(err)
-				}
-				var events []Event
-				position := int64(0)
-				for index, chunk := range chunks {
-					if reopen && index > 0 {
-						if err := backend.Close(); err != nil {
-							t.Fatal(err)
-						}
-						backend = openRestartStore(t, restartPath)
-						engine = newEngine()
-					}
-					fired, err := engine.Observe(ctx, "target-1", "identity-1", position, []byte(chunk))
-					if err != nil {
-						t.Fatalf("observe %q: %v", chunk, err)
-					}
-					events = append(events, fired...)
-					position += int64(len(chunk))
-				}
-				return events
-			}
-			stream := "xz"
-			assertEvents(t, run(t, []string{stream}, false), 0, 2)
-			for split := 1; split < len(stream); split++ {
-				assertEvents(t, run(t, []string{stream[:split], stream[split:]}, false), 0, 2)
-				assertEvents(t, run(t, []string{stream[:split], stream[split:]}, true), 0, 2)
-			}
+			condition := Condition{Type: ConditionRegex, Pattern: testCase.pattern}
+			assertChunkObservations(t, splitChunkObservations(condition, "xz", 0, 2))
 		})
 	}
 }
@@ -80,59 +28,8 @@ func TestMultiRuneStarPlusSplitMatch(t *testing.T) {
 	patterns := []string{`x(ab)*c`, `x(?:ab)+c`}
 	for _, pattern := range patterns {
 		t.Run(pattern, func(t *testing.T) {
-			run := func(t *testing.T, chunks []string, reopen bool) []Event {
-				clock := newTestClock()
-				ctx := ownerCtx("owner-a")
-				restartPath := filepath.Join(t.TempDir(), "watch.db")
-				var backend *store.Store
-				if reopen {
-					backend = openRestartStore(t, restartPath)
-				} else {
-					var err error
-					backend, err = store.OpenInMemory(context.Background())
-					if err != nil {
-						t.Fatal(err)
-					}
-				}
-				t.Cleanup(func() { _ = backend.Close() })
-				newEngine := func() *Engine {
-					engine, err := New(backend, Options{Now: clock.Now})
-					if err != nil {
-						t.Fatal(err)
-					}
-					mustAttach(t, engine, ctx, "target-1", "identity-1")
-					return engine
-				}
-				engine := newEngine()
-				if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1",
-					Condition: Condition{Type: ConditionRegex, Pattern: pattern}}); err != nil {
-					t.Fatal(err)
-				}
-				var events []Event
-				position := int64(0)
-				for index, chunk := range chunks {
-					if reopen && index > 0 {
-						if err := backend.Close(); err != nil {
-							t.Fatal(err)
-						}
-						backend = openRestartStore(t, restartPath)
-						engine = newEngine()
-					}
-					fired, err := engine.Observe(ctx, "target-1", "identity-1", position, []byte(chunk))
-					if err != nil {
-						t.Fatalf("observe %q: %v", chunk, err)
-					}
-					events = append(events, fired...)
-					position += int64(len(chunk))
-				}
-				return events
-			}
-			stream := "xababc"
-			assertEvents(t, run(t, []string{stream}, false), 0, 6)
-			for split := 1; split < len(stream); split++ {
-				assertEvents(t, run(t, []string{stream[:split], stream[split:]}, false), 0, 6)
-				assertEvents(t, run(t, []string{stream[:split], stream[split:]}, true), 0, 6)
-			}
+			condition := Condition{Type: ConditionRegex, Pattern: pattern}
+			assertChunkObservations(t, splitChunkObservations(condition, "xababc", 0, 6))
 		})
 	}
 	// An over-capacity live partial settles as unverifiable instead of
@@ -163,59 +60,8 @@ func TestMultiRuneStarPlusSplitMatch(t *testing.T) {
 }
 
 func TestAssertionPrefixScanUsesRealContext(t *testing.T) {
-	run := func(t *testing.T, chunks []string, reopen bool) []Event {
-		clock := newTestClock()
-		ctx := ownerCtx("owner-a")
-		restartPath := filepath.Join(t.TempDir(), "watch.db")
-		var backend *store.Store
-		if reopen {
-			backend = openRestartStore(t, restartPath)
-		} else {
-			var err error
-			backend, err = store.OpenInMemory(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-		t.Cleanup(func() { _ = backend.Close() })
-		newEngine := func() *Engine {
-			engine, err := New(backend, Options{Now: clock.Now})
-			if err != nil {
-				t.Fatal(err)
-			}
-			mustAttach(t, engine, ctx, "target-1", "identity-1")
-			return engine
-		}
-		engine := newEngine()
-		if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1",
-			Condition: Condition{Type: ConditionRegex, Pattern: `\Bfoo.*`}}); err != nil {
-			t.Fatal(err)
-		}
-		var events []Event
-		position := int64(0)
-		for index, chunk := range chunks {
-			if reopen && index > 0 {
-				if err := backend.Close(); err != nil {
-					t.Fatal(err)
-				}
-				backend = openRestartStore(t, restartPath)
-				engine = newEngine()
-			}
-			fired, err := engine.Observe(ctx, "target-1", "identity-1", position, []byte(chunk))
-			if err != nil {
-				t.Fatalf("observe %q: %v", chunk, err)
-			}
-			events = append(events, fired...)
-			position += int64(len(chunk))
-		}
-		return events
-	}
-	stream := "afoo"
-	assertEvents(t, run(t, []string{stream}, false), 1, 4)
-	for split := 1; split < len(stream); split++ {
-		assertEvents(t, run(t, []string{stream[:split], stream[split:]}, false), 1, 4)
-		assertEvents(t, run(t, []string{stream[:split], stream[split:]}, true), 1, 4)
-	}
+	condition := Condition{Type: ConditionRegex, Pattern: `\Bfoo.*`}
+	assertChunkObservations(t, splitChunkObservations(condition, "afoo", 1, 4))
 }
 
 func TestOverlapMatchAfterAnchor(t *testing.T) {
@@ -276,61 +122,18 @@ func TestRightEdgeAssertionsDefer(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			run := func(t *testing.T, chunks []string, reopen bool) []Event {
-				clock := newTestClock()
-				ctx := ownerCtx("owner-a")
-				restartPath := filepath.Join(t.TempDir(), "watch.db")
-				var backend *store.Store
-				if reopen {
-					backend = openRestartStore(t, restartPath)
-				} else {
-					var err error
-					backend, err = store.OpenInMemory(context.Background())
-					if err != nil {
-						t.Fatal(err)
-					}
-				}
-				t.Cleanup(func() { _ = backend.Close() })
-				newEngine := func() *Engine {
-					engine, err := New(backend, Options{Now: clock.Now})
-					if err != nil {
-						t.Fatal(err)
-					}
-					mustAttach(t, engine, ctx, "target-1", "identity-1")
-					return engine
-				}
-				engine := newEngine()
-				if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1",
-					Condition: Condition{Type: ConditionRegex, Pattern: testCase.pattern}}); err != nil {
-					t.Fatal(err)
-				}
-				var events []Event
-				position := int64(0)
-				for index, chunk := range chunks {
-					if reopen && index > 0 {
-						if err := backend.Close(); err != nil {
-							t.Fatal(err)
-						}
-						backend = openRestartStore(t, restartPath)
-						engine = newEngine()
-					}
-					fired, err := engine.Observe(ctx, "target-1", "identity-1", position, []byte(chunk))
-					if err != nil {
-						t.Fatalf("observe %q: %v", chunk, err)
-					}
-					events = append(events, fired...)
-					position += int64(len(chunk))
-				}
-				return events
+			condition := Condition{Type: ConditionRegex, Pattern: testCase.pattern}
+			observations := []chunkObservation{
+				{condition: condition, chunks: stringChunks(testCase.stream), from: testCase.from, to: testCase.to},
 			}
-			contiguous := run(t, []string{testCase.stream}, false)
-			assertEvents(t, contiguous, testCase.from, testCase.to)
 			for split := 1; split < len(testCase.stream); split++ {
-				chunked := run(t, []string{testCase.stream[:split], testCase.stream[split:]}, false)
-				assertEvents(t, chunked, testCase.from, testCase.to)
-				restarted := run(t, []string{testCase.stream[:split], testCase.stream[split:]}, true)
-				assertEvents(t, restarted, testCase.from, testCase.to)
+				chunks := stringChunks(testCase.stream[:split], testCase.stream[split:])
+				observations = append(observations,
+					chunkObservation{condition: condition, chunks: chunks, from: testCase.from, to: testCase.to},
+					chunkObservation{condition: condition, chunks: chunks, restart: true, from: testCase.from, to: testCase.to},
+				)
 			}
+			assertChunkObservations(t, observations)
 		})
 	}
 }
@@ -349,65 +152,18 @@ func TestRightEdgeAssertionsFireAtEOF(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			run := func(t *testing.T, chunks []string, reopen bool) []Event {
-				clock := newTestClock()
-				ctx := ownerCtx("owner-a")
-				restartPath := filepath.Join(t.TempDir(), "watch.db")
-				var backend *store.Store
-				if reopen {
-					backend = openRestartStore(t, restartPath)
-				} else {
-					var err error
-					backend, err = store.OpenInMemory(context.Background())
-					if err != nil {
-						t.Fatal(err)
-					}
-				}
-				t.Cleanup(func() { _ = backend.Close() })
-				newEngine := func() *Engine {
-					engine, err := New(backend, Options{Now: clock.Now})
-					if err != nil {
-						t.Fatal(err)
-					}
-					mustAttach(t, engine, ctx, "target-1", "identity-1")
-					return engine
-				}
-				engine := newEngine()
-				if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1",
-					Condition: Condition{Type: ConditionRegex, Pattern: testCase.pattern}}); err != nil {
-					t.Fatal(err)
-				}
-				var events []Event
-				position := int64(0)
-				for index, chunk := range chunks {
-					if reopen && index > 0 {
-						if err := backend.Close(); err != nil {
-							t.Fatal(err)
-						}
-						backend = openRestartStore(t, restartPath)
-						engine = newEngine()
-					}
-					fired, err := engine.Observe(ctx, "target-1", "identity-1", position, []byte(chunk))
-					if err != nil {
-						t.Fatalf("observe %q: %v", chunk, err)
-					}
-					events = append(events, fired...)
-					position += int64(len(chunk))
-				}
-				fired, err := engine.ObserveEOF(ctx, "target-1", "identity-1", position)
-				if err != nil {
-					t.Fatalf("observe EOF: %v", err)
-				}
-				return append(events, fired...)
+			condition := Condition{Type: ConditionRegex, Pattern: testCase.pattern}
+			observations := []chunkObservation{
+				{condition: condition, chunks: stringChunks(testCase.stream), eof: true, from: testCase.from, to: testCase.to},
 			}
-			contiguous := run(t, []string{testCase.stream}, false)
-			assertEvents(t, contiguous, testCase.from, testCase.to)
 			for split := 1; split < len(testCase.stream); split++ {
-				chunked := run(t, []string{testCase.stream[:split], testCase.stream[split:]}, false)
-				assertEvents(t, chunked, testCase.from, testCase.to)
-				restarted := run(t, []string{testCase.stream[:split], testCase.stream[split:]}, true)
-				assertEvents(t, restarted, testCase.from, testCase.to)
+				chunks := stringChunks(testCase.stream[:split], testCase.stream[split:])
+				observations = append(observations,
+					chunkObservation{condition: condition, chunks: chunks, eof: true, from: testCase.from, to: testCase.to},
+					chunkObservation{condition: condition, chunks: chunks, restart: true, eof: true, from: testCase.from, to: testCase.to},
+				)
 			}
+			assertChunkObservations(t, observations)
 		})
 	}
 }
