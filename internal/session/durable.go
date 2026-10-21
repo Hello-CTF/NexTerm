@@ -22,26 +22,8 @@ type durableOffsetAttacher interface {
 	AttachFrom(ctx context.Context, id string, offset uint64) (base.DurableAttachment, error)
 }
 
-type DurableTranscriptOffsetStore interface {
-	DurableTranscriptCatchUpBytes(tabID string) int64
-	PersistDurableTranscriptOffset(tabID string, offset int64)
-	DeleteDurableTranscriptOffset(tabID string)
-}
-
-// DurableTabTitleStore persists custom tab titles of durable tabs so a
-// recovered tab keeps the title its user gave it across restarts.
-type DurableTabTitleStore interface {
-	DurableTabTitle(tabID string) string
-	PersistDurableTabTitle(tabID string, title string)
-	DeleteDurableTabTitle(tabID string)
-}
-
-// Owner-scoped variants of the durable stores: methods take a context so the
-// implementation can isolate rows by the session owner carried in it. The
-// Context suffix keeps them additive — a store can implement both the legacy
-// and the owner-scoped interface. Stores that implement them get owner
-// isolation on multi-user servers; a legacy adapter on a non-open server must
-// fail closed (zero-value reads, skipped writes) rather than run ownerless.
+// Owner-scoped durable stores isolate rows by the session owner carried in
+// the context. An empty owner keeps desktop and open-access rows ownerless.
 type OwnerScopedDurableTranscriptOffsetStore interface {
 	DurableTranscriptCatchUpBytesContext(ctx context.Context, tabID string) int64
 	PersistDurableTranscriptOffsetContext(ctx context.Context, tabID string, offset int64)
@@ -54,4 +36,4 @@ type OwnerScopedDurableTabTitleStore interface {
 	DeleteDurableTabTitleContext(ctx context.Context, tabID string)
 }
 
-type durableTranscriptOffsetSource = DurableTranscriptOffsetStore
+type durableTranscriptOffsetSource = OwnerScopedDurableTranscriptOffsetStore

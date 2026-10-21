@@ -157,8 +157,8 @@ type Config struct {
 	Durable              base.DurableProvider
 	DurableResolver      DurableResolver
 	TerminalModeResolver func(context.Context, string) (string, error)
-	TranscriptOffsets    DurableTranscriptOffsetStore
-	TabTitles            DurableTabTitleStore
+	TranscriptOffsets    OwnerScopedDurableTranscriptOffsetStore
+	TabTitles            OwnerScopedDurableTabTitleStore
 	Hub                  *hub.Hub
 	Emitter              Emitter
 	Transcripts          TranscriptSink

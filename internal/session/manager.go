@@ -56,8 +56,8 @@ type Manager struct {
 	durable              base.DurableProvider
 	resolver             DurableResolver
 	terminalModeResolver func(context.Context, string) (string, error)
-	offsets              DurableTranscriptOffsetStore
-	titles               DurableTabTitleStore
+	offsets              OwnerScopedDurableTranscriptOffsetStore
+	titles               OwnerScopedDurableTabTitleStore
 	bus                  *hub.Hub
 	ownsBus              bool
 	emitter              Emitter
@@ -163,17 +163,7 @@ func NewManager(config Config) *Manager {
 		manager.bus = config.Hub
 	}
 	manager.offsets = config.TranscriptOffsets
-	if manager.offsets == nil {
-		if source, ok := config.Durable.(durableTranscriptOffsetSource); ok {
-			manager.offsets = source
-		}
-	}
 	manager.titles = config.TabTitles
-	if manager.titles == nil {
-		if source, ok := config.Durable.(DurableTabTitleStore); ok {
-			manager.titles = source
-		}
-	}
 	manager.logger = config.Logger
 	if manager.logger == nil {
 		manager.logger = slog.Default()

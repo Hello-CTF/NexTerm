@@ -52,19 +52,19 @@ func (p *continuityDurableProvider) Attach(_ context.Context, id string) (base.D
 	return continuityDurableAttachment{channel}, nil
 }
 
-func (p *continuityDurableProvider) DurableTranscriptCatchUpBytes(tabID string) int64 {
+func (p *continuityDurableProvider) DurableTranscriptCatchUpBytesContext(_ context.Context, tabID string) int64 {
 	_, _, offsets, _ := p.offsets.snapshot()
 	return offsets[tabID]
 }
 
-func (p *continuityDurableProvider) PersistDurableTranscriptOffset(tabID string, offset int64) {
+func (p *continuityDurableProvider) PersistDurableTranscriptOffsetContext(_ context.Context, tabID string, offset int64) {
 	p.offsets.mu.Lock()
 	p.offsets.durableOffsets[tabID] = offset
 	p.offsets.mu.Unlock()
 }
 
-func (p *continuityDurableProvider) DeleteDurableTranscriptOffset(tabID string) {
-	p.PersistDurableTranscriptOffset(tabID, 0)
+func (p *continuityDurableProvider) DeleteDurableTranscriptOffsetContext(ctx context.Context, tabID string) {
+	p.PersistDurableTranscriptOffsetContext(ctx, tabID, 0)
 }
 
 func (p *continuityDurableProvider) channel(tabID string) *transcriptFeedChannel {
@@ -325,4 +325,4 @@ func TestTranscriptWriterDurableRecoveryMultipleIDsStayIndependent(t *testing.T)
 	}
 }
 
-var _ session.DurableTranscriptOffsetStore = (*continuityDurableProvider)(nil)
+var _ session.OwnerScopedDurableTranscriptOffsetStore = (*continuityDurableProvider)(nil)
