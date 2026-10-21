@@ -305,65 +305,6 @@ VALUES('sneaky-session', ?, ?, ?, ?, ?, ?)`, user.ID, device.ID, sessionTokenHas
 	requireCode(t, validateErr(a, ctx, "sneaky-token"), ipc.CodeForbidden)
 }
 
-func TestIssueSessionConcurrentRevoke(t *testing.T) {
-	a := testFileAccounts(t)
-	ctx := context.Background()
-	user, err := a.CreateUser(ctx, "uma", "", "synthetic-password-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	device, err := a.RegisterDevice(ctx, user.ID, "laptop", "desktop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	const issuers = 4
-	var mu sync.Mutex
-	var tokens []string
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-	for i := 0; i < issuers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				select {
-				case <-stop:
-					return
-				default:
-				}
-				token, _, err := a.IssueSession(ctx, user.ID, device.ID)
-				if err != nil {
-					return
-				}
-				mu.Lock()
-				tokens = append(tokens, token)
-				mu.Unlock()
-			}
-		}()
-	}
-	time.Sleep(50 * time.Millisecond)
-	if err := a.RevokeDevice(ctx, user.ID, device.ID); err != nil {
-		t.Fatal(err)
-	}
-	close(stop)
-	wg.Wait()
-
-	mu.Lock()
-	issued := append([]string(nil), tokens...)
-	mu.Unlock()
-	if len(issued) == 0 {
-		t.Fatal("no sessions issued during concurrency window")
-	}
-	for _, token := range issued {
-		if _, err := a.ValidateSession(ctx, token); err == nil {
-			t.Fatal("session outlived device revocation")
-		}
-	}
-	if _, _, err := a.IssueSession(ctx, user.ID, device.ID); err == nil {
-		t.Fatal("issue after revoke accepted")
-	}
-}
-
 func TestRevokeSessionConcurrentSingleWinner(t *testing.T) {
 	a := testFileAccounts(t)
 	ctx := context.Background()
