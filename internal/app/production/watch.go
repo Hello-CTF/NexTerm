@@ -126,6 +126,11 @@ func (s *watchService) ensureAttached(ctx context.Context, executor *watches.Exe
 		return mapWatchSourceError(err)
 	}
 	if err := executor.AttachTarget(ctx, targetID, state.Episode, source); err != nil {
+		// The startup reconcile may attach the same episode concurrently;
+		// losing that race is not a failure when the mirror landed identically.
+		if identity, attached := executor.AttachedIdentity(ctx, targetID); attached && identity == state.Episode {
+			return nil
+		}
 		return err
 	}
 	return nil
