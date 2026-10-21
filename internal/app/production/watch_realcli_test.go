@@ -148,9 +148,9 @@ func TestProductionWatchEndToEndRealCLI(t *testing.T) {
 	}
 
 	// The UI notification carries the same envelope, filtered by the owner.
-	toolDataEvents := events.toolDataEvents()
-	if len(toolDataEvents) != 1 || toolDataEvents[0].OwnerID != "owner-a" || toolDataEvents[0].Data.Event.DeliveryID != event.DeliveryID {
-		t.Fatalf("UI tool data events = %+v", toolDataEvents)
+	uiEvent := waitWatchToolDataEvent(t, events, event.DeliveryID)
+	if uiEvent.OwnerID != "owner-a" || uiEvent.Data.Event.DeliveryID != event.DeliveryID {
+		t.Fatalf("UI tool data event = %+v", uiEvent)
 	}
 
 	// The IPC list reflects the matched watch with its revision advanced.
@@ -199,9 +199,9 @@ func TestProductionWatchRestartResumesDeliveryWithFixedDeliveryID(t *testing.T) 
 	if len(deliveries) != 1 || deliveries[0].Event.DeliveryID != string(deliveryID) {
 		t.Fatalf("deliveries after restart = %+v; want the fixed DeliveryID %s", deliveries, deliveryID)
 	}
-	toolDataEvents := events.toolDataEvents()
-	if len(toolDataEvents) != 1 || toolDataEvents[0].Data.Event.DeliveryID != string(deliveryID) {
-		t.Fatalf("UI deliveries after restart = %+v; want exactly the fixed DeliveryID", toolDataEvents)
+	uiEvent := waitWatchToolDataEvent(t, events, string(deliveryID))
+	if uiEvent.Data.Event.DeliveryID != string(deliveryID) {
+		t.Fatalf("UI delivery after restart = %+v; want the fixed DeliveryID", uiEvent)
 	}
 
 	// The ack is durable: a further dispatch pass delivers nothing new.

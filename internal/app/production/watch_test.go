@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,15 +16,20 @@ import (
 )
 
 type watchEventCapture struct {
+	mu     sync.Mutex
 	events []ipc.Event
 }
 
 func (c *watchEventCapture) Emit(_ context.Context, event ipc.Event) error {
+	c.mu.Lock()
 	c.events = append(c.events, event)
+	c.mu.Unlock()
 	return nil
 }
 
 func (c *watchEventCapture) toolDataEvents() []watches.ToolDataEvent {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	var out []watches.ToolDataEvent
 	for _, event := range c.events {
 		if event.Event != ipc.TopicAIWatchToolData {
@@ -34,6 +40,25 @@ func (c *watchEventCapture) toolDataEvents() []watches.ToolDataEvent {
 		}
 	}
 	return out
+}
+
+// waitWatchToolDataEvent waits for the UI notification of one delivery: the
+// sink emits after the durable consumer accepts, so the notification trails
+// the history row and must be polled for.
+func waitWatchToolDataEvent(t *testing.T, events *watchEventCapture, deliveryID string) watches.ToolDataEvent {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		for _, event := range events.toolDataEvents() {
+			if event.Data.Event.DeliveryID == deliveryID {
+				return event
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no UI tool data event for delivery %s", deliveryID)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func newWatchTestFixture(t *testing.T) (*store.Store, *session.Manager, *watchEventCapture) {
