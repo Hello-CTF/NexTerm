@@ -15,7 +15,17 @@ function run(command, args) {
 
 try {
   fs.rmSync(embedded, { recursive: true, force: true });
-  run(process.execPath, [path.join(ROOT, "scripts/build.mjs"), "frontend", "--repro-check"]);
+  const distSource = process.env.DIST_SOURCE?.trim() || "";
+  const distManifest = process.env.DIST_MANIFEST?.trim() || "";
+  if (Boolean(distSource) !== Boolean(distManifest)) {
+    throw new Error("DIST_SOURCE and DIST_MANIFEST must be set together");
+  }
+  const build = path.join(ROOT, "scripts/build.mjs");
+  if (distSource) {
+    run(process.execPath, [build, "frontend", `--consume-dist=${distSource}`, `--dist-manifest=${distManifest}`]);
+  } else {
+    run(process.execPath, [build, "frontend", "--repro-check"]);
+  }
   fs.cpSync(path.join(ROOT, "dist"), embedded, { recursive: true });
   run("go", ["test", "-tags", "production", "./cmd/nexterm-desktop"]);
 } catch (error) {

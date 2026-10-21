@@ -105,9 +105,11 @@ tasks:
       - go test -race ./...
 
   test:production:
-    summary: Rebuild fresh frontend assets, test production embedding and clean staged assets
+    summary: Build or consume verified frontend assets, test production embedding and clean staged assets
     env:
       GOFLAGS: '{{.GOFLAGS}}'
+      DIST_SOURCE: '{{.DIST_SOURCE}}'
+      DIST_MANIFEST: '{{.DIST_MANIFEST}}'
     cmds:
       - node scripts/test-production.mjs
 
@@ -131,7 +133,6 @@ tasks:
     summary: Lint, test, gate coverage, typecheck and reproducibly build the frontend
     cmds:
       - pnpm lint
-      - pnpm test
       - pnpm test:coverage
       - task: frontend
 
@@ -287,4 +288,7 @@ tasks:
       - task: check
       - task: test:race
       - task: test:production
+        vars:
+          DIST_SOURCE: dist
+          DIST_MANIFEST: target/dist-manifest.json
       - node scripts/build.mjs desktop --release --repro-check --consume-dist=dist --dist-manifest=target/dist-manifest.json
