@@ -23,6 +23,9 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		AgentEvidenceKeyRow:     newAgentEvidenceKeyRow(db, opts...),
 		AgentOutcomeRow:         newAgentOutcomeRow(db, opts...),
 		AgentRosterRow:          newAgentRosterRow(db, opts...),
+		AgentWatchOutboxRow:     newAgentWatchOutboxRow(db, opts...),
+		AgentWatchRow:           newAgentWatchRow(db, opts...),
+		AgentWatchTargetRow:     newAgentWatchTargetRow(db, opts...),
 		AppUser:                 newAppUser(db, opts...),
 		AssetGroupRow:           newAssetGroupRow(db, opts...),
 		AssetRow:                newAssetRow(db, opts...),
@@ -84,6 +87,9 @@ type Query struct {
 	AgentEvidenceKeyRow     agentEvidenceKeyRow
 	AgentOutcomeRow         agentOutcomeRow
 	AgentRosterRow          agentRosterRow
+	AgentWatchOutboxRow     agentWatchOutboxRow
+	AgentWatchRow           agentWatchRow
+	AgentWatchTargetRow     agentWatchTargetRow
 	AppUser                 appUser
 	AssetGroupRow           assetGroupRow
 	AssetRow                assetRow
@@ -146,6 +152,9 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		AgentEvidenceKeyRow:     q.AgentEvidenceKeyRow.clone(db),
 		AgentOutcomeRow:         q.AgentOutcomeRow.clone(db),
 		AgentRosterRow:          q.AgentRosterRow.clone(db),
+		AgentWatchOutboxRow:     q.AgentWatchOutboxRow.clone(db),
+		AgentWatchRow:           q.AgentWatchRow.clone(db),
+		AgentWatchTargetRow:     q.AgentWatchTargetRow.clone(db),
 		AppUser:                 q.AppUser.clone(db),
 		AssetGroupRow:           q.AssetGroupRow.clone(db),
 		AssetRow:                q.AssetRow.clone(db),
@@ -215,6 +224,9 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		AgentEvidenceKeyRow:     q.AgentEvidenceKeyRow.replaceDB(db),
 		AgentOutcomeRow:         q.AgentOutcomeRow.replaceDB(db),
 		AgentRosterRow:          q.AgentRosterRow.replaceDB(db),
+		AgentWatchOutboxRow:     q.AgentWatchOutboxRow.replaceDB(db),
+		AgentWatchRow:           q.AgentWatchRow.replaceDB(db),
+		AgentWatchTargetRow:     q.AgentWatchTargetRow.replaceDB(db),
 		AppUser:                 q.AppUser.replaceDB(db),
 		AssetGroupRow:           q.AssetGroupRow.replaceDB(db),
 		AssetRow:                q.AssetRow.replaceDB(db),
@@ -274,6 +286,9 @@ type queryCtx struct {
 	AgentEvidenceKeyRow     *agentEvidenceKeyRowDo
 	AgentOutcomeRow         *agentOutcomeRowDo
 	AgentRosterRow          *agentRosterRowDo
+	AgentWatchOutboxRow     *agentWatchOutboxRowDo
+	AgentWatchRow           *agentWatchRowDo
+	AgentWatchTargetRow     *agentWatchTargetRowDo
 	AppUser                 *appUserDo
 	AssetGroupRow           *assetGroupRowDo
 	AssetRow                *assetRowDo
@@ -333,6 +348,9 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		AgentEvidenceKeyRow:     q.AgentEvidenceKeyRow.WithContext(ctx),
 		AgentOutcomeRow:         q.AgentOutcomeRow.WithContext(ctx),
 		AgentRosterRow:          q.AgentRosterRow.WithContext(ctx),
+		AgentWatchOutboxRow:     q.AgentWatchOutboxRow.WithContext(ctx),
+		AgentWatchRow:           q.AgentWatchRow.WithContext(ctx),
+		AgentWatchTargetRow:     q.AgentWatchTargetRow.WithContext(ctx),
 		AppUser:                 q.AppUser.WithContext(ctx),
 		AssetGroupRow:           q.AssetGroupRow.WithContext(ctx),
 		AssetRow:                q.AssetRow.WithContext(ctx),
