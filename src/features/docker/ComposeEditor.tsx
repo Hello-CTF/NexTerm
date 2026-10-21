@@ -69,6 +69,9 @@ export function ComposeEditor({
     finishInFlight.current = true;
     setBusy(true);
     setError(null);
+    // A retry closes the previous challenge: if the backend re-challenges, the
+    // dialog remounts for the new identity instead of reusing its typed input.
+    setProduction(null);
     const { change } = pendingSave;
     try {
       const bytes = new TextEncoder().encode(change.content);
@@ -187,12 +190,13 @@ export function ComposeEditor({
       )}
       {production && (
         <ProductionConfirmationDialog
+          key={`${production.challenge.targetSetHash}:${production.challenge.commandHash}`}
           challenge={production.challenge}
           contentHash={production.challenge.commandHash}
           command={`保存 ${production.pending.change.path} 并执行 docker compose up -d`}
           typedPhrase="production"
           onCancel={cancelPending}
-          onConfirm={() => void finish(production.pending, dockerConfirmation(production.challenge))}
+          onConfirm={(environmentNames) => void finish(production.pending, dockerConfirmation(production.challenge, environmentNames))}
         />
       )}
     </>,

@@ -120,6 +120,7 @@ import { isFleetHealthTabId } from "../features/fleet/fleetHealthTab";
 import { DockerPanel } from "../features/docker/DockerPanel";
 import { DbPanel } from "../features/db/DbPanel";
 import { ExecBatchPanel } from "../features/execbatch/ExecBatchPanel";
+import { useAssetProductionClassification } from "../features/production/productionSettings";
 import { AiSidebar } from "../features/ai/AiSidebar";
 import { SettingsView } from "../features/settings/SettingsView";
 import { useDesktopAutoSync, useWebAutoSync } from "../features/settings/useWebAutoSync";
@@ -273,6 +274,20 @@ function TabStripTitle({ tab }: { tab: AppTab }) {
   const remoteTitle = useTerminalTabTitle(tab.id);
   return (
     <span className="truncate">{tab.kind === "terminal" && remoteTitle ? remoteTitle : tab.title}</span>
+  );
+}
+
+// R-01 workspace-scope warning: a terminal tab whose backend-classified asset
+// environment is production carries an amber badge; the environment name is in
+// the tooltip, the tab strip stays compact.
+function TabProductionBadge({ sessionId }: { sessionId?: string }) {
+  const assetId = useUi((s) => (sessionId ? s.sessions.find((x) => x.id === sessionId)?.assetId : undefined));
+  const classification = useAssetProductionClassification(assetId);
+  if (!classification?.production) return null;
+  return (
+    <span className="nx-badge nx-badge-amber shrink-0" title={`生产环境：${classification.environment}`}>
+      生产
+    </span>
   );
 }
 
@@ -2234,6 +2249,7 @@ function PaneGroup({
               >
                 <Icon size={13} />
                 <TabStripTitle tab={t} />
+                {t.kind === "terminal" && <TabProductionBadge sessionId={t.sessionId} />}
                 {t.closeError && (
                   <span className="flex shrink-0 items-center text-red-400" role="img" aria-label={`关闭失败：${t.closeError}`}>
                     <IconAlert size={11} />

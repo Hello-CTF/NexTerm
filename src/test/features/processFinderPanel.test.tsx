@@ -10,6 +10,7 @@ import {
   click,
   clickButton,
   flush,
+  flushMacrotask,
   flushUntil,
   mountWithClient,
   setInputValue,
@@ -135,6 +136,15 @@ async function mountAndFind(selectedIds = ["s1", "s2"]): Promise<void> {
   await flushUntil(() => panel().container.querySelector(`section[data-session-id="${lastHost}"]`) !== null);
 }
 
+// The confirm click starts the async retry; keep an act scope open across a
+// macrotask so its state updates land inside act.
+async function clickAndFlush(element: Element): Promise<void> {
+  await act(async () => {
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushMacrotask();
+  });
+}
+
 describe("ProcessFinderPanel", () => {
   it("shows host by match results and per-host tool failures", async () => {
     await mountAndFind();
@@ -217,6 +227,46 @@ describe("ProcessFinderPanel", () => {
       [...matchRow().querySelectorAll("button")].some((button) => button.textContent?.trim() === "kill" && !button.disabled),
     );
     expect(panel().container.textContent).toContain("sudo 不可用或需要密码");
+  });
+
+  it("retries the M15 typed production challenge with the typed environment names", async () => {
+    const targetSetHash = "c".repeat(64);
+    const commandHash = "d".repeat(64);
+    const failure: ServiceOperationBatch = {
+      batchId: "batch-2", command: "kill -TERM -- 1201",
+      hosts: [{
+        result: execResult("s1", { status: "success", exitCode: 0 }),
+        systemd: "unknown", failureKind: undefined, units: [],
+      }],
+    };
+    mocks.kill.mockRejectedValueOnce({
+      code: "needs_confirm",
+      detail: {
+        kind: "exec_batch_production_confirmation", batchId: "batch-2", targetSetHash, commandHash,
+        requiredEnvironmentNames: ["prod"],
+        productionTargets: [{ sessionId: "s1", sessionName: "web-one", environment: "prod" }],
+      },
+    }).mockResolvedValueOnce(failure);
+    await mountAndFind();
+    clickButton(matchRow(), "kill");
+    await flushUntil(() => document.body.querySelector('[role="dialog"][aria-label="确认生产环境执行"]') !== null);
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"][aria-label="确认生产环境执行"]')!;
+    const environmentInput = dialog.querySelector<HTMLInputElement>('input[aria-label="输入环境名 web-one"]');
+    if (!environmentInput) throw new Error("typed environment input not found");
+    const confirm = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(
+      (candidate) => candidate.textContent?.trim() === "确认执行（1）",
+    );
+    if (!confirm) throw new Error("confirm button not found");
+    expect(confirm.disabled).toBe(true);
+    setInputValue(environmentInput, "prod");
+    expect(confirm.disabled).toBe(false);
+    await clickAndFlush(confirm);
+    await flushUntil(() => mocks.kill.mock.calls.length === 2);
+    expect(mocks.kill.mock.calls[1][0]).toMatchObject({
+      batchId: "batch-2",
+      productionConfirmation: { confirmed: true, targetSetHash, commandHash, environmentNames: ["prod"] },
+    });
   });
 
   it("attributes truncation warnings only to the truncated host", async () => {

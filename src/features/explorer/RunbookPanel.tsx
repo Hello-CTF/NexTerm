@@ -268,7 +268,7 @@ export function RunbookPanel({ snippets, onClose }: { snippets: readonly Snippet
     state: RunbookRunState,
     confirmed: boolean,
     epoch: number,
-    productionConfirmation?: { confirmed: true; targetSetHash: string; commandHash: string },
+    productionConfirmation?: { confirmed: true; targetSetHash: string; commandHash: string; environmentNames?: string[] },
   ): Promise<RunbookRunState | null> => {
     if (!isActiveEpoch(epoch) || runRef.current?.runId !== state.runId) return null;
     const next = await runbookApi.advance({
@@ -370,7 +370,7 @@ export function RunbookPanel({ snippets, onClose }: { snippets: readonly Snippet
     void transition((epoch) => drive(run, epoch));
   };
 
-  const confirmProduction = () => {
+  const confirmProduction = (environmentNames?: string[]) => {
     const challenge = run?.productionChallenge;
     if (!run || !challenge) return;
     void transition(async (epoch) => {
@@ -378,6 +378,7 @@ export function RunbookPanel({ snippets, onClose }: { snippets: readonly Snippet
         confirmed: true,
         targetSetHash: challenge.targetSetHash,
         commandHash: challenge.commandHash,
+        ...(environmentNames ? { environmentNames } : {}),
       });
       if (next) await drive(next, epoch);
     });

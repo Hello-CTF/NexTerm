@@ -14,7 +14,8 @@ reason: string, message?: string, attempt: number, seq: number, };
 
 export type AiHitlInterruptDto = { id: string, runId: string, checkpointId: string, checkpointHash: string, targetId: string, callId: string, tool: string, 
 kind: string, parameters: JsonValue, parameterHash: string, question?: AiHitlQuestionDto, nonce: string, 
-createdAt: string, expiresAt: string, attempt: number, seq: number, };
+createdAt: string, expiresAt: string, attempt: number, seq: number,
+requiredEnvironmentNames?: Array<string>, };
 
 export type AiHitlQuestionDto = { id: string, text: string, options?: Array<string>, };
 

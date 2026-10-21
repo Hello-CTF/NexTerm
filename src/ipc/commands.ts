@@ -1076,6 +1076,10 @@ export interface AiConfirmationInput {
   callId: string;
   nonce: string;
   decision: AiDecision;
+  // EnvironmentNames are the actual environment names the user typed back
+  // for a production-classified target; they are validated against the
+  // challenge's required names at resume and are never auto-echoed.
+  environmentNames?: string[];
 }
 
 export interface AiAnswerInput {

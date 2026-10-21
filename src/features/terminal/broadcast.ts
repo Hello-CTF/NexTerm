@@ -4,11 +4,14 @@ import type {
   Workspace,
 } from "../../app/store";
 import type {
-  BroadcastConfirmationChallenge,
-  BroadcastProductionConfirmation,
   SessionInfo,
   TerminalBroadcastWriteOptions,
 } from "../../ipc/commands";
+import {
+  getProductionChallenge,
+  type BroadcastEnvironmentConfirmation,
+  type BroadcastProductionChallenge,
+} from "../production/productionChallenge";
 
 export interface BroadcastCandidate {
   storeTabId: string;
@@ -195,57 +198,11 @@ export interface BroadcastWriteArgs {
   data: string;
   write: BroadcastWrite;
   prepare?: BroadcastPrepare;
-  productionConfirmation?: BroadcastProductionConfirmation;
+  productionConfirmation?: BroadcastEnvironmentConfirmation;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function isHash(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
-}
-
-export function getBroadcastConfirmationChallenge(cause: unknown): BroadcastConfirmationChallenge | null {
-  if (!isRecord(cause) || cause.code !== "needs_confirm" || !isRecord(cause.detail)) return null;
-  const detail = cause.detail;
-  if (
-    detail.kind !== "broadcast_production_confirmation" ||
-    !isHash(detail.targetSetHash) ||
-    !isHash(detail.inputHash) ||
-    !Array.isArray(detail.productionTargets) ||
-    detail.productionTargets.length === 0
-  ) {
-    return null;
-  }
-  const productionTargets: BroadcastConfirmationChallenge["productionTargets"] = [];
-  for (const value of detail.productionTargets) {
-    if (
-      !isRecord(value) ||
-      typeof value.tabId !== "string" ||
-      typeof value.sessionId !== "string" ||
-      typeof value.sessionName !== "string" ||
-      typeof value.environment !== "string" ||
-      (value.assetId !== undefined && typeof value.assetId !== "string") ||
-      (value.hostname !== undefined && typeof value.hostname !== "string")
-    ) {
-      return null;
-    }
-    productionTargets.push({
-      tabId: value.tabId,
-      sessionId: value.sessionId,
-      sessionName: value.sessionName,
-      environment: value.environment,
-      ...(typeof value.assetId === "string" ? { assetId: value.assetId } : {}),
-      ...(typeof value.hostname === "string" ? { hostname: value.hostname } : {}),
-    });
-  }
-  return {
-    kind: "broadcast_production_confirmation",
-    targetSetHash: detail.targetSetHash,
-    inputHash: detail.inputHash,
-    productionTargets,
-  };
+export function getBroadcastConfirmationChallenge(cause: unknown): BroadcastProductionChallenge | null {
+  return getProductionChallenge(cause, "broadcast_production_confirmation");
 }
 
 function skipped(targetId: string, title: string, reason: string): BroadcastTargetResult {
@@ -281,7 +238,7 @@ function broadcastTargetTabIds(
 
 function broadcastWriteOptions(
   targetTabIds: string[],
-  confirmation: BroadcastProductionConfirmation | undefined,
+  confirmation: BroadcastEnvironmentConfirmation | undefined,
 ): TerminalBroadcastWriteOptions {
   return { targetTabIds, ...(confirmation ? { productionConfirmation: confirmation } : {}) };
 }

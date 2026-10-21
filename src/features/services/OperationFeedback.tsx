@@ -1,4 +1,4 @@
-import type { ExecBatchConfirmationChallenge } from "../../ipc/execBatchApi";
+import type { ExecBatchProductionChallenge } from "../production/productionChallenge";
 import { ProductionConfirmationDialog } from "../execbatch/ProductionConfirmationDialog";
 import { IconStop } from "../../ui/icons";
 
@@ -39,10 +39,10 @@ export function OperationProductionDialog({
   onCancel,
 }: {
   pending: {
-    challenge: ExecBatchConfirmationChallenge;
+    challenge: ExecBatchProductionChallenge;
     summary: string;
   } | null;
-  onConfirm: () => void;
+  onConfirm: (environmentNames?: string[]) => void;
   onCancel: () => void;
 }) {
   if (!pending) return null;

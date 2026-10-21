@@ -10,6 +10,7 @@ import {
   click,
   clickButton,
   flush,
+  flushMacrotask,
   flushUntil,
   mount,
   setInputValue,
@@ -121,6 +122,15 @@ async function mountAndLoad(): Promise<void> {
   await flushUntil(() => panel().container.textContent?.includes("nginx.service") ?? false);
 }
 
+// The confirm click starts the async retry; keep an act scope open across a
+// macrotask so its state updates land inside act.
+async function clickAndFlush(element: Element): Promise<void> {
+  await act(async () => {
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushMacrotask();
+  });
+}
+
 describe("ServicesPanel", () => {
   it("loads and filters units while keeping sudo failures visible", async () => {
     await mountAndLoad();
@@ -176,6 +186,41 @@ describe("ServicesPanel", () => {
       panel().container.textContent?.includes("服务操作逐目标结果") === true &&
       panel().container.querySelector<HTMLInputElement>('input[aria-label="批量服务 unit"]')?.disabled === false,
     );
+  });
+
+  it("retries the M15 typed production challenge with the typed environment names", async () => {
+    const targetSetHash = "a".repeat(64);
+    const commandHash = "b".repeat(64);
+    mocks.action.mockRejectedValueOnce({
+      code: "needs_confirm",
+      detail: {
+        kind: "exec_batch_production_confirmation", batchId: "batch-1", targetSetHash, commandHash,
+        requiredEnvironmentNames: ["production"],
+        productionTargets: [{ sessionId: "s1", sessionName: "web-one", environment: "production" }],
+      },
+    }).mockResolvedValueOnce(batch([]));
+    mounted = mount(createElement(ServicesPanel, { targets, sessions }));
+    click(target("s1"));
+    click(target("s2"));
+    clickButton(panel().container, "应用到已选目标");
+    await flushUntil(() => document.body.querySelector('[role="dialog"][aria-label="确认生产环境执行"]') !== null);
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"][aria-label="确认生产环境执行"]')!;
+    const environmentInput = dialog.querySelector<HTMLInputElement>('input[aria-label="输入环境名 web-one"]');
+    if (!environmentInput) throw new Error("typed environment input not found");
+    const confirm = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(
+      (candidate) => candidate.textContent?.trim() === "确认执行（1）",
+    );
+    if (!confirm) throw new Error("confirm button not found");
+    expect(confirm.disabled).toBe(true);
+    setInputValue(environmentInput, "production");
+    expect(confirm.disabled).toBe(false);
+    await clickAndFlush(confirm);
+    await flushUntil(() => mocks.action.mock.calls.length === 2);
+    expect(mocks.action.mock.calls[1][0]).toMatchObject({
+      batchId: "batch-1",
+      productionConfirmation: { confirmed: true, targetSetHash, commandHash, environmentNames: ["production"] },
+    });
   });
 
   it("marks hosts without systemd unsupported and opens journal through the R-1 stream API", async () => {

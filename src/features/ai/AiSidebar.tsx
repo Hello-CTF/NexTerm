@@ -27,6 +27,13 @@ import { GrantPanel } from "./GrantPanel";
 import { CronPanel } from "./CronPanel";
 import { ModelSelector } from "./ModelSelector";
 import { Markdown } from "./Markdown";
+import { ProductionWriteRiskNotice } from "../production/ProductionWarning";
+import { useAssetProductionClassification } from "../production/productionSettings";
+import {
+  evaluateEnvironmentConfirmation,
+  targetKey,
+  type EnvironmentConfirmationChallenge,
+} from "../production/environmentConfirmation";
 import { diffLineText, hasVisibleChange, simpleDiff } from "./diff";
 import {
   answerInput,
@@ -655,6 +662,8 @@ function AiChatTab({
   }, [activeWorkspace, sessionId, tabId, sessions]);
   const hasAiScope = Boolean(sessionId || (activeWorkspace?.kind === "db" && activeWorkspace.connId));
   const permScope = hasAiScope ? aiScope : undefined;
+  const aiScopeAssetId = typeof aiScope.assetId === "string" ? aiScope.assetId : undefined;
+  const aiScopeProduction = useAssetProductionClassification(aiScopeAssetId);
   const activeRef = useRef(active);
   activeRef.current = active;
   const mountedRef = useRef(false);
@@ -665,14 +674,14 @@ function AiChatTab({
   );
   const [busy, setBusyState] = useState(false);
   const busyRef = useRef(false);
-  const setBusy = (v: boolean) => {
+  const setBusy = useCallback((v: boolean) => {
     const run = activeRunRef.current;
     const cancellationPending = run !== null && run.cancellation !== "idle" && !run.settled;
     const next = !v && cancellationPending ? true : v;
     busyRef.current = next;
     if (mountedRef.current) setBusyState(next);
     setAiTabBusy(tabKey, next);
-  };
+  }, [tabKey]);
   const bindings = useKeybindings();
   const reclaimKeyLabel = formatBinding(bindings.reclaimTakeover);
   const streamRef = useRef<ConversationStream | null>(null);
@@ -699,10 +708,10 @@ function AiChatTab({
   const activeRunRef = useRef<AiRunSlot | null>(null);
   const [activeRun, setActiveRunState] = useState<AiRunSlot | null>(null);
   const activeGeneration = activeRun?.generation ?? null;
-  const setActiveRun = (run: AiRunSlot) => {
+  const setActiveRun = useCallback((run: AiRunSlot) => {
     activeRunRef.current = run;
     if (mountedRef.current) setActiveRunState(run);
-  };
+  }, []);
   const stopRef = useRef<(closeTab: boolean) => Promise<boolean>>(() => Promise.resolve(false));
   const runControl = useCallback(() => stopRef.current(true), []);
   const catchupChains = useRef(new Map<number, Promise<{ applied: number; failed: boolean }>>());
@@ -732,16 +741,19 @@ function AiChatTab({
     stream.beginRun(run.generation, kind);
     return run;
   };
-  const disposeRestoredChannel = () => {
+  const disposeRestoredChannel = useCallback(() => {
     const restored = restoredChannelRef.current;
     if (!restored) return;
     restoredChannelRef.current = null;
     if (restored.expiryTimer !== null) clearTimeout(restored.expiryTimer);
     restored.offReopen();
     disposeChannel(restored.channel);
-  };
+  }, []);
   useEffect(() => {
     mountedRef.current = true;
+    const catchupChainsMap = catchupChains.current;
+    const requestSnapshots = requestSnapshotsRef.current;
+    const cancelWaiters = cancelWaitersRef.current;
     return () => {
       mountedRef.current = false;
       restoreGenerationRef.current += 1;
@@ -756,31 +768,31 @@ function AiChatTab({
         clearTimeout(resyncTimerRef.current.timer);
         resyncTimerRef.current = null;
       }
-      catchupChains.current.clear();
-      requestSnapshotsRef.current.clear();
-      for (const waiter of cancelWaitersRef.current) {
+      catchupChainsMap.clear();
+      requestSnapshots.clear();
+      for (const waiter of cancelWaiters) {
         clearTimeout(waiter.timer);
         waiter.resolve(false);
       }
-      cancelWaitersRef.current.clear();
+      cancelWaiters.clear();
       cancelOperationRef.current = null;
       queueMicrotask(() => {
         if (!mountedRef.current) stream.dispose();
       });
     };
-  }, [stream]);
-  const clearResyncTimer = (generation?: number) => {
+  }, [stream, disposeRestoredChannel]);
+  const clearResyncTimer = useCallback((generation?: number) => {
     const pending = resyncTimerRef.current;
     if (!pending) return;
     if (generation !== undefined && pending.generation !== generation) return;
     clearTimeout(pending.timer);
     resyncTimerRef.current = null;
-  };
-  const clearResyncState = (generation: number) => {
+  }, []);
+  const clearResyncState = useCallback((generation: number) => {
     clearResyncTimer(generation);
     setSyncNotice((prev) => (prev && prev.generation === generation ? null : prev));
-  };
-  const markSyncing = (generation: number) => {
+  }, [clearResyncTimer]);
+  const markSyncing = useCallback((generation: number) => {
     const current = activeRunRef.current;
     if (!isCurrentAiRun(current, generation)) return;
     if (syncTimerRef.current !== null) {
@@ -788,8 +800,8 @@ function AiChatTab({
       syncTimerRef.current = null;
     }
     setSyncNotice({ generation, phase: "syncing", count: 0 });
-  };
-  const markSynced = (generation: number, count: number) => {
+  }, []);
+  const markSynced = useCallback((generation: number, count: number) => {
     const current = activeRunRef.current;
     if (!isCurrentAiRun(current, generation)) return;
     setSyncNotice((prev) =>
@@ -799,20 +811,46 @@ function AiChatTab({
     syncTimerRef.current = setTimeout(() => {
       setSyncNotice((prev) => (prev && prev.generation === generation ? null : prev));
     }, AI_SYNC_NOTICE_DISMISS_MS);
-  };
-  const markSyncFailed = (generation: number) => {
+  }, []);
+  const markSyncFailed = useCallback((generation: number) => {
     const current = activeRunRef.current;
     if (!isCurrentAiRun(current, generation) || current.settled) return;
     setSyncNotice((prev) =>
       prev && prev.generation === generation ? { generation, phase: "failed", count: 0 } : prev,
     );
-  };
+  }, []);
   const confirmCard = pendingInteraction(conv, activeGeneration, "confirm");
   const questionCard = pendingInteraction(conv, activeGeneration, "question");
   const confirmCardRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (confirmCard) confirmCardRef.current?.focus({ preventScroll: true });
+    if (confirmCard?.id) confirmCardRef.current?.focus({ preventScroll: true });
   }, [confirmCard?.id]);
+  const productionNames = confirmCard?.requiredEnvironmentNames;
+  // The confirm state is bound to the owning card id and honored only while
+  // that id is the current card: a directly replaced card starts locked in
+  // the same render, never relying on a passive effect for the safety reset.
+  const [productionConfirm, setProductionConfirm] = useState<{
+    cardId: string;
+    canConfirm: boolean;
+    submittedNames: string[];
+  } | null>(null);
+  const handleProductionState = useCallback((canConfirm: boolean, submittedNames: string[]) => {
+    const cardId = confirmCard?.id;
+    if (!cardId) return;
+    setProductionConfirm((current) =>
+      current !== null &&
+      current.cardId === cardId &&
+      current.canConfirm === canConfirm &&
+      current.submittedNames.join("\u0000") === submittedNames.join("\u0000")
+        ? current
+        : { cardId, canConfirm, submittedNames },
+    );
+  }, [confirmCard?.id]);
+  const currentProductionConfirm =
+    productionConfirm !== null && productionConfirm.cardId === confirmCard?.id
+      ? productionConfirm
+      : null;
+  const productionBlocked = productionNames !== undefined && currentProductionConfirm?.canConfirm !== true;
   const hitlWaiting = confirmCard
     ? "等待你确认后继续…"
     : questionCard
@@ -827,15 +865,17 @@ function AiChatTab({
   const [conversationError, setConversationError] = useState<string | null>(null);
   const conversationIdRef = useRef<string | undefined>(undefined);
   const restoreBindingRef = useRef<{ id: string; generation: number } | null>(null);
-  const updateConversationId = (id: string | undefined, title?: string) => {
+  const onConversationChangeRef = useRef(onConversationChange);
+  onConversationChangeRef.current = onConversationChange;
+  const updateConversationId = useCallback((id: string | undefined, title?: string) => {
     if (!isLifecycleActive()) return;
     conversationIdRef.current = id;
     restoreBindingRef.current = id === undefined
       ? null
       : { id, generation: restoreGenerationRef.current };
     setConversationId(id);
-    onConversationChange(id, title);
-  };
+    onConversationChangeRef.current(id, title);
+  }, [isLifecycleActive]);
   const isRestoreActive = useCallback(
     (generation: number, id?: string) =>
       isLifecycleActive() &&
@@ -895,12 +935,14 @@ function AiChatTab({
   const imageInputRef = useRef<HTMLInputElement>(null);
   const follow = useConversationFollow(conv.items);
   const virtual = useVirtualWindow(conv.items.length);
+  const { scrollRef: followScrollRef } = follow;
+  const { scrollRef: virtualScrollRef, revealIndex: virtualRevealIndex, clearReveal: virtualClearReveal } = virtual;
   const setScrollEl = useCallback(
     (el: HTMLElement | null) => {
-      follow.scrollRef(el);
-      virtual.scrollRef(el);
+      followScrollRef(el);
+      virtualScrollRef(el);
     },
-    [follow.scrollRef, virtual.scrollRef],
+    [followScrollRef, virtualScrollRef],
   );
   const [conversationRuns, setConversationRuns] = useState<AiRunDto[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -921,12 +963,12 @@ function AiChatTab({
     const next = searchMatches.length > 0 ? 0 : -1;
     setMatchCursor(next);
     const target = next >= 0 ? searchMatches[next] : undefined;
-    if (target !== undefined) virtual.revealIndex(target);
-    else virtual.clearReveal();
-  }, [searchMatches, virtual.revealIndex, virtual.clearReveal]);
+    if (target !== undefined) virtualRevealIndex(target);
+    else virtualClearReveal();
+  }, [searchMatches, virtualRevealIndex, virtualClearReveal]);
   useEffect(() => {
-    if (!searchOpen) virtual.clearReveal();
-  }, [searchOpen, virtual.clearReveal]);
+    if (!searchOpen) virtualClearReveal();
+  }, [searchOpen, virtualClearReveal]);
 
   const [permDeviceOverride, setPermDeviceOverride] = useState(false);
   const loadPermission = useCallback(async (): Promise<AiPermissionConfig | null> => {
@@ -1041,7 +1083,7 @@ function AiChatTab({
     return `[引用对象]\n${list}\n\n${text}`;
   };
 
-  const replayHitl = async (generation: number, jobId: string) => {
+  const replayHitl = useCallback(async (generation: number, jobId: string) => {
     const canApply = () =>
       isLifecycleActive() && isCurrentAiRun(activeRunRef.current, generation);
     const plan = stream.planHitlReplay(generation);
@@ -1058,7 +1100,7 @@ function AiChatTab({
     } catch {
       if (canApply() && events.length > 0) stream.applyHitlReplay(generation, plan, events, null);
     }
-  };
+  }, [stream, isLifecycleActive]);
 
   const cancelOperationRef = useRef<{
     generation: number;
@@ -1076,7 +1118,7 @@ function AiChatTab({
   const hasCloseWaiter = (generation: number) =>
     [...cancelWaitersRef.current].some((waiter) => waiter.generation === generation && waiter.closeTab);
 
-  const confirmCancellation = (generation: number) => {
+  const confirmCancellation = useCallback((generation: number) => {
     if (cancelOperationRef.current?.generation === generation) cancelOperationRef.current = null;
     for (const waiter of [...cancelWaitersRef.current]) {
       if (waiter.generation !== generation) continue;
@@ -1084,9 +1126,9 @@ function AiChatTab({
       cancelWaitersRef.current.delete(waiter);
       waiter.resolve(true);
     }
-  };
+  }, []);
 
-  const unconfirmCancellation = (generation: number, error?: unknown) => {
+  const unconfirmCancellation = useCallback((generation: number, error?: unknown) => {
     const current = activeRunRef.current;
     if (isCurrentAiRun(current, generation) && current.cancellation !== "idle") {
       setActiveRun(markAiRunCancellationUnconfirmed(current));
@@ -1107,7 +1149,7 @@ function AiChatTab({
           : `停止未确认：${describeError(error)}`,
       );
     }
-  };
+  }, [setActiveRun, pushToast]);
 
   const confirmCancellationFromQuery = async (
     operation: { generation: number; jobId: string | null },
@@ -1219,7 +1261,7 @@ function AiChatTab({
     return promise;
   };
 
-  const settleRestoredRun = (generation: number, confirmed = true) => {
+  const settleRestoredRun = useCallback((generation: number, confirmed = true) => {
     const current = activeRunRef.current;
     if (!confirmed && isCurrentAiRun(current, generation) && current.cancellation !== "idle") return;
     if (isCurrentAiRun(current, generation)) {
@@ -1236,12 +1278,12 @@ function AiChatTab({
       confirmCancellation(generation);
       if (activeRunRef.current?.generation === generation) clearAiTabRun(tabKey);
     }
-  };
+  }, [setActiveRun, setBusy, disposeRestoredChannel, clearResyncState, confirmCancellation, tabKey]);
 
   // maybeOpenAiCreatedTerminal opens a terminal_create foreground tab in the
   // workspace, the same recipe as the background-sessions takeover. It fires
   // only for events of the live run; historical replays never re-open old tabs.
-  const maybeOpenAiCreatedTerminal = (generation: number, ev: Record<string, unknown>, result: ApplyResult) => {
+  const maybeOpenAiCreatedTerminal = useCallback((generation: number, ev: Record<string, unknown>, result: ApplyResult) => {
     const current = activeRunRef.current;
     if (!isLifecycleActive() || !isCurrentAiRun(current, generation) || current.settled) return;
     for (const candidate of [{ ev, accepted: result.accepted }, ...(result.drained ?? [])]) {
@@ -1281,9 +1323,9 @@ function AiChatTab({
         }),
       }));
     }
-  };
+  }, [isLifecycleActive]);
 
-  const replayRunEvents = async (
+  const replayRunEvents = useCallback(async (
     generation: number,
     jobId: string,
   ): Promise<{ applied: number; failed: boolean }> => {
@@ -1304,9 +1346,9 @@ function AiChatTab({
       { shouldContinue: isLifecycleActive },
     );
     return { applied, failed };
-  };
+  }, [stream, isLifecycleActive, maybeOpenAiCreatedTerminal, settleRestoredRun]);
 
-  const catchUpRunEvents = (
+  const catchUpRunEvents = useCallback((
     generation: number,
     jobId: string,
   ): Promise<{ applied: number; failed: boolean }> => {
@@ -1321,9 +1363,9 @@ function AiChatTab({
     };
     void next.then(cleanup, cleanup);
     return next;
-  };
+  }, [replayRunEvents]);
 
-  const resyncRun = (generation: number, jobId: string, attempt = 0) => {
+  const resyncRun = useCallback((generation: number, jobId: string, attempt = 0) => {
     clearResyncTimer(generation);
     markSyncing(generation);
     void catchUpRunEvents(generation, jobId).then((result) => {
@@ -1352,7 +1394,7 @@ function AiChatTab({
       };
     });
     void replayHitl(generation, jobId);
-  };
+  }, [clearResyncTimer, markSyncing, catchUpRunEvents, isLifecycleActive, markSynced, markSyncFailed, setActiveRun, setBusy, replayHitl]);
 
   terminalPollRef.current = async (generation, jobId) => {
     const current = activeRunRef.current;
@@ -1406,7 +1448,7 @@ function AiChatTab({
     void replayRunEvents(restored.generation, jobId);
   };
 
-  const armExpiryWatch = (jobId: string) => {
+  const armExpiryWatch = useCallback((jobId: string) => {
     const restored = restoredChannelRef.current;
     if (!restored || restored.jobId !== jobId) return;
     if (restored.expiryRetries <= 0) {
@@ -1423,9 +1465,9 @@ function AiChatTab({
         if (!settled) armExpiryWatch(jobId);
       });
     }, 3000);
-  };
+  }, [settleRestoredRun, replayRunEvents]);
 
-  const scheduleExpiryWatch = (snapshot: AiHitlSnapshotDto) => {
+  const scheduleExpiryWatch = useCallback((snapshot: AiHitlSnapshotDto) => {
     const deadline = pendingDeadline(snapshot);
     if (deadline === null) return null;
     const delay = Math.min(
@@ -1440,9 +1482,9 @@ function AiChatTab({
         if (!settled) armExpiryWatch(restored.jobId);
       });
     }, delay);
-  };
+  }, [replayRunEvents, armExpiryWatch]);
 
-  const restoreConversationRuns = async (
+  const restoreConversationRuns = useCallback(async (
     id: string,
     restoreGeneration: number,
     preloaded?: AiRunDto[],
@@ -1536,7 +1578,22 @@ function AiChatTab({
     setActiveRun(bindAiRunJob(createAiRun(generation), resumable.run.id));
     setBusy(true);
     void replayHitl(generation, resumable.run.id);
-  };
+  }, [
+    isRestoreActive,
+    stream,
+    disposeRestoredChannel,
+    clearResyncState,
+    resyncRun,
+    maybeOpenAiCreatedTerminal,
+    settleRestoredRun,
+    scheduleExpiryWatch,
+    setActiveRun,
+    setBusy,
+    replayHitl,
+    runControl,
+    pushToast,
+    tabKey,
+  ]);
 
   const restoreConversation = useCallback(
     async (id: string) => {
@@ -1580,7 +1637,7 @@ function AiChatTab({
       if (!isRestoreActive(restoreGeneration, id) || runSequenceRef.current !== startSeq) return;
       void restoreConversationRuns(id, restoreGeneration, runs);
     },
-    [clearMessageHistory, isLifecycleActive, isRestoreActive, resetMessageHistory, stream],
+    [clearMessageHistory, isLifecycleActive, isRestoreActive, resetMessageHistory, restoreConversationRuns, stream, updateConversationId],
   );
 
   // Conversation restore driven by the external binding (persisted board); proactive in-tab switches already synced the ref and do not restore again.
@@ -1883,9 +1940,19 @@ function AiChatTab({
       return;
     }
     if (submittingCardId) return;
+    // A production challenge is only answered with the user's actual typed
+    // environment names, and only with the state bound to this exact card;
+    // anything less never reaches the backend.
+    if (card.requiredEnvironmentNames) {
+      if (currentProductionConfirm === null || !currentProductionConfirm.canConfirm) return;
+    }
     setSubmittingCardId(card.id);
     try {
-      const input = confirmationInput({ jobId: id, callId: card.callId, nonce: card.nonce }, decision);
+      const input = confirmationInput(
+        { jobId: id, callId: card.callId, nonce: card.nonce },
+        decision,
+        card.requiredEnvironmentNames && currentProductionConfirm ? currentProductionConfirm.submittedNames : undefined,
+      );
       const channel = card.jobId === restoredChannelRef.current?.jobId ? restoredChannelRef.current.channel : undefined;
       if (run.kind === "takeover") {
         await aiApi.takeoverConfirm(input);
@@ -1955,16 +2022,17 @@ function AiChatTab({
     if (!aiTabBusyIds.has(tabKey) || !aiTabRunControls.has(tabKey)) {
       aiTabRunControls.set(tabKey, runControl);
     }
+    const cancelWaiters = cancelWaitersRef.current;
     return () => {
       if (aiTabRunControls.get(tabKey) !== runControl) return;
       if (activeRunRef.current && !activeRunRef.current.settled) return;
       setAiTabBusy(tabKey, false);
       clearAiTabRun(tabKey);
-      for (const waiter of cancelWaitersRef.current) {
+      for (const waiter of cancelWaiters) {
         clearTimeout(waiter.timer);
         waiter.resolve(false);
       }
-      cancelWaitersRef.current.clear();
+      cancelWaiters.clear();
       cancelOperationRef.current = null;
     };
   }, [tabKey, runControl]);
@@ -2264,15 +2332,17 @@ function AiChatTab({
   };
   resumeTakeoverRef.current = resumeTakeoverRun;
 
+  const activeRunGeneration = activeRun?.generation;
+  const activeRunKind = activeRun?.kind;
+  const activeRunJobId = activeRun?.jobId;
+  const activeRunSettled = activeRun?.settled;
   useEffect(() => {
-    const run = activeRun;
-    if (!run || run.kind !== "takeover" || !run.jobId || run.settled) return;
-    const jobId = run.jobId;
+    if (activeRunKind !== "takeover" || !activeRunJobId || activeRunSettled) return;
     return registerTakeoverResumeHandler(
-      jobId,
-      () => resumeTakeoverRef.current(run.generation, jobId),
+      activeRunJobId,
+      () => resumeTakeoverRef.current(activeRunGeneration ?? 0, activeRunJobId),
     );
-  }, [activeRun?.generation, activeRun?.kind, activeRun?.jobId, activeRun?.settled]);
+  }, [activeRunGeneration, activeRunKind, activeRunJobId, activeRunSettled]);
 
   useEffect(() => {
     const restored = takeoverState;
@@ -2297,7 +2367,7 @@ function AiChatTab({
     stream.resumeFromNextEvent(generation);
     takeoverPausedRef.current = true;
     setBusy(true);
-  }, [active, runControl, stream, tabId, tabKey, takeoverState]);
+  }, [active, runControl, setActiveRun, setBusy, stream, tabId, tabKey, takeoverState]);
 
   const runTakeover = async () => {
     if (!tabId) {
@@ -2772,20 +2842,27 @@ function AiChatTab({
                 <span className="nx-badge nx-badge-amber">{toolLabel(confirmCard.tool)}</span>
               </div>
               <ConfirmBody card={confirmCard} />
+              {productionNames && (
+                <ProductionEnvironmentChallenge
+                  key={confirmCard.id}
+                  names={productionNames}
+                  onStateChange={handleProductionState}
+                />
+              )}
               <div className="mb-2 text-[10.5px] leading-relaxed text-neutral-500">
                 如需更严格控制，可添加拦截规则；如需减少确认，可选择「本轮允许此类」或调整权限模式。按 Esc 默认拒绝。
               </div>
               <div className="flex flex-wrap gap-1.5">
                 <button
                   className="nx-btn nx-btn-primary nx-btn-xs"
-                  disabled={submittingCardId === confirmCard.id}
+                  disabled={submittingCardId === confirmCard.id || productionBlocked}
                   onClick={() => void confirm("allow")}
                 >
                   允许一次
                 </button>
                 <button
                   className="nx-btn nx-btn-outline nx-btn-xs"
-                  disabled={submittingCardId === confirmCard.id}
+                  disabled={submittingCardId === confirmCard.id || productionBlocked}
                   onClick={() => void confirm("allow_session")}
                 >
                   本轮允许此类
@@ -2795,7 +2872,7 @@ function AiChatTab({
                     <button
                       className="nx-btn nx-btn-outline nx-btn-xs"
                       title={`${permanentScopeText(confirmCard)}；仅覆盖普通需确认操作，高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝；可随时在授权管理中撤销`}
-                      disabled={submittingCardId === confirmCard.id}
+                      disabled={submittingCardId === confirmCard.id || productionBlocked}
                       onClick={() => void confirm("allow_persistent")}
                     >
                       永久允许
@@ -2805,7 +2882,7 @@ function AiChatTab({
                 )}
                 <button
                   className="nx-btn nx-btn-ghost nx-btn-xs"
-                  disabled={submittingCardId === confirmCard.id}
+                  disabled={submittingCardId === confirmCard.id || productionBlocked}
                   onClick={() => void confirm("deny")}
                 >
                   拒绝
@@ -3030,6 +3107,15 @@ function AiChatTab({
           >
             <IconLoader size={10} className="animate-spin text-amber-300/80" />
             <span className="truncate">{statusText(conv.status)}</span>
+          </div>
+        )}
+        {aiScopeProduction?.production && (
+          <div className="mb-1.5">
+            <ProductionWriteRiskNotice
+              environment={aiScopeProduction.environment}
+              production
+              operation="AI"
+            />
           </div>
         )}
         {refs.length > 0 && (
@@ -3653,6 +3739,66 @@ function ConfirmBody({ card }: { card: ConfirmItem }) {
         </pre>
       </details>
     </>
+  );
+}
+
+// R-01 typed environment-name confirmation for a production-classified AI
+// target. Each required name gets one input; the user types the actual
+// environment names themselves — the submitted set is their own input,
+// evaluated by the shared Go-semantics view-model, never echoed from the
+// challenge. The backend re-validates the set at resume.
+function ProductionEnvironmentChallenge({
+  names,
+  onStateChange,
+}: {
+  names: string[];
+  onStateChange: (canConfirm: boolean, submittedNames: string[]) => void;
+}) {
+  const [typedByTarget, setTypedByTarget] = useState<Record<string, string>>({});
+  const challenge: EnvironmentConfirmationChallenge = useMemo(
+    () => ({
+      targetSetHash: "ai-production-challenge",
+      requiredEnvironmentNames: names,
+      productionTargets: names.map((name, index) => ({
+        sessionId: `required-${index}`,
+        sessionName: name,
+        environment: name,
+      })),
+    }),
+    [names],
+  );
+  const state = evaluateEnvironmentConfirmation(challenge, typedByTarget, challenge.targetSetHash);
+  const canConfirm = state.canConfirm;
+  const submittedNames = state.submittedNames;
+  const submittedKey = submittedNames.join("\u0000");
+  useEffect(() => {
+    onStateChange(canConfirm, submittedNames);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canConfirm, submittedKey, onStateChange]);
+  return (
+    <div className="mb-2 rounded border border-amber-900/50 bg-amber-950/10 px-2.5 py-2" role="note">
+      <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-amber-300">
+        <IconAlert size={12} />
+        生产环境写入风险：AI 写入将需要逐次输入实际环境名确认，本会话不会记住授权。
+      </div>
+      <ul className="flex flex-col gap-1.5" aria-label="生产环境名列表">
+        {state.targets.map(({ target, typed, missing, matches }) => (
+          <li key={targetKey(target)} className="flex items-center gap-2 text-[11px]">
+            <span className="nx-badge nx-badge-amber shrink-0">{target.environment}</span>
+            <input
+              className="nx-input font-mono text-xs"
+              aria-label={`输入环境名 ${target.environment}`}
+              autoComplete="off"
+              value={typed}
+              onChange={(event) =>
+                setTypedByTarget((current) => ({ ...current, [targetKey(target)]: event.target.value }))
+              }
+            />
+            {!missing && !matches && <span className="shrink-0 text-red-300">环境名不匹配</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

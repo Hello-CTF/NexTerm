@@ -1,4 +1,4 @@
-import { confirmationNonceOf, interactionIdentityOf, questionFromEvent } from "./aiWire";
+import { confirmationNonceOf, interactionIdentityOf, questionFromEvent, requiredEnvironmentNamesFromEvent } from "./aiWire";
 import type { AiHitlInterruptDto } from "../../ipc/types";
 import type { AiUsage } from "./UsageRing";
 
@@ -73,6 +73,9 @@ export type ChatItem =
       requestId?: string;
       hitlAttempt?: number;
       resolution?: string;
+      // Production challenge: the environment names the confirmation must
+      // type back, present only for production-classified targets.
+      requiredEnvironmentNames?: string[];
     })
   | (ItemBase & {
       role: "question";
@@ -389,6 +392,12 @@ export function appendHitlInterrupt(
     requestId: request.id || undefined,
     hitlAttempt: request.attempt >= 1 ? request.attempt : undefined,
   };
+  // The snapshot interrupt carries the same production challenge contract as
+  // the live event; parse it with the same fail-closed rules so a restored
+  // card never degrades into the legacy flow the backend would reject.
+  const requiredEnvironmentNames = requiredEnvironmentNamesFromEvent({
+    requiredEnvironmentNames: request.requiredEnvironmentNames,
+  });
   if (role === "question") {
     return appendItems({ ...state, seq }, [
       {
@@ -407,6 +416,7 @@ export function appendHitlInterrupt(
       rendered: renderInterruptParameters(request.parameters),
       reason: "",
       preview: null,
+      ...(requiredEnvironmentNames ? { requiredEnvironmentNames } : {}),
     },
   ]);
 }
@@ -663,6 +673,7 @@ export function applyAiEvent(
       const commands = Array.isArray(ev.commands)
         ? ev.commands.filter((command): command is string => typeof command === "string")
         : undefined;
+      const requiredEnvironmentNames = requiredEnvironmentNamesFromEvent(ev);
       return accepted(
         appendItems({ ...state, seq }, [
           {
@@ -679,6 +690,7 @@ export function applyAiEvent(
             risk: typeof ev.risk === "string" ? ev.risk : undefined,
             commands: commands && commands.length > 0 ? commands : undefined,
             rulePattern: typeof ev.rulePattern === "string" ? ev.rulePattern : undefined,
+            ...(requiredEnvironmentNames ? { requiredEnvironmentNames } : {}),
             ...interactionIdentityOf(ev),
           },
         ]),

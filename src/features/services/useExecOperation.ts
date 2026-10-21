@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
   execBatchApi,
-  getExecBatchConfirmationChallenge,
-  type ExecBatchConfirmationChallenge,
   type ProductionConfirmation,
 } from "../../ipc/execBatchApi";
+import { getProductionChallenge, type ExecBatchProductionChallenge } from "../production/productionChallenge";
 import { describeError } from "../../ui/errorText";
 
 export interface OperationRequest {
@@ -22,7 +21,7 @@ export function useExecOperation<Request extends OperationRequest, Result>(
   const [canceling, setCanceling] = useState(false);
   const [production, setProduction] = useState<{
     request: Request;
-    challenge: ExecBatchConfirmationChallenge;
+    challenge: ExecBatchProductionChallenge;
     summary: string;
     onSuccess?: (result: Result) => void;
   } | null>(null);
@@ -53,7 +52,7 @@ export function useExecOperation<Request extends OperationRequest, Result>(
       onSuccess?.(next);
     } catch (cause) {
       if (activeRef.current !== request.batchId) return;
-      const challenge = getExecBatchConfirmationChallenge(cause);
+      const challenge = getProductionChallenge(cause, "exec_batch_production_confirmation");
       if (challenge?.batchId === request.batchId) {
         const unconfirmed = { ...request };
         delete unconfirmed.productionConfirmation;
@@ -70,7 +69,7 @@ export function useExecOperation<Request extends OperationRequest, Result>(
     }
   };
 
-  const confirmProduction = () => {
+  const confirmProduction = (environmentNames?: string[]) => {
     const pending = production;
     if (!pending || activeRef.current) return;
     void execute(
@@ -80,6 +79,7 @@ export function useExecOperation<Request extends OperationRequest, Result>(
           confirmed: true,
           targetSetHash: pending.challenge.targetSetHash,
           commandHash: pending.challenge.commandHash,
+          ...(environmentNames ? { environmentNames } : {}),
         },
       },
       pending.summary,
