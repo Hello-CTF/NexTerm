@@ -679,14 +679,14 @@ func TestProductionTerminalConnectTransportInterleaveDialsHealthy(t *testing.T) 
 
 // The ErrDisconnected sentinel at the transport read maps the same way: an
 // SSH session disconnected between the status check and the read reaches the
-// R-07 gates after the public opt-in, and the session layer's
-// deliberate-disconnect contract then refuses the redial honestly instead of
-// the verdict dying at the identity binding.
-func TestProductionTerminalConnectTransportDisconnectedReachesGate(t *testing.T) {
+// R-07 gates. The deliberate disconnect unmapped the asset's session record,
+// so the shared strict dial layer dials a fresh, healthy session with the
+// refreshed strict-host-key asset and real I/O completes on it.
+func TestProductionTerminalConnectTransportDisconnectedReconnectsHealthy(t *testing.T) {
 	ctx := context.Background()
 	dials := &connectTransportLog{}
 	services, database, _ := composeConnectRuntime(t, ctx, filepath.Join(t.TempDir(), "connect.db"), dials)
-	hostKeys, err := newProductionHostKeyStore(ctx, filepath.Join(t.TempDir(), "known_hosts.json"), database, false)
+	hostKeys, err := newProductionHostKeyStore(ctx, filepath.Join(t.TempDir(), "known_hosts.json"), database, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -730,18 +730,59 @@ func TestProductionTerminalConnectTransportDisconnectedReachesGate(t *testing.T)
 		t.Fatalf("declined connect dialed: %d", got)
 	}
 
-	// With the public opt-in the R-07 gates all pass, and the session layer's
-	// deliberate-disconnect contract refuses the redial of the disconnected
-	// record honestly — the same contract every R-07 surface shares.
+	// With the public opt-in the R-07 gates all pass and the strict dial
+	// layer dials again: the deliberate disconnect already unmapped the
+	// asset's session record, so Manager.Connect establishes a fresh,
+	// healthy session with the refreshed strict-host-key asset.
 	enableAiTerminalConnectOptIn(t, ctx, database)
-	failed := registry.Execute(ctx, "job-2", tools.Scope{}, connectCreateCall(sshAsset.ID), nil)
-	if failed.OK {
-		t.Fatalf("redial of a deliberately disconnected record faked success: %+v", failed)
+	created := registry.Execute(ctx, "job-2", tools.Scope{}, connectCreateCall(sshAsset.ID), nil)
+	if !created.OK {
+		t.Fatalf("redial after public opt-in = %+v", created)
 	}
-	if failed.Panic {
-		t.Fatalf("redial of a deliberately disconnected record panicked: %+v", failed)
+	if got := dials.count(); got != 2 {
+		t.Fatalf("no redial after the deliberate disconnect: dials=%d, want 2", got)
 	}
-	if got := dials.count(); got != 1 {
-		t.Fatalf("session layer redialed a deliberately disconnected record: dials=%d", got)
+	options, ok := dials.asset(1).Options.(map[string]any)
+	if !ok || options["strictHostKey"] != true {
+		t.Fatalf("redial lost the strict-host-key mark: %+v", dials.asset(1).Options)
+	}
+	if created.CreatedTab == nil || created.CreatedTab.SessionID == "" || created.CreatedTab.SessionID == initial.ID {
+		t.Fatalf("created tab not on a fresh session: %+v (initial %s)", created.CreatedTab, initial.ID)
+	}
+	final, err := services.Sessions.TransportFor(ctx, created.CreatedTab.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !final.IsAlive() {
+		t.Fatal("reconnected session's transport is not alive")
+	}
+	result, err := final.Exec(ctx, "echo healthy", base.ExecOptions{})
+	if err != nil || result.Stdout != "ran:echo healthy" {
+		t.Fatalf("Exec on the reconnected session = %+v, %v", result, err)
+	}
+	channel, err := final.(base.PTYTransport).OpenPTY(ctx, base.PTYOptions{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = channel.Close() }()
+	if written, err := channel.Write([]byte("healthy")); err != nil || written != len("healthy") {
+		t.Fatalf("PTY Write on the reconnected session = %d, %v", written, err)
+	}
+	buffer := make([]byte, len("healthy"))
+	read := 0
+	for read < len(buffer) {
+		n, readErr := channel.Read(buffer[read:])
+		if readErr != nil {
+			t.Fatalf("PTY Read on the reconnected session = %v", readErr)
+		}
+		read += n
+	}
+	if string(buffer) != "healthy" {
+		t.Fatalf("PTY Read on the reconnected session = %q", buffer)
+	}
+	// The original dead transport still refuses everything.
+	dead := dials.at(0)
+	if _, err := dead.Exec(ctx, "echo nope", base.ExecOptions{}); !errors.Is(err, base.ErrClosed) {
+		t.Fatalf("dead transport Exec = %v, want ErrClosed", err)
 	}
 }
