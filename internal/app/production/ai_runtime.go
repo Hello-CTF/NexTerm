@@ -166,9 +166,12 @@ func aiRunAssetResolver(services *ProductionServices) func(context.Context, stri
 }
 
 // aiAssetEnvironmentResolver resolves a target asset's environment name from
-// the authoritative asset row, never from client claims. A synthetic or
-// session-only asset has no store environment: it stays unclassified rather
-// than failing the evaluation.
+// the authoritative asset row, never from client claims. A not-found row is
+// tolerated only when the owner's own session evidence proves the asset is a
+// synthetic session-only asset (StoreBacked=false); a deleted or replaced
+// store-backed row, a foreign owner's asset, an unreadable store, or an
+// asset with no session evidence all fail closed with a visible error and
+// stop authorization and recovery.
 func aiAssetEnvironmentResolver(services *ProductionServices) func(context.Context, string) (string, error) {
 	return func(ctx context.Context, assetID string) (string, error) {
 		if assetID == "" {
@@ -178,12 +181,42 @@ func aiAssetEnvironmentResolver(services *ProductionServices) func(context.Conte
 		if err != nil {
 			var appErr *ipc.Error
 			if errors.As(err, &appErr) && appErr.Code == ipc.CodeNotFound {
-				return "", nil
+				synthetic, serr := syntheticSessionAsset(ctx, services, assetID)
+				if serr != nil {
+					return "", serr
+				}
+				if synthetic {
+					return "", nil
+				}
+				return "", err
 			}
 			return "", err
 		}
 		return store.AssetEnvironment(asset), nil
 	}
+}
+
+// syntheticSessionAsset reports whether the asset is a session-only
+// synthetic asset (StoreBacked=false), proven through the owner's own
+// sessions. A store-backed asset whose row is gone, a foreign owner's asset,
+// or an asset with no session evidence cannot be proven synthetic and fails
+// closed.
+func syntheticSessionAsset(ctx context.Context, services *ProductionServices, assetID string) (bool, error) {
+	infos, err := services.Sessions.ListSessionsFor(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, info := range infos {
+		if info.AssetID != assetID {
+			continue
+		}
+		connected, err := services.Sessions.SessionFor(ctx, info.ID)
+		if err != nil {
+			return false, err
+		}
+		return !connected.Asset().StoreBacked, nil
+	}
+	return false, nil
 }
 
 // aiRequiredEnvironmentNames resolves the production environment names a
