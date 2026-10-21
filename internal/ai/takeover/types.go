@@ -27,9 +27,13 @@ var (
 const EnterBanner = "\r\n\x1b[41;37m[AI 正在操作此终端 - 按任意键暂停]\x1b[0m\r\n"
 
 type Dependencies struct {
-	Model                  agent.ModelFactory
-	Checkpoints            adk.CheckPointStore
-	Permission             func(context.Context) (guard.Config, error)
+	Model       agent.ModelFactory
+	Checkpoints adk.CheckPointStore
+	Permission  func(context.Context) (guard.Config, error)
+	// DeviceMode layers the guard mode bound to the real target asset (the
+	// tab's resolved asset identity) over the global config; nil keeps the
+	// plain global mode.
+	DeviceMode             func(context.Context, guard.Config, string) (guard.Config, error)
 	Grants                 *guard.Grants
 	TabAsset               func(context.Context, string) (string, error)
 	Snapshot               func(context.Context, string) (tools.Screen, error)

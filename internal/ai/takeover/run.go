@@ -248,6 +248,15 @@ func (m *Manager) initializeEino(state *runState) error {
 		return err
 	}
 	permission = permission.Normalized()
+	// The guard mode bound to the real target asset outranks the global
+	// mode; an unresolvable binding fails the run closed instead of
+	// silently falling back to the global mode.
+	if m.deps.DeviceMode != nil && state.assetID != "" {
+		permission, err = m.deps.DeviceMode(state.ctx, permission, state.assetID)
+		if err != nil {
+			return err
+		}
+	}
 	chatModel, _, err := m.deps.Model(state.ctx)
 	if err != nil {
 		return err

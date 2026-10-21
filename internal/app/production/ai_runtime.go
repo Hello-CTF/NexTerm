@@ -663,6 +663,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	takeoverDeps := takeover.Dependencies{
 		Model:       aiModelFactory(services.Profiles),
 		Permission:  guardManager.Snapshot,
+		DeviceMode:  guardManager.WithDeviceMode,
 		Grants:      grantsManager,
 		Checkpoints: agent.NewStoreCheckpoints(services.Store),
 		Audit:       toolsDeps.Audit,
