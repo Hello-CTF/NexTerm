@@ -70,16 +70,21 @@ type forwardRecoverySettings struct {
 	Enabled bool `json:"enabled"`
 }
 
+// load reads the persisted switch; any read or decode failure — including a
+// type error after a partially decoded field — fails closed to the zero
+// (disabled) value.
 func (s *forwardRecoverySettingsStore) load() forwardRecoverySettings {
-	var settings forwardRecoverySettings
 	if s == nil || s.path == "" {
-		return settings
+		return forwardRecoverySettings{}
 	}
 	data, err := os.ReadFile(s.path)
 	if err != nil {
-		return settings
+		return forwardRecoverySettings{}
 	}
-	_ = json.Unmarshal(data, &settings)
+	var settings forwardRecoverySettings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return forwardRecoverySettings{}
+	}
 	return settings
 }
 

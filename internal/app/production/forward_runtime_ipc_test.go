@@ -73,6 +73,28 @@ func TestForwardRecoverySettingsDefaultOffPersistenceAndCorruptFailClosed(t *tes
 	}
 }
 
+func TestForwardRecoverySettingsPartialDecodeFailsClosed(t *testing.T) {
+	fixture, dispatcher := newForwardIPCFixture(t, startEchoListener(t))
+	fixture.saveAutoStartRule(t, fixture.asset.ID, true)
+	// A type error after a successfully decoded field must not keep the
+	// partially decoded value: any decode failure fails closed to disabled.
+	if err := os.WriteFile(fixture.runtime.recoverySettings.path, []byte(`{"enabled":true,"enabled":"bad"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := recoverySettingsGet(t, dispatcher, fixture.ctx); got.Enabled {
+		t.Fatalf("partially decoded recovery settings = %+v, want disabled", got)
+	}
+	response := recoverNow(t, dispatcher, fixture.ctx)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.Code("conflict") {
+		t.Fatalf("recover_now with corrupt settings = %+v", response)
+	}
+	sessions, err := fixture.manager.ListSessionsFor(fixture.ctx)
+	if err != nil || len(sessions) != 0 {
+		t.Fatalf("corrupt-settings recover_now dialed: %d, %v", len(sessions), err)
+	}
+}
+
 func TestForwardRuleSetAutoStartOwnerScoped(t *testing.T) {
 	fixture, dispatcher := newForwardIPCFixture(t, startEchoListener(t))
 	rule := fixture.saveAutoStartRule(t, fixture.asset.ID, false)
