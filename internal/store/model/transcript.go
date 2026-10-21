@@ -32,6 +32,40 @@ type TranscriptChunkRow struct {
 
 func (TranscriptChunkRow) TableName() string { return "transcript_chunk" }
 
+// TranscriptChunkTS is the per-block timestamp index of a transcript's
+// stored chunks: one row per stored block carrying the block's true
+// maximum chunk timestamp. The distant seek prunes by this index — a block
+// whose maximum timestamp is below the target provably holds no qualifying
+// chunk under any timestamp order — so seeks stay bounded and correct for
+// both ordered and out-of-order data, without narrowing what may be
+// written. Rows are maintained by every chunk write path and backfilled
+// for pre-index transcripts in resumable batches.
+type TranscriptChunkTS struct {
+	TranscriptID string        `gorm:"column:transcript_id;primaryKey;index:idx_transcript_chunk_ts_max,priority:1" json:"transcriptId"`
+	BlockSeq     int64         `gorm:"column:block_seq;primaryKey;index:idx_transcript_chunk_ts_max,priority:3" json:"blockSeq"`
+	MaxTS        int64         `gorm:"column:max_ts;not null;index:idx_transcript_chunk_ts_max,priority:2" json:"maxTs"`
+	OwnerID      string        `gorm:"size:191;column:owner_id;not null;default:'';index:idx_transcript_chunk_ts_owner" json:"owner_id"`
+	Transcript   TranscriptRow `gorm:"foreignKey:TranscriptID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
+}
+
+func (TranscriptChunkTS) TableName() string { return "transcript_chunk_ts" }
+
+// TranscriptTSIndex tracks a transcript's timestamp-index completeness.
+// Complete reports every stored block has an index row, so the seek can
+// trust the index alone; until then the seek eliminates candidates from
+// the indexed prefix and scans the remaining suffix soundly while the
+// backfill advances in bounded batches.
+type TranscriptTSIndex struct {
+	TranscriptID string        `gorm:"column:transcript_id;primaryKey" json:"transcriptId"`
+	IndexedThrough int64       `gorm:"column:indexed_through;not null;default:0" json:"indexedThrough"`
+	Complete     bool          `gorm:"column:complete;not null;default:0" json:"complete"`
+	UpdatedAt    int64         `gorm:"column:updated_at;not null" json:"updatedAt"`
+	OwnerID      string        `gorm:"size:191;column:owner_id;not null;default:'';index:idx_transcript_ts_index_owner" json:"owner_id"`
+	Transcript   TranscriptRow `gorm:"foreignKey:TranscriptID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
+}
+
+func (TranscriptTSIndex) TableName() string { return "transcript_ts_index" }
+
 type DurableTranscriptOffset struct {
 	DurableID string `gorm:"column:durable_id;primaryKey" json:"durableId"`
 	Offset    int64  `gorm:"column:offset;not null" json:"offset"`

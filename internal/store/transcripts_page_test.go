@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"math/bits"
 	"math/rand"
-	"sort"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -337,124 +335,154 @@ func TestTranscriptPageRandomizedParity(t *testing.T) {
 	}
 }
 
-// The full-scan fallback is disorder-tolerant: it finds the first chunk
-// with TS >= at under ANY timestamp order and resolves duplicate groups
-// spanning block boundaries to the first matching chunk by seq.
-func TestSeekFirstChunkAtLeastBounded(t *testing.T) {
-	cases := []struct {
-		name  string
-		count int
-		tsAt  func(index int) int64
-		at    int64
-	}{
-		{"uniform plateau", 4096, func(int) int64 { return 100 }, 100},
-		{"strictly increasing", 4096, func(index int) int64 { return int64(index) }, 2048},
-		{"late step", 4096, func(index int) int64 { return int64(index / 4095) }, 1},
-		{"all before", 1024, func(index int) int64 { return int64(index) }, 5000},
-		{"single chunk hit", 1, func(int) int64 { return 10 }, 10},
-		{"out of order early spike", 512, func(index int) int64 {
-			if index == 3 {
-				return 9999
-			}
-			return int64(index)
-		}, 5000},
-		{"out of order late dip", 512, func(index int) int64 {
-			if index >= 256 {
-				return 1
-			}
-			return int64(index)
-		}, 100},
+// The per-block timestamp computation mirrors the encoder's block grouping
+// exactly: every computed row matches the decoded block's true maximum
+// timestamp, including across the item and byte boundaries.
+func TestTranscriptBlockMaxTimestamps(t *testing.T) {
+	chunks := make([]TranscriptChunkRow, 0, 600)
+	for seq := 0; seq < 600; seq++ {
+		ts := int64(1000 + seq)
+		if seq == 300 {
+			ts = 9999 // out-of-order spike: the block max is not the last chunk's TS
+		}
+		chunks = append(chunks, TranscriptChunkRow{Seq: int64(seq), TabID: "tab-a", TS: ts, Data: []byte("x")})
 	}
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			blocks := make([]transcriptDecodedBlock, 0, (testCase.count+255)/256)
-			for start := 0; start < testCase.count; start += 256 {
-				end := min(start+256, testCase.count)
-				block := make(transcriptDecodedBlock, 0, end-start)
-				for index := start; index < end; index++ {
-					block = append(block, TranscriptChunkRow{Seq: int64(index), TS: testCase.tsAt(index)})
-				}
-				blocks = append(blocks, block)
+	rows := transcriptBlockMaxTimestamps(chunks)
+	blocks, err := encodeTranscriptChunks(chunks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != len(blocks) {
+		t.Fatalf("index rows = %d, want one per stored block (%d)", len(rows), len(blocks))
+	}
+	for index, block := range blocks {
+		decoded, err := decodeTranscriptBlock(block)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := decoded[0].TS
+		for _, chunk := range decoded[1:] {
+			if chunk.TS > want {
+				want = chunk.TS
 			}
-			decoded := 0
-			next := func() (transcriptDecodedBlock, error) {
-				if decoded >= len(blocks) {
-					return nil, nil
-				}
-				block := blocks[decoded]
-				decoded++
-				return block, nil
-			}
-			got, found, err := seekFirstChunkAtLeast(next, testCase.at)
-			if err != nil {
-				t.Fatalf("seek: %v", err)
-			}
-			want, wantFound := int64(0), false
-			for index := 0; index < testCase.count; index++ {
-				if testCase.tsAt(index) >= testCase.at {
-					want, wantFound = int64(index), true
-					break
-				}
-			}
-			if found != wantFound || got != want {
-				t.Fatalf("seek = (%d,%v), want (%d,%v)", got, found, want, wantFound)
-			}
-			if decoded > len(blocks) {
-				t.Fatalf("seek decoded %d blocks, want <= %d", decoded, len(blocks))
-			}
-		})
+		}
+		if rows[index].blockSeq != block.Seq || rows[index].maxTS != want {
+			t.Fatalf("row %d = %+v, want block seq %d with true max TS %d", index, rows[index], block.Seq, want)
+		}
 	}
 }
 
-// The bounded index is sound under the order invariant: the binary search
-// over the block seq keyspace finds the first block whose maximum timestamp
-// reaches the target with a logarithmic probe count, matching the naive
-// linear scan on every shape.
-func TestSeekFirstBlockAtLeastBounded(t *testing.T) {
-	cases := []struct {
-		name  string
-		count int
-		tsAt  func(index int) int64
-		at    int64
-	}{
-		{"uniform plateau", 4096, func(int) int64 { return 100 }, 100},
-		{"strictly increasing", 4096, func(index int) int64 { return int64(index) }, 2048},
-		{"late step", 4096, func(index int) int64 { return int64(index / 4095) }, 1},
-		{"all before", 1024, func(index int) int64 { return int64(index) }, 5000},
-		{"single block hit", 1, func(int) int64 { return 10 }, 10},
+// A stored block whose timestamp metadata does not match its last chunk is
+// corrupt: verified decoding fails explicitly instead of trusting the row
+// for time-indexed reads.
+func TestDecodeTranscriptBlockVerifiedRejectsTimestampMismatch(t *testing.T) {
+	blocks, err := encodeTranscriptChunks([]TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-a", TS: 1000, Data: []byte("a")},
+		{Seq: 1, TabID: "tab-a", TS: 1001, Data: []byte("b")},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			blockSeqs := make([]int64, testCase.count)
-			blockTS := make([]int64, testCase.count)
-			for index := 0; index < testCase.count; index++ {
-				blockSeqs[index] = int64(index*256 + 255)
-				blockTS[index] = testCase.tsAt(index)
-			}
-			probes := 0
-			probe := func(seq int64) (int64, int64, bool) {
-				probes++
-				index := sort.Search(len(blockSeqs), func(index int) bool { return blockSeqs[index] >= seq })
-				if index >= testCase.count {
-					return 0, 0, false
-				}
-				return blockSeqs[index], blockTS[index], true
-			}
-			got, found := seekFirstBlockAtLeast(probe, blockSeqs[0], blockSeqs[len(blockSeqs)-1], testCase.at)
-			want, wantFound := int64(0), false
-			for index, ts := range blockTS {
-				if ts >= testCase.at {
-					want, wantFound = blockSeqs[index], true
-					break
-				}
-			}
-			if found != wantFound || got != want {
-				t.Fatalf("seek = (%d,%v), want (%d,%v)", got, found, want, wantFound)
-			}
-			if budget := 2*bits.Len64(uint64(testCase.count)) + 16; probes > budget {
-				t.Fatalf("seek used %d probes, want <= %d", probes, budget)
-			}
-		})
+	if _, err := decodeTranscriptBlockVerified(blocks[0]); err != nil {
+		t.Fatalf("verified decode of a healthy block = %v", err)
+	}
+	corrupt := blocks[0]
+	corrupt.TS = 9999
+	if _, err := decodeTranscriptBlockVerified(corrupt); err == nil {
+		t.Fatal("verified decode of a timestamp-mismatched block = nil error")
+	}
+}
+
+// Out-of-order timestamps are legitimate input — a clock step or an older
+// writer must never lose data: the append accepts them and the seek answers
+// correctly through the timestamp index, which is independent of TS order.
+func TestTranscriptAppendAcceptsOutOfOrderTimestamps(t *testing.T) {
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	appendPagedFixture(t, db, id, []TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-a", TS: 1000, Data: []byte("a")},
+		{Seq: 1, TabID: "tab-a", TS: 1002, Data: []byte("b")},
+	})
+	// A later batch steps below the newest block's stored TS — accepted.
+	appendPagedFixture(t, db, id, []TranscriptChunkRow{
+		{Seq: 2, TabID: "tab-a", TS: 1001, Data: []byte("c")},
+		{Seq: 3, TabID: "tab-a", TS: 9999, Data: []byte("d")},
+	})
+	all := naiveTranscriptChunks(t, db, id)
+	if len(all) != 4 {
+		t.Fatalf("stored chunks = %d, want all 4 accepted", len(all))
+	}
+	// The seek finds the first qualifying chunk by seq under the disorder.
+	page, err := db.TranscriptSeekToTimePage(context.Background(), id, 1002, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Chunks) == 0 || page.Chunks[0].Seq != 1 {
+		t.Fatalf("seek page = %+v, want it to start at seq 1", page.Chunks)
+	}
+	// The spike at seq 3 is found from its timestamp alone.
+	spike, err := db.TranscriptSeekToTimePage(context.Background(), id, 5000, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spike.Chunks) == 0 || spike.Chunks[0].Seq != 3 {
+		t.Fatalf("spike seek = %+v, want it to start at seq 3", spike.Chunks)
+	}
+}
+
+// Synced and replacement content with out-of-order timestamps is accepted
+// and indexed like any other content.
+func TestTranscriptSyncedAndReplaceAcceptOutOfOrderTimestamps(t *testing.T) {
+	db := testStore(t)
+	ctx := context.Background()
+	row := TranscriptRow{ID: ids.New(), SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000}
+	if err := db.TranscriptStart(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	ended := int64(2000)
+	row.EndedAt = &ended
+	row.ContentOmitted = true
+	if err := db.TranscriptInsertSynced(ctx, row, []TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-a", TS: 1001, Data: []byte("a")},
+		{Seq: 1, TabID: "tab-a", TS: 1000, Data: []byte("b")},
+	}); err != nil {
+		t.Fatalf("synced insert with out-of-order timestamps = %v", err)
+	}
+	if err := db.TranscriptReplaceContent(ctx, row.ID, 2, 2, false, []TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-a", TS: 1002, Data: []byte("c")},
+		{Seq: 1, TabID: "tab-a", TS: 1001, Data: []byte("d")},
+	}); err != nil {
+		t.Fatalf("replace with out-of-order timestamps = %v", err)
+	}
+	page, err := db.TranscriptSeekToTimePage(ctx, row.ID, 1002, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Chunks) == 0 || page.Chunks[0].Seq != 0 {
+		t.Fatalf("seek = %+v, want it to start at seq 0", page.Chunks)
+	}
+}
+
+// The per-block timestamp index is maintained on every append: the distant
+// seek eliminates blocks by their true maximum timestamp and decodes only
+// the candidate, matching the naive full-scan reference under ordered,
+// duplicate, and out-of-order data.
+func TestTranscriptSeekUsesTimestampIndex(t *testing.T) {
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	appendPagedFixture(t, db, id, pagedFixtureChunks(600))
+	// A later append with a disorder is indexed too.
+	appendPagedFixture(t, db, id, []TranscriptChunkRow{
+		{Seq: 600, TabID: "tab-a", TS: 500, Data: []byte("dip")},
+		{Seq: 601, TabID: "tab-a", TS: 9999, Data: []byte("spike")},
+	})
+	all := naiveTranscriptChunks(t, db, id)
+	for _, at := range []int64{0, 500, 999, 1000, 1007, 1050, 1300, 1595, 1596, 5000, 9999, 10000} {
+		page, err := db.TranscriptSeekToTimePage(context.Background(), id, at, 4096)
+		if err != nil {
+			t.Fatalf("seek %d: %v", at, err)
+		}
+		requirePageParity(t, page, naiveSeekToTime(all, at, 4096), all)
 	}
 }
 
@@ -593,82 +621,8 @@ func TestTranscriptSeekToTimeDisorderParity(t *testing.T) {
 	}
 }
 
-// The write invariant: appends reject out-of-order timestamps with badParam
-// and no state change, so every transcript written through this store has
-// non-decreasing chunk timestamps and the bounded binary-search seek is
-// sound for it.
-func TestTranscriptAppendRejectsOutOfOrderTimestamps(t *testing.T) {
-	db := testStore(t)
-	id := startTranscript(t, db, "asset-1", 1000)
-	appendPagedFixture(t, db, id, []TranscriptChunkRow{
-		{Seq: 0, TabID: "tab-a", TS: 1000, Data: []byte("a")},
-		{Seq: 1, TabID: "tab-a", TS: 1002, Data: []byte("b")},
-	})
-	// Within-batch disorder: seq 3's TS steps below seq 2's.
-	err := db.TranscriptAppendChunks(context.Background(), id, []TranscriptChunkRow{
-		{Seq: 2, TabID: "tab-a", TS: 1003, Data: []byte("c")},
-		{Seq: 3, TabID: "tab-a", TS: 1001, Data: []byte("d")},
-	})
-	requireCode(t, err, ipc.CodeBadParam)
-	// Against the newest block: seq 4's TS steps below seq 1's.
-	err = db.TranscriptAppendChunks(context.Background(), id, []TranscriptChunkRow{
-		{Seq: 4, TabID: "tab-a", TS: 1001, Data: []byte("e")},
-	})
-	requireCode(t, err, ipc.CodeBadParam)
-
-	row, err := db.TranscriptGet(context.Background(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if row.Chunks != 2 {
-		t.Fatalf("rejected appends changed the chunk count to %d, want 2", row.Chunks)
-	}
-	all := naiveTranscriptChunks(t, db, id)
-	if len(all) != 2 || all[0].Seq != 0 || all[1].Seq != 1 {
-		t.Fatalf("stored chunks = %+v, want the original two", all)
-	}
-	// The ordered seek still answers after rejected appends.
-	page, err := db.TranscriptSeekToTimePage(context.Background(), id, 1002, 1<<20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	requirePageParity(t, page, naiveSeekToTime(all, 1002, 1<<20), all)
-}
-
-// The sync and replace write paths enforce the same invariant.
-func TestTranscriptSyncedAndReplaceRejectOutOfOrderTimestamps(t *testing.T) {
-	db := testStore(t)
-	ctx := context.Background()
-	row := TranscriptRow{ID: ids.New(), SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000}
-	if err := db.TranscriptStart(ctx, row); err != nil {
-		t.Fatal(err)
-	}
-	ended := int64(2000)
-	row.EndedAt = &ended
-	err := db.TranscriptInsertSynced(ctx, row, []TranscriptChunkRow{
-		{Seq: 0, TabID: "tab-a", TS: 1001, Data: []byte("a")},
-		{Seq: 1, TabID: "tab-a", TS: 1000, Data: []byte("b")},
-	})
-	requireCode(t, err, ipc.CodeBadParam)
-	if err := db.TranscriptInsertSynced(ctx, row, []TranscriptChunkRow{
-		{Seq: 0, TabID: "tab-a", TS: 1000, Data: []byte("a")},
-		{Seq: 1, TabID: "tab-a", TS: 1001, Data: []byte("b")},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	err = db.TranscriptReplaceContent(ctx, row.ID, 2, 2, false, []TranscriptChunkRow{
-		{Seq: 0, TabID: "tab-a", TS: 1002, Data: []byte("c")},
-		{Seq: 1, TabID: "tab-a", TS: 1001, Data: []byte("d")},
-	})
-	requireCode(t, err, ipc.CodeBadParam)
-	all := naiveTranscriptChunks(t, db, row.ID)
-	if len(all) != 2 || all[0].TS != 1000 || all[1].TS != 1001 {
-		t.Fatalf("stored chunks = %+v, want the ordered synced pair", all)
-	}
-}
-
-// Legacy ordered data (written before the invariant) validates on first
-// seek and then takes the bounded binary-search path, with parity against
+// Legacy ordered data (written before the timestamp index) is backfilled on
+// first seek and then takes the bounded index path, with parity against
 // the naive scan.
 func TestTranscriptSeekLegacyOrderedValidation(t *testing.T) {
 	db := testStore(t)
@@ -756,6 +710,49 @@ func TestTranscriptSeekCorruptBlockFailsExplicitly(t *testing.T) {
 	if _, err := db.TranscriptSeekToTimePage(context.Background(), id, 1001, 1<<20); err == nil {
 		t.Fatal("seek over a corrupt block = nil error, want an explicit failure")
 	}
+}
+
+// The straddling-block cap handles blocks whose chunk seqs span far more
+// than one block span: a block holding sparse chunks with huge seq gaps
+// still yields the chunks just below the cursor.
+func TestTranscriptPageBeforeWithSparseSeqStraddle(t *testing.T) {
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	// One stored block holding chunks with 5000-wide seq gaps.
+	appendPagedFixture(t, db, id, []TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-a", TS: 1000, Data: []byte("a")},
+		{Seq: 5000, TabID: "tab-a", TS: 1001, Data: []byte("b")},
+		{Seq: 10000, TabID: "tab-a", TS: 1002, Data: []byte("c")},
+	})
+	all := naiveTranscriptChunks(t, db, id)
+
+	// The page before seq 6000 must include seq 5000 — it lives in the
+	// block whose stored seq (10000) is far above the cursor.
+	page, err := db.TranscriptPageBefore(context.Background(), id, 6000, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Chunks) != 2 || page.Chunks[0].Seq != 0 || page.Chunks[1].Seq != 5000 {
+		t.Fatalf("page = %+v, want seqs 0 and 5000", page.Chunks)
+	}
+	if !page.HasAfter {
+		t.Fatal("page must report the seq-10000 chunk as later history")
+	}
+	requirePageParity(t, page, naiveFirstScreen(all[:2], 1<<20), all)
+	// The page before seq 5001 ends at seq 5000 with the straddler excluded.
+	upper, err := db.TranscriptPageBefore(context.Background(), id, 5001, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(upper.Chunks) != 2 || upper.Chunks[1].Seq != 5000 {
+		t.Fatalf("upper page = %+v, want seqs 0 and 5000", upper.Chunks)
+	}
+	// The first-screen tail read still reaches the newest chunk.
+	tail, err := db.TranscriptFirstScreenPage(context.Background(), id, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requirePageParity(t, tail, naiveFirstScreen(all, 1<<20), all)
 }
 
 // The first-screen tail read is inclusive: a chunk stored at the maximum

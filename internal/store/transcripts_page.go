@@ -65,11 +65,17 @@ func (s *Store) transcriptPageBefore(ctx context.Context, transcriptID string, b
 		Where(chunk.TranscriptID.Eq(transcriptID)).
 		Where(ownerConditions(ctx, chunk.TableName())...)
 	// A block's seq is its last chunk's seq, so the block straddling
-	// beforeSeq can carry chunks just below it; widen the block predicate by
-	// one maximum block span and filter precisely per chunk below. Guard the
-	// addition so a MaxInt64 cursor (the first-screen read) never wraps.
-	if beforeSeq <= math.MaxInt64-transcriptBlockMaxItems {
-		blocks = blocks.Where(chunk.Seq.Lt(beforeSeq + transcriptBlockMaxItems))
+	// beforeSeq can carry chunks just below it — and a block's chunk seqs
+	// can span far more than one block span when chunks are sparse. The
+	// only block at or above beforeSeq that can hold older chunks is the
+	// FIRST one; every later block starts above beforeSeq. Cap the scan at
+	// that straddling block instead of a fixed seq window.
+	straddler, _, straddles, err := s.transcriptBlockAtOrAfter(ctx, transcriptID, beforeSeq)
+	if err != nil {
+		return TranscriptPage{}, err
+	}
+	if straddles {
+		blocks = blocks.Where(chunk.Seq.Lte(straddler))
 	}
 	rows, err := blocks.Order(chunk.Seq.Desc()).Rows()
 	if err != nil {
@@ -176,157 +182,65 @@ func (s *Store) TranscriptPageAfter(ctx context.Context, transcriptID string, af
 // TranscriptSeekToTimePage reads the page starting at the first chunk with
 // TS >= atMS; a time past the last chunk yields the final (tail) page, and
 // duplicate timestamps resolve to the first chunk of the group — the same
-// semantics as the reference model's SeekToTime. For transcripts with
-// non-decreasing chunk timestamps (every transcript written through this
-// store, verified for legacy data) the seek is a bounded binary search
-// over the block seq keyspace; legacy data with out-of-order timestamps
-// falls back to the sound full-scan, so any timestamp order resolves
-// correctly and no transcript size ever fails the seek.
+// semantics as the reference model's SeekToTime. The distant seek is
+// bounded and correct under any timestamp order: the per-block timestamp
+// index eliminates every block whose maximum timestamp is below the target
+// (such a block provably holds no qualifying chunk), and the first block
+// reaching the target is decoded for the exact chunk. While a legacy
+// transcript's index is still backfilling, the unindexed remainder is
+// scanned soundly in seq order; the backfill advances in the background so
+// the remainder disappears instead of rescanning on every seek.
 func (s *Store) TranscriptSeekToTimePage(ctx context.Context, transcriptID string, atMS int64, maxBytes int) (TranscriptPage, error) {
 	if _, err := s.TranscriptGet(ctx, transcriptID); err != nil {
 		return TranscriptPage{}, err
 	}
-	first, last, found, err := s.transcriptBlockBoundaries(ctx, transcriptID)
+	_, _, found, err := s.transcriptBlockBoundaries(ctx, transcriptID)
 	if err != nil {
 		return TranscriptPage{}, err
 	}
 	if !found {
 		return TranscriptPage{Chunks: []TranscriptChunkRow{}}, nil
 	}
-	status, ok := transcriptOrderStatusOf(transcriptID)
-	if !ok {
-		status, err = s.transcriptValidateOrder(ctx, transcriptID)
-		if err != nil {
-			return TranscriptPage{}, err
-		}
-		transcriptOrderMark(transcriptID, status)
-	}
-	var seq int64
-	var foundMatch bool
-	if status == transcriptOrderOrdered {
-		seq, foundMatch, err = s.seekFirstChunkOrdered(ctx, transcriptID, first, last, atMS)
-	} else {
-		seq, foundMatch, err = s.seekFirstChunkAtLeast(ctx, transcriptID, atMS)
-	}
+	complete, err := s.transcriptTSIndexComplete(ctx, transcriptID)
 	if err != nil {
 		return TranscriptPage{}, err
 	}
-	if !foundMatch {
+	if !complete {
+		s.kickTranscriptTSIndexBackfill()
+	}
+	answerSeq, answerFound, err := s.transcriptIndexedBlockAtLeast(ctx, transcriptID, atMS)
+	if err != nil {
+		return TranscriptPage{}, err
+	}
+	if answerFound {
+		answerSeq, answerFound, err = s.firstChunkAtLeastInBlock(ctx, transcriptID, answerSeq, atMS)
+		if err != nil {
+			return TranscriptPage{}, err
+		}
+	}
+	if !complete {
+		suffixSeq, suffixFound, err := s.scanUnindexedChunksAtLeast(ctx, transcriptID, atMS)
+		if err != nil {
+			return TranscriptPage{}, err
+		}
+		if suffixFound && (!answerFound || suffixSeq < answerSeq) {
+			answerSeq, answerFound = suffixSeq, true
+		}
+	}
+	if !answerFound {
 		return s.TranscriptFirstScreenPage(ctx, transcriptID, maxBytes)
 	}
-	return s.TranscriptPageAfter(ctx, transcriptID, seq, maxBytes)
+	return s.TranscriptPageAfter(ctx, transcriptID, answerSeq, maxBytes)
 }
 
-// transcriptValidateOrder decodes every block of the transcript and reports
-// whether chunk timestamps are non-decreasing along the seq order — the
-// invariant the bounded index requires. A corrupt block fails explicitly.
-func (s *Store) transcriptValidateOrder(ctx context.Context, transcriptID string) (transcriptOrderStatus, error) {
-	chunk := query.Use(s.db).TranscriptChunkRow
-	rows, err := chunk.WithContext(ctx).
-		Where(chunk.TranscriptID.Eq(transcriptID)).
-		Where(ownerConditions(ctx, chunk.TableName())...).
-		Order(chunk.Seq).
-		Rows()
-	if err != nil {
-		return transcriptOrderUnknown, dbError(err)
-	}
-	defer rows.Close()
-	var lastTS int64
-	started := false
-	for rows.Next() {
-		var stored TranscriptChunkRow
-		if err := s.db.ScanRows(rows, &stored); err != nil {
-			return transcriptOrderUnknown, dbError(err)
-		}
-		chunks, err := decodeTranscriptBlock(stored)
-		if err != nil {
-			return transcriptOrderUnknown, err
-		}
-		for _, row := range chunks {
-			if started && row.TS < lastTS {
-				return transcriptOrderDisordered, nil
-			}
-			lastTS = row.TS
-			started = true
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return transcriptOrderUnknown, dbError(err)
-	}
-	return transcriptOrderOrdered, nil
-}
-
-// transcriptBlockProbe resolves the first stored block whose seq is >= the
-// given seq, reporting the block's seq and its stored timestamp (the last
-// chunk's TS, which is the block's maximum under the order invariant).
-type transcriptBlockProbe func(seq int64) (blockSeq, blockTS int64, ok bool)
-
-// seekFirstBlockAtLeast returns the seq of the first block whose maximum
-// chunk timestamp is >= at, or false when every block predates at. Under
-// the order invariant block timestamps are non-decreasing along the block
-// seq order, so the search binary-searches the seq keyspace through the
-// probe: each round either halves the remaining keyspace or steps to a
-// real block boundary, keeping the probe count logarithmic in the seq
-// range instead of scanning the block population.
-func seekFirstBlockAtLeast(probe transcriptBlockProbe, firstSeq, lastSeq, at int64) (int64, bool) {
-	lo, hi := firstSeq, lastSeq
-	var candidate int64
-	found := false
-	for lo <= hi {
-		mid := lo + (hi-lo)/2
-		blockSeq, blockTS, ok := probe(mid)
-		if !ok || blockSeq > hi {
-			// No block at or above mid inside the range: everything from
-			// mid upward is empty keyspace.
-			hi = mid - 1
-			continue
-		}
-		if blockTS >= at {
-			candidate, found = blockSeq, true
-			if blockSeq <= lo {
-				break
-			}
-			hi = blockSeq - 1
-			continue
-		}
-		// Monotonicity: blocks at or below blockSeq predate at as well.
-		if blockSeq >= hi {
-			break
-		}
-		lo = blockSeq + 1
-	}
-	return candidate, found
-}
-
-// seekFirstChunkOrdered resolves the first chunk with TS >= at through the
-// bounded index: a binary search over the block seq keyspace locates the
-// first block whose maximum timestamp reaches at, and only that block is
-// decoded. Every probe error fails the seek explicitly.
-func (s *Store) seekFirstChunkOrdered(ctx context.Context, transcriptID string, first, last, atMS int64) (int64, bool, error) {
-	var probeErr error
-	probe := func(seq int64) (int64, int64, bool) {
-		blockSeq, blockTS, ok, err := s.transcriptBlockAtOrAfter(ctx, transcriptID, seq)
-		if err != nil {
-			probeErr = err
-			return 0, 0, false
-		}
-		if !ok {
-			return 0, 0, false
-		}
-		return blockSeq, blockTS, true
-	}
-	blockSeq, found := seekFirstBlockAtLeast(probe, first, last, atMS)
-	if probeErr != nil {
-		return 0, false, probeErr
-	}
-	if !found {
-		return 0, false, nil
-	}
+// firstChunkAtLeastInBlock decodes the candidate block and returns the seq
+// of its first chunk with TS >= atMS.
+func (s *Store) firstChunkAtLeastInBlock(ctx context.Context, transcriptID string, blockSeq, atMS int64) (int64, bool, error) {
 	block, err := s.transcriptBlockBySeq(ctx, transcriptID, blockSeq)
 	if err != nil {
 		return 0, false, err
 	}
-	chunks, err := decodeTranscriptBlock(block)
+	chunks, err := decodeTranscriptBlockVerified(block)
 	if err != nil {
 		return 0, false, err
 	}
@@ -408,68 +322,6 @@ func (s *Store) transcriptBlockBySeq(ctx context.Context, transcriptID string, b
 		return TranscriptChunkRow{}, dbError(err)
 	}
 	return *row, nil
-}
-
-// transcriptDecodedBlock is one decoded stored block (ascending chunks).
-type transcriptDecodedBlock []TranscriptChunkRow
-
-// seekFirstChunkAtLeast returns the seq of the first chunk with TS >= at by
-// decoding blocks in seq order through next (nil block = exhausted); found
-// is false when every chunk predates at. The scan is sound under any
-// timestamp order.
-func seekFirstChunkAtLeast(next func() (transcriptDecodedBlock, error), at int64) (int64, bool, error) {
-	for {
-		block, err := next()
-		if err != nil {
-			return 0, false, err
-		}
-		if block == nil {
-			return 0, false, nil
-		}
-		for _, row := range block {
-			if row.TS >= at {
-				return row.Seq, true, nil
-			}
-		}
-	}
-}
-
-// seekFirstChunkAtLeast scans the transcript's blocks in seq order and
-// returns the first chunk with TS >= atMS — the sound full-scan fallback
-// for out-of-order legacy data. The rows cursor is closed before returning
-// so follow-up page reads never race it.
-func (s *Store) seekFirstChunkAtLeast(ctx context.Context, transcriptID string, atMS int64) (int64, bool, error) {
-	chunk := query.Use(s.db).TranscriptChunkRow
-	rows, err := chunk.WithContext(ctx).
-		Where(chunk.TranscriptID.Eq(transcriptID)).
-		Where(ownerConditions(ctx, chunk.TableName())...).
-		Order(chunk.Seq).
-		Rows()
-	if err != nil {
-		return 0, false, dbError(err)
-	}
-	next := func() (transcriptDecodedBlock, error) {
-		if !rows.Next() {
-			if err := rows.Err(); err != nil {
-				return nil, dbError(err)
-			}
-			return nil, nil
-		}
-		var stored TranscriptChunkRow
-		if err := s.db.ScanRows(rows, &stored); err != nil {
-			return nil, dbError(err)
-		}
-		chunks, err := decodeTranscriptBlock(stored)
-		if err != nil {
-			return nil, err
-		}
-		return transcriptDecodedBlock(chunks), nil
-	}
-	seq, found, err := seekFirstChunkAtLeast(next, atMS)
-	if closeErr := rows.Close(); err == nil && closeErr != nil {
-		return 0, false, dbError(closeErr)
-	}
-	return seq, found, err
 }
 
 // transcriptChunkBeforeExists reports whether any chunk with seq < bound

@@ -225,6 +225,42 @@ func TestTranscriptPageHoleAndOffsetStartDatabase(t *testing.T) {
 	}
 }
 
+// Blocks holding sparse chunks with huge seq gaps still straddle correctly
+// on every backend: the first block at or above the cursor is the only one
+// that can carry older chunks.
+func TestTranscriptPageSparseStraddleDatabase(t *testing.T) {
+	ctx := context.Background()
+	db := dbtest.NewFixture(t).OpenStore(t)
+
+	id := "pg-sparse-straddle-transcript"
+	if err := db.TranscriptStart(ctx, store.TranscriptRow{ID: id, SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000}); err != nil {
+		t.Fatal(err)
+	}
+	appendPagedDatabaseChunks(t, db, id, []store.TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-a", TS: 1000, Data: []byte("a")},
+		{Seq: 5000, TabID: "tab-a", TS: 1001, Data: []byte("b")},
+		{Seq: 10000, TabID: "tab-a", TS: 1002, Data: []byte("c")},
+	})
+
+	page, err := db.TranscriptPageBefore(ctx, id, 6000, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Chunks) != 2 || page.Chunks[0].Seq != 0 || page.Chunks[1].Seq != 5000 {
+		t.Fatalf("page = %+v, want seqs 0 and 5000", page.Chunks)
+	}
+	if !page.HasAfter {
+		t.Fatal("page must report the seq-10000 chunk as later history")
+	}
+	tail, err := db.TranscriptFirstScreenPage(ctx, id, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tail.Chunks) != 3 || tail.LastSeq != 10000 || tail.HasBefore || tail.HasAfter {
+		t.Fatalf("tail page = %+v", tail)
+	}
+}
+
 // A distant seek on a transcript far beyond the old scan budget resolves
 // through the bounded index on every backend: the last block's timestamp is
 // found with no budget error, and a past-end time yields the tail page.
