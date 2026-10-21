@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -512,6 +514,39 @@ func TestEmptyUploadCommitsEmptyFile(t *testing.T) {
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm() != chunked.DefaultUploadMode {
 		t.Fatalf("new target mode = %v, want %v", info.Mode(), chunked.DefaultUploadMode)
+	}
+	assertNoUploadArtifacts(t, remote)
+}
+
+type chmodUnsupportedFS struct {
+	*fslocal.FileSystem
+}
+
+func (chmodUnsupportedFS) Chmod(context.Context, string, fs.FileMode) error {
+	return fmt.Errorf("chmod: %w", base.ErrUnsupported)
+}
+
+// A filesystem without chmod capability (the Windows local FS) still
+// commits: mode preservation is best-effort, while content confirmation and
+// the atomic replace stay mandatory.
+func TestCommitToleratesChmodUnsupported(t *testing.T) {
+	remote := filepath.Join(t.TempDir(), "remote.bin")
+	if err := os.WriteFile(remote, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	upload, err := chunked.New(testUploadID, remote, 10, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := chmodUnsupportedFS{FileSystem: fslocal.New()}
+	writeChunk(t, upload, destination, 0, "abcd")
+	writeChunk(t, upload, destination, 1, "efgh")
+	writeChunk(t, upload, destination, 2, "ij")
+	if _, err := upload.Commit(context.Background(), destination); err != nil {
+		t.Fatalf("commit on a chmod-unsupported filesystem: %v", err)
+	}
+	if data, err := os.ReadFile(remote); err != nil || string(data) != "abcdefghij" {
+		t.Fatalf("committed target = %q, %v", data, err)
 	}
 	assertNoUploadArtifacts(t, remote)
 }

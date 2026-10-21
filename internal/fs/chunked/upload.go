@@ -257,7 +257,10 @@ func (u *Upload) Commit(ctx context.Context, destination base.FileSystem, activi
 		cleanupPath(temporary, destination.Delete)
 		return u.received, err
 	}
-	if err := destination.Chmod(ctx, temporary, mode); err != nil {
+	if err := destination.Chmod(ctx, temporary, mode); err != nil && !errors.Is(err, base.ErrUnsupported) {
+		// Mode preservation is best-effort: a filesystem without chmod
+		// capability (the Windows local FS) still commits verified content
+		// atomically; any other chmod failure stays fatal.
 		cleanupPath(temporary, destination.Delete)
 		return u.received, err
 	}
