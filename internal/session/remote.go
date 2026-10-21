@@ -87,6 +87,7 @@ func (m *Manager) RegisterRemoteSession(ctx context.Context, options RemoteSessi
 		ctx: tabCtx, cancel: tabCancel, responses: newResponseQueue(1), feedGate: make(chan struct{}, 1),
 		writeGate:  make(chan struct{}, 1),
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
+		runtimeEpisode: ids.New(),
 	}
 	tab.feedGate <- struct{}{}
 	// The shell has no transport, so the terminal model's responses to query sequences (e.g. DA) have nowhere to go and are dropped;

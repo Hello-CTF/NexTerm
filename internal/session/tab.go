@@ -108,22 +108,28 @@ type Tab struct {
 	controlled   bool
 	// guestLease/guestLeaseUntil record the preview guest control lease holder and expiry:
 	// after the controller is removed by orphan cleanup on disconnect, the lease is kept until expiry (disconnect grace) and lazily cleared.
-	guestLease       string
-	guestLeaseUntil  time.Time
-	hidden           bool
-	exited           bool
-	closed           bool
-	destroying       bool
-	title            string
-	titleCustom      bool
-	cancelPump       context.CancelFunc
-	cwdTracker       *shellintegr.Tracker
-	cwd              string
-	commandTrack     *shellintegr.CommandTracker
-	commandState     shellintegr.CommandState
-	pendingCmd       *pendingCommand
-	durableFed       int64
-	durableIdentity  base.DurableIdentity
+	guestLease      string
+	guestLeaseUntil time.Time
+	hidden          bool
+	exited          bool
+	closed          bool
+	destroying      bool
+	title           string
+	titleCustom     bool
+	cancelPump      context.CancelFunc
+	cwdTracker      *shellintegr.Tracker
+	cwd             string
+	commandTrack    *shellintegr.CommandTracker
+	commandState    shellintegr.CommandState
+	pendingCmd      *pendingCommand
+	durableFed      int64
+	durableIdentity base.DurableIdentity
+	// runtimeEpisode uniquely identifies the tab's current runtime episode
+	// for roster evidence: minted once at registration for tabs with no
+	// durable daemon identity and never reused, so remove/recreate and
+	// manager restarts cannot alias two episodes. Durable tabs leave it
+	// empty and report the daemon-assigned durableIdentity.Incarnation.
+	runtimeEpisode   string
 	metadataRevision uint64
 	renameAttempts   map[string]*durableRenameAttempt
 	streamEpoch      string
@@ -458,6 +464,9 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
 		durableIdentity: durableIdentity, metadataRevision: metadataRevision,
 		streamEpoch: ids.New(), outputWake: make(chan struct{}),
+	}
+	if options.Durable == nil {
+		tab.runtimeEpisode = ids.New()
 	}
 	if options.Ephemeral {
 		tab.recovery = newRecoveryRing(recoveryRingBytes)
