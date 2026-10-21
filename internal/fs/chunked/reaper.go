@@ -17,8 +17,8 @@ import (
 const stagingMarker = ".nexterm-"
 
 // ParseStagingName reports whether name is a chunked-upload staging file and,
-// when it is, the upload ID and staging kind ("manifest", "commit", or
-// "part-<index>").
+// when it is, the upload ID and staging kind ("params", "manifest", "commit",
+// or "part-<index>").
 func ParseStagingName(name string) (uploadID, kind string, ok bool) {
 	if !strings.HasPrefix(name, ".") {
 		return "", "", false
@@ -33,7 +33,7 @@ func ParseStagingName(name string) (uploadID, kind string, ok bool) {
 		return "", "", false
 	}
 	switch {
-	case kind == "manifest" || kind == "commit":
+	case kind == "manifest" || kind == "commit" || kind == "params":
 		return id, kind, true
 	case strings.HasPrefix(kind, "part-"):
 		if _, err := strconv.ParseInt(kind[len("part-"):], 10, 64); err != nil {

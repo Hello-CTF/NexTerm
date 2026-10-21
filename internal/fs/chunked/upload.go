@@ -79,6 +79,27 @@ func (u *Upload) Total() int64 {
 	return u.total
 }
 
+// ID returns the upload's staging ID.
+func (u *Upload) ID() string {
+	return u.id
+}
+
+// MatchesStaged reports whether a staged group was left behind by an upload
+// with exactly this upload's parameters and intact part sizes. Groups without
+// readable params never match: they predate crash-safe resume or lost a write
+// race, and are left for the reaper rather than risking a mixed adoption.
+func (u *Upload) MatchesStaged(staged StagedUpload) bool {
+	if !staged.HasParams || staged.Total != u.total || staged.ChunkSize != u.chunkSize {
+		return false
+	}
+	for index, size := range staged.Parts {
+		if index < 0 || index >= u.chunkCount || size != u.expectedChunkSize(index)+sha256.Size {
+			return false
+		}
+	}
+	return true
+}
+
 func (u *Upload) WriteChunk(ctx context.Context, destination base.FileSystem, chunk Chunk) (int64, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -96,9 +117,6 @@ func (u *Upload) WriteChunk(ctx context.Context, destination base.FileSystem, ch
 	if !strings.EqualFold(actualSHA256, chunk.SHA256) {
 		return u.received, fmt.Errorf("chunk %d checksum mismatch", chunk.Index)
 	}
-	if err := u.prepare(ctx, destination); err != nil {
-		return u.received, err
-	}
 	path := u.partPath(chunk.Index)
 	_, err := destination.Size(ctx, path)
 	switch {
@@ -113,16 +131,22 @@ func (u *Upload) WriteChunk(ctx context.Context, destination base.FileSystem, ch
 	case !errors.Is(err, fs.ErrNotExist):
 		return u.received, err
 	}
+	if err := u.prepare(ctx, destination); err != nil {
+		return u.received, err
+	}
 	if err := writePart(ctx, destination, path, chunk.Data, digest); err != nil {
 		cleanupPath(path, destination.Delete)
+		u.cleanupParamsAfterFailedFirstChunk(destination)
 		return u.received, err
 	}
 	if err := ctx.Err(); err != nil {
 		cleanupPath(path, destination.Delete)
+		u.cleanupParamsAfterFailedFirstChunk(destination)
 		return u.received, err
 	}
 	if err := appendManifest(ctx, destination, u.manifestPath(), chunk.Index); err != nil {
 		cleanupPath(path, destination.Delete)
+		u.cleanupParamsAfterFailedFirstChunk(destination)
 		return u.received, err
 	}
 	u.received += chunk.Size
@@ -193,6 +217,10 @@ func (u *Upload) Commit(ctx context.Context, destination base.FileSystem, activi
 		}
 	}
 	if err := destination.Delete(ctx, u.manifestPath(), false); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		cleanupPath(temporary, destination.Delete)
+		return u.received, err
+	}
+	if err := destination.Delete(ctx, u.paramsPath(), false); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		cleanupPath(temporary, destination.Delete)
 		return u.received, err
 	}
@@ -365,6 +393,9 @@ func (u *Upload) Abort(ctx context.Context, destination base.FileSystem) error {
 			errs = append(errs, err)
 		}
 	}
+	if err := destination.Delete(ctx, u.paramsPath(), false); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		errs = append(errs, err)
+	}
 	if err := destination.Delete(ctx, u.commitPath(), false); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		errs = append(errs, err)
 	}
@@ -378,8 +409,23 @@ func (u *Upload) prepare(ctx context.Context, destination base.FileSystem) error
 	if err := ensureRemoteDir(ctx, destination, parentDir(u.remotePath)); err != nil {
 		return err
 	}
+	if err := u.writeStagingParams(ctx, destination); err != nil {
+		cleanupPath(u.paramsPath(), destination.Delete)
+		return err
+	}
 	u.prepared = true
 	return nil
+}
+
+// cleanupParamsAfterFailedFirstChunk removes the params file written by
+// prepare when the first staged chunk never landed, so a canceled upload
+// leaves no staging artifacts behind. The next attempt rewrites it.
+func (u *Upload) cleanupParamsAfterFailedFirstChunk(destination base.FileSystem) {
+	if u.received != 0 {
+		return
+	}
+	cleanupPath(u.paramsPath(), destination.Delete)
+	u.prepared = false
 }
 
 func StagingPath(remotePath, uploadID, kind string) string {
@@ -393,6 +439,10 @@ func (u *Upload) partPath(index int64) string {
 
 func (u *Upload) manifestPath() string {
 	return StagingPath(u.remotePath, u.id, "manifest")
+}
+
+func (u *Upload) paramsPath() string {
+	return StagingPath(u.remotePath, u.id, "params")
 }
 
 func (u *Upload) commitPath() string {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -51,6 +52,9 @@ type fsChunkUploadEntry struct {
 	sessionID   string
 	taskID      string
 	attemptID   string
+	remotePath  string
+	total       int64
+	chunkSize   int
 	transferCtx context.Context
 	upload      *chunked.Upload
 	finish      func()
@@ -68,6 +72,13 @@ type fsChunkUploadRegistry struct {
 	closingSessions map[string]int
 	sessionVersions map[string]uint64
 	beforeRegister  func()
+	// beginMu serializes the staging lookup and registration of begin so
+	// concurrent begins for the same destination path cannot adopt or create
+	// duplicate upload IDs.
+	beginMu sync.Mutex
+	// resumeStaging rebuilds a staged upload's progress on the destination;
+	// the composition root may replace it with the forward runtime's method.
+	resumeStaging func(context.Context, base.FileSystem, *chunked.Upload) (chunked.ResumeStatus, error)
 }
 
 func newFSChunkUploadRegistry(loggers ...*slog.Logger) *fsChunkUploadRegistry {
@@ -81,6 +92,9 @@ func newFSChunkUploadRegistry(loggers ...*slog.Logger) *fsChunkUploadRegistry {
 	return &fsChunkUploadRegistry{
 		entries: make(map[fsChunkUploadKey]*fsChunkUploadEntry), logger: logger,
 		closingSessions: make(map[string]int), sessionVersions: make(map[string]uint64),
+		resumeStaging: func(ctx context.Context, destination base.FileSystem, upload *chunked.Upload) (chunked.ResumeStatus, error) {
+			return upload.Resume(ctx, destination)
+		},
 	}
 }
 
@@ -92,11 +106,12 @@ func (r *fsChunkUploadRegistry) begin(ctx context.Context, transfers *fsTransfer
 	if chunkSize == 0 {
 		chunkSize = chunked.DefaultChunkSize
 	}
-	uploadID := ids.New()
-	upload, err := chunked.New(uploadID, input.RemotePath, input.TotalSize, chunkSize)
+	fresh, err := chunked.New(ids.New(), input.RemotePath, input.TotalSize, chunkSize)
 	if err != nil {
 		return fsChunkUploadBeginDTO{}, ipc.BadParam(err)
 	}
+	r.beginMu.Lock()
+	defer r.beginMu.Unlock()
 	r.mu.Lock()
 	version := r.sessionVersions[input.SessionID]
 	closed := r.closed || r.closingSessions[input.SessionID] > 0
@@ -104,7 +119,15 @@ func (r *fsChunkUploadRegistry) begin(ctx context.Context, transfers *fsTransfer
 	if closed {
 		return fsChunkUploadBeginDTO{}, ipc.NewError(ipc.Code("conflict"), "上传会话或注册表正在关闭")
 	}
-	key := fsChunkUploadKey{owner: ipc.OwnerID(ctx), sessionID: input.SessionID, uploadID: uploadID}
+	owner := ipc.OwnerID(ctx)
+	upload, uploadID, done, err := r.resumeOrCreate(ctx, input, fresh, owner, chunkSize)
+	if err != nil {
+		return fsChunkUploadBeginDTO{}, err
+	}
+	if done {
+		return fsChunkUploadBeginDTO{UploadID: uploadID, ChunkSize: chunkSize}, nil
+	}
+	key := fsChunkUploadKey{owner: owner, sessionID: input.SessionID, uploadID: uploadID}
 	var entry *fsChunkUploadEntry
 	transferCtx, _, finish, err := transfers.beginWithExpiry(context.WithoutCancel(ctx), input.TaskID, input.AttemptID, func() {
 		r.expireEntry(key, entry)
@@ -123,7 +146,11 @@ func (r *fsChunkUploadRegistry) begin(ctx context.Context, transfers *fsTransfer
 		}
 		finish()
 	}()
-	entry = &fsChunkUploadEntry{sessionID: input.SessionID, taskID: input.TaskID, attemptID: input.AttemptID, transferCtx: transferCtx, upload: upload}
+	entry = &fsChunkUploadEntry{
+		sessionID: input.SessionID, taskID: input.TaskID, attemptID: input.AttemptID,
+		remotePath: input.RemotePath, total: input.TotalSize, chunkSize: chunkSize,
+		transferCtx: transferCtx, upload: upload,
+	}
 	var finishOnce sync.Once
 	entry.finish = func() {
 		finishOnce.Do(func() {
@@ -154,6 +181,99 @@ func (r *fsChunkUploadRegistry) begin(ctx context.Context, transfers *fsTransfer
 	transfers.leave(transferCtx, input.TaskID, input.AttemptID)
 	registered = true
 	return fsChunkUploadBeginDTO{UploadID: uploadID, ChunkSize: chunkSize}, nil
+}
+
+// resumeOrCreate picks the upload a begin should register. A live entry or
+// crashed destination staging matching owner, session, path, and the exact
+// total/chunkSize wins over a fresh ID, so a retried begin never creates a
+// duplicate staging group. The boolean reports an idempotent hit whose
+// registration already exists.
+func (r *fsChunkUploadRegistry) resumeOrCreate(ctx context.Context, input fsChunkUploadRequest, fresh *chunked.Upload, owner string, chunkSize int) (*chunked.Upload, string, bool, error) {
+	r.mu.Lock()
+	var match *fsChunkUploadEntry
+	var matchKey fsChunkUploadKey
+	live := make(map[string]struct{}, len(r.entries))
+	for key, entry := range r.entries {
+		live[key.uploadID] = struct{}{}
+		if key.owner == owner && key.sessionID == input.SessionID &&
+			entry.remotePath == input.RemotePath && entry.total == input.TotalSize && entry.chunkSize == chunkSize {
+			match, matchKey = entry, key
+		}
+	}
+	r.mu.Unlock()
+	if match != nil {
+		if match.taskID == input.TaskID && match.attemptID == input.AttemptID {
+			return nil, matchKey.uploadID, true, nil
+		}
+		// A new attempt supersedes the registered one: the old entry is
+		// finished and the staged upload is re-registered under the new
+		// attempt below, keeping its ID and staged progress.
+		match.finish()
+		return match.upload, matchKey.uploadID, false, nil
+	}
+	if r.filesystem == nil {
+		return fresh, fresh.ID(), false, nil
+	}
+	remote, _, err := r.filesystem(ctx, input.SessionID)
+	if err != nil || remote == nil {
+		return fresh, fresh.ID(), false, nil
+	}
+	adopted, hit, err := chunked.FindStaged(ctx, remote, input.RemotePath, input.TotalSize, chunkSize)
+	if err != nil {
+		r.logger.Warn("scan chunked upload staging failed", "session", input.SessionID, "error", err)
+		return fresh, fresh.ID(), false, nil
+	}
+	if !hit {
+		return fresh, fresh.ID(), false, nil
+	}
+	if _, active := live[adopted.ID()]; active {
+		// The staged group belongs to a live entry of this registry; a
+		// parallel begin must not hijack it and gets a fresh ID instead.
+		return fresh, fresh.ID(), false, nil
+	}
+	if _, err := r.resumeStaging(ctx, remote, adopted); err != nil {
+		r.logger.Warn("resume staged chunked upload failed", "session", input.SessionID, "upload", adopted.ID(), "error", err)
+		return fresh, fresh.ID(), false, nil
+	}
+	return adopted, adopted.ID(), false, nil
+}
+
+// stagingTargets enumerates the staging directories of the registry's known
+// uploads so the crash staging reaper can sweep them. Directories are grouped
+// per session and resolved through the filesystem resolver; sessions whose
+// filesystem cannot be resolved are skipped with a warning.
+func (r *fsChunkUploadRegistry) stagingTargets(ctx context.Context) ([]chunked.Target, error) {
+	r.mu.Lock()
+	dirsBySession := make(map[string]map[string]struct{})
+	for key, entry := range r.entries {
+		dirs := dirsBySession[key.sessionID]
+		if dirs == nil {
+			dirs = make(map[string]struct{})
+			dirsBySession[key.sessionID] = dirs
+		}
+		dirs[chunked.StagingDir(entry.remotePath)] = struct{}{}
+	}
+	resolver := r.filesystem
+	r.mu.Unlock()
+	if resolver == nil {
+		return nil, nil
+	}
+	var targets []chunked.Target
+	for sessionID, dirs := range dirsBySession {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		remote, _, err := resolver(ctx, sessionID)
+		if err != nil || remote == nil {
+			r.logger.Warn("resolve staging target filesystem failed", "session", sessionID, "error", err)
+			continue
+		}
+		for dir := range dirs {
+			targets = append(targets, chunked.Target{FileSystem: remote, Dir: dir})
+		}
+	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].Dir < targets[j].Dir })
+	return targets, nil
 }
 
 func (r *fsChunkUploadRegistry) lookup(ctx context.Context, input fsChunkUploadRequest) (*fsChunkUploadEntry, error) {
