@@ -163,8 +163,10 @@ type TerminalBrief struct {
 }
 
 // TabDetail carries the per-tab identity and state surfaced by read_screen
-// and context injection: kind, OSC title, shell-reported cwd, and the exact
-// handle reference.
+// and context injection: kind, title, shell-reported cwd, and the exact
+// handle reference. The title is the tab's current title: a user/AI-set
+// custom title takes precedence, and the dynamic OSC 0/2 title surfaces
+// only while no custom title is set.
 type TabDetail struct {
 	TabID     string
 	SessionID string
