@@ -341,7 +341,10 @@ func (e *Engine) applyAIGrantDevice(ctx context.Context, plaintext []byte, repor
 			return false, false
 		}
 	}
-	grants[payload.DeviceID] = guard.DeviceGrant{DeviceID: payload.DeviceID, Kinds: kinds, UpdatedAt: payload.UpdatedAt}
+	// A device grant in the guard store is a long-term authorization, so permanence is bound
+	// explicitly exactly like guard.Grant writes it locally; the payload carries no permanence
+	// bit, keeping old peers and pre-marker legacy records compatible by the guard's own rule.
+	grants[payload.DeviceID] = guard.DeviceGrant{DeviceID: payload.DeviceID, Kinds: kinds, Permanent: true, UpdatedAt: payload.UpdatedAt}
 	if err := e.aiGrantSettingPut(ctx, guard.DeviceGrantsSettingKeyForUser(ctx), grants, max(revision, payload.UpdatedAt)); err != nil {
 		report.warnf("AI 设备授权应用失败: %v", err)
 		return false, false

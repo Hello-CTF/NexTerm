@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/dbtest"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	mysqldriver "github.com/go-sql-driver/mysql"
@@ -95,4 +96,58 @@ func openPreferenceNoBackslashStore(t *testing.T, fixture *dbtest.Fixture) *stor
 		t.Fatalf("session sql_mode = %q, want NO_BACKSLASH_ESCAPES", sqlMode)
 	}
 	return db
+}
+
+// A synced device grant persists the guard's explicit permanence marker on every supported backend:
+// payloads carry no permanence bit, so old peers stay compatible while the durable record lands as a
+// permanent long-term authorization, and a re-grant after a revocation tombstone is permanent again.
+func TestApplyAIGrantDevicePermanenceDatabase(t *testing.T) {
+	fixture := dbtest.NewFixture(t)
+	db := fixture.OpenStore(t)
+	ctx := context.Background()
+	engine := NewEngine(db, nil, nil)
+
+	applyGrant := func(updatedAt int64) {
+		t.Helper()
+		payload, err := marshalObject(aiGrantDeviceObject{ID: "device/dev-1", DeviceID: "dev-1", Kinds: []string{"terminal_write"}, UpdatedAt: updatedAt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if applied, _ := engine.applyAIGrantDevice(ctx, payload, &SyncReport{}); !applied {
+			t.Fatalf("grant payload %d was not applied", updatedAt)
+		}
+	}
+	requirePermanent := func() {
+		t.Helper()
+		value, found, err := db.SettingGet(ctx, guard.DeviceGrantsSettingKey)
+		if err != nil || !found {
+			t.Fatalf("device grants row: found=%v err=%v", found, err)
+		}
+		if !strings.Contains(value, `"permanent":true`) {
+			t.Fatalf("synced grant is not explicitly permanent: %s", value)
+		}
+		grants, err := guard.NewGrants(ctx, db, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		grant, ok, err := grants.Get(ctx, "dev-1")
+		if err != nil || !ok || !grant.Permanent {
+			t.Fatalf("guard loads synced grant as %+v %v err=%v, want permanent", grant, ok, err)
+		}
+	}
+
+	applyGrant(100)
+	requirePermanent()
+	if applied, _ := engine.applyAIGrantTombstone(ctx, "device/dev-1", 200, &SyncReport{}); !applied {
+		t.Fatal("grant tombstone was not applied")
+	}
+	grants, err := guard.NewGrants(ctx, db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := grants.Get(ctx, "dev-1"); err != nil || ok {
+		t.Fatalf("tombstoned grant kept: %v %v", ok, err)
+	}
+	applyGrant(300)
+	requirePermanent()
 }

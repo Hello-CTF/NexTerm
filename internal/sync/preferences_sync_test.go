@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -726,4 +727,133 @@ func TestApplyAIGrantNormalizesEdgeSpaces(t *testing.T) {
 	if _, ok := deviceModeForTest(t, ctx, manager, "dev-1"); ok {
 		t.Fatal("mode tombstone did not delete the normalized entry")
 	}
+}
+
+// A synced device grant is a long-term authorization: the apply path must bind the guard's explicit
+// permanence marker exactly like guard.Grant writes it locally, keeping the durable record permanent
+// across LWW updates, revocations, and re-grants. The payload carries no permanence bit, so old peers
+// stay compatible and legacy records (written before the marker existed) keep their permanent meaning.
+func TestApplyAIGrantDeviceBindsExplicitPermanence(t *testing.T) {
+	device := newTestDevice(t)
+	ctx := context.Background()
+	engine := device.engine
+
+	applyGrant := func(updatedAt int64, kinds ...string) {
+		t.Helper()
+		payload, err := marshalObject(aiGrantDeviceObject{ID: "device/dev-1", DeviceID: "dev-1", Kinds: kinds, UpdatedAt: updatedAt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if applied, _ := engine.applyAIGrantDevice(ctx, payload, &SyncReport{}); !applied {
+			t.Fatalf("grant payload %d was not applied", updatedAt)
+		}
+	}
+	requirePermanent := func(updatedAt int64) {
+		t.Helper()
+		value, revision, found := readPreferenceSetting(t, device, guard.DeviceGrantsSettingKey)
+		if !found || revision != updatedAt {
+			t.Fatalf("device grants row = %q %d %v, want revision %d", value, revision, found, updatedAt)
+		}
+		if !strings.Contains(value, `"permanent":true`) {
+			t.Fatalf("synced grant is not explicitly permanent: %s", value)
+		}
+		grants, err := guard.NewGrants(ctx, device.db, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		grant, ok := grantForTest(t, ctx, grants, "dev-1")
+		if !ok || !grant.Permanent {
+			t.Fatalf("guard loads synced grant as %+v %v, want permanent", grant, ok)
+		}
+	}
+
+	applyGrant(100, "terminal_write")
+	requirePermanent(100)
+	if decision := deviceGrantsEvaluate(t, device, ctx, "dev-1", "send_keys"); decision.Action != guard.ActionAllow {
+		t.Fatalf("synced permanent grant must allow: %+v", decision)
+	}
+
+	// A newer LWW revision keeps the explicit permanence marker.
+	applyGrant(200, "terminal_write", "session_exec")
+	requirePermanent(200)
+
+	// Revocation tombstones the grant; a re-grant resurrects it as explicit-permanent again.
+	if applied, _ := engine.applyAIGrantTombstone(ctx, "device/dev-1", 300, &SyncReport{}); !applied {
+		t.Fatal("grant tombstone was not applied")
+	}
+	if decision := deviceGrantsEvaluate(t, device, ctx, "dev-1", "send_keys"); decision.Action == guard.ActionAllow {
+		t.Fatal("tombstoned grant must not allow")
+	}
+	applyGrant(400, "terminal_write")
+	requirePermanent(400)
+}
+
+// Legacy device grant records written before permanence was explicit (no marker) still converge: the
+// collector exports them like any device grant without mutating the local record, and the receiving
+// device persists the explicit permanence marker. Another account on the same server never receives it.
+func TestEngineAIGrantLegacyRecordConvergesPermanent(t *testing.T) {
+	server := newTestSyncServer(t)
+	server.createUser(t, "alice", "alice-pw-123")
+	server.createUser(t, "bob", "bob-pw-123")
+	deviceA := newTestDevice(t)
+	deviceB := newTestDevice(t)
+	deviceC := newTestDevice(t)
+	userID := serverUserID(t, server, "alice", "alice-pw-123")
+	bobID := serverUserID(t, server, "bob", "bob-pw-123")
+	enableDeviceAIGrantOptIn(t, deviceA, userID)
+	enableDeviceAIGrantOptIn(t, deviceB, userID)
+	enableDeviceAIGrantOptIn(t, deviceC, bobID)
+	ctx := context.Background()
+
+	// A carries a legacy record: no permanence marker, as written before the field existed.
+	legacy := `{"dev-legacy":{"deviceId":"dev-legacy","kinds":["terminal_write"],"updatedAt":100}}`
+	putPreferenceSetting(t, deviceA, guard.DeviceGrantsSettingKey, legacy, 100)
+	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
+	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+
+	// The legacy record on A stays byte-identical and still loads as permanent through the guard.
+	if value, _, found := readPreferenceSetting(t, deviceA, guard.DeviceGrantsSettingKey); !found || value != legacy {
+		t.Fatalf("legacy record mutated on A: %q %v", value, found)
+	}
+	grantsA, err := guard.NewGrants(ctx, deviceA.db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grant, ok := grantForTest(t, ctx, grantsA, "dev-legacy"); !ok || !grant.Permanent {
+		t.Fatalf("legacy grant on A = %+v %v, want permanent", grant, ok)
+	}
+
+	// B persists the grant with the explicit permanence marker, and guard evaluation allows it.
+	value, _, found := readPreferenceSetting(t, deviceB, guard.DeviceGrantsSettingKey)
+	if !found || !strings.Contains(value, `"permanent":true`) {
+		t.Fatalf("grant on B is not explicitly permanent: %q %v", value, found)
+	}
+	grantsB, err := guard.NewGrants(ctx, deviceB.db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grant, ok := grantForTest(t, ctx, grantsB, "dev-legacy"); !ok || !grant.Permanent {
+		t.Fatalf("grant on B = %+v %v, want permanent", grant, ok)
+	}
+	if decision := deviceGrantsEvaluate(t, deviceB, ctx, "dev-legacy", "send_keys"); decision.Action != guard.ActionAllow {
+		t.Fatalf("converged permanent grant must allow on B: %+v", decision)
+	}
+	assertServerObjectKind(t, server, "alice", "alice-pw-123", "device/dev-legacy", KindAIGrant)
+
+	// Bob's device never receives alice's grant.
+	syncDevice(t, deviceC, server, "bob", "bob-pw-123")
+	if _, _, found := readPreferenceSetting(t, deviceC, guard.DeviceGrantsSettingKey); found {
+		t.Fatal("bob received alice's device grants")
+	}
+	grantsC, err := guard.NewGrants(ctx, deviceC.db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := grantForTest(t, ctx, grantsC, "dev-legacy"); ok {
+		t.Fatal("bob's guard sees alice's grant")
+	}
+
+	// The legacy local form (A) and the permanent-bound form (B) collect byte-identical payloads: no flip-flop.
+	requireDeviceQuiescent(t, deviceA, server, "alice", "alice-pw-123")
+	requireDeviceQuiescent(t, deviceB, server, "alice", "alice-pw-123")
 }
