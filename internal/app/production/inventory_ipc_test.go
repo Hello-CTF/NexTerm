@@ -185,6 +185,7 @@ func TestInventoryWatchParseFailureKeepsLastSnapshot(t *testing.T) {
 func TestInventoryServerSyncOwnerIsolationAndPathBoundary(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	service, database := newInventoryTestService(t, false)
 	sshDir := filepath.Join(home, ".ssh")
 	pathA := filepath.Join(sshDir, "config-a")
@@ -334,6 +335,7 @@ func TestInventorySSHWatchTruncatedSnapshotPreservesLastGood(t *testing.T) {
 func TestInventoryServerWatchIncludeEscapeKeepsLastGood(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	service, database := newInventoryTestService(t, false)
 	sshDir := filepath.Join(home, ".ssh")
 	outside := t.TempDir()

@@ -16,6 +16,7 @@ import (
 func TestInventoryServerIncludeSymlinkEscapeRejected(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	service, database := newInventoryTestService(t, false)
 	sshDir := filepath.Join(home, ".ssh")
 	outside := t.TempDir()
@@ -40,6 +41,7 @@ func TestInventoryServerIncludeSymlinkEscapeRejected(t *testing.T) {
 func TestInventoryServerRootSymlinkEscapeRejected(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	service, database := newInventoryTestService(t, false)
 	sshDir := filepath.Join(home, ".ssh")
 	outside := t.TempDir()
