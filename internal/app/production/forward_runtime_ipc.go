@@ -14,9 +14,8 @@ import (
 
 // Typed IPC surface for the R-11/R-12 settings slice: per-rule autoStart
 // toggles, the startup recovery switch, and the opt-in recover-now action.
-// The generated TypeScript contract picks these commands up when the forward
-// contract scope is regenerated; until then the backend and its behavior
-// tests are the source of truth.
+// These commands carry the forward-rule typed scope in the generated
+// TypeScript contract.
 type forwardRuleSettingsDTO struct {
 	ID         string `json:"id"`
 	AssetID    string `json:"assetId"`

@@ -39,8 +39,9 @@ type Rule struct {
 	Status     string `json:"status"`
 	SessionID  string `json:"sessionId,omitempty"`
 	Error      string `json:"error,omitempty"`
-	// AutoStart stays out of the IPC JSON surface until the forward contract
-	// regeneration lands; startup recovery already persists and honors it.
+	// AutoStart stays out of the legacy Rule JSON surface; the typed
+	// forward_rule_settings_list DTO exposes it, and startup recovery
+	// already persists and honors it.
 	AutoStart bool  `json:"-"`
 	CreatedAt int64 `json:"createdAt"`
 	UpdatedAt int64 `json:"updatedAt"`
