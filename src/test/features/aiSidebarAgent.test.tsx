@@ -148,6 +148,8 @@ function rosterListRow() {
     },
     presence: "connected",
     assetId: "asset-1",
+    host: "web-01",
+    cwd: "/srv/app",
   };
 }
 

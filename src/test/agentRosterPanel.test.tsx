@@ -22,6 +22,7 @@ import type { AgentRosterEntry } from "../features/ai/agentTypes";
 function entry(partial: Partial<AgentRosterEntry> = {}): AgentRosterEntry {
   return {
     handle: "build",
+    alias: "build",
     host: "web-01",
     cwd: "/srv/app",
     ownerId: "u-1",
@@ -44,7 +45,7 @@ function makeApi(rows: AgentRosterEntry[]) {
     list: vi.fn(async () => rows),
     open: vi.fn(async () => ({ tabId: "tab-opened" })),
     attach: vi.fn(async () => ({ tabId: "tab-attached" })),
-    rename: vi.fn(async (_handle: string, next: string) => ({ ...entry(), handle: next })),
+    rename: vi.fn(async (handle: string, next: string) => ({ ...entry(), handle, alias: next })),
     release: vi.fn(async () => {}),
     resolveApproval: vi.fn(async () => {}),
   } satisfies AgentRosterApi;
@@ -154,28 +155,47 @@ describe("AgentRosterPanel", () => {
     expect(api.open).not.toHaveBeenCalled();
   });
 
-  it("rename commits a valid new handle through the api", async () => {
+  it("rename commits a valid new alias through the api while the handle stays permanent", async () => {
     const api = await mountPanel([entry()]);
     const row = rowFor("build");
     clickButton(row, "重命名");
-    const input = row.querySelector('input[aria-label="新句柄名称"]') as HTMLInputElement;
-    setInputValue(input, "deploy-2");
+    const input = row.querySelector('input[aria-label="新别名"]') as HTMLInputElement;
+    // The draft starts from the current alias, not the handle pattern.
+    expect(input.value).toBe("build");
+    setInputValue(input, "deploy 构建机");
     clickButton(row, "保存");
     await flush();
-    expect(api.rename).toHaveBeenCalledWith("build", "deploy-2");
-    expect(view!.container.querySelector('[data-handle="deploy-2"]')).not.toBeNull();
+    expect(api.rename).toHaveBeenCalledWith("build", "deploy 构建机");
+    // The handle never changes; the new alias is visible as its own chip.
+    expect(view!.container.querySelector('[data-handle="build"]')).not.toBeNull();
+    expect(rowFor("build").textContent).toContain("别名 deploy 构建机");
   });
 
-  it("rename rejects mention-unsafe handles without calling the api", async () => {
+  it("rename rejects empty and overlong aliases without calling the api", async () => {
     const api = await mountPanel([entry()]);
     const row = rowFor("build");
     clickButton(row, "重命名");
-    const input = row.querySelector('input[aria-label="新句柄名称"]') as HTMLInputElement;
-    setInputValue(input, "bad name@x");
+    const input = row.querySelector('input[aria-label="新别名"]') as HTMLInputElement;
+    setInputValue(input, "   ");
     clickButton(row, "保存");
     await flush();
     expect(api.rename).not.toHaveBeenCalled();
-    expect(row.textContent).toContain("句柄只能包含");
+    expect(row.textContent).toContain("别名不能为空");
+
+    setInputValue(input, "x".repeat(192));
+    clickButton(row, "保存");
+    await flush();
+    expect(api.rename).not.toHaveBeenCalled();
+    expect(row.textContent).toContain("别名不能超过 191 字");
+  });
+
+  it("renders the alias chip only when the alias differs from the handle", async () => {
+    await mountPanel([entry(), entry({ handle: "deploy", alias: "生产部署" })]);
+    expect(rowFor("build").textContent).not.toContain("别名");
+    const renamed = rowFor("deploy");
+    expect(renamed.textContent).toContain("别名 生产部署");
+    // The durable handle@host:cwd identity still renders alongside.
+    expect(renamed.textContent).toContain("deploy@web-01:/srv/app");
   });
 
   it("mention reports the @handle token for the composer", async () => {

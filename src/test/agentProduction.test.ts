@@ -38,7 +38,14 @@ function rosterEntry(partial: Partial<RosterEntry> = {}): RosterEntry {
 }
 
 function rosterRow(partial: Partial<RosterListEntry> = {}): RosterListEntry {
-  return { entry: rosterEntry(), presence: "connected", assetId: "asset-1", ...partial };
+  return {
+    entry: rosterEntry(),
+    presence: "connected",
+    assetId: "asset-1",
+    host: "web-01",
+    cwd: "/srv/app",
+    ...partial,
+  };
 }
 
 function deps(partial: Partial<AgentRosterProductionDeps> = {}): AgentRosterProductionDeps {
@@ -71,7 +78,7 @@ describe("agent production roster adapter", () => {
     expect(typeof historyConformance.listRuns).toBe("function");
   });
 
-  it("lists through ai_roster_list and maps the real DTO with honest unknown host/cwd", async () => {
+  it("lists through ai_roster_list and maps the real DTO including verifiable host/cwd", async () => {
     mocks.call.mockImplementation((cmd: string) => {
       if (cmd === "ai_roster_list") return Promise.resolve([rosterRow()]);
       if (cmd === "production_settings_get") return Promise.resolve({ productionEnvironments: [] });
@@ -83,9 +90,10 @@ describe("agent production roster adapter", () => {
     expect(rows).toHaveLength(1);
     const row = rows[0];
     expect(row.handle).toBe("build");
-    // M131 lands real host/cwd; the adapter never substitutes the asset name.
-    expect(row.host).toBe("");
-    expect(row.cwd).toBe("");
+    expect(row.alias).toBe("build");
+    // The backend's verifiable target evidence passes through verbatim.
+    expect(row.host).toBe("web-01");
+    expect(row.cwd).toBe("/srv/app");
     expect(row.presence).toBe("attached");
     expect(row.isMine).toBe(true);
     expect(row.ownerId).toBe("u-1");
@@ -94,6 +102,18 @@ describe("agent production roster adapter", () => {
     expect(row.tabId).toBe("tab-1");
     expect(row.releasePending).toBe(false);
     expect(row.lastRun).toBeNull();
+  });
+
+  it("keeps unverifiable target evidence honestly unknown", async () => {
+    mocks.call.mockImplementation((cmd: string) => {
+      if (cmd === "ai_roster_list") return Promise.resolve([rosterRow({ host: "", cwd: "" })]);
+      if (cmd === "production_settings_get") return Promise.resolve({ productionEnvironments: [] });
+      return Promise.reject(new Error(`unexpected call: ${cmd}`));
+    });
+    const api = createAgentRosterApi(deps());
+    const rows = await api.list();
+    expect(rows[0].host).toBe("");
+    expect(rows[0].cwd).toBe("");
   });
 
   it("marks production rows from the real target asset environment", async () => {
@@ -230,6 +250,8 @@ describe("agent production roster adapter", () => {
       entry: rosterEntry({ jobId: "job-live" }),
       resolution: "connected",
       assetId: "asset-1",
+      host: "web-01",
+      cwd: "/srv/app",
     };
     mocks.call.mockImplementation((cmd: string) => {
       if (cmd === "ai_roster_list") return Promise.resolve([rosterRow()]);
@@ -261,7 +283,13 @@ describe("agent production roster adapter", () => {
     ] as const) {
       mocks.call.mockImplementation((cmd: string) => {
         if (cmd === "ai_roster_attach") {
-          return Promise.resolve({ entry: rosterEntry(), resolution, assetId: "" } satisfies RosterAttachmentDTO);
+          return Promise.resolve({
+            entry: rosterEntry(),
+            resolution,
+            assetId: "",
+            host: "",
+            cwd: "",
+          } satisfies RosterAttachmentDTO);
         }
         if (cmd === "production_settings_get") return Promise.resolve({ productionEnvironments: [] });
         return Promise.reject(new Error(`unexpected call: ${cmd}`));
@@ -291,10 +319,67 @@ describe("agent production roster adapter", () => {
     });
   });
 
-  it("answers rename as honestly unsupported until the M131 command lands", async () => {
+  it("renames the alias through ai_roster_rename with the exact durable identity", async () => {
+    mocks.call.mockImplementation((cmd: string) => {
+      if (cmd === "ai_roster_list") return Promise.resolve([rosterRow()]);
+      if (cmd === "ai_roster_rename") return Promise.resolve(rosterEntry({ alias: "deploy 构建机" }));
+      if (cmd === "production_settings_get") return Promise.resolve({ productionEnvironments: [] });
+      return Promise.reject(new Error(`unexpected call: ${cmd}`));
+    });
     const api = createAgentRosterApi(deps());
-    await expect(api.rename("build", "deploy")).rejects.toMatchObject({ code: "unsupported" });
-    expect(mocks.call).not.toHaveBeenCalledWith("ai_roster_rename", expect.anything());
+    await api.list();
+    const updated = await api.rename("build", "deploy 构建机");
+    expect(mocks.call).toHaveBeenCalledWith("ai_roster_rename", {
+      handle: "build",
+      alias: "deploy 构建机",
+      createdAt: 1_760_000_000_000,
+      incarnation: "inc-1",
+    });
+    // The permanent handle, incarnation and the cached target evidence
+    // survive; only the alias moved.
+    expect(updated.handle).toBe("build");
+    expect(updated.alias).toBe("deploy 构建机");
+    expect(updated.incarnation).toBe("inc-1");
+    expect(updated.host).toBe("web-01");
+    expect(updated.cwd).toBe("/srv/app");
+  });
+
+  it("propagates a stale-identity rename conflict and rejects unknown handles", async () => {
+    mocks.call.mockImplementation((cmd: string) => {
+      if (cmd === "ai_roster_list") return Promise.resolve([rosterRow()]);
+      if (cmd === "ai_roster_rename") {
+        return Promise.reject({ code: "conflict", message: "roster 精确身份不匹配" });
+      }
+      if (cmd === "production_settings_get") return Promise.resolve({ productionEnvironments: [] });
+      return Promise.reject(new Error(`unexpected call: ${cmd}`));
+    });
+    const api = createAgentRosterApi(deps());
+    await api.list();
+    await expect(api.rename("build", "deploy")).rejects.toMatchObject({ code: "conflict" });
+    await expect(api.rename("ghost", "deploy")).rejects.toMatchObject({ code: "unsupported" });
+  });
+
+  it("keeps the attachment target evidence for later mutations", async () => {
+    const attachment: RosterAttachmentDTO = {
+      entry: rosterEntry({ jobId: "job-live" }),
+      resolution: "connected",
+      assetId: "asset-1",
+      host: "prod.example",
+      cwd: "/var/lib/app",
+    };
+    mocks.call.mockImplementation((cmd: string) => {
+      if (cmd === "ai_roster_list") return Promise.resolve([rosterRow({ host: "", cwd: "" })]);
+      if (cmd === "ai_roster_attach") return Promise.resolve(attachment);
+      if (cmd === "ai_roster_rename") return Promise.resolve(rosterEntry({ alias: "renamed" }));
+      if (cmd === "production_settings_get") return Promise.resolve({ productionEnvironments: [] });
+      return Promise.reject(new Error(`unexpected call: ${cmd}`));
+    });
+    const api = createAgentRosterApi(deps());
+    await api.list();
+    await api.attach("build");
+    const updated = await api.rename("build", "renamed");
+    expect(updated.host).toBe("prod.example");
+    expect(updated.cwd).toBe("/var/lib/app");
   });
 
   it("delegates approval resolution to the production flow", async () => {

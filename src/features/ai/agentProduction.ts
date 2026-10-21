@@ -1,11 +1,10 @@
 // Production wiring between the reviewed agent UI contracts and the real
 // generated IPC surface (ai_roster_*, ai_run_history, ai_run_recovery_summary).
 // Every value crossing the seam is validated instead of cast; what the
-// backend cannot evidence stays unknown instead of being invented. Two
-// reviewed contract capabilities deliberately wait for their backend owners:
-// rename (M131, alias-only owner-scoped command) surfaces an honest
-// unsupported error, and host/cwd stay empty (M131 real target identity)
-// rather than borrowing the asset name as a fake host.
+// backend cannot evidence stays unknown instead of being invented. Rename is
+// the M131 alias-only command under the exact durable identity CAS — the
+// permanent handle never changes — and host/cwd are the backend's verifiable
+// target evidence (store-asset host, OSC 7 directory), empty when unknown.
 
 import { assetApi, call, type AppError } from "../../ipc/commands";
 import type {
@@ -108,10 +107,11 @@ function toRosterEntryView(row: RosterListEntry, ctx: RosterMappingContext): Age
   const environment = row.assetId === "" ? "" : ctx.environmentByAsset.get(row.assetId) ?? "";
   return {
     handle: entry.handle,
-    // Real host/cwd arrive with the M131 roster contract; an asset name is
-    // not a host and is never substituted for one.
-    host: "",
-    cwd: "",
+    alias: entry.alias,
+    // Verifiable target evidence from the backend (store-asset host, OSC 7
+    // cwd); empty stays honestly unknown and is never substituted.
+    host: row.host,
+    cwd: row.cwd,
     ownerId: ctx.identity.ownerId,
     ownerName: ctx.identity.ownerName,
     // The roster IPC surface is owner-isolated: cross-owner rows fail closed
@@ -129,10 +129,13 @@ function toRosterEntryView(row: RosterListEntry, ctx: RosterMappingContext): Age
 }
 
 export function createAgentRosterApi(deps: AgentRosterProductionDeps): AgentRosterApi {
-  // Raw rows behind the latest delivered listing: attach/release need the
-  // exact durable identity (createdAt + incarnation) the reviewed UI contract
-  // deliberately does not carry, and open needs the preassigned tab.
+  // Raw rows behind the latest delivered listing: attach/rename/release need
+  // the exact durable identity (createdAt + incarnation) the reviewed UI
+  // contract deliberately does not carry, and open needs the preassigned tab.
   let rawByHandle = new Map<string, RosterListEntry>();
+  // The latest listing's mapping context lets post-mutation responses be
+  // re-projected with the same owner/environment classification.
+  let lastCtx: RosterMappingContext | null = null;
 
   const rawEntry = (handle: string): RosterListEntry => {
     const row = rawByHandle.get(handle);
@@ -172,6 +175,7 @@ export function createAgentRosterApi(deps: AgentRosterProductionDeps): AgentRost
         return toRosterEntryView(row, ctx);
       });
       rawByHandle = nextRaw;
+      lastCtx = ctx;
       return entries;
     },
 
@@ -189,7 +193,13 @@ export function createAgentRosterApi(deps: AgentRosterProductionDeps): AgentRost
       if (resolution === "connected") {
         const current = rawByHandle.get(handle);
         if (current) {
-          rawByHandle.set(handle, { ...current, entry: attachment.entry, assetId: attachment.assetId });
+          rawByHandle.set(handle, {
+            ...current,
+            entry: attachment.entry,
+            assetId: attachment.assetId,
+            host: attachment.host,
+            cwd: attachment.cwd,
+          });
         }
         if (attachment.entry.tabId === "") {
           throw unsupported(`句柄 ${handle} 已连接但没有可打开的终端标签`);
@@ -212,10 +222,25 @@ export function createAgentRosterApi(deps: AgentRosterProductionDeps): AgentRost
       throw unsupported(`附加句柄 ${handle} 失败：${text}`);
     },
 
-    rename(handle: string, _nextHandle: string): Promise<AgentRosterEntry> {
-      // The backend roster command for rename lands with M131 (alias-only,
-      // handles stay permanent); until then the honest answer is unsupported.
-      return Promise.reject(unsupported(`句柄 ${handle} 重命名待后端契约开放`));
+    // Alias-only rename through the real command: the permanent handle and
+    // incarnation survive, and the exact durable identity (createdAt +
+    // incarnation) guards the CAS so a stale listing conflicts instead of
+    // renaming a replacement row.
+    async rename(handle: string, nextAlias: string): Promise<AgentRosterEntry> {
+      const row = rawEntry(handle);
+      const updated = await call("ai_roster_rename", {
+        handle,
+        alias: nextAlias,
+        createdAt: row.entry.createdAt,
+        incarnation: row.entry.incarnation,
+      });
+      const merged: RosterListEntry = { ...row, entry: updated };
+      rawByHandle.set(handle, merged);
+      const ctx = lastCtx;
+      if (!ctx) {
+        throw unsupported("句柄列表上下文缺失，请刷新后重试");
+      }
+      return toRosterEntryView(merged, ctx);
     },
 
     async release(handle: string): Promise<void> {

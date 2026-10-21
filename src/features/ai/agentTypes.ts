@@ -33,6 +33,9 @@ export interface AgentRunSummary {
 
 export interface AgentRosterEntry {
   handle: string;
+  // The display alias is the only renamable field; the handle itself is
+  // permanent and never changes, so mentions keep resolving durably.
+  alias: string;
   host: string;
   cwd: string;
   ownerId: string;

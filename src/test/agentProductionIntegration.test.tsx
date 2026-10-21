@@ -7,7 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { clickButton, flush, mount, type MountedView } from "./features/reactTestUtils";
+import { clickButton, flush, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   call: vi.fn(),
@@ -187,11 +187,13 @@ describe("production integration: roster panel", () => {
     mocks.call.mockImplementation((cmd: string) => {
       if (cmd === "ai_roster_list") {
         return Promise.resolve([
-          { entry: rosterEntry(), presence: "connected", assetId: "asset-1" },
+          { entry: rosterEntry(), presence: "connected", assetId: "asset-1", host: "web-01", cwd: "/srv/app" },
           {
             entry: rosterEntry({ id: "row-2", handle: "deploy", tabId: "tab-2" }),
             presence: "disconnected",
             assetId: "",
+            host: "",
+            cwd: "",
           },
         ]);
       }
@@ -217,19 +219,55 @@ describe("production integration: roster panel", () => {
     return api;
   }
 
-  it("renders real rows with honest unknown host/cwd and the production badge", async () => {
+  it("renders real rows with the verifiable host/cwd and the production badge", async () => {
     mountRoster();
     await flush();
     const build = view!.container.querySelector('[data-handle="build"]')!;
     const text = build.textContent ?? "";
-    expect(text).toContain("build");
-    // No fabricated target identity: handle@asset-name must never appear.
-    expect(text).not.toContain("build@");
+    // The backend's verifiable target evidence renders as the full identity.
+    expect(text).toContain("build@web-01:/srv/app");
     expect(text).toContain("已附加");
     expect(text).toContain("生产环境");
     const deploy = view!.container.querySelector('[data-handle="deploy"]')!;
+    // Unverifiable target evidence stays honestly unknown: no fabricated
+    // handle@host ever appears.
+    expect(deploy.textContent).toContain("deploy");
+    expect(deploy.textContent).not.toContain("deploy@");
     expect(deploy.textContent).toContain("已断开");
     expect(deploy.textContent).not.toContain("生产环境");
+  });
+
+  it("renames the alias through the real command and shows the alias chip", async () => {
+    mocks.call.mockImplementation((cmd: string) => {
+      if (cmd === "ai_roster_list") {
+        return Promise.resolve([
+          { entry: rosterEntry(), presence: "connected", assetId: "asset-1", host: "web-01", cwd: "/srv/app" },
+        ]);
+      }
+      if (cmd === "ai_roster_rename") return Promise.resolve(rosterEntry({ alias: "生产构建机" }));
+      if (cmd === "production_settings_get") return Promise.resolve({ productionEnvironments: [] });
+      return Promise.reject(new Error(`unexpected call: ${cmd}`));
+    });
+    mountRoster();
+    await flush();
+    const build = view!.container.querySelector('[data-handle="build"]')! as HTMLElement;
+    clickButton(build, "重命名");
+    const input = build.querySelector('input[aria-label="新别名"]') as HTMLInputElement;
+    expect(input.value).toBe("build");
+    setInputValue(input, "生产构建机");
+    clickButton(build, "保存");
+    await flush();
+    expect(mocks.call).toHaveBeenCalledWith("ai_roster_rename", {
+      handle: "build",
+      alias: "生产构建机",
+      createdAt: 1_760_000_111_000,
+      incarnation: "inc-1",
+    });
+    const row = view!.container.querySelector('[data-handle="build"]')!;
+    expect(row.textContent).toContain("别名 生产构建机");
+    // The durable identity still renders, and the mention token stays the handle.
+    expect(row.textContent).toContain("build@web-01:/srv/app");
+    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("别名已更新为 生产构建机"));
   });
 
   it("attaches through the real IPC with the active job and reports the tab", async () => {

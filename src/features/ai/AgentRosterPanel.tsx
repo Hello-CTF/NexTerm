@@ -17,7 +17,6 @@ import {
   autoWriteAllowed,
   formatEvidence,
   handleAtHostCwd,
-  isValidHandleName,
   mentionToken,
   presenceView,
   runStateView,
@@ -32,6 +31,10 @@ const TONE_BADGE: Record<AgentStateTone, string> = {
   muted: "nx-count",
   accent: "nx-badge nx-badge-blue",
 };
+
+// Mirrors the backend alias bound (roster.go): a rename fails at the contract
+// boundary with a visible reason instead of deep in a backend.
+const MAX_ALIAS_RUNES = 191;
 
 // Presences that may be terminally over. They only count as dead when the
 // evidence view confirms them; without evidence the row stays unknown.
@@ -140,18 +143,26 @@ export function AgentRosterPanel({
 
   const startRename = (entry: AgentRosterEntry) => {
     setRenaming(entry.handle);
-    setRenameDraft(entry.handle);
+    setRenameDraft(entry.alias);
     setRenameError(null);
   };
 
+  // Rename edits only the display alias (the real backend contract): the
+  // handle is permanent, so the draft starts from the current alias and the
+  // validation mirrors the backend's alias rules (trimmed non-empty, bounded
+  // runes) instead of the mention-safe handle pattern.
   const commitRename = (entry: AgentRosterEntry) => {
     const next = renameDraft.trim();
-    if (next === entry.handle) {
+    if (next === entry.alias) {
       setRenaming(null);
       return;
     }
-    if (!isValidHandleName(next)) {
-      setRenameError("句柄只能包含字母、数字、下划线和连字符，且不能以符号开头");
+    if (next === "") {
+      setRenameError("别名不能为空");
+      return;
+    }
+    if ([...next].length > MAX_ALIAS_RUNES) {
+      setRenameError(`别名不能超过 ${MAX_ALIAS_RUNES} 字`);
       return;
     }
     void withBusy(entry.handle, async () => {
@@ -164,7 +175,7 @@ export function AgentRosterPanel({
           (prev ?? []).map((row) => (row.handle === entry.handle ? updated : row)),
         );
         setRenaming(null);
-        pushToast("success", `句柄已重命名为 ${updated.handle}`);
+        pushToast("success", `句柄 ${entry.handle} 的别名已更新为 ${updated.alias}`);
       } catch (e) {
         pushToast("error", `重命名失败：${describeError(e)}`);
       }
@@ -272,6 +283,11 @@ export function AgentRosterPanel({
             </div>
 
             <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10.5px]">
+              {entry.alias !== entry.handle && (
+                <span className="nx-count" title={`句柄 ${entry.handle} 永久不变，此处仅显示别名`}>
+                  别名 {entry.alias}
+                </span>
+              )}
               {!entry.isMine && (
                 <span className="nx-badge nx-badge-amber" title="仅所有者可执行重命名和释放">
                   所有者：{entry.ownerName}
@@ -285,35 +301,40 @@ export function AgentRosterPanel({
             </div>
 
             {renaming === entry.handle ? (
-              <div className="mt-1 flex items-center gap-1">
-                <input
-                  className="nx-input min-w-32 flex-1 py-0.5 font-mono text-[11px]"
-                  aria-label="新句柄名称"
-                  value={renameDraft}
-                  disabled={pending}
-                  onChange={(event) => {
-                    setRenameDraft(event.target.value);
-                    setRenameError(null);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") commitRename(entry);
-                    if (event.key === "Escape") setRenaming(null);
-                  }}
-                />
-                <button
-                  className="nx-btn nx-btn-outline nx-btn-xs"
-                  disabled={pending}
-                  onClick={() => commitRename(entry)}
-                >
-                  {pending ? "保存中…" : "保存"}
-                </button>
-                <button
-                  className="nx-btn nx-btn-outline nx-btn-xs"
-                  disabled={pending}
-                  onClick={() => setRenaming(null)}
-                >
-                  取消
-                </button>
+              <div className="mt-1">
+                <div className="flex items-center gap-1">
+                  <input
+                    className="nx-input min-w-32 flex-1 py-0.5 font-mono text-[11px]"
+                    aria-label="新别名"
+                    value={renameDraft}
+                    disabled={pending}
+                    onChange={(event) => {
+                      setRenameDraft(event.target.value);
+                      setRenameError(null);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") commitRename(entry);
+                      if (event.key === "Escape") setRenaming(null);
+                    }}
+                  />
+                  <button
+                    className="nx-btn nx-btn-outline nx-btn-xs"
+                    disabled={pending}
+                    onClick={() => commitRename(entry)}
+                  >
+                    {pending ? "保存中…" : "保存"}
+                  </button>
+                  <button
+                    className="nx-btn nx-btn-outline nx-btn-xs"
+                    disabled={pending}
+                    onClick={() => setRenaming(null)}
+                  >
+                    取消
+                  </button>
+                </div>
+                <div className="mt-0.5 text-[10.5px] text-neutral-500">
+                  仅修改显示别名，句柄 {entry.handle} 永久不变
+                </div>
               </div>
             ) : (
               <div className="mt-1 flex flex-wrap items-center gap-1">
