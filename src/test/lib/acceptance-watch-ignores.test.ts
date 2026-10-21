@@ -1,6 +1,4 @@
-import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { normalizePath } from "vite";
 import { acceptanceWatchIgnored } from "./acceptance-watch-ignores.mjs";
 
 // Matching model for anchored rules: strip the trailing /** then prefix-match (a bare rule matches the exact directory itself).
@@ -11,11 +9,14 @@ function matchesAnchored(pattern: string, target: string): boolean {
 
 describe("acceptanceWatchIgnored", () => {
   it("anchored resolved root: src is not matched when root has a .tower ancestor, while the root's own artifact directories are matched", () => {
-    // Resolve like the implementation does so the drive letter on Windows is
-    // part of the expected root; the .tower ancestor survives resolution on
-    // every platform, which is the behavior under test.
-    const root = normalizePath(path.resolve("/fake/.tower/worktrees/wt-fake"));
-    const patterns = acceptanceWatchIgnored(root);
+    // A "//"-rooted input is absolute on every platform (a UNC path on
+    // Windows, so resolution prepends no drive letter) and the
+    // implementation's resolve + normalizePath collapses it to the
+    // single-slash root everywhere; the .tower ancestor survives resolution
+    // on every platform, which is the behavior under test. node:path is not
+    // imported because this tsconfig loads no @types/node declarations.
+    const root = "/fake/.tower/worktrees/wt-fake";
+    const patterns = acceptanceWatchIgnored(`/${root}`);
     expect(patterns).toEqual([
       `${root}/.tower`,
       `${root}/.tower/**`,
