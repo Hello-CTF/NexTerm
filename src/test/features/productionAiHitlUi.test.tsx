@@ -374,3 +374,126 @@ describe("AI HITL typed environment confirmation", () => {
     expect(mocks.confirm.mock.calls[0][0]).not.toHaveProperty("environmentNames");
   });
 });
+
+describe("AI HITL restored from a snapshot", () => {
+  function interruptOf(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "req-snap-1",
+      runId: "run-needed",
+      checkpointId: "run-needed",
+      checkpointHash: "hash-1",
+      targetId: "target-1",
+      callId: "call-snap-1",
+      tool: "exec_commands",
+      kind: "confirm",
+      parameters: { commands: ["systemctl restart nginx"] },
+      parameterHash: "phash-1",
+      nonce: "nonce-snap-1",
+      createdAt: "2026-10-03T10:00:00Z",
+      expiresAt: "2026-10-03T10:05:00Z",
+      attempt: 1,
+      seq: 1,
+      ...overrides,
+    };
+  }
+
+  async function showRestored(pending: Record<string, unknown>[]): Promise<void> {
+    const workspaceId = useUi.getState().ensureWorkspace({ kind: "session", sessionId: "s1", title: "ws" });
+    useUi.setState({
+      activeWorkspaceId: workspaceId,
+      aiBoards: {
+        [workspaceId]: { tabs: [{ id: "t1", title: "Old", conversationId: "conv-old" }], activeTabId: "t1" },
+      },
+    });
+    mocks.conversationList.mockResolvedValue([{ id: "conv-old", title: "Old", createdAt: 0, updatedAt: 0, scope: {} }]);
+    mocks.messages.mockResolvedValue([]);
+    mocks.runs.mockResolvedValue([
+      {
+        id: "run-needed", conversationId: "conv-old", status: "interrupted", attempt: 1, seq: 1,
+        planMode: false, source: "chat", answer: "", turns: 0, tokensIn: 0, tokensOut: 0,
+        cacheCreationTokens: 0, latencyMs: 0, retries: 0, failures: 0, createdAt: 1, updatedAt: 1,
+      },
+    ]);
+    mocks.hitlSnapshot.mockResolvedValue({
+      runId: "run-needed",
+      checkpointId: "run-needed",
+      status: "interrupted",
+      attempt: 1,
+      seq: 1,
+      pending,
+    });
+    mounted = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    await flush();
+    await flushUntil(() => mounted!.container.querySelector('[aria-label="生产环境名列表"]') !== null
+      || mounted!.container.textContent?.includes("需要你确认") === true);
+  }
+
+  it("restores a single-target production challenge and sends only the typed names", async () => {
+    await showRestored([interruptOf({ requiredEnvironmentNames: ["production"] })]);
+
+    expect(mounted!.container.querySelector('[aria-label="生产环境名列表"]')).not.toBeNull();
+    expect(decisionButton("允许一次").disabled).toBe(true);
+    setInputValue(environmentInput("production"), "production");
+    expect(decisionButton("允许一次").disabled).toBe(false);
+    await clickAndFlush(decisionButton("允许一次"));
+
+    await flushUntil(() => mocks.confirm.mock.calls.length === 1);
+    expect(mocks.confirm.mock.calls[0][0]).toEqual({
+      jobId: "run-needed",
+      callId: "call-snap-1",
+      nonce: "nonce-snap-1",
+      decision: "allow",
+      environmentNames: ["production"],
+    });
+  });
+
+  it("restores a multi-target production challenge and requires every name", async () => {
+    await showRestored([interruptOf({ requiredEnvironmentNames: ["live", "production"] })]);
+
+    expect(decisionButton("允许一次").disabled).toBe(true);
+    setInputValue(environmentInput("live"), "live");
+    expect(decisionButton("允许一次").disabled).toBe(true);
+    setInputValue(environmentInput("production"), "production");
+    expect(decisionButton("允许一次").disabled).toBe(false);
+    await clickAndFlush(decisionButton("允许一次"));
+
+    await flushUntil(() => mocks.confirm.mock.calls.length === 1);
+    expect(mocks.confirm.mock.calls[0][0].environmentNames).toEqual(["live", "production"]);
+  });
+
+  it("does not send when a restored challenge is missing a name", async () => {
+    await showRestored([interruptOf({ requiredEnvironmentNames: ["live", "production"] })]);
+
+    setInputValue(environmentInput("live"), "live");
+    expect(decisionButton("允许一次").disabled).toBe(true);
+    await clickAndFlush(decisionButton("允许一次"));
+    await flush();
+    expect(mocks.confirm).not.toHaveBeenCalled();
+  });
+
+  it("does not send when a restored challenge has a wrong name", async () => {
+    await showRestored([interruptOf({ requiredEnvironmentNames: ["production"] })]);
+
+    setInputValue(environmentInput("production"), "staging");
+    expect(decisionButton("允许一次").disabled).toBe(true);
+    await clickAndFlush(decisionButton("允许一次"));
+    await flush();
+    expect(mocks.confirm).not.toHaveBeenCalled();
+  });
+
+  it("keeps a legacy snapshot interrupt on the fieldless flow", async () => {
+    await showRestored([interruptOf()]);
+
+    expect(mounted!.container.querySelector('[aria-label="生产环境名列表"]')).toBeNull();
+    expect(decisionButton("允许一次").disabled).toBe(false);
+    await clickAndFlush(decisionButton("允许一次"));
+    await flushUntil(() => mocks.confirm.mock.calls.length === 1);
+    expect(mocks.confirm.mock.calls[0][0]).toEqual({
+      jobId: "run-needed",
+      callId: "call-snap-1",
+      nonce: "nonce-snap-1",
+      decision: "allow",
+    });
+    expect(mocks.confirm.mock.calls[0][0]).not.toHaveProperty("environmentNames");
+  });
+});

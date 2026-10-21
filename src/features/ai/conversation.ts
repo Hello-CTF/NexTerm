@@ -392,6 +392,12 @@ export function appendHitlInterrupt(
     requestId: request.id || undefined,
     hitlAttempt: request.attempt >= 1 ? request.attempt : undefined,
   };
+  // The snapshot interrupt carries the same production challenge contract as
+  // the live event; parse it with the same fail-closed rules so a restored
+  // card never degrades into the legacy flow the backend would reject.
+  const requiredEnvironmentNames = requiredEnvironmentNamesFromEvent({
+    requiredEnvironmentNames: request.requiredEnvironmentNames,
+  });
   if (role === "question") {
     return appendItems({ ...state, seq }, [
       {
@@ -410,6 +416,7 @@ export function appendHitlInterrupt(
       rendered: renderInterruptParameters(request.parameters),
       reason: "",
       preview: null,
+      ...(requiredEnvironmentNames ? { requiredEnvironmentNames } : {}),
     },
   ]);
 }
