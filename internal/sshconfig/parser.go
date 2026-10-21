@@ -184,7 +184,7 @@ func (p *fileParser) parseFile(path string, depth int) error {
 	p.files++
 	defer delete(p.active, path)
 
-	f, err := os.Open(path)
+	f, err := openSharedDelete(path)
 	if err != nil {
 		return err
 	}
