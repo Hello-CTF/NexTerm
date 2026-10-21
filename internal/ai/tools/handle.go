@@ -156,6 +156,47 @@ func orUnknown(value string) string {
 	return value
 }
 
+// operationResult queries the durable, owner-scoped outcome ledger for one
+// operation's recorded outcome: its state, failure stage, residual session
+// or resource, error, and the recorded result payload — the pre-retry
+// answer for an uncertain mutation.
+func (r *Registry) operationResult(ctx context.Context, scope Scope, raw []byte) Output {
+	var args struct {
+		OperationID string `json:"operation_id"`
+	}
+	if err := decode(raw, &args); err != nil {
+		return Fail(err)
+	}
+	if strings.TrimSpace(args.OperationID) == "" {
+		return Fail(invalid("operation_id 不能为空"))
+	}
+	if r.deps.DurableOutcomes == nil {
+		return Fail(errors.New("结果查询未配置"))
+	}
+	record, err := r.deps.DurableOutcomes.OutcomeResult(ctx, args.OperationID)
+	if err != nil {
+		return Fail(err)
+	}
+	var detail strings.Builder
+	fmt.Fprintf(&detail, "操作 %s：state=%s kind=%s", record.OperationID, record.State, record.Kind)
+	if record.FailureStage != "" {
+		fmt.Fprintf(&detail, "，失败阶段=%s", record.FailureStage)
+	}
+	if record.ResidualSessionID != "" {
+		fmt.Fprintf(&detail, "，残留会话 session_id=%s（未自动清理）", record.ResidualSessionID)
+	}
+	if record.ResidualResource != "" {
+		fmt.Fprintf(&detail, "，残留资源=%s", record.ResidualResource)
+	}
+	if record.Error != "" {
+		fmt.Fprintf(&detail, "，错误=%s", record.Error)
+	}
+	if len(record.Result) > 0 && string(record.Result) != "{}" {
+		detail.WriteString("，结果=" + string(record.Result))
+	}
+	return OK(detail.String())
+}
+
 // tabDetail reads the optional per-tab identity detail for read_screen
 // headers and context injection; the zero detail degrades silently.
 func (r *Registry) tabDetail(ctx context.Context, tabID string) TabDetail {

@@ -90,6 +90,10 @@ type Call struct {
 	// opt-in established before the outcome key was computed, so a later
 	// create failure still names the residual session.
 	ConnectedSessionID string `json:"-"`
+	// BoundSessionID is the session the bound identities were resolved or
+	// connected from, so the durable outcome record can re-verify that
+	// exact session's identity on a later replay.
+	BoundSessionID string `json:"-"`
 }
 
 type Output struct {
@@ -422,6 +426,44 @@ type AssetConnector interface {
 	ConnectAsset(ctx context.Context, assetID string) (sessionID string, err error)
 }
 
+// OutcomeAttempt is one durable outcome-ledger attempt of an operation, as
+// classified for pre-side-effect adjudication and for the operation_result
+// query. State is "initiated" (in-progress), "succeeded", or "failed".
+type OutcomeAttempt struct {
+	OperationID       string
+	Kind              string
+	State             string
+	FailureStage      string
+	ResidualSessionID string
+	ResidualResource  string
+	Result            json.RawMessage
+	Error             string
+}
+
+// OutcomeAdjudication classifies what the durable, owner-scoped outcome
+// ledger already holds under one operation prefix: the newest unfinished
+// attempt, the newest finished attempt, and whether the family is conflicted
+// (more than one unfinished attempt). A conflicted or unfinished family
+// never reconnects blindly; a finished one replays only after its binding
+// and original session identity verify.
+type OutcomeAdjudication struct {
+	Pending  *OutcomeAttempt
+	Terminal *OutcomeAttempt
+	Conflict bool
+}
+
+// DurableOutcomeLedger is the optional durable, owner-scoped outcome ledger
+// (M74's AgentOutcomeListByPrefix+Adjudicate) used to adjudicate a recorded
+// operation before any new side effect such as a connect, and to power the
+// operation_result query. The production adapter maps agent.OutcomeLedger;
+// nil keeps the in-process adjudication only.
+type DurableOutcomeLedger interface {
+	AdjudicateOutcome(ctx context.Context, prefix string) (OutcomeAdjudication, error)
+	BeginOutcome(ctx context.Context, operationID, kind string) error
+	CompleteOutcome(ctx context.Context, operationID string, attempt OutcomeAttempt) error
+	OutcomeResult(ctx context.Context, operationID string) (OutcomeAttempt, error)
+}
+
 type Database interface {
 	Tables(context.Context, string, string) ([]string, error)
 	Describe(context.Context, string, string, string) (db.TableDescribe, error)
@@ -464,9 +506,14 @@ type Dependencies struct {
 	Notify                      func(context.Context, string) error
 	Grants                      *guard.Grants
 
-	Outcome      *outcome.Ledger
-	Now          func() time.Time
-	PollInterval time.Duration
+	Outcome *outcome.Ledger
+	// DurableOutcomes is the optional durable, owner-scoped outcome ledger
+	// used to adjudicate recorded operations before any new side effect and
+	// to power the operation_result query. Nil keeps the in-process
+	// adjudication only.
+	DurableOutcomes DurableOutcomeLedger
+	Now             func() time.Time
+	PollInterval    time.Duration
 }
 
 type Preparation struct {

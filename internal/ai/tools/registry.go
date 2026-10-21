@@ -3,6 +3,7 @@ package tools
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -52,7 +53,7 @@ func (r *Registry) acquireOperationFlight(key string) (release func(), acquired 
 
 func PlanAllowed(name string) bool {
 	switch name {
-	case "read_file", "list_dir", "search_files", "read_screen", "wait_for", "terminal_list", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode", NotifyTool:
+	case "read_file", "list_dir", "search_files", "read_screen", "wait_for", "terminal_list", "operation_result", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode", NotifyTool:
 		return true
 	default:
 		return false
@@ -223,9 +224,29 @@ func (r *Registry) Execute(ctx context.Context, jobID string, scope Scope, call 
 			}
 			defer release()
 		}
+		executed := false
+		if call.Name == "terminal_create" && r.deps.DurableOutcomes != nil && callTargetsAsset(call) {
+			// The durable, owner-scoped ledger adjudicates the operation
+			// before any side effect: a conflicted or unfinished family
+			// never reconnects blindly, a finished one replays only when
+			// its binding and the original session identity still hold,
+			// and only a certified-fresh operation begins a new attempt.
+			completion, failure := r.adjudicateAndBeginDurableCreate(ctx, jobID, &call)
+			if failure != nil {
+				return *failure
+			}
+			defer func() {
+				stage := "prepare"
+				if executed {
+					stage = "execute"
+				}
+				completion(&result, stage)
+			}()
+		}
 		if failure := r.bindCallAssetIdentities(ctx, jobID, &call); failure != nil {
 			return *failure
 		}
+		executed = true
 		result = r.executeRecorded(ctx, jobID, scope, call, preparation)
 	} else {
 		result = r.execute(ctx, jobID, scope, call, preparation)
@@ -338,6 +359,7 @@ func (r *Registry) bindTerminalCreateIdentity(ctx context.Context, jobID string,
 				return &failure
 			}
 			call.AssetIdentities = []AssetIdentity{identity}
+			call.BoundSessionID = sessionID
 			r.state(jobID).rememberAssetOperation(call.ID, call.AssetIdentities, sessionID, "")
 			return nil
 		}
@@ -357,6 +379,7 @@ func (r *Registry) bindTerminalCreateIdentity(ctx context.Context, jobID string,
 			return failure
 		}
 		call.ConnectedSessionID = connectedID
+		call.BoundSessionID = connectedID
 		call.AssetIdentities = []AssetIdentity{identity}
 		r.state(jobID).rememberAssetOperation(call.ID, call.AssetIdentities, connectedID, connectedID)
 		return nil
@@ -371,6 +394,7 @@ func (r *Registry) bindTerminalCreateIdentity(ctx context.Context, jobID string,
 				call.AssetIdentities = []AssetIdentity{identity}
 			}
 		}
+		call.BoundSessionID = sessionID
 		r.state(jobID).rememberAssetOperation(call.ID, call.AssetIdentities, sessionID, "")
 		return nil
 	}
@@ -388,6 +412,7 @@ func (r *Registry) bindTerminalCreateIdentity(ctx context.Context, jobID string,
 		return failure
 	}
 	call.ConnectedSessionID = connectedID
+	call.BoundSessionID = connectedID
 	call.AssetIdentities = []AssetIdentity{identity}
 	r.state(jobID).rememberAssetOperation(call.ID, call.AssetIdentities, connectedID, connectedID)
 	return nil
@@ -501,6 +526,188 @@ func (r *Registry) recordStaleAfterReconfigure(ctx context.Context, binding asse
 		}
 	}
 	return true
+}
+
+// callTargetsAsset reports whether the call targets an explicit asset.
+func callTargetsAsset(call Call) bool {
+	var args struct {
+		AssetID string `json:"asset_id"`
+	}
+	return json.Unmarshal(call.Args, &args) == nil && args.AssetID != ""
+}
+
+// durableCreateBinding ties a durable outcome record to the exact call that
+// produced it: canonical arguments, the authorization that approved it, and
+// the operation kind — the same binding contract the idempotency ledger
+// enforces on reserve.
+type durableCreateBinding struct {
+	CanonicalArgs   string `json:"canonical_args"`
+	AuthorizationID string `json:"authorization_id"`
+	Kind            string `json:"kind"`
+}
+
+// durableCreateOutcome is the recorded payload of one terminal_create
+// attempt: its binding, the identities it executed under, the session they
+// were bound from, the session this call connected, and the created tab on
+// success.
+type durableCreateOutcome struct {
+	Binding            durableCreateBinding `json:"binding"`
+	Identities         []AssetIdentity      `json:"identities,omitempty"`
+	SessionID          string               `json:"session_id,omitempty"`
+	ConnectedSessionID string               `json:"connected_session_id,omitempty"`
+	Output             *durableCreateOutput `json:"output,omitempty"`
+}
+
+type durableCreateOutput struct {
+	TabID     string `json:"tab_id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	Title     string `json:"title,omitempty"`
+	Handle    string `json:"handle,omitempty"`
+}
+
+// adjudicateAndBeginDurableCreate consults the durable, owner-scoped outcome
+// ledger before any side effect: a conflicted or unfinished family fails
+// visibly without reconnecting, a finished attempt replays only when its
+// binding and the original session identity still hold, and only a
+// certified-fresh operation begins a new durable attempt. The returned
+// completion writes the attempt's final record.
+func (r *Registry) adjudicateAndBeginDurableCreate(ctx context.Context, jobID string, call *Call) (func(*Output, string), *Output) {
+	operation := operationID(jobID, call.ID, "terminal_create")
+	adjudication, err := r.deps.DurableOutcomes.AdjudicateOutcome(ctx, operation)
+	if err != nil {
+		failure := Fail(fmt.Errorf("执行记录裁定查询失败: %w", err))
+		return nil, &failure
+	}
+	switch {
+	case adjudication.Conflict:
+		failure := Fail(errors.New("相同调用存在冲突的执行记录，未重复执行"))
+		failure.OperationID = operation
+		return nil, &failure
+	case adjudication.Pending != nil:
+		failure := Fail(fmt.Errorf("相同调用已有未完成的执行记录（state=%s），未重复执行", adjudication.Pending.State))
+		failure.OperationID = operation
+		if adjudication.Pending.ResidualSessionID != "" {
+			note := fmt.Sprintf("；残留会话 session_id=%s（未自动清理）", adjudication.Pending.ResidualSessionID)
+			failure.Text += note
+			failure.Notes += note
+		}
+		return nil, &failure
+	case adjudication.Terminal != nil:
+		if output, done := r.replayDurableCreate(ctx, jobID, call, adjudication.Terminal); done {
+			return nil, output
+		}
+		// The record is stale (the asset was reconfigured) or finally
+		// failed: a fresh attempt proceeds.
+	}
+	attempt := operation + ":" + newOutcomeAttemptNonce()
+	if err := r.deps.DurableOutcomes.BeginOutcome(ctx, attempt, "terminal_create"); err != nil {
+		failure := Fail(fmt.Errorf("执行记录登记失败: %w", err))
+		return nil, &failure
+	}
+	return func(result *Output, stage string) {
+		r.completeDurableCreate(context.WithoutCancel(ctx), attempt, call, result, stage)
+	}, nil
+}
+
+// replayDurableCreate returns the recorded result of a finished attempt when
+// the durable binding still matches this call and the originally bound
+// session still reports the same complete identity. A binding mismatch is a
+// conflict; a reconfigured asset falls through to fresh execution.
+func (r *Registry) replayDurableCreate(ctx context.Context, jobID string, call *Call, record *OutcomeAttempt) (*Output, bool) {
+	operation := operationID(jobID, call.ID, "terminal_create")
+	var recorded durableCreateOutcome
+	canonical, canonErr := outcome.CanonicalizeArguments(call.Args)
+	if err := json.Unmarshal(record.Result, &recorded); canonErr != nil || err != nil ||
+		recorded.Binding.AuthorizationID != call.AuthorizationID ||
+		recorded.Binding.Kind != string(sideEffectKind(call.Name)) ||
+		recorded.Binding.CanonicalArgs != string(canonical) {
+		failure := Fail(fmt.Errorf("调用与已记录的执行冲突（授权或参数不一致）: %w", outcome.ErrIdempotenceConflict))
+		failure.OperationID = operation
+		return &failure, true
+	}
+	if record.State != "succeeded" || r.durableCreateStale(ctx, recorded) {
+		return nil, false
+	}
+	output := Output{OK: true, Text: fmt.Sprintf("调用已执行过，返回已记录的结果（outcome=%s）", record.State), OperationID: operation}
+	if recorded.ConnectedSessionID != "" {
+		note := fmt.Sprintf("；原执行建立的连接 session_id=%s（残留资源保留，未自动清理）", recorded.ConnectedSessionID)
+		output.Text += note
+		output.Notes += note
+	}
+	if recorded.Output != nil {
+		output.Terminal = &CreatedTerminal{TabID: recorded.Output.TabID, SessionID: recorded.Output.SessionID, Title: recorded.Output.Title, Handle: recorded.Output.Handle}
+	}
+	return &output, true
+}
+
+// durableCreateStale reports whether the session the attempt was bound to
+// now reports a different complete identity — the only side-effect-free
+// proof that the recorded result is stale and fresh execution is needed.
+func (r *Registry) durableCreateStale(ctx context.Context, recorded durableCreateOutcome) bool {
+	if recorded.SessionID == "" || len(recorded.Identities) == 0 {
+		return false
+	}
+	checker, ok := r.deps.Terminal.(SessionAssetIdentityResolver)
+	if !ok {
+		return false
+	}
+	current, err := checker.SessionAssetIdentity(ctx, recorded.SessionID)
+	if err != nil || current.AssetID == "" || current.ConfigFingerprint == "" {
+		return false
+	}
+	for _, identity := range recorded.Identities {
+		if current == identity {
+			return false
+		}
+	}
+	return true
+}
+
+// completeDurableCreate writes the attempt's final record: the binding, the
+// identities and sessions it ran under, and the created tab on success or
+// the failure stage and residual on failure. A record write failure is
+// surfaced on the result instead of hidden.
+func (r *Registry) completeDurableCreate(ctx context.Context, attemptID string, call *Call, result *Output, stage string) {
+	recorded := durableCreateOutcome{
+		Identities:         call.AssetIdentities,
+		SessionID:          call.BoundSessionID,
+		ConnectedSessionID: call.ConnectedSessionID,
+	}
+	recorded.Binding.AuthorizationID = call.AuthorizationID
+	recorded.Binding.Kind = string(sideEffectKind(call.Name))
+	if canonical, err := outcome.CanonicalizeArguments(call.Args); err == nil {
+		recorded.Binding.CanonicalArgs = string(canonical)
+	}
+	attempt := OutcomeAttempt{
+		Kind:              "terminal_create",
+		ResidualSessionID: call.ConnectedSessionID,
+	}
+	if result.OK {
+		attempt.State = "succeeded"
+		if result.Terminal != nil {
+			recorded.Output = &durableCreateOutput{TabID: result.Terminal.TabID, SessionID: result.Terminal.SessionID, Title: result.Terminal.Title, Handle: result.Terminal.Handle}
+		}
+	} else {
+		attempt.State = "failed"
+		attempt.FailureStage = stage
+		attempt.Error = result.Text
+	}
+	if encoded, err := json.Marshal(recorded); err == nil {
+		attempt.Result = encoded
+	}
+	if err := r.deps.DurableOutcomes.CompleteOutcome(ctx, attemptID, attempt); err != nil {
+		note := fmt.Sprintf("；durable 执行记录写入失败: %v", err)
+		result.Text += note
+		result.Notes += note
+	}
+}
+
+// newOutcomeAttemptNonce returns a unique per-attempt suffix for the durable
+// operation record.
+func newOutcomeAttemptNonce() string {
+	var bytes [8]byte
+	_, _ = rand.Read(bytes[:])
+	return hex.EncodeToString(bytes[:])
 }
 
 func GuardAuthorizationID(decision guard.Decision) string {
@@ -657,6 +864,8 @@ func (r *Registry) executeTool(ctx context.Context, jobID string, scope Scope, c
 		return r.terminalRename(ctx, jobID, scope, call.Args)
 	case "terminal_list":
 		return r.terminalList(ctx, scope, call.Args)
+	case "operation_result":
+		return r.operationResult(ctx, scope, call.Args)
 	case "wait_for":
 		return r.waitFor(ctx, jobID, scope, call.Args, 120)
 	case "shell_history":
