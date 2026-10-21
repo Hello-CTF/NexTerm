@@ -104,7 +104,7 @@ func readKeyFileBounded(path string) ([]byte, error) {
 	if err := rejectNonRegular(path); err != nil {
 		return nil, err
 	}
-	f, err := os.Open(path)
+	f, err := openSharedDelete(path)
 	if err != nil {
 		return nil, err
 	}
