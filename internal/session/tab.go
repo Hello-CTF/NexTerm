@@ -109,6 +109,7 @@ type Tab struct {
 	closed           bool
 	destroying       bool
 	title            string
+	titleCustom      bool
 	cancelPump       context.CancelFunc
 	cwdTracker       *shellintegr.Tracker
 	cwd              string
@@ -125,15 +126,32 @@ type Tab struct {
 
 	catchUpRemaining int64
 
-	ctx          context.Context
-	cancel       context.CancelFunc
-	responses    *responseQueue
-	feedGate     chan struct{}
-	writeMu      sync.Mutex
+	ctx       context.Context
+	cancel    context.CancelFunc
+	responses *responseQueue
+	feedGate  chan struct{}
+	// writeGate serializes tab writes (capacity 1, empty = held by nobody).
+	// Unlike a plain mutex it lets a queued writer give up early when its
+	// context ends or the tab closes.
+	writeGate    chan struct{}
 	visibilityMu sync.Mutex
 	lifecycleMu  sync.Mutex
 	closeMu      sync.Mutex
 	closeRetry   bool
+}
+
+// acquireWrite takes the tab's write gate, giving up early when the caller's
+// context ends or the tab closes; the returned release function must be
+// called to free the gate for the next writer.
+func (t *Tab) acquireWrite(ctx context.Context) (func(), error) {
+	select {
+	case t.writeGate <- struct{}{}:
+		return func() { <-t.writeGate }, nil
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
+	case <-t.ctx.Done():
+		return nil, ErrTabClosed
+	}
 }
 
 func (t *Tab) Info() TabInfo {
@@ -430,6 +448,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		exited: options.Durable != nil && options.Durable.Recover && options.Durable.RecoveredExited,
 		shell:  shell,
 		ctx:    tabCtx, cancel: cancel, responses: newResponseQueue(generation), feedGate: make(chan struct{}, 1),
+		writeGate:  make(chan struct{}, 1),
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
 		durableIdentity: durableIdentity, metadataRevision: metadataRevision,
 		streamEpoch: ids.New(), outputWake: make(chan struct{}),
@@ -458,8 +477,10 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		}
 		if options.Durable.CanonicalMetadata {
 			tab.title = options.Durable.Title
+			tab.titleCustom = true
 		} else if title := m.durableTabTitle(ownerCtx(context.Background(), session.userID), tabID); title != "" {
 			tab.title = title
+			tab.titleCustom = true
 		}
 	}
 	tab.feedGate <- struct{}{}
@@ -674,6 +695,7 @@ func (m *Manager) RenameTab(ctx context.Context, tabID, title string) (TabInfo, 
 	}
 	tab.mu.Lock()
 	tab.title = title
+	tab.titleCustom = true
 	event := tab.controlEventLocked()
 	info := tab.infoLocked()
 	tab.mu.Unlock()
@@ -1327,8 +1349,11 @@ func (m *Manager) Write(ctx context.Context, tabID, client string, data []byte) 
 	if err != nil {
 		return err
 	}
-	tab.writeMu.Lock()
-	defer tab.writeMu.Unlock()
+	release, err := tab.acquireWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	tab.mu.Lock()
 	if tab.closed || tab.destroying {
 		tab.mu.Unlock()
@@ -1696,6 +1721,25 @@ func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []
 		event := tab.controlEventLocked()
 		tab.mu.Unlock()
 		m.emit(feedCtx, TopicTerminalControl, event)
+	}
+	// The OSC 0/2 dynamic title tracks the application-reported window title
+	// until the user sets a custom one: a custom title (RenameTab or a
+	// durable-restored title) takes precedence and later OSC reports never
+	// override it.
+	if source, ok := tab.terminal.(interface{ Title() string }); ok {
+		dynamic := source.Title()
+		tab.mu.Lock()
+		var titleEvent ControlEvent
+		titleChanged := false
+		if !tab.titleCustom && !tab.closed && dynamic != tab.title {
+			tab.title = dynamic
+			titleEvent = tab.controlEventLocked()
+			titleChanged = true
+		}
+		tab.mu.Unlock()
+		if titleChanged {
+			m.emit(feedCtx, TopicTerminalControl, titleEvent)
+		}
 	}
 	m.observeCommand(tab, data)
 	type outputTarget struct {

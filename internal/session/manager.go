@@ -750,13 +750,16 @@ func (m *Manager) disconnect(id string, expectedIdle *time.Time) error {
 	m.mu.Unlock()
 
 	cancel()
-	closeChannels(channels)
+	closeErr := closeChannels(channels)
 	if transport != nil {
-		_ = transport.Close()
+		// A failed close is surfaced instead of swallowed: the session still
+		// completes the disconnect transition, but the caller (IPC, sweeps,
+		// account cleanup) sees the real close result.
+		closeErr = errors.Join(closeErr, transport.Close())
 	}
 	m.emit(context.Background(), TopicSessionStatus, disconnectedEvent)
 	m.transcriptEnded(session)
-	return nil
+	return closeErr
 }
 
 func (s *Session) detachChannelsLocked() []*channelHandle {
@@ -779,10 +782,14 @@ func (s *Session) detachChannelsLocked() []*channelHandle {
 	return channels
 }
 
-func closeChannels(channels []*channelHandle) {
+func closeChannels(channels []*channelHandle) error {
+	var errs []error
 	for _, channel := range channels {
-		_ = channel.Close()
+		if err := channel.Close(); err != nil {
+			errs = append(errs, err)
+		}
 	}
+	return errors.Join(errs...)
 }
 
 func (m *Manager) reap(id string, expectedIdle ...time.Time) error {
@@ -939,7 +946,12 @@ func (m *Manager) idleLoop() {
 		case <-m.ctx.Done():
 			return
 		case <-ticker.C:
-			_ = m.SweepIdle(m.ctx)
+			// Close failures on the disconnect path stay visible instead of
+			// vanishing into the sweep: the session is already disconnected,
+			// but a failed channel/transport close is logged for inspection.
+			if err := m.SweepIdle(m.ctx); err != nil {
+				m.logger.Warn("idle sweep disconnect failed", "error", err)
+			}
 		}
 	}
 }

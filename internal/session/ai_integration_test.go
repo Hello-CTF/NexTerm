@@ -78,7 +78,7 @@ func TestInjectInternalFeedsVTAndSubscribersWithoutTransportWrite(t *testing.T) 
 	}
 }
 
-func TestUserInputHookRunsBeforeWriteMuAndWhenCanceled(t *testing.T) {
+func TestUserInputHookRunsBeforeWriteGateAndWhenCanceled(t *testing.T) {
 	manager, connector, _, session := openTestSession(t, KindSSH)
 	tab := openTestTab(t, manager, session, "client-a", "a-1")
 	channel := connector.transport(0).channel(0)
@@ -89,11 +89,9 @@ func TestUserInputHookRunsBeforeWriteMuAndWhenCanceled(t *testing.T) {
 		if tabID != tab.ID {
 			t.Errorf("hook tab = %q, want %q", tabID, tab.ID)
 		}
-		if !tab.writeMu.TryLock() {
+		if writeGateHeld(tab) {
 			lockFailures.Add(1)
-			return
 		}
-		tab.writeMu.Unlock()
 	})
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -113,7 +111,7 @@ func TestUserInputHookRunsBeforeWriteMuAndWhenCanceled(t *testing.T) {
 		t.Fatalf("user input hook calls = %d, want 2", got)
 	}
 	if got := lockFailures.Load(); got != 0 {
-		t.Fatalf("hook observed writeMu held %d times", got)
+		t.Fatalf("hook observed write gate held %d times", got)
 	}
 	manager.SetUserInputHook(nil)
 	if err := manager.WriteInternal(context.Background(), tab.ID, []byte("ai")); err != nil {
@@ -124,7 +122,7 @@ func TestUserInputHookRunsBeforeWriteMuAndWhenCanceled(t *testing.T) {
 	}
 }
 
-func TestTakeoverLockOrderRaceDoesNotHoldWriteMuDuringHook(t *testing.T) {
+func TestTakeoverLockOrderRaceDoesNotHoldWriteGateDuringHook(t *testing.T) {
 	manager, _, _, session := openTestSession(t, KindSSH)
 	tab := openTestTab(t, manager, session, "client-a", "a-1")
 	var takeover sync.Mutex
@@ -148,10 +146,8 @@ func TestTakeoverLockOrderRaceDoesNotHoldWriteMuDuringHook(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("user hook did not start")
 	}
-	if !tab.writeMu.TryLock() {
-		t.Error("user hook ran after acquiring writeMu")
-	} else {
-		tab.writeMu.Unlock()
+	if writeGateHeld(tab) {
+		t.Error("user hook ran after acquiring the write gate")
 	}
 	aiDone := make(chan error, 1)
 	go func() { aiDone <- manager.WriteInternal(context.Background(), tab.ID, []byte("ai")) }()

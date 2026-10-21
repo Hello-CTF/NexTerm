@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 )
@@ -77,9 +78,12 @@ func (m *Manager) startResponses(tab *Tab) bool {
 				current := !tab.closed && tab.generation == item.generation
 				tab.mu.Unlock()
 				if current && channel != nil {
-					tab.writeMu.Lock()
+					release, err := tab.acquireWrite(context.Background())
+					if err != nil {
+						continue
+					}
 					_ = writeAll(channel, item.data)
-					tab.writeMu.Unlock()
+					release()
 				}
 				continue
 			}
