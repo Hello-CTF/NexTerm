@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { call, toAppError } from "../../ipc/commands";
 import type { ProductionConfirmation } from "../../ipc/generated/types";
 import { describeError } from "../../ui/errorText";
@@ -98,26 +98,54 @@ export function BatchProgressPanel({
   original,
   onConfirmationRequired,
   onRerunStart,
+  onFinished,
   pollIntervalMs = 1000,
   newBatchId = () => globalThis.crypto.randomUUID(),
+  rerunDisabled = false,
 }: {
   api: BatchProgressApi;
   batchId: string;
   original: { command: string; timeoutMs?: number; maxConcurrent?: number };
-  onConfirmationRequired?: (detail: unknown) => void;
+  onConfirmationRequired?: (detail: unknown, request: BatchRerunRequest) => void;
   onRerunStart?: (batchId: string) => void;
+  onFinished?: (batchId: string) => void;
   pollIntervalMs?: number;
   newBatchId?: () => string;
+  rerunDisabled?: boolean;
 }) {
   const [snapshot, setSnapshot] = useState<BatchProgressSnapshot | null>(null);
   const [finalBatch, setFinalBatch] = useState<BatchFinalResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [activeBatchId, setActiveBatchId] = useState(batchId);
+  const onFinishedRef = useRef(onFinished);
+  onFinishedRef.current = onFinished;
+  // rerunPendingRef marks the startup window of a rerun: the new batch's
+  // first polls may legitimately see not_found before the tracker is
+  // published, which is a temporary absence, not a terminal one.
+  const rerunPendingRef = useRef(false);
+  const rerunGenerationRef = useRef(0);
+  const apiRef = useRef(api);
+  const activeBatchIdRef = useRef(activeBatchId);
+  activeBatchIdRef.current = activeBatchId;
+  if (apiRef.current !== api) {
+    apiRef.current = api;
+    rerunGenerationRef.current++;
+    rerunPendingRef.current = false;
+  }
 
   useEffect(() => {
+    if (batchId === activeBatchIdRef.current) {
+      // The parent mirroring the self-switch is not an external switch:
+      // keep the in-flight rerun and its continuations valid.
+      return;
+    }
     setActiveBatchId(batchId);
     setFinalBatch(null);
+    // An external batch switch invalidates any in-flight rerun: its late
+    // continuations must not commit into the new view.
+    rerunGenerationRef.current++;
+    rerunPendingRef.current = false;
   }, [batchId]);
 
   useEffect(() => {
@@ -131,17 +159,24 @@ export function BatchProgressPanel({
       try {
         const next = await api.progress(activeBatchId);
         if (stopped || current !== generation) return;
+        if (!isProgressSnapshot(next)) {
+          setError("进度响应格式错误");
+          stopped = true;
+          return;
+        }
         setSnapshot(next);
         setError(null);
         if (next.batch.phase === "finished") {
           stopped = true;
+          onFinishedRef.current?.(activeBatchId);
         }
       } catch (cause) {
         if (stopped || current !== generation) return;
         const appError = toAppError(cause);
         setError(appError.message);
-        if (appError.code === "not_found") {
+        if (appError.code === "not_found" && !rerunPendingRef.current) {
           // Terminal absence: the batch is unknown or its snapshot expired.
+          // While a rerun is pending, not_found is a temporary absence.
           stopped = true;
         }
       }
@@ -176,24 +211,41 @@ export function BatchProgressPanel({
       maxConcurrent: original.maxConcurrent,
       results: snapshot.targets.map((target) => ({ sessionId: target.sessionId, status: target.status ?? "" })),
     };
+    const rerunGeneration = ++rerunGenerationRef.current;
+    const rerunApi = api;
+    const rerunBatchId = request.batchId;
+    const isCurrentRerun = () =>
+      rerunGenerationRef.current === rerunGeneration &&
+      apiRef.current === rerunApi &&
+      activeBatchIdRef.current === rerunBatchId;
     setBusy(true);
     setError(null);
     // The new batch identity is already known: notify before awaiting and
     // start polling it so the rerun's live progress is observable while the
     // rerun request is still pending.
     onRerunStart?.(request.batchId);
+    rerunPendingRef.current = true;
     setActiveBatchId(request.batchId);
+    setFinalBatch(null);
     void api
       .rerun(request)
-      .then((finalBatch) => setFinalBatch(finalBatch))
+      .then((finalBatch) => {
+        if (!isCurrentRerun()) return;
+        setFinalBatch(finalBatch);
+      })
       .catch((cause: unknown) => {
+        if (!isCurrentRerun()) return;
         const appError = toAppError(cause);
         if (appError.code === "needs_confirm") {
-          onConfirmationRequired?.(appError.detail);
+          onConfirmationRequired?.(appError.detail, request);
         }
         setError(appError.message);
       })
-      .finally(() => setBusy(false));
+      .finally(() => {
+        if (!isCurrentRerun()) return;
+        rerunPendingRef.current = false;
+        setBusy(false);
+      });
   };
 
   return (
@@ -216,7 +268,7 @@ export function BatchProgressPanel({
                 取消执行
               </button>
             )}
-            {snapshot.batch.phase === "finished" && snapshot.batch.failed > 0 && (
+            {snapshot.batch.phase === "finished" && snapshot.batch.failed > 0 && !rerunDisabled && (
               <>
                 <button type="button" className="nx-link" disabled={busy} onClick={rerun}>
                   重跑失败目标
@@ -285,6 +337,12 @@ export function BatchProgressPanel({
       )}
     </fieldset>
   );
+}
+
+function isProgressSnapshot(value: unknown): value is BatchProgressSnapshot {
+  if (value === null || typeof value !== "object") return false;
+  const candidate = value as { batch?: unknown };
+  return candidate.batch !== null && typeof candidate.batch === "object";
 }
 
 function OutputLine({ label, output }: { label: string; output: BatchOutputSnapshot }) {

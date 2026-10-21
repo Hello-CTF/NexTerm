@@ -122,3 +122,13 @@ export const execBatchApi = {
   historyGet: (batchId: string, scope: ExecBatchHistoryScope = "self") =>
     call("exec_batch_history_get", { batchId, scope }),
 };
+
+// Saved target sets (R-08): per-owner CRUD over the typed target_set_*
+// commands; the first version is local-only and never syncs.
+export const targetSetApi = {
+  list: () => call("target_set_list"),
+  create: (name: string, sessionIds: string[]) => call("target_set_create", { name, sessionIds }),
+  update: (id: string, name: string, sessionIds: string[]) =>
+    call("target_set_update", { id, name, sessionIds }).then(() => undefined),
+  delete: (id: string) => call("target_set_delete", { id }).then(() => undefined),
+};

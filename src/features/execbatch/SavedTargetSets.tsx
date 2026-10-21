@@ -62,7 +62,7 @@ export function SavedTargetSets({
     try {
       const loaded = await requestApi.list();
       if (generationRef.current !== generation) return;
-      setState({ forApi: requestApi, sets: loaded });
+      setState({ forApi: requestApi, sets: Array.isArray(loaded) ? loaded : [] });
       setError(null);
     } catch (cause) {
       if (generationRef.current !== generation) return;

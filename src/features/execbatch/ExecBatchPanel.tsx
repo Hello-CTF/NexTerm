@@ -5,12 +5,14 @@ import { assetApi, type Asset, type SessionInfo } from "../../ipc/commands";
 import {
   createExecBatchId,
   execBatchApi,
+  targetSetApi,
   type ExecBatch,
   type ExecBatchRequest,
   type ExecBatchResult,
   type ExecBatchStatus,
 } from "../../ipc/execBatchApi";
 import { getProductionChallenge, type ExecBatchProductionChallenge } from "../production/productionChallenge";
+import { useAuth } from "../auth/store";
 import { describeError } from "../../ui/errorText";
 import { IconPlay, IconServer, IconStop } from "../../ui/icons";
 import { assetTagValues } from "../explorer/assetSearch";
@@ -22,6 +24,8 @@ import { ProcessFinderPanel } from "../services/ProcessFinderPanel";
 import { ServicesPanel } from "../services/ServicesPanel";
 import { ExecBatchHistory } from "./ExecBatchHistory";
 import { TargetSetPicker, type TargetSetPickerTarget } from "./TargetSetPicker";
+import { SavedTargetSets } from "./SavedTargetSets";
+import { BatchProgressPanel, liveBatchProgressApi, type BatchRerunRequest } from "./BatchProgress";
 
 const MAX_TARGETS = 64;
 const MAX_CONCURRENT = 32;
@@ -147,9 +151,22 @@ export function ExecBatchPanel({ sessions }: { sessions: SessionInfo[] }) {
     request: ExecBatchRequest;
     challenge: ExecBatchProductionChallenge;
   } | null>(null);
+  const [rerunId, setRerunId] = useState<string | null>(null);
+  const [rerunConfirmation, setRerunConfirmation] = useState<{
+    request: BatchRerunRequest;
+    challenge: ExecBatchProductionChallenge;
+  } | null>(null);
   const activeRef = useRef<string | null>(null);
   const executionPlanRef = useRef<ExecutionPlan | null>(null);
   const { promptForValues, promptElement, prompting } = useSnippetVariablePrompt();
+  const accountID = useAuth((state) => state.user?.id ?? null);
+  // Rebuild the API identity on account switch so the saved-sets guards
+  // drop in-flight responses from the previous owner.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const targetSetsApi = useMemo(() => ({ ...targetSetApi }), [accountID]);
+  const availableIds = useMemo(() => targets.map((target) => target.id), [targets]);
+  const progressBatchId = runningId ?? rerunId ?? batch?.batchId ?? null;
+  const progressCommand = batch && batch.command !== "多条逐目标渲染命令" ? batch.command : command;
 
   useEffect(() => {
     const available = new Set(targets.map((target) => target.id));
@@ -180,6 +197,7 @@ export function ExecBatchPanel({ sessions }: { sessions: SessionInfo[] }) {
     setRunningId(batchId);
     setCanceling(false);
     setBatch(null);
+    setRerunId(null);
     setError(null);
     setCancelError(null);
     setProductionConfirmation(null);
@@ -356,6 +374,37 @@ export function ExecBatchPanel({ sessions }: { sessions: SessionInfo[] }) {
     }
   };
 
+  const handleRerunStart = (nextBatchId: string) => {
+    setBatch(null);
+    setRerunId(nextBatchId);
+  };
+
+  const handleRerunConfirmation = (detail: unknown, request: BatchRerunRequest) => {
+    const challenge = getProductionChallenge({ code: "needs_confirm", detail }, "exec_batch_production_confirmation");
+    if (!challenge || challenge.batchId !== request.batchId) return;
+    setRerunConfirmation({ request, challenge });
+  };
+
+  const confirmRerunProduction = (environmentNames?: string[]) => {
+    const pending = rerunConfirmation;
+    if (!pending) return;
+    setRerunConfirmation(null);
+    void liveBatchProgressApi
+      .rerun({
+        ...pending.request,
+        productionConfirmation: {
+          confirmed: true,
+          targetSetHash: pending.challenge.targetSetHash,
+          commandHash: pending.challenge.commandHash,
+          ...(environmentNames ? { environmentNames } : {}),
+        },
+      })
+      .then(() => {
+        handleRerunStart(pending.request.batchId);
+      })
+      .catch((cause: unknown) => setError(describeError(cause)));
+  };
+
   const cancel = async () => {
     const batchId = activeRef.current;
     if (!batchId || canceling) return;
@@ -411,6 +460,13 @@ export function ExecBatchPanel({ sessions }: { sessions: SessionInfo[] }) {
           void execute();
         }}
       >
+        <SavedTargetSets
+          api={targetSetsApi}
+          availableTargetIds={availableIds}
+          selectedIds={selectedIds}
+          onSelect={setSelected}
+          disabled={running}
+        />
         <TargetSetPicker
           targets={targets}
           selectedIds={selectedIds}
@@ -501,6 +557,24 @@ export function ExecBatchPanel({ sessions }: { sessions: SessionInfo[] }) {
         )}
       </form>
 
+      {progressBatchId !== null && (
+        <div className="border-t border-neutral-800/70 px-3 py-2">
+          <BatchProgressPanel
+            api={liveBatchProgressApi}
+            batchId={progressBatchId}
+            original={{
+              command: progressCommand,
+              timeoutMs: Number(timeoutSeconds) * 1000,
+              maxConcurrent: Number(concurrency),
+            }}
+            onConfirmationRequired={handleRerunConfirmation}
+            onRerunStart={handleRerunStart}
+            rerunDisabled={batch !== null && batch.command === "多条逐目标渲染命令"}
+            newBatchId={createExecBatchId}
+          />
+        </div>
+      )}
+
       {promptElement}
       {productionConfirmation && (
         <ProductionConfirmationDialog
@@ -510,6 +584,17 @@ export function ExecBatchPanel({ sessions }: { sessions: SessionInfo[] }) {
           command={productionConfirmation.request.command}
           onCancel={discardProductionConfirmation}
           onConfirm={confirmProduction}
+        />
+      )}
+
+      {rerunConfirmation && (
+        <ProductionConfirmationDialog
+          key={`rerun:${rerunConfirmation.challenge.targetSetHash}:${rerunConfirmation.challenge.commandHash}`}
+          challenge={rerunConfirmation.challenge}
+          contentHash={rerunConfirmation.challenge.commandHash}
+          command={rerunConfirmation.request.command}
+          onCancel={() => setRerunConfirmation(null)}
+          onConfirm={confirmRerunProduction}
         />
       )}
 
