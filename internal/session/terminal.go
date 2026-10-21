@@ -621,8 +621,11 @@ func (m *Manager) WriteInternal(ctx context.Context, tabID string, data []byte) 
 	if err != nil {
 		return err
 	}
-	tab.writeMu.Lock()
-	defer tab.writeMu.Unlock()
+	release, err := tab.acquireWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return m.writeInternalLocked(ctx, tab, data)
 }
 
@@ -636,8 +639,11 @@ func (m *Manager) WritePasteFor(ctx context.Context, tabID, text string) error {
 	if err != nil {
 		return err
 	}
-	tab.writeMu.Lock()
-	defer tab.writeMu.Unlock()
+	release, err := tab.acquireWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if err := tab.lockFeed(ctx); err != nil {
 		return err
 	}
@@ -686,8 +692,11 @@ func (m *Manager) WritePasteLiteralFor(ctx context.Context, tabID, text string, 
 	if err != nil {
 		return err
 	}
-	tab.writeMu.Lock()
-	defer tab.writeMu.Unlock()
+	release, err := tab.acquireWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if err := tab.lockFeed(ctx); err != nil {
 		return err
 	}
@@ -742,7 +751,7 @@ func (m *Manager) writeInternalLocked(ctx context.Context, tab *Tab, data []byte
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := writeAll(channel, data); err != nil {
+	if err := writeChannelContext(ctx, channel, data); err != nil {
 		return err
 	}
 	m.transcriptInput(ctx, tab, data)

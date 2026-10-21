@@ -85,7 +85,9 @@ func (m *Manager) RegisterRemoteSession(ctx context.Context, options RemoteSessi
 		cols: cols, rows: rows, encoding: canonicalEncoding(""),
 		generation: 1, subscribers: make(map[string]subscriber), streamEpoch: ids.New(), outputWake: make(chan struct{}),
 		ctx: tabCtx, cancel: tabCancel, responses: newResponseQueue(1), feedGate: make(chan struct{}, 1),
+		writeGate:  make(chan struct{}, 1),
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
+		runtimeEpisode: ids.New(),
 	}
 	tab.feedGate <- struct{}{}
 	// The shell has no transport, so the terminal model's responses to query sequences (e.g. DA) have nowhere to go and are dropped;
@@ -114,6 +116,8 @@ func (m *Manager) RegisterRemoteSession(ctx context.Context, options RemoteSessi
 		return TabInfo{}, ErrRemoteLimit
 	}
 	m.sessions[session.ID] = session
+	m.nextTabIncarnation++
+	tab.incarnation = m.nextTabIncarnation
 	m.tabs[tab.ID] = tab
 	session.tabs[tab.ID] = tab
 	session.mu.Lock()
@@ -339,7 +343,7 @@ func (m *Manager) reapRemote(id string, activity time.Time) error {
 
 	cancel()
 	for _, tab := range tabs {
-		m.closeTabResources(tab)
+		m.closeTabResources(tab, false)
 	}
 	m.emit(context.Background(), TopicSessionStatus, disconnectedEvent)
 	m.transcriptEnded(session)

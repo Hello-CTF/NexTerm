@@ -16,7 +16,7 @@ var (
 )
 
 // WriteGuest writes to the terminal as a preview guest and arbitrates control by lease: the decision and the takeover complete atomically
-// inside tab.mu (lock order matches Write: writeMu -> mu -> session.mu after unlocking); on success the guest becomes the controller and
+// inside tab.mu (lock order matches Write: write gate -> mu -> session.mu after unlocking); on success the guest becomes the controller and
 // holds a leaseTTL lease, renewed on each call from the same guest. An active owner (controller held by someone else) returns
 // ErrGuestControlOwner; another guest's unexpired lease returns ErrGuestControlBusy, and expired leases are lazily cleared during the check.
 // The guest's clientID is the same as its read-only subscription ("preview-<shareID>"), so the existing orphan cleanup removes the controller
@@ -28,8 +28,11 @@ func (m *Manager) WriteGuest(ctx context.Context, tabID, guest string, data []by
 	if err != nil {
 		return err
 	}
-	tab.writeMu.Lock()
-	defer tab.writeMu.Unlock()
+	release, err := tab.acquireWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	tab.mu.Lock()
 	if tab.closed || tab.destroying {
 		tab.mu.Unlock()
@@ -88,7 +91,7 @@ func (m *Manager) WriteGuest(ctx context.Context, tabID, guest string, data []by
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := writeAll(channel, data); err != nil {
+	if err := writeChannelContext(ctx, channel, data); err != nil {
 		return err
 	}
 	m.transcriptInput(ctx, tab, data)

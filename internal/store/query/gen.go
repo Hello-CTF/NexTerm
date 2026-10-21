@@ -62,7 +62,9 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		SyncState:               newSyncState(db, opts...),
 		SyncTombstone:           newSyncTombstone(db, opts...),
 		TranscriptChunkRow:      newTranscriptChunkRow(db, opts...),
+		TranscriptChunkTS:       newTranscriptChunkTS(db, opts...),
 		TranscriptRow:           newTranscriptRow(db, opts...),
+		TranscriptTSIndex:       newTranscriptTSIndex(db, opts...),
 		UserDEK:                 newUserDEK(db, opts...),
 		UserDevice:              newUserDevice(db, opts...),
 		UserSession:             newUserSession(db, opts...),
@@ -121,7 +123,9 @@ type Query struct {
 	SyncState               syncState
 	SyncTombstone           syncTombstone
 	TranscriptChunkRow      transcriptChunkRow
+	TranscriptChunkTS       transcriptChunkTS
 	TranscriptRow           transcriptRow
+	TranscriptTSIndex       transcriptTSIndex
 	UserDEK                 userDEK
 	UserDevice              userDevice
 	UserSession             userSession
@@ -181,7 +185,9 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		SyncState:               q.SyncState.clone(db),
 		SyncTombstone:           q.SyncTombstone.clone(db),
 		TranscriptChunkRow:      q.TranscriptChunkRow.clone(db),
+		TranscriptChunkTS:       q.TranscriptChunkTS.clone(db),
 		TranscriptRow:           q.TranscriptRow.clone(db),
+		TranscriptTSIndex:       q.TranscriptTSIndex.clone(db),
 		UserDEK:                 q.UserDEK.clone(db),
 		UserDevice:              q.UserDevice.clone(db),
 		UserSession:             q.UserSession.clone(db),
@@ -248,7 +254,9 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		SyncState:               q.SyncState.replaceDB(db),
 		SyncTombstone:           q.SyncTombstone.replaceDB(db),
 		TranscriptChunkRow:      q.TranscriptChunkRow.replaceDB(db),
+		TranscriptChunkTS:       q.TranscriptChunkTS.replaceDB(db),
 		TranscriptRow:           q.TranscriptRow.replaceDB(db),
+		TranscriptTSIndex:       q.TranscriptTSIndex.replaceDB(db),
 		UserDEK:                 q.UserDEK.replaceDB(db),
 		UserDevice:              q.UserDevice.replaceDB(db),
 		UserSession:             q.UserSession.replaceDB(db),
@@ -305,7 +313,9 @@ type queryCtx struct {
 	SyncState               *syncStateDo
 	SyncTombstone           *syncTombstoneDo
 	TranscriptChunkRow      *transcriptChunkRowDo
+	TranscriptChunkTS       *transcriptChunkTSDo
 	TranscriptRow           *transcriptRowDo
+	TranscriptTSIndex       *transcriptTSIndexDo
 	UserDEK                 *userDEKDo
 	UserDevice              *userDeviceDo
 	UserSession             *userSessionDo
@@ -362,7 +372,9 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		SyncState:               q.SyncState.WithContext(ctx),
 		SyncTombstone:           q.SyncTombstone.WithContext(ctx),
 		TranscriptChunkRow:      q.TranscriptChunkRow.WithContext(ctx),
+		TranscriptChunkTS:       q.TranscriptChunkTS.WithContext(ctx),
 		TranscriptRow:           q.TranscriptRow.WithContext(ctx),
+		TranscriptTSIndex:       q.TranscriptTSIndex.WithContext(ctx),
 		UserDEK:                 q.UserDEK.WithContext(ctx),
 		UserDevice:              q.UserDevice.WithContext(ctx),
 		UserSession:             q.UserSession.WithContext(ctx),

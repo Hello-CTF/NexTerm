@@ -71,6 +71,7 @@ func TestOpenTabSSHUsesRemoteDurableProvider(t *testing.T) {
 		Terminals:       newFakeTerminalFactory(),
 		DurableResolver: resolver,
 	})
+	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
 	connected, err := manager.Connect(ctx, Asset{ID: "ssh-remote", Kind: KindSSH})
 	if err != nil {
@@ -120,6 +121,7 @@ func TestCreateTabSSHHelperFallbackPreservesNoticeAfterRename(t *testing.T) {
 	resolver := &countingResolver{err: base.ErrUnsupported}
 	connector := newFakeConnector()
 	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	t.Cleanup(func() { _ = manager.Close() })
 	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-fallback", Kind: KindSSH})
 	if err != nil {
 		t.Fatal(err)
@@ -151,6 +153,7 @@ func TestOpenTabSSHExplicitRetryAfterHelperBecomesAvailable(t *testing.T) {
 		return provider, nil
 	})
 	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	t.Cleanup(func() { _ = manager.Close() })
 	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-helper-retry", Kind: KindSSH})
 	if err != nil {
 		t.Fatal(err)
@@ -181,6 +184,7 @@ func TestCreateTabSSHFailedCommandDoesNotConsumeFallbackNotice(t *testing.T) {
 	resolver := &countingResolver{err: base.ErrUnsupported}
 	connector := newFakeConnector()
 	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	t.Cleanup(func() { _ = manager.Close() })
 	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-fallback-command", Kind: KindSSH})
 	if err != nil {
 		t.Fatal(err)
@@ -203,6 +207,7 @@ func TestOpenTabSSHDoesNotFallbackAfterUnclassifiedHelperError(t *testing.T) {
 	resolver := &countingResolver{err: errors.New("helper request rejected")}
 	connector := newFakeConnector()
 	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	t.Cleanup(func() { _ = manager.Close() })
 	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-helper-rejected", Kind: KindSSH})
 	if err != nil {
 		t.Fatal(err)
@@ -221,6 +226,7 @@ func TestOpenTabSSHCreateUnavailableFallsBackAndCachesFailure(t *testing.T) {
 	resolver := &countingResolver{provider: provider}
 	connector := newFakeConnector()
 	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	t.Cleanup(func() { _ = manager.Close() })
 	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-create-fallback", Kind: KindSSH})
 	if err != nil {
 		t.Fatal(err)
@@ -256,6 +262,7 @@ func TestOpenTabSSHCreateFailureKeepsExistingDurableTabsUsable(t *testing.T) {
 	provider := &descriptorListingDurableProvider{listingDurableProvider: &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}}
 	resolver := &countingResolver{provider: provider}
 	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver, OpenAccess: true})
+	t.Cleanup(func() { _ = manager.Close() })
 	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-existing-durable", Kind: KindSSH})
 	if err != nil {
 		t.Fatal(err)
@@ -314,6 +321,7 @@ func TestOpenTabSSHCreateFailureKeepsExistingDurableTabsUsable(t *testing.T) {
 func TestOpenTabSSHFallbackNoticeRepeatsAfterReconnect(t *testing.T) {
 	resolver := &countingResolver{err: durable.ErrUnavailable}
 	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	t.Cleanup(func() { _ = manager.Close() })
 	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-notice-reconnect", Kind: KindSSH})
 	if err != nil {
 		t.Fatal(err)
@@ -344,6 +352,7 @@ func TestOpenTabSSHCreateUnclassifiedErrorDoesNotFallback(t *testing.T) {
 	provider := &fakeDurableProvider{records: make(map[string]*fakeDurableRecord), createErr: errors.New("create rejected")}
 	connector := newFakeConnector()
 	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), DurableResolver: &countingResolver{provider: provider}})
+	t.Cleanup(func() { _ = manager.Close() })
 	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-create-rejected", Kind: KindSSH})
 	if err != nil {
 		t.Fatal(err)
@@ -359,6 +368,7 @@ func TestOpenTabSSHCreateUnclassifiedErrorDoesNotFallback(t *testing.T) {
 
 func TestOpenTabSSHDurableUnsupported(t *testing.T) {
 	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory()})
+	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
 	connected, err := manager.Connect(ctx, Asset{ID: "ssh-plain", Kind: KindSSH})
 	if err != nil {
@@ -381,6 +391,7 @@ func TestOpenTabDeviceUsesRemoteDurableProvider(t *testing.T) {
 		Terminals:       newFakeTerminalFactory(),
 		DurableResolver: resolver,
 	})
+	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
 	connected, err := manager.Connect(ctx, Asset{ID: "device/dev-1", Kind: KindDevice})
 	if err != nil {
@@ -441,6 +452,7 @@ func TestOpenTabSSHDurableResolverError(t *testing.T) {
 		Terminals:       newFakeTerminalFactory(),
 		DurableResolver: &countingResolver{err: resolverErr},
 	})
+	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
 	connected, err := manager.Connect(ctx, Asset{ID: "ssh-error", Kind: KindSSH})
 	if err != nil {
@@ -467,6 +479,7 @@ func TestRecoverRemoteDurable(t *testing.T) {
 		Terminals:       newFakeTerminalFactory(),
 		DurableResolver: resolver,
 	})
+	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
 	if _, err := manager.Connect(ctx, Asset{ID: "ssh-a", Kind: KindSSH}); err != nil {
 		t.Fatal(err)
@@ -496,6 +509,7 @@ func TestRecoverRemoteDurableRequiresScopeWhenHostsShareID(t *testing.T) {
 		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
 		DurableResolver: &countingResolver{provider: provider},
 	})
+	t.Cleanup(func() { _ = manager.Close() })
 	first, err := manager.Connect(t.Context(), Asset{ID: "ssh-a", Kind: KindSSH})
 	if err != nil {
 		t.Fatal(err)
@@ -529,6 +543,7 @@ func TestRecoverRemoteDurableUsesUniqueReachableOwner(t *testing.T) {
 		return nil, durable.ErrUnavailable
 	})
 	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), DurableResolver: resolver, OpenAccess: true})
+	t.Cleanup(func() { _ = manager.Close() })
 	owner, err := manager.Connect(t.Context(), Asset{ID: "ssh-owner", Kind: KindSSH})
 	if err != nil {
 		t.Fatal(err)
@@ -562,6 +577,7 @@ func TestRecoverRemoteDurableDoesNotHideUnrelatedSearchError(t *testing.T) {
 		return nil, listErr
 	})
 	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), DurableResolver: resolver, OpenAccess: true})
+	t.Cleanup(func() { _ = manager.Close() })
 	owner, err := manager.Connect(t.Context(), Asset{ID: "ssh-owner", Kind: KindSSH})
 	if err != nil {
 		t.Fatal(err)
@@ -590,6 +606,7 @@ func TestRecoverRemoteDurableIncludesDeviceSessions(t *testing.T) {
 		Terminals:       newFakeTerminalFactory(),
 		DurableResolver: resolver,
 	})
+	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
 	if _, err := manager.Connect(ctx, Asset{ID: "device/dev-1", Kind: KindDevice}); err != nil {
 		t.Fatal(err)
@@ -622,6 +639,7 @@ func TestRecoverRemoteDurableResolverErrorPropagates(t *testing.T) {
 		Terminals:       newFakeTerminalFactory(),
 		DurableResolver: &countingResolver{err: resolverErr},
 	})
+	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
 	if _, err := manager.Connect(ctx, Asset{ID: "ssh-resolver-error", Kind: KindSSH}); err != nil {
 		t.Fatal(err)
@@ -643,6 +661,7 @@ func TestRecoverRemoteDurableListErrorPropagates(t *testing.T) {
 		Terminals:       newFakeTerminalFactory(),
 		DurableResolver: &countingResolver{provider: provider},
 	})
+	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
 	if _, err := manager.Connect(ctx, Asset{ID: "ssh-list-error", Kind: KindSSH}); err != nil {
 		t.Fatal(err)
@@ -672,6 +691,7 @@ func TestRecoverRemoteDurableJoinsSearchErrors(t *testing.T) {
 		Terminals:       newFakeTerminalFactory(),
 		DurableResolver: resolver,
 	})
+	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
 	if _, err := manager.Connect(ctx, Asset{ID: "ssh-join-a", Kind: KindSSH}); err != nil {
 		t.Fatal(err)

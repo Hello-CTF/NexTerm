@@ -827,30 +827,31 @@ func TestStreamControlFullSequenceSurvivesStaleResume(t *testing.T) {
 	}
 
 	// Phase C: the transport keeps draining but the client accepts nothing
-	// more: sustained output stalls at the retention floor plus the ring
-	// instead of evicting the refused suffix.
-	stalled := false
-	stallEmitted := false
-	for i := fedThrough; i < 4000 && !stalled; i++ {
+	// more: feed until the ring is provably at capacity with the floor
+	// blocking eviction — the pump parks instead of evicting the refused
+	// suffix. The pipe-held chunk is then emitted with the pump provably
+	// parked, so it waits in the transport pipe and the recovery's anchor
+	// is the next frame the client sees; a read-timeout stall guess could
+	// instead fire while the pump is merely slow, and the late chunk would
+	// overtake the anchor.
+	for i := fedThrough; i < 4000 && !tab.recovery.needsStall(); i++ {
 		data := chunk(i)
+		fed = append(fed, data...)
 		if err := channel.emit(data); err != nil {
-			stalled = true
-			break
+			t.Fatal(err)
 		}
-		if !tryReadFrames(t, receiver, chunkSize, data) {
-			stalled = true
-			// Emitted but not fed: it waits in the transport pipe and arrives
-			// once the resume wakes the pump.
-			stallEmitted = true
+		if got := readFramesUntil(t, receiver, chunkSize); !bytes.Equal(got, data) {
+			t.Fatalf("chunk %d mismatch", i)
 		}
-		if !stalled {
-			fed = append(fed, data...)
-			fedThrough = i + 1
-		}
+		fedThrough = i + 1
 	}
-	if !stalled {
+	if !tab.recovery.needsStall() {
 		t.Fatal("producer kept reading past the ring capacity with the floor set")
 	}
+	if err := channel.emit(chunk(fedThrough)); err != nil {
+		t.Fatal(err)
+	}
+	stallEmitted := true
 
 	// The whole refused suffix [12 MiB, fed) is redelivered byte-identical.
 	recoverDone := make(chan error, 1)
@@ -1013,29 +1014,35 @@ func TestStreamControlFullSequenceTwoRecoverRounds(t *testing.T) {
 		}
 	}
 	// feedStalled keeps the transport draining while the client accepts
-	// nothing more, until the producer stalls at the retention floor plus the
-	// ring; it reports the pipe-held chunk, which arrives after the resume.
+	// nothing more, until the ring is provably at capacity with the floor
+	// blocking eviction — the pump parks instead of evicting the refused
+	// suffix. The pipe-held chunk is then emitted with the pump provably
+	// parked, so it waits in the transport pipe and arrives after the
+	// resume; a read-timeout stall guess could instead fire while the pump
+	// is merely slow, and the late chunk would overtake the anchor.
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	feedStalled := func() (stallEmitted bool) {
-		stalled := false
-		for i := fedThrough; i < 4000 && !stalled; i++ {
+		for i := fedThrough; i < 4000 && !tab.recovery.needsStall(); i++ {
 			data := chunk(i)
+			fed = append(fed, data...)
 			if err := channel.emit(data); err != nil {
-				stalled = true
-				break
+				t.Fatal(err)
 			}
-			if !tryReadFrames(t, receiver, chunkSize, data) {
-				stalled = true
-				stallEmitted = true
+			if got := readFramesUntil(t, receiver, chunkSize); !bytes.Equal(got, data) {
+				t.Fatalf("chunk %d mismatch", i)
 			}
-			if !stalled {
-				fed = append(fed, data...)
-				fedThrough = i + 1
-			}
+			fedThrough = i + 1
 		}
-		if !stalled {
+		if !tab.recovery.needsStall() {
 			t.Fatal("producer kept reading past the ring capacity with the floor set")
 		}
-		return stallEmitted
+		if err := channel.emit(chunk(fedThrough)); err != nil {
+			t.Fatal(err)
+		}
+		return true
 	}
 	var attachmentId uint64
 	recoverRound := func(accepted int64, episodeGen uint64) (suffix []byte) {

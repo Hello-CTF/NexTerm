@@ -33,6 +33,22 @@ type TranscriptMatch struct {
 	Preview []byte
 }
 
+// transcriptHasBlocks reports whether the transcript has any stored block,
+// used to decide whether an append establishes the timestamp index from a
+// verified-complete starting point.
+func (s *Store) transcriptHasBlocks(ctx context.Context, tx *gorm.DB, transcriptID string) (bool, error) {
+	var one int64
+	result := tx.WithContext(ctx).Model(&TranscriptChunkRow{}).
+		Select("1").
+		Where("transcript_id = ?", transcriptID).
+		Limit(1).
+		Scan(&one)
+	if result.Error != nil {
+		return false, dbError(result.Error)
+	}
+	return result.RowsAffected > 0, nil
+}
+
 type TranscriptHostRow struct {
 	AssetID       string
 	AssetName     string
@@ -98,8 +114,17 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 		totalStoredBytes += int64(len(block.Data))
 	}
 	totalChunks := int64(len(chunks))
+	wasEmpty := false
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		queries := query.Use(tx)
+		// The per-block timestamp index is maintained for every append so
+		// the distant seek stays bounded and correct under any timestamp
+		// order — no append is ever narrowed by an ordering rule.
+		hasBlocks, err := s.transcriptHasBlocks(ctx, tx, transcriptID)
+		if err != nil {
+			return err
+		}
+		wasEmpty = !hasBlocks
 		for _, chunk := range blocks {
 			chunk.TranscriptID = transcriptID
 			chunk.OwnerID = ipc.OwnerID(ctx)
@@ -107,10 +132,44 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 				return err
 			}
 		}
-		transcript := queries.TranscriptRow
-		if _, err := transcript.WithContext(ctx).
-			Where(transcript.ID.Eq(transcriptID)).
-			Where(ownerConditions(ctx, transcript.TableName())...).
+		gen, err := s.transcriptContentGen(ctx, tx, transcriptID)
+		if err != nil {
+			return err
+		}
+		for _, indexRow := range transcriptBlockMaxTimestamps(chunks) {
+			if err := s.transcriptTSIndexUpsertCurrent(ctx, tx, transcriptID, indexRow.blockSeq, indexRow.maxTS, gen, ipc.OwnerID(ctx)); err != nil {
+				return err
+			}
+		}
+		if err := s.transcriptTSIndexStateUpsert(ctx, tx, transcriptID, wasEmpty); err != nil {
+			return err
+		}
+		// A legal out-of-order append can insert blocks at or before the
+		// verification watermark: those blocks are unverified, so the
+		// watermark rolls back to the position just before the earliest of
+		// them — and the rollback epoch increments, so an advance computed
+		// from a snapshot that read the pre-rollback watermark is discarded
+		// instead of re-covering them. The next seek's bounded pass
+		// verifies them instead of trusting a watermark that no longer
+		// covers them.
+		minNewSeq := blocks[0].Seq
+		for _, block := range blocks[1:] {
+			if block.Seq < minNewSeq {
+				minNewSeq = block.Seq
+			}
+		}
+		if err := tx.WithContext(ctx).Model(&model.TranscriptTSIndex{}).
+			Where("transcript_id = ?", transcriptID).
+			Updates(map[string]any{
+				"verified_through": gorm.Expr("CASE WHEN verified_through >= ? THEN ? ELSE verified_through END", minNewSeq, minNewSeq-1),
+				"revision":         gorm.Expr("CASE WHEN verified_through >= ? THEN revision + 1 ELSE revision END", minNewSeq),
+			}).Error; err != nil {
+			return err
+		}
+		transcriptQuery := queries.TranscriptRow
+		if _, err := transcriptQuery.WithContext(ctx).
+			Where(transcriptQuery.ID.Eq(transcriptID)).
+			Where(ownerConditions(ctx, transcriptQuery.TableName())...).
 			UpdateColumns(map[string]any{
 				"bytes":        gorm.Expr("bytes + ?", totalBytes),
 				"stored_bytes": gorm.Expr("stored_bytes + ?", totalStoredBytes),
@@ -408,7 +467,7 @@ func (s *Store) TranscriptReplaceContent(ctx context.Context, transcriptID strin
 		info, err := transcript.WithContext(ctx).
 			Where(transcript.ID.Eq(transcriptID), transcript.ContentOmitted.Is(true)).
 			Where(ownerConditions(ctx, transcript.TableName())...).
-			UpdateColumns(map[string]any{"bytes": bytes, "stored_bytes": storedBytes, "chunks": chunks, "truncated": truncated, "content_omitted": false})
+			UpdateColumns(map[string]any{"bytes": bytes, "stored_bytes": storedBytes, "chunks": chunks, "truncated": truncated, "content_omitted": false, "content_gen": gorm.Expr("content_gen + 1")})
 		if err != nil {
 			return err
 		}
@@ -428,6 +487,33 @@ func (s *Store) TranscriptReplaceContent(ctx context.Context, transcriptID strin
 			if err := chunk.WithContext(ctx).Create(&row); err != nil {
 				return err
 			}
+		}
+		// The replacement is the transcript's whole content: rebuild its
+		// timestamp index from the same chunks and mark it complete. The
+		// generation bump above invalidates every row written for the old
+		// content — including a backfill insert that raced this replace and
+		// landed after the delete below: it carries the old generation and
+		// is never read for the current content.
+		if err := tx.WithContext(ctx).
+			Where("transcript_id = ?", transcriptID).
+			Delete(&model.TranscriptChunkTS{}).Error; err != nil {
+			return err
+		}
+		gen, err := s.transcriptContentGen(ctx, tx, transcriptID)
+		if err != nil {
+			return err
+		}
+		for _, indexRow := range transcriptBlockMaxTimestamps(content) {
+			row := &model.TranscriptChunkTS{TranscriptID: transcriptID, BlockSeq: indexRow.blockSeq, MaxTS: indexRow.maxTS, Gen: gen, OwnerID: ipc.OwnerID(ctx)}
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "transcript_id"}, {Name: "block_seq"}},
+				DoNothing: true,
+			}).Create(row).Error; err != nil {
+				return err
+			}
+		}
+		if err := s.transcriptTSIndexStateComplete(ctx, tx, transcriptID); err != nil {
+			return err
 		}
 		return nil
 	})
@@ -538,6 +624,7 @@ func (s *Store) TranscriptInsertSynced(ctx context.Context, row TranscriptRow, c
 				"chunks":          row.Chunks,
 				"truncated":       row.Truncated,
 				"content_omitted": row.ContentOmitted,
+				"content_gen":     gorm.Expr("content_gen + 1"),
 				"owner_id":        ipc.OwnerID(ctx),
 			}); err != nil {
 			return err
@@ -581,6 +668,33 @@ func (s *Store) TranscriptInsertSynced(ctx context.Context, row TranscriptRow, c
 			if err := chunk.WithContext(ctx).Create(&item); err != nil {
 				return err
 			}
+		}
+		// The synced content is the transcript's whole content: rebuild its
+		// timestamp index from the same chunks and mark it complete. The
+		// generation bump above invalidates every row written for the old
+		// content — including a backfill insert that raced this apply and
+		// landed after the delete below: it carries the old generation and
+		// is never read for the current content.
+		if err := tx.WithContext(ctx).
+			Where("transcript_id = ?", row.ID).
+			Delete(&model.TranscriptChunkTS{}).Error; err != nil {
+			return err
+		}
+		gen, err := s.transcriptContentGen(ctx, tx, row.ID)
+		if err != nil {
+			return err
+		}
+		for _, indexRow := range transcriptBlockMaxTimestamps(chunks) {
+			index := &model.TranscriptChunkTS{TranscriptID: row.ID, BlockSeq: indexRow.blockSeq, MaxTS: indexRow.maxTS, Gen: gen, OwnerID: ipc.OwnerID(ctx)}
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "transcript_id"}, {Name: "block_seq"}},
+				DoNothing: true,
+			}).Create(index).Error; err != nil {
+				return err
+			}
+		}
+		if err := s.transcriptTSIndexStateComplete(ctx, tx, row.ID); err != nil {
+			return err
 		}
 		return nil
 	})

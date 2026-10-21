@@ -77,6 +77,12 @@ type Tab struct {
 	ID        string
 	SessionID string
 
+	// incarnation is the unique identity of this tab's creation: it is
+	// assigned once at registration and never reused, so a removed and
+	// recreated tab is distinguishable from the original even when their
+	// versions coincide.
+	incarnation uint64
+
 	session    *Session
 	terminal   TerminalState
 	fanout     *terminal.Fanout
@@ -102,21 +108,28 @@ type Tab struct {
 	controlled   bool
 	// guestLease/guestLeaseUntil record the preview guest control lease holder and expiry:
 	// after the controller is removed by orphan cleanup on disconnect, the lease is kept until expiry (disconnect grace) and lazily cleared.
-	guestLease       string
-	guestLeaseUntil  time.Time
-	hidden           bool
-	exited           bool
-	closed           bool
-	destroying       bool
-	title            string
-	cancelPump       context.CancelFunc
-	cwdTracker       *shellintegr.Tracker
-	cwd              string
-	commandTrack     *shellintegr.CommandTracker
-	commandState     shellintegr.CommandState
-	pendingCmd       *pendingCommand
-	durableFed       int64
-	durableIdentity  base.DurableIdentity
+	guestLease      string
+	guestLeaseUntil time.Time
+	hidden          bool
+	exited          bool
+	closed          bool
+	destroying      bool
+	title           string
+	titleCustom     bool
+	cancelPump      context.CancelFunc
+	cwdTracker      *shellintegr.Tracker
+	cwd             string
+	commandTrack    *shellintegr.CommandTracker
+	commandState    shellintegr.CommandState
+	pendingCmd      *pendingCommand
+	durableFed      int64
+	durableIdentity base.DurableIdentity
+	// runtimeEpisode uniquely identifies the tab's current runtime episode
+	// for roster evidence: minted once at registration for tabs with no
+	// durable daemon identity and never reused, so remove/recreate and
+	// manager restarts cannot alias two episodes. Durable tabs leave it
+	// empty and report the daemon-assigned durableIdentity.Incarnation.
+	runtimeEpisode   string
 	metadataRevision uint64
 	renameAttempts   map[string]*durableRenameAttempt
 	streamEpoch      string
@@ -125,15 +138,32 @@ type Tab struct {
 
 	catchUpRemaining int64
 
-	ctx          context.Context
-	cancel       context.CancelFunc
-	responses    *responseQueue
-	feedGate     chan struct{}
-	writeMu      sync.Mutex
+	ctx       context.Context
+	cancel    context.CancelFunc
+	responses *responseQueue
+	feedGate  chan struct{}
+	// writeGate serializes tab writes (capacity 1, empty = held by nobody).
+	// Unlike a plain mutex it lets a queued writer give up early when its
+	// context ends or the tab closes.
+	writeGate    chan struct{}
 	visibilityMu sync.Mutex
 	lifecycleMu  sync.Mutex
 	closeMu      sync.Mutex
 	closeRetry   bool
+}
+
+// acquireWrite takes the tab's write gate, giving up early when the caller's
+// context ends or the tab closes; the returned release function must be
+// called to free the gate for the next writer.
+func (t *Tab) acquireWrite(ctx context.Context) (func(), error) {
+	select {
+	case t.writeGate <- struct{}{}:
+		return func() { <-t.writeGate }, nil
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
+	case <-t.ctx.Done():
+		return nil, ErrTabClosed
+	}
 }
 
 func (t *Tab) Info() TabInfo {
@@ -430,9 +460,13 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		exited: options.Durable != nil && options.Durable.Recover && options.Durable.RecoveredExited,
 		shell:  shell,
 		ctx:    tabCtx, cancel: cancel, responses: newResponseQueue(generation), feedGate: make(chan struct{}, 1),
+		writeGate:  make(chan struct{}, 1),
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
 		durableIdentity: durableIdentity, metadataRevision: metadataRevision,
 		streamEpoch: ids.New(), outputWake: make(chan struct{}),
+	}
+	if options.Durable == nil {
+		tab.runtimeEpisode = ids.New()
 	}
 	if options.Ephemeral {
 		tab.recovery = newRecoveryRing(recoveryRingBytes)
@@ -458,8 +492,13 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		}
 		if options.Durable.CanonicalMetadata {
 			tab.title = options.Durable.Title
+			// Only a real custom title latches the precedence over the OSC
+			// dynamic title; the default empty canonical title must not
+			// lock the OSC title out for the tab's lifetime.
+			tab.titleCustom = options.Durable.Title != ""
 		} else if title := m.durableTabTitle(ownerCtx(context.Background(), session.userID), tabID); title != "" {
 			tab.title = title
+			tab.titleCustom = true
 		}
 	}
 	tab.feedGate <- struct{}{}
@@ -473,6 +512,8 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	session.mu.Lock()
 	current := !m.closed && !session.closed && m.sessions[session.ID] == session && session.status == StatusConnected && session.generation == generation && session.transport == transport && m.tabs[tab.ID] == nil
 	if current {
+		m.nextTabIncarnation++
+		tab.incarnation = m.nextTabIncarnation
 		m.tabs[tab.ID] = tab
 		session.tabs[tab.ID] = tab
 		session.idleSince = time.Time{}
@@ -518,7 +559,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		return TabInfo{}, errors.Join(ErrSessionClosed, m.closeTab(tab, destroyOnFailure))
 	}
 	if (options.Durable == nil || !options.Durable.Recover) && startupCommand != "" && startupCommandSupported(kind) {
-		_ = writeAll(channel, []byte(startupCommand+"\n"))
+		_ = writeChannelContext(ctx, channel, []byte(startupCommand+"\n"))
 	}
 	if fallbackCause != nil {
 		if options.Detached {
@@ -606,7 +647,7 @@ func (m *Manager) CreateTab(ctx context.Context, options CreateTabOptions) (TabI
 		if exited || channel == nil {
 			return TabInfo{}, errors.Join(ErrTabClosed, m.CloseTab(info.ID))
 		}
-		if err := writeAll(channel, []byte(options.Command+"\n")); err != nil {
+		if err := writeChannelContext(ctx, channel, []byte(options.Command+"\n")); err != nil {
 			return TabInfo{}, errors.Join(err, m.CloseTab(info.ID))
 		}
 	}
@@ -674,6 +715,7 @@ func (m *Manager) RenameTab(ctx context.Context, tabID, title string) (TabInfo, 
 	}
 	tab.mu.Lock()
 	tab.title = title
+	tab.titleCustom = true
 	event := tab.controlEventLocked()
 	info := tab.infoLocked()
 	tab.mu.Unlock()
@@ -1191,7 +1233,7 @@ func (m *Manager) reapEphemeralTab(tab *Tab, generation uint64) error {
 	if !current {
 		return nil
 	}
-	if err := m.closeTabResources(tab); err != nil {
+	if err := m.closeTabResources(tab, false); err != nil {
 		return err
 	}
 
@@ -1327,8 +1369,11 @@ func (m *Manager) Write(ctx context.Context, tabID, client string, data []byte) 
 	if err != nil {
 		return err
 	}
-	tab.writeMu.Lock()
-	defer tab.writeMu.Unlock()
+	release, err := tab.acquireWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	tab.mu.Lock()
 	if tab.closed || tab.destroying {
 		tab.mu.Unlock()
@@ -1358,7 +1403,7 @@ func (m *Manager) Write(ctx context.Context, tabID, client string, data []byte) 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := writeAll(channel, data); err != nil {
+	if err := writeChannelContext(ctx, channel, data); err != nil {
 		return err
 	}
 	m.transcriptInput(ctx, tab, data)
@@ -1533,7 +1578,7 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 		m.deleteDurableTabTitle(ownerCtx(context.Background(), tab.session.userID), id)
 	} else {
 		m.mu.Unlock()
-		if err := m.closeTabResources(tab); err != nil {
+		if err := m.closeTabResources(tab, false); err != nil {
 			return err
 		}
 	}
@@ -1552,11 +1597,11 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 		session.mu.Unlock()
 	}
 	m.mu.Unlock()
-	_ = m.closeTabResources(tab)
+	_ = m.closeTabResources(tab, false)
 	return nil
 }
 
-func (m *Manager) closeTabResources(tab *Tab, afterClose ...func()) error {
+func (m *Manager) closeTabResources(tab *Tab, bestEffortChannel bool, afterClose ...func()) error {
 	tab.closeMu.Lock()
 	defer tab.closeMu.Unlock()
 	tab.mu.Lock()
@@ -1570,12 +1615,21 @@ func (m *Manager) closeTabResources(tab *Tab, afterClose ...func()) error {
 	tab.destroying = true
 	channel := tab.channel
 	tab.mu.Unlock()
+	var channelErr error
 	if channel != nil {
 		if err := channel.Close(); err != nil {
 			tab.mu.Lock()
-			tab.closeRetry = true
+			tab.closeRetry = !bestEffortChannel
 			tab.mu.Unlock()
-			return err
+			if !bestEffortChannel {
+				return err
+			}
+			// A reaping session teardown (cancelled context, closed
+			// transport) already killed the channel, so the close error
+			// cannot succeed on retry and must not block the
+			// goroutine-releasing teardown below; it is reported once the
+			// teardown completes.
+			channelErr = err
 		}
 	}
 
@@ -1623,7 +1677,7 @@ func (m *Manager) closeTabResources(tab *Tab, afterClose ...func()) error {
 	event := tab.controlEventLocked()
 	tab.mu.Unlock()
 	m.emit(context.Background(), TopicTerminalControl, event)
-	return nil
+	return channelErr
 }
 
 func (m *Manager) attachSubscriberOutput(tab *Tab, channelID string, incarnation uint64, producer *hub.Producer, expected *outCoalescer) {
@@ -1696,6 +1750,25 @@ func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []
 		event := tab.controlEventLocked()
 		tab.mu.Unlock()
 		m.emit(feedCtx, TopicTerminalControl, event)
+	}
+	// The OSC 0/2 dynamic title tracks the application-reported window title
+	// until the user sets a custom one: a custom title (RenameTab or a
+	// durable-restored title) takes precedence and later OSC reports never
+	// override it.
+	if source, ok := tab.terminal.(interface{ Title() string }); ok {
+		dynamic := source.Title()
+		tab.mu.Lock()
+		var titleEvent ControlEvent
+		titleChanged := false
+		if !tab.titleCustom && !tab.closed && dynamic != tab.title {
+			tab.title = dynamic
+			titleEvent = tab.controlEventLocked()
+			titleChanged = true
+		}
+		tab.mu.Unlock()
+		if titleChanged {
+			m.emit(feedCtx, TopicTerminalControl, titleEvent)
+		}
 	}
 	m.observeCommand(tab, data)
 	type outputTarget struct {
@@ -1837,9 +1910,16 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 	transportFailure := errors.Is(readErr, base.ErrDisconnected) || errors.Is(waitErr, base.ErrDisconnected)
 	tab.session.mu.Lock()
 	transport := tab.session.transport
+	sessionClosed := tab.session.closed
 	transportFailure = transportFailure || transport != nil && !transport.IsAlive()
 	shouldReconnect := tab.session.status == StatusConnected && tab.session.generation == generation && reconnectable(tab.session.asset.Kind) && transportFailure && !hasExitCode
 	tab.session.mu.Unlock()
+	// A reaped session's transport close wakes the tab's pump before the
+	// teardown marks the tab destroying; such an exit is part of the
+	// teardown, not a terminal event, and must not reach subscribers.
+	if sessionClosed {
+		return
+	}
 
 	tab.mu.Lock()
 	current := !tab.closed && !tab.destroying && tab.generation == generation
@@ -1873,6 +1953,14 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 	}
 	tab.mu.Unlock()
 	if !current {
+		return
+	}
+	// Re-check under the session lock: a reap that began after the first
+	// check still must not let the teardown exit escape as a terminal event.
+	tab.session.mu.Lock()
+	sessionClosed = tab.session.closed
+	tab.session.mu.Unlock()
+	if sessionClosed {
 		return
 	}
 	m.emit(context.Background(), TopicTerminalExit, exitEvent)

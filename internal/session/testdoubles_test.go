@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/terminal"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -66,6 +67,10 @@ type fakeTransport struct {
 	options  []base.PTYOptions
 	execs    []string
 	writeErr error
+	closeErr error
+	// channelDecorator, when set, wraps every channel the transport opens
+	// (e.g. to add the context-write capability).
+	channelDecorator func(*fakeChannel) base.Channel
 }
 
 func newFakeTransport(kind string, generation uint64) *fakeTransport {
@@ -92,7 +97,7 @@ func (t *fakeTransport) Close() error {
 	for _, channel := range channels {
 		_ = channel.Close()
 	}
-	return nil
+	return t.closeErr
 }
 
 func (t *fakeTransport) OpenPTY(_ context.Context, options base.PTYOptions) (base.Channel, error) {
@@ -107,7 +112,11 @@ func (t *fakeTransport) OpenPTY(_ context.Context, options base.PTYOptions) (bas
 	t.mu.Lock()
 	t.channels = append(t.channels, channel)
 	t.options = append(t.options, options)
+	decorator := t.channelDecorator
 	t.mu.Unlock()
+	if decorator != nil {
+		return decorator(channel), nil
+	}
 	return channel, nil
 }
 
@@ -144,6 +153,7 @@ type fakeChannel struct {
 	closeOnce  sync.Once
 	closeCount atomic.Int32
 	writeErr   error
+	closeErr   error
 
 	mu         sync.Mutex
 	pending    []byte
@@ -154,6 +164,8 @@ type fakeChannel struct {
 	waitErr    error
 	closeWrite int
 	resizeHook func(context.Context, uint32, uint32) error
+	writeHook  func([]byte) (int, error)
+	closeHook  func() error
 }
 
 func newFakeChannel(generation uint64) *fakeChannel {
@@ -189,6 +201,9 @@ func (c *fakeChannel) Write(data []byte) (int, error) {
 		return 0, base.ErrClosed
 	default:
 	}
+	if c.writeHook != nil {
+		return c.writeHook(data)
+	}
 	if c.writeErr != nil {
 		return 0, c.writeErr
 	}
@@ -203,7 +218,10 @@ func (c *fakeChannel) Close() error {
 		c.closeCount.Add(1)
 		close(c.closed)
 	})
-	return nil
+	if c.closeHook != nil {
+		return c.closeHook()
+	}
+	return c.closeErr
 }
 
 func (c *fakeChannel) Stderr() io.Reader { return nil }
@@ -255,6 +273,18 @@ func (c *fakeChannel) written() []byte {
 	return append([]byte(nil), c.input...)
 }
 
+// writeGateHeld reports whether the tab's write gate is currently held; it
+// is the channel-gate equivalent of the old mutex TryLock probe.
+func writeGateHeld(tab *Tab) bool {
+	select {
+	case tab.writeGate <- struct{}{}:
+		<-tab.writeGate
+		return false
+	default:
+		return true
+	}
+}
+
 type fakeTerminalFactory struct {
 	mu        sync.Mutex
 	terminals map[string]*fakeTerminal
@@ -289,6 +319,10 @@ type fakeTerminal struct {
 	visibilityHook func(bool)
 	bracketed      bool
 	bracketedGen   uint64
+	title          string
+	quiet          terminal.TabQuietState
+	quietHookFunc  func()
+	closeHookFunc  func()
 }
 
 // setBracketedPaste flips the reported bracketed-paste mode and bumps its
@@ -298,6 +332,48 @@ func (t *fakeTerminal) setBracketedPaste(on bool) {
 	t.bracketed = on
 	t.bracketedGen++
 	t.mu.Unlock()
+}
+
+// setTitle records the latest OSC 0/2 dynamic window title, mirroring what
+// the real terminal reports after feeding output containing an OSC sequence.
+func (t *fakeTerminal) setTitle(title string) {
+	t.mu.Lock()
+	t.title = title
+	t.mu.Unlock()
+}
+
+func (t *fakeTerminal) Title() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.title
+}
+
+// setQuiet replaces the reported quiet state, mirroring the real terminal's
+// seqlock-consistent QuietState readings.
+func (t *fakeTerminal) setQuiet(idleMS int64, version uint64, closed bool) {
+	t.mu.Lock()
+	t.quiet = terminal.TabQuietState{IdleMS: idleMS, Version: version, Closed: closed}
+	t.mu.Unlock()
+}
+
+// quietHook, when set, runs at the start of every QuietState read outside
+// the terminal lock, letting tests interleave lifecycle events mid-snapshot.
+func (t *fakeTerminal) quietHook(hook func()) {
+	t.mu.Lock()
+	t.quietHookFunc = hook
+	t.mu.Unlock()
+}
+
+func (t *fakeTerminal) QuietState() terminal.TabQuietState {
+	t.mu.Lock()
+	hook := t.quietHookFunc
+	t.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.quiet
 }
 
 func (t *fakeTerminal) BracketedPasteMode() (bool, uint64) {
@@ -352,7 +428,26 @@ func (t *fakeTerminal) isHidden() bool {
 
 func (t *fakeTerminal) Close() {
 	t.mu.Lock()
+	hook := t.closeHookFunc
+	t.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	t.mu.Lock()
 	t.closeCount++
+	// Mirror the real terminal: closing bumps the quiet version and marks
+	// the state closed as one seqlock-consistent write.
+	t.quiet.Closed = true
+	t.quiet.Version++
+	t.mu.Unlock()
+}
+
+// closeHookFunc, when set, runs at the start of Close outside the terminal
+// lock, letting tests interpose between the manager close and the terminal
+// state change.
+func (t *fakeTerminal) closeHook(hook func()) {
+	t.mu.Lock()
+	t.closeHookFunc = hook
 	t.mu.Unlock()
 }
 
