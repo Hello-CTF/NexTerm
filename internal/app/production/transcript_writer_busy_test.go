@@ -305,14 +305,16 @@ func TestTranscriptWriterRecoversAfterContentionClears(t *testing.T) {
 // fails at pool checkout with the closed-pool error — never the driver busy
 // error the held-lock variant asserts. The remaining interleaving — the
 // production flush already inside the driver's busy wait at the exact
-// Close instant — has no Go-level deterministic seam on this stack: the
-// pool checkout that must precede Close is not observable without driver
-// internals, and faking it would be a pool-metric guess. What covers it
-// instead: Go's pool never touches in-use connections on Close, and
-// TestStoreSQLiteBusyWaitOutlivesCancelAndClose proves on a pre-acquired
-// store connection that such a wait is neither interrupted nor joined.
-// Shutdown still joins here and the data outcome is identical: the tail
-// stays suppressed and the offset does not advance.
+// Close instant — is not deterministically covered from Go on this stack:
+// the pool checkout that must precede Close is not observable without
+// driver internals, and the terminal busy verdict cannot distinguish that
+// ordering from close-first, so no test here or in the store package
+// asserts it. TestStoreSQLiteBusyWaitOutlivesCancelAndClose covers only the
+// deterministic close-first ordering — Close does not prevent a contended
+// wait started afterwards on a pre-acquired connection — and M91's probes
+// supply the behavioral contract for the uncovered half. Shutdown still
+// joins here and the data outcome is identical: the tail stays suppressed
+// and the offset does not advance.
 func TestTranscriptWriterShutdownJoinsFlushStartedAfterClose(t *testing.T) {
 	ctx := context.Background()
 	writer, database, gated, path := newInflightFlushFixture(t, 2*time.Second)

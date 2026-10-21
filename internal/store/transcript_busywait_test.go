@@ -60,20 +60,6 @@ func TestStoreBusyTimeoutOptionConfiguresPragma(t *testing.T) {
 	}
 }
 
-// startedCall runs fn in a goroutine that closes started immediately before
-// making the call, so the test can order its own Close right after that
-// handshake. fn's result is the driver's own verdict — the busy handler's
-// terminal error — never a pool metric or a sleep-based guess.
-func startedCall(fn func() error) (started chan struct{}, done chan error) {
-	started = make(chan struct{})
-	done = make(chan error, 1)
-	go func() {
-		close(started)
-		done <- fn()
-	}()
-	return started, done
-}
-
 // isInterruptErr reports whether the driver aborted the statement with
 // SQLITE_INTERRUPT — the outcome when sqlite3_interrupt lands before the
 // busy handler engages.
@@ -98,10 +84,18 @@ func isInterruptErr(err error) bool {
 //     narrow setup window before the busy handler engages can abort the
 //     statement with SQLITE_INTERRUPT instead — but the production flush
 //     path never delivers one: the durable write ctx is never cancelled.)
-//   - database/sql Close neither interrupts nor joins the wait: Go closes
-//     only free pool connections, a connection pre-acquired from the pool
-//     keeps working across Close, and the contended statement on it still
-//     ends with the busy handler's terminal error.
+//   - database/sql Close does not prevent a contended wait started after
+//     it: Go closes only free pool connections, a connection pre-acquired
+//     from the pool keeps working across Close, and the contended statement
+//     on it still ends with the busy handler's terminal error. Only this
+//     deterministic close-first ordering is asserted. The complementary
+//     interleaving — Close landing while such a wait is already in flight —
+//     is not covered by any test here: no Go-level seam proves the wait
+//     engaged before Close without driver internals, and the terminal busy
+//     verdict, the Close return timing, and an in-flight check cannot
+//     distinguish the two orderings. M91's probes showed Close neither
+//     interrupts nor joins that wait; the shutdown design relies on that
+//     probe result rather than on a regression test.
 //
 // The fixture keeps the boundary at 2s so the assertions stay fast while the
 // production default remains 30s.
@@ -114,6 +108,7 @@ func TestStoreSQLiteBusyWaitOutlivesCancelAndClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = database.Close() })
 	second, err := OpenWithOptions(ctx, path, OpenOptions{BusyTimeout: 2 * time.Second})
 	if err != nil {
 		t.Fatal(err)
@@ -202,41 +197,6 @@ func TestStoreSQLiteBusyWaitOutlivesCancelAndClose(t *testing.T) {
 		}
 		_, err = conn.BeginTx(ctx, nil)
 		mustBusy(err, "the busy wait starting after Close")
-	})
-
-	// The wait is already in flight when Close runs (the handshake orders the
-	// driver call before Close; a lost preemption race still yields the busy
-	// verdict below because the pre-acquired conn survives Close). A joined
-	// Close would return only near the 2s busy expiry, far outside the 500ms
-	// window, and the in-flight wait still ends with the busy handler's
-	// terminal error instead of an interrupt.
-	t.Run("close during the wait neither interrupts nor joins it", func(t *testing.T) {
-		conn, err := database.DB().Conn(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = conn.Close() })
-		started, done := startedCall(func() error {
-			_, err := conn.BeginTx(ctx, nil)
-			return err
-		})
-		<-started
-		closed := make(chan error, 1)
-		go func() { closed <- database.Close() }()
-		select {
-		case err := <-closed:
-			if err != nil {
-				t.Fatalf("close during the busy wait: %v", err)
-			}
-		case <-time.After(500 * time.Millisecond):
-			t.Fatal("Close joined the in-flight busy wait instead of returning")
-		}
-		select {
-		case err := <-done:
-			t.Fatalf("Close interrupted the in-flight busy wait: %v", err)
-		default:
-		}
-		mustBusy(<-done, "the in-flight busy wait")
 	})
 
 	unlock()
