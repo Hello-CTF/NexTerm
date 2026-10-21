@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, createElement, useLayoutEffect, type ReactNode } from "react";
+import { act, createElement, StrictMode, useLayoutEffect, type ReactNode } from "react";
 import {
   BatchProgressPanel,
   type BatchProgressApi,
@@ -508,6 +508,42 @@ describe("BatchProgressPanel", () => {
     await act(async () => {
       mounted!.root.render(
         createElement(LayoutProbe, null, progressElement(api, { batchId: "batch-3" })),
+      );
+    });
+    const firstLayout = layouts[beforeSwitch] ?? "";
+    expect(firstLayout).not.toContain("批次 batch-2 已结束");
+    expect(firstLayout).not.toContain("fixed");
+    await flushUntil(() =>
+      (api.progress as ReturnType<typeof vi.fn>).mock.calls.some((call) => call[0] === "batch-3"),
+    );
+    const settled = mounted.container.textContent ?? "";
+    expect(settled).not.toContain("批次 batch-2 已结束");
+    expect(settled).not.toContain("fixed");
+  });
+
+  it("hides a rendered final batch from the first layout after an external batch switch in StrictMode", async () => {
+    const api = fakeApi();
+    const layouts: string[] = [];
+    function LayoutProbe({ children }: { children: ReactNode }) {
+      useLayoutEffect(() => {
+        layouts.push(document.querySelector("[data-batch-progress-probe]")?.textContent ?? "");
+      });
+      return <div data-batch-progress-probe="">{children}</div>;
+    }
+    mounted = mount(
+      createElement(StrictMode, null, createElement(LayoutProbe, null, progressElement(api))),
+    );
+    await flushUntil(() => mounted?.container.textContent?.includes("重跑失败目标") ?? false);
+    clickButton(mounted.container, "重跑失败目标");
+    await flushUntil(() => mounted?.container.textContent?.includes("fixed") ?? false);
+    expect(mounted.container.textContent).toContain("批次 batch-2 已结束");
+
+    // StrictMode double-renders the switch commit; both renders must detect
+    // the external transition and hide the old final from the first frame.
+    const beforeSwitch = layouts.length;
+    await act(async () => {
+      mounted!.root.render(
+        createElement(StrictMode, null, createElement(LayoutProbe, null, progressElement(api, { batchId: "batch-3" }))),
       );
     });
     const firstLayout = layouts[beforeSwitch] ?? "";

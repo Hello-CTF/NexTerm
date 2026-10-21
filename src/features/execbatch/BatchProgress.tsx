@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import { call, toAppError } from "../../ipc/commands";
 import type { ProductionConfirmation } from "../../ipc/generated/types";
 import { describeError } from "../../ui/errorText";
@@ -140,7 +140,6 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
   const rerunGenerationRef = useRef(0);
   const apiRef = useRef(api);
   const activeBatchIdRef = useRef(activeBatchId);
-  activeBatchIdRef.current = activeBatchId;
   // The startup grace covers the ordinary execute window between the active
   // batch being admitted and its tracker being published: not_found is a
   // temporary absence until the grace expires or a snapshot was observed.
@@ -149,13 +148,24 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
   // previousBatchIdRef detects an external prop transition during render:
   // the prop changing to a different ID is an external switch (hide the old
   // final from the first frame), while an unchanged prop means the current
-  // view still belongs to the component's own rerun.
+  // view still belongs to the component's own rerun. Refs that render reads
+  // are updated in layout effects (commit phase), never during render, so a
+  // StrictMode double render evaluates the guard against the same committed
+  // prop value twice.
   const previousBatchIdRef = useRef(batchId);
-  if (apiRef.current !== api) {
-    apiRef.current = api;
-    rerunGenerationRef.current++;
-    rerunPendingRef.current = false;
-  }
+  useLayoutEffect(() => {
+    previousBatchIdRef.current = batchId;
+  }, [batchId]);
+  useLayoutEffect(() => {
+    activeBatchIdRef.current = activeBatchId;
+  }, [activeBatchId]);
+  useLayoutEffect(() => {
+    if (apiRef.current !== api) {
+      apiRef.current = api;
+      rerunGenerationRef.current++;
+      rerunPendingRef.current = false;
+    }
+  }, [api]);
 
   useEffect(() => {
     if (batchId === activeBatchIdRef.current) {
@@ -307,7 +317,6 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
   // transition is a prop change to a different ID; an unchanged prop means
   // the view still belongs to the component's own rerun.
   const externallySwitched = batchId !== activeBatchId && batchId !== previousBatchIdRef.current;
-  previousBatchIdRef.current = batchId;
   const visibleFinalBatch =
     finalBatch !== null && finalBatch.forApi === api && finalBatch.batchId === activeBatchId && !externallySwitched
       ? finalBatch.batch
