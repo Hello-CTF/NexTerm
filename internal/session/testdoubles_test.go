@@ -322,6 +322,7 @@ type fakeTerminal struct {
 	title          string
 	quiet          terminal.TabQuietState
 	quietHookFunc  func()
+	closeHookFunc  func()
 }
 
 // setBracketedPaste flips the reported bracketed-paste mode and bumps its
@@ -427,7 +428,26 @@ func (t *fakeTerminal) isHidden() bool {
 
 func (t *fakeTerminal) Close() {
 	t.mu.Lock()
+	hook := t.closeHookFunc
+	t.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	t.mu.Lock()
 	t.closeCount++
+	// Mirror the real terminal: closing bumps the quiet version and marks
+	// the state closed as one seqlock-consistent write.
+	t.quiet.Closed = true
+	t.quiet.Version++
+	t.mu.Unlock()
+}
+
+// closeHookFunc, when set, runs at the start of Close outside the terminal
+// lock, letting tests interpose between the manager close and the terminal
+// state change.
+func (t *fakeTerminal) closeHook(hook func()) {
+	t.mu.Lock()
+	t.closeHookFunc = hook
 	t.mu.Unlock()
 }
 

@@ -3,8 +3,10 @@ package session
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
@@ -82,28 +84,54 @@ func TestQuietGroupSnapshotReportsTerminalClosed(t *testing.T) {
 	}
 }
 
-// A tab whose quiet version advances between the two consistency reads is
-// re-read, never reported with a stale version paired to a newer state.
-func TestQuietGroupSnapshotRetriesVersionChange(t *testing.T) {
+// A close that blocks before the terminal's own close keeps the snapshot
+// consistent: the pre-close snapshot and the mid-close snapshot carry the
+// same version with the same open state, and only the terminal's close
+// moves the version and the closed fact together.
+func TestQuietGroupSnapshotCloseBeforeTerminalClose(t *testing.T) {
 	manager, _, terminals, session := openOpenTestSession(t, KindSSH)
 	tab := openTestTab(t, manager, session, "client-a", "a-1")
 	term := terminals.terminal(tab.ID)
 	term.setQuiet(10, 5, false)
-	var calls atomic.Int32
-	term.quietHook(func() {
-		if calls.Add(1) == 2 {
-			term.setQuiet(10, 6, false)
-		}
-	})
-	states, err := manager.QuietGroupSnapshot(context.Background(), []string{tab.ID})
+
+	before, err := manager.QuietGroupSnapshot(context.Background(), []string{tab.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(states) != 1 || states[0].Version != 6 {
-		t.Fatalf("states = %+v, want the re-read version 6", states)
+	if len(before) != 1 || before[0].Version != 5 || before[0].Closed {
+		t.Fatalf("open snapshot = %+v, want version 5 open", before)
 	}
-	if calls.Load() < 3 {
-		t.Fatalf("QuietState calls = %d, want a re-read after the version change", calls.Load())
+
+	// Block the tab's close between the manager teardown and the terminal's
+	// own Close: the manager-side closed/destroying flags are already set,
+	// but they must not leak into the snapshot — only the terminal's
+	// versioned state speaks.
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseHook := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseHook()
+	term.closeHook(func() {
+		close(entered)
+		<-release
+	})
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- manager.CloseTab(tab.ID) }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("tab close never reached the terminal close")
+	}
+	mid, err := manager.QuietGroupSnapshot(context.Background(), []string{tab.ID})
+	if err != nil {
+		t.Fatalf("mid-close snapshot = %v", err)
+	}
+	if len(mid) != 1 || mid[0].Version != before[0].Version || mid[0].Closed {
+		t.Fatalf("mid-close snapshot = %+v, want the same version %d still open", mid, before[0].Version)
+	}
+	releaseHook()
+	if err := <-closeDone; err != nil {
+		t.Fatalf("CloseTab = %v", err)
 	}
 }
 
@@ -116,20 +144,20 @@ func TestQuietGroupSnapshotFailsOnInterleavedRemove(t *testing.T) {
 	term.setQuiet(10, 5, false)
 	var calls atomic.Int32
 	term.quietHook(func() {
-		if calls.Add(1) == 2 {
+		if calls.Add(1) == 1 {
 			if err := manager.CloseTab(tab.ID); err != nil {
 				t.Errorf("CloseTab: %v", err)
 			}
 		}
 	})
-	if _, err := manager.QuietGroupSnapshot(context.Background(), []string{tab.ID}); !errors.Is(err, ErrTabNotFound) {
-		t.Fatalf("snapshot = %v, want ErrTabNotFound after the interleaved remove", err)
+	if _, err := manager.QuietGroupSnapshot(context.Background(), []string{tab.ID}); !errors.Is(err, ErrQuietSnapshot) {
+		t.Fatalf("snapshot = %v, want ErrQuietSnapshot after the interleaved remove", err)
 	}
 }
 
 // A tab removed and recreated under the same ID between the consistency
-// reads is re-resolved: the snapshot reports the new incarnation's state,
-// never the removed one's.
+// reads fails the whole snapshot instead of silently adopting the new
+// incarnation — the caller never sees a same-ID state it cannot trust.
 func TestQuietGroupSnapshotRechecksIncarnation(t *testing.T) {
 	manager, _, terminals, session := openOpenTestSession(t, KindSSH)
 	tab := openTestTab(t, manager, session, "client-a", "a-1")
@@ -137,7 +165,7 @@ func TestQuietGroupSnapshotRechecksIncarnation(t *testing.T) {
 	term.setQuiet(10, 5, false)
 	var calls atomic.Int32
 	term.quietHook(func() {
-		if calls.Add(1) == 2 {
+		if calls.Add(1) == 1 {
 			if err := manager.CloseTab(tab.ID); err != nil {
 				t.Errorf("CloseTab: %v", err)
 			}
@@ -149,12 +177,8 @@ func TestQuietGroupSnapshotRechecksIncarnation(t *testing.T) {
 			terminals.terminal(tab.ID).setQuiet(20, 99, false)
 		}
 	})
-	states, err := manager.QuietGroupSnapshot(context.Background(), []string{tab.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(states) != 1 || states[0].Version != 99 {
-		t.Fatalf("states = %+v, want the recreated tab's version 99, never the removed tab's state", states)
+	if _, err := manager.QuietGroupSnapshot(context.Background(), []string{tab.ID}); !errors.Is(err, ErrQuietSnapshot) {
+		t.Fatalf("snapshot = %v, want ErrQuietSnapshot instead of the recreated incarnation's state", err)
 	}
 }
 
