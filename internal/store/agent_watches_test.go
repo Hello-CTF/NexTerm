@@ -29,7 +29,11 @@ func watchOwnerCtx(owner string) context.Context {
 
 func attachWatchTarget(t *testing.T, backend *store.Store, ctx context.Context, targetID, identity string) model.AgentWatchTargetRow {
 	t.Helper()
-	row, err := backend.AgentWatchTargetAttach(ctx, targetID, identity, 1000)
+	expected := uint64(0)
+	if existing, err := backend.AgentWatchTargetGet(ctx, targetID); err == nil {
+		expected = existing.Generation
+	}
+	row, err := backend.AgentWatchTargetAttach(ctx, targetID, identity, expected, 1000)
 	if err != nil {
 		t.Fatalf("attach target %s: %v", targetID, err)
 	}
@@ -156,7 +160,7 @@ func TestAgentWatchCreateRejectsStaleCredential(t *testing.T) {
 	attachWatchTarget(t, backend, ctx, "target-1", "identity-1")
 	// The presenter holds generation 1; a replacement moves the target to
 	// generation 2 before the create lands.
-	if _, err := backend.AgentWatchTargetAttach(ctx, "target-1", "identity-2", 1500); err != nil {
+	if _, err := backend.AgentWatchTargetAttach(ctx, "target-1", "identity-2", 1, 1500); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := backend.AgentWatchCreate(ctx, testWatchRow("watch-stale", "target-1"), 1); !errors.Is(err, store.ErrAgentWatchDetached) {
@@ -533,7 +537,7 @@ func TestAgentWatchEventAckDoesNotReArmAfterPermanentDetach(t *testing.T) {
 	if _, err := backend.AgentWatchFire(ctx, fireParams(created2, "delivery-ad2", 10)); err != nil {
 		t.Fatal(err)
 	}
-	replaced, err := backend.AgentWatchTargetAttach(ctx, "target-2", "identity-2", 5000)
+	replaced, err := backend.AgentWatchTargetAttach(ctx, "target-2", "identity-2", 1, 5000)
 	if err != nil || replaced.Generation != 2 {
 		t.Fatalf("replacement = %+v, %v", replaced, err)
 	}
@@ -736,12 +740,12 @@ func TestAgentWatchTimestampsSurvive(t *testing.T) {
 func TestAgentWatchTargetLifecycle(t *testing.T) {
 	backend := openAgentWatchStore(t)
 	ctx := watchOwnerCtx("owner-a")
-	row, err := backend.AgentWatchTargetAttach(ctx, "target-1", "identity-1", 1000)
+	row, err := backend.AgentWatchTargetAttach(ctx, "target-1", "identity-1", 0, 1000)
 	if err != nil || row.Generation != 1 || row.Gone {
 		t.Fatalf("first attach = %+v, %v", row, err)
 	}
 	// Same-identity attach is idempotent.
-	again, err := backend.AgentWatchTargetAttach(ctx, "target-1", "identity-1", 2000)
+	again, err := backend.AgentWatchTargetAttach(ctx, "target-1", "identity-1", 1, 2000)
 	if err != nil || again.Generation != 1 {
 		t.Fatalf("idempotent attach = %+v, %v", again, err)
 	}
@@ -763,7 +767,7 @@ func TestAgentWatchTargetLifecycle(t *testing.T) {
 		t.Fatalf("watch after stale credential detach = %+v, %v", watch, err)
 	}
 	// Identity replacement settles the old incarnation and bumps generation.
-	replaced, err := backend.AgentWatchTargetAttach(ctx, "target-1", "identity-2", 4000)
+	replaced, err := backend.AgentWatchTargetAttach(ctx, "target-1", "identity-2", 1, 4000)
 	if err != nil || replaced.Generation != 2 || replaced.Identity != "identity-2" {
 		t.Fatalf("replacement attach = %+v, %v", replaced, err)
 	}
@@ -793,7 +797,7 @@ func TestAgentWatchTargetLifecycle(t *testing.T) {
 		t.Fatalf("target after idempotent detach = %+v, %v", row, err)
 	}
 	// Reattaching after permanent detach resurrects as a new generation.
-	resurrected, err := backend.AgentWatchTargetAttach(ctx, "target-1", "identity-2", 7000)
+	resurrected, err := backend.AgentWatchTargetAttach(ctx, "target-1", "identity-2", 3, 7000)
 	if err != nil || resurrected.Gone || resurrected.Generation != 4 {
 		t.Fatalf("resurrect attach = %+v, %v", resurrected, err)
 	}
@@ -803,11 +807,11 @@ func TestAgentWatchTargetOwnerIsolation(t *testing.T) {
 	backend := openAgentWatchStore(t)
 	ctxA := watchOwnerCtx("owner-a")
 	ctxB := watchOwnerCtx("owner-b")
-	rowA, err := backend.AgentWatchTargetAttach(ctxA, "target-shared", "identity-a", 1000)
+	rowA, err := backend.AgentWatchTargetAttach(ctxA, "target-shared", "identity-a", 0, 1000)
 	if err != nil || rowA.Identity != "identity-a" {
 		t.Fatalf("attach A = %+v, %v", rowA, err)
 	}
-	rowB, err := backend.AgentWatchTargetAttach(ctxB, "target-shared", "identity-b", 1000)
+	rowB, err := backend.AgentWatchTargetAttach(ctxB, "target-shared", "identity-b", 0, 1000)
 	if err != nil || rowB.Identity != "identity-b" {
 		t.Fatalf("attach B = %+v, %v", rowB, err)
 	}

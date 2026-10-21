@@ -244,3 +244,40 @@ func (t *stubTerminal) Dump(int) []byte                 { return nil }
 func (t *stubTerminal) Resize(int, int) error           { return nil }
 func (t *stubTerminal) SetResponseHandler(func([]byte)) {}
 func (t *stubTerminal) Close()                          { t.closed = true }
+
+// A clipped Tail must end exactly at the anchor: retention clamping moves
+// the window start forward, and bytes at or after beforeSeq are cut instead
+// of being signed into the left context at shifted positions.
+func TestWatchSourceTailNeverReturnsBytesPastTheAnchor(t *testing.T) {
+	manager := newWatchTestManager(t)
+	tab := openWatchTestTab(t, manager)
+	identity := watchTestEpisode(t, manager, tab.ID)
+	source := &WatchSource{
+		manager: manager, tabID: tab.ID, identity: identity,
+		reader:  &fakeWatchSeqReader{data: []byte("retained"), base: 96},
+		options: WatchSourceOptions{PollInterval: time.Millisecond, MaxChunkBytes: 256},
+		ctx:     context.Background(),
+	}
+	cases := []struct {
+		beforeSeq int64
+		maxBytes  int
+		want      string
+	}{
+		{100, 8, "reta"},     // clamped: the true retained tail is [96,100)
+		{104, 8, "retained"}, // full window, all before the anchor
+		{104, 4, "ined"},     // capped by maxBytes
+		{96, 8, ""},          // nothing retained before the base
+		{2, 8, ""},           // the anchor itself rolled out of retention
+		{100, 4, "reta"},     // short request inside the window
+		{103, 2, "ne"},       // the two bytes just before the anchor
+	}
+	for _, tc := range cases {
+		got, err := source.Tail(context.Background(), tc.beforeSeq, tc.maxBytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != tc.want {
+			t.Fatalf("Tail(%d, %d) = %q; want %q", tc.beforeSeq, tc.maxBytes, got, tc.want)
+		}
+	}
+}

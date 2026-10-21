@@ -180,3 +180,182 @@ func TestExecutorWatchCreateSerializedWithReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The clipped-tail boundary: with the anchor's full left context evicted,
+// the source honestly returns only the retained prefix, and the create fails
+// instead of persisting shifted context that would let a boundary assertion
+// misfire. Counterexample, retained [96,104) = "abcdXYZ " with anchor 100:
+// the byte at 99 is 'd', so \bXYZ must not match at 100; a shifted
+// eight-byte context ending in the space at 103 would invent that boundary.
+func TestExecutorCreateFailsOnUnverifiableLeftContext(t *testing.T) {
+	backend, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	ctx := ownerCtx("owner-a")
+	sink := newChanSink()
+	executor := newTestExecutor(t, backend, sink)
+	// The source's stream already rolled everything before 96 away and its
+	// tail honestly reports only the four retained bytes before the anchor.
+	source := &scriptSource{
+		steps:  []scriptStep{{data: []byte("XYZ ")}},
+		endSeq: 100,
+		tail:   []byte("abcd"),
+	}
+	attachTarget(t, executor, ctx, "target-1", "identity-1", source)
+	if _, err := executor.Watch(ctx, WatchParams{TargetID: "target-1", Condition: Condition{Type: ConditionRegex, Pattern: `\bXYZ`}}); err == nil {
+		t.Fatal("create succeeded with an unverifiable left context")
+	}
+	rows, err := backend.AgentWatchListByTarget(ctx, "target-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("a watch with shifted left context was persisted: %+v", rows)
+	}
+	if err := executor.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if delivered, err := executor.DispatchOnce(ctx); err != nil || delivered != 0 {
+		t.Fatalf("dispatch = %d, %v; the shifted-context watch must never exist to fire", delivered, err)
+	}
+	if err := executor.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Two executors over one store: a stale attach delayed past another
+// executor's incarnation advance must conflict with zero side effects — the
+// durable precheck and the transaction CAS, never the local mirror.
+func TestExecutorStaleAttachAcrossExecutorsConflictsAtTheDurableFence(t *testing.T) {
+	backend, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	ctx := ownerCtx("owner-a")
+	executorA := newTestExecutor(t, backend, newChanSink())
+	executorB := newTestExecutor(t, backend, newChanSink())
+
+	attachTarget(t, executorA, ctx, "target-1", "identity-1", &scriptSource{gate: make(chan struct{})})
+	rowG1, err := backend.AgentWatchTargetGet(ctx, "target-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Executor B advances the incarnation and arms a watch on the new stream.
+	attachTarget(t, executorB, ctx, "target-1", "identity-2", &scriptSource{gate: make(chan struct{})})
+	watchB, err := executorB.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("ready")})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Executor A's delayed attach prepared at generation 1 resumes: its local
+	// mirror still says g1, but the durable row is at g2, so the durable fence
+	// must reject it before it can cancel B's runner or settle B's watch.
+	staleSource := &scriptSource{}
+	err = executorA.AttachTarget(ctx, "target-1", "identity-1", staleSource, rowG1.Generation)
+	if err == nil || !errors.Is(err, ErrConflict) {
+		t.Fatalf("cross-executor stale attach = %v; want ErrConflict", err)
+	}
+	staleSource.mu.Lock()
+	staleClosed := staleSource.closed
+	staleSource.mu.Unlock()
+	if staleClosed {
+		t.Fatal("the executor closed a source it never bound")
+	}
+	if !executorB.RunnerAlive("target-1") {
+		t.Fatal("the stale attach cancelled the other executor's live runner")
+	}
+	row, err := backend.AgentWatchGet(ctx, watchB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != store.AgentWatchStatusArmed || row.Generation != 2 {
+		t.Fatalf("watch B after the stale attach = %+v; want armed at generation 2", row)
+	}
+	targetRow, err := backend.AgentWatchTargetGet(ctx, "target-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if targetRow.Identity != "identity-2" || targetRow.Generation != 2 {
+		t.Fatalf("durable target after the stale attach = %+v; want identity-2 generation 2", targetRow)
+	}
+	if err := executorA.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := executorB.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The ^ seam shares the clipped-context honesty: a left context shorter than
+// the anchor window must fail the create, never let a begin-assertion
+// evaluate against bytes taken from after the anchor.
+func TestExecutorCreateFailsOnUnverifiableBeginAssertionContext(t *testing.T) {
+	backend, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	ctx := ownerCtx("owner-a")
+	executor := newTestExecutor(t, backend, newChanSink())
+	// The honest clipped tail has only five bytes before the anchor; the full
+	// eight-byte window is unverifiable, so ^-anchored creation must fail.
+	source := &scriptSource{endSeq: 100, tail: []byte("abXYZ")}
+	attachTarget(t, executor, ctx, "target-1", "identity-1", source)
+	if _, err := executor.Watch(ctx, WatchParams{TargetID: "target-1", Condition: Condition{Type: ConditionRegex, Pattern: `^XYZ`}}); err == nil {
+		t.Fatal("^ create succeeded with an unverifiable left context")
+	}
+	rows, err := backend.AgentWatchListByTarget(ctx, "target-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("a ^ watch with shifted context was persisted: %+v", rows)
+	}
+	if err := executor.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The UTF-8 seam: a clipped tail ending mid-rune anchors at the rune start
+// with the incomplete sequence carried, so the completed rune is evaluated
+// at its true position instead of the anchor swallowing post-anchor bytes.
+func TestExecutorCreateRetreatsAnchorAcrossAMidRuneSeam(t *testing.T) {
+	backend, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	ctx := ownerCtx("owner-a")
+	sink := newChanSink()
+	executor := newTestExecutor(t, backend, sink)
+	// The clipped tail is the full window ending with the first two bytes
+	// of 力; the anchor must retreat to the rune start at 98 with the
+	// incomplete sequence carried, and the chunk supplying the rune's final
+	// byte fires at the true rune start.
+	source := &scriptSource{
+		steps:  []scriptStep{{data: append([]byte{0x9B}, []byte(" ready")...)}},
+		endSeq: 100,
+		tail:   []byte{'a', 'a', 'a', 'a', 'a', 'a', 0xE5, 0x8A},
+	}
+	attachTarget(t, executor, ctx, "target-1", "identity-1", source)
+	watch, err := executor.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("力 ready")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if watch.AnchorSeq != 98 {
+		t.Fatalf("anchor = %d; want the rune start 98", watch.AnchorSeq)
+	}
+	if err := executor.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	data := waitDelivery(t, sink)
+	if data.Event.WatchID != watch.ID || data.Event.MatchedFrom != 98 || data.Event.MatchedTo != 107 {
+		t.Fatalf("delivered event = %+v; want the match at the true rune start 98..107", data.Event)
+	}
+	if err := executor.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+}

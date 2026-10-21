@@ -133,12 +133,15 @@ func newTestExecutor(t *testing.T, backend *store.Store, sink Sink) *Executor {
 	return executor
 }
 
-// attachTarget attaches with the current mirror credential as the
-// incarnation fence: sequential tests always present the generation they
-// just observed, which is exactly the fencing contract.
+// attachTarget attaches with the current durable generation as the
+// incarnation fence: sequential tests always present the generation the
+// locked row currently carries, which is exactly the fencing contract.
 func attachTarget(t *testing.T, executor *Executor, ctx context.Context, targetID, identity string, source Source) {
 	t.Helper()
-	_, generation, _ := executor.AttachedCredential(ctx, targetID)
+	generation := uint64(0)
+	if row, err := executor.store.AgentWatchTargetGet(ctx, targetID); err == nil {
+		generation = row.Generation
+	}
 	if err := executor.AttachTarget(ctx, targetID, identity, source, generation); err != nil {
 		t.Fatal(err)
 	}

@@ -51,11 +51,23 @@ func ownerCtx(owner string) context.Context {
 	return ipc.WithUserID(context.Background(), owner)
 }
 
-func mustCreate(t *testing.T, engine *Engine, ctx context.Context, target string, condition Condition) Watch {
+// attachEngine attaches presenting the current durable generation as the
+// incarnation fence, which is exactly the fencing contract sequential tests
+// satisfy — the belief is the locked durable row, never the mirror cache.
+func attachEngine(t *testing.T, engine *Engine, ctx context.Context, target, identity string) {
 	t.Helper()
-	if err := engine.Attach(ctx, target, "identity-1"); err != nil {
+	generation := uint64(0)
+	if row, err := engine.store.AgentWatchTargetGet(ctx, target); err == nil {
+		generation = row.Generation
+	}
+	if err := engine.Attach(ctx, target, identity, generation); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func mustCreate(t *testing.T, engine *Engine, ctx context.Context, target string, condition Condition) Watch {
+	t.Helper()
+	attachEngine(t, engine, ctx, target, "identity-1")
 	watch, err := engine.Create(ctx, CreateParams{TargetID: target, Condition: condition})
 	if err != nil {
 		t.Fatal(err)
@@ -73,9 +85,7 @@ func TestCreateRequiresAttachedTarget(t *testing.T) {
 	if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1", Condition: containsCondition("ready")}); !errors.Is(err, ErrDetached) {
 		t.Fatalf("create without attach = %v; want ErrDetached", err)
 	}
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	watch, err := engine.Create(ctx, CreateParams{TargetID: "target-1", Name: "w", Condition: containsCondition("ready")})
 	if err != nil {
 		t.Fatal(err)
@@ -94,9 +104,7 @@ func TestCreateRequiresAttachedTarget(t *testing.T) {
 func TestCreateValidatesCondition(t *testing.T) {
 	engine, _ := newTestEngine(t, newTestClock())
 	ctx := ownerCtx("owner-a")
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	for name, condition := range map[string]Condition{
 		"empty pattern": {Type: ConditionContains},
 		"unknown type":  {Type: "magic", Pattern: "x"},
@@ -209,9 +217,7 @@ func TestDetachReversibleResumesFromAnchor(t *testing.T) {
 	if err := engine.Detach(ctx, "target-1", "identity-1", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	events, err := engine.Observe(ctx, "target-1", "identity-1", 4, []byte("ready"))
 	if err != nil || len(events) != 1 {
 		t.Fatalf("resumed observe = %+v, %v", events, err)
@@ -244,12 +250,8 @@ func TestDetachPermanentMarksUnverifiable(t *testing.T) {
 func TestStaleDetachDoesNotTearDownNewerAttachment(t *testing.T) {
 	engine, _ := newTestEngine(t, newTestClock())
 	ctx := ownerCtx("owner-a")
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := engine.Attach(ctx, "target-1", "identity-2"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
+	attachEngine(t, engine, ctx, "target-1", "identity-2")
 	if err := engine.Detach(ctx, "target-1", "identity-1", true); err != nil {
 		t.Fatal(err)
 	}
@@ -267,9 +269,7 @@ func TestAttachReplacementInvalidatesOldIdentityWatches(t *testing.T) {
 	engine, _ := newTestEngine(t, newTestClock())
 	ctx := ownerCtx("owner-a")
 	old := mustCreate(t, engine, ctx, "target-1", containsCondition("ready"))
-	if err := engine.Attach(ctx, "target-1", "identity-2"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-2")
 	after, err := engine.Get(ctx, old.ID)
 	if err != nil || after.Status != StatusUnverifiable {
 		t.Fatalf("old-identity watch = %+v, %v", after, err)
@@ -329,9 +329,7 @@ func TestCancelPendingEventStopsDelivery(t *testing.T) {
 func TestRepeatWatchReArmsOnAck(t *testing.T) {
 	engine, backend := newTestEngine(t, newTestClock())
 	ctx := ownerCtx("owner-a")
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	watch, err := engine.Create(ctx, CreateParams{TargetID: "target-1", Condition: containsCondition("ready"), Repeat: true})
 	if err != nil {
 		t.Fatal(err)
@@ -367,9 +365,7 @@ func TestSweepExpired(t *testing.T) {
 	clock := newTestClock()
 	engine, _ := newTestEngine(t, clock)
 	ctx := ownerCtx("owner-a")
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	expired, err := engine.Create(ctx, CreateParams{TargetID: "target-1", Condition: containsCondition("ready"),
 		ExpiresAt: clock.Now().Add(-time.Minute)})
 	if err != nil {
@@ -416,9 +412,7 @@ func TestEngineOwnerIsolation(t *testing.T) {
 	// B has its own mirror and durable row for the shared target ID: its
 	// observe is evaluated only against B's watches and never fires or
 	// settles owner A's watch.
-	if err := engine.Attach(ctxB, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctxB, "target-1", "identity-1")
 	events, err := engine.Observe(ctxB, "target-1", "identity-1", 0, []byte("ready"))
 	if err != nil || len(events) != 0 {
 		t.Fatalf("cross-owner observe fired owner-a watch: %+v, %v", events, err)
@@ -432,9 +426,7 @@ func TestEngineOwnerIsolation(t *testing.T) {
 func TestObserveEvaluatesWatchesIndependently(t *testing.T) {
 	engine, _ := newTestEngine(t, newTestClock())
 	ctx := ownerCtx("owner-a")
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	matching, err := engine.Create(ctx, CreateParams{TargetID: "target-1", Condition: containsCondition("ready")})
 	if err != nil {
 		t.Fatal(err)
@@ -465,9 +457,7 @@ func TestRegexConditionAndBoundedExcerpt(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := ownerCtx("owner-a")
-	if err := engine.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-1")
 	if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1",
 		Condition: Condition{Type: ConditionRegex, Pattern: `error \d+`}}); err != nil {
 		t.Fatal(err)
@@ -494,9 +484,7 @@ func TestConcurrentObserveFiresExactlyOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustCreate(t, engine, ctx, "target-1", containsCondition("ready"))
-	if err := second.Attach(ctx, "target-1", "identity-1"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, second, ctx, "target-1", "identity-1")
 	var wg sync.WaitGroup
 	results := make([][]Event, 2)
 	errs := make([]error, 2)

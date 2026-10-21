@@ -115,14 +115,22 @@ func (s *watchService) openSource(ctx context.Context, targetID, episode string)
 // the mirror does not hold the current watch identity, and also when it does
 // but the runner is dead — a runner that exited on a terminal source failure
 // or stream end leaves the mirror attached while nobody consumes output. The
-// returned generation is the incarnation fence the attach must present: it
-// pins the mirror state this decision was made from.
-func (s *watchService) needsAttach(ctx context.Context, executor *watches.Executor, targetID, identity string) (bool, uint64) {
-	mirror, generation, attached := executor.AttachedCredential(ctx, targetID)
-	if !attached || mirror != identity {
-		return true, generation
+// returned generation is the incarnation fence the attach must present, read
+// from the durable row (never the mirror cache): it pins the durable
+// incarnation this decision was made from, and the store's transaction CAS
+// rejects the attach if the incarnation advanced since.
+func (s *watchService) needsAttach(ctx context.Context, executor *watches.Executor, targetID, identity string) (bool, uint64, error) {
+	fence := uint64(0)
+	if row, err := s.store.AgentWatchTargetGet(ctx, targetID); err == nil {
+		fence = row.Generation
+	} else if !errors.Is(err, store.ErrAgentWatchNotFound) {
+		return false, 0, err
 	}
-	return !executor.RunnerAlive(targetID), generation
+	mirror, _, attached := executor.AttachedCredential(ctx, targetID)
+	if !attached || mirror != identity {
+		return true, fence, nil
+	}
+	return !executor.RunnerAlive(targetID), fence, nil
 }
 
 // ensureAttached attaches the target to its current watch identity: a no-op
@@ -141,7 +149,10 @@ func (s *watchService) ensureAttached(ctx context.Context, executor *watches.Exe
 		return ipc.NewError(ipc.CodeUnsupported, "watch 目标身份不可验证")
 	}
 	identity := state.WatchIdentity()
-	needed, fence := s.needsAttach(ctx, executor, targetID, identity)
+	needed, fence, err := s.needsAttach(ctx, executor, targetID, identity)
+	if err != nil {
+		return err
+	}
 	if !needed {
 		return nil
 	}
@@ -198,8 +209,8 @@ func (s *watchService) reconcileOwner(owner string) {
 			continue
 		}
 		identity := state.WatchIdentity()
-		needed, fence := s.needsAttach(ctx, executor, row.TargetID, identity)
-		if !needed {
+		needed, fence, err := s.needsAttach(ctx, executor, row.TargetID, identity)
+		if err != nil || !needed {
 			continue
 		}
 		source, _, err := s.openSource(ctx, row.TargetID, identity)

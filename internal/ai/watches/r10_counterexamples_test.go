@@ -192,9 +192,7 @@ func TestExecutorResumeFiltersSupersededMatchedRepeatRestart(t *testing.T) {
 	if _, err := engine.Observe(ctx, "target-1", "identity-1", 0, []byte("ready")); err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.Attach(ctx, "target-1", "identity-2"); err != nil {
-		t.Fatal(err)
-	}
+	attachEngine(t, engine, ctx, "target-1", "identity-2")
 	if err := backend.Close(); err != nil {
 		t.Fatal(err)
 	}

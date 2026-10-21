@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 // Source supplies output chunks for one target with absolute stream
@@ -247,12 +248,21 @@ func (e *Executor) AttachTarget(ctx context.Context, targetID, identity string, 
 	}
 	e.attachMu.Lock()
 	defer e.attachMu.Unlock()
-	mirror, mirrorGeneration, _ := e.engine.Credential(ctx, targetID)
-	if mirrorGeneration != expectedGeneration {
-		// The mirror moved since the caller prepared this attach (a newer
-		// incarnation landed): the stale presenter fails with zero side
-		// effects — it must not cancel the newer runner or roll the
-		// incarnation back.
+	// Durable precheck: the expected generation is the caller's belief of the
+	// durable incarnation at preparation time. If the locked-row check inside
+	// the store transaction is the authoritative fence, this precheck is its
+	// side-effect-free twin — a stale presenter fails here before any runner
+	// cancellation, and the transaction's own CAS closes the remaining
+	// precheck-to-attach window.
+	durableRow, err := e.store.AgentWatchTargetGet(ctx, targetID)
+	if err != nil {
+		if !errors.Is(err, store.ErrAgentWatchNotFound) {
+			return err
+		}
+		if expectedGeneration != 0 {
+			return fmt.Errorf("watches: target %s incarnation advanced during attach preparation: %w", targetID, ErrConflict)
+		}
+	} else if durableRow.Generation != expectedGeneration {
 		return fmt.Errorf("watches: target %s incarnation advanced during attach preparation: %w", targetID, ErrConflict)
 	}
 	for {
@@ -282,7 +292,7 @@ func (e *Executor) AttachTarget(ctx context.Context, targetID, identity string, 
 			_ = stale.source.Close()
 		}
 	}
-	if err := e.engine.Attach(ctx, targetID, identity); err != nil {
+	if err := e.engine.Attach(ctx, targetID, identity, expectedGeneration); err != nil {
 		return err
 	}
 	mirror, generation, attached := e.engine.Credential(ctx, targetID)

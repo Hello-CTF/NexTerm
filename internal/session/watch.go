@@ -232,7 +232,9 @@ func (s *WatchSource) End(ctx context.Context) (int64, error) {
 
 // Tail returns up to maxBytes of the retained stream immediately before
 // beforeSeq. Fewer bytes than requested mean the stream (or its retention)
-// is shorter — never shifted data.
+// is shorter — never shifted data: when retention clamping moves the window
+// start forward, the returned bytes are cut back to end at beforeSeq, so the
+// caller never receives output produced at or after the anchor.
 func (s *WatchSource) Tail(ctx context.Context, beforeSeq int64, maxBytes int) ([]byte, error) {
 	if beforeSeq <= 0 || maxBytes <= 0 {
 		return nil, nil
@@ -244,7 +246,14 @@ func (s *WatchSource) Tail(ctx context.Context, beforeSeq int64, maxBytes int) (
 	if start < 0 {
 		start = 0
 	}
-	data, _, _ := s.reader.ReplayFrom(uint64(start), int(beforeSeq-start))
+	data, actualStart, _ := s.reader.ReplayFrom(uint64(start), int(beforeSeq-start))
+	end := int(beforeSeq - int64(actualStart))
+	if end < 0 {
+		end = 0
+	}
+	if end < len(data) {
+		data = data[:end]
+	}
 	return data, nil
 }
 
