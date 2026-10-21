@@ -1209,9 +1209,9 @@ func TestAccountLayoutAndSyncEventContracts(t *testing.T) {
 		if layoutVisible != allow {
 			t.Fatalf("%s layout visibility = %v, want %v; frames = %q", actorName, layoutVisible, allow, frames)
 		}
-		wantSyncStatuses := 1
+		wantSyncStatuses := 0
 		if allow {
-			wantSyncStatuses = 2
+			wantSyncStatuses = 1
 		}
 		if syncStatuses != wantSyncStatuses {
 			t.Fatalf("%s sync status count = %d, want %d; frames = %q", actorName, syncStatuses, wantSyncStatuses, frames)

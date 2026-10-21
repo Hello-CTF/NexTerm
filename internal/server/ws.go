@@ -198,14 +198,8 @@ func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
 			_, ok := event.Payload.(ipc.InventoryChangedEvent)
 			return ok && event.OwnerID != "" && event.OwnerID == userID
 		case ipc.TopicSyncStatus:
-			switch status := event.Payload.(type) {
-			case ipc.SyncStatusEvent:
-				return status.OwnerID != "" && status.OwnerID == userID
-			case struct{}:
-				return true
-			default:
-				return false
-			}
+			status, ok := event.Payload.(ipc.SyncStatusEvent)
+			return ok && status.OwnerID != "" && status.OwnerID == userID
 		case ipc.Topic("sync://round-complete"):
 			_, ok := event.Payload.(struct{})
 			return ok
