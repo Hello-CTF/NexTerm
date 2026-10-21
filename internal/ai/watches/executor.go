@@ -13,12 +13,15 @@ import (
 
 // Source supplies output chunks for one target with absolute stream
 // positions. The executor drives it; a real implementation wraps a terminal
-// or session stream once the roster contract lands (M25/M26) — the
+// or session stream (the production adapter lives in internal/session) — the
 // synthetic sources in tests are not external CLI validation.
 type Source interface {
 	// Chunk returns the next output chunk starting at fromSeq and the
 	// position immediately after it. Returning io.EOF marks the stream end
-	// (ObserveEOF semantics); any other error is retried with backoff.
+	// (ObserveEOF semantics). A *GapError reports that bytes before the
+	// resumed position were lost; the runner skips ahead so the engine's own
+	// gap semantics settle the affected watches instead of matching
+	// mis-positioned data. Any other error is retried with backoff.
 	Chunk(ctx context.Context, fromSeq int64) (chunk []byte, nextSeq int64, err error)
 	// End returns the current stream end position.
 	End(ctx context.Context) (int64, error)
@@ -27,6 +30,31 @@ type Source interface {
 	// Close releases the source.
 	Close() error
 }
+
+// GapError reports that the source lost the requested stream position: output
+// before FromSeq rolled out of retention, so the stream honestly resumes at
+// FromSeq. The executor advances the runner past the hole so the next Observe
+// presents the true position and the engine settles every watch that lost
+// bytes as unverifiable — never letting one match against bytes whose
+// positions were silently shifted.
+type GapError struct {
+	FromSeq int64
+}
+
+func (e *GapError) Error() string {
+	return fmt.Sprintf("watch source gap: output resumes at %d", e.FromSeq)
+}
+
+// TerminalError marks a source failure no retry can fix — the watched runtime
+// was replaced or is gone for good. The runner stops instead of retrying, so
+// the target's next explicit attach settles the old incarnation; the watches
+// stay durable in the meantime.
+type TerminalError struct {
+	Err error
+}
+
+func (e *TerminalError) Error() string { return e.Err.Error() }
+func (e *TerminalError) Unwrap() error { return e.Err }
 
 // ExecutorOptions carries the engine options plus the loop settings.
 type ExecutorOptions struct {
@@ -137,6 +165,9 @@ func (e *Executor) Start(ctx context.Context) error {
 			case <-e.lifecycleCtx.Done():
 				return
 			case <-ticker.C:
+				// Expiry settles before dispatch so a due watch never fires
+				// late; a failed sweep is retried on the next tick.
+				_, _ = e.engine.SweepExpired(e.ownerCtx)
 				// A failed pass leaves rows pending; the next tick retries,
 				// keeping delivery at-least-once.
 				_, _ = e.DispatchOnce(e.ownerCtx)
@@ -191,7 +222,10 @@ type targetRunner struct {
 
 // AttachTarget binds the target to an identity incarnation and starts its
 // runner. The runner resumes from the watches' own evaluated positions when
-// they exist (restart recovery) and from the source end otherwise.
+// they exist (restart recovery) and from the source end otherwise. A target
+// whose previous runner already exited (a terminal source failure or a
+// finished stream) may be re-attached: the stale runner is replaced and its
+// source closed, while a live runner rejects the duplicate attach.
 func (e *Executor) AttachTarget(ctx context.Context, targetID, identity string, source Source) error {
 	if source == nil {
 		return errors.New("watches: executor source is nil")
@@ -213,10 +247,19 @@ func (e *Executor) AttachTarget(ctx context.Context, targetID, identity string, 
 		cancel: cancel, done: make(chan struct{}), pos: pos, ownerCtx: e.ownerCtx,
 	}
 	e.mu.Lock()
-	if _, exists := e.targets[targetID]; exists {
-		e.mu.Unlock()
-		cancel()
-		return fmt.Errorf("watches: target %s already attached", targetID)
+	if stale, exists := e.targets[targetID]; exists {
+		select {
+		case <-stale.done:
+			// The stale runner exited on its own; replacing it never races a
+			// live consumer of the old source.
+			stale.cancel()
+			_ = stale.source.Close()
+			delete(e.targets, targetID)
+		default:
+			e.mu.Unlock()
+			cancel()
+			return fmt.Errorf("watches: target %s already attached", targetID)
+		}
 	}
 	e.targets[targetID] = runner
 	// A fresh attach supersedes any failed detach attempt.
@@ -224,6 +267,14 @@ func (e *Executor) AttachTarget(ctx context.Context, targetID, identity string, 
 	e.mu.Unlock()
 	go runner.run(runnerCtx, e)
 	return nil
+}
+
+// AttachedIdentity reports the identity the target's mirror is bound to and
+// whether it is currently attached, so the production service can decide
+// between a no-op, a fresh attach, or a replacement attach.
+func (e *Executor) AttachedIdentity(ctx context.Context, targetID string) (string, bool) {
+	identity, _, attached := e.engine.Credential(ctx, targetID)
+	return identity, attached
 }
 
 // DetachTarget stops the runner and detaches the target durably. A failed
@@ -374,6 +425,26 @@ func (r *targetRunner) run(ctx context.Context, e *Executor) {
 			}
 		}
 		if err != nil {
+			// A terminal source failure (replaced or gone runtime) stops the
+			// runner: retrying could never succeed, and the target's next
+			// explicit attach settles the incarnation.
+			var terminal *TerminalError
+			if errors.As(err, &terminal) {
+				return
+			}
+			// A source-reported gap skips the runner to the honest resume
+			// position: the next Observe then presents a fromSeq beyond every
+			// lagging watch's evaluated position, so the engine settles those
+			// watches as unverifiable instead of matching shifted bytes.
+			var gap *GapError
+			if errors.As(err, &gap) && gap.FromSeq > pos {
+				r.observeMu.Lock()
+				if r.pos == pos {
+					r.pos = gap.FromSeq
+				}
+				r.observeMu.Unlock()
+				continue
+			}
 			if ctx.Err() != nil {
 				return
 			}
