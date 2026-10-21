@@ -95,3 +95,31 @@ func TestSendReminderNeedsConfirmation(t *testing.T) {
 		t.Fatalf("danger rule over reminder content: %+v", got)
 	}
 }
+
+func TestLoadSkillClassifiesReadOnlyWithoutLooseningUnknownTools(t *testing.T) {
+	t.Parallel()
+	ruling := classifyToolForTest("load_skill", `{"name":"ops-runbook"}`)
+	if ruling.Risk != Safe {
+		t.Fatalf("load_skill risk = %v, want Safe", ruling.Risk)
+	}
+	for _, mode := range []Mode{Unattended, ReadOnly, ReadWrite} {
+		if decision := Decide(Config{Mode: mode}, ruling, nil); decision.Action != ActionAllow {
+			t.Fatalf("load_skill in %s mode = %+v, want allow", mode, decision)
+		}
+	}
+	// Unrecognized tools keep the fail-closed default in every mode.
+	unknown := ClassifyTool("some_future_tool", json.RawMessage(`{}`), Config{Mode: ReadWrite})
+	if unknown.Risk == Safe {
+		t.Fatal("unknown tool must not classify as Safe")
+	}
+	if decision := Decide(Config{Mode: Unattended}, unknown, nil); decision.Action != ActionDeny {
+		t.Fatalf("unknown tool in unattended mode = %+v, want deny", decision)
+	}
+	if decision := Decide(Config{Mode: ReadOnly}, unknown, nil); decision.Action != ActionDeny {
+		t.Fatalf("unknown tool in read-only mode = %+v, want deny", decision)
+	}
+	// Write confirmations are not loosened by the read-only addition.
+	if got := classifyToolForTest("write_file", `{"path":"/etc/hosts","content":"x"}`); got.Risk == Safe {
+		t.Fatal("write_file must not become Safe")
+	}
+}

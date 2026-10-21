@@ -134,6 +134,12 @@ type OperationResultArgs struct {
 	OperationID string `json:"operation_id" jsonschema:"required"`
 }
 
+// LoadSkillArgs is the load_skill tool payload. The JSON shape matches the
+// skills service contract (name only).
+type LoadSkillArgs struct {
+	Name string `json:"name" jsonschema:"required"`
+}
+
 var einoNames = []string{
 	"exec_commands", "read_file", "write_file", "list_dir", "search_files", "read_screen", "send_keys", "wait_for",
 	"shell_history",
@@ -473,7 +479,7 @@ func (e *Execution) Tools() ([]tool.BaseTool, error) {
 			})
 		},
 	}
-	result := make([]tool.BaseTool, 0, len(makers)+1)
+	result := make([]tool.BaseTool, 0, len(makers)+2)
 	for index, makeTool := range makers {
 		if !e.enabled(einoNames[index]) {
 			continue
@@ -483,6 +489,18 @@ func (e *Execution) Tools() ([]tool.BaseTool, error) {
 			return nil, err
 		}
 		result = append(result, current)
+	}
+	// load_skill is not in einoNames: the registry only advertises it when a
+	// skills backend is configured, and the description comes from that
+	// backend's schema so the model sees one contract on both surfaces.
+	if e.enabled("load_skill") {
+		loadSkill, err := utils.InferTool("load_skill", e.Registry.deps.Skills.LoadSkillSchema().Description, func(ctx context.Context, input LoadSkillArgs) (Output, error) {
+			return e.run(ctx, "load_skill", input)
+		})
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, loadSkill)
 	}
 	if e.enabled(subagent.SpawnToolName) {
 		spawn, err := e.subagentSpawnTool()
@@ -545,6 +563,8 @@ func (e *Execution) enabled(name string) bool {
 		return deps.Notify != nil
 	case subagent.SpawnToolName:
 		return e.Subagents != nil
+	case "load_skill":
+		return skillLoaderConfigured(deps.Skills)
 	default:
 		return true
 	}

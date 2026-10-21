@@ -34,7 +34,7 @@ type Registry struct {
 
 func NewRegistry(deps Dependencies) *Registry {
 	schemas := toolSchemas()
-	if deps.Skills != nil {
+	if skillLoaderConfigured(deps.Skills) {
 		schemas = append(schemas, deps.Skills.LoadSkillSchema())
 	}
 	return &Registry{deps: deps, jobs: make(map[string]*jobState), schemas: schemas, flights: make(map[string]struct{})}
@@ -1038,7 +1038,7 @@ func (r *Registry) executeTool(ctx context.Context, jobID string, scope Scope, c
 	case NotifyTool:
 		return r.notify(ctx, call.Args)
 	case "load_skill":
-		if r.deps.Skills == nil {
+		if !skillLoaderConfigured(r.deps.Skills) {
 			return Fail(fmt.Errorf("未知工具 %s", call.Name))
 		}
 		return r.deps.Skills.LoadSkill(ctx, call.Args)
