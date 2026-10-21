@@ -4,6 +4,8 @@ package supervisor
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -920,8 +923,6 @@ func TestPipeStreamCloseNoInflight(t *testing.T) {
 const (
 	windowsHelperAppDirEnv   = "NEXTERM_SUPERVISOR_WINDOWS_APP_DIR"
 	windowsHelperAppReadyEnv = "NEXTERM_SUPERVISOR_WINDOWS_APP_READY"
-	windowsSecondUserName    = "nxsuphelper"
-	windowsSecondUserPass    = "NxSup!2026test"
 )
 
 func TestWindowsHelperSessionsSurviveAppProcessExitAndReattach(t *testing.T) {
@@ -1040,12 +1041,17 @@ func TestStateDirDeniesSecondUser(t *testing.T) {
 	if err := exec.Command("net", "session").Run(); err != nil {
 		t.Skip("elevation is required for the second-user denial test")
 	}
-	_ = exec.Command("net", "user", windowsSecondUserName, "/delete").Run()
-	if output, err := exec.Command("net", "user", windowsSecondUserName, windowsSecondUserPass, "/add").CombinedOutput(); err != nil {
+	username, password := secondUserCredentials(t)
+	// Own the account lifecycle outright: the generated name must not exist
+	// yet, and cleanup below deletes only the account this test created.
+	if err := exec.Command("net", "user", username).Run(); err == nil {
+		t.Fatalf("second test user %q already exists; refusing to reuse or delete a pre-existing account", username)
+	}
+	if output, err := exec.Command("net", "user", username, password, "/add").CombinedOutput(); err != nil {
 		t.Skipf("cannot create the second test user: %v (%s)", err, output)
 	}
 	t.Cleanup(func() {
-		_ = exec.Command("net", "user", windowsSecondUserName, "/delete").Run()
+		_ = exec.Command("net", "user", username, "/delete").Run()
 	})
 	base := `C:\Windows\Temp`
 	stateDir := filepath.Join(base, "nxsup-state-"+ids.New())
@@ -1071,7 +1077,7 @@ func TestStateDirDeniesSecondUser(t *testing.T) {
 	}
 	grantDACL(t, shared, "D:(A;;GA;;;SY)(A;;GA;;;WD)(A;;GA;;;"+sid+")")
 
-	withSecondUser(t, func() {
+	withSecondUser(t, username, password, func() {
 		if _, err := os.ReadFile(shared); err != nil {
 			t.Fatalf("control read as the second user: %v", err)
 		}
@@ -1093,9 +1099,16 @@ var (
 	procImpersonateLoggedOnUser = advapi32.NewProc("ImpersonateLoggedOnUser")
 )
 
-func withSecondUser(t *testing.T, fn func()) {
+func withSecondUser(t *testing.T, username, password string, fn func()) {
 	t.Helper()
-	username, err := windows.UTF16PtrFromString(windowsSecondUserName)
+	// Windows impersonation is per-thread, so pin this goroutine to its OS
+	// thread for the whole impersonated section: an unpinned goroutine may
+	// migrate between ImpersonateLoggedOnUser and the file operations in fn
+	// and run them under the original identity, which would both defeat the
+	// ACL denial assertions and leave the thread impersonated.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	usernamePtr, err := windows.UTF16PtrFromString(username)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1103,15 +1116,15 @@ func withSecondUser(t *testing.T, fn func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	password, err := windows.UTF16PtrFromString(windowsSecondUserPass)
+	passwordPtr, err := windows.UTF16PtrFromString(password)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var token windows.Handle
 	result, _, err := procLogonUserW.Call(
-		uintptr(unsafe.Pointer(username)),
+		uintptr(unsafe.Pointer(usernamePtr)),
 		uintptr(unsafe.Pointer(domain)),
-		uintptr(unsafe.Pointer(password)),
+		uintptr(unsafe.Pointer(passwordPtr)),
 		uintptr(3),
 		uintptr(0),
 		uintptr(unsafe.Pointer(&token)),
@@ -1125,6 +1138,33 @@ func withSecondUser(t *testing.T, fn func()) {
 	}
 	defer func() { _ = windows.RevertToSelf() }()
 	fn()
+}
+
+// secondUserCredentials returns a per-run account name and password so the
+// test never touches a pre-existing or concurrently used account and no
+// credential is baked into source control.
+func secondUserCredentials(t *testing.T) (string, string) {
+	t.Helper()
+	var suffix [4]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		t.Fatal(err)
+	}
+	username := "nxsup" + hex.EncodeToString(suffix[:])
+	// Cover all four character classes up front so the generated password
+	// satisfies the default complexity policy regardless of host settings.
+	// Stay within 14 characters: longer passwords make net user prompt for
+	// confirmation about down-level clients, which cannot be answered here.
+	var raw [10]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		t.Fatal(err)
+	}
+	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	var password strings.Builder
+	password.WriteString("Nx9!")
+	for _, b := range raw {
+		password.WriteByte(alphabet[int(b)%len(alphabet)])
+	}
+	return username, password.String()
 }
 
 func grantDACL(t *testing.T, path, sddl string) {
