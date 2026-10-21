@@ -10,147 +10,35 @@ import (
 )
 
 func TestDynamicPrefixUTF8TailCompletion(t *testing.T) {
-	run := func(t *testing.T, chunks [][]byte, reopen bool) []Event {
-		clock := newTestClock()
-		ctx := ownerCtx("owner-a")
-		restartPath := filepath.Join(t.TempDir(), "watch.db")
-		var backend *store.Store
-		if reopen {
-			backend = openRestartStore(t, restartPath)
-		} else {
-			var err error
-			backend, err = store.OpenInMemory(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-		t.Cleanup(func() { _ = backend.Close() })
-		newEngine := func() *Engine {
-			engine, err := New(backend, Options{Now: clock.Now})
-			if err != nil {
-				t.Fatal(err)
-			}
-			mustAttach(t, engine, ctx, "target-1", "identity-1")
-			return engine
-		}
-		engine := newEngine()
-		if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1",
-			Condition: Condition{Type: ConditionRegex, Pattern: `x[界]*z`}}); err != nil {
-			t.Fatal(err)
-		}
-		var events []Event
-		position := int64(0)
-		for index, chunk := range chunks {
-			if reopen && index > 0 {
-				if err := backend.Close(); err != nil {
-					t.Fatal(err)
-				}
-				backend = openRestartStore(t, restartPath)
-				engine = newEngine()
-			}
-			fired, err := engine.Observe(ctx, "target-1", "identity-1", position, chunk)
-			if err != nil {
-				t.Fatalf("observe %q: %v", chunk, err)
-			}
-			events = append(events, fired...)
-			position += int64(len(chunk))
-		}
-		return events
-	}
-	stream := []byte("x界z")
-	assertEvents(t, run(t, [][]byte{stream}, false), 0, 5)
+	condition := Condition{Type: ConditionRegex, Pattern: `x[界]*z`}
 	chunks := [][]byte{{'x', 0xE7}, {0x95, 0x8C}, {'z'}}
-	assertEvents(t, run(t, chunks, false), 0, 5)
-	assertEvents(t, run(t, chunks, true), 0, 5)
+	assertChunkObservations(t, []chunkObservation{
+		{condition: condition, chunks: [][]byte{[]byte("x界z")}, from: 0, to: 5},
+		{condition: condition, chunks: chunks, from: 0, to: 5},
+		{condition: condition, chunks: chunks, restart: true, from: 0, to: 5},
+	})
 }
 
 func TestTrailingEmptyGroupDefersRightEdge(t *testing.T) {
 	patterns := []string{`ready\b()`, `ready$()`}
 	for _, pattern := range patterns {
 		t.Run(pattern, func(t *testing.T) {
-			run := func(t *testing.T, chunks []string, reopen bool) []Event {
-				clock := newTestClock()
-				ctx := ownerCtx("owner-a")
-				restartPath := filepath.Join(t.TempDir(), "watch.db")
-				var backend *store.Store
-				if reopen {
-					backend = openRestartStore(t, restartPath)
-				} else {
-					var err error
-					backend, err = store.OpenInMemory(context.Background())
-					if err != nil {
-						t.Fatal(err)
-					}
-				}
-				t.Cleanup(func() { _ = backend.Close() })
-				newEngine := func() *Engine {
-					engine, err := New(backend, Options{Now: clock.Now})
-					if err != nil {
-						t.Fatal(err)
-					}
-					mustAttach(t, engine, ctx, "target-1", "identity-1")
-					return engine
-				}
-				engine := newEngine()
-				if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1",
-					Condition: Condition{Type: ConditionRegex, Pattern: pattern}}); err != nil {
-					t.Fatal(err)
-				}
-				var events []Event
-				position := int64(0)
-				for index, chunk := range chunks {
-					if reopen && index > 0 {
-						if err := backend.Close(); err != nil {
-							t.Fatal(err)
-						}
-						backend = openRestartStore(t, restartPath)
-						engine = newEngine()
-					}
-					fired, err := engine.Observe(ctx, "target-1", "identity-1", position, []byte(chunk))
-					if err != nil {
-						t.Fatalf("observe %q: %v", chunk, err)
-					}
-					events = append(events, fired...)
-					position += int64(len(chunk))
-				}
-				return events
-			}
-			// The trailing empty group must not hide the right-context
-			// dependency: a word continuation refutes the match.
-			assertEvents(t, run(t, []string{"readyx"}, false), -1, -1)
-			assertEvents(t, run(t, []string{"ready", "x"}, false), -1, -1)
-			assertEvents(t, run(t, []string{"ready", "x"}, true), -1, -1)
-			// A non-word continuation confirms a word boundary; for end-text
-			// it is simply not a match, and only EOF confirms it.
+			condition := Condition{Type: ConditionRegex, Pattern: pattern}
+			continuationFrom, continuationTo := int64(-1), int64(-1)
 			if strings.Contains(pattern, `\b`) {
-				assertEvents(t, run(t, []string{"ready", " "}, false), 0, 5)
-			} else {
-				assertEvents(t, run(t, []string{"ready", " "}, false), -1, -1)
+				continuationFrom, continuationTo = 0, 5
 			}
-			// EOF confirms it as well.
-			clock := newTestClock()
-			ctx := ownerCtx("owner-a")
-			backend, err := store.OpenInMemory(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = backend.Close() })
-			engine, err := New(backend, Options{Now: clock.Now})
-			if err != nil {
-				t.Fatal(err)
-			}
-			mustAttach(t, engine, ctx, "target-1", "identity-1")
-			if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1",
-				Condition: Condition{Type: ConditionRegex, Pattern: pattern}}); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := engine.Observe(ctx, "target-1", "identity-1", 0, []byte("ready")); err != nil {
-				t.Fatal(err)
-			}
-			events, err := engine.ObserveEOF(ctx, "target-1", "identity-1", 5)
-			if err != nil || len(events) != 1 || events[0].MatchedFrom != 0 || events[0].MatchedTo != 5 {
-				t.Fatalf("EOF fire = %+v, %v", events, err)
-			}
+			assertChunkObservations(t, []chunkObservation{
+				// A word continuation refutes the match, including across a
+				// split and a restart.
+				{condition: condition, chunks: stringChunks("readyx"), from: -1, to: -1},
+				{condition: condition, chunks: stringChunks("ready", "x"), from: -1, to: -1},
+				{condition: condition, chunks: stringChunks("ready", "x"), restart: true, from: -1, to: -1},
+				// A non-word continuation confirms a word boundary; for
+				// end-text only EOF confirms the match.
+				{condition: condition, chunks: stringChunks("ready", " "), from: continuationFrom, to: continuationTo},
+				{condition: condition, chunks: stringChunks("ready"), eof: true, from: 0, to: 5},
+			})
 		})
 	}
 }

@@ -167,123 +167,13 @@ func TestMatchedConsumePreservesSplitRuneRestart(t *testing.T) {
 
 func TestFoldedLiteralSplitMatch(t *testing.T) {
 	kelvin := "K"
-	stream := kelvin + kelvin
-	run := func(t *testing.T, chunks []string, reopen bool) []Event {
-		clock := newTestClock()
-		ctx := ownerCtx("owner-a")
-		restartPath := filepath.Join(t.TempDir(), "watch.db")
-		var backend *store.Store
-		if reopen {
-			backend = openRestartStore(t, restartPath)
-		} else {
-			var err error
-			backend, err = store.OpenInMemory(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-		t.Cleanup(func() { _ = backend.Close() })
-		newEngine := func() *Engine {
-			engine, err := New(backend, Options{Now: clock.Now})
-			if err != nil {
-				t.Fatal(err)
-			}
-			mustAttach(t, engine, ctx, "target-1", "identity-1")
-			return engine
-		}
-		engine := newEngine()
-		if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1",
-			Condition: Condition{Type: ConditionRegex, Pattern: `(?i)kk`}}); err != nil {
-			t.Fatal(err)
-		}
-		var events []Event
-		position := int64(0)
-		for index, chunk := range chunks {
-			if reopen && index > 0 {
-				if err := backend.Close(); err != nil {
-					t.Fatal(err)
-				}
-				backend = openRestartStore(t, restartPath)
-				engine = newEngine()
-			}
-			fired, err := engine.Observe(ctx, "target-1", "identity-1", position, []byte(chunk))
-			if err != nil {
-				t.Fatalf("observe %q: %v", chunk, err)
-			}
-			events = append(events, fired...)
-			position += int64(len(chunk))
-		}
-		return events
-	}
-
-	contiguous := run(t, []string{stream}, false)
-	assertEvents(t, contiguous, 0, 6)
-	for split := 1; split < len(stream); split++ {
-		chunked := run(t, []string{stream[:split], stream[split:]}, false)
-		assertEvents(t, chunked, 0, 6)
-		restarted := run(t, []string{stream[:split], stream[split:]}, true)
-		assertEvents(t, restarted, 0, 6)
-	}
+	condition := Condition{Type: ConditionRegex, Pattern: `(?i)kk`}
+	assertChunkObservations(t, splitChunkObservations(condition, kelvin+kelvin, 0, 6))
 }
 
 func TestNullableRepetitionSplitMatch(t *testing.T) {
-	run := func(t *testing.T, chunks []string, reopen bool, capBytes int) []Event {
-		clock := newTestClock()
-		ctx := ownerCtx("owner-a")
-		restartPath := filepath.Join(t.TempDir(), "watch.db")
-		var backend *store.Store
-		if reopen {
-			backend = openRestartStore(t, restartPath)
-		} else {
-			var err error
-			backend, err = store.OpenInMemory(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-		t.Cleanup(func() { _ = backend.Close() })
-		newEngine := func() *Engine {
-			engine, err := New(backend, Options{Now: clock.Now, MaxCarryBytes: capBytes})
-			if err != nil {
-				t.Fatal(err)
-			}
-			mustAttach(t, engine, ctx, "target-1", "identity-1")
-			return engine
-		}
-		engine := newEngine()
-		if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1",
-			Condition: Condition{Type: ConditionRegex, Pattern: `x(a?)*b`}}); err != nil {
-			t.Fatal(err)
-		}
-		var events []Event
-		position := int64(0)
-		for index, chunk := range chunks {
-			if reopen && index > 0 {
-				if err := backend.Close(); err != nil {
-					t.Fatal(err)
-				}
-				backend = openRestartStore(t, restartPath)
-				engine = newEngine()
-			}
-			fired, err := engine.Observe(ctx, "target-1", "identity-1", position, []byte(chunk))
-			if err != nil {
-				t.Fatalf("observe %q: %v", chunk, err)
-			}
-			events = append(events, fired...)
-			position += int64(len(chunk))
-		}
-		return events
-	}
-
-	stream := "xaaab"
-	contiguous := run(t, []string{stream}, false, DefaultMaxCarryBytes)
-	assertEvents(t, contiguous, 0, 5)
-	for split := 1; split < len(stream); split++ {
-		chunked := run(t, []string{stream[:split], stream[split:]}, false, DefaultMaxCarryBytes)
-		assertEvents(t, chunked, 0, 5)
-		restarted := run(t, []string{stream[:split], stream[split:]}, true, DefaultMaxCarryBytes)
-		assertEvents(t, restarted, 0, 5)
-	}
+	condition := Condition{Type: ConditionRegex, Pattern: `x(a?)*b`}
+	assertChunkObservations(t, splitChunkObservations(condition, "xaaab", 0, 5))
 	// A live partial that outgrows the configured capacity settles as
 	// unverifiable instead of silently dropping the possible match.
 	backend, err := store.OpenInMemory(context.Background())

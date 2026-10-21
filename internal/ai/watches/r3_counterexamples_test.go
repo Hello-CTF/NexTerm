@@ -189,69 +189,18 @@ func TestAssertionResultsAreChunkInvariant(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			run := func(t *testing.T, chunks []string, reopen bool) []Event {
-				clock := newTestClock()
-				ctx := ownerCtx("owner-a")
-				restartPath := filepath.Join(t.TempDir(), "watch.db")
-				var backend *store.Store
-				if reopen {
-					backend = openRestartStore(t, restartPath)
-				} else {
-					var err error
-					backend, err = store.OpenInMemory(context.Background())
-					if err != nil {
-						t.Fatal(err)
-					}
-				}
-				t.Cleanup(func() { _ = backend.Close() })
-				newEngine := func() *Engine {
-					engine, err := New(backend, Options{Now: clock.Now})
-					if err != nil {
-						t.Fatal(err)
-					}
-					mustAttach(t, engine, ctx, "target-1", "identity-1")
-					return engine
-				}
-				engine := newEngine()
-				if _, err := engine.Create(ctx, CreateParams{TargetID: "target-1",
-					Condition: Condition{Type: ConditionRegex, Pattern: testCase.pattern}}); err != nil {
-					t.Fatal(err)
-				}
-				var events []Event
-				position := int64(0)
-				for index, chunk := range chunks {
-					if reopen && index > 0 {
-						if err := backend.Close(); err != nil {
-							t.Fatal(err)
-						}
-						backend = openRestartStore(t, restartPath)
-						engine = newEngine()
-					}
-					fired, err := engine.Observe(ctx, "target-1", "identity-1", position, []byte(chunk))
-					if err != nil {
-						t.Fatalf("observe %q: %v", chunk, err)
-					}
-					events = append(events, fired...)
-					position += int64(len(chunk))
-				}
-				if testCase.eof {
-					fired, err := engine.ObserveEOF(ctx, "target-1", "identity-1", position)
-					if err != nil {
-						t.Fatalf("observe EOF: %v", err)
-					}
-					events = append(events, fired...)
-				}
-				return events
+			condition := Condition{Type: ConditionRegex, Pattern: testCase.pattern}
+			observations := []chunkObservation{
+				{condition: condition, chunks: stringChunks(testCase.stream), eof: testCase.eof, from: testCase.from, to: testCase.to},
 			}
-
-			contiguous := run(t, []string{testCase.stream}, false)
-			assertEvents(t, contiguous, testCase.from, testCase.to)
 			for split := 1; split < len(testCase.stream); split++ {
-				chunked := run(t, []string{testCase.stream[:split], testCase.stream[split:]}, false)
-				assertEvents(t, chunked, testCase.from, testCase.to)
-				restarted := run(t, []string{testCase.stream[:split], testCase.stream[split:]}, true)
-				assertEvents(t, restarted, testCase.from, testCase.to)
+				chunks := stringChunks(testCase.stream[:split], testCase.stream[split:])
+				observations = append(observations,
+					chunkObservation{condition: condition, chunks: chunks, eof: testCase.eof, from: testCase.from, to: testCase.to},
+					chunkObservation{condition: condition, chunks: chunks, restart: true, eof: testCase.eof, from: testCase.from, to: testCase.to},
+				)
 			}
+			assertChunkObservations(t, observations)
 		})
 	}
 }

@@ -3,6 +3,7 @@ package watches
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -29,6 +30,158 @@ func newRestartEngine(t *testing.T, backend *store.Store, clock *testClock) *Eng
 		t.Fatal(err)
 	}
 	return engine
+}
+
+type chunkObservation struct {
+	condition     Condition
+	chunks        [][]byte
+	restart       bool
+	eof           bool
+	maxCarryBytes int
+	from          int64
+	to            int64
+}
+
+func stringChunks(chunks ...string) [][]byte {
+	result := make([][]byte, len(chunks))
+	for index, chunk := range chunks {
+		result[index] = []byte(chunk)
+	}
+	return result
+}
+
+func splitChunkObservations(condition Condition, stream string, from, to int64) []chunkObservation {
+	observations := []chunkObservation{
+		{condition: condition, chunks: stringChunks(stream), from: from, to: to},
+	}
+	for split := 1; split < len(stream); split++ {
+		chunks := stringChunks(stream[:split], stream[split:])
+		observations = append(observations,
+			chunkObservation{condition: condition, chunks: chunks, from: from, to: to},
+			chunkObservation{condition: condition, chunks: chunks, restart: true, from: from, to: to},
+		)
+	}
+	return observations
+}
+
+// assertChunkObservations keeps an independent target, clock, and engine for
+// every case. Restart cases are grouped by chunk count so each one crosses the
+// same real close/reopen boundaries as an isolated run without migrating an
+// identical schema for every split point.
+func assertChunkObservations(t *testing.T, cases []chunkObservation) {
+	t.Helper()
+	type observationGroup struct {
+		restart    bool
+		chunkCount int
+		indices    []int
+	}
+	var groups []observationGroup
+	for index, testCase := range cases {
+		if len(testCase.chunks) == 0 {
+			t.Fatalf("chunk observation %d has no input", index)
+		}
+		chunkCount := len(testCase.chunks)
+		if !testCase.restart {
+			chunkCount = 0
+		}
+		groupIndex := -1
+		for index := range groups {
+			if groups[index].restart == testCase.restart && groups[index].chunkCount == chunkCount {
+				groupIndex = index
+				break
+			}
+		}
+		if groupIndex < 0 {
+			groups = append(groups, observationGroup{restart: testCase.restart, chunkCount: chunkCount})
+			groupIndex = len(groups) - 1
+		}
+		groups[groupIndex].indices = append(groups[groupIndex].indices, index)
+	}
+
+	ctx := ownerCtx("owner-a")
+	clocks := make([]*testClock, len(cases))
+	engines := make([]*Engine, len(cases))
+	targets := make([]string, len(cases))
+	positions := make([]int64, len(cases))
+	events := make([][]Event, len(cases))
+	for index := range cases {
+		clocks[index] = newTestClock()
+		targets[index] = fmt.Sprintf("chunk-observation-%d", index)
+	}
+	for _, group := range groups {
+		func() {
+			var backend *store.Store
+			var restartPath string
+			if group.restart {
+				restartPath = filepath.Join(t.TempDir(), "watch.db")
+				backend = openRestartStore(t, restartPath)
+			} else {
+				var err error
+				backend, err = store.OpenInMemory(context.Background())
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			defer func() { _ = backend.Close() }()
+			newEngine := func(index int) {
+				engine, err := New(backend, Options{Now: clocks[index].Now, MaxCarryBytes: cases[index].maxCarryBytes})
+				if err != nil {
+					t.Fatal(err)
+				}
+				mustAttach(t, engine, ctx, targets[index], "identity-1")
+				engines[index] = engine
+			}
+			for _, index := range group.indices {
+				newEngine(index)
+				if _, err := engines[index].Create(ctx, CreateParams{TargetID: targets[index], Condition: cases[index].condition}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for chunkIndex := 0; ; chunkIndex++ {
+				active := false
+				for _, index := range group.indices {
+					if chunkIndex < len(cases[index].chunks) {
+						active = true
+						break
+					}
+				}
+				if !active {
+					break
+				}
+				if group.restart && chunkIndex > 0 {
+					if err := backend.Close(); err != nil {
+						t.Fatal(err)
+					}
+					backend = openRestartStore(t, restartPath)
+					for _, index := range group.indices {
+						newEngine(index)
+					}
+				}
+				for _, index := range group.indices {
+					if chunkIndex >= len(cases[index].chunks) {
+						continue
+					}
+					chunk := cases[index].chunks[chunkIndex]
+					fired, err := engines[index].Observe(ctx, targets[index], "identity-1", positions[index], chunk)
+					if err != nil {
+						t.Fatalf("observe case %d chunk %d: %v", index, chunkIndex, err)
+					}
+					events[index] = append(events[index], fired...)
+					positions[index] += int64(len(chunk))
+				}
+			}
+			for _, index := range group.indices {
+				if cases[index].eof {
+					fired, err := engines[index].ObserveEOF(ctx, targets[index], "identity-1", positions[index])
+					if err != nil {
+						t.Fatalf("observe case %d EOF: %v", index, err)
+					}
+					events[index] = append(events[index], fired...)
+				}
+				assertEvents(t, events[index], cases[index].from, cases[index].to)
+			}
+		}()
+	}
 }
 
 func TestRestartResumesAnchorWithoutSkippingOrRefiring(t *testing.T) {
