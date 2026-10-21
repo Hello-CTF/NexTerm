@@ -175,6 +175,26 @@ func NewRoster(store RosterStore, probe RosterRuntimeProbe) *Roster {
 	return &Roster{store: store, probe: probe, now: ids.NowMS, newID: ids.New}
 }
 
+// Probe exposes the configured runtime probe for read-only enrichment paths
+// (list presence, asset evidence); nil when no probe is configured.
+func (r *Roster) Probe() RosterRuntimeProbe {
+	return r.probe
+}
+
+// List returns the owner's roster entries for a conversation (every
+// conversation when empty), oldest first.
+func (r *Roster) List(ctx context.Context, conversationID string) ([]RosterEntry, error) {
+	rows, err := r.store.AgentRosterList(ctx, conversationID)
+	if err != nil {
+		return nil, mapRosterStoreError(err)
+	}
+	entries := make([]RosterEntry, 0, len(rows))
+	for _, row := range rows {
+		entries = append(entries, rosterEntryFromRow(row))
+	}
+	return entries, nil
+}
+
 // Provision creates the roster row provisioning-first: the entry (with its
 // preassigned TabID and a fresh Incarnation) exists before any runtime starts.
 // Handles are permanent per owner and are never reused.

@@ -273,6 +273,15 @@ func (r *Runner) initializeEino(current *job) error {
 			}
 		}
 	}
+	if r.config.Roster != nil {
+		injection, err := r.config.Roster.InjectContext(current.ctx, current.args.ConversationID)
+		if err != nil {
+			return err
+		}
+		if len(injection.Entries) > 0 {
+			messages = append(messages, schema.UserMessage(injection.Prompt))
+		}
+	}
 	messages = append(messages, userMessage(current.args))
 	if r.config.Memory != nil {
 		scope, err := r.memoryScope(current.ctx)

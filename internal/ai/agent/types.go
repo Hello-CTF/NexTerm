@@ -102,12 +102,17 @@ type Config struct {
 	// request owner and the real asset through the configurable production
 	// classification; nil issues no environment challenge.
 	HITLEnvironmentResolver func(context.Context, string) ([]string, error)
-	Now                     func() time.Time
-	Subagents               *tools.SubagentConfig
-	NewID                   func() string
-	MaxTurns                int
-	MaxImages               int
-	MaxImageBytes           int
+	// Roster is the conversation's persistent agent roster; nil disables
+	// roster context injection. When configured, every job start loads the
+	// roster and a failed load fails the start closed instead of silently
+	// running without roster context.
+	Roster        *Roster
+	Now           func() time.Time
+	Subagents     *tools.SubagentConfig
+	NewID         func() string
+	MaxTurns      int
+	MaxImages     int
+	MaxImageBytes int
 
 	MaxPendingSteers int
 
