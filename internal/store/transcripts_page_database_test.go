@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/dbtest"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -261,7 +262,146 @@ func TestTranscriptPageSparseStraddleDatabase(t *testing.T) {
 	}
 }
 
-// A distant seek on a transcript far beyond the old scan budget resolves
+// A legacy transcript (pre-index data, simulated by dropping the index
+// rows) answers its first seek from the bounded verification pass and then
+// from the completed index after the backfill catches up — on every
+// backend.
+func TestTranscriptSeekLegacyBackfillDatabase(t *testing.T) {
+	ctx := context.Background()
+	db := dbtest.NewFixture(t).OpenStore(t)
+
+	id := "pg-legacy-backfill-transcript"
+	if err := db.TranscriptStart(ctx, store.TranscriptRow{ID: id, SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000}); err != nil {
+		t.Fatal(err)
+	}
+	appendPagedDatabaseChunks(t, db, id, []store.TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-a", TS: 1000, Data: []byte("a")},
+	})
+	appendPagedDatabaseChunks(t, db, id, []store.TranscriptChunkRow{
+		{Seq: 1, TabID: "tab-a", TS: 1001, Data: []byte("b")},
+	})
+	// Simulate legacy data: the transcript's blocks exist but its index
+	// rows and state row are gone, so the index is incomplete.
+	if err := db.GORM().WithContext(ctx).Exec("DELETE FROM transcript_chunk_ts WHERE transcript_id = ?", id).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.GORM().WithContext(ctx).Exec("DELETE FROM transcript_ts_index WHERE transcript_id = ?", id).Error; err != nil {
+		t.Fatal(err)
+	}
+	// The first seek answers from the bounded verification pass.
+	page, err := db.TranscriptSeekToTimePage(ctx, id, 1001, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Chunks) == 0 || page.Chunks[0].Seq != 1 {
+		t.Fatalf("legacy seek = %+v, want it to start at seq 1", page.Chunks)
+	}
+	// Wait for the backfill to complete; the next seek answers from the
+	// completed index.
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		complete, err := db.TranscriptTSIndexCompleteForTest(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if complete {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("backfill never completed")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	again, err := db.TranscriptSeekToTimePage(ctx, id, 1001, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again.Chunks) == 0 || again.Chunks[0].Seq != 1 {
+		t.Fatalf("post-backfill seek = %+v, want it to start at seq 1", again.Chunks)
+	}
+}
+
+// A corrupt index row fails the seek explicitly on every backend, never a
+// silent tail page.
+func TestTranscriptSeekCorruptionDatabase(t *testing.T) {
+	ctx := context.Background()
+	db := dbtest.NewFixture(t).OpenStore(t)
+
+	id := "pg-corrupt-index-transcript"
+	if err := db.TranscriptStart(ctx, store.TranscriptRow{ID: id, SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000}); err != nil {
+		t.Fatal(err)
+	}
+	appendPagedDatabaseChunks(t, db, id, []store.TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-a", TS: 1000, Data: []byte("a")},
+	})
+	appendPagedDatabaseChunks(t, db, id, []store.TranscriptChunkRow{
+		{Seq: 1, TabID: "tab-a", TS: 1001, Data: []byte("b")},
+	})
+	// Corrupt the index: block 0's max_ts claims the block reaches far
+	// beyond its content.
+	if err := db.GORM().WithContext(ctx).Exec("UPDATE transcript_chunk_ts SET max_ts = ? WHERE transcript_id = ? AND block_seq = 0", 2000, id).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.TranscriptSeekToTimePage(ctx, id, 1001, 1<<20); err == nil {
+		t.Fatal("seek over a corrupted index = nil error, want explicit corruption")
+	}
+}
+
+// A legacy transcript whose verification pass exceeds the scan budget
+// reports pending, then answers once the backfill completes — on every
+// backend.
+func TestTranscriptBackfillPendingRecoveryDatabase(t *testing.T) {
+	ctx := context.Background()
+	db := dbtest.NewFixture(t).OpenStore(t)
+
+	oldBudget := store.TranscriptSeekScanBudgetForTest()
+	store.SetTranscriptSeekScanBudgetForTest(8)
+	defer store.SetTranscriptSeekScanBudgetForTest(oldBudget)
+
+	id := "pg-pending-recovery-transcript"
+	if err := db.TranscriptStart(ctx, store.TranscriptRow{ID: id, SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000}); err != nil {
+		t.Fatal(err)
+	}
+	chunks := make([]store.TranscriptChunkRow, 0, 16*256)
+	for seq := 0; seq < 16*256; seq++ {
+		chunks = append(chunks, store.TranscriptChunkRow{Seq: int64(seq), TabID: "tab-a", TS: int64(1000 + seq), Data: []byte("x")})
+	}
+	appendPagedDatabaseChunks(t, db, id, chunks)
+	// Simulate legacy data: drop the index rows and the state row.
+	if err := db.GORM().WithContext(ctx).Exec("DELETE FROM transcript_chunk_ts WHERE transcript_id = ?", id).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.GORM().WithContext(ctx).Exec("DELETE FROM transcript_ts_index WHERE transcript_id = ?", id).Error; err != nil {
+		t.Fatal(err)
+	}
+	// The late seek reports pending (the pass cannot reach the answer).
+	if _, err := db.TranscriptSeekToTimePage(ctx, id, 1000+3000, 1<<20); err == nil {
+		t.Fatal("late seek over a large legacy transcript = nil error, want pending")
+	}
+	// Wait for the backfill to complete; the next seek answers.
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		complete, err := db.TranscriptTSIndexCompleteForTest(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if complete {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("backfill never completed")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	page, err := db.TranscriptSeekToTimePage(ctx, id, 1000+3000, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Chunks) == 0 || page.Chunks[0].Seq != 3000 {
+		t.Fatalf("recovered seek = %+v, want it to start at seq 3000", page.Chunks)
+	}
+}
+
 // through the bounded index on every backend: the last block's timestamp is
 // found with no budget error, and a past-end time yields the tail page.
 func TestTranscriptSeekLargeTranscriptDatabase(t *testing.T) {

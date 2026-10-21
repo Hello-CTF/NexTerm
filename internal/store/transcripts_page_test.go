@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
@@ -743,7 +744,7 @@ func waitForTranscriptTSIndexComplete(t *testing.T, db *Store, id string) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		complete, err := db.transcriptTSIndexComplete(context.Background(), id)
+		complete, err := db.transcriptTSIndexComplete(context.Background(), db.db, id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -754,6 +755,263 @@ func waitForTranscriptTSIndexComplete(t *testing.T, db *Store, id string) {
 			t.Fatal("backfill never completed")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A lowered index value on ANY eliminated block — not just the immediate
+// predecessor — is caught by the verification scan: the block before the
+// candidate is decoded and its true maximum timestamp is checked against
+// its index row, so a hidden match is explicit corruption, never a later
+// page.
+func TestTranscriptSeekNonAdjacentLowCorruptionFails(t *testing.T) {
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	appendPagedFixture(t, db, id, []TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-a", TS: 1000, Data: []byte("a")},
+	})
+	appendPagedFixture(t, db, id, []TranscriptChunkRow{
+		{Seq: 1, TabID: "tab-a", TS: 0, Data: []byte("b")},
+	})
+	appendPagedFixture(t, db, id, []TranscriptChunkRow{
+		{Seq: 2, TabID: "tab-a", TS: 2000, Data: []byte("c")},
+	})
+	// Corrupt the index: block 0's max_ts is lowered below its true max.
+	if err := db.db.WithContext(context.Background()).Model(&model.TranscriptChunkTS{}).
+		Where("transcript_id = ? AND block_seq = 0", id).
+		Update("max_ts", 0).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.transcriptTSIndexStateComplete(context.Background(), db.db, id); err != nil {
+		t.Fatal(err)
+	}
+	// The naive answer is seq 0; the seek must report corruption, not
+	// return the later seq-2 page.
+	if _, err := db.TranscriptSeekToTimePage(context.Background(), id, 1000, 1<<20); err == nil {
+		t.Fatal("seek over a non-adjacent low-corrupted index = nil error, want explicit corruption")
+	}
+}
+
+// With no candidate the verification scan still checks every block before
+// the tail page: a lowered index value on the only matching block is
+// explicit corruption, not a silent tail page.
+func TestTranscriptSeekNoCandidateLowCorruptionFails(t *testing.T) {
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	appendPagedFixture(t, db, id, []TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-a", TS: 1000, Data: []byte("a")},
+	})
+	appendPagedFixture(t, db, id, []TranscriptChunkRow{
+		{Seq: 1, TabID: "tab-a", TS: 0, Data: []byte("b")},
+	})
+	// Corrupt the index: block 0's max_ts is lowered below the target.
+	if err := db.db.WithContext(context.Background()).Model(&model.TranscriptChunkTS{}).
+		Where("transcript_id = ? AND block_seq = 0", id).
+		Update("max_ts", 500).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.transcriptTSIndexStateComplete(context.Background(), db.db, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.TranscriptSeekToTimePage(context.Background(), id, 1000, 1<<20); err == nil {
+		t.Fatal("seek with a low-corrupted no-candidate index = nil error, want explicit corruption")
+	}
+}
+
+// A healthy replace is never a corruption, and the answer is always one
+// consistent version: with the same blockSeq and the same index max_ts but
+// different content (an ABA rewrite), the seek's snapshot yields one
+// coherent page, not a mix of old and new.
+func TestTranscriptSeekABAReplaceStaysConsistent(t *testing.T) {
+	db := testStore(t)
+	ctx := context.Background()
+	id := "dbg-aba-replace"
+	row := TranscriptRow{ID: id, SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000}
+	if err := db.TranscriptStart(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	ended := int64(2000)
+	row.EndedAt = &ended
+	row.ContentOmitted = true
+	// Old block: chunks (seq0,TS0),(seq1,TS1000).
+	if err := db.TranscriptInsertSynced(ctx, row, []TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-a", TS: 0, Data: []byte("old0")},
+		{Seq: 1, TabID: "tab-a", TS: 1000, Data: []byte("old1")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.transcriptTSIndexStateComplete(ctx, db.db, id); err != nil {
+		t.Fatal(err)
+	}
+	// New block: same blockSeq and the same index max_ts, different content
+	// (seq0,TS1000),(seq1,TS0) — the ABA rewrite.
+	if err := db.TranscriptReplaceContent(ctx, id, 2, 2, false, []TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-a", TS: 1000, Data: []byte("new0")},
+		{Seq: 1, TabID: "tab-a", TS: 0, Data: []byte("new1")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.transcriptTSIndexStateComplete(ctx, db.db, id); err != nil {
+		t.Fatal(err)
+	}
+	// The seek's snapshot yields one coherent version: either the old
+	// block's seq1 (TS1000) or the new block's seq0 (TS1000), never a mix.
+	page, err := db.TranscriptSeekToTimePage(ctx, id, 1000, 1<<20)
+	if err != nil {
+		t.Fatalf("seek over an ABA-replaced block = %v, want one consistent page", err)
+	}
+	if len(page.Chunks) == 0 {
+		t.Fatal("seek returned an empty page")
+	}
+	first := page.Chunks[0]
+	if first.TS != 1000 {
+		t.Fatalf("first chunk = seq %d TS %d, want a consistent version with TS 1000", first.Seq, first.TS)
+	}
+	// And the answer is consistent with the current content: the new
+	// block's seq0 is the first-by-seq match.
+	if first.Seq != 0 {
+		t.Fatalf("first chunk seq = %d, want the new block's seq 0", first.Seq)
+	}
+}
+
+// A healthy replace that lowers the block's timestamp is never a
+// corruption: the seek's snapshot answers from one consistent version.
+func TestTranscriptSeekHealthyReplaceLowersTS(t *testing.T) {
+	db := testStore(t)
+	ctx := context.Background()
+	id := "dbg-healthy-replace"
+	row := TranscriptRow{ID: id, SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000}
+	if err := db.TranscriptStart(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	ended := int64(2000)
+	row.EndedAt = &ended
+	row.ContentOmitted = true
+	if err := db.TranscriptInsertSynced(ctx, row, []TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-a", TS: 2000, Data: []byte("old")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.transcriptTSIndexStateComplete(ctx, db.db, id); err != nil {
+		t.Fatal(err)
+	}
+	// Healthy replace lowering the block's timestamp from 2000 to 0.
+	if err := db.TranscriptReplaceContent(ctx, id, 1, 1, false, []TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-a", TS: 0, Data: []byte("new")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.transcriptTSIndexStateComplete(ctx, db.db, id); err != nil {
+		t.Fatal(err)
+	}
+	// The seek's snapshot answers from the current content: the new block's
+	// TS=0 predates the target, so the answer is the tail page, never a
+	// corruption error and never the stale TS=2000 page.
+	page, err := db.TranscriptSeekToTimePage(ctx, id, 1000, 1<<20)
+	if err != nil {
+		t.Fatalf("seek over a healthy TS-lowering replace = %v", err)
+	}
+	if len(page.Chunks) == 0 || page.Chunks[0].TS != 0 {
+		t.Fatalf("page = %+v, want the tail page from the current content", page.Chunks)
+	}
+}
+
+// The backfill loop's defers run in the right order (Done last) and the
+// lifecycle lock keeps Close's Add/Wait contract: an old loop finishing
+// cannot unregister a new loop, and a kick racing Close cannot start work
+// that Close would not join.
+func TestBackfillDeferOrderAndCloseInterleave(t *testing.T) {
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	insertRawTranscriptBlocks(t, db, id, []TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-a", TS: 1000, Data: []byte("a")},
+	})
+	// Kick a loop, let it finish, then kick again while Close runs: the
+	// second loop is joined by Close and no duplicate escapes.
+	db.kickTranscriptTSIndexBackfill("")
+	waitForTranscriptTSIndexComplete(t, db, id)
+	db.kickTranscriptTSIndexBackfill("")
+	closed := make(chan error, 1)
+	go func() { closed <- db.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close = %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close never returned; the second backfill loop was not joined")
+	}
+	goleak.VerifyNone(t)
+}
+
+// Persistently corrupt blocks never fill the selection window or stall the
+// loop: after 64 corrupt blocks, another owner's large healthy legacy
+// transcript still completes its backfill and its repeated seeks recover.
+func TestTranscriptBackfillCorruptBlocksDontStallRecovery(t *testing.T) {
+	db := testStore(t)
+	ownerA := ipc.WithUserID(context.Background(), "user-a")
+	ownerB := ipc.WithUserID(context.Background(), "user-b")
+	// Owner B: 64 corrupt blocks that can never be indexed.
+	corruptID := ids.New()
+	if err := db.TranscriptStart(ownerB, TranscriptRow{ID: corruptID, SessionID: "sess-b", AssetID: "asset-b", StartedAt: 1000}); err != nil {
+		t.Fatal(err)
+	}
+	for seq := 0; seq < 64; seq++ {
+		if err := db.db.WithContext(context.Background()).Create(&TranscriptChunkRow{
+			TranscriptID: corruptID, Seq: int64(seq), TabID: "tab-b", TS: int64(1000 + seq), Data: []byte("corrupt"), OwnerID: "user-b",
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Owner A: a large healthy legacy transcript (over the lowered scan
+	// budget) that must still complete and recover.
+	healthyID := ids.New()
+	if err := db.TranscriptStart(ownerA, TranscriptRow{ID: healthyID, SessionID: "sess-a", AssetID: "asset-a", StartedAt: 1000}); err != nil {
+		t.Fatal(err)
+	}
+	chunks := make([]TranscriptChunkRow, 0, 128*256)
+	for seq := 0; seq < 128*256; seq++ {
+		chunks = append(chunks, TranscriptChunkRow{Seq: int64(seq), TabID: "tab-a", TS: int64(1000 + seq), Data: []byte("x"), OwnerID: "user-a"})
+		if len(chunks) == 65536 {
+			if err := db.TranscriptAppendChunks(ownerA, healthyID, chunks); err != nil {
+				t.Fatal(err)
+			}
+			chunks = chunks[:0]
+		}
+	}
+	if len(chunks) > 0 {
+		if err := db.TranscriptAppendChunks(ownerA, healthyID, chunks); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Simulate legacy: drop the index rows and the state row so the
+	// transcript is incomplete like pre-index data.
+	if err := db.db.WithContext(context.Background()).Exec("DELETE FROM transcript_chunk_ts WHERE transcript_id = ?", healthyID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.db.WithContext(context.Background()).Exec("DELETE FROM transcript_ts_index WHERE transcript_id = ?", healthyID).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Lower the scan budget so the healthy transcript's seeks hit the
+	// pending path until the backfill catches up.
+	oldBudget := transcriptSeekScanBudget
+	transcriptSeekScanBudget = 64
+	defer func() { transcriptSeekScanBudget = oldBudget }()
+	// Owner A's first seek reports pending (bounded pass cannot reach the
+	// answer) and kicks the backfill; the corrupt blocks are skipped and
+	// the healthy transcript completes.
+	if _, err := db.TranscriptSeekToTimePage(ownerA, healthyID, 1000+30000, 1<<20); !errors.Is(err, ErrTranscriptSeekIndexing) {
+		t.Fatalf("first seek = %v, want ErrTranscriptSeekIndexing", err)
+	}
+	waitForTranscriptTSIndexComplete(t, db, healthyID)
+	// Repeated seeks now answer from the completed index.
+	for i := 0; i < 3; i++ {
+		page, err := db.TranscriptSeekToTimePage(ownerA, healthyID, 1000+30000, 1<<20)
+		if err != nil {
+			t.Fatalf("recovered seek %d = %v", i, err)
+		}
+		if len(page.Chunks) == 0 || page.Chunks[0].Seq != 30000 {
+			t.Fatalf("recovered seek %d = %+v, want it to start at seq 30000", i, page.Chunks)
+		}
 	}
 }
 

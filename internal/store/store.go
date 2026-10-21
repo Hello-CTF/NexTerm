@@ -34,10 +34,13 @@ type Store struct {
 	aiHistoryShared atomic.Bool
 
 	// backfillCtx is cancelled on Close to stop background work (the
-	// timestamp-index backfill loop); backfillWG lets Close join it.
+	// timestamp-index backfill loop); backfillWG lets Close join it, and
+	// backfillMu serializes the closed flag against new work starting.
 	backfillCtx    context.Context
 	backfillCancel context.CancelFunc
 	backfillWG     sync.WaitGroup
+	backfillMu     sync.Mutex
+	backfillClosed bool
 
 	protectorMu sync.RWMutex
 	protector   SecretProtector
@@ -228,7 +231,11 @@ func (s *Store) Close() error {
 		_ = s.keepAlive.Close()
 		s.keepAlive = nil
 	}
-	// Cancel background work first, join it, then close the handle.
+	// Mark closed under the lifecycle lock so no new backfill work can
+	// start, then cancel and join it, then close the handle.
+	s.backfillMu.Lock()
+	s.backfillClosed = true
+	s.backfillMu.Unlock()
 	s.backfillCancel()
 	s.backfillWG.Wait()
 	return s.sqlDB.Close()
