@@ -832,11 +832,10 @@ export interface ComposeOverview {
   stacks: ComposeStack[];
 }
 
-export type DockerProductionConfirmation = {
-  confirmed: true;
-  targetSetHash: string;
-  commandHash: string;
-};
+export type DockerProductionConfirmation = Omit<
+  import("./generated/types").DockerProductionConfirmation,
+  "confirmed"
+> & { confirmed: true };
 
 export interface DiskCategory {
   kind: "images" | "containers" | "volumes" | "buildCache";

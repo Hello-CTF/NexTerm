@@ -8,11 +8,7 @@ import {
 export type DockerConfirmationTarget = ProductionChallengeTarget;
 export type DockerConfirmationChallenge = DockerProductionChallenge;
 
-// The hand-written DockerProductionConfirmation in ipc/commands predates the
-// typed-name contract; the extended shape is structurally assignable to it,
-// so environmentNames flows through the legacy docker envelopes without
-// editing the hand-written IPC module.
-export type DockerEnvironmentConfirmation = DockerProductionConfirmation & { environmentNames?: string[] };
+export type DockerEnvironmentConfirmation = DockerProductionConfirmation;
 
 export function getDockerConfirmationChallenge(cause: unknown): DockerConfirmationChallenge | null {
   return getProductionChallenge(cause, "docker_production_confirmation");
