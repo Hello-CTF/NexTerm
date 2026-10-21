@@ -1,7 +1,6 @@
 package ssh
 
 import (
-	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -28,12 +27,20 @@ import (
 // the real OpenSSH implementation.
 type openSSHTestServer struct {
 	cmd         *exec.Cmd
-	stderr      *bytes.Buffer
+	stderrPath  string
 	port        int
 	user        string
 	hostKey     gossh.PublicKey
 	userKeyPEM  []byte
 	otherKeyPEM []byte
+}
+
+// sshdStderr returns the daemon's captured stderr text for diagnostics.
+// Windows OpenSSH hangs after "Server listening" when its stderr is a
+// pipe, so the fixture captures the output in a file instead.
+func (s *openSSHTestServer) sshdStderr() string {
+	data, _ := os.ReadFile(s.stderrPath)
+	return string(data)
 }
 
 func startOpenSSHTestServer(t *testing.T, port int, userKeyPEM []byte) *openSSHTestServer {
@@ -85,14 +92,19 @@ func startOpenSSHTestServer(t *testing.T, port int, userKeyPEM []byte) *openSSHT
 	if output, err := exec.CommandContext(checkCtx, binary, "-t", "-f", configPath).CombinedOutput(); err != nil {
 		t.Skipf("sshd cannot use the test configuration: %v: %s", err, output)
 	}
-	stderr := &bytes.Buffer{}
+	stderrPath := filepath.Join(dir, "sshd.stderr")
+	stderrFile, err := os.Create(stderrPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stderrFile.Close() })
 	cmd := exec.Command(binary, "-D", "-e", "-f", configPath)
-	cmd.Stderr = stderr
+	cmd.Stderr = stderrFile
 	if err := cmd.Start(); err != nil {
 		t.Skipf("sshd failed to start: %v", err)
 	}
 	server := &openSSHTestServer{
-		cmd: cmd, stderr: stderr, port: port, user: current.Username,
+		cmd: cmd, stderrPath: stderrPath, port: port, user: current.Username,
 		hostKey: hostSigner.PublicKey(), userKeyPEM: openSSHTestKeyPEM(t, userPrivate),
 		otherKeyPEM: openSSHTestKeyPEM(t, otherPrivate),
 	}
@@ -171,10 +183,10 @@ func openSSHTestWaitReady(t *testing.T, server *openSSHTestServer) {
 			}
 		}
 		if server.cmd.ProcessState != nil {
-			t.Skipf("sshd exited before becoming ready: %s", server.stderr.String())
+			t.Skipf("sshd exited before becoming ready: %s", server.sshdStderr())
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("sshd did not become ready at %s: %s", address, server.stderr.String())
+			t.Fatalf("sshd did not become ready at %s: %s", address, server.sshdStderr())
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
