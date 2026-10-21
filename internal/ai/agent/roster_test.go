@@ -168,6 +168,12 @@ func (p *fakeRosterProbe) set(handle string, kind RosterRuntimeKind, currentInca
 	p.statuses[handle] = RosterRuntimeStatus{Kind: kind, CurrentIncarnation: currentIncarnation}
 }
 
+func (p *fakeRosterProbe) setConnected(handle, episode string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.statuses[handle] = RosterRuntimeStatus{Kind: RosterRuntimeConnected, ObservedIncarnation: episode}
+}
+
 func (p *fakeRosterProbe) setError(handle string, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -985,5 +991,59 @@ func TestRosterCorruptMetadataNeverPanicsNorWrites(t *testing.T) {
 		if !strings.Contains(report.Entries[0].Reason, "no write") {
 			t.Fatalf("reconcile reason hides the outcome: %q", report.Entries[0].Reason)
 		}
+	}
+}
+
+// A connected first attach binds the runtime episode through the same
+// metadata merge, so a corrupt persisted value must fail closed exactly like
+// the transition path: unverifiable, no write, never a reset of the corrupt
+// value. A legal object still merges, keeping unrelated keys.
+func TestRosterCorruptMetadataFailsClosedOnConnectedFirstAttach(t *testing.T) {
+	ctx := rosterOwnerContext("owner-a")
+	fake := newFakeRosterStore()
+	probe := newFakeRosterProbe()
+	roster := newTestRoster(fake, probe)
+	entry := mustProvision(t, roster, ctx, "conv-1", "handle-a")
+
+	for _, corrupt := range []string{"null", `"text"`, `[1,2]`, `42`, `{malformed`} {
+		fake.mutate(entry.ID, func(row *store.AgentRosterRow) {
+			row.MetadataJSON = corrupt
+		})
+		probe.setConnected("handle-a", "episode-1")
+
+		attachment, err := roster.Attach(ctx, "handle-a", "job-1")
+		if err != nil {
+			t.Fatalf("attach with %s metadata err=%v", corrupt, err)
+		}
+		if attachment.Resolution != RosterResolutionUnverifiable {
+			t.Fatalf("attach with %s metadata resolution=%s", corrupt, attachment.Resolution)
+		}
+		stored, err := fake.AgentRosterGetByHandle(ctx, "handle-a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stored.MetadataJSON != corrupt || stored.JobID != "" {
+			t.Fatalf("attach wrote over %s metadata: %+v", corrupt, stored)
+		}
+	}
+
+	// A legal object still merges: the episode binding lands and unrelated
+	// keys survive.
+	fake.mutate(entry.ID, func(row *store.AgentRosterRow) {
+		row.MetadataJSON = `{"origin":"synthetic"}`
+	})
+	attachment, err := roster.Attach(ctx, "handle-a", "job-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attachment.Resolution != RosterResolutionConnected {
+		t.Fatalf("legal merge attach = %+v", attachment)
+	}
+	stored, err := fake.AgentRosterGetByHandle(ctx, "handle-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stored.MetadataJSON, `"runtimeEpisode":"episode-1"`) || !strings.Contains(stored.MetadataJSON, `"origin":"synthetic"`) {
+		t.Fatalf("legal merge lost keys: %s", stored.MetadataJSON)
 	}
 }

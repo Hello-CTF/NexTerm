@@ -343,7 +343,14 @@ func (r *Roster) casConnected(ctx context.Context, row store.AgentRosterRow, job
 			updates["state"] = string(RosterStateActive)
 		}
 		if rosterRecordedEpisode(row) == "" && episode != "" {
-			updates["metadata_json"] = rosterEpisodeMetadata(row.MetadataJSON, episode)
+			merged, err := rosterEpisodeMetadata(row.MetadataJSON, episode)
+			if err != nil {
+				// A corrupt persisted value cannot be merged honestly:
+				// unverifiable, no write — the same contract as the
+				// transition path.
+				return RosterAttachment{Entry: rosterEntryFromRow(row), Resolution: RosterResolutionUnverifiable}, nil
+			}
+			updates["metadata_json"] = merged
 		}
 		updated, err := r.store.AgentRosterCompareAndSwapState(ctx, row.ID, row.Identity(), row.State, updates)
 		if err == nil {
@@ -692,16 +699,18 @@ func rosterRecordedEpisode(row store.AgentRosterRow) string {
 }
 
 // rosterEpisodeMetadata merges the runtime-episode binding into the row's
-// metadata object, preserving unrelated keys.
-func rosterEpisodeMetadata(raw, episode string) string {
+// metadata object, preserving unrelated keys. A persisted non-object or
+// malformed value cannot be merged honestly: it returns an error and the
+// caller aborts before any write, the same contract as the transition path.
+func rosterEpisodeMetadata(raw, episode string) (string, error) {
 	metadata := map[string]any{}
 	if err := json.Unmarshal([]byte(raw), &metadata); err != nil || metadata == nil {
-		metadata = map[string]any{}
+		return "", ipc.NewError(ipc.Code("conflict"), "roster metadata 不是 JSON 对象")
 	}
 	metadata["runtimeEpisode"] = episode
 	encoded, err := json.Marshal(metadata)
 	if err != nil {
-		return raw
+		return "", ipc.WrapError(ipc.CodeInternal, "roster metadata 编码失败: "+err.Error(), err)
 	}
-	return string(encoded)
+	return string(encoded), nil
 }
