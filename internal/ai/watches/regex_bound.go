@@ -337,16 +337,31 @@ func trailingRightContextDependent(re *syntax.Regexp) bool {
 	case syntax.OpCapture:
 		return trailingRightContextDependent(re.Sub[0])
 	case syntax.OpConcat:
-		// A trailing empty group hides nothing: walk from the end and judge
-		// the last input-consuming subexpression.
+		// Walk from the end: trailing empty groups hide nothing, and a
+		// nullable-consuming suffix (.*, (?:x)?, a*) can vanish, so the
+		// match's effective right edge may sit further left — keep walking
+		// until the edge is grounded on a consuming subexpression.
 		for i := len(re.Sub) - 1; i >= 0; i-- {
 			sub := re.Sub[i]
 			if isRightContextAssertion(sub) {
 				return true
 			}
-			if !alwaysEmpty(sub) {
-				return false
+			if alwaysEmpty(sub) {
+				continue
 			}
+			if canMatchEmpty(sub) {
+				// The suffix may vanish, leaving the edge before it, but
+				// its consuming branch can itself end in an assertion
+				// (e.g. (?:x\b)?), which still sees the bytes beyond.
+				if trailingRightContextDependent(sub) {
+					return true
+				}
+				continue
+			}
+			// The edge is grounded on this subexpression; its own trailing
+			// assertions (a capture ending in \b, for example) still see
+			// the bytes beyond the edge.
+			return trailingRightContextDependent(sub)
 		}
 		return false
 	case syntax.OpAlternate:
@@ -356,7 +371,7 @@ func trailingRightContextDependent(re *syntax.Regexp) bool {
 			}
 		}
 		return false
-	case syntax.OpStar, syntax.OpPlus, syntax.OpRepeat:
+	case syntax.OpStar, syntax.OpPlus, syntax.OpQuest, syntax.OpRepeat:
 		return trailingRightContextDependent(re.Sub[0])
 	default:
 		return false
@@ -396,6 +411,42 @@ func alwaysEmpty(re *syntax.Regexp) bool {
 		return true
 	case syntax.OpQuest, syntax.OpStar, syntax.OpPlus, syntax.OpRepeat:
 		return alwaysEmpty(re.Sub[0])
+	default:
+		return false
+	}
+}
+
+// canMatchEmpty reports whether the subexpression can match the empty
+// string while also being able to consume input — a nullable-consuming
+// suffix such as .*, (?:x)? or a*.
+func canMatchEmpty(re *syntax.Regexp) bool {
+	switch re.Op {
+	case syntax.OpEmptyMatch:
+		return true
+	case syntax.OpLiteral:
+		return len(re.Rune) == 0
+	case syntax.OpCharClass, syntax.OpAnyCharNotNL, syntax.OpAnyChar:
+		return false
+	case syntax.OpCapture:
+		return canMatchEmpty(re.Sub[0])
+	case syntax.OpConcat:
+		for _, sub := range re.Sub {
+			if !canMatchEmpty(sub) {
+				return false
+			}
+		}
+		return true
+	case syntax.OpAlternate:
+		for _, sub := range re.Sub {
+			if canMatchEmpty(sub) {
+				return true
+			}
+		}
+		return false
+	case syntax.OpStar, syntax.OpQuest:
+		return true
+	case syntax.OpPlus, syntax.OpRepeat:
+		return canMatchEmpty(re.Sub[0])
 	default:
 		return false
 	}
