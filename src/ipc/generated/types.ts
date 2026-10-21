@@ -61,6 +61,19 @@ export type AssetProbeResultDTO = {
   durationMs: number;
 };
 
+export type BatchProgress = {
+  batchId: string;
+  phase: string;
+  total: number;
+  pending: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  canceled: number;
+  finishedAt?: number;
+  droppedEvents?: number;
+};
+
 export type ConfirmationRequiredDetail = {
   kind: string;
   batchId: string;
@@ -201,6 +214,15 @@ export type ExecBatchLastBatch = {
   finishedAt: number | null;
 };
 
+export type ExecBatchProgressRequest = {
+  batchId: string;
+};
+
+export type ExecBatchProgressSnapshot = {
+  batch: BatchProgress;
+  targets: TargetProgress[];
+};
+
 export type ExecBatchRequest = {
   batchId: string;
   sessionIds: string[];
@@ -209,6 +231,20 @@ export type ExecBatchRequest = {
   maxConcurrent?: number;
   productionConfirmation?: ProductionConfirmation | null;
   runbook?: RunbookMetadata | null;
+};
+
+export type ExecBatchRerunRequest = {
+  batchId: string;
+  command: string;
+  timeoutMs?: number;
+  maxConcurrent?: number;
+  results: ExecBatchRerunResult[];
+  productionConfirmation?: ProductionConfirmation | null;
+};
+
+export type ExecBatchRerunResult = {
+  sessionId: string;
+  status: string;
 };
 
 export type ExecBatchResult = {
@@ -461,6 +497,14 @@ export type Listener = {
   program: string;
 };
 
+export type OutputSnapshot = {
+  head: string;
+  tail: string;
+  totalBytes: number;
+  droppedBytes: number;
+  truncated: boolean;
+};
+
 export type PrepareRequest = {
   runId: string;
   stepNumber: number;
@@ -598,6 +642,25 @@ export type StepState = {
   results: ExecBatchResult[];
   batchIds: string[];
   error?: string;
+};
+
+export type TargetOutputSnapshot = {
+  stdout: OutputSnapshot;
+  stderr: OutputSnapshot;
+};
+
+export type TargetProgress = {
+  sessionId: string;
+  position: number;
+  phase: string;
+  status?: string;
+  exitCode?: number | null;
+  signal?: string;
+  error?: string;
+  output: TargetOutputSnapshot;
+  startedAt?: number;
+  finishedAt?: number;
+  durationMs?: number;
 };
 
 export type TargetSetCreateRequest = {

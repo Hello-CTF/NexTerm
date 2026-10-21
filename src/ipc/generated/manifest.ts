@@ -570,6 +570,22 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/store.ExecBatchHistoryQuery", ts: "ExecBatchHistoryQuery" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/store.ExecBatchHistoryPage", ts: "ExecBatchHistoryPage" },
     },
+    "exec_batch_progress": {
+      scope: "exec-batch",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.execBatchProgressRequest", ts: "ExecBatchProgressRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.execBatchProgressSnapshot", ts: "ExecBatchProgressSnapshot" },
+    },
+    "exec_batch_rerun": {
+      scope: "exec-batch",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.execBatchRerunRequest", ts: "ExecBatchRerunRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/execbatch.Batch", ts: "ExecBatch" },
+    },
     "exec_batch_test_login": {
       scope: "exec-batch",
       nested: true,
@@ -1990,6 +2006,14 @@ export interface IPCCommandTypeMap {
   "exec_batch_history_list": {
     input: contractTypes.ExecBatchHistoryQuery;
     output: contractTypes.ExecBatchHistoryPage;
+  };
+  "exec_batch_progress": {
+    input: contractTypes.ExecBatchProgressRequest;
+    output: contractTypes.ExecBatchProgressSnapshot;
+  };
+  "exec_batch_rerun": {
+    input: contractTypes.ExecBatchRerunRequest;
+    output: contractTypes.ExecBatch;
   };
   "exec_batch_test_login": {
     input: contractTypes.AssetProbeBatchRequest;
