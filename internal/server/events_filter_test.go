@@ -158,7 +158,7 @@ VALUES(?,?,'box','agent',1)`, row.deviceID, row.ownerID); err != nil {
 		{"own sync status", ipc.Event{Event: ipc.TopicSyncStatus, Payload: ipc.SyncStatusEvent{OwnerID: "u-1"}}, true},
 		{"other user sync status", ipc.Event{Event: ipc.TopicSyncStatus, Payload: ipc.SyncStatusEvent{OwnerID: "u-2"}}, false},
 		{"unscoped sync status", ipc.Event{Event: ipc.TopicSyncStatus, Payload: ipc.SyncStatusEvent{}}, false},
-		{"legacy sync status payload", ipc.Event{Event: ipc.TopicSyncStatus, Payload: struct{}{}}, true},
+		{"legacy sync status payload", ipc.Event{Event: ipc.TopicSyncStatus, Payload: struct{}{}}, false},
 		{"malformed sync status payload", ipc.Event{Event: ipc.TopicSyncStatus, Payload: map[string]any{}}, false},
 		{"legacy sync round complete", ipc.Event{Event: ipc.Topic("sync://round-complete"), Payload: struct{}{}}, true},
 		{"malformed sync round complete", ipc.Event{Event: ipc.Topic("sync://round-complete"), Payload: map[string]any{}}, false},

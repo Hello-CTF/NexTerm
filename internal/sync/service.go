@@ -197,7 +197,7 @@ func (s *Service) syncBackground(ctx context.Context) {
 	_ = ipc.Emit(ctx, s.events, syncRoundCompleteTopic, struct{}{})
 	// Broadcast status when a background round establishes a new session (unlock wake/failure recovery), so an open settings page auto-refreshes to logged-in.
 	if !wasLoggedIn && s.engine.hasSession() {
-		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: ipc.OwnerID(ctx)})
 	}
 }
 
@@ -274,7 +274,7 @@ func (s *Service) probeSavedLink(ctx context.Context) {
 	defer s.settingsMu.Unlock()
 	if s.probePersistedSession(ctx, secret) {
 		s.recordProbe(ctx, nil)
-		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: ipc.OwnerID(ctx)})
 		return
 	}
 	connect, err := s.engine.Connect(ctx, remoteConfigFromSecret(secret))
@@ -290,7 +290,7 @@ func (s *Service) probeSavedLink(ctx context.Context) {
 			s.recordProbe(ctx, errReloginReset)
 		}
 	}
-	_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+	_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: ipc.OwnerID(ctx)})
 }
 
 // probePersistedSession prefers restoring the account session from the persisted session: a passing me() check restores without login.
@@ -414,7 +414,7 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (LinkResult, err
 	defer func() {
 		s.settingsMu.Unlock()
 		if notifyStatus {
-			_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+			_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: ipc.OwnerID(ctx)})
 		}
 	}()
 	if initialized, _ := s.vaultStatus(); !initialized {
@@ -523,7 +523,7 @@ func (s *Service) LinkMFA(ctx context.Context, code string) (LinkResult, error) 
 	defer func() {
 		s.settingsMu.Unlock()
 		if notifyStatus {
-			_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+			_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: ipc.OwnerID(ctx)})
 		}
 	}()
 	secret, err := s.linkSecret(ctx)
@@ -552,7 +552,7 @@ func (s *Service) LinkResetPassword(ctx context.Context, newPassword string) (Li
 	defer func() {
 		s.settingsMu.Unlock()
 		if notifyStatus {
-			_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+			_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: ipc.OwnerID(ctx)})
 		}
 	}()
 	secret, err := s.linkSecret(ctx)
@@ -703,7 +703,7 @@ func (s *Service) Sync(ctx context.Context) (report SyncReport, returnErr error)
 				s.engine.logger.Warn("reload synced AI grants failed", "error", err)
 			}
 		}
-		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: ipc.OwnerID(ctx)})
 	}
 	s.recordProbe(ctx, syncErr)
 	return report, syncErr

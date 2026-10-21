@@ -340,6 +340,10 @@ func TestServiceSyncEmitsChangedStatus(t *testing.T) {
 	if len(events) != 1 || events[0].Event != ipc.TopicSyncStatus {
 		t.Fatalf("events = %+v, want one sync status event", events)
 	}
+	payload, ok := events[0].Payload.(ipc.SyncStatusEvent)
+	if !ok || payload.OwnerID != "" {
+		t.Fatalf("desktop sync status payload = %+v, want an ownerless local notification", events[0].Payload)
+	}
 }
 
 func TestSyncReportChangedIgnoresPulledOnly(t *testing.T) {
@@ -362,31 +366,48 @@ func TestSyncReportChangedIgnoresPulledOnly(t *testing.T) {
 }
 
 func TestApplyObjectsEmitsChangedStatus(t *testing.T) {
-	instance := newTestInstance(t, false)
-	ctx := context.Background()
-	var events []ipc.Event
-	instance.service.events = ipc.EmitterFunc(func(_ context.Context, event ipc.Event) error {
-		events = append(events, event)
-		return nil
-	})
-	reloads := 0
-	instance.service.profilesReload = func(context.Context) error {
-		reloads++
-		return nil
-	}
-	result, err := instance.service.ApplyObjects(ctx, ApplyObjectsRequest{Objects: []ApplyObject{
-		applyKnownHost(t, ids.New(), "sync.example.com", 22, "ssh-ed25519", "SHA256:sync", 100),
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Applied != 1 {
-		t.Fatalf("apply result = %+v, want one applied object", result)
-	}
-	if reloads != 1 {
-		t.Fatalf("profile reloads = %d, want 1", reloads)
-	}
-	if len(events) != 1 || events[0].Event != ipc.TopicSyncStatus {
-		t.Fatalf("events = %+v, want one sync status event", events)
+	for _, test := range []struct {
+		name    string
+		ownerID string
+	}{
+		{name: "desktop-local"},
+		{name: "account", ownerID: "account-a"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			instance := newTestInstance(t, false)
+			ctx := context.Background()
+			if test.ownerID != "" {
+				ctx = WithUserID(ctx, test.ownerID)
+			}
+			var events []ipc.Event
+			instance.service.events = ipc.EmitterFunc(func(_ context.Context, event ipc.Event) error {
+				events = append(events, event)
+				return nil
+			})
+			reloads := 0
+			instance.service.profilesReload = func(context.Context) error {
+				reloads++
+				return nil
+			}
+			result, err := instance.service.ApplyObjects(ctx, ApplyObjectsRequest{Objects: []ApplyObject{
+				applyKnownHost(t, ids.New(), "sync.example.com", 22, "ssh-ed25519", "SHA256:sync", 100),
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Applied != 1 {
+				t.Fatalf("apply result = %+v, want one applied object", result)
+			}
+			if reloads != 1 {
+				t.Fatalf("profile reloads = %d, want 1", reloads)
+			}
+			if len(events) != 1 || events[0].Event != ipc.TopicSyncStatus {
+				t.Fatalf("events = %+v, want one sync status event", events)
+			}
+			payload, ok := events[0].Payload.(ipc.SyncStatusEvent)
+			if !ok || payload.OwnerID != test.ownerID {
+				t.Fatalf("sync status payload = %+v, want owner %q", events[0].Payload, test.ownerID)
+			}
+		})
 	}
 }

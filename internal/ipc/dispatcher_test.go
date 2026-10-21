@@ -184,10 +184,27 @@ func TestDispatcherEmitsSyncStatusOnlyForRelevantSuccessfulWrites(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
+	ctx := WithUserID(context.Background(), "account-a")
 	for _, command := range []string{"asset_create", "asset_update", "asset_delete", "ai_set_permission", "sync_apply_objects"} {
-		_ = dispatcher.Dispatch(context.Background(), Request{Command: command}, Environment{Events: emitter})
+		_ = dispatcher.Dispatch(ctx, Request{Command: command}, Environment{Events: emitter})
 	}
 	if len(events) != 3 || events[0].Event != TopicSyncStatus || events[1].Event != TopicSyncStatus || events[2].Event != TopicSyncStatus {
 		t.Fatalf("events = %+v, want three sync status events", events)
+	}
+	for _, event := range events {
+		payload, ok := event.Payload.(SyncStatusEvent)
+		if !ok || payload.OwnerID != "account-a" {
+			t.Fatalf("account sync status payload = %+v, want owner account-a", event.Payload)
+		}
+	}
+
+	events = nil
+	_ = dispatcher.Dispatch(context.Background(), Request{Command: "asset_create"}, Environment{Events: emitter})
+	if len(events) != 1 {
+		t.Fatalf("desktop events = %+v, want one local sync status", events)
+	}
+	payload, ok := events[0].Payload.(SyncStatusEvent)
+	if !ok || payload.OwnerID != "" {
+		t.Fatalf("desktop sync status payload = %+v, want an ownerless local notification", events[0].Payload)
 	}
 }

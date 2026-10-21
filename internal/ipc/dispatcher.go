@@ -119,7 +119,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, request Request, environment 
 		return Failure(NormalizeError(err))
 	}
 	if syncObjectWriteCommands[request.Command] {
-		_ = Emit(ctx, call.Events, TopicSyncStatus, struct{}{})
+		_ = Emit(ctx, call.Events, TopicSyncStatus, SyncStatusEvent{OwnerID: OwnerID(ctx)})
 	}
 	data, err := json.Marshal(result)
 	if err != nil {
