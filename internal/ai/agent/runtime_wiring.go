@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
@@ -94,6 +95,15 @@ func (r *Runner) atomicFinisher() (atomicRunFinisher, bool) {
 	}
 	capability, ok := r.runs.(atomicRunFinisher)
 	return capability, ok
+}
+
+// ToolsRegistry exposes the runner's configured tools registry so the
+// production composition can verify the wiring it assembled (for example
+// that an optional dependencies backend resolved to the same instance it
+// passed in). The registry stays owned by the runner; callers must not
+// mutate it.
+func (r *Runner) ToolsRegistry() *tools.Registry {
+	return r.config.Tools
 }
 
 // OutcomeResult returns the recorded outcome of an uncertain mutation, so

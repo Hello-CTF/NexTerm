@@ -602,6 +602,14 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	}
 	toolsDeps.Outcome = outcomeLedger
 	toolsDeps.Reminders = reminderScheduler{scheduler: cronScheduler, conversations: services.Store, scopeValidator: productionScopeValidator(services)}
+	// The skills backend is the single services-level manager: the ai-skills
+	// IPC module registers the same instance, so the load_skill tool and the
+	// IPC surface share per-owner state instead of splitting two managers. A
+	// typed nil must never reach the interface field: without a manager the
+	// seam stays unset and load_skill is honestly unavailable.
+	if services.Skills != nil {
+		toolsDeps.Skills = services.Skills
+	}
 	toolsDeps.Notify = func(ctx context.Context, text string) error {
 		return ipc.Emit(ctx, services.Events, ipc.TopicAINotification, ipc.AINotificationEvent{OwnerID: tools.NotifyOwnerID(ctx), Text: text})
 	}

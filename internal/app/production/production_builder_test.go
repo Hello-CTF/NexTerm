@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
+	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	fleetserver "github.com/Hello-CTF/NexTerm/internal/fleet/server"
 	"github.com/Hello-CTF/NexTerm/internal/forward"
 	"github.com/Hello-CTF/NexTerm/internal/fs/chunked"
@@ -1151,5 +1153,52 @@ func TestConcreteProductionRetiredDevicePublicRouteNotFoundNoStore(t *testing.T)
 	// The root page stays intact after the retirement.
 	if status, body, _ := get("/"); status != http.StatusOK || body != spaPage {
 		t.Fatalf("root page after retirement = %d %q", status, body)
+	}
+}
+
+// TestConcreteProductionSharesSingleSkillsManager proves the concrete
+// production assembly builds one skills manager and hands the same instance
+// to both the ai-skills IPC surface and the agent tools registry: the
+// services-level manager is set, ai_skills_* commands are registered, and
+// the composed runner exposes load_skill backed by that manager.
+func TestConcreteProductionSharesSingleSkillsManager(t *testing.T) {
+	production, err := NewProduction(t.Context(), ProductionConfig{
+		Config: Config{Logger: slog.Default()}, DataDir: t.TempDir(), Desktop: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	t.Cleanup(func() { _ = production.Shutdown(ctx) })
+
+	manager := production.Services.Skills
+	if manager == nil {
+		t.Fatal("production services carry no skills manager")
+	}
+	for _, command := range []string{
+		skills.CommandList, skills.CommandSaveOverride, skills.CommandDeleteOverride, skills.CommandDispatch, skills.CommandMaterial,
+	} {
+		if !slices.Contains(production.Dispatcher.Commands(), command) {
+			t.Fatalf("production is missing skills command %s", command)
+		}
+	}
+	registry := production.Services.Agent.ToolsRegistry()
+	if registry == nil {
+		t.Fatal("the composed runner has no tools registry")
+	}
+	body := "production-shared-instance"
+	description := "shared instance evidence"
+	if _, err := manager.SaveOverride(t.Context(), skills.OverrideInput{Name: "ops-note", Description: &description, Body: &body}); err != nil {
+		t.Fatal(err)
+	}
+	call := tools.Call{ID: "call-1", Name: "load_skill", Args: json.RawMessage(`{"name":"ops-note"}`)}
+	if err := registry.Validate(call); err != nil {
+		t.Fatalf("load_skill is not exposed by the production registry: %v", err)
+	}
+	viaRegistry := registry.Execute(t.Context(), "job-1", tools.Scope{}, call, nil)
+	viaManager := manager.LoadSkill(t.Context(), call.Args)
+	if !viaRegistry.OK || !viaManager.OK || viaRegistry.Text != viaManager.Text {
+		t.Fatalf("load_skill outputs diverge: registry=%+v manager=%+v", viaRegistry, viaManager)
 	}
 }

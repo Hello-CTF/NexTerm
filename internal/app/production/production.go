@@ -7,6 +7,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
+	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
 	"github.com/Hello-CTF/NexTerm/internal/ai/takeover"
 	core "github.com/Hello-CTF/NexTerm/internal/app"
 	"github.com/Hello-CTF/NexTerm/internal/db"
@@ -59,6 +60,10 @@ type ProductionServices struct {
 	Guard            *guard.Manager
 	Agent            *agent.Runner
 	Takeover         *takeover.Manager
+	// Skills is the single skills manager instance shared by the ai-skills
+	// IPC surface and the agent tools registry (load_skill), so per-owner
+	// caches and overrides never split across two managers.
+	Skills           *skills.Manager
 	Events           ipc.Emitter
 	Update           *update.Manager
 	ScreenInsets     func(context.Context) (ScreenInsets, error)
