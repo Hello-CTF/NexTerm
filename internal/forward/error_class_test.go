@@ -12,8 +12,8 @@ import (
 // A-04: forward commands must classify session lifecycle errors instead of
 // leaking generic internal errors — disconnected/redialing sessions surface as
 // CodeDisconnected, identity-less callers without an open deployment as
-// CodeForbidden, and identity-less open-access callers keep the session-state
-// classification.
+// CodeForbidden, and open-access callers (vouched identities or explicitly
+// open deployments) keep the session-state classification.
 
 func requireErrorCode(t *testing.T, err error, code ipc.Code) {
 	t.Helper()
@@ -72,12 +72,20 @@ func TestForwardClassifiesIdentityLessWithoutOpenAccessAsForbidden(t *testing.T)
 	_, err = fixture.service.CreateSocks(identityLess, CreateSocksArgs{SessionID: fixture.connected.ID, AcknowledgeRisk: true})
 	requireErrorCode(t, err, ipc.CodeForbidden)
 
-	open := session.WithOpenAccess(identityLess)
-	spec, err := fixture.service.CreateLocal(open, CreateLocalArgs{
+	// The context flag alone is an in-process vouch, not an authorization:
+	// identity-less open access stays forbidden on a non-open server.
+	marker := session.WithOpenAccess(identityLess)
+	_, err = fixture.service.CreateLocal(marker, CreateLocalArgs{
+		SessionID: fixture.connected.ID, TargetHost: "remote-only.invalid", TargetPort: 4567,
+	})
+	requireErrorCode(t, err, ipc.CodeForbidden)
+
+	// An identity backed by the vouch keeps open-access semantics.
+	spec, err := fixture.service.CreateLocal(session.WithOpenAccess(fixture.ctx), CreateLocalArgs{
 		SessionID: fixture.connected.ID, TargetHost: "remote-only.invalid", TargetPort: 4567,
 	})
 	if err != nil {
-		t.Fatalf("open-access identity-less create: %v", err)
+		t.Fatalf("vouched open-access create: %v", err)
 	}
 	if spec.SessionID != fixture.connected.ID {
 		t.Fatalf("open-access spec = %+v", spec)
@@ -85,18 +93,20 @@ func TestForwardClassifiesIdentityLessWithoutOpenAccessAsForbidden(t *testing.T)
 }
 
 func TestForwardClassifiesIdentityLessOpenAccessBySessionState(t *testing.T) {
-	fixture := newSavedRuleFixture(t)
+	// Identity-less open access now requires an explicitly open deployment;
+	// there the session-state classification applies with or without the
+	// in-process vouch marker.
+	fixture := newSavedRuleFixtureAccess(t, true)
 	if err := fixture.manager.Disconnect(fixture.connected.ID); err != nil {
 		t.Fatal(err)
 	}
-	open := session.WithOpenAccess(context.Background())
 
-	_, err := fixture.service.CreateLocal(open, CreateLocalArgs{
+	_, err := fixture.service.CreateLocal(session.WithOpenAccess(context.Background()), CreateLocalArgs{
 		SessionID: fixture.connected.ID, TargetHost: "remote-only.invalid", TargetPort: 4567,
 	})
 	requireErrorCode(t, err, ipc.CodeDisconnected)
 
-	_, err = fixture.service.CreateSocks(open, CreateSocksArgs{SessionID: fixture.connected.ID, AcknowledgeRisk: true})
+	_, err = fixture.service.CreateSocks(context.Background(), CreateSocksArgs{SessionID: fixture.connected.ID, AcknowledgeRisk: true})
 	requireErrorCode(t, err, ipc.CodeDisconnected)
 }
 

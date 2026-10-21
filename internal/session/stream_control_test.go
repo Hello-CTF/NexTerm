@@ -364,30 +364,36 @@ func TestStreamControlFullSequenceSurvivesLateOldControlFrames(t *testing.T) {
 		t.Fatalf("old resume = %v, want ErrForbidden", err)
 	}
 
-	// Phase C: sustained output with a healthy drain stalls at the retention
-	// floor (5 MiB) plus the 64 MiB ring, instead of evicting the suffix.
-	stalled := false
-	stallEmitted := false
-	for i := fedThrough; i < 4000 && !stalled; i++ {
-		data := chunk(i)
-		if err := channel.emit(data); err != nil {
-			stalled = true
-			break
-		}
-		if !tryReadFrames(t, receiver, chunkSize, data) {
-			stalled = true
-			// Emitted but not fed: the chunk waits in the transport pipe and
-			// arrives once the resume wakes the pump.
-			stallEmitted = true
-		}
-		if !stalled {
-			fed = append(fed, data...)
-			fedThrough = i + 1
-		}
+	// Phase C: the transport keeps draining but the client accepts nothing
+	// more: feed until the ring is provably at capacity with the floor
+	// blocking eviction — the pump parks instead of evicting the refused
+	// suffix. The pipe-held chunk is then emitted with the pump provably
+	// parked, so it waits in the transport pipe and the recovery's anchor
+	// is the next frame the client sees; a read-timeout stall guess could
+	// instead fire while the pump is merely slow, and the late chunk would
+	// overtake the anchor.
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !stalled {
+	for i := fedThrough; i < 4000 && !tab.recovery.needsStall(); i++ {
+		data := chunk(i)
+		fed = append(fed, data...)
+		if err := channel.emit(data); err != nil {
+			t.Fatal(err)
+		}
+		if got := readFramesUntil(t, receiver, chunkSize); !bytes.Equal(got, data) {
+			t.Fatalf("phase C chunk %d mismatch", i)
+		}
+		fedThrough = i + 1
+	}
+	if !tab.recovery.needsStall() {
 		t.Fatal("producer kept reading past the ring capacity with the floor set")
 	}
+	if err := channel.emit(chunk(fedThrough)); err != nil {
+		t.Fatal(err)
+	}
+	stallEmitted := true
 
 	// The whole refused suffix [5 MiB, fed) is redelivered byte-identical.
 	recoverDone := make(chan error, 1)

@@ -52,6 +52,11 @@ func newSavedRuleService(t *testing.T, db *store.Store, manager *session.Manager
 
 func newSavedRuleFixture(t *testing.T) *savedRuleFixture {
 	t.Helper()
+	return newSavedRuleFixtureAccess(t, false)
+}
+
+func newSavedRuleFixtureAccess(t *testing.T, openAccess bool) *savedRuleFixture {
+	t.Helper()
 	db, err := store.OpenInMemory(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -71,6 +76,7 @@ func newSavedRuleFixture(t *testing.T) *savedRuleFixture {
 			return transport, nil
 		}),
 		IdleTimeout: -1,
+		OpenAccess:  openAccess,
 	})
 	t.Cleanup(func() { _ = manager.Close() })
 	connected, err := manager.Connect(ctx, session.Asset{ID: asset.ID, Kind: session.KindSSH})

@@ -7,7 +7,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"net"
+	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -19,8 +21,9 @@ import (
 )
 
 // lifetimeSSHServer is a minimal in-process SSH server: one ed25519 host key,
-// password auth, and a session channel that runs /bin/sh wired to the
-// channel. Tests pin the host key out of band instead of auto-accepting it.
+// password auth, and a session channel that runs the host's shell wired to
+// the channel. Tests pin the host key out of band instead of auto-accepting
+// it.
 type lifetimeSSHServer struct {
 	listener net.Listener
 	config   *gossh.ServerConfig
@@ -112,8 +115,24 @@ func (s *lifetimeSSHServer) handleSession(channel gossh.Channel, requests <-chan
 	}
 }
 
+// lifetimeShell names a shell the test host can execute: /bin/sh on Unix,
+// the Windows command processor (with banner/prompt noise the tests tolerate
+// because they match markers by substring) elsewhere. The lifetime tests only
+// require a process that runs `echo <marker>` lines over the channel.
+func lifetimeShell() (string, []string) {
+	if runtime.GOOS == "windows" {
+		comspec := os.Getenv("COMSPEC")
+		if comspec == "" {
+			comspec = `C:\Windows\System32\cmd.exe`
+		}
+		return comspec, []string{"/Q"}
+	}
+	return "/bin/sh", nil
+}
+
 func (s *lifetimeSSHServer) runShell(channel gossh.Channel) {
-	command := exec.Command("/bin/sh")
+	name, args := lifetimeShell()
+	command := exec.Command(name, args...)
 	command.Stdin = channel
 	command.Stdout = channel
 	command.Stderr = channel
