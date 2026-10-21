@@ -961,6 +961,12 @@ func TestConcreteProductionFSUploadBeginResumesCrashedStaging(t *testing.T) {
 	if second.UploadID != first.UploadID {
 		t.Fatalf("resumed begin = %q, want crashed upload %q", second.UploadID, first.UploadID)
 	}
+	// Staged chunks are re-presented and verified before commit; the matching
+	// chunk deduplicates without changing progress.
+	replayed := decodeFSTransferTest[fsChunkUploadProgressDTO](t, dispatchFSTransferTest(production.Dispatcher, ctx, "fs_upload_chunk", chunkIPCRequest(second, 0, "abcd"), nil))
+	if replayed.Received != 4 {
+		t.Fatalf("re-presented chunk progress = %+v, want received 4", replayed)
+	}
 	progress := decodeFSTransferTest[fsChunkUploadProgressDTO](t, dispatchFSTransferTest(production.Dispatcher, ctx, "fs_upload_chunk", chunkIPCRequest(second, 1, "efgh"), nil))
 	if progress.Received != 8 {
 		t.Fatalf("resumed progress = %+v, want received 8", progress)
@@ -974,4 +980,45 @@ func TestConcreteProductionFSUploadBeginResumesCrashedStaging(t *testing.T) {
 		t.Fatalf("committed target = %q, %v", data, err)
 	}
 	assertNoChunkIArtifacts(t, remote)
+}
+
+// A crashed upload's staging directory is persisted at begin, so the composed
+// reaper still sweeps the leftover after the registry entry is gone — no live
+// entry required — once the asset has a live session again.
+func TestConcreteProductionForwardRuntimeReaperSweepsPersistedTargetsAfterCrash(t *testing.T) {
+	production := newForwardFSProduction(t, startEchoListener(t), true, 5*time.Millisecond)
+	ctx := context.Background()
+	connected, err := production.Services.Sessions.Connect(ctx, session.Asset{ID: "ssh-asset", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	remote := filepath.Join(dir, "remote.bin")
+	input := beginChunkIPC(t, production.Dispatcher, ctx, fsChunkUploadRequest{
+		SessionID: connected.ID, RemotePath: remote, TaskID: "crash-task", AttemptID: "crash-attempt", TotalSize: 8, ChunkSize: 4,
+	})
+	decodeFSTransferTest[fsChunkUploadProgressDTO](t, dispatchFSTransferTest(production.Dispatcher, ctx, "fs_upload_chunk", chunkIPCRequest(input, 0, "abcd"), nil))
+
+	// Simulate the crash: the entry vanishes while the staging files stay.
+	production.Services.fsUploads.mu.Lock()
+	for key := range production.Services.fsUploads.entries {
+		if key.uploadID == input.UploadID {
+			delete(production.Services.fsUploads.entries, key)
+		}
+	}
+	production.Services.fsUploads.mu.Unlock()
+
+	old := time.Now().Add(-25 * time.Hour)
+	if err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chtimes(path, old, old)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitForCondition(t, 5*time.Second, func() bool {
+		matches, err := filepath.Glob(filepath.Join(dir, ".remote.bin.nexterm-*"))
+		return err == nil && len(matches) == 0
+	})
 }

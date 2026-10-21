@@ -10,9 +10,9 @@ import (
 	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
 )
 
-func mustNewUpload(t *testing.T, uploadID, remote string, total int64, chunkSize int) *chunked.Upload {
+func mustNewUpload(t *testing.T, uploadID, remote string, total int64, chunkSize int, options ...chunked.Option) *chunked.Upload {
 	t.Helper()
-	upload, err := chunked.New(uploadID, remote, total, chunkSize)
+	upload, err := chunked.New(uploadID, remote, total, chunkSize, options...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,6 +126,43 @@ func TestMatchesStagedRequiresExactParamsAndIntactParts(t *testing.T) {
 	}
 }
 
+func TestMatchesStagedBindsOwnerAndLegacyBoundary(t *testing.T) {
+	remote := filepath.Join(t.TempDir(), "remote.bin")
+	destination := fslocal.New()
+	writeChunk(t, mustNewUpload(t, "00000000000000000000000001", remote, 8, 4, chunked.WithOwner("owner-a")), destination, 0, "abcd")
+	staged, err := chunked.ScanStaging(context.Background(), destination, remote)
+	if err != nil || len(staged) != 1 {
+		t.Fatalf("ScanStaging = %+v, %v", staged, err)
+	}
+	if staged[0].ParamsVersion != stagingParamsVersion2 || staged[0].Owner != "owner-a" {
+		t.Fatalf("staged params = %+v", staged[0])
+	}
+	if !mustNewUpload(t, "00000000000000000000000001", remote, 8, 4, chunked.WithOwner("owner-a")).MatchesStaged(staged[0]) {
+		t.Fatal("same owner did not match")
+	}
+	if mustNewUpload(t, "00000000000000000000000001", remote, 8, 4, chunked.WithOwner("owner-b")).MatchesStaged(staged[0]) {
+		t.Fatal("cross-owner staging matched")
+	}
+	if mustNewUpload(t, "00000000000000000000000001", remote, 8, 4).MatchesStaged(staged[0]) {
+		t.Fatal("empty owner matched owner-bound staging")
+	}
+
+	legacy := staged[0]
+	legacy.ParamsVersion = stagingParamsVersion1
+	legacy.Owner = ""
+	if !mustNewUpload(t, "00000000000000000000000001", remote, 8, 4).MatchesStaged(legacy) {
+		t.Fatal("desktop empty owner did not match legacy sidecar")
+	}
+	if mustNewUpload(t, "00000000000000000000000001", remote, 8, 4, chunked.WithOwner("owner-b")).MatchesStaged(legacy) {
+		t.Fatal("multi-account begin matched legacy owner-less sidecar")
+	}
+}
+
+const (
+	stagingParamsVersion1 = 1
+	stagingParamsVersion2 = 2
+)
+
 func TestFindStagedResumesCrashedUploadAndCommits(t *testing.T) {
 	remote := filepath.Join(t.TempDir(), "remote.bin")
 	destination := fslocal.New()
@@ -133,7 +170,7 @@ func TestFindStagedResumesCrashedUploadAndCommits(t *testing.T) {
 	writeChunk(t, first, destination, 0, "abcd")
 	writeChunk(t, first, destination, 2, "ij")
 
-	adopted, hit, err := chunked.FindStaged(context.Background(), destination, remote, 10, 4)
+	adopted, hit, err := chunked.FindStaged(context.Background(), destination, remote, 10, 4, "")
 	if err != nil || !hit {
 		t.Fatalf("FindStaged = %v, %v", hit, err)
 	}
@@ -147,6 +184,9 @@ func TestFindStagedResumesCrashedUploadAndCommits(t *testing.T) {
 	if status.Received != 6 || len(status.Chunks) != 2 || status.Chunks[0] != 0 || status.Chunks[1] != 2 {
 		t.Fatalf("resume status = %+v", status)
 	}
+	// Every staged chunk must be re-presented and verified before commit.
+	writeChunk(t, adopted, destination, 0, "abcd")
+	writeChunk(t, adopted, destination, 2, "ij")
 	if got := writeChunk(t, adopted, destination, 1, "efgh"); got != 10 {
 		t.Fatalf("received after resumed chunk = %d, want 10", got)
 	}
@@ -168,13 +208,13 @@ func TestFindStagedMissesOnParamMismatchForeignPathAndAfterReap(t *testing.T) {
 	destination := fslocal.New()
 	writeChunk(t, mustNewUpload(t, testUploadID, remote, 10, 4), destination, 0, "abcd")
 
-	if _, hit, err := chunked.FindStaged(context.Background(), destination, remote, 12, 4); err != nil || hit {
+	if _, hit, err := chunked.FindStaged(context.Background(), destination, remote, 12, 4, ""); err != nil || hit {
 		t.Fatalf("param mismatch = %v, %v", hit, err)
 	}
-	if _, hit, err := chunked.FindStaged(context.Background(), destination, remote, 10, 8); err != nil || hit {
+	if _, hit, err := chunked.FindStaged(context.Background(), destination, remote, 10, 8, ""); err != nil || hit {
 		t.Fatalf("chunk size mismatch = %v, %v", hit, err)
 	}
-	if _, hit, err := chunked.FindStaged(context.Background(), destination, other, 10, 4); err != nil || hit {
+	if _, hit, err := chunked.FindStaged(context.Background(), destination, other, 10, 4, ""); err != nil || hit {
 		t.Fatalf("foreign path = %v, %v", hit, err)
 	}
 	if matches := stagingGlob(t, remote, testUploadID); len(matches) != 3 {
@@ -184,7 +224,7 @@ func TestFindStagedMissesOnParamMismatchForeignPathAndAfterReap(t *testing.T) {
 	if _, err := chunked.ReapStaleStaging(context.Background(), destination, dir, 0); err != nil {
 		t.Fatalf("ReapStaleStaging: %v", err)
 	}
-	if _, hit, err := chunked.FindStaged(context.Background(), destination, remote, 10, 4); err != nil || hit {
+	if _, hit, err := chunked.FindStaged(context.Background(), destination, remote, 10, 4, ""); err != nil || hit {
 		t.Fatalf("reaped staging = %v, %v", hit, err)
 	}
 }

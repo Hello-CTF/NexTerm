@@ -3,14 +3,18 @@ package production
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
+	"os"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/atomicfile"
 	"github.com/Hello-CTF/NexTerm/internal/fs/chunked"
 	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -55,6 +59,7 @@ type fsChunkUploadEntry struct {
 	remotePath  string
 	total       int64
 	chunkSize   int
+	assetID     string
 	transferCtx context.Context
 	upload      *chunked.Upload
 	finish      func()
@@ -79,7 +84,28 @@ type fsChunkUploadRegistry struct {
 	// resumeStaging rebuilds a staged upload's progress on the destination;
 	// the composition root may replace it with the forward runtime's method.
 	resumeStaging func(context.Context, base.FileSystem, *chunked.Upload) (chunked.ResumeStatus, error)
+	// sessionAsset resolves the asset backing a session so staging targets
+	// survive the session itself; reapFilesystem resolves a live filesystem
+	// for a persisted owner+asset target during reaper sweeps.
+	sessionAsset   func(context.Context, string) (string, error)
+	reapFilesystem func(context.Context, string, string) (base.FileSystem, error)
+	// targetsPath persists seen staging targets so crash leftovers stay
+	// discoverable after a restart; empty disables persistence.
+	targetsPath   string
+	targets       []fsStagingTargetRecord
+	targetsLoaded bool
 }
+
+// fsStagingTargetRecord is one persisted staging directory: which owner
+// staged into which asset directory, so the reaper can resolve it again
+// after a restart once that owner has a live session for the asset.
+type fsStagingTargetRecord struct {
+	Owner   string `json:"owner"`
+	AssetID string `json:"assetId"`
+	Dir     string `json:"dir"`
+}
+
+const fsStagingTargetLimit = 1024
 
 func newFSChunkUploadRegistry(loggers ...*slog.Logger) *fsChunkUploadRegistry {
 	var logger *slog.Logger
@@ -106,7 +132,8 @@ func (r *fsChunkUploadRegistry) begin(ctx context.Context, transfers *fsTransfer
 	if chunkSize == 0 {
 		chunkSize = chunked.DefaultChunkSize
 	}
-	fresh, err := chunked.New(ids.New(), input.RemotePath, input.TotalSize, chunkSize)
+	owner := ipc.OwnerID(ctx)
+	fresh, err := chunked.New(ids.New(), input.RemotePath, input.TotalSize, chunkSize, chunked.WithOwner(owner))
 	if err != nil {
 		return fsChunkUploadBeginDTO{}, ipc.BadParam(err)
 	}
@@ -119,7 +146,6 @@ func (r *fsChunkUploadRegistry) begin(ctx context.Context, transfers *fsTransfer
 	if closed {
 		return fsChunkUploadBeginDTO{}, ipc.NewError(ipc.Code("conflict"), "上传会话或注册表正在关闭")
 	}
-	owner := ipc.OwnerID(ctx)
 	upload, uploadID, done, err := r.resumeOrCreate(ctx, input, fresh, owner, chunkSize)
 	if err != nil {
 		return fsChunkUploadBeginDTO{}, err
@@ -180,7 +206,74 @@ func (r *fsChunkUploadRegistry) begin(ctx context.Context, transfers *fsTransfer
 	r.mu.Unlock()
 	transfers.leave(transferCtx, input.TaskID, input.AttemptID)
 	registered = true
+	r.recordStagingTarget(ctx, key, entry)
 	return fsChunkUploadBeginDTO{UploadID: uploadID, ChunkSize: chunkSize}, nil
+}
+
+// recordStagingTarget stamps the entry with its asset and remembers the
+// staging directory of a registered upload so the crash reaper can discover
+// it after a restart, once the owner has a live session for the asset again.
+// Resolution failures stay visible and only skip persistence for this begin.
+func (r *fsChunkUploadRegistry) recordStagingTarget(ctx context.Context, key fsChunkUploadKey, entry *fsChunkUploadEntry) {
+	if r.sessionAsset == nil {
+		return
+	}
+	assetID, err := r.sessionAsset(ctx, key.sessionID)
+	if err != nil || assetID == "" {
+		r.logger.Warn("resolve staging target asset failed", "session", key.sessionID, "error", err)
+		return
+	}
+	r.mu.Lock()
+	if entry.assetID == "" {
+		entry.assetID = assetID
+	}
+	r.mu.Unlock()
+	if r.targetsPath == "" {
+		return
+	}
+	dir := chunked.StagingDir(entry.remotePath)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, record := range r.targets {
+		if record.Owner == key.owner && record.AssetID == assetID && record.Dir == dir {
+			return
+		}
+	}
+	r.loadStagingTargetsLocked()
+	r.targets = append(r.targets, fsStagingTargetRecord{Owner: key.owner, AssetID: assetID, Dir: dir})
+	if len(r.targets) > fsStagingTargetLimit {
+		r.targets = append([]fsStagingTargetRecord(nil), r.targets[len(r.targets)-fsStagingTargetLimit:]...)
+	}
+	if err := r.saveStagingTargetsLocked(); err != nil {
+		r.logger.Warn("persist staging targets failed", "path", r.targetsPath, "error", err)
+	}
+}
+
+func (r *fsChunkUploadRegistry) loadStagingTargetsLocked() {
+	if r.targetsLoaded || r.targetsPath == "" {
+		return
+	}
+	r.targetsLoaded = true
+	data, err := os.ReadFile(r.targetsPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		r.logger.Warn("load staging targets failed", "path", r.targetsPath, "error", err)
+		return
+	}
+	var records []fsStagingTargetRecord
+	if err := json.Unmarshal(data, &records); err != nil {
+		r.logger.Warn("decode staging targets failed", "path", r.targetsPath, "error", err)
+		return
+	}
+	r.targets = records
+}
+
+func (r *fsChunkUploadRegistry) saveStagingTargetsLocked() error {
+	return atomicfile.Write(r.targetsPath, 0o600, func(writer io.Writer) error {
+		return json.NewEncoder(writer).Encode(r.targets)
+	})
 }
 
 // resumeOrCreate picks the upload a begin should register. A live entry or
@@ -218,7 +311,7 @@ func (r *fsChunkUploadRegistry) resumeOrCreate(ctx context.Context, input fsChun
 	if err != nil || remote == nil {
 		return fresh, fresh.ID(), false, nil
 	}
-	adopted, hit, err := chunked.FindStaged(ctx, remote, input.RemotePath, input.TotalSize, chunkSize)
+	adopted, hit, err := chunked.FindStaged(ctx, remote, input.RemotePath, input.TotalSize, chunkSize, owner)
 	if err != nil {
 		r.logger.Warn("scan chunked upload staging failed", "session", input.SessionID, "error", err)
 		return fresh, fresh.ID(), false, nil
@@ -238,42 +331,82 @@ func (r *fsChunkUploadRegistry) resumeOrCreate(ctx context.Context, input fsChun
 	return adopted, adopted.ID(), false, nil
 }
 
-// stagingTargets enumerates the staging directories of the registry's known
-// uploads so the crash staging reaper can sweep them. Directories are grouped
-// per session and resolved through the filesystem resolver; sessions whose
-// filesystem cannot be resolved are skipped with a warning.
+// stagingTargets enumerates the staging directories the reaper should sweep:
+// the live entries' directories plus every persisted target, so crash
+// leftovers stay discoverable after a restart. Each target resolves with its
+// recorded owner restored into the context, keeping background sweeps usable
+// on non-open multi-account servers. Resolution failures are aggregated into
+// the returned error while the remaining targets still sweep.
 func (r *fsChunkUploadRegistry) stagingTargets(ctx context.Context) ([]chunked.Target, error) {
+	type stagingTarget struct {
+		owner   string
+		scope   string
+		dir     string
+		resolve func(context.Context) (base.FileSystem, error)
+	}
 	r.mu.Lock()
-	dirsBySession := make(map[string]map[string]struct{})
+	var wanted []stagingTarget
 	for key, entry := range r.entries {
-		dirs := dirsBySession[key.sessionID]
-		if dirs == nil {
-			dirs = make(map[string]struct{})
-			dirsBySession[key.sessionID] = dirs
+		scope := entry.assetID
+		if scope == "" {
+			scope = "session:" + key.sessionID
 		}
-		dirs[chunked.StagingDir(entry.remotePath)] = struct{}{}
+		wanted = append(wanted, stagingTarget{
+			owner: key.owner, scope: scope, dir: chunked.StagingDir(entry.remotePath),
+			resolve: func(callCtx context.Context) (base.FileSystem, error) {
+				if r.filesystem == nil {
+					return nil, errors.New("filesystem resolver not configured")
+				}
+				remote, _, err := r.filesystem(ownerContext(callCtx, key.owner), key.sessionID)
+				return remote, err
+			},
+		})
 	}
-	resolver := r.filesystem
+	r.loadStagingTargetsLocked()
+	for _, record := range r.targets {
+		wanted = append(wanted, stagingTarget{
+			owner: record.Owner, scope: "asset:" + record.AssetID, dir: record.Dir,
+			resolve: func(callCtx context.Context) (base.FileSystem, error) {
+				if r.reapFilesystem == nil {
+					return nil, errors.New("reap filesystem resolver not configured")
+				}
+				return r.reapFilesystem(callCtx, record.Owner, record.AssetID)
+			},
+		})
+	}
 	r.mu.Unlock()
-	if resolver == nil {
-		return nil, nil
-	}
+
+	seen := make(map[string]struct{}, len(wanted))
 	var targets []chunked.Target
-	for sessionID, dirs := range dirsBySession {
+	var failures []error
+	for _, target := range wanted {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		remote, _, err := resolver(ctx, sessionID)
-		if err != nil || remote == nil {
-			r.logger.Warn("resolve staging target filesystem failed", "session", sessionID, "error", err)
+		key := target.owner + "\x00" + target.scope + "\x00" + target.dir
+		if _, ok := seen[key]; ok {
 			continue
 		}
-		for dir := range dirs {
-			targets = append(targets, chunked.Target{FileSystem: remote, Dir: dir})
+		seen[key] = struct{}{}
+		remote, err := target.resolve(ctx)
+		if err != nil || remote == nil {
+			if err == nil {
+				err = errors.New("resolver returned no filesystem")
+			}
+			failures = append(failures, fmt.Errorf("resolve staging target %s (owner %q, %s): %w", target.dir, target.owner, target.scope, err))
+			continue
 		}
+		targets = append(targets, chunked.Target{FileSystem: remote, Dir: target.dir})
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Dir < targets[j].Dir })
-	return targets, nil
+	return targets, errors.Join(failures...)
+}
+
+func ownerContext(ctx context.Context, owner string) context.Context {
+	if owner == "" {
+		return ctx
+	}
+	return ipc.WithUserID(ctx, owner)
 }
 
 func (r *fsChunkUploadRegistry) lookup(ctx context.Context, input fsChunkUploadRequest) (*fsChunkUploadEntry, error) {

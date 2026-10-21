@@ -44,6 +44,10 @@ func TestResumeContinuesInterruptedUploadAcrossSessions(t *testing.T) {
 	if status.Received != 6 || len(status.Chunks) != 2 || status.Chunks[0] != 0 || status.Chunks[1] != 2 {
 		t.Fatalf("resume status = %+v", status)
 	}
+	// Staged chunks only count toward commit once the current session
+	// presents them; matching chunks deduplicate.
+	writeChunk(t, second, destination, 0, "abcd")
+	writeChunk(t, second, destination, 2, "ij")
 	if got := writeChunk(t, second, destination, 1, "efgh"); got != 10 {
 		t.Fatalf("received after resumed chunk = %d, want 10", got)
 	}
@@ -138,6 +142,7 @@ func TestResumeAdoptsOrphanPartMissingFromManifest(t *testing.T) {
 	if status.Received != 4 || len(status.Chunks) != 1 || status.Chunks[0] != 0 {
 		t.Fatalf("resume status = %+v", status)
 	}
+	writeChunk(t, second, destination, 0, "abcd")
 	writeChunk(t, second, destination, 1, "efgh")
 	committed, err := second.Commit(context.Background(), destination)
 	if err != nil || committed != 8 {
@@ -182,6 +187,7 @@ func TestResumeIgnoresTruncatedManifestTail(t *testing.T) {
 	if status.Received != 4 || len(status.Chunks) != 1 || status.Chunks[0] != 0 {
 		t.Fatalf("resume status = %+v", status)
 	}
+	writeChunk(t, second, destination, 0, "abcd")
 	committed, err := second.Commit(context.Background(), destination)
 	if err != nil || committed != 4 {
 		t.Fatalf("Commit = %d, %v", committed, err)

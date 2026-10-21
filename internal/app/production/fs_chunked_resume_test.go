@@ -3,6 +3,7 @@ package production
 import (
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/fs/chunked"
 	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -81,6 +83,11 @@ func TestFSChunkedBeginResumesStagedUploadAfterRestart(t *testing.T) {
 	resumedEntry, err := restarted.lookup(ctx, resumedInput)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Every staged chunk is re-presented and verified before commit;
+	// matching chunks deduplicate without a rewrite.
+	if received := writeResumeChunkForTest(t, resumedEntry, filesystem, resumedInput, 0, "abcd"); received != 4 {
+		t.Fatalf("re-presented chunk received = %d, want 4", received)
 	}
 	if received := writeResumeChunkForTest(t, resumedEntry, filesystem, resumedInput, 1, "efgh"); received != 8 {
 		t.Fatalf("received after resumed chunk = %d, want 8 (4 staged + 4 new)", received)
@@ -274,6 +281,7 @@ func TestFSChunkedBeginNewAttemptRebindsEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	writeResumeChunkForTest(t, newEntry, filesystem, newInput, 0, "abcd")
 	if received := writeResumeChunkForTest(t, newEntry, filesystem, newInput, 1, "efgh"); received != 8 {
 		t.Fatalf("received after rebound chunk = %d, want 8", received)
 	}
@@ -348,8 +356,8 @@ func TestFSChunkedRegistryStagingTargets(t *testing.T) {
 	}
 
 	targets, err := uploads.stagingTargets(context.Background())
-	if err != nil {
-		t.Fatalf("stagingTargets: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "session gone") {
+		t.Fatalf("stagingTargets error = %v, want the broken session failure aggregated", err)
 	}
 	want := []string{dirA, dirNested, dirB}
 	if len(targets) != len(want) {
@@ -444,6 +452,282 @@ func TestFSChunkedResumeFailsClosedOnDivergentContent(t *testing.T) {
 		t.Fatalf("committed target = %q, %v", data, err)
 	}
 	if err := restarted.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// P1-1 counterexample: a caller that only sends the chunks it believes are
+// missing must never commit a mix of crashed and new content.
+func TestFSChunkedResumePartialSendCannotCommitMixedContent(t *testing.T) {
+	remote := filepath.Join(t.TempDir(), "remote.bin")
+	filesystem := fslocal.New()
+	ctx := ipc.WithUserID(t.Context(), "owner-a")
+
+	crashed, crashedTransfers := newUploadRegistryForTest(filesystem)
+	first := beginResumeUploadForTest(t, crashed, crashedTransfers, ctx, "session-a", "task-1", "attempt-1", remote, 8, 4)
+	crashedInput := fsChunkUploadRequest{SessionID: "session-a", UploadID: first.UploadID, TaskID: "task-1", AttemptID: "attempt-1"}
+	crashedEntry, err := crashed.lookup(ctx, crashedInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeResumeChunkForTest(t, crashedEntry, filesystem, crashedInput, 0, "abcd")
+
+	restarted, restartedTransfers := newUploadRegistryForTest(filesystem)
+	second := beginResumeUploadForTest(t, restarted, restartedTransfers, ctx, "session-b", "task-2", "attempt-2", remote, 8, 4)
+	if second.UploadID != first.UploadID {
+		t.Fatalf("resumed begin = %q, want crashed upload %q", second.UploadID, first.UploadID)
+	}
+	resumedInput := fsChunkUploadRequest{SessionID: "session-b", UploadID: second.UploadID, TaskID: "task-2", AttemptID: "attempt-2"}
+	resumedEntry, err := restarted.lookup(ctx, resumedInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// New content: chunk 0 happens to match, chunk 1 diverges. The caller only
+	// sends the chunk it believes is missing.
+	writeResumeChunkForTest(t, resumedEntry, filesystem, resumedInput, 1, "WXYZ")
+	if _, err := resumedEntry.upload.Commit(context.Background(), filesystem); err == nil {
+		t.Fatal("mixed content committed from unconfirmed staged chunks")
+	}
+	if _, err := os.Stat(remote); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed mixed commit exposed a target: %v", err)
+	}
+	if err := restarted.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// P1-1 counterexample: a fully staged crashed group must not be committable
+// by a begin that never presented the content.
+func TestFSChunkedResumeDirectCommitAfterAdoptionFails(t *testing.T) {
+	remote := filepath.Join(t.TempDir(), "remote.bin")
+	filesystem := fslocal.New()
+	ctx := ipc.WithUserID(t.Context(), "owner-a")
+
+	crashed, crashedTransfers := newUploadRegistryForTest(filesystem)
+	first := beginResumeUploadForTest(t, crashed, crashedTransfers, ctx, "session-a", "task-1", "attempt-1", remote, 8, 4)
+	crashedInput := fsChunkUploadRequest{SessionID: "session-a", UploadID: first.UploadID, TaskID: "task-1", AttemptID: "attempt-1"}
+	crashedEntry, err := crashed.lookup(ctx, crashedInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeResumeChunkForTest(t, crashedEntry, filesystem, crashedInput, 0, "abcd")
+	writeResumeChunkForTest(t, crashedEntry, filesystem, crashedInput, 1, "efgh")
+
+	restarted, restartedTransfers := newUploadRegistryForTest(filesystem)
+	second := beginResumeUploadForTest(t, restarted, restartedTransfers, ctx, "session-b", "task-2", "attempt-2", remote, 8, 4)
+	if second.UploadID != first.UploadID {
+		t.Fatalf("resumed begin = %q, want crashed upload %q", second.UploadID, first.UploadID)
+	}
+	resumedInput := fsChunkUploadRequest{SessionID: "session-b", UploadID: second.UploadID, TaskID: "task-2", AttemptID: "attempt-2"}
+	resumedEntry, err := restarted.lookup(ctx, resumedInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resumedEntry.upload.Commit(context.Background(), filesystem); err == nil {
+		t.Fatal("direct commit published the crashed content without client confirmation")
+	}
+	if _, err := os.Stat(remote); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed direct commit exposed a target: %v", err)
+	}
+	if err := restarted.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// P1-2 counterexample: owner-b must not adopt, commit, or abort owner-a's
+// crashed staging even with identical path and parameters.
+func TestFSChunkedBeginDoesNotAdoptAcrossOwners(t *testing.T) {
+	remote := filepath.Join(t.TempDir(), "remote.bin")
+	filesystem := fslocal.New()
+	ownerA := ipc.WithUserID(t.Context(), "owner-a")
+	ownerB := ipc.WithUserID(t.Context(), "owner-b")
+
+	crashed, crashedTransfers := newUploadRegistryForTest(filesystem)
+	first := beginResumeUploadForTest(t, crashed, crashedTransfers, ownerA, "session-a", "task-1", "attempt-1", remote, 8, 4)
+	crashedInput := fsChunkUploadRequest{SessionID: "session-a", UploadID: first.UploadID, TaskID: "task-1", AttemptID: "attempt-1"}
+	crashedEntry, err := crashed.lookup(ownerA, crashedInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeResumeChunkForTest(t, crashedEntry, filesystem, crashedInput, 0, "abcd")
+
+	restarted, restartedTransfers := newUploadRegistryForTest(filesystem)
+	second := beginResumeUploadForTest(t, restarted, restartedTransfers, ownerB, "session-b", "task-2", "attempt-2", remote, 8, 4)
+	if second.UploadID == first.UploadID {
+		t.Fatal("owner-b adopted owner-a's crashed staging")
+	}
+	foreignInput := fsChunkUploadRequest{SessionID: "session-b", UploadID: first.UploadID, TaskID: "task-2", AttemptID: "attempt-2"}
+	if _, err := restarted.lookup(ownerB, foreignInput); err == nil {
+		t.Fatal("owner-b resolved owner-a's upload entry")
+	}
+	if files := stagingGroupFiles(t, remote); len(files) != 3 {
+		t.Fatalf("owner-b's begin disturbed owner-a's staging: %v", files)
+	}
+
+	third := beginResumeUploadForTest(t, restarted, restartedTransfers, ownerA, "session-a", "task-3", "attempt-3", remote, 8, 4)
+	if third.UploadID != first.UploadID {
+		t.Fatalf("owner-a begin = %q, want own crashed upload %q", third.UploadID, first.UploadID)
+	}
+	if err := restarted.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// P1-2 boundary: a legacy 16-byte sidecar carries no owner. Multi-account
+// begins fail closed and never adopt it; the desktop empty owner keeps the
+// compatibility adoption.
+func TestFSChunkedBeginLegacySidecarOwnerBoundary(t *testing.T) {
+	remote := filepath.Join(t.TempDir(), "remote.bin")
+	filesystem := fslocal.New()
+	ownerB := ipc.WithUserID(t.Context(), "owner-b")
+
+	crashed, crashedTransfers := newUploadRegistryForTest(filesystem)
+	first := beginResumeUploadForTest(t, crashed, crashedTransfers, context.Background(), "session-a", "task-1", "attempt-1", remote, 8, 4)
+	crashedInput := fsChunkUploadRequest{SessionID: "session-a", UploadID: first.UploadID, TaskID: "task-1", AttemptID: "attempt-1"}
+	crashedEntry, err := crashed.lookup(context.Background(), crashedInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeResumeChunkForTest(t, crashedEntry, filesystem, crashedInput, 0, "abcd")
+	legacy := make([]byte, 16)
+	binary.LittleEndian.PutUint64(legacy[0:8], 8)
+	binary.LittleEndian.PutUint64(legacy[8:16], 4)
+	if err := os.WriteFile(chunked.StagingPath(remote, first.UploadID, "params"), legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	multiAccount, multiAccountTransfers := newUploadRegistryForTest(filesystem)
+	second := beginResumeUploadForTest(t, multiAccount, multiAccountTransfers, ownerB, "session-b", "task-2", "attempt-2", remote, 8, 4)
+	if second.UploadID == first.UploadID {
+		t.Fatal("multi-account begin adopted a legacy owner-less sidecar")
+	}
+
+	desktop, desktopTransfers := newUploadRegistryForTest(filesystem)
+	third := beginResumeUploadForTest(t, desktop, desktopTransfers, context.Background(), "session-c", "task-3", "attempt-3", remote, 8, 4)
+	if third.UploadID != first.UploadID {
+		t.Fatalf("desktop empty-owner begin = %q, want legacy compat adoption %q", third.UploadID, first.UploadID)
+	}
+	if err := multiAccount.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := desktop.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// P2: persisted staging targets keep crash leftovers discoverable after a
+// restart, resolution failures aggregate into the returned error while other
+// targets still sweep, and the target resolves again once the owner has a
+// live session for the asset.
+func TestFSChunkedRegistryStagingTargetsSurvivesRestart(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "targets.json")
+	filesystem := fslocal.New()
+	resolver := func(context.Context, string) (base.FileSystem, string, error) { return filesystem, "ssh", nil }
+	ctx := ipc.WithUserID(t.Context(), "owner-a")
+	dir := t.TempDir()
+
+	first := newFSChunkUploadRegistry()
+	first.transfers = newFSTransferRegistry()
+	first.filesystem = resolver
+	first.sessionAsset = func(context.Context, string) (string, error) { return "asset-1", nil }
+	first.targetsPath = storePath
+	beginResumeUploadForTest(t, first, first.transfers, ctx, "session-a", "task-1", "attempt-1", filepath.Join(dir, "remote.bin"), 4, 4)
+
+	reapErr := errors.New("no live session for asset asset-1")
+	second := newFSChunkUploadRegistry()
+	second.transfers = newFSTransferRegistry()
+	second.filesystem = resolver
+	second.targetsPath = storePath
+	second.reapFilesystem = func(context.Context, string, string) (base.FileSystem, error) { return nil, reapErr }
+	liveDir := t.TempDir()
+	beginResumeUploadForTest(t, second, second.transfers, ctx, "session-b", "task-2", "attempt-2", filepath.Join(liveDir, "live.bin"), 4, 4)
+
+	targets, err := second.stagingTargets(context.Background())
+	if !errors.Is(err, reapErr) {
+		t.Fatalf("stagingTargets error = %v, want aggregated %v", err, reapErr)
+	}
+	if len(targets) != 1 || targets[0].Dir != liveDir {
+		t.Fatalf("targets = %+v, want the live entry's dir %q", targets, liveDir)
+	}
+
+	second.reapFilesystem = func(_ context.Context, owner, assetID string) (base.FileSystem, error) {
+		if owner != "owner-a" || assetID != "asset-1" {
+			t.Fatalf("reap resolve = %q, %q, want owner-a/asset-1", owner, assetID)
+		}
+		return filesystem, nil
+	}
+	targets, err = second.stagingTargets(context.Background())
+	if err != nil || len(targets) != 2 {
+		t.Fatalf("reconnected targets = %+v, %v", targets, err)
+	}
+	if err := first.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// P2: a background sweep context is identity-less, so stagingTargets must
+// restore each entry's owner to resolve its filesystem on a non-open
+// multi-account server.
+func TestFSChunkedRegistryStagingTargetsRestoresOwnerBackground(t *testing.T) {
+	filesystem := fslocal.New()
+	manager := session.NewManager(session.Config{
+		Connector: session.ConnectorFunc(func(_ context.Context, asset session.Asset, generation uint64) (base.Transport, error) {
+			return fakeProviderTransport{kind: asset.Kind, fs: filesystem}, nil
+		}),
+		IdleTimeout: -1,
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	ownerA := ipc.WithUserID(t.Context(), "owner-a")
+	ownerB := ipc.WithUserID(t.Context(), "owner-b")
+	connectedA, err := manager.Connect(ownerA, session.Asset{ID: "asset-a", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connectedB, err := manager.Connect(ownerB, session.Asset{ID: "asset-b", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	uploads := newFSChunkUploadRegistry()
+	uploads.transfers = newFSTransferRegistry()
+	uploads.filesystem = func(ctx context.Context, sessionID string) (base.FileSystem, string, error) {
+		transport, err := manager.TransportFor(ctx, sessionID)
+		if err != nil {
+			return nil, "", err
+		}
+		provider, ok := transport.(base.FileTransport)
+		if !ok {
+			return nil, transport.Kind(), base.ErrUnsupported
+		}
+		remote, err := provider.FileSystem(ctx)
+		if err != nil {
+			return nil, transport.Kind(), err
+		}
+		return remote, transport.Kind(), nil
+	}
+	uploads.sessionAsset = func(ctx context.Context, sessionID string) (string, error) {
+		connected, err := manager.SessionFor(ctx, sessionID)
+		if err != nil {
+			return "", err
+		}
+		return connected.Asset().ID, nil
+	}
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	beginResumeUploadForTest(t, uploads, uploads.transfers, ownerA, connectedA.ID, "task-a", "attempt-a", filepath.Join(dirA, "a.bin"), 4, 4)
+	beginResumeUploadForTest(t, uploads, uploads.transfers, ownerB, connectedB.ID, "task-b", "attempt-b", filepath.Join(dirB, "b.bin"), 4, 4)
+
+	targets, err := uploads.stagingTargets(context.Background())
+	if err != nil {
+		t.Fatalf("background stagingTargets: %v", err)
+	}
+	if len(targets) != 2 || targets[0].Dir != dirA || targets[1].Dir != dirB {
+		t.Fatalf("background targets = %+v, want %q and %q", targets, dirA, dirB)
+	}
+	if err := uploads.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -22,6 +22,7 @@ import (
 	sshdaemon "github.com/Hello-CTF/NexTerm/internal/ssh"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/update"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 	"github.com/Hello-CTF/NexTerm/internal/version"
@@ -262,6 +263,36 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	// recovery, and the crash staging reaper over the chunked-upload registry's
 	// known staging directories; upload begin resumes crashed staging through
 	// the runtime so resume and reaping share one lifecycle.
+	fsUploads.targetsPath = filepath.Join(config.DataDir, "chunked-staging-targets.json")
+	fsUploads.sessionAsset = func(ctx context.Context, sessionID string) (string, error) {
+		connected, err := sessionManager.SessionFor(productionSessionRequestContext(ctx), sessionID)
+		if err != nil {
+			return "", err
+		}
+		return connected.Asset().ID, nil
+	}
+	fsUploads.reapFilesystem = func(ctx context.Context, owner, assetID string) (base.FileSystem, error) {
+		ownerCtx := ownerContext(ctx, owner)
+		infos, err := sessionManager.ListSessionsFor(ownerCtx)
+		if err != nil {
+			return nil, err
+		}
+		for _, info := range infos {
+			if info.AssetID != assetID {
+				continue
+			}
+			transport, err := sessionManager.TransportFor(ownerCtx, info.ID)
+			if err != nil {
+				return nil, err
+			}
+			provider, ok := transport.(base.FileTransport)
+			if !ok {
+				return nil, fmt.Errorf("%w: session transport has no filesystem", base.ErrUnsupported)
+			}
+			return provider.FileSystem(ownerCtx)
+		}
+		return nil, fmt.Errorf("no live session for asset %s: %w", assetID, session.ErrSessionNotFound)
+	}
 	forwardRuntime = newForwardRuntime(forwardRuntimeConfig{
 		Forward:        forwardService,
 		Sessions:       sessionManager,

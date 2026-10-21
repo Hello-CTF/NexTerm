@@ -396,6 +396,9 @@ func TestForwardRuntimeResumeUploadStaging(t *testing.T) {
 	if status.Received != 4 || len(status.Chunks) != 1 || status.Chunks[0] != 0 {
 		t.Fatalf("resume status = %+v", status)
 	}
+	if _, err := second.WriteChunk(context.Background(), destination, runtimeChunk(0, "abcd")); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := second.WriteChunk(context.Background(), destination, runtimeChunk(1, "efgh")); err != nil {
 		t.Fatal(err)
 	}
