@@ -547,3 +547,104 @@ func TestSessionRosterProbeTargetEvidenceFailsClosed(t *testing.T) {
 		t.Fatalf("remote shell host = %q, want unknown", evidence.Host)
 	}
 }
+
+// Regression for the r1 review: a roster row bound to the replacement
+// runtime after a non-durable reconnect must not inherit the old runtime's
+// OSC 7 directory — the replacement never reported one, so the cwd evidence
+// is honestly unknown until it does.
+func TestSessionRosterProbeTargetEvidenceCwdUnknownAfterReplacement(t *testing.T) {
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	transport := &probeFakeTransport{}
+	manager := session.NewManager(session.Config{
+		IdleTimeout: -1,
+		Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
+			return transport, nil
+		}),
+		ReconnectMax:     10,
+		ReconnectBackoff: []time.Duration{0},
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.ConnectFor(ctx, session.Asset{ID: "asset-2", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab, err := manager.OpenTab(ctx, session.OpenTabOptions{SessionID: connected.Info().ID, ClientID: "client", ChannelID: "channel", Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport.lastChannel().emit([]byte("\x1b]7;file://prod/srv/app\x07"))
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		snapshot, ok := manager.RosterRuntimeSnapshot(ctx, tab.ID)
+		if ok && snapshot.Cwd == "/srv/app" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("snapshot never carried the OSC 7 cwd")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	roster := NewRoster(database, NewSessionRosterProbe(database, manager))
+	probe := NewSessionRosterProbe(database, manager)
+
+	// The row bound before the reconnect resolves the old runtime's report...
+	beforeEntry, err := roster.Provision(ctx, "conv-1", "handle-before", "", tab.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := roster.Attach(ctx, "handle-before", "job-1"); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := probe.ResolveRosterTarget(ctx, "handle-before", beforeEntry.Incarnation)
+	if err != nil || evidence.Cwd != "/srv/app" {
+		t.Fatalf("pre-reconnect evidence = %+v err=%v", evidence, err)
+	}
+
+	if err := manager.Reconnect(ctx, connected.Info().ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// ...the stale row now fails closed against the replacement episode...
+	if evidence, err := probe.ResolveRosterTarget(ctx, "handle-before", beforeEntry.Incarnation); err == nil {
+		t.Fatalf("stale row resolved against the replacement runtime: %+v", evidence)
+	}
+	// ...and a new row bound to the replacement sees an honestly unknown
+	// directory: the replacement runtime never reported one.
+	afterEntry, err := roster.Provision(ctx, "conv-1", "handle-after", "", tab.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, err := roster.Attach(ctx, "handle-after", "job-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attachment.Resolution != RosterResolutionConnected {
+		t.Fatalf("post-reconnect attach = %+v", attachment)
+	}
+	evidence, err = probe.ResolveRosterTarget(ctx, "handle-after", afterEntry.Incarnation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evidence.Cwd != "" {
+		t.Fatalf("replacement row inherited cwd %q the new runtime never reported", evidence.Cwd)
+	}
+
+	// Once the replacement reports its own directory, the evidence lands.
+	transport.lastChannel().emit([]byte("\x1b]7;file://prod/srv/replacement\x07"))
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		evidence, err = probe.ResolveRosterTarget(ctx, "handle-after", afterEntry.Incarnation)
+		if err == nil && evidence.Cwd == "/srv/replacement" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("replacement's own report never resolved: %+v err=%v", evidence, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

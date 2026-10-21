@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
-	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
@@ -506,9 +505,11 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 				// The replacement channel is a new runtime: advance the
 				// episode so a roster row bound to the pre-reconnect
 				// episode cannot keep reporting connected or resolve the
-				// replacement asset. Durable tabs carry no runtimeEpisode;
-				// their daemon incarnation stays stable across recovery.
-				tab.runtimeEpisode = ids.New()
+				// replacement asset, and reset the cwd evidence with it —
+				// the old runtime's reports never describe the replacement.
+				// Durable tabs carry no runtimeEpisode; their daemon
+				// incarnation stays stable across recovery.
+				tab.advanceRuntimeEpisodeLocked()
 			}
 			cols, rows := reconnectGeometryLocked(tab)
 			controls = append(controls, tab.controlEventLocked())
@@ -548,8 +549,9 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 				if tab.runtimeEpisode != "" {
 					// The session transport is the replacement runtime for
 					// non-PTY tabs: advance the episode exactly like the
-					// channel-replacement branch above.
-					tab.runtimeEpisode = ids.New()
+					// channel-replacement branch above, resetting the cwd
+					// evidence with it.
+					tab.advanceRuntimeEpisodeLocked()
 				}
 				cols, rows := reconnectGeometryLocked(tab)
 				controls = append(controls, tab.controlEventLocked())

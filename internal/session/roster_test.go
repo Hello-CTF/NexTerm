@@ -447,3 +447,199 @@ func TestRosterRuntimeSnapshotCarriesReportedCwd(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func waitRosterSnapshotCwd(t *testing.T, manager *Manager, ctx context.Context, tabID, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		snapshot, ok := manager.RosterRuntimeSnapshot(ctx, tabID)
+		if ok && snapshot.Cwd == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("snapshot cwd never became %q (last %+v, %v)", want, snapshot, ok)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A non-durable replacement resets the cwd evidence with the episode: the
+// pre-reconnect runtime's OSC 7 report never describes the replacement, a
+// stale feed from the retired channel cannot repopulate it, and the
+// replacement's own report re-establishes it.
+func TestRosterRuntimeSnapshotCwdResetsOnReplacement(t *testing.T) {
+	connector := newFakeConnector()
+	manager := NewManager(Config{
+		Connector: connector, Terminals: newFakeTerminalFactory(),
+		ReconnectMax: 10, ReconnectBackoff: []time.Duration{0}, OpenAccess: true,
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	ctx := context.Background()
+	connected, err := manager.Connect(ctx, Asset{ID: "ssh-asset", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.OpenTab(ctx, OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client-a", ChannelID: "ch-1", Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retired := connector.transport(0).channel(0)
+	if err := retired.emit([]byte("\x1b]7;file://host/srv/app\x1b\\")); err != nil {
+		t.Fatal(err)
+	}
+	waitRosterSnapshotCwd(t, manager, ctx, info.ID, "/srv/app")
+	before, ok := manager.RosterRuntimeSnapshot(ctx, info.ID)
+	if !ok {
+		t.Fatal("pre-reconnect snapshot failed")
+	}
+
+	if err := manager.Reconnect(ctx, connected.ID); err != nil {
+		t.Fatal(err)
+	}
+	after, ok := manager.RosterRuntimeSnapshot(ctx, info.ID)
+	if !ok {
+		t.Fatal("post-reconnect snapshot failed")
+	}
+	if !after.EpisodeOK || after.Episode == before.Episode {
+		t.Fatalf("episode did not advance on the replacement: %q (was %q)", after.Episode, before.Episode)
+	}
+	if after.Cwd != "" {
+		t.Fatalf("replacement inherited the old runtime's cwd %q, want unknown", after.Cwd)
+	}
+
+	// A stale feed from the retired channel never repopulates the new
+	// episode. The manager may already have torn the channel down by the
+	// time the feed lands — an even stronger guarantee, so both outcomes
+	// are accepted and the assertion is on the snapshot alone.
+	if err := retired.emit([]byte("\x1b]7;file://host/old/stale\x1b\\")); err != nil {
+		t.Logf("retired channel already closed before the stale feed: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	snapshot, ok := manager.RosterRuntimeSnapshot(ctx, info.ID)
+	if !ok || snapshot.Cwd != "" {
+		t.Fatalf("retired channel repopulated the new episode's cwd: %+v", snapshot)
+	}
+
+	// The replacement's own report re-establishes the directory.
+	replacement := connector.transport(1).channel(0)
+	if err := replacement.emit([]byte("\x1b]7;file://host/srv/new\x1b\\")); err != nil {
+		t.Fatal(err)
+	}
+	waitRosterSnapshotCwd(t, manager, ctx, info.ID, "/srv/new")
+}
+
+// A durable tab's daemon terminal is the same runtime across the reconnect:
+// the episode stays stable and so does the cwd evidence, while the reattached
+// channel's own reports keep updating it.
+func TestRosterRuntimeSnapshotCwdSurvivesDurableReconnect(t *testing.T) {
+	provider := &rosterIdentityDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
+	resolver := &countingResolver{provider: provider}
+	manager := NewManager(Config{
+		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
+		DurableResolver: resolver, ReconnectBackoff: []time.Duration{0}, OpenAccess: true,
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	ctx := context.Background()
+	connected, err := manager.Connect(ctx, Asset{ID: "ssh-durable", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.OpenTab(ctx, OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client-a", ChannelID: "rc-1", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.attachment(info.ID, 0).emit([]byte("\x1b]7;file://host/srv/durable\x1b\\")); err != nil {
+		t.Fatal(err)
+	}
+	waitRosterSnapshotCwd(t, manager, ctx, info.ID, "/srv/durable")
+	before, ok := manager.RosterRuntimeSnapshot(ctx, info.ID)
+	if !ok || before.Episode != "daemon-1" {
+		t.Fatalf("pre-reconnect durable snapshot = %+v, %v", before, ok)
+	}
+
+	if err := manager.Reconnect(ctx, connected.ID); err != nil {
+		t.Fatal(err)
+	}
+	after, ok := manager.RosterRuntimeSnapshot(ctx, info.ID)
+	if !ok {
+		t.Fatal("post-reconnect durable snapshot failed")
+	}
+	if after.Episode != before.Episode {
+		t.Fatalf("durable episode advanced to %q, want stable %q", after.Episode, before.Episode)
+	}
+	if after.Cwd != "/srv/durable" {
+		t.Fatalf("durable reconnect dropped the daemon-reported cwd %q", after.Cwd)
+	}
+
+	// The reattached channel's own reports keep updating the directory.
+	if err := provider.attachment(info.ID, 1).emit([]byte("\x1b]7;file://host/srv/durable-next\x1b\\")); err != nil {
+		t.Fatal(err)
+	}
+	waitRosterSnapshotCwd(t, manager, ctx, info.ID, "/srv/durable-next")
+}
+
+// Feeds racing a reconnect can never leak the old runtime's directory into
+// the replacement episode: after the commit the snapshot holds either the
+// reset unknown or the replacement's own report.
+func TestRosterRuntimeSnapshotCwdConcurrentFeedAndReconnect(t *testing.T) {
+	connector := newFakeConnector()
+	manager := NewManager(Config{
+		Connector: connector, Terminals: newFakeTerminalFactory(),
+		ReconnectMax: 10, ReconnectBackoff: []time.Duration{0}, OpenAccess: true,
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	ctx := context.Background()
+	connected, err := manager.Connect(ctx, Asset{ID: "ssh-asset", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.OpenTab(ctx, OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client-a", ChannelID: "ch-1", Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retired := connector.transport(0).channel(0)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				if err := retired.emit([]byte("\x1b]7;file://host/srv/old\x1b\\")); err != nil {
+					return
+				}
+				time.Sleep(time.Millisecond)
+			}
+		}
+	}()
+	if err := manager.Reconnect(ctx, connected.ID); err != nil {
+		t.Fatal(err)
+	}
+	close(stop)
+	<-done
+
+	// The old runtime's report must never appear in the replacement episode.
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		snapshot, ok := manager.RosterRuntimeSnapshot(ctx, info.ID)
+		if ok && snapshot.Cwd == "/srv/old" {
+			t.Fatalf("old runtime's cwd leaked into the replacement episode: %+v", snapshot)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	replacement := connector.transport(1).channel(0)
+	if err := replacement.emit([]byte("\x1b]7;file://host/srv/new\x1b\\")); err != nil {
+		t.Fatal(err)
+	}
+	waitRosterSnapshotCwd(t, manager, ctx, info.ID, "/srv/new")
+}
