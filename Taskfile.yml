@@ -128,10 +128,11 @@ tasks:
       - task: test
 
   check:frontend:
-    summary: Lint, test, typecheck and reproducibly build the frontend
+    summary: Lint, test, gate coverage, typecheck and reproducibly build the frontend
     cmds:
       - pnpm lint
       - pnpm test
+      - pnpm test:coverage
       - task: frontend
 
   check:scripts:
