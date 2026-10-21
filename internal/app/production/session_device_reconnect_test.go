@@ -3,6 +3,7 @@
 package production
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"regexp"
@@ -145,8 +146,7 @@ func TestProductionDeviceBridgeFailureReconnectsLiveDurableProcess(t *testing.T)
 	writeDurableTestCommand(t, production, tabID, "device-before-fault", "client-a")
 	waitForProductionOutput(t, stream, "device-before-fault")
 	writeDurableTestInput(t, production, tabID, `printf 'device-pid-before:%s\n' "$$"`, "client-a")
-	waitForProductionOutput(t, stream, "device-pid-before:")
-	beforePID := deviceTestPID(t, stream.output(), "device-pid-before")
+	beforePID := waitForDeviceTestPID(t, stream, "device-pid-before")
 	before := deviceTestDurableInfo(t, rig, tabID)
 	if before.Dead {
 		t.Fatalf("durable process is dead before fault: %+v", before)
@@ -179,8 +179,7 @@ func TestProductionDeviceBridgeFailureReconnectsLiveDurableProcess(t *testing.T)
 	}
 	waitForProductionOutput(t, stream, "device-disconnect-marker")
 	writeDurableTestInput(t, production, tabID, `printf 'device-pid-after:%s\n' "$$"`, "client-a")
-	waitForProductionOutput(t, stream, "device-pid-after:")
-	afterPID := deviceTestPID(t, stream.output(), "device-pid-after")
+	afterPID := waitForDeviceTestPID(t, stream, "device-pid-after")
 	if afterPID != beforePID {
 		t.Fatalf("shell PID changed across bridge reconnect: before=%s after=%s", beforePID, afterPID)
 	}
@@ -256,11 +255,47 @@ func deviceTestDurableInfo(t *testing.T, rig *deviceIPCTestRig, tabID string) su
 	return supervisor.Info{}
 }
 
-func deviceTestPID(t *testing.T, output []byte, marker string) string {
+func TestDeviceTestPIDOutputIgnoresCommandEcho(t *testing.T) {
+	const marker = "device-pid-before"
+	echo := []byte(`printf 'device-pid-before:%s\n' "$$"` + "\r\n")
+	if pid, ok := parseDeviceTestPID(echo, marker); ok {
+		t.Fatalf("command echo produced shell PID %q", pid)
+	}
+	output := append(echo, []byte("device-pid-before:4287\r\n")...)
+	pid, ok := parseDeviceTestPID(output, marker)
+	if !ok {
+		t.Fatal("shell PID output did not satisfy readiness")
+	}
+	if pid != "4287" {
+		t.Fatalf("shell PID = %q; want 4287", pid)
+	}
+}
+
+func waitForDeviceTestPID(t *testing.T, stream *bridgeTestStream, marker string) string {
 	t.Helper()
+	timer := time.NewTimer(3 * time.Second)
+	defer timer.Stop()
+	for {
+		stream.mu.Lock()
+		output := bytes.Join(stream.frames, nil)
+		pid, ok := parseDeviceTestPID(output, marker)
+		changed := stream.changed
+		stream.mu.Unlock()
+		if ok {
+			return pid
+		}
+		select {
+		case <-changed:
+		case <-timer.C:
+			t.Fatalf("shell PID output for %s is missing: %q", marker, stream.output())
+		}
+	}
+}
+
+func parseDeviceTestPID(output []byte, marker string) (string, bool) {
 	matches := regexp.MustCompile(regexp.QuoteMeta(marker) + `:([0-9]+)`).FindSubmatch(output)
 	if len(matches) != 2 {
-		t.Fatalf("shell PID output for %s is missing: %q", marker, output)
+		return "", false
 	}
-	return string(matches[1])
+	return string(matches[1]), true
 }
