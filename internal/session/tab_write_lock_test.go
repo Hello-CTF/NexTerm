@@ -220,6 +220,42 @@ func TestManagerCloseCompletesTeardownOnChannelCloseFailure(t *testing.T) {
 	}
 }
 
+// L-03: a transient transport-close failure keeps the session retryable —
+// the tabs and their fanout subscribers stay attached while the retry is
+// pending (nothing is released early), and the retry completes the
+// teardown so no fanout subscriber is left behind.
+func TestManagerCloseTransportFailureRetryCompletesTeardown(t *testing.T) {
+	manager, connector, _, session := openTestSession(t, KindSSH)
+	tab := openTestTab(t, manager, session, "client-a", "a-1")
+	transportErr := errors.New("transport close failed")
+	transport := connector.transport(0)
+	transport.closeErr = transportErr
+
+	if err := manager.Close(); !errors.Is(err, transportErr) {
+		t.Fatalf("Manager.Close = %v, want the transport close failure surfaced", err)
+	}
+	// The session stays retryable: the tab is still registered and its
+	// fanout subscriber is still attached — nothing was released early.
+	if _, err := manager.Tab(tab.ID); err != nil {
+		t.Fatalf("tab dropped after a transient transport close failure: %v", err)
+	}
+	if count := tab.fanout.Count(); count != 1 {
+		t.Fatalf("fanout holds %d subscribers while the retry is pending, want 1", count)
+	}
+
+	// The transient failure clears; the retry completes the teardown.
+	transport.closeErr = nil
+	if err := manager.Close(); err != nil {
+		t.Fatalf("retry Manager.Close = %v, want a clean close", err)
+	}
+	if _, err := manager.Tab(tab.ID); !errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("tab survived the completed retry teardown: %v", err)
+	}
+	if count := tab.fanout.Count(); count != 0 {
+		t.Fatalf("fanout still holds %d subscribers after the retry", count)
+	}
+}
+
 // L-03: a session teardown whose transport close fails must surface the
 // failure to the caller (account cleanup and shutdown included) instead of
 // reporting a clean close.
