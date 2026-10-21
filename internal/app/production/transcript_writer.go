@@ -235,6 +235,21 @@ func (w *transcriptWriter) Start(ctx context.Context) error {
 	return nil
 }
 
+// Shutdown closes the queue, cancels the run loop's context, joins the
+// retention loop unconditionally, then waits for the run loop to drain and
+// exit until ctx expires.
+//
+// Driver limitation (M91/M96): a flush already inside the modernc busy
+// handler cannot be interrupted — the durable write context deliberately
+// outlives the run loop, the busy handler keeps waiting even when the
+// statement context is cancelled, and database/sql Close neither interrupts
+// nor joins in-flight connections. A contended in-flight flush therefore
+// ends only when the store's busy_timeout expires; if that outlasts ctx,
+// Shutdown reports ctx.Err() while the run loop finishes the failed flush
+// and exits, and the unflushed tail stays suppressed either way. Callers
+// that must keep the join deterministic under external lock contention bound
+// the wait below their shutdown budget with store.OpenOptions.BusyTimeout;
+// the 30s production default is unchanged.
 func (w *transcriptWriter) Shutdown(ctx context.Context) error {
 	w.lifecycleMu.Lock()
 	cancel := w.cancel

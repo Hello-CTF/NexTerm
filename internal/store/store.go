@@ -48,6 +48,28 @@ type Store struct {
 
 type OpenOptions struct {
 	Logger *slog.Logger
+	// BusyTimeout overrides the SQLite busy_timeout pragma applied to every
+	// pooled connection; zero keeps the 30s production default. The modernc
+	// busy handler cannot be interrupted once it starts waiting — neither
+	// cancelling the statement context nor closing the pool stops it — so
+	// tests that close or shut down while a write may be contended set a
+	// short value to bound the wait instead of weakening the default.
+	BusyTimeout time.Duration
+}
+
+const defaultBusyTimeoutMS = 30000
+
+func (o OpenOptions) busyTimeoutMS() (int64, error) {
+	if o.BusyTimeout < 0 {
+		return 0, badParam(fmt.Errorf("busy timeout 不能为负数"))
+	}
+	if o.BusyTimeout == 0 {
+		return defaultBusyTimeoutMS, nil
+	}
+	if ms := o.BusyTimeout.Milliseconds(); ms > 0 {
+		return ms, nil
+	}
+	return 1, nil
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -57,6 +79,10 @@ func Open(ctx context.Context, path string) (*Store, error) {
 func OpenWithOptions(ctx context.Context, path string, options OpenOptions) (*Store, error) {
 	if path == "" {
 		return nil, badParam(fmt.Errorf("数据库路径不能为空"))
+	}
+	busyTimeoutMS, err := options.busyTimeoutMS()
+	if err != nil {
+		return nil, err
 	}
 	if dir := filepath.Dir(path); dir != "." {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -69,7 +95,7 @@ func OpenWithOptions(ctx context.Context, path string, options OpenOptions) (*St
 	var s *Store
 	var legacyBackup string
 	for attempt := 0; ; attempt++ {
-		db, err := openDB(sqliteDSN(path), 8)
+		db, err := openDB(sqliteDSN(path, busyTimeoutMS), 8)
 		if err == nil {
 			s = newStore(db, options.Logger)
 			legacy, lerr := hasLegacySchemaMarker(ctx, s)
@@ -120,7 +146,11 @@ func OpenInMemory(ctx context.Context) (*Store, error) {
 }
 
 func OpenInMemoryWithOptions(ctx context.Context, options OpenOptions) (*Store, error) {
-	dsn := "file:nexterm-" + ids.New() + "?mode=memory&cache=shared" + pragmaQuery(true)
+	busyTimeoutMS, err := options.busyTimeoutMS()
+	if err != nil {
+		return nil, err
+	}
+	dsn := "file:nexterm-" + ids.New() + "?mode=memory&cache=shared" + pragmaQuery(true, busyTimeoutMS)
 	db, err := openDB(dsn, 2)
 	if err != nil {
 		return nil, err
@@ -166,18 +196,18 @@ func openDB(dsn string, maxConnections int) (*gorm.DB, error) {
 	return db, nil
 }
 
-func sqliteDSN(path string) string {
+func sqliteDSN(path string, busyTimeoutMS int64) string {
 	path = filepath.ToSlash(path)
 	if runtime.GOOS == "windows" && len(path) >= 2 && path[1] == ':' {
 		path = "/" + path
 	}
 	u := &url.URL{Scheme: "file", Path: path}
-	u.RawQuery = strings.TrimPrefix(pragmaQuery(false), "&")
+	u.RawQuery = strings.TrimPrefix(pragmaQuery(false, busyTimeoutMS), "&")
 	return u.String()
 }
 
-func pragmaQuery(memory bool) string {
-	query := "&_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=synchronous(NORMAL)&_txlock=immediate"
+func pragmaQuery(memory bool, busyTimeoutMS int64) string {
+	query := fmt.Sprintf("&_pragma=foreign_keys(1)&_pragma=busy_timeout(%d)&_pragma=synchronous(NORMAL)&_txlock=immediate", busyTimeoutMS)
 	if !memory {
 		query += "&_pragma=journal_mode(WAL)"
 	}
