@@ -17,17 +17,6 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// The timestamp-index models are registered here as a TEMPORARY bridge so
-// the store package can ship and test the index before the unified model
-// registry and generated queries land: internal/store/model/models.go and
-// internal/store/query are owned by the coordinated generation effort, and
-// this init bypass must be removed once the models are registered there
-// and the queries are regenerated through the project command. It is not
-// the final registration.
-func init() {
-	model.AllModels = append(model.AllModels, model.TranscriptChunkTS{}, model.TranscriptTSIndex{})
-}
-
 // transcriptBlockTS is one stored block's seq with its true maximum chunk
 // timestamp.
 type transcriptBlockTS struct {

@@ -40,6 +40,7 @@ func newTranscriptRow(db *gorm.DB, opts ...gen.DOOption) transcriptRow {
 	_transcriptRow.Truncated = field.NewBool(tableName, "truncated")
 	_transcriptRow.SyncOptIn = field.NewBool(tableName, "sync_opt_in")
 	_transcriptRow.ContentOmitted = field.NewBool(tableName, "content_omitted")
+	_transcriptRow.ContentGen = field.NewInt64(tableName, "content_gen")
 	_transcriptRow.OwnerID = field.NewString(tableName, "owner_id")
 
 	_transcriptRow.fillFieldMap()
@@ -64,6 +65,7 @@ type transcriptRow struct {
 	Truncated      field.Bool
 	SyncOptIn      field.Bool
 	ContentOmitted field.Bool
+	ContentGen     field.Int64
 	OwnerID        field.String
 
 	fieldMap map[string]field.Expr
@@ -94,6 +96,7 @@ func (t *transcriptRow) updateTableName(table string) *transcriptRow {
 	t.Truncated = field.NewBool(table, "truncated")
 	t.SyncOptIn = field.NewBool(table, "sync_opt_in")
 	t.ContentOmitted = field.NewBool(table, "content_omitted")
+	t.ContentGen = field.NewInt64(table, "content_gen")
 	t.OwnerID = field.NewString(table, "owner_id")
 
 	t.fillFieldMap()
@@ -123,7 +126,7 @@ func (t *transcriptRow) GetFieldByName(fieldName string) (field.OrderExpr, bool)
 }
 
 func (t *transcriptRow) fillFieldMap() {
-	t.fieldMap = make(map[string]field.Expr, 14)
+	t.fieldMap = make(map[string]field.Expr, 15)
 	t.fieldMap["id"] = t.ID
 	t.fieldMap["session_id"] = t.SessionID
 	t.fieldMap["asset_id"] = t.AssetID
@@ -137,6 +140,7 @@ func (t *transcriptRow) fillFieldMap() {
 	t.fieldMap["truncated"] = t.Truncated
 	t.fieldMap["sync_opt_in"] = t.SyncOptIn
 	t.fieldMap["content_omitted"] = t.ContentOmitted
+	t.fieldMap["content_gen"] = t.ContentGen
 	t.fieldMap["owner_id"] = t.OwnerID
 }
 
