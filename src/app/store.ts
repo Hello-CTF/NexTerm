@@ -395,6 +395,10 @@ interface UiState {
   aiAccountEpoch: number;
   accountEpoch: number;
   advanceAccountEpoch: () => void;
+  // knownAssetIds is the last authoritative asset-ID snapshot of the current
+  // account epoch; knownAssetsEpoch tracks which epoch it belongs to.
+  knownAssetIds: string[];
+  knownAssetsEpoch: number;
   workspaceRuntime: Record<string, WorkspaceRuntime>;
   workspaceRuntimeEpoch: number;
   connectionProblems: Record<string, WorkspaceProblem>;
@@ -451,6 +455,7 @@ interface UiState {
   setActiveWorkspace: (id: string) => void;
   closeWorkspace: (id: string, mode?: "detach") => Promise<boolean>;
   markDeletedAssetWorkspaces: (assetId: string) => void;
+  reconcileDeletedTargets: (assets: readonly { id: string }[], epoch: number) => void;
 
   splitWorkspace: (workspaceId?: string) => void;
   openInLowerPane: (tab: AppTab, workspaceId?: string) => void;
@@ -1019,6 +1024,8 @@ export const useUi = create<UiState>((set, get) => ({
   aiBoards: {},
   aiAccountEpoch: 0,
   accountEpoch: 0,
+  knownAssetIds: [],
+  knownAssetsEpoch: -1,
   advanceAccountEpoch: () => set((state) => ({ accountEpoch: state.accountEpoch + 1 })),
   workspaceRuntime: {},
   workspaceRuntimeEpoch: 0,
@@ -1135,6 +1142,35 @@ export const useUi = create<UiState>((set, get) => ({
       w.assetId === assetId ? { ...w, deletedTarget: true } : w,
     ),
   })),
+  // reconcileDeletedTargets mirrors the authoritative assets list onto open
+  // workspaces. A target that was present in the previous snapshot of this
+  // account epoch and is now absent is marked deletedTarget (and preserved,
+  // never auto-disconnected); a reappearing target clears the mark. The first
+  // snapshot of an epoch is only a baseline — an asset never seen cannot be
+  // proven deleted, so quick-connect targets and restore-time marks are not
+  // mislabeled, and a snapshot from a previous account is ignored entirely.
+  reconcileDeletedTargets: (assets, epoch) => set((st) => {
+    if (st.accountEpoch !== epoch) return st;
+    const present = new Set(assets.map((asset) => asset.id));
+    if (st.knownAssetsEpoch !== epoch) {
+      return { knownAssetsEpoch: epoch, knownAssetIds: [...present] };
+    }
+    let changed = false;
+    const workspaces = st.workspaces.map((w) => {
+      if (!w.assetId) return w;
+      const shouldMark = st.knownAssetIds.includes(w.assetId) && !present.has(w.assetId);
+      const shouldClear = w.deletedTarget === true && present.has(w.assetId);
+      if (!shouldMark && !shouldClear) return w;
+      changed = true;
+      return { ...w, deletedTarget: shouldMark ? true : undefined };
+    });
+    const knownChanged = st.knownAssetIds.length !== present.size || st.knownAssetIds.some((id) => !present.has(id));
+    if (!changed && !knownChanged) return st;
+    return {
+      ...(knownChanged ? { knownAssetIds: [...present] } : null),
+      ...(changed ? { workspaces } : null),
+    };
+  }),
 
   closeWorkspace: async (id, mode) => {
     const sameSqlDraft = (left: SqlDraft | undefined, right: SqlDraft | undefined): boolean => {
@@ -1788,6 +1824,8 @@ export const useUi = create<UiState>((set, get) => ({
       workspaceRuntimeEpoch: state.workspaceRuntimeEpoch + 1,
       workspaceRuntime: {},
       connectionProblems: {},
+      knownAssetIds: [],
+      knownAssetsEpoch: -1,
       broadcast: null,
     }));
   },
