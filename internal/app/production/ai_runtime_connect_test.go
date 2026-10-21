@@ -3,6 +3,7 @@ package production
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http/httptest"
 	"path/filepath"
@@ -21,13 +22,17 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-// connectFakeChannel is the minimal PTY channel a local tab needs: reads
-// block until close (the tab stays live for the whole test), writes are
-// accepted and forgotten.
+// connectFakeChannel is an honest PTY channel: writes loop back into a
+// readable queue (so tests can do real write/read I/O), reads block until
+// data or close, and every operation after close fails with base.ErrClosed —
+// the same contract real local and SSH channels have.
 type connectFakeChannel struct {
 	id     string
 	closed chan struct{}
 	once   sync.Once
+
+	mu    sync.Mutex
+	queue [][]byte
 }
 
 func newConnectFakeChannel(id string) *connectFakeChannel {
@@ -35,8 +40,24 @@ func newConnectFakeChannel(id string) *connectFakeChannel {
 }
 
 func (c *connectFakeChannel) Read(buffer []byte) (int, error) {
-	<-c.closed
-	return 0, io.EOF
+	for {
+		c.mu.Lock()
+		if len(c.queue) > 0 {
+			n := copy(buffer, c.queue[0])
+			c.queue[0] = c.queue[0][n:]
+			if len(c.queue[0]) == 0 {
+				c.queue = c.queue[1:]
+			}
+			c.mu.Unlock()
+			return n, nil
+		}
+		c.mu.Unlock()
+		select {
+		case <-c.closed:
+			return 0, io.EOF
+		case <-time.After(time.Millisecond):
+		}
+	}
 }
 
 func (c *connectFakeChannel) Write(data []byte) (int, error) {
@@ -45,6 +66,9 @@ func (c *connectFakeChannel) Write(data []byte) (int, error) {
 		return 0, base.ErrClosed
 	default:
 	}
+	c.mu.Lock()
+	c.queue = append(c.queue, append([]byte(nil), data...))
+	c.mu.Unlock()
 	return len(data), nil
 }
 
@@ -68,8 +92,9 @@ func (c *connectFakeChannel) ID() string         { return c.id }
 func (c *connectFakeChannel) Generation() uint64 { return 1 }
 
 // connectFakeTransport serves both the exec path and PTY-backed local tab
-// creation; every channel is tracked so Close tears the runtime down, and
-// the alive flag lets tests flip a live session's transport dead.
+// creation. A dead transport refuses PTY and Exec with base.ErrClosed —
+// exactly what real local and SSH transports do — so a test can never fake
+// success onto a dead connection.
 type connectFakeTransport struct {
 	mu       sync.Mutex
 	channels []*connectFakeChannel
@@ -87,13 +112,22 @@ func (t *connectFakeTransport) Kind() string       { return session.KindLocal }
 func (t *connectFakeTransport) Generation() uint64 { return 1 }
 func (t *connectFakeTransport) IsAlive() bool      { return t.alive.Load() }
 func (t *connectFakeTransport) Ping(context.Context) (time.Duration, error) {
+	if !t.alive.Load() {
+		return 0, base.ErrClosed
+	}
 	return 0, nil
 }
-func (t *connectFakeTransport) Exec(context.Context, string, base.ExecOptions) (base.ExecResult, error) {
+func (t *connectFakeTransport) Exec(_ context.Context, command string, _ base.ExecOptions) (base.ExecResult, error) {
+	if !t.alive.Load() {
+		return base.ExecResult{}, base.ErrClosed
+	}
 	code := 0
-	return base.ExecResult{ExitCode: &code}, nil
+	return base.ExecResult{Stdout: "ran:" + command, ExitCode: &code}, nil
 }
 func (t *connectFakeTransport) OpenPTY(context.Context, base.PTYOptions) (base.Channel, error) {
+	if !t.alive.Load() {
+		return nil, base.ErrClosed
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.opens++
@@ -111,16 +145,20 @@ func (t *connectFakeTransport) Close() error {
 	return nil
 }
 
-// connectTransportLog records every transport the harness dial produced, in
-// order, so tests can kill a specific session's transport and count dials.
+// connectTransportLog records every dial the harness produced — the asset it
+// was asked to connect and the transport it returned — so tests can assert
+// the strict-host-key options survived the dial and kill a specific
+// session's transport.
 type connectTransportLog struct {
-	mu   sync.Mutex
-	list []*connectFakeTransport
+	mu     sync.Mutex
+	assets []session.Asset
+	list   []*connectFakeTransport
 }
 
-func (l *connectTransportLog) add(transport *connectFakeTransport) {
+func (l *connectTransportLog) add(asset session.Asset, transport *connectFakeTransport) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.assets = append(l.assets, asset)
 	l.list = append(l.list, transport)
 }
 
@@ -134,6 +172,12 @@ func (l *connectTransportLog) at(index int) *connectFakeTransport {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.list[index]
+}
+
+func (l *connectTransportLog) asset(index int) session.Asset {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.assets[index]
 }
 
 // The production terminal_create connect=true flow: the AI terminal surface
@@ -181,9 +225,9 @@ func composeConnectRuntime(t *testing.T, ctx context.Context, path string, dials
 	}
 	sessions := session.NewManager(session.Config{
 		OpenAccess: true,
-		Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
+		Connector: session.ConnectorFunc(func(_ context.Context, asset session.Asset, _ uint64) (base.Transport, error) {
 			transport := newConnectFakeTransport()
-			dials.add(transport)
+			dials.add(asset, transport)
 			return transport, nil
 		}),
 		Terminals: session.TerminalFactoryFunc(func(config session.TerminalConfig) (session.TerminalState, error) {
@@ -372,19 +416,70 @@ func TestProductionTerminalConnectDeadTransportDialsThroughPublicOptIn(t *testin
 		t.Fatalf("unknown asset dialed: %d", got)
 	}
 	// The user enables the surface opt-in through the public settings IPC:
-	// the gated connect path completes. Manager.Connect reuses the existing
-	// session record for the asset (the session layer's established
-	// contract, shared by every R-07 surface), so no second dial happens;
-	// the created tab rides the manager-resolved session.
+	// the gated connect path dials again. The session layer no longer reuses
+	// the dead-transport session — it disconnects the stale record and
+	// redials — so the operation lands on a fresh, healthy session whose
+	// strict-host-key asset options were never weakened.
 	enableAiTerminalConnectOptIn(t, ctx, database)
 	created := registry.Execute(ctx, "job-2", tools.Scope{}, connectCreateCall(assetID), nil)
 	if !created.OK {
 		t.Fatalf("dead-transport connect after public opt-in = %+v", created)
 	}
-	if got := dials.count(); got != 1 {
-		t.Fatalf("Manager.Connect reuse semantics changed: dials=%d", got)
+	if got := dials.count(); got != 2 {
+		t.Fatalf("no redial after the dead transport: dials=%d, want 2", got)
 	}
-	if created.CreatedTab == nil || created.CreatedTab.SessionID != initial.ID {
-		t.Fatalf("created tab not on the manager-resolved session: %+v", created.CreatedTab)
+	options, ok := dials.asset(1).Options.(map[string]any)
+	if !ok || options["strictHostKey"] != true {
+		t.Fatalf("redialed asset lost the strict-host-key mark: %+v", dials.asset(1).Options)
+	}
+	if created.CreatedTab == nil || created.CreatedTab.SessionID == "" || created.CreatedTab.SessionID == initial.ID {
+		t.Fatalf("created tab not on a fresh session: %+v (initial %s)", created.CreatedTab, initial.ID)
+	}
+	// The final session's transport is alive and does real I/O; the dead one
+	// refuses PTY and Exec exactly like a real local or SSH transport.
+	final, err := services.Sessions.TransportFor(ctx, created.CreatedTab.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !final.IsAlive() {
+		t.Fatal("final session's transport is not alive")
+	}
+	result, err := final.Exec(ctx, "echo healthy", base.ExecOptions{})
+	if err != nil || result.Stdout != "ran:echo healthy" {
+		t.Fatalf("Exec on the final session = %+v, %v", result, err)
+	}
+	channel, err := final.(base.PTYTransport).OpenPTY(ctx, base.PTYOptions{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = channel.Close() }()
+	if written, err := channel.Write([]byte("healthy")); err != nil || written != len("healthy") {
+		t.Fatalf("PTY Write on the final session = %d, %v", written, err)
+	}
+	readBack := make(chan string, 1)
+	go func() {
+		buffer := make([]byte, len("healthy"))
+		n, readErr := channel.Read(buffer)
+		if readErr != nil {
+			readBack <- "read error: " + readErr.Error()
+			return
+		}
+		readBack <- string(buffer[:n])
+	}()
+	select {
+	case got := <-readBack:
+		if got != "healthy" {
+			t.Fatalf("PTY Read on the final session = %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("PTY Read on the final session timed out")
+	}
+	dead := dials.at(0)
+	if _, err := dead.Exec(ctx, "echo nope", base.ExecOptions{}); !errors.Is(err, base.ErrClosed) {
+		t.Fatalf("dead transport Exec = %v, want ErrClosed", err)
+	}
+	var deadPTY base.PTYTransport = dead
+	if _, err := deadPTY.OpenPTY(ctx, base.PTYOptions{Cols: 80, Rows: 24}); !errors.Is(err, base.ErrClosed) {
+		t.Fatalf("dead transport OpenPTY = %v, want ErrClosed", err)
 	}
 }
