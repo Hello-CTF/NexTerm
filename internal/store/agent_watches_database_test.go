@@ -232,3 +232,39 @@ func TestAgentWatchDatabaseTargetDurabilityAcrossRestart(t *testing.T) {
 		t.Fatalf("create after permanent detach = %v; want detached", err)
 	}
 }
+
+func TestAgentWatchDatabaseOwnerListingsIsolateOwners(t *testing.T) {
+	_, backend := openAgentWatchFixture(t)
+	ctxA := ipc.WithUserID(context.Background(), "owner-a")
+	ctxB := ipc.WithUserID(context.Background(), "owner-b")
+	createTestWatch(t, backend, ctxA, "watch-db-a1", "target-1", "identity-1")
+	createTestWatch(t, backend, ctxA, "watch-db-a2", "target-2", "identity-2")
+	createTestWatch(t, backend, ctxB, "watch-db-b1", "target-1", "identity-1")
+
+	watchesA, err := backend.AgentWatchListByOwner(ctxA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(watchesA) != 2 || watchesA[0].ID != "watch-db-a1" || watchesA[1].ID != "watch-db-a2" {
+		t.Fatalf("owner-a watches = %+v", watchesA)
+	}
+	targetsA, err := backend.AgentWatchTargetListByOwner(ctxA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targetsA) != 2 {
+		t.Fatalf("owner-a targets = %+v", targetsA)
+	}
+	for _, target := range targetsA {
+		if target.OwnerID != "owner-a" {
+			t.Fatalf("owner listing leaked %s row %+v", target.OwnerID, target)
+		}
+	}
+	watchesB, err := backend.AgentWatchListByOwner(ctxB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(watchesB) != 1 || watchesB[0].ID != "watch-db-b1" {
+		t.Fatalf("owner-b watches = %+v", watchesB)
+	}
+}
