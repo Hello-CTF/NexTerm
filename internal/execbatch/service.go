@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,19 @@ const (
 	pendingCancelTTL          = 10 * time.Second
 	maxPendingCancels         = 128
 	maxPendingCancelsPerOwner = 16
+)
+
+// Committed account-cleanup events are replay markers, not work items: their
+// payload is dropped at commit and they are retained only so a same-event
+// replay dedups instead of re-snapshotting. The bounds below keep that
+// retention finite, mirroring the pendingCancels pattern; prepared but
+// uncommitted events are never evicted.
+const (
+	accountCleanupEventTTL           = 24 * time.Hour
+	maxAccountCleanupEventsPerOwner  = 64
+	maxAccountCleanupAliasesPerOwner = 256
+	maxAccountCleanupEvents          = 1024
+	maxAccountCleanupAliases         = 4096
 )
 
 type Config struct {
@@ -61,6 +75,7 @@ type batchKey struct {
 
 type activeBatch struct {
 	ownerID    string
+	startedAt  time.Time
 	cancel     context.CancelFunc
 	canceling  bool
 	executions sync.WaitGroup
@@ -124,7 +139,7 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
-	active := &activeBatch{ownerID: ownerID, cancel: cancel}
+	active := &activeBatch{ownerID: ownerID, startedAt: s.now(), cancel: cancel}
 	key := batchKey{ownerID: ownerID, batchID: request.BatchID}
 	pendingKey := pendingCancelKey{ownerID: ownerID, batchID: request.BatchID}
 	err = admit(ctx, func() error {
@@ -251,14 +266,19 @@ func (s *Service) Cancel(_ context.Context, ownerID, batchID string) (CancelResu
 }
 
 type accountCleanupEvent struct {
-	done      chan struct{}
-	batches   []*activeBatch
-	committed bool
-	aborted   bool
+	done        chan struct{}
+	batches     []*activeBatch
+	committed   bool
+	committedAt time.Time
+	aborted     bool
 }
 
-// PrepareOwnerCleanup reserves an event and its current owner snapshot without canceling it; commit and rollback are mutually exclusive.
-func (s *Service) PrepareOwnerCleanup(_ context.Context, ownerID, eventID string) (func(...string), func()) {
+// PrepareOwnerCleanup reserves an event and its current owner snapshot without
+// canceling it; commit and rollback are mutually exclusive. A non-nil cutoff
+// bounds the snapshot to batches that started at or before the cleanup
+// generation's terminal instant, so a late cleanup of an evicted event cannot
+// cancel new-generation batches.
+func (s *Service) PrepareOwnerCleanup(_ context.Context, ownerID, eventID string, cutoff *time.Time) (func(...string), func()) {
 	if ownerID == "" || eventID == "" {
 		return func(...string) {}, func() {}
 	}
@@ -271,19 +291,24 @@ func (s *Service) PrepareOwnerCleanup(_ context.Context, ownerID, eventID string
 	if !exists {
 		event = &accountCleanupEvent{done: make(chan struct{}), batches: make([]*activeBatch, 0)}
 		for _, active := range s.batches {
-			if active.ownerID == ownerID {
-				event.batches = append(event.batches, active)
+			if active.ownerID != ownerID {
+				continue
 			}
+			if cutoff != nil && active.startedAt.After(*cutoff) {
+				continue
+			}
+			event.batches = append(event.batches, active)
 		}
 		s.accountCleanups[key] = event
 	}
+	s.purgeAccountCleanupsLocked(s.now())
 	s.mu.Unlock()
 	return func(sessionIDs ...string) { s.commitOwnerCleanup(key, event, sessionIDs...) }, func() { s.abortOwnerCleanup(key, event) }
 }
 
 // CancelOwner takes one snapshot per cleanup event. Optional revoked session IDs alias a shared event, and replays wait without another snapshot.
-func (s *Service) CancelOwner(ctx context.Context, ownerID, eventID string, sessionIDs ...string) {
-	commit, _ := s.PrepareOwnerCleanup(ctx, ownerID, eventID)
+func (s *Service) CancelOwner(ctx context.Context, ownerID, eventID string, cutoff *time.Time, sessionIDs ...string) {
+	commit, _ := s.PrepareOwnerCleanup(ctx, ownerID, eventID, cutoff)
 	commit(sessionIDs...)
 }
 
@@ -317,14 +342,19 @@ func (s *Service) commitOwnerCleanup(key accountCleanupKey, event *accountCleanu
 		return
 	}
 	event.committed = true
-	for _, active := range event.batches {
+	event.committedAt = s.now()
+	// The batch snapshot is the event's large payload: cancel it exactly once
+	// here, then drop it. Replays only wait on done and must not pin batches.
+	batches := event.batches
+	event.batches = nil
+	for _, active := range batches {
 		active.canceling = true
 	}
 	s.mu.Unlock()
-	for _, active := range event.batches {
+	for _, active := range batches {
 		active.cancel()
 	}
-	for _, active := range event.batches {
+	for _, active := range batches {
 		active.executions.Wait()
 	}
 	close(event.done)
@@ -351,6 +381,120 @@ func (s *Service) purgePendingCancelsLocked(now time.Time) {
 	for key, expiresAt := range s.pendingCancels {
 		if !expiresAt.After(now) {
 			delete(s.pendingCancels, key)
+		}
+	}
+}
+
+// purgeAccountCleanupsLocked bounds committed cleanup events and their aliases:
+// everything past the TTL, then the oldest committed entries beyond the
+// per-owner and global caps. Prepared but uncommitted events are never
+// evicted, and eviction order is deterministic (oldest commit first, ties
+// broken by key).
+func (s *Service) purgeAccountCleanupsLocked(now time.Time) {
+	if len(s.accountCleanups) == 0 {
+		return
+	}
+	type committedEntry struct {
+		key   accountCleanupKey
+		event *accountCleanupEvent
+	}
+	committed := make([]committedEntry, 0, len(s.accountCleanups))
+	for key, event := range s.accountCleanups {
+		if event.committed {
+			committed = append(committed, committedEntry{key: key, event: event})
+		}
+	}
+	sort.Slice(committed, func(i, j int) bool {
+		left, right := committed[i], committed[j]
+		if !left.event.committedAt.Equal(right.event.committedAt) {
+			return left.event.committedAt.Before(right.event.committedAt)
+		}
+		if left.key.ownerID != right.key.ownerID {
+			return left.key.ownerID < right.key.ownerID
+		}
+		return left.key.eventID < right.key.eventID
+	})
+	evicted := make(map[accountCleanupKey]struct{})
+	for _, entry := range committed {
+		if !entry.event.committedAt.Add(accountCleanupEventTTL).After(now) {
+			evicted[entry.key] = struct{}{}
+		}
+	}
+	// Cap pressure keeps the newest entries: an entry is evicted when the
+	// newer entries at or after its position already fill the allowance.
+	ownerTotals := make(map[string]int)
+	total := 0
+	for _, entry := range committed {
+		if _, gone := evicted[entry.key]; !gone {
+			ownerTotals[entry.key.ownerID]++
+			total++
+		}
+	}
+	ownerSeen := make(map[string]int)
+	seen := 0
+	for _, entry := range committed {
+		if _, gone := evicted[entry.key]; gone {
+			continue
+		}
+		ownerSeen[entry.key.ownerID]++
+		seen++
+		if ownerTotals[entry.key.ownerID]-ownerSeen[entry.key.ownerID] >= maxAccountCleanupEventsPerOwner ||
+			total-seen >= maxAccountCleanupEvents {
+			evicted[entry.key] = struct{}{}
+		}
+	}
+	for key := range evicted {
+		delete(s.accountCleanups, key)
+		for alias, canonical := range s.accountCleanupAliases {
+			if canonical == key {
+				delete(s.accountCleanupAliases, alias)
+			}
+		}
+	}
+	s.purgeAccountCleanupAliasesLocked()
+}
+
+// purgeAccountCleanupAliasesLocked trims aliases past the per-owner and global
+// caps, oldest canonical commit first; aliases whose canonical event is gone
+// are dropped regardless.
+func (s *Service) purgeAccountCleanupAliasesLocked() {
+	type aliasEntry struct {
+		alias     accountCleanupKey
+		committed time.Time
+	}
+	aliases := make([]aliasEntry, 0, len(s.accountCleanupAliases))
+	for alias, canonical := range s.accountCleanupAliases {
+		event := s.accountCleanups[canonical]
+		if event == nil {
+			delete(s.accountCleanupAliases, alias)
+			continue
+		}
+		aliases = append(aliases, aliasEntry{alias: alias, committed: event.committedAt})
+	}
+	sort.Slice(aliases, func(i, j int) bool {
+		left, right := aliases[i], aliases[j]
+		if !left.committed.Equal(right.committed) {
+			return left.committed.Before(right.committed)
+		}
+		if left.alias.ownerID != right.alias.ownerID {
+			return left.alias.ownerID < right.alias.ownerID
+		}
+		return left.alias.eventID < right.alias.eventID
+	})
+	ownerTotals := make(map[string]int)
+	total := 0
+	for _, entry := range aliases {
+		ownerTotals[entry.alias.ownerID]++
+		total++
+	}
+	ownerSeen := make(map[string]int)
+	seen := 0
+	for _, entry := range aliases {
+		ownerSeen[entry.alias.ownerID]++
+		seen++
+		if ownerTotals[entry.alias.ownerID]-ownerSeen[entry.alias.ownerID] >= maxAccountCleanupAliasesPerOwner ||
+			total-seen >= maxAccountCleanupAliases {
+			delete(s.accountCleanupAliases, entry.alias)
 		}
 	}
 }

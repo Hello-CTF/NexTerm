@@ -72,11 +72,11 @@ func newAccountExecLifecycleFixture(t *testing.T, batches *execbatch.Service) *a
 	accounts := account.New(database.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
 	config.Accounts = accounts
 	config.AccountCleanup = func(ctx context.Context, ownerID, cleanupID string, sessionIDs ...string) error {
-		batches.CancelOwner(ctx, ownerID, cleanupID, sessionIDs...)
+		batches.CancelOwner(ctx, ownerID, cleanupID, nil, sessionIDs...)
 		return nil
 	}
 	config.AccountCleanupPrepare = func(ctx context.Context, ownerID, cleanupID string) (func(...string), func(), error) {
-		commit, rollback := batches.PrepareOwnerCleanup(ctx, ownerID, cleanupID)
+		commit, rollback := batches.PrepareOwnerCleanup(ctx, ownerID, cleanupID, nil)
 		return commit, rollback, nil
 	}
 	server, httpServer := newTestHTTP(t, config)

@@ -15,10 +15,12 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/server"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 type accountCleanupHTTPSession struct {
@@ -40,6 +42,7 @@ type accountCleanupHTTPFixture struct {
 	dispatcher  *ipc.Dispatcher
 	http        *httptest.Server
 	application *Production
+	batches     *execbatch.Service
 }
 
 func newAccountCleanupHTTPFixture(t *testing.T) *accountCleanupHTTPFixture {
@@ -53,8 +56,28 @@ func newAccountCleanupHTTPFixture(t *testing.T) *accountCleanupHTTPFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	application := &Production{Services: ProductionServices{Sessions: rig.manager, Store: database}}
+	batches := execbatch.New(execbatch.Config{
+		Resolver: execbatch.ResolverFunc(func(ctx context.Context, sessionID string) (execbatch.Target, error) {
+			connected, err := rig.manager.SessionFor(ctx, sessionID)
+			if err != nil {
+				return execbatch.Target{}, err
+			}
+			transport, err := rig.manager.TransportFor(ctx, sessionID)
+			if err != nil {
+				return execbatch.Target{}, err
+			}
+			return execbatch.Target{SessionID: connected.ID, SessionName: connected.ID, Transport: transport, Generation: transport.Generation()}, nil
+		}),
+		Now: clock.Now,
+	})
+	application := &Production{Services: ProductionServices{Sessions: rig.manager, Store: database, ExecBatches: batches}}
+	application.accountCleanup.now = clock.Now
 	dispatcher := ipc.NewDispatcher()
+	if err := ipc.Register(dispatcher, "exec_batch_execute", func(ctx context.Context, _ *ipc.Call, input execbatch.Request) (execbatch.Batch, error) {
+		return batches.Execute(ctx, ipc.OwnerID(ctx), input)
+	}); err != nil {
+		t.Fatal(err)
+	}
 	accounts := account.New(database.GORM(), account.WithNow(clock.NowMS))
 	api, err := server.New(server.Config{
 		Options:    server.Options{Auth: server.AuthOn, Listen: "127.0.0.1:0"},
@@ -75,7 +98,7 @@ func newAccountCleanupHTTPFixture(t *testing.T) *accountCleanupHTTPFixture {
 		httpServer.Close()
 		_ = api.Close()
 	})
-	return &accountCleanupHTTPFixture{clock: clock, rig: rig, accounts: accounts, db: database, dispatcher: dispatcher, http: httpServer, application: application}
+	return &accountCleanupHTTPFixture{clock: clock, rig: rig, accounts: accounts, db: database, dispatcher: dispatcher, http: httpServer, application: application, batches: batches}
 }
 
 func (f *accountCleanupHTTPFixture) call(t *testing.T, method, path string, body any, session *accountCleanupHTTPSession) accountCleanupHTTPResponse {
@@ -377,8 +400,8 @@ func TestAccountServerLogoutAllAbortsWhenCleanupSnapshotFails(t *testing.T) {
 	ownerA := ipc.WithUserID(t.Context(), aliceID)
 	deviceA, tabA := fixture.rig.open(t, ownerA, session.Asset{ID: "device/a", Kind: session.KindDevice})
 
-	fixture.application.accountCleanup.cutoffBound = func(context.Context, string, string) (*time.Time, error) {
-		return nil, errors.New("injected cutoff failure")
+	fixture.application.accountCleanup.listOwnerSessions = func(context.Context, string) ([]session.SessionInfo, error) {
+		return nil, errors.New("injected listing failure")
 	}
 	call := fixture.call(t, http.MethodPost, "/auth/logout-all", nil, alice)
 	if call.status != http.StatusInternalServerError {
@@ -391,7 +414,7 @@ func TestAccountServerLogoutAllAbortsWhenCleanupSnapshotFails(t *testing.T) {
 	requireAccountCleanupTab(t, ownerA, fixture.rig.manager, tabA.ID, true)
 	requireAccountCleanupStatus(t, ownerA, fixture.rig.manager, deviceA.ID, session.StatusConnected)
 
-	fixture.application.accountCleanup.cutoffBound = nil
+	fixture.application.accountCleanup.listOwnerSessions = nil
 	call = fixture.call(t, http.MethodPost, "/auth/logout-all", nil, alice)
 	if call.status != http.StatusOK {
 		t.Fatalf("logout-all retry status = %d body = %v", call.status, call.body)
@@ -469,4 +492,129 @@ func currentCleanupSessionID(t *testing.T, fixture *accountCleanupHTTPFixture, s
 	}
 	t.Fatal("current session not found")
 	return ""
+}
+
+// Full-stack deterministic counterexample for the post-eviction hazard: a
+// late revalidation of a long-revoked session must derive its terminal no-op
+// from the durable revoked session row, not cancel the new generation's
+// batch or device started after the retention TTL evicted the event.
+func TestAccountServerPostEvictionLateRevalidationKeepsNewGeneration(t *testing.T) {
+	fixture := newAccountCleanupHTTPFixture(t)
+	aliceID, _ := fixture.initUsers(t)
+	alice := fixture.login(t, "alice", "password-alice")
+	ownerA := ipc.WithUserID(t.Context(), aliceID)
+	deviceA, tabA := fixture.rig.open(t, ownerA, session.Asset{ID: "device/a", Kind: session.KindDevice})
+
+	// Admit one request with S1 and park it inside the handler: its
+	// revalidation fires the deferred cleanup once S1 is revoked.
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	if err := fixture.dispatcher.RegisterRaw("test_late_revalidation_cleanup", func(ctx context.Context, _ *ipc.Call) (any, error) {
+		close(entered)
+		<-release
+		return nil, ipc.CheckAccountSession(ctx)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	parkedDone := make(chan accountCleanupHTTPResponse, 1)
+	go func() {
+		parkedDone <- fixture.call(t, http.MethodPost, "/rpc", map[string]any{
+			"cmd": "test_late_revalidation_cleanup", "args": map[string]any{},
+		}, alice)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("request did not reach the parked handler")
+	}
+
+	// The paired logout-all commits the cleanup: the old device generation is
+	// closed and the cleanup event is retained as a replay marker.
+	if call := fixture.call(t, http.MethodPost, "/auth/logout-all", nil, alice); call.status != http.StatusOK {
+		t.Fatalf("logout-all status = %d body = %v", call.status, call.body)
+	}
+	requireAccountCleanupTab(t, ownerA, fixture.rig.manager, tabA.ID, false)
+	requireAccountCleanupStatus(t, ownerA, fixture.rig.manager, deviceA.ID, session.StatusDisconnected)
+
+	// Past the retention TTL the committed event and its aliases are purged;
+	// a probe cleanup applies the lazy purge before the late revalidation
+	// (no batches are running yet, so its snapshot is empty).
+	fixture.clock.Advance(accountCleanupEventTTL + time.Millisecond)
+	if err := fixture.application.CleanupAccount(context.Background(), aliceID, "login-probe"); err != nil {
+		t.Fatal(err)
+	}
+
+	// New generation: a fresh login, device, and blocking batch.
+	alice2 := fixture.login(t, "alice", "password-alice")
+	deviceNew, tabNew := fixture.rig.open(t, ownerA, session.Asset{ID: "device/new", Kind: session.KindDevice})
+	batchStarted := make(chan struct{}, 1)
+	fixture.rig.setExecHook("asset-ssh", func(ctx context.Context) (base.ExecResult, error) {
+		batchStarted <- struct{}{}
+		<-ctx.Done()
+		return base.ExecResult{}, ctx.Err()
+	})
+	sshSession, _ := fixture.rig.open(t, ownerA, session.Asset{ID: "asset-ssh", Kind: session.KindSSH})
+	batchDone := make(chan accountCleanupHTTPResponse, 1)
+	go func() {
+		batchDone <- fixture.call(t, http.MethodPost, "/rpc", map[string]any{
+			"cmd":  "exec_batch_execute",
+			"args": execbatch.Request{BatchID: "new-batch", SessionIDs: []string{sshSession.ID}, Command: "wait"},
+		}, alice2)
+	}()
+	select {
+	case <-batchStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("new generation batch did not start")
+	}
+
+	// The parked S1 request revalidates as revoked: the deferred cleanup runs
+	// against a purged event and must stay on the terminal generation.
+	unblock()
+	select {
+	case call := <-parkedDone:
+		if call.status != http.StatusOK || call.body["ok"] != false {
+			t.Fatalf("parked revalidation status = %d body = %v", call.status, call.body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("parked revalidation did not finish")
+	}
+	select {
+	case call := <-batchDone:
+		t.Fatalf("late revalidation canceled the new generation batch: %+v", call)
+	case <-time.After(50 * time.Millisecond):
+	}
+	requireAccountCleanupTab(t, ownerA, fixture.rig.manager, tabNew.ID, true)
+	requireAccountCleanupStatus(t, ownerA, fixture.rig.manager, deviceNew.ID, session.StatusConnected)
+
+	if _, err := fixture.batches.Cancel(t.Context(), aliceID, "new-batch"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case call := <-batchDone:
+		batch := decodeAccountCleanupExecBatch(t, call)
+		if len(batch.Results) != 1 || batch.Results[0].Status != execbatch.StatusCanceled {
+			t.Fatalf("new generation batch results = %+v, want canceled", batch.Results)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("new generation batch did not finish")
+	}
+}
+
+func decodeAccountCleanupExecBatch(t *testing.T, call accountCleanupHTTPResponse) execbatch.Batch {
+	t.Helper()
+	if call.status != http.StatusOK || call.body["ok"] != true {
+		t.Fatalf("execute RPC status = %d body = %v", call.status, call.body)
+	}
+	encoded, err := json.Marshal(call.body["data"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var batch execbatch.Batch
+	if err := json.Unmarshal(encoded, &batch); err != nil {
+		t.Fatal(err)
+	}
+	return batch
 }
