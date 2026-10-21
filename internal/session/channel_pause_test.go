@@ -39,27 +39,6 @@ func expectNoFrame(t *testing.T, receiver *hub.Receiver) {
 	}
 }
 
-// tryReadFrames reads want bytes with a short deadline and reports whether
-// they arrived intact; a timeout means the producer stalled.
-func tryReadFrames(t *testing.T, receiver *hub.Receiver, want int, chunk []byte) bool {
-	t.Helper()
-	var got []byte
-	deadline := time.Now().Add(200 * time.Millisecond)
-	for len(got) < want {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Until(deadline))
-		frame, err := receiver.Next(ctx)
-		cancel()
-		if err != nil {
-			return false
-		}
-		got = append(got, frame.Data...)
-		if err := receiver.Ack(frame.Sequence); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return bytes.Equal(got, chunk)
-}
-
 func drainAttachHeader(t *testing.T, receiver *hub.Receiver) {
 	t.Helper()
 	frame := receiveTestFrame(t, receiver)
@@ -863,28 +842,31 @@ func TestRecoverChannelForFloorStallsBeforeDelayedRPC(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Sustained output past the ring's capacity: the producer stalls at the
-	// retention floor instead of evicting the refused suffix. Both transports
-	// keep draining, exactly like the real saturated client and its healthy
-	// peer. Feed until a chunk no longer arrives — that is the floor stall.
-	stalled := false
-	for i := 256; i < 4000 && !stalled; i++ {
+	// Sustained output with both transports draining, exactly like the real
+	// saturated client and its healthy peer: feed until the ring is provably
+	// at capacity with the floor blocking eviction — the pump parks instead
+	// of evicting the refused suffix. Both receivers drain every chunk, so
+	// the recovery's anchor is the next frame each client sees; a
+	// read-timeout stall guess could instead fire while the pump is merely
+	// slow, and late data frames would overtake the anchor.
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 256; i < 4000 && !tab.recovery.needsStall(); i++ {
 		chunk := bytes.Repeat([]byte{byte('a' + i%26)}, chunkSize)
+		fed = append(fed, chunk...)
 		if err := channel.emit(chunk); err != nil {
-			stalled = true
-			break
+			t.Fatal(err)
 		}
-		if !tryReadFrames(t, receiverA, chunkSize, chunk) {
-			stalled = true
+		if got := readFramesUntil(t, receiverA, chunkSize); !bytes.Equal(got, chunk) {
+			t.Fatalf("channel A chunk %d mismatch past the floor", i)
 		}
-		if !tryReadFrames(t, receiverB, chunkSize, chunk) {
-			stalled = true
-		}
-		if !stalled {
-			fed = append(fed, chunk...)
+		if got := readFramesUntil(t, receiverB, chunkSize); !bytes.Equal(got, chunk) {
+			t.Fatalf("channel B chunk %d mismatch past the floor", i)
 		}
 	}
-	if !stalled {
+	if !tab.recovery.needsStall() {
 		t.Fatal("producer kept reading past the ring capacity with the floor set")
 	}
 
