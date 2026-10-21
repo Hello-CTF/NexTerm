@@ -146,6 +146,11 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
   // temporary absence until the grace expires or a snapshot was observed.
   const startupGraceUntilRef = useRef(0);
   const observedRef = useRef(false);
+  // previousBatchIdRef detects an external prop transition during render:
+  // the prop changing to a different ID is an external switch (hide the old
+  // final from the first frame), while an unchanged prop means the current
+  // view still belongs to the component's own rerun.
+  const previousBatchIdRef = useRef(batchId);
   if (apiRef.current !== api) {
     apiRef.current = api;
     rerunGenerationRef.current++;
@@ -297,10 +302,14 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
   useImperativeHandle(ref, () => ({ rerun: (request) => rerunWithRef.current(request) }), []);
 
   // The final batch renders only for the API identity and batch that
-  // produced it: an API or batch switch hides it synchronously, so the
-  // previous owner's output never mixes into the new view.
+  // produced it: an API or external batch switch hides it synchronously, so
+  // the previous owner's output never mixes into the new view. An external
+  // transition is a prop change to a different ID; an unchanged prop means
+  // the view still belongs to the component's own rerun.
+  const externallySwitched = batchId !== activeBatchId && batchId !== previousBatchIdRef.current;
+  previousBatchIdRef.current = batchId;
   const visibleFinalBatch =
-    finalBatch !== null && finalBatch.forApi === api && finalBatch.batchId === activeBatchId
+    finalBatch !== null && finalBatch.forApi === api && finalBatch.batchId === activeBatchId && !externallySwitched
       ? finalBatch.batch
       : null;
 
