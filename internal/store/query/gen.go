@@ -41,6 +41,8 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		DurableTranscriptOffset: newDurableTranscriptOffset(db, opts...),
 		ExecBatchResultRow:      newExecBatchResultRow(db, opts...),
 		ExecBatchRow:            newExecBatchRow(db, opts...),
+		ExecTargetSetItemRow:    newExecTargetSetItemRow(db, opts...),
+		ExecTargetSetRow:        newExecTargetSetRow(db, opts...),
 		ForwardRuleRow:          newForwardRuleRow(db, opts...),
 		HitlRunRow:              newHitlRunRow(db, opts...),
 		HostShare:               newHostShare(db, opts...),
@@ -98,6 +100,8 @@ type Query struct {
 	DurableTranscriptOffset durableTranscriptOffset
 	ExecBatchResultRow      execBatchResultRow
 	ExecBatchRow            execBatchRow
+	ExecTargetSetItemRow    execTargetSetItemRow
+	ExecTargetSetRow        execTargetSetRow
 	ForwardRuleRow          forwardRuleRow
 	HitlRunRow              hitlRunRow
 	HostShare               hostShare
@@ -156,6 +160,8 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		DurableTranscriptOffset: q.DurableTranscriptOffset.clone(db),
 		ExecBatchResultRow:      q.ExecBatchResultRow.clone(db),
 		ExecBatchRow:            q.ExecBatchRow.clone(db),
+		ExecTargetSetItemRow:    q.ExecTargetSetItemRow.clone(db),
+		ExecTargetSetRow:        q.ExecTargetSetRow.clone(db),
 		ForwardRuleRow:          q.ForwardRuleRow.clone(db),
 		HitlRunRow:              q.HitlRunRow.clone(db),
 		HostShare:               q.HostShare.clone(db),
@@ -221,6 +227,8 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		DurableTranscriptOffset: q.DurableTranscriptOffset.replaceDB(db),
 		ExecBatchResultRow:      q.ExecBatchResultRow.replaceDB(db),
 		ExecBatchRow:            q.ExecBatchRow.replaceDB(db),
+		ExecTargetSetItemRow:    q.ExecTargetSetItemRow.replaceDB(db),
+		ExecTargetSetRow:        q.ExecTargetSetRow.replaceDB(db),
 		ForwardRuleRow:          q.ForwardRuleRow.replaceDB(db),
 		HitlRunRow:              q.HitlRunRow.replaceDB(db),
 		HostShare:               q.HostShare.replaceDB(db),
@@ -276,6 +284,8 @@ type queryCtx struct {
 	DurableTranscriptOffset *durableTranscriptOffsetDo
 	ExecBatchResultRow      *execBatchResultRowDo
 	ExecBatchRow            *execBatchRowDo
+	ExecTargetSetItemRow    *execTargetSetItemRowDo
+	ExecTargetSetRow        *execTargetSetRowDo
 	ForwardRuleRow          *forwardRuleRowDo
 	HitlRunRow              *hitlRunRowDo
 	HostShare               *hostShareDo
@@ -331,6 +341,8 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		DurableTranscriptOffset: q.DurableTranscriptOffset.WithContext(ctx),
 		ExecBatchResultRow:      q.ExecBatchResultRow.WithContext(ctx),
 		ExecBatchRow:            q.ExecBatchRow.WithContext(ctx),
+		ExecTargetSetItemRow:    q.ExecTargetSetItemRow.WithContext(ctx),
+		ExecTargetSetRow:        q.ExecTargetSetRow.WithContext(ctx),
 		ForwardRuleRow:          q.ForwardRuleRow.WithContext(ctx),
 		HitlRunRow:              q.HitlRunRow.WithContext(ctx),
 		HostShare:               q.HostShare.WithContext(ctx),
