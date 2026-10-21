@@ -199,6 +199,41 @@ func TestSessionCloseUnblocksBlockedMasterWrite(t *testing.T) {
 	}
 }
 
+func TestPollableMasterCloseOnExec(t *testing.T) {
+	master, slave, err := creack.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = master.Close()
+		_ = slave.Close()
+	}()
+	if err := creack.Setsize(master, &creack.Winsize{Cols: 80, Rows: 24}); err != nil {
+		t.Fatal(err)
+	}
+	master, err = pollableMaster(master)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := master.SyscallConn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var flags int
+	var fcntlErr error
+	if err := connection.Control(func(fd uintptr) {
+		flags, fcntlErr = unix.FcntlInt(fd, unix.F_GETFD, 0)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if fcntlErr != nil {
+		t.Fatal(fcntlErr)
+	}
+	if flags&unix.FD_CLOEXEC == 0 {
+		t.Fatal("pollable master is missing FD_CLOEXEC")
+	}
+}
+
 func TestSessionCloseKillsProcessTreeAndIsIdempotent(t *testing.T) {
 	pidPath := filepath.Join(t.TempDir(), "pty-child.pid")
 	command := fmt.Sprintf("sleep 1000 & child=$!; printf '%%s' \"$child\" > %s; wait", testShellQuote(pidPath))

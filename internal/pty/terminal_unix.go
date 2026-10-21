@@ -55,14 +55,18 @@ func pollableMaster(master *os.File) (*os.File, error) {
 	duplicateFD := -1
 	var duplicateErr error
 	if err := connection.Control(func(fd uintptr) {
+		syscall.ForkLock.RLock()
+		defer syscall.ForkLock.RUnlock()
 		duplicateFD, duplicateErr = unix.Dup(int(fd))
+		if duplicateErr == nil {
+			unix.CloseOnExec(duplicateFD)
+		}
 	}); err != nil {
 		return master, err
 	}
 	if duplicateErr != nil {
 		return master, duplicateErr
 	}
-	unix.CloseOnExec(duplicateFD)
 	if err := unix.SetNonblock(duplicateFD, true); err != nil {
 		_ = unix.Close(duplicateFD)
 		return master, err
