@@ -96,6 +96,12 @@ type InterruptInput struct {
 	Kind         Kind            `json:"kind"`
 	Parameters   json.RawMessage `json:"parameters"`
 	Question     *Question       `json:"question,omitempty"`
+	// RequiredEnvironmentNames are the production environment names a
+	// confirmation must type back, when the challenge already computed them
+	// from the real target set (for example a multi-target exec batch). When
+	// empty, the manager resolves them from the run's target asset through
+	// the configurable production classification.
+	RequiredEnvironmentNames []string `json:"requiredEnvironmentNames,omitempty"`
 }
 
 type Interrupt struct {

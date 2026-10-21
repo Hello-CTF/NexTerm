@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/ai/hitl"
 	"github.com/Hello-CTF/NexTerm/internal/ai/subagent"
 	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
+	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/cloudwego/eino/components/tool"
@@ -299,6 +301,10 @@ type Interaction struct {
 	Commands []string
 	// RulePattern is the path scope an "always allow" decision will grant; empty means the action is not path-limited.
 	RulePattern string
+	// RequiredEnvironmentNames are the production environment names the
+	// confirmation must type back, computed from the real target set (for
+	// example a multi-target exec batch challenge).
+	RequiredEnvironmentNames []string
 }
 
 type InteractionState struct {
@@ -684,16 +690,24 @@ func (e *Execution) runInner(ctx context.Context, name string, input any) (Outpu
 		if !hasData {
 			return Output{}, tool.StatefulInterrupt(ctx, state.Info, state)
 		}
-		if data == "deny" {
-			return Fail(errors.New("用户拒绝了此操作")), nil
-		}
-		if data != "allow" && data != "allow_session" && data != "allow_persistent" {
+		// The resume payload is structured: the decision plus the user's own
+		// typed environment names, validated against the challenge's required
+		// set by the hitl manager before the resume proceeds.
+		var resume hitl.ResumeValue
+		if err := json.Unmarshal([]byte(data), &resume); err != nil {
 			return Fail(errors.New("确认结果无效，操作未执行")), nil
 		}
-		if state.ProductionChallenge != nil && data != "allow" {
+		decision := resume.Decision
+		if decision == "deny" {
+			return Fail(errors.New("用户拒绝了此操作")), nil
+		}
+		if decision != "allow" && decision != "allow_session" && decision != "allow_persistent" {
+			return Fail(errors.New("确认结果无效，操作未执行")), nil
+		}
+		if state.ProductionChallenge != nil && decision != "allow" {
 			return Fail(errors.New("生产环境多主机执行只允许本次确认，操作未执行")), nil
 		}
-		if state.IsolatedTarget && data == "allow_persistent" {
+		if state.IsolatedTarget && decision == "allow_persistent" {
 			return Fail(errors.New("跨资产操作不能使用当前主机的永久授权，请仅本次确认")), nil
 		}
 		if call.Name == "send_keys" {
@@ -714,7 +728,7 @@ func (e *Execution) runInner(ctx context.Context, name string, input any) (Outpu
 				return Fail(ErrTerminalInputChanged), nil
 			}
 		}
-		if data == "allow_session" {
+		if decision == "allow_session" {
 			if guard.RuleActionNeedsPath(state.Resource.Action) && state.Resource.Path != "" {
 				e.Memory.AddPathRule(state.Resource.Action, guard.DirPattern(state.Resource.Path))
 			} else {
@@ -726,7 +740,7 @@ func (e *Execution) runInner(ctx context.Context, name string, input any) (Outpu
 				}
 			}
 		}
-		if data == "allow_persistent" {
+		if decision == "allow_persistent" {
 			if err := e.persistPermanentGrant(ctx, state); err != nil {
 				return Fail(err), nil
 			}
@@ -735,7 +749,14 @@ func (e *Execution) runInner(ctx context.Context, name string, input any) (Outpu
 		if state.ProductionChallenge != nil {
 			call.OriginID = state.Info.CallID
 			call.ID += ":production"
-			call.ProductionConfirmations = append(call.ProductionConfirmations, state.ProductionChallenge.Confirmations...)
+			// Fill every confirmation with the user's typed names from the
+			// resume value — never echoed from the challenge — so the exec
+			// batch's exact-name validation sees the actual user input.
+			confirmations := append([]execbatch.ProductionConfirmation(nil), state.ProductionChallenge.Confirmations...)
+			for index := range confirmations {
+				confirmations[index].EnvironmentNames = append([]string(nil), resume.EnvironmentNames...)
+			}
+			call.ProductionConfirmations = append(call.ProductionConfirmations, confirmations...)
 		}
 		if call.Name == ReminderTool {
 			return e.executeReminder(ctx, call), nil
@@ -867,7 +888,7 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 		if len(targets) > 0 {
 			reason += "；生产目标：" + strings.Join(targets, ", ")
 		}
-		info := Interaction{Kind: "confirm", CallID: call.ID, Tool: call.Name, Args: string(call.Args), Risk: guard.Danger.String(), Rendered: DisplayCall(call), Reason: reason}
+		info := Interaction{Kind: "confirm", CallID: call.ID, Tool: call.Name, Args: string(call.Args), Risk: guard.Danger.String(), Rendered: DisplayCall(call), Reason: reason, RequiredEnvironmentNames: append([]string(nil), challenge.Detail.RequiredEnvironmentNames...)}
 		if call.Name == "exec_commands" {
 			var input ExecCommandsArgs
 			if json.Unmarshal(call.Args, &input) == nil {

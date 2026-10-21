@@ -714,13 +714,14 @@ func (r *Runner) handleInterrupt(current *job, contexts []*adk.InterruptCtx) err
 			return err
 		}
 		request, err := r.hitl.Interrupt(current.ctx, context, hitl.InterruptInput{
-			RunID:        current.id,
-			CheckpointID: current.id,
-			CallID:       interaction.CallID,
-			Tool:         interaction.Tool,
-			Kind:         kind,
-			Parameters:   json.RawMessage(interaction.Args),
-			Question:     question,
+			RunID:                    current.id,
+			CheckpointID:             current.id,
+			CallID:                   interaction.CallID,
+			Tool:                     interaction.Tool,
+			Kind:                     kind,
+			Parameters:               json.RawMessage(interaction.Args),
+			Question:                 question,
+			RequiredEnvironmentNames: interaction.RequiredEnvironmentNames,
 		})
 		if err != nil {
 			return err

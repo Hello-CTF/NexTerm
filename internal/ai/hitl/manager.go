@@ -214,11 +214,15 @@ func (m *Manager) interruptRun(ctx context.Context, run *runState, target *adk.I
 	if err != nil {
 		return Interrupt{}, err
 	}
-	// The production challenge is resolved from the real target asset through
-	// the configurable classification, never from client input; the user must
-	// type these names back at resume time.
+	// The production challenge comes from the real target set: an input that
+	// already carries the required names (for example a multi-target exec
+	// batch challenge) wins; otherwise the names are resolved from the run's
+	// target asset through the configurable production classification. Never
+	// from client input; the user must type these names back at resume time.
 	var requiredEnvironmentNames []string
-	if m.environmentResolver != nil {
+	if len(input.RequiredEnvironmentNames) > 0 {
+		requiredEnvironmentNames = append([]string(nil), input.RequiredEnvironmentNames...)
+	} else if m.environmentResolver != nil {
 		requiredEnvironmentNames, err = m.environmentResolver(ctx, asset)
 		if err != nil {
 			return Interrupt{}, err
@@ -479,6 +483,15 @@ func (m *Manager) resumeRun(ctx context.Context, run *runState, resumer Resumer,
 	return resume, iterator, nil
 }
 
+// ResumeValue is the structured resume payload for a confirm answer: the
+// decision plus the user's actual typed environment names. The names are the
+// user's own input, never echoed from the challenge; they are validated
+// against the challenge's required set before the resume proceeds.
+type ResumeValue struct {
+	Decision         string   `json:"decision"`
+	EnvironmentNames []string `json:"environmentNames,omitempty"`
+}
+
 func answerValue(kind Kind, answer Answer) (string, error) {
 	switch kind {
 	case KindConfirm:
@@ -487,7 +500,11 @@ func answerValue(kind Kind, answer Answer) (string, error) {
 		}
 		switch answer.Decision {
 		case DecisionAllow, DecisionAllowSession, DecisionAllowPersist, DecisionDeny:
-			return string(answer.Decision), nil
+			encoded, err := json.Marshal(ResumeValue{Decision: string(answer.Decision), EnvironmentNames: answer.EnvironmentNames})
+			if err != nil {
+				return "", err
+			}
+			return string(encoded), nil
 		default:
 			return "", ErrInvalidArgument
 		}

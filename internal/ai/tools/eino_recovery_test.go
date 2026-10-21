@@ -70,8 +70,8 @@ func (m *recoveryModel) Stream(context.Context, []*schema.Message, ...model.Opti
 // TestEinoHITLOutcomeProductionResumeWithoutEnvironmentNamesRejected pins the
 // fail-closed contract: a production resume whose confirmations omit the typed
 // environment names executes nothing, the rejection is recorded, and the
-// consumed request still cannot be replayed. The typed-name success path
-// arrives with the real HITL name collection.
+// consumed request still cannot be replayed. The typed-name success path is
+// covered end to end by the agent-level production exec regressions.
 func TestEinoHITLOutcomeProductionResumeWithoutEnvironmentNamesRejected(t *testing.T) {
 	const arguments = `{"commands":["echo one"],"asset_ids":["asset-prod"]}`
 	transport := successfulBatchTransport()
