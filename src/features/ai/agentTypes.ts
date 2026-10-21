@@ -40,7 +40,9 @@ export interface AgentRosterEntry {
   isMine: boolean;
   production: boolean;
   persistent: boolean;
-  incarnation: number;
+  // The backend incarnation is an opaque durable-identity string, never a
+  // sequence number; it is carried for exact-identity operations, not display.
+  incarnation: string;
   presence: AgentPresence;
   evidence: AgentEvidence | null;
   releasePending: boolean;

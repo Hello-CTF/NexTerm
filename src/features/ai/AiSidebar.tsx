@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent as ReactDragEvent } from "react";
 import { ask, askChoice, promptText } from "../../ui/dialogs";
-import { aiApi, assetApi, modelApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc/commands";
+import { aiApi, assetApi, modelApi, terminalApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc/commands";
 import { createAiChannel, disposeChannel, onChannelReopen, type IpcChannel } from "../../ipc/events";
 import type { AiHitlEventDto, AiHitlSnapshotDto, AiRunDto, MessageDto } from "../../ipc/types";
 import {
@@ -25,6 +25,13 @@ import { DESKTOP } from "../../ipc/env";
 import { ModelPanel } from "./ModelPanel";
 import { GrantPanel } from "./GrantPanel";
 import { CronPanel } from "./CronPanel";
+import { AgentRosterPanel } from "./AgentRosterPanel";
+import { AgentRunHistoryPanel } from "./AgentRunHistoryPanel";
+import { WatchPanel } from "./WatchPanel";
+import { createAgentRosterApi, createAgentRunHistoryApi } from "./agentProduction";
+import type { AgentApprovalDecision, AgentRosterEntry } from "./agentTypes";
+import { watchPanelApi } from "../../ipc/watchApi";
+import { useAuth } from "../auth/store";
 import { ModelSelector } from "./ModelSelector";
 import { Markdown } from "./Markdown";
 import { ProductionWriteRiskNotice } from "../production/ProductionWarning";
@@ -923,6 +930,8 @@ function AiChatTab({
   const [permOpen, setPermOpen] = useState(false);
   const [grantOpen, setGrantOpen] = useState(false);
   const [cronOpen, setCronOpen] = useState(false);
+  const [agentOpen, setAgentOpen] = useState(false);
+  const [watchOpen, setWatchOpen] = useState(false);
   const [images, setImages] = useState<string[]>([]);
   const [refs, setRefs] = useState<RefChip[]>([]);
   const [atOpen, setAtOpen] = useState(false);
@@ -998,7 +1007,10 @@ function AiChatTab({
   }, [permOpen, loadPermission]);
 
   useEffect(() => {
-    if (!conversationId) setCronOpen(false);
+    if (!conversationId) {
+      setCronOpen(false);
+      setAgentOpen(false);
+    }
   }, [conversationId]);
 
   const savePerm = async (next: AiPermissionConfig) => {
@@ -2014,6 +2026,115 @@ function AiChatTab({
     }
   };
 
+  // Agent production wiring: the reviewed roster/history panels consume the
+  // real generated IPC through the adapter (no unsafeCall), and the approval
+  // delegate maps reviewed decisions onto the pending HITL interaction.
+  const authUser = useAuth((s) => s.user);
+  const agentOwnerId = authUser?.id ?? "";
+  const agentOwnerName = authUser?.display_name || authUser?.username || "";
+  const resolveAgentApproval = useCallback(
+    async (requestId: string, decision: AgentApprovalDecision) => {
+      const run = activeRunRef.current;
+      const card = pendingInteraction(stream.getState(), run?.generation ?? null, "confirm");
+      if (!run?.jobId || !card || card.requestId !== requestId) {
+        throw { code: "conflict", message: "审批请求不存在或已解决，请稍后刷新重试" };
+      }
+      const mapped = decision === "approve_once" ? "allow" : decision === "approve_session" ? "allow_session" : "deny";
+      const input = confirmationInput({ jobId: run.jobId, callId: card.callId, nonce: card.nonce }, mapped);
+      const channel = card.jobId === restoredChannelRef.current?.jobId ? restoredChannelRef.current.channel : undefined;
+      if (run.kind === "takeover") {
+        await aiApi.takeoverConfirm(input);
+      } else if (channel) {
+        await aiApi.confirm(input, channel);
+      } else {
+        await aiApi.confirm(input);
+      }
+      if (isCurrentAiRun(activeRunRef.current, run.generation)) {
+        stream.resolveInteraction(run.generation, card.id, card.nonce, CONFIRM_RESOLUTION[mapped]);
+      }
+    },
+    [stream],
+  );
+  const agentRosterApi = useMemo(
+    () =>
+      conversationId === undefined
+        ? null
+        : createAgentRosterApi({
+            conversationId,
+            identity: { ownerId: agentOwnerId, ownerName: agentOwnerName },
+            activeJobId: () => activeRunRef.current?.jobId ?? "",
+            resolveApproval: resolveAgentApproval,
+          }),
+    [conversationId, agentOwnerId, agentOwnerName, resolveAgentApproval],
+  );
+  const agentHistoryApi = useMemo(() => createAgentRunHistoryApi(), []);
+  const watchOwner = agentOwnerId === "" ? "local" : agentOwnerId;
+  const mentionAgentHandle = useCallback((token: string) => {
+    setInput((prev) => {
+      const base = prev.replace(/\s+$/, "");
+      return base === "" ? `${token} ` : `${base} ${token} `;
+    });
+    inputRef.current?.focus();
+  }, []);
+  const openAgentTerminal = useCallback(
+    (tabId: string, entry: AgentRosterEntry) => {
+      const state = useUi.getState();
+      for (const workspace of state.workspaces) {
+        for (const pane of workspace.panes) {
+          const existing = pane.tabs.find((tab) => tab.tabId === tabId);
+          if (existing) {
+            state.setActiveWorkspace(workspace.id);
+            state.setActivePane(pane.id, workspace.id);
+            state.setActiveTab(existing.id);
+            return;
+          }
+        }
+      }
+      // No live view yet: resolve the owning session through the real backend
+      // tab lists (live first, then durable per session), then attach a
+      // terminal tab bound to that durable backend tab — never a new shell.
+      void (async () => {
+        try {
+          const live = await terminalApi.listLive();
+          let sessionId = live.find((tab) => tab.tabId === tabId)?.sessionId;
+          if (sessionId === undefined) {
+            const durable = await Promise.all(
+              state.sessions.map(async (session) => {
+                const rows = await terminalApi.listDurable(session.id);
+                return rows.some((row) => row.id === tabId) ? session.id : undefined;
+              }),
+            );
+            sessionId = durable.find((id) => id !== undefined);
+          }
+          const session = state.sessions.find((item) => item.id === sessionId);
+          if (!session) {
+            pushToast("error", `无法定位句柄 ${entry.handle} 终端所属会话（可能已断开），请刷新句柄列表`);
+            return;
+          }
+          const workspaceId = state.ensureWorkspace({
+            kind: "session",
+            sessionId: session.id,
+            assetId: session.assetId ?? undefined,
+            title: session.name,
+            assetKind: session.kind,
+          });
+          state.setActiveWorkspace(workspaceId);
+          state.addTab({
+            id: nextTabId(`term-${session.id}`),
+            kind: "terminal",
+            title: entry.handle,
+            sessionId: session.id,
+            tabId,
+            closable: true,
+          });
+        } catch (e) {
+          pushToast("error", `打开句柄终端失败：${describeError(e)}`);
+        }
+      })();
+    },
+    [pushToast],
+  );
+
   const stop = () => {
     void requestCancellation(false);
   };
@@ -2502,6 +2623,26 @@ function AiChatTab({
           <IconClock size={14} />
         </button>
         <button
+          className={`nx-icon-btn nx-icon-btn-sm ${agentOpen ? "is-active" : ""}`}
+          title={
+            conversationId
+              ? "当前会话的 Agent 句柄与 run 历史"
+              : "Agent 句柄挂在会话上：先发送消息开始一个会话"
+          }
+          disabled={!conversationId}
+          onClick={() => setAgentOpen((v) => !v)}
+        >
+          <IconBot size={14} />
+        </button>
+        <button
+          className={`nx-icon-btn nx-icon-btn-sm ${watchOpen ? "is-active" : ""}`}
+          title="Watch 监视"
+          aria-expanded={watchOpen}
+          onClick={() => setWatchOpen((v) => !v)}
+        >
+          <IconMonitor size={14} />
+        </button>
+        <button
           className={`nx-icon-btn nx-icon-btn-sm ${historyOpen ? "is-active" : ""}`}
           title="历史会话"
           onClick={toggleHistory}
@@ -2741,6 +2882,26 @@ function AiChatTab({
           hostName={activeWorkspace?.kind === "session" ? activeWorkspace.title : undefined}
           onClose={() => setCronOpen(false)}
         />
+      )}
+
+      {agentOpen && conversationId && agentRosterApi && (
+        <>
+          <AgentRosterPanel
+            api={agentRosterApi}
+            onMention={mentionAgentHandle}
+            onOpened={openAgentTerminal}
+          />
+          <AgentRunHistoryPanel
+            api={agentHistoryApi}
+            scope={{ ownerId: agentOwnerId, conversationId }}
+          />
+        </>
+      )}
+
+      {watchOpen && (
+        <div className="max-h-[55%] shrink-0 overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60">
+          <WatchPanel api={watchPanelApi} owner={watchOwner} onClose={() => setWatchOpen(false)} />
+        </div>
       )}
 
       {grantOpen && <GrantPanel onClose={() => setGrantOpen(false)} />}

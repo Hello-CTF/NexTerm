@@ -29,7 +29,7 @@ function entry(partial: Partial<AgentRosterEntry> = {}): AgentRosterEntry {
     isMine: true,
     production: false,
     persistent: true,
-    incarnation: 3,
+    incarnation: "inc-3",
     presence: "attached",
     evidence: { kind: "attach", observedAt: 1_760_000_000_000, summary: "附加成功" },
     releasePending: false,
