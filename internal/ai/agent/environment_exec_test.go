@@ -266,9 +266,19 @@ func TestProductionExecTypedEnvironmentNamesAfterRestart(t *testing.T) {
 	if transport.calls() != 0 {
 		t.Fatal("exec ran despite the bare confirmation")
 	}
-	// The restart rebuilds the runner over the same store; the persisted
-	// challenge still requires the typed names, and the typed names resume
-	// and execute for real.
+	// The restart builds a fresh HITL manager over the same store, exactly
+	// like a real process restart: the original run, blob, and checkpoint are
+	// the recovery inputs. Two live runners sharing one manager is not a
+	// production restart scenario — the original manager's watcher would race
+	// the restarted run's normal completion.
+	restartedManager, err := hitl.NewManager(hitl.Config{
+		Checkpoints: NewStoreCheckpoints(storage),
+		Store:       hitlStoreBridge{storage},
+		TTL:         time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	restarted := NewRunner(Config{
 		Model: func(context.Context) (model.BaseChatModel, uint64, error) {
 			return sequenceModel(schema.AssistantMessage("done", nil)), 32768, nil
@@ -277,7 +287,7 @@ func TestProductionExecTypedEnvironmentNamesAfterRestart(t *testing.T) {
 		Store:       storage,
 		Runs:        storage,
 		Checkpoints: NewStoreCheckpoints(storage),
-		HITL:        manager,
+		HITL:        restartedManager,
 	})
 	t.Cleanup(func() { _ = restarted.Close() })
 	if err := restarted.RecoverRuns(context.Background()); err != nil {
@@ -294,7 +304,6 @@ func TestProductionExecTypedEnvironmentNamesAfterRestart(t *testing.T) {
 	if transport.calls() != 1 {
 		t.Fatalf("exec calls = %d, want 1", transport.calls())
 	}
-	// The run's final status is not asserted: a pre-existing race between the
-	// restored run's watcher and its normal completion can mark it failed
-	// after the exec already succeeded, which is outside this test's scope.
+	waitRunStatus(t, storage, response.JobID, store.RunStatusCompleted)
+	waitTerminalJournal(t, storage, response.JobID, "done")
 }
