@@ -28,6 +28,7 @@ func TestSessionManagerCreationIPCErrorCodes(t *testing.T) {
 	if err := service.RegisterCommands(dispatcher); err != nil {
 		t.Fatal(err)
 	}
+	ownerCtx := ipc.WithUserID(t.Context(), "session-owner")
 	assertCreationError := func(sessionID string, want ipc.Code) {
 		t.Helper()
 		for _, command := range []string{"forward_create", "forward_create_socks", "forward_create_remote"} {
@@ -44,7 +45,7 @@ func TestSessionManagerCreationIPCErrorCodes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			response := dispatcher.Dispatch(t.Context(), ipc.Request{Command: command, Args: args}, ipc.Environment{})
+			response := dispatcher.Dispatch(ownerCtx, ipc.Request{Command: command, Args: args}, ipc.Environment{})
 			if response.OK || response.Error == nil || response.Error.Code != want {
 				t.Fatalf("%s session %q response = %+v, want %s", command, sessionID, response, want)
 			}
@@ -52,7 +53,7 @@ func TestSessionManagerCreationIPCErrorCodes(t *testing.T) {
 	}
 
 	t.Run("local unsupported", func(t *testing.T) {
-		connectedSession, err := manager.Connect(t.Context(), session.Asset{ID: "local-asset", Kind: session.KindLocal})
+		connectedSession, err := manager.Connect(ownerCtx, session.Asset{ID: "local-asset", Kind: session.KindLocal})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -62,7 +63,7 @@ func TestSessionManagerCreationIPCErrorCodes(t *testing.T) {
 		assertCreationError("missing-session", ipc.CodeNotFound)
 	})
 	t.Run("disconnected", func(t *testing.T) {
-		connectedSession, err := manager.Connect(t.Context(), session.Asset{ID: "ssh-asset", Kind: session.KindSSH})
+		connectedSession, err := manager.Connect(ownerCtx, session.Asset{ID: "ssh-asset", Kind: session.KindSSH})
 		if err != nil {
 			t.Fatal(err)
 		}
