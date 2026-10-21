@@ -43,6 +43,13 @@ function formatted(diagnostics: readonly ts.Diagnostic[]): string {
   });
 }
 
+// ts.sys.resolvePath keeps the platform separator while the compiler reports
+// file names with normalized forward slashes; compare on separator form so the
+// assertion holds on Windows without weakening the check.
+function sameFileName(a: string, b: string): boolean {
+  return a.replaceAll("\\", "/") === b.replaceAll("\\", "/");
+}
+
 describe("typed IPC call contract", () => {
   // These tests run a real in-memory TypeScript compile of the generated IPC
   // graph — deterministic CPU work, not an async wait that could be awaited
@@ -99,6 +106,6 @@ void unsafeCall(dynamic);
     if (source === undefined) throw new Error("generated IPC types are missing");
     const diagnostics = compile([consumer], { [generated]: source.replaceAll("batchId", "batchID") });
     expect(diagnostics.length).toBeGreaterThan(0);
-    expect(diagnostics.some((diagnostic) => diagnostic.file?.fileName === consumer)).toBe(true);
+    expect(diagnostics.some((diagnostic) => diagnostic.file !== undefined && sameFileName(diagnostic.file.fileName, consumer))).toBe(true);
   }, COMPILE_BUDGET_MS);
 });

@@ -284,6 +284,9 @@ func TestProductionHostKeyCompositionModes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if err := production.Start(ctx); err != nil {
+				t.Fatal(err)
+			}
 			t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
 			keys := production.Services.hostKeys
 			if keys == nil || keys.shared != test.shared {

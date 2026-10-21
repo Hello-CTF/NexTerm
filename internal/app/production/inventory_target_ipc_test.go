@@ -1284,6 +1284,7 @@ func readPersistedWatchOwners(t *testing.T, path string) map[string]string {
 func TestInventoryServerSSHWatchPersistsAndRestores(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	dataDir := t.TempDir()
 	database, err := store.OpenInMemory(context.Background())
 	if err != nil {
