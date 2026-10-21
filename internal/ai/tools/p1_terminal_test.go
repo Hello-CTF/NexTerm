@@ -141,17 +141,24 @@ func (f *tabFakeTerminal) CommandState(_ context.Context, tabID string) (Command
 }
 
 func (f *tabFakeTerminal) OutputSince(_ context.Context, tabID string, seq uint64, maxBytes int) ([]byte, uint64, uint64, error) {
+	tab, err := f.tab(tabID)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	// Complete the read before firing the hook: a hook that lets a producer
+	// append in response must never have its output swallowed by this read's
+	// fromSeq — the append is new output for the next scan, not this one.
+	data, start, latest, err := tab.ring.since(seq, maxBytes)
+	if err != nil {
+		return nil, 0, 0, err
+	}
 	f.mu.Lock()
 	hook := f.outputSinceHook
 	f.mu.Unlock()
 	if hook != nil {
 		hook(tabID)
 	}
-	tab, err := f.tab(tabID)
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	return tab.ring.since(seq, maxBytes)
+	return data, start, latest, nil
 }
 
 func (f *tabFakeTerminal) ListTerminalTabs(context.Context) ([]TerminalBrief, error) {
@@ -556,7 +563,9 @@ func TestTerminalCreateConnectStages(t *testing.T) {
 // result metadata carrying exact anchors.
 // waitAnchoredHook returns a hook plus per-tab channels that close when the
 // wait has read each tab's anchor, so tests append output strictly after
-// anchoring instead of racing a sleep.
+// anchoring instead of racing a sleep. The hook fires only after the
+// triggering read completes, so an append made in response is new output for
+// the next scan — never swallowed by the anchored read's fromSeq.
 func waitAnchoredHook(tabIDs ...string) (func(string), map[string]chan struct{}) {
 	anchored := make(map[string]chan struct{}, len(tabIDs))
 	onces := make(map[string]*sync.Once, len(tabIDs))
@@ -570,6 +579,32 @@ func waitAnchoredHook(tabIDs ...string) (func(string), map[string]chan struct{})
 		}
 	}
 	return hook, anchored
+}
+
+// The anchor hook fires only after the triggering read completes: output
+// appended in response to it is new output for the next scan, never
+// swallowed by the anchored read's fromSeq. This pins the hook-after-read
+// interleaving deterministically — with the hook firing before the read,
+// the append below would land inside the read and fail the assertion.
+func TestTabFakeOutputSinceHookFiresAfterRead(t *testing.T) {
+	tab := fakeTab("t1", "s1", "$ ", 5)
+	fake := newTabFake(tab)
+	var once sync.Once
+	fake.outputSinceHook = func(string) {
+		once.Do(func() { tab.ring.append("after-anchor\r\n") })
+	}
+	data, _, latest, err := fake.OutputSince(context.Background(), "t1", 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "after-anchor") {
+		t.Fatalf("read included output appended in the hook: %q", data)
+	}
+	// The append is new output for the follow-up scan.
+	data2, _, latest2, err := fake.OutputSince(context.Background(), "t1", latest, 100)
+	if err != nil || !strings.Contains(string(data2), "after-anchor") || latest2 <= latest {
+		t.Fatalf("follow-up read = %q latest=%d err=%v", data2, latest2, err)
+	}
 }
 
 func TestWaitForTabsAnyMode(t *testing.T) {
