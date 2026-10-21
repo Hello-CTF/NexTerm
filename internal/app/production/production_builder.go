@@ -195,6 +195,9 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 					}
 				}
 			}
+			if services.watches != nil {
+				services.watches.onSessionEvent(ctx, event)
+			}
 			return emitter.EmitSessionEvent(ctx, event)
 		}),
 	})
@@ -357,6 +360,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		{Name: "ai-skills", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
 			return skills.RegisterIPC(dispatcher, services.Skills)
 		}},
+		{Name: "watch", RegisterCommands: services.watches.registerCommands, Component: services.watches},
 		{Name: "forward-runtime", RegisterCommands: forwardRuntime.registerCommands, Component: forwardRuntime},
 	}, config.Config.Modules...)
 	production, err := NewProductionWithServices(config.Config, services)

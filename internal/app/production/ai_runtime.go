@@ -692,6 +692,11 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	services.cron = &cronRuntime{scheduler: cronScheduler, conversations: services.Store, profiles: services.Profiles, scopeValidator: productionScopeValidator(services)}
 
 	services.aiRelease = takeover.InstallSessionHooks(services.Sessions, takeoverManager)
+
+	// The watch service shares the AI runtime's roster and store: executors
+	// start lazily per owner, and session events drive the lifecycle
+	// reconcile through the emitter hook installed in the builder.
+	services.watches = newWatchService(services.Store, services.Sessions, services.Events, roster, nil)
 	return nil
 }
 
@@ -721,6 +726,10 @@ func aiProfileModelFactory(manager *profiles.Manager) agent.ProfileModelFactory 
 }
 
 func (s *ProductionServices) closeAIRuntime() {
+	if s.watches != nil {
+		_ = s.watches.Shutdown(context.Background())
+		s.watches = nil
+	}
 	if s.cron != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

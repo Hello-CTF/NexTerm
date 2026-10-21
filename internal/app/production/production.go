@@ -79,6 +79,7 @@ type ProductionServices struct {
 	hostKeysShared   bool
 	aiRelease        func()
 	cron             *cronRuntime
+	watches          *watchService
 	Transcripts      *transcriptWriter
 	aiRetention      *aiRetentionComponent
 	inventory        *inventoryService

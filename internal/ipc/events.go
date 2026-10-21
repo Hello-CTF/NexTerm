@@ -23,6 +23,7 @@ const (
 	TopicDeviceStatus      Topic = "device://status"
 	TopicUpdateProgress    Topic = "update://progress"
 	TopicAINotification    Topic = "ai://notification"
+	TopicAIWatchToolData   Topic = "ai://watch-tool-data"
 	TopicInventoryChanged  Topic = "inventory://changed"
 )
 

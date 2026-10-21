@@ -291,6 +291,30 @@
       "channel": false,
       "stream": "none"
     },
+    "ai_watch_cancel": {
+      "scope": "ai-watch",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_watch_create": {
+      "scope": "ai-watch",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_watch_list": {
+      "scope": "ai-watch",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_watch_targets": {
+      "scope": "ai-watch",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "app_info": {
       "nested": false,
       "channel": false,

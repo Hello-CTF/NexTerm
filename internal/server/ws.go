@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/ai/watches"
 	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -187,6 +188,9 @@ func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
 		case ipc.TopicAINotification:
 			notification, ok := event.Payload.(ipc.AINotificationEvent)
 			return ok && notification.OwnerID != "" && notification.OwnerID == userID
+		case ipc.TopicAIWatchToolData:
+			toolData, ok := event.Payload.(watches.ToolDataEvent)
+			return ok && toolData.OwnerID != "" && toolData.OwnerID == userID
 		case ipc.TopicLayoutChanged:
 			_, ok := event.Payload.(ipc.LayoutChangedEvent)
 			return ok && event.OwnerID != "" && event.OwnerID == userID

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/ai/watches"
 	fleetserver "github.com/Hello-CTF/NexTerm/internal/fleet/server"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
@@ -142,6 +143,10 @@ VALUES(?,?,'box','agent',1)`, row.deviceID, row.ownerID); err != nil {
 		{"other user notification", ipc.Event{Event: ipc.TopicAINotification, Payload: ipc.AINotificationEvent{OwnerID: "u-2", Text: "构建完成"}}, false},
 		{"ownerless notification", ipc.Event{Event: ipc.TopicAINotification, Payload: ipc.AINotificationEvent{Text: "构建完成"}}, false},
 		{"foreign notification payload", ipc.Event{Event: ipc.TopicAINotification, Payload: map[string]any{"ownerId": "u-1"}}, false},
+		{"own watch tool data", ipc.Event{Event: ipc.TopicAIWatchToolData, Payload: watches.ToolDataEvent{OwnerID: "u-1", Data: watches.NewToolData(watches.Event{Kind: watches.EventKind, DeliveryID: "d-1"})}}, true},
+		{"other user watch tool data", ipc.Event{Event: ipc.TopicAIWatchToolData, Payload: watches.ToolDataEvent{OwnerID: "u-2", Data: watches.NewToolData(watches.Event{Kind: watches.EventKind, DeliveryID: "d-1"})}}, false},
+		{"ownerless watch tool data", ipc.Event{Event: ipc.TopicAIWatchToolData, Payload: watches.ToolDataEvent{Data: watches.NewToolData(watches.Event{Kind: watches.EventKind, DeliveryID: "d-1"})}}, false},
+		{"foreign watch tool data payload", ipc.Event{Event: ipc.TopicAIWatchToolData, Payload: map[string]any{"ownerId": "u-1"}}, false},
 		{"own layout", ipc.Event{Event: ipc.TopicLayoutChanged, Payload: ipc.LayoutChangedEvent{Revision: 1}, OwnerID: "u-1"}, true},
 		{"other user layout", ipc.Event{Event: ipc.TopicLayoutChanged, Payload: ipc.LayoutChangedEvent{Revision: 1}, OwnerID: "u-2"}, false},
 		{"ownerless layout", ipc.Event{Event: ipc.TopicLayoutChanged, Payload: ipc.LayoutChangedEvent{Revision: 1}}, false},
