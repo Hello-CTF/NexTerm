@@ -216,3 +216,78 @@ func TestProductionWatchMissingTabIsDisconnectedNotGone(t *testing.T) {
 		t.Fatalf("watch of a closed tab must stay armed: %+v", rows)
 	}
 }
+
+// The dead-runner re-attach leg of the P1 regression: a runner that exits
+// (here: the tab's stream ends) leaves the engine mirror attached with the
+// same identity, and a manual reconcile must re-attach instead of skipping on
+// the stale credential. The re-attached runner promptly reaches EOF again —
+// the stream is over — which is bounded and harmless. The automatic trigger
+// side of the regression is the recovery leg
+// (TestProductionWatchDurableRecoveryReattachesAndStaysHonest): the durable
+// recovery control event drives the same reconcile. The watch stays armed
+// throughout: a finished stream is not a gone target.
+func TestProductionWatchManualReconcileReattachesDeadRunner(t *testing.T) {
+	database, sessions, events := newWatchTestFixture(t)
+	service, dispatcher := newWatchTestService(t, database, sessions, events, time.Hour)
+	ctxA := watchOwnerCtx("owner-a")
+	tab := registerWatchTargetTab(t, sessions, "owner-a")
+	attached := make(chan string, 4)
+	service.attachHook = func(targetID string) { attached <- targetID }
+
+	create := dispatchWatch(t, ctxA, dispatcher, "ai_watch_create", `{"targetId":"`+tab.ID+`","condition":{"type":"contains","pattern":"ready"},"repeat":false,"expiresAt":0}`)
+	if !create.OK {
+		t.Fatalf("ai_watch_create = %+v", create.Error)
+	}
+	var summary WatchSummary
+	if err := json.Unmarshal(create.Data, &summary); err != nil {
+		t.Fatal(err)
+	}
+	drainAttachHook(attached, tab.ID)
+	if err := sessions.EndRemote(tab.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	waitWatchRunnerState(t, service, "owner-a", tab.ID, false)
+	service.reconcileOwner("owner-a")
+	select {
+	case targetID := <-attached:
+		if targetID != tab.ID {
+			t.Fatalf("manual reconcile attached %s; want %s", targetID, tab.ID)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("manual reconcile skipped the re-attach of a dead runner with an unchanged identity")
+	}
+	row, err := database.AgentWatchGet(ctxA, summary.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != store.AgentWatchStatusArmed {
+		t.Fatalf("watch after re-attach = %s; want armed (a finished stream is not a gone target)", row.Status)
+	}
+}
+
+func drainAttachHook(attached chan string, want string) {
+	for {
+		select {
+		case <-attached:
+			return
+		case <-time.After(5 * time.Second):
+			return
+		}
+	}
+}
+
+func waitWatchRunnerState(t *testing.T, service *watchService, owner, targetID string, alive bool) {
+	t.Helper()
+	ctx := watchOwnerCtx(owner)
+	executor, err := service.executorFor(ctx, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for executor.RunnerAlive(targetID) != alive {
+		if time.Now().After(deadline) {
+			t.Fatalf("runner alive for %s stuck at %v; want %v", targetID, !alive, alive)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

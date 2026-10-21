@@ -35,6 +35,11 @@ type watchService struct {
 	dispatchInterval time.Duration
 	pollInterval     time.Duration
 
+	// attachHook, when set (tests only), runs after every successful
+	// AttachTarget so a regression can prove a re-attach happened without
+	// racing the runner's lifecycle.
+	attachHook func(targetID string)
+
 	mu        sync.Mutex
 	executors map[string]*watches.Executor
 	closed    bool
@@ -105,10 +110,22 @@ func (s *watchService) openSource(ctx context.Context, targetID, episode string)
 	return watchSourceAdapter{source: source}, state, nil
 }
 
-// ensureAttached attaches the target to its current evidenced episode: a
-// no-op when the executor already mirrors that episode, a replacement attach
-// when the episode advanced (settling the old incarnation's watches), or a
-// fresh attach. The target must exist for the caller and its episode must be
+// needsAttach reports whether the target must be (re-)attached: always when
+// the mirror does not hold the current watch identity, and also when it does
+// but the runner is dead — a runner that exited on a terminal source failure
+// or stream end leaves the mirror attached while nobody consumes output.
+func (s *watchService) needsAttach(ctx context.Context, executor *watches.Executor, targetID, identity string) bool {
+	mirror, attached := executor.AttachedIdentity(ctx, targetID)
+	if !attached || mirror != identity {
+		return true
+	}
+	return !executor.RunnerAlive(targetID)
+}
+
+// ensureAttached attaches the target to its current watch identity: a no-op
+// when a live runner already consumes that stream, a replacement attach when
+// the identity advanced (settling the old incarnation's watches), or a fresh
+// attach. The target must exist for the caller and its episode must be
 // evidenced; terminals without sequence tracking are honestly unsupported.
 func (s *watchService) ensureAttached(ctx context.Context, executor *watches.Executor, targetID string) error {
 	state, ok := s.sessions.WatchStreamState(ctx, targetID)
@@ -118,20 +135,24 @@ func (s *watchService) ensureAttached(ctx context.Context, executor *watches.Exe
 	if !state.EpisodeOK {
 		return ipc.NewError(ipc.CodeUnsupported, "watch 目标身份不可验证")
 	}
-	if identity, attached := executor.AttachedIdentity(ctx, targetID); attached && identity == state.Episode {
+	identity := state.WatchIdentity()
+	if !s.needsAttach(ctx, executor, targetID, identity) {
 		return nil
 	}
-	source, _, err := s.openSource(ctx, targetID, state.Episode)
+	source, _, err := s.openSource(ctx, targetID, identity)
 	if err != nil {
 		return mapWatchSourceError(err)
 	}
-	if err := executor.AttachTarget(ctx, targetID, state.Episode, source); err != nil {
-		// The startup reconcile may attach the same episode concurrently;
+	if err := executor.AttachTarget(ctx, targetID, identity, source); err != nil {
+		// The startup reconcile may attach the same identity concurrently;
 		// losing that race is not a failure when the mirror landed identically.
-		if identity, attached := executor.AttachedIdentity(ctx, targetID); attached && identity == state.Episode {
+		if mirror, attached := executor.AttachedIdentity(ctx, targetID); attached && mirror == identity {
 			return nil
 		}
 		return err
+	}
+	if s.attachHook != nil {
+		s.attachHook(targetID)
 	}
 	return nil
 }
@@ -166,25 +187,36 @@ func (s *watchService) reconcileOwner(owner string) {
 		if !ok || !state.EpisodeOK {
 			continue
 		}
-		if identity, attached := executor.AttachedIdentity(ctx, row.TargetID); attached && identity == state.Episode {
+		identity := state.WatchIdentity()
+		if !s.needsAttach(ctx, executor, row.TargetID, identity) {
 			continue
 		}
-		source, _, err := s.openSource(ctx, row.TargetID, state.Episode)
+		source, _, err := s.openSource(ctx, row.TargetID, identity)
 		if err != nil {
 			continue
 		}
-		if err := executor.AttachTarget(ctx, row.TargetID, state.Episode, source); err != nil {
-			s.logger.Warn("watch target reconcile attach failed", "target", row.TargetID, "error", err)
+		if err := executor.AttachTarget(ctx, row.TargetID, identity, source); err != nil {
+			// A concurrent reconcile (creation-triggered or event-driven) may
+			// win the same attach; that is not a failure worth logging.
+			if mirror, attached := executor.AttachedIdentity(ctx, row.TargetID); !attached || mirror != identity {
+				s.logger.Warn("watch target reconcile attach failed", "target", row.TargetID, "error", err)
+			}
+			continue
+		}
+		if s.attachHook != nil {
+			s.attachHook(row.TargetID)
 		}
 	}
 }
 
 // onSessionEvent reconciles the event owner's watch targets on session
-// status changes and terminal exits; the event context carries the owner.
+// status changes, terminal exits and terminal control events; the event
+// context carries the owner. Durable tab recovery reports through the
+// control topic, so excluding it would leave recovered streams unattached.
 // Owners without any durable watch target never get an executor: a busy
 // server's session churn must not spawn idle dispatch loops.
 func (s *watchService) onSessionEvent(ctx context.Context, event session.Event) {
-	if event.Topic != session.TopicSessionStatus && event.Topic != session.TopicTerminalExit {
+	if event.Topic != session.TopicSessionStatus && event.Topic != session.TopicTerminalExit && event.Topic != session.TopicTerminalControl {
 		return
 	}
 	owner := ipc.EventOwnerID(ctx)
@@ -352,11 +384,12 @@ func watchSummaryFromRow(row model.AgentWatchRow) (WatchSummary, error) {
 func (s *watchService) targetSummary(ctx context.Context, executor *watches.Executor, row model.AgentWatchTargetRow) WatchTargetSummary {
 	summary := WatchTargetSummary{TargetID: row.TargetID, Identity: row.Identity}
 	state, ok := s.sessions.WatchStreamState(ctx, row.TargetID)
-	identity, attached := executor.AttachedIdentity(ctx, row.TargetID)
-	if ok && state.EpisodeOK && state.Episode == row.Identity && attached && identity == row.Identity && !state.Exited && state.Status == session.StatusConnected {
-		summary.State = "attached"
-		summary.Evidence = identity
-		return summary
+	if ok && state.EpisodeOK && state.WatchIdentity() == row.Identity && !state.Exited && state.Status == session.StatusConnected {
+		if identity, attached := executor.AttachedIdentity(ctx, row.TargetID); attached && identity == row.Identity && executor.RunnerAlive(row.TargetID) {
+			summary.State = "attached"
+			summary.Evidence = identity
+			return summary
+		}
 	}
 	if row.Gone {
 		summary.State = "gone"
@@ -372,9 +405,9 @@ func (s *watchService) targetSummary(ctx context.Context, executor *watches.Exec
 		summary.Evidence = "runtime episode cannot be evidenced"
 		return summary
 	}
-	if state.Episode != row.Identity {
+	if state.WatchIdentity() != row.Identity {
 		summary.State = "replaced"
-		summary.Evidence = state.Episode
+		summary.Evidence = state.WatchIdentity()
 		return summary
 	}
 	if state.Exited {

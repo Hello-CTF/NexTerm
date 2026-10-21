@@ -39,10 +39,10 @@ func feedWatchTestTab(t *testing.T, manager *Manager, tabID string, data []byte)
 func watchTestEpisode(t *testing.T, manager *Manager, tabID string) string {
 	t.Helper()
 	state, ok := manager.WatchStreamState(context.Background(), tabID)
-	if !ok || !state.EpisodeOK {
+	if !ok || !state.EpisodeOK || state.WatchIdentity() == "" {
 		t.Fatalf("watch stream state = %+v, %v", state, ok)
 	}
-	return state.Episode
+	return state.WatchIdentity()
 }
 
 func TestWatchSourceStreamsAbsolutePositions(t *testing.T) {
@@ -156,8 +156,9 @@ func TestWatchSourceFailsOnEpisodeReplacement(t *testing.T) {
 	if _, _, err := source.Chunk(ctx, 0); !errors.As(err, &replaced) {
 		t.Fatalf("Chunk after replacement = %v; want WatchEpisodeReplacedError", err)
 	}
-	if replaced.Current != "episode-new" {
-		t.Fatalf("replacement evidence = %q; want the current episode", replaced.Current)
+	state, ok := manager.WatchStreamState(ctx, tab.ID)
+	if !ok || replaced.Current != state.WatchIdentity() {
+		t.Fatalf("replacement evidence = %q; want the current watch identity %q", replaced.Current, state.WatchIdentity())
 	}
 	if _, err := manager.OpenWatchSource(ctx, tab.ID, episode, WatchSourceOptions{}); !errors.As(err, &replaced) {
 		t.Fatalf("open with a stale episode = %v; want WatchEpisodeReplacedError", err)
@@ -201,7 +202,7 @@ func TestWatchSourceGapReportsTheHonestResumePosition(t *testing.T) {
 	tab := openWatchTestTab(t, manager)
 	episode := watchTestEpisode(t, manager, tab.ID)
 	source := &WatchSource{
-		manager: manager, tabID: tab.ID, episode: episode,
+		manager: manager, tabID: tab.ID, identity: episode,
 		reader:  &fakeWatchSeqReader{data: []byte("retained"), base: 96},
 		options: WatchSourceOptions{PollInterval: time.Millisecond, MaxChunkBytes: 256},
 		ctx:     context.Background(),

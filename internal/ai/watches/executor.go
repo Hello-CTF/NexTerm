@@ -290,6 +290,25 @@ func (e *Executor) AttachedIdentity(ctx context.Context, targetID string) (strin
 	return identity, attached
 }
 
+// RunnerAlive reports whether the target currently has a live runner. The
+// durable mirror stays attached after a runner exits (a terminal source
+// failure or a finished stream), so the mirror alone can never prove that
+// output is being consumed; only a live runner can.
+func (e *Executor) RunnerAlive(targetID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	runner, ok := e.targets[targetID]
+	if !ok {
+		return false
+	}
+	select {
+	case <-runner.done:
+		return false
+	default:
+		return true
+	}
+}
+
 // DetachTarget stops the runner and detaches the target durably. A failed
 // permanent detach keeps the incarnation credential as a pending record, so
 // the retry can complete the durable transition instead of reporting a

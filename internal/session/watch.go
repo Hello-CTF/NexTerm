@@ -11,13 +11,30 @@ import (
 )
 
 // WatchStreamState is the watch-facing view of one tab's runtime episode and
-// lifecycle. It reuses the roster same-source snapshot, so episode evidence,
-// exit state and connectivity always come from one consistent read.
+// lifecycle. It reuses the roster same-source snapshot for the episode and
+// adds the tab's stream epoch from the same locked read: the daemon
+// incarnation of a durable tab survives a close/recover cycle, but the
+// recovered tab is a brand-new stream view (new ring, new stream epoch, fresh
+// absolute positions), and the epoch is what proves which stream a position
+// belongs to.
 type WatchStreamState struct {
-	Episode   string
-	EpisodeOK bool
-	Exited    bool
-	Status    Status
+	Episode     string
+	EpisodeOK   bool
+	StreamEpoch string
+	Exited      bool
+	Status      Status
+}
+
+// WatchIdentity is the identity a watch must bind to: the runtime episode
+// qualified by the stream epoch. Binding to the bare episode would let a
+// watch anchored in a closed tab's coordinates silently resume against the
+// recovered tab's reset positions; the epoch changes exactly when the stream
+// coordinate space does, so identity semantics stay honest.
+func (s WatchStreamState) WatchIdentity() string {
+	if !s.EpisodeOK {
+		return ""
+	}
+	return s.Episode + "@" + s.StreamEpoch
 }
 
 // WatchStreamState returns the tab's current watch stream state. The boolean
@@ -27,9 +44,17 @@ func (m *Manager) WatchStreamState(ctx context.Context, tabID string) (WatchStre
 	if !ok {
 		return WatchStreamState{}, false
 	}
+	tab, err := m.TabFor(ctx, tabID)
+	if err != nil {
+		return WatchStreamState{}, false
+	}
+	tab.mu.Lock()
+	streamEpoch := tab.streamEpoch
+	tab.mu.Unlock()
 	return WatchStreamState{
 		Episode: snapshot.Episode, EpisodeOK: snapshot.EpisodeOK,
-		Exited: snapshot.Exited, Status: snapshot.Status,
+		StreamEpoch: streamEpoch,
+		Exited:      snapshot.Exited, Status: snapshot.Status,
 	}, true
 }
 
@@ -92,34 +117,36 @@ type watchSequenceReader interface {
 }
 
 // WatchSource is an absolute-position raw output stream over one tab's
-// retained scrollback, bound to one runtime episode. It never invents bytes:
-// positions come from the terminal sequence counter, a clipped read reports
-// the honest resume position as *WatchGapError, a committed replacement
-// runtime reports *WatchEpisodeReplacedError, and a tab that exited with no
-// more retained output reports io.EOF.
+// retained scrollback, bound to one watch identity (the runtime episode
+// qualified by the stream epoch). It never invents bytes: positions come from
+// the terminal sequence counter, a clipped read reports the honest resume
+// position as *WatchGapError, a replaced stream (a reconnect's new runtime or
+// a close/recover cycle's fresh coordinates) reports
+// *WatchEpisodeReplacedError, and a tab that exited with no more retained
+// output reports io.EOF.
 type WatchSource struct {
-	manager *Manager
-	tabID   string
-	episode string
-	reader  watchSequenceReader
-	options WatchSourceOptions
+	manager  *Manager
+	tabID    string
+	identity string
+	reader   watchSequenceReader
+	options  WatchSourceOptions
 	// ctx carries the opener's owner identity without the request's
 	// cancellation; state lookups use it, while each call's own ctx still
 	// governs cancellation.
 	ctx context.Context
 }
 
-// OpenWatchSource binds a watch stream to the tab's current runtime episode.
-// The episode must be the evidenced one from WatchStreamState: a mismatch
-// means the caller's incarnation view is stale and the open fails instead of
-// attributing a replacement runtime's output. Terminals without sequence
+// OpenWatchSource binds a watch stream to the tab's current watch identity.
+// The identity must be the one from WatchStreamState.WatchIdentity: a
+// mismatch means the caller's stream view is stale and the open fails instead
+// of attributing a replaced stream's output. Terminals without sequence
 // tracking cannot be watched and fail with ErrUnsupported. The source keeps
 // polling under the opener's owner identity — the request context cancels
 // with the call, but the attachment's credential is the owner that was
 // verified here.
-func (m *Manager) OpenWatchSource(ctx context.Context, tabID, episode string, options WatchSourceOptions) (*WatchSource, error) {
+func (m *Manager) OpenWatchSource(ctx context.Context, tabID, identity string, options WatchSourceOptions) (*WatchSource, error) {
 	options.withDefaults()
-	if episode == "" {
+	if identity == "" {
 		return nil, ErrWatchEpisodeUnevidenced
 	}
 	state, ok := m.WatchStreamState(ctx, tabID)
@@ -129,8 +156,8 @@ func (m *Manager) OpenWatchSource(ctx context.Context, tabID, episode string, op
 	if !state.EpisodeOK {
 		return nil, ErrWatchEpisodeUnevidenced
 	}
-	if state.Episode != episode {
-		return nil, &WatchEpisodeReplacedError{Current: state.Episode}
+	if current := state.WatchIdentity(); current != identity {
+		return nil, &WatchEpisodeReplacedError{Current: current}
 	}
 	tab, err := m.TabFor(ctx, tabID)
 	if err != nil {
@@ -147,12 +174,12 @@ func (m *Manager) OpenWatchSource(ctx context.Context, tabID, episode string, op
 	if ownerID := ipc.OwnerID(ctx); ownerID != "" {
 		pollCtx = ipc.WithUserID(pollCtx, ownerID)
 	}
-	return &WatchSource{manager: m, tabID: tabID, episode: episode, reader: reader, options: options, ctx: pollCtx}, nil
+	return &WatchSource{manager: m, tabID: tabID, identity: identity, reader: reader, options: options, ctx: pollCtx}, nil
 }
 
 // Chunk returns the next retained output starting at fromSeq and the position
 // immediately after it. It waits (bounded by the poll interval) for new
-// output, an exit, or an episode change; io.EOF marks the exited stream end.
+// output, an exit, or an identity change; io.EOF marks the exited stream end.
 func (s *WatchSource) Chunk(ctx context.Context, fromSeq int64) ([]byte, int64, error) {
 	for {
 		if err := ctx.Err(); err != nil {
@@ -162,8 +189,8 @@ func (s *WatchSource) Chunk(ctx context.Context, fromSeq int64) ([]byte, int64, 
 		if !ok {
 			return nil, fromSeq, ErrWatchTargetGone
 		}
-		if state.EpisodeOK && state.Episode != s.episode {
-			return nil, fromSeq, &WatchEpisodeReplacedError{Current: state.Episode}
+		if current := state.WatchIdentity(); state.EpisodeOK && current != s.identity {
+			return nil, fromSeq, &WatchEpisodeReplacedError{Current: current}
 		}
 		latest := int64(s.reader.LatestSeq())
 		if latest > fromSeq {
