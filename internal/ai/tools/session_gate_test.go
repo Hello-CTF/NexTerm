@@ -36,6 +36,15 @@ func TestSessionAdapterGatewayIdentityLessDenied(t *testing.T) {
 	if _, err := adapter.(WaitSnapshotTerminal).WaitSnapshot(ctx, fixture.tabID); !errors.Is(err, session.ErrForbidden) {
 		t.Fatalf("wait snapshot err = %v", err)
 	}
+	if _, err := adapter.(TabSessionTerminal).TabSession(ctx, fixture.tabID); !errors.Is(err, session.ErrForbidden) {
+		t.Fatalf("tab session err = %v", err)
+	}
+	if _, err := adapter.(ListTabsTerminal).ListTerminalTabs(ctx); !errors.Is(err, session.ErrForbidden) {
+		t.Fatalf("list tabs err = %v", err)
+	}
+	if _, err := adapter.(TabDetailTerminal).TabDetail(ctx, fixture.tabID); !errors.Is(err, session.ErrForbidden) {
+		t.Fatalf("tab detail err = %v", err)
+	}
 	if err := adapter.Write(ctx, fixture.tabID, []byte("ls")); !errors.Is(err, session.ErrForbidden) {
 		t.Fatalf("write err = %v", err)
 	}
@@ -60,6 +69,7 @@ func TestSessionAdapterGatewayIdentityLessDenied(t *testing.T) {
 		{ID: "r", Name: "read_screen"},
 		{ID: "k", Name: "send_keys", Args: []byte(`{"keys":"ls"}`)},
 		{ID: "w", Name: "wait_for", Args: []byte(`{"pattern":"x","timeout_ms":10}`)},
+		{ID: "l", Name: "terminal_list"},
 	} {
 		if result := registry.Execute(ctx, "job", fixture.scope(), call, nil); result.OK {
 			t.Fatalf("%s succeeded for identity-less gateway caller", call.Name)
@@ -67,16 +77,43 @@ func TestSessionAdapterGatewayIdentityLessDenied(t *testing.T) {
 	}
 }
 
-func TestSessionAdapterTrustedMarkAllowed(t *testing.T) {
+func TestSessionAdapterIdentityLessMarkDeniedAndVouchedIdentityAllowed(t *testing.T) {
 	fixture := gateFixture(t)
 	adapter := SessionTerminal(fixture.manager)
-	ctx := owner.WithOpenAccess(context.Background())
+	marked := owner.WithOpenAccess(context.Background())
 
+	// An identity-less mark is a vouch, not an authorization: the session
+	// layer denies it on a non-open server, and nothing reaches the channel.
+	if _, err := adapter.Snapshot(marked, fixture.tabID); !errors.Is(err, session.ErrForbidden) {
+		t.Fatalf("identity-less marked snapshot err = %v", err)
+	}
+	if _, err := adapter.(ListTabsTerminal).ListTerminalTabs(marked); !errors.Is(err, session.ErrForbidden) {
+		t.Fatalf("identity-less marked list err = %v", err)
+	}
+	if err := adapter.Write(marked, fixture.tabID, []byte("ls")); !errors.Is(err, session.ErrForbidden) {
+		t.Fatalf("identity-less marked write err = %v", err)
+	}
+	if got := fixture.channel.attemptCount(); got != 0 {
+		t.Fatalf("identity-less marked write reached the channel %d times", got)
+	}
+
+	// A vouched identity — the identified owner carrying the app's mark —
+	// keeps open access.
+	ctx := trustedContext()
 	if _, err := adapter.Snapshot(ctx, fixture.tabID); err != nil {
 		t.Fatalf("snapshot err = %v", err)
 	}
 	if _, err := adapter.(WaitSnapshotTerminal).WaitSnapshot(ctx, fixture.tabID); err != nil {
 		t.Fatalf("wait snapshot err = %v", err)
+	}
+	if id, err := adapter.(TabSessionTerminal).TabSession(ctx, fixture.tabID); err != nil || id != fixture.sessionID {
+		t.Fatalf("tab session = %q err=%v", id, err)
+	}
+	if tabs, err := adapter.(ListTabsTerminal).ListTerminalTabs(ctx); err != nil || len(tabs) != 1 {
+		t.Fatalf("list tabs = %+v err=%v", tabs, err)
+	}
+	if detail, err := adapter.(TabDetailTerminal).TabDetail(ctx, fixture.tabID); err != nil || detail.TabID != fixture.tabID {
+		t.Fatalf("tab detail = %+v err=%v", detail, err)
 	}
 	if _, err := adapter.(CommandStateTerminal).CommandState(ctx, fixture.tabID); err != nil {
 		t.Fatalf("command state err = %v", err)
@@ -144,6 +181,12 @@ func TestSessionAdapterOpenManagerCompat(t *testing.T) {
 	if screen.Cols != 80 {
 		t.Fatalf("screen = %+v", screen)
 	}
+	if id, err := adapter.(TabSessionTerminal).TabSession(ctx, tabID); err != nil || id != sessionID {
+		t.Fatalf("tab session = %q err=%v", id, err)
+	}
+	if tabs, err := adapter.(ListTabsTerminal).ListTerminalTabs(ctx); err != nil || len(tabs) != 1 {
+		t.Fatalf("list tabs = %+v err=%v", tabs, err)
+	}
 	if kind, err := adapter.(AssetKindTerminal).SessionAssetKind(ctx, sessionID); err != nil || kind != session.KindSSH {
 		t.Fatalf("session asset kind = %q err=%v", kind, err)
 	}
@@ -174,6 +217,9 @@ func TestSessionAdapterCrossAccountDenied(t *testing.T) {
 	if _, err := adapter.Snapshot(otherCtx, opened.ID); !errors.Is(err, session.ErrForbidden) {
 		t.Fatalf("cross-account snapshot err = %v", err)
 	}
+	if _, err := adapter.(TabDetailTerminal).TabDetail(otherCtx, opened.ID); !errors.Is(err, session.ErrForbidden) {
+		t.Fatalf("cross-account tab detail err = %v", err)
+	}
 	if _, err := adapter.(CommandStateTerminal).CommandState(otherCtx, opened.ID); !errors.Is(err, session.ErrForbidden) {
 		t.Fatalf("cross-account command state err = %v", err)
 	}
@@ -191,6 +237,21 @@ func TestSessionAdapterCrossAccountDenied(t *testing.T) {
 	}
 	if _, err := adapter.Snapshot(ownerCtx, fixture.tabID); !errors.Is(err, session.ErrForbidden) {
 		t.Fatalf("ownerless session snapshot err = %v", err)
+	}
+	// Listing scopes to the requester's own sessions.
+	tabs, err := adapter.(ListTabsTerminal).ListTerminalTabs(ownerCtx)
+	if err != nil {
+		t.Fatalf("owner list err = %v", err)
+	}
+	if len(tabs) != 1 || tabs[0].TabID != opened.ID {
+		t.Fatalf("owner list = %+v", tabs)
+	}
+	tabs, err = adapter.(ListTabsTerminal).ListTerminalTabs(otherCtx)
+	if err != nil {
+		t.Fatalf("u2 list err = %v", err)
+	}
+	if len(tabs) != 0 {
+		t.Fatalf("u2 list = %+v", tabs)
 	}
 }
 
@@ -213,7 +274,7 @@ func TestSessionAdapterGateRace(t *testing.T) {
 	const racers = 8
 	begin := make(chan struct{})
 	var wg sync.WaitGroup
-	denied := make(chan error, racers*2)
+	denied := make(chan error, racers*4)
 	allowed := make(chan error, racers*3)
 	for range racers {
 		wg.Add(1)
@@ -232,10 +293,10 @@ func TestSessionAdapterGateRace(t *testing.T) {
 			defer wg.Done()
 			<-begin
 			if _, err := adapter.Snapshot(marked, opened.ID); err != nil {
-				allowed <- err
+				denied <- err
 			}
 			if _, err := adapter.Snapshot(marked, fixture.tabID); err != nil {
-				allowed <- err
+				denied <- err
 			}
 			if _, err := adapter.Snapshot(ownerCtx, opened.ID); err != nil {
 				allowed <- err
@@ -262,11 +323,15 @@ func TestSessionRequestContextUnit(t *testing.T) {
 		t.Fatal("identity-less unmarked context must not be elevated")
 	}
 	marked := owner.WithOpenAccess(base)
-	if got := sessionRequestContext(marked); got == marked {
-		t.Fatal("trusted mark must elevate to open access")
+	if got := sessionRequestContext(marked); got != marked {
+		t.Fatal("identity-less mark must not be elevated")
 	}
 	identified := ipc.WithUserID(base, "u1")
 	if got := sessionRequestContext(identified); got != identified {
 		t.Fatal("identified context must pass through unchanged")
+	}
+	vouched := owner.WithOpenAccess(identified)
+	if got := sessionRequestContext(vouched); got == vouched {
+		t.Fatal("vouched identity must elevate to open access")
 	}
 }

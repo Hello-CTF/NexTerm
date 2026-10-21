@@ -39,6 +39,25 @@ func Render(bundle Bundle) string {
 			fmt.Fprintf(&output, "- Current Directory: %s\n", bundle.Session.CWD)
 		}
 	}
+	if bundle.Tab != nil {
+		output.WriteString("[Terminal Tab]\n")
+		fmt.Fprintf(&output, "- Handle: %s\n", bundle.Tab.Handle)
+		if bundle.Tab.Kind != "" {
+			fmt.Fprintf(&output, "- Kind: %s\n", bundle.Tab.Kind)
+		}
+		if bundle.Tab.Title != "" {
+			fmt.Fprintf(&output, "- Title: %s\n", bundle.Tab.Title)
+		}
+		if bundle.Tab.CWD != "" {
+			fmt.Fprintf(&output, "- Current Directory: %s\n", bundle.Tab.CWD)
+		}
+		if bundle.Tab.Durable {
+			output.WriteString("- Durable: true\n")
+		}
+		if bundle.Tab.Exited {
+			output.WriteString("- Exited: true\n")
+		}
+	}
 	if bundle.Screen != "" {
 		output.WriteString("[Current Terminal Screen]\n")
 		output.WriteString(bundle.Screen)
@@ -107,6 +126,9 @@ func TrimToBudget(bundle *Bundle) {
 	}
 	if len(Render(*bundle)) > BudgetBytes {
 		bundle.Tail = nil
+	}
+	if len(Render(*bundle)) > BudgetBytes {
+		bundle.Tab = nil
 	}
 	if len(Render(*bundle)) > BudgetBytes {
 		bundle.Session = nil

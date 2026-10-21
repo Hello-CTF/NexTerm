@@ -175,6 +175,7 @@ type fakeTerminal struct {
 	writeErr        error
 	commandState    CommandState
 	onWrite         func()
+	onCommandState  func()
 	outputSinceFunc func(seq uint64, maxBytes int) ([]byte, uint64, uint64, error)
 	assetKind       string
 	assetKindErr    error
@@ -217,8 +218,13 @@ func (f *fakeTerminal) WaitSnapshot(ctx context.Context, tabID string) (Screen, 
 }
 func (f *fakeTerminal) CommandState(context.Context, string) (CommandState, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.commandState, nil
+	state := f.commandState
+	hook := f.onCommandState
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return state, nil
 }
 func (f *fakeTerminal) setCommandState(state CommandState) {
 	f.mu.Lock()

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
@@ -195,10 +196,10 @@ func (t *atomicPTYTransport) channelAt(index int) *atomicPTYChannel {
 }
 
 // trustedContext simulates the trusted-internal caller shape these atomicity
-// tests exercise: identity-less but marked open-access by the app, which is
-// the only identity-less shape the tools layer still elevates.
+// tests exercise: an identified owner carrying the app's open-access vouch,
+// the only shape a non-open server honors for full access.
 func trustedContext() context.Context {
-	return owner.WithOpenAccess(context.Background())
+	return owner.WithOpenAccess(ipc.WithUserID(context.Background(), "owner-a"))
 }
 
 type atomicSessionFixture struct {
@@ -236,7 +237,7 @@ func newAtomicSessionFixture(t *testing.T, manualClock bool) *atomicSessionFixtu
 			return core, nil
 		}),
 	})
-	connected, err := fixture.manager.Connect(context.Background(), session.Asset{ID: "asset-atomic", Kind: session.KindSSH})
+	connected, err := fixture.manager.Connect(ipc.WithUserID(context.Background(), "owner-a"), session.Asset{ID: "asset-atomic", Kind: session.KindSSH})
 	if err != nil {
 		t.Fatal(err)
 	}

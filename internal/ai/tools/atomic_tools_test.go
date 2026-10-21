@@ -73,41 +73,35 @@ func TestWaitForQuietContinuousOutputTimeoutCancelAndZeroOutput(t *testing.T) {
 			t.Fatal(err)
 		}
 		startClock := fixture.clock.Load()
-		stop := make(chan struct{})
-		emitErrors := make(chan error, 1)
-		var feeder sync.WaitGroup
-		feeder.Add(1)
-		go func() {
-			defer feeder.Done()
-			ticker := time.NewTicker(2 * time.Millisecond)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-stop:
-					return
-				case <-ticker.C:
-					fixture.clock.Add(10)
-					if err := fixture.channel.emit([]byte("noise\r\n")); err != nil {
-						emitErrors <- err
-						return
-					}
-				}
+		// Every snapshot advances the fake clock and feeds the tab model
+		// directly, so the quiet threshold can never be reached. Once the
+		// fake clock crosses quiet_ms (6 snapshots × 10ms = 60ms > 50ms),
+		// the wait is canceled in a controlled way: it must NOT have
+		// succeeded by then, proving continuous output defeats quiet even
+		// past the threshold.
+		ctx, cancel := context.WithCancel(trustedContext())
+		var armHook func()
+		snapshots := 0
+		armHook = func() {
+			snapshots++
+			fixture.clock.Add(10)
+			fixture.terminal().Feed([]byte("noise\r\n"))
+			if snapshots == 6 {
+				cancel()
 			}
-		}()
-		result := fixture.registry().Execute(trustedContext(), "job", fixture.scope(), Call{ID: "continuous", Name: "wait_for", Args: json.RawMessage(`{"pattern":"READY","quiet_ms":50,"timeout_ms":60}`)}, nil)
-		close(stop)
-		feeder.Wait()
-		select {
-		case err := <-emitErrors:
-			t.Fatal(err)
-		default:
+			fixture.setSnapshotHook(armHook)
 		}
-		timedOut := strings.Contains(result.Text, "等待超时") || strings.Contains(result.Text, context.DeadlineExceeded.Error())
-		if result.OK || result.ExitCode != 1 || !timedOut || strings.Contains(result.Text, "模式已出现") {
+		fixture.setSnapshotHook(armHook)
+		result := fixture.registry().Execute(ctx, "job", fixture.scope(), Call{ID: "continuous", Name: "wait_for", Args: json.RawMessage(`{"pattern":"READY","quiet_ms":50,"timeout_ms":60000}`)}, nil)
+		fixture.setSnapshotHook(nil)
+		if result.OK || !strings.Contains(result.Text, context.Canceled.Error()) {
 			t.Fatalf("continuous output result = %+v", result)
 		}
-		if advanced := fixture.clock.Load() - startClock; advanced < 100 {
-			t.Fatalf("test only advanced %dms, does not exceed quiet threshold", advanced)
+		if strings.Contains(result.Text, "模式已出现") {
+			t.Fatalf("quiet satisfied despite continuous output: %+v", result)
+		}
+		if advanced := fixture.clock.Load() - startClock; advanced < 60 {
+			t.Fatalf("fake clock advanced only %dms, below quiet_ms=50", advanced)
 		}
 	})
 

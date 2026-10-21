@@ -18,14 +18,13 @@ func SessionTerminal(manager *session.Manager) Terminal {
 	return &sessionTerminal{manager: manager}
 }
 
-// sessionRequestContext elevates an identity-less caller to open access only
-// in trusted-open shapes: a desktop deployment, an explicitly open
-// deployment, or an internal shared-state caller already marked by the app
-// (owner.WithOpenAccess). Server account mode never elevates here, so a
-// gateway request without an identity keeps requester-less reads denied
-// (ErrForbidden) instead of reaching every tab.
+// sessionRequestContext passes the caller through unchanged: the session
+// layer natively denies identity-less open access on non-open servers and
+// scopes identified callers to their own resources. An app-marked
+// (owner.WithOpenAccess) caller carrying an identity is vouched to open
+// access; an identity-less mark is never elevated.
 func sessionRequestContext(ctx context.Context) context.Context {
-	if _, ok := ipc.UserIDFromContext(ctx); ok {
+	if _, ok := ipc.UserIDFromContext(ctx); !ok {
 		return ctx
 	}
 	if owner.OpenAccess(ctx) {
@@ -122,6 +121,85 @@ func (s *sessionTerminal) Create(ctx context.Context, sessionID string, options 
 func (s *sessionTerminal) Rename(ctx context.Context, tabID, title string) error {
 	_, err := s.manager.RenameTabFor(sessionRequestContext(ctx), tabID, title)
 	return err
+}
+
+// SessionAssetIdentity reports the immutable asset identity the session is
+// currently bound to (asset ID plus config fingerprint), so mutation tools
+// can re-validate a resolved identity at execution time.
+func (s *sessionTerminal) SessionAssetIdentity(ctx context.Context, sessionID string) (AssetIdentity, error) {
+	current, err := s.manager.SessionFor(sessionRequestContext(ctx), sessionID)
+	if err != nil {
+		return AssetIdentity{}, err
+	}
+	asset := current.Asset()
+	return AssetIdentity{AssetID: asset.ID, ConfigFingerprint: asset.ConfigFingerprint}, nil
+}
+
+// ListTerminalTabs enumerates the tabs visible to the caller with the exact
+// handle each is addressed by; the asset kind is resolved server-side so
+// privacy decisions never depend on client-supplied fields.
+func (s *sessionTerminal) ListTerminalTabs(ctx context.Context) ([]TerminalBrief, error) {
+	ctx = sessionRequestContext(ctx)
+	infos, err := s.manager.ListTabsFor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	briefs := make([]TerminalBrief, 0, len(infos))
+	for _, info := range infos {
+		brief := TerminalBrief{
+			Handle:    TerminalHandle{TabID: info.ID, SessionID: info.SessionID}.String(),
+			TabID:     info.ID,
+			SessionID: info.SessionID,
+			Title:     info.Title,
+			CWD:       info.Cwd,
+			Durable:   info.Durable,
+			Exited:    info.Exited,
+		}
+		if session, err := s.manager.SessionFor(ctx, info.SessionID); err == nil {
+			asset := session.Asset()
+			brief.AssetID = asset.ID
+			brief.Kind = asset.Kind
+		}
+		briefs = append(briefs, brief)
+	}
+	return briefs, nil
+}
+
+// TabDetail reports the per-tab identity (kind, OSC title, shell-reported
+// cwd, lifecycle state) surfaced by read_screen headers. The title prefers
+// the live OSC 0/2 dynamic title the application reported and falls back to
+// the durable user/AI-set title.
+func (s *sessionTerminal) TabDetail(ctx context.Context, tabID string) (TabDetail, error) {
+	ctx = sessionRequestContext(ctx)
+	tab, err := s.manager.TabFor(ctx, tabID)
+	if err != nil {
+		return TabDetail{}, err
+	}
+	info := tab.Info()
+	detail := TabDetail{
+		TabID:     info.ID,
+		SessionID: info.SessionID,
+		Title:     info.Title,
+		CWD:       info.Cwd,
+		Exited:    info.Exited,
+		Durable:   info.Durable,
+	}
+	if snapshot, err := s.manager.TerminalSnapshotFor(ctx, tabID); err == nil && snapshot.Title != "" {
+		detail.Title = snapshot.Title
+	}
+	if session, err := s.manager.SessionFor(ctx, info.SessionID); err == nil {
+		detail.Kind = session.Asset().Kind
+	}
+	return detail, nil
+}
+
+// WritePasteLiteral writes text under the terminal's write lock with the
+// bracketed-paste mode read inside that same lock: when the mode is off,
+// text with line breaks is refused before any byte is written. force stays
+// false — the tools layer's own pre-write guard already refuses that shape,
+// so an in-lock refusal is a genuine mode flip and must surface.
+func (s *sessionTerminal) WritePasteLiteral(ctx context.Context, tabID, text string) error {
+	return s.manager.WritePasteLiteralFor(sessionRequestContext(ctx), tabID, text, false)
 }
 
 func WithSession(deps Dependencies, manager *session.Manager) Dependencies {

@@ -100,29 +100,33 @@ func TestWaitForNewOutputAlsoRequiresQuiet(t *testing.T) {
 }
 
 func TestSendKeysPasteEncodingAndSubmissionProof(t *testing.T) {
-	for _, test := range []struct {
-		name      string
-		bracketed bool
-		wantFirst string
-	}{
-		{name: "bracketed", bracketed: true, wantFirst: "\x1b[200~one\n<enter>two\x1b[201~"},
-		{name: "plain paste", bracketed: false, wantFirst: "one\r<enter>two"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			terminal := &fakeTerminal{screen: Screen{Seq: 42, BracketedPaste: test.bracketed}}
-			registry := NewRegistry(Dependencies{Terminal: terminal})
-			result := registry.Execute(context.Background(), "job", Scope{SessionID: "s", TabID: "tab"}, Call{ID: "keys", Name: "send_keys", Args: json.RawMessage(`{"keys":"one\n<enter>two","enter":true,"paste":true}`)}, nil)
-			if !result.OK {
-				t.Fatalf("send_keys = %+v", result)
-			}
-			if len(terminal.writes) != 2 || string(terminal.writes[0]) != test.wantFirst || string(terminal.writes[1]) != "\r" {
-				t.Fatalf("writes = %q, want first %q then Enter", terminal.writes, test.wantFirst)
-			}
-			if result.SubmittedSeq == nil || *result.SubmittedSeq != 42 || !result.WriteConfirmed || !strings.Contains(result.Notes, "not proof") {
-				t.Fatalf("submission proof = %+v", result)
-			}
-		})
-	}
+	t.Run("bracketed", func(t *testing.T) {
+		terminal := &fakeTerminal{screen: Screen{Seq: 42, BracketedPaste: true}}
+		registry := NewRegistry(Dependencies{Terminal: terminal})
+		result := registry.Execute(context.Background(), "job", Scope{SessionID: "s", TabID: "tab"}, Call{ID: "keys", Name: "send_keys", Args: json.RawMessage(`{"keys":"one\n<enter>two","enter":true,"paste":true}`)}, nil)
+		if !result.OK {
+			t.Fatalf("send_keys = %+v", result)
+		}
+		if len(terminal.writes) != 2 || string(terminal.writes[0]) != "\x1b[200~one\n<enter>two\x1b[201~" || string(terminal.writes[1]) != "\r" {
+			t.Fatalf("writes = %q", terminal.writes)
+		}
+		if result.SubmittedSeq == nil || *result.SubmittedSeq != 42 || !result.WriteConfirmed || !strings.Contains(result.Notes, "not proof") {
+			t.Fatalf("submission proof = %+v", result)
+		}
+	})
+	t.Run("plain paste", func(t *testing.T) {
+		// Unbracketed mode maps LF to CR, so a multi-line paste would submit
+		// early: the mode-aware guard rejects it before any write.
+		terminal := &fakeTerminal{screen: Screen{Seq: 42, BracketedPaste: false}}
+		registry := NewRegistry(Dependencies{Terminal: terminal})
+		result := registry.Execute(context.Background(), "job", Scope{SessionID: "s", TabID: "tab"}, Call{ID: "keys", Name: "send_keys", Args: json.RawMessage(`{"keys":"one\n<enter>two","enter":true,"paste":true}`)}, nil)
+		if result.OK || !strings.Contains(result.Text, "bracketed-paste") {
+			t.Fatalf("plain paste = %+v", result)
+		}
+		if len(terminal.writes) != 0 {
+			t.Fatalf("plain paste wrote bytes: %q", terminal.writes)
+		}
+	})
 }
 
 func TestSendKeysWithoutPasteKeepsKeyEncoding(t *testing.T) {
