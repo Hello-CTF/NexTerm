@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -67,12 +68,21 @@ func startOpenSSHTestServer(t *testing.T, port int, userKeyPEM []byte) *openSSHT
 	}
 	configPath := filepath.Join(dir, "sshd_config")
 	config := fmt.Sprintf("Port %d\nListenAddress 127.0.0.1\nHostKey %s\nPidFile %s\n"+
-		"AuthorizedKeysFile %s\nStrictModes no\nUsePAM no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n",
+		"AuthorizedKeysFile %s\nStrictModes no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n",
 		port, hostKeyPath, filepath.Join(dir, "sshd.pid"), authorizedKeysPath)
+	if runtime.GOOS != "windows" {
+		// Windows OpenSSH rejects UsePAM as an unsupported option.
+		config += "UsePAM no\n"
+	}
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if output, err := exec.Command(binary, "-t", "-f", configPath).CombinedOutput(); err != nil {
+	// The validation must stay bounded: Windows OpenSSH sshd -t never exits
+	// after printing a config error while its output is piped, which would
+	// otherwise hang the whole suite on CombinedOutput.
+	checkCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if output, err := exec.CommandContext(checkCtx, binary, "-t", "-f", configPath).CombinedOutput(); err != nil {
 		t.Skipf("sshd cannot use the test configuration: %v: %s", err, output)
 	}
 	stderr := &bytes.Buffer{}
