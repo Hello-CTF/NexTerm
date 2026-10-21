@@ -214,3 +214,61 @@ func TestBlockedWriterUnblockedByKill(t *testing.T) {
 		t.Fatal("blocked writer was not woken by Kill")
 	}
 }
+
+func TestCloseUnblocksInputPumpWithSlaveHeldOpen(t *testing.T) {
+	supervisor, err := New(Config{StateDir: filepath.Join(t.TempDir(), "state"), CommandTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = supervisor.Close() })
+	session := testScriptSession(t, supervisor, `stty raw -echo; tty; exec sleep 60`)
+	attachment, err := supervisor.Attach(context.Background(), session.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = attachment.Close() }()
+	slavePath := strings.TrimSpace(string(readUntil(t, attachment, "\n")))
+	slave, err := os.OpenFile(slavePath, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open slave %q: %v", slavePath, err)
+	}
+	defer func() { _ = slave.Close() }()
+
+	payload := make([]byte, maxInputChunkLen)
+	saturated := false
+	for attempt := 0; attempt < inputQueueSlots+2; attempt++ {
+		if _, err := session.tryWrite(payload); err != nil {
+			if !errors.Is(err, ErrUnavailable) {
+				t.Fatalf("fill input queue: %v", err)
+			}
+			select {
+			case <-session.inputDone:
+				t.Fatalf("input closed while filling the queue: %v", err)
+			default:
+				saturated = true
+			}
+			break
+		}
+	}
+	if !saturated || len(session.inputQueue) != cap(session.inputQueue) {
+		t.Fatalf("input queue did not saturate: len=%d cap=%d", len(session.inputQueue), cap(session.inputQueue))
+	}
+
+	if err := supervisor.Close(); err != nil {
+		_ = slave.Close()
+		pumpsDone := make(chan struct{})
+		go func() {
+			supervisor.pumps.Wait()
+			close(pumpsDone)
+		}()
+		select {
+		case <-pumpsDone:
+		case <-time.After(5 * time.Second):
+			t.Error("supervisor pumps remained blocked after releasing the slave")
+		}
+		t.Fatalf("Close with a blocked input pump = %v", err)
+	}
+	if _, err := session.Write([]byte("after close")); !errors.Is(err, ErrExited) {
+		t.Fatalf("Write after Close = %v, want ErrExited", err)
+	}
+}

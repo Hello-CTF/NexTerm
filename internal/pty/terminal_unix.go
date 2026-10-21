@@ -24,6 +24,13 @@ func startTerminal(cmd *exec.Cmd, cols, rows uint32, processFactory func(*exec.C
 	if err != nil {
 		return nil, err
 	}
+	master, err = pollableMaster(master)
+	if err != nil {
+		_ = master.Close()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, err
+	}
 	if processFactory == nil {
 		processFactory = newStartedProcess
 	}
@@ -35,6 +42,41 @@ func startTerminal(cmd *exec.Cmd, cols, rows uint32, processFactory func(*exec.C
 		return nil, err
 	}
 	return &unixTerminal{master: master, process: process}, nil
+}
+
+// pollableMaster replaces the descriptor after creack's Fd-based ioctls.
+// A blocking master can leave Write in the kernel after Close; the duplicate
+// lets os.NewFile register nonblocking I/O with the runtime poller.
+func pollableMaster(master *os.File) (*os.File, error) {
+	connection, err := master.SyscallConn()
+	if err != nil {
+		return master, err
+	}
+	duplicateFD := -1
+	var duplicateErr error
+	if err := connection.Control(func(fd uintptr) {
+		duplicateFD, duplicateErr = unix.Dup(int(fd))
+	}); err != nil {
+		return master, err
+	}
+	if duplicateErr != nil {
+		return master, duplicateErr
+	}
+	unix.CloseOnExec(duplicateFD)
+	if err := unix.SetNonblock(duplicateFD, true); err != nil {
+		_ = unix.Close(duplicateFD)
+		return master, err
+	}
+	duplicate := os.NewFile(uintptr(duplicateFD), master.Name())
+	if duplicate == nil {
+		_ = unix.Close(duplicateFD)
+		return master, os.ErrInvalid
+	}
+	if err := master.Close(); err != nil {
+		_ = duplicate.Close()
+		return master, err
+	}
+	return duplicate, nil
 }
 
 func (t *unixTerminal) Read(p []byte) (int, error) {

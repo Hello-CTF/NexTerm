@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	creack "github.com/creack/pty"
+	"golang.org/x/sys/unix"
 )
 
 func TestSessionOutputResizeAndExitStatus(t *testing.T) {
@@ -76,6 +78,124 @@ func TestSessionRawWrite(t *testing.T) {
 	}
 	if err := session.Wait(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSessionCloseUnblocksBlockedMasterWrite(t *testing.T) {
+	master, slave, err := creack.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stty := osexec.Command("/bin/stty", "raw", "-echo")
+	stty.Stdin = slave
+	if output, err := stty.CombinedOutput(); err != nil {
+		_ = master.Close()
+		_ = slave.Close()
+		t.Fatalf("configure raw slave: %v: %s", err, output)
+	}
+	if err := creack.Setsize(master, &creack.Winsize{Cols: 80, Rows: 24}); err != nil {
+		_ = master.Close()
+		_ = slave.Close()
+		t.Fatal(err)
+	}
+	master, err = pollableMaster(master)
+	if err != nil {
+		_ = master.Close()
+		_ = slave.Close()
+		t.Fatal(err)
+	}
+	process := newProcess(&retryProcessTree{}, func() error { return nil })
+	<-process.done
+	ctx, cancel := context.WithCancel(context.Background())
+	session := &Session{
+		terminal: &unixTerminal{master: master, process: process},
+		ctx:      ctx,
+		cancel:   cancel,
+	}
+	connection, err := master.SyscallConn()
+	if err != nil {
+		_ = session.Close()
+		_ = slave.Close()
+		t.Fatal(err)
+	}
+	fd := -1
+	if err := connection.Control(func(raw uintptr) { fd = int(raw) }); err != nil {
+		_ = session.Close()
+		_ = slave.Close()
+		t.Fatal(err)
+	}
+
+	payload := make([]byte, 8*1024*1024)
+	type writeResult struct {
+		count int
+		err   error
+	}
+	writeDone := make(chan writeResult, 1)
+	go func() {
+		count, err := session.Write(payload)
+		writeDone <- writeResult{count: count, err: err}
+	}()
+	writeComplete := false
+	defer func() {
+		_ = slave.Close()
+		_ = session.Close()
+		if !writeComplete {
+			select {
+			case <-writeDone:
+			case <-time.After(5 * time.Second):
+				t.Error("blocked writer did not stop after releasing the slave")
+			}
+		}
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		select {
+		case result := <-writeDone:
+			writeComplete = true
+			t.Fatalf("write completed before the master filled: %d, %v", result.count, result.err)
+		default:
+		}
+		descriptors := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLOUT}}
+		if _, err := unix.Poll(descriptors, 0); err != nil {
+			t.Fatal(err)
+		}
+		if descriptors[0].Revents&unix.POLLOUT == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("writer did not fill the PTY master")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case result := <-writeDone:
+		writeComplete = true
+		t.Fatalf("write completed instead of blocking on a full master: %d, %v", result.count, result.err)
+	default:
+	}
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- session.Close() }()
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("Close = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return with a blocked master writer")
+	}
+	select {
+	case result := <-writeDone:
+		writeComplete = true
+		if result.err == nil {
+			t.Fatalf("blocked write returned %d, nil after Close", result.count)
+		}
+		if result.count == len(payload) {
+			t.Fatal("blocked write reported the entire payload after Close")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close returned without unblocking the master writer")
 	}
 }
 
