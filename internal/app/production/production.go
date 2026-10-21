@@ -45,21 +45,21 @@ type ScreenInsets struct {
 }
 
 type ProductionServices struct {
-	Store            *store.Store
-	Vault            *vault.Vault
-	Sync             *syncservice.Service
-	Profiles         *profiles.Manager
-	Database         *db.Service
-	Mount            *mount.Service
-	Sessions         *session.Manager
-	ExecBatches      *execbatch.Service
-	Runbook          *runbookIPCService
-	Forward          *forward.Service
-	Docker           *docker.Service
-	Retention        *RetentionRunner
-	Guard            *guard.Manager
-	Agent            *agent.Runner
-	Takeover         *takeover.Manager
+	Store       *store.Store
+	Vault       *vault.Vault
+	Sync        *syncservice.Service
+	Profiles    *profiles.Manager
+	Database    *db.Service
+	Mount       *mount.Service
+	Sessions    *session.Manager
+	ExecBatches *execbatch.Service
+	Runbook     *runbookIPCService
+	Forward     *forward.Service
+	Docker      *docker.Service
+	Retention   *RetentionRunner
+	Guard       *guard.Manager
+	Agent       *agent.Runner
+	Takeover    *takeover.Manager
 	// Skills is the single skills manager instance shared by the ai-skills
 	// IPC surface and the agent tools registry (load_skill), so per-owner
 	// caches and overrides never split across two managers.
