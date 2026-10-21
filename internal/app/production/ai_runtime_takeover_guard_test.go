@@ -143,7 +143,7 @@ func TestProductionRunnerResolvesRealAssetEvidenceAndChallenge(t *testing.T) {
 	if err := services.Store.RunInsert(ctx, store.RunRow{ID: "run-evidence", ConversationID: conversation.ID, Status: store.RunStatusRunning}); err != nil {
 		t.Fatal(err)
 	}
-	resolved, err := aiRunAssetResolver(services)(ctx, "run-evidence")
+	resolved, err := aiRunAssetResolver(services)(ctx, "run-evidence", "exec_commands")
 	if err != nil || resolved != asset.ID {
 		t.Fatalf("asset evidence = %q err=%v, want the real session asset %s", resolved, err, asset.ID)
 	}

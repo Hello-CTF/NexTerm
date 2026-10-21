@@ -94,9 +94,10 @@ type Config struct {
 	HITL                  *hitl.Manager
 	HITLTTL               time.Duration
 	HITLTerminalRetention time.Duration
-	// HITLAssetResolver resolves a run's real asset identity from
-	// server-side state; nil disables asset evidence binding.
-	HITLAssetResolver func(context.Context, string) (string, error)
+	// HITLAssetResolver resolves a run's real asset identity for the tool
+	// awaiting confirmation from server-side state; nil disables asset
+	// evidence binding.
+	HITLAssetResolver func(context.Context, string, string) (string, error)
 	// HITLEnvironmentResolver resolves the production environment names a
 	// confirmation must type back for the run's target asset, from the
 	// request owner and the real asset through the configurable production

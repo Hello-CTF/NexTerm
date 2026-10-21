@@ -19,7 +19,7 @@ type assetResolver struct {
 	err   error
 }
 
-func (r *assetResolver) resolve(context.Context, string) (string, error) {
+func (r *assetResolver) resolve(context.Context, string, string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.asset, r.err
@@ -344,5 +344,121 @@ func TestCancelledRunRejectsAssetBoundAnswer(t *testing.T) {
 	}
 	if h.resumer.count() != 0 {
 		t.Fatalf("cancelled run resumed %d times", h.resumer.count())
+	}
+}
+
+// toolAssetResolver resolves per-tool asset identities, modeling the
+// production chain where a database tool binds the connection's real DB asset
+// and a terminal tool binds the session asset inside one mixed scope.
+type toolAssetResolver struct {
+	mu     sync.Mutex
+	assets map[string]string
+}
+
+func (r *toolAssetResolver) resolve(_ context.Context, _ string, tool string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.assets[tool], nil
+}
+
+func newToolAssetHarness(t *testing.T, resolver *toolAssetResolver, environmentResolver func(context.Context, string) ([]string, error)) *harness {
+	t.Helper()
+	store := newFakeCheckpoints()
+	store.put("checkpoint", []byte("checkpoint-one"))
+	var nonce atomic.Uint64
+	manager, err := NewManager(Config{
+		Checkpoints: store,
+		TTL:         time.Hour,
+		NewNonce: func() (string, error) {
+			return fmt.Sprintf("nonce-%d", nonce.Add(1)), nil
+		},
+		AssetResolver:       resolver.resolve,
+		EnvironmentResolver: environmentResolver,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	if _, err := manager.RegisterRun(context.Background(), "run", "checkpoint"); err != nil {
+		t.Fatal(err)
+	}
+	return &harness{manager: manager, store: store, resumer: &fakeResumer{}}
+}
+
+func (h *harness) interruptTool(t *testing.T, targetID, callID, tool string) Interrupt {
+	t.Helper()
+	request, err := h.manager.Interrupt(context.Background(), &adk.InterruptCtx{ID: targetID, IsRootCause: true}, InterruptInput{
+		RunID: "run", CheckpointID: "checkpoint", CallID: callID, Tool: tool, Kind: KindConfirm, Parameters: []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return request
+}
+
+// The interrupt and the resume comparison bind to the actual confirming tool:
+// a database call carries the connection's real asset and its production
+// challenge, a terminal call in the same run carries the session asset, and a
+// flipped tool identity rejects the pending answer instead of resuming on
+// stale evidence.
+func TestInterruptResumeBindsEvidenceToTheConfirmingTool(t *testing.T) {
+	resolver := &toolAssetResolver{assets: map[string]string{"db_query": "asset-db", "send_keys": "asset-term"}}
+	h := newToolAssetHarness(t, resolver, func(_ context.Context, assetID string) ([]string, error) {
+		if assetID == "asset-db" {
+			return []string{"live"}, nil
+		}
+		return nil, nil
+	})
+
+	dbRequest := h.interruptTool(t, "target-one", "call-db", "db_query")
+	if dbRequest.AssetID != "asset-db" {
+		t.Fatalf("db interrupt asset evidence = %q", dbRequest.AssetID)
+	}
+	if len(dbRequest.RequiredEnvironmentNames) != 1 || dbRequest.RequiredEnvironmentNames[0] != "live" {
+		t.Fatalf("db interrupt required names = %v", dbRequest.RequiredEnvironmentNames)
+	}
+	dbAnswer := answerFor("answer-db", dbRequest)
+	dbAnswer.EnvironmentNames = []string{"live"}
+	resume, _, err := h.manager.Resume(context.Background(), h.resumer, dbAnswer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resume.AssetID != "asset-db" {
+		t.Fatalf("db resume asset evidence = %q", resume.AssetID)
+	}
+
+	termRequest := h.interruptTool(t, "target-one", "call-term", "send_keys")
+	if termRequest.AssetID != "asset-term" {
+		t.Fatalf("terminal interrupt asset evidence = %q", termRequest.AssetID)
+	}
+	if len(termRequest.RequiredEnvironmentNames) != 0 {
+		t.Fatalf("terminal interrupt required names = %v", termRequest.RequiredEnvironmentNames)
+	}
+	if _, _, err := h.manager.Resume(context.Background(), h.resumer, answerFor("answer-term", termRequest)); err != nil {
+		t.Fatal(err)
+	}
+
+	// The database connection is rebound while the next confirmation is
+	// pending: the answer is rejected as mismatched instead of resuming on
+	// stale evidence, and the request stays pending for the real asset.
+	resolver.mu.Lock()
+	resolver.assets["db_query"] = "asset-db-new"
+	resolver.mu.Unlock()
+	rebound := h.interruptTool(t, "target-one", "call-db-2", "db_query")
+	if rebound.AssetID != "asset-db-new" {
+		t.Fatalf("rebound interrupt asset evidence = %q", rebound.AssetID)
+	}
+	resolver.mu.Lock()
+	resolver.assets["db_query"] = "asset-db-third"
+	resolver.mu.Unlock()
+	if _, _, err := h.manager.Resume(context.Background(), h.resumer, answerFor("answer-db-2", rebound)); !errors.Is(err, ErrAssetMismatch) {
+		t.Fatalf("rebound resume error = %v", err)
+	}
+	if h.resumer.count() != 2 {
+		t.Fatalf("mismatched answer resumed %d times", h.resumer.count())
+	}
+	snapshot, err := h.manager.Snapshot("run")
+	if err != nil || len(snapshot.Pending) != 1 || snapshot.Pending[0].AssetID != "asset-db-new" {
+		t.Fatalf("rejected rebound consumed the request: %+v, %v", snapshot, err)
 	}
 }

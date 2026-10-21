@@ -34,6 +34,7 @@ var contractScopes = []scopeSpec{
 	{name: "ai-watch", prefixes: []string{"ai_watch_"}},
 	{name: "ai-run", commands: []string{"ai_run_history", "ai_run_recovery_summary"}},
 	{name: "ai-skills", prefixes: []string{"ai_skills_"}},
+	{name: "ai-grant", prefixes: []string{"ai_grant_"}},
 	{name: "fs-cancel", commands: []string{"fs_cancel"}},
 	{name: "terminal-stream", commands: []string{"terminal_pause", "terminal_recover", "terminal_resume", "terminal_stream_ack"}},
 	{name: "memory-owner", deferred: true},

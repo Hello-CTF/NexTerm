@@ -67,34 +67,52 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "ai_grant_list": {
+      scope: "ai-grant",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/ai/guard.DeviceGrant", ts: "DeviceGrant[]" },
     },
     "ai_grant_revoke": {
+      scope: "ai-grant",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{DeviceID string \"json:\\\"deviceId\\\"\"}", ts: "{\n  deviceId: string;\n}" },
+      output: { go: "any", ts: "unknown" },
     },
     "ai_grant_rule_list": {
+      scope: "ai-grant",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/ai/guard.GrantRule", ts: "GrantRule[]" },
     },
     "ai_grant_rule_revoke": {
+      scope: "ai-grant",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{ID string \"json:\\\"id\\\"\"}", ts: "{\n  id: string;\n}" },
+      output: { go: "any", ts: "unknown" },
     },
     "ai_grant_rule_set": {
+      scope: "ai-grant",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{DeviceID string \"json:\\\"deviceId\\\"\"; Action string \"json:\\\"action\\\"\"; Path string \"json:\\\"path\\\"\"; ExpiresAt int64 \"json:\\\"expiresAt\\\"\"}", ts: "{\n  deviceId: string;\n  action: string;\n  path: string;\n  expiresAt: number;\n}" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/guard.GrantRule", ts: "GrantRule" },
     },
     "ai_grant_set": {
+      scope: "ai-grant",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{DeviceID string \"json:\\\"deviceId\\\"\"; Kinds []string \"json:\\\"kinds\\\"\"}", ts: "{\n  deviceId: string;\n  kinds: string[];\n}" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/guard.DeviceGrant", ts: "DeviceGrant" },
     },
     "ai_hitl_events": {
       nested: false,
@@ -1874,12 +1892,6 @@ export const ipcContractManifest = {
     "ai_edit_resend",
     "ai_get_permission",
     "ai_get_provider",
-    "ai_grant_list",
-    "ai_grant_revoke",
-    "ai_grant_rule_list",
-    "ai_grant_rule_revoke",
-    "ai_grant_rule_set",
-    "ai_grant_set",
     "ai_hitl_events",
     "ai_hitl_snapshot",
     "ai_messages",
@@ -2135,6 +2147,42 @@ export type IPCTypedCommandName = Exclude<keyof typeof ipcContractManifest.comma
 export type IPCCommandName = keyof typeof ipcContractManifest.commands;
 
 export interface IPCCommandTypeMap {
+  "ai_grant_list": {
+    input: Record<string, never>;
+    output: contractTypes.DeviceGrant[];
+  };
+  "ai_grant_revoke": {
+    input: {
+  deviceId: string;
+};
+    output: unknown;
+  };
+  "ai_grant_rule_list": {
+    input: Record<string, never>;
+    output: contractTypes.GrantRule[];
+  };
+  "ai_grant_rule_revoke": {
+    input: {
+  id: string;
+};
+    output: unknown;
+  };
+  "ai_grant_rule_set": {
+    input: {
+  deviceId: string;
+  action: string;
+  path: string;
+  expiresAt: number;
+};
+    output: contractTypes.GrantRule;
+  };
+  "ai_grant_set": {
+    input: {
+  deviceId: string;
+  kinds: string[];
+};
+    output: contractTypes.DeviceGrant;
+  };
   "ai_roster_attach": {
     input: {
   handle: string;

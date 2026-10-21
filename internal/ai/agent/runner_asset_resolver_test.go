@@ -13,7 +13,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 )
 
-func assetResolverRunner(t *testing.T, chat model.BaseChatModel, deps tools.Dependencies, assetResolver func(context.Context, string) (string, error), environmentResolver func(context.Context, string) ([]string, error)) *Runner {
+func assetResolverRunner(t *testing.T, chat model.BaseChatModel, deps tools.Dependencies, assetResolver func(context.Context, string, string) (string, error), environmentResolver func(context.Context, string) ([]string, error)) *Runner {
 	t.Helper()
 	storage, err := store.OpenInMemory(context.Background())
 	if err != nil {
@@ -45,7 +45,7 @@ func TestRunnerBindsRealAssetEvidenceAndEnvironmentChallenge(t *testing.T) {
 	runner := assetResolverRunner(t, dockerConfirmChat(), tools.Dependencies{DockerAct: func(context.Context, string, string, string) error {
 		actions.Add(1)
 		return nil
-	}}, func(context.Context, string) (string, error) {
+	}}, func(context.Context, string, string) (string, error) {
 		return current.Load().(string), nil
 	}, func(_ context.Context, assetID string) ([]string, error) {
 		if assetID == "asset-1" {
@@ -116,7 +116,7 @@ func TestRunnerAssetEvidenceFailsClosedWhenUnresolvable(t *testing.T) {
 	runner := assetResolverRunner(t, dockerConfirmChat(), tools.Dependencies{DockerAct: func(context.Context, string, string, string) error {
 		actions.Add(1)
 		return nil
-	}}, func(context.Context, string) (string, error) { return "", nil }, nil)
+	}}, func(context.Context, string, string) (string, error) { return "", nil }, nil)
 
 	stream := &SliceStream{}
 	if _, err := runner.Start(context.Background(), ChatArgs{Message: "start the container", Scope: tools.Scope{SessionID: "session"}}, StaticStream(stream)); err != nil {

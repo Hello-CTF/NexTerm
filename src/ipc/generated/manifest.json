@@ -66,31 +66,37 @@
       "stream": "none"
     },
     "ai_grant_list": {
+      "scope": "ai-grant",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "ai_grant_revoke": {
+      "scope": "ai-grant",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "ai_grant_rule_list": {
+      "scope": "ai-grant",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "ai_grant_rule_revoke": {
+      "scope": "ai-grant",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "ai_grant_rule_set": {
+      "scope": "ai-grant",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "ai_grant_set": {
+      "scope": "ai-grant",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1740,12 +1746,6 @@
     "ai_edit_resend",
     "ai_get_permission",
     "ai_get_provider",
-    "ai_grant_list",
-    "ai_grant_revoke",
-    "ai_grant_rule_list",
-    "ai_grant_rule_revoke",
-    "ai_grant_rule_set",
-    "ai_grant_set",
     "ai_hitl_events",
     "ai_hitl_snapshot",
     "ai_messages",

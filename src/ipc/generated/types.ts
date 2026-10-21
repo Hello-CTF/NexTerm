@@ -109,6 +109,13 @@ export type DeployPublicKeyRequest = {
   productionConfirmation?: ProductionConfirmation | null;
 };
 
+export type DeviceGrant = {
+  deviceId: string;
+  kinds: string[];
+  permanent: boolean;
+  updatedAt: number;
+};
+
 export type Dispatch = {
   name: string;
   description: string;
@@ -454,6 +461,16 @@ export type ForwardRuleSettingsDTO = {
 export type ForwardRuleStartRequest = {
   id: string;
   sessionId: string;
+};
+
+export type GrantRule = {
+  id: string;
+  deviceId: string;
+  action: string;
+  path?: string;
+  expiresAt?: number;
+  createdAt: number;
+  updatedAt: number;
 };
 
 export type HostShareInputRequest = {

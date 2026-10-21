@@ -142,7 +142,7 @@ describe("GrantPanel long-term device grants", () => {
     expect(text).toContain("默认关闭");
     expect(text).toContain("桌面和明确开放部署使用共享授权");
     expect(text).toContain("对当前 NexTerm 实例的所有会话生效");
-    expect(text).toContain("普通终端写入和命令执行无需逐次确认");
+    expect(text).toContain("普通终端写入、命令执行和数据库查询无需逐次确认");
     expect(text).toContain("只读模式下也会放行");
     expect(text).toContain("高危或无法判断的操作仍按当前权限模式处理");
     expect(text).toContain("禁止操作始终拒绝");
@@ -154,12 +154,27 @@ describe("GrantPanel long-term device grants", () => {
     expect(text).not.toContain("已授权：");
   });
 
-  it("hides grant controls for database assets and excludes them from rule device options", async () => {
+  it("offers a fixed db_query grant for database assets and excludes them from rule device options", async () => {
     await mountPanel();
-    expect(() => rowFor("数据库")).toThrow();
+    const row = rowFor("数据库");
+    expect(row.textContent).toContain("MySQL");
+    expect(row.textContent).toContain("未授权");
+    expect(row.textContent).toContain("数据库查询");
+    // Database assets grant a fixed db_query kind: no kind toggles are offered.
+    expect(row.textContent).not.toContain("终端写入");
     const text = view!.container.textContent ?? "";
-    expect(text).toContain("数据库资产不支持设备授权");
-    expect(text).not.toContain("已授权：");
+    expect(text).toContain("数据库资产仅支持数据库查询授权");
+    expect(text).not.toContain("数据库资产不支持设备授权");
+
+    clickButton(row, "开启授权");
+    await flush();
+    expect(mocks.ask).toHaveBeenCalledOnce();
+    const message = mocks.ask.mock.calls[0][0] as string;
+    expect(message).toContain("数据库");
+    expect(message).toContain("数据库查询");
+    expect(mocks.grantSet).toHaveBeenCalledWith("asset-2", ["db_query"]);
+    await flushUntil(() => rowFor("数据库").textContent?.includes("已授权：数据库查询") === true);
+
     clickButton(view!.container, "添加规则");
     await flush();
     const options = [...view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则设备']")!.options].map(
@@ -167,6 +182,16 @@ describe("GrantPanel long-term device grants", () => {
     );
     expect(options).toContain("生产 Web");
     expect(options).not.toContain("数据库");
+  });
+
+  it("revokes a database asset grant after confirmation", async () => {
+    mocks.grantList.mockResolvedValue([{ deviceId: "asset-2", kinds: ["db_query"], permanent: true, updatedAt: 1 }]);
+    await mountPanel();
+    expect(rowFor("数据库").textContent).toContain("已授权：数据库查询");
+    clickButton(rowFor("数据库"), "撤销");
+    await flushUntil(() => mocks.grantRevoke.mock.calls.length > 0);
+    expect(mocks.grantRevoke).toHaveBeenCalledWith("asset-2");
+    await flushUntil(() => rowFor("数据库").textContent?.includes("未授权") === true);
   });
 
   it("requires explicit confirmation before granting and grants the selected kinds", async () => {
@@ -242,7 +267,7 @@ describe("GrantPanel long-term device grants", () => {
   });
 
   it("shows grant failures and leaves the device unauthorized", async () => {
-    mocks.grantSet.mockRejectedValue(new Error("设备授权种类仅支持 terminal_write/session_exec"));
+    mocks.grantSet.mockRejectedValue(new Error("设备授权种类仅支持 terminal_write/session_exec/db_query"));
     await mountPanel();
     clickButton(rowFor("生产 Web"), "开启授权");
     await flush();
