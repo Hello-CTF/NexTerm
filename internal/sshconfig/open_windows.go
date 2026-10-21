@@ -9,10 +9,13 @@ import (
 )
 
 // openSharedDelete opens path for reading — config parses and one-shot
-// identity-key reads — with FILE_SHARE_DELETE so a concurrent rename or
-// removal (the inventory watch deleting the config between polls, or an
-// identity key rotating mid-import) is never blocked by an in-flight reader,
-// matching the Unix unlink-while-open behavior the sync semantics rely on.
+// identity-key reads — with FILE_SHARE_DELETE so a concurrent removal or
+// rename-away (the inventory watch deleting the config between polls, or the
+// first step of an identity-key rotation mid-import) is never blocked by an
+// in-flight reader, matching the Unix unlink-while-open behavior the sync
+// semantics rely on. Windows still refuses a single-step rename-replace over
+// an open file regardless of sharing mode, so rotation writers must move the
+// old name aside before renaming the new key in.
 func openSharedDelete(path string) (*os.File, error) {
 	name, err := windows.UTF16PtrFromString(path)
 	if err != nil {
