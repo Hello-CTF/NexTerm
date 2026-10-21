@@ -137,15 +137,29 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 			return err
 		}
 		for _, indexRow := range transcriptBlockMaxTimestamps(chunks) {
-			row := &model.TranscriptChunkTS{TranscriptID: transcriptID, BlockSeq: indexRow.blockSeq, MaxTS: indexRow.maxTS, Gen: gen, OwnerID: ipc.OwnerID(ctx)}
-			if err := tx.Clauses(clause.OnConflict{
-				Columns:   []clause.Column{{Name: "transcript_id"}, {Name: "block_seq"}},
-				DoNothing: true,
-			}).Create(row).Error; err != nil {
+			if err := s.transcriptTSIndexUpsertCurrent(ctx, tx, transcriptID, indexRow.blockSeq, indexRow.maxTS, gen, ipc.OwnerID(ctx)); err != nil {
 				return err
 			}
 		}
 		if err := s.transcriptTSIndexStateUpsert(ctx, tx, transcriptID, wasEmpty); err != nil {
+			return err
+		}
+		// A legal out-of-order append can insert blocks at or before the
+		// verification watermark: those blocks are unverified, so the
+		// watermark rolls back to the position just before the earliest of
+		// them — the next seek's bounded pass verifies them instead of
+		// trusting a watermark that no longer covers them.
+		minNewSeq := blocks[0].Seq
+		for _, block := range blocks[1:] {
+			if block.Seq < minNewSeq {
+				minNewSeq = block.Seq
+			}
+		}
+		if err := tx.WithContext(ctx).Model(&model.TranscriptTSIndex{}).
+			Where("transcript_id = ?", transcriptID).
+			Updates(map[string]any{
+				"verified_through": gorm.Expr("CASE WHEN verified_through >= ? THEN ? ELSE verified_through END", minNewSeq, minNewSeq-1),
+			}).Error; err != nil {
 			return err
 		}
 		transcriptQuery := queries.TranscriptRow

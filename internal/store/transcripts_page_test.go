@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1175,10 +1176,10 @@ func TestTranscriptSeekConcurrentReplaceStaysConsistent(t *testing.T) {
 		}
 	}()
 	for i := 0; i < 20; i++ {
-		page, err := db.TranscriptSeekToTimePage(ctx, id, 1000, 1<<20)
-		if err != nil {
-			t.Fatalf("seek %d: %v", i, err)
-		}
+		// A seek racing a replace reports the explicit retry state (the
+		// generation changed under it); the retry then reads one consistent
+		// version, never a mix and never a false corruption.
+		page := seekWithRetry(t, db, ctx, id, 1000, 1<<20)
 		if len(page.Chunks) == 0 {
 			t.Fatalf("seek %d returned an empty page", i)
 		}
@@ -1774,4 +1775,205 @@ func TestTranscriptBackfillOwnerPriorityAndFairness(t *testing.T) {
 			t.Fatalf("global order did not serve the corrupt window first or stalled:\n%s", text)
 		}
 	})
+}
+
+// A legal out-of-order append can insert blocks at or before the
+// verification watermark: those blocks are unverified, so the watermark
+// must roll back to keep them inside the next bounded verification pass —
+// a lowered index value on such a block is explicit corruption, never a
+// silently later page.
+func TestTranscriptSeekWatermarkRollsBackOnEarlySeqAppend(t *testing.T) {
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	appendPagedFixture(t, db, id, []TranscriptChunkRow{{Seq: 100, TabID: "tab-a", TS: 1000, Data: []byte("a")}})
+	appendPagedFixture(t, db, id, []TranscriptChunkRow{{Seq: 200, TabID: "tab-a", TS: 2000, Data: []byte("b")}})
+	// The seek to at=1500 establishes verified_through=200.
+	page, err := db.TranscriptSeekToTimePage(context.Background(), id, 1500, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Chunks) == 0 || page.Chunks[0].Seq != 200 {
+		t.Fatalf("page = %+v, want it to start at seq 200", page)
+	}
+	verified, err := db.transcriptTSIndexVerifiedThrough(context.Background(), db.db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified != 200 {
+		t.Fatalf("watermark = %d, want 200", verified)
+	}
+
+	// A legal early-seq append inserts a block before the watermark: the
+	// watermark must roll back so the new block is verified on the next seek.
+	appendPagedFixture(t, db, id, []TranscriptChunkRow{{Seq: 0, TabID: "tab-a", TS: 1500, Data: []byte("c")}})
+	verified, err = db.transcriptTSIndexVerifiedThrough(context.Background(), db.db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified != -1 {
+		t.Fatalf("watermark = %d after the early-seq append, want rollback to -1", verified)
+	}
+
+	// A lowered index value on the new block is explicit corruption on the
+	// next seek — never a silently later page.
+	if err := db.db.WithContext(context.Background()).Model(&model.TranscriptChunkTS{}).
+		Where("transcript_id = ? AND block_seq = 0", id).
+		Update("max_ts", 0).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.TranscriptSeekToTimePage(context.Background(), id, 1500, 4096); err == nil {
+		t.Fatal("seek after a low-corrupted early-seq append = nil error, want explicit corruption")
+	}
+}
+
+// After the rollback, the next seek re-verifies the early block and
+// answers from it (naive parity) — the watermark then covers it.
+func TestTranscriptSeekEarlySeqAppendVerifiedAndAnswers(t *testing.T) {
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	appendPagedFixture(t, db, id, []TranscriptChunkRow{{Seq: 100, TabID: "tab-a", TS: 1000, Data: []byte("a")}})
+	appendPagedFixture(t, db, id, []TranscriptChunkRow{{Seq: 200, TabID: "tab-a", TS: 2000, Data: []byte("b")}})
+	if _, err := db.TranscriptSeekToTimePage(context.Background(), id, 1500, 4096); err != nil {
+		t.Fatal(err)
+	}
+	// The legal early-seq append rolls the watermark back.
+	appendPagedFixture(t, db, id, []TranscriptChunkRow{{Seq: 0, TabID: "tab-a", TS: 1500, Data: []byte("c")}})
+	// The next seek verifies the new block and answers from it.
+	page, err := db.TranscriptSeekToTimePage(context.Background(), id, 1500, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Chunks) == 0 || page.Chunks[0].Seq != 0 {
+		t.Fatalf("page = %+v, want it to start at the appended seq 0", page)
+	}
+	verified, err := db.transcriptTSIndexVerifiedThrough(context.Background(), db.db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified != 0 {
+		t.Fatalf("watermark = %d after the re-verifying seek, want 0", verified)
+	}
+}
+
+// A stale-gen index row left by a backfill that raced a whole-content
+// replace must not block a later legal append at the same seq: the
+// append's current-generation upsert repairs the row, the watermark rolls
+// back, and the seek answers from the appended block (naive parity).
+func TestTranscriptSeekAppendRepairsStaleIndexRow(t *testing.T) {
+	db := testStore(t)
+	ctx := context.Background()
+	id := "dbg-stale-append"
+	row := TranscriptRow{ID: id, SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000}
+	if err := db.TranscriptStart(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	ended := int64(2000)
+	row.EndedAt = &ended
+	row.ContentOmitted = true
+	if err := db.TranscriptInsertSynced(ctx, row, []TranscriptChunkRow{
+		{Seq: 50, TabID: "tab-a", TS: 900, Data: []byte("old")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The replace lands new content with a new generation.
+	if err := db.TranscriptReplaceContent(ctx, id, 1, 1, false, []TranscriptChunkRow{
+		{Seq: 200, TabID: "tab-a", TS: 2000, Data: []byte("new")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The racing backfill's late insert: a stale-gen row for the old block.
+	if err := db.db.WithContext(ctx).Exec(
+		"INSERT INTO transcript_chunk_ts (transcript_id, block_seq, max_ts, gen, owner_id) VALUES (?, ?, ?, ?, ?)",
+		id, 50, 900, 0, "").Error; err != nil {
+		t.Fatal(err)
+	}
+	// A seek establishes a watermark on the new content.
+	if _, err := db.TranscriptSeekToTimePage(ctx, id, 2000, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+
+	// A legal append reuses the old block's seq: the stale row must be
+	// repaired with the current generation, and the watermark must roll
+	// back so the new block is verified.
+	if err := db.TranscriptAppendChunks(ctx, id, []TranscriptChunkRow{
+		{Seq: 50, TabID: "tab-a", TS: 1000, Data: []byte("appended")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The seek must answer from the appended block (naive parity), not the
+	// later block the stale row used to hide it behind.
+	page, err := db.TranscriptSeekToTimePage(ctx, id, 1000, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Chunks) == 0 || page.Chunks[0].Seq != 50 {
+		t.Fatalf("page = %+v, want it to start at the appended seq 50", page)
+	}
+}
+
+// The watermark advance is guarded by the content generation: a seek whose
+// snapshot verified the old content must not write its watermark into the
+// new generation after an interleaved whole-content replace — the advance
+// is discarded and the seek reports the explicit retry state, never a
+// polluted watermark and never a wrong page.
+func TestTranscriptSeekAdvanceDiscardsStaleGeneration(t *testing.T) {
+	db := testStore(t)
+	ctx := context.Background()
+	id := "dbg-advance-cas"
+	row := TranscriptRow{ID: id, SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000}
+	if err := db.TranscriptStart(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	ended := int64(2000)
+	row.EndedAt = &ended
+	row.ContentOmitted = true
+	if err := db.TranscriptInsertSynced(ctx, row, []TranscriptChunkRow{
+		{Seq: 100, TabID: "tab-a", TS: 1000, Data: []byte("old")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The hook interleaves a whole-content replace between the seek's
+	// snapshot verification and its watermark advance — exactly the window
+	// where an unguarded advance would pollute the new generation. The new
+	// content's first chunk is oversized so it forms its own early block:
+	// a polluted watermark could hide a low corruption on it.
+	var replaced atomic.Bool
+	restore := transcriptSeekBeforeAdvanceHook
+	transcriptSeekBeforeAdvanceHook = func() {
+		if replaced.CompareAndSwap(false, true) {
+			if err := db.TranscriptReplaceContent(ctx, id, 2, 2, false, []TranscriptChunkRow{
+				{Seq: 0, TabID: "tab-a", TS: 1500, Data: bytes.Repeat([]byte("w"), (4<<20)+1)},
+				{Seq: 200, TabID: "tab-a", TS: 2000, Data: []byte("new1")},
+			}); err != nil {
+				t.Errorf("interleaved replace = %v", err)
+			}
+		}
+	}
+	defer func() { transcriptSeekBeforeAdvanceHook = restore }()
+
+	// The seek verifies the old content, then the replace lands before the
+	// advance: the advance must be discarded (explicit retry), never
+	// written into the new generation's watermark.
+	if _, err := db.TranscriptSeekToTimePage(ctx, id, 1000, 1<<20); !errors.Is(err, ErrTranscriptSeekIndexing) {
+		t.Fatalf("seek with an interleaved replace = %v, want the explicit retry state", err)
+	}
+	verified, err := db.transcriptTSIndexVerifiedThrough(ctx, db.db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified != -1 {
+		t.Fatalf("watermark = %d after the interleaved replace, want the new generation's reset to -1", verified)
+	}
+
+	// A lowered index value on the new content's early block is explicit
+	// corruption on the retry, never a silently later page.
+	if err := db.db.WithContext(ctx).Model(&model.TranscriptChunkTS{}).
+		Where("transcript_id = ? AND block_seq = 0", id).
+		Update("max_ts", 0).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.TranscriptSeekToTimePage(ctx, id, 1500, 1<<20); err == nil || errors.Is(err, ErrTranscriptSeekIndexing) {
+		t.Fatalf("retry after a low-corrupted new-content block = %v, want explicit corruption", err)
+	}
 }

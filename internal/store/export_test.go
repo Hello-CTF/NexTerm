@@ -26,3 +26,12 @@ func (s *Store) TranscriptBackfillLoopRunningForTest() bool {
 	_, running := transcriptTSIndexBackfills.Load(s)
 	return running
 }
+
+// SetTranscriptSeekBeforeAdvanceHookForTest installs the hook that runs
+// between the seek's snapshot transaction and its watermark advance, and
+// returns the previous value for restoration.
+func SetTranscriptSeekBeforeAdvanceHookForTest(hook func()) (restore func()) {
+	previous := transcriptSeekBeforeAdvanceHook
+	transcriptSeekBeforeAdvanceHook = hook
+	return func() { transcriptSeekBeforeAdvanceHook = previous }
+}

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"sort"
@@ -125,19 +126,55 @@ func (s *Store) transcriptTSIndexVerifiedThrough(ctx context.Context, tx *gorm.D
 	return verified, nil
 }
 
-// transcriptTSIndexAdvanceVerified moves the verification watermark forward
-// monotonically: concurrent seeks may verify different ranges, and the
-// watermark never regresses.
-func (s *Store) transcriptTSIndexAdvanceVerified(ctx context.Context, tx *gorm.DB, transcriptID string, verified int64) error {
-	query := tx.WithContext(ctx).Model(&model.TranscriptTSIndex{}).
-		Where("transcript_id = ?", transcriptID).
-		Updates(map[string]any{
-			"verified_through": gorm.Expr("CASE WHEN verified_through < ? THEN ? ELSE verified_through END", verified, verified),
-		})
-	if query.Error != nil {
-		return dbError(query.Error)
+// transcriptTSIndexAdvanceVerifiedGen moves the verification watermark
+// forward monotonically, guarded by the content generation the seek
+// verified against: the advance runs in its own READ COMMITTED
+// transaction so it sees the latest committed generation, and it applies
+// only while the transcript's current generation still matches — a
+// replace that landed after the seek's snapshot resets the watermark in
+// its own transaction, and the stale advance is discarded (the caller
+// reports the explicit retry state). A serialization or lock failure on
+// the way is likewise an explicit retry, never an error page.
+func (s *Store) transcriptTSIndexAdvanceVerifiedGen(ctx context.Context, transcriptID string, verified, gen int64) (bool, error) {
+	var currentGen int64
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.WithContext(ctx).Model(&model.TranscriptRow{}).
+			Select("content_gen").
+			Where("id = ?", transcriptID).
+			Scan(&currentGen).Error; err != nil {
+			return dbError(err)
+		}
+		if currentGen != gen {
+			return nil
+		}
+		result := tx.WithContext(ctx).Model(&model.TranscriptTSIndex{}).
+			Where("transcript_id = ? AND (SELECT content_gen FROM transcript WHERE id = ?) = ?", transcriptID, transcriptID, gen).
+			Updates(map[string]any{
+				"verified_through": gorm.Expr("CASE WHEN verified_through < ? THEN ? ELSE verified_through END", verified, verified),
+			})
+		if result.Error != nil {
+			return dbError(result.Error)
+		}
+		if result.RowsAffected == 0 {
+			// MySQL and MariaDB count changed rows: the advance may have
+			// been a no-op because the watermark already covered it. Re-read
+			// the generation to tell that apart from a concurrent replace.
+			if err := tx.WithContext(ctx).Model(&model.TranscriptRow{}).
+				Select("content_gen").
+				Where("id = ?", transcriptID).
+				Scan(&currentGen).Error; err != nil {
+				return dbError(err)
+			}
+		}
+		return nil
+	}, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		if isBusyErr(err) {
+			return false, nil
+		}
+		return false, err
 	}
-	return nil
+	return currentGen == gen, nil
 }
 
 // transcriptContentGen reads the transcript's content generation, the
@@ -200,6 +237,25 @@ func (s *Store) transcriptIndexedBlockAtLeast(ctx context.Context, tx *gorm.DB, 
 		return 0, false, nil
 	}
 	return blockSeq, true, nil
+}
+
+// transcriptTSIndexUpsertCurrent writes one block's timestamp-index row
+// stamped with the given content generation. The guarded repair only
+// overwrites an existing row when the incoming generation is newer: an
+// older backfill's late row can never overwrite the current generation's
+// row, and a stale row left by a replace is repaired by the next
+// current-generation write instead of blocking it forever.
+func (s *Store) transcriptTSIndexUpsertCurrent(ctx context.Context, tx *gorm.DB, transcriptID string, blockSeq, maxTS, gen int64, ownerID string) error {
+	row := &model.TranscriptChunkTS{TranscriptID: transcriptID, BlockSeq: blockSeq, MaxTS: maxTS, Gen: gen, OwnerID: ownerID}
+	if err := tx.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "transcript_id"}, {Name: "block_seq"}},
+		DoNothing: true,
+	}).Create(row).Error; err != nil {
+		return dbError(err)
+	}
+	return tx.WithContext(ctx).Model(&model.TranscriptChunkTS{}).
+		Where("transcript_id = ? AND block_seq = ? AND gen < ?", transcriptID, blockSeq, gen).
+		Updates(map[string]any{"max_ts": maxTS, "gen": gen, "owner_id": ownerID}).Error
 }
 
 // transcriptTSIndexBackfillBatch is the block population indexed per
@@ -381,7 +437,13 @@ func (s *Store) backfillTranscriptTSIndexBatch(state *transcriptTSIndexBackfillS
 func (s *Store) unindexedTranscriptBlockRefs(filterOwner, cursorOwner, cursorTranscriptID string, cursorSeq int64) ([]transcriptBackfillBlockRef, error) {
 	query := s.db.WithContext(s.backfillCtx).Model(&model.TranscriptChunkRow{}).
 		Select("transcript_chunk.owner_id AS owner_id, transcript_chunk.transcript_id AS transcript_id, transcript_chunk.seq AS seq").
-		Where("NOT EXISTS (SELECT 1 FROM transcript_chunk_ts idx WHERE idx.transcript_id = transcript_chunk.transcript_id AND idx.block_seq = transcript_chunk.seq)").
+		Where(`NOT EXISTS (
+			SELECT 1 FROM transcript_chunk_ts idx
+			JOIN transcript ON transcript.id = idx.transcript_id
+			WHERE idx.transcript_id = transcript_chunk.transcript_id
+			  AND idx.block_seq = transcript_chunk.seq
+			  AND idx.gen = transcript.content_gen
+		)`).
 		Order("transcript_chunk.owner_id, transcript_chunk.transcript_id, transcript_chunk.seq").
 		Limit(transcriptTSIndexBackfillBatch)
 	if filterOwner != "" {
@@ -450,12 +512,8 @@ func (s *Store) indexTranscriptBlockRefs(state *transcriptTSIndexBackfillState, 
 				maxTS = chunk.TS
 			}
 		}
-		row := &model.TranscriptChunkTS{TranscriptID: ref.TranscriptID, BlockSeq: ref.Seq, MaxTS: maxTS, Gen: gen, OwnerID: block.OwnerID}
-		if err := s.db.WithContext(s.backfillCtx).Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "transcript_id"}, {Name: "block_seq"}},
-			DoNothing: true,
-		}).Create(row).Error; err != nil {
-			return false, dbError(err)
+		if err := s.transcriptTSIndexUpsertCurrent(s.backfillCtx, s.db, ref.TranscriptID, ref.Seq, maxTS, gen, block.OwnerID); err != nil {
+			return false, err
 		}
 		indexed++
 		transcripts[ref.TranscriptID] = struct{}{}
@@ -501,11 +559,19 @@ func transcriptBackfillRefOwners(refs []transcriptBackfillBlockRef) []string {
 }
 
 // transcriptTSIndexFullyIndexed reports whether the transcript has no
-// unindexed blocks left.
+// unindexed blocks left: every block carries an index row stamped with the
+// transcript's current content generation — a stale row from an older
+// generation does not count.
 func (s *Store) transcriptTSIndexFullyIndexed(ctx context.Context, transcriptID string) (bool, error) {
 	var remaining int64
 	err := s.db.WithContext(ctx).Model(&model.TranscriptChunkRow{}).
-		Where("transcript_chunk.transcript_id = ? AND NOT EXISTS (SELECT 1 FROM transcript_chunk_ts idx WHERE idx.transcript_id = transcript_chunk.transcript_id AND idx.block_seq = transcript_chunk.seq)", transcriptID).
+		Where(`transcript_chunk.transcript_id = ? AND NOT EXISTS (
+			SELECT 1 FROM transcript_chunk_ts idx
+			JOIN transcript ON transcript.id = idx.transcript_id
+			WHERE idx.transcript_id = transcript_chunk.transcript_id
+			  AND idx.block_seq = transcript_chunk.seq
+			  AND idx.gen = transcript.content_gen
+		)`, transcriptID).
 		Count(&remaining).Error
 	if err != nil {
 		return false, dbError(err)

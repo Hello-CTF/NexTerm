@@ -218,35 +218,50 @@ func (s *Store) transcriptPageAfterTx(ctx context.Context, tx *gorm.DB, transcri
 	return s.transcriptPageAfter(ctx, tx, transcriptID, afterSeq, maxBytes)
 }
 
+// transcriptSeekBeforeAdvanceHook, when set, runs between the seek's
+// snapshot transaction and its watermark advance — tests use it to
+// interleave a whole-content replace at exactly that boundary.
+var transcriptSeekBeforeAdvanceHook func()
+
 // TranscriptSeekToTimePage reads the page starting at the first chunk with
 // TS >= atMS; a time past the last chunk yields the final (tail) page, and
 // duplicate timestamps resolve to the first chunk of the group — the same
-// semantics as the reference model's SeekToTime. The whole seek runs in one
-// read-only REPEATABLE READ transaction, so the candidate query, the
-// verification scan, and the final page all read one snapshot: a
-// concurrent replace or an in-flight backfill can never mix old and new
-// content or masquerade as corruption. With a complete index the seek
-// verifies only the blocks beyond the persisted verification watermark and
-// answers from the candidate block; when the bounded pass cannot reach the
-// answer in this call it commits the watermark advance and reports the
-// explicit pending state — the next call resumes where this one stopped,
-// never an unbounded scan, never a wrong page, and never a silently
-// unsupported answer.
+// semantics as the reference model's SeekToTime. The candidate query, the
+// verification scan, and the final page all read one REPEATABLE READ
+// snapshot: a concurrent replace or an in-flight backfill can never mix
+// old and new content or masquerade as corruption. With a complete index
+// the seek verifies only the blocks beyond the persisted verification
+// watermark and answers from the candidate block; when the bounded pass
+// cannot reach the answer in this call it reports the explicit pending
+// state — the next call resumes where this one stopped, never an
+// unbounded scan and never a wrong page. The watermark advance commits
+// separately under the content-generation guard: a replace that landed
+// after the snapshot discards the advance and the seek reports the
+// explicit retry state instead of polluting the new generation's
+// watermark.
 func (s *Store) TranscriptSeekToTimePage(ctx context.Context, transcriptID string, atMS int64, maxBytes int) (TranscriptPage, error) {
 	var page TranscriptPage
 	var pending bool
+	var advance *transcriptSeekAdvance
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
-		page, pending, err = s.transcriptSeekToTimePageTx(ctx, tx, transcriptID, atMS, maxBytes)
-		// A pending pass still commits: the watermark advance it made is
-		// exactly what lets the next call resume instead of rescanning.
-		if err != nil {
-			return err
-		}
-		return nil
+		page, pending, advance, err = s.transcriptSeekToTimePageTx(ctx, tx, transcriptID, atMS, maxBytes)
+		return err
 	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return TranscriptPage{}, err
+	}
+	if advance != nil {
+		if transcriptSeekBeforeAdvanceHook != nil {
+			transcriptSeekBeforeAdvanceHook()
+		}
+		applied, err := s.transcriptTSIndexAdvanceVerifiedGen(ctx, transcriptID, advance.verified, advance.gen)
+		if err != nil {
+			return TranscriptPage{}, err
+		}
+		if !applied {
+			return TranscriptPage{}, ErrTranscriptSeekIndexing
+		}
 	}
 	if pending {
 		return TranscriptPage{}, ErrTranscriptSeekIndexing
@@ -254,24 +269,32 @@ func (s *Store) TranscriptSeekToTimePage(ctx context.Context, transcriptID strin
 	return page, nil
 }
 
+// transcriptSeekAdvance is the watermark advance a seek computed inside its
+// snapshot: the verified high-water seq and the content generation it was
+// verified against. It commits separately under the generation guard.
+type transcriptSeekAdvance struct {
+	verified int64
+	gen      int64
+}
+
 // transcriptSeekToTimePageTx is the seek's implementation inside its
 // consistent-snapshot transaction; pending reports that the bounded pass
-// exhausted its budget before reaching the answer (the watermark advance
-// is written either way).
-func (s *Store) transcriptSeekToTimePageTx(ctx context.Context, tx *gorm.DB, transcriptID string, atMS int64, maxBytes int) (TranscriptPage, bool, error) {
+// exhausted its budget before reaching the answer, and advance (when
+// non-nil) is the watermark advance to commit after the snapshot.
+func (s *Store) transcriptSeekToTimePageTx(ctx context.Context, tx *gorm.DB, transcriptID string, atMS int64, maxBytes int) (TranscriptPage, bool, *transcriptSeekAdvance, error) {
 	if _, err := s.transcriptGet(ctx, tx, transcriptID); err != nil {
-		return TranscriptPage{}, false, err
+		return TranscriptPage{}, false, nil, err
 	}
 	_, _, found, err := s.transcriptBlockBoundaries(ctx, tx, transcriptID)
 	if err != nil {
-		return TranscriptPage{}, false, err
+		return TranscriptPage{}, false, nil, err
 	}
 	if !found {
-		return TranscriptPage{Chunks: []TranscriptChunkRow{}}, false, nil
+		return TranscriptPage{Chunks: []TranscriptChunkRow{}}, false, nil, nil
 	}
 	complete, err := s.transcriptTSIndexComplete(ctx, tx, transcriptID)
 	if err != nil {
-		return TranscriptPage{}, false, err
+		return TranscriptPage{}, false, nil, err
 	}
 	if complete {
 		return s.seekIndexedAtLeastTx(ctx, tx, transcriptID, atMS, maxBytes)
@@ -279,21 +302,21 @@ func (s *Store) transcriptSeekToTimePageTx(ctx context.Context, tx *gorm.DB, tra
 	s.kickTranscriptTSIndexBackfill(ipc.OwnerID(ctx))
 	gen, err := s.transcriptContentGen(ctx, tx, transcriptID)
 	if err != nil {
-		return TranscriptPage{}, false, err
+		return TranscriptPage{}, false, nil, err
 	}
 	seq, found, pending, err := s.scanBlocksAtLeast(ctx, tx, transcriptID, atMS, gen, transcriptSeekScanBudget, 0, true)
 	if err != nil {
-		return TranscriptPage{}, false, err
+		return TranscriptPage{}, false, nil, err
 	}
 	if pending {
-		return TranscriptPage{}, true, nil
+		return TranscriptPage{}, true, nil, nil
 	}
 	if !found {
 		page, err := s.transcriptFirstScreenPageTx(ctx, tx, transcriptID, maxBytes)
-		return page, false, err
+		return page, false, nil, err
 	}
 	page, err := s.transcriptPageAfterTx(ctx, tx, transcriptID, seq, maxBytes)
-	return page, false, err
+	return page, false, nil, err
 }
 
 // transcriptSeekScanBudget bounds the block rows one incomplete-index pass
@@ -322,54 +345,56 @@ func transcriptIndexCorruptError(transcriptID string, blockSeq int64) error {
 // timestamp reaches at; every block the watermark has not yet verified is
 // decoded in a bounded pass — each block's true maximum timestamp must
 // match its index row, so a lowered value cannot silently hide a match
-// (corruption is explicit, never a later page) — and the watermark advance
-// is committed with the seek so the next call resumes instead of
-// rescanning. Once the candidate lies inside the verified prefix the seek
-// answers from the candidate block alone, matching the reference model
-// exactly.
-func (s *Store) seekIndexedAtLeastTx(ctx context.Context, tx *gorm.DB, transcriptID string, atMS int64, maxBytes int) (TranscriptPage, bool, error) {
+// (corruption is explicit, never a later page) — and the watermark
+// advance is handed to the caller to commit under the generation guard,
+// so the next call resumes instead of rescanning. Once the candidate lies
+// inside the verified prefix the seek answers from the candidate block
+// alone, matching the reference model exactly.
+func (s *Store) seekIndexedAtLeastTx(ctx context.Context, tx *gorm.DB, transcriptID string, atMS int64, maxBytes int) (TranscriptPage, bool, *transcriptSeekAdvance, error) {
 	gen, err := s.transcriptContentGen(ctx, tx, transcriptID)
 	if err != nil {
-		return TranscriptPage{}, false, err
+		return TranscriptPage{}, false, nil, err
 	}
 	verified, err := s.transcriptTSIndexVerifiedThrough(ctx, tx, transcriptID)
 	if err != nil {
-		return TranscriptPage{}, false, err
+		return TranscriptPage{}, false, nil, err
 	}
 	blockSeq, found, err := s.transcriptIndexedBlockAtLeast(ctx, tx, transcriptID, atMS, gen)
 	if err != nil {
-		return TranscriptPage{}, false, err
+		return TranscriptPage{}, false, nil, err
 	}
 	if !found {
 		// No candidate: verify the unverified suffix before answering with
 		// the tail page — a lowered index value must not silently hide a
 		// match, and the bounded pass resumes across calls.
-		advanced, pending, err := s.verifyIndexedPrefix(ctx, tx, transcriptID, gen, verified, 0, transcriptSeekScanBudget)
+		advanced, pending, err := s.verifyIndexedPrefix(ctx, tx, transcriptID, gen, verified, math.MaxInt64, transcriptSeekScanBudget)
 		if err != nil {
-			return TranscriptPage{}, false, err
+			return TranscriptPage{}, false, nil, err
 		}
-		if err := s.transcriptTSIndexAdvanceVerified(ctx, tx, transcriptID, advanced); err != nil {
-			return TranscriptPage{}, false, err
+		var advance *transcriptSeekAdvance
+		if advanced > verified {
+			advance = &transcriptSeekAdvance{verified: advanced, gen: gen}
 		}
 		if pending {
-			return TranscriptPage{}, true, nil
+			return TranscriptPage{}, true, advance, nil
 		}
 		page, err := s.transcriptFirstScreenPageTx(ctx, tx, transcriptID, maxBytes)
-		return page, false, err
+		return page, false, advance, err
 	}
+	var advance *transcriptSeekAdvance
 	if blockSeq > verified {
 		// Verify the newly reached blocks up to the candidate: bounded per
 		// call, resumable through the watermark, and a mismatch is explicit
 		// corruption, never a silently eliminated match.
 		advanced, pending, err := s.verifyIndexedPrefix(ctx, tx, transcriptID, gen, verified, blockSeq, transcriptSeekScanBudget)
 		if err != nil {
-			return TranscriptPage{}, false, err
+			return TranscriptPage{}, false, nil, err
 		}
-		if err := s.transcriptTSIndexAdvanceVerified(ctx, tx, transcriptID, advanced); err != nil {
-			return TranscriptPage{}, false, err
+		if advanced > verified {
+			advance = &transcriptSeekAdvance{verified: advanced, gen: gen}
 		}
 		if pending {
-			return TranscriptPage{}, true, nil
+			return TranscriptPage{}, true, advance, nil
 		}
 	}
 	// The candidate is the first block with a qualifying chunk; its index
@@ -377,28 +402,27 @@ func (s *Store) seekIndexedAtLeastTx(ctx context.Context, tx *gorm.DB, transcrip
 	// answer — one block decode, never a scan.
 	seq, err := s.transcriptFirstQualifyingChunkSeq(ctx, tx, transcriptID, blockSeq, atMS)
 	if err != nil {
-		return TranscriptPage{}, false, err
+		return TranscriptPage{}, false, nil, err
 	}
 	page, err := s.transcriptPageAfterTx(ctx, tx, transcriptID, seq, maxBytes)
-	return page, false, err
+	return page, false, advance, err
 }
 
 // verifyIndexedPrefix decodes the transcript's blocks in (afterSeq,
-// stopAtSeq] — or through the tail when stopAtSeq is 0 — checking each
-// block's true maximum timestamp against its index row for the current
-// content generation. It returns the last verified seq and reports pending
-// when the budget ran out before the range was exhausted, so the caller
-// advances the watermark and the next call resumes from there.
+// stopAtSeq] — pass math.MaxInt64 for stopAtSeq to scan through the tail —
+// checking each block's true maximum timestamp against its index row for
+// the current content generation. It returns the last verified seq and
+// reports pending when the budget ran out before the range was exhausted,
+// so the caller advances the watermark and the next call resumes from
+// there.
 func (s *Store) verifyIndexedPrefix(ctx context.Context, tx *gorm.DB, transcriptID string, gen, afterSeq, stopAtSeq int64, budget int) (int64, bool, error) {
 	query := tx.WithContext(ctx).Model(&model.TranscriptChunkRow{}).
 		Select("transcript_chunk.*, idx.max_ts AS indexed_max_ts").
 		Joins("LEFT JOIN transcript_chunk_ts idx ON idx.transcript_id = transcript_chunk.transcript_id AND idx.block_seq = transcript_chunk.seq AND idx.gen = ?", gen).
 		Where("transcript_chunk.transcript_id = ?", transcriptID).
 		Where("transcript_chunk.seq > ?", afterSeq).
+		Where("transcript_chunk.seq <= ?", stopAtSeq).
 		Order("transcript_chunk.seq")
-	if stopAtSeq > 0 {
-		query = query.Where("transcript_chunk.seq <= ?", stopAtSeq)
-	}
 	if ownerID := ipc.OwnerID(ctx); ownerID != "" {
 		query = query.Where("transcript_chunk.owner_id = ?", ownerID)
 	}
