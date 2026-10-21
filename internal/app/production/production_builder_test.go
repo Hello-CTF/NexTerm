@@ -22,6 +22,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/server"
 	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/local"
 	"github.com/coder/websocket"
@@ -685,5 +686,122 @@ func testProductionGracefulDrain(t *testing.T, fixture *productionChannelFixture
 			_ = closed.CloseNow()
 		}
 		t.Fatalf("fully drained WS = %d, want 403", status)
+	}
+}
+
+// An anomalous ownerless session on a non-open server must fail closed: the
+// transcript writer refuses to record an ownerless row every account could
+// read. Desktop deployments keep the legacy ownerless behavior.
+func TestConcreteProductionTranscriptOwnerlessSessionFailsClosed(t *testing.T) {
+	var logs syncedLogBuffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	production, err := NewProduction(t.Context(), ProductionConfig{
+		Config:    Config{Logger: logger},
+		DataDir:   t.TempDir(),
+		Desktop:   false,
+		Connector: transcriptTestConnector(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := production.Services.Sessions.Connect(context.Background(), session.Asset{ID: "anomaly-asset", Kind: session.KindSSH}); err != nil {
+		t.Fatal(err)
+	}
+	waitForLogCount(t, &logs, "failing closed instead of ownerless", 1)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := production.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := store.Open(context.Background(), filepath.Join(production.Services.dataDir, "data.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	rows, err := reopened.TranscriptListByAsset(context.Background(), "anomaly-asset", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("ownerless transcript rows persisted on a non-open server: %+v", rows)
+	}
+}
+
+func TestConcreteProductionDesktopOwnerlessSessionWritesLegacyRow(t *testing.T) {
+	production, err := NewProduction(t.Context(), ProductionConfig{
+		Config:    Config{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))},
+		DataDir:   t.TempDir(),
+		Desktop:   true,
+		Connector: transcriptTestConnector(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := production.Services.Sessions.Connect(context.Background(), session.Asset{ID: "legacy-asset", Kind: session.KindSSH}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	var rows []store.TranscriptRow
+	for time.Now().Before(deadline) {
+		rows, err = production.Services.Store.TranscriptListByAsset(context.Background(), "legacy-asset", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(rows) != 1 || rows[0].OwnerID != "" {
+		t.Fatalf("desktop ownerless session must keep the legacy row: %+v", rows)
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := production.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The composition stops the transcript writer before the store, so Shutdown
+// returns only after the retention loop has stopped and joined: no retention
+// run may write to the store or the logger after Shutdown returned, and the
+// store closes only after every retention write happened.
+func TestConcreteProductionShutdownJoinsTranscriptRetention(t *testing.T) {
+	var logs syncedLogBuffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	production, err := NewProduction(t.Context(), ProductionConfig{
+		Config:  Config{Logger: logger},
+		DataDir: t.TempDir(),
+		Desktop: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	waitForLogCount(t, &logs, "scheduled retention cleanup finished", 1)
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := production.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+	frozen := strings.Count(logs.String(), "scheduled retention cleanup finished")
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if got := strings.Count(logs.String(), "scheduled retention cleanup finished"); got != frozen {
+			t.Fatalf("retention wrote after Shutdown returned: count went %d -> %d", frozen, got)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if _, err := production.Services.Store.TranscriptHosts(context.Background()); err == nil {
+		t.Fatal("store must be closed by shutdown after the retention loop joined")
 	}
 }

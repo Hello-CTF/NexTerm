@@ -12,6 +12,7 @@ import (
 
 	core "github.com/Hello-CTF/NexTerm/internal/app"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
@@ -43,6 +44,11 @@ type transcriptWriterConfig struct {
 	MaxSessionBytes   int64
 	QueueMaxBytes     int64
 	RetentionInterval time.Duration
+	// RequireOwner rejects ownerless transcript writes: non-open multi-user
+	// servers fail closed instead of recording rows every account can read.
+	// Desktop and open-access deployments leave it false, so ownerless
+	// sessions keep the legacy shared-store behavior.
+	RequireOwner bool
 }
 
 type transcriptItemKind int
@@ -80,6 +86,8 @@ func (d *transcriptDrop) merge(other transcriptDrop) {
 type deferredTranscript struct {
 	info      session.TranscriptInfo
 	startedAt int64
+	ownerID   string
+	writeCtx  context.Context
 	drop      transcriptDrop
 }
 
@@ -88,6 +96,7 @@ type transcriptItem struct {
 	sessionID string
 	tabID     string
 	durableID string
+	ownerID   string
 	ts        int64
 	chunkKind int
 	data      []byte
@@ -98,6 +107,8 @@ type transcriptItem struct {
 type transcriptPeriod struct {
 	sessionID     string
 	transcriptID  string
+	ownerID       string
+	writeCtx      context.Context
 	durableBytes  map[string]int64
 	durableFrozen map[string]bool
 	nextSeq       int64
@@ -136,6 +147,7 @@ type transcriptWriter struct {
 	maxSessionBytes   int64
 	queueMaxBytes     int64
 	retentionInterval time.Duration
+	requireOwner      bool
 
 	queueMu        sync.Mutex
 	queue          []transcriptItem
@@ -152,6 +164,7 @@ type transcriptWriter struct {
 	lifecycleMu sync.Mutex
 	cancel      context.CancelFunc
 	wg          sync.WaitGroup
+	retentionWg sync.WaitGroup
 }
 
 var _ session.TranscriptSink = (*transcriptWriter)(nil)
@@ -178,6 +191,7 @@ func newTranscriptWriter(config transcriptWriterConfig) *transcriptWriter {
 		maxSessionBytes:   config.MaxSessionBytes,
 		queueMaxBytes:     config.QueueMaxBytes,
 		retentionInterval: config.RetentionInterval,
+		requireOwner:      config.RequireOwner,
 		activeDrops:       make(map[string]int),
 		signalCh:          make(chan struct{}, 1),
 		spaceCh:           make(chan struct{}),
@@ -212,9 +226,9 @@ func (w *transcriptWriter) Start(ctx context.Context) error {
 		w.run()
 	}()
 	if w.retentionDatabase != nil {
-		w.wg.Add(1)
+		w.retentionWg.Add(1)
 		go func() {
-			defer w.wg.Done()
+			defer w.retentionWg.Done()
 			w.retentionLoop(runCtx)
 		}()
 	}
@@ -235,6 +249,11 @@ func (w *transcriptWriter) Shutdown(ctx context.Context) error {
 	w.queueMu.Unlock()
 	w.signal()
 	cancel()
+	// The retention loop is joined unconditionally: every retention write and
+	// log must happen before Shutdown returns, never after the caller moved on
+	// and possibly closed the store or the test's logger. The run loop keeps
+	// its context escape so a stalled database drain cannot wedge shutdown.
+	w.retentionWg.Wait()
 	done := make(chan struct{})
 	go func() {
 		w.wg.Wait()
@@ -284,7 +303,8 @@ func (w *transcriptWriter) SessionEnded(ctx context.Context, sessionID string) {
 	w.enqueue(ctx, transcriptItem{kind: transcriptItemEnd, sessionID: sessionID, ts: time.Now().UnixMilli()})
 }
 
-func (w *transcriptWriter) enqueue(_ context.Context, item transcriptItem) {
+func (w *transcriptWriter) enqueue(ctx context.Context, item transcriptItem) {
+	item.ownerID = ipc.OwnerID(ctx)
 	w.queueMu.Lock()
 	reported := false
 	for !w.closed && item.kind != transcriptItemChunk && w.queuedControls >= transcriptControlQueueMaxItems {
@@ -351,7 +371,7 @@ func (w *transcriptWriter) dropChunkLocked(item transcriptItem) bool {
 	if item.durableID != "" {
 		drop.durableIDs[item.durableID] = struct{}{}
 	}
-	w.queue = append(w.queue, transcriptItem{kind: transcriptItemDrop, sessionID: item.sessionID, drop: drop})
+	w.queue = append(w.queue, transcriptItem{kind: transcriptItemDrop, sessionID: item.sessionID, ownerID: item.ownerID, drop: drop})
 	w.activeDrops[item.sessionID] = len(w.queue) - 1
 	return true
 }
@@ -361,6 +381,25 @@ func (w *transcriptWriter) signal() {
 	case w.signalCh <- struct{}{}:
 	default:
 	}
+}
+
+// transcriptOwnerContext resolves the database context carrying the trusted
+// session owner into which a transcript period writes. The second return is
+// false when a non-open deployment must fail closed: an ownerless row would
+// be readable by every account.
+func (w *transcriptWriter) transcriptOwnerContext(ownerID string) (context.Context, bool) {
+	if ownerID == "" {
+		if w.requireOwner {
+			return nil, false
+		}
+		return context.Background(), true
+	}
+	return ipc.WithUserID(context.Background(), ownerID), true
+}
+
+func (w *transcriptWriter) failClosedOwnerless(sessionID, operation string) {
+	w.logger.Warn("transcript write without an owner on a non-open server; failing closed instead of ownerless",
+		"sessionId", sessionID, "operation", operation)
 }
 
 func (w *transcriptWriter) notifySpaceLocked() {
@@ -459,8 +498,13 @@ func (w *transcriptWriter) flushBatch(sessions map[string]*transcriptPeriod, def
 				w.logger.Warn("transcript start for session with an open transcript", "sessionId", item.sessionID)
 				continue
 			}
+			writeCtx, ok := w.transcriptOwnerContext(item.ownerID)
+			if !ok {
+				w.failClosedOwnerless(item.sessionID, "start")
+				continue
+			}
 			transcriptID := ids.New()
-			if err := w.database.TranscriptStart(context.Background(), store.TranscriptRow{
+			if err := w.database.TranscriptStart(writeCtx, store.TranscriptRow{
 				ID:        transcriptID,
 				SessionID: item.info.SessionID,
 				AssetID:   item.info.AssetID,
@@ -469,13 +513,13 @@ func (w *transcriptWriter) flushBatch(sessions map[string]*transcriptPeriod, def
 				StartedAt: item.ts,
 			}); err != nil {
 				if deferredDrops[item.sessionID] == nil {
-					deferredDrops[item.sessionID] = &deferredTranscript{info: item.info, startedAt: item.ts}
+					deferredDrops[item.sessionID] = &deferredTranscript{info: item.info, startedAt: item.ts, ownerID: item.ownerID, writeCtx: writeCtx}
 				}
 				w.stats.flushErrors.Add(1)
 				w.logger.Error("transcript start failed; session output will not be recorded", "sessionId", item.sessionID, "error", err)
 				continue
 			}
-			period := &transcriptPeriod{sessionID: item.sessionID, transcriptID: transcriptID}
+			period := &transcriptPeriod{sessionID: item.sessionID, transcriptID: transcriptID, ownerID: item.ownerID, writeCtx: writeCtx}
 			sessions[item.sessionID] = period
 			if deferred := deferredDrops[item.sessionID]; deferred != nil && deferred.drop.chunks > 0 {
 				w.applyTranscriptDrop(period, deferred.drop)
@@ -511,9 +555,14 @@ func (w *transcriptWriter) flushBatch(sessions map[string]*transcriptPeriod, def
 		case transcriptItemDrop:
 			period := sessions[item.sessionID]
 			if period == nil {
+				writeCtx, ok := w.transcriptOwnerContext(item.ownerID)
+				if !ok {
+					w.failClosedOwnerless(item.sessionID, "drop marker")
+					continue
+				}
 				deferred := deferredDrops[item.sessionID]
 				if deferred == nil {
-					deferred = &deferredTranscript{info: session.TranscriptInfo{SessionID: item.sessionID}, startedAt: item.drop.ts}
+					deferred = &deferredTranscript{info: session.TranscriptInfo{SessionID: item.sessionID}, startedAt: item.drop.ts, ownerID: item.ownerID, writeCtx: writeCtx}
 					deferredDrops[item.sessionID] = deferred
 				}
 				deferred.drop.merge(item.drop)
@@ -569,7 +618,7 @@ func (w *transcriptWriter) flushPending(period *transcriptPeriod) {
 		return
 	}
 	chunks := len(period.pending)
-	if err := w.database.TranscriptAppendChunks(context.Background(), period.transcriptID, period.pending, period.durableBytes); err != nil {
+	if err := w.database.TranscriptAppendChunks(period.writeCtx, period.transcriptID, period.pending, period.durableBytes); err != nil {
 		period.truncated = true
 		for durableID := range period.durableBytes {
 			period.freezeDurable(durableID)
@@ -589,7 +638,7 @@ func (w *transcriptWriter) flushPending(period *transcriptPeriod) {
 
 func (w *transcriptWriter) flushPeriod(period *transcriptPeriod, endedAt int64) {
 	w.flushPending(period)
-	if err := w.database.TranscriptEnd(context.Background(), period.transcriptID, endedAt, period.truncated); err != nil {
+	if err := w.database.TranscriptEnd(period.writeCtx, period.transcriptID, endedAt, period.truncated); err != nil {
 		w.stats.flushErrors.Add(1)
 		w.logger.Error("transcript end failed", "sessionId", period.sessionID, "transcriptId", period.transcriptID, "error", err)
 		return
@@ -603,7 +652,7 @@ func (w *transcriptWriter) flushDeferred(deferred *deferredTranscript, endedAt i
 		return
 	}
 	transcriptID := ids.New()
-	if err := w.database.TranscriptStart(context.Background(), store.TranscriptRow{
+	if err := w.database.TranscriptStart(deferred.writeCtx, store.TranscriptRow{
 		ID:        transcriptID,
 		SessionID: deferred.info.SessionID,
 		AssetID:   deferred.info.AssetID,
@@ -615,7 +664,7 @@ func (w *transcriptWriter) flushDeferred(deferred *deferredTranscript, endedAt i
 		w.logger.Error("deferred transcript flush failed; releasing gap state", "sessionId", deferred.info.SessionID, "droppedChunks", deferred.drop.chunks, "droppedBytes", deferred.drop.bytes, "error", err)
 		return
 	}
-	period := &transcriptPeriod{sessionID: deferred.info.SessionID, transcriptID: transcriptID}
+	period := &transcriptPeriod{sessionID: deferred.info.SessionID, transcriptID: transcriptID, ownerID: deferred.ownerID, writeCtx: deferred.writeCtx}
 	w.applyTranscriptDrop(period, deferred.drop)
 	w.flushPeriod(period, endedAt)
 }

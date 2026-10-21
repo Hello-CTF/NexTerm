@@ -175,7 +175,7 @@ func (m *Manager) reconnect(ctx context.Context, id string, expectedGeneration u
 		_ = oldTransport.Close()
 	}
 	m.emit(context.Background(), TopicSessionStatus, reconnectingEvent)
-	m.transcriptEnded(id)
+	m.transcriptEnded(session)
 
 	runCtx, cancel := context.WithCancel(reconnectCtx)
 	stop := context.AfterFunc(ctx, cancel)

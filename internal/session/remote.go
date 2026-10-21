@@ -53,7 +53,7 @@ func (m *Manager) RegisterRemoteSession(ctx context.Context, options RemoteSessi
 	}
 
 	now := m.now()
-	sessionCtx, sessionCancel := context.WithCancel(m.ctx)
+	sessionCtx, sessionCancel := context.WithCancel(ownerCtx(m.ctx, options.OwnerID))
 	session := &Session{
 		ID:          newID(),
 		CreatedAt:   now,
@@ -342,6 +342,6 @@ func (m *Manager) reapRemote(id string, activity time.Time) error {
 		m.closeTabResources(tab)
 	}
 	m.emit(context.Background(), TopicSessionStatus, disconnectedEvent)
-	m.transcriptEnded(id)
+	m.transcriptEnded(session)
 	return nil
 }

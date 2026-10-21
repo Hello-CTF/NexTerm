@@ -63,7 +63,7 @@ func (m *Manager) transcriptStarted(ctx context.Context, session *Session) {
 	if m.transcripts == nil {
 		return
 	}
-	m.transcripts.SessionStarted(context.WithoutCancel(ctx), TranscriptInfo{
+	m.transcripts.SessionStarted(ownerCtx(context.WithoutCancel(ctx), session.userID), TranscriptInfo{
 		SessionID: session.ID,
 		AssetID:   session.asset.ID,
 		AssetName: session.asset.Name,
@@ -99,28 +99,28 @@ func (m *Manager) transcriptOutput(ctx context.Context, tab *Tab, data []byte) {
 	if len(data) == 0 {
 		return
 	}
-	m.transcripts.SessionOutput(ctx, durableID, tab.SessionID, tab.ID, data)
+	m.transcripts.SessionOutput(ownerCtx(ctx, tab.session.userID), durableID, tab.SessionID, tab.ID, data)
 }
 
-func (m *Manager) transcriptEnded(sessionID string) {
+func (m *Manager) transcriptEnded(session *Session) {
 	if m.transcripts == nil {
 		return
 	}
-	m.transcripts.SessionEnded(m.ctx, sessionID)
+	m.transcripts.SessionEnded(ownerCtx(m.ctx, session.userID), session.ID)
 }
 
 func (m *Manager) transcriptInput(ctx context.Context, tab *Tab, data []byte) {
 	if m.transcripts == nil || len(data) == 0 {
 		return
 	}
-	m.transcripts.SessionInput(ctx, tab.SessionID, tab.ID, data)
+	m.transcripts.SessionInput(ownerCtx(ctx, tab.session.userID), tab.SessionID, tab.ID, data)
 }
 
 func (m *Manager) transcriptResize(ctx context.Context, tab *Tab, cols, rows uint32) {
 	if m.transcripts == nil {
 		return
 	}
-	m.transcripts.SessionResize(ctx, tab.SessionID, tab.ID, cols, rows)
+	m.transcripts.SessionResize(ownerCtx(ctx, tab.session.userID), tab.SessionID, tab.ID, cols, rows)
 }
 
 // ownerCtx returns a context carrying the session owner's identity for
