@@ -135,6 +135,47 @@ func TestQuietGroupSnapshotCloseBeforeTerminalClose(t *testing.T) {
 	}
 }
 
+// Two successful snapshots of the same tab carry the same incarnation; a
+// removed and recreated tab under the same ID gets a new one, so a
+// same-ID same-version reading from a different incarnation is never
+// mistaken for the same tab.
+func TestQuietGroupSnapshotIncarnationDistinguishesRecreation(t *testing.T) {
+	manager, _, terminals, session := openOpenTestSession(t, KindSSH)
+	tab := openTestTab(t, manager, session, "client-a", "a-1")
+	terminals.terminal(tab.ID).setQuiet(10, 5, false)
+	first, err := manager.QuietGroupSnapshot(context.Background(), []string{tab.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 || first[0].Incarnation == 0 {
+		t.Fatalf("first snapshot = %+v, want a nonzero incarnation", first)
+	}
+	if err := manager.CloseTab(tab.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.OpenTab(context.Background(), OpenTabOptions{
+		TabID: tab.ID, SessionID: session.ID, ClientID: "client-a", ChannelID: "a-2", Cols: 80, Rows: 24,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The recreated tab reports the same version but a different
+	// incarnation: the two snapshots are distinguishable.
+	terminals.terminal(tab.ID).setQuiet(10, 5, false)
+	second, err := manager.QuietGroupSnapshot(context.Background(), []string{tab.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 1 {
+		t.Fatalf("second snapshot = %+v", second)
+	}
+	if second[0].Version != first[0].Version {
+		t.Fatalf("versions = %d vs %d, want the same version for the ABA check", second[0].Version, first[0].Version)
+	}
+	if second[0].Incarnation == first[0].Incarnation {
+		t.Fatalf("incarnation = %d for both tabs; a recreated tab must never share the original's incarnation", second[0].Incarnation)
+	}
+}
+
 // A tab removed between the consistency reads must never be reported with a
 // stale state: the whole snapshot fails closed.
 func TestQuietGroupSnapshotFailsOnInterleavedRemove(t *testing.T) {

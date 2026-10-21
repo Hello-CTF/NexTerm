@@ -18,14 +18,18 @@ var ErrQuietSnapshot = errors.New("quiet group snapshot changed during the read"
 
 // TabQuietState is one tab's quiet reading at a point in the terminal's
 // state: idle milliseconds since the last output, a version that bumps on
-// any output, resize, mode change, encoding switch, or close, and whether
-// the tab is closed. Two group snapshots whose per-tab versions all match
-// describe one consistent state.
+// any output, resize, mode change, encoding switch, or close, whether the
+// tab is closed, and the unique incarnation of this tab's creation. Two
+// group snapshots whose per-tab versions and incarnations all match
+// describe one consistent state; a recreated tab's incarnation never
+// matches the original's, so a same-ID same-version reading from a
+// different incarnation is never mistaken for the same tab.
 type TabQuietState struct {
-	TabID   string
-	IdleMS  int64
-	Version uint64
-	Closed  bool
+	TabID       string
+	IdleMS      int64
+	Version     uint64
+	Closed      bool
+	Incarnation uint64
 }
 
 // QuietGroupSnapshot reads the quiet state of the requested tabs in one
@@ -80,7 +84,8 @@ func (m *Manager) QuietGroupSnapshot(ctx context.Context, tabIDs []string) ([]Ta
 // tabQuietState reads one tab's quiet state from the terminal's versioned
 // state: the version and the closed fact come from the same read, so a
 // close is reported only once the terminal itself has closed and bumped
-// the version.
+// the version. The incarnation is the tab's creation identity, letting
+// callers compare two snapshots for ABA across a remove+recreate.
 func (m *Manager) tabQuietState(tab *Tab) (TabQuietState, error) {
 	source, ok := tab.terminal.(interface{ QuietState() terminal.TabQuietState })
 	if !ok {
@@ -88,9 +93,10 @@ func (m *Manager) tabQuietState(tab *Tab) (TabQuietState, error) {
 	}
 	quiet := source.QuietState()
 	return TabQuietState{
-		TabID:   tab.ID,
-		IdleMS:  quiet.IdleMS,
-		Version: quiet.Version,
-		Closed:  quiet.Closed,
+		TabID:       tab.ID,
+		IdleMS:      quiet.IdleMS,
+		Version:     quiet.Version,
+		Closed:      quiet.Closed,
+		Incarnation: tab.incarnation,
 	}, nil
 }

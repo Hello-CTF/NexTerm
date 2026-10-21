@@ -77,6 +77,12 @@ type Tab struct {
 	ID        string
 	SessionID string
 
+	// incarnation is the unique identity of this tab's creation: it is
+	// assigned once at registration and never reused, so a removed and
+	// recreated tab is distinguishable from the original even when their
+	// versions coincide.
+	incarnation uint64
+
 	session    *Session
 	terminal   TerminalState
 	fanout     *terminal.Fanout
@@ -497,6 +503,8 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	session.mu.Lock()
 	current := !m.closed && !session.closed && m.sessions[session.ID] == session && session.status == StatusConnected && session.generation == generation && session.transport == transport && m.tabs[tab.ID] == nil
 	if current {
+		m.nextTabIncarnation++
+		tab.incarnation = m.nextTabIncarnation
 		m.tabs[tab.ID] = tab
 		session.tabs[tab.ID] = tab
 		session.idleSince = time.Time{}

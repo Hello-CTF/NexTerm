@@ -115,6 +115,8 @@ func (m *Manager) RegisterRemoteSession(ctx context.Context, options RemoteSessi
 		return TabInfo{}, ErrRemoteLimit
 	}
 	m.sessions[session.ID] = session
+	m.nextTabIncarnation++
+	tab.incarnation = m.nextTabIncarnation
 	m.tabs[tab.ID] = tab
 	session.tabs[tab.ID] = tab
 	session.mu.Lock()
