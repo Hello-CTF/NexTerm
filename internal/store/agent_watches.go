@@ -158,6 +158,20 @@ func (s *Store) AgentWatchTargetGet(ctx context.Context, targetID string) (model
 	return row, nil
 }
 
+// AgentWatchTargetListByOwner returns the caller's durable target rows,
+// oldest first. The production watch service uses it to re-attach live
+// targets after a restart and to render the target list; cross-owner rows
+// are never returned.
+func (s *Store) AgentWatchTargetListByOwner(ctx context.Context) ([]model.AgentWatchTargetRow, error) {
+	rows := []model.AgentWatchTargetRow{}
+	err := agentWatchOwnerScope(ctx, s.db.WithContext(ctx), "owner_id").
+		Order("updated_at ASC, target_id ASC").Find(&rows).Error
+	if err != nil {
+		return nil, dbError(err)
+	}
+	return rows, nil
+}
+
 // settleAgentWatchTargetWatches marks every armed watch of an older
 // generation unverifiable; watches of the current incarnation never match
 // output they cannot vouch for.
@@ -250,6 +264,19 @@ func (s *Store) AgentWatchGet(ctx context.Context, watchID string) (model.AgentW
 func (s *Store) AgentWatchListByTarget(ctx context.Context, targetID string) ([]model.AgentWatchRow, error) {
 	rows := []model.AgentWatchRow{}
 	err := agentWatchOwnerScope(ctx, s.db.WithContext(ctx).Where("target_id = ?", targetID), "owner_id").
+		Order("created_at ASC, id ASC").Find(&rows).Error
+	if err != nil {
+		return nil, dbError(err)
+	}
+	return rows, nil
+}
+
+// AgentWatchListByOwner returns the caller's watch rows across every target,
+// oldest first. The watch IPC list and the production restart scan are
+// owner-scoped through the same owner condition as every other watch query.
+func (s *Store) AgentWatchListByOwner(ctx context.Context) ([]model.AgentWatchRow, error) {
+	rows := []model.AgentWatchRow{}
+	err := agentWatchOwnerScope(ctx, s.db.WithContext(ctx), "owner_id").
 		Order("created_at ASC, id ASC").Find(&rows).Error
 	if err != nil {
 		return nil, dbError(err)

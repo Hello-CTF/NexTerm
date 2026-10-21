@@ -875,3 +875,47 @@ func TestAgentWatchCreateSerializesWithPermanentDetach(t *testing.T) {
 		t.Fatalf("create after detach = %v; want ErrAgentWatchDetached", err)
 	}
 }
+
+func TestAgentWatchListByOwnerScopesToTheCaller(t *testing.T) {
+	backend := openAgentWatchStore(t)
+	ctxA := watchOwnerCtx("owner-a")
+	ctxB := watchOwnerCtx("owner-b")
+	createTestWatch(t, backend, ctxA, "watch-a1", "target-1", "identity-1")
+	createTestWatch(t, backend, ctxA, "watch-a2", "target-2", "identity-2")
+	createTestWatch(t, backend, ctxB, "watch-b1", "target-1", "identity-1")
+
+	watchesA, err := backend.AgentWatchListByOwner(ctxA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(watchesA) != 2 || watchesA[0].ID != "watch-a1" || watchesA[1].ID != "watch-a2" {
+		t.Fatalf("owner-a watches = %+v", watchesA)
+	}
+	watchesB, err := backend.AgentWatchListByOwner(ctxB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(watchesB) != 1 || watchesB[0].ID != "watch-b1" {
+		t.Fatalf("owner-b watches = %+v", watchesB)
+	}
+
+	targetsA, err := backend.AgentWatchTargetListByOwner(ctxA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targetsA) != 2 {
+		t.Fatalf("owner-a targets = %+v", targetsA)
+	}
+	for _, target := range targetsA {
+		if target.OwnerID != "owner-a" {
+			t.Fatalf("owner-a target list leaked %s row %+v", target.OwnerID, target)
+		}
+	}
+	targetsB, err := backend.AgentWatchTargetListByOwner(ctxB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targetsB) != 1 || targetsB[0].OwnerID != "owner-b" {
+		t.Fatalf("owner-b targets = %+v", targetsB)
+	}
+}
