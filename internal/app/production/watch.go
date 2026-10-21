@@ -176,19 +176,25 @@ func (s *watchService) reconcileOwner(owner string) {
 
 // onSessionEvent reconciles the event owner's watch targets on session
 // status changes and terminal exits; the event context carries the owner.
+// Owners without any durable watch target never get an executor: a busy
+// server's session churn must not spawn idle dispatch loops.
 func (s *watchService) onSessionEvent(ctx context.Context, event session.Event) {
 	if event.Topic != session.TopicSessionStatus && event.Topic != session.TopicTerminalExit {
 		return
 	}
+	owner := ipc.EventOwnerID(ctx)
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		return
 	}
+	_, running := s.executors[owner]
 	s.mu.Unlock()
-	owner := ipc.EventOwnerID(ctx)
-	if _, err := s.executorFor(ctx, owner); err != nil {
-		return
+	if !running {
+		rows, err := s.store.AgentWatchTargetListByOwner(s.ownerCtx(owner))
+		if err != nil || len(rows) == 0 {
+			return
+		}
 	}
 	go s.reconcileOwner(owner)
 }
@@ -326,8 +332,8 @@ func watchSummaryFromRow(row model.AgentWatchRow) (WatchSummary, error) {
 	}
 	return WatchSummary{
 		ID: row.ID, TargetID: row.TargetID, Name: row.Name,
-		Condition:  WatchConditionDTO{Type: condition.Type, Pattern: condition.Pattern},
-		Status:     row.Status, Repeat: row.Repeat, AnchorSeq: row.AnchorSeq,
+		Condition: WatchConditionDTO{Type: condition.Type, Pattern: condition.Pattern},
+		Status:    row.Status, Repeat: row.Repeat, AnchorSeq: row.AnchorSeq,
 		Generation: row.Generation, Revision: row.Revision,
 		LastError: row.LastError, UpdatedAt: row.UpdatedAt,
 	}, nil
@@ -406,11 +412,11 @@ func (s *watchService) registerCommands(dispatcher *ipc.Dispatcher) error {
 	registrations := []func() error{
 		func() error {
 			return ipc.Register(dispatcher, "ai_watch_create", func(ctx context.Context, _ *ipc.Call, args struct {
-				TargetID   string            `json:"targetId"`
-				Name       string            `json:"name"`
-				Condition  WatchConditionDTO `json:"condition"`
-				Repeat     bool              `json:"repeat"`
-				ExpiresAt  int64             `json:"expiresAt"`
+				TargetID  string            `json:"targetId"`
+				Name      string            `json:"name"`
+				Condition WatchConditionDTO `json:"condition"`
+				Repeat    bool              `json:"repeat"`
+				ExpiresAt int64             `json:"expiresAt"`
 			}) (WatchSummary, error) {
 				condition := watches.Condition{Type: args.Condition.Type, Pattern: args.Condition.Pattern}
 				if err := condition.Validate(); err != nil {
