@@ -202,6 +202,7 @@ func TestExecutorCreateFailsOnUnverifiableLeftContext(t *testing.T) {
 		steps:  []scriptStep{{data: []byte("XYZ ")}},
 		endSeq: 100,
 		tail:   []byte("abcd"),
+		gate:   make(chan struct{}),
 	}
 	attachTarget(t, executor, ctx, "target-1", "identity-1", source)
 	if _, err := executor.Watch(ctx, WatchParams{TargetID: "target-1", Condition: Condition{Type: ConditionRegex, Pattern: `\bXYZ`}}); err == nil {
@@ -335,10 +336,12 @@ func TestExecutorCreateRetreatsAnchorAcrossAMidRuneSeam(t *testing.T) {
 	// of 力; the anchor must retreat to the rune start at 98 with the
 	// incomplete sequence carried, and the chunk supplying the rune's final
 	// byte fires at the true rune start.
+	gate := make(chan struct{})
 	source := &scriptSource{
 		steps:  []scriptStep{{data: append([]byte{0x9B}, []byte(" ready")...)}},
 		endSeq: 100,
 		tail:   []byte{'a', 'a', 'a', 'a', 'a', 'a', 0xE5, 0x8A},
+		gate:   gate,
 	}
 	attachTarget(t, executor, ctx, "target-1", "identity-1", source)
 	watch, err := executor.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("力 ready")})
@@ -348,6 +351,7 @@ func TestExecutorCreateRetreatsAnchorAcrossAMidRuneSeam(t *testing.T) {
 	if watch.AnchorSeq != 98 {
 		t.Fatalf("anchor = %d; want the rune start 98", watch.AnchorSeq)
 	}
+	close(gate)
 	if err := executor.Start(ctx); err != nil {
 		t.Fatal(err)
 	}

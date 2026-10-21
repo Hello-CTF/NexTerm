@@ -124,7 +124,7 @@ func TestExecutorWatchCreatedAtUTF8SplitDoesNotPanic(t *testing.T) {
 	executor := newTestExecutor(t, backend, newChanSink())
 	// The source ends right after the lead byte; Watch is created before the
 	// continuation arrives.
-	source := &scriptSource{endSeq: 1, tail: []byte{0xE7}, steps: []scriptStep{
+	source := &scriptSource{endSeq: 1, tail: []byte{0xE7}, gate: make(chan struct{}), steps: []scriptStep{
 		{data: []byte{0x95}},
 		{data: []byte{0x8C}},
 		{data: []byte("ready")},
@@ -279,12 +279,14 @@ func TestExecutorEOFFaultInjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := &scriptSource{steps: []scriptStep{{data: []byte("ready")}}}
+	gate := make(chan struct{})
+	source := &scriptSource{gate: gate, steps: []scriptStep{{data: []byte("ready")}}}
 	attachTarget(t, executor, ctx, "target-1", "identity-1", source)
 	if _, err := executor.Watch(ctx, WatchParams{TargetID: "target-1",
 		Condition: Condition{Type: ConditionRegex, Pattern: `ready$`}}); err != nil {
 		t.Fatal(err)
 	}
+	close(gate)
 	if err := executor.Start(ctx); err != nil {
 		t.Fatal(err)
 	}

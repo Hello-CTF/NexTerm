@@ -25,6 +25,7 @@ type scriptSource struct {
 	gate      chan struct{}
 	gateAfter int
 	calls     int
+	observed  map[int64]byte
 	closed    bool
 }
 
@@ -56,16 +57,45 @@ func (s *scriptSource) Chunk(ctx context.Context, fromSeq int64) ([]byte, int64,
 	if step.err != nil {
 		return nil, fromSeq, step.err
 	}
+	if s.observed == nil {
+		s.observed = make(map[int64]byte)
+	}
+	for index, value := range step.data {
+		s.observed[fromSeq+int64(index)] = value
+	}
 	return step.data, fromSeq + int64(len(step.data)) + step.skip, nil
 }
 
 func (s *scriptSource) End(ctx context.Context) (int64, error) { return s.endSeq, nil }
 
 func (s *scriptSource) Tail(ctx context.Context, beforeSeq int64, maxBytes int) ([]byte, error) {
-	if len(s.tail) > maxBytes {
-		return s.tail[len(s.tail)-maxBytes:], nil
+	if beforeSeq <= 0 || maxBytes <= 0 {
+		return nil, nil
 	}
-	return s.tail, nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stream := make(map[int64]byte, len(s.tail)+len(s.observed))
+	base := s.endSeq - int64(len(s.tail))
+	for index, value := range s.tail {
+		stream[base+int64(index)] = value
+	}
+	for position, value := range s.observed {
+		stream[position] = value
+	}
+	start := beforeSeq - int64(maxBytes)
+	if start < 0 {
+		start = 0
+	}
+	var tail []byte
+	for position := start; position < beforeSeq; position++ {
+		value, ok := stream[position]
+		if !ok {
+			tail = tail[:0]
+			continue
+		}
+		tail = append(tail, value)
+	}
+	return tail, nil
 }
 
 func (s *scriptSource) Close() error {
@@ -156,7 +186,8 @@ func TestExecutorFeedsObservationsAndDeliversToolData(t *testing.T) {
 	ctx := ownerCtx("owner-a")
 	sink := newChanSink()
 	executor := newTestExecutor(t, backend, sink)
-	source := &scriptSource{steps: []scriptStep{
+	gate := make(chan struct{})
+	source := &scriptSource{gate: gate, steps: []scriptStep{
 		{data: []byte("not yet\n")},
 		{data: []byte("xxready\n")},
 	}}
@@ -165,6 +196,7 @@ func TestExecutorFeedsObservationsAndDeliversToolData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	close(gate)
 	if err := executor.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
