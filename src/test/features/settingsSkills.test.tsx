@@ -266,6 +266,42 @@ describe("skills mock backend contract", () => {
     await expectSkillError(owner.saveOverride({ name: "alpha-skill", body: oversizedBody }), "invalid_param");
   });
 
+  it("pins the wire field names to the Go service JSON contract", async () => {
+    const owner = createSkillsMockBackend(EMBEDDED).apiFor("owner-a");
+    await owner.saveOverride({ name: "alpha-skill", description: "Alpha overridden" });
+    const entries = await owner.list();
+    const entry = entries.find((item) => item.name === "alpha-skill");
+    if (!entry?.override) throw new Error("expected override detail on the listed entry");
+    // The production typed adapter deserializes the Go DTOs in
+    // internal/ai/skills (Entry/Override/Dispatch json tags); these key sets
+    // are the wire contract it will consume. Optional fields that Go omits
+    // versus emits as false deserialize identically, so the pin is on names.
+    expect(Object.keys(JSON.parse(JSON.stringify(entry))).sort()).toEqual([
+      "description",
+      "digest",
+      "disabled",
+      "name",
+      "overridden",
+      "override",
+      "source",
+      "updatedAt",
+    ]);
+    expect(Object.keys(JSON.parse(JSON.stringify(entry.override))).sort()).toEqual([
+      "description",
+      "disabled",
+      "name",
+      "updatedAt",
+    ]);
+    const dispatch = await owner.dispatch("alpha-skill");
+    expect(Object.keys(JSON.parse(JSON.stringify(dispatch))).sort()).toEqual([
+      "body",
+      "description",
+      "digest",
+      "name",
+      "source",
+    ]);
+  });
+
   it("getEffective reads disabled material without performing a dispatch", async () => {
     const owner = createSkillsMockBackend(EMBEDDED).apiFor("owner-a");
     await owner.saveOverride({ name: "alpha-skill", disabled: true });
@@ -433,6 +469,61 @@ describe("SkillsCard", () => {
     expect(call).toMatchObject({ name: "alpha-skill", description: "Alpha overridden", disabled: false });
     expect("body" in call).toBe(false);
     await expectToast(toast, "success", "已保存");
+  });
+
+  it("saves a body-only override without sending a description key", async () => {
+    const backend = createSkillsMockBackend(EMBEDDED);
+    const api = renderWith(backend.apiFor("owner-a"));
+
+    click(await waitForButton(mounted!.container, "编辑技能 alpha-skill"));
+    expect((await waitForTextarea(mounted!.container, "技能正文")).disabled).toBe(true);
+    click(inputByLabel(mounted!.container, "覆盖正文"));
+    setInputValue(textareaByLabel(mounted!.container, "技能正文"), "alpha body v2\n");
+    clickButton(mounted!.container, "保存");
+
+    const call: SkillOverrideInput = api.saveOverride.mock.calls[0]![0];
+    expect(call).toMatchObject({ name: "alpha-skill", body: "alpha body v2\n", disabled: false });
+    expect("description" in call).toBe(false);
+    await expectToast(toast, "success", "已保存");
+  });
+
+  it("requires at least one override field or disable before saving an embedded edit", async () => {
+    const backend = createSkillsMockBackend(EMBEDDED);
+    const api = renderWith(backend.apiFor("owner-a"));
+
+    click(await waitForButton(mounted!.container, "编辑技能 alpha-skill"));
+    await waitForInput(mounted!.container, "技能描述");
+    clickButton(mounted!.container, "保存");
+    await flush();
+
+    expect(mounted!.container.textContent).toContain("至少选择一项");
+    expect(api.saveOverride).not.toHaveBeenCalled();
+  });
+
+  it("keeps the edit form and shows the backend message when saving an override fails", async () => {
+    const backend = createSkillsMockBackend(EMBEDDED);
+    const api = renderWith(backend.apiFor("owner-a"));
+
+    click(await waitForButton(mounted!.container, "编辑技能 alpha-skill"));
+    click(await waitForInput(mounted!.container, "覆盖描述"));
+    api.saveOverride.mockRejectedValueOnce(new SkillError("invalid_param", "AI 技能内容无效: read-only"));
+    clickButton(mounted!.container, "保存");
+
+    await expectText(mounted!.container, "AI 技能内容无效: read-only");
+    expect(textareaByLabel(mounted!.container, "技能正文")).toBeTruthy();
+    expect(api.list).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a failed settings read and closes the editor", async () => {
+    const backend = createSkillsMockBackend(EMBEDDED);
+    const api = renderWith(backend.apiFor("owner-a"));
+
+    api.getEffective.mockRejectedValueOnce(new Error("backend unavailable"));
+    click(await waitForButton(mounted!.container, "编辑技能 alpha-skill"));
+
+    await expectToast(toast, "error", "读取技能内容失败");
+    await expectNoText(mounted!.container, "读取技能内容…");
+    expect(mounted!.container.querySelector('textarea[aria-label="技能正文"]')).toBeNull();
   });
 
   it("prefills the edit form with the exact overridden fields", async () => {
