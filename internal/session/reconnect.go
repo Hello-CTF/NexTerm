@@ -225,7 +225,16 @@ func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generatio
 		if err == nil {
 			var opened map[*Tab]*replacementChannel
 			var gone map[*Tab]struct{}
-			opened, gone, err = m.openReplacementChannels(ctx, session, handle, generation)
+			// Replacement channels must outlive the reconnect attempt: every
+			// transport binds an opened channel's lifetime to the context it
+			// receives, so opening with the attempt-scoped ctx tore the fresh
+			// channels down moments after Reconnect returned. Open them under
+			// the session's lifetime context; failed attempts and superseded
+			// opens still close every replacement explicitly below.
+			session.mu.Lock()
+			channelCtx := session.ctx
+			session.mu.Unlock()
+			opened, gone, err = m.openReplacementChannels(channelCtx, session, handle, generation)
 			if err == nil {
 				committed, commitErr := m.commitReconnect(session, handle, opened, gone, generation)
 				if committed {
