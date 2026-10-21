@@ -3,6 +3,7 @@ package hitl
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -113,25 +114,21 @@ func newDetachedRace(t *testing.T) *detachedRace {
 	return race
 }
 
-// enter starts entry in a goroutine with its fetch explicitly proven first:
-// the wrapper takes the run through the manager's own lookup and signals,
-// then the rollback is released while the test holds the manager read lock,
-// so the entry's own fetch strictly precedes the delete. It returns the
-// entry's error after the callback completes.
-func (r *detachedRace) enter(t *testing.T, entry func() error) error {
+// enter resolves the run through the manager's own lookup, then starts the
+// entry's post-lookup path with that pointer while holding the manager read
+// lock, so the rollback's delete is ordered strictly after the fetch — no
+// RWMutex-priority or scheduling reliance: the entry's fetch (this lookup)
+// is complete before the gate opens, and the entry parks on run.mu (held by
+// the gated restore) until the rollback completes and the restore returns.
+func (r *detachedRace) enter(t *testing.T, entry func(run *runState) error) error {
 	t.Helper()
+	run, err := r.manager.run("run")
+	if err != nil {
+		t.Fatalf("resolve the run for the entry: %v", err)
+	}
 	r.manager.mu.RLock()
-	fetched := make(chan struct{})
 	done := make(chan error, 1)
-	go func() {
-		if _, err := r.manager.run("run"); err != nil {
-			done <- err
-			return
-		}
-		close(fetched)
-		done <- entry()
-	}()
-	<-fetched
+	go func() { done <- entry(run) }()
 	close(r.allow)
 	r.manager.mu.RUnlock()
 	return <-done
@@ -185,8 +182,8 @@ func TestStoreRestoreRollbackDetachesStartedExpireCallback(t *testing.T) {
 	race := newDetachedRace(t)
 	// Arm the expiry so the entered callback classifies the request as expired.
 	race.offset.Store(int64(2 * time.Hour))
-	if err := race.enter(t, func() error {
-		race.manager.expire("run", race.request.ID)
+	if err := race.enter(t, func(run *runState) error {
+		race.manager.expireRun(run, race.request.ID)
 		return nil
 	}); err != nil {
 		t.Fatalf("expire callback: %v", err)
@@ -204,8 +201,8 @@ func TestStoreRestoreRollbackDetachesStartedExpireCallback(t *testing.T) {
 // terminalizing the detached run and deleting its checkpoint.
 func TestStoreRestoreRollbackDetachesStartedFinish(t *testing.T) {
 	race := newDetachedRace(t)
-	err := race.enter(t, func() error {
-		_, err := race.manager.Finish("run", TerminalCompleted, nil)
+	err := race.enter(t, func(run *runState) error {
+		_, err := race.manager.finish(run, TerminalCompleted, "", false)
 		return err
 	})
 	if !errors.Is(err, ErrRunNotFound) {
@@ -222,8 +219,8 @@ func TestStoreRestoreRollbackDetachesStartedFinish(t *testing.T) {
 // rollback with the same fail-closed contract as Finish.
 func TestStoreRestoreRollbackDetachesStartedCancel(t *testing.T) {
 	race := newDetachedRace(t)
-	err := race.enter(t, func() error {
-		_, err := race.manager.Cancel("run")
+	err := race.enter(t, func(run *runState) error {
+		_, err := race.manager.finish(run, TerminalCanceled, "", true)
 		return err
 	})
 	if !errors.Is(err, ErrRunNotFound) {
@@ -243,8 +240,13 @@ func TestStoreRestoreRollbackDetachesStartedCancel(t *testing.T) {
 func TestStoreRestoreRollbackDetachesStartedResume(t *testing.T) {
 	race := newDetachedRace(t)
 	resumer := &fakeResumer{}
-	err := race.enter(t, func() error {
-		_, _, err := race.manager.Resume(context.Background(), resumer, answerFor("answer-one", race.request))
+	answer := answerFor("answer-one", race.request)
+	_, parameterHash, err := CanonicalParameters(answer.Parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = race.enter(t, func(run *runState) error {
+		_, _, err := race.manager.resumeRun(context.Background(), run, resumer, answer, parameterHash)
 		return err
 	})
 	if !errors.Is(err, ErrRunNotFound) {
@@ -269,10 +271,21 @@ func TestStoreRestoreRollbackDetachesStartedResume(t *testing.T) {
 // recording a request and persisting the detached run.
 func TestStoreRestoreRollbackDetachesStartedInterrupt(t *testing.T) {
 	race := newDetachedRace(t)
-	err := race.enter(t, func() error {
-		_, err := race.manager.Interrupt(context.Background(), &adk.InterruptCtx{ID: "target-two", IsRootCause: true}, InterruptInput{
-			RunID: "run", CheckpointID: "checkpoint", CallID: "call-two", Tool: "exec_commands", Kind: KindConfirm, Parameters: []byte(`{"commands":["ls"]}`),
-		})
+	input := InterruptInput{
+		RunID: "run", CheckpointID: "checkpoint", CallID: "call-two", Tool: "exec_commands", Kind: KindConfirm, Parameters: []byte(`{"commands":["ls"]}`),
+	}
+	target := &adk.InterruptCtx{ID: "target-two", IsRootCause: true}
+	parameters, parameterHash, err := CanonicalParameters(input.Parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	question := cloneQuestion(input.Question)
+	questionJSON, err := json.Marshal(question)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = race.enter(t, func(run *runState) error {
+		_, err := race.manager.interruptRun(context.Background(), run, target, input, parameters, parameterHash, question, questionJSON)
 		return err
 	})
 	if !errors.Is(err, ErrRunNotFound) {

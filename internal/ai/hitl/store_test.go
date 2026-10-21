@@ -446,4 +446,3 @@ func TestStoreRestorePersistFailureRollsBackAndRetries(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-

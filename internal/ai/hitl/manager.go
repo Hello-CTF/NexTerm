@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/cloudwego/eino/adk"
 )
@@ -55,14 +56,15 @@ type runState struct {
 }
 
 type Manager struct {
-	checkpoints       adk.CheckPointStore
-	store             Store
-	ttl               time.Duration
-	terminalRetention time.Duration
-	now               func() time.Time
-	afterFunc         func(time.Duration, func()) Timer
-	newNonce          func() (string, error)
-	assetResolver     func(context.Context, string) (string, error)
+	checkpoints         adk.CheckPointStore
+	store               Store
+	ttl                 time.Duration
+	terminalRetention   time.Duration
+	now                 func() time.Time
+	afterFunc           func(time.Duration, func()) Timer
+	newNonce            func() (string, error)
+	assetResolver       func(context.Context, string) (string, error)
+	environmentResolver func(context.Context, string) ([]string, error)
 
 	mu     sync.RWMutex
 	runs   map[string]*runState
@@ -92,16 +94,17 @@ func NewManager(config Config) (*Manager, error) {
 		config.NewNonce = secureNonce
 	}
 	return &Manager{
-		checkpoints:       config.Checkpoints,
-		store:             config.Store,
-		ttl:               config.TTL,
-		terminalRetention: config.TerminalRetention,
-		now:               config.Now,
-		afterFunc:         config.AfterFunc,
-		newNonce:          config.NewNonce,
-		assetResolver:     config.AssetResolver,
-		runs:              make(map[string]*runState),
-		nonces:            make(map[string]string),
+		checkpoints:         config.Checkpoints,
+		store:               config.Store,
+		ttl:                 config.TTL,
+		terminalRetention:   config.TerminalRetention,
+		now:                 config.Now,
+		afterFunc:           config.AfterFunc,
+		newNonce:            config.NewNonce,
+		assetResolver:       config.AssetResolver,
+		environmentResolver: config.EnvironmentResolver,
+		runs:                make(map[string]*runState),
+		nonces:              make(map[string]string),
 	}, nil
 }
 
@@ -179,6 +182,13 @@ func (m *Manager) Interrupt(ctx context.Context, target *adk.InterruptCtx, input
 	if err != nil {
 		return Interrupt{}, err
 	}
+	return m.interruptRun(ctx, run, target, input, parameters, parameterHash, question, questionJSON)
+}
+
+// interruptRun is the post-lookup half of Interrupt: it runs with the run
+// pointer the caller already resolved, so tests can drive the exact
+// interleaving between the lookup and the run.mu wait.
+func (m *Manager) interruptRun(ctx context.Context, run *runState, target *adk.InterruptCtx, input InterruptInput, parameters json.RawMessage, parameterHash string, question *Question, questionJSON []byte) (Interrupt, error) {
 	run.mu.Lock()
 	defer run.mu.Unlock()
 	if run.terminal != nil {
@@ -203,6 +213,16 @@ func (m *Manager) Interrupt(ctx context.Context, target *adk.InterruptCtx, input
 	asset, err := m.resolveAsset(ctx, run.id)
 	if err != nil {
 		return Interrupt{}, err
+	}
+	// The production challenge is resolved from the real target asset through
+	// the configurable classification, never from client input; the user must
+	// type these names back at resume time.
+	var requiredEnvironmentNames []string
+	if m.environmentResolver != nil {
+		requiredEnvironmentNames, err = m.environmentResolver(ctx, asset)
+		if err != nil {
+			return Interrupt{}, err
+		}
 	}
 	checkpointHash := digest("checkpoint", checkpoint)
 	requestID := stableID("itr_", run.id, run.checkpointID, checkpointHash, target.ID, input.CallID, input.Tool, string(input.Kind), parameterHash, string(questionJSON))
@@ -239,22 +259,23 @@ func (m *Manager) Interrupt(ctx context.Context, target *adk.InterruptCtx, input
 	}
 	now := m.now()
 	interrupt := Interrupt{
-		ID:             requestID,
-		RunID:          run.id,
-		CheckpointID:   run.checkpointID,
-		CheckpointHash: checkpointHash,
-		TargetID:       target.ID,
-		CallID:         input.CallID,
-		Tool:           input.Tool,
-		Kind:           input.Kind,
-		Parameters:     parameters,
-		ParameterHash:  parameterHash,
-		Question:       question,
-		Nonce:          nonce,
-		CreatedAt:      now,
-		ExpiresAt:      now.Add(m.ttl),
-		Attempt:        run.attempt,
-		AssetID:        asset,
+		ID:                       requestID,
+		RunID:                    run.id,
+		CheckpointID:             run.checkpointID,
+		CheckpointHash:           checkpointHash,
+		TargetID:                 target.ID,
+		CallID:                   input.CallID,
+		Tool:                     input.Tool,
+		Kind:                     input.Kind,
+		Parameters:               parameters,
+		ParameterHash:            parameterHash,
+		Question:                 question,
+		Nonce:                    nonce,
+		CreatedAt:                now,
+		ExpiresAt:                now.Add(m.ttl),
+		Attempt:                  run.attempt,
+		AssetID:                  asset,
+		RequiredEnvironmentNames: requiredEnvironmentNames,
 	}
 	request := &requestState{interrupt: interrupt, status: requestPending}
 	run.requests[requestID] = request
@@ -281,6 +302,13 @@ func (m *Manager) Resume(ctx context.Context, resumer Resumer, answer Answer, op
 	if err != nil {
 		return Resume{}, nil, err
 	}
+	return m.resumeRun(ctx, run, resumer, answer, parameterHash, opts...)
+}
+
+// resumeRun is the post-lookup half of Resume: it runs with the run pointer
+// the caller already resolved, so tests can drive the exact interleaving
+// between the lookup and the run.mu wait.
+func (m *Manager) resumeRun(ctx context.Context, run *runState, resumer Resumer, answer Answer, parameterHash string, opts ...adk.AgentRunOption) (Resume, *adk.AsyncIterator[*adk.AgentEvent], error) {
 	run.mu.Lock()
 	if run.terminal != nil {
 		run.mu.Unlock()
@@ -391,6 +419,14 @@ func (m *Manager) Resume(ctx context.Context, resumer Resumer, answer Answer, op
 			return Resume{}, nil, ErrAssetMismatch
 		}
 		resumeAsset = interrupt.AssetID
+	}
+	// The typed environment names are the user's answer to the production
+	// challenge: they must equal the request's required set exactly. Missing,
+	// wrong, or extra names all fail closed here, before any state change,
+	// persist, or resumer start — never auto-echoed from the challenge.
+	if !guard.EnvironmentNamesMatch(answer.EnvironmentNames, interrupt.RequiredEnvironmentNames) {
+		run.mu.Unlock()
+		return Resume{}, nil, ErrEnvironmentNamesMismatch
 	}
 	request.status = requestConsumed
 	request.timer.Stop()
@@ -582,11 +618,18 @@ func (m *Manager) expire(runID, requestID string) {
 	if err != nil {
 		return
 	}
+	m.expireRun(run, requestID)
+}
+
+// expireRun is the post-lookup half of expire: it runs with the run pointer
+// the caller already resolved, so tests can drive the exact interleaving
+// between the lookup and the run.mu wait.
+func (m *Manager) expireRun(run *runState, requestID string) {
 	run.mu.Lock()
 	m.mu.RLock()
 	closed := m.closed
 	m.mu.RUnlock()
-	if closed || !m.registeredLocked(runID, run) || run.terminal != nil {
+	if closed || !m.registeredLocked(run.id, run) || run.terminal != nil {
 		run.mu.Unlock()
 		return
 	}
@@ -862,6 +905,7 @@ func validIDs(values ...string) bool {
 
 func cloneInterrupt(value Interrupt) Interrupt {
 	value.Parameters = append(json.RawMessage(nil), value.Parameters...)
+	value.RequiredEnvironmentNames = append([]string(nil), value.RequiredEnvironmentNames...)
 	value.Question = cloneQuestion(value.Question)
 	return value
 }
