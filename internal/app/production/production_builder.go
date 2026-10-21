@@ -40,6 +40,8 @@ type ProductionConfig struct {
 	DB                      store.BackendConfig
 	// StagedBlobs is injected by the server-side assembly (nexterm-server), resolving relative paths from blob Stage/Reserve responses to staged file paths; nil on desktop.
 	StagedBlobs StagedBlobResolver
+	// ForwardReaperInterval tunes the chunked-upload crash staging reaper sweep interval; non-positive values default to one hour.
+	ForwardReaperInterval time.Duration
 	// RestartFunc is injected by the desktop: start a new process and exit the current wails app; when server is nil,
 	// app_restart degrades to an unavailability reason.
 	RestartFunc func(context.Context, string) error
@@ -132,6 +134,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	}
 	dockerService := config.Docker
 	var forwardService *forward.Service
+	var forwardRuntime *forwardRuntime
 	fsUploads := newFSChunkUploadRegistry(config.Config.Logger)
 	emitter := session.AdaptEmitter(config.Config.Events)
 	transcriptWriter := newTranscriptWriter(transcriptWriterConfig{
@@ -172,6 +175,9 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 							forwardService.SuspendRemote(status.SessionID)
 						case session.StatusConnected:
 							go forwardService.RestoreRemote(productionSessionRequestContext(context.WithoutCancel(ctx)), status.SessionID)
+							if forwardRuntime != nil {
+								go forwardRuntime.SessionConnected(productionSessionRequestContext(context.WithoutCancel(ctx)), status.SessionID)
+							}
 						case session.StatusDisconnected, session.StatusFailed:
 							reason := status.Error
 							if reason == "" {
@@ -252,6 +258,19 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Policy:  forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform},
 		OnError: func(err error) { config.Config.Logger.Warn("forward lifecycle error", "error", err) },
 	})
+	// The forward runtime drives auto-start rules on connect, opt-in startup
+	// recovery, and the crash staging reaper over the chunked-upload registry's
+	// known staging directories; upload begin resumes crashed staging through
+	// the runtime so resume and reaping share one lifecycle.
+	forwardRuntime = newForwardRuntime(forwardRuntimeConfig{
+		Forward:        forwardService,
+		Sessions:       sessionManager,
+		Store:          database,
+		Logger:         config.Config.Logger,
+		ReaperInterval: config.ForwardReaperInterval, ReaperMinAge: defaultForwardReaperMinAge,
+		ReapTargets: fsUploads.stagingTargets,
+	})
+	fsUploads.resumeStaging = forwardRuntime.ResumeUploadStaging
 	services = ProductionServices{
 		Store: database, Vault: credentialVault, Sync: syncService, Profiles: profileManager,
 		Database: newProductionDatabaseService(database, credentialVault, sessionManager),
@@ -292,6 +311,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		services.closeAIRuntime()
 		return nil, err
 	}
+	config.Config.Modules = append([]Module{{Name: "forward-runtime", Component: forwardRuntime}}, config.Config.Modules...)
 	production, err := NewProductionWithServices(config.Config, services)
 	if err != nil {
 		services.closeAIRuntime()

@@ -19,6 +19,9 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/forward"
+	"github.com/Hello-CTF/NexTerm/internal/fs/chunked"
+	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/server"
 	"github.com/Hello-CTF/NexTerm/internal/session"
@@ -804,4 +807,171 @@ func TestConcreteProductionShutdownJoinsTranscriptRetention(t *testing.T) {
 	if _, err := production.Services.Store.TranscriptHosts(context.Background()); err == nil {
 		t.Fatal("store must be closed by shutdown after the retention loop joined")
 	}
+}
+
+// forwardFSTransport couples the forward dial test double with a real local
+// filesystem so composition tests can exercise both forward rules and
+// chunked-upload staging through one session.
+type forwardFSTransport struct {
+	fakeDialTransport
+	fs base.FileSystem
+}
+
+func (t *forwardFSTransport) FileSystem(context.Context) (base.FileSystem, error) {
+	return t.fs, nil
+}
+
+func newForwardFSProduction(t *testing.T, upstream string, desktop bool, reaperInterval time.Duration) *Production {
+	t.Helper()
+	production, err := NewProduction(t.Context(), ProductionConfig{
+		Config:  Config{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))},
+		DataDir: t.TempDir(),
+		Desktop: desktop,
+		Connector: session.ConnectorFunc(func(_ context.Context, asset session.Asset, generation uint64) (base.Transport, error) {
+			return &forwardFSTransport{
+				fakeDialTransport: fakeDialTransport{
+					fakeSSHTransport: fakeSSHTransport{kind: asset.Kind, generation: generation},
+					upstream:         upstream,
+				},
+				fs: fslocal.New(),
+			}, nil
+		}),
+		ForwardReaperInterval: reaperInterval,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
+	return production
+}
+
+// The connected lifecycle drives the forward runtime through the session
+// status emitter: an auto-start rule owned by the connecting account must
+// start with the trusted owner restored from the event context.
+func TestConcreteProductionForwardRuntimeConnectedStartsAutoStartRules(t *testing.T) {
+	production := newForwardFSProduction(t, startEchoListener(t), false, 0)
+	ownerCtx := ipc.WithUserID(context.Background(), "builder-owner")
+	asset, err := production.Services.Store.AssetCreate(ownerCtx, store.AssetInput{Kind: "ssh", Name: "builder-host", OptionsJSON: "{}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule, err := production.Services.Store.ForwardRuleSave(ownerCtx, store.ForwardRuleInput{
+		AssetID: asset.ID, Name: "database", ListenPort: freeRuntimePort(t),
+		TargetHost: "remote.internal", TargetPort: 4567, AutoStart: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := production.Services.Sessions.Connect(ownerCtx, session.Asset{ID: asset.ID, Kind: session.KindSSH}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitForCondition(t, 5*time.Second, func() bool {
+		runtimes := production.Services.Forward.ListFor(ownerCtx)
+		return len(runtimes) == 1 && runtimes[0].ID == rule.ID && runtimes[0].Status == forward.StatusActive
+	})
+	conn := assertForwardEcho(t, production.Services.Forward.ListFor(ownerCtx)[0], "builder-auto-start")
+	_ = conn.Close()
+}
+
+// The composition reaper sweeps the registry's known staging directories: a
+// stale crashed group sharing a directory with an active upload is removed
+// while the fresh in-flight staging is kept.
+func TestConcreteProductionForwardRuntimeReaperSweepsStaleStrangers(t *testing.T) {
+	production := newForwardFSProduction(t, startEchoListener(t), true, 5*time.Millisecond)
+	ctx := context.Background()
+	connected, err := production.Services.Sessions.Connect(ctx, session.Asset{ID: "ssh-asset", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	remote := filepath.Join(dir, "active.bin")
+	input := beginChunkIPC(t, production.Dispatcher, ctx, fsChunkUploadRequest{
+		SessionID: connected.ID, RemotePath: remote, TaskID: "active-task", AttemptID: "active-attempt", TotalSize: 8, ChunkSize: 4,
+	})
+	decodeFSTransferTest[fsChunkUploadProgressDTO](t, dispatchFSTransferTest(production.Dispatcher, ctx, "fs_upload_chunk", chunkIPCRequest(input, 0, "abcd"), nil))
+
+	strangerRemote := filepath.Join(dir, "crashed.bin")
+	stranger, err := chunked.New("00000000000000000000000099", strangerRemote, 8, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := fslocal.New()
+	if _, err := stranger.WriteChunk(context.Background(), destination, runtimeChunk(0, "wxyz")); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-25 * time.Hour)
+	if err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if strings.Contains(info.Name(), "00000000000000000000000099") {
+			return os.Chtimes(path, old, old)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitForCondition(t, 5*time.Second, func() bool {
+		_, err := os.Stat(filepath.Join(dir, ".crashed.bin.nexterm-00000000000000000000000099.manifest"))
+		return errors.Is(err, os.ErrNotExist)
+	})
+	if _, err := os.Stat(filepath.Join(dir, ".active.bin.nexterm-"+input.UploadID+".manifest")); err != nil {
+		t.Fatalf("active upload staging was reaped: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".active.bin.nexterm-"+input.UploadID+".part-000000000000")); err != nil {
+		t.Fatalf("active upload part was reaped: %v", err)
+	}
+}
+
+// Crash recovery through the real composition: after the registry loses the
+// live entry, the next begin adopts the crashed staging on the destination
+// and keeps the original upload ID instead of duplicating the group.
+func TestConcreteProductionFSUploadBeginResumesCrashedStaging(t *testing.T) {
+	production := newForwardFSProduction(t, startEchoListener(t), true, 0)
+	ctx := context.Background()
+	connected, err := production.Services.Sessions.Connect(ctx, session.Asset{ID: "ssh-asset", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := filepath.Join(t.TempDir(), "remote.bin")
+	first := beginChunkIPC(t, production.Dispatcher, ctx, fsChunkUploadRequest{
+		SessionID: connected.ID, RemotePath: remote, TaskID: "crash-task", AttemptID: "crash-attempt", TotalSize: 8, ChunkSize: 4,
+	})
+	decodeFSTransferTest[fsChunkUploadProgressDTO](t, dispatchFSTransferTest(production.Dispatcher, ctx, "fs_upload_chunk", chunkIPCRequest(first, 0, "abcd"), nil))
+
+	// Simulate the crash: the entry vanishes with the process while the
+	// staging files stay on the destination.
+	production.Services.fsUploads.mu.Lock()
+	for key := range production.Services.fsUploads.entries {
+		if key.uploadID == first.UploadID {
+			delete(production.Services.fsUploads.entries, key)
+		}
+	}
+	production.Services.fsUploads.mu.Unlock()
+
+	second := beginChunkIPC(t, production.Dispatcher, ctx, fsChunkUploadRequest{
+		SessionID: connected.ID, RemotePath: remote, TaskID: "resume-task", AttemptID: "resume-attempt", TotalSize: 8, ChunkSize: 4,
+	})
+	if second.UploadID != first.UploadID {
+		t.Fatalf("resumed begin = %q, want crashed upload %q", second.UploadID, first.UploadID)
+	}
+	progress := decodeFSTransferTest[fsChunkUploadProgressDTO](t, dispatchFSTransferTest(production.Dispatcher, ctx, "fs_upload_chunk", chunkIPCRequest(second, 1, "efgh"), nil))
+	if progress.Received != 8 {
+		t.Fatalf("resumed progress = %+v, want received 8", progress)
+	}
+	committed := decodeFSTransferTest[int64](t, dispatchFSTransferTest(production.Dispatcher, ctx, "fs_upload_commit", second, nil))
+	if committed != 8 {
+		t.Fatalf("committed = %d, want 8", committed)
+	}
+	data, err := os.ReadFile(remote)
+	if err != nil || string(data) != "abcdefgh" {
+		t.Fatalf("committed target = %q, %v", data, err)
+	}
+	assertNoChunkIArtifacts(t, remote)
 }

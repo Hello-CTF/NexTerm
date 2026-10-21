@@ -370,3 +370,80 @@ func TestFSChunkedRegistryStagingTargets(t *testing.T) {
 		t.Fatalf("Close error = %v, want the broken session cleanup failure", err)
 	}
 }
+
+// Resume-by-path is fail-closed on divergent content for the supported client
+// flow: the begin DTO carries no staged-chunk list, so clients re-send every
+// chunk, and a staged chunk that does not match the re-sent content surfaces
+// ErrChunkConflict instead of silently composing mixed content. Aborting then
+// clears the foreign staging so a fresh begin can commit the new content.
+func TestFSChunkedResumeFailsClosedOnDivergentContent(t *testing.T) {
+	remote := filepath.Join(t.TempDir(), "remote.bin")
+	filesystem := fslocal.New()
+	ctx := ipc.WithUserID(t.Context(), "owner-a")
+
+	crashed, crashedTransfers := newUploadRegistryForTest(filesystem)
+	first := beginResumeUploadForTest(t, crashed, crashedTransfers, ctx, "session-a", "task-1", "attempt-1", remote, 8, 4)
+	crashedInput := fsChunkUploadRequest{SessionID: "session-a", UploadID: first.UploadID, TaskID: "task-1", AttemptID: "attempt-1"}
+	crashedEntry, err := crashed.lookup(ctx, crashedInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeResumeChunkForTest(t, crashedEntry, filesystem, crashedInput, 0, "abcd")
+	writeResumeChunkForTest(t, crashedEntry, filesystem, crashedInput, 1, "efgh")
+
+	restarted, restartedTransfers := newUploadRegistryForTest(filesystem)
+	second := beginResumeUploadForTest(t, restarted, restartedTransfers, ctx, "session-b", "task-2", "attempt-2", remote, 8, 4)
+	if second.UploadID != first.UploadID {
+		t.Fatalf("resumed begin = %q, want crashed upload %q", second.UploadID, first.UploadID)
+	}
+
+	resumedInput := fsChunkUploadRequest{SessionID: "session-b", UploadID: second.UploadID, TaskID: "task-2", AttemptID: "attempt-2"}
+	resumedEntry, err := restarted.lookup(ctx, resumedInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The new content shares chunk 0 but diverges at chunk 1: re-sending every
+	// chunk must fail closed at the divergent one.
+	if received := writeResumeChunkForTest(t, resumedEntry, filesystem, resumedInput, 0, "abcd"); received != 8 {
+		t.Fatalf("matching chunk received = %d, want 8 (both crashed chunks adopted)", received)
+	}
+	request := chunkIPCRequest(resumedInput, 1, "WXYZ")
+	payload, err := base64.StdEncoding.DecodeString(request.ContentBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resumedEntry.upload.WriteChunk(resumedEntry.transferCtx, filesystem, chunked.Chunk{
+		Index: request.Index, Size: request.Size, SHA256: request.SHA256, Data: payload,
+	}); !errors.Is(err, chunked.ErrChunkConflict) {
+		t.Fatalf("divergent chunk = %v, want ErrChunkConflict", err)
+	}
+
+	if err := resumedEntry.upload.Abort(context.Background(), filesystem); err != nil {
+		t.Fatal(err)
+	}
+	// Mirror the abort IPC handler: the entry is finished once staging is gone.
+	resumedEntry.finish()
+	assertNoChunkIArtifacts(t, remote)
+	third := beginResumeUploadForTest(t, restarted, restartedTransfers, ctx, "session-b", "task-3", "attempt-3", remote, 8, 4)
+	if third.UploadID == first.UploadID {
+		t.Fatal("aborted staging was resumed again")
+	}
+	freshInput := fsChunkUploadRequest{SessionID: "session-b", UploadID: third.UploadID, TaskID: "task-3", AttemptID: "attempt-3"}
+	freshEntry, err := restarted.lookup(ctx, freshInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeResumeChunkForTest(t, freshEntry, filesystem, freshInput, 0, "abcd")
+	writeResumeChunkForTest(t, freshEntry, filesystem, freshInput, 1, "WXYZ")
+	committed, err := freshEntry.upload.Commit(context.Background(), filesystem)
+	if err != nil || committed != 8 {
+		t.Fatalf("Commit = %d, %v", committed, err)
+	}
+	data, err := os.ReadFile(remote)
+	if err != nil || string(data) != "abcdWXYZ" {
+		t.Fatalf("committed target = %q, %v", data, err)
+	}
+	if err := restarted.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
