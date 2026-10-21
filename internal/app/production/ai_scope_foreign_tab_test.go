@@ -36,7 +36,10 @@ func TestScopeRebindRejectsForeignTabWithOwnAssetR2(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 	sessions := session.NewManager(session.Config{
 		Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
-			return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
+			// The platform default shell keeps this fixture working on every
+			// supported OS; the shell choice is incidental to the scope
+			// validation under test.
+			return local.NewWithConfig(local.Config{}), nil
 		}),
 		Terminals: session.TerminalFactoryFunc(func(session.TerminalConfig) (session.TerminalState, error) {
 			return scopeForeignTabTerminal{}, nil

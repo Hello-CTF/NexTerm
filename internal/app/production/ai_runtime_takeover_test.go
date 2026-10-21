@@ -176,6 +176,10 @@ func composeTakeoverRuntime(t *testing.T, database *store.Store, providerURL, as
 	t.Cleanup(func() {
 		services.closeAIRuntime()
 		_ = sessions.Close()
+		// The helper owns every resource it composes: callers hand the store
+		// over with the runtime, and Close is idempotent, so an explicit
+		// caller close (restart tests) stays valid.
+		_ = database.Close()
 	})
 	openTakeoverTab(t, services, connected.ID)
 	return services, transport

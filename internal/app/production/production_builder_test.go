@@ -5,6 +5,8 @@ package production
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -19,10 +21,15 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	fleetserver "github.com/Hello-CTF/NexTerm/internal/fleet/server"
+	"github.com/Hello-CTF/NexTerm/internal/forward"
+	"github.com/Hello-CTF/NexTerm/internal/fs/chunked"
+	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/server"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/model"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/local"
 	"github.com/coder/websocket"
@@ -803,5 +810,346 @@ func TestConcreteProductionShutdownJoinsTranscriptRetention(t *testing.T) {
 	}
 	if _, err := production.Services.Store.TranscriptHosts(context.Background()); err == nil {
 		t.Fatal("store must be closed by shutdown after the retention loop joined")
+	}
+}
+
+// forwardFSTransport couples the forward dial test double with a real local
+// filesystem so composition tests can exercise both forward rules and
+// chunked-upload staging through one session.
+type forwardFSTransport struct {
+	fakeDialTransport
+	fs base.FileSystem
+}
+
+func (t *forwardFSTransport) FileSystem(context.Context) (base.FileSystem, error) {
+	return t.fs, nil
+}
+
+func newForwardFSProduction(t *testing.T, upstream string, desktop bool, reaperInterval time.Duration) *Production {
+	t.Helper()
+	production, err := NewProduction(t.Context(), ProductionConfig{
+		Config:  Config{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))},
+		DataDir: t.TempDir(),
+		Desktop: desktop,
+		Connector: session.ConnectorFunc(func(_ context.Context, asset session.Asset, generation uint64) (base.Transport, error) {
+			return &forwardFSTransport{
+				fakeDialTransport: fakeDialTransport{
+					fakeSSHTransport: fakeSSHTransport{kind: asset.Kind, generation: generation},
+					upstream:         upstream,
+				},
+				fs: fslocal.New(),
+			}, nil
+		}),
+		ForwardReaperInterval: reaperInterval,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
+	return production
+}
+
+// The connected lifecycle drives the forward runtime through the session
+// status emitter: an auto-start rule owned by the connecting account must
+// start with the trusted owner restored from the event context.
+func TestConcreteProductionForwardRuntimeConnectedStartsAutoStartRules(t *testing.T) {
+	production := newForwardFSProduction(t, startEchoListener(t), false, 0)
+	ownerCtx := ipc.WithUserID(context.Background(), "builder-owner")
+	asset, err := production.Services.Store.AssetCreate(ownerCtx, store.AssetInput{Kind: "ssh", Name: "builder-host", OptionsJSON: "{}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule, err := production.Services.Store.ForwardRuleSave(ownerCtx, store.ForwardRuleInput{
+		AssetID: asset.ID, Name: "database", ListenPort: freeRuntimePort(t),
+		TargetHost: "remote.internal", TargetPort: 4567, AutoStart: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := production.Services.Sessions.Connect(ownerCtx, session.Asset{ID: asset.ID, Kind: session.KindSSH}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitForCondition(t, 5*time.Second, func() bool {
+		runtimes := production.Services.Forward.ListFor(ownerCtx)
+		return len(runtimes) == 1 && runtimes[0].ID == rule.ID && runtimes[0].Status == forward.StatusActive
+	})
+	conn := assertForwardEcho(t, production.Services.Forward.ListFor(ownerCtx)[0], "builder-auto-start")
+	_ = conn.Close()
+}
+
+// The composition reaper sweeps the registry's known staging directories: a
+// stale crashed group sharing a directory with an active upload is removed
+// while the fresh in-flight staging is kept.
+func TestConcreteProductionForwardRuntimeReaperSweepsStaleStrangers(t *testing.T) {
+	production := newForwardFSProduction(t, startEchoListener(t), true, 5*time.Millisecond)
+	ctx := context.Background()
+	connected, err := production.Services.Sessions.Connect(ctx, session.Asset{ID: "ssh-asset", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	remote := filepath.Join(dir, "active.bin")
+	input := beginChunkIPC(t, production.Dispatcher, ctx, fsChunkUploadRequest{
+		SessionID: connected.ID, RemotePath: remote, TaskID: "active-task", AttemptID: "active-attempt", TotalSize: 8, ChunkSize: 4,
+	})
+	decodeFSTransferTest[fsChunkUploadProgressDTO](t, dispatchFSTransferTest(production.Dispatcher, ctx, "fs_upload_chunk", chunkIPCRequest(input, 0, "abcd"), nil))
+
+	strangerRemote := filepath.Join(dir, "crashed.bin")
+	stranger, err := chunked.New("00000000000000000000000099", strangerRemote, 8, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := fslocal.New()
+	if _, err := stranger.WriteChunk(context.Background(), destination, runtimeChunk(0, "wxyz")); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-25 * time.Hour)
+	if err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if strings.Contains(info.Name(), "00000000000000000000000099") {
+			return os.Chtimes(path, old, old)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitForCondition(t, 5*time.Second, func() bool {
+		_, err := os.Stat(filepath.Join(dir, ".crashed.bin.nexterm-00000000000000000000000099.manifest"))
+		return errors.Is(err, os.ErrNotExist)
+	})
+	if _, err := os.Stat(filepath.Join(dir, ".active.bin.nexterm-"+input.UploadID+".manifest")); err != nil {
+		t.Fatalf("active upload staging was reaped: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".active.bin.nexterm-"+input.UploadID+".part-000000000000")); err != nil {
+		t.Fatalf("active upload part was reaped: %v", err)
+	}
+}
+
+// Crash recovery through the real composition: after the registry loses the
+// live entry, the next begin adopts the crashed staging on the destination
+// and keeps the original upload ID instead of duplicating the group.
+func TestConcreteProductionFSUploadBeginResumesCrashedStaging(t *testing.T) {
+	production := newForwardFSProduction(t, startEchoListener(t), true, 0)
+	ctx := context.Background()
+	connected, err := production.Services.Sessions.Connect(ctx, session.Asset{ID: "ssh-asset", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := filepath.Join(t.TempDir(), "remote.bin")
+	first := beginChunkIPC(t, production.Dispatcher, ctx, fsChunkUploadRequest{
+		SessionID: connected.ID, RemotePath: remote, TaskID: "crash-task", AttemptID: "crash-attempt", TotalSize: 8, ChunkSize: 4,
+	})
+	decodeFSTransferTest[fsChunkUploadProgressDTO](t, dispatchFSTransferTest(production.Dispatcher, ctx, "fs_upload_chunk", chunkIPCRequest(first, 0, "abcd"), nil))
+
+	// Simulate the crash: the entry vanishes with the process while the
+	// staging files stay on the destination.
+	production.Services.fsUploads.mu.Lock()
+	for key := range production.Services.fsUploads.entries {
+		if key.uploadID == first.UploadID {
+			delete(production.Services.fsUploads.entries, key)
+		}
+	}
+	production.Services.fsUploads.mu.Unlock()
+
+	second := beginChunkIPC(t, production.Dispatcher, ctx, fsChunkUploadRequest{
+		SessionID: connected.ID, RemotePath: remote, TaskID: "resume-task", AttemptID: "resume-attempt", TotalSize: 8, ChunkSize: 4,
+	})
+	if second.UploadID != first.UploadID {
+		t.Fatalf("resumed begin = %q, want crashed upload %q", second.UploadID, first.UploadID)
+	}
+	// Staged chunks are re-presented and verified before commit; the matching
+	// chunk deduplicates without changing progress.
+	replayed := decodeFSTransferTest[fsChunkUploadProgressDTO](t, dispatchFSTransferTest(production.Dispatcher, ctx, "fs_upload_chunk", chunkIPCRequest(second, 0, "abcd"), nil))
+	if replayed.Received != 4 {
+		t.Fatalf("re-presented chunk progress = %+v, want received 4", replayed)
+	}
+	progress := decodeFSTransferTest[fsChunkUploadProgressDTO](t, dispatchFSTransferTest(production.Dispatcher, ctx, "fs_upload_chunk", chunkIPCRequest(second, 1, "efgh"), nil))
+	if progress.Received != 8 {
+		t.Fatalf("resumed progress = %+v, want received 8", progress)
+	}
+	committed := decodeFSTransferTest[int64](t, dispatchFSTransferTest(production.Dispatcher, ctx, "fs_upload_commit", second, nil))
+	if committed != 8 {
+		t.Fatalf("committed = %d, want 8", committed)
+	}
+	data, err := os.ReadFile(remote)
+	if err != nil || string(data) != "abcdefgh" {
+		t.Fatalf("committed target = %q, %v", data, err)
+	}
+	assertNoChunkIArtifacts(t, remote)
+}
+
+// A crashed upload's staging directory is persisted at begin, so the composed
+// reaper still sweeps the leftover after the registry entry is gone — no live
+// entry required — once the asset has a live session again.
+func TestConcreteProductionForwardRuntimeReaperSweepsPersistedTargetsAfterCrash(t *testing.T) {
+	production := newForwardFSProduction(t, startEchoListener(t), true, 5*time.Millisecond)
+	ctx := context.Background()
+	connected, err := production.Services.Sessions.Connect(ctx, session.Asset{ID: "ssh-asset", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	remote := filepath.Join(dir, "remote.bin")
+	input := beginChunkIPC(t, production.Dispatcher, ctx, fsChunkUploadRequest{
+		SessionID: connected.ID, RemotePath: remote, TaskID: "crash-task", AttemptID: "crash-attempt", TotalSize: 8, ChunkSize: 4,
+	})
+	decodeFSTransferTest[fsChunkUploadProgressDTO](t, dispatchFSTransferTest(production.Dispatcher, ctx, "fs_upload_chunk", chunkIPCRequest(input, 0, "abcd"), nil))
+
+	// Simulate the crash: the entry vanishes while the staging files stay.
+	production.Services.fsUploads.mu.Lock()
+	for key := range production.Services.fsUploads.entries {
+		if key.uploadID == input.UploadID {
+			delete(production.Services.fsUploads.entries, key)
+		}
+	}
+	production.Services.fsUploads.mu.Unlock()
+
+	old := time.Now().Add(-25 * time.Hour)
+	if err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chtimes(path, old, old)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitForCondition(t, 5*time.Second, func() bool {
+		matches, err := filepath.Glob(filepath.Join(dir, ".remote.bin.nexterm-*"))
+		return err == nil && len(matches) == 0
+	})
+}
+
+// A-03: through the real production composition (NewProduction + server.New
+// with the fleet service mounted), a retired device's public share route
+// answers 404 with no-store before any SPA fallback, while valid tokens,
+// unknown tokens, the root page, and the WS data plane keep their behavior.
+func TestConcreteProductionRetiredDevicePublicRouteNotFoundNoStore(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	production, err := NewProduction(t.Context(), ProductionConfig{
+		Config: Config{Logger: logger}, DataDir: t.TempDir(), Desktop: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
+	accounts := account.New(production.Services.Store.GORM())
+	owner, err := accounts.CreateUser(context.Background(), "a03-owner", "", "password-a03")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fleetService, err := fleetserver.New(fleetserver.Config{
+		DB: production.Services.Store.GORM(), Accounts: accounts, AuthOff: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = fleetService.Close() })
+
+	const spaPage = "<html><head><title>NexTerm</title></head><body>a03-spa</body></html>"
+	var gotPath string
+	staticStub := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write([]byte(spaPage))
+	})
+	api, err := server.New(server.Config{
+		Options:     server.Options{Listen: "127.0.0.1:0", DataDir: t.TempDir(), Auth: server.AuthOn},
+		Dispatcher:  production.Dispatcher,
+		Environment: production.Environment(""),
+		Accounts:    accounts,
+		SyncObjects: production.Services.Sync.ObjectHandler(),
+		Channels:    server.NewHubAdapter(production.Services.Sessions.Hub()),
+		Spectator:   production.Services.Sessions,
+		Logger:      logger,
+		Fleet:       fleetService,
+		Static:      staticStub,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpServer := httptest.NewServer(api.Handler())
+	t.Cleanup(httpServer.Close)
+
+	// Seed the share link on a live device; the page path only reads
+	// share_link and user_device.
+	const token = "a03-test-token"
+	now := time.Now().Unix()
+	digest := sha256.Sum256([]byte(token))
+	database := production.Services.Store.GORM()
+	if err := database.Create(&model.UserDevice{ID: "a03-device", UserID: owner.ID, Name: "a03-box", Kind: "desktop", CreatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&model.ShareLink{
+		ID: "a03-link", OwnerID: owner.ID, DeviceID: "a03-device", SessionID: "a03-session",
+		TokenHash: hex.EncodeToString(digest[:]), Permission: "read", CreatedAt: now, ExpiresAt: now + 3600,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	get := func(path string) (int, string, string) {
+		t.Helper()
+		response, err := httpServer.Client().Get(httpServer.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response.StatusCode, string(body), response.Header.Get("Cache-Control")
+	}
+
+	// Valid and unknown tokens keep the SPA diversion with no-store; the root
+	// page is unchanged.
+	if status, body, cache := get("/share/public/" + token); status != http.StatusOK || body != spaPage || cache != "no-store" {
+		t.Fatalf("valid token page = %d %q %q", status, body, cache)
+	}
+	if gotPath != "/" {
+		t.Fatalf("static entry got path %q, want /", gotPath)
+	}
+	if status, body, cache := get("/share/public/not-a-token"); status != http.StatusOK || body != spaPage || cache != "no-store" {
+		t.Fatalf("unknown token page = %d %q %q", status, body, cache)
+	}
+	if status, body, _ := get("/"); status != http.StatusOK || body != spaPage {
+		t.Fatalf("root page = %d %q", status, body)
+	}
+
+	// Retire the device: the public route now answers 404 with no-store and
+	// never reaches the static entry; the data plane still denies the upgrade.
+	if err := database.Model(&model.UserDevice{}).Where("id = ?", "a03-device").Update("revoked_at", now).Error; err != nil {
+		t.Fatal(err)
+	}
+	gotPath = ""
+	if status, _, cache := get("/share/public/" + token); status != http.StatusNotFound || cache != "no-store" {
+		t.Fatalf("retired device page = %d %q, want 404 no-store", status, cache)
+	}
+	if gotPath != "" {
+		t.Fatalf("retired device page reached the static entry with path %q", gotPath)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, handshake, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/share/public/"+token, nil)
+	if err == nil {
+		t.Fatal("retired device WS handshake succeeded")
+	}
+	if handshake == nil || handshake.StatusCode != http.StatusForbidden {
+		t.Fatalf("retired device WS handshake = %+v, want 403", handshake)
+	}
+	// The root page stays intact after the retirement.
+	if status, body, _ := get("/"); status != http.StatusOK || body != spaPage {
+		t.Fatalf("root page after retirement = %d %q", status, body)
 	}
 }

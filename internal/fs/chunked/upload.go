@@ -40,16 +40,31 @@ type Upload struct {
 	mu         sync.Mutex
 	id         string
 	remotePath string
+	owner      string
 	total      int64
 	chunkSize  int64
 	chunkCount int64
 	received   int64
-	prepared   bool
-	committed  bool
-	aborted    bool
+	// counted tracks the chunks already included in received; confirmed
+	// tracks the chunks the current session presented and had verified.
+	// Commit requires every chunk confirmed, so staged content from a
+	// crashed session can never be committed unverified.
+	counted   map[int64]struct{}
+	confirmed map[int64]struct{}
+	prepared  bool
+	committed bool
+	aborted   bool
 }
 
-func New(uploadID, remotePath string, total int64, chunkSize int) (*Upload, error) {
+// Option customizes an Upload.
+type Option func(*Upload)
+
+// WithOwner binds the upload's staging metadata to the given owner identity.
+func WithOwner(owner string) Option {
+	return func(u *Upload) { u.owner = owner }
+}
+
+func New(uploadID, remotePath string, total int64, chunkSize int, options ...Option) (*Upload, error) {
 	if !ids.Valid(uploadID) {
 		return nil, fmt.Errorf("invalid upload id")
 	}
@@ -69,14 +84,57 @@ func New(uploadID, remotePath string, total int64, chunkSize int) (*Upload, erro
 	if total%int64(chunkSize) != 0 {
 		count++
 	}
-	return &Upload{
+	upload := &Upload{
 		id: uploadID, remotePath: remotePath, total: total, chunkSize: int64(chunkSize),
-		chunkCount: count,
-	}, nil
+		chunkCount: count, counted: map[int64]struct{}{}, confirmed: map[int64]struct{}{},
+	}
+	for _, option := range options {
+		option(upload)
+	}
+	if len(upload.owner) > stagingParamsMaxOwner {
+		return nil, fmt.Errorf("upload owner length %d exceeds the %d-byte staging metadata limit", len(upload.owner), stagingParamsMaxOwner)
+	}
+	return upload, nil
 }
 
 func (u *Upload) Total() int64 {
 	return u.total
+}
+
+// ID returns the upload's staging ID.
+func (u *Upload) ID() string {
+	return u.id
+}
+
+// MatchesStaged reports whether a staged group was left behind by an upload
+// with exactly this upload's owner, parameters, and intact part sizes.
+// Version 2 metadata binds the group to its owner; legacy 16-byte metadata
+// carries no owner and only matches the desktop's empty owner, so a
+// multi-account begin never adopts it. Groups without readable params never
+// match: they predate crash-safe resume or lost a write race, and are left
+// for the reaper rather than risking a mixed adoption.
+func (u *Upload) MatchesStaged(staged StagedUpload) bool {
+	if !staged.HasParams || staged.Total != u.total || staged.ChunkSize != u.chunkSize {
+		return false
+	}
+	switch staged.ParamsVersion {
+	case stagingParamsVersion2:
+		if staged.Owner != u.owner {
+			return false
+		}
+	case stagingParamsVersion1:
+		if u.owner != "" {
+			return false
+		}
+	default:
+		return false
+	}
+	for index, size := range staged.Parts {
+		if index < 0 || index >= u.chunkCount || size != u.expectedChunkSize(index)+sha256.Size {
+			return false
+		}
+	}
+	return true
 }
 
 func (u *Upload) WriteChunk(ctx context.Context, destination base.FileSystem, chunk Chunk) (int64, error) {
@@ -96,9 +154,6 @@ func (u *Upload) WriteChunk(ctx context.Context, destination base.FileSystem, ch
 	if !strings.EqualFold(actualSHA256, chunk.SHA256) {
 		return u.received, fmt.Errorf("chunk %d checksum mismatch", chunk.Index)
 	}
-	if err := u.prepare(ctx, destination); err != nil {
-		return u.received, err
-	}
 	path := u.partPath(chunk.Index)
 	_, err := destination.Size(ctx, path)
 	switch {
@@ -109,24 +164,41 @@ func (u *Upload) WriteChunk(ctx context.Context, destination base.FileSystem, ch
 			}
 			return u.received, err
 		}
+		u.confirmChunk(chunk.Index, chunk.Size)
 		return u.received, nil
 	case !errors.Is(err, fs.ErrNotExist):
 		return u.received, err
 	}
+	if err := u.prepare(ctx, destination); err != nil {
+		return u.received, err
+	}
 	if err := writePart(ctx, destination, path, chunk.Data, digest); err != nil {
 		cleanupPath(path, destination.Delete)
+		u.cleanupParamsAfterFailedFirstChunk(destination)
 		return u.received, err
 	}
 	if err := ctx.Err(); err != nil {
 		cleanupPath(path, destination.Delete)
+		u.cleanupParamsAfterFailedFirstChunk(destination)
 		return u.received, err
 	}
 	if err := appendManifest(ctx, destination, u.manifestPath(), chunk.Index); err != nil {
 		cleanupPath(path, destination.Delete)
+		u.cleanupParamsAfterFailedFirstChunk(destination)
 		return u.received, err
 	}
-	u.received += chunk.Size
+	u.confirmChunk(chunk.Index, chunk.Size)
 	return u.received, nil
+}
+
+// confirmChunk marks a chunk as presented and verified by the current
+// session, counting it toward progress exactly once.
+func (u *Upload) confirmChunk(index, size int64) {
+	if _, ok := u.counted[index]; !ok {
+		u.counted[index] = struct{}{}
+		u.received += size
+	}
+	u.confirmed[index] = struct{}{}
 }
 
 func (u *Upload) validateChunk(chunk Chunk) error {
@@ -169,6 +241,9 @@ func (u *Upload) Commit(ctx context.Context, destination base.FileSystem, activi
 	if u.received != u.total {
 		return u.received, fmt.Errorf("upload is incomplete: %d of %d bytes", u.received, u.total)
 	}
+	if len(u.confirmed) != int(u.chunkCount) {
+		return u.received, fmt.Errorf("upload has %d unconfirmed chunks: re-send every chunk so staged content is verified before commit", u.chunkCount-int64(len(u.confirmed)))
+	}
 	if err := u.prepare(ctx, destination); err != nil {
 		return u.received, err
 	}
@@ -182,7 +257,10 @@ func (u *Upload) Commit(ctx context.Context, destination base.FileSystem, activi
 		cleanupPath(temporary, destination.Delete)
 		return u.received, err
 	}
-	if err := destination.Chmod(ctx, temporary, mode); err != nil {
+	if err := destination.Chmod(ctx, temporary, mode); err != nil && !errors.Is(err, base.ErrUnsupported) {
+		// Mode preservation is best-effort: a filesystem without chmod
+		// capability (the Windows local FS) still commits verified content
+		// atomically; any other chmod failure stays fatal.
 		cleanupPath(temporary, destination.Delete)
 		return u.received, err
 	}
@@ -193,6 +271,10 @@ func (u *Upload) Commit(ctx context.Context, destination base.FileSystem, activi
 		}
 	}
 	if err := destination.Delete(ctx, u.manifestPath(), false); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		cleanupPath(temporary, destination.Delete)
+		return u.received, err
+	}
+	if err := destination.Delete(ctx, u.paramsPath(), false); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		cleanupPath(temporary, destination.Delete)
 		return u.received, err
 	}
@@ -365,6 +447,9 @@ func (u *Upload) Abort(ctx context.Context, destination base.FileSystem) error {
 			errs = append(errs, err)
 		}
 	}
+	if err := destination.Delete(ctx, u.paramsPath(), false); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		errs = append(errs, err)
+	}
 	if err := destination.Delete(ctx, u.commitPath(), false); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		errs = append(errs, err)
 	}
@@ -378,8 +463,23 @@ func (u *Upload) prepare(ctx context.Context, destination base.FileSystem) error
 	if err := ensureRemoteDir(ctx, destination, parentDir(u.remotePath)); err != nil {
 		return err
 	}
+	if err := u.writeStagingParams(ctx, destination); err != nil {
+		cleanupPath(u.paramsPath(), destination.Delete)
+		return err
+	}
 	u.prepared = true
 	return nil
+}
+
+// cleanupParamsAfterFailedFirstChunk removes the params file written by
+// prepare when the first staged chunk never landed, so a canceled upload
+// leaves no staging artifacts behind. The next attempt rewrites it.
+func (u *Upload) cleanupParamsAfterFailedFirstChunk(destination base.FileSystem) {
+	if len(u.counted) != 0 {
+		return
+	}
+	cleanupPath(u.paramsPath(), destination.Delete)
+	u.prepared = false
 }
 
 func StagingPath(remotePath, uploadID, kind string) string {
@@ -393,6 +493,10 @@ func (u *Upload) partPath(index int64) string {
 
 func (u *Upload) manifestPath() string {
 	return StagingPath(u.remotePath, u.id, "manifest")
+}
+
+func (u *Upload) paramsPath() string {
+	return StagingPath(u.remotePath, u.id, "params")
 }
 
 func (u *Upload) commitPath() string {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
+	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
 	"github.com/Hello-CTF/NexTerm/internal/docker"
 	"github.com/Hello-CTF/NexTerm/internal/forward"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
@@ -22,6 +23,7 @@ import (
 	sshdaemon "github.com/Hello-CTF/NexTerm/internal/ssh"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/update"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 	"github.com/Hello-CTF/NexTerm/internal/version"
@@ -40,6 +42,8 @@ type ProductionConfig struct {
 	DB                      store.BackendConfig
 	// StagedBlobs is injected by the server-side assembly (nexterm-server), resolving relative paths from blob Stage/Reserve responses to staged file paths; nil on desktop.
 	StagedBlobs StagedBlobResolver
+	// ForwardReaperInterval tunes the chunked-upload crash staging reaper sweep interval; non-positive values default to one hour.
+	ForwardReaperInterval time.Duration
 	// RestartFunc is injected by the desktop: start a new process and exit the current wails app; when server is nil,
 	// app_restart degrades to an unavailability reason.
 	RestartFunc func(context.Context, string) error
@@ -132,6 +136,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	}
 	dockerService := config.Docker
 	var forwardService *forward.Service
+	var forwardRuntime *forwardRuntime
 	fsUploads := newFSChunkUploadRegistry(config.Config.Logger)
 	emitter := session.AdaptEmitter(config.Config.Events)
 	transcriptWriter := newTranscriptWriter(transcriptWriterConfig{
@@ -172,6 +177,9 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 							forwardService.SuspendRemote(status.SessionID)
 						case session.StatusConnected:
 							go forwardService.RestoreRemote(productionSessionRequestContext(context.WithoutCancel(ctx)), status.SessionID)
+							if forwardRuntime != nil {
+								go forwardRuntime.SessionConnected(productionSessionRequestContext(context.WithoutCancel(ctx)), status.SessionID)
+							}
 						case session.StatusDisconnected, session.StatusFailed:
 							reason := status.Error
 							if reason == "" {
@@ -252,6 +260,50 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Policy:  forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform},
 		OnError: func(err error) { config.Config.Logger.Warn("forward lifecycle error", "error", err) },
 	})
+	// The forward runtime drives auto-start rules on connect, opt-in startup
+	// recovery, and the crash staging reaper over the chunked-upload registry's
+	// known staging directories; upload begin resumes crashed staging through
+	// the runtime so resume and reaping share one lifecycle.
+	fsUploads.targetsPath = filepath.Join(config.DataDir, "chunked-staging-targets.json")
+	fsUploads.sessionAsset = func(ctx context.Context, sessionID string) (string, error) {
+		connected, err := sessionManager.SessionFor(productionSessionRequestContext(ctx), sessionID)
+		if err != nil {
+			return "", err
+		}
+		return connected.Asset().ID, nil
+	}
+	fsUploads.reapFilesystem = func(ctx context.Context, owner, assetID string) (base.FileSystem, error) {
+		ownerCtx := ownerContext(ctx, owner)
+		infos, err := sessionManager.ListSessionsFor(ownerCtx)
+		if err != nil {
+			return nil, err
+		}
+		for _, info := range infos {
+			if info.AssetID != assetID {
+				continue
+			}
+			transport, err := sessionManager.TransportFor(ownerCtx, info.ID)
+			if err != nil {
+				return nil, err
+			}
+			provider, ok := transport.(base.FileTransport)
+			if !ok {
+				return nil, fmt.Errorf("%w: session transport has no filesystem", base.ErrUnsupported)
+			}
+			return provider.FileSystem(ownerCtx)
+		}
+		return nil, fmt.Errorf("no live session for asset %s: %w", assetID, session.ErrSessionNotFound)
+	}
+	forwardRuntime = newForwardRuntime(forwardRuntimeConfig{
+		Forward:        forwardService,
+		Sessions:       sessionManager,
+		Store:          database,
+		Logger:         config.Config.Logger,
+		ReaperInterval: config.ForwardReaperInterval, ReaperMinAge: defaultForwardReaperMinAge,
+		ReapTargets:          fsUploads.stagingTargets,
+		RecoverySettingsPath: filepath.Join(config.DataDir, "forward-recovery.json"),
+	})
+	fsUploads.resumeStaging = forwardRuntime.ResumeUploadStaging
 	services = ProductionServices{
 		Store: database, Vault: credentialVault, Sync: syncService, Profiles: profileManager,
 		Database: newProductionDatabaseService(database, credentialVault, sessionManager),
@@ -292,6 +344,17 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		services.closeAIRuntime()
 		return nil, err
 	}
+	skillsManager, err := skills.NewManager(ctx, database, skills.WithShared(config.Desktop || owner.OpenAccess(ctx)))
+	if err != nil {
+		services.closeAIRuntime()
+		return nil, err
+	}
+	config.Config.Modules = append([]Module{
+		{Name: "ai-skills", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+			return skills.RegisterIPC(dispatcher, skillsManager)
+		}},
+		{Name: "forward-runtime", RegisterCommands: forwardRuntime.registerCommands, Component: forwardRuntime},
+	}, config.Config.Modules...)
 	production, err := NewProductionWithServices(config.Config, services)
 	if err != nil {
 		services.closeAIRuntime()

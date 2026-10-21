@@ -628,6 +628,8 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	}
 	builder := aicontext.NewBuilder(contextDeps)
 
+	roster := agent.NewRoster(services.Store, agent.NewSessionRosterProbe(services.Store, services.Sessions))
+
 	runner := agent.NewRunner(agent.Config{
 		Profiles:        services.Profiles,
 		ModelForProfile: aiProfileModelFactory(services.Profiles),
@@ -652,6 +654,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 
 		HITLAssetResolver:       aiRunAssetResolver(services),
 		HITLEnvironmentResolver: aiRequiredEnvironmentNames(services),
+		Roster:                  roster,
 	})
 	if err := runner.RecoverRuns(store.WithAIHistoryInternalAccess(owner.WithOpenAccess(session.WithOpenAccess(ctx)))); err != nil {
 		return err
@@ -660,6 +663,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	takeoverDeps := takeover.Dependencies{
 		Model:       aiModelFactory(services.Profiles),
 		Permission:  guardManager.Snapshot,
+		DeviceMode:  guardManager.WithDeviceMode,
 		Grants:      grantsManager,
 		Checkpoints: agent.NewStoreCheckpoints(services.Store),
 		Audit:       toolsDeps.Audit,

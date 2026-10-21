@@ -91,6 +91,14 @@ export type ConfirmationTarget = {
   environment: string;
 };
 
+export type ConversationRecoverySummary = {
+  conversationId: string;
+  restoredRuns: number;
+  resumableRunId: string | null;
+  interruptedRunIds: string[];
+  truncated: boolean;
+};
+
 export type DeployPublicKeyRequest = {
   batchId: string;
   sessionIds: string[];
@@ -101,11 +109,30 @@ export type DeployPublicKeyRequest = {
   productionConfirmation?: ProductionConfirmation | null;
 };
 
+export type Dispatch = {
+  name: string;
+  description: string;
+  body: string;
+  digest: string;
+  source: string;
+};
+
 export type DockerProductionConfirmation = {
   confirmed: boolean;
   targetSetHash: string;
   commandHash: string;
   environmentNames?: string[];
+};
+
+export type Entry = {
+  name: string;
+  description: string;
+  source: string;
+  overridden: boolean;
+  disabled: boolean;
+  digest: string;
+  updatedAt: number;
+  override?: Override | null;
 };
 
 export type ExecBatch = {
@@ -352,6 +379,24 @@ export type FinderQuery = {
   value: string;
 };
 
+export type ForwardRecoverOutcomeDTO = {
+  assetId: string;
+  sessionId?: string;
+  started?: string[];
+  skipped?: string;
+  error?: string;
+};
+
+export type ForwardRecoverySettingsDTO = {
+  enabled: boolean;
+  maxConcurrentConnections: number;
+  skipProduction: boolean;
+};
+
+export type ForwardRecoverySettingsSetRequest = {
+  enabled: boolean;
+};
+
 export type ForwardRule = {
   id: string;
   assetId: string;
@@ -368,6 +413,11 @@ export type ForwardRule = {
   updatedAt: number;
 };
 
+export type ForwardRuleAutoStartDTO = {
+  id: string;
+  autoStart: boolean;
+};
+
 export type ForwardRuleInput = {
   id?: string;
   assetId: string;
@@ -379,6 +429,26 @@ export type ForwardRuleInput = {
 
 export type ForwardRuleRequest = {
   id: string;
+};
+
+export type ForwardRuleSetAutoStartRequest = {
+  id: string;
+  autoStart: boolean;
+};
+
+export type ForwardRuleSettingsDTO = {
+  id: string;
+  assetId: string;
+  name: string;
+  kind: string;
+  listenHost: string;
+  listenPort: number;
+  targetHost: string;
+  targetPort: number;
+  autoStart: boolean;
+  status: string;
+  sessionId?: string;
+  error?: string;
 };
 
 export type ForwardRuleStartRequest = {
@@ -497,12 +567,31 @@ export type Listener = {
   program: string;
 };
 
+export type NameRequest = {
+  name: string;
+};
+
 export type OutputSnapshot = {
   head: string;
   tail: string;
   totalBytes: number;
   droppedBytes: number;
   truncated: boolean;
+};
+
+export type Override = {
+  name: string;
+  description?: string | null;
+  body?: string | null;
+  disabled?: boolean;
+  updatedAt: number;
+};
+
+export type OverrideInput = {
+  name: string;
+  description?: string | null;
+  body?: string | null;
+  disabled?: boolean;
 };
 
 export type PrepareRequest = {
@@ -561,6 +650,66 @@ export type RemoteOK = {
 export type RenderedCommand = {
   sessionId: string;
   command: string;
+};
+
+export type RosterAttachmentDTO = {
+  entry: RosterEntry;
+  resolution: string;
+  currentIncarnation?: string;
+  assetId: string;
+};
+
+export type RosterEntry = {
+  id: string;
+  conversationId: string;
+  handle: string;
+  alias: string;
+  tabId: string;
+  state: string;
+  incarnation: string;
+  jobId: string;
+  createdAt: number;
+  updatedAt: number;
+  releasedAt: number | null;
+};
+
+export type RosterListEntry = {
+  entry: RosterEntry;
+  presence: string;
+  assetId: string;
+};
+
+export type RosterReconcileEntry = {
+  id: string;
+  handle: string;
+  state: string;
+  outcome: string;
+  wrote: boolean;
+  reason: string;
+};
+
+export type RosterReconcileReport = {
+  entries: RosterReconcileEntry[];
+};
+
+export type RunHistoryEntry = {
+  runId: string;
+  state: string;
+  evidence: RunHistoryEvidence | null;
+  startedAt: number;
+  finishedAt: number | null;
+  summary: string;
+};
+
+export type RunHistoryEvidence = {
+  kind: string;
+  observedAt: number;
+  summary: string;
+};
+
+export type RunHistoryPage = {
+  entries: RunHistoryEntry[];
+  nextCursor: string | null;
 };
 
 export type RunRequest = {

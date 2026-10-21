@@ -23,7 +23,10 @@ type ResumeStatus struct {
 // chunk. Every manifest entry is validated against its staged part; staged
 // parts that no longer match are removed so they can be re-sent, and valid
 // parts missing from the manifest (a crash between staging and the manifest
-// append) are adopted into it.
+// append) are adopted into it. Staged chunks count toward received progress
+// but stay unconfirmed until the current session presents them: Commit
+// requires every chunk confirmed by client data, so crashed content can
+// never be committed unverified.
 func (u *Upload) Resume(ctx context.Context, destination base.FileSystem) (ResumeStatus, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -79,7 +82,15 @@ func (u *Upload) Resume(ctx context.Context, destination base.FileSystem) (Resum
 		staged = append(staged, index)
 	}
 	sort.Slice(staged, func(i, j int) bool { return staged[i] < staged[j] })
-	u.received = received
+	// Staged chunks count toward received exactly once so progress survives
+	// the crash, but they stay unconfirmed until the current session
+	// presents them: Commit requires every chunk confirmed by client data.
+	for _, index := range staged {
+		if _, ok := u.counted[index]; !ok {
+			u.counted[index] = struct{}{}
+			u.received += u.expectedChunkSize(index)
+		}
+	}
 	if len(staged) > 0 {
 		u.prepared = true
 	}

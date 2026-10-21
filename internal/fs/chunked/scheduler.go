@@ -36,11 +36,10 @@ func NewScheduler(interval, minAge time.Duration, targets func(context.Context) 
 
 // Sweep reaps every target once and returns the number of removed staging
 // files. A failing target is reported and skipped; remaining targets proceed.
+// When enumeration itself fails partially, the resolved targets still sweep
+// and the enumeration error is returned alongside the removal count.
 func (s *Scheduler) Sweep(ctx context.Context) (int, error) {
 	targets, err := s.targets(ctx)
-	if err != nil {
-		return 0, err
-	}
 	removed := 0
 	for _, target := range targets {
 		if err := ctx.Err(); err != nil {
@@ -55,7 +54,7 @@ func (s *Scheduler) Sweep(ctx context.Context) (int, error) {
 		}
 		removed += len(report.Removed)
 	}
-	return removed, nil
+	return removed, err
 }
 
 // Run sweeps immediately and then on every interval until ctx is canceled.

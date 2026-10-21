@@ -73,10 +73,16 @@ const (
 )
 
 // RosterRuntimeStatus carries the probe answer; CurrentIncarnation is set
-// when a replacement incarnation is authoritatively known.
+// when a replacement incarnation is authoritatively known. ObservedIncarnation
+// reports the runtime episode the probe actually evidenced (empty when the
+// episode could not be evidenced), and BindingValid reports whether the row's
+// recorded episode binding matches it: a row may only claim the runtime its
+// binding matches, never whatever the tab currently hosts.
 type RosterRuntimeStatus struct {
-	Kind               RosterRuntimeKind
-	CurrentIncarnation string
+	Kind                RosterRuntimeKind
+	CurrentIncarnation  string
+	ObservedIncarnation string
+	BindingValid        bool
 }
 
 // RosterRuntimeProbe authoritatively classifies the runtime behind a handle.
@@ -175,6 +181,26 @@ func NewRoster(store RosterStore, probe RosterRuntimeProbe) *Roster {
 	return &Roster{store: store, probe: probe, now: ids.NowMS, newID: ids.New}
 }
 
+// Probe exposes the configured runtime probe for read-only enrichment paths
+// (list presence, asset evidence); nil when no probe is configured.
+func (r *Roster) Probe() RosterRuntimeProbe {
+	return r.probe
+}
+
+// List returns the owner's roster entries for a conversation (every
+// conversation when empty), oldest first.
+func (r *Roster) List(ctx context.Context, conversationID string) ([]RosterEntry, error) {
+	rows, err := r.store.AgentRosterList(ctx, conversationID)
+	if err != nil {
+		return nil, mapRosterStoreError(err)
+	}
+	entries := make([]RosterEntry, 0, len(rows))
+	for _, row := range rows {
+		entries = append(entries, rosterEntryFromRow(row))
+	}
+	return entries, nil
+}
+
 // Provision creates the roster row provisioning-first: the entry (with its
 // preassigned TabID and a fresh Incarnation) exists before any runtime starts.
 // Handles are permanent per owner and are never reused.
@@ -266,7 +292,9 @@ func (r *Roster) attachLive(ctx context.Context, row store.AgentRosterRow, jobID
 	}
 	switch status.Kind {
 	case RosterRuntimeConnected:
-		return r.casConnected(ctx, row, jobID)
+		// The first connected bind persists the observed runtime episode in
+		// the same CAS; later binds only rebind the job.
+		return r.casConnected(ctx, row, jobID, status.ObservedIncarnation)
 	case RosterRuntimeDisconnected:
 		return RosterAttachment{Entry: entry, Resolution: RosterResolutionDisconnected}, nil
 	case RosterRuntimeGone:
@@ -304,12 +332,25 @@ func (r *Roster) attachLive(ctx context.Context, row store.AgentRosterRow, jobID
 // concurrent authoritative terminal transition (reconcile gone, release)
 // can never be resurrected or rebound. A state conflict re-reads the row:
 // live states retry the bind (a peer activated it first), terminal states
-// resolve authoritatively without a write.
-func (r *Roster) casConnected(ctx context.Context, row store.AgentRosterRow, jobID string) (RosterAttachment, error) {
+// resolve authoritatively without a write. When the row carries no runtime
+// episode binding yet and the probe observed one, the binding is persisted in
+// the same CAS — the row's recorded episode is what later presence and asset
+// reads validate against.
+func (r *Roster) casConnected(ctx context.Context, row store.AgentRosterRow, jobID, episode string) (RosterAttachment, error) {
 	for attempt := 0; attempt < 3; attempt++ {
 		updates := map[string]any{"job_id": jobID}
 		if RosterState(row.State) == RosterStateProvisioning {
 			updates["state"] = string(RosterStateActive)
+		}
+		if rosterRecordedEpisode(row) == "" && episode != "" {
+			merged, err := rosterEpisodeMetadata(row.MetadataJSON, episode)
+			if err != nil {
+				// A corrupt persisted value cannot be merged honestly:
+				// unverifiable, no write — the same contract as the
+				// transition path.
+				return RosterAttachment{Entry: rosterEntryFromRow(row), Resolution: RosterResolutionUnverifiable}, nil
+			}
+			updates["metadata_json"] = merged
 		}
 		updated, err := r.store.AgentRosterCompareAndSwapState(ctx, row.ID, row.Identity(), row.State, updates)
 		if err == nil {
@@ -642,4 +683,34 @@ func replacedByIncarnation(row store.AgentRosterRow) string {
 		return ""
 	}
 	return metadata.ReplacedBy
+}
+
+// rosterRecordedEpisode reads the row's persisted runtime-episode binding.
+// The row's own (ID, CreatedAt, Incarnation) triple stays the row identity
+// used for recovery and CAS guards; it never doubles as the runtime episode.
+func rosterRecordedEpisode(row store.AgentRosterRow) string {
+	var metadata struct {
+		RuntimeEpisode string `json:"runtimeEpisode"`
+	}
+	if err := json.Unmarshal([]byte(row.MetadataJSON), &metadata); err != nil {
+		return ""
+	}
+	return metadata.RuntimeEpisode
+}
+
+// rosterEpisodeMetadata merges the runtime-episode binding into the row's
+// metadata object, preserving unrelated keys. A persisted non-object or
+// malformed value cannot be merged honestly: it returns an error and the
+// caller aborts before any write, the same contract as the transition path.
+func rosterEpisodeMetadata(raw, episode string) (string, error) {
+	metadata := map[string]any{}
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil || metadata == nil {
+		return "", ipc.NewError(ipc.Code("conflict"), "roster metadata 不是 JSON 对象")
+	}
+	metadata["runtimeEpisode"] = episode
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return "", ipc.WrapError(ipc.CodeInternal, "roster metadata 编码失败: "+err.Error(), err)
+	}
+	return string(encoded), nil
 }

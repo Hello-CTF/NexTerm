@@ -645,6 +645,7 @@ function AppShell() {
     dismissToast,
     pushToast,
     connectFocusRevision,
+    reconcileDeletedTargets,
   } = useUi();
   const closedTabEntries = useClosedTabs((s) => s.stack.entries);
 
@@ -693,6 +694,14 @@ function AppShell() {
     if (activeProject === ALL_PROJECTS || !assetsQuery.data || !groupsQuery.data) return;
     setProjectInventory({ assets: assetsQuery.data, groups: groupsQuery.data });
   }, [activeProject, assetsQuery.data, groupsQuery.data, setProjectInventory]);
+  // The authoritative assets refresh drives deletedTarget: workspaces whose
+  // target disappeared are marked and preserved (never auto-disconnected),
+  // and the mark clears when the target reappears. The store's epoch guard
+  // keeps a snapshot from a previous account from mislabeling.
+  useEffect(() => {
+    if (!assetsQuery.data) return;
+    reconcileDeletedTargets(assetsQuery.data, accountEpoch);
+  }, [assetsQuery.data, accountEpoch, reconcileDeletedTargets]);
   const [vaultProtectionSeq, setVaultProtectionSeq] = useState(0);
   const syncLink = useQuery({
     queryKey: ["sync-link"],

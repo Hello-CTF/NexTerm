@@ -151,6 +151,38 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "ai_roster_attach": {
+      scope: "ai-roster",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{Handle string \"json:\\\"handle\\\"\"; JobID string \"json:\\\"jobId\\\"\"}", ts: "{\n  handle: string;\n  jobId: string;\n}" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/agent.RosterAttachmentDTO", ts: "RosterAttachmentDTO" },
+    },
+    "ai_roster_list": {
+      scope: "ai-roster",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{ConversationID string \"json:\\\"conversationId\\\"\"}", ts: "{\n  conversationId: string;\n}" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/ai/agent.RosterListEntry", ts: "RosterListEntry[]" },
+    },
+    "ai_roster_reconcile": {
+      scope: "ai-roster",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{ConversationID string \"json:\\\"conversationId\\\"\"}", ts: "{\n  conversationId: string;\n}" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/agent.RosterReconcileReport", ts: "RosterReconcileReport" },
+    },
+    "ai_roster_release": {
+      scope: "ai-roster",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{Handle string \"json:\\\"handle\\\"\"; CreatedAt int64 \"json:\\\"createdAt\\\"\"; Incarnation string \"json:\\\"incarnation\\\"\"}", ts: "{\n  handle: string;\n  createdAt: number;\n  incarnation: string;\n}" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/agent.RosterEntry", ts: "RosterEntry" },
+    },
     "ai_run_events": {
       nested: false,
       channel: false,
@@ -161,10 +193,26 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "ai_run_history": {
+      scope: "ai-run",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{ConversationID string \"json:\\\"conversationId\\\"\"; Filter string \"json:\\\"filter\\\"\"; Cursor string \"json:\\\"cursor\\\"\"; Limit int \"json:\\\"limit\\\"\"}", ts: "{\n  conversationId: string;\n  filter: string;\n  cursor: string;\n  limit: number;\n}" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/agent.RunHistoryPage", ts: "RunHistoryPage" },
+    },
     "ai_run_list": {
       nested: false,
       channel: false,
       stream: "none",
+    },
+    "ai_run_recovery_summary": {
+      scope: "ai-run",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{ConversationID string \"json:\\\"conversationId\\\"\"}", ts: "{\n  conversationId: string;\n}" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/ai/agent.ConversationRecoverySummary", ts: "ConversationRecoverySummary | null" },
     },
     "ai_set_permission": {
       nested: false,
@@ -175,6 +223,46 @@ export const ipcContractManifest = {
       nested: false,
       channel: false,
       stream: "none",
+    },
+    "ai_skills_delete_override": {
+      scope: "ai-skills",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/ai/skills.nameRequest", ts: "NameRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
+    "ai_skills_dispatch": {
+      scope: "ai-skills",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/ai/skills.nameRequest", ts: "NameRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/skills.Dispatch", ts: "Dispatch" },
+    },
+    "ai_skills_list": {
+      scope: "ai-skills",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/ai/skills.Entry", ts: "Entry[]" },
+    },
+    "ai_skills_material": {
+      scope: "ai-skills",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/ai/skills.nameRequest", ts: "NameRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/skills.Dispatch", ts: "Dispatch" },
+    },
+    "ai_skills_save_override": {
+      scope: "ai-skills",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/ai/skills.OverrideInput", ts: "OverrideInput" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/skills.Entry", ts: "Entry" },
     },
     "ai_steer": {
       nested: false,
@@ -645,6 +733,30 @@ export const ipcContractManifest = {
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "[]github.com/Hello-CTF/NexTerm/internal/forward.Rule", ts: "ForwardRule[]" },
     },
+    "forward_rule_recover_now": {
+      scope: "forward-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.forwardRecoverOutcomeDTO", ts: "ForwardRecoverOutcomeDTO[]" },
+    },
+    "forward_rule_recovery_settings_get": {
+      scope: "forward-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.forwardRecoverySettingsDTO", ts: "ForwardRecoverySettingsDTO" },
+    },
+    "forward_rule_recovery_settings_set": {
+      scope: "forward-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.forwardRecoverySettingsSetRequest", ts: "ForwardRecoverySettingsSetRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.forwardRecoverySettingsDTO", ts: "ForwardRecoverySettingsDTO" },
+    },
     "forward_rule_save": {
       scope: "forward-rule",
       nested: false,
@@ -652,6 +764,22 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "github.com/Hello-CTF/NexTerm/internal/store.ForwardRuleInput", ts: "ForwardRuleInput" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/forward.Rule", ts: "ForwardRule" },
+    },
+    "forward_rule_set_auto_start": {
+      scope: "forward-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.forwardRuleSetAutoStartRequest", ts: "ForwardRuleSetAutoStartRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.forwardRuleAutoStartDTO", ts: "ForwardRuleAutoStartDTO" },
+    },
+    "forward_rule_settings_list": {
+      scope: "forward-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.forwardRuleSettingsDTO", ts: "ForwardRuleSettingsDTO[]" },
     },
     "forward_rule_start": {
       scope: "forward-rule",
@@ -1975,6 +2103,68 @@ export type IPCTypedCommandName = Exclude<keyof typeof ipcContractManifest.comma
 export type IPCCommandName = keyof typeof ipcContractManifest.commands;
 
 export interface IPCCommandTypeMap {
+  "ai_roster_attach": {
+    input: {
+  handle: string;
+  jobId: string;
+};
+    output: contractTypes.RosterAttachmentDTO;
+  };
+  "ai_roster_list": {
+    input: {
+  conversationId: string;
+};
+    output: contractTypes.RosterListEntry[];
+  };
+  "ai_roster_reconcile": {
+    input: {
+  conversationId: string;
+};
+    output: contractTypes.RosterReconcileReport;
+  };
+  "ai_roster_release": {
+    input: {
+  handle: string;
+  createdAt: number;
+  incarnation: string;
+};
+    output: contractTypes.RosterEntry;
+  };
+  "ai_run_history": {
+    input: {
+  conversationId: string;
+  filter: string;
+  cursor: string;
+  limit: number;
+};
+    output: contractTypes.RunHistoryPage;
+  };
+  "ai_run_recovery_summary": {
+    input: {
+  conversationId: string;
+};
+    output: contractTypes.ConversationRecoverySummary | null;
+  };
+  "ai_skills_delete_override": {
+    input: contractTypes.NameRequest;
+    output: unknown;
+  };
+  "ai_skills_dispatch": {
+    input: contractTypes.NameRequest;
+    output: contractTypes.Dispatch;
+  };
+  "ai_skills_list": {
+    input: Record<string, never>;
+    output: contractTypes.Entry[];
+  };
+  "ai_skills_material": {
+    input: contractTypes.NameRequest;
+    output: contractTypes.Dispatch;
+  };
+  "ai_skills_save_override": {
+    input: contractTypes.OverrideInput;
+    output: contractTypes.Entry;
+  };
   "exec_batch_asset_edit": {
     input: contractTypes.AssetBulkEditIPCRequest;
     output: contractTypes.AssetBulkEditIPCResponse;
@@ -2027,9 +2217,29 @@ export interface IPCCommandTypeMap {
     input: Record<string, never>;
     output: contractTypes.ForwardRule[];
   };
+  "forward_rule_recover_now": {
+    input: Record<string, never>;
+    output: contractTypes.ForwardRecoverOutcomeDTO[];
+  };
+  "forward_rule_recovery_settings_get": {
+    input: Record<string, never>;
+    output: contractTypes.ForwardRecoverySettingsDTO;
+  };
+  "forward_rule_recovery_settings_set": {
+    input: contractTypes.ForwardRecoverySettingsSetRequest;
+    output: contractTypes.ForwardRecoverySettingsDTO;
+  };
   "forward_rule_save": {
     input: contractTypes.ForwardRuleInput;
     output: contractTypes.ForwardRule;
+  };
+  "forward_rule_set_auto_start": {
+    input: contractTypes.ForwardRuleSetAutoStartRequest;
+    output: contractTypes.ForwardRuleAutoStartDTO;
+  };
+  "forward_rule_settings_list": {
+    input: Record<string, never>;
+    output: contractTypes.ForwardRuleSettingsDTO[];
   };
   "forward_rule_start": {
     input: contractTypes.ForwardRuleStartRequest;
