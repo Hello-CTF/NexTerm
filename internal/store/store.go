@@ -90,15 +90,15 @@ func OpenWithOptions(ctx context.Context, path string, options OpenOptions) (*St
 			return nil, ipc.WrapError(ipc.CodeIO, "创建数据库目录失败: "+err.Error(), err)
 		}
 	}
-	if err := prepareDatabaseFile(path); err != nil {
-		return nil, ipc.WrapError(ipc.CodeIO, "准备数据库文件失败: "+err.Error(), err)
-	}
 	legacy, err := hasLegacySchemaMarkerAtPath(ctx, path, busyTimeoutMS)
 	if err != nil {
 		return nil, err
 	}
 	if legacy {
 		return nil, ipc.NewError(ipc.CodeUnsupported, "不支持直接升级 v1.0.3 之前的 pre-GORM 数据库；原数据库未修改")
+	}
+	if err := prepareDatabaseFile(path); err != nil {
+		return nil, ipc.WrapError(ipc.CodeIO, "准备数据库文件失败: "+err.Error(), err)
 	}
 	var s *Store
 	for attempt := 0; ; attempt++ {
@@ -214,6 +214,13 @@ func pragmaQuery(memory bool, busyTimeoutMS int64) string {
 }
 
 func hasLegacySchemaMarkerAtPath(ctx context.Context, path string, busyTimeoutMS int64) (bool, error) {
+	_, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
+	}
 	legacy, err := hasLegacySchemaMarkerInDatabase(ctx, sqliteImmutableDSN(path))
 	if err != nil || legacy {
 		return legacy, err

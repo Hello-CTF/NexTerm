@@ -120,6 +120,89 @@ func requirePreGormUnsupported(t *testing.T, path string) {
 	}
 }
 
+func TestLegacyMarkerPreflightIgnoresMissingPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.db")
+	legacy, err := hasLegacySchemaMarkerAtPath(context.Background(), path, defaultBusyTimeoutMS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy {
+		t.Fatal("missing path reported a legacy schema marker")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("missing path preflight created a database: %v", err)
+	}
+}
+
+func TestOpenFreshDatabaseAndReopen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "nested", "data.db")
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SettingSet(ctx, "fresh", "created"); err != nil {
+		_ = s.Close()
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reopened.Close() }()
+	value, found, err := reopened.SettingGet(ctx, "fresh")
+	if err != nil || !found || value != "created" {
+		t.Fatalf("value=%q found=%v err=%v", value, found, err)
+	}
+}
+
+func requireFileMode(t *testing.T, path string, expected os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual := info.Mode().Perm(); actual != expected {
+		t.Fatalf("database mode = %#o, want %#o", actual, expected)
+	}
+}
+
+func TestOpenRejectsPreGormDatabaseAndPreservesMode(t *testing.T) {
+	if !ownerOnlyPermissionsSupported() {
+		t.Skip("platform does not expose owner/group/other permission bits")
+	}
+	path := filepath.Join(t.TempDir(), "data.db")
+	createLegacyMarkerDB(t, path)
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := databaseFileStates(t, path)
+
+	requirePreGormUnsupported(t, path)
+	requireDatabaseFileStates(t, path, before)
+	requireFileMode(t, path, 0o644)
+}
+
+func TestOpenRejectsReadOnlyPreGormDatabase(t *testing.T) {
+	if !ownerOnlyPermissionsSupported() {
+		t.Skip("platform does not expose owner/group/other permission bits")
+	}
+	path := filepath.Join(t.TempDir(), "data.db")
+	createLegacyMarkerDB(t, path)
+	if err := os.Chmod(path, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	before := databaseFileStates(t, path)
+
+	requirePreGormUnsupported(t, path)
+	requireDatabaseFileStates(t, path, before)
+	requireFileMode(t, path, 0o400)
+}
+
 func TestOpenRejectsPreGormDatabaseAndPreservesFiles(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "data.db")
 	createLegacyMarkerDB(t, path)
