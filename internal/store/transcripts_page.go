@@ -255,7 +255,7 @@ func (s *Store) TranscriptSeekToTimePage(ctx context.Context, transcriptID strin
 		if transcriptSeekBeforeAdvanceHook != nil {
 			transcriptSeekBeforeAdvanceHook()
 		}
-		applied, err := s.transcriptTSIndexAdvanceVerifiedGen(ctx, transcriptID, advance.verified, advance.gen)
+		applied, err := s.transcriptTSIndexAdvanceVerifiedGen(ctx, transcriptID, advance.verified, advance.gen, advance.expected)
 		if err != nil {
 			return TranscriptPage{}, err
 		}
@@ -270,11 +270,14 @@ func (s *Store) TranscriptSeekToTimePage(ctx context.Context, transcriptID strin
 }
 
 // transcriptSeekAdvance is the watermark advance a seek computed inside its
-// snapshot: the verified high-water seq and the content generation it was
-// verified against. It commits separately under the generation guard.
+// snapshot: the verified high-water seq, the content generation it was
+// verified against, and the watermark the snapshot read (the expected
+// value the advance compares against). It commits separately under the
+// generation and expected-watermark guards.
 type transcriptSeekAdvance struct {
 	verified int64
 	gen      int64
+	expected int64
 }
 
 // transcriptSeekToTimePageTx is the seek's implementation inside its
@@ -373,7 +376,7 @@ func (s *Store) seekIndexedAtLeastTx(ctx context.Context, tx *gorm.DB, transcrip
 		}
 		var advance *transcriptSeekAdvance
 		if advanced > verified {
-			advance = &transcriptSeekAdvance{verified: advanced, gen: gen}
+			advance = &transcriptSeekAdvance{verified: advanced, gen: gen, expected: verified}
 		}
 		if pending {
 			return TranscriptPage{}, true, advance, nil
@@ -391,7 +394,7 @@ func (s *Store) seekIndexedAtLeastTx(ctx context.Context, tx *gorm.DB, transcrip
 			return TranscriptPage{}, false, nil, err
 		}
 		if advanced > verified {
-			advance = &transcriptSeekAdvance{verified: advanced, gen: gen}
+			advance = &transcriptSeekAdvance{verified: advanced, gen: gen, expected: verified}
 		}
 		if pending {
 			return TranscriptPage{}, true, advance, nil

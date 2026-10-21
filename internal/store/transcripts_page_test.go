@@ -1977,3 +1977,74 @@ func TestTranscriptSeekAdvanceDiscardsStaleGeneration(t *testing.T) {
 		t.Fatalf("retry after a low-corrupted new-content block = %v, want explicit corruption", err)
 	}
 }
+
+// A stale advance must not re-cover blocks an interleaved append rolled
+// back: the seek's snapshot verified the old content, a legal early-seq
+// append rolled the watermark back, and the advance computed from the old
+// snapshot would push the watermark forward again over the new unverified
+// block — hiding a lowered index value on it and returning a later page.
+// The advance is discarded (explicit retry) and the retry's bounded pass
+// reports the corruption instead.
+func TestTranscriptSeekAdvanceDiscardsRolledBackWatermark(t *testing.T) {
+	db := testStore(t)
+	ctx := context.Background()
+	id := "dbg-advance-rollback-cas"
+	if err := db.TranscriptStart(ctx, TranscriptRow{ID: id, SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000}); err != nil {
+		t.Fatal(err)
+	}
+	appendPagedFixture(t, db, id, []TranscriptChunkRow{{Seq: 100, TabID: "tab-a", TS: 1000, Data: []byte("a")}})
+	appendPagedFixture(t, db, id, []TranscriptChunkRow{{Seq: 200, TabID: "tab-a", TS: 2000, Data: []byte("b")}})
+	// The first seek establishes verified_through=100.
+	if _, err := db.TranscriptSeekToTimePage(ctx, id, 1000, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := db.transcriptTSIndexVerifiedThrough(ctx, db.db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified != 100 {
+		t.Fatalf("watermark = %d, want 100", verified)
+	}
+
+	// The hook interleaves a legal early-seq append between the seek's
+	// snapshot verification and its watermark advance: the append rolls
+	// the watermark back to 49, and the stale advance must not push it
+	// forward again over the new unverified block.
+	var appended atomic.Bool
+	restore := transcriptSeekBeforeAdvanceHook
+	transcriptSeekBeforeAdvanceHook = func() {
+		if appended.CompareAndSwap(false, true) {
+			if err := db.TranscriptAppendChunks(ctx, id, []TranscriptChunkRow{
+				{Seq: 50, TabID: "tab-a", TS: 1500, Data: []byte("c")},
+			}); err != nil {
+				t.Errorf("interleaved append = %v", err)
+			}
+		}
+	}
+	defer func() { transcriptSeekBeforeAdvanceHook = restore }()
+
+	// The seek verifies the old content to seq=200, then the append rolls
+	// the watermark back: the stale advance must be discarded (explicit
+	// retry), never re-covering the new unverified block.
+	if _, err := db.TranscriptSeekToTimePage(ctx, id, 1500, 1<<20); !errors.Is(err, ErrTranscriptSeekIndexing) {
+		t.Fatalf("seek with an interleaved early-seq append = %v, want the explicit retry state", err)
+	}
+	verified, err = db.transcriptTSIndexVerifiedThrough(ctx, db.db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified != 49 {
+		t.Fatalf("watermark = %d after the interleaved append, want the rollback to 49", verified)
+	}
+
+	// A lowered index value on the new block is explicit corruption on the
+	// retry, never a silently later page.
+	if err := db.db.WithContext(ctx).Model(&model.TranscriptChunkTS{}).
+		Where("transcript_id = ? AND block_seq = 50", id).
+		Update("max_ts", 0).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.TranscriptSeekToTimePage(ctx, id, 1500, 1<<20); err == nil || errors.Is(err, ErrTranscriptSeekIndexing) {
+		t.Fatalf("retry after a low-corrupted appended block = %v, want explicit corruption", err)
+	}
+}

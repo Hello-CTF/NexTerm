@@ -127,16 +127,18 @@ func (s *Store) transcriptTSIndexVerifiedThrough(ctx context.Context, tx *gorm.D
 }
 
 // transcriptTSIndexAdvanceVerifiedGen moves the verification watermark
-// forward monotonically, guarded by the content generation the seek
-// verified against: the advance runs in its own READ COMMITTED
-// transaction so it sees the latest committed generation, and it applies
-// only while the transcript's current generation still matches — a
-// replace that landed after the seek's snapshot resets the watermark in
-// its own transaction, and the stale advance is discarded (the caller
-// reports the explicit retry state). A serialization or lock failure on
-// the way is likewise an explicit retry, never an error page.
-func (s *Store) transcriptTSIndexAdvanceVerifiedGen(ctx context.Context, transcriptID string, verified, gen int64) (bool, error) {
-	var currentGen int64
+// forward monotonically, guarded by the content generation and the
+// watermark the seek read in its snapshot: the advance runs in its own
+// READ COMMITTED transaction so it sees the latest committed state, and
+// it applies only while the transcript's current generation still matches
+// and the watermark has not moved backward — a replace that landed after
+// the snapshot resets the watermark in its own transaction, and a legal
+// early-seq append rolls it back; either way the stale advance is
+// discarded (the caller reports the explicit retry state) instead of
+// re-covering blocks the snapshot never verified. A serialization or lock
+// failure on the way is likewise an explicit retry, never an error page.
+func (s *Store) transcriptTSIndexAdvanceVerifiedGen(ctx context.Context, transcriptID string, verified, gen, expected int64) (bool, error) {
+	var currentGen, currentVerified int64
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).Model(&model.TranscriptRow{}).
 			Select("content_gen").
@@ -147,8 +149,17 @@ func (s *Store) transcriptTSIndexAdvanceVerifiedGen(ctx context.Context, transcr
 		if currentGen != gen {
 			return nil
 		}
+		if err := tx.WithContext(ctx).Model(&model.TranscriptTSIndex{}).
+			Select("verified_through").
+			Where("transcript_id = ?", transcriptID).
+			Scan(&currentVerified).Error; err != nil {
+			return dbError(err)
+		}
+		if currentVerified < expected {
+			return nil
+		}
 		result := tx.WithContext(ctx).Model(&model.TranscriptTSIndex{}).
-			Where("transcript_id = ? AND (SELECT content_gen FROM transcript WHERE id = ?) = ?", transcriptID, transcriptID, gen).
+			Where("transcript_id = ? AND (SELECT content_gen FROM transcript WHERE id = ?) = ? AND verified_through >= ?", transcriptID, transcriptID, gen, expected).
 			Updates(map[string]any{
 				"verified_through": gorm.Expr("CASE WHEN verified_through < ? THEN ? ELSE verified_through END", verified, verified),
 			})
@@ -158,11 +169,21 @@ func (s *Store) transcriptTSIndexAdvanceVerifiedGen(ctx context.Context, transcr
 		if result.RowsAffected == 0 {
 			// MySQL and MariaDB count changed rows: the advance may have
 			// been a no-op because the watermark already covered it. Re-read
-			// the generation to tell that apart from a concurrent replace.
+			// the generation and the watermark to tell that apart from a
+			// concurrent replace or rollback.
 			if err := tx.WithContext(ctx).Model(&model.TranscriptRow{}).
 				Select("content_gen").
 				Where("id = ?", transcriptID).
 				Scan(&currentGen).Error; err != nil {
+				return dbError(err)
+			}
+			if currentGen != gen {
+				return nil
+			}
+			if err := tx.WithContext(ctx).Model(&model.TranscriptTSIndex{}).
+				Select("verified_through").
+				Where("transcript_id = ?", transcriptID).
+				Scan(&currentVerified).Error; err != nil {
 				return dbError(err)
 			}
 		}
@@ -174,7 +195,7 @@ func (s *Store) transcriptTSIndexAdvanceVerifiedGen(ctx context.Context, transcr
 		}
 		return false, err
 	}
-	return currentGen == gen, nil
+	return currentGen == gen && currentVerified >= expected, nil
 }
 
 // transcriptContentGen reads the transcript's content generation, the
