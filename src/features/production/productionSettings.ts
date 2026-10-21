@@ -8,6 +8,7 @@
 
 import { useSyncExternalStore } from "react";
 import { assetApi, call } from "../../ipc/commands";
+import { onAssetDataChanged } from "../../ipc/assetEvents";
 import { useUi } from "../../app/store";
 import type { ProductionSettingsDTO, ProductionSettingsUpdateRequest } from "../../ipc/generated/types";
 import { assetEnvironment } from "./assetEnvironment";
@@ -49,26 +50,33 @@ interface ClassificationState {
 
 let state: ClassificationState = { epoch: -1, version: 0, environments: new Map(), configured: [], loaded: false };
 let loadPromise: Promise<void> | null = null;
+let loadGeneration = 0;
 const listeners = new Set<() => void>();
 let unsubscribeAccount: (() => void) | null = null;
+let unsubscribeAssets: (() => void) | null = null;
 
 function notify(): void {
   state = { ...state, version: state.version + 1 };
   for (const listener of listeners) listener();
 }
 
-function resetClassification(): void {
+// refreshProductionClassification drops the cached classifications at the
+// current epoch and reloads while consumers are mounted. Settings saves and
+// asset tag changes both flow through here so mounted warnings never keep a
+// stale per-owner classification; the generation guard stops an older
+// in-flight load from overwriting the fresh one.
+export function refreshProductionClassification(): void {
   state = { epoch: useUi.getState().accountEpoch, version: state.version, environments: new Map(), configured: [], loaded: false };
   loadPromise = null;
   notify();
-  // Existing subscribers must not keep stale per-owner classifications: reload
-  // for the new epoch immediately.
   if (listeners.size > 0) ensureLoaded();
 }
 
 async function loadClassification(epoch: number): Promise<void> {
+  const generation = ++loadGeneration;
   try {
     const [assets, settings] = await Promise.all([assetApi.list(), productionSettingsApi.get()]);
+    if (generation !== loadGeneration) return;
     if (useUi.getState().accountEpoch !== epoch) return;
     const environments = new Map<string, string>();
     for (const asset of assets) {
@@ -83,6 +91,7 @@ async function loadClassification(epoch: number): Promise<void> {
       loaded: true,
     };
   } catch {
+    if (generation !== loadGeneration) return;
     if (useUi.getState().accountEpoch !== epoch) return;
     state = { epoch, version: state.version, environments: new Map(), configured: [], loaded: false };
   }
@@ -108,15 +117,18 @@ function subscribe(listener: () => void): () => void {
     unsubscribeAccount = useUi.subscribe((current) => {
       if (current.accountEpoch === previousEpoch) return;
       previousEpoch = current.accountEpoch;
-      resetClassification();
+      refreshProductionClassification();
     });
+    unsubscribeAssets = onAssetDataChanged(() => refreshProductionClassification());
   }
   ensureLoaded();
   return () => {
     listeners.delete(listener);
-    if (listeners.size === 0 && unsubscribeAccount !== null) {
-      unsubscribeAccount();
+    if (listeners.size === 0) {
+      unsubscribeAccount?.();
       unsubscribeAccount = null;
+      unsubscribeAssets?.();
+      unsubscribeAssets = null;
     }
   };
 }
@@ -137,5 +149,5 @@ export function useAssetProductionClassification(assetId: string | null | undefi
 
 // Test hook: drop cached state so the next subscribe reloads.
 export function resetProductionClassificationCache(): void {
-  resetClassification();
+  refreshProductionClassification();
 }

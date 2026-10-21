@@ -4,6 +4,7 @@ import { describeError } from "../../ui/errorText";
 import { IconAlert, IconPlus, IconShield, IconXCircle } from "../../ui/icons";
 import {
   productionSettingsApi,
+  refreshProductionClassification,
   type ProductionSettingsDTO,
   type ProductionSettingsUpdateRequest,
 } from "./productionSettings";
@@ -152,7 +153,13 @@ export function ProductionSettingsPanel() {
     setPendingKey("productionEnvironments");
     const saved = await save({ productionEnvironments: draftNames }, "生产环境列表已保存");
     setPendingKey(null);
-    if (saved) setDraftNames(null);
+    if (saved) {
+      setDraftNames(null);
+      // The configured list feeds the workspace/terminal/AI warnings: reload
+      // the classification at the current epoch so mounted consumers pick the
+      // new list up without an account switch.
+      refreshProductionClassification();
+    }
   };
 
   const toggleOptIn = async (row: OptInRow, value: boolean) => {

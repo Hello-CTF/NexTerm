@@ -30,6 +30,7 @@ import {
   type AssetProductionClassification,
 } from "../../features/production/productionSettings";
 import { assetEnvironment } from "../../features/production/assetEnvironment";
+import { notifyAssetDataChanged } from "../../ipc/assetEvents";
 import { useUi } from "../../app/store";
 
 const DEFAULT_DTO = {
@@ -45,9 +46,13 @@ const DEFAULT_DTO = {
 let mounted: MountedView | undefined;
 
 function settingsGet(input: unknown = DEFAULT_DTO) {
+  let current = { ...DEFAULT_DTO, ...(input as object) };
   mocks.call.mockImplementation((cmd: string, args?: unknown) => {
-    if (cmd === "production_settings_get") return Promise.resolve(input);
-    if (cmd === "production_settings_set") return Promise.resolve({ ...DEFAULT_DTO, ...(args as object) });
+    if (cmd === "production_settings_get") return Promise.resolve({ ...current });
+    if (cmd === "production_settings_set") {
+      current = { ...current, ...(args as object) };
+      return Promise.resolve({ ...current });
+    }
     return Promise.reject(new Error(`unexpected command ${cmd}`));
   });
 }
@@ -118,7 +123,11 @@ describe("isProductionEnvironment", () => {
 
 function ClassificationProbe({ assetId }: { assetId: string }) {
   const classification: AssetProductionClassification | null = useAssetProductionClassification(assetId);
-  return <span>{classification ? `${classification.environment}:${classification.production}` : "unclassified"}</span>;
+  return <span data-testid="classification-probe">{classification ? `${classification.environment}:${classification.production}` : "unclassified"}</span>;
+}
+
+function probeText(mountedView: MountedView): string {
+  return mountedView.container.querySelector<HTMLElement>('[data-testid="classification-probe"]')?.textContent ?? "";
 }
 
 describe("production classification store", () => {
@@ -148,6 +157,21 @@ describe("production classification store", () => {
     await flush();
     expect(mounted.container.textContent).toBe("unclassified");
     expect(classifyAssetProduction("a1")).toBeNull();
+  });
+
+  it("refreshes mounted consumers when asset tags change, without an account switch", async () => {
+    mocks.assetList.mockResolvedValue([{ id: "a1", tags: "env:staging" }]);
+    mounted = mount(createElement(ClassificationProbe, { assetId: "a1" }));
+    await flush();
+    await flushUntil(() => probeText(mounted!) === "staging:false");
+
+    mocks.assetList.mockResolvedValue([{ id: "a1", tags: "env:production" }]);
+    act(() => {
+      notifyAssetDataChanged();
+    });
+    await flush();
+    await flushUntil(() => probeText(mounted!) === "production:true");
+    expect(classifyAssetProduction("a1")).toEqual({ environment: "production", production: true });
   });
 });
 
@@ -197,6 +221,32 @@ describe("ProductionSettingsPanel", () => {
     await clickAndFlush(saveButton);
     await flushUntil(() => mocks.call.mock.calls.some(([cmd]) => cmd === "production_settings_set"));
     expect(mocks.call).toHaveBeenCalledWith("production_settings_set", { productionEnvironments: ["live", "canary"] });
+  });
+
+  it("refreshes mounted consumers after the environment list is saved, without an account switch", async () => {
+    mocks.assetList.mockResolvedValue([{ id: "a1", tags: "env:staging" }]);
+    mounted = mount(createElement("div", null,
+      createElement(ProductionSettingsPanel),
+      createElement(ClassificationProbe, { assetId: "a1" }),
+    ));
+    await flush();
+    await flushUntil(() => probeText(mounted!) === "staging:false");
+
+    const input = mounted.container.querySelector<HTMLInputElement>('input[aria-label="新增生产环境名"]');
+    if (!input) throw new Error("name input not found");
+    setInputValue(input, "staging");
+    click(mounted.container.querySelector('button[aria-label="添加生产环境名"]')!);
+    const saveButton = [...mounted.container.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent?.trim() === "保存列表",
+    );
+    if (!saveButton) throw new Error("save button not found");
+    await clickAndFlush(saveButton);
+    await flushUntil(() => mocks.call.mock.calls.some(([cmd]) => cmd === "production_settings_set"));
+
+    // The save invalidates and reloads the classification at the current
+    // epoch: the mounted probe flips without any account switch.
+    await flushUntil(() => probeText(mounted!) === "staging:true");
+    expect(classifyAssetProduction("a1")).toEqual({ environment: "staging", production: true });
   });
 
   it("drops a stale get response after an account switch and shows the new owner", async () => {

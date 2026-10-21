@@ -12,6 +12,7 @@ import {
   flushMacrotask,
   flushUntil,
   mountWithClient,
+  setInputValue,
   setSelectValue,
   type MountedView,
 } from "./reactTestUtils";
@@ -327,6 +328,55 @@ describe("RunbookPanel", () => {
       productionConfirmation: { confirmed: true, targetSetHash, commandHash },
     });
     expect(mocks.start.mock.calls[0][0]).toMatchObject({ confirmationPolicy: "production_only" });
+  });
+
+  it("retries the M15 typed production challenge with the typed environment names", async () => {
+    const targetSetHash = "a".repeat(64);
+    const commandHash = "b".repeat(64);
+    mocks.advance.mockImplementationOnce((input: { stepNumber: number }) => {
+      if (!currentState) throw new Error("run not started");
+      const next = structuredClone(currentState);
+      next.status = "awaiting_production_confirmation";
+      next.steps[input.stepNumber - 1].status = "awaiting_production_confirmation";
+      next.productionCommand = "echo api-a one";
+      next.productionChallenge = {
+        kind: "exec_batch_production_confirmation", batchId: "batch-prod", targetSetHash, commandHash,
+        requiredEnvironmentNames: ["production"],
+        productionTargets: [{ sessionId: "s1", sessionName: "ssh-s1", environment: "production" }],
+      };
+      currentState = next;
+      return Promise.resolve(next);
+    }).mockImplementationOnce((input: { stepNumber: number }) => Promise.resolve(finishCurrentStep(input.stepNumber)));
+    addSnippet("snippet-one");
+    setSelectValue(panel().container.querySelector('select[aria-label="Runbook 确认策略"]')!, "production_only");
+    click(targetCheckbox("s1"));
+    clickButton(panel().container, "开始运行");
+    await flushUntil(() => document.body.textContent?.includes("填写 Runbook 步骤变量") ?? false);
+    const prompt = [...document.body.querySelectorAll<HTMLElement>('[role="dialog"]')].find(
+      (dialog) => dialog.textContent?.includes("填写 Runbook 步骤变量"),
+    );
+    if (!prompt) throw new Error("variable prompt not found");
+    clickButton(prompt, "继续");
+    await flushUntil(() => document.body.querySelector('[aria-label="确认生产环境执行"]') !== null);
+
+    const dialog = document.body.querySelector<HTMLElement>('[aria-label="确认生产环境执行"]')!;
+    expect(dialog.textContent).toContain("echo api-a one");
+    const environmentInput = dialog.querySelector<HTMLInputElement>('input[aria-label="输入环境名 ssh-s1"]');
+    if (!environmentInput) throw new Error("typed environment input not found");
+    const confirm = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(
+      (candidate) => candidate.textContent?.trim() === "确认执行（1）",
+    );
+    if (!confirm) throw new Error("production confirm button not found");
+    expect(confirm.disabled).toBe(true);
+    setInputValue(environmentInput, "production");
+    expect(confirm.disabled).toBe(false);
+    clickButton(dialog, "确认执行（1）");
+    await flushUntil(() => text().includes("查看本次运行历史"));
+    expect(mocks.advance).toHaveBeenCalledTimes(2);
+    expect(mocks.advance.mock.calls[1][0]).toMatchObject({
+      stepNumber: 1,
+      productionConfirmation: { confirmed: true, targetSetHash, commandHash, environmentNames: ["production"] },
+    });
   });
 
   it("stops after a failed step and reads back the run history", async () => {
