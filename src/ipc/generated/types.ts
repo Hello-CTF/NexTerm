@@ -674,6 +674,8 @@ export type RosterAttachmentDTO = {
   resolution: string;
   currentIncarnation?: string;
   assetId: string;
+  host: string;
+  cwd: string;
 };
 
 export type RosterEntry = {
@@ -694,6 +696,8 @@ export type RosterListEntry = {
   entry: RosterEntry;
   presence: string;
   assetId: string;
+  host: string;
+  cwd: string;
 };
 
 export type RosterReconcileEntry = {

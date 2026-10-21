@@ -201,6 +201,14 @@ export const ipcContractManifest = {
       input: { go: "struct{Handle string \"json:\\\"handle\\\"\"; CreatedAt int64 \"json:\\\"createdAt\\\"\"; Incarnation string \"json:\\\"incarnation\\\"\"}", ts: "{\n  handle: string;\n  createdAt: number;\n  incarnation: string;\n}" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/agent.RosterEntry", ts: "RosterEntry" },
     },
+    "ai_roster_rename": {
+      scope: "ai-roster",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{Handle string \"json:\\\"handle\\\"\"; Alias string \"json:\\\"alias\\\"\"; CreatedAt int64 \"json:\\\"createdAt\\\"\"; Incarnation string \"json:\\\"incarnation\\\"\"}", ts: "{\n  handle: string;\n  alias: string;\n  createdAt: number;\n  incarnation: string;\n}" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/agent.RosterEntry", ts: "RosterEntry" },
+    },
     "ai_run_events": {
       nested: false,
       channel: false,
@@ -2205,6 +2213,15 @@ export interface IPCCommandTypeMap {
   "ai_roster_release": {
     input: {
   handle: string;
+  createdAt: number;
+  incarnation: string;
+};
+    output: contractTypes.RosterEntry;
+  };
+  "ai_roster_rename": {
+    input: {
+  handle: string;
+  alias: string;
   createdAt: number;
   incarnation: string;
 };
