@@ -92,53 +92,79 @@ func (s *Store) transcriptTSIndexStateUpsert(ctx context.Context, tx *gorm.DB, t
 
 // transcriptTSIndexStateComplete marks the transcript's timestamp index
 // complete after its content was fully (re)indexed; the verification
-// watermark resets with the content generation, so seeks re-verify the new
-// content lazily instead of trusting rows no seek has checked.
+// watermark resets with the content generation and the rollback epoch
+// increments, so a stale advance from before the replace is discarded
+// instead of trusting rows no seek has checked.
 func (s *Store) transcriptTSIndexStateComplete(ctx context.Context, tx *gorm.DB, transcriptID string) error {
 	state := &model.TranscriptTSIndex{
 		TranscriptID:    transcriptID,
 		VerifiedThrough: -1,
+		Revision:        0,
 		Complete:        true,
 		UpdatedAt:       ids.NowMS(),
 		OwnerID:         ipc.OwnerID(ctx),
 	}
 	return tx.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "transcript_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"complete", "updated_at", "owner_id", "verified_through"}),
+		Columns: []clause.Column{{Name: "transcript_id"}},
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "complete"}, Value: true},
+			{Column: clause.Column{Name: "updated_at"}, Value: ids.NowMS()},
+			{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)},
+			{Column: clause.Column{Name: "verified_through"}, Value: -1},
+			{Column: clause.Column{Name: "revision"}, Value: gorm.Expr("transcript_ts_index.revision + 1")},
+		},
 	}).Create(state).Error
+}
+
+// transcriptTSIndexState reads the transcript's index state in one
+// snapshot-consistent round trip: the completeness flag, the verification
+// watermark, and the rollback epoch the advance must compare against.
+// found is false when no state row exists.
+func (s *Store) transcriptTSIndexState(ctx context.Context, tx *gorm.DB, transcriptID string) (complete bool, verified, revision int64, found bool, err error) {
+	query := tx.WithContext(ctx).Model(&model.TranscriptTSIndex{}).
+		Select("complete", "verified_through", "revision").
+		Where("transcript_id = ?", transcriptID)
+	if ownerID := ipc.OwnerID(ctx); ownerID != "" {
+		query = query.Where("owner_id = ?", ownerID)
+	}
+	var state struct {
+		Complete        bool
+		VerifiedThrough int64
+		Revision        int64
+	}
+	result := query.Scan(&state)
+	if result.Error != nil {
+		return false, 0, 0, false, dbError(result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return false, 0, 0, false, nil
+	}
+	return state.Complete, state.VerifiedThrough, state.Revision, true, nil
 }
 
 // transcriptTSIndexVerifiedThrough reads the seek-side verification
 // watermark: blocks with seq <= watermark have had their decoded content
 // verified against their index rows for the current content.
 func (s *Store) transcriptTSIndexVerifiedThrough(ctx context.Context, tx *gorm.DB, transcriptID string) (int64, error) {
-	query := tx.WithContext(ctx).Model(&model.TranscriptTSIndex{}).
-		Select("verified_through").
-		Where("transcript_id = ?", transcriptID)
-	if ownerID := ipc.OwnerID(ctx); ownerID != "" {
-		query = query.Where("owner_id = ?", ownerID)
-	}
-	var verified int64
-	result := query.Scan(&verified)
-	if result.Error != nil {
-		return 0, dbError(result.Error)
-	}
-	return verified, nil
+	_, verified, _, _, err := s.transcriptTSIndexState(ctx, tx, transcriptID)
+	return verified, err
 }
 
 // transcriptTSIndexAdvanceVerifiedGen moves the verification watermark
 // forward monotonically, guarded by the content generation and the
-// watermark the seek read in its snapshot: the advance runs in its own
-// READ COMMITTED transaction so it sees the latest committed state, and
-// it applies only while the transcript's current generation still matches
-// and the watermark has not moved backward — a replace that landed after
-// the snapshot resets the watermark in its own transaction, and a legal
-// early-seq append rolls it back; either way the stale advance is
-// discarded (the caller reports the explicit retry state) instead of
-// re-covering blocks the snapshot never verified. A serialization or lock
-// failure on the way is likewise an explicit retry, never an error page.
-func (s *Store) transcriptTSIndexAdvanceVerifiedGen(ctx context.Context, transcriptID string, verified, gen, expected int64) (bool, error) {
-	var currentGen, currentVerified int64
+// rollback epoch the seek read in its snapshot: the advance runs in its
+// own READ COMMITTED transaction so it sees the latest committed state,
+// and it applies only while the transcript's current generation still
+// matches and the epoch is unchanged — a replace that landed after the
+// snapshot resets the watermark, and an early-seq append rolls it back
+// (bumping the epoch); either way the stale advance is discarded (the
+// caller reports the explicit retry state) instead of re-covering blocks
+// the snapshot never verified. Another seek's legitimate forward advance
+// leaves the epoch untouched and is honored, and an advance the watermark
+// already covers is a no-op. A serialization or lock failure on the way
+// is likewise an explicit retry, never an error page.
+func (s *Store) transcriptTSIndexAdvanceVerifiedGen(ctx context.Context, transcriptID string, verified, gen, revision int64) (bool, error) {
+	var currentGen, currentRevision int64
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).Model(&model.TranscriptRow{}).
 			Select("content_gen").
@@ -150,16 +176,16 @@ func (s *Store) transcriptTSIndexAdvanceVerifiedGen(ctx context.Context, transcr
 			return nil
 		}
 		if err := tx.WithContext(ctx).Model(&model.TranscriptTSIndex{}).
-			Select("verified_through").
+			Select("revision").
 			Where("transcript_id = ?", transcriptID).
-			Scan(&currentVerified).Error; err != nil {
+			Scan(&currentRevision).Error; err != nil {
 			return dbError(err)
 		}
-		if currentVerified < expected {
+		if currentRevision != revision {
 			return nil
 		}
 		result := tx.WithContext(ctx).Model(&model.TranscriptTSIndex{}).
-			Where("transcript_id = ? AND (SELECT content_gen FROM transcript WHERE id = ?) = ? AND verified_through >= ?", transcriptID, transcriptID, gen, expected).
+			Where("transcript_id = ? AND (SELECT content_gen FROM transcript WHERE id = ?) = ? AND revision = ?", transcriptID, transcriptID, gen, revision).
 			Updates(map[string]any{
 				"verified_through": gorm.Expr("CASE WHEN verified_through < ? THEN ? ELSE verified_through END", verified, verified),
 			})
@@ -169,7 +195,7 @@ func (s *Store) transcriptTSIndexAdvanceVerifiedGen(ctx context.Context, transcr
 		if result.RowsAffected == 0 {
 			// MySQL and MariaDB count changed rows: the advance may have
 			// been a no-op because the watermark already covered it. Re-read
-			// the generation and the watermark to tell that apart from a
+			// the generation and the epoch to tell that apart from a
 			// concurrent replace or rollback.
 			if err := tx.WithContext(ctx).Model(&model.TranscriptRow{}).
 				Select("content_gen").
@@ -181,9 +207,9 @@ func (s *Store) transcriptTSIndexAdvanceVerifiedGen(ctx context.Context, transcr
 				return nil
 			}
 			if err := tx.WithContext(ctx).Model(&model.TranscriptTSIndex{}).
-				Select("verified_through").
+				Select("revision").
 				Where("transcript_id = ?", transcriptID).
-				Scan(&currentVerified).Error; err != nil {
+				Scan(&currentRevision).Error; err != nil {
 				return dbError(err)
 			}
 		}
@@ -195,7 +221,7 @@ func (s *Store) transcriptTSIndexAdvanceVerifiedGen(ctx context.Context, transcr
 		}
 		return false, err
 	}
-	return currentGen == gen && currentVerified >= expected, nil
+	return currentGen == gen && currentRevision == revision, nil
 }
 
 // transcriptContentGen reads the transcript's content generation, the

@@ -255,7 +255,7 @@ func (s *Store) TranscriptSeekToTimePage(ctx context.Context, transcriptID strin
 		if transcriptSeekBeforeAdvanceHook != nil {
 			transcriptSeekBeforeAdvanceHook()
 		}
-		applied, err := s.transcriptTSIndexAdvanceVerifiedGen(ctx, transcriptID, advance.verified, advance.gen, advance.expected)
+		applied, err := s.transcriptTSIndexAdvanceVerifiedGen(ctx, transcriptID, advance.verified, advance.gen, advance.revision)
 		if err != nil {
 			return TranscriptPage{}, err
 		}
@@ -271,13 +271,12 @@ func (s *Store) TranscriptSeekToTimePage(ctx context.Context, transcriptID strin
 
 // transcriptSeekAdvance is the watermark advance a seek computed inside its
 // snapshot: the verified high-water seq, the content generation it was
-// verified against, and the watermark the snapshot read (the expected
-// value the advance compares against). It commits separately under the
-// generation and expected-watermark guards.
+// verified against, and the rollback epoch it read in the snapshot. It
+// commits separately under the generation and epoch guards.
 type transcriptSeekAdvance struct {
 	verified int64
 	gen      int64
-	expected int64
+	revision int64
 }
 
 // transcriptSeekToTimePageTx is the seek's implementation inside its
@@ -295,12 +294,12 @@ func (s *Store) transcriptSeekToTimePageTx(ctx context.Context, tx *gorm.DB, tra
 	if !found {
 		return TranscriptPage{Chunks: []TranscriptChunkRow{}}, false, nil, nil
 	}
-	complete, err := s.transcriptTSIndexComplete(ctx, tx, transcriptID)
+	complete, verified, revision, found, err := s.transcriptTSIndexState(ctx, tx, transcriptID)
 	if err != nil {
 		return TranscriptPage{}, false, nil, err
 	}
 	if complete {
-		return s.seekIndexedAtLeastTx(ctx, tx, transcriptID, atMS, maxBytes)
+		return s.seekIndexedAtLeastTx(ctx, tx, transcriptID, atMS, maxBytes, verified, revision)
 	}
 	s.kickTranscriptTSIndexBackfill(ipc.OwnerID(ctx))
 	gen, err := s.transcriptContentGen(ctx, tx, transcriptID)
@@ -353,12 +352,8 @@ func transcriptIndexCorruptError(transcriptID string, blockSeq int64) error {
 // so the next call resumes instead of rescanning. Once the candidate lies
 // inside the verified prefix the seek answers from the candidate block
 // alone, matching the reference model exactly.
-func (s *Store) seekIndexedAtLeastTx(ctx context.Context, tx *gorm.DB, transcriptID string, atMS int64, maxBytes int) (TranscriptPage, bool, *transcriptSeekAdvance, error) {
+func (s *Store) seekIndexedAtLeastTx(ctx context.Context, tx *gorm.DB, transcriptID string, atMS int64, maxBytes int, verified, revision int64) (TranscriptPage, bool, *transcriptSeekAdvance, error) {
 	gen, err := s.transcriptContentGen(ctx, tx, transcriptID)
-	if err != nil {
-		return TranscriptPage{}, false, nil, err
-	}
-	verified, err := s.transcriptTSIndexVerifiedThrough(ctx, tx, transcriptID)
 	if err != nil {
 		return TranscriptPage{}, false, nil, err
 	}
@@ -376,7 +371,7 @@ func (s *Store) seekIndexedAtLeastTx(ctx context.Context, tx *gorm.DB, transcrip
 		}
 		var advance *transcriptSeekAdvance
 		if advanced > verified {
-			advance = &transcriptSeekAdvance{verified: advanced, gen: gen, expected: verified}
+			advance = &transcriptSeekAdvance{verified: advanced, gen: gen, revision: revision}
 		}
 		if pending {
 			return TranscriptPage{}, true, advance, nil
@@ -394,7 +389,7 @@ func (s *Store) seekIndexedAtLeastTx(ctx context.Context, tx *gorm.DB, transcrip
 			return TranscriptPage{}, false, nil, err
 		}
 		if advanced > verified {
-			advance = &transcriptSeekAdvance{verified: advanced, gen: gen, expected: verified}
+			advance = &transcriptSeekAdvance{verified: advanced, gen: gen, revision: revision}
 		}
 		if pending {
 			return TranscriptPage{}, true, advance, nil

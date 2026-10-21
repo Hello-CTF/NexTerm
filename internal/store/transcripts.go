@@ -147,8 +147,11 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 		// A legal out-of-order append can insert blocks at or before the
 		// verification watermark: those blocks are unverified, so the
 		// watermark rolls back to the position just before the earliest of
-		// them — the next seek's bounded pass verifies them instead of
-		// trusting a watermark that no longer covers them.
+		// them — and the rollback epoch increments, so an advance computed
+		// from a snapshot that read the pre-rollback watermark is discarded
+		// instead of re-covering them. The next seek's bounded pass
+		// verifies them instead of trusting a watermark that no longer
+		// covers them.
 		minNewSeq := blocks[0].Seq
 		for _, block := range blocks[1:] {
 			if block.Seq < minNewSeq {
@@ -159,6 +162,7 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 			Where("transcript_id = ?", transcriptID).
 			Updates(map[string]any{
 				"verified_through": gorm.Expr("CASE WHEN verified_through >= ? THEN ? ELSE verified_through END", minNewSeq, minNewSeq-1),
+				"revision":         gorm.Expr("CASE WHEN verified_through >= ? THEN revision + 1 ELSE revision END", minNewSeq),
 			}).Error; err != nil {
 			return err
 		}

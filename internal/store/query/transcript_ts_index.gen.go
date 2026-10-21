@@ -29,6 +29,7 @@ func newTranscriptTSIndex(db *gorm.DB, opts ...gen.DOOption) transcriptTSIndex {
 	_transcriptTSIndex.ALL = field.NewAsterisk(tableName)
 	_transcriptTSIndex.TranscriptID = field.NewString(tableName, "transcript_id")
 	_transcriptTSIndex.VerifiedThrough = field.NewInt64(tableName, "verified_through")
+	_transcriptTSIndex.Revision = field.NewInt64(tableName, "revision")
 	_transcriptTSIndex.Complete = field.NewBool(tableName, "complete")
 	_transcriptTSIndex.UpdatedAt = field.NewInt64(tableName, "updated_at")
 	_transcriptTSIndex.OwnerID = field.NewString(tableName, "owner_id")
@@ -49,6 +50,7 @@ type transcriptTSIndex struct {
 	ALL             field.Asterisk
 	TranscriptID    field.String
 	VerifiedThrough field.Int64
+	Revision        field.Int64
 	Complete        field.Bool
 	UpdatedAt       field.Int64
 	OwnerID         field.String
@@ -71,6 +73,7 @@ func (t *transcriptTSIndex) updateTableName(table string) *transcriptTSIndex {
 	t.ALL = field.NewAsterisk(table)
 	t.TranscriptID = field.NewString(table, "transcript_id")
 	t.VerifiedThrough = field.NewInt64(table, "verified_through")
+	t.Revision = field.NewInt64(table, "revision")
 	t.Complete = field.NewBool(table, "complete")
 	t.UpdatedAt = field.NewInt64(table, "updated_at")
 	t.OwnerID = field.NewString(table, "owner_id")
@@ -102,9 +105,10 @@ func (t *transcriptTSIndex) GetFieldByName(fieldName string) (field.OrderExpr, b
 }
 
 func (t *transcriptTSIndex) fillFieldMap() {
-	t.fieldMap = make(map[string]field.Expr, 6)
+	t.fieldMap = make(map[string]field.Expr, 7)
 	t.fieldMap["transcript_id"] = t.TranscriptID
 	t.fieldMap["verified_through"] = t.VerifiedThrough
+	t.fieldMap["revision"] = t.Revision
 	t.fieldMap["complete"] = t.Complete
 	t.fieldMap["updated_at"] = t.UpdatedAt
 	t.fieldMap["owner_id"] = t.OwnerID

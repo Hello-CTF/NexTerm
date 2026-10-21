@@ -71,11 +71,16 @@ func (TranscriptChunkTS) TableName() string { return "transcript_chunk_ts" }
 // its decoded content verified against its index row for the current
 // content, so a seek whose candidate lies beyond it only verifies the
 // newly reached blocks — bounded and resumable across calls, never an
-// unbounded prefix scan. A whole-content replacement resets the watermark
-// in the same transaction.
+// unbounded prefix scan. Revision is the watermark's rollback epoch: it
+// increments whenever the watermark moves backward (an early-seq append
+// rolls it back, a whole-content replacement resets it), so a seek's
+// advance can compare against the epoch it read in its snapshot and a
+// stale advance is discarded instead of re-covering blocks the snapshot
+// never verified.
 type TranscriptTSIndex struct {
 	TranscriptID    string        `gorm:"column:transcript_id;primaryKey" json:"transcriptId"`
 	VerifiedThrough int64         `gorm:"column:verified_through;not null;default:0" json:"verifiedThrough"`
+	Revision        int64         `gorm:"column:revision;not null;default:0" json:"revision"`
 	Complete        bool          `gorm:"column:complete;not null;default:0" json:"complete"`
 	UpdatedAt       int64         `gorm:"column:updated_at;not null" json:"updatedAt"`
 	OwnerID         string        `gorm:"size:191;column:owner_id;not null;default:'';index:idx_transcript_ts_index_owner" json:"owner_id"`

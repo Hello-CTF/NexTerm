@@ -2048,3 +2048,93 @@ func TestTranscriptSeekAdvanceDiscardsRolledBackWatermark(t *testing.T) {
 		t.Fatalf("retry after a low-corrupted appended block = %v, want explicit corruption", err)
 	}
 }
+
+// A stale advance must not re-cover blocks a rollback hid, even when the
+// watermark's numeric value still passes a value comparison: the old
+// seek's snapshot read the watermark, another seek legitimately advanced
+// it higher, and an early-seq append rolled it back — the rollback is the
+// signal the advance must honor, not the number. The advance is discarded
+// (explicit retry) and the retry's bounded pass reports the corruption on
+// the appended block instead of a silently later page.
+func TestTranscriptSeekAdvanceDiscardsRolledBackWatermarkABA(t *testing.T) {
+	db := testStore(t)
+	ctx := context.Background()
+	id := "dbg-advance-rollback-aba"
+	if err := db.TranscriptStart(ctx, TranscriptRow{ID: id, SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000}); err != nil {
+		t.Fatal(err)
+	}
+	for _, chunk := range []TranscriptChunkRow{
+		{Seq: 100, TabID: "tab-a", TS: 1000, Data: []byte("a")},
+		{Seq: 200, TabID: "tab-a", TS: 2000, Data: []byte("b")},
+		{Seq: 300, TabID: "tab-a", TS: 3000, Data: []byte("c")},
+	} {
+		appendPagedFixture(t, db, id, []TranscriptChunkRow{chunk})
+	}
+	// The first seek establishes verified_through=100.
+	if _, err := db.TranscriptSeekToTimePage(ctx, id, 1000, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+
+	// The old seek pauses between its snapshot and its advance.
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	restore := transcriptSeekBeforeAdvanceHook
+	transcriptSeekBeforeAdvanceHook = func() {
+		if calls.Add(1) == 1 {
+			close(entered)
+			<-release
+		}
+	}
+	defer func() { transcriptSeekBeforeAdvanceHook = restore }()
+
+	oldSeekErr := make(chan error, 1)
+	go func() {
+		_, err := db.TranscriptSeekToTimePage(ctx, id, 2000, 1<<20)
+		oldSeekErr <- err
+	}()
+	<-entered
+
+	// Another seek legitimately advances the watermark to 300 (no
+	// rollback, so the old advance must not fail on it), then a legal
+	// early-seq append rolls the watermark back to 149.
+	if _, err := db.TranscriptSeekToTimePage(ctx, id, 3000, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.TranscriptAppendChunks(ctx, id, []TranscriptChunkRow{
+		{Seq: 150, TabID: "tab-a", TS: 1500, Data: []byte("new")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := db.transcriptTSIndexVerifiedThrough(ctx, db.db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified != 149 {
+		t.Fatalf("watermark after the rollback = %d, want 149", verified)
+	}
+
+	// The old advance must be discarded (explicit retry), never pushing
+	// the watermark back over the rolled-back block.
+	close(release)
+	if err := <-oldSeekErr; !errors.Is(err, ErrTranscriptSeekIndexing) {
+		t.Fatalf("old seek after the rollback = %v, want the explicit retry state", err)
+	}
+	verified, err = db.transcriptTSIndexVerifiedThrough(ctx, db.db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified != 149 {
+		t.Fatalf("watermark after the discarded advance = %d, want the rollback to 149 kept", verified)
+	}
+
+	// A lowered index value on the appended block is explicit corruption
+	// on the retry, never a silently later page.
+	if err := db.db.WithContext(ctx).Exec(
+		"UPDATE transcript_chunk_ts SET max_ts = 0 WHERE transcript_id = ? AND block_seq = 150", id).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.TranscriptSeekToTimePage(ctx, id, 1500, 1<<20); err == nil || errors.Is(err, ErrTranscriptSeekIndexing) {
+		t.Fatalf("retry after a low-corrupted appended block = %v, want explicit corruption", err)
+	}
+}
