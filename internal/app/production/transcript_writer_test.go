@@ -711,7 +711,13 @@ func TestTranscriptWriterEnqueueHonorsCancelledContext(t *testing.T) {
 func TestTranscriptWriterCrashBeforeFlushDoesNotSuppressUnflushed(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "data.db")
-	database, err := store.Open(ctx, path)
+	// The busy-timeout fixture bounds the modernc busy wait, which neither
+	// ctx cancellation nor closing the pool can interrupt (M91 probes;
+	// TestStoreSQLiteBusyWaitOutlivesCancelAndClose). Whether the tail flush
+	// below wins or loses the race against Close, the contended wait now ends
+	// well inside the 30s shutdown budget, so the join is deterministic while
+	// production keeps the 30s default.
+	database, err := store.OpenWithOptions(ctx, path, store.OpenOptions{BusyTimeout: 1500 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
