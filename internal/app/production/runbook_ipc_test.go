@@ -463,7 +463,7 @@ func TestRunbookIPCAccountCleanupDropsOnlyOwnerRuns(t *testing.T) {
 		}
 	}
 
-	service.CancelOwner(context.WithoutCancel(t.Context()), "owner-a", "logout-all")
+	service.CancelOwner(context.WithoutCancel(t.Context()), "owner-a", "logout-all", nil)
 	select {
 	case response := <-advanceA:
 		if state := decodeExecBatchTest[runbook.RunState](t, response); state.Status != runbook.RunCanceled {
@@ -476,7 +476,7 @@ func TestRunbookIPCAccountCleanupDropsOnlyOwnerRuns(t *testing.T) {
 	requireRunbookIPCNotFound(t, runbookIPCGetRun(t, dispatcher, ownerA, "run-done"))
 	decodeExecBatchTest[runbook.RunState](t, runbookIPCGetRun(t, dispatcher, ownerB, "run-b-live"))
 
-	commit, rollback := service.PrepareOwnerCleanup(t.Context(), "owner-b", "logout-all")
+	commit, rollback := service.PrepareOwnerCleanup(t.Context(), "owner-b", "logout-all", nil)
 	rollback()
 	decodeExecBatchTest[runbook.RunState](t, runbookIPCGetRun(t, dispatcher, ownerB, "run-b-live"))
 	commit()

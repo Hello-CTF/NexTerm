@@ -81,7 +81,7 @@ func (s *accountCleanupState) nowTime() time.Time {
 // contract the account cleanup lifecycle depends on; *runbookIPCService
 // satisfies it.
 type runbookCleanup interface {
-	PrepareOwnerCleanup(ctx context.Context, ownerID, eventID string) (commit func(...string), rollback func())
+	PrepareOwnerCleanup(ctx context.Context, ownerID, eventID string, cutoff *time.Time) (commit func(...string), rollback func())
 }
 
 // SetRunbookCleanup wires the runbook service into the account cleanup
@@ -143,10 +143,10 @@ func (p *Production) prepareAccountCleanup(ctx context.Context, ownerID, cleanup
 		return func(...string) {}, func() {}, err
 	}
 	return func(sessionIDs ...string) {
-			if !p.commitAccountDeviceSnapshot(key, event, sessionIDs) {
+			devices, ok := p.commitAccountDeviceSnapshot(key, event, sessionIDs)
+			if !ok {
 				return
 			}
-			devices := p.takeCommittedAccountDeviceSnapshot(key, event)
 			commitBatches(sessionIDs...)
 			event.runbookCommit(sessionIDs...)
 			p.cleanupAccountDeviceSnapshot(ctx, ownerID, devices)
@@ -195,7 +195,7 @@ func (p *Production) prepareAccountDeviceSnapshot(ctx context.Context, ownerID, 
 
 	commitRunbook, rollbackRunbook := func(...string) {}, func() {}
 	if state.runbook != nil {
-		commitRunbook, rollbackRunbook = state.runbook.PrepareOwnerCleanup(ctx, ownerID, key.eventID)
+		commitRunbook, rollbackRunbook = state.runbook.PrepareOwnerCleanup(ctx, ownerID, key.eventID, cutoff)
 	}
 	snapshot, err := p.accountDeviceSnapshot(ctx, ownerID, cutoff)
 	if err != nil {
@@ -216,12 +216,18 @@ func (p *Production) prepareAccountDeviceSnapshot(ctx context.Context, ownerID, 
 	return key, event, nil
 }
 
-func (p *Production) commitAccountDeviceSnapshot(key accountCleanupKey, event *accountCleanupEvent, sessionIDs []string) bool {
+// commitAccountDeviceSnapshot validates the event, registers the revoked
+// session aliases, and marks the event committed in one critical section,
+// detaching the device payload with the mark: a concurrent retention purge
+// can evict the committed event immediately afterwards, but it can never
+// reclaim the payload of a commit that already ran. Replays get a nil
+// payload and stay exactly-once no-ops.
+func (p *Production) commitAccountDeviceSnapshot(key accountCleanupKey, event *accountCleanupEvent, sessionIDs []string) ([]session.SessionInfo, bool) {
 	state := &p.accountCleanup
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if state.events[key] != event || event.aborted {
-		return false
+		return nil, false
 	}
 	for _, sessionID := range sessionIDs {
 		if sessionID == "" || sessionID == key.eventID {
@@ -236,23 +242,9 @@ func (p *Production) commitAccountDeviceSnapshot(key accountCleanupKey, event *a
 		event.committed = true
 		event.committedAt = state.nowTime()
 	}
-	return true
-}
-
-// takeCommittedAccountDeviceSnapshot returns the device payload exactly once:
-// the first successful commit closes those devices, and the payload is
-// dropped so replays (which keep the committed marker for dedup) cannot
-// re-close or pin the fleet snapshot.
-func (p *Production) takeCommittedAccountDeviceSnapshot(key accountCleanupKey, event *accountCleanupEvent) []session.SessionInfo {
-	state := &p.accountCleanup
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.events[key] != event {
-		return nil
-	}
 	devices := event.deviceSessions
 	event.deviceSessions = nil
-	return devices
+	return devices, true
 }
 
 func (p *Production) rollbackAccountDeviceSnapshot(key accountCleanupKey, event *accountCleanupEvent) bool {

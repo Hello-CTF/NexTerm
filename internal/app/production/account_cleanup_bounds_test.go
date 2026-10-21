@@ -394,3 +394,232 @@ func TestAccountCleanupCompositionWiresRunbookCleanup(t *testing.T) {
 		t.Fatal("owner B's run was canceled by A's cleanup")
 	}
 }
+
+// newAccountCleanupComposition builds the real composition root: the runbook
+// service is auto-built from the supplied services and wired into the account
+// cleanup lifecycle, and the execbatch service resolves rig sessions on the
+// fixture clock.
+func newAccountCleanupComposition(t *testing.T, clock *accountCleanupClock, rig *accountCleanupRig, database *store.Store) (*Production, *execbatch.Service) {
+	t.Helper()
+	batches := execbatch.New(execbatch.Config{
+		Resolver: execbatch.ResolverFunc(func(ctx context.Context, sessionID string) (execbatch.Target, error) {
+			connected, err := rig.manager.SessionFor(ctx, sessionID)
+			if err != nil {
+				return execbatch.Target{}, err
+			}
+			transport, err := rig.manager.TransportFor(ctx, sessionID)
+			if err != nil {
+				return execbatch.Target{}, err
+			}
+			return execbatch.Target{SessionID: connected.ID, SessionName: connected.ID, Transport: transport, Generation: transport.Generation()}, nil
+		}),
+		Now: clock.Now,
+	})
+	application, err := NewProductionWithServices(Config{}, ProductionServices{Sessions: rig.manager, Store: database, ExecBatches: batches})
+	if err != nil {
+		t.Fatal(err)
+	}
+	application.Services.Runbook.now = clock.Now
+	application.accountCleanup.now = clock.Now
+	return application, batches
+}
+
+func startCompositionRun(t *testing.T, application *Production, ownerID, runID string) {
+	t.Helper()
+	if _, err := application.Services.Runbook.Start(context.Background(), ownerID, runbook.StartRequest{
+		RunID: runID, RunbookID: "runbook-1", RunbookName: "runbook",
+		Steps:      []runbook.Step{{ID: "step-1", Name: "step", Command: "cmd"}},
+		SessionIDs: []string{"asset-1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func requireCompositionRunGone(t *testing.T, application *Production, ownerID, runID string) {
+	t.Helper()
+	if _, err := application.Services.Runbook.Get(context.Background(), ownerID, runID); !errors.Is(err, runbook.ErrNotFound) {
+		t.Fatalf("run %s: err = %v, want %v", runID, err, runbook.ErrNotFound)
+	}
+}
+
+func requireCompositionRunAlive(t *testing.T, application *Production, ownerID, runID string) {
+	t.Helper()
+	state, err := application.Services.Runbook.Get(context.Background(), ownerID, runID)
+	if err != nil {
+		t.Fatalf("run %s should survive: %v", runID, err)
+	}
+	if state.Status == runbook.RunCanceled {
+		t.Fatalf("run %s was canceled", runID)
+	}
+}
+
+// startCompositionBatch starts a batch whose Exec blocks until canceled and
+// returns once the transport observed the call (so the caller controls the
+// clock at admission).
+func startCompositionBatch(t *testing.T, batches *execbatch.Service, rig *accountCleanupRig, owner context.Context, ownerID, assetID, batchID string) chan execbatch.Batch {
+	t.Helper()
+	started := make(chan struct{}, 1)
+	rig.setExecHook(assetID, func(ctx context.Context) (base.ExecResult, error) {
+		started <- struct{}{}
+		<-ctx.Done()
+		return base.ExecResult{}, ctx.Err()
+	})
+	connected, _ := rig.open(t, owner, session.Asset{ID: assetID, Kind: session.KindSSH})
+	done := make(chan execbatch.Batch, 1)
+	go func() {
+		batch, _ := batches.Execute(owner, ownerID, execbatch.Request{BatchID: batchID, SessionIDs: []string{connected.ID}, Command: "wait"})
+		done <- batch
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("batch %s did not start", batchID)
+	}
+	return done
+}
+
+func requireCompositionBatchCanceled(t *testing.T, done chan execbatch.Batch, batchID string) {
+	t.Helper()
+	select {
+	case batch := <-done:
+		if len(batch.Results) != 1 || batch.Results[0].Status != execbatch.StatusCanceled {
+			t.Fatalf("batch %s results = %+v, want canceled", batchID, batch.Results)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("batch %s did not finish", batchID)
+	}
+}
+
+// The first natural-expiry cleanup cancels the terminal generation only: runs
+// and batches started at or before the durable expiry (same-millisecond
+// inclusive) are canceled; anything started after it survives.
+func TestAccountCleanupCutoffBoundsRunbookRunsAndBatches(t *testing.T) {
+	clock := newAccountCleanupClock()
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	rig := newAccountCleanupRig(t, func(config *session.Config) { config.Now = clock.Now })
+	application, batches := newAccountCleanupComposition(t, clock, rig, database)
+	owner := ipc.WithUserID(t.Context(), "owner-a")
+	sessionID := "01ARZ3NDEKTSV4RRFFQ69G5FAY"
+	seedAccountSessionRow(t, database, "owner-a", sessionID, clock.NowMS()+2, 0)
+
+	// Old generation, started before the expiry cutoff.
+	startCompositionRun(t, application, "owner-a", "run-old")
+	oldBatch := startCompositionBatch(t, batches, rig, owner, "owner-a", "asset-ssh-old", "batch-old")
+	clock.Advance(2 * time.Millisecond)
+	// Same-millisecond boundary: started exactly at the cutoff, canceled.
+	startCompositionRun(t, application, "owner-a", "run-same-ms")
+	clock.Advance(time.Millisecond)
+	// New generation, started after the cutoff.
+	startCompositionRun(t, application, "owner-a", "run-new")
+	newBatch := startCompositionBatch(t, batches, rig, owner, "owner-a", "asset-ssh-new", "batch-new")
+
+	if err := application.CleanupAccount(context.Background(), "owner-a", sessionID, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	requireCompositionRunGone(t, application, "owner-a", "run-old")
+	requireCompositionRunGone(t, application, "owner-a", "run-same-ms")
+	requireCompositionRunAlive(t, application, "owner-a", "run-new")
+	requireCompositionBatchCanceled(t, oldBatch, "batch-old")
+	select {
+	case batch := <-newBatch:
+		t.Fatalf("batch-new was canceled by the expiry cleanup: %+v", batch)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if _, err := batches.Cancel(t.Context(), "owner-a", "batch-new"); err != nil {
+		t.Fatal(err)
+	}
+	requireCompositionBatchCanceled(t, newBatch, "batch-new")
+}
+
+// Post-eviction late cleanup with the real composition: the fresh runbook and
+// execbatch snapshots are bounded by the durable revocation instant, so the
+// new login's run and batch survive.
+func TestAccountCleanupPostEvictionLateCleanupKeepsNewRunbookAndBatch(t *testing.T) {
+	clock := newAccountCleanupClock()
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	rig := newAccountCleanupRig(t, func(config *session.Config) { config.Now = clock.Now })
+	application, batches := newAccountCleanupComposition(t, clock, rig, database)
+	owner := ipc.WithUserID(t.Context(), "owner-a")
+	sessionID := "01ARZ3NDEKTSV4RRFFQ69G5FAZ"
+	seedAccountSessionRow(t, database, "owner-a", sessionID, clock.NowMS()+3600_000, 0)
+
+	// The paired generation: its run is canceled by the paired commit.
+	startCompositionRun(t, application, "owner-a", "run-old")
+	commit, _, err := application.PrepareAccountCleanup(context.Background(), "owner-a", sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit(sessionID)
+	requireCompositionRunGone(t, application, "owner-a", "run-old")
+	if err := database.GORM().Exec("UPDATE user_session SET revoked_at = ? WHERE id = ?", clock.NowMS(), sessionID).Error; err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(accountCleanupEventTTL + time.Millisecond)
+	// The retention purge is lazy: a probe prepare applies it.
+	_, probeRollback, err := application.PrepareAccountCleanup(context.Background(), "owner-a", "login-probe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	probeRollback()
+
+	// New generation after the eviction.
+	startCompositionRun(t, application, "owner-a", "run-new")
+	newBatch := startCompositionBatch(t, batches, rig, owner, "owner-a", "asset-ssh-new", "batch-new")
+
+	if err := application.CleanupAccount(context.Background(), "owner-a", sessionID, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	requireCompositionRunAlive(t, application, "owner-a", "run-new")
+	select {
+	case batch := <-newBatch:
+		t.Fatalf("batch-new was canceled by the late cleanup: %+v", batch)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if _, err := batches.Cancel(t.Context(), "owner-a", "batch-new"); err != nil {
+		t.Fatal(err)
+	}
+	requireCompositionBatchCanceled(t, newBatch, "batch-new")
+}
+
+// Commit-vs-eviction: the payload is detached in the same critical section
+// that marks the event committed, so a retention purge that evicts the
+// just-committed event cannot turn the first commit into zero device closes.
+func TestAccountCleanupCommitDetachesPayloadBeforeEviction(t *testing.T) {
+	clock := newAccountCleanupClock()
+	rig := newAccountCleanupRig(t, func(config *session.Config) { config.Now = clock.Now })
+	application := &Production{Services: ProductionServices{Sessions: rig.manager}}
+	application.accountCleanup.now = clock.Now
+	owner := ipc.WithUserID(t.Context(), "owner-a")
+	connected, tab := rig.open(t, owner, session.Asset{ID: "device/a", Kind: session.KindDevice})
+
+	key, event, err := application.prepareAccountDeviceSnapshot(context.Background(), "owner-a", "login-a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, ok := application.commitAccountDeviceSnapshot(key, event, []string{"login-a"})
+	if !ok || len(devices) != 1 {
+		t.Fatalf("commit = %v, %v; want the payload detached with the commit mark", devices, ok)
+	}
+	application.accountCleanup.mu.Lock()
+	application.accountCleanup.purgeCommittedLocked(clock.Now().Add(accountCleanupEventTTL + time.Millisecond))
+	_, evicted := application.accountCleanup.events[key]
+	application.accountCleanup.mu.Unlock()
+	if evicted {
+		t.Fatal("committed event was not evicted by the retention purge")
+	}
+
+	application.cleanupAccountDeviceSnapshot(context.Background(), "owner-a", devices)
+	requireAccountCleanupTab(t, owner, rig.manager, tab.ID, false)
+	requireAccountCleanupStatus(t, owner, rig.manager, connected.ID, session.StatusDisconnected)
+	if got := rig.transport("device/a").channels[0].closeCount.Load(); got != 1 {
+		t.Fatalf("terminal close count = %d, want exactly 1", got)
+	}
+}

@@ -34,6 +34,7 @@ type runbookRunKey struct {
 
 type runbookRunEntry struct {
 	runs       *runbook.Service
+	startedAt  time.Time
 	lastAccess time.Time
 	terminal   bool
 }
@@ -145,7 +146,7 @@ func (s *runbookIPCService) Start(ctx context.Context, ownerID string, input run
 	if s.activeRunCountLocked(ownerID) >= s.maxActiveRunsPerOwner {
 		return runbook.RunState{}, fmt.Errorf("%w: %s", errRunbookActiveRunLimit, input.RunID)
 	}
-	entry := &runbookRunEntry{runs: runbook.New(s.executor), lastAccess: now}
+	entry := &runbookRunEntry{runs: runbook.New(s.executor), startedAt: now, lastAccess: now}
 	state, err := entry.runs.Start(ctx, ownerID, input)
 	if err != nil {
 		return runbook.RunState{}, err
@@ -250,16 +251,22 @@ func (s *runbookIPCService) activeRunCountLocked(ownerID string) int {
 }
 
 // PrepareOwnerCleanup snapshots the owner's live runs without canceling them; commit and rollback are mutually exclusive.
-func (s *runbookIPCService) PrepareOwnerCleanup(ctx context.Context, ownerID, eventID string) (func(...string), func()) {
+// A non-nil cutoff bounds the snapshot to runs started at or before the cleanup generation's terminal
+// instant (same-millisecond inclusive), so a late cleanup of an evicted event cannot cancel new-generation runs.
+func (s *runbookIPCService) PrepareOwnerCleanup(ctx context.Context, ownerID, eventID string, cutoff *time.Time) (func(...string), func()) {
 	if ownerID == "" || eventID == "" {
 		return func(...string) {}, func() {}
 	}
 	s.mu.Lock()
 	snapshot := make([]runbookRunKey, 0, len(s.runs))
-	for key := range s.runs {
-		if key.ownerID == ownerID {
-			snapshot = append(snapshot, key)
+	for key, entry := range s.runs {
+		if key.ownerID != ownerID {
+			continue
 		}
+		if cutoff != nil && entry.startedAt.After(*cutoff) {
+			continue
+		}
+		snapshot = append(snapshot, key)
 	}
 	s.mu.Unlock()
 	var once sync.Once
@@ -282,8 +289,8 @@ func (s *runbookIPCService) PrepareOwnerCleanup(ctx context.Context, ownerID, ev
 	return commit, func() {}
 }
 
-func (s *runbookIPCService) CancelOwner(ctx context.Context, ownerID, eventID string, sessionIDs ...string) {
-	commit, _ := s.PrepareOwnerCleanup(ctx, ownerID, eventID)
+func (s *runbookIPCService) CancelOwner(ctx context.Context, ownerID, eventID string, cutoff *time.Time, sessionIDs ...string) {
+	commit, _ := s.PrepareOwnerCleanup(ctx, ownerID, eventID, cutoff)
 	commit(sessionIDs...)
 }
 
