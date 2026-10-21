@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -210,4 +211,37 @@ func (s *execEvidenceScript) ServeHTTP(writer http.ResponseWriter, request *http
 		return
 	}
 	spawnWriteContent(writer, "done")
+}
+
+// The composed runtime releases the store before the test's TempDir cleanup
+// runs: the helper owns every resource it composes, so by the time cleanup
+// order reaches the TempDir removal point the data.db handle is closed
+// (Ping fails) and the file is removable — Windows refuses to unlink open
+// files, which is what this coverage pins down.
+func TestComposeTakeoverRuntimeReleasesStoreBeforeTempDirCleanup(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "data.db")
+	database, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Registered before the helper: LIFO cleanup order runs this assertion
+	// after the helper's own cleanup, at the same point TempDir removal runs.
+	t.Cleanup(func() {
+		sqlDB, err := database.GORM().DB()
+		if err != nil {
+			t.Fatalf("sql handle: %v", err)
+		}
+		if err := sqlDB.PingContext(context.Background()); err == nil {
+			t.Fatal("store still open after the composed runtime cleanup")
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatalf("data.db still held after the composed runtime cleanup: %v", err)
+		}
+	})
+	asset, err := database.AssetCreate(ctx, store.AssetInput{Kind: "ssh", Name: "server"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	composeTakeoverRuntime(t, database, "http://127.0.0.1:1", asset.ID)
 }
