@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
+import { flushSync } from "react-dom";
 import { click, flush, flushMacrotask, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
@@ -333,6 +334,38 @@ describe("AI HITL typed environment confirmation", () => {
     await flushUntil(() => mocks.confirm.mock.calls.length === 1);
     expect(mocks.confirm.mock.calls[0][0]).toMatchObject({
       callId: "call-7-restart",
+      environmentNames: ["production"],
+    });
+  });
+
+  it("never submits the previous card's names for a directly replaced card", async () => {
+    await show();
+    await sendAndEmit([
+      { type: "toolCall", id: "call-r1", name: "exec_commands", display: "exec_commands", args: {} },
+      confirmEvent("call-r1", { requiredEnvironmentNames: ["production"] }),
+    ]);
+    setInputValue(environmentInput("production"), "production");
+    expect(decisionButton("允许一次").disabled).toBe(false);
+
+    // 直接替换卡片：flushSync 让新卡立即提交，passive effect 尚未运行——
+    // 新卡首帧就必须锁定（不得沿用上一卡的 canConfirm），随后提交也不得把
+    // 新 nonce 与旧 names 组合发出。
+    act(() => {
+      flushSync(() => {
+        mocks.channels[0].onEvent(confirmEvent("call-r2", { requiredEnvironmentNames: ["production"] }));
+      });
+      expect(decisionButton("允许一次").disabled).toBe(true);
+      click(decisionButton("允许一次"));
+    });
+    await flush();
+    expect(mocks.confirm).not.toHaveBeenCalled();
+
+    // 为 call-r2 重新输入后，只发送 call-r2 的 names
+    setInputValue(environmentInput("production"), "production");
+    await clickAndFlush(decisionButton("允许一次"));
+    await flushUntil(() => mocks.confirm.mock.calls.length === 1);
+    expect(mocks.confirm.mock.calls[0][0]).toMatchObject({
+      callId: "call-r2",
       environmentNames: ["production"],
     });
   });

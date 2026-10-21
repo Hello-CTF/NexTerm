@@ -297,6 +297,56 @@ describe("Compose edit and redeploy", () => {
     mounted.unmount();
   });
 
+  it("requires re-entry when a consecutive challenge arrives with a new hash", async () => {
+    const secondChallenge = {
+      code: "needs_confirm",
+      detail: {
+        kind: "docker_production_confirmation",
+        targetSetHash: "c".repeat(64),
+        commandHash: "d".repeat(64),
+        requiredEnvironmentNames: ["production"],
+        productionTargets: [{ sessionId: "s1", sessionName: "production", environment: "production" }],
+      },
+    };
+    mocks.composePrepare
+      .mockRejectedValueOnce(typedChallenge())
+      .mockRejectedValueOnce(secondChallenge)
+      .mockResolvedValue({ ticket: "ticket-1", contentHash: "content-hash-1" });
+    const mounted = mountWithClient(createElement(ComposeEditor, { sessionId: "s1", stack, onClose: vi.fn(), onChanged: vi.fn() }));
+    clickButton(document.body, "trigger-save");
+    await waitFor(() => expect(document.body.textContent).toContain("保存并重新部署"));
+    clickButton(document.body, "保存并 up -d");
+    await waitFor(() => expect(mocks.composePrepare).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(document.body.querySelector('input[aria-label="输入环境名 production"]')).not.toBeNull());
+
+    // 第一个挑战：输入并确认
+    await typeEnvironmentNameAndConfirm();
+    await waitFor(() => expect(mocks.composePrepare).toHaveBeenCalledTimes(2));
+
+    // 同 target/environment、不同 hash 的连续挑战必须清空并锁定：上一挑战的
+    // 输入不得用于新身份。
+    await waitFor(() => expect(document.body.querySelector('input[aria-label="输入环境名 production"]')).not.toBeNull());
+    const input = document.body.querySelector<HTMLInputElement>('input[aria-label="输入环境名 production"]');
+    expect(input?.value).toBe("");
+    const confirm = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.includes("确认执行"),
+    );
+    expect(confirm?.disabled).toBe(true);
+
+    // 针对新身份重新输入后，确认携带新 hash 与实输 names
+    await typeEnvironmentNameAndConfirm();
+    await waitFor(() => expect(mocks.composePrepare).toHaveBeenCalledTimes(3));
+    expect(mocks.composePrepare.mock.calls[2][0]).toMatchObject({
+      productionConfirmation: {
+        confirmed: true,
+        targetSetHash: "c".repeat(64),
+        commandHash: "d".repeat(64),
+        environmentNames: ["production"],
+      },
+    });
+    mounted.unmount();
+  });
+
   it("redacts old and new .env values from the diff DOM", async () => {
     mocks.editorChange = {
       sessionId: "s1",
