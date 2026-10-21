@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
@@ -66,5 +68,67 @@ func TestSSHImportServerRootSymlinkEscapeRejected(t *testing.T) {
 	}
 	if !strings.Contains(response.Error.Message, "escapes root boundary") {
 		t.Fatalf("server preview message = %q, want root boundary rejection", response.Error.Message)
+	}
+}
+
+// The production reader follows a symlink only to a regular target, matching
+// the pre-open Lstat boundary: a symlinked key file reads the target bytes, a
+// symlink to a directory is rejected as non-regular, and a dangling symlink
+// surfaces the stat error instead of reading through.
+func TestProductionReadKeyFileBoundedSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real_key")
+	const content = "throwaway key material"
+	if err := os.WriteFile(target, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "linked_key")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	data, err := productionReadKeyFileBounded(link)
+	if err != nil {
+		t.Fatalf("read through symlink: %v", err)
+	}
+	if string(data) != content {
+		t.Fatalf("symlink read = %q, want %q", data, content)
+	}
+
+	dirLink := filepath.Join(dir, "linked_dir")
+	if err := os.Symlink(dir, dirLink); err != nil {
+		t.Fatalf("symlink dir: %v", err)
+	}
+	if _, err := productionReadKeyFileBounded(dirLink); err == nil || !strings.Contains(err.Error(), "is not a regular file") {
+		t.Fatalf("symlink-to-directory read error = %v, want non-regular rejection", err)
+	}
+
+	dangling := filepath.Join(dir, "dangling_key")
+	if err := os.Symlink(filepath.Join(dir, "absent"), dangling); err != nil {
+		t.Fatalf("dangling symlink: %v", err)
+	}
+	if _, err := productionReadKeyFileBounded(dangling); err == nil {
+		t.Fatal("dangling symlink read succeeded, want stat error")
+	}
+}
+
+// A FIFO must be rejected by the Lstat boundary without opening — the read
+// returns immediately instead of blocking on a writer that never arrives.
+func TestProductionReadKeyFileBoundedFIFO(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fifo_key")
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatalf("mkfifo: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := productionReadKeyFileBounded(path)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatalf("productionReadKeyFileBounded(%s) succeeded for non-regular file", path)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("productionReadKeyFileBounded(%s) blocked on non-regular file", path)
 	}
 }
