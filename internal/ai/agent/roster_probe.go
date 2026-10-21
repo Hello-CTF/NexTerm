@@ -40,6 +40,12 @@ func (p *SessionRosterProbe) probeTab(ctx context.Context, tabID string) RosterR
 	if err != nil {
 		return RosterRuntimeStatus{Kind: RosterRuntimeUnverifiable}
 	}
+	// The tab's own exit state is authoritative and comes first: a runtime
+	// that exited (EndRemote or a plain pty exit) never answers connected,
+	// even while its session record still reads connected.
+	if tab.Info().Exited {
+		return RosterRuntimeStatus{Kind: RosterRuntimeExited}
+	}
 	connected, err := p.sessions.SessionFor(ctx, tab.SessionID)
 	if err != nil {
 		return RosterRuntimeStatus{Kind: RosterRuntimeUnverifiable}
