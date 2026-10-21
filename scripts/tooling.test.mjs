@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { normalizePath } from "vite";
 import { acceptanceWatchIgnored } from "./lib/vite-watch-ignores.mjs";
 import { flattenDownloadedReleaseAssets, flattenReleaseAssets } from "./flatten-release-assets.mjs";
 import { stampVersion } from "./stamp-version.mjs";
@@ -14,7 +15,9 @@ const BUILD = path.join(ROOT, "scripts", "build.mjs");
 const MINISIGN_PUBLIC_KEY = "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3";
 
 test("vite watch ignores anchor every artifact directory to the resolved root", () => {
-  const root = path.join(path.sep, "work", "nexterm");
+  // Resolve like the implementation does so the drive letter on Windows lands
+  // in the expected root instead of breaking the anchored comparisons.
+  const root = normalizePath(path.resolve(path.join(path.sep, "work", "nexterm")));
   const patterns = acceptanceWatchIgnored(root);
   for (const dir of [".tower", "target", "target-alt", ".tmp"]) {
     assert.ok(patterns.includes(`${root}/${dir}`), `missing anchored ignore for ${dir}`);
