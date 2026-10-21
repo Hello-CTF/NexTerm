@@ -150,6 +150,30 @@
       "channel": false,
       "stream": "none"
     },
+    "ai_roster_attach": {
+      "scope": "ai-roster",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_roster_list": {
+      "scope": "ai-roster",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_roster_reconcile": {
+      "scope": "ai-roster",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_roster_release": {
+      "scope": "ai-roster",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "ai_run_events": {
       "nested": false,
       "channel": false,
@@ -160,7 +184,19 @@
       "channel": false,
       "stream": "none"
     },
+    "ai_run_history": {
+      "scope": "ai-run",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "ai_run_list": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_run_recovery_summary": {
+      "scope": "ai-run",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -171,6 +207,36 @@
       "stream": "none"
     },
     "ai_set_provider": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_skills_delete_override": {
+      "scope": "ai-skills",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_skills_dispatch": {
+      "scope": "ai-skills",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_skills_list": {
+      "scope": "ai-skills",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_skills_material": {
+      "scope": "ai-skills",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_skills_save_override": {
+      "scope": "ai-skills",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -618,7 +684,37 @@
       "channel": false,
       "stream": "none"
     },
+    "forward_rule_recover_now": {
+      "scope": "forward-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_rule_recovery_settings_get": {
+      "scope": "forward-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_rule_recovery_settings_set": {
+      "scope": "forward-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "forward_rule_save": {
+      "scope": "forward-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_rule_set_auto_start": {
+      "scope": "forward-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_rule_settings_list": {
       "scope": "forward-rule",
       "nested": false,
       "channel": false,

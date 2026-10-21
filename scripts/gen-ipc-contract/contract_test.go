@@ -221,11 +221,18 @@ func TestProductionSettingsCommandsAreTypedScope(t *testing.T) {
 func TestUnwiredRegistrationsStayOutOfThePublishedContract(t *testing.T) {
 	generated := generateForTest(t, nil)
 	commands := commandsByName(generated.commands)
-	// The AI skills service is registration-ready but no shipped binary
-	// imports it yet, so its commands must not be published.
+	// The AI skills service is wired into the production builder now, so its
+	// commands publish under the ai-skills typed scope with DTO metadata.
 	for _, name := range []string{"ai_skills_list", "ai_skills_dispatch", "ai_skills_material", "ai_skills_save_override", "ai_skills_delete_override"} {
-		if _, ok := commands[name]; ok {
-			t.Fatalf("unwired command %q was published", name)
+		command, ok := commands[name]
+		if !ok {
+			t.Fatalf("wired command %q is missing", name)
+		}
+		if command.Scope != "ai-skills" {
+			t.Fatalf("command %q scope = %q, want ai-skills", name, command.Scope)
+		}
+		if command.Input == nil || command.Output == nil {
+			t.Fatalf("command %q must carry DTO metadata: %+v", name, command)
 		}
 	}
 	// Real production commands stay published: deferred registration must

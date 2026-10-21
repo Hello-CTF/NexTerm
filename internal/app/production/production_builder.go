@@ -13,6 +13,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
+	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
 	"github.com/Hello-CTF/NexTerm/internal/docker"
 	"github.com/Hello-CTF/NexTerm/internal/forward"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
@@ -343,7 +344,17 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		services.closeAIRuntime()
 		return nil, err
 	}
-	config.Config.Modules = append([]Module{{Name: "forward-runtime", RegisterCommands: forwardRuntime.registerCommands, Component: forwardRuntime}}, config.Config.Modules...)
+	skillsManager, err := skills.NewManager(ctx, database, skills.WithShared(config.Desktop || owner.OpenAccess(ctx)))
+	if err != nil {
+		services.closeAIRuntime()
+		return nil, err
+	}
+	config.Config.Modules = append([]Module{
+		{Name: "ai-skills", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+			return skills.RegisterIPC(dispatcher, skillsManager)
+		}},
+		{Name: "forward-runtime", RegisterCommands: forwardRuntime.registerCommands, Component: forwardRuntime},
+	}, config.Config.Modules...)
 	production, err := NewProductionWithServices(config.Config, services)
 	if err != nil {
 		services.closeAIRuntime()
