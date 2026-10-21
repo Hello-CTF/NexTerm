@@ -373,6 +373,7 @@ func TestReadBinaryWithoutUTF8Conversion(t *testing.T) {
 }
 
 func TestPackDownloadRoundTrip(t *testing.T) {
+	tempDir := isolatePackTempDir(t)
 	ctx := context.Background()
 	filesystem := New()
 	root := filepath.Join(t.TempDir(), "pack source")
@@ -390,14 +391,6 @@ func TestPackDownloadRoundTrip(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	countTemp := func() int {
-		matches, err := filepath.Glob(filepath.Join(os.TempDir(), "nexterm-pack-*.tar.gz"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return len(matches)
-	}
-	before := countTemp()
 	destination := filepath.Join(t.TempDir(), "out.tar.gz")
 	var progress []sshfs.Progress
 	transferred, err := filesystem.PackDownload(ctx, root, destination, sshfs.TransferOptions{
@@ -457,9 +450,7 @@ func TestPackDownloadRoundTrip(t *testing.T) {
 	if runtime.GOOS != "windows" && linkTarget != "top.txt" {
 		t.Fatalf("symlink entry = %q, want top.txt", linkTarget)
 	}
-	if after := countTemp(); after != before {
-		t.Fatalf("temp archives before = %d, after = %d; want no leftovers", before, after)
-	}
+	assertNoPackTempArchives(t, tempDir)
 
 	if _, err := filesystem.PackDownload(ctx, filepath.Join(root, "top.txt"), filepath.Join(t.TempDir(), "x.tar.gz"), sshfs.TransferOptions{}); err == nil {
 		t.Fatal("packing a regular file must fail")
@@ -467,8 +458,40 @@ func TestPackDownloadRoundTrip(t *testing.T) {
 	if _, err := filesystem.PackDownload(ctx, filepath.Join(root, "missing"), filepath.Join(t.TempDir(), "x.tar.gz"), sshfs.TransferOptions{}); err == nil {
 		t.Fatal("packing a missing directory must fail")
 	}
-	if after := countTemp(); after != before {
-		t.Fatalf("failed pack left %d temp archives behind, want %d", after, before)
+	assertNoPackTempArchives(t, tempDir)
+}
+
+func TestPackDownloadCleansTemporaryArchiveAfterDownloadFailure(t *testing.T) {
+	tempDir := isolatePackTempDir(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("pack me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New().PackDownload(context.Background(), root, t.TempDir(), sshfs.TransferOptions{}); err == nil {
+		t.Fatal("downloading an archive to a directory must fail")
+	}
+	assertNoPackTempArchives(t, tempDir)
+}
+
+func isolatePackTempDir(t *testing.T) string {
+	t.Helper()
+	tempDir := t.TempDir()
+	t.Setenv("TMPDIR", tempDir)
+	t.Setenv("TMP", tempDir)
+	if got := filepath.Clean(os.TempDir()); got != filepath.Clean(tempDir) {
+		t.Fatalf("os.TempDir() = %q, want isolated directory %q", got, tempDir)
+	}
+	return tempDir
+}
+
+func assertNoPackTempArchives(t *testing.T, tempDir string) {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(tempDir, "nexterm-pack-*.tar.gz"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("temporary archives left behind: %v", matches)
 	}
 }
 
