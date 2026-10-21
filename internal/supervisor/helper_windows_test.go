@@ -1043,15 +1043,20 @@ func TestStateDirDeniesSecondUser(t *testing.T) {
 	}
 	username, password := secondUserCredentials(t)
 	// Own the account lifecycle outright: the generated name must not exist
-	// yet, and cleanup below deletes only the account this test created.
-	if err := exec.Command("net", "user", username).Run(); err == nil {
-		t.Fatalf("second test user %q already exists; refusing to reuse or delete a pre-existing account", username)
-	}
-	if output, err := exec.Command("net", "user", username, password, "/add").CombinedOutput(); err != nil {
-		t.Skipf("cannot create the second test user: %v (%s)", err, output)
+	// yet, and cleanup below deletes and verifies only the account this test
+	// created.
+	if err := addSecondUser(runNetUser, username, password); err != nil {
+		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_ = exec.Command("net", "user", username, "/delete").Run()
+		if err := removeSecondUser(runNetUser, username); err != nil {
+			t.Errorf("cleanup second test user: %v", err)
+		}
+		// net user /delete is synchronous, so a failed delete leaves the
+		// account behind; verify read-only that it is really gone.
+		if err := verifySecondUserGone(runNetUser, username); err != nil {
+			t.Errorf("cleanup second test user: %v", err)
+		}
 	})
 	base := `C:\Windows\Temp`
 	stateDir := filepath.Join(base, "nxsup-state-"+ids.New())
@@ -1165,6 +1170,96 @@ func secondUserCredentials(t *testing.T) (string, string) {
 		password.WriteByte(alphabet[int(b)%len(alphabet)])
 	}
 	return username, password.String()
+}
+
+// netUserRunner runs `net user` with the given arguments and returns the
+// combined output. It is passed as a parameter rather than called directly
+// so failure paths can be exercised deterministically without real
+// administrator operations.
+type netUserRunner func(args ...string) (string, error)
+
+func runNetUser(args ...string) (string, error) {
+	output, err := exec.Command("net", append([]string{"user"}, args...)...).CombinedOutput()
+	return string(output), err
+}
+
+// addSecondUser creates the account, refusing to touch a pre-existing one.
+// The returned error never contains the password.
+func addSecondUser(run netUserRunner, username, password string) error {
+	if _, err := run(username); err == nil {
+		return fmt.Errorf("second test user %q already exists; refusing to reuse or delete a pre-existing account", username)
+	}
+	output, err := run(username, password, "/add")
+	if err != nil {
+		return fmt.Errorf("create second test user %q: %w: %s", username, err, strings.TrimSpace(output))
+	}
+	return nil
+}
+
+func removeSecondUser(run netUserRunner, username string) error {
+	output, err := run(username, "/delete")
+	if err != nil {
+		return fmt.Errorf("delete second test user %q: %w: %s", username, err, strings.TrimSpace(output))
+	}
+	return nil
+}
+
+// verifySecondUserGone read-only checks that the account no longer exists.
+func verifySecondUserGone(run netUserRunner, username string) error {
+	if output, err := run(username); err == nil {
+		return fmt.Errorf("second test user %q still exists after cleanup: %s", username, strings.TrimSpace(output))
+	}
+	return nil
+}
+
+func TestSecondUserAccountHelpersSurfaceFailures(t *testing.T) {
+	const password = "fake-password-must-not-leak"
+	addFailure := func(args ...string) (string, error) {
+		if len(args) == 3 {
+			return "The password does not meet the password policy requirements.", errors.New("exit status 2")
+		}
+		return "", errors.New("The user name could not be found.")
+	}
+	err := addSecondUser(addFailure, "nxsup-test", password)
+	if err == nil {
+		t.Fatal("addSecondUser succeeded despite a failing net user runner")
+	}
+	if !strings.Contains(err.Error(), "nxsup-test") || !strings.Contains(err.Error(), "password policy") {
+		t.Fatalf("addSecondUser error %q does not report the username and net user output", err)
+	}
+	if strings.Contains(err.Error(), password) {
+		t.Fatal("addSecondUser error leaked the account password")
+	}
+
+	existing := func(args ...string) (string, error) {
+		if len(args) == 1 {
+			return "User name                    nxsup-test", nil
+		}
+		return "", errors.New("unexpected net user invocation for a pre-existing account")
+	}
+	if err := addSecondUser(existing, "nxsup-test", password); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("addSecondUser on a pre-existing account = %v, want a refusal without touching it", err)
+	}
+
+	deleteFailure := func(args ...string) (string, error) {
+		return "System error 5 has occurred.", errors.New("exit status 2")
+	}
+	if err := removeSecondUser(deleteFailure, "nxsup-test"); err == nil || !strings.Contains(err.Error(), "nxsup-test") || !strings.Contains(err.Error(), "System error 5") {
+		t.Fatalf("removeSecondUser error = %v, want the username and net user output surfaced", err)
+	}
+
+	stillThere := func(args ...string) (string, error) {
+		return "User name                    nxsup-test", nil
+	}
+	if err := verifySecondUserGone(stillThere, "nxsup-test"); err == nil || !strings.Contains(err.Error(), "still exists") {
+		t.Fatalf("verifySecondUserGone error = %v, want a leftover-account failure", err)
+	}
+	gone := func(args ...string) (string, error) {
+		return "The user name could not be found.", errors.New("exit status 2")
+	}
+	if err := verifySecondUserGone(gone, "nxsup-test"); err != nil {
+		t.Fatalf("verifySecondUserGone on a deleted account = %v, want nil", err)
+	}
 }
 
 func grantDACL(t *testing.T, path, sddl string) {
