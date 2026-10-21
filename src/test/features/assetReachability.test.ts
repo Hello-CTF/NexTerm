@@ -1,6 +1,35 @@
 /** @vitest-environment jsdom */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  AssetProbeBatchDTO,
+  AssetProbeBatchRequest,
+  AssetProbeResultDTO,
+} from "../../ipc/generated/types";
+import type { AssetProbeBatchDto, AssetProbeResultDto } from "../../ipc/types";
+
+type TypeEqual<Left, Right> =
+  (<Type>() => Type extends Left ? 1 : 2) extends
+  (<Type>() => Type extends Right ? 1 : 2) ? true : false;
+
+if (false) {
+  const resultMatchesGenerated: TypeEqual<AssetProbeResultDto, AssetProbeResultDTO> = true;
+  const batchMatchesGenerated: TypeEqual<AssetProbeBatchDto, AssetProbeBatchDTO> = true;
+  const facadeKeepsOptionalArguments: TypeEqual<
+    Parameters<typeof import("../../ipc/commands").assetApi.probeBatch>,
+    [assetIds: string[], timeoutMs?: number, maxConcurrent?: number]
+  > = true;
+  const requestDoesNotReplaceFacade: TypeEqual<
+    Parameters<typeof import("../../ipc/commands").assetApi.probeBatch>,
+    [request: AssetProbeBatchRequest]
+  > = false;
+  void [
+    resultMatchesGenerated,
+    batchMatchesGenerated,
+    facadeKeepsOptionalArguments,
+    requestDoesNotReplaceFacade,
+  ];
+}
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
