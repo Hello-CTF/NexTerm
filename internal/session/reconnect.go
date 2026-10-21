@@ -229,12 +229,20 @@ func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generatio
 			// transport binds an opened channel's lifetime to the context it
 			// receives, so opening with the attempt-scoped ctx tore the fresh
 			// channels down moments after Reconnect returned. Open them under
-			// the session's lifetime context; failed attempts and superseded
-			// opens still close every replacement explicitly below.
+			// a context scoped to the session's lifetime instead: the attempt
+			// cancels it only while the opens are in flight, so a blocked open
+			// still aborts on caller cancellation, and once the attempt stops
+			// watching, a committed channel lives until the session ends.
 			session.mu.Lock()
 			channelCtx := session.ctx
 			session.mu.Unlock()
-			opened, gone, err = m.openReplacementChannels(channelCtx, session, handle, generation)
+			openCtx, cancelOpen := context.WithCancel(channelCtx)
+			stop := context.AfterFunc(ctx, cancelOpen)
+			opened, gone, err = m.openReplacementChannels(openCtx, session, handle, generation)
+			stop()
+			if err == nil && ctx.Err() != nil {
+				err = ctx.Err()
+			}
 			if err == nil {
 				committed, commitErr := m.commitReconnect(session, handle, opened, gone, generation)
 				if committed {
@@ -242,6 +250,9 @@ func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generatio
 				}
 				err = commitErr
 			}
+			// Every path short of a committed reconnect releases the scoped
+			// open context and closes the replacements explicitly.
+			cancelOpen()
 			for _, replacement := range opened {
 				_ = replacement.channel.Close()
 			}
