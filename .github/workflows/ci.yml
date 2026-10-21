@@ -173,10 +173,6 @@ jobs:
         env:
           GOOS: windows
         run: go vet ./...
-      - name: IPC contract generator tests
-        run: go test -count=1 ./scripts/gen-ipc-contract
-      - name: CI workflow contracts
-        run: go test -count=1 ./scripts/ci-workflow
 
   unit:
     name: Go and frontend unit tests
@@ -225,7 +221,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
       - name: Run all Go tests with the race detector
-        run: go test -race ./...
+        run: go test -race -count=1 ./...
 
   production:
     name: Desktop production-tag tests
