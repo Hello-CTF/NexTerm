@@ -299,7 +299,8 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Store:          database,
 		Logger:         config.Config.Logger,
 		ReaperInterval: config.ForwardReaperInterval, ReaperMinAge: defaultForwardReaperMinAge,
-		ReapTargets: fsUploads.stagingTargets,
+		ReapTargets:          fsUploads.stagingTargets,
+		RecoverySettingsPath: filepath.Join(config.DataDir, "forward-recovery.json"),
 	})
 	fsUploads.resumeStaging = forwardRuntime.ResumeUploadStaging
 	services = ProductionServices{
@@ -342,7 +343,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		services.closeAIRuntime()
 		return nil, err
 	}
-	config.Config.Modules = append([]Module{{Name: "forward-runtime", Component: forwardRuntime}}, config.Config.Modules...)
+	config.Config.Modules = append([]Module{{Name: "forward-runtime", RegisterCommands: forwardRuntime.registerCommands, Component: forwardRuntime}}, config.Config.Modules...)
 	production, err := NewProductionWithServices(config.Config, services)
 	if err != nil {
 		services.closeAIRuntime()

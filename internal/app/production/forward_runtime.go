@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/forward"
@@ -27,9 +28,11 @@ type forwardRuntime struct {
 	logger   *slog.Logger
 	connect  func(ctx context.Context, assetID string) (string, error)
 
-	reaper       *chunked.Scheduler
-	reaperCancel context.CancelFunc
-	reaperWG     sync.WaitGroup
+	reaper           *chunked.Scheduler
+	reaperCancel     context.CancelFunc
+	reaperWG         sync.WaitGroup
+	recoverySettings *forwardRecoverySettingsStore
+	closed           atomic.Bool
 }
 
 type forwardRuntimeConfig struct {
@@ -44,6 +47,9 @@ type forwardRuntimeConfig struct {
 	ReaperInterval time.Duration
 	ReaperMinAge   time.Duration
 	ReapTargets    func(ctx context.Context) ([]chunked.Target, error)
+	// RecoverySettingsPath persists the startup recovery switch; empty keeps
+	// recovery disabled with no persistence.
+	RecoverySettingsPath string
 }
 
 // defaultForwardReaperMinAge keeps the automatic reaper from treating fresh,
@@ -62,6 +68,9 @@ func newForwardRuntime(config forwardRuntimeConfig) *forwardRuntime {
 		store:    config.Store,
 		logger:   logger,
 		connect:  config.Connect,
+	}
+	if config.RecoverySettingsPath != "" {
+		runtime.recoverySettings = &forwardRecoverySettingsStore{path: config.RecoverySettingsPath}
 	}
 	if config.ReapTargets != nil {
 		minAge := config.ReaperMinAge
@@ -92,8 +101,9 @@ func (r *forwardRuntime) Start(ctx context.Context) error {
 }
 
 // Shutdown implements the lifecycle component: it stops the reaper and waits
-// for it to finish.
+// for it to finish, then closes the runtime so recover-now refuses new work.
 func (r *forwardRuntime) Shutdown(context.Context) error {
+	r.closed.Store(true)
 	if r.reaperCancel != nil {
 		r.reaperCancel()
 		r.reaperWG.Wait()

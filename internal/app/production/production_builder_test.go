@@ -5,6 +5,8 @@ package production
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -19,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	fleetserver "github.com/Hello-CTF/NexTerm/internal/fleet/server"
 	"github.com/Hello-CTF/NexTerm/internal/forward"
 	"github.com/Hello-CTF/NexTerm/internal/fs/chunked"
 	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
@@ -26,6 +29,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/server"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/model"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/local"
 	"github.com/coder/websocket"
@@ -1021,4 +1025,131 @@ func TestConcreteProductionForwardRuntimeReaperSweepsPersistedTargetsAfterCrash(
 		matches, err := filepath.Glob(filepath.Join(dir, ".remote.bin.nexterm-*"))
 		return err == nil && len(matches) == 0
 	})
+}
+
+// A-03: through the real production composition (NewProduction + server.New
+// with the fleet service mounted), a retired device's public share route
+// answers 404 with no-store before any SPA fallback, while valid tokens,
+// unknown tokens, the root page, and the WS data plane keep their behavior.
+func TestConcreteProductionRetiredDevicePublicRouteNotFoundNoStore(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	production, err := NewProduction(t.Context(), ProductionConfig{
+		Config: Config{Logger: logger}, DataDir: t.TempDir(), Desktop: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
+	accounts := account.New(production.Services.Store.GORM())
+	owner, err := accounts.CreateUser(context.Background(), "a03-owner", "", "password-a03")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fleetService, err := fleetserver.New(fleetserver.Config{
+		DB: production.Services.Store.GORM(), Accounts: accounts, AuthOff: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = fleetService.Close() })
+
+	const spaPage = "<html><head><title>NexTerm</title></head><body>a03-spa</body></html>"
+	var gotPath string
+	staticStub := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write([]byte(spaPage))
+	})
+	api, err := server.New(server.Config{
+		Options:     server.Options{Listen: "127.0.0.1:0", DataDir: t.TempDir(), Auth: server.AuthOn},
+		Dispatcher:  production.Dispatcher,
+		Environment: production.Environment(""),
+		Accounts:    accounts,
+		SyncObjects: production.Services.Sync.ObjectHandler(),
+		Channels:    server.NewHubAdapter(production.Services.Sessions.Hub()),
+		Spectator:   production.Services.Sessions,
+		Logger:      logger,
+		Fleet:       fleetService,
+		Static:      staticStub,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpServer := httptest.NewServer(api.Handler())
+	t.Cleanup(httpServer.Close)
+
+	// Seed the share link on a live device; the page path only reads
+	// share_link and user_device.
+	const token = "a03-test-token"
+	now := time.Now().Unix()
+	digest := sha256.Sum256([]byte(token))
+	database := production.Services.Store.GORM()
+	if err := database.Create(&model.UserDevice{ID: "a03-device", UserID: owner.ID, Name: "a03-box", Kind: "desktop", CreatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&model.ShareLink{
+		ID: "a03-link", OwnerID: owner.ID, DeviceID: "a03-device", SessionID: "a03-session",
+		TokenHash: hex.EncodeToString(digest[:]), Permission: "read", CreatedAt: now, ExpiresAt: now + 3600,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	get := func(path string) (int, string, string) {
+		t.Helper()
+		response, err := httpServer.Client().Get(httpServer.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response.StatusCode, string(body), response.Header.Get("Cache-Control")
+	}
+
+	// Valid and unknown tokens keep the SPA diversion with no-store; the root
+	// page is unchanged.
+	if status, body, cache := get("/share/public/" + token); status != http.StatusOK || body != spaPage || cache != "no-store" {
+		t.Fatalf("valid token page = %d %q %q", status, body, cache)
+	}
+	if gotPath != "/" {
+		t.Fatalf("static entry got path %q, want /", gotPath)
+	}
+	if status, body, cache := get("/share/public/not-a-token"); status != http.StatusOK || body != spaPage || cache != "no-store" {
+		t.Fatalf("unknown token page = %d %q %q", status, body, cache)
+	}
+	if status, body, _ := get("/"); status != http.StatusOK || body != spaPage {
+		t.Fatalf("root page = %d %q", status, body)
+	}
+
+	// Retire the device: the public route now answers 404 with no-store and
+	// never reaches the static entry; the data plane still denies the upgrade.
+	if err := database.Model(&model.UserDevice{}).Where("id = ?", "a03-device").Update("revoked_at", now).Error; err != nil {
+		t.Fatal(err)
+	}
+	gotPath = ""
+	if status, _, cache := get("/share/public/" + token); status != http.StatusNotFound || cache != "no-store" {
+		t.Fatalf("retired device page = %d %q, want 404 no-store", status, cache)
+	}
+	if gotPath != "" {
+		t.Fatalf("retired device page reached the static entry with path %q", gotPath)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, handshake, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/share/public/"+token, nil)
+	if err == nil {
+		t.Fatal("retired device WS handshake succeeded")
+	}
+	if handshake == nil || handshake.StatusCode != http.StatusForbidden {
+		t.Fatalf("retired device WS handshake = %+v, want 403", handshake)
+	}
+	// The root page stays intact after the retirement.
+	if status, body, _ := get("/"); status != http.StatusOK || body != spaPage {
+		t.Fatalf("root page after retirement = %d %q", status, body)
+	}
 }
