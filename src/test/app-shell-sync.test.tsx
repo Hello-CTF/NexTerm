@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   syncLinkSet: vi.fn(),
   syncStatus: vi.fn(),
   vaultLock: vi.fn(),
+  call: vi.fn(),
   syncEventHandlers: [] as Array<{ topic: string; handler: (payload: unknown) => void }>,
 }));
 
@@ -41,6 +42,7 @@ vi.mock("../ipc/env", async (importOriginal) => {
 });
 
 vi.mock("../ipc/commands", () => ({
+  call: mocks.call,
   assetApi: { list: mocks.assetList, search: vi.fn(), groupList: vi.fn(), snippetList: vi.fn() },
   sessionApi: {
     list: mocks.sessionList,
@@ -154,6 +156,13 @@ beforeEach(() => {
   mocks.assetList.mockResolvedValue([]);
   mocks.sessionList.mockResolvedValue([]);
   mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
+  mocks.call.mockImplementation((command: string) => {
+    if (command === "forward_rule_recovery_settings_get") {
+      return Promise.resolve({ enabled: false, maxConcurrentConnections: 4, skipProduction: true });
+    }
+    if (command === "forward_rule_recover_now") return Promise.resolve([]);
+    return Promise.reject(new Error(`unexpected command: ${command}`));
+  });
   useUi.setState({
     toasts: [],
     leftOpen: true,
@@ -415,6 +424,25 @@ describe("desktop account sync card", () => {
     const text = document.body.textContent ?? "";
     expect(text).toContain("终端录像默认不同步，可在「终端历史」中单独开启");
     expect(text).not.toContain("到「会话记录」里");
+  });
+});
+
+describe("startup forward recovery", () => {
+  it("consumes the persisted opt-in through the real App startup path", async () => {
+    mocks.call.mockImplementation((command: string) => {
+      if (command === "forward_rule_recovery_settings_get") {
+        return Promise.resolve({ enabled: true, maxConcurrentConnections: 4, skipProduction: true });
+      }
+      if (command === "forward_rule_recover_now") {
+        return Promise.resolve([{ assetId: "asset-1", sessionId: "session-1", started: ["rule-1"] }]);
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+
+    mounted = mountApp();
+
+    await flushUntil(() => mocks.call.mock.calls.some(([command]) => command === "forward_rule_recover_now"));
+    expect(mocks.call.mock.calls.filter(([command]) => command === "forward_rule_recover_now")).toHaveLength(1);
   });
 });
 
