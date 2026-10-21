@@ -29,6 +29,11 @@ import { ModelSelector } from "./ModelSelector";
 import { Markdown } from "./Markdown";
 import { ProductionWriteRiskNotice } from "../production/ProductionWarning";
 import { useAssetProductionClassification } from "../production/productionSettings";
+import {
+  evaluateEnvironmentConfirmation,
+  targetKey,
+  type EnvironmentConfirmationChallenge,
+} from "../production/environmentConfirmation";
 import { diffLineText, hasVisibleChange, simpleDiff } from "./diff";
 import {
   answerInput,
@@ -817,6 +822,22 @@ function AiChatTab({
   useEffect(() => {
     if (confirmCard) confirmCardRef.current?.focus({ preventScroll: true });
   }, [confirmCard?.id]);
+  const productionNames = confirmCard?.requiredEnvironmentNames;
+  const [productionConfirm, setProductionConfirm] = useState<{ canConfirm: boolean; submittedNames: string[] }>({
+    canConfirm: false,
+    submittedNames: [],
+  });
+  useEffect(() => {
+    setProductionConfirm({ canConfirm: false, submittedNames: [] });
+  }, [confirmCard?.id]);
+  const handleProductionState = useCallback((canConfirm: boolean, submittedNames: string[]) => {
+    setProductionConfirm((current) =>
+      current.canConfirm === canConfirm && current.submittedNames.join("\u0000") === submittedNames.join("\u0000")
+        ? current
+        : { canConfirm, submittedNames },
+    );
+  }, []);
+  const productionBlocked = productionNames !== undefined && !productionConfirm.canConfirm;
   const hitlWaiting = confirmCard
     ? "等待你确认后继续…"
     : questionCard
@@ -1887,9 +1908,16 @@ function AiChatTab({
       return;
     }
     if (submittingCardId) return;
+    // A production challenge is only answered with the user's actual typed
+    // environment names; anything less never reaches the backend.
+    if (card.requiredEnvironmentNames && !productionConfirm.canConfirm) return;
     setSubmittingCardId(card.id);
     try {
-      const input = confirmationInput({ jobId: id, callId: card.callId, nonce: card.nonce }, decision);
+      const input = confirmationInput(
+        { jobId: id, callId: card.callId, nonce: card.nonce },
+        decision,
+        card.requiredEnvironmentNames ? productionConfirm.submittedNames : undefined,
+      );
       const channel = card.jobId === restoredChannelRef.current?.jobId ? restoredChannelRef.current.channel : undefined;
       if (run.kind === "takeover") {
         await aiApi.takeoverConfirm(input);
@@ -2776,20 +2804,27 @@ function AiChatTab({
                 <span className="nx-badge nx-badge-amber">{toolLabel(confirmCard.tool)}</span>
               </div>
               <ConfirmBody card={confirmCard} />
+              {productionNames && (
+                <ProductionEnvironmentChallenge
+                  key={confirmCard.id}
+                  names={productionNames}
+                  onStateChange={handleProductionState}
+                />
+              )}
               <div className="mb-2 text-[10.5px] leading-relaxed text-neutral-500">
                 如需更严格控制，可添加拦截规则；如需减少确认，可选择「本轮允许此类」或调整权限模式。按 Esc 默认拒绝。
               </div>
               <div className="flex flex-wrap gap-1.5">
                 <button
                   className="nx-btn nx-btn-primary nx-btn-xs"
-                  disabled={submittingCardId === confirmCard.id}
+                  disabled={submittingCardId === confirmCard.id || productionBlocked}
                   onClick={() => void confirm("allow")}
                 >
                   允许一次
                 </button>
                 <button
                   className="nx-btn nx-btn-outline nx-btn-xs"
-                  disabled={submittingCardId === confirmCard.id}
+                  disabled={submittingCardId === confirmCard.id || productionBlocked}
                   onClick={() => void confirm("allow_session")}
                 >
                   本轮允许此类
@@ -2799,7 +2834,7 @@ function AiChatTab({
                     <button
                       className="nx-btn nx-btn-outline nx-btn-xs"
                       title={`${permanentScopeText(confirmCard)}；仅覆盖普通需确认操作，高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝；可随时在授权管理中撤销`}
-                      disabled={submittingCardId === confirmCard.id}
+                      disabled={submittingCardId === confirmCard.id || productionBlocked}
                       onClick={() => void confirm("allow_persistent")}
                     >
                       永久允许
@@ -2809,7 +2844,7 @@ function AiChatTab({
                 )}
                 <button
                   className="nx-btn nx-btn-ghost nx-btn-xs"
-                  disabled={submittingCardId === confirmCard.id}
+                  disabled={submittingCardId === confirmCard.id || productionBlocked}
                   onClick={() => void confirm("deny")}
                 >
                   拒绝
@@ -3666,6 +3701,66 @@ function ConfirmBody({ card }: { card: ConfirmItem }) {
         </pre>
       </details>
     </>
+  );
+}
+
+// R-01 typed environment-name confirmation for a production-classified AI
+// target. Each required name gets one input; the user types the actual
+// environment names themselves — the submitted set is their own input,
+// evaluated by the shared Go-semantics view-model, never echoed from the
+// challenge. The backend re-validates the set at resume.
+function ProductionEnvironmentChallenge({
+  names,
+  onStateChange,
+}: {
+  names: string[];
+  onStateChange: (canConfirm: boolean, submittedNames: string[]) => void;
+}) {
+  const [typedByTarget, setTypedByTarget] = useState<Record<string, string>>({});
+  const challenge: EnvironmentConfirmationChallenge = useMemo(
+    () => ({
+      targetSetHash: "ai-production-challenge",
+      requiredEnvironmentNames: names,
+      productionTargets: names.map((name, index) => ({
+        sessionId: `required-${index}`,
+        sessionName: name,
+        environment: name,
+      })),
+    }),
+    [names],
+  );
+  const state = evaluateEnvironmentConfirmation(challenge, typedByTarget, challenge.targetSetHash);
+  const canConfirm = state.canConfirm;
+  const submittedNames = state.submittedNames;
+  const submittedKey = submittedNames.join("\u0000");
+  useEffect(() => {
+    onStateChange(canConfirm, submittedNames);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canConfirm, submittedKey, onStateChange]);
+  return (
+    <div className="mb-2 rounded border border-amber-900/50 bg-amber-950/10 px-2.5 py-2" role="note">
+      <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-amber-300">
+        <IconAlert size={12} />
+        生产环境写入风险：AI 写入将需要逐次输入实际环境名确认，本会话不会记住授权。
+      </div>
+      <ul className="flex flex-col gap-1.5" aria-label="生产环境名列表">
+        {state.targets.map(({ target, typed, missing, matches }) => (
+          <li key={targetKey(target)} className="flex items-center gap-2 text-[11px]">
+            <span className="nx-badge nx-badge-amber shrink-0">{target.environment}</span>
+            <input
+              className="nx-input font-mono text-xs"
+              aria-label={`输入环境名 ${target.environment}`}
+              autoComplete="off"
+              value={typed}
+              onChange={(event) =>
+                setTypedByTarget((current) => ({ ...current, [targetKey(target)]: event.target.value }))
+              }
+            />
+            {!missing && !matches && <span className="shrink-0 text-red-300">环境名不匹配</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
