@@ -1,9 +1,9 @@
 import { createContext, useContext, type ReactNode } from "react";
 
-// Explicit contract for the R-11/R-12 settings slice. The production IPC
-// adapter is registered as a follow-up once the IPC surface can carry the
-// autoStart flag; until then callers inject an implementation through
-// ForwardSettingsApiProvider, and tests inject fakes.
+// Explicit contract for the R-11/R-12 settings slice. The production adapter
+// lives in forwardSettingsIpc.ts and is mounted once per account generation
+// by ForwardSettingsSection; tests inject fakes through
+// ForwardSettingsApiProvider.
 export interface ForwardRuleSettings {
   id: string;
   assetId: string;
