@@ -396,7 +396,11 @@ func TestAIPermissionScopeUsesRequestAccountOverHTTP(t *testing.T) {
 	newRuntime := func(t *testing.T, auth string, serverMode bool) *runtimeFixture {
 		t.Helper()
 		fixture := newAccountFixture(t, auth)
-		manager := session.NewManager(session.Config{IdleTimeout: -1})
+		// Mirror production wiring: desktop/open deployments run an open session
+		// manager (production_builder sets OpenAccess for config.Desktop or an
+		// open startup context), account servers stay closed so identity-less
+		// callers fail closed.
+		manager := session.NewManager(session.Config{IdleTimeout: -1, OpenAccess: !serverMode})
 		storage, err := store.OpenInMemory(context.Background())
 		if err != nil {
 			t.Fatal(err)
