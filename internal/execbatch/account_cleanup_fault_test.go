@@ -37,14 +37,14 @@ func TestOwnerCleanupAliasFailureRetriesSameEvent(t *testing.T) {
 	service.beforeCleanupCommit = func(accountCleanupKey) error {
 		return errors.New("injected alias registration failure")
 	}
-	commit, _ := service.PrepareOwnerCleanup(t.Context(), "owner-a", "logout-all:s1")
+	commit, _ := service.PrepareOwnerCleanup(t.Context(), "owner-a", "logout-all:s1", nil)
 	commit("session-s1", "session-s2")
 	if execCtx.Err() != nil {
 		t.Fatal("injected alias failure canceled the batch")
 	}
 
 	service.beforeCleanupCommit = nil
-	service.CancelOwner(t.Context(), "owner-a", "logout-all:s1", "session-s1", "session-s2")
+	service.CancelOwner(t.Context(), "owner-a", "logout-all:s1", nil, "session-s1", "session-s2")
 	select {
 	case result := <-done:
 		if result.err != nil || len(result.batch.Results) != 1 || result.batch.Results[0].Status != StatusCanceled {

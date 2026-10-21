@@ -63,6 +63,7 @@ type accountCleanupTransport struct {
 	closeCount atomic.Int32
 	mu         sync.Mutex
 	channels   []*accountCleanupChannel
+	execHook   func(context.Context) (base.ExecResult, error)
 }
 
 func newAccountCleanupTransport(kind string, generation uint64) *accountCleanupTransport {
@@ -77,7 +78,13 @@ func (t *accountCleanupTransport) IsAlive() bool      { return t.alive.Load() }
 func (t *accountCleanupTransport) Ping(context.Context) (time.Duration, error) {
 	return 0, nil
 }
-func (t *accountCleanupTransport) Exec(context.Context, string, base.ExecOptions) (base.ExecResult, error) {
+func (t *accountCleanupTransport) Exec(ctx context.Context, _ string, _ base.ExecOptions) (base.ExecResult, error) {
+	t.mu.Lock()
+	hook := t.execHook
+	t.mu.Unlock()
+	if hook != nil {
+		return hook(ctx)
+	}
 	return base.ExecResult{}, nil
 }
 func (t *accountCleanupTransport) Close() error {
@@ -127,15 +134,17 @@ type accountCleanupRig struct {
 	manager    *session.Manager
 	mu         sync.Mutex
 	transports map[string]*accountCleanupTransport
+	execHooks  map[string]func(context.Context) (base.ExecResult, error)
 }
 
 func newAccountCleanupRig(t *testing.T, configure ...func(*session.Config)) *accountCleanupRig {
 	t.Helper()
-	rig := &accountCleanupRig{transports: make(map[string]*accountCleanupTransport)}
+	rig := &accountCleanupRig{transports: make(map[string]*accountCleanupTransport), execHooks: make(map[string]func(context.Context) (base.ExecResult, error))}
 	config := session.Config{
 		Connector: session.ConnectorFunc(func(_ context.Context, asset session.Asset, generation uint64) (base.Transport, error) {
 			transport := newAccountCleanupTransport(asset.Kind, generation)
 			rig.mu.Lock()
+			transport.execHook = rig.execHooks[asset.ID]
 			rig.transports[asset.ID] = transport
 			rig.mu.Unlock()
 			return transport, nil
@@ -150,6 +159,19 @@ func newAccountCleanupRig(t *testing.T, configure ...func(*session.Config)) *acc
 	rig.manager = session.NewManager(config)
 	t.Cleanup(func() { _ = rig.manager.Close() })
 	return rig
+}
+
+// setExecHook installs (or replaces) the Exec behavior for an asset; call it
+// before the asset connects.
+func (r *accountCleanupRig) setExecHook(assetID string, hook func(context.Context) (base.ExecResult, error)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.execHooks[assetID] = hook
+	if transport := r.transports[assetID]; transport != nil {
+		transport.mu.Lock()
+		transport.execHook = hook
+		transport.mu.Unlock()
+	}
 }
 
 func (r *accountCleanupRig) open(t *testing.T, ctx context.Context, asset session.Asset) (*session.Session, session.TabInfo) {

@@ -131,7 +131,14 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 	if err != nil {
 		return nil, err
 	}
-	return &Production{Application: application, Services: services}, nil
+	production := &Production{Application: application, Services: services}
+	// The runbook service is built above (or supplied); wire it into the
+	// account cleanup lifecycle so an owner cleanup also cancels that owner's
+	// live runbook runs.
+	if services.Runbook != nil {
+		production.SetRunbookCleanup(services.Runbook)
+	}
+	return production, nil
 }
 
 func (p *Production) SyncObjectHandler() http.Handler {

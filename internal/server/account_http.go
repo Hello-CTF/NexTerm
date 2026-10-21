@@ -558,6 +558,8 @@ func (s *Server) serveAccountLogoutAll(w http.ResponseWriter, r *http.Request) {
 		// event id once the snapshot read recovers.
 		sessionIDs, err := s.revokeUserSessions(r.Context(), identity.UserID, "", func() error {
 			var prepareErr error
+			// The prefixed key is normalized back to this session ID by the
+			// cleanup generation-bound read; keep the two in sync.
 			commit, rollback, prepareErr = s.prepareAccountCleanup(r.Context(), identity.UserID, "logout-all:"+identity.SessionID)
 			return prepareErr
 		})

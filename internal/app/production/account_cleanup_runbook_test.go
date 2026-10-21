@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
@@ -25,7 +26,7 @@ func newFakeRunbookCleanup() *fakeRunbookCleanup {
 	return &fakeRunbookCleanup{live: map[string][]string{}, canceled: map[string][]string{}}
 }
 
-func (f *fakeRunbookCleanup) PrepareOwnerCleanup(_ context.Context, ownerID, _ string) (func(...string), func()) {
+func (f *fakeRunbookCleanup) PrepareOwnerCleanup(_ context.Context, ownerID, _ string, _ *time.Time) (func(...string), func()) {
 	f.mu.Lock()
 	f.prepares++
 	snapshot := append([]string(nil), f.live[ownerID]...)
