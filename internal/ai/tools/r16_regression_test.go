@@ -29,6 +29,9 @@ import (
 type r16DurableOutcomes struct {
 	store *store.Store
 	now   func() int64
+	// completeErr, when set, fails the completion write to simulate a crash
+	// between the connect and the final record.
+	completeErr error
 }
 
 func newR16DurableOutcomes(t *testing.T, database *store.Store) *r16DurableOutcomes {
@@ -36,31 +39,28 @@ func newR16DurableOutcomes(t *testing.T, database *store.Store) *r16DurableOutco
 	return &r16DurableOutcomes{store: database, now: func() int64 { return time.Now().UnixMilli() }}
 }
 
-func (f *r16DurableOutcomes) BeginOutcome(ctx context.Context, operationID, kind string) error {
-	_, _, err := f.store.AgentOutcomeBegin(ctx, store.AgentOutcomeRow{OperationID: operationID, Kind: kind, State: store.AgentOutcomeStateInitiated})
-	return err
+func (f *r16DurableOutcomes) ClaimOutcome(ctx context.Context, family, kind string) (bool, error) {
+	return f.store.AgentOutcomeClaimAttempt(ctx, family, kind)
 }
 
-func (f *r16DurableOutcomes) CompleteOutcome(ctx context.Context, operationID string, attempt OutcomeAttempt) error {
-	updates := map[string]any{
-		"state":       attempt.State,
-		"error":       attempt.Error,
-		"finished_at": f.now(),
+func (f *r16DurableOutcomes) ProgressOutcome(ctx context.Context, family, residualSessionID string) error {
+	return f.store.AgentOutcomeProgress(ctx, family, residualSessionID)
+}
+
+func (f *r16DurableOutcomes) CompleteOutcome(ctx context.Context, family string, attempt OutcomeAttempt) error {
+	if f.completeErr != nil {
+		return f.completeErr
 	}
-	if attempt.FailureStage != "" {
-		updates["failure_stage"] = attempt.FailureStage
+	return f.store.AgentOutcomeCompleteAttempt(ctx, family, r16RowFromAttempt(attempt, f.now()))
+}
+
+func r16RowFromAttempt(attempt OutcomeAttempt, now int64) store.AgentOutcomeRow {
+	return store.AgentOutcomeRow{
+		OperationID: attempt.OperationID, Kind: attempt.Kind, State: attempt.State,
+		FailureStage:      attempt.FailureStage,
+		ResidualSessionID: attempt.ResidualSessionID, ResidualResource: attempt.ResidualResource,
+		ResultJSON: string(attempt.Result), Error: attempt.Error, FinishedAt: &now,
 	}
-	if attempt.ResidualSessionID != "" {
-		updates["residual_session_id"] = attempt.ResidualSessionID
-	}
-	if attempt.ResidualResource != "" {
-		updates["residual_resource"] = attempt.ResidualResource
-	}
-	if len(attempt.Result) > 0 {
-		updates["result_json"] = string(attempt.Result)
-	}
-	_, err := f.store.AgentOutcomeComplete(ctx, operationID, updates)
-	return err
 }
 
 func (f *r16DurableOutcomes) AdjudicateOutcome(ctx context.Context, prefix string) (OutcomeAdjudication, error) {
@@ -245,11 +245,13 @@ func TestTerminalCreateDurableAdjudicationPendingBlocksReconnect(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 	durable := newR16DurableOutcomes(t, database)
 	operation := operationID("job", "c", "terminal_create")
-	// A crashed attempt: initiated but never finished, with the connected
-	// session recorded as its residual.
-	if _, _, err := database.AgentOutcomeBegin(context.Background(), store.AgentOutcomeRow{
-		OperationID: operation + ":" + r16Nonce(), Kind: "terminal_create", State: store.AgentOutcomeStateInitiated, ResidualSessionID: "s9",
-	}); err != nil {
+	// A crashed attempt: claimed but never completed, with the connected
+	// session persisted as its progress residual — produced by the real
+	// store primitives, not hand-seeded.
+	if claimed, err := database.AgentOutcomeClaimAttempt(context.Background(), operation, "terminal_create"); err != nil || !claimed {
+		t.Fatalf("seed claim = %t err=%v", claimed, err)
+	}
+	if err := database.AgentOutcomeProgress(context.Background(), operation, "s9"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -284,11 +286,12 @@ func TestTerminalCreateDurableAdjudicationConflictBlocksReconnect(t *testing.T) 
 	durable := newR16DurableOutcomes(t, database)
 	operation := operationID("job", "c", "terminal_create")
 	// Two unfinished attempts under one operation family: conflicted.
-	if err := durable.BeginOutcome(context.Background(), operation+":a", "terminal_create"); err != nil {
-		t.Fatal(err)
-	}
-	if err := durable.BeginOutcome(context.Background(), operation+":b", "terminal_create"); err != nil {
-		t.Fatal(err)
+	for _, suffix := range []string{":a", ":b"} {
+		if _, _, err := database.AgentOutcomeBegin(context.Background(), store.AgentOutcomeRow{
+			OperationID: operation + suffix, Kind: "terminal_create", State: store.AgentOutcomeStateInitiated,
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	fake := &identityFakeTerminal{tabFakeTerminal: newTabFake(fakeTab("t1", "s1", "$ ", 0))}

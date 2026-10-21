@@ -1222,11 +1222,16 @@ func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope
 	if args.Command != "" {
 		detail += "，启动命令已发送"
 	}
+	createdTab := &CreatedTerminal{TabID: created.TabID, SessionID: sessionID, Title: created.Title, Handle: handle}
 	if args.Background {
-		return Output{OK: true, Text: fmt.Sprintf("已在后台创建分离终端（%s），AI 可在其中工作，用户可在「后台会话」中接管%s", detail, identityNote), OperationID: operation, Notes: identityNote}
+		// The background branch deliberately omits the public Terminal field
+		// (the tab opens detached); CreatedTab still carries the identity
+		// for the durable outcome record so replays and result queries can
+		// restore it.
+		return Output{OK: true, Text: fmt.Sprintf("已在后台创建分离终端（%s），AI 可在其中工作，用户可在「后台会话」中接管%s", detail, identityNote), OperationID: operation, Notes: identityNote, CreatedTab: createdTab}
 	}
 	return Output{OK: true, Text: fmt.Sprintf("已创建并在前台展示终端标签页（%s），AI 正在其中工作，用户可随时接管输入%s", detail, identityNote), OperationID: operation, Notes: identityNote,
-		Terminal: &CreatedTerminal{TabID: created.TabID, SessionID: sessionID, Title: created.Title, Handle: handle}}
+		Terminal: createdTab, CreatedTab: createdTab}
 }
 
 // resolveAssetSessionForCreate resolves the asset's live session, preferring
@@ -1296,8 +1301,11 @@ func (r *Registry) connectedSessionAssetIdentity(ctx context.Context, sessionID,
 // connectAssetSession establishes a new session for assetID after an
 // explicit ErrNoLiveSession verdict with the connect=true opt-in, and
 // verifies the connected session's complete identity before any create
-// proceeds. Every failure keeps the residual session and the operation ID
-// visible; a missing Create capability or connector never burns a connect.
+// proceeds. The connected session ID is returned on every path — success,
+// connect error with a partial session, and identity failure — so the
+// caller can name the residual and the durable ledger can persist it the
+// moment the connect returns. A missing Create capability or connector
+// never burns a connect.
 func (r *Registry) connectAssetSession(ctx context.Context, jobID string, call Call, assetID string, resolveErr error, bound AssetIdentity, hasBound bool) (string, AssetIdentity, *Output) {
 	if _, ok := r.deps.Terminal.(CreateTerminal); !ok {
 		failure := Fail(errors.New("终端服务未配置"))
@@ -1308,22 +1316,43 @@ func (r *Registry) connectAssetSession(ctx context.Context, jobID string, call C
 		return "", AssetIdentity{}, &failure
 	}
 	connectedID, connectErr := r.deps.AssetConnector.ConnectAsset(ctx, assetID)
+	if connectedID != "" {
+		// Persist the progress residual the moment the connect returns —
+		// before identity verification and the create — so a crash before
+		// the final completion still leaves the residual recoverable.
+		if err := r.progressDurableConnectResidual(ctx, jobID, call, connectedID); err != nil {
+			failure := Fail(fmt.Errorf("连接已建立（session_id=%s），但执行记录写入失败: %w；已建立的会话作为残留资源保留（未自动清理）", connectedID, err))
+			failure.OperationID = operationID(jobID, call.ID, "terminal_create")
+			return connectedID, AssetIdentity{}, &failure
+		}
+	}
 	if connectErr != nil {
 		failure := Fail(fmt.Errorf("解析资产会话失败: %v；建立新连接失败: %w", resolveErr, connectErr))
 		if connectedID != "" {
 			failure.Text += fmt.Sprintf("；已建立的会话 session_id=%s 作为残留资源保留（未自动清理）", connectedID)
 		}
 		failure.OperationID = operationID(jobID, call.ID, "terminal_create")
-		return "", AssetIdentity{}, &failure
+		return connectedID, AssetIdentity{}, &failure
 	}
 	identity, identityErr := r.connectedSessionAssetIdentity(ctx, connectedID, assetID, bound, hasBound)
 	if identityErr != nil {
 		failure := Fail(identityErr)
 		failure.Text += fmt.Sprintf("；已建立的会话 session_id=%s 作为残留资源保留（未自动清理）", connectedID)
 		failure.OperationID = operationID(jobID, call.ID, "terminal_create")
-		return "", AssetIdentity{}, &failure
+		return connectedID, AssetIdentity{}, &failure
 	}
 	return connectedID, identity, nil
+}
+
+// progressDurableConnectResidual persists the attempt's progress residual on
+// the durable ledger the moment a connect returns, before identity
+// verification and the create. It only runs for recorded operations, whose
+// claim row exists; non-recorded calls have no claim to update.
+func (r *Registry) progressDurableConnectResidual(ctx context.Context, jobID string, call Call, sessionID string) error {
+	if r.deps.DurableOutcomes == nil || sessionID == "" || r.deps.Outcome == nil || call.AuthorizationID == "" {
+		return nil
+	}
+	return r.deps.DurableOutcomes.ProgressOutcome(ctx, operationID(jobID, call.ID, "terminal_create"), sessionID)
 }
 
 // validateTargetIdentitySet requires exactly one complete identity per

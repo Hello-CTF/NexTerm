@@ -7,6 +7,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store/model"
+	"gorm.io/gorm"
 )
 
 type AgentOutcomeRow = model.AgentOutcomeRow
@@ -155,4 +156,107 @@ func (s *Store) AgentOutcomeComplete(ctx context.Context, operationID string, up
 		return stored, nil
 	}
 	return s.AgentOutcomeGet(ctx, operationID)
+}
+
+// agentOutcomeClaimSuffix marks the single in-flight attempt row of an
+// operation family: the (owner_id, operation_id) primary key makes the
+// claim insert atomic, so concurrent claimants on any supported backend
+// serialize into exactly one winner without a schema change.
+const agentOutcomeClaimSuffix = ":claim"
+
+// AgentOutcomeClaimAttempt atomically claims one operation family for a new
+// attempt by inserting the family's single in-flight row. It reports whether
+// this caller won the claim: a false result with a nil error means another
+// attempt already holds (or crashed while holding) the family, and the
+// caller must adjudicate the existing records instead of starting a new
+// attempt. The random-nonce attempt history rows are written separately by
+// AgentOutcomeCompleteAttempt.
+func (s *Store) AgentOutcomeClaimAttempt(ctx context.Context, family, kind string) (bool, error) {
+	if strings.TrimSpace(family) == "" {
+		return false, ipc.NewError(ipc.CodeBadParam, "outcome family 不能为空")
+	}
+	if strings.TrimSpace(kind) == "" {
+		return false, ipc.NewError(ipc.CodeBadParam, "outcome kind 不能为空")
+	}
+	row := AgentOutcomeRow{
+		OperationID: family + agentOutcomeClaimSuffix, Kind: kind, State: AgentOutcomeStateInitiated,
+		OwnerID: ipc.OwnerID(ctx),
+	}
+	now := ids.NowMS()
+	row.CreatedAt = now
+	row.UpdatedAt = now
+	result := s.db.WithContext(ctx).Create(&row)
+	if result.Error != nil {
+		if IsUniqueErr(result.Error) {
+			return false, nil
+		}
+		return false, dbError(result.Error)
+	}
+	return true, nil
+}
+
+// AgentOutcomeProgress persists the attempt's progress residual on the
+// family's in-flight row the moment a connect returns, so a crash before
+// the final completion still leaves the residual session recoverable. The
+// compare-and-swap on the in-progress state refuses to write a released or
+// completed claim.
+func (s *Store) AgentOutcomeProgress(ctx context.Context, family, residualSessionID string) error {
+	if strings.TrimSpace(family) == "" {
+		return ipc.NewError(ipc.CodeBadParam, "outcome family 不能为空")
+	}
+	result := s.db.WithContext(ctx).Model(&AgentOutcomeRow{}).
+		Where("owner_id = ? AND operation_id = ? AND state = ?", ipc.OwnerID(ctx), family+agentOutcomeClaimSuffix, AgentOutcomeStateInitiated).
+		Updates(map[string]any{"residual_session_id": residualSessionID, "updated_at": ids.NowMS()})
+	if result.Error != nil {
+		return dbError(result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return notFound("outcome 进行中的尝试记录")
+	}
+	return nil
+}
+
+// AgentOutcomeCompleteAttempt records the attempt's terminal history row
+// and releases the family claim in one transaction: the history row keeps
+// the random-nonce attempt ID and its full payload, and the claim row's
+// deletion admits the family's next attempt. A crash between the two would
+// leave the claim held, which blocks the next attempt instead of letting
+// it double-execute.
+func (s *Store) AgentOutcomeCompleteAttempt(ctx context.Context, family string, row AgentOutcomeRow) error {
+	if strings.TrimSpace(family) == "" {
+		return ipc.NewError(ipc.CodeBadParam, "outcome family 不能为空")
+	}
+	if strings.TrimSpace(row.OperationID) == "" {
+		return ipc.NewError(ipc.CodeBadParam, "outcome operation_id 不能为空")
+	}
+	if strings.TrimSpace(row.Kind) == "" {
+		return ipc.NewError(ipc.CodeBadParam, "outcome kind 不能为空")
+	}
+	if !AgentOutcomeFinal(row.State) {
+		return ipc.NewError(ipc.CodeBadParam, "outcome 完成状态必须是 succeeded 或 failed")
+	}
+	row.OwnerID = ipc.OwnerID(ctx)
+	now := ids.NowMS()
+	row.CreatedAt = now
+	row.UpdatedAt = now
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if result := tx.Create(&row); result.Error != nil {
+			if IsUniqueErr(result.Error) {
+				stored, err := s.AgentOutcomeGet(ctx, row.OperationID)
+				if err != nil {
+					return dbError(result.Error)
+				}
+				if stored.State != row.State || stored.ResultJSON != row.ResultJSON {
+					return ipc.NewError(ipc.CodeInternal, "outcome 尝试记录已存在且内容不一致")
+				}
+			} else {
+				return dbError(result.Error)
+			}
+		}
+		if result := tx.Where("owner_id = ? AND operation_id = ?", ipc.OwnerID(ctx), family+agentOutcomeClaimSuffix).
+			Delete(&AgentOutcomeRow{}); result.Error != nil {
+			return dbError(result.Error)
+		}
+		return nil
+	})
 }

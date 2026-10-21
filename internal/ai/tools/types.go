@@ -117,6 +117,11 @@ type Output struct {
 	Plan        string           `json:"plan,omitempty"`
 	Question    *Question        `json:"question,omitempty"`
 	Terminal    *CreatedTerminal `json:"terminal,omitempty"`
+	// CreatedTab carries the created tab's identity for the durable outcome
+	// record on both foreground and background creates; the public Terminal
+	// field stays foreground-only, so the background display semantics are
+	// unchanged.
+	CreatedTab *CreatedTerminal `json:"-"`
 	// OperationID identifies an uncertain mutation (tab creation with asset
 	// connection, paste submission) so a later call can reference the exact
 	// operation when querying its result. It is deterministic per
@@ -459,8 +464,20 @@ type OutcomeAdjudication struct {
 // nil keeps the in-process adjudication only.
 type DurableOutcomeLedger interface {
 	AdjudicateOutcome(ctx context.Context, prefix string) (OutcomeAdjudication, error)
-	BeginOutcome(ctx context.Context, operationID, kind string) error
-	CompleteOutcome(ctx context.Context, operationID string, attempt OutcomeAttempt) error
+	// ClaimOutcome atomically claims the base-operation family for a new
+	// attempt: it succeeds only when no in-flight attempt holds the family,
+	// so concurrent callers across processes cannot both be admitted before
+	// connecting. A false result means another attempt holds the family and
+	// the caller must adjudicate its records instead of starting a new one.
+	ClaimOutcome(ctx context.Context, family, kind string) (bool, error)
+	// ProgressOutcome persists the attempt's progress residual immediately
+	// after a connect returns, so a crash before the final completion still
+	// leaves the residual session recoverable.
+	ProgressOutcome(ctx context.Context, family, residualSessionID string) error
+	// CompleteOutcome writes the attempt's terminal history row and releases
+	// the family claim in one transaction. The attempt's OperationID is the
+	// random-nonce history ID.
+	CompleteOutcome(ctx context.Context, family string, attempt OutcomeAttempt) error
 	OutcomeResult(ctx context.Context, operationID string) (OutcomeAttempt, error)
 }
 
