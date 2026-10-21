@@ -1,11 +1,15 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"math/rand"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -758,6 +762,43 @@ func waitForTranscriptTSIndexComplete(t *testing.T, db *Store, id string) {
 	}
 }
 
+// waitForTranscriptBackfillLoop waits until the store's backfill loop
+// registration is gone: the loop deletes its registration only as it
+// exits, so every batch log is on record once this returns.
+func waitForTranscriptBackfillLoop(t *testing.T, db *Store) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, running := transcriptTSIndexBackfills.Load(db); !running {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("backfill loop never finished")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// seekWithRetry drives a seek through its explicit pending state: the
+// bounded verification advances the watermark per call, so the caller
+// retries until the answer (or a real error) arrives. The cap fails the
+// test if the watermark never advances.
+func seekWithRetry(t *testing.T, db *Store, ctx context.Context, id string, at int64, maxBytes int) TranscriptPage {
+	t.Helper()
+	for range 10000 {
+		page, err := db.TranscriptSeekToTimePage(ctx, id, at, maxBytes)
+		if errors.Is(err, ErrTranscriptSeekIndexing) {
+			continue
+		}
+		if err != nil {
+			t.Fatalf("seek %d: %v", at, err)
+		}
+		return page
+	}
+	t.Fatalf("seek %d stayed pending: the verification watermark never advanced", at)
+	return TranscriptPage{}
+}
+
 // A lowered index value on ANY eliminated block — not just the immediate
 // predecessor — is caught by the verification scan: the block before the
 // candidate is decoded and its true maximum timestamp is checked against
@@ -1005,10 +1046,7 @@ func TestTranscriptBackfillCorruptBlocksDontStallRecovery(t *testing.T) {
 	waitForTranscriptTSIndexComplete(t, db, healthyID)
 	// Repeated seeks now answer from the completed index.
 	for i := 0; i < 3; i++ {
-		page, err := db.TranscriptSeekToTimePage(ownerA, healthyID, 1000+30000, 1<<20)
-		if err != nil {
-			t.Fatalf("recovered seek %d = %v", i, err)
-		}
+		page := seekWithRetry(t, db, ownerA, healthyID, 1000+30000, 1<<20)
 		if len(page.Chunks) == 0 || page.Chunks[0].Seq != 30000 {
 			t.Fatalf("recovered seek %d = %+v, want it to start at seq 30000", i, page.Chunks)
 		}
@@ -1349,4 +1387,391 @@ func TestTranscriptFirstScreenIncludesMaxSeqChunk(t *testing.T) {
 	if !exclusive.HasAfter {
 		t.Fatal("exclusive page must report the max-seq chunk as later history")
 	}
+}
+
+// The complete-index seek never scans an unbounded prefix: verification is
+// bounded per call, the watermark advance commits with the seek, and the
+// next call resumes — pending is explicit and the final answer matches the
+// reference model. Once the watermark covers the candidate the seek
+// answers immediately.
+func TestTranscriptSeekVerificationBoundedAndResumable(t *testing.T) {
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	for seq := 0; seq < 10; seq++ {
+		appendPagedFixture(t, db, id, []TranscriptChunkRow{{Seq: int64(seq), TabID: "tab-a", TS: int64(1000 + seq), Data: []byte("x")}})
+	}
+	all := naiveTranscriptChunks(t, db, id)
+
+	restore := transcriptSeekScanBudget
+	transcriptSeekScanBudget = 2
+	t.Cleanup(func() { transcriptSeekScanBudget = restore })
+
+	// A far seek on an unverified index reports the explicit pending state
+	// once per bounded pass — never a wrong page, never an unbounded scan.
+	pendingCalls := 0
+	var page TranscriptPage
+	for {
+		var err error
+		page, err = db.TranscriptSeekToTimePage(context.Background(), id, 1008, 4096)
+		if errors.Is(err, ErrTranscriptSeekIndexing) {
+			pendingCalls++
+			if pendingCalls > 10 {
+				t.Fatal("verification never advanced")
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		break
+	}
+	if pendingCalls == 0 {
+		t.Fatal("a far seek on an unverified index answered without any bounded verification pass")
+	}
+	requirePageParity(t, page, naiveSeekToTime(all, 1008, 4096), all)
+
+	// The watermark covers the candidate now: a repeat seek answers
+	// immediately, and the past-end tail read needs no further verification.
+	again, err := db.TranscriptSeekToTimePage(context.Background(), id, 1008, 4096)
+	if err != nil {
+		t.Fatalf("repeat seek = %v, want an immediate answer from the watermark", err)
+	}
+	requirePageParity(t, again, naiveSeekToTime(all, 1008, 4096), all)
+	tail, err := db.TranscriptSeekToTimePage(context.Background(), id, 99999, 4096)
+	if err != nil {
+		t.Fatalf("past-end seek = %v, want the tail page without further verification", err)
+	}
+	requirePageParity(t, tail, naiveSeekToTime(all, 99999, 4096), all)
+}
+
+// The watermark never hides corruption: blocks it covers were verified as
+// matching, but a lowered index value beyond it is still caught when a
+// later seek's bounded verification reaches it.
+func TestTranscriptSeekWatermarkDoesNotHideCorruption(t *testing.T) {
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	for seq := 0; seq < 4; seq++ {
+		appendPagedFixture(t, db, id, []TranscriptChunkRow{{Seq: int64(seq), TabID: "tab-a", TS: int64(1000 + seq), Data: []byte("x")}})
+	}
+	restore := transcriptSeekScanBudget
+	transcriptSeekScanBudget = 2
+	t.Cleanup(func() { transcriptSeekScanBudget = restore })
+
+	// Corrupt block 1's index row: its true max is 1001, the row says 0.
+	if err := db.db.WithContext(context.Background()).Model(&model.TranscriptChunkTS{}).
+		Where("transcript_id = ? AND block_seq = 1", id).
+		Update("max_ts", 0).Error; err != nil {
+		t.Fatal(err)
+	}
+	// A seek whose candidate (block 3) lies beyond the corrupt block fails
+	// explicitly once the bounded verification reaches it.
+	var err error
+	for {
+		_, err = db.TranscriptSeekToTimePage(context.Background(), id, 1003, 4096)
+		if errors.Is(err, ErrTranscriptSeekIndexing) {
+			continue
+		}
+		break
+	}
+	if err == nil || errors.Is(err, ErrTranscriptSeekIndexing) {
+		t.Fatal("seek past a low-corrupted block = nil error, want explicit corruption")
+	}
+}
+
+// A replace rebuilds the index in the same transaction and bumps the
+// content generation: a backfill insert that raced the replace and landed
+// afterwards carries the old generation and is never read — the seek
+// answers from the current content, never from the stale row.
+func TestTranscriptSeekIgnoresStaleIndexRowFromReplacedContent(t *testing.T) {
+	db := testStore(t)
+	ctx := context.Background()
+	id := "dbg-stale-index-row"
+	row := TranscriptRow{ID: id, SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000}
+	if err := db.TranscriptStart(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	ended := int64(2000)
+	row.EndedAt = &ended
+	row.ContentOmitted = true
+	if err := db.TranscriptInsertSynced(ctx, row, []TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-a", TS: 1000, Data: []byte("old0")},
+		{Seq: 1, TabID: "tab-a", TS: 1001, Data: []byte("old1")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The replace lands a whole new content with new block seqs.
+	if err := db.TranscriptReplaceContent(ctx, id, 2, 2, false, []TranscriptChunkRow{
+		{Seq: 10, TabID: "tab-a", TS: 2000, Data: []byte("new0")},
+		{Seq: 11, TabID: "tab-a", TS: 2001, Data: []byte("new1")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the racing backfill's insert: a row for a block of the OLD
+	// content, stamped with the OLD generation, landing after the replace.
+	var gen int64
+	if err := db.db.WithContext(ctx).Model(&model.TranscriptRow{}).Select("content_gen").Where("id = ?", id).Scan(&gen).Error; err != nil {
+		t.Fatal(err)
+	}
+	stale := &model.TranscriptChunkTS{TranscriptID: id, BlockSeq: 1, MaxTS: 99999, Gen: gen - 1, OwnerID: ""}
+	if err := db.db.WithContext(ctx).Create(stale).Error; err != nil {
+		t.Fatal(err)
+	}
+	// The stale row claims a huge max at block 1, which no longer exists:
+	// unfiltered it would be picked as the candidate and fail the seek; the
+	// generation filter makes it invisible and the seek answers from the
+	// current content — a time past the new content yields its tail page.
+	page, err := db.TranscriptSeekToTimePage(ctx, id, 5000, 1<<20)
+	if err != nil {
+		t.Fatalf("seek with a stale index row present = %v, want the current content's answer", err)
+	}
+	if len(page.Chunks) == 0 || page.Chunks[0].Seq != 10 {
+		t.Fatalf("page = %+v, want it to start at the new content's seq 10", page)
+	}
+}
+
+// A replace resets the verification watermark in the same transaction: the
+// first seek over the new content re-verifies lazily (bounded, resumable)
+// instead of trusting a watermark earned on the replaced content.
+func TestTranscriptSeekAfterReplaceResetsVerificationWatermark(t *testing.T) {
+	db := testStore(t)
+	ctx := context.Background()
+	id := "dbg-replace-watermark"
+	row := TranscriptRow{ID: id, SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000}
+	if err := db.TranscriptStart(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	ended := int64(2000)
+	row.EndedAt = &ended
+	row.ContentOmitted = true
+	if err := db.TranscriptInsertSynced(ctx, row, []TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-a", TS: 1000, Data: []byte("old0")},
+		{Seq: 1, TabID: "tab-a", TS: 1001, Data: []byte("old1")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	restore := transcriptSeekScanBudget
+	transcriptSeekScanBudget = 1
+	t.Cleanup(func() { transcriptSeekScanBudget = restore })
+
+	// Drive the watermark past block 0 on the old content.
+	if _, err := db.TranscriptSeekToTimePage(ctx, id, 1001, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := db.transcriptTSIndexVerifiedThrough(ctx, db.db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified != 1 {
+		t.Fatalf("watermark = %d, want 1 after the old-content seek", verified)
+	}
+
+	// The replace resets the watermark with the new content generation.
+	if err := db.TranscriptReplaceContent(ctx, id, 2, 2, false, []TranscriptChunkRow{
+		{Seq: 10, TabID: "tab-a", TS: 2000, Data: []byte("new0")},
+		{Seq: 11, TabID: "tab-a", TS: 2001, Data: []byte("new1")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	verified, err = db.transcriptTSIndexVerifiedThrough(ctx, db.db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified != -1 {
+		t.Fatalf("watermark = %d after the replace, want the reset to -1", verified)
+	}
+
+	// The first seek over the new content answers from the re-verified
+	// index: the watermark advances over the new content's block, proving
+	// the seek verified it rather than trusting the pre-replace watermark.
+	page, err := db.TranscriptSeekToTimePage(ctx, id, 2001, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Chunks) == 0 || page.Chunks[0].Seq != 11 {
+		t.Fatalf("page = %+v, want it to start at the new content's seq 11", page)
+	}
+	verified, err = db.transcriptTSIndexVerifiedThrough(ctx, db.db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified != 11 {
+		t.Fatalf("watermark = %d after the post-replace seek, want the new content's block 11 verified", verified)
+	}
+}
+
+// A seek racing a whole-content replace always reads one consistent
+// version: the snapshot transaction yields either the pre-replace or the
+// post-replace answer, never a mix and never a false corruption.
+func TestTranscriptSeekDuringReplaceSeesOneVersion(t *testing.T) {
+	db := testStore(t)
+	ctx := context.Background()
+	id := "dbg-concurrent-replace"
+	row := TranscriptRow{ID: id, SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000}
+	if err := db.TranscriptStart(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	ended := int64(2000)
+	row.EndedAt = &ended
+	row.ContentOmitted = true
+	oldChunks := []TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-a", TS: 1000, Data: []byte("old0")},
+		{Seq: 1, TabID: "tab-a", TS: 1001, Data: []byte("old1")},
+	}
+	if err := db.TranscriptInsertSynced(ctx, row, oldChunks); err != nil {
+		t.Fatal(err)
+	}
+	newChunks := []TranscriptChunkRow{
+		{Seq: 10, TabID: "tab-a", TS: 2000, Data: []byte("new0")},
+		{Seq: 11, TabID: "tab-a", TS: 2001, Data: []byte("new1")},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 50; i++ {
+			if err := db.TranscriptReplaceContent(ctx, id, 2, 2, false, newChunks); err != nil {
+				t.Error(err)
+				return
+			}
+			// ReplaceContent only fills omitted content; reset the flag so
+			// the next round can replace back.
+			if err := db.db.WithContext(ctx).Model(&model.TranscriptRow{}).Where("id = ?", id).Update("content_omitted", true).Error; err != nil {
+				t.Error(err)
+				return
+			}
+			if err := db.TranscriptReplaceContent(ctx, id, 2, 2, false, oldChunks); err != nil {
+				t.Error(err)
+				return
+			}
+			if err := db.db.WithContext(ctx).Model(&model.TranscriptRow{}).Where("id = ?", id).Update("content_omitted", true).Error; err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+	reads := 0
+	for {
+		select {
+		case <-done:
+			return
+		default:
+		}
+		page, err := db.TranscriptSeekToTimePage(ctx, id, 1001, 1<<20)
+		if err != nil {
+			if errors.Is(err, ErrTranscriptSeekIndexing) {
+				continue
+			}
+			t.Fatalf("seek during replace = %v, want one consistent version", err)
+		}
+		if len(page.Chunks) == 0 {
+			t.Fatal("empty page during replace")
+		}
+		if first := page.Chunks[0].Seq; first != 1 && first != 10 {
+			t.Fatalf("page starts at seq %d, want one consistent version (1 or 10)", first)
+		}
+		reads++
+		if reads > 20000 {
+			t.Fatal("replace never observed")
+		}
+	}
+}
+
+// lockedBuffer is a goroutine-safe log sink: the backfill loop writes logs
+// from its own goroutine while the test reads them.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// The backfill scheduling is owner-explainable and the ownerID parameter
+// actually takes effect: with 64 corrupt blocks sorting before the healthy
+// transcript, a kick naming the healthy owner serves it first (the corrupt
+// window never delays it), while a kick without an owner serves the corrupt
+// window first in (owner, transcript, seq) order — and either way the
+// corrupt blocks are skipped without stalling the healthy transcript.
+func TestTranscriptBackfillOwnerPriorityAndFairness(t *testing.T) {
+	newBackfillStore := func(t *testing.T) (*Store, *lockedBuffer) {
+		t.Helper()
+		logs := &lockedBuffer{}
+		db, err := OpenInMemoryWithOptions(context.Background(), OpenOptions{
+			Logger: slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelInfo})),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		return db, logs
+	}
+	seed := func(t *testing.T, db *Store) (healthyID string) {
+		t.Helper()
+		ownerA := ipc.WithUserID(context.Background(), "user-a")
+		ownerB := ipc.WithUserID(context.Background(), "user-b")
+		// Owner A: 64 corrupt blocks that can never be indexed, sorting
+		// before every healthy block in (owner, transcript, seq) order.
+		corruptID := ids.New()
+		if err := db.TranscriptStart(ownerA, TranscriptRow{ID: corruptID, SessionID: "sess-a", AssetID: "asset-a", StartedAt: 1000}); err != nil {
+			t.Fatal(err)
+		}
+		for seq := 0; seq < 64; seq++ {
+			if err := db.db.WithContext(context.Background()).Create(&TranscriptChunkRow{
+				TranscriptID: corruptID, Seq: int64(seq), TabID: "tab-a", TS: int64(1000 + seq), Data: []byte("corrupt"), OwnerID: "user-a",
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Owner B: a healthy legacy transcript.
+		healthyID = ids.New()
+		if err := db.TranscriptStart(ownerB, TranscriptRow{ID: healthyID, SessionID: "sess-b", AssetID: "asset-b", StartedAt: 1000}); err != nil {
+			t.Fatal(err)
+		}
+		insertRawTranscriptBlocks(t, db, healthyID, []TranscriptChunkRow{
+			{Seq: 0, TabID: "tab-b", TS: 1000, Data: []byte("b0"), OwnerID: "user-b"},
+			{Seq: 1, TabID: "tab-b", TS: 1001, Data: []byte("b1"), OwnerID: "user-b"},
+		})
+		return healthyID
+	}
+
+	t.Run("kick with the healthy owner serves it before the corrupt window", func(t *testing.T) {
+		db, logs := newBackfillStore(t)
+		healthyID := seed(t, db)
+		db.kickTranscriptTSIndexBackfill("user-b")
+		waitForTranscriptTSIndexComplete(t, db, healthyID)
+		waitForTranscriptBackfillLoop(t, db)
+		text := logs.String()
+		priority := strings.Index(text, "prioritizing the kicked owner")
+		healthy := strings.Index(text, "owners=user-b")
+		corrupt := strings.Index(text, "owners=user-a")
+		if priority < 0 || healthy < 0 || corrupt < 0 {
+			t.Fatalf("backfill logs missing scheduling evidence:\n%s", text)
+		}
+		if !(priority < healthy && healthy < corrupt) {
+			t.Fatalf("the healthy owner was not served first:\n%s", text)
+		}
+	})
+
+	t.Run("kick without an owner serves the corrupt window first without stalling", func(t *testing.T) {
+		db, logs := newBackfillStore(t)
+		healthyID := seed(t, db)
+		db.kickTranscriptTSIndexBackfill("")
+		waitForTranscriptTSIndexComplete(t, db, healthyID)
+		waitForTranscriptBackfillLoop(t, db)
+		text := logs.String()
+		corrupt := strings.Index(text, "owners=user-a")
+		healthy := strings.Index(text, "owners=user-b")
+		if corrupt < 0 || healthy < 0 || corrupt > healthy {
+			t.Fatalf("global order did not serve the corrupt window first or stalled:\n%s", text)
+		}
+	})
 }

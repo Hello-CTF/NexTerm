@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -81,15 +82,16 @@ func decodeTranscriptBlockVerified(stored TranscriptChunkRow) ([]TranscriptChunk
 // up), and an absent state row is created incomplete.
 func (s *Store) transcriptTSIndexStateUpsert(ctx context.Context, tx *gorm.DB, transcriptID string, wasEmpty bool) error {
 	state := &model.TranscriptTSIndex{
-		TranscriptID: transcriptID,
-		Complete:     wasEmpty,
-		UpdatedAt:    ids.NowMS(),
-		OwnerID:      ipc.OwnerID(ctx),
+		TranscriptID:    transcriptID,
+		VerifiedThrough: -1,
+		Complete:        wasEmpty,
+		UpdatedAt:       ids.NowMS(),
+		OwnerID:         ipc.OwnerID(ctx),
 	}
 	if wasEmpty {
 		return tx.WithContext(ctx).Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "transcript_id"}},
-			DoUpdates: clause.AssignmentColumns([]string{"complete", "updated_at", "owner_id"}),
+			DoUpdates: clause.AssignmentColumns([]string{"complete", "updated_at", "owner_id", "verified_through"}),
 		}).Create(state).Error
 	}
 	return tx.WithContext(ctx).Clauses(clause.OnConflict{
@@ -99,18 +101,72 @@ func (s *Store) transcriptTSIndexStateUpsert(ctx context.Context, tx *gorm.DB, t
 }
 
 // transcriptTSIndexStateComplete marks the transcript's timestamp index
-// complete after its content was fully (re)indexed.
+// complete after its content was fully (re)indexed; the verification
+// watermark resets with the content generation, so seeks re-verify the new
+// content lazily instead of trusting rows no seek has checked.
 func (s *Store) transcriptTSIndexStateComplete(ctx context.Context, tx *gorm.DB, transcriptID string) error {
 	state := &model.TranscriptTSIndex{
-		TranscriptID: transcriptID,
-		Complete:     true,
-		UpdatedAt:    ids.NowMS(),
-		OwnerID:      ipc.OwnerID(ctx),
+		TranscriptID:    transcriptID,
+		VerifiedThrough: -1,
+		Complete:        true,
+		UpdatedAt:       ids.NowMS(),
+		OwnerID:         ipc.OwnerID(ctx),
 	}
 	return tx.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "transcript_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"complete", "updated_at", "owner_id"}),
+		DoUpdates: clause.AssignmentColumns([]string{"complete", "updated_at", "owner_id", "verified_through"}),
 	}).Create(state).Error
+}
+
+// transcriptTSIndexVerifiedThrough reads the seek-side verification
+// watermark: blocks with seq <= watermark have had their decoded content
+// verified against their index rows for the current content.
+func (s *Store) transcriptTSIndexVerifiedThrough(ctx context.Context, tx *gorm.DB, transcriptID string) (int64, error) {
+	query := tx.WithContext(ctx).Model(&model.TranscriptTSIndex{}).
+		Select("verified_through").
+		Where("transcript_id = ?", transcriptID)
+	if ownerID := ipc.OwnerID(ctx); ownerID != "" {
+		query = query.Where("owner_id = ?", ownerID)
+	}
+	var verified int64
+	result := query.Scan(&verified)
+	if result.Error != nil {
+		return 0, dbError(result.Error)
+	}
+	return verified, nil
+}
+
+// transcriptTSIndexAdvanceVerified moves the verification watermark forward
+// monotonically: concurrent seeks may verify different ranges, and the
+// watermark never regresses.
+func (s *Store) transcriptTSIndexAdvanceVerified(ctx context.Context, tx *gorm.DB, transcriptID string, verified int64) error {
+	query := tx.WithContext(ctx).Model(&model.TranscriptTSIndex{}).
+		Where("transcript_id = ?", transcriptID).
+		Updates(map[string]any{
+			"verified_through": gorm.Expr("CASE WHEN verified_through < ? THEN ? ELSE verified_through END", verified, verified),
+		})
+	if query.Error != nil {
+		return dbError(query.Error)
+	}
+	return nil
+}
+
+// transcriptContentGen reads the transcript's content generation, the
+// stamp every timestamp-index row must carry to be trusted for the current
+// content.
+func (s *Store) transcriptContentGen(ctx context.Context, tx *gorm.DB, transcriptID string) (int64, error) {
+	var gen int64
+	result := tx.WithContext(ctx).Model(&model.TranscriptRow{}).
+		Select("content_gen").
+		Where("id = ?", transcriptID).
+		Scan(&gen)
+	if result.Error != nil {
+		return 0, dbError(result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return 0, notFound("会话记录")
+	}
+	return gen, nil
 }
 
 // transcriptTSIndexComplete reports whether every stored block of the
@@ -133,11 +189,14 @@ func (s *Store) transcriptTSIndexComplete(ctx context.Context, tx *gorm.DB, tran
 // transcriptIndexedBlockAtLeast returns the seq of the first indexed block
 // whose maximum chunk timestamp reaches atMS; a block whose maximum is
 // below the target provably holds no qualifying chunk under any timestamp
-// order, so this eliminates every earlier block from the seek.
-func (s *Store) transcriptIndexedBlockAtLeast(ctx context.Context, tx *gorm.DB, transcriptID string, atMS int64) (int64, bool, error) {
+// order, so this eliminates every earlier block from the seek. Only rows
+// stamped with the transcript's current content generation are trusted: a
+// row written for an older generation is stale (a replace rebuilt the
+// content) and must never eliminate current content.
+func (s *Store) transcriptIndexedBlockAtLeast(ctx context.Context, tx *gorm.DB, transcriptID string, atMS, gen int64) (int64, bool, error) {
 	query := tx.WithContext(ctx).Model(&model.TranscriptChunkTS{}).
 		Select("block_seq").
-		Where("transcript_id = ? AND max_ts >= ?", transcriptID, atMS).
+		Where("transcript_id = ? AND max_ts >= ? AND gen = ?", transcriptID, atMS, gen).
 		Order("block_seq").
 		Limit(1)
 	if ownerID := ipc.OwnerID(ctx); ownerID != "" {
@@ -155,8 +214,9 @@ func (s *Store) transcriptIndexedBlockAtLeast(ctx context.Context, tx *gorm.DB, 
 }
 
 // transcriptTSIndexBackfillBatch is the block population indexed per
-// backfill batch.
-const transcriptTSIndexBackfillBatch = 64
+// backfill batch; it is a variable so tests can exercise multi-batch
+// scheduling without a multi-million-chunk fixture.
+var transcriptTSIndexBackfillBatch = 64
 
 // transcriptTSIndexBackfillPauses bound the backfill loop's pacing.
 const (
@@ -166,18 +226,25 @@ const (
 )
 
 // transcriptTSIndexBackfillState tracks a store's backfill loop, its
-// per-block failures, and its resumable cursor. Failed blocks are corrupt
+// per-block failures, and its resumable cursors. Failed blocks are corrupt
 // data that can never be indexed; they are skipped with a log so they
 // cannot block other transcripts' progress, and the transcript they belong
 // to stays incomplete so its seeks keep failing explicitly on the corrupt
-// block. The cursor marks the last-processed position so a batch always
+// block. The cursors mark the last-processed positions so a batch always
 // moves forward: corrupt blocks can never fill the selection window and
-// stall the loop.
+// stall the loop. The priority cursor serves the kicking owner's
+// transcripts first; the global cursor then serves every owner in (owner,
+// transcript, seq) order — fair across owners and explainable per batch.
 type transcriptTSIndexBackfillState struct {
 	running atomic.Bool
 	failed  sync.Map // transcriptID/blockSeq -> struct{}{}
 	cursor  struct {
 		ownerID      string
+		transcriptID string
+		seq          int64
+	}
+	priorityOwner  string
+	priorityCursor struct {
 		transcriptID string
 		seq          int64
 	}
@@ -219,9 +286,17 @@ func (s *Store) backfillTranscriptTSIndexLoop(state *transcriptTSIndexBackfillSt
 	defer s.backfillWG.Done()
 	defer state.running.Store(false)
 	defer transcriptTSIndexBackfills.Delete(s)
+	if ownerID != "" {
+		// The scheduling decision is observable, not just documented: the
+		// kicked owner's transcripts are served first so the seek that
+		// started the loop gets its answer without waiting behind every
+		// other owner's backlog.
+		state.priorityOwner = ownerID
+		s.logger.Info("transcript timestamp index backfill prioritizing the kicked owner", "owner", ownerID)
+	}
 	failures := 0
 	for {
-		progressed, err := s.backfillTranscriptTSIndexBatch(state, ownerID)
+		progressed, err := s.backfillTranscriptTSIndexBatch(state)
 		if err != nil {
 			if isDBClosedError(err) || s.backfillCtx.Err() != nil {
 				return
@@ -264,36 +339,87 @@ func isDBClosedError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "database is closed")
 }
 
+// transcriptBackfillBlockRef identifies one unindexed block to backfill.
+type transcriptBackfillBlockRef struct {
+	OwnerID      string `gorm:"column:owner_id"`
+	TranscriptID string `gorm:"column:transcript_id"`
+	Seq          int64  `gorm:"column:seq"`
+}
+
 // backfillTranscriptTSIndexBatch indexes up to
 // transcriptTSIndexBackfillBatch unindexed blocks across transcripts and
-// marks fully covered transcripts complete. Work proceeds in (owner,
-// transcript, seq) order from the state's resumable cursor: corrupt blocks
-// are recorded in the failed set and skipped, but the cursor always moves
-// forward so they can never fill the selection window and stall the loop.
+// marks fully covered transcripts complete. The kicking owner's transcripts
+// are served first through the resumable priority cursor; once the owner is
+// fully indexed the batch falls through to the global (owner, transcript,
+// seq) cursor, which serves every owner in turn — fair across owners, and
+// every batch logs the owner it served so the scheduling is explainable.
 // It is resumable by construction: already-indexed blocks are skipped, so
 // an interruption resumes where it left off.
-func (s *Store) backfillTranscriptTSIndexBatch(state *transcriptTSIndexBackfillState, ownerID string) (bool, error) {
-	type blockRef struct {
-		OwnerID      string `gorm:"column:owner_id"`
-		TranscriptID string `gorm:"column:transcript_id"`
-		Seq          int64  `gorm:"column:seq"`
+func (s *Store) backfillTranscriptTSIndexBatch(state *transcriptTSIndexBackfillState) (bool, error) {
+	if state.priorityOwner != "" {
+		refs, err := s.unindexedTranscriptBlockRefs(state.priorityOwner, "", state.priorityCursor.transcriptID, state.priorityCursor.seq)
+		if err != nil {
+			return false, err
+		}
+		if len(refs) > 0 {
+			return s.indexTranscriptBlockRefs(state, refs, func(last transcriptBackfillBlockRef) {
+				state.priorityCursor.transcriptID = last.TranscriptID
+				state.priorityCursor.seq = last.Seq
+			})
+		}
+		// The priority owner is fully indexed: the global order takes over
+		// in the same batch so the loop keeps making progress.
+		state.priorityOwner = ""
 	}
-	var refs []blockRef
-	err := s.db.WithContext(s.backfillCtx).Model(&model.TranscriptChunkRow{}).
-		Select("transcript_chunk.owner_id AS owner_id, transcript_chunk.transcript_id AS transcript_id, transcript_chunk.seq AS seq").
-		Where("NOT EXISTS (SELECT 1 FROM transcript_chunk_ts idx WHERE idx.transcript_id = transcript_chunk.transcript_id AND idx.block_seq = transcript_chunk.seq)").
-		Where("(transcript_chunk.owner_id, transcript_chunk.transcript_id, transcript_chunk.seq) > (?, ?, ?)", state.cursor.ownerID, state.cursor.transcriptID, state.cursor.seq).
-		Order("transcript_chunk.owner_id, transcript_chunk.transcript_id, transcript_chunk.seq").
-		Limit(transcriptTSIndexBackfillBatch).
-		Scan(&refs).Error
+	refs, err := s.unindexedTranscriptBlockRefs("", state.cursor.ownerID, state.cursor.transcriptID, state.cursor.seq)
 	if err != nil {
-		return false, dbError(err)
+		return false, err
 	}
 	if len(refs) == 0 {
 		return false, nil
 	}
-	indexed := 0
+	return s.indexTranscriptBlockRefs(state, refs, func(last transcriptBackfillBlockRef) {
+		state.cursor.ownerID = last.OwnerID
+		state.cursor.transcriptID = last.TranscriptID
+		state.cursor.seq = last.Seq
+	})
+}
+
+// unindexedTranscriptBlockRefs selects up to transcriptTSIndexBackfillBatch
+// unindexed block refs: within one owner when filterOwner is set (priority
+// pass), across owners in (owner, transcript, seq) order otherwise (global
+// pass). The cursor makes the pass resumable.
+func (s *Store) unindexedTranscriptBlockRefs(filterOwner, cursorOwner, cursorTranscriptID string, cursorSeq int64) ([]transcriptBackfillBlockRef, error) {
+	query := s.db.WithContext(s.backfillCtx).Model(&model.TranscriptChunkRow{}).
+		Select("transcript_chunk.owner_id AS owner_id, transcript_chunk.transcript_id AS transcript_id, transcript_chunk.seq AS seq").
+		Where("NOT EXISTS (SELECT 1 FROM transcript_chunk_ts idx WHERE idx.transcript_id = transcript_chunk.transcript_id AND idx.block_seq = transcript_chunk.seq)").
+		Order("transcript_chunk.owner_id, transcript_chunk.transcript_id, transcript_chunk.seq").
+		Limit(transcriptTSIndexBackfillBatch)
+	if filterOwner != "" {
+		query = query.
+			Where("transcript_chunk.owner_id = ?", filterOwner).
+			Where("(transcript_chunk.transcript_id, transcript_chunk.seq) > (?, ?)", cursorTranscriptID, cursorSeq)
+	} else {
+		query = query.
+			Where("(transcript_chunk.owner_id, transcript_chunk.transcript_id, transcript_chunk.seq) > (?, ?, ?)", cursorOwner, cursorTranscriptID, cursorSeq)
+	}
+	var refs []transcriptBackfillBlockRef
+	if err := query.Scan(&refs).Error; err != nil {
+		return nil, dbError(err)
+	}
+	return refs, nil
+}
+
+// indexTranscriptBlockRefs indexes the selected blocks — stamping each row
+// with the transcript's current content generation so a row written for a
+// replaced content generation is recognizable as stale — and marks fully
+// covered transcripts complete. The cursor advances to the last ref:
+// corrupt blocks are recorded and skipped, but the window always moves
+// forward so they can never fill it and stall the loop.
+func (s *Store) indexTranscriptBlockRefs(state *transcriptTSIndexBackfillState, refs []transcriptBackfillBlockRef, advance func(transcriptBackfillBlockRef)) (bool, error) {
+	gens := make(map[string]int64, len(refs))
 	transcripts := make(map[string]struct{}, len(refs))
+	indexed := 0
 	for _, ref := range refs {
 		key := fmt.Sprintf("%s/%d", ref.TranscriptID, ref.Seq)
 		if _, failed := state.failed.Load(key); failed {
@@ -301,6 +427,12 @@ func (s *Store) backfillTranscriptTSIndexBatch(state *transcriptTSIndexBackfillS
 		}
 		block, err := s.transcriptBlockBySeq(s.backfillCtx, s.db, ref.TranscriptID, ref.Seq)
 		if err != nil {
+			if isNotFoundError(err) {
+				// The block was replaced or deleted after selection: the
+				// replacement rebuilds the index itself, so the ref is
+				// simply stale — skip it instead of failing the batch.
+				continue
+			}
 			return false, err
 		}
 		chunks, err := decodeTranscriptBlockVerified(block)
@@ -312,13 +444,24 @@ func (s *Store) backfillTranscriptTSIndexBatch(state *transcriptTSIndexBackfillS
 			state.failed.Store(key, struct{}{})
 			continue
 		}
+		gen, ok := gens[ref.TranscriptID]
+		if !ok {
+			gen, err = s.transcriptContentGen(s.backfillCtx, s.db, ref.TranscriptID)
+			if err != nil {
+				if isNotFoundError(err) {
+					continue
+				}
+				return false, err
+			}
+			gens[ref.TranscriptID] = gen
+		}
 		maxTS := chunks[0].TS
 		for _, chunk := range chunks[1:] {
 			if chunk.TS > maxTS {
 				maxTS = chunk.TS
 			}
 		}
-		row := &model.TranscriptChunkTS{TranscriptID: ref.TranscriptID, BlockSeq: ref.Seq, MaxTS: maxTS, OwnerID: block.OwnerID}
+		row := &model.TranscriptChunkTS{TranscriptID: ref.TranscriptID, BlockSeq: ref.Seq, MaxTS: maxTS, Gen: gen, OwnerID: block.OwnerID}
 		if err := s.db.WithContext(s.backfillCtx).Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "transcript_id"}, {Name: "block_seq"}},
 			DoNothing: true,
@@ -328,13 +471,8 @@ func (s *Store) backfillTranscriptTSIndexBatch(state *transcriptTSIndexBackfillS
 		indexed++
 		transcripts[ref.TranscriptID] = struct{}{}
 	}
-	// Advance the cursor to the last ref's position: corrupt blocks are
-	// skipped, but the window always moves forward so they can never fill
-	// it and stall the loop.
-	last := refs[len(refs)-1]
-	state.cursor.ownerID = last.OwnerID
-	state.cursor.transcriptID = last.TranscriptID
-	state.cursor.seq = last.Seq
+	advance(refs[len(refs)-1])
+	s.logger.Info("transcript timestamp index backfill batch", "owners", strings.Join(transcriptBackfillRefOwners(refs), ","), "selected", len(refs), "indexed", indexed)
 	for transcriptID := range transcripts {
 		complete, err := s.transcriptTSIndexFullyIndexed(s.backfillCtx, transcriptID)
 		if err != nil {
@@ -346,7 +484,31 @@ func (s *Store) backfillTranscriptTSIndexBatch(state *transcriptTSIndexBackfillS
 			}
 		}
 	}
-	return len(refs) > 0, nil
+	return true, nil
+}
+
+// isNotFoundError reports whether the error is the store's not-found
+// verdict, so the backfill can skip a block or transcript that was
+// replaced or deleted after selection instead of failing the batch.
+func isNotFoundError(err error) bool {
+	var appErr *ipc.Error
+	return errors.As(err, &appErr) && appErr.Code == ipc.CodeNotFound
+}
+
+// transcriptBackfillRefOwners lists the distinct owners of a batch's refs
+// in first-seen order, so each batch log names exactly the owners the
+// scheduling decision served.
+func transcriptBackfillRefOwners(refs []transcriptBackfillBlockRef) []string {
+	owners := make([]string, 0, 1)
+	seen := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		if _, ok := seen[ref.OwnerID]; ok {
+			continue
+		}
+		seen[ref.OwnerID] = struct{}{}
+		owners = append(owners, ref.OwnerID)
+	}
+	return owners
 }
 
 // transcriptTSIndexFullyIndexed reports whether the transcript has no
@@ -374,10 +536,11 @@ func (s *Store) transcriptTSIndexMarkComplete(ctx context.Context, transcriptID 
 		return dbError(err)
 	}
 	state := &model.TranscriptTSIndex{
-		TranscriptID: transcriptID,
-		Complete:     true,
-		UpdatedAt:    ids.NowMS(),
-		OwnerID:      ownerID,
+		TranscriptID:    transcriptID,
+		VerifiedThrough: -1,
+		Complete:        true,
+		UpdatedAt:       ids.NowMS(),
+		OwnerID:         ownerID,
 	}
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "transcript_id"}},

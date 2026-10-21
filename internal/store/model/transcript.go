@@ -14,7 +14,13 @@ type TranscriptRow struct {
 	Truncated      bool   `gorm:"column:truncated;not null;default:0" json:"truncated"`
 	SyncOptIn      bool   `gorm:"column:sync_opt_in;not null;default:0" json:"syncOptIn"`
 	ContentOmitted bool   `gorm:"column:content_omitted;not null;default:0" json:"contentOmitted"`
-	OwnerID        string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_transcript_owner" json:"owner_id"`
+	// ContentGen is the transcript's content generation: it bumps on every
+	// whole-content replacement (sync apply, replace) so timestamp-index
+	// rows written for an older content generation are recognizable as
+	// stale and never trusted for the current content. Appends do not bump
+	// it: existing blocks are unchanged by an append.
+	ContentGen int64  `gorm:"column:content_gen;not null;default:0" json:"contentGen"`
+	OwnerID    string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_transcript_owner" json:"owner_id"`
 }
 
 func (TranscriptRow) TableName() string { return "transcript" }
@@ -41,11 +47,17 @@ func (TranscriptChunkRow) TableName() string { return "transcript_chunk" }
 // written. Rows are maintained by every chunk write path and backfilled
 // for pre-index transcripts in resumable batches.
 type TranscriptChunkTS struct {
-	TranscriptID string        `gorm:"column:transcript_id;primaryKey;index:idx_transcript_chunk_ts_max,priority:1" json:"transcriptId"`
-	BlockSeq     int64         `gorm:"column:block_seq;primaryKey;index:idx_transcript_chunk_ts_max,priority:3" json:"blockSeq"`
-	MaxTS        int64         `gorm:"column:max_ts;not null;index:idx_transcript_chunk_ts_max,priority:2" json:"maxTs"`
-	OwnerID      string        `gorm:"size:191;column:owner_id;not null;default:'';index:idx_transcript_chunk_ts_owner" json:"owner_id"`
-	Transcript   TranscriptRow `gorm:"foreignKey:TranscriptID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
+	TranscriptID string `gorm:"column:transcript_id;primaryKey;index:idx_transcript_chunk_ts_max,priority:1" json:"transcriptId"`
+	BlockSeq     int64  `gorm:"column:block_seq;primaryKey;index:idx_transcript_chunk_ts_max,priority:3" json:"blockSeq"`
+	MaxTS        int64  `gorm:"column:max_ts;not null;index:idx_transcript_chunk_ts_max,priority:2" json:"maxTs"`
+	// Gen is the content generation of the transcript the row was computed
+	// from: rows stamped with an older generation are stale (a replace
+	// rebuilt the content and the index) and every index read filters them
+	// out, so a backfill insert racing a replace can never be mistaken for
+	// the current index.
+	Gen        int64         `gorm:"column:gen;not null;default:0" json:"gen"`
+	OwnerID    string        `gorm:"size:191;column:owner_id;not null;default:'';index:idx_transcript_chunk_ts_owner" json:"owner_id"`
+	Transcript TranscriptRow `gorm:"foreignKey:TranscriptID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
 func (TranscriptChunkTS) TableName() string { return "transcript_chunk_ts" }
@@ -54,14 +66,20 @@ func (TranscriptChunkTS) TableName() string { return "transcript_chunk_ts" }
 // Complete reports every stored block has an index row, so the seek can
 // trust the index alone; until then the seek eliminates candidates from
 // the indexed prefix and scans the remaining suffix soundly while the
-// backfill advances in bounded batches.
+// backfill advances in bounded batches. VerifiedThrough is the seek-side
+// verification watermark: every block with seq <= VerifiedThrough has had
+// its decoded content verified against its index row for the current
+// content, so a seek whose candidate lies beyond it only verifies the
+// newly reached blocks — bounded and resumable across calls, never an
+// unbounded prefix scan. A whole-content replacement resets the watermark
+// in the same transaction.
 type TranscriptTSIndex struct {
-	TranscriptID   string        `gorm:"column:transcript_id;primaryKey" json:"transcriptId"`
-	IndexedThrough int64         `gorm:"column:indexed_through;not null;default:0" json:"indexedThrough"`
-	Complete       bool          `gorm:"column:complete;not null;default:0" json:"complete"`
-	UpdatedAt      int64         `gorm:"column:updated_at;not null" json:"updatedAt"`
-	OwnerID        string        `gorm:"size:191;column:owner_id;not null;default:'';index:idx_transcript_ts_index_owner" json:"owner_id"`
-	Transcript     TranscriptRow `gorm:"foreignKey:TranscriptID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
+	TranscriptID    string        `gorm:"column:transcript_id;primaryKey" json:"transcriptId"`
+	VerifiedThrough int64         `gorm:"column:verified_through;not null;default:0" json:"verifiedThrough"`
+	Complete        bool          `gorm:"column:complete;not null;default:0" json:"complete"`
+	UpdatedAt       int64         `gorm:"column:updated_at;not null" json:"updatedAt"`
+	OwnerID         string        `gorm:"size:191;column:owner_id;not null;default:'';index:idx_transcript_ts_index_owner" json:"owner_id"`
+	Transcript      TranscriptRow `gorm:"foreignKey:TranscriptID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
 func (TranscriptTSIndex) TableName() string { return "transcript_ts_index" }

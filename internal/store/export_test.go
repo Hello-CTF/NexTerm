@@ -18,3 +18,11 @@ func TranscriptSeekScanBudgetForTest() int { return transcriptSeekScanBudget }
 
 // SetTranscriptSeekScanBudgetForTest sets the scan budget.
 func SetTranscriptSeekScanBudgetForTest(budget int) { transcriptSeekScanBudget = budget }
+
+// TranscriptBackfillLoopRunningForTest reports whether the store's backfill
+// loop is still registered: the loop deletes its registration only as it
+// exits, so a false return means every batch has been processed.
+func (s *Store) TranscriptBackfillLoopRunningForTest() bool {
+	_, running := transcriptTSIndexBackfills.Load(s)
+	return running
+}

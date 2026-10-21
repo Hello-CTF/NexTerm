@@ -132,8 +132,12 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 				return err
 			}
 		}
+		gen, err := s.transcriptContentGen(ctx, tx, transcriptID)
+		if err != nil {
+			return err
+		}
 		for _, indexRow := range transcriptBlockMaxTimestamps(chunks) {
-			row := &model.TranscriptChunkTS{TranscriptID: transcriptID, BlockSeq: indexRow.blockSeq, MaxTS: indexRow.maxTS, OwnerID: ipc.OwnerID(ctx)}
+			row := &model.TranscriptChunkTS{TranscriptID: transcriptID, BlockSeq: indexRow.blockSeq, MaxTS: indexRow.maxTS, Gen: gen, OwnerID: ipc.OwnerID(ctx)}
 			if err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "transcript_id"}, {Name: "block_seq"}},
 				DoNothing: true,
@@ -144,10 +148,10 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 		if err := s.transcriptTSIndexStateUpsert(ctx, tx, transcriptID, wasEmpty); err != nil {
 			return err
 		}
-		transcript := queries.TranscriptRow
-		if _, err := transcript.WithContext(ctx).
-			Where(transcript.ID.Eq(transcriptID)).
-			Where(ownerConditions(ctx, transcript.TableName())...).
+		transcriptQuery := queries.TranscriptRow
+		if _, err := transcriptQuery.WithContext(ctx).
+			Where(transcriptQuery.ID.Eq(transcriptID)).
+			Where(ownerConditions(ctx, transcriptQuery.TableName())...).
 			UpdateColumns(map[string]any{
 				"bytes":        gorm.Expr("bytes + ?", totalBytes),
 				"stored_bytes": gorm.Expr("stored_bytes + ?", totalStoredBytes),
@@ -445,7 +449,7 @@ func (s *Store) TranscriptReplaceContent(ctx context.Context, transcriptID strin
 		info, err := transcript.WithContext(ctx).
 			Where(transcript.ID.Eq(transcriptID), transcript.ContentOmitted.Is(true)).
 			Where(ownerConditions(ctx, transcript.TableName())...).
-			UpdateColumns(map[string]any{"bytes": bytes, "stored_bytes": storedBytes, "chunks": chunks, "truncated": truncated, "content_omitted": false})
+			UpdateColumns(map[string]any{"bytes": bytes, "stored_bytes": storedBytes, "chunks": chunks, "truncated": truncated, "content_omitted": false, "content_gen": gorm.Expr("content_gen + 1")})
 		if err != nil {
 			return err
 		}
@@ -467,14 +471,22 @@ func (s *Store) TranscriptReplaceContent(ctx context.Context, transcriptID strin
 			}
 		}
 		// The replacement is the transcript's whole content: rebuild its
-		// timestamp index from the same chunks and mark it complete.
+		// timestamp index from the same chunks and mark it complete. The
+		// generation bump above invalidates every row written for the old
+		// content — including a backfill insert that raced this replace and
+		// landed after the delete below: it carries the old generation and
+		// is never read for the current content.
 		if err := tx.WithContext(ctx).
 			Where("transcript_id = ?", transcriptID).
 			Delete(&model.TranscriptChunkTS{}).Error; err != nil {
 			return err
 		}
+		gen, err := s.transcriptContentGen(ctx, tx, transcriptID)
+		if err != nil {
+			return err
+		}
 		for _, indexRow := range transcriptBlockMaxTimestamps(content) {
-			row := &model.TranscriptChunkTS{TranscriptID: transcriptID, BlockSeq: indexRow.blockSeq, MaxTS: indexRow.maxTS, OwnerID: ipc.OwnerID(ctx)}
+			row := &model.TranscriptChunkTS{TranscriptID: transcriptID, BlockSeq: indexRow.blockSeq, MaxTS: indexRow.maxTS, Gen: gen, OwnerID: ipc.OwnerID(ctx)}
 			if err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "transcript_id"}, {Name: "block_seq"}},
 				DoNothing: true,
@@ -594,6 +606,7 @@ func (s *Store) TranscriptInsertSynced(ctx context.Context, row TranscriptRow, c
 				"chunks":          row.Chunks,
 				"truncated":       row.Truncated,
 				"content_omitted": row.ContentOmitted,
+				"content_gen":     gorm.Expr("content_gen + 1"),
 				"owner_id":        ipc.OwnerID(ctx),
 			}); err != nil {
 			return err
@@ -639,14 +652,22 @@ func (s *Store) TranscriptInsertSynced(ctx context.Context, row TranscriptRow, c
 			}
 		}
 		// The synced content is the transcript's whole content: rebuild its
-		// timestamp index from the same chunks and mark it complete.
+		// timestamp index from the same chunks and mark it complete. The
+		// generation bump above invalidates every row written for the old
+		// content — including a backfill insert that raced this apply and
+		// landed after the delete below: it carries the old generation and
+		// is never read for the current content.
 		if err := tx.WithContext(ctx).
 			Where("transcript_id = ?", row.ID).
 			Delete(&model.TranscriptChunkTS{}).Error; err != nil {
 			return err
 		}
+		gen, err := s.transcriptContentGen(ctx, tx, row.ID)
+		if err != nil {
+			return err
+		}
 		for _, indexRow := range transcriptBlockMaxTimestamps(chunks) {
-			index := &model.TranscriptChunkTS{TranscriptID: row.ID, BlockSeq: indexRow.blockSeq, MaxTS: indexRow.maxTS, OwnerID: ipc.OwnerID(ctx)}
+			index := &model.TranscriptChunkTS{TranscriptID: row.ID, BlockSeq: indexRow.blockSeq, MaxTS: indexRow.maxTS, Gen: gen, OwnerID: ipc.OwnerID(ctx)}
 			if err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "transcript_id"}, {Name: "block_seq"}},
 				DoNothing: true,
