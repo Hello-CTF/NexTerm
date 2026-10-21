@@ -27,8 +27,10 @@ type RosterAttachmentDTO struct {
 }
 
 // rosterAssetResolver is the optional probe capability behind asset evidence.
+// The caller's saved incarnation is passed through so a stale identity fails
+// closed instead of resolving whatever the handle now points at.
 type rosterAssetResolver interface {
-	ResolveRosterAsset(ctx context.Context, handle string) (string, error)
+	ResolveRosterAsset(ctx context.Context, handle, incarnation string) (string, error)
 }
 
 // RegisterRosterCommands registers the roster IPC surface backed by the
@@ -53,7 +55,7 @@ func (r *Runner) RegisterRosterCommands(dispatcher *ipc.Dispatcher) error {
 					listed = append(listed, RosterListEntry{
 						Entry:    entry,
 						Presence: r.rosterPresence(ctx, entry),
-						AssetID:  r.rosterAssetEvidence(ctx, entry.Handle),
+						AssetID:  r.rosterAssetEvidence(ctx, entry.Handle, entry.Incarnation),
 					})
 				}
 				return listed, nil
@@ -78,7 +80,7 @@ func (r *Runner) RegisterRosterCommands(dispatcher *ipc.Dispatcher) error {
 					Entry:              attachment.Entry,
 					Resolution:         attachment.Resolution,
 					CurrentIncarnation: attachment.CurrentIncarnation,
-					AssetID:            r.rosterAssetEvidence(ctx, args.Handle),
+					AssetID:            r.rosterAssetEvidence(ctx, args.Handle, attachment.Entry.Incarnation),
 				}, nil
 			})
 		},
@@ -154,14 +156,15 @@ func (r *Runner) rosterPresence(ctx context.Context, entry RosterEntry) RosterRe
 }
 
 // rosterAssetEvidence resolves the real target asset through the probe's
-// optional resolver; an unresolvable runtime stays unknown ("") instead of
-// substituting a client-claimed identity.
-func (r *Runner) rosterAssetEvidence(ctx context.Context, handle string) string {
+// optional resolver, bound to the caller's saved incarnation; an unresolvable
+// runtime or a stale identity stays unknown ("") instead of substituting a
+// client-claimed identity.
+func (r *Runner) rosterAssetEvidence(ctx context.Context, handle, incarnation string) string {
 	resolver, ok := r.config.Roster.Probe().(rosterAssetResolver)
 	if !ok {
 		return ""
 	}
-	assetID, err := resolver.ResolveRosterAsset(ctx, handle)
+	assetID, err := resolver.ResolveRosterAsset(ctx, handle, incarnation)
 	if err != nil {
 		return ""
 	}

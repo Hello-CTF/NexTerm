@@ -97,7 +97,7 @@ func TestSessionRosterProbeResolvesConnectedRuntimeAndAsset(t *testing.T) {
 	if err != nil || status.Kind != RosterRuntimeConnected {
 		t.Fatalf("probe status = %+v err=%v", status, err)
 	}
-	assetID, err := probe.ResolveRosterAsset(ctx, "handle-a")
+	assetID, err := probe.ResolveRosterAsset(ctx, "handle-a", entry.Incarnation)
 	if err != nil || assetID != "asset-1" {
 		t.Fatalf("resolved asset = %q err=%v", assetID, err)
 	}
@@ -140,7 +140,7 @@ func TestSessionRosterProbeClassifiesDisconnectedSession(t *testing.T) {
 		t.Fatalf("probe status = %+v err=%v", status, err)
 	}
 	// A disconnected runtime still carries its real asset identity.
-	assetID, err := probe.ResolveRosterAsset(ctx, "handle-b")
+	assetID, err := probe.ResolveRosterAsset(ctx, "handle-b", entry.Incarnation)
 	if err != nil || assetID != "asset-2" {
 		t.Fatalf("resolved asset = %q err=%v", assetID, err)
 	}
@@ -231,6 +231,45 @@ func TestSessionRosterProbeClassifiesExitedTabBeforeConnected(t *testing.T) {
 	})
 }
 
+// A stale incarnation never resolves: the caller's saved identity must match
+// the row's current incarnation, and a mismatch fails closed instead of
+// answering from whatever runtime the handle now points at.
+func TestSessionRosterProbeFailsClosedOnStaleIncarnation(t *testing.T) {
+	database, manager := newRosterProbeFixture(t)
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	tab, err := manager.RegisterRemoteSession(ctx, session.RemoteSessionOptions{OwnerID: "owner-a", AssetID: "asset-1", Title: "agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	roster := NewRoster(database, NewSessionRosterProbe(database, manager))
+	entry, err := roster.Provision(ctx, "conv-1", "handle-a", "", tab.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The row moves on underneath the caller: the saved identity is stale.
+	if _, err := database.AgentRosterUpdate(ctx, entry.ID, store.AgentRosterIdentity{CreatedAt: entry.CreatedAt, Incarnation: entry.Incarnation}, map[string]any{"incarnation": "incarnation-2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	probe := NewSessionRosterProbe(database, manager)
+	status, err := probe.ProbeRosterRuntime(ctx, "handle-a", entry.Incarnation)
+	if err != nil || status.Kind != RosterRuntimeUnverifiable {
+		t.Fatalf("stale probe status = %+v err=%v, want fail-closed unverifiable", status, err)
+	}
+	if assetID, err := probe.ResolveRosterAsset(ctx, "handle-a", entry.Incarnation); err == nil {
+		t.Fatalf("stale incarnation resolved the asset %q", assetID)
+	}
+
+	// The row's current identity still resolves honestly.
+	status, err = probe.ProbeRosterRuntime(ctx, "handle-a", "incarnation-2")
+	if err != nil || status.Kind != RosterRuntimeConnected {
+		t.Fatalf("current probe status = %+v err=%v", status, err)
+	}
+	if assetID, err := probe.ResolveRosterAsset(ctx, "handle-a", "incarnation-2"); err != nil || assetID != "asset-1" {
+		t.Fatalf("current incarnation resolved %q err=%v", assetID, err)
+	}
+}
+
 func TestSessionRosterProbeFailsClosedToUnverifiable(t *testing.T) {
 	database, manager := newRosterProbeFixture(t)
 	ctx := ipc.WithUserID(context.Background(), "owner-a")
@@ -268,7 +307,7 @@ func TestSessionRosterProbeFailsClosedToUnverifiable(t *testing.T) {
 		}
 	}
 	// Cross-owner resolution never leaks the real asset identity.
-	if assetID, err := probe.ResolveRosterAsset(other, "handle-a"); err == nil && assetID != "" {
+	if assetID, err := probe.ResolveRosterAsset(other, "handle-a", ""); err == nil && assetID != "" {
 		t.Fatalf("foreign owner resolved asset %q", assetID)
 	}
 }
