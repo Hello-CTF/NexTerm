@@ -192,7 +192,7 @@ export function ComposeEditor({
           command={`保存 ${production.pending.change.path} 并执行 docker compose up -d`}
           typedPhrase="production"
           onCancel={cancelPending}
-          onConfirm={() => void finish(production.pending, dockerConfirmation(production.challenge))}
+          onConfirm={(environmentNames) => void finish(production.pending, dockerConfirmation(production.challenge, environmentNames))}
         />
       )}
     </>,

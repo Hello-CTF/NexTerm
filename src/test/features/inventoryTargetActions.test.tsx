@@ -177,6 +177,48 @@ describe("inventory target actions", () => {
     await waitFor(() => expect(m.container.textContent).toContain("ok"));
   });
 
+  it("retries the M15 typed challenge with the typed environment names and a fresh operationId", async () => {
+    mocks.call.mockRejectedValueOnce({
+      code: "needs_confirm",
+      detail: {
+        kind: "docker_production_confirmation",
+        targetSetHash: "a".repeat(64),
+        commandHash: "b".repeat(64),
+        requiredEnvironmentNames: ["production"],
+        productionTargets: [{ sessionId: "s1", sessionName: "production", environment: "production" }],
+      },
+    }).mockResolvedValueOnce({ output: "ok\n", exitCode: 0 });
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "uname -a");
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+
+    const input = document.body.querySelector<HTMLInputElement>('input[aria-label="输入环境名 production"]');
+    if (!input) throw new Error("typed environment input not found");
+    const confirm = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.includes("确认执行"),
+    );
+    expect(confirm?.disabled).toBe(true);
+    setInputValue(input, "production");
+    expect(confirm?.disabled).toBe(false);
+    act(() => confirm!.click());
+    await flush();
+
+    expect(mocks.call).toHaveBeenCalledTimes(2);
+    const retry = mocks.call.mock.calls[1][1].args;
+    expect(retry.confirmation).toEqual({
+      confirmed: true,
+      targetSetHash: "a".repeat(64),
+      commandHash: "b".repeat(64),
+      environmentNames: ["production"],
+    });
+    expect(retry.command).toEqual(["uname", "-a"]);
+    expect(retry.container).toBe("web");
+    expect(retry.operationId).not.toBe(mocks.call.mock.calls[0][1].args.operationId);
+    await waitFor(() => expect(m.container.textContent).toContain("ok"));
+  });
+
   it("cancels the production confirmation without retrying", async () => {
     mocks.call.mockRejectedValueOnce(challenge());
     const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));

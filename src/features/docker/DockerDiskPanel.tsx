@@ -239,10 +239,10 @@ export function DockerDiskPanel({ sessionId, visible }: { sessionId: string; vis
           command={`docker prune · ${production.preview.items.length} 项 · ${formatDockerBytes(production.preview.totalBytes)}`}
           typedPhrase="production"
           onCancel={() => setProduction(null)}
-          onConfirm={() => {
+          onConfirm={(environmentNames) => {
             const current = production;
             setProduction(null);
-            void execute(current.preview, dockerConfirmation(current.challenge));
+            void execute(current.preview, dockerConfirmation(current.challenge, environmentNames));
           }}
         />
       )}

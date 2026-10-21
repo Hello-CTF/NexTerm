@@ -2,11 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createExecBatchId,
   execBatchApi,
-  getExecBatchConfirmationChallenge,
-  type ExecBatchConfirmationChallenge,
   type ExecBatchRequest,
   type ExecBatchResult,
 } from "../../ipc/execBatchApi";
+import { getProductionChallenge, type ExecBatchProductionChallenge } from "../production/productionChallenge";
 import { describeError } from "../../ui/errorText";
 import { IconPlay, IconStop } from "../../ui/icons";
 import { ProductionConfirmationDialog } from "./ProductionConfirmationDialog";
@@ -68,7 +67,7 @@ export function DriftComparePanel({
   const [analysis, setAnalysis] = useState<DriftAnalysis | null>(null);
   const [production, setProduction] = useState<{
     request: ExecBatchRequest;
-    challenge: ExecBatchConfirmationChallenge;
+    challenge: ExecBatchProductionChallenge;
   } | null>(null);
   const [baselineGroupId, setBaselineGroupId] = useState<string | null>(null);
   const [compareGroupId, setCompareGroupId] = useState<string | null>(null);
@@ -118,7 +117,7 @@ export function DriftComparePanel({
       setBaselineSessionId(null);
     } catch (cause) {
       if (activeRef.current !== request.batchId) return;
-      const challenge = getExecBatchConfirmationChallenge(cause);
+      const challenge = getProductionChallenge(cause, "exec_batch_production_confirmation");
       if (challenge?.batchId === request.batchId) {
         const unconfirmed = { ...request };
         delete unconfirmed.productionConfirmation;
@@ -247,12 +246,13 @@ export function DriftComparePanel({
           contentHash={production.challenge.commandHash}
           command={production.request.command}
           onCancel={() => setProduction(null)}
-          onConfirm={() => void run({
+          onConfirm={(environmentNames) => void run({
             ...production.request,
             productionConfirmation: {
               confirmed: true,
               targetSetHash: production.challenge.targetSetHash,
               commandHash: production.challenge.commandHash,
+              ...(environmentNames ? { environmentNames } : {}),
             },
           })}
         />

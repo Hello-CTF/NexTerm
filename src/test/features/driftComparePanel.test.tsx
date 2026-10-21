@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import type { ExecBatch } from "../../ipc/execBatchApi";
-import { click, clickButton, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flushMacrotask, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({ execute: vi.fn(), cancel: vi.fn(), createId: vi.fn() }));
 
@@ -38,6 +38,15 @@ function result(sessionId: string, stdout: string) {
     durationMs: 1,
     truncated: false,
   };
+}
+
+// The confirm click starts the async retry; keep an act scope open across a
+// macrotask so its state updates land inside act.
+async function clickAndFlush(element: Element): Promise<void> {
+  await act(async () => {
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushMacrotask();
+  });
 }
 
 beforeEach(() => {
@@ -88,5 +97,55 @@ describe("DriftComparePanel", () => {
     expect(mounted.container.textContent).toContain("baseline：host-c");
     expect(diff()).toContain("- different");
     expect(diff()).toContain("+ same");
+  });
+
+  it("retries the M15 typed production challenge with the typed environment names", async () => {
+    const targetSetHash = "a".repeat(64);
+    const commandHash = "b".repeat(64);
+    mocks.execute
+      .mockRejectedValueOnce({
+        code: "needs_confirm",
+        detail: {
+          kind: "exec_batch_production_confirmation",
+          batchId: "drift-batch",
+          targetSetHash,
+          commandHash,
+          requiredEnvironmentNames: ["production"],
+          productionTargets: [{ sessionId: "a", sessionName: "host-a", environment: "production" }],
+        },
+      })
+      .mockResolvedValueOnce({
+        batchId: "drift-batch",
+        command: "cat < '/etc/hostname'",
+        startedAt: 1,
+        finishedAt: 2,
+        results: [result("a", "same\n")],
+      });
+    mounted = mount(createElement(DriftComparePanel, { targets }));
+    click(mounted.container.querySelector('input[type="checkbox"]')!);
+    clickButton(mounted.container, "执行对比");
+    await flushUntil(() => document.body.querySelector('[role="dialog"][aria-label="确认生产环境执行"]') !== null);
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"][aria-label="确认生产环境执行"]')!;
+    const environmentInput = dialog.querySelector<HTMLInputElement>('input[aria-label="输入环境名 host-a"]');
+    if (!environmentInput) throw new Error("typed environment input not found");
+    const confirm = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(
+      (candidate) => candidate.textContent?.trim() === "确认执行（1）",
+    );
+    if (!confirm) throw new Error("confirm button not found");
+    expect(confirm.disabled).toBe(true);
+    setInputValue(environmentInput, "production");
+    expect(confirm.disabled).toBe(false);
+    await clickAndFlush(confirm);
+
+    await flushUntil(() => mocks.execute.mock.calls.length === 2);
+    expect(mocks.execute).toHaveBeenNthCalledWith(2, {
+      batchId: "drift-batch",
+      sessionIds: ["a"],
+      command: "cat < '/etc/hostname'",
+      timeoutMs: 30000,
+      maxConcurrent: 4,
+      productionConfirmation: { confirmed: true, targetSetHash, commandHash, environmentNames: ["production"] },
+    });
   });
 });

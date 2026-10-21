@@ -153,10 +153,10 @@ export function ComposeStackHeader({
           command={production.command}
           typedPhrase="production"
           onCancel={() => setProduction(null)}
-          onConfirm={() => {
+          onConfirm={(environmentNames) => {
             const current = production;
             setProduction(null);
-            void current.retry(dockerConfirmation(current.challenge));
+            void current.retry(dockerConfirmation(current.challenge, environmentNames));
           }}
         />
       )}

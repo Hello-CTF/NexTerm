@@ -7,7 +7,7 @@
 
 import type { EnvironmentConfirmationChallenge } from "./environmentConfirmation";
 
-export type ProductionChallengeKind = "exec_batch_production_confirmation" | "broadcast_production_confirmation";
+export type ProductionChallengeKind = "exec_batch_production_confirmation" | "broadcast_production_confirmation" | "docker_production_confirmation";
 
 export interface ProductionChallengeTarget {
   sessionId: string;
@@ -35,7 +35,12 @@ export interface BroadcastProductionChallenge extends ProductionChallengeBase {
   inputHash: string;
 }
 
-export type ProductionChallenge = ExecBatchProductionChallenge | BroadcastProductionChallenge;
+export interface DockerProductionChallenge extends ProductionChallengeBase {
+  kind: "docker_production_confirmation";
+  commandHash: string;
+}
+
+export type ProductionChallenge = ExecBatchProductionChallenge | BroadcastProductionChallenge | DockerProductionChallenge;
 
 // BroadcastProductionConfirmation in ipc/commands predates the typed-name
 // contract; the extended shape is structurally assignable to it, so the extra
@@ -101,6 +106,10 @@ export function getProductionChallenge(
   cause: unknown,
   kind: "broadcast_production_confirmation",
 ): BroadcastProductionChallenge | null;
+export function getProductionChallenge(
+  cause: unknown,
+  kind: "docker_production_confirmation",
+): DockerProductionChallenge | null;
 export function getProductionChallenge(cause: unknown, kind: ProductionChallengeKind): ProductionChallenge | null {
   if (!isRecord(cause) || cause.code !== "needs_confirm" || !isRecord(cause.detail)) return null;
   const detail = cause.detail;
@@ -116,6 +125,19 @@ export function getProductionChallenge(cause: unknown, kind: ProductionChallenge
     return {
       kind,
       batchId: detail.batchId,
+      targetSetHash: detail.targetSetHash,
+      commandHash: detail.commandHash,
+      ...(requiredEnvironmentNames ? { requiredEnvironmentNames } : {}),
+      productionTargets,
+    };
+  }
+  if (kind === "docker_production_confirmation") {
+    if (!isHash(detail.commandHash)) return null;
+    const productionTargets = parseTargets(detail.productionTargets, false);
+    // The docker surfaces operate on exactly one target per challenge.
+    if (!productionTargets || productionTargets.length !== 1) return null;
+    return {
+      kind,
       targetSetHash: detail.targetSetHash,
       commandHash: detail.commandHash,
       ...(requiredEnvironmentNames ? { requiredEnvironmentNames } : {}),

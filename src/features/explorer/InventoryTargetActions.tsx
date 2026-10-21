@@ -481,7 +481,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
           command={production.command}
           typedPhrase="production"
           onCancel={() => setProduction(null)}
-          onConfirm={() => {
+          onConfirm={(environmentNames) => {
             const current = production;
             setProduction(null);
             if (current === null || current.generation !== generationRef.current) return;
@@ -491,7 +491,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
             void launch({
               ...current.snapshot,
               operationId: globalThis.crypto.randomUUID(),
-              confirmation: dockerConfirmation(current.challenge),
+              confirmation: dockerConfirmation(current.challenge, environmentNames),
             });
           }}
         />
