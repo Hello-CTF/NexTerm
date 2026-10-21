@@ -56,12 +56,12 @@ func (TranscriptChunkTS) TableName() string { return "transcript_chunk_ts" }
 // the indexed prefix and scans the remaining suffix soundly while the
 // backfill advances in bounded batches.
 type TranscriptTSIndex struct {
-	TranscriptID string        `gorm:"column:transcript_id;primaryKey" json:"transcriptId"`
-	IndexedThrough int64       `gorm:"column:indexed_through;not null;default:0" json:"indexedThrough"`
-	Complete     bool          `gorm:"column:complete;not null;default:0" json:"complete"`
-	UpdatedAt    int64         `gorm:"column:updated_at;not null" json:"updatedAt"`
-	OwnerID      string        `gorm:"size:191;column:owner_id;not null;default:'';index:idx_transcript_ts_index_owner" json:"owner_id"`
-	Transcript   TranscriptRow `gorm:"foreignKey:TranscriptID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
+	TranscriptID   string        `gorm:"column:transcript_id;primaryKey" json:"transcriptId"`
+	IndexedThrough int64         `gorm:"column:indexed_through;not null;default:0" json:"indexedThrough"`
+	Complete       bool          `gorm:"column:complete;not null;default:0" json:"complete"`
+	UpdatedAt      int64         `gorm:"column:updated_at;not null" json:"updatedAt"`
+	OwnerID        string        `gorm:"size:191;column:owner_id;not null;default:'';index:idx_transcript_ts_index_owner" json:"owner_id"`
+	Transcript     TranscriptRow `gorm:"foreignKey:TranscriptID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
 func (TranscriptTSIndex) TableName() string { return "transcript_ts_index" }

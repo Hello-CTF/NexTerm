@@ -12,16 +12,17 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store/model"
-	"github.com/Hello-CTF/NexTerm/internal/store/query"
-	"gorm.io/gen/field"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-// The timestamp-index models are registered here rather than in
-// internal/store/model/models.go so the store package owns its index schema
-// without touching the shared model registry; the registration is consumed
-// by the same startup AutoMigrate.
+// The timestamp-index models are registered here as a TEMPORARY bridge so
+// the store package can ship and test the index before the unified model
+// registry and generated queries land: internal/store/model/models.go and
+// internal/store/query are owned by the coordinated generation effort, and
+// this init bypass must be removed once the models are registered there
+// and the queries are regenerated through the project command. It is not
+// the final registration.
 func init() {
 	model.AllModels = append(model.AllModels, model.TranscriptChunkTS{}, model.TranscriptTSIndex{})
 }
@@ -164,47 +165,79 @@ const (
 	transcriptTSIndexBackfillMaxFailures = 8
 )
 
+// transcriptTSIndexBackfillState tracks a store's backfill loop and its
+// per-block failures. Failed blocks are corrupt data that can never be
+// indexed; they are skipped with a log so they cannot block other
+// transcripts' progress, and the transcript they belong to stays
+// incomplete so its seeks keep failing explicitly on the corrupt block.
+type transcriptTSIndexBackfillState struct {
+	running atomic.Bool
+	failed  sync.Map // transcriptID/blockSeq -> struct{}{}
+}
+
 // transcriptTSIndexBackfills tracks the running backfill loop per store so
 // a later seek can restart it after an early exit; the entry is removed
 // when the loop finishes.
-var transcriptTSIndexBackfills sync.Map // *Store -> *atomic.Bool
+var transcriptTSIndexBackfills sync.Map // *Store -> *transcriptTSIndexBackfillState
 
 // kickTranscriptTSIndexBackfill starts the backfill loop when it is not
-// already running.
-func (s *Store) kickTranscriptTSIndexBackfill() {
-	flag, _ := transcriptTSIndexBackfills.LoadOrStore(s, &atomic.Bool{})
-	if flag.(*atomic.Bool).CompareAndSwap(false, true) {
-		go s.backfillTranscriptTSIndexLoop(flag.(*atomic.Bool))
+// already running, prioritizing the given owner's transcripts.
+func (s *Store) kickTranscriptTSIndexBackfill(ownerID string) {
+	state, _ := transcriptTSIndexBackfills.LoadOrStore(s, &transcriptTSIndexBackfillState{})
+	if state.(*transcriptTSIndexBackfillState).running.CompareAndSwap(false, true) {
+		s.backfillWG.Add(1)
+		go s.backfillTranscriptTSIndexLoop(state.(*transcriptTSIndexBackfillState), ownerID)
 	}
 }
 
 // backfillTranscriptTSIndexLoop indexes unindexed blocks in bounded batches
 // until none remain, the store closes, or failures persist. It runs in the
 // background so a legacy transcript's distant seek only pays the index
-// query while the index is complete and only scans the unindexed remainder
-// until the backfill catches up — never an unbounded scan per seek.
-func (s *Store) backfillTranscriptTSIndexLoop(running *atomic.Bool) {
+// query while the index is complete and only scans a bounded pass while
+// the backfill catches up — never an unbounded scan per seek.
+func (s *Store) backfillTranscriptTSIndexLoop(state *transcriptTSIndexBackfillState, ownerID string) {
+	// Delete the registration before clearing the flag so a new loop
+	// cannot reuse a flag the old loop is about to clear, and a second
+	// loop cannot start unregistered.
 	defer transcriptTSIndexBackfills.Delete(s)
-	defer running.Store(false)
+	defer state.running.Store(false)
+	defer s.backfillWG.Done()
 	failures := 0
 	for {
-		progressed, err := s.backfillTranscriptTSIndexBatch(context.Background())
+		progressed, err := s.backfillTranscriptTSIndexBatch(state, ownerID)
 		if err != nil {
-			if isDBClosedError(err) {
+			if isDBClosedError(err) || s.backfillCtx.Err() != nil {
 				return
 			}
 			failures++
 			if failures >= transcriptTSIndexBackfillMaxFailures {
 				return
 			}
-			time.Sleep(transcriptTSIndexBackfillErrorPause)
+			if !s.backfillSleep(transcriptTSIndexBackfillErrorPause) {
+				return
+			}
 			continue
 		}
 		failures = 0
 		if !progressed {
 			return
 		}
-		time.Sleep(transcriptTSIndexBackfillBatchPause)
+		if !s.backfillSleep(transcriptTSIndexBackfillBatchPause) {
+			return
+		}
+	}
+}
+
+// backfillSleep waits for the pause and reports whether the store is still
+// open; a closed store ends the loop instead of parking it.
+func (s *Store) backfillSleep(pause time.Duration) bool {
+	timer := time.NewTimer(pause)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-s.backfillCtx.Done():
+		return false
 	}
 }
 
@@ -215,37 +248,47 @@ func isDBClosedError(err error) bool {
 }
 
 // backfillTranscriptTSIndexBatch indexes up to
-// transcriptTSIndexBackfillBatch unindexed blocks across transcripts in
-// (transcript, seq) order and marks fully covered transcripts complete. It
-// is resumable by construction: already-indexed blocks are skipped, so an
-// interruption resumes where it left off.
-func (s *Store) backfillTranscriptTSIndexBatch(ctx context.Context) (bool, error) {
+// transcriptTSIndexBackfillBatch unindexed blocks across transcripts and
+// marks fully covered transcripts complete. The seeking owner's transcripts
+// go first, then the rest in (owner, transcript, seq) order, so every
+// batch's work is attributable. It is resumable by construction:
+// already-indexed blocks are skipped, so an interruption resumes where it
+// left off; corrupt blocks are recorded in the failed set and skipped so
+// they cannot block the loop.
+func (s *Store) backfillTranscriptTSIndexBatch(state *transcriptTSIndexBackfillState, ownerID string) (bool, error) {
 	type blockRef struct {
 		TranscriptID string `gorm:"column:transcript_id"`
 		Seq          int64  `gorm:"column:seq"`
 	}
 	var refs []blockRef
-	err := s.db.WithContext(ctx).Model(&model.TranscriptChunkRow{}).
+	err := s.db.WithContext(s.backfillCtx).Model(&model.TranscriptChunkRow{}).
 		Select("transcript_chunk.transcript_id AS transcript_id, transcript_chunk.seq AS seq").
 		Where("NOT EXISTS (SELECT 1 FROM transcript_chunk_ts idx WHERE idx.transcript_id = transcript_chunk.transcript_id AND idx.block_seq = transcript_chunk.seq)").
-		Order("transcript_chunk.transcript_id, transcript_chunk.seq").
+		Order(gorm.Expr("CASE WHEN transcript_chunk.owner_id = ? THEN 0 ELSE 1 END, transcript_chunk.owner_id, transcript_chunk.transcript_id, transcript_chunk.seq", ownerID)).
 		Limit(transcriptTSIndexBackfillBatch).
 		Scan(&refs).Error
 	if err != nil {
 		return false, dbError(err)
 	}
-	if len(refs) == 0 {
-		return false, nil
-	}
+	indexed := 0
 	transcripts := make(map[string]struct{}, len(refs))
 	for _, ref := range refs {
-		block, err := s.transcriptBlockBySeq(context.WithoutCancel(ctx), ref.TranscriptID, ref.Seq)
+		key := fmt.Sprintf("%s/%d", ref.TranscriptID, ref.Seq)
+		if _, failed := state.failed.Load(key); failed {
+			continue
+		}
+		block, err := s.transcriptBlockBySeq(s.backfillCtx, ref.TranscriptID, ref.Seq)
 		if err != nil {
 			return false, err
 		}
 		chunks, err := decodeTranscriptBlockVerified(block)
 		if err != nil {
-			return false, err
+			// A persistently corrupt block must not stall the loop: record
+			// it and move on; its transcript stays incomplete so its seeks
+			// keep failing explicitly on the corrupt block.
+			s.logger.Warn("transcript timestamp index backfill skipped a corrupt block", "transcript", ref.TranscriptID, "block", ref.Seq, "error", err)
+			state.failed.Store(key, struct{}{})
+			continue
 		}
 		maxTS := chunks[0].TS
 		for _, chunk := range chunks[1:] {
@@ -254,26 +297,27 @@ func (s *Store) backfillTranscriptTSIndexBatch(ctx context.Context) (bool, error
 			}
 		}
 		row := &model.TranscriptChunkTS{TranscriptID: ref.TranscriptID, BlockSeq: ref.Seq, MaxTS: maxTS, OwnerID: block.OwnerID}
-		if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		if err := s.db.WithContext(s.backfillCtx).Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "transcript_id"}, {Name: "block_seq"}},
 			DoNothing: true,
 		}).Create(row).Error; err != nil {
 			return false, dbError(err)
 		}
+		indexed++
 		transcripts[ref.TranscriptID] = struct{}{}
 	}
 	for transcriptID := range transcripts {
-		complete, err := s.transcriptTSIndexFullyIndexed(ctx, transcriptID)
+		complete, err := s.transcriptTSIndexFullyIndexed(s.backfillCtx, transcriptID)
 		if err != nil {
 			return false, err
 		}
 		if complete {
-			if err := s.transcriptTSIndexMarkComplete(ctx, transcriptID); err != nil {
+			if err := s.transcriptTSIndexMarkComplete(s.backfillCtx, transcriptID); err != nil {
 				return false, err
 			}
 		}
 	}
-	return true, nil
+	return indexed > 0, nil
 }
 
 // transcriptTSIndexFullyIndexed reports whether the transcript has no
@@ -310,39 +354,4 @@ func (s *Store) transcriptTSIndexMarkComplete(ctx context.Context, transcriptID 
 		Columns:   []clause.Column{{Name: "transcript_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"complete", "updated_at", "owner_id"}),
 	}).Create(state).Error
-}
-
-// scanUnindexedChunksAtLeast returns the first chunk with TS >= atMS among
-// blocks that have no timestamp-index row yet, in seq order — the sound
-// remainder scan while the backfill is catching up.
-func (s *Store) scanUnindexedChunksAtLeast(ctx context.Context, transcriptID string, atMS int64) (int64, bool, error) {
-	chunk := query.Use(s.db).TranscriptChunkRow
-	blocks := chunk.WithContext(ctx).
-		Where(chunk.TranscriptID.Eq(transcriptID)).
-		Where(ownerConditions(ctx, chunk.TableName())...).
-		Where(field.NewUnsafeFieldRaw("NOT EXISTS (SELECT 1 FROM transcript_chunk_ts idx WHERE idx.transcript_id = transcript_chunk.transcript_id AND idx.block_seq = transcript_chunk.seq)"))
-	rows, err := blocks.Order(chunk.Seq).Rows()
-	if err != nil {
-		return 0, false, dbError(err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var stored TranscriptChunkRow
-		if err := s.db.ScanRows(rows, &stored); err != nil {
-			return 0, false, dbError(err)
-		}
-		chunks, err := decodeTranscriptBlockVerified(stored)
-		if err != nil {
-			return 0, false, err
-		}
-		for _, row := range chunks {
-			if row.TS >= atMS {
-				return row.Seq, true, nil
-			}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return 0, false, dbError(err)
-	}
-	return 0, false, nil
 }

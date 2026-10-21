@@ -33,6 +33,12 @@ type Store struct {
 	retention       retentionState
 	aiHistoryShared atomic.Bool
 
+	// backfillCtx is cancelled on Close to stop background work (the
+	// timestamp-index backfill loop); backfillWG lets Close join it.
+	backfillCtx    context.Context
+	backfillCancel context.CancelFunc
+	backfillWG     sync.WaitGroup
+
 	protectorMu sync.RWMutex
 	protector   SecretProtector
 }
@@ -136,7 +142,8 @@ func newStore(db *gorm.DB, logger *slog.Logger) *Store {
 	}
 	_ = db.Callback().Create().Before("gorm:create").Register("nexterm:conflict_conditions", preserveConflictConditions)
 	sqlDB, _ := db.DB()
-	s := &Store{db: db, sqlDB: sqlDB, logger: logger, backend: BackendSQLite}
+	backfillCtx, backfillCancel := context.WithCancel(context.Background())
+	s := &Store{db: db, sqlDB: sqlDB, logger: logger, backend: BackendSQLite, backfillCtx: backfillCtx, backfillCancel: backfillCancel}
 	s.aiHistoryShared.Store(true)
 	return s
 }
@@ -221,6 +228,9 @@ func (s *Store) Close() error {
 		_ = s.keepAlive.Close()
 		s.keepAlive = nil
 	}
+	// Cancel background work first, join it, then close the handle.
+	s.backfillCancel()
+	s.backfillWG.Wait()
 	return s.sqlDB.Close()
 }
 

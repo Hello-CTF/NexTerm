@@ -2,9 +2,14 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"math"
 	"slices"
+	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store/model"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
 )
 
@@ -182,14 +187,13 @@ func (s *Store) TranscriptPageAfter(ctx context.Context, transcriptID string, af
 // TranscriptSeekToTimePage reads the page starting at the first chunk with
 // TS >= atMS; a time past the last chunk yields the final (tail) page, and
 // duplicate timestamps resolve to the first chunk of the group — the same
-// semantics as the reference model's SeekToTime. The distant seek is
-// bounded and correct under any timestamp order: the per-block timestamp
-// index eliminates every block whose maximum timestamp is below the target
-// (such a block provably holds no qualifying chunk), and the first block
-// reaching the target is decoded for the exact chunk. While a legacy
-// transcript's index is still backfilling, the unindexed remainder is
-// scanned soundly in seq order; the backfill advances in the background so
-// the remainder disappears instead of rescanning on every seek.
+// semantics as the reference model's SeekToTime. With a complete index the
+// seek is a bounded candidate query plus one verified decode. While a
+// legacy transcript's index is still being built, the seek runs one
+// snapshot-consistent bounded pass over the blocks in seq order, decoding
+// only blocks the index cannot eliminate, and reports an explicit pending
+// state when the pass cannot reach the answer — never an unbounded scan
+// and never a wrong page.
 func (s *Store) TranscriptSeekToTimePage(ctx context.Context, transcriptID string, atMS int64, maxBytes int) (TranscriptPage, error) {
 	if _, err := s.TranscriptGet(ctx, transcriptID); err != nil {
 		return TranscriptPage{}, err
@@ -205,51 +209,274 @@ func (s *Store) TranscriptSeekToTimePage(ctx context.Context, transcriptID strin
 	if err != nil {
 		return TranscriptPage{}, err
 	}
-	if !complete {
-		s.kickTranscriptTSIndexBackfill()
+	if complete {
+		seq, found, err := s.seekIndexedAtLeast(ctx, transcriptID, atMS)
+		if err != nil {
+			return TranscriptPage{}, err
+		}
+		if !found {
+			return s.TranscriptFirstScreenPage(ctx, transcriptID, maxBytes)
+		}
+		return s.TranscriptPageAfter(ctx, transcriptID, seq, maxBytes)
 	}
-	answerSeq, answerFound, err := s.transcriptIndexedBlockAtLeast(ctx, transcriptID, atMS)
+	s.kickTranscriptTSIndexBackfill(ipc.OwnerID(ctx))
+	seq, found, pending, err := s.scanBlocksAtLeast(ctx, transcriptID, atMS, transcriptSeekScanBudget)
 	if err != nil {
 		return TranscriptPage{}, err
 	}
-	if answerFound {
-		answerSeq, answerFound, err = s.firstChunkAtLeastInBlock(ctx, transcriptID, answerSeq, atMS)
-		if err != nil {
-			return TranscriptPage{}, err
-		}
+	if pending {
+		return TranscriptPage{}, ErrTranscriptSeekIndexing
 	}
-	if !complete {
-		suffixSeq, suffixFound, err := s.scanUnindexedChunksAtLeast(ctx, transcriptID, atMS)
-		if err != nil {
-			return TranscriptPage{}, err
-		}
-		if suffixFound && (!answerFound || suffixSeq < answerSeq) {
-			answerSeq, answerFound = suffixSeq, true
-		}
-	}
-	if !answerFound {
+	if !found {
 		return s.TranscriptFirstScreenPage(ctx, transcriptID, maxBytes)
 	}
-	return s.TranscriptPageAfter(ctx, transcriptID, answerSeq, maxBytes)
+	return s.TranscriptPageAfter(ctx, transcriptID, seq, maxBytes)
 }
 
-// firstChunkAtLeastInBlock decodes the candidate block and returns the seq
-// of its first chunk with TS >= atMS.
-func (s *Store) firstChunkAtLeastInBlock(ctx context.Context, transcriptID string, blockSeq, atMS int64) (int64, bool, error) {
+// transcriptSeekScanBudget bounds the block rows one incomplete-index pass
+// decodes before it reports the explicit pending state.
+const transcriptSeekScanBudget = 8192
+
+// ErrTranscriptSeekIndexing reports that the transcript's timestamp index
+// is still being built and the bounded pass could not reach the answer in
+// this pass; the caller retries once the backfill advances. It is an
+// explicit, visible state — never an error page and never a silent
+// unsupported answer.
+var ErrTranscriptSeekIndexing = ipc.NewError(ipc.Code("transcript_indexing"), "transcript timestamp index is still building; retry shortly")
+
+// transcriptIndexCorruptError reports that a stored block's content does
+// not match its timestamp-index row: the index cannot be trusted for this
+// transcript and the seek fails explicitly instead of answering from a
+// wrong page.
+func transcriptIndexCorruptError(transcriptID string, blockSeq int64) error {
+	return ipc.NewError(ipc.Code("transcript_corrupt"), fmt.Sprintf("transcript timestamp index does not match the stored content at block %d", blockSeq))
+}
+
+// seekIndexedAtLeast is the complete-index fast path: the candidate query
+// picks the first block whose maximum timestamp reaches at, and the
+// verified decode returns its first qualifying chunk. The elimination
+// boundary — the block immediately before the candidate — is verified too:
+// a lowered index value there would silently hide a real match, so a
+// stable mismatch is reported as corruption, never a later page. A
+// concurrent replace/sync in flight keeps the index row changing, so the
+// seek retries until the row stabilizes or the deadline passes; a stable
+// but wrong index row is corruption by construction and fails explicitly,
+// never a silent tail page.
+func (s *Store) seekIndexedAtLeast(ctx context.Context, transcriptID string, atMS int64) (int64, bool, error) {
+	deadline := time.Now().Add(transcriptSeekReplaceDeadline)
+	for attempt := 0; ; attempt++ {
+		blockSeq, found, err := s.transcriptIndexedBlockAtLeast(ctx, transcriptID, atMS)
+		if err != nil {
+			return 0, false, err
+		}
+		if !found {
+			return 0, false, nil
+		}
+		if err := s.verifyEliminationBoundary(ctx, transcriptID, blockSeq, atMS); err != nil {
+			return 0, false, err
+		}
+		seq, match, retry, err := s.verifiedFirstChunkAtLeast(ctx, transcriptID, blockSeq, atMS)
+		if err != nil {
+			return 0, false, err
+		}
+		if match {
+			return seq, true, nil
+		}
+		if !retry || time.Now().After(deadline) {
+			return 0, false, transcriptIndexCorruptError(transcriptID, blockSeq)
+		}
+	}
+}
+
+// transcriptSeekReplaceDeadline bounds how long a seek retries while a
+// concurrent replace keeps the index row changing.
+const transcriptSeekReplaceDeadline = 2 * time.Second
+
+// verifyEliminationBoundary decodes the block immediately before the
+// candidate and checks its true maximum timestamp against its index row:
+// a lowered index value there would silently hide a real match, so a
+// stable mismatch — or a true maximum reaching the target — is reported
+// as corruption instead of a later page. A changing index row means a
+// concurrent replace just landed: the candidate's own versioned check
+// decides, so the boundary check stands down.
+func (s *Store) verifyEliminationBoundary(ctx context.Context, transcriptID string, candidateSeq, atMS int64) error {
+	boundary, _, found, err := s.transcriptBlockBefore(ctx, transcriptID, candidateSeq)
+	if err != nil || !found {
+		return err
+	}
+	indexedTS1, indexed1, err := s.transcriptIndexedBlockTS(ctx, transcriptID, boundary)
+	if err != nil {
+		return err
+	}
+	chunks, err := s.verifiedBlockChunks(ctx, transcriptID, boundary)
+	if err != nil {
+		return err
+	}
+	maxTS := chunks[0].TS
+	for _, chunk := range chunks[1:] {
+		if chunk.TS > maxTS {
+			maxTS = chunk.TS
+		}
+	}
+	indexedTS2, indexed2, err := s.transcriptIndexedBlockTS(ctx, transcriptID, boundary)
+	if err != nil {
+		return err
+	}
+	if indexed1 != indexed2 || indexedTS1 != indexedTS2 {
+		return nil
+	}
+	if indexed1 && indexedTS1 != maxTS {
+		return transcriptIndexCorruptError(transcriptID, boundary)
+	}
+	if maxTS >= atMS {
+		return transcriptIndexCorruptError(transcriptID, boundary)
+	}
+	return nil
+}
+
+// verifiedBlockChunks decodes one stored block with verification.
+func (s *Store) verifiedBlockChunks(ctx context.Context, transcriptID string, blockSeq int64) ([]TranscriptChunkRow, error) {
 	block, err := s.transcriptBlockBySeq(ctx, transcriptID, blockSeq)
 	if err != nil {
-		return 0, false, err
+		return nil, err
+	}
+	return decodeTranscriptBlockVerified(block)
+}
+
+// verifiedFirstChunkAtLeast decodes the candidate block and returns its
+// first qualifying chunk. The block's true maximum timestamp is checked
+// against the index row read before and after the decode: a stable but
+// wrong row is corruption by construction and fails explicitly; a
+// changing row means a concurrent replace just landed and the caller
+// retries. A vanished block is likewise a retry, never a wrong page.
+func (s *Store) verifiedFirstChunkAtLeast(ctx context.Context, transcriptID string, blockSeq, atMS int64) (seq int64, match, retry bool, err error) {
+	indexedTS1, indexed1, err := s.transcriptIndexedBlockTS(ctx, transcriptID, blockSeq)
+	if err != nil {
+		return 0, false, false, err
+	}
+	block, err := s.transcriptBlockBySeq(ctx, transcriptID, blockSeq)
+	if err != nil {
+		return 0, false, true, nil
 	}
 	chunks, err := decodeTranscriptBlockVerified(block)
 	if err != nil {
-		return 0, false, err
+		return 0, false, false, err
+	}
+	maxTS := chunks[0].TS
+	for _, chunk := range chunks[1:] {
+		if chunk.TS > maxTS {
+			maxTS = chunk.TS
+		}
+	}
+	indexedTS2, indexed2, err := s.transcriptIndexedBlockTS(ctx, transcriptID, blockSeq)
+	if err != nil {
+		return 0, false, false, err
+	}
+	if indexed1 != indexed2 || indexedTS1 != indexedTS2 {
+		return 0, false, true, nil
+	}
+	if indexed1 && indexedTS1 != maxTS {
+		return 0, false, false, transcriptIndexCorruptError(transcriptID, blockSeq)
 	}
 	for _, row := range chunks {
 		if row.TS >= atMS {
-			return row.Seq, true, nil
+			return row.Seq, true, false, nil
 		}
 	}
-	return 0, false, nil
+	return 0, false, false, nil
+}
+
+// transcriptIndexedBlockTS reads one index row's maximum timestamp for the
+// corruption check.
+func (s *Store) transcriptIndexedBlockTS(ctx context.Context, transcriptID string, blockSeq int64) (int64, bool, error) {
+	query := s.db.WithContext(ctx).Model(&model.TranscriptChunkTS{}).
+		Select("max_ts").
+		Where("transcript_id = ? AND block_seq = ?", transcriptID, blockSeq)
+	if ownerID := ipc.OwnerID(ctx); ownerID != "" {
+		query = query.Where("owner_id = ?", ownerID)
+	}
+	var maxTS int64
+	result := query.Scan(&maxTS)
+	if result.Error != nil {
+		return 0, false, dbError(result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return 0, false, nil
+	}
+	return maxTS, true, nil
+}
+
+// scanBlocksAtLeast runs one snapshot-consistent bounded pass over the
+// transcript's blocks in seq order: every block is either eliminated by a
+// valid index row (its maximum timestamp is below the target, which no
+// content change can outgrow) or decoded and checked. The pass is bounded
+// by a block-row budget; exhausting it with the index still incomplete
+// reports pending so the caller retries once the backfill advances.
+func (s *Store) scanBlocksAtLeast(ctx context.Context, transcriptID string, atMS int64, budget int) (int64, bool, bool, error) {
+	query := s.db.WithContext(ctx).Model(&model.TranscriptChunkRow{}).
+		Select("transcript_chunk.*, idx.max_ts AS indexed_max_ts").
+		Joins("LEFT JOIN transcript_chunk_ts idx ON idx.transcript_id = transcript_chunk.transcript_id AND idx.block_seq = transcript_chunk.seq").
+		Where("transcript_chunk.transcript_id = ?", transcriptID).
+		Order("transcript_chunk.seq")
+	if ownerID := ipc.OwnerID(ctx); ownerID != "" {
+		query = query.Where("transcript_chunk.owner_id = ?", ownerID)
+	}
+	rows, err := query.Rows()
+	if err != nil {
+		return 0, false, false, dbError(err)
+	}
+	defer rows.Close()
+	scanned := 0
+	for rows.Next() {
+		scanned++
+		if scanned > budget {
+			return 0, false, true, nil
+		}
+		var stored struct {
+			model.TranscriptChunkRow
+			IndexedMaxTS sql.NullInt64 `gorm:"column:indexed_max_ts"`
+		}
+		if err := s.db.ScanRows(rows, &stored); err != nil {
+			return 0, false, false, dbError(err)
+		}
+		if stored.IndexedMaxTS.Valid && stored.IndexedMaxTS.Int64 < atMS {
+			continue
+		}
+		chunks, err := decodeTranscriptBlockVerified(stored.TranscriptChunkRow)
+		if err != nil {
+			return 0, false, false, err
+		}
+		if stored.IndexedMaxTS.Valid {
+			maxTS := chunks[0].TS
+			for _, chunk := range chunks[1:] {
+				if chunk.TS > maxTS {
+					maxTS = chunk.TS
+				}
+			}
+			if maxTS != stored.IndexedMaxTS.Int64 {
+				// A concurrent replace may have rewritten the block after
+				// the cursor read its index row: re-read the index once and
+				// only call it corruption when the fresh row still
+				// disagrees with the fresh block.
+				fresh, ok, err := s.transcriptIndexedBlockTS(ctx, transcriptID, stored.Seq)
+				if err != nil {
+					return 0, false, false, err
+				}
+				if !ok || fresh != maxTS {
+					return 0, false, false, transcriptIndexCorruptError(transcriptID, stored.Seq)
+				}
+			}
+		}
+		for _, row := range chunks {
+			if row.TS >= atMS {
+				return row.Seq, true, false, nil
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, false, false, dbError(err)
+	}
+	return 0, false, false, nil
 }
 
 // transcriptBlockBoundaries reads the seq of the oldest and newest blocks
@@ -298,6 +525,25 @@ func (s *Store) transcriptBlockAtOrAfter(ctx context.Context, transcriptID strin
 		Where(chunk.TranscriptID.Eq(transcriptID), chunk.Seq.Gte(seq)).
 		Where(ownerConditions(ctx, chunk.TableName())...).
 		Order(chunk.Seq).
+		Take()
+	if isNoRows(err) {
+		return 0, 0, false, nil
+	}
+	if err != nil {
+		return 0, 0, false, dbError(err)
+	}
+	return row.Seq, row.TS, true, nil
+}
+
+// transcriptBlockBefore resolves the newest block with seq < the given
+// seq, reporting the block's seq and its stored timestamp.
+func (s *Store) transcriptBlockBefore(ctx context.Context, transcriptID string, seq int64) (blockSeq, blockTS int64, ok bool, err error) {
+	chunk := query.Use(s.db).TranscriptChunkRow
+	row, err := chunk.WithContext(ctx).
+		Select(chunk.Seq, chunk.TS).
+		Where(chunk.TranscriptID.Eq(transcriptID), chunk.Seq.Lt(seq)).
+		Where(ownerConditions(ctx, chunk.TableName())...).
+		Order(chunk.Seq.Desc()).
 		Take()
 	if isNoRows(err) {
 		return 0, 0, false, nil
