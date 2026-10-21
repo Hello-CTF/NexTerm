@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -56,12 +57,29 @@ func TestStoreBusyTimeoutOptionConfiguresPragma(t *testing.T) {
 	}
 }
 
+// waitForConnInUse blocks until the pool shows a checked-out connection: the
+// contended TranscriptStart is one statement transaction whose BEGIN
+// IMMEDIATE must acquire the write lock the locker holds, so a conn in use
+// means the write is inside the driver busy wait. A condition wait on
+// observable pool state — never a fixed sleep guessing driver progress.
+func waitForConnInUse(t *testing.T, db *sql.DB) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if db.Stats().InUse > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("the contended write never entered the driver")
+}
+
 // Documents the modernc busy-handler limitation M91 proved and this change
 // designs around rather than fixes: once a statement enters the busy wait,
 // cancelling its context does not interrupt it, and closing the pool neither
-// interrupts it nor joins it — the wait ends only when busy_timeout expires.
-// The fixture keeps that boundary at 2s so the assertions stay fast while the
-// production default remains 30s.
+// interrupts it nor joins it — while the exclusive lock stays held, the wait
+// ends only when busy_timeout expires. The fixture keeps that boundary at 2s
+// so the assertions stay fast while the production default remains 30s.
 func TestStoreSQLiteBusyWaitOutlivesCancelAndClose(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "data.db")
@@ -97,11 +115,11 @@ func TestStoreSQLiteBusyWaitOutlivesCancelAndClose(t *testing.T) {
 	go func() {
 		cancelled <- database.TranscriptStart(cancelCtx, TranscriptRow{SessionID: "busy-cancel", StartedAt: 1})
 	}()
-	time.Sleep(300 * time.Millisecond) // the write is inside the busy wait
+	waitForConnInUse(t, database.DB())
 	cancel()
 	select {
 	case err := <-cancelled:
-		t.Fatalf("ctx cancellation interrupted the busy wait after 300ms: %v", err)
+		t.Fatalf("ctx cancellation interrupted the busy wait: %v", err)
 	case <-time.After(400 * time.Millisecond):
 	}
 	select {
@@ -113,13 +131,15 @@ func TestStoreSQLiteBusyWaitOutlivesCancelAndClose(t *testing.T) {
 		t.Fatal("the busy wait never honoured busy_timeout")
 	}
 
-	// Closing the pool returns without joining the in-flight busy wait, and
-	// the wait still runs to busy_timeout instead of being interrupted.
+	// Closing the pool returns without joining the in-flight busy wait — a
+	// joined Close would return only near the 2s busy expiry, far outside the
+	// 500ms window — and the wait still runs to busy_timeout afterwards
+	// instead of being interrupted.
 	inflight := make(chan error, 1)
 	go func() {
 		inflight <- database.TranscriptStart(ctx, TranscriptRow{SessionID: "busy-close", StartedAt: 2})
 	}()
-	time.Sleep(300 * time.Millisecond) // the write is inside the busy wait
+	waitForConnInUse(t, database.DB())
 	closed := make(chan error, 1)
 	go func() { closed <- database.Close() }()
 	select {
@@ -127,8 +147,13 @@ func TestStoreSQLiteBusyWaitOutlivesCancelAndClose(t *testing.T) {
 		if err != nil {
 			t.Fatalf("close during the busy wait: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(500 * time.Millisecond):
 		t.Fatal("Close joined the in-flight busy wait instead of returning")
+	}
+	select {
+	case err := <-inflight:
+		t.Fatalf("Close interrupted the in-flight busy wait: %v", err)
+	default:
 	}
 	select {
 	case err := <-inflight:

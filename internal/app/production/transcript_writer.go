@@ -243,13 +243,17 @@ func (w *transcriptWriter) Start(ctx context.Context) error {
 // handler cannot be interrupted — the durable write context deliberately
 // outlives the run loop, the busy handler keeps waiting even when the
 // statement context is cancelled, and database/sql Close neither interrupts
-// nor joins in-flight connections. A contended in-flight flush therefore
-// ends only when the store's busy_timeout expires; if that outlasts ctx,
-// Shutdown reports ctx.Err() while the run loop finishes the failed flush
-// and exits, and the unflushed tail stays suppressed either way. Callers
-// that must keep the join deterministic under external lock contention bound
-// the wait below their shutdown budget with store.OpenOptions.BusyTimeout;
-// the 30s production default is unchanged.
+// nor joins in-flight connections. While the external lock stays held, the
+// wait ends only when the store's busy_timeout expires and the flush fails;
+// if the lock clears earlier, the same wait completes and the flush commits.
+// When the failure outlasts ctx, Shutdown reports ctx.Err() while the run
+// loop finishes the failed flush and exits, and the unflushed tail stays
+// suppressed. The bound is per write, not per drain: with the store still
+// open, the drain's later statements (such as TranscriptEnd) may each
+// busy-wait again; after Store.Close they fail fast on the closed pool.
+// Callers that must keep the join deterministic under sustained external
+// lock contention bound the wait below their shutdown budget with
+// store.OpenOptions.BusyTimeout; the 30s production default is unchanged.
 func (w *transcriptWriter) Shutdown(ctx context.Context) error {
 	w.lifecycleMu.Lock()
 	cancel := w.cancel
