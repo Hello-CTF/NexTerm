@@ -26,12 +26,8 @@ type targetSetReferenceRequest struct {
 
 // registerTargetSetCommands wires the per-owner target-set CRUD and picker
 // commands. The owner always comes from the authenticated context, never
-// from the request payload.
-//
-// Registration gap: production.go does not call this yet; the hookup next to
-// registerExecBatchCommands and the ipc:contract manifest regeneration that
-// picks these commands up are handed to the shared owner. Target sets are
-// local-only in this version: nothing here syncs.
+// from the request payload. Target sets are local-only in this version:
+// nothing here syncs.
 func registerTargetSetCommands(dispatcher *ipc.Dispatcher, service *execbatch.TargetSetService) error {
 	if err := ipc.Register(dispatcher, "target_set_list", func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]store.ExecTargetSet, error) {
 		sets, err := service.List(ctx, ipc.OwnerID(ctx))

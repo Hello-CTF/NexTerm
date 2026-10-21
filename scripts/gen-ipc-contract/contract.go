@@ -24,6 +24,7 @@ type scopeSpec struct {
 var contractScopes = []scopeSpec{
 	{name: "host-share", prefixes: []string{"host_share_"}},
 	{name: "exec-batch", prefixes: []string{"exec_batch_"}},
+	{name: "target-set", prefixes: []string{"target_set_"}},
 	{name: "runbook", prefixes: []string{"runbook_"}},
 	{name: "forward-rule", prefixes: []string{"forward_rule_"}},
 	{name: "services", prefixes: []string{"services_"}},

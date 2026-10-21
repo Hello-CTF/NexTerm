@@ -268,6 +268,14 @@ export type ExecBatchRunHistory = {
   batches: ExecBatchHistory[];
 };
 
+export type ExecTargetSet = {
+  id: string;
+  name: string;
+  sessionIds: string[];
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type FSCancelRequest = {
   taskId: string;
   attemptId?: string;
@@ -590,6 +598,21 @@ export type StepState = {
   results: ExecBatchResult[];
   batchIds: string[];
   error?: string;
+};
+
+export type TargetSetCreateRequest = {
+  name: string;
+  sessionIds: string[];
+};
+
+export type TargetSetReferenceRequest = {
+  id: string;
+};
+
+export type TargetSetUpdateRequest = {
+  id: string;
+  name: string;
+  sessionIds: string[];
 };
 
 export type TerminalPauseRequest = {

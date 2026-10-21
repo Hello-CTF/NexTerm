@@ -1335,6 +1335,36 @@
       "channel": false,
       "stream": "none"
     },
+    "target_set_create": {
+      "scope": "target-set",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "target_set_delete": {
+      "scope": "target-set",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "target_set_get": {
+      "scope": "target-set",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "target_set_list": {
+      "scope": "target-set",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "target_set_update": {
+      "scope": "target-set",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "terminal_attach": {
       "nested": false,
       "channel": true,
