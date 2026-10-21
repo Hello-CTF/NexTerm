@@ -706,6 +706,8 @@ function AiChatTab({
   }, [input]);
   const [questionInput, setQuestionInput] = useState("");
   const [submittingCardId, setSubmittingCardId] = useState<string | null>(null);
+  const submittingCardIdRef = useRef(submittingCardId);
+  submittingCardIdRef.current = submittingCardId;
   const [syncNotice, setSyncNotice] = useState<{
     generation: number;
     phase: "syncing" | "synced" | "failed";
@@ -841,6 +843,8 @@ function AiChatTab({
     canConfirm: boolean;
     submittedNames: string[];
   } | null>(null);
+  const productionConfirmRef = useRef(productionConfirm);
+  productionConfirmRef.current = productionConfirm;
   const handleProductionState = useCallback((canConfirm: boolean, submittedNames: string[]) => {
     const cardId = confirmCard?.id;
     if (!cardId) return;
@@ -1454,11 +1458,11 @@ function AiChatTab({
     return () => window.clearInterval(timer);
   }, [activeRun?.generation, activeRun?.jobId, activeRun?.settled]);
 
-  const replayRestoredIfBound = (jobId: string) => {
+  const replayRestoredIfBound = useCallback((jobId: string) => {
     const restored = restoredChannelRef.current;
     if (!restored || restored.jobId !== jobId) return;
     void replayRunEvents(restored.generation, jobId);
-  };
+  }, [replayRunEvents]);
 
   const armExpiryWatch = useCallback((jobId: string) => {
     const restored = restoredChannelRef.current;
@@ -1943,6 +1947,56 @@ function AiChatTab({
     }
   };
 
+  // One formal confirmation path shared by the card buttons and the agent
+  // approval delegate: the busy guard, takeover/restored-channel routing,
+  // failure replay/resync and interaction resolution are never a reduced
+  // copy. Returns whether the decision reached the backend.
+  const submitConfirmCard = useCallback(
+    async (
+      card: ConfirmItem,
+      decision: "allow" | "allow_session" | "allow_persistent" | "deny",
+      environmentNames?: string[],
+    ): Promise<boolean> => {
+      const run = activeRunRef.current;
+      const id = run?.jobId;
+      if (!run || !id) {
+        pushToast("info", "当前任务正在启动，请稍后重试。");
+        return false;
+      }
+      if (submittingCardIdRef.current) return false;
+      setSubmittingCardId(card.id);
+      try {
+        const input = confirmationInput(
+          { jobId: id, callId: card.callId, nonce: card.nonce },
+          decision,
+          environmentNames,
+        );
+        const channel = card.jobId === restoredChannelRef.current?.jobId ? restoredChannelRef.current.channel : undefined;
+        if (run.kind === "takeover") {
+          await aiApi.takeoverConfirm(input);
+        } else if (channel) {
+          await aiApi.confirm(input, channel);
+        } else {
+          await aiApi.confirm(input);
+        }
+      } catch (e) {
+        pushToast("error", `确认失败：${describeError(e)}`);
+        if (run.kind === "chat" && isCurrentAiRun(activeRunRef.current, run.generation)) {
+          void replayHitl(run.generation, id);
+        }
+        replayRestoredIfBound(id);
+        return false;
+      } finally {
+        setSubmittingCardId(null);
+      }
+      if (isCurrentAiRun(activeRunRef.current, run.generation)) {
+        stream.resolveInteraction(run.generation, card.id, card.nonce, CONFIRM_RESOLUTION[decision]);
+      }
+      return true;
+    },
+    [stream, pushToast, replayHitl, replayRestoredIfBound],
+  );
+
   const confirm = async (decision: "allow" | "allow_session" | "allow_persistent" | "deny") => {
     const run = activeRunRef.current;
     const card = confirmCard;
@@ -1958,34 +2012,11 @@ function AiChatTab({
     if (card.requiredEnvironmentNames) {
       if (currentProductionConfirm === null || !currentProductionConfirm.canConfirm) return;
     }
-    setSubmittingCardId(card.id);
-    try {
-      const input = confirmationInput(
-        { jobId: id, callId: card.callId, nonce: card.nonce },
-        decision,
-        card.requiredEnvironmentNames && currentProductionConfirm ? currentProductionConfirm.submittedNames : undefined,
-      );
-      const channel = card.jobId === restoredChannelRef.current?.jobId ? restoredChannelRef.current.channel : undefined;
-      if (run.kind === "takeover") {
-        await aiApi.takeoverConfirm(input);
-      } else if (channel) {
-        await aiApi.confirm(input, channel);
-      } else {
-        await aiApi.confirm(input);
-      }
-    } catch (e) {
-      pushToast("error", `确认失败：${describeError(e)}`);
-      if (run.kind === "chat" && isCurrentAiRun(activeRunRef.current, run.generation)) {
-        void replayHitl(run.generation, id);
-      }
-      replayRestoredIfBound(id);
-      return;
-    } finally {
-      setSubmittingCardId(null);
-    }
-    if (isCurrentAiRun(activeRunRef.current, run.generation)) {
-      stream.resolveInteraction(run.generation, card.id, card.nonce, CONFIRM_RESOLUTION[decision]);
-    }
+    await submitConfirmCard(
+      card,
+      decision,
+      card.requiredEnvironmentNames && currentProductionConfirm ? currentProductionConfirm.submittedNames : undefined,
+    );
   };
 
   const answer = async (option?: string) => {
@@ -2039,21 +2070,24 @@ function AiChatTab({
       if (!run?.jobId || !card || card.requestId !== requestId) {
         throw { code: "conflict", message: "审批请求不存在或已解决，请稍后刷新重试" };
       }
-      const mapped = decision === "approve_once" ? "allow" : decision === "approve_session" ? "allow_session" : "deny";
-      const input = confirmationInput({ jobId: run.jobId, callId: card.callId, nonce: card.nonce }, mapped);
-      const channel = card.jobId === restoredChannelRef.current?.jobId ? restoredChannelRef.current.channel : undefined;
-      if (run.kind === "takeover") {
-        await aiApi.takeoverConfirm(input);
-      } else if (channel) {
-        await aiApi.confirm(input, channel);
-      } else {
-        await aiApi.confirm(input);
+      // The same production challenge gate as the card buttons: only the
+      // user's actual typed names, bound to this exact card, reach the
+      // backend — never an auto-echoed or missing answer.
+      let environmentNames: string[] | undefined;
+      if (card.requiredEnvironmentNames) {
+        const challenge = productionConfirmRef.current;
+        if (!challenge || challenge.cardId !== card.id || !challenge.canConfirm) {
+          throw { code: "conflict", message: "生产环境挑战未完成：请先在确认卡片中输入环境名称" };
+        }
+        environmentNames = challenge.submittedNames;
       }
-      if (isCurrentAiRun(activeRunRef.current, run.generation)) {
-        stream.resolveInteraction(run.generation, card.id, card.nonce, CONFIRM_RESOLUTION[mapped]);
+      const mapped = decision === "approve_once" ? "allow" : decision === "approve_session" ? "allow_session" : "deny";
+      const submitted = await submitConfirmCard(card, mapped, environmentNames);
+      if (!submitted) {
+        throw { code: "internal", message: "审批提交失败，请重试" };
       }
     },
-    [stream],
+    [stream, submitConfirmCard],
   );
   const agentRosterApi = useMemo(
     () =>
@@ -2096,19 +2130,50 @@ function AiChatTab({
       void (async () => {
         try {
           const live = await terminalApi.listLive();
-          let sessionId = live.find((tab) => tab.tabId === tabId)?.sessionId;
+          const liveMatches = live.filter((tab) => tab.tabId === tabId);
+          if (liveMatches.length > 1) {
+            // Fail closed: ambiguous backend ownership never picks arbitrarily.
+            pushToast("error", `句柄 ${entry.handle} 的终端在多个会话中命中，无法安全定位`);
+            return;
+          }
+          let sessionId = liveMatches[0]?.sessionId;
           if (sessionId === undefined) {
-            const durable = await Promise.all(
-              state.sessions.map(async (session) => {
+            // Probe durable tabs only on sessions that can answer (connected,
+            // durable-capable ssh/device), tolerating individual failures so
+            // one broken session never masks another session's hit.
+            const candidates = state.sessions.filter(
+              (session) =>
+                session.status === "connected" && (session.kind === "ssh" || session.kind === "device"),
+            );
+            const probed = await Promise.allSettled(
+              candidates.map(async (session) => {
                 const rows = await terminalApi.listDurable(session.id);
                 return rows.some((row) => row.id === tabId) ? session.id : undefined;
               }),
             );
-            sessionId = durable.find((id) => id !== undefined);
+            const hits = probed
+              .filter((result): result is PromiseFulfilledResult<string | undefined> => result.status === "fulfilled")
+              .map((result) => result.value)
+              .filter((id): id is string => id !== undefined);
+            const failures = probed.length - probed.filter((result) => result.status === "fulfilled").length;
+            if (hits.length > 1) {
+              pushToast("error", `句柄 ${entry.handle} 的终端在多个会话中命中，无法安全定位`);
+              return;
+            }
+            if (hits.length === 0) {
+              pushToast(
+                "error",
+                failures > 0
+                  ? `无法定位句柄 ${entry.handle} 的终端会话：已搜索会话均未命中，另有 ${failures} 个会话搜索失败`
+                  : `无法定位句柄 ${entry.handle} 的终端会话（可能已断开或已退出），请刷新句柄列表`,
+              );
+              return;
+            }
+            sessionId = hits[0];
           }
           const session = state.sessions.find((item) => item.id === sessionId);
           if (!session) {
-            pushToast("error", `无法定位句柄 ${entry.handle} 终端所属会话（可能已断开），请刷新句柄列表`);
+            pushToast("error", `句柄 ${entry.handle} 的终端会话不在当前会话列表中，请刷新句柄列表`);
             return;
           }
           const workspaceId = state.ensureWorkspace({
@@ -2885,13 +2950,19 @@ function AiChatTab({
       )}
 
       {agentOpen && conversationId && agentRosterApi && (
+        // Keyed by conversation: a switch remounts both panels, so the first
+        // committed frame of the new conversation can never show, and the
+        // composer can never mention, the previous conversation's rows —
+        // regardless of how the new conversation's load settles or fails.
         <>
           <AgentRosterPanel
+            key={`roster-${conversationId}`}
             api={agentRosterApi}
             onMention={mentionAgentHandle}
             onOpened={openAgentTerminal}
           />
           <AgentRunHistoryPanel
+            key={`history-${conversationId}`}
             api={agentHistoryApi}
             scope={{ ownerId: agentOwnerId, conversationId }}
           />

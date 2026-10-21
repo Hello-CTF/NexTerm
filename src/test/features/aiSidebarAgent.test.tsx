@@ -6,7 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, clickButton, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
+import { click, clickButton, deferred, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   call: vi.fn(),
@@ -378,5 +378,340 @@ describe("AiSidebar agent production mounting", () => {
       decision: "allow",
     });
     await expect(api.resolveApproval("req-gone", "deny")).rejects.toMatchObject({ code: "conflict" });
+  });
+
+  it("sends the user's typed production environment names through the approval delegate", async () => {
+    await send(view!, "Question A");
+    await flushUntil(() => useUi.getState().aiBusy === true);
+    emit({
+      type: "confirmRequired",
+      id: "call-9",
+      tool: "exec_commands",
+      rendered: "$ systemctl restart nginx",
+      confirmationNonce: "n-9",
+      requestId: "req-9",
+      attempt: 1,
+      requiredEnvironmentNames: ["production"],
+    });
+    await flushUntil(() => textOf(view!).includes("需要你确认"));
+    click(agentButton(view!));
+    await flushUntil(() => view!.container.querySelector('[data-handle="build"]') !== null);
+    await flush();
+    const api = mocks.rosterProps!.api;
+
+    // The challenge is incomplete: the delegate refuses before any backend call.
+    await act(async () => {
+      await expect(api.resolveApproval("req-9", "approve_once")).rejects.toMatchObject({
+        code: "conflict",
+        message: expect.stringContaining("生产环境挑战未完成"),
+      });
+    });
+    expect(mocks.confirm).not.toHaveBeenCalled();
+
+    // The user's actual typed names — and only those — reach the backend.
+    const envInput = view!.container.querySelector<HTMLInputElement>('input[aria-label="输入环境名 production"]');
+    if (!envInput) throw new Error("environment input not found");
+    setInputValue(envInput, "production");
+    await flush();
+    await act(async () => {
+      await api.resolveApproval("req-9", "approve_once");
+    });
+    expect(mocks.confirm).toHaveBeenCalledWith({
+      jobId: "job-1",
+      callId: "call-9",
+      nonce: "n-9",
+      decision: "allow",
+      environmentNames: ["production"],
+    });
+  });
+
+  it("replays HITL state and surfaces the failure when an approval submission fails", async () => {
+    await send(view!, "Question A");
+    await flushUntil(() => useUi.getState().aiBusy === true);
+    emit({
+      type: "confirmRequired",
+      id: "call-9",
+      tool: "exec_commands",
+      rendered: "$ rm -rf /tmp/x",
+      confirmationNonce: "n-9",
+      requestId: "req-9",
+      attempt: 1,
+    });
+    await flushUntil(() => textOf(view!).includes("需要你确认"));
+    click(agentButton(view!));
+    await flushUntil(() => view!.container.querySelector('[data-handle="build"]') !== null);
+    await flush();
+    const api = mocks.rosterProps!.api;
+
+    const hitlCallsBefore = mocks.hitlEvents.mock.calls.length + mocks.hitlSnapshot.mock.calls.length;
+    // The backend still holds the pending request: the replay after a failed
+    // submission re-presents the same card instead of losing it.
+    const interrupt = {
+      id: "req-9",
+      runId: "job-1",
+      checkpointId: "job-1",
+      checkpointHash: "hash-9",
+      targetId: "target-9",
+      callId: "call-9",
+      tool: "exec_commands",
+      kind: "confirm",
+      parameters: {},
+      parameterHash: "phash-9",
+      nonce: "n-9",
+      createdAt: "2026-10-06T10:00:00Z",
+      expiresAt: "2099-10-06T10:05:00Z",
+      attempt: 1,
+      seq: 1,
+    };
+    mocks.hitlSnapshot.mockResolvedValue({
+      runId: "job-1",
+      checkpointId: "job-1",
+      status: "running",
+      attempt: 1,
+      seq: 1,
+      pending: [interrupt],
+    });
+    mocks.hitlEvents.mockResolvedValue([
+      {
+        type: "confirmRequired",
+        id: "call-9",
+        tool: "exec_commands",
+        rendered: "$ rm -rf /tmp/x",
+        confirmationNonce: "n-9",
+        requestId: "req-9",
+        attempt: 1,
+        seq: 1,
+      },
+    ]);
+    mocks.confirm.mockRejectedValueOnce(new Error("backend down"));
+    await act(async () => {
+      await expect(api.resolveApproval("req-9", "approve_once")).rejects.toMatchObject({ code: "internal" });
+    });
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("确认失败"));
+    // The failure replays the HITL state instead of resolving the card away.
+    await flushUntil(
+      () => mocks.hitlEvents.mock.calls.length + mocks.hitlSnapshot.mock.calls.length > hitlCallsBefore,
+    );
+    expect(textOf(view!)).toContain("需要你确认");
+
+    // The pending card survives the failure and a retry reaches the backend.
+    await act(async () => {
+      await api.resolveApproval("req-9", "deny");
+    });
+    expect(mocks.confirm).toHaveBeenLastCalledWith({
+      jobId: "job-1",
+      callId: "call-9",
+      nonce: "n-9",
+      decision: "deny",
+    });
+  });
+
+  function sessionRow(id: string, kind: string, status: string) {
+    return { id, assetId: `asset-${id}`, name: id, kind, status, tabs: [], createdAt: 0 };
+  }
+
+  function durableHit(tabId: string) {
+    return [
+      {
+        id: tabId,
+        incarnation: "inc-tab",
+        createdAt: 1_760_000_000_000,
+        metadataRevision: 0,
+        cols: 80,
+        rows: 24,
+        dead: false,
+        exitCode: null,
+        finishedAt: null,
+      },
+    ];
+  }
+
+  async function openBuildRow() {
+    await send(view!, "Question A");
+    emit({ type: "done", answer: "Answer A" });
+    await flush();
+    click(agentButton(view!));
+    await flushUntil(() => view!.container.querySelector('[data-handle="build"]') !== null);
+    clickButton(view!.container.querySelector('[data-handle="build"]') as HTMLElement, "打开");
+  }
+
+  function openedAgentTab() {
+    return useUi
+      .getState()
+      .workspaces.flatMap((workspace) => workspace.panes.flatMap((pane) => pane.tabs))
+      .find((tab) => tab.tabId === "tab-agent-1");
+  }
+
+  it("opens a durable-only roster terminal probing only connected ssh/device sessions", async () => {
+    act(() => {
+      useUi.setState({
+        sessions: [
+          sessionRow("s-ssh", "ssh", "connected") as never,
+          sessionRow("s-local", "local", "connected") as never,
+          sessionRow("s-down", "ssh", "disconnected") as never,
+        ],
+      });
+    });
+    mocks.listLive.mockResolvedValue([]);
+    mocks.listDurable.mockImplementation((sessionId: string) => {
+      if (sessionId === "s-ssh") return Promise.resolve(durableHit("tab-agent-1"));
+      return Promise.reject(new Error(`must not probe ${sessionId}`));
+    });
+
+    await openBuildRow();
+    await flushUntil(() => openedAgentTab() !== undefined);
+    expect(openedAgentTab()?.sessionId).toBe("s-ssh");
+    expect(mocks.listDurable).toHaveBeenCalledTimes(1);
+    expect(mocks.listDurable).toHaveBeenCalledWith("s-ssh");
+  });
+
+  it("never lets one session's durable failure mask another session's hit", async () => {
+    act(() => {
+      useUi.setState({
+        sessions: [
+          sessionRow("s-broken", "ssh", "connected") as never,
+          sessionRow("s-device", "device", "connected") as never,
+        ],
+      });
+    });
+    mocks.listLive.mockResolvedValue([]);
+    mocks.listDurable.mockImplementation((sessionId: string) => {
+      if (sessionId === "s-broken") return Promise.reject(new Error("session gone"));
+      if (sessionId === "s-device") return Promise.resolve(durableHit("tab-agent-1"));
+      return Promise.reject(new Error(`must not probe ${sessionId}`));
+    });
+
+    await openBuildRow();
+    await flushUntil(() => openedAgentTab() !== undefined);
+    expect(openedAgentTab()?.sessionId).toBe("s-device");
+  });
+
+  it("fails closed when multiple sessions claim the same durable tab", async () => {
+    act(() => {
+      useUi.setState({
+        sessions: [
+          sessionRow("s-a", "ssh", "connected") as never,
+          sessionRow("s-b", "device", "connected") as never,
+        ],
+      });
+    });
+    mocks.listLive.mockResolvedValue([]);
+    mocks.listDurable.mockImplementation(() => Promise.resolve(durableHit("tab-agent-1")));
+
+    await openBuildRow();
+    await flushUntil(() =>
+      mocks.toast.mock.calls.some(
+        (call) => call[0] === "error" && String(call[1]).includes("多个会话"),
+      ),
+    );
+    expect(openedAgentTab()).toBeUndefined();
+  });
+
+  it("reports a diagnosable error when no session hits, including search failures", async () => {
+    act(() => {
+      useUi.setState({
+        sessions: [
+          sessionRow("s-empty", "ssh", "connected") as never,
+          sessionRow("s-broken", "device", "connected") as never,
+        ],
+      });
+    });
+    mocks.listLive.mockResolvedValue([]);
+    mocks.listDurable.mockImplementation((sessionId: string) => {
+      if (sessionId === "s-broken") return Promise.reject(new Error("session gone"));
+      return Promise.resolve([]);
+    });
+
+    await openBuildRow();
+    await flushUntil(() =>
+      mocks.toast.mock.calls.some(
+        (call) => call[0] === "error" && String(call[1]).includes("搜索失败"),
+      ),
+    );
+    expect(openedAgentTab()).toBeUndefined();
+    const message = String(mocks.toast.mock.calls.find((call) => String(call[1]).includes("搜索失败"))?.[1]);
+    expect(message).toContain("未命中");
+  });
+
+  function switchToConversationB(rosterForB: () => Promise<unknown>) {
+    mocks.conversationList.mockResolvedValue([{ id: "conv-b", title: "Conversation B", updatedAt: 0 }]);
+    mocks.call.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "ai_roster_list") {
+        return (args as { conversationId?: string }).conversationId === "conv-b"
+          ? rosterForB()
+          : Promise.resolve([rosterListRow()]);
+      }
+      if (cmd === "ai_run_history") return Promise.resolve({ entries: [], nextCursor: null });
+      if (cmd === "ai_run_recovery_summary") return Promise.resolve(null);
+      if (cmd === "production_settings_get") return Promise.resolve({ productionEnvironments: [] });
+      if (cmd === "ai_watch_list") return Promise.resolve([]);
+      if (cmd === "ai_watch_targets") return Promise.resolve([]);
+      return Promise.reject(new Error(`unexpected call: ${cmd}`));
+    });
+    click(view!.container.querySelector('button[title="历史会话"]')!);
+    return flushUntil(() => textOf(view!).includes("Conversation B")).then(() => {
+      const button = [...view!.container.querySelectorAll("button")].find(
+        (candidate) => candidate.getAttribute("title") === "Conversation B",
+      );
+      if (!button) throw new Error("conversation B entry not found");
+      click(button);
+    });
+  }
+
+  it("never shows or mentions the previous conversation's roster rows while the next one loads", async () => {
+    const bList = deferred<unknown>();
+    await send(view!, "Question A");
+    emit({ type: "done", answer: "Answer A" });
+    await flush();
+    click(agentButton(view!));
+    await flushUntil(() => view!.container.querySelector('[data-handle="build"]') !== null);
+
+    await switchToConversationB(() => bList.promise);
+    await flushUntil(() => view!.container.textContent?.includes("加载句柄列表…") === true);
+    // The first committed frame of conversation B carries none of A's rows,
+    // and no stale row can be mentioned while B is still loading.
+    expect(view!.container.querySelector('[data-handle="build"]')).toBeNull();
+    expect(
+      [...view!.container.querySelectorAll("button")].some(
+        (button) => button.textContent?.trim() === "提及",
+      ),
+    ).toBe(false);
+
+    await act(async () => {
+      bList.resolve([
+        {
+          entry: { ...rosterListRow().entry, id: "row-b", handle: "deploy", tabId: "tab-b" },
+          presence: "connected",
+          assetId: "",
+        },
+      ]);
+    });
+    await flushUntil(() => view!.container.querySelector('[data-handle="deploy"]') !== null);
+    expect(view!.container.querySelector('[data-handle="build"]')).toBeNull();
+  });
+
+  it("shows the load error without resurrecting previous rows when the next conversation fails", async () => {
+    const bList = deferred<unknown>();
+    await send(view!, "Question A");
+    emit({ type: "done", answer: "Answer A" });
+    await flush();
+    click(agentButton(view!));
+    await flushUntil(() => view!.container.querySelector('[data-handle="build"]') !== null);
+
+    await switchToConversationB(() => bList.promise);
+    await flushUntil(() => view!.container.textContent?.includes("加载句柄列表…") === true);
+    expect(view!.container.querySelector('[data-handle="build"]')).toBeNull();
+
+    await act(async () => {
+      bList.reject(new Error("backend down"));
+    });
+    await flushUntil(() => view!.container.textContent?.includes("加载失败") === true);
+    expect(view!.container.querySelector('[data-handle="build"]')).toBeNull();
+    expect(view!.container.querySelector('[data-handle="deploy"]')).toBeNull();
+    expect(
+      [...view!.container.querySelectorAll("button")].some(
+        (button) => button.textContent?.trim() === "提及",
+      ),
+    ).toBe(false);
   });
 });
