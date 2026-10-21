@@ -2,10 +2,13 @@ package store
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
+
+	sqlite "github.com/glebarez/go-sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // The busy-timeout fixture must reach every pooled connection: the default
@@ -57,36 +60,65 @@ func TestStoreBusyTimeoutOptionConfiguresPragma(t *testing.T) {
 	}
 }
 
-// waitForConnInUse blocks until the pool shows a checked-out connection: the
-// contended TranscriptStart is one statement transaction whose BEGIN
-// IMMEDIATE must acquire the write lock the locker holds, so a conn in use
-// means the write is inside the driver busy wait. A condition wait on
-// observable pool state — never a fixed sleep guessing driver progress.
-func waitForConnInUse(t *testing.T, db *sql.DB) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if db.Stats().InUse > 0 {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatal("the contended write never entered the driver")
+// startedCall runs fn in a goroutine that closes started immediately before
+// making the call, so the test can order its own Close right after that
+// handshake. fn's result is the driver's own verdict — the busy handler's
+// terminal error — never a pool metric or a sleep-based guess.
+func startedCall(fn func() error) (started chan struct{}, done chan error) {
+	started = make(chan struct{})
+	done = make(chan error, 1)
+	go func() {
+		close(started)
+		done <- fn()
+	}()
+	return started, done
 }
 
-// Documents the modernc busy-handler limitation M91 proved and this change
-// designs around rather than fixes: once a statement enters the busy wait,
-// cancelling its context does not interrupt it, and closing the pool neither
-// interrupts it nor joins it — while the exclusive lock stays held, the wait
-// ends only when busy_timeout expires. The fixture keeps that boundary at 2s
-// so the assertions stay fast while the production default remains 30s.
+// isInterruptErr reports whether the driver aborted the statement with
+// SQLITE_INTERRUPT — the outcome when sqlite3_interrupt lands before the
+// busy handler engages.
+func isInterruptErr(err error) bool {
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	return sqliteErr.Code()&0xff == sqlite3.SQLITE_INTERRUPT
+}
+
+// Documents the modernc busy-handler contract M91 proved and this change
+// designs around rather than fixes. Every claim is anchored on the driver's
+// own terminal error, which the SQLITE_BUSY handler returns only after
+// busy_timeout expires — no pool metrics, no sleeps as synchronization:
+//
+//   - A contended statement runs the full busy_timeout even when its ctx is
+//     cancelled before the call: the tx begin executes on context.Background
+//     inside glebarez's newTx, and the plain statement path arms the
+//     driver's interruptOnDone watcher, yet the SQLITE_BUSY result comes
+//     back only at expiry in both cases. (An interrupt delivered in the
+//     narrow setup window before the busy handler engages can abort the
+//     statement with SQLITE_INTERRUPT instead — but the production flush
+//     path never delivers one: the durable write ctx is never cancelled.)
+//   - database/sql Close neither interrupts nor joins the wait: Go closes
+//     only free pool connections, a connection pre-acquired from the pool
+//     keeps working across Close, and the contended statement on it still
+//     ends with the busy handler's terminal error.
+//
+// The fixture keeps the boundary at 2s so the assertions stay fast while the
+// production default remains 30s.
 func TestStoreSQLiteBusyWaitOutlivesCancelAndClose(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "data.db")
+	// Both stores migrate before the exclusive lock is taken: opening one
+	// afterwards would busy-wait on its own migration DDL.
 	database, err := OpenWithOptions(ctx, path, OpenOptions{BusyTimeout: 2 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
+	second, err := OpenWithOptions(ctx, path, OpenOptions{BusyTimeout: 2 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = second.Close() })
 	locker, err := Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -107,61 +139,115 @@ func TestStoreSQLiteBusyWaitOutlivesCancelAndClose(t *testing.T) {
 			t.Error(err)
 		}
 	}
-
-	// A contended write keeps waiting past its context's cancellation and
-	// fails only when the 2s busy timeout expires.
-	cancelCtx, cancel := context.WithCancel(ctx)
-	cancelled := make(chan error, 1)
-	go func() {
-		cancelled <- database.TranscriptStart(cancelCtx, TranscriptRow{SessionID: "busy-cancel", StartedAt: 1})
-	}()
-	waitForConnInUse(t, database.DB())
-	cancel()
-	select {
-	case err := <-cancelled:
-		t.Fatalf("ctx cancellation interrupted the busy wait: %v", err)
-	case <-time.After(400 * time.Millisecond):
-	}
-	select {
-	case err := <-cancelled:
+	mustBusy := func(err error, what string) {
+		t.Helper()
 		if !IsBusy(err) {
-			t.Fatalf("busy wait must expire with a busy error, got %v", err)
+			t.Fatalf("%s must end with the driver busy error at busy_timeout, got %v", what, err)
 		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("the busy wait never honoured busy_timeout")
 	}
 
-	// Closing the pool returns without joining the in-flight busy wait — a
-	// joined Close would return only near the 2s busy expiry, far outside the
-	// 500ms window — and the wait still runs to busy_timeout afterwards
-	// instead of being interrupted.
-	inflight := make(chan error, 1)
-	go func() {
-		inflight <- database.TranscriptStart(ctx, TranscriptRow{SessionID: "busy-close", StartedAt: 2})
-	}()
-	waitForConnInUse(t, database.DB())
-	closed := make(chan error, 1)
-	go func() { closed <- database.Close() }()
-	select {
-	case err := <-closed:
+	// The production flush path begins its transaction this way: glebarez's
+	// newTx executes BEGIN IMMEDIATE with context.Background. Even a ctx
+	// cancelled before the call therefore cannot reach the wait, and the
+	// begin runs to busy_timeout.
+	t.Run("pre-cancelled ctx does not interrupt the transaction begin busy wait", func(t *testing.T) {
+		conn, err := database.DB().Conn(ctx)
 		if err != nil {
-			t.Fatalf("close during the busy wait: %v", err)
+			t.Fatal(err)
 		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("Close joined the in-flight busy wait instead of returning")
-	}
-	select {
-	case err := <-inflight:
-		t.Fatalf("Close interrupted the in-flight busy wait: %v", err)
-	default:
-	}
-	select {
-	case err := <-inflight:
-		if !IsBusy(err) {
-			t.Fatalf("Close must not interrupt the busy wait; it must expire busy, got %v", err)
+		t.Cleanup(func() { _ = conn.Close() })
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		_, err = conn.BeginTx(cancelled, nil)
+		mustBusy(err, "the contended begin")
+	})
+
+	// The plain statement path arms the driver's ctx watcher
+	// (interruptOnDone), so a cancelled ctx can abort the statement — but
+	// only when the interrupt lands before the busy handler engages; once
+	// the handler is running, the statement fails at busy_timeout instead
+	// (M91's probes). Which of the two outcomes a single run takes is
+	// decided by interrupt timing inside the driver, so the deterministic
+	// contract pinned here is the union: the statement never commits and it
+	// always ends with one of the two driver error classes.
+	t.Run("cancelled statement either interrupts before engagement or expires busy, never commits", func(t *testing.T) {
+		conn, err := database.DB().Conn(ctx)
+		if err != nil {
+			t.Fatal(err)
 		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("the in-flight busy wait never honoured busy_timeout after Close")
-	}
+		t.Cleanup(func() { _ = conn.Close() })
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		_, err = conn.ExecContext(cancelled, "INSERT INTO transcript (id, session_id, started_at, owner_id) VALUES ('probe-cancel', 'session-probe', 1, '')")
+		if err == nil {
+			t.Fatal("the cancelled contended statement must not commit")
+		}
+		if !IsBusy(err) && !isInterruptErr(err) {
+			t.Fatalf("the cancelled statement must end interrupt-class or busy-class, got %v", err)
+		}
+		t.Logf("cancelled statement ended with %v (boundary outcome is interrupt-timing dependent)", err)
+	})
+
+	// A connection checked out before Close keeps working after it: the
+	// contended statement still runs to busy_timeout — Close neither
+	// prevents nor interrupts the wait.
+	t.Run("close before the wait neither prevents nor interrupts it", func(t *testing.T) {
+		conn, err := second.DB().Conn(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = conn.Close() })
+		if err := second.Close(); err != nil {
+			t.Fatal(err)
+		}
+		_, err = conn.BeginTx(ctx, nil)
+		mustBusy(err, "the busy wait starting after Close")
+	})
+
+	// The wait is already in flight when Close runs (the handshake orders the
+	// driver call before Close; a lost preemption race still yields the busy
+	// verdict below because the pre-acquired conn survives Close). A joined
+	// Close would return only near the 2s busy expiry, far outside the 500ms
+	// window, and the in-flight wait still ends with the busy handler's
+	// terminal error instead of an interrupt.
+	t.Run("close during the wait neither interrupts nor joins it", func(t *testing.T) {
+		conn, err := database.DB().Conn(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = conn.Close() })
+		started, done := startedCall(func() error {
+			_, err := conn.BeginTx(ctx, nil)
+			return err
+		})
+		<-started
+		closed := make(chan error, 1)
+		go func() { closed <- database.Close() }()
+		select {
+		case err := <-closed:
+			if err != nil {
+				t.Fatalf("close during the busy wait: %v", err)
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("Close joined the in-flight busy wait instead of returning")
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("Close interrupted the in-flight busy wait: %v", err)
+		default:
+		}
+		mustBusy(<-done, "the in-flight busy wait")
+	})
+
 	unlock()
+
+	// Whichever boundary outcome the cancelled statement took, it never
+	// committed: the probe row must not exist once the lock is gone.
+	var rows int64
+	if err := locker.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM transcript WHERE id = 'probe-cancel'").Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("the cancelled statement must not commit, found %d rows", rows)
+	}
 }

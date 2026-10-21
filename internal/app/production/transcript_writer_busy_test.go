@@ -16,10 +16,12 @@ import (
 
 // gatedAppendStore blocks one transcript append at the store boundary once
 // armed and records the real results of the append and the session end, so a
-// test can prove a flush is in flight before it contends with Close or
-// Shutdown and assert which driver outcome it actually met — a busy error
-// from the contended driver wait, a pool-close error from a flush that
-// started after Close, or success. Everything else delegates unchanged.
+// test can assert which driver outcome the flush actually met. The busy
+// handler's terminal SQLITE_BUSY is the only engagement evidence the
+// glebarez/modernc stack exposes to Go (there is no busy-handler callback
+// seam without unsafe or new dependencies), so every contention claim below
+// is anchored on that recorded driver result — never on pool metrics or
+// sleeps. Everything else delegates unchanged.
 type gatedAppendStore struct {
 	*store.Store
 	armed   atomic.Bool
@@ -62,6 +64,19 @@ func (s *gatedAppendStore) results() (appendErr error, appendDone bool, endErr e
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.appendErr, s.appendDone, s.endErr, s.endDone
+}
+
+func (s *gatedAppendStore) waitForAppendResult(t *testing.T) error {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if appendErr, appendDone, _, _ := s.results(); appendDone {
+			return appendErr
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("the gated append never returned")
+	return nil
 }
 
 // rootError unwraps an error chain to its leaf so tests can compare error
@@ -152,32 +167,6 @@ func startGatedTailFlush(t *testing.T, writer *transcriptWriter, gated *gatedApp
 	}
 }
 
-// waitForInflightDriverWait blocks until the pool shows a connection checked
-// out continuously for the hold window. The append's pre-flush read returns
-// its connection within milliseconds, so only a statement stuck in the driver
-// busy wait against the locker's exclusive lock can hold a conn this long.
-// A condition wait on observable pool state — never a fixed sleep guessing
-// driver progress.
-func waitForInflightDriverWait(t *testing.T, db *sql.DB) {
-	t.Helper()
-	const sample = 5 * time.Millisecond
-	const holdWindow = 50 * time.Millisecond
-	held := time.Duration(0)
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if db.Stats().InUse > 0 {
-			held += sample
-			if held >= holdWindow {
-				return
-			}
-		} else {
-			held = 0
-		}
-		time.Sleep(sample)
-	}
-	t.Fatal("the tail flush never entered the driver busy wait")
-}
-
 func rollbackLocker(t *testing.T, locker *store.Store, lockConn *sql.Conn) {
 	t.Helper()
 	if _, err := lockConn.ExecContext(context.Background(), "ROLLBACK"); err != nil {
@@ -212,53 +201,18 @@ func assertOnlyPrefixPersisted(t *testing.T, path string) {
 	}
 }
 
-// M91's forced-race diagnostic, made deterministic: the tail flush is
-// provably inside the driver busy wait (the pool holds its connection) when
-// Close and Shutdown run — the captured append result must be the driver's
-// busy error, never a pool-close error, and the post-Close drain must fail
-// fast on the closed pool instead of busy-waiting again. The busy-timeout
-// fixture bounds the uninterruptible wait at 2s, so the 30s shutdown join
-// returns nil — with the 30s production busy_timeout this same interleaving
-// deterministically returned context.DeadlineExceeded. The data outcome is
-// unchanged: the unflushed tail stays suppressed and the durable offset does
-// not advance.
-func TestTranscriptWriterShutdownJoinsInflightFlushPastClose(t *testing.T) {
-	ctx := context.Background()
-	writer, database, gated, path := newInflightFlushFixture(t, 2*time.Second)
-	locker, lockConn := flushPrefixAndLock(t, writer, database, path)
-	startGatedTailFlush(t, writer, gated)
-	close(gated.release)
-	waitForInflightDriverWait(t, database.DB())
-
-	if err := database.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, appendDone, _, _ := gated.results(); appendDone {
-		t.Fatal("the tail flush must still be in flight when Close returns")
-	}
-	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	if err := writer.Shutdown(shutdownCtx); err != nil {
-		t.Fatalf("Shutdown must join the run loop once the bounded busy wait expires: %v", err)
-	}
-	appendErr, appendDone, endErr, endDone := gated.results()
-	if !appendDone || !store.IsBusy(appendErr) {
-		t.Fatalf("the in-flight flush must fail with the driver busy error, got done=%v err=%v", appendDone, appendErr)
-	}
-	if closed := closedPoolRoot(t, database); !endDone || rootError(endErr) != closed {
-		t.Fatalf("the post-Close drain must fail fast on the closed pool, got done=%v err=%v", endDone, endErr)
-	}
-	if stats := writer.statsSnapshot(); stats.flushErrors == 0 {
-		t.Fatal("the contended in-flight flush must surface as a flush error")
-	}
-	rollbackLocker(t, locker, lockConn)
-	assertOnlyPrefixPersisted(t, path)
-}
-
-// The same in-flight interleaving without closing the store first: Shutdown
-// joins after the bounded busy wait, the tail stays suppressed, and the
-// drain's TranscriptEnd busy-waits again and fails busy while the lock is
-// held — the wait bound is per write, not one busy_timeout for the drain.
+// The flush is provably contended while Shutdown runs: the pool stays open,
+// so the gated append has no outcome other than meeting the held lock, and
+// its recorded busy error — the busy handler's terminal event — is only
+// produced after the wait actually engaged. The drain's TranscriptEnd
+// contends and fails busy again while the lock is held, so the wait bound
+// is per write, not one busy_timeout for the drain. Shutdown joins both
+// failures (their results are recorded before the join returns) well inside
+// the 30s budget — with the 30s production busy_timeout this interleaving
+// deterministically returned context.DeadlineExceeded in M91's forced-race
+// diagnostic. Closing the store afterwards, in the production order, is a
+// no-op for the already-finished flush. The data outcome is unchanged: the
+// unflushed tail stays suppressed and the durable offset does not advance.
 func TestTranscriptWriterShutdownJoinsInflightFlushUnderLock(t *testing.T) {
 	ctx := context.Background()
 	writer, database, gated, path := newInflightFlushFixture(t, 2*time.Second)
@@ -266,7 +220,6 @@ func TestTranscriptWriterShutdownJoinsInflightFlushUnderLock(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 	startGatedTailFlush(t, writer, gated)
 	close(gated.release)
-	waitForInflightDriverWait(t, database.DB())
 
 	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -283,69 +236,83 @@ func TestTranscriptWriterShutdownJoinsInflightFlushUnderLock(t *testing.T) {
 	if stats := writer.statsSnapshot(); stats.flushErrors == 0 {
 		t.Fatal("the contended in-flight flush must surface as a flush error")
 	}
+	if err := database.Close(); err != nil {
+		t.Fatalf("closing the store after the joined shutdown: %v", err)
+	}
 	rollbackLocker(t, locker, lockConn)
 	assertOnlyPrefixPersisted(t, path)
 }
 
-// Positive control for the fixture: the tail flush is provably inside the
-// controlled busy wait (the pool holds its connection) before the lock
-// clears, so when the lock clears before the busy timeout the in-flight
-// flush commits and Shutdown drains and ends the transcript — the bounded
-// wait did not weaken the durable flush.
-func TestTranscriptWriterInflightFlushPersistsOnceContentionClears(t *testing.T) {
+// Contention and recovery, proven on driver verdicts alone: the gated tail
+// flush meets the held lock and fails with the busy handler's terminal
+// error — the only engagement evidence this driver stack exposes — which
+// also freezes its durable advance. Once the lock clears, the writer
+// persists the next output, ends the transcript, and the durable offset
+// still covers only flushed bytes. Whether a flush already waiting when the
+// lock clears goes on to commit cannot be asserted from Go on this stack:
+// the busy handler's engagement is not observable before its terminal
+// result without a driver-internal seam that glebarez/modernc do not
+// provide without unsafe or new dependencies (see TestStoreSQLiteBusyWaitOutlivesCancelAndClose).
+func TestTranscriptWriterRecoversAfterContentionClears(t *testing.T) {
 	ctx := context.Background()
-	writer, database, gated, path := newInflightFlushFixture(t, 2*time.Second)
+	writer, database, gated, path := newInflightFlushFixture(t, 600*time.Millisecond)
 	locker, lockConn := flushPrefixAndLock(t, writer, database, path)
 	t.Cleanup(func() { _ = database.Close() })
 	startGatedTailFlush(t, writer, gated)
 	close(gated.release)
-	waitForInflightDriverWait(t, database.DB())
-	rollbackLocker(t, locker, lockConn)
 
+	if appendErr := gated.waitForAppendResult(t); !store.IsBusy(appendErr) {
+		t.Fatalf("the contended tail flush must fail with the driver busy error, got %v", appendErr)
+	}
+	rollbackLocker(t, locker, lockConn)
+	writer.SessionOutput(ctx, "tab-1", "session-inflight", "tab-1", []byte("post-clear-tail\r\n"))
 	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := writer.Shutdown(shutdownCtx); err != nil {
 		t.Fatal(err)
 	}
-	appendErr, appendDone, endErr, endDone := gated.results()
-	if !appendDone || appendErr != nil {
-		t.Fatalf("the in-flight flush must commit once the lock clears, got done=%v err=%v", appendDone, appendErr)
+	if _, _, endErr, endDone := gated.results(); !endDone || endErr != nil {
+		t.Fatalf("the transcript must be ended after the recovery, got done=%v err=%v", endDone, endErr)
 	}
-	if !endDone || endErr != nil {
-		t.Fatalf("the transcript must be ended after the recovered flush, got done=%v err=%v", endDone, endErr)
-	}
+
 	reopened, err := store.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
-	offset, err := reopened.DurableTranscriptOffsetGet(ctx, "tab-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := int64(len("flushed-prefix\r\n") + len("unflushed-tail\r\n")); offset != want {
-		t.Fatalf("offset = %d, want both flushes persisted: %d", offset, want)
-	}
 	rows, err := reopened.TranscriptListByAsset(ctx, "asset-1", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].EndedAt == nil {
-		t.Fatalf("the recovered flush must drain and end the transcript: %+v", rows)
+	if len(rows) != 1 || rows[0].EndedAt == nil || !rows[0].Truncated {
+		t.Fatalf("the recovery must end the transcript and keep the contention failure marked truncated: %+v", rows)
 	}
 	chunks := readTranscriptAll(t, reopened, rows[0].ID)
-	if len(chunks) != 2 || !bytes.Contains(chunks[1].Data, []byte("unflushed-tail")) {
-		t.Fatalf("the in-flight flush must persist once contention clears: %+v", chunks)
+	if len(chunks) != 2 || !bytes.Contains(chunks[0].Data, []byte("flushed-prefix")) || !bytes.Contains(chunks[1].Data, []byte("post-clear-tail")) {
+		t.Fatalf("the recovery must persist the prefix and the post-clear output, got %+v", chunks)
+	}
+	offset, err := reopened.DurableTranscriptOffsetGet(ctx, "tab-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offset != int64(len("flushed-prefix\r\n")) {
+		t.Fatalf("the durable offset must stay frozen at the flushed prefix after the failed flush, got %d", offset)
 	}
 }
 
-// The other race branch, made deterministic and kept as the counterexample
-// guard: the gated tail flush starts only after Close, so it fails at pool
-// checkout with the closed-pool error — never the driver busy error the
-// in-flight variants assert. If those variants' in-flight synchronization
-// were vacuous, their flush would land here and their busy assertion would
-// fail the same way. Shutdown still joins and the data outcome is identical:
-// the tail stays suppressed and the offset does not advance.
+// The closed-pool race branch, made deterministic and kept as the
+// counterexample guard: the gated tail flush starts only after Close, so it
+// fails at pool checkout with the closed-pool error — never the driver busy
+// error the held-lock variant asserts. The remaining interleaving — the
+// production flush already inside the driver's busy wait at the exact
+// Close instant — has no Go-level deterministic seam on this stack: the
+// pool checkout that must precede Close is not observable without driver
+// internals, and faking it would be a pool-metric guess. What covers it
+// instead: Go's pool never touches in-use connections on Close, and
+// TestStoreSQLiteBusyWaitOutlivesCancelAndClose proves on a pre-acquired
+// store connection that such a wait is neither interrupted nor joined.
+// Shutdown still joins here and the data outcome is identical: the tail
+// stays suppressed and the offset does not advance.
 func TestTranscriptWriterShutdownJoinsFlushStartedAfterClose(t *testing.T) {
 	ctx := context.Background()
 	writer, database, gated, path := newInflightFlushFixture(t, 2*time.Second)
