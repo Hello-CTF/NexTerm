@@ -27,6 +27,11 @@ func newAIOwnerModelsServer(t *testing.T, authorization *atomic.Value, hits *ato
 }
 
 func TestAIModelRefreshOwnerBoundary(t *testing.T) {
+	database, err := store.OpenInMemory(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
 	for _, test := range []struct {
 		name    string
 		shared  bool
@@ -41,11 +46,6 @@ func TestAIModelRefreshOwnerBoundary(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
-			database, err := store.OpenInMemory(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = database.Close() })
 			manager, err := profiles.NewManager(ctx, database, profiles.WithShared(test.shared))
 			if err != nil {
 				t.Fatal(err)

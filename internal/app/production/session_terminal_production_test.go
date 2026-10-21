@@ -625,9 +625,14 @@ func requireProductionAuthorization(t *testing.T, response ipc.Response, allowed
 var productionAuthorizationActorNames = []string{"owner", "same-account-second-client", "other-account", "superadmin", "open"}
 
 func TestProductionSessionAndTerminalListsAreOwnerScoped(t *testing.T) {
+	defaultFixture := newProductionAuthorizationFixture(t, false)
+	openFixture := newProductionAuthorizationFixture(t, true)
 	for _, actorName := range productionAuthorizationActorNames {
 		t.Run(actorName, func(t *testing.T) {
-			fixture := newProductionAuthorizationFixture(t, actorName == "open")
+			fixture := defaultFixture
+			if actorName == "open" {
+				fixture = openFixture
+			}
 			actor := fixture.actor(actorName)
 			sessionResponse := fixture.dispatch(actor, "session_list", `null`, "")
 			var sessions []sessionInfoDTO
