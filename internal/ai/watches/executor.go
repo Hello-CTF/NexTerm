@@ -230,6 +230,19 @@ func (e *Executor) AttachTarget(ctx context.Context, targetID, identity string, 
 	if source == nil {
 		return errors.New("watches: executor source is nil")
 	}
+	// Reject a live duplicate before touching durable state: engine.Attach on
+	// a changed identity settles the previous incarnation, and a caller whose
+	// attach fails must not carry that side effect.
+	e.mu.Lock()
+	if stale, exists := e.targets[targetID]; exists {
+		select {
+		case <-stale.done:
+		default:
+			e.mu.Unlock()
+			return fmt.Errorf("watches: target %s already attached", targetID)
+		}
+	}
+	e.mu.Unlock()
 	if err := e.engine.Attach(ctx, targetID, identity); err != nil {
 		return err
 	}
