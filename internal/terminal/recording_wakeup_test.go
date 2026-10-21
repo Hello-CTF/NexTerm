@@ -234,6 +234,10 @@ func TestRecordingSaturatedFailureEnqueuedBeforeReplacementRunning(t *testing.T)
 	if err := tab.StartRecording(filepath.Join(t.TempDir(), "gen2.log")); err != nil {
 		t.Fatal(err)
 	}
+	// The replacement generation holds gen2.log open; stop it before the
+	// test returns so the t.TempDir cleanup can remove the directory —
+	// Windows cannot delete a file that is still open.
+	defer tab.StopRecording()
 	close(gate)
 	close(writer.gate) // release the stuck writer for test cleanliness
 	waitFor(t, "both lifecycle events", func() bool { return len(collector.snapshot()) == 2 })
@@ -269,6 +273,10 @@ func TestRecordingWriterFailureEnqueuedBeforeReplacementRunning(t *testing.T) {
 	if err := tab.StartRecording(filepath.Join(t.TempDir(), "gen2.log")); err != nil {
 		t.Fatal(err)
 	}
+	// The replacement generation holds gen2.log open; stop it before the
+	// test returns so the t.TempDir cleanup can remove the directory —
+	// Windows cannot delete a file that is still open.
+	defer tab.StopRecording()
 	close(gate)
 	waitFor(t, "both lifecycle events", func() bool { return len(collector.snapshot()) == 2 })
 	requireEventOrder(t, collector.snapshot(),
