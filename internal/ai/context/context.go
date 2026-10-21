@@ -20,8 +20,10 @@ type SessionBrief struct {
 }
 
 // TabBrief is the identity of the terminal tab the conversation is scoped
-// to: the stable handle other tools address it by, its kind, OSC title, and
-// shell-reported working directory.
+// to: the stable handle other tools address it by, its kind, title, and
+// shell-reported working directory. The title is the tab's current title:
+// a user/AI-set custom title takes precedence, and the dynamic OSC 0/2
+// title surfaces only while no custom title is set.
 type TabBrief struct {
 	Handle  string `json:"handle"`
 	Kind    string `json:"kind,omitempty"`
