@@ -27,8 +27,14 @@ const (
 )
 
 // stagingParamsHeaderV2 is the fixed part of a version 2 params file:
-// version byte, total, chunk size, and owner length.
-const stagingParamsHeaderV2 = 1 + 8 + 8 + 2
+// version byte, total, chunk size, and owner length. A version 2 file is at
+// most stagingParamsMaxSizeV2 bytes; anything else fails closed before any
+// allocation sized by the remote declaration.
+const (
+	stagingParamsHeaderV2  = 1 + 8 + 8 + 2
+	stagingParamsMaxOwner  = 1<<16 - 1
+	stagingParamsMaxSizeV2 = stagingParamsHeaderV2 + stagingParamsMaxOwner
+)
 
 // StagedUpload describes one chunked-upload staging group discovered on a
 // destination: the staged parts with their sizes, plus which control files
@@ -150,7 +156,7 @@ func readStagingParams(ctx context.Context, destination base.FileSystem, path st
 		}
 	}()
 	size := reader.Size()
-	if size != stagingParamsSizeV1 && size < stagingParamsHeaderV2 {
+	if size != stagingParamsSizeV1 && (size < stagingParamsHeaderV2 || size > stagingParamsMaxSizeV2) {
 		return 0, 0, "", 0, fmt.Errorf("staging params size %d is invalid", size)
 	}
 	raw := make([]byte, size)

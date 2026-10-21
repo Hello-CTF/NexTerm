@@ -299,10 +299,23 @@ func (r *fsChunkUploadRegistry) resumeOrCreate(ctx context.Context, input fsChun
 			return nil, matchKey.uploadID, true, nil
 		}
 		// A new attempt supersedes the registered one: the old entry is
-		// finished and the staged upload is re-registered under the new
-		// attempt below, keeping its ID and staged progress.
+		// finished and the upload is re-registered under the new attempt
+		// with a fresh confirmation set — attempt boundaries never inherit
+		// confirmation. A same-ID Upload plus Resume restores only counted
+		// staged progress, mirroring crash adoption.
 		match.finish()
-		return match.upload, matchKey.uploadID, false, nil
+		rebound, err := chunked.New(matchKey.uploadID, input.RemotePath, input.TotalSize, chunkSize, chunked.WithOwner(owner))
+		if err != nil {
+			return nil, "", false, ipc.BadParam(err)
+		}
+		if r.filesystem != nil {
+			if remote, _, err := r.filesystem(ctx, input.SessionID); err == nil && remote != nil {
+				if _, err := r.resumeStaging(ctx, remote, rebound); err != nil {
+					r.logger.Warn("resume rebound chunked upload failed", "session", input.SessionID, "upload", rebound.ID(), "error", err)
+				}
+			}
+		}
+		return rebound, rebound.ID(), false, nil
 	}
 	if r.filesystem == nil {
 		return fresh, fresh.ID(), false, nil

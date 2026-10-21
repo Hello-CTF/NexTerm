@@ -91,6 +91,9 @@ func New(uploadID, remotePath string, total int64, chunkSize int, options ...Opt
 	for _, option := range options {
 		option(upload)
 	}
+	if len(upload.owner) > stagingParamsMaxOwner {
+		return nil, fmt.Errorf("upload owner length %d exceeds the %d-byte staging metadata limit", len(upload.owner), stagingParamsMaxOwner)
+	}
 	return upload, nil
 }
 

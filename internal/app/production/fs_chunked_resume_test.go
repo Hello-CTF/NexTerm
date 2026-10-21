@@ -731,3 +731,100 @@ func TestFSChunkedRegistryStagingTargetsRestoresOwnerBackground(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// r3 P1 counterexample via the real IPC path: a new attempt that rebinds a
+// live entry must not inherit the previous attempt's confirmed chunks —
+// writing only the missing chunk must never commit a mix.
+func TestFSChunkedRebindNewAttemptPartialSendCannotCommit(t *testing.T) {
+	remote := filepath.Join(t.TempDir(), "remote.bin")
+	dispatcher, manager := newFSTransferTestDispatcher(t, fslocal.New(), nil)
+	ctx := ipc.WithUserID(t.Context(), "owner-a")
+	connected, err := manager.ConnectFor(ctx, session.Asset{ID: "asset-rebind-mix", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := beginChunkIPC(t, dispatcher, ctx, fsChunkUploadRequest{
+		SessionID: connected.ID, RemotePath: remote, TaskID: "task-1", AttemptID: "attempt-1", TotalSize: 8, ChunkSize: 4,
+	})
+	decodeFSTransferTest[fsChunkUploadProgressDTO](t, dispatchFSTransferTest(dispatcher, ctx, "fs_upload_chunk", chunkIPCRequest(first, 0, "abcd"), nil))
+
+	second := beginChunkIPC(t, dispatcher, ctx, fsChunkUploadRequest{
+		SessionID: connected.ID, RemotePath: remote, TaskID: "task-2", AttemptID: "attempt-2", TotalSize: 8, ChunkSize: 4,
+	})
+	if second.UploadID != first.UploadID {
+		t.Fatalf("rebound begin = %q, want %q", second.UploadID, first.UploadID)
+	}
+	// The new attempt only sends the chunk it believes is missing; its chunk 1
+	// diverges from the previous attempt's content.
+	decodeFSTransferTest[fsChunkUploadProgressDTO](t, dispatchFSTransferTest(dispatcher, ctx, "fs_upload_chunk", chunkIPCRequest(second, 1, "WXYZ"), nil))
+	response := dispatchFSTransferTest(dispatcher, ctx, "fs_upload_commit", second, nil)
+	if response.OK {
+		t.Fatal("new attempt committed a mix of inherited and new chunks")
+	}
+	if _, err := os.Stat(remote); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed mixed commit exposed a target: %v", err)
+	}
+}
+
+// r3 P1 counterexample via the real IPC path: a new attempt must not commit
+// the previous attempt's fully staged content without presenting anything.
+func TestFSChunkedRebindNewAttemptDirectCommitFails(t *testing.T) {
+	remote := filepath.Join(t.TempDir(), "remote.bin")
+	dispatcher, manager := newFSTransferTestDispatcher(t, fslocal.New(), nil)
+	ctx := ipc.WithUserID(t.Context(), "owner-a")
+	connected, err := manager.ConnectFor(ctx, session.Asset{ID: "asset-rebind-direct", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := beginChunkIPC(t, dispatcher, ctx, fsChunkUploadRequest{
+		SessionID: connected.ID, RemotePath: remote, TaskID: "task-1", AttemptID: "attempt-1", TotalSize: 8, ChunkSize: 4,
+	})
+	decodeFSTransferTest[fsChunkUploadProgressDTO](t, dispatchFSTransferTest(dispatcher, ctx, "fs_upload_chunk", chunkIPCRequest(first, 0, "abcd"), nil))
+	decodeFSTransferTest[fsChunkUploadProgressDTO](t, dispatchFSTransferTest(dispatcher, ctx, "fs_upload_chunk", chunkIPCRequest(first, 1, "efgh"), nil))
+
+	second := beginChunkIPC(t, dispatcher, ctx, fsChunkUploadRequest{
+		SessionID: connected.ID, RemotePath: remote, TaskID: "task-2", AttemptID: "attempt-2", TotalSize: 8, ChunkSize: 4,
+	})
+	if second.UploadID != first.UploadID {
+		t.Fatalf("rebound begin = %q, want %q", second.UploadID, first.UploadID)
+	}
+	response := dispatchFSTransferTest(dispatcher, ctx, "fs_upload_commit", second, nil)
+	if response.OK {
+		t.Fatal("new attempt committed the previous attempt's content without presenting chunks")
+	}
+	if _, err := os.Stat(remote); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed direct commit exposed a target: %v", err)
+	}
+}
+
+// An idempotent retry of the same task and attempt keeps its confirmation, so
+// the legitimate flow of resending the remaining chunks and committing still
+// works without re-presenting earlier chunks.
+func TestFSChunkedSameAttemptRetryKeepsConfirmation(t *testing.T) {
+	remote := filepath.Join(t.TempDir(), "remote.bin")
+	dispatcher, manager := newFSTransferTestDispatcher(t, fslocal.New(), nil)
+	ctx := ipc.WithUserID(t.Context(), "owner-a")
+	connected, err := manager.ConnectFor(ctx, session.Asset{ID: "asset-same-attempt", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := fsChunkUploadRequest{
+		SessionID: connected.ID, RemotePath: remote, TaskID: "task-1", AttemptID: "attempt-1", TotalSize: 8, ChunkSize: 4,
+	}
+	first := beginChunkIPC(t, dispatcher, ctx, input)
+	decodeFSTransferTest[fsChunkUploadProgressDTO](t, dispatchFSTransferTest(dispatcher, ctx, "fs_upload_chunk", chunkIPCRequest(first, 0, "abcd"), nil))
+	retry := beginChunkIPC(t, dispatcher, ctx, input)
+	if retry.UploadID != first.UploadID {
+		t.Fatalf("idempotent begin = %q, want %q", retry.UploadID, first.UploadID)
+	}
+	decodeFSTransferTest[fsChunkUploadProgressDTO](t, dispatchFSTransferTest(dispatcher, ctx, "fs_upload_chunk", chunkIPCRequest(retry, 1, "efgh"), nil))
+	committed := decodeFSTransferTest[int64](t, dispatchFSTransferTest(dispatcher, ctx, "fs_upload_commit", retry, nil))
+	if committed != 8 {
+		t.Fatalf("committed = %d, want 8", committed)
+	}
+	data, err := os.ReadFile(remote)
+	if err != nil || string(data) != "abcdefgh" {
+		t.Fatalf("committed target = %q, %v", data, err)
+	}
+	assertNoChunkIArtifacts(t, remote)
+}
