@@ -26,9 +26,10 @@ type ConnAssetIdentity interface {
 	AssetIDOf(context.Context, string) (string, bool)
 }
 
-// dbGrantCall reports whether the call's grant identity comes from the scope's
-// database connection rather than from the session asset.
-func dbGrantCall(name string) bool {
+// DBGrantCall reports whether the call's grant and confirmation identity
+// comes from the scope's database connection rather than from the session
+// asset.
+func DBGrantCall(name string) bool {
 	switch name {
 	case "db_list_tables", "db_describe", "db_query", "redis_scan":
 		return true
@@ -157,7 +158,7 @@ func (e *Execution) decide(ctx context.Context, call Call, ruling guard.Ruling, 
 	if e.Registry == nil || e.Registry.deps.Grants == nil {
 		return guard.DecideResource(e.Permission, ruling, memory, resource)
 	}
-	if dbGrantCall(call.Name) {
+	if DBGrantCall(call.Name) {
 		return e.decideDB(ctx, call, ruling, memory, resource)
 	}
 	return e.Registry.deps.Grants.EvaluateResource(ctx, e.Permission, ruling, memory, e.grantDeviceID(ctx), call.Name, e.JobID, resource)

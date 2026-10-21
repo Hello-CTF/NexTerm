@@ -63,7 +63,7 @@ type Manager struct {
 	now                 func() time.Time
 	afterFunc           func(time.Duration, func()) Timer
 	newNonce            func() (string, error)
-	assetResolver       func(context.Context, string) (string, error)
+	assetResolver       func(context.Context, string, string) (string, error)
 	environmentResolver func(context.Context, string) ([]string, error)
 
 	mu     sync.RWMutex
@@ -210,7 +210,7 @@ func (m *Manager) interruptRun(ctx context.Context, run *runState, target *adk.I
 	if !ok {
 		return Interrupt{}, ErrCheckpointNotFound
 	}
-	asset, err := m.resolveAsset(ctx, run.id)
+	asset, err := m.resolveAsset(ctx, run.id, input.Tool)
 	if err != nil {
 		return Interrupt{}, err
 	}
@@ -409,7 +409,7 @@ func (m *Manager) resumeRun(ctx context.Context, run *runState, resumer Resumer,
 			run.mu.Unlock()
 			return Resume{}, nil, ErrAssetUnknown
 		}
-		current, err := m.assetResolver(ctx, run.id)
+		current, err := m.assetResolver(ctx, run.id, interrupt.Tool)
 		if err != nil {
 			run.mu.Unlock()
 			return Resume{}, nil, fmt.Errorf("hitl: resolve asset evidence: %w", err)
@@ -832,13 +832,14 @@ func (m *Manager) uniqueNonce(runID string) (string, error) {
 	return "", errors.New("nonce generator repeatedly returned a duplicate")
 }
 
-// resolveAsset returns the run's current asset evidence from the configured
-// resolver; with no resolver configured, asset identity stays unknown.
-func (m *Manager) resolveAsset(ctx context.Context, runID string) (string, error) {
+// resolveAsset returns the run's current asset evidence for the tool awaiting
+// confirmation from the configured resolver; with no resolver configured,
+// asset identity stays unknown.
+func (m *Manager) resolveAsset(ctx context.Context, runID, tool string) (string, error) {
 	if m.assetResolver == nil {
 		return "", nil
 	}
-	asset, err := m.assetResolver(ctx, runID)
+	asset, err := m.assetResolver(ctx, runID, tool)
 	if err != nil {
 		return "", fmt.Errorf("hitl: resolve asset evidence: %w", err)
 	}
