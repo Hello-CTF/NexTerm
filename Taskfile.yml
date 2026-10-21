@@ -98,11 +98,11 @@ tasks:
           DBTEST_DSN: 'root:nexterm_root@tcp(127.0.0.1:33309)/nexterm_test?parseTime=true'
 
   test:race:
-    summary: Run Go tests with the race detector
+    summary: Run selected Go packages with the race detector, defaulting to all packages
     env:
       GOFLAGS: '{{.GOFLAGS}}'
     cmds:
-      - go test -race ./...
+      - go test -race -count=1 {{.RACE_PACKAGES | default "./..."}}
 
   test:production:
     summary: Build or consume verified frontend assets, test production embedding and clean staged assets
@@ -143,7 +143,6 @@ tasks:
       SOURCE_DATE_EPOCH: '1'
     cmds:
       - go run ./scripts/test-database --check
-      - go test -count=1 ./scripts/test-database
       - node scripts/check-placeholders.mjs
       - node --test scripts/*.test.mjs
       - node --test .github/scripts/*.test.mjs
@@ -162,7 +161,6 @@ tasks:
       - task: ipc:contract:check
       - task: gorm:check
       - task: check:scripts
-      - go test -count=1 ./scripts/compile-only
       - task: vet
       - task: bindings:check
       - GOOS=$(go env GOOS) GOARCH=$(go env GOARCH) go run -mod=readonly ./scripts/compile-only ./...

@@ -128,7 +128,7 @@ func (command *taskCommand) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func TestQualityUsesSharedTaskWithoutDroppingCoverage(t *testing.T) {
+func TestQualityStaysStaticAndRequiredUnitOwnsGoTests(t *testing.T) {
 	ci := loadWorkflow(t, ".github/workflows/ci.yml")
 	quality := requireJob(t, ci, "quality")
 	requireRun(t, quality, "wails3 task check:ci-quality")
@@ -136,16 +136,27 @@ func TestQualityUsesSharedTaskWithoutDroppingCoverage(t *testing.T) {
 	if got := windowsVet.Env["GOOS"]; got != "windows" {
 		t.Fatalf("Windows vet GOOS = %q, want windows", got)
 	}
-	requireRun(t, quality, "go test -count=1 ./scripts/gen-ipc-contract")
-	requireRun(t, quality, "go test -count=1 ./scripts/ci-workflow")
+	for _, step := range quality.Steps {
+		if run := normalize(step.Run); strings.Contains(run, "go test") {
+			t.Errorf("quality job duplicates Go tests owned by the required unit job: %s", run)
+		}
+	}
+	unit := requireJob(t, ci, "unit")
+	if unit.If != "" {
+		t.Fatalf("unit job must remain required on every event, got condition %q", unit.If)
+	}
+	requireRun(t, unit, "go test -count=1 ./...")
 
 	tasks := loadTaskfile(t)
-	commands := make(map[string]bool)
+	commands := make(map[string]int)
 	for _, command := range tasks.Tasks["check:ci-quality"].Commands {
 		if command.Task != "" {
-			commands["task:"+command.Task] = true
+			commands["task:"+command.Task]++
 		} else {
-			commands["run:"+normalize(command.Run)] = true
+			commands["run:"+normalize(command.Run)]++
+		}
+		if strings.Contains(command.Run, "go test") {
+			t.Errorf("check:ci-quality must remain a static gate rather than a Go unit-test entry: %s", command.Run)
 		}
 	}
 	for _, required := range []string{
@@ -155,15 +166,73 @@ func TestQualityUsesSharedTaskWithoutDroppingCoverage(t *testing.T) {
 		"task:ipc:contract:check",
 		"task:gorm:check",
 		"task:check:scripts",
-		"run:go test -count=1 ./scripts/compile-only",
 		"task:vet",
 		"task:bindings:check",
 		"run:GOOS=$(go env GOOS) GOARCH=$(go env GOARCH) go run -mod=readonly ./scripts/compile-only ./...",
 	} {
-		if !commands[required] {
-			t.Errorf("check:ci-quality is missing %s", required)
+		if commands[required] != 1 {
+			t.Errorf("check:ci-quality command %s count = %d, want 1", required, commands[required])
 		}
 	}
+
+	scriptCommands := make(map[string]int)
+	for _, command := range tasks.Tasks["check:scripts"].Commands {
+		scriptCommands[normalize(command.Run)]++
+		if strings.Contains(command.Run, "go test") {
+			t.Errorf("check:scripts duplicates Go tests owned by task test: %s", command.Run)
+		}
+	}
+	for _, required := range []string{
+		"go run ./scripts/test-database --check",
+		"node scripts/check-placeholders.mjs",
+		"node --test scripts/*.test.mjs",
+		"node --test .github/scripts/*.test.mjs",
+		"python3 scripts/test-install-device.py",
+		"python3 scripts/test-systemd-install.py",
+		"go run ./scripts/check-release-evidence",
+	} {
+		if scriptCommands[required] != 1 {
+			t.Errorf("check:scripts command %s count = %d, want 1", required, scriptCommands[required])
+		}
+	}
+
+	checkCommands := make(map[string]int)
+	for _, command := range tasks.Tasks["check"].Commands {
+		checkCommands[command.Task]++
+	}
+	if checkCommands["test"] != 1 {
+		t.Errorf("task check must run the independent full Go test task exactly once, got %d", checkCommands["test"])
+	}
+	testCommands := tasks.Tasks["test"].Commands
+	if len(testCommands) != 1 || normalize(testCommands[0].Run) != "go test ./..." {
+		t.Fatalf("task test no longer owns the full Go unit run: %#v", testCommands)
+	}
+}
+
+func TestRaceDefaultsToFullUncachedRunAndVerifyDoesNotNarrowIt(t *testing.T) {
+	tasks := loadTaskfile(t)
+	race := tasks.Tasks["test:race"]
+	const selectedRace = `go test -race -count=1 {{.RACE_PACKAGES | default "./..."}}`
+	if len(race.Commands) != 1 || normalize(race.Commands[0].Run) != selectedRace {
+		t.Fatalf("test:race must select RACE_PACKAGES and default to an uncached full run: %#v", race.Commands)
+	}
+
+	raceCalls := 0
+	for _, command := range tasks.Tasks["verify"].Commands {
+		if command.Task != "test:race" {
+			continue
+		}
+		raceCalls++
+		if len(command.Vars) != 0 {
+			t.Errorf("verify must not narrow its final full race run: %v", command.Vars)
+		}
+	}
+	if raceCalls != 1 {
+		t.Errorf("verify test:race call count = %d, want 1", raceCalls)
+	}
+
+	ci := loadWorkflow(t, ".github/workflows/ci.yml")
+	requireRun(t, requireJob(t, ci, "race"), "go test -race -count=1 ./...")
 }
 
 func TestLocalFrontendAndProductionReuseVerifiedResults(t *testing.T) {
@@ -312,9 +381,9 @@ func TestCompileOnlyPreservesNativeTargetsAndNeverRunsTestMain(t *testing.T) {
 			}
 		}
 	}
-	// The shared quality gate owns the compile-only behavior tests and the
-	// explicit host-target compile; the quality job must not duplicate them as
-	// standalone steps.
+	// The required unit job owns the compile-only behavior tests. The shared
+	// static quality gate retains the explicit host-target compile, which the
+	// quality job must not duplicate as a standalone step.
 	tasks := loadTaskfile(t)
 	qualityCommands := make(map[string]bool)
 	for _, command := range tasks.Tasks["check:ci-quality"].Commands {
@@ -324,13 +393,9 @@ func TestCompileOnlyPreservesNativeTargetsAndNeverRunsTestMain(t *testing.T) {
 			qualityCommands["run:"+normalize(command.Run)] = true
 		}
 	}
-	for _, required := range []string{
-		"run:go test -count=1 ./scripts/compile-only",
-		"run:GOOS=$(go env GOOS) GOARCH=$(go env GOARCH) go run -mod=readonly ./scripts/compile-only ./...",
-	} {
-		if !qualityCommands[required] {
-			t.Errorf("check:ci-quality is missing %s", required)
-		}
+	const hostCompile = "run:GOOS=$(go env GOOS) GOARCH=$(go env GOARCH) go run -mod=readonly ./scripts/compile-only ./..."
+	if !qualityCommands[hostCompile] {
+		t.Errorf("check:ci-quality is missing %s", hostCompile)
 	}
 	quality := requireJob(t, ci, "quality")
 	for _, step := range quality.Steps {
