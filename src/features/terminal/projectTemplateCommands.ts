@@ -24,11 +24,7 @@ export interface ProjectCommandDependencies {
   claim(tabId: string): Promise<unknown>;
   prepare(tabId: string, data: Uint8Array, confirmation?: BroadcastEnvironmentConfirmation): Promise<void>;
   write(tabId: string, data: Uint8Array, confirmation?: BroadcastEnvironmentConfirmation): Promise<void>;
-  // Legacy acknowledge-only confirmation (pre-typed-name challenges). Typed-name
-  // challenges need confirmProductionEnvironmentNames instead.
-  confirmProduction(challenge: BroadcastProductionChallenge, command: string): Promise<boolean>;
-  // R-01 typed confirmation: resolves the per-target environment names the
-  // user entered, or null when canceled.
+  // Resolves the per-target environment names the user entered, or null when canceled.
   confirmProductionEnvironmentNames?(challenge: BroadcastProductionChallenge, command: string): Promise<string[] | null>;
 }
 
@@ -41,7 +37,6 @@ function defaultDependencies(): ProjectCommandDependencies {
       targetTabIds: [tabId],
       ...(confirmation ? { productionConfirmation: confirmation } : {}),
     }),
-    confirmProduction: async () => false,
   };
 }
 
@@ -87,22 +82,19 @@ async function ensureTerminalTab(storeTabId: string, deps: ProjectCommandDepende
   return info.tabId;
 }
 
-// Resolve the typed names for a challenge. Legacy challenges (no
-// requiredEnvironmentNames) keep the acknowledge-only dep; typed challenges
-// require the names-carrying dep so the confirmation the backend demands is
-// the one the user actually gave.
 async function confirmProductionNames(
   challenge: BroadcastProductionChallenge,
   command: string,
   deps: ProjectCommandDependencies,
 ): Promise<string[] | null> {
-  if (challenge.requiredEnvironmentNames === undefined) {
-    return (await deps.confirmProduction(challenge, command)) ? [] : null;
-  }
   if (!deps.confirmProductionEnvironmentNames) {
     throw new Error("当前入口不支持逐目标环境名确认，命令未执行");
   }
-  return deps.confirmProductionEnvironmentNames(challenge, command);
+  const environmentNames = await deps.confirmProductionEnvironmentNames(challenge, command);
+  if (environmentNames !== null && environmentNames.length === 0) {
+    throw new Error("生产环境确认缺少环境名，命令未执行");
+  }
+  return environmentNames;
 }
 
 async function writeWithProductionConfirmation(
@@ -126,7 +118,7 @@ async function writeWithProductionConfirmation(
         confirmed: true,
         targetSetHash: challenge.targetSetHash,
         inputHash: challenge.inputHash,
-        ...(environmentNames.length > 0 ? { environmentNames } : {}),
+        environmentNames,
       };
     }
   }

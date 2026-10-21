@@ -70,13 +70,12 @@ describe("getProductionChallenge", () => {
     });
   });
 
-  it("keeps legacy challenges without required environment names distinguishable", () => {
-    const { requiredEnvironmentNames: _legacy, ...legacyDetail } = execDetail();
-    const challenge = getProductionChallenge(
-      { code: "needs_confirm", detail: legacyDetail },
+  it("rejects challenges without required environment names", () => {
+    const { requiredEnvironmentNames: _missing, ...missingNamesDetail } = execDetail();
+    expect(getProductionChallenge(
+      { code: "needs_confirm", detail: missingNamesDetail },
       "exec_batch_production_confirmation",
-    );
-    expect(challenge?.requiredEnvironmentNames).toBeUndefined();
+    )).toBeNull();
   });
 
   it("fails closed on the wrong kind, code, or shape", () => {

@@ -57,14 +57,9 @@ function ensureCurrent(isCurrent?: () => boolean): void {
 }
 
 export async function trustPresentedHostKey(detail: HostKeyDetail | undefined, isCurrent?: () => boolean): Promise<boolean> {
-  if (!detail?.host || !detail?.port || !detail?.keyType || !detail?.fingerprint) return false;
+  if (!detail?.host || !detail?.port || !detail?.keyType || !detail?.fingerprint || !detail.key) return false;
   ensureCurrent(isCurrent);
-  if (detail.key) {
-    await assetApi.knownHostAccept(detail.host, detail.port, detail.keyType, detail.fingerprint, detail.key);
-  } else {
-    // Legacy pending detail without material: keep the fingerprint-only acceptance.
-    await assetApi.knownHostAccept(detail.host, detail.port, detail.keyType, detail.fingerprint);
-  }
+  await assetApi.knownHostAccept(detail.host, detail.port, detail.keyType, detail.fingerprint, detail.key);
   return true;
 }
 

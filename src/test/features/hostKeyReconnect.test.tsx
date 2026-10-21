@@ -94,6 +94,7 @@ const PENDING_DETAIL = {
   port: 22,
   keyType: "ssh-ed25519",
   fingerprint: "SHA256:newfp",
+  key: "ZmFrZS1rZXktdGVzdA==",
   changed: false,
 };
 const CHANGED_DETAIL = {
@@ -222,15 +223,13 @@ describe("Host key retry stays actionable", () => {
     expect(mocks.connect).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps the fingerprint-only accept when the pending detail carries no key", async () => {
+  it("rejects a pending detail without the presented public key and does not retry", async () => {
     mocks.ask.mockResolvedValue(true);
-    mocks.connect
-      .mockRejectedValueOnce({ code: "host_key_pending", message: "approval required", detail: PENDING_DETAIL })
-      .mockResolvedValueOnce({ id: "s2" });
+    mocks.connect.mockRejectedValueOnce({ code: "host_key_pending", message: "approval required", detail: { ...PENDING_DETAIL, key: undefined } });
 
-    await expect(connectWithHostKeyConfirm(() => mocks.connect())).resolves.toEqual({ id: "s2" });
-    expect(mocks.knownHostAccept).toHaveBeenCalledWith("10.0.0.8", 22, "ssh-ed25519", "SHA256:newfp");
-    expect(mocks.knownHostAccept.mock.calls[0]).toHaveLength(4);
+    await expect(connectWithHostKeyConfirm(() => mocks.connect())).rejects.toMatchObject({ code: "host_key_pending" });
+    expect(mocks.knownHostAccept).not.toHaveBeenCalled();
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
   });
 
   it("does not accept a fingerprint or retry after the account changes during confirmation", async () => {
@@ -330,6 +329,7 @@ describe("Host key confirmation when reconnecting a dead terminal (reconnectNow)
       22,
       "ssh-ed25519",
       "SHA256:newfp",
+      "ZmFrZS1rZXktdGVzdA==",
     );
     expect(mocks.connect).toHaveBeenCalledTimes(2);
     expect(useUi.getState().sessions.some((s) => s.id === "s2")).toBe(true);
@@ -382,6 +382,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
       port: 22,
       keyType: "ssh-ed25519",
       fingerprint: "SHA256:newfp",
+      key: "ZmFrZS1rZXktdGVzdA==",
       state: "changed",
       known: [{ keyType: "ssh-ed25519", fingerprint: "SHA256:oldfp" }],
     });
@@ -401,6 +402,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
       22,
       "ssh-ed25519",
       "SHA256:newfp",
+      "ZmFrZS1rZXktdGVzdA==",
     );
   });
 
@@ -454,6 +456,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
         port: 22,
         keyType: "ssh-ed25519",
         fingerprint: "SHA256:jumpnew",
+        key: "ZmFrZS1qdW1wLWtleQ==",
         changed: true,
         known: [{ keyType: "ssh-ed25519", fingerprint: "SHA256:jumpold" }],
       },
@@ -474,6 +477,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
       22,
       "ssh-ed25519",
       "SHA256:jumpnew",
+      "ZmFrZS1qdW1wLWtleQ==",
     );
   });
 

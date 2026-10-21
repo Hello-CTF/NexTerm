@@ -24,8 +24,7 @@ import { ProductionConfirmationDialog } from "../execbatch/ProductionConfirmatio
 interface ProductionPrompt {
   challenge: BroadcastProductionChallenge;
   command: string;
-  // Resolves the typed per-target environment names on confirm (an empty
-  // array for the legacy acknowledge flow), or null on cancel.
+  // Resolves the typed per-target environment names on confirm, or null on cancel.
   resolve(environmentNames: string[] | null): void;
 }
 
@@ -129,18 +128,13 @@ export function ProjectTemplatePanel({ groups }: { groups: readonly AssetGroup[]
   const confirmProductionEnvironmentNames = (challenge: BroadcastProductionChallenge, command: string) =>
     new Promise<string[] | null>((resolve) => setProductionPrompt({ challenge, command, resolve }));
 
-  // Legacy acknowledge-only challenges keep the boolean dep: confirmed is any
-  // non-null resolution, canceled is null.
-  const confirmProduction = (challenge: BroadcastProductionChallenge, command: string) =>
-    confirmProductionEnvironmentNames(challenge, command).then((environmentNames) => environmentNames !== null);
-
   const finishProductionPrompt = (environmentNames: string[] | null) => {
     productionPrompt?.resolve(environmentNames);
     setProductionPrompt(null);
   };
 
   const open = (template: ProjectTemplate) => run(async (epoch) => {
-    const result = await openProjectTemplate(template, { commandDependencies: { confirmProduction, confirmProductionEnvironmentNames } });
+    const result = await openProjectTemplate(template, { commandDependencies: { confirmProductionEnvironmentNames } });
     if (isStale(epoch)) return;
     const failedWorkspaces = Object.values(result.workspaces).filter((item) => item.status === "failed").length;
     const failedForwards = result.forwards.filter((item) => item.status === "failed").length;
@@ -255,7 +249,7 @@ export function ProjectTemplatePanel({ groups }: { groups: readonly AssetGroup[]
           contentHash={productionPrompt.challenge.inputHash}
           command={productionPrompt.command}
           onCancel={() => finishProductionPrompt(null)}
-          onConfirm={(environmentNames) => finishProductionPrompt(environmentNames ?? [])}
+          onConfirm={finishProductionPrompt}
         />
       )}
     </section>

@@ -496,6 +496,7 @@ describe("BroadcastInputQueue", () => {
         kind: "broadcast_production_confirmation",
         targetSetHash: "a".repeat(64),
         inputHash: "b".repeat(64),
+        requiredEnvironmentNames: ["production"],
         productionTargets: [
           { tabId: "k-t1", sessionId: "s1", sessionName: "prod-one", hostname: "prod.internal", environment: "production" },
         ],
@@ -518,6 +519,7 @@ describe("BroadcastInputQueue", () => {
       confirmed: true,
       targetSetHash: challenge.targetSetHash,
       inputHash: challenge.inputHash,
+      environmentNames: ["production"],
     };
     const outcome = await queue.enqueue({ ...args, productionConfirmation });
     expect(outcome?.sent).toBe(2);

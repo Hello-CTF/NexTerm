@@ -198,6 +198,7 @@ describe("ProcessFinderPanel", () => {
       code: "needs_confirm",
       detail: {
         kind: "exec_batch_production_confirmation", batchId: "batch-2", targetSetHash, commandHash,
+        requiredEnvironmentNames: ["prod"],
         productionTargets: [{ sessionId: "s1", sessionName: "web-one", environment: "prod" }],
       },
     }).mockResolvedValueOnce(failure);
@@ -213,14 +214,16 @@ describe("ProcessFinderPanel", () => {
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"][aria-label="确认生产环境执行"]');
     if (!dialog) throw new Error("production dialog not found");
     expect(dialog.textContent).toContain("kill -TERM -- 1201");
-    click(dialog.querySelector<HTMLInputElement>('input[aria-label="确认生产环境风险"]')!);
+    const environmentInput = dialog.querySelector<HTMLInputElement>('input[aria-label="输入环境名 web-one"]');
+    if (!environmentInput) throw new Error("typed environment input not found");
+    setInputValue(environmentInput, "prod");
     clickButton(dialog, "确认执行（1）");
     await act(async () => {
       await flush();
     });
     await flushUntil(() => mocks.kill.mock.calls.length === 2);
     expect(mocks.kill.mock.calls[1][0]).toMatchObject({
-      batchId: "batch-2", productionConfirmation: { confirmed: true, targetSetHash, commandHash },
+      batchId: "batch-2", productionConfirmation: { confirmed: true, targetSetHash, commandHash, environmentNames: ["prod"] },
     });
     await flushUntil(() =>
       panel().container.textContent?.includes("kill 逐目标结果") === true &&

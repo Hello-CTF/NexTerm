@@ -84,7 +84,7 @@ export function ComposeStackHeader({
   const startAction = async (action: ComposeAction) => {
     if (unavailable) return;
     if (action === "down" && !(await ask(
-      `停止并删除 Compose 栈 ${project} 的容器和默认网络？\n\n命名卷不会被删除；生产环境还需要输入确认文字。`,
+      `停止并删除 Compose 栈 ${project} 的容器和默认网络？\n\n命名卷不会被删除；生产环境还需要逐目标输入实际环境名。`,
       { kind: "warning" },
     ))) return;
     await execute(action);
@@ -151,7 +151,6 @@ export function ComposeStackHeader({
           challenge={production.challenge}
           contentHash={production.challenge.commandHash}
           command={production.command}
-          typedPhrase="production"
           onCancel={() => setProduction(null)}
           onConfirm={(environmentNames) => {
             const current = production;

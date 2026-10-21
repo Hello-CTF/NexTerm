@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, clickButton, flush, flushMacrotask, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
+import { clickButton, flush, flushMacrotask, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 import type { ProjectTemplate } from "../../app/projectTemplates";
 import type { Workspace } from "../../app/store";
 import type { ProjectInventory } from "../../app/projectFocus";
@@ -313,23 +313,18 @@ describe("production confirmation for template startup commands", () => {
     await flushUntil(() => useUi.getState().toasts.some((toast) => toast.text.includes("1 条命令已取消")));
   });
 
-  it("keeps the acknowledge flow for legacy challenges without required names", async () => {
+  it("rejects challenges without required names before opening a dialog or writing", async () => {
     openThroughRealCommands();
-    mocks.prepareBroadcast.mockRejectedValueOnce(legacyChallenge()).mockResolvedValue(undefined);
-    mocks.write.mockResolvedValue(undefined);
-    await openTemplateWithChallenge();
+    mocks.prepareBroadcast.mockRejectedValueOnce(legacyChallenge());
+    mocks.list.mockResolvedValue([commandTemplate()]);
+    mounted = mount(createElement(ProjectTemplatePanel, { groups }));
+    clickButton(mounted.container, "项目模板（0）");
+    await flushUntil(() => mounted!.container.textContent?.includes("Daily") ?? false);
+    clickButton(mounted.container, "打开");
 
-    const acknowledgement = productionDialog().querySelector<HTMLInputElement>('input[aria-label="确认生产环境风险"]');
-    if (!acknowledgement) throw new Error("legacy acknowledgement checkbox not found");
-    const confirm = confirmButton();
-    expect(confirm.disabled).toBe(true);
-    click(acknowledgement);
-    expect(confirm.disabled).toBe(false);
-    await clickAndFlush(confirm);
-
-    await flushUntil(() => mocks.write.mock.calls.length === 1);
-    const productionConfirmation = { confirmed: true, targetSetHash: "a".repeat(64), inputHash: "b".repeat(64) };
-    expect(mocks.prepareBroadcast.mock.calls[1][2]).toEqual(productionConfirmation);
-    expect(mocks.write.mock.calls[0][2]).toEqual({ targetTabIds: ["kernel-old"], productionConfirmation });
+    await flushUntil(() => useUi.getState().toasts.some((toast) => toast.text.includes("1 条命令失败")));
+    expect(document.body.querySelector('[role="dialog"][aria-label="确认生产环境执行"]')).toBeNull();
+    expect(mocks.prepareBroadcast).toHaveBeenCalledTimes(1);
+    expect(mocks.write).not.toHaveBeenCalled();
   });
 });

@@ -51,6 +51,10 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     assetApi: {
       list: mocks.list,
       search: mocks.search,
+      searchMeta: async (query: string) => {
+        const assets = await mocks.search(query);
+        return { assets, total: assets.length, truncated: false };
+      },
       create: mocks.create,
       update: mocks.update,
       delete: mocks.assetDelete,

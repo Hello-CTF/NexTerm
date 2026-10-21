@@ -1,5 +1,5 @@
-// Device metrics panel: shared by device management and the asset tree. New responses use an independent latest sample
-// and actual window metadata; legacy samples-only responses remain readable but are marked as having an unverified window.
+// Device metrics panel: shared by device management and the asset tree. Current responses carry an independent
+// latest sample and actual window metadata.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type FleetMetricsResponse } from "../../ipc/fleetApi";
@@ -59,7 +59,7 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
   const data = result?.deviceId === deviceId ? result.data : null;
   const error = requestError?.deviceId === deviceId ? requestError.message : null;
   const samples = data?.samples ?? [];
-  const latest = data?.latest ?? samples[samples.length - 1];
+  const latest = data?.latest;
   const gapThreshold = metricsGapThreshold(data?.sampleIntervalMs);
   const [, refreshFreshness] = useState(0);
   useEffect(() => {
@@ -111,7 +111,7 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
   const windowStart = data?.windowStart;
   const windowEnd = data?.windowEnd;
   const hasWindow = windowStart !== undefined && windowEnd !== undefined;
-  const sampleCount = data?.sampleCount ?? samples.length;
+  const sampleCount = data?.sampleCount;
   const referenceTime = Date.now();
   const stale = referenceTime - latest.ts > gapThreshold;
   const staleText = `${online ? "指标过期" : "设备离线，指标过期"} · 过期阈值 ${formatUptime(gapThreshold / 1000)}`;
@@ -166,10 +166,10 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
         <div className="nx-hint text-[11px]">
           {hasWindow ? (
             <>
-              趋势窗口 {formatTime(windowStart)} - {formatTime(windowEnd)} · {data?.seriesError ? "采样数未知" : `共 ${sampleCount} 个采样点${data?.downsampled ? ` · 显示 ${samples.length} 个原始点` : ""}`}
+              趋势窗口 {formatTime(windowStart)} - {formatTime(windowEnd)} · {data?.seriesError || sampleCount === undefined ? "采样数未知" : `共 ${sampleCount} 个采样点${data?.downsampled ? ` · 显示 ${samples.length} 个原始点` : ""}`}
             </>
           ) : (
-            <>旧接口返回 {samples.length} 个采样点，窗口完整性未知</>
+            <>趋势窗口元数据不可用</>
           )}
           {" · 最新 "}{formatTime(latest.ts)}{stale ? ` · ${staleText}` : ""}
         </div>

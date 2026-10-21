@@ -222,6 +222,7 @@ const CHANGED_HOST_KEY = {
     port: 22,
     keyType: "ssh-ed25519",
     fingerprint: "SHA256:new",
+    key: "ZmFrZS1kZWFkLXRhYi1rZXk=",
     changed: true,
     known: [{ keyType: "ssh-ed25519", fingerprint: "SHA256:old" }],
   },
@@ -725,7 +726,7 @@ describe("terminal dead-tab context menu reconnect", () => {
     await clickMenuItem("重新连接这台主机");
 
     await waitFor(() => expect(toastTexts()).toContain("已重新连接"));
-    expect(mocks.knownHostAccept).toHaveBeenCalledWith("127.0.0.1", 22, "ssh-ed25519", "SHA256:new");
+    expect(mocks.knownHostAccept).toHaveBeenCalledWith("127.0.0.1", 22, "ssh-ed25519", "SHA256:new", "ZmFrZS1kZWFkLXRhYi1rZXk=");
     expect(mocks.connect).toHaveBeenCalledTimes(2);
     const st = useUi.getState();
     expect(st.workspaces).toHaveLength(1);
