@@ -94,6 +94,10 @@ type Call struct {
 	// connected from, so the durable outcome record can re-verify that
 	// exact session's identity on a later replay.
 	BoundSessionID string `json:"-"`
+	// IdempotencyScope, when non-empty, scopes the inner idempotency key to
+	// one fresh attempt: a durable-adjudicated fresh attempt after a failed
+	// record must not be short-circuited by the old finished failure.
+	IdempotencyScope string `json:"-"`
 }
 
 type Output struct {

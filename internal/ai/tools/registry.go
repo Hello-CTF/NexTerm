@@ -589,6 +589,7 @@ func (r *Registry) adjudicateAndBeginDurableCreate(ctx context.Context, jobID st
 		failure := Fail(fmt.Errorf("执行记录裁定查询失败: %w", err))
 		return nil, &failure
 	}
+	freshAfterFailure := false
 	switch {
 	case adjudication.Conflict:
 		failure := Fail(errors.New("相同调用存在冲突的执行记录，未重复执行"))
@@ -609,6 +610,7 @@ func (r *Registry) adjudicateAndBeginDurableCreate(ctx context.Context, jobID st
 		}
 		// The record is stale (the asset was reconfigured) or finally
 		// failed: a fresh attempt proceeds.
+		freshAfterFailure = adjudication.Terminal.State == "failed"
 	}
 	claimID, claimed, err := r.deps.DurableOutcomes.ClaimOutcome(ctx, operation, "terminal_create")
 	if err != nil {
@@ -666,8 +668,15 @@ func (r *Registry) adjudicateAndBeginDurableCreate(ctx context.Context, jobID st
 		}
 		// The record is stale (the asset was reconfigured) or finally
 		// failed: this caller's fresh attempt proceeds.
+		freshAfterFailure = freshAfterFailure || adjudication.Terminal.State == "failed"
 	}
 	attempt := operation + ":" + newOutcomeAttemptNonce()
+	if freshAfterFailure {
+		// The fresh attempt follows a failed record on the same identity:
+		// scope the inner idempotency key to this attempt so the old
+		// finished failure cannot short-circuit the effect.
+		call.IdempotencyScope = attempt
+	}
 	return func(result *Output, stage string) {
 		writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), durableOutcomeWriteTimeout)
 		defer cancel()
@@ -828,8 +837,14 @@ func GuardAuthorizationID(decision guard.Decision) string {
 }
 
 func (r *Registry) executeRecorded(ctx context.Context, jobID string, scope Scope, call Call, preparation *Preparation) Output {
+	key := OutcomeKeyWithIdentity(jobID, call.ID, call.AssetIdentities)
+	if call.IdempotencyScope != "" {
+		// A durable-adjudicated fresh attempt scopes its own key: the old
+		// finished failure under the family key must not short-circuit it.
+		key = OutcomeKeyWithIdentity(jobID, call.IdempotencyScope, call.AssetIdentities)
+	}
 	request := outcome.Request{
-		IdempotenceKey:  OutcomeKeyWithIdentity(jobID, call.ID, call.AssetIdentities),
+		IdempotenceKey:  key,
 		AuthorizationID: call.AuthorizationID,
 		Kind:            sideEffectKind(call.Name),
 		Arguments:       call.Args,
