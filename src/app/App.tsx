@@ -111,6 +111,7 @@ import { FileTree } from "../features/files/FileTree";
 import { fileVisual } from "../features/files/fileTypes";
 import { MountPanel } from "../features/files/MountPanel";
 import { ForwardPanel } from "../features/forward/ForwardPanel";
+import { ForwardStartupRecovery } from "../features/forward/ForwardStartupRecovery";
 import { FileEditor } from "../features/files/FileEditor";
 import { LogViewer } from "../features/files/LogViewer";
 import { MultiHostLogTail } from "../features/logs/MultiHostLogTail";
@@ -1557,6 +1558,7 @@ function AppShell() {
         跳到主内容
       </a>
       <DeviceSessionBoundary />
+      <ForwardStartupRecovery />
 
       <div className="flex min-h-0 flex-1">
         <nav
