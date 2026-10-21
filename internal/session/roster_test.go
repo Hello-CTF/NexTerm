@@ -398,3 +398,52 @@ func TestRosterRuntimeEpisodeStableOnDurableReconnect(t *testing.T) {
 		t.Fatalf("durable episode after reconnect = %q, %v; want stable %q", after, ok, before)
 	}
 }
+
+// The snapshot carries the tab's OSC-7-reported working directory from the
+// same critical section as the episode and asset: before any report the cwd
+// is honestly empty, and a report through the real pump path lands in the
+// snapshot without disturbing the other fields.
+func TestRosterRuntimeSnapshotCarriesReportedCwd(t *testing.T) {
+	connector := newFakeConnector()
+	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), OpenAccess: true})
+	t.Cleanup(func() { _ = manager.Close() })
+	ctx := context.Background()
+	connected, err := manager.Connect(ctx, Asset{ID: "roster-cwd-asset", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.OpenTab(ctx, OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client-a", ChannelID: "roster-cwd", Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, ok := manager.RosterRuntimeSnapshot(ctx, info.ID)
+	if !ok {
+		t.Fatal("snapshot lookup failed")
+	}
+	if before.Cwd != "" {
+		t.Fatalf("snapshot cwd before any report = %q, want empty (unknown)", before.Cwd)
+	}
+
+	if err := connector.transport(0).channel(0).emit([]byte("\x1b]7;file://buildhost/srv/app\x1b\\")); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		snapshot, ok := manager.RosterRuntimeSnapshot(ctx, info.ID)
+		if ok && snapshot.Cwd == "/srv/app" {
+			if !snapshot.EpisodeOK || snapshot.Episode != before.Episode {
+				t.Fatalf("cwd report disturbed the episode: %q vs %q", snapshot.Episode, before.Episode)
+			}
+			if snapshot.Asset.ID != "roster-cwd-asset" || snapshot.Status != StatusConnected {
+				t.Fatalf("cwd report disturbed the snapshot: %+v", snapshot)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("snapshot never carried the OSC 7 cwd")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

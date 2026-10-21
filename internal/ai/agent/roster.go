@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -447,6 +448,41 @@ func (r *Roster) RequestRelease(ctx context.Context, handle string, identity Ros
 
 func rosterIdentityMatches(row store.AgentRosterRow, identity RosterIdentity) bool {
 	return row.CreatedAt == identity.CreatedAt && row.Incarnation == identity.Incarnation
+}
+
+// maxRosterAliasRunes bounds roster aliases to the store column size, so a
+// rename fails at the contract boundary instead of deep in a backend.
+const maxRosterAliasRunes = 191
+
+// Rename changes only the entry's alias under the exact durable identity CAS:
+// the permanent handle, the persisted state, the job binding, and the existing
+// metadata all survive, and a stale identity conflicts instead of renaming a
+// replacement row. The row may be renamed in any state — the alias is display
+// metadata on the permanent row, not a runtime property — and renaming to the
+// current alias is an idempotent success.
+func (r *Roster) Rename(ctx context.Context, handle string, identity RosterIdentity, alias string) (RosterEntry, error) {
+	trimmed := strings.TrimSpace(alias)
+	if trimmed == "" {
+		return RosterEntry{}, ipc.NewError(ipc.CodeBadParam, "roster alias 不能为空")
+	}
+	if utf8.RuneCountInString(trimmed) > maxRosterAliasRunes {
+		return RosterEntry{}, ipc.NewError(ipc.CodeBadParam, "roster alias 过长")
+	}
+	if strings.TrimSpace(handle) == "" {
+		return RosterEntry{}, ipc.NewError(ipc.CodeBadParam, "roster handle 不能为空")
+	}
+	row, err := r.store.AgentRosterGetByHandle(ctx, handle)
+	if err != nil {
+		return RosterEntry{}, mapRosterStoreError(err)
+	}
+	// The store update is the authoritative identity CAS: the alias is the
+	// only mutable field, so a conflict can only mean the caller's saved
+	// identity is stale.
+	updated, err := r.store.AgentRosterUpdate(ctx, row.ID, identity, map[string]any{"alias": trimmed})
+	if err != nil {
+		return RosterEntry{}, mapRosterStoreError(err)
+	}
+	return rosterEntryFromRow(updated), nil
 }
 
 // ConfirmRelease completes a release-pending entry once the runtime

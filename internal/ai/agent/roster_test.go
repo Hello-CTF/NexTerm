@@ -127,6 +127,8 @@ func (f *fakeRosterStore) applyUpdates(row *store.AgentRosterRow, updates map[st
 			row.State = value.(string)
 		case "job_id":
 			row.JobID = value.(string)
+		case "alias":
+			row.Alias = value.(string)
 		case "released_at":
 			if value == nil {
 				row.ReleasedAt = nil
@@ -1045,5 +1047,159 @@ func TestRosterCorruptMetadataFailsClosedOnConnectedFirstAttach(t *testing.T) {
 	}
 	if !strings.Contains(stored.MetadataJSON, `"runtimeEpisode":"episode-1"`) || !strings.Contains(stored.MetadataJSON, `"origin":"synthetic"`) {
 		t.Fatalf("legal merge lost keys: %s", stored.MetadataJSON)
+	}
+}
+
+// Rename changes only the alias: the permanent handle, the exact durable
+// identity, the persisted state, the job binding, and the existing metadata
+// all survive the write.
+func TestRosterRenameChangesOnlyAlias(t *testing.T) {
+	ctx := rosterOwnerContext("owner-a")
+	fake := newFakeRosterStore()
+	probe := newFakeRosterProbe()
+	probe.set("handle-a", RosterRuntimeConnected, "")
+	roster := newTestRoster(fake, probe)
+	entry, err := roster.Provision(ctx, "conv-1", "handle-a", "alias-before", "tab-a", map[string]any{"origin": "synthetic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := roster.Activate(ctx, entry.ID, rosterIdentityOf(entry), "job-0"); err != nil {
+		t.Fatal(err)
+	}
+
+	renamed, err := roster.Rename(ctx, "handle-a", rosterIdentityOf(entry), "  alias-after  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.Alias != "alias-after" {
+		t.Fatalf("renamed alias = %q", renamed.Alias)
+	}
+	if renamed.ID != entry.ID || renamed.Handle != "handle-a" || renamed.TabID != entry.TabID {
+		t.Fatalf("rename disturbed the permanent identity: %+v", renamed)
+	}
+	if renamed.Incarnation != entry.Incarnation || renamed.CreatedAt != entry.CreatedAt {
+		t.Fatalf("rename disturbed the durable identity: %+v", renamed)
+	}
+	if renamed.State != RosterStateActive || renamed.JobID != "job-0" {
+		t.Fatalf("rename disturbed the lifecycle: %+v", renamed)
+	}
+	stored, err := fake.AgentRosterGetByHandle(ctx, "handle-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stored.MetadataJSON, `"origin":"synthetic"`) {
+		t.Fatalf("rename rewrote metadata: %s", stored.MetadataJSON)
+	}
+
+	// Renaming to the current alias is an idempotent success, and terminal
+	// rows stay renameable: the alias is display metadata on the permanent
+	// row, not a runtime property.
+	if _, err := roster.Rename(ctx, "handle-a", rosterIdentityOf(entry), "alias-after"); err != nil {
+		t.Fatalf("idempotent rename err=%v", err)
+	}
+	if _, err := roster.RequestRelease(ctx, "handle-a", rosterIdentityOf(entry)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := roster.ConfirmRelease(ctx, "handle-a", rosterIdentityOf(entry)); err != nil {
+		t.Fatal(err)
+	}
+	released, err := roster.Rename(ctx, "handle-a", rosterIdentityOf(entry), "alias-released")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if released.Alias != "alias-released" || released.State != RosterStateReleased {
+		t.Fatalf("released rename = %+v", released)
+	}
+}
+
+// A stale saved identity never renames: the exact durable identity CAS
+// conflicts instead of landing on the replacement row.
+func TestRosterRenameStaleIdentityConflicts(t *testing.T) {
+	ctx := rosterOwnerContext("owner-a")
+	fake := newFakeRosterStore()
+	roster := newTestRoster(fake, newFakeRosterProbe())
+	entry := mustProvision(t, roster, ctx, "conv-1", "handle-a")
+
+	// An out-of-band replacement changes the incarnation underneath the caller.
+	fake.mutate(entry.ID, func(row *store.AgentRosterRow) {
+		row.Incarnation = "inc-replacement"
+	})
+	if _, err := roster.Rename(ctx, "handle-a", rosterIdentityOf(entry), "alias-new"); !errors.Is(err, ErrRosterIdentityConflict) {
+		t.Fatalf("stale rename err=%v", err)
+	}
+	// A wrong creation stamp is equally stale.
+	stale := RosterIdentity{CreatedAt: entry.CreatedAt + 1, Incarnation: "inc-replacement"}
+	if _, err := roster.Rename(ctx, "handle-a", stale, "alias-new"); !errors.Is(err, ErrRosterIdentityConflict) {
+		t.Fatalf("wrong-stamp rename err=%v", err)
+	}
+	stored, err := fake.AgentRosterGetByHandle(ctx, "handle-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Alias != "handle-a-alias" {
+		t.Fatalf("stale rename rewrote the alias: %+v", stored)
+	}
+	// The holder of the current identity renames successfully.
+	renamed, err := roster.Rename(ctx, "handle-a", RosterIdentity{CreatedAt: entry.CreatedAt, Incarnation: "inc-replacement"}, "alias-new")
+	if err != nil || renamed.Alias != "alias-new" {
+		t.Fatalf("current identity rename = %+v err=%v", renamed, err)
+	}
+}
+
+// Rename is owner-scoped: a foreign owner never resolves the handle and
+// cannot observe or disturb the row.
+func TestRosterRenameCrossOwnerFailsClosed(t *testing.T) {
+	ctx := rosterOwnerContext("owner-a")
+	foreign := rosterOwnerContext("owner-b")
+	fake := newFakeRosterStore()
+	roster := newTestRoster(fake, newFakeRosterProbe())
+	entry := mustProvision(t, roster, ctx, "conv-1", "handle-a")
+
+	if _, err := roster.Rename(foreign, "handle-a", rosterIdentityOf(entry), "alias-new"); !errors.Is(err, ErrRosterNotFound) {
+		t.Fatalf("foreign rename err=%v", err)
+	}
+	stored, err := fake.AgentRosterGetByHandle(ctx, "handle-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Alias != "handle-a-alias" {
+		t.Fatalf("foreign rename rewrote the alias: %+v", stored)
+	}
+}
+
+func TestRosterRenameRejectsInvalidInput(t *testing.T) {
+	ctx := rosterOwnerContext("owner-a")
+	fake := newFakeRosterStore()
+	roster := newTestRoster(fake, newFakeRosterProbe())
+	entry := mustProvision(t, roster, ctx, "conv-1", "handle-a")
+	identity := rosterIdentityOf(entry)
+
+	for name, alias := range map[string]string{
+		"empty":      "",
+		"whitespace": "   ",
+		"overlong":   strings.Repeat("a", maxRosterAliasRunes+1),
+	} {
+		if _, err := roster.Rename(ctx, "handle-a", identity, alias); err == nil {
+			t.Fatalf("%s alias accepted", name)
+		} else {
+			var appErr *ipc.Error
+			if !errors.As(err, &appErr) || appErr.Code != ipc.CodeBadParam {
+				t.Fatalf("%s alias err=%v, want bad param", name, err)
+			}
+		}
+	}
+	if _, err := roster.Rename(ctx, "  ", identity, "alias-new"); err == nil {
+		t.Fatal("empty handle accepted")
+	}
+	stored, err := fake.AgentRosterGetByHandle(ctx, "handle-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Alias != "handle-a-alias" {
+		t.Fatalf("invalid rename rewrote the alias: %+v", stored)
+	}
+	// The rune cap boundary itself is accepted.
+	if _, err := roster.Rename(ctx, "handle-a", identity, strings.Repeat("a", maxRosterAliasRunes)); err != nil {
+		t.Fatalf("boundary alias err=%v", err)
 	}
 }
