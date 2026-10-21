@@ -16,6 +16,7 @@ func TestTabTracksCommandLifecycle(t *testing.T) {
 		Connector: connector,
 		Terminals: newFakeTerminalFactory(),
 	})
+	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
 	connected, err := manager.Connect(ctx, Asset{ID: "cmd-asset", Kind: KindSSH})
 	if err != nil {
@@ -59,6 +60,7 @@ func TestTabCommandStateIgnores133FreeStream(t *testing.T) {
 		Connector: connector,
 		Terminals: newFakeTerminalFactory(),
 	})
+	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
 	connected, err := manager.Connect(ctx, Asset{ID: "plain-asset", Kind: KindSSH})
 	if err != nil {
