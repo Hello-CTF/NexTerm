@@ -40,9 +40,10 @@ type watchService struct {
 	// racing the runner's lifecycle.
 	attachHook func(targetID string)
 
-	mu        sync.Mutex
-	executors map[string]*watches.Executor
-	closed    bool
+	reconcileMu sync.Mutex
+	mu          sync.Mutex
+	executors   map[string]*watches.Executor
+	closed      bool
 }
 
 func newWatchService(storage *store.Store, sessions *session.Manager, events ipc.Emitter, roster *agent.Roster, logger *slog.Logger) *watchService {
@@ -160,9 +161,12 @@ func (s *watchService) ensureAttached(ctx context.Context, executor *watches.Exe
 // reconcileOwner re-attaches the owner's live durable targets after a
 // restart or a lifecycle event. Targets whose tab is missing keep their
 // watches armed (a durable tab can return with the same incarnation); a tab
-// whose episode advanced re-attaches with the new identity, settling the old
-// incarnation.
+// whose identity advanced re-attaches with the new identity, settling the old
+// incarnation. Reconciles are serialized: concurrent event-driven passes
+// would otherwise race the same attaches.
 func (s *watchService) reconcileOwner(owner string) {
+	s.reconcileMu.Lock()
+	defer s.reconcileMu.Unlock()
 	ctx := s.ownerCtx(owner)
 	executor, err := s.executorFor(ctx, owner)
 	if err != nil {

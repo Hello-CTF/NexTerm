@@ -139,8 +139,8 @@ func TestWatchSourceFailsOnEpisodeReplacement(t *testing.T) {
 	manager := newWatchTestManager(t)
 	tab := openWatchTestTab(t, manager)
 	ctx := context.Background()
-	episode := watchTestEpisode(t, manager, tab.ID)
-	source, err := manager.OpenWatchSource(ctx, tab.ID, episode, WatchSourceOptions{PollInterval: time.Millisecond})
+	identity := watchTestEpisode(t, manager, tab.ID)
+	source, err := manager.OpenWatchSource(ctx, tab.ID, identity, WatchSourceOptions{PollInterval: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,8 +148,10 @@ func TestWatchSourceFailsOnEpisodeReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The coordinate incarnation is the stream epoch: recreating the ring
+	// replaces the stream even when nothing else about the tab changed.
 	tabObject.mu.Lock()
-	tabObject.runtimeEpisode = "episode-new"
+	tabObject.streamEpoch = "epoch-recreated"
 	tabObject.mu.Unlock()
 
 	var replaced *WatchEpisodeReplacedError
@@ -160,13 +162,13 @@ func TestWatchSourceFailsOnEpisodeReplacement(t *testing.T) {
 	if !ok || replaced.Current != state.WatchIdentity() {
 		t.Fatalf("replacement evidence = %q; want the current watch identity %q", replaced.Current, state.WatchIdentity())
 	}
-	if _, err := manager.OpenWatchSource(ctx, tab.ID, episode, WatchSourceOptions{}); !errors.As(err, &replaced) {
-		t.Fatalf("open with a stale episode = %v; want WatchEpisodeReplacedError", err)
+	if _, err := manager.OpenWatchSource(ctx, tab.ID, identity, WatchSourceOptions{}); !errors.As(err, &replaced) {
+		t.Fatalf("open with a stale identity = %v; want WatchEpisodeReplacedError", err)
 	}
 	if _, err := manager.OpenWatchSource(ctx, tab.ID, "", WatchSourceOptions{}); !errors.Is(err, ErrWatchEpisodeUnevidenced) {
-		t.Fatalf("open with an empty episode = %v; want ErrWatchEpisodeUnevidenced", err)
+		t.Fatalf("open with an empty identity = %v; want ErrWatchEpisodeUnevidenced", err)
 	}
-	if _, err := manager.OpenWatchSource(ctx, "tab-missing", "episode", WatchSourceOptions{}); !errors.Is(err, ErrWatchTargetGone) {
+	if _, err := manager.OpenWatchSource(ctx, "tab-missing", "identity", WatchSourceOptions{}); !errors.Is(err, ErrWatchTargetGone) {
 		t.Fatalf("open on a missing tab = %v; want ErrWatchTargetGone", err)
 	}
 }

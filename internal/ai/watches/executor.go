@@ -221,34 +221,56 @@ type targetRunner struct {
 }
 
 // AttachTarget binds the target to an identity incarnation and starts its
-// runner. The runner resumes from the watches' own evaluated positions when
-// they exist (restart recovery) and from the source end otherwise. A target
-// whose previous runner already exited (a terminal source failure or a
-// finished stream) may be re-attached: the stale runner is replaced and its
-// source closed, while a live runner rejects the duplicate attach.
+// runner, serializing the per-target lifecycle. A live runner for the same
+// identity rejects the attach as a duplicate; an attach carrying a different
+// identity is a replacement: the stale runner is cancelled and awaited before
+// the durable transition, so a recovered stream is never left without a
+// consumer while its old runner drains. A runner that already exited is
+// replaced and its source closed. After the durable attach the mirror must
+// hold the requested identity — a concurrent newer attach supersedes the
+// stale presenter instead of letting it start a runner over replaced
+// coordinates. The runner resumes from the watches' own evaluated positions
+// when they exist (restart recovery) and from the source end otherwise.
 func (e *Executor) AttachTarget(ctx context.Context, targetID, identity string, source Source) error {
 	if source == nil {
 		return errors.New("watches: executor source is nil")
 	}
-	// Reject a live duplicate before touching durable state: engine.Attach on
-	// a changed identity settles the previous incarnation, and a caller whose
-	// attach fails must not carry that side effect.
-	e.mu.Lock()
-	if stale, exists := e.targets[targetID]; exists {
+	for {
+		e.mu.Lock()
+		stale, exists := e.targets[targetID]
+		if !exists {
+			e.mu.Unlock()
+			break
+		}
 		select {
 		case <-stale.done:
-		default:
+			stale.cancel()
+			_ = stale.source.Close()
+			delete(e.targets, targetID)
 			e.mu.Unlock()
-			return fmt.Errorf("watches: target %s already attached", targetID)
+		default:
+			if stale.identity == identity {
+				e.mu.Unlock()
+				return fmt.Errorf("watches: target %s already attached", targetID)
+			}
+			// The identity advanced: retire the stale runner and wait for it
+			// before the durable transition, so the old source can never
+			// deliver output of the replaced stream past this point.
+			stale.cancel()
+			e.mu.Unlock()
+			<-stale.done
+			_ = stale.source.Close()
 		}
 	}
-	e.mu.Unlock()
 	if err := e.engine.Attach(ctx, targetID, identity); err != nil {
 		return err
 	}
-	_, generation, attached := e.engine.Credential(ctx, targetID)
+	mirror, generation, attached := e.engine.Credential(ctx, targetID)
 	if !attached {
 		return ErrDetached
+	}
+	if mirror != identity {
+		return fmt.Errorf("watches: target %s identity superseded during attach: %w", targetID, ErrConflict)
 	}
 	pos, err := e.resumePosition(ctx, targetID, source, generation)
 	if err != nil {
@@ -263,15 +285,16 @@ func (e *Executor) AttachTarget(ctx context.Context, targetID, identity string, 
 	if stale, exists := e.targets[targetID]; exists {
 		select {
 		case <-stale.done:
-			// The stale runner exited on its own; replacing it never races a
-			// live consumer of the old source.
 			stale.cancel()
 			_ = stale.source.Close()
 			delete(e.targets, targetID)
 		default:
 			e.mu.Unlock()
 			cancel()
-			return fmt.Errorf("watches: target %s already attached", targetID)
+			if stale.identity == identity {
+				return fmt.Errorf("watches: target %s already attached", targetID)
+			}
+			return fmt.Errorf("watches: target %s identity superseded during attach: %w", targetID, ErrConflict)
 		}
 	}
 	e.targets[targetID] = runner

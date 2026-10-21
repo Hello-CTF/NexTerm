@@ -167,24 +167,23 @@ func TestExecutorTerminalErrorStopsRunnerAndAllowsReattach(t *testing.T) {
 	}
 	close(gate)
 	// The runner consumes "aa", then the terminal error stops it; re-attach
-	// must succeed while a live duplicate is still rejected elsewhere.
+	// succeeds whether the stale runner is still draining or already done.
 	deadline := time.Now().Add(10 * time.Second)
+	var fresh *scriptSource
 	for {
-		fresh := &scriptSource{endSeq: 50}
-		err := executor.AttachTarget(ctx, "target-1", "identity-2", fresh)
-		if err == nil {
-			stale.mu.Lock()
-			closed := stale.closed
-			stale.mu.Unlock()
-			if !closed {
-				t.Fatal("the stale source was not closed on replacement")
-			}
+		fresh = &scriptSource{endSeq: 50, gate: make(chan struct{})}
+		if err := executor.AttachTarget(ctx, "target-1", "identity-2", fresh); err == nil {
 			break
-		}
-		if !strings.Contains(err.Error(), "already attached") || time.Now().After(deadline) {
+		} else if !strings.Contains(err.Error(), "already attached") || time.Now().After(deadline) {
 			t.Fatalf("re-attach = %v", err)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+	stale.mu.Lock()
+	staleClosed := stale.closed
+	stale.mu.Unlock()
+	if !staleClosed {
+		t.Fatal("the stale source was not closed on replacement")
 	}
 	// The replacement identity settled the old incarnation's watch.
 	row, err := backend.AgentWatchGet(ctx, watch.ID)
@@ -197,9 +196,25 @@ func TestExecutorTerminalErrorStopsRunnerAndAllowsReattach(t *testing.T) {
 	if identity, attached := executor.AttachedIdentity(ctx, "target-1"); !attached || identity != "identity-2" {
 		t.Fatalf("AttachedIdentity after re-attach = %q, %v; want identity-2, true", identity, attached)
 	}
-	// A second attach while the fresh runner is alive is still rejected.
-	if err := executor.AttachTarget(ctx, "target-1", "identity-3", &scriptSource{}); err == nil || !strings.Contains(err.Error(), "already attached") {
-		t.Fatalf("duplicate attach = %v; want already attached", err)
+	// The fresh runner is alive (parked on its gate): a duplicate attach for
+	// the same identity is rejected without touching durable state, while a
+	// different identity is a live replacement — the running stale runner is
+	// cancelled, awaited and closed before the newer identity binds.
+	if err := executor.AttachTarget(ctx, "target-1", "identity-2", &scriptSource{}); err == nil || !strings.Contains(err.Error(), "already attached") {
+		t.Fatalf("duplicate same-identity attach = %v; want already attached", err)
+	}
+	live := &scriptSource{gate: make(chan struct{})}
+	if err := executor.AttachTarget(ctx, "target-1", "identity-3", live); err != nil {
+		t.Fatalf("live replacement attach = %v", err)
+	}
+	fresh.mu.Lock()
+	freshClosed := fresh.closed
+	fresh.mu.Unlock()
+	if !freshClosed {
+		t.Fatal("the live stale source was not closed on replacement")
+	}
+	if identity, attached := executor.AttachedIdentity(ctx, "target-1"); !attached || identity != "identity-3" {
+		t.Fatalf("AttachedIdentity after live replacement = %q, %v; want identity-3, true", identity, attached)
 	}
 	if err := executor.Stop(ctx); err != nil {
 		t.Fatal(err)

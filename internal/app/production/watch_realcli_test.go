@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
@@ -214,5 +215,149 @@ func TestProductionWatchRestartResumesDeliveryWithFixedDeliveryID(t *testing.T) 
 	}
 	if rows, err := database.MsgList(ctx, conversationID); err != nil || len(agent.WatchHistoryToolData(rows)) != 1 {
 		t.Fatalf("history deliveries after ack = %+v, %v; want exactly 1", rows, err)
+	}
+}
+
+// The r2 live-replacement regression on the real CLI boundary: the tab is
+// closed and recreated under the same target ID while the old runner is still
+// alive (its poll is parked for the whole close/recreate window). The
+// reconcile must retire the live stale runner and attach the new stream in
+// the same executor: the old watch settles honestly, the target is never
+// recorded gone, and a new watch fires on the recreated tab's output.
+func TestProductionWatchLiveStaleRunnerReplacedOnRecreate(t *testing.T) {
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	events := &watchEventCapture{}
+	attached := make(chan string, 4)
+	var service *watchService
+	sessionsWithHook := session.NewManager(session.Config{
+		IdleTimeout: -1,
+		Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
+			return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
+		}),
+		Emitter: session.EmitterFunc(func(ctx context.Context, event session.Event) error {
+			if service != nil {
+				service.onSessionEvent(ctx, event)
+			}
+			return nil
+		}),
+	})
+	t.Cleanup(func() { _ = sessionsWithHook.Close() })
+	service, _ = newWatchTestService(t, database, sessionsWithHook, events, 10*time.Millisecond)
+	// Park the runner's poll far beyond the close/recreate window so the
+	// stale runner is provably alive when the recovery reconcile arrives.
+	service.pollInterval = 30 * time.Second
+	service.attachHook = func(targetID string) { attached <- targetID }
+	ctx := watchOwnerCtx("owner-a")
+
+	connected, err := sessionsWithHook.Connect(ctx, session.Asset{ID: "asset-local", Kind: session.KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab, err := sessionsWithHook.OpenTabFor(ctx, session.OpenTabOptions{
+		TabID: "watch-live-target", SessionID: connected.ID, ClientID: "client-a", ChannelID: "a-1", Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversationID := provisionWatchConversation(t, database, ctx, tab.ID)
+	dispatcher := ipc.NewDispatcher()
+	if err := service.registerCommands(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	create := dispatchWatch(t, ctx, dispatcher, "ai_watch_create", `{"targetId":"`+tab.ID+`","condition":{"type":"contains","pattern":"nexterm-live-one"},"repeat":false,"expiresAt":0}`)
+	if !create.OK {
+		t.Fatalf("ai_watch_create = %+v", create.Error)
+	}
+	var summary WatchSummary
+	if err := json.Unmarshal(create.Data, &summary); err != nil {
+		t.Fatal(err)
+	}
+	drainAttachHook(attached, tab.ID)
+	executor, err := service.executorFor(ctx, "owner-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Close and recreate the tab under the same target ID while the old
+	// runner is parked: the identity advances with the recreated ring.
+	before, ok := sessionsWithHook.WatchStreamState(ctx, tab.ID)
+	if !ok || before.WatchIdentity() == "" {
+		t.Fatal("watch state before recreate failed")
+	}
+	if err := sessionsWithHook.CloseTabFor(ctx, tab.ID); err != nil {
+		t.Fatal(err)
+	}
+	if !executor.RunnerAlive(tab.ID) {
+		t.Fatal("test premise failed: the stale runner died before the recreate")
+	}
+	recreated, err := sessionsWithHook.OpenTabFor(ctx, session.OpenTabOptions{
+		TabID: tab.ID, SessionID: connected.ID, ClientID: "client-a", ChannelID: "a-2", Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, ok := sessionsWithHook.WatchStreamState(ctx, recreated.ID)
+	if !ok || after.WatchIdentity() == "" {
+		t.Fatal("watch state after recreate failed")
+	}
+	if after.WatchIdentity() == before.WatchIdentity() {
+		t.Fatal("a recreated ring must advance the watch identity")
+	}
+
+	select {
+	case targetID := <-attached:
+		if targetID != tab.ID {
+			t.Fatalf("reconcile attached %s; want %s", targetID, tab.ID)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the recovery event never replaced the live stale runner")
+	}
+	// The old runner was retired for the replacement and the old watch
+	// settled honestly against the advanced identity.
+	if !executor.RunnerAlive(tab.ID) {
+		t.Fatal("no live runner consumes the recreated stream after the replacement")
+	}
+	row, err := database.AgentWatchGet(ctx, summary.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != store.AgentWatchStatusUnverifiable {
+		t.Fatalf("old watch after live replacement = %s; want unverifiable", row.Status)
+	}
+	targetRow, err := database.AgentWatchTargetGet(ctx, tab.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if targetRow.Gone {
+		t.Fatal("a closed-then-recreated tab must never be recorded gone")
+	}
+
+	// A new watch on the recreated stream fires on its output. The runner that
+	// proved the replacement still polls on the slow test interval, so swap it
+	// for a fast one: a reversible detach keeps the watches armed and the next
+	// attach opens a fresh source with the restored interval.
+	service.pollInterval = 5 * time.Millisecond
+	if err := executor.DetachTarget(ctx, tab.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	create2 := dispatchWatch(t, ctx, dispatcher, "ai_watch_create", `{"targetId":"`+tab.ID+`","condition":{"type":"contains","pattern":"nexterm-live-two"},"repeat":false,"expiresAt":0}`)
+	if !create2.OK {
+		t.Fatalf("ai_watch_create after recreate = %+v", create2.Error)
+	}
+	if err := sessionsWithHook.Write(ctx, recreated.ID, "client-a", []byte("printf 'nexterm-live-two\\n'\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitWatchHistoryDeliveries(t, database, ctx, conversationID, 1)
+	rows, err := database.MsgList(ctx, conversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deliveries := agent.WatchHistoryToolData(rows)
+	if deliveries[0].Event.TargetID != tab.ID || deliveries[0].Event.Identity != after.WatchIdentity() {
+		t.Fatalf("delivered event after live replacement = %+v; want the recreated identity", deliveries[0].Event)
 	}
 }

@@ -12,11 +12,11 @@ import (
 
 // WatchStreamState is the watch-facing view of one tab's runtime episode and
 // lifecycle. It reuses the roster same-source snapshot for the episode and
-// adds the tab's stream epoch from the same locked read: the daemon
-// incarnation of a durable tab survives a close/recover cycle, but the
-// recovered tab is a brand-new stream view (new ring, new stream epoch, fresh
-// absolute positions), and the epoch is what proves which stream a position
-// belongs to.
+// adds the tab's stream epoch from a second locked read. The epoch never
+// changes within a tab object's lifetime, so the pair is coherent for the
+// tab the snapshot evidenced; a remove/recreate landing between the two
+// reads can only produce a pair that matches nothing, and every consumer
+// fails closed on the mismatch.
 type WatchStreamState struct {
 	Episode     string
 	EpisodeOK   bool
@@ -25,16 +25,22 @@ type WatchStreamState struct {
 	Status      Status
 }
 
-// WatchIdentity is the identity a watch must bind to: the runtime episode
-// qualified by the stream epoch. Binding to the bare episode would let a
-// watch anchored in a closed tab's coordinates silently resume against the
-// recovered tab's reset positions; the epoch changes exactly when the stream
-// coordinate space does, so identity semantics stay honest.
+// WatchIdentity is the identity a watch must bind to: the stream-coordinate
+// incarnation of the tab's output ring, not the roster runtime episode. The
+// stream epoch is minted with the tab object and never changes during its
+// life, so it is stable exactly while absolute stream positions stay
+// meaningful: an in-place reconnect replaces the channel but keeps the
+// terminal and its ring (coordinates continue, watches survive), while a
+// close/recover or a manager restart creates a new tab with a new ring and a
+// new epoch (coordinates reset, old watches must settle). EpisodeOK is the
+// evidence gate: a durable tab whose daemon supplied no incarnation cannot
+// vouch for stream continuity across reconnects, so the identity fails
+// closed instead of binding a watch to an unverifiable stream.
 func (s WatchStreamState) WatchIdentity() string {
 	if !s.EpisodeOK {
 		return ""
 	}
-	return s.Episode + "@" + s.StreamEpoch
+	return s.StreamEpoch
 }
 
 // WatchStreamState returns the tab's current watch stream state. The boolean
@@ -117,8 +123,8 @@ type watchSequenceReader interface {
 }
 
 // WatchSource is an absolute-position raw output stream over one tab's
-// retained scrollback, bound to one watch identity (the runtime episode
-// qualified by the stream epoch). It never invents bytes: positions come from
+// retained scrollback, bound to one watch identity (the stream's coordinate
+// incarnation). It never invents bytes: positions come from
 // the terminal sequence counter, a clipped read reports the honest resume
 // position as *WatchGapError, a replaced stream (a reconnect's new runtime or
 // a close/recover cycle's fresh coordinates) reports
@@ -137,9 +143,10 @@ type WatchSource struct {
 }
 
 // OpenWatchSource binds a watch stream to the tab's current watch identity.
-// The identity must be the one from WatchStreamState.WatchIdentity: a
-// mismatch means the caller's stream view is stale and the open fails instead
-// of attributing a replaced stream's output. Terminals without sequence
+// The identity must be the one from WatchStreamState.WatchIdentity — the
+// tab's stream epoch while the runtime is evidenced: a mismatch means the
+// caller's coordinate view is stale and the open fails instead of
+// attributing a replaced stream's output. Terminals without sequence
 // tracking cannot be watched and fail with ErrUnsupported. The source keeps
 // polling under the opener's owner identity — the request context cancels
 // with the call, but the attachment's credential is the owner that was
