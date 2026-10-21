@@ -868,7 +868,7 @@ func (m *Manager) reap(id string, expectedIdle ...time.Time) error {
 		m.mu.Unlock()
 	}
 	for _, tab := range tabs {
-		if err := m.closeTabResources(tab, func() { finish(tab) }); err != nil {
+		if err := m.closeTabResources(tab, true, func() { finish(tab) }); err != nil {
 			session.mu.Lock()
 			session.reapRetry = true
 			session.mu.Unlock()

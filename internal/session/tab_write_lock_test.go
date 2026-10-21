@@ -200,6 +200,26 @@ func TestCloseTabRetriesFailedChannelClose(t *testing.T) {
 	}
 }
 
+// L-03: a tab whose channel close fails while the session is being reaped
+// must still complete the goroutine-releasing teardown — the reaping cancel
+// and transport close already killed the channel, so retrying is
+// meaningless — and the tab must not linger with live fanout subscribers.
+func TestManagerCloseCompletesTeardownOnChannelCloseFailure(t *testing.T) {
+	manager, connector, _, session := openTestSession(t, KindSSH)
+	tab := openTestTab(t, manager, session, "client-a", "a-1")
+	channelErr := errors.New("channel close failed")
+	connector.transport(0).channel(0).closeErr = channelErr
+	if err := manager.Close(); !errors.Is(err, channelErr) {
+		t.Fatalf("Manager.Close = %v, want the channel close failure surfaced", err)
+	}
+	if _, err := manager.Tab(tab.ID); !errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("tab survived a completed reaping teardown: %v", err)
+	}
+	if count := tab.fanout.Count(); count != 0 {
+		t.Fatalf("fanout still holds %d subscribers after the teardown", count)
+	}
+}
+
 // L-03: a session teardown whose transport close fails must surface the
 // failure to the caller (account cleanup and shutdown included) instead of
 // reporting a clean close.

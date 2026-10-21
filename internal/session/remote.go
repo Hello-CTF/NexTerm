@@ -342,7 +342,7 @@ func (m *Manager) reapRemote(id string, activity time.Time) error {
 
 	cancel()
 	for _, tab := range tabs {
-		m.closeTabResources(tab)
+		m.closeTabResources(tab, false)
 	}
 	m.emit(context.Background(), TopicSessionStatus, disconnectedEvent)
 	m.transcriptEnded(session)

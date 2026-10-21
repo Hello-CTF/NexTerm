@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 )
@@ -133,5 +134,52 @@ func TestReconnectAbortDiscardsPendingControlEvents(t *testing.T) {
 	case event := <-events:
 		t.Fatalf("aborted control event leaked: %+v", event)
 	default:
+	}
+}
+
+// A reaping manager shutdown must not let a tab's pump emit a terminal exit
+// event: the reap's transport close wakes the replacement channel's pump
+// before the teardown marks the tab destroying, and only the session-closed
+// suppression keeps that teardown wake from reaching subscribers.
+func TestManagerCloseSuppressesReapedTabExitEvent(t *testing.T) {
+	var mu sync.Mutex
+	var exits []ExitEvent
+	manager := NewManager(Config{
+		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
+		Emitter: EmitterFunc(func(_ context.Context, event Event) error {
+			if event.Topic == TopicTerminalExit {
+				mu.Lock()
+				exits = append(exits, event.Payload.(ExitEvent))
+				mu.Unlock()
+			}
+			return nil
+		}),
+		ReconnectBackoff: []time.Duration{0},
+	})
+	ctx := context.Background()
+	session, err := manager.Connect(ctx, Asset{ID: "asset", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := manager.connector.(*fakeConnector)
+	openTestTab(t, manager, session, "client-a", "a-1")
+	if err := connector.transport(0).channel(0).Close(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(exits) == 1
+	})
+	if err := manager.Reconnect(ctx, session.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(exits) != 1 {
+		t.Fatalf("exit events = %d, want only the pre-reconnect exit; the reaped tab's teardown wake escaped as a terminal event", len(exits))
 	}
 }

@@ -1224,7 +1224,7 @@ func (m *Manager) reapEphemeralTab(tab *Tab, generation uint64) error {
 	if !current {
 		return nil
 	}
-	if err := m.closeTabResources(tab); err != nil {
+	if err := m.closeTabResources(tab, false); err != nil {
 		return err
 	}
 
@@ -1569,7 +1569,7 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 		m.deleteDurableTabTitle(ownerCtx(context.Background(), tab.session.userID), id)
 	} else {
 		m.mu.Unlock()
-		if err := m.closeTabResources(tab); err != nil {
+		if err := m.closeTabResources(tab, false); err != nil {
 			return err
 		}
 	}
@@ -1588,11 +1588,11 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 		session.mu.Unlock()
 	}
 	m.mu.Unlock()
-	_ = m.closeTabResources(tab)
+	_ = m.closeTabResources(tab, false)
 	return nil
 }
 
-func (m *Manager) closeTabResources(tab *Tab, afterClose ...func()) error {
+func (m *Manager) closeTabResources(tab *Tab, bestEffortChannel bool, afterClose ...func()) error {
 	tab.closeMu.Lock()
 	defer tab.closeMu.Unlock()
 	tab.mu.Lock()
@@ -1606,12 +1606,21 @@ func (m *Manager) closeTabResources(tab *Tab, afterClose ...func()) error {
 	tab.destroying = true
 	channel := tab.channel
 	tab.mu.Unlock()
+	var channelErr error
 	if channel != nil {
 		if err := channel.Close(); err != nil {
 			tab.mu.Lock()
-			tab.closeRetry = true
+			tab.closeRetry = !bestEffortChannel
 			tab.mu.Unlock()
-			return err
+			if !bestEffortChannel {
+				return err
+			}
+			// A reaping session teardown (cancelled context, closed
+			// transport) already killed the channel, so the close error
+			// cannot succeed on retry and must not block the
+			// goroutine-releasing teardown below; it is reported once the
+			// teardown completes.
+			channelErr = err
 		}
 	}
 
@@ -1659,7 +1668,7 @@ func (m *Manager) closeTabResources(tab *Tab, afterClose ...func()) error {
 	event := tab.controlEventLocked()
 	tab.mu.Unlock()
 	m.emit(context.Background(), TopicTerminalControl, event)
-	return nil
+	return channelErr
 }
 
 func (m *Manager) attachSubscriberOutput(tab *Tab, channelID string, incarnation uint64, producer *hub.Producer, expected *outCoalescer) {
@@ -1892,9 +1901,16 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 	transportFailure := errors.Is(readErr, base.ErrDisconnected) || errors.Is(waitErr, base.ErrDisconnected)
 	tab.session.mu.Lock()
 	transport := tab.session.transport
+	sessionClosed := tab.session.closed
 	transportFailure = transportFailure || transport != nil && !transport.IsAlive()
 	shouldReconnect := tab.session.status == StatusConnected && tab.session.generation == generation && reconnectable(tab.session.asset.Kind) && transportFailure && !hasExitCode
 	tab.session.mu.Unlock()
+	// A reaped session's transport close wakes the tab's pump before the
+	// teardown marks the tab destroying; such an exit is part of the
+	// teardown, not a terminal event, and must not reach subscribers.
+	if sessionClosed {
+		return
+	}
 
 	tab.mu.Lock()
 	current := !tab.closed && !tab.destroying && tab.generation == generation
@@ -1928,6 +1944,14 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 	}
 	tab.mu.Unlock()
 	if !current {
+		return
+	}
+	// Re-check under the session lock: a reap that began after the first
+	// check still must not let the teardown exit escape as a terminal event.
+	tab.session.mu.Lock()
+	sessionClosed = tab.session.closed
+	tab.session.mu.Unlock()
+	if sessionClosed {
 		return
 	}
 	m.emit(context.Background(), TopicTerminalExit, exitEvent)
