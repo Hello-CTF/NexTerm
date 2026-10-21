@@ -20,6 +20,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"go.uber.org/goleak"
 	"golang.org/x/sys/windows"
 )
 
@@ -68,10 +69,12 @@ const (
 )
 
 func TestMain(m *testing.M) {
+	// Re-executed helper processes must exit before the leak check: they run
+	// a CLI, not the test suite, so goleak must never apply to them.
 	if len(os.Args) > 1 && os.Args[1] == HelperCommand {
 		os.Exit(RunHelperCLI(os.Args[2:]))
 	}
-	os.Exit(m.Run())
+	goleak.VerifyTestMain(m)
 }
 
 func TestSessionEnvWindowsPassthrough(t *testing.T) {
