@@ -9,13 +9,14 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/session"
 )
 
-// The session adapter consumes the merged terminal primitives: the real OSC
-// 0/2 dynamic title surfaces in TabDetail (falling back to the durable
-// title), and WritePasteLiteral delegates to the session manager's
+// The session adapter consumes the merged terminal primitives: TabDetail
+// follows the session manager's custom-title precedence (a user/AI-set title
+// wins over the OSC 0/2 dynamic title, which surfaces only while no custom
+// title is set), and WritePasteLiteral delegates to the session manager's
 // write-lock guarded literal paste, so send_keys no longer marks the
 // on→off mode-flip window as uncovered for session-backed terminals.
 
-func TestSessionTabDetailPrefersOSCTitle(t *testing.T) {
+func TestSessionTabDetailCustomTitlePrecedence(t *testing.T) {
 	fixture := newAtomicSessionFixture(t, false)
 	adapter := SessionTerminal(fixture.manager)
 	ctx := trustedContext()
@@ -28,22 +29,55 @@ func TestSessionTabDetailPrefersOSCTitle(t *testing.T) {
 	if err != nil || detail.Title != "构建机" {
 		t.Fatalf("durable title detail = %+v err=%v", detail, err)
 	}
-	// Once the application reports an OSC 2 title, the live title wins.
+	// Once the application reports an OSC 2 title, the custom title keeps
+	// precedence: the live OSC report must not replace a user/AI-set title.
 	fixture.terminal().Feed([]byte("\x1b]2;vim build\x07"))
 	detail, err = adapter.(TabDetailTerminal).TabDetail(ctx, fixture.tabID)
-	if err != nil || detail.Title != "vim build" {
-		t.Fatalf("OSC title detail = %+v err=%v", detail, err)
+	if err != nil || detail.Title != "构建机" {
+		t.Fatalf("OSC 2 title detail = %+v err=%v", detail, err)
 	}
-	// OSC 0 sets the window title too.
+	// OSC 0 sets the window title too, and still loses to the custom title.
+	fixture.terminal().Feed([]byte("\x1b]0;icon title\x07"))
+	detail, err = adapter.(TabDetailTerminal).TabDetail(ctx, fixture.tabID)
+	if err != nil || detail.Title != "构建机" {
+		t.Fatalf("OSC 0 title detail = %+v err=%v", detail, err)
+	}
+	// The read_screen header carries the same custom title.
+	result := fixture.registry().Execute(ctx, "job", fixture.scope(), Call{ID: "r", Name: "read_screen"}, nil)
+	if !result.OK || !strings.Contains(result.Text, "「构建机」") {
+		t.Fatalf("read_screen header = %+v", result)
+	}
+}
+
+func TestSessionTabDetailOSCTitleWithoutCustomTitle(t *testing.T) {
+	fixture := newAtomicSessionFixture(t, false)
+	adapter := SessionTerminal(fixture.manager)
+	ctx := trustedContext()
+
+	// No custom title is set: the OSC 2 dynamic title flows through.
+	fixture.terminal().Feed([]byte("\x1b]2;vim build\x07"))
+	detail, err := adapter.(TabDetailTerminal).TabDetail(ctx, fixture.tabID)
+	if err != nil || detail.Title != "vim build" {
+		t.Fatalf("OSC 2 title detail = %+v err=%v", detail, err)
+	}
+	// OSC 0 updates the dynamic title the same way.
 	fixture.terminal().Feed([]byte("\x1b]0;icon title\x07"))
 	detail, err = adapter.(TabDetailTerminal).TabDetail(ctx, fixture.tabID)
 	if err != nil || detail.Title != "icon title" {
 		t.Fatalf("OSC 0 title detail = %+v err=%v", detail, err)
 	}
-	// The read_screen header carries the same live title.
+	// The read_screen header carries the live dynamic title.
 	result := fixture.registry().Execute(ctx, "job", fixture.scope(), Call{ID: "r", Name: "read_screen"}, nil)
 	if !result.OK || !strings.Contains(result.Text, "「icon title」") {
 		t.Fatalf("read_screen header = %+v", result)
+	}
+	// A later custom title takes precedence over the dynamic title.
+	if _, err := fixture.manager.RenameTab(ctx, fixture.tabID, "构建机"); err != nil {
+		t.Fatal(err)
+	}
+	detail, err = adapter.(TabDetailTerminal).TabDetail(ctx, fixture.tabID)
+	if err != nil || detail.Title != "构建机" {
+		t.Fatalf("custom title detail = %+v err=%v", detail, err)
 	}
 }
 

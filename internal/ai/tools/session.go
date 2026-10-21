@@ -165,10 +165,11 @@ func (s *sessionTerminal) ListTerminalTabs(ctx context.Context) ([]TerminalBrief
 	return briefs, nil
 }
 
-// TabDetail reports the per-tab identity (kind, OSC title, shell-reported
-// cwd, lifecycle state) surfaced by read_screen headers. The title prefers
-// the live OSC 0/2 dynamic title the application reported and falls back to
-// the durable user/AI-set title.
+// TabDetail reports the per-tab identity (kind, title, shell-reported cwd,
+// lifecycle state) surfaced by read_screen headers. The title follows the
+// session manager's custom-title precedence: a user/AI-set title wins over
+// the live OSC 0/2 dynamic title, which surfaces only while no custom title
+// is set.
 func (s *sessionTerminal) TabDetail(ctx context.Context, tabID string) (TabDetail, error) {
 	ctx = sessionRequestContext(ctx)
 	tab, err := s.manager.TabFor(ctx, tabID)
@@ -184,8 +185,10 @@ func (s *sessionTerminal) TabDetail(ctx context.Context, tabID string) (TabDetai
 		Exited:    info.Exited,
 		Durable:   info.Durable,
 	}
-	if snapshot, err := s.manager.TerminalSnapshotFor(ctx, tabID); err == nil && snapshot.Title != "" {
-		detail.Title = snapshot.Title
+	if detail.Title == "" {
+		if snapshot, err := s.manager.TerminalSnapshotFor(ctx, tabID); err == nil {
+			detail.Title = snapshot.Title
+		}
 	}
 	if session, err := s.manager.SessionFor(ctx, info.SessionID); err == nil {
 		detail.Kind = session.Asset().Kind
