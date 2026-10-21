@@ -483,3 +483,265 @@ func TestProductionTerminalConnectDeadTransportDialsThroughPublicOptIn(t *testin
 		t.Fatalf("dead transport OpenPTY = %v, want ErrClosed", err)
 	}
 }
+
+// An interleaved deletion of the selected session between the listing and
+// the SessionFor read is the same definite not-connected verdict: without
+// the opt-in the connect reaches the R-07 gate, and with the public opt-in
+// it redials to a healthy session with real I/O.
+func TestProductionTerminalConnectSessionDeletedInterleaveDialsHealthy(t *testing.T) {
+	ctx := context.Background()
+	dials := &connectTransportLog{}
+	services, database, assetID := composeConnectRuntime(t, ctx, filepath.Join(t.TempDir(), "connect.db"), dials)
+	initial, err := services.Sessions.ConnectFor(ctx, session.Asset{ID: assetID, Kind: session.KindLocal, StoreBacked: true, ConfigFingerprint: "fp-initial"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := dials.count(); got != 1 {
+		t.Fatalf("initial connect dialed %d times", got)
+	}
+	// The interleave deletes the selected session after the listing (a local
+	// session is reaped on disconnect) and before the resolver's own read.
+	resolveAssetSessionInterleaveHook = func(point string) {
+		if point == resolveAssetSessionInterleaveAfterLive {
+			_ = services.Sessions.Disconnect(initial.ID)
+		}
+	}
+	defer func() { resolveAssetSessionInterleaveHook = nil }()
+
+	registry := services.Agent.ToolsRegistry()
+	declined := registry.Execute(ctx, "job", tools.Scope{}, connectCreateCall(assetID), nil)
+	if declined.OK {
+		t.Fatalf("connect without opt-in succeeded after the interleaved deletion: %+v", declined)
+	}
+	if !strings.Contains(declined.Text, "opt-in") {
+		t.Fatalf("deleted-session connect did not reach the opt-in gate: %+v", declined)
+	}
+	if strings.Contains(declined.Text, "无效或无权") || strings.Contains(declined.Text, "请手动") {
+		t.Fatalf("deleted-session verdict not mapped to the not-connected sentinel: %+v", declined)
+	}
+	if got := dials.count(); got != 1 {
+		t.Fatalf("declined connect dialed: %d", got)
+	}
+
+	// The user enables the surface opt-in through the public settings IPC.
+	// The same interleave now lands on the R-07 dial: the fresh session is
+	// healthy and does real I/O.
+	enableAiTerminalConnectOptIn(t, ctx, database)
+	second, err := services.Sessions.ConnectFor(ctx, session.Asset{ID: assetID, Kind: session.KindLocal, StoreBacked: true, ConfigFingerprint: "fp-second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := dials.count(); got != 2 {
+		t.Fatalf("second connect dialed %d times", got)
+	}
+	resolveAssetSessionInterleaveHook = func(point string) {
+		if point == resolveAssetSessionInterleaveAfterLive {
+			_ = services.Sessions.Disconnect(second.ID)
+		}
+	}
+	created := registry.Execute(ctx, "job-2", tools.Scope{}, connectCreateCall(assetID), nil)
+	if !created.OK {
+		t.Fatalf("connect after public opt-in = %+v", created)
+	}
+	if got := dials.count(); got != 3 {
+		t.Fatalf("no redial after the interleaved deletion: dials=%d, want 3", got)
+	}
+	if created.CreatedTab == nil || created.CreatedTab.SessionID == "" || created.CreatedTab.SessionID == second.ID {
+		t.Fatalf("created tab not on a fresh session: %+v", created.CreatedTab)
+	}
+	final, err := services.Sessions.TransportFor(ctx, created.CreatedTab.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !final.IsAlive() {
+		t.Fatal("final session's transport is not alive")
+	}
+	result, err := final.Exec(ctx, "echo healthy", base.ExecOptions{})
+	if err != nil || result.Stdout != "ran:echo healthy" {
+		t.Fatalf("Exec on the final session = %+v, %v", result, err)
+	}
+	channel, err := final.(base.PTYTransport).OpenPTY(ctx, base.PTYOptions{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = channel.Close() }()
+	if written, err := channel.Write([]byte("healthy")); err != nil || written != len("healthy") {
+		t.Fatalf("PTY Write on the final session = %d, %v", written, err)
+	}
+	buffer := make([]byte, len("healthy"))
+	read := 0
+	for read < len(buffer) {
+		n, readErr := channel.Read(buffer[read:])
+		if readErr != nil {
+			t.Fatalf("PTY Read on the final session = %v", readErr)
+		}
+		read += n
+	}
+	if string(buffer) != "healthy" {
+		t.Fatalf("PTY Read on the final session = %q", buffer)
+	}
+}
+
+// An interleaved disconnect of the selected session between the status check
+// and the transport read (or an interleaved deletion there) is the same
+// definite not-connected verdict: it enters the R-07 gates instead of
+// failing at the identity binding.
+func TestProductionTerminalConnectTransportInterleaveDialsHealthy(t *testing.T) {
+	ctx := context.Background()
+	dials := &connectTransportLog{}
+	services, database, assetID := composeConnectRuntime(t, ctx, filepath.Join(t.TempDir(), "connect.db"), dials)
+	initial, err := services.Sessions.ConnectFor(ctx, session.Asset{ID: assetID, Kind: session.KindLocal, StoreBacked: true, ConfigFingerprint: "fp-initial"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := dials.count(); got != 1 {
+		t.Fatalf("initial connect dialed %d times", got)
+	}
+	// The interleave deletes the selected session after the resolver's status
+	// check passes and before its transport read.
+	resolveAssetSessionInterleaveHook = func(point string) {
+		if point == resolveAssetSessionInterleaveBeforeTransport {
+			_ = services.Sessions.Disconnect(initial.ID)
+		}
+	}
+	defer func() { resolveAssetSessionInterleaveHook = nil }()
+
+	registry := services.Agent.ToolsRegistry()
+	declined := registry.Execute(ctx, "job", tools.Scope{}, connectCreateCall(assetID), nil)
+	if declined.OK {
+		t.Fatalf("connect without opt-in succeeded after the interleaved deletion: %+v", declined)
+	}
+	if !strings.Contains(declined.Text, "opt-in") {
+		t.Fatalf("transport-gone connect did not reach the opt-in gate: %+v", declined)
+	}
+	if strings.Contains(declined.Text, "无效或无权") || strings.Contains(declined.Text, "请手动") {
+		t.Fatalf("transport-gone verdict not mapped to the not-connected sentinel: %+v", declined)
+	}
+	if got := dials.count(); got != 1 {
+		t.Fatalf("declined connect dialed: %d", got)
+	}
+
+	enableAiTerminalConnectOptIn(t, ctx, database)
+	second, err := services.Sessions.ConnectFor(ctx, session.Asset{ID: assetID, Kind: session.KindLocal, StoreBacked: true, ConfigFingerprint: "fp-second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := dials.count(); got != 2 {
+		t.Fatalf("second connect dialed %d times", got)
+	}
+	resolveAssetSessionInterleaveHook = func(point string) {
+		if point == resolveAssetSessionInterleaveBeforeTransport {
+			_ = services.Sessions.Disconnect(second.ID)
+		}
+	}
+	created := registry.Execute(ctx, "job-2", tools.Scope{}, connectCreateCall(assetID), nil)
+	if !created.OK {
+		t.Fatalf("connect after public opt-in = %+v", created)
+	}
+	if got := dials.count(); got != 3 {
+		t.Fatalf("no redial after the interleaved deletion: dials=%d, want 3", got)
+	}
+	if created.CreatedTab == nil || created.CreatedTab.SessionID == "" || created.CreatedTab.SessionID == second.ID {
+		t.Fatalf("created tab not on a fresh session: %+v", created.CreatedTab)
+	}
+	final, err := services.Sessions.TransportFor(ctx, created.CreatedTab.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !final.IsAlive() {
+		t.Fatal("final session's transport is not alive")
+	}
+	result, err := final.Exec(ctx, "echo healthy", base.ExecOptions{})
+	if err != nil || result.Stdout != "ran:echo healthy" {
+		t.Fatalf("Exec on the final session = %+v, %v", result, err)
+	}
+	channel, err := final.(base.PTYTransport).OpenPTY(ctx, base.PTYOptions{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = channel.Close() }()
+	if written, err := channel.Write([]byte("healthy")); err != nil || written != len("healthy") {
+		t.Fatalf("PTY Write on the final session = %d, %v", written, err)
+	}
+	buffer := make([]byte, len("healthy"))
+	read := 0
+	for read < len(buffer) {
+		n, readErr := channel.Read(buffer[read:])
+		if readErr != nil {
+			t.Fatalf("PTY Read on the final session = %v", readErr)
+		}
+		read += n
+	}
+	if string(buffer) != "healthy" {
+		t.Fatalf("PTY Read on the final session = %q", buffer)
+	}
+}
+
+// The ErrDisconnected sentinel at the transport read maps the same way: an
+// SSH session disconnected between the status check and the read reaches the
+// R-07 gates after the public opt-in, and the session layer's
+// deliberate-disconnect contract then refuses the redial honestly instead of
+// the verdict dying at the identity binding.
+func TestProductionTerminalConnectTransportDisconnectedReachesGate(t *testing.T) {
+	ctx := context.Background()
+	dials := &connectTransportLog{}
+	services, database, _ := composeConnectRuntime(t, ctx, filepath.Join(t.TempDir(), "connect.db"), dials)
+	hostKeys, err := newProductionHostKeyStore(ctx, filepath.Join(t.TempDir(), "known_hosts.json"), database, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	services.hostKeys = hostKeys
+	hostname := "gate.example"
+	sshAsset, err := database.AssetCreate(ctx, store.AssetInput{Kind: session.KindSSH, Name: "gate", Host: &hostname})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.KnownHostAccept(ctx, hostname, 22, "ssh-ed25519", "SHA256:gate"); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := services.Sessions.ConnectFor(ctx, session.Asset{ID: sshAsset.ID, Name: sshAsset.Name, Kind: session.KindSSH, StoreBacked: true, ConfigFingerprint: "fp-initial"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := dials.count(); got != 1 {
+		t.Fatalf("initial connects dialed %d times", got)
+	}
+	// The interleave disconnects the SSH session (a reconnectable kind keeps
+	// its record) after the status check and before the transport read.
+	resolveAssetSessionInterleaveHook = func(point string) {
+		if point == resolveAssetSessionInterleaveBeforeTransport {
+			_ = services.Sessions.Disconnect(initial.ID)
+		}
+	}
+	defer func() { resolveAssetSessionInterleaveHook = nil }()
+
+	registry := services.Agent.ToolsRegistry()
+	declined := registry.Execute(ctx, "job", tools.Scope{}, connectCreateCall(sshAsset.ID), nil)
+	if declined.OK {
+		t.Fatalf("connect without opt-in succeeded after the interleaved disconnect: %+v", declined)
+	}
+	if !strings.Contains(declined.Text, "opt-in") {
+		t.Fatalf("disconnected-session connect did not reach the opt-in gate: %+v", declined)
+	}
+	if strings.Contains(declined.Text, "无效或无权") || strings.Contains(declined.Text, "请手动") {
+		t.Fatalf("disconnected-session verdict not mapped to the not-connected sentinel: %+v", declined)
+	}
+	if got := dials.count(); got != 1 {
+		t.Fatalf("declined connect dialed: %d", got)
+	}
+
+	// With the public opt-in the R-07 gates all pass, and the session layer's
+	// deliberate-disconnect contract refuses the redial of the disconnected
+	// record honestly — the same contract every R-07 surface shares.
+	enableAiTerminalConnectOptIn(t, ctx, database)
+	failed := registry.Execute(ctx, "job-2", tools.Scope{}, connectCreateCall(sshAsset.ID), nil)
+	if failed.OK {
+		t.Fatalf("redial of a deliberately disconnected record faked success: %+v", failed)
+	}
+	if failed.Panic {
+		t.Fatalf("redial of a deliberately disconnected record panicked: %+v", failed)
+	}
+	if got := dials.count(); got != 1 {
+		t.Fatalf("session layer redialed a deliberately disconnected record: dials=%d", got)
+	}
+}

@@ -108,6 +108,17 @@ func productionScopeError(err error) error {
 	return ipc.WrapError(ipc.CodeForbidden, "AI 终端范围无效或无权访问", err)
 }
 
+// resolveAssetSessionInterleaveHook, when set by in-package tests, runs at
+// the marked points inside resolveProductionAssetSession so an interleaved
+// disconnect or deletion between the session reads becomes deterministic.
+// It is nil in production.
+var resolveAssetSessionInterleaveHook func(point string)
+
+const (
+	resolveAssetSessionInterleaveAfterLive       = "after-live"
+	resolveAssetSessionInterleaveBeforeTransport = "before-transport"
+)
+
 type productionScopeDatabase interface {
 	Tables(context.Context, string, string) ([]string, error)
 }
@@ -455,8 +466,18 @@ func resolveProductionAssetSession(ctx context.Context, services *ProductionServ
 		}
 		return "", err
 	}
+	if resolveAssetSessionInterleaveHook != nil {
+		resolveAssetSessionInterleaveHook(resolveAssetSessionInterleaveAfterLive)
+	}
 	connected, err := services.Sessions.SessionFor(validationCtx, sessionID)
 	if err != nil {
+		// The selected session vanished between the listing and this read
+		// (a concurrent disconnect reaped it): the same definite
+		// not-connected verdict. Forbidden and transient errors never
+		// trigger a connect.
+		if errors.Is(err, session.ErrSessionNotFound) {
+			return "", ipc.WrapError(ipc.CodeDisconnected, "资产的在线会话已不存在", tools.ErrNoLiveSession)
+		}
 		return "", productionScopeError(err)
 	}
 	info := connected.Info()
@@ -470,8 +491,18 @@ func resolveProductionAssetSession(ctx context.Context, services *ProductionServ
 	if info.Status != session.StatusConnected {
 		return "", ipc.WrapError(ipc.CodeDisconnected, "资产没有健康的在线会话", tools.ErrNoLiveSession)
 	}
+	if resolveAssetSessionInterleaveHook != nil {
+		resolveAssetSessionInterleaveHook(resolveAssetSessionInterleaveBeforeTransport)
+	}
 	transport, err := services.Sessions.TransportFor(validationCtx, sessionID)
 	if err != nil {
+		// The selected session disconnected or vanished between the status
+		// check and this read: the same definite not-connected verdict.
+		// Forbidden, context cancellation, and transient errors never
+		// trigger a connect.
+		if errors.Is(err, session.ErrSessionNotFound) || errors.Is(err, session.ErrDisconnected) {
+			return "", ipc.WrapError(ipc.CodeDisconnected, "资产的在线会话已断开或不存在", tools.ErrNoLiveSession)
+		}
 		return "", productionScopeError(err)
 	}
 	if !transport.IsAlive() {
