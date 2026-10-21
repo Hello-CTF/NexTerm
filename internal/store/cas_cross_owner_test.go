@@ -80,6 +80,46 @@ func TestCredentialUpdateCASStaleExpectedConflicts(t *testing.T) {
 	}
 }
 
+// A-04 legacy path: identity-less (ownerless) credentials keep the pre-account
+// desktop semantics — an identity-less writer updates them — while a named
+// owner never matches the ownerless row: the owner guard treats legacy rows as
+// foreign rather than adopting them.
+func TestCredentialUpdateCASLegacyOwnerlessSemantics(t *testing.T) {
+	db := credentialCASFixture(t)
+	legacy := context.Background()
+	before := createCredentialFor(t, db, legacy, "legacy-key")
+
+	if err := db.CredentialUpdateCAS(legacy, db.GORM(), before.ID, before.UpdatedAt, store.CredentialInput{
+		Name: "legacy-key-2", Kind: "private_key", Nonce: []byte{3}, Blob: []byte{4},
+	}); err != nil {
+		t.Fatalf("legacy identity-less CAS: %v", err)
+	}
+	after, err := db.CredentialGetRow(legacy, before.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Name != "legacy-key-2" || after.UpdatedAt <= before.UpdatedAt || !bytes.Equal(after.Blob, []byte{4}) {
+		t.Fatalf("legacy credential after CAS = %+v", after)
+	}
+
+	ctxA := ipc.WithUserID(context.Background(), "owner-a")
+	if err := db.CredentialUpdateCAS(ctxA, db.GORM(), before.ID, after.UpdatedAt, store.CredentialInput{
+		Name: "adopted", Kind: "private_key", Nonce: []byte{9}, Blob: []byte{9},
+	}); !errors.Is(err, store.ErrWriteConflict) {
+		t.Fatalf("named-owner CAS on legacy row = %v, want ErrWriteConflict", err)
+	}
+	retained, err := db.CredentialGetRow(legacy, before.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retained.Name != "legacy-key-2" || !bytes.Equal(retained.Blob, []byte{4}) || retained.UpdatedAt != after.UpdatedAt {
+		t.Fatalf("legacy credential after named-owner CAS = %+v, want %+v", retained, after)
+	}
+	if _, err := db.CredentialGetRow(ctxA, before.ID); err == nil {
+		t.Fatal("named owner read the legacy ownerless credential")
+	}
+}
+
 func TestCredentialUpdateCASMissingConflicts(t *testing.T) {
 	db := credentialCASFixture(t)
 	ctx := ipc.WithUserID(context.Background(), "owner-a")

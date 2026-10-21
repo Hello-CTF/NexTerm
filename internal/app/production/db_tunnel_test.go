@@ -230,3 +230,150 @@ func TestProductionDatabaseServiceSurfacesDisconnectedTunnel(t *testing.T) {
 	_, err = service.Connect(owner, db.ConnectArgs{AssetID: target.ID})
 	requireDBTunnelCode(t, err, ipc.CodeDisconnected)
 }
+
+// A-04 identity-less classification: the production dialer never invents an
+// owner for an identity-less Connect context. An owned jump asset rejects as
+// forbidden; an ownerless asset defers to the session manager, which refuses
+// identity-less open-access vouches on a non-open deployment and honors them
+// on an open one.
+func TestProductionDatabaseDialerIdentityLessClassification(t *testing.T) {
+	database := newDBTunnelTestStore(t)
+	owner := ipc.WithUserID(t.Context(), "owner-a")
+	owned, err := database.AssetCreate(owner, store.AssetInput{Kind: session.KindSSH, Name: "owned-jump", OptionsJSON: `{}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerless, err := database.AssetCreate(context.Background(), store.AssetInput{Kind: session.KindSSH, Name: "ownerless-jump", OptionsJSON: `{}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newManager := func(openAccess bool, transport base.Transport) *session.Manager {
+		manager := session.NewManager(session.Config{
+			Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
+				return transport, nil
+			}),
+			IdleTimeout: -1,
+			OpenAccess:  openAccess,
+		})
+		t.Cleanup(func() { _ = manager.Close() })
+		return manager
+	}
+
+	t.Run("owned asset rejects identity-less as forbidden", func(t *testing.T) {
+		manager := newManager(false, newDBTunnelTestTransport(session.KindSSH, 1))
+		dial, err := newProductionDatabaseDialer(database, manager)(context.Background(), owned.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = dial(t.Context(), "tcp", "pg.internal:5432")
+		requireDBTunnelCode(t, err, ipc.CodeForbidden)
+	})
+
+	t.Run("ownerless asset on a non-open deployment rejects identity-less as forbidden", func(t *testing.T) {
+		manager := newManager(false, newDBTunnelTestTransport(session.KindSSH, 1))
+		dial, err := newProductionDatabaseDialer(database, manager)(context.Background(), ownerless.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = dial(t.Context(), "tcp", "pg.internal:5432")
+		requireDBTunnelCode(t, err, ipc.CodeForbidden)
+	})
+
+	t.Run("ownerless asset on an open deployment follows session state", func(t *testing.T) {
+		transport := newDBTunnelTestTransport(session.KindSSH, 1)
+		manager := newManager(true, transport)
+		dial, err := newProductionDatabaseDialer(database, manager)(context.Background(), ownerless.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = dial(t.Context(), "tcp", "pg.internal:5432")
+		requireDBTunnelCode(t, err, ipc.CodeDisconnected)
+		if _, err := manager.Connect(context.Background(), session.Asset{ID: ownerless.ID, Kind: session.KindSSH}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := dial(t.Context(), "tcp", "pg.internal:5432"); !errors.Is(err, errDBTunnelTestDial) {
+			t.Fatalf("open identity-less dial error = %v, want tunnel dial", err)
+		}
+	})
+
+	t.Run("empty viaAssetId is a bad parameter", func(t *testing.T) {
+		manager := newManager(false, newDBTunnelTestTransport(session.KindSSH, 1))
+		if _, err := newProductionDatabaseDialer(database, manager)(owner, "  "); err == nil {
+			t.Fatal("empty viaAssetId was accepted")
+		} else {
+			requireDBTunnelCode(t, err, ipc.CodeBadParam)
+		}
+	})
+}
+
+// A-04 stale-connection and production-guard classification: a jump session
+// whose transport died underneath a still-listed session rejects as
+// disconnected, a session without tunnel capability rejects as unsupported,
+// and a composition missing its store or session manager degrades to
+// unsupported instead of panicking.
+func TestProductionDatabaseDialerStaleTransportAndGuardClassification(t *testing.T) {
+	database := newDBTunnelTestStore(t)
+	owner := ipc.WithUserID(t.Context(), "owner-a")
+	via, err := database.AssetCreate(owner, store.AssetInput{Kind: session.KindSSH, Name: "jump", OptionsJSON: `{}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("dead transport under a live session is disconnected", func(t *testing.T) {
+		transport := newDBTunnelTestTransport(session.KindSSH, 1)
+		manager := session.NewManager(session.Config{
+			Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
+				return transport, nil
+			}),
+			IdleTimeout: -1,
+		})
+		t.Cleanup(func() { _ = manager.Close() })
+		if _, err := manager.Connect(owner, session.Asset{ID: via.ID, Kind: session.KindSSH}); err != nil {
+			t.Fatal(err)
+		}
+		dial, err := newProductionDatabaseDialer(database, manager)(owner, via.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := dial(t.Context(), "tcp", "pg.internal:5432"); !errors.Is(err, errDBTunnelTestDial) {
+			t.Fatalf("live dial error = %v, want tunnel dial", err)
+		}
+		if err := transport.Close(); err != nil {
+			t.Fatal(err)
+		}
+		_, err = dial(t.Context(), "tcp", "pg.internal:5432")
+		requireDBTunnelCode(t, err, ipc.CodeDisconnected)
+	})
+
+	t.Run("session without tunnel capability is unsupported", func(t *testing.T) {
+		manager := session.NewManager(session.Config{
+			Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
+				return &fakeSSHTransport{kind: session.KindSSH, generation: 1}, nil
+			}),
+			IdleTimeout: -1,
+		})
+		t.Cleanup(func() { _ = manager.Close() })
+		if _, err := manager.Connect(owner, session.Asset{ID: via.ID, Kind: session.KindSSH}); err != nil {
+			t.Fatal(err)
+		}
+		dial, err := newProductionDatabaseDialer(database, manager)(owner, via.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = dial(t.Context(), "tcp", "pg.internal:5432")
+		requireDBTunnelCode(t, err, ipc.CodeUnsupported)
+	})
+
+	t.Run("missing store or sessions degrades to unsupported", func(t *testing.T) {
+		for _, factory := range []db.DialerFactory{
+			newProductionDatabaseDialer(nil, nil),
+			newProductionDatabaseDialer(database, nil),
+		} {
+			if _, err := factory(owner, via.ID); err == nil {
+				t.Fatal("incomplete composition accepted a tunnel dial")
+			} else {
+				requireDBTunnelCode(t, err, ipc.CodeUnsupported)
+			}
+		}
+	})
+}

@@ -3,6 +3,7 @@
 package production
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -11,12 +12,16 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1200,5 +1205,330 @@ func TestConcreteProductionSharesSingleSkillsManager(t *testing.T) {
 	viaManager := manager.LoadSkill(t.Context(), call.Args)
 	if !viaRegistry.OK || !viaManager.OK || viaRegistry.Text != viaManager.Text {
 		t.Fatalf("load_skill outputs diverge: registry=%+v manager=%+v", viaRegistry, viaManager)
+	}
+}
+
+// dbTunnelCompositionTransport is an SSH transport double whose DialContext
+// reaches a fixed upstream; Close kills every connection it vended, like a
+// real SSH session drop kills its direct-tcpip channels.
+type dbTunnelCompositionTransport struct {
+	kind       string
+	generation uint64
+	upstream   string
+	alive      atomic.Bool
+	dialed     atomic.Int32
+	mu         sync.Mutex
+	conns      map[*dbTunnelCompositionConn]struct{}
+}
+
+func newDBTunnelCompositionTransport(kind string, generation uint64, upstream string) *dbTunnelCompositionTransport {
+	transport := &dbTunnelCompositionTransport{kind: kind, generation: generation, upstream: upstream, conns: make(map[*dbTunnelCompositionConn]struct{})}
+	transport.alive.Store(true)
+	return transport
+}
+
+func (t *dbTunnelCompositionTransport) Kind() string       { return t.kind }
+func (t *dbTunnelCompositionTransport) Generation() uint64 { return t.generation }
+func (t *dbTunnelCompositionTransport) Exec(context.Context, string, base.ExecOptions) (base.ExecResult, error) {
+	return base.ExecResult{}, nil
+}
+func (t *dbTunnelCompositionTransport) Ping(context.Context) (time.Duration, error) { return 0, nil }
+func (t *dbTunnelCompositionTransport) IsAlive() bool                               { return t.alive.Load() }
+func (t *dbTunnelCompositionTransport) Close() error {
+	t.alive.Store(false)
+	t.mu.Lock()
+	conns := make([]*dbTunnelCompositionConn, 0, len(t.conns))
+	for conn := range t.conns {
+		conns = append(conns, conn)
+	}
+	t.mu.Unlock()
+	for _, conn := range conns {
+		conn.kill()
+	}
+	return nil
+}
+func (t *dbTunnelCompositionTransport) DialContext(ctx context.Context, _, _ string) (net.Conn, error) {
+	if !t.alive.Load() {
+		return nil, base.ErrDisconnected
+	}
+	var dialer net.Dialer
+	raw, err := dialer.DialContext(ctx, "tcp", t.upstream)
+	if err != nil {
+		return nil, err
+	}
+	t.mu.Lock()
+	if !t.alive.Load() {
+		t.mu.Unlock()
+		_ = raw.Close()
+		return nil, base.ErrDisconnected
+	}
+	var conn *dbTunnelCompositionConn
+	conn = &dbTunnelCompositionConn{Conn: raw, release: func() {
+		t.mu.Lock()
+		delete(t.conns, conn)
+		t.mu.Unlock()
+	}}
+	t.conns[conn] = struct{}{}
+	t.mu.Unlock()
+	t.dialed.Add(1)
+	return conn, nil
+}
+
+// dbTunnelCompositionConn models an SSH channel: a session drop kills it, and
+// the client-side Close that comes later is a no-op rather than an error.
+type dbTunnelCompositionConn struct {
+	net.Conn
+	killed  atomic.Bool
+	once    sync.Once
+	release func()
+}
+
+func (c *dbTunnelCompositionConn) kill() {
+	c.killed.Store(true)
+	_ = c.Conn.Close()
+	c.once.Do(c.release)
+}
+
+func (c *dbTunnelCompositionConn) Close() error {
+	if c.killed.Load() {
+		c.once.Do(c.release)
+		return nil
+	}
+	err := c.Conn.Close()
+	c.once.Do(c.release)
+	return err
+}
+
+// startDBTunnelCompositionRESP serves just enough RESP2 for the real go-redis
+// client handshake: HELLO is refused like a pre-6.0 server so the client falls
+// back to legacy AUTH, PING gets +PONG, everything else gets +OK. It exercises
+// NexTerm's own tunnel wiring only; it is not a stand-in for the flagged
+// real-Redis integration tests.
+func startDBTunnelCompositionRESP(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conns sync.Map
+	serve := func(conn net.Conn) {
+		defer conn.Close()
+		reader := bufio.NewReader(conn)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil || !strings.HasPrefix(line, "*") {
+				return
+			}
+			count, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "*")))
+			if err != nil {
+				return
+			}
+			command := ""
+			for i := 0; i < count; i++ {
+				bulk, err := reader.ReadString('\n')
+				if err != nil || !strings.HasPrefix(bulk, "$") {
+					return
+				}
+				length, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(bulk, "$")))
+				if err != nil {
+					return
+				}
+				payload := make([]byte, length+2)
+				if _, err := io.ReadFull(reader, payload); err != nil {
+					return
+				}
+				if i == 0 {
+					command = strings.ToUpper(string(payload[:length]))
+				}
+			}
+			reply := "+OK\r\n"
+			switch command {
+			case "HELLO":
+				reply = "-ERR unknown command 'HELLO'\r\n"
+			case "PING":
+				reply = "+PONG\r\n"
+			}
+			if _, err := conn.Write([]byte(reply)); err != nil {
+				return
+			}
+		}
+	}
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			conns.Store(conn, struct{}{})
+			go func() {
+				serve(conn)
+				conns.Delete(conn)
+			}()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		conns.Range(func(key, _ any) bool {
+			_ = key.(net.Conn).Close()
+			return true
+		})
+	})
+	return listener.Addr().String()
+}
+
+// The DB connection asset identity through the real production composition
+// root: NewProduction wires the store resolver, the vault decryptor, and the
+// session-backed SSH tunnel dialer into one db.Service, and the identity the
+// grant layer resolves is the DB asset the connection was resolved from —
+// never the tunnel viaAssetId, never an inline handle. Owner scoping, stale
+// tunnel redial through a replacement session, and account-session logout all
+// behave the same as at the unit level.
+func TestConcreteProductionDatabaseTunnelIdentityComposition(t *testing.T) {
+	upstream := startDBTunnelCompositionRESP(t)
+	var mu sync.Mutex
+	var transports []*dbTunnelCompositionTransport
+	production, err := NewProduction(t.Context(), ProductionConfig{
+		Config:  Config{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))},
+		DataDir: t.TempDir(),
+		Desktop: true,
+		Connector: session.ConnectorFunc(func(_ context.Context, asset session.Asset, generation uint64) (base.Transport, error) {
+			transport := newDBTunnelCompositionTransport(asset.Kind, generation, upstream)
+			mu.Lock()
+			transports = append(transports, transport)
+			mu.Unlock()
+			return transport, nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
+
+	ownerA := ipc.WithUserID(context.Background(), "owner-a")
+	loginA := ipc.WithAccountSessionID(ownerA, "login-a")
+	ownerB := ipc.WithUserID(context.Background(), "owner-b")
+	dispatch := func(ctx context.Context, command, args string) ipc.Response {
+		t.Helper()
+		return production.Dispatcher.Dispatch(ctx, ipc.Request{Command: command, Args: json.RawMessage(args)}, ipc.Environment{})
+	}
+
+	if _, ok := any(production.Services.Database).(server.AccountConnectionCloser); !ok {
+		t.Fatal("composition database service does not close account sessions; server logout wiring has no seam")
+	}
+
+	response := dispatch(ownerA, "vault_set_credential", `{"args":{"name":"cache-password","kind":"password","secret":"s3cret"}}`)
+	var credential map[string]string
+	requireStoreTestResponse(t, response, &credential)
+	credentialID := credential["id"]
+	via, err := production.Services.Store.AssetCreate(ownerA, store.AssetInput{Kind: session.KindSSH, Name: "jump", OptionsJSON: `{}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := "redis.tunnel.invalid"
+	port := int32(6379)
+	optionsJSON, err := json.Marshal(map[string]any{"database": "0", "viaAssetId": via.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := production.Services.Store.AssetCreate(ownerA, store.AssetInput{
+		Kind: "redis", Name: "cache", Host: &host, Port: &port, CredID: &credentialID, OptionsJSON: string(optionsJSON),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The production surface cannot open identity-less inline handles.
+	inline := dispatch(ownerA, "db_connect", `{"args":{"inline":{"kind":"redis","host":"redis.tunnel.invalid"}}}`)
+	if inline.OK || inline.Error == nil || inline.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("inline connect through production = %+v, want bad_param", inline)
+	}
+
+	// Without a connected jump session the tunnel surfaces disconnected.
+	noSession := dispatch(loginA, "db_connect", `{"args":{"assetId":"`+target.ID+`"}}`)
+	if noSession.OK || noSession.Error == nil || noSession.Error.Code != ipc.CodeDisconnected {
+		t.Fatalf("connect without jump session = %+v, want disconnected", noSession)
+	}
+
+	sshSession, err := production.Services.Sessions.Connect(ownerA, session.Asset{ID: via.ID, Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = dispatch(loginA, "db_connect", `{"args":{"assetId":"`+target.ID+`"}}`)
+	var connected struct {
+		ConnID string `json:"connId"`
+	}
+	requireStoreTestResponse(t, response, &connected)
+
+	// The grant-identity seam resolves the DB asset, never the tunnel asset,
+	// for both the direct service lookup and the production scope resolver.
+	if assetID, ok := production.Services.Database.AssetIDOf(loginA, connected.ConnID); !ok || assetID != target.ID {
+		t.Fatalf("AssetIDOf = %q, %v; want the DB asset %q, true", assetID, ok, target.ID)
+	}
+	if assetID, ok := production.Services.Database.AssetIDOf(ownerB, connected.ConnID); ok {
+		t.Fatalf("cross-owner AssetIDOf resolved %q; want explicit none", assetID)
+	}
+	resolved, err := resolveScopeToolAsset(loginA, production.Services.Database, production.Services.Sessions, tools.Scope{ConnID: connected.ConnID}, "db_query")
+	if err != nil || resolved != target.ID {
+		t.Fatalf("resolveScopeToolAsset = %q, %v; want the DB asset %q", resolved, err, target.ID)
+	}
+	if resolved, err := resolveScopeToolAsset(loginA, production.Services.Database, production.Services.Sessions, tools.Scope{}, "terminal_write"); err != nil || resolved != "" {
+		t.Fatalf("session-less terminal scope resolved %q, %v; want no invented identity", resolved, err)
+	}
+
+	response = dispatch(loginA, "redis_command", `{"connId":"`+connected.ConnID+`","args":["PING"]}`)
+	var pong string
+	requireStoreTestResponse(t, response, &pong)
+	if pong != "PONG" {
+		t.Fatalf("PING through the composed tunnel = %q", pong)
+	}
+	crossOwner := dispatch(ownerB, "redis_command", `{"connId":"`+connected.ConnID+`","args":["PING"]}`)
+	if crossOwner.OK || crossOwner.Error == nil || crossOwner.Error.Code != ipc.CodeForbidden {
+		t.Fatalf("cross-owner redis_command = %+v, want forbidden", crossOwner)
+	}
+
+	// Stale tunnel: killing the jump session kills the live connection's
+	// channel, and a replacement session carries the redial while the recorded
+	// DB asset identity stays put.
+	if err := production.Services.Sessions.Disconnect(sshSession.ID); err != nil {
+		t.Fatal(err)
+	}
+	if stale := dispatch(loginA, "redis_command", `{"connId":"`+connected.ConnID+`","args":["PING"]}`); stale.OK {
+		t.Fatal("redis_command survived the killed jump session")
+	}
+	if _, err := production.Services.Sessions.Connect(ownerA, session.Asset{ID: via.ID, Kind: session.KindSSH}); err != nil {
+		t.Fatal(err)
+	}
+	response = dispatch(loginA, "redis_command", `{"connId":"`+connected.ConnID+`","args":["PING"]}`)
+	pong = ""
+	requireStoreTestResponse(t, response, &pong)
+	if pong != "PONG" {
+		t.Fatalf("PING after replacement jump session = %q", pong)
+	}
+	mu.Lock()
+	if len(transports) != 2 || transports[1].dialed.Load() == 0 {
+		t.Fatalf("tunnel redial used transports %d/%d", len(transports), func() int32 {
+			if len(transports) > 1 {
+				return transports[1].dialed.Load()
+			}
+			return 0
+		}())
+	}
+	mu.Unlock()
+	if assetID, ok := production.Services.Database.AssetIDOf(loginA, connected.ConnID); !ok || assetID != target.ID {
+		t.Fatalf("AssetIDOf after tunnel redial = %q, %v; want %q, true", assetID, ok, target.ID)
+	}
+
+	// Logout: the account-session seam drops the handle and its identity.
+	if err := production.Services.Database.CloseAccountSession("login-a"); err != nil {
+		t.Fatal(err)
+	}
+	if assetID, ok := production.Services.Database.AssetIDOf(loginA, connected.ConnID); ok {
+		t.Fatalf("AssetIDOf survived logout: %q", assetID)
+	}
+	if after := dispatch(loginA, "redis_command", `{"connId":"`+connected.ConnID+`","args":["PING"]}`); after.OK || after.Error == nil || after.Error.Code != ipc.CodeNotFound {
+		t.Fatalf("redis_command after logout = %+v, want not_found", after)
 	}
 }
