@@ -26,9 +26,7 @@ func TestExecutorResumeFiltersSupersededMatchedRepeat(t *testing.T) {
 	first := newTestExecutor(t, backend, newChanSink())
 	gate := make(chan struct{})
 	source := &scriptSource{gate: gate, steps: []scriptStep{{data: []byte("ready")}}}
-	if err := first.AttachTarget(ctx, "target-1", "identity-1", source); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, first, ctx, "target-1", "identity-1", source)
 	old, err := first.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("ready"), Repeat: true})
 	if err != nil {
 		t.Fatal(err)
@@ -59,9 +57,7 @@ func TestExecutorResumeFiltersSupersededMatchedRepeat(t *testing.T) {
 	secondSource := &scriptSource{endSeq: 7, gate: secondGate, tail: []byte("aaaaaXX"), steps: []scriptStep{
 		{data: []byte("XX")},
 	}}
-	if err := second.AttachTarget(ctx, "target-1", "identity-2", secondSource); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, second, ctx, "target-1", "identity-2", secondSource)
 	fresh, err := second.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("XX")})
 	if err != nil {
 		t.Fatal(err)
@@ -112,9 +108,7 @@ func TestExecutorResumeFiltersSupersededMatchedRepeatDetach(t *testing.T) {
 	first := newTestExecutor(t, backend, newChanSink())
 	gate := make(chan struct{})
 	source := &scriptSource{gate: gate, steps: []scriptStep{{data: []byte("ready")}}}
-	if err := first.AttachTarget(ctx, "target-1", "identity-1", source); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, first, ctx, "target-1", "identity-1", source)
 	old, err := first.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("ready"), Repeat: true})
 	if err != nil {
 		t.Fatal(err)
@@ -148,9 +142,7 @@ func TestExecutorResumeFiltersSupersededMatchedRepeatDetach(t *testing.T) {
 	secondSource := &scriptSource{endSeq: 7, gate: secondGate, tail: []byte("aaaaaXX"), steps: []scriptStep{
 		{data: []byte("XX")},
 	}}
-	if err := second.AttachTarget(ctx, "target-1", "identity-1", secondSource); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, second, ctx, "target-1", "identity-1", secondSource)
 	fresh, err := second.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("XX")})
 	if err != nil {
 		t.Fatal(err)
@@ -214,9 +206,7 @@ func TestExecutorResumeFiltersSupersededMatchedRepeatRestart(t *testing.T) {
 	executor := newTestExecutor(t, backend, newChanSink())
 	gate := make(chan struct{})
 	source := &scriptSource{endSeq: 7, gate: gate, tail: []byte("aaaaaXX"), steps: []scriptStep{{data: []byte("XX")}}}
-	if err := executor.AttachTarget(ctx, "target-1", "identity-2", source); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, executor, ctx, "target-1", "identity-2", source)
 	fresh, err := executor.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("XX")})
 	if err != nil {
 		t.Fatal(err)

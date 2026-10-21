@@ -133,6 +133,17 @@ func newTestExecutor(t *testing.T, backend *store.Store, sink Sink) *Executor {
 	return executor
 }
 
+// attachTarget attaches with the current mirror credential as the
+// incarnation fence: sequential tests always present the generation they
+// just observed, which is exactly the fencing contract.
+func attachTarget(t *testing.T, executor *Executor, ctx context.Context, targetID, identity string, source Source) {
+	t.Helper()
+	_, generation, _ := executor.AttachedCredential(ctx, targetID)
+	if err := executor.AttachTarget(ctx, targetID, identity, source, generation); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestExecutorFeedsObservationsAndDeliversToolData(t *testing.T) {
 	backend, err := store.OpenInMemory(context.Background())
 	if err != nil {
@@ -146,9 +157,7 @@ func TestExecutorFeedsObservationsAndDeliversToolData(t *testing.T) {
 		{data: []byte("not yet\n")},
 		{data: []byte("xxready\n")},
 	}}
-	if err := executor.AttachTarget(ctx, "target-1", "identity-1", source); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, executor, ctx, "target-1", "identity-1", source)
 	watch, err := executor.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("ready")})
 	if err != nil {
 		t.Fatal(err)
@@ -211,9 +220,7 @@ func TestExecutorWatchFillsAnchorAndLeftContext(t *testing.T) {
 	ctx := ownerCtx("owner-a")
 	executor := newTestExecutor(t, backend, newChanSink())
 	source := &scriptSource{endSeq: 10, tail: []byte("12345678")}
-	if err := executor.AttachTarget(ctx, "target-1", "identity-1", source); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, executor, ctx, "target-1", "identity-1", source)
 	watch, err := executor.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("ready")})
 	if err != nil {
 		t.Fatal(err)
@@ -242,9 +249,7 @@ func TestExecutorRestartResumesPendingDeliveryWithFixedIDs(t *testing.T) {
 	gate := make(chan struct{})
 	source := &scriptSource{gate: gate, steps: []scriptStep{{data: []byte("ready")}}}
 	first := newTestExecutor(t, backend, newChanSink())
-	if err := first.AttachTarget(ctx, "target-1", "identity-1", source); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, first, ctx, "target-1", "identity-1", source)
 	if _, err := first.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("ready")}); err != nil {
 		t.Fatal(err)
 	}
@@ -309,9 +314,7 @@ func TestExecutorDuplicateDeliveryDeduplicatedByConsumer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := first.AttachTarget(ctx, "target-1", "identity-1", source); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, first, ctx, "target-1", "identity-1", source)
 	if _, err := first.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("ready")}); err != nil {
 		t.Fatal(err)
 	}
@@ -365,9 +368,7 @@ func TestExecutorEOFDefersThenFiresAtEOF(t *testing.T) {
 	source := &scriptSource{gate: gate, steps: []scriptStep{
 		{data: []byte("ready")},
 	}}
-	if err := executor.AttachTarget(ctx, "target-1", "identity-1", source); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, executor, ctx, "target-1", "identity-1", source)
 	if _, err := executor.Watch(ctx, WatchParams{TargetID: "target-1",
 		Condition: Condition{Type: ConditionRegex, Pattern: `ready$`}}); err != nil {
 		t.Fatal(err)
@@ -401,9 +402,7 @@ func TestExecutorGapSettlesUnverifiable(t *testing.T) {
 		{data: []byte("ab"), skip: 6},
 		{data: []byte("ready")},
 	}}
-	if err := executor.AttachTarget(ctx, "target-1", "identity-1", source); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, executor, ctx, "target-1", "identity-1", source)
 	watch, err := executor.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("ready")})
 	if err != nil {
 		t.Fatal(err)
@@ -450,9 +449,7 @@ func TestExecutorRetryAfterSourceError(t *testing.T) {
 		{err: errors.New("source hiccup")},
 		{data: []byte("ready")},
 	}}
-	if err := executor.AttachTarget(ctx, "target-1", "identity-1", source); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, executor, ctx, "target-1", "identity-1", source)
 	if _, err := executor.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("ready")}); err != nil {
 		t.Fatal(err)
 	}
@@ -479,9 +476,7 @@ func TestExecutorDetachPermanentStopsAndSettles(t *testing.T) {
 	executor := newTestExecutor(t, backend, newChanSink())
 	gate := make(chan struct{})
 	source := &scriptSource{gate: gate, steps: []scriptStep{{data: []byte("ready")}}}
-	if err := executor.AttachTarget(ctx, "target-1", "identity-1", source); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, executor, ctx, "target-1", "identity-1", source)
 	watch, err := executor.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("ready")})
 	if err != nil {
 		t.Fatal(err)

@@ -106,8 +106,13 @@ type Executor struct {
 	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc
 
-	mu      sync.Mutex
-	targets map[string]*targetRunner
+	// attachMu serializes AttachTarget and Watch: the fence check, stale-runner
+	// retirement, the durable transition and the registration form one
+	// per-target protocol, so a delayed stale presenter can never cancel or
+	// supersede a newer incarnation.
+	attachMu sync.Mutex
+	mu       sync.Mutex
+	targets  map[string]*targetRunner
 	// pendingDetach keeps the incarnation credential of a failed permanent
 	// detach so the retry can complete the durable transition.
 	pendingDetach map[string]pendingDetach
@@ -206,9 +211,14 @@ func (e *Executor) DispatchOnce(ctx context.Context) (int, error) {
 type targetRunner struct {
 	targetID string
 	identity string
-	source   Source
-	cancel   context.CancelFunc
-	done     chan struct{}
+	// generation is the incarnation generation this runner was attached at;
+	// Watch presents it as the creation credential, so a create whose
+	// coordinates predate a replacement can never sign into the new
+	// generation.
+	generation uint64
+	source     Source
+	cancel     context.CancelFunc
+	done       chan struct{}
 	// ownerCtx carries the attaching owner's identity for engine calls; the
 	// lifecycle context only cancels the source.
 	ownerCtx context.Context
@@ -231,9 +241,19 @@ type targetRunner struct {
 // stale presenter instead of letting it start a runner over replaced
 // coordinates. The runner resumes from the watches' own evaluated positions
 // when they exist (restart recovery) and from the source end otherwise.
-func (e *Executor) AttachTarget(ctx context.Context, targetID, identity string, source Source) error {
+func (e *Executor) AttachTarget(ctx context.Context, targetID, identity string, source Source, expectedGeneration uint64) error {
 	if source == nil {
 		return errors.New("watches: executor source is nil")
+	}
+	e.attachMu.Lock()
+	defer e.attachMu.Unlock()
+	mirror, mirrorGeneration, _ := e.engine.Credential(ctx, targetID)
+	if mirrorGeneration != expectedGeneration {
+		// The mirror moved since the caller prepared this attach (a newer
+		// incarnation landed): the stale presenter fails with zero side
+		// effects — it must not cancel the newer runner or roll the
+		// incarnation back.
+		return fmt.Errorf("watches: target %s incarnation advanced during attach preparation: %w", targetID, ErrConflict)
 	}
 	for {
 		e.mu.Lock()
@@ -278,7 +298,7 @@ func (e *Executor) AttachTarget(ctx context.Context, targetID, identity string, 
 	}
 	runnerCtx, cancel := context.WithCancel(e.lifecycleCtx)
 	runner := &targetRunner{
-		targetID: targetID, identity: identity, source: source,
+		targetID: targetID, identity: identity, generation: generation, source: source,
 		cancel: cancel, done: make(chan struct{}), pos: pos, ownerCtx: e.ownerCtx,
 	}
 	e.mu.Lock()
@@ -303,6 +323,14 @@ func (e *Executor) AttachTarget(ctx context.Context, targetID, identity string, 
 	e.mu.Unlock()
 	go runner.run(runnerCtx, e)
 	return nil
+}
+
+// AttachedCredential reports the identity and generation the target's mirror
+// is bound to and whether it is currently attached. Callers preparing an
+// attach read it as the incarnation fence: the durable target starts at
+// generation 1, so a zero generation means the mirror holds no incarnation.
+func (e *Executor) AttachedCredential(ctx context.Context, targetID string) (identity string, generation uint64, attached bool) {
+	return e.engine.Credential(ctx, targetID)
 }
 
 // AttachedIdentity reports the identity the target's mirror is bound to and
@@ -424,13 +452,26 @@ type WatchParams struct {
 }
 
 // Watch creates an armed watch anchored at the target's current stream
-// position with the true left context from the source tail.
+// position with the true left context from the source tail. Creation joins
+// the same per-target lifecycle protocol as attachment: the runner it
+// fetched must still be the current incarnation's consumer — a replacement
+// that advanced the mirror since invalidates its coordinates — and the
+// engine presents the runner's generation to the store, which rejects the
+// create if the incarnation moved again. A stale create therefore fails with
+// a conflict and writes nothing instead of signing old coordinates into the
+// new generation.
 func (e *Executor) Watch(ctx context.Context, params WatchParams) (Watch, error) {
+	e.attachMu.Lock()
+	defer e.attachMu.Unlock()
 	e.mu.Lock()
 	runner, ok := e.targets[params.TargetID]
 	e.mu.Unlock()
 	if !ok {
 		return Watch{}, ErrDetached
+	}
+	identity, generation, attached := e.engine.Credential(ctx, params.TargetID)
+	if !attached || identity != runner.identity || generation != runner.generation {
+		return Watch{}, fmt.Errorf("watches: target %s incarnation advanced before watch creation: %w", params.TargetID, ErrConflict)
 	}
 	runner.observeMu.Lock()
 	defer runner.observeMu.Unlock()

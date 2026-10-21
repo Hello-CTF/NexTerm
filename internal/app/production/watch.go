@@ -114,19 +114,23 @@ func (s *watchService) openSource(ctx context.Context, targetID, episode string)
 // needsAttach reports whether the target must be (re-)attached: always when
 // the mirror does not hold the current watch identity, and also when it does
 // but the runner is dead — a runner that exited on a terminal source failure
-// or stream end leaves the mirror attached while nobody consumes output.
-func (s *watchService) needsAttach(ctx context.Context, executor *watches.Executor, targetID, identity string) bool {
-	mirror, attached := executor.AttachedIdentity(ctx, targetID)
+// or stream end leaves the mirror attached while nobody consumes output. The
+// returned generation is the incarnation fence the attach must present: it
+// pins the mirror state this decision was made from.
+func (s *watchService) needsAttach(ctx context.Context, executor *watches.Executor, targetID, identity string) (bool, uint64) {
+	mirror, generation, attached := executor.AttachedCredential(ctx, targetID)
 	if !attached || mirror != identity {
-		return true
+		return true, generation
 	}
-	return !executor.RunnerAlive(targetID)
+	return !executor.RunnerAlive(targetID), generation
 }
 
 // ensureAttached attaches the target to its current watch identity: a no-op
 // when a live runner already consumes that stream, a replacement attach when
 // the identity advanced (settling the old incarnation's watches), or a fresh
-// attach. The target must exist for the caller and its episode must be
+// attach. The attach presents the incarnation fence read at decision time, so
+// a newer incarnation landing in between fails the stale attach with zero
+// side effects. The target must exist for the caller and its episode must be
 // evidenced; terminals without sequence tracking are honestly unsupported.
 func (s *watchService) ensureAttached(ctx context.Context, executor *watches.Executor, targetID string) error {
 	state, ok := s.sessions.WatchStreamState(ctx, targetID)
@@ -137,17 +141,19 @@ func (s *watchService) ensureAttached(ctx context.Context, executor *watches.Exe
 		return ipc.NewError(ipc.CodeUnsupported, "watch 目标身份不可验证")
 	}
 	identity := state.WatchIdentity()
-	if !s.needsAttach(ctx, executor, targetID, identity) {
+	needed, fence := s.needsAttach(ctx, executor, targetID, identity)
+	if !needed {
 		return nil
 	}
 	source, _, err := s.openSource(ctx, targetID, identity)
 	if err != nil {
 		return mapWatchSourceError(err)
 	}
-	if err := executor.AttachTarget(ctx, targetID, identity, source); err != nil {
+	if err := executor.AttachTarget(ctx, targetID, identity, source, fence); err != nil {
+		_ = source.Close()
 		// The startup reconcile may attach the same identity concurrently;
 		// losing that race is not a failure when the mirror landed identically.
-		if mirror, attached := executor.AttachedIdentity(ctx, targetID); attached && mirror == identity {
+		if mirror, _, attached := executor.AttachedCredential(ctx, targetID); attached && mirror == identity {
 			return nil
 		}
 		return err
@@ -192,17 +198,19 @@ func (s *watchService) reconcileOwner(owner string) {
 			continue
 		}
 		identity := state.WatchIdentity()
-		if !s.needsAttach(ctx, executor, row.TargetID, identity) {
+		needed, fence := s.needsAttach(ctx, executor, row.TargetID, identity)
+		if !needed {
 			continue
 		}
 		source, _, err := s.openSource(ctx, row.TargetID, identity)
 		if err != nil {
 			continue
 		}
-		if err := executor.AttachTarget(ctx, row.TargetID, identity, source); err != nil {
+		if err := executor.AttachTarget(ctx, row.TargetID, identity, source, fence); err != nil {
+			_ = source.Close()
 			// A concurrent reconcile (creation-triggered or event-driven) may
 			// win the same attach; that is not a failure worth logging.
-			if mirror, attached := executor.AttachedIdentity(ctx, row.TargetID); !attached || mirror != identity {
+			if mirror, _, attached := executor.AttachedCredential(ctx, row.TargetID); !attached || mirror != identity {
 				s.logger.Warn("watch target reconcile attach failed", "target", row.TargetID, "error", err)
 			}
 			continue

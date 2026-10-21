@@ -32,9 +32,7 @@ func TestExecutorSourceGapSettlesLaggingWatches(t *testing.T) {
 		},
 		gate: gate,
 	}
-	if err := executor.AttachTarget(ctx, "target-1", "identity-1", source); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, executor, ctx, "target-1", "identity-1", source)
 	// The runner is parked on the very first chunk, so the watch anchors at 0
 	// with an empty left context deterministically.
 	watch, err := executor.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("zz")})
@@ -102,9 +100,7 @@ func TestExecutorDispatchTickSweepsExpired(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := &scriptSource{}
-	if err := executor.AttachTarget(ctx, "target-1", "identity-1", source); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, executor, ctx, "target-1", "identity-1", source)
 	watch, err := executor.Watch(ctx, WatchParams{
 		TargetID: "target-1", Condition: containsCondition("ready"), ExpiresAt: clock.Now().Add(time.Hour),
 	})
@@ -155,9 +151,7 @@ func TestExecutorTerminalErrorStopsRunnerAndAllowsReattach(t *testing.T) {
 		gate:      gate,
 		gateAfter: 1,
 	}
-	if err := executor.AttachTarget(ctx, "target-1", "identity-1", stale); err != nil {
-		t.Fatal(err)
-	}
+	attachTarget(t, executor, ctx, "target-1", "identity-1", stale)
 	watch, err := executor.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("ready")})
 	if err != nil {
 		t.Fatal(err)
@@ -172,7 +166,8 @@ func TestExecutorTerminalErrorStopsRunnerAndAllowsReattach(t *testing.T) {
 	var fresh *scriptSource
 	for {
 		fresh = &scriptSource{endSeq: 50, gate: make(chan struct{})}
-		if err := executor.AttachTarget(ctx, "target-1", "identity-2", fresh); err == nil {
+		_, fence, _ := executor.AttachedCredential(ctx, "target-1")
+		if err := executor.AttachTarget(ctx, "target-1", "identity-2", fresh, fence); err == nil {
 			break
 		} else if !strings.Contains(err.Error(), "already attached") || time.Now().After(deadline) {
 			t.Fatalf("re-attach = %v", err)
@@ -200,11 +195,13 @@ func TestExecutorTerminalErrorStopsRunnerAndAllowsReattach(t *testing.T) {
 	// the same identity is rejected without touching durable state, while a
 	// different identity is a live replacement — the running stale runner is
 	// cancelled, awaited and closed before the newer identity binds.
-	if err := executor.AttachTarget(ctx, "target-1", "identity-2", &scriptSource{}); err == nil || !strings.Contains(err.Error(), "already attached") {
+	_, dupFence, _ := executor.AttachedCredential(ctx, "target-1")
+	if err := executor.AttachTarget(ctx, "target-1", "identity-2", &scriptSource{}, dupFence); err == nil || !strings.Contains(err.Error(), "already attached") {
 		t.Fatalf("duplicate same-identity attach = %v; want already attached", err)
 	}
 	live := &scriptSource{gate: make(chan struct{})}
-	if err := executor.AttachTarget(ctx, "target-1", "identity-3", live); err != nil {
+	_, liveFence, _ := executor.AttachedCredential(ctx, "target-1")
+	if err := executor.AttachTarget(ctx, "target-1", "identity-3", live, liveFence); err != nil {
 		t.Fatalf("live replacement attach = %v", err)
 	}
 	fresh.mu.Lock()
