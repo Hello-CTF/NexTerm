@@ -534,7 +534,7 @@ func productionReadKeyFileBounded(path string) ([]byte, error) {
 	if info.Size() > maxImportKeyFileBytes {
 		return nil, fmt.Errorf("key file %s exceeds size limit %d", path, maxImportKeyFileBytes)
 	}
-	file, err := os.Open(path)
+	file, err := sshconfig.OpenSharedDelete(path)
 	if err != nil {
 		return nil, err
 	}
