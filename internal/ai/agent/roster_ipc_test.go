@@ -30,6 +30,11 @@ func TestRosterIPCListCarriesRealPresenceAndAssetEvidence(t *testing.T) {
 	if _, err := roster.Provision(ctx, "conv-1", "handle-a", "agent-a", tab.ID, nil); err != nil {
 		t.Fatal(err)
 	}
+	// The first attach binds the row to the live runtime episode; only a
+	// bound row may report connected presence and real asset evidence.
+	if _, err := roster.Attach(ctx, "handle-a", "job-1"); err != nil {
+		t.Fatal(err)
+	}
 	runner := NewRunner(Config{Store: database, Roster: roster})
 	t.Cleanup(func() { _ = runner.Close() })
 

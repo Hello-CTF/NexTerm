@@ -141,6 +141,12 @@ func (r *Runner) rosterPresence(ctx context.Context, entry RosterEntry) RosterRe
 	}
 	switch status.Kind {
 	case RosterRuntimeConnected:
+		// A connected answer requires the row's recorded episode binding to
+		// match the evidenced one: an unbound row cannot prove the live
+		// runtime is its own and stays unverifiable.
+		if !status.BindingValid {
+			return RosterResolutionUnverifiable
+		}
 		return RosterResolutionConnected
 	case RosterRuntimeDisconnected:
 		return RosterResolutionDisconnected

@@ -91,10 +91,15 @@ func TestSessionRosterProbeResolvesConnectedRuntimeAndAsset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The first attach binds the row to the runtime episode it found; only a
+	// bound row may report connected or resolve the asset.
+	if _, err := roster.Attach(ctx, "handle-a", "job-1"); err != nil {
+		t.Fatal(err)
+	}
 
 	probe := NewSessionRosterProbe(database, manager)
 	status, err := probe.ProbeRosterRuntime(ctx, "handle-a", entry.Incarnation)
-	if err != nil || status.Kind != RosterRuntimeConnected {
+	if err != nil || status.Kind != RosterRuntimeConnected || !status.BindingValid {
 		t.Fatalf("probe status = %+v err=%v", status, err)
 	}
 	assetID, err := probe.ResolveRosterAsset(ctx, "handle-a", entry.Incarnation)
@@ -125,18 +130,23 @@ func TestSessionRosterProbeClassifiesDisconnectedSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.Disconnect(connected.Info().ID); err != nil {
-		t.Fatal(err)
-	}
 	roster := NewRoster(database, NewSessionRosterProbe(database, manager))
 	entry, err := roster.Provision(ctx, "conv-1", "handle-b", "", tab.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Bind the row to the live episode first; the binding then survives the
+	// disconnect and keeps resolving the real asset identity.
+	if _, err := roster.Attach(ctx, "handle-b", "job-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Disconnect(connected.Info().ID); err != nil {
+		t.Fatal(err)
+	}
 
 	probe := NewSessionRosterProbe(database, manager)
 	status, err := probe.ProbeRosterRuntime(ctx, "handle-b", entry.Incarnation)
-	if err != nil || status.Kind != RosterRuntimeDisconnected {
+	if err != nil || status.Kind != RosterRuntimeDisconnected || !status.BindingValid {
 		t.Fatalf("probe status = %+v err=%v", status, err)
 	}
 	// A disconnected runtime still carries its real asset identity.
@@ -260,9 +270,13 @@ func TestSessionRosterProbeFailsClosedOnStaleIncarnation(t *testing.T) {
 		t.Fatalf("stale incarnation resolved the asset %q", assetID)
 	}
 
-	// The row's current identity still resolves honestly.
+	// The row's current identity still resolves honestly, once the row is
+	// bound to the live runtime episode.
+	if _, err := roster.Attach(ctx, "handle-a", "job-1"); err != nil {
+		t.Fatal(err)
+	}
 	status, err = probe.ProbeRosterRuntime(ctx, "handle-a", "incarnation-2")
-	if err != nil || status.Kind != RosterRuntimeConnected {
+	if err != nil || status.Kind != RosterRuntimeConnected || !status.BindingValid {
 		t.Fatalf("current probe status = %+v err=%v", status, err)
 	}
 	if assetID, err := probe.ResolveRosterAsset(ctx, "handle-a", "incarnation-2"); err != nil || assetID != "asset-1" {

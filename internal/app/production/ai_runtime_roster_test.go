@@ -64,6 +64,13 @@ func TestComposeAIRuntimeWiresRosterWithRealAssetEvidence(t *testing.T) {
 		return dispatcher.Dispatch(ctx, ipc.Request{Command: command, Args: json.RawMessage(args)}, ipc.Environment{})
 	}
 
+	// The first attach binds handle-a to the live runtime episode; only a
+	// bound row may report connected presence and real asset evidence.
+	attach := dispatch("ai_roster_attach", `{"handle":"handle-a","jobId":"job-1"}`)
+	if !attach.OK {
+		t.Fatalf("ai_roster_attach = %+v", attach.Error)
+	}
+
 	response := dispatch("ai_roster_list", `{"conversationId":"conv-1"}`)
 	if !response.OK {
 		t.Fatalf("ai_roster_list = %+v", response.Error)

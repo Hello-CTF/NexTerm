@@ -73,10 +73,16 @@ const (
 )
 
 // RosterRuntimeStatus carries the probe answer; CurrentIncarnation is set
-// when a replacement incarnation is authoritatively known.
+// when a replacement incarnation is authoritatively known. ObservedIncarnation
+// reports the runtime episode the probe actually evidenced (empty when the
+// episode could not be evidenced), and BindingValid reports whether the row's
+// recorded episode binding matches it: a row may only claim the runtime its
+// binding matches, never whatever the tab currently hosts.
 type RosterRuntimeStatus struct {
-	Kind               RosterRuntimeKind
-	CurrentIncarnation string
+	Kind                RosterRuntimeKind
+	CurrentIncarnation  string
+	ObservedIncarnation string
+	BindingValid        bool
 }
 
 // RosterRuntimeProbe authoritatively classifies the runtime behind a handle.
@@ -286,7 +292,9 @@ func (r *Roster) attachLive(ctx context.Context, row store.AgentRosterRow, jobID
 	}
 	switch status.Kind {
 	case RosterRuntimeConnected:
-		return r.casConnected(ctx, row, jobID)
+		// The first connected bind persists the observed runtime episode in
+		// the same CAS; later binds only rebind the job.
+		return r.casConnected(ctx, row, jobID, status.ObservedIncarnation)
 	case RosterRuntimeDisconnected:
 		return RosterAttachment{Entry: entry, Resolution: RosterResolutionDisconnected}, nil
 	case RosterRuntimeGone:
@@ -324,12 +332,18 @@ func (r *Roster) attachLive(ctx context.Context, row store.AgentRosterRow, jobID
 // concurrent authoritative terminal transition (reconcile gone, release)
 // can never be resurrected or rebound. A state conflict re-reads the row:
 // live states retry the bind (a peer activated it first), terminal states
-// resolve authoritatively without a write.
-func (r *Roster) casConnected(ctx context.Context, row store.AgentRosterRow, jobID string) (RosterAttachment, error) {
+// resolve authoritatively without a write. When the row carries no runtime
+// episode binding yet and the probe observed one, the binding is persisted in
+// the same CAS — the row's recorded episode is what later presence and asset
+// reads validate against.
+func (r *Roster) casConnected(ctx context.Context, row store.AgentRosterRow, jobID, episode string) (RosterAttachment, error) {
 	for attempt := 0; attempt < 3; attempt++ {
 		updates := map[string]any{"job_id": jobID}
 		if RosterState(row.State) == RosterStateProvisioning {
 			updates["state"] = string(RosterStateActive)
+		}
+		if rosterRecordedEpisode(row) == "" && episode != "" {
+			updates["metadata_json"] = rosterEpisodeMetadata(row.MetadataJSON, episode)
 		}
 		updated, err := r.store.AgentRosterCompareAndSwapState(ctx, row.ID, row.Identity(), row.State, updates)
 		if err == nil {
@@ -662,4 +676,32 @@ func replacedByIncarnation(row store.AgentRosterRow) string {
 		return ""
 	}
 	return metadata.ReplacedBy
+}
+
+// rosterRecordedEpisode reads the row's persisted runtime-episode binding.
+// The row's own (ID, CreatedAt, Incarnation) triple stays the row identity
+// used for recovery and CAS guards; it never doubles as the runtime episode.
+func rosterRecordedEpisode(row store.AgentRosterRow) string {
+	var metadata struct {
+		RuntimeEpisode string `json:"runtimeEpisode"`
+	}
+	if err := json.Unmarshal([]byte(row.MetadataJSON), &metadata); err != nil {
+		return ""
+	}
+	return metadata.RuntimeEpisode
+}
+
+// rosterEpisodeMetadata merges the runtime-episode binding into the row's
+// metadata object, preserving unrelated keys.
+func rosterEpisodeMetadata(raw, episode string) string {
+	metadata := map[string]any{}
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil || metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadata["runtimeEpisode"] = episode
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return raw
+	}
+	return string(encoded)
 }
