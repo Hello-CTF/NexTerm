@@ -354,6 +354,7 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 		existing.mu.Lock()
 		allowed := sessionRequestAllowed(existing, requester, true)
 		status := existing.status
+		transport := existing.transport
 		done := existing.connectDone
 		existing.mu.Unlock()
 		m.mu.Unlock()
@@ -362,10 +363,25 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 			return nil, ErrForbidden
 		}
 		if status != StatusConnecting {
+			if status == StatusConnected && transport != nil && transport.IsAlive() {
+				if err := ipc.CheckAccountSession(ctx); err != nil {
+					return nil, err
+				}
+				return existing, nil
+			}
+			if status != StatusConnected && status != StatusReconnecting {
+				return nil, ErrDisconnected
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if err := ipc.CheckAccountSession(ctx); err != nil {
 				return nil, err
 			}
-			return existing, nil
+			if err := m.Disconnect(existing.ID); err != nil {
+				return nil, err
+			}
+			return m.Connect(ctx, asset)
 		}
 		select {
 		case <-ctx.Done():
@@ -378,10 +394,7 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 		ownerExpired := existing.connectOwnerExpired
 		existing.mu.Unlock()
 		if status == StatusConnected || status == StatusReconnecting {
-			if err := ipc.CheckAccountSession(ctx); err != nil {
-				return nil, err
-			}
-			return existing, nil
+			return m.Connect(ctx, asset)
 		}
 		if connectErr != nil {
 			if ownerExpired {
