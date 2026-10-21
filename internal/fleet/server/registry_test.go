@@ -48,7 +48,7 @@ type bridgeOutcome struct {
 func startBridgeRequest(t *testing.T, r *Registry, deviceID string) (context.CancelFunc, chan bridgeOutcome, string) {
 	t.Helper()
 	controlClient, controlServer := wsPair(t)
-	r.RegisterControl(deviceID, controlServer, "", nil)
+	r.RegisterControl(deviceID, controlServer, "", []string{agent.PurposeTerminal})
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan bridgeOutcome, 1)
 	go func() {
@@ -227,22 +227,36 @@ func TestRegistryCapabilitiesRoundTrip(t *testing.T) {
 	}
 }
 
-// Old agents advertise no capabilities: a non-terminal purpose is rejected before any control frame is
-// written, so they never mis-handle a purpose bridge as terminal.
-func TestRequestBridgeRejectsUnadvertisedPurpose(t *testing.T) {
-	r := NewRegistry()
-	controlClient, controlServer := wsPair(t)
-	r.RegisterControl("dev-old", controlServer, "", nil)
-	if _, err := r.RequestBridge(context.Background(), "dev-old", "file"); err != errPurposeUnsupported {
-		t.Fatalf("RequestBridge = %v, want errPurposeUnsupported", err)
-	}
-	if count := pendingIDs(r); count != 0 {
-		t.Fatalf("pending = %d, want 0", count)
-	}
-	readCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-	if _, _, err := controlClient.Read(readCtx); err == nil {
-		t.Fatal("a control frame was written for a rejected purpose")
+// Every purpose, including both terminal spellings, requires an explicit capability. A missing capability
+// is rejected before any control frame is written or pending bridge is allocated.
+func TestRequestBridgeRejectsMissingCapabilities(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		purpose string
+	}{
+		{name: "file", purpose: "file"},
+		{name: "terminal", purpose: agent.PurposeTerminal},
+		{name: "empty terminal", purpose: ""},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			r := NewRegistry()
+			controlClient, controlServer := wsPair(t)
+			r.RegisterControl("dev-no-capabilities", controlServer, "", nil)
+			requestCtx, requestCancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			_, err := r.RequestBridge(requestCtx, "dev-no-capabilities", testCase.purpose)
+			requestCancel()
+			if err != errPurposeUnsupported {
+				t.Fatalf("RequestBridge = %v, want errPurposeUnsupported", err)
+			}
+			if count := pendingIDs(r); count != 0 {
+				t.Fatalf("pending = %d, want 0", count)
+			}
+			readCtx, readCancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			defer readCancel()
+			if _, _, err := controlClient.Read(readCtx); err == nil {
+				t.Fatal("a control frame was written without the required capability")
+			}
+		})
 	}
 }
 

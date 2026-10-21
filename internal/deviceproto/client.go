@@ -150,8 +150,7 @@ func (c *Client) unary(ctx context.Context, kind FrameType, message any) error {
 	return ex.expectOK()
 }
 
-// Roots uses the negotiated file purpose; only the legacy protocol rejection
-// becomes unsupported, leaving bridge and agent enumeration failures intact.
+// Roots uses the negotiated file purpose and preserves coded agent errors.
 func (c *Client) Roots(ctx context.Context) (base.FileSystemRoots, error) {
 	ex, err := c.begin(ctx, FrameRoots, struct{}{})
 	if err != nil {
@@ -166,9 +165,6 @@ func (c *Client) Roots(ctx context.Context) (base.FileSystemRoots, error) {
 		var msg ErrorMsg
 		if err := UnmarshalPayload(payload, &msg); err != nil {
 			return base.FileSystemRoots{}, err
-		}
-		if msg.Code == CodeProtocol {
-			return base.FileSystemRoots{}, fmt.Errorf("%w: %s", base.ErrUnsupported, msg.Message)
 		}
 		return base.FileSystemRoots{}, CodedError(msg.Code, msg.Message)
 	}

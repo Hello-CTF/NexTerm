@@ -84,10 +84,11 @@ func TestClientRootsErrors(t *testing.T) {
 	for _, testCase := range []struct {
 		name            string
 		code            string
+		want            error
 		wantUnsupported bool
 	}{
-		{name: "legacy agent", code: CodeProtocol, wantUnsupported: true},
-		{name: "explicit unsupported", code: CodeUnsupported, wantUnsupported: true},
+		{name: "protocol rejection", code: CodeProtocol, want: ErrProtocol},
+		{name: "explicit unsupported", code: CodeUnsupported, want: base.ErrUnsupported, wantUnsupported: true},
 		{name: "enumeration failure", code: CodeInternal},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -102,11 +103,14 @@ func TestClientRootsErrors(t *testing.T) {
 			if err == nil {
 				t.Fatal("Roots must surface the agent error")
 			}
+			if testCase.want != nil && !errors.Is(err, testCase.want) {
+				t.Fatalf("Roots error = %v; want errors.Is %v", err, testCase.want)
+			}
 			if errors.Is(err, base.ErrUnsupported) != testCase.wantUnsupported {
 				t.Fatalf("Roots error = %v; unsupported = %v, want %v", err, errors.Is(err, base.ErrUnsupported), testCase.wantUnsupported)
 			}
-			if testCase.wantUnsupported && (roots.Supported || len(roots.Roots) != 0) {
-				t.Fatalf("unsupported Roots = %+v; want no fabricated roots", roots)
+			if roots.Supported || len(roots.Roots) != 0 || roots.HomePath != "" {
+				t.Fatalf("Roots = %+v after an error; want no fabricated roots", roots)
 			}
 		})
 	}

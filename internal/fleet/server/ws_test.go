@@ -220,6 +220,7 @@ func TestDeviceBridgePairing(t *testing.T) {
 	control := dialDeviceWS(t, f)
 	if response := helloDevice(t, control, agent.HelloMessage{
 		Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: deviceID, Secret: secret,
+		Capabilities: []string{agent.PurposeTerminal},
 	}); response.Type != "hello_ok" {
 		t.Fatalf("hello = %+v", response)
 	}
@@ -316,6 +317,7 @@ func TestDeviceBridgeRelayAuthorization(t *testing.T) {
 	control := dialDeviceWS(t, f)
 	if response := helloDevice(t, control, agent.HelloMessage{
 		Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: deviceID, Secret: secret,
+		Capabilities: []string{agent.PurposeTerminal},
 	}); response.Type != "hello_ok" {
 		t.Fatalf("hello = %+v", response)
 	}
