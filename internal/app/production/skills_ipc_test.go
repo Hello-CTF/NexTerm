@@ -7,18 +7,23 @@ import (
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
+	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
 	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
+	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-// These tests exercise the production skills wiring recipe end to end: the
-// real settings store, the real embedded index, the real dispatcher, and the
-// same construction the production module registration performs
+// These tests exercise the production skills wiring end to end: the real
+// settings store, the real embedded index, the real dispatcher, and the
+// construction the production module registration performs
 // (skills.NewManager over the store with the shared flag, then
 // skills.RegisterIPC). They pin the contract the runtime registration must
 // preserve — per-owner isolation, digest pinning, and disabled/override
-// semantics — before the module entry itself lands.
+// semantics. The composed-runtime tests at the bottom prove the landed
+// production wiring: the ai-skills IPC surface and the load_skill tool
+// share one services-level manager instance.
 
 func registerProductionSkillsIPC(t *testing.T, database *store.Store, shared bool) *ipc.Dispatcher {
 	t.Helper()
@@ -240,4 +245,132 @@ func TestSkillsIPCProductionDisabledAndCustomLifecycle(t *testing.T) {
 	requireSkillsIPCCode(t, dispatchSkillsIPC(ctx, dispatcher, skills.CommandDispatch, `{"name":"ops-runbook"}`), ipc.CodeNotFound)
 	requireSkillsIPCCode(t, dispatchSkillsIPC(ctx, dispatcher, skills.CommandSaveOverride, `{"name":"Bad_Name","disabled":true}`), ipc.CodeBadParam)
 	requireSkillsIPCCode(t, dispatchSkillsIPC(ctx, dispatcher, skills.CommandSaveOverride, `{"name":"another-custom","description":"missing body"}`), ipc.CodeBadParam)
+}
+
+// composeProductionSkillsRuntime builds the real production AI runtime
+// composition over a real store and returns the services-level skills
+// manager together with the composed runner's tools registry. The manager is
+// the same instance the production builder hands to the ai-skills IPC
+// module, so these tests observe exactly what production wires.
+func composeProductionSkillsRuntime(t *testing.T, shared bool) (*skills.Manager, *tools.Registry) {
+	t.Helper()
+	database, err := store.OpenInMemory(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileManager, err := profiles.NewManager(t.Context(), database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := session.NewManager(session.Config{IdleTimeout: -1})
+	skillsManager, err := skills.NewManager(t.Context(), database, skills.WithShared(shared))
+	if err != nil {
+		t.Fatal(err)
+	}
+	services := &ProductionServices{Store: database, Profiles: profileManager, Sessions: sessions, Skills: skillsManager}
+	if err := composeAIRuntime(t.Context(), services); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		services.closeAIRuntime()
+		_ = sessions.Close()
+		_ = database.Close()
+	})
+	registry := services.Agent.ToolsRegistry()
+	if registry == nil {
+		t.Fatal("the composed runner has no tools registry")
+	}
+	return skillsManager, registry
+}
+
+func loadSkillThroughRegistry(registry *tools.Registry, ctx context.Context, name string) tools.Output {
+	return registry.Execute(ctx, "job-skills", tools.Scope{}, tools.Call{
+		ID: "call-load", Name: "load_skill", Args: json.RawMessage(`{"name":"` + name + `"}`),
+	}, nil)
+}
+
+// The production proof: the IPC surface and load_skill consume one shared
+// manager. An override saved over IPC is exactly what load_skill returns,
+// with the same pinned digest as the IPC dispatch surface; a disable over
+// IPC closes load_skill while the Settings read path stays open; and another
+// owner's load_skill keeps seeing the embedded material.
+func TestSkillsIPCProductionSurfacesShareOverridesAndDigests(t *testing.T) {
+	manager, registry := composeProductionSkillsRuntime(t, false)
+	dispatcher := ipc.NewDispatcher()
+	if err := skills.RegisterIPC(dispatcher, manager); err != nil {
+		t.Fatal(err)
+	}
+	ctxA := ipc.WithUserID(t.Context(), "owner-a")
+	ctxB := ipc.WithUserID(t.Context(), "owner-b")
+
+	response := dispatchSkillsIPC(ctxA, dispatcher, skills.CommandSaveOverride, `{"name":"skill-format","description":"实例格式说明","body":"custom body\n"}`)
+	var saved skills.Entry
+	requireSkillsIPCResponse(t, response, &saved)
+	if !saved.Overridden {
+		t.Fatalf("saved entry = %+v", saved)
+	}
+
+	var dispatched skills.Dispatch
+	requireSkillsIPCResponse(t, dispatchSkillsIPC(ctxA, dispatcher, skills.CommandDispatch, `{"name":"skill-format"}`), &dispatched)
+	output := loadSkillThroughRegistry(registry, ctxA, "skill-format")
+	if !output.OK {
+		t.Fatalf("load_skill output = %+v", output)
+	}
+	for _, fragment := range []string{"skill: skill-format", "digest: " + dispatched.Digest, "实例格式说明", "custom body\n"} {
+		if !strings.Contains(output.Text, fragment) {
+			t.Fatalf("load_skill text missing %q:\n%s", fragment, output.Text)
+		}
+	}
+
+	// Disabling preserves the overridden fields, the same payload the
+	// Settings UI sends when toggling an overridden skill off.
+	if response := dispatchSkillsIPC(ctxA, dispatcher, skills.CommandSaveOverride, `{"name":"skill-format","description":"实例格式说明","body":"custom body\n","disabled":true}`); !response.OK {
+		t.Fatalf("disable response = %+v", response)
+	}
+	output = loadSkillThroughRegistry(registry, ctxA, "skill-format")
+	if output.OK || !strings.Contains(output.Text, "禁用") {
+		t.Fatalf("disabled load_skill output = %+v", output)
+	}
+	var material skills.Dispatch
+	requireSkillsIPCResponse(t, dispatchSkillsIPC(ctxA, dispatcher, skills.CommandMaterial, `{"name":"skill-format"}`), &material)
+	if material.Body != "custom body\n" {
+		t.Fatalf("disabled material must stay readable for Settings: %+v", material)
+	}
+
+	outputB := loadSkillThroughRegistry(registry, ctxB, "skill-format")
+	if !outputB.OK || strings.Contains(outputB.Text, "custom body\n") || strings.Contains(outputB.Text, "实例格式说明") {
+		t.Fatalf("owner A's override leaked to owner B's load_skill: %+v", outputB)
+	}
+	var dispatchedB skills.Dispatch
+	requireSkillsIPCResponse(t, dispatchSkillsIPC(ctxB, dispatcher, skills.CommandDispatch, `{"name":"skill-format"}`), &dispatchedB)
+	if dispatchedB.Digest == dispatched.Digest {
+		t.Fatal("owner B's dispatch must pin the embedded material, not owner A's override")
+	}
+	if !strings.Contains(outputB.Text, "digest: "+dispatchedB.Digest) {
+		t.Fatalf("owner B's load_skill does not pin owner B's dispatch digest %q:\n%s", dispatchedB.Digest, outputB.Text)
+	}
+}
+
+// Legacy shared behavior: with the desktop/open shared flag, ownerless
+// requests resolve the shared override state on both surfaces.
+func TestSkillsIPCProductionLegacySharedLoadSkill(t *testing.T) {
+	manager, registry := composeProductionSkillsRuntime(t, true)
+	dispatcher := ipc.NewDispatcher()
+	if err := skills.RegisterIPC(dispatcher, manager); err != nil {
+		t.Fatal(err)
+	}
+
+	response := dispatchSkillsIPC(t.Context(), dispatcher, skills.CommandSaveOverride, `{"name":"skill-format","body":"shared body\n"}`)
+	if !response.OK {
+		t.Fatalf("shared save response = %+v", response)
+	}
+	output := loadSkillThroughRegistry(registry, t.Context(), "skill-format")
+	if !output.OK || !strings.Contains(output.Text, "shared body\n") {
+		t.Fatalf("legacy shared load_skill output = %+v", output)
+	}
+	var dispatched skills.Dispatch
+	requireSkillsIPCResponse(t, dispatchSkillsIPC(t.Context(), dispatcher, skills.CommandDispatch, `{"name":"skill-format"}`), &dispatched)
+	if !strings.Contains(output.Text, dispatched.Digest) {
+		t.Fatalf("load_skill digest %q does not pin the IPC dispatch digest %q", output.Text, dispatched.Digest)
+	}
 }
