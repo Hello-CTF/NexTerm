@@ -206,6 +206,7 @@ type runbookIPCExecutor struct {
 	block   map[string]bool
 	cancels map[string]context.CancelFunc
 	started chan string
+	stdout  string
 }
 
 func newRunbookIPCExecutor(block ...string) *runbookIPCExecutor {
@@ -219,7 +220,7 @@ func newRunbookIPCExecutor(block ...string) *runbookIPCExecutor {
 func (e *runbookIPCExecutor) Execute(ctx context.Context, _ string, request execbatch.Request) (execbatch.Batch, error) {
 	results := make([]execbatch.Result, len(request.SessionIDs))
 	for index, sessionID := range request.SessionIDs {
-		results[index] = execbatch.Result{SessionID: sessionID, SessionName: sessionID, Status: execbatch.StatusSuccess}
+		results[index] = execbatch.Result{SessionID: sessionID, SessionName: sessionID, Status: execbatch.StatusSuccess, Stdout: e.stdout}
 	}
 	batch := execbatch.Batch{BatchID: request.BatchID, Command: request.Command, Results: results}
 	e.mu.Lock()
@@ -890,4 +891,43 @@ func TestRunbookIPCPrepareOwnerCleanupSameMillisecondInclusive(t *testing.T) {
 	commit, _ := service.PrepareOwnerCleanup(t.Context(), "owner-a", "event", &cutoff)
 	commit()
 	requireRunbookIPCNotFound(t, runbookIPCGetRun(t, dispatcher, ownerA, "run-sub-ms"))
+}
+
+// A committed cleanup must not pin the reservation payload: after the
+// once-only commit the entry map is released, so the retained replay marker
+// cannot keep the run services, their step requests, and their batch outputs
+// alive for the retention lifetime. The cancel stays exactly-once and the
+// replacement guard is unchanged.
+func TestRunbookIPCPrepareOwnerCleanupReleasesReservationPayload(t *testing.T) {
+	executor := newRunbookIPCExecutor()
+	executor.stdout = "batch output payload"
+	service := newRunbookIPCService(executor)
+	dispatcher := ipc.NewDispatcher()
+	if err := service.register(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	ownerA := ipc.WithUserID(t.Context(), "owner-a")
+
+	// A completed run: its service retains the step requests and the batch
+	// output in the run state, so a pinned reservation is real payload.
+	runbookIPCStartRun(t, dispatcher, ownerA, "run-payload", "payload")
+	if state := runbookIPCCompleteRun(t, dispatcher, ownerA, "run-payload"); state.Status != runbook.RunSuccess {
+		t.Fatalf("run-payload final state = %+v", state)
+	}
+
+	reservation := service.prepareOwnerCleanupReservation(t.Context(), "owner-a", "event", nil)
+	if len(reservation.entries) != 1 {
+		t.Fatalf("reservation entries = %d, want the completed run pinned", len(reservation.entries))
+	}
+	reservation.commit()
+	if !reservation.released || reservation.entries != nil {
+		t.Fatalf("reservation after commit = %+v, want the entry map released", reservation)
+	}
+	requireRunbookIPCNotFound(t, runbookIPCGetRun(t, dispatcher, ownerA, "run-payload"))
+	// Replay: exactly-once no-op, nothing left to cancel or release.
+	reservation.commit()
+	if !reservation.released || reservation.entries != nil {
+		t.Fatal("replay resurrected the released reservation")
+	}
+	requireRunbookIPCNotFound(t, runbookIPCGetRun(t, dispatcher, ownerA, "run-payload"))
 }
