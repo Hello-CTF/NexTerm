@@ -100,13 +100,15 @@ type taskFile struct {
 }
 
 type taskDefinition struct {
-	Deps     []taskCommand `yaml:"deps"`
-	Commands []taskCommand `yaml:"cmds"`
+	Deps     []taskCommand     `yaml:"deps"`
+	Commands []taskCommand     `yaml:"cmds"`
+	Env      map[string]string `yaml:"env"`
 }
 
 type taskCommand struct {
 	Run  string
 	Task string
+	Vars map[string]string
 }
 
 func (command *taskCommand) UnmarshalYAML(node *yaml.Node) error {
@@ -115,12 +117,14 @@ func (command *taskCommand) UnmarshalYAML(node *yaml.Node) error {
 		return nil
 	}
 	var decoded struct {
-		Task string `yaml:"task"`
+		Task string            `yaml:"task"`
+		Vars map[string]string `yaml:"vars"`
 	}
 	if err := node.Decode(&decoded); err != nil {
 		return err
 	}
 	command.Task = decoded.Task
+	command.Vars = decoded.Vars
 	return nil
 }
 
@@ -162,6 +166,75 @@ func TestQualityUsesSharedTaskWithoutDroppingCoverage(t *testing.T) {
 	}
 }
 
+func TestLocalFrontendAndProductionReuseVerifiedResults(t *testing.T) {
+	tasks := loadTaskfile(t)
+	frontend := tasks.Tasks["check:frontend"]
+	commands := make(map[string]int)
+	for _, command := range frontend.Commands {
+		if command.Task != "" {
+			commands["task:"+command.Task]++
+		} else {
+			commands["run:"+normalize(command.Run)]++
+		}
+	}
+	if commands["run:pnpm test"] != 0 {
+		t.Error("check:frontend still duplicates the Vitest suite without coverage")
+	}
+	for _, required := range []string{"run:pnpm lint", "run:pnpm test:coverage", "task:frontend"} {
+		if commands[required] != 1 {
+			t.Errorf("check:frontend command %s count = %d, want 1", required, commands[required])
+		}
+	}
+	var packageJSON struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if err := json.Unmarshal([]byte(readRepositoryFile(t, "package.json")), &packageJSON); err != nil {
+		t.Fatal(err)
+	}
+	if packageJSON.Scripts["test"] != "vitest run" || packageJSON.Scripts["test:coverage"] != "vitest run --coverage" {
+		t.Fatalf("frontend package scripts changed: %v", packageJSON.Scripts)
+	}
+
+	production := tasks.Tasks["test:production"]
+	if production.Env["DIST_SOURCE"] != "{{.DIST_SOURCE}}" || production.Env["DIST_MANIFEST"] != "{{.DIST_MANIFEST}}" {
+		t.Fatalf("test:production does not forward dist consumption settings: %v", production.Env)
+	}
+	verify := tasks.Tasks["verify"]
+	checkSeen := false
+	productionSeen := false
+	for _, command := range verify.Commands {
+		if command.Task == "check" {
+			checkSeen = true
+		}
+		if command.Task != "test:production" {
+			continue
+		}
+		if productionSeen {
+			t.Fatal("verify runs test:production more than once")
+		}
+		productionSeen = true
+		if !checkSeen {
+			t.Error("verify runs test:production before check produces the verified dist")
+		}
+		if command.Vars["DIST_SOURCE"] != "dist" || command.Vars["DIST_MANIFEST"] != "target/dist-manifest.json" {
+			t.Errorf("verify test:production vars = %v, want checked dist and manifest", command.Vars)
+		}
+	}
+	if !checkSeen || !productionSeen {
+		t.Fatalf("verify check/production contract missing: check=%t production=%t", checkSeen, productionSeen)
+	}
+
+	desktopSeen := false
+	for _, command := range verify.Commands {
+		if normalize(command.Run) == "node scripts/build.mjs desktop --release --repro-check --consume-dist=dist --dist-manifest=target/dist-manifest.json" {
+			desktopSeen = true
+		}
+	}
+	if !desktopSeen {
+		t.Error("verify no longer retains the final manifest-checked desktop build")
+	}
+}
+
 func TestProductionJobRunsOnEveryPullRequestWithoutExpandingRace(t *testing.T) {
 	ci := loadWorkflow(t, ".github/workflows/ci.yml")
 	production := requireJob(t, ci, "production")
@@ -171,24 +244,36 @@ func TestProductionJobRunsOnEveryPullRequestWithoutExpandingRace(t *testing.T) {
 	if production.RunsOn != "ubuntu-latest" || production.TimeoutMinutes <= 0 || production.TimeoutMinutes > 30 {
 		t.Fatalf("production runner/timeout = %q/%d", production.RunsOn, production.TimeoutMinutes)
 	}
+	if len(production.Needs) != 1 || production.Needs[0] != "frontend" {
+		t.Fatalf("production needs = %v, want the verified frontend job", production.Needs)
+	}
 	productionRun := requireRun(t, production, "wails3 task test:production")
-	requireRun(t, production, "pnpm install --frozen-lockfile")
+	if productionRun.Env["DIST_SOURCE"] != "target/ci-work/verified-dist/dist" || productionRun.Env["DIST_MANIFEST"] != "target/ci-work/verified-dist/target/dist-manifest.json" {
+		t.Fatalf("production consumption environment = %v", productionRun.Env)
+	}
 	requireUse(t, production, "actions/checkout@")
-	pnpm := requireUse(t, production, "pnpm/action-setup@")
+	download := requireUse(t, production, "actions/download-artifact@")
+	if download.With["name"] != "frontend-dist" || download.With["path"] != "target/ci-work/verified-dist" {
+		t.Fatalf("production artifact download = %v", download.With)
+	}
+	requireBefore(t, production, download, productionRun, "verified frontend must be downloaded before production tests")
 	node := requireUse(t, production, "actions/setup-node@")
 	goSetup := requireUse(t, production, "actions/setup-go@")
 	wailsCache := requireUse(t, production, "actions/cache@")
-	if node.With["cache"] != "pnpm" {
-		t.Fatalf("production setup-node cache = %v", node.With["cache"])
+	if _, ok := node.With["cache"]; ok {
+		t.Fatalf("production setup-node retains an unused package cache: %v", node.With["cache"])
 	}
-	requireBefore(t, production, pnpm, node, "pnpm must be installed before setup-node configures its cache")
 	requireBefore(t, production, node, productionRun, "Node must be installed before production tests")
 	requireBefore(t, production, goSetup, productionRun, "Go must be installed before production tests")
 	requireBefore(t, production, wailsCache, productionRun, "Wails must be restored before production tests")
 	wailsInstall := requireRunContaining(t, production, "go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27")
 	requireBefore(t, production, wailsInstall, productionRun, "Wails must be installed before production tests")
+	requireRunContaining(t, production, "sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev")
 	for _, step := range production.Steps {
 		run := normalize(step.Run)
+		if strings.HasPrefix(step.Uses, "pnpm/") || strings.Contains(run, "pnpm") {
+			t.Fatalf("production consumer redundantly installs or runs pnpm: %s %s", step.Uses, run)
+		}
 		if strings.Contains(run, "task verify") || strings.Contains(run, "test:race") || strings.Contains(run, "go test -race") {
 			t.Fatalf("production PR job duplicates verify/race: %s", run)
 		}
