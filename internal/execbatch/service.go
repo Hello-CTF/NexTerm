@@ -51,6 +51,16 @@ type Config struct {
 	ProductionSettings guard.Settings
 }
 
+// batchProgressTTL bounds how long a finished batch's terminal progress
+// snapshot stays readable after completion, so progress consumers can
+// always observe the terminal transition without unbounded retention.
+const batchProgressTTL = 10 * time.Minute
+
+type finishedProgressEntry struct {
+	tracker   *ProgressTracker
+	expiresAt time.Time
+}
+
 type Service struct {
 	resolver           Resolver
 	auditor            Auditor
@@ -63,6 +73,7 @@ type Service struct {
 	beforeCleanupCommit   func(accountCleanupKey) error
 	mu                    sync.Mutex
 	batches               map[batchKey]*activeBatch
+	finishedProgress      map[batchKey]finishedProgressEntry
 	pendingCancels        map[pendingCancelKey]time.Time
 	accountCleanups       map[accountCleanupKey]*accountCleanupEvent
 	accountCleanupAliases map[accountCleanupKey]accountCleanupKey
@@ -123,6 +134,7 @@ func New(config Config) *Service {
 	return &Service{
 		resolver: config.Resolver, auditor: config.Auditor, history: config.History, now: now, onError: onError,
 		outputLimit: outputLimit, batches: make(map[batchKey]*activeBatch),
+		finishedProgress:      make(map[batchKey]finishedProgressEntry),
 		pendingCancels:        make(map[pendingCancelKey]time.Time),
 		accountCleanups:       make(map[accountCleanupKey]*accountCleanupEvent),
 		accountCleanupAliases: make(map[accountCleanupKey]accountCleanupKey),
@@ -166,6 +178,14 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 		s.mu.Lock()
 		if s.batches[key] == active {
 			delete(s.batches, key)
+			if active.progress != nil {
+				// Keep the terminal snapshot readable for a bounded TTL so
+				// progress consumers always observe the finished transition.
+				s.purgeFinishedProgressLocked(s.now())
+				s.finishedProgress[key] = finishedProgressEntry{
+					tracker: active.progress, expiresAt: s.now().Add(batchProgressTTL),
+				}
+			}
 		}
 		s.mu.Unlock()
 		cancel()
@@ -260,15 +280,24 @@ func (s *Service) Rerun(ctx context.Context, ownerID string, original Request, r
 	return ExecuteRerun(ctx, s, ownerID, original, results, newBatchID)
 }
 
-// BatchProgress returns the live progress snapshot of an active batch.
-// Progress exists only while the batch is running; finished batches are
-// served by the history store.
+// BatchProgress returns the progress snapshot of a batch: the live snapshot
+// while it runs, or the terminal snapshot for a bounded TTL after
+// completion. Progress for older batches is served by the history store.
 func (s *Service) BatchProgress(ownerID, batchID string) (BatchProgress, []TargetProgress, bool) {
 	s.mu.Lock()
 	active := s.batches[batchKey{ownerID: ownerID, batchID: batchID}]
 	var tracker *ProgressTracker
 	if active != nil {
 		tracker = active.progress
+	} else {
+		key := batchKey{ownerID: ownerID, batchID: batchID}
+		if entry, exists := s.finishedProgress[key]; exists {
+			if entry.expiresAt.After(s.now()) {
+				tracker = entry.tracker
+			} else {
+				delete(s.finishedProgress, key)
+			}
+		}
 	}
 	s.mu.Unlock()
 	if tracker == nil {
@@ -276,6 +305,14 @@ func (s *Service) BatchProgress(ownerID, batchID string) (BatchProgress, []Targe
 	}
 	batch, targets := tracker.Snapshot()
 	return batch, targets, true
+}
+
+func (s *Service) purgeFinishedProgressLocked(now time.Time) {
+	for key, entry := range s.finishedProgress {
+		if !entry.expiresAt.After(now) {
+			delete(s.finishedProgress, key)
+		}
+	}
 }
 
 // Cancel sets canceling under this same mutex before waiting, so no Add can race its Wait.

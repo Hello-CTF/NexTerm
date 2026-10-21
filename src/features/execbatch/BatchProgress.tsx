@@ -61,10 +61,29 @@ export interface BatchRerunRequest {
   productionConfirmation?: ProductionConfirmation | null;
 }
 
+export interface BatchFinalResult {
+  batchId: string;
+  command: string;
+  startedAt: number;
+  finishedAt: number;
+  results: {
+    sessionId: string;
+    sessionName?: string;
+    status: string;
+    stdout?: string;
+    stderr?: string;
+    exitCode?: number | null;
+    signal?: string;
+    error?: string;
+    durationMs?: number;
+    truncated?: boolean;
+  }[];
+}
+
 export interface BatchProgressApi {
   progress(batchId: string): Promise<BatchProgressSnapshot>;
   cancel(batchId: string): Promise<void>;
-  rerun(request: BatchRerunRequest): Promise<{ batchId?: string }>;
+  rerun(request: BatchRerunRequest): Promise<BatchFinalResult>;
 }
 
 export const liveBatchProgressApi: BatchProgressApi = {
@@ -91,8 +110,15 @@ export function BatchProgressPanel({
   newBatchId?: () => string;
 }) {
   const [snapshot, setSnapshot] = useState<BatchProgressSnapshot | null>(null);
+  const [finalBatch, setFinalBatch] = useState<BatchFinalResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [activeBatchId, setActiveBatchId] = useState(batchId);
+
+  useEffect(() => {
+    setActiveBatchId(batchId);
+    setFinalBatch(null);
+  }, [batchId]);
 
   useEffect(() => {
     // Only the latest poll response commits: a slow response from a previous
@@ -103,7 +129,7 @@ export function BatchProgressPanel({
       if (stopped) return;
       const current = ++generation;
       try {
-        const next = await api.progress(batchId);
+        const next = await api.progress(activeBatchId);
         if (stopped || current !== generation) return;
         setSnapshot(next);
         setError(null);
@@ -112,7 +138,12 @@ export function BatchProgressPanel({
         }
       } catch (cause) {
         if (stopped || current !== generation) return;
-        setError(describeError(cause));
+        const appError = toAppError(cause);
+        setError(appError.message);
+        if (appError.code === "not_found") {
+          // Terminal absence: the batch is unknown or its snapshot expired.
+          stopped = true;
+        }
       }
     };
     setSnapshot(null);
@@ -124,14 +155,14 @@ export function BatchProgressPanel({
       generation++;
       clearInterval(timer);
     };
-  }, [api, batchId, pollIntervalMs]);
+  }, [api, activeBatchId, pollIntervalMs]);
 
   const cancel = () => {
     if (busy) return;
     setBusy(true);
     setError(null);
     void api
-      .cancel(batchId)
+      .cancel(activeBatchId)
       .catch((cause: unknown) => setError(describeError(cause)))
       .finally(() => setBusy(false));
   };
@@ -147,11 +178,14 @@ export function BatchProgressPanel({
     };
     setBusy(true);
     setError(null);
+    // The new batch identity is already known: notify before awaiting and
+    // start polling it so the rerun's live progress is observable while the
+    // rerun request is still pending.
+    onRerunStart?.(request.batchId);
+    setActiveBatchId(request.batchId);
     void api
       .rerun(request)
-      .then((started) => {
-        onRerunStart?.(started.batchId ?? request.batchId);
-      })
+      .then((finalBatch) => setFinalBatch(finalBatch))
       .catch((cause: unknown) => {
         const appError = toAppError(cause);
         if (appError.code === "needs_confirm") {
@@ -210,6 +244,40 @@ export function BatchProgressPanel({
                 )}
                 <OutputLine label="stdout" output={target.output.stdout} />
                 <OutputLine label="stderr" output={target.output.stderr} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {finalBatch !== null && (
+        <div className="flex flex-col gap-2">
+          <div className="text-[11px] text-neutral-400">批次 {finalBatch.batchId} 已结束</div>
+          <ul className="grid max-h-64 grid-cols-1 gap-1 overflow-y-auto rounded border border-neutral-800/70 p-2">
+            {finalBatch.results.map((result) => (
+              <li key={result.sessionId} className="min-w-0 px-1.5 py-1 text-[11px]">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <span className="truncate font-medium text-neutral-200" title={result.sessionId}>
+                    {result.sessionId}
+                  </span>
+                  <span className="nx-badge">{result.status}</span>
+                  {result.exitCode != null && <span className="text-neutral-400">exit {result.exitCode}</span>}
+                  {result.durationMs !== undefined && <span className="text-neutral-500">{result.durationMs}ms</span>}
+                </div>
+                {result.error !== undefined && result.error !== "" && (
+                  <div className="text-amber-300">{result.error}</div>
+                )}
+                {result.stdout !== undefined && result.stdout !== "" && (
+                  <div className="min-w-0 font-mono text-[10px] text-neutral-400">
+                    <span className="text-neutral-500">stdout:</span>{" "}
+                    <span className="whitespace-pre-wrap break-all">{result.stdout}</span>
+                  </div>
+                )}
+                {result.stderr !== undefined && result.stderr !== "" && (
+                  <div className="min-w-0 font-mono text-[10px] text-neutral-400">
+                    <span className="text-neutral-500">stderr:</span>{" "}
+                    <span className="whitespace-pre-wrap break-all">{result.stderr}</span>
+                  </div>
+                )}
               </li>
             ))}
           </ul>

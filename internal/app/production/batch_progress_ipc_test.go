@@ -2,6 +2,8 @@ package production
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -9,6 +11,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -227,6 +230,123 @@ func TestExecBatchProgressCommandLiveLifecycle(t *testing.T) {
 	}
 	close(release)
 	<-done
-	response := dispatchExecBatchTest(dispatcher, ownerA, "exec_batch_progress", map[string]any{"batchId": "batch-1"})
-	requireIPCCode(t, response, ipc.CodeNotFound)
+	// The terminal snapshot stays readable for a bounded TTL after
+	// completion: the poll observes the finished transition, not not_found.
+	terminal := decodeExecBatchTest[execBatchProgressSnapshot](t, dispatchExecBatchTest(dispatcher, ownerA, "exec_batch_progress", map[string]any{"batchId": "batch-1"}))
+	if terminal.Batch.Phase != execbatch.ProgressPhaseFinished || terminal.Batch.Succeeded != 1 || terminal.Batch.FinishedAt == 0 {
+		t.Fatalf("terminal snapshot = %+v", terminal.Batch)
+	}
+	if len(terminal.Targets) != 1 || terminal.Targets[0].Status != execbatch.StatusSuccess {
+		t.Fatalf("terminal targets = %+v", terminal.Targets)
+	}
+}
+
+func TestExecBatchRerunCommandProductionConfirmation(t *testing.T) {
+	var execCalls atomic.Int32
+	transport := newExecBatchTestTransport(func(context.Context, string, base.ExecOptions) (base.ExecResult, error) {
+		execCalls.Add(1)
+		code := 1
+		return base.ExecResult{ExitCode: &code}, nil
+	})
+	manager := newExecBatchTestManager(t, transport)
+	owner := ipc.WithUserID(context.Background(), "owner-a")
+	connected, err := manager.ConnectFor(owner, session.Asset{ID: "asset-production", Name: "Production API", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	auditor := &execBatchProductionAuditor{}
+	service := newExecBatchService(manager, execBatchTestAssets(map[string]store.AssetRow{
+		"asset-production": {ID: "asset-production", Name: "Production API", Tags: "env:production"},
+	}), auditor)
+	dispatcher := ipc.NewDispatcher()
+	if err := registerExecBatchCommands(dispatcher, service, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := registerExecBatchProgressCommands(dispatcher, service); err != nil {
+		t.Fatal(err)
+	}
+
+	original := execbatch.Request{BatchID: "batch-1", SessionIDs: []string{connected.ID}, Command: "deploy"}
+	response := dispatchExecBatchTest(dispatcher, owner, "exec_batch_execute", original)
+	if !response.OK && response.Error != nil && response.Error.Code == ipc.CodeNeedsConfirm {
+		detail := decodeConfirmationDetail(t, response)
+		original.ProductionConfirmation = &execbatch.ProductionConfirmation{
+			Confirmed: true, TargetSetHash: detail.TargetSetHash, CommandHash: detail.CommandHash,
+			EnvironmentNames: detail.RequiredEnvironmentNames,
+		}
+	}
+	first := decodeExecBatchTest[execbatch.Batch](t, dispatchExecBatchTest(dispatcher, owner, "exec_batch_execute", original))
+	if len(first.Results) != 1 || first.Results[0].Status != execbatch.StatusExitError {
+		t.Fatalf("first batch = %+v", first.Results)
+	}
+	callsAfterFirst := execCalls.Load()
+
+	rerunResults := []map[string]any{{"sessionId": connected.ID, "status": "exit_error"}}
+	// No confirmation: the rerun demands a fresh, batch-bound one.
+	response = dispatchExecBatchTest(dispatcher, owner, "exec_batch_rerun", map[string]any{
+		"batchId": "batch-2", "command": "deploy", "results": rerunResults,
+	})
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNeedsConfirm {
+		t.Fatalf("unconfirmed rerun = %+v", response)
+	}
+	detail2 := decodeConfirmationDetail(t, response)
+	if detail2.BatchID != "batch-2" {
+		t.Fatalf("rerun challenge batch = %q", detail2.BatchID)
+	}
+
+	// The original batch's confirmation is stale for the rerun.
+	response = dispatchExecBatchTest(dispatcher, owner, "exec_batch_rerun", map[string]any{
+		"batchId": "batch-2", "command": "deploy", "results": rerunResults,
+		"productionConfirmation": original.ProductionConfirmation,
+	})
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNeedsConfirm {
+		t.Fatalf("stale-confirmed rerun = %+v", response)
+	}
+
+	// A fresh confirmation bound to the rerun batch executes the failed
+	// target and records the confirmation audit.
+	confirmed := map[string]any{
+		"batchId": "batch-2", "command": "deploy", "results": rerunResults,
+		"productionConfirmation": &execbatch.ProductionConfirmation{
+			Confirmed: true, TargetSetHash: detail2.TargetSetHash, CommandHash: detail2.CommandHash,
+			EnvironmentNames: detail2.RequiredEnvironmentNames,
+		},
+	}
+	batch := decodeExecBatchTest[execbatch.Batch](t, dispatchExecBatchTest(dispatcher, owner, "exec_batch_rerun", confirmed))
+	if len(batch.Results) != 1 || batch.Results[0].Status != execbatch.StatusExitError {
+		t.Fatalf("confirmed rerun = %+v", batch.Results)
+	}
+	if execCalls.Load() != callsAfterFirst+1 {
+		t.Fatalf("rerun exec calls = %d, want %d", execCalls.Load(), callsAfterFirst+1)
+	}
+	auditor.mu.Lock()
+	defer auditor.mu.Unlock()
+	var rerunAudit []store.AuditInput
+	for _, record := range auditor.records {
+		if record.Kind == "exec_batch_production_confirmation" {
+			encoded, marshalErr := json.Marshal(record.Payload)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			if strings.Contains(string(encoded), `"batchId":"batch-2"`) {
+				rerunAudit = append(rerunAudit, record)
+			}
+		}
+	}
+	if len(rerunAudit) != 1 {
+		t.Fatalf("rerun confirmation audit records = %+v", auditor.records)
+	}
+}
+
+func decodeConfirmationDetail(t *testing.T, response ipc.Response) execbatch.ConfirmationRequiredDetail {
+	t.Helper()
+	encoded, err := json.Marshal(response.Error.Detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var detail execbatch.ConfirmationRequiredDetail
+	if err := json.Unmarshal(encoded, &detail); err != nil {
+		t.Fatal(err)
+	}
+	return detail
 }

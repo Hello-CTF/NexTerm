@@ -443,8 +443,11 @@ func TestExecBatchTenHostFakeTransportAcceptance(t *testing.T) {
 	if strings.Join(request.SessionIDs, ",") != "session-02,session-05,session-07" {
 		t.Fatalf("rerun sessions = %+v", request.SessionIDs)
 	}
-	if request.ProductionConfirmation != nil || request.Runbook != nil {
-		t.Fatalf("rerun request kept confirmation/runbook: %+v", request)
+	if request.ProductionConfirmation != original.ProductionConfirmation {
+		t.Fatal("rerun request dropped the caller's fresh production confirmation")
+	}
+	if request.Runbook != nil {
+		t.Fatal("rerun request kept the runbook metadata")
 	}
 }
 

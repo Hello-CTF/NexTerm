@@ -34,10 +34,11 @@ func SelectRerunTargets(results []Result) []string {
 
 // RerunRequest builds the rerun Request for the failed targets of a finished
 // batch, preserving the command, timeout, and concurrency of the original
-// request. ProductionConfirmation and Runbook are deliberately dropped: a
-// rerun of production targets must pass a fresh confirmation through the
-// normal Execute flow, and a manual rerun is not part of the original
-// runbook run.
+// request plus the caller's production confirmation, which must be fresh:
+// the new batch ID and failed-only target set change the challenge hashes,
+// so the original batch's confirmation never validates here. Runbook
+// metadata is deliberately dropped: a manual rerun is not part of the
+// original runbook run.
 func RerunRequest(original Request, results []Result, newBatchID string) (Request, error) {
 	if newBatchID == "" || len(newBatchID) > 128 || strings.TrimSpace(newBatchID) != newBatchID {
 		return Request{}, fmt.Errorf("%w: invalid rerun batch id", ErrInvalid)
@@ -47,11 +48,12 @@ func RerunRequest(original Request, results []Result, newBatchID string) (Reques
 		return Request{}, fmt.Errorf("%w: batch has no failed targets to rerun", ErrInvalid)
 	}
 	return Request{
-		BatchID:       newBatchID,
-		SessionIDs:    sessionIDs,
-		Command:       original.Command,
-		TimeoutMS:     original.TimeoutMS,
-		MaxConcurrent: original.MaxConcurrent,
+		BatchID:                newBatchID,
+		SessionIDs:             sessionIDs,
+		Command:                original.Command,
+		TimeoutMS:              original.TimeoutMS,
+		MaxConcurrent:          original.MaxConcurrent,
+		ProductionConfirmation: original.ProductionConfirmation,
 	}, nil
 }
 

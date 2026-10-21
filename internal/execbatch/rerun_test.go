@@ -86,8 +86,8 @@ func TestRerunRequestBuildsFailedOnlyRerun(t *testing.T) {
 	if strings.Join(request.SessionIDs, ",") != "exit,transport,timeout" {
 		t.Fatalf("sessions = %+v", request.SessionIDs)
 	}
-	if request.ProductionConfirmation != nil {
-		t.Fatal("rerun request kept the production confirmation")
+	if request.ProductionConfirmation != original.ProductionConfirmation {
+		t.Fatal("rerun request dropped the caller's production confirmation")
 	}
 	if request.Runbook != nil {
 		t.Fatal("rerun request kept the runbook metadata")

@@ -93,7 +93,13 @@ function fakeApi(overrides: Partial<BatchProgressApi> = {}): BatchProgressApi {
   return {
     progress: vi.fn().mockResolvedValue(snapshot()),
     cancel: vi.fn().mockResolvedValue(undefined),
-    rerun: vi.fn().mockResolvedValue({ batchId: "batch-2" }),
+    rerun: vi.fn().mockResolvedValue({
+      batchId: "batch-2",
+      command: "deploy",
+      startedAt: 1,
+      finishedAt: 2,
+      results: [{ sessionId: "session-bad", status: "success", stdout: "fixed" }],
+    }),
     ...overrides,
   };
 }
@@ -215,6 +221,58 @@ describe("BatchProgressPanel", () => {
       { sessionId: "session-stop", status: "canceled" },
     ]);
     expect(onRerunStart).toHaveBeenCalledWith("batch-2");
+    expect(mounted.container.textContent).toContain("fixed");
+  });
+
+  it("switches to the rerun batch before the rerun resolves and renders the returned final batch", async () => {
+    const rerunCall = deferred<Awaited<ReturnType<BatchProgressApi["rerun"]>>>();
+    const api = fakeApi({ rerun: vi.fn(() => rerunCall.promise) });
+    const onRerunStart = vi.fn();
+    mounted = mount(progressElement(api, { onRerunStart }));
+    await flushUntil(() => mounted?.container.textContent?.includes("重跑失败目标") ?? false);
+    clickButton(mounted.container, "重跑失败目标");
+    await flush();
+
+    // The new batch identity is announced while the rerun is still pending.
+    await flushUntil(() => onRerunStart.mock.calls.length === 1);
+    expect(onRerunStart).toHaveBeenCalledWith("batch-2");
+    // The panel polls the NEW batch id during the pending rerun.
+    await flushUntil(() =>
+      (api.progress as ReturnType<typeof vi.fn>).mock.calls.some((call) => call[0] === "batch-2"),
+    );
+
+    await act(async () => {
+      rerunCall.resolve({
+        batchId: "batch-2",
+        command: "deploy",
+        startedAt: 1,
+        finishedAt: 2,
+        results: [{ sessionId: "session-bad", status: "success", stdout: "fixed" }],
+      });
+    });
+    await flushUntil(() => mounted?.container.textContent?.includes("fixed") ?? false);
+    expect(mounted.container.textContent).toContain("session-bad");
+    expect(mounted.container.textContent).toContain("批次 batch-2 已结束");
+  });
+
+  it("stops polling when the batch is not found", async () => {
+    const api = fakeApi({
+      progress: vi.fn().mockRejectedValue({ code: "not_found", message: "批量执行不存在或已结束" }),
+    });
+    mounted = mount(progressElement(api));
+    await flushUntil(() => mounted?.container.querySelector("[role='alert']") !== null);
+    expect(mounted.container.querySelector("[role='alert']")?.textContent).toContain("批量执行不存在或已结束");
+    await flush();
+    expect(api.progress).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders a fast-completing batch without further polls", async () => {
+    const api = fakeApi();
+    mounted = mount(progressElement(api));
+    await flushUntil(() => mounted?.container.textContent?.includes("重跑失败目标") ?? false);
+    await flush();
+    expect(api.progress).toHaveBeenCalledTimes(1);
+    expect(mounted.container.textContent).toContain("session-bad");
   });
 
   it("surfaces a production re-confirmation challenge instead of failing silently", async () => {

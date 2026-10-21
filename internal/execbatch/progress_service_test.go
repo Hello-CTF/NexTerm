@@ -2,7 +2,9 @@ package execbatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -86,8 +88,9 @@ func TestServiceExecuteStreamsProgressAndCapturedOutput(t *testing.T) {
 	if len(auditor.records) != 2 {
 		t.Fatalf("audit records = %d", len(auditor.records))
 	}
-	if _, _, ok := service.BatchProgress("owner-a", "batch-1"); ok {
-		t.Fatal("progress still exposed after the batch finished")
+	terminal, _, ok := service.BatchProgress("owner-a", "batch-1")
+	if !ok || terminal.Phase != ProgressPhaseFinished || terminal.Succeeded != 2 {
+		t.Fatalf("terminal snapshot = %+v, %v", terminal, ok)
 	}
 }
 
@@ -153,6 +156,43 @@ func TestServiceExecuteCanceledUnstartedTargetsFinishProgress(t *testing.T) {
 		if target.SessionID == "session-b" && target.StartedAt != 0 {
 			t.Fatalf("never-started target fabricated StartedAt %d", target.StartedAt)
 		}
+	}
+}
+
+func TestServiceBatchProgressTerminalSnapshotTTL(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	target := Target{
+		SessionID: "session-a", SessionName: "a",
+		Transport: &fakeStreamTransport{
+			generation: 1,
+			open:       fakeHostScript{stdout: []string{"done"}}.open,
+			exec: func(context.Context, string, base.ExecOptions) (base.ExecResult, error) {
+				return base.ExecResult{}, errors.New("one-shot must not be used")
+			},
+		},
+		Generation: 1,
+	}
+	service := New(Config{Resolver: streamServiceResolver(target), Now: func() time.Time { return now }})
+
+	if _, err := service.Execute(context.Background(), "owner-a", Request{
+		BatchID: "batch-1", SessionIDs: []string{"session-a"}, Command: "deploy",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	batch, targets, ok := service.BatchProgress("owner-a", "batch-1")
+	if !ok || batch.Phase != ProgressPhaseFinished || batch.Succeeded != 1 || len(targets) != 1 {
+		t.Fatalf("terminal snapshot = %+v, %v, %v", batch, targets, ok)
+	}
+	if targets[0].Output.Stdout.Head != "done" {
+		t.Fatalf("terminal output = %+v", targets[0].Output.Stdout)
+	}
+
+	now = now.Add(batchProgressTTL + time.Millisecond)
+	if _, _, ok := service.BatchProgress("owner-a", "batch-1"); ok {
+		t.Fatal("terminal snapshot outlived the progress TTL")
+	}
+	if _, _, ok := service.BatchProgress("owner-b", "batch-1"); ok {
+		t.Fatal("terminal snapshot leaked across owners")
 	}
 }
 
@@ -315,7 +355,8 @@ func TestServiceRerunRequiresFreshProductionConfirmation(t *testing.T) {
 		},
 		Generation: 1,
 	}
-	service := New(Config{Resolver: streamServiceResolver(production), Auditor: &fakeAuditor{}})
+	auditor := &fakeAuditor{}
+	service := New(Config{Resolver: streamServiceResolver(production), Auditor: auditor})
 	original := Request{BatchID: "batch-1", SessionIDs: []string{"session-prod"}, Command: "deploy"}
 
 	_, err := service.Execute(context.Background(), "owner-a", original)
@@ -343,5 +384,42 @@ func TestServiceRerunRequiresFreshProductionConfirmation(t *testing.T) {
 	}
 	if required.BatchID != "batch-2" {
 		t.Fatalf("rerun challenge batch = %q, want batch-2", required.BatchID)
+	}
+
+	// The original batch's confirmation is stale for the rerun: new batch ID
+	// and failed-only target set change the challenge hashes.
+	if _, err := service.Rerun(context.Background(), "owner-a", confirmed, first.Results, "batch-2"); !errors.As(err, &required) {
+		t.Fatalf("rerun with the original confirmation = %v", err)
+	}
+
+	// A fresh confirmation bound to the rerun batch executes the failed
+	// targets and records the confirmation audit.
+	detail2 := required.IPCDetail()
+	fresh := original
+	fresh.ProductionConfirmation = &ProductionConfirmation{
+		Confirmed: true, TargetSetHash: detail2.TargetSetHash, CommandHash: detail2.CommandHash,
+		EnvironmentNames: detail2.RequiredEnvironmentNames,
+	}
+	rerun, err := service.Rerun(context.Background(), "owner-a", fresh, first.Results, "batch-2")
+	if err != nil {
+		t.Fatalf("rerun with fresh confirmation = %v", err)
+	}
+	if len(rerun.Results) != 1 || rerun.Results[0].Status != StatusExitError {
+		t.Fatalf("rerun results = %+v", rerun.Results)
+	}
+	var confirmationAudit []byte
+	for _, record := range auditor.records {
+		if record.Kind == "exec_batch_production_confirmation" {
+			encoded, marshalErr := json.Marshal(record.Payload)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			if strings.Contains(string(encoded), `"batchId":"batch-2"`) {
+				confirmationAudit = encoded
+			}
+		}
+	}
+	if confirmationAudit == nil {
+		t.Fatalf("no rerun confirmation audit record: %+v", auditor.records)
 	}
 }
