@@ -99,6 +99,7 @@ jobs:
       NEXTERM_IOS_PROVISIONING_PROFILE: ${{ secrets.NEXTERM_IOS_PROVISIONING_PROFILE }}
     with:
       release_version: ${{ github.ref_name }}
+      updater_public_key: ${{ vars.NEXTERM_MINISIGN_PUBLIC_KEY }}
 
   desktop:
     name: ${{ matrix.os }}/${{ matrix.arch }} native package
@@ -109,6 +110,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     env:
+      NEXTERM_RELEASE_REF: ${{ github.ref }}
       NEXTERM_MINISIGN_PUBLIC_KEY: ${{ vars.NEXTERM_MINISIGN_PUBLIC_KEY }}
       NEXTERM_MACOS_SIGNING: ${{ vars.NEXTERM_MACOS_SIGNING }}
       NEXTERM_MACOS_SIGN_IDENTITY: ${{ vars.NEXTERM_MACOS_SIGN_IDENTITY }}
@@ -193,17 +195,27 @@ jobs:
         with:
           name: frontend-dist
           path: target/release-work/verified-dist
+      - name: Download the verified CI desktop binary
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-${{ matrix.os }}-${{ matrix.arch }}-desktop
+          path: target/release-work/reused-native
       - name: Download both verified Linux SSH helpers
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: native-linux-*-helper
           merge-multiple: true
           path: target/release-work/verified-helpers
-      - name: Stage the verified Linux SSH helpers
+      - name: Stage the verified desktop binary and Linux SSH helpers
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p target/go-build
+          suffix=""
+          if [ "${{ matrix.os }}" = "windows" ]; then suffix=".exe"; fi
+          binary="nexterm-desktop-${{ matrix.os }}-${{ matrix.arch }}${suffix}"
+          cp "target/release-work/reused-native/go-build/${binary}" "target/release-work/reused-native/go-build/${binary}.manifest.json" target/go-build/
+          if [ "${{ matrix.os }}" != "windows" ]; then chmod +x "target/go-build/${binary}"; fi
           for helper_arch in amd64 arm64; do
             helper="nexterm-helper-linux-$helper_arch"
             cp "target/release-work/verified-helpers/go-build/$helper" "target/release-work/verified-helpers/go-build/$helper.manifest.json" target/go-build/
@@ -257,8 +269,8 @@ jobs:
             printf 'NEXTERM_MACOS_NOTARY_KEY_ID=%s\n' "$NEXTERM_MACOS_NOTARY_KEY_ID" >> "$GITHUB_ENV"
             printf 'NEXTERM_MACOS_NOTARY_ISSUER=%s\n' "$NEXTERM_MACOS_NOTARY_ISSUER" >> "$GITHUB_ENV"
           fi
-      - name: Build and package the production desktop with updater verification
-        run: node scripts/build.mjs desktop --release --package --repro-check --consume-dist=target/release-work/verified-dist/dist --dist-manifest=target/release-work/verified-dist/target/dist-manifest.json --os=${{ matrix.os }} --arch=${{ matrix.arch }} --require-evidence
+      - name: Package the verified production desktop with updater evidence
+        run: node scripts/build.mjs desktop --release --package --package-only --consume-dist=target/release-work/verified-dist/dist --dist-manifest=target/release-work/verified-dist/target/dist-manifest.json --os=${{ matrix.os }} --arch=${{ matrix.arch }} --require-evidence
       - name: Sign and verify the Windows installer with Authenticode
         if: matrix.os == 'windows'
         shell: bash

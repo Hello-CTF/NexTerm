@@ -34,6 +34,7 @@ const HELP_TEXT = `#!/usr/bin/env node
  *   node scripts/build.mjs desktop --release --os=darwin --arch=arm64 --package
  *   node scripts/build.mjs desktop --release --package --package-only --consume-dist=DIR \\
  *     --os=darwin --arch=arm64 --require-evidence
+ * Package-only reuse also requires the exact NEXTERM_RELEASE_REF tag and updater public key.
  *   node scripts/build.mjs server --release --os=linux --arch=amd64
  *   node scripts/build.mjs agent --release --os=linux --arch=amd64
  *   node scripts/build.mjs helper --release --repro-check --os=linux --arch=arm64
@@ -77,6 +78,7 @@ if (packageVersion !== WAILS_VERSION_PLACEHOLDER) die(`package.json version ${pa
 let SOURCE_DATE_EPOCH = process.env.SOURCE_DATE_EPOCH || "";
 const { commit: SOURCE_COMMIT, dirty: DIRTY } = sourceState({ cwd: ROOT });
 const COMMIT = commitLabel({ commit: SOURCE_COMMIT, dirty: DIRTY });
+const RELEASE_REF = (process.env.NEXTERM_RELEASE_REF || "").trim();
 SOURCE_DATE_EPOCH ||= output("git", ["show", "-s", "--format=%ct", "HEAD"], { allowFailure: true })?.trim();
 if (!SOURCE_DATE_EPOCH || !/^\d+$/.test(SOURCE_DATE_EPOCH)) {
   die("SOURCE_DATE_EPOCH is required when the git commit timestamp is unavailable");
@@ -327,6 +329,24 @@ function desktopMinisignPublicKey() {
   return encoded;
 }
 
+function desktopMinisignPublicKeyDigest() {
+  const publicKey = desktopMinisignPublicKey();
+  return publicKey ? crypto.createHash("sha256").update(publicKey).digest("hex") : "";
+}
+
+function desktopReuseEvidence() {
+  if (!process.env.NEXTERM_RELEASE_VERSION || !parseReleaseVersion(VERSION)) {
+    die("--package-only requires a non-placeholder NEXTERM_RELEASE_VERSION; master placeholder artifacts cannot be reused for a tag");
+  }
+  const expectedRef = `refs/tags/v${VERSION}`;
+  if (RELEASE_REF !== expectedRef) {
+    die(`--package-only requires NEXTERM_RELEASE_REF=${expectedRef}, got ${JSON.stringify(RELEASE_REF)}`);
+  }
+  const updaterPublicKeySHA256 = desktopMinisignPublicKeyDigest();
+  if (!updaterPublicKeySHA256) die("--package-only requires NEXTERM_MINISIGN_PUBLIC_KEY for updater equivalence evidence");
+  return { sourceRef: RELEASE_REF, updaterPublicKeySHA256 };
+}
+
 function ldflags(kind, goos) {
   const flags = [
     "-s",
@@ -429,6 +449,10 @@ function writeBinaryManifest(file, { id, kind, goos, goarch, tags, cgo, stripped
     commit: COMMIT,
     source_date_epoch: Number(SOURCE_DATE_EPOCH),
   });
+  if (kind === "desktop") {
+    manifest.source_ref = RELEASE_REF;
+    manifest.updater_public_key_sha256 = desktopMinisignPublicKeyDigest();
+  }
   if (kind === "helper") {
     try {
       Object.assign(manifest, helperBinaryMetadata(file, goarch));
@@ -443,7 +467,7 @@ function writeBinaryManifest(file, { id, kind, goos, goarch, tags, cgo, stripped
   log(`${id} binary manifest: ${destination}`);
 }
 
-function validateBinaryForPackaging(outputPath, kind, goos, goarch) {
+function validateBinaryForPackaging(outputPath, kind, goos, goarch, reuseEvidence) {
   if (!fs.existsSync(outputPath) || !fs.statSync(outputPath).isFile()) {
     die(`--package-only requires the existing production binary: ${outputPath}`);
   }
@@ -469,6 +493,14 @@ function validateBinaryForPackaging(outputPath, kind, goos, goarch) {
       commit: COMMIT,
     },
   });
+  if (kind === "desktop") {
+    if (manifest.source_ref !== reuseEvidence.sourceRef) {
+      problems.push(`binary manifest source_ref ${JSON.stringify(manifest.source_ref)} does not match ${reuseEvidence.sourceRef}`);
+    }
+    if (manifest.updater_public_key_sha256 !== reuseEvidence.updaterPublicKeySHA256) {
+      problems.push(`binary manifest updater public key SHA-256 ${JSON.stringify(manifest.updater_public_key_sha256)} does not match ${reuseEvidence.updaterPublicKeySHA256}`);
+    }
+  }
   if (problems.length) die(`--package-only binary manifest validation failed:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`);
   if (kind === "helper") {
     const expected = helperProtocolMetadata();
@@ -542,7 +574,7 @@ function buildBinary(kind) {
   const windowsResource = kind === "desktop" && goos === "windows" && !packageOnly ? stageWindowsResource(goarch) : null;
   try {
     if (packageOnly) {
-      validateBinaryForPackaging(outputPath, kind, goos, goarch);
+      validateBinaryForPackaging(outputPath, kind, goos, goarch, desktopReuseEvidence());
     } else {
       run("go", args, { env: buildEnvironment(goos, goarch, kind) });
       if (flag("repro-check")) {

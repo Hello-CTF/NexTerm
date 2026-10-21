@@ -11,6 +11,10 @@ on:
         description: "Release version stamped into artifacts (without the leading v); empty means the wails.json placeholder"
         required: false
         type: string
+      updater_public_key:
+        description: "Non-secret minisign updater public key embedded in release desktop binaries"
+        required: false
+        type: string
     secrets:
       NEXTERM_ANDROID_KEYSTORE_BASE64:
         required: false
@@ -393,6 +397,8 @@ jobs:
     timeout-minutes: 60
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      NEXTERM_RELEASE_REF: ${{ github.ref }}
+      NEXTERM_MINISIGN_PUBLIC_KEY: ${{ inputs.updater_public_key }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.version.outputs.native-matrix) }}
