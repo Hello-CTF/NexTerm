@@ -3,9 +3,11 @@ package execbatch
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -152,6 +154,62 @@ func TestServiceExecuteCanceledUnstartedTargetsFinishProgress(t *testing.T) {
 			t.Fatalf("never-started target fabricated StartedAt %d", target.StartedAt)
 		}
 	}
+}
+
+func TestServiceBatchProgressPublication(t *testing.T) {
+	// Hold Execute inside startHistory (before tracker construction) while
+	// progress readers poll: the tracker pointer must be published and read
+	// under the service mutex, never observed mid-construction.
+	history := &blockingHistory{release: make(chan struct{}), entered: make(chan struct{}, 4)}
+	blocked := Target{
+		SessionID: "session-a", SessionName: "a",
+		Transport: &fakeStreamTransport{
+			generation: 1,
+			open:       fakeHostScript{stdout: []string{"done"}}.open,
+			exec: func(context.Context, string, base.ExecOptions) (base.ExecResult, error) {
+				return base.ExecResult{}, errors.New("one-shot must not be used")
+			},
+		},
+		Generation: 1,
+	}
+	service := New(Config{Resolver: streamServiceResolver(blocked), History: history})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = service.Execute(context.Background(), "owner-a", Request{
+			BatchID: "batch-1", SessionIDs: []string{"session-a"}, Command: "deploy",
+		})
+	}()
+	<-history.entered
+
+	pollsDone := make(chan struct{})
+	go func() {
+		defer close(pollsDone)
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				_, _, _ = service.BatchProgress("owner-a", "batch-1")
+			}
+		}
+	}()
+	close(history.release)
+	<-done
+	<-pollsDone
+}
+
+type blockingHistory struct {
+	release chan struct{}
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (h *blockingHistory) ExecBatchHistorySave(context.Context, store.ExecBatchRow, []store.ExecBatchResultRow) error {
+	h.once.Do(func() { h.entered <- struct{}{} })
+	<-h.release
+	return nil
 }
 
 func TestServiceBatchProgressOwnerScoped(t *testing.T) {

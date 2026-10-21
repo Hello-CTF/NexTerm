@@ -197,7 +197,11 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 	}
 	s.startHistory(runCtx, ownerID, request, started, targets, classification.production())
 	tracker := NewProgressTracker(request.BatchID, request.SessionIDs)
+	// Publish the fully constructed tracker under the service mutex so
+	// progress readers never observe it mid-construction.
+	s.mu.Lock()
 	active.progress = tracker
+	s.mu.Unlock()
 
 	results := make([]Result, len(targets))
 	jobs := make(chan int, len(targets))
@@ -262,11 +266,15 @@ func (s *Service) Rerun(ctx context.Context, ownerID string, original Request, r
 func (s *Service) BatchProgress(ownerID, batchID string) (BatchProgress, []TargetProgress, bool) {
 	s.mu.Lock()
 	active := s.batches[batchKey{ownerID: ownerID, batchID: batchID}]
+	var tracker *ProgressTracker
+	if active != nil {
+		tracker = active.progress
+	}
 	s.mu.Unlock()
-	if active == nil || active.progress == nil {
+	if tracker == nil {
 		return BatchProgress{}, nil, false
 	}
-	batch, targets := active.progress.Snapshot()
+	batch, targets := tracker.Snapshot()
 	return batch, targets, true
 }
 
