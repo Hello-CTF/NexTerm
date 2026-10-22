@@ -131,7 +131,9 @@ func TestSessionCloseUnblocksBlockedMasterWrite(t *testing.T) {
 		err   error
 	}
 	writeDone := make(chan writeResult, 1)
+	writeStarted := make(chan struct{})
 	go func() {
+		close(writeStarted)
 		count, err := session.Write(payload)
 		writeDone <- writeResult{count: count, err: err}
 	}()
@@ -147,6 +149,7 @@ func TestSessionCloseUnblocksBlockedMasterWrite(t *testing.T) {
 			}
 		}
 	}()
+	<-writeStarted
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -156,12 +159,15 @@ func TestSessionCloseUnblocksBlockedMasterWrite(t *testing.T) {
 			t.Fatalf("write completed before the master filled: %d, %v", result.count, result.err)
 		default:
 		}
-		descriptors := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLOUT}}
-		if _, err := unix.Poll(descriptors, 0); err != nil {
+		count, err := unix.Write(fd, payload[:32*1024])
+		if errors.Is(err, unix.EAGAIN) {
+			break
+		}
+		if err != nil {
 			t.Fatal(err)
 		}
-		if descriptors[0].Revents&unix.POLLOUT == 0 {
-			break
+		if count == 0 {
+			t.Fatal("zero write before the master filled")
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("writer did not fill the PTY master")
@@ -771,21 +777,64 @@ func testShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
+func TestReadSessionPIDWaitsForPIDWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "child.pid")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	const expectedPID = 12345
+	reads := 0
+	readFile := func(path string) ([]byte, error) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		reads++
+		if reads == 1 {
+			if len(data) != 0 {
+				t.Fatalf("initial PID file = %q, want empty", data)
+			}
+			if err := os.WriteFile(path, []byte(strconv.Itoa(expectedPID)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return data, nil
+	}
+	if pid := readSessionPIDWithReadFile(t, path, readFile); pid != expectedPID {
+		t.Fatalf("PID = %d, want %d", pid, expectedPID)
+	}
+	if reads != 2 {
+		t.Fatalf("PID file reads = %d, want empty read followed by complete read", reads)
+	}
+}
+
 func readSessionPID(t *testing.T, path string) int {
+	t.Helper()
+	return readSessionPIDWithReadFile(t, path, os.ReadFile)
+}
+
+func readSessionPIDWithReadFile(t *testing.T, path string, readFile func(string) ([]byte, error)) int {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		data, err := os.ReadFile(path)
+		data, err := readFile(path)
 		if err == nil {
-			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-			if err != nil {
-				t.Fatal(err)
+			text := strings.TrimSpace(string(data))
+			if text != "" {
+				pid, err := strconv.Atoi(text)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return pid
 			}
-			return pid
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("PID file %s was not created", path)
+	t.Fatalf("PID file %s was not ready", path)
 	return 0
 }
 
