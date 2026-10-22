@@ -131,7 +131,9 @@ func TestSessionCloseUnblocksBlockedMasterWrite(t *testing.T) {
 		err   error
 	}
 	writeDone := make(chan writeResult, 1)
+	writeStarted := make(chan struct{})
 	go func() {
+		close(writeStarted)
 		count, err := session.Write(payload)
 		writeDone <- writeResult{count: count, err: err}
 	}()
@@ -147,6 +149,7 @@ func TestSessionCloseUnblocksBlockedMasterWrite(t *testing.T) {
 			}
 		}
 	}()
+	<-writeStarted
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -156,12 +159,15 @@ func TestSessionCloseUnblocksBlockedMasterWrite(t *testing.T) {
 			t.Fatalf("write completed before the master filled: %d, %v", result.count, result.err)
 		default:
 		}
-		descriptors := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLOUT}}
-		if _, err := unix.Poll(descriptors, 0); err != nil {
+		count, err := unix.Write(fd, payload[:32*1024])
+		if errors.Is(err, unix.EAGAIN) {
+			break
+		}
+		if err != nil {
 			t.Fatal(err)
 		}
-		if descriptors[0].Revents&unix.POLLOUT == 0 {
-			break
+		if count == 0 {
+			t.Fatal("zero write before the master filled")
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("writer did not fill the PTY master")
