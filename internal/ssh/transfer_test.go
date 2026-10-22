@@ -749,8 +749,6 @@ func TestEnsureDaemonExecFallbackDoesNotMoveUnprovableState(t *testing.T) {
 	}
 	resolver := &Resolver{
 		HelperExecutable: local,
-		StartTimeout:     20 * time.Millisecond,
-		EnsureTimeout:    200 * time.Millisecond,
 		RetryBackoff:     -1,
 		hostFor: func(context.Context, *transportssh.Client) (Host, error) {
 			return host, nil
@@ -840,8 +838,6 @@ func TestEnsureDaemonExecFallbackPreservesStatLoaderFailure(t *testing.T) {
 	}
 	resolver := &Resolver{
 		HelperExecutable: local,
-		StartTimeout:     20 * time.Millisecond,
-		EnsureTimeout:    200 * time.Millisecond,
 		RetryBackoff:     -1,
 		hostFor: func(context.Context, *transportssh.Client) (Host, error) {
 			return host, nil
