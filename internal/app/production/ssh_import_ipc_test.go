@@ -140,6 +140,7 @@ func assetOptions(t *testing.T, row store.AssetRow) map[string]any {
 }
 
 func TestSSHImportPreviewToApply(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	dispatcher, database, _, _ := sshImportTestRig(t)
 	dir := t.TempDir()
@@ -277,6 +278,7 @@ func TestSSHImportPreviewToApply(t *testing.T) {
 }
 
 func TestSSHImportConflictsOverwriteAndMultiHop(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	dispatcher, database, _, _ := sshImportTestRig(t)
 	dir := t.TempDir()
@@ -410,6 +412,7 @@ func sshImportAssetIDByName(t *testing.T, database *store.Store, name string) st
 }
 
 func TestSSHImportConflictKeySkippedUnbinds(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	dispatcher, database, _, _ := sshImportTestRig(t)
 	dir := t.TempDir()
@@ -480,6 +483,7 @@ func TestSSHImportConflictKeySkippedUnbinds(t *testing.T) {
 }
 
 func TestSSHImportPassphraseKeyDedupe(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	dispatcher, database, _, _ := sshImportTestRig(t)
 	dir := t.TempDir()
@@ -593,6 +597,7 @@ func sshImportTermiusBody(dbPath string, extra string) string {
 }
 
 func TestSSHImportTermiusAgentAndSameNameKeys(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
@@ -676,6 +681,7 @@ func TestSSHImportTermiusAgentAndSameNameKeys(t *testing.T) {
 }
 
 func TestSSHImportTermiusConflictKeySkippedUnbinds(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
@@ -750,6 +756,7 @@ func sshImportTermiusPEM(t *testing.T) (string, string) {
 }
 
 func TestSSHImportSelectionRejectsUnknownToken(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	dispatcher, database, _, _ := sshImportTestRig(t)
 	dir := t.TempDir()
@@ -787,6 +794,7 @@ func TestSSHImportSelectionRejectsUnknownToken(t *testing.T) {
 }
 
 func TestSSHImportCaseVariantJumpNotOverwritten(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	dispatcher, database, _, _ := sshImportTestRig(t)
 	dir := t.TempDir()
@@ -844,6 +852,7 @@ func TestSSHImportCaseVariantJumpNotOverwritten(t *testing.T) {
 }
 
 func TestSSHImportTermiusSecondSameNameKeyReferenced(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
@@ -919,6 +928,7 @@ func TestSSHImportTermiusSecondSameNameKeyReferenced(t *testing.T) {
 }
 
 func TestSSHImportDuplicateOverwriteSameCredential(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
@@ -999,6 +1009,7 @@ func TestSSHImportDuplicateOverwriteSameCredential(t *testing.T) {
 }
 
 func TestSSHImportOverwriteInvalidatesSkipDuplicate(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
@@ -1073,6 +1084,7 @@ func TestSSHImportOverwriteInvalidatesSkipDuplicate(t *testing.T) {
 }
 
 func TestSSHImportTermiusRequiresConfirmation(t *testing.T) {
+	t.Parallel()
 	dispatcher, _, _, _ := sshImportPreviewTestRig(t, true)
 	response := dispatchStoreTest(dispatcher, "ssh_import_preview", `{"args":{"source":"termius"}}`)
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
@@ -1091,6 +1103,7 @@ func TestSSHImportTermiusRequiresConfirmation(t *testing.T) {
 }
 
 func TestSSHImportApplyRequiresUnlockedVault(t *testing.T) {
+	t.Parallel()
 	dispatcher, _, _, _ := sshImportTestRig(t)
 	requireProductionNull(t, dispatchStoreTest(dispatcher, "vault_lock", `{}`))
 	response := dispatchStoreTest(dispatcher, "ssh_import_apply", `{"args":{"source":"ssh-config","path":"/nonexistent","hosts":[],"keys":[]}}`)
@@ -1100,6 +1113,7 @@ func TestSSHImportApplyRequiresUnlockedVault(t *testing.T) {
 }
 
 func TestVaultGenerateKey(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	dispatcher, database, credentialVault, _ := sshImportTestRig(t)
 
@@ -1161,6 +1175,7 @@ func TestVaultGenerateKey(t *testing.T) {
 func sshImportStrPtr(value string) *string { return &value }
 
 func TestSSHImportHomePreviewAndApply(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	dispatcher, database, credentialVault, _ := sshImportTestRig(t)
 	dir := t.TempDir()
@@ -1350,6 +1365,7 @@ func TestSSHImportHomePreviewAndApply(t *testing.T) {
 // .length on warnings/aliases, which crashed the whole app when importing the
 // ~/.ssh directory (reported on Windows). List fields must always be arrays.
 func TestSSHImportPreviewNeverEmitsNullLists(t *testing.T) {
+	t.Parallel()
 	dispatcher, _, _, _ := sshImportPreviewTestRig(t, true)
 	dir := t.TempDir()
 	keyPath, _ := sshImportTestKeyFile(t, dir)
@@ -1387,6 +1403,7 @@ func TestSSHImportPreviewNeverEmitsNullLists(t *testing.T) {
 }
 
 func TestSSHImportHomeSymlinkAliasBinding(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation requires privileges on windows")
 	}
@@ -1441,6 +1458,7 @@ func TestSSHImportHomeSymlinkAliasBinding(t *testing.T) {
 }
 
 func TestSSHImportHomeApplyRequiresUnlockedVault(t *testing.T) {
+	t.Parallel()
 	dispatcher, _, _, _ := sshImportTestRig(t)
 	requireProductionNull(t, dispatchStoreTest(dispatcher, "vault_lock", `{}`))
 	response := dispatchStoreTest(dispatcher, "ssh_import_apply", `{"args":{"source":"ssh-home","path":"/nonexistent","hosts":[],"keys":[]}}`)
@@ -1520,6 +1538,7 @@ func sshImportApplyRequestBody(t *testing.T, request sshImportApplyRequest) stri
 }
 
 func TestSSHImportApplyDestinationGroupAndTags(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	dispatcher, database, _, _ := sshImportTestRig(t)
 	group, err := database.GroupCreate(ctx, store.GroupInput{Name: "导入目标"})
@@ -1562,6 +1581,7 @@ func TestSSHImportApplyDestinationGroupAndTags(t *testing.T) {
 }
 
 func TestSSHImportApplyRollsBackAllWrites(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	dispatcher, database, _, _ := sshImportTestRig(t)
 	dir := t.TempDir()
@@ -1634,6 +1654,7 @@ func TestSSHImportServerIncludeEscapeExcluded(t *testing.T) {
 }
 
 func TestSSHImportDesktopIncludeEscapeStillParsed(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	dir := filepath.Join(base, "ssh")
 	outside := t.TempDir()

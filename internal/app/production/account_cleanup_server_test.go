@@ -192,6 +192,7 @@ func (f *accountCleanupHTTPFixture) expireOnlySession(t *testing.T, ownerID stri
 }
 
 func TestAccountServerLogoutAllCleansDeviceOwnerWithoutFrontend(t *testing.T) {
+	t.Parallel()
 	fixture := newAccountCleanupHTTPFixture(t)
 	aliceID, bobID := fixture.initUsers(t)
 	alice := fixture.login(t, "alice", "password-alice")
@@ -215,6 +216,7 @@ func TestAccountServerLogoutAllCleansDeviceOwnerWithoutFrontend(t *testing.T) {
 }
 
 func TestAccountServerExpiredSessionUsesPreExpiryDeviceGeneration(t *testing.T) {
+	t.Parallel()
 	fixture := newAccountCleanupHTTPFixture(t)
 	aliceID, bobID := fixture.initUsers(t)
 	alice := fixture.login(t, "alice", "password-alice")
@@ -287,6 +289,7 @@ func TestAccountServerExpiredSessionUsesPreExpiryDeviceGeneration(t *testing.T) 
 }
 
 func TestAccountServerExpiredSessionCleanupRetriesAfterSnapshotFailure(t *testing.T) {
+	t.Parallel()
 	fixture := newAccountCleanupHTTPFixture(t)
 	aliceID := fixture.initAlice(t)
 	alice := fixture.login(t, "alice", "password-alice")
@@ -365,6 +368,7 @@ func TestAccountServerExpiredSessionCleanupRetriesAfterSnapshotFailure(t *testin
 }
 
 func TestAccountServerLogoutAbortsWhenCleanupSnapshotFails(t *testing.T) {
+	t.Parallel()
 	fixture := newAccountCleanupHTTPFixture(t)
 	aliceID := fixture.initAlice(t)
 	alice := fixture.login(t, "alice", "password-alice")
@@ -399,6 +403,7 @@ func TestAccountServerLogoutAbortsWhenCleanupSnapshotFails(t *testing.T) {
 }
 
 func TestAccountServerLogoutAllAbortsWhenCleanupSnapshotFails(t *testing.T) {
+	t.Parallel()
 	fixture := newAccountCleanupHTTPFixture(t)
 	aliceID := fixture.initAlice(t)
 	alice := fixture.login(t, "alice", "password-alice")
@@ -436,6 +441,7 @@ func TestAccountServerLogoutAllAbortsWhenCleanupSnapshotFails(t *testing.T) {
 }
 
 func TestAccountServerSessionRevokeAbortsWhenCleanupSnapshotFails(t *testing.T) {
+	t.Parallel()
 	fixture := newAccountCleanupHTTPFixture(t)
 	aliceID := fixture.initAlice(t)
 	alice := fixture.login(t, "alice", "password-alice")
@@ -505,6 +511,7 @@ func currentCleanupSessionID(t *testing.T, fixture *accountCleanupHTTPFixture, s
 // from the durable revoked session row, not cancel the new generation's
 // batch or device started after the retention TTL evicted the event.
 func TestAccountServerPostEvictionLateRevalidationKeepsNewGeneration(t *testing.T) {
+	t.Parallel()
 	fixture := newAccountCleanupHTTPFixture(t)
 	aliceID := fixture.initAlice(t)
 	alice := fixture.login(t, "alice", "password-alice")

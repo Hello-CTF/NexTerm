@@ -521,6 +521,7 @@ func TestClampProbeTimeout(t *testing.T) {
 }
 
 func TestProductionAssetProbeBatchFixtureLifecycle(t *testing.T) {
+	t.Parallel()
 	production := newHostKeyTestProduction(t)
 	for _, test := range []struct {
 		name string

@@ -522,7 +522,7 @@ type productionAuthorizationActor struct {
 	allowed  bool
 }
 
-func newProductionAuthorizationFixture(t *testing.T, open bool) *productionAuthorizationFixture {
+func newProductionAuthorizationFixture(t *testing.T, open, includeOther bool) *productionAuthorizationFixture {
 	t.Helper()
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
 		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
@@ -560,9 +560,13 @@ func newProductionAuthorizationFixture(t *testing.T, open bool) *productionAutho
 		ownerConnect, otherConnect = t.Context(), t.Context()
 	}
 	fixture.ownerSession = fixture.connect(t, ownerConnect, "session-a", "owner-a")
-	fixture.otherSession = fixture.connect(t, otherConnect, "session-b", "owner-b")
+	if includeOther {
+		fixture.otherSession = fixture.connect(t, otherConnect, "session-b", "owner-b")
+	}
 	fixture.ownerTab = fixture.openTab(t, ownerConnect, fixture.ownerSession.ID, "owner-client", "owner-channel")
-	fixture.otherTab = fixture.openTab(t, otherConnect, fixture.otherSession.ID, "other-client", "other-channel")
+	if includeOther {
+		fixture.otherTab = fixture.openTab(t, otherConnect, fixture.otherSession.ID, "other-client", "other-channel")
+	}
 	return fixture
 }
 
@@ -625,8 +629,8 @@ func requireProductionAuthorization(t *testing.T, response ipc.Response, allowed
 var productionAuthorizationActorNames = []string{"owner", "same-account-second-client", "other-account", "superadmin", "open"}
 
 func TestProductionSessionAndTerminalListsAreOwnerScoped(t *testing.T) {
-	defaultFixture := newProductionAuthorizationFixture(t, false)
-	openFixture := newProductionAuthorizationFixture(t, true)
+	defaultFixture := newProductionAuthorizationFixture(t, false, true)
+	openFixture := newProductionAuthorizationFixture(t, true, true)
 	for _, actorName := range productionAuthorizationActorNames {
 		t.Run(actorName, func(t *testing.T) {
 			fixture := defaultFixture
@@ -746,7 +750,7 @@ func TestProductionTerminalRequestsEnforceAccountOwnership(t *testing.T) {
 		t.Run(operation.name, func(t *testing.T) {
 			for _, actorName := range productionAuthorizationActorNames {
 				t.Run(actorName, func(t *testing.T) {
-					fixture := newProductionAuthorizationFixture(t, actorName == "open")
+					fixture := newProductionAuthorizationFixture(t, actorName == "open", false)
 					actor := fixture.actor(actorName)
 					if operation.controller && actorName == "same-account-second-client" {
 						claim := fixture.dispatch(actor, "terminal_claim", `{"tabId":"`+fixture.ownerTab.ID+`","clientId":"`+actor.clientID+`"}`, "")

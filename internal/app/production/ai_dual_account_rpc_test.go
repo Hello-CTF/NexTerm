@@ -309,6 +309,7 @@ func (f *aiDualAccountFixture) createAsset(t *testing.T, userID, name string) st
 }
 
 func TestAIDualAccountProfilesOverRPC(t *testing.T) {
+	t.Parallel()
 	var authorization atomic.Value
 	var hits atomic.Int32
 	models := newModelsServer(t, &authorization, &hits)
@@ -402,6 +403,7 @@ func TestAIDualAccountProfilesOverRPC(t *testing.T) {
 }
 
 func TestAIDualAccountMemoryOverRPC(t *testing.T) {
+	t.Parallel()
 	fixture := newAIDualAccountFixture(t, nil, false)
 
 	create := fixture.rpc(t, fixture.alice, "memory_create", map[string]any{
@@ -473,6 +475,7 @@ func TestAIDualAccountMemoryOverRPC(t *testing.T) {
 }
 
 func TestAIDualAccountGrantsOverRPC(t *testing.T) {
+	t.Parallel()
 	fixture := newAIDualAccountFixture(t, nil, false)
 	aliceAsset := fixture.createAsset(t, fixture.aliceID, "alice-server")
 	bobAsset := fixture.createAsset(t, fixture.bobID, "bob-server")
@@ -527,6 +530,7 @@ func TestAIDualAccountGrantsOverRPC(t *testing.T) {
 }
 
 func TestAIDualAccountCronOverRPC(t *testing.T) {
+	t.Parallel()
 	fixture := newAIDualAccountFixture(t, nil, false)
 
 	conversation := fixture.rpc(t, fixture.alice, "ai_conversation_create", map[string]any{"title": "alice chat"})
@@ -632,6 +636,7 @@ func (s *aiDualHITLScript) ServeHTTP(writer http.ResponseWriter, request *http.R
 }
 
 func TestAIDualAccountHITLOverRPC(t *testing.T) {
+	t.Parallel()
 	script := &aiDualHITLScript{command: "systemctl restart nginx"}
 	fixture := newAIDualAccountFixture(t, script, true)
 
@@ -719,6 +724,7 @@ func TestAIDualAccountHITLOverRPC(t *testing.T) {
 }
 
 func TestAIDualAccountTakeoverOverRPC(t *testing.T) {
+	t.Parallel()
 	fixture := newAIDualAccountFixture(t, nil, false)
 	aliceCtx := fixture.ownerContext(fixture.aliceID)
 	_, tab := fixture.rig.open(t, aliceCtx, session.Asset{ID: "device/alice", Kind: session.KindDevice})
