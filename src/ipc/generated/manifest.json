@@ -447,6 +447,7 @@
       "stream": "none"
     },
     "credential_update": {
+      "scope": "credential",
       "nested": true,
       "channel": false,
       "stream": "none"
@@ -1764,61 +1765,73 @@
       "stream": "none"
     },
     "vault_change_password": {
+      "scope": "vault",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "vault_delete_credential": {
+      "scope": "vault",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "vault_generate_key": {
+      "scope": "vault",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "vault_init_dpapi": {
+      "scope": "vault",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "vault_init_master": {
+      "scope": "vault",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "vault_list_credentials": {
+      "scope": "vault",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "vault_lock": {
+      "scope": "vault",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "vault_reveal_credential": {
+      "scope": "vault",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "vault_set_autolock": {
+      "scope": "vault",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "vault_set_credential": {
+      "scope": "vault",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "vault_status": {
+      "scope": "vault",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "vault_unlock": {
+      "scope": "vault",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1876,7 +1889,6 @@
     "biometric_unlock",
     "command_count",
     "command_query",
-    "credential_update",
     "db_columns",
     "db_connect",
     "db_disconnect",
@@ -1986,18 +1998,6 @@
     "transcript_list",
     "transcript_read",
     "transcript_search",
-    "transcript_sync_opt_in",
-    "vault_change_password",
-    "vault_delete_credential",
-    "vault_generate_key",
-    "vault_init_dpapi",
-    "vault_init_master",
-    "vault_list_credentials",
-    "vault_lock",
-    "vault_reveal_credential",
-    "vault_set_autolock",
-    "vault_set_credential",
-    "vault_status",
-    "vault_unlock"
+    "transcript_sync_opt_in"
   ]
 }

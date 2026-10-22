@@ -1240,21 +1240,21 @@ export interface RevealedCredential {
 }
 
 export const vaultApi = {
-  status: () => call<VaultStatus>("vault_status"),
-  initMaster: (password: string) => call<void>("vault_init_master", { password }),
-  initDpapi: (password = "") => call<void>("vault_init_dpapi", { password }),
-  unlock: (password: string) => call<void>("vault_unlock", { password }),
-  lock: () => call<void>("vault_lock"),
-  setAutoLock: (minutes: number) => call<void>("vault_set_autolock", { minutes }),
+  status: () => call("vault_status") as Promise<VaultStatus>,
+  initMaster: (password: string) => call("vault_init_master", { password }) as Promise<void>,
+  initDpapi: (password = "") => call("vault_init_dpapi", { password }) as Promise<void>,
+  unlock: (password: string) => call("vault_unlock", { password }) as Promise<void>,
+  lock: () => call("vault_lock") as Promise<void>,
+  setAutoLock: (minutes: number) => call("vault_set_autolock", { minutes }) as Promise<void>,
   changePassword: (oldPassword: string, newPassword: string) =>
-    call<void>("vault_change_password", { oldPassword, newPassword }),
+    call("vault_change_password", { oldPassword, newPassword }) as Promise<void>,
   setCredential: (
     name: string,
     kind: string,
     secret: string,
     extra: { id?: string; source?: CredentialSource; passphrase?: string } = {},
   ) =>
-    call<{ id: string }>("vault_set_credential", {
+    call("vault_set_credential", {
       args: {
         id: extra.id,
         name,
@@ -1263,10 +1263,10 @@ export const vaultApi = {
         source: extra.source,
         passphrase: extra.passphrase,
       },
-    }),
-  listCredentials: () => call<Credential[]>("vault_list_credentials"),
-  deleteCredential: (id: string) => call<void>("vault_delete_credential", { id }),
-  revealCredential: (id: string) => call<RevealedCredential>("vault_reveal_credential", { id }),
+    }) as Promise<{ id: string }>,
+  listCredentials: () => call("vault_list_credentials") as Promise<Credential[]>,
+  deleteCredential: (id: string) => call("vault_delete_credential", { id }) as Promise<void>,
+  revealCredential: (id: string) => call("vault_reveal_credential", { id }) as Promise<RevealedCredential>,
   updateCredential: (
     id: string,
     patch: {
@@ -1275,11 +1275,11 @@ export const vaultApi = {
       source?: CredentialSource;
       passphrase?: string;
     },
-  ) => call<void>("credential_update", { args: { id, ...patch } }),
+  ) => call("credential_update", { args: { id, ...patch } }) as Promise<void>,
   generateKey: (name: string, algorithm?: "ed25519" | "rsa", passphrase?: string) =>
-    call<import("./types").GeneratedKeyDto>("vault_generate_key", {
+    call("vault_generate_key", {
       args: { name, algorithm, passphrase },
-    }),
+    }) as Promise<import("./types").GeneratedKeyDto>,
 };
 
 export type SshImportSource = "ssh-config" | "termius" | "ssh-home";

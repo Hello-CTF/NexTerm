@@ -452,6 +452,111 @@ void generatedOutputs;
     expect(diagnostics, formatted(diagnostics)).toEqual([]);
   }, COMPILE_BUDGET_MS);
 
+  it("types vault and credential commands without widening secret visibility or facade inputs", () => {
+    const probe = resolve("src/test/__ipc_vault_credential_contract_probe.ts");
+    const source = `
+import {
+  call,
+  vaultApi,
+  type Credential,
+  type RevealedCredential,
+  type VaultStatus,
+} from "../ipc/commands";
+import type { IPCInput, IPCOutput } from "../ipc/generated/manifest";
+import type { GeneratedKeyDto } from "../ipc/types";
+
+type Equal<Left, Right> =
+  (<T>() => T extends Left ? 1 : 2) extends
+  (<T>() => T extends Right ? 1 : 2) ? true : false;
+type Assert<Value extends true> = Value;
+const passwordOptional: Assert<Equal<IPCInput<"vault_init_master">["password"], string | undefined>> = true;
+const setPassphraseNullable: Assert<Equal<IPCInput<"vault_set_credential">["passphrase"], string | null | undefined>> = true;
+const updateSourceNullable: Assert<Equal<IPCInput<"credential_update">["source"], string | null | undefined>> = true;
+const generatePassphraseOptional: Assert<Equal<IPCInput<"vault_generate_key">["passphrase"], string | undefined>> = true;
+const autoLockNullable: Assert<Equal<IPCInput<"vault_set_autolock">["minutes"], number | null>> = true;
+const revealPassphraseNullable: Assert<Equal<IPCOutput<"vault_reveal_credential">["passphrase"], string | null>> = true;
+const listSourceNullable: Assert<Equal<IPCOutput<"vault_list_credentials">[number]["source"], string | null>> = true;
+const generatedPublicKey: Assert<Equal<IPCOutput<"vault_generate_key">["publicKey"], string>> = true;
+const lockUnknown: Assert<Equal<IPCOutput<"vault_lock">, unknown>> = true;
+const updateUnknown: Assert<Equal<IPCOutput<"credential_update">, unknown>> = true;
+void [passwordOptional, setPassphraseNullable, updateSourceNullable, generatePassphraseOptional, autoLockNullable, revealPassphraseNullable, listSourceNullable, generatedPublicKey, lockUnknown, updateUnknown];
+
+const status: Promise<VaultStatus> = vaultApi.status();
+const initialized: Promise<void> = vaultApi.initMaster("");
+const initializedDpapi: Promise<void> = vaultApi.initDpapi();
+const unlocked: Promise<void> = vaultApi.unlock("");
+const locked: Promise<void> = vaultApi.lock();
+const autoLock: Promise<void> = vaultApi.setAutoLock(0);
+const changed: Promise<void> = vaultApi.changePassword("", "");
+const created: Promise<{ id: string }> = vaultApi.setCredential("database", "password", "");
+const listedFacade: Promise<Credential[]> = vaultApi.listCredentials();
+const deleted: Promise<void> = vaultApi.deleteCredential("cred-1");
+const revealedFacade: Promise<RevealedCredential> = vaultApi.revealCredential("cred-1");
+const updated: Promise<void> = vaultApi.updateCredential("cred-1", { passphrase: "" });
+const generatedFacade: Promise<GeneratedKeyDto> = vaultApi.generateKey("default-key");
+void [status, initialized, initializedDpapi, unlocked, locked, autoLock, changed, created, listedFacade, deleted, revealedFacade, updated, generatedFacade];
+
+void call("vault_status");
+void call("vault_init_master", { password: "" });
+void call("vault_init_dpapi", {});
+void call("vault_unlock", { password: "" });
+void call("vault_lock");
+void call("vault_set_autolock", { minutes: 0 });
+void call("vault_change_password", { oldPassword: "", newPassword: "" });
+void call("vault_set_credential", { args: { name: "database", kind: "password", secret: "" } });
+void call("vault_set_credential", { args: { name: "key", kind: "private_key", secret: "fake", source: null, passphrase: null } });
+void call("vault_list_credentials");
+void call("vault_delete_credential", { id: "cred-1" });
+void call("vault_reveal_credential", { id: "cred-1" });
+void call("credential_update", { args: { id: "cred-1", passphrase: "" } });
+void call("credential_update", { args: { id: "cred-1", source: "" } });
+void call("credential_update", { args: { id: "cred-1", source: null } });
+void call("vault_generate_key", { args: { name: "default-key" } });
+
+// @ts-expect-error typed vault commands reject the legacy generic output escape
+void call<VaultStatus>("vault_status");
+// @ts-expect-error typed credential updates reject the legacy generic output escape
+void call<void>("credential_update", { args: { id: "cred-1" } });
+// @ts-expect-error nested credential creation rejects flat input
+void call("vault_set_credential", { name: "database", kind: "password", secret: "" });
+// @ts-expect-error credential creation still requires secret content, including an explicit empty string
+void call("vault_set_credential", { args: { name: "database", kind: "password" } });
+// @ts-expect-error auto-lock minutes remain required by the facade wire call
+void call("vault_set_autolock", {});
+// @ts-expect-error password fields remain strings
+void call("vault_unlock", { password: 42 });
+// @ts-expect-error generated-key names remain strings
+void call("vault_generate_key", { args: { name: 42 } });
+// @ts-expect-error the existing update facade does not widen patches to nullable wire values
+void vaultApi.updateCredential("cred-1", { passphrase: null });
+
+async function generatedOutputs() {
+  const status = await call("vault_status");
+  const mode: string = status.mode;
+  // @ts-expect-error vault status never exposes password material
+  const password = status.password;
+  const listed = await call("vault_list_credentials");
+  const usedBy: { id: string; name: string; kind: string }[] = listed[0].usedBy;
+  const hasPassphrase: boolean = listed[0].hasPassphrase;
+  // @ts-expect-error credential list metadata never exposes secret values
+  const secret = listed[0].secret;
+  const revealed = await call("vault_reveal_credential", { id: "cred-1" });
+  const value: string = revealed.value;
+  const passphrase: string | null = revealed.passphrase;
+  const generated = await call("vault_generate_key", { args: { name: "default-key" } });
+  const publicKey: string = generated.publicKey;
+  // @ts-expect-error generated-key results contain public material only
+  const privateKey = generated.privateKey;
+  const created = await call("vault_set_credential", { args: { name: "database", kind: "password", secret: "" } });
+  const id: string = created.id;
+  void [mode, password, usedBy, hasPassphrase, secret, value, passphrase, publicKey, privateKey, id];
+}
+void generatedOutputs;
+`;
+    const diagnostics = compile([probe], { [probe]: source });
+    expect(diagnostics, formatted(diagnostics)).toEqual([]);
+  }, COMPILE_BUDGET_MS);
+
   it("types the consumer-priority session terminal vertical without narrowing legacy fallbacks", () => {
     const probe = resolve("src/test/__ipc_session_terminal_contract_probe.ts");
     const source = `

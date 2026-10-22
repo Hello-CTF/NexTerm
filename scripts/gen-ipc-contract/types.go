@@ -47,6 +47,7 @@ var tsNameOverrides = map[string]string{
 	"github.com/Hello-CTF/NexTerm/internal/logtail.StartResult":              "LogTailStartResult",
 	"github.com/Hello-CTF/NexTerm/internal/logtail.CancelResult":             "LogTailCancelResult",
 	"github.com/Hello-CTF/NexTerm/internal/store.ForwardRuleInput":           "ForwardRuleInput",
+	"github.com/Hello-CTF/NexTerm/internal/vault.Status":                     "VaultStatus",
 }
 
 var consumerOptionalRequestFields = map[string]map[string]bool{
@@ -60,6 +61,12 @@ var consumerOptionalRequestFields = map[string]map[string]bool{
 	"github.com/Hello-CTF/NexTerm/internal/app/production.assetProbeBatchRequest": {
 		"TimeoutMS": true, "MaxConcurrent": true,
 	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.credentialSetRequest": {
+		"ID": true, "Source": true, "Passphrase": true,
+	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.credentialUpdateRequest": {
+		"Name": true, "Secret": true, "Source": true, "Passphrase": true,
+	},
 	"github.com/Hello-CTF/NexTerm/internal/app/production.groupInputRequest": {
 		"ParentID": true, "Sort": true,
 	},
@@ -71,6 +78,12 @@ var consumerOptionalRequestFields = map[string]map[string]bool{
 	},
 	"github.com/Hello-CTF/NexTerm/internal/app/production.knownHostRequest": {
 		"Key": true,
+	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.vaultGenerateKeyRequest": {
+		"Algorithm": true, "Passphrase": true,
+	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.vaultPasswordRequest": {
+		"Password": true, "OldPassword": true, "NewPassword": true,
 	},
 }
 
