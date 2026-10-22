@@ -279,6 +279,13 @@ func (r *Registry) Execute(ctx context.Context, jobID string, scope Scope, call 
 	if ctx.Err() != nil {
 		return Fail(ctx.Err())
 	}
+	if err := r.bindExecutionTarget(ctx, jobID, scope, &call); err != nil {
+		return Fail(err)
+	}
+	if err := r.revalidateExecutionAuthorization(ctx, call); err != nil {
+		return Fail(err)
+	}
+	ctx = withTargetWriteBinding(ctx, call.Target)
 	if r.deps.Outcome != nil && call.AuthorizationID != "" && sideEffectKind(call.Name) != "" {
 		if call.Name == "terminal_create" {
 			// The adjudication→connect→reserve sequence is arbitrated
@@ -968,7 +975,7 @@ func (r *Registry) executeRecorded(ctx context.Context, jobID string, scope Scop
 	}
 	request := outcome.Request{
 		IdempotenceKey:  key,
-		AuthorizationID: call.AuthorizationID,
+		AuthorizationID: outcomeAuthorizationID(call),
 		Kind:            sideEffectKind(call.Name),
 		Arguments:       call.Args,
 	}
@@ -994,7 +1001,7 @@ func (r *Registry) executeRecorded(ctx context.Context, jobID string, scope Scop
 	case errors.Is(err, outcome.ErrInProgress):
 		return withConnectedResidual(call, operation, Fail(fmt.Errorf("相同调用正在执行中，未重复执行: %w", err)))
 	case errors.Is(err, outcome.ErrIdempotenceConflict):
-		return withConnectedResidual(call, operation, Fail(fmt.Errorf("调用与已记录的执行冲突（授权或参数不一致）: %w", err)))
+		return withConnectedResidual(call, operation, Fail(fmt.Errorf("调用与已记录的执行冲突（授权、参数或执行目标不一致）: %w", err)))
 	case !ranEffect:
 		return withConnectedResidual(call, operation, Fail(fmt.Errorf("执行结果记录失败: %w", err)))
 	case record.State != outcome.ExecutionFinished || record.Audit.State == outcome.AuditPending:

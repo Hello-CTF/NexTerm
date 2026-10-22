@@ -136,3 +136,92 @@ func TestPersistedAuthorizationRevalidatesTargetBeforeUse(t *testing.T) {
 		t.Fatal("foreign persisted device mode was applied")
 	}
 }
+
+func TestAutomaticAuthorizationRevisionSurvivesReloadAndRejectsStaleRecords(t *testing.T) {
+	ctx := context.Background()
+	settings := &memorySettings{values: make(map[string]string)}
+	grants, err := NewGrants(ctx, settings, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := grants.Grant(ctx, "device-a", []GrantKind{GrantKindTerminalWrite}); err != nil {
+		t.Fatal(err)
+	}
+	ruling := Confirm(KindProcess, "write")
+	oldGrant := grants.Evaluate(ctx, Config{Mode: ReadWrite}, ruling, nil, "device-a", "send_keys", "run")
+	if oldGrant.Authorization == nil {
+		t.Fatal("grant decision has no authorization binding")
+	}
+	if err := grants.Revoke(ctx, "device-a"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := grants.Grant(ctx, "device-a", []GrantKind{GrantKindTerminalWrite}); err != nil {
+		t.Fatal(err)
+	}
+	if err := grants.RevalidateAuthorization(ctx, oldGrant.Authorization); err == nil {
+		t.Fatal("revoke and re-create revived the old grant admission")
+	}
+	newGrant := grants.Evaluate(ctx, Config{Mode: ReadWrite}, ruling, nil, "device-a", "send_keys", "run")
+	if err := grants.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := grants.RevalidateAuthorization(ctx, newGrant.Authorization); err != nil {
+		t.Fatalf("persisted grant revision did not survive reload: %v", err)
+	}
+
+	if _, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	resource := Resource{Action: "write_file", Path: "/var/log/app.log"}
+	oldRule := grants.EvaluateResource(ctx, Config{Mode: ReadWrite}, Confirm(KindWriteFS, "write"), nil, "device-a", "write_file", "run", resource)
+	if oldRule.Authorization == nil {
+		t.Fatal("rule decision has no authorization binding")
+	}
+	if _, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := grants.RevalidateAuthorization(ctx, oldRule.Authorization); err == nil {
+		t.Fatal("rule update revived the old rule admission")
+	}
+	newRule := grants.EvaluateResource(ctx, Config{Mode: ReadWrite}, Confirm(KindWriteFS, "write"), nil, "device-a", "write_file", "run", resource)
+	if err := grants.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := grants.RevalidateAuthorization(ctx, newRule.Authorization); err != nil {
+		t.Fatalf("persisted rule revision did not survive reload: %v", err)
+	}
+}
+
+func TestAuthorizationAdmissionRechecksRevisionAfterTargetValidation(t *testing.T) {
+	type admissionContextKey struct{}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	validator := func(ctx context.Context, _ string) error {
+		if ctx.Value(admissionContextKey{}) != nil {
+			close(entered)
+			<-release
+		}
+		return nil
+	}
+	grants, err := NewGrants(context.Background(), &memorySettings{values: make(map[string]string)}, nil, WithTargetValidator(validator))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := grants.Grant(ctx, "device-a", []GrantKind{GrantKindTerminalWrite}); err != nil {
+		t.Fatal(err)
+	}
+	decision := grants.Evaluate(ctx, Config{Mode: ReadWrite}, Confirm(KindProcess, "write"), nil, "device-a", "send_keys", "run")
+	done := make(chan error, 1)
+	go func() {
+		done <- grants.RevalidateAuthorization(context.WithValue(ctx, admissionContextKey{}, true), decision.Authorization)
+	}()
+	<-entered
+	if err := grants.Revoke(ctx, "device-a"); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-done; err == nil {
+		t.Fatal("revoke completed during target validation but the old admission succeeded")
+	}
+}

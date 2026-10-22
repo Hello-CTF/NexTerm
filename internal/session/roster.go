@@ -2,6 +2,20 @@ package session
 
 import "context"
 
+type expectedTabEpisodeContextKey struct{}
+
+type expectedTabEpisode struct {
+	tabID   string
+	episode string
+}
+
+// WithExpectedTabEpisode binds a write to the exact tab runtime episode that
+// was authorized. The session write path checks it after acquiring the tab's
+// existing write gate, immediately before touching the channel.
+func WithExpectedTabEpisode(ctx context.Context, tabID, episode string) context.Context {
+	return context.WithValue(ctx, expectedTabEpisodeContextKey{}, expectedTabEpisode{tabID: tabID, episode: episode})
+}
+
 // RosterRuntimeSnapshot captures every roster-relevant runtime field of a tab
 // from a single critical section, so a caller never combines one tab's
 // session state with another tab's episode: tab and session identity, the

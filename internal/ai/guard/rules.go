@@ -59,6 +59,7 @@ type GrantRule struct {
 	ExpiresAt int64  `json:"expiresAt,omitempty"`
 	CreatedAt int64  `json:"createdAt"`
 	UpdatedAt int64  `json:"updatedAt"`
+	revision  uint64
 }
 
 var ruleActions = map[string]struct{}{

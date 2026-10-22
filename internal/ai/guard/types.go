@@ -163,10 +163,18 @@ const (
 	ActionDeny  Action = "deny"
 )
 
+type AuthorizationBinding struct {
+	Kind     string `json:"kind"`
+	DeviceID string `json:"deviceId"`
+	RuleID   string `json:"ruleId,omitempty"`
+	Revision uint64 `json:"revision"`
+}
+
 type Decision struct {
-	Action Action `json:"action"`
-	Ruling Ruling `json:"ruling"`
-	Reason string `json:"reason,omitempty"`
+	Action        Action                `json:"action"`
+	Ruling        Ruling                `json:"ruling"`
+	Reason        string                `json:"reason,omitempty"`
+	Authorization *AuthorizationBinding `json:"authorization,omitempty"`
 }
 
 // DecideResource layers the path-level grants remembered for this session on top of Decide.

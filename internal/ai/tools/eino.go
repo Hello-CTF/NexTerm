@@ -348,6 +348,8 @@ type InteractionState struct {
 	Info           Interaction
 
 	AuthorizationID     string
+	Authorization       *guard.AuthorizationBinding
+	Target              *TargetBinding
 	Resource            guard.Resource
 	IsolatedTarget      bool
 	ProductionChallenge *ExecBatchProductionChallenge
@@ -813,6 +815,9 @@ func (e *Execution) runInner(ctx context.Context, name string, input any) (Outpu
 			}
 		}
 		call.AuthorizationID = state.AuthorizationID
+		call.Authorization = state.Authorization
+		call.Target = state.Target
+		call.OneTimeConfirmation = true
 		if state.ProductionChallenge != nil {
 			call.OriginID = state.Info.CallID
 			call.ID += ":production"
@@ -842,6 +847,9 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 	}
 	if call.Name == "exit_plan_mode" && !e.PlanMode {
 		return Fail(errorsNewPlanModeOnly()), nil
+	}
+	if err := e.Registry.bindExecutionTarget(ctx, e.JobID, e.Scope, &call); err != nil {
+		return Fail(err), nil
 	}
 	terminalInput := ""
 	cursor := 0
@@ -931,7 +939,7 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 				}
 			}
 		}
-		state := InteractionState{Kind: "confirm", CallID: call.ID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), TerminalInput: terminalInput, TerminalCursor: cursor, Info: info, AuthorizationID: GuardAuthorizationID(decision), Resource: resource, IsolatedTarget: isolatedTarget}
+		state := InteractionState{Kind: "confirm", CallID: call.ID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), TerminalInput: terminalInput, TerminalCursor: cursor, Info: info, AuthorizationID: GuardAuthorizationID(decision), Authorization: decision.Authorization, Target: call.Target, Resource: resource, IsolatedTarget: isolatedTarget}
 		if forcedConfirm || isolatedTarget {
 			state.MemoryKind = ""
 			state.MemoryKinds = nil
@@ -939,6 +947,7 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 		return Output{}, tool.StatefulInterrupt(ctx, info, state)
 	}
 	call.AuthorizationID = GuardAuthorizationID(decision)
+	call.Authorization = decision.Authorization
 	if call.Name == ReminderTool {
 		return e.executeReminder(ctx, call), nil
 	}
@@ -962,7 +971,7 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 				info.Commands = input.Commands
 			}
 		}
-		state := InteractionState{Kind: "confirm", CallID: call.ID, Info: info, AuthorizationID: call.AuthorizationID, Resource: resourceForCall(call), IsolatedTarget: true, ProductionChallenge: challenge}
+		state := InteractionState{Kind: "confirm", CallID: call.ID, Info: info, AuthorizationID: call.AuthorizationID, Authorization: call.Authorization, Target: call.Target, Resource: resourceForCall(call), IsolatedTarget: true, ProductionChallenge: challenge}
 		return Output{}, tool.StatefulInterrupt(ctx, info, state)
 	}
 	if result.Question != nil {

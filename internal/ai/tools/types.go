@@ -80,6 +80,17 @@ type Schema struct {
 	Parameters  map[string]any `json:"parameters"`
 }
 
+// TargetBinding identifies the exact execution target used for admission and
+// outcome replay. Empty asset fields remain explicit unknown evidence.
+type TargetBinding struct {
+	Kind           string
+	SessionID      string
+	TabID          string
+	RuntimeEpisode string
+	ConnID         string
+	Asset          AssetIdentity
+}
+
 type Call struct {
 	ID     string          `json:"id"`
 	Name   string          `json:"name"`
@@ -87,6 +98,9 @@ type Call struct {
 	Reason string          `json:"reason,omitempty"`
 
 	AuthorizationID         string                             `json:"authorizationId,omitempty"`
+	Authorization           *guard.AuthorizationBinding        `json:"-"`
+	Target                  *TargetBinding                     `json:"-"`
+	OneTimeConfirmation     bool                               `json:"-"`
 	OriginID                string                             `json:"-"`
 	ProductionConfirmations []execbatch.ProductionConfirmation `json:"-"`
 	// AssetIdentities carries the immutable asset identities resolved before
@@ -443,6 +457,12 @@ type AssetIdentity struct {
 // resolved identity at execution time.
 type SessionAssetIdentityResolver interface {
 	SessionAssetIdentity(ctx context.Context, sessionID string) (AssetIdentity, error)
+}
+
+// TabExecutionIdentityTerminal reads the tab's session, stable runtime
+// episode, and real asset identity from one runtime snapshot.
+type TabExecutionIdentityTerminal interface {
+	TabExecutionIdentity(ctx context.Context, tabID string) (sessionID, episode string, asset AssetIdentity, err error)
 }
 
 // AssetConnector is the optional dependency that connects an asset and

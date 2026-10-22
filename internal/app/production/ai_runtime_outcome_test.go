@@ -263,7 +263,7 @@ func TestComposedAIRuntimeRecordsOutcomeOnce(t *testing.T) {
 	if decision.Action != guard.ActionAllow {
 		t.Fatalf("test setup: decision = %+v", decision)
 	}
-	if want := tools.GuardAuthorizationID(decision); record.AuthorizationID != want {
+	if want := tools.GuardAuthorizationID(decision); !strings.HasPrefix(record.AuthorizationID, want+"|execution:") {
 		t.Fatalf("authorization id = %q, want the guard-decision binding %q", record.AuthorizationID, want)
 	}
 
@@ -330,7 +330,7 @@ func TestComposedAIRuntimeOutcomeBindsAskDecisionOnResume(t *testing.T) {
 	if decision.Action != guard.ActionAsk {
 		t.Fatalf("test setup: decision = %+v", decision)
 	}
-	if want := tools.GuardAuthorizationID(decision); record.AuthorizationID != want {
+	if want := tools.GuardAuthorizationID(decision); !strings.HasPrefix(record.AuthorizationID, want+"|execution:") {
 		t.Fatalf("authorization id = %q, want the ask-decision binding %q", record.AuthorizationID, want)
 	}
 	if rows := composedAuditRows(t, database, store.OutcomeAuditKind); len(rows) != 1 {
