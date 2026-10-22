@@ -860,6 +860,81 @@ func TestShareHostTerminalRecipientSessionInvalidation(t *testing.T) {
 	}
 }
 
+func TestShareHostCreateRequiresControlChannel(t *testing.T) {
+	f := newHTTPFixture(t, false)
+	owner := f.createUser(t, "readiness-owner")
+	recipient := f.createUser(t, "readiness-recipient")
+	stranger := f.createUser(t, "readiness-stranger")
+	deviceID, secret := enrollAgent(t, f, owner, "readiness-box")
+	ownerSession := f.session(t, owner)
+
+	if call := f.call(t, "POST", "/agent/current-url", map[string]any{
+		"device_id": deviceID, "secret": secret, "url": f.http.URL, "reason": "initial",
+	}, nil, ""); call.status != http.StatusOK {
+		t.Fatalf("report current URL: HTTP %d %v", call.status, call.body)
+	}
+	devices, err := f.service.ListDevices(context.Background(), &account.Identity{UserID: owner.ID, Role: owner.Role})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 1 || devices[0].Agent == nil || devices[0].Agent.CurrentURL != f.http.URL {
+		t.Fatalf("current URL was not persisted: %+v", devices)
+	}
+	if f.service.registry.AgentOnline(deviceID) {
+		t.Fatal("current URL report registered a control channel")
+	}
+
+	create := func(session *httpSession, username string) httpCall {
+		return f.call(t, "POST", "/share/host-shares", map[string]any{
+			"device_id": deviceID, "recipient_username": username, "write": false, "ttl_ms": 3600000,
+		}, session, session.csrf)
+	}
+	if call := create(ownerSession, "no-such-user"); call.status != http.StatusNotFound {
+		t.Fatalf("unknown recipient before control channel: HTTP %d %v", call.status, call.body)
+	}
+	if call := create(ownerSession, recipient.Username); call.status != http.StatusServiceUnavailable {
+		t.Fatalf("current URL without control channel: HTTP %d %v", call.status, call.body)
+	}
+
+	control := dialDeviceWS(t, f)
+	if response := helloDevice(t, control, agent.HelloMessage{
+		Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: deviceID, Secret: secret, StateDigest: "readiness-digest",
+		Capabilities: []string{agent.PurposeTerminal},
+	}); response.Type != "hello_ok" {
+		t.Fatalf("control hello = %+v", response)
+	}
+	if !f.service.registry.AgentOnline(deviceID) {
+		t.Fatal("hello_ok did not leave the control channel registered")
+	}
+	if digest, ok := f.service.registry.StateDigest(deviceID); !ok || digest != "readiness-digest" {
+		t.Fatalf("state digest = %q, %t", digest, ok)
+	}
+	if call := create(ownerSession, recipient.Username); call.status != http.StatusOK ||
+		call.body["owner_username"] != owner.Username || call.body["recipient_username"] != recipient.Username {
+		t.Fatalf("online create: HTTP %d %v", call.status, call.body)
+	}
+	if call := create(f.session(t, stranger), recipient.Username); call.status != http.StatusForbidden {
+		t.Fatalf("stranger online create: HTTP %d %v", call.status, call.body)
+	}
+
+	if err := control.Close(websocket.StatusNormalClosure, ""); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for f.service.registry.AgentOnline(deviceID) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if f.service.registry.AgentOnline(deviceID) {
+		t.Fatal("closed control channel remained registered")
+	}
+	if call := create(ownerSession, recipient.Username); call.status != http.StatusServiceUnavailable {
+		t.Fatalf("create after control channel close: HTTP %d %v", call.status, call.body)
+	}
+	if call := f.call(t, "GET", "/share/devices/"+deviceID+"/terminal", nil, f.session(t, recipient), ""); call.status != http.StatusServiceUnavailable {
+		t.Fatalf("existing share after control channel close: HTTP %d %v", call.status, call.body)
+	}
+}
+
 func TestShareHostShareCreateByUsername(t *testing.T) {
 	f := newHTTPFixture(t, false)
 	owner := f.createUser(t, "byname-owner")
