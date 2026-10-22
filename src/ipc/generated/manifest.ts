@@ -488,29 +488,44 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "cron_get": {
+      scope: "cron",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.cronJobRequest", ts: "CronJobRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/cron.Job", ts: "CronJob" },
     },
     "cron_list": {
+      scope: "cron",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.cronJobRequest", ts: "CronJobRequest" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/ai/cron.Job", ts: "CronJob[]" },
     },
     "cron_register": {
+      scope: "cron",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.cronRegisterRequest", ts: "CronRegisterRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/cron.Job", ts: "CronJob" },
     },
     "cron_set_enabled": {
+      scope: "cron",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.cronSetEnabledRequest", ts: "CronSetEnabledRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/cron.Job", ts: "CronJob" },
     },
     "cron_unregister": {
+      scope: "cron",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.cronJobRequest", ts: "CronJobRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "db_columns": {
       nested: false,
@@ -1079,19 +1094,29 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "log_tail_cancel": {
+      scope: "log-tail",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.logTailCancelRequest", ts: "LogTailCancelRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/logtail.CancelResult", ts: "LogTailCancelResult" },
     },
     "log_tail_save": {
+      scope: "log-tail",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.logTailSaveRequest", ts: "LogTailSaveRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.logTailSaveResult", ts: "LogTailSaveResult" },
     },
     "log_tail_start": {
+      scope: "log-tail",
       nested: false,
       channel: true,
       stream: "json",
+      streamPayload: "unknown",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/logtail.Request", ts: "LogTailRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/logtail.StartResult", ts: "LogTailStartResult" },
     },
     "memory_create": {
       nested: false,
@@ -2134,11 +2159,6 @@ export const ipcContractManifest = {
     "command_count",
     "command_query",
     "credential_update",
-    "cron_get",
-    "cron_list",
-    "cron_register",
-    "cron_set_enabled",
-    "cron_unregister",
     "db_columns",
     "db_connect",
     "db_disconnect",
@@ -2204,9 +2224,6 @@ export const ipcContractManifest = {
     "local_file_read",
     "local_file_read_range",
     "local_folder_list",
-    "log_tail_cancel",
-    "log_tail_save",
-    "log_tail_start",
     "memory_create",
     "memory_delete",
     "memory_edit",
@@ -2411,6 +2428,26 @@ export interface IPCCommandTypeMap {
     input: Record<string, never>;
     output: contractTypes.WatchTargetSummary[];
   };
+  "cron_get": {
+    input: contractTypes.CronJobRequest;
+    output: contractTypes.CronJob;
+  };
+  "cron_list": {
+    input: contractTypes.CronJobRequest;
+    output: contractTypes.CronJob[];
+  };
+  "cron_register": {
+    input: contractTypes.CronRegisterRequest;
+    output: contractTypes.CronJob;
+  };
+  "cron_set_enabled": {
+    input: contractTypes.CronSetEnabledRequest;
+    output: contractTypes.CronJob;
+  };
+  "cron_unregister": {
+    input: contractTypes.CronJobRequest;
+    output: unknown;
+  };
   "exec_batch_asset_edit": {
     input: contractTypes.AssetBulkEditIPCRequest;
     output: contractTypes.AssetBulkEditIPCResponse;
@@ -2530,6 +2567,18 @@ export interface IPCCommandTypeMap {
   "inventory_target_exec": {
     input: contractTypes.InventoryTargetExecRequest;
     output: contractTypes.InventoryTargetExecResponse;
+  };
+  "log_tail_cancel": {
+    input: contractTypes.LogTailCancelRequest;
+    output: contractTypes.LogTailCancelResult;
+  };
+  "log_tail_save": {
+    input: contractTypes.LogTailSaveRequest;
+    output: contractTypes.LogTailSaveResult;
+  };
+  "log_tail_start": {
+    input: contractTypes.LogTailRequest;
+    output: contractTypes.LogTailStartResult;
   };
   "preview_share_active": {
     input: contractTypes.PreviewShareActiveRequest;

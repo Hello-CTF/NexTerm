@@ -443,26 +443,31 @@
       "stream": "none"
     },
     "cron_get": {
+      "scope": "cron",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "cron_list": {
+      "scope": "cron",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "cron_register": {
+      "scope": "cron",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "cron_set_enabled": {
+      "scope": "cron",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "cron_unregister": {
+      "scope": "cron",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -973,16 +978,19 @@
       "stream": "none"
     },
     "log_tail_cancel": {
+      "scope": "log-tail",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "log_tail_save": {
+      "scope": "log-tail",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "log_tail_start": {
+      "scope": "log-tail",
       "nested": false,
       "channel": true,
       "stream": "json"
@@ -1862,11 +1870,6 @@
     "command_count",
     "command_query",
     "credential_update",
-    "cron_get",
-    "cron_list",
-    "cron_register",
-    "cron_set_enabled",
-    "cron_unregister",
     "db_columns",
     "db_connect",
     "db_disconnect",
@@ -1932,9 +1935,6 @@
     "local_file_read",
     "local_file_read_range",
     "local_folder_list",
-    "log_tail_cancel",
-    "log_tail_save",
-    "log_tail_start",
     "memory_create",
     "memory_delete",
     "memory_edit",

@@ -60,6 +60,8 @@ var contractScopes = []scopeSpec{
 		"sync_status",
 		"sync_wake",
 	}},
+	{name: "cron", prefixes: []string{"cron_"}},
+	{name: "log-tail", prefixes: []string{"log_tail_"}},
 	{name: "ai-roster", prefixes: []string{"ai_roster_"}},
 	{name: "ai-watch", prefixes: []string{"ai_watch_"}},
 	{name: "ai-run", commands: []string{"ai_run_history", "ai_run_recovery_summary"}},

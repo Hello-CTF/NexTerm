@@ -399,6 +399,98 @@ func TestSessionTerminalVerticalContracts(t *testing.T) {
 	}
 }
 
+func TestCronAndLogTailVerticalContracts(t *testing.T) {
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	tests := []struct {
+		name    string
+		scope   string
+		channel bool
+		stream  string
+		output  string
+	}{
+		{name: "cron_register", scope: "cron", stream: "none", output: "CronJob"},
+		{name: "cron_list", scope: "cron", stream: "none", output: "CronJob[]"},
+		{name: "cron_get", scope: "cron", stream: "none", output: "CronJob"},
+		{name: "cron_set_enabled", scope: "cron", stream: "none", output: "CronJob"},
+		{name: "cron_unregister", scope: "cron", stream: "none", output: "unknown"},
+		{name: "log_tail_start", scope: "log-tail", channel: true, stream: "json", output: "LogTailStartResult"},
+		{name: "log_tail_cancel", scope: "log-tail", stream: "none", output: "LogTailCancelResult"},
+		{name: "log_tail_save", scope: "log-tail", stream: "none", output: "LogTailSaveResult"},
+	}
+	selected := make(map[string]bool, len(tests))
+	registry := newTypeRegistry()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, ok := commands[test.name]
+			if !ok {
+				t.Fatalf("selected command %q is missing", test.name)
+			}
+			if command.Scope != test.scope || command.Nested || command.Channel != test.channel || command.Stream != test.stream {
+				t.Fatalf("metadata = scope:%q nested:%t channel:%t stream:%s, want scope:%q nested:false channel:%t stream:%s",
+					command.Scope, command.Nested, command.Channel, command.Stream, test.scope, test.channel, test.stream)
+			}
+			if command.Input == nil || command.Output == nil {
+				t.Fatalf("selected command must carry input/output DTO metadata: %+v", command)
+			}
+			if _, err := registry.ref(command.Input); err != nil {
+				t.Fatal(err)
+			}
+			output, err := registry.ref(command.Output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if output.TS != test.output {
+				t.Fatalf("output = %q, want %q", output.TS, test.output)
+			}
+			selected[test.name] = true
+		})
+	}
+	for name, command := range commands {
+		if (strings.HasPrefix(name, "cron_") || strings.HasPrefix(name, "log_tail_")) && !selected[name] {
+			t.Errorf("command %q is missing from the cron/logTail vertical inventory", name)
+		}
+		if (command.Scope == "cron" || command.Scope == "log-tail") && !selected[name] {
+			t.Errorf("unexpected command %q joined the cron/logTail vertical scopes", name)
+		}
+	}
+
+	cronGet, ok := commands["cron_get"]
+	if !ok || cronGet.Output == nil {
+		t.Fatal("cron_get output metadata is missing")
+	}
+	job := registry.declarations[typeIdentifier(cronGet.Output)]
+	if job == nil {
+		t.Fatal("cron job declaration is missing")
+	}
+	for _, want := range []string{
+		"schedule: string;",
+		"nextRunAt: string;",
+		"retryAt?: string;",
+		"lastCoalesced?: boolean;",
+		"lease: CronLease;",
+		"run: CronRunState;",
+		"ownerId: string;",
+		"ownerKind: string;",
+	} {
+		if !strings.Contains(job.Body, want) {
+			t.Errorf("cron job declaration is missing %q", want)
+		}
+	}
+	manifest := string(generated.files["manifest.ts"])
+	start := strings.Index(manifest, `"log_tail_start": {`)
+	if start < 0 {
+		t.Fatal("log_tail_start manifest entry is missing")
+	}
+	end := strings.Index(manifest[start:], "\n    },")
+	if end < 0 {
+		t.Fatal("log_tail_start manifest entry is unterminated")
+	}
+	if entry := manifest[start : start+end]; !strings.Contains(entry, `streamPayload: "unknown"`) {
+		t.Fatalf("log_tail_start JSON stream payload must remain unknown:\n%s", entry)
+	}
+}
+
 func TestConsumedJSONFieldRenameFailsDriftCheck(t *testing.T) {
 	baseline := generateForTest(t, nil)
 	root := repositoryRoot(t)
