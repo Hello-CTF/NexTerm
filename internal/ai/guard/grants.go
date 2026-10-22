@@ -127,15 +127,16 @@ type grantRuleRecord struct {
 }
 
 type Grants struct {
-	settings            Settings
-	audit               GrantAuditor
-	now                 func() time.Time
-	newID               func() string
-	shared              bool
-	targetValidator     TargetValidator
-	mutationValidator   MutationValidator
-	environmentResolver EnvironmentResolver
-	conns               *connAssetRegistry
+	settings               Settings
+	audit                  GrantAuditor
+	now                    func() time.Time
+	newID                  func() string
+	shared                 bool
+	targetValidator        TargetValidator
+	mutationValidator      MutationValidator
+	environmentResolver    EnvironmentResolver
+	revalidationAfterState func()
+	conns                  *connAssetRegistry
 
 	mu     sync.RWMutex
 	states map[string]*grantState
@@ -149,9 +150,9 @@ func NewGrants(ctx context.Context, settings Settings, audit GrantAuditor, opts 
 	manager := &Grants{
 		settings: settings, audit: audit, now: time.Now, newID: ids.New, shared: configuration.shared,
 		targetValidator: configuration.targetValidator, mutationValidator: configuration.mutationValidator,
-		environmentResolver: configuration.environmentResolver,
-		conns:               newConnAssetRegistry(configuration.shared),
-		states:              map[string]*grantState{},
+		environmentResolver: configuration.environmentResolver, revalidationAfterState: configuration.revalidationAfterState,
+		conns:  newConnAssetRegistry(configuration.shared),
+		states: map[string]*grantState{},
 	}
 	if _, err := owner.ID(ctx, manager.shared); err == nil {
 		if err := manager.Reload(ctx); err != nil {
@@ -728,29 +729,42 @@ func (g *Grants) RevalidateAuthorization(ctx context.Context, binding *Authoriza
 	if err := g.authorizeTarget(ctx, binding.DeviceID); err != nil {
 		return err
 	}
-	entry, err := g.stateFor(ctx)
+	ownerID, err := owner.ID(ctx, g.shared)
 	if err != nil {
 		return err
 	}
-	valid := false
-	g.mu.RLock()
-	switch binding.Kind {
-	case "grant":
-		grant, ok := entry.grants[binding.DeviceID]
-		valid = ok && grant.generation == binding.Generation
-	case "rule":
-		for _, rule := range entry.rules {
-			if rule.ID == binding.RuleID && rule.DeviceID == binding.DeviceID {
-				valid = rule.generation == binding.Generation && !rule.Expired(g.now())
-				break
+	for {
+		entry, err := g.stateFor(ctx)
+		if err != nil {
+			return err
+		}
+		if g.revalidationAfterState != nil {
+			g.revalidationAfterState()
+		}
+		valid := false
+		g.mu.RLock()
+		if g.states[ownerID] != entry {
+			g.mu.RUnlock()
+			continue
+		}
+		switch binding.Kind {
+		case "grant":
+			grant, ok := entry.grants[binding.DeviceID]
+			valid = ok && grant.generation == binding.Generation
+		case "rule":
+			for _, rule := range entry.rules {
+				if rule.ID == binding.RuleID && rule.DeviceID == binding.DeviceID {
+					valid = rule.generation == binding.Generation && !rule.Expired(g.now())
+					break
+				}
 			}
 		}
+		g.mu.RUnlock()
+		if !valid {
+			return errors.New("自动授权已撤销或变化，请重新评估")
+		}
+		return nil
 	}
-	g.mu.RUnlock()
-	if !valid {
-		return errors.New("自动授权已撤销或变化，请重新评估")
-	}
-	return nil
 }
 
 func (g *Grants) persistLocked(ctx context.Context, grants map[string]DeviceGrant) error {

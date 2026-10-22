@@ -937,3 +937,98 @@ func TestAuthorizationGenerationMigrationConflictDoesNotReviveGORMRecords(t *tes
 		})
 	}
 }
+
+func TestAuthorizationRevalidationReloadRevokeBeforeAdmission(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		kind     string
+		recorded bool
+	}{
+		{name: "grant_execution", kind: "grant"},
+		{name: "grant_outcome", kind: "grant", recorded: true},
+		{name: "rule_execution", kind: "rule"},
+		{name: "rule_outcome", kind: "rule", recorded: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			database := dbtest.NewFixture(t).OpenStore(t)
+			ctx := ipc.WithUserID(context.Background(), "owner-reload-revoke-"+test.name)
+			recorder := &chatGrantRecorder{}
+			var grants *guard.Grants
+			var once sync.Once
+			var hookErr error
+			armed := false
+			ruleID := ""
+			manager, err := guard.NewGrants(ctx, database, recorder.record, guard.WithShared(false), guard.WithRevalidationAfterState(func() {
+				if !armed {
+					return
+				}
+				once.Do(func() {
+					if err := grants.Reload(ctx); err != nil {
+						hookErr = err
+						return
+					}
+					if test.kind == "grant" {
+						hookErr = grants.Revoke(ctx, "asset-a")
+					} else {
+						hookErr = grants.RevokeRule(ctx, ruleID)
+					}
+				})
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			grants = manager
+			if test.kind == "grant" {
+				if _, err := grants.Grant(ctx, "asset-a", []guard.GrantKind{guard.GrantKindTerminalWrite}); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				rule, err := grants.AddRule(ctx, "asset-a", "send_keys", "", time.Time{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				ruleID = rule.ID
+			}
+			decision := grants.Evaluate(ctx, guard.Config{Mode: guard.ReadWrite}, guard.Confirm(guard.KindProcess, "write"), nil, "asset-a", "send_keys", "job-grant-1")
+			if decision.Action != guard.ActionAllow || decision.Authorization == nil {
+				t.Fatalf("initial authorization = %+v", decision)
+			}
+			h := newChatGrantHarness(guard.Config{Mode: guard.ReadWrite}, "asset-a", grants, recorder)
+			outcomeStore, err := outcome.NewSQLiteStore(database.GORM())
+			if err != nil {
+				t.Fatal(err)
+			}
+			ledger, err := outcome.New(outcome.Options{Store: outcomeStore, Auditor: database.OutcomeAuditor()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.execution.Registry.deps.Outcome = ledger
+			call := p1Call("call-reload-revoke-"+test.name, "send_keys", `{"keys":"touch /tmp/reload-revoke","enter":true}`)
+			call.AuthorizationID = GuardAuthorizationID(decision)
+			call.Authorization = decision.Authorization
+			execute := func() Output {
+				return h.execution.Registry.Execute(ctx, h.execution.JobID, h.execution.Scope, call, nil)
+			}
+			wantWrites := 0
+			if test.recorded {
+				if first := execute(); !first.OK {
+					t.Fatalf("initial execution = %+v", first)
+				}
+				wantWrites = 1
+			}
+			armed = true
+			if result := execute(); result.OK {
+				t.Fatalf("Reload→Revoke still returned success (recorded=%t): %+v", test.recorded, result)
+			}
+			if hookErr != nil {
+				t.Fatal(hookErr)
+			}
+			if writes := h.writeCount(); writes != wantWrites {
+				t.Fatalf("writes after Reload→Revoke = %d, want %d", writes, wantWrites)
+			}
+			if err := grants.RevalidateAuthorization(ctx, decision.Authorization); err == nil {
+				t.Fatal("final authorization revalidation accepted the revoked generation")
+			}
+		})
+	}
+}
