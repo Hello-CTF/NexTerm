@@ -28,6 +28,7 @@ const TONE_BADGE: Record<AgentStateTone, string> = {
 const APPROVAL_LABEL: Record<AgentApprovalDecision, string> = {
   approve_once: "已批准一次",
   approve_session: "已本会话批准",
+  approve_persistent: "已永久批准",
   deny: "已拒绝",
 };
 

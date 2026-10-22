@@ -85,7 +85,7 @@ export interface AgentRecoverySummary {
   truncated: boolean;
 }
 
-export type AgentApprovalDecision = "approve_once" | "approve_session" | "deny";
+export type AgentApprovalDecision = "approve_once" | "approve_session" | "approve_persistent" | "deny";
 
 export interface AgentApproval {
   requestId: string;

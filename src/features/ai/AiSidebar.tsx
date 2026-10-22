@@ -27,9 +27,17 @@ import { GrantPanel } from "./GrantPanel";
 import { CronPanel } from "./CronPanel";
 import { AgentRosterPanel } from "./AgentRosterPanel";
 import { AgentRunHistoryPanel } from "./AgentRunHistoryPanel";
+import { AgentToolCard } from "./AgentToolCard";
 import { WatchPanel } from "./WatchPanel";
 import { createAgentRosterApi, createAgentRunHistoryApi } from "./agentProduction";
-import type { AgentApprovalDecision, AgentRosterEntry } from "./agentTypes";
+import {
+  ToolHandleRegistry,
+  approvalFromConfirmCard,
+  buildAgentToolCall,
+  runSummaryFromAttempt,
+} from "./agentToolData";
+import { refreshAgentRosterSnapshot, useAgentRosterSnapshot } from "./agentRosterSnapshot";
+import type { AgentApprovalDecision, AgentRosterEntry, AgentToolCall } from "./agentTypes";
 import { watchPanelApi } from "../../ipc/watchApi";
 import { useAuth } from "../auth/store";
 import { ModelSelector } from "./ModelSelector";
@@ -58,6 +66,7 @@ import {
   type QuestionItem,
   type StatusLine,
   type SubagentTimeline,
+  type ToolItem,
 } from "./conversation";
 import { createConversationStream, type ConversationStream } from "./conversationStream";
 import { useConversationFollow } from "./conversationFollow";
@@ -698,6 +707,23 @@ function AiChatTab({
   const getSnapshot = useCallback(() => stream.getState(), [stream]);
   const conv = useSyncExternalStore(subscribe, getSnapshot);
 
+  // Tool-card handle tracking: the verified roster handle of each tool call
+  // is captured from the actual toolCall/toolResult event stream (live,
+  // replayed, and cross-restart resumed alike) instead of ever being
+  // re-derived. The registry fails closed on conflicting evidence, and the
+  // roster snapshot joins host/cwd/presence through real ai_roster_list data.
+  const toolHandlesRef = useRef<ToolHandleRegistry | null>(null);
+  if (toolHandlesRef.current === null) toolHandlesRef.current = new ToolHandleRegistry();
+  const [toolHandleVersion, setToolHandleVersion] = useState(0);
+  const lastRefreshedHandleVersionRef = useRef(0);
+  const pushAgentEvent = useCallback(
+    (generation: number, ev: Record<string, unknown>): ReturnType<typeof stream.pushEvent> => {
+      if (toolHandlesRef.current?.record(ev)) setToolHandleVersion((version) => version + 1);
+      return stream.pushEvent(generation, ev);
+    },
+    [stream],
+  );
+
   const [input, setInput] = useState(draft ?? "");
   const onDraftChangeRef = useRef(onDraftChange);
   onDraftChangeRef.current = onDraftChange;
@@ -880,6 +906,13 @@ function AiChatTab({
   onConversationChangeRef.current = onConversationChange;
   const updateConversationId = useCallback((id: string | undefined, title?: string) => {
     if (!isLifecycleActive()) return;
+    if (conversationIdRef.current !== id) {
+      // A real conversation switch invalidates the tool-handle tracking of
+      // the previous conversation; replayed events of the new one re-record.
+      toolHandlesRef.current?.clear();
+      setToolHandleVersion(0);
+      lastRefreshedHandleVersionRef.current = 0;
+    }
     conversationIdRef.current = id;
     restoreBindingRef.current = id === undefined
       ? null
@@ -1185,7 +1218,7 @@ function AiChatTab({
         if (!hasOutcome) {
           const terminalEvent = terminalEventOf(terminalRun);
           if (terminalEvent) {
-            stream.pushEvent(operation.generation, terminalEvent);
+            pushAgentEvent(operation.generation, terminalEvent);
             stream.flush();
           }
         }
@@ -1352,7 +1385,7 @@ function AiChatTab({
       (events) => {
         for (const event of events) {
           if (!isLifecycleActive()) return;
-          const result = stream.pushEvent(generation, event as Record<string, unknown>);
+          const result = pushAgentEvent(generation, event as Record<string, unknown>);
           if (result.accepted) applied += 1;
           maybeOpenAiCreatedTerminal(generation, event as Record<string, unknown>, result);
           if (result.terminal) settleRestoredRun(generation);
@@ -1362,7 +1395,7 @@ function AiChatTab({
       { shouldContinue: isLifecycleActive },
     );
     return { applied, failed };
-  }, [stream, isLifecycleActive, maybeOpenAiCreatedTerminal, settleRestoredRun]);
+  }, [stream, isLifecycleActive, maybeOpenAiCreatedTerminal, settleRestoredRun, pushAgentEvent]);
 
   const catchUpRunEvents = useCallback((
     generation: number,
@@ -1430,7 +1463,7 @@ function AiChatTab({
       if (!hasOutcome) {
         const event = terminalEventOf(run);
         if (event) {
-          stream.pushEvent(generation, event);
+          pushAgentEvent(generation, event);
           stream.flush();
         }
       }
@@ -1532,7 +1565,7 @@ function AiChatTab({
         (events) => {
           for (const event of events) {
             if (!isRestoreActive(restoreGeneration, id)) return;
-            stream.pushEvent(generation, event as Record<string, unknown>);
+            pushAgentEvent(generation, event as Record<string, unknown>);
           }
           if (isRestoreActive(restoreGeneration, id)) stream.flush();
         },
@@ -1567,7 +1600,7 @@ function AiChatTab({
         }
         return;
       }
-      const result = stream.pushEvent(generation, ev);
+      const result = pushAgentEvent(generation, ev);
       if (result.gap) resyncRun(generation, resumable.run.id);
       maybeOpenAiCreatedTerminal(generation, ev, result);
       if (!result.terminal) return;
@@ -1609,6 +1642,7 @@ function AiChatTab({
     runControl,
     pushToast,
     tabKey,
+    pushAgentEvent,
   ]);
 
   const restoreConversation = useCallback(
@@ -1737,7 +1771,7 @@ function AiChatTab({
         }
         return;
       }
-      const result = stream.pushEvent(run.generation, ev);
+      const result = pushAgentEvent(run.generation, ev);
       if (result.gap && current.jobId) resyncRun(run.generation, current.jobId);
       maybeOpenAiCreatedTerminal(run.generation, ev, result);
       if (!result.terminal) return;
@@ -1798,7 +1832,7 @@ function AiChatTab({
     } catch (e) {
       const current = activeRunRef.current;
       if (isLifecycleActive() && isCurrentAiRun(current, run.generation)) {
-        const result = stream.pushEvent(run.generation, {
+        const result = pushAgentEvent(run.generation, {
           type: "error",
           message: describeError(e),
         });
@@ -2081,7 +2115,14 @@ function AiChatTab({
         }
         environmentNames = challenge.submittedNames;
       }
-      const mapped = decision === "approve_once" ? "allow" : decision === "approve_session" ? "allow_session" : "deny";
+      const mapped =
+        decision === "approve_once"
+          ? "allow"
+          : decision === "approve_session"
+            ? "allow_session"
+            : decision === "approve_persistent"
+              ? "allow_persistent"
+              : "deny";
       const submitted = await submitConfirmCard(card, mapped, environmentNames);
       if (!submitted) {
         throw { code: "internal", message: "审批提交失败，请重试" };
@@ -2103,6 +2144,63 @@ function AiChatTab({
   );
   const agentHistoryApi = useMemo(() => createAgentRunHistoryApi(), []);
   const watchOwner = agentOwnerId === "" ? "local" : agentOwnerId;
+
+  // The roster snapshot joins the recorded handles onto real roster rows;
+  // it reloads once per recorded-handle change, loads are shared in-flight,
+  // and a stale conversation's response never lands.
+  const rosterSnapshot = useAgentRosterSnapshot(conversationId);
+  const rosterByHandle = useMemo(() => {
+    const map = new Map<string, AgentRosterEntry>();
+    for (const entry of rosterSnapshot ?? []) map.set(entry.handle, entry);
+    return map;
+  }, [rosterSnapshot]);
+  // The snapshot reloads once per recorded-handle change; a handle the
+  // roster never covers stays honestly unknown instead of spinning reloads.
+  useEffect(() => {
+    if (!conversationId || !agentRosterApi || toolHandleVersion === 0) return;
+    if (lastRefreshedHandleVersionRef.current === toolHandleVersion) return;
+    lastRefreshedHandleVersionRef.current = toolHandleVersion;
+    void refreshAgentRosterSnapshot(agentRosterApi, conversationId);
+  }, [conversationId, agentRosterApi, toolHandleVersion]);
+  const runRowsByJobId = useMemo(() => {
+    const map = new Map<string, (typeof conversationRuns)[number]>();
+    for (const row of conversationRuns) map.set(row.id, row);
+    return map;
+  }, [conversationRuns]);
+  const agentToolCallFor = useCallback(
+    (item: ToolItem): AgentToolCall | null => {
+      const lookup = toolHandlesRef.current?.lookup(item.callId) ?? { kind: "unknown" as const };
+      if (lookup.kind !== "handle") return null;
+      const attempt = conv.attempts.find((candidate) => candidate.generation === item.attempt);
+      const run = attempt
+        ? runSummaryFromAttempt(attempt.outcome, attempt.jobId ? runRowsByJobId.get(attempt.jobId) : undefined)
+        : null;
+      const confirm = [...conv.items]
+        .reverse()
+        .find(
+          (candidate): candidate is ConfirmItem =>
+            candidate.role === "confirm" &&
+            candidate.callId === item.callId &&
+            (item.attempt === null || candidate.attempt === item.attempt),
+        );
+      return buildAgentToolCall(
+        item,
+        lookup.handle,
+        rosterByHandle.get(lookup.handle),
+        run,
+        approvalFromConfirmCard(confirm),
+      );
+    },
+    [conv.attempts, conv.items, runRowsByJobId, rosterByHandle],
+  );
+  const submitAgentApproval = useCallback(
+    (requestId: string, decision: AgentApprovalDecision) => {
+      void resolveAgentApproval(requestId, decision).catch((error: unknown) => {
+        pushToast("error", `审批失败：${describeError(error)}`);
+      });
+    },
+    [resolveAgentApproval, pushToast],
+  );
   const mentionAgentHandle = useCallback((token: string) => {
     setInput((prev) => {
       const base = prev.replace(/\s+$/, "");
@@ -2448,7 +2546,7 @@ function AiChatTab({
         if (type === "done" || type === "error" || type === "canceled") dispose();
         return;
       }
-      const result = stream.pushEvent(run.generation, ev);
+      const result = pushAgentEvent(run.generation, ev);
       if (result.accepted && type === "paused") {
         updateTakeoverPaused(activeRunRef.current?.jobId ?? run.jobId, true);
       } else if (result.accepted && type === "resumed") {
@@ -2647,7 +2745,7 @@ function AiChatTab({
       }
       const current = activeRunRef.current;
       if (isLifecycleActive() && isCurrentAiRun(current, run.generation)) {
-        const result = stream.pushEvent(run.generation, {
+        const result = pushAgentEvent(run.generation, {
           type: "error",
           message: describeError(e),
         });
@@ -3047,6 +3145,9 @@ function AiChatTab({
                   onApprovePlan={handleApprovePlan}
                   onRetry={handleRetryRun}
                   onEdit={handleEditResend}
+                  agentToolCall={item.role === "tool" ? agentToolCallFor(item) : null}
+                  onAgentApproval={submitAgentApproval}
+                  agentApprovalBusy={submittingCardId !== null}
                 />
               </div>
             );
@@ -3619,6 +3720,9 @@ const ChatBubble = memo(function ChatBubble({
   onApprovePlan,
   onRetry,
   onEdit,
+  agentToolCall,
+  onAgentApproval,
+  agentApprovalBusy,
 }: {
   item: ChatItem;
   streaming: boolean;
@@ -3626,6 +3730,9 @@ const ChatBubble = memo(function ChatBubble({
   onApprovePlan: () => void;
   onRetry: (item: ChatItem) => void;
   onEdit: (item: ChatItem) => void;
+  agentToolCall: AgentToolCall | null;
+  onAgentApproval: (requestId: string, decision: AgentApprovalDecision) => void;
+  agentApprovalBusy: boolean;
 }) {
   if (item.role === "user") {
     return (
@@ -3723,7 +3830,21 @@ const ChatBubble = memo(function ChatBubble({
   if (item.role === "plan") {
     return <PlanBubble item={item} approved={planApproved} onApprove={onApprovePlan} />;
   }
-  if (item.role === "tool") return <ToolBubble item={item} />;
+  if (item.role === "tool") {
+    // A tool call with a verified roster handle renders the reviewed agent
+    // tool card (roster-joined identity, run evidence and approval actions);
+    // anything else keeps the plain bubble and claims no roster identity.
+    if (agentToolCall) {
+      return (
+        <AgentToolCard
+          call={agentToolCall}
+          onApproval={onAgentApproval}
+          approvalBusy={agentApprovalBusy}
+        />
+      );
+    }
+    return <ToolBubble item={item} />;
+  }
   return null;
 });
 
