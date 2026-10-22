@@ -312,7 +312,11 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	var fallbackCause error
 	if options.Durable != nil {
 		var err error
-		provider, err = m.durableProviderFor(ctx, session, transport, kind, generation, !options.DurableFallback)
+		if kind == KindSSH && options.DurableFallback && !options.Durable.Recover {
+			provider, err = m.automaticDurableProvider(ctx, session, transport, generation)
+		} else {
+			provider, err = m.durableProviderFor(ctx, session, transport, kind, generation, !options.DurableFallback)
+		}
 		if err == nil && kind == KindSSH && options.DurableFallback && !options.Durable.Recover {
 			err = session.cachedDurableCreateFailure(transport, generation)
 		}
