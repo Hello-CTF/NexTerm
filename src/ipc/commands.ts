@@ -892,18 +892,18 @@ export type ComposeRedeployAttachRequest = {
 
 export const dockerApi = {
   overview: (sessionId: string) =>
-    call<{ containers: ContainerSummary[]; hostStats: Record<string, number> }>(
-      "docker_overview",
-      { sessionId },
-    ),
-  ps: (sessionId: string) => call<ContainerSummary[]>("docker_ps", { sessionId }),
+    call("docker_overview", { sessionId }) as Promise<{
+      containers: ContainerSummary[];
+      hostStats: Record<string, number>;
+    }>,
+  ps: (sessionId: string) => call("docker_ps", { sessionId }) as Promise<ContainerSummary[]>,
   logsAttach: (
     sessionId: string,
     containerId: string,
     tail: number,
     channel: unknown,
   ) =>
-    call<string>("docker_logs_attach", {
+    call("docker_logs_attach", {
       sessionId,
       containerId,
       tail,
@@ -918,60 +918,65 @@ export const dockerApi = {
     channel: unknown,
     cmd?: string,
   ) =>
-    call<string>("docker_exec_attach", {
+    call("docker_exec_attach", {
       args: { sessionId, containerId, cmd, cols, rows, clientId: clientId() },
       channel,
     }),
   action: (sessionId: string, containerId: string, action: string, newName?: string) =>
-    call<void>("docker_action", { args: { sessionId, containerId, action, newName } }),
-  images: (sessionId: string) => call<ImageSummary[]>("docker_images", { sessionId }),
+    call("docker_action", { args: { sessionId, containerId, action, newName } }) as Promise<void>,
+  images: (sessionId: string) => call("docker_images", { sessionId }) as Promise<ImageSummary[]>,
   imagePull: (sessionId: string, image: string) =>
-    call<string>("docker_image_pull", { sessionId, image }),
+    call("docker_image_pull", { sessionId, image }),
   imageRemove: (sessionId: string, image: string, force?: boolean) =>
-    call<void>("docker_image_remove", { sessionId, image, force }),
+    call("docker_image_remove", { sessionId, image, force }) as Promise<void>,
   inspect: (sessionId: string, containerId: string) =>
-    call<Record<string, unknown>>("docker_inspect", { sessionId, containerId }),
-  stats: (sessionId: string) => call<string>("docker_stats", { sessionId }),
+    call("docker_inspect", { sessionId, containerId }),
+  stats: (sessionId: string) => call("docker_stats", { sessionId }),
   containerListDir: (sessionId: string, containerId: string, path: string) =>
-    call<string[]>("docker_container_list_dir", { sessionId, containerId, path }),
-  composeStacks: (sessionId: string) => call<ComposeOverview>("docker_compose_stacks", { sessionId }),
+    call("docker_container_list_dir", { sessionId, containerId, path }),
+  composeStacks: (sessionId: string) =>
+    call("docker_compose_stacks", { sessionId }) as Promise<ComposeOverview>,
   composeAction: (
     sessionId: string,
     project: string,
     action: "up" | "down" | "restart" | "pull",
     productionConfirmation?: DockerProductionConfirmation,
   ) =>
-    call<string>("docker_compose_action", {
+    call("docker_compose_action", {
       sessionId,
       project,
       action,
       ...(productionConfirmation ? { productionConfirmation } : {}),
     }),
   composeLogsAttach: (sessionId: string, project: string, tail: number, channel: unknown) =>
-    call<string>("docker_compose_logs_attach", { sessionId, project, tail, channel, clientId: clientId() }),
+    call("docker_compose_logs_attach", { sessionId, project, tail, channel, clientId: clientId() }),
   composeRedeployPrepare: (request: ComposeRedeployPrepareRequest) =>
-    call<{ ticket: string; contentHash: string }>("docker_compose_redeploy_prepare", request),
+    call("docker_compose_redeploy_prepare", request) as Promise<{ ticket: string; contentHash: string }>,
   composeRedeployAttach: (request: ComposeRedeployAttachRequest) => {
     const { channel, ...body } = request;
-    return call<string>("docker_compose_redeploy_attach", { ...body, channel, clientId: clientId() });
+    return call("docker_compose_redeploy_attach", { ...body, channel, clientId: clientId() });
   },
-  diskUsage: (sessionId: string) => call<DockerDiskUsage>("docker_disk_usage", { sessionId }),
+  diskUsage: (sessionId: string) =>
+    call("docker_disk_usage", { sessionId }) as Promise<DockerDiskUsage>,
   prunePreview: (sessionId: string, kinds: DockerPruneKind[]) =>
-    call<DockerPrunePreview>("docker_prune_preview", { sessionId, kinds }),
+    call("docker_prune_preview", { sessionId, kinds }) as Promise<DockerPrunePreview>,
   prune: (
     sessionId: string,
     token: string,
     digest: string,
     productionConfirmation?: DockerProductionConfirmation,
   ) =>
-    call<DockerPruneResult>("docker_prune", {
+    call("docker_prune", {
       sessionId,
       token,
       digest,
       ...(productionConfirmation ? { productionConfirmation } : {}),
-    }),
+    }) as Promise<DockerPruneResult>,
   reclaimable: (sessionId: string) =>
-    call<{ totalBytes: number; categories: DiskCategory[] }>("docker_reclaimable", { sessionId }),
+    call("docker_reclaimable", { sessionId }) as Promise<{
+      totalBytes: number;
+      categories: DiskCategory[];
+    }>,
 };
 
 export interface QueryResult {

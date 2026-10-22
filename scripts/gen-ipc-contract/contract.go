@@ -82,6 +82,7 @@ var contractScopes = []scopeSpec{
 	{name: "ai-run", commands: []string{"ai_run_history", "ai_run_recovery_summary"}},
 	{name: "ai-skills", prefixes: []string{"ai_skills_"}},
 	{name: "ai-grant", prefixes: []string{"ai_grant_"}},
+	{name: "docker", prefixes: []string{"docker_"}},
 	{name: "fs", prefixes: []string{"fs_"}},
 	{name: "local-file", prefixes: []string{"local_file_", "local_folder_"}},
 	{name: "mount", prefixes: []string{"mount_"}},
@@ -266,7 +267,12 @@ func extractContracts(loaded []*packages.Package) ([]commandContract, error) {
 							return false
 						}
 						contract.Input = input
-						contract.Output = signature.Results().At(0).Type()
+						output, err := projectConsumerCommandOutput(name, signature.Results().At(0).Type(), loaded)
+						if err != nil {
+							extractionErr = fmt.Errorf("project %s output: %w", name, err)
+							return false
+						}
+						contract.Output = output
 					}
 					if existing, exists := commandsByName[name]; exists {
 						if selected || existing.Scope != "" {
@@ -304,6 +310,63 @@ func extractContracts(loaded []*packages.Package) ([]commandContract, error) {
 	}
 	sort.Slice(commands, func(i, j int) bool { return commands[i].Name < commands[j].Name })
 	return commands, nil
+}
+
+var consumerCommandOutputProjections = map[string]string{
+	"docker_compose_action":           "string",
+	"docker_compose_redeploy_prepare": "github.com/Hello-CTF/NexTerm/internal/app/production.dockerComposeRedeployPrepareResult",
+	"docker_compose_stacks":           "github.com/Hello-CTF/NexTerm/internal/docker.ComposeOverview",
+	"docker_disk_usage":               "github.com/Hello-CTF/NexTerm/internal/docker.DiskUsage",
+	"docker_images":                   "[]github.com/Hello-CTF/NexTerm/internal/docker.ImageSummary",
+	"docker_overview":                 "github.com/Hello-CTF/NexTerm/internal/docker.Overview",
+	"docker_prune":                    "github.com/Hello-CTF/NexTerm/internal/docker.PruneResult",
+	"docker_prune_preview":            "github.com/Hello-CTF/NexTerm/internal/docker.PrunePreview",
+	"docker_ps":                       "[]github.com/Hello-CTF/NexTerm/internal/docker.ContainerSummary",
+	"docker_reclaimable":              "github.com/Hello-CTF/NexTerm/internal/docker.ReclaimableProbe",
+}
+
+func projectConsumerCommandOutput(command string, registered types.Type, loaded []*packages.Package) (types.Type, error) {
+	identifier, ok := consumerCommandOutputProjections[command]
+	if !ok {
+		return registered, nil
+	}
+	projected, err := resolveConsumerCommandOutputType(identifier, loaded)
+	if err != nil {
+		return nil, err
+	}
+	if typeIdentifier(registered) != "any" && !types.Identical(registered, projected) {
+		return nil, fmt.Errorf("output projection requires any or %s, got %s", identifier, typeIdentifier(registered))
+	}
+	return projected, nil
+}
+
+func resolveConsumerCommandOutputType(identifier string, loaded []*packages.Package) (types.Type, error) {
+	if identifier == "string" {
+		return types.Typ[types.String], nil
+	}
+	if element, ok := strings.CutPrefix(identifier, "[]"); ok {
+		resolved, err := resolveConsumerCommandOutputType(element, loaded)
+		if err != nil {
+			return nil, err
+		}
+		return types.NewSlice(resolved), nil
+	}
+	separator := strings.LastIndex(identifier, ".")
+	if separator <= 0 || separator == len(identifier)-1 {
+		return nil, fmt.Errorf("invalid output type identifier %q", identifier)
+	}
+	packagePath, name := identifier[:separator], identifier[separator+1:]
+	for _, pkg := range loaded {
+		if pkg.PkgPath != packagePath {
+			continue
+		}
+		object, ok := pkg.Types.Scope().Lookup(name).(*types.TypeName)
+		if !ok {
+			return nil, fmt.Errorf("output type %s is missing from %s", name, packagePath)
+		}
+		return object.Type(), nil
+	}
+	return nil, fmt.Errorf("output type package %s is not loaded", packagePath)
 }
 
 func registrationNestedOverrides(loaded []*packages.Package) map[string]bool {

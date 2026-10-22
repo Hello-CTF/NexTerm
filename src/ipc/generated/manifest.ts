@@ -598,104 +598,168 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "docker_action": {
+      scope: "docker",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; ContainerID string \"json:\\\"containerId\\\"\"; Action string \"json:\\\"action\\\"\"; NewName string \"json:\\\"newName,omitempty\\\"\"}", ts: "{\n  sessionId: string;\n  containerId: string;\n  action: string;\n  newName?: string;\n}" },
+      output: { go: "any", ts: "unknown" },
     },
     "docker_compose_action": {
+      scope: "docker",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.dockerComposeActionIPCRequest", ts: "DockerComposeActionIPCRequest" },
+      output: { go: "string", ts: "string" },
     },
     "docker_compose_logs_attach": {
+      scope: "docker",
       nested: false,
       channel: true,
       stream: "binary",
+      streamPayload: "unknown",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.dockerComposeLogsIPCRequest", ts: "DockerComposeLogsIPCRequest" },
+      output: { go: "string", ts: "string" },
     },
     "docker_compose_redeploy_attach": {
+      scope: "docker",
       nested: false,
       channel: true,
       stream: "binary",
+      streamPayload: "unknown",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Project string \"json:\\\"project\\\"\"; Path string \"json:\\\"path\\\"\"; Ticket string \"json:\\\"ticket\\\"\"}", ts: "{\n  sessionId: string;\n  project: string;\n  path: string;\n  ticket: string;\n}" },
+      output: { go: "string", ts: "string" },
     },
     "docker_compose_redeploy_prepare": {
+      scope: "docker",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Project string \"json:\\\"project\\\"\"; Path string \"json:\\\"path\\\"\"; BaseContentBase64 string \"json:\\\"baseContentBase64\\\"\"; ContentBase64 string \"json:\\\"contentBase64\\\"\"; ProductionConfirmation *github.com/Hello-CTF/NexTerm/internal/app/production.dockerProductionConfirmation \"json:\\\"productionConfirmation,omitempty\\\"\"}", ts: "{\n  sessionId: string;\n  project: string;\n  path: string;\n  baseContentBase64: string;\n  contentBase64: string;\n  productionConfirmation?: DockerProductionConfirmation | null;\n}" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.dockerComposeRedeployPrepareResult", ts: "DockerComposeRedeployPrepareResult" },
     },
     "docker_compose_stacks": {
+      scope: "docker",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionIDRequest", ts: "SessionIDRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/docker.ComposeOverview", ts: "ComposeOverview" },
     },
     "docker_container_list_dir": {
+      scope: "docker",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; ContainerID string \"json:\\\"containerId\\\"\"; Path string \"json:\\\"path\\\"\"}", ts: "{\n  sessionId: string;\n  containerId: string;\n  path: string;\n}" },
+      output: { go: "[]string", ts: "string[]" },
     },
     "docker_disk_usage": {
+      scope: "docker",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionIDRequest", ts: "SessionIDRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/docker.DiskUsage", ts: "DiskUsage" },
     },
     "docker_exec_attach": {
+      scope: "docker",
       nested: true,
       channel: true,
       stream: "binary",
+      streamPayload: "unknown",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; ContainerID string \"json:\\\"containerId\\\"\"; Cmd string \"json:\\\"cmd,omitempty\\\"\"; Cols uint \"json:\\\"cols\\\"\"; Rows uint \"json:\\\"rows\\\"\"; ClientID string \"json:\\\"clientId\\\"\"}", ts: "{\n  sessionId: string;\n  containerId: string;\n  cmd?: string;\n  cols: number;\n  rows: number;\n  clientId: string;\n}" },
+      output: { go: "string", ts: "string" },
     },
     "docker_image_pull": {
+      scope: "docker",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Image string \"json:\\\"image\\\"\"}", ts: "{\n  sessionId: string;\n  image: string;\n}" },
+      output: { go: "string", ts: "string" },
     },
     "docker_image_remove": {
+      scope: "docker",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Image string \"json:\\\"image\\\"\"; Force bool \"json:\\\"force,omitempty\\\"\"}", ts: "{\n  sessionId: string;\n  image: string;\n  force?: boolean;\n}" },
+      output: { go: "any", ts: "unknown" },
     },
     "docker_images": {
+      scope: "docker",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionIDRequest", ts: "SessionIDRequest" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/docker.ImageSummary", ts: "ImageSummary[]" },
     },
     "docker_inspect": {
+      scope: "docker",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; ContainerID string \"json:\\\"containerId\\\"\"}", ts: "{\n  sessionId: string;\n  containerId: string;\n}" },
+      output: { go: "encoding/json.RawMessage", ts: "unknown" },
     },
     "docker_logs_attach": {
+      scope: "docker",
       nested: false,
       channel: true,
       stream: "binary",
+      streamPayload: "unknown",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.dockerLogsRequest", ts: "DockerLogsRequest" },
+      output: { go: "string", ts: "string" },
     },
     "docker_overview": {
+      scope: "docker",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionIDRequest", ts: "SessionIDRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/docker.Overview", ts: "Overview" },
     },
     "docker_prune": {
+      scope: "docker",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.dockerPruneIPCRequest", ts: "DockerPruneIPCRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/docker.PruneResult", ts: "PruneResult" },
     },
     "docker_prune_preview": {
+      scope: "docker",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.dockerPrunePreviewIPCRequest", ts: "DockerPrunePreviewIPCRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/docker.PrunePreview", ts: "PrunePreview" },
     },
     "docker_ps": {
+      scope: "docker",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionIDRequest", ts: "SessionIDRequest" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/docker.ContainerSummary", ts: "ContainerSummary[]" },
     },
     "docker_reclaimable": {
+      scope: "docker",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionIDRequest", ts: "SessionIDRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/docker.ReclaimableProbe", ts: "ReclaimableProbe" },
     },
     "docker_stats": {
+      scope: "docker",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionIDRequest", ts: "SessionIDRequest" },
+      output: { go: "string", ts: "string" },
     },
     "exec_batch_asset_edit": {
       scope: "exec-batch",
@@ -2319,26 +2383,6 @@ export const ipcContractManifest = {
     "db_tables",
     "desktop_tray_get",
     "desktop_tray_set",
-    "docker_action",
-    "docker_compose_action",
-    "docker_compose_logs_attach",
-    "docker_compose_redeploy_attach",
-    "docker_compose_redeploy_prepare",
-    "docker_compose_stacks",
-    "docker_container_list_dir",
-    "docker_disk_usage",
-    "docker_exec_attach",
-    "docker_image_pull",
-    "docker_image_remove",
-    "docker_images",
-    "docker_inspect",
-    "docker_logs_attach",
-    "docker_overview",
-    "docker_prune",
-    "docker_prune_preview",
-    "docker_ps",
-    "docker_reclaimable",
-    "docker_stats",
     "forward_create",
     "forward_create_remote",
     "forward_create_socks",
@@ -2595,6 +2639,124 @@ export interface IPCCommandTypeMap {
   "cron_unregister": {
     input: contractTypes.CronJobRequest;
     output: unknown;
+  };
+  "docker_action": {
+    input: {
+  sessionId: string;
+  containerId: string;
+  action: string;
+  newName?: string;
+};
+    output: unknown;
+  };
+  "docker_compose_action": {
+    input: contractTypes.DockerComposeActionIPCRequest;
+    output: string;
+  };
+  "docker_compose_logs_attach": {
+    input: contractTypes.DockerComposeLogsIPCRequest;
+    output: string;
+  };
+  "docker_compose_redeploy_attach": {
+    input: {
+  sessionId: string;
+  project: string;
+  path: string;
+  ticket: string;
+};
+    output: string;
+  };
+  "docker_compose_redeploy_prepare": {
+    input: {
+  sessionId: string;
+  project: string;
+  path: string;
+  baseContentBase64: string;
+  contentBase64: string;
+  productionConfirmation?: contractTypes.DockerProductionConfirmation | null;
+};
+    output: contractTypes.DockerComposeRedeployPrepareResult;
+  };
+  "docker_compose_stacks": {
+    input: contractTypes.SessionIDRequest;
+    output: contractTypes.ComposeOverview;
+  };
+  "docker_container_list_dir": {
+    input: {
+  sessionId: string;
+  containerId: string;
+  path: string;
+};
+    output: string[];
+  };
+  "docker_disk_usage": {
+    input: contractTypes.SessionIDRequest;
+    output: contractTypes.DiskUsage;
+  };
+  "docker_exec_attach": {
+    input: {
+  sessionId: string;
+  containerId: string;
+  cmd?: string;
+  cols: number;
+  rows: number;
+  clientId: string;
+};
+    output: string;
+  };
+  "docker_image_pull": {
+    input: {
+  sessionId: string;
+  image: string;
+};
+    output: string;
+  };
+  "docker_image_remove": {
+    input: {
+  sessionId: string;
+  image: string;
+  force?: boolean;
+};
+    output: unknown;
+  };
+  "docker_images": {
+    input: contractTypes.SessionIDRequest;
+    output: contractTypes.ImageSummary[];
+  };
+  "docker_inspect": {
+    input: {
+  sessionId: string;
+  containerId: string;
+};
+    output: unknown;
+  };
+  "docker_logs_attach": {
+    input: contractTypes.DockerLogsRequest;
+    output: string;
+  };
+  "docker_overview": {
+    input: contractTypes.SessionIDRequest;
+    output: contractTypes.Overview;
+  };
+  "docker_prune": {
+    input: contractTypes.DockerPruneIPCRequest;
+    output: contractTypes.PruneResult;
+  };
+  "docker_prune_preview": {
+    input: contractTypes.DockerPrunePreviewIPCRequest;
+    output: contractTypes.PrunePreview;
+  };
+  "docker_ps": {
+    input: contractTypes.SessionIDRequest;
+    output: contractTypes.ContainerSummary[];
+  };
+  "docker_reclaimable": {
+    input: contractTypes.SessionIDRequest;
+    output: contractTypes.ReclaimableProbe;
+  };
+  "docker_stats": {
+    input: contractTypes.SessionIDRequest;
+    output: string;
   };
   "exec_batch_asset_edit": {
     input: contractTypes.AssetBulkEditIPCRequest;

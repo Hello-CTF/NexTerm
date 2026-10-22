@@ -42,7 +42,7 @@ export type CommandEntryDto = { id: number, sessionId: string, tabId: string, as
 userId: string | null, command: string, source: string, exitCode: number | null,
 startedAt: number, finishedAt: number, };
 
-export type ContainerSummaryDto = { id: string, name: string, image: string, state: string, status: string, ports: string, composeProject: string | null, };
+export type ContainerSummaryDto = import("./generated/types").ContainerSummary;
 
 export type ConversationDto = { id: string, title: string, scope: JsonValue, createdAt: number, updatedAt: number, };
 
@@ -62,7 +62,7 @@ export type ForwardSpecDto = { id: string, sessionId: string, hostId?: string, s
 targetHost: string | null, targetPort: number | null, 
 kind: string, createdAt: number, };
 
-export type ImageSummaryDto = { id: string, repository: string, tag: string, size: string, createdSince: string, };
+export type ImageSummaryDto = import("./generated/types").ImageSummary;
 
 export type SkippedNewerEntry = { kind: string, id: string, name: string, 
 localRevision: number, remoteRevision: number, equalRevision: boolean, };

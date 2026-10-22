@@ -210,6 +210,13 @@ export type BroadcastProductionConfirmation = {
   environmentNames?: string[];
 };
 
+export type BuildCacheUsage = {
+  id: string;
+  type: string;
+  sizeBytes: number;
+  shared: boolean;
+};
+
 export type BundleFileRequest = {
   path: string;
   content: string;
@@ -412,6 +419,24 @@ export type CompareRow = {
   localPayloadHash?: string;
 };
 
+export type ComposeOverview = {
+  cli?: string;
+  available: boolean;
+  message?: string;
+  stacks: ComposeStack[];
+};
+
+export type ComposeStack = {
+  project: string;
+  workingDir: string;
+  configFiles: string[];
+  envPath: string;
+  envExists: boolean;
+  services: string[];
+  readOnly: boolean;
+  reason?: string;
+};
+
 export type ConfirmationRequiredDetail = {
   kind: string;
   batchId: string;
@@ -427,6 +452,22 @@ export type ConfirmationTarget = {
   assetId?: string;
   hostname?: string;
   environment: string;
+};
+
+export type ContainerSummary = {
+  id: string;
+  name: string;
+  image: string;
+  state: string;
+  status: string;
+  ports: string;
+  composeProject: string | null;
+  composeService?: string | null;
+};
+
+export type ContainerUse = {
+  id: string;
+  name: string;
 };
 
 export type ConversationRecoverySummary = {
@@ -557,6 +598,40 @@ export type DigestEntry = {
   groupId: string | null;
 };
 
+export type DiskCategory = {
+  kind: string;
+  total: number;
+  active: number;
+  sizeBytes: number;
+  reclaimableBytes: number;
+};
+
+export type DiskContainer = {
+  id: string;
+  name: string;
+  image: string;
+  status: string;
+  sizeBytes: number;
+};
+
+export type DiskImage = {
+  id: string;
+  repository: string;
+  tag: string;
+  containers: number;
+  sizeBytes: number;
+  uniqueSizeBytes: number;
+};
+
+export type DiskUsage = {
+  categories: DiskCategory[];
+  images: DiskImage[];
+  containers: DiskContainer[];
+  volumes: VolumeUsage[];
+  networks: NetworkUsage[];
+  buildCache: BuildCacheUsage[];
+};
+
 export type Dispatch = {
   name: string;
   description: string;
@@ -565,11 +640,47 @@ export type Dispatch = {
   source: string;
 };
 
+export type DockerComposeActionIPCRequest = {
+  sessionId: string;
+  project: string;
+  action: string;
+  productionConfirmation?: DockerProductionConfirmation | null;
+};
+
+export type DockerComposeLogsIPCRequest = {
+  sessionId: string;
+  project: string;
+  tail?: number | null;
+};
+
+export type DockerComposeRedeployPrepareResult = {
+  ticket: string;
+  contentHash: string;
+};
+
+export type DockerLogsRequest = {
+  sessionId: string;
+  containerId: string;
+  tail: number;
+};
+
 export type DockerProductionConfirmation = {
   confirmed: boolean;
   targetSetHash: string;
   commandHash: string;
   environmentNames?: string[];
+};
+
+export type DockerPruneIPCRequest = {
+  sessionId: string;
+  token: string;
+  digest: string;
+  productionConfirmation?: DockerProductionConfirmation | null;
+};
+
+export type DockerPrunePreviewIPCRequest = {
+  sessionId: string;
+  kinds: string[];
 };
 
 export type Entry = {
@@ -989,12 +1100,26 @@ export type HostShareStreamRequest = {
   streamId: string;
 };
 
+export type HostStats = {
+  containersRunning: number;
+  containersTotal: number;
+  images: number;
+};
+
 export type IDRequest = {
   id?: string;
   q?: string;
   name?: string;
   body?: string;
   path?: string;
+};
+
+export type ImageSummary = {
+  id: string;
+  repository: string;
+  tag: string;
+  size: string;
+  createdSince: string;
 };
 
 export type ImportBundleRequest = {
@@ -1269,6 +1394,15 @@ export type NameRequest = {
   name: string;
 };
 
+export type NetworkUsage = {
+  id: string;
+  name: string;
+  driver: string;
+  scope: string;
+  builtin: boolean;
+  containers: ContainerUse[];
+};
+
 export type OpenTerminalRequest = {
   sessionId: string;
   cols: number;
@@ -1297,6 +1431,11 @@ export type OverrideInput = {
   description?: string | null;
   body?: string | null;
   disabled?: boolean;
+};
+
+export type Overview = {
+  containers: ContainerSummary[];
+  hostStats: HostStats;
 };
 
 export type PreferenceScopeView = {
@@ -1374,6 +1513,37 @@ export type ProductionSettingsUpdateRequest = {
   targetSetConnectProductionOptIn?: boolean | null;
   aiTerminalConnectOptIn?: boolean | null;
   aiTerminalConnectProductionOptIn?: boolean | null;
+};
+
+export type PruneItem = {
+  kind: string;
+  id: string;
+  name: string;
+  bytes: number;
+};
+
+export type PruneItemResult = {
+  item: PruneItem;
+  output?: string;
+  error?: string;
+};
+
+export type PrunePreview = {
+  token: string;
+  digest: string;
+  expiresAt: number;
+  items: PruneItem[];
+  totalBytes: number;
+};
+
+export type PruneResult = {
+  items: PruneItemResult[];
+  freedBytes: number;
+};
+
+export type ReclaimableProbe = {
+  totalBytes: number;
+  categories: DiskCategory[];
 };
 
 export type RemoteAccountDevice = {
@@ -2012,6 +2182,14 @@ export type VaultStatus = {
   autoLockMinutes: number;
   passwordless: boolean;
   systemProtection: boolean;
+};
+
+export type VolumeUsage = {
+  name: string;
+  driver: string;
+  links: number;
+  sizeBytes: number;
+  containers: ContainerUse[];
 };
 
 export type WatchConditionDTO = {

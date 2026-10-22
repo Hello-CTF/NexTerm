@@ -625,6 +625,94 @@ describe("fs, desktop local-file and mount facade IPC contracts", () => {
   });
 });
 
+describe("docker vertical facade IPC contracts", () => {
+  it("preserves the exact envelopes for all 20 commands and stable attach identity", async () => {
+    const prepared = { ticket: "ticket-1", contentHash: "d".repeat(64) };
+    const calls = captureRpc({
+      docker_logs_attach: "logs-stream",
+      docker_exec_attach: "exec-stream",
+      docker_compose_logs_attach: "compose-logs-stream",
+      docker_compose_redeploy_prepare: prepared,
+      docker_compose_redeploy_attach: "redeploy-stream",
+    });
+    const { dockerApi } = await import("../ipc/commands");
+    const productionConfirmation = {
+      confirmed: true as const,
+      targetSetHash: "a".repeat(64),
+      commandHash: "b".repeat(64),
+      environmentNames: ["production"],
+    };
+    const logsChannel = { toJSON: () => "logs-channel" };
+    const execChannel = { toJSON: () => "exec-channel" };
+    const composeLogsChannel = { toJSON: () => "compose-logs-channel" };
+    const redeployChannel = { toJSON: () => "redeploy-channel" };
+    const cases: Array<{ command: IPCCommandName; payload: unknown; invoke: () => Promise<unknown> }> = [
+      { command: "docker_overview", payload: { sessionId: "s1" }, invoke: () => dockerApi.overview("s1") },
+      { command: "docker_ps", payload: { sessionId: "s1" }, invoke: () => dockerApi.ps("s1") },
+      { command: "docker_logs_attach", payload: { sessionId: "s1", containerId: "c1", tail: 500 }, invoke: () => dockerApi.logsAttach("s1", "c1", 500, logsChannel) },
+      { command: "docker_exec_attach", payload: { sessionId: "s1", containerId: "c1", cmd: "sh", cols: 120, rows: 40, clientId: expect.any(String) }, invoke: () => dockerApi.execAttach("s1", "c1", 120, 40, execChannel, "sh") },
+      { command: "docker_action", payload: { sessionId: "s1", containerId: "c1", action: "rename", newName: "web-new" }, invoke: () => dockerApi.action("s1", "c1", "rename", "web-new") },
+      { command: "docker_images", payload: { sessionId: "s1" }, invoke: () => dockerApi.images("s1") },
+      { command: "docker_image_pull", payload: { sessionId: "s1", image: "nginx:latest" }, invoke: () => dockerApi.imagePull("s1", "nginx:latest") },
+      { command: "docker_image_remove", payload: { sessionId: "s1", image: "nginx:latest", force: false }, invoke: () => dockerApi.imageRemove("s1", "nginx:latest", false) },
+      { command: "docker_inspect", payload: { sessionId: "s1", containerId: "c1" }, invoke: () => dockerApi.inspect("s1", "c1") },
+      { command: "docker_stats", payload: { sessionId: "s1" }, invoke: () => dockerApi.stats("s1") },
+      { command: "docker_container_list_dir", payload: { sessionId: "s1", containerId: "c1", path: "/srv" }, invoke: () => dockerApi.containerListDir("s1", "c1", "/srv") },
+      { command: "docker_compose_stacks", payload: { sessionId: "s1" }, invoke: () => dockerApi.composeStacks("s1") },
+      { command: "docker_compose_action", payload: { sessionId: "s1", project: "shop", action: "down", productionConfirmation }, invoke: () => dockerApi.composeAction("s1", "shop", "down", productionConfirmation) },
+      { command: "docker_compose_logs_attach", payload: { sessionId: "s1", project: "shop", tail: 500 }, invoke: () => dockerApi.composeLogsAttach("s1", "shop", 500, composeLogsChannel) },
+      {
+        command: "docker_compose_redeploy_prepare",
+        payload: { sessionId: "s1", project: "shop", path: "/srv/shop/compose.yml", baseContentBase64: "b2xk", contentBase64: "bmV3", productionConfirmation },
+        invoke: async () => expect(await dockerApi.composeRedeployPrepare({ sessionId: "s1", project: "shop", path: "/srv/shop/compose.yml", baseContentBase64: "b2xk", contentBase64: "bmV3", productionConfirmation })).toEqual(prepared),
+      },
+      { command: "docker_compose_redeploy_attach", payload: { sessionId: "s1", project: "shop", path: "/srv/shop/compose.yml", ticket: "ticket-1" }, invoke: () => dockerApi.composeRedeployAttach({ sessionId: "s1", project: "shop", path: "/srv/shop/compose.yml", ticket: "ticket-1", channel: redeployChannel }) },
+      { command: "docker_disk_usage", payload: { sessionId: "s1" }, invoke: () => dockerApi.diskUsage("s1") },
+      { command: "docker_prune_preview", payload: { sessionId: "s1", kinds: ["containers", "images"] }, invoke: () => dockerApi.prunePreview("s1", ["containers", "images"]) },
+      { command: "docker_prune", payload: { sessionId: "s1", token: "preview-token", digest: "c".repeat(64), productionConfirmation }, invoke: () => dockerApi.prune("s1", "preview-token", "c".repeat(64), productionConfirmation) },
+      { command: "docker_reclaimable", payload: { sessionId: "s1" }, invoke: () => dockerApi.reclaimable("s1") },
+    ];
+
+    expect(cases).toHaveLength(20);
+    for (const [index, test] of cases.entries()) {
+      await test.invoke();
+      expectManifestEnvelope(calls[index], test.command, test.payload);
+    }
+    expect(calls).toHaveLength(20);
+    expect(calls[2]?.channel).toBe("logs-channel");
+    expect(calls[3]?.channel).toBe("exec-channel");
+    expect(calls[13]?.channel).toBe("compose-logs-channel");
+    expect(calls[15]?.channel).toBe("redeploy-channel");
+    const execClientId = (calls[3]?.args as { args: { clientId: unknown } }).args.clientId;
+    const attachClientIds = [calls[2]?.clientId, execClientId, calls[13]?.clientId, calls[15]?.clientId];
+    expect(attachClientIds[0]).toEqual(expect.any(String));
+    for (const id of attachClientIds) expect(id).toBe(attachClientIds[0]);
+    expect(calls[3]?.clientId).toBeUndefined();
+  });
+
+  it("omits only unset facade options without dropping operation identity", async () => {
+    const calls = captureRpc();
+    const { dockerApi } = await import("../ipc/commands");
+    const channel = { toJSON: () => "exec-channel" };
+
+    await dockerApi.execAttach("s1", "c1", 80, 24, channel);
+    await dockerApi.action("s1", "c1", "restart");
+    await dockerApi.imageRemove("s1", "nginx:latest");
+    await dockerApi.composeAction("s1", "shop", "up");
+    await dockerApi.composeRedeployPrepare({ sessionId: "s1", project: "shop", path: "/srv/shop/compose.yml", baseContentBase64: "b2xk", contentBase64: "bmV3" });
+    await dockerApi.prune("s1", "preview-token", "c".repeat(64));
+
+    expect(calls).toHaveLength(6);
+    expectManifestEnvelope(calls[0], "docker_exec_attach", { sessionId: "s1", containerId: "c1", cols: 80, rows: 24, clientId: expect.any(String) });
+    expect(calls[0]?.args).not.toHaveProperty("args.cmd");
+    expectManifestEnvelope(calls[1], "docker_action", { sessionId: "s1", containerId: "c1", action: "restart" });
+    expectManifestEnvelope(calls[2], "docker_image_remove", { sessionId: "s1", image: "nginx:latest" });
+    expectManifestEnvelope(calls[3], "docker_compose_action", { sessionId: "s1", project: "shop", action: "up" });
+    expectManifestEnvelope(calls[4], "docker_compose_redeploy_prepare", { sessionId: "s1", project: "shop", path: "/srv/shop/compose.yml", baseContentBase64: "b2xk", contentBase64: "bmV3" });
+    expectManifestEnvelope(calls[5], "docker_prune", { sessionId: "s1", token: "preview-token", digest: "c".repeat(64) });
+  });
+});
+
 describe("ai_edit_resend wire contract", () => {
   it("keeps ai_edit_resend production args flat with exact fields", async () => {
     const calls = captureRpc();

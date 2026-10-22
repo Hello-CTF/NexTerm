@@ -834,6 +834,143 @@ func TestFSLocalMountVerticalContracts(t *testing.T) {
 	}
 }
 
+func TestDockerVerticalContracts(t *testing.T) {
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	structType := func(fields ...string) string {
+		return "{\n  " + strings.Join(fields, "\n  ") + "\n}"
+	}
+	tests := []struct {
+		name    string
+		nested  bool
+		channel bool
+		stream  string
+		input   string
+		output  string
+	}{
+		{name: "docker_action", nested: true, stream: "none", input: structType("sessionId: string;", "containerId: string;", "action: string;", "newName?: string;"), output: "unknown"},
+		{name: "docker_compose_action", stream: "none", input: "DockerComposeActionIPCRequest", output: "string"},
+		{name: "docker_compose_logs_attach", channel: true, stream: "binary", input: "DockerComposeLogsIPCRequest", output: "string"},
+		{name: "docker_compose_redeploy_attach", channel: true, stream: "binary", input: structType("sessionId: string;", "project: string;", "path: string;", "ticket: string;"), output: "string"},
+		{name: "docker_compose_redeploy_prepare", stream: "none", input: structType("sessionId: string;", "project: string;", "path: string;", "baseContentBase64: string;", "contentBase64: string;", "productionConfirmation?: DockerProductionConfirmation | null;"), output: "DockerComposeRedeployPrepareResult"},
+		{name: "docker_compose_stacks", stream: "none", input: "SessionIDRequest", output: "ComposeOverview"},
+		{name: "docker_container_list_dir", stream: "none", input: structType("sessionId: string;", "containerId: string;", "path: string;"), output: "string[]"},
+		{name: "docker_disk_usage", stream: "none", input: "SessionIDRequest", output: "DiskUsage"},
+		{name: "docker_exec_attach", nested: true, channel: true, stream: "binary", input: structType("sessionId: string;", "containerId: string;", "cmd?: string;", "cols: number;", "rows: number;", "clientId: string;"), output: "string"},
+		{name: "docker_image_pull", stream: "none", input: structType("sessionId: string;", "image: string;"), output: "string"},
+		{name: "docker_image_remove", stream: "none", input: structType("sessionId: string;", "image: string;", "force?: boolean;"), output: "unknown"},
+		{name: "docker_images", stream: "none", input: "SessionIDRequest", output: "ImageSummary[]"},
+		{name: "docker_inspect", stream: "none", input: structType("sessionId: string;", "containerId: string;"), output: "unknown"},
+		{name: "docker_logs_attach", channel: true, stream: "binary", input: "DockerLogsRequest", output: "string"},
+		{name: "docker_overview", stream: "none", input: "SessionIDRequest", output: "Overview"},
+		{name: "docker_prune", stream: "none", input: "DockerPruneIPCRequest", output: "PruneResult"},
+		{name: "docker_prune_preview", stream: "none", input: "DockerPrunePreviewIPCRequest", output: "PrunePreview"},
+		{name: "docker_ps", stream: "none", input: "SessionIDRequest", output: "ContainerSummary[]"},
+		{name: "docker_reclaimable", stream: "none", input: "SessionIDRequest", output: "ReclaimableProbe"},
+		{name: "docker_stats", stream: "none", input: "SessionIDRequest", output: "string"},
+	}
+	selected := make(map[string]bool, len(tests))
+	registry := newTypeRegistry()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, ok := commands[test.name]
+			if !ok {
+				t.Fatalf("selected command %q is missing", test.name)
+			}
+			if command.Scope != "docker" || command.Nested != test.nested || command.Channel != test.channel || command.Stream != test.stream {
+				t.Fatalf("metadata = scope:%q nested:%t channel:%t stream:%s, want scope:docker nested:%t channel:%t stream:%s",
+					command.Scope, command.Nested, command.Channel, command.Stream, test.nested, test.channel, test.stream)
+			}
+			if command.Input == nil || command.Output == nil {
+				t.Fatalf("selected command must carry input/output DTO metadata: %+v", command)
+			}
+			input, err := registry.ref(command.Input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if input.TS != test.input {
+				t.Fatalf("input = %q, want %q", input.TS, test.input)
+			}
+			output, err := registry.ref(command.Output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if output.TS != test.output {
+				t.Fatalf("output = %q, want %q", output.TS, test.output)
+			}
+			selected[test.name] = true
+		})
+	}
+	if len(selected) != 20 {
+		t.Fatalf("selected docker command count = %d, want 20", len(selected))
+	}
+	for name, command := range commands {
+		if strings.HasPrefix(name, "docker_") && !selected[name] {
+			t.Errorf("docker command %q is missing from the vertical inventory", name)
+		}
+		if command.Scope == "docker" && !selected[name] {
+			t.Errorf("unexpected command %q joined the docker vertical", name)
+		}
+	}
+
+	declarations := make(map[string]*tsDeclaration)
+	for _, declaration := range registry.declarations {
+		declarations[declaration.Name] = declaration
+	}
+	declarationTests := []struct {
+		name   string
+		want   []string
+		absent []string
+	}{
+		{name: "DockerProductionConfirmation", want: []string{"confirmed: boolean;", "targetSetHash: string;", "commandHash: string;", "environmentNames?: string[];"}, absent: []string{"\n  sessionId:", "\n  project:", "\n  action:", "\n  token:"}},
+		{name: "DockerComposeActionIPCRequest", want: []string{"sessionId: string;", "project: string;", "action: string;", "productionConfirmation?: DockerProductionConfirmation | null;"}},
+		{name: "DockerComposeLogsIPCRequest", want: []string{"sessionId: string;", "project: string;", "tail?: number | null;"}},
+		{name: "DockerComposeRedeployPrepareResult", want: []string{"ticket: string;", "contentHash: string;"}},
+		{name: "DockerPruneIPCRequest", want: []string{"sessionId: string;", "token: string;", "digest: string;", "productionConfirmation?: DockerProductionConfirmation | null;"}},
+		{name: "PrunePreview", want: []string{"token: string;", "digest: string;", "expiresAt: number;", "items: PruneItem[];", "totalBytes: number;"}},
+		{name: "PruneResult", want: []string{"items: PruneItemResult[];", "freedBytes: number;"}},
+		{name: "ContainerSummary", want: []string{"id: string;", "composeProject: string | null;", "composeService?: string | null;"}},
+		{name: "Overview", want: []string{"containers: ContainerSummary[];", "hostStats: HostStats;"}},
+		{name: "ComposeOverview", want: []string{"cli?: string;", "available: boolean;", "stacks: ComposeStack[];"}},
+		{name: "DiskUsage", want: []string{"categories: DiskCategory[];", "images: DiskImage[];", "containers: DiskContainer[];", "volumes: VolumeUsage[];", "networks: NetworkUsage[];", "buildCache: BuildCacheUsage[];"}},
+		{name: "ReclaimableProbe", want: []string{"totalBytes: number;", "categories: DiskCategory[];"}},
+	}
+	for _, test := range declarationTests {
+		declaration := declarations[test.name]
+		if declaration == nil {
+			t.Errorf("%s declaration is missing", test.name)
+			continue
+		}
+		for _, want := range test.want {
+			if !strings.Contains(declaration.Body, want) {
+				t.Errorf("%s declaration is missing %q:\n%s", test.name, want, declaration.Body)
+			}
+		}
+		for _, absent := range test.absent {
+			if strings.Contains(declaration.Body, absent) {
+				t.Errorf("%s declaration unexpectedly exposes %q:\n%s", test.name, absent, declaration.Body)
+			}
+		}
+	}
+	if got := typeIdentifier(commands["docker_inspect"].Output); got != "encoding/json.RawMessage" {
+		t.Fatalf("docker_inspect output = %q, want encoding/json.RawMessage", got)
+	}
+	manifest := string(generated.files["manifest.ts"])
+	for _, name := range []string{"docker_logs_attach", "docker_exec_attach", "docker_compose_logs_attach", "docker_compose_redeploy_attach"} {
+		start := strings.Index(manifest, strconvQuote(name)+": {")
+		if start < 0 {
+			t.Fatalf("%s manifest entry is missing", name)
+		}
+		end := strings.Index(manifest[start:], "\n    },")
+		if end < 0 {
+			t.Fatalf("%s manifest entry is unterminated", name)
+		}
+		if entry := manifest[start : start+end]; !strings.Contains(entry, `streamPayload: "unknown"`) {
+			t.Fatalf("%s stream payload must remain unknown:\n%s", name, entry)
+		}
+	}
+}
+
 func TestConsumedJSONFieldRenameFailsDriftCheck(t *testing.T) {
 	baseline := generateForTest(t, nil)
 	root := repositoryRoot(t)

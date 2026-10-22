@@ -253,6 +253,7 @@ describe("Compose edit and redeploy", () => {
     expect(mocks.composePrepare.mock.invocationCallOrder[1]).toBeLessThan(mocks.composeAttach.mock.invocationCallOrder[0]);
     await waitFor(() => expect(document.body.textContent).toContain("shop · up -d"));
     mounted.unmount();
+    expect(mocks.closeTab).toHaveBeenCalledWith("up-stream", "kill", "s1");
   });
 
   it("retries the M15 typed challenge on redeploy with the typed environment names", async () => {

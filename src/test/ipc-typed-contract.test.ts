@@ -670,6 +670,112 @@ void generatedOutputs;
     expect(diagnostics, formatted(diagnostics)).toEqual([]);
   }, COMPILE_BUDGET_MS);
 
+  it("types the Docker vertical without inventing inspect or stream schemas", () => {
+    const probe = resolve("src/test/__ipc_docker_vertical_contract_probe.ts");
+    const source = `
+import {
+  call,
+  dockerApi,
+  type ComposeOverview,
+  type ContainerSummary,
+  type DockerDiskUsage,
+  type DockerPrunePreview,
+} from "../ipc/commands";
+import { ipcContractManifest, type IPCInput, type IPCOutput } from "../ipc/generated/manifest";
+
+type Equal<Left, Right> =
+  (<T>() => T extends Left ? 1 : 2) extends
+  (<T>() => T extends Right ? 1 : 2) ? true : false;
+type Assert<Value extends true> = Value;
+type ContractChecks = [
+  Assert<Equal<IPCOutput<"docker_inspect">, unknown>>,
+  Assert<Equal<IPCOutput<"docker_action">, unknown>>,
+  Assert<Equal<IPCOutput<"docker_image_remove">, unknown>>,
+  Assert<Equal<IPCOutput<"docker_compose_action">, string>>,
+  Assert<Equal<IPCOutput<"docker_prune_preview">["expiresAt"], number>>,
+  Assert<Equal<IPCOutput<"docker_compose_redeploy_prepare">["contentHash"], string>>,
+  Assert<Equal<IPCOutput<"docker_compose_redeploy_prepare">["ticket"], string>>,
+  Assert<Equal<IPCOutput<"docker_overview">["hostStats"]["containersTotal"], number>>,
+  Assert<Equal<IPCInput<"docker_exec_attach">["cmd"], string | undefined>>,
+  Assert<Equal<IPCInput<"docker_action">["newName"], string | undefined>>,
+  Assert<Equal<IPCInput<"docker_image_remove">["force"], boolean | undefined>>,
+  Assert<Equal<(typeof ipcContractManifest.commands)["docker_logs_attach"]["streamPayload"], "unknown">>,
+  Assert<Equal<(typeof ipcContractManifest.commands)["docker_exec_attach"]["streamPayload"], "unknown">>,
+  Assert<Equal<(typeof ipcContractManifest.commands)["docker_compose_logs_attach"]["streamPayload"], "unknown">>,
+  Assert<Equal<(typeof ipcContractManifest.commands)["docker_compose_redeploy_attach"]["streamPayload"], "unknown">>,
+];
+const contractChecks: ContractChecks = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
+void contractChecks;
+
+const containers: Promise<ContainerSummary[]> = dockerApi.ps("s1");
+const compose: Promise<ComposeOverview> = dockerApi.composeStacks("s1");
+const disk: Promise<DockerDiskUsage> = dockerApi.diskUsage("s1");
+const preview: Promise<DockerPrunePreview> = dockerApi.prunePreview("s1", ["containers"]);
+const inspected: Promise<unknown> = dockerApi.inspect("s1", "c1");
+const prepared: Promise<{ ticket: string; contentHash: string }> = dockerApi.composeRedeployPrepare({
+  sessionId: "s1", project: "shop", path: "/srv/shop/compose.yml", baseContentBase64: "b2xk", contentBase64: "bmV3",
+});
+const attached: Promise<string> = dockerApi.execAttach("s1", "c1", 80, 24, {});
+const removed: Promise<void> = dockerApi.imageRemove("s1", "nginx:latest");
+void [containers, compose, disk, preview, inspected, prepared, attached, removed];
+
+void call("docker_ps", { sessionId: "s1" });
+void call("docker_action", { args: { sessionId: "s1", containerId: "c1", action: "restart" } });
+void call("docker_exec_attach", { args: { sessionId: "s1", containerId: "c1", cols: 80, rows: 24, clientId: "client-1" }, channel: {} });
+void call("docker_logs_attach", { sessionId: "s1", containerId: "c1", tail: 500, channel: {} });
+void call("docker_compose_action", { sessionId: "s1", project: "shop", action: "down", productionConfirmation: {
+  confirmed: true, targetSetHash: "a", commandHash: "b", environmentNames: ["production"],
+} });
+void call("docker_compose_redeploy_prepare", {
+  sessionId: "s1", project: "shop", path: "/srv/shop/compose.yml", baseContentBase64: "b2xk", contentBase64: "bmV3",
+  productionConfirmation: { confirmed: true, targetSetHash: "a", commandHash: "b" },
+});
+void call("docker_compose_redeploy_attach", { sessionId: "s1", project: "shop", path: "/srv/shop/compose.yml", ticket: "ticket-1", channel: {} });
+void call("docker_prune", { sessionId: "s1", token: "preview-token", digest: "c" });
+void call("docker_inspect", { sessionId: "s1", containerId: "c1" });
+
+// @ts-expect-error typed docker commands reject the legacy generic output escape
+void call<ContainerSummary[]>("docker_ps", { sessionId: "s1" });
+// @ts-expect-error nested container actions reject flat input
+void call("docker_action", { sessionId: "s1", containerId: "c1", action: "restart" });
+// @ts-expect-error exec attachment retains its nested envelope and required channel
+void call("docker_exec_attach", { sessionId: "s1", containerId: "c1", cols: 80, rows: 24 });
+// @ts-expect-error logs attachment requires its binary channel
+void call("docker_logs_attach", { sessionId: "s1", containerId: "c1", tail: 500 });
+// @ts-expect-error exec dimensions remain numeric
+void call("docker_exec_attach", { args: { sessionId: "s1", containerId: "c1", cols: "80", rows: 24, clientId: "client-1" }, channel: {} });
+// @ts-expect-error redeploy preparation has no attach ticket
+void call("docker_compose_redeploy_prepare", { sessionId: "s1", project: "shop", path: "/srv/shop/compose.yml", baseContentBase64: "b2xk", contentBase64: "bmV3", ticket: "not-yet-issued" });
+// @ts-expect-error redeploy attachment cannot carry a production confirmation around the prepare guard
+void call("docker_compose_redeploy_attach", { sessionId: "s1", project: "shop", path: "/srv/shop/compose.yml", ticket: "ticket-1", productionConfirmation: { confirmed: true, targetSetHash: "a", commandHash: "b" }, channel: {} });
+// @ts-expect-error redeploy attachment requires the issued ticket
+void call("docker_compose_redeploy_attach", { sessionId: "s1", project: "shop", path: "/srv/shop/compose.yml", channel: {} });
+// @ts-expect-error prune digest remains text
+void call("docker_prune", { sessionId: "s1", token: "preview-token", digest: 42 });
+// @ts-expect-error production confirmation fields remain typed
+void call("docker_compose_action", { sessionId: "s1", project: "shop", action: "down", productionConfirmation: { confirmed: "yes", targetSetHash: "a", commandHash: "b" } });
+// @ts-expect-error the public facade still requires an explicit true confirmation
+void dockerApi.composeAction("s1", "shop", "down", { confirmed: false, targetSetHash: "a", commandHash: "b" });
+
+async function generatedOutputs() {
+  const preview = await call("docker_prune_preview", { sessionId: "s1", kinds: ["containers"] });
+  const token: string = preview.token;
+  const digest: string = preview.digest;
+  const expiresAt: number = preview.expiresAt;
+  const prepared = await call("docker_compose_redeploy_prepare", { sessionId: "s1", project: "shop", path: "/srv/shop/compose.yml", baseContentBase64: "b2xk", contentBase64: "bmV3" });
+  const ticket: string = prepared.ticket;
+  const contentHash: string = prepared.contentHash;
+  const inspect: unknown = await call("docker_inspect", { sessionId: "s1", containerId: "c1" });
+  // @ts-expect-error dynamic inspect JSON requires runtime narrowing
+  const inspectID: string = inspect.Id;
+  void [token, digest, expiresAt, ticket, contentHash, inspect, inspectID];
+}
+void generatedOutputs;
+`;
+    const diagnostics = compile([probe], { [probe]: source });
+    expect(diagnostics, formatted(diagnostics)).toEqual([]);
+  }, COMPILE_BUDGET_MS);
+
   it("types the consumer-priority session terminal vertical without narrowing legacy fallbacks", () => {
     const probe = resolve("src/test/__ipc_session_terminal_contract_probe.ts");
     const source = `

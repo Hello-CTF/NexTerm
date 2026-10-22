@@ -523,101 +523,121 @@
       "stream": "none"
     },
     "docker_action": {
+      "scope": "docker",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "docker_compose_action": {
+      "scope": "docker",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "docker_compose_logs_attach": {
+      "scope": "docker",
       "nested": false,
       "channel": true,
       "stream": "binary"
     },
     "docker_compose_redeploy_attach": {
+      "scope": "docker",
       "nested": false,
       "channel": true,
       "stream": "binary"
     },
     "docker_compose_redeploy_prepare": {
+      "scope": "docker",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "docker_compose_stacks": {
+      "scope": "docker",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "docker_container_list_dir": {
+      "scope": "docker",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "docker_disk_usage": {
+      "scope": "docker",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "docker_exec_attach": {
+      "scope": "docker",
       "nested": true,
       "channel": true,
       "stream": "binary"
     },
     "docker_image_pull": {
+      "scope": "docker",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "docker_image_remove": {
+      "scope": "docker",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "docker_images": {
+      "scope": "docker",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "docker_inspect": {
+      "scope": "docker",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "docker_logs_attach": {
+      "scope": "docker",
       "nested": false,
       "channel": true,
       "stream": "binary"
     },
     "docker_overview": {
+      "scope": "docker",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "docker_prune": {
+      "scope": "docker",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "docker_prune_preview": {
+      "scope": "docker",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "docker_ps": {
+      "scope": "docker",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "docker_reclaimable": {
+      "scope": "docker",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "docker_stats": {
+      "scope": "docker",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1922,26 +1942,6 @@
     "db_tables",
     "desktop_tray_get",
     "desktop_tray_set",
-    "docker_action",
-    "docker_compose_action",
-    "docker_compose_logs_attach",
-    "docker_compose_redeploy_attach",
-    "docker_compose_redeploy_prepare",
-    "docker_compose_stacks",
-    "docker_container_list_dir",
-    "docker_disk_usage",
-    "docker_exec_attach",
-    "docker_image_pull",
-    "docker_image_remove",
-    "docker_images",
-    "docker_inspect",
-    "docker_logs_attach",
-    "docker_overview",
-    "docker_prune",
-    "docker_prune_preview",
-    "docker_ps",
-    "docker_reclaimable",
-    "docker_stats",
     "forward_create",
     "forward_create_remote",
     "forward_create_socks",
