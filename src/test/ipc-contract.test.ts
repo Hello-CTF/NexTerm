@@ -30,13 +30,13 @@ function installWebEnv() {
   });
 }
 
-function captureRpc() {
+function captureRpc(results: Record<string, unknown> = {}) {
   const calls: RpcCall[] = [];
   vi.stubGlobal("fetch", async (...fetchArgs: unknown[]) => {
     const init = fetchArgs[1] as { body?: string } | undefined;
     const body = JSON.parse(String(init?.body)) as Omit<RpcCall, "url">;
     calls.push({ url: fetchArgs[0], ...body });
-    return { text: async () => JSON.stringify({ ok: true, data: null }) };
+    return { text: async () => JSON.stringify({ ok: true, data: results[String(body.cmd)] ?? null }) };
   });
   return calls;
 }
@@ -299,6 +299,43 @@ describe("cron IPC wire contract", () => {
     expectManifestEnvelope(calls[0], "cron_register", registration);
   });
 
+  it("omits unset registration options and preserves owner, schedule and run result fields", async () => {
+    const job = {
+      id: "j-1",
+      sessionId: "c-1",
+      prompt: "check disk",
+      schedule: "0 2 * * *",
+      timezone: "UTC",
+      enabled: true,
+      timeout: 60_000_000_000,
+      createdAt: "2030-01-01T00:00:00Z",
+      updatedAt: "2030-01-01T00:00:00Z",
+      revision: 1,
+      nextRunAt: "2030-01-02T02:00:00Z",
+      lease: { owner: "owner-1", expiresAt: "2030-01-01T00:01:00Z" },
+      run: {
+        id: "run-1",
+        scheduledFor: "2030-01-01T02:00:00Z",
+        startedAt: "2030-01-01T02:00:01Z",
+        deadline: "2030-01-01T02:01:01Z",
+        coalesced: true,
+      },
+      ownerId: "account-1",
+      ownerKind: "account",
+    };
+    const calls = captureRpc({ cron_register: job });
+    const { cronApi } = await import("../ipc/cron");
+
+    await expect(cronApi.register({ sessionId: "c-1", prompt: "check disk", schedule: "0 2 * * *" })).resolves.toEqual(job);
+
+    expect(calls).toHaveLength(1);
+    expectManifestEnvelope(calls[0], "cron_register", {
+      sessionId: "c-1",
+      prompt: "check disk",
+      schedule: "0 2 * * *",
+    });
+  });
+
   it("keeps cron_list/get/set_enabled/unregister production args flat", async () => {
     const calls = captureRpc();
     const { cronApi } = await import("../ipc/cron");
@@ -313,6 +350,53 @@ describe("cron IPC wire contract", () => {
     expectManifestEnvelope(calls[1], "cron_get", { sessionId: "c-1", jobId: "j-1" });
     expectManifestEnvelope(calls[2], "cron_set_enabled", { sessionId: "c-1", jobId: "j-1", enabled: false });
     expectManifestEnvelope(calls[3], "cron_unregister", { sessionId: "c-1", jobId: "j-1" });
+  });
+});
+
+describe("logTail IPC wire contract", () => {
+  it("preserves start, cancel and save envelopes and facade result shapes", async () => {
+    const startResult = { runId: "run-1" };
+    const cancelResult = { runId: "run-1", canceled: true };
+    const saveResult = { path: "/tmp/merged.log", bytes: 13 };
+    const calls = captureRpc({
+      log_tail_start: startResult,
+      log_tail_cancel: cancelResult,
+      log_tail_save: saveResult,
+    });
+    const { logTailApi } = await import("../ipc/logTailApi");
+    const request = {
+      runId: "run-1",
+      sources: [{ sourceId: "source-1", sessionId: "session-1", kind: "file" as const, value: "/var/log/app.log" }],
+      maxConcurrent: 2,
+    };
+
+    await expect(logTailApi.start(request, { toJSON: () => "log-tail-1" })).resolves.toEqual(startResult);
+    await expect(logTailApi.cancel("run-1")).resolves.toEqual(cancelResult);
+    await expect(logTailApi.save("/tmp/merged.log", "first\nsecond\n")).resolves.toEqual(saveResult);
+
+    expect(calls).toHaveLength(3);
+    expectManifestEnvelope(calls[0], "log_tail_start", request);
+    expect(calls[0]?.channel).toBe("log-tail-1");
+    expectManifestEnvelope(calls[1], "log_tail_cancel", { runId: "run-1" });
+    expectManifestEnvelope(calls[2], "log_tail_save", {
+      path: "/tmp/merged.log",
+      contentBase64: "Zmlyc3QKc2Vjb25kCg==",
+    });
+  });
+
+  it("omits maxConcurrent when the caller leaves it unset", async () => {
+    const calls = captureRpc();
+    const { logTailApi } = await import("../ipc/logTailApi");
+    const request = {
+      runId: "run-1",
+      sources: [{ sourceId: "source-1", sessionId: "session-1", kind: "journal" as const, value: "nginx.service" }],
+    };
+
+    await logTailApi.start(request, { toJSON: () => "log-tail-1" });
+
+    expect(calls).toHaveLength(1);
+    expectManifestEnvelope(calls[0], "log_tail_start", request);
+    expect(calls[0]?.args).not.toHaveProperty("maxConcurrent");
   });
 });
 

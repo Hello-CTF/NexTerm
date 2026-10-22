@@ -48,18 +48,18 @@ export interface LogTailSaveResult {
 
 export const logTailApi = {
   start: (request: LogTailStartRequest, channel: unknown) =>
-    call<LogTailStartResult>("log_tail_start", {
+    call("log_tail_start", {
       runId: request.runId,
       sources: request.sources,
       maxConcurrent: request.maxConcurrent,
       channel,
-    }),
-  cancel: (runId: string) => call<LogTailCancelResult>("log_tail_cancel", { runId }),
+    }) as Promise<LogTailStartResult>,
+  cancel: (runId: string) => call("log_tail_cancel", { runId }) as Promise<LogTailCancelResult>,
   save: (path: string, content: string) =>
-    call<LogTailSaveResult>("log_tail_save", {
+    call("log_tail_save", {
       path,
       contentBase64: bytesToBase64(new TextEncoder().encode(content)),
-    }),
+    }) as Promise<LogTailSaveResult>,
 };
 
 export function createLogTailRunId(): string {

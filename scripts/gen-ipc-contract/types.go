@@ -28,6 +28,9 @@ type typeRegistry struct {
 
 var tsNameOverrides = map[string]string{
 	"github.com/Hello-CTF/NexTerm/internal/app/production.fsCancelRequest": "FSCancelRequest",
+	"github.com/Hello-CTF/NexTerm/internal/ai/cron.Job":                    "CronJob",
+	"github.com/Hello-CTF/NexTerm/internal/ai/cron.Lease":                  "CronLease",
+	"github.com/Hello-CTF/NexTerm/internal/ai/cron.RunState":               "CronRunState",
 	"github.com/Hello-CTF/NexTerm/internal/execbatch.Request":              "ExecBatchRequest",
 	"github.com/Hello-CTF/NexTerm/internal/execbatch.Batch":                "ExecBatch",
 	"github.com/Hello-CTF/NexTerm/internal/execbatch.Result":               "ExecBatchResult",
@@ -35,6 +38,10 @@ var tsNameOverrides = map[string]string{
 	"github.com/Hello-CTF/NexTerm/internal/forward.Rule":                   "ForwardRule",
 	"github.com/Hello-CTF/NexTerm/internal/forward.ruleRequest":            "ForwardRuleRequest",
 	"github.com/Hello-CTF/NexTerm/internal/forward.startRuleRequest":       "ForwardRuleStartRequest",
+	"github.com/Hello-CTF/NexTerm/internal/logtail.Request":                "LogTailRequest",
+	"github.com/Hello-CTF/NexTerm/internal/logtail.Source":                 "LogTailSource",
+	"github.com/Hello-CTF/NexTerm/internal/logtail.StartResult":            "LogTailStartResult",
+	"github.com/Hello-CTF/NexTerm/internal/logtail.CancelResult":           "LogTailCancelResult",
 	"github.com/Hello-CTF/NexTerm/internal/store.ForwardRuleInput":         "ForwardRuleInput",
 }
 

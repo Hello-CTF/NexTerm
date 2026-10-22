@@ -350,6 +350,68 @@ export type ConversationRecoverySummary = {
   truncated: boolean;
 };
 
+export type CronJob = {
+  id: string;
+  sessionId: string;
+  name?: string;
+  prompt: string;
+  schedule: string;
+  timezone: string;
+  enabled: boolean;
+  timeout: number;
+  modelProfileId?: string;
+  createdAt: string;
+  updatedAt: string;
+  revision: number;
+  nextRunAt: string;
+  retryAt?: string;
+  circuitOpenUntil?: string;
+  consecutiveFailures?: number;
+  lastRunAt?: string;
+  lastScheduledFor?: string;
+  lastCoalesced?: boolean;
+  lastError?: string;
+  lease: CronLease;
+  run: CronRunState;
+  ownerId: string;
+  ownerKind: string;
+};
+
+export type CronJobRequest = {
+  sessionId: string;
+  jobId: string;
+};
+
+export type CronLease = {
+  owner?: string;
+  expiresAt?: string;
+};
+
+export type CronRegisterRequest = {
+  sessionId: string;
+  name?: string;
+  prompt: string;
+  schedule: string;
+  timezone?: string;
+  disabled?: boolean;
+  timeoutMs?: number;
+  modelProfileId?: string;
+};
+
+export type CronRunState = {
+  id: string;
+  scheduledFor: string;
+  startedAt: string;
+  deadline: string;
+  coalesced?: boolean;
+};
+
+export type CronSetEnabledRequest = {
+  sessionId: string;
+  jobId: string;
+  enabled: boolean;
+};
+
 export type DeployPublicKeyRequest = {
   batchId: string;
   sessionIds: string[];
@@ -921,6 +983,43 @@ export type Listener = {
   port: number;
   pid: number;
   program: string;
+};
+
+export type LogTailCancelRequest = {
+  runId: string;
+};
+
+export type LogTailCancelResult = {
+  runId: string;
+  canceled: boolean;
+};
+
+export type LogTailRequest = {
+  runId: string;
+  sources: LogTailSource[];
+  maxConcurrent?: number;
+};
+
+export type LogTailSaveRequest = {
+  path: string;
+  contentBase64: string;
+};
+
+export type LogTailSaveResult = {
+  path: string;
+  bytes: number;
+};
+
+export type LogTailSource = {
+  sourceId: string;
+  sessionId: string;
+  sessionName?: string;
+  kind: string;
+  value: string;
+};
+
+export type LogTailStartResult = {
+  runId: string;
 };
 
 export type NameRequest = {

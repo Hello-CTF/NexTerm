@@ -271,6 +271,92 @@ void generatedOutputs;
     expect(diagnostics, formatted(diagnostics)).toEqual([]);
   }, COMPILE_BUDGET_MS);
 
+  it("types cron and logTail while preserving facade shapes and unresolved stream payloads", () => {
+    const probe = resolve("src/test/__ipc_cron_logtail_contract_probe.ts");
+    const source = `
+import { call } from "../ipc/commands";
+import { cronApi, type CronJob, type CronRegistration } from "../ipc/cron";
+import {
+  logTailApi,
+  type LogTailCancelResult,
+  type LogTailSaveResult,
+  type LogTailSource,
+  type LogTailStartResult,
+} from "../ipc/logTailApi";
+import { ipcContractManifest, type IPCInput, type IPCOutput } from "../ipc/generated/manifest";
+
+type Equal<Left, Right> =
+  (<T>() => T extends Left ? 1 : 2) extends
+  (<T>() => T extends Right ? 1 : 2) ? true : false;
+type Assert<Value extends true> = Value;
+type ContractChecks = [
+  Assert<Equal<IPCOutput<"cron_unregister">, unknown>>,
+  Assert<Equal<(typeof ipcContractManifest.commands)["log_tail_start"]["streamPayload"], "unknown">>,
+  Assert<Equal<IPCOutput<"cron_get">["ownerId"], string>>,
+  Assert<Equal<IPCOutput<"cron_get">["ownerKind"], string>>,
+  Assert<Equal<IPCOutput<"cron_get">["run"]["scheduledFor"], string>>,
+  Assert<Equal<IPCInput<"log_tail_start">["maxConcurrent"], number | undefined>>,
+];
+const contractChecks: ContractChecks = [true, true, true, true, true, true];
+void contractChecks;
+
+const registration: CronRegistration = { sessionId: "conversation-1", prompt: "check disk", schedule: "0 2 * * *" };
+const created: Promise<CronJob> = cronApi.register(registration);
+const listed: Promise<CronJob[]> = cronApi.list("conversation-1");
+const fetched: Promise<CronJob> = cronApi.get("conversation-1", "job-1");
+const toggled: Promise<CronJob> = cronApi.setEnabled("conversation-1", "job-1", false);
+const unregistered: Promise<void> = cronApi.unregister("conversation-1", "job-1");
+const source: LogTailSource = { sourceId: "source-1", sessionId: "session-1", kind: "file", value: "/var/log/app.log" };
+const started: Promise<LogTailStartResult> = logTailApi.start({ runId: "run-1", sources: [source] }, {});
+const canceled: Promise<LogTailCancelResult> = logTailApi.cancel("run-1");
+const saved: Promise<LogTailSaveResult> = logTailApi.save("/tmp/merged.log", "first\\n");
+void [created, listed, fetched, toggled, unregistered, started, canceled, saved];
+
+void call("cron_register", { sessionId: "conversation-1", prompt: "check disk", schedule: "0 2 * * *", disabled: false });
+void call("cron_get", { sessionId: "conversation-1", jobId: "job-1" });
+void call("cron_set_enabled", { sessionId: "conversation-1", jobId: "job-1", enabled: true });
+void call("cron_unregister", { sessionId: "conversation-1", jobId: "job-1" });
+void call("log_tail_start", { runId: "run-1", sources: [source], channel: {} });
+void call("log_tail_cancel", { runId: "run-1" });
+void call("log_tail_save", { path: "/tmp/merged.log", contentBase64: "Zmlyc3QK" });
+
+// @ts-expect-error typed cron commands reject the legacy generic output escape
+void call<CronJob>("cron_get", { sessionId: "conversation-1", jobId: "job-1" });
+// @ts-expect-error typed logTail commands reject the legacy generic output escape
+void call<LogTailCancelResult>("log_tail_cancel", { runId: "run-1" });
+// @ts-expect-error owner identity is not accepted from the registration facade input
+void call("cron_register", { sessionId: "conversation-1", prompt: "check disk", schedule: "0 2 * * *", ownerId: "other-user" });
+// @ts-expect-error cron enabled state remains boolean
+void call("cron_set_enabled", { sessionId: "conversation-1", jobId: "job-1", enabled: "yes" });
+// @ts-expect-error logTail concurrency remains numeric
+void call("log_tail_start", { runId: "run-1", sources: [source], maxConcurrent: "four", channel: {} });
+// @ts-expect-error logTail start requires its existing JSON stream channel
+void call("log_tail_start", { runId: "run-1", sources: [source] });
+// @ts-expect-error logTail save content remains base64 text
+void call("log_tail_save", { path: "/tmp/merged.log", contentBase64: 42 });
+// @ts-expect-error the public source facade keeps its supported source-kind union
+const invalidSource: LogTailSource = { sourceId: "source-2", sessionId: "session-1", kind: "process", value: "worker" };
+void invalidSource;
+
+async function generatedOutputs() {
+  const job = await call("cron_get", { sessionId: "conversation-1", jobId: "job-1" });
+  const ownerId: string = job.ownerId;
+  const ownerKind: string = job.ownerKind;
+  const schedule: string = job.schedule;
+  const leaseOwner: string | undefined = job.lease.owner;
+  const retryAt: string | undefined = job.retryAt;
+  const coalesced: boolean | undefined = job.run.coalesced;
+  const lastCoalesced: boolean | undefined = job.lastCoalesced;
+  // @ts-expect-error generated cron output fields are checked
+  const invalidRevision: string = job.revision;
+  void [ownerId, ownerKind, schedule, leaseOwner, retryAt, coalesced, lastCoalesced, invalidRevision];
+}
+void generatedOutputs;
+`;
+    const diagnostics = compile([probe], { [probe]: source });
+    expect(diagnostics, formatted(diagnostics)).toEqual([]);
+  }, COMPILE_BUDGET_MS);
+
   it("types the consumer-priority session terminal vertical without narrowing legacy fallbacks", () => {
     const probe = resolve("src/test/__ipc_session_terminal_contract_probe.ts");
     const source = `

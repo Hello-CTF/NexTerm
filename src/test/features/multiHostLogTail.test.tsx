@@ -73,6 +73,7 @@ vi.mock("../../ipc/webFiles", async (importOriginal) => {
 });
 
 import { MultiHostLogTail } from "../../features/logs/MultiHostLogTail";
+import { MergedLogBuffer, type MergedLogLine } from "../../features/logs/mergedLog";
 
 const sessions: SessionInfo[] = [
   { id: "s1", assetId: null, name: "host-one", kind: "ssh", status: "connected", tabs: [], createdAt: 0 },
@@ -358,5 +359,29 @@ describe("MultiHostLogTail", () => {
     });
     emit({ runId: "run-next", sequence: 1, type: "done" });
     await flushUntil(() => panel().container.textContent?.includes("开始跟随") === true);
+  });
+});
+
+describe("MergedLogBuffer sequence contract", () => {
+  it("keeps cursors ordered and deduplicated while applying the retention bound", () => {
+    const buffer = new MergedLogBuffer(2);
+    const line = (sequence: number): MergedLogLine => ({
+      sequence,
+      sourceId: "source-1",
+      sessionId: "session-1",
+      host: "host-one",
+      text: `line-${sequence}`,
+      stderr: false,
+      timeMs: sequence,
+    });
+
+    buffer.append(line(2));
+    buffer.append(line(1));
+    buffer.append({ ...line(2), text: "duplicate" });
+    buffer.append(line(3));
+
+    expect(buffer.retainedLines().map((entry) => entry.sequence)).toEqual([2, 3]);
+    expect(buffer.retainedLines()[0]?.text).toBe("line-2");
+    expect(buffer.droppedCount).toBe(1);
   });
 });
