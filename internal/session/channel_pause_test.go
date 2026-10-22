@@ -613,14 +613,15 @@ func TestRecoverChannelForPauseHoldsLiveOutputForOrderedResume(t *testing.T) {
 	}
 	expectNoFrame(t, receiverA)
 
-	// Resume flushes the held bytes in order behind the replay: B reads the
-	// post-recovery chunks contiguously, the producer continues, and the
-	// stalled chunk reaches A as well.
+	// Resume flushes the held bytes in order behind the replay and releases the
+	// pipe-held chunk. Both chunks may share one coalesced frame, so verify the
+	// exact byte stream rather than assuming a frame boundary between them.
 	if err := manager.ResumeChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), episodeGenFor(t, manager, info.ID, "b-1")); err != nil {
 		t.Fatal(err)
 	}
-	if got := readFramesUntil(t, receiverB, len(fed)-(32<<20)); !bytes.Equal(got, fed[32<<20:]) {
-		t.Fatal("post-recovery stream B mismatch")
+	wantPostRecovery := append(bytes.Clone(fed[32<<20:]), chunk513...)
+	if got := readFramesUntil(t, receiverB, len(wantPostRecovery)); !bytes.Equal(got, wantPostRecovery) {
+		t.Fatalf("post-recovery stream B mismatch: got %d bytes want %d", len(got), len(wantPostRecovery))
 	}
 	if got := readFramesUntil(t, receiverA, chunkSize); !bytes.Equal(got, chunk513) {
 		t.Fatal("stalled chunk did not reach channel A after the resume")
@@ -792,12 +793,14 @@ func TestRecoverChannelForFloorRetainsSuffixBeforeRecover(t *testing.T) {
 	if err := <-recoverDone; err != nil {
 		t.Fatal(err)
 	}
-	// Resume flushes the held chunk in order behind the replay.
+	// Resume flushes the held chunk and releases the pipe-held chunk. They may
+	// share one coalesced frame, so verify their exact ordered byte stream.
 	if err := manager.ResumeChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), episodeGenFor(t, manager, info.ID, "b-1")); err != nil {
 		t.Fatal(err)
 	}
-	if got := readFramesUntil(t, receiverB, chunkSize); !bytes.Equal(got, chunk512) {
-		t.Fatal("post-recovery stream B mismatch")
+	wantPostRecovery := append(bytes.Clone(chunk512), chunk513...)
+	if got := readFramesUntil(t, receiverB, len(wantPostRecovery)); !bytes.Equal(got, wantPostRecovery) {
+		t.Fatalf("post-recovery stream B mismatch: got %d bytes want %d", len(got), len(wantPostRecovery))
 	}
 	if got := readFramesUntil(t, receiverA, chunkSize); !bytes.Equal(got, chunk513) {
 		t.Fatal("stalled chunk did not reach channel A after the resume")
