@@ -2,10 +2,9 @@ package hitl
 
 import (
 	"context"
+	"github.com/cloudwego/eino/adk"
 	"testing"
 	"time"
-
-	"github.com/cloudwego/eino/adk"
 )
 
 func TestProductionQuestionAnswer(t *testing.T) {
@@ -30,7 +29,6 @@ func TestProductionQuestionAnswer(t *testing.T) {
 		t.Fatalf("production ask_user answer should resume: %v (required=%v)", err, request.RequiredEnvironmentNames)
 	}
 }
-
 func TestProductionRejectNoNames(t *testing.T) {
 	m, _, _, request := environmentChallengeHarness(t, []string{"production"})
 	answer := answerFor("answer-one", request)

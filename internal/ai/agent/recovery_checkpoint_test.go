@@ -2,9 +2,8 @@ package agent
 
 import (
 	"context"
-	"testing"
-
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"testing"
 )
 
 func TestRecoveryNoOpPreservesResumedCheckpoint(t *testing.T) {
