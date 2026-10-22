@@ -163,11 +163,13 @@ const (
 	ActionDeny  Action = "deny"
 )
 
+// AuthorizationBinding identifies the exact automatic grant or rule generation
+// that authorized a call. A new mutation never reuses a prior generation.
 type AuthorizationBinding struct {
-	Kind     string `json:"kind"`
-	DeviceID string `json:"deviceId"`
-	RuleID   string `json:"ruleId,omitempty"`
-	Revision uint64 `json:"revision"`
+	Kind       string `json:"kind"`
+	DeviceID   string `json:"deviceId"`
+	RuleID     string `json:"ruleId,omitempty"`
+	Generation string `json:"generation"`
 }
 
 type Decision struct {

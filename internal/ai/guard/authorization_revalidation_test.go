@@ -137,7 +137,7 @@ func TestPersistedAuthorizationRevalidatesTargetBeforeUse(t *testing.T) {
 	}
 }
 
-func TestAutomaticAuthorizationRevisionSurvivesReloadAndRejectsStaleRecords(t *testing.T) {
+func TestAutomaticAuthorizationGenerationSurvivesReloadAndRejectsStaleRecords(t *testing.T) {
 	ctx := context.Background()
 	settings := &memorySettings{values: make(map[string]string)}
 	grants, err := NewGrants(ctx, settings, nil)
@@ -166,7 +166,7 @@ func TestAutomaticAuthorizationRevisionSurvivesReloadAndRejectsStaleRecords(t *t
 		t.Fatal(err)
 	}
 	if err := grants.RevalidateAuthorization(ctx, newGrant.Authorization); err != nil {
-		t.Fatalf("persisted grant revision did not survive reload: %v", err)
+		t.Fatalf("persisted grant generation did not survive reload: %v", err)
 	}
 
 	if _, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", time.Time{}); err != nil {
@@ -188,11 +188,11 @@ func TestAutomaticAuthorizationRevisionSurvivesReloadAndRejectsStaleRecords(t *t
 		t.Fatal(err)
 	}
 	if err := grants.RevalidateAuthorization(ctx, newRule.Authorization); err != nil {
-		t.Fatalf("persisted rule revision did not survive reload: %v", err)
+		t.Fatalf("persisted rule generation did not survive reload: %v", err)
 	}
 }
 
-func TestAuthorizationAdmissionRechecksRevisionAfterTargetValidation(t *testing.T) {
+func TestAuthorizationAdmissionRechecksGenerationAfterTargetValidation(t *testing.T) {
 	type admissionContextKey struct{}
 	entered := make(chan struct{})
 	release := make(chan struct{})

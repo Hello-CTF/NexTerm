@@ -79,6 +79,9 @@ func (r *Registry) bindExecutionTarget(ctx context.Context, jobID string, scope 
 		}
 		return nil
 	}
+	if call.OneTimeConfirmation && call.Target == nil && current != nil {
+		return errExecutionTargetChanged
+	}
 	if call.Target != nil && *call.Target != *current {
 		return fmt.Errorf("%w: 原绑定=%+v 当前=%+v", errExecutionTargetChanged, *call.Target, *current)
 	}

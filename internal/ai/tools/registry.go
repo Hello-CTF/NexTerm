@@ -561,7 +561,7 @@ func (r *Registry) adjudicateRecordedCreate(ctx context.Context, jobID string, c
 		// same-authorization retry with changed arguments is a conflict, not
 		// a replay.
 		canonical, canonErr := outcome.CanonicalizeArguments(call.Args)
-		if canonErr != nil || record.AuthorizationID != call.AuthorizationID ||
+		if canonErr != nil || record.AuthorizationID != outcomeAuthorizationID(*call) ||
 			record.Kind != sideEffectKind(call.Name) ||
 			!bytes.Equal(record.CanonicalArguments, canonical) {
 			failure := Fail(fmt.Errorf("调用与已记录的执行冲突（授权或参数不一致）: %w", outcome.ErrIdempotenceConflict))

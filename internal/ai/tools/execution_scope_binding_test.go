@@ -6,14 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ai/hitl"
+	"github.com/Hello-CTF/NexTerm/internal/dbtest"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/outcome"
 	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/compose"
@@ -424,5 +428,348 @@ func TestOneTimeConfirmationDoesNotRevalidateAutomaticGrant(t *testing.T) {
 	}, nil)
 	if !result.OK || h.writeCount() != 1 {
 		t.Fatalf("one-time confirmation inherited an automatic grant revalidation: result=%+v writes=%d", result, h.writeCount())
+	}
+}
+
+type legacyEpisodeTerminal struct {
+	Terminal
+	tabSession TabSessionTerminal
+}
+
+func (t *legacyEpisodeTerminal) TabSession(ctx context.Context, tabID string) (string, error) {
+	return t.tabSession.TabSession(ctx, tabID)
+}
+
+func TestLegacyPendingSendKeysDoesNotAdoptReplacementEpisode(t *testing.T) {
+	fixture := newAtomicSessionFixture(t, false)
+	ctx := trustedContext()
+	deps := WithSession(Dependencies{PollInterval: time.Millisecond}, fixture.manager)
+	realTerminal := deps.Terminal
+	deps.Terminal = &legacyEpisodeTerminal{Terminal: realTerminal, tabSession: realTerminal.(TabSessionTerminal)}
+	registry := NewRegistry(deps)
+	execution := &Execution{
+		JobID: "job-legacy-episode", Registry: registry, Scope: fixture.scope(),
+		Permission: guard.Config{Mode: guard.ReadWrite}, Memory: guard.NewMemory(),
+	}
+	available, err := execution.Tools()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const arguments = `{"keys":"touch /tmp/legacy-episode","enter":true}`
+	chatModel := &recoveryModel{steps: []*schema.Message{
+		schema.AssistantMessage("", []schema.ToolCall{{ID: "call-legacy-episode", Type: "function", Function: schema.FunctionCall{Name: "send_keys", Arguments: arguments}}}),
+		schema.AssistantMessage("finished", nil),
+	}}
+	chatAgent, err := adk.NewChatModelAgent(context.Background(), &adk.ChatModelAgentConfig{
+		Name: "legacy-episode", Description: "legacy-episode", Instruction: "Use the tool", Model: chatModel, MaxIterations: 3,
+		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: available, ExecuteSequentially: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoints := newRecoveryCheckpoints()
+	runner := adk.NewRunner(context.Background(), adk.RunnerConfig{Agent: chatAgent, CheckPointStore: checkpoints})
+	manager, err := hitl.NewManager(hitl.Config{Checkpoints: checkpoints, TTL: time.Hour, NewNonce: func() (string, error) { return "legacy-episode-nonce", nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	if _, err := manager.RegisterRun(ctx, "run-legacy-episode", "checkpoint-legacy-episode"); err != nil {
+		t.Fatal(err)
+	}
+	iterator := runner.Run(ctx, []adk.Message{schema.UserMessage("execute")}, adk.WithCheckPointID("checkpoint-legacy-episode"))
+	var interruptContext *adk.InterruptCtx
+	for {
+		event, ok := iterator.Next()
+		if !ok {
+			break
+		}
+		if event.Err != nil {
+			t.Fatal(event.Err)
+		}
+		if event.Action != nil && event.Action.Interrupted != nil {
+			for _, candidate := range event.Action.Interrupted.InterruptContexts {
+				if candidate.IsRootCause {
+					interruptContext = candidate
+				}
+			}
+		}
+	}
+	if interruptContext == nil {
+		t.Fatal("legacy send_keys did not interrupt")
+	}
+	request, err := manager.Interrupt(ctx, interruptContext, hitl.InterruptInput{
+		RunID: "run-legacy-episode", CheckpointID: "checkpoint-legacy-episode", CallID: "call-legacy-episode", Tool: "send_keys", Kind: hitl.KindConfirm, Parameters: []byte(arguments),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.manager.CloseTab(fixture.tabID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.manager.OpenTab(context.Background(), session.OpenTabOptions{
+		TabID: fixture.tabID, SessionID: fixture.sessionID, ClientID: "client", ChannelID: "channel", Cols: 80, Rows: 24,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	replacement := fixture.transport.channelAt(1)
+
+	registry.deps.Terminal = realTerminal
+	restartedExecution := &Execution{
+		JobID: execution.JobID, Registry: registry, Scope: execution.Scope,
+		Permission: execution.Permission, Memory: execution.Memory,
+	}
+	restartedTools, err := restartedExecution.Tools()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartedAgent, err := adk.NewChatModelAgent(context.Background(), &adk.ChatModelAgentConfig{
+		Name: "legacy-episode", Description: "legacy-episode", Instruction: "Use the tool",
+		Model: &recoveryModel{steps: []*schema.Message{schema.AssistantMessage("finished", nil)}}, MaxIterations: 3,
+		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: restartedTools, ExecuteSequentially: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartedRunner := adk.NewRunner(context.Background(), adk.RunnerConfig{Agent: restartedAgent, CheckPointStore: checkpoints})
+	_, resumed, err := manager.Resume(ctx, restartedRunner, hitl.Answer{
+		ID: "answer", RunID: request.RunID, RequestID: request.ID, CheckpointID: request.CheckpointID,
+		TargetID: request.TargetID, CallID: request.CallID, Nonce: request.Nonce,
+		Parameters: request.Parameters, Decision: hitl.DecisionAllow,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		event, ok := resumed.Next()
+		if !ok {
+			break
+		}
+		if event.Err != nil {
+			t.Fatal(event.Err)
+		}
+	}
+	for _, write := range replacement.successfulWrites() {
+		if bytes.Contains(write, []byte("touch /tmp/legacy-episode")) {
+			t.Fatalf("legacy unbound confirmation adopted the replacement episode: %q", write)
+		}
+	}
+}
+
+func TestTerminalCreateReplayKeepsAuthorizationBinding(t *testing.T) {
+	_, ledger, _ := outcomeFixture(t)
+	connected := false
+	vacated := false
+	fake := &identityFakeTerminal{tabFakeTerminal: newTabFake(fakeTab("t1", "s1", "$ ", 0))}
+	fake.setIdentity(identityA)
+	registry := p1Registry(fake)
+	registry.deps.Outcome = ledger
+	registry.deps.ResolveAssetSessionIdentity = func(context.Context, string) (string, AssetIdentity, error) {
+		if !connected || vacated {
+			return "", AssetIdentity{}, ErrNoLiveSession
+		}
+		return "s9", identityA, nil
+	}
+	connector := &r13Connector{sessionIDs: []string{"s9", "s10"}, onConnect: func(string) { connected = true }}
+	registry.deps.AssetConnector = connector
+	grants := newChatGrantManager(t, &chatGrantRecorder{})
+	if _, err := grants.Grant(context.Background(), "a1", []guard.GrantKind{guard.GrantKindSessionExec}); err != nil {
+		t.Fatal(err)
+	}
+	decision := grants.Evaluate(context.Background(), guard.Config{Mode: guard.ReadWrite}, guard.Confirm(guard.KindProcess, "create"), nil, "a1", "terminal_create", "job")
+	call := p1Call("c", "terminal_create", `{"asset_id":"a1","connect":true}`)
+	call.AuthorizationID = GuardAuthorizationID(decision)
+	call.Authorization = decision.Authorization
+	call.OneTimeConfirmation = true
+	scope := Scope{SessionID: "s1", TabID: "t1"}
+	if first := registry.Execute(context.Background(), "job", scope, call, nil); !first.OK {
+		t.Fatalf("first create = %+v", first)
+	}
+	vacated = true
+	second := registry.Execute(context.Background(), "job", scope, call, nil)
+	if !second.OK || !strings.Contains(second.Text, "调用已执行过") {
+		t.Fatalf("same-binding terminal_create did not replay: %+v", second)
+	}
+	if connector.callCount() != 1 || len(fake.created) != 1 {
+		t.Fatalf("same-binding replay re-executed: connector=%d created=%d", connector.callCount(), len(fake.created))
+	}
+}
+
+func TestAuthorizationGenerationNeverReusedAcrossRestartAndSyncRewrite(t *testing.T) {
+	ctx := ipc.WithUserID(context.Background(), "owner-generation")
+	path := fmt.Sprintf("%s/grants.db", t.TempDir())
+	database, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newGrants := func(db *store.Store) *guard.Grants {
+		manager, err := guard.NewGrants(ctx, db, nil, guard.WithShared(false))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return manager
+	}
+	newLedger := func(db *store.Store) *outcome.Ledger {
+		sqliteStore, err := outcome.NewSQLiteStore(db.GORM())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ledger, err := outcome.New(outcome.Options{Store: sqliteStore, Auditor: db.OutcomeAuditor()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ledger
+	}
+	terminal := newTabFake()
+	terminal.bindSessionAsset("session-a", AssetIdentity{AssetID: "asset-a", ConfigFingerprint: "config-a"})
+	transport := &fakeTransport{files: newFakeFS(), result: base.ExecResult{Stdout: "ok"}}
+	newRegistry := func(manager *guard.Grants, ledger *outcome.Ledger) *Registry {
+		return NewRegistry(Dependencies{
+			Terminal: terminal, Grants: manager, Outcome: ledger,
+			Transport: func(context.Context, string) (base.Transport, error) { return transport, nil },
+		})
+	}
+	permission := guard.Config{Mode: guard.ReadWrite}
+	call := p1Call("call-generation", "exec_commands", `{"commands":["touch /tmp/generation-aba"]}`)
+	ruling := guard.ClassifyTool(call.Name, call.Args, permission)
+	decisionFor := func(manager *guard.Grants) guard.Decision {
+		return manager.EvaluateResource(ctx, permission, ruling, nil, "asset-a", call.Name, "job-generation", resourceForCall(call))
+	}
+	execute := func(registry *Registry, decision guard.Decision) Output {
+		current := call
+		current.AuthorizationID = GuardAuthorizationID(decision)
+		current.Authorization = decision.Authorization
+		return registry.Execute(ctx, "job-generation", Scope{SessionID: "session-a"}, current, nil)
+	}
+	grants := newGrants(database)
+	if _, err := grants.Grant(ctx, "asset-a", []guard.GrantKind{guard.GrantKindSessionExec}); err != nil {
+		t.Fatal(err)
+	}
+	oldDecision := decisionFor(grants)
+	if first := execute(newRegistry(grants, newLedger(database)), oldDecision); !first.OK {
+		t.Fatalf("first execution = %+v", first)
+	}
+	if transport.calls() != 1 {
+		t.Fatalf("first effect calls = %d, want 1", transport.calls())
+	}
+	if err := grants.Revoke(ctx, "asset-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	database, err = store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	grants = newGrants(database)
+	if _, err := grants.Grant(ctx, "asset-a", []guard.GrantKind{guard.GrantKindSessionExec}); err != nil {
+		t.Fatal(err)
+	}
+	if err := grants.RevalidateAuthorization(ctx, oldDecision.Authorization); err == nil {
+		t.Fatal("revoked generation was admitted after restart and regrant")
+	}
+	newDecision := decisionFor(grants)
+	if GuardAuthorizationID(newDecision) == GuardAuthorizationID(oldDecision) {
+		t.Fatal("restart reused the revoked generation's authorization identity")
+	}
+	if second := execute(newRegistry(grants, newLedger(database)), newDecision); second.OK {
+		t.Fatalf("revoked generation's outcome replayed after restart: %+v", second)
+	}
+	if transport.calls() != 1 {
+		t.Fatalf("restart replay repeated the effect: calls = %d, want 1", transport.calls())
+	}
+	otherManager := newGrants(database)
+	if err := otherManager.RevalidateAuthorization(ctx, newDecision.Authorization); err != nil {
+		t.Fatalf("persisted generation was not shared by managers: %v", err)
+	}
+
+	raw, found, err := database.SettingGet(ctx, guard.DeviceGrantsSettingKeyForUser(ctx))
+	if err != nil || !found {
+		t.Fatalf("grant setting = %t, %v", found, err)
+	}
+	var records map[string]guard.DeviceGrant
+	if err := json.Unmarshal([]byte(raw), &records); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SettingSet(ctx, guard.DeviceGrantsSettingKeyForUser(ctx), string(encoded)); err != nil {
+		t.Fatal(err)
+	}
+	syncedManager := newGrants(database)
+	if _, err := syncedManager.Grant(ctx, "asset-a", []guard.GrantKind{guard.GrantKindSessionExec}); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncedManager.RevalidateAuthorization(ctx, newDecision.Authorization); err == nil {
+		t.Fatal("sync rewrite revived the previous generation")
+	}
+	syncedDecision := decisionFor(syncedManager)
+	if third := execute(newRegistry(syncedManager, newLedger(database)), syncedDecision); third.OK {
+		t.Fatalf("sync-rewritten generation replayed the old outcome: %+v", third)
+	}
+	if transport.calls() != 1 {
+		t.Fatalf("sync rewrite repeated the effect: calls = %d, want 1", transport.calls())
+	}
+}
+
+func TestAuthorizationGenerationMigrationPreservesSettingTimestamp(t *testing.T) {
+	database := dbtest.NewFixture(t).OpenStore(t)
+	ctx := ipc.WithUserID(context.Background(), "owner-generation-migration")
+	manager, err := guard.NewGrants(ctx, database, nil, guard.WithShared(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Grant(ctx, "asset-a", []guard.GrantKind{guard.GrantKindSessionExec}); err != nil {
+		t.Fatal(err)
+	}
+	key := guard.DeviceGrantsSettingKeyForUser(ctx)
+	raw, found, err := database.SettingGet(ctx, key)
+	if err != nil || !found {
+		t.Fatalf("grant setting = %t, %v", found, err)
+	}
+	var records map[string]guard.DeviceGrant
+	if err := json.Unmarshal([]byte(raw), &records); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SettingSet(ctx, key, string(encoded)); err != nil {
+		t.Fatal(err)
+	}
+	readTimestamp := func() int64 {
+		var row store.Setting
+		if err := database.GORM().WithContext(ctx).Where(store.Setting{Key: key}).First(&row).Error; err != nil {
+			t.Fatal(err)
+		}
+		return row.UpdatedAt
+	}
+	before := readTimestamp()
+	manager, err = guard.NewGrants(ctx, database, nil, guard.WithShared(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	permission := guard.Config{Mode: guard.ReadWrite}
+	call := p1Call("call-generation-migration", "exec_commands", `{"commands":["touch /tmp/generation-migration"]}`)
+	ruling := guard.ClassifyTool(call.Name, call.Args, permission)
+	decision := manager.EvaluateResource(ctx, permission, ruling, nil, "asset-a", call.Name, "job-generation-migration", resourceForCall(call))
+	if decision.Authorization == nil || decision.Authorization.Generation == "" {
+		t.Fatalf("migration did not bind a generation: %+v", decision.Authorization)
+	}
+	if after := readTimestamp(); after != before {
+		t.Fatalf("generation migration changed LWW timestamp: before=%d after=%d", before, after)
+	}
+	other, err := guard.NewGrants(ctx, database, nil, guard.WithShared(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := other.RevalidateAuthorization(ctx, decision.Authorization); err != nil {
+		t.Fatalf("migrated generation was not shared across managers: %v", err)
 	}
 }

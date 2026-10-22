@@ -11,6 +11,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
 )
 
 const DeviceGrantsSettingKey = "ai.device_grants"
@@ -41,11 +43,11 @@ const (
 // DeviceGrant is a long-term device authorization. Permanent is explicit in the
 // persisted record: records written before the field existed are permanent.
 type DeviceGrant struct {
-	DeviceID  string      `json:"deviceId"`
-	Kinds     []GrantKind `json:"kinds"`
-	Permanent bool        `json:"permanent"`
-	UpdatedAt int64       `json:"updatedAt"`
-	revision  uint64
+	DeviceID   string      `json:"deviceId"`
+	Kinds      []GrantKind `json:"kinds"`
+	Permanent  bool        `json:"permanent"`
+	UpdatedAt  int64       `json:"updatedAt"`
+	generation string
 }
 
 func ParseGrantKinds(values []string) ([]GrantKind, error) {
@@ -108,19 +110,18 @@ type GrantAuditEvent struct {
 type GrantAuditor func(context.Context, GrantAuditEvent) error
 
 type grantState struct {
-	grants   map[string]DeviceGrant
-	rules    []GrantRule
-	revision uint64
+	grants map[string]DeviceGrant
+	rules  []GrantRule
 }
 
 type deviceGrantRecord struct {
 	DeviceGrant
-	Revision uint64 `json:"revision,omitempty"`
+	Generation string `json:"generation,omitempty"`
 }
 
 type grantRuleRecord struct {
 	GrantRule
-	Revision uint64 `json:"revision,omitempty"`
+	Generation string `json:"generation,omitempty"`
 }
 
 type Grants struct {
@@ -158,9 +159,12 @@ func NewGrants(ctx context.Context, settings Settings, audit GrantAuditor, opts 
 	return manager, nil
 }
 
-func loadGrants(ctx context.Context, settings Settings) (grantState, error) {
+// loadGrants is read-only: legacy and sync-rewritten records migrate to a
+// fresh persisted generation only on their first automatic evaluation, never
+// merely because a manager was constructed or reloaded.
+func (g *Grants) loadGrants(ctx context.Context) (grantState, error) {
 	result := grantState{grants: make(map[string]DeviceGrant)}
-	raw, found, err := settings.SettingGet(ctx, DeviceGrantsSettingKeyForUser(ctx))
+	raw, found, err := g.settings.SettingGet(ctx, DeviceGrantsSettingKeyForUser(ctx))
 	if err != nil {
 		return grantState{}, err
 	}
@@ -175,7 +179,7 @@ func loadGrants(ctx context.Context, settings Settings) (grantState, error) {
 				return grantState{}, err
 			}
 			grant := record.DeviceGrant
-			grant.revision = record.Revision
+			grant.generation = record.Generation
 			var marker struct {
 				Permanent *bool `json:"permanent"`
 			}
@@ -189,7 +193,7 @@ func loadGrants(ctx context.Context, settings Settings) (grantState, error) {
 			result.grants[id] = grant
 		}
 	}
-	raw, found, err = settings.SettingGet(ctx, GrantRulesSettingKeyForUser(ctx))
+	raw, found, err = g.settings.SettingGet(ctx, GrantRulesSettingKeyForUser(ctx))
 	if err != nil {
 		return grantState{}, err
 	}
@@ -200,21 +204,76 @@ func loadGrants(ctx context.Context, settings Settings) (grantState, error) {
 		}
 		for _, record := range records {
 			rule := record.GrantRule
-			rule.revision = record.Revision
+			rule.generation = record.Generation
 			result.rules = append(result.rules, rule)
 		}
 	}
-	for _, grant := range result.grants {
-		if grant.revision > result.revision {
-			result.revision = grant.revision
-		}
-	}
-	for _, rule := range result.rules {
-		if rule.revision > result.revision {
-			result.revision = rule.revision
-		}
-	}
 	return result, nil
+}
+
+func (g *Grants) persistGenerationValue(ctx context.Context, key string, value any) error {
+	switch values := value.(type) {
+	case map[string]DeviceGrant:
+		records := make(map[string]deviceGrantRecord, len(values))
+		for id, grant := range values {
+			records[id] = deviceGrantRecord{DeviceGrant: grant, Generation: grant.generation}
+		}
+		value = records
+	case []GrantRule:
+		records := make([]grantRuleRecord, 0, len(values))
+		for _, rule := range values {
+			records = append(records, grantRuleRecord{GrantRule: rule, Generation: rule.generation})
+		}
+		value = records
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	if settings, ok := g.settings.(interface{ GORM() *gorm.DB }); ok {
+		setting := query.Use(settings.GORM()).Setting
+		result, err := setting.WithContext(ctx).Where(setting.Key.Eq(key)).UpdateColumn(setting.Value, string(encoded))
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("授权代际对应的设置记录不存在")
+		}
+		return nil
+	}
+	return g.settings.SettingSet(ctx, key, string(encoded))
+}
+
+func (g *Grants) ensureGenerations(ctx context.Context, entry *grantState) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	grantsChanged := false
+	for id, grant := range entry.grants {
+		if grant.generation == "" {
+			grant.generation = ids.New()
+			entry.grants[id] = grant
+			grantsChanged = true
+		}
+	}
+	rulesChanged := false
+	for index, rule := range entry.rules {
+		if rule.generation == "" {
+			rule.generation = ids.New()
+			entry.rules[index] = rule
+			rulesChanged = true
+		}
+	}
+	if grantsChanged {
+		if err := g.persistGenerationValue(ctx, DeviceGrantsSettingKeyForUser(ctx), entry.grants); err != nil {
+			return err
+		}
+	}
+	if rulesChanged {
+		if err := g.persistGenerationValue(ctx, GrantRulesSettingKeyForUser(ctx), entry.rules); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (g *Grants) stateFor(ctx context.Context) (*grantState, error) {
@@ -231,7 +290,7 @@ func (g *Grants) stateForLocked(ctx context.Context, ownerID string) (*grantStat
 	if entry, ok := g.states[ownerID]; ok {
 		return entry, nil
 	}
-	entry, err := loadGrants(ctx, g.settings)
+	entry, err := g.loadGrants(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -246,12 +305,9 @@ func (g *Grants) Reload(ctx context.Context) error {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	entry, err := loadGrants(ctx, g.settings)
+	entry, err := g.loadGrants(ctx)
 	if err != nil {
 		return err
-	}
-	if previous := g.states[ownerID]; previous != nil && previous.revision > entry.revision {
-		entry.revision = previous.revision
 	}
 	g.states[ownerID] = &entry
 	return nil
@@ -309,8 +365,7 @@ func (g *Grants) Grant(ctx context.Context, deviceID string, kinds []GrantKind) 
 		g.mu.Unlock()
 		return DeviceGrant{}, err
 	}
-	entry.revision++
-	grant.revision = entry.revision
+	grant.generation = ids.New()
 	next := cloneGrantMap(entry.grants)
 	next[deviceID] = grant
 	if err := g.persistLocked(ctx, next); err != nil {
@@ -402,8 +457,6 @@ func (g *Grants) AddRule(ctx context.Context, deviceID, action, pattern string, 
 		return GrantRule{}, err
 	}
 	now := g.now().UnixMilli()
-	entry.revision++
-	revision := entry.revision
 	next := append([]GrantRule(nil), entry.rules...)
 	for index, existing := range next {
 		if existing.DeviceID != deviceID || existing.Action != action || existing.Path != pattern {
@@ -411,7 +464,7 @@ func (g *Grants) AddRule(ctx context.Context, deviceID, action, pattern string, 
 		}
 		existing.ExpiresAt = expiresAtMS
 		existing.UpdatedAt = now
-		existing.revision = revision
+		existing.generation = ids.New()
 		next[index] = existing
 		if err := g.persistRulesLocked(ctx, next); err != nil {
 			g.mu.Unlock()
@@ -422,7 +475,7 @@ func (g *Grants) AddRule(ctx context.Context, deviceID, action, pattern string, 
 		g.emitAudit(ctx, GrantAuditEvent{Action: "rule_grant", DeviceID: deviceID, Operation: action, RuleID: existing.ID, RulePath: pattern})
 		return existing, nil
 	}
-	rule := GrantRule{ID: g.newID(), DeviceID: deviceID, Action: action, Path: pattern, ExpiresAt: expiresAtMS, CreatedAt: now, UpdatedAt: now, revision: revision}
+	rule := GrantRule{ID: g.newID(), DeviceID: deviceID, Action: action, Path: pattern, ExpiresAt: expiresAtMS, CreatedAt: now, UpdatedAt: now, generation: ids.New()}
 	next = append(next, rule)
 	if err := g.persistRulesLocked(ctx, next); err != nil {
 		g.mu.Unlock()
@@ -506,7 +559,7 @@ func matchRule(entry *grantState, now time.Time, deviceID, action, path string) 
 func (g *Grants) persistRulesLocked(ctx context.Context, rules []GrantRule) error {
 	records := make([]grantRuleRecord, 0, len(rules))
 	for _, rule := range rules {
-		records = append(records, grantRuleRecord{GrantRule: rule, Revision: rule.revision})
+		records = append(records, grantRuleRecord{GrantRule: rule, Generation: rule.generation})
 	}
 	encoded, err := json.Marshal(records)
 	if err != nil {
@@ -578,6 +631,9 @@ func (g *Grants) EvaluateResource(ctx context.Context, config Config, ruling Rul
 	if err != nil {
 		return Decision{Action: ActionDeny, Ruling: ruling, Reason: err.Error()}
 	}
+	if err := g.ensureGenerations(ctx, entry); err != nil {
+		return Decision{Action: ActionDeny, Ruling: ruling, Reason: err.Error()}
+	}
 	action := resource.Action
 	if action == "" {
 		action = operation
@@ -595,11 +651,11 @@ func (g *Grants) EvaluateResource(ctx context.Context, config Config, ruling Rul
 	}
 	if ruleOK {
 		g.emitAudit(ctx, GrantAuditEvent{Action: "use_rule", DeviceID: deviceID, Operation: action, RunID: runID, RuleID: rule.ID, RulePath: rule.Path})
-		return Decision{Action: ActionAllow, Ruling: ruling, Reason: "路径规则授权", Authorization: &AuthorizationBinding{Kind: "rule", DeviceID: deviceID, RuleID: rule.ID, Revision: rule.revision}}
+		return Decision{Action: ActionAllow, Ruling: ruling, Reason: "路径规则授权", Authorization: &AuthorizationBinding{Kind: "rule", DeviceID: deviceID, RuleID: rule.ID, Generation: rule.generation}}
 	}
 	if grantCovers {
 		g.emitAudit(ctx, GrantAuditEvent{Action: "use", DeviceID: deviceID, Kinds: grant.Kinds, Operation: operation, RunID: runID})
-		return Decision{Action: ActionAllow, Ruling: ruling, Reason: "设备长期授权", Authorization: &AuthorizationBinding{Kind: "grant", DeviceID: deviceID, Revision: grant.revision}}
+		return Decision{Action: ActionAllow, Ruling: ruling, Reason: "设备长期授权", Authorization: &AuthorizationBinding{Kind: "grant", DeviceID: deviceID, Generation: grant.generation}}
 	}
 	return DecideResource(config, ruling, memory, resource)
 }
@@ -613,6 +669,9 @@ func (g *Grants) RevalidateAuthorization(ctx context.Context, binding *Authoriza
 	if binding == nil {
 		return nil
 	}
+	if binding.Generation == "" {
+		return errors.New("自动授权缺少代际绑定，请重新评估")
+	}
 	if err := g.authorizeTarget(ctx, binding.DeviceID); err != nil {
 		return err
 	}
@@ -625,11 +684,11 @@ func (g *Grants) RevalidateAuthorization(ctx context.Context, binding *Authoriza
 	switch binding.Kind {
 	case "grant":
 		grant, ok := entry.grants[binding.DeviceID]
-		valid = ok && grant.revision == binding.Revision
+		valid = ok && grant.generation == binding.Generation
 	case "rule":
 		for _, rule := range entry.rules {
 			if rule.ID == binding.RuleID && rule.DeviceID == binding.DeviceID {
-				valid = rule.revision == binding.Revision && !rule.Expired(g.now())
+				valid = rule.generation == binding.Generation && !rule.Expired(g.now())
 				break
 			}
 		}
@@ -644,7 +703,7 @@ func (g *Grants) RevalidateAuthorization(ctx context.Context, binding *Authoriza
 func (g *Grants) persistLocked(ctx context.Context, grants map[string]DeviceGrant) error {
 	records := make(map[string]deviceGrantRecord, len(grants))
 	for id, grant := range grants {
-		records[id] = deviceGrantRecord{DeviceGrant: grant, Revision: grant.revision}
+		records[id] = deviceGrantRecord{DeviceGrant: grant, Generation: grant.generation}
 	}
 	encoded, err := json.Marshal(records)
 	if err != nil {
