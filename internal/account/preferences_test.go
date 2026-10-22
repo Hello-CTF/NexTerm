@@ -3,6 +3,7 @@ package account
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -38,7 +39,9 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 		"appearance.uiFontPreset",
 		"appearance.uiFontScale",
 		"appearance.terminalFontSize",
+		"appearance.terminalFontFamily",
 		"appearance.terminalTheme",
+		"appearance.terminalContrast",
 		"appearance.themeMode",
 		"input.selectionAutoCopy",
 		"terminal.closeAction",
@@ -114,17 +117,19 @@ func TestNormalizePreferenceBinding(t *testing.T) {
 
 func TestValidatePreferenceValue(t *testing.T) {
 	valid := map[string]string{
-		"appearance.uiFontPreset":     "15.5",
-		"appearance.uiFontScale":      "1.25",
-		"appearance.terminalFontSize": "32",
-		"appearance.terminalTheme":    `"light"`,
-		"appearance.themeMode":        `"system"`,
-		"input.selectionAutoCopy":     "true",
-		"terminal.closeAction":        `"kill"`,
-		"project.workspaceTemplates":  `[{"v":1,"name":"project"}]`,
-		"keybinding.closeTab":         `"Mod+Shift+w"`,
-		"keybinding.closeTab:null":    "null",
-		"keybinding.reclaimTakeover":  `"Mod+Shift+s"`,
+		"appearance.uiFontPreset":       "15.5",
+		"appearance.uiFontScale":        "1.25",
+		"appearance.terminalFontSize":   "32",
+		"appearance.terminalFontFamily": `"jetbrains-mono"`,
+		"appearance.terminalTheme":      `"light"`,
+		"appearance.terminalContrast":   `"maximum"`,
+		"appearance.themeMode":          `"system"`,
+		"input.selectionAutoCopy":       "true",
+		"terminal.closeAction":          `"kill"`,
+		"project.workspaceTemplates":    `[{"v":1,"name":"project"}]`,
+		"keybinding.closeTab":           `"Mod+Shift+w"`,
+		"keybinding.closeTab:null":      "null",
+		"keybinding.reclaimTakeover":    `"Mod+Shift+s"`,
 	}
 	for key, want := range valid {
 		name := key
@@ -138,16 +143,30 @@ func TestValidatePreferenceValue(t *testing.T) {
 			t.Fatalf("validatePreferenceValue(%q,%s)=(%q,%v) want (%q,nil)", name, raw, got, err, want)
 		}
 	}
+	for _, value := range []string{"cascadia", "system", "jetbrains-mono", "fira-code", "source-code-pro", "menlo", "consolas"} {
+		got, err := validatePreferenceValue("appearance.terminalFontFamily", json.RawMessage(strconv.Quote(value)))
+		if err != nil || got != strconv.Quote(value) {
+			t.Errorf("terminal font %q=(%q,%v)", value, got, err)
+		}
+	}
+	for _, value := range []string{"standard", "high", "maximum"} {
+		got, err := validatePreferenceValue("appearance.terminalContrast", json.RawMessage(strconv.Quote(value)))
+		if err != nil || got != strconv.Quote(value) {
+			t.Errorf("terminal contrast %q=(%q,%v)", value, got, err)
+		}
+	}
 	invalid := map[string][]string{
-		"appearance.uiFontPreset":     {`"13"`, "7.5", "13.25", "32.5", "null", "true"},
-		"appearance.uiFontScale":      {"1.1", "2.5", "null", `{"v":1}`},
-		"appearance.terminalFontSize": {"7", "33", "13.5", `"13"`, "null"},
-		"appearance.terminalTheme":    {`"blue"`, "1", "null", "true"},
-		"appearance.themeMode":        {`"blue"`, "1", "null", "true"},
-		"input.selectionAutoCopy":     {`"true"`, "1", "null"},
-		"terminal.closeAction":        {`"background"`, "1", "null", "true"},
-		"project.workspaceTemplates":  {`{"v":1}`, `"text"`, "null", "[invalid]"},
-		"keybinding.closeTab":         {`"p"`, `"Mod+Mod+p"`, `"Mod+Primary+p"`, "1", "true", `{"key":"Mod+p"}`},
+		"appearance.uiFontPreset":       {`"13"`, "7.5", "13.25", "32.5", "null", "true"},
+		"appearance.uiFontScale":        {"1.1", "2.5", "null", `{"v":1}`},
+		"appearance.terminalFontSize":   {"7", "33", "13.5", `"13"`, "null"},
+		"appearance.terminalFontFamily": {`"downloaded-font"`, `"Cascadia Mono"`, "1", "null", "true"},
+		"appearance.terminalTheme":      {`"blue"`, "1", "null", "true"},
+		"appearance.terminalContrast":   {`"extreme"`, "1", "null", "true"},
+		"appearance.themeMode":          {`"blue"`, "1", "null", "true"},
+		"input.selectionAutoCopy":       {`"true"`, "1", "null"},
+		"terminal.closeAction":          {`"background"`, "1", "null", "true"},
+		"project.workspaceTemplates":    {`{"v":1}`, `"text"`, "null", "[invalid]"},
+		"keybinding.closeTab":           {`"p"`, `"Mod+Mod+p"`, `"Mod+Primary+p"`, "1", "true", `{"key":"Mod+p"}`},
 	}
 	for key, rawStrings := range invalid {
 		for _, rawString := range rawStrings {
@@ -342,5 +361,59 @@ func TestPreferencesUserIsolationAndMerge(t *testing.T) {
 	bobOverrides, err = preferences.UserOverrides(ctx, bob)
 	if err != nil || len(bobOverrides) != 1 {
 		t.Fatalf("alice clear must not touch bob, overrides=%v err=%v", bobOverrides, err)
+	}
+}
+
+func TestPreferencesTerminalFontAndContrastIsolation(t *testing.T) {
+	ctx := context.Background()
+	preferences := testPreferences(t)
+	alice, bob := "01USERFONTALICE000000000000", "01USERFONTBOB00000000000000"
+
+	if _, err := preferences.UpdateDefaults(ctx, map[string]json.RawMessage{
+		"appearance.terminalFontFamily": json.RawMessage(`"menlo"`),
+		"appearance.terminalContrast":   json.RawMessage(`"standard"`),
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := preferences.UpdateUserOverrides(ctx, alice, map[string]json.RawMessage{
+		"appearance.terminalFontFamily": json.RawMessage(`"jetbrains-mono"`),
+		"appearance.terminalContrast":   json.RawMessage(`"high"`),
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := preferences.UpdateUserOverrides(ctx, bob, map[string]json.RawMessage{
+		"appearance.terminalFontFamily": json.RawMessage(`"fira-code"`),
+		"appearance.terminalContrast":   json.RawMessage(`"maximum"`),
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	defaults, err := preferences.Defaults(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliceOverrides, err := preferences.UserOverrides(ctx, alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	effective := MergePreferences(defaults, aliceOverrides)
+	if string(effective["appearance.terminalFontFamily"]) != `"jetbrains-mono"` || string(effective["appearance.terminalContrast"]) != `"high"` {
+		t.Fatalf("alice effective preferences=%v", effective)
+	}
+	aliceOverrides, err = preferences.UpdateUserOverrides(ctx, alice, nil, []string{"appearance.terminalFontFamily", "appearance.terminalContrast"})
+	if err != nil || len(aliceOverrides) != 0 {
+		t.Fatalf("alice overrides after clear=%v err=%v", aliceOverrides, err)
+	}
+	effective = MergePreferences(defaults, aliceOverrides)
+	if string(effective["appearance.terminalFontFamily"]) != `"menlo"` || string(effective["appearance.terminalContrast"]) != `"standard"` {
+		t.Fatalf("alice cleared preferences must inherit defaults=%v", effective)
+	}
+
+	bobOverrides, err := preferences.UserOverrides(ctx, bob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(bobOverrides["appearance.terminalFontFamily"]) != `"fira-code"` || string(bobOverrides["appearance.terminalContrast"]) != `"maximum"` {
+		t.Fatalf("alice clear must not touch bob=%v", bobOverrides)
 	}
 }

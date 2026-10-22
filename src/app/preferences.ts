@@ -258,14 +258,18 @@ export function useTerminalPrefs(): TerminalPrefs {
 }
 
 export type UiFontPreset = number;
+export type TerminalFontFamily = "cascadia" | "system" | "jetbrains-mono" | "fira-code" | "source-code-pro" | "menlo" | "consolas";
 export type TerminalThemePref = "dark" | "light" | "interface";
+export type TerminalContrast = "standard" | "high" | "maximum";
 export type ResolvedTerminalTheme = "dark" | "light";
 
 export interface AppearancePrefs {
   uiFontPreset: UiFontPreset;
   uiFontScale: number;
   terminalFontSize: number;
+  terminalFontFamily: TerminalFontFamily;
   terminalTheme: TerminalThemePref;
+  terminalContrast: TerminalContrast;
 }
 
 export const UI_FONT_PRESETS: readonly UiFontPreset[] = [12, 13, 14.5];
@@ -274,13 +278,23 @@ export const UI_FONT_SIZE_MIN = 8;
 export const UI_FONT_SIZE_MAX = 32;
 export const TERMINAL_FONT_SIZE_MIN = 8;
 export const TERMINAL_FONT_SIZE_MAX = 32;
-
+export const TERMINAL_FONT_FAMILIES: readonly TerminalFontFamily[] = [
+  "cascadia",
+  "system",
+  "jetbrains-mono",
+  "fira-code",
+  "source-code-pro",
+  "menlo",
+  "consolas",
+];
 const APPEARANCE_KEY = "nexterm.appearance.v1";
 const DEFAULT_APPEARANCE: AppearancePrefs = {
   uiFontPreset: 13,
   uiFontScale: 1,
   terminalFontSize: 13,
+  terminalFontFamily: "cascadia",
   terminalTheme: "dark",
+  terminalContrast: "standard",
 };
 
 const MOBILE_DEFAULT_TERMINAL_FONT_SIZE = 12;
@@ -300,7 +314,9 @@ const APPEARANCE_PREF_KEYS: Record<keyof AppearancePrefs, string> = {
   uiFontPreset: "appearance.uiFontPreset",
   uiFontScale: "appearance.uiFontScale",
   terminalFontSize: "appearance.terminalFontSize",
+  terminalFontFamily: "appearance.terminalFontFamily",
   terminalTheme: "appearance.terminalTheme",
+  terminalContrast: "appearance.terminalContrast",
 };
 
 function parsePreset(value: unknown): UiFontPreset {
@@ -331,10 +347,22 @@ function parseTerminalFontSize(value: unknown): number {
   );
 }
 
+function parseTerminalFontFamily(value: unknown): TerminalFontFamily {
+  return typeof value === "string" && (TERMINAL_FONT_FAMILIES as readonly string[]).includes(value)
+    ? value as TerminalFontFamily
+    : DEFAULT_APPEARANCE.terminalFontFamily;
+}
+
 function parseTerminalTheme(value: unknown): TerminalThemePref {
   return value === "dark" || value === "light" || value === "interface"
     ? value
     : DEFAULT_APPEARANCE.terminalTheme;
+}
+
+function parseTerminalContrast(value: unknown): TerminalContrast {
+  return value === "standard" || value === "high" || value === "maximum"
+    ? value
+    : DEFAULT_APPEARANCE.terminalContrast;
 }
 
 function loadAppearance(): AppearancePrefs {
@@ -353,7 +381,9 @@ function loadAppearance(): AppearancePrefs {
     uiFontPreset: parsePreset(merged.uiFontPreset),
     uiFontScale: parseScale(merged.uiFontScale),
     terminalFontSize: parseTerminalFontSize(merged.terminalFontSize),
+    terminalFontFamily: parseTerminalFontFamily(merged.terminalFontFamily),
     terminalTheme: parseTerminalTheme(merged.terminalTheme),
+    terminalContrast: parseTerminalContrast(merged.terminalContrast),
   };
 }
 
@@ -392,7 +422,9 @@ function appearanceEquals(a: AppearancePrefs, b: AppearancePrefs): boolean {
     a.uiFontPreset === b.uiFontPreset &&
     a.uiFontScale === b.uiFontScale &&
     a.terminalFontSize === b.terminalFontSize &&
-    a.terminalTheme === b.terminalTheme
+    a.terminalFontFamily === b.terminalFontFamily &&
+    a.terminalTheme === b.terminalTheme &&
+    a.terminalContrast === b.terminalContrast
   );
 }
 
@@ -434,9 +466,21 @@ export function setTerminalFontSize(value: number): void {
   commitAppearance({ ...appearance, terminalFontSize: next });
 }
 
+export function setTerminalFontFamily(value: TerminalFontFamily): void {
+  const next = parseTerminalFontFamily(value);
+  if (appearance.terminalFontFamily === next) return;
+  commitAppearance({ ...appearance, terminalFontFamily: next });
+}
+
 export function setTerminalTheme(value: TerminalThemePref): void {
   if (appearance.terminalTheme === value) return;
   commitAppearance({ ...appearance, terminalTheme: value });
+}
+
+export function setTerminalContrast(value: TerminalContrast): void {
+  const next = parseTerminalContrast(value);
+  if (appearance.terminalContrast === next) return;
+  commitAppearance({ ...appearance, terminalContrast: next });
 }
 
 // resetAppearancePrefs clears device-local values and removes account appearance overrides, falling back to builtin/server global defaults.

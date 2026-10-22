@@ -20,7 +20,11 @@ func adminAuthorizationRequest(route adminRoute, disableTargetID, resetTargetID 
 	case "PUT /admin/settings":
 		body = map[string]any{"registration_open": true}
 	case "PUT /admin/preferences":
-		body = map[string]any{"set": map[string]any{"appearance.terminalTheme": "dark"}}
+		body = map[string]any{"set": map[string]any{
+			"appearance.terminalTheme":      "dark",
+			"appearance.terminalFontFamily": "cascadia",
+			"appearance.terminalContrast":   "standard",
+		}}
 	}
 	return method, path, body
 }
