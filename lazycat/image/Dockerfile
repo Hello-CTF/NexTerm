@@ -16,10 +16,24 @@ RUN apt-get update \
 COPY nexterm-server /usr/local/bin/nexterm-server
 COPY nexterm-helper-linux-amd64 /usr/local/bin/nexterm-helper-linux-amd64
 COPY nexterm-helper-linux-arm64 /usr/local/bin/nexterm-helper-linux-arm64
+COPY nexterm-helper-linux-armv7 /usr/local/bin/nexterm-helper-linux-armv7
+COPY nexterm-helper-linux-riscv64 /usr/local/bin/nexterm-helper-linux-riscv64
+COPY nexterm-helper-linux-loong64 /usr/local/bin/nexterm-helper-linux-loong64
+COPY nexterm-helper-darwin-amd64 /usr/local/bin/nexterm-helper-darwin-amd64
+COPY nexterm-helper-darwin-arm64 /usr/local/bin/nexterm-helper-darwin-arm64
+COPY nexterm-helper-windows-amd64.exe /usr/local/bin/nexterm-helper-windows-amd64.exe
+COPY nexterm-helper-windows-arm64.exe /usr/local/bin/nexterm-helper-windows-arm64.exe
 COPY entrypoint.sh /usr/local/bin/nexterm-server-entrypoint
 RUN test -x /usr/local/bin/nexterm-server \
     && test -x /usr/local/bin/nexterm-helper-linux-amd64 \
     && test -x /usr/local/bin/nexterm-helper-linux-arm64 \
+    && test -x /usr/local/bin/nexterm-helper-linux-armv7 \
+    && test -x /usr/local/bin/nexterm-helper-linux-riscv64 \
+    && test -x /usr/local/bin/nexterm-helper-linux-loong64 \
+    && test -x /usr/local/bin/nexterm-helper-darwin-amd64 \
+    && test -x /usr/local/bin/nexterm-helper-darwin-arm64 \
+    && test -x /usr/local/bin/nexterm-helper-windows-amd64.exe \
+    && test -x /usr/local/bin/nexterm-helper-windows-arm64.exe \
     && test -x /usr/bin/setpriv \
     && test -x /usr/bin/findmnt \
     && test -x /usr/bin/awk \

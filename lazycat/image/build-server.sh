@@ -48,6 +48,23 @@ case "$BASE_REF" in
     ;;
 esac
 
+HELPERS_DIR="${NEXTERM_HELPERS_DIR:-$ROOT/target/go-build}"
+case "$HELPERS_DIR" in
+  /*) ;;
+  *) HELPERS_DIR="$ROOT/$HELPERS_DIR" ;;
+esac
+verify_helpers() {
+  while IFS='|' read -r HELPER_OS HELPER_ARCH HELPER_NAME; do
+    HELPER="$HELPERS_DIR/$HELPER_NAME"
+    node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$HELPER" "helper-$HELPER_OS-$HELPER_ARCH" "$HELPER_OS" "$HELPER_ARCH" 0
+  done < <(node "$ROOT/.github/scripts/helper-matrix.mjs" --shell)
+}
+if [ -n "${NEXTERM_HELPERS_DIR:-}" ]; then
+  [ -d "$HELPERS_DIR" ] || { echo "[lzc-build] error: helpers directory does not exist: $HELPERS_DIR" >&2; exit 1; }
+  echo "[lzc-build]     using helper binaries and metadata records from: $HELPERS_DIR"
+  verify_helpers
+fi
+
 echo "[lzc-build] 2/4 building the frontend (node scripts/build.mjs frontend -> dist/)"
 cd "$ROOT"
 
@@ -73,15 +90,21 @@ mkdir -p "$CONTENT/lazycat-injects"
 cp "$HERE"/../injects/*.js "$CONTENT/lazycat-injects/"
 echo "[lzc-build]     inject scripts ready: $CONTENT/lazycat-injects"
 
-echo "[lzc-build] 3/4 building the server and both Linux helpers"
+echo "[lzc-build] 3/4 building the server and nine SSH target helpers"
 node scripts/build.mjs server --release --os=linux --arch="$LZC_ARCH"
+if [ -z "${NEXTERM_HELPERS_DIR:-}" ]; then
+  node scripts/build.mjs helpers --release
+fi
+[ -d "$HELPERS_DIR" ] || { echo "[lzc-build] error: helpers directory does not exist: $HELPERS_DIR" >&2; exit 1; }
+if [ -z "${NEXTERM_HELPERS_DIR:-}" ]; then
+  verify_helpers
+fi
 rm -rf "$IMAGE_CONTEXT"
 mkdir -p "$IMAGE_CONTEXT"
 install -m 0755 "$ROOT/target/go-build/nexterm-server-linux-${LZC_ARCH}" "$IMAGE_CONTEXT/nexterm-server"
-for HELPER_ARCH in amd64 arm64; do
-  node scripts/build.mjs helper --release --os=linux --arch="$HELPER_ARCH"
-  install -m 0755 "$ROOT/target/go-build/nexterm-helper-linux-${HELPER_ARCH}" "$IMAGE_CONTEXT/nexterm-helper-linux-${HELPER_ARCH}"
-done
+while IFS='|' read -r HELPER_OS HELPER_ARCH HELPER_NAME; do
+  install -m 0755 "$HELPERS_DIR/$HELPER_NAME" "$IMAGE_CONTEXT/$HELPER_NAME"
+done < <(node .github/scripts/helper-matrix.mjs --shell)
 install -m 0644 "$HERE/Dockerfile" "$IMAGE_CONTEXT/Dockerfile"
 install -m 0755 "$HERE/entrypoint.sh" "$IMAGE_CONTEXT/entrypoint.sh"
 echo "[lzc-build]     image context ready: $IMAGE_CONTEXT"
@@ -111,13 +134,19 @@ check_static_elf() {
 
 echo "[lzc-build] 4/4 self-check"
 check_static_elf "$IMAGE_CONTEXT/nexterm-server" "$ELF_ARCH"
-for HELPER_ARCH in amd64 arm64; do
-  case "$HELPER_ARCH" in
-    amd64) HELPER_ELF_ARCH="x86-64" ;;
-    arm64) HELPER_ELF_ARCH="aarch64" ;;
-  esac
-  check_static_elf "$IMAGE_CONTEXT/nexterm-helper-linux-${HELPER_ARCH}" "$HELPER_ELF_ARCH"
-done
+while IFS='|' read -r HELPER_OS HELPER_ARCH HELPER_NAME; do
+  [ -x "$IMAGE_CONTEXT/$HELPER_NAME" ] || { echo "[lzc-build] error: helper is not executable: $HELPER_NAME" >&2; exit 1; }
+  if [ "$HELPER_OS" = "linux" ]; then
+    case "$HELPER_ARCH" in
+      amd64) HELPER_ELF_ARCH="x86-64" ;;
+      arm64) HELPER_ELF_ARCH="aarch64" ;;
+      armv7) HELPER_ELF_ARCH="ARM" ;;
+      riscv64) HELPER_ELF_ARCH="RISC-V" ;;
+      loong64) HELPER_ELF_ARCH="LoongArch" ;;
+    esac
+    check_static_elf "$IMAGE_CONTEXT/$HELPER_NAME" "$HELPER_ELF_ARCH"
+  fi
+done < <(node .github/scripts/helper-matrix.mjs --shell)
 if [ ! -f "$CONTENT/web/index.html" ]; then
   echo "[lzc-build] error: $CONTENT/web/index.html does not exist: did the frontend build fail?" >&2
   exit 1

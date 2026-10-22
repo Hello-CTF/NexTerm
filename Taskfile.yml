@@ -255,13 +255,18 @@ tasks:
     cmds:
       - node scripts/build.mjs desktop --release --repro-check --os=linux --arch={{.GOARCH | default "amd64"}}
 
+  helpers:matrix:
+    summary: Build all nine helpers and execute metadata only on a matching real host
+    cmds:
+      - node scripts/build.mjs helpers --release
+
   package:
-    summary: Package the host desktop and enforce artifact assertion evidence
+    summary: Package the host desktop with nine helpers and representative metadata evidence
     cmds:
       - node scripts/build.mjs release
 
   linux:package:
-    summary: Produce one full Linux server archive with both runtime units
+    summary: Produce one full Linux server archive with both runtime units and nine helpers
     cmds:
       - bash scripts/pack-linux-server.sh --arch={{.GOARCH | default "amd64"}}
 
@@ -281,7 +286,7 @@ tasks:
       - go run ./scripts/e2e-harness sync
 
   verify:
-    summary: Run all checks, race and production tests, then reproducibly build the host desktop
+    summary: Run all checks, race and production tests, the nine-helper matrix and a host desktop build
     cmds:
       - task: check
       - task: test:race
@@ -289,4 +294,5 @@ tasks:
         vars:
           DIST_SOURCE: dist
           DIST_MANIFEST: target/dist-manifest.json
+      - task: helpers:matrix
       - node scripts/build.mjs desktop --release --repro-check --consume-dist=dist --dist-manifest=target/dist-manifest.json

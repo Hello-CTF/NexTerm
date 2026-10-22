@@ -145,13 +145,19 @@ script — including whether each env file predates the attempt, so an
 example env written by the interrupted run is never mistaken for explicit
 configuration — and finishes with `enable --now`.
 
-Keep both helpers beside `nexterm-server`. On the server's own
-architecture, verify the matching helper before enabling the service; it
-must print JSON with a protocol version:
+Keep all nine target helpers beside `nexterm-server`: Linux
+amd64/arm64/armv7/riscv64/loong64, macOS amd64/arm64, and Windows
+amd64/arm64 (`.exe`). Build metadata acceptance uses three representatives:
+Linux amd64, Windows amd64, and macOS arm64. The other six targets are
+marked as untested cross-compiled helpers with metadata not-run; do not
+present them as target-accepted. This archive does not record real SSH
+deployment acceptance. Execute `--metadata` only on the actual target host;
+its JSON includes the protocol and the executing file's SHA-256:
 
 ```sh
 /opt/nexterm/nexterm-helper-linux-amd64 --metadata  # x86_64 host
 /opt/nexterm/nexterm-helper-linux-arm64 --metadata  # aarch64 host
+/opt/nexterm/nexterm-helper-linux-armv7 --metadata  # ARMv7 host
 ```
 
 The units read their settings from `/etc/nexterm/nexterm.env` and

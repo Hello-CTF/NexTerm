@@ -24,11 +24,32 @@ SetCompressor /SOLID lzma
 !ifndef NEXTERM_EXE_NAME
   !error "NEXTERM_EXE_NAME is required"
 !endif
-!ifndef NEXTERM_HELPER_AMD64
-  !error "NEXTERM_HELPER_AMD64 is required"
+!ifndef NEXTERM_HELPER_LINUX_AMD64
+  !error "NEXTERM_HELPER_LINUX_AMD64 is required"
 !endif
-!ifndef NEXTERM_HELPER_ARM64
-  !error "NEXTERM_HELPER_ARM64 is required"
+!ifndef NEXTERM_HELPER_LINUX_ARM64
+  !error "NEXTERM_HELPER_LINUX_ARM64 is required"
+!endif
+!ifndef NEXTERM_HELPER_LINUX_ARMV7
+  !error "NEXTERM_HELPER_LINUX_ARMV7 is required"
+!endif
+!ifndef NEXTERM_HELPER_LINUX_RISCV64
+  !error "NEXTERM_HELPER_LINUX_RISCV64 is required"
+!endif
+!ifndef NEXTERM_HELPER_LINUX_LOONG64
+  !error "NEXTERM_HELPER_LINUX_LOONG64 is required"
+!endif
+!ifndef NEXTERM_HELPER_DARWIN_AMD64
+  !error "NEXTERM_HELPER_DARWIN_AMD64 is required"
+!endif
+!ifndef NEXTERM_HELPER_DARWIN_ARM64
+  !error "NEXTERM_HELPER_DARWIN_ARM64 is required"
+!endif
+!ifndef NEXTERM_HELPER_WINDOWS_AMD64
+  !error "NEXTERM_HELPER_WINDOWS_AMD64 is required"
+!endif
+!ifndef NEXTERM_HELPER_WINDOWS_ARM64
+  !error "NEXTERM_HELPER_WINDOWS_ARM64 is required"
 !endif
 
 Name "NexTerm ${NEXTERM_VERSION}"
@@ -57,8 +78,15 @@ Section "NexTerm" SEC01
   SetOutPath "$INSTDIR"
   SetOverwrite on
   File "${NEXTERM_BINARY}"
-  File /oname=nexterm-helper-linux-amd64 "${NEXTERM_HELPER_AMD64}"
-  File /oname=nexterm-helper-linux-arm64 "${NEXTERM_HELPER_ARM64}"
+  File /oname=nexterm-helper-linux-amd64 "${NEXTERM_HELPER_LINUX_AMD64}"
+  File /oname=nexterm-helper-linux-arm64 "${NEXTERM_HELPER_LINUX_ARM64}"
+  File /oname=nexterm-helper-linux-armv7 "${NEXTERM_HELPER_LINUX_ARMV7}"
+  File /oname=nexterm-helper-linux-riscv64 "${NEXTERM_HELPER_LINUX_RISCV64}"
+  File /oname=nexterm-helper-linux-loong64 "${NEXTERM_HELPER_LINUX_LOONG64}"
+  File /oname=nexterm-helper-darwin-amd64 "${NEXTERM_HELPER_DARWIN_AMD64}"
+  File /oname=nexterm-helper-darwin-arm64 "${NEXTERM_HELPER_DARWIN_ARM64}"
+  File /oname=nexterm-helper-windows-amd64.exe "${NEXTERM_HELPER_WINDOWS_AMD64}"
+  File /oname=nexterm-helper-windows-arm64.exe "${NEXTERM_HELPER_WINDOWS_ARM64}"
   File /oname=MicrosoftEdgeWebview2Setup.exe "${NEXTERM_WEBVIEW2}"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "Software\NexTerm" "InstallDir" "$INSTDIR"
@@ -98,6 +126,13 @@ Section "Uninstall"
   Delete "$INSTDIR\${NEXTERM_EXE_NAME}"
   Delete "$INSTDIR\nexterm-helper-linux-amd64"
   Delete "$INSTDIR\nexterm-helper-linux-arm64"
+  Delete "$INSTDIR\nexterm-helper-linux-armv7"
+  Delete "$INSTDIR\nexterm-helper-linux-riscv64"
+  Delete "$INSTDIR\nexterm-helper-linux-loong64"
+  Delete "$INSTDIR\nexterm-helper-darwin-amd64"
+  Delete "$INSTDIR\nexterm-helper-darwin-arm64"
+  Delete "$INSTDIR\nexterm-helper-windows-amd64.exe"
+  Delete "$INSTDIR\nexterm-helper-windows-arm64.exe"
   Delete "$INSTDIR\MicrosoftEdgeWebview2Setup.exe"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"

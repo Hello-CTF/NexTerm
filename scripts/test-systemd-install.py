@@ -121,6 +121,15 @@ SCRIPT = ROOT / "deploy" / "systemd" / "install.sh"
 SYSTEMD_DIR = ROOT / "deploy" / "systemd"
 UNITS = ("nexterm-server.service", "nexterm-onlyserver.service")
 ENVS = ("nexterm.env", "onlyserver.env")
+HELPER_NAMES = tuple(
+    f"nexterm-helper-{goos}-{arch}{'.exe' if goos == 'windows' else ''}"
+    for goos, architectures in (
+        ("linux", ("amd64", "arm64", "armv7", "riscv64", "loong64")),
+        ("darwin", ("amd64", "arm64")),
+        ("windows", ("amd64", "arm64")),
+    )
+    for arch in architectures
+)
 FAKE_KEY_HEX = "0123456789abcdef" * 4
 
 PASSED: list[str] = []
@@ -269,7 +278,8 @@ exit "${INIT_ADMIN_EXIT:-0}"
 def make_payload(base: pathlib.Path, version: str) -> pathlib.Path:
     payload = base / f"payload-{version}"
     (payload / "web").mkdir(parents=True)
-    for name in ("nexterm-server", "nexterm-helper-linux-amd64", "nexterm-helper-linux-arm64"):
+    assert len(HELPER_NAMES) == 9
+    for name in ("nexterm-server", *HELPER_NAMES):
         binary = payload / name
         binary.write_text(f"#!/bin/sh\n# fake {name} {version}\n")
         binary.chmod(0o755)
@@ -486,6 +496,9 @@ def test_first_install_safe_defaults() -> None:
         assert result.returncode == 0, result.stderr
         assert "mode: first install" in result.stdout, result.stdout
         assert read(root / "opt/nexterm/nexterm-server") == read(payload / "nexterm-server")
+        for helper in HELPER_NAMES:
+            assert read(root / "opt/nexterm" / helper) == read(payload / helper), helper
+            assert mode(root / "opt/nexterm" / helper) == 0o755, helper
         assert read(root / "opt/nexterm/web/index.html") == "<html>nexterm web v1</html>\n"
         for unit in UNITS:
             assert read(root / "etc/systemd/system" / unit) == read(SYSTEMD_DIR / unit), unit
@@ -3217,7 +3230,7 @@ def test_real_server_archive_smoke() -> None:
         assert len(dirs) == 1, f"archive must extract to a single directory: {dirs}"
         payload = dirs[0]
         for member in (
-            "install.sh", "nexterm-server", "nexterm-helper-linux-amd64", "nexterm-helper-linux-arm64",
+            "install.sh", "nexterm-server", *HELPER_NAMES,
             "nexterm-server.service", "nexterm-onlyserver.service",
             "nexterm.env.example", "onlyserver.env.example", "web/index.html",
         ):
