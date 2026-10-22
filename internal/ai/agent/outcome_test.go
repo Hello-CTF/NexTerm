@@ -136,6 +136,9 @@ func TestEditResendTruncatesAndSupersedesFinishedRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitClosed(t, second)
+	if err := runner.Wait(context.Background(), secondResponse.JobID); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := storage.CheckpointSet(context.Background(), secondResponse.JobID, []byte("checkpoint")); err != nil {
 		t.Fatal(err)
