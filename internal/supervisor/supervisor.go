@@ -24,11 +24,13 @@ type Supervisor struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu         sync.Mutex
-	sessions   map[string]*Session
-	killed     map[string]string
-	closing    bool
-	finishErrs []error
+	mu           sync.Mutex
+	sessions     map[string]*Session
+	startingPTY  int
+	startingExec int
+	killed       map[string]string
+	closing      bool
+	finishErrs   []error
 
 	killMu  sync.Mutex
 	creates sync.WaitGroup
@@ -87,6 +89,7 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 	if err != nil {
 		return nil, err
 	}
+	usePTY := options.usePTY()
 	s.killMu.Lock()
 	defer s.killMu.Unlock()
 	s.mu.Lock()
@@ -99,11 +102,19 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 		return nil, fmt.Errorf("%w: %s", ErrAlreadyExists, id)
 	}
 	delete(s.killed, id)
+	s.startActivityLocked(usePTY)
 	s.creates.Add(1)
 	s.mu.Unlock()
 	defer s.creates.Done()
+	starting := true
+	defer func() {
+		if starting {
+			s.mu.Lock()
+			s.finishActivityStartLocked(usePTY)
+			s.mu.Unlock()
+		}
+	}()
 
-	usePTY := options.usePTY()
 	abort := func(cause error) (*Session, error) {
 		if cleanupErr := removeRegistryArtifacts(sessionsRoot(s.stateDir), id); cleanupErr != nil {
 			return nil, errors.Join(cause, cleanupErr)
@@ -179,6 +190,8 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 		return abort(ErrClosed)
 	}
 	s.sessions[id] = session
+	s.finishActivityStartLocked(usePTY)
+	starting = false
 	if usePTY {
 		s.pumps.Add(2)
 	} else {

@@ -317,7 +317,7 @@ func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
 		}
 	}
 	conn := &clientConn{conn: netConn}
-	features := []string{featureExec, featureMetadata}
+	features := []string{featureExec, featureMetadata, featureRuntimeMetadata, featureActivity}
 	if c.dial != nil {
 		features = append(features, featureReplayGzip)
 	}
@@ -339,7 +339,24 @@ func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
 		_ = netConn.Close()
 		return nil, fmt.Errorf("%w: server speaks protocol %d", ErrProtocol, ack.Version)
 	}
-	conn.features = ack.Features
+	conn.features = slices.Clone(ack.Features)
+	if slices.Contains(features, featureRuntimeMetadata) && slices.Contains(conn.features, featureRuntimeMetadata) && ack.Runtime != nil {
+		metadata := *ack.Runtime
+		if err := validateRuntimeMetadata(metadata, ack.Version); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		metadata.Features = slices.Clone(metadata.Features)
+		conn.runtimeMetadata = &metadata
+	}
+	if slices.Contains(features, featureActivity) && slices.Contains(conn.features, featureActivity) && ack.Activity != nil {
+		if ack.Activity.PTY < 0 || ack.Activity.Exec < 0 {
+			_ = conn.Close()
+			return nil, fmt.Errorf("%w: negative daemon activity count", ErrProtocol)
+		}
+		activity := *ack.Activity
+		conn.activity = &activity
+	}
 	return conn, nil
 }
 
@@ -356,9 +373,11 @@ type clientFrame struct {
 }
 
 type clientConn struct {
-	conn     net.Conn
-	features []string
-	writeMu  sync.Mutex
+	conn            net.Conn
+	features        []string
+	runtimeMetadata *RuntimeMetadata
+	activity        *ActivitySnapshot
+	writeMu         sync.Mutex
 }
 
 func (c *clientConn) request(ctx context.Context, kind frameType, message any) (frameType, []byte, error) {
