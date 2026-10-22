@@ -781,6 +781,62 @@ describe("database and Redis facade IPC contracts", () => {
   });
 });
 
+describe("transcript facade IPC contracts", () => {
+  it("preserves all six flat envelopes, partial reads and mutation result payloads", async () => {
+    const hosts = [{ assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false, transcripts: 1, lastStartedAt: 10 }];
+    const summaries = [{
+      id: "t1", sessionId: "s1", assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false,
+      startedAt: 10, endedAt: 20, bytes: 3, storedBytes: 2, chunks: 1, truncated: false, active: false,
+      syncOptIn: true, contentOmitted: false,
+    }];
+    const partial = {
+      chunks: [{ seq: 3, tabId: "tab-1", ts: 12, kind: 0, dataBase64: "AQID" }],
+      nextSeq: 4,
+      done: false,
+      totalBytes: 9,
+    };
+    const matches = [{ seq: 3, ts: 12, preview: "match" }];
+    const calls = captureRpc({
+      transcript_hosts: hosts,
+      transcript_list: summaries,
+      transcript_read: partial,
+      transcript_search: matches,
+      transcript_sync_opt_in: {},
+    });
+    const { transcriptApi } = await import("../ipc/commands");
+    const cases: Array<{ command: IPCCommandName; payload: unknown; invoke: () => Promise<unknown> }> = [
+      { command: "transcript_hosts", payload: null, invoke: async () => expect(await transcriptApi.hosts()).toEqual(hosts) },
+      { command: "transcript_list", payload: { assetId: "a1" }, invoke: async () => expect(await transcriptApi.list("a1")).toEqual(summaries) },
+      { command: "transcript_read", payload: { id: "t1", afterSeq: 3, maxBytes: 1024 }, invoke: async () => expect(await transcriptApi.read("t1", 3, 1024)).toEqual(partial) },
+      { command: "transcript_search", payload: { id: "t1", query: "match" }, invoke: async () => expect(await transcriptApi.search("t1", "match")).toEqual(matches) },
+      { command: "transcript_delete", payload: { id: "t1" }, invoke: () => expect(transcriptApi.remove("t1")).resolves.toBeNull() },
+      { command: "transcript_sync_opt_in", payload: { id: "t1", optIn: true }, invoke: () => expect(transcriptApi.syncOptIn("t1", true)).resolves.toEqual({}) },
+    ];
+
+    expect(cases).toHaveLength(6);
+    for (const [index, test] of cases.entries()) {
+      await test.invoke();
+      expectManifestEnvelope(calls[index], test.command, test.payload);
+    }
+    expect(calls).toHaveLength(6);
+    expect(calls[5]?.args).not.toHaveProperty("args");
+  });
+
+  it("defaults the inclusive cursor and omits an unset maxBytes in web JSON", async () => {
+    const calls = captureRpc({ transcript_read: { chunks: [], nextSeq: 0, done: true, totalBytes: 0 } });
+    const { transcriptApi } = await import("../ipc/commands");
+
+    await transcriptApi.read("t1");
+    await transcriptApi.read("t1", 7);
+
+    expect(calls).toHaveLength(2);
+    expectManifestEnvelope(calls[0], "transcript_read", { id: "t1", afterSeq: 0 });
+    expectManifestEnvelope(calls[1], "transcript_read", { id: "t1", afterSeq: 7 });
+    expect(calls[0]?.args).not.toHaveProperty("maxBytes");
+    expect(calls[1]?.args).not.toHaveProperty("maxBytes");
+  });
+});
+
 describe("ai_edit_resend wire contract", () => {
   it("keeps ai_edit_resend production args flat with exact fields", async () => {
     const calls = captureRpc();

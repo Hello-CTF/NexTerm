@@ -277,8 +277,8 @@ func TestSyncVerticalContracts(t *testing.T) {
 		}
 	}
 	transcript := commands["transcript_sync_opt_in"]
-	if transcript.Scope != "" || transcript.Input != nil || transcript.Output != nil {
-		t.Fatalf("transcript opt-in must remain outside the sync vertical: %+v", transcript)
+	if transcript.Scope != "transcript" || transcript.Input == nil || transcript.Output == nil {
+		t.Fatalf("transcript opt-in must join the transcript vertical instead of sync: %+v", transcript)
 	}
 
 	rendered := registry.render()
@@ -300,6 +300,98 @@ func TestSyncVerticalContracts(t *testing.T) {
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("generated sync declarations are missing %q", want)
+		}
+	}
+}
+
+func TestTranscriptVerticalContracts(t *testing.T) {
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	tests := []struct {
+		name   string
+		input  string
+		output string
+	}{
+		{name: "transcript_hosts", input: "Record<string, never>", output: "TranscriptHostDTO[]"},
+		{name: "transcript_list", input: "TranscriptListRequest", output: "TranscriptSummaryDTO[]"},
+		{name: "transcript_read", input: "TranscriptReadRequest", output: "TranscriptReadResult"},
+		{name: "transcript_search", input: "TranscriptSearchRequest", output: "TranscriptMatchDTO[]"},
+		{name: "transcript_delete", input: "TranscriptIDRequest", output: "unknown"},
+		{name: "transcript_sync_opt_in", input: "TranscriptSyncOptInRequest", output: "Record<string, never>"},
+	}
+	selected := make(map[string]bool, len(tests))
+	registry := newTypeRegistry()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, ok := commands[test.name]
+			if !ok {
+				t.Fatalf("selected command %q is missing", test.name)
+			}
+			if command.Scope != "transcript" || command.Nested || command.Channel || command.Stream != "none" {
+				t.Fatalf("unexpected transcript metadata: %+v", command)
+			}
+			if command.Input == nil || command.Output == nil {
+				t.Fatalf("selected command must carry input/output DTO metadata: %+v", command)
+			}
+			input, err := registry.ref(command.Input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if input.TS != test.input {
+				t.Fatalf("input = %q, want %q", input.TS, test.input)
+			}
+			output, err := registry.ref(command.Output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if output.TS != test.output {
+				t.Fatalf("output = %q, want %q", output.TS, test.output)
+			}
+			selected[test.name] = true
+		})
+	}
+	if len(selected) != 6 {
+		t.Fatalf("selected transcript command count = %d, want 6", len(selected))
+	}
+	for name, command := range commands {
+		if strings.HasPrefix(name, "transcript_") && !selected[name] {
+			t.Errorf("transcript command %q is missing from the vertical inventory", name)
+		}
+		if command.Scope == "transcript" && !selected[name] {
+			t.Errorf("unexpected command %q joined the transcript vertical", name)
+		}
+	}
+
+	declarations := make(map[string]*tsDeclaration)
+	for _, declaration := range registry.declarations {
+		declarations[declaration.Name] = declaration
+	}
+	declarationTests := []struct {
+		name   string
+		want   []string
+		absent []string
+	}{
+		{name: "TranscriptSummaryDTO", want: []string{"storedBytes: number;", "syncOptIn: boolean;", "contentOmitted: boolean;", "endedAt: number | null;"}},
+		{name: "TranscriptChunkDTO", want: []string{"seq: number;", "tabId: string;", "ts: number;", "kind: number;", "dataBase64: string;"}},
+		{name: "TranscriptReadRequest", want: []string{"id: string;", "afterSeq: number;", "maxBytes?: number;"}, absent: []string{"afterSeq?:"}},
+		{name: "TranscriptReadResult", want: []string{"chunks: TranscriptChunkDTO[];", "nextSeq: number;", "done: boolean;", "totalBytes: number;"}},
+		{name: "TranscriptSyncOptInRequest", want: []string{"id: string;", "optIn: boolean;"}},
+	}
+	for _, test := range declarationTests {
+		declaration := declarations[test.name]
+		if declaration == nil {
+			t.Errorf("%s declaration is missing", test.name)
+			continue
+		}
+		for _, want := range test.want {
+			if !strings.Contains(declaration.Body, want) {
+				t.Errorf("%s declaration is missing %q:\n%s", test.name, want, declaration.Body)
+			}
+		}
+		for _, absent := range test.absent {
+			if strings.Contains(declaration.Body, absent) {
+				t.Errorf("%s declaration unexpectedly contains %q:\n%s", test.name, absent, declaration.Body)
+			}
 		}
 	}
 }

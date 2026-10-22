@@ -60,6 +60,14 @@ var contractScopes = []scopeSpec{
 		"sync_status",
 		"sync_wake",
 	}},
+	{name: "transcript", commands: []string{
+		"transcript_delete",
+		"transcript_hosts",
+		"transcript_list",
+		"transcript_read",
+		"transcript_search",
+		"transcript_sync_opt_in",
+	}},
 	{name: "cron", prefixes: []string{"cron_"}},
 	{name: "log-tail", prefixes: []string{"log_tail_"}},
 	{name: "asset", commands: []string{

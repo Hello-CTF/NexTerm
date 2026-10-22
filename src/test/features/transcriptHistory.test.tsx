@@ -398,6 +398,24 @@ describe("TranscriptHistoryPanel", () => {
     expect(mocks.toast).not.toHaveBeenCalled();
   });
 
+  it("enables sync with an explicit true opt-in and reloads without confirmation", async () => {
+    const unsynced = summary();
+    mocks.transcriptList
+      .mockResolvedValueOnce([unsynced])
+      .mockResolvedValue([summary({ syncOptIn: true })]);
+    mocks.transcriptSyncOptIn.mockResolvedValue({});
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
+    await flushUntil(() => mounted!.container.querySelector('button[aria-label="开启这条记录的同步"]') !== null);
+
+    click(mounted.container.querySelector<HTMLButtonElement>('button[aria-label="开启这条记录的同步"]')!);
+
+    await waitFor(() => expect(mocks.transcriptSyncOptIn).toHaveBeenCalledWith(unsynced.id, true));
+    await flushUntil(() => mounted!.container.querySelector('button[aria-label="关闭这条记录的同步"]') !== null);
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.transcriptList.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已开启这条记录的同步");
+  });
+
   it("disables sync and reloads only after confirmation", async () => {
     const synced = summary({ syncOptIn: true });
     const confirmation = deferred<boolean>();

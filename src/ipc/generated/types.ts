@@ -2242,6 +2242,78 @@ export type TerminalWriteRequest = {
   broadcast?: TerminalBroadcastWriteOptions | null;
 };
 
+export type TranscriptChunkDTO = {
+  seq: number;
+  tabId: string;
+  ts: number;
+  kind: number;
+  dataBase64: string;
+};
+
+export type TranscriptHostDTO = {
+  assetId: string;
+  assetName: string;
+  assetKind: string;
+  assetDeleted: boolean;
+  transcripts: number;
+  lastStartedAt: number;
+};
+
+export type TranscriptIDRequest = {
+  id: string;
+};
+
+export type TranscriptListRequest = {
+  assetId: string;
+};
+
+export type TranscriptMatchDTO = {
+  seq: number;
+  ts: number;
+  preview: string;
+};
+
+export type TranscriptReadRequest = {
+  id: string;
+  afterSeq: number;
+  maxBytes?: number;
+};
+
+export type TranscriptReadResult = {
+  chunks: TranscriptChunkDTO[];
+  nextSeq: number;
+  done: boolean;
+  totalBytes: number;
+};
+
+export type TranscriptSearchRequest = {
+  id: string;
+  query: string;
+};
+
+export type TranscriptSummaryDTO = {
+  id: string;
+  sessionId: string;
+  assetId: string;
+  assetName: string;
+  assetKind: string;
+  assetDeleted: boolean;
+  startedAt: number;
+  endedAt: number | null;
+  bytes: number;
+  storedBytes: number;
+  chunks: number;
+  truncated: boolean;
+  active: boolean;
+  syncOptIn: boolean;
+  contentOmitted: boolean;
+};
+
+export type TranscriptSyncOptInRequest = {
+  id: string;
+  optIn: boolean;
+};
+
 export type VaultAutoLockRequest = {
   minutes: number | null;
 };

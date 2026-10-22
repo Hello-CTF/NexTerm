@@ -873,6 +873,94 @@ void generatedOutputs;
     expect(diagnostics, formatted(diagnostics)).toEqual([]);
   }, COMPILE_BUDGET_MS);
 
+  it("types the transcript vertical without widening its public facade", () => {
+    const probe = resolve("src/test/__ipc_transcript_vertical_contract_probe.ts");
+    const source = `
+import {
+  call,
+  transcriptApi,
+  type TranscriptChunk,
+  type TranscriptHost,
+  type TranscriptMatch,
+  type TranscriptReadResult,
+  type TranscriptSummary,
+} from "../ipc/commands";
+import type { IPCInput, IPCOutput } from "../ipc/generated/manifest";
+
+type Equal<Left, Right> =
+  (<T>() => T extends Left ? 1 : 2) extends
+  (<T>() => T extends Right ? 1 : 2) ? true : false;
+type Assert<Value extends true> = Value;
+const deleteUnknown: Assert<Equal<IPCOutput<"transcript_delete">, unknown>> = true;
+const optInEmpty: Assert<Equal<IPCOutput<"transcript_sync_opt_in">, Record<string, never>>> = true;
+const cursorRequired: Assert<Equal<IPCInput<"transcript_read">["afterSeq"], number>> = true;
+const maxBytesOptional: Assert<Equal<IPCInput<"transcript_read">["maxBytes"], number | undefined>> = true;
+const generatedKind: Assert<Equal<IPCOutput<"transcript_read">["chunks"][number]["kind"], number>> = true;
+const generatedStoredBytes: Assert<Equal<IPCOutput<"transcript_list">[number]["storedBytes"], number>> = true;
+const publicKind: Assert<Equal<TranscriptChunk["kind"], number | undefined>> = true;
+const publicStoredBytes: Assert<Equal<TranscriptSummary["storedBytes"], number | undefined>> = true;
+const publicSyncOptIn: Assert<Equal<TranscriptSummary["syncOptIn"], boolean | undefined>> = true;
+const publicContentOmitted: Assert<Equal<TranscriptSummary["contentOmitted"], boolean | undefined>> = true;
+const facadeList: Assert<Equal<ReturnType<typeof transcriptApi.list>, Promise<TranscriptSummary[]>>> = true;
+const facadeRead: Assert<Equal<ReturnType<typeof transcriptApi.read>, Promise<TranscriptReadResult>>> = true;
+const facadeDelete: Assert<Equal<ReturnType<typeof transcriptApi.remove>, Promise<void>>> = true;
+const facadeOptIn: Assert<Equal<ReturnType<typeof transcriptApi.syncOptIn>, Promise<void>>> = true;
+void [deleteUnknown, optInEmpty, cursorRequired, maxBytesOptional, generatedKind, generatedStoredBytes, publicKind, publicStoredBytes, publicSyncOptIn, publicContentOmitted, facadeList, facadeRead, facadeDelete, facadeOptIn];
+
+const hosts: Promise<TranscriptHost[]> = transcriptApi.hosts();
+const summaries: Promise<TranscriptSummary[]> = transcriptApi.list("a1");
+const read: Promise<TranscriptReadResult> = transcriptApi.read("t1");
+const matches: Promise<TranscriptMatch[]> = transcriptApi.search("t1", "needle");
+const removed: Promise<void> = transcriptApi.remove("t1");
+const optedIn: Promise<void> = transcriptApi.syncOptIn("t1", true);
+void [hosts, summaries, read, matches, removed, optedIn];
+void transcriptApi.read("t1", 4, 512 * 1024);
+
+void call("transcript_hosts");
+void call("transcript_list", { assetId: "a1" });
+void call("transcript_read", { id: "t1", afterSeq: 0 });
+void call("transcript_read", { id: "t1", afterSeq: 4, maxBytes: 4096 });
+void call("transcript_search", { id: "t1", query: "needle" });
+void call("transcript_delete", { id: "t1" });
+void call("transcript_sync_opt_in", { id: "t1", optIn: true });
+
+// @ts-expect-error typed transcript commands reject the legacy generic output escape
+void call<TranscriptReadResult>("transcript_read", { id: "t1", afterSeq: 0 });
+// @ts-expect-error the inclusive cursor is required by the generated call contract
+void call("transcript_read", { id: "t1" });
+// @ts-expect-error maxBytes is optional but not nullable
+void call("transcript_read", { id: "t1", afterSeq: 0, maxBytes: null });
+// @ts-expect-error owner identity comes from context, not client input
+void call("transcript_list", { assetId: "a1", ownerId: "other-user" });
+// @ts-expect-error no-argument hosts rejects owner injection
+void call("transcript_hosts", { ownerId: "other-user" });
+// @ts-expect-error transcript opt-in remains flat, not nested like sync_* mutations
+void call("transcript_sync_opt_in", { args: { id: "t1", optIn: true } });
+// @ts-expect-error optIn remains boolean
+void call("transcript_sync_opt_in", { id: "t1", optIn: "yes" });
+// @ts-expect-error the public facade does not widen optional maxBytes to null
+void transcriptApi.read("t1", 0, null);
+
+async function generatedOutputs() {
+  const result = await call("transcript_read", { id: "t1", afterSeq: 0 });
+  const kind: number = result.chunks[0].kind;
+  const nextSeq: number = result.nextSeq;
+  const done: boolean = result.done;
+  const totalBytes: number = result.totalBytes;
+  const deleted = await call("transcript_delete", { id: "t1" });
+  const dynamic: unknown = deleted;
+  // @ts-expect-error delete keeps its dynamic any output as unknown
+  const deletedField = deleted.field;
+  const opted = await call("transcript_sync_opt_in", { id: "t1", optIn: false });
+  const empty: Record<string, never> = opted;
+  void [kind, nextSeq, done, totalBytes, dynamic, deletedField, empty];
+}
+void generatedOutputs;
+`;
+    const diagnostics = compile([probe], { [probe]: source });
+    expect(diagnostics, formatted(diagnostics)).toEqual([]);
+  }, COMPILE_BUDGET_MS);
+
   it("types the consumer-priority session terminal vertical without narrowing legacy fallbacks", () => {
     const probe = resolve("src/test/__ipc_session_terminal_contract_probe.ts");
     const source = `
