@@ -270,14 +270,33 @@ func remoteCommandNotFound(err error) bool {
 	if err == nil || errors.Is(err, fs.ErrPermission) || errors.Is(err, ErrNoExec) {
 		return false
 	}
-	return strings.Contains(strings.ToLower(err.Error()), "no such file or directory")
+	var exitErr *base.ExitError
+	return errors.As(err, &exitErr) && exitErr.Code == 1
+}
+
+func remoteStatNotFoundDiagnostic(err error, path string) bool {
+	if !remoteCommandNotFound(err) {
+		return false
+	}
+	suffix := ": No such file or directory"
+	for _, diagnostic := range []string{
+		"stat: " + path + suffix,
+		"stat: " + path + ": stat" + suffix,
+		"stat: cannot stat '" + path + "'" + suffix,
+		"stat: cannot statx '" + path + "'" + suffix,
+	} {
+		if strings.Contains(err.Error(), diagnostic) {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *ExecHost) Exists(ctx context.Context, path string) (bool, error) {
 	quoted := quoteShell(path)
-	stat := "stat -- "
+	stat := "LC_ALL=C stat -- "
 	if h.target.GOOS == "darwin" {
-		stat = "stat -f '%N' -- "
+		stat = "LC_ALL=C stat -f '%N' -- "
 	}
 	command := "if [ -e " + quoted + " ] || [ -L " + quoted + " ]; then printf 1; else " + stat + quoted + " >/dev/null && printf 1; fi"
 	if h.target.GOOS == "windows" {
@@ -288,7 +307,7 @@ func (h *ExecHost) Exists(ctx context.Context, path string) (bool, error) {
 	}
 	stdout, err := h.run(ctx, command)
 	if err != nil {
-		if remoteCommandNotFound(err) {
+		if h.target.GOOS != "windows" && remoteStatNotFoundDiagnostic(err, path) {
 			return false, nil
 		}
 		return false, err
