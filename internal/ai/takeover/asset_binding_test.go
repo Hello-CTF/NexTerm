@@ -136,6 +136,7 @@ func TestResumePausedRejectsChangedAsset(t *testing.T) {
 		t.Fatalf("asset mismatch resume error = %v", err)
 	}
 	asset.set("asset-a")
+	waitTakeoverPauseReady(t, h.manager, response.JobID)
 	resumed := &agent.SliceStream{}
 	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(resumed)); err != nil {
 		t.Fatalf("resume after asset restored: %v", err)
@@ -149,6 +150,80 @@ func TestResumePausedRejectsChangedAsset(t *testing.T) {
 	if len(h.aiWrites) != 1 {
 		t.Fatalf("resume duplicated writes: %q", h.aiWrites)
 	}
+}
+
+type pausedAssetStream struct {
+	*agent.SliceStream
+	paused  chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *pausedAssetStream) Send(ctx context.Context, event agent.Event) error {
+	if err := s.SliceStream.Send(ctx, event); err != nil {
+		return err
+	}
+	if event.Type != "paused" {
+		return nil
+	}
+	s.once.Do(func() { close(s.paused) })
+	select {
+	case <-s.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestResumeAssetMismatchPrecedenceDuringPause(t *testing.T) {
+	var calls atomic.Int32
+	modelRelease := make(chan struct{})
+	chat := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		if calls.Add(1) == 1 {
+			return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(namedToolCall("keys", "send_keys", `{"keys":"ls","enter":true}`))}), nil
+		}
+		select {
+		case <-modelRelease:
+			return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(doneCall("finished"))}), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}}
+	asset := &mutableAsset{asset: "asset-a"}
+	h := newHarnessWith(t, chat, func(deps *Dependencies) {
+		deps.TabAsset = asset.resolve
+	})
+	stream := &pausedAssetStream{SliceStream: &agent.SliceStream{}, paused: make(chan struct{}), release: make(chan struct{})}
+	var releaseOnce sync.Once
+	releasePause := func() { releaseOnce.Do(func() { close(stream.release) }) }
+	defer releasePause()
+	response, err := h.manager.Run(context.Background(), RunArgs{TabID: "tab", Instruction: "go"}, agent.StaticStream(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitEvent(t, stream.SliceStream, "toolResult")
+	resumeArgs := ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}
+	factory := agent.StaticStream(&agent.SliceStream{})
+
+	asset.set("asset-b")
+	if _, err := h.manager.Resume(context.Background(), resumeArgs, factory); !errors.Is(err, ErrOwnershipActive) {
+		t.Fatalf("active job asset mismatch resume error = %v", err)
+	}
+	asset.set("asset-a")
+	h.manager.Pause("tab")
+	close(modelRelease)
+	<-stream.paused
+
+	asset.set("asset-b")
+	if _, err := h.manager.Resume(context.Background(), resumeArgs, factory); !errors.Is(err, ErrResumeMismatch) {
+		t.Fatalf("paused asset mismatch resume error = %v", err)
+	}
+	asset.set("asset-a")
+	if _, err := h.manager.Resume(context.Background(), resumeArgs, factory); !errors.Is(err, ErrOwnershipActive) {
+		t.Fatalf("same-asset resume during pause finalization error = %v", err)
+	}
+	releasePause()
+	waitTakeoverPauseReady(t, h.manager, response.JobID)
 }
 
 func TestGuardModesStillGateWithAssetBinding(t *testing.T) {

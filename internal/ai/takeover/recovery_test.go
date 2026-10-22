@@ -406,6 +406,7 @@ func TestPauseWaitsForCheckpointPersistence(t *testing.T) {
 	close(store.gate)
 	close(modelRelease)
 	waitEvent(t, stream, "paused")
+	waitTakeoverPauseReady(t, h.manager, response.JobID)
 	resumed := &agent.SliceStream{}
 	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(resumed)); err != nil {
 		t.Fatalf("resume after checkpoint persisted: %v", err)
