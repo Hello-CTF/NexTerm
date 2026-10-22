@@ -63,6 +63,9 @@ var tsNameOverrides = map[string]string{
 	"github.com/Hello-CTF/NexTerm/internal/mount.RemoveArgs":                         "MountRemoveArgs",
 	"github.com/Hello-CTF/NexTerm/internal/mount.listRequest":                        "MountListRequest",
 	"github.com/Hello-CTF/NexTerm/internal/store.ForwardRuleInput":                   "ForwardRuleInput",
+	"github.com/Hello-CTF/NexTerm/internal/biometric.Status":                         "BiometricStatus",
+	"github.com/Hello-CTF/NexTerm/internal/update.Result":                            "UpdateResult",
+	"github.com/Hello-CTF/NexTerm/internal/update.Status":                            "UpdateStatus",
 	"github.com/Hello-CTF/NexTerm/internal/vault.Status":                             "VaultStatus",
 }
 
@@ -115,9 +118,11 @@ var consumerOptionalRequestFields = map[string]map[string]bool{
 type consumerRequestField struct {
 	name     string
 	optional bool
+	nullable bool
 }
 
 var consumerCommandRequestProjections = map[string][]consumerRequestField{
+	"app_update_install":              {{name: "Version", nullable: true}},
 	"db_query":                        {{name: "ConnID"}, {name: "SQL"}, {name: "TimeoutMS", optional: true}},
 	"docker_action":                   {{name: "SessionID"}, {name: "ContainerID"}, {name: "Action"}, {name: "NewName", optional: true}},
 	"docker_compose_redeploy_attach":  {{name: "SessionID"}, {name: "Project"}, {name: "Path"}, {name: "Ticket"}},
@@ -182,7 +187,11 @@ func projectConsumerCommandInput(command string, value types.Type) (types.Type, 
 				return nil, fmt.Errorf("request projection field %s: %w", projected.name, err)
 			}
 		}
-		fields = append(fields, structure.Field(index))
+		field := structure.Field(index)
+		if projected.nullable {
+			field = types.NewVar(field.Pos(), field.Pkg(), field.Name(), types.NewPointer(field.Type()))
+		}
+		fields = append(fields, field)
 		tags = append(tags, tag)
 	}
 	return types.NewStruct(fields, tags), nil

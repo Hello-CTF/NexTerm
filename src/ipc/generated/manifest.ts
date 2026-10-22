@@ -378,24 +378,36 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "app_platform": {
+      scope: "platform",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "string", ts: "string" },
     },
     "app_restart": {
+      scope: "update",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/update.Result", ts: "UpdateResult" },
     },
     "app_update_check": {
+      scope: "update",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/update.Status", ts: "UpdateStatus" },
     },
     "app_update_install": {
+      scope: "update",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{Version *string \"json:\\\"version\\\"\"}", ts: "{\n  version: string | null;\n}" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/update.Result", ts: "UpdateResult" },
     },
     "asset_create": {
       scope: "asset",
@@ -480,24 +492,36 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "biometric_disable": {
+      scope: "biometric",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "any", ts: "unknown" },
     },
     "biometric_enable": {
+      scope: "biometric",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.biometricEnableRequest", ts: "BiometricEnableRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "biometric_status": {
+      scope: "biometric",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/biometric.Status", ts: "BiometricStatus" },
     },
     "biometric_unlock": {
+      scope: "biometric",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.biometricUnlockResult", ts: "BiometricUnlockResult" },
     },
     "command_count": {
       nested: true,
@@ -606,14 +630,20 @@ export const ipcContractManifest = {
       output: { go: "[]string", ts: "string[]" },
     },
     "desktop_tray_get": {
+      scope: "platform",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.desktopTrayDTO", ts: "DesktopTrayDTO" },
     },
     "desktop_tray_set": {
+      scope: "platform",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.desktopTraySetRequest", ts: "DesktopTraySetRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.desktopTrayDTO", ts: "DesktopTrayDTO" },
     },
     "docker_action": {
       scope: "docker",
@@ -2022,9 +2052,12 @@ export const ipcContractManifest = {
       output: { go: "struct{}", ts: "Record<string, never>" },
     },
     "system_insets": {
+      scope: "platform",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.ScreenInsets", ts: "ScreenInsets" },
     },
     "target_set_create": {
       scope: "target-set",
@@ -2411,20 +2444,10 @@ export const ipcContractManifest = {
     "ai_test_provider",
     "ai_usage_summary",
     "app_info",
-    "app_platform",
-    "app_restart",
-    "app_update_check",
-    "app_update_install",
     "audit_count",
     "audit_query",
-    "biometric_disable",
-    "biometric_enable",
-    "biometric_status",
-    "biometric_unlock",
     "command_count",
     "command_query",
-    "desktop_tray_get",
-    "desktop_tray_set",
     "forward_create",
     "forward_create_remote",
     "forward_create_socks",
@@ -2452,7 +2475,6 @@ export const ipcContractManifest = {
     "snippet_update",
     "ssh_import_apply",
     "ssh_import_preview",
-    "system_insets",
     "terminal_attach_tab",
     "terminal_claim",
     "terminal_close_tab",
@@ -2612,6 +2634,24 @@ export interface IPCCommandTypeMap {
     input: Record<string, never>;
     output: contractTypes.WatchTargetSummary[];
   };
+  "app_platform": {
+    input: Record<string, never>;
+    output: string;
+  };
+  "app_restart": {
+    input: Record<string, never>;
+    output: contractTypes.UpdateResult;
+  };
+  "app_update_check": {
+    input: Record<string, never>;
+    output: contractTypes.UpdateStatus;
+  };
+  "app_update_install": {
+    input: {
+  version: string | null;
+};
+    output: contractTypes.UpdateResult;
+  };
   "asset_create": {
     input: contractTypes.AssetInputRequest;
     output: contractTypes.AssetDTO;
@@ -2647,6 +2687,22 @@ export interface IPCCommandTypeMap {
   "asset_update": {
     input: contractTypes.AssetPatchRequest;
     output: contractTypes.AssetDTO;
+  };
+  "biometric_disable": {
+    input: Record<string, never>;
+    output: unknown;
+  };
+  "biometric_enable": {
+    input: contractTypes.BiometricEnableRequest;
+    output: unknown;
+  };
+  "biometric_status": {
+    input: Record<string, never>;
+    output: contractTypes.BiometricStatus;
+  };
+  "biometric_unlock": {
+    input: Record<string, never>;
+    output: contractTypes.BiometricUnlockResult;
   };
   "credential_update": {
     input: contractTypes.CredentialUpdateRequest;
@@ -2699,6 +2755,14 @@ export interface IPCCommandTypeMap {
   "db_tables": {
     input: contractTypes.TablesRequest;
     output: string[];
+  };
+  "desktop_tray_get": {
+    input: Record<string, never>;
+    output: contractTypes.DesktopTrayDTO;
+  };
+  "desktop_tray_set": {
+    input: contractTypes.DesktopTraySetRequest;
+    output: contractTypes.DesktopTrayDTO;
   };
   "docker_action": {
     input: {
@@ -3458,6 +3522,10 @@ export interface IPCCommandTypeMap {
   "sync_wake": {
     input: Record<string, never>;
     output: Record<string, never>;
+  };
+  "system_insets": {
+    input: Record<string, never>;
+    output: contractTypes.ScreenInsets;
   };
   "target_set_create": {
     input: contractTypes.TargetSetCreateRequest;

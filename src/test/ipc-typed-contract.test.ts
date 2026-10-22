@@ -90,7 +90,7 @@ void call("host_share_terminal_open", {
   args: { deviceId: "d", streamId: "s" },
   channel: { toJSON: () => null },
 });
-void call<string>("app_platform");
+void call("app_platform");
 // @ts-expect-error the current facade has no dynamic-command escape hatch
 void commands.unsafeCall(dynamic);
 `;
@@ -954,6 +954,109 @@ async function generatedOutputs() {
   const opted = await call("transcript_sync_opt_in", { id: "t1", optIn: false });
   const empty: Record<string, never> = opted;
   void [kind, nextSeq, done, totalBytes, dynamic, deletedField, empty];
+}
+void generatedOutputs;
+`;
+    const diagnostics = compile([probe], { [probe]: source });
+    expect(diagnostics, formatted(diagnostics)).toEqual([]);
+  }, COMPILE_BUDGET_MS);
+
+  it("types platform, update and biometric commands while preserving public facades and app_info legacy", () => {
+    const probe = resolve("src/test/__ipc_platform_update_biometric_contract_probe.ts");
+    const source = `
+import {
+  appUpdateApi,
+  biometricApi,
+  call,
+  desktopTrayApi,
+  systemApi,
+  type BiometricStatus,
+  type BiometricUnlockResult,
+  type DesktopTrayDto,
+} from "../ipc/commands";
+import type { IPCInput, IPCOutput } from "../ipc/generated/manifest";
+import type { UpdateResultDto, UpdateStatusDto } from "../ipc/types";
+
+type Equal<Left, Right> =
+  (<T>() => T extends Left ? 1 : 2) extends
+  (<T>() => T extends Right ? 1 : 2) ? true : false;
+type Assert<Value extends true> = Value;
+type ContractChecks = [
+  Assert<Equal<IPCInput<"app_update_install">["version"], string | null>>,
+  Assert<Equal<IPCOutput<"app_update_check">["unavailableReason"], string>>,
+  Assert<Equal<IPCOutput<"app_restart">["restarted"], boolean>>,
+  Assert<Equal<IPCOutput<"app_restart">["installed"], boolean>>,
+  Assert<Equal<IPCOutput<"biometric_status">["canEvaluate"], boolean>>,
+  Assert<Equal<IPCOutput<"biometric_unlock">["password"], string | undefined>>,
+  Assert<Equal<IPCOutput<"biometric_enable">, unknown>>,
+  Assert<Equal<IPCOutput<"biometric_disable">, unknown>>,
+  Assert<Equal<IPCOutput<"system_insets">["top"], number>>,
+];
+const contractChecks: ContractChecks = [true, true, true, true, true, true, true, true, true];
+void contractChecks;
+
+const platform: Promise<string> = systemApi.platform();
+const insets: Promise<{ top: number; right: number; bottom: number; left: number }> = systemApi.insets();
+const tray: Promise<DesktopTrayDto> = desktopTrayApi.get();
+const savedTray: Promise<DesktopTrayDto> = desktopTrayApi.set(false);
+const status: Promise<BiometricStatus> = biometricApi.status();
+const unlocked: Promise<BiometricUnlockResult> = biometricApi.unlock();
+const enabled: Promise<void> = biometricApi.enable("master-password");
+const disabled: Promise<void> = biometricApi.disable();
+const checked: Promise<UpdateStatusDto> = appUpdateApi.check();
+const installed: Promise<UpdateResultDto> = appUpdateApi.install();
+const installedExplicit: Promise<UpdateResultDto> = appUpdateApi.install("1.2.3");
+const installedLatest: Promise<UpdateResultDto> = appUpdateApi.install("");
+const restarted: Promise<UpdateResultDto> = appUpdateApi.restart();
+void [platform, insets, tray, savedTray, status, unlocked, enabled, disabled, checked, installed, installedExplicit, installedLatest, restarted];
+void appUpdateApi.install(undefined);
+
+void call("app_platform");
+void call("system_insets");
+void call("desktop_tray_get");
+void call("desktop_tray_set", { enabled: false });
+void call("app_update_check");
+void call("app_update_install", { version: null });
+void call("app_update_install", { version: "1.2.3" });
+void call("app_update_install", { version: "" });
+void call("app_restart");
+void call("biometric_status");
+void call("biometric_unlock");
+void call("biometric_enable", { password: "master-password" });
+void call("biometric_disable");
+void call<unknown>("app_info");
+
+// @ts-expect-error typed platform commands reject the legacy generic output escape
+void call<string>("app_platform");
+// @ts-expect-error typed update commands reject the legacy generic output escape
+void call<UpdateStatusDto>("app_update_check");
+// @ts-expect-error no-argument commands reject unexpected input
+void call("app_restart", { unexpected: true });
+// @ts-expect-error the wire version is explicitly required and nullable; omission belongs to the facade only
+void call("app_update_install", {});
+// @ts-expect-error update install is flat, not nested
+void call("app_update_install", { args: { version: null } });
+// @ts-expect-error explicit versions remain strings or null
+void call("app_update_install", { version: 42 });
+// @ts-expect-error tray preference remains boolean
+void call("desktop_tray_set", { enabled: "yes" });
+// @ts-expect-error biometric enable still requires the password
+void call("biometric_enable", {});
+// @ts-expect-error the facade does not widen optional versions to null
+void appUpdateApi.install(null);
+
+async function generatedOutputs() {
+  const status = await call("app_update_check");
+  const canInstall: boolean = status.canInstall;
+  const result = await call("app_restart");
+  const installed: boolean = result.installed;
+  const restarted: boolean = result.restarted;
+  const unavailableReason: string = result.unavailableReason;
+  const unlocked = await call("biometric_unlock");
+  const password: string | undefined = unlocked.password;
+  // @ts-expect-error biometric availability never exposes stored material
+  const material = (await call("biometric_status")).password;
+  void [canInstall, installed, restarted, unavailableReason, password, material];
 }
 void generatedOutputs;
 `;

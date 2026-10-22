@@ -183,8 +183,8 @@ async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<
 }
 
 export const systemApi = {
-  platform: () => call<string>("app_platform"),
-  insets: () => call<{ top: number; right: number; bottom: number; left: number }>("system_insets"),
+  platform: () => call("app_platform"),
+  insets: () => call("system_insets"),
 };
 
 export interface DesktopTrayDto {
@@ -194,8 +194,8 @@ export interface DesktopTrayDto {
 // Desktop tray preference (desktop builds only; the server assembly answers
 // CodeUnsupported): enabled=false means closing the window quits the app.
 export const desktopTrayApi = {
-  get: () => call<DesktopTrayDto>("desktop_tray_get"),
-  set: (enabled: boolean) => call<DesktopTrayDto>("desktop_tray_set", { enabled }),
+  get: (): Promise<DesktopTrayDto> => call("desktop_tray_get"),
+  set: (enabled: boolean): Promise<DesktopTrayDto> => call("desktop_tray_set", { enabled }),
 };
 
 export interface BiometricStatus {
@@ -214,19 +214,19 @@ export interface BiometricUnlockResult {
 // (access control bound to the current Face ID set), Android in Keystore-encrypted EncryptedSharedPreferences;
 // verification happens in the system biometric prompt; on other platforms status.available is always false.
 export const biometricApi = {
-  status: () => call<BiometricStatus>("biometric_status"),
-  unlock: () => call<BiometricUnlockResult>("biometric_unlock"),
-  enable: (password: string) => call<void>("biometric_enable", { password }),
-  disable: () => call<void>("biometric_disable"),
+  status: (): Promise<BiometricStatus> => call("biometric_status"),
+  unlock: (): Promise<BiometricUnlockResult> => call("biometric_unlock"),
+  enable: (password: string) => ignoreResult(call("biometric_enable", { password })),
+  disable: () => ignoreResult(call("biometric_disable")),
 };
 
 import type { UpdateResultDto, UpdateStatusDto } from "./types";
 
 export const appUpdateApi = {
-  check: () => call<UpdateStatusDto>("app_update_check"),
-  install: (version?: string) =>
-    call<UpdateResultDto>("app_update_install", { version: version ?? null }),
-  restart: () => call<UpdateResultDto>("app_restart"),
+  check: (): Promise<UpdateStatusDto> => call("app_update_check"),
+  install: (version?: string): Promise<UpdateResultDto> =>
+    call("app_update_install", { version: version ?? null }),
+  restart: (): Promise<UpdateResultDto> => call("app_restart"),
 };
 
 export interface SessionInfo {

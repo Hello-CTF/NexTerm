@@ -730,6 +730,59 @@ describe("desktop database and Redis facade IPC contracts", () => {
   });
 });
 
+describe("desktop platform, update and biometric facade IPC contracts", () => {
+  it("preserves all 11 flat envelopes, null arguments and facade void results", async () => {
+    const installResult = { installed: false, restarted: false, version: "", unavailableReason: "install unavailable" };
+    const restartResult = { installed: true, restarted: false, version: "1.2.3", unavailableReason: "restart unavailable" };
+    const results: Record<string, unknown> = {
+      app_update_install: installResult,
+      app_restart: restartResult,
+      biometric_unlock: { ok: true, password: "stored-master-password" },
+      desktop_tray_set: { enabled: false },
+    };
+    runtime.Call.ByName.mockImplementation(async (_name, request) => ({
+      ok: true,
+      data: results[(request as { cmd: string }).cmd] ?? null,
+    }));
+    const { appUpdateApi, biometricApi, desktopTrayApi, systemApi } = await import("../ipc/commands");
+    const cases: Array<{ command: string; payload: unknown; invoke: () => Promise<unknown> }> = [
+      { command: "app_platform", payload: null, invoke: () => systemApi.platform() },
+      { command: "system_insets", payload: null, invoke: () => systemApi.insets() },
+      { command: "desktop_tray_get", payload: null, invoke: () => desktopTrayApi.get() },
+      { command: "desktop_tray_set", payload: { enabled: false }, invoke: () => desktopTrayApi.set(false) },
+      { command: "app_update_check", payload: null, invoke: () => appUpdateApi.check() },
+      { command: "app_update_install", payload: { version: null }, invoke: async () => expect(await appUpdateApi.install()).toEqual(installResult) },
+      { command: "app_restart", payload: null, invoke: async () => expect(await appUpdateApi.restart()).toEqual(restartResult) },
+      { command: "biometric_status", payload: null, invoke: () => biometricApi.status() },
+      { command: "biometric_unlock", payload: null, invoke: () => biometricApi.unlock() },
+      { command: "biometric_enable", payload: { password: "master-password" }, invoke: async () => expect(await biometricApi.enable("master-password")).toBeUndefined() },
+      { command: "biometric_disable", payload: null, invoke: async () => expect(await biometricApi.disable()).toBeUndefined() },
+    ];
+
+    expect(cases).toHaveLength(11);
+    for (const [index, test] of cases.entries()) {
+      await test.invoke();
+      expect(requestAt(index)).toEqual({ cmd: test.command, args: test.payload });
+    }
+    expect(runtime.Call.ByName).toHaveBeenCalledTimes(11);
+  });
+
+  it("preserves null, explicit and empty update versions on the desktop transport", async () => {
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: null });
+    const { appUpdateApi } = await import("../ipc/commands");
+
+    await appUpdateApi.install();
+    await appUpdateApi.install(undefined);
+    await appUpdateApi.install("1.2.3");
+    await appUpdateApi.install("");
+
+    expect(requestAt(0)).toEqual({ cmd: "app_update_install", args: { version: null } });
+    expect(requestAt(1)).toEqual({ cmd: "app_update_install", args: { version: null } });
+    expect(requestAt(2)).toEqual({ cmd: "app_update_install", args: { version: "1.2.3" } });
+    expect(requestAt(3)).toEqual({ cmd: "app_update_install", args: { version: "" } });
+  });
+});
+
 describe("web command behavior compatibility", () => {
   function useWebTransport() {
     vi.stubGlobal("window", {

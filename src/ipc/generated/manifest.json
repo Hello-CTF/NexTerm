@@ -333,21 +333,25 @@
       "stream": "none"
     },
     "app_platform": {
+      "scope": "platform",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "app_restart": {
+      "scope": "update",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "app_update_check": {
+      "scope": "update",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "app_update_install": {
+      "scope": "update",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -417,21 +421,25 @@
       "stream": "none"
     },
     "biometric_disable": {
+      "scope": "biometric",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "biometric_enable": {
+      "scope": "biometric",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "biometric_status": {
+      "scope": "biometric",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "biometric_unlock": {
+      "scope": "biometric",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -519,11 +527,13 @@
       "stream": "none"
     },
     "desktop_tray_get": {
+      "scope": "platform",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "desktop_tray_set": {
+      "scope": "platform",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1612,6 +1622,7 @@
       "stream": "none"
     },
     "system_insets": {
+      "scope": "platform",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1938,20 +1949,10 @@
     "ai_test_provider",
     "ai_usage_summary",
     "app_info",
-    "app_platform",
-    "app_restart",
-    "app_update_check",
-    "app_update_install",
     "audit_count",
     "audit_query",
-    "biometric_disable",
-    "biometric_enable",
-    "biometric_status",
-    "biometric_unlock",
     "command_count",
     "command_query",
-    "desktop_tray_get",
-    "desktop_tray_set",
     "forward_create",
     "forward_create_remote",
     "forward_create_socks",
@@ -1979,7 +1980,6 @@
     "snippet_update",
     "ssh_import_apply",
     "ssh_import_preview",
-    "system_insets",
     "terminal_attach_tab",
     "terminal_claim",
     "terminal_close_tab",
