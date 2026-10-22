@@ -95,6 +95,7 @@ func (a *Accounts) ChangePassword(ctx context.Context, userID, oldPassword, newP
 	if err := validateEnvelopes(envelopes); err != nil {
 		return err
 	}
+	var activated *User
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		appUser := query.Use(tx).AppUser
 		user, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(userID)).First()
@@ -115,6 +116,9 @@ func (a *Accounts) ChangePassword(ctx context.Context, userID, oldPassword, newP
 		state := user.State
 		if state == string(StateResetRequired) {
 			state = string(StateActive)
+		}
+		if user.Role == string(RoleSuperadmin) && user.State == string(StateResetRequired) {
+			activated = &User{Role: RoleSuperadmin, State: State(state)}
 		}
 		info, err := appUser.WithContext(ctx).
 			Where(appUser.ID.Eq(userID), appUser.PasswordHash.Eq(user.PasswordHash)).
@@ -148,6 +152,7 @@ func (a *Accounts) ChangePassword(ctx context.Context, userID, oldPassword, newP
 		return err
 	}
 	a.epochs.bump(userID)
+	a.notifyActiveSuperadmin(ctx, activated)
 	return nil
 }
 
@@ -159,6 +164,7 @@ func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, reco
 		return err
 	}
 	var resetUserID string
+	var activated *User
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		appUser := query.Use(tx).AppUser
 		user, err := appUser.WithContext(ctx).Where(appUser.Username.Lower().Eq(strings.ToLower(username))).First()
@@ -192,6 +198,9 @@ func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, reco
 		if state == string(StateResetRequired) {
 			state = string(StateActive)
 		}
+		if user.Role == string(RoleSuperadmin) && user.State == string(StateResetRequired) {
+			activated = &User{Role: RoleSuperadmin, State: State(state)}
+		}
 		if _, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(user.ID)).UpdateColumns(map[string]any{
 			"password_hash": newHash, "must_change_password": false, "state": state, "updated_at": now,
 		}); err != nil {
@@ -221,6 +230,7 @@ func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, reco
 		return err
 	}
 	a.epochs.bump(resetUserID)
+	a.notifyActiveSuperadmin(ctx, activated)
 	return nil
 }
 

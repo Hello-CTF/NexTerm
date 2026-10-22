@@ -112,6 +112,56 @@ func TestServerProcessBootstrapsVaultFromMasterKeyFile(t *testing.T) {
 	}
 }
 
+func TestServerProcessRetriesDeferredUpgradeAfterFirstAdmin(t *testing.T) {
+	binary := buildServerBinary(t)
+	dataDir := t.TempDir()
+	database, err := store.Open(context.Background(), filepath.Join(dataDir, "data.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []any{
+		&store.AssetRow{ID: "legacy-asset", Kind: "ssh", Name: "legacy", OptionsJSON: "{}", CreatedAt: 1, UpdatedAt: 1},
+		&store.ConversationRow{ID: "legacy-conversation", ScopeJSON: "{}", CreatedAt: 1, UpdatedAt: 1},
+		&store.CronJob{ID: "legacy-cron", SessionID: "legacy-conversation", Prompt: "synthetic-prompt", Schedule: "* * * * *", Timezone: "UTC", Enabled: false, TimeoutMS: 1000, CreatedAt: 1, UpdatedAt: 1, Revision: 1, NextRunAt: time.Now().Add(time.Hour).UnixMilli()},
+	} {
+		if err := database.GORM().Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	process, address := startServerProcess(t, binary, dataDir, false)
+	defer process.stop(t)
+	waitForHealth(t, process, address)
+	session := initSuperadminThroughProcess(t, process, address, "alice", "alice-pw-123")
+
+	upgraded, err := store.Open(context.Background(), filepath.Join(dataDir, "data.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer upgraded.Close()
+	for _, check := range []struct {
+		model any
+		id    string
+	}{
+		{&store.AssetRow{}, "legacy-asset"},
+		{&store.ConversationRow{}, "legacy-conversation"},
+		{&store.CronJob{}, "legacy-cron"},
+	} {
+		var ownerID string
+		if err := upgraded.GORM().Model(check.model).Select("owner_id").Where("id = ?", check.id).Scan(&ownerID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if ownerID != session.userID {
+			t.Fatalf("%T owner after real server init = %q, want %q", check.model, ownerID, session.userID)
+		}
+	}
+	if output := process.output.String(); !strings.Contains(output, "data upgrade deferred") || !strings.Contains(output, "completed data upgrade") {
+		t.Fatalf("real server deferred/retry logs = %s", output)
+	}
+}
+
 func TestSyncOnlyProcessServesV2ObjectProtocol(t *testing.T) {
 	binary := buildServerBinary(t)
 	dataDir := t.TempDir()

@@ -83,6 +83,8 @@ type ProductionServices struct {
 	Transcripts      *transcriptWriter
 	aiRetention      *aiRetentionComponent
 	inventory        *inventoryService
+
+	retryDeferredUpgrade func(context.Context)
 }
 
 type Production struct {
@@ -152,6 +154,14 @@ func (p *Production) SyncObjectHandler() http.Handler {
 		return nil
 	}
 	return p.Services.Sync.ObjectHandler()
+}
+
+// RetryDeferredUpgrade runs only after startup deferred data migration for
+// lack of an active superadmin. Errors are reported through logs and AppError.
+func (p *Production) RetryDeferredUpgrade(ctx context.Context) {
+	if p.Services.retryDeferredUpgrade != nil {
+		p.Services.retryDeferredUpgrade(ctx)
+	}
 }
 
 func productionModules(services ProductionServices) []Module {
