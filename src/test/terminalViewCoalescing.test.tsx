@@ -186,7 +186,15 @@ vi.mock("../ipc/wails", async (importOriginal) => ({
 vi.mock("../app/keybindings", () => ({ matchAppKeybinding: () => null }));
 vi.mock("../app/store", () => ({
   useUi: {
-    getState: () => ({ sessions: [], pushToast: harness.pushToast }),
+    getState: () => ({
+      sessions: [],
+      pushToast: harness.pushToast,
+      registerHelperOperationIntent: (
+        _tabId: string,
+        _kind: "deploy" | "reattach",
+        _originalTabId?: string,
+      ) => undefined,
+    }),
   },
 }));
 vi.mock("../app/preferences", () => ({
