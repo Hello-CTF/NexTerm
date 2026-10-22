@@ -480,10 +480,12 @@ type OutcomeAdjudication struct {
 }
 
 // DurableOutcomeLedger is the optional durable, owner-scoped outcome ledger
-// (M74's AgentOutcomeListByPrefix+Adjudicate) used to adjudicate a recorded
-// operation before any new side effect such as a connect, and to power the
-// operation_result query. The production adapter maps agent.OutcomeLedger;
-// nil keeps the in-process adjudication only.
+// used to adjudicate a recorded operation before any new side effect such as
+// a connect, and to power the operation_result query. The production adapter
+// is durableStoreOutcomes (outcome_store.go): it adapts the real store's
+// owner-scoped agent-outcome primitives — claim, progress, complete,
+// adjudicate — so records survive restarts and are isolated per owner; nil
+// keeps the in-process adjudication only.
 type DurableOutcomeLedger interface {
 	AdjudicateOutcome(ctx context.Context, prefix string) (OutcomeAdjudication, error)
 	// ClaimOutcome atomically claims the base-operation family for a new

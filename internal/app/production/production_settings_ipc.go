@@ -13,10 +13,11 @@ import (
 )
 
 // Per-owner production safety configuration: the configurable production
-// environment list plus the R-07 connect opt-ins for the cron, broadcast, and
-// target-set surfaces. All values default to off/empty and are persisted per
-// user through the existing guard/settings keys — this file adds no second
-// persistence source.
+// environment list plus the R-07 connect opt-ins for the cron, broadcast,
+// target-set, and AI terminal surfaces — each an independent per-user
+// opt-in pair, so one surface's opt-in never authorizes another. All values
+// default to off/empty and are persisted per user through the existing
+// guard/settings keys — this file adds no second persistence source.
 const (
 	maxProductionEnvironmentNames  = 32
 	maxProductionEnvironmentLength = 64
