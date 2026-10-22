@@ -57,7 +57,10 @@ type deploymentLocation struct {
 	base      string
 }
 
-var errHelperProcessNotFound = errors.New("actual helper process not found")
+var (
+	errHelperProcessNotFound  = errors.New("actual helper process not found")
+	errRunningProcessEvidence = errors.New("running helper process evidence unavailable")
+)
 
 type helperProcess struct {
 	pid    int
@@ -202,7 +205,7 @@ func (r *Resolver) ensureCycle(ctx context.Context, host Host, client *transport
 	for _, location := range ordered {
 		connection, err := r.findRunningDaemon(ctx, host, location, source)
 		if err != nil {
-			if daemonRefusal(err) {
+			if daemonRefusal(err) || errors.Is(err, errUnsafeTemporaryRoot) || errors.Is(err, errRunningProcessEvidence) {
 				return nil, err
 			}
 			continue
@@ -265,7 +268,11 @@ func (r *Resolver) ensureCycle(ctx context.Context, host Host, client *transport
 				return nil, err
 			}
 			if !ready {
-				return nil, fmt.Errorf("%w: no compatible helper is installed and automatic helper installation is disabled", durable.ErrUnavailable)
+				lastErr = fmt.Errorf("%w: no compatible helper is installed and automatic helper installation is disabled", durable.ErrUnavailable)
+				if len(ordered) > 1 {
+					continue
+				}
+				return nil, lastErr
 			}
 			connection, err := r.connectOrStartDaemon(ctx, host, location, candidate, nil)
 			if err != nil {
@@ -440,17 +447,28 @@ func lookupPathBinaries(ctx context.Context, host Host, target Target) []string 
 
 func (r *Resolver) findRunningDaemon(ctx context.Context, host Host, location deploymentLocation, source *UploadSource) (*daemonConnection, error) {
 	if location.temporary {
-		exists, err := host.Exists(ctx, location.base)
+		baseExists, err := host.Exists(ctx, location.base)
 		if err != nil {
-			return nil, helperUnavailable("inspect temporary helper base", err)
+			return nil, unsafeTemporaryError(err)
 		}
-		if exists {
-			if err := validateFallbackBase(ctx, host, location); err != nil {
+		stateExists, err := host.Exists(ctx, location.paths.StateDir)
+		if err != nil {
+			return nil, unsafeTemporaryError(err)
+		}
+		if baseExists || stateExists {
+			if err := r.validateDeploymentLocation(ctx, host, location); err != nil {
 				return nil, err
 			}
 		}
 	}
-	binaries := lookupPathBinaries(ctx, host, location.target)
+	binaries := make([]string, 0, 2)
+	process, err := inspectHelperProcess(ctx, host, location.target, location.paths.StateDir)
+	if err == nil {
+		binaries = append(binaries, process.binary)
+	} else if !errors.Is(err, errHelperProcessNotFound) {
+		return nil, fmt.Errorf("%w: %w", errRunningProcessEvidence, err)
+	}
+	binaries = append(binaries, lookupPathBinaries(ctx, host, location.target)...)
 	if source != nil && source.ValidateForTarget(location.target) == nil {
 		if cached, err := location.paths.Helper(source.Digest); err == nil {
 			exists, existsErr := host.Exists(ctx, cached)
@@ -522,6 +540,9 @@ func daemonRefusal(err error) bool {
 }
 
 func (r *Resolver) connectOrStartDaemon(ctx context.Context, host Host, location deploymentLocation, binary string, expected *supervisor.RuntimeMetadata) (*daemonConnection, error) {
+	if err := r.validateDeploymentLocation(ctx, host, location); err != nil {
+		return nil, err
+	}
 	daemon := newTargetDaemon(host, location, binary)
 	if err := r.probeDaemon(ctx, daemon); err == nil {
 		metadata, known, err := r.remoteClient(daemon).RuntimeMetadata(ctx)
@@ -1089,6 +1110,31 @@ func remoteDirectoryKind(ctx context.Context, host Host, target Target, director
 }
 
 var errUnsafeTemporaryRoot = errors.New("unsafe temporary helper root")
+
+func unsafeTemporaryError(err error) error {
+	if err == nil || errors.Is(err, errUnsafeTemporaryRoot) {
+		return err
+	}
+	return fmt.Errorf("%w: %w: %w", durable.ErrUnavailable, errUnsafeTemporaryRoot, err)
+}
+
+func (r *Resolver) validateDeploymentLocation(ctx context.Context, host Host, location deploymentLocation) error {
+	if !location.temporary {
+		return nil
+	}
+	r.reportProgress(ctx, HelperProgress{Step: 3, Stage: "fallback", Path: location.paths.Root, Cause: "using a verified private temporary helper root; OS temporary-directory cleanup can remove it and will require redeployment"})
+	if err := validateFallbackBase(ctx, host, location); err != nil {
+		return unsafeTemporaryError(err)
+	}
+	kind, err := remoteDirectoryKind(ctx, host, location.target, location.paths.StateDir)
+	if err != nil {
+		return unsafeTemporaryError(err)
+	}
+	if kind != "missing" && kind != "directory" {
+		return fmt.Errorf("%w: %w: temporary daemon state path %s is %s", durable.ErrUnavailable, errUnsafeTemporaryRoot, location.paths.StateDir, kind)
+	}
+	return nil
+}
 
 func validateFallbackBase(ctx context.Context, host Host, location deploymentLocation) error {
 	if !location.temporary || location.base == "" {

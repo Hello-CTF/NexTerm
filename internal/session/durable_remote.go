@@ -70,10 +70,20 @@ func (m *Manager) automaticDurableProvider(ctx context.Context, session *Session
 	}
 	session.durableMu.Unlock()
 
+	session.mu.Lock()
+	if session.closed || session.status != StatusConnected {
+		session.mu.Unlock()
+		return nil, ErrDisconnected
+	}
+	if session.transport != transport || session.generation != generation {
+		session.mu.Unlock()
+		return nil, ErrStaleGeneration
+	}
 	backgroundHelperDeployments.Lock()
 	if entry := backgroundHelperDeployments.entries[session]; entry != nil {
 		if entry.transport == transport && entry.generation == generation {
 			backgroundHelperDeployments.Unlock()
+			session.mu.Unlock()
 			return nil, errHelperDeploymentPending
 		}
 		delete(backgroundHelperDeployments.entries, session)
@@ -90,6 +100,7 @@ func (m *Manager) automaticDurableProvider(ctx context.Context, session *Session
 	entry.stop = context.AfterFunc(m.ctx, cancel)
 	backgroundHelperDeployments.entries[session] = entry
 	backgroundHelperDeployments.Unlock()
+	session.mu.Unlock()
 	if !m.startGoroutine(func() { m.runBackgroundHelper(entry) }) {
 		backgroundHelperDeployments.Lock()
 		if backgroundHelperDeployments.entries[session] == entry {
@@ -115,7 +126,7 @@ func (m *Manager) automaticDurableProvider(ctx context.Context, session *Session
 		if entry.err == nil && entry.provider != nil {
 			return entry.provider, nil
 		}
-		return nil, fmt.Errorf("%w: background helper deployment: %v", durable.ErrUnavailable, entry.err)
+		return nil, entry.err
 	case <-timer.C:
 		return nil, errHelperDeploymentPending
 	case <-ctx.Done():
@@ -150,7 +161,7 @@ func (m *Manager) runBackgroundHelper(entry *backgroundHelperDeployment) {
 			session.durableCreateFailure = nil
 		} else {
 			session.durableProvider = nil
-			session.durableFailure = fmt.Errorf("%w: background helper deployment: %v", durable.ErrUnavailable, entry.err)
+			session.durableFailure = entry.err
 			session.durableFailureAt = m.now()
 		}
 		session.durableMu.Unlock()

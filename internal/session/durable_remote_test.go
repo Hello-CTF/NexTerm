@@ -264,6 +264,138 @@ func TestOpenTabSSHDeploysHelperInBackgroundForLaterTabs(t *testing.T) {
 	}
 }
 
+func TestCreateTabSSHDeploysHelperInBackgroundForLaterTabs(t *testing.T) {
+	provider := newFakeDurableProvider()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	resolver := DurableResolverFunc(func(ctx context.Context, _ base.Transport) (base.DurableProvider, error) {
+		close(started)
+		select {
+		case <-release:
+			return provider, nil
+		case <-ctx.Done():
+			return nil, context.Cause(ctx)
+		}
+	})
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+		_ = manager.Close()
+	})
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-create-background", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type createResult struct {
+		info TabInfo
+		err  error
+	}
+	created := make(chan createResult, 1)
+	go func() {
+		info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+		created <- createResult{info: info, err: err}
+	}()
+	var first TabInfo
+	select {
+	case result := <-created:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		first = result.info
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("detached create waited for helper deployment")
+	}
+	if first.Durable || first.FallbackNotice == "" {
+		t.Fatalf("first detached tab = %+v; want ordinary SSH", first)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("background deployment did not start")
+	}
+	close(release)
+	waitFor(t, func() bool {
+		connected.durableMu.Lock()
+		defer connected.durableMu.Unlock()
+		return connected.durableProvider == provider
+	})
+	second, err := manager.CreateTab(t.Context(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.Durable {
+		t.Fatalf("later detached tab = %+v; want durable", second)
+	}
+	firstTab, err := manager.Tab(first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstTab.Info().Durable {
+		t.Fatal("existing ordinary detached tab was mutated")
+	}
+}
+
+func TestAutomaticDurableProviderReconnectDoesNotRegisterOldGeneration(t *testing.T) {
+	var resolverMu sync.Mutex
+	resolverCalls := 0
+	resolver := DurableResolverFunc(func(ctx context.Context, _ base.Transport) (base.DurableProvider, error) {
+		resolverMu.Lock()
+		resolverCalls++
+		resolverMu.Unlock()
+		<-ctx.Done()
+		return nil, context.Cause(ctx)
+	})
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-register-reconnect", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connected.mu.Lock()
+	transport := connected.transport
+	generation := connected.generation
+	connected.mu.Unlock()
+	connected.durableMu.Lock()
+	type resolveResult struct {
+		provider base.DurableProvider
+		err      error
+	}
+	result := make(chan resolveResult, 1)
+	go func() {
+		provider, err := manager.automaticDurableProvider(context.Background(), connected, transport, generation)
+		result <- resolveResult{provider: provider, err: err}
+	}()
+	if err := manager.Reconnect(t.Context(), connected.ID); err != nil {
+		t.Fatal(err)
+	}
+	connected.durableMu.Unlock()
+	select {
+	case resolved := <-result:
+		if !errors.Is(resolved.err, ErrStaleGeneration) || resolved.provider != nil {
+			t.Fatalf("stale automatic registration = %+v, %v", resolved.provider, resolved.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("automatic registration did not finish")
+	}
+	resolverMu.Lock()
+	calls := resolverCalls
+	resolverMu.Unlock()
+	if calls != 0 {
+		t.Fatalf("old generation bound the reconnected context and started %d resolvers", calls)
+	}
+	backgroundHelperDeployments.Lock()
+	entry := backgroundHelperDeployments.entries[connected]
+	backgroundHelperDeployments.Unlock()
+	if entry != nil {
+		t.Fatalf("stale deployment remained registered: %+v", entry)
+	}
+}
+
 func TestOpenTabSSHBackgroundDeploymentUsesSessionLifetime(t *testing.T) {
 	started := make(chan struct{})
 	resolver := DurableResolverFunc(func(ctx context.Context, _ base.Transport) (base.DurableProvider, error) {
@@ -319,7 +451,8 @@ func TestCreateTabSSHFailedCommandDoesNotConsumeFallbackNotice(t *testing.T) {
 }
 
 func TestOpenTabSSHDoesNotFallbackAfterUnclassifiedHelperError(t *testing.T) {
-	resolver := &countingResolver{err: errors.New("helper request rejected")}
+	resolverErr := errors.New("helper request rejected")
+	resolver := &countingResolver{err: resolverErr}
 	connector := newFakeConnector()
 	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
 	t.Cleanup(func() { _ = manager.Close() })
@@ -329,10 +462,10 @@ func TestOpenTabSSHDoesNotFallbackAfterUnclassifiedHelperError(t *testing.T) {
 	}
 	_, err = manager.OpenTab(t.Context(), OpenTabOptions{
 		SessionID: connected.ID, ClientID: "client", ChannelID: "channel", Cols: 80, Rows: 24,
-		Durable: &DurableTabOptions{},
+		Durable: &DurableTabOptions{}, DurableFallback: true,
 	})
-	if err == nil || connector.transport(0).channelCount() != 0 {
-		t.Fatalf("OpenTab = %v, PTY channels = %d; unexpected fallback", err, connector.transport(0).channelCount())
+	if !errors.Is(err, resolverErr) || connector.transport(0).channelCount() != 0 {
+		t.Fatalf("OpenTab = %v, PTY channels = %d; want original error and no fallback", err, connector.transport(0).channelCount())
 	}
 }
 

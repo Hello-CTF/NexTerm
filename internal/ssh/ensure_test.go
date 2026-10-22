@@ -418,6 +418,8 @@ func (h *fakeHost) Run(ctx context.Context, command string, _ time.Duration) (st
 			}
 		}
 		return "ok\n", 0, nil
+	case strings.Contains(script, "helper.pid"):
+		return "", 73, nil
 	case strings.Contains(script, "uname -s"):
 		if h.windows {
 			return "", 1, nil
@@ -1629,6 +1631,15 @@ func (h *helperUpdateHarness) update(ctx context.Context, interrupt bool) (*Daem
 	return h.resolver.updateRunningDaemon(ctx, h.host, h.location, h.source, h.current, EnsureOptions{InterruptActive: interrupt})
 }
 
+func (h *helperUpdateHarness) ensure(ctx context.Context, interrupt bool) (*Daemon, error) {
+	h.host.discovery = h.location.target.DataRoot + "\nLinux\namd64\n501\n"
+	h.resolver.HelperExecutable = h.source.Path
+	h.resolver.RetryBackoff = -1
+	h.resolver.hostFor = func(context.Context, *transportssh.Client) (Host, error) { return h.host, nil }
+	h.resolver.inspect = func(string) (UploadSource, error) { return *h.source, nil }
+	return h.resolver.EnsureDaemonWithOptions(ctx, nil, EnsureOptions{InterruptActive: interrupt})
+}
+
 func TestEnsureDaemonCompatibleReleaseDifferenceContinues(t *testing.T) {
 	h := newHelperUpdateHarness(t)
 	h.source.Digest = h.oldDigest
@@ -1653,14 +1664,14 @@ func TestEnsureDaemonCompatibleReleaseDifferenceContinues(t *testing.T) {
 	}
 }
 
-func TestHelperUpdateDefaultsToDeferredAcrossDaemonActivity(t *testing.T) {
+func TestEnsureDaemonWithOptionsDefersDiscoveredContentAddressedUpdate(t *testing.T) {
 	h := newHelperUpdateHarness(t)
 	h.oldClient.idle = func(context.Context) error { return supervisor.ErrActiveSessions }
-	daemon, err := h.update(t.Context(), false)
+	daemon, err := h.ensure(t.Context(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if daemon != h.current.daemon || !daemon.Update.Deferred || !h.oldRunning || h.newRunning {
+	if daemon.Binary != h.oldBinary || !daemon.Update.Deferred || !h.oldRunning || h.newRunning {
 		t.Fatalf("active update was not deferred: daemon=%+v old=%v new=%v", daemon, h.oldRunning, h.newRunning)
 	}
 	if h.host.sawCommand("kill -TERM") {
@@ -1674,10 +1685,10 @@ func TestHelperUpdateDefaultsToDeferredAcrossDaemonActivity(t *testing.T) {
 	}
 }
 
-func TestHelperUpdateExplicitInterruptSwitchesAfterRechecks(t *testing.T) {
+func TestEnsureDaemonWithOptionsInterruptsDiscoveredContentAddressedUpdate(t *testing.T) {
 	h := newHelperUpdateHarness(t)
 	h.oldClient.idle = func(context.Context) error { return supervisor.ErrActiveSessions }
-	daemon, err := h.update(t.Context(), true)
+	daemon, err := h.ensure(t.Context(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1692,15 +1703,15 @@ func TestHelperUpdateExplicitInterruptSwitchesAfterRechecks(t *testing.T) {
 	}
 }
 
-func TestHelperUpdateRollbackRestoresDaemonWithoutRevivingShells(t *testing.T) {
+func TestEnsureDaemonWithOptionsRollsBackDiscoveredContentAddressedUpdate(t *testing.T) {
 	h := newHelperUpdateHarness(t)
 	h.newClient.list = func(context.Context) ([]supervisor.Info, error) { return nil, errors.New("new daemon not ready") }
-	daemon, err := h.update(t.Context(), false)
+	_, err := h.ensure(t.Context(), false)
 	if err == nil || !strings.Contains(err.Error(), "without reviving interrupted shells") {
 		t.Fatalf("rollback error = %v", err)
 	}
-	if daemon == nil || !daemon.Update.RolledBack || !h.oldRunning || h.newRunning {
-		t.Fatalf("rollback process state daemon=%+v old=%v new=%v", daemon, h.oldRunning, h.newRunning)
+	if !h.oldRunning || h.newRunning {
+		t.Fatalf("rollback process state old=%v new=%v", h.oldRunning, h.newRunning)
 	}
 	if digest := h.host.digests[h.oldBinary]; digest != h.oldDigest {
 		t.Fatalf("rollback executable was not preserved: %q", digest)
@@ -1917,6 +1928,54 @@ func TestEnsureDaemonRejectsUnsafeTemporaryRoot(t *testing.T) {
 	}
 	if host.running || len(host.uploads) != 0 {
 		t.Fatalf("unsafe root was used: running=%v uploads=%v", host.running, host.uploads)
+	}
+}
+
+func TestEnsureDaemonRejectsUnsafeTemporaryPathWithoutUpload(t *testing.T) {
+	for _, reason := range []string{"symlink", "wrong owner", "wrong mode"} {
+		t.Run(reason, func(t *testing.T) {
+			host, resolver, _, _ := temporaryFallbackHarness(t, "501")
+			base := "/tmp/nexterm-501"
+			host.pathBinary = "/usr/bin/nexterm-helper"
+			host.invalidPrivateBases = map[string]bool{base: true}
+			host.directories = map[string]bool{base: true}
+			var events []HelperProgress
+			resolver.Progress = func(_ context.Context, event HelperProgress) { events = append(events, event) }
+			daemon, err := resolver.EnsureDaemon(t.Context(), nil)
+			if !errors.Is(err, errUnsafeTemporaryRoot) || daemon != nil {
+				t.Fatalf("unsafe PATH-only start daemon=%+v error=%v", daemon, err)
+			}
+			if host.running || len(host.uploads) != 0 || host.sawCommand("setsid") {
+				t.Fatalf("unsafe PATH-only start ran helper: running=%v uploads=%v commands=%v", host.running, host.uploads, host.commands)
+			}
+			visible := false
+			for _, event := range events {
+				if event.Stage == "fallback" && event.Path == base+"/nexterm" && strings.Contains(event.Cause, "cleanup") {
+					visible = true
+				}
+			}
+			if !visible {
+				t.Fatalf("temporary path and cleanup risk are not visible: %+v", events)
+			}
+		})
+	}
+}
+
+func TestEnsureDaemonDisableAutoInstallValidatesTemporaryCache(t *testing.T) {
+	host, resolver, _, _ := temporaryFallbackHarness(t, "501")
+	base := "/tmp/nexterm-501"
+	cached := base + "/nexterm/bin/nexterm-helper-" + host.uploadDigest
+	host.invalidPrivateBases = map[string]bool{base: true}
+	host.directories = map[string]bool{base: true}
+	host.exists = map[string]bool{cached: true}
+	host.digests = map[string]string{cached: host.uploadDigest}
+	resolver.DisableAutoInstall = true
+	daemon, err := resolver.EnsureDaemon(t.Context(), nil)
+	if !errors.Is(err, errUnsafeTemporaryRoot) || daemon != nil {
+		t.Fatalf("unsafe cached start daemon=%+v error=%v", daemon, err)
+	}
+	if host.running || len(host.uploads) != 0 || host.sawCommand("setsid") {
+		t.Fatalf("unsafe cached helper started: running=%v uploads=%v commands=%v", host.running, host.uploads, host.commands)
 	}
 }
 

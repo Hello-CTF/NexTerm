@@ -627,14 +627,7 @@ func (m *Manager) CreateTab(ctx context.Context, options CreateTabOptions) (TabI
 	}
 	session.mu.Lock()
 	openGeneration := session.generation
-	openTransport := session.transport
 	session.mu.Unlock()
-	if kind == KindSSH && open.Durable != nil {
-		_, resolveErr := m.durableProviderFor(ctx, session, openTransport, kind, openGeneration, false)
-		if resolveErr != nil && !sshHelperUnavailable(resolveErr) {
-			return TabInfo{}, resolveErr
-		}
-	}
 	info, err := m.OpenTab(ctx, open)
 	if err != nil {
 		return TabInfo{}, err
