@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { ensureSyntaxTree, language } from "@codemirror/language";
+import { EditorState } from "@codemirror/state";
 import {
   detectFileLanguage,
+  FILE_LANGUAGE_OPTIONS,
   fileLanguageExtension,
   resolveFileLanguage,
   type FileLanguageId,
@@ -98,5 +101,15 @@ describe("file editor language detection", () => {
     for (const [path, language] of cases) {
       expect(resolveFileLanguage(path, language)).toBe(language);
     }
+  });
+
+  it.each(FILE_LANGUAGE_OPTIONS)("creates a usable $id language extension", ({ id }) => {
+    const state = EditorState.create({
+      doc: "value",
+      extensions: fileLanguageExtension("/a.unknown", id),
+    });
+
+    expect(state.facet(language)).not.toBeNull();
+    expect(ensureSyntaxTree(state, state.doc.length, 1000)).not.toBeNull();
   });
 });
