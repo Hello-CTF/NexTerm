@@ -306,10 +306,21 @@ func TestLocalFrontendAndProductionReuseVerifiedResults(t *testing.T) {
 	}
 
 	desktopSeen := false
+	helperMatrixSeen := 0
 	for _, command := range verify.Commands {
+		if command.Task == "helpers:matrix" {
+			helperMatrixSeen++
+		}
 		if normalize(command.Run) == "node scripts/build.mjs desktop --release --repro-check --consume-dist=dist --dist-manifest=target/dist-manifest.json" {
 			desktopSeen = true
 		}
+	}
+	if helperMatrixSeen != 1 {
+		t.Errorf("verify helper matrix count = %d, want 1", helperMatrixSeen)
+	}
+	helperMatrix := tasks.Tasks["helpers:matrix"].Commands
+	if len(helperMatrix) != 1 || normalize(helperMatrix[0].Run) != "node scripts/build.mjs helpers --release" {
+		t.Fatalf("helpers:matrix must build the explicit nine-target matrix: %#v", helperMatrix)
 	}
 	if !desktopSeen {
 		t.Error("verify no longer retains the final manifest-checked desktop build")
@@ -685,6 +696,82 @@ func TestPullRequestNativeScopeCoversPlatformFilesAndModuleManifests(t *testing.
 	}
 }
 
+func TestHelperMatrixHasNineDirectTargetsAndFailsReleaseCrossEvidenceClosed(t *testing.T) {
+	var entries []struct {
+		Runner string `json:"runner"`
+		OS     string `json:"os"`
+		Arch   string `json:"arch"`
+		Kind   string `json:"kind"`
+		Smoke  bool   `json:"smoke"`
+		Cross  bool   `json:"cross"`
+	}
+	if err := json.Unmarshal([]byte(readRepositoryFile(t, ".github/native-matrix.json")), &entries); err != nil {
+		t.Fatal(err)
+	}
+	helpers := make(map[string]bool)
+	smoke := make(map[string]bool)
+	cross := make(map[string]bool)
+	for _, entry := range entries {
+		if entry.Kind != "helper" {
+			continue
+		}
+		key := entry.OS + "/" + entry.Arch
+		if helpers[key] {
+			t.Errorf("duplicate helper target %s", key)
+		}
+		helpers[key] = true
+		if entry.Smoke {
+			smoke[key] = true
+		}
+		if entry.Cross {
+			cross[key] = true
+		}
+		if entry.Runner == "" {
+			t.Errorf("helper target %s has no runner", key)
+		}
+	}
+	for _, key := range []string{
+		"linux/amd64", "linux/arm64", "linux/armv7", "linux/riscv64", "linux/loong64",
+		"darwin/amd64", "darwin/arm64", "windows/amd64", "windows/arm64",
+	} {
+		if !helpers[key] {
+			t.Errorf("helper target %s is missing", key)
+		}
+		delete(helpers, key)
+	}
+	for key := range helpers {
+		t.Errorf("unexpected helper target %s", key)
+	}
+	if len(smoke) != 1 || !smoke["linux/amd64"] {
+		t.Errorf("ordinary PR helper smoke targets = %v, want only linux/amd64", smoke)
+	}
+	for _, key := range []string{"linux/armv7", "linux/riscv64", "linux/loong64"} {
+		if !cross[key] {
+			t.Errorf("hosted-runner cross target %s is not explicit", key)
+		}
+	}
+
+	ci := loadWorkflow(t, ".github/workflows/ci.yml")
+	version := requireJob(t, ci, "version")
+	requireRunContaining(t, version, ".github/scripts/helper-matrix.mjs --matrix")
+	native := requireJob(t, ci, "native")
+	build := requireRunContaining(t, native, "node scripts/build.mjs ${{ matrix.kind }} --release --repro-check")
+	for _, required := range []string{"matrix.kind == 'helper'", "matrix.cross", "inputs.release_version", "--require-evidence"} {
+		if !strings.Contains(build.Run, required) {
+			t.Errorf("helper build evidence gate is missing %q: %s", required, build.Run)
+		}
+	}
+
+	release := loadWorkflow(t, ".github/workflows/release.yml")
+	for _, jobName := range []string{"desktop", "server"} {
+		job := requireJob(t, release, jobName)
+		stage := requireRunContaining(t, job, ".github/scripts/helper-matrix.mjs --shell")
+		if !strings.Contains(stage.Run, "while IFS='|' read -r helper_os helper_arch helper") {
+			t.Errorf("%s does not stage the shared nine-helper list: %s", jobName, stage.Run)
+		}
+	}
+}
+
 func TestSetupNodeVersionsArePinnedAcrossCIReleaseAndPages(t *testing.T) {
 	for _, name := range []string{".github/workflows/ci.yml", ".github/workflows/release.yml", ".github/workflows/pages.yml"} {
 		workflow := loadWorkflow(t, name)
@@ -760,7 +847,8 @@ func TestReleaseDesktopReusesEquivalentNativeEvidence(t *testing.T) {
 	stage := requireRunContaining(t, desktop, `binary="nexterm-desktop-`)
 	for _, required := range []string{
 		`cp "target/release-work/reused-native/go-build/${binary}" "target/release-work/reused-native/go-build/${binary}.manifest.json" target/go-build/`,
-		"for helper_arch in amd64 arm64",
+		".github/scripts/helper-matrix.mjs --shell",
+		"while IFS='|' read -r helper_os helper_arch helper",
 		`cp "target/release-work/verified-helpers/go-build/$helper"`,
 	} {
 		if !strings.Contains(stage.Run, required) {

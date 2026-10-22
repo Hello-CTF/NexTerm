@@ -200,13 +200,13 @@ jobs:
         with:
           name: native-${{ matrix.os }}-${{ matrix.arch }}-desktop
           path: target/release-work/reused-native
-      - name: Download both verified Linux SSH helpers
+      - name: Download all nine verified SSH helpers
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: native-linux-*-helper
+          pattern: native-*-helper
           merge-multiple: true
           path: target/release-work/verified-helpers
-      - name: Stage the verified desktop binary and Linux SSH helpers
+      - name: Stage the verified desktop binary and nine SSH helpers
         shell: bash
         run: |
           set -euo pipefail
@@ -216,11 +216,10 @@ jobs:
           binary="nexterm-desktop-${{ matrix.os }}-${{ matrix.arch }}${suffix}"
           cp "target/release-work/reused-native/go-build/${binary}" "target/release-work/reused-native/go-build/${binary}.manifest.json" target/go-build/
           if [ "${{ matrix.os }}" != "windows" ]; then chmod +x "target/go-build/${binary}"; fi
-          for helper_arch in amd64 arm64; do
-            helper="nexterm-helper-linux-$helper_arch"
+          while IFS='|' read -r helper_os helper_arch helper; do
             cp "target/release-work/verified-helpers/go-build/$helper" "target/release-work/verified-helpers/go-build/$helper.manifest.json" target/go-build/
             chmod +x "target/go-build/$helper"
-          done
+          done < <(node .github/scripts/helper-matrix.mjs --shell)
       - name: Import the Windows Authenticode certificate
         if: matrix.os == 'windows'
         shell: bash
@@ -356,13 +355,13 @@ jobs:
         with:
           name: native-linux-${{ matrix.arch }}-server
           path: target/release-work/reused-native
-      - name: Download both verified Linux SSH helpers
+      - name: Download all nine verified SSH helpers
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: native-linux-*-helper
+          pattern: native-*-helper
           merge-multiple: true
           path: target/release-work/verified-helpers
-      - name: Stage the reused production server binary
+      - name: Stage the reused production server binary and nine SSH helpers
         shell: bash
         run: |
           set -euo pipefail
@@ -370,11 +369,10 @@ jobs:
           mkdir -p target/go-build
           cp "target/release-work/reused-native/go-build/${binary}" "target/release-work/reused-native/go-build/${binary}.manifest.json" target/go-build/
           chmod +x "target/go-build/${binary}"
-          for helper_arch in amd64 arm64; do
-            helper="nexterm-helper-linux-$helper_arch"
+          while IFS='|' read -r helper_os helper_arch helper; do
             cp "target/release-work/verified-helpers/go-build/$helper" "target/release-work/verified-helpers/go-build/$helper.manifest.json" target/go-build/
             chmod +x "target/go-build/$helper"
-          done
+          done < <(node .github/scripts/helper-matrix.mjs --shell)
       - name: Verify the reused production server binary against its manifest
         run: node .github/scripts/verify-reused-binary.mjs "target/go-build/nexterm-server-linux-${{ matrix.arch }}" "server-linux-${{ matrix.arch }}" linux "${{ matrix.arch }}" 0
       - name: Restore the verified frontend for packaging

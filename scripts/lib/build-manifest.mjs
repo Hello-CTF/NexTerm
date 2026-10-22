@@ -88,13 +88,13 @@ export function distManifestProblems(root, manifest, { version, commit }) {
   return problems;
 }
 
-export function createBinaryManifest({ file, id, kind: _kind, goos, goarch, tags, cgo, stripped, version, commit, source_date_epoch: sourceDateEpoch }) {
+export function createBinaryManifest({ file, id, kind: _kind, goos, goarch, goarm = "", tags, cgo, stripped, version, commit, source_date_epoch: sourceDateEpoch }) {
   const content = fs.readFileSync(file);
   return {
     schema_version: 1,
     kind: "go-binary",
     id,
-    platform: { os: goos, arch: goarch, cgo },
+    platform: { os: goos, arch: goarch, cgo, ...(goarm ? { goarm } : {}) },
     tags: [...tags].sort(),
     stripped,
     version,
@@ -114,6 +114,9 @@ export function binaryManifestProblems({ manifest, file, expect }) {
   if (platform.os !== expect.goos) problems.push(`binary manifest os ${JSON.stringify(platform.os)} does not match ${expect.goos}`);
   if (platform.arch !== expect.goarch) problems.push(`binary manifest arch ${JSON.stringify(platform.arch)} does not match ${expect.goarch}`);
   if (platform.cgo !== expect.cgo) problems.push(`binary manifest cgo ${JSON.stringify(platform.cgo)} does not match ${expect.cgo}`);
+  const expectedGOARM = expect.goarm || "";
+  const actualGOARM = platform.goarm || "";
+  if (actualGOARM !== expectedGOARM) problems.push(`binary manifest GOARM ${JSON.stringify(actualGOARM)} does not match ${JSON.stringify(expectedGOARM)}`);
   const expectedTags = [...expect.tags].sort();
   if (!Array.isArray(manifest.tags)) {
     problems.push("binary manifest tags must be an array");
@@ -133,6 +136,33 @@ export function binaryManifestProblems({ manifest, file, expect }) {
   const content = fs.readFileSync(file);
   if (manifest.artifact?.size_bytes !== content.length) problems.push(`binary size mismatch: manifest ${manifest.artifact?.size_bytes} bytes, actual ${content.length} bytes`);
   if (manifest.artifact?.sha256 !== digest(content)) problems.push(`binary sha256 mismatch: manifest ${manifest.artifact?.sha256}, actual ${digest(content)}`);
+  return problems;
+}
+
+export function helperMetadataManifestProblems({ manifest, goos, goarch, protocol, features }) {
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) return ["helper metadata manifest is not a JSON object"];
+  const problems = [];
+  if (manifest.binary_metadata_verified !== true) problems.push("helper final-binary --metadata evidence is not verified");
+  if (!Number.isInteger(manifest.protocol) || manifest.protocol <= 0) {
+    problems.push(`helper metadata protocol is invalid: ${JSON.stringify(manifest.protocol)}`);
+  } else if (protocol !== undefined && manifest.protocol !== protocol) {
+    problems.push(`helper metadata protocol ${manifest.protocol} does not match ${protocol}`);
+  }
+  if (!Array.isArray(manifest.features) || manifest.features.length === 0 || manifest.features.some((feature) => typeof feature !== "string" || feature === "")) {
+    problems.push("helper metadata features must be non-empty strings");
+  } else {
+    const sorted = [...manifest.features].sort();
+    if (JSON.stringify(manifest.features) !== JSON.stringify(sorted)) problems.push("helper metadata features must be sorted");
+    if (features !== undefined && JSON.stringify(sorted) !== JSON.stringify([...features].sort())) problems.push("helper metadata features do not match this build");
+  }
+  if (manifest.metadata_host?.os !== goos || manifest.metadata_host?.arch !== goarch) {
+    problems.push(`helper metadata execution host ${JSON.stringify(manifest.metadata_host)} does not match ${goos}/${goarch}`);
+  }
+  if (!/^[0-9a-f]{64}$/.test(manifest.sha256 || "")) {
+    problems.push("helper metadata sha256 must be 64 lowercase hex characters");
+  } else if (manifest.sha256 !== manifest.artifact?.sha256) {
+    problems.push("helper metadata sha256 does not match artifact sha256");
+  }
   return problems;
 }
 

@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { helperTargets } from "./helper-matrix.mjs";
 
 const script = fileURLToPath(new URL("./verify-server-archive.mjs", import.meta.url));
 
@@ -17,7 +18,7 @@ function writeArchive(directory, root, mainBytes) {
   const stage = path.join(directory, `stage-${root}`);
   fs.mkdirSync(path.join(stage, root), { recursive: true });
   fs.writeFileSync(path.join(stage, root, "nexterm-server"), mainBytes);
-  fs.writeFileSync(path.join(stage, root, "nexterm-helper-linux-amd64"), Buffer.from("helper fixture"));
+  for (const target of helperTargets()) fs.writeFileSync(path.join(stage, root, target.name), Buffer.from(`helper fixture ${target.name}`));
   fs.writeFileSync(path.join(stage, root, "web-index-placeholder"), Buffer.from("placeholder"));
   const archive = path.join(directory, `${root}.tar.gz`);
   // COPYFILE_DISABLE keeps bsdtar from adding AppleDouble members; the real

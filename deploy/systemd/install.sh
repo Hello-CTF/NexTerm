@@ -110,7 +110,7 @@ FAILED_DIR="$OPT_DIR/.rollback.failed"
 SERVER_UNIT="nexterm-server.service"
 ONLYSERVER_UNIT="nexterm-onlyserver.service"
 UNITS="$SERVER_UNIT $ONLYSERVER_UNIT"
-BINARIES="nexterm-server nexterm-helper-linux-amd64 nexterm-helper-linux-arm64"
+BINARIES="nexterm-server nexterm-helper-linux-amd64 nexterm-helper-linux-arm64 nexterm-helper-linux-armv7 nexterm-helper-linux-riscv64 nexterm-helper-linux-loong64 nexterm-helper-darwin-amd64 nexterm-helper-darwin-arm64 nexterm-helper-windows-amd64.exe nexterm-helper-windows-arm64.exe"
 ENV_KEYS="NEXTERM_LISTEN NEXTERM_AUTH NEXTERM_DATA_DIR NEXTERM_WEB_ROOT NEXTERM_MASTER_KEY_FILE NEXTERM_DB"
 REAL_ROOT=0
 [ "$ROOT_PREFIX" = "/" ] && REAL_ROOT=1

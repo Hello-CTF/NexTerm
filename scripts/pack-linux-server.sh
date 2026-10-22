@@ -26,16 +26,16 @@ while [ $# -gt 0 ]; do
       cat <<'PACK_HELP_EOF'
 Usage: scripts/pack-linux-server.sh [options]
 
-Package one full CGO_ENABLED=0 Go server tar.gz with both runtime units.
-scripts/build.mjs owns compilation/versioning; scripts/e2e-harness retains
---sync-only acceptance.
+Package one full CGO_ENABLED=0 Go server tar.gz with both runtime units and
+all nine SSH target helpers. scripts/build.mjs owns compilation/versioning;
+scripts/e2e-harness retains --sync-only acceptance.
 
 Options:
   --out DIR           output directory (default target/release-assets)
   --bin PATH          server binary (default target/go-build/nexterm-server-linux-<arch>)
   --web DIR           frontend dist directory (default dist)
   --arch ARCH         Linux server architecture: amd64 or arm64 (default amd64)
-  --helpers-dir DIR    verified Linux helper binaries and manifests
+  --helpers-dir DIR   verified nine-target helper binaries and manifests
   --require-evidence  fail unless the artifact report passes every assertion
   -h, --help          show this help
 PACK_HELP_EOF
@@ -57,11 +57,11 @@ VERSION="${NEXTERM_RELEASE_VERSION:-$(node -e 'const fs=require("fs"); const c=J
 }
 [ -f "$WEB/index.html" ] || { echo "missing real frontend: $WEB/index.html" >&2; exit 1; }
 [ -x "$BIN" ] || { echo "server binary is not executable: $BIN" >&2; exit 1; }
-for helper_arch in amd64 arm64; do
-  helper="$HELPERS_DIR/nexterm-helper-linux-$helper_arch"
-  [ -x "$helper" ] || { echo "missing executable Linux helper: $helper" >&2; exit 1; }
-  node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$helper" "helper-linux-$helper_arch" linux "$helper_arch" 0
-done
+while IFS='|' read -r helper_os helper_arch helper_name; do
+  helper="$HELPERS_DIR/$helper_name"
+  [ -x "$helper" ] || { echo "missing executable helper: $helper" >&2; exit 1; }
+  node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$helper" "helper-$helper_os-$helper_arch" "$helper_os" "$helper_arch" 0
+done < <(node "$ROOT/.github/scripts/helper-matrix.mjs" --shell)
 
 FILE_INFO="$(file -b "$BIN")"
 case "$FILE_INFO" in *ELF*64-bit*) ;; *) echo "not a 64-bit ELF binary: $FILE_INFO" >&2; exit 1 ;; esac
@@ -100,12 +100,12 @@ tar_cz() {
 package_full() {
   local name="NexTerm-server_${VERSION}_linux_${ARCH}"
   local dir="$STAGE/$name"
-  local unit env_file member
+  local unit env_file member helper_os helper_arch helper_name
   mkdir -p "$dir"
   install -m 0755 "$BIN" "$dir/nexterm-server"
-  for helper_arch in amd64 arm64; do
-    install -m 0755 "$HELPERS_DIR/nexterm-helper-linux-$helper_arch" "$dir/nexterm-helper-linux-$helper_arch"
-  done
+  while IFS='|' read -r helper_os helper_arch helper_name; do
+    install -m 0755 "$HELPERS_DIR/$helper_name" "$dir/$helper_name"
+  done < <(node "$ROOT/.github/scripts/helper-matrix.mjs" --shell)
   for unit in nexterm-server.service nexterm-onlyserver.service; do
     install -m 0644 "$ROOT/deploy/systemd/$unit" "$dir/$unit"
   done
@@ -123,8 +123,6 @@ package_full() {
   archive_members="$(tar -tzf "$OUT/$name.tar.gz")"
   for member in \
     nexterm-server \
-    nexterm-helper-linux-amd64 \
-    nexterm-helper-linux-arm64 \
     nexterm-server.service \
     nexterm-onlyserver.service \
     install.sh \
@@ -133,8 +131,11 @@ package_full() {
     LICENSE \
     README.md \
     web/index.html; do
-    grep -q "^$name/$member$" <<<"$archive_members"
+    grep -Fxq "$name/$member" <<<"$archive_members"
   done
+  while IFS='|' read -r helper_os helper_arch helper_name; do
+    grep -Fxq "$name/$helper_name" <<<"$archive_members"
+  done < <(node "$ROOT/.github/scripts/helper-matrix.mjs" --shell)
 }
 
 ARTIFACT="$OUT/NexTerm-server_${VERSION}_linux_${ARCH}.tar.gz"

@@ -72,7 +72,14 @@ func buildStubBinary(directory, mainSource, goos, goarch, cgo string) (string, e
 	output := filepath.Join(directory, "stub-binary")
 	buildCmd := exec.Command("go", "build", "-ldflags", "-s -w", "-o", output, ".")
 	buildCmd.Dir = directory
-	buildCmd.Env = append(os.Environ(), "CGO_ENABLED="+cgo, "GOOS="+goos, "GOARCH="+goarch)
+	buildGOARCH := goarch
+	if goarch == "armv7" {
+		buildGOARCH = "arm"
+	}
+	buildCmd.Env = append(os.Environ(), "CGO_ENABLED="+cgo, "GOOS="+goos, "GOARCH="+buildGOARCH)
+	if goarch == "armv7" {
+		buildCmd.Env = append(buildCmd.Env, "GOARM=7")
+	}
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("go build: %v: %s", err, out)
 	}
