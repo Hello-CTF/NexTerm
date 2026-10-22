@@ -91,6 +91,90 @@ describe("generated IPC envelope contract", () => {
   });
 });
 
+describe("remote desktop facade IPC contracts", () => {
+  it("preserves the exact envelopes for all 28 surveyed commands", async () => {
+    const calls = captureRpc();
+    const {
+      remoteAccountApi,
+      remoteFleetApi,
+      remoteHealthApi,
+      remoteLinkApi,
+      remotePreviewApi,
+      remoteSharingApi,
+      syncCompareApi,
+    } = await import("../ipc/remoteApi");
+    const cases: Array<{ command: IPCCommandName; payload: unknown; invoke: () => Promise<unknown> }> = [
+      { command: "remote_account_admin_create_user", payload: { username: "alice", password: "password-1", displayName: "Alice" }, invoke: () => remoteAccountApi.adminCreateUser("alice", "password-1", "Alice") },
+      { command: "remote_account_admin_set_user_state", payload: { userId: "u-1", state: "disabled" }, invoke: () => remoteAccountApi.adminSetUserState("u-1", "disabled") },
+      { command: "remote_account_admin_users", payload: null, invoke: () => remoteAccountApi.adminUsers() },
+      { command: "remote_account_change_password", payload: { oldPassword: "old-password", newPassword: "new-password" }, invoke: () => remoteAccountApi.changePassword("old-password", "new-password") },
+      { command: "remote_account_device_revoke", payload: { deviceId: "device-1" }, invoke: () => remoteAccountApi.deviceRevoke("device-1") },
+      { command: "remote_account_devices", payload: null, invoke: () => remoteAccountApi.devices() },
+      { command: "remote_account_me", payload: null, invoke: () => remoteAccountApi.me() },
+      { command: "remote_fleet_base_urls_get", payload: null, invoke: () => remoteFleetApi.baseUrls() },
+      { command: "remote_fleet_base_urls_put", payload: { entries: [{ url: "https://sync.example.com", insecure: false }] }, invoke: () => remoteFleetApi.putBaseUrls([{ url: "https://sync.example.com", insecure: false }]) },
+      { command: "remote_fleet_device_autostart", payload: { deviceId: "device-1", desired: true }, invoke: () => remoteFleetApi.setAutostart("device-1", true) },
+      { command: "remote_fleet_device_metrics", payload: { deviceId: "device-1" }, invoke: () => remoteFleetApi.metrics("device-1") },
+      { command: "remote_fleet_device_revoke", payload: { deviceId: "device-1" }, invoke: () => remoteFleetApi.revoke("device-1") },
+      { command: "remote_fleet_devices", payload: null, invoke: () => remoteFleetApi.devices() },
+      { command: "remote_fleet_enroll_code", payload: { ttlMs: 60_000 }, invoke: () => remoteFleetApi.issueEnrollCode(60_000) },
+      { command: "remote_healthz", payload: null, invoke: () => remoteHealthApi.serverVersion() },
+      { command: "remote_share_host_create", payload: { deviceId: "device-1", recipientUsername: "alice", write: false, ttlMs: 60_000 }, invoke: () => remoteSharingApi.createHostShare({ deviceId: "device-1", recipientUsername: "alice", write: false, ttlMs: 60_000 }) },
+      { command: "remote_share_host_list", payload: null, invoke: () => remoteSharingApi.hostShares() },
+      { command: "remote_share_host_revoke", payload: { id: "share-1" }, invoke: () => remoteSharingApi.revokeHostShare("share-1") },
+      { command: "remote_share_link_list", payload: null, invoke: () => remoteSharingApi.links() },
+      { command: "remote_share_link_revoke", payload: { id: "link-1" }, invoke: () => remoteSharingApi.revokeLink("link-1") },
+      { command: "remote_share_preview_list", payload: null, invoke: () => remoteSharingApi.previewLinks() },
+      { command: "remote_share_preview_revoke", payload: { id: "preview-1" }, invoke: () => remoteSharingApi.revokePreviewLink("preview-1") },
+      { command: "preview_share_active", payload: { tabId: "tab-1" }, invoke: () => remotePreviewApi.active("tab-1") },
+      { command: "preview_share_create", payload: { tabId: "tab-1", ttlMs: 60_000 }, invoke: () => remotePreviewApi.create("tab-1", 60_000) },
+      { command: "sync_compare", payload: null, invoke: () => syncCompareApi.compare() },
+      { command: "sync_link_mfa", payload: { code: "123456" }, invoke: () => remoteLinkApi.mfa("123456") },
+      { command: "sync_link_reset_password", payload: { newPassword: "new-password" }, invoke: () => remoteLinkApi.resetPassword("new-password") },
+      {
+        command: "sync_repair_undecryptable",
+        payload: { id: "asset-1", action: "restore-local", userId: "u-1", compareToken: "compare-1", remoteSeq: 7, remoteBlobHash: "remote-hash", localKind: "asset", localPayloadHash: "local-hash" },
+        invoke: () => syncCompareApi.repairUndecryptable({ id: "asset-1", action: "restore-local", userId: "u-1", compareToken: "compare-1", remoteSeq: 7, remoteBlobHash: "remote-hash", localKind: "asset", localPayloadHash: "local-hash" }),
+      },
+    ];
+
+    expect(cases).toHaveLength(28);
+    for (const [index, test] of cases.entries()) {
+      await test.invoke();
+      expectManifestEnvelope(calls[index], test.command, test.payload);
+    }
+    expect(calls).toHaveLength(28);
+  });
+
+  it("preserves explicitly provided optional fields and clear-cloud omissions", async () => {
+    const calls = captureRpc();
+    const { remoteFleetApi, syncCompareApi } = await import("../ipc/remoteApi");
+
+    await remoteFleetApi.issueEnrollCode(60_000, "u-1");
+    await remoteFleetApi.metrics("device-1", 30_000);
+    await syncCompareApi.repairUndecryptable({
+      id: "asset-1",
+      action: "clear-cloud",
+      userId: "u-1",
+      compareToken: "compare-1",
+      remoteSeq: 7,
+      remoteBlobHash: "remote-hash",
+    });
+
+    expect(calls).toHaveLength(3);
+    expectManifestEnvelope(calls[0], "remote_fleet_enroll_code", { ttlMs: 60_000, userId: "u-1" });
+    expectManifestEnvelope(calls[1], "remote_fleet_device_metrics", { deviceId: "device-1", sinceMs: 30_000 });
+    expectManifestEnvelope(calls[2], "sync_repair_undecryptable", {
+      id: "asset-1",
+      action: "clear-cloud",
+      userId: "u-1",
+      compareToken: "compare-1",
+      remoteSeq: 7,
+      remoteBlobHash: "remote-hash",
+    });
+  });
+});
+
 describe("cron IPC wire contract", () => {
   it("uses the generated flat envelope for cron_register", async () => {
     const calls = captureRpc();

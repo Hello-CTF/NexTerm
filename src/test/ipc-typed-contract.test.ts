@@ -57,7 +57,7 @@ describe("typed IPC call contract", () => {
   // 7-13s under heavy host contention (load average 45-60 from sibling test
   // runs). The explicit 30s budget is sized to that measured cost (roughly
   // 12x headroom over standalone, 2.3x over the worst observed load); it is a
-  // compute budget for the compile itself, authorized for these two
+  // compute budget for each compile itself, authorized for these
   // compile-type tests only, not a behavioral threshold and not a global
   // timeout loosening.
   const COMPILE_BUDGET_MS = 30_000;
@@ -109,5 +109,78 @@ void commands.unsafeCall(dynamic);
     const diagnostics = compile([consumer], { [generated]: source.replaceAll("batchId", "batchID") });
     expect(diagnostics.length).toBeGreaterThan(0);
     expect(diagnostics.some((diagnostic) => diagnostic.file !== undefined && sameFileName(diagnostic.file.fileName, consumer))).toBe(true);
+  }, COMPILE_BUDGET_MS);
+
+  it("types the remote desktop vertical while preserving its public facade contracts", () => {
+    const probe = resolve("src/test/__ipc_remote_desktop_contract_probe.ts");
+    const source = `
+import { call } from "../ipc/commands";
+import {
+  remoteAccountApi,
+  remoteFleetApi,
+  remoteLinkApi,
+  remotePreviewApi,
+  syncCompareApi,
+  type RemoteLinkResult,
+  type RemotePreviewCreateResult,
+  type SyncCompareResult,
+} from "../ipc/remoteApi";
+import type { AccountUser } from "../ipc/authApi";
+import type { FleetDevice, FleetMetricsResponse } from "../ipc/fleetApi";
+
+const devices: Promise<{ devices: FleetDevice[] }> = remoteFleetApi.devices();
+const metrics: Promise<FleetMetricsResponse> = remoteFleetApi.metrics("device-1");
+const me: Promise<{ user: AccountUser; mfa_required: boolean }> = remoteAccountApi.me();
+const linked: Promise<RemoteLinkResult> = remoteLinkApi.mfa("123456");
+const compared: Promise<SyncCompareResult> = syncCompareApi.compare();
+const preview: Promise<RemotePreviewCreateResult> = remotePreviewApi.create("tab-1", 60_000);
+void [devices, metrics, me, linked, compared, preview];
+
+// @ts-expect-error the facade keeps only the two supported admin state actions
+void remoteAccountApi.adminSetUserState("u-1", "active");
+// @ts-expect-error the facade keeps repair actions restricted
+void syncCompareApi.repairUndecryptable({ id: "a1", action: "delete", userId: "u-1", compareToken: "token", remoteSeq: 1, remoteBlobHash: "hash" });
+
+// @ts-expect-error nested commands reject flat input
+void call("preview_share_active", { tabId: "tab-1" });
+// @ts-expect-error no-argument commands reject unexpected input
+void call("remote_healthz", { unexpected: true });
+// @ts-expect-error generated optional fields retain their types
+void call("remote_fleet_enroll_code", { args: { ttlMs: 60_000, userId: 42 } });
+// @ts-expect-error generated numeric fields retain their types
+void call("remote_fleet_device_metrics", { args: { deviceId: "device-1", sinceMs: "30_000" } });
+// @ts-expect-error generated MFA input is checked
+void call("sync_link_mfa", { args: { code: 123456 } });
+// @ts-expect-error generated preview input is checked
+void call("preview_share_create", { args: { tabId: "tab-1", ttlMs: "one-hour" } });
+// @ts-expect-error generated compare evidence is checked
+void call("sync_repair_undecryptable", { args: { id: "a1", action: "clear-cloud", userId: "u-1", compareToken: "token", remoteSeq: "1", remoteBlobHash: "hash" } });
+
+void call("remote_healthz");
+void call("sync_compare");
+void call("remote_fleet_enroll_code", { args: { ttlMs: 60_000 } });
+void call("remote_fleet_device_metrics", { args: { deviceId: "device-1", sinceMs: 30_000 } });
+void call("sync_link_mfa", { args: { code: "123456" } });
+void call("sync_link_reset_password", { args: { newPassword: "new-password" } });
+void call("preview_share_create", { args: { tabId: "tab-1", ttlMs: 60_000 } });
+void call("sync_repair_undecryptable", { args: { id: "a1", action: "clear-cloud", userId: "u-1", compareToken: "token", remoteSeq: 1, remoteBlobHash: "hash" } });
+void call<{ connect: string }>("sync_link_set", { args: {} });
+void call<unknown>("app_info");
+
+async function generatedOutputs() {
+  const link = await call("sync_link_mfa", { args: { code: "123456" } });
+  const url: string = link.url;
+  const recoveryKey: string | undefined = link.recoveryKey;
+  const compare = await call("sync_compare");
+  const compareToken: string = compare.compareToken;
+  const remoteBlobHash: string | undefined = compare.rows[0].remoteBlobHash;
+  // @ts-expect-error generated output fields are checked
+  const invalidToken: number = compare.compareToken;
+  void [url, recoveryKey, compareToken, remoteBlobHash, invalidToken];
+}
+void generatedOutputs;
+`;
+    const diagnostics = compile([probe], { [probe]: source });
+    expect(diagnostics, formatted(diagnostics)).toEqual([]);
   }, COMPILE_BUDGET_MS);
 });

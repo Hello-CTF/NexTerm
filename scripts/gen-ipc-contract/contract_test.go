@@ -135,6 +135,81 @@ func TestGeneratedContractMetadata(t *testing.T) {
 	}
 }
 
+func TestRemoteDesktopVerticalContracts(t *testing.T) {
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	tests := []struct {
+		name   string
+		scope  string
+		nested bool
+	}{
+		{name: "remote_account_admin_create_user", scope: "remote", nested: true},
+		{name: "remote_account_admin_set_user_state", scope: "remote", nested: true},
+		{name: "remote_account_admin_users", scope: "remote"},
+		{name: "remote_account_change_password", scope: "remote", nested: true},
+		{name: "remote_account_device_revoke", scope: "remote", nested: true},
+		{name: "remote_account_devices", scope: "remote"},
+		{name: "remote_account_me", scope: "remote"},
+		{name: "remote_fleet_base_urls_get", scope: "remote"},
+		{name: "remote_fleet_base_urls_put", scope: "remote", nested: true},
+		{name: "remote_fleet_device_autostart", scope: "remote", nested: true},
+		{name: "remote_fleet_device_metrics", scope: "remote", nested: true},
+		{name: "remote_fleet_device_revoke", scope: "remote", nested: true},
+		{name: "remote_fleet_devices", scope: "remote"},
+		{name: "remote_fleet_enroll_code", scope: "remote", nested: true},
+		{name: "remote_healthz", scope: "remote"},
+		{name: "remote_share_host_create", scope: "remote", nested: true},
+		{name: "remote_share_host_list", scope: "remote"},
+		{name: "remote_share_host_revoke", scope: "remote", nested: true},
+		{name: "remote_share_link_list", scope: "remote"},
+		{name: "remote_share_link_revoke", scope: "remote", nested: true},
+		{name: "remote_share_preview_list", scope: "remote"},
+		{name: "remote_share_preview_revoke", scope: "remote", nested: true},
+		{name: "preview_share_active", scope: "preview-share", nested: true},
+		{name: "preview_share_create", scope: "preview-share", nested: true},
+		{name: "sync_compare", scope: "sync"},
+		{name: "sync_link_mfa", scope: "sync", nested: true},
+		{name: "sync_link_reset_password", scope: "sync", nested: true},
+		{name: "sync_repair_undecryptable", scope: "sync", nested: true},
+	}
+	selected := make(map[string]bool, len(tests))
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, ok := commands[test.name]
+			if !ok {
+				t.Fatalf("selected command %q is missing", test.name)
+			}
+			if command.Scope != test.scope || command.Nested != test.nested {
+				t.Fatalf("metadata = scope:%q nested:%t, want scope:%q nested:%t", command.Scope, command.Nested, test.scope, test.nested)
+			}
+			if command.Channel || command.Stream != "none" {
+				t.Fatalf("unexpected channel/stream metadata: %+v", command)
+			}
+			if command.Input == nil || command.Output == nil {
+				t.Fatalf("selected command must carry input/output DTO metadata: %+v", command)
+			}
+			selected[test.name] = true
+		})
+	}
+	if len(selected) != 28 {
+		t.Fatalf("selected remote desktop command count = %d, want 28", len(selected))
+	}
+	for name, command := range commands {
+		if (command.Scope == "remote" || command.Scope == "preview-share" || command.Scope == "sync") && !selected[name] {
+			t.Errorf("unexpected command %q joined the remote desktop vertical scopes", name)
+		}
+	}
+	for _, name := range []string{"sync_link_set", "app_info"} {
+		command, ok := commands[name]
+		if !ok {
+			t.Fatalf("excluded legacy command %q is missing", name)
+		}
+		if command.Scope != "" || command.Input != nil || command.Output != nil {
+			t.Fatalf("excluded command %q acquired DTO metadata: %+v", name, command)
+		}
+	}
+}
+
 func TestConsumedJSONFieldRenameFailsDriftCheck(t *testing.T) {
 	baseline := generateForTest(t, nil)
 	root := repositoryRoot(t)

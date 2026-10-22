@@ -126,6 +126,7 @@ func (r *typeRegistry) structBody(structure *types.Struct, namespace string) (st
 	if structure.NumFields() == 0 {
 		return "Record<string, never>", nil
 	}
+	var embedded []string
 	var fields []string
 	for index := 0; index < structure.NumFields(); index++ {
 		field := structure.Field(index)
@@ -134,6 +135,21 @@ func (r *typeRegistry) structBody(structure *types.Struct, namespace string) (st
 		}
 		tag := reflect.StructTag(structure.Tag(index)).Get("json")
 		if tag == "-" {
+			continue
+		}
+		if field.Embedded() && tag == "" {
+			named, ok := types.Unalias(field.Type()).(*types.Named)
+			if !ok {
+				return "unknown", nil
+			}
+			if _, ok := types.Unalias(named.Underlying()).(*types.Struct); !ok {
+				return "unknown", nil
+			}
+			mapped, _, err := r.mapType(named, namespace)
+			if err != nil {
+				return "", err
+			}
+			embedded = append(embedded, mapped)
 			continue
 		}
 		if field.Embedded() && strings.Split(tag, ",")[0] == "" {
@@ -167,10 +183,17 @@ func (r *typeRegistry) structBody(structure *types.Struct, namespace string) (st
 		}
 		fields = append(fields, "  "+propertyName(name)+separator+" "+mapped+";")
 	}
-	if len(fields) == 0 {
-		return "Record<string, never>", nil
+	body := "Record<string, never>"
+	if len(fields) > 0 {
+		body = "{\n" + strings.Join(fields, "\n") + "\n}"
 	}
-	return "{\n" + strings.Join(fields, "\n") + "\n}", nil
+	if len(embedded) > 0 {
+		if len(fields) == 0 {
+			return strings.Join(embedded, " & "), nil
+		}
+		return strings.Join(append(embedded, body), " & "), nil
+	}
+	return body, nil
 }
 
 func (r *typeRegistry) render() string {

@@ -1149,14 +1149,20 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "preview_share_active": {
+      scope: "preview-share",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.previewShareActiveRequest", ts: "PreviewShareActiveRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.previewShareActiveResult", ts: "PreviewShareActiveResult" },
     },
     "preview_share_create": {
+      scope: "preview-share",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.previewShareCreateRequest", ts: "PreviewShareCreateRequest" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/app/production.previewShareCreateResult", ts: "PreviewShareCreateResult | null" },
     },
     "production_settings_get": {
       scope: "production",
@@ -1195,114 +1201,180 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "remote_account_admin_create_user": {
+      scope: "remote",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteAdminCreateUserRequest", ts: "RemoteAdminCreateUserRequest" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteAccountUserResult", ts: "RemoteAccountUserResult | null" },
     },
     "remote_account_admin_set_user_state": {
+      scope: "remote",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteAdminSetStateRequest", ts: "RemoteAdminSetStateRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.RemoteOK", ts: "RemoteOK" },
     },
     "remote_account_admin_users": {
+      scope: "remote",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteAccountUsers", ts: "RemoteAccountUsers | null" },
     },
     "remote_account_change_password": {
+      scope: "remote",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteChangePasswordRequest", ts: "RemoteChangePasswordRequest" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemotePasswordChangeResult", ts: "RemotePasswordChangeResult | null" },
     },
     "remote_account_device_revoke": {
+      scope: "remote",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteDeviceRequest", ts: "RemoteDeviceRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.RemoteOK", ts: "RemoteOK" },
     },
     "remote_account_devices": {
+      scope: "remote",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteAccountDevices", ts: "RemoteAccountDevices | null" },
     },
     "remote_account_me": {
+      scope: "remote",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteAccountMe", ts: "RemoteAccountMe | null" },
     },
     "remote_fleet_base_urls_get": {
+      scope: "remote",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteBaseURLs", ts: "RemoteBaseURLs | null" },
     },
     "remote_fleet_base_urls_put": {
+      scope: "remote",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteBaseURLsPutRequest", ts: "RemoteBaseURLsPutRequest" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteBaseURLs", ts: "RemoteBaseURLs | null" },
     },
     "remote_fleet_device_autostart": {
+      scope: "remote",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteAutostartRequest", ts: "RemoteAutostartRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.RemoteAutostartResult", ts: "RemoteAutostartResult" },
     },
     "remote_fleet_device_metrics": {
+      scope: "remote",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteMetricsRequest", ts: "RemoteMetricsRequest" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteMetricsSamples", ts: "RemoteMetricsSamples | null" },
     },
     "remote_fleet_device_revoke": {
+      scope: "remote",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteDeviceRequest", ts: "RemoteDeviceRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.RemoteOK", ts: "RemoteOK" },
     },
     "remote_fleet_devices": {
+      scope: "remote",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteFleetDevices", ts: "RemoteFleetDevices | null" },
     },
     "remote_fleet_enroll_code": {
+      scope: "remote",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteEnrollCodeRequest", ts: "RemoteEnrollCodeRequest" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteEnrollCode", ts: "RemoteEnrollCode | null" },
     },
     "remote_healthz": {
+      scope: "remote",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "string", ts: "string" },
     },
     "remote_share_host_create": {
+      scope: "remote",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.RemoteHostShareInput", ts: "RemoteHostShareInput" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteHostShare", ts: "RemoteHostShare | null" },
     },
     "remote_share_host_list": {
+      scope: "remote",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteHostShares", ts: "RemoteHostShares | null" },
     },
     "remote_share_host_revoke": {
+      scope: "remote",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteIDRequest", ts: "RemoteIDRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.RemoteOK", ts: "RemoteOK" },
     },
     "remote_share_link_list": {
+      scope: "remote",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteShareLinks", ts: "RemoteShareLinks | null" },
     },
     "remote_share_link_revoke": {
+      scope: "remote",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteIDRequest", ts: "RemoteIDRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.RemoteOK", ts: "RemoteOK" },
     },
     "remote_share_preview_list": {
+      scope: "remote",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemotePreviewLinks", ts: "RemotePreviewLinks | null" },
     },
     "remote_share_preview_revoke": {
+      scope: "remote",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteIDRequest", ts: "RemoteIDRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.RemoteOK", ts: "RemoteOK" },
     },
     "runbook_run_advance": {
       scope: "runbook",
@@ -1530,9 +1602,12 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "sync_compare": {
+      scope: "sync",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CompareResult", ts: "CompareResult" },
     },
     "sync_digest": {
       nested: false,
@@ -1565,14 +1640,20 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "sync_link_mfa": {
+      scope: "sync",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.LinkMFARequest", ts: "LinkMFARequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.LinkResult", ts: "LinkResult" },
     },
     "sync_link_reset_password": {
+      scope: "sync",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.LinkResetPasswordRequest", ts: "LinkResetPasswordRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.LinkResult", ts: "LinkResult" },
     },
     "sync_link_set": {
       nested: true,
@@ -1590,9 +1671,12 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "sync_repair_undecryptable": {
+      scope: "sync",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.RepairUndecryptableRequest", ts: "RepairUndecryptableRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.RepairUndecryptableResult", ts: "RepairUndecryptableResult" },
     },
     "sync_status": {
       nested: false,
@@ -2033,34 +2117,10 @@ export const ipcContractManifest = {
     "mount_create",
     "mount_list",
     "mount_remove",
-    "preview_share_active",
-    "preview_share_create",
     "redis_command",
     "redis_inspect",
     "redis_scan",
     "redis_set_ttl",
-    "remote_account_admin_create_user",
-    "remote_account_admin_set_user_state",
-    "remote_account_admin_users",
-    "remote_account_change_password",
-    "remote_account_device_revoke",
-    "remote_account_devices",
-    "remote_account_me",
-    "remote_fleet_base_urls_get",
-    "remote_fleet_base_urls_put",
-    "remote_fleet_device_autostart",
-    "remote_fleet_device_metrics",
-    "remote_fleet_device_revoke",
-    "remote_fleet_devices",
-    "remote_fleet_enroll_code",
-    "remote_healthz",
-    "remote_share_host_create",
-    "remote_share_host_list",
-    "remote_share_host_revoke",
-    "remote_share_link_list",
-    "remote_share_link_revoke",
-    "remote_share_preview_list",
-    "remote_share_preview_revoke",
     "session_connect",
     "session_connect_device",
     "session_connect_local",
@@ -2090,19 +2150,15 @@ export const ipcContractManifest = {
     "sync_collect_known_hosts",
     "sync_collect_preferences",
     "sync_collect_tombstones",
-    "sync_compare",
     "sync_digest",
     "sync_export",
     "sync_import",
     "sync_kind_opt_in_get",
     "sync_kind_opt_in_set",
     "sync_link_get",
-    "sync_link_mfa",
-    "sync_link_reset_password",
     "sync_link_set",
     "sync_preferences_get",
     "sync_preferences_set",
-    "sync_repair_undecryptable",
     "sync_status",
     "sync_wake",
     "system_insets",
@@ -2407,6 +2463,14 @@ export interface IPCCommandTypeMap {
     input: contractTypes.InventoryTargetExecRequest;
     output: contractTypes.InventoryTargetExecResponse;
   };
+  "preview_share_active": {
+    input: contractTypes.PreviewShareActiveRequest;
+    output: contractTypes.PreviewShareActiveResult;
+  };
+  "preview_share_create": {
+    input: contractTypes.PreviewShareCreateRequest;
+    output: contractTypes.PreviewShareCreateResult | null;
+  };
   "production_settings_get": {
     input: Record<string, never>;
     output: contractTypes.ProductionSettingsDTO;
@@ -2414,6 +2478,94 @@ export interface IPCCommandTypeMap {
   "production_settings_set": {
     input: contractTypes.ProductionSettingsUpdateRequest;
     output: contractTypes.ProductionSettingsDTO;
+  };
+  "remote_account_admin_create_user": {
+    input: contractTypes.RemoteAdminCreateUserRequest;
+    output: contractTypes.RemoteAccountUserResult | null;
+  };
+  "remote_account_admin_set_user_state": {
+    input: contractTypes.RemoteAdminSetStateRequest;
+    output: contractTypes.RemoteOK;
+  };
+  "remote_account_admin_users": {
+    input: Record<string, never>;
+    output: contractTypes.RemoteAccountUsers | null;
+  };
+  "remote_account_change_password": {
+    input: contractTypes.RemoteChangePasswordRequest;
+    output: contractTypes.RemotePasswordChangeResult | null;
+  };
+  "remote_account_device_revoke": {
+    input: contractTypes.RemoteDeviceRequest;
+    output: contractTypes.RemoteOK;
+  };
+  "remote_account_devices": {
+    input: Record<string, never>;
+    output: contractTypes.RemoteAccountDevices | null;
+  };
+  "remote_account_me": {
+    input: Record<string, never>;
+    output: contractTypes.RemoteAccountMe | null;
+  };
+  "remote_fleet_base_urls_get": {
+    input: Record<string, never>;
+    output: contractTypes.RemoteBaseURLs | null;
+  };
+  "remote_fleet_base_urls_put": {
+    input: contractTypes.RemoteBaseURLsPutRequest;
+    output: contractTypes.RemoteBaseURLs | null;
+  };
+  "remote_fleet_device_autostart": {
+    input: contractTypes.RemoteAutostartRequest;
+    output: contractTypes.RemoteAutostartResult;
+  };
+  "remote_fleet_device_metrics": {
+    input: contractTypes.RemoteMetricsRequest;
+    output: contractTypes.RemoteMetricsSamples | null;
+  };
+  "remote_fleet_device_revoke": {
+    input: contractTypes.RemoteDeviceRequest;
+    output: contractTypes.RemoteOK;
+  };
+  "remote_fleet_devices": {
+    input: Record<string, never>;
+    output: contractTypes.RemoteFleetDevices | null;
+  };
+  "remote_fleet_enroll_code": {
+    input: contractTypes.RemoteEnrollCodeRequest;
+    output: contractTypes.RemoteEnrollCode | null;
+  };
+  "remote_healthz": {
+    input: Record<string, never>;
+    output: string;
+  };
+  "remote_share_host_create": {
+    input: contractTypes.RemoteHostShareInput;
+    output: contractTypes.RemoteHostShare | null;
+  };
+  "remote_share_host_list": {
+    input: Record<string, never>;
+    output: contractTypes.RemoteHostShares | null;
+  };
+  "remote_share_host_revoke": {
+    input: contractTypes.RemoteIDRequest;
+    output: contractTypes.RemoteOK;
+  };
+  "remote_share_link_list": {
+    input: Record<string, never>;
+    output: contractTypes.RemoteShareLinks | null;
+  };
+  "remote_share_link_revoke": {
+    input: contractTypes.RemoteIDRequest;
+    output: contractTypes.RemoteOK;
+  };
+  "remote_share_preview_list": {
+    input: Record<string, never>;
+    output: contractTypes.RemotePreviewLinks | null;
+  };
+  "remote_share_preview_revoke": {
+    input: contractTypes.RemoteIDRequest;
+    output: contractTypes.RemoteOK;
   };
   "runbook_run_advance": {
     input: contractTypes.AdvanceRequest;
@@ -2454,6 +2606,22 @@ export interface IPCCommandTypeMap {
   "services_list": {
     input: contractTypes.ListRequest;
     output: contractTypes.ServiceOperationBatch;
+  };
+  "sync_compare": {
+    input: Record<string, never>;
+    output: contractTypes.CompareResult;
+  };
+  "sync_link_mfa": {
+    input: contractTypes.LinkMFARequest;
+    output: contractTypes.LinkResult;
+  };
+  "sync_link_reset_password": {
+    input: contractTypes.LinkResetPasswordRequest;
+    output: contractTypes.LinkResult;
+  };
+  "sync_repair_undecryptable": {
+    input: contractTypes.RepairUndecryptableRequest;
+    output: contractTypes.RepairUndecryptableResult;
   };
   "target_set_create": {
     input: contractTypes.TargetSetCreateRequest;
