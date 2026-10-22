@@ -46,6 +46,7 @@ func TestUserPauseKeepsCheckpointAndResumes(t *testing.T) {
 	if done, failed := counts(events); done+failed != 0 {
 		t.Fatalf("pause produced terminal events: %+v", events)
 	}
+	waitTakeoverPauseReady(t, h.manager, response.JobID)
 	resumed := &agent.SliceStream{}
 	result, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(resumed))
 	if err != nil {
@@ -297,6 +298,7 @@ func TestPauseDuringWriteDoesNotDuplicateOnResume(t *testing.T) {
 	h.manager.Pause("tab")
 	close(release)
 	waitEvent(t, stream, "paused")
+	waitTakeoverPauseReady(t, h.manager, response.JobID)
 	resumed := &agent.SliceStream{}
 	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(resumed)); err != nil {
 		t.Fatal(err)

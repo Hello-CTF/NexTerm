@@ -382,20 +382,21 @@ func (m *Manager) resumePaused(ctx context.Context, owner *ownership, state *run
 		return RunResponse{}, ErrStaleOwnership
 	}
 	state.pendingMu.Lock()
+	userPaused := state.userPaused
+	state.pendingMu.Unlock()
+	if !userPaused {
+		return RunResponse{}, ErrOwnershipActive
+	}
+	if err := m.verifyJobAsset(ctx, state); err != nil {
+		return RunResponse{}, err
+	}
+	state.pendingMu.Lock()
 	if !(state.userPaused && !state.running && state.pauseReady) {
 		state.pendingMu.Unlock()
 		return RunResponse{}, ErrOwnershipActive
 	}
 	state.pauseReady = false
 	state.pendingMu.Unlock()
-	if err := m.verifyJobAsset(ctx, state); err != nil {
-		state.pendingMu.Lock()
-		if state.ctx.Err() == nil {
-			state.pauseReady = true
-		}
-		state.pendingMu.Unlock()
-		return RunResponse{}, err
-	}
 	stream, err := factory(ctx, args.ChannelID, state.id)
 	if err != nil || stream == nil {
 		state.pendingMu.Lock()
