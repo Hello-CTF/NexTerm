@@ -190,6 +190,31 @@ export type AttachedTabDTO = {
   attachmentId?: number;
 };
 
+export type AuditCountDTO = {
+  total: number;
+};
+
+export type AuditDTO = {
+  id: number;
+  ts: number;
+  sessionId: string | null;
+  assetId: string | null;
+  source: string;
+  kind: string;
+  payload: unknown;
+  exitCode: number | null;
+  durationMs: number | null;
+};
+
+export type AuditQueryRequest = {
+  sessionId?: string | null;
+  assetId?: string | null;
+  source?: string | null;
+  kind?: string | null;
+  limit?: number;
+  offset?: number;
+};
+
 export type BatchProgress = {
   batchId: string;
   phase: string;
@@ -419,6 +444,27 @@ export type ColumnsRequest = {
   connId: string;
   schema?: string;
   table: string;
+};
+
+export type CommandLogDTO = {
+  id: number;
+  sessionId: string;
+  tabId: string;
+  assetId: string;
+  userId: string | null;
+  command: string;
+  source: string;
+  exitCode: number | null;
+  startedAt: number;
+  finishedAt: number;
+};
+
+export type CommandLogQueryRequest = {
+  sessionId?: string | null;
+  assetId?: string | null;
+  userId?: string | null;
+  limit?: number;
+  offset?: number;
 };
 
 export type CompareResult = {
@@ -1322,6 +1368,23 @@ export type KnownHostRequest = {
   key?: string;
 };
 
+export type LayoutDTO = {
+  revision: number;
+  updatedAt: number;
+  data: unknown;
+};
+
+export type LayoutPutRequest = {
+  data: string;
+  revision: number;
+};
+
+export type LayoutSaveDTO = {
+  saved: boolean;
+  revision: number;
+  conflict: boolean;
+};
+
 export type Link = {
   url: string;
   username: string;
@@ -2083,6 +2146,31 @@ export type SkippedNewerEntry = {
   equalRevision: boolean;
 };
 
+export type SnippetDTO = {
+  id: string;
+  name: string;
+  body: string;
+  groupId: string | null;
+  sort: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type SnippetInputRequest = {
+  name: string;
+  body: string;
+  groupId?: string | null;
+  sort?: number;
+};
+
+export type SnippetPatchRequest = {
+  id: string;
+  name: string;
+  body: string;
+  groupId?: string | null;
+  sort?: number | null;
+};
+
 export type Spec = {
   id: string;
   sessionId: string;
@@ -2095,6 +2183,78 @@ export type Spec = {
   targetPort: number | null;
   kind: string;
   createdAt: number;
+};
+
+export type SshImportApplyDTO = {
+  assetsCreated: number;
+  assetsUpdated: number;
+  credentialsCreated: number;
+  credentialsUpdated: number;
+  skipped: number;
+  warnings: string[];
+};
+
+export type SshImportApplyRequest = {
+  source: string;
+  path?: string;
+  confirmed?: boolean;
+  groupId?: string | null;
+  tags?: string | null;
+  hosts: SshImportItemAction[];
+  keys: SshImportItemAction[];
+};
+
+export type SshImportDiagnosticDTO = {
+  code: string;
+  source: string;
+  message: string;
+};
+
+export type SshImportHostDTO = {
+  id: string;
+  alias: string;
+  hostname: string;
+  port: number;
+  username: string;
+  identityFiles: string[];
+  keyName: string;
+  keyFingerprint: string;
+  proxyJump: string;
+  authMethod: string;
+  source: string;
+  action: string;
+  warnings: string[];
+};
+
+export type SshImportItemAction = {
+  id: string;
+  action: string;
+};
+
+export type SshImportKeyDTO = {
+  id: string;
+  aliases: string[];
+  fingerprint: string;
+  keyType: string;
+  path: string;
+  source: string;
+  action: string;
+  warnings: string[];
+};
+
+export type SshImportPreviewDTO = {
+  source: string;
+  path: string;
+  hosts: SshImportHostDTO[];
+  keys: SshImportKeyDTO[];
+  diagnostics: SshImportDiagnosticDTO[];
+  truncated: boolean;
+};
+
+export type SshImportPreviewRequest = {
+  source: string;
+  path?: string;
+  confirmed?: boolean;
 };
 
 export type StartRequest = {

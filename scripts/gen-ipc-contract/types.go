@@ -104,6 +104,24 @@ var consumerOptionalRequestFields = map[string]map[string]bool{
 	"github.com/Hello-CTF/NexTerm/internal/app/production.localFileReadRequest": {
 		"MaxBytes": true,
 	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.auditQueryRequest": {
+		"SessionID": true, "AssetID": true, "Source": true, "Kind": true, "Limit": true, "Offset": true,
+	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.commandLogQueryRequest": {
+		"SessionID": true, "AssetID": true, "UserID": true, "Limit": true, "Offset": true,
+	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.snippetInputRequest": {
+		"GroupID": true, "Sort": true,
+	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.snippetPatchRequest": {
+		"Sort": true,
+	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.sshImportPreviewRequest": {
+		"Path": true, "Confirmed": true,
+	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.sshImportApplyRequest": {
+		"Path": true, "Confirmed": true, "GroupID": true, "Tags": true,
+	},
 	"github.com/Hello-CTF/NexTerm/internal/app/production.transcriptReadRequest": {
 		"MaxBytes": true,
 	},
@@ -122,7 +140,14 @@ type consumerRequestField struct {
 }
 
 var consumerCommandRequestProjections = map[string][]consumerRequestField{
-	"app_update_install":              {{name: "Version", nullable: true}},
+	"app_update_install": {{name: "Version", nullable: true}},
+	"audit_count": {
+		{name: "SessionID", optional: true}, {name: "AssetID", optional: true},
+		{name: "Source", optional: true}, {name: "Kind", optional: true},
+	},
+	"command_count": {
+		{name: "SessionID", optional: true}, {name: "AssetID", optional: true}, {name: "UserID", optional: true},
+	},
 	"db_query":                        {{name: "ConnID"}, {name: "SQL"}, {name: "TimeoutMS", optional: true}},
 	"docker_action":                   {{name: "SessionID"}, {name: "ContainerID"}, {name: "Action"}, {name: "NewName", optional: true}},
 	"docker_compose_redeploy_attach":  {{name: "SessionID"}, {name: "Project"}, {name: "Path"}, {name: "Ticket"}},
@@ -150,6 +175,7 @@ var consumerCommandRequestProjections = map[string][]consumerRequestField{
 	"fs_upload_chunk":                 {{name: "SessionID"}, {name: "UploadID"}, {name: "TaskID"}, {name: "AttemptID"}, {name: "Index"}, {name: "Size"}, {name: "SHA256"}, {name: "ContentBase64"}},
 	"fs_upload_commit":                {{name: "SessionID"}, {name: "UploadID"}, {name: "TaskID"}, {name: "AttemptID"}},
 	"fs_write":                        {{name: "SessionID"}, {name: "Path"}, {name: "ContentBase64"}, {name: "Backup"}, {name: "TaskID", optional: true}, {name: "AttemptID", optional: true}},
+	"snippet_delete":                  {{name: "ID"}},
 }
 
 func projectConsumerCommandInput(command string, value types.Type) (types.Type, error) {

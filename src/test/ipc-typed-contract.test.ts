@@ -1245,4 +1245,152 @@ void generatedOutputs;
     const diagnostics = compile([probe], { [probe]: source });
     expect(diagnostics, formatted(diagnostics)).toEqual([]);
   }, COMPILE_BUDGET_MS);
+
+  it("types operations consumers while preserving optional patches, dynamic data and narrow facades", () => {
+    const probe = resolve("src/test/__ipc_operations_contract_probe.ts");
+    const source = `
+import {
+  assetApi,
+  call,
+  layoutApi,
+  sshImportApi,
+  type LayoutDto,
+  type LayoutSaveResult,
+} from "../ipc/commands";
+import type { IPCInput, IPCOutput } from "../ipc/generated/manifest";
+import type {
+  AuditCountDto,
+  AuditEntryDto,
+  CommandEntryDto,
+  JsonValue,
+  SnippetDto,
+  SshImportAction,
+  SshImportApplyDto,
+  SshImportPreviewDto,
+} from "../ipc/types";
+
+type Equal<Left, Right> =
+  (<T>() => T extends Left ? 1 : 2) extends
+  (<T>() => T extends Right ? 1 : 2) ? true : false;
+type Assert<Value extends true> = Value;
+type ContractChecks = [
+  Assert<Equal<IPCOutput<"snippet_create">, Record<string, string>>>,
+  Assert<Equal<IPCOutput<"snippet_update">, unknown>>,
+  Assert<Equal<IPCOutput<"snippet_delete">, unknown>>,
+  Assert<Equal<IPCInput<"snippet_create">["groupId"], string | null | undefined>>,
+  Assert<Equal<IPCInput<"snippet_create">["sort"], number | undefined>>,
+  Assert<Equal<IPCInput<"snippet_update">["groupId"], string | null | undefined>>,
+  Assert<Equal<IPCInput<"snippet_update">["sort"], number | null | undefined>>,
+  Assert<Equal<IPCOutput<"audit_query">[number]["payload"], unknown>>,
+  Assert<Equal<IPCOutput<"layout_get">["data"], unknown>>,
+  Assert<Equal<IPCInput<"layout_put">["data"], string>>,
+  Assert<Equal<IPCInput<"layout_put">["revision"], number>>,
+  Assert<Equal<IPCInput<"ssh_import_apply">["groupId"], string | null | undefined>>,
+  Assert<Equal<IPCInput<"ssh_import_apply">["tags"], string | null | undefined>>,
+  Assert<Equal<IPCOutput<"ssh_import_preview">["hosts"][number]["action"], string>>,
+  Assert<Equal<AuditEntryDto["payload"], JsonValue>>,
+  Assert<Equal<SshImportPreviewDto["hosts"][number]["action"], SshImportAction>>,
+  Assert<Equal<ReturnType<typeof assetApi.snippetList>, Promise<SnippetDto[]>>>,
+  Assert<Equal<ReturnType<typeof assetApi.snippetCreate>, Promise<{ id: string }>>>,
+  Assert<Equal<ReturnType<typeof assetApi.snippetUpdate>, Promise<void>>>,
+  Assert<Equal<ReturnType<typeof assetApi.snippetDelete>, Promise<void>>>,
+  Assert<Equal<ReturnType<typeof assetApi.auditQuery>, Promise<AuditEntryDto[]>>>,
+  Assert<Equal<ReturnType<typeof assetApi.auditCount>, Promise<AuditCountDto>>>,
+  Assert<Equal<ReturnType<typeof assetApi.commandQuery>, Promise<CommandEntryDto[]>>>,
+  Assert<Equal<ReturnType<typeof assetApi.commandCount>, Promise<AuditCountDto>>>,
+  Assert<Equal<ReturnType<typeof layoutApi.get>, Promise<LayoutDto>>>,
+  Assert<Equal<ReturnType<typeof layoutApi.put>, Promise<LayoutSaveResult>>>,
+  Assert<Equal<ReturnType<typeof sshImportApi.preview>, Promise<SshImportPreviewDto>>>,
+  Assert<Equal<ReturnType<typeof sshImportApi.apply>, Promise<SshImportApplyDto>>>,
+];
+const contractChecks: ContractChecks = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
+void contractChecks;
+
+const snippets: Promise<SnippetDto[]> = assetApi.snippetList();
+const created: Promise<{ id: string }> = assetApi.snippetCreate("Logs", "tail -f app.log");
+const updated: Promise<void> = assetApi.snippetUpdate("snippet-1", "Logs", "tail -f app.log", { groupId: null, sort: 0 });
+const removed: Promise<void> = assetApi.snippetDelete("snippet-1");
+const audited: Promise<AuditEntryDto[]> = assetApi.auditQuery({ source: "user", limit: 100, offset: 0 });
+const auditTotal: Promise<AuditCountDto> = assetApi.auditCount({ source: "user" });
+const commands: Promise<CommandEntryDto[]> = assetApi.commandQuery({ assetId: "asset-1", userId: "user-1", sessionId: "session-1", limit: 100, offset: 0 });
+const commandTotal: Promise<AuditCountDto> = assetApi.commandCount({ assetId: "asset-1", userId: "user-1", sessionId: "session-1" });
+const layout: Promise<LayoutDto> = layoutApi.get();
+const saved: Promise<LayoutSaveResult> = layoutApi.put(JSON.stringify({ v: 3, workspaces: [] }), 7);
+const preview: Promise<SshImportPreviewDto> = sshImportApi.preview({ source: "ssh-home" });
+const applied: Promise<SshImportApplyDto> = sshImportApi.apply({
+  source: "ssh-config",
+  path: "/home/demo/.ssh/config",
+  groupId: "group-1",
+  tags: "prod, 欧洲",
+  hosts: [{ id: "host-1", action: "import" }],
+  keys: [{ id: "key-1", action: "skip" }],
+});
+void [snippets, created, updated, removed, audited, auditTotal, commands, commandTotal, layout, saved, preview, applied];
+
+void call("snippet_list");
+void call("snippet_create", { name: "Logs", body: "tail -f app.log" });
+void call("snippet_create", { name: "Logs", body: "tail -f app.log", groupId: null, sort: 0 });
+void call("snippet_update", { id: "snippet-1", name: "Logs", body: "tail -f app.log" });
+void call("snippet_update", { id: "snippet-1", name: "Logs", body: "tail -f app.log", groupId: null, sort: 0 });
+void call("snippet_delete", { id: "snippet-1" });
+void call("audit_query", { args: { sessionId: "session-1", assetId: "asset-1", source: "user", kind: "connect", limit: 100, offset: 0 } });
+void call("audit_count", { args: { source: "user", kind: "connect" } });
+void call("command_query", { args: { sessionId: "session-1", assetId: "asset-1", userId: "user-1", limit: 100, offset: 0 } });
+void call("command_count", { args: { sessionId: "session-1", assetId: "asset-1", userId: "user-1" } });
+void call("layout_get");
+void call("layout_put", { args: { data: "{\\"v\\":3,\\"workspaces\\":[]}", revision: 7 } });
+void call("ssh_import_preview", { args: { source: "ssh-home" } });
+void call("ssh_import_apply", { args: { source: "ssh-config", groupId: "group-1", tags: "prod", hosts: [], keys: [] } });
+void call("ssh_import_apply", { args: { source: "ssh-config", groupId: null, tags: null, hosts: [], keys: [] } });
+
+// @ts-expect-error typed snippet commands reject the legacy generic output escape
+void call<SnippetDto[]>("snippet_list");
+// @ts-expect-error shared idRequest fields do not leak into snippet deletion
+void call("snippet_delete", { id: "snippet-1", q: "unrelated" });
+// @ts-expect-error snippet sort remains numeric
+void call("snippet_create", { name: "Logs", body: "tail -f app.log", sort: "first" });
+// @ts-expect-error count projects filters only, not pagination
+void call("audit_count", { args: { source: "user", limit: 100 } });
+// @ts-expect-error count projects filters only, not pagination
+void call("command_count", { args: { userId: "user-1", offset: 100 } });
+// @ts-expect-error audit pagination remains numeric
+void call("audit_query", { args: { source: "user", limit: "100" } });
+// @ts-expect-error command user filters remain strings
+void call("command_query", { args: { userId: 42 } });
+// @ts-expect-error nested audit commands reject flat input
+void call("audit_query", { source: "user" });
+// @ts-expect-error layout data remains its serialized JSON string
+void call("layout_put", { args: { data: { v: 3 }, revision: 7 } });
+// @ts-expect-error layout put remains nested
+void call("layout_put", { data: "{}", revision: 7 });
+// @ts-expect-error layout revision remains required
+void call("layout_put", { args: { data: "{}" } });
+// @ts-expect-error the public preview facade keeps its supported source union
+void sshImportApi.preview({ source: "other" });
+// @ts-expect-error the public apply facade keeps import actions narrow
+void sshImportApi.apply({ source: "ssh-home", hosts: [{ id: "host-1", action: "add" }], keys: [] });
+// @ts-expect-error SSH apply still requires host selections
+void sshImportApi.apply({ source: "ssh-home", keys: [] });
+
+async function generatedOutputs() {
+  const audit = await call("audit_query", { args: { source: "user" } });
+  const payload: unknown = audit[0].payload;
+  // @ts-expect-error dynamic audit JSON requires runtime narrowing
+  const payloadText: string = audit[0].payload;
+  const layout = await call("layout_get");
+  const data: unknown = layout.data;
+  // @ts-expect-error dynamic layout JSON requires runtime narrowing
+  const layoutText: string = layout.data;
+  const conflict = await call("layout_put", { args: { data: "{}", revision: 7 } });
+  const saved: boolean = conflict.saved;
+  const conflicted: boolean = conflict.conflict;
+  const created = await call("snippet_create", { name: "Logs", body: "tail -f app.log" });
+  const id: string = created.id;
+  void [payload, payloadText, data, layoutText, saved, conflicted, id];
+}
+void generatedOutputs;
+`;
+    const diagnostics = compile([probe], { [probe]: source });
+    expect(diagnostics, formatted(diagnostics)).toEqual([]);
+  }, COMPILE_BUDGET_MS);
 });

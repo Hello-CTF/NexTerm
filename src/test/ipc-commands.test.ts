@@ -878,6 +878,75 @@ describe("desktop forward runtime facade IPC contracts", () => {
   });
 });
 
+describe("desktop operations facade IPC contracts", () => {
+  function serializedRequestAt(index: number): Record<string, unknown> {
+    return JSON.parse(JSON.stringify(requestAt(index))) as Record<string, unknown>;
+  }
+
+  it("mirrors all 12 envelopes and keeps layout conflicts and import warnings as results", async () => {
+    const layoutData = { v: 3, workspaces: [{ id: "workspace-1", nested: [true, null] }] };
+    const conflict = { saved: false, revision: 8, conflict: true };
+    const applied = {
+      assetsCreated: 1,
+      assetsUpdated: 0,
+      credentialsCreated: 1,
+      credentialsUpdated: 0,
+      skipped: 2,
+      warnings: ["one entry was skipped"],
+    };
+    const results: Record<string, unknown> = {
+      layout_get: { revision: 7, updatedAt: 1234, data: layoutData },
+      layout_put: conflict,
+      ssh_import_apply: applied,
+    };
+    runtime.Call.ByName.mockImplementation(async (_name, request) => ({
+      ok: true,
+      data: results[(request as { cmd: string }).cmd] ?? null,
+    }));
+    const { assetApi, layoutApi, sshImportApi } = await import("../ipc/commands");
+    const layoutJSON = JSON.stringify(layoutData);
+
+    await assetApi.snippetList();
+    await assetApi.snippetCreate("Logs", "tail -f app.log", "group-1", 0);
+    await assetApi.snippetUpdate("snippet-1", "Logs", "tail -f app.log", { groupId: null, sort: 0 });
+    await assetApi.snippetDelete("snippet-1");
+    await assetApi.auditQuery({ sessionId: "session-1", assetId: "asset-1", source: "user", kind: "connect", limit: 100, offset: 200 });
+    await assetApi.auditCount({ sessionId: "session-1", assetId: "asset-1", source: "user", kind: "connect" });
+    await assetApi.commandQuery({ sessionId: "session-1", assetId: "asset-1", userId: "user-1", limit: 100, offset: 200 });
+    await assetApi.commandCount({ sessionId: "session-1", assetId: "asset-1", userId: "user-1" });
+    await expect(layoutApi.get()).resolves.toEqual({ revision: 7, updatedAt: 1234, data: layoutData });
+    await expect(layoutApi.put(layoutJSON, 7)).resolves.toEqual(conflict);
+    await sshImportApi.preview({ source: "ssh-config", path: "/home/demo/.ssh/config", confirmed: true });
+    await expect(sshImportApi.apply({
+      source: "ssh-config",
+      path: "/home/demo/.ssh/config",
+      confirmed: true,
+      groupId: "group-1",
+      tags: "prod, 欧洲",
+      hosts: [{ id: "host-1", action: "import" }],
+      keys: [{ id: "key-1", action: "skip" }],
+    })).resolves.toEqual(applied);
+
+    const expected: Array<{ cmd: string; args: unknown }> = [
+      { cmd: "snippet_list", args: null },
+      { cmd: "snippet_create", args: { name: "Logs", body: "tail -f app.log", groupId: "group-1", sort: 0 } },
+      { cmd: "snippet_update", args: { id: "snippet-1", name: "Logs", body: "tail -f app.log", groupId: null, sort: 0 } },
+      { cmd: "snippet_delete", args: { id: "snippet-1" } },
+      { cmd: "audit_query", args: { args: { sessionId: "session-1", assetId: "asset-1", source: "user", kind: "connect", limit: 100, offset: 200 } } },
+      { cmd: "audit_count", args: { args: { sessionId: "session-1", assetId: "asset-1", source: "user", kind: "connect" } } },
+      { cmd: "command_query", args: { args: { sessionId: "session-1", assetId: "asset-1", userId: "user-1", limit: 100, offset: 200 } } },
+      { cmd: "command_count", args: { args: { sessionId: "session-1", assetId: "asset-1", userId: "user-1" } } },
+      { cmd: "layout_get", args: null },
+      { cmd: "layout_put", args: { args: { data: layoutJSON, revision: 7 } } },
+      { cmd: "ssh_import_preview", args: { args: { source: "ssh-config", path: "/home/demo/.ssh/config", confirmed: true } } },
+      { cmd: "ssh_import_apply", args: { args: { source: "ssh-config", path: "/home/demo/.ssh/config", confirmed: true, groupId: "group-1", tags: "prod, 欧洲", hosts: [{ id: "host-1", action: "import" }], keys: [{ id: "key-1", action: "skip" }] } } },
+    ];
+    expect(expected).toHaveLength(12);
+    expected.forEach((want, index) => expect(serializedRequestAt(index)).toEqual(want));
+    expect(runtime.Call.ByName).toHaveBeenCalledTimes(12);
+  });
+});
+
 describe("web command behavior compatibility", () => {
   function useWebTransport() {
     vi.stubGlobal("window", {

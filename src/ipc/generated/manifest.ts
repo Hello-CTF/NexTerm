@@ -482,14 +482,20 @@ export const ipcContractManifest = {
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetDTO", ts: "AssetDTO" },
     },
     "audit_count": {
+      scope: "audit",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID *string \"json:\\\"sessionId,omitempty\\\"\"; AssetID *string \"json:\\\"assetId,omitempty\\\"\"; Source *string \"json:\\\"source,omitempty\\\"\"; Kind *string \"json:\\\"kind,omitempty\\\"\"}", ts: "{\n  sessionId?: string | null;\n  assetId?: string | null;\n  source?: string | null;\n  kind?: string | null;\n}" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.auditCountDTO", ts: "AuditCountDTO" },
     },
     "audit_query": {
+      scope: "audit",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.auditQueryRequest", ts: "AuditQueryRequest" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.auditDTO", ts: "AuditDTO[]" },
     },
     "biometric_disable": {
       scope: "biometric",
@@ -524,14 +530,20 @@ export const ipcContractManifest = {
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.biometricUnlockResult", ts: "BiometricUnlockResult" },
     },
     "command_count": {
+      scope: "command-log",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID *string \"json:\\\"sessionId,omitempty\\\"\"; AssetID *string \"json:\\\"assetId,omitempty\\\"\"; UserID *string \"json:\\\"userId,omitempty\\\"\"}", ts: "{\n  sessionId?: string | null;\n  assetId?: string | null;\n  userId?: string | null;\n}" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.auditCountDTO", ts: "AuditCountDTO" },
     },
     "command_query": {
+      scope: "command-log",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.commandLogQueryRequest", ts: "CommandLogQueryRequest" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.commandLogDTO", ts: "CommandLogDTO[]" },
     },
     "credential_update": {
       scope: "credential",
@@ -1307,14 +1319,20 @@ export const ipcContractManifest = {
       output: { go: "any", ts: "unknown" },
     },
     "layout_get": {
+      scope: "layout",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.layoutDTO", ts: "LayoutDTO" },
     },
     "layout_put": {
+      scope: "layout",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.layoutPutRequest", ts: "LayoutPutRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.layoutSaveDTO", ts: "LayoutSaveDTO" },
     },
     "local_file_read": {
       scope: "local-file",
@@ -1835,34 +1853,52 @@ export const ipcContractManifest = {
       output: { go: "bool", ts: "boolean" },
     },
     "snippet_create": {
+      scope: "snippet",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.snippetInputRequest", ts: "SnippetInputRequest" },
+      output: { go: "map[string]string", ts: "Record<string, string>" },
     },
     "snippet_delete": {
+      scope: "snippet",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{ID string \"json:\\\"id\\\"\"}", ts: "{\n  id: string;\n}" },
+      output: { go: "any", ts: "unknown" },
     },
     "snippet_list": {
+      scope: "snippet",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.snippetDTO", ts: "SnippetDTO[]" },
     },
     "snippet_update": {
+      scope: "snippet",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.snippetPatchRequest", ts: "SnippetPatchRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "ssh_import_apply": {
+      scope: "ssh-import",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sshImportApplyRequest", ts: "SshImportApplyRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sshImportApplyDTO", ts: "SshImportApplyDTO" },
     },
     "ssh_import_preview": {
+      scope: "ssh-import",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sshImportPreviewRequest", ts: "SshImportPreviewRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sshImportPreviewDTO", ts: "SshImportPreviewDTO" },
     },
     "sync_apply_objects": {
       scope: "sync",
@@ -2465,12 +2501,6 @@ export const ipcContractManifest = {
     "ai_test_provider",
     "ai_usage_summary",
     "app_info",
-    "audit_count",
-    "audit_query",
-    "command_count",
-    "command_query",
-    "layout_get",
-    "layout_put",
     "memory_create",
     "memory_delete",
     "memory_edit",
@@ -2483,12 +2513,6 @@ export const ipcContractManifest = {
     "session_line_exec",
     "session_probe",
     "session_probe_host_key",
-    "snippet_create",
-    "snippet_delete",
-    "snippet_list",
-    "snippet_update",
-    "ssh_import_apply",
-    "ssh_import_preview",
     "terminal_attach_tab",
     "terminal_claim",
     "terminal_close_tab",
@@ -2702,6 +2726,19 @@ export interface IPCCommandTypeMap {
     input: contractTypes.AssetPatchRequest;
     output: contractTypes.AssetDTO;
   };
+  "audit_count": {
+    input: {
+  sessionId?: string | null;
+  assetId?: string | null;
+  source?: string | null;
+  kind?: string | null;
+};
+    output: contractTypes.AuditCountDTO;
+  };
+  "audit_query": {
+    input: contractTypes.AuditQueryRequest;
+    output: contractTypes.AuditDTO[];
+  };
   "biometric_disable": {
     input: Record<string, never>;
     output: unknown;
@@ -2717,6 +2754,18 @@ export interface IPCCommandTypeMap {
   "biometric_unlock": {
     input: Record<string, never>;
     output: contractTypes.BiometricUnlockResult;
+  };
+  "command_count": {
+    input: {
+  sessionId?: string | null;
+  assetId?: string | null;
+  userId?: string | null;
+};
+    output: contractTypes.AuditCountDTO;
+  };
+  "command_query": {
+    input: contractTypes.CommandLogQueryRequest;
+    output: contractTypes.CommandLogDTO[];
   };
   "credential_update": {
     input: contractTypes.CredentialUpdateRequest;
@@ -3233,6 +3282,14 @@ export interface IPCCommandTypeMap {
     input: contractTypes.IDRequest;
     output: unknown;
   };
+  "layout_get": {
+    input: Record<string, never>;
+    output: contractTypes.LayoutDTO;
+  };
+  "layout_put": {
+    input: contractTypes.LayoutPutRequest;
+    output: contractTypes.LayoutSaveDTO;
+  };
   "local_file_read": {
     input: contractTypes.LocalFileReadRequest;
     output: contractTypes.FSReadDTO;
@@ -3460,6 +3517,32 @@ export interface IPCCommandTypeMap {
   "session_reconnect": {
     input: contractTypes.SessionIDRequest;
     output: boolean;
+  };
+  "snippet_create": {
+    input: contractTypes.SnippetInputRequest;
+    output: Record<string, string>;
+  };
+  "snippet_delete": {
+    input: {
+  id: string;
+};
+    output: unknown;
+  };
+  "snippet_list": {
+    input: Record<string, never>;
+    output: contractTypes.SnippetDTO[];
+  };
+  "snippet_update": {
+    input: contractTypes.SnippetPatchRequest;
+    output: unknown;
+  };
+  "ssh_import_apply": {
+    input: contractTypes.SshImportApplyRequest;
+    output: contractTypes.SshImportApplyDTO;
+  };
+  "ssh_import_preview": {
+    input: contractTypes.SshImportPreviewRequest;
+    output: contractTypes.SshImportPreviewDTO;
   };
   "sync_apply_objects": {
     input: contractTypes.ApplyObjectsRequest;

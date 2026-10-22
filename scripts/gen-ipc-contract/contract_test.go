@@ -750,7 +750,7 @@ func TestAssetGroupKnownHostVerticalContracts(t *testing.T) {
 			t.Errorf("unexpected command %q joined the asset/group/known-host vertical scopes", name)
 		}
 	}
-	for _, name := range []string{"snippet_list", "audit_query", "session_probe_host_key"} {
+	for _, name := range []string{"session_probe_host_key"} {
 		command := commands[name]
 		if command.Scope != "" || command.Input != nil || command.Output != nil {
 			t.Errorf("deferred command %q acquired DTO metadata: %+v", name, command)
@@ -1430,6 +1430,220 @@ func TestForwardRuntimeVerticalContracts(t *testing.T) {
 	}
 	if rendered := registry.render(); strings.Contains(rendered, "ExposureRisk") {
 		t.Fatalf("confirmation error detail leaked into a normal forward output DTO:\n%s", rendered)
+	}
+}
+
+func TestOperationsVerticalContracts(t *testing.T) {
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	structType := func(fields ...string) string {
+		return "{\n  " + strings.Join(fields, "\n  ") + "\n}"
+	}
+	tests := []struct {
+		name   string
+		scope  string
+		nested bool
+		input  string
+		output string
+	}{
+		{name: "snippet_list", scope: "snippet", input: "Record<string, never>", output: "SnippetDTO[]"},
+		{name: "snippet_create", scope: "snippet", input: "SnippetInputRequest", output: "Record<string, string>"},
+		{name: "snippet_update", scope: "snippet", input: "SnippetPatchRequest", output: "unknown"},
+		{name: "snippet_delete", scope: "snippet", input: structType("id: string;"), output: "unknown"},
+		{name: "audit_query", scope: "audit", nested: true, input: "AuditQueryRequest", output: "AuditDTO[]"},
+		{name: "audit_count", scope: "audit", nested: true, input: structType("sessionId?: string | null;", "assetId?: string | null;", "source?: string | null;", "kind?: string | null;"), output: "AuditCountDTO"},
+		{name: "command_query", scope: "command-log", nested: true, input: "CommandLogQueryRequest", output: "CommandLogDTO[]"},
+		{name: "command_count", scope: "command-log", nested: true, input: structType("sessionId?: string | null;", "assetId?: string | null;", "userId?: string | null;"), output: "AuditCountDTO"},
+		{name: "layout_get", scope: "layout", input: "Record<string, never>", output: "LayoutDTO"},
+		{name: "layout_put", scope: "layout", nested: true, input: "LayoutPutRequest", output: "LayoutSaveDTO"},
+		{name: "ssh_import_preview", scope: "ssh-import", nested: true, input: "SshImportPreviewRequest", output: "SshImportPreviewDTO"},
+		{name: "ssh_import_apply", scope: "ssh-import", nested: true, input: "SshImportApplyRequest", output: "SshImportApplyDTO"},
+	}
+	selected := make(map[string]bool, len(tests))
+	registry := newTypeRegistry()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, ok := commands[test.name]
+			if !ok {
+				t.Fatalf("selected command %q is missing", test.name)
+			}
+			if command.Scope != test.scope || command.Nested != test.nested || command.Channel || command.Stream != "none" {
+				t.Fatalf("unexpected operations metadata: %+v", command)
+			}
+			if command.Input == nil || command.Output == nil {
+				t.Fatalf("selected command must carry input/output DTO metadata: %+v", command)
+			}
+			input, err := registry.ref(command.Input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if input.TS != test.input {
+				t.Fatalf("input = %q, want %q", input.TS, test.input)
+			}
+			output, err := registry.ref(command.Output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if output.TS != test.output {
+				t.Fatalf("output = %q, want %q", output.TS, test.output)
+			}
+			selected[test.name] = true
+		})
+	}
+	if len(selected) != 12 {
+		t.Fatalf("selected operations command count = %d, want 12", len(selected))
+	}
+	for name, command := range commands {
+		switch command.Scope {
+		case "snippet", "audit", "command-log", "layout", "ssh-import":
+			if !selected[name] {
+				t.Errorf("unexpected command %q joined the operations scopes", name)
+			}
+		}
+	}
+
+	declarations := make(map[string]*tsDeclaration)
+	for _, declaration := range registry.declarations {
+		declarations[declaration.Name] = declaration
+	}
+	declarationTests := []struct {
+		name string
+		want []string
+	}{
+		{name: "SnippetInputRequest", want: []string{"name: string;", "body: string;", "groupId?: string | null;", "sort?: number;"}},
+		{name: "SnippetPatchRequest", want: []string{"id: string;", "name: string;", "body: string;", "groupId?: string | null;", "sort?: number | null;"}},
+		{name: "AuditQueryRequest", want: []string{"sessionId?: string | null;", "assetId?: string | null;", "source?: string | null;", "kind?: string | null;", "limit?: number;", "offset?: number;"}},
+		{name: "AuditDTO", want: []string{"payload: unknown;", "exitCode: number | null;", "durationMs: number | null;"}},
+		{name: "AuditCountDTO", want: []string{"total: number;"}},
+		{name: "CommandLogQueryRequest", want: []string{"sessionId?: string | null;", "assetId?: string | null;", "userId?: string | null;", "limit?: number;", "offset?: number;"}},
+		{name: "CommandLogDTO", want: []string{"userId: string | null;", "command: string;", "exitCode: number | null;"}},
+		{name: "LayoutDTO", want: []string{"revision: number;", "updatedAt: number;", "data: unknown;"}},
+		{name: "LayoutPutRequest", want: []string{"data: string;", "revision: number;"}},
+		{name: "LayoutSaveDTO", want: []string{"saved: boolean;", "revision: number;", "conflict: boolean;"}},
+		{name: "SshImportPreviewRequest", want: []string{"source: string;", "path?: string;", "confirmed?: boolean;"}},
+		{name: "SshImportApplyRequest", want: []string{"source: string;", "path?: string;", "confirmed?: boolean;", "groupId?: string | null;", "tags?: string | null;", "hosts: SshImportItemAction[];", "keys: SshImportItemAction[];"}},
+		{name: "SshImportPreviewDTO", want: []string{"hosts: SshImportHostDTO[];", "keys: SshImportKeyDTO[];", "diagnostics: SshImportDiagnosticDTO[];", "truncated: boolean;"}},
+		{name: "SshImportApplyDTO", want: []string{"assetsCreated: number;", "assetsUpdated: number;", "credentialsCreated: number;", "credentialsUpdated: number;", "skipped: number;", "warnings: string[];"}},
+	}
+	for _, test := range declarationTests {
+		declaration := declarations[test.name]
+		if declaration == nil {
+			t.Errorf("%s declaration is missing", test.name)
+			continue
+		}
+		for _, want := range test.want {
+			if !strings.Contains(declaration.Body, want) {
+				t.Errorf("%s declaration is missing %q:\n%s", test.name, want, declaration.Body)
+			}
+		}
+	}
+}
+
+func TestRemainingLegacyCommandsAreExplicitlyDeferred(t *testing.T) {
+	generated := generateForTest(t, nil)
+	want := []string{
+		"ai_answer",
+		"ai_cancel",
+		"ai_chat",
+		"ai_circuit_status",
+		"ai_confirm",
+		"ai_conversation_create",
+		"ai_conversation_delete",
+		"ai_conversation_list",
+		"ai_conversation_retitle",
+		"ai_edit_resend",
+		"ai_get_permission",
+		"ai_get_provider",
+		"ai_hitl_events",
+		"ai_hitl_snapshot",
+		"ai_messages",
+		"ai_model_activate",
+		"ai_model_delete",
+		"ai_model_preset",
+		"ai_model_profiles",
+		"ai_model_refresh",
+		"ai_model_save",
+		"ai_models",
+		"ai_presets",
+		"ai_run_events",
+		"ai_run_get",
+		"ai_run_list",
+		"ai_set_permission",
+		"ai_set_provider",
+		"ai_steer",
+		"ai_takeover_cancel",
+		"ai_takeover_confirm",
+		"ai_takeover_enter",
+		"ai_takeover_exit",
+		"ai_takeover_pause",
+		"ai_takeover_resume",
+		"ai_takeover_run",
+		"ai_test_provider",
+		"ai_usage_summary",
+		"app_info",
+		"memory_create",
+		"memory_delete",
+		"memory_edit",
+		"memory_get",
+		"memory_index",
+		"memory_settings_get",
+		"memory_settings_set",
+		"session_connect",
+		"session_connect_quick",
+		"session_line_exec",
+		"session_probe",
+		"session_probe_host_key",
+		"terminal_attach_tab",
+		"terminal_claim",
+		"terminal_close_tab",
+		"terminal_create_tab",
+		"terminal_detach",
+		"terminal_dump",
+		"terminal_export_log",
+		"terminal_list",
+		"terminal_record_start",
+		"terminal_record_status",
+		"terminal_record_stop",
+		"terminal_release",
+		"terminal_resize",
+		"terminal_resize_flush",
+		"terminal_screen_text",
+		"terminal_set_visible",
+		"terminal_snapshot",
+		"terminal_switch_encoding",
+		"terminal_tail",
+	}
+	var got []string
+	aiMemory := 0
+	sessionTerminal := 0
+	appInfo := 0
+	for _, command := range generated.commands {
+		if command.Input != nil {
+			continue
+		}
+		got = append(got, command.Name)
+		if command.Scope != "" || command.Output != nil {
+			t.Errorf("legacy command %q acquired typed metadata: %+v", command.Name, command)
+		}
+		switch {
+		case strings.HasPrefix(command.Name, "ai_"), strings.HasPrefix(command.Name, "memory_"):
+			aiMemory++
+		case strings.HasPrefix(command.Name, "session_"), strings.HasPrefix(command.Name, "terminal_"):
+			sessionTerminal++
+		case command.Name == "app_info":
+			appInfo++
+		default:
+			t.Errorf("legacy command %q is outside every explicitly deferred category", command.Name)
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("remaining legacy commands = %v, want %v", got, want)
+	}
+	if len(got) != 70 || aiMemory != 45 || sessionTerminal != 24 || appInfo != 1 {
+		t.Fatalf("legacy categories = total:%d AI/memory:%d session/terminal:%d app_info:%d, want 70/45/24/1", len(got), aiMemory, sessionTerminal, appInfo)
+	}
+	if scopes := deferredScopes(); !reflect.DeepEqual(scopes, []string{"memory-owner", "ai-owner"}) {
+		t.Fatalf("deferred scopes = %v, want only memory-owner and ai-owner", scopes)
 	}
 }
 
