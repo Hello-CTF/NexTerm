@@ -22,6 +22,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/server"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
 // AI-03: the real server HTTP/RPC surface with two accounts. Every AI owner
@@ -78,7 +79,7 @@ type aiDualAccountFixture struct {
 // newAIDualAccountFixture composes the server-mode (desktop=false) AI runtime
 // behind a real account-enabled HTTP server, exactly the command surface the
 // server assembly mounts (ai-profiles, ai-agent, cron, ai-takeover).
-func newAIDualAccountFixture(t *testing.T, providerScript http.Handler) *aiDualAccountFixture {
+func newAIDualAccountFixture(t *testing.T, providerScript http.Handler, withProfileSecrets bool) *aiDualAccountFixture {
 	t.Helper()
 	ctx := context.Background()
 	database, err := store.OpenInMemory(ctx)
@@ -87,7 +88,11 @@ func newAIDualAccountFixture(t *testing.T, providerScript http.Handler) *aiDualA
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	database.SetAIHistoryShared(false)
-	initTestVault(t, ctx, database)
+	if withProfileSecrets {
+		initTestVault(t, ctx, database)
+	} else {
+		vault.Load(ctx, database)
+	}
 	profileManager, err := profiles.NewManager(ctx, database, profiles.WithShared(false))
 	if err != nil {
 		t.Fatal(err)
@@ -307,7 +312,7 @@ func TestAIDualAccountProfilesOverRPC(t *testing.T) {
 	var authorization atomic.Value
 	var hits atomic.Int32
 	models := newModelsServer(t, &authorization, &hits)
-	fixture := newAIDualAccountFixture(t, nil)
+	fixture := newAIDualAccountFixture(t, nil, true)
 
 	save := fixture.rpc(t, fixture.alice, "ai_model_save", map[string]any{"profile": map[string]any{
 		"name": "alice-model", "baseUrl": models.URL, "apiKey": "alice-secret-key", "model": "m1",
@@ -397,7 +402,7 @@ func TestAIDualAccountProfilesOverRPC(t *testing.T) {
 }
 
 func TestAIDualAccountMemoryOverRPC(t *testing.T) {
-	fixture := newAIDualAccountFixture(t, nil)
+	fixture := newAIDualAccountFixture(t, nil, false)
 
 	create := fixture.rpc(t, fixture.alice, "memory_create", map[string]any{
 		"topic": "deploy", "content": "alice deployment note",
@@ -468,7 +473,7 @@ func TestAIDualAccountMemoryOverRPC(t *testing.T) {
 }
 
 func TestAIDualAccountGrantsOverRPC(t *testing.T) {
-	fixture := newAIDualAccountFixture(t, nil)
+	fixture := newAIDualAccountFixture(t, nil, false)
 	aliceAsset := fixture.createAsset(t, fixture.aliceID, "alice-server")
 	bobAsset := fixture.createAsset(t, fixture.bobID, "bob-server")
 
@@ -522,7 +527,7 @@ func TestAIDualAccountGrantsOverRPC(t *testing.T) {
 }
 
 func TestAIDualAccountCronOverRPC(t *testing.T) {
-	fixture := newAIDualAccountFixture(t, nil)
+	fixture := newAIDualAccountFixture(t, nil, false)
 
 	conversation := fixture.rpc(t, fixture.alice, "ai_conversation_create", map[string]any{"title": "alice chat"})
 	requireAIDualOK(t, conversation, "alice ai_conversation_create")
@@ -628,7 +633,7 @@ func (s *aiDualHITLScript) ServeHTTP(writer http.ResponseWriter, request *http.R
 
 func TestAIDualAccountHITLOverRPC(t *testing.T) {
 	script := &aiDualHITLScript{command: "systemctl restart nginx"}
-	fixture := newAIDualAccountFixture(t, script)
+	fixture := newAIDualAccountFixture(t, script, true)
 
 	save := fixture.rpc(t, fixture.alice, "ai_model_save", map[string]any{"profile": map[string]any{
 		"name": "alice-live", "baseUrl": fixture.providerURL, "apiKey": "alice-secret-key", "model": "test-model",
@@ -714,7 +719,7 @@ func TestAIDualAccountHITLOverRPC(t *testing.T) {
 }
 
 func TestAIDualAccountTakeoverOverRPC(t *testing.T) {
-	fixture := newAIDualAccountFixture(t, nil)
+	fixture := newAIDualAccountFixture(t, nil, false)
 	aliceCtx := fixture.ownerContext(fixture.aliceID)
 	_, tab := fixture.rig.open(t, aliceCtx, session.Asset{ID: "device/alice", Kind: session.KindDevice})
 

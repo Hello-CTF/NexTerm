@@ -26,6 +26,14 @@ func sshImportTestRig(t *testing.T) (*ipc.Dispatcher, *store.Store, *vault.Vault
 }
 
 func sshImportTestRigMode(t *testing.T, desktop bool) (*ipc.Dispatcher, *store.Store, *vault.Vault, *sshImportPlanner) {
+	return sshImportTestRigModeWithMaster(t, desktop, true)
+}
+
+func sshImportPreviewTestRig(t *testing.T, desktop bool) (*ipc.Dispatcher, *store.Store, *vault.Vault, *sshImportPlanner) {
+	return sshImportTestRigModeWithMaster(t, desktop, false)
+}
+
+func sshImportTestRigModeWithMaster(t *testing.T, desktop, initializeMaster bool) (*ipc.Dispatcher, *store.Store, *vault.Vault, *sshImportPlanner) {
 	t.Helper()
 	ctx := t.Context()
 	database, err := store.OpenInMemory(ctx)
@@ -42,7 +50,9 @@ func sshImportTestRigMode(t *testing.T, desktop bool) (*ipc.Dispatcher, *store.S
 	if err := planner.registerCommands(dispatcher); err != nil {
 		t.Fatal(err)
 	}
-	requireProductionNull(t, dispatchStoreTest(dispatcher, "vault_init_master", `{"password":"test-password"}`))
+	if initializeMaster {
+		requireProductionNull(t, dispatchStoreTest(dispatcher, "vault_init_master", `{"password":"test-password"}`))
+	}
 	return dispatcher, database, credentialVault, planner
 }
 
@@ -1063,7 +1073,7 @@ func TestSSHImportOverwriteInvalidatesSkipDuplicate(t *testing.T) {
 }
 
 func TestSSHImportTermiusRequiresConfirmation(t *testing.T) {
-	dispatcher, _, _, _ := sshImportTestRig(t)
+	dispatcher, _, _, _ := sshImportPreviewTestRig(t, true)
 	response := dispatchStoreTest(dispatcher, "ssh_import_preview", `{"args":{"source":"termius"}}`)
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
 		t.Fatalf("unconfirmed termius preview = %+v, want bad_param", response)
@@ -1340,7 +1350,7 @@ func TestSSHImportHomePreviewAndApply(t *testing.T) {
 // .length on warnings/aliases, which crashed the whole app when importing the
 // ~/.ssh directory (reported on Windows). List fields must always be arrays.
 func TestSSHImportPreviewNeverEmitsNullLists(t *testing.T) {
-	dispatcher, _, _, _ := sshImportTestRig(t)
+	dispatcher, _, _, _ := sshImportPreviewTestRig(t, true)
 	dir := t.TempDir()
 	keyPath, _ := sshImportTestKeyFile(t, dir)
 	sshImportTestConfig(t, dir, keyPath)
@@ -1450,7 +1460,7 @@ func TestSSHImportServerAssemblyRestrictsPathsToSSHHome(t *testing.T) {
 	insideConfig := sshImportTestConfig(t, sshDir, "")
 	outsideConfig := sshImportTestConfig(t, t.TempDir(), "")
 
-	dispatcher, _, _, _ := sshImportTestRigMode(t, false)
+	dispatcher, _, _, _ := sshImportPreviewTestRig(t, false)
 
 	rejected := func(body string) {
 		t.Helper()
@@ -1602,7 +1612,7 @@ func TestSSHImportServerIncludeEscapeExcluded(t *testing.T) {
 	writeInventoryTestFile(t, filepath.Join(outside, "secret.conf"), "Host secret\n  HostName secret.example\n")
 	writeInventoryTestFile(t, filepath.Join(home, "escape.conf"), "Host escaped\n  HostName escaped.example\n")
 	writeInventoryTestFile(t, configPath, "Include "+filepath.Join(outside, "secret.conf")+"\nInclude ../escape.conf\nHost alpha\n  HostName alpha.example\n")
-	dispatcher, _, _, _ := sshImportTestRigMode(t, false)
+	dispatcher, _, _, _ := sshImportPreviewTestRig(t, false)
 
 	preview := sshImportPreview(t, dispatcher, `{"args":{"source":"ssh-config","path":`+strconvQuote(configPath)+`}}`)
 	aliases := map[string]bool{}
@@ -1631,7 +1641,7 @@ func TestSSHImportDesktopIncludeEscapeStillParsed(t *testing.T) {
 	writeInventoryTestFile(t, filepath.Join(outside, "extra.conf"), "Host beta\n  HostName beta.example\n")
 	writeInventoryTestFile(t, filepath.Join(base, "escape.conf"), "Host gamma\n  HostName gamma.example\n")
 	writeInventoryTestFile(t, configPath, "Include "+filepath.Join(outside, "extra.conf")+"\nInclude ../escape.conf\nHost alpha\n  HostName alpha.example\n")
-	dispatcher, _, _, _ := sshImportTestRig(t)
+	dispatcher, _, _, _ := sshImportPreviewTestRig(t, true)
 
 	preview := sshImportPreview(t, dispatcher, `{"args":{"source":"ssh-config","path":`+strconvQuote(configPath)+`}}`)
 	aliases := map[string]bool{}
@@ -1656,7 +1666,7 @@ func TestSSHImportServerHomeIncludeEscapeExcluded(t *testing.T) {
 	outside := t.TempDir()
 	writeInventoryTestFile(t, filepath.Join(outside, "secret.conf"), "Host secret\n  HostName secret.example\n")
 	writeInventoryTestFile(t, filepath.Join(sshDir, "config"), "Include "+filepath.Join(outside, "secret.conf")+"\nHost alpha\n  HostName alpha.example\n")
-	dispatcher, _, _, _ := sshImportTestRigMode(t, false)
+	dispatcher, _, _, _ := sshImportPreviewTestRig(t, false)
 
 	preview := sshImportPreview(t, dispatcher, `{"args":{"source":"ssh-home","path":`+strconvQuote(sshDir)+`}}`)
 	aliases := map[string]bool{}
