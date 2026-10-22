@@ -78,6 +78,7 @@ func copyDatabaseFiles(t *testing.T, source, destination string) {
 type databaseFileState struct {
 	exists  bool
 	content []byte
+	mode    os.FileMode
 }
 
 func databaseFileStates(t *testing.T, path string) map[string]databaseFileState {
@@ -87,7 +88,11 @@ func databaseFileStates(t *testing.T, path string) map[string]databaseFileState 
 		content, err := os.ReadFile(path + suffix)
 		switch {
 		case err == nil:
-			states[suffix] = databaseFileState{exists: true, content: content}
+			info, err := os.Stat(path + suffix)
+			if err != nil {
+				t.Fatal(err)
+			}
+			states[suffix] = databaseFileState{exists: true, content: content, mode: info.Mode().Perm()}
 		case os.IsNotExist(err):
 			states[suffix] = databaseFileState{}
 		default:
@@ -101,8 +106,8 @@ func requireDatabaseFileStates(t *testing.T, path string, expected map[string]da
 	t.Helper()
 	actual := databaseFileStates(t, path)
 	for _, suffix := range []string{"", "-wal", "-shm"} {
-		if actual[suffix].exists != expected[suffix].exists || !bytes.Equal(actual[suffix].content, expected[suffix].content) {
-			t.Errorf("database file %s changed after rejected open", path+suffix)
+		if actual[suffix].exists != expected[suffix].exists || !bytes.Equal(actual[suffix].content, expected[suffix].content) || actual[suffix].mode != expected[suffix].mode {
+			t.Errorf("database file %s changed during preflight", path+suffix)
 		}
 	}
 }
@@ -284,4 +289,182 @@ func TestOpenCancelledContextReturnsError(t *testing.T) {
 		_ = s.Close()
 		t.Fatal("cancelled open unexpectedly succeeded")
 	}
+}
+
+func TestOpenRejectsPreGormDatabaseAfterWALCheckpointDeleteBeforeCopy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "data.db")
+	createLegacyWALDB(t, path)
+
+	restore := legacyPreflightBeforeCopyHook
+	defer func() { legacyPreflightBeforeCopyHook = restore }()
+	interleaved := false
+	var afterCheckpoint map[string]databaseFileState
+	legacyPreflightBeforeCopyHook = func(suffix string) {
+		if suffix != "" || interleaved {
+			return
+		}
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+			_ = db.Close()
+			t.Fatal(err)
+		}
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(path + "-wal"); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		interleaved = true
+		afterCheckpoint = databaseFileStates(t, path)
+	}
+
+	requirePreGormUnsupported(t, path)
+	if !interleaved {
+		t.Fatal("checkpoint/delete interleaving did not run")
+	}
+	requireDatabaseFileStates(t, path, afterCheckpoint)
+}
+
+func TestOpenGORMDatabaseAfterWALCheckpointDeleteBeforeCopy(t *testing.T) {
+	ctx := context.Background()
+	sourcePath := filepath.Join(t.TempDir(), "source.db")
+	source, err := Open(ctx, sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = source.Close() }()
+	if err := source.SettingSet(ctx, "persisted", "yes"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "data.db")
+	copyDatabaseFiles(t, sourcePath, path)
+
+	restore := legacyPreflightBeforeCopyHook
+	defer func() { legacyPreflightBeforeCopyHook = restore }()
+	interleaved := false
+	legacyPreflightBeforeCopyHook = func(suffix string) {
+		if suffix != "" || interleaved {
+			return
+		}
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+			_ = db.Close()
+			t.Fatal(err)
+		}
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(path + "-wal"); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		interleaved = true
+	}
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	if !interleaved {
+		t.Fatal("checkpoint/delete interleaving did not run")
+	}
+	value, found, err := s.SettingGet(ctx, "persisted")
+	if err != nil || !found || value != "yes" {
+		t.Fatalf("value=%q found=%v err=%v", value, found, err)
+	}
+}
+
+func TestLegacyMarkerPreflightRetriesSnapshotChangedBeforeWALCopy(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "data.db")
+	createLegacyWALDB(t, path)
+
+	restore := legacyPreflightBeforeCopyHook
+	defer func() { legacyPreflightBeforeCopyHook = restore }()
+	interleaved := false
+	var checkpointed *sql.DB
+	defer func() {
+		if checkpointed != nil {
+			_ = checkpointed.Close()
+		}
+	}()
+	var afterCheckpoint map[string]databaseFileState
+	legacyPreflightBeforeCopyHook = func(suffix string) {
+		if suffix != "-wal" || interleaved {
+			return
+		}
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		checkpointed = db
+		if _, err := db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO legacy_payload (id, value) VALUES (2, 'post-checkpoint')`); err != nil {
+			t.Fatal(err)
+		}
+		wal, err := os.Stat(path + "-wal")
+		if err != nil || wal.Size() == 0 {
+			t.Fatalf("checkpoint interleaving left no nonempty WAL: info=%v err=%v", wal, err)
+		}
+		interleaved = true
+		afterCheckpoint = databaseFileStates(t, path)
+	}
+
+	legacy, err := hasLegacySchemaMarkerAtPath(ctx, path, defaultBusyTimeoutMS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !legacy {
+		t.Fatal("snapshot assembled across a checkpoint lost the legacy schema marker")
+	}
+	if !interleaved {
+		t.Fatal("checkpoint/WAL replacement interleaving did not run")
+	}
+	requireDatabaseFileStates(t, path, afterCheckpoint)
+}
+
+func TestLegacyMarkerPreflightFailsClosedWhenSnapshotKeepsChanging(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "data.db")
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	if err := s.SettingSet(ctx, "before", "snapshot"); err != nil {
+		t.Fatal(err)
+	}
+
+	restore := legacyPreflightBeforeCopyHook
+	defer func() { legacyPreflightBeforeCopyHook = restore }()
+	writes := 0
+	var afterWrite map[string]databaseFileState
+	legacyPreflightBeforeCopyHook = func(suffix string) {
+		if suffix != "-wal" {
+			return
+		}
+		writes++
+		if err := s.SettingSet(ctx, fmt.Sprintf("changing-%d", writes), "snapshot"); err != nil {
+			t.Fatal(err)
+		}
+		afterWrite = databaseFileStates(t, path)
+	}
+
+	legacy, err := hasLegacySchemaMarkerAtPath(ctx, path, defaultBusyTimeoutMS)
+	if legacy {
+		t.Fatal("changing GORM snapshot reported a legacy schema marker")
+	}
+	requireCode(t, err, ipc.CodeIO)
+	if writes < 2 {
+		t.Fatal("changed snapshot was accepted without a complete retry")
+	}
+	requireDatabaseFileStates(t, path, afterWrite)
 }

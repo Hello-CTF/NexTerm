@@ -213,10 +213,40 @@ func pragmaQuery(memory bool, busyTimeoutMS int64) string {
 	return query
 }
 
+const legacyPreflightSnapshotAttempts = 3
+
+var errLegacyPreflightSnapshotChanged = errors.New("数据库文件在旧版预检期间发生变化")
+
+// legacyPreflightBeforeCopyHook lets tests interleave source-file changes at
+// each copy boundary.
+var legacyPreflightBeforeCopyHook func(suffix string)
+
 func hasLegacySchemaMarkerAtPath(ctx context.Context, path string, busyTimeoutMS int64) (bool, error) {
 	_, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
+	}
+	if err != nil {
+		return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
+	}
+	var snapshotErr error
+	for attempt := 0; attempt < legacyPreflightSnapshotAttempts; attempt++ {
+		legacy, err := hasLegacySchemaMarkerAtPathAttempt(ctx, path, busyTimeoutMS)
+		if !errors.Is(err, errLegacyPreflightSnapshotChanged) {
+			return legacy, err
+		}
+		snapshotErr = err
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+	}
+	return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: 无法获得一致快照: "+snapshotErr.Error(), snapshotErr)
+}
+
+func hasLegacySchemaMarkerAtPathAttempt(ctx context.Context, path string, busyTimeoutMS int64) (bool, error) {
+	database, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("%w: %v", errLegacyPreflightSnapshotChanged, err)
 	}
 	if err != nil {
 		return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
@@ -226,13 +256,18 @@ func hasLegacySchemaMarkerAtPath(ctx context.Context, path string, busyTimeoutMS
 		return legacy, err
 	}
 	wal, err := os.Stat(path + "-wal")
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
+	walMissing := errors.Is(err, os.ErrNotExist)
+	if err != nil && !walMissing {
 		return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
 	}
-	if wal.Size() == 0 {
+	if walMissing || wal.Size() == 0 {
+		unchanged, err := sqliteFileVersionUnchanged(path, database)
+		if err != nil {
+			return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
+		}
+		if !unchanged {
+			return false, fmt.Errorf("%w: %s", errLegacyPreflightSnapshotChanged, path)
+		}
 		return false, nil
 	}
 	if err := ctx.Err(); err != nil {
@@ -248,11 +283,43 @@ func hasLegacySchemaMarkerAtPath(ctx context.Context, path string, busyTimeoutMS
 	defer func() { _ = os.RemoveAll(dir) }()
 	copyPath := filepath.Join(dir, "data.db")
 	for _, suffix := range []string{"", "-wal"} {
+		if legacyPreflightBeforeCopyHook != nil {
+			legacyPreflightBeforeCopyHook(suffix)
+		}
 		if err := copySQLiteFile(path+suffix, copyPath+suffix); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return false, fmt.Errorf("%w: %v", errLegacyPreflightSnapshotChanged, err)
+			}
 			return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
 		}
 	}
+	for _, file := range []struct {
+		suffix string
+		info   os.FileInfo
+	}{
+		{suffix: "", info: database},
+		{suffix: "-wal", info: wal},
+	} {
+		unchanged, err := sqliteFileVersionUnchanged(path+file.suffix, file.info)
+		if err != nil {
+			return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
+		}
+		if !unchanged {
+			return false, fmt.Errorf("%w: %s", errLegacyPreflightSnapshotChanged, path+file.suffix)
+		}
+	}
 	return hasLegacySchemaMarkerInDatabase(ctx, sqliteDSN(copyPath, busyTimeoutMS))
+}
+
+func sqliteFileVersionUnchanged(path string, expected os.FileInfo) (bool, error) {
+	actual, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(expected, actual) && expected.Size() == actual.Size() && expected.ModTime().Equal(actual.ModTime()), nil
 }
 
 func hasLegacySchemaMarkerInDatabase(ctx context.Context, dsn string) (bool, error) {
