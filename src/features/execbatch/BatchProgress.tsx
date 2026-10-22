@@ -164,6 +164,7 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
       apiRef.current = api;
       rerunGenerationRef.current++;
       rerunPendingRef.current = false;
+      setBusy(false);
     }
   }, [api]);
 
@@ -179,6 +180,7 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
     // continuations must not commit into the new view.
     rerunGenerationRef.current++;
     rerunPendingRef.current = false;
+    setBusy(false);
   }, [batchId]);
 
   useEffect(() => {
@@ -239,12 +241,23 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
 
   const cancel = () => {
     if (busy) return;
+    const generation = ++rerunGenerationRef.current;
+    const cancelApi = api;
+    const cancelBatchId = activeBatchId;
+    const isCurrent = () =>
+      rerunGenerationRef.current === generation &&
+      apiRef.current === cancelApi &&
+      activeBatchIdRef.current === cancelBatchId;
     setBusy(true);
     setError(null);
     void api
       .cancel(activeBatchId)
-      .catch((cause: unknown) => setError(describeError(cause)))
-      .finally(() => setBusy(false));
+      .catch((cause: unknown) => {
+        if (isCurrent()) setError(describeError(cause));
+      })
+      .finally(() => {
+        if (isCurrent()) setBusy(false);
+      });
   };
 
   const rerunWith = (request: BatchRerunRequest) => {

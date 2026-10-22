@@ -78,6 +78,10 @@ func TestDatabaseDueScansSelectOnlyActionableCandidates(t *testing.T) {
 	if got := jobIDs(limitedRecovery); !equalJobIDs(got, []string{"abandoned-earlier"}) {
 		t.Fatalf("limited recovery batch = %v; want the earliest deadline", got)
 	}
+	remaining, err := cronStore.ListRecoveryCandidates(ctx, now, 1, "abandoned-earlier")
+	if err != nil || !equalJobIDs(jobIDs(remaining), []string{"abandoned"}) {
+		t.Fatalf("recovery after excluding local cleanup = %v, %v", jobIDs(remaining), err)
+	}
 	if empty, err := cronStore.ListDueIdle(ctx, now, 0); err != nil || len(empty) != 0 {
 		t.Fatalf("zero-limit idle batch = %v, %v; want none", jobIDs(empty), err)
 	}

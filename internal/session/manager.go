@@ -504,8 +504,8 @@ func (s *Session) finishReconnectLocked(err error) {
 		return
 	}
 	s.reconnecting = false
-	s.reconnectErr = err
-	close(s.reconnectDone)
+	s.reconnectCompletion.err = err
+	close(s.reconnectCompletion.done)
 }
 
 func (m *Manager) Session(id string) (*Session, error) {

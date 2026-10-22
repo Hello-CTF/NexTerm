@@ -147,6 +147,12 @@ func productionScopeValidatorWith(sessions *session.Manager, storage *store.Stor
 // asset evidence unknown and confirmations fail-closed.
 func aiRunAssetResolver(services *ProductionServices) func(context.Context, string, string) (string, error) {
 	return func(ctx context.Context, runID, tool string) (string, error) {
+		return aiRunRequestAssetResolver(services)(ctx, runID, tool, nil)
+	}
+}
+
+func aiRunRequestAssetResolver(services *ProductionServices) func(context.Context, string, string, json.RawMessage) (string, error) {
+	return func(ctx context.Context, runID, tool string, parameters json.RawMessage) (string, error) {
 		row, err := services.Store.RunGet(ctx, runID)
 		if err != nil {
 			return "", err
@@ -160,6 +166,40 @@ func aiRunAssetResolver(services *ProductionServices) func(context.Context, stri
 		}
 		if err := json.Unmarshal([]byte(conversation.ScopeJSON), &envelope); err != nil {
 			return "", err
+		}
+		var target struct {
+			AssetID string `json:"asset_id"`
+			TabID   string `json:"tab_id"`
+		}
+		if len(parameters) > 0 {
+			if err := json.Unmarshal(parameters, &target); err != nil {
+				return "", err
+			}
+		}
+		if tool == "terminal_create" && target.AssetID != "" {
+			if err := productionScopeValidator(services).validateScopeAsset(ctx, target.AssetID); err != nil {
+				return "", err
+			}
+			return target.AssetID, nil
+		}
+		if tool == "send_keys" && target.TabID != "" {
+			tabID := target.TabID
+			var expectedSession string
+			if strings.HasPrefix(tabID, "t/") {
+				handle, err := tools.ParseTerminalHandle(tabID)
+				if err != nil {
+					return "", err
+				}
+				tabID, expectedSession = handle.TabID, handle.SessionID
+			}
+			tab, err := services.Sessions.TabFor(ctx, tabID)
+			if err != nil {
+				return "", err
+			}
+			if expectedSession != "" && tab.SessionID != expectedSession {
+				return "", tools.ErrTerminalReplaced
+			}
+			envelope.Scope.SessionID, envelope.Scope.TabID = tab.SessionID, tab.ID
 		}
 		var database connAssetIdentity
 		if services.Database != nil {
@@ -792,9 +832,10 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 		MemoryScopeFor: productionMemoryScopeFor(services.desktop),
 		ServerMode:     !services.desktop,
 
-		HITLAssetResolver:       aiRunAssetResolver(services),
-		HITLEnvironmentResolver: aiRequiredEnvironmentNames(services),
-		Roster:                  roster,
+		HITLAssetResolver:        aiRunAssetResolver(services),
+		HITLRequestAssetResolver: aiRunRequestAssetResolver(services),
+		HITLEnvironmentResolver:  aiRequiredEnvironmentNames(services),
+		Roster:                   roster,
 	})
 	if err := runner.RecoverRuns(store.WithAIHistoryInternalAccess(owner.WithOpenAccess(session.WithOpenAccess(ctx)))); err != nil {
 		return err

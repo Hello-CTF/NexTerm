@@ -2043,13 +2043,13 @@ function AiChatTab({
     // A production challenge is only answered with the user's actual typed
     // environment names, and only with the state bound to this exact card;
     // anything less never reaches the backend.
-    if (card.requiredEnvironmentNames) {
+    if (decision !== "deny" && card.requiredEnvironmentNames) {
       if (currentProductionConfirm === null || !currentProductionConfirm.canConfirm) return;
     }
     await submitConfirmCard(
       card,
       decision,
-      card.requiredEnvironmentNames && currentProductionConfirm ? currentProductionConfirm.submittedNames : undefined,
+      decision !== "deny" && card.requiredEnvironmentNames && currentProductionConfirm ? currentProductionConfirm.submittedNames : undefined,
     );
   };
 
@@ -2108,7 +2108,7 @@ function AiChatTab({
       // user's actual typed names, bound to this exact card, reach the
       // backend — never an auto-echoed or missing answer.
       let environmentNames: string[] | undefined;
-      if (card.requiredEnvironmentNames) {
+      if (decision !== "deny" && card.requiredEnvironmentNames) {
         const challenge = productionConfirmRef.current;
         if (!challenge || challenge.cardId !== card.id || !challenge.canConfirm) {
           throw { code: "conflict", message: "生产环境挑战未完成：请先在确认卡片中输入环境名称" };
@@ -3216,7 +3216,7 @@ function AiChatTab({
                 )}
                 <button
                   className="nx-btn nx-btn-ghost nx-btn-xs"
-                  disabled={submittingCardId === confirmCard.id || productionBlocked}
+                  disabled={submittingCardId === confirmCard.id}
                   onClick={() => void confirm("deny")}
                 >
                   拒绝

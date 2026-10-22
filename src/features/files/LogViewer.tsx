@@ -342,25 +342,27 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
           aria-label={`日志内容 ${path}`}
           ref={scrollRef}
           className="min-h-0 flex-1 overflow-auto px-1 py-1 font-mono text-[12px] leading-[1.55]"
-          style={{ paddingTop: windowTop, paddingBottom: windowBottom }}
         >
-          {virtualItems.map((vi) => {
-            const { text, index } = rowItems[vi.index];
-            return (
-              <div
-                key={vi.key}
-                className="flex gap-3 rounded px-2 hover:bg-neutral-800/30"
-              >
-                <span className="w-12 shrink-0 select-none text-right text-neutral-600">
-                  {index + 1}
-                </span>
-                <span className="whitespace-pre">{highlight(text, query)}</span>
-              </div>
-            );
-          })}
-          {filtered && filtered.length === 0 && (
-            <div className="nx-hint px-2 py-4 text-center">当前分块没有匹配的行</div>
-          )}
+          {/* Keep virtual padding inside the viewport so it cannot enlarge the flex item. */}
+          <div style={{ paddingTop: windowTop, paddingBottom: windowBottom }}>
+            {virtualItems.map((vi) => {
+              const { text, index } = rowItems[vi.index];
+              return (
+                <div
+                  key={vi.key}
+                  className="flex gap-3 rounded px-2 hover:bg-neutral-800/30"
+                >
+                  <span className="w-12 shrink-0 select-none text-right text-neutral-600">
+                    {index + 1}
+                  </span>
+                  <span className="whitespace-pre">{highlight(text, query)}</span>
+                </div>
+              );
+            })}
+            {filtered && filtered.length === 0 && (
+              <div className="nx-hint px-2 py-4 text-center">当前分块没有匹配的行</div>
+            )}
+          </div>
         </div>
       ) : null}
 

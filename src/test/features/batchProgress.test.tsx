@@ -620,3 +620,19 @@ describe("BatchProgressPanel", () => {
     expect(mounted.container.textContent).not.toContain("重跑失败目标");
   });
 });
+
+it("releases busy when an external batch replaces a pending rerun", async () => {
+  const pending = deferred<Awaited<ReturnType<BatchProgressApi["rerun"]>>>();
+  const api = fakeApi({ rerun: vi.fn(() => pending.promise) });
+  mounted = mount(progressElement(api));
+  await flushUntil(() => mounted?.container.textContent?.includes("重跑失败目标") ?? false);
+  clickButton(mounted.container, "重跑失败目标");
+  await flush();
+  await act(async () => { mounted!.root.render(progressElement(api, { batchId: "batch-3" })); });
+  await flush();
+  await act(async () => { pending.resolve({batchId:"batch-2", command:"deploy", startedAt:1, finishedAt:2,results:[]}); });
+  await flush();
+  const button = [...mounted.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "重跑失败目标");
+  expect(button).toBeDefined();
+  expect(button!.disabled).toBe(false);
+});

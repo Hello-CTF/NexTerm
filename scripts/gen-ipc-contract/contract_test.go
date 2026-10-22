@@ -1281,6 +1281,57 @@ func TestDBRedisVerticalContracts(t *testing.T) {
 	}
 }
 
+func TestDockerUntypedOutputsRemainUnknown(t *testing.T) {
+	root := repositoryRoot(t)
+	targets := map[string][]string{
+		"docker_ipc.go": {"docker_overview", "docker_ps", "docker_images"},
+		"docker_maintenance_ipc.go": {
+			"docker_compose_stacks", "docker_compose_action", "docker_compose_redeploy_prepare",
+			"docker_disk_usage", "docker_prune_preview", "docker_prune", "docker_reclaimable",
+		},
+	}
+	overlay := make(map[string][]byte)
+	for file, commands := range targets {
+		path := filepath.Join(root, "internal", "app", "production", file)
+		source, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, command := range commands {
+			start := bytes.Index(source, []byte(`ipc.Register(dispatcher, "`+command+`",`))
+			if start < 0 {
+				t.Fatalf("registration for %s is missing", command)
+			}
+			resultStart := bytes.Index(source[start:], []byte(") ("))
+			if resultStart < 0 {
+				t.Fatalf("handler results for %s are missing", command)
+			}
+			resultStart += start + len(") (")
+			resultEnd := bytes.Index(source[resultStart:], []byte(", error)"))
+			if resultEnd < 0 {
+				t.Fatalf("handler error result for %s is missing", command)
+			}
+			resultEnd += resultStart
+			source = append(append(append([]byte(nil), source[:resultStart]...), []byte("any")...), source[resultEnd:]...)
+		}
+		overlay[path] = source
+	}
+	generated := generateForTest(t, overlay)
+	commands := commandsByName(generated.commands)
+	registry := newTypeRegistry()
+	for _, names := range targets {
+		for _, name := range names {
+			output, err := registry.ref(commands[name].Output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if output.TS != "unknown" || output.Manifest != "unknown" {
+				t.Errorf("%s any output = %+v, want unknown", name, output)
+			}
+		}
+	}
+}
+
 func TestConsumedJSONFieldRenameFailsDriftCheck(t *testing.T) {
 	baseline := generateForTest(t, nil)
 	root := repositoryRoot(t)

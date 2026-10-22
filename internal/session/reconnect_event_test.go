@@ -91,7 +91,7 @@ func TestReconnectAbortDiscardsPendingControlEvents(t *testing.T) {
 	session.mu.Lock()
 	session.status = StatusReconnecting
 	session.reconnecting = true
-	session.reconnectDone = make(chan struct{})
+	session.reconnectCompletion = &reconnectCompletion{done: make(chan struct{})}
 	generation := session.generation + 1
 	session.generation = generation
 	session.mu.Unlock()

@@ -241,7 +241,7 @@ describe("LogViewer", () => {
     const chunkLines = FILE_TEXT.slice(0, CHUNK).split("\n");
     const expected = chunkLines.filter((l) => l.toLowerCase().includes("error boom")).length;
     expect(mounted!.container.textContent).toContain(`${expected} 行匹配`);
-    const rows = [...mounted!.container.querySelectorAll('[role="log"] > div')];
+    const rows = [...mounted!.container.querySelectorAll('[role="log"] > div > div')];
     expect(rows.length).toBe(expected);
     for (const row of rows) {
       expect(row.textContent?.toLowerCase()).toContain("error boom");
@@ -250,7 +250,7 @@ describe("LogViewer", () => {
 
     setInputValue(search, "");
     await flush();
-    expect(mounted!.container.querySelectorAll('[role="log"] > div').length).toBeGreaterThan(
+    expect(mounted!.container.querySelectorAll('[role="log"] > div > div').length).toBeGreaterThan(
       expected,
     );
   });
@@ -291,7 +291,7 @@ describe("LogViewer", () => {
     expect(mounted!.container.textContent).toContain("分块 1 / 1");
 
     const rowNumbers = () =>
-      [...mounted!.container.querySelectorAll('[role="log"] > div')].map(
+      [...mounted!.container.querySelectorAll('[role="log"] > div > div')].map(
         (row) => Number(row.querySelector("span")?.textContent ?? 0),
       );
     const scrollEl = mounted!.container.querySelector<HTMLElement>('[role="log"]')!;
@@ -334,7 +334,7 @@ describe("LogViewer", () => {
     setInputValue(search, "error boom");
     await flush();
     expect(mounted!.container.textContent).toContain("2000 行匹配");
-    const matchedRows = [...mounted!.container.querySelectorAll('[role="log"] > div')];
+    const matchedRows = [...mounted!.container.querySelectorAll('[role="log"] > div > div')];
     expect(matchedRows.length).toBeGreaterThan(0);
     expect(matchedRows.length).toBeLessThan(100);
     for (const row of matchedRows) {

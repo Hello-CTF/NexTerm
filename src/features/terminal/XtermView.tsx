@@ -336,8 +336,29 @@ export function XtermView(props: XtermViewProps) {
     // ephemeral local/WinRM tabs whose PTY a detach would reap. Docker exec
     // streams pause through the existing hub backpressure: detaching routes
     // to DetachStream (the exec keeps running, output accumulates in the
-    // bounded replay) and the reopen resumes via attachTab/ResumeExec.
+    // bounded replay) and draining resumes via attachTab/ResumeExec.
     let pauseNeeded = false;
+    let reattaching = false;
+    let backpressureDetached = false;
+    let backpressureDetach: Promise<void> | null = null;
+    const reattachAfterDrain = () => {
+      if (disposed || pauseNeeded || !backpressureDetached || backpressureDetach !== null) return;
+      reattachOnReopen();
+    };
+    const detachForBackpressure = () => {
+      if (disposed || !kernelTabId || backpressureDetached) return;
+      backpressureDetached = true;
+      const pending = terminalApi.detach(kernelTabId, channelIdOf(channel));
+      backpressureDetach = pending;
+      const settled = () => {
+        if (disposed || backpressureDetach !== pending) return;
+        backpressureDetach = null;
+        // A failed RPC can still have detached on the server. Wait for its
+        // result before replacing the subscription, including that case.
+        reattachAfterDrain();
+      };
+      void pending.then(settled, settled);
+    };
     let pauseRetryTimer: number | undefined;
     // The request generation of the current normal-pause chain: each pause
     // request carries a fresh generation, so a newer attempt invalidates the
@@ -377,9 +398,9 @@ export function XtermView(props: XtermViewProps) {
       resumeIfReady();
     };
     const pauseUpstream = () => {
-      if (!kernelTabId) return;
+      if (!kernelTabId || backpressureDetached) return;
       if (containerId) {
-        void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);
+        detachForBackpressure();
         return;
       }
       pauseWithRetry();
@@ -546,7 +567,12 @@ export function XtermView(props: XtermViewProps) {
     // resumed yet. A learned token, a drained writer, and a caught-up replay
     // all funnel through here — never around it.
     const resumeIfReady = () => {
-      if (disposed || containerId || !kernelTabId) return;
+      if (disposed || !kernelTabId) return;
+      if (backpressureDetached || backpressureDetach !== null) {
+        reattachAfterDrain();
+        return;
+      }
+      if (containerId || reattaching) return;
       if (recoverInFlight || recoverPending) return;
       if (recoverTarget !== null && acceptedOffsetNow() < recoverTarget) return;
       if (pauseNeeded) return;
@@ -681,7 +707,7 @@ export function XtermView(props: XtermViewProps) {
         }
       } else if (kernelTabId) {
         // Durable tabs: the resume anchor replays refused bytes in order.
-        void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);
+        detachForBackpressure();
       }
       const nowMs = Date.now();
       if (nowMs - lastRefuseToastAt > 10_000) {
@@ -723,12 +749,6 @@ export function XtermView(props: XtermViewProps) {
             pauseUpstream();
           } else {
             pauseNeeded = false;
-            // Lift a refusal episode for tab kinds without an anchor-driven
-            // recovery (docker exec); durable tabs end the episode at the
-            // next anchor, and ephemeral recovery ends it at the recovery
-            // anchor — never here, where a later old frame would be
-            // accepted into a non-contiguous prefix.
-            if (containerId) streamWriter.beginAttachment();
             // The unified gate: resume only once the refused suffix is fully
             // accepted, no recovery is in flight or pending, the writer is
             // drained, and the episode token is current and unresent.
@@ -986,10 +1006,14 @@ export function XtermView(props: XtermViewProps) {
     };
     onGeometryRef.current = () => void doAttach();
 
-    let reattaching = false;
     const reattachOnReopen = () => {
       const id = kernelTabId;
-      if (!id || reattaching) return;
+      if (disposed || !id || reattaching) return;
+      // Transport reopen and a drained FIFO share this entry point. An
+      // outstanding detach must settle first, even if the transport has
+      // already reopened, or it could remove the replacement subscription.
+      if (backpressureDetach !== null || (backpressureDetached && pauseNeeded)) return;
+      backpressureDetached = false;
       const resume = containerId
         ? undefined
         : streamAnchor
@@ -1017,10 +1041,8 @@ export function XtermView(props: XtermViewProps) {
           }
           kernelTabId = info.tabId;
           kernelTabIdRef.current = info.tabId;
-          // The backpressure episode ends at the attachment boundary: the
-          // resume replay (anchor for session tabs, bounded replay for docker
-          // exec) redelivers everything the saturated FIFO refused.
-          streamWriter.beginAttachment();
+          // Replay can overflow before this response arrives. Its refusal
+          // ends only at the next stream boundary, never at the response.
           applyRemoteDimensions(info.cols, info.rows);
           coordinator.attach(info.tabId, { cols: info.cols, rows: info.rows }, true);
           reportAttachInfo({
@@ -1052,6 +1074,10 @@ export function XtermView(props: XtermViewProps) {
           }
         } finally {
           reattaching = false;
+          // Synchronous replay can fill the FIFO and detach again before
+          // the attach response arrives. Its drain waits for this request
+          // to finish instead of losing the next resubscription.
+          reattachAfterDrain();
         }
       })();
     };

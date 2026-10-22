@@ -57,8 +57,8 @@ func (s *recordingStore) ListDueIdle(ctx context.Context, now time.Time, limit i
 	return jobs, err
 }
 
-func (s *recordingStore) ListRecoveryCandidates(ctx context.Context, now time.Time, limit int) ([]Job, error) {
-	jobs, err := s.Store.ListRecoveryCandidates(ctx, now, limit)
+func (s *recordingStore) ListRecoveryCandidates(ctx context.Context, now time.Time, limit int, excludedIDs ...string) ([]Job, error) {
+	jobs, err := s.Store.ListRecoveryCandidates(ctx, now, limit, excludedIDs...)
 	s.recorder.recordRecovery(limit, len(jobs))
 	return jobs, err
 }

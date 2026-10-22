@@ -22,6 +22,7 @@ type Service struct {
 	provider         DialerProvider
 	sessionHost      func(context.Context, string) (string, error)
 	rules            RuleStore
+	isProduction     func(context.Context, string) (bool, error)
 	env              Environment
 	reconnect        ReconnectPolicy
 	dialTimeout      time.Duration
@@ -68,6 +69,7 @@ func NewService(config Config) *Service {
 		provider:         config.Provider,
 		sessionHost:      config.SessionHost,
 		rules:            config.Rules,
+		isProduction:     config.IsProduction,
 		env:              config.Policy.Environment(),
 		reconnect:        reconnect,
 		dialTimeout:      config.DialTimeout,

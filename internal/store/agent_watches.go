@@ -445,7 +445,8 @@ type AgentWatchFireParams struct {
 // acknowledgement resumes with the real stream context instead of treating
 // the new anchor as a fresh text start. The outbox primary key and the
 // unique (watch_id, fire_seq) pair make the same logical fire idempotent and
-// reject double fires with fresh IDs.
+// reject double fires with fresh IDs. A watch whose expiry is at or before
+// Now settles as expired without an outbox row and returns ErrAgentWatchState.
 func (s *Store) AgentWatchFire(ctx context.Context, params AgentWatchFireParams) (model.AgentWatchOutboxRow, error) {
 	if params.DeliveryID == "" || params.RunID == "" {
 		return model.AgentWatchOutboxRow{}, badParam(fmt.Errorf("agent watch 触发缺少固定的 DeliveryID/RunID"))
@@ -465,6 +466,7 @@ func (s *Store) AgentWatchFire(ctx context.Context, params AgentWatchFireParams)
 		return model.AgentWatchOutboxRow{}, badParam(fmt.Errorf("agent watch 活后缀长度无效"))
 	}
 	var out model.AgentWatchOutboxRow
+	expired := false
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if existing, err := s.agentWatchEventByID(ctx, tx, params.DeliveryID); err == nil {
 			if existing.WatchID != params.WatchID {
@@ -487,6 +489,19 @@ func (s *Store) AgentWatchFire(ctx context.Context, params AgentWatchFireParams)
 		}
 		if watch.Identity != params.Identity {
 			return fmt.Errorf("agent watch %s identity: %w", params.WatchID, ErrAgentWatchIdentity)
+		}
+		if watch.ExpiresAt != nil && *watch.ExpiresAt <= params.Now {
+			info := tx.Model(&model.AgentWatchRow{}).
+				Where("id = ? AND owner_id = ? AND revision = ?", watch.ID, watch.OwnerID, params.ExpectedRevision).
+				Updates(map[string]any{"status": AgentWatchStatusExpired, "revision": params.ExpectedRevision + 1, "updated_at": params.Now})
+			if info.Error != nil {
+				return dbError(info.Error)
+			}
+			if info.RowsAffected != 1 {
+				return fmt.Errorf("agent watch %s: %w", watch.ID, ErrAgentWatchConflict)
+			}
+			expired = true
+			return nil
 		}
 		if params.AnchorSeq < watch.AnchorSeq {
 			return fmt.Errorf("agent watch %s anchor %d < %d: %w", params.WatchID, params.AnchorSeq, watch.AnchorSeq, ErrAgentWatchConflict)
@@ -537,6 +552,10 @@ func (s *Store) AgentWatchFire(ctx context.Context, params AgentWatchFireParams)
 		out = row
 		return nil
 	})
+	if err == nil && expired {
+		// Commit the expiry transition before reporting that firing is refused.
+		return model.AgentWatchOutboxRow{}, fmt.Errorf("agent watch %s expired: %w", params.WatchID, ErrAgentWatchState)
+	}
 	return out, err
 }
 
@@ -643,8 +662,9 @@ func (s *Store) AgentWatchEventGet(ctx context.Context, deliveryID string) (mode
 }
 
 // AgentWatchEventAck marks a pending event acked and, in the same
-// transaction, re-arms a repeat watch so it can fire again from its current
-// anchor. A duplicate Ack with a stale revision is an idempotent no-op once
+// transaction, re-arms an unexpired repeat watch from its current anchor;
+// expired repeats settle as expired. A duplicate Ack with a stale revision
+// is an idempotent no-op once
 // the row is acked; concurrent acks are serialized by CAS.
 func (s *Store) AgentWatchEventAck(ctx context.Context, deliveryID string, expectedRevision uint64, now int64) (model.AgentWatchOutboxRow, error) {
 	var updated model.AgentWatchOutboxRow
@@ -705,10 +725,14 @@ func (s *Store) AgentWatchEventAck(ctx context.Context, deliveryID string, expec
 				updated, err = s.agentWatchEventByID(ctx, tx, deliveryID)
 				return err
 			}
+			status := AgentWatchStatusArmed
+			if watch.ExpiresAt != nil && *watch.ExpiresAt <= now {
+				status = AgentWatchStatusExpired
+			}
 			info := tx.Model(&model.AgentWatchRow{}).
 				Where("id = ? AND owner_id = ? AND revision = ?", watch.ID, watch.OwnerID, watch.Revision).
 				Updates(map[string]any{
-					"status":       AgentWatchStatusArmed,
+					"status":       status,
 					"delivery_id":  "",
 					"run_id":       "",
 					"matched_from": 0,

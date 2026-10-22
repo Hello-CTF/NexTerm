@@ -56,15 +56,16 @@ type runState struct {
 }
 
 type Manager struct {
-	checkpoints         adk.CheckPointStore
-	store               Store
-	ttl                 time.Duration
-	terminalRetention   time.Duration
-	now                 func() time.Time
-	afterFunc           func(time.Duration, func()) Timer
-	newNonce            func() (string, error)
-	assetResolver       func(context.Context, string, string) (string, error)
-	environmentResolver func(context.Context, string) ([]string, error)
+	checkpoints          adk.CheckPointStore
+	store                Store
+	ttl                  time.Duration
+	terminalRetention    time.Duration
+	now                  func() time.Time
+	afterFunc            func(time.Duration, func()) Timer
+	newNonce             func() (string, error)
+	assetResolver        func(context.Context, string, string) (string, error)
+	requestAssetResolver func(context.Context, string, string, json.RawMessage) (string, error)
+	environmentResolver  func(context.Context, string) ([]string, error)
 
 	mu     sync.RWMutex
 	runs   map[string]*runState
@@ -94,17 +95,18 @@ func NewManager(config Config) (*Manager, error) {
 		config.NewNonce = secureNonce
 	}
 	return &Manager{
-		checkpoints:         config.Checkpoints,
-		store:               config.Store,
-		ttl:                 config.TTL,
-		terminalRetention:   config.TerminalRetention,
-		now:                 config.Now,
-		afterFunc:           config.AfterFunc,
-		newNonce:            config.NewNonce,
-		assetResolver:       config.AssetResolver,
-		environmentResolver: config.EnvironmentResolver,
-		runs:                make(map[string]*runState),
-		nonces:              make(map[string]string),
+		checkpoints:          config.Checkpoints,
+		store:                config.Store,
+		ttl:                  config.TTL,
+		terminalRetention:    config.TerminalRetention,
+		now:                  config.Now,
+		afterFunc:            config.AfterFunc,
+		newNonce:             config.NewNonce,
+		assetResolver:        config.AssetResolver,
+		requestAssetResolver: config.RequestAssetResolver,
+		environmentResolver:  config.EnvironmentResolver,
+		runs:                 make(map[string]*runState),
+		nonces:               make(map[string]string),
 	}, nil
 }
 
@@ -210,7 +212,7 @@ func (m *Manager) interruptRun(ctx context.Context, run *runState, target *adk.I
 	if !ok {
 		return Interrupt{}, ErrCheckpointNotFound
 	}
-	asset, err := m.resolveAsset(ctx, run.id, input.Tool)
+	asset, err := m.resolveRequestAsset(ctx, run.id, input.Tool, parameters)
 	if err != nil {
 		return Interrupt{}, err
 	}
@@ -220,9 +222,9 @@ func (m *Manager) interruptRun(ctx context.Context, run *runState, target *adk.I
 	// target asset through the configurable production classification. Never
 	// from client input; the user must type these names back at resume time.
 	var requiredEnvironmentNames []string
-	if len(input.RequiredEnvironmentNames) > 0 {
+	if input.Kind == KindConfirm && len(input.RequiredEnvironmentNames) > 0 {
 		requiredEnvironmentNames = append([]string(nil), input.RequiredEnvironmentNames...)
-	} else if m.environmentResolver != nil {
+	} else if input.Kind == KindConfirm && m.environmentResolver != nil {
 		requiredEnvironmentNames, err = m.environmentResolver(ctx, asset)
 		if err != nil {
 			return Interrupt{}, err
@@ -402,14 +404,14 @@ func (m *Manager) resumeRun(ctx context.Context, run *runState, resumer Resumer,
 		return Resume{}, nil, ErrCheckpointChanged
 	}
 	resumeAsset := ""
-	if m.assetResolver != nil {
+	if m.assetResolver != nil || m.requestAssetResolver != nil {
 		// A request without asset evidence cannot be bound to the real asset
 		// identity; an unknown current identity is not a match either.
 		if interrupt.AssetID == "" {
 			run.mu.Unlock()
 			return Resume{}, nil, ErrAssetUnknown
 		}
-		current, err := m.assetResolver(ctx, run.id, interrupt.Tool)
+		current, err := m.resolveRequestAsset(ctx, run.id, interrupt.Tool, interrupt.Parameters)
 		if err != nil {
 			run.mu.Unlock()
 			return Resume{}, nil, fmt.Errorf("hitl: resolve asset evidence: %w", err)
@@ -428,7 +430,7 @@ func (m *Manager) resumeRun(ctx context.Context, run *runState, resumer Resumer,
 	// challenge: they must equal the request's required set exactly. Missing,
 	// wrong, or extra names all fail closed here, before any state change,
 	// persist, or resumer start — never auto-echoed from the challenge.
-	if !guard.EnvironmentNamesMatch(answer.EnvironmentNames, interrupt.RequiredEnvironmentNames) {
+	if interrupt.Kind == KindConfirm && answer.Decision != DecisionDeny && !guard.EnvironmentNamesMatch(answer.EnvironmentNames, interrupt.RequiredEnvironmentNames) {
 		run.mu.Unlock()
 		return Resume{}, nil, ErrEnvironmentNamesMismatch
 	}
@@ -832,14 +834,20 @@ func (m *Manager) uniqueNonce(runID string) (string, error) {
 	return "", errors.New("nonce generator repeatedly returned a duplicate")
 }
 
-// resolveAsset returns the run's current asset evidence for the tool awaiting
+// resolveRequestAsset returns the current asset evidence for the tool awaiting
 // confirmation from the configured resolver; with no resolver configured,
 // asset identity stays unknown.
-func (m *Manager) resolveAsset(ctx context.Context, runID, tool string) (string, error) {
-	if m.assetResolver == nil {
+func (m *Manager) resolveRequestAsset(ctx context.Context, runID, tool string, parameters json.RawMessage) (string, error) {
+	if m.assetResolver == nil && m.requestAssetResolver == nil {
 		return "", nil
 	}
-	asset, err := m.assetResolver(ctx, runID, tool)
+	var asset string
+	var err error
+	if m.requestAssetResolver != nil {
+		asset, err = m.requestAssetResolver(ctx, runID, tool, parameters)
+	} else {
+		asset, err = m.assetResolver(ctx, runID, tool)
+	}
 	if err != nil {
 		return "", fmt.Errorf("hitl: resolve asset evidence: %w", err)
 	}

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	fleetserver "github.com/Hello-CTF/NexTerm/internal/fleet/server"
@@ -931,6 +932,56 @@ func TestConcreteProductionForwardRuntimeConnectedStartsAutoStartRules(t *testin
 	})
 	conn := assertForwardEcho(t, production.Services.Forward.ListFor(ownerCtx)[0], "builder-auto-start")
 	_ = conn.Close()
+}
+
+func TestConcreteProductionForwardRecoveryUsesOwnerProductionEnvironments(t *testing.T) {
+	production := newForwardFSProduction(t, startEchoListener(t), false, 0)
+	database := production.Services.Store
+	ownerCtx := ipc.WithUserID(t.Context(), "forward-owner")
+	otherCtx := ipc.WithUserID(t.Context(), "forward-other")
+	if err := guard.SetProductionEnvironments(ownerCtx, database, []string{"live"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name string
+		ctx  context.Context
+		skip bool
+	}{
+		{"configured owner", ownerCtx, true},
+		{"other owner", otherCtx, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			asset, err := database.AssetCreate(test.ctx, store.AssetInput{Kind: "ssh", Name: "live", Tags: "env:live"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := database.ForwardRuleSave(test.ctx, store.ForwardRuleInput{
+				AssetID: asset.ID, Name: "auto", ListenPort: freeRuntimePort(t),
+				TargetHost: "remote.internal", TargetPort: 4567, AutoStart: true,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			connects := 0
+			connectErr := errors.New("connection observed")
+			outcomes := production.Services.Forward.RecoverAutoStartRules(test.ctx, []forward.RecoveryDevice{{
+				AssetID: asset.ID,
+				Connect: func(context.Context) (string, error) {
+					connects++
+					return "", connectErr
+				},
+			}})
+			if len(outcomes) != 1 {
+				t.Fatalf("recovery outcomes = %+v", outcomes)
+			}
+			if test.skip {
+				if connects != 0 || outcomes[0].Skipped == "" || outcomes[0].Err != nil {
+					t.Fatalf("configured production recovery connected %d times: %+v", connects, outcomes)
+				}
+			} else if connects != 1 || !errors.Is(outcomes[0].Err, connectErr) {
+				t.Fatalf("unconfigured owner's recovery = %+v, connects=%d", outcomes, connects)
+			}
+		})
+	}
 }
 
 // The composition reaper sweeps the registry's known staging directories: a

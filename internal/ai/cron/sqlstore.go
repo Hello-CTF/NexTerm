@@ -94,7 +94,7 @@ func (s *SQLStore) ListDueIdle(ctx context.Context, now time.Time, limit int) ([
 	return jobsFromModels(rows), nil
 }
 
-func (s *SQLStore) ListRecoveryCandidates(ctx context.Context, now time.Time, limit int) ([]Job, error) {
+func (s *SQLStore) ListRecoveryCandidates(ctx context.Context, now time.Time, limit int, excludedIDs ...string) ([]Job, error) {
 	if err := s.validateAccess(ctx); err != nil {
 		return nil, err
 	}
@@ -105,7 +105,11 @@ func (s *SQLStore) ListRecoveryCandidates(ctx context.Context, now time.Time, li
 	rows := []store.CronJob{}
 	// run_id > '' is the sargable form of run_id <> '' (run_id is NOT NULL):
 	// the comparison keeps the recovery scan on idx_cron_job_recovery.
-	err := scopeCronJobs(ctx, s.db).Where(cronRecoveryWhere, stamp, stamp).
+	scoped := scopeCronJobs(ctx, s.db).Where(cronRecoveryWhere, stamp, stamp)
+	if len(excludedIDs) > 0 {
+		scoped = scoped.Where("id NOT IN ?", excludedIDs)
+	}
+	err := scoped.
 		Order(cronRecoveryOrder).Limit(limit).Find(&rows).Error
 	if err != nil {
 		return nil, err

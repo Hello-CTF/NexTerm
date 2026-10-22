@@ -60,27 +60,27 @@ type dockerPruneIPCRequest struct {
 func (s *terminalCommandService) registerDockerMaintenance(dispatcher *ipc.Dispatcher) error {
 	registrations := []func() error{
 		func() error {
-			return ipc.Register(dispatcher, "docker_compose_stacks", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (any, error) {
+			return ipc.Register(dispatcher, "docker_compose_stacks", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (docker.ComposeOverview, error) {
 				if _, err := s.authorizeDockerSession(ctx, input.SessionID); err != nil {
-					return nil, terminalIPCError(err)
+					return docker.ComposeOverview{}, terminalIPCError(err)
 				}
 				value, err := s.docker.ComposeStacks(ctx, input.SessionID)
 				return value, terminalIPCError(err)
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "docker_compose_action", func(ctx context.Context, _ *ipc.Call, input dockerComposeActionIPCRequest) (any, error) {
+			return ipc.Register(dispatcher, "docker_compose_action", func(ctx context.Context, _ *ipc.Call, input dockerComposeActionIPCRequest) (string, error) {
 				connected, err := s.authorizeDockerSession(ctx, input.SessionID)
 				if err != nil {
-					return nil, terminalIPCError(err)
+					return "", terminalIPCError(err)
 				}
 				if input.Action == docker.ComposeActionDown {
 					if _, err := s.docker.ComposeStack(ctx, input.SessionID, input.Project); err != nil {
-						return nil, terminalIPCError(err)
+						return "", terminalIPCError(err)
 					}
 					operation := dockerMutationOperation{Kind: "compose_down", Project: input.Project}
 					if err := s.guardDockerMutation(ctx, connected, operation, input.ProductionConfirmation); err != nil {
-						return nil, dockerMutationIPCError(err)
+						return "", dockerMutationIPCError(err)
 					}
 				}
 				value, err := s.docker.ComposeAction(ctx, docker.ComposeActionRequest{
@@ -110,7 +110,7 @@ func (s *terminalCommandService) registerDockerMaintenance(dispatcher *ipc.Dispa
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "docker_compose_redeploy_prepare", func(ctx context.Context, _ *ipc.Call, input dockerComposeRedeployIPCRequest) (any, error) {
+			return ipc.Register(dispatcher, "docker_compose_redeploy_prepare", func(ctx context.Context, _ *ipc.Call, input dockerComposeRedeployIPCRequest) (dockerComposeRedeployPrepareResult, error) {
 				value, err := s.composeRedeployWrite(ctx, input)
 				return value, err
 			})
@@ -138,32 +138,32 @@ func (s *terminalCommandService) registerDockerMaintenance(dispatcher *ipc.Dispa
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "docker_disk_usage", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (any, error) {
+			return ipc.Register(dispatcher, "docker_disk_usage", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (docker.DiskUsage, error) {
 				if _, err := s.authorizeDockerSession(ctx, input.SessionID); err != nil {
-					return nil, terminalIPCError(err)
+					return docker.DiskUsage{}, terminalIPCError(err)
 				}
 				value, err := s.docker.DiskUsage(ctx, input.SessionID)
 				return value, terminalIPCError(err)
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "docker_prune_preview", func(ctx context.Context, _ *ipc.Call, input dockerPrunePreviewIPCRequest) (any, error) {
+			return ipc.Register(dispatcher, "docker_prune_preview", func(ctx context.Context, _ *ipc.Call, input dockerPrunePreviewIPCRequest) (docker.PrunePreview, error) {
 				if _, err := s.authorizeDockerSession(ctx, input.SessionID); err != nil {
-					return nil, terminalIPCError(err)
+					return docker.PrunePreview{}, terminalIPCError(err)
 				}
 				value, err := s.docker.PreviewPrune(ctx, input.SessionID, input.Kinds)
 				return value, terminalIPCError(err)
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "docker_prune", func(ctx context.Context, _ *ipc.Call, input dockerPruneIPCRequest) (any, error) {
+			return ipc.Register(dispatcher, "docker_prune", func(ctx context.Context, _ *ipc.Call, input dockerPruneIPCRequest) (docker.PruneResult, error) {
 				connected, err := s.authorizeDockerSession(ctx, input.SessionID)
 				if err != nil {
-					return nil, terminalIPCError(err)
+					return docker.PruneResult{}, terminalIPCError(err)
 				}
 				operation := dockerMutationOperation{Kind: "prune", PreviewToken: input.Token, PreviewDigest: input.Digest}
 				if err := s.guardDockerMutation(ctx, connected, operation, input.ProductionConfirmation); err != nil {
-					return nil, dockerMutationIPCError(err)
+					return docker.PruneResult{}, dockerMutationIPCError(err)
 				}
 				value, err := s.docker.Prune(ctx, docker.PruneRequest{
 					SessionID: input.SessionID, AssetID: connected.Asset().ID, Source: "user", Token: input.Token, Digest: input.Digest,
@@ -175,9 +175,9 @@ func (s *terminalCommandService) registerDockerMaintenance(dispatcher *ipc.Dispa
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "docker_reclaimable", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (any, error) {
+			return ipc.Register(dispatcher, "docker_reclaimable", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (docker.ReclaimableProbe, error) {
 				if _, err := s.authorizeDockerSession(ctx, input.SessionID); err != nil {
-					return nil, terminalIPCError(err)
+					return docker.ReclaimableProbe{}, terminalIPCError(err)
 				}
 				value, err := s.docker.Reclaimable(ctx, input.SessionID)
 				return value, terminalIPCError(err)
@@ -207,40 +207,40 @@ func (s *terminalCommandService) authorizeComposeRedeploy(ctx context.Context, i
 	return connected, stack, nil
 }
 
-func (s *terminalCommandService) composeRedeployWrite(ctx context.Context, input dockerComposeRedeployIPCRequest) (any, error) {
+func (s *terminalCommandService) composeRedeployWrite(ctx context.Context, input dockerComposeRedeployIPCRequest) (dockerComposeRedeployPrepareResult, error) {
 	connected, _, err := s.authorizeComposeRedeploy(ctx, input)
 	if err != nil {
-		return nil, err
+		return dockerComposeRedeployPrepareResult{}, err
 	}
 	baseContent, err := base64.StdEncoding.DecodeString(input.BaseContentBase64)
 	if err != nil {
-		return nil, ipc.BadParam(errors.New("compose 磁盘基线不是有效的 Base64"))
+		return dockerComposeRedeployPrepareResult{}, ipc.BadParam(errors.New("compose 磁盘基线不是有效的 Base64"))
 	}
 	content, err := base64.StdEncoding.DecodeString(input.ContentBase64)
 	if err != nil {
-		return nil, ipc.BadParam(errors.New("compose 新内容不是有效的 Base64"))
+		return dockerComposeRedeployPrepareResult{}, ipc.BadParam(errors.New("compose 新内容不是有效的 Base64"))
 	}
 	if len(baseContent) > fsReadDefaultMaxBytes || len(content) > fsReadDefaultMaxBytes {
-		return nil, ipc.BadParam(errors.New("compose 文件超过允许的大小"))
+		return dockerComposeRedeployPrepareResult{}, ipc.BadParam(errors.New("compose 文件超过允许的大小"))
 	}
 	transport, err := s.sessions.TransportFor(productionSessionRequestContext(ctx), input.SessionID)
 	if err != nil {
-		return nil, terminalIPCError(err)
+		return dockerComposeRedeployPrepareResult{}, terminalIPCError(err)
 	}
 	provider, ok := transport.(base.FileTransport)
 	if !ok {
-		return nil, terminalIPCError(base.ErrUnsupported)
+		return dockerComposeRedeployPrepareResult{}, terminalIPCError(base.ErrUnsupported)
 	}
 	filesystem, err := provider.FileSystem(ctx)
 	if err != nil {
-		return nil, fsIPCError(transport.Kind(), err)
+		return dockerComposeRedeployPrepareResult{}, fsIPCError(transport.Kind(), err)
 	}
 	current, err := filesystem.ReadFile(ctx, input.Path, fsReadDefaultMaxBytes)
 	if err != nil {
-		return nil, fsIPCError(transport.Kind(), err)
+		return dockerComposeRedeployPrepareResult{}, fsIPCError(transport.Kind(), err)
 	}
 	if !bytes.Equal(current, baseContent) {
-		return nil, ipc.BadParam(errors.New("compose 文件在确认前已被外部修改，请重新读取并合并"))
+		return dockerComposeRedeployPrepareResult{}, ipc.BadParam(errors.New("compose 文件在确认前已被外部修改，请重新读取并合并"))
 	}
 	operation := dockerMutationOperation{
 		Kind: "compose_redeploy", Project: input.Project, Path: input.Path,
@@ -248,14 +248,14 @@ func (s *terminalCommandService) composeRedeployWrite(ctx context.Context, input
 		ContentHash:     dockerConfirmationDigest("content-v1", content),
 	}
 	if err := s.guardDockerMutation(ctx, connected, operation, input.ProductionConfirmation); err != nil {
-		return nil, dockerMutationIPCError(err)
+		return dockerComposeRedeployPrepareResult{}, dockerMutationIPCError(err)
 	}
 	if err := filesystem.WriteFile(ctx, input.Path, content, true); err != nil {
-		return nil, fsIPCError(transport.Kind(), err)
+		return dockerComposeRedeployPrepareResult{}, fsIPCError(transport.Kind(), err)
 	}
 	ticket, err := issueDockerRedeployTicket(input.SessionID, input.Project, input.Path, operation)
 	if err != nil {
-		return nil, terminalIPCError(err)
+		return dockerComposeRedeployPrepareResult{}, terminalIPCError(err)
 	}
 	return dockerComposeRedeployPrepareResult{Ticket: ticket, ContentHash: operation.ContentHash}, nil
 }

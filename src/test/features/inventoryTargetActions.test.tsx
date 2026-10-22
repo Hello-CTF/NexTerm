@@ -109,6 +109,30 @@ describe("inventory target actions", () => {
     expect(m.container.textContent).toContain("请输入容器名");
   });
 
+  it.each<[string, string[]]>([
+    ["printf '%s\\n' 'hello world'", ["printf", "%s\\n", "hello world"]],
+    ['sh -c "echo hello"', ["sh", "-c", "echo hello"]],
+    ["printf a\\ b '' pre\"two words\"", ["printf", "a b", "", "pretwo words"]],
+    ['printf "%s\\n" "$HOME"', ["printf", "%s\\n", "$HOME"]],
+  ])("preserves quoted command arguments: %s", async (command, expected) => {
+    mocks.call.mockResolvedValue({ output: "ok", exitCode: 0 });
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, command);
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+    expect(mocks.call.mock.calls[0][1].args.command).toEqual(expected);
+  });
+
+  it.each(["echo 'unfinished", "echo unfinished\\"])("rejects incomplete command quoting: %s", async (command) => {
+    const m = (mounted = render({ kind: "kubernetes", target: podTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, command);
+    clickButton(m.container, "执行");
+    await flush();
+    expect(mocks.call).not.toHaveBeenCalled();
+    expect(m.container.textContent).toMatch(/引号未闭合|转义符不完整/);
+  });
+
   it("selects the container for a kubernetes pod target", async () => {
     mocks.call.mockResolvedValue({ output: "ok\n", exitCode: 0 });
     const m = (mounted = render({ kind: "kubernetes", target: podTarget }));
@@ -225,6 +249,22 @@ describe("inventory target actions", () => {
     expect(document.body.querySelector('input[aria-label="输入环境名 production"]')).toBeNull();
     expect(mocks.call).toHaveBeenCalledTimes(1);
     expect(m.container.textContent).not.toContain("退出码");
+  });
+
+  it("shows quoted arguments in production confirmation and retries the frozen argv", async () => {
+    mocks.call.mockRejectedValueOnce(challenge()).mockResolvedValueOnce({ output: "ok", exitCode: 0 });
+    const m = (mounted = render({ kind: "docker-context", target: dockerTarget }));
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, `printf '%s\\n' "it's fine"`);
+    setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
+    clickButton(m.container, "执行");
+    await flush();
+    expect(document.body.textContent).toContain("'it'\\''s fine'");
+    setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "changed");
+    setInputValue(document.body.querySelector('input[aria-label="输入环境名 production"]')!, "production");
+    const confirm = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("确认执行"));
+    act(() => confirm!.click());
+    await flush();
+    expect(mocks.call.mock.calls[1][1].args.command).toEqual(["printf", "%s\\n", "it's fine"]);
   });
 
   it("presents a non-zero exit code with the preserved output", async () => {

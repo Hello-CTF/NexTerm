@@ -48,16 +48,16 @@ type dockerContainerRequest struct {
 func (s *terminalCommandService) registerDocker(dispatcher *ipc.Dispatcher) error {
 	registrations := []func() error{
 		func() error {
-			return ipc.Register(dispatcher, "docker_overview", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (any, error) {
+			return ipc.Register(dispatcher, "docker_overview", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (docker.Overview, error) {
 				if _, err := s.authorizeDockerSession(ctx, input.SessionID); err != nil {
-					return nil, terminalIPCError(err)
+					return docker.Overview{}, terminalIPCError(err)
 				}
 				value, err := s.docker.Overview(ctx, input.SessionID)
 				return value, terminalIPCError(err)
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "docker_ps", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (any, error) {
+			return ipc.Register(dispatcher, "docker_ps", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) ([]docker.ContainerSummary, error) {
 				if _, err := s.authorizeDockerSession(ctx, input.SessionID); err != nil {
 					return nil, terminalIPCError(err)
 				}
@@ -126,7 +126,7 @@ func (s *terminalCommandService) registerDocker(dispatcher *ipc.Dispatcher) erro
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "docker_images", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (any, error) {
+			return ipc.Register(dispatcher, "docker_images", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) ([]docker.ImageSummary, error) {
 				if _, err := s.authorizeDockerSession(ctx, input.SessionID); err != nil {
 					return nil, terminalIPCError(err)
 				}

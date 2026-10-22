@@ -134,14 +134,20 @@ func (r *Runner) recoverRun(ctx context.Context, row store.RunRow, blob hitl.Run
 		message = "AI 确认请求已过期，请重新发送"
 		retryable = false
 	}
-	r.finishRecoveredRun(ctx, row, status, message, retryable)
+	applied, err := r.finishRecoveredRun(ctx, row, status, message, retryable)
+	if err != nil {
+		return err
+	}
+	if !applied {
+		return nil
+	}
 	if deleter, ok := r.checkpoints.(adk.CheckPointDeleter); ok {
 		_ = deleter.Delete(context.WithoutCancel(ctx), row.ID)
 	}
 	return nil
 }
 
-func (r *Runner) finishRecoveredRun(ctx context.Context, row store.RunRow, status, message string, retryable bool) {
+func (r *Runner) finishRecoveredRun(ctx context.Context, row store.RunRow, status, message string, retryable bool) (bool, error) {
 	eventType := "error"
 	event := Event{Type: "error", Message: message, Retryable: retryable}
 	if status == store.RunStatusCanceled {
@@ -150,20 +156,17 @@ func (r *Runner) finishRecoveredRun(ctx context.Context, row store.RunRow, statu
 	}
 	finisher, ok := r.atomicFinisher()
 	if !ok {
-		slog.Warn("AI 运行存储缺少条件完成能力", "run", row.ID)
-		return
+		return false, ipc.NewError(ipc.CodeUnsupported, "AI 运行存储缺少条件完成能力")
 	}
 	total := r.recoveredUsage(ctx, row.ID)
 	// The event and the conditional finish are one atomic operation: a
 	// no-op appends nothing and leaves no partial terminal history.
-	if _, err := finisher.RunFinishWithEventIfStatus(ctx, row.ID, row.Status, status, "", message, 0,
+	return finisher.RunFinishWithEventIfStatus(ctx, row.ID, row.Status, status, "", message, 0,
 		usage.SaturatingInt64(total.PromptTokens), usage.SaturatingInt64(total.CompletionTokens),
 		usage.SaturatingInt64(total.CacheCreationTokens), total.LatencyMS, eventType, func(seq uint64) ([]byte, error) {
 			event.Seq = seq
 			return json.Marshal(event)
-		}); err != nil {
-		slog.Warn("AI 恢复完成状态写入失败", "run", row.ID, "error", err)
-	}
+		})
 }
 
 func (r *Runner) recoveredUsage(ctx context.Context, runID string) usage.Usage {
@@ -249,7 +252,9 @@ func (r *Runner) watchRestoredRun(ctx context.Context, row store.RunRow) {
 			message = ""
 		}
 		retryable := status == store.RunStatusFailed || status == store.RunStatusInterrupted
-		r.finishRecoveredRun(ctx, row, status, message, retryable)
+		if _, err := r.finishRecoveredRun(ctx, row, status, message, retryable); err != nil {
+			slog.Warn("AI 恢复完成状态写入失败", "run", row.ID, "error", err)
+		}
 	}()
 }
 

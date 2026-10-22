@@ -265,18 +265,25 @@ func (s *Store) AgentOutcomeCompleteAttempt(ctx context.Context, family string, 
 	row.CreatedAt = now
 	row.UpdatedAt = now
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.SavePoint("complete_attempt").Error; err != nil {
+			return dbError(err)
+		}
 		if result := tx.Create(&row); result.Error != nil {
-			if IsUniqueErr(result.Error) {
-				stored, err := s.AgentOutcomeGet(ctx, row.OperationID)
-				if err != nil {
-					return dbError(result.Error)
-				}
-				if stored.State != row.State || stored.ResultJSON != row.ResultJSON {
-					return ipc.NewError(ipc.CodeInternal, "outcome 尝试记录已存在且内容不一致")
-				}
-			} else {
+			if !IsUniqueErr(result.Error) {
 				return dbError(result.Error)
 			}
+			if err := tx.RollbackTo("complete_attempt").Error; err != nil {
+				return dbError(err)
+			}
+			var stored AgentOutcomeRow
+			if err := tx.Where("owner_id = ? AND operation_id = ?", row.OwnerID, row.OperationID).Take(&stored).Error; err != nil {
+				return dbError(err)
+			}
+			if stored.State != row.State || stored.ResultJSON != row.ResultJSON {
+				return ipc.NewError(ipc.CodeInternal, "outcome 尝试记录已存在且内容不一致")
+			}
+			// A replay must not release the claim of a later attempt.
+			return nil
 		}
 		if result := tx.Where("owner_id = ? AND operation_id = ?", ipc.OwnerID(ctx), AgentOutcomeClaimRowID(family)).
 			Delete(&AgentOutcomeRow{}); result.Error != nil {

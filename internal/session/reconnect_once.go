@@ -23,7 +23,7 @@ func (m *Manager) ReconnectOnceFor(ctx context.Context, id string, asset Asset) 
 		return err
 	}
 	session, generation, err := m.beginReconnectOnce(ctx, id)
-	if err != nil {
+	if err != nil || session == nil {
 		return err
 	}
 	return m.reconnectOnce(ctx, session, generation)
@@ -31,7 +31,8 @@ func (m *Manager) ReconnectOnceFor(ctx context.Context, id string, asset Asset) 
 
 // beginReconnectOnce moves the session into the reconnecting state exactly
 // like the interactive reconnect path, returning the session and its new
-// generation for the single attempt.
+// generation for the single attempt. A nil session means the caller joined
+// an existing reconnect and its result has already been returned.
 func (m *Manager) beginReconnectOnce(ctx context.Context, id string) (*Session, uint64, error) {
 	m.mu.Lock()
 	session := m.sessions[id]
@@ -56,10 +57,10 @@ func (m *Manager) beginReconnectOnce(ctx context.Context, id string) (*Session, 
 		return nil, 0, ErrSessionClosed
 	}
 	if session.reconnecting {
-		done := session.reconnectDone
+		completion := session.reconnectCompletion
 		session.mu.Unlock()
 		m.mu.Unlock()
-		return nil, 0, waitReconnect(ctx, session, done)
+		return nil, 0, waitReconnect(ctx, completion)
 	}
 	if session.status == StatusConnecting {
 		session.mu.Unlock()
@@ -80,8 +81,7 @@ func (m *Manager) beginReconnectOnce(ctx context.Context, id string) (*Session, 
 	session.ctx, session.cancel = context.WithCancel(ownerCtx(m.ctx, session.userID))
 	session.status = StatusReconnecting
 	session.reconnecting = true
-	session.reconnectDone = make(chan struct{})
-	session.reconnectErr = nil
+	session.reconnectCompletion = &reconnectCompletion{done: make(chan struct{})}
 	session.reconnectAttempt = 0
 	session.reconnectNextRetry = m.now().Add(m.reconnectBackoff[0])
 	channels := session.detachChannelsLocked()

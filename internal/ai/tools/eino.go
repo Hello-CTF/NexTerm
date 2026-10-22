@@ -833,7 +833,7 @@ func (e *Execution) runInner(ctx context.Context, name string, input any) (Outpu
 		if call.Name == ReminderTool {
 			return e.executeReminder(ctx, call), nil
 		}
-		return e.Registry.Execute(ctx, e.JobID, e.Scope, call, nil), nil
+		return e.executionResult(ctx, call, e.Registry.Execute(ctx, e.JobID, e.Scope, call, nil))
 	}
 	return e.initial(ctx, call)
 }
@@ -952,6 +952,10 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 		return e.executeReminder(ctx, call), nil
 	}
 	result := e.Registry.Execute(ctx, e.JobID, e.Scope, call, preparation)
+	return e.executionResult(ctx, call, result)
+}
+
+func (e *Execution) executionResult(ctx context.Context, call Call, result Output) (Output, error) {
 	if challenge := result.ProductionChallenge; challenge != nil {
 		if e.Permission.Mode == guard.Unattended {
 			return Fail(errors.New("生产环境多主机执行需要用户确认，无人值守运行禁止此操作")), nil

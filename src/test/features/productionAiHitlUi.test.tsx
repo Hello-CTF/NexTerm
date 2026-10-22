@@ -288,14 +288,14 @@ describe("AI HITL typed environment confirmation", () => {
     expect(mocks.confirm).not.toHaveBeenCalled();
   });
 
-  it("sends the typed names with a deny decision", async () => {
+  it("allows denying without typing production names", async () => {
     await show();
     await sendAndEmit([
       { type: "toolCall", id: "call-6", name: "exec_commands", display: "exec_commands", args: {} },
       confirmEvent("call-6", { requiredEnvironmentNames: ["production"] }),
     ]);
 
-    setInputValue(environmentInput("production"), "production");
+    expect(decisionButton("拒绝").disabled).toBe(false);
     await clickAndFlush(decisionButton("拒绝"));
     await flushUntil(() => mocks.confirm.mock.calls.length === 1);
     expect(mocks.confirm).toHaveBeenCalledWith({
@@ -303,7 +303,7 @@ describe("AI HITL typed environment confirmation", () => {
       callId: "call-6",
       nonce: "nonce-call-6",
       decision: "deny",
-      environmentNames: ["production"],
+      environmentNames: undefined,
     });
   });
 

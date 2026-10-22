@@ -205,14 +205,18 @@ type Config struct {
 	AfterFunc         func(time.Duration, func()) Timer
 	NewNonce          func() (string, error)
 	// AssetResolver resolves the run's current real asset identity from
-	// server-side state for the tool awaiting confirmation; it is the only
-	// source of asset evidence. When nil, asset binding is disabled and all
-	// asset identities remain unknown. The tool argument keeps the evidence
+	// server-side state for the tool awaiting confirmation. When both asset
+	// resolvers are nil, asset binding is disabled and all asset identities
+	// remain unknown. The tool argument keeps the evidence
 	// bound to the actual call: a database tool resolves the connection's real
 	// DB asset while a terminal tool resolves the session asset, even within
 	// one mixed scope. It is called with the run lock held and must not call
 	// back into the Manager.
 	AssetResolver func(ctx context.Context, runID, tool string) (string, error)
+	// RequestAssetResolver takes precedence over AssetResolver and resolves
+	// the actual target selected by the canonical tool parameters. The same
+	// persisted parameters are resolved again before a request resumes.
+	RequestAssetResolver func(context.Context, string, string, json.RawMessage) (string, error)
 	// EnvironmentResolver resolves the production environment names a
 	// confirmation must type back for the run's target asset, from the
 	// request owner and the real asset through the configurable production

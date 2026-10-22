@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
 	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
@@ -255,6 +256,9 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	forwardService = forward.NewService(forward.Config{
 		Provider: forward.DialerProviderFunc(sessionManager.CurrentDialerFor),
 		Rules:    database,
+		IsProduction: func(ctx context.Context, environment string) (bool, error) {
+			return guard.IsProductionEnvironment(ctx, database, environment)
+		},
 		SessionHost: func(ctx context.Context, sessionID string) (string, error) {
 			connected, err := sessionManager.SessionFor(productionSessionRequestContext(ctx), sessionID)
 			if err != nil {

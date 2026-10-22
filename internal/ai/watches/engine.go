@@ -601,6 +601,9 @@ func (e *Engine) observeWatch(ctx context.Context, row model.AgentWatchRow, iden
 			Excerpt: excerpt, EventKind: EventKind, EventJSON: string(eventJSON),
 			Now: now.UnixMilli(),
 		}); err != nil {
+			if errors.Is(err, store.ErrAgentWatchState) {
+				return nil, nil
+			}
 			return nil, err
 		}
 		return &event, nil

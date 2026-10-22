@@ -140,6 +140,26 @@ func TestRecoverAutoStartRulesSkipsProductionAssets(t *testing.T) {
 	}
 }
 
+func TestRecoverAutoStartRulesRejectsProductionClassificationFailure(t *testing.T) {
+	fixture := newSavedRuleFixture(t)
+	fixture.saveAutoStartRule(t, fixture.asset.ID, freeSavedRulePort(t), true)
+	classificationErr := errors.New("production configuration unavailable")
+	fixture.service.isProduction = func(context.Context, string) (bool, error) {
+		return false, classificationErr
+	}
+	var connects atomic.Int32
+	outcomes := fixture.service.RecoverAutoStartRules(fixture.ctx, []RecoveryDevice{{
+		AssetID: fixture.asset.ID,
+		Connect: func(context.Context) (string, error) {
+			connects.Add(1)
+			return fixture.connected.ID, nil
+		},
+	}})
+	if len(outcomes) != 1 || !errors.Is(outcomes[0].Err, classificationErr) || connects.Load() != 0 {
+		t.Fatalf("classification failure outcomes=%+v connects=%d", outcomes, connects.Load())
+	}
+}
+
 func TestRecoverAutoStartRulesStartsRulesAndBindsLoopback(t *testing.T) {
 	fixture := newSavedRuleFixture(t)
 	rule := fixture.saveAutoStartRule(t, fixture.asset.ID, freeSavedRulePort(t), true)

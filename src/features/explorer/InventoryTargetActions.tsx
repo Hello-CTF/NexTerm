@@ -7,6 +7,7 @@ import type { DockerProductionConfirmation } from "../../ipc/commands";
 import type { InventoryTargetExecRequest } from "../../ipc/generated/types";
 import type { LiveOperation } from "./inventoryLiveOperationStore";
 import { liveOperationStore } from "./inventoryLiveOperationStore";
+import { formatInventoryCommand, parseInventoryCommand } from "./inventoryCommand";
 
 export interface InventoryTargetSession {
   id: string;
@@ -213,7 +214,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
         // the new context.
         liveOperationStore.remove(op.ownerKey, op.snapshot.operationId);
         if (generation === generationRef.current && ownerRef.current === op.ownerKey && identityRef.current === op.identity) {
-          setProduction({ challenge, command: op.snapshot.command.join(" "), snapshot: op.snapshot, generation });
+          setProduction({ challenge, command: formatInventoryCommand(op.snapshot.command), snapshot: op.snapshot, generation });
         }
         return;
       }
@@ -246,7 +247,13 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
     // operation that already settled blocks until its done notice is
     // cleared, so a retry is never blind.
     if (busy || liveOpRef.current !== null || ignoredDone) return;
-    const argv = command.trim() ? command.trim().split(/\s+/) : [];
+    let argv: string[];
+    try {
+      argv = parseInventoryCommand(command);
+    } catch (cause) {
+      setInputError(describeError(cause));
+      return;
+    }
     if (argv.length === 0) {
       setInputError("请输入要执行的命令");
       return;
@@ -364,6 +371,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
               placeholder="例如 uname -a"
             />
           </label>
+          <div className="text-[11px] text-neutral-500">支持引号与转义；管道或重定向请使用 sh -c '…'。</div>
           {isPod && containers.length > 0 && (
             <label className="flex items-center gap-2 text-[11px] text-neutral-400">
               容器

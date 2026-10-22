@@ -31,6 +31,15 @@ function rosterEntry(partial: Partial<AgentRosterEntry> = {}): AgentRosterEntry 
 }
 
 describe("ToolHandleRegistry", () => {
+  it("keeps numeric call IDs distinct across run generations", () => {
+    const registry = new ToolHandleRegistry();
+    registry.record(1, { type: "toolCall", id: "23", handle: "first" });
+    expect(registry.lookup(12, "3")).toEqual({ kind: "unknown" });
+    registry.record(12, { type: "toolCall", id: "3", handle: "second" });
+    expect(registry.lookup(1, "23")).toEqual({ kind: "handle", handle: "first" });
+    expect(registry.lookup(12, "3")).toEqual({ kind: "handle", handle: "second" });
+  });
+
   it("records verified handles from toolCall and toolResult events of one run", () => {
     const registry = new ToolHandleRegistry();
     expect(registry.record(1, { type: "toolCall", id: "call-1", handle: "build" })).toBe(true);

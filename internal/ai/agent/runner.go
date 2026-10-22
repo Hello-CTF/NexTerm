@@ -85,12 +85,13 @@ func NewRunner(config Config) *Runner {
 	manager := config.HITL
 	if manager == nil {
 		hitlConfig := hitl.Config{
-			Checkpoints:         config.Checkpoints,
-			TTL:                 config.HITLTTL,
-			TerminalRetention:   config.HITLTerminalRetention,
-			Now:                 config.Now,
-			AssetResolver:       config.HITLAssetResolver,
-			EnvironmentResolver: config.HITLEnvironmentResolver,
+			Checkpoints:          config.Checkpoints,
+			TTL:                  config.HITLTTL,
+			TerminalRetention:    config.HITLTerminalRetention,
+			Now:                  config.Now,
+			AssetResolver:        config.HITLAssetResolver,
+			RequestAssetResolver: config.HITLRequestAssetResolver,
+			EnvironmentResolver:  config.HITLEnvironmentResolver,
 		}
 		if config.Runs != nil {
 			hitlConfig.Store = hitlStoreBridge{config.Runs}

@@ -724,6 +724,16 @@ func (s *Stream) requestRaw(ctx context.Context, kind frameType, payload []byte)
 		s.pending = false
 		s.mu.Unlock()
 	}()
+	cancelDone := make(chan struct{})
+	stopCancel := context.AfterFunc(ctx, func() {
+		s.fail(context.Cause(ctx))
+		close(cancelDone)
+	})
+	defer func() {
+		if !stopCancel() {
+			<-cancelDone
+		}
+	}()
 	s.writeMu.Lock()
 	err := writeFrame(s.conn.conn, kind, payload)
 	s.writeMu.Unlock()

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -131,79 +132,96 @@ func (f *fakeBatchAuditor) AuditInsert(context.Context, store.AuditInput) error 
 // challenge covering every production target, and the typed names execute
 // the batch for real.
 func TestProductionExecMultiTargetTypedEnvironmentNamesExecutes(t *testing.T) {
-	storage := restartStore(t)
-	conversation, err := storage.ConvCreate(ipc.WithUserID(context.Background(), "user-1"), "owned", map[string]any{"scope": tools.Scope{SessionID: "session"}})
-	if err != nil {
-		t.Fatal(err)
+	for _, command := range []string{"echo one", "touch /tmp/production-confirmation-test"} {
+		t.Run(command, func(t *testing.T) {
+			storage := restartStore(t)
+			conversation, err := storage.ConvCreate(ipc.WithUserID(context.Background(), "user-1"), "owned", map[string]any{"scope": tools.Scope{SessionID: "session"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			first := &fakeBatchTransport{}
+			second := &fakeBatchTransport{}
+			service := execbatch.New(execbatch.Config{
+				Resolver: execbatch.ResolverFunc(func(_ context.Context, sessionID string) (execbatch.Target, error) {
+					targets := map[string]*fakeBatchTransport{"session-a": first, "session-b": second}
+					transport := targets[sessionID]
+					return execbatch.Target{SessionName: sessionID, AssetID: "asset-" + sessionID, Environment: "production", Transport: transport, Generation: transport.Generation()}, nil
+				}),
+				Auditor: &fakeBatchAuditor{},
+			})
+			registry := tools.NewRegistry(tools.Dependencies{
+				ResolveExecTargets: func(context.Context, []string, []string) (tools.ExecTargetSet, error) {
+					return tools.ExecTargetSet{SessionIDs: []string{"session-a", "session-b"}, Production: true}, nil
+				},
+				ExecBatch: func(ctx context.Context, request execbatch.Request) (execbatch.Batch, error) {
+					return service.Execute(ctx, "user-1", request)
+				},
+			})
+			manager, err := hitl.NewManager(hitl.Config{
+				Checkpoints: NewStoreCheckpoints(storage),
+				Store:       hitlStoreBridge{storage},
+				TTL:         time.Hour,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner := NewRunner(Config{
+				Model: func(context.Context) (model.BaseChatModel, uint64, error) {
+					return sequenceModel(
+						toolCallMessage(namedToolCall("exec", "exec_commands", fmt.Sprintf(`{"commands":[%q],"asset_ids":["asset-a","asset-b"]}`, command))),
+						schema.AssistantMessage("done", nil),
+					), 32768, nil
+				},
+				Tools:       registry,
+				Store:       storage,
+				Runs:        storage,
+				Checkpoints: NewStoreCheckpoints(storage),
+				HITL:        manager,
+			})
+			t.Cleanup(func() { _ = runner.Close() })
+			stream := &SliceStream{}
+			response, err := runner.Start(context.Background(), ChatArgs{ConversationID: conversation.ID, Message: "go", Scope: tools.Scope{SessionID: "session"}}, StaticStream(stream))
+			if err != nil {
+				t.Fatal(err)
+			}
+			confirmation := waitEvent(t, stream, "confirmRequired")
+			if command != "echo one" {
+				if err := runner.Confirm(Confirmation{JobID: response.JobID, CallID: confirmation.ID, Nonce: confirmation.Nonce, Decision: "allow"}); err != nil {
+					t.Fatal(err)
+				}
+				confirmation = waitEventIndex(t, stream, "confirmRequired", 1)
+			}
+			if len(confirmation.RequiredEnvironmentNames) != 1 || confirmation.RequiredEnvironmentNames[0] != "production" {
+				t.Fatalf("confirmRequired required names = %v", confirmation.RequiredEnvironmentNames)
+			}
+			// Wrong names: rejected with zero execution.
+			if err := runner.Confirm(Confirmation{JobID: response.JobID, CallID: confirmation.ID, Nonce: confirmation.Nonce, Decision: "allow", EnvironmentNames: []string{"staging"}}); !errors.Is(err, hitl.ErrEnvironmentNamesMismatch) {
+				t.Fatalf("wrong names error = %v", err)
+			}
+			if first.calls() != 0 || second.calls() != 0 {
+				t.Fatal("exec ran despite the wrong names")
+			}
+
+			if len(confirmation.RequiredEnvironmentNames) != 1 || confirmation.RequiredEnvironmentNames[0] != "production" {
+				t.Fatalf("production challenge = %+v", confirmation)
+			}
+			if first.calls() != 0 || second.calls() != 0 {
+				t.Fatal("executed before production approval")
+			}
+			// The typed names execute every target for real.
+			if err := runner.Confirm(Confirmation{JobID: response.JobID, CallID: confirmation.ID, Nonce: confirmation.Nonce, Decision: "allow", EnvironmentNames: []string{"production"}}); err != nil {
+				t.Fatal(err)
+			}
+			events := waitClosed(t, stream)
+			if done, failed := terminalCounts(events); done != 1 || failed != 0 {
+				t.Fatalf("resumed terminal counts done=%d error=%d", done, failed)
+			}
+			if first.calls() != 1 || second.calls() != 1 {
+				t.Fatalf("exec calls = %d/%d, want 1/1", first.calls(), second.calls())
+			}
+			waitRunStatus(t, storage, response.JobID, store.RunStatusCompleted)
+		})
 	}
-	first := &fakeBatchTransport{}
-	second := &fakeBatchTransport{}
-	service := execbatch.New(execbatch.Config{
-		Resolver: execbatch.ResolverFunc(func(_ context.Context, sessionID string) (execbatch.Target, error) {
-			targets := map[string]*fakeBatchTransport{"session-a": first, "session-b": second}
-			transport := targets[sessionID]
-			return execbatch.Target{SessionName: sessionID, AssetID: "asset-" + sessionID, Environment: "production", Transport: transport, Generation: transport.Generation()}, nil
-		}),
-		Auditor: &fakeBatchAuditor{},
-	})
-	registry := tools.NewRegistry(tools.Dependencies{
-		ResolveExecTargets: func(context.Context, []string, []string) (tools.ExecTargetSet, error) {
-			return tools.ExecTargetSet{SessionIDs: []string{"session-a", "session-b"}, Production: true}, nil
-		},
-		ExecBatch: func(ctx context.Context, request execbatch.Request) (execbatch.Batch, error) {
-			return service.Execute(ctx, "user-1", request)
-		},
-	})
-	manager, err := hitl.NewManager(hitl.Config{
-		Checkpoints: NewStoreCheckpoints(storage),
-		Store:       hitlStoreBridge{storage},
-		TTL:         time.Hour,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	runner := NewRunner(Config{
-		Model: func(context.Context) (model.BaseChatModel, uint64, error) {
-			return sequenceModel(
-				toolCallMessage(namedToolCall("exec", "exec_commands", `{"commands":["echo one"],"asset_ids":["asset-a","asset-b"]}`)),
-				schema.AssistantMessage("done", nil),
-			), 32768, nil
-		},
-		Tools:       registry,
-		Store:       storage,
-		Runs:        storage,
-		Checkpoints: NewStoreCheckpoints(storage),
-		HITL:        manager,
-	})
-	t.Cleanup(func() { _ = runner.Close() })
-	stream := &SliceStream{}
-	response, err := runner.Start(context.Background(), ChatArgs{ConversationID: conversation.ID, Message: "go", Scope: tools.Scope{SessionID: "session"}}, StaticStream(stream))
-	if err != nil {
-		t.Fatal(err)
-	}
-	confirmation := waitEvent(t, stream, "confirmRequired")
-	if len(confirmation.RequiredEnvironmentNames) != 1 || confirmation.RequiredEnvironmentNames[0] != "production" {
-		t.Fatalf("confirmRequired required names = %v", confirmation.RequiredEnvironmentNames)
-	}
-	// Wrong names: rejected with zero execution.
-	if err := runner.Confirm(Confirmation{JobID: response.JobID, CallID: confirmation.ID, Nonce: confirmation.Nonce, Decision: "allow", EnvironmentNames: []string{"staging"}}); !errors.Is(err, hitl.ErrEnvironmentNamesMismatch) {
-		t.Fatalf("wrong names error = %v", err)
-	}
-	if first.calls() != 0 || second.calls() != 0 {
-		t.Fatal("exec ran despite the wrong names")
-	}
-	// The typed names execute every target for real.
-	if err := runner.Confirm(Confirmation{JobID: response.JobID, CallID: confirmation.ID, Nonce: confirmation.Nonce, Decision: "allow", EnvironmentNames: []string{"production"}}); err != nil {
-		t.Fatal(err)
-	}
-	events := waitClosed(t, stream)
-	if done, failed := terminalCounts(events); done != 1 || failed != 0 {
-		t.Fatalf("resumed terminal counts done=%d error=%d", done, failed)
-	}
-	if first.calls() != 1 || second.calls() != 1 {
-		t.Fatalf("exec calls = %d/%d, want 1/1", first.calls(), second.calls())
-	}
-	waitRunStatus(t, storage, response.JobID, store.RunStatusCompleted)
 }
 
 // TestProductionExecTypedEnvironmentNamesAfterRestart covers the restart

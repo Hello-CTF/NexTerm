@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"time"
@@ -98,6 +99,9 @@ type Config struct {
 	// awaiting confirmation from server-side state; nil disables asset
 	// evidence binding.
 	HITLAssetResolver func(context.Context, string, string) (string, error)
+	// HITLRequestAssetResolver takes precedence and binds the actual target
+	// selected by the persisted tool parameters.
+	HITLRequestAssetResolver func(context.Context, string, string, json.RawMessage) (string, error)
 	// HITLEnvironmentResolver resolves the production environment names a
 	// confirmation must type back for the run's target asset, from the
 	// request owner and the real asset through the configurable production

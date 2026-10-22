@@ -134,10 +134,10 @@ func (m *Manager) reconnect(ctx context.Context, id string, expectedGeneration u
 		return nil
 	}
 	if session.reconnecting {
-		done := session.reconnectDone
+		completion := session.reconnectCompletion
 		session.mu.Unlock()
 		m.mu.Unlock()
-		return waitReconnect(ctx, session, done)
+		return waitReconnect(ctx, completion)
 	}
 	if session.status == StatusConnecting {
 		session.mu.Unlock()
@@ -158,8 +158,7 @@ func (m *Manager) reconnect(ctx context.Context, id string, expectedGeneration u
 	session.ctx, session.cancel = context.WithCancel(ownerCtx(m.ctx, session.userID))
 	session.status = StatusReconnecting
 	session.reconnecting = true
-	session.reconnectDone = make(chan struct{})
-	session.reconnectErr = nil
+	session.reconnectCompletion = &reconnectCompletion{done: make(chan struct{})}
 	session.reconnectAttempt = 0
 	session.reconnectNextRetry = m.now().Add(m.reconnectBackoff[0])
 	channels := session.detachChannelsLocked()
@@ -186,21 +185,15 @@ func (m *Manager) reconnect(ctx context.Context, id string, expectedGeneration u
 	return m.reconnectLoop(runCtx, session, generation)
 }
 
-func waitReconnect(ctx context.Context, session *Session, done <-chan struct{}) error {
+func waitReconnect(ctx context.Context, completion *reconnectCompletion) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-done:
+	case <-completion.done:
 	}
-	session.mu.Lock()
-	defer session.mu.Unlock()
-	if session.status == StatusConnected {
-		return nil
-	}
-	if session.reconnectErr != nil {
-		return session.reconnectErr
-	}
-	return ErrDisconnected
+	// Closing done publishes this attempt's immutable result even if another
+	// reconnect has already replaced the session's current completion.
+	return completion.err
 }
 
 func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generation uint64) error {

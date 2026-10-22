@@ -31,7 +31,7 @@ export class ToolHandleRegistry {
   private records = new Map<string, { handle: string } | { ambiguous: true }>();
 
   private key(generation: number, callId: string): string {
-    return `${generation}${callId}`;
+    return JSON.stringify([generation, callId]);
   }
 
   // record ingests one raw stream event of the given run generation and

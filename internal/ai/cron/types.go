@@ -54,8 +54,9 @@ type Store interface {
 	ListDueIdle(ctx context.Context, now time.Time, limit int) ([]Job, error)
 	// ListRecoveryCandidates returns at most limit running jobs whose lease and
 	// run deadline have both expired at now, ordered by (run_deadline, id) so
-	// batches are stable. A limit <= 0 yields no rows.
-	ListRecoveryCandidates(ctx context.Context, now time.Time, limit int) ([]Job, error)
+	// batches are stable. Excluded IDs let scans pass locally active cleanups.
+	// A limit <= 0 yields no rows.
+	ListRecoveryCandidates(ctx context.Context, now time.Time, limit int, excludedIDs ...string) ([]Job, error)
 	Create(ctx context.Context, job Job, maxPerSession int) (Job, error)
 	CompareAndSwap(ctx context.Context, job Job, expectedRevision uint64) (Job, error)
 	Delete(ctx context.Context, sessionID, jobID string, expectedRevision uint64) error

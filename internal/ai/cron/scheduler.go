@@ -308,28 +308,26 @@ func (s *Scheduler) runOnce(ctx context.Context, now time.Time) (int, error) {
 	return s.startDueJobs(ctx, now)
 }
 
-// recoverAbandonedRuns reconciles expired runs in stable batches. It stops as
-// soon as a batch makes no progress so locally active cleanups are never
-// treated as abandoned, and never reexecutes the interrupted occurrence.
+// recoverAbandonedRuns reconciles expired runs in stable batches, passing
+// locally active cleanups without treating them as abandoned.
 func (s *Scheduler) recoverAbandonedRuns(ctx context.Context, now time.Time) error {
+	var excludedIDs []string
 	for {
-		candidates, err := s.store.ListRecoveryCandidates(ctx, now, s.options.RecoveryBatchSize)
+		candidates, err := s.store.ListRecoveryCandidates(ctx, now, s.options.RecoveryBatchSize, excludedIDs...)
 		if err != nil {
 			return storageError("list recovery", "", err)
 		}
 		if len(candidates) == 0 {
 			return nil
 		}
-		progressed := false
 		for _, job := range candidates {
 			recovered, err := s.recoverIfAbandoned(ctx, job, now)
 			if err != nil {
 				return err
 			}
-			progressed = progressed || recovered
-		}
-		if !progressed {
-			return nil
+			if !recovered {
+				excludedIDs = append(excludedIDs, job.ID)
+			}
 		}
 	}
 }

@@ -287,6 +287,11 @@ type ThrottleEvent struct {
 	Version       uint64 `json:"version"`
 }
 
+type reconnectCompletion struct {
+	done chan struct{}
+	err  error
+}
+
 type Session struct {
 	ID        string
 	CreatedAt time.Time
@@ -312,8 +317,7 @@ type Session struct {
 	connectOwnerExpired bool
 	connectFinished     bool
 	reconnecting        bool
-	reconnectDone       chan struct{}
-	reconnectErr        error
+	reconnectCompletion *reconnectCompletion
 	reconnectAttempt    int
 	reconnectNextRetry  time.Time
 	statusErr           error

@@ -952,7 +952,7 @@ install_units() {
 
 ensure_env_files() {
   fail_at env
-  local name env_file example legacy line key pre_existed record_file wd data_dir_migrated data_dir_value configured_key_value
+  local name env_file example legacy line key pre_existed record_file wd data_dir_migrated data_dir_value configured_key_value path_value
   for name in nexterm onlyserver; do
     env_file="$ETC_DIR/$name.env"
     example="$SOURCE_DIR/$name.env.example"
@@ -1034,6 +1034,15 @@ EOF
     if [ -n "$configured_key_value" ] && [ "${configured_key_value#/}" = "$configured_key_value" ] && [ "$wd" != "/var/lib/nexterm" ]; then
       env_set "$env_file" NEXTERM_MASTER_KEY_FILE "$(lex_clean "$(join_path "$wd" "$configured_key_value")")"
       log "absolutized relative NEXTERM_MASTER_KEY_FILE against the previous working directory $wd"
+    fi
+    if [ "$wd" != "/var/lib/nexterm" ]; then
+      for key in NEXTERM_WEB_ROOT NEXTERM_DB_PASSWORD_FILE; do
+        path_value="$(env_get "$env_file" "$key")"
+        if [ -n "$path_value" ] && [ "${path_value#/}" = "$path_value" ]; then
+          env_set "$env_file" "$key" "$(lex_clean "$(join_path "$wd" "$path_value")")"
+          log "absolutized relative $key against the previous working directory $wd"
+        fi
+      done
     fi
   done
 }

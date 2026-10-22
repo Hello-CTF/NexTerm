@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
@@ -126,7 +127,15 @@ func (s *Service) RecoverAutoStartRules(ctx context.Context, devices []RecoveryD
 			outcomes[index] = RecoveryOutcome{AssetID: assetID, Err: err}
 			continue
 		}
-		if environment == "production" {
+		production := guard.IsBuiltInProductionEnvironment(environment)
+		if s.isProduction != nil {
+			production, err = s.isProduction(ctx, environment)
+			if err != nil {
+				outcomes[index] = RecoveryOutcome{AssetID: assetID, Err: err}
+				continue
+			}
+		}
+		if production {
 			outcomes[index] = RecoveryOutcome{AssetID: assetID, Skipped: "生产环境资产不参与启动恢复"}
 			continue
 		}

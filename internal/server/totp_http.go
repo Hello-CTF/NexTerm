@@ -182,6 +182,10 @@ func (s *Server) serveAccountTOTPSetup(w http.ResponseWriter, r *http.Request) {
 	// setup write must not interleave with a revocation bump.
 	s.accountRevocationMu.Lock()
 	defer s.accountRevocationMu.Unlock()
+	if err := s.revalidateTOTPBindingSession(r); err != nil {
+		writeAccountFailure(w, err)
+		return
+	}
 	secret, uri, err := s.accounts.BeginTOTPSetup(r.Context(), identity.UserID, request.Reverify)
 	if err != nil {
 		// A missing re-verification credential is a client flow problem and is not counted toward brute-force throttling; only wrong credentials count.
@@ -193,6 +197,19 @@ func (s *Server) serveAccountTOTPSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	s.accountThrottle.mfa.RecordSuccess(key)
 	writeAccountJSON(w, http.StatusOK, accountTOTPSetupView{Secret: secret, OTPAuthURI: uri})
+}
+
+// revalidateTOTPBindingSession requires accountRevocationMu: a request body
+// can arrive after the session admitted by accountGuard has been revoked.
+func (s *Server) revalidateTOTPBindingSession(r *http.Request) error {
+	identity := accountIdentityFrom(r.Context())
+	token, ok := sessionCookie(r)
+	if !ok || identity == nil {
+		return ipc.NewError(ipc.CodeForbidden, sessionReloginMessage)
+	}
+	return s.validateAccountSession(r.Context(), token, identity, func() {
+		s.cleanupAccountLocked(r.Context(), identity.UserID, identity.SessionID)
+	})
 }
 
 type accountTOTPConfirmRequest struct {
@@ -217,6 +234,10 @@ func (s *Server) serveAccountTOTPConfirm(w http.ResponseWriter, r *http.Request)
 	// revocation cannot land between the check and the commit.
 	s.accountRevocationMu.Lock()
 	defer s.accountRevocationMu.Unlock()
+	if err := s.revalidateTOTPBindingSession(r); err != nil {
+		writeAccountFailure(w, err)
+		return
+	}
 	codes, err := s.accounts.ConfirmTOTPSetup(r.Context(), identity.UserID, request.Code)
 	if err != nil {
 		s.accountThrottle.mfa.RecordFailure(key)

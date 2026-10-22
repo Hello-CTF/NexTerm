@@ -405,7 +405,7 @@ func (m *WatchManager) startLocked(ctx context.Context, watch SSHWatch, initialS
 	m.watchers[watch.OwnerID] = handle
 	m.mu.Unlock()
 	if initialSync {
-		if err := m.syncAndRecord(runCtx, handle); err != nil {
+		if err := m.syncAndRecord(ctx, handle); err != nil {
 			m.mu.Lock()
 			if m.watchers[watch.OwnerID] == handle {
 				delete(m.watchers, watch.OwnerID)

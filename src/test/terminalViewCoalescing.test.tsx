@@ -454,23 +454,9 @@ describe("XtermView stream wiring", () => {
     act(() => harness.channel?.onBytes?.(new Uint8Array(1024).fill(0x62)));
     expect(t.writeLog.length).toBe(4);
     expect(harness.detach).toHaveBeenCalledTimes(1);
-    // Draining asked the server to resume the feed: the pause response
-    // carrying the episode token lands, then the resume fires with it.
+    // Draining reattaches the detached subscription without a transport
+    // reopen. A resume RPC alone cannot recreate that subscription.
     await act(async () => {
-      await flushMacrotask();
-    });
-    expect(harness.call).toHaveBeenCalledWith("terminal_resume", {
-      tabId: "kernel-1",
-      channelId: "channel-1",
-      clientId: "me",
-      attachmentId: 11,
-      episodeToken: 31,
-    });
-    // Transport reopen → reattach with a resume anchor at the last accepted
-    // byte; the refused suffix will be replayed from there.
-    await act(async () => {
-      harness.reopenCb?.();
-      await flushMacrotask();
       await flushMacrotask();
     });
     expect(harness.attachTab).toHaveBeenCalledWith(
@@ -480,6 +466,7 @@ describe("XtermView stream wiring", () => {
       { seq: 4 * (4 << 20), epoch: "e1" },
       "session-1",
     );
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 4 * (4 << 20), controlBytes: 0, attachmentId: 12 });
     // The replay redelivers the refused chunk: accepted and rendered in order.
     act(() => harness.channel?.onBytes?.(chunk));
     act(() => t.drainWrites());
@@ -532,6 +519,55 @@ describe("XtermView stream wiring", () => {
     expect(t.writeLog.length).toBe(5);
     const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
     expect(total).toBe(5 * (4 << 20));
+  });
+
+  it("keeps a replay overflow refused after the attach response and resumes before the gap", async () => {
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const attach = deferred<Record<string, unknown>>();
+    const recovery = deferred<Record<string, unknown>>();
+    harness.attachTab.mockReturnValueOnce(attach.promise).mockReturnValueOnce(recovery.promise);
+    act(() => harness.reopenCb?.());
+    expect(harness.attachTab).toHaveBeenCalledTimes(1);
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0, attachmentId: 12 });
+
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    for (let index = 0; index < 5; index++) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    expect(harness.detach).toHaveBeenCalledTimes(1);
+    // Free enough capacity for the late small chunk while keeping the
+    // writer paused, so a replacement cannot end the refusal episode yet.
+    act(() => t.drainWrites(1));
+    await act(async () => {
+      attach.resolve({ tabId: "kernel-1", cols: 80, rows: 30, controller: "me", subscribers: 1, viewers: 1, exited: false, retainable: true, ephemeral: false, attachmentId: 12 });
+      await flushMacrotask();
+    });
+    expect(harness.attachTab).toHaveBeenCalledTimes(1);
+    const later = new Uint8Array(1024).fill(0x62);
+    act(() => harness.channel?.onBytes?.(later));
+    act(() => t.drainWrites());
+    await act(async () => { await flushMacrotask(); });
+    expect(t.writeLog.reduce((total, entry) => total + entry.length, 0)).toBe(4 * chunk.length);
+    expect(harness.attachTab).toHaveBeenNthCalledWith(
+      2, "kernel-1", expect.anything(), -1,
+      { seq: 4 * chunk.length, epoch: "e1" }, "session-1",
+    );
+
+    // The next ordered anchor restores the refused suffix first; the late
+    // bytes then follow it instead of being rendered across the missing gap.
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 4 * chunk.length, controlBytes: 0, attachmentId: 13 });
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => harness.channel?.onBytes?.(later));
+    act(() => t.drainWrites());
+    await act(async () => {
+      recovery.resolve({ tabId: "kernel-1", cols: 80, rows: 30, controller: "me", subscribers: 1, viewers: 1, exited: false, retainable: true, ephemeral: false, attachmentId: 13 });
+      await flushMacrotask();
+    });
+    expect(t.writeLog.reduce((total, entry) => total + entry.length, 0)).toBe(5 * chunk.length + later.length);
+    expect(t.writeLog.at(-1)).toBe("b".repeat(later.length));
   });
 
   it("ephemeral tabs: a working pause keeps the full sequence lossless with no refusal", async () => {
@@ -989,14 +1025,15 @@ describe("XtermView stream wiring", () => {
     }
     act(() => harness.channel?.onBytes?.(chunk));
     expect(harness.detach).toHaveBeenCalledWith("kernel-1", "channel-1");
-    act(() => t.drainWrites());
     // The resume RPC stays in flight while the replay arrives: the episode
     // must already be closed so the replay is accepted, not discarded.
     let finish: ((value: unknown) => void) | undefined;
     harness.attachTab.mockImplementation(
       () => new Promise((resolve) => { finish = resolve; }),
     );
-    act(() => harness.reopenCb?.());
+    act(() => t.drainWrites());
+    await act(async () => { await flushMacrotask(); });
+    expect(harness.attachTab).toHaveBeenCalled();
     const replay = new Uint8Array(4 << 20).fill(0x62);
     act(() => harness.channel?.onBytes?.(replay));
     act(() => t.drainWrites());
@@ -1033,11 +1070,9 @@ describe("XtermView stream wiring", () => {
     act(() => harness.channel?.onBytes?.(chunk));
     expect(harness.pushToast).toHaveBeenCalledWith("info", expect.stringContaining("重新同步"));
     act(() => t.drainWrites());
-    // The reopen resumes the exec through attachTab/ResumeExec, which
-    // replays the bounded backlog; the episode ends at that boundary.
-    harness.attachTab.mockClear();
+    // The drain resumes the exec through attachTab/ResumeExec, which
+    // replays the bounded backlog without reopening the transport.
     await act(async () => {
-      harness.reopenCb?.();
       await flushMacrotask();
       await flushMacrotask();
     });
@@ -1048,6 +1083,89 @@ describe("XtermView stream wiring", () => {
     expect(t.writeLog.length).toBe(5);
     const total = t.writeLog.reduce((n, entry) => n + entry.length, 0);
     expect(total).toBe(5 * (4 << 20));
+  });
+
+  it("reattaches Docker after the high watermark drains without overflowing or reopening transport", async () => {
+    await show({ containerId: "container-1" });
+    await attachOk();
+    act(() => harness.channel?.onBytes?.(new Uint8Array(4 << 20).fill(0x61)));
+    expect(harness.detach).toHaveBeenCalledWith("kernel-1", "channel-1");
+    expect(harness.attachTab).not.toHaveBeenCalled();
+    act(() => term().drainWrites());
+    await act(async () => { await flushMacrotask(); });
+    expect(harness.attachTab).toHaveBeenCalledWith("kernel-1", expect.anything(), -1, undefined, undefined);
+  });
+
+  it.each([false, true])("waits for a pending detach before drain/reopen can replace the subscription (Docker=%s)", async (docker) => {
+    const detach = deferred<void>();
+    harness.detach.mockReturnValueOnce(detach.promise);
+    await show(docker ? { containerId: "container-1" } : {});
+    await attachOk();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0 });
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    for (let index = 0; index < (docker ? 1 : 5); index++) {
+      act(() => harness.channel?.onBytes?.(chunk));
+    }
+    act(() => term().drainWrites());
+    await act(async () => {
+      harness.reopenCb?.();
+      await flushMacrotask();
+    });
+    expect(harness.attachTab).not.toHaveBeenCalled();
+    await act(async () => {
+      detach.resolve();
+      await flushMacrotask();
+    });
+    expect(harness.attachTab).toHaveBeenCalledTimes(1);
+    expect(harness.attachTab).toHaveBeenCalledWith(
+      "kernel-1", expect.anything(), -1,
+      docker ? undefined : { seq: 4 * chunk.length, epoch: "e1" },
+      docker ? undefined : "session-1",
+    );
+  });
+
+  it("does not reattach a closed view after its backpressure detach completes", async () => {
+    const detach = deferred<void>();
+    harness.detach.mockReturnValueOnce(detach.promise);
+    await show({ containerId: "container-1" });
+    await attachOk();
+    act(() => harness.channel?.onBytes?.(new Uint8Array(4 << 20).fill(0x61)));
+    act(() => term().drainWrites());
+    mounted?.unmount();
+    mounted = undefined;
+    await act(async () => { detach.resolve(); await flushMacrotask(); });
+    expect(harness.attachTab).not.toHaveBeenCalled();
+  });
+
+  it("recovers a detached subscription even when the detach response is lost", async () => {
+    harness.detach.mockRejectedValueOnce(new Error("response lost"));
+    await show({ containerId: "container-1" });
+    await attachOk();
+    act(() => harness.channel?.onBytes?.(new Uint8Array(4 << 20).fill(0x61)));
+    act(() => term().drainWrites());
+    await act(async () => { await flushMacrotask(); });
+    expect(harness.attachTab).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves another drain while a backpressure reattach is still replaying", async () => {
+    const attach = deferred<Record<string, unknown>>();
+    harness.attachTab.mockReturnValueOnce(attach.promise);
+    await show({ containerId: "container-1" });
+    await attachOk();
+    const chunk = new Uint8Array(4 << 20).fill(0x61);
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => term().drainWrites());
+    await act(async () => { await flushMacrotask(); });
+    expect(harness.attachTab).toHaveBeenCalledTimes(1);
+    act(() => harness.channel?.onBytes?.(chunk));
+    act(() => term().drainWrites());
+    await act(async () => { await flushMacrotask(); });
+    expect(harness.attachTab).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      attach.resolve({ tabId: "kernel-1", cols: 80, rows: 30, controller: "me", subscribers: 1, viewers: 1, exited: false, attachmentId: 12 });
+      await flushMacrotask();
+    });
+    expect(harness.attachTab).toHaveBeenCalledTimes(2);
   });
 
   it("normal attach: every stream ACK carries the response's attachment incarnation", async () => {

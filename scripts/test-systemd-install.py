@@ -1486,6 +1486,36 @@ def test_relative_data_dir_resolved_against_working_dir() -> None:
         assert read(data_key) == "relative-custom-wd-key\n"
 
 
+def test_upgrade_preserves_relative_service_paths() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        stubs = make_stubs(base)
+        root = base / "root"
+        seed_first_install(base, stubs, root)
+        for name, unit in zip(("nexterm", "onlyserver"), UNITS):
+            (root / f"etc/systemd/system/{unit}").write_text(
+                read(root / f"etc/systemd/system/{unit}").replace(
+                    "WorkingDirectory=/var/lib/nexterm", "WorkingDirectory=/srv/old-wd",
+                ),
+            )
+            (root / f"etc/nexterm/{name}.env").write_text(
+                "NEXTERM_DB=postgres\nNEXTERM_DATA_DIR=/var/lib/nexterm\n"
+                "NEXTERM_WEB_ROOT=web assets\n"
+                "NEXTERM_DB_PASSWORD_FILE=secrets/../db-password\n"
+                "NEXTERM_MASTER_KEY_FILE=/etc/nexterm/master.key\n",
+            )
+        payload = make_payload(base, "v2")
+        failed = run_install(payload, root, stubs, base, fail_at="masterkey")
+        assert failed.returncode != 0
+        result = run_install(payload, root, stubs, base)
+        assert result.returncode == 0, result.stderr
+        for name, unit in zip(("nexterm", "onlyserver"), UNITS):
+            values = env_values(root / f"etc/nexterm/{name}.env")
+            assert values["NEXTERM_WEB_ROOT"] == "/srv/old-wd/web assets", values
+            assert values["NEXTERM_DB_PASSWORD_FILE"] == "/srv/old-wd/db-password", values
+            assert "WorkingDirectory=/var/lib/nexterm" in read(root / f"etc/systemd/system/{unit}")
+
+
 def test_legacy_c_style_escapes() -> None:
     legacy_escaped = """[Unit]
 Description=NexTerm server (legacy C-style escapes)
@@ -3282,6 +3312,7 @@ def main() -> int:
         test_legacy_quoted_paths_tokenization,
         test_missing_and_empty_data_dir_preserve_fallback,
         test_relative_data_dir_resolved_against_working_dir,
+        test_upgrade_preserves_relative_service_paths,
         test_legacy_c_style_escapes,
         test_legacy_duplicate_flags_last_value_wins,
         test_path_normalization_and_containment,

@@ -103,7 +103,7 @@ function logScrollElement(view: MountedView): HTMLElement {
 }
 
 function renderedRows(view: MountedView): HTMLElement[] {
-  return [...view.container.querySelectorAll<HTMLElement>('[role="log"] > div')];
+  return [...view.container.querySelectorAll<HTMLElement>('[role="log"] > div > div')];
 }
 
 function rowIndex(row: HTMLElement): number {

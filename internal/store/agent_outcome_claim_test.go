@@ -86,6 +86,15 @@ func TestAgentOutcomeClaimAttemptDatabase(t *testing.T) {
 		t.Fatalf("claim after completion = %t err=%v", won, err)
 	}
 	if err := db.AgentOutcomeCompleteAttempt(ctxA, "op-family-1", store.AgentOutcomeRow{
+		OperationID: "op-family-1:attempt-1", Kind: "terminal_create", State: store.AgentOutcomeStateSucceeded,
+		ResultJSON: `{"tab_id":"tab-new"}`,
+	}); err != nil {
+		t.Fatalf("replay completed attempt: %v", err)
+	}
+	if won, err := db.AgentOutcomeClaimAttempt(ctxA, "op-family-1", "terminal_create"); err != nil || won {
+		t.Fatalf("replay released the next attempt's claim: won=%t err=%v", won, err)
+	}
+	if err := db.AgentOutcomeCompleteAttempt(ctxA, "op-family-1", store.AgentOutcomeRow{
 		OperationID: "op-family-1:attempt-2", Kind: "terminal_create", State: store.AgentOutcomeStateFailed,
 		FailureStage: "connect", Error: "dial failed", ResidualSessionID: "session-2",
 	}); err != nil {

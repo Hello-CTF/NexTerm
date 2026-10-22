@@ -63,7 +63,7 @@ func (s *memoryStore) ListDueIdle(ctx context.Context, now time.Time, limit int)
 	return jobs, nil
 }
 
-func (s *memoryStore) ListRecoveryCandidates(ctx context.Context, now time.Time, limit int) ([]Job, error) {
+func (s *memoryStore) ListRecoveryCandidates(ctx context.Context, now time.Time, limit int, excludedIDs ...string) ([]Job, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -76,8 +76,12 @@ func (s *memoryStore) ListRecoveryCandidates(ctx context.Context, now time.Time,
 		return []Job{}, nil
 	}
 	jobs := make([]Job, 0, len(s.jobs))
+	excluded := make(map[string]bool, len(excludedIDs))
+	for _, id := range excludedIDs {
+		excluded[id] = true
+	}
 	for _, job := range s.jobs {
-		if !memoryOwnerMatches(ctx, job) || !job.Running() {
+		if excluded[job.ID] || !memoryOwnerMatches(ctx, job) || !job.Running() {
 			continue
 		}
 		leaseExpired := job.Lease.Owner == "" || job.Lease.ExpiresAt.IsZero() || !now.Before(job.Lease.ExpiresAt)
