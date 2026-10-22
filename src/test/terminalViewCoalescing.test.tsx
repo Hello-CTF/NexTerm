@@ -2507,6 +2507,15 @@ describe("XtermView stream wiring", () => {
       await flushMacrotask();
       await flushMacrotask();
     });
+    // The ordered anchor ends the old refusal episode; the attach response
+    // alone must never make later bytes jump across the refused gap.
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "e1",
+      streamSeq: 4 * (4 << 20),
+      controlBytes: 0,
+      attachmentId: 12,
+    });
     // Attachment 11's old recover response lands now: dropped, not learned.
     resolveRecover11?.({ flushedOffset: 20 << 20, episodeToken: 31 });
     await act(async () => {
