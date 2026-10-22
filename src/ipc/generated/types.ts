@@ -74,6 +74,26 @@ export type BatchProgress = {
   droppedEvents?: number;
 };
 
+export type CompareResult = {
+  rows: CompareRow[];
+  warnings?: string[];
+  remote: number;
+  userId: string;
+  compareToken: string;
+};
+
+export type CompareRow = {
+  id: string;
+  kind: string;
+  name: string;
+  state: string;
+  updatedAtLocal?: number;
+  updatedAtRemote?: number;
+  remoteSeq?: number;
+  remoteBlobHash?: string;
+  localPayloadHash?: string;
+};
+
 export type ConfirmationRequiredDetail = {
   kind: string;
   batchId: string;
@@ -568,6 +588,30 @@ export type KillRequest = {
   productionConfirmation?: ProductionConfirmation | null;
 };
 
+export type Link = {
+  url: string;
+  username: string;
+  insecure: boolean;
+  hasPassword: boolean;
+  verifiedAt: number;
+  lastError: string;
+};
+
+export type LinkMFARequest = {
+  code: string;
+};
+
+export type LinkResetPasswordRequest = {
+  newPassword: string;
+};
+
+export type LinkResult = Link & {
+  connect: string;
+  mfaTicket?: string;
+  mfaExpiresAt?: number;
+  recoveryKey?: string;
+};
+
 export type ListRequest = {
   batchId: string;
   sessionIds: string[];
@@ -617,6 +661,25 @@ export type PrepareRequest = {
   commands: RenderedCommand[];
 };
 
+export type PreviewShareActiveRequest = {
+  tabId: string;
+};
+
+export type PreviewShareActiveResult = {
+  sessionId?: string;
+};
+
+export type PreviewShareCreateRequest = {
+  tabId: string;
+  ttlMs: number;
+};
+
+export type PreviewShareCreateResult = {
+  token: string;
+  url: string;
+  sessionId: string;
+};
+
 export type Process = {
   pid: number;
   user: string;
@@ -658,19 +721,254 @@ export type ProductionSettingsUpdateRequest = {
   aiTerminalConnectProductionOptIn?: boolean | null;
 };
 
+export type RemoteAccountDevice = {
+  id: string;
+  name: string;
+  kind: string;
+  created_at: number;
+  last_seen_at: number;
+  revoked_at: number;
+};
+
+export type RemoteAccountDevices = {
+  devices: RemoteAccountDevice[];
+};
+
+export type RemoteAccountMe = {
+  user: RemoteAccountUser;
+  mfa_required: boolean;
+};
+
+export type RemoteAccountUser = {
+  id: string;
+  username: string;
+  display_name: string;
+  role: string;
+  state: string;
+  must_change_password: boolean;
+  mfa_enabled: boolean;
+  created_at: number;
+  updated_at: number;
+  last_login_at: number;
+};
+
+export type RemoteAccountUserResult = {
+  user: RemoteAccountUser;
+};
+
+export type RemoteAccountUsers = {
+  users: RemoteAccountUser[];
+};
+
+export type RemoteAdminCreateUserRequest = {
+  username: string;
+  password: string;
+  displayName: string;
+};
+
+export type RemoteAdminSetStateRequest = {
+  userId: string;
+  state: string;
+};
+
+export type RemoteAutostartRequest = {
+  deviceId: string;
+  desired: boolean;
+};
+
+export type RemoteAutostartResult = {
+  ok: boolean;
+  desired_autostart: boolean;
+};
+
+export type RemoteBaseURLEntry = {
+  url: string;
+  insecure?: boolean;
+};
+
+export type RemoteBaseURLs = {
+  base_urls: RemoteBaseURLEntry[];
+};
+
+export type RemoteBaseURLsPutRequest = {
+  entries: RemoteBaseURLEntry[];
+};
+
+export type RemoteChangePasswordRequest = {
+  oldPassword: string;
+  newPassword: string;
+};
+
+export type RemoteDeviceRequest = {
+  deviceId: string;
+};
+
+export type RemoteEnrollCode = {
+  code: string;
+  expires_at: number;
+};
+
+export type RemoteEnrollCodeRequest = {
+  ttlMs: number;
+  userId?: string;
+};
+
+export type RemoteFleetAgent = {
+  platform: string;
+  app_version: string;
+  desired_autostart: boolean;
+  terminal_enabled: boolean;
+  current_url: string;
+  service_state: RemoteFleetServiceState;
+  last_seen_at: number;
+  state_digest?: string;
+};
+
+export type RemoteFleetDevice = {
+  id: string;
+  name: string;
+  kind: string;
+  created_at: number;
+  last_seen_at: number;
+  revoked_at: number;
+  owner?: RemoteFleetOwner | null;
+  agent?: RemoteFleetAgent | null;
+};
+
+export type RemoteFleetDevices = {
+  devices: RemoteFleetDevice[];
+};
+
+export type RemoteFleetOwner = {
+  id: string;
+  username: string;
+};
+
+export type RemoteFleetServiceState = {
+  installed: boolean;
+  enabled: boolean;
+  active: boolean;
+  last_reconcile_at?: number;
+  last_error?: string;
+};
+
+export type RemoteHostShare = {
+  id: string;
+  owner_id: string;
+  owner_username: string;
+  device_id: string;
+  recipient_id: string;
+  recipient_username: string;
+  permission: string;
+  created_at: number;
+  expires_at: number;
+  revoked_at?: number;
+};
+
 export type RemoteHostShareIdentity = {
   serverUrl: string;
   userId: string;
   generation: string;
 };
 
+export type RemoteHostShareInput = {
+  deviceId: string;
+  recipientUsername: string;
+  write: boolean;
+  ttlMs: number;
+};
+
+export type RemoteHostShares = {
+  shares: RemoteHostShare[];
+};
+
+export type RemoteIDRequest = {
+  id: string;
+};
+
+export type RemoteMetricsRequest = {
+  deviceId: string;
+  sinceMs: number;
+};
+
+export type RemoteMetricsSample = {
+  ts: number;
+  cpu_pct: number;
+  mem_used: number;
+  mem_total: number;
+  disk_used: number;
+  disk_total: number;
+  uptime_s: number;
+};
+
+export type RemoteMetricsSamples = {
+  samples: RemoteMetricsSample[];
+  latest?: RemoteMetricsSample | null;
+  windowStart?: number;
+  windowEnd?: number;
+  sampleCount?: number;
+  downsampled?: boolean;
+  seriesError?: string;
+  sampleIntervalMs?: number;
+};
+
 export type RemoteOK = {
   ok: boolean;
+};
+
+export type RemotePasswordChangeResult = {
+  ok: boolean;
+  recoveryKey?: string;
+};
+
+export type RemotePreviewLink = {
+  id: string;
+  owner_id: string;
+  session_id: string;
+  created_at: number;
+  expires_at: number;
+  revoked_at?: number;
+  last_accessed_at?: number;
+};
+
+export type RemotePreviewLinks = {
+  links: RemotePreviewLink[];
+};
+
+export type RemoteShareLink = {
+  id: string;
+  owner_id: string;
+  device_id: string;
+  session_id: string;
+  permission: string;
+  created_at: number;
+  expires_at: number;
+  revoked_at?: number;
+  last_accessed_at?: number;
+};
+
+export type RemoteShareLinks = {
+  links: RemoteShareLink[];
 };
 
 export type RenderedCommand = {
   sessionId: string;
   command: string;
+};
+
+export type RepairUndecryptableRequest = {
+  id: string;
+  action: string;
+  userId: string;
+  compareToken: string;
+  remoteSeq: number;
+  remoteBlobHash: string;
+  localKind?: string;
+  localPayloadHash?: string;
+};
+
+export type RepairUndecryptableResult = {
+  repaired: boolean;
 };
 
 export type RosterAttachmentDTO = {
