@@ -1064,6 +1064,117 @@ void generatedOutputs;
     expect(diagnostics, formatted(diagnostics)).toEqual([]);
   }, COMPILE_BUDGET_MS);
 
+  it("types the forward runtime vertical without widening risk, status or facade compatibility", () => {
+    const probe = resolve("src/test/__ipc_forward_runtime_contract_probe.ts");
+    const source = `
+import { call, forwardApi, type ForwardSpec } from "../ipc/commands";
+import type { IPCInput, IPCOutput } from "../ipc/generated/manifest";
+import type { ForwardEnvDto, ForwardSpecDto } from "../ipc/types";
+
+type Equal<Left, Right> =
+  (<T>() => T extends Left ? 1 : 2) extends
+  (<T>() => T extends Right ? 1 : 2) ? true : false;
+type Assert<Value extends true> = Value;
+type ContractChecks = [
+  Assert<Equal<IPCOutput<"forward_remove">, unknown>>,
+  Assert<Equal<IPCOutput<"forward_env">["listenHost"], string>>,
+  Assert<Equal<IPCOutput<"forward_env">["reason"], string | undefined>>,
+  Assert<Equal<IPCOutput<"forward_create">["status"], string>>,
+  Assert<Equal<IPCOutput<"forward_create">["listenHost"], string>>,
+  Assert<Equal<IPCOutput<"forward_create">["targetHost"], string | null>>,
+  Assert<Equal<IPCOutput<"forward_create">["targetPort"], number | null>>,
+  Assert<Equal<IPCOutput<"forward_create">["hostId"], string | undefined>>,
+  Assert<Equal<IPCOutput<"forward_create">["error"], string | undefined>>,
+  Assert<Equal<IPCInput<"forward_retry">["sessionId"], string | undefined>>,
+  Assert<Equal<IPCInput<"forward_create_socks">["acknowledgeRisk"], boolean | undefined>>,
+  Assert<Equal<IPCInput<"forward_create_remote">["acknowledgeRisk"], boolean | undefined>>,
+  Assert<Equal<IPCInput<"forward_create_remote">["bindHost"], string>>,
+  Assert<Equal<IPCInput<"forward_create_remote">["bindPort"], number>>,
+  Assert<Equal<IPCInput<"forward_create_remote">["targetHost"], string>>,
+  Assert<Equal<IPCInput<"forward_create_remote">["targetPort"], number>>,
+  Assert<Equal<ForwardSpec["status"], "active" | "reconnecting" | "failed">>,
+  Assert<Equal<ForwardSpec["listenHost"], string | undefined>>,
+  Assert<Equal<ForwardSpecDto["targetHost"], string | null>>,
+  Assert<Equal<ForwardSpecDto["targetPort"], number | null>>,
+];
+const contractChecks: ContractChecks = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
+void contractChecks;
+
+const env: Promise<ForwardEnvDto> = forwardApi.env();
+const created: Promise<ForwardSpec> = forwardApi.create("session-1", 13306, "db.internal", 5432);
+const socks: Promise<ForwardSpec> = forwardApi.createSocks("session-1", 1080, false);
+const remote: Promise<ForwardSpec> = forwardApi.createRemote("session-1", "127.0.0.1", 18080, "127.0.0.1", 8080, false);
+const listed: Promise<ForwardSpec[]> = forwardApi.list();
+const retried: Promise<ForwardSpec> = forwardApi.retry("forward-1", "");
+const removed: Promise<void> = forwardApi.remove("forward-1");
+void [env, created, socks, remote, listed, retried, removed];
+void forwardApi.createSocks("session-1", 1080);
+void forwardApi.createRemote("session-1", "127.0.0.1", 18080, "127.0.0.1", 8080);
+void forwardApi.retry("forward-1");
+void forwardApi.retry("forward-1", undefined);
+
+void call("forward_env");
+void call("forward_create", { sessionId: "session-1", listenPort: 13306, targetHost: "db.internal", targetPort: 5432 });
+void call("forward_create_socks", { sessionId: "session-1", listenPort: 1080 });
+void call("forward_create_socks", { sessionId: "session-1", listenPort: 1080, acknowledgeRisk: false });
+void call("forward_create_remote", { sessionId: "session-1", bindHost: "127.0.0.1", bindPort: 18080, targetHost: "127.0.0.1", targetPort: 8080 });
+void call("forward_create_remote", { sessionId: "session-1", bindHost: "0.0.0.0", bindPort: 18080, targetHost: "127.0.0.1", targetPort: 8080, acknowledgeRisk: true });
+void call("forward_list");
+void call("forward_retry", { id: "forward-1" });
+void call("forward_retry", { id: "forward-1", sessionId: "" });
+void call("forward_remove", { id: "forward-1" });
+
+// @ts-expect-error typed forward commands reject the legacy generic output escape
+void call<ForwardSpec>("forward_create", { sessionId: "session-1", listenPort: 13306, targetHost: "db.internal", targetPort: 5432 });
+// @ts-expect-error local creation does not acquire a risk acknowledgement
+void call("forward_create", { sessionId: "session-1", listenPort: 13306, targetHost: "db.internal", targetPort: 5432, acknowledgeRisk: true });
+// @ts-expect-error runtime creation does not reopen saved-rule autoStart
+void call("forward_create", { sessionId: "session-1", listenPort: 13306, targetHost: "db.internal", targetPort: 5432, autoStart: true });
+// @ts-expect-error remote bindHost remains required despite the backend default
+void call("forward_create_remote", { sessionId: "session-1", bindPort: 18080, targetHost: "127.0.0.1", targetPort: 8080 });
+// @ts-expect-error remote target fields remain required
+void call("forward_create_remote", { sessionId: "session-1", bindHost: "127.0.0.1", bindPort: 18080, targetHost: "127.0.0.1" });
+// @ts-expect-error risk acknowledgement remains boolean
+void call("forward_create_socks", { sessionId: "session-1", listenPort: 1080, acknowledgeRisk: "yes" });
+// @ts-expect-error retry session identity remains a string
+void call("forward_retry", { id: "forward-1", sessionId: 42 });
+// @ts-expect-error forward runtime commands remain flat
+void call("forward_retry", { args: { id: "forward-1" } });
+// @ts-expect-error no-argument list rejects owner or rule controls
+void call("forward_list", { autoStart: true });
+// @ts-expect-error the public runtime facade does not acquire saved-rule stopped status
+const stopped: ForwardSpec["status"] = "stopped";
+void stopped;
+// @ts-expect-error the facade keeps all remote bind and target arguments required
+void forwardApi.createRemote("session-1", "127.0.0.1", 18080, "127.0.0.1");
+
+async function generatedOutputs() {
+  const generated = await call("forward_create", { sessionId: "session-1", listenPort: 13306, targetHost: "db.internal", targetPort: 5432 });
+  const generatedStatus: string = generated.status;
+  const generatedListenHost: string = generated.listenHost;
+  const generatedTargetHost: string | null = generated.targetHost;
+  const generatedTargetPort: number | null = generated.targetPort;
+  const generatedHostId: string | undefined = generated.hostId;
+  const generatedError: string | undefined = generated.error;
+  // @ts-expect-error exposure risk remains needs_confirm error detail, not a normal output field
+  const risk = generated.risk;
+  const generatedEnv = await call("forward_env");
+  const generatedReason: string | undefined = generatedEnv.reason;
+  const facadeEnv = await forwardApi.env();
+  // @ts-expect-error the existing public env DTO does not expose the backend reason field
+  const facadeReason = facadeEnv.reason;
+  const facade = await forwardApi.retry("forward-1");
+  const facadeStatus: "active" | "reconnecting" | "failed" = facade.status;
+  const facadeListenHost: string | undefined = facade.listenHost;
+  const removeResult: unknown = await call("forward_remove", { id: "forward-1" });
+  void [generatedStatus, generatedListenHost, generatedTargetHost, generatedTargetPort, generatedHostId, generatedError, risk, generatedReason, facadeReason, facadeStatus, facadeListenHost, removeResult];
+}
+void generatedOutputs;
+`;
+    const diagnostics = compile([probe], { [probe]: source });
+    expect(diagnostics, formatted(diagnostics)).toEqual([]);
+  }, COMPILE_BUDGET_MS);
+
   it("types the consumer-priority session terminal vertical without narrowing legacy fallbacks", () => {
     const probe = resolve("src/test/__ipc_session_terminal_contract_probe.ts");
     const source = `

@@ -783,6 +783,101 @@ describe("desktop platform, update and biometric facade IPC contracts", () => {
   });
 });
 
+describe("desktop forward runtime facade IPC contracts", () => {
+  function serializedRequestAt(index: number): Record<string, unknown> {
+    return JSON.parse(JSON.stringify(requestAt(index))) as Record<string, unknown>;
+  }
+
+  it("preserves all seven flat envelopes and the runtime null remove result", async () => {
+    const environment = { available: true, platform: "other", listenHost: "127.0.0.1" };
+    const spec = {
+      id: "forward-1",
+      sessionId: "session-1",
+      hostId: "asset-1",
+      status: "active",
+      listenHost: "127.0.0.1",
+      listenPort: 13306,
+      targetHost: "db.internal",
+      targetPort: 5432,
+      kind: "local",
+      createdAt: 1,
+    };
+    const results: Record<string, unknown> = {
+      forward_env: environment,
+      forward_create: spec,
+      forward_create_socks: spec,
+      forward_create_remote: spec,
+      forward_list: [spec],
+      forward_retry: spec,
+    };
+    runtime.Call.ByName.mockImplementation(async (_name, request) => ({
+      ok: true,
+      data: results[(request as { cmd: string }).cmd] ?? null,
+    }));
+    const { forwardApi } = await import("../ipc/commands");
+
+    await expect(forwardApi.env()).resolves.toEqual(environment);
+    await expect(forwardApi.create("session-1", 13306, "db.internal", 5432)).resolves.toEqual(spec);
+    await expect(forwardApi.createSocks("session-1", 1080, true)).resolves.toEqual(spec);
+    await expect(forwardApi.createRemote("session-1", "0.0.0.0", 18080, "127.0.0.1", 8080, true)).resolves.toEqual(spec);
+    await expect(forwardApi.list()).resolves.toEqual([spec]);
+    await expect(forwardApi.retry("forward-1", "session-1")).resolves.toEqual(spec);
+    await expect(forwardApi.remove("forward-1")).resolves.toBeNull();
+
+    expect(serializedRequestAt(0)).toEqual({ cmd: "forward_env", args: null });
+    expect(serializedRequestAt(1)).toEqual({
+      cmd: "forward_create",
+      args: { sessionId: "session-1", listenPort: 13306, targetHost: "db.internal", targetPort: 5432 },
+    });
+    expect(serializedRequestAt(2)).toEqual({
+      cmd: "forward_create_socks",
+      args: { sessionId: "session-1", listenPort: 1080, acknowledgeRisk: true },
+    });
+    expect(serializedRequestAt(3)).toEqual({
+      cmd: "forward_create_remote",
+      args: { sessionId: "session-1", bindHost: "0.0.0.0", bindPort: 18080, targetHost: "127.0.0.1", targetPort: 8080, acknowledgeRisk: true },
+    });
+    expect(serializedRequestAt(4)).toEqual({ cmd: "forward_list", args: null });
+    expect(serializedRequestAt(5)).toEqual({ cmd: "forward_retry", args: { id: "forward-1", sessionId: "session-1" } });
+    expect(serializedRequestAt(6)).toEqual({ cmd: "forward_remove", args: { id: "forward-1" } });
+  });
+
+  it("omits unacknowledged risk and unset or empty retry session identity", async () => {
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: null });
+    const { forwardApi } = await import("../ipc/commands");
+
+    await forwardApi.create("session-1", 13306, "db.internal", 5432);
+    await forwardApi.createSocks("session-1", 1080);
+    await forwardApi.createSocks("session-1", 1080, false);
+    await forwardApi.createRemote("session-1", "127.0.0.1", 18080, "127.0.0.1", 8080);
+    await forwardApi.createRemote("session-1", "127.0.0.1", 18080, "127.0.0.1", 8080, false);
+    await forwardApi.retry("forward-1");
+    await forwardApi.retry("forward-1", undefined);
+    await forwardApi.retry("forward-1", "");
+
+    expect(serializedRequestAt(0)).toEqual({
+      cmd: "forward_create",
+      args: { sessionId: "session-1", listenPort: 13306, targetHost: "db.internal", targetPort: 5432 },
+    });
+    expect(serializedRequestAt(1)).toEqual({ cmd: "forward_create_socks", args: { sessionId: "session-1", listenPort: 1080 } });
+    expect(serializedRequestAt(2)).toEqual({ cmd: "forward_create_socks", args: { sessionId: "session-1", listenPort: 1080 } });
+    expect(serializedRequestAt(3)).toEqual({
+      cmd: "forward_create_remote",
+      args: { sessionId: "session-1", bindHost: "127.0.0.1", bindPort: 18080, targetHost: "127.0.0.1", targetPort: 8080 },
+    });
+    expect(serializedRequestAt(4)).toEqual({
+      cmd: "forward_create_remote",
+      args: { sessionId: "session-1", bindHost: "127.0.0.1", bindPort: 18080, targetHost: "127.0.0.1", targetPort: 8080 },
+    });
+    for (const index of [0, 1, 2, 3, 4]) {
+      expect(serializedRequestAt(index).args).not.toHaveProperty("acknowledgeRisk");
+    }
+    for (const index of [5, 6, 7]) {
+      expect(serializedRequestAt(index)).toEqual({ cmd: "forward_retry", args: { id: "forward-1" } });
+    }
+  });
+});
+
 describe("web command behavior compatibility", () => {
   function useWebTransport() {
     vi.stubGlobal("window", {

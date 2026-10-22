@@ -512,6 +512,28 @@ export type ConversationRecoverySummary = {
   truncated: boolean;
 };
 
+export type CreateLocalArgs = {
+  sessionId: string;
+  listenPort: number;
+  targetHost: string;
+  targetPort: number;
+};
+
+export type CreateRemoteArgs = {
+  sessionId: string;
+  bindHost: string;
+  bindPort: number;
+  targetHost: string;
+  targetPort: number;
+  acknowledgeRisk?: boolean;
+};
+
+export type CreateSocksArgs = {
+  sessionId: string;
+  listenPort: number;
+  acknowledgeRisk?: boolean;
+};
+
 export type CredentialDTO = {
   id: string;
   name: string;
@@ -734,6 +756,13 @@ export type Entry = {
   digest: string;
   updatedAt: number;
   override?: Override | null;
+};
+
+export type Environment = {
+  available: boolean;
+  platform: string;
+  listenHost: string;
+  reason?: string;
 };
 
 export type ExecBatch = {
@@ -1857,6 +1886,10 @@ export type RemoteShareLinks = {
   links: RemoteShareLink[];
 };
 
+export type RemoveRequest = {
+  id: string;
+};
+
 export type RenameTerminalRequest = {
   tabId: string;
   title: string;
@@ -1880,6 +1913,11 @@ export type RepairUndecryptableRequest = {
 
 export type RepairUndecryptableResult = {
   repaired: boolean;
+};
+
+export type RetryRequest = {
+  id: string;
+  sessionId?: string;
 };
 
 export type RevealedCredentialDTO = {
@@ -2043,6 +2081,20 @@ export type SkippedNewerEntry = {
   localRevision: number;
   remoteRevision: number;
   equalRevision: boolean;
+};
+
+export type Spec = {
+  id: string;
+  sessionId: string;
+  hostId?: string;
+  status: string;
+  error?: string;
+  listenHost: string;
+  listenPort: number;
+  targetHost: string | null;
+  targetPort: number | null;
+  kind: string;
+  createdAt: number;
 };
 
 export type StartRequest = {
