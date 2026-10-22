@@ -39,14 +39,13 @@ import {
   unknownFileEditorRenameConflict,
 } from "./editorGuards";
 
-import { StreamLanguage } from "@codemirror/language";
-import { shell } from "@codemirror/legacy-modes/mode/shell";
-import { nginx } from "@codemirror/legacy-modes/mode/nginx";
-import { yaml } from "@codemirror/legacy-modes/mode/yaml";
-import { properties } from "@codemirror/legacy-modes/mode/properties";
-import { javascript } from "@codemirror/legacy-modes/mode/javascript";
-import { python } from "@codemirror/legacy-modes/mode/python";
-import { sql } from "@codemirror/lang-sql";
+import {
+  FILE_LANGUAGE_OPTIONS,
+  detectFileLanguage,
+  fileLanguageExtension,
+  fileLanguageLabel,
+  type FileLanguageChoice,
+} from "./fileLanguages";
 import { describeError } from "../../ui/errorText";
 
 export interface FileEditorSaveChange {
@@ -85,21 +84,6 @@ export async function loadFileEditorSaveChange({
   return { sessionId, path, previous: currentText, baseContentBase64: current.contentBase64, content };
 }
 
-function modeFor(path: string) {
-  const lower = path.toLowerCase();
-  if (lower.endsWith(".py")) return StreamLanguage.define(python);
-  if (lower.endsWith(".sh") || lower.endsWith(".bash") || lower.endsWith(".bashrc") || lower.endsWith(".zshrc") || lower.endsWith(".profile"))
-    return StreamLanguage.define(shell);
-  if (lower.includes("nginx")) return StreamLanguage.define(nginx);
-  if (lower.endsWith(".yml") || lower.endsWith(".yaml")) return StreamLanguage.define(yaml);
-  if (lower.endsWith(".ini") || lower.endsWith(".conf") || lower.endsWith(".env"))
-    return StreamLanguage.define(properties);
-  if (lower.endsWith(".js") || lower.endsWith(".mjs") || lower.endsWith(".json") || lower.endsWith(".ts"))
-    return StreamLanguage.define(javascript);
-  if (lower.endsWith(".sql")) return sql();
-  return undefined;
-}
-
 const ENC_LABEL: Record<EncChoice, string> = {
   auto: "自动",
   "utf-8": "UTF-8",
@@ -122,6 +106,15 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
   const [enc, setEnc] = useState<EncChoice>("auto");
   const [reloadEnc, setReloadEnc] = useState<EncChoice>("auto");
   const [reloadKey, setReloadKey] = useState(0);
+  const [languageSelection, setLanguageSelection] = useState<{
+    sessionId: string;
+    path: string;
+    choice: FileLanguageChoice;
+  }>({ sessionId, path, choice: "auto" });
+  const languageChoice =
+    languageSelection.sessionId === sessionId && languageSelection.path === path
+      ? languageSelection.choice
+      : "auto";
   const viewRef = useRef<EditorView | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const saveRef = useRef<() => void>(() => undefined);
@@ -134,11 +127,13 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
   const loadLocksRef = useRef(new Map<string, { token: number; users: number }>());
   const onCloseRef = useRef(onClose);
   const caseInsensitiveRef = useRef(caseInsensitive);
+  const languageChoiceRef = useRef(languageChoice);
   const language = useRef(new Compartment()).current;
   locatorRef.current = { sessionId, path };
   dirtyRef.current = dirty;
   onCloseRef.current = onClose;
   caseInsensitiveRef.current = caseInsensitive;
+  languageChoiceRef.current = languageChoice;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -146,6 +141,15 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    setLanguageSelection((current) => {
+      if (current.sessionId === sessionId && current.path === path && current.choice === "auto") {
+        return current;
+      }
+      return { sessionId, path, choice: "auto" };
+    });
+  }, [sessionId, path]);
 
   useEffect(() => {
     setFileEditorDirty(sessionId, path, dirty, caseInsensitive);
@@ -248,14 +252,13 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         if (hostRef.current) {
           viewRef.current?.destroy();
           viewRef.current = null;
-          const mode = modeFor(locatorRef.current.path);
           viewRef.current = new EditorView({
             state: EditorState.create({
               doc: text,
               extensions: [
                 basicSetup,
                 search({ top: true }),
-                language.of(mode ? [mode] : []),
+                language.of(fileLanguageExtension(locatorRef.current.path, languageChoiceRef.current)),
                 keymap.of([indentWithTab]),
                 nxHighlight,
                 EditorView.updateListener.of((u) => {
@@ -300,9 +303,8 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    const mode = modeFor(path);
-    view.dispatch({ effects: language.reconfigure(mode ? [mode] : []) });
-  }, [path, language]);
+    view.dispatch({ effects: language.reconfigure(fileLanguageExtension(path, languageChoice)) });
+  }, [path, languageChoice, language]);
 
   const save = async () => {
     const view = viewRef.current;
@@ -500,6 +502,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
   };
 
   const { Icon: FileIcon, tone } = fileVisual(path, "file");
+  const autoLanguage = detectFileLanguage(path);
   const steps = ZOOM_STEPS.length - 1;
   const fontPx = ZOOM_STEPS[zoom] ?? 13;
 
@@ -592,6 +595,29 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
             ))}
           </select>
         </label>
+        <select
+          className="nx-select nx-select-sm w-[124px] shrink-0"
+          value={languageChoice}
+          aria-label="语法高亮"
+          title="语法高亮（手动选择仅用于当前打开的文件）"
+          onChange={(event) =>
+            setLanguageSelection({
+              sessionId,
+              path,
+              choice: event.target.value as FileLanguageChoice,
+            })
+          }
+        >
+          <option value="auto">
+            {autoLanguage ? `自动（${fileLanguageLabel(autoLanguage)}）` : "自动"}
+          </option>
+          <option value="plain">纯文本</option>
+          {FILE_LANGUAGE_OPTIONS.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.label}
+            </option>
+          ))}
+        </select>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="重新读取（丢弃未保存改动）"
