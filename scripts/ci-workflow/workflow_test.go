@@ -220,9 +220,9 @@ func TestQualityStaysStaticAndRequiredUnitOwnsGoTests(t *testing.T) {
 func TestRaceDefaultsToFullUncachedRunAndVerifyDoesNotNarrowIt(t *testing.T) {
 	tasks := loadTaskfile(t)
 	race := tasks.Tasks["test:race"]
-	const selectedRace = `go test -race -count=1 {{.RACE_PACKAGES | default "./..."}}`
+	const selectedRace = `go test -race -count=1 -p={{.RACE_PACKAGE_PARALLELISM | default "4"}} {{.RACE_PACKAGES | default "./..."}}`
 	if len(race.Commands) != 1 || normalize(race.Commands[0].Run) != selectedRace {
-		t.Fatalf("test:race must select RACE_PACKAGES and default to an uncached full run: %#v", race.Commands)
+		t.Fatalf("test:race must select packages and bounded parallelism for an uncached full run: %#v", race.Commands)
 	}
 
 	raceCalls := 0
@@ -240,7 +240,11 @@ func TestRaceDefaultsToFullUncachedRunAndVerifyDoesNotNarrowIt(t *testing.T) {
 	}
 
 	ci := loadWorkflow(t, ".github/workflows/ci.yml")
-	requireRun(t, requireJob(t, ci, "race"), "go test -race -count=1 ./...")
+	ciRace := requireJob(t, ci, "race")
+	if got := ciRace.Env["RACE_PACKAGE_PARALLELISM"]; got != "4" {
+		t.Fatalf("CI race package parallelism = %q, want the evidenced default 4", got)
+	}
+	requireRun(t, ciRace, "go test -race -count=1 -p=${RACE_PACKAGE_PARALLELISM} ./...")
 }
 
 func TestLocalFrontendAndProductionReuseVerifiedResults(t *testing.T) {
