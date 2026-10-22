@@ -79,7 +79,7 @@ func userMessage(err error) string {
 	case errors.Is(err, ErrDisconnected), errors.Is(err, base.ErrDisconnected):
 		return "会话已断开，请重新连接"
 	case errors.Is(err, ErrDurableDisabled):
-		return "该 SSH 资产已设置为普通终端；要恢复旧持久终端，请在资产高级选项中改回自动模式"
+		return "该 SSH 资产已设置为普通终端，不能新建持久终端；已有持久终端可从后台会话恢复"
 	case errors.Is(err, ErrAmbiguousDurable):
 		return "多个已连接主机存在同一持久终端，请指定会话后重试"
 	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported), errors.Is(err, durable.ErrUnavailable):

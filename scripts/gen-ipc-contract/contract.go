@@ -129,6 +129,7 @@ var contractScopes = []scopeSpec{
 		"terminal_write",
 	}},
 	{name: "terminal-stream", commands: []string{"terminal_pause", "terminal_recover", "terminal_resume", "terminal_stream_ack"}},
+	{name: "helper", commands: []string{"terminal_helper_operation", "terminal_helper_offline"}},
 	{name: "memory-owner", deferred: true},
 	{name: "ai-owner", deferred: true},
 }

@@ -594,6 +594,34 @@ func TestSessionTerminalVerticalContracts(t *testing.T) {
 	}
 }
 
+func TestHelperOperationContracts(t *testing.T) {
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	registry := newTypeRegistry()
+	for _, name := range []string{"terminal_helper_operation", "terminal_helper_offline"} {
+		command, ok := commands[name]
+		if !ok {
+			t.Fatalf("helper command %q is missing", name)
+		}
+		if command.Scope != "helper" || command.Nested || command.Channel || command.Stream != "none" {
+			t.Fatalf("helper command %q metadata = %+v", name, command)
+		}
+		if command.Input == nil || command.Output == nil {
+			t.Fatalf("helper command %q must have real DTOs", name)
+		}
+		output, err := registry.ref(command.Output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if output.TS != "HelperOperationDTO" {
+			t.Fatalf("helper command %q output = %q", name, output.TS)
+		}
+	}
+	if rendered := registry.render(); !strings.Contains(rendered, "protocol?: number | null;") {
+		t.Fatalf("helper protocol evidence must remain optional and nullable:\n%s", rendered)
+	}
+}
+
 func TestCronAndLogTailVerticalContracts(t *testing.T) {
 	generated := generateForTest(t, nil)
 	commands := commandsByName(generated.commands)

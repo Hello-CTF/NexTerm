@@ -1203,6 +1203,56 @@ export type GrantRule = {
   updatedAt: number;
 };
 
+export type HelperOfflineDTO = {
+  fileName: string;
+  sha256: string;
+  protocol?: number | null;
+  compatibility: string;
+  trusted: boolean;
+};
+
+export type HelperOfflineRequest = {
+  sessionId: string;
+  path: string;
+  sha256?: string;
+  confirmed: boolean;
+};
+
+export type HelperOperationDTO = {
+  sessionId: string;
+  operationId?: string;
+  action: string;
+  accepted: boolean;
+  local: HelperVersionDTO;
+  running: HelperVersionDTO;
+  compatibility: string;
+  update?: HelperUpdateDTO | null;
+  offline?: HelperOfflineDTO | null;
+};
+
+export type HelperOperationRequest = {
+  sessionId: string;
+  operationId?: string;
+  action: string;
+  interruptActive?: boolean;
+};
+
+export type HelperUpdateDTO = {
+  status: string;
+  detail?: string;
+  updated: boolean;
+  interrupted: boolean;
+  rolledBack: boolean;
+};
+
+export type HelperVersionDTO = {
+  known: boolean;
+  release?: string;
+  commit?: string;
+  protocol?: number | null;
+  sha256?: string;
+};
+
 export type HostShareInputRequest = {
   streamId: string;
   data: string | number[];

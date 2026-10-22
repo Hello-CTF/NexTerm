@@ -4,6 +4,7 @@ import { CommandBlockPanel } from "./CommandBlockPanel";
 import { TerminalKeysBar } from "./TerminalKeysBar";
 import { Cwd } from "./Cwd";
 import { Daemon } from "./Daemon";
+import { HelperOperationView } from "./HelperOperationView";
 import { resolveWinrmMode } from "./terminalPolicy";
 import { splitAllowedForHeight } from "./workspaceLayout";
 import {
@@ -26,6 +27,7 @@ import {
   fsApi,
   assetApi,
   syncApi,
+  type HelperOperationResult,
 } from "../../ipc/commands";
 import type { BroadcastEnvironmentConfirmation, BroadcastProductionChallenge } from "../production/productionChallenge";
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
@@ -49,7 +51,6 @@ import {
 import type { TerminalStreamBacklog } from "./terminalStream";
 import { ask, askChoice, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
-import { formatBytes } from "../../ui/format";
 import { copyText, readText } from "../../ui/clipboard";
 import { hasActiveOverlay, isEditableTarget, isImeKeyEvent } from "../../ui/DialogHost";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
@@ -158,38 +159,6 @@ function applyBackendTabTitle(storeTabId: string, title: string): void {
   }
 }
 
-function helperStageText(stage: string): string {
-  switch (stage) {
-    case "discover":
-      return "检测远端环境";
-    case "probe":
-      return "查找已有持久终端助手";
-    case "cache":
-      return "检查助手缓存";
-    case "upload":
-      return "上传持久终端助手";
-    case "verify":
-      return "校验持久终端助手";
-    case "start":
-      return "启动持久终端助手";
-    case "ready":
-      return "持久终端助手已就绪";
-    case "failed":
-      return "持久终端助手启动失败";
-    default:
-      return stage || "准备持久终端";
-  }
-}
-
-function helperProgressPercent(progress: { percent: number; transferred: number; total: number }): number | null {
-  const raw = Number.isFinite(progress.percent) && progress.percent >= 0
-    ? progress.percent
-    : progress.total > 0
-      ? (progress.transferred / progress.total) * 100
-      : null;
-  return raw === null ? null : Math.min(100, Math.max(0, Math.round(raw)));
-}
-
 function canPlaceOverlayFocus(pane: HTMLElement | null): boolean {
   if (hasActiveOverlay()) return false;
   const active = document.activeElement;
@@ -199,6 +168,15 @@ function canPlaceOverlayFocus(pane: HTMLElement | null): boolean {
   const activePane = active.closest(".nx-pane");
   if (activePane && activePane !== pane) return false;
   return true;
+}
+
+function rollbackResultFromError(error: unknown): HelperOperationResult | null {
+  if (!error || typeof error !== "object") return null;
+  const detail = (error as { detail?: unknown }).detail;
+  if (!detail || typeof detail !== "object") return null;
+  const candidate = detail as Partial<HelperOperationResult>;
+  if (typeof candidate.sessionId !== "string" || candidate.update?.rolledBack !== true) return null;
+  return candidate as HelperOperationResult;
 }
 
 // Desktop read-only preview depends on a logged-in server account ("account sync" link): a shared singleton polls
@@ -289,6 +267,14 @@ export function TerminalPane({
   const [epoch, setEpoch] = useState(0);
   const [cwd, setCwd] = useState<string | null>(null);
   const [durable, setDurable] = useState(false);
+  const [forceRegular, setForceRegular] = useState(false);
+  const [ordinaryStarting, setOrdinaryStarting] = useState(false);
+  const [helperActionBusy, setHelperActionBusy] = useState(false);
+  const [rememberRegular, setRememberRegular] = useState(false);
+  const [helperPanelOpen, setHelperPanelOpen] = useState(false);
+  const [helperDetails, setHelperDetails] = useState<HelperOperationResult | null>(null);
+  const [helperPanelError, setHelperPanelError] = useState<string | null>(null);
+  const [offlinePath, setOfflinePath] = useState<string | null>(null);
   const [imagePaste, setImagePaste] = useState<{
     phase: "uploading" | "success" | "error";
     message: string;
@@ -338,6 +324,16 @@ export function TerminalPane({
   const staleConfig = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.staleConfig === true);
   const execTabAssetId = useUi((s) => s.workspaces.flatMap((w) => w.panes).flatMap((p) => p.tabs).find((tab) => tab.id === storeTabId)?.assetId);
   const execAttachedSessionRef = useRef(sessionId);
+  const helperDetailsSessionRef = useRef(sessionId);
+  helperDetailsSessionRef.current = sessionId;
+  const previousHelperSessionRef = useRef(sessionId);
+  const helperRequestGenerationRef = useRef(0);
+  const nextHelperRequestGeneration = () => {
+    helperRequestGenerationRef.current += 1;
+    return helperRequestGenerationRef.current;
+  };
+  const helperRequestIsCurrent = (generation: number, requestSessionId: string) =>
+    helperRequestGenerationRef.current === generation && helperDetailsSessionRef.current === requestSessionId;
   const execTargetAssetRef = useRef(execTabAssetId ?? sessionAssetId);
   if (execTargetAssetRef.current === undefined && sessionAssetId !== undefined) {
     execTargetAssetRef.current = sessionAssetId;
@@ -346,10 +342,8 @@ export function TerminalPane({
   const connectProgress = useUi((s) =>
     sessionAssetId ? s.connectProgress[sessionAssetId] : undefined,
   );
-  const helperProgress = useUi((s) => {
-    if (!sessionAssetId) return undefined;
-    return s.helperProgress[JSON.stringify([sessionId, sessionAssetId])];
-  });
+  const helperOperation = useUi((s) => s.helperOperations.operations[storeTabId]);
+  const helperRetryPending = useUi((s) => s.helperRetries[sessionId]?.tabId === storeTabId);
   const sessionName = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.name) ?? title;
   const recording = useUi((s) => (kernelTabId ? s.recordings[kernelTabId] : undefined));
   const workspaceId = useUi(
@@ -884,12 +878,10 @@ export function TerminalPane({
   useEffect(() => {
     const previous = previousSessionStatus.current;
     previousSessionStatus.current = sessionStatus;
-    if (previous === "connected" || sessionStatus !== "connected" || !attachDead || !resumeRef.current) return;
-    useUi.getState().updateTab(storeTabId, { dead: false });
-    setAttachDead(false);
+    if (previous === "connected" || sessionStatus !== "connected" || !attachDead || !resumeRef.current || forceRegular) return;
     setKernelTabId(null);
     setEpoch((value) => value + 1);
-  }, [sessionStatus, attachDead, storeTabId]);
+  }, [sessionStatus, attachDead, storeTabId, forceRegular]);
 
   const markExecInterrupted = useCallback(() => {
     if (!containerId) return;
@@ -929,13 +921,27 @@ export function TerminalPane({
         markExecInterrupted();
         return;
       }
-      if (code !== "not_found") return;
+      if (code !== "not_found") {
+        if (ordinaryStarting) {
+          setOrdinaryStarting(false);
+          pushToast("error", `新建普通终端失败：${code}；原持久终端未被接管或终止`);
+        }
+        return;
+      }
       const st = useUi.getState();
       const tab = st.workspaces
         .flatMap((w) => w.panes)
         .flatMap((p) => p.tabs)
         .find((t) => t.id === storeTabId);
       const session = st.sessions.find((x) => x.id === tab?.sessionId);
+      if (forceRegular) {
+        setOrdinaryStarting(false);
+        st.updateTab(storeTabId, { dead: true });
+        setKernelTabId(null);
+        setAttachDead(true);
+        pushToast("error", "新建普通终端失败：会话已不存在；原持久终端未被接管或终止");
+        return;
+      }
       if (!containerId && !effectiveWinrm && session?.kind !== "ssh" && session?.kind !== "device" && tab?.tabId !== undefined && session?.status === "connected") {
         resumeAttemptedRef.current = false;
         resumeRef.current = undefined;
@@ -946,10 +952,13 @@ export function TerminalPane({
         return;
       }
       st.updateTab(storeTabId, { dead: true });
+      if (session?.kind === "ssh" || session?.kind === "device") {
+        st.failHelperRestore(storeTabId, "原持久终端恢复失败；远端进程是否存活仍未知");
+      }
       setKernelTabId(null);
       setAttachDead(true);
     },
-    [storeTabId, containerId, effectiveWinrm, markExecInterrupted, pushToast],
+    [storeTabId, containerId, effectiveWinrm, markExecInterrupted, pushToast, forceRegular, ordinaryStarting],
   );
 
   const reconnectNow = useCallback(async () => {
@@ -980,11 +989,12 @@ export function TerminalPane({
         ? current?.tabId
         : resumeAttemptedRef.current ? undefined : current?.tabId;
       resumeAttemptedRef.current = resumeId !== undefined;
-      useUi.getState().updateTab(storeTabId, { sessionId: s.id, tabId: resumeId, dead: false });
+      useUi.getState().updateTab(storeTabId, { sessionId: s.id, tabId: resumeId });
       resumeRef.current = resumeId;
       setControl(null);
       setRemoteGrid(null);
-      setAttachDead(false);
+      setForceRegular(false);
+      setOrdinaryStarting(false);
       setKernelTabId(null);
       setEpoch((n) => n + 1);
       pushToast("info", "已重新连接");
@@ -1067,11 +1077,12 @@ export function TerminalPane({
         ? current?.tabId
         : resumeAttemptedRef.current ? undefined : current?.tabId;
       resumeAttemptedRef.current = resumeId !== undefined;
-      useUi.getState().updateTab(storeTabId, { tabId: resumeId, dead: false });
+      useUi.getState().updateTab(storeTabId, { tabId: resumeId });
       resumeRef.current = resumeId;
       setControl(null);
       setRemoteGrid(null);
-      setAttachDead(false);
+      setForceRegular(false);
+      setOrdinaryStarting(false);
       setKernelTabId(null);
       setEpoch((n) => n + 1);
       pushToast("info", "已重新连接");
@@ -1082,6 +1093,142 @@ export function TerminalPane({
       }
       pushToast("error", `重连失败：${describeError(e)}`);
     }
+  };
+
+  useEffect(() => {
+    setRememberRegular(false);
+  }, [helperOperation?.operationId]);
+
+  const runHelperAction = async (action: () => Promise<void>, generation?: number) => {
+    if (helperActionBusy) return;
+    setHelperActionBusy(true);
+    try {
+      await action();
+    } catch (error) {
+      if (generation === undefined || helperRequestIsCurrent(generation, sessionId)) {
+        pushToast("error", `持久终端助手操作失败：${describeError(error)}`);
+      }
+    } finally {
+      setHelperActionBusy(false);
+    }
+  };
+
+  const retryPersistent = () => runHelperAction(async () => {
+    const operation = helperOperation;
+    if (!operation) return;
+    await useUi.getState().retryHelperOperation(storeTabId);
+    if (operation.kind === "reattach" && operation.originalTabId) {
+      resumeRef.current = operation.originalTabId;
+      resumeAttemptedRef.current = true;
+      setForceRegular(false);
+      setOrdinaryStarting(false);
+      setKernelTabId(null);
+      setEpoch((value) => value + 1);
+    }
+  });
+
+  const continueOrdinary = () => runHelperAction(async () => {
+    const operation = helperOperation;
+    if (!operation) return;
+    await useUi.getState().continueHelperOrdinary(storeTabId, rememberRegular);
+    if (operation.kind === "reattach" && operation.originalTabId) {
+      resumeRef.current = undefined;
+      resumeAttemptedRef.current = false;
+      useUi.getState().updateTab(storeTabId, { tabId: undefined });
+      setForceRegular(true);
+      setOrdinaryStarting(true);
+      setKernelTabId(null);
+      setEpoch((value) => value + 1);
+    }
+  });
+
+  const cancelHelper = () => runHelperAction(async () => {
+    await useUi.getState().cancelHelperOperation(storeTabId);
+  });
+
+  const refreshHelperDetails = useCallback(async () => {
+    const generation = nextHelperRequestGeneration();
+    setHelperPanelOpen(true);
+    setHelperPanelError(null);
+    try {
+      const result = await terminalApi.helperOperation(sessionId, "", "status");
+      if (!helperRequestIsCurrent(generation, sessionId)) return;
+      setHelperDetails(result);
+      setOfflinePath(null);
+    } catch (error) {
+      if (!helperRequestIsCurrent(generation, sessionId)) return;
+      const message = describeError(error);
+      setHelperPanelError(message);
+      pushToast("error", `读取持久终端助手状态失败：${message}`);
+    }
+  }, [sessionId, pushToast]);
+
+  useEffect(() => {
+    if (previousHelperSessionRef.current === sessionId) return;
+    previousHelperSessionRef.current = sessionId;
+    helperRequestGenerationRef.current += 1;
+    useUi.getState().dismissHelperOperation(storeTabId);
+    setHelperPanelOpen(false);
+    setHelperDetails(null);
+    setHelperPanelError(null);
+    setOfflinePath(null);
+  }, [sessionId, storeTabId]);
+
+  useEffect(() => {
+    if (helperOperation?.status === "succeeded") {
+      void refreshHelperDetails();
+    }
+  }, [helperOperation?.operationId, helperOperation?.status, refreshHelperDetails]);
+
+  const importOfflineHelper = async () => {
+    const selected = await promptText("离线 helper 本地路径（先核实 SHA-256 与协议，确认前不会用于部署）", "");
+    if (!selected?.trim()) return;
+    const path = selected.trim();
+    setHelperPanelOpen(true);
+    const generation = nextHelperRequestGeneration();
+    await runHelperAction(async () => {
+      const result = await terminalApi.helperOffline(sessionId, path);
+      if (!helperRequestIsCurrent(generation, sessionId)) return;
+      setHelperDetails(result);
+      setOfflinePath(path);
+      setHelperPanelError(null);
+    }, generation);
+  };
+
+  const confirmOfflineHelper = () => {
+    const generation = nextHelperRequestGeneration();
+    return runHelperAction(async () => {
+      const offline = helperDetails?.offline;
+      if (!offlinePath || !offline) return;
+      const result = await terminalApi.helperOffline(sessionId, offlinePath, offline.sha256, true);
+      if (!helperRequestIsCurrent(generation, sessionId)) return;
+      setHelperDetails((current) => current ? { ...current, offline: result.offline } : result);
+    }, generation);
+  };
+
+  const updateHelper = (interruptActive: boolean) => {
+    const generation = nextHelperRequestGeneration();
+    return runHelperAction(async () => {
+      try {
+        const result = await terminalApi.helperUpdate(sessionId, interruptActive);
+        if (!helperRequestIsCurrent(generation, sessionId)) return;
+        setHelperDetails(result);
+        setHelperPanelError(null);
+      } catch (error) {
+        if (!helperRequestIsCurrent(generation, sessionId)) return;
+        const rollback = rollbackResultFromError(error);
+        if (!rollback) throw error;
+        setHelperDetails(rollback);
+        setHelperPanelError(describeError(error));
+      }
+    }, generation);
+  };
+
+  const deferHelperUpdate = () => {
+    setHelperDetails((current) => current?.update ? {
+      ...current,
+      update: { status: "deferred", detail: "用户选择稍后更新；未请求中断或切换活动进程" },
+    } : current);
   };
 
   const startRecording = async () => {
@@ -1313,6 +1460,19 @@ export function TerminalPane({
         onSelect: () => void applyEncoding(enc),
       })),
     },
+    ...(sessionKind === "ssh"
+      ? ([
+          { kind: "separator" },
+          {
+            kind: "item",
+            label: "持久终端助手…",
+            onSelect: () => void refreshHelperDetails(),
+          },
+          ...(!WEB
+            ? ([{ kind: "item", label: "导入离线 helper…", onSelect: () => void importOfflineHelper() }] satisfies MenuItem[])
+            : []),
+        ] satisfies MenuItem[])
+      : []),
   ];
 
   const openToolbarOverflow = (e: ReactMouseEvent<HTMLButtonElement>) => {
@@ -1618,54 +1778,6 @@ export function TerminalPane({
         </button>
       </div>
 
-      {helperProgress && (
-        <div
-          role={helperProgress.error ? "alert" : "status"}
-          className={`flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b px-2.5 py-1.5 text-xs ${
-            helperProgress.error
-              ? "border-red-900/50 bg-red-950/30 text-red-200"
-              : "border-blue-900/50 bg-blue-950/20 text-blue-300"
-          }`}
-        >
-          <span className="font-medium">{helperStageText(helperProgress.stage)}</span>
-          <span className="text-[11px] opacity-80">步骤 {helperProgress.step}/{helperProgress.steps}</span>
-          {helperProgress.error ? (
-            <span className="min-w-0 break-all">失败：{helperProgress.error}</span>
-          ) : (
-            <>
-              <div
-                className="nx-progress min-w-[100px] flex-1"
-                role="progressbar"
-                aria-label="持久终端助手安装进度"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                {...(() => {
-                  const percent = helperProgressPercent(helperProgress);
-                  return percent === null ? {} : { "aria-valuenow": percent };
-                })()}
-              >
-                <span
-                  className={`nx-progress-bar ${helperProgressPercent(helperProgress) === null ? "w-1/3 animate-pulse motion-reduce:animate-none" : ""}`}
-                  style={
-                    helperProgressPercent(helperProgress) === null
-                      ? undefined
-                      : { width: `${helperProgressPercent(helperProgress)}%` }
-                  }
-                />
-              </div>
-              <span className="shrink-0">
-                {helperProgressPercent(helperProgress) === null
-                  ? "处理中"
-                  : `${helperProgressPercent(helperProgress)}%`}
-                {helperProgress.total > 0 && (
-                  <> · {formatBytes(helperProgress.transferred)} / {formatBytes(helperProgress.total)}</>
-                )}
-              </span>
-            </>
-          )}
-        </div>
-      )}
-
       {containerId && execInterrupted && (
         <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-800/50 bg-amber-950/30 px-2.5 py-1.5 text-xs text-amber-300">
           <span>容器 exec 已中断，原进程和输入不能恢复；重新打开会启动新的 exec。</span>
@@ -1776,6 +1888,7 @@ export function TerminalPane({
               winrm={effectiveWinrm}
               containerId={containerId}
               resumeTabId={resumeRef.current}
+              forceRegular={forceRegular}
               sessionConnected={sessionStatus === "connected"}
               canResize={canResize}
               remoteGrid={remoteGrid ?? undefined}
@@ -1803,6 +1916,12 @@ export function TerminalPane({
               }}
               onAttach={(id) => {
                 if (containerId) execAttachedSessionRef.current = sessionId;
+                const operation = useUi.getState().helperOperations.operations[storeTabId];
+                if (operation?.kind === "reattach") {
+                  useUi.getState().dismissHelperOperation(storeTabId, operation.operationId);
+                }
+                setForceRegular(false);
+                setOrdinaryStarting(false);
                 setKernelTabId(id);
                 setAttachDead(false);
                 setThrottle(null);
@@ -1977,7 +2096,9 @@ export function TerminalPane({
                 这个终端已失效
               </span>
               <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-200">
-                所属连接已在服务端删除。重新连接将恢复原终端并回放输出；若原终端已结束，则在当前标签中打开新终端。历史输出可在「终端历史」中查看
+                {ordinaryStarting
+                  ? "正在新建普通终端和新的 shell；原持久会话未恢复，原远端进程状态未知，完成后才会更新此标签"
+                  : "所属连接已在服务端删除。重新连接会先尝试恢复原终端并回放输出；恢复失败时可明确选择新建普通 shell。历史输出可在「终端历史」中查看"}
               </span>
               <div className="flex items-center gap-2">
                 <button
@@ -2014,6 +2135,46 @@ export function TerminalPane({
           />
         )}
       </div>
+
+      {(helperOperation || helperPanelOpen) && (
+        <div className="shrink-0">
+          <HelperOperationView
+            stage={helperOperation?.stage ?? (helperPanelError ? "failed" : "ready")}
+            reason={[helperOperation?.reason?.message, helperOperation?.cleanupFailure?.message, helperPanelError]
+              .filter((value): value is string => Boolean(value))
+              .join("；") || null}
+            operationId={helperOperation?.operationId}
+            attempt={helperOperation?.attempt ?? null}
+            maxAttempts={helperOperation?.maxAttempts ?? null}
+            deadline={helperOperation ? new Date(helperOperation.deadline).toISOString() : null}
+            path={helperOperation?.path}
+            transport={helperOperation?.transport}
+            localVersion={helperDetails?.local}
+            runningVersion={helperDetails?.running}
+            compatibility={helperDetails?.compatibility}
+            offlineTrust={helperDetails?.offline ?? null}
+            update={helperDetails?.update ?? null}
+            restoreFailure={helperOperation?.kind === "reattach" && helperOperation.originalSession === "not_restored"}
+            quickConnect={helperOperation?.quickConnect ?? false}
+            rememberRegular={helperOperation ? rememberRegular : undefined}
+            controlsDisabled={helperActionBusy || helperRetryPending || ordinaryStarting}
+            onRememberRegularChange={helperOperation && !helperOperation.quickConnect ? setRememberRegular : undefined}
+            onRetryPersistent={helperOperation?.status === "awaiting_choice" ? () => void retryPersistent() : undefined}
+            onContinueOrdinary={helperOperation?.status === "awaiting_choice" ? () => void continueOrdinary() : undefined}
+            onCancel={helperOperation?.status === "running" || helperOperation?.status === "awaiting_choice"
+              ? () => void cancelHelper()
+              : undefined}
+            onConfirmOfflineTrust={offlinePath && helperDetails?.offline && !helperDetails.offline.trusted
+              ? () => void confirmOfflineHelper()
+              : undefined}
+            onUpdate={helperDetails?.update?.status === "available" ? () => void updateHelper(false) : undefined}
+            onDeferUpdate={helperDetails?.update?.status === "available" ? deferHelperUpdate : undefined}
+            onInterruptAndUpdate={helperDetails?.update && ["available", "deferred"].includes(helperDetails.update.status)
+              ? () => void updateHelper(true)
+              : undefined}
+          />
+        </div>
+      )}
 
       <TerminalKeysBar
         onSend={(data) => void sendData(data)}

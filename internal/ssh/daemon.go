@@ -116,6 +116,8 @@ type Resolver struct {
 	Executable string
 	// HelperExecutable explicitly selects an offline standalone helper import.
 	HelperExecutable string
+	// HelperSHA256 optionally requires HelperExecutable to retain this confirmed content digest.
+	HelperSHA256 string
 	// DisableAutoInstall keeps installed and running helpers usable but forbids uploads.
 	DisableAutoInstall bool
 	// StartTimeout bounds each daemon spawn plus readiness sequence, within EnsureTimeout.

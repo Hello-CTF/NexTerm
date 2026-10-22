@@ -20,6 +20,14 @@ import {
 import { baseName } from "../features/files/pathUtils";
 import { aiTabRunControls, confirmAiRunCancellation, runningAiTabs as getRunningAiTabs, clearAiTabRun, clearAiTabRuns, type AiCloseTab } from "../features/ai/runOwnership";
 import { splitAllowedForHeight, workspaceViewport } from "../features/terminal/workspaceLayout";
+import {
+  createHelperOperationState,
+  HELPER_DEFAULT_BUDGET_MS,
+  helperOperationReducer,
+  type HelperOperation,
+  type HelperOperationKind,
+  type HelperOperationState,
+} from "../features/terminal/helperOperationState";
 import { useConnectHistory } from "../features/explorer/connectHistory";
 import { isFleetHealthTabId } from "../features/fleet/fleetHealthTab";
 import {
@@ -495,7 +503,17 @@ interface UiState {
   connectProgress: Record<string, ConnectProgressEvent>;
   setConnectProgress: (assetId: string, progress: ConnectProgressEvent | null) => void;
   helperProgress: Record<string, HelperProgressEvent>;
+  helperOperations: HelperOperationState;
+  helperOperationTabs: Record<string, string>;
+  helperOperationIntents: Record<string, { kind: HelperOperationKind; originalTabId?: string; sequence: number }>;
+  helperRetries: Record<string, { tabId: string; operationId: string }>;
+  registerHelperOperationIntent: (tabId: string, kind: HelperOperationKind, originalTabId?: string) => void;
   setHelperProgress: (progress: HelperProgressEvent | null) => void;
+  cancelHelperOperation: (tabId: string) => Promise<void>;
+  retryHelperOperation: (tabId: string) => Promise<void>;
+  continueHelperOrdinary: (tabId: string, remember?: boolean) => Promise<void>;
+  failHelperRestore: (tabId: string, message?: string) => void;
+  dismissHelperOperation: (tabId: string, operationId?: string) => void;
 }
 
 let toastSeq = 1;
@@ -998,6 +1016,102 @@ function migrateWorkspaceFileLocators(
   });
   migrateFileEditorDirty(sessionId, from, to, kind, caseInsensitive);
   return changed ? { ...st, workspaces } : st;
+}
+
+interface HelperTabContext {
+  tabId: string;
+  sessionId: string;
+  kind: HelperOperationKind;
+  originalTabId?: string;
+  quickConnect: boolean;
+}
+
+function helperTabContext(state: UiState, tabId: string): HelperTabContext | null {
+  for (const workspace of state.workspaces) {
+    for (const pane of workspace.panes) {
+      const tab = pane.tabs.find((candidate) => candidate.id === tabId);
+      if (!tab || tab.kind !== "terminal" || !tab.sessionId) continue;
+      return {
+        tabId: tab.id,
+        sessionId: tab.sessionId,
+        kind: tab.tabId ? "reattach" : "deploy",
+        originalTabId: tab.tabId,
+        quickConnect: Boolean(workspace.quickTarget && !workspace.assetId),
+      };
+    }
+  }
+  return null;
+}
+
+let helperOperationIntentSeq = 0;
+
+function latestHelperOperationIntent(state: UiState, sessionId: string): HelperTabContext | null {
+  let latest: HelperTabContext | null = null;
+  let sequence = 0;
+  for (const [tabId, intent] of Object.entries(state.helperOperationIntents)) {
+    if (intent.sequence < sequence) continue;
+    const context = helperTabContext(state, tabId);
+    if (context?.sessionId !== sessionId) continue;
+    latest = { ...context, kind: intent.kind, originalTabId: intent.originalTabId };
+    sequence = intent.sequence;
+  }
+  return latest;
+}
+
+function helperProgressContext(state: UiState, progress: HelperProgressEvent): HelperTabContext | null {
+  for (const [tabId, operation] of Object.entries(state.helperOperations.operations)) {
+    if (operation.operationId === progress.operationId) {
+      const context = helperTabContext(state, tabId);
+      if (context?.sessionId === progress.sessionId) return context;
+    }
+  }
+  const pending = state.helperRetries[progress.sessionId];
+  if (pending) {
+    const context = helperTabContext(state, pending.tabId);
+    if (context?.sessionId === progress.sessionId) return context;
+  }
+  const intended = latestHelperOperationIntent(state, progress.sessionId);
+  if (intended) return intended;
+  const mapped = state.helperOperationTabs[progress.sessionId];
+  if (mapped) {
+    const context = helperTabContext(state, mapped);
+    if (context?.sessionId === progress.sessionId) return context;
+  }
+  const activeWorkspace = state.workspaces.find((workspace) => workspace.id === state.activeWorkspaceId);
+  const activePane = activeWorkspace?.panes.find((pane) => pane.id === activeWorkspace.activePaneId);
+  const activeTab = activePane?.activeTabId;
+  if (activeTab) {
+    const context = helperTabContext(state, activeTab);
+    if (context?.sessionId === progress.sessionId) return context;
+  }
+  for (const workspace of state.workspaces) {
+    for (const pane of workspace.panes) {
+      for (const tab of pane.tabs) {
+        const context = helperTabContext(state, tab.id);
+        if (context?.sessionId === progress.sessionId) return context;
+      }
+    }
+  }
+  return null;
+}
+
+function helperProgressKey(progress: Pick<HelperProgressEvent, "sessionId" | "assetId">): string {
+  return JSON.stringify([progress.sessionId, progress.assetId]);
+}
+
+function helperOperationMessage(progress: HelperProgressEvent): string | undefined {
+  return progress.cause?.trim() || progress.error?.trim() || undefined;
+}
+
+function helperOperationLive(operation: HelperOperation | undefined): boolean {
+  return operation?.status === "running" || operation?.status === "awaiting_choice";
+}
+
+let localHelperOperationSeq = 0;
+
+function nextLocalHelperOperationID(): string {
+  localHelperOperationSeq += 1;
+  return `local-restore-${localHelperOperationSeq}`;
 }
 
 export const useUi = create<UiState>((set, get) => ({
@@ -1555,14 +1669,14 @@ export const useUi = create<UiState>((set, get) => ({
     const paneId = hit.pane.id;
     const closedTabGeneration = useClosedTabs.getState().stack.generation;
     let closeMode: "kill" | "detach" | undefined;
-    // A detached entry may only be recorded when the detach IPC actually succeeded;
-    // a not_found/disconnected cleanup means the process is already gone.
     let detachConfirmed = false;
+    let remoteCloseUnknown = false;
+    let remote = false;
     if (target.tabId) {
       try {
         const kind = st.sessions.find((session) => session.id === target.sessionId)?.kind
           ?? st.workspaces.find((workspace) => workspace.id === wsId)?.assetKind;
-        const remote = !target.containerId && (kind === "ssh" || kind === "device");
+        remote = !target.containerId && (kind === "ssh" || kind === "device");
         closeMode = mode ?? (remote && target.exited !== true ? "detach" : undefined);
         if (remote) {
           await terminalApi.closeTab(target.tabId, closeMode, target.sessionId);
@@ -1580,6 +1694,9 @@ export const useUi = create<UiState>((set, get) => ({
           if (!suppressErrorToast) get().pushToast("error", `终端操作失败：${describeError(e)}`);
           void get().resyncSessions({ silent: true });
           return false;
+        }
+        if (remote && closeMode === "detach" && (code === "not_found" || code === "disconnected")) {
+          remoteCloseUnknown = true;
         }
       }
     } else if (target.kind === "db" && target.connId) {
@@ -1627,6 +1744,9 @@ export const useUi = create<UiState>((set, get) => ({
       detached: detachConfirmed,
     });
     if (closedEntry) useClosedTabs.getState().capture(closedEntry, closedTabGeneration);
+    if (remoteCloseUnknown && !suppressErrorToast) {
+      get().pushToast("info", "本地标签已关闭；远端持久终端可能仍在运行，可在后台会话中查看");
+    }
     void get().resyncSessions({ silent: true });
     return true;
   },
@@ -1787,6 +1907,10 @@ export const useUi = create<UiState>((set, get) => ({
       sessions: [],
       recordings: {},
       helperProgress: {},
+      helperOperations: createHelperOperationState(),
+      helperOperationTabs: {},
+      helperOperationIntents: {},
+      helperRetries: {},
       sessionResyncFailed: false,
       sessionResyncCompleted: false,
       workspaceRuntimeEpoch: state.workspaceRuntimeEpoch + (clearWorkspaceRuntime ? 1 : 0),
@@ -1821,6 +1945,10 @@ export const useUi = create<UiState>((set, get) => ({
       connectingAssetIds: [],
       connectProgress: {},
       helperProgress: {},
+      helperOperations: createHelperOperationState(),
+      helperOperationTabs: {},
+      helperOperationIntents: {},
+      helperRetries: {},
       workspaceRuntimeEpoch: state.workspaceRuntimeEpoch + 1,
       workspaceRuntime: {},
       connectionProblems: {},
@@ -2130,18 +2258,300 @@ export const useUi = create<UiState>((set, get) => ({
       return { connectProgress: next };
     }),
   helperProgress: {},
-  setHelperProgress: (progress) =>
+  helperOperations: createHelperOperationState(),
+  helperOperationTabs: {},
+  helperOperationIntents: {},
+  helperRetries: {},
+  registerHelperOperationIntent: (tabId, kind, originalTabId) => {
+    helperOperationIntentSeq += 1;
+    set((st) => ({
+      helperOperationIntents: {
+        ...st.helperOperationIntents,
+        [tabId]: { kind, originalTabId, sequence: helperOperationIntentSeq },
+      },
+    }));
+  },
+  setHelperProgress: (progress) => {
+    if (!progress) return;
     set((st) => {
-      if (!progress?.sessionId || !progress.assetId) return st;
-      const key = JSON.stringify([progress.sessionId, progress.assetId]);
-      const next = { ...st.helperProgress };
-      if (progress.done && !progress.error) {
-        delete next[key];
-      } else {
-        next[key] = progress;
+      if (!progress.sessionId || !progress.assetId) return st;
+      const key = helperProgressKey(progress);
+      const raw = { ...st.helperProgress };
+      const operationID = progress.operationId?.trim() ?? "";
+      const attempt = progress.attempt ?? 0;
+      const deadline = progress.deadline ?? 0;
+      if (!operationID || !Number.isInteger(attempt) || attempt <= 0 || !Number.isFinite(deadline) || deadline <= 0) {
+        if (progress.done && !progress.error) delete raw[key];
+        else raw[key] = progress;
+        return { helperProgress: raw };
       }
-      return { helperProgress: next };
-    }),
+      const context = helperProgressContext(st, progress);
+      if (!context) return st;
+      const now = Date.now();
+      const tabId = context.tabId;
+      let operations = st.helperOperations;
+      let retries = st.helperRetries;
+      let operation = operations.operations[tabId];
+      const pending = retries[progress.sessionId];
+      if (pending && pending.tabId === tabId && pending.operationId !== operationID) {
+        operations = helperOperationReducer(operations, {
+          type: "retry",
+          tabId,
+          operationId: pending.operationId,
+          newOperationId: operationID,
+          now,
+          budgetMs: HELPER_DEFAULT_BUDGET_MS,
+          deadline,
+        });
+        retries = { ...retries };
+        delete retries[progress.sessionId];
+        operation = operations.operations[tabId];
+      } else if (!operation || operation.operationId !== operationID) {
+        if (operations.usedOperationIds.includes(operationID)) return st;
+        if (operation) {
+          operations = {
+            ...operations,
+            operations: { ...operations.operations },
+          };
+          delete operations.operations[tabId];
+        }
+        operations = helperOperationReducer(operations, {
+          type: "start",
+          tabId,
+          operationId: operationID,
+          kind: context.kind,
+          now,
+          budgetMs: HELPER_DEFAULT_BUDGET_MS,
+          deadline,
+          assetId: progress.assetId,
+          quickConnect: context.quickConnect,
+          originalTabId: context.originalTabId,
+        });
+        operation = operations.operations[tabId];
+      }
+      if (!operation || operation.operationId !== operationID || operation.attempt > attempt) return st;
+      if (operation.attempt < attempt) {
+        operations = helperOperationReducer(operations, {
+          type: "attemptStarted",
+          tabId,
+          operationId: operationID,
+          attempt,
+          now,
+          stage: progress.stage,
+        });
+        operation = operations.operations[tabId];
+        if (!operation || operation.attempt !== attempt) return st;
+      }
+      const message = helperOperationMessage(progress);
+      const reason = message ? { code: `helper_${progress.stage}`, message } : undefined;
+      if (progress.stage === "backoff") {
+        operations = helperOperationReducer(operations, {
+          type: "attemptFailed",
+          tabId,
+          operationId: operationID,
+          attempt,
+          now,
+          reason: { kind: "transient", code: "helper_backoff", message: message ?? "transient helper failure" },
+          path: progress.path ?? null,
+          transport: progress.transport ?? null,
+        });
+      } else if (progress.stage === "failed") {
+        operations = helperOperationReducer(operations, {
+          type: "attemptFailed",
+          tabId,
+          operationId: operationID,
+          attempt,
+          now,
+          reason: {
+            kind: operation.kind === "reattach" ? "restore_failed" : "permanent",
+            code: "helper_failed",
+            message: message ?? "helper operation failed",
+          },
+          path: progress.path ?? null,
+          transport: progress.transport ?? null,
+        });
+      } else if (progress.stage === "ready" && progress.done && operation.kind === "deploy") {
+        operations = helperOperationReducer(operations, {
+          type: "succeeded",
+          tabId,
+          operationId: operationID,
+          attempt,
+          now,
+        });
+      } else {
+        operations = helperOperationReducer(operations, {
+          type: "progress",
+          tabId,
+          operationId: operationID,
+          attempt,
+          now,
+          stage: progress.stage,
+          reason: reason ? { kind: "info", ...reason } : null,
+          path: progress.path ?? null,
+          transport: progress.transport ?? null,
+        });
+      }
+      operation = operations.operations[tabId];
+      if (!operation || operation.operationId !== operationID) return st;
+      if (progress.done && !progress.error && operation.kind === "deploy") delete raw[key];
+      else raw[key] = progress;
+      return {
+        helperProgress: raw,
+        helperOperations: operations,
+        helperOperationTabs: { ...st.helperOperationTabs, [progress.sessionId]: tabId },
+        helperRetries: retries,
+      };
+    });
+  },
+  cancelHelperOperation: async (tabId) => {
+    const st = get();
+    const operation = st.helperOperations.operations[tabId];
+    if (!operation || !helperOperationLive(operation)) return;
+    const context = helperTabContext(st, tabId);
+    if (!context) throw new Error("终端所属会话已不存在");
+    if (operation.status === "running" && !operation.operationId.startsWith("local-restore-")) {
+      await terminalApi.helperOperation(context.sessionId, operation.operationId, "cancel");
+    }
+    set((current) => ({
+      helperOperations: helperOperationReducer(current.helperOperations, {
+        type: "cancel",
+        tabId,
+        operationId: operation.operationId,
+      }),
+    }));
+  },
+  retryHelperOperation: async (tabId) => {
+    const st = get();
+    const operation = st.helperOperations.operations[tabId];
+    if (!operation || operation.status !== "awaiting_choice") throw new Error("当前助手操作不能重试");
+    const context = helperTabContext(st, tabId);
+    if (!context) throw new Error("终端所属会话已不存在");
+    if (operation.operationId.startsWith("local-restore-")) {
+      const now = Date.now();
+      set((current) => ({
+        helperOperations: helperOperationReducer(current.helperOperations, {
+          type: "retry",
+          tabId,
+          operationId: operation.operationId,
+          newOperationId: nextLocalHelperOperationID(),
+          now,
+          budgetMs: HELPER_DEFAULT_BUDGET_MS,
+          deadline: now + HELPER_DEFAULT_BUDGET_MS,
+        }),
+      }));
+      return;
+    }
+    set((current) => ({
+      helperRetries: {
+        ...current.helperRetries,
+        [context.sessionId]: { tabId, operationId: operation.operationId },
+      },
+    }));
+    try {
+      await terminalApi.helperOperation(context.sessionId, operation.operationId, "retry");
+    } catch (error) {
+      set((current) => {
+        const retries = { ...current.helperRetries };
+        if (retries[context.sessionId]?.operationId === operation.operationId) delete retries[context.sessionId];
+        return { helperRetries: retries };
+      });
+      throw error;
+    }
+  },
+  continueHelperOrdinary: async (tabId, remember = false) => {
+    const st = get();
+    const operation = st.helperOperations.operations[tabId];
+    if (!operation || operation.status !== "awaiting_choice") return;
+    if (remember && !operation.quickConnect && operation.assetId) {
+      const asset = await assetApi.get(operation.assetId);
+      await assetApi.update({
+        id: operation.assetId,
+        options: { ...(asset.options ?? {}), terminalMode: "regular" },
+      });
+    }
+    set((current) => ({
+      helperOperations: helperOperationReducer(current.helperOperations, {
+        type: "continueOrdinary",
+        tabId,
+        operationId: operation.operationId,
+        remember,
+      }),
+    }));
+  },
+  failHelperRestore: (tabId, message) => {
+    set((st) => {
+      const context = helperTabContext(st, tabId);
+      if (!context?.originalTabId) return st;
+      const existing = st.helperOperations.operations[tabId];
+      if (existing?.status === "awaiting_choice") return st;
+      if (existing?.status === "running" && existing.kind === "reattach") {
+        return {
+          helperOperations: helperOperationReducer(st.helperOperations, {
+            type: "attemptFailed",
+            tabId,
+            operationId: existing.operationId,
+            attempt: existing.attempt,
+            now: Date.now(),
+            reason: { kind: "restore_failed", code: "restore_failed", message: message ?? "原持久终端恢复失败" },
+          }),
+        };
+      }
+      const now = Date.now();
+      const operationId = nextLocalHelperOperationID();
+      let operations = helperOperationReducer(st.helperOperations, {
+        type: "start",
+        tabId,
+        operationId,
+        kind: "reattach",
+        now,
+        budgetMs: HELPER_DEFAULT_BUDGET_MS,
+        deadline: now + HELPER_DEFAULT_BUDGET_MS,
+        assetId: st.sessions.find((session) => session.id === context.sessionId)?.assetId ?? undefined,
+        quickConnect: context.quickConnect,
+        originalTabId: context.originalTabId,
+      });
+      operations = helperOperationReducer(operations, {
+        type: "attemptFailed",
+        tabId,
+        operationId,
+        attempt: 1,
+        now,
+        reason: { kind: "restore_failed", code: "restore_failed", message: message ?? "原持久终端恢复失败" },
+      });
+      return { helperOperations: operations };
+    });
+  },
+  dismissHelperOperation: (tabId, operationId) => {
+    set((st) => {
+      const operation = st.helperOperations.operations[tabId];
+      if (!operation || (operationId !== undefined && operation.operationId !== operationId)) return st;
+      const operations = { ...st.helperOperations.operations };
+      delete operations[tabId];
+      const tabs = { ...st.helperOperationTabs };
+      for (const [sessionId, mapped] of Object.entries(tabs)) {
+        if (mapped === tabId) delete tabs[sessionId];
+      }
+      const retries = { ...st.helperRetries };
+      for (const [sessionId, retry] of Object.entries(retries)) {
+        if (retry.tabId === tabId) delete retries[sessionId];
+      }
+      const intents = { ...st.helperOperationIntents };
+      delete intents[tabId];
+      const raw = { ...st.helperProgress };
+      const context = helperTabContext(st, tabId);
+      if (context) {
+        const session = st.sessions.find((candidate) => candidate.id === context.sessionId);
+        if (session?.assetId) delete raw[helperProgressKey({ sessionId: context.sessionId, assetId: session.assetId })];
+      }
+      return {
+        helperOperations: { ...st.helperOperations, operations },
+        helperOperationTabs: tabs,
+        helperOperationIntents: intents,
+        helperRetries: retries,
+        helperProgress: raw,
+      };
+    });
+  },
 
   pushToast: (kind, text, action) => {
     const existing = get().toasts.find((t) => t.kind === kind && t.text === text);

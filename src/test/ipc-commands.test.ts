@@ -141,6 +141,38 @@ describe("desktop command envelopes", () => {
     });
   });
 
+  it("preserves helper operation, update and offline trust envelopes", async () => {
+    runtime.Call.ByName.mockResolvedValue({
+      ok: true,
+      data: {
+        sessionId: "host-b",
+        action: "cancel",
+        accepted: true,
+        local: { known: false },
+        running: { known: false },
+        compatibility: "unknown",
+      },
+    });
+    const { terminalApi } = await import("../ipc/commands");
+
+    await terminalApi.helperOperation("host-b", "operation-1", "cancel");
+    await terminalApi.helperUpdate("host-b", true);
+    await terminalApi.helperOffline("host-b", "/tmp/helper", "a".repeat(64), true);
+
+    expect(requestAt(0)).toEqual({
+      cmd: "terminal_helper_operation",
+      args: { sessionId: "host-b", operationId: "operation-1", action: "cancel", interruptActive: false },
+    });
+    expect(requestAt(1)).toEqual({
+      cmd: "terminal_helper_operation",
+      args: { sessionId: "host-b", action: "update", interruptActive: true },
+    });
+    expect(requestAt(2)).toEqual({
+      cmd: "terminal_helper_offline",
+      args: { sessionId: "host-b", path: "/tmp/helper", sha256: "a".repeat(64), confirmed: true },
+    });
+  });
+
   it("uses the same stable client identity when opening and executing a line tab", async () => {
     runtime.Call.ByName.mockResolvedValueOnce({ ok: true, data: "tab-1" });
     runtime.Call.ByName.mockResolvedValueOnce({ ok: true, data: null });

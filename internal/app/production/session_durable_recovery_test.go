@@ -170,16 +170,24 @@ func createDaemonTabWithID(t *testing.T, provider base.DurableProvider, tabID, m
 type transportDurableResolver struct {
 	mu        sync.Mutex
 	providers map[base.Transport]base.DurableProvider
+	calls     int
 }
 
 func (r *transportDurableResolver) ResolveDurable(_ context.Context, transport base.Transport) (base.DurableProvider, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.calls++
 	provider := r.providers[transport]
 	if provider == nil {
 		return nil, durable.ErrUnavailable
 	}
 	return provider, nil
+}
+
+func (r *transportDurableResolver) recorded() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls
 }
 
 func readUntilDurableOutput(t *testing.T, attachment base.DurableAttachment, text string) {
@@ -393,7 +401,17 @@ func TestProductionCloseDiscoveredSSHTabRequiresAuthorizedOwningSession(t *testi
 			if err != nil || len(infos) != 1 || infos[0].Dead {
 				t.Fatalf("rejected kill disturbed original shell: %+v, %v", infos, err)
 			}
-			requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", args, "", "client-a"))
+			closed := dispatchDurableTest(t, production, "terminal_close_tab", args, "", "client-a")
+			if mode == "detach" {
+				if closed.OK || closed.Error == nil || closed.Error.Code != ipc.CodeNotFound {
+					t.Fatalf("local detach with unknown remote survival = %+v, want visible not_found", closed)
+				}
+				if calls := resolver.recorded(); calls != 0 {
+					t.Fatalf("local detach triggered %d helper resolutions, want none", calls)
+				}
+			} else {
+				requireProductionNull(t, closed)
+			}
 			if mode == "detach" {
 				descriptors, err := production.Services.Sessions.ListRemoteDurable(t.Context(), connected.ID)
 				if err != nil {
@@ -575,8 +593,9 @@ func TestProductionTerminalAttachFallsBackWhenDurableCreateBecomesUnavailable(t 
 	}
 }
 
-func TestProductionRegularSSHModeSkipsHelperForBothTabEntries(t *testing.T) {
-	resolver := &recordingDurableResolver{err: durable.ErrUnavailable}
+func TestProductionRegularSSHModeOnlyAffectsNewTabs(t *testing.T) {
+	fixture := newRemoteDaemonFixture(t)
+	resolver := &recordingDurableResolver{provider: fixture.provider}
 	production, _ := newRemoteRecoveryHarness(t, resolver)
 	host, username, port := "127.0.0.1", "tester", int32(22)
 	asset, err := production.Services.Store.AssetCreate(t.Context(), store.AssetInput{
@@ -606,7 +625,7 @@ func TestProductionRegularSSHModeSkipsHelperForBothTabEntries(t *testing.T) {
 		}
 	}
 	if calls := len(resolver.recorded()); calls != 0 {
-		t.Fatalf("helper resolution calls = %d; regular mode must not start helper", calls)
+		t.Fatalf("helper resolution calls = %d; regular mode must not start helper for new tabs", calls)
 	}
 	forced := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24,"durable":true}`, "regular-forced-channel", "client-a")
 	if forced.OK || forced.Error == nil || forced.Error.Code != ipc.CodeUnsupported || !strings.Contains(forced.Error.Message, "普通终端") {
@@ -615,18 +634,25 @@ func TestProductionRegularSSHModeSkipsHelperForBothTabEntries(t *testing.T) {
 	if len(resolver.recorded()) != 0 {
 		t.Fatal("explicit durable attach started helper despite regular mode")
 	}
+	tabID := createDaemonTab(t, fixture.provider, "regular-mode-old-durable")
 	listResponse := dispatchDurableTest(t, production, "terminal_list", `{"sessionId":"`+connected.ID+`","durable":true}`, "", "client-a")
 	var descriptors []durableDescriptorDTO
 	requireStoreTestResponse(t, listResponse, &descriptors)
-	if len(descriptors) != 0 || len(resolver.recorded()) != 0 {
-		t.Fatalf("regular mode listed durable tabs or started helper: %+v", descriptors)
+	if len(descriptors) != 1 || descriptors[0].ID != tabID || descriptors[0].Dead {
+		t.Fatalf("regular mode hid the old durable tab: %+v", descriptors)
 	}
-	recovery := dispatchDurableTest(t, production, "terminal_attach_tab", `{"sessionId":"`+connected.ID+`","tabId":"`+ids.New()+`"}`, "old-durable-channel", "client-a")
-	if recovery.OK || recovery.Error == nil || recovery.Error.Code != ipc.CodeUnsupported || !strings.Contains(recovery.Error.Message, "普通终端") {
-		t.Fatalf("old durable tab recovery in regular mode = %+v", recovery)
+	recovery := dispatchDurableTest(t, production, "terminal_attach_tab", `{"sessionId":"`+connected.ID+`","tabId":"`+tabID+`"}`, "old-durable-channel", "client-a")
+	var recovered attachedTabDTO
+	requireStoreTestResponse(t, recovery, &recovered)
+	if recovered.TabID != tabID {
+		t.Fatalf("regular mode recovered tab %q, want original %q", recovered.TabID, tabID)
 	}
-	if len(resolver.recorded()) != 0 {
-		t.Fatal("regular mode attempted helper during old tab recovery")
+	tab, err := production.Services.Sessions.Tab(tabID)
+	if err != nil || !tab.Info().Durable {
+		t.Fatalf("regular mode changed the recovered durable tab: %+v, %v", tab, err)
+	}
+	if calls := len(resolver.recorded()); calls != 1 {
+		t.Fatalf("old durable list/recovery used %d resolver calls, want one cached provider resolution", calls)
 	}
 }
 

@@ -132,7 +132,7 @@ func (r *Resolver) ensureOnHostWithClient(ctx context.Context, host Host, client
 		lastErr = cycleErr
 		if operationCtx.Err() != nil || attempt == maxEnsureAttempts || permanentHelperFailure(cycleErr) {
 			r.reportProgress(attemptCtx, HelperProgress{Step: helperProgressSteps, Stage: "failed", Done: true, Cause: cycleErr.Error()})
-			return nil, lastErr
+			return daemon, lastErr
 		}
 		r.reportProgress(attemptCtx, HelperProgress{Step: helperProgressSteps, Stage: "backoff", Cause: cycleErr.Error()})
 		backoff := r.RetryBackoff
@@ -336,6 +336,9 @@ func (r *Resolver) uploadSourceForTarget(target Target) (*UploadSource, error) {
 				return nil, fmt.Errorf("%w: %w: %s", durable.ErrUnavailable, ErrHelperNotFound, r.HelperExecutable)
 			}
 			return nil, fmt.Errorf("inspect offline helper %s: %w", r.HelperExecutable, err)
+		}
+		if r.HelperSHA256 != "" && !strings.EqualFold(source.Digest, r.HelperSHA256) {
+			return nil, fmt.Errorf("%w: offline helper digest %s does not match confirmed SHA256 %s", ErrDigestMismatch, source.Digest, r.HelperSHA256)
 		}
 		return &source, nil
 	}

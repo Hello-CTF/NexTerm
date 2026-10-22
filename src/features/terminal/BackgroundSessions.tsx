@@ -683,7 +683,7 @@ export function BackgroundSessions({
                     {needsReconnect
                       ? "持久终端仍可能在目标主机运行，重连成功后会自动刷新列表"
                       : ownerWorkspace?.assetKind === "ssh" && remoteOwner
-                        ? "如果该 SSH 资产已切换为普通终端，已有持久会话不会被删除；切回「自动」后可在这里查看并接管"
+                        ? "普通模式只影响以后新开的终端；已有持久会话不会被删除，仍可在这里查看并接管"
                         : "关闭运行中的 SSH 或受管设备终端标签不会终止进程；AI 以后台方式创建的终端（含本机）也会列在这里，之后可在此接管"}
                   </div>
                 </td>

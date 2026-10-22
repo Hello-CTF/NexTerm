@@ -2208,6 +2208,22 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "terminal_helper_offline": {
+      scope: "helper",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.helperOfflineRequest", ts: "HelperOfflineRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.helperOperationDTO", ts: "HelperOperationDTO" },
+    },
+    "terminal_helper_operation": {
+      scope: "helper",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.helperOperationRequest", ts: "HelperOperationRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.helperOperationDTO", ts: "HelperOperationDTO" },
+    },
     "terminal_list": {
       nested: false,
       channel: false,
@@ -3679,6 +3695,14 @@ export interface IPCCommandTypeMap {
   "terminal_broadcast_prepare": {
     input: contractTypes.TerminalBroadcastPrepareRequest;
     output: unknown;
+  };
+  "terminal_helper_offline": {
+    input: contractTypes.HelperOfflineRequest;
+    output: contractTypes.HelperOperationDTO;
+  };
+  "terminal_helper_operation": {
+    input: contractTypes.HelperOperationRequest;
+    output: contractTypes.HelperOperationDTO;
   };
   "terminal_pause": {
     input: contractTypes.TerminalPauseRequest;

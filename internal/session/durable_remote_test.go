@@ -3,7 +3,9 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -424,6 +426,12 @@ func TestOpenTabSSHBackgroundDeploymentUsesSessionLifetime(t *testing.T) {
 	}
 	if err := manager.Close(); err != nil {
 		t.Fatal(err)
+	}
+	completedHelperDeployments.Lock()
+	_, retained := completedHelperDeployments.entries[connected]
+	completedHelperDeployments.Unlock()
+	if retained {
+		t.Fatal("closed session retained a completed helper operation")
 	}
 }
 
@@ -960,5 +968,303 @@ func TestRecoverRemoteDurableJoinsSearchErrors(t *testing.T) {
 	}
 	if !errors.Is(err, firstErr) || !errors.Is(err, secondErr) {
 		t.Fatalf("RecoverRemoteDurable error = %v; want both daemon failures joined", err)
+	}
+}
+
+func TestHelperOperationCancelAndRetryFenceGenerationAndOperation(t *testing.T) {
+	type attempt struct {
+		id      string
+		started chan struct{}
+		ctx     context.Context
+	}
+	var mu sync.Mutex
+	attempts := make([]*attempt, 0, 2)
+	resolver := DurableResolverFunc(func(ctx context.Context, _ base.Transport) (base.DurableProvider, error) {
+		mu.Lock()
+		index := len(attempts)
+		current := &attempt{id: []string{"operation-one", "operation-two"}[index], started: make(chan struct{}), ctx: ctx}
+		attempts = append(attempts, current)
+		mu.Unlock()
+		ReportHelperOperation(ctx, current.id)
+		close(current.started)
+		<-ctx.Done()
+		return nil, context.Cause(ctx)
+	})
+	connector := newFakeConnector()
+	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), DurableResolver: resolver, OpenAccess: true})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-helper-operation", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := manager.OpenTab(t.Context(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client", ChannelID: "ordinary-operation", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{}, DurableFallback: true,
+	})
+	if err != nil || opened.Durable {
+		t.Fatalf("ordinary tab = %+v, %v", opened, err)
+	}
+	mu.Lock()
+	first := attempts[0]
+	mu.Unlock()
+	select {
+	case <-first.started:
+	case <-time.After(time.Second):
+		t.Fatal("first helper operation did not start")
+	}
+	if err := manager.CancelHelperOperation(t.Context(), connected.ID, "stale-operation"); !errors.Is(err, ErrStaleGeneration) {
+		t.Fatalf("stale cancellation = %v, want ErrStaleGeneration", err)
+	}
+	select {
+	case <-first.ctx.Done():
+		t.Fatal("stale operation ID canceled the active deployment")
+	default:
+	}
+	if err := manager.CancelHelperOperation(t.Context(), connected.ID, first.id); err != nil {
+		t.Fatalf("cancel helper operation: %v", err)
+	}
+	select {
+	case <-first.ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("real deployment context was not canceled")
+	}
+	if !connector.transport(0).IsAlive() {
+		t.Fatal("helper cancellation disconnected SSH")
+	}
+	tab, err := manager.Tab(opened.ID)
+	if err != nil || tab.Info().Durable {
+		t.Fatalf("ordinary tab after cancellation = %+v, %v", tab, err)
+	}
+	waitFor(t, func() bool {
+		backgroundHelperDeployments.Lock()
+		defer backgroundHelperDeployments.Unlock()
+		return backgroundHelperDeployments.entries[connected] == nil
+	})
+	if err := manager.RetryHelperOperation(t.Context(), connected.ID, first.id); err != nil {
+		t.Fatalf("retry helper operation: %v", err)
+	}
+	mu.Lock()
+	if len(attempts) != 2 {
+		mu.Unlock()
+		t.Fatalf("resolver attempts = %d, want a fresh operation", len(attempts))
+	}
+	second := attempts[1]
+	mu.Unlock()
+	select {
+	case <-second.started:
+	case <-time.After(time.Second):
+		t.Fatal("retried helper operation did not start")
+	}
+	ReportHelperOperation(first.ctx, "late-old-operation")
+	if err := manager.CancelHelperOperation(t.Context(), connected.ID, first.id); !errors.Is(err, ErrStaleGeneration) {
+		t.Fatalf("old operation cancellation after retry = %v, want ErrStaleGeneration", err)
+	}
+	select {
+	case <-second.ctx.Done():
+		t.Fatal("old operation cancellation stopped the retry")
+	default:
+	}
+	if err := manager.CancelHelperOperation(t.Context(), connected.ID, second.id); err != nil {
+		t.Fatalf("cancel retried operation: %v", err)
+	}
+}
+
+func TestHelperOperationCompletionDoesNotRegress(t *testing.T) {
+	started := make(chan struct{})
+	resolver := DurableResolverFunc(func(ctx context.Context, _ base.Transport) (base.DurableProvider, error) {
+		ReportHelperOperation(ctx, "retry-current")
+		close(started)
+		<-ctx.Done()
+		return nil, context.Cause(ctx)
+	})
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver, OpenAccess: true})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-completion-order", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connected.mu.Lock()
+	transport := connected.transport
+	generation := connected.generation
+	connected.mu.Unlock()
+	completed := func(sequence uint64, operationID string) *backgroundHelperDeployment {
+		entry := &backgroundHelperDeployment{
+			session: connected, transport: transport, generation: generation, sequence: sequence,
+			operationID: operationID, done: make(chan struct{}), err: durable.ErrUnavailable,
+		}
+		close(entry.done)
+		return entry
+	}
+	recordCompletedHelperDeployment(completed(2, "newer-operation"))
+	recordCompletedHelperDeployment(completed(1, "older-operation"))
+	if err := manager.RetryHelperOperation(t.Context(), connected.ID, "older-operation"); !errors.Is(err, ErrStaleGeneration) {
+		t.Fatalf("older completed operation was revived: %v", err)
+	}
+	if err := manager.RetryHelperOperation(t.Context(), connected.ID, "newer-operation"); err != nil {
+		t.Fatalf("newer completed operation could not retry: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("current operation did not start")
+	}
+	if err := manager.CancelHelperOperation(t.Context(), connected.ID, "retry-current"); err != nil {
+		t.Fatalf("cancel current operation: %v", err)
+	}
+}
+
+func TestCancelHelperOperationDoesNotBlockNextAutomaticTab(t *testing.T) {
+	started := make(chan struct{})
+	provider := newFakeDurableProvider()
+	var calls atomic.Int32
+	resolver := DurableResolverFunc(func(ctx context.Context, _ base.Transport) (base.DurableProvider, error) {
+		if calls.Add(1) == 1 {
+			ReportHelperOperation(ctx, "cancel-next-auto")
+			close(started)
+			<-ctx.Done()
+			return nil, errors.Join(fmt.Errorf("wrapped helper upload cancellation: %w", context.Cause(ctx)), context.Canceled)
+		}
+		return provider, nil
+	})
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver, OpenAccess: true})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-cancel-next-auto", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := manager.OpenTab(t.Context(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client", ChannelID: "cancel-first", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{}, DurableFallback: true,
+	})
+	if err != nil || first.Durable {
+		t.Fatalf("first ordinary tab = %+v, %v", first, err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("deployment did not start")
+	}
+	backgroundHelperDeployments.Lock()
+	deployment := backgroundHelperDeployments.entries[connected]
+	backgroundHelperDeployments.Unlock()
+	if deployment == nil {
+		t.Fatal("deployment disappeared before cancellation")
+	}
+	if err := manager.CancelHelperOperation(t.Context(), connected.ID, "cancel-next-auto"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-deployment.done:
+	case <-time.After(time.Second):
+		t.Fatal("cancelled deployment did not complete")
+	}
+	connected.durableMu.Lock()
+	t.Logf("durable failure after explicit cancellation: %v", connected.durableFailure)
+	connected.durableMu.Unlock()
+	second, err := manager.OpenTab(t.Context(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client", ChannelID: "cancel-second", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{}, DurableFallback: true,
+	})
+	if err != nil {
+		t.Fatalf("auto tab immediately after cancellation failed: %v", err)
+	}
+	if !second.Durable {
+		t.Fatalf("auto tab after cancellation = %+v; want usable durable provider", second)
+	}
+
+	unsafeManager := NewManager(Config{
+		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), OpenAccess: true,
+		DurableResolver: DurableResolverFunc(func(context.Context, base.Transport) (base.DurableProvider, error) {
+			return nil, errors.New("unclassified helper safety failure")
+		}),
+	})
+	t.Cleanup(func() { _ = unsafeManager.Close() })
+	unsafeSession, err := unsafeManager.Connect(t.Context(), Asset{ID: "ssh-unsafe-error", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unsafeManager.OpenTab(t.Context(), OpenTabOptions{
+		SessionID: unsafeSession.ID, ClientID: "client", ChannelID: "unsafe-auto", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{}, DurableFallback: true,
+	}); err == nil {
+		t.Fatal("unclassified helper error unexpectedly fell back to ordinary SSH")
+	}
+}
+
+func TestCancelHelperOperationPreservesNonCancellationFailure(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		result error
+	}{
+		{name: "direct", result: errors.New("unclassified helper safety failure after user cancellation")},
+		{name: "joined_cleanup", result: errors.Join(context.Canceled, errors.New("helper cleanup failed"))},
+		{name: "joined_deadline", result: errors.Join(context.Canceled, context.DeadlineExceeded)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			operationID := "cancel-preserves-" + test.name
+			started := make(chan struct{})
+			var calls atomic.Int32
+			resolver := DurableResolverFunc(func(ctx context.Context, _ base.Transport) (base.DurableProvider, error) {
+				if calls.Add(1) == 1 {
+					ReportHelperOperation(ctx, operationID)
+					close(started)
+					<-ctx.Done()
+					return nil, test.result
+				}
+				<-ctx.Done()
+				return nil, context.Cause(ctx)
+			})
+			manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver, OpenAccess: true})
+			t.Cleanup(func() { _ = manager.Close() })
+			connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-cancel-preserves-" + test.name, Kind: KindSSH})
+			if err != nil {
+				t.Fatal(err)
+			}
+			first, err := manager.OpenTab(t.Context(), OpenTabOptions{
+				SessionID: connected.ID, ClientID: "client", ChannelID: "cancel-safety-first", Cols: 80, Rows: 24,
+				Durable: &DurableTabOptions{}, DurableFallback: true,
+			})
+			if err != nil || first.Durable {
+				t.Fatalf("first ordinary tab = %+v, %v", first, err)
+			}
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("deployment did not start")
+			}
+			backgroundHelperDeployments.Lock()
+			deployment := backgroundHelperDeployments.entries[connected]
+			backgroundHelperDeployments.Unlock()
+			if deployment == nil {
+				t.Fatal("deployment disappeared before cancellation")
+			}
+			if err := manager.CancelHelperOperation(t.Context(), connected.ID, operationID); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-deployment.done:
+			case <-time.After(time.Second):
+				t.Fatal("cancelled deployment did not complete")
+			}
+			connected.durableMu.Lock()
+			failure := connected.durableFailure
+			connected.durableMu.Unlock()
+			if failure != test.result {
+				t.Fatalf("durable failure = %v, want preserved result %v", failure, test.result)
+			}
+			second, err := manager.OpenTab(t.Context(), OpenTabOptions{
+				SessionID: connected.ID, ClientID: "client", ChannelID: "cancel-safety-second", Cols: 80, Rows: 24,
+				Durable: &DurableTabOptions{}, DurableFallback: true,
+			})
+			if err == nil {
+				t.Fatalf("auto tab after non-cancellation failure = %+v; want fail closed", second)
+			}
+			if err != test.result {
+				t.Fatalf("auto tab error = %v, want preserved result %v", err, test.result)
+			}
+			if got := calls.Load(); got != 1 {
+				t.Fatalf("resolver calls after cached safety failure = %d, want 1", got)
+			}
+		})
 	}
 }

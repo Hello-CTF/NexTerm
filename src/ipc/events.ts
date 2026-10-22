@@ -95,9 +95,16 @@ export interface ConnectProgressEvent {
 export interface HelperProgressEvent {
   sessionId: string;
   assetId: string;
+  operationId?: string;
+  attempt?: number;
+  attempts?: number;
+  deadline?: number;
   step: number;
   steps: number;
   stage: string;
+  cause?: string;
+  path?: string;
+  transport?: string;
   transferred: number;
   total: number;
   percent: number;

@@ -207,6 +207,8 @@ describe("terminal toolbar overflow", () => {
       "选择广播目标…",
       "开始录制…",
       "字符编码",
+      "持久终端助手…",
+      "导入离线 helper…",
     ]);
     await waitFor(() =>
       expect(document.activeElement?.textContent).toContain("搜索终端内容"),

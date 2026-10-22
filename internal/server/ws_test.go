@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/coder/websocket"
 )
@@ -374,6 +375,40 @@ func TestCloseContextBoundsBlockedChannelBinder(t *testing.T) {
 		t.Fatalf("CloseContext error = %v", err)
 	}
 	close(block)
+}
+
+func TestHelperOperationEventFilterKeepsAssetOwnerBoundary(t *testing.T) {
+	owners := map[string]string{"asset-a": "user-a", "asset-b": "user-b"}
+	server := &Server{assetOwner: func(_ context.Context, id string) (string, error) {
+		owner, ok := owners[id]
+		if !ok {
+			return "", errors.New("unknown asset")
+		}
+		return owner, nil
+	}}
+	for _, test := range []struct {
+		userID  string
+		assetID string
+		allowed bool
+	}{
+		{userID: "user-a", assetID: "asset-a", allowed: true},
+		{userID: "user-a", assetID: "asset-b", allowed: false},
+		{userID: "user-b", assetID: "asset-a", allowed: false},
+		{userID: "user-b", assetID: "asset-b", allowed: true},
+	} {
+		filter := server.eventFilter(&account.Identity{UserID: test.userID, Role: account.RoleUser})
+		if filter == nil {
+			t.Fatalf("%s filter is nil", test.userID)
+		}
+		event := ipc.Event{Event: ipc.TopicHelperProgress, Payload: ipc.HelperProgressEvent{
+			SessionID: "session-" + test.assetID, AssetID: test.assetID,
+			OperationID: "helper-operation", Attempt: 2, Attempts: 3, Deadline: 123456,
+			Stage: "upload", Cause: "retry", Path: "/remote/helper", Transport: "exec",
+		}}
+		if got := filter(event); got != test.allowed {
+			t.Fatalf("%s receiving %s = %v, want %v", test.userID, test.assetID, got, test.allowed)
+		}
+	}
 }
 
 func waitFor(t *testing.T, condition func() bool) {

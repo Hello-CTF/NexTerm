@@ -18,8 +18,11 @@ export interface HelperOfflineTrustPresentation {
 }
 
 export interface HelperUpdatePresentation {
-  status: "available" | "deferred" | "interrupted";
+  status: "available" | "deferred" | "interrupted" | "updated" | "rolled_back" | "unknown";
   detail?: string | null;
+  updated?: boolean;
+  interrupted?: boolean;
+  rolledBack?: boolean;
 }
 
 export interface HelperOperationViewProps {
@@ -28,6 +31,9 @@ export interface HelperOperationViewProps {
   attempt?: number | null;
   maxAttempts?: number | null;
   deadline?: string | null;
+  operationId?: string | null;
+  path?: string | null;
+  transport?: string | null;
   localVersion?: HelperVersionPresentation | null;
   runningVersion?: HelperVersionPresentation | null;
   compatibility?: HelperCompatibility;
@@ -150,6 +156,9 @@ export function HelperOperationView({
   attempt,
   maxAttempts,
   deadline,
+  operationId,
+  path,
+  transport,
   localVersion,
   runningVersion,
   compatibility,
@@ -211,6 +220,9 @@ export function HelperOperationView({
           <Definition term="原因" value={textOrUnknown(reason)} />
           <Definition term="尝试次数" value={attemptText(attempt, maxAttempts)} />
           <Definition term="截止时间" value={textOrUnknown(deadline)} />
+          {operationId !== undefined && <Definition term="操作 ID" value={textOrUnknown(operationId)} />}
+          {path !== undefined && <Definition term="路径" value={textOrUnknown(path)} />}
+          {transport !== undefined && <Definition term="传输" value={textOrUnknown(transport)} />}
         </dl>
       </div>
 
@@ -350,6 +362,12 @@ export function HelperOperationView({
             {update.status === "available" && <p>可以检查并执行助手更新。</p>}
             {update.status === "deferred" && <p>更新已延后：不会主动中断活动 PTY 或其他 exec。</p>}
             {update.status === "interrupted" && <p>已请求中断并更新。原有进程状态以实际结果为准。</p>}
+            {update.status === "updated" && !update.updated && <p>助手更新已完成；原有进程不会因更新或回滚而复活。</p>}
+            {update.status === "rolled_back" && <p>更新失败，已返回回滚结果。</p>}
+            {update.status === "unknown" && <p>更新结果未知，不能推断已更新、已延后或已中断。</p>}
+            {update.interrupted && <p>已明确中断活动进程。</p>}
+            {update.updated && <p>助手更新已完成；原有进程不会因更新或回滚而复活。</p>}
+            {update.rolledBack && <p>已回滚助手二进制；原 shell 和其他进程不会复活。</p>}
             {update.detail && <p className="mt-1 text-neutral-400">{update.detail}</p>}
             <p id={updateNoteId} className="mt-1 text-[var(--nx-fg-warning)]">
               活动进程存在时默认稍后更新；只有明确选择后才能中断。更新或回滚都不会复活原 shell 或其他进程。
@@ -378,7 +396,7 @@ export function HelperOperationView({
                 稍后更新
               </button>
             )}
-            {update.status !== "interrupted" && onInterruptAndUpdate && (
+            {(update.status === "available" || update.status === "deferred") && onInterruptAndUpdate && (
               <button
                 type="button"
                 className="nx-btn nx-btn-ghost nx-btn-sm"

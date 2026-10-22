@@ -35,6 +35,7 @@ type terminalCommandService struct {
 	stagedBlobs  StagedBlobResolver
 	fsUploads    *fsChunkUploadRegistry
 	desktop      bool
+	helpers      *productionHelperService
 
 	mu         sync.Mutex
 	dockerTabs map[string]*dockerTabInfo
@@ -94,6 +95,20 @@ type openTerminalRequest struct {
 	Cols      uint32 `json:"cols"`
 	Rows      uint32 `json:"rows"`
 	Durable   *bool  `json:"durable,omitempty"`
+}
+
+type helperOperationRequest struct {
+	SessionID       string `json:"sessionId"`
+	OperationID     string `json:"operationId,omitempty"`
+	Action          string `json:"action"`
+	InterruptActive bool   `json:"interruptActive,omitempty"`
+}
+
+type helperOfflineRequest struct {
+	SessionID string `json:"sessionId"`
+	Path      string `json:"path"`
+	SHA256    string `json:"sha256,omitempty"`
+	Confirmed bool   `json:"confirmed"`
 }
 
 type durableDescriptorDTO struct {
@@ -873,7 +888,9 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				}
 				err := s.closeSessionTab(ctx, call, input)
 				if errors.Is(err, session.ErrTabNotFound) && input.SessionID != "" {
-					if _, err = s.sessions.SessionFor(ctx, input.SessionID); err == nil {
+					if _, sessionErr := s.sessions.SessionFor(ctx, input.SessionID); sessionErr != nil {
+						err = sessionErr
+					} else if input.Mode == "kill" {
 						_, err = s.sessions.RecoverRemoteDurable(ctx, input.TabID, session.OpenTabOptions{
 							SessionID: input.SessionID, ClientID: call.ClientID, Detached: true, Cols: 80, Rows: 24,
 						})
@@ -918,6 +935,62 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					return attachedTabDTO{}, terminalIPCError(err)
 				}
 				return attachedSessionTab(info), nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "terminal_helper_operation", func(ctx context.Context, _ *ipc.Call, input helperOperationRequest) (helperOperationDTO, error) {
+				ctx = productionSessionRequestContext(ctx)
+				action := input.Action
+				if action == "update" && input.InterruptActive {
+					action = "update_interrupt"
+				}
+				switch action {
+				case "cancel", "retry":
+					if input.OperationID == "" {
+						return helperOperationDTO{}, ipc.BadParam(errors.New("助手操作缺少 operationId"))
+					}
+					var err error
+					if action == "cancel" {
+						err = s.sessions.CancelHelperOperation(ctx, input.SessionID, input.OperationID)
+					} else {
+						err = s.sessions.RetryHelperOperation(ctx, input.SessionID, input.OperationID)
+					}
+					if err != nil {
+						return helperOperationDTO{}, terminalIPCError(err)
+					}
+					return helperOperationDTO{
+						SessionID: input.SessionID, OperationID: input.OperationID, Action: action, Accepted: true,
+						Local: helperVersionDTO{Known: false}, Running: helperVersionDTO{Known: false}, Compatibility: "unknown",
+					}, nil
+				case "status", "update", "update_interrupt":
+					if s.helpers == nil {
+						return helperOperationDTO{}, terminalIPCError(session.ErrUnsupported)
+					}
+					result, err := s.helpers.ensure(ctx, input.SessionID, action)
+					if err != nil {
+						if result.Update != nil && result.Update.RolledBack {
+							return result, ipc.NormalizeError(err).WithDetail(result)
+						}
+						return helperOperationDTO{}, terminalIPCError(err)
+					}
+					result.Accepted = action != "status"
+					return result, nil
+				default:
+					return helperOperationDTO{}, ipc.BadParam(errors.New("未知的助手操作"))
+				}
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "terminal_helper_offline", func(ctx context.Context, _ *ipc.Call, input helperOfflineRequest) (helperOperationDTO, error) {
+				ctx = productionSessionRequestContext(ctx)
+				if !s.desktop || s.helpers == nil {
+					return helperOperationDTO{}, terminalIPCError(session.ErrUnsupported)
+				}
+				result, err := s.helpers.inspectOffline(ctx, input.SessionID, input.Path, input.SHA256, input.Confirmed)
+				if err != nil {
+					return helperOperationDTO{}, ipc.BadParam(err)
+				}
+				return result, nil
 			})
 		},
 	}

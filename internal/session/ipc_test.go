@@ -73,7 +73,7 @@ func TestIPCErrorUserMessagesAreActionable(t *testing.T) {
 		{err: ErrSessionClosed, code: ipc.CodeDisconnected, want: "会话已关闭"},
 		{err: ErrTabClosed, code: ipc.CodeDisconnected, want: "终端标签页已关闭"},
 		{err: ErrUnsupported, code: ipc.CodeUnsupported, want: "不支持"},
-		{err: ErrDurableDisabled, code: ipc.CodeUnsupported, want: "改回自动模式"},
+		{err: ErrDurableDisabled, code: ipc.CodeUnsupported, want: "已有持久终端可从后台会话恢复"},
 		{err: ErrAmbiguousDurable, code: ipc.CodeBadParam, want: "指定会话"},
 		{err: ErrInvalidSize, code: ipc.CodeBadParam, want: "终端尺寸无效"},
 		{err: context.DeadlineExceeded, code: ipc.CodeTimeout, want: "操作超时"},

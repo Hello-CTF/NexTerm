@@ -294,7 +294,7 @@ describe("AssetEditor SSH connectivity", () => {
     const mode = findSelect("普通终端（不使用持久终端）");
     expect(mode.value).toBe("auto");
     setSelectValue(mode, "regular");
-    expect(mounted?.container.textContent).toContain("切换为普通终端不会删除已有持久会话；切回「自动」后可在「后台会话」查看并接管");
+    expect(mounted?.container.textContent).toContain("普通模式只影响以后新开的终端，不会删除已有持久会话，已有会话仍可在「后台会话」查看并接管");
     fillName("ordinary-ssh");
     fillHost("10.0.0.8");
     click(saveButton());

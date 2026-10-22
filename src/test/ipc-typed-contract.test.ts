@@ -1201,7 +1201,9 @@ const written: Promise<void> = terminalApi.write("tab-1", new Uint8Array([1]));
 const resized: Promise<void> = terminalApi.resize("tab-1", 80, 24);
 const live: Promise<LiveTabInfo[]> = terminalApi.listLive();
 const durable: Promise<DurableDescriptor[]> = terminalApi.listDurable("session-1");
-void [sessions, attached, disconnected, prepared, written, resized, live, durable];
+const helperOperation = terminalApi.helperOperation("session-1", "operation-1", "cancel");
+const helperOffline = terminalApi.helperOffline("session-1", "/tmp/helper", "a".repeat(64), true);
+void [sessions, attached, disconnected, prepared, written, resized, live, durable, helperOperation, helperOffline];
 
 void call("session_connect_device", { args: { deviceId: "device-1", name: "Device" } });
 void call("session_connect_local");
@@ -1214,6 +1216,11 @@ void call("terminal_attach", { sessionId: "session-1", cols: 80, rows: 24, durab
 void call("terminal_broadcast_prepare", { args: { tabIds: ["tab-1"], data: [1] } });
 void call("terminal_rename_tab", { tabId: "tab-1", title: "Deploy" });
 void call("terminal_write", { args: { tabId: "tab-1", clientId: "client-1", data: [1] } });
+void call("terminal_helper_operation", { sessionId: "session-1", operationId: "operation-1", action: "cancel" });
+void call("terminal_helper_offline", { sessionId: "session-1", path: "/tmp/helper", sha256: "a".repeat(64), confirmed: true });
+
+// @ts-expect-error generated helper operation input fields are checked
+void call("terminal_helper_operation", { sessionId: "session-1", operationId: 42, action: "cancel" });
 
 // @ts-expect-error generated device input fields are checked
 void call("session_connect_device", { args: { deviceId: 42, name: "Device" } });

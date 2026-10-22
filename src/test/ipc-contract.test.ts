@@ -132,6 +132,33 @@ describe("session and terminal facade IPC contracts", () => {
     expectManifestEnvelope(calls[1], "terminal_list", null);
     expectManifestEnvelope(calls[2], "terminal_list", { sessionId: "session-1", durable: true });
   });
+
+  it("uses generated non-nested contracts for helper operation and offline trust", async () => {
+    const result = {
+      sessionId: "session-1",
+      action: "retry",
+      accepted: true,
+      local: { known: false },
+      running: { known: false },
+      compatibility: "unknown",
+    };
+    const calls = captureRpc({
+      terminal_helper_operation: result,
+      terminal_helper_offline: result,
+    });
+    const { terminalApi } = await import("../ipc/commands");
+
+    await terminalApi.helperOperation("session-1", "operation-1", "retry");
+    await terminalApi.helperOffline("session-1", "/tmp/helper", "a".repeat(64), true);
+
+    expect(calls).toHaveLength(2);
+    expectManifestEnvelope(calls[0], "terminal_helper_operation", {
+      sessionId: "session-1", operationId: "operation-1", action: "retry", interruptActive: false,
+    });
+    expectManifestEnvelope(calls[1], "terminal_helper_offline", {
+      sessionId: "session-1", path: "/tmp/helper", sha256: "a".repeat(64), confirmed: true,
+    });
+  });
 });
 
 describe("remote desktop facade IPC contracts", () => {
