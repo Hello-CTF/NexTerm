@@ -51,8 +51,8 @@ type Session struct {
 }
 
 // execState holds the process of a non-PTY session. drained tracks the two
-// pipe consumers: cmd.Wait runs only after both pipes are fully read, as
-// os/exec requires.
+// pipe consumers: cmd.Wait runs only after both consumers finish, as os/exec
+// requires.
 type execState struct {
 	cmd     *exec.Cmd
 	stdout  io.ReadCloser
@@ -392,8 +392,9 @@ func (s *Session) pump() {
 	s.finish(s.pty.Wait(context.Background()))
 }
 
-// execWait reaps a non-PTY process once both pipes are fully drained by the
-// stream consumer; os/exec forbids Wait before the reads complete.
+// execWait reaps a non-PTY process after its pipe consumers finish. Normal
+// consumers drain both pipes before Wait; abort closes them to unblock the
+// consumers without waiting for descendants that inherited the write ends.
 func (s *Session) execWait() {
 	defer s.supervisor.sessionDone()
 	s.exec.drained.Wait()
@@ -509,6 +510,10 @@ func (s *Session) closeProcess() {
 		if s.exec.cmd.Process != nil {
 			_ = s.exec.cmd.Process.Kill()
 		}
+		// A descendant can inherit the write ends, so closing the parent's read
+		// ends is required to release the drainers and let cmd.Wait run.
+		_ = s.exec.stdout.Close()
+		_ = s.exec.stderr.Close()
 		return
 	}
 	_ = s.pty.Close()

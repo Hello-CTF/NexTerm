@@ -439,7 +439,11 @@ func (s *Supervisor) Close() error {
 	s.mu.Unlock()
 
 	for _, session := range sessions {
-		session.markKilled()
+		if session.exec != nil {
+			session.closeProcess()
+		} else {
+			session.markKilled()
+		}
 	}
 	s.cancel()
 	var errs []error
