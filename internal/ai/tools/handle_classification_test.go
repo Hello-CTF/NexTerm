@@ -53,3 +53,66 @@ func TestTerminalHandleErrorClassification(t *testing.T) {
 		})
 	}
 }
+
+// ResolveCallTarget resolves only single-tab terminal tools, with the same
+// scope and handle rules the execution applies; every other shape — a
+// multi-tab wait, a non-terminal tool, a cross-scope or unresolvable
+// target — reports no target instead of guessing one.
+func TestResolveCallTargetSingleTabTools(t *testing.T) {
+	fake := newTabFake(fakeTab("t1", "s1", "$ ", 0), fakeTab("t2", "s2", "$ ", 0))
+	registry := p1Registry(fake)
+	scope := Scope{SessionID: "s1", TabID: "t1"}
+	ctx := context.Background()
+
+	for _, call := range []Call{
+		p1Call("a", "send_keys", `{"keys":"ls"}`),
+		p1Call("b", "read_screen", `{}`),
+		p1Call("c", "terminal_rename", `{"tab_id":"t1","title":"x"}`),
+		p1Call("d", "wait_for", `{"pattern":"READY"}`),
+		p1Call("e", "wait_for", `{"pattern":"READY","tab_ids":["t/t1/s1"]}`),
+		p1Call("f", "read_screen", `{"tab_id":"t/t1/s1"}`),
+	} {
+		handle, ok := registry.ResolveCallTarget(ctx, "job", scope, call)
+		if !ok {
+			t.Fatalf("%s did not resolve: %+v", call.Name, call.Args)
+		}
+		if handle.TabID != "t1" || handle.SessionID != "s1" {
+			t.Fatalf("%s resolved %+v, want t1/s1", call.Name, handle)
+		}
+		if parsed, err := ParseTerminalHandle(handle.String()); err != nil || parsed != handle {
+			t.Fatalf("%s handle %q not parseable: %v", call.Name, handle.String(), err)
+		}
+	}
+}
+
+func TestResolveCallTargetUnknownShapes(t *testing.T) {
+	fake := newTabFake(fakeTab("t1", "s1", "$ ", 0), fakeTab("t2", "s2", "$ ", 0))
+	registry := p1Registry(fake)
+	scope := Scope{SessionID: "s1", TabID: "t1"}
+	ctx := context.Background()
+
+	unknown := []Call{
+		// Multi-tab waits have no single honest target.
+		p1Call("a", "wait_for", `{"pattern":"READY","tab_ids":["t/t1/s1","t/t2/s2"]}`),
+		p1Call("b", "wait_for", `{"pattern":"READY","tab_id":"t1","tab_ids":["t/t1/s1"]}`),
+		// Non-terminal tools never carry a tab target.
+		p1Call("c", "exec_commands", `{"commands":["ls"]}`),
+		p1Call("d", "db_query", `{"query":"select 1"}`),
+		p1Call("e", "terminal_create", `{}`),
+		p1Call("f", "terminal_list", `{}`),
+		// Cross-scope, gone, and malformed targets are unverifiable.
+		p1Call("g", "send_keys", `{"keys":"ls","tab_id":"t2"}`),
+		p1Call("h", "read_screen", `{"tab_id":"t/t1/s9"}`),
+		p1Call("i", "read_screen", `{"tab_id":"t/t9/s1"}`),
+		p1Call("j", "send_keys", `{"keys":"ls","tab_id":"bogus"}`),
+	}
+	for _, call := range unknown {
+		if handle, ok := registry.ResolveCallTarget(ctx, "job", scope, call); ok {
+			t.Fatalf("%s %s resolved %+v, want unknown", call.Name, call.Args, handle)
+		}
+	}
+	// A scope without a tab cannot anchor a default target either.
+	if handle, ok := registry.ResolveCallTarget(ctx, "job", Scope{}, p1Call("k", "read_screen", `{}`)); ok {
+		t.Fatalf("scope-less read_screen resolved %+v", handle)
+	}
+}

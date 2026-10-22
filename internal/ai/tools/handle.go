@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -79,6 +80,56 @@ func (r *Registry) resolveHandle(ctx context.Context, handle TerminalHandle) (st
 		return "", ErrTerminalReplaced
 	}
 	return handle.TabID, nil
+}
+
+// ResolveCallTarget reports the exact terminal handle a tool call targets,
+// resolved with the same scope and handle rules the execution applies, so
+// callers (the agent runner's tool events) can join the call to roster
+// metadata without re-deriving the target. Only single-tab terminal tools
+// resolve: multi-tab waits, non-terminal tools, and targets that fail
+// resolution report ok=false — an unknown target is never guessed.
+func (r *Registry) ResolveCallTarget(ctx context.Context, jobID string, scope Scope, call Call) (TerminalHandle, bool) {
+	requested := ""
+	switch call.Name {
+	case "send_keys", "read_screen", "terminal_rename":
+		var args struct {
+			TabID string `json:"tab_id"`
+		}
+		if len(call.Args) > 0 && json.Unmarshal(call.Args, &args) != nil {
+			return TerminalHandle{}, false
+		}
+		requested = args.TabID
+	case "wait_for":
+		var args struct {
+			TabID  string   `json:"tab_id"`
+			TabIDs []string `json:"tab_ids"`
+		}
+		if len(call.Args) > 0 && json.Unmarshal(call.Args, &args) != nil {
+			return TerminalHandle{}, false
+		}
+		switch {
+		case args.TabID != "" && len(args.TabIDs) > 0:
+			return TerminalHandle{}, false
+		case len(args.TabIDs) == 1:
+			requested = args.TabIDs[0]
+		case len(args.TabIDs) > 1:
+			// A multi-tab wait has no single honest target handle.
+			return TerminalHandle{}, false
+		default:
+			requested = args.TabID
+		}
+	default:
+		return TerminalHandle{}, false
+	}
+	tabID, err := r.resolveTab(ctx, jobID, scope, requested)
+	if err != nil {
+		return TerminalHandle{}, false
+	}
+	sessionID, err := r.tabSession(ctx, tabID)
+	if err != nil || sessionID == "" {
+		return TerminalHandle{}, false
+	}
+	return TerminalHandle{TabID: tabID, SessionID: sessionID}, true
 }
 
 const (

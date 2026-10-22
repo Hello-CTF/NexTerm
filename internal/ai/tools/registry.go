@@ -37,7 +37,71 @@ func NewRegistry(deps Dependencies) *Registry {
 	if skillLoaderConfigured(deps.Skills) {
 		schemas = append(schemas, deps.Skills.LoadSkillSchema())
 	}
+	deps = composeAssetIdentityResolvers(deps)
 	return &Registry{deps: deps, jobs: make(map[string]*jobState), schemas: schemas, flights: make(map[string]struct{})}
+}
+
+// composeAssetIdentityResolvers wires the identity-aware resolvers a fully
+// configured dependency set implies but did not spell out. The live
+// session's bound asset identity (asset ID plus config fingerprint) is the
+// same source the execution-time re-validation reads, so a registry with
+// the plain session resolvers and an identity-capable terminal binds and
+// re-validates real identities instead of marking operations unverifiable.
+// Explicitly configured resolvers always win, a terminal without the
+// identity seam keeps the honest unverifiable path, and a session without
+// an identity source (device, inline) resolves to
+// ErrAssetIdentityUnverifiable so the operation stays visibly unverifiable
+// instead of binding an invented identity.
+func composeAssetIdentityResolvers(deps Dependencies) Dependencies {
+	identities, ok := deps.Terminal.(SessionAssetIdentityResolver)
+	if !ok {
+		return deps
+	}
+	if deps.ResolveAssetSessionIdentity == nil && deps.ResolveAssetSession != nil {
+		resolve := deps.ResolveAssetSession
+		deps.ResolveAssetSessionIdentity = func(ctx context.Context, assetID string) (string, AssetIdentity, error) {
+			sessionID, err := resolve(ctx, assetID)
+			if err != nil {
+				return "", AssetIdentity{}, err
+			}
+			identity, err := identities.SessionAssetIdentity(ctx, sessionID)
+			if err != nil {
+				return "", AssetIdentity{}, err
+			}
+			if identity.AssetID == "" || identity.ConfigFingerprint == "" {
+				// A session without an identity source (device, inline)
+				// resolves to the honest unverifiable verdict — carrying the
+				// resolved session with it, never an invented identity.
+				return sessionID, AssetIdentity{}, ErrAssetIdentityUnverifiable
+			}
+			return sessionID, identity, nil
+		}
+	}
+	if deps.ResolveExecTargetIdentities == nil && deps.ResolveExecTargets != nil {
+		resolve := deps.ResolveExecTargets
+		deps.ResolveExecTargetIdentities = func(ctx context.Context, assetIDs, tags []string) (ExecTargetSet, []AssetIdentity, error) {
+			targets, err := resolve(ctx, assetIDs, tags)
+			if err != nil {
+				return ExecTargetSet{}, nil, err
+			}
+			resolved := make([]AssetIdentity, 0, len(targets.SessionIDs))
+			for _, sessionID := range targets.SessionIDs {
+				identity, err := identities.SessionAssetIdentity(ctx, sessionID)
+				if err != nil {
+					return ExecTargetSet{}, nil, err
+				}
+				if identity.AssetID == "" || identity.ConfigFingerprint == "" {
+					// One unevidenced target unbinds the whole batch: it runs
+					// on the honest unverifiable path instead — carrying the
+					// resolved targets with the verdict.
+					return targets, nil, ErrAssetIdentityUnverifiable
+				}
+				resolved = append(resolved, identity)
+			}
+			return targets, resolved, nil
+		}
+	}
+	return deps
 }
 
 // acquireOperationFlight marks the operation in-flight until the returned
@@ -306,9 +370,11 @@ func OutcomeKeyWithIdentity(jobID, callID string, identities []AssetIdentity) st
 // storing them on the call. A configured resolver that fails or returns an
 // invalid empty identity set fails the call visibly — an identity-less
 // record is never written or replayed; only the path without a configured
-// resolver stays visibly identity-unverifiable. For terminal_create with
-// connect=true, an ErrNoLiveSession verdict runs the explicit connect flow
-// here so the connected, verified identity is what the outcome key binds to.
+// resolver, or one whose target identity genuinely cannot be evidenced
+// (ErrAssetIdentityUnverifiable), stays visibly identity-unverifiable. For
+// terminal_create with connect=true, an ErrNoLiveSession verdict runs the
+// explicit connect flow here so the connected, verified identity is what
+// the outcome key binds to.
 func (r *Registry) bindCallAssetIdentities(ctx context.Context, jobID string, call *Call) *Output {
 	switch call.Name {
 	case "terminal_create":
@@ -335,6 +401,20 @@ func (r *Registry) bindCallAssetIdentities(ctx context.Context, jobID string, ca
 		}
 		targets, identities, err := r.deps.ResolveExecTargetIdentities(ctx, assetIDs, tags)
 		if err != nil {
+			if errors.Is(err, ErrAssetIdentityUnverifiable) {
+				// A call already bound to identities must never degrade: the
+				// bound identity requires an exact match, so an unverifiable
+				// target fails closed instead of executing on, recording
+				// against, or replaying under the old identity.
+				if len(call.AssetIdentities) > 0 {
+					failure := Fail(fmt.Errorf("身份解析失败: 目标资产身份已不可验证，与操作绑定身份不一致: %w", ErrAssetIdentityChanged))
+					return &failure
+				}
+				// The batch's identity genuinely cannot be evidenced: it
+				// runs unbound and the result marks it unverifiable, the
+				// same contract as a registry without the identity resolver.
+				return nil
+			}
 			failure := Fail(fmt.Errorf("身份解析失败: %w", err))
 			return &failure
 		}
@@ -370,30 +450,42 @@ func (r *Registry) bindTerminalCreateIdentity(ctx context.Context, jobID string,
 			r.state(jobID).rememberAssetOperation(call.ID, call.AssetIdentities, sessionID, "")
 			return nil
 		}
-		if !errors.Is(err, ErrNoLiveSession) || !connect {
-			failure := Fail(fmt.Errorf("身份解析失败: %w", err))
+		if !errors.Is(err, ErrAssetIdentityUnverifiable) {
+			if !errors.Is(err, ErrNoLiveSession) || !connect {
+				failure := Fail(fmt.Errorf("身份解析失败: %w", err))
+				return &failure
+			}
+			// Before any ConnectAsset, adjudicate the operation's existing
+			// outcome records through the stable operation→identity mapping: a
+			// finished record replays directly, a non-terminal one fails
+			// visibly, and only the certain fresh-execution cases connect —
+			// including a durable-certified fresh attempt after a failure,
+			// whose idempotency scope keeps the old finished record from
+			// short-circuiting the reconnect.
+			if output, adjudicated := r.adjudicateRecordedCreate(ctx, jobID, call); adjudicated {
+				return output
+			}
+			connectedID, identity, failure := r.connectAssetSession(ctx, jobID, *call, assetID, err, AssetIdentity{}, false)
+			if failure != nil {
+				call.ConnectedSessionID = connectedID
+				return failure
+			}
+			call.ConnectedSessionID = connectedID
+			call.BoundSessionID = connectedID
+			call.AssetIdentities = []AssetIdentity{identity}
+			r.state(jobID).rememberAssetOperation(call.ID, call.AssetIdentities, connectedID, connectedID)
+			return nil
+		}
+		// The target's identity genuinely cannot be evidenced (device or
+		// inline session): a call already bound to an identity must never
+		// degrade — the bound identity requires an exact match, so it fails
+		// closed instead of executing on or recording against the
+		// unverifiable target. Only an originally unbound call falls through
+		// to the plain-resolver path, which keeps it visibly unverifiable.
+		if len(call.AssetIdentities) > 0 {
+			failure := Fail(fmt.Errorf("身份解析失败: 资产 %s 的身份已不可验证，与操作绑定身份不一致: %w", assetID, ErrAssetIdentityChanged))
 			return &failure
 		}
-		// Before any ConnectAsset, adjudicate the operation's existing
-		// outcome records through the stable operation→identity mapping: a
-		// finished record replays directly, a non-terminal one fails
-		// visibly, and only the certain fresh-execution cases connect —
-		// including a durable-certified fresh attempt after a failure,
-		// whose idempotency scope keeps the old finished record from
-		// short-circuiting the reconnect.
-		if output, adjudicated := r.adjudicateRecordedCreate(ctx, jobID, call); adjudicated {
-			return output
-		}
-		connectedID, identity, failure := r.connectAssetSession(ctx, jobID, *call, assetID, err, AssetIdentity{}, false)
-		if failure != nil {
-			call.ConnectedSessionID = connectedID
-			return failure
-		}
-		call.ConnectedSessionID = connectedID
-		call.BoundSessionID = connectedID
-		call.AssetIdentities = []AssetIdentity{identity}
-		r.state(jobID).rememberAssetOperation(call.ID, call.AssetIdentities, connectedID, connectedID)
-		return nil
 	}
 	if r.deps.ResolveAssetSession == nil {
 		return nil
@@ -727,6 +819,19 @@ func (r *Registry) replayDurableCreate(ctx context.Context, jobID string, call *
 		failure := Fail(fmt.Errorf("调用与已记录的执行冲突（授权或参数不一致）: %w", outcome.ErrIdempotenceConflict))
 		failure.OperationID = operation
 		return &failure, true
+	}
+	// A record bound to a specific identity must never replay when the
+	// current target can no longer evidence one: the replay cannot certify
+	// the binding still holds, so it fails closed instead of returning the
+	// old result for an unverifiable target. A vacated session (no live
+	// session at all) is not this verdict — replay stays the no-side-effect
+	// path there.
+	if len(recorded.Identities) > 0 && r.deps.ResolveAssetSessionIdentity != nil {
+		if _, _, err := r.deps.ResolveAssetSessionIdentity(ctx, recorded.Identities[0].AssetID); errors.Is(err, ErrAssetIdentityUnverifiable) {
+			failure := Fail(fmt.Errorf("资产 %s 的身份已不可验证，与已记录执行的绑定身份不一致: %w", recorded.Identities[0].AssetID, ErrAssetIdentityChanged))
+			failure.OperationID = operation
+			return &failure, true
+		}
 	}
 	if record.State != "succeeded" || r.durableCreateStale(ctx, recorded) {
 		return nil, false

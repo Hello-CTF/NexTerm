@@ -642,6 +642,8 @@ export type ProductionSettingsDTO = {
   broadcastConnectProductionOptIn: boolean;
   targetSetConnectOptIn: boolean;
   targetSetConnectProductionOptIn: boolean;
+  aiTerminalConnectOptIn: boolean;
+  aiTerminalConnectProductionOptIn: boolean;
 };
 
 export type ProductionSettingsUpdateRequest = {
@@ -652,6 +654,8 @@ export type ProductionSettingsUpdateRequest = {
   broadcastConnectProductionOptIn?: boolean | null;
   targetSetConnectOptIn?: boolean | null;
   targetSetConnectProductionOptIn?: boolean | null;
+  aiTerminalConnectOptIn?: boolean | null;
+  aiTerminalConnectProductionOptIn?: boolean | null;
 };
 
 export type RemoteHostShareIdentity = {

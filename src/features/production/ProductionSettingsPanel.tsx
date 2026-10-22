@@ -10,11 +10,12 @@ import {
 } from "./productionSettings";
 
 // R-01/R-07 per-owner production safety settings: the configurable production
-// environment list and the three surface connect opt-in pairs. Everything
-// defaults to off/empty server-side; the opt-ins only gate connecting
-// disconnected assets (owner / known host key / vault / production rules still
-// apply, and unknown host keys are never auto-accepted). They never bypass the
-// per-operation typed environment-name confirmation for production writes.
+// environment list and the surface connect opt-in pairs (cron, broadcast,
+// target-set, and the AI terminal surface). Everything defaults to off/empty
+// server-side; the opt-ins only gate connecting disconnected assets (owner /
+// known host key / vault / production rules still apply, and unknown host keys
+// are never auto-accepted). They never bypass the per-operation typed
+// environment-name confirmation for production writes.
 
 const MAX_ENVIRONMENT_NAMES = 32;
 const MAX_ENVIRONMENT_LENGTH = 64;
@@ -25,7 +26,9 @@ type ProductionOptInKey =
   | "broadcastConnectOptIn"
   | "broadcastConnectProductionOptIn"
   | "targetSetConnectOptIn"
-  | "targetSetConnectProductionOptIn";
+  | "targetSetConnectProductionOptIn"
+  | "aiTerminalConnectOptIn"
+  | "aiTerminalConnectProductionOptIn";
 
 interface OptInRow {
   key: ProductionOptInKey;
@@ -62,6 +65,16 @@ const OPT_IN_ROWS: OptInRow[] = [
   {
     key: "targetSetConnectProductionOptIn",
     label: "目标集连接生产环境资产",
+    hint: "生产环境目标还需要此项显式允许；仍需已确认的主机密钥与可用凭据库。",
+  },
+  {
+    key: "aiTerminalConnectOptIn",
+    label: "AI 终端连接未连接资产",
+    hint: "关闭时，AI 创建终端（connect=true）只使用已连接会话，不会为未连接资产建立连接。",
+  },
+  {
+    key: "aiTerminalConnectProductionOptIn",
+    label: "AI 终端连接生产环境资产",
     hint: "生产环境目标还需要此项显式允许；仍需已确认的主机密钥与可用凭据库。",
   },
 ];

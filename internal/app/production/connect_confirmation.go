@@ -54,10 +54,10 @@ func (e surfaceConnectEvidence) ProductionConfirmed(ctx context.Context, _ cron.
 	return cronConnectSetting(ctx, e.services.Store, e.productionOptInKey(ctx))
 }
 
-// newSurfaceConnector builds the R-07 connect gate for the broadcast and
-// target-set surfaces: the same evidence, authorization, and strict host-key
-// dial as cron, with the surface's own per-user opt-in and production
-// confirmation settings.
+// newSurfaceConnector builds the R-07 connect gate for the broadcast,
+// target-set, and AI terminal surfaces: the same evidence, authorization,
+// and strict host-key dial as cron, with each surface's own per-user opt-in
+// and production confirmation settings.
 func newSurfaceConnector(services *ProductionServices, optInKey, productionOptInKey func(context.Context) string) *cron.Connector {
 	return &cron.Connector{
 		OptIn: func(ctx context.Context, _ cron.Trigger) (bool, error) {

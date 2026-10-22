@@ -108,6 +108,17 @@ func productionScopeError(err error) error {
 	return ipc.WrapError(ipc.CodeForbidden, "AI 终端范围无效或无权访问", err)
 }
 
+// resolveAssetSessionInterleaveHook, when set by in-package tests, runs at
+// the marked points inside resolveProductionAssetSession so an interleaved
+// disconnect or deletion between the session reads becomes deterministic.
+// It is nil in production.
+var resolveAssetSessionInterleaveHook func(point string)
+
+const (
+	resolveAssetSessionInterleaveAfterLive       = "after-live"
+	resolveAssetSessionInterleaveBeforeTransport = "before-transport"
+)
+
 type productionScopeDatabase interface {
 	Tables(context.Context, string, string) ([]string, error)
 }
@@ -445,25 +456,57 @@ func resolveProductionAssetSession(ctx context.Context, services *ProductionServ
 	}
 	sessionID, err := productionScopeValidator(services).liveSessionForAsset(validationCtx, assetID)
 	if err != nil {
+		// The explicit not-connected verdict maps to the tools layer's
+		// ErrNoLiveSession, so terminal_create connect=true can dial through
+		// the R-07 gates; forbidden, unsupported, and transient failures
+		// propagate untouched and never trigger a connect.
+		var appErr *ipc.Error
+		if errors.As(err, &appErr) && appErr.Code == ipc.CodeDisconnected {
+			return "", ipc.WrapError(ipc.CodeDisconnected, appErr.Error(), tools.ErrNoLiveSession)
+		}
 		return "", err
+	}
+	if resolveAssetSessionInterleaveHook != nil {
+		resolveAssetSessionInterleaveHook(resolveAssetSessionInterleaveAfterLive)
 	}
 	connected, err := services.Sessions.SessionFor(validationCtx, sessionID)
 	if err != nil {
+		// The selected session vanished between the listing and this read
+		// (a concurrent disconnect reaped it): the same definite
+		// not-connected verdict. Forbidden and transient errors never
+		// trigger a connect.
+		if errors.Is(err, session.ErrSessionNotFound) {
+			return "", ipc.WrapError(ipc.CodeDisconnected, "资产的在线会话已不存在", tools.ErrNoLiveSession)
+		}
 		return "", productionScopeError(err)
 	}
 	info := connected.Info()
 	if connected.Asset().ID != assetID || connected.Asset().Kind != expectedKind || info.Kind != expectedKind {
 		return "", ipc.NewError(ipc.CodeForbidden, "资产与在线会话类型或身份不匹配")
 	}
+	// A resolved session that is no longer connected, or whose transport is
+	// dead, is the same definite not-connected verdict as having no live
+	// session at all: terminal_create connect=true may dial through the R-07
+	// gates instead of being told to reconnect manually.
 	if info.Status != session.StatusConnected {
-		return "", ipc.NewError(ipc.CodeDisconnected, "资产没有健康的在线会话；请先手动连接")
+		return "", ipc.WrapError(ipc.CodeDisconnected, "资产没有健康的在线会话", tools.ErrNoLiveSession)
+	}
+	if resolveAssetSessionInterleaveHook != nil {
+		resolveAssetSessionInterleaveHook(resolveAssetSessionInterleaveBeforeTransport)
 	}
 	transport, err := services.Sessions.TransportFor(validationCtx, sessionID)
 	if err != nil {
+		// The selected session disconnected or vanished between the status
+		// check and this read: the same definite not-connected verdict.
+		// Forbidden, context cancellation, and transient errors never
+		// trigger a connect.
+		if errors.Is(err, session.ErrSessionNotFound) || errors.Is(err, session.ErrDisconnected) {
+			return "", ipc.WrapError(ipc.CodeDisconnected, "资产的在线会话已断开或不存在", tools.ErrNoLiveSession)
+		}
 		return "", productionScopeError(err)
 	}
 	if !transport.IsAlive() {
-		return "", ipc.NewError(ipc.CodeDisconnected, "资产在线会话的传输已断开；请先手动重连")
+		return "", ipc.WrapError(ipc.CodeDisconnected, "资产在线会话的传输已断开", tools.ErrNoLiveSession)
 	}
 	return sessionID, nil
 }
@@ -598,6 +641,50 @@ func (r *productionScopeResolver) persist(ctx context.Context, conversationID st
 // the grant branch.
 var _ tools.ConnAssetIdentity = (*db.Service)(nil)
 
+// Per-user explicit opt-in settings for the AI terminal_create connect
+// surface. The surface has its own pair — the cron, broadcast, and
+// target-set opt-ins never authorize an AI terminal connect — and both
+// default to off.
+const (
+	aiTerminalConnectOptInSettingKey           = "ai.terminal_connect_opt_in"
+	aiTerminalConnectProductionOptInSettingKey = "ai.terminal_connect_production"
+)
+
+func aiTerminalConnectOptInSettingKeyForUser(ctx context.Context) string {
+	return connectOptInSettingKeyForUser(ctx, aiTerminalConnectOptInSettingKey)
+}
+
+func aiTerminalConnectProductionOptInSettingKeyForUser(ctx context.Context) string {
+	return connectOptInSettingKeyForUser(ctx, aiTerminalConnectProductionOptInSettingKey)
+}
+
+// aiTerminalAssetConnector adapts the R-07 surface connect gate to the tools
+// AssetConnector contract for terminal_create connect=true: the per-user
+// opt-in, owner match, known-host-key verdict, vault readiness, and
+// production confirmation all pass guard.AuthorizeConnect before the strict
+// host-key dial, which never auto-accepts unknown or changed keys. A
+// declined or unverifiable gate fails closed with its sentinel error instead
+// of connecting.
+type aiTerminalAssetConnector struct {
+	services  *ProductionServices
+	connector *cron.Connector
+}
+
+func newAITerminalAssetConnector(services *ProductionServices) *aiTerminalAssetConnector {
+	return &aiTerminalAssetConnector{
+		services:  services,
+		connector: newSurfaceConnector(services, aiTerminalConnectOptInSettingKeyForUser, aiTerminalConnectProductionOptInSettingKeyForUser),
+	}
+}
+
+func (c *aiTerminalAssetConnector) ConnectAsset(ctx context.Context, assetID string) (string, error) {
+	validationCtx, err := productionAITargetContext(ctx, c.services.desktop)
+	if err != nil {
+		return "", err
+	}
+	return c.connector.Connect(validationCtx, cron.Trigger{OwnerID: ipc.OwnerID(validationCtx)}, assetID)
+}
+
 func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	if services.Store == nil || services.Sessions == nil || services.Profiles == nil {
 		return errors.New("AI runtime requires store, sessions and profiles services")
@@ -641,6 +728,11 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 		return services.ExecBatches.Execute(requestCtx, ipc.OwnerID(ctx), request)
 	}
 	toolsDeps.Outcome = outcomeLedger
+	// terminal_create connect=true connects through the R-07 surface gate:
+	// the same opt-in, owner, known-host-key, vault, and production
+	// confirmation evidence as the other connect surfaces, with the AI
+	// terminal surface's own per-user settings.
+	toolsDeps.AssetConnector = newAITerminalAssetConnector(services)
 	toolsDeps.Reminders = reminderScheduler{scheduler: cronScheduler, conversations: services.Store, scopeValidator: productionScopeValidator(services)}
 	// The skills backend is the single services-level manager: the ai-skills
 	// IPC module registers the same instance, so the load_skill tool and the

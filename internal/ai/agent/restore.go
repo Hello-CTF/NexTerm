@@ -268,6 +268,33 @@ func restoreJobError(err error) error {
 	return ErrJobNotFound
 }
 
+// restoreCallHandles rebuilds the run's call-ID→roster-handle mapping from
+// its persisted toolCall journal events, so a resumed toolResult carries the
+// same verified handle the original toolCall emitted. The mapping is never
+// re-derived from the live target: an entry whose payload is corrupt or
+// carries no handle leaves that call's handle unknown instead of guessing,
+// and one call's handle is never used for another. A read failure degrades
+// to all-unknown handles rather than failing the restore.
+func (r *Runner) restoreCallHandles(ctx context.Context, current *job) {
+	if r.runs == nil {
+		return
+	}
+	rows, err := r.runs.RunEventsAfterLimit(ctx, current.id, 0, 0)
+	if err != nil {
+		return
+	}
+	for _, row := range rows {
+		if row.Type != "toolCall" {
+			continue
+		}
+		var event Event
+		if err := json.Unmarshal(store.ParseJSONOr(row.PayloadJSON), &event); err != nil || event.ID == "" || event.Handle == "" {
+			continue
+		}
+		current.rememberCallHandle(event.ID, event.Handle)
+	}
+}
+
 func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFactory) (*job, error) {
 	if r.runs == nil {
 		return nil, ErrJobNotFound
@@ -329,6 +356,7 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 		doneCh:      make(chan struct{}),
 	}
 	current.capture = r.newJobCapture(jobID, row.ConversationID)
+	r.restoreCallHandles(ctx, current)
 	if err := r.reserveJobID(jobID); err != nil {
 		cancel()
 		forceCancel()

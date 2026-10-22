@@ -656,11 +656,47 @@ func (r *Runner) emitToolCalls(current *job, calls []schema.ToolCall) error {
 		if toolCall.ID == "" {
 			return errors.New("模型返回了空 tool call ID")
 		}
-		if err := current.emit(current.ctx, Event{Type: "toolCall", ID: toolCall.ID, Name: toolCall.Name, Args: toolCall.Args, Display: tools.DisplayCall(toolCall)}); err != nil {
+		handle := r.rosterHandleForCall(current, toolCall)
+		current.rememberCallHandle(toolCall.ID, handle)
+		if err := current.emit(current.ctx, Event{Type: "toolCall", ID: toolCall.ID, Name: toolCall.Name, Args: toolCall.Args, Display: tools.DisplayCall(toolCall), Handle: handle}); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// rosterHandleForCall resolves the permanent roster handle of the call's
+// actual target tab: only a call whose resolved target is a tab claimed by
+// exactly one live roster entry yields that entry's handle. Non-terminal
+// tools, multi-tab targets, unresolvable or cross-scope targets, tabs with
+// no live roster row, and tabs claimed by more than one live row all report
+// no handle — the UI renders those as unknown, never a fabricated
+// reference.
+func (r *Runner) rosterHandleForCall(current *job, call tools.Call) string {
+	if r.config.Roster == nil || r.config.Tools == nil {
+		return ""
+	}
+	target, ok := r.config.Tools.ResolveCallTarget(current.ctx, current.id, current.args.Scope, call)
+	if !ok {
+		return ""
+	}
+	entries, err := r.config.Roster.List(current.ctx, current.args.ConversationID)
+	if err != nil {
+		return ""
+	}
+	handle := ""
+	for _, entry := range entries {
+		if entry.TabID != target.TabID || RosterStateTerminal(entry.State) {
+			continue
+		}
+		if handle != "" {
+			// Two live entries claiming one tab cannot be told apart
+			// honestly.
+			return ""
+		}
+		handle = entry.Handle
+	}
+	return handle
 }
 
 func mapSubagentEvent(parentCallID string, depth int, event subagent.Event) Event {
@@ -694,7 +730,7 @@ func (r *Runner) emitToolResult(current *job, message *schema.Message) (tools.Ou
 	}
 	text, cut := prefixBytes(result.Text, persistedToolResultLimit)
 	result.Truncated = result.Truncated || cut
-	if err := current.emit(current.ctx, Event{Type: "toolResult", ID: message.ToolCallID, OK: result.OK, Summary: summarize(result.Text), Text: text, Truncated: result.Truncated, ExitCode: result.ExitCode, Panic: result.Panic, Terminal: result.Terminal}); err != nil {
+	if err := current.emit(current.ctx, Event{Type: "toolResult", ID: message.ToolCallID, OK: result.OK, Summary: summarize(result.Text), Text: text, Truncated: result.Truncated, ExitCode: result.ExitCode, Panic: result.Panic, Terminal: result.Terminal, Handle: current.callHandle(message.ToolCallID)}); err != nil {
 		return result, "", err
 	}
 	if result.Todos != nil {

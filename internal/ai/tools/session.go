@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"math"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -203,6 +204,40 @@ func (s *sessionTerminal) TabDetail(ctx context.Context, tabID string) (TabDetai
 // so an in-lock refusal is a genuine mode flip and must surface.
 func (s *sessionTerminal) WritePasteLiteral(ctx context.Context, tabID, text string) error {
 	return s.manager.WritePasteLiteralFor(sessionRequestContext(ctx), tabID, text, false)
+}
+
+// WritePasteSubmit delegates to the session manager's combined paste-submit:
+// the paste block, the submit delay, and the Enter key are written under one
+// and the same terminal write lock, with the literal-newline guard enforced
+// inside that lock, so send_keys never falls back to split writes on
+// session-backed terminals.
+func (s *sessionTerminal) WritePasteSubmit(ctx context.Context, tabID, text string, submit bool, delay time.Duration) error {
+	return s.manager.WritePasteSubmitFor(sessionRequestContext(ctx), tabID, text, submit, delay)
+}
+
+// QuietGroupSnapshot delegates to the session manager's exact-roster group
+// snapshot: the response carries exactly one state per requested tab — each
+// with its version, closed fact, and creation incarnation from one versioned
+// terminal read — and the roster is re-verified against the manager's
+// current incarnations before returning, so a tab recreated under the same
+// ID during the read fails the whole snapshot instead of silently adopting
+// the new incarnation's state.
+func (s *sessionTerminal) QuietGroupSnapshot(ctx context.Context, tabIDs []string) ([]TabQuietState, error) {
+	states, err := s.manager.QuietGroupSnapshot(sessionRequestContext(ctx), tabIDs)
+	if err != nil {
+		return nil, err
+	}
+	mapped := make([]TabQuietState, 0, len(states))
+	for _, state := range states {
+		mapped = append(mapped, TabQuietState{
+			TabID:       state.TabID,
+			IdleMS:      state.IdleMS,
+			Version:     state.Version,
+			Closed:      state.Closed,
+			Incarnation: state.Incarnation,
+		})
+	}
+	return mapped, nil
 }
 
 func WithSession(deps Dependencies, manager *session.Manager) Dependencies {

@@ -13,34 +13,39 @@ import (
 )
 
 // Per-owner production safety configuration: the configurable production
-// environment list plus the R-07 connect opt-ins for the cron, broadcast, and
-// target-set surfaces. All values default to off/empty and are persisted per
-// user through the existing guard/settings keys — this file adds no second
-// persistence source.
+// environment list plus the R-07 connect opt-ins for the cron, broadcast,
+// target-set, and AI terminal surfaces — each an independent per-user
+// opt-in pair, so one surface's opt-in never authorizes another. All values
+// default to off/empty and are persisted per user through the existing
+// guard/settings keys — this file adds no second persistence source.
 const (
 	maxProductionEnvironmentNames  = 32
 	maxProductionEnvironmentLength = 64
 )
 
 type productionSettingsDTO struct {
-	ProductionEnvironments          []string `json:"productionEnvironments"`
-	CronConnectOptIn                bool     `json:"cronConnectOptIn"`
-	CronConnectProductionOptIn      bool     `json:"cronConnectProductionOptIn"`
-	BroadcastConnectOptIn           bool     `json:"broadcastConnectOptIn"`
-	BroadcastConnectProductionOptIn bool     `json:"broadcastConnectProductionOptIn"`
-	TargetSetConnectOptIn           bool     `json:"targetSetConnectOptIn"`
-	TargetSetConnectProductionOptIn bool     `json:"targetSetConnectProductionOptIn"`
+	ProductionEnvironments           []string `json:"productionEnvironments"`
+	CronConnectOptIn                 bool     `json:"cronConnectOptIn"`
+	CronConnectProductionOptIn       bool     `json:"cronConnectProductionOptIn"`
+	BroadcastConnectOptIn            bool     `json:"broadcastConnectOptIn"`
+	BroadcastConnectProductionOptIn  bool     `json:"broadcastConnectProductionOptIn"`
+	TargetSetConnectOptIn            bool     `json:"targetSetConnectOptIn"`
+	TargetSetConnectProductionOptIn  bool     `json:"targetSetConnectProductionOptIn"`
+	AiTerminalConnectOptIn           bool     `json:"aiTerminalConnectOptIn"`
+	AiTerminalConnectProductionOptIn bool     `json:"aiTerminalConnectProductionOptIn"`
 }
 
 // productionSettingsUpdateRequest patches only the provided fields.
 type productionSettingsUpdateRequest struct {
-	ProductionEnvironments          *[]string `json:"productionEnvironments,omitempty"`
-	CronConnectOptIn                *bool     `json:"cronConnectOptIn,omitempty"`
-	CronConnectProductionOptIn      *bool     `json:"cronConnectProductionOptIn,omitempty"`
-	BroadcastConnectOptIn           *bool     `json:"broadcastConnectOptIn,omitempty"`
-	BroadcastConnectProductionOptIn *bool     `json:"broadcastConnectProductionOptIn,omitempty"`
-	TargetSetConnectOptIn           *bool     `json:"targetSetConnectOptIn,omitempty"`
-	TargetSetConnectProductionOptIn *bool     `json:"targetSetConnectProductionOptIn,omitempty"`
+	ProductionEnvironments           *[]string `json:"productionEnvironments,omitempty"`
+	CronConnectOptIn                 *bool     `json:"cronConnectOptIn,omitempty"`
+	CronConnectProductionOptIn       *bool     `json:"cronConnectProductionOptIn,omitempty"`
+	BroadcastConnectOptIn            *bool     `json:"broadcastConnectOptIn,omitempty"`
+	BroadcastConnectProductionOptIn  *bool     `json:"broadcastConnectProductionOptIn,omitempty"`
+	TargetSetConnectOptIn            *bool     `json:"targetSetConnectOptIn,omitempty"`
+	TargetSetConnectProductionOptIn  *bool     `json:"targetSetConnectProductionOptIn,omitempty"`
+	AiTerminalConnectOptIn           *bool     `json:"aiTerminalConnectOptIn,omitempty"`
+	AiTerminalConnectProductionOptIn *bool     `json:"aiTerminalConnectProductionOptIn,omitempty"`
 }
 
 type productionSettingsStore interface {
@@ -88,12 +93,14 @@ func loadProductionSettings(ctx context.Context, database productionSettingsStor
 	}
 	result.ProductionEnvironments = environments
 	for key, target := range map[string]*bool{
-		cron.ConnectOptInSettingKeyForUser(ctx):               &result.CronConnectOptIn,
-		cron.ConnectProductionOptInSettingKeyForUser(ctx):     &result.CronConnectProductionOptIn,
-		BroadcastConnectOptInSettingKeyForUser(ctx):           &result.BroadcastConnectOptIn,
-		BroadcastConnectProductionOptInSettingKeyForUser(ctx): &result.BroadcastConnectProductionOptIn,
-		TargetSetConnectOptInSettingKeyForUser(ctx):           &result.TargetSetConnectOptIn,
-		TargetSetConnectProductionOptInSettingKeyForUser(ctx): &result.TargetSetConnectProductionOptIn,
+		cron.ConnectOptInSettingKeyForUser(ctx):                &result.CronConnectOptIn,
+		cron.ConnectProductionOptInSettingKeyForUser(ctx):      &result.CronConnectProductionOptIn,
+		BroadcastConnectOptInSettingKeyForUser(ctx):            &result.BroadcastConnectOptIn,
+		BroadcastConnectProductionOptInSettingKeyForUser(ctx):  &result.BroadcastConnectProductionOptIn,
+		TargetSetConnectOptInSettingKeyForUser(ctx):            &result.TargetSetConnectOptIn,
+		TargetSetConnectProductionOptInSettingKeyForUser(ctx):  &result.TargetSetConnectProductionOptIn,
+		aiTerminalConnectOptInSettingKeyForUser(ctx):           &result.AiTerminalConnectOptIn,
+		aiTerminalConnectProductionOptInSettingKeyForUser(ctx): &result.AiTerminalConnectProductionOptIn,
 	} {
 		optIn, err := cronConnectSetting(ctx, database, key)
 		if err != nil {
@@ -118,12 +125,14 @@ func applyProductionSettingsUpdate(ctx context.Context, database productionSetti
 		}
 	}
 	for key, value := range map[string]*bool{
-		cron.ConnectOptInSettingKeyForUser(ctx):               input.CronConnectOptIn,
-		cron.ConnectProductionOptInSettingKeyForUser(ctx):     input.CronConnectProductionOptIn,
-		BroadcastConnectOptInSettingKeyForUser(ctx):           input.BroadcastConnectOptIn,
-		BroadcastConnectProductionOptInSettingKeyForUser(ctx): input.BroadcastConnectProductionOptIn,
-		TargetSetConnectOptInSettingKeyForUser(ctx):           input.TargetSetConnectOptIn,
-		TargetSetConnectProductionOptInSettingKeyForUser(ctx): input.TargetSetConnectProductionOptIn,
+		cron.ConnectOptInSettingKeyForUser(ctx):                input.CronConnectOptIn,
+		cron.ConnectProductionOptInSettingKeyForUser(ctx):      input.CronConnectProductionOptIn,
+		BroadcastConnectOptInSettingKeyForUser(ctx):            input.BroadcastConnectOptIn,
+		BroadcastConnectProductionOptInSettingKeyForUser(ctx):  input.BroadcastConnectProductionOptIn,
+		TargetSetConnectOptInSettingKeyForUser(ctx):            input.TargetSetConnectOptIn,
+		TargetSetConnectProductionOptInSettingKeyForUser(ctx):  input.TargetSetConnectProductionOptIn,
+		aiTerminalConnectOptInSettingKeyForUser(ctx):           input.AiTerminalConnectOptIn,
+		aiTerminalConnectProductionOptInSettingKeyForUser(ctx): input.AiTerminalConnectProductionOptIn,
 	} {
 		if value == nil {
 			continue

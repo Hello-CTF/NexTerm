@@ -5,12 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/outcome"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -22,14 +20,12 @@ import (
 // a finished attempt replays only when the canonical binding and the original
 // session identity still hold, and a reconfigured asset executes fresh. The
 // operation_result tool queries the recorded outcome by its operation ID.
-
-// r16DurableOutcomes adapts the real store's agent-outcome methods to the
-// tools DurableOutcomeLedger contract, replicating M74's Adjudicate
-// classification (agent.OutcomeLedger itself cannot be imported here without
-// a test import cycle).
+//
+// r16DurableOutcomes wraps the production store-backed adapter
+// (DurableStoreOutcomes) with crash-injection hooks, so the whole suite runs
+// against the real production wiring rather than a test-side replication.
 type r16DurableOutcomes struct {
-	store *store.Store
-	now   func() int64
+	DurableOutcomeLedger
 	// completeErr, when set, fails the completion write to simulate a crash
 	// between the connect and the final record.
 	completeErr error
@@ -43,7 +39,11 @@ type r16DurableOutcomes struct {
 
 func newR16DurableOutcomes(t *testing.T, database *store.Store) *r16DurableOutcomes {
 	t.Helper()
-	return &r16DurableOutcomes{store: database, now: func() int64 { return time.Now().UnixMilli() }}
+	durable := DurableStoreOutcomes(database)
+	if durable == nil {
+		t.Fatal("DurableStoreOutcomes returned nil for a live store")
+	}
+	return &r16DurableOutcomes{DurableOutcomeLedger: durable}
 }
 
 func (f *r16DurableOutcomes) ClaimOutcome(ctx context.Context, family, kind string) (string, bool, error) {
@@ -53,81 +53,14 @@ func (f *r16DurableOutcomes) ClaimOutcome(ctx context.Context, family, kind stri
 	if f.claimGate != nil {
 		<-f.claimGate
 	}
-	claimed, err := f.store.AgentOutcomeClaimAttempt(ctx, family, kind)
-	return store.AgentOutcomeClaimRowID(family), claimed, err
-}
-
-func (f *r16DurableOutcomes) ProgressOutcome(ctx context.Context, family, residualSessionID string) error {
-	return f.store.AgentOutcomeProgress(ctx, family, residualSessionID)
-}
-
-func (f *r16DurableOutcomes) ReleaseOutcome(ctx context.Context, family string) error {
-	return f.store.AgentOutcomeReleaseClaim(ctx, family)
+	return f.DurableOutcomeLedger.ClaimOutcome(ctx, family, kind)
 }
 
 func (f *r16DurableOutcomes) CompleteOutcome(ctx context.Context, family string, attempt OutcomeAttempt) error {
 	if f.completeErr != nil {
 		return f.completeErr
 	}
-	return f.store.AgentOutcomeCompleteAttempt(ctx, family, r16RowFromAttempt(attempt, f.now()))
-}
-
-func r16RowFromAttempt(attempt OutcomeAttempt, now int64) store.AgentOutcomeRow {
-	return store.AgentOutcomeRow{
-		OperationID: attempt.OperationID, Kind: attempt.Kind, State: attempt.State,
-		FailureStage:      attempt.FailureStage,
-		ResidualSessionID: attempt.ResidualSessionID, ResidualResource: attempt.ResidualResource,
-		ResultJSON: string(attempt.Result), Error: attempt.Error, FinishedAt: &now,
-	}
-}
-
-func (f *r16DurableOutcomes) AdjudicateOutcome(ctx context.Context, prefix string) (OutcomeAdjudication, error) {
-	rows, err := f.store.AgentOutcomeListByPrefix(ctx, prefix, 65)
-	if err != nil {
-		return OutcomeAdjudication{}, err
-	}
-	var adjudication OutcomeAdjudication
-	if len(rows) > 64 {
-		adjudication.Conflict = true
-		rows = rows[:64]
-	}
-	pending := 0
-	for _, row := range rows {
-		attempt := r16AttemptFromRow(row)
-		switch {
-		case row.State == store.AgentOutcomeStateInitiated:
-			pending++
-			if adjudication.Pending == nil {
-				adjudication.Pending = &attempt
-			}
-		case adjudication.Terminal == nil:
-			adjudication.Terminal = &attempt
-		}
-	}
-	if pending > 1 {
-		adjudication.Conflict = true
-	}
-	return adjudication, nil
-}
-
-func (f *r16DurableOutcomes) OutcomeResult(ctx context.Context, operationID string) (OutcomeAttempt, error) {
-	rows, err := f.store.AgentOutcomeListByPrefix(ctx, operationID, 1)
-	if err != nil {
-		return OutcomeAttempt{}, err
-	}
-	if len(rows) == 0 {
-		return OutcomeAttempt{}, errors.New("outcome 记录不存在")
-	}
-	return r16AttemptFromRow(rows[0]), nil
-}
-
-func r16AttemptFromRow(row store.AgentOutcomeRow) OutcomeAttempt {
-	return OutcomeAttempt{
-		OperationID: row.OperationID, Kind: row.Kind, State: row.State,
-		FailureStage:      row.FailureStage,
-		ResidualSessionID: row.ResidualSessionID, ResidualResource: row.ResidualResource,
-		Result: json.RawMessage(row.ResultJSON), Error: row.Error,
-	}
+	return f.DurableOutcomeLedger.CompleteOutcome(ctx, family, attempt)
 }
 
 // r16Registry builds a recorded terminal_create registry with both ledgers:

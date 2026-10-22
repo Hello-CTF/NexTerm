@@ -588,3 +588,54 @@ func TestCronJobFailureDoesNotEmitAppErrorEvent(t *testing.T) {
 		t.Fatal("ordinary job failure must not emit app://error")
 	}
 }
+
+// The shared R-07 strict dial layer: a deliberately disconnected session
+// record is unmapped by the disconnect transition, so dialAssetStrict dials
+// a fresh, healthy session with the refreshed strict-host-key asset — the
+// same contract cron, target-set, and the AI terminal surface all ride on.
+func TestDialAssetStrictDialsFreshAfterDeliberateDisconnect(t *testing.T) {
+	ctx := context.Background()
+	dials := &connectTransportLog{}
+	services, database, _ := composeConnectRuntime(t, ctx, filepath.Join(t.TempDir(), "connect.db"), dials)
+	hostname := "cron-gate.example"
+	sshAsset, err := database.AssetCreate(ctx, store.AssetInput{Kind: session.KindSSH, Name: "cron-gate", Host: &hostname})
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, err := services.Sessions.ConnectFor(ctx, session.Asset{ID: sshAsset.ID, Name: sshAsset.Name, Kind: session.KindSSH, StoreBacked: true, ConfigFingerprint: "fp-initial"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := dials.count(); got != 1 {
+		t.Fatalf("initial connect dialed %d times", got)
+	}
+	if err := services.Sessions.Disconnect(initial.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	dialed, err := dialAssetStrict(ctx, services, "", sshAsset.ID)
+	if err != nil {
+		t.Fatalf("dialAssetStrict after the deliberate disconnect = %v", err)
+	}
+	if got := dials.count(); got != 2 {
+		t.Fatalf("no fresh dial after the deliberate disconnect: dials=%d, want 2", got)
+	}
+	if dialed == "" || dialed == initial.ID {
+		t.Fatalf("dialAssetStrict returned %q, want a fresh session (initial %s)", dialed, initial.ID)
+	}
+	options, ok := dials.asset(1).Options.(map[string]any)
+	if !ok || options["strictHostKey"] != true {
+		t.Fatalf("fresh dial lost the strict-host-key mark: %+v", dials.asset(1).Options)
+	}
+	transport, err := services.Sessions.TransportFor(ctx, dialed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !transport.IsAlive() {
+		t.Fatal("fresh session's transport is not alive")
+	}
+	result, err := transport.Exec(ctx, "echo healthy", base.ExecOptions{})
+	if err != nil || result.Stdout != "ran:echo healthy" {
+		t.Fatalf("Exec on the fresh session = %+v, %v", result, err)
+	}
+}

@@ -235,14 +235,22 @@ func quietVersionsEqual(a, b []TabQuietState) bool {
 		return false
 	}
 	// The contract guarantees each requested tab exactly once, not response
-	// order: compare versions by TabID, never by slice index.
-	versions := make(map[string]uint64, len(a))
+	// order: compare versions by TabID, never by slice index. The incarnation
+	// and closed fact ride with the version: a tab recreated under the same
+	// ID between the two reads (a same-version coincidence from a different
+	// incarnation) or closed in between is never one consistent state.
+	type versionedState struct {
+		version     uint64
+		incarnation uint64
+		closed      bool
+	}
+	states := make(map[string]versionedState, len(a))
 	for _, state := range a {
-		versions[state.TabID] = state.Version
+		states[state.TabID] = versionedState{version: state.Version, incarnation: state.Incarnation, closed: state.Closed}
 	}
 	for _, state := range b {
-		version, ok := versions[state.TabID]
-		if !ok || version != state.Version {
+		previous, ok := states[state.TabID]
+		if !ok || previous.version != state.Version || previous.incarnation != state.Incarnation || previous.closed != state.Closed {
 			return false
 		}
 	}
@@ -250,12 +258,20 @@ func quietVersionsEqual(a, b []TabQuietState) bool {
 }
 
 // applyGroupQuietStates recomputes per-tab satisfaction from one agreed
-// group snapshot and returns the satisfied count.
+// group snapshot and returns the satisfied count. A closed tab can never be
+// quietly satisfied: the verdict is revoked with the closure recorded, the
+// same contract as a failed per-tab quiet snapshot.
 func applyGroupQuietStates(targets []*waitTarget, states []TabQuietState, quietMS int64) int {
 	consistent := 0
 	for _, target := range targets {
 		for _, state := range states {
 			if state.TabID == target.tabID {
+				if state.Closed {
+					target.satisfied = false
+					target.idleMS = -1
+					target.idleErr = "标签页已关闭"
+					break
+				}
 				target.idleMS = state.IdleMS
 				target.idleErr = ""
 				target.satisfied = target.matched && state.IdleMS >= quietMS
