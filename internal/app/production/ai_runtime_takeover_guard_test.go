@@ -84,7 +84,7 @@ func TestProductionTakeoverAppliesRealAssetGuardMode(t *testing.T) {
 				}
 				bound = other.ID
 			}
-			services, transport := composeTakeoverRuntime(t, database, provider.URL, asset.ID)
+			services, transport := composeTakeoverRuntime(t, database, provider.URL, asset.ID, false)
 			if err := services.Guard.Set(ctx, guard.Config{Mode: test.global}); err != nil {
 				t.Fatal(err)
 			}
@@ -134,7 +134,7 @@ func TestProductionRunnerResolvesRealAssetEvidenceAndChallenge(t *testing.T) {
 	}
 	provider := httptest.NewServer(&execEvidenceScript{assetID: asset.ID})
 	t.Cleanup(provider.Close)
-	services, _ := composeTakeoverRuntime(t, database, provider.URL, asset.ID)
+	services, _ := composeTakeoverRuntime(t, database, provider.URL, asset.ID, false)
 
 	conversation, err := services.Store.ConvCreate(ctx, "prod", map[string]any{"scope": tools.Scope{TabID: "tab-takeover"}})
 	if err != nil {
@@ -243,5 +243,5 @@ func TestComposeTakeoverRuntimeReleasesStoreBeforeTempDirCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	composeTakeoverRuntime(t, database, "http://127.0.0.1:1", asset.ID)
+	composeTakeoverRuntime(t, database, "http://127.0.0.1:1", asset.ID, false)
 }

@@ -17,15 +17,34 @@ type productionSettingsFixture struct {
 	other    context.Context
 }
 
-func newProductionSettingsFixture(t *testing.T) *productionSettingsFixture {
-	t.Helper()
-	owner := ipc.WithUserID(t.Context(), "owner-a")
-	other := ipc.WithUserID(t.Context(), "owner-b")
-	database, err := store.OpenInMemory(owner)
+func TestProductionSettingsFixtureLifecycle(t *testing.T) {
+	database, err := store.OpenInMemory(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
+	for _, test := range []struct {
+		name string
+		run  func(*testing.T, *productionSettingsFixture)
+	}{
+		{name: "TestProductionSettingsDefaultOff", run: testProductionSettingsDefaultOff},
+		{name: "TestProductionSettingsEmptyEnvironmentsMarshalAsEmptyArray", run: testProductionSettingsEmptyEnvironmentsMarshalAsEmptyArray},
+		{name: "TestProductionSettingsSetAndGet", run: testProductionSettingsSetAndGet},
+		{name: "TestProductionSettingsOwnerIsolation", run: testProductionSettingsOwnerIsolation},
+		{name: "TestProductionSettingsInvalidInputFailClosed", run: testProductionSettingsInvalidInputFailClosed},
+		{name: "TestProductionSettingsPatchSemantics", run: testProductionSettingsPatchSemantics},
+		{name: "TestProductionSettingsAiTerminalConnectOptInRoundTrip", run: testProductionSettingsAiTerminalConnectOptInRoundTrip},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			test.run(t, newProductionSettingsFixture(t, database))
+		})
+	}
+}
+
+func newProductionSettingsFixture(t *testing.T, database *store.Store) *productionSettingsFixture {
+	t.Helper()
+	owner := ipc.WithUserID(t.Context(), t.Name()+"/owner-a")
+	other := ipc.WithUserID(t.Context(), t.Name()+"/owner-b")
 	return &productionSettingsFixture{database: database, owner: owner, other: other}
 }
 
@@ -51,8 +70,7 @@ func (f *productionSettingsFixture) set(t *testing.T, ctx context.Context, input
 	return f.dispatch(t, ctx, "production_settings_set", input)
 }
 
-func TestProductionSettingsDefaultOff(t *testing.T) {
-	fixture := newProductionSettingsFixture(t)
+func testProductionSettingsDefaultOff(t *testing.T, fixture *productionSettingsFixture) {
 	settings := fixture.get(t, fixture.owner)
 	if len(settings.ProductionEnvironments) != 0 {
 		t.Fatalf("default production environments = %v", settings.ProductionEnvironments)
@@ -65,8 +83,7 @@ func TestProductionSettingsDefaultOff(t *testing.T) {
 	}
 }
 
-func TestProductionSettingsEmptyEnvironmentsMarshalAsEmptyArray(t *testing.T) {
-	fixture := newProductionSettingsFixture(t)
+func testProductionSettingsEmptyEnvironmentsMarshalAsEmptyArray(t *testing.T, fixture *productionSettingsFixture) {
 	requireRawEmptyEnvironments := func(t *testing.T, response ipc.Response) {
 		t.Helper()
 		if !response.OK {
@@ -86,8 +103,7 @@ func TestProductionSettingsEmptyEnvironmentsMarshalAsEmptyArray(t *testing.T) {
 	requireRawEmptyEnvironments(t, fixture.dispatch(t, fixture.owner, "production_settings_get", nil))
 }
 
-func TestProductionSettingsSetAndGet(t *testing.T) {
-	fixture := newProductionSettingsFixture(t)
+func testProductionSettingsSetAndGet(t *testing.T, fixture *productionSettingsFixture) {
 	response := fixture.set(t, fixture.owner, productionSettingsUpdateRequest{
 		ProductionEnvironments: stringSlicePointer([]string{"live", "staging"}),
 		CronConnectOptIn:       boolPointer(true),
@@ -118,8 +134,7 @@ func TestProductionSettingsSetAndGet(t *testing.T) {
 	}
 }
 
-func TestProductionSettingsOwnerIsolation(t *testing.T) {
-	fixture := newProductionSettingsFixture(t)
+func testProductionSettingsOwnerIsolation(t *testing.T, fixture *productionSettingsFixture) {
 	fixture.set(t, fixture.owner, productionSettingsUpdateRequest{
 		ProductionEnvironments: stringSlicePointer([]string{"live"}),
 		CronConnectOptIn:       boolPointer(true),
@@ -133,8 +148,7 @@ func TestProductionSettingsOwnerIsolation(t *testing.T) {
 	}
 }
 
-func TestProductionSettingsInvalidInputFailClosed(t *testing.T) {
-	fixture := newProductionSettingsFixture(t)
+func testProductionSettingsInvalidInputFailClosed(t *testing.T, fixture *productionSettingsFixture) {
 	for _, test := range []struct {
 		name  string
 		input productionSettingsUpdateRequest
@@ -157,8 +171,7 @@ func TestProductionSettingsInvalidInputFailClosed(t *testing.T) {
 	}
 }
 
-func TestProductionSettingsPatchSemantics(t *testing.T) {
-	fixture := newProductionSettingsFixture(t)
+func testProductionSettingsPatchSemantics(t *testing.T, fixture *productionSettingsFixture) {
 	fixture.set(t, fixture.owner, productionSettingsUpdateRequest{
 		ProductionEnvironments: stringSlicePointer([]string{"live"}),
 		CronConnectOptIn:       boolPointer(true),
@@ -189,8 +202,7 @@ func manyEnvironmentNames(count int) []string {
 // The AI terminal connect surface is configurable per owner through the same
 // public settings IPC: the patch persists to the surface's own per-user keys
 // and never touches the other surfaces' opt-ins.
-func TestProductionSettingsAiTerminalConnectOptInRoundTrip(t *testing.T) {
-	fixture := newProductionSettingsFixture(t)
+func testProductionSettingsAiTerminalConnectOptInRoundTrip(t *testing.T, fixture *productionSettingsFixture) {
 	response := fixture.set(t, fixture.owner, productionSettingsUpdateRequest{
 		AiTerminalConnectOptIn:           boolPointer(true),
 		AiTerminalConnectProductionOptIn: boolPointer(true),
