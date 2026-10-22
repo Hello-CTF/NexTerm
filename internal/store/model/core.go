@@ -139,8 +139,12 @@ type KnownHostRow struct {
 	Port        int32  `gorm:"column:port;not null;uniqueIndex:known_host_owner_endpoint_unique,priority:3" json:"port"`
 	KeyType     string `gorm:"column:key_type;not null;size:191;uniqueIndex:known_host_owner_endpoint_unique,priority:4" json:"keyType"`
 	Fingerprint string `gorm:"column:fingerprint;not null" json:"fingerprint"`
-	AddedAt     int64  `gorm:"column:added_at;not null" json:"addedAt"`
-	OwnerID     string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_known_host_owner;uniqueIndex:known_host_owner_endpoint_unique,priority:1" json:"owner_id"`
+	Key         string `gorm:"column:key;not null;default:''" json:"key"`
+	// OpToken is the unique identity of the accept operation that last wrote the row; it backs
+	// conditional compensation, which wall-clock added_at cannot disambiguate. It is not synced state.
+	OpToken string `gorm:"column:op_token;not null;default:''" json:"-"`
+	AddedAt int64  `gorm:"column:added_at;not null" json:"addedAt"`
+	OwnerID string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_known_host_owner;uniqueIndex:known_host_owner_endpoint_unique,priority:1" json:"owner_id"`
 }
 
 func (KnownHostRow) TableName() string { return "known_host" }
@@ -186,13 +190,13 @@ type CronJob struct {
 	Prompt              string `gorm:"column:prompt;not null" json:"prompt"`
 	Schedule            string `gorm:"column:schedule;not null" json:"schedule"`
 	Timezone            string `gorm:"column:timezone;not null" json:"timezone"`
-	Enabled             bool   `gorm:"column:enabled;not null;check:chk_cron_enabled,enabled IN (false,true)" json:"enabled"`
+	Enabled             bool   `gorm:"column:enabled;not null;check:chk_cron_enabled,enabled IN (false,true);index:idx_cron_job_due,priority:1" json:"enabled"`
 	TimeoutMS           int64  `gorm:"column:timeout_ms;not null;check:chk_cron_timeout,timeout_ms > 0" json:"timeoutMs"`
 	ModelProfileID      string `gorm:"column:model_profile_id;not null;default:''" json:"modelProfileId"`
 	CreatedAt           int64  `gorm:"column:created_at;not null" json:"createdAt"`
 	UpdatedAt           int64  `gorm:"column:updated_at;not null" json:"updatedAt"`
 	Revision            uint64 `gorm:"column:revision;not null;check:chk_cron_revision,revision > 0" json:"revision"`
-	NextRunAt           int64  `gorm:"column:next_run_at;not null" json:"nextRunAt"`
+	NextRunAt           int64  `gorm:"column:next_run_at;not null;index:idx_cron_job_due,priority:2" json:"nextRunAt"`
 	RetryAt             *int64 `gorm:"column:retry_at" json:"retryAt"`
 	CircuitOpenUntil    *int64 `gorm:"column:circuit_open_until" json:"circuitOpenUntil"`
 	ConsecutiveFailures int64  `gorm:"column:consecutive_failures;not null;default:0" json:"consecutiveFailures"`
@@ -202,12 +206,13 @@ type CronJob struct {
 	LastError           string `gorm:"column:last_error;not null;default:''" json:"lastError"`
 	LeaseOwner          string `gorm:"column:lease_owner;not null;default:''" json:"leaseOwner"`
 	LeaseExpiresAt      *int64 `gorm:"column:lease_expires_at" json:"leaseExpiresAt"`
-	RunID               string `gorm:"size:191;column:run_id;not null;default:''" json:"runId"`
+	RunID               string `gorm:"size:191;column:run_id;not null;default:'';index:idx_cron_job_recovery,priority:1" json:"runId"`
 	RunScheduledFor     *int64 `gorm:"column:run_scheduled_for" json:"runScheduledFor"`
 	RunStartedAt        *int64 `gorm:"column:run_started_at" json:"runStartedAt"`
-	RunDeadline         *int64 `gorm:"column:run_deadline" json:"runDeadline"`
+	RunDeadline         *int64 `gorm:"column:run_deadline;index:idx_cron_job_recovery,priority:2" json:"runDeadline"`
 	RunCoalesced        bool   `gorm:"column:run_coalesced;not null;default:0;check:chk_cron_run_coalesced,run_coalesced IN (false,true)" json:"runCoalesced"`
 	OwnerID             string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_cron_job_owner" json:"owner_id"`
+	OwnerKind           string `gorm:"size:16;column:owner_kind;not null;default:''" json:"owner_kind"`
 }
 
 func (CronJob) TableName() string { return "cron_job" }

@@ -9,6 +9,7 @@ import (
 
 func (s *Scheduler) execute(ctx context.Context, job Job) {
 	defer s.wg.Done()
+	defer s.releaseExecutionSlot()
 	defer func() {
 		s.mu.Lock()
 		if s.local[job.ID] == job.Run.ID {
@@ -17,13 +18,14 @@ func (s *Scheduler) execute(ctx context.Context, job Job) {
 		s.mu.Unlock()
 	}()
 
-	runContext, cancel := context.WithTimeout(ctx, job.Timeout)
+	runContext, cancel := context.WithTimeout(contextWithOwner(ctx, job.OwnerID, job.OwnerKind), job.Timeout)
 	defer cancel()
 	results := make(chan error, 1)
 	trigger := Trigger{
 		RunID: job.Run.ID, JobID: job.ID, SessionID: job.SessionID,
 		Name: job.Name, Prompt: job.Prompt, ScheduledFor: job.Run.ScheduledFor,
 		Coalesced: job.Run.Coalesced, ModelProfileID: job.ModelProfileID,
+		OwnerID: job.OwnerID, OwnerKind: job.OwnerKind,
 	}
 	go func() {
 		results <- s.callExecutor(runContext, trigger)
@@ -35,22 +37,33 @@ func (s *Scheduler) execute(ctx context.Context, job Job) {
 	}
 	ticker := time.NewTicker(renewInterval)
 	defer ticker.Stop()
+	renewContext := ctx
+	done := runContext.Done()
+	var terminalErr error
 	for {
 		select {
 		case err := <-results:
-			s.finishExecution(ctx, job, executionError(runContext, job.Timeout, err))
+			if terminalErr == nil {
+				terminalErr = executionError(runContext, job.Timeout, err)
+			}
+			s.finishExecution(ctx, job, terminalErr)
 			return
-		case <-runContext.Done():
-			err := <-results
-			s.finishExecution(ctx, job, executionError(runContext, job.Timeout, err))
-			return
+		case <-done:
+			terminalErr = executionError(runContext, job.Timeout, nil)
+			renewContext = context.WithoutCancel(ctx)
+			done = nil
 		case <-ticker.C:
-			renewed, err := s.renew(ctx, job)
+			renewed, err := s.renew(renewContext, job)
 			if err != nil {
 				cancel()
-				<-results
-				s.reportOwnershipOrStorage(job.ID, err)
-				return
+				if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
+					<-results
+					s.reportOwnershipOrStorage(job.ID, err)
+					return
+				}
+				// Keep renewing while the canceled executor cleans up; a later successful renew prevents recovery overlap.
+				s.notify(err)
+				continue
 			}
 			job = renewed
 		}

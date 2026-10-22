@@ -2,7 +2,7 @@
 // Device-session account boundary tests: an identity change closes device-type workspaces and disconnects sessions, no old-account shell is left for the new account;
 // non-device workspaces are unaffected; same identity on mount is not wrongly cleared.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { flush, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
@@ -14,8 +14,10 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
-	const original = await importOriginal<typeof import("../../ipc/commands")>();
-	return { ...original, sessionApi: { ...original.sessionApi, disconnect: mocks.disconnect } };
+	const { createCommandsMock } = await import("../helpers/mockCommands");
+	return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
+		sessionApi: { disconnect: mocks.disconnect },
+	});
 });
 
 import { DeviceSessionBoundary } from "../../features/fleet/DeviceSessionBoundary";
@@ -92,18 +94,22 @@ afterEach(() => {
 
 describe("Device session account boundaries", () => {
 	it("account A to B: closes device workspaces and disconnects their sessions, preserves SSH workspaces", async () => {
-		useAuth.setState({ user: OTHER_USER });
+		act(() => {
+			useAuth.setState({ user: OTHER_USER });
+		});
 		await flushUntil(() => useUi.getState().workspaces.every((w) => w.assetKind !== "device"));
 
 		expect(useUi.getState().workspaces.map((w) => w.id)).toEqual(["ws-ssh"]);
-		expect(mocks.closeTab).toHaveBeenCalledWith("t1");
+		expect(mocks.closeTab).toHaveBeenCalledWith("t1", "kill");
 		expect(mocks.disconnect).toHaveBeenCalledTimes(1);
 		expect(mocks.disconnect).toHaveBeenCalledWith("s-dev");
 		expect(useUi.getState().activeWorkspaceId).toBe("ws-ssh");
 	});
 
 	it("logout (user becomes null): also cleans up device workspaces", async () => {
-		useAuth.setState({ user: null });
+		act(() => {
+			useAuth.setState({ user: null });
+		});
 		await flushUntil(() => useUi.getState().workspaces.every((w) => w.assetKind !== "device"));
 
 		expect(mocks.disconnect).toHaveBeenCalledWith("s-dev");
@@ -115,14 +121,18 @@ describe("Device session account boundaries", () => {
 		useAuth.setState({ user: null });
 		mounted = mountWithClient(createElement(DeviceSessionBoundary));
 		await flush();
-		useAuth.setState({ user: USER });
+		act(() => {
+			useAuth.setState({ user: USER });
+		});
 		await flush();
 		expect(useUi.getState().workspaces.some((w) => w.assetKind === "device")).toBe(true);
 		expect(mocks.disconnect).not.toHaveBeenCalled();
 	});
 
 	it("refreshing with the same identity does not clear device workspaces", async () => {
-		useAuth.setState({ user: { ...USER } });
+		act(() => {
+			useAuth.setState({ user: { ...USER } });
+		});
 		await flushUntil(() => mocks.disconnect.mock.calls.length === 0 && useUi.getState().workspaces.length === 2);
 		expect(useUi.getState().workspaces.some((w) => w.assetKind === "device")).toBe(true);
 	});

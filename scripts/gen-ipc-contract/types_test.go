@@ -1,0 +1,361 @@
+package main
+
+import (
+	"go/token"
+	"go/types"
+	"strings"
+	"testing"
+)
+
+func TestUnreliableTypesRemainUnknown(t *testing.T) {
+	jsonPackage := types.NewPackage("encoding/json", "json")
+	rawMessage := types.NewNamed(
+		types.NewTypeName(token.NoPos, jsonPackage, "RawMessage", nil),
+		types.NewSlice(types.Typ[types.Byte]),
+		nil,
+	)
+	for _, value := range []types.Type{rawMessage, types.Universe.Lookup("any").Type()} {
+		reference, err := newTypeRegistry().ref(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reference.TS != "unknown" || reference.Manifest != "unknown" {
+			t.Fatalf("%s mapped to %+v, want unknown", typeIdentifier(value), reference)
+		}
+	}
+}
+
+func TestTimeTimeMapsToJSONString(t *testing.T) {
+	timePackage := types.NewPackage("time", "time")
+	timeType := types.NewNamed(
+		types.NewTypeName(token.NoPos, timePackage, "Time", nil),
+		types.NewStruct(nil, nil),
+		nil,
+	)
+	reference, err := newTypeRegistry().ref(timeType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reference.TS != "string" || reference.Manifest != "string" {
+		t.Fatalf("time.Time mapped to %+v, want string", reference)
+	}
+}
+
+func TestInvalidSelectedTypeIsRejected(t *testing.T) {
+	if _, err := newTypeRegistry().ref(types.Typ[types.Invalid]); err == nil {
+		t.Fatal("invalid Go type was silently mapped")
+	}
+}
+
+func TestEmbeddedStructFieldsRemainTyped(t *testing.T) {
+	pkg := types.NewPackage("example.com/sync", "sync")
+	link := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkg, "Link", nil),
+		types.NewStruct([]*types.Var{
+			types.NewField(token.NoPos, pkg, "URL", types.Typ[types.String], false),
+		}, []string{`json:"url"`}),
+		nil,
+	)
+	linkResult := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkg, "LinkResult", nil),
+		types.NewStruct([]*types.Var{
+			types.NewField(token.NoPos, pkg, "Link", link, true),
+			types.NewField(token.NoPos, pkg, "Connect", types.Typ[types.String], false),
+			types.NewField(token.NoPos, pkg, "RecoveryKey", types.Typ[types.String], false),
+		}, []string{"", `json:"connect"`, `json:"recoveryKey,omitempty"`}),
+		nil,
+	)
+	registry := newTypeRegistry()
+	reference, err := registry.ref(linkResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reference.TS != "LinkResult" || reference.Manifest != "contractTypes.LinkResult" {
+		t.Fatalf("embedded result mapped to %+v", reference)
+	}
+	rendered := registry.render()
+	for _, want := range []string{
+		"export type Link = {\n  url: string;\n};",
+		"export type LinkResult = Link & {\n  connect: string;\n  recoveryKey?: string;\n};",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("embedded struct declaration is missing %q in:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestOptionalIPCValueMapsToNullableWireValue(t *testing.T) {
+	pkg := types.NewPackage("github.com/Hello-CTF/NexTerm/internal/app/production", "production")
+	typeParam := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "T", nil), types.Universe.Lookup("any").Type())
+	optional := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkg, "optionalIPCValue", nil),
+		types.NewStruct([]*types.Var{
+			types.NewField(token.NoPos, pkg, "Set", types.Typ[types.Bool], false),
+			types.NewField(token.NoPos, pkg, "Value", types.NewPointer(typeParam), false),
+		}, []string{"", ""}),
+		nil,
+	)
+	optional.SetTypeParams([]*types.TypeParam{typeParam})
+	instantiated, err := types.Instantiate(nil, optional, []types.Type{types.Typ[types.String]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference, err := newTypeRegistry().ref(instantiated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reference.TS != "string | null" || reference.Manifest != "string | null" {
+		t.Fatalf("optional IPC value mapped to %+v, want nullable string", reference)
+	}
+}
+
+func TestUnresolvedEmbeddedPointerRemainsUnknown(t *testing.T) {
+	pkg := types.NewPackage("example.com/sync", "sync")
+	link := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkg, "Link", nil),
+		types.NewStruct(nil, nil),
+		nil,
+	)
+	result := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkg, "Result", nil),
+		types.NewStruct([]*types.Var{
+			types.NewField(token.NoPos, pkg, "Link", types.NewPointer(link), true),
+		}, []string{""}),
+		nil,
+	)
+	registry := newTypeRegistry()
+	reference, err := registry.ref(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reference.TS != "Result" {
+		t.Fatalf("embedded pointer result mapped to %+v", reference)
+	}
+	declaration := registry.declarations[typeIdentifier(result)]
+	if declaration == nil || declaration.Body != "unknown" {
+		t.Fatalf("embedded pointer declaration = %+v, want unknown body", declaration)
+	}
+}
+
+func TestConsumerCommandInputProjectsDBQueryWithoutLimit(t *testing.T) {
+	pkg := types.NewPackage("github.com/Hello-CTF/NexTerm/internal/db", "db")
+	request := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkg, "queryRequest", nil),
+		types.NewStruct([]*types.Var{
+			types.NewField(token.NoPos, pkg, "ConnID", types.Typ[types.String], false),
+			types.NewField(token.NoPos, pkg, "SQL", types.Typ[types.String], false),
+			types.NewField(token.NoPos, pkg, "Limit", types.NewPointer(types.Typ[types.Uint64]), false),
+			types.NewField(token.NoPos, pkg, "TimeoutMS", types.NewPointer(types.Typ[types.Uint64]), false),
+		}, []string{`json:"connId"`, `json:"sql"`, `json:"limit,omitempty"`, `json:"timeoutMs,omitempty"`}),
+		nil,
+	)
+	projected, err := projectConsumerCommandInput("db_query", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference, err := newTypeRegistry().ref(projected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "{\n  connId: string;\n  sql: string;\n  timeoutMs?: number | null;\n}"
+	if reference.TS != want {
+		t.Fatalf("projected db_query input = %q, want %q", reference.TS, want)
+	}
+	if strings.Contains(reference.TS, "limit") {
+		t.Fatalf("db_query acquired a facade-inaccessible limit: %s", reference.TS)
+	}
+}
+
+func TestOperationsConsumerProjections(t *testing.T) {
+	pkg := types.NewPackage("github.com/Hello-CTF/NexTerm/internal/app/production", "production")
+	newRequest := func(name string, fields []*types.Var, tags []string) types.Type {
+		return types.NewNamed(
+			types.NewTypeName(token.NoPos, pkg, name, nil),
+			types.NewStruct(fields, tags),
+			nil,
+		)
+	}
+	stringPointer := types.NewPointer(types.Typ[types.String])
+	for _, test := range []struct {
+		command string
+		request types.Type
+		want    string
+	}{
+		{
+			command: "snippet_delete",
+			request: newRequest("idRequest", []*types.Var{
+				types.NewField(token.NoPos, pkg, "ID", types.Typ[types.String], false),
+				types.NewField(token.NoPos, pkg, "Q", types.Typ[types.String], false),
+				types.NewField(token.NoPos, pkg, "Name", types.Typ[types.String], false),
+				types.NewField(token.NoPos, pkg, "Body", types.Typ[types.String], false),
+				types.NewField(token.NoPos, pkg, "Path", types.Typ[types.String], false),
+			}, []string{`json:"id"`, `json:"q"`, `json:"name"`, `json:"body"`, `json:"path"`}),
+			want: "{\n  id: string;\n}",
+		},
+		{
+			command: "audit_count",
+			request: newRequest("auditQueryRequest", []*types.Var{
+				types.NewField(token.NoPos, pkg, "SessionID", stringPointer, false),
+				types.NewField(token.NoPos, pkg, "AssetID", stringPointer, false),
+				types.NewField(token.NoPos, pkg, "Source", stringPointer, false),
+				types.NewField(token.NoPos, pkg, "Kind", stringPointer, false),
+				types.NewField(token.NoPos, pkg, "Limit", types.Typ[types.Int64], false),
+				types.NewField(token.NoPos, pkg, "Offset", types.Typ[types.Int64], false),
+			}, []string{`json:"sessionId"`, `json:"assetId"`, `json:"source"`, `json:"kind"`, `json:"limit"`, `json:"offset"`}),
+			want: "{\n  sessionId?: string | null;\n  assetId?: string | null;\n  source?: string | null;\n  kind?: string | null;\n}",
+		},
+		{
+			command: "command_count",
+			request: newRequest("commandLogQueryRequest", []*types.Var{
+				types.NewField(token.NoPos, pkg, "SessionID", stringPointer, false),
+				types.NewField(token.NoPos, pkg, "AssetID", stringPointer, false),
+				types.NewField(token.NoPos, pkg, "UserID", stringPointer, false),
+				types.NewField(token.NoPos, pkg, "Limit", types.Typ[types.Int64], false),
+				types.NewField(token.NoPos, pkg, "Offset", types.Typ[types.Int64], false),
+			}, []string{`json:"sessionId"`, `json:"assetId"`, `json:"userId"`, `json:"limit"`, `json:"offset"`}),
+			want: "{\n  sessionId?: string | null;\n  assetId?: string | null;\n  userId?: string | null;\n}",
+		},
+	} {
+		t.Run(test.command, func(t *testing.T) {
+			projected, err := projectConsumerCommandInput(test.command, test.request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reference, err := newTypeRegistry().ref(projected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reference.TS != test.want {
+				t.Fatalf("projected %s input = %q, want %q", test.command, reference.TS, test.want)
+			}
+			if test.command != "snippet_delete" && (strings.Contains(reference.TS, "limit") || strings.Contains(reference.TS, "offset")) {
+				t.Fatalf("%s acquired query-only pagination fields: %s", test.command, reference.TS)
+			}
+		})
+	}
+}
+
+func TestRedisScanResultUsesExactWireTuple(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		packagePath string
+		typeName    string
+		tuple       bool
+	}{
+		{name: "redis scan result", packagePath: "github.com/Hello-CTF/NexTerm/internal/db", typeName: "RedisScanResult", tuple: true},
+		{name: "same name elsewhere", packagePath: "example.com/db", typeName: "RedisScanResult"},
+		{name: "same package other type", packagePath: "github.com/Hello-CTF/NexTerm/internal/db", typeName: "OtherScanResult"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			pkg := types.NewPackage(test.packagePath, "db")
+			named := types.NewNamed(
+				types.NewTypeName(token.NoPos, pkg, test.typeName, nil),
+				types.NewStruct([]*types.Var{
+					types.NewField(token.NoPos, pkg, "Cursor", types.Typ[types.Uint64], false),
+					types.NewField(token.NoPos, pkg, "Keys", types.NewSlice(types.Typ[types.String]), false),
+				}, []string{"", ""}),
+				nil,
+			)
+			registry := newTypeRegistry()
+			reference, err := registry.ref(named)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.tuple {
+				if reference.TS != "[number, string[]]" || reference.Manifest != "[number, string[]]" {
+					t.Fatalf("RedisScanResult mapped to %+v, want wire tuple", reference)
+				}
+				if len(registry.declarations) != 0 {
+					t.Fatalf("RedisScanResult acquired a struct declaration: %+v", registry.declarations)
+				}
+			} else if reference.TS == "[number, string[]]" || reference.Manifest == "[number, string[]]" {
+				t.Fatalf("unrelated named type acquired the Redis wire tuple: %+v", reference)
+			}
+		})
+	}
+}
+
+func TestConsumerCommandInputProjectsOnlyRealFSReadFields(t *testing.T) {
+	pkg := types.NewPackage("github.com/Hello-CTF/NexTerm/internal/app/production", "production")
+	request := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkg, "fsRequest", nil),
+		types.NewStruct([]*types.Var{
+			types.NewField(token.NoPos, pkg, "SessionID", types.Typ[types.String], false),
+			types.NewField(token.NoPos, pkg, "Path", types.Typ[types.String], false),
+			types.NewField(token.NoPos, pkg, "MaxBytes", types.Typ[types.Int64], false),
+			types.NewField(token.NoPos, pkg, "LocalPath", types.Typ[types.String], false),
+			types.NewField(token.NoPos, pkg, "ContentBase64", types.Typ[types.String], false),
+		}, []string{`json:"sessionId"`, `json:"path"`, `json:"maxBytes"`, `json:"localPath"`, `json:"contentBase64"`}),
+		nil,
+	)
+	projected, err := projectConsumerCommandInput("fs_read", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference, err := newTypeRegistry().ref(projected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "{\n  sessionId: string;\n  path: string;\n  maxBytes?: number;\n}"
+	if reference.TS != want {
+		t.Fatalf("projected fs_read input = %q, want %q", reference.TS, want)
+	}
+	if strings.Contains(reference.TS, "localPath") || strings.Contains(reference.TS, "contentBase64") {
+		t.Fatalf("fs_read acquired unrelated transfer fields: %s", reference.TS)
+	}
+	if _, err := projectConsumerCommandInput("fs_read", types.NewStruct(nil, nil)); err == nil {
+		t.Fatal("request projection accepted a struct without its declared fields")
+	}
+}
+
+func TestUpdateInstallRequestKeepsExplicitNullableVersion(t *testing.T) {
+	pkg := types.NewPackage("github.com/Hello-CTF/NexTerm/internal/app/production", "production")
+	request := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkg, "updateInstallRequest", nil),
+		types.NewStruct([]*types.Var{
+			types.NewField(token.NoPos, pkg, "Version", types.Typ[types.String], false),
+		}, []string{`json:"version"`}),
+		nil,
+	)
+	projected, err := projectConsumerCommandInput("app_update_install", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference, err := newTypeRegistry().ref(projected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "{\n  version: string | null;\n}"
+	if reference.TS != want {
+		t.Fatalf("projected app_update_install input = %q, want %q", reference.TS, want)
+	}
+	if strings.Contains(reference.TS, "version?:") {
+		t.Fatalf("app_update_install must keep an explicit nullable version, got %s", reference.TS)
+	}
+}
+
+func TestTranscriptReadRequestKeepsCursorRequiredAndMaxBytesOptional(t *testing.T) {
+	pkg := types.NewPackage("github.com/Hello-CTF/NexTerm/internal/app/production", "production")
+	request := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkg, "transcriptReadRequest", nil),
+		types.NewStruct([]*types.Var{
+			types.NewField(token.NoPos, pkg, "ID", types.Typ[types.String], false),
+			types.NewField(token.NoPos, pkg, "AfterSeq", types.Typ[types.Int64], false),
+			types.NewField(token.NoPos, pkg, "MaxBytes", types.Typ[types.Int], false),
+		}, []string{`json:"id"`, `json:"afterSeq"`, `json:"maxBytes"`}),
+		nil,
+	)
+	registry := newTypeRegistry()
+	reference, err := registry.ref(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reference.TS != "TranscriptReadRequest" {
+		t.Fatalf("transcript read request mapped to %+v", reference)
+	}
+	declaration := registry.declarations[typeIdentifier(request)]
+	want := "{\n  id: string;\n  afterSeq: number;\n  maxBytes?: number;\n}"
+	if declaration == nil || declaration.Body != want {
+		t.Fatalf("transcript read request declaration = %+v, want %s", declaration, want)
+	}
+}

@@ -93,7 +93,7 @@ func sharedClientHost(t *testing.T, dataRoot string, shared *sharedTarget) *fake
 	t.Helper()
 	return &fakeHost{
 		discovery:    testDiscovery(t, dataRoot),
-		pathBinary:   "/usr/bin/nexterm-server",
+		pathBinary:   "/usr/bin/nexterm-helper",
 		probeVersion: strconv.Itoa(supervisor.ProtocolVersion),
 		shared:       shared,
 	}
@@ -238,7 +238,7 @@ func TestEnsureDaemonConcurrentClientsShareUpload(t *testing.T) {
 	fixture := newDaemonFixture(t, dataRoot)
 	shared := newSharedTarget(fixture.socketPath)
 	const digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	target := dataRoot + "/nexterm/bin/nexterm-" + digest[:12]
+	target := dataRoot + "/nexterm/bin/nexterm-helper-" + digest
 
 	const clients = 4
 	daemons := make([]*Daemon, clients)
@@ -253,10 +253,11 @@ func TestEnsureDaemonConcurrentClientsShareUpload(t *testing.T) {
 			start.Wait()
 			host := &fakeHost{
 				discovery:    testDiscovery(t, dataRoot),
+				probeVersion: strconv.Itoa(supervisor.ProtocolVersion),
 				shared:       shared,
 				uploadDigest: digest,
 			}
-			resolver := testResolver(host, "/local/nexterm")
+			resolver := testResolver(host, "/local/nexterm-desktop")
 			resolver.inspect = func(string) (UploadSource, error) { return fakeUploadSource(digest), nil }
 			daemons[index], errs[index] = resolver.EnsureDaemon(context.Background(), nil)
 		}(index)
@@ -277,8 +278,8 @@ func TestEnsureDaemonConcurrentClientsShareUpload(t *testing.T) {
 		}
 	}
 	uploads, renames, spawns := shared.counts()
-	if uploads != clients || renames != clients {
-		t.Fatalf("shared target saw %d uploads and %d renames; want %d each", uploads, renames, clients)
+	if uploads != 1 || renames != 1 {
+		t.Fatalf("shared target saw %d uploads and %d renames; want one each", uploads, renames)
 	}
 	if spawns < 1 {
 		t.Fatal("no client spawned the daemon")

@@ -54,16 +54,10 @@ func (c *aiRetentionComponent) Start(ctx context.Context) error {
 	c.done = done
 	go func() {
 		defer close(done)
-		c.enforce(runCtx)
-		ticker := time.NewTicker(c.interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-runCtx.Done():
-				return
-			case <-ticker.C:
-				c.enforce(runCtx)
-			}
+		if err := c.store.RunRetentionSchedule(runCtx, store.RetentionSchedule{
+			Name: "ai-runs", Interval: c.interval, Run: c.enforce,
+		}); err != nil {
+			slog.Error("AI run retention scheduler failed", "error", err)
 		}
 	}()
 	return nil

@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { flush, flushMacrotask, mount, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   return {
@@ -74,12 +74,16 @@ const harness = vi.hoisted(() => ({
 }));
 
 vi.mock("../../features/terminal/XtermView", async () => {
-  const { useEffect } = await import("react");
+  const { useEffect, useRef } = await import("react");
   return {
     XtermView: (props: Record<string, unknown>) => {
       harness.props = props;
+      const onHandleRef = useRef(props.onHandle);
+      const onAttachRef = useRef(props.onAttach);
+      onHandleRef.current = props.onHandle;
+      onAttachRef.current = props.onAttach;
       useEffect(() => {
-        (props.onHandle as ((handle: unknown) => void) | undefined)?.({
+        (onHandleRef.current as ((handle: unknown) => void) | undefined)?.({
           copyBlock: () => "",
           scrollToBlock: () => {},
           navigateBlock: () => null,
@@ -91,7 +95,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
           paste: mocks.paste,
           dimensions: () => ({ cols: 80, rows: 24 }),
         });
-        (props.onAttach as ((id: string) => void) | undefined)?.("kernel-1");
+        (onAttachRef.current as ((id: string) => void) | undefined)?.("kernel-1");
       }, []);
       return <div data-testid="xterm-mock" />;
     },
@@ -150,7 +154,7 @@ function png(name: string): File {
 async function pasteImages(files: File[]): Promise<void> {
   await act(async () => {
     (harness.props?.onPasteImages as ((files: File[]) => void) | undefined)?.(files);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flushMacrotask();
   });
 }
 

@@ -626,11 +626,17 @@ func (s *Service) ListDevices(ctx context.Context, identity *account.Identity) (
 }
 
 func (s *Service) RevokeDevice(ctx context.Context, identity *account.Identity, deviceID string) error {
-	if _, err := s.authorize(ctx, identity, deviceID, "revoke", auditKindDeviceRevoke); err != nil {
+	grant, err := s.authorize(ctx, identity, deviceID, "revoke", auditKindDeviceRevoke)
+	if err != nil {
 		return err
 	}
 	now := s.now()
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	// The revocation and its epoch bump share the account async-boundary mutex,
+	// so a device revocation invalidates pending logins, MFA tickets, DEK
+	// uploads, and TOTP bindings exactly like an account-side revocation.
+	s.accounts.RevocationMu().Lock()
+	defer s.accounts.RevocationMu().Unlock()
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		q := query.Use(tx)
 		if _, err := q.UserDevice.WithContext(ctx).
 			Where(q.UserDevice.ID.Eq(deviceID), q.UserDevice.RevokedAt.IsNull()).
@@ -652,6 +658,7 @@ func (s *Service) RevokeDevice(ctx context.Context, identity *account.Identity, 
 	if err != nil {
 		return err
 	}
+	s.accounts.BumpEpoch(grant.userID)
 	s.registry.KickDevice(deviceID)
 	// Revocation means offline: after the control channel is kicked there is no more unregistration callback (KickDevice already removed it from the table),
 	// so one offline transition is made up here, keeping the audit timeline and the device://status push complete.

@@ -46,6 +46,7 @@ func TestUserPauseKeepsCheckpointAndResumes(t *testing.T) {
 	if done, failed := counts(events); done+failed != 0 {
 		t.Fatalf("pause produced terminal events: %+v", events)
 	}
+	waitTakeoverPauseReady(t, h.manager, response.JobID)
 	resumed := &agent.SliceStream{}
 	result, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(resumed))
 	if err != nil {
@@ -93,6 +94,7 @@ func TestPauseResumeAcrossRestart(t *testing.T) {
 		WriteAI:      func(context.Context, string, []byte) error { writes.Add(1); return nil },
 		TabAsset:     func(context.Context, string) (string, error) { return asset.Load().(string), nil },
 		PollInterval: time.Millisecond,
+		Shared:       true,
 	}
 	first := NewManager(deps)
 	stream := &agent.SliceStream{}
@@ -180,6 +182,7 @@ func TestShutdownPreservesRunningJobForRecovery(t *testing.T) {
 		WriteAI:      func(context.Context, string, []byte) error { return nil },
 		TabAsset:     func(context.Context, string) (string, error) { return "asset-a", nil },
 		PollInterval: time.Millisecond,
+		Shared:       true,
 	}
 	first := NewManager(deps)
 	stream := &agent.SliceStream{}
@@ -295,6 +298,7 @@ func TestPauseDuringWriteDoesNotDuplicateOnResume(t *testing.T) {
 	h.manager.Pause("tab")
 	close(release)
 	waitEvent(t, stream, "paused")
+	waitTakeoverPauseReady(t, h.manager, response.JobID)
 	resumed := &agent.SliceStream{}
 	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(resumed)); err != nil {
 		t.Fatal(err)

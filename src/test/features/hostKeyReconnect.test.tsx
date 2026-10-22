@@ -31,6 +31,7 @@ vi.mock("../../ipc/commands", () => ({
     reconnect: mocks.reconnect,
     disconnect: vi.fn(),
     probeHostKey: mocks.probeHostKey,
+    list: vi.fn(),
   },
   terminalApi: {
     listLive: vi.fn().mockResolvedValue([]),
@@ -64,14 +65,18 @@ vi.mock("../../features/terminal/CommandBlockPanel", () => ({ CommandBlockPanel:
 vi.mock("../../features/terminal/TerminalKeysBar", () => ({ TerminalKeysBar: () => null }));
 
 vi.mock("../../features/terminal/XtermView", async () => {
-  const { useEffect } = await import("react");
+  const { useEffect, useRef } = await import("react");
   return {
     XtermView: (props: Record<string, unknown>) => {
+      const onAttachRef = useRef(props.onAttach);
+      const onAttachFailedRef = useRef(props.onAttachFailed);
+      onAttachRef.current = props.onAttach;
+      onAttachFailedRef.current = props.onAttachFailed;
       useEffect(() => {
         if (mocks.attachDead) {
-          (props.onAttachFailed as ((code: string) => void) | undefined)?.("not_found");
+          (onAttachFailedRef.current as ((code: string) => void) | undefined)?.("not_found");
         } else {
-          (props.onAttach as ((id: string) => void) | undefined)?.("kernel-1");
+          (onAttachRef.current as ((id: string) => void) | undefined)?.("kernel-1");
         }
       }, []);
       return <div className="h-full w-full min-h-0" />;
@@ -82,12 +87,14 @@ vi.mock("../../features/terminal/XtermView", async () => {
 import { TerminalPane } from "../../features/terminal/TerminalPane";
 import { connectWithHostKeyConfirm } from "../../app/hostKeys";
 import { useUi } from "../../app/store";
+import { sessionApi } from "../../ipc/commands";
 
 const PENDING_DETAIL = {
   host: "10.0.0.8",
   port: 22,
   keyType: "ssh-ed25519",
   fingerprint: "SHA256:newfp",
+  key: "ZmFrZS1rZXktdGVzdA==",
   changed: false,
 };
 const CHANGED_DETAIL = {
@@ -169,7 +176,12 @@ async function clickTerminalMenuItem(label: string): Promise<void> {
     (candidate) => candidate.textContent?.includes(label),
   );
   if (!item) throw new Error(`menu item ${label} not found`);
-  act(() => item.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await act(async () => {
+    item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  await waitFor(() => {
+    expect(toastTexts()).toMatch(/已重新连接|已取消重连|会话已在服务端删除|重连失败/);
+  });
 }
 
 let mounted: MountedView | undefined;
@@ -178,6 +190,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   mocks.attachDead = false;
+  vi.mocked(sessionApi.list).mockImplementation(async () => useUi.getState().sessions);
 });
 
 describe("Host key retry stays actionable", () => {
@@ -193,6 +206,30 @@ describe("Host key retry stays actionable", () => {
     });
     expect(mocks.connect).toHaveBeenCalledTimes(2);
     expect(mocks.knownHostAccept).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends the presented public key with the accept when the pending detail carries one", async () => {
+    mocks.ask.mockResolvedValue(true);
+    mocks.connect
+      .mockRejectedValueOnce({
+        code: "host_key_pending",
+        message: "approval required",
+        detail: { ...PENDING_DETAIL, key: "ZmFrZS1rZXktdGVzdA==" },
+      })
+      .mockResolvedValueOnce({ id: "s2" });
+
+    await expect(connectWithHostKeyConfirm(() => mocks.connect())).resolves.toEqual({ id: "s2" });
+    expect(mocks.knownHostAccept).toHaveBeenCalledWith("10.0.0.8", 22, "ssh-ed25519", "SHA256:newfp", "ZmFrZS1rZXktdGVzdA==");
+    expect(mocks.connect).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a pending detail without the presented public key and does not retry", async () => {
+    mocks.ask.mockResolvedValue(true);
+    mocks.connect.mockRejectedValueOnce({ code: "host_key_pending", message: "approval required", detail: { ...PENDING_DETAIL, key: undefined } });
+
+    await expect(connectWithHostKeyConfirm(() => mocks.connect())).rejects.toMatchObject({ code: "host_key_pending" });
+    expect(mocks.knownHostAccept).not.toHaveBeenCalled();
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
   });
 
   it("does not accept a fingerprint or retry after the account changes during confirmation", async () => {
@@ -239,7 +276,9 @@ describe("Host key confirmation when reconnecting a dead terminal (reconnectNow)
       (candidate) => candidate.textContent?.includes("重新连接这台主机"),
     );
     if (!button) throw new Error("reconnect button not found");
-    act(() => button.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await act(async () => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
     await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
 
     const [question, options] = mocks.ask.mock.calls[0] as [string, Record<string, unknown>];
@@ -275,8 +314,10 @@ describe("Host key confirmation when reconnecting a dead terminal (reconnectNow)
       (candidate) => candidate.textContent?.includes("重新连接这台主机"),
     );
     if (!button) throw new Error("reconnect button not found");
-    act(() => button.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    mocks.attachDead = false;
+    await act(async () => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      mocks.attachDead = false;
+    });
     await waitFor(() => expect(toastTexts()).toContain("已重新连接"));
 
     const [question] = mocks.ask.mock.calls[0] as [string];
@@ -288,6 +329,7 @@ describe("Host key confirmation when reconnecting a dead terminal (reconnectNow)
       22,
       "ssh-ed25519",
       "SHA256:newfp",
+      "ZmFrZS1rZXktdGVzdA==",
     );
     expect(mocks.connect).toHaveBeenCalledTimes(2);
     expect(useUi.getState().sessions.some((s) => s.id === "s2")).toBe(true);
@@ -300,11 +342,19 @@ describe("Host key confirmation when reconnecting a dead terminal (reconnectNow)
 });
 
 describe("Host key confirmation for TerminalPane menu reconnect (reconnectSession)", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     seed({ status: "failed" });
+    vi.mocked(sessionApi.list).mockImplementation(async () =>
+      useUi.getState().sessions.map((session) =>
+        session.id === "s1" && mocks.reconnect.mock.calls.length > 0
+          ? { ...session, status: "connected" as const }
+          : session,
+      ),
+    );
     mounted = mount(
       createElement(TerminalPane, { sessionId: "s1", title: "term", storeTabId: "t1" }),
     );
+    await flush();
   });
 
   it("does not reconnect when a pending confirmation is cancelled", async () => {
@@ -332,6 +382,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
       port: 22,
       keyType: "ssh-ed25519",
       fingerprint: "SHA256:newfp",
+      key: "ZmFrZS1rZXktdGVzdA==",
       state: "changed",
       known: [{ keyType: "ssh-ed25519", fingerprint: "SHA256:oldfp" }],
     });
@@ -351,6 +402,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
       22,
       "ssh-ed25519",
       "SHA256:newfp",
+      "ZmFrZS1rZXktdGVzdA==",
     );
   });
 
@@ -404,6 +456,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
         port: 22,
         keyType: "ssh-ed25519",
         fingerprint: "SHA256:jumpnew",
+        key: "ZmFrZS1qdW1wLWtleQ==",
         changed: true,
         known: [{ keyType: "ssh-ed25519", fingerprint: "SHA256:jumpold" }],
       },
@@ -424,6 +477,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
       22,
       "ssh-ed25519",
       "SHA256:jumpnew",
+      "ZmFrZS1qdW1wLWtleQ==",
     );
   });
 

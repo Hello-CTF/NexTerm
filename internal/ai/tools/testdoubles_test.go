@@ -10,6 +10,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/db"
 	"github.com/Hello-CTF/NexTerm/internal/fs/conditional"
+	"github.com/Hello-CTF/NexTerm/internal/terminal"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -174,6 +175,7 @@ type fakeTerminal struct {
 	writeErr        error
 	commandState    CommandState
 	onWrite         func()
+	onCommandState  func()
 	outputSinceFunc func(seq uint64, maxBytes int) ([]byte, uint64, uint64, error)
 	assetKind       string
 	assetKindErr    error
@@ -203,10 +205,26 @@ func (f *fakeTerminal) Write(_ context.Context, _ string, data []byte) error {
 	}
 	return nil
 }
+
+func (f *fakeTerminal) WritePaste(ctx context.Context, tabID, text string) error {
+	f.mu.Lock()
+	bracketed := f.screen.BracketedPaste
+	f.mu.Unlock()
+	return f.Write(ctx, tabID, terminal.EncodePaste(text, bracketed))
+}
+
+func (f *fakeTerminal) WaitSnapshot(ctx context.Context, tabID string) (Screen, error) {
+	return f.Snapshot(ctx, tabID)
+}
 func (f *fakeTerminal) CommandState(context.Context, string) (CommandState, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.commandState, nil
+	state := f.commandState
+	hook := f.onCommandState
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return state, nil
 }
 func (f *fakeTerminal) setCommandState(state CommandState) {
 	f.mu.Lock()

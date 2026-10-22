@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   snippetList: vi.fn(),
   create: vi.fn(),
   probeBatch: vi.fn(),
+  connect: vi.fn(),
   write: vi.fn(),
   ask: vi.fn(),
   toast: vi.fn(),
@@ -38,7 +39,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       create: mocks.create,
       probeBatch: mocks.probeBatch,
     },
-    sessionApi: {},
+    sessionApi: { list: vi.fn().mockResolvedValue([]), connect: mocks.connect },
     dbApi: {},
     vaultApi: {},
     terminalApi: { write: mocks.write },
@@ -265,6 +266,24 @@ describe("command palette asset secondary actions", () => {
     }
   });
 
+  it("does not offer connections or probes for inventory-only assets", async () => {
+    mocks.list.mockResolvedValue([
+      { ...WEB },
+      assetOf({ id: "docker-1", name: "docker-prod", kind: "docker-context", host: "ssh://ops@prod", options: { inventory: { source: "docker-context", key: "context/prod" } } }),
+      assetOf({ id: "k8s-1", name: "ops/api-0", kind: "kubernetes", host: null, options: { inventory: { source: "kubernetes", key: "pod/current/ops/api-0" } } }),
+    ]);
+    await mountPalette({ onClose: vi.fn() });
+    const options = [...mounted!.container.querySelectorAll('[role="option"]')].map((option) => option.textContent ?? "");
+    expect(options.some((text) => text.includes("连接 web-01"))).toBe(true);
+    expect(options.some((text) => text.includes("连接 docker-prod"))).toBe(false);
+    expect(options.some((text) => text.includes("连接 ops/api-0"))).toBe(false);
+    expect(options.some((text) => text.includes("编辑资产 docker-prod"))).toBe(true);
+    expect(options.some((text) => text.includes("编辑资产 ops/api-0"))).toBe(true);
+    await waitFor(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
+    expect(mocks.probeBatch.mock.calls[0]![0]).toEqual(["a1"]);
+    expect(mocks.connect).not.toHaveBeenCalled();
+  });
+
   it("does not offer a generic database action that opens the first asset and keeps per-asset connections", async () => {
     mocks.list.mockResolvedValue([
       assetOf({ id: "db", name: "db-01", kind: "postgres", host: "10.0.0.9", port: 5432 }),
@@ -333,6 +352,28 @@ describe("command palette asset secondary actions", () => {
 });
 
 describe("command palette workspace actions", () => {
+  it("lists opened workspaces in a dedicated section and jumps to the selected workspace", async () => {
+    const first = { ...workspaceOf("ws-a", "session", "s1"), title: "alpha-workspace" };
+    const second = { ...workspaceOf("ws-b", "session", "s2"), title: "beta-workspace" };
+    useUi.setState({ workspaces: [first, second], activeWorkspaceId: first.id });
+    const onClose = vi.fn();
+    await mountPalette({ onClose });
+
+    const firstOption = mounted!.container.querySelector('[role="option"]');
+    expect(firstOption?.textContent).toContain("快速连接…");
+    expect(firstOption?.getAttribute("aria-selected")).toBe("true");
+    expect(mounted!.container.querySelectorAll('[data-command-section="已打开的工作区"]')).toHaveLength(1);
+    expect(optionByText(mounted!.container, "alpha-workspace").textContent).toContain("当前");
+    setInputValue(searchInput(mounted!.container), "已打开的工作区");
+    expect(mounted!.container.querySelectorAll('[role="option"]')).toHaveLength(2);
+
+    click(optionByText(mounted!.container, "beta-workspace"));
+
+    expect(useUi.getState().activeWorkspaceId).toBe("ws-b");
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(mocks.addTab).not.toHaveBeenCalled();
+  });
+
   it("opens port forwarding for the explicit current host", async () => {
     const first = workspaceOf("ws-a", "session", "s1");
     const second = workspaceOf("ws-b", "session", "s2");
@@ -424,5 +465,62 @@ describe("command palette workspace actions", () => {
       title: "终端历史",
       closable: true,
     });
+  });
+
+  it("opens the batch execution tool", async () => {
+    await mountPalette({ onClose: vi.fn() });
+
+    click(optionByText(mounted!.container, "批量执行命令"));
+
+    expect(mocks.addTab).toHaveBeenCalledWith({
+      id: "exec-batch",
+      kind: "execBatch",
+      title: "批量执行",
+      closable: true,
+    });
+  });
+
+  it("opens the multi-host log tail as a dedicated log tab", async () => {
+    await mountPalette({ onClose: vi.fn() });
+
+    click(optionByText(mounted!.container, "多主机日志合并"));
+
+    expect(mocks.addTab).toHaveBeenCalledWith({
+      id: expect.stringMatching(/^multi-host-log-tail:/),
+      kind: "log",
+      title: "多主机日志",
+      closable: true,
+    });
+  });
+
+  it("keeps two workspace tail instances independent when closing one", async () => {
+    const first = workspaceOf("ws-a", "session", "s1");
+    const second = workspaceOf("ws-b", "session", "s2");
+    useUi.setState({ workspaces: [first, second], activeWorkspaceId: first.id, addTab: realAddTab });
+    await mountPalette({ onClose: vi.fn() });
+    click(optionByText(mounted!.container, "多主机日志合并"));
+    await flush();
+    mounted?.unmount();
+    mounted = undefined;
+
+    useUi.setState({ activeWorkspaceId: second.id });
+    await mountPalette({ onClose: vi.fn() });
+    click(optionByText(mounted!.container, "多主机日志合并"));
+    await flush();
+
+    const tails = allTabs().filter((tab) => tab.id.startsWith("multi-host-log-tail:"));
+    expect(tails).toHaveLength(2);
+    expect(tails[0].id).not.toBe(tails[1].id);
+    const currentFirst = useUi.getState().workspaces.find((workspace) => workspace.id === first.id);
+    const currentSecond = useUi.getState().workspaces.find((workspace) => workspace.id === second.id);
+    const firstID = currentFirst?.panes[0].tabs[0].id;
+    const secondID = currentSecond?.panes[0].tabs[0].id;
+    expect(firstID).toBeDefined();
+    expect(secondID).toBeDefined();
+    (mounted as MountedView | undefined)?.unmount();
+    mounted = undefined;
+    await expect(useUi.getState().closeTab(firstID!)).resolves.toBe(true);
+    expect(useUi.getState().workspaces.find((workspace) => workspace.id === first.id)?.panes[0].tabs).toHaveLength(0);
+    expect(useUi.getState().workspaces.find((workspace) => workspace.id === second.id)?.panes[0].tabs.map((tab) => tab.id)).toEqual([secondID]);
   });
 });

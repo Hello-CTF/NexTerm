@@ -3,7 +3,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
+import { flush, flushUntil as flushUntilBase, mount, type MountedView } from "./features/reactTestUtils";
+
+async function flushUntil(predicate: () => boolean, maxTicks = 60): Promise<void> {
+  await flush();
+  await flushUntilBase(predicate, maxTicks);
+  await flush();
+}
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -27,11 +33,21 @@ vi.mock("../ipc/commands", () => ({
     probe: vi.fn(),
   },
   vaultApi: { status: mocks.vaultStatus, listCredentials: vi.fn() },
-  syncApi: { linkGet: vi.fn().mockResolvedValue({ url: "" }) },
+  syncApi: {
+    linkGet: vi.fn().mockResolvedValue({ url: "" }),
+    status: vi.fn().mockResolvedValue({ configured: false, loggedIn: false, lastError: "", warnings: [] }),
+    kindOptInGet: vi.fn().mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false }),
+    wake: vi.fn().mockResolvedValue(undefined),
+  },
   appUpdateApi: { check: mocks.updateCheck },
   terminalApi: {},
   dbApi: {},
 }));
+
+vi.mock("../ipc/events", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ipc/events")>();
+  return { ...actual, listenEvent: vi.fn(() => Promise.resolve(() => {})) };
+});
 
 vi.mock("../features/settings/useWebAutoSync", () => ({
   useDesktopAutoSync: () => {},
@@ -66,7 +82,7 @@ vi.mock("../features/explorer/AssetTree", () => ({ AssetTree: () => null }));
 vi.mock("../app/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 vi.mock("../app/UpdateBanner", () => ({ UpdateBanner: () => null }));
-vi.mock("../app/unread", () => ({ startUnreadTracking: () => {} }));
+vi.mock("../app/unread", () => ({ startUnreadTracking: () => {}, resetUnreadTracking: () => {} }));
 
 import App from "../app/App";
 import { useUi } from "../app/store";
@@ -101,9 +117,11 @@ beforeEach(() => {
   useUpdateStore.setState({ status: null, checking: false, checkError: null, remindedVersion: null });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await flush();
   mounted?.unmount();
   mounted = undefined;
+  await flush();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });

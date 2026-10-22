@@ -62,7 +62,7 @@ func TestReadScreenPanicIsolatedAndRunContinues(t *testing.T) {
 		return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(doneCall("recovered"))}), nil
 	}}
 	h := newHarness(t, chat)
-	panicSnapshotOnCall(h, 3)
+	panicSnapshotOnCall(h, 4)
 	stream := &agent.SliceStream{}
 	h.run(t, stream, RunArgs{})
 	events := waitClosed(t, stream)
@@ -89,7 +89,7 @@ func TestSendKeysPanicEmitsStructuredToolResult(t *testing.T) {
 		return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(doneCall("recovered"))}), nil
 	}}
 	h := newHarness(t, chat)
-	panicSnapshotOnCall(h, 3)
+	panicSnapshotOnCall(h, 4)
 	stream := &agent.SliceStream{}
 	h.run(t, stream, RunArgs{})
 	events := waitClosed(t, stream)

@@ -641,18 +641,25 @@ func TestApplyAIProfileReadableByProfilesManager(t *testing.T) {
 	payload := fullTestAIProfile(profileID)
 	requireApplyResult(t, mustApplyObjects(t, instance, applyAIProfile(t, payload)).Objects[0], ApplyResultApplied)
 
-	manager, err := profiles.NewManager(context.Background(), instance.db)
+	ctx := context.Background()
+	manager, err := profiles.NewManager(ctx, instance.db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	overview := manager.Overview()
+	overview, err := manager.Overview(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(overview.Profiles) != 1 || overview.Profiles[0].ID != profileID {
 		t.Fatalf("overview=%+v", overview)
 	}
 	if overview.Profiles[0].APIKey != profiles.MaskedAPIKey {
 		t.Fatalf("overview must mask the key: %q", overview.Profiles[0].APIKey)
 	}
-	profile, exists := manager.Profile(profileID)
+	profile, exists, err := manager.Profile(ctx, profileID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !exists {
 		t.Fatal("profile missing from manager")
 	}
@@ -667,7 +674,10 @@ func TestApplyAIProfileReadableByProfilesManager(t *testing.T) {
 		profile.CircuitCooldownSeconds == nil || *profile.CircuitCooldownSeconds != *payload.CircuitCooldownSeconds {
 		t.Fatalf("manager sees drifted fields: %+v", profile)
 	}
-	config, ok := manager.ActiveConfig()
+	config, ok, err := manager.ActiveConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !ok || config.APIKey != payload.APIKey {
 		t.Fatalf("manager must resolve the applied key: %+v ok=%v", config, ok)
 	}

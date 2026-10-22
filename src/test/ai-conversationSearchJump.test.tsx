@@ -10,7 +10,11 @@ import {
   setInputValue,
   type MountedView,
 } from "./features/reactTestUtils";
-import { VIRTUAL_ITEM_ESTIMATE_PX, VIRTUAL_ITEM_GAP_PX } from "../features/ai/conversationVirtual";
+import {
+  CONVERSATION_SCROLL_SETTLE_MS,
+  VIRTUAL_ITEM_ESTIMATE_PX,
+  VIRTUAL_ITEM_GAP_PX,
+} from "../features/ai/conversationVirtual";
 
 const mocks = vi.hoisted(() => ({
   chat: vi.fn(),
@@ -141,6 +145,7 @@ describe("AiSidebar search jump", () => {
   let offsetSpy: MockInstance | null = null;
 
   beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
       setTimeout(cb, 0);
       return 1;
@@ -510,7 +515,7 @@ describe("AiSidebar search jump", () => {
     expect(log.scrollTop).toBe(centered(99));
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 160));
+      await vi.advanceTimersByTimeAsync(CONVERSATION_SCROLL_SETTLE_MS);
     });
     heightOf = (i) => (i === 50 || i === 90 ? 98 : i === 95 ? 108 : i === 99 ? 30 : VIRTUAL_ITEM_ESTIMATE_PX);
     const above = wrapperOf(view!, 95)!;
@@ -539,7 +544,7 @@ describe("AiSidebar search jump", () => {
     click(view!.container.querySelector('button[title="搜索对话内容"]')!);
     await flush();
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 160));
+      await vi.advanceTimersByTimeAsync(CONVERSATION_SCROLL_SETTLE_MS);
     });
     const restoredAbove = [...view!.container.querySelectorAll<HTMLElement>("[data-conversation-index]")].find(
       (element) =>
@@ -618,7 +623,7 @@ describe("AiSidebar search jump", () => {
     expect(log.scrollTop).toBe(centered(73));
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 160));
+      await vi.advanceTimersByTimeAsync(CONVERSATION_SCROLL_SETTLE_MS);
     });
     heightOf = (i) => (i === 72 ? 108 : i === 99 ? 30 : VIRTUAL_ITEM_ESTIMATE_PX);
     const above = wrapperOf(view!, 72)!;

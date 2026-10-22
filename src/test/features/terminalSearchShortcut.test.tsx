@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { flush, flushMacrotask, mount, waitFor, type MountedView } from "./reactTestUtils";
 
 const harness = vi.hoisted(() => ({
   mac: false,
@@ -57,11 +57,17 @@ vi.mock("../../features/terminal/CommandBlockPanel", () => ({ CommandBlockPanel:
 vi.mock("../../features/terminal/TerminalKeysBar", () => ({ TerminalKeysBar: () => null }));
 
 vi.mock("../../features/terminal/XtermView", async () => {
-  const { useEffect } = await import("react");
+  const { useEffect, useRef } = await import("react");
   return {
     XtermView: (props: Record<string, unknown>) => {
+      const onHandleRef = useRef(props.onHandle);
+      const registerSearchRef = useRef(props.registerSearch);
+      const onAttachRef = useRef(props.onAttach);
+      onHandleRef.current = props.onHandle;
+      registerSearchRef.current = props.registerSearch;
+      onAttachRef.current = props.onAttach;
       useEffect(() => {
-        (props.onHandle as ((h: unknown) => void) | undefined)?.({
+        (onHandleRef.current as ((h: unknown) => void) | undefined)?.({
           copyBlock: () => "",
           scrollToBlock: () => {},
           navigateBlock: () => null,
@@ -72,11 +78,11 @@ vi.mock("../../features/terminal/XtermView", async () => {
           fit: () => {},
           dimensions: () => ({ cols: 80, rows: 24 }),
         });
-        (props.registerSearch as ((api: unknown) => void) | undefined)?.({
+        (registerSearchRef.current as ((api: unknown) => void) | undefined)?.({
           findNext: harness.findNext,
           findPrevious: harness.findPrevious,
         });
-        (props.onAttach as ((id: string) => void) | undefined)?.("kernel-1");
+        (onAttachRef.current as ((id: string) => void) | undefined)?.("kernel-1");
       }, []);
       return (
         <div className="h-full w-full min-h-0">
@@ -110,9 +116,9 @@ function searchInput(): HTMLInputElement | null {
   return mounted?.container.querySelector<HTMLInputElement>('input[placeholder="搜索终端内容…"]') ?? null;
 }
 
-async function flushTimers(ms = 0): Promise<void> {
+async function flushTimers(): Promise<void> {
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, ms));
+    await flushMacrotask();
   });
 }
 
@@ -135,7 +141,7 @@ async function pressFromTerminal(
   return { event, targetSeen, bubbleSeen };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   harness.mac = false;
@@ -184,6 +190,7 @@ beforeEach(() => {
   mounted = mount(
     createElement(TerminalPane, { sessionId: "s1", title: "term", storeTabId: "t1" }),
   );
+  await flush();
 });
 
 afterEach(() => {

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  click,
   clickButton,
   flush,
   mount,
@@ -19,9 +20,15 @@ const mocks = vi.hoisted(() => {
   return {
     preview: vi.fn(),
     apply: vi.fn(),
+    groupList: vi.fn(),
     sessionConnect: vi.fn(),
     toast: vi.fn(),
   };
+});
+const platformMocks = vi.hoisted(() => ({ mac: true, mobile: false }));
+vi.mock("../app/platform", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../app/platform")>();
+  return { ...actual, isMac: () => platformMocks.mac, isMobile: () => platformMocks.mobile };
 });
 const gateMocks = vi.hoisted(() => ({
   ensureVaultInit: vi.fn(),
@@ -30,6 +37,7 @@ vi.mock("../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../ipc/commands")>();
   return {
     ...actual,
+    assetApi: { ...actual.assetApi, groupList: mocks.groupList },
     sessionApi: { connect: mocks.sessionConnect },
     sshImportApi: { preview: mocks.preview, apply: mocks.apply },
   };
@@ -137,8 +145,11 @@ function mountDialog(): MountedView {
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
+  platformMocks.mac = true;
+  platformMocks.mobile = false;
   useUi.setState({ pushToast: mocks.toast, appDialog: null });
   gateMocks.ensureVaultInit.mockResolvedValue(true);
+  mocks.groupList.mockResolvedValue([{ id: "g1", parentId: null, name: "生产", sort: 0, createdAt: 1, updatedAt: 1 }]);
   mocks.preview.mockResolvedValue(PREVIEW);
   mocks.apply.mockResolvedValue({
     assetsCreated: 2,
@@ -164,7 +175,7 @@ describe("SSH import dialog", () => {
     expect(previewButton.disabled).toBe(true);
 
     const confirmBox = [...mounted.container.querySelectorAll<HTMLInputElement>("input[type=checkbox]")][0]!;
-    confirmBox.click();
+    click(confirmBox);
     await flush();
     expect(previewButton.disabled).toBe(false);
 
@@ -176,6 +187,30 @@ describe("SSH import dialog", () => {
         confirmed: true,
       }),
     );
+  });
+
+  it("disables Termius with a reason on non-macOS desktop platforms", () => {
+    platformMocks.mac = false;
+    mounted = mountDialog();
+    const button = [...mounted.container.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent?.trim() === "Termius",
+    ) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(mounted.container.textContent).toContain("仅支持 macOS");
+    expect(mocks.preview).not.toHaveBeenCalled();
+  });
+
+  it("passes the selected group and normalized common tags to apply", async () => {
+    mounted = mountDialog();
+    await waitFor(() => expect(mounted!.container.querySelector("#ssh-import-group")?.querySelectorAll("option").length).toBe(2));
+    setSelectValue(mounted.container.querySelector<HTMLSelectElement>("#ssh-import-group")!, "g1");
+    setInputValue(mounted.container.querySelector<HTMLInputElement>("#ssh-import-tags")!, " prod, PROD, 欧洲 ");
+    clickButton(mounted.container, "预览");
+    await waitFor(() => expect(mocks.preview).toHaveBeenCalled());
+    await flush();
+    clickButton(mounted.container, "导入选中项");
+    await waitFor(() => expect(mocks.apply).toHaveBeenCalled());
+    expect(mocks.apply).toHaveBeenCalledWith(expect.objectContaining({ groupId: "g1", tags: "prod, 欧洲" }));
   });
 
   it("shows conflict badges, diagnostics, and default selections in preview", async () => {
@@ -251,6 +286,19 @@ describe("SSH import dialog", () => {
     expect(args.hosts).toContainEqual({ id: "h2", action: "overwrite" });
   });
 
+  it("clears a stale preview instead of allowing another apply", async () => {
+    mocks.apply.mockRejectedValue({ code: "bad_param", message: "导入预览已变化，请重新预览后再导入" });
+    mounted = mountDialog();
+    clickButton(mounted.container, "预览");
+    await waitFor(() => expect(mocks.preview).toHaveBeenCalled());
+    await flush();
+    clickButton(mounted.container, "导入选中项");
+    await waitFor(() => expect(mocks.apply).toHaveBeenCalled());
+    await waitFor(() => expect(mounted!.container.textContent).toContain("重新预览"));
+    expect(mounted.container.querySelector("button.nx-btn-primary")?.textContent).toBe("预览");
+    expect(mounted.container.textContent).not.toContain("导入选中项");
+  });
+
   it("shows preview errors and allows returning", async () => {
     mocks.preview.mockRejectedValue({ code: "bad_param", message: "SSH config file not found /x" });
     mounted = mountDialog();
@@ -269,7 +317,7 @@ describe("SSH import dialog", () => {
 describe("quick import from the SSH ~/.ssh directory", () => {
   it("hides the path input and omits the old path after switching from a config path to ~/.ssh", async () => {
     mounted = mountDialog();
-    const pathInput = mounted.container.querySelector<HTMLInputElement>("input.nx-input")!;
+    const pathInput = mounted.container.querySelector<HTMLInputElement>('input[placeholder="~/.ssh/config"]')!;
     setInputValue(pathInput, "/home/demo/.ssh/config");
     await flush();
 
@@ -277,7 +325,8 @@ describe("quick import from the SSH ~/.ssh directory", () => {
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("自动发现受支持的私钥");
     expect(text).toContain("不修改任何原始文件");
-    expect(mounted.container.querySelector("input")).toBeNull();
+    expect(mounted.container.querySelector('input[placeholder="~/.ssh/config"]')).toBeNull();
+    expect(mounted.container.querySelector<HTMLInputElement>("#ssh-import-tags")?.value).toBe("");
 
     clickButton(mounted.container, "预览");
     await waitFor(() =>
@@ -320,8 +369,8 @@ describe("quick import from the SSH ~/.ssh directory", () => {
     expect(edBox.checked).toBe(true);
 
     // Manually uncheck one host and one key; switch the conflicting host to overwrite
-    bastionBox.click();
-    edBox.click();
+    click(bastionBox);
+    click(edBox);
     await flush();
     const strategy = mounted.container.querySelector<HTMLSelectElement>(
       'select[aria-label="主机 nat-01 的冲突处理"]',

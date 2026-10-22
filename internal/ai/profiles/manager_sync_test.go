@@ -11,9 +11,9 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-func seedProfile(t *testing.T, manager *profiles.Manager, name string) string {
+func seedProfile(t *testing.T, manager *profiles.Manager, name string, contexts ...context.Context) string {
 	t.Helper()
-	overview, err := manager.Save(context.Background(), profiles.Profile{Name: name, BaseURL: "https://api.example.com/v1", Model: "m"})
+	overview, err := manager.Save(testContext(contexts), profiles.Profile{Name: name, BaseURL: "https://api.example.com/v1", Model: "m"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestDeleteWithoutOptInWritesNoTombstone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := seedProfile(t, manager, "off")
+	id := seedProfile(t, manager, "off", ctx)
 	if _, err := manager.Delete(ctx, id); err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestDeleteWithOptInWritesUserTombstone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := seedProfile(t, manager, "on")
+	id := seedProfile(t, manager, "on", ctx)
 	if _, err := manager.Delete(ctx, id); err != nil {
 		t.Fatal(err)
 	}
@@ -104,16 +104,16 @@ func TestDeleteOptInIsolatedPerUser(t *testing.T) {
 	if err := database.SetAIProfileSyncOptIn(context.Background(), "u-a", true); err != nil {
 		t.Fatal(err)
 	}
-	manager, err := profiles.NewManager(context.Background(), database)
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := seedProfile(t, manager, "isolated")
-	// A on, B off: B's delete follows B's own opt-in (off), so no tombstone
 	ctxB := ipc.WithUserID(context.Background(), "u-b")
 	if err := database.SetAIProfileSyncOptIn(ctxB, "u-b", false); err != nil {
 		t.Fatal(err)
 	}
+	manager, err := profiles.NewManager(ctxB, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := seedProfile(t, manager, "isolated", ctxB)
+	// A on, B off: B's delete follows B's own opt-in (off), so no tombstone
 	if _, err := manager.Delete(ctxB, id); err != nil {
 		t.Fatal(err)
 	}
@@ -153,23 +153,23 @@ type atomicSyncSettings struct {
 	recorded  []string
 }
 
-func (f *atomicSyncSettings) AIProfilesDeleteTx(_ context.Context, stateJSON string, tombstoneID string, _ int64) error {
+func (f *atomicSyncSettings) AIProfilesDeleteTx(ctx context.Context, stateJSON string, tombstoneID string, _ int64) error {
 	if f.deleteErr != nil {
 		return f.deleteErr
 	}
-	f.values[profiles.SettingKey] = stateJSON
+	f.values[store.AIProfilesSettingKeyForUser(ipc.OwnerID(ctx))] = stateJSON
 	f.recorded = append(f.recorded, tombstoneID)
 	return nil
 }
 
 func TestDeletePropagatesTombstoneRecordFailure(t *testing.T) {
 	settings := &fakeSyncSettings{values: map[string]string{"sync.optin.ai_profile.u-a": "1"}, recordErr: errors.New("disk full")}
-	manager, err := profiles.NewManager(context.Background(), settings)
+	ctx := ipc.WithUserID(context.Background(), "u-a")
+	manager, err := profiles.NewManager(ctx, settings)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := seedProfile(t, manager, "fail")
-	ctx := ipc.WithUserID(context.Background(), "u-a")
+	id := seedProfile(t, manager, "fail", ctx)
 	if _, err := manager.Delete(ctx, id); err == nil {
 		t.Fatal("墓碑记录失败必须向调用方返回错误, 不得静默吞掉")
 	}
@@ -181,17 +181,17 @@ func TestDeleteAtomicRetryAfterFailureConverges(t *testing.T) {
 		fakeSyncSettings: &fakeSyncSettings{values: map[string]string{"sync.optin.ai_profile.u-a": "1"}},
 		deleteErr:        errors.New("tombstone write failed"),
 	}
-	manager, err := profiles.NewManager(context.Background(), settings)
+	ctx := ipc.WithUserID(context.Background(), "u-a")
+	manager, err := profiles.NewManager(ctx, settings)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := seedProfile(t, manager, "retry")
-	ctx := ipc.WithUserID(context.Background(), "u-a")
+	id := seedProfile(t, manager, "retry", ctx)
 
 	if _, err := manager.Delete(ctx, id); err == nil {
 		t.Fatal("首次删除必须返回墓碑写失败")
 	}
-	if _, ok := manager.Profile(id); !ok {
+	if _, ok := mustProfile(t, manager, id, ctx); !ok {
 		t.Fatal("原子删除失败时档案必须仍在(可重试收敛)")
 	}
 	if len(settings.recorded) != 0 {
@@ -202,7 +202,7 @@ func TestDeleteAtomicRetryAfterFailureConverges(t *testing.T) {
 	if _, err := manager.Delete(ctx, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := manager.Profile(id); ok {
+	if _, ok := mustProfile(t, manager, id, ctx); ok {
 		t.Fatal("重试后档案必须已删除")
 	}
 	if len(settings.recorded) != 1 || settings.recorded[0] != id {

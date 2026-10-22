@@ -155,6 +155,11 @@ type tombstoneObject struct {
 }
 
 // knownHostObject's revision is addedAt (re-accepting a host key refreshes it); the (host, port, keyType) triple is globally unique.
+// The payload is fingerprint-only by contract: it never carries key material, so old
+// peers sending this shape are fully compatible without version negotiation. A sync
+// apply that changes the fingerprint clears the locally stored key material (the row
+// degrades to fingerprint-only trust until the next verified accept refills it through
+// KnownHostFillKeyMaterial or PutHostKey); a same-fingerprint update preserves it.
 type knownHostObject struct {
 	ID          string `json:"id"`
 	Host        string `json:"host"`

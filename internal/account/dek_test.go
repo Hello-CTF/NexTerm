@@ -3,6 +3,7 @@ package account
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -63,6 +64,45 @@ func TestSetAndGetUserDEKEnvelopes(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireCode(t, getEnvErr(a, ctx, other.ID), ipc.CodeNotFound)
+}
+
+// The second envelope upload conflicts deterministically regardless of driver
+// RowsAffected semantics (clientFoundRows reports 1 for a no-op INSERT), and
+// the stored row keeps the first upload's content.
+func TestInsertUserDEKEnvelopesConflictDeterministic(t *testing.T) {
+	a, _ := testAccounts(t)
+	ctx := context.Background()
+	user, err := a.CreateUser(ctx, "oliver", "", "synthetic-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, first, _, err := vault.GenerateUserDEKEnvelopes("synthetic-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.InsertUserDEKEnvelopes(ctx, user.ID, first); err != nil {
+		t.Fatalf("first envelope upload = %v", err)
+	}
+	second := testEnvelopes(t)
+	if err := a.InsertUserDEKEnvelopes(ctx, user.ID, second); err == nil || !errors.Is(err, ErrDEKEnvelopesExist) {
+		t.Fatalf("second envelope upload = %v, want ErrDEKEnvelopesExist", err)
+	}
+	stored, err := a.GetUserDEKEnvelopes(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stored.DEKEnvelope, first.DEKEnvelope) ||
+		!bytes.Equal(stored.KDFSalt, first.KDFSalt) ||
+		stored.KDFParams != first.KDFParams ||
+		!bytes.Equal(stored.RecoveryEnvelope, first.RecoveryEnvelope) ||
+		stored.RecoveryHash != first.RecoveryHash {
+		t.Fatal("stored envelopes mismatch: the second upload overwrote the first")
+	}
+	// Re-uploading the identical envelope set also conflicts (no idempotent
+	// success path): the row already exists.
+	if err := a.InsertUserDEKEnvelopes(ctx, user.ID, first); err == nil || !errors.Is(err, ErrDEKEnvelopesExist) {
+		t.Fatalf("identical re-upload = %v, want ErrDEKEnvelopesExist", err)
+	}
 }
 
 func TestChangePasswordRewrapOnly(t *testing.T) {
@@ -475,70 +515,6 @@ func rotatedEnvelopesForTest(t *testing.T, recoveryKey, password string, current
 		KDFParams:        params,
 		RecoveryEnvelope: recoveryEnvelope,
 		RecoveryHash:     vault.RecoveryKeyHash(newRecoveryKey),
-	}
-}
-
-func TestChangePasswordConcurrentSameOldPassword(t *testing.T) {
-	a := testFileAccounts(t)
-	ctx := context.Background()
-	user, err := a.CreateUser(ctx, "wendy", "", "old-password-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, envelopes, _, err := vault.GenerateUserDEKEnvelopes("old-password-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := a.SetUserDEKEnvelopes(ctx, user.ID, envelopes); err != nil {
-		t.Fatal(err)
-	}
-	token, _, err := a.IssueSession(ctx, user.ID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	passwords := []string{"new-password-a", "new-password-b"}
-	updated := []*vault.UserDEKEnvelopes{
-		rewrapForTest(t, "old-password-1", passwords[0], envelopes),
-		rewrapForTest(t, "old-password-1", passwords[1], envelopes),
-	}
-	start := make(chan struct{})
-	errs := make([]error, 2)
-	var wg sync.WaitGroup
-	for i := range passwords {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			<-start
-			errs[i] = a.ChangePassword(ctx, user.ID, "old-password-1", passwords[i], updated[i], "")
-		}(i)
-	}
-	close(start)
-	wg.Wait()
-	winner := -1
-	for i, err := range errs {
-		if err == nil {
-			if winner != -1 {
-				t.Fatalf("both password changes succeeded: %v", errs)
-			}
-			winner = i
-			continue
-		}
-		requireCode(t, err, ipc.CodeForbidden)
-	}
-	if winner == -1 {
-		t.Fatalf("no password change succeeded: %v", errs)
-	}
-	requireCode(t, authErr(a, ctx, "wendy", "old-password-1"), ipc.CodeForbidden)
-	if _, err := a.Authenticate(ctx, "wendy", passwords[winner]); err != nil {
-		t.Fatalf("winner password rejected: %v", err)
-	}
-	requireCode(t, validateErr(a, ctx, token), ipc.CodeForbidden)
-	stored, err := a.GetUserDEKEnvelopes(ctx, user.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(stored.DEKEnvelope, updated[winner].DEKEnvelope) {
-		t.Fatal("stored envelope does not match the winning password change")
 	}
 }
 

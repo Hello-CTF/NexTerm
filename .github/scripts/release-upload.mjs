@@ -8,7 +8,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const version = process.env.NEXTERM_RELEASE_VERSION || JSON.parse(fs.readFileSync(path.join(ROOT, "wails.json"), "utf8")).info.version;
 const packageNames = [...releaseArtifacts(version).keys()];
 const evidenceNames = ["SHA256SUMS"];
-const expectedNames = [...packageNames, ...evidenceNames];
+const signatureNames = ["SHA256SUMS.minisig", "SHA256SUMS.minisign.pub"];
+const expectedNames = [...packageNames, ...evidenceNames, ...signatureNames];
 const retriableStatuses = new Set([429, 500, 502, 503, 504]);
 const requestTimeoutMs = 600_000;
 
@@ -47,6 +48,11 @@ const apiBase = (process.env.GITHUB_API_URL || "https://api.github.com").replace
 
 if (!fs.existsSync(directory) || !fs.statSync(directory).isDirectory()) {
   console.error(`release-upload: candidate directory does not exist: ${directory}`);
+  process.exit(1);
+}
+const presentSignatureNames = signatureNames.filter((name) => fs.existsSync(path.join(directory, name)));
+if (presentSignatureNames.length !== signatureNames.length) {
+  console.error(`release-upload: minisign signature and public key are required and must be provided together: ${signatureNames.join(", ")}`);
   process.exit(1);
 }
 const missing = expectedNames.filter((name) => !fs.existsSync(path.join(directory, name)));
@@ -136,24 +142,40 @@ async function runPool(items, limit, worker) {
   return results;
 }
 
+const notesFile = path.resolve(ROOT, options.notesFile || path.join(options.directory || "candidate", "release-body.md"));
+if (!fs.existsSync(notesFile)) {
+  console.error(`release-upload: notes file does not exist: ${notesFile}`);
+  process.exit(1);
+}
+const notes = fs.readFileSync(notesFile, "utf8");
 const startedAt = performance.now();
 const resolveStarted = performance.now();
 let release = await findReleaseByTag(tag);
+if (release && !release.draft) {
+  console.error(`release-upload: refusing to modify published release ${release.id} for ${tag}; asset replacement and notes updates are limited to drafts`);
+  process.exit(1);
+}
 if (release) {
-  console.warn(`release-upload: resolved existing release ${release.id} for ${tag} (draft=${release.draft}, prerelease=${release.prerelease})`);
-} else {
-  const notesFile = path.resolve(ROOT, options.notesFile || path.join(options.directory || "candidate", "release-body.md"));
-  if (!fs.existsSync(notesFile)) {
-    console.error(`release-upload: notes file does not exist: ${notesFile}`);
+  console.warn(`release-upload: resolved existing draft release ${release.id} for ${tag} (prerelease=${release.prerelease})`);
+  const patched = await sendWithRetry(`${apiBase}/repos/${repository}/releases/${release.id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ body: notes }),
+  });
+  if (patched.response.status !== 200) {
+    console.error(`release-upload: update notes for draft ${release.id}: HTTP ${patched.response.status}: ${(await patched.response.text()).slice(0, 300)}`);
     process.exit(1);
   }
+  release = await patched.response.json();
+  console.warn(`release-upload: updated notes for draft release ${release.id} (attempts=${patched.attempts})`);
+} else {
   const created = await sendWithRetry(`${apiBase}/repos/${repository}/releases`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       tag_name: tag,
       name: `NexTerm ${tag}`,
-      body: fs.readFileSync(notesFile, "utf8"),
+      body: notes,
       draft: true,
       prerelease,
     }),
@@ -169,7 +191,9 @@ const resolveSeconds = (performance.now() - resolveStarted) / 1000;
 const uploadBase = release.upload_url.replace(/\{.*$/, "");
 
 const clobberStarted = performance.now();
-const stale = (await listAssets(release.id)).filter((asset) => expectedNames.includes(asset.name));
+const stale = (await listAssets(release.id)).filter((asset) => expectedNames.includes(asset.name)
+  || signatureNames.includes(asset.name)
+  || asset.name === `NexTerm_${version}_ios.ipa`);
 await runPool(stale, options.concurrency, async (asset) => {
   await deleteAsset(asset.id);
   console.warn(`release-upload: deleted stale asset ${asset.name} (${asset.id})`);

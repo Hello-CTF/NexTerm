@@ -21,14 +21,14 @@ const windowsTaskName = "NexTermAgent"
 type windowsManager struct {
 	runner        CommandRunner
 	commandPrefix []string
+	taskUser      func() (string, error)
 }
 
-func newWindowsManager(runner CommandRunner, commandPrefix ...string) ServiceManager {
-	return &windowsManager{runner: runner, commandPrefix: commandPrefix}
+func newWindowsManager(runner CommandRunner, commandPrefix ...string) *windowsManager {
+	return &windowsManager{runner: runner, commandPrefix: commandPrefix, taskUser: windowsTaskUser}
 }
 
-// windowsTaskUser returns the run account of the scheduled task (DOMAIN\user); replaceable in tests.
-var windowsTaskUser = func() (string, error) {
+func windowsTaskUser() (string, error) {
 	current, err := user.Current()
 	if err != nil {
 		return "", err
@@ -43,7 +43,7 @@ func (m *windowsManager) Install(ctx context.Context, executable, dataDir string
 	if err := m.removeLegacyService(ctx); err != nil {
 		return err
 	}
-	account, err := windowsTaskUser()
+	account, err := m.taskUser()
 	if err != nil {
 		return fmt.Errorf("读取当前用户失败: %w", err)
 	}

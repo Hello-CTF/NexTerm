@@ -23,6 +23,14 @@ type channelOwnerRegistration struct {
 	generation uint64
 }
 
+type managerHooks struct {
+	channelCloseAfterCheck    func()
+	channelCloseBeforeCapture func(string)
+	channelCloseAfterCapture  func(string)
+	channelRecoverBeforeFeed  func()
+	ephemeralReapAfterCurrent func()
+}
+
 type Manager struct {
 	mu                     sync.Mutex
 	sessions               map[string]*Session
@@ -32,6 +40,8 @@ type Manager struct {
 	channelIncarnations    map[string]uint64
 	channelOwners          map[string]channelOwnerRegistration
 	channelOwnerGeneration uint64
+	nextAttachmentId       uint64
+	nextTabIncarnation     uint64
 	sessionOwners          map[string]string
 	tabOwners              map[string]string
 	controlOwners          map[*recordingControlQueue]string
@@ -47,14 +57,17 @@ type Manager struct {
 	durable              base.DurableProvider
 	resolver             DurableResolver
 	terminalModeResolver func(context.Context, string) (string, error)
-	offsets              DurableTranscriptOffsetStore
-	titles               DurableTabTitleStore
+	offsets              OwnerScopedDurableTranscriptOffsetStore
+	titles               OwnerScopedDurableTabTitleStore
 	bus                  *hub.Hub
 	ownsBus              bool
 	emitter              Emitter
 	transcripts          TranscriptSink
 	commands             CommandSink
+	commandQueue         *asyncCommandSink
 	logger               *slog.Logger
+	now                  func() time.Time
+	hooks                managerHooks
 
 	hookMu        sync.RWMutex
 	userInputHook func(string)
@@ -98,15 +111,26 @@ func NewManager(config Config) *Manager {
 		emitter:              config.Emitter,
 		transcripts:          config.Transcripts,
 		commands:             config.Commands,
-		idleTimeout:          config.IdleTimeout,
-		sweepInterval:        config.SweepInterval,
-		reconnectMax:         config.ReconnectMax,
-		reconnectBackoff:     append([]time.Duration(nil), config.ReconnectBackoff...),
-		defaultReplay:        config.DefaultReplay,
-		openAccess:           config.OpenAccess,
-		ctx:                  ctx,
-		cancel:               cancel,
-		closeDone:            make(chan struct{}),
+		now:                  config.Now,
+		hooks: managerHooks{
+			channelCloseAfterCheck:    func() {},
+			channelCloseBeforeCapture: func(string) {},
+			channelCloseAfterCapture:  func(string) {},
+			channelRecoverBeforeFeed:  func() {},
+			ephemeralReapAfterCurrent: func() {},
+		},
+		idleTimeout:      config.IdleTimeout,
+		sweepInterval:    config.SweepInterval,
+		reconnectMax:     config.ReconnectMax,
+		reconnectBackoff: append([]time.Duration(nil), config.ReconnectBackoff...),
+		defaultReplay:    config.DefaultReplay,
+		openAccess:       config.OpenAccess,
+		ctx:              ctx,
+		cancel:           cancel,
+		closeDone:        make(chan struct{}),
+	}
+	if manager.now == nil {
+		manager.now = time.Now
 	}
 	if manager.terminals == nil {
 		manager.terminals = terminalFactory{}
@@ -141,20 +165,14 @@ func NewManager(config Config) *Manager {
 		manager.bus = config.Hub
 	}
 	manager.offsets = config.TranscriptOffsets
-	if manager.offsets == nil {
-		if source, ok := config.Durable.(durableTranscriptOffsetSource); ok {
-			manager.offsets = source
-		}
-	}
 	manager.titles = config.TabTitles
-	if manager.titles == nil {
-		if source, ok := config.Durable.(DurableTabTitleStore); ok {
-			manager.titles = source
-		}
-	}
 	manager.logger = config.Logger
 	if manager.logger == nil {
 		manager.logger = slog.Default()
+	}
+	if config.Commands != nil {
+		manager.commandQueue = newAsyncCommandSink(config.Commands, manager.logger, commandLogQueueSize, manager.now)
+		manager.commands = manager.commandQueue
 	}
 	if binder, ok := config.Transcripts.(interface {
 		BindTranscriptOffsetSource(durableTranscriptOffsetSource)
@@ -172,12 +190,8 @@ func (m *Manager) Bind(channelID string) (*hub.Receiver, error) {
 	return m.bus.Bind(channelID)
 }
 
-var channelCloseAfterCheck = func() {}
-var channelCloseBeforeCapture = func(string) {}
-var channelCloseAfterCapture = func(string) {}
-
 func (m *Manager) onChannelClose(channelID string, incarnation uint64, closeChannel func()) {
-	channelCloseAfterCapture(channelID)
+	m.hooks.channelCloseAfterCapture(channelID)
 	m.mu.Lock()
 	tabID := m.channelTabs[channelID]
 	if tabID == "" {
@@ -201,7 +215,7 @@ func (m *Manager) onChannelClose(channelID string, incarnation uint64, closeChan
 	}
 	_, cleanup := m.detachChannelLocked(channelID, incarnation, closeChannel)
 	m.mu.Unlock()
-	channelCloseAfterCheck()
+	m.hooks.channelCloseAfterCheck()
 	cleanup()
 }
 
@@ -294,7 +308,13 @@ func (m *Manager) Shutdown(context.Context) error {
 }
 
 func (m *Manager) requestOpenAccess(ctx context.Context) bool {
-	return m.openAccess || openAccessFromContext(ctx)
+	if m.openAccess {
+		return true
+	}
+	// A non-open server never honors the context flag for identity-less
+	// callers: the flag is an in-process vouch, not an authorization, and
+	// open access must be backed by an authenticated identity.
+	return openAccessFromContext(ctx) && userIDFromContext(ctx) != ""
 }
 
 func (m *Manager) ConnectFor(ctx context.Context, asset Asset) (*Session, error) {
@@ -326,6 +346,7 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 		existing.mu.Lock()
 		allowed := sessionRequestAllowed(existing, requester, true)
 		status := existing.status
+		transport := existing.transport
 		done := existing.connectDone
 		existing.mu.Unlock()
 		m.mu.Unlock()
@@ -334,10 +355,25 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 			return nil, ErrForbidden
 		}
 		if status != StatusConnecting {
+			if status == StatusConnected && transport != nil && transport.IsAlive() {
+				if err := ipc.CheckAccountSession(ctx); err != nil {
+					return nil, err
+				}
+				return existing, nil
+			}
+			if status != StatusConnected && status != StatusReconnecting {
+				return nil, ErrDisconnected
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if err := ipc.CheckAccountSession(ctx); err != nil {
 				return nil, err
 			}
-			return existing, nil
+			if err := m.Disconnect(existing.ID); err != nil {
+				return nil, err
+			}
+			return m.Connect(ctx, asset)
 		}
 		select {
 		case <-ctx.Done():
@@ -350,10 +386,7 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 		ownerExpired := existing.connectOwnerExpired
 		existing.mu.Unlock()
 		if status == StatusConnected || status == StatusReconnecting {
-			if err := ipc.CheckAccountSession(ctx); err != nil {
-				return nil, err
-			}
-			return existing, nil
+			return m.Connect(ctx, asset)
 		}
 		if connectErr != nil {
 			if ownerExpired {
@@ -368,10 +401,10 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 	}
 
 	generation := uint64(1)
-	sessionCtx, cancel := context.WithCancel(m.ctx)
+	sessionCtx, cancel := context.WithCancel(ownerCtx(m.ctx, requester))
 	session := &Session{
 		ID:          newID(),
-		CreatedAt:   time.Now(),
+		CreatedAt:   m.now(),
 		asset:       asset,
 		userID:      requester,
 		status:      StatusConnecting,
@@ -379,7 +412,7 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 		ctx:         sessionCtx,
 		cancel:      cancel,
 		tabs:        make(map[string]*Tab),
-		idleSince:   time.Now(),
+		idleSince:   m.now(),
 		connectDone: make(chan struct{}),
 	}
 	m.sessions[session.ID] = session
@@ -447,7 +480,7 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 	}
 	session.transport = handle
 	session.status = StatusConnected
-	session.idleSince = time.Now()
+	session.idleSince = m.now()
 	session.finishConnectLocked(nil)
 	connectedEvent := session.statusEventLocked(StatusConnected, nil)
 	session.mu.Unlock()
@@ -471,8 +504,8 @@ func (s *Session) finishReconnectLocked(err error) {
 		return
 	}
 	s.reconnecting = false
-	s.reconnectErr = err
-	close(s.reconnectDone)
+	s.reconnectCompletion.err = err
+	close(s.reconnectCompletion.done)
 }
 
 func (m *Manager) Session(id string) (*Session, error) {
@@ -636,7 +669,7 @@ func (m *Manager) listTabs(requester string, openAccess bool) ([]TabInfo, error)
 	m.mu.Unlock()
 	infos := make([]TabInfo, 0, len(tabs))
 	for _, tab := range tabs {
-		infos = append(infos, tab.Info())
+		infos = append(infos, tab.listInfo())
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].ID < infos[j].ID })
 	return infos, nil
@@ -723,13 +756,16 @@ func (m *Manager) disconnect(id string, expectedIdle *time.Time) error {
 	m.mu.Unlock()
 
 	cancel()
-	closeChannels(channels)
+	closeErr := closeChannels(channels)
 	if transport != nil {
-		_ = transport.Close()
+		// A failed close is surfaced instead of swallowed: the session still
+		// completes the disconnect transition, but the caller (IPC, sweeps,
+		// account cleanup) sees the real close result.
+		closeErr = errors.Join(closeErr, transport.Close())
 	}
 	m.emit(context.Background(), TopicSessionStatus, disconnectedEvent)
-	m.transcriptEnded(id)
-	return nil
+	m.transcriptEnded(session)
+	return closeErr
 }
 
 func (s *Session) detachChannelsLocked() []*channelHandle {
@@ -752,10 +788,14 @@ func (s *Session) detachChannelsLocked() []*channelHandle {
 	return channels
 }
 
-func closeChannels(channels []*channelHandle) {
+func closeChannels(channels []*channelHandle) error {
+	var errs []error
 	for _, channel := range channels {
-		_ = channel.Close()
+		if err := channel.Close(); err != nil {
+			errs = append(errs, err)
+		}
 	}
+	return errors.Join(errs...)
 }
 
 func (m *Manager) reap(id string, expectedIdle ...time.Time) error {
@@ -833,7 +873,7 @@ func (m *Manager) reap(id string, expectedIdle ...time.Time) error {
 		m.mu.Unlock()
 	}
 	for _, tab := range tabs {
-		if err := m.closeTabResources(tab, func() { finish(tab) }); err != nil {
+		if err := m.closeTabResources(tab, true, func() { finish(tab) }); err != nil {
 			session.mu.Lock()
 			session.reapRetry = true
 			session.mu.Unlock()
@@ -847,7 +887,7 @@ func (m *Manager) reap(id string, expectedIdle ...time.Time) error {
 		return ErrStaleGeneration
 	}
 	m.emit(context.Background(), TopicSessionStatus, disconnectedEvent)
-	m.transcriptEnded(id)
+	m.transcriptEnded(session)
 	return nil
 }
 
@@ -863,7 +903,7 @@ func (m *Manager) SweepIdle(ctx context.Context) error {
 		id       string
 		activity time.Time
 	}
-	now := time.Now()
+	now := m.now()
 	m.mu.Lock()
 	candidates := make([]candidate, 0)
 	remoteCandidates := make([]remoteCandidate, 0)
@@ -912,7 +952,12 @@ func (m *Manager) idleLoop() {
 		case <-m.ctx.Done():
 			return
 		case <-ticker.C:
-			_ = m.SweepIdle(m.ctx)
+			// Close failures on the disconnect path stay visible instead of
+			// vanishing into the sweep: the session is already disconnected,
+			// but a failed channel/transport close is logged for inspection.
+			if err := m.SweepIdle(m.ctx); err != nil {
+				m.logger.Warn("idle sweep disconnect failed", "error", err)
+			}
 		}
 	}
 }
@@ -923,6 +968,11 @@ func (m *Manager) Close() error {
 	if m.closeComplete {
 		return m.closeErr
 	}
+	defer func() {
+		if m.commandQueue != nil {
+			m.commandQueue.Close()
+		}
+	}()
 	m.mu.Lock()
 	m.closed = true
 	for channelID, timer := range m.slowKicks {

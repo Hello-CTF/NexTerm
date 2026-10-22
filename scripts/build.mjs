@@ -6,12 +6,23 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveMakensis } from "./lib/makensis.mjs";
+import { readHostHelperProtocolMetadata } from "../.github/scripts/helper-metadata.mjs";
+import { commitLabel, sourceState } from "./lib/mobile.mjs";
 import { resolveSpawnSpec } from "./lib/spawn-spec.mjs";
+import { parseReleaseVersion, parseSemVer } from "./lib/semver.mjs";
+import {
+  canExecuteHelperMetadata,
+  helperArchiveMembers,
+  helperTarget,
+  helperTargets,
+  missingHelperArchiveMembers,
+} from "../.github/scripts/helper-matrix.mjs";
 import {
   binaryManifestProblems,
   createBinaryManifest,
   createDistManifest,
   distManifestProblems,
+  helperMetadataManifestProblems,
   loadManifest,
   treeHash,
 } from "./lib/build-manifest.mjs";
@@ -23,13 +34,17 @@ const HELP_TEXT = `#!/usr/bin/env node
  * release tag in CI); the wails.json/package.json versions are 0.0.0 placeholders.
  *
  *   node scripts/build.mjs                         # frontend + host debug desktop
- *   node scripts/build.mjs release                 # reproducible frontend + native package
+ *   node scripts/build.mjs release                 # frontend + desktop with nine helpers and representative evidence
+ *   node scripts/build.mjs helpers --release       # all nine targets; executes metadata only on matching hosts
  *   node scripts/build.mjs frontend --repro-check
  *   node scripts/build.mjs frontend --consume-dist=DIR --dist-manifest=PATH
  *   node scripts/build.mjs bindings
+ *   node scripts/build.mjs desktop-ldflags --os=linux
+ *   node scripts/build.mjs write-minisign-public-key --out=PATH
  *   node scripts/build.mjs desktop --release --os=darwin --arch=arm64 --package
  *   node scripts/build.mjs desktop --release --package --package-only --consume-dist=DIR \\
  *     --os=darwin --arch=arm64 --require-evidence
+ * Package-only reuse also requires the exact NEXTERM_RELEASE_REF tag and updater public key.
  *   node scripts/build.mjs server --release --os=linux --arch=amd64
  *   node scripts/build.mjs agent --release --os=linux --arch=amd64
  *   node scripts/build.mjs helper --release --repro-check --os=linux --arch=arm64
@@ -38,15 +53,19 @@ const HELP_TEXT = `#!/usr/bin/env node
  `;
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const WAILS_VERSION = "v3.0.0-beta.27";
+const goMod = fs.readFileSync(path.join(ROOT, "go.mod"), "utf8");
+const WAILS_MODULE = "github.com/wailsapp/wails/v3/cmd/wails3";
+const WAILS_VERSION = goMod.match(/^\s*github\.com\/wailsapp\/wails\/v3\s+(v\S+)\s*$/m)?.[1];
+const GO_TOOLCHAIN = goMod.match(/^toolchain\s+(go\d+\.\d+\.\d+)\s*$/m)?.[1];
+if (!WAILS_VERSION || !GO_TOOLCHAIN) die("go.mod must declare the Wails module and an exact Go toolchain");
 const RSRC_VERSION = "v0.10.2";
 const argv = process.argv.slice(2);
 const command = argv[0] && !argv[0].startsWith("-") ? argv.shift() : "debug";
 const KNOWN_OPTIONS = new Set([
-  "arch", "assets-dir", "base", "binary-manifest", "cgo", "consume-dist",
+  "arch", "assets-dir", "base", "binary", "binary-manifest", "cgo", "consume-dist",
   "dist-manifest", "file", "helpers-dir", "id", "kind", "os", "out", "output", "package",
   "package-only", "release", "repro-check", "require-evidence",
-  "skip-frontend",
+  "skip-frontend", "write",
 ]);
 const options = {};
 for (const arg of argv) {
@@ -59,20 +78,30 @@ for (const arg of argv) {
 const wailsConfig = JSON.parse(fs.readFileSync(path.join(ROOT, "wails.json"), "utf8"));
 const WAILS_VERSION_PLACEHOLDER = wailsConfig.info?.version;
 const VERSION = process.env.NEXTERM_RELEASE_VERSION || WAILS_VERSION_PLACEHOLDER;
-if (!VERSION || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(VERSION)) {
+const VERSION_INFO = process.env.NEXTERM_RELEASE_VERSION ? parseReleaseVersion(VERSION) : parseSemVer(VERSION);
+if (!VERSION_INFO) {
   die(`release version is not a semver version: ${VERSION}`);
 }
-const packageVersion = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
+const packageJSON = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+const packageVersion = packageJSON.version;
 if (packageVersion !== WAILS_VERSION_PLACEHOLDER) die(`package.json version ${packageVersion} diverges from the wails.json placeholder ${WAILS_VERSION_PLACEHOLDER}`);
 let SOURCE_DATE_EPOCH = process.env.SOURCE_DATE_EPOCH || "";
-const COMMIT = output("git", ["rev-parse", "HEAD"], { allowFailure: true })?.trim() || "unknown";
+const { commit: SOURCE_COMMIT, dirty: DIRTY } = sourceState({ cwd: ROOT });
+const COMMIT = commitLabel({ commit: SOURCE_COMMIT, dirty: DIRTY });
+const RELEASE_REF = (process.env.NEXTERM_RELEASE_REF || "").trim();
 SOURCE_DATE_EPOCH ||= output("git", ["show", "-s", "--format=%ct", "HEAD"], { allowFailure: true })?.trim();
 if (!SOURCE_DATE_EPOCH || !/^\d+$/.test(SOURCE_DATE_EPOCH)) {
   die("SOURCE_DATE_EPOCH is required when the git commit timestamp is unavailable");
 }
 
 const HOST_OS = { darwin: "darwin", linux: "linux", win32: "windows" }[process.platform];
-const HOST_ARCH = { arm64: "arm64", x64: "amd64" }[process.arch];
+const HOST_ARCH = {
+  arm: String(process.config.variables.arm_version) === "7" ? "armv7" : `armv${process.config.variables.arm_version || "unknown"}`,
+  arm64: "arm64",
+  loong64: "loong64",
+  riscv64: "riscv64",
+  x64: "amd64",
+}[process.arch];
 
 function log(message) {
   console.log(message);
@@ -123,28 +152,35 @@ function targetArch() {
 }
 
 function assertTarget(kind, goos, goarch) {
+  if (kind === "helper") {
+    if (!helperTarget(goos, goarch)) die(`unsupported helper target ${goos}/${goarch}; expected one of ${helperTargets().map((target) => `${target.os}/${target.arch}`).join(", ")}`);
+    return;
+  }
   const allowed = {
     "windows/amd64": ["desktop", "server", "agent"],
     "windows/arm64": ["desktop", "agent"],
     "darwin/amd64": ["desktop", "server", "agent"],
     "darwin/arm64": ["desktop", "server", "agent"],
-    "linux/amd64": ["desktop", "server", "agent", "helper"],
-    "linux/arm64": ["desktop", "server", "agent", "helper"],
+    "linux/amd64": ["desktop", "server", "agent"],
+    "linux/arm64": ["desktop", "server", "agent"],
   };
   if (!allowed[`${goos}/${goarch}`]?.includes(kind)) {
-    die(`unsupported ${kind} target ${goos}/${goarch}; desktop is Windows/macOS/Linux amd64+arm64, server is Linux amd64+arm64, agent is Windows/macOS/Linux amd64+arm64, and helper is Linux amd64+arm64`);
+    die(`unsupported ${kind} target ${goos}/${goarch}; desktop is Windows/macOS/Linux amd64+arm64, server is Linux amd64+arm64, and agent is Windows/macOS/Linux amd64+arm64`);
   }
 }
 
 function buildEnvironment(goos, goarch, kind) {
   const cgo = kind === "desktop" && (goos === "darwin" || goos === "linux") ? "1" : "0";
+  const target = kind === "helper" ? helperTarget(goos, goarch) : null;
   const env = {
     ...process.env,
     GOOS: goos,
-    GOARCH: goarch,
+    GOARCH: target?.goarch || goarch,
     CGO_ENABLED: cgo,
-    GOTOOLCHAIN: "go1.26.8",
+    GOTOOLCHAIN: GO_TOOLCHAIN,
   };
+  if (target?.goarm) env.GOARM = target.goarm;
+  else delete env.GOARM;
   if (goos === "darwin") {
     env.MACOSX_DEPLOYMENT_TARGET = "12.0";
     env.CGO_CFLAGS = "-mmacosx-version-min=12.0";
@@ -252,20 +288,86 @@ function compareDirectories(expected, actual, prefix = "") {
   return differences;
 }
 
+let wailsVerified = false;
+
+function runWails(args, options = {}) {
+  const env = { ...process.env, GOTOOLCHAIN: GO_TOOLCHAIN, ...options.env };
+  if (!wailsVerified) {
+    const result = run("go", ["run", `${WAILS_MODULE}@${WAILS_VERSION}`, "version"], { env, quiet: true });
+    const outputLines = `${result.stdout || ""}${result.stderr || ""}`.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const actual = outputLines.at(-1) || "unavailable";
+    if (actual !== WAILS_VERSION) die(`Wails CLI version ${actual} does not match go.mod ${WAILS_VERSION}`);
+    wailsVerified = true;
+    log(`Wails CLI: ${actual} (pinned by go.mod)`);
+  }
+  return run("go", ["run", `${WAILS_MODULE}@${WAILS_VERSION}`, ...args], { ...options, env });
+}
+
+function replaceBindings(generated, committed) {
+  const backup = `${committed}.previous-${process.pid}`;
+  const hadCommitted = fs.existsSync(committed);
+  if (hadCommitted) fs.renameSync(committed, backup);
+  try {
+    fs.cpSync(generated, committed, { recursive: true });
+    if (hadCommitted) fs.rmSync(backup, { recursive: true, force: true });
+  } catch (error) {
+    fs.rmSync(committed, { recursive: true, force: true });
+    if (hadCommitted) fs.renameSync(backup, committed);
+    throw error;
+  }
+}
+
 function verifyBindings() {
   const committed = path.join(ROOT, "src/ipc/bindings");
-  if (!fs.existsSync(committed)) die("src/ipc/bindings is missing; generate and review bindings before enabling drift checks");
+  const write = flag("write");
+  if (!write && !fs.existsSync(committed)) die("src/ipc/bindings is missing; generate and review bindings before enabling drift checks");
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-bindings-"));
   try {
-    run("wails3", ["generate", "bindings", "-ts", "-i", "-d", temporary, "./cmd/nexterm-desktop"], {
-      env: { ...process.env, GOTOOLCHAIN: "go1.26.8" },
-    });
+    runWails(["generate", "bindings", "-ts", "-i", "-d", temporary, "./cmd/nexterm-desktop"]);
+    if (write) {
+      replaceBindings(temporary, committed);
+      log(`Wails bindings generated with ${WAILS_VERSION}`);
+      return;
+    }
     const differences = compareDirectories(committed, temporary);
     if (differences.length) die(`Wails bindings drift detected:\n${differences.join("\n")}`);
     log("Wails bindings: no drift");
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
   }
+}
+
+function desktopMinisignPublicKey() {
+  const configured = (process.env.NEXTERM_MINISIGN_PUBLIC_KEY || "").trim();
+  if (!configured) return "";
+  const lines = configured.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 2 && lines[0].startsWith("untrusted comment:")) lines.shift();
+  if (lines.length !== 1) die("NEXTERM_MINISIGN_PUBLIC_KEY must be one Base64 public key or a two-line minisign public key file");
+  const encoded = lines[0];
+  if (!/^[A-Za-z0-9+/]{56}$/.test(encoded)) die("NEXTERM_MINISIGN_PUBLIC_KEY must contain one 56-character Base64 minisign public key");
+  const decoded = Buffer.from(encoded, "base64");
+  if (decoded.length !== 42 || decoded.subarray(0, 2).toString() !== "Ed" || decoded.toString("base64") !== encoded) {
+    die("NEXTERM_MINISIGN_PUBLIC_KEY is not an Ed25519 minisign public key");
+  }
+  return encoded;
+}
+
+function desktopMinisignPublicKeyDigest() {
+  const publicKey = desktopMinisignPublicKey();
+  return publicKey ? crypto.createHash("sha256").update(publicKey).digest("hex") : "";
+}
+
+function desktopReuseEvidence() {
+  if (!process.env.NEXTERM_RELEASE_VERSION || !parseReleaseVersion(VERSION)) {
+    die("--package-only requires a non-placeholder NEXTERM_RELEASE_VERSION; master placeholder artifacts cannot be reused for a tag");
+  }
+  const expectedRef = `refs/tags/v${VERSION}`;
+  if (RELEASE_REF !== expectedRef) {
+    die(`--package-only requires NEXTERM_RELEASE_REF=${expectedRef}, got ${JSON.stringify(RELEASE_REF)}`);
+  }
+  const updaterPublicKeySHA256 = desktopMinisignPublicKeyDigest();
+  if (!updaterPublicKeySHA256) die("--package-only requires NEXTERM_MINISIGN_PUBLIC_KEY for updater equivalence evidence");
+  return { sourceRef: RELEASE_REF, updaterPublicKeySHA256 };
 }
 
 function ldflags(kind, goos) {
@@ -275,8 +377,22 @@ function ldflags(kind, goos) {
     `-X github.com/Hello-CTF/NexTerm/internal/version.Version=${VERSION}`,
     `-X github.com/Hello-CTF/NexTerm/internal/version.Commit=${COMMIT}`,
   ];
+  if (kind === "desktop") {
+    const publicKey = desktopMinisignPublicKey();
+    if (publicKey) flags.push(`-X github.com/Hello-CTF/NexTerm/internal/update.defaultMinisignPublicKey=${publicKey}`);
+  }
   if (kind === "desktop" && goos === "windows") flags.push("-H windowsgui");
   return flags.join(" ");
+}
+
+function writeMinisignPublicKey() {
+  const destination = path.resolve(ROOT, option("out", ""));
+  if (!option("out")) die("write-minisign-public-key requires --out=PATH");
+  const publicKey = desktopMinisignPublicKey();
+  if (!publicKey) die("NEXTERM_MINISIGN_PUBLIC_KEY is required");
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.writeFileSync(destination, `untrusted comment: NexTerm release minisign public key\n${publicKey}\n`, { mode: 0o644 });
+  log(`minisign public key file: ${destination}`);
 }
 
 function stageWindowsResource(goarch) {
@@ -289,6 +405,7 @@ function stageWindowsResource(goarch) {
 }
 
 function defaultBinaryPath(kind, goos, goarch) {
+  if (kind === "helper") return path.join(ROOT, "target/go-build", helperTarget(goos, goarch).name);
   const suffix = goos === "windows" ? ".exe" : "";
   return path.join(ROOT, "target/go-build", `nexterm-${kind}-${goos}-${goarch}${suffix}`);
 }
@@ -298,57 +415,59 @@ const cachedHelperBinaryMetadata = new Map();
 
 function helperProtocolMetadata() {
   if (cachedHelperProtocolMetadata) return cachedHelperProtocolMetadata;
-  const raw = output("go", ["run", "-mod=readonly", "./cmd/nexterm-helper", "--metadata"], {
-    env: buildEnvironment(HOST_OS, HOST_ARCH, "helper"),
-  });
-  let metadata;
   try {
-    metadata = JSON.parse(raw);
+    cachedHelperProtocolMetadata = readHostHelperProtocolMetadata({
+      cwd: ROOT,
+      env: { ...buildEnvironment(HOST_OS, HOST_ARCH, "helper"), SOURCE_DATE_EPOCH: String(SOURCE_DATE_EPOCH), TZ: "UTC" },
+    });
   } catch (error) {
-    die(`helper metadata is not valid JSON: ${error.message}`);
+    die(error.message);
   }
-  if (!Number.isInteger(metadata.protocol) || metadata.protocol <= 0) die(`helper metadata has invalid protocol ${metadata.protocol}`);
-  if (!Array.isArray(metadata.features) || metadata.features.some((feature) => typeof feature !== "string" || feature === "")) {
-    die("helper metadata features must be non-empty strings");
-  }
-  cachedHelperProtocolMetadata = { protocol: metadata.protocol, features: [...metadata.features].sort() };
   return cachedHelperProtocolMetadata;
 }
 
-function helperBinaryMetadata(file, goarch) {
+function helperBinaryMetadata(file, goos, goarch) {
   if (cachedHelperBinaryMetadata.has(file)) return cachedHelperBinaryMetadata.get(file);
-  const native = HOST_OS === "linux" && HOST_ARCH === goarch;
-  const raw = native
-    ? output(file, ["--metadata"], { allowFailure: true, timeout: 30000 })
-    : output("docker", ["run", "--rm", "--platform", `linux/${goarch}`,
-      "--mount", `type=bind,source=${path.resolve(file)},target=/nexterm-helper,readonly`,
-      "alpine:3.21", "/nexterm-helper", "--metadata"], { allowFailure: true, timeout: 60000 });
-  if (raw === null) throw new Error(`cannot execute final Linux/${goarch} helper --metadata; build on a matching Linux host or start Docker`);
+  const target = helperTarget(goos, goarch);
+  if (!canExecuteHelperMetadata({ os: HOST_OS, arch: HOST_ARCH }, target)) {
+    throw new Error(`cannot execute final ${goos}/${goarch} helper --metadata on ${HOST_OS}/${HOST_ARCH}; a matching real host is required`);
+  }
+  const raw = output(file, ["--metadata"], { allowFailure: true, timeout: 30000 });
+  if (raw === null) throw new Error(`cannot execute final ${goos}/${goarch} helper --metadata on the matching host`);
   let metadata;
   try {
     metadata = JSON.parse(raw);
   } catch (error) {
-    throw new Error(`final Linux/${goarch} helper --metadata is not JSON: ${error.message}`);
+    throw new Error(`final ${goos}/${goarch} helper --metadata is not JSON: ${error.message}`);
   }
   const expected = helperProtocolMetadata();
   const features = Array.isArray(metadata.features) ? [...metadata.features].sort() : null;
+  const artifactSHA256 = sha256(file);
   if (metadata.version !== VERSION || metadata.commit !== COMMIT || metadata.protocol !== expected.protocol ||
       features === null || features.some((feature) => typeof feature !== "string" || feature === "") ||
-      JSON.stringify(features) !== JSON.stringify(expected.features)) {
-    throw new Error(`final Linux/${goarch} helper metadata does not match this build: ${JSON.stringify(metadata)}`);
+      JSON.stringify(features) !== JSON.stringify(expected.features) || metadata.sha256 !== artifactSHA256) {
+    throw new Error(`final ${goos}/${goarch} helper metadata does not match this build and artifact sha256: ${JSON.stringify(metadata)}`);
   }
-  const verified = { protocol: metadata.protocol, features, binary_metadata_verified: true };
+  const verified = {
+    protocol: metadata.protocol,
+    features,
+    sha256: metadata.sha256,
+    binary_metadata_verified: true,
+    metadata_host: { os: HOST_OS, arch: HOST_ARCH },
+  };
   cachedHelperBinaryMetadata.set(file, verified);
   return verified;
 }
 
 function writeBinaryManifest(file, { id, kind, goos, goarch, tags, cgo, stripped }) {
+  const target = kind === "helper" ? helperTarget(goos, goarch) : null;
   const manifest = createBinaryManifest({
     file,
     id,
     kind,
     goos,
     goarch,
+    goarm: target?.goarm || "",
     tags: tags ? tags.split(",") : [],
     cgo,
     stripped,
@@ -356,12 +475,21 @@ function writeBinaryManifest(file, { id, kind, goos, goarch, tags, cgo, stripped
     commit: COMMIT,
     source_date_epoch: Number(SOURCE_DATE_EPOCH),
   });
+  if (kind === "desktop") {
+    manifest.source_ref = RELEASE_REF;
+    manifest.updater_public_key_sha256 = desktopMinisignPublicKeyDigest();
+  }
   if (kind === "helper") {
-    try {
-      Object.assign(manifest, helperBinaryMetadata(file, goarch));
-    } catch (error) {
-      Object.assign(manifest, helperProtocolMetadata(), { binary_metadata_verified: false });
-      log(`helper binary metadata verification failed: ${error.message}`);
+    if (canExecuteHelperMetadata({ os: HOST_OS, arch: HOST_ARCH }, target)) {
+      try {
+        Object.assign(manifest, helperBinaryMetadata(file, goos, goarch));
+      } catch (error) {
+        manifest.binary_metadata_verified = false;
+        log(`helper binary metadata verification failed: ${error.message}`);
+      }
+    } else {
+      Object.assign(manifest, { binary_metadata_verified: false, metadata_status: "not-run", cross_compiled: true, untested: true });
+      log(`helper final ${goos}/${goarch} --metadata not executed on ${HOST_OS}/${HOST_ARCH}; recorded as untested cross-compiled output`);
     }
   }
   const destination = path.resolve(ROOT, option("binary-manifest", `${file}.manifest.json`));
@@ -370,7 +498,7 @@ function writeBinaryManifest(file, { id, kind, goos, goarch, tags, cgo, stripped
   log(`${id} binary manifest: ${destination}`);
 }
 
-function validateBinaryForPackaging(outputPath, kind, goos, goarch) {
+function validateBinaryForPackaging(outputPath, kind, goos, goarch, reuseEvidence) {
   if (!fs.existsSync(outputPath) || !fs.statSync(outputPath).isFile()) {
     die(`--package-only requires the existing production binary: ${outputPath}`);
   }
@@ -389,6 +517,7 @@ function validateBinaryForPackaging(outputPath, kind, goos, goarch) {
       kind,
       goos,
       goarch,
+      goarm: kind === "helper" ? helperTarget(goos, goarch).goarm : "",
       tags: ["production"],
       cgo: buildEnvironment(goos, goarch, kind).CGO_ENABLED,
       stripped: true,
@@ -396,15 +525,50 @@ function validateBinaryForPackaging(outputPath, kind, goos, goarch) {
       commit: COMMIT,
     },
   });
-  if (problems.length) die(`--package-only binary manifest validation failed:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`);
-  if (kind === "helper") {
-    const expected = helperProtocolMetadata();
-    if (manifest.binary_metadata_verified !== true || manifest.protocol !== expected.protocol ||
-        JSON.stringify(manifest.features) !== JSON.stringify(expected.features)) {
-      die(`--package-only helper manifest lacks matching final-binary --metadata evidence: ${manifestPath}`);
+  if (kind === "desktop") {
+    if (manifest.source_ref !== reuseEvidence.sourceRef) {
+      problems.push(`binary manifest source_ref ${JSON.stringify(manifest.source_ref)} does not match ${reuseEvidence.sourceRef}`);
+    }
+    if (manifest.updater_public_key_sha256 !== reuseEvidence.updaterPublicKeySHA256) {
+      problems.push(`binary manifest updater public key SHA-256 ${JSON.stringify(manifest.updater_public_key_sha256)} does not match ${reuseEvidence.updaterPublicKeySHA256}`);
     }
   }
-  log(`${kind}-${goos}-${goarch}: reusing verified production binary sha256:${manifest.artifact.sha256}`);
+  if (kind === "helper") {
+    const expected = helperProtocolMetadata();
+    problems.push(...helperMetadataManifestProblems({ manifest, goos, goarch, protocol: expected.protocol, features: expected.features }));
+  }
+  if (problems.length) die(`--package-only binary manifest validation failed:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`);
+  if (kind === "helper" && manifest.binary_metadata_verified === false) {
+    log(`${kind}-${goos}-${goarch}: reusing untested cross-compiled helper; metadata not-run; sha256:${manifest.artifact.sha256}`);
+  } else {
+    log(`${kind}-${goos}-${goarch}: reusing verified production binary sha256:${manifest.artifact.sha256}`);
+  }
+}
+
+function reproduceBinary(args, outputPath, kind, goos, goarch) {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-go-repro-"));
+  const checkout = path.join(temporary, "checkout");
+  const cache = path.join(temporary, "fresh-go-cache");
+  const reproduction = `${outputPath}.repro`;
+  try {
+    fs.mkdirSync(checkout, { recursive: true });
+    for (const name of ["go.mod", "go.sum"]) {
+      fs.copyFileSync(path.join(ROOT, name), path.join(checkout, name));
+    }
+    for (const name of ["cmd", "internal"]) {
+      fs.cpSync(path.join(ROOT, name), path.join(checkout, name), { recursive: true });
+    }
+    const reproductionArgs = [...args];
+    reproductionArgs[reproductionArgs.indexOf("-o") + 1] = reproduction;
+    run("go", reproductionArgs, {
+      cwd: checkout,
+      env: { ...buildEnvironment(goos, goarch, kind), GOCACHE: cache },
+    });
+    if (sha256(outputPath) !== sha256(reproduction)) die(`${kind} binary is not reproducible across checkout paths with a fresh GOCACHE: ${outputPath} != ${reproduction}`);
+    log(`${kind} ${goos}/${goarch} cross-checkout reproducibility with fresh GOCACHE: ${sha256(outputPath)}`);
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
 }
 
 function buildBinary(kind) {
@@ -443,17 +607,12 @@ function buildBinary(kind) {
   const windowsResource = kind === "desktop" && goos === "windows" && !packageOnly ? stageWindowsResource(goarch) : null;
   try {
     if (packageOnly) {
-      validateBinaryForPackaging(outputPath, kind, goos, goarch);
+      validateBinaryForPackaging(outputPath, kind, goos, goarch, desktopReuseEvidence());
     } else {
       run("go", args, { env: buildEnvironment(goos, goarch, kind) });
       if (flag("repro-check")) {
-        const reproduction = `${outputPath}.repro`;
-        const reproductionArgs = [...args];
-        reproductionArgs[reproductionArgs.indexOf("-o") + 1] = reproduction;
-        run("go", reproductionArgs, { env: buildEnvironment(goos, goarch, kind) });
-        if (sha256(outputPath) !== sha256(reproduction)) die(`${kind} binary is not reproducible: ${outputPath} != ${reproduction}`);
-        fs.rmSync(reproduction, { force: true });
-        log(`${kind} ${goos}/${goarch} reproducibility: ${sha256(outputPath)}`);
+        reproduceBinary(args, outputPath, kind, goos, goarch);
+        fs.rmSync(`${outputPath}.repro`, { force: true });
       }
     }
   } finally {
@@ -523,19 +682,21 @@ function inspectBinary(file) {
     const architecture = { 0x01000007: "amd64", 0x0100000c: "arm64" }[cpu];
     return { format: "mach-o", architecture, static: null };
   }
-  if (data.length >= 0x40 && data[0] === 0x7f && data.toString("ascii", 1, 4) === "ELF") {
-    if (data[4] !== 2) throw new Error("only 64-bit ELF release binaries are supported");
+  if (data.length >= 0x34 && data[0] === 0x7f && data.toString("ascii", 1, 4) === "ELF") {
+    if (data[4] !== 1 && data[4] !== 2) throw new Error("unknown ELF class");
+    if (data[5] !== 1 && data[5] !== 2) throw new Error("unknown ELF byte order");
     const littleEndian = data[5] === 1;
     const read16 = (offset) => (littleEndian ? data.readUInt16LE(offset) : data.readUInt16BE(offset));
+    const read32 = (offset) => (littleEndian ? data.readUInt32LE(offset) : data.readUInt32BE(offset));
     const read64 = (offset) => (littleEndian ? data.readBigUInt64LE(offset) : data.readBigUInt64BE(offset));
     const machine = read16(18);
-    const architecture = { 62: "amd64", 183: "arm64" }[machine];
-    const phoff = Number(read64(0x20));
-    const phentsize = read16(0x36);
-    const phnum = read16(0x38);
+    const architecture = { 40: "arm", 62: "amd64", 183: "arm64", 243: "riscv64", 258: "loong64" }[machine];
+    const phoff = data[4] === 1 ? read32(0x1c) : Number(read64(0x20));
+    const phentsize = read16(data[4] === 1 ? 0x2a : 0x36);
+    const phnum = read16(data[4] === 1 ? 0x2c : 0x38);
     let dynamic = false;
     for (let index = 0; index < phnum; index += 1) {
-      const type = littleEndian ? data.readUInt32LE(phoff + index * phentsize) : data.readUInt32BE(phoff + index * phentsize);
+      const type = read32(phoff + index * phentsize);
       if (type === 2) dynamic = true;
     }
     return { format: "elf", architecture, static: !dynamic };
@@ -549,29 +710,40 @@ function assertion(id, passed, detail) {
 
 function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbedded }) {
   const result = [];
+  const target = kind === "helper" ? helperTarget(goos, goarch) : null;
+  const expectedGOARCH = target?.goarch || goarch;
   let inspected;
   let helperMetadata;
   try {
     inspected = inspectBinary(file);
     result.push(assertion("binary-format", inspected.format === ({ windows: "pe", darwin: "mach-o", linux: "elf" })[goos], JSON.stringify(inspected)));
-    result.push(assertion("binary-architecture", inspected.architecture === goarch, `expected ${goos}/${goarch}; actual ${inspected.format}/${inspected.architecture}`));
+    result.push(assertion("binary-architecture", inspected.architecture === expectedGOARCH, `expected ${goos}/${goarch} (GOARCH=${expectedGOARCH}); actual ${inspected.format}/${inspected.architecture}`));
     if (kind === "desktop" && goos === "windows") result.push(assertion("windows-icon-resource", inspected.resourceRva > 0, inspected.resourceRva > 0 ? `PE resource directory RVA 0x${inspected.resourceRva.toString(16)}` : "PE resource directory is empty; the .syso icon resource was not linked"));
     if ((kind === "server" || kind === "agent") && goos === "linux") result.push(assertion("static-linux-server", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
     if (kind === "helper" && goos === "linux") result.push(assertion("static-linux-helper", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
   } catch (error) {
     result.push(assertion("binary-format", false, String(error)));
   }
-  if (kind === "helper" && goos === "linux") {
-    try {
-      helperMetadata = helperBinaryMetadata(file, goarch);
-      result.push(assertion("helper-binary-metadata", true,
-          `executed final Linux/${goarch} helper --metadata: protocol=${helperMetadata.protocol}; features=${helperMetadata.features.join(",")}`));
-    } catch (error) {
-      result.push(assertion("helper-binary-metadata", false, String(error)));
+  if (kind === "helper") {
+    if (canExecuteHelperMetadata({ os: HOST_OS, arch: HOST_ARCH }, target)) {
+      try {
+        helperMetadata = helperBinaryMetadata(file, goos, goarch);
+        result.push(assertion("helper-binary-metadata", true,
+            `executed final ${goos}/${goarch} helper --metadata on matching real host ${HOST_OS}/${HOST_ARCH}: protocol=${helperMetadata.protocol}; features=${helperMetadata.features.join(",")}; sha256=${helperMetadata.sha256}`));
+      } catch (error) {
+        result.push(assertion("helper-binary-metadata", false, String(error)));
+      }
+    } else {
+      result.push({
+        id: "helper-binary-metadata",
+        status: "not-run",
+        detail: `not executed: host ${HOST_OS}/${HOST_ARCH} does not exactly match final target ${goos}/${goarch}; matching real-host execution is required`,
+      });
     }
   }
   const moduleInfo = output("go", ["version", "-m", file], { allowFailure: true });
   result.push(assertion("cgo-boundary", Boolean(moduleInfo?.includes(`CGO_ENABLED=${cgo}`)), `expected CGO_ENABLED=${cgo} in go version -m`));
+  if (target?.goarm) result.push(assertion("goarm", moduleInfo?.includes(`GOARM=${target.goarm}`) === true, `expected GOARM=${target.goarm} in go version -m`));
   if (stripped) {
     const binary = fs.readFileSync(file);
     const hasDwarf = binary.includes(Buffer.from(".debug_info")) || binary.includes(Buffer.from(".zdebug_info"));
@@ -590,27 +762,56 @@ function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbe
 
 function packagedHelperAssertions(directory, relativeDirectory, checkMode) {
   const checks = [];
-  for (const arch of ["amd64", "arm64"]) {
-    const name = `nexterm-helper-linux-${arch}`;
-    const packaged = path.join(directory, relativeDirectory, name);
-    const input = path.resolve(ROOT, option("helpers-dir", "target/go-build"), name);
-    const label = `packaged-helper-${arch}`;
+  const expectedMetadata = helperProtocolMetadata();
+  for (const target of helperTargets()) {
+    const packaged = path.join(directory, relativeDirectory, target.name);
+    const input = path.resolve(ROOT, option("helpers-dir", "target/go-build"), target.name);
+    const label = `packaged-helper-${target.os}-${target.arch}`;
     try {
       const packagedStat = fs.lstatSync(packaged);
-      if (!packagedStat.isFile()) throw new Error(`${name} is not a regular file`);
+      if (!packagedStat.isFile()) throw new Error(`${target.name} is not a regular file`);
       const inputStat = fs.statSync(input);
-      if (!inputStat.isFile()) throw new Error(`packaging input ${name} is not a regular file`);
+      if (!inputStat.isFile()) throw new Error(`packaging input ${target.name} is not a regular file`);
       const inspected = inspectBinary(packaged);
       const packagedDigest = sha256(packaged);
       const inputDigest = sha256(input);
-      checks.push(assertion(`${label}-elf`, inspected.format === "elf" && inspected.architecture === arch && inspected.static === true,
-          `expected static Linux ELF/${arch}; actual ${JSON.stringify(inspected)}`));
+      const expectedFormat = { windows: "pe", darwin: "mach-o", linux: "elf" }[target.os];
+      checks.push(assertion(`${label}-binary`, inspected.format === expectedFormat && inspected.architecture === target.goarch && (target.os !== "linux" || inspected.static === true),
+          `expected ${target.os}/${target.arch} ${expectedFormat}/GOARCH=${target.goarch}${target.os === "linux" ? " static" : ""}; actual ${JSON.stringify(inspected)}`));
+      if (target.goarm) {
+        const moduleInfo = output("go", ["version", "-m", packaged], { allowFailure: true });
+        checks.push(assertion(`${label}-goarm`, moduleInfo?.includes(`GOARM=${target.goarm}`) === true, `expected GOARM=${target.goarm} in go version -m`));
+      }
       checks.push(assertion(`${label}-sha256`, packagedDigest === inputDigest,
           `package SHA256=${packagedDigest}; input SHA256=${inputDigest}`));
+      const manifest = loadManifest(`${input}.manifest.json`);
+      const evidenceProblems = helperMetadataManifestProblems({ manifest, goos: target.os, goarch: target.arch, protocol: expectedMetadata.protocol, features: expectedMetadata.features });
+      const evidenceDetail = evidenceProblems.length > 0 ? evidenceProblems.join("; ") : manifest.binary_metadata_verified === true
+        ? `verified metadata protocol=${manifest.protocol}; sha256=${manifest.sha256}`
+        : "untested: cross-compiled; metadata not-run";
+      checks.push(assertion(`${label}-evidence`, evidenceProblems.length === 0, evidenceDetail));
       if (checkMode) checks.push(assertion(`${label}-executable`, (packagedStat.mode & 0o111) !== 0,
           `package mode=${(packagedStat.mode & 0o777).toString(8)}; executable bit required`));
     } catch (error) {
       checks.push(assertion(`${label}-inspect`, false, String(error)));
+    }
+  }
+  return checks;
+}
+
+function packagedDarwinHelperLinkAssertions(mountpoint) {
+  const checks = [];
+  for (const target of helperTargets()) {
+    const label = `packaged-helper-${target.os}-${target.arch}-resource-link`;
+    const link = path.join(mountpoint, "NexTerm.app/Contents/MacOS", target.name);
+    const payload = path.join(mountpoint, "NexTerm.app/Contents/Resources/helpers", target.name);
+    const expected = `../Resources/helpers/${target.name}`;
+    try {
+      const stat = fs.lstatSync(link);
+      const actual = stat.isSymbolicLink() ? fs.readlinkSync(link) : "not a symbolic link";
+      checks.push(assertion(label, stat.isSymbolicLink() && actual === expected && fs.realpathSync(link) === fs.realpathSync(payload), `expected ${expected}; actual ${actual}`));
+    } catch (error) {
+      checks.push(assertion(label, false, String(error)));
     }
   }
   return checks;
@@ -627,6 +828,37 @@ function sevenZipCommand() {
     if (output(command, ["i"], { allowFailure: true }) !== null) return command;
   }
   return null;
+}
+
+function agentArchiveBinaryAssertions(kind, file, goos, goarch) {
+  const member = goos === "windows" ? "nexterm-agent.exe" : "nexterm-agent";
+  const input = path.resolve(ROOT, option("binary", defaultBinaryPath("agent", goos, goarch)));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-agent-assert-"));
+  const checks = [];
+  try {
+    const extracted = kind === "agent-archive"
+      ? output("tar", ["-xzf", path.resolve(file), "-C", work, member], { allowFailure: true })
+      : output("python3", ["-m", "zipfile", "-e", path.resolve(file), work], { allowFailure: true });
+    checks.push(assertion(`${kind}-binary-extract`, extracted !== null, `extract ${member} from the final archive`));
+    if (extracted === null) return checks;
+    const packaged = path.join(work, member);
+    const packagedValid = fs.existsSync(packaged) && fs.statSync(packaged).isFile();
+    const inputValid = fs.existsSync(input) && fs.statSync(input).isFile();
+    checks.push(assertion(`${kind}-binary-input`, packagedValid && inputValid, `packaged=${packaged}; input=${input}`));
+    if (!packagedValid || !inputValid) return checks;
+    const packagedDigest = sha256(packaged);
+    const inputDigest = sha256(input);
+    checks.push(assertion(`${kind}-binary-sha256`, packagedDigest === inputDigest, `package SHA256=${packagedDigest}; input SHA256=${inputDigest}`));
+    const binary = binaryAssertions({ kind: "agent", goos, goarch, file: packaged, cgo: "0", stripped: true });
+    for (const item of binary.assertions) {
+      checks.push(assertion(`${kind}-binary-${item.id}`, item.status === "passed", item.detail));
+    }
+  } catch (error) {
+    checks.push(assertion(`${kind}-binary-inspect`, false, String(error)));
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
+  }
+  return checks;
 }
 
 function packageAssertions(kind, file, goos, goarch) {
@@ -665,11 +897,12 @@ function packageAssertions(kind, file, goos, goarch) {
       ));
       const listing = output("tar", ["-tzf", path.join(work, "data.tar.gz")], { allowFailure: true });
       const members = new Set(listing?.split(/\r?\n/) || []);
-      const required = ["usr/bin/nexterm-desktop", "usr/bin/nexterm-helper-linux-amd64", "usr/bin/nexterm-helper-linux-arm64", "usr/share/applications/nexterm.desktop", "usr/share/icons/hicolor/256x256/apps/nexterm.png", "usr/share/doc/nexterm/copyright"];
-      checks.push(assertion("linux-desktop-deb-members", goos === "linux" && listing !== null && required.every((member) => members.has(member)), `required members: ${required.join(", ")}`));
+      const required = ["usr/bin/nexterm-desktop", "usr/share/applications/nexterm.desktop", "usr/share/icons/hicolor/256x256/apps/nexterm.png", "usr/share/doc/nexterm/copyright"];
+      const missingHelpers = missingHelperArchiveMembers(members, "usr/bin/");
+      checks.push(assertion("linux-desktop-deb-members", goos === "linux" && listing !== null && missingHelpers.length === 0 && required.every((member) => members.has(member)), `required members: ${[...required, ...helperArchiveMembers("usr/bin/")].join(", ")}; missing helpers: ${missingHelpers.join(", ") || "none"}`));
       const unpacked = output("tar", ["-xzf", path.join(work, "data.tar.gz"), "-C", work,
-        "usr/bin/nexterm-helper-linux-amd64", "usr/bin/nexterm-helper-linux-arm64"], { allowFailure: true });
-      checks.push(assertion("linux-desktop-deb-helper-extract", unpacked !== null, "both helpers must extract from data.tar.gz"));
+        ...helperArchiveMembers("usr/bin/")], { allowFailure: true });
+      checks.push(assertion("linux-desktop-deb-helper-extract", unpacked !== null, "all nine helpers must extract from data.tar.gz"));
       if (unpacked !== null) checks.push(...packagedHelperAssertions(work, "usr/bin", true));
     } finally {
       fs.rmSync(work, { recursive: true, force: true });
@@ -680,21 +913,22 @@ function packageAssertions(kind, file, goos, goarch) {
     const checks = [assertion("gzip-container", data[0] === 0x1f && data[1] === 0x8b, "server archive is not gzip compressed")];
     const root = `NexTerm-server_${VERSION}_linux_${goarch}`;
     const required = [
-      "nexterm-server", "nexterm-helper-linux-amd64", "nexterm-helper-linux-arm64", "nexterm-server.service", "nexterm-onlyserver.service",
+      "nexterm-server", "nexterm-server.service", "nexterm-onlyserver.service",
       "nexterm.env.example", "onlyserver.env.example", "LICENSE", "README.md", "web/index.html",
     ].map((member) => `${root}/${member}`);
     const listing = output("tar", ["-tzf", file], { allowFailure: true });
     const members = new Set(listing?.split(/\r?\n/) || []);
+    const missingHelpers = missingHelperArchiveMembers(members, `${root}/`);
     checks.push(assertion(
         "full-server-archive-members",
-        goos === "linux" && listing !== null && required.every((member) => members.has(member)),
-        `required members: ${required.join(", ")}`,
+        goos === "linux" && listing !== null && missingHelpers.length === 0 && required.every((member) => members.has(member)),
+        `required members: ${[...required, ...helperArchiveMembers(`${root}/`)].join(", ")}; missing helpers: ${missingHelpers.join(", ") || "none"}`,
     ));
     const work = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-server-assert-"));
     try {
       const extracted = output("tar", ["-xzf", path.resolve(file), "-C", work,
-        `${root}/nexterm-helper-linux-amd64`, `${root}/nexterm-helper-linux-arm64`], { allowFailure: true });
-      checks.push(assertion("server-archive-helper-extract", extracted !== null, "both helpers must extract from the server archive"));
+        ...helperArchiveMembers(`${root}/`)], { allowFailure: true });
+      checks.push(assertion("server-archive-helper-extract", extracted !== null, "all nine helpers must extract from the server archive"));
       if (extracted !== null) checks.push(...packagedHelperAssertions(work, root, true));
     } finally {
       fs.rmSync(work, { recursive: true, force: true });
@@ -711,7 +945,10 @@ function packageAssertions(kind, file, goos, goarch) {
     try {
       mounted = output("hdiutil", ["attach", "-readonly", "-nobrowse", "-quiet", "-mountpoint", mountpoint, path.resolve(file)], { allowFailure: true }) !== null;
       checks.push(assertion("dmg-mount", mounted, "hdiutil must mount the generated DMG"));
-      if (mounted) checks.push(...packagedHelperAssertions(mountpoint, "NexTerm.app/Contents/MacOS", true));
+      if (mounted) {
+        checks.push(...packagedHelperAssertions(mountpoint, "NexTerm.app/Contents/Resources/helpers", true));
+        checks.push(...packagedDarwinHelperLinkAssertions(mountpoint));
+      }
     } finally {
       if (mounted) {
         detached = output("hdiutil", ["detach", "-quiet", mountpoint], { allowFailure: true }) !== null;
@@ -730,11 +967,12 @@ function packageAssertions(kind, file, goos, goarch) {
         (goos === "linux" || goos === "darwin") && listing !== null && members.length === 1 && members[0] === "nexterm-agent",
         `tar root must contain only nexterm-agent; members: ${members.join(", ")}`,
     ));
+    checks.push(...agentArchiveBinaryAssertions(kind, file, goos, goarch));
     return checks;
   }
   if (kind === "agent-zip") {
     const members = zipMembers(data);
-    return [
+    const checks = [
       assertion("zip-container", data[0] === 0x50 && data[1] === 0x4b && data[2] === 0x03 && data[3] === 0x04, "agent package is not a zip archive"),
       assertion(
           "agent-zip-members",
@@ -742,6 +980,8 @@ function packageAssertions(kind, file, goos, goarch) {
           `zip root must contain only nexterm-agent.exe; members: ${members === null ? "unreadable central directory" : members.join(", ")}`,
       ),
     ];
+    checks.push(...agentArchiveBinaryAssertions(kind, file, goos, goarch));
+    return checks;
   }
   return [];
 }
@@ -784,13 +1024,17 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
       ? binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbedded })
       : { assertions: packageAssertions(kind, file, goos, goarch), inspected: null };
   const assertionsFailed = inspected.assertions.length === 0 || inspected.assertions.some((item) => item.status === "failed");
+  const metadataPending = inspected.assertions.some((item) => item.status === "not-run");
+  const target = kind === "helper" ? helperTarget(goos, goarch) : null;
   const report = {
     schema_version: 2,
     id,
     kind,
-    platform: { os: goos, arch: goarch, cgo: cgo === "1" ? "enabled-only-for-wails-platform-layer" : "disabled" },
+    platform: { os: goos, arch: goarch, cgo: cgo === "1" ? "enabled-only-for-wails-platform-layer" : "disabled", ...(target?.goarm ? { goarm: target.goarm } : {}) },
     version: VERSION,
     commit: COMMIT,
+    source_commit: SOURCE_COMMIT,
+    dirty_source_tree: DIRTY,
     source_date_epoch: Number(SOURCE_DATE_EPOCH),
     artifact: { path: path.relative(ROOT, file), size_bytes: bytes, sha256: sha256(file), stripped },
     build: {
@@ -799,7 +1043,7 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
       windows_resource: `rsrc ${RSRC_VERSION} embeds public/brand/icon.ico as rsrc_windows_<arch>.syso for windows desktop binaries`,
       node: process.version,
       pnpm: output("pnpm", ["--version"], { allowFailure: true })?.trim() || "unknown",
-      toolchain_pin: "CI pins Go 1.26.8, Node 24 and pnpm 11; local Node/pnpm drift must not change committed lockfile artifacts",
+      toolchain_pin: `${GO_TOOLCHAIN} from go.mod; Node 24+; ${packageJSON.packageManager || "pnpm version supplied by CI"}; Wails ${WAILS_VERSION} pinned for generation`,
       module_mode: "-mod=readonly",
       reproducible_flags: ["-trimpath", "-buildvcs=false", "-ldflags=-s -w + version/commit"],
       runtime_metadata: "Go pclntab and build info are preserved for stack symbolization; no UPX and no manual symbol-table or pclntab stripping",
@@ -807,8 +1051,9 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
     },
     format: inspected.inspected,
     assertions: inspected.assertions,
-    status: assertionsFailed ? "failed" : "passed",
+    status: assertionsFailed ? "failed" : metadataPending ? "cross-compiled" : "passed",
   };
+  if (kind === "helper" && metadataPending) Object.assign(report, { metadata_status: "not-run", untested: true });
   if (kind === "helper" && inspected.helperMetadata) Object.assign(report, inspected.helperMetadata);
   const destination = path.resolve(ROOT, option("output", `${file}.artifact.json`));
   fs.mkdirSync(path.dirname(destination), { recursive: true });
@@ -823,31 +1068,39 @@ function requireReportPassed(report) {
   const assertionsPassed = Array.isArray(report.assertions) && report.assertions.length > 0 && report.assertions.every((item) => item.status === "passed");
   const ready = report.status === "passed" && assertionsPassed;
   if (!ready) {
-    die(`${report.id} is not release-ready (${report.status}); every artifact needs passing file/content/static/cgo checks`);
+    die(`${report.id} is not release-ready (${report.status}); every artifact needs passing file/content/static/cgo checks and required representative helper metadata evidence`);
   }
 }
 
 function packageDesktop(binary, goos, goarch) {
   if (goos !== HOST_OS) die(`native ${goos} packaging cannot run on ${HOST_OS}`);
-  for (const arch of ["amd64", "arm64"]) verifiedHelper(arch);
+  for (const target of helperTargets()) verifiedHelper(target);
   if (goos === "darwin") return packageDarwin(binary, goarch);
   if (goos === "windows") return packageWindows(binary, goarch);
   if (goos === "linux") return packageLinuxDesktop(binary, goarch);
   die(`no desktop package is contracted for ${goos}`);
 }
 
-function verifiedHelper(arch) {
-  const file = path.resolve(ROOT, option("helpers-dir", "target/go-build"), `nexterm-helper-linux-${arch}`);
-  validateBinaryForPackaging(file, "helper", "linux", arch);
+function verifiedHelper(target) {
+  const file = path.resolve(ROOT, option("helpers-dir", "target/go-build"), target.name);
+  validateBinaryForPackaging(file, "helper", target.os, target.arch);
   return file;
 }
 
 function copyHelpers(directory) {
-  for (const arch of ["amd64", "arm64"]) {
-    const target = path.join(directory, `nexterm-helper-linux-${arch}`);
-    fs.copyFileSync(verifiedHelper(arch), target);
-    fs.chmodSync(target, 0o755);
+  for (const target of helperTargets()) {
+    const destination = path.join(directory, target.name);
+    fs.copyFileSync(verifiedHelper(target), destination);
+    fs.chmodSync(destination, 0o755);
   }
+}
+
+function copyDarwinHelpers(app) {
+  const resources = path.join(app, "Contents/Resources/helpers");
+  const macos = path.join(app, "Contents/MacOS");
+  fs.mkdirSync(resources, { recursive: true });
+  copyHelpers(resources);
+  for (const target of helperTargets()) fs.symlinkSync(`../Resources/helpers/${target.name}`, path.join(macos, target.name));
 }
 
 function debVersion(version) {
@@ -885,14 +1138,15 @@ function packageLinuxDesktop(binary, goarch) {
   };
   normalizeModes(dataDir);
   fs.chmodSync(path.join(dataDir, "usr/bin/nexterm-desktop"), 0o755);
-  for (const arch of ["amd64", "arm64"]) fs.chmodSync(path.join(dataDir, "usr/bin", `nexterm-helper-linux-${arch}`), 0o755);
-  const tarFlags = ["--sort=name", `--mtime=@${SOURCE_DATE_EPOCH}`, "--owner=0", "--group=0", "--numeric-owner"];
-  run("tar", [...tarFlags, "-czf", path.join(work, "control.tar.gz"), "-C", path.join(work, "control"), "control"]);
-  run("tar", [...tarFlags, "-czf", path.join(work, "data.tar.gz"), "-C", dataDir, "usr"]);
+  for (const target of helperTargets()) fs.chmodSync(path.join(dataDir, "usr/bin", target.name), 0o755);
+  const portableArchive = path.join(ROOT, "scripts/lib/portable-archive.py");
+  run("python3", [portableArchive, "tar", path.join(work, "control.tar.gz"), path.join(work, "control"), "control", String(SOURCE_DATE_EPOCH)]);
+  run("python3", [portableArchive, "tar", path.join(work, "data.tar.gz"), dataDir, "usr", String(SOURCE_DATE_EPOCH)]);
   fs.writeFileSync(path.join(work, "debian-binary"), "2.0\n");
   const deb = path.join(assets, `${name}.deb`);
   fs.rmSync(deb, { force: true });
   run("ar", ["rD", deb, path.join(work, "debian-binary"), path.join(work, "control.tar.gz"), path.join(work, "data.tar.gz")]);
+  fs.chmodSync(deb, 0o644);
   return deb;
 }
 
@@ -905,7 +1159,7 @@ function packageDarwin(binary, goarch) {
   fs.mkdirSync(path.join(app, "Contents/Resources"), { recursive: true });
   fs.copyFileSync(binary, path.join(app, "Contents/MacOS/NexTerm"));
   fs.chmodSync(path.join(app, "Contents/MacOS/NexTerm"), 0o755);
-  copyHelpers(path.join(app, "Contents/MacOS"));
+  copyDarwinHelpers(app);
   const icon = path.join(ROOT, "public/brand/icon.icns");
   if (!fs.existsSync(icon)) die("macOS icon.icns asset is missing");
   fs.copyFileSync(icon, path.join(app, "Contents/Resources/icon.icns"));
@@ -946,7 +1200,7 @@ function packageWindows(binary, goarch) {
   const work = path.join(ROOT, "target/package-work/windows", goarch);
   fs.mkdirSync(work, { recursive: true });
   fs.mkdirSync(assets, { recursive: true });
-  run("wails3", ["generate", "webview2bootstrapper", "-dir", work]);
+  runWails(["generate", "webview2bootstrapper", "-dir", work]);
   const bootstrapper = path.join(work, "MicrosoftEdgeWebview2Setup.exe");
   if (!fs.existsSync(bootstrapper)) die("Wails did not generate the WebView2 bootstrapper");
   const icon = path.join(ROOT, "public/brand/icon.ico");
@@ -956,13 +1210,12 @@ function packageWindows(binary, goarch) {
   const defines = [
     `NEXTERM_BINARY=${binary}`,
     `NEXTERM_VERSION=${VERSION}`,
-    `NEXTERM_NUMERIC_VERSION=${VERSION.split(/[-+]/)[0]}.0`,
+    `NEXTERM_NUMERIC_VERSION=${VERSION_INFO.core}.0`,
     `NEXTERM_OUT=${installer}`,
     `NEXTERM_ICON=${icon}`,
     `NEXTERM_WEBVIEW2=${bootstrapper}`,
     `NEXTERM_EXE_NAME=${path.basename(binary)}`,
-    `NEXTERM_HELPER_AMD64=${verifiedHelper("amd64")}`,
-    `NEXTERM_HELPER_ARM64=${verifiedHelper("arm64")}`,
+    ...helperTargets().map((target) => `NEXTERM_HELPER_${target.os.toUpperCase()}_${target.arch.toUpperCase()}=${verifiedHelper(target)}`),
   ];
   const makensis = resolveMakensis({ env: process.env });
   log(`makensis: ${makensis.command} (${makensis.source})`);
@@ -979,6 +1232,20 @@ function reportOnly() {
   const id = option("id", `${kind}-${goos}-${goarch}`);
   if (!options.file) die("report requires --file=PATH");
   writeArtifactReport({ id, kind, goos, goarch, file, cgo: option("cgo", "0"), requireEvidence: flag("require-evidence"), stripped: true });
+}
+
+function buildHelpers() {
+  for (const name of ["os", "arch", "out", "binary-manifest", "output"]) {
+    if (options[name] !== undefined) die(`helpers builds the full matrix and does not accept --${name}; use helper for one target`);
+  }
+  if (flag("package") || flag("package-only")) die("helpers produces binaries only; package each desktop/server with verified matching-host helper evidence");
+  for (const target of helperTargets()) {
+    options.os = target.os;
+    options.arch = target.arch;
+    options.out = path.join(option("helpers-dir", "target/go-build"), target.name);
+    buildBinary("helper");
+  }
+  delete options.out;
 }
 
 switch (command) {
@@ -998,6 +1265,9 @@ switch (command) {
   case "agent":
   case "helper":
     buildBinary(command);
+    break;
+  case "helpers":
+    buildHelpers();
     break;
   case "report":
     reportOnly();
@@ -1020,26 +1290,22 @@ switch (command) {
     options["repro-check"] = "true";
     options["require-evidence"] = "true";
     options["skip-frontend"] = "true";
-    const requestedOutput = options.out;
-    delete options.out;
-    for (const arch of ["amd64", "arm64"]) {
-      options.os = "linux";
-      options.arch = arch;
-      options.out = path.join(option("helpers-dir", "target/go-build"), `nexterm-helper-linux-${arch}`);
-      buildBinary("helper");
-    }
-    if (requestedOutput === undefined) delete options.out;
-    else options.out = requestedOutput;
     options.package = "true";
     options.os = HOST_OS;
     options.arch = HOST_ARCH;
     buildBinary("desktop");
     break;
   }
+  case "desktop-ldflags":
+    console.log(ldflags("desktop", targetOS()));
+    break;
+  case "write-minisign-public-key":
+    writeMinisignPublicKey();
+    break;
   case "help":
   case "--help":
     console.log(HELP_TEXT);
     break;
   default:
-    die(`unknown command ${command}; use debug, release, frontend, bindings, desktop, server, agent, helper, report, or help`);
+    die(`unknown command ${command}; use debug, release, frontend, bindings, desktop, server, agent, helper, helpers, report, desktop-ldflags, write-minisign-public-key, or help`);
 }

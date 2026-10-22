@@ -118,7 +118,7 @@ async function send(view: MountedView, text: string) {
 describe("AiSidebar image paste and attachment", () => {
   let view: MountedView | null = null;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     mocks.desktop = false;
     mocks.channels.length = 0;
@@ -161,9 +161,11 @@ describe("AiSidebar image paste and attachment", () => {
       activeWorkspaceId: null,
     });
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    await flush();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flush();
     view?.unmount();
     view = null;
   });

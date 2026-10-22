@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { click, clickButton, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
 
@@ -30,6 +30,19 @@ vi.mock("../../ipc/commands", () => ({
     probeHostKey: mocks.probeHostKey,
   },
   vaultApi: { status: mocks.vaultStatus, listCredentials: vi.fn() },
+  syncApi: {
+    linkGet: vi.fn().mockResolvedValue({
+      url: "",
+      username: "",
+      insecure: false,
+      hasPassword: false,
+      verifiedAt: 0,
+      lastError: null,
+    }),
+    status: vi.fn().mockResolvedValue({ configured: false, loggedIn: false, lastError: "", warnings: [] }),
+    kindOptInGet: vi.fn().mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false }),
+    wake: vi.fn().mockResolvedValue(undefined),
+  },
   terminalApi: {},
   dbApi: {},
 }));
@@ -60,6 +73,7 @@ const PENDING_DETAIL = {
   port: 22,
   keyType: "ssh-ed25519",
   fingerprint: "SHA256:newfp",
+  key: "ZmFrZS1rZXktdGVzdA==",
   changed: false,
 };
 const SESSION = {
@@ -191,6 +205,7 @@ describe("Host key confirmation when creating a terminal (App openNewTerminal)",
       port: 22,
       keyType: "ssh-ed25519",
       fingerprint: "SHA256:newfp",
+      key: "ZmFrZS1rZXktdGVzdA==",
       state: "changed",
       known: [{ keyType: "ssh-ed25519", fingerprint: "SHA256:oldfp" }],
     });
@@ -215,6 +230,7 @@ describe("Host key confirmation when creating a terminal (App openNewTerminal)",
       22,
       "ssh-ed25519",
       "SHA256:newfp",
+      "ZmFrZS1rZXktdGVzdA==",
     );
   });
 
@@ -237,6 +253,36 @@ describe("Host key confirmation when creating a terminal (App openNewTerminal)",
     await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
     expect(dialog()).toBeNull();
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
+  });
+
+  it("sends the probed public key with the accept after confirmation", async () => {
+    seedWorkspace(true);
+    mocks.probeHostKey.mockResolvedValue({
+      host: "10.0.0.8",
+      port: 22,
+      keyType: "ssh-ed25519",
+      fingerprint: "SHA256:newfp",
+      key: "ZmFrZS1rZXktdGVzdA==",
+      state: "pending",
+    });
+    mocks.reconnect.mockResolvedValue(true);
+    listUntilReconnectThenConnected();
+    mounted = mountApp();
+    await flush();
+
+    clickWorkspaceNewTerminal();
+    await flush();
+    await waitFor(() => expect(dialog()).not.toBeNull());
+
+    clickButton(dialog() as HTMLElement, "确定");
+    await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
+    expect(mocks.knownHostAccept).toHaveBeenCalledWith(
+      "10.0.0.8",
+      22,
+      "ssh-ed25519",
+      "SHA256:newfp",
+      "ZmFrZS1rZXktdGVzdA==",
+    );
   });
 
   it("shows confirmation when probe itself reports host_key_pending for a jump host and does not reconnect after cancellation", async () => {
@@ -281,6 +327,7 @@ describe("Host key confirmation when creating a terminal (App openNewTerminal)",
         port: 22,
         keyType: "ssh-ed25519",
         fingerprint: "SHA256:jumpnew",
+        key: "ZmFrZS1qdW1wLWtleQ==",
         changed: true,
         known: [{ keyType: "ssh-ed25519", fingerprint: "SHA256:jumpold" }],
       },
@@ -306,7 +353,37 @@ describe("Host key confirmation when creating a terminal (App openNewTerminal)",
       22,
       "ssh-ed25519",
       "SHA256:jumpnew",
+      "ZmFrZS1qdW1wLWtleQ==",
     );
+  });
+
+  it("rejects a changed detail without the presented public key and does not reconnect", async () => {
+    seedWorkspace(true);
+    mocks.probeHostKey.mockRejectedValue({
+      code: "host_key_pending",
+      message: "SSH host key for jump.example:22 changed",
+      detail: {
+        host: "jump.example",
+        port: 22,
+        keyType: "ssh-ed25519",
+        fingerprint: "SHA256:jumpnew",
+        changed: true,
+        known: [{ keyType: "ssh-ed25519", fingerprint: "SHA256:jumpold" }],
+      },
+    });
+    mocks.reconnect.mockResolvedValue(true);
+    listUntilReconnectThenConnected();
+    mounted = mountApp();
+    await flush();
+
+    clickWorkspaceNewTerminal();
+    await flush();
+    await waitFor(() => expect(dialog()).not.toBeNull());
+    clickButton(dialog() as HTMLElement, "确定");
+    await flush();
+
+    expect(mocks.knownHostAccept).not.toHaveBeenCalled();
+    expect(mocks.reconnect).not.toHaveBeenCalled();
   });
 
   it("falls back to direct reconnect without a dialog when probing is unavailable", async () => {
@@ -381,6 +458,7 @@ describe("Host key confirmation when creating a terminal (App openNewTerminal)",
       22,
       "ssh-ed25519",
       "SHA256:newfp",
+      "ZmFrZS1rZXktdGVzdA==",
     );
     await waitFor(() =>
       expect(useUi.getState().sessions.some((s) => s.id === "s2")).toBe(true),
@@ -396,6 +474,7 @@ describe("Host key confirmation dialog deduplication", () => {
       port: 22,
       keyType: "ssh-ed25519",
       fingerprint: "SHA256:newfp",
+      key: "ZmFrZS1rZXktdGVzdA==",
       state: "pending",
     });
     mocks.connect
@@ -414,12 +493,17 @@ describe("Host key confirmation dialog deduplication", () => {
     await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
 
-    const connectPromise = connectAsset({ id: "a1", name: "web-01", kind: "ssh" });
+    let connectPromise!: ReturnType<typeof connectAsset>;
+    act(() => {
+      connectPromise = connectAsset({ id: "a1", name: "web-01", kind: "ssh" });
+    });
     await flush();
     expect(document.querySelectorAll('[role="alertdialog"]')).toHaveLength(1);
 
     clickButton(dialog() as HTMLElement, "确定");
-    await connectPromise;
+    await act(async () => {
+      await connectPromise;
+    });
     await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
 
     expect(document.querySelectorAll('[role="alertdialog"]')).toHaveLength(0);
@@ -428,6 +512,7 @@ describe("Host key confirmation dialog deduplication", () => {
       22,
       "ssh-ed25519",
       "SHA256:newfp",
+      "ZmFrZS1rZXktdGVzdA==",
     );
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(mocks.probeHostKey).toHaveBeenCalledTimes(1);
@@ -454,12 +539,17 @@ describe("Host key confirmation dialog deduplication", () => {
     await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
 
-    const connectPromise = connectAsset({ id: "a1", name: "web-01", kind: "ssh" });
+    let connectPromise!: ReturnType<typeof connectAsset>;
+    act(() => {
+      connectPromise = connectAsset({ id: "a1", name: "web-01", kind: "ssh" });
+    });
     await flush();
     expect(document.querySelectorAll('[role="alertdialog"]')).toHaveLength(1);
 
     clickButton(dialog() as HTMLElement, "取消");
-    await connectPromise;
+    await act(async () => {
+      await connectPromise;
+    });
     await flush();
 
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();

@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clickButton, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
 
@@ -257,10 +257,13 @@ describe("SyncCard comparison clock hint", () => {
     mounted = mount(createElement(QueryClientProvider, { client }, createElement(SyncCard)));
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("web-01"));
+    await flushUntil(() => !(mounted!.container.textContent ?? "").includes("正在读取本机与云端数据"));
 
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("请保持各设备时钟准确");
     expect(text).toContain("否则「较新」判定可能不符合预期");
-    useAuth.setState({ user: null, dek: null, gate: "ready", pendingRecoveryKey: null, error: null, status: null });
+    act(() => {
+      useAuth.setState({ user: null, dek: null, gate: "ready", pendingRecoveryKey: null, error: null, status: null });
+    });
   });
 });

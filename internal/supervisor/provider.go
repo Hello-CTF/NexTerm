@@ -72,9 +72,10 @@ func renameRequest(options base.DurableRenameOptions) RenameRequest {
 
 type Provider struct {
 	supervisor *Supervisor
+	attach     func(context.Context, *Supervisor, *Session) (*Attachment, error)
 }
 
-var embeddedProviderAttach = func(ctx context.Context, supervisor *Supervisor, session *Session) (*Attachment, error) {
+func embeddedProviderAttach(ctx context.Context, supervisor *Supervisor, session *Session) (*Attachment, error) {
 	identity := session.Identity()
 	return supervisor.attachFrom(ctx, session.ID(), 0, &identity)
 }
@@ -83,7 +84,7 @@ func NewProvider(supervisor *Supervisor) *Provider {
 	if supervisor == nil {
 		return nil
 	}
-	return &Provider{supervisor: supervisor}
+	return &Provider{supervisor: supervisor, attach: embeddedProviderAttach}
 }
 
 func (p *Provider) Create(ctx context.Context, options base.DurableCreateOptions) (base.DurableAttachment, error) {
@@ -98,7 +99,7 @@ func (p *Provider) Create(ctx context.Context, options base.DurableCreateOptions
 	if session == nil {
 		return nil, translateError(err)
 	}
-	attachment, err := embeddedProviderAttach(ctx, p.supervisor, session)
+	attachment, err := p.attach(ctx, p.supervisor, session)
 	if err != nil {
 		identity := session.Identity()
 		_ = p.supervisor.kill(context.Background(), session.ID(), &identity)
@@ -262,20 +263,22 @@ func (a *channelAttachment) DurableGrid() (cols, rows uint32, ok bool) {
 
 type RemoteProvider struct {
 	client *Client
+	create func(context.Context, *Client, CreateOptions) (Info, error)
+	attach func(context.Context, *Client, string, *Identity) (*Stream, error)
 }
 
 func NewRemoteProvider(client *Client) *RemoteProvider {
 	if client == nil {
 		return nil
 	}
-	return &RemoteProvider{client: client}
+	return &RemoteProvider{client: client, create: remoteProviderCreate, attach: remoteProviderAttach}
 }
 
-var remoteProviderCreate = func(ctx context.Context, client *Client, options CreateOptions) (Info, error) {
+func remoteProviderCreate(ctx context.Context, client *Client, options CreateOptions) (Info, error) {
 	return client.Create(ctx, options)
 }
 
-var remoteProviderAttach = func(ctx context.Context, client *Client, id string, expect *Identity) (*Stream, error) {
+func remoteProviderAttach(ctx context.Context, client *Client, id string, expect *Identity) (*Stream, error) {
 	return client.Attach(ctx, id, expect)
 }
 
@@ -284,7 +287,7 @@ func (p *RemoteProvider) Create(ctx context.Context, options base.DurableCreateO
 		options.ID = ids.New()
 	}
 	attempt := ids.New()
-	info, err := remoteProviderCreate(ctx, p.client, CreateOptions{
+	info, err := p.create(ctx, p.client, CreateOptions{
 		ID:      options.ID,
 		Attempt: attempt,
 		Command: options.Command,
@@ -300,7 +303,7 @@ func (p *RemoteProvider) Create(ctx context.Context, options base.DurableCreateO
 		return nil, translateError(err)
 	}
 	expect := &Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation}
-	stream, err := remoteProviderAttach(ctx, p.client, info.ID, expect)
+	stream, err := p.attach(ctx, p.client, info.ID, expect)
 	if err != nil {
 		p.compensateCreate(info.ID, expect)
 		return nil, translateError(err)

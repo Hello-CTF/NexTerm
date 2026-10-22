@@ -17,7 +17,7 @@ vi.mock("../../ipc/commands", () => ({
   assetApi: {},
   dbApi: {},
   vaultApi: {},
-  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn() },
+  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn(), list: vi.fn() },
   terminalApi: {
     listLive: vi.fn().mockResolvedValue([]),
     write: vi.fn().mockResolvedValue(undefined),
@@ -53,11 +53,15 @@ vi.mock("../../features/terminal/CommandBlockPanel", () => ({ CommandBlockPanel:
 vi.mock("../../features/terminal/TerminalKeysBar", () => ({ TerminalKeysBar: () => null }));
 
 vi.mock("../../features/terminal/XtermView", async () => {
-  const { useEffect } = await import("react");
+  const { useEffect, useRef } = await import("react");
   return {
     XtermView: (props: Record<string, unknown>) => {
+      const onHandleRef = useRef(props.onHandle);
+      const onAttachRef = useRef(props.onAttach);
+      onHandleRef.current = props.onHandle;
+      onAttachRef.current = props.onAttach;
       useEffect(() => {
-        (props.onHandle as ((h: unknown) => void) | undefined)?.({
+        (onHandleRef.current as ((h: unknown) => void) | undefined)?.({
           copyBlock: () => "",
           scrollToBlock: () => {},
           navigateBlock: () => null,
@@ -68,7 +72,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
           fit: () => {},
           dimensions: () => ({ cols: 80, rows: 24 }),
         });
-        (props.onAttach as ((id: string) => void) | undefined)?.("kernel-1");
+        (onAttachRef.current as ((id: string) => void) | undefined)?.("kernel-1");
       }, []);
       return <div className="h-full w-full min-h-0" />;
     },
@@ -77,7 +81,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
 
 import { TerminalPane } from "../../features/terminal/TerminalPane";
 import { useUi } from "../../app/store";
-import type { SessionInfo } from "../../ipc/commands";
+import { sessionApi, type SessionInfo } from "../../ipc/commands";
 
 let mounted: MountedView | undefined;
 
@@ -119,13 +123,15 @@ function seedSession(status: SessionInfo["status"]): void {
   });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   seedSession("reconnecting");
+  vi.mocked(sessionApi.list).mockImplementation(async () => useUi.getState().sessions);
   mounted = mount(
     createElement(TerminalPane, { sessionId: "s1", title: "term", storeTabId: "t1" }),
   );
+  await flush();
 });
 
 afterEach(() => {
@@ -169,7 +175,9 @@ describe("session://connect-progress badge", () => {
   });
 
   it("shows the target-host stage while connecting", async () => {
-    seedSession("connecting");
+    act(() => {
+      seedSession("connecting");
+    });
     await act(async () => {
       await flush();
     });

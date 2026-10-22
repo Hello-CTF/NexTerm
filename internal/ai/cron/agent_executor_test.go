@@ -51,6 +51,8 @@ func (f *fakeAgentRunner) Cancel(jobID string) error {
 	return nil
 }
 
+func (f *fakeAgentRunner) Wait(context.Context, string) error { return nil }
+
 func (f *fakeAgentRunner) canceledJobs() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -61,6 +63,7 @@ func testTrigger() Trigger {
 	return Trigger{
 		RunID: "run-1", JobID: "job-1", SessionID: "session-1", Name: "check",
 		Prompt: "inspect the deployment", ScheduledFor: time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC),
+		OwnerKind: OwnerKindOpen,
 	}
 }
 
@@ -68,7 +71,7 @@ func TestAgentExecutorRunsToDone(t *testing.T) {
 	runner := &fakeAgentRunner{emit: func(stream agent.Stream) {
 		_ = stream.Send(context.Background(), agent.Event{Type: "done", Answer: "all healthy"})
 	}}
-	executor := &AgentExecutor{Runner: runner, ScopeFor: func(trigger Trigger) (tools.Scope, error) {
+	executor := &AgentExecutor{Runner: runner, ScopeFor: func(_ context.Context, trigger Trigger) (tools.Scope, error) {
 		return tools.Scope{SessionID: trigger.SessionID, AssetID: "asset-1"}, nil
 	}}
 	if err := executor.Execute(context.Background(), testTrigger()); err != nil {
@@ -93,7 +96,7 @@ func TestAgentExecutorRunsToDone(t *testing.T) {
 
 func TestAgentExecutorFailsHonestlyWhenScopeQueryFails(t *testing.T) {
 	runner := &fakeAgentRunner{}
-	executor := &AgentExecutor{Runner: runner, ScopeFor: func(Trigger) (tools.Scope, error) {
+	executor := &AgentExecutor{Runner: runner, ScopeFor: func(context.Context, Trigger) (tools.Scope, error) {
 		return tools.Scope{}, errors.New("conversation store offline")
 	}}
 	err := executor.Execute(context.Background(), testTrigger())
@@ -114,7 +117,7 @@ func TestAgentExecutorAllowsLegitimatelyEmptyScope(t *testing.T) {
 	runner := &fakeAgentRunner{emit: func(stream agent.Stream) {
 		_ = stream.Send(context.Background(), agent.Event{Type: "done", Answer: "ok"})
 	}}
-	executor := &AgentExecutor{Runner: runner, ScopeFor: func(Trigger) (tools.Scope, error) {
+	executor := &AgentExecutor{Runner: runner, ScopeFor: func(context.Context, Trigger) (tools.Scope, error) {
 		return tools.Scope{}, nil
 	}}
 	if err := executor.Execute(context.Background(), testTrigger()); err != nil {
@@ -179,6 +182,25 @@ func TestAgentExecutorClosedWithoutTerminalEvent(t *testing.T) {
 	err := executor.Execute(context.Background(), testTrigger())
 	if err == nil || !strings.Contains(err.Error(), "without a terminal event") {
 		t.Fatalf("execute error = %v; want an explicit missing-outcome failure", err)
+	}
+	if canceled := runner.canceledJobs(); len(canceled) != 1 || canceled[0] != "run-1" {
+		t.Fatalf("canceled = %v; want the orphaned run canceled so it cannot outlive the cron run", canceled)
+	}
+}
+
+func TestAgentExecutorSkipsStartWhenContextAlreadyCanceled(t *testing.T) {
+	runner := &fakeAgentRunner{}
+	executor := &AgentExecutor{Runner: runner}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := executor.Execute(ctx, testTrigger())
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("execute error = %v; want context.Canceled", err)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.args) != 0 {
+		t.Fatalf("started %d runs for an already-canceled trigger", len(runner.args))
 	}
 }
 

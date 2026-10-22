@@ -2,6 +2,7 @@ package deviceproto
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -67,11 +68,22 @@ func (ex *exchange) err(err error) error {
 	return err
 }
 
+// unexpectedEnd converts a bare conn EOF into io.ErrUnexpectedEOF: every
+// operation concludes with an explicit reply frame (FrameEnd, FrameDialEOF,
+// FrameOK, or FrameError), so a silent conn end is a truncated operation,
+// never a clean result.
+func unexpectedEnd(err error) error {
+	if errors.Is(err, io.EOF) {
+		return io.ErrUnexpectedEOF
+	}
+	return err
+}
+
 // next reads one reply frame, converting FrameError payloads to errors.
 func (ex *exchange) next() (FrameType, []byte, error) {
 	kind, payload, err := ReadFrame(ex.conn)
 	if err != nil {
-		return 0, nil, ex.err(err)
+		return 0, nil, ex.err(unexpectedEnd(err))
 	}
 	if kind == FrameError {
 		return 0, nil, ReadError(payload)
@@ -138,8 +150,7 @@ func (c *Client) unary(ctx context.Context, kind FrameType, message any) error {
 	return ex.expectOK()
 }
 
-// Roots uses the negotiated file purpose; only the legacy protocol rejection
-// becomes unsupported, leaving bridge and agent enumeration failures intact.
+// Roots uses the negotiated file purpose and preserves coded agent errors.
 func (c *Client) Roots(ctx context.Context) (base.FileSystemRoots, error) {
 	ex, err := c.begin(ctx, FrameRoots, struct{}{})
 	if err != nil {
@@ -148,15 +159,12 @@ func (c *Client) Roots(ctx context.Context) (base.FileSystemRoots, error) {
 	defer ex.finish()
 	kind, payload, err := ReadFrame(ex.conn)
 	if err != nil {
-		return base.FileSystemRoots{}, ex.err(err)
+		return base.FileSystemRoots{}, ex.err(unexpectedEnd(err))
 	}
 	if kind == FrameError {
 		var msg ErrorMsg
 		if err := UnmarshalPayload(payload, &msg); err != nil {
 			return base.FileSystemRoots{}, err
-		}
-		if msg.Code == CodeProtocol {
-			return base.FileSystemRoots{}, fmt.Errorf("%w: %s", base.ErrUnsupported, msg.Message)
 		}
 		return base.FileSystemRoots{}, CodedError(msg.Code, msg.Message)
 	}
@@ -223,7 +231,9 @@ func (c *Client) ReadRange(ctx context.Context, path string, offset, maxBytes in
 
 // WriteFile streams the payload as data frames after the header; the reply
 // reader runs from the start so an early server error cannot deadlock a
-// fully synchronous transport.
+// fully synchronous transport. The payload is confirmed only by the final
+// reply: on error the applied byte count is unknown, so the payload must
+// not be replayed from a partial position.
 func (c *Client) WriteFile(ctx context.Context, path string, data []byte, backup bool) error {
 	if int64(len(data)) > MaxWriteFileSize {
 		return fmt.Errorf("%w: write of %d bytes exceeds limit %d", ErrInvalid, len(data), MaxWriteFileSize)
@@ -339,6 +349,7 @@ type ReadStream struct {
 	*exchange
 	size      int64
 	buf       []byte
+	readEOF   bool
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -354,6 +365,9 @@ func (s *ReadStream) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
+	if s.readEOF {
+		return 0, io.EOF
+	}
 	for len(s.buf) == 0 {
 		kind, payload, err := s.next()
 		if err != nil {
@@ -363,6 +377,7 @@ func (s *ReadStream) Read(p []byte) (int, error) {
 		case FrameData:
 			s.buf = payload
 		case FrameEnd:
+			s.readEOF = true
 			return 0, io.EOF
 		default:
 			return 0, s.unexpected(kind)
@@ -418,7 +433,7 @@ func (s *streamExchange) readReplies() {
 		kind, payload, err := ReadFrame(s.conn)
 		switch {
 		case err != nil:
-			s.fail(s.err(err))
+			s.fail(s.err(unexpectedEnd(err)))
 			return
 		case kind == FrameOK:
 			s.deliver(nil)
@@ -524,6 +539,10 @@ type WriteStream struct {
 	closeErr  error
 }
 
+// Write queues p as data frames; the returned count covers the frames the
+// conn accepted, not the server-durable count: only Sync or Close confirms
+// the stream. After an error the applied byte count is unknown and the
+// stream is terminal, so the count must not seed a resumed write.
 func (w *WriteStream) Write(p []byte) (int, error) {
 	if err := w.stream.ctx.Err(); err != nil {
 		return 0, err

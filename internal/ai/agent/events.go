@@ -9,61 +9,69 @@ import (
 )
 
 type Event struct {
-	Type                string
-	Seq                 uint64
-	Phase               string
-	Detail              *string
-	Turn                int
-	Text                string
-	Tool                string
-	Chars               int
-	ID                  string
-	Name                string
-	Args                json.RawMessage
-	Nonce               string
-	Display             string
-	OK                  bool
-	Summary             string
-	Truncated           bool
-	ExitCode            int
-	Panic               bool
-	Risk                string
-	Rendered            string
-	Reason              string
-	Preview             *tools.Preview
-	Question            *tools.Question
-	Terminal            *tools.CreatedTerminal
-	Commands            []string
-	RulePattern         string
-	RequestID           string
-	Attempt             uint64
-	TabID               string
-	Path                string
-	Before              string
-	After               string
-	PromptTokens        uint64
-	CompletionTokens    uint64
-	CachedTokens        uint64
-	CacheCreationTokens uint64
-	LatencyMS           int64
-	ContextWindow       uint64
-	Model               string
-	RunID               string
-	CallID              string
-	Channel             string
-	Items               []tools.TodoItem
-	Plan                string
-	Answer              string
-	Turns               int
-	TokensIn            uint64
-	TokensOut           uint64
-	Message             string
-	Retryable           bool
-	MaxIterations       bool
-	ParentCallID        string
-	SubagentID          string
-	Depth               int
-	Status              string
+	Type      string
+	Seq       uint64
+	Phase     string
+	Detail    *string
+	Turn      int
+	Text      string
+	Tool      string
+	Chars     int
+	ID        string
+	Name      string
+	Args      json.RawMessage
+	Nonce     string
+	Display   string
+	OK        bool
+	Summary   string
+	Truncated bool
+	ExitCode  int
+	Panic     bool
+	Risk      string
+	Rendered  string
+	Reason    string
+	Preview   *tools.Preview
+	Question  *tools.Question
+	Terminal  *tools.CreatedTerminal
+	// Handle is the permanent roster handle of the tool call's actual target
+	// tab, emitted only when that target verifiably belongs to a live roster
+	// entry; non-roster or unprovable targets omit it (unknown), never a
+	// fabricated reference.
+	Handle      string
+	Commands    []string
+	RulePattern string
+	RequestID   string
+	Attempt     uint64
+	// RequiredEnvironmentNames are the production environment names the
+	// confirmation must type back, resolved from the real target asset.
+	RequiredEnvironmentNames []string
+	TabID                    string
+	Path                     string
+	Before                   string
+	After                    string
+	PromptTokens             uint64
+	CompletionTokens         uint64
+	CachedTokens             uint64
+	CacheCreationTokens      uint64
+	LatencyMS                int64
+	ContextWindow            uint64
+	Model                    string
+	RunID                    string
+	CallID                   string
+	Channel                  string
+	Items                    []tools.TodoItem
+	Plan                     string
+	Answer                   string
+	Turns                    int
+	TokensIn                 uint64
+	TokensOut                uint64
+	Message                  string
+	Retryable                bool
+	MaxIterations            bool
+	ParentCallID             string
+	SubagentID               string
+	Depth                    int
+	Status                   string
 }
 
 func (e Event) MarshalJSON() ([]byte, error) {
@@ -80,11 +88,17 @@ func (e Event) MarshalJSON() ([]byte, error) {
 	case "toolCall":
 		payload["id"], payload["name"], payload["display"] = e.ID, e.Name, e.Display
 		payload["args"] = rawObject(e.Args)
+		if e.Handle != "" {
+			payload["handle"] = e.Handle
+		}
 	case "toolResult":
 		payload["id"], payload["ok"], payload["summary"], payload["text"] = e.ID, e.OK, e.Summary, e.Text
 		payload["truncated"], payload["exitCode"], payload["panic"] = e.Truncated, e.ExitCode, e.Panic
 		if e.Terminal != nil {
 			payload["terminal"] = e.Terminal
+		}
+		if e.Handle != "" {
+			payload["handle"] = e.Handle
 		}
 	case "confirmRequired":
 		payload["id"], payload["tool"], payload["args"], payload["risk"] = e.ID, e.Tool, rawObject(e.Args), e.Risk
@@ -97,6 +111,9 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		}
 		payload["confirmationNonce"] = e.Nonce
 		payload["requestId"], payload["attempt"] = e.RequestID, e.Attempt
+		if len(e.RequiredEnvironmentNames) != 0 {
+			payload["requiredEnvironmentNames"] = e.RequiredEnvironmentNames
+		}
 	case "questionRequired":
 		payload["id"], payload["question"], payload["confirmationNonce"] = e.ID, e.Question, e.Nonce
 		payload["requestId"], payload["attempt"] = e.RequestID, e.Attempt

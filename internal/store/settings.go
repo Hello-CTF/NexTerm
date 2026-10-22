@@ -110,11 +110,7 @@ func (s *Store) SettingDelete(ctx context.Context, key string) error {
 }
 
 func (s *Store) SettingListPrefix(ctx context.Context, prefix string) (map[string]string, error) {
-	setting := query.Use(s.db).Setting
-	rows := []Setting{}
-	err := setting.WithContext(ctx).
-		Where(field.NewUnsafeFieldRaw(`key LIKE ? ESCAPE '\'`, escapeLikePrefix(prefix)+"%")).
-		Scan(&rows)
+	rows, err := SettingRowsWithPrefix(ctx, s.db, prefix)
 	if err != nil {
 		return nil, dbError(err)
 	}
@@ -125,32 +121,55 @@ func (s *Store) SettingListPrefix(ctx context.Context, prefix string) (map[strin
 	return values, nil
 }
 
-func escapeLikePrefix(prefix string) string {
+func SettingRowsWithPrefix(ctx context.Context, db *gorm.DB, prefix string) ([]Setting, error) {
+	setting := query.Use(db).Setting
+	rows := []Setting{}
+	if err := setting.WithContext(ctx).
+		Where(settingLike("key", EscapeLikePrefix(prefix)+"%")).
+		Scan(&rows); err != nil {
+		return nil, err
+	}
+	exact := rows[:0]
+	for _, row := range rows {
+		if strings.HasPrefix(row.Key, prefix) {
+			exact = append(exact, row)
+		}
+	}
+	return exact, nil
+}
+
+func EscapeLikePrefix(prefix string) string {
 	var out strings.Builder
 	out.Grow(len(prefix))
 	for _, r := range prefix {
 		switch r {
-		case '\\', '%', '_':
-			out.WriteByte('\\')
+		case '!', '%', '_':
+			out.WriteByte('!')
 		}
 		out.WriteRune(r)
 	}
 	return out.String()
 }
 
+func settingLike(column, pattern string) field.Expr {
+	return field.NewUnsafeFieldRaw("? LIKE ? ESCAPE '!'", clause.Column{Name: column}, pattern)
+}
+
 func (s *Store) SettingContainsValue(ctx context.Context, substring string) (bool, error) {
 	setting := query.Use(s.db).Setting
-	like := "value LIKE ? ESCAPE '\\'"
-	if s.db.Dialector.Name() == "mysql" {
-		like = "value LIKE ? ESCAPE '\\\\'"
-	}
-	count, err := setting.WithContext(ctx).
-		Where(field.NewUnsafeFieldRaw(like, "%"+escapeLikePrefix(substring)+"%")).
-		Count()
+	rows := []Setting{}
+	err := setting.WithContext(ctx).
+		Where(settingLike("value", "%"+EscapeLikePrefix(substring)+"%")).
+		Scan(&rows)
 	if err != nil {
 		return false, dbError(err)
 	}
-	return count > 0, nil
+	for _, row := range rows {
+		if strings.Contains(row.Value, substring) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 type SettingTx interface {
@@ -216,38 +235,52 @@ func (s *Store) LayoutSave(ctx context.Context, expected int64, dataJSON string)
 	if err := json.Unmarshal([]byte(dataJSON), &data); err != nil {
 		return false, 0, badParam(fmt.Errorf("布局不是合法 JSON: %w", err))
 	}
+	key := LayoutSettingKeyForUser(ipc.OwnerID(ctx))
+	setting := query.Use(s.db).Setting
+	row, err := setting.WithContext(ctx).Where(setting.Key.Eq(key)).First()
+	if err != nil && !isNoRows(err) {
+		return false, 0, dbError(err)
+	}
 	var currentRevision int64
-	var next int64
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		setting := query.Use(tx).Setting
-		q := setting.WithContext(ctx).Where(setting.Key.Eq(LayoutSettingKeyForUser(ipc.OwnerID(ctx))))
-		row, err := q.First()
-		if err != nil && !isNoRows(err) {
-			return err
-		}
-		if err == nil {
-			currentRevision, _ = decodeLayout(row.Value)
-		}
-		if currentRevision != expected {
-			return nil
-		}
-		next = currentRevision + 1
-		now := ids.NowMS()
-		value, err := json.Marshal(struct {
-			Revision  int64 `json:"revision"`
-			UpdatedAt int64 `json:"updatedAt"`
-			Data      any   `json:"data"`
-		}{Revision: next, UpdatedAt: now, Data: data})
-		if err != nil {
-			return err
-		}
-		return settingUpsert(ctx, tx, LayoutSettingKeyForUser(ipc.OwnerID(ctx)), string(value), now)
-	})
-	if err != nil {
-		return false, currentRevision, dbError(err)
+	if row != nil {
+		currentRevision, _ = decodeLayout(row.Value)
 	}
 	if currentRevision != expected {
 		return false, currentRevision, nil
+	}
+	next := currentRevision + 1
+	now := ids.NowMS()
+	value, err := json.Marshal(struct {
+		Revision  int64 `json:"revision"`
+		UpdatedAt int64 `json:"updatedAt"`
+		Data      any   `json:"data"`
+	}{Revision: next, UpdatedAt: now, Data: data})
+	if err != nil {
+		return false, currentRevision, dbError(err)
+	}
+	conflict := func() (bool, int64, error) {
+		revision, _, _, err := s.LayoutLoad(ctx)
+		return false, revision, err
+	}
+	if row == nil {
+		err = s.db.WithContext(ctx).Create(&Setting{Key: key, Value: string(value), UpdatedAt: now}).Error
+		if err == nil {
+			return true, next, nil
+		}
+		if IsUniqueErr(err) {
+			return conflict()
+		}
+		return false, currentRevision, dbError(err)
+	}
+	result := s.db.WithContext(ctx).Model(&Setting{}).
+		Where(clause.Eq{Column: clause.Column{Name: "key"}, Value: key}).
+		Where(clause.Eq{Column: clause.Column{Name: "value"}, Value: row.Value}).
+		UpdateColumns(map[string]any{"value": string(value), "updated_at": now})
+	if result.Error != nil {
+		return false, currentRevision, dbError(result.Error)
+	}
+	if result.RowsAffected != 1 {
+		return conflict()
 	}
 	return true, next, nil
 }

@@ -139,18 +139,7 @@ func TestGenerateInvalidOptions(t *testing.T) {
 
 func TestGenerateNoFileArtifacts(t *testing.T) {
 	tmp := t.TempDir()
-	oldwd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(tmp); err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := os.Chdir(oldwd); err != nil {
-			t.Fatal(err)
-		}
-	}()
+	t.Chdir(tmp)
 	variants := []Options{
 		{},
 		{Algorithm: AlgorithmRSA},
@@ -162,7 +151,7 @@ func TestGenerateNoFileArtifacts(t *testing.T) {
 		}
 	}
 	var files []string
-	err = filepath.WalkDir(tmp, func(path string, entry os.DirEntry, err error) error {
+	err := filepath.WalkDir(tmp, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

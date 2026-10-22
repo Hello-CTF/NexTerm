@@ -163,6 +163,63 @@ func journalDeltaText(events []store.RunEventRow) string {
 	return builder.String()
 }
 
+type gatedJournalLiveStream struct {
+	*SliceStream
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *gatedJournalLiveStream) Send(ctx context.Context, event Event) error {
+	s.once.Do(func() { close(s.started) })
+	select {
+	case <-s.release:
+		return s.SliceStream.Send(ctx, event)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestJournalPersistsBatchedDeltaBeforeLiveDelivery(t *testing.T) {
+	storage, runID := journalTestStore(t)
+	live := &gatedJournalLiveStream{SliceStream: &SliceStream{}, started: make(chan struct{}), release: make(chan struct{})}
+	stream := WithRunJournal(live, storage, runID)
+	released := false
+	defer func() {
+		if !released {
+			close(live.release)
+			_ = stream.Close()
+		}
+	}()
+	for _, text := range []string{"你", "好", "啊"} {
+		if err := stream.Send(context.Background(), Event{Type: "delta", Text: text}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	select {
+	case <-live.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for live delivery to start")
+	}
+	persisted := journalEventsOf(t, storage, runID)
+	beforeRelease, _ := live.Snapshot()
+	close(live.release)
+	released = true
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	afterRelease, closed := live.Snapshot()
+	if len(persisted) != 1 || persisted[0].Type != "delta" || persisted[0].Seq != 1 || journalDeltaText(persisted) != "你好啊" {
+		t.Fatalf("persisted events = %+v", persisted)
+	}
+	if len(beforeRelease) != 0 {
+		t.Fatalf("live events before release = %+v", beforeRelease)
+	}
+	if !closed || len(afterRelease) != 1 || afterRelease[0].Seq != 1 || afterRelease[0].Text != "你好啊" {
+		t.Fatalf("live events after release = %+v, closed = %v", afterRelease, closed)
+	}
+}
+
 func TestJournalBatchesDeltasWithinWindow(t *testing.T) {
 	storage, runID := journalTestStore(t)
 	live := &SliceStream{}
@@ -181,6 +238,9 @@ func TestJournalBatchesDeltasWithinWindow(t *testing.T) {
 	}
 	if got := journalDeltaText(events); got != "你好啊" {
 		t.Fatalf("merged delta text = %q", got)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
 	}
 	liveEvents, _ := live.Snapshot()
 	if len(liveEvents) != 1 || liveEvents[0].Seq != 1 || liveEvents[0].Text != "你好啊" {

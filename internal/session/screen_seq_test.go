@@ -15,6 +15,7 @@ func TestTabScreenSeqMonotonicAndOutputSince(t *testing.T) {
 		Connector: connector,
 		Terminals: terminalFactory{},
 	})
+	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
 	connected, err := manager.Connect(ctx, Asset{ID: "seq-asset", Kind: KindSSH})
 	if err != nil {
@@ -73,6 +74,7 @@ func TestTabScreenSeqZeroWithoutRingTerminal(t *testing.T) {
 		Connector: connector,
 		Terminals: newFakeTerminalFactory(),
 	})
+	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
 	connected, err := manager.Connect(ctx, Asset{ID: "fake-asset", Kind: KindSSH})
 	if err != nil {

@@ -6,6 +6,7 @@ const h = vi.hoisted(() => ({
   kind: "ssh",
   pickedFolder: "/local/pics" as string | null,
   pickThrows: false,
+  virtualUpload: false,
   listing: { name: "pics", files: [], emptyDirs: [] } as {
     name: string;
     files: { relativePath: string; localPath: string; size: number; mtimeMs: number }[];
@@ -72,14 +73,54 @@ vi.mock("../../ipc/commands", () => ({
       if (h.listError) throw h.listError;
       return h.listing;
     },
-    read: async (path: string) => {
+    readRange: async (path: string, offset: number, length: number) => {
       h.calls.push(`read:${path}`);
       const content = h.localReads[path];
       if (content === undefined) throw new Error(`no read sample for ${path}`);
-      return { path, size: atob(content).length, contentBase64: content };
+      const decoded = atob(content);
+      const selected = decoded.slice(offset, offset + length);
+      return {
+        path,
+        offset,
+        size: decoded.length,
+        contentBase64: btoa(selected),
+        truncated: offset + selected.length < decoded.length,
+      };
     },
   },
 }));
+
+vi.mock("../../features/files/chunkedUpload", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../features/files/chunkedUpload")>();
+  return {
+    ...actual,
+    uploadChunked: async ({
+      remotePath,
+      source,
+      onProgress,
+    }: {
+      remotePath: string;
+      source: { size: number; read(offset: number, length: number): Promise<Uint8Array<ArrayBuffer>> };
+      onProgress?: (transferred: number, total: number) => void;
+    }) => {
+      onProgress?.(0, source.size);
+      if (h.virtualUpload) {
+        h.calls.push(`write:${remotePath}:virtual`);
+        onProgress?.(source.size, source.size);
+        return;
+      }
+      const out = new Uint8Array(source.size);
+      for (let offset = 0; offset < source.size; offset += actual.UPLOAD_CHUNK_SIZE) {
+        const length = Math.min(actual.UPLOAD_CHUNK_SIZE, source.size - offset);
+        out.set(await source.read(offset, length), offset);
+      }
+      let binary = "";
+      for (const value of out) binary += String.fromCharCode(value);
+      h.calls.push(`write:${remotePath}:${btoa(binary)}`);
+      onProgress?.(source.size, source.size);
+    },
+  };
+});
 
 vi.mock("../../ipc/webFiles", () => ({
   stageFile: async (file: File) => {
@@ -139,14 +180,11 @@ function dropOf(items: unknown[], files: File[]): DataTransfer {
 }
 
 async function waitForSettled(): Promise<void> {
-  for (let i = 0; i < 400; i++) {
+  await vi.waitFor(() => {
     const { tasks } = useTransferStore.getState();
-    if (tasks.length > 0 && tasks.every((t) => t.status !== "queued" && t.status !== "running")) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 2));
-  }
-  throw new Error("transfer tasks did not settle");
+    expect(tasks.length).toBeGreaterThan(0);
+    expect(tasks.every((t) => t.status !== "queued" && t.status !== "running")).toBe(true);
+  });
 }
 
 function b64(text: string): string {
@@ -168,6 +206,7 @@ beforeEach(() => {
   h.kind = "ssh";
   h.pickedFolder = "/local/pics";
   h.pickThrows = false;
+  h.virtualUpload = false;
   h.listing = { name: "pics", files: [], emptyDirs: [] };
   h.listError = null;
   h.choice = "perFile";
@@ -175,7 +214,7 @@ beforeEach(() => {
   h.localReads = {};
   h.calls = [];
   h.toasts = [];
-  useTransferStore.setState({ tasks: [], runningId: null });
+  useTransferStore.setState({ tasks: [] });
 });
 
 describe("desktop native folder picker", () => {
@@ -286,8 +325,7 @@ describe("desktop native folder picker", () => {
       });
     try {
       const pending = pickFolderUpload({ sessionId: "s1", dir: "/data", knownSiblings: [] });
-      for (let i = 0; i < 100 && !captured; i++) await new Promise((r) => setTimeout(r, 2));
-      expect(captured).not.toBeNull();
+      await vi.waitFor(() => expect(captured).not.toBeNull());
       const input = captured as unknown as HTMLInputElement;
       Object.defineProperty(input, "files", {
         value: [fakeFile("pics/a.txt", "A"), fakeFile("pics/sub/b.txt", "BB")],
@@ -331,6 +369,26 @@ describe("desktop drag-drop content fallback", () => {
     expect(h.calls).toContain(`write:/data/pics/sub/b.txt:${b64("BB")}`);
   });
 
+  it("folder drag pack mode streams one archive, extracts it, and cleans up the temporary package", async () => {
+    h.choice = "pack";
+    h.virtualUpload = true;
+    const folder = dirEntry("pics", [
+      fileEntry("a.txt", fakeFile("pics/a.txt", "A")),
+      dirEntry("sub", [fileEntry("b.txt", fakeFile("pics/sub/b.txt", "BB"))]),
+    ]);
+    const dt = dropOf([{ webkitGetAsEntry: () => folder, getAsFile: () => null }], []);
+    await dropFolderUpload({ sessionId: "s1", dir: "/data", dataTransfer: dt, knownSiblings: [] });
+
+    const writeIndex = h.calls.indexOf("write:/data/pics.tar:virtual");
+    const extractIndex = h.calls.indexOf("extract:/data/pics.tar");
+    const deleteIndex = h.calls.indexOf("delete:/data/pics.tar:false");
+    expect(writeIndex).toBeGreaterThan(-1);
+    expect(extractIndex).toBeGreaterThan(writeIndex);
+    expect(deleteIndex).toBeGreaterThan(extractIndex);
+    expect(h.calls.some((call) => call.includes("/data/pics/a.txt"))).toBe(false);
+    expect(h.toasts.some((toast) => toast.level === "success" && toast.text.includes("/data/pics"))).toBe(true);
+  });
+
   it("drag conflicts use the keep-both strategy with auto rename", async () => {
     h.choice = "keepBoth";
     h.siblings = [{ name: "x.txt", kind: "file" }] as FileEntryDto[];
@@ -361,7 +419,7 @@ describe("WEB drag-drop path does not regress", () => {
   });
 });
 
-describe("device session drag size guard", () => {
+describe("device session drag streaming", () => {
   const OVERSIZE = 65 * 1024 * 1024;
 
   function oversizedFile(rel: string): File {
@@ -370,32 +428,29 @@ describe("device session drag size guard", () => {
     return file;
   }
 
-  it("oversized loose files are rejected in the frontend: toast points to the upload button, zero IPC zero tasks", async () => {
+  it("accepts oversized loose files through the chunked uploader instead of rejecting them", async () => {
     h.kind = "device";
+    h.virtualUpload = true;
     const big = oversizedFile("big.bin");
     const dt = dropOf([{ webkitGetAsEntry: () => null, getAsFile: () => big }], [big]);
     await dropFolderUpload({ sessionId: "s1", dir: "/data", dataTransfer: dt, knownSiblings: [] });
-    expect(h.toasts).toEqual([{ level: "error", text: expect.stringContaining("单次写入上限") }]);
-    expect(h.toasts[0]!.text).toContain("big.bin");
-    expect(h.toasts[0]!.text).toContain("上传按钮");
-    expect(h.calls).toEqual([]);
-    expect(useTransferStore.getState().tasks).toEqual([]);
+    await waitForSettled();
+    expect(h.calls).toContain("write:/data/big.bin:virtual");
+    expect(h.toasts.some((t) => t.text.includes("单次写入上限"))).toBe(false);
   });
 
-  it("folder drags containing oversized files are likewise rejected before mode selection", async () => {
+  it("accepts a folder drag containing oversized files", async () => {
     h.kind = "device";
+    h.virtualUpload = true;
     const folder = dirEntry("pics", [
       fileEntry("a.txt", fakeFile("pics/a.txt", "A")),
       fileEntry("big.bin", oversizedFile("pics/big.bin")),
     ]);
     const dt = dropOf([{ webkitGetAsEntry: () => folder, getAsFile: () => null }], []);
     await dropFolderUpload({ sessionId: "s1", dir: "/data", dataTransfer: dt, knownSiblings: [] });
-    expect(h.toasts).toEqual([{ level: "error", text: expect.stringContaining("单次写入上限") }]);
-    expect(h.toasts[0]!.text).toContain("big.bin");
-    expect(
-      h.calls.some((c) => c.startsWith("list") || c.startsWith("write:") || c.startsWith("upload:") || c.startsWith("mkdir:")),
-    ).toBe(false);
-    expect(useTransferStore.getState().tasks).toEqual([]);
+    await waitForSettled();
+    expect(h.calls).toContain("write:/data/pics/big.bin:virtual");
+    expect(h.toasts.some((t) => t.text.includes("单次写入上限"))).toBe(false);
   });
 
   it("large files via the device native picker are unaffected (path streaming upload)", async () => {
@@ -413,11 +468,12 @@ describe("device session drag size guard", () => {
 
   it("oversized files on non-device sessions can still drag-upload content", async () => {
     h.kind = "ssh";
+    h.virtualUpload = true;
     const big = oversizedFile("big.bin");
     const dt = dropOf([{ webkitGetAsEntry: () => null, getAsFile: () => big }], [big]);
     await dropFolderUpload({ sessionId: "s1", dir: "/data", dataTransfer: dt, knownSiblings: [] });
     await waitForSettled();
-    expect(h.calls.some((c) => c.startsWith("write:/data/big.bin:"))).toBe(true);
+    expect(h.calls).toContain("write:/data/big.bin:virtual");
     expect(h.toasts.some((t) => t.level === "error")).toBe(false);
   });
 });

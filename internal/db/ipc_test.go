@@ -22,7 +22,10 @@ func TestIPCRegistrationAndWireShapes(t *testing.T) {
 		return newFakeRows([]string{"id"}, []string{"INT"}, nil), nil
 	}}
 	database := newFakeSQLDB(t, state)
-	service := NewService(nil)
+	host := "localhost"
+	service := NewService(AssetResolverFunc(func(context.Context, string) (Asset, error) {
+		return Asset{Kind: "mysql", Host: &host}, nil
+	}))
 	service.newID = func() (string, error) { return "conn-1", nil }
 	service.openMySQL = func(_ context.Context, config MySQLConfig) (*mysqlConnection, error) {
 		return &mysqlConnection{db: database, database: config.Database}, nil
@@ -41,7 +44,7 @@ func TestIPCRegistrationAndWireShapes(t *testing.T) {
 		}
 	}
 
-	response := dispatcher.Dispatch(context.Background(), ipc.Request{Command: "db_connect", Args: json.RawMessage(`{"args":{"inline":{"kind":"mysql","host":"localhost"}}}`)}, ipc.Environment{})
+	response := dispatcher.Dispatch(context.Background(), ipc.Request{Command: "db_connect", Args: json.RawMessage(`{"args":{"assetId":"mysql-asset"}}`)}, ipc.Environment{})
 	if !response.OK || string(response.Data) != `{"connId":"conn-1"}` {
 		t.Fatalf("connect response=%+v data=%s error=%v", response, response.Data, response.Error)
 	}
@@ -58,6 +61,10 @@ func TestIPCRegistrationAndWireShapes(t *testing.T) {
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNotFound || response.Error.Message == "" {
 		t.Fatalf("error response=%+v", response)
 	}
+	response = dispatcher.Dispatch(context.Background(), ipc.Request{Command: "db_connect", Args: json.RawMessage(`{"args":{"inline":{"kind":"mysql","host":"localhost"}}}`)}, ipc.Environment{})
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("inline connect response=%+v, want bad_param", response)
+	}
 }
 
 func TestIPCPostgresConnectDispatch(t *testing.T) {
@@ -68,7 +75,10 @@ func TestIPCPostgresConnectDispatch(t *testing.T) {
 		return newFakeRows([]string{"id"}, []string{"INT8"}, nil), nil
 	}}
 	database := newFakeSQLDB(t, state)
-	service := NewService(nil)
+	host := "localhost"
+	service := NewService(AssetResolverFunc(func(context.Context, string) (Asset, error) {
+		return Asset{Kind: "postgres", Host: &host}, nil
+	}))
 	service.newID = func() (string, error) { return "pg-1", nil }
 	service.openPostgres = func(_ context.Context, config PostgresConfig) (*postgresConnection, error) {
 		if config.Port != 5432 {
@@ -80,7 +90,7 @@ func TestIPCPostgresConnectDispatch(t *testing.T) {
 	if err := service.RegisterCommands(dispatcher); err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	response := dispatcher.Dispatch(context.Background(), ipc.Request{Command: "db_connect", Args: json.RawMessage(`{"args":{"inline":{"kind":"postgres","host":"localhost"}}}`)}, ipc.Environment{})
+	response := dispatcher.Dispatch(context.Background(), ipc.Request{Command: "db_connect", Args: json.RawMessage(`{"args":{"assetId":"postgres-asset"}}`)}, ipc.Environment{})
 	if !response.OK || string(response.Data) != `{"connId":"pg-1"}` {
 		t.Fatalf("connect response=%+v data=%s error=%v", response, response.Data, response.Error)
 	}
@@ -137,12 +147,8 @@ func callDBHTTP(t *testing.T, client *http.Client, url, token, command string, a
 
 func connectDBHTTP(t *testing.T, client *http.Client, url, token, kind string) string {
 	t.Helper()
-	database := "app"
-	if kind == "redis" {
-		database = "0"
-	}
 	_, body, response := callDBHTTP(t, client, url, token, "db_connect", map[string]any{
-		"args": map[string]any{"inline": map[string]any{"kind": kind, "host": "db.internal", "database": database}},
+		"args": map[string]any{"assetId": kind},
 	})
 	if !response.OK {
 		t.Fatalf("%s connect failed: body=%s error=%+v", kind, body, response.Error)
@@ -209,7 +215,14 @@ func TestDBConnectionOwnershipOverHTTP(t *testing.T) {
 		scanKeys: []string{"owner_redis_key"},
 		doFunc:   func(...any) (any, error) { return int64(1), nil },
 	}
-	service := NewService(nil)
+	service := NewService(AssetResolverFunc(func(_ context.Context, id string) (Asset, error) {
+		host := "db.internal"
+		database := "app"
+		if id == "redis" {
+			database = "0"
+		}
+		return Asset{Kind: id, Host: &host, OptionsJSON: `{"database":"` + database + `"}`}, nil
+	}))
 	service.openMySQL = func(_ context.Context, config MySQLConfig) (*mysqlConnection, error) {
 		return &mysqlConnection{db: newFakeSQLDB(t, state), database: config.Database}, nil
 	}

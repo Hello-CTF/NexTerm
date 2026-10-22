@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 )
 
 func TestFanoutTwoSubscribersSameOutput(t *testing.T) {
@@ -20,17 +19,15 @@ func TestFanoutTwoSubscribersSameOutput(t *testing.T) {
 	if !f.Send(context.Background(), frame) {
 		t.Fatal("expected delivery")
 	}
-	if !bytes.Equal(a.Bytes(), frame) || !bytes.Equal(b.Bytes(), frame) {
-		t.Fatalf("a=%q b=%q", a.Bytes(), b.Bytes())
-	}
+	waitFor(t, "first frame on both subscribers", func() bool {
+		return bytes.Equal(a.Bytes(), frame) && bytes.Equal(b.Bytes(), frame)
+	})
 	f.Send(context.Background(), []byte("2"))
 	f.Send(context.Background(), []byte("3"))
-	if !bytes.Equal(a.Bytes(), append(append([]byte{}, frame...), []byte("23")...)) {
-		t.Fatalf("order broken: %q", a.Bytes())
-	}
-	if !bytes.Equal(a.Bytes(), b.Bytes()) {
-		t.Fatal("clients diverged")
-	}
+	want := append(append([]byte{}, frame...), []byte("23")...)
+	waitFor(t, "ordered frames on both subscribers", func() bool {
+		return bytes.Equal(a.Bytes(), want) && bytes.Equal(b.Bytes(), want)
+	})
 }
 
 func TestFanoutNoSubscribersIsNoop(t *testing.T) {
@@ -47,22 +44,15 @@ func TestFanoutFailingSinkDetached(t *testing.T) {
 	f.Attach("bad", bad)
 	f.Attach("good", good)
 	if !f.Send(context.Background(), []byte("x")) {
-		t.Fatal("good sink should receive")
+		t.Fatal("good sink should be accepted")
 	}
-	if f.Count() != 1 {
-		t.Fatalf("failed sink not detached: %d", f.Count())
-	}
-	if !bytes.Equal(good.Bytes(), []byte("x")) {
-		t.Fatalf("good = %q", good.Bytes())
-	}
+	waitFor(t, "failed sink detached and good sink delivered", func() bool {
+		return f.Count() == 1 && bytes.Equal(good.Bytes(), []byte("x"))
+	})
 	f.Detach("good")
 	f.Attach("bad2", &memSink{err: errors.New("gone")})
-	if f.Send(context.Background(), []byte("y")) {
-		t.Fatal("expected false")
-	}
-	if f.Count() != 0 {
-		t.Fatalf("count = %d", f.Count())
-	}
+	f.Send(context.Background(), []byte("y"))
+	waitFor(t, "second failed sink detached", func() bool { return f.Count() == 0 })
 }
 
 func TestFanoutReattachReplaces(t *testing.T) {
@@ -75,11 +65,9 @@ func TestFanoutReattachReplaces(t *testing.T) {
 		t.Fatal("second attach should replace")
 	}
 	f.Send(context.Background(), []byte("new"))
+	waitFor(t, "replacement delivery", func() bool { return bytes.Equal(fresh.Bytes(), []byte("new")) })
 	if len(old.Frames()) != 0 {
 		t.Fatalf("stale sink got frames: %q", old.Bytes())
-	}
-	if !bytes.Equal(fresh.Bytes(), []byte("new")) {
-		t.Fatalf("fresh = %q", fresh.Bytes())
 	}
 	if f.Count() != 1 {
 		t.Fatalf("count = %d", f.Count())
@@ -98,44 +86,20 @@ func TestFanoutDetachAll(t *testing.T) {
 	}
 }
 
-func TestFanoutCancellationDetachesInterrupted(t *testing.T) {
+func TestFanoutCancellationSkipsPublishWithoutDetaching(t *testing.T) {
 	f := NewFanout()
-	blocking := SinkFunc(func(ctx context.Context, data []byte) error {
-		<-ctx.Done()
-		return ctx.Err()
-	})
-	f.Attach("block", blocking)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	start := time.Now()
+	sink := &memSink{}
+	f.Attach("ws", sink)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 	if f.Send(ctx, []byte("x")) {
-		t.Fatal("expected no delivery")
+		t.Fatal("canceled publish should not be accepted")
 	}
-	if time.Since(start) > 2*time.Second {
-		t.Fatal("send did not honor cancellation")
+	if f.Count() != 1 {
+		t.Fatalf("canceled publish detached subscriber: %d", f.Count())
 	}
-	if f.Count() != 0 {
-		t.Fatalf("interrupted sink retained: count = %d", f.Count())
+	if !f.Send(context.Background(), []byte("z")) {
+		t.Fatal("subscriber should remain active")
 	}
-
-	g := NewFanout()
-	g.Attach("block", blocking)
-	good := &memSink{}
-	g.Attach("good", good)
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel2()
-	g.Send(ctx2, []byte("y"))
-	g.Send(context.Background(), []byte("z"))
-	switch g.Count() {
-	case 0:
-		if len(good.Bytes()) != 0 {
-			t.Fatalf("detached client kept receiving: %q", good.Bytes())
-		}
-	case 1:
-		if !bytes.Equal(good.Bytes(), []byte("yz")) {
-			t.Fatalf("continuity broken: %q", good.Bytes())
-		}
-	default:
-		t.Fatalf("interrupted sink retained: count = %d", g.Count())
-	}
+	waitFor(t, "delivery after canceled publish", func() bool { return bytes.Equal(sink.Bytes(), []byte("z")) })
 }

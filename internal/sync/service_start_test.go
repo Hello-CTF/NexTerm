@@ -3,6 +3,10 @@ package sync
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -88,10 +92,19 @@ func startProbeService(t *testing.T, service *Service) {
 
 func waitForCondition(t *testing.T, what string, condition func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	waitForConditionTimeout(t, what, 3*time.Second, nil, condition)
+}
+
+func waitForConditionTimeout(t *testing.T, what string, timeout time.Duration, detail func() string, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
 	for !condition() {
 		if time.Now().After(deadline) {
-			t.Fatalf("condition not met: %s", what)
+			message := "condition not met: " + what
+			if detail != nil {
+				message += ": " + detail()
+			}
+			t.Fatal(message)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -224,7 +237,11 @@ func TestServiceStartConnectsAfterVaultUnlock(t *testing.T) {
 	startProbeService(t, service)
 
 	// During the locked period both the probe and background rounds silently skip: no events, no recorded errors.
-	time.Sleep(100 * time.Millisecond)
+	// Deterministic completion signal instead of a blind sleep: the first background round records its blocked attempt in the round status.
+	waitForCondition(t, "background round did not record a blocked attempt while the vault is locked", func() bool {
+		status, err := service.Status(ctx)
+		return err == nil && status.Paused && status.VaultLocked && !status.LastAttemptAt.IsZero()
+	})
 	if events.count() != 0 {
 		t.Fatal("probe must stay silent while the vault is locked")
 	}
@@ -385,7 +402,11 @@ func TestServiceStartSkipsPersistedSessionWhileVaultLocked(t *testing.T) {
 	}
 	startProbeService(t, service)
 
-	time.Sleep(100 * time.Millisecond)
+	// Same deterministic completion signal as above: wait until the background round provably ran while locked.
+	waitForCondition(t, "background round did not record a blocked attempt while the vault is locked", func() bool {
+		status, err := service.Status(ctx)
+		return err == nil && status.Paused && status.VaultLocked && !status.LastAttemptAt.IsZero()
+	})
 	if events.count() != 0 {
 		t.Fatal("probe must stay silent while the vault is locked")
 	}
@@ -425,8 +446,13 @@ func TestPersistedSessionClearedOnPasswordChange(t *testing.T) {
 
 	service2, _ := restartService(t, db, &probeEventRecorder{})
 	startProbeService(t, service2)
-	waitForCondition(t, "re-login with the new password failed", func() bool {
+	var lastStatus any
+	var lastErr error
+	waitForConditionTimeout(t, "re-login with the new password failed", 15*time.Second, func() string {
+		return fmt.Sprintf("status=%+v err=%v logins=%d", lastStatus, lastErr, fixture.logins.Load())
+	}, func() bool {
 		status, err := service2.Status(ctx)
+		lastStatus, lastErr = status, err
 		return err == nil && status.LoggedIn
 	})
 	if got := fixture.logins.Load(); got != 2 {
@@ -499,4 +525,93 @@ func TestPersistedSessionReplacedOnLinkResetPassword(t *testing.T) {
 	if got := fixture.logins.Load(); got != loginsBefore {
 		t.Fatalf("logins = %d, want %d (restart after reset restored the persisted session)", got, loginsBefore)
 	}
+}
+
+// GT-07 ratchet: the sync engine/service test files must not reintroduce blind time.Sleep waits.
+// Synchronization must use completion signals or condition polling (waitForCondition/waitForConditionTimeout);
+// the only tolerated time.Sleep is the single bounded poll interval that is the last statement of
+// waitForConditionTimeout's `for !condition()` loop. Any other sleep — including an extra sleep inside
+// that helper — is reported. A helper that loses the poll structure entirely (poll sleep deleted or
+// moved) is reported even when no other sleep remains, so the shared condition wait cannot regress
+// into a busy-spin.
+func TestSyncScopedTestsNoBlindSleeps(t *testing.T) {
+	files := []string{"engine_cursor_test.go", "engine_sync_test.go", "service_start_test.go", "settings_sync_test.go"}
+	for _, name := range files {
+		fset := token.NewFileSet()
+		node, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, decl := range node.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			var exempt token.Pos
+			if fn.Name.Name == "waitForConditionTimeout" {
+				exempt = pollSleepPos(fn)
+				if exempt == token.NoPos {
+					t.Errorf("%s: waitForConditionTimeout lost its expected poll structure: the unique trailing time.Sleep poll interval inside the `for !condition()` loop is missing; restore it so the shared condition wait cannot regress into a busy-spin", name)
+				}
+			}
+			var sleeps []string
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok || !isTimeSleepCall(call) || call.Pos() == exempt {
+					return true
+				}
+				sleeps = append(sleeps, fmt.Sprintf("line %d", fset.Position(call.Pos()).Line))
+				return true
+			})
+			if len(sleeps) > 0 {
+				t.Errorf("%s: %s uses blind time.Sleep (%s); use waitForCondition or another completion signal", name, fn.Name.Name, strings.Join(sleeps, ", "))
+			}
+		}
+	}
+}
+
+// pollSleepPos returns the position of the one bounded poll sleep tolerated inside
+// waitForConditionTimeout: the final statement of its `for !condition()` poll loop.
+// It returns token.NoPos when the helper no longer has that exact shape; the ratchet
+// then reports the missing poll structure explicitly, and every sleep in the helper is
+// enumerated instead of exempted.
+func pollSleepPos(fn *ast.FuncDecl) token.Pos {
+	for _, stmt := range fn.Body.List {
+		loop, ok := stmt.(*ast.ForStmt)
+		if !ok {
+			continue
+		}
+		unary, ok := loop.Cond.(*ast.UnaryExpr)
+		if !ok || unary.Op != token.NOT {
+			continue
+		}
+		condCall, ok := unary.X.(*ast.CallExpr)
+		if !ok {
+			continue
+		}
+		if ident, ok := condCall.Fun.(*ast.Ident); !ok || ident.Name != "condition" {
+			continue
+		}
+		body := loop.Body.List
+		if len(body) == 0 {
+			continue
+		}
+		exprStmt, ok := body[len(body)-1].(*ast.ExprStmt)
+		if !ok {
+			continue
+		}
+		if call, ok := exprStmt.X.(*ast.CallExpr); ok && isTimeSleepCall(call) {
+			return call.Pos()
+		}
+	}
+	return token.NoPos
+}
+
+func isTimeSleepCall(call *ast.CallExpr) bool {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "Sleep" {
+		return false
+	}
+	ident, ok := selector.X.(*ast.Ident)
+	return ok && ident.Name == "time"
 }

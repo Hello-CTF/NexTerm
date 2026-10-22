@@ -90,7 +90,7 @@ func TestGrantRuleSetValidatesInput(t *testing.T) {
 			t.Fatalf("%s accepted: %+v", name, response)
 		}
 	}
-	if rules := grants.Rules(); len(rules) != 0 {
+	if rules := mustAgentRules(t, grants); len(rules) != 0 {
 		t.Fatalf("rejected rules persisted: %+v", rules)
 	}
 }

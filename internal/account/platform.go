@@ -46,5 +46,10 @@ func (a *Accounts) EnsurePlatformOwner(ctx context.Context) (*User, error) {
 	if err := query.Use(a.db).AppUser.WithContext(ctx).Create(&row); err != nil && !store.IsUniqueErr(err) {
 		return nil, translateUserWriteError(err)
 	}
-	return a.GetUserByUsername(ctx, PlatformOwnerUsername)
+	owner, err = a.GetUserByUsername(ctx, PlatformOwnerUsername)
+	if err != nil {
+		return nil, err
+	}
+	a.notifyActiveSuperadmin(ctx, owner)
+	return owner, nil
 }

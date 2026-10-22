@@ -15,10 +15,15 @@ const mocks = vi.hoisted(() => ({
   listSessions: vi.fn(),
   closeTab: vi.fn(),
   write: vi.fn(),
+  helperOperation: vi.fn(),
+  helperUpdate: vi.fn(),
+  helperOffline: vi.fn(),
+  promptText: vi.fn(),
 }));
 
 vi.mock("../../app/platform", () => ({
   isMac: () => false,
+  isWindows: () => false,
   modHint: () => "Ctrl",
   setMacPlatform: () => {},
   wailsDragRegionStyle: {},
@@ -42,6 +47,9 @@ vi.mock("../../ipc/commands", () => ({
     listLive: mocks.listLive,
     write: mocks.write,
     closeTab: mocks.closeTab,
+    helperOperation: mocks.helperOperation,
+    helperUpdate: mocks.helperUpdate,
+    helperOffline: mocks.helperOffline,
     detach: vi.fn().mockResolvedValue(undefined),
     setVisible: vi.fn().mockResolvedValue(undefined),
   },
@@ -63,7 +71,7 @@ vi.mock("../../ui/dialogs", () => ({
   describeTarget: () => "",
   finishSave: vi.fn(),
   pickSavePath: vi.fn(),
-  promptText: vi.fn(),
+  promptText: mocks.promptText,
   ask: mocks.ask,
 }));
 
@@ -75,12 +83,14 @@ const harness = vi.hoisted(() => ({
 }));
 
 vi.mock("../../features/terminal/XtermView", async () => {
-  const { useEffect } = await import("react");
+  const { useEffect, useRef } = await import("react");
   return {
     XtermView: (props: Record<string, unknown>) => {
       harness.props = props;
+      const onHandleRef = useRef(props.onHandle);
+      onHandleRef.current = props.onHandle;
       useEffect(() => {
-        (props.onHandle as ((handle: unknown) => void) | undefined)?.({
+        (onHandleRef.current as ((handle: unknown) => void) | undefined)?.({
           copyBlock: () => "",
           scrollToBlock: () => {},
           navigateBlock: () => null,
@@ -98,7 +108,8 @@ vi.mock("../../features/terminal/XtermView", async () => {
 });
 
 import { TerminalPane } from "../../features/terminal/TerminalPane";
-import { useUi, type AppTab } from "../../app/store";
+import { createHelperOperationState } from "../../features/terminal/helperOperationState";
+import { assetConnectionProblemKey, useUi, type AppTab } from "../../app/store";
 
 let mounted: MountedView | undefined;
 
@@ -143,6 +154,10 @@ function seedTab(
       },
     ],
     toasts: [],
+    helperProgress: {},
+    helperOperations: createHelperOperationState(),
+    helperOperationTabs: {},
+    helperRetries: {},
   });
   return tab;
 }
@@ -171,6 +186,12 @@ function failAttach(code: string): void {
   });
 }
 
+function succeedAttach(id = "kernel-1"): void {
+  act(() => {
+    (harness.props?.onAttach as ((attached: string) => void) | undefined)?.(id);
+  });
+}
+
 function overlay(): HTMLElement | null {
   return [...(mounted?.container.querySelectorAll("span") ?? [])].find(
     (candidate) => candidate.textContent?.trim() === "这个终端已失效",
@@ -188,12 +209,22 @@ async function openTerminalMenu(): Promise<void> {
   await flush();
 }
 
+async function openToolbarOverflow(): Promise<void> {
+  const button = mounted?.container.querySelector<HTMLElement>('button[aria-label="更多终端操作"]');
+  if (!button) throw new Error("toolbar overflow button not found");
+  await act(async () => {
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
 async function clickMenuItem(label: string): Promise<void> {
   const item = [...document.querySelectorAll<HTMLElement>(".nx-menu .nx-menu-item")].find(
     (candidate) => candidate.textContent?.includes(label),
   );
   if (!item) throw new Error(`menu item ${label} not found`);
-  act(() => item.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await act(async () => {
+    item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
 }
 
 function menuLabels(): string[] {
@@ -217,6 +248,7 @@ const CHANGED_HOST_KEY = {
     port: 22,
     keyType: "ssh-ed25519",
     fingerprint: "SHA256:new",
+    key: "ZmFrZS1kZWFkLXRhYi1rZXk=",
     changed: true,
     known: [{ keyType: "ssh-ed25519", fingerprint: "SHA256:old" }],
   },
@@ -228,6 +260,7 @@ describe("terminal dead-tab overlay", () => {
     document.body.replaceChildren();
     harness.props = null;
     mocks.listLive.mockResolvedValue([]);
+    mocks.listSessions.mockImplementation(async () => useUi.getState().sessions);
     mocks.write.mockResolvedValue(undefined);
     mocks.closeTab.mockResolvedValue(undefined);
     mocks.connect.mockResolvedValue({
@@ -269,6 +302,111 @@ describe("terminal dead-tab overlay", () => {
     expect(storeTab()?.tabId).toBe("kernel-1");
   });
 
+  it.each([
+    { kind: "ssh", expected: ["kernel-1", "detach", "s1"] },
+    { kind: "device", expected: ["kernel-1", "detach", "s1"] },
+    { kind: "local", expected: ["kernel-1", undefined] },
+  ])("uses the safe default close path for an attach-dead $kind terminal", async ({ kind, expected }) => {
+    seedTab({}, { assetId: kind === "device" ? "device/d-1" : "asset-1", assetKind: kind });
+    mounted = mountPane();
+    await flush();
+    failAttach("not_found");
+    await waitFor(() => expect(overlay()).not.toBeNull());
+
+    clickButton(mounted.container, "关闭标签");
+
+    await waitFor(() => expect(mocks.closeTab).toHaveBeenCalledWith(...expected));
+    expect(storeTab()).toBeUndefined();
+  });
+
+  it("opens a genuinely new ordinary shell only after an explicit restore-failure choice", async () => {
+    seedTab();
+    mounted = mountPane();
+    await flush();
+    failAttach("not_found");
+    await waitFor(() => expect(overlay()).not.toBeNull());
+
+    clickButton(mounted.container, "新建普通终端");
+
+    await waitFor(() => expect(harness.props?.forceRegular).toBe(true));
+    expect(harness.props?.resumeTabId).toBeUndefined();
+    expect(storeTab()?.dead).toBe(true);
+    expect(storeTab()?.tabId).toBeUndefined();
+    expect(useUi.getState().helperOperations.operations.t1?.originalSession).toBe("not_restored");
+
+    succeedAttach("kernel-new-ordinary");
+
+    await waitFor(() => expect(storeTab()?.dead).toBe(false));
+    expect(storeTab()?.tabId).toBe("kernel-new-ordinary");
+    expect(useUi.getState().helperOperations.operations.t1).toBeUndefined();
+  });
+
+  it("keeps remote survival uncertainty visible when detach returns not_found", async () => {
+    mocks.closeTab.mockRejectedValue({ code: "not_found", message: "local tab missing" });
+    seedTab();
+    mounted = mountPane();
+    await flush();
+    failAttach("not_found");
+    await waitFor(() => expect(overlay()).not.toBeNull());
+
+    clickButton(mounted.container, "关闭标签");
+
+    await waitFor(() => expect(storeTab()).toBeUndefined());
+    expect(toastTexts()).toContain("远端持久终端可能仍在运行");
+  });
+
+  it("closes a dead remote tab while keeping unknown survival visible on disconnected", async () => {
+    mocks.closeTab.mockRejectedValue({ code: "disconnected", message: "close outcome unknown" });
+    seedTab();
+    mounted = mountPane();
+    await flush();
+    failAttach("not_found");
+    await waitFor(() => expect(overlay()).not.toBeNull());
+
+    clickButton(mounted.container, "关闭标签");
+
+    await waitFor(() => expect(storeTab()).toBeUndefined());
+    expect(toastTexts()).toContain("远端持久终端可能仍在运行");
+  });
+
+  it.each([false, true])("synchronizes attach info with exited=%s and clears stale close state", async (exited) => {
+    seedTab({ dead: true, exited: !exited, closeError: "stale" });
+    mocks.listLive.mockResolvedValue([{
+      tabId: "kernel-1",
+      sessionId: "s1",
+      sessionName: "web-01",
+      sessionKind: "ssh",
+      cols: 80,
+      rows: 24,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited,
+      lastOutputMsAgo: 0,
+    }]);
+    mounted = mountPane();
+    await flush();
+
+    act(() => {
+      (harness.props?.onAttachInfo as ((info: Record<string, unknown>) => void) | undefined)?.({
+        tabId: "kernel-1",
+        controller: "me",
+        subscribers: 1,
+        viewers: 1,
+        exited,
+        retainable: true,
+        shell: "posix",
+      });
+      (harness.props?.onAttach as ((id: string) => void) | undefined)?.("kernel-1");
+    });
+
+    await waitFor(() => {
+      expect(storeTab()?.exited).toBe(exited);
+      expect(storeTab()?.dead).toBe(false);
+      expect(storeTab()?.closeError).toBeUndefined();
+    });
+  });
+
   it("keeps the terminal on other attach failures such as bad_param", async () => {
     seedTab();
     mounted = mountPane();
@@ -291,6 +429,7 @@ describe("terminal dead-tab overlay", () => {
     clickButton(mounted.container, "重新连接这台主机");
 
     await flush();
+    succeedAttach();
     await waitFor(() => expect(overlay()).toBeNull());
     expect(mocks.connect).toHaveBeenCalledWith("asset-1");
     expect(storeTab()?.dead).toBe(false);
@@ -313,6 +452,7 @@ describe("terminal dead-tab overlay", () => {
         status: "connected", tabs: [], createdAt: 1,
       }]);
     });
+    succeedAttach();
     await waitFor(() => expect(overlay()).toBeNull());
     expect(harness.props?.resumeTabId).toBe("kernel-1");
     expect(storeTab()?.tabId).toBe("kernel-1");
@@ -383,6 +523,7 @@ describe("terminal dead-tab overlay", () => {
     clickButton(mounted.container, "重新连接这台主机");
 
     await flush();
+    succeedAttach();
     await waitFor(() => expect(overlay()).toBeNull());
     expect(mocks.connectDevice).toHaveBeenCalledWith("d-1", "build-box");
     expect(mocks.connectDevice).toHaveBeenCalledTimes(1);
@@ -515,6 +656,232 @@ describe("terminal dead-tab overlay", () => {
     expect(overlay()).not.toBeNull();
     expect(storeTab()?.dead).toBe(true);
   });
+
+  it("discards helper metadata returned by an old session after reconnect", async () => {
+    let resolveStatus: ((value: unknown) => void) | undefined;
+    mocks.helperOperation.mockReturnValue(new Promise((resolve) => {
+      resolveStatus = resolve;
+    }));
+    seedTab();
+    mounted = mountPane();
+    await flush();
+    await openToolbarOverflow();
+    await clickMenuItem("持久终端助手…");
+    act(() => {
+      useUi.getState().setHelperProgress({
+        sessionId: "s1",
+        assetId: "asset-1",
+        operationId: "stale-operation",
+        attempt: 1,
+        attempts: 3,
+        deadline: Date.now() + 60_000,
+        step: 1,
+        steps: 6,
+        stage: "discover",
+        transferred: 0,
+        total: 0,
+        percent: -1,
+        done: false,
+      });
+    });
+    expect(useUi.getState().helperOperations.operations.t1?.operationId).toBe("stale-operation");
+
+    act(() => {
+      mounted!.root.render(createElement(TerminalPane, {
+        sessionId: "s2",
+        title: "web-01",
+        storeTabId: "t1",
+        resumeTabId: "kernel-1",
+      }));
+    });
+    resolveStatus?.({
+      sessionId: "s1",
+      action: "status",
+      accepted: false,
+      local: { known: true, release: "stale-release", protocol: 2, sha256: "d".repeat(64) },
+      running: { known: false },
+      compatibility: "unknown",
+    });
+    await flush();
+
+    expect(useUi.getState().helperOperations.operations.t1).toBeUndefined();
+    expect(mounted.container.textContent).not.toContain("stale-release");
+    expect(mounted.container.textContent).not.toContain("持久终端助手");
+  });
+
+  it("keeps only the newest same-session status result when update finishes first", async () => {
+    let resolveStaleStatus: ((value: unknown) => void) | undefined;
+    const currentSHA = "e".repeat(64);
+    mocks.helperOperation
+      .mockResolvedValueOnce({
+        sessionId: "s1",
+        action: "status",
+        accepted: false,
+        local: { known: true, release: "current", protocol: 2, sha256: currentSHA },
+        running: { known: true, release: "running", protocol: 2, sha256: currentSHA },
+        compatibility: "compatible",
+        update: { status: "available" },
+      })
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveStaleStatus = resolve;
+      }));
+    mocks.helperUpdate.mockResolvedValue({
+      sessionId: "s1",
+      action: "update_interrupt",
+      accepted: true,
+      local: { known: true, release: "updated", protocol: 2, sha256: "f".repeat(64) },
+      running: { known: true, release: "updated-running", protocol: 2, sha256: "f".repeat(64) },
+      compatibility: "compatible",
+      update: { status: "updated", updated: true, interrupted: true, rolledBack: false },
+    });
+    seedTab();
+    mounted = mountPane();
+    await flush();
+    await openToolbarOverflow();
+    await clickMenuItem("持久终端助手…");
+    await waitFor(() => expect(mounted?.container.textContent).toContain("可以检查并执行助手更新"));
+
+    await openToolbarOverflow();
+    await clickMenuItem("持久终端助手…");
+    clickButton(mounted.container, "中断活动进程并更新");
+    await waitFor(() => expect(mocks.helperUpdate).toHaveBeenCalledWith("s1", true));
+    await waitFor(() => expect(mounted?.container.textContent).toContain("updated-running"));
+
+    resolveStaleStatus?.({
+      sessionId: "s1",
+      action: "status",
+      accepted: false,
+      local: { known: true, release: "stale-before-update", protocol: 2, sha256: "d".repeat(64) },
+      running: { known: true, release: "stale-running", protocol: 2, sha256: "d".repeat(64) },
+      compatibility: "compatible",
+      update: { status: "available" },
+    });
+    await flush();
+
+    expect(mounted.container.textContent).toContain("updated-running");
+    expect(mounted.container.textContent).not.toContain("stale-before-update");
+    expect(mounted.container.textContent).not.toContain("stale-running");
+  });
+
+  it("shows real helper versions and sends explicit default/interrupt update actions", async () => {
+    const localSHA = "a".repeat(64);
+    const runningSHA = "b".repeat(64);
+    const status = {
+      sessionId: "s1",
+      action: "status",
+      accepted: false,
+      local: { known: true, release: "v1.4.0", commit: "local-commit", protocol: 2, sha256: localSHA },
+      running: { known: true, release: "v1.3.9", commit: "running-commit", protocol: 2, sha256: runningSHA },
+      compatibility: "compatible",
+      update: { status: "available", detail: "检测到活动 PTY" },
+    };
+    mocks.helperOperation.mockResolvedValue(status);
+    mocks.helperUpdate.mockImplementation(async (_sessionId, interruptActive) => ({
+      ...status,
+      action: interruptActive ? "update_interrupt" : "update",
+      accepted: true,
+      update: { status: "updated", detail: interruptActive ? "已明确中断活动进程" : "已完成空闲更新" },
+    }));
+    seedTab();
+    mounted = mountPane();
+    await flush();
+
+    await openToolbarOverflow();
+    await clickMenuItem("持久终端助手…");
+
+    await waitFor(() => expect(mounted?.container.textContent).toContain("v1.4.0"));
+    expect(mounted.container.textContent).toContain("local-commit");
+    expect(mounted.container.textContent).toContain(localSHA);
+    expect(mounted.container.textContent).toContain("v1.3.9");
+    expect(mounted.container.textContent).toContain(runningSHA);
+    expect(mounted.container.textContent).toContain("协议兼容；发布版本不同不妨碍继续");
+    expect(mocks.helperOperation).toHaveBeenCalledWith("s1", "", "status");
+
+    clickButton(mounted.container, "更新助手");
+    await waitFor(() => expect(mocks.helperUpdate).toHaveBeenCalledWith("s1", false));
+    await waitFor(() => expect(mounted?.container.textContent).toContain("助手更新已完成"));
+
+    await openToolbarOverflow();
+    await clickMenuItem("持久终端助手…");
+    await waitFor(() => expect(mounted?.container.textContent).toContain("可以检查并执行助手更新"));
+    clickButton(mounted.container, "中断活动进程并更新");
+    await waitFor(() => expect(mocks.helperUpdate).toHaveBeenCalledWith("s1", true));
+  });
+
+  it("renders structured rollback details from update errors", async () => {
+    const status = {
+      sessionId: "s1",
+      action: "status",
+      accepted: false,
+      local: { known: true, release: "v1.4.0", protocol: 2, sha256: "a".repeat(64) },
+      running: { known: true, release: "v1.3.9", protocol: 2, sha256: "b".repeat(64) },
+      compatibility: "compatible",
+      update: { status: "available" },
+    };
+    mocks.helperOperation.mockResolvedValue(status);
+    mocks.helperUpdate.mockRejectedValue({
+      code: "unavailable",
+      message: "helper update failed; previous daemon restored",
+      detail: {
+        ...status,
+        action: "update",
+        update: {
+          status: "rolled_back",
+          detail: "previous daemon restored",
+          updated: false,
+          interrupted: false,
+          rolledBack: true,
+        },
+      },
+    });
+    seedTab();
+    mounted = mountPane();
+    await flush();
+    await openToolbarOverflow();
+    await clickMenuItem("持久终端助手…");
+    await waitFor(() => expect(mounted?.container.textContent).toContain("可以检查并执行助手更新"));
+
+    clickButton(mounted.container, "更新助手");
+
+    await waitFor(() => expect(mocks.helperUpdate).toHaveBeenCalledWith("s1", false));
+    await waitFor(() => expect(mounted?.container.textContent).toContain("已回滚助手二进制"));
+    expect(mounted.container.textContent).toContain("更新失败，已返回回滚结果");
+    expect(mounted.container.textContent).toContain("helper update failed; previous daemon restored");
+  });
+
+  it("requires an explicit offline SHA confirmation through the real terminal menu", async () => {
+    const sha256 = "c".repeat(64);
+    const inspected = {
+      sessionId: "s1",
+      action: "offline",
+      accepted: false,
+      local: { known: true, release: "v1.4.0", commit: "offline-commit", protocol: 2, sha256 },
+      running: { known: false },
+      compatibility: "compatible",
+      offline: { fileName: "offline-helper", sha256, protocol: 2, compatibility: "compatible", trusted: false },
+    };
+    mocks.promptText.mockResolvedValue("/tmp/offline-helper");
+    mocks.helperOffline
+      .mockResolvedValueOnce(inspected)
+      .mockResolvedValueOnce({
+        ...inspected,
+        accepted: true,
+        offline: { ...inspected.offline, trusted: true },
+      });
+    seedTab();
+    mounted = mountPane();
+    await flush();
+
+    await openToolbarOverflow();
+    await clickMenuItem("导入离线 helper…");
+
+    await waitFor(() => expect(mounted?.container.textContent).toContain(sha256));
+    expect(mounted.container.textContent).toContain("协议兼容；发布版本不同不妨碍继续");
+    clickButton(mounted.container, "确认 SHA-256 并信任离线文件");
+
+    await waitFor(() => expect(mocks.helperOffline).toHaveBeenCalledWith("s1", "/tmp/offline-helper", sha256, true));
+    await waitFor(() => expect(mounted?.container.textContent).not.toContain("确认 SHA-256 并信任离线文件"));
+  });
 });
 
 describe("terminal dead-tab context menu reconnect", () => {
@@ -555,6 +922,7 @@ describe("terminal dead-tab context menu reconnect", () => {
     await clickMenuItem("重新连接这台主机");
 
     await waitFor(() => expect(mocks.connect).toHaveBeenCalledWith("asset-1"));
+    succeedAttach();
     await waitFor(() => expect(overlay()).toBeNull());
     expect(mocks.reconnect).not.toHaveBeenCalled();
     const st = useUi.getState();
@@ -599,6 +967,38 @@ describe("terminal dead-tab context menu reconnect", () => {
     expect(storeTab()?.tabId).toBe("kernel-1");
   });
 
+  it("records a current-session reconnect failure and clears it after retry", async () => {
+    useUi.setState({ workspaceRuntime: {}, connectionProblems: {} });
+    seedTab();
+    mocks.reconnect.mockResolvedValueOnce(false).mockResolvedValue(true);
+    mounted = mountPane();
+    await flush();
+
+    await openTerminalMenu();
+    await clickMenuItem("重连会话");
+    await waitFor(() => expect(toastTexts()).toContain("重连失败：重连未能启动"));
+    expect(useUi.getState().workspaceRuntime.ws1?.problems?.[0]).toMatchObject({
+      connectionKey: assetConnectionProblemKey("asset-1"),
+      summary: "重连未能启动",
+    });
+
+    mocks.listSessions.mockResolvedValue([
+      {
+        id: "s1",
+        assetId: "asset-1",
+        name: "web-01",
+        kind: "ssh",
+        status: "connected",
+        tabs: [],
+        createdAt: 1,
+      },
+    ]);
+    await openTerminalMenu();
+    await clickMenuItem("重连会话");
+    await waitFor(() => expect(toastTexts()).toContain("已重新连接"));
+    expect(useUi.getState().workspaceRuntime.ws1?.problems ?? []).toEqual([]);
+  });
+
   it("cancelling the changed host key confirmation neither trusts nor retries", async () => {
     seedTab();
     mounted = mountPane();
@@ -632,13 +1032,14 @@ describe("terminal dead-tab context menu reconnect", () => {
     await clickMenuItem("重新连接这台主机");
 
     await waitFor(() => expect(toastTexts()).toContain("已重新连接"));
-    expect(mocks.knownHostAccept).toHaveBeenCalledWith("127.0.0.1", 22, "ssh-ed25519", "SHA256:new");
+    expect(mocks.knownHostAccept).toHaveBeenCalledWith("127.0.0.1", 22, "ssh-ed25519", "SHA256:new", "ZmFrZS1kZWFkLXRhYi1rZXk=");
     expect(mocks.connect).toHaveBeenCalledTimes(2);
     const st = useUi.getState();
     expect(st.workspaces).toHaveLength(1);
     expect(st.workspaces[0]?.panes[0]?.tabs).toHaveLength(1);
     expect(storeTab()?.sessionId).toBe("s2");
-    expect(storeTab()?.dead).toBe(false);
+    succeedAttach();
+    await waitFor(() => expect(storeTab()?.dead).toBe(false));
   });
 
   it("keeps the tab dead and reports the error when the fresh connect fails", async () => {
@@ -703,7 +1104,7 @@ describe("terminal dead-tab context menu reconnect", () => {
     expect(mounted.container.textContent).toContain("原进程和输入不能恢复");
     expect(storeTab()?.tabId).toBe("exec-1");
     clickButton(mounted.container, "重新打开 exec");
-    await waitFor(() => expect(storeTab()?.exited).toBe(false));
+    await waitFor(() => expect(storeTab()?.exited).toBeUndefined());
     expect(storeTab()?.tabId).toBeUndefined();
   });
 

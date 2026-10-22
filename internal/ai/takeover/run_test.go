@@ -46,6 +46,7 @@ func newHarnessWith(t *testing.T, chat model.BaseChatModel, configure func(*Depe
 			return screen, nil
 		},
 		PollInterval: time.Millisecond,
+		Shared:       true,
 	}
 	deps.WriteAI = func(_ context.Context, _ string, data []byte) error {
 		h.mu.Lock()

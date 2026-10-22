@@ -130,6 +130,9 @@ func buildAcceptanceWorkload(t *testing.T, enc Encoding) (chunks [][]byte, total
 const linuxUserHZ = 100
 
 func processCPUTime() (float64, bool) {
+	if seconds, ok := nativeProcessCPUTime(); ok {
+		return seconds, true
+	}
 	data, err := os.ReadFile("/proc/self/stat")
 	if err != nil {
 		return 0, false

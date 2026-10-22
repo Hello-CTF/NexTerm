@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { acceptanceWatchIgnored } from "./src/test/lib/acceptance-watch-ignores.mjs";
+import { acceptanceWatchIgnored } from "./scripts/lib/vite-watch-ignores.mjs";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 
@@ -16,8 +16,8 @@ const config = defineConfig({
     // The root accumulates artifact dirs like .tower/target (up to millions of
     // files in the main checkout): vite dev watches the whole root by default
     // and would walk all of them, blowing past a 2GB heap into OOM (M238).
-    // The ignore rules anchor on the root itself, reusing the set in
-    // src/test/lib/acceptance-watch-ignores.mjs.
+    // The ignore rules anchor on the root itself, reusing the shared helper in
+    // scripts/lib/vite-watch-ignores.mjs.
     watch: { ignored: acceptanceWatchIgnored(root) },
   },
   // Dep scanning collects entries via **/*.html by default and would also walk
@@ -32,6 +32,7 @@ const config = defineConfig({
     chunkSizeWarningLimit: 2000,
   },
   test: {
+    maxWorkers: 2,
     environment: "node",
     include: ["src/test/**/*.test.ts", "src/test/**/*.test.tsx"],
     setupFiles: ["src/test/setup.ts"],

@@ -63,20 +63,13 @@ func TestDesktopStreamsPreserveBinaryJSONAndChannelOrder(t *testing.T) {
 	if events[0].Name != "channel://pty-1" || events[1].Name != "channel://pty-1" || events[2].Name != "channel://ai-1" {
 		t.Fatalf("event topics = %q, %q, %q", events[0].Name, events[1].Name, events[2].Name)
 	}
-	if got := events[0].Data; !reflect.DeepEqual(got, []int{0, 1, 127, 255}) {
+	if got := decodeDesktopBinaryData(t, events[0].Data); !reflect.DeepEqual(got, []byte{0, 1, 127, 255}) {
 		t.Fatalf("first binary payload = %#v", got)
 	}
-	if got := events[1].Data; !reflect.DeepEqual(got, []int{2, 3}) {
+	if got := decodeDesktopBinaryData(t, events[1].Data); !reflect.DeepEqual(got, []byte{2, 3}) {
 		t.Fatalf("second binary payload = %#v", got)
 	}
-	encoded, err := json.Marshal(events[0].Data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(encoded) != `[0,1,127,255]` {
-		t.Fatalf("binary JSON = %s", encoded)
-	}
-	encoded, err = json.Marshal(events[2].Data)
+	encoded, err := json.Marshal(events[2].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,8 +116,12 @@ func TestDesktopStreamCloseReopenAndIsolation(t *testing.T) {
 		t.Fatalf("stale producer error = %v", err)
 	}
 	events := window.snapshot()
-	if len(events) != 2 || events[0].Name != "channel://shared-id" || events[1].Name != "channel://other-id" {
+	if len(events) != 3 || events[0].Name != "channel://shared-id" || events[1].Name != "channel://shared-id" || events[2].Name != "channel://other-id" {
 		t.Fatalf("events after reopen = %+v", events)
+	}
+	closed, ok := events[0].Data.(desktopStreamClosedEvent)
+	if !ok || closed.Type != desktopStreamClosedEventType {
+		t.Fatalf("close payload = %#v, want one typed reopen notification", events[0].Data)
 	}
 }
 
@@ -163,6 +160,9 @@ func TestDesktopStreamRejectsUnavailableInvalidAndCanceledCalls(t *testing.T) {
 	if err := factory.Close(); err != nil {
 		t.Fatal(err)
 	}
+	if events := window.snapshot(); len(events) != 0 {
+		t.Fatalf("factory shutdown emitted reopen notifications: %+v", events)
+	}
 	if err := factory.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestDesktopStreamSerializesConcurrentSendsPerChannel(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
 	window := &recordingStreamWindow{before: func(event *application.CustomEvent) {
-		if values, ok := event.Data.([]int); ok && len(values) == 1 && values[0] == 1 {
+		if values, ok := desktopBinaryBytes(event.Data); ok && len(values) == 1 && values[0] == 1 {
 			once.Do(func() { close(started) })
 			<-release
 		}
@@ -216,7 +216,9 @@ func TestDesktopStreamSerializesConcurrentSendsPerChannel(t *testing.T) {
 		}
 	}
 	events := window.snapshot()
-	if len(events) != 2 || !reflect.DeepEqual(events[0].Data, []int{1}) || !reflect.DeepEqual(events[1].Data, []int{2}) {
+	if len(events) != 2 ||
+		!reflect.DeepEqual(decodeDesktopBinaryData(t, events[0].Data), []byte{1}) ||
+		!reflect.DeepEqual(decodeDesktopBinaryData(t, events[1].Data), []byte{2}) {
 		t.Fatalf("ordered events = %+v", events)
 	}
 }

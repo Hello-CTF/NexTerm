@@ -25,7 +25,7 @@ function setup() {
   return { term, manager, filter, write, latest };
 }
 
-const drainWrites = () => new Promise((resolve) => setTimeout(resolve, 80));
+const drainWrites = (term: Terminal) => new Promise<void>((resolve) => term.write("", resolve));
 
 describe("OSC 133 write ordering", () => {
   it("applies echo/C/output/D from a single chunk in stream order", async () => {
@@ -35,7 +35,7 @@ describe("OSC 133 write ordering", () => {
         enc.encode("$ make\r\n\x1b]133;C\x07line1\r\nline2\r\n\x1b]133;D;2\x07$ "),
       ),
     );
-    await drainWrites();
+    await drainWrites(h.term);
     const blocks = h.latest();
     expect(blocks).toHaveLength(1);
     const block = blocks[0];
@@ -55,9 +55,9 @@ describe("OSC 133 write ordering", () => {
   it("keeps order across chunk boundaries (echo, then C/output/D)", async () => {
     const h = setup();
     h.write(h.filter.push(enc.encode("$ systemctl status\r\n")));
-    await drainWrites();
+    await drainWrites(h.term);
     h.write(h.filter.push(enc.encode("\x1b]133;C\x07active (running)\r\n\x1b]133;D;0\x07$ ")));
-    await drainWrites();
+    await drainWrites(h.term);
     const blocks = h.latest();
     expect(blocks).toHaveLength(1);
     expect(blocks[0].command).toBe("$ systemctl status");
@@ -71,7 +71,7 @@ describe("OSC 133 write ordering", () => {
     h.write(h.filter.push(enc.encode("$ make\r\n")));
     h.write(h.filter.push(enc.encode("\x1b]133;C\x07line1\r\nline2\r\n")));
     h.write(h.filter.push(enc.encode("\x1b]133;D;2\x07$ ")));
-    await drainWrites();
+    await drainWrites(h.term);
     const blocks = h.latest();
     expect(blocks).toHaveLength(1);
     expect(blocks[0].command).toBe("$ make");
@@ -95,7 +95,7 @@ describe("OSC 133 write ordering", () => {
       },
     );
     write(filter.push(enc.encode("first\r\n\x1b]133;D;1\x07")));
-    await drainWrites();
+    await drainWrites(h.term);
     // D must observe the already-parsed "first" line, not an empty buffer.
     expect(seen).toEqual(["D:first"]);
     h.term.dispose();

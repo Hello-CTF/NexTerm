@@ -71,8 +71,12 @@ type ReconnectPolicy struct {
 }
 
 type Config struct {
-	Provider         DialerProvider
-	SessionHost      func(context.Context, string) (string, error)
+	Provider    DialerProvider
+	SessionHost func(context.Context, string) (string, error)
+	Rules       RuleStore
+	// IsProduction classifies recovery targets for the requesting
+	// owner. Nil keeps the built-in production environment classification.
+	IsProduction     func(context.Context, string) (bool, error)
 	Policy           Policy
 	Reconnect        ReconnectPolicy
 	DialTimeout      time.Duration

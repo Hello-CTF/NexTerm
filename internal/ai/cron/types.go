@@ -17,6 +17,9 @@ var (
 	ErrStorage          = errors.New("定时任务存储失败，请重试")
 	ErrExecutionTimeout = errors.New("定时任务执行超时")
 	ErrLeaseLost        = errors.New("定时任务租约丢失，本次运行已中断")
+	ErrOwnerlessLegacy  = errors.New("账号模式不能执行无所有者的旧定时任务，请重新创建")
+	ErrInvalidOwner     = errors.New("定时任务所有者信息无效")
+	ErrForeignScope     = errors.New("定时任务会话不属于任务所有者")
 )
 
 type StorageError struct {
@@ -45,6 +48,15 @@ func storageError(op, jobID string, err error) error {
 
 type Store interface {
 	List(ctx context.Context) ([]Job, error)
+	// ListDueIdle returns at most limit enabled, non-running jobs whose next
+	// occurrence is due at now, ordered by (next_run_at, id) so batches are
+	// stable. A limit <= 0 yields no rows.
+	ListDueIdle(ctx context.Context, now time.Time, limit int) ([]Job, error)
+	// ListRecoveryCandidates returns at most limit running jobs whose lease and
+	// run deadline have both expired at now, ordered by (run_deadline, id) so
+	// batches are stable. Excluded IDs let scans pass locally active cleanups.
+	// A limit <= 0 yields no rows.
+	ListRecoveryCandidates(ctx context.Context, now time.Time, limit int, excludedIDs ...string) ([]Job, error)
 	Create(ctx context.Context, job Job, maxPerSession int) (Job, error)
 	CompareAndSwap(ctx context.Context, job Job, expectedRevision uint64) (Job, error)
 	Delete(ctx context.Context, sessionID, jobID string, expectedRevision uint64) error
@@ -98,6 +110,8 @@ type Job struct {
 	LastError           string        `json:"lastError,omitempty"`
 	Lease               Lease         `json:"lease"`
 	Run                 RunState      `json:"run"`
+	OwnerID             string        `json:"ownerId"`
+	OwnerKind           OwnerKind     `json:"ownerKind"`
 }
 
 func (j Job) Running() bool { return j.Run.ID != "" }
@@ -111,33 +125,43 @@ type Trigger struct {
 	ScheduledFor   time.Time `json:"scheduledFor"`
 	Coalesced      bool      `json:"coalesced"`
 	ModelProfileID string    `json:"modelProfileId,omitempty"`
+	OwnerID        string    `json:"ownerId"`
+	OwnerKind      OwnerKind `json:"ownerKind"`
 }
 
+// Execute must return after ctx cancellation; the scheduler renews the durable lease while cancellation cleanup is in progress.
 type Executor interface {
 	Execute(ctx context.Context, trigger Trigger) error
 }
 
 const (
-	DefaultMaxJobsPerSession = 32
-	DefaultExecutionTimeout  = time.Minute
-	DefaultLeaseDuration     = 20 * time.Second
-	DefaultPollInterval      = time.Second
-	DefaultFailureBackoff    = time.Second
-	DefaultMaxFailureBackoff = time.Minute
-	DefaultCircuitThreshold  = 5
-	DefaultCircuitCooldown   = 5 * time.Minute
+	DefaultMaxJobsPerSession       = 32
+	DefaultMaxConcurrentExecutions = 4
+	DefaultExecutionTimeout        = time.Minute
+	DefaultLeaseDuration           = 20 * time.Second
+	DefaultPollInterval            = time.Second
+	DefaultFailureBackoff          = time.Second
+	DefaultMaxFailureBackoff       = time.Minute
+	DefaultCircuitThreshold        = 5
+	DefaultCircuitCooldown         = 5 * time.Minute
+	DefaultDueScanBatchSize        = 64
+	DefaultRecoveryBatchSize       = 64
 )
 
 type Options struct {
-	MaxJobsPerSession int
-	ExecutionTimeout  time.Duration
-	LeaseDuration     time.Duration
-	PollInterval      time.Duration
-	FailureBackoff    time.Duration
-	MaxFailureBackoff time.Duration
-	CircuitThreshold  int
-	CircuitCooldown   time.Duration
-	OwnerID           string
-	Now               func() time.Time
-	OnError           func(error)
+	MaxJobsPerSession       int
+	MaxConcurrentExecutions int
+	ExecutionTimeout        time.Duration
+	LeaseDuration           time.Duration
+	PollInterval            time.Duration
+	FailureBackoff          time.Duration
+	MaxFailureBackoff       time.Duration
+	CircuitThreshold        int
+	CircuitCooldown         time.Duration
+	DueScanBatchSize        int
+	RecoveryBatchSize       int
+	AllowOwnerlessLegacy    bool
+	OwnerID                 string
+	Now                     func() time.Time
+	OnError                 func(error)
 }

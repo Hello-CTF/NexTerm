@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/ai/watches"
 	fleetserver "github.com/Hello-CTF/NexTerm/internal/fleet/server"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
@@ -142,14 +143,22 @@ VALUES(?,?,'box','agent',1)`, row.deviceID, row.ownerID); err != nil {
 		{"other user notification", ipc.Event{Event: ipc.TopicAINotification, Payload: ipc.AINotificationEvent{OwnerID: "u-2", Text: "构建完成"}}, false},
 		{"ownerless notification", ipc.Event{Event: ipc.TopicAINotification, Payload: ipc.AINotificationEvent{Text: "构建完成"}}, false},
 		{"foreign notification payload", ipc.Event{Event: ipc.TopicAINotification, Payload: map[string]any{"ownerId": "u-1"}}, false},
+		{"own watch tool data", ipc.Event{Event: ipc.TopicAIWatchToolData, Payload: watches.ToolDataEvent{OwnerID: "u-1", Data: watches.NewToolData(watches.Event{Kind: watches.EventKind, DeliveryID: "d-1"})}}, true},
+		{"other user watch tool data", ipc.Event{Event: ipc.TopicAIWatchToolData, Payload: watches.ToolDataEvent{OwnerID: "u-2", Data: watches.NewToolData(watches.Event{Kind: watches.EventKind, DeliveryID: "d-1"})}}, false},
+		{"ownerless watch tool data", ipc.Event{Event: ipc.TopicAIWatchToolData, Payload: watches.ToolDataEvent{Data: watches.NewToolData(watches.Event{Kind: watches.EventKind, DeliveryID: "d-1"})}}, false},
+		{"foreign watch tool data payload", ipc.Event{Event: ipc.TopicAIWatchToolData, Payload: map[string]any{"ownerId": "u-1"}}, false},
 		{"own layout", ipc.Event{Event: ipc.TopicLayoutChanged, Payload: ipc.LayoutChangedEvent{Revision: 1}, OwnerID: "u-1"}, true},
 		{"other user layout", ipc.Event{Event: ipc.TopicLayoutChanged, Payload: ipc.LayoutChangedEvent{Revision: 1}, OwnerID: "u-2"}, false},
 		{"ownerless layout", ipc.Event{Event: ipc.TopicLayoutChanged, Payload: ipc.LayoutChangedEvent{Revision: 1}}, false},
 		{"malformed layout", ipc.Event{Event: ipc.TopicLayoutChanged, Payload: map[string]any{"revision": 1}, OwnerID: "u-1"}, false},
+		{"own inventory", ipc.Event{Event: ipc.TopicInventoryChanged, Payload: ipc.InventoryChangedEvent{Source: "ssh-config", GroupID: "g-1"}, OwnerID: "u-1"}, true},
+		{"other user inventory", ipc.Event{Event: ipc.TopicInventoryChanged, Payload: ipc.InventoryChangedEvent{Source: "ssh-config", GroupID: "g-2"}, OwnerID: "u-2"}, false},
+		{"ownerless inventory", ipc.Event{Event: ipc.TopicInventoryChanged, Payload: ipc.InventoryChangedEvent{Source: "ssh-config", GroupID: "g-1"}}, false},
+		{"malformed inventory", ipc.Event{Event: ipc.TopicInventoryChanged, Payload: map[string]any{"source": "ssh-config"}, OwnerID: "u-1"}, false},
 		{"own sync status", ipc.Event{Event: ipc.TopicSyncStatus, Payload: ipc.SyncStatusEvent{OwnerID: "u-1"}}, true},
 		{"other user sync status", ipc.Event{Event: ipc.TopicSyncStatus, Payload: ipc.SyncStatusEvent{OwnerID: "u-2"}}, false},
 		{"unscoped sync status", ipc.Event{Event: ipc.TopicSyncStatus, Payload: ipc.SyncStatusEvent{}}, false},
-		{"legacy sync status payload", ipc.Event{Event: ipc.TopicSyncStatus, Payload: struct{}{}}, true},
+		{"legacy sync status payload", ipc.Event{Event: ipc.TopicSyncStatus, Payload: struct{}{}}, false},
 		{"malformed sync status payload", ipc.Event{Event: ipc.TopicSyncStatus, Payload: map[string]any{}}, false},
 		{"legacy sync round complete", ipc.Event{Event: ipc.Topic("sync://round-complete"), Payload: struct{}{}}, true},
 		{"malformed sync round complete", ipc.Event{Event: ipc.Topic("sync://round-complete"), Payload: map[string]any{}}, false},
@@ -245,5 +254,42 @@ func TestEventFilterPublicAllowlistAndUnknownTopic(t *testing.T) {
 	}
 	if filter(ipc.Event{Event: ipc.Topic("unknown://sensitive"), Payload: struct{}{}, OwnerID: "u-1"}) {
 		t.Fatal("unknown topic was delivered by the default branch")
+	}
+}
+
+func TestInventoryChangedBrokerDeliveryRespectsSubscriberOwner(t *testing.T) {
+	broker := NewEventBroker()
+	server := &Server{}
+	alice, unsubscribeAlice, err := broker.subscribe(0, false, false, server.eventFilter(&account.Identity{UserID: "u-1", Role: account.RoleUser}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsubscribeAlice()
+	bob, unsubscribeBob, err := broker.subscribe(0, false, false, server.eventFilter(&account.Identity{UserID: "u-2", Role: account.RoleUser}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsubscribeBob()
+
+	if err := ipc.Emit(ipc.WithUserID(context.Background(), "u-1"), broker, ipc.TopicInventoryChanged, ipc.InventoryChangedEvent{Source: "ssh-config", GroupID: "g-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(alice.queue) != 1 || len(bob.queue) != 0 {
+		t.Fatalf("owner delivery queues: alice=%d bob=%d", len(alice.queue), len(bob.queue))
+	}
+	if data := <-alice.queue; !strings.Contains(string(data), `"source":"ssh-config"`) {
+		t.Fatalf("inventory payload = %s", data)
+	}
+	if err := ipc.Emit(context.Background(), broker, ipc.TopicInventoryChanged, ipc.InventoryChangedEvent{Source: "ssh-config", GroupID: "g-ownerless"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(alice.queue) != 0 || len(bob.queue) != 0 {
+		t.Fatal("ownerless inventory event reached a logged-in subscriber")
+	}
+	if err := ipc.Emit(ipc.WithUserID(context.Background(), "u-2"), broker, ipc.TopicInventoryChanged, ipc.InventoryChangedEvent{Source: "kubernetes", GroupID: "g-2"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(alice.queue) != 0 || len(bob.queue) != 1 {
+		t.Fatalf("second owner delivery queues: alice=%d bob=%d", len(alice.queue), len(bob.queue))
 	}
 }

@@ -14,7 +14,8 @@ reason: string, message?: string, attempt: number, seq: number, };
 
 export type AiHitlInterruptDto = { id: string, runId: string, checkpointId: string, checkpointHash: string, targetId: string, callId: string, tool: string, 
 kind: string, parameters: JsonValue, parameterHash: string, question?: AiHitlQuestionDto, nonce: string, 
-createdAt: string, expiresAt: string, attempt: number, seq: number, };
+createdAt: string, expiresAt: string, attempt: number, seq: number,
+requiredEnvironmentNames?: Array<string>, };
 
 export type AiHitlQuestionDto = { id: string, text: string, options?: Array<string>, };
 
@@ -30,10 +31,9 @@ export type AiRunEventDto = Record<string, unknown>;
 
 export type AppErrorDto = { code: string, message: string, detail: JsonValue | null, };
 
-export type AssetDto = { id: string, groupId: string | null, kind: string, name: string, host: string | null, port: number | null, username: string | null, authKind: string | null, keyPath: string | null, credId: string | null, options: JsonValue, tags: string, note: string, sort: number, createdAt: number, updatedAt: number, deletedAt: number | null, 
-builtin: boolean, };
+export type AssetDto = import("./generated/types").AssetDTO;
 
-export type AssetGroupDto = { id: string, parentId: string | null, name: string, sort: number, createdAt: number, updatedAt: number, };
+export type AssetGroupDto = import("./generated/types").AssetGroupDTO;
 
 export type AuditEntryDto = { id: number, ts: number, sessionId: string | null, assetId: string | null, 
 source: string, kind: string, payload: JsonValue, exitCode: number | null, durationMs: number | null, };
@@ -42,7 +42,7 @@ export type CommandEntryDto = { id: number, sessionId: string, tabId: string, as
 userId: string | null, command: string, source: string, exitCode: number | null,
 startedAt: number, finishedAt: number, };
 
-export type ContainerSummaryDto = { id: string, name: string, image: string, state: string, status: string, ports: string, composeProject: string | null, };
+export type ContainerSummaryDto = import("./generated/types").ContainerSummary;
 
 export type ConversationDto = { id: string, title: string, scope: JsonValue, createdAt: number, updatedAt: number, };
 
@@ -51,8 +51,7 @@ export type CredentialMetaDto = { id: string, name: string, kind: string, cipher
 export type DigestEntry = { id: string, name: string, kind: string, host: string | null, username: string | null, updatedAt: number, deletedAt: number | null, 
 hasCred: boolean, groupId: string | null, };
 
-export type FileEntryDto = { name: string, path: string, 
-kind: string, size: number, mode: string, owner: string | null, group: string | null, mtime: number, symlinkTarget: string | null, };
+export type FileEntryDto = import("./generated/types").FSEntryDTO;
 
 export type ForwardEnvDto = { 
 available: boolean, 
@@ -63,7 +62,7 @@ export type ForwardSpecDto = { id: string, sessionId: string, hostId?: string, s
 targetHost: string | null, targetPort: number | null, 
 kind: string, createdAt: number, };
 
-export type ImageSummaryDto = { id: string, repository: string, tag: string, size: string, createdSince: string, };
+export type ImageSummaryDto = import("./generated/types").ImageSummary;
 
 export type SkippedNewerEntry = { kind: string, id: string, name: string, 
 localRevision: number, remoteRevision: number, equalRevision: boolean, };
@@ -78,11 +77,11 @@ warnings: Array<string>, };
 
 export type KnownHostDto = { id: string, host: string, port: number, keyType: string, fingerprint: string, addedAt: number, };
 
-export type SshHostKeyProbeDto = { host: string, port: number, keyType: string, fingerprint: string, state: "known" | "changed" | "pending", known?: Array<{ keyType: string, fingerprint: string }>, };
+export type SshHostKeyProbeDto = { host: string, port: number, keyType: string, fingerprint: string, key?: string, state: "known" | "changed" | "pending", known?: Array<{ keyType: string, fingerprint: string }>, };
 
-export type AssetProbeResultDto = { assetId: string, reachable: boolean, kind?: string, error?: string, durationMs: number, };
+export type AssetProbeResultDto = import("./generated/types").AssetProbeResultDTO;
 
-export type AssetProbeBatchDto = { results: Array<AssetProbeResultDto>, };
+export type AssetProbeBatchDto = import("./generated/types").AssetProbeBatchDTO;
 
 export type MessageDto = { id: string, conversationId: string, role: string, content: JsonValue, tokensIn: number | null, tokensOut: number | null, createdAt: number, };
 
@@ -108,15 +107,15 @@ export type AiUsageSummaryRow = { source: string, profileId: string, runs: numbe
 
 export type AiCircuitStatusDto = { consecutiveFailures: number, openUntil: number | null, };
 
-export type MountEntryDto = { id: string, localPoint: string, remote: string, sessionId: string | null, createdAt: number | null, managed: boolean };
+export type MountEntryDto = import("./generated/types").MountEntryDTO;
 
 export type ProviderConfigDto = { baseUrl: string, apiKey: string, model: string, temperature?: number, reasoningEffort?: string, contextWindow: number, proxy: string | null, stream: boolean,
 fallbackModel?: string | null,
 maxTokens?: number | null, };
 
-export type QueryResultDto = { columns: Array<string>, rows: Array<Array<JsonValue>>, rowsAffected: number, durationMs: number, truncated: boolean, error: string | null, };
+export type QueryResultDto = { columns: Array<string>, rows: Array<Array<unknown>>, rowsAffected: number, durationMs: number, truncated: boolean, error: string | null, };
 
-export type RedisKeyViewDto = { key: string, keyType: string, ttl: number, value: JsonValue, };
+export type RedisKeyViewDto = { key: string, keyType: string, ttl: number, value: unknown, };
 
 export type ScreenSnapshotDto = { text: string, lines: Array<string>, cursorRow: number, cursorCol: number, cols: number, rows: number, altScreen: boolean, lastOutputMsAgo: number, };
 
@@ -233,8 +232,7 @@ export type AuditCountDto = { total: number, };
 
 export type TerminalExitEvent = { tabId: string, exitCode: number | null, version: number, };
 
-export type VaultStatusDto = { initialized: boolean, 
-mode: string, unlocked: boolean, autoLockMinutes: number, passwordless: boolean, systemProtection: boolean, };
+export type VaultStatusDto = import("./generated/types").VaultStatus;
 
 export type SshImportAction = "add" | "skip-duplicate" | "conflict-alias" | "conflict-endpoint" | "blocked-jump";
 
@@ -253,8 +251,7 @@ hosts: SshImportHostDto[], keys: SshImportKeyDto[], diagnostics: SshImportDiagno
 export type SshImportApplyDto = { assetsCreated: number, assetsUpdated: number,
 credentialsCreated: number, credentialsUpdated: number, skipped: number, warnings: string[], };
 
-export type GeneratedKeyDto = { id: string, name: string, algorithm: string,
-fingerprint: string, publicKey: string, };
+export type GeneratedKeyDto = import("./generated/types").GeneratedKeyDTO;
 
 export type UpdateStatusDto = { available: boolean, currentVersion: string, version: string,
 notes: string, prerelease: boolean, assetName: string, assetSize: number, canInstall: boolean,

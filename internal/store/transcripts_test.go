@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -901,4 +902,301 @@ func TestTranscriptSearchPaginatesStoredBlocks(t *testing.T) {
 	if err != nil || len(matches) != 1 || matches[0].Seq != 599 {
 		t.Fatalf("search must continue across stored-block pages: matches=%+v err=%v", matches, err)
 	}
+}
+
+func requireNoOwnerlessTombstones(t *testing.T, db *Store) {
+	t.Helper()
+	var count int64
+	if err := db.GORM().Model(&SyncTombstone{}).Where("owner_id = ? AND kind = ?", "", "transcript").Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("transcript tombstones with an empty owner = %d, want 0", count)
+	}
+}
+
+func requireDurableOffsetRow(t *testing.T, db *Store, durableID, owner string, offset int64) {
+	t.Helper()
+	var row DurableTranscriptOffset
+	if err := db.GORM().Model(&DurableTranscriptOffset{}).Where("durable_id = ?", durableID).First(&row).Error; err != nil {
+		t.Fatalf("durable offset row %s: %v", durableID, err)
+	}
+	if row.OwnerID != owner || row.Offset != offset {
+		t.Fatalf("durable offset row %s = owner %q offset %d, want owner %q offset %d", durableID, row.OwnerID, row.Offset, owner, offset)
+	}
+}
+
+func requireNoDurableOffsetRow(t *testing.T, db *Store, durableID string) {
+	t.Helper()
+	var count int64
+	if err := db.GORM().Model(&DurableTranscriptOffset{}).Where("durable_id = ?", durableID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("unexpected durable offset row for %s", durableID)
+	}
+}
+
+func requireDurableTabTitleRow(t *testing.T, db *Store, durableID, owner, title string) {
+	t.Helper()
+	var row DurableTabTitle
+	if err := db.GORM().Model(&DurableTabTitle{}).Where("durable_id = ?", durableID).First(&row).Error; err != nil {
+		t.Fatalf("durable tab title row %s: %v", durableID, err)
+	}
+	if row.OwnerID != owner || row.Title != title {
+		t.Fatalf("durable tab title row %s = owner %q title %q, want owner %q title %q", durableID, row.OwnerID, row.Title, owner, title)
+	}
+}
+
+func requireNoDurableTabTitleRow(t *testing.T, db *Store, durableID string) {
+	t.Helper()
+	var count int64
+	if err := db.GORM().Model(&DurableTabTitle{}).Where("durable_id = ?", durableID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("unexpected durable tab title row for %s", durableID)
+	}
+}
+
+func requireTranscriptTombstoneOwner(t *testing.T, db *Store, id, owner string, want bool) {
+	t.Helper()
+	var count int64
+	if err := db.GORM().Model(&SyncTombstone{}).
+		Where("owner_id = ? AND id = ? AND kind = ?", owner, id, "transcript").
+		Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if (count == 1) != want {
+		t.Fatalf("transcript %s tombstone under owner %q exists = %v, want %v", id, owner, count == 1, want)
+	}
+}
+
+func TestTranscriptRetentionBackgroundAppliesRowOwnerTombstones(t *testing.T) {
+	// Background retention runs without an owner in the context; deletions and
+	// tombstones must still follow each row's own owner.
+	ctx := context.Background()
+	db := testStore(t)
+	now := time.Now().UnixMilli()
+	old := now - 48*time.Hour.Milliseconds()
+	recentA := now - 10*time.Minute.Milliseconds()
+	recentB := now - 5*time.Minute.Milliseconds()
+	rows := []TranscriptRow{
+		{ID: "bg-a-old-opted", SessionID: "s1", AssetID: "asset-1", StartedAt: old - 1, EndedAt: &old, SyncOptIn: true, OwnerID: "owner-a"},
+		{ID: "bg-a-old-plain", SessionID: "s2", AssetID: "asset-1", StartedAt: old - 1, EndedAt: &old, OwnerID: "owner-a"},
+		{ID: "bg-b-old-opted", SessionID: "s3", AssetID: "asset-1", StartedAt: old - 1, EndedAt: &old, SyncOptIn: true, OwnerID: "owner-b"},
+		{ID: "bg-a-recent", SessionID: "s4", AssetID: "asset-1", StartedAt: recentA - 1, EndedAt: &recentA, SyncOptIn: true, OwnerID: "owner-a"},
+		{ID: "bg-b-recent", SessionID: "s5", AssetID: "asset-1", StartedAt: recentB - 1, EndedAt: &recentB, OwnerID: "owner-b"},
+		{ID: "bg-active", SessionID: "s6", AssetID: "asset-1", StartedAt: now, SyncOptIn: true, OwnerID: "owner-a"},
+	}
+	if err := db.GORM().Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := db.EnforceTranscriptRetention(ctx, TranscriptRetentionPolicy{MaxAge: 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Deleted != 3 {
+		t.Fatalf("background age retention deleted %d, want 3 across both owners", result.Deleted)
+	}
+	requireTranscriptRetentionOwnerCounts(t, db, "owner-a", 2, 1)
+	requireTranscriptRetentionOwnerCounts(t, db, "owner-b", 1, 1)
+	requireTranscriptTombstoneOwner(t, db, "bg-a-old-opted", "owner-a", true)
+	requireTranscriptTombstoneOwner(t, db, "bg-b-old-opted", "owner-b", true)
+	requireTranscriptTombstoneOwner(t, db, "bg-a-old-plain", "owner-a", false)
+	requireNoOwnerlessTombstones(t, db)
+	if _, err := db.TranscriptGet(ctx, "bg-a-recent"); err != nil {
+		t.Fatalf("recent transcript must survive age retention: %v", err)
+	}
+	if _, err := db.TranscriptGet(ctx, "bg-active"); err != nil {
+		t.Fatalf("active transcript must survive age retention: %v", err)
+	}
+
+	// Count retention without an owner keeps the newest rows across every owner.
+	result, err = db.EnforceTranscriptRetention(ctx, TranscriptRetentionPolicy{MaxCount: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Deleted != 1 {
+		t.Fatalf("background count retention deleted %d, want the older recent row", result.Deleted)
+	}
+	requireTranscriptRetentionOwnerCounts(t, db, "owner-a", 1, 2)
+	requireTranscriptRetentionOwnerCounts(t, db, "owner-b", 1, 1)
+	requireTranscriptTombstoneOwner(t, db, "bg-a-recent", "owner-a", true)
+	requireTranscriptTombstoneOwner(t, db, "bg-b-recent", "owner-b", false)
+	requireNoOwnerlessTombstones(t, db)
+	if _, err := db.TranscriptGet(ctx, "bg-b-recent"); err != nil {
+		t.Fatalf("newest transcript must survive count retention: %v", err)
+	}
+	if _, err := db.TranscriptGet(ctx, "bg-active"); err != nil {
+		t.Fatalf("active transcript must survive count retention: %v", err)
+	}
+
+	repeated, err := db.EnforceTranscriptRetention(ctx, TranscriptRetentionPolicy{MaxAge: 24 * time.Hour, MaxCount: 1})
+	if err != nil || repeated.Deleted != 0 {
+		t.Fatalf("repeated background result = %+v, %v", repeated, err)
+	}
+	requireNoOwnerlessTombstones(t, db)
+}
+
+func TestTranscriptRetentionBackgroundBatchFailureRollsBackTombstones(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	const perOwner = retentionBatchSize + 9
+	old := time.Now().Add(-2 * time.Hour).UnixMilli()
+	rows := make([]TranscriptRow, 0, 2*perOwner)
+	for i := 0; i < perOwner; i++ {
+		rows = append(rows,
+			transcriptRetentionFixtureRow(fmt.Sprintf("r%03d-a", i), "owner-a", &old, i%2 == 0),
+			transcriptRetentionFixtureRow(fmt.Sprintf("r%03d-b", i), "owner-b", &old, i%2 == 1),
+		)
+	}
+	if err := db.GORM().CreateInBatches(rows, 64).Error; err != nil {
+		t.Fatal(err)
+	}
+	// IDs sort r000-a, r000-b, r001-a, ... so the first two 128-row batches carry
+	// both owners; fail the third batch on an owner-b row.
+	if _, err := db.DB().Exec(`CREATE TRIGGER fail_background_transcript_batch BEFORE DELETE ON transcript
+WHEN OLD.id = 'r128-b'
+BEGIN SELECT RAISE(ABORT, 'injected background transcript batch failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	policy := TranscriptRetentionPolicy{MaxAge: time.Hour}
+	if _, err := db.EnforceTranscriptRetention(ctx, policy); err == nil {
+		t.Fatal("expected background transcript batch failure")
+	}
+	// The two committed batches keep per-owner tombstones; the failed batch keeps
+	// both its rows and its tombstones rolled back.
+	requireTranscriptRetentionOwnerCounts(t, db, "owner-a", perOwner-retentionBatchSize, retentionBatchSize/2)
+	requireTranscriptRetentionOwnerCounts(t, db, "owner-b", perOwner-retentionBatchSize, retentionBatchSize/2)
+	requireTranscriptTombstoneOwner(t, db, "r000-a", "owner-a", true)
+	requireTranscriptTombstoneOwner(t, db, "r001-b", "owner-b", true)
+	requireTranscriptTombstoneOwner(t, db, "r128-a", "owner-a", false)
+	requireTranscriptTombstoneOwner(t, db, "r128-b", "owner-b", false)
+	requireNoOwnerlessTombstones(t, db)
+	if _, err := db.TranscriptGet(ctx, "r128-a"); err != nil {
+		t.Fatalf("rolled-back owner-a row is missing: %v", err)
+	}
+	if _, err := db.TranscriptGet(ctx, "r128-b"); err != nil {
+		t.Fatalf("rolled-back owner-b row is missing: %v", err)
+	}
+
+	if _, err := db.DB().Exec("DROP TRIGGER fail_background_transcript_batch"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := db.EnforceTranscriptRetention(ctx, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remaining := int64(2 * (perOwner - retentionBatchSize))
+	if result.Deleted != remaining {
+		t.Fatalf("resumed background deletion = %d, want %d", result.Deleted, remaining)
+	}
+	wantTombstonesA := int64(retentionBatchSize/2 + 5)
+	wantTombstonesB := int64(retentionBatchSize/2 + 4)
+	requireTranscriptRetentionOwnerCounts(t, db, "owner-a", 0, wantTombstonesA)
+	requireTranscriptRetentionOwnerCounts(t, db, "owner-b", 0, wantTombstonesB)
+	requireTranscriptTombstoneOwner(t, db, "r129-b", "owner-b", true)
+	requireNoOwnerlessTombstones(t, db)
+}
+
+func TestDurableTranscriptOffsetGuardedSeedAndDeleteRace(t *testing.T) {
+	// A row claimed between owner resolution and the guarded write must not be
+	// reset or deleted by the stale resolution: the guard is atomic in the
+	// UPDATE/DELETE and the legacy fallback is explicitly owner_id = ''.
+	ctx := context.Background()
+	ctxA := ipc.WithUserID(ctx, "owner-a")
+	db := testStore(t)
+	now := ids.NowMS()
+	if err := db.GORM().Create(&DurableTranscriptOffset{DurableID: "race-durable", Offset: 7, UpdatedAt: now, OwnerID: ""}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// Resolution observes the legacy ownerless row...
+	resolved, err := db.DurableTranscriptOffsetOwner(ctx, "race-durable")
+	if err != nil || resolved != "" {
+		t.Fatalf("resolved owner = %q, %v", resolved, err)
+	}
+	// ...then the writer claims it under owner-a.
+	transcriptID := ids.New()
+	if err := db.TranscriptStart(ctxA, TranscriptRow{ID: transcriptID, SessionID: "sess-race", AssetID: "asset-1", StartedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.TranscriptAppendChunks(ctxA, transcriptID,
+		[]TranscriptChunkRow{{Seq: 0, TabID: "race-durable", TS: now, Data: []byte("bb")}},
+		map[string]int64{"race-durable": 2}); err != nil {
+		t.Fatal(err)
+	}
+	requireDurableOffsetRow(t, db, "race-durable", "owner-a", 9)
+
+	// The stale ownerless resolution must not reset the claimed row.
+	reset, err := db.DurableTranscriptOffsetSeed(ctx, "race-durable", resolved, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reset {
+		t.Fatal("stale ownerless resolution must not reset a claimed row")
+	}
+	requireDurableOffsetRow(t, db, "race-durable", "owner-a", 9)
+
+	// Nor may it delete it.
+	if err := db.DurableTranscriptOffsetDeleteIfOwned(ctx, "race-durable", resolved); err != nil {
+		t.Fatal(err)
+	}
+	requireDurableOffsetRow(t, db, "race-durable", "owner-a", 9)
+
+	// The current owner's resolution resets and deletes atomically.
+	reset, err = db.DurableTranscriptOffsetSeed(ctx, "race-durable", "owner-a", 0)
+	if err != nil || !reset {
+		t.Fatalf("owner seed = %v, %v", reset, err)
+	}
+	requireDurableOffsetRow(t, db, "race-durable", "owner-a", 0)
+	if err := db.DurableTranscriptOffsetDeleteIfOwned(ctx, "race-durable", "owner-a"); err != nil {
+		t.Fatal(err)
+	}
+	requireNoDurableOffsetRow(t, db, "race-durable")
+}
+
+func TestDurableTabTitleOwnerGuard(t *testing.T) {
+	ctx := context.Background()
+	ctxA := ipc.WithUserID(ctx, "owner-a")
+	ctxB := ipc.WithUserID(ctx, "owner-b")
+	db := testStore(t)
+
+	if err := db.DurableTabTitleSet(ctxB, "title-shared", "bravo"); err != nil {
+		t.Fatal(err)
+	}
+	requireDurableTabTitleRow(t, db, "title-shared", "owner-b", "bravo")
+
+	// A foreign owner cannot overwrite the title; the guarded update is a no-op.
+	if err := db.DurableTabTitleSet(ctxA, "title-shared", "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	requireDurableTabTitleRow(t, db, "title-shared", "owner-b", "bravo")
+	if title, err := db.DurableTabTitleGet(ctxA, "title-shared"); err != nil || title != "" {
+		t.Fatalf("owner-a scoped title = %q, %v", title, err)
+	}
+	if title, err := db.DurableTabTitleGet(ctxB, "title-shared"); err != nil || title != "bravo" {
+		t.Fatalf("owner-b scoped title = %q, %v", title, err)
+	}
+
+	// A legacy ownerless row is claimed by the first owner that sets it.
+	if err := db.GORM().Create(&DurableTabTitle{DurableID: "title-legacy", Title: "legacy", UpdatedAt: ids.NowMS(), OwnerID: ""}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DurableTabTitleSet(ctxA, "title-legacy", "claimed"); err != nil {
+		t.Fatal(err)
+	}
+	requireDurableTabTitleRow(t, db, "title-legacy", "owner-a", "claimed")
+
+	// Deletes are guarded the same way.
+	if err := db.DurableTabTitleDeleteIfOwned(ctx, "title-shared", "owner-a"); err != nil {
+		t.Fatal(err)
+	}
+	requireDurableTabTitleRow(t, db, "title-shared", "owner-b", "bravo")
+	if err := db.DurableTabTitleDeleteIfOwned(ctx, "title-shared", "owner-b"); err != nil {
+		t.Fatal(err)
+	}
+	requireNoDurableTabTitleRow(t, db, "title-shared")
 }

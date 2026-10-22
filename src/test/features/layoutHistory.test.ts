@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { deferred } from "./reactTestUtils";
+import { deferred, flushMacrotask } from "./reactTestUtils";
 import { layoutApi, type LayoutDto, type LayoutSaveResult } from "../../ipc/commands";
 
 const server = vi.hoisted(() => ({
@@ -12,30 +12,30 @@ const server = vi.hoisted(() => ({
   handlers: [] as Array<(payload: { revision?: number } | null) => void>,
 }));
 
-vi.mock("../../ipc/commands", () => ({
-  layoutApi: {
-    get: vi.fn(async () => {
-      server.getCalls += 1;
-      return {
-        revision: server.revision,
-        updatedAt: 0,
-        data: server.data === null ? null : JSON.parse(server.data),
-      };
-    }),
-    put: vi.fn(async (data: string, revision: number) => {
-      if (server.putAlwaysConflicts || revision !== server.revision) {
-        return { saved: false, revision: server.revision, conflict: true };
-      }
-      server.revision = revision + 1;
-      server.data = data;
-      return { saved: true, revision: server.revision, conflict: false };
-    }),
-  },
-  terminalApi: { listLive: vi.fn(async () => []) },
-  dbApi: {},
-  sessionApi: {},
-  vaultApi: {},
-}));
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const { createCommandsMock } = await import("../helpers/mockCommands");
+  return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
+    layoutApi: {
+      get: vi.fn(async () => {
+        server.getCalls += 1;
+        return {
+          revision: server.revision,
+          updatedAt: 0,
+          data: server.data === null ? null : JSON.parse(server.data),
+        };
+      }),
+      put: vi.fn(async (data: string, revision: number) => {
+        if (server.putAlwaysConflicts || revision !== server.revision) {
+          return { saved: false, revision: server.revision, conflict: true };
+        }
+        server.revision = revision + 1;
+        server.data = data;
+        return { saved: true, revision: server.revision, conflict: false };
+      }),
+    },
+    terminalApi: { listLive: vi.fn(async () => []) },
+  });
+});
 
 vi.mock("../../ipc/events", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/events")>();
@@ -73,6 +73,9 @@ interface LayoutModule {
   flushLayout: () => Promise<void>;
   onRemoteChange: (payload: { revision?: number } | null) => void;
   advanceLayoutAccount: () => void;
+  resetLayoutSyncForTest: () => void;
+  LAYOUT_RETRY_MS: number;
+  LAYOUT_MAX_RETRY: number;
   layoutBootstrapped: Promise<void>;
   sanitizeLayout: (raw: unknown) => PersistedLayout | null;
   serializeLayout: (s: UiState) => PersistedLayout | null;
@@ -84,6 +87,8 @@ interface StoreModule {
     setState: (partial: Partial<UiState>) => void;
   };
 }
+
+const openedLayouts: LayoutModule[] = [];
 
 function panelTab(id: string, kind: AppTab["kind"], title: string): AppTab {
   return { id, kind, title, closable: true };
@@ -187,6 +192,7 @@ async function openTab(): Promise<{ layout: LayoutModule; store: StoreModule["us
   vi.resetModules();
   const layout = (await import("../../app/layout")) as unknown as LayoutModule;
   const store = (await import("../../app/store")) as unknown as StoreModule;
+  openedLayouts.push(layout);
   layout.startLayoutSync();
   await layout.layoutBootstrapped;
   return { layout, store: store.useUi };
@@ -194,7 +200,7 @@ async function openTab(): Promise<{ layout: LayoutModule; store: StoreModule["us
 
 async function waitForPull(before: number): Promise<void> {
   await vi.waitFor(() => expect(server.getCalls).toBeGreaterThan(before));
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await flushMacrotask();
 }
 
 beforeEach(() => {
@@ -203,9 +209,12 @@ beforeEach(() => {
   server.getCalls = 0;
   server.putAlwaysConflicts = false;
   server.handlers.length = 0;
+  window.localStorage.clear();
 });
 
 afterEach(() => {
+  for (const layout of openedLayouts) layout.resetLayoutSyncForTest();
+  openedLayouts.length = 0;
   vi.resetModules();
   vi.clearAllMocks();
 });
@@ -400,11 +409,11 @@ describe("history tab in the layout pane contract", () => {
     expect(parsed?.activeWorkspaceId).toBe("tools");
   });
 
-  function expectLegacyLayout(state: UiState): void {
+  function expectLegacyLayout(state: UiState, activeTabId = "history"): void {
     const tools = state.workspaces.find((w) => w.kind === "tools");
     const host = state.workspaces.find((w) => w.id === "host");
     expect(tools?.panes[0].tabs.map((t) => t.kind)).toEqual(["settings", "history", "audit"]);
-    expect(tools?.panes[0].activeTabId).toBe("history");
+    expect(tools?.panes[0].activeTabId).toBe(activeTabId);
     expect(findTab(state, "history")?.title).toBe("终端历史");
     expect(host?.panes[0].tabs.map((t) => t.kind)).toEqual(["terminal", "background"]);
     expect(host?.panes[0].tabs[1]).toMatchObject({
@@ -434,22 +443,28 @@ describe("history tab in the layout pane contract", () => {
     await vi.waitFor(() => {
       expect(findTab(store.getState(), "history")?.title).toBe("终端历史");
     });
-    expectLegacyLayout(store.getState());
+    expectLegacyLayout(store.getState(), "settings");
   });
 
-  it("conflict layout application applies the same legacy migration and refreshes to the server copy", async () => {
+  it("conflict layout application applies the same legacy migration and merges the server copy", async () => {
     server.data = JSON.stringify(persistedLayout([workspace([panelTab("settings", "settings", "Settings")])]));
     const { layout, store } = await openTab();
 
     server.revision = 7;
     server.data = JSON.stringify(persistedLayout(legacyWorkspaces("history")));
     server.putAlwaysConflicts = true;
-    store.setState({ leftWidth: 300 });
+    store.setState({
+      leftWidth: 300,
+      workspaces: [
+        ...store.getState().workspaces,
+        hostWorkspace("local-host", "s-local", "asset-local", [terminal("local-terminal", "s-local")]),
+      ],
+    });
     await layout.flushLayout();
 
     const state = store.getState();
-    expectLegacyLayout(state);
-    expect(state.leftWidth).toBe(248);
+    expectLegacyLayout(state, "settings");
+    expect(state.leftWidth).toBe(300);
     expect(state.toasts.some((t) => t.text.includes("布局已在其他设备上更新"))).toBe(true);
   });
 
@@ -753,6 +768,7 @@ describe("history tab in the layout pane contract", () => {
       },
       toasts: [],
     });
+    await layout.flushLayout();
     const remote = persistedLayout([hostA, hostB]);
     remote.aiBoards = {
       "host-a": {
@@ -765,11 +781,11 @@ describe("history tab in the layout pane contract", () => {
         activeTabId: "ai-bound",
       },
     };
-    server.revision = 1;
+    server.revision = 2;
     server.data = JSON.stringify(remote);
     const before = server.getCalls;
 
-    layout.onRemoteChange({ revision: 1 });
+    layout.onRemoteChange({ revision: 2 });
     await waitForPull(before);
 
     expect(store.getState().aiBoards).toEqual({
@@ -835,6 +851,7 @@ describe("history tab in the layout pane contract", () => {
     get.mockImplementationOnce(() => stale.promise).mockImplementationOnce(() => fresh.promise);
     layout.onRemoteChange({ revision: 1 });
     layout.advanceLayoutAccount();
+    store.setState({ workspaces: [], activeWorkspaceId: null, aiBoards: {} });
     layout.onRemoteChange(null);
 
     stale.resolve({ revision: 1, updatedAt: 0, data: persistedLayout([hostA]) });
@@ -854,6 +871,7 @@ describe("history tab in the layout pane contract", () => {
     get.mockImplementationOnce(() => stale.promise).mockImplementationOnce(() => fresh.promise);
     layout.onRemoteChange({ revision: 1 });
     layout.advanceLayoutAccount();
+    store.setState({ workspaces: [], activeWorkspaceId: null, aiBoards: {} });
     layout.onRemoteChange(null);
 
     stale.reject(new Error("stale account GET failed"));
@@ -862,37 +880,44 @@ describe("history tab in the layout pane contract", () => {
     await vi.waitFor(() => expect(store.getState().workspaces[0]?.id).toBe("host-b"));
   });
 
-  it("does not let a stale PUT success pollute the next account revision or lastSynced", async () => {
+  it("does not let a stale PUT success pollute the next account revision or base", async () => {
     const hostB = hostWorkspace("host-b", "s2", "asset-2", [terminal("terminal-b", "s2")]);
     const { layout, store } = await openTab();
-    store.setState({ leftWidth: 300 });
+    store.setState({ workspaces: [hostB], activeWorkspaceId: "host-b" });
     const stalePut = deferred<LayoutSaveResult>();
     const freshPut = deferred<LayoutSaveResult>();
     const freshGet = deferred<LayoutDto>();
+    let freshGetStarted = false;
     const put = vi.mocked(layoutApi.put);
     put.mockImplementationOnce(() => stalePut.promise).mockImplementationOnce(() => freshPut.promise);
-    vi.mocked(layoutApi.get).mockImplementationOnce(() => freshGet.promise);
+    vi.mocked(layoutApi.get).mockImplementationOnce(() => {
+      freshGetStarted = true;
+      return freshGet.promise;
+    });
     const firstFlush = layout.flushLayout();
     layout.advanceLayoutAccount();
+    store.setState({ workspaces: [], activeWorkspaceId: null, aiBoards: {} });
     layout.onRemoteChange(null);
 
     stalePut.resolve({ saved: true, revision: 1, conflict: false });
-    await vi.waitFor(() => expect(layoutApi.get).toHaveBeenCalledTimes(1));
-    store.setState({ leftWidth: 301 });
+    await vi.waitFor(() => expect(freshGetStarted).toBe(true));
+    freshGet.resolve({ revision: 2, updatedAt: 0, data: persistedLayout([hostB]) });
+    await firstFlush;
+    store.setState({ workspaces: [{ ...hostB, title: "next account" }] });
     const secondFlush = layout.flushLayout();
     await vi.waitFor(() => expect(put).toHaveBeenCalledTimes(2));
-    expect(put.mock.calls[1][1]).toBe(0);
+    expect(put.mock.calls[1][1]).toBe(2);
 
     freshPut.resolve({ saved: true, revision: 2, conflict: false });
-    freshGet.resolve({ revision: 2, updatedAt: 0, data: persistedLayout([hostB]) });
-    await Promise.all([firstFlush, secondFlush]);
+    await secondFlush;
     expect(store.getState().workspaces[0]?.id).toBe("host-b");
   });
 
   it("continues the account refresh without retrying a stale failed PUT", async () => {
+    vi.useFakeTimers();
     const hostB = hostWorkspace("host-b", "s2", "asset-2", [terminal("terminal-b", "s2")]);
     const { layout, store } = await openTab();
-    store.setState({ leftWidth: 300 });
+    store.setState({ workspaces: [hostB], activeWorkspaceId: "host-b" });
     const stalePut = deferred<LayoutSaveResult>();
     const freshGet = deferred<LayoutDto>();
     const put = vi.mocked(layoutApi.put);
@@ -900,14 +925,16 @@ describe("history tab in the layout pane contract", () => {
     vi.mocked(layoutApi.get).mockImplementationOnce(() => freshGet.promise);
     const firstFlush = layout.flushLayout();
     layout.advanceLayoutAccount();
+    store.setState({ workspaces: [], activeWorkspaceId: null, aiBoards: {} });
     layout.onRemoteChange(null);
 
     stalePut.reject(new Error("stale account PUT failed"));
-    await vi.waitFor(() => expect(layoutApi.get).toHaveBeenCalledTimes(1));
     freshGet.resolve({ revision: 2, updatedAt: 0, data: persistedLayout([hostB]) });
+    layout.onRemoteChange(null);
     await firstFlush;
     expect(store.getState().workspaces[0]?.id).toBe("host-b");
-    await new Promise((resolve) => setTimeout(resolve, 3100));
+    await vi.advanceTimersByTimeAsync(layout.LAYOUT_RETRY_MS * layout.LAYOUT_MAX_RETRY);
+    expect(vi.getTimerCount()).toBe(0);
     const staleJson = put.mock.calls[0][0];
     expect(put.mock.calls.slice(1).every(([data]) => data !== staleJson)).toBe(true);
   });
@@ -915,7 +942,7 @@ describe("history tab in the layout pane contract", () => {
   it("stops conflict recovery when the conflict response itself is stale", async () => {
     const hostB = hostWorkspace("host-b", "s2", "asset-2", [terminal("terminal-b", "s2")]);
     const { layout, store } = await openTab();
-    store.setState({ leftWidth: 300 });
+    store.setState({ workspaces: [hostB], activeWorkspaceId: "host-b" });
     const conflict = deferred<LayoutSaveResult>();
     const put = vi.mocked(layoutApi.put);
     put.mockImplementationOnce(() => conflict.promise);
@@ -924,6 +951,7 @@ describe("history tab in the layout pane contract", () => {
 
     conflict.resolve({ saved: false, revision: 0, conflict: true });
     layout.advanceLayoutAccount();
+    store.setState({ workspaces: [], activeWorkspaceId: null, aiBoards: {} });
     await flushing;
     expect(put).toHaveBeenCalledTimes(1);
 
@@ -931,7 +959,7 @@ describe("history tab in the layout pane contract", () => {
     server.data = JSON.stringify(persistedLayout([hostB]));
     layout.onRemoteChange(null);
     await vi.waitFor(() => expect(store.getState().workspaces[0]?.id).toBe("host-b"));
-    store.setState({ leftWidth: 301 });
+    store.setState({ workspaces: [{ ...hostB, title: "next account" }] });
     await layout.flushLayout();
     expect(put).toHaveBeenCalledTimes(2);
     expect(put.mock.calls[1][1]).toBe(2);
@@ -942,7 +970,7 @@ describe("history tab in the layout pane contract", () => {
     const hostA = hostWorkspace("host-a", "s1", "asset-1", [terminal("terminal-a", "s1")]);
     const hostB = hostWorkspace("host-b", "s2", "asset-2", [terminal("terminal-b", "s2")]);
     const { layout, store } = await openTab();
-    store.setState({ leftWidth: 300 });
+    store.setState({ workspaces: [hostA], activeWorkspaceId: "host-a" });
     const conflictGet = deferred<LayoutDto>();
     const put = vi.mocked(layoutApi.put);
     put.mockResolvedValueOnce({ saved: false, revision: 0, conflict: true });
@@ -952,6 +980,7 @@ describe("history tab in the layout pane contract", () => {
     await vi.waitFor(() => expect(layoutApi.get).toHaveBeenCalledTimes(1));
 
     layout.advanceLayoutAccount();
+    store.setState({ workspaces: [], activeWorkspaceId: null, aiBoards: {} });
     conflictGet.resolve({ revision: 1, updatedAt: 0, data: persistedLayout([hostA]) });
     await flushing;
     expect(put).toHaveBeenCalledTimes(1);
@@ -960,7 +989,7 @@ describe("history tab in the layout pane contract", () => {
     server.data = JSON.stringify(persistedLayout([hostB]));
     layout.onRemoteChange(null);
     await vi.waitFor(() => expect(store.getState().workspaces[0]?.id).toBe("host-b"));
-    store.setState({ leftWidth: 301 });
+    store.setState({ workspaces: [{ ...hostB, title: "next account" }] });
     await layout.flushLayout();
     expect(put).toHaveBeenCalledTimes(2);
     expect(put.mock.calls[1][1]).toBe(2);
@@ -968,9 +997,10 @@ describe("history tab in the layout pane contract", () => {
   });
 
   it("does not retry old JSON or queue stale work after a conflict GET fails during account change", async () => {
+    vi.useFakeTimers();
     const hostB = hostWorkspace("host-b", "s2", "asset-2", [terminal("terminal-b", "s2")]);
     const { layout, store } = await openTab();
-    store.setState({ leftWidth: 300 });
+    store.setState({ workspaces: [hostB], activeWorkspaceId: "host-b" });
     const conflictGet = deferred<LayoutDto>();
     const put = vi.mocked(layoutApi.put);
     put.mockResolvedValueOnce({ saved: false, revision: 0, conflict: true });
@@ -980,6 +1010,7 @@ describe("history tab in the layout pane contract", () => {
     await vi.waitFor(() => expect(layoutApi.get).toHaveBeenCalledTimes(1));
 
     layout.advanceLayoutAccount();
+    store.setState({ workspaces: [], activeWorkspaceId: null, aiBoards: {} });
     conflictGet.reject(new Error("stale conflict GET failed"));
     await flushing;
     expect(put).toHaveBeenCalledTimes(1);
@@ -988,12 +1019,13 @@ describe("history tab in the layout pane contract", () => {
     server.data = JSON.stringify(persistedLayout([hostB]));
     layout.onRemoteChange(null);
     await vi.waitFor(() => expect(store.getState().workspaces[0]?.id).toBe("host-b"));
-    store.setState({ leftWidth: 301 });
+    store.setState({ workspaces: [{ ...hostB, title: "next account" }] });
     await layout.flushLayout();
     expect(put).toHaveBeenCalledTimes(2);
     expect(put.mock.calls[1][1]).toBe(2);
     expect(put.mock.calls[1][0]).not.toBe(oldJson);
-    await new Promise((resolve) => setTimeout(resolve, 3100));
+    await vi.advanceTimersByTimeAsync(layout.LAYOUT_RETRY_MS * layout.LAYOUT_MAX_RETRY);
+    expect(vi.getTimerCount()).toBe(0);
     expect(put.mock.calls.slice(1).every(([data]) => data !== oldJson)).toBe(true);
   });
 });

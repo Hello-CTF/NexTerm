@@ -66,6 +66,7 @@ func TestEventTopicsRemainStable(t *testing.T) {
 		TopicDeviceStatus,
 		TopicUpdateProgress,
 		TopicAINotification,
+		TopicInventoryChanged,
 	}
 	want := []string{
 		"session://status",
@@ -83,6 +84,7 @@ func TestEventTopicsRemainStable(t *testing.T) {
 		"device://status",
 		"update://progress",
 		"ai://notification",
+		"inventory://changed",
 	}
 	for index := range want {
 		if string(topics[index]) != want[index] {

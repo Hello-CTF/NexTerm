@@ -91,7 +91,7 @@ func (p *fakeDurableProvider) Attach(_ context.Context, id string) (base.Durable
 	return attachment, nil
 }
 
-func (p *fakeDurableProvider) DurableTranscriptCatchUpBytes(tabID string) int64 {
+func (p *fakeDurableProvider) DurableTranscriptCatchUpBytesContext(_ context.Context, tabID string) int64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	record := p.records[tabID]
@@ -101,7 +101,7 @@ func (p *fakeDurableProvider) DurableTranscriptCatchUpBytes(tabID string) int64 
 	return record.transcribed
 }
 
-func (p *fakeDurableProvider) PersistDurableTranscriptOffset(tabID string, offset int64) {
+func (p *fakeDurableProvider) PersistDurableTranscriptOffsetContext(_ context.Context, tabID string, offset int64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if record := p.records[tabID]; record != nil {
@@ -109,7 +109,7 @@ func (p *fakeDurableProvider) PersistDurableTranscriptOffset(tabID string, offse
 	}
 }
 
-func (p *fakeDurableProvider) DeleteDurableTranscriptOffset(tabID string) {
+func (p *fakeDurableProvider) DeleteDurableTranscriptOffsetContext(_ context.Context, tabID string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if record := p.records[tabID]; record != nil {
@@ -117,19 +117,19 @@ func (p *fakeDurableProvider) DeleteDurableTranscriptOffset(tabID string) {
 	}
 }
 
-func (p *fakeDurableProvider) DurableTabTitle(tabID string) string {
+func (p *fakeDurableProvider) DurableTabTitleContext(_ context.Context, tabID string) string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.titles[tabID]
 }
 
-func (p *fakeDurableProvider) PersistDurableTabTitle(tabID string, title string) {
+func (p *fakeDurableProvider) PersistDurableTabTitleContext(_ context.Context, tabID, title string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.titles[tabID] = title
 }
 
-func (p *fakeDurableProvider) DeleteDurableTabTitle(tabID string) {
+func (p *fakeDurableProvider) DeleteDurableTabTitleContext(_ context.Context, tabID string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.titles, tabID)
@@ -270,7 +270,14 @@ func newDurableTestManager(t *testing.T, provider base.DurableProvider) (*Manage
 	t.Helper()
 	connector := newFakeConnector()
 	terminals := newFakeTerminalFactory()
-	manager := NewManager(Config{Connector: connector, Terminals: terminals, Durable: provider})
+	config := Config{Connector: connector, Terminals: terminals, Durable: provider}
+	if store, ok := provider.(OwnerScopedDurableTranscriptOffsetStore); ok {
+		config.TranscriptOffsets = store
+	}
+	if store, ok := provider.(OwnerScopedDurableTabTitleStore); ok {
+		config.TabTitles = store
+	}
+	manager := NewManager(config)
 	t.Cleanup(func() { _ = manager.Close() })
 	connected, err := manager.Connect(context.Background(), Asset{ID: ids.New(), Kind: KindLocal})
 	if err != nil {
@@ -405,8 +412,8 @@ func TestDurableTabTitleSurvivesRestartAndDiesWithTab(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if renamed.Title != "构建机" || provider.DurableTabTitle(info.ID) != "构建机" {
-		t.Fatalf("rename info = %+v, persisted = %q", renamed, provider.DurableTabTitle(info.ID))
+	if renamed.Title != "构建机" || provider.DurableTabTitleContext(context.Background(), info.ID) != "构建机" {
+		t.Fatalf("rename info = %+v, persisted = %q", renamed, provider.DurableTabTitleContext(context.Background(), info.ID))
 	}
 	if err := first.Close(); err != nil {
 		t.Fatal(err)
@@ -427,7 +434,7 @@ func TestDurableTabTitleSurvivesRestartAndDiesWithTab(t *testing.T) {
 	if err := second.CloseTab(info.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := provider.DurableTabTitle(info.ID); got != "" {
+	if got := provider.DurableTabTitleContext(context.Background(), info.ID); got != "" {
 		t.Fatalf("title after kill = %q", got)
 	}
 }

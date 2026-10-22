@@ -7,9 +7,8 @@ import (
 )
 
 type listRequest struct {
-	SessionID    string `json:"sessionId,omitempty"`
+	SessionID    string `json:"sessionId"`
 	ForceRefresh bool   `json:"forceRefresh,omitempty"`
-	Global       bool   `json:"global,omitempty"`
 }
 
 func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {

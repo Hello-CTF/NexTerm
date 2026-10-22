@@ -9,6 +9,7 @@ const harness = vi.hoisted(() => ({
   mac: false,
   switchEncoding: vi.fn(),
   listLive: vi.fn(),
+  sessionList: vi.fn(),
 }));
 
 vi.mock("../../app/platform", () => ({
@@ -24,7 +25,7 @@ vi.mock("../../ipc/commands", () => ({
   assetApi: {},
   dbApi: {},
   vaultApi: {},
-  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn() },
+  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn(), list: harness.sessionList },
   terminalApi: {
     listLive: harness.listLive,
     write: vi.fn().mockResolvedValue(undefined),
@@ -61,11 +62,17 @@ vi.mock("../../features/terminal/CommandBlockPanel", () => ({ CommandBlockPanel:
 vi.mock("../../features/terminal/TerminalKeysBar", () => ({ TerminalKeysBar: () => null }));
 
 vi.mock("../../features/terminal/XtermView", async () => {
-  const { useEffect } = await import("react");
+  const { useEffect, useRef } = await import("react");
   return {
     XtermView: (props: Record<string, unknown>) => {
+      const onHandleRef = useRef(props.onHandle);
+      const registerSearchRef = useRef(props.registerSearch);
+      const onAttachRef = useRef(props.onAttach);
+      onHandleRef.current = props.onHandle;
+      registerSearchRef.current = props.registerSearch;
+      onAttachRef.current = props.onAttach;
       useEffect(() => {
-        (props.onHandle as ((h: unknown) => void) | undefined)?.({
+        (onHandleRef.current as ((h: unknown) => void) | undefined)?.({
           copyBlock: () => "",
           scrollToBlock: () => {},
           navigateBlock: () => null,
@@ -76,11 +83,11 @@ vi.mock("../../features/terminal/XtermView", async () => {
           fit: () => {},
           dimensions: () => ({ cols: 80, rows: 24 }),
         });
-        (props.registerSearch as ((api: unknown) => void) | undefined)?.({
+        (registerSearchRef.current as ((api: unknown) => void) | undefined)?.({
           findNext: () => {},
           findPrevious: () => {},
         });
-        (props.onAttach as ((id: string) => void) | undefined)?.("kernel-1");
+        (onAttachRef.current as ((id: string) => void) | undefined)?.("kernel-1");
       }, []);
       return <div className="h-full w-full min-h-0" />;
     },
@@ -123,11 +130,12 @@ function clickMenuItem(label: string): void {
   click(item);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   harness.mac = false;
   harness.listLive.mockResolvedValue([]);
+  harness.sessionList.mockImplementation(async () => useUi.getState().sessions);
   harness.switchEncoding.mockResolvedValue(undefined);
   vi.mocked(pickSavePath).mockResolvedValue(null);
   vi.mocked(finishSave).mockResolvedValue(null);
@@ -175,6 +183,7 @@ beforeEach(() => {
   mounted = mount(
     createElement(TerminalPane, { sessionId: "s1", title: "term", storeTabId: "t1" }),
   );
+  await flush();
 });
 
 afterEach(() => {
@@ -198,6 +207,8 @@ describe("terminal toolbar overflow", () => {
       "选择广播目标…",
       "开始录制…",
       "字符编码",
+      "持久终端助手…",
+      "导入离线 helper…",
     ]);
     await waitFor(() =>
       expect(document.activeElement?.textContent).toContain("搜索终端内容"),

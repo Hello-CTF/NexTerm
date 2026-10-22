@@ -142,7 +142,7 @@ func TestGrantSetValidatesKindsAndDevice(t *testing.T) {
 	if noDevice.OK || noDevice.Error == nil || !strings.Contains(noDevice.Error.Message, "缺少设备 ID") {
 		t.Fatalf("empty device dispatch = %+v", noDevice)
 	}
-	if listed := grants.List(); len(listed) != 0 {
+	if listed := mustAgentGrantList(t, grants); len(listed) != 0 {
 		t.Fatalf("rejected grants must not persist, got %+v", listed)
 	}
 }

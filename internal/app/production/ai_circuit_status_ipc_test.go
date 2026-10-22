@@ -67,7 +67,7 @@ func TestAICircuitStatusCommandRegistrationAndInvocation(t *testing.T) {
 		t.Fatalf("active profile zero state = %+v", status)
 	}
 
-	client, err := manager.ClientFor(openProfile.ID)
+	client, err := manager.ClientFor(ctx, openProfile.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestAICircuitStatusCommandRegistrationAndInvocation(t *testing.T) {
 		t.Fatalf("openUntil wire type = %T", wire["openUntil"])
 	}
 
-	counting, err := manager.ClientFor(countingProfile.ID)
+	counting, err := manager.ClientFor(ctx, countingProfile.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -43,7 +43,10 @@ func TestFailedSaveDoesNotCommitMemoryOrRuntime(t *testing.T) {
 	if _, err := manager.Save(ctx, saved); err == nil {
 		t.Fatal("injected write failure was ignored")
 	}
-	active, ok := manager.ActiveProfile()
+	active, ok, err := manager.ActiveProfile(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !ok || active.Model != "kimi-k3" {
 		t.Fatalf("failed save changed runtime: %+v, active=%v", active, ok)
 	}
@@ -52,7 +55,11 @@ func TestFailedSaveDoesNotCommitMemoryOrRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := reloaded.Overview().Profiles[0].Model; got != "kimi-k3" {
+	overview, err = reloaded.Overview(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := overview.Profiles[0].Model; got != "kimi-k3" {
 		t.Fatalf("failed save reached persistence: %s", got)
 	}
 }

@@ -127,7 +127,7 @@ describe("session list resynchronization after closeTab", () => {
     expect(useUi.getState().toasts).toEqual([]);
   });
 
-  it.each(["ssh", "device"] as const)("closes a dead %s tab after its session has disconnected", async (kind) => {
+  it.each(["ssh", "device"] as const)("detaches a dead %s tab by default after its session has disconnected", async (kind) => {
     seedWorkspaceWithTerminal();
     useUi.setState((state) => ({
       sessions: [{ ...SESSION, kind }],
@@ -138,9 +138,24 @@ describe("session list resynchronization after closeTab", () => {
 
     await expect(useUi.getState().closeTab("t1")).resolves.toBe(true);
 
-    expect(mocks.closeTab).toHaveBeenCalledWith("bt1", undefined, "s1");
+    expect(mocks.closeTab).toHaveBeenCalledWith("bt1", "detach", "s1");
     expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toEqual([]);
-    expect(useUi.getState().toasts).toEqual([]);
+    expect(useUi.getState().toasts.map((toast) => toast.text)).toContain(
+      "本地标签已关闭；远端持久终端可能仍在运行，可在后台会话中查看",
+    );
+  });
+
+  it("preserves the local default close semantics", async () => {
+    seedWorkspaceWithTerminal();
+    useUi.setState((state) => ({
+      sessions: [{ ...SESSION, kind: "local" }],
+      workspaces: state.workspaces.map((workspace) => ({ ...workspace, assetKind: "local" })),
+    }));
+
+    await expect(useUi.getState().closeTab("t1")).resolves.toBe(true);
+
+    expect(mocks.closeTab).toHaveBeenCalledWith("bt1", undefined);
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toEqual([]);
   });
 
   it("closes an SSH tab that the server no longer knows", async () => {

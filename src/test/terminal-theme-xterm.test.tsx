@@ -4,6 +4,7 @@ import { act } from "react";
 import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { flushMacrotask } from "./features/reactTestUtils";
 
 const harness = vi.hoisted(() => ({
   terminals: [] as Array<{
@@ -137,8 +138,17 @@ import {
   xtermThemeFor,
 } from "../features/terminal/XtermView";
 import {
+  TERMINAL_FONT_STACKS,
+  XTERM_DARK_HIGH_CONTRAST_THEME,
+  XTERM_DARK_MAXIMUM_CONTRAST_THEME,
+  XTERM_LIGHT_HIGH_CONTRAST_THEME,
+  XTERM_LIGHT_MAXIMUM_CONTRAST_THEME,
+} from "../features/terminal/xtermTheme";
+import {
   getAppearancePrefs,
   resetAppearancePrefs,
+  setTerminalContrast,
+  setTerminalFontFamily,
   setTerminalFontSize,
   setTerminalTheme,
 } from "../app/preferences";
@@ -153,8 +163,8 @@ async function flushWork(): Promise<void> {
     const callbacks = [...harness.frames.values()];
     harness.frames.clear();
     for (const callback of callbacks) callback();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flushMacrotask();
+    await flushMacrotask();
   });
 }
 
@@ -239,43 +249,101 @@ afterEach(() => {
   container = null;
 });
 
-describe("xterm palettes", () => {
-  it("keeps foreground and white readable on both canvases", () => {
-    for (const theme of [XTERM_DARK_THEME, XTERM_LIGHT_THEME]) {
-      expect(contrast(theme.foreground, theme.background)).toBeGreaterThanOrEqual(4.5);
-      expect(contrast(theme.white, theme.background)).toBeGreaterThanOrEqual(4.5);
-      expect(contrast(theme.brightWhite, theme.background)).toBeGreaterThanOrEqual(4.5);
-    }
-  });
+const chromaticColors = [
+  "red",
+  "brightRed",
+  "green",
+  "brightGreen",
+  "yellow",
+  "brightYellow",
+  "blue",
+  "brightBlue",
+  "magenta",
+  "brightMagenta",
+  "cyan",
+  "brightCyan",
+] as const;
+const textColors = ["foreground", "white", "brightWhite"] as const;
+const measuredAnsiColors = ["brightBlack", ...chromaticColors] as const;
+const paletteCases = [
+  { name: "standard dark", theme: XTERM_DARK_THEME, text: 4.5, ansi: 3 },
+  { name: "standard light", theme: XTERM_LIGHT_THEME, text: 4.5, ansi: 3 },
+  { name: "high dark", theme: XTERM_DARK_HIGH_CONTRAST_THEME, text: 7, ansi: 7 },
+  { name: "high light", theme: XTERM_LIGHT_HIGH_CONTRAST_THEME, text: 7, ansi: 7 },
+  { name: "maximum dark", theme: XTERM_DARK_MAXIMUM_CONTRAST_THEME, text: 12, ansi: 12 },
+  { name: "maximum light", theme: XTERM_LIGHT_MAXIMUM_CONTRAST_THEME, text: 12, ansi: 12 },
+];
 
-  it("keeps chromatic ansi colors at 3:1 or better on both canvases", () => {
-    const chromatic = [
-      "red",
-      "brightRed",
-      "green",
-      "brightGreen",
-      "yellow",
-      "brightYellow",
-      "blue",
-      "brightBlue",
-      "magenta",
-      "brightMagenta",
-      "cyan",
-      "brightCyan",
-    ] as const;
-    for (const theme of [XTERM_DARK_THEME, XTERM_LIGHT_THEME]) {
-      for (const key of chromatic) {
-        expect(
-          contrast(theme[key], theme.background),
-          `${key} on ${theme.background}`,
-        ).toBeGreaterThanOrEqual(3);
+function hue(hex: string): number {
+  const n = parseInt(hex.slice(1), 16);
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => v / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+  if (delta === 0) return 0;
+  let value: number;
+  if (max === r) value = 60 * (((g - b) / delta) % 6);
+  else if (max === g) value = 60 * ((b - r) / delta + 2);
+  else value = 60 * ((r - g) / delta + 4);
+  return (value + 360) % 360;
+}
+
+function hueDistance(a: string, b: string): number {
+  const difference = Math.abs(hue(a) - hue(b));
+  return Math.min(difference, 360 - difference);
+}
+
+describe("xterm palettes", () => {
+  it("measures foreground and key ANSI contrast for every dark/light preset", () => {
+    for (const { name, theme, text, ansi } of paletteCases) {
+      for (const key of textColors) {
+        expect(contrast(theme[key], theme.background), `${name} ${key}`).toBeGreaterThanOrEqual(text);
+      }
+      for (const key of measuredAnsiColors) {
+        expect(contrast(theme[key], theme.background), `${name} ${key}`).toBeGreaterThanOrEqual(ansi);
       }
     }
   });
 
-  it("resolves the palette strictly by the resolved terminal theme", () => {
+  it("does not reduce measured contrast when moving to a stronger preset", () => {
+    for (const [standard, high, maximum] of [
+      [XTERM_DARK_THEME, XTERM_DARK_HIGH_CONTRAST_THEME, XTERM_DARK_MAXIMUM_CONTRAST_THEME],
+      [XTERM_LIGHT_THEME, XTERM_LIGHT_HIGH_CONTRAST_THEME, XTERM_LIGHT_MAXIMUM_CONTRAST_THEME],
+    ]) {
+      for (const key of [...textColors, ...measuredAnsiColors]) {
+        const standardRatio = contrast(standard[key], standard.background);
+        const highRatio = contrast(high[key], high.background);
+        const maximumRatio = contrast(maximum[key], maximum.background);
+        expect(highRatio, `high ${key}`).toBeGreaterThanOrEqual(standardRatio);
+        expect(maximumRatio, `maximum ${key}`).toBeGreaterThanOrEqual(highRatio);
+      }
+    }
+  });
+
+  it("preserves ANSI hues and selection/cursor behavior across presets", () => {
+    for (const [standard, high, maximum] of [
+      [XTERM_DARK_THEME, XTERM_DARK_HIGH_CONTRAST_THEME, XTERM_DARK_MAXIMUM_CONTRAST_THEME],
+      [XTERM_LIGHT_THEME, XTERM_LIGHT_HIGH_CONTRAST_THEME, XTERM_LIGHT_MAXIMUM_CONTRAST_THEME],
+    ]) {
+      for (const theme of [high, maximum]) {
+        for (const key of chromaticColors) {
+          expect(hueDistance(standard[key], theme[key]), key).toBeLessThanOrEqual(2);
+        }
+        expect(theme.selectionBackground).toBe(standard.selectionBackground);
+        expect(theme.cursorAccent).toBe(theme.background);
+        expect(theme).not.toHaveProperty("cursor");
+      }
+    }
+  });
+
+  it("resolves actual palettes by theme and contrast while retaining the standard default", () => {
     expect(xtermThemeFor("dark")).toBe(XTERM_DARK_THEME);
     expect(xtermThemeFor("light")).toBe(XTERM_LIGHT_THEME);
+    expect(xtermThemeFor("dark", "standard")).toBe(XTERM_DARK_THEME);
+    expect(xtermThemeFor("dark", "high")).toBe(XTERM_DARK_HIGH_CONTRAST_THEME);
+    expect(xtermThemeFor("dark", "maximum")).toBe(XTERM_DARK_MAXIMUM_CONTRAST_THEME);
+    expect(xtermThemeFor("light", "high")).toBe(XTERM_LIGHT_HIGH_CONTRAST_THEME);
+    expect(xtermThemeFor("light", "maximum")).toBe(XTERM_LIGHT_MAXIMUM_CONTRAST_THEME);
   });
 });
 
@@ -293,6 +361,46 @@ describe("XtermView appearance hot updates", () => {
     setTerminalFontSize(16);
     await show();
     expect(harness.terminals[0].options.fontSize).toBe(16);
+  });
+
+  it("mounts with the current Cascadia default and persisted font/contrast preferences", async () => {
+    setTerminalFontFamily("jetbrains-mono");
+    setTerminalContrast("high");
+    await show();
+    const term = harness.terminals[0];
+    expect(term.options.fontFamily).toBe(TERMINAL_FONT_STACKS["jetbrains-mono"]);
+    expect((term.options.theme as Record<string, string>).background).toBe(
+      XTERM_DARK_HIGH_CONTRAST_THEME.background,
+    );
+
+    act(() => resetAppearancePrefs());
+    expect(term.options.fontFamily).toBe(TERMINAL_FONT_STACKS.cascadia);
+    expect((term.options.theme as Record<string, string>).background).toBe(XTERM_DARK_THEME.background);
+  });
+
+  it("hot-updates font and contrast on the same terminal without reattaching", async () => {
+    await show();
+    const term = harness.terminals[0];
+    const options = term.options;
+    const initialTheme = term.options.theme as Record<string, string>;
+    expect(initialTheme.cursor).toBe("#516cd6");
+    expect(initialTheme.selectionBackground).toBe(XTERM_DARK_THEME.selectionBackground);
+    harness.attach.mockClear();
+
+    act(() => setTerminalFontFamily("fira-code"));
+    expect(term.options).toBe(options);
+    expect(term.options.fontFamily).toBe(TERMINAL_FONT_STACKS["fira-code"]);
+
+    act(() => setTerminalContrast("maximum"));
+    const maximumTheme = term.options.theme as Record<string, string>;
+    expect(maximumTheme.background).toBe(XTERM_DARK_MAXIMUM_CONTRAST_THEME.background);
+    expect(maximumTheme.cursor).toBe(initialTheme.cursor);
+    expect(maximumTheme.selectionBackground).toBe(initialTheme.selectionBackground);
+    expect(maximumTheme.cursorAccent).toBe(maximumTheme.background);
+    expect(harness.terminals).toHaveLength(1);
+    expect(harness.terminals[0]).toBe(term);
+    expect(harness.attach).not.toHaveBeenCalled();
+    expect(harness.attachTab).not.toHaveBeenCalled();
   });
 
   it("hot-updates the font size and recomputes the grid", async () => {

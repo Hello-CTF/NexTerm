@@ -17,14 +17,15 @@ import (
 const maxDimension = 1024
 
 type Config struct {
-	Path       string
-	Args       []string
-	Dir        string
-	Env        []string
-	Cols       uint32
-	Rows       uint32
-	ID         string
-	Generation uint64
+	Path           string
+	Args           []string
+	Dir            string
+	Env            []string
+	Cols           uint32
+	Rows           uint32
+	ID             string
+	Generation     uint64
+	processFactory func(*exec.Cmd) (*Process, error)
 }
 
 type terminal interface {
@@ -69,7 +70,7 @@ func Start(ctx context.Context, config Config) (*Session, error) {
 	cmd := exec.Command(config.Path, config.Args...)
 	cmd.Dir = config.Dir
 	cmd.Env = config.Env
-	terminal, err := startTerminal(cmd, config.Cols, config.Rows)
+	terminal, err := startTerminal(cmd, config.Cols, config.Rows, config.processFactory)
 	if err != nil {
 		return nil, err
 	}

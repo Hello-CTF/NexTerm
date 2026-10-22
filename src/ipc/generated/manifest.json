@@ -1,0 +1,2015 @@
+{
+  "schemaVersion": 1,
+  "deferredScopes": [
+    "memory-owner",
+    "ai-owner"
+  ],
+  "commands": {
+    "ai_answer": {
+      "nested": false,
+      "channel": true,
+      "stream": "json"
+    },
+    "ai_cancel": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_chat": {
+      "nested": true,
+      "channel": true,
+      "stream": "json"
+    },
+    "ai_circuit_status": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_confirm": {
+      "nested": false,
+      "channel": true,
+      "stream": "json"
+    },
+    "ai_conversation_create": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_conversation_delete": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_conversation_list": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_conversation_retitle": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_edit_resend": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_get_permission": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_get_provider": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_grant_list": {
+      "scope": "ai-grant",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_grant_revoke": {
+      "scope": "ai-grant",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_grant_rule_list": {
+      "scope": "ai-grant",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_grant_rule_revoke": {
+      "scope": "ai-grant",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_grant_rule_set": {
+      "scope": "ai-grant",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_grant_set": {
+      "scope": "ai-grant",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_hitl_events": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_hitl_snapshot": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_messages": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_model_activate": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_model_delete": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_model_preset": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_model_profiles": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_model_refresh": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_model_save": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_models": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_presets": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_roster_attach": {
+      "scope": "ai-roster",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_roster_list": {
+      "scope": "ai-roster",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_roster_reconcile": {
+      "scope": "ai-roster",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_roster_release": {
+      "scope": "ai-roster",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_roster_rename": {
+      "scope": "ai-roster",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_run_events": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_run_get": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_run_history": {
+      "scope": "ai-run",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_run_list": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_run_recovery_summary": {
+      "scope": "ai-run",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_set_permission": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_set_provider": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_skills_delete_override": {
+      "scope": "ai-skills",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_skills_dispatch": {
+      "scope": "ai-skills",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_skills_list": {
+      "scope": "ai-skills",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_skills_material": {
+      "scope": "ai-skills",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_skills_save_override": {
+      "scope": "ai-skills",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_steer": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_takeover_cancel": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_takeover_confirm": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_takeover_enter": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_takeover_exit": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_takeover_pause": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_takeover_resume": {
+      "nested": false,
+      "channel": true,
+      "stream": "json"
+    },
+    "ai_takeover_run": {
+      "nested": false,
+      "channel": true,
+      "stream": "json"
+    },
+    "ai_test_provider": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_usage_summary": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_watch_cancel": {
+      "scope": "ai-watch",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_watch_create": {
+      "scope": "ai-watch",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_watch_list": {
+      "scope": "ai-watch",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_watch_targets": {
+      "scope": "ai-watch",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "app_info": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "app_platform": {
+      "scope": "platform",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "app_restart": {
+      "scope": "update",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "app_update_check": {
+      "scope": "update",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "app_update_install": {
+      "scope": "update",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "asset_create": {
+      "scope": "asset",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "asset_delete": {
+      "scope": "asset",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "asset_get": {
+      "scope": "asset",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "asset_list": {
+      "scope": "asset",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "asset_probe_batch": {
+      "scope": "asset",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "asset_read_key_file": {
+      "scope": "asset",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "asset_search": {
+      "scope": "asset",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "asset_search_meta": {
+      "scope": "asset",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "asset_update": {
+      "scope": "asset",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "audit_count": {
+      "scope": "audit",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "audit_query": {
+      "scope": "audit",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "biometric_disable": {
+      "scope": "biometric",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "biometric_enable": {
+      "scope": "biometric",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "biometric_status": {
+      "scope": "biometric",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "biometric_unlock": {
+      "scope": "biometric",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "command_count": {
+      "scope": "command-log",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "command_query": {
+      "scope": "command-log",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "credential_update": {
+      "scope": "credential",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "cron_get": {
+      "scope": "cron",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "cron_list": {
+      "scope": "cron",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "cron_register": {
+      "scope": "cron",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "cron_set_enabled": {
+      "scope": "cron",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "cron_unregister": {
+      "scope": "cron",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "db_columns": {
+      "scope": "db",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "db_connect": {
+      "scope": "db",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "db_disconnect": {
+      "scope": "db",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "db_query": {
+      "scope": "db",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "db_schemas": {
+      "scope": "db",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "db_tables": {
+      "scope": "db",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "desktop_tray_get": {
+      "scope": "platform",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "desktop_tray_set": {
+      "scope": "platform",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "docker_action": {
+      "scope": "docker",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "docker_compose_action": {
+      "scope": "docker",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "docker_compose_logs_attach": {
+      "scope": "docker",
+      "nested": false,
+      "channel": true,
+      "stream": "binary"
+    },
+    "docker_compose_redeploy_attach": {
+      "scope": "docker",
+      "nested": false,
+      "channel": true,
+      "stream": "binary"
+    },
+    "docker_compose_redeploy_prepare": {
+      "scope": "docker",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "docker_compose_stacks": {
+      "scope": "docker",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "docker_container_list_dir": {
+      "scope": "docker",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "docker_disk_usage": {
+      "scope": "docker",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "docker_exec_attach": {
+      "scope": "docker",
+      "nested": true,
+      "channel": true,
+      "stream": "binary"
+    },
+    "docker_image_pull": {
+      "scope": "docker",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "docker_image_remove": {
+      "scope": "docker",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "docker_images": {
+      "scope": "docker",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "docker_inspect": {
+      "scope": "docker",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "docker_logs_attach": {
+      "scope": "docker",
+      "nested": false,
+      "channel": true,
+      "stream": "binary"
+    },
+    "docker_overview": {
+      "scope": "docker",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "docker_prune": {
+      "scope": "docker",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "docker_prune_preview": {
+      "scope": "docker",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "docker_ps": {
+      "scope": "docker",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "docker_reclaimable": {
+      "scope": "docker",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "docker_stats": {
+      "scope": "docker",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "exec_batch_asset_edit": {
+      "scope": "exec-batch",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "exec_batch_cancel": {
+      "scope": "exec-batch",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "exec_batch_deploy_public_key": {
+      "scope": "exec-batch",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "exec_batch_execute": {
+      "scope": "exec-batch",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "exec_batch_health_cancel": {
+      "scope": "exec-batch",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "exec_batch_health_probe": {
+      "scope": "exec-batch",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "exec_batch_history_get": {
+      "scope": "exec-batch",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "exec_batch_history_list": {
+      "scope": "exec-batch",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "exec_batch_progress": {
+      "scope": "exec-batch",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "exec_batch_rerun": {
+      "scope": "exec-batch",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "exec_batch_test_login": {
+      "scope": "exec-batch",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_create": {
+      "scope": "forward",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_create_remote": {
+      "scope": "forward",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_create_socks": {
+      "scope": "forward",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_env": {
+      "scope": "forward",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_list": {
+      "scope": "forward",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_remove": {
+      "scope": "forward",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_retry": {
+      "scope": "forward",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_rule_delete": {
+      "scope": "forward-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_rule_list": {
+      "scope": "forward-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_rule_recover_now": {
+      "scope": "forward-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_rule_recovery_settings_get": {
+      "scope": "forward-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_rule_recovery_settings_set": {
+      "scope": "forward-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_rule_save": {
+      "scope": "forward-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_rule_set_auto_start": {
+      "scope": "forward-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_rule_settings_list": {
+      "scope": "forward-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_rule_start": {
+      "scope": "forward-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "forward_rule_stop": {
+      "scope": "forward-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_cancel": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_checksum": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_chmod": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_delete": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_download": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_extract": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_list": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_mkdir": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_pack_download": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_read": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_read_range": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_rename": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_roots": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_upload": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_upload_abort": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_upload_begin": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_upload_chunk": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_upload_commit": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_write": {
+      "scope": "fs",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "group_create": {
+      "scope": "group",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "group_delete": {
+      "scope": "group",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "group_list": {
+      "scope": "group",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "group_update": {
+      "scope": "group",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "host_share_identity": {
+      "scope": "host-share",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "host_share_terminal_close": {
+      "scope": "host-share",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "host_share_terminal_input": {
+      "scope": "host-share",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "host_share_terminal_open": {
+      "scope": "host-share",
+      "nested": true,
+      "channel": true,
+      "stream": "json"
+    },
+    "inventory_discover": {
+      "scope": "inventory",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "inventory_ssh_watch": {
+      "scope": "inventory",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "inventory_sync": {
+      "scope": "inventory",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "inventory_target_exec": {
+      "scope": "inventory",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "known_host_accept": {
+      "scope": "known-host",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "known_host_list": {
+      "scope": "known-host",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "known_host_remove": {
+      "scope": "known-host",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "layout_get": {
+      "scope": "layout",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "layout_put": {
+      "scope": "layout",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_file_read": {
+      "scope": "local-file",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_file_read_range": {
+      "scope": "local-file",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_folder_list": {
+      "scope": "local-file",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "log_tail_cancel": {
+      "scope": "log-tail",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "log_tail_save": {
+      "scope": "log-tail",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "log_tail_start": {
+      "scope": "log-tail",
+      "nested": false,
+      "channel": true,
+      "stream": "json"
+    },
+    "memory_create": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "memory_delete": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "memory_edit": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "memory_get": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "memory_index": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "memory_settings_get": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "memory_settings_set": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "mount_capability": {
+      "scope": "mount",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "mount_create": {
+      "scope": "mount",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "mount_list": {
+      "scope": "mount",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "mount_remove": {
+      "scope": "mount",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "preview_share_active": {
+      "scope": "preview-share",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "preview_share_create": {
+      "scope": "preview-share",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "production_settings_get": {
+      "scope": "production",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "production_settings_set": {
+      "scope": "production",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "redis_command": {
+      "scope": "redis",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "redis_inspect": {
+      "scope": "redis",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "redis_scan": {
+      "scope": "redis",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "redis_set_ttl": {
+      "scope": "redis",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_account_admin_create_user": {
+      "scope": "remote",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_account_admin_set_user_state": {
+      "scope": "remote",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_account_admin_users": {
+      "scope": "remote",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_account_change_password": {
+      "scope": "remote",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_account_device_revoke": {
+      "scope": "remote",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_account_devices": {
+      "scope": "remote",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_account_me": {
+      "scope": "remote",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_fleet_base_urls_get": {
+      "scope": "remote",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_fleet_base_urls_put": {
+      "scope": "remote",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_fleet_device_autostart": {
+      "scope": "remote",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_fleet_device_metrics": {
+      "scope": "remote",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_fleet_device_revoke": {
+      "scope": "remote",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_fleet_devices": {
+      "scope": "remote",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_fleet_enroll_code": {
+      "scope": "remote",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_healthz": {
+      "scope": "remote",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_share_host_create": {
+      "scope": "remote",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_share_host_list": {
+      "scope": "remote",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_share_host_revoke": {
+      "scope": "remote",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_share_link_list": {
+      "scope": "remote",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_share_link_revoke": {
+      "scope": "remote",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_share_preview_list": {
+      "scope": "remote",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_share_preview_revoke": {
+      "scope": "remote",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "runbook_run_advance": {
+      "scope": "runbook",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "runbook_run_cancel": {
+      "scope": "runbook",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "runbook_run_get": {
+      "scope": "runbook",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "runbook_run_history_get": {
+      "scope": "runbook",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "runbook_run_prepare": {
+      "scope": "runbook",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "runbook_run_start": {
+      "scope": "runbook",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "services_action": {
+      "scope": "services",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "services_find": {
+      "scope": "services",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "services_kill": {
+      "scope": "services",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "services_list": {
+      "scope": "services",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "session_connect": {
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "session_connect_device": {
+      "scope": "session",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "session_connect_local": {
+      "scope": "session",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "session_connect_quick": {
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "session_disconnect": {
+      "scope": "session",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "session_line_exec": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "session_list": {
+      "scope": "session",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "session_open_line_tab": {
+      "scope": "session",
+      "nested": false,
+      "channel": true,
+      "stream": "binary"
+    },
+    "session_probe": {
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "session_probe_host_key": {
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "session_quick_connect_user": {
+      "scope": "session",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "session_reconnect": {
+      "scope": "session",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "snippet_create": {
+      "scope": "snippet",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "snippet_delete": {
+      "scope": "snippet",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "snippet_list": {
+      "scope": "snippet",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "snippet_update": {
+      "scope": "snippet",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ssh_import_apply": {
+      "scope": "ssh-import",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "ssh_import_preview": {
+      "scope": "ssh-import",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_apply_objects": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_bundle_read": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_bundle_write": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_collect_ai_grants": {
+      "scope": "sync",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_collect_ai_permission": {
+      "scope": "sync",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_collect_ai_profiles": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_collect_assets": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_collect_credentials": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_collect_known_hosts": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_collect_preferences": {
+      "scope": "sync",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_collect_tombstones": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_compare": {
+      "scope": "sync",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_digest": {
+      "scope": "sync",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_export": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_import": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_kind_opt_in_get": {
+      "scope": "sync",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_kind_opt_in_set": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_link_get": {
+      "scope": "sync",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_link_mfa": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_link_reset_password": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_link_set": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_preferences_get": {
+      "scope": "sync",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_preferences_set": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_repair_undecryptable": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_status": {
+      "scope": "sync",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_wake": {
+      "scope": "sync",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "system_insets": {
+      "scope": "platform",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "target_set_create": {
+      "scope": "target-set",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "target_set_delete": {
+      "scope": "target-set",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "target_set_get": {
+      "scope": "target-set",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "target_set_list": {
+      "scope": "target-set",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "target_set_update": {
+      "scope": "target-set",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_attach": {
+      "scope": "terminal",
+      "nested": false,
+      "channel": true,
+      "stream": "binary"
+    },
+    "terminal_attach_tab": {
+      "nested": false,
+      "channel": true,
+      "stream": "binary"
+    },
+    "terminal_broadcast_prepare": {
+      "scope": "terminal",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_claim": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_close_tab": {
+      "nested": false,
+      "channel": true,
+      "stream": "none"
+    },
+    "terminal_create_tab": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_detach": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_dump": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_export_log": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_helper_offline": {
+      "scope": "helper",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_helper_operation": {
+      "scope": "helper",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_list": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_pause": {
+      "scope": "terminal-stream",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_record_start": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_record_status": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_record_stop": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_recover": {
+      "scope": "terminal-stream",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_release": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_rename_tab": {
+      "scope": "terminal",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_resize": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_resize_flush": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_resume": {
+      "scope": "terminal-stream",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_screen_text": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_set_visible": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_snapshot": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_stream_ack": {
+      "scope": "terminal-stream",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_switch_encoding": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_tail": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_write": {
+      "scope": "terminal",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "transcript_delete": {
+      "scope": "transcript",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "transcript_hosts": {
+      "scope": "transcript",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "transcript_list": {
+      "scope": "transcript",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "transcript_read": {
+      "scope": "transcript",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "transcript_search": {
+      "scope": "transcript",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "transcript_sync_opt_in": {
+      "scope": "transcript",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "vault_change_password": {
+      "scope": "vault",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "vault_delete_credential": {
+      "scope": "vault",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "vault_generate_key": {
+      "scope": "vault",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "vault_init_dpapi": {
+      "scope": "vault",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "vault_init_master": {
+      "scope": "vault",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "vault_list_credentials": {
+      "scope": "vault",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "vault_lock": {
+      "scope": "vault",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "vault_reveal_credential": {
+      "scope": "vault",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "vault_set_autolock": {
+      "scope": "vault",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "vault_set_credential": {
+      "scope": "vault",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "vault_status": {
+      "scope": "vault",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "vault_unlock": {
+      "scope": "vault",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    }
+  },
+  "legacyCommands": [
+    "ai_answer",
+    "ai_cancel",
+    "ai_chat",
+    "ai_circuit_status",
+    "ai_confirm",
+    "ai_conversation_create",
+    "ai_conversation_delete",
+    "ai_conversation_list",
+    "ai_conversation_retitle",
+    "ai_edit_resend",
+    "ai_get_permission",
+    "ai_get_provider",
+    "ai_hitl_events",
+    "ai_hitl_snapshot",
+    "ai_messages",
+    "ai_model_activate",
+    "ai_model_delete",
+    "ai_model_preset",
+    "ai_model_profiles",
+    "ai_model_refresh",
+    "ai_model_save",
+    "ai_models",
+    "ai_presets",
+    "ai_run_events",
+    "ai_run_get",
+    "ai_run_list",
+    "ai_set_permission",
+    "ai_set_provider",
+    "ai_steer",
+    "ai_takeover_cancel",
+    "ai_takeover_confirm",
+    "ai_takeover_enter",
+    "ai_takeover_exit",
+    "ai_takeover_pause",
+    "ai_takeover_resume",
+    "ai_takeover_run",
+    "ai_test_provider",
+    "ai_usage_summary",
+    "app_info",
+    "memory_create",
+    "memory_delete",
+    "memory_edit",
+    "memory_get",
+    "memory_index",
+    "memory_settings_get",
+    "memory_settings_set",
+    "session_connect",
+    "session_connect_quick",
+    "session_line_exec",
+    "session_probe",
+    "session_probe_host_key",
+    "terminal_attach_tab",
+    "terminal_claim",
+    "terminal_close_tab",
+    "terminal_create_tab",
+    "terminal_detach",
+    "terminal_dump",
+    "terminal_export_log",
+    "terminal_list",
+    "terminal_record_start",
+    "terminal_record_status",
+    "terminal_record_stop",
+    "terminal_release",
+    "terminal_resize",
+    "terminal_resize_flush",
+    "terminal_screen_text",
+    "terminal_set_visible",
+    "terminal_snapshot",
+    "terminal_switch_encoding",
+    "terminal_tail"
+  ]
+}

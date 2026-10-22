@@ -1,6 +1,35 @@
 /** @vitest-environment jsdom */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  AssetProbeBatchDTO,
+  AssetProbeBatchRequest,
+  AssetProbeResultDTO,
+} from "../../ipc/generated/types";
+import type { AssetProbeBatchDto, AssetProbeResultDto } from "../../ipc/types";
+
+type TypeEqual<Left, Right> =
+  (<Type>() => Type extends Left ? 1 : 2) extends
+  (<Type>() => Type extends Right ? 1 : 2) ? true : false;
+
+if (false) {
+  const resultMatchesGenerated: TypeEqual<AssetProbeResultDto, AssetProbeResultDTO> = true;
+  const batchMatchesGenerated: TypeEqual<AssetProbeBatchDto, AssetProbeBatchDTO> = true;
+  const facadeKeepsOptionalArguments: TypeEqual<
+    Parameters<typeof import("../../ipc/commands").assetApi.probeBatch>,
+    [assetIds: string[], timeoutMs?: number, maxConcurrent?: number]
+  > = true;
+  const requestDoesNotReplaceFacade: TypeEqual<
+    Parameters<typeof import("../../ipc/commands").assetApi.probeBatch>,
+    [request: AssetProbeBatchRequest]
+  > = false;
+  void [
+    resultMatchesGenerated,
+    batchMatchesGenerated,
+    facadeKeepsOptionalArguments,
+    requestDoesNotReplaceFacade,
+  ];
+}
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -136,6 +165,40 @@ describe("assetReachability overlapping batches", () => {
     );
     calls[0].resolve({ results: [] });
     await p1;
+  });
+});
+
+describe("assetReachability reset isolation", () => {
+  it("a late response from before reset never overwrites the post-reset owner's entry for the same asset", async () => {
+    const p1 = probe(["shared-asset"]);
+    useAssetReachability.getState().reset();
+    const p2 = probe(["shared-asset"]);
+    expect(mocks.probeBatch).toHaveBeenCalledTimes(2);
+
+    calls[1].resolve({ results: [result("shared-asset", true)] });
+    await p2;
+    expect(entryOf("shared-asset")?.state).toBe("reachable");
+
+    calls[0].resolve({ results: [result("shared-asset", false, { error: "account-a-late" })] });
+    await p1;
+
+    expect(entryOf("shared-asset")?.state).toBe("reachable");
+    expect(entryOf("shared-asset")?.error).toBeUndefined();
+    expect(useAssetReachability.getState().batchError).toBeNull();
+  });
+
+  it("a late rejection from before reset never writes the post-reset owner's batchError", async () => {
+    const p1 = probe(["shared-asset"]);
+    useAssetReachability.getState().reset();
+    const p2 = probe(["shared-asset"]);
+    calls[1].resolve({ results: [result("shared-asset", true)] });
+    await p2;
+
+    calls[0].reject({ code: "io", message: "account-a-late" });
+    await p1;
+
+    expect(entryOf("shared-asset")?.state).toBe("reachable");
+    expect(useAssetReachability.getState().batchError).toBeNull();
   });
 });
 

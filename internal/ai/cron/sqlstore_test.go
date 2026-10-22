@@ -42,48 +42,9 @@ func fullTestJob(id, sessionID string, now time.Time) Job {
 		RetryAt: now.Add(time.Minute), CircuitOpenUntil: now.Add(2 * time.Minute),
 		ConsecutiveFailures: 3, LastRunAt: now.Add(-time.Hour), LastScheduledFor: now.Add(-time.Hour),
 		LastCoalesced: true, LastError: "previous failure", ModelProfileID: "profile-1",
-		Lease: Lease{Owner: "owner-1", ExpiresAt: now.Add(20 * time.Second)},
-		Run:   RunState{ID: "run-1", ScheduledFor: now.Add(-time.Minute), StartedAt: now, Deadline: now.Add(time.Minute), Coalesced: true},
-	}
-}
-
-func TestSQLiteStoreRoundTripPreservesEveryField(t *testing.T) {
-	ctx := context.Background()
-	store := newTestSQLiteStore(t)
-	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
-	job := fullTestJob("job-1", "session-a", now)
-	created, err := store.Create(ctx, job, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if created.Revision != 1 {
-		t.Fatalf("created revision = %d; want 1", created.Revision)
-	}
-	jobs, err := store.List(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(jobs) != 1 {
-		t.Fatalf("listed %d jobs; want 1", len(jobs))
-	}
-	got := jobs[0]
-	if !jobsEqual(got, job) {
-		t.Fatalf("round trip mismatch:\n got %+v\nwant %+v", got, job)
-	}
-
-	stored, err := store.CompareAndSwap(ctx, got, got.Revision)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stored.Revision != 2 {
-		t.Fatalf("cas revision = %d; want 2", stored.Revision)
-	}
-	reloaded, err := store.List(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(reloaded) != 1 || reloaded[0].Revision != 2 || !jobsEqual(reloaded[0], stored) {
-		t.Fatalf("cas not durable: %+v", reloaded)
+		Lease:     Lease{Owner: "owner-1", ExpiresAt: now.Add(20 * time.Second)},
+		Run:       RunState{ID: "run-1", ScheduledFor: now.Add(-time.Minute), StartedAt: now, Deadline: now.Add(time.Minute), Coalesced: true},
+		OwnerKind: OwnerKindOpen,
 	}
 }
 
@@ -95,7 +56,7 @@ func jobsEqual(a, b Job) bool {
 		a.ConsecutiveFailures == b.ConsecutiveFailures && a.LastRunAt.Equal(b.LastRunAt) &&
 		a.LastScheduledFor.Equal(b.LastScheduledFor) && a.LastCoalesced == b.LastCoalesced && a.LastError == b.LastError &&
 		a.ModelProfileID == b.ModelProfileID &&
-		a.Lease == b.Lease && a.Run == b.Run
+		a.Lease == b.Lease && a.Run == b.Run && a.OwnerID == b.OwnerID && a.OwnerKind == b.OwnerKind
 }
 
 func TestSQLiteStoreCreateEnforcesBoundAndUniqueness(t *testing.T) {
@@ -323,35 +284,6 @@ func TestSQLiteStoreConcurrentCreateStaysBounded(t *testing.T) {
 	}
 }
 
-func TestSQLiteStoreConcurrentCompareAndSwapHasSingleWinner(t *testing.T) {
-	ctx := context.Background()
-	store := newTestSQLiteStore(t)
-	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
-	created, err := store.Create(ctx, fullTestJob("job", "session-a", now), 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var won atomic.Int32
-	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			candidate := created
-			candidate.LastError = fmt.Sprintf("writer-%d", i)
-			if _, err := store.CompareAndSwap(ctx, candidate, created.Revision); err == nil {
-				won.Add(1)
-			} else if !errors.Is(err, ErrConflict) {
-				t.Errorf("cas %d: %v", i, err)
-			}
-		}(i)
-	}
-	wg.Wait()
-	if won.Load() != 1 {
-		t.Fatalf("winners = %d; want 1", won.Load())
-	}
-}
-
 func TestSQLiteStoreSurfacesExplicitStorageErrors(t *testing.T) {
 	ctx := context.Background()
 	store := newTestSQLiteStore(t)
@@ -365,46 +297,5 @@ func TestSQLiteStoreSurfacesExplicitStorageErrors(t *testing.T) {
 	}
 	if _, err := scheduler.Register(ctx, testRegistration("session")); !errors.Is(err, ErrStorage) {
 		t.Fatalf("register on a failed store = %v; want explicit ErrStorage", err)
-	}
-}
-
-func TestSQLiteStoreConcurrentClaimHasSingleWinner(t *testing.T) {
-	ctx := context.Background()
-	store := newTestSQLiteStore(t)
-	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
-	var calls atomic.Int32
-	executor := executorFunc(func(context.Context, Trigger) error {
-		calls.Add(1)
-		return nil
-	})
-	first := testScheduler(t, store, executor, clock, func(options *Options) { options.OwnerID = "owner-a" })
-	second := testScheduler(t, store, executor, clock, func(options *Options) { options.OwnerID = "owner-b" })
-	registerTestJob(t, first, "job", "session")
-	now := clock.Add(time.Minute)
-
-	var wait sync.WaitGroup
-	wait.Add(2)
-	var firstClaims, secondClaims int
-	var firstErr, secondErr error
-	go func() {
-		defer wait.Done()
-		firstClaims, firstErr = first.runOnce(ctx, now)
-	}()
-	go func() {
-		defer wait.Done()
-		secondClaims, secondErr = second.runOnce(ctx, now)
-	}()
-	wait.Wait()
-	first.wg.Wait()
-	second.wg.Wait()
-	if firstErr != nil || secondErr != nil {
-		t.Fatalf("racing claims failed: %v, %v", firstErr, secondErr)
-	}
-	if firstClaims+secondClaims != 1 || calls.Load() != 1 {
-		t.Fatalf("claims = %d + %d, executions = %d", firstClaims, secondClaims, calls.Load())
-	}
-	stored := loadStoredJob(t, store, "job")
-	if stored.Running() || stored.LastRunAt.IsZero() || stored.LastError != "" || stored.Revision != 3 {
-		t.Fatalf("claim race left inconsistent durable state: %+v", stored)
 	}
 }

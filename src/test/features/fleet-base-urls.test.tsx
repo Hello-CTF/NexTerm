@@ -161,7 +161,14 @@ describe("BaseUrlsSection superadmin editing", () => {
 
   it("sends the remaining entries to the server after deleting and saving", async () => {
     const calls = routePut({ base_urls: [{ url: "https://b.example.com" }] });
-    mounted = mount(createElement(BaseUrlsSection, { entries, isAdmin: true, onSaved: () => undefined }));
+    let saved: { url: string; insecure?: boolean }[] | null = null;
+    mounted = mount(createElement(BaseUrlsSection, {
+      entries,
+      isAdmin: true,
+      onSaved: (list) => {
+        saved = list;
+      },
+    }));
     await expandSection();
     await flushUntil(() => document.body.textContent?.includes("#2") ?? false);
 
@@ -170,7 +177,7 @@ describe("BaseUrlsSection superadmin editing", () => {
     const saveButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("保存修改"));
     await flushUntil(() => !(saveButton as HTMLButtonElement).disabled);
     click(saveButton as HTMLButtonElement);
-    await flushUntil(() => calls.some((c) => c.method === "PUT"));
+    await flushUntil(() => saved !== null);
 
     expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ base_urls: [{ url: "https://b.example.com" }] });
   });

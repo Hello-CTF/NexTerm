@@ -650,6 +650,27 @@ describe("ForwardPanel env status, polling, and browser wording", () => {
     expect(mocks.forwardCreate).not.toHaveBeenCalled();
   });
 
+  it("falls back to the environment listenHost for runtime entries that omit it", async () => {
+    mocks.forwardEnv.mockResolvedValue({ available: true, platform: "other", listenHost: "0.0.0.0" });
+    mocks.forwardList.mockResolvedValue([
+      {
+        id: "legacy-forward",
+        sessionId: "s",
+        listenPort: 13306,
+        targetHost: "10.0.0.8",
+        targetPort: 3306,
+        kind: "local",
+        createdAt: 1,
+      },
+    ]);
+    mountForward();
+    await flush();
+
+    const row = mounted!.container.querySelector("tbody tr");
+    expect(row?.textContent).toContain("0.0.0.0:13306");
+    expect(row?.textContent).not.toContain("127.0.0.1:13306");
+  });
+
   it("env query failure shows the error and a retry; create stays forbidden until recovery", async () => {
     mocks.forwardEnv
       .mockRejectedValueOnce(new Error("env probe failed"))
@@ -786,7 +807,8 @@ describe("ForwardPanel and MountPanel session scope", () => {
 
     expect(mounted!.container.textContent).toContain("远端监听已断开");
     clickButton(mounted!.container, "重试");
-    await flushUntil(() => mocks.forwardRetry.mock.calls.some(([id, connectedSession]) => id === "f1" && connectedSession === "s"));
+    await flushUntil(() => mocks.toast.mock.calls.some(([kind, text]) => kind === "success" && text === "转发已恢复"));
+    expect(mocks.forwardRetry.mock.calls.some(([id, connectedSession]) => id === "f1" && connectedSession === "s")).toBe(true);
     expect(mocks.toast).toHaveBeenCalledWith("success", "转发已恢复");
   });
 

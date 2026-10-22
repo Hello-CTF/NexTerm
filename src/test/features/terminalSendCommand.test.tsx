@@ -60,11 +60,17 @@ vi.mock("../../features/terminal/CommandBlockPanel", () => ({ CommandBlockPanel:
 vi.mock("../../features/terminal/TerminalKeysBar", () => ({ TerminalKeysBar: () => null }));
 
 vi.mock("../../features/terminal/XtermView", async () => {
-  const { useEffect } = await import("react");
+  const { useEffect, useRef } = await import("react");
   return {
     XtermView: (props: Record<string, unknown>) => {
+      const onHandleRef = useRef(props.onHandle);
+      const onAttachRef = useRef(props.onAttach);
+      const registerSearchRef = useRef(props.registerSearch);
+      onHandleRef.current = props.onHandle;
+      onAttachRef.current = props.onAttach;
+      registerSearchRef.current = props.registerSearch;
       useEffect(() => {
-        (props.onHandle as ((handle: unknown) => void) | undefined)?.({
+        (onHandleRef.current as ((handle: unknown) => void) | undefined)?.({
           copyBlock: () => "",
           scrollToBlock: () => {},
           navigateBlock: () => null,
@@ -76,7 +82,11 @@ vi.mock("../../features/terminal/XtermView", async () => {
           paste: () => {},
           dimensions: () => ({ cols: 80, rows: 24 }),
         });
-        (props.onAttach as ((id: string) => void) | undefined)?.("kernel-1");
+        (onAttachRef.current as ((id: string) => void) | undefined)?.("kernel-1");
+        (registerSearchRef.current as ((api: unknown) => void) | undefined)?.({
+          findNext: () => {},
+          findPrevious: () => {},
+        });
       }, []);
       return <div data-testid="xterm-mock" />;
     },
@@ -145,7 +155,9 @@ async function clickMenuItem(label: string): Promise<void> {
     (candidate) => candidate.textContent?.includes(label),
   );
   if (!item) throw new Error(`menu item ${label} not found`);
-  act(() => item.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await act(async () => {
+    item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
 }
 
 describe("TerminalPane truthful command-input send feedback", () => {

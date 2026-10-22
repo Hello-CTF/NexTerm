@@ -5,7 +5,7 @@
 // relay do not support control in the first phase), the creation signature stays (tabId, ttlMs); the login-gating hook
 // of the TerminalPane entry returns false on logged-out desktop (hiding the entry).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { clickButton, flush, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
@@ -133,9 +133,14 @@ describe("PreviewShareMenu desktop dispatch", () => {
   it("lists no links when the current tab has no active relay", async () => {
     mocks.active.mockResolvedValue({});
     mocks.previewLinks.mockResolvedValue({ links: [linkOn("shell-9", "l-9")] });
-    const container = mountMenu();
-    await flushUntil(() => mocks.active.mock.calls.length >= 1);
-    await flushUntil(() => container.textContent?.includes("创建链接") === true);
+    mounted = mountWithClient(createElement(PreviewShareMenu, { tabId: "tab-1", sessionName: "web-01" }));
+    const container = mounted.container;
+    const open = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "预览链接")!;
+    await act(async () => {
+      open.click();
+      await flushUntil(() => mocks.active.mock.calls.length >= 1);
+      await flush();
+    });
     expect(mocks.previewLinks).not.toHaveBeenCalled();
     expect(container.textContent?.includes("进行中的预览")).toBe(false);
   });

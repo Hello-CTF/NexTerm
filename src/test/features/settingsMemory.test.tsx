@@ -53,8 +53,6 @@ import { MemoryCard } from "../../features/settings/MemoryCard";
 import { useUi } from "../../app/store";
 import type { MemoryTopicIndex } from "../../ipc/memory";
 
-const SCOPE = { tenant: "local", subject: "default" };
-
 const SETTINGS_V3 = { injectionEnabled: false, toolsEnabled: false, version: 3 };
 
 const ENTRY_FULL = {
@@ -119,9 +117,9 @@ describe("MemoryCard", () => {
     expect(text).toContain("operations");
     expect(text).toContain("m-1");
     expect(text).toContain("1 条");
-    expect(text).toContain("记忆按属主隔离存储");
-    expect(mocks.settings).toHaveBeenCalledWith(SCOPE);
-    expect(mocks.index).toHaveBeenCalledWith(SCOPE);
+    expect(text).toContain("记忆保存在当前 NexTerm 实例");
+    expect(mocks.settings).toHaveBeenCalledWith();
+    expect(mocks.index).toHaveBeenCalledWith();
   });
 
   it("shows an empty hint when nothing is remembered yet", async () => {
@@ -150,7 +148,7 @@ describe("MemoryCard", () => {
 
     click(inputByLabel(mounted.container, "在 AI 运行时注入记忆"));
     await flush();
-    expect(mocks.setSettings).toHaveBeenCalledWith(SCOPE, 3, { injectionEnabled: true });
+    expect(mocks.setSettings).toHaveBeenCalledWith(3, { injectionEnabled: true });
     expect((inputByLabel(mounted.container, "在 AI 运行时注入记忆") as HTMLInputElement).checked).toBe(true);
   });
 
@@ -188,7 +186,7 @@ describe("MemoryCard", () => {
     clickButton(mounted.container, "保存");
     await flush();
 
-    expect(mocks.create).toHaveBeenCalledWith(SCOPE, "operations", "restart at 03:00", "reject");
+    expect(mocks.create).toHaveBeenCalledWith("operations", "restart at 03:00", "reject");
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已保存"));
     expect(mocks.index).toHaveBeenCalledTimes(2);
   });
@@ -225,7 +223,7 @@ describe("MemoryCard", () => {
 
     click(iconButton(mounted.container, "编辑记忆 m-1"));
     await flush();
-    expect(mocks.get).toHaveBeenCalledWith(SCOPE, "m-1");
+    expect(mocks.get).toHaveBeenCalledWith("m-1");
     expect(mounted.container.textContent).toContain("编辑记忆");
     expect(inputByLabel(mounted.container, "记忆主题").value).toBe("operations");
     const content = mounted.container.querySelector<HTMLTextAreaElement>(
@@ -237,7 +235,7 @@ describe("MemoryCard", () => {
     clickButton(mounted.container, "保存");
     await flush();
 
-    expect(mocks.edit).toHaveBeenCalledWith(SCOPE, "m-1", 2, {
+    expect(mocks.edit).toHaveBeenCalledWith("m-1", 2, {
       topic: "operations",
       content: "restart at 03:00",
       secrets: "reject",
@@ -290,7 +288,7 @@ describe("MemoryCard", () => {
 
     click(iconButton(mounted.container, "删除记忆 m-1"));
     await flush();
-    expect(mocks.delete).toHaveBeenCalledWith(SCOPE, "m-1", 2);
+    expect(mocks.delete).toHaveBeenCalledWith("m-1", 2);
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已删除"));
     expect(mocks.index).toHaveBeenCalledTimes(2);
     expect(mounted.container.textContent).toContain("还没有记忆");
@@ -318,7 +316,7 @@ describe("MemoryCard", () => {
     if (!expander) throw new Error("expander not found");
     click(expander);
     await flush();
-    expect(mocks.get).toHaveBeenCalledWith(SCOPE, "m-1");
+    expect(mocks.get).toHaveBeenCalledWith("m-1");
     expect(mounted.container.textContent).toContain("正文读取失败");
 
     clickButton(mounted.container, "重试");
@@ -412,12 +410,15 @@ describe("MemoryCard", () => {
     expect(mounted.container.textContent).toContain("m-1");
   });
 
-  it("limits the card description to scope isolation and leaves injection details to the toggle section", async () => {
+  it("describes account isolation and shared desktop/Open storage without overclaiming", async () => {
     mounted = mount(createElement(MemoryCard));
     await flush();
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("记忆按属主隔离存储，并与 AI 运行共用");
-    expect(text).not.toContain("记忆按属主隔离。");
+    expect(text).toContain("浏览器账号模式下，记忆按账号隔离");
+    expect(text).toContain("只有当前账号能读写自己的记忆");
+    expect(text).toContain("不覆盖已有个人记忆");
+    expect(text).toContain("桌面和明确开放部署使用共享记忆");
+    expect(text).not.toContain("其他属主无法读取或修改");
     expect(text).not.toContain("开启了的运行");
     expect(text).toContain("开启后，每次 AI 运行都会将选中的记忆作为临时系统消息加入模型输入");
   });

@@ -3,19 +3,16 @@ Description=NexTerm server (sync-only asset synchronization peer)
 Documentation=https://github.com/Hello-CTF/NexTerm
 After=network-online.target
 Wants=network-online.target
+Conflicts=nexterm-server.service
 
 [Service]
 Type=simple
 User=nexterm
 Group=nexterm
 
-EnvironmentFile=-/etc/nexterm/onlyserver.env
+EnvironmentFile=/etc/nexterm/onlyserver.env
 
-ExecStart=/opt/nexterm/nexterm-server \
-  --sync-only \
-  --listen 127.0.0.1:8080 \
-  --auth on \
-  --data-dir /var/lib/nexterm
+ExecStart=/opt/nexterm/nexterm-server --sync-only
 
 Restart=on-failure
 RestartSec=3
@@ -23,6 +20,16 @@ RestartSec=3
 Environment=HOME=/var/lib/nexterm
 WorkingDirectory=/var/lib/nexterm
 StateDirectory=nexterm
+StateDirectoryMode=0700
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+LockPersonality=true
+UMask=0077
+LimitNOFILE=1048576
 
 [Install]
 WantedBy=multi-user.target

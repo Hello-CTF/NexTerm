@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -243,7 +244,28 @@ func (a *Accounts) ValidateSession(ctx context.Context, token string) (*Identity
 	}, nil
 }
 
+// accountSessionOwnerRead resolves the session's owner before revocation; tests
+// replace it to inject owner-read failures.
+var accountSessionOwnerRead = func(ctx context.Context, db *gorm.DB, sessionID string) (string, error) {
+	userSession := query.Use(db).UserSession
+	row, err := userSession.WithContext(ctx).Where(userSession.ID.Eq(sessionID)).First()
+	if err != nil {
+		return "", err
+	}
+	return row.UserID, nil
+}
+
 func (a *Accounts) RevokeSession(ctx context.Context, sessionID string) error {
+	// Read the owner before revoking: a failed lookup aborts the revocation
+	// (the session stays active and the caller retries) instead of silently
+	// skipping the epoch bump after the revoke already committed.
+	ownerID, err := accountSessionOwnerRead(ctx, a.db, sessionID)
+	if err == gorm.ErrRecordNotFound {
+		return ipc.NewError(ipc.CodeNotFound, "会话不存在")
+	}
+	if err != nil {
+		return dbError(err)
+	}
 	userSession := query.Use(a.db).UserSession
 	info, err := userSession.WithContext(ctx).
 		Where(userSession.ID.Eq(sessionID), userSession.RevokedAt.IsNull()).
@@ -254,6 +276,7 @@ func (a *Accounts) RevokeSession(ctx context.Context, sessionID string) error {
 	if info.RowsAffected == 0 {
 		return ipc.NewError(ipc.CodeNotFound, "会话不存在")
 	}
+	a.epochs.bump(ownerID)
 	return nil
 }
 
@@ -268,18 +291,64 @@ func (a *Accounts) RevokeUserSession(ctx context.Context, userID, sessionID stri
 	if info.RowsAffected == 0 {
 		return ipc.NewError(ipc.CodeNotFound, "会话不存在或已撤销")
 	}
+	a.epochs.bump(userID)
 	return nil
 }
 
 func (a *Accounts) RevokeUserSessions(ctx context.Context, userID, exceptSessionID string) (int64, error) {
-	userSession := query.Use(a.db).UserSession
-	q := userSession.WithContext(ctx).Where(userSession.UserID.Eq(userID), userSession.RevokedAt.IsNull())
-	if exceptSessionID != "" {
-		q = q.Where(userSession.ID.Neq(exceptSessionID))
-	}
-	info, err := q.UpdateColumns(map[string]any{"revoked_at": a.now()})
+	sessionIDs, err := a.RevokeUserSessionsWithIDs(ctx, userID, exceptSessionID)
+	return int64(len(sessionIDs)), err
+}
+
+// RevokeUserSessionsWithIDs revokes and returns the exact session set in one account write transaction.
+func (a *Accounts) RevokeUserSessionsWithIDs(ctx context.Context, userID, exceptSessionID string, beforeCommit ...func() error) ([]string, error) {
+	var sessionIDs []string
+	err := a.withBusyRetry(ctx, func() error {
+		sessionIDs = nil
+		return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			userSession := query.Use(tx).UserSession
+			q := userSession.WithContext(ctx).Where(userSession.UserID.Eq(userID), userSession.RevokedAt.IsNull())
+			if exceptSessionID != "" {
+				q = q.Where(userSession.ID.Neq(exceptSessionID))
+			}
+			var rows []store.UserSession
+			if err := q.Select(userSession.ID).Scan(&rows); err != nil {
+				return dbError(err)
+			}
+			ids := make([]string, 0, len(rows))
+			for _, row := range rows {
+				ids = append(ids, row.ID)
+			}
+			if len(ids) == 0 {
+				return nil
+			}
+			for _, prepare := range beforeCommit {
+				if prepare != nil {
+					if err := prepare(); err != nil {
+						return err
+					}
+				}
+			}
+			updateQ := userSession.WithContext(ctx).Where(userSession.UserID.Eq(userID), userSession.RevokedAt.IsNull())
+			if exceptSessionID != "" {
+				updateQ = updateQ.Where(userSession.ID.Neq(exceptSessionID))
+			}
+			info, err := updateQ.UpdateColumns(map[string]any{"revoked_at": a.now()})
+			if err != nil {
+				return dbError(err)
+			}
+			if info.RowsAffected != int64(len(ids)) {
+				return dbError(fmt.Errorf("session revocation set changed during transaction"))
+			}
+			sessionIDs = ids
+			return nil
+		})
+	})
 	if err != nil {
-		return 0, dbError(err)
+		return nil, err
 	}
-	return info.RowsAffected, nil
+	if len(sessionIDs) > 0 {
+		a.epochs.bump(userID)
+	}
+	return sessionIDs, nil
 }

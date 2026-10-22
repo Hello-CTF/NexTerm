@@ -15,15 +15,6 @@ import (
 	"github.com/pkg/sftp"
 )
 
-var (
-	conditionalPreVerifyHook func()
-	conditionalPreCommitHook func()
-)
-
-var conditionalLink = func(client *sftp.Client, oldname, newname string) error {
-	return client.Link(oldname, newname)
-}
-
 func (f *FS) WriteFileVersion(ctx context.Context, remotePath string, data []byte, backup bool, expected conditional.Expectation) error {
 	if err := expected.Validate(); err != nil {
 		return err
@@ -56,8 +47,8 @@ func (f *FS) createFileVersion(ctx context.Context, remotePath string, data []by
 			_ = f.client.Remove(temporary)
 		}
 	}()
-	if conditionalPreVerifyHook != nil {
-		conditionalPreVerifyHook()
+	if f.conditionalPreVerifyHook != nil {
+		f.conditionalPreVerifyHook()
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -69,13 +60,13 @@ func (f *FS) createFileVersion(ctx context.Context, remotePath string, data []by
 	if occupied {
 		return remoteAlreadyExists(expected)
 	}
-	if conditionalPreCommitHook != nil {
-		conditionalPreCommitHook()
+	if f.conditionalPreCommitHook != nil {
+		f.conditionalPreCommitHook()
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := conditionalLink(f.client, temporary, remotePath); err != nil {
+	if err := f.conditionalLink(f.client, temporary, remotePath); err != nil {
 		if !sftpFailureProvenByServer(err) {
 			return &conditional.IndeterminateError{Expected: expected, New: conditional.VersionOf(data), Cause: fmt.Errorf("SFTP conditional create %s: %w", remotePath, err)}
 		}

@@ -211,6 +211,24 @@ describe("webTransport reconnection timing", () => {
     vi.advanceTimersByTime(60_000);
     expect(FakeWebSocket.instances).toHaveLength(2);
   });
+
+  it("does not apply desktop base64 decoding to WebSocket messages", async () => {
+    const events = await import("../ipc/events");
+    const frames: number[][] = [];
+    const channel = events.createBinaryChannel((bytes) => frames.push(Array.from(bytes)));
+    const socket = FakeWebSocket.instances[0];
+    socket.serverOpen();
+
+    socket.serverMessage(JSON.stringify({ type: "nexterm.desktop-binary", data: btoa("nx") }));
+    socket.serverMessage("bnh4");
+    socket.serverMessage(new Uint8Array([0, 255]).buffer);
+
+    expect(frames).toEqual([
+      [98, 110, 104, 52],
+      [0, 255],
+    ]);
+    events.disposeChannel(channel);
+  });
 });
 
 describe("events reconnection recovery cursor", () => {

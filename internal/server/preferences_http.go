@@ -25,8 +25,6 @@ type preferenceScopeView struct {
 func (s *Server) mountPreferenceRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /auth/preferences", s.accountGuard(s.requireAccountSession(http.HandlerFunc(s.servePreferencesGet))))
 	mux.Handle("PUT /auth/preferences", s.accountGuard(s.requireAccountSession(s.requireAccountCSRF(http.HandlerFunc(s.servePreferencesPut)))))
-	mux.Handle("GET /admin/preferences", s.accountGuard(s.requireAccountSession(s.requireSuperadmin(http.HandlerFunc(s.serveAdminPreferencesGet)))))
-	mux.Handle("PUT /admin/preferences", s.accountGuard(s.requireAccountSession(s.requireAccountCSRF(s.requireSuperadmin(http.HandlerFunc(s.serveAdminPreferencesPut))))))
 }
 
 func (s *Server) preferencesUnavailable(w http.ResponseWriter) {

@@ -537,10 +537,12 @@ describe("rename (FileBrowser)", () => {
   });
 
   function seedKind(kind: string): void {
-    useUi.setState({
-      sessions: [
-        { id: SID, assetId: null, name: "h", kind, status: "connected", tabs: [], createdAt: 1 },
-      ],
+    act(() => {
+      useUi.setState({
+        sessions: [
+          { id: SID, assetId: null, name: "h", kind, status: "connected", tabs: [], createdAt: 1 },
+        ],
+      });
     });
   }
 
@@ -2499,7 +2501,7 @@ describe("context menus: blank-area entries and wiring", () => {
     openRowMenu(mounted!.container, "~/sub");
     clickMenuItem(mounted!.container, "打包下载当前目录");
     await waitFor(() =>
-      expect(mocks.packDownload).toHaveBeenCalledWith(SID, "~/sub", "/local/sub.tar.gz"),
+      expect(mocks.packDownload).toHaveBeenCalledWith(SID, "~/sub", "/local/sub.tar.gz", expect.any(String)),
     );
     expect(mocks.pickSavePath).toHaveBeenCalledWith("sub.tar.gz");
     await waitFor(() =>

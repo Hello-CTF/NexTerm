@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sessionApi, syncApi, terminalApi, type LiveTabInfo } from "../../ipc/commands";
-import { nextTabId, reconnectDeadHost, reconnectSessionAndWait, useUi, type Workspace } from "../../app/store";
+import { nextTabId, reconnectDeadHost, reconnectWorkspaceSession, useUi, type Workspace } from "../../app/store";
 import { apiBase, TRANSPORT } from "../../ipc/env";
 import { listenEvent } from "../../ipc/events";
 import { useAuth } from "../auth/store";
@@ -83,6 +83,11 @@ function ago(ms: number): string {
   return `${Math.floor(h / 24)} 天前`;
 }
 
+function lastOutputLabel(tab: BackgroundTab): string {
+  if (tab.lastOutputAt !== undefined && tab.lastOutputAt <= 0) return "暂无输出";
+  return ago(tab.lastOutputMsAgo ?? 0);
+}
+
 export function BackgroundSessions({
   visible = true,
   workspaceId,
@@ -113,8 +118,14 @@ export function BackgroundSessions({
   const accountScope = TRANSPORT === "web"
     ? (webUserId ? JSON.stringify([apiBase() || window.location.origin, webUserId]) : null)
     : desktopScope?.epoch === runtimeEpoch ? desktopScope.value : null;
-  const memoryKnown = !desktopChecking && knownState.scope === accountScope && knownState.epoch === runtimeEpoch ? knownState.tabs : {};
-  const verifiedQuickSessions = quickState.scope === accountScope && quickState.epoch === runtimeEpoch ? quickState.sessions : {};
+  const memoryKnown = useMemo(
+    () => (!desktopChecking && knownState.scope === accountScope && knownState.epoch === runtimeEpoch ? knownState.tabs : {}),
+    [desktopChecking, knownState, accountScope, runtimeEpoch],
+  );
+  const verifiedQuickSessions = useMemo(
+    () => (quickState.scope === accountScope && quickState.epoch === runtimeEpoch ? quickState.sessions : {}),
+    [quickState, accountScope, runtimeEpoch],
+  );
   useEffect(() => {
     if (TRANSPORT !== "desktop") return;
     let current = true;
@@ -310,7 +321,7 @@ export function BackgroundSessions({
     } finally {
       if (generation === loadGenerationRef.current) setLoading(false);
     }
-  }, [hostSessionId, showAll, sessions, remoteOwner, ownerWorkspace?.assetId, ownerWorkspace?.assetKind, accountScope, runtimeEpoch, desktopChecking, verifiedQuickSessions]);
+  }, [hostSessionId, showAll, sessions, remoteOwner, ownerWorkspace, accountScope, runtimeEpoch, desktopChecking, verifiedQuickSessions]);
 
   useEffect(() => {
     ownerGenerationRef.current += 1;
@@ -431,11 +442,13 @@ export function BackgroundSessions({
     const connectionEpoch = runtimeEpoch;
     setReconnecting(true);
     setError(null);
+    const isCurrent = () =>
+      ownerGeneration === ownerGenerationRef.current && connectionEpoch === useUi.getState().workspaceRuntimeEpoch;
     try {
       const fresh = currentSession && workspaceSessionMatches(target, currentSession, verifiedQuickSessions)
-        ? await reconnectSessionAndWait(currentSession)
-        : await reconnectDeadHost(target);
-      if (ownerGeneration !== ownerGenerationRef.current || connectionEpoch !== useUi.getState().workspaceRuntimeEpoch) return;
+        ? await reconnectWorkspaceSession(target, currentSession, { isCurrent })
+        : await reconnectDeadHost(target, { isCurrent });
+      if (!isCurrent()) return;
       if (!fresh) {
         pushToast("info", "已取消重连");
         return;
@@ -600,7 +613,7 @@ export function BackgroundSessions({
                   <td className="nx-mono text-neutral-400" title={t.title}>
                     {t.title ?? `${t.cols}×${t.rows}`}
                   </td>
-                  <td className="text-neutral-400">{t.remote ? "远端持久终端" : ago(t.lastOutputMsAgo ?? 0)}</td>
+                  <td className="text-neutral-400">{t.remote ? "远端持久终端" : lastOutputLabel(t)}</td>
                   <td className="nx-right">
                     <div className="flex items-center justify-end gap-1.5">
                       <button
@@ -670,7 +683,7 @@ export function BackgroundSessions({
                     {needsReconnect
                       ? "持久终端仍可能在目标主机运行，重连成功后会自动刷新列表"
                       : ownerWorkspace?.assetKind === "ssh" && remoteOwner
-                        ? "如果该 SSH 资产已切换为普通终端，已有持久会话不会被删除；切回「自动」后可在这里查看并接管"
+                        ? "普通模式只影响以后新开的终端；已有持久会话不会被删除，仍可在这里查看并接管"
                         : "关闭运行中的 SSH 或受管设备终端标签不会终止进程；AI 以后台方式创建的终端（含本机）也会列在这里，之后可在此接管"}
                   </div>
                 </td>

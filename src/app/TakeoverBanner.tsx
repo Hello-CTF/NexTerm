@@ -6,7 +6,69 @@ import { IconAlert, IconGamepad, IconShield } from "../ui/icons";
 import { describeError } from "../ui/errorText";
 import { hasActiveOverlay, isImeKeyEvent } from "../ui/DialogHost";
 
+export type TakeoverViewState = TakeoverState & { paused?: boolean };
+
+export function takeoverPaused(takeover: TakeoverState): boolean {
+  return (takeover as TakeoverViewState).paused === true;
+}
+
+export function withTakeoverPaused(takeover: TakeoverState, paused: boolean): TakeoverState {
+  return { ...takeover, paused } as TakeoverState;
+}
+
+const resumeHandlers = new Map<string, () => Promise<void>>();
+
+export function registerTakeoverResumeHandler(jobId: string, handler: () => Promise<void>): () => void {
+  resumeHandlers.set(jobId, handler);
+  return () => {
+    if (resumeHandlers.get(jobId) === handler) resumeHandlers.delete(jobId);
+  };
+}
+
 let stealBackInFlight: TakeoverState | null = null;
+let controlInFlight: TakeoverState | null = null;
+
+export async function pauseTakeover() {
+  const { takeover, setTakeover, pushToast } = useUi.getState();
+  if (!takeover || takeoverPaused(takeover) || controlInFlight === takeover) return;
+  controlInFlight = takeover;
+  try {
+    await aiApi.takeoverPause(takeover.tabId, takeover.token);
+    if (useUi.getState().takeover === takeover) setTakeover(withTakeoverPaused(takeover, true));
+  } catch (e) {
+    pushToast("error", `暂停接管失败：${describeError(e)}`);
+  } finally {
+    if (controlInFlight === takeover) controlInFlight = null;
+  }
+}
+
+export async function resumeTakeover() {
+  const { takeover, setTakeover, pushToast } = useUi.getState();
+  if (!takeover || !takeoverPaused(takeover) || controlInFlight === takeover) return;
+  controlInFlight = takeover;
+  try {
+    if (!takeover.jobId) throw new Error("接管任务 ID 缺失");
+    const handler = resumeHandlers.get(takeover.jobId);
+    if (!handler) throw new Error("接管会话已断开，请打开对应 AI 会话后重试");
+    await handler();
+    if (useUi.getState().takeover === takeover) setTakeover(withTakeoverPaused(takeover, false));
+  } catch (e) {
+    pushToast("error", `恢复接管失败：${describeError(e)}`);
+  } finally {
+    if (controlInFlight === takeover) controlInFlight = null;
+  }
+}
+
+function persistedTakeoverPaused(restored: TakeoverState): boolean {
+  try {
+    const raw = localStorage.getItem("nexterm.takeover.v1");
+    if (!raw) return false;
+    const value = JSON.parse(raw) as { tabId?: unknown; jobId?: unknown; paused?: unknown };
+    return value.paused === true && value.tabId === restored.tabId && value.jobId === restored.jobId;
+  } catch {
+    return false;
+  }
+}
 
 function alreadyEnded(message: string): boolean {
   return message.includes("接管令牌已过期") || message.includes("接管任务不存在或已结束");
@@ -18,7 +80,7 @@ export async function stealBack(reason = "用户收回控制权") {
   stealBackInFlight = takeover;
   try {
     if (takeover.jobId) {
-      await aiApi.cancel(takeover.jobId).catch(() => undefined);
+      await aiApi.takeoverCancel(takeover.jobId).catch(() => undefined);
     }
     await aiApi.takeoverExit(takeover.tabId, takeover.token, reason);
     if (useUi.getState().takeover === takeover) setTakeover(null);
@@ -85,8 +147,12 @@ export function TakeoverBanner() {
   }, [takeover]);
 
   useEffect(() => {
-    const restored = consumeRestoredTakeover();
+    let restored = consumeRestoredTakeover();
     if (!restored) return;
+    if (persistedTakeoverPaused(restored)) {
+      restored = withTakeoverPaused(restored, true);
+      useUi.getState().setTakeover(restored);
+    }
     let disposed = false;
     void restoredTakeoverAlive(restored, (tabId) => terminalApi.snapshot(tabId)).then((alive) => {
       if (disposed || alive) return;
@@ -106,6 +172,7 @@ export function TakeoverBanner() {
   const mm = String(Math.floor(elapsed / 60)).padStart(2, "0");
   const ss = String(elapsed % 60).padStart(2, "0");
   const mode = takeover.allowWrite ? "可写" : "只读";
+  const paused = takeoverPaused(takeover);
 
   return (
     <div
@@ -114,12 +181,12 @@ export function TakeoverBanner() {
       aria-label="AI 终端接管状态"
     >
       <span className="nx-sr-only" role="status" aria-atomic="true">
-        AI 正在操作此终端，{mode}。
+        {paused ? `AI 接管已暂停，${mode}。` : `AI 正在操作此终端，${mode}。`}
         {bindings.reclaimTakeover ? `按 ${reclaimLabel} 可收回控制权。` : "可收回控制权。"}
       </span>
       <span className="flex items-center gap-1.5 font-semibold text-red-100">
         <IconAlert size={14} className="text-red-300" />
-        AI 正在操作此终端
+        {paused ? "AI 接管已暂停" : "AI 正在操作此终端"}
       </span>
       <span className={`nx-badge ${takeover.allowWrite ? "nx-badge-red" : ""}`}>
         <IconShield size={10} />
@@ -147,6 +214,14 @@ export function TakeoverBanner() {
           "可收回控制权"
         )}
       </span>
+      <button
+        type="button"
+        className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
+        title={paused ? "使用同一接管任务 ID 继续" : "暂停 AI 接管，之后可继续"}
+        onClick={() => void (paused ? resumeTakeover() : pauseTakeover())}
+      >
+        {paused ? "继续" : "暂停"}
+      </button>
       <button
         type="button"
         className="nx-btn nx-btn-danger-solid nx-btn-sm shrink-0"

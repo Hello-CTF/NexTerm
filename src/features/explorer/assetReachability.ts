@@ -22,6 +22,10 @@ interface AssetReachabilityState {
   reset: () => void;
 }
 
+// Ownership of a probe result is (resetEpoch, per-asset generation): reset bumps the epoch
+// instead of only clearing generations, so a late response from before the reset can never
+// match a post-reset probe of the same asset id and write into the new account's entries.
+let resetEpoch = 0;
 const generations = new Map<string, number>();
 const inflight = new Map<string, Promise<void>>();
 
@@ -31,6 +35,7 @@ export const useAssetReachability = create<AssetReachabilityState>((set) => ({
   probe: async (assetIds) => {
     const ids = [...new Set(assetIds)].slice(0, REACHABILITY_BATCH_LIMIT);
     if (ids.length === 0) return;
+    const myEpoch = resetEpoch;
     const myGen = new Map<string, number>();
     const checkingAt = Date.now();
     const checking: Record<string, ReachabilityEntry> = {};
@@ -42,7 +47,7 @@ export const useAssetReachability = create<AssetReachabilityState>((set) => ({
     }
     set((s) => ({ entries: { ...s.entries, ...checking }, batchError: null }));
 
-    const owned = (id: string) => generations.get(id) === myGen.get(id);
+    const owned = (id: string) => resetEpoch === myEpoch && generations.get(id) === myGen.get(id);
     const run = (async () => {
       try {
         const res = await assetApi.probeBatch(
@@ -95,6 +100,7 @@ export const useAssetReachability = create<AssetReachabilityState>((set) => ({
     }
   },
   reset: () => {
+    resetEpoch += 1;
     generations.clear();
     inflight.clear();
     set({ entries: {}, batchError: null });

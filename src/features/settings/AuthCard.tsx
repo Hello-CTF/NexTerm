@@ -49,6 +49,11 @@ export function AuthCard() {
   const logout = useAuth((s) => s.logout);
   const pendingRecoveryKey = useAuth((s) => s.pendingRecoveryKey);
   const clearPendingRecoveryKey = useAuth((s) => s.clearPendingRecoveryKey);
+  const authError = useAuth((s) => s.error);
+  const cleanupError = useAuth((s) => s.cleanupError);
+  const clearError = useAuth((s) => s.clearError);
+  const clearCleanupError = useAuth((s) => s.clearCleanupError);
+  const visibleAccountError = authError ?? cleanupError;
 
   // Platform-hosted mode (Lazycat): the account is auto-established with the platform login; the user holds no password and should not have a "logout".
   // The next refresh after logout would be taken over by the platform session again; keeping the button only makes people think "logout" worked.
@@ -206,10 +211,10 @@ export function AuthCard() {
     );
     if (!ok || !actionAccount || accountKeyRef.current !== actionAccount) return;
     try {
-      await authApi.sessionRevoke(session.id);
+      if (session.current) await logout();
+      else await authApi.sessionRevoke(session.id);
       if (accountKeyRef.current !== actionAccount) return;
       if (session.current) {
-        await logout();
         void qc.invalidateQueries();
       } else {
         setSessionResult((current) => current?.accountKey === actionAccount
@@ -319,6 +324,24 @@ export function AuthCard() {
           {user.last_login_at > 0 && <span className="nx-hint">最近登录 {formatTime(user.last_login_at)}</span>}
         </div>
 
+        {visibleAccountError && (
+          <div className="nx-alert nx-alert-danger mt-3 flex items-start gap-2" role="alert">
+            <IconXCircle size={13} className="mt-0.5 shrink-0" />
+            <span className="min-w-0 flex-1 break-words">{describeError(visibleAccountError)}</span>
+            <button
+              type="button"
+              className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
+              onClick={() => {
+                if (cleanupError && authError === cleanupError) clearCleanupError();
+                else if (authError) clearError();
+                else clearCleanupError();
+              }}
+            >
+              知道了
+            </button>
+          </div>
+        )}
+
         {platformManaged && (
           <p className="nx-hint mt-2">
             本实例部署在懒猫平台上，登录由平台负责：打开地址即为当前账号，不需要在这里登录或退出。
@@ -358,8 +381,7 @@ export function AuthCard() {
                   });
                   if (!ok) return;
                   try {
-                    await authApi.logoutAll();
-                    await logout();
+                    await logout({ all: true });
                     void qc.invalidateQueries();
                   } catch (e) {
                     pushToast("error", describeError(e));
@@ -778,14 +800,14 @@ function TotpCard() {
           <div className="nx-alert nx-alert-info mb-3 flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <code className="nx-code break-all font-mono text-[12.5px]">{setup.otpauth_uri}</code>
-              <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => copyText(setup.otpauth_uri, "绑定链接")}>
+              <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void copyText(setup.otpauth_uri, "绑定链接")}>
                 <IconCopy size={12} />
                 复制
               </button>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <code className="nx-code font-mono text-[12.5px]">{setup.secret.replace(/(.{4})/g, "$1 ").trim()}</code>
-              <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => copyText(setup.secret, "密钥")}>
+              <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void copyText(setup.secret, "密钥")}>
                 <IconCopy size={12} />
                 复制
               </button>

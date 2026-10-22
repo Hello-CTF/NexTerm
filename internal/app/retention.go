@@ -79,6 +79,8 @@ type retentionSettings struct {
 	RecordingMaxCount       int64 `json:"recordingMaxCount"`
 	CommandMaxAgeMS         int64 `json:"commandMaxAgeMs"`
 	CommandMaxCount         int64 `json:"commandMaxCount"`
+	ExecBatchMaxAgeMS       int64 `json:"execBatchMaxAgeMs"`
+	ExecBatchMaxCount       int64 `json:"execBatchMaxCount"`
 	CommandFollowTranscript bool  `json:"commandFollowTranscript"`
 }
 
@@ -142,7 +144,11 @@ func StoreRetentionPolicy(database *store.Store) RetentionPolicySource {
 		if err != nil {
 			return store.RetentionPolicy{}, err
 		}
-		if settings.AuditMaxCount < 0 || settings.RecordingMaxCount < 0 || settings.CommandMaxCount < 0 {
+		execBatchAge, err := retentionDuration("execBatchMaxAgeMs", settings.ExecBatchMaxAgeMS)
+		if err != nil {
+			return store.RetentionPolicy{}, err
+		}
+		if settings.AuditMaxCount < 0 || settings.RecordingMaxCount < 0 || settings.CommandMaxCount < 0 || settings.ExecBatchMaxCount < 0 {
 			return store.RetentionPolicy{}, fmt.Errorf("%s counts must not be negative", RetentionSettingKey)
 		}
 		policy := store.RetentionPolicy{
@@ -152,6 +158,8 @@ func StoreRetentionPolicy(database *store.Store) RetentionPolicySource {
 			RecordingMaxCount: settings.RecordingMaxCount,
 			CommandMaxAge:     commandAge,
 			CommandMaxCount:   settings.CommandMaxCount,
+			ExecBatchMaxAge:   execBatchAge,
+			ExecBatchMaxCount: settings.ExecBatchMaxCount,
 		}
 		if settings.CommandFollowTranscript {
 			transcript, err := TranscriptRetentionPolicy(ctx, database)
@@ -209,12 +217,45 @@ func (r *RetentionRunner) Start(ctx context.Context) error {
 	r.done = make(chan struct{})
 	done := r.done
 	r.mu.Unlock()
+	r.reconcileStartup(runCtx)
 	go r.run(runCtx, done)
 	return nil
 }
 
+// reconcileStartup marks batches left running by a previous process as failed before
+// the first retention pass. It runs synchronously so no exec batch can be genuinely
+// active yet: callers only serve traffic after Start returns.
+func (r *RetentionRunner) reconcileStartup(ctx context.Context) {
+	reconciler, ok := r.store.(interface {
+		ExecBatchStartupReconcile(context.Context) (int64, error)
+	})
+	if !ok {
+		return
+	}
+	attemptCtx, cancel := context.WithTimeout(ctx, r.attemptTimeout)
+	defer cancel()
+	reconciled, err := reconciler.ExecBatchStartupReconcile(attemptCtx)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			r.logger.Warn("startup reconcile of interrupted exec batches failed", "error", err)
+		}
+		return
+	}
+	if reconciled > 0 {
+		r.logger.Info("reconciled exec batches interrupted by the previous shutdown", "count", reconciled)
+	}
+}
+
 func (r *RetentionRunner) run(ctx context.Context, done chan struct{}) {
 	defer close(done)
+	if scheduler, ok := r.store.(interface {
+		RunRetentionSchedule(context.Context, store.RetentionSchedule) error
+	}); ok {
+		if err := scheduler.RunRetentionSchedule(ctx, store.RetentionSchedule{Name: "general", Interval: r.interval, Run: r.enforce}); err != nil {
+			r.logger.Error("retention scheduler failed", "error", err)
+		}
+		return
+	}
 	for {
 		r.enforce(ctx)
 		select {
@@ -254,7 +295,7 @@ func (r *RetentionRunner) enforce(ctx context.Context) {
 
 func retentionEnabled(policy store.RetentionPolicy) bool {
 	return policy.AuditMaxAge > 0 || policy.AuditMaxCount > 0 || policy.RecordingMaxAge > 0 || policy.RecordingMaxCount > 0 ||
-		policy.CommandMaxAge > 0 || policy.CommandMaxCount > 0
+		policy.CommandMaxAge > 0 || policy.CommandMaxCount > 0 || policy.ExecBatchMaxAge > 0 || policy.ExecBatchMaxCount > 0
 }
 
 func (r *RetentionRunner) Status(_ context.Context) (RetentionHealth, error) {

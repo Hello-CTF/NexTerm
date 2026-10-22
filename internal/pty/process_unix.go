@@ -16,14 +16,25 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var unixProcessSnapshot = func() ([]byte, error) {
-	return exec.Command("/bin/ps", "-A", "-o", "pid=,pgid=,stat=").Output()
+type unixProcessAPI struct {
+	snapshot            func() ([]byte, error)
+	getSessionID        func(int) (int, error)
+	getProcessGroupID   func(int) (int, error)
+	readProcessIdentity func(int) (string, error)
+	kill                func(int, syscall.Signal) error
 }
 
-var unixGetSessionID = unix.Getsid
-var unixGetProcessGroupID = unix.Getpgid
-var unixReadProcessIdentity = readUnixProcessIdentity
-var unixKill = syscall.Kill
+func defaultUnixProcessAPI() unixProcessAPI {
+	return unixProcessAPI{
+		snapshot: func() ([]byte, error) {
+			return exec.Command("/bin/ps", "-A", "-o", "pid=,pgid=,stat=").Output()
+		},
+		getSessionID:        unix.Getsid,
+		getProcessGroupID:   unix.Getpgid,
+		readProcessIdentity: readUnixProcessIdentity,
+		kill:                syscall.Kill,
+	}
+}
 
 func startProcess(cmd *exec.Cmd) (*Process, error) {
 	prepareCommand(cmd)
@@ -54,15 +65,21 @@ type unixProcessTree struct {
 	process  *os.Process
 	session  bool
 	identity string
+	api      unixProcessAPI
 }
 
 func newStartedProcess(cmd *exec.Cmd) (*Process, error) {
+	return newStartedProcessWithAPI(cmd, defaultUnixProcessAPI())
+}
+
+func newStartedProcessWithAPI(cmd *exec.Cmd, api unixProcessAPI) (*Process, error) {
 	tree := &unixProcessTree{
 		process: cmd.Process,
 		session: cmd.SysProcAttr != nil && cmd.SysProcAttr.Setsid,
+		api:     api,
 	}
 	if tree.session {
-		identity, err := unixReadProcessIdentity(cmd.Process.Pid)
+		identity, err := api.readProcessIdentity(cmd.Process.Pid)
 		if err != nil {
 			return nil, err
 		}
@@ -76,9 +93,9 @@ func (t *unixProcessTree) Kill() error {
 		if t.identity == "" {
 			return errors.New("PTY session leader start identity is unavailable")
 		}
-		return killUnixSession(t.process.Pid, t.identity)
+		return killUnixSession(t.api, t.process.Pid, t.identity)
 	}
-	err := unixKill(-t.process.Pid, syscall.SIGKILL)
+	err := t.api.kill(-t.process.Pid, syscall.SIGKILL)
 	if err == nil {
 		return nil
 	}
@@ -89,11 +106,11 @@ func (t *unixProcessTree) Kill() error {
 	return err
 }
 
-func killUnixSession(sessionID int, expectedIdentity string) error {
+func killUnixSession(api unixProcessAPI, sessionID int, expectedIdentity string) error {
 	verifyLeader := func() error {
-		sid, sidErr := unixGetSessionID(sessionID)
-		group, groupErr := unixGetProcessGroupID(sessionID)
-		identity, identityErr := unixReadProcessIdentity(sessionID)
+		sid, sidErr := api.getSessionID(sessionID)
+		group, groupErr := api.getProcessGroupID(sessionID)
+		identity, identityErr := api.readProcessIdentity(sessionID)
 		if sidErr != nil || groupErr != nil || identityErr != nil {
 			return errors.Join(sidErr, groupErr, identityErr)
 		}
@@ -106,7 +123,7 @@ func killUnixSession(sessionID int, expectedIdentity string) error {
 		return nil
 	}
 	for round := 0; ; round++ {
-		groups, err := unixSessionProcessGroups(sessionID)
+		groups, err := unixSessionProcessGroups(api, sessionID)
 		if err != nil {
 			return err
 		}
@@ -123,7 +140,7 @@ func killUnixSession(sessionID int, expectedIdentity string) error {
 			if err := verifyLeader(); err != nil {
 				return fmt.Errorf("verify PTY session %d leader: %w", sessionID, err)
 			}
-			if err := unixKill(-sessionID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+			if err := api.kill(-sessionID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 				return fmt.Errorf("kill PTY session leader %d: %w", sessionID, err)
 			}
 			time.Sleep(10 * time.Millisecond)
@@ -145,8 +162,8 @@ func killUnixSession(sessionID int, expectedIdentity string) error {
 				continue
 			}
 			pid := members[0]
-			sid, sidErr := unixGetSessionID(pid)
-			currentGroup, groupErr := unixGetProcessGroupID(pid)
+			sid, sidErr := api.getSessionID(pid)
+			currentGroup, groupErr := api.getProcessGroupID(pid)
 			if errors.Is(sidErr, syscall.ESRCH) || errors.Is(groupErr, syscall.ESRCH) {
 				continue
 			}
@@ -156,7 +173,7 @@ func killUnixSession(sessionID int, expectedIdentity string) error {
 			if sid != sessionID || currentGroup != group {
 				return fmt.Errorf("PTY session process %d identity changed before kill", pid)
 			}
-			if err := unixKill(-group, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+			if err := api.kill(-group, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 				return fmt.Errorf("kill PTY session process group %d: %w", group, err)
 			}
 		}
@@ -164,8 +181,8 @@ func killUnixSession(sessionID int, expectedIdentity string) error {
 	}
 }
 
-func unixSessionProcessGroups(sessionID int) (map[int][]int, error) {
-	output, err := unixProcessSnapshot()
+func unixSessionProcessGroups(api unixProcessAPI, sessionID int) (map[int][]int, error) {
+	output, err := api.snapshot()
 	if err != nil {
 		return nil, fmt.Errorf("list PTY session processes: %w", err)
 	}
@@ -189,7 +206,7 @@ func unixSessionProcessGroups(sessionID int) (map[int][]int, error) {
 		if pid <= 0 || group <= 0 {
 			continue
 		}
-		sid, err := unixGetSessionID(pid)
+		sid, err := api.getSessionID(pid)
 		if errors.Is(err, syscall.ESRCH) {
 			continue
 		}

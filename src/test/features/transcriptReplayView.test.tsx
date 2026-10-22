@@ -14,6 +14,10 @@ interface FakeTerminal {
   resizes: { cols: number; rows: number }[];
   resets: number;
   disposed: boolean;
+  content: string;
+  deferWrites: boolean;
+  readonly pendingWrites: number;
+  completeNextWrite: () => void;
 }
 
 vi.mock("@xterm/xterm", () => ({
@@ -23,19 +27,35 @@ vi.mock("@xterm/xterm", () => ({
     resizes: { cols: number; rows: number }[] = [];
     resets = 0;
     disposed = false;
+    content = "";
+    deferWrites = false;
+    private callbacks: (() => void)[] = [];
     constructor(options?: unknown) {
       this.options = options;
       terminalMocks.instances.push(this as unknown as FakeTerminal);
     }
     open() {}
-    write(data: Uint8Array) {
+    write(data: Uint8Array, callback?: () => void) {
       this.writes.push(data);
+      this.content += new TextDecoder().decode(data);
+      if (!callback) return;
+      if (this.deferWrites) this.callbacks.push(callback);
+      else callback();
+    }
+    get pendingWrites(): number {
+      return this.callbacks.length;
+    }
+    completeNextWrite() {
+      const callback = this.callbacks.shift();
+      if (!callback) throw new Error("No pending write");
+      callback();
     }
     resize(cols: number, rows: number) {
       this.resizes.push({ cols, rows });
     }
     reset() {
       this.resets += 1;
+      this.content = "";
     }
     dispose() {
       this.disposed = true;
@@ -105,6 +125,41 @@ describe("TranscriptReplayView", () => {
     expect(clock?.textContent).toBe("00:00 / 00:01");
   });
 
+  it("loads multiple pages by nextSeq and preserves byte order across page boundaries", async () => {
+    const encode = (bytes: number[]) => btoa(String.fromCharCode(...bytes));
+    mocks.transcriptRead.mockImplementation(async (_id: string, afterSeq: number) => {
+      if (afterSeq === 0) {
+        return {
+          chunks: [
+            { seq: 0, tabId: "tab-1", ts: 1000, kind: 0, dataBase64: encode([0, 1, 2]) },
+            { seq: 1, tabId: "tab-1", ts: 1000, kind: 0, dataBase64: encode([65]) },
+          ],
+          nextSeq: 2,
+          done: false,
+          totalBytes: 7,
+        };
+      }
+      return {
+        chunks: [
+          { seq: 2, tabId: "tab-1", ts: 1000, kind: 0, dataBase64: encode([66, 67]) },
+          { seq: 3, tabId: "tab-1", ts: 1000, kind: 0, dataBase64: encode([255]) },
+        ],
+        nextSeq: 4,
+        done: true,
+        totalBytes: 7,
+      };
+    });
+
+    mounted = mount(<TranscriptReplayView transcriptId="t-1" />);
+    await flush();
+
+    expect(mocks.transcriptRead).toHaveBeenCalledTimes(2);
+    expect(mocks.transcriptRead).toHaveBeenNthCalledWith(1, "t-1", 0, 4 * 1024 * 1024);
+    expect(mocks.transcriptRead).toHaveBeenNthCalledWith(2, "t-1", 2, 4 * 1024 * 1024);
+    const terminal = terminalMocks.instances[0];
+    expect(terminal.writes.flatMap((data) => Array.from(data))).toEqual([0, 1, 2, 65, 66, 67, 255]);
+  });
+
   it("automatically pauses at the end during playback and applies the speed multiplier", async () => {
     vi.useFakeTimers();
     mounted = mount(<TranscriptReplayView transcriptId="t-1" />);
@@ -161,10 +216,41 @@ describe("TranscriptReplayView", () => {
     const resetsBefore = terminal.resets;
     const range = mounted.container.querySelector("input[aria-label='回放进度']") as HTMLInputElement;
     setInputValue(range, "0");
+    await act(async () => {
+      await Promise.resolve();
+    });
     expect(terminal.resets).toBe(resetsBefore + 1);
     expect(writtenText(terminal)).toBe("hello worldhello ");
     const clock = mounted.container.querySelector("[data-testid='replay-clock']");
     expect(clock?.textContent).toBe("00:00 / 00:01");
+  });
+
+  it("coalesces 20 seek inputs behind pending terminal writes", async () => {
+    mounted = mount(<TranscriptReplayView transcriptId="t-1" />);
+    const terminal = terminalMocks.instances[0];
+    terminal.deferWrites = true;
+    await flush();
+    expect(terminal.pendingWrites).toBe(1);
+    const resetsBefore = terminal.resets;
+    const range = mounted.container.querySelector("input[aria-label='回放进度']") as HTMLInputElement;
+    for (let i = 1; i <= 20; i += 1) setInputValue(range, String(i * 50));
+    expect(terminal.resets).toBe(resetsBefore);
+
+    await act(async () => {
+      terminal.completeNextWrite();
+      await Promise.resolve();
+    });
+    expect(terminal.resets).toBe(resetsBefore + 1);
+    act(() => {
+      while (terminal.pendingWrites > 0) terminal.completeNextWrite();
+    });
+
+    expect(terminal.resets).toBe(resetsBefore + 1);
+    expect(terminal.content).toBe("hello world");
+    expect(terminal.content).not.toContain("secret");
+    expect(mounted.container.querySelector("[data-testid='replay-clock']")?.textContent).toBe(
+      "00:01 / 00:01",
+    );
   });
 
   it("shows an error when loading fails", async () => {

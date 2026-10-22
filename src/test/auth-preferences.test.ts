@@ -15,6 +15,7 @@ import {
   resetKeybinding,
   setKeybinding,
 } from "../app/keybindings";
+import { flushMacrotask } from "./features/reactTestUtils";
 
 const prefsMocks = vi.hoisted(() => ({
   get: vi.fn(),
@@ -43,6 +44,23 @@ vi.mock("../ipc/authApi", async (importOriginal) => {
       get: prefsMocks.get,
       put: prefsMocks.put,
     },
+  };
+});
+
+// The preference-store lifecycle tests exercise register/logout state
+// transitions, not the KDF: wrapDEKWithPassword derives the KEK with
+// production Argon2id params (t=3, m=64MiB, p=4), which costs ~27s per call
+// and blows the test timeout under load. The KDF itself is covered against
+// the Go vectors in auth-crypto.test.ts, so stub the envelope wrap here.
+vi.mock("../features/auth/crypto", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../features/auth/crypto")>();
+  return {
+    ...actual,
+    wrapDEKWithPassword: vi.fn(async () => ({
+      envelope: new Uint8Array(28),
+      salt: new Uint8Array(16),
+      params: JSON.stringify({ t: 1, m: 8, p: 1 }),
+    })),
   };
 });
 
@@ -211,7 +229,7 @@ describe("account theme preferences", () => {
   it("writes local theme changes back to the account", async () => {
     const store = memoryStore({});
     registerAccountPreferenceStore(store);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flushMacrotask();
     const { useUi } = await import("../app/store");
 
     useUi.getState().setThemeMode("light");
@@ -294,8 +312,18 @@ describe("server global defaults in the keybinding snapshot (built-in < server <
 describe("production path: flat HTTP preference-store contract", () => {
   it("loads defaults/overrides in their real shape after registration and rebuilds the snapshot with inherited superadmin defaults", async () => {
     prefsMocks.get.mockResolvedValue({
-      defaults: { "appearance.terminalFontSize": 16, "input.selectionAutoCopy": true },
-      overrides: { "keybinding.newTerminal": "Mod+Shift+t", "appearance.terminalTheme": "light" },
+      defaults: {
+        "appearance.terminalFontSize": 16,
+        "appearance.terminalFontFamily": "menlo",
+        "appearance.terminalContrast": "high",
+        "input.selectionAutoCopy": true,
+      },
+      overrides: {
+        "keybinding.newTerminal": "Mod+Shift+t",
+        "appearance.terminalFontFamily": "source-code-pro",
+        "appearance.terminalTheme": "light",
+        "appearance.terminalContrast": "maximum",
+      },
       effective: {},
     });
     prefsMocks.put.mockResolvedValue({ defaults: {}, overrides: {}, effective: {} });
@@ -309,6 +337,8 @@ describe("production path: flat HTTP preference-store contract", () => {
     await vi.waitFor(() => expect(getAppearancePrefs().terminalFontSize).toBe(16));
     // Account override takes precedence over global and built-in defaults
     await vi.waitFor(() => expect(getAppearancePrefs().terminalTheme).toBe("light"));
+    expect(getAppearancePrefs().terminalFontFamily).toBe("source-code-pro");
+    expect(getAppearancePrefs().terminalContrast).toBe("maximum");
     await vi.waitFor(() => expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t"));
   });
 
@@ -316,24 +346,30 @@ describe("production path: flat HTTP preference-store contract", () => {
     prefsMocks.get.mockResolvedValue({ defaults: {}, overrides: {}, effective: {} });
     prefsMocks.put.mockResolvedValue({ defaults: {}, overrides: {}, effective: {} });
 
-    const { registerAccountPreferenceStore, createHttpPreferenceStore, setSelectionAutoCopy, setTerminalTheme, resetAppearancePrefs, getAppearancePrefs } = await import("../app/preferences");
+    const { registerAccountPreferenceStore, createHttpPreferenceStore, setSelectionAutoCopy, setTerminalFontFamily, setTerminalContrast, setTerminalTheme, resetAppearancePrefs, getAppearancePrefs } = await import("../app/preferences");
     registerAccountPreferenceStore(createHttpPreferenceStore());
     await vi.waitFor(() => expect(prefsMocks.get).toHaveBeenCalled(), { timeout: 10000 });
 
     setSelectionAutoCopy(true);
     await vi.waitFor(() => expect(prefsMocks.put).toHaveBeenCalledWith({ set: { "input.selectionAutoCopy": true } }));
 
+    setTerminalFontFamily("fira-code");
+    await vi.waitFor(() => expect(prefsMocks.put).toHaveBeenCalledWith({ set: { "appearance.terminalFontFamily": "fira-code" } }));
+    setTerminalContrast("maximum");
+    await vi.waitFor(() => expect(prefsMocks.put).toHaveBeenCalledWith({ set: { "appearance.terminalContrast": "maximum" } }));
     setTerminalTheme("light");
     await vi.waitFor(() => expect(prefsMocks.put).toHaveBeenCalledWith({ set: { "appearance.terminalTheme": "light" } }));
 
     resetAppearancePrefs();
     await vi.waitFor(() =>
       expect(prefsMocks.put).toHaveBeenCalledWith({
-        clear: ["appearance.uiFontPreset", "appearance.uiFontScale", "appearance.terminalFontSize", "appearance.terminalTheme", "appearance.themeMode"],
+        clear: ["appearance.uiFontPreset", "appearance.uiFontScale", "appearance.terminalFontSize", "appearance.terminalFontFamily", "appearance.terminalTheme", "appearance.terminalContrast", "appearance.themeMode"],
       }),
     );
     // After clearing, falls back to defaults with no leftover cleared account overrides
+    expect(getAppearancePrefs().terminalFontFamily).toBe("cascadia");
     expect(getAppearancePrefs().terminalTheme).toBe("dark");
+    expect(getAppearancePrefs().terminalContrast).toBe("standard");
   });
 
   it("does not overwrite new state with a late response from the previous account (generation guard)", async () => {
@@ -345,16 +381,30 @@ describe("production path: flat HTTP preference-store contract", () => {
       putOverrides: async () => undefined,
       deleteOverrides: async () => undefined,
     };
-    const storeB = memoryStore({});
+    const storeB = memoryStore({
+      "appearance.terminalFontFamily": "menlo",
+      "appearance.terminalContrast": "high",
+    });
     registerAccountPreferenceStore(storeA);
     registerAccountPreferenceStore(storeB);
     await vi.waitFor(() => expect(getAccountPreferenceStore()).toBe(storeB));
+    const { getInputPrefs, getAppearancePrefs } = await import("../app/preferences");
+    await vi.waitFor(() => expect(getAppearancePrefs().terminalFontFamily).toBe("menlo"));
+    expect(getAppearancePrefs().terminalContrast).toBe("high");
 
-    resolveA?.({ defaults: {}, overrides: { "input.selectionAutoCopy": true } });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const { getInputPrefs } = await import("../app/preferences");
+    resolveA?.({ defaults: {}, overrides: {
+      "input.selectionAutoCopy": true,
+      "appearance.terminalFontFamily": "fira-code",
+      "appearance.terminalContrast": "maximum",
+    } });
+    await flushMacrotask();
     expect(getInputPrefs().selectionAutoCopy).toBe(false);
-    expect(getAccountOverrides()).toEqual({});
+    expect(getAppearancePrefs().terminalFontFamily).toBe("menlo");
+    expect(getAppearancePrefs().terminalContrast).toBe("high");
+    expect(getAccountOverrides()).toEqual({
+      "appearance.terminalFontFamily": "menlo",
+      "appearance.terminalContrast": "high",
+    });
   });
 });
 

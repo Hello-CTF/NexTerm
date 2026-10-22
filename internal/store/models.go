@@ -22,6 +22,7 @@ type KnownHostRow = model.KnownHostRow
 type RecordingRow = model.RecordingRow
 type OutcomeRecord = model.OutcomeRecord
 type CronJob = model.CronJob
+type AIOwnerMigration = model.AIOwnerMigration
 type SyncTombstone = model.SyncTombstone
 type SyncState = model.SyncState
 type AppUser = model.AppUser
@@ -42,7 +43,8 @@ type ShareLink = model.ShareLink
 type SharePreviewLink = model.SharePreviewLink
 type HostShare = model.HostShare
 type CommandLog = model.CommandLog
-type DeviceShareLink = model.DeviceShareLink
+type ExecBatchRow = model.ExecBatchRow
+type ExecBatchResultRow = model.ExecBatchResultRow
 
 type AssetRef struct {
 	ID   string `json:"id"`

@@ -151,7 +151,8 @@ describe("CronPanel", () => {
     mocks.setEnabled.mockResolvedValue(undefined);
     mocks.unregister.mockResolvedValue(undefined);
   });
-  afterEach(() => {
+  afterEach(async () => {
+    await flush();
     mounted?.unmount();
     mounted = undefined;
   });
@@ -168,6 +169,22 @@ describe("CronPanel", () => {
     expect(text).toContain("1 个");
     expect(mocks.list).toHaveBeenCalledTimes(1);
     expect(mocks.list).toHaveBeenCalledWith(CONV_ID);
+  });
+
+  it("shows the bound host name and unattended exec_commands guidance", async () => {
+    mounted = mount(
+      createElement(CronPanel, {
+        conversationId: CONV_ID,
+        hostName: "prod-host",
+        onClose: mocks.onClose,
+      }),
+    );
+    await flush();
+
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("绑定主机：prod-host");
+    expect(text).toContain("不调用 terminal_create");
+    expect(text).toContain("使用 exec_commands");
   });
 
   it("reloads jobs for the new conversation after switching conversations", async () => {
@@ -981,6 +998,7 @@ describe("CronPanel", () => {
       run: { id: "running-1", scheduledFor: "", startedAt: "", deadline: "" },
     });
     mocks.list.mockResolvedValue([disabled]);
+    mounted.unmount();
     mounted = mountPanel();
     await flush();
     const text = mounted.container.textContent ?? "";

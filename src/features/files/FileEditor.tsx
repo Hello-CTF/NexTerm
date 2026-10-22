@@ -39,35 +39,49 @@ import {
   unknownFileEditorRenameConflict,
 } from "./editorGuards";
 
-import { StreamLanguage } from "@codemirror/language";
-import { shell } from "@codemirror/legacy-modes/mode/shell";
-import { nginx } from "@codemirror/legacy-modes/mode/nginx";
-import { yaml } from "@codemirror/legacy-modes/mode/yaml";
-import { properties } from "@codemirror/legacy-modes/mode/properties";
-import { javascript } from "@codemirror/legacy-modes/mode/javascript";
-import { python } from "@codemirror/legacy-modes/mode/python";
-import { sql } from "@codemirror/lang-sql";
+import {
+  FILE_LANGUAGE_OPTIONS,
+  detectFileLanguage,
+  fileLanguageExtension,
+  fileLanguageLabel,
+  type FileLanguageChoice,
+} from "./fileLanguages";
 import { describeError } from "../../ui/errorText";
+
+export interface FileEditorSaveChange {
+  sessionId: string;
+  path: string;
+  previous: string;
+  baseContentBase64: string;
+  content: string;
+}
 
 export interface FileEditorProps {
   sessionId: string;
   path: string;
   onClose?: () => void;
+  saveFile?: (change: FileEditorSaveChange) => Promise<boolean>;
 }
 
-function modeFor(path: string) {
-  const lower = path.toLowerCase();
-  if (lower.endsWith(".py")) return StreamLanguage.define(python);
-  if (lower.endsWith(".sh") || lower.endsWith(".bash") || lower.endsWith(".bashrc") || lower.endsWith(".zshrc") || lower.endsWith(".profile"))
-    return StreamLanguage.define(shell);
-  if (lower.includes("nginx")) return StreamLanguage.define(nginx);
-  if (lower.endsWith(".yml") || lower.endsWith(".yaml")) return StreamLanguage.define(yaml);
-  if (lower.endsWith(".ini") || lower.endsWith(".conf") || lower.endsWith(".env"))
-    return StreamLanguage.define(properties);
-  if (lower.endsWith(".js") || lower.endsWith(".mjs") || lower.endsWith(".json") || lower.endsWith(".ts"))
-    return StreamLanguage.define(javascript);
-  if (lower.endsWith(".sql")) return sql();
-  return undefined;
+export async function loadFileEditorSaveChange({
+  sessionId,
+  path,
+  editorBase,
+  content,
+  encoding,
+}: {
+  sessionId: string;
+  path: string;
+  editorBase: string;
+  content: string;
+  encoding: EncChoice;
+}): Promise<FileEditorSaveChange> {
+  const current = await fsApi.read(sessionId, path);
+  const currentText = decodeContent(bytesFromBase64(current.contentBase64), encoding).text;
+  if (currentText !== editorBase) {
+    throw new Error("文件在打开后已被外部修改；请重新读取并合并改动后再保存");
+  }
+  return { sessionId, path, previous: currentText, baseContentBase64: current.contentBase64, content };
 }
 
 const ENC_LABEL: Record<EncChoice, string> = {
@@ -78,7 +92,7 @@ const ENC_LABEL: Record<EncChoice, string> = {
 
 const ZOOM_STEPS = [11, 12, 13, 14.5, 16, 18];
 
-export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
+export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorProps) {
   const qc = useQueryClient();
   const pushToast = useUi((state) => state.pushToast);
   const caseInsensitive = useUi((state) =>
@@ -92,18 +106,34 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
   const [enc, setEnc] = useState<EncChoice>("auto");
   const [reloadEnc, setReloadEnc] = useState<EncChoice>("auto");
   const [reloadKey, setReloadKey] = useState(0);
+  const [languageSelection, setLanguageSelection] = useState<{
+    sessionId: string;
+    path: string;
+    choice: FileLanguageChoice;
+  }>({ sessionId, path, choice: "auto" });
+  const languageChoice =
+    languageSelection.sessionId === sessionId && languageSelection.path === path
+      ? languageSelection.choice
+      : "auto";
   const viewRef = useRef<EditorView | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const saveRef = useRef<() => void>(() => undefined);
   const saveInFlightRef = useRef(false);
   const editVersionRef = useRef(0);
   const dirtyRef = useRef(false);
+  const originalRef = useRef("");
   const mountedRef = useRef(true);
   const locatorRef = useRef({ sessionId, path });
   const loadLocksRef = useRef(new Map<string, { token: number; users: number }>());
+  const onCloseRef = useRef(onClose);
+  const caseInsensitiveRef = useRef(caseInsensitive);
+  const languageChoiceRef = useRef(languageChoice);
   const language = useRef(new Compartment()).current;
   locatorRef.current = { sessionId, path };
   dirtyRef.current = dirty;
+  onCloseRef.current = onClose;
+  caseInsensitiveRef.current = caseInsensitive;
+  languageChoiceRef.current = languageChoice;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -111,6 +141,15 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    setLanguageSelection((current) => {
+      if (current.sessionId === sessionId && current.path === path && current.choice === "auto") {
+        return current;
+      }
+      return { sessionId, path, choice: "auto" };
+    });
+  }, [sessionId, path]);
 
   useEffect(() => {
     setFileEditorDirty(sessionId, path, dirty, caseInsensitive);
@@ -129,18 +168,19 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
 
   useEffect(() => {
     let cancelled = false;
+    const ci = caseInsensitiveRef.current;
     const initialLocator = locatorRef.current;
     const lockKey = fileEditorLocatorKey(
       initialLocator.sessionId,
       initialLocator.path,
-      caseInsensitive,
+      ci,
     );
     let lock = loadLocksRef.current.get(lockKey);
     if (!lock) {
-      const token = beginFileEditorLoad(initialLocator.sessionId, initialLocator.path, caseInsensitive);
+      const token = beginFileEditorLoad(initialLocator.sessionId, initialLocator.path, ci);
       if (token === null) {
         pushToast("info", "文件读取或重命名进行中，完成后请重新读取");
-        onClose?.();
+        onCloseRef.current?.();
         return;
       }
       lock = { token, users: 0 };
@@ -178,11 +218,11 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
           if (choice === "view") {
             const current = locatorRef.current;
             openLogTab(current.sessionId, current.path);
-            onClose?.();
+            onCloseRef.current?.();
             return;
           }
           if (choice !== "edit") {
-            onClose?.();
+            onCloseRef.current?.();
             return;
           }
           largeEditConfirmed = true;
@@ -196,29 +236,29 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
           res.size > 5 * 1024 * 1024 &&
           !(await ask("文件超过 5MB，确定要编辑？", { kind: "info" }))
         ) {
-          onClose?.();
+          onCloseRef.current?.();
           return;
         }
         if (cancelled) return;
         const bin = bytesFromBase64(res.contentBase64);
         const { text, encoding } = decodeContent(bin, reloadEnc);
+        originalRef.current = text;
         setMeta({ encoding, size: res.size });
         setEol(text.includes("\r\n") ? "CRLF" : "LF");
         dirtyRef.current = false;
         const current = locatorRef.current;
-        setFileEditorDirty(current.sessionId, current.path, false, caseInsensitive);
+        setFileEditorDirty(current.sessionId, current.path, false, ci);
         setDirty(false);
         if (hostRef.current) {
           viewRef.current?.destroy();
           viewRef.current = null;
-          const mode = modeFor(locatorRef.current.path);
           viewRef.current = new EditorView({
             state: EditorState.create({
               doc: text,
               extensions: [
                 basicSetup,
                 search({ top: true }),
-                language.of(mode ? [mode] : []),
+                language.of(fileLanguageExtension(locatorRef.current.path, languageChoiceRef.current)),
                 keymap.of([indentWithTab]),
                 nxHighlight,
                 EditorView.updateListener.of((u) => {
@@ -226,7 +266,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
                     editVersionRef.current += 1;
                     dirtyRef.current = true;
                     const latest = locatorRef.current;
-                    setFileEditorDirty(latest.sessionId, latest.path, true, caseInsensitive);
+                    setFileEditorDirty(latest.sessionId, latest.path, true, ci);
                     setDirty(true);
                     const s = u.state.doc.toString();
                     setEol(s.includes("\r\n") ? "CRLF" : "LF");
@@ -240,7 +280,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       } catch (e) {
         if (!cancelled) {
           pushToast("error", `打开失败：${describeError(e)}`);
-          onClose?.();
+          onCloseRef.current?.();
         }
       } finally {
         const current = loadLocksRef.current.get(lockKey);
@@ -258,14 +298,13 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-  }, [sessionId, reloadEnc, reloadKey, language]);
+  }, [sessionId, reloadEnc, reloadKey, language, pushToast]);
 
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    const mode = modeFor(path);
-    view.dispatch({ effects: language.reconfigure(mode ? [mode] : []) });
-  }, [path, language]);
+    view.dispatch({ effects: language.reconfigure(fileLanguageExtension(path, languageChoice)) });
+  }, [path, languageChoice, language]);
 
   const save = async () => {
     const view = viewRef.current;
@@ -348,7 +387,19 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       const bytes = new TextEncoder().encode(text);
       const b64 = bytesToBase64(bytes);
       const writeLocator = locatorRef.current;
-      await fsApi.write(writeLocator.sessionId, writeLocator.path, b64, true);
+      if (saveFile) {
+        const change = await loadFileEditorSaveChange({
+          sessionId: writeLocator.sessionId,
+          path: writeLocator.path,
+          editorBase: originalRef.current,
+          content: text,
+          encoding: reloadEnc,
+        });
+        if (!(await saveFile(change))) return;
+      } else {
+        await fsApi.write(writeLocator.sessionId, writeLocator.path, b64, true);
+      }
+      originalRef.current = text;
       if (mountedRef.current) {
         setMeta({ encoding: "utf-8", size: bytes.length });
         if (meta && meta.encoding !== "utf-8") setEnc("utf-8");
@@ -451,6 +502,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
   };
 
   const { Icon: FileIcon, tone } = fileVisual(path, "file");
+  const autoLanguage = detectFileLanguage(path);
   const steps = ZOOM_STEPS.length - 1;
   const fontPx = ZOOM_STEPS[zoom] ?? 13;
 
@@ -543,6 +595,29 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
             ))}
           </select>
         </label>
+        <select
+          className="nx-select nx-select-sm w-[124px] shrink-0"
+          value={languageChoice}
+          aria-label="语法高亮"
+          title="语法高亮（手动选择仅用于当前打开的文件）"
+          onChange={(event) =>
+            setLanguageSelection({
+              sessionId,
+              path,
+              choice: event.target.value as FileLanguageChoice,
+            })
+          }
+        >
+          <option value="auto">
+            {autoLanguage ? `自动（${fileLanguageLabel(autoLanguage)}）` : "自动"}
+          </option>
+          <option value="plain">纯文本</option>
+          {FILE_LANGUAGE_OPTIONS.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.label}
+            </option>
+          ))}
+        </select>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="重新读取（丢弃未保存改动）"

@@ -50,12 +50,13 @@ export function cronTimeoutMs(job: CronJob): number {
 }
 
 export const cronApi = {
-  register: (args: CronRegistration) => call<CronJob>("cron_register", { ...args }),
-  list: (sessionId: string) => call<CronJob[]>("cron_list", { sessionId }),
+  register: (args: CronRegistration) => call("cron_register", { ...args }) as Promise<CronJob>,
+  list: (sessionId: string) =>
+    call("cron_list", { sessionId } as import("./generated/types").CronJobRequest) as Promise<CronJob[]>,
   get: (sessionId: string, jobId: string) =>
-    call<CronJob>("cron_get", { sessionId, jobId }),
+    call("cron_get", { sessionId, jobId }) as Promise<CronJob>,
   setEnabled: (sessionId: string, jobId: string, enabled: boolean) =>
-    call<CronJob>("cron_set_enabled", { sessionId, jobId, enabled }),
+    call("cron_set_enabled", { sessionId, jobId, enabled }) as Promise<CronJob>,
   unregister: (sessionId: string, jobId: string) =>
-    call<void>("cron_unregister", { sessionId, jobId }),
+    call("cron_unregister", { sessionId, jobId }) as Promise<void>,
 };

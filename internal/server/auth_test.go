@@ -143,30 +143,35 @@ func TestExposedListenRequiresSessionForRPC(t *testing.T) {
 }
 
 func TestExposedListenGatewayKeyAdmission(t *testing.T) {
-	config := exposedConfig(t)
-	config.GatewayAuthKey = "gateway-secret"
-	config.Accounts = newTestAccounts(t)
-	_, httpServer := newTestHTTP(t, config)
+	fixture := newAccountFixtureListen(t, AuthOn, "0.0.0.0:8080")
+	fixture.server.gatewayAuthKey = testGatewayKey
+	url := fixture.http.URL + "/rpc"
 
-	status, body := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{GatewayAuthHeader: "gateway-secret"})
+	status, body := postRPC(t, fixture.client, url, "app_info", map[string]string{GatewayAuthHeader: testGatewayKey})
 	if status != http.StatusOK || !body.OK {
-		t.Fatalf("gateway key admission = %d %+v", status, body)
+		t.Fatalf("gateway-only non-owner admission = %d %+v", status, body)
 	}
-	status, body = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{GatewayAuthHeader: "wrong"})
+	status, body = postRPC(t, fixture.client, url, "app_info", map[string]string{GatewayAuthHeader: "wrong"})
 	if status != http.StatusUnauthorized || body.OK {
 		t.Fatalf("wrong gateway key = %d %+v", status, body)
 	}
-	status, body = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{"X-HC-User-ID": "forged"})
+	status, body = postRPC(t, fixture.client, url, "app_info", map[string]string{"X-HC-User-ID": "forged"})
 	if status != http.StatusUnauthorized || body.OK {
 		t.Fatalf("forged platform identity header = %d %+v", status, body)
 	}
-	status, body = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{"X-HC-User-ID": "forged", GatewayAuthHeader: "wrong"})
+	status, body = postRPC(t, fixture.client, url, "app_info", map[string]string{"X-HC-User-ID": "forged", GatewayAuthHeader: "wrong"})
 	if status != http.StatusUnauthorized || body.OK {
 		t.Fatalf("forged platform header with wrong gateway key = %d %+v", status, body)
 	}
 
-	connection, response, err := websocket.Dial(context.Background(), strings.Replace(httpServer.URL, "http", "ws", 1)+"/ws/events", &websocket.DialOptions{
-		HTTPHeader: http.Header{GatewayAuthHeader: []string{"gateway-secret"}},
+	session, _ := fixture.initSuperadmin(t, "root", "password-rpc-gateway")
+	call := fixture.call(t, http.MethodPost, "/rpc", map[string]any{"cmd": "app_info", "args": map[string]any{}}, session, session.csrf, map[string]string{GatewayAuthHeader: testGatewayKey})
+	if call.status != http.StatusOK {
+		t.Fatalf("gateway plus account session = %d body=%v", call.status, call.body)
+	}
+
+	connection, response, err := websocket.Dial(context.Background(), strings.Replace(fixture.http.URL, "http", "ws", 1)+"/ws/events", &websocket.DialOptions{
+		HTTPHeader: http.Header{GatewayAuthHeader: []string{testGatewayKey}},
 	})
 	if err != nil {
 		t.Fatalf("websocket gateway key admission: %v", response)
@@ -391,7 +396,11 @@ func TestAIPermissionScopeUsesRequestAccountOverHTTP(t *testing.T) {
 	newRuntime := func(t *testing.T, auth string, serverMode bool) *runtimeFixture {
 		t.Helper()
 		fixture := newAccountFixture(t, auth)
-		manager := session.NewManager(session.Config{IdleTimeout: -1})
+		// Mirror production wiring: desktop/open deployments run an open session
+		// manager (production_builder sets OpenAccess for config.Desktop or an
+		// open startup context), account servers stay closed so identity-less
+		// callers fail closed.
+		manager := session.NewManager(session.Config{IdleTimeout: -1, OpenAccess: !serverMode})
 		storage, err := store.OpenInMemory(context.Background())
 		if err != nil {
 			t.Fatal(err)
@@ -777,7 +786,7 @@ func TestAIJobOperationsAuthorizationOverHTTP(t *testing.T) {
 	t.Run("gateway unknown identity", func(t *testing.T) {
 		runtime := newRuntime(t, &aiJobAuthModel{block: true}, tools.Dependencies{}, AuthPlatform)
 		stream := &agent.SliceStream{}
-		started, err := runtime.runner.Start(context.Background(), agent.ChatArgs{Message: "go"}, agent.StaticStream(stream))
+		started, err := runtime.runner.Start(ipc.WithUserID(context.Background(), "gateway-owner"), agent.ChatArgs{Message: "go"}, agent.StaticStream(stream))
 		if err != nil {
 			t.Fatal(err)
 		}

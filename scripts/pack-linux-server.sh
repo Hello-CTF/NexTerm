@@ -26,16 +26,16 @@ while [ $# -gt 0 ]; do
       cat <<'PACK_HELP_EOF'
 Usage: scripts/pack-linux-server.sh [options]
 
-Package one full CGO_ENABLED=0 Go server tar.gz with both runtime units.
-scripts/build.mjs owns compilation/versioning; scripts/e2e-harness retains
---sync-only acceptance.
+Package one full CGO_ENABLED=0 Go server tar.gz with both runtime units and
+all nine SSH target helpers. scripts/build.mjs owns compilation/versioning;
+scripts/e2e-harness retains --sync-only acceptance.
 
 Options:
   --out DIR           output directory (default target/release-assets)
   --bin PATH          server binary (default target/go-build/nexterm-server-linux-<arch>)
   --web DIR           frontend dist directory (default dist)
   --arch ARCH         Linux server architecture: amd64 or arm64 (default amd64)
-  --helpers-dir DIR    verified Linux helper binaries and manifests
+  --helpers-dir DIR   nine-target helper binaries and metadata records
   --require-evidence  fail unless the artifact report passes every assertion
   -h, --help          show this help
 PACK_HELP_EOF
@@ -57,11 +57,11 @@ VERSION="${NEXTERM_RELEASE_VERSION:-$(node -e 'const fs=require("fs"); const c=J
 }
 [ -f "$WEB/index.html" ] || { echo "missing real frontend: $WEB/index.html" >&2; exit 1; }
 [ -x "$BIN" ] || { echo "server binary is not executable: $BIN" >&2; exit 1; }
-for helper_arch in amd64 arm64; do
-  helper="$HELPERS_DIR/nexterm-helper-linux-$helper_arch"
-  [ -x "$helper" ] || { echo "missing executable Linux helper: $helper" >&2; exit 1; }
-  node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$helper" "helper-linux-$helper_arch" linux "$helper_arch" 0
-done
+while IFS='|' read -r helper_os helper_arch helper_name; do
+  helper="$HELPERS_DIR/$helper_name"
+  [ -x "$helper" ] || { echo "missing executable helper: $helper" >&2; exit 1; }
+  node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$helper" "helper-$helper_os-$helper_arch" "$helper_os" "$helper_arch" 0
+done < <(node "$ROOT/.github/scripts/helper-matrix.mjs" --shell)
 
 FILE_INFO="$(file -b "$BIN")"
 case "$FILE_INFO" in *ELF*64-bit*) ;; *) echo "not a 64-bit ELF binary: $FILE_INFO" >&2; exit 1 ;; esac
@@ -75,14 +75,13 @@ if command -v readelf >/dev/null 2>&1 && readelf -l "$BIN" | grep -q 'DYNAMIC'; 
 fi
 GO_INFO="$(go version -m "$BIN")"
 printf '%s' "$GO_INFO" | grep -q 'CGO_ENABLED=0' || { echo "server was not built with CGO_ENABLED=0" >&2; exit 1; }
-BINARY_VERSION="$("$BIN" --version)"
-[ "$BINARY_VERSION" = "$VERSION" ] || {
-  echo "server --version ($BINARY_VERSION) does not match release version ($VERSION)" >&2; exit 1;
-}
+export NEXTERM_RELEASE_VERSION="$VERSION"
+node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$BIN" "server-linux-$ARCH" linux "$ARCH" 0
 
 for unit in nexterm-server.service nexterm-onlyserver.service; do
   [ -f "$ROOT/deploy/systemd/$unit" ] || { echo "missing systemd unit: deploy/systemd/$unit" >&2; exit 1; }
 done
+[ -f "$ROOT/deploy/systemd/install.sh" ] || { echo "missing systemd installer: deploy/systemd/install.sh" >&2; exit 1; }
 [ -f "$ROOT/LICENSE" ] || { echo "missing LICENSE" >&2; exit 1; }
 
 mkdir -p "$OUT"
@@ -92,129 +91,57 @@ rm -f \
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
-if tar --version 2>/dev/null | grep -qi 'gnu tar'; then
-  TAR_OWNER=(--owner=0 --group=0 --numeric-owner)
-else
-  TAR_OWNER=(--uid 0 --gid 0)
-fi
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" show -s --format=%ct HEAD)}"
 
 tar_cz() {
-  tar ${TAR_OWNER[@]+"${TAR_OWNER[@]}"} --sort=name --mtime="@$SOURCE_DATE_EPOCH" -czf "$1" -C "$2" "$3"
-}
-
-write_env() {
-  local target="$1" env_name="$2"
-  cat > "$target" <<ENVEOF
-# Copy to /etc/nexterm/$env_name and chmod 0600.
-# The vault root key lives in its own 0600 file owned by the service user:
-#   install -m 0600 -o nexterm -g nexterm /dev/null /etc/nexterm/master.key
-#   printf '%s' '<root-key>' > /etc/nexterm/master.key
-NEXTERM_MASTER_KEY_FILE=/etc/nexterm/master.key
-# If a TLS reverse proxy forwards to this server, make it overwrite
-# X-Forwarded-Proto and list its source IP ranges here (comma separated).
-# NEXTERM_TRUSTED_PROXY_CIDRS=127.0.0.1/32
-ENVEOF
-}
-
-write_readme() {
-  local target="$1"
-  cat > "$target" <<MDEOF
-# NexTerm Linux Server $VERSION (linux/$ARCH)
-
-This is the only Linux server archive. It contains the stripped, static Go
-server, Linux amd64/arm64 SSH helpers, the real Vite frontend, systemd units
-and environment-file examples.
-Its version comes from the release tag (NEXTERM_RELEASE_VERSION).
-
-## Install
-
-From the extracted archive, install the server, both helpers and web assets:
-
-    install -d -m 0755 /opt/nexterm
-    install -m 0755 nexterm-server nexterm-helper-linux-amd64 nexterm-helper-linux-arm64 /opt/nexterm/
-    cp -R web /opt/nexterm/
-
-Keep both helpers executable in the same directory as nexterm-server. On the
-server's own architecture, verify the installed helper before enabling the
-service:
-
-    /opt/nexterm/nexterm-helper-linux-amd64 --metadata  # x86_64 host
-    /opt/nexterm/nexterm-helper-linux-arm64 --metadata  # aarch64 host
-
-Run only the matching command; it must print JSON with a protocol version and
-exit successfully. Then enable nexterm-server.service with nexterm.env. It
-serves the browser UI with a
-built-in init/login page: on first start with no account, the server prints a
-one-time init code to the console (journalctl -u nexterm-server under
-systemd); open the UI and finish superadmin setup. /rpc, /ws and /files/blob
-always require an account session with --auth on. Public deployments still
-belong behind a TLS-terminating reverse proxy.
-Configure the proxy to overwrite X-Forwarded-Proto and set
-NEXTERM_TRUSTED_PROXY_CIDRS to its source IP ranges so HTTPS session cookies
-carry Secure. The server ignores forwarding headers from other addresses.
-
-The env examples point NEXTERM_MASTER_KEY_FILE at /etc/nexterm/master.key;
-create that root-key file owned by the nexterm service user with chmod 0600,
-keep it secret and back it up with /var/lib/nexterm.
-
-## Verify
-
-- curl http://127.0.0.1:8080/healthz and check syncOnly=false.
-- Account sign-in: POST /auth/login with username and password returns a
-  session cookie. Desktop clients sign in under Settings -> Account Sync with
-  server address + username + password.
-
-LazyCat package assembly and real LazyCat/box acceptance are separate external
-steps. This archive is an input contract, not evidence that those external
-targets have passed.
-MDEOF
+  python3 "$ROOT/scripts/lib/portable-archive.py" tar "$1" "$2" "$3" "$SOURCE_DATE_EPOCH"
 }
 
 package_full() {
   local name="NexTerm-server_${VERSION}_linux_${ARCH}"
   local dir="$STAGE/$name"
-  local unit env_file member
+  local unit env_file member helper_os helper_arch helper_name
   mkdir -p "$dir"
   install -m 0755 "$BIN" "$dir/nexterm-server"
-  for helper_arch in amd64 arm64; do
-    install -m 0755 "$HELPERS_DIR/nexterm-helper-linux-$helper_arch" "$dir/nexterm-helper-linux-$helper_arch"
-  done
+  while IFS='|' read -r helper_os helper_arch helper_name; do
+    install -m 0755 "$HELPERS_DIR/$helper_name" "$dir/$helper_name"
+  done < <(node "$ROOT/.github/scripts/helper-matrix.mjs" --shell)
   for unit in nexterm-server.service nexterm-onlyserver.service; do
     install -m 0644 "$ROOT/deploy/systemd/$unit" "$dir/$unit"
   done
+  install -m 0755 "$ROOT/deploy/systemd/install.sh" "$dir/install.sh"
   for env_file in nexterm.env onlyserver.env; do
-    write_env "$dir/$env_file.example" "$env_file"
+    install -m 0644 "$ROOT/deploy/systemd/$env_file.example" "$dir/$env_file.example"
   done
   install -m 0644 "$ROOT/LICENSE" "$dir/LICENSE"
-  write_readme "$dir/README.md"
-  mkdir -p "$dir/web"
-  (cd "$WEB" && find . -type f -print0 | sort -z | while IFS= read -r -d '' file; do
-    install -D -m 0644 "$file" "$dir/web/$file"
-  done)
+  install -m 0644 "$ROOT/deploy/systemd/README.md" "$dir/README.md"
+  python3 "$ROOT/scripts/lib/portable-archive.py" copy-tree "$WEB" "$dir/web"
   tar_cz "$OUT/$name.tar.gz" "$STAGE" "$name"
+  chmod 0644 "$OUT/$name.tar.gz"
 
   local archive_members
   archive_members="$(tar -tzf "$OUT/$name.tar.gz")"
   for member in \
     nexterm-server \
-    nexterm-helper-linux-amd64 \
-    nexterm-helper-linux-arm64 \
     nexterm-server.service \
     nexterm-onlyserver.service \
+    install.sh \
     nexterm.env.example \
     onlyserver.env.example \
     LICENSE \
     README.md \
     web/index.html; do
-    grep -q "^$name/$member$" <<<"$archive_members"
+    grep -Fxq "$name/$member" <<<"$archive_members"
   done
+  while IFS='|' read -r helper_os helper_arch helper_name; do
+    grep -Fxq "$name/$helper_name" <<<"$archive_members"
+  done < <(node "$ROOT/.github/scripts/helper-matrix.mjs" --shell)
 }
 
 ARTIFACT="$OUT/NexTerm-server_${VERSION}_linux_${ARCH}.tar.gz"
 (cd "$ROOT" && package_full)
 
-report_args=(--kind=server-archive --os=linux "--arch=$ARCH" "--file=$ARTIFACT")
+report_args=(--kind=server-archive --os=linux "--arch=$ARCH" "--file=$ARTIFACT" "--helpers-dir=$HELPERS_DIR")
 if [ "$REQUIRE_EVIDENCE" -ne 0 ]; then
   report_args+=(--require-evidence)
 fi

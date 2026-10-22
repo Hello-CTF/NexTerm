@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 // SHARE158 live contract: sharingApi paths/methods/CSRF/snake_case JSON fields align with
 // the real routes in internal/fleet/server/sharing_http.go; 401 reuses the existing session-expired event;
-// public links have only list and revoke - no creation method exists (the creation entry belongs to the live-session slice).
+// legacy public links have only list and revoke; new anonymous access uses the separate preview-link API.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -106,9 +106,11 @@ describe("sharingApi live contract", () => {
     expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBe("csrf-9");
   });
 
-  it("does not expose public-link creation because this slice has no creation entry and never fabricates session_id", () => {
+  it("does not expose legacy public-link creation on either browser or desktop clients", async () => {
+    const { remoteSharingApi } = await import("../../ipc/remoteApi");
     expect((sharingApi as unknown as Record<string, unknown>).createLink).toBeUndefined();
     expect((sharingApi as unknown as Record<string, unknown>).linksCreate).toBeUndefined();
+    expect((remoteSharingApi as unknown as Record<string, unknown>).createLink).toBeUndefined();
   });
 
   it("maps snake_case response fields into DTOs and omits tokens from lists", async () => {

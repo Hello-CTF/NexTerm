@@ -29,6 +29,8 @@ type Runner struct {
 	runs         RunStore
 	checkpoints  adk.CheckPointStore
 	hitl         *hitl.Manager
+	closeCtx     context.Context
+	closeCancel  context.CancelFunc
 	mu           sync.Mutex
 	jobs         map[string]*job
 	reservedJobs map[string]struct{}
@@ -37,7 +39,11 @@ type Runner struct {
 	shutdownErrs []error
 	wg           sync.WaitGroup
 
+	captures     map[string]*Capture
+	captureOrder []string
+
 	conversationLocks sync.Map
+	titleInFlight     sync.Map
 }
 
 func NewRunner(config Config) *Runner {
@@ -56,6 +62,9 @@ func NewRunner(config Config) *Runner {
 	if config.MaxPendingSteers <= 0 {
 		config.MaxPendingSteers = 16
 	}
+	if config.TitleTimeout <= 0 {
+		config.TitleTimeout = defaultTitleGenerationTimeout
+	}
 	if config.Permission == nil && config.Permissions != nil {
 		config.Permission = config.Permissions.Snapshot
 	}
@@ -70,12 +79,19 @@ func NewRunner(config Config) *Runner {
 	if config.Checkpoints == nil {
 		config.Checkpoints = NewMemoryCheckpoints()
 	}
+	if config.Now == nil {
+		config.Now = time.Now
+	}
 	manager := config.HITL
 	if manager == nil {
 		hitlConfig := hitl.Config{
-			Checkpoints:       config.Checkpoints,
-			TTL:               config.HITLTTL,
-			TerminalRetention: config.HITLTerminalRetention,
+			Checkpoints:          config.Checkpoints,
+			TTL:                  config.HITLTTL,
+			TerminalRetention:    config.HITLTerminalRetention,
+			Now:                  config.Now,
+			AssetResolver:        config.HITLAssetResolver,
+			RequestAssetResolver: config.HITLRequestAssetResolver,
+			EnvironmentResolver:  config.HITLEnvironmentResolver,
 		}
 		if config.Runs != nil {
 			hitlConfig.Store = hitlStoreBridge{config.Runs}
@@ -86,7 +102,8 @@ func NewRunner(config Config) *Runner {
 			panic(fmt.Sprintf("agent: hitl manager: %v", err))
 		}
 	}
-	return &Runner{config: config, store: config.Store, runs: config.Runs, checkpoints: config.Checkpoints, hitl: manager, jobs: make(map[string]*job), reservedJobs: make(map[string]struct{})}
+	closeCtx, closeCancel := context.WithCancel(context.Background())
+	return &Runner{config: config, store: config.Store, runs: config.Runs, checkpoints: config.Checkpoints, hitl: manager, closeCtx: closeCtx, closeCancel: closeCancel, jobs: make(map[string]*job), reservedJobs: make(map[string]struct{}), captures: make(map[string]*Capture)}
 }
 
 func (r *Runner) reserveJobID(jobID string) error {
@@ -129,25 +146,51 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 			return StartResponse{}, errors.New("图片总大小超出限制")
 		}
 	}
+	if err := r.validateExecutionRequest(ctx); err != nil {
+		return StartResponse{}, err
+	}
 	conversationID := args.ConversationID
+	persisted := conversationID != ""
 	ownerID := ""
-	if conversationID == "" {
+	var persistedScope tools.Scope
+	if persisted {
+		row, getErr := r.store.ConvGet(ctx, conversationID)
+		if getErr != nil {
+			return StartResponse{}, getErr
+		}
+		ownerID = row.OwnerID
+		persistedScope, getErr = scopeFromConversation(row.ScopeJSON)
+		if getErr != nil {
+			return StartResponse{}, getErr
+		}
+	} else {
+		resolved, resolveErr := r.resolveScope(ctx, "", args.Scope)
+		if resolveErr != nil {
+			return StartResponse{}, resolveErr
+		}
+		args.Scope = resolved
 		row, createErr := r.store.ConvCreate(ctx, AutoTitle(args.Message), map[string]any{"scope": args.Scope})
 		if createErr != nil {
 			return StartResponse{}, createErr
 		}
 		conversationID = row.ID
 		ownerID = row.OwnerID
-	} else {
-		row, getErr := r.store.ConvGet(ctx, conversationID)
-		if getErr != nil {
-			return StartResponse{}, getErr
+	}
+	executionCtx := conversationExecutionContext(ctx, ownerID)
+	if persisted {
+		resolved, resolveErr := r.resolveScope(executionCtx, conversationID, persistedScope)
+		if resolveErr != nil {
+			return StartResponse{}, resolveErr
 		}
-		ownerID = row.OwnerID
+		args.Scope = resolved
 	}
 	args.ConversationID = conversationID
 	if args.ModelProfileID == "" && r.config.Profiles != nil {
-		if profile, ok := r.config.Profiles.ActiveProfile(); ok {
+		profile, ok, err := r.config.Profiles.ActiveProfile(executionCtx)
+		if err != nil {
+			return StartResponse{}, err
+		}
+		if ok {
 			args.ModelProfileID = profile.ID
 		}
 	}
@@ -158,7 +201,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 	if err := r.reserveJobID(jobID); err != nil {
 		return StartResponse{}, err
 	}
-	jobContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	jobContext, cancel := context.WithCancel(context.WithoutCancel(executionCtx))
 	jobContext = tools.WithNotifyOwner(jobContext, ownerID)
 	deliveryContext, forceCancel := context.WithCancel(context.WithoutCancel(jobContext))
 	stream, err := factory(ctx, args.ChannelID, jobID)
@@ -177,7 +220,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 
 	unlock := r.lockConversation(conversationID)
 	defer unlock()
-	if err := r.store.MsgInsert(ctx, conversationID, "user", map[string]any{"role": "user", "content": args.Message, "imageCount": len(args.Images), "jobId": jobID}, nil, nil); err != nil {
+	if err := r.store.MsgInsert(executionCtx, conversationID, "user", map[string]any{"role": "user", "content": args.Message, "imageCount": len(args.Images), "jobId": jobID}, nil, nil); err != nil {
 		r.releaseJobID(jobID)
 		cancel()
 		forceCancel()
@@ -185,7 +228,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		return StartResponse{}, err
 	}
 	if r.runs != nil {
-		if err := r.runs.RunInsert(ctx, store.RunRow{ID: jobID, ConversationID: conversationID, Status: store.RunStatusRunning, PlanMode: args.PlanMode, Source: args.Source, ProfileID: r.profileIDFor(args)}); err != nil {
+		if err := r.runs.RunInsert(executionCtx, store.RunRow{ID: jobID, ConversationID: conversationID, Status: store.RunStatusRunning, PlanMode: args.PlanMode, Source: args.Source, ProfileID: r.profileIDFor(executionCtx, args)}); err != nil {
 			r.releaseJobID(jobID)
 			cancel()
 			forceCancel()
@@ -194,7 +237,8 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		}
 	}
 	stream = r.wrapStream(stream, jobID)
-	current := &job{id: jobID, ownerID: ipc.OwnerID(ctx), args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, memory: guard.NewMemory(), steer: steer.NewQueue(r.config.MaxPendingSteers), running: true, cancelSync: newCancelSync()}
+	current := &job{id: jobID, ownerID: ownerID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, memory: guard.NewMemory(), steer: steer.NewQueue(r.config.MaxPendingSteers), running: true, cancelSync: newCancelSync(), doneCh: make(chan struct{})}
+	current.capture = r.newJobCapture(jobID, conversationID)
 	r.mu.Lock()
 	if r.closed || r.jobs[jobID] != nil {
 		r.mu.Unlock()
@@ -244,6 +288,31 @@ func decodedImageSize(image string) (int, error) {
 }
 
 var cancelTestHook func()
+
+func (r *Runner) Wait(ctx context.Context, jobID string) error {
+	r.mu.Lock()
+	current := r.jobs[jobID]
+	r.mu.Unlock()
+	if current != nil {
+		select {
+		case <-current.doneCh:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if r.runs == nil {
+		return ErrJobNotFound
+	}
+	row, err := r.runs.RunGet(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	if row.FinishedAt == nil {
+		return ErrJobNotFound
+	}
+	return nil
+}
 
 func (r *Runner) Cancel(jobID string) error {
 	return r.CancelContext(WithOpenAccess(context.Background()), jobID)
@@ -366,7 +435,7 @@ func (r *Runner) ConfirmStreamContext(ctx context.Context, confirmation Confirma
 	if current == nil {
 		restored, err := r.restoreJob(ctx, confirmation.JobID, factory)
 		if err != nil {
-			return ErrJobNotFound
+			return restoreJobError(err)
 		}
 		current = restored
 	}
@@ -378,15 +447,16 @@ func (r *Runner) ConfirmStreamContext(ctx context.Context, confirmation Confirma
 		return err
 	}
 	answer := hitl.Answer{
-		ID:           r.config.NewID(),
-		RunID:        current.id,
-		RequestID:    request.ID,
-		CheckpointID: request.CheckpointID,
-		TargetID:     request.TargetID,
-		CallID:       request.CallID,
-		Nonce:        confirmation.Nonce,
-		Parameters:   request.Parameters,
-		Decision:     hitl.Decision(confirmation.Decision),
+		ID:               r.config.NewID(),
+		RunID:            current.id,
+		RequestID:        request.ID,
+		CheckpointID:     request.CheckpointID,
+		TargetID:         request.TargetID,
+		CallID:           request.CallID,
+		Nonce:            confirmation.Nonce,
+		Parameters:       request.Parameters,
+		Decision:         hitl.Decision(confirmation.Decision),
+		EnvironmentNames: confirmation.EnvironmentNames,
 	}
 	return r.resumeWithAnswer(current, answer)
 }
@@ -410,7 +480,7 @@ func (r *Runner) AnswerStreamContext(ctx context.Context, answer Answer, factory
 	if current == nil {
 		restored, err := r.restoreJob(ctx, answer.JobID, factory)
 		if err != nil {
-			return ErrJobNotFound
+			return restoreJobError(err)
 		}
 		current = restored
 	}
@@ -450,7 +520,7 @@ func (r *Runner) authorizeJob(ctx context.Context, jobID string, current *job) e
 		if r.runs == nil {
 			return ErrJobNotFound
 		}
-		row, err := r.runs.RunGet(ipc.WithUserID(ctx, ""), jobID)
+		row, err := r.runs.RunGet(store.WithAIHistoryInternalAccess(ipc.WithUserID(ctx, "")), jobID)
 		if err != nil {
 			return ErrJobNotFound
 		}
@@ -520,6 +590,8 @@ func mapResumeError(err error) error {
 		return fmt.Errorf("%w: %w", ErrJobNotFound, err)
 	case errors.Is(err, hitl.ErrInvalidArgument):
 		return fmt.Errorf("%w: %w", ErrInvalidConfirmation, err)
+	case errors.Is(err, hitl.ErrEnvironmentNamesMismatch):
+		return fmt.Errorf("%w: %w", ErrInvalidConfirmation, err)
 	default:
 		return fmt.Errorf("%w: %w", ErrConfirmationStale, err)
 	}
@@ -529,8 +601,33 @@ func (r *Runner) HITLSnapshot(jobID string) (hitl.Snapshot, error) {
 	return r.hitl.Snapshot(jobID)
 }
 
+func (r *Runner) HITLSnapshotContext(ctx context.Context, jobID string) (hitl.Snapshot, error) {
+	if err := r.authorizeHITLRead(ctx, jobID); err != nil {
+		return hitl.Snapshot{}, err
+	}
+	return r.HITLSnapshot(jobID)
+}
+
 func (r *Runner) HITLEvents(jobID string, after uint64) ([]hitl.Event, error) {
 	return r.hitl.Events(jobID, after)
+}
+
+func (r *Runner) HITLEventsContext(ctx context.Context, jobID string, after uint64) ([]hitl.Event, error) {
+	if err := r.authorizeHITLRead(ctx, jobID); err != nil {
+		return nil, err
+	}
+	return r.HITLEvents(jobID, after)
+}
+
+func (r *Runner) authorizeHITLRead(ctx context.Context, jobID string) error {
+	if r.runs == nil {
+		if r.config.ServerMode {
+			return ErrJobNotFound
+		}
+		return nil
+	}
+	_, err := r.runs.RunGet(ctx, jobID)
+	return err
 }
 
 func (r *Runner) complete(current *job, answer string, turns int, total usage.Usage, terminalErr error) {
@@ -569,12 +666,12 @@ func (r *Runner) closeSubagents(current *job) error {
 	return manager.Close()
 }
 
-func (r *Runner) profileIDFor(args ChatArgs) string {
+func (r *Runner) profileIDFor(ctx context.Context, args ChatArgs) string {
 	if args.ModelProfileID != "" {
 		return args.ModelProfileID
 	}
 	if r.config.Profiles != nil {
-		if profile, ok := r.config.Profiles.ActiveProfile(); ok {
+		if profile, ok, err := r.config.Profiles.ActiveProfile(ctx); err == nil && ok {
 			return profile.ID
 		}
 	}
@@ -588,6 +685,10 @@ func isCancellation(err error) bool {
 }
 
 func (r *Runner) finishRun(current *job, answer string, turns int, total usage.Usage, terminalErr error, terminal hitl.Event) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(current.ctx), 5*time.Second)
+	defer cancel()
+	r.recordRunAnswer(current, answer)
+	r.sealJobCapture(ctx, current)
 	if r.runs == nil {
 		return nil
 	}
@@ -614,11 +715,10 @@ func (r *Runner) finishRun(current *job, answer string, turns int, total usage.U
 			}
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(current.ctx), 5*time.Second)
-	defer cancel()
-	return r.runs.RunFinishUsage(ctx, current.id, status, answer, message, turns,
+	err := r.runs.RunFinishUsage(ctx, current.id, status, answer, message, turns,
 		usage.SaturatingInt64(total.PromptTokens), usage.SaturatingInt64(total.CompletionTokens),
 		usage.SaturatingInt64(total.CacheCreationTokens), usage.SaturatingInt64(uint64(max(total.LatencyMS, 0))))
+	return err
 }
 
 func (r *Runner) updateRunStatus(current *job, status string) {
@@ -655,11 +755,6 @@ func (r *Runner) reportSteerLeftover(current *job) {
 }
 
 func (r *Runner) cleanup(current *job) {
-	r.mu.Lock()
-	if r.jobs[current.id] == current {
-		delete(r.jobs, current.id)
-	}
-	r.mu.Unlock()
 	current.cancel()
 	r.releaseJobID(current.id)
 	if current.forceCancel != nil {
@@ -671,6 +766,12 @@ func (r *Runner) cleanup(current *job) {
 	if deleter, ok := r.checkpoints.(adk.CheckPointDeleter); ok {
 		_ = deleter.Delete(context.Background(), current.id)
 	}
+	current.markDone()
+	r.mu.Lock()
+	if r.jobs[current.id] == current {
+		delete(r.jobs, current.id)
+	}
+	r.mu.Unlock()
 	r.wg.Done()
 }
 
@@ -697,6 +798,9 @@ func (r *Runner) CloseContext(ctx context.Context) error {
 		jobs = append(jobs, current)
 	}
 	r.mu.Unlock()
+	if r.closeCancel != nil {
+		r.closeCancel()
+	}
 	for _, current := range jobs {
 		running, cancelFn := current.state()
 		if !running {

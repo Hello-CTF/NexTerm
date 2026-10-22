@@ -14,10 +14,13 @@ const mocks = vi.hoisted(() => ({
   discardStaged: vi.fn(),
   dropStaged: vi.fn(),
   stageFile: vi.fn(),
+  isStagedPath: vi.fn(),
   list: vi.fn(),
   mkdir: vi.fn(),
+  write: vi.fn(),
   upload: vi.fn(),
   download: vi.fn(),
+  cancel: vi.fn(),
   packDownload: vi.fn(),
   extract: vi.fn(),
   termWrite: vi.fn(),
@@ -41,21 +44,24 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
   };
 });
 vi.mock("../../ipc/commands", async (importOriginal) => {
+  const { createFakeApi } = await import("../helpers/createFakeApi");
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
-  return {
+  return createFakeApi({
     ...actual,
     fsApi: {
       list: mocks.list,
       mkdir: mocks.mkdir,
+      write: mocks.write,
       upload: mocks.upload,
       download: mocks.download,
+      cancel: mocks.cancel,
       packDownload: mocks.packDownload,
       extract: mocks.extract,
     },
     localFileApi: { listFolder: mocks.listFolder },
     terminalApi: { write: mocks.termWrite },
     sessionApi: {},
-  };
+  });
 });
 vi.mock("../../ipc/events", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/events")>();
@@ -67,7 +73,16 @@ vi.mock("../../ipc/events", async (importOriginal) => {
 });
 vi.mock("../../ipc/webFiles", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/webFiles")>();
-  return { ...actual, dropStaged: mocks.dropStaged, stageFile: mocks.stageFile };
+  return {
+    ...actual,
+    dropStaged: mocks.dropStaged,
+    stageFile: mocks.stageFile,
+    isStagedPath: mocks.isStagedPath,
+  };
+});
+vi.mock("../../features/files/chunkedUpload", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../features/files/chunkedUpload")>();
+  return { ...actual, uploadChunked: mocks.write };
 });
 vi.mock("../../features/files/folderPackUpload", () => ({
   packExtractSupported: mocks.packSupported,
@@ -289,8 +304,12 @@ beforeEach(() => {
     id: `staged-${file.name}`,
     path: `/staged/${file.name}`,
   }));
+  mocks.isStagedPath.mockReturnValue(false);
+  mocks.write.mockResolvedValue(undefined);
+  mocks.upload.mockReset();
   mocks.upload.mockResolvedValue(100);
   mocks.download.mockResolvedValue(100);
+  mocks.cancel.mockResolvedValue(true);
   mocks.mkdir.mockResolvedValue(undefined);
   mocks.packSupported.mockImplementation((kind: string) => kind === "ssh" || kind === "device");
   mocks.packUpload.mockResolvedValue("~/pics");
@@ -311,7 +330,7 @@ beforeEach(() => {
     activeWorkspaceId: null,
     sessions: [],
   });
-  useTransferStore.setState({ tasks: [], runningId: null });
+  useTransferStore.setState({ tasks: [] });
 });
 
 afterEach(async () => {
@@ -327,12 +346,12 @@ describe("unified transfer queue panel (FileBrowser)", () => {
   });
 
   it("queues uploads with direction, remote path, and in-progress status, then shows a clear completion toast", async () => {
-    useUi.setState({ sessions: [{ ...sessionOfKind("ssh"), assetId: "asset-a", name: "Alpha" }] });
+    act(() => useUi.setState({ sessions: [{ ...sessionOfKind("ssh"), assetId: "asset-a", name: "Alpha" }] }));
     let resolveUpload!: (v: number) => void;
     mocks.upload.mockReturnValueOnce(new Promise<number>((r) => (resolveUpload = r)));
 
     click(buttonByTitle(mounted!.container, "上传"));
-    await waitFor(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false));
+    await waitFor(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false, expect.any(String), expect.any(String)));
 
     const panel = mounted!.container.querySelector('[data-testid="transfer-panel"]');
     expect(panel).not.toBeNull();
@@ -358,10 +377,10 @@ describe("unified transfer queue panel (FileBrowser)", () => {
     click(buttonByTitle(mounted!.container, "上传"));
     await waitFor(() => expect(mocks.upload).toHaveBeenCalled());
 
-    emitProgress({ taskId: "srv-1", transferred: 50, total: 100, done: false });
+    emitProgress({ taskId: useTransferStore.getState().tasks[0].id, transferred: 50, total: 100, done: false });
     await waitFor(() => expect(panelRows(mounted!.container)[0]?.textContent).toContain("50%"));
 
-    emitProgress({ taskId: "srv-1", transferred: 100, total: 100, done: true });
+    emitProgress({ taskId: useTransferStore.getState().tasks[0].id, transferred: 100, total: 100, done: true });
     resolveUpload(100);
     await waitFor(() => expect(panelRows(mounted!.container)[0]?.textContent).toContain("已完成"));
   });
@@ -388,7 +407,9 @@ describe("unified transfer queue panel (FileBrowser)", () => {
 
     click(rowByPath(mounted!.container, "~/a.txt"));
     click(buttonByTitle(mounted!.container, "下载"));
-    await waitFor(() => expect(mocks.download).toHaveBeenCalledWith(SID, "~/a.txt", LOCAL_SAVE));
+    await waitFor(() =>
+      expect(mocks.download).toHaveBeenCalledWith(SID, "~/a.txt", LOCAL_SAVE, false, expect.any(String), expect.any(String)),
+    );
 
     const panel = mounted!.container.querySelector('[data-testid="transfer-panel"]');
     expect(panel!.textContent).toContain("~/a.txt");
@@ -477,7 +498,7 @@ describe("unified transfer queue panel (FileBrowser)", () => {
     expect(bar?.getAttribute("aria-valuemax")).toBe("100");
     expect(bar?.getAttribute("aria-valuenow")).toBe("0");
 
-    emitProgress({ taskId: "srv-1", transferred: 50, total: 100, done: false });
+    emitProgress({ taskId: useTransferStore.getState().tasks[0].id, transferred: 50, total: 100, done: false });
     await waitFor(() =>
       expect(
         mounted!.container.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow"),
@@ -499,7 +520,7 @@ describe("unified transfer queue panel (FileBrowser)", () => {
   });
 
   it("defaults to the current host, including an earlier session of that host, and keeps other hosts when clearing", async () => {
-    useUi.setState({ sessions: [{ ...sessionOfKind("ssh"), assetId: "asset-a", name: "Alpha" }] });
+    act(() => useUi.setState({ sessions: [{ ...sessionOfKind("ssh"), assetId: "asset-a", name: "Alpha" }] }));
     act(() => {
       useTransferStore.setState({
         tasks: [
@@ -528,7 +549,7 @@ describe("unified transfer queue panel (FileBrowser)", () => {
   });
 
   it("global view cancels only the selected queued task and clears finished tasks in that view", async () => {
-    useUi.setState({ sessions: [{ ...sessionOfKind("ssh"), assetId: "asset-a", name: "Alpha" }] });
+    act(() => useUi.setState({ sessions: [{ ...sessionOfKind("ssh"), assetId: "asset-a", name: "Alpha" }] }));
     act(() => {
       useTransferStore.setState({
         tasks: [
@@ -575,14 +596,18 @@ describe("unified transfer queue panel (FileBrowser)", () => {
   it("account reset discards an in-flight download before it can be saved in the next account", async () => {
     let resolveOldDownload!: (bytes: number) => void;
     mocks.download.mockReturnValueOnce(new Promise<number>((resolve) => (resolveOldDownload = resolve)));
-    enqueueDownload(SID, { remotePath: "~/old-account.txt", localPath: "/staged/old-account.txt" });
+    act(() => {
+      enqueueDownload(SID, { remotePath: "~/old-account.txt", localPath: "/staged/old-account.txt" });
+    });
     await waitFor(() => expect(mocks.download).toHaveBeenCalledTimes(1));
 
     act(() => resetTransferQueue());
     expect(useTransferStore.getState().tasks).toEqual([]);
     expect(mocks.discardStaged).not.toHaveBeenCalledWith("/staged/old-account.txt");
 
-    enqueueDownload(SID, { remotePath: "~/new-account.txt", localPath: "/staged/new-account.txt" });
+    act(() => {
+      enqueueDownload(SID, { remotePath: "~/new-account.txt", localPath: "/staged/new-account.txt" });
+    });
     resolveOldDownload(100);
     await waitFor(() => expect(mocks.finishSave).toHaveBeenCalledWith("/staged/new-account.txt", "new-account.txt"));
     expect(mocks.finishSave).not.toHaveBeenCalledWith("/staged/old-account.txt", "old-account.txt");
@@ -603,7 +628,7 @@ describe("drag-and-drop upload (FileBrowser)", () => {
     dropOn(list, [new File(["x"], "d.txt")]);
 
     await waitFor(() =>
-      expect(mocks.upload).toHaveBeenCalledWith(SID, expect.anything(), "~/d.txt", false),
+      expect(mocks.upload).toHaveBeenCalledWith(SID, expect.anything(), "~/d.txt", false, expect.any(String), expect.any(String)),
     );
     const localPath = mocks.upload.mock.calls[0]?.[1] as string;
     expect(localPath).toContain("d.txt");
@@ -613,7 +638,7 @@ describe("drag-and-drop upload (FileBrowser)", () => {
   it("uploads into a directory when files are dropped on its row", async () => {
     dropOn(rowByPath(mounted!.container, "~/sub"), [new File(["x"], "d.txt")]);
     await waitFor(() =>
-      expect(mocks.upload).toHaveBeenCalledWith(SID, expect.anything(), "~/sub/d.txt", false),
+      expect(mocks.upload).toHaveBeenCalledWith(SID, expect.anything(), "~/sub/d.txt", false, expect.any(String), expect.any(String)),
     );
   });
 
@@ -627,7 +652,7 @@ describe("drag-and-drop upload (FileBrowser)", () => {
     dropOn(list, [new File(["x"], "d.txt")]);
 
     await waitFor(() =>
-      expect(mocks.upload).toHaveBeenCalledWith(SID, expect.anything(), "~/d (1).txt", false),
+      expect(mocks.upload).toHaveBeenCalledWith(SID, expect.anything(), "~/d (1).txt", false, expect.any(String), expect.any(String)),
     );
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.askChoice).toHaveBeenCalledWith(
@@ -650,31 +675,31 @@ describe("drag-and-drop upload (FileBrowser)", () => {
     dropOn(list, [new File(["1"], "d.txt"), new File(["2"], "e.txt")]);
 
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(2));
-    expect(mocks.upload).toHaveBeenNthCalledWith(1, SID, expect.anything(), "~/d.txt", false);
-    expect(mocks.upload).toHaveBeenNthCalledWith(2, SID, expect.anything(), "~/e (1).txt", false);
+    expect(mocks.upload).toHaveBeenNthCalledWith(1, SID, expect.anything(), "~/d.txt", false, expect.any(String), expect.any(String));
+    expect(mocks.upload).toHaveBeenNthCalledWith(2, SID, expect.anything(), "~/e (1).txt", false, expect.any(String), expect.any(String));
     expect(mocks.askChoice).toHaveBeenCalledTimes(2);
   });
 
   it("automatically keeps both case-variant names in one winrm batch without a conflict prompt or error", async () => {
-    useUi.setState({ sessions: [sessionOfKind("winrm")] });
+    act(() => useUi.setState({ sessions: [sessionOfKind("winrm")] }));
     const list = mounted!.container.querySelector("[role='tree']")!;
     dropOn(list, [new File(["1"], "x.txt"), new File(["2"], "X.TXT")]);
 
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(2));
-    expect(mocks.upload).toHaveBeenNthCalledWith(1, SID, expect.anything(), "~/x.txt", false);
-    expect(mocks.upload).toHaveBeenNthCalledWith(2, SID, expect.anything(), "~/X (1).TXT", false);
+    expect(mocks.upload).toHaveBeenNthCalledWith(1, SID, expect.anything(), "~/x.txt", false, expect.any(String), expect.any(String));
+    expect(mocks.upload).toHaveBeenNthCalledWith(2, SID, expect.anything(), "~/X (1).TXT", false, expect.any(String), expect.any(String));
     expect(mocks.askChoice).not.toHaveBeenCalled();
     expect(mocks.toast).not.toHaveBeenCalledWith("error", expect.anything());
   });
 
   it("automatically keeps both identical names in one ssh batch without a conflict prompt or error", async () => {
-    useUi.setState({ sessions: [sessionOfKind("ssh")] });
+    act(() => useUi.setState({ sessions: [sessionOfKind("ssh")] }));
     const list = mounted!.container.querySelector("[role='tree']")!;
     dropOn(list, [new File(["1"], "x.txt"), new File(["2"], "x.txt")]);
 
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(2));
-    expect(mocks.upload).toHaveBeenNthCalledWith(1, SID, expect.anything(), "~/x.txt", false);
-    expect(mocks.upload).toHaveBeenNthCalledWith(2, SID, expect.anything(), "~/x (1).txt", false);
+    expect(mocks.upload).toHaveBeenNthCalledWith(1, SID, expect.anything(), "~/x.txt", false, expect.any(String), expect.any(String));
+    expect(mocks.upload).toHaveBeenNthCalledWith(2, SID, expect.anything(), "~/x (1).txt", false, expect.any(String), expect.any(String));
     expect(mocks.askChoice).not.toHaveBeenCalled();
     expect(mocks.toast).not.toHaveBeenCalledWith("error", expect.anything());
   });
@@ -734,7 +759,7 @@ describe("drag-and-drop upload (FileTree)", () => {
     dropOn(tree, [new File(["x"], "d.txt")]);
 
     await waitFor(() =>
-      expect(mocks.upload).toHaveBeenCalledWith(SID, expect.anything(), "~/d.txt", false),
+      expect(mocks.upload).toHaveBeenCalledWith(SID, expect.anything(), "~/d.txt", false, expect.any(String), expect.any(String)),
     );
     expect(mounted!.container.querySelector('[data-testid="transfer-panel"]')).toBeNull();
     expect(
@@ -764,13 +789,15 @@ describe("folder upload (FileBrowser)", () => {
     dropFoldersOn(list, [fakeDir("pics", [fakeFile("a.jpg"), fakeDir("sub", [fakeFile("a.jpg")])])]);
 
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(2));
-    expect(mocks.upload).toHaveBeenNthCalledWith(1, SID, "/staged/1-a.jpg", "~/pics/a.jpg", false);
+    expect(mocks.upload).toHaveBeenNthCalledWith(1, SID, "/staged/1-a.jpg", "~/pics/a.jpg", false, expect.any(String), expect.any(String));
     expect(mocks.upload).toHaveBeenNthCalledWith(
       2,
       SID,
       "/staged/2-a.jpg",
       "~/pics/sub/a.jpg",
       false,
+      expect.any(String),
+      expect.any(String),
     );
     expect(mocks.askChoice).toHaveBeenCalledTimes(1);
     expect(mocks.askChoice).toHaveBeenCalledWith(
@@ -782,7 +809,7 @@ describe("folder upload (FileBrowser)", () => {
   });
 
   it("does not offer packed upload for winrm sessions", async () => {
-    useUi.setState({ sessions: [sessionOfKind("winrm")] });
+    act(() => useUi.setState({ sessions: [sessionOfKind("winrm")] }));
     mocks.askChoice.mockResolvedValueOnce("perFile");
     const list = mounted!.container.querySelector("[role='tree']")!;
     dropFoldersOn(list, [fakeDir("pics", [fakeFile("a.jpg")])]);
@@ -793,7 +820,7 @@ describe("folder upload (FileBrowser)", () => {
   });
 
   it("rejects entries with backslashes for winrm: reports an error, cleans staging, and skips upload", async () => {
-    useUi.setState({ sessions: [sessionOfKind("winrm")] });
+    act(() => useUi.setState({ sessions: [sessionOfKind("winrm")] }));
     const list = mounted!.container.querySelector("[role='tree']")!;
     dropFoldersOn(list, [fakeDir("pics", [fakeFile("a\\b.jpg")])]);
 
@@ -809,7 +836,7 @@ describe("folder upload (FileBrowser)", () => {
   });
 
   it("allows packed upload for ssh: calls packUploadAndExtract and cleans staging", async () => {
-    useUi.setState({ sessions: [sessionOfKind("ssh")] });
+    act(() => useUi.setState({ sessions: [sessionOfKind("ssh")] }));
     mocks.askChoice.mockResolvedValueOnce("pack");
     const list = mounted!.container.querySelector("[role='tree']")!;
     dropFoldersOn(list, [
@@ -893,7 +920,7 @@ describe("folder upload (FileBrowser)", () => {
     dropFoldersOn(list, [fakeDir("pics", [fakeFile("a.jpg"), fakeDir("sub", [fakeFile("b.jpg")])])]);
 
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
-    expect(mocks.upload).toHaveBeenCalledWith(SID, "/staged/b.jpg", "~/pics/sub/b.jpg", false);
+    expect(mocks.upload).toHaveBeenCalledWith(SID, "/staged/b.jpg", "~/pics/sub/b.jpg", false, expect.any(String), expect.any(String));
     expect(mocks.askChoice).toHaveBeenCalledTimes(2);
     expect(mocks.askChoice).toHaveBeenNthCalledWith(
       2,
@@ -925,8 +952,8 @@ describe("folder upload (FileTree)", () => {
     dropFoldersOn(tree, [fakeDir("pics", [fakeFile("a.jpg"), fakeDir("sub", [fakeFile("b.jpg")])])]);
 
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(2));
-    expect(mocks.upload).toHaveBeenNthCalledWith(1, SID, "/staged/a.jpg", "~/pics/a.jpg", false);
-    expect(mocks.upload).toHaveBeenNthCalledWith(2, SID, "/staged/b.jpg", "~/pics/sub/b.jpg", false);
+    expect(mocks.upload).toHaveBeenNthCalledWith(1, SID, "/staged/a.jpg", "~/pics/a.jpg", false, expect.any(String), expect.any(String));
+    expect(mocks.upload).toHaveBeenNthCalledWith(2, SID, "/staged/b.jpg", "~/pics/sub/b.jpg", false, expect.any(String), expect.any(String));
   });
 });
 
@@ -948,7 +975,7 @@ describe("native drag-and-drop upload (wails native drop)", () => {
     emitNativeDrop({ paths: [{ path: "/local/d.txt", dir: false }], x: 5, y: 5 });
 
     await waitFor(() =>
-      expect(mocks.upload).toHaveBeenCalledWith(SID, "/local/d.txt", "~/d.txt", false),
+      expect(mocks.upload).toHaveBeenCalledWith(SID, "/local/d.txt", "~/d.txt", false, expect.any(String), expect.any(String)),
     );
     expect(useTransferStore.getState().tasks.some((t) => t.remotePath === "~/d.txt")).toBe(true);
     expect(mocks.listFolder).not.toHaveBeenCalled();
@@ -961,7 +988,7 @@ describe("native drag-and-drop upload (wails native drop)", () => {
     emitNativeDrop({ paths: [{ path: "/local/d.txt", dir: false }], x: 5, y: 5 });
 
     await waitFor(() =>
-      expect(mocks.upload).toHaveBeenCalledWith(SID, "/local/d.txt", "~/sub/d.txt", false),
+      expect(mocks.upload).toHaveBeenCalledWith(SID, "/local/d.txt", "~/sub/d.txt", false, expect.any(String), expect.any(String)),
     );
   });
 
@@ -976,7 +1003,7 @@ describe("native drag-and-drop upload (wails native drop)", () => {
     emitNativeDrop({ paths: [{ path: "/local/pics", dir: true }], x: 5, y: 5 });
 
     await waitFor(() =>
-      expect(mocks.upload).toHaveBeenCalledWith(SID, "/local/pics/a.jpg", "~/pics/a.jpg", false),
+      expect(mocks.upload).toHaveBeenCalledWith(SID, "/local/pics/a.jpg", "~/pics/a.jpg", false, expect.any(String), expect.any(String)),
     );
     expect(mocks.listFolder).toHaveBeenCalledWith("/local/pics");
   });
@@ -990,7 +1017,7 @@ describe("native drag-and-drop upload (wails native drop)", () => {
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
     await flush();
     expect(mocks.upload).toHaveBeenCalledTimes(1);
-    expect(mocks.upload).toHaveBeenCalledWith(SID, "/staged/e.txt", "~/e.txt", false);
+    expect(mocks.upload).toHaveBeenCalledWith(SID, "/staged/e.txt", "~/e.txt", false, expect.any(String), expect.any(String));
   });
 
   it("ignores events when the drop point is outside the panel drop surface", async () => {
@@ -1021,7 +1048,7 @@ describe("native drag-and-drop upload (wails native drop)", () => {
     emitNativeDrop({ paths: [{ path: "/local/g.txt", dir: false }], x: 5, y: 5 });
 
     await waitFor(() =>
-      expect(mocks.upload).toHaveBeenCalledWith(SID, "/local/g.txt", "~/g.txt", false),
+      expect(mocks.upload).toHaveBeenCalledWith(SID, "/local/g.txt", "~/g.txt", false, expect.any(String), expect.any(String)),
     );
   });
 });

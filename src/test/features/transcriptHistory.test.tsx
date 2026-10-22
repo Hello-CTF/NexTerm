@@ -147,7 +147,7 @@ describe("TranscriptHistoryPanel", () => {
     const hostSelect = mounted.container.querySelector<HTMLSelectElement>('select[aria-label="选择主机"]')!;
     expect(hostSelect.value).toBe("");
     setSelectValue(hostSelect, other.id);
-    await flushUntil(() => mocks.transcriptList.mock.calls.length > 0);
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("该主机还没有终端历史"));
     expect(mocks.transcriptList).toHaveBeenCalledWith(other.id);
     expect(mocks.transcriptList).not.toHaveBeenCalledWith(ASSET.id);
   });
@@ -160,7 +160,11 @@ describe("TranscriptHistoryPanel", () => {
     mounted = mount(
       createElement(TranscriptHistoryPanel, { workspaceId: "ws-tools", assetId: ASSET.id }),
     );
-    await flushUntil(() => mocks.transcriptList.mock.calls.length > 0);
+    await flushUntil(
+      () =>
+        mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="选择主机"]')?.options.length === 3 &&
+        (mounted!.container.textContent ?? "").includes("该主机还没有终端历史"),
+    );
     expect(mocks.transcriptList).toHaveBeenCalledWith(ASSET.id);
     expect(mocks.transcriptList).not.toHaveBeenCalledWith(other.id);
   });
@@ -176,7 +180,11 @@ describe("TranscriptHistoryPanel", () => {
     );
     const hostSelect = () =>
       mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="选择主机"]')!;
-    await flushUntil(() => hostSelect().options.length === 4);
+    await flushUntil(
+      () =>
+        hostSelect().options.length === 4 &&
+        (mounted!.container.textContent ?? "").includes("该主机还没有终端历史"),
+    );
     expect(mocks.transcriptList).toHaveBeenLastCalledWith(hostA.id);
 
     const rerender = (visible: boolean, assetId?: string) =>
@@ -187,7 +195,11 @@ describe("TranscriptHistoryPanel", () => {
       });
 
     setSelectValue(hostSelect(), hostB.id);
-    await flushUntil(() => mocks.transcriptList.mock.calls.some((call) => call[0] === hostB.id));
+    await flushUntil(
+      () =>
+        mocks.transcriptList.mock.calls.some((call) => call[0] === hostB.id) &&
+        (mounted!.container.textContent ?? "").includes("该主机还没有终端历史"),
+    );
     expect(mocks.updateTab).toHaveBeenCalledWith("history", { assetId: hostB.id });
     const hostACalls = mocks.transcriptList.mock.calls.filter((call) => call[0] === hostA.id).length;
 
@@ -199,14 +211,22 @@ describe("TranscriptHistoryPanel", () => {
     expect(mocks.transcriptList.mock.calls.filter((call) => call[0] === hostA.id)).toHaveLength(hostACalls);
 
     rerender(true, ASSET.id);
-    await flushUntil(() => mocks.transcriptList.mock.calls.some((call) => call[0] === ASSET.id));
+    await flushUntil(
+      () =>
+        hostSelect().value === ASSET.id &&
+        mocks.transcriptList.mock.calls.some((call) => call[0] === ASSET.id) &&
+        (mounted!.container.textContent ?? "").includes("该主机还没有终端历史"),
+    );
     expect(hostSelect().value).toBe(ASSET.id);
   });
 
   it("shows empty state when the host has no transcripts", async () => {
     mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
-    await flushUntil(() => mocks.transcriptList.mock.calls.length > 0);
-    await flush();
+    await flushUntil(
+      () =>
+        mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="选择主机"]')?.options.length === 2 &&
+        (mounted!.container.textContent ?? "").includes("该主机还没有终端历史"),
+    );
     expect(mounted.container.textContent).toContain("该主机还没有终端历史");
     expect(mocks.transcriptList).toHaveBeenCalledWith(ASSET.id);
   });
@@ -293,7 +313,11 @@ describe("TranscriptHistoryPanel", () => {
     mocks.transcriptRead.mockResolvedValue(readResult([{ seq: 0, dataBase64: b64("needle here\r\n") }]));
     mocks.transcriptSearch.mockResolvedValue([{ seq: 0, ts: 1700000000000, preview: "needle here" }]);
     mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
-    await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
+    await flushUntil(
+      () =>
+        mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="选择主机"]')?.options.length === 2 &&
+        (mounted!.container.textContent ?? "").includes("已结束"),
+    );
     click(mounted.container.querySelector("tbody tr")!);
     await flushUntil(() => mounted!.container.querySelector("pre") !== null);
 
@@ -302,7 +326,7 @@ describe("TranscriptHistoryPanel", () => {
     setInputValue(input!, "needle");
     const searchButton = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.trim() === "搜索");
     click(searchButton!);
-    await flushUntil(() => (mounted!.container.textContent ?? "").includes("needle here"));
+    await flushUntil(() => mounted!.container.querySelector('button[title="needle here"]') !== null);
     expect(mocks.transcriptSearch).toHaveBeenCalledWith(summary().id, "needle");
   });
 
@@ -372,6 +396,24 @@ describe("TranscriptHistoryPanel", () => {
     expect(synced).toMatchObject({ syncOptIn: true });
     expect(syncButton?.textContent?.trim()).toBe("已开启同步");
     expect(mocks.toast).not.toHaveBeenCalled();
+  });
+
+  it("enables sync with an explicit true opt-in and reloads without confirmation", async () => {
+    const unsynced = summary();
+    mocks.transcriptList
+      .mockResolvedValueOnce([unsynced])
+      .mockResolvedValue([summary({ syncOptIn: true })]);
+    mocks.transcriptSyncOptIn.mockResolvedValue({});
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
+    await flushUntil(() => mounted!.container.querySelector('button[aria-label="开启这条记录的同步"]') !== null);
+
+    click(mounted.container.querySelector<HTMLButtonElement>('button[aria-label="开启这条记录的同步"]')!);
+
+    await waitFor(() => expect(mocks.transcriptSyncOptIn).toHaveBeenCalledWith(unsynced.id, true));
+    await flushUntil(() => mounted!.container.querySelector('button[aria-label="关闭这条记录的同步"]') !== null);
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.transcriptList.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已开启这条记录的同步");
   });
 
   it("disables sync and reloads only after confirmation", async () => {
@@ -522,7 +564,11 @@ describe("TranscriptHistoryPanel", () => {
     const second = deferred<ReturnType<typeof summary>[]>();
     mocks.transcriptList.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
     mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
-    await flushUntil(() => mocks.transcriptList.mock.calls.length === 1);
+    await flushUntil(
+      () =>
+        mocks.transcriptList.mock.calls.length === 1 &&
+        mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="选择主机"]')?.options.length === 2,
+    );
     const refresh = [...mounted.container.querySelectorAll("button")].find(
       (button) => button.textContent?.trim() === "刷新",
     );

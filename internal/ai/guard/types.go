@@ -163,14 +163,29 @@ const (
 	ActionDeny  Action = "deny"
 )
 
+// AuthorizationBinding identifies the exact automatic grant or rule generation
+// that authorized a call. A new mutation never reuses a prior generation.
+type AuthorizationBinding struct {
+	Kind       string `json:"kind"`
+	DeviceID   string `json:"deviceId"`
+	RuleID     string `json:"ruleId,omitempty"`
+	Generation string `json:"generation"`
+}
+
 type Decision struct {
-	Action Action `json:"action"`
-	Ruling Ruling `json:"ruling"`
-	Reason string `json:"reason,omitempty"`
+	Action        Action                `json:"action"`
+	Ruling        Ruling                `json:"ruling"`
+	Reason        string                `json:"reason,omitempty"`
+	Authorization *AuthorizationBinding `json:"authorization,omitempty"`
 }
 
 // DecideResource layers the path-level grants remembered for this session on top of Decide.
+// Production targets are never auto-authorized from session memory: the remembered kinds
+// and path rules are ignored so every production operation is explicitly confirmed.
 func DecideResource(config Config, ruling Ruling, memory *Memory, resource Resource) Decision {
+	if resource.ProductionTarget() {
+		memory = nil
+	}
 	if ruling.Risk == NeedsConfirm && memory != nil && memory.CoversPathRule(resource.Action, resource.Path) {
 		return Decision{Action: ActionAllow, Ruling: ruling, Reason: "本会话路径授权"}
 	}

@@ -159,6 +159,69 @@ func TestRemoteForwardExposedBindRequiresAcknowledgement(t *testing.T) {
 	}
 }
 
+func TestRemoteForwardLoopbackBindTableNeedsNoAcknowledgement(t *testing.T) {
+	for _, bindHost := range []string{"127.0.0.1", "localhost", "::1", "127.0.0.2"} {
+		t.Run(bindHost, func(t *testing.T) {
+			dialer := &fakeRemoteDialer{recordingDialer: &recordingDialer{}}
+			service := newLoopbackService(t, &switchProvider{dialer: dialer})
+			spec, err := service.CreateRemote(t.Context(), CreateRemoteArgs{
+				SessionID:  "s",
+				BindHost:   bindHost,
+				TargetHost: "127.0.0.1",
+				TargetPort: 8080,
+			})
+			if err != nil {
+				// Some hosts cannot bind non-primary loopback addresses; the
+				// classification still must not demand a risk acknowledgement.
+				var appErr *ipc.Error
+				if errors.As(err, &appErr) && appErr.Code == ipc.CodeNeedsConfirm {
+					t.Fatalf("loopback bind %q demanded acknowledgement: %v", bindHost, err)
+				}
+				return
+			}
+			if spec.ListenHost != bindHost {
+				t.Fatalf("listen host = %q, want %q", spec.ListenHost, bindHost)
+			}
+			if calls := dialer.listenCalls(); len(calls) != 1 {
+				t.Fatalf("remote listen calls = %v", calls)
+			}
+		})
+	}
+}
+
+func TestRemoteForwardExposedBindTableDemandsAcknowledgement(t *testing.T) {
+	for _, bindHost := range []string{"0.0.0.0", "::", "192.0.2.1", "example.com"} {
+		t.Run(bindHost, func(t *testing.T) {
+			dialer := &fakeRemoteDialer{recordingDialer: &recordingDialer{}}
+			provider := &switchProvider{dialer: dialer}
+			service := newLoopbackService(t, provider)
+			_, err := service.CreateRemote(t.Context(), CreateRemoteArgs{
+				SessionID:  "s",
+				BindHost:   bindHost,
+				TargetHost: "127.0.0.1",
+				TargetPort: 8080,
+			})
+			var appErr *ipc.Error
+			if !errors.As(err, &appErr) || appErr.Code != ipc.CodeNeedsConfirm {
+				t.Fatalf("bind %q error = %v, want needs_confirm", bindHost, err)
+			}
+			risk, ok := appErr.Detail.(ExposureRisk)
+			if !ok || risk.Risk != "unauthenticated_exposed_remote_forward" || risk.ListenHost != bindHost || risk.Authentication != "none" {
+				t.Fatalf("risk detail = %#v", appErr.Detail)
+			}
+			if provider.callCount() != 0 {
+				t.Fatal("risk rejection accessed the session")
+			}
+			if calls := dialer.listenCalls(); len(calls) != 0 {
+				t.Fatalf("risk rejection opened a remote listener: %v", calls)
+			}
+			if runtimes := service.List(); len(runtimes) != 0 {
+				t.Fatalf("risk rejection left a runtime: %+v", runtimes)
+			}
+		})
+	}
+}
+
 func TestRemoteForwardUnsupportedTransport(t *testing.T) {
 	service := newLoopbackService(t, &switchProvider{dialer: &recordingDialer{}})
 	_, err := service.CreateRemote(t.Context(), CreateRemoteArgs{

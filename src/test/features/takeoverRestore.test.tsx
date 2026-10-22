@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { flush, mount, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
@@ -24,7 +24,7 @@ vi.hoisted(() => {
 });
 
 vi.mock("../../ipc/commands", () => ({
-  aiApi: { cancel: mocks.cancel, takeoverExit: mocks.exit },
+  aiApi: { takeoverCancel: mocks.cancel, takeoverExit: mocks.exit },
   dbApi: {},
   sessionApi: {},
   vaultApi: {},
@@ -112,14 +112,19 @@ describe("TakeoverBanner takeover restoration", () => {
   });
 
   it("restores the banner after reload, then clears it and notifies when the snapshot shows the takeover ended", async () => {
+    vi.resetModules();
+    localStorage.setItem("nexterm.takeover.v1", JSON.stringify(mocks.seeded));
+    const { TakeoverBanner: ReloadedTakeoverBanner } = await import("../../app/TakeoverBanner");
+    const { useUi: reloadedUi } = await import("../../app/store");
+    reloadedUi.setState({ pushToast: mocks.toast });
     mocks.snapshot.mockResolvedValue({ text: "[接管结束: 用户退出]\r\n$ " });
-    view = mount(createElement(TakeoverBanner));
+    view = mount(createElement(ReloadedTakeoverBanner));
     expect(view.container.textContent).toContain("AI 正在操作此终端");
 
     await flushProbe();
     expect(mocks.snapshot).toHaveBeenCalledWith("tab-a");
     expect(view.container.textContent).not.toContain("AI 正在操作此终端");
-    expect(useUi.getState().takeover).toBeNull();
+    expect(reloadedUi.getState().takeover).toBeNull();
     expect(mocks.toast).toHaveBeenCalledWith("info", "接管已结束");
     expect(localStorage.getItem("nexterm.takeover.v1")).toBeNull();
   });
@@ -130,7 +135,7 @@ describe("TakeoverBanner takeover restoration", () => {
     await flushProbe();
     expect(mocks.snapshot).not.toHaveBeenCalled();
     expect(view.container.textContent).toContain("AI 正在操作此终端");
-    useUi.getState().setTakeover(null);
+    act(() => useUi.getState().setTakeover(null));
   });
 });
 

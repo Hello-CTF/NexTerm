@@ -2,6 +2,8 @@ package session
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -354,6 +356,10 @@ func lockRecordingOperation(tab *Tab) func() {
 
 type terminalFactory struct{}
 
+func (m *Manager) newOutputFanout() *terminal.Fanout {
+	return terminal.NewFanoutWithOptions(terminal.FanoutOptions{Logger: m.logger})
+}
+
 func (terminalFactory) NewTerminal(config TerminalConfig) (TerminalState, error) {
 	encoding := terminal.UTF8
 	var err error
@@ -615,8 +621,112 @@ func (m *Manager) WriteInternal(ctx context.Context, tabID string, data []byte) 
 	if err != nil {
 		return err
 	}
-	tab.writeMu.Lock()
-	defer tab.writeMu.Unlock()
+	release, err := tab.acquireWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return m.writeInternalLocked(ctx, tab, data)
+}
+
+var (
+	ErrPasteModeChanged  = errors.New("terminal paste mode changed during write; input may be partially written; do not retry blindly")
+	ErrPasteVerification = errors.New("terminal paste mode verification failed after write; input may be partially written; do not retry blindly")
+	ErrTabEpisodeChanged = errors.New("terminal tab runtime episode changed before write")
+)
+
+func (m *Manager) WritePasteFor(ctx context.Context, tabID, text string) error {
+	tab, err := m.TabFor(ctx, tabID)
+	if err != nil {
+		return err
+	}
+	release, err := tab.acquireWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := tab.lockFeed(ctx); err != nil {
+		return err
+	}
+	core, ok := tab.terminal.(interface{ BracketedPasteMode() (bool, uint64) })
+	if !ok {
+		tab.unlockFeed()
+		return ErrUnsupported
+	}
+	bracketed, generation := core.BracketedPasteMode()
+	encoded := terminal.EncodePaste(text, bracketed)
+	tab.unlockFeed()
+	if err := m.writeInternalLocked(ctx, tab, encoded); err != nil {
+		return err
+	}
+	if err := tab.lockFeed(ctx); err != nil {
+		return errors.Join(ErrPasteVerification, err)
+	}
+	defer tab.unlockFeed()
+	_, currentGeneration := core.BracketedPasteMode()
+	if currentGeneration != generation {
+		return ErrPasteModeChanged
+	}
+	return nil
+}
+
+// ErrPasteGuarded refuses a literal paste whose text would be reinterpreted
+// as line submissions: without bracketed-paste mode the encoder turns every
+// LF into CR, so multi-line text would execute line by line instead of
+// pasting literally.
+var ErrPasteGuarded = errors.New("literal paste refused: terminal left bracketed-paste mode and the text contains line breaks")
+
+// WritePasteLiteralFor writes text as literal terminal input for callers
+// that must never have line breaks reinterpreted as submissions (AI tools
+// pasting scripts). The mode snapshot is read inside the real write lock and
+// the encoding uses that same copy, so a mode flip between a caller's
+// precheck and the write cannot silently change the encoding: when the
+// snapshot says bracketed paste is off and the text contains line breaks,
+// the write is refused with ErrPasteGuarded before any byte is written.
+// force bypasses that refusal, but still writes under the same write lock
+// with the same mode snapshot, in arrival order with interactive input —
+// force never overrides newer user input. Single-line text is written
+// unchanged regardless of mode, and interactive WritePasteFor behavior is
+// untouched.
+func (m *Manager) WritePasteLiteralFor(ctx context.Context, tabID, text string, force bool) error {
+	tab, err := m.TabFor(ctx, tabID)
+	if err != nil {
+		return err
+	}
+	release, err := tab.acquireWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := tab.lockFeed(ctx); err != nil {
+		return err
+	}
+	core, ok := tab.terminal.(interface{ BracketedPasteMode() (bool, uint64) })
+	if !ok {
+		tab.unlockFeed()
+		return ErrUnsupported
+	}
+	bracketed, generation := core.BracketedPasteMode()
+	encoded := terminal.EncodePaste(text, bracketed)
+	tab.unlockFeed()
+	if !bracketed && !force && strings.ContainsAny(text, "\r\n") {
+		return ErrPasteGuarded
+	}
+	if err := m.writeInternalLocked(ctx, tab, encoded); err != nil {
+		return err
+	}
+	if err := tab.lockFeed(ctx); err != nil {
+		return errors.Join(ErrPasteVerification, err)
+	}
+	defer tab.unlockFeed()
+	_, currentGeneration := core.BracketedPasteMode()
+	if currentGeneration != generation {
+		return ErrPasteModeChanged
+	}
+	return nil
+}
+
+func (m *Manager) writeInternalLocked(ctx context.Context, tab *Tab, data []byte) error {
 	tab.mu.Lock()
 	if tab.closed {
 		tab.mu.Unlock()
@@ -642,7 +752,19 @@ func (m *Manager) WriteInternal(ctx context.Context, tabID string, data []byte) 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := writeAll(channel, data); err != nil {
+	if expected, ok := ctx.Value(expectedTabEpisodeContextKey{}).(expectedTabEpisode); ok {
+		tab.mu.Lock()
+		episode := tab.durableIdentity.Incarnation
+		if episode == "" {
+			episode = tab.runtimeEpisode
+		}
+		valid := !tab.closed && !tab.exited && tab.generation == generation && expected.tabID == tab.ID && expected.episode != "" && episode == expected.episode
+		tab.mu.Unlock()
+		if !valid {
+			return ErrTabEpisodeChanged
+		}
+	}
+	if err := writeChannelContext(ctx, channel, data); err != nil {
 		return err
 	}
 	m.transcriptInput(ctx, tab, data)
@@ -654,6 +776,26 @@ func (m *Manager) TerminalSnapshotFor(ctx context.Context, tabID string) (termin
 		return terminal.Snapshot{}, err
 	}
 	return m.TerminalSnapshot(tabID)
+}
+
+func (m *Manager) TerminalWaitSnapshotFor(ctx context.Context, tabID string) (terminal.Snapshot, []string, error) {
+	tab, err := m.TabFor(ctx, tabID)
+	if err != nil {
+		return terminal.Snapshot{}, nil, err
+	}
+	if err := tab.lockFeed(ctx); err != nil {
+		return terminal.Snapshot{}, nil, err
+	}
+	defer tab.unlockFeed()
+	snapshot, err := m.TerminalSnapshot(tabID)
+	if err != nil {
+		return terminal.Snapshot{}, nil, err
+	}
+	tail, err := m.TailLines(tabID, 30)
+	if err != nil {
+		return terminal.Snapshot{}, nil, err
+	}
+	return snapshot, tail, nil
 }
 
 func (m *Manager) ScreenTextFor(ctx context.Context, tabID string) (string, error) {

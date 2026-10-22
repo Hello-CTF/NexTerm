@@ -4,6 +4,7 @@
 // the RemoteProxy facade in internal/sync (cookie+CSRF held in desktop memory).
 
 import { call } from "./commands";
+import type { RemoteHostShareIdentity, RemoteMetricsRequest } from "./generated/types";
 import type { AccountLink } from "./types";
 import type { FleetBaseURLEntry, FleetDevice, FleetEnrollCode, FleetMetricsResponse } from "./fleetApi";
 import type { HostShareView, ShareLinkView } from "./sharingApi";
@@ -22,12 +23,15 @@ export interface RemoteLinkResult extends AccountLink {
 // mfa / resetPassword complete two-factor verification and forced password change onboarding (cookie+CSRF held in memory once the session is established).
 export const remoteLinkApi = {
   linkSet: (patch: { url?: string; username?: string; password?: string; insecure?: boolean }) =>
-    call<RemoteLinkResult>("sync_link_set", { args: patch }),
+    call("sync_link_set", {
+      args: patch as unknown as import("./generated/types").LinkPatch,
+    }) as Promise<RemoteLinkResult>,
 
-  mfa: (code: string) => call<RemoteLinkResult>("sync_link_mfa", { args: { code } }),
+  mfa: (code: string) =>
+    call("sync_link_mfa", { args: { code } }) as Promise<RemoteLinkResult>,
 
   resetPassword: (newPassword: string) =>
-    call<RemoteLinkResult>("sync_link_reset_password", { args: { newPassword } }),
+    call("sync_link_reset_password", { args: { newPassword } }) as Promise<RemoteLinkResult>,
 };
 
 // SyncCompareRow is a per-row comparison of sync_compare: state values match the web compare detail;
@@ -67,9 +71,9 @@ export interface SyncRepairUndecryptableRequest {
 // syncCompareApi is the desktop account sync per-row comparison entry: the Go side decrypts cloud objects with the engine session DEK,
 // then judges states against the local collection using the same LWW rules as the web (see internal/sync/compare.go).
 export const syncCompareApi = {
-  compare: () => call<SyncCompareResult>("sync_compare"),
+  compare: () => call("sync_compare") as Promise<SyncCompareResult>,
   repairUndecryptable: (args: SyncRepairUndecryptableRequest) =>
-    call<{ repaired: boolean }>("sync_repair_undecryptable", { args }),
+    call("sync_repair_undecryptable", { args }) as Promise<{ repaired: boolean }>,
 };
 
 // RemotePreviewLinkView mirrors PreviewLinkView in src/features/sharing/previewApi.ts
@@ -82,12 +86,6 @@ export interface RemotePreviewLinkView {
   expires_at: number;
   revoked_at?: number;
   last_accessed_at?: number;
-}
-
-// RemoteShareLinkCreateResult is the create-public-link response: the only entry that carries the one-time token;
-// the token is used only to assemble the public URL on the spot - never logged, persisted, or put into web storage.
-export interface RemoteShareLinkCreateResult extends ShareLinkView {
-  token: string;
 }
 
 // RemotePreviewCreateResult is the return of preview_share_create: the desktop relay has already assembled the public url
@@ -104,76 +102,98 @@ export interface RemotePreviewCreateResult {
 // current relay. List/revoke reuse remoteSharingApi.previewLinks / revokePreviewLink.
 export const remotePreviewApi = {
   create: (tabId: string, ttlMs: number) =>
-    call<RemotePreviewCreateResult>("preview_share_create", { args: { tabId, ttlMs } }),
+    call("preview_share_create", { args: { tabId, ttlMs } }) as Promise<RemotePreviewCreateResult>,
 
-  active: (tabId: string) => call<{ sessionId?: string }>("preview_share_active", { args: { tabId } }),
+  active: (tabId: string) =>
+    call("preview_share_active", { args: { tabId } }) as Promise<{ sessionId?: string }>,
 };
 
 export const remoteFleetApi = {
-  devices: () => call<{ devices: FleetDevice[] }>("remote_fleet_devices"),
+  devices: () => call("remote_fleet_devices") as Promise<{ devices: FleetDevice[] }>,
 
   issueEnrollCode: (ttlMs: number, userId?: string) =>
-    call<FleetEnrollCode>("remote_fleet_enroll_code", { args: { ttlMs, ...(userId ? { userId } : {}) } }),
+    call("remote_fleet_enroll_code", { args: { ttlMs, ...(userId ? { userId } : {}) } }) as Promise<FleetEnrollCode>,
 
-  revoke: (id: string) => call<{ ok: boolean }>("remote_fleet_device_revoke", { args: { deviceId: id } }),
+  revoke: (id: string) =>
+    call("remote_fleet_device_revoke", { args: { deviceId: id } }) as Promise<{ ok: boolean }>,
 
   setAutostart: (id: string, desired: boolean) =>
-    call<{ ok: boolean; desired_autostart: boolean }>("remote_fleet_device_autostart", { args: { deviceId: id, desired } }),
+    call("remote_fleet_device_autostart", { args: { deviceId: id, desired } }) as Promise<{ ok: boolean; desired_autostart: boolean }>,
 
   metrics: (id: string, sinceMs?: number) =>
-    call<FleetMetricsResponse>("remote_fleet_device_metrics", {
-      args: { deviceId: id, ...(sinceMs ? { sinceMs } : {}) },
-    }),
+    call("remote_fleet_device_metrics", {
+      args: { deviceId: id, ...(sinceMs ? { sinceMs } : {}) } as RemoteMetricsRequest,
+    }) as Promise<FleetMetricsResponse>,
 
-  baseUrls: () => call<{ base_urls: FleetBaseURLEntry[] }>("remote_fleet_base_urls_get"),
+  baseUrls: () => call("remote_fleet_base_urls_get") as Promise<{ base_urls: FleetBaseURLEntry[] }>,
 
   putBaseUrls: (entries: FleetBaseURLEntry[]) =>
-    call<{ base_urls: FleetBaseURLEntry[] }>("remote_fleet_base_urls_put", { args: { entries } }),
+    call("remote_fleet_base_urls_put", { args: { entries } }) as Promise<{ base_urls: FleetBaseURLEntry[] }>,
 };
 
 export const remoteSharingApi = {
-  hostShares: () => call<{ shares: HostShareView[] }>("remote_share_host_list"),
+  hostShares: () => call("remote_share_host_list") as Promise<{ shares: HostShareView[] }>,
 
   createHostShare: (input: { deviceId: string; recipientUsername: string; write: boolean; ttlMs: number }) =>
-    call<HostShareView>("remote_share_host_create", { args: input }),
+    call("remote_share_host_create", { args: input }) as Promise<HostShareView>,
 
-  revokeHostShare: (id: string) => call<{ ok: boolean }>("remote_share_host_revoke", { args: { id } }),
+  revokeHostShare: (id: string) =>
+    call("remote_share_host_revoke", { args: { id } }) as Promise<{ ok: boolean }>,
 
-  links: () => call<{ links: ShareLinkView[] }>("remote_share_link_list"),
+  links: () => call("remote_share_link_list") as Promise<{ links: ShareLinkView[] }>,
 
-  createLink: (input: { deviceId: string; sessionId: string; write: boolean; ttlMs: number }) =>
-    call<RemoteShareLinkCreateResult>("remote_share_link_create", { args: input }),
+  revokeLink: (id: string) =>
+    call("remote_share_link_revoke", { args: { id } }) as Promise<{ ok: boolean }>,
 
-  revokeLink: (id: string) => call<{ ok: boolean }>("remote_share_link_revoke", { args: { id } }),
+  previewLinks: () =>
+    call("remote_share_preview_list") as Promise<{ links: RemotePreviewLinkView[] }>,
 
-  previewLinks: () => call<{ links: RemotePreviewLinkView[] }>("remote_share_preview_list"),
-
-  revokePreviewLink: (id: string) => call<{ ok: boolean }>("remote_share_preview_revoke", { args: { id } }),
+  revokePreviewLink: (id: string) =>
+    call("remote_share_preview_revoke", { args: { id } }) as Promise<{ ok: boolean }>,
 };
 
 export const remoteAccountApi = {
-  me: () => call<{ user: AccountUser; mfa_required: boolean }>("remote_account_me"),
+  me: () => call("remote_account_me") as Promise<{ user: AccountUser; mfa_required: boolean }>,
 
-  devices: () => call<{ devices: AccountDevice[] }>("remote_account_devices"),
+  devices: () => call("remote_account_devices") as Promise<{ devices: AccountDevice[] }>,
 
-  deviceRevoke: (id: string) => call<{ ok: boolean }>("remote_account_device_revoke", { args: { deviceId: id } }),
+  deviceRevoke: (id: string) =>
+    call("remote_account_device_revoke", { args: { deviceId: id } }) as Promise<{ ok: boolean }>,
 
-  adminUsers: () => call<{ users: AccountUser[] }>("remote_account_admin_users"),
+  adminUsers: () => call("remote_account_admin_users") as Promise<{ users: AccountUser[] }>,
 
   adminCreateUser: (username: string, password: string, displayName: string) =>
-    call<{ user: AccountUser }>("remote_account_admin_create_user", { args: { username, password, displayName } }),
+    call("remote_account_admin_create_user", { args: { username, password, displayName } }) as Promise<{ user: AccountUser }>,
 
   // state supports only disabled and reset_required, matching the server's only two state actions.
   adminSetUserState: (userId: string, state: "disabled" | "reset_required") =>
-    call<{ ok: boolean }>("remote_account_admin_set_user_state", { args: { userId, state } }),
+    call("remote_account_admin_set_user_state", { args: { userId, state } }) as Promise<{ ok: boolean }>,
 
   // changePassword returns a one-time recovery key (issued only in this response); the view layer must show it immediately.
   changePassword: (oldPassword: string, newPassword: string) =>
-    call<{ ok: boolean; recoveryKey?: string }>("remote_account_change_password", { args: { oldPassword, newPassword } }),
+    call("remote_account_change_password", { args: { oldPassword, newPassword } }) as Promise<{ ok: boolean; recoveryKey?: string }>,
 };
 
 export const remoteHealthApi = {
   // serverVersion reads the real server version from /healthz. An empty string means the version is unavailable:
   // callers must hide version-dependent UI, never fabricate a version.
-  serverVersion: () => call<string>("remote_healthz"),
+  serverVersion: () => call("remote_healthz") as Promise<string>,
+};
+
+export type { RemoteHostShareIdentity };
+
+export const remoteHostShareApi = {
+  identity: async (): Promise<RemoteHostShareIdentity> => {
+    const identity = await call("host_share_identity");
+    if (identity === null) throw new Error("主机分享身份信息不可用");
+    return identity;
+  },
+
+  open: (deviceId: string, streamId: string, channel: { toJSON: () => string | null }) =>
+    call("host_share_terminal_open", { args: { deviceId, streamId }, channel }),
+
+  input: (streamId: string, data: Uint8Array) =>
+    call("host_share_terminal_input", { args: { streamId, data: Array.from(data) } }),
+
+  close: (streamId: string) => call("host_share_terminal_close", { args: { streamId } }),
 };

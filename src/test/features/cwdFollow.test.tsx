@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
@@ -340,17 +340,29 @@ describe("cwd record lifecycle", () => {
   });
 
   it("live tabs' cwd records survive pruning", async () => {
+    const firstList = deferred<never[]>();
+    mocks.list.mockImplementation((_sid: string, dir: string) =>
+      dir === "/first" ? firstList.promise : Promise.resolve([]),
+    );
     seedWorkspace({ secondTabId: "k2" });
     mountTree();
     await flush();
 
     emitControl({ tabId: "k1", version: 1, cwd: "/first" });
     emitControl({ tabId: "k2", version: 1, cwd: "/second" });
+    await waitFor(() => expect(listCalls()).toContain("/first"));
+    await act(async () => {
+      firstList.resolve([]);
+      await firstList.promise;
+    });
+    await flush();
     expect(cwdFollowMapSizeForTest()).toBe(2);
 
     act(() => {
       useUi.getState().setActiveTab("t2");
     });
+    await waitFor(() => expect(listCalls()).toContain("/second"));
+    await flush();
     expect(cwdFollowMapSizeForTest()).toBe(2);
   });
 });

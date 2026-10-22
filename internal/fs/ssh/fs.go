@@ -27,12 +27,21 @@ type Executor interface {
 }
 
 type FS struct {
-	client   *sftp.Client
-	executor Executor
+	client                   *sftp.Client
+	executor                 Executor
+	conditionalLink          func(*sftp.Client, string, string) error
+	conditionalPreVerifyHook func()
+	conditionalPreCommitHook func()
 }
 
 func New(client *sftp.Client, executor Executor) *FS {
-	return &FS{client: client, executor: executor}
+	return &FS{
+		client:   client,
+		executor: executor,
+		conditionalLink: func(client *sftp.Client, oldname, newname string) error {
+			return client.Link(oldname, newname)
+		},
+	}
 }
 
 func (f *FS) List(ctx context.Context, remotePath string) ([]base.FileEntry, error) {
@@ -144,6 +153,27 @@ func (f *FS) Rename(ctx context.Context, from, to string) error {
 	return ctx.Err()
 }
 
+func (f *FS) AtomicRename(ctx context.Context, from, to string) error {
+	from, to, err := f.realPair(ctx, from, to)
+	if err != nil {
+		return err
+	}
+	_, statErr := f.client.Stat(to)
+	switch {
+	case errors.Is(statErr, fs.ErrNotExist):
+		if err := f.client.Rename(from, to); err != nil {
+			return fmt.Errorf("SFTP rename %s to %s: %w", from, to, err)
+		}
+		return ctx.Err()
+	case statErr != nil:
+		return fmt.Errorf("SFTP stat rename target %s: %w", to, statErr)
+	}
+	if err := f.client.PosixRename(from, to); err != nil {
+		return fmt.Errorf("SFTP atomic rename %s to %s: %w", from, to, err)
+	}
+	return ctx.Err()
+}
+
 func (f *FS) Delete(ctx context.Context, remotePath string, directory bool) error {
 	remotePath, err := f.real(ctx, remotePath)
 	if err != nil {
@@ -251,6 +281,18 @@ func (f *FS) Size(ctx context.Context, remotePath string) (int64, error) {
 	return info.Size(), ctx.Err()
 }
 
+func (f *FS) FileMode(ctx context.Context, remotePath string) (fs.FileMode, error) {
+	remotePath, err := f.real(ctx, remotePath)
+	if err != nil {
+		return 0, err
+	}
+	info, err := f.client.Stat(remotePath)
+	if err != nil {
+		return 0, fmt.Errorf("SFTP stat %s: %w", remotePath, err)
+	}
+	return info.Mode(), ctx.Err()
+}
+
 func (f *FS) OpenRead(ctx context.Context, remotePath string) (base.RemoteReader, error) {
 	remotePath, err := f.real(ctx, remotePath)
 	if err != nil {
@@ -275,6 +317,11 @@ func (f *FS) OpenWrite(ctx context.Context, remotePath string, append bool) (bas
 	if err != nil {
 		return nil, err
 	}
+	_, statErr := f.client.Stat(remotePath)
+	newFile := errors.Is(statErr, fs.ErrNotExist)
+	if statErr != nil && !newFile {
+		return nil, fmt.Errorf("SFTP stat before write %s: %w", remotePath, statErr)
+	}
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
 	if append {
 		flags = os.O_WRONLY | os.O_CREATE | os.O_APPEND
@@ -282,6 +329,12 @@ func (f *FS) OpenWrite(ctx context.Context, remotePath string, append bool) (bas
 	file, err := f.client.OpenFile(remotePath, flags)
 	if err != nil {
 		return nil, fmt.Errorf("SFTP open for write %s: %w", remotePath, err)
+	}
+	if newFile {
+		if err := file.Chmod(0o600); err != nil {
+			_ = file.Close()
+			return nil, fmt.Errorf("SFTP restrict new file %s: %w", remotePath, err)
+		}
 	}
 	if append {
 		if _, err := file.Seek(0, io.SeekEnd); err != nil {

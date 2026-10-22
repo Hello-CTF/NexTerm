@@ -24,32 +24,28 @@ func (m *titleTestModel) Generate(ctx context.Context, _ []*schema.Message, _ ..
 	return m.generate(ctx)
 }
 
-type shutdownSignalContext struct {
-	context.Context
-	entered chan struct{}
-	once    sync.Once
-}
-
-func (c *shutdownSignalContext) Done() <-chan struct{} {
-	c.once.Do(func() { close(c.entered) })
-	return c.Context.Done()
-}
-
-func titleTestRunner(t *testing.T, chat model.BaseChatModel) (*Runner, *store.Store) {
+func titleTestRunner(t *testing.T, chat model.BaseChatModel, titleTimeout ...time.Duration) (*Runner, *store.Store) {
 	t.Helper()
 	storage, err := store.OpenInMemory(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := NewRunner(Config{
+	t.Cleanup(func() { _ = storage.Close() })
+	return titleTestRunnerWithStore(t, chat, storage, titleTimeout...), storage
+}
+
+func titleTestRunnerWithStore(t *testing.T, chat model.BaseChatModel, storage *store.Store, titleTimeout ...time.Duration) *Runner {
+	t.Helper()
+	config := Config{
 		Model: func(context.Context) (model.BaseChatModel, uint64, error) { return chat, 32768, nil },
 		Tools: tools.NewRegistry(tools.Dependencies{}), Store: storage, Runs: storage,
-	})
-	t.Cleanup(func() {
-		_ = runner.Close()
-		_ = storage.Close()
-	})
-	return runner, storage
+	}
+	if len(titleTimeout) > 0 {
+		config.TitleTimeout = titleTimeout[0]
+	}
+	runner := NewRunner(config)
+	t.Cleanup(func() { _ = runner.Close() })
+	return runner
 }
 
 func answeringStream(context.Context, []*schema.Message, ...model.Option) (*schema.StreamReader[*schema.Message], error) {
@@ -65,17 +61,24 @@ func conversationTitleOf(t *testing.T, storage *store.Store, conversationID stri
 	return row.Title
 }
 
-func waitTitleChange(t *testing.T, storage *store.Store, conversationID, from string) string {
+func waitTitleGeneration(t *testing.T, runner *Runner) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if title := conversationTitleOf(t, storage, conversationID); title != from {
-			return title
-		}
-		time.Sleep(5 * time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		runner.wg.Wait()
+		close(done)
+	}()
+	waitChannelClosed(t, done, "title generation did not finish")
+}
+
+func waitTitleChange(t *testing.T, runner *Runner, storage *store.Store, conversationID, from string) string {
+	t.Helper()
+	waitTitleGeneration(t, runner)
+	title := conversationTitleOf(t, storage, conversationID)
+	if title == from {
+		t.Fatalf("title did not change from %q", from)
 	}
-	t.Fatalf("title did not change from %q", from)
-	return ""
+	return title
 }
 
 func TestNormalizeTitleLimitsRunesAndStripsQuotes(t *testing.T) {
@@ -92,8 +95,13 @@ func TestNormalizeTitleLimitsRunesAndStripsQuotes(t *testing.T) {
 	if got := normalizeTitle("\n\n"); got != "" {
 		t.Fatalf("blank title = %q", got)
 	}
-	if titleGenerationTimeout != 15*time.Second {
-		t.Fatalf("title generation timeout = %s", titleGenerationTimeout)
+}
+
+func TestTitleGenerationDefaultTimeout(t *testing.T) {
+	runner := NewRunner(Config{})
+	t.Cleanup(func() { _ = runner.Close() })
+	if runner.config.TitleTimeout != 15*time.Second {
+		t.Fatalf("title generation timeout = %s", runner.config.TitleTimeout)
 	}
 }
 
@@ -129,30 +137,23 @@ func TestTitleGenerationAfterFirstRun(t *testing.T) {
 		t.Fatalf("title generation blocked its caller: title = %q", title)
 	}
 	close(release)
-	title := waitTitleChange(t, storage, conversation.ID, autoTitle)
+	title := waitTitleChange(t, runner, storage, conversation.ID, autoTitle)
 	expected := string([]rune("这是一个超过二十个字符限制的会话标题内容啊")[:titleMaxRunes])
 	if title != expected {
 		t.Fatalf("generated title = %q, want %q", title, expected)
 	}
+	summary, err := storage.RunUsageSummary(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 	var titleRow store.RunUsageSummaryRow
 	usageFound := false
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		summary, err := storage.RunUsageSummary(context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, row := range summary {
-			if row.Source == store.RunSourceTitle {
-				titleRow = row
-				usageFound = true
-				break
-			}
-		}
-		if usageFound {
+	for _, row := range summary {
+		if row.Source == store.RunSourceTitle {
+			titleRow = row
+			usageFound = true
 			break
 		}
-		time.Sleep(5 * time.Millisecond)
 	}
 	if !usageFound {
 		t.Fatal("title usage dimension missing from summary")
@@ -169,25 +170,16 @@ func TestTitleGenerationAfterFirstRun(t *testing.T) {
 	}
 }
 
-func TestRunnerCloseWaitsForTitleGeneration(t *testing.T) {
+func TestRunnerCloseCancelsTitleGenerationAndReturnsPromptly(t *testing.T) {
 	generateCalled := make(chan struct{})
-	release := make(chan struct{})
-	released := false
-	defer func() {
-		if !released {
-			close(release)
-		}
-	}()
+	generateErr := make(chan error, 1)
 	chat := &titleTestModel{
 		fakeModel: fakeModel{stream: answeringStream},
 		generate: func(ctx context.Context) (*schema.Message, error) {
 			close(generateCalled)
-			select {
-			case <-release:
-				return schema.AssistantMessage("生成的标题", nil), nil
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
+			<-ctx.Done()
+			generateErr <- ctx.Err()
+			return nil, ctx.Err()
 		},
 	}
 	runner, storage := titleTestRunner(t, chat)
@@ -198,32 +190,35 @@ func TestRunnerCloseWaitsForTitleGeneration(t *testing.T) {
 	}
 	runner.maybeGenerateConversationTitle(&job{args: ChatArgs{ConversationID: conversation.ID, Message: message}})
 	waitChannelClosed(t, generateCalled, "title generation did not start")
-	shutdownCtx := &shutdownSignalContext{Context: context.Background(), entered: make(chan struct{})}
 	closeReturned := make(chan error, 1)
 	go func() {
-		closeReturned <- runner.CloseContext(shutdownCtx)
+		closeReturned <- runner.Close()
 	}()
-	waitChannelClosed(t, shutdownCtx.entered, "runner close did not reach shutdown wait")
-	select {
-	case <-runner.Drain():
-		t.Fatal("runner drained before title generation was released")
-	default:
-	}
 	select {
 	case err := <-closeReturned:
-		t.Fatalf("runner close returned before title generation was released: %v", err)
-	default:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runner close did not cancel title generation promptly")
 	}
-	close(release)
-	released = true
-	if err := <-closeReturned; err != nil {
-		t.Fatal(err)
+	if err := <-generateErr; !errors.Is(err, context.Canceled) {
+		t.Fatalf("title generation error = %v, want runner cancellation", err)
 	}
-	if _, active := conversationTitleInFlight.Load(conversation.ID); active {
+	if _, active := runner.titleInFlight.Load(conversation.ID); active {
 		t.Fatal("runner close returned with title generation in flight")
 	}
-	if title := conversationTitleOf(t, storage, conversation.ID); title != "生成的标题" {
-		t.Fatalf("title after runner close = %q", title)
+	if title := conversationTitleOf(t, storage, conversation.ID); title != AutoTitle(message) {
+		t.Fatalf("canceled title generation changed the title: %q", title)
+	}
+	summary, err := storage.RunUsageSummary(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range summary {
+		if row.Source == store.RunSourceTitle {
+			t.Fatalf("canceled title generation recorded usage: %+v", row)
+		}
 	}
 }
 
@@ -241,7 +236,7 @@ func TestTitleGenerationSilentFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner.maybeGenerateConversationTitle(&job{args: ChatArgs{ConversationID: conversation.ID, Message: message}})
-	time.Sleep(300 * time.Millisecond)
+	waitTitleGeneration(t, runner)
 	if title := conversationTitleOf(t, storage, conversation.ID); title != AutoTitle(message) {
 		t.Fatalf("failed title generation changed the title: %q", title)
 	}
@@ -319,7 +314,7 @@ func TestTitleGenerationDoesNotOverwriteUserRenameDuringModelCall(t *testing.T) 
 		t.Fatal(err)
 	}
 	close(release)
-	time.Sleep(300 * time.Millisecond)
+	waitTitleGeneration(t, runner)
 	if title := conversationTitleOf(t, storage, conversation.ID); title != "用户改的标题" {
 		t.Fatalf("user rename during model call was overwritten: %q", title)
 	}
@@ -335,9 +330,6 @@ func TestTitleGenerationDoesNotOverwriteUserRenameDuringModelCall(t *testing.T) 
 }
 
 func TestTitleGenerationTimeout(t *testing.T) {
-	original := titleGenerationTimeout
-	titleGenerationTimeout = 50 * time.Millisecond
-	defer func() { titleGenerationTimeout = original }()
 	chat := &titleTestModel{
 		fakeModel: fakeModel{stream: answeringStream},
 		generate: func(ctx context.Context) (*schema.Message, error) {
@@ -345,14 +337,14 @@ func TestTitleGenerationTimeout(t *testing.T) {
 			return nil, ctx.Err()
 		},
 	}
-	runner, storage := titleTestRunner(t, chat)
+	runner, storage := titleTestRunner(t, chat, time.Nanosecond)
 	const message = "帮我排查数据库连接失败的问题"
 	conversation, err := storage.ConvCreate(context.Background(), AutoTitle(message), map[string]any{"scope": nil})
 	if err != nil {
 		t.Fatal(err)
 	}
 	runner.maybeGenerateConversationTitle(&job{args: ChatArgs{ConversationID: conversation.ID, Message: message}})
-	time.Sleep(300 * time.Millisecond)
+	waitTitleGeneration(t, runner)
 	if title := conversationTitleOf(t, storage, conversation.ID); title != AutoTitle(message) {
 		t.Fatalf("timed out title generation changed the title: %q", title)
 	}
@@ -360,11 +352,14 @@ func TestTitleGenerationTimeout(t *testing.T) {
 
 func TestTitleGenerationSingleFlight(t *testing.T) {
 	release := make(chan struct{})
+	generateCalled := make(chan struct{})
+	var generateOnce sync.Once
 	var generateCalls atomic.Int64
 	chat := &titleTestModel{
 		fakeModel: fakeModel{stream: answeringStream},
 		generate: func(ctx context.Context) (*schema.Message, error) {
 			generateCalls.Add(1)
+			generateOnce.Do(func() { close(generateCalled) })
 			select {
 			case <-release:
 				return schema.AssistantMessage("并发标题", nil), nil
@@ -381,13 +376,55 @@ func TestTitleGenerationSingleFlight(t *testing.T) {
 	current := &job{args: ChatArgs{ConversationID: conversation.ID, Message: "并发消息"}}
 	runner.maybeGenerateConversationTitle(current)
 	runner.maybeGenerateConversationTitle(current)
-	time.Sleep(100 * time.Millisecond)
+	waitChannelClosed(t, generateCalled, "title generation did not start")
 	if calls := generateCalls.Load(); calls != 1 {
 		t.Fatalf("concurrent title generations = %d, want 1", calls)
 	}
 	close(release)
-	title := waitTitleChange(t, storage, conversation.ID, AutoTitle("并发消息"))
+	title := waitTitleChange(t, runner, storage, conversation.ID, AutoTitle("并发消息"))
 	if !strings.Contains(title, "并发") {
+		t.Fatalf("generated title = %q", title)
+	}
+}
+
+func TestTitleGenerationSingleFlightIsPerRunner(t *testing.T) {
+	release := make(chan struct{})
+	bothGenerateCalled := make(chan struct{})
+	var generateCalls atomic.Int64
+	chat := &titleTestModel{
+		fakeModel: fakeModel{stream: answeringStream},
+		generate: func(ctx context.Context) (*schema.Message, error) {
+			if generateCalls.Add(1) == 2 {
+				close(bothGenerateCalled)
+			}
+			select {
+			case <-release:
+				return schema.AssistantMessage("实例标题", nil), nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		},
+	}
+	first, storage := titleTestRunner(t, chat)
+	second := titleTestRunnerWithStore(t, chat, storage)
+	conversation, err := storage.ConvCreate(context.Background(), AutoTitle("共享消息"), map[string]any{"scope": nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := &job{args: ChatArgs{ConversationID: conversation.ID, Message: "共享消息"}}
+	first.maybeGenerateConversationTitle(current)
+	second.maybeGenerateConversationTitle(current)
+	waitChannelClosed(t, bothGenerateCalled, "title generation was suppressed across runners")
+	if calls := generateCalls.Load(); calls != 2 {
+		t.Fatalf("concurrent title generations = %d, want 2", calls)
+	}
+	close(release)
+	waitTitleGeneration(t, first)
+	waitTitleGeneration(t, second)
+	if calls := generateCalls.Load(); calls != 2 {
+		t.Fatalf("finished title generations = %d, want 2", calls)
+	}
+	if title := conversationTitleOf(t, storage, conversation.ID); title != "实例标题" {
 		t.Fatalf("generated title = %q", title)
 	}
 }

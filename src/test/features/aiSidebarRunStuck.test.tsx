@@ -72,7 +72,11 @@ vi.mock("../../ipc/events", async (importOriginal) => ({
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, promptText: vi.fn() }));
 
-import { AiSidebar } from "../../features/ai/AiSidebar";
+import {
+  AI_RESYNC_BACKOFF_MS,
+  AI_RESYNC_MAX_ATTEMPTS,
+  AiSidebar,
+} from "../../features/ai/AiSidebar";
 import { aiTabBusyIds, aiTabRunControls, clearAiTabRuns } from "../../features/ai/runOwnership";
 import { GLOBAL_AI_BOARD_KEY, useUi } from "../../app/store";
 
@@ -123,7 +127,7 @@ async function flushReplay() {
 describe("AiSidebar stuck busy-state fixes", () => {
   let view: MountedView | null = null;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     clearAiTabRuns([...aiTabBusyIds, ...aiTabRunControls.keys()]);
     rafQueue = [];
@@ -172,12 +176,13 @@ describe("AiSidebar stuck busy-state fixes", () => {
       activeWorkspaceId: null,
     });
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    await flush();
   });
 
   afterEach(() => {
-    vi.useRealTimers();
     view?.unmount();
     view = null;
+    vi.useRealTimers();
   });
 
   it("recovers the final outcome when the run completed but its terminal event never reached the channel", async () => {
@@ -222,6 +227,7 @@ describe("AiSidebar stuck busy-state fixes", () => {
   });
 
   it("settles the busy state after a permanent replay failure so the tab can be closed directly", async () => {
+    vi.useFakeTimers();
     await flush();
     await send(view!, "Hello");
     emit({ type: "delta", text: "one", seq: 1 });
@@ -230,13 +236,12 @@ describe("AiSidebar stuck busy-state fixes", () => {
 
     emit({ type: "delta", text: "three", seq: 3 });
     await flushReplay();
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1100));
-    });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 2100));
-    });
-    await flushReplay();
+    for (let attempt = 1; attempt <= AI_RESYNC_MAX_ATTEMPTS; attempt += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(AI_RESYNC_BACKOFF_MS * attempt);
+      });
+      await flushReplay();
+    }
 
     expect(textOf(view!)).toContain("补齐失败");
     expect(useUi.getState().aiBusy).toBe(false);
@@ -249,6 +254,7 @@ describe("AiSidebar stuck busy-state fixes", () => {
   });
 
   it("manually replaying after a permanent failure still recovers the final outcome", async () => {
+    vi.useFakeTimers();
     await flush();
     await send(view!, "Hello");
     emit({ type: "delta", text: "one", seq: 1 });
@@ -257,13 +263,12 @@ describe("AiSidebar stuck busy-state fixes", () => {
 
     emit({ type: "delta", text: "three", seq: 3 });
     await flushReplay();
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1100));
-    });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 2100));
-    });
-    await flushReplay();
+    for (let attempt = 1; attempt <= AI_RESYNC_MAX_ATTEMPTS; attempt += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(AI_RESYNC_BACKOFF_MS * attempt);
+      });
+      await flushReplay();
+    }
     expect(textOf(view!)).toContain("补齐失败");
     expect(useUi.getState().aiBusy).toBe(false);
 
@@ -693,7 +698,10 @@ describe("AiSidebar stuck busy-state fixes", () => {
     await flush();
     expect(mocks.cancel).not.toHaveBeenCalled();
 
-    const closing = useUi.getState().closeWorkspace(workspaceA);
+    let closing!: Promise<boolean>;
+    act(() => {
+      closing = useUi.getState().closeWorkspace(workspaceA);
+    });
     await flushUntil(() =>
       mocks.cancel.mock.calls.length > 0 ||
       !useUi.getState().workspaces.some((workspace) => workspace.id === workspaceA)
@@ -701,8 +709,12 @@ describe("AiSidebar stuck busy-state fixes", () => {
 
     expect(mocks.cancel).toHaveBeenCalledWith("job-1");
     expect(useUi.getState().workspaces.some((workspace) => workspace.id === workspaceA)).toBe(true);
-    emit({ type: "canceled", message: "已停止本轮" });
-    await closing;
+    mocks.runs.mockResolvedValue([
+      { id: "job-1", conversationId: "conv-1", status: "canceled", finishedAt: 2000 },
+    ]);
+    await act(async () => {
+      await closing;
+    });
     expect(useUi.getState().workspaces.some((workspace) => workspace.id === workspaceA)).toBe(false);
     expect(useUi.getState().workspaces.some((workspace) => workspace.id === workspaceB)).toBe(true);
     expect(useUi.getState().aiBoards[workspaceA]).toBeUndefined();
@@ -735,7 +747,7 @@ describe("AiSidebar stuck busy-state fixes", () => {
     await flushReplay();
   });
 
-  it.each(["host", "tools"] as const)("keeps the original run control after a %s board round trip", async (startKind) => {
+  it.each(["host", "tools"] as const)("confirms a detached run through the backend after a %s board round trip", async (startKind) => {
     view?.unmount();
     useUi.setState({ workspaces: [], activeWorkspaceId: null, aiBoards: {}, workspaceRuntime: {} });
     const first = useUi.getState().ensureWorkspace(
@@ -762,7 +774,14 @@ describe("AiSidebar stuck busy-state fixes", () => {
     expect(useUi.getState().aiBoards[boardKey].tabs.some((tab) => tab.id === tabId)).toBe(true);
     emit({ type: "canceled", message: "已停止本轮" }, 0);
     await flush();
-    expect(useUi.getState().aiBoards[boardKey].tabs.some((tab) => tab.id === tabId)).toBe(false);
+    expect(useUi.getState().aiBoards[boardKey].tabs.some((tab) => tab.id === tabId)).toBe(true);
+    mocks.runs.mockResolvedValue([
+      { id: "job-1", conversationId: "conv-1", status: "canceled", finishedAt: 2000 },
+    ]);
+    await flushUntil(
+      () => !useUi.getState().aiBoards[boardKey].tabs.some((tab) => tab.id === tabId),
+      300,
+    );
   });
 
   it("does not settle or clear busy when replay permanently fails during cancellation", async () => {
@@ -777,14 +796,12 @@ describe("AiSidebar stuck busy-state fixes", () => {
 
     emit({ type: "delta", text: "three", seq: 3 }, 0);
     await flushReplay();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1100);
-    });
-    await flushReplay();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2100);
-    });
-    await flushReplay();
+    for (let attempt = 1; attempt <= AI_RESYNC_MAX_ATTEMPTS; attempt += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(AI_RESYNC_BACKOFF_MS * attempt);
+      });
+      await flushReplay();
+    }
 
     expect(textOf(view!)).toContain("补齐失败");
     expect(useUi.getState().aiBusy).toBe(true);

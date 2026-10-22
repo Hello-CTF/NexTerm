@@ -12,7 +12,6 @@ includes:
 # For automatically managed signing & provisioning, use `task ios:xcode` and
 # build from the generated Xcode project instead.
 vars:
-  BUNDLE_ID: '{{.BUNDLE_ID | default "com.wails.app"}}'
   IOS_PLATFORM: '{{.IOS_PLATFORM | default "simulator"}}'
   MIN_IOS_VERSION: '{{.MIN_IOS_VERSION | default "15.0"}}'
   IOS_SDK: '{{if eq .IOS_PLATFORM "device"}}iphoneos{{else}}iphonesimulator{{end}}'
@@ -24,7 +23,10 @@ vars:
   PROVISIONING_PROFILE: '{{.PROVISIONING_PROFILE | default ""}}'
   # Optional entitlements applied at codesign time (generated default below)
   ENTITLEMENTS_FILE: '{{.ENTITLEMENTS_FILE | default "build/ios/entitlements.plist"}}'
-  # SDK_PATH is computed lazily at task-level to avoid errors on non-macOS systems
+  # SDK_PATH is computed lazily at task-level, and only when xcrun exists, so
+  # `task ios:package --dry` can resolve the task graph on non-macOS systems
+  # (go-task evaluates `sh:` vars even with --dry). A present-but-broken xcrun
+  # still fails the evaluation, keeping the real iOS build requirement intact.
 
 tasks:
   install:deps:
@@ -49,11 +51,12 @@ tasks:
       - echo "Building iOS app {{.APP_NAME}} ({{.IOS_PLATFORM}})..."
       - go build -buildmode=c-archive -overlay build/ios/xcode/overlay.json {{.BUILD_FLAGS}} -o {{.OUTPUT}}.a ./cmd/nexterm-desktop
     vars:
-      BUILD_FLAGS: '{{if eq .PRODUCTION "true"}}-tags production,ios -trimpath -buildvcs=false -ldflags="-w -s"{{else}}-tags ios,debug -buildvcs=false -gcflags=all="-l"{{end}}'
+      BUILD_FLAGS:
+        sh: 'node scripts/mobile-source.mjs ldflags --platform=ios --production={{.PRODUCTION | default "false"}}'
       DEFAULT_OUTPUT: '{{.BIN_DIR}}/{{.APP_NAME}}'
       OUTPUT: '{{ .OUTPUT | default .DEFAULT_OUTPUT }}'
       SDK_PATH:
-        sh: xcrun --sdk {{.IOS_SDK}} --show-sdk-path
+        sh: 'if command -v xcrun >/dev/null 2>&1; then xcrun --sdk {{.IOS_SDK}} --show-sdk-path; fi'
     env:
       GOOS: ios
       CGO_ENABLED: 1
@@ -79,6 +82,7 @@ tasks:
     cmds:
       - rm -rf "{{.BIN_DIR}}/Payload" "{{.BIN_DIR}}/{{.APP_NAME}}.ipa"
       - mkdir -p "{{.BIN_DIR}}/Payload"
+      - chmod 0755 "{{.BIN_DIR}}/{{.APP_NAME}}.app/{{.APP_NAME | lower}}"
       - cp -R "{{.BIN_DIR}}/{{.APP_NAME}}.app" "{{.BIN_DIR}}/Payload/"
       - cd "{{.BIN_DIR}}" && zip -qry "{{.APP_NAME}}.ipa" Payload
       - rm -rf "{{.BIN_DIR}}/Payload"
@@ -91,7 +95,7 @@ tasks:
     summary: Link the iOS executable from the Go archive and main.m
     vars:
       SDK_PATH:
-        sh: xcrun --sdk {{.IOS_SDK}} --show-sdk-path
+        sh: 'if command -v xcrun >/dev/null 2>&1; then xcrun --sdk {{.IOS_SDK}} --show-sdk-path; fi'
     cmds:
       - |
         MAIN_M=build/ios/main.m
@@ -117,6 +121,7 @@ tasks:
       - rm -rf "{{.BIN_DIR}}/{{.APP_NAME}}.app"
       - mkdir -p "{{.BIN_DIR}}/{{.APP_NAME}}.app"
       - cp "{{.BIN_DIR}}/{{.APP_NAME | lower}}" "{{.BIN_DIR}}/{{.APP_NAME}}.app/"
+      - chmod 0755 "{{.BIN_DIR}}/{{.APP_NAME}}.app/{{.APP_NAME | lower}}"
       - cp build/ios/Info.plist "{{.BIN_DIR}}/{{.APP_NAME}}.app/"
       - |
         if [ -n "${NEXTERM_RELEASE_VERSION:-}" ] || [ -n "${IOS_BUILD_NUMBER:-}" ]; then
@@ -208,7 +213,7 @@ tasks:
     cmds:
       - |
         # Read the real bundle id from the built bundle (it comes from
-        # build/config.yml, not the BUNDLE_ID var, so it varies per project).
+        # build/config.yml, so it varies per project).
         APP="{{.BIN_DIR}}/{{.APP_NAME}}.app"
         BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")
         xcrun simctl terminate booted "$BUNDLE_ID" 2>/dev/null || true
@@ -250,7 +255,7 @@ tasks:
       - frontend/bindings/**/*
     vars:
       SDK_PATH:
-        sh: xcrun --sdk {{.IOS_SDK}} --show-sdk-path
+        sh: 'if command -v xcrun >/dev/null 2>&1; then xcrun --sdk {{.IOS_SDK}} --show-sdk-path; fi'
     cmds:
       - wails3 generate bindings -f '{{.BUILD_FLAGS}}' -clean=true
     env:
@@ -301,15 +306,20 @@ tasks:
         msg: "xcrun not found. Please run 'wails3 task ios:install:deps' to install iOS development dependencies"
 
   generate:ios:overlay:
-    internal: true
     summary: Generate Go build overlay and iOS shim
+    deps:
+      # The stamp refresh must run before this task's up-to-date check; as a
+      # dep it always runs, so a version change or removal reaches the
+      # sources and invalidates the cached generation.
+      - task: common:stamp:mobile:config
     sources:
       - build/config.yml
+      - build/config.stamp.yml
     generates:
       - build/ios/xcode/overlay.json
       - build/ios/xcode/gen/main_ios.gen.go
     cmds:
-      - wails3 ios overlay:gen -out build/ios/xcode/overlay.json -config build/config.yml
+      - wails3 ios overlay:gen -out build/ios/xcode/overlay.json -config "$(node scripts/mobile-source.mjs config)"
       - |
         node -e '
           const fs = require("node:fs");
@@ -326,8 +336,15 @@ tasks:
   generate:ios:xcode:
     internal: true
     summary: Generate iOS Xcode project structure and assets
+    deps:
+      # The stamp refresh must run before this task's up-to-date check; as a
+      # dep it always runs, so a version change or removal reaches the
+      # sources and invalidates the cached generation (the generated
+      # Info.plist picks the version up from the stamp).
+      - task: common:stamp:mobile:config
     sources:
       - build/config.yml
+      - build/config.stamp.yml
       - build/appicon.png
       - build/ios/LaunchScreen.storyboard
       - build/ios/LaunchIcon.imageset/Contents.json
@@ -337,7 +354,7 @@ tasks:
       - build/ios/xcode/main/Assets.xcassets/**/*
       - build/ios/xcode/main.xcodeproj/project.pbxproj
     cmds:
-      - wails3 ios xcode:gen -outdir build/ios/xcode -config build/config.yml
+      - wails3 ios xcode:gen -outdir build/ios/xcode -config "$(node scripts/mobile-source.mjs config)"
       # The generated launch screen shows the product name as a text label;
       # overlay the icon-only storyboard and its LaunchIcon image set.
       - cp build/ios/LaunchScreen.storyboard build/ios/xcode/main/LaunchScreen.storyboard

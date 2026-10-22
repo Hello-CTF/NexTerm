@@ -147,7 +147,11 @@ func (r *Runner) registerMemoryCommands(dispatcher *ipc.Dispatcher) error {
 				if err != nil {
 					return memoryEntryDTO{}, err
 				}
-				entry, err := store.Create(ctx, memory.Scope(input.Scope), memory.CreateInput{Topic: input.Topic, Content: input.Content, Secrets: policy})
+				scope, err := r.memoryScope(ctx)
+				if err != nil {
+					return memoryEntryDTO{}, memoryIPCError(err)
+				}
+				entry, err := store.Create(ctx, scope, memory.CreateInput{Topic: input.Topic, Content: input.Content, Secrets: policy})
 				if err != nil {
 					return memoryEntryDTO{}, memoryIPCError(err)
 				}
@@ -156,7 +160,11 @@ func (r *Runner) registerMemoryCommands(dispatcher *ipc.Dispatcher) error {
 		},
 		func() error {
 			return ipc.Register(dispatcher, memoryCommandGet, func(ctx context.Context, _ *ipc.Call, input memoryGetRequest) (memoryEntryDTO, error) {
-				entry, err := store.Get(ctx, memory.Scope(input.Scope), input.ID)
+				scope, err := r.memoryScope(ctx)
+				if err != nil {
+					return memoryEntryDTO{}, memoryIPCError(err)
+				}
+				entry, err := store.Get(ctx, scope, input.ID)
 				if err != nil {
 					return memoryEntryDTO{}, memoryIPCError(err)
 				}
@@ -169,7 +177,11 @@ func (r *Runner) registerMemoryCommands(dispatcher *ipc.Dispatcher) error {
 				if err != nil {
 					return memoryEntryDTO{}, err
 				}
-				entry, err := store.Edit(ctx, memory.Scope(input.Scope), input.ID, input.ExpectedVersion, memory.EditInput{
+				scope, err := r.memoryScope(ctx)
+				if err != nil {
+					return memoryEntryDTO{}, memoryIPCError(err)
+				}
+				entry, err := store.Edit(ctx, scope, input.ID, input.ExpectedVersion, memory.EditInput{
 					Topic: input.Topic, Content: input.Content, Secrets: policy,
 				})
 				if err != nil {
@@ -180,7 +192,11 @@ func (r *Runner) registerMemoryCommands(dispatcher *ipc.Dispatcher) error {
 		},
 		func() error {
 			return ipc.Register(dispatcher, memoryCommandDelete, func(ctx context.Context, _ *ipc.Call, input memoryDeleteRequest) (any, error) {
-				if err := store.Delete(ctx, memory.Scope(input.Scope), input.ID, input.ExpectedVersion); err != nil {
+				scope, err := r.memoryScope(ctx)
+				if err != nil {
+					return nil, memoryIPCError(err)
+				}
+				if err := store.Delete(ctx, scope, input.ID, input.ExpectedVersion); err != nil {
 					return nil, memoryIPCError(err)
 				}
 				return nil, nil
@@ -188,7 +204,11 @@ func (r *Runner) registerMemoryCommands(dispatcher *ipc.Dispatcher) error {
 		},
 		func() error {
 			return ipc.Register(dispatcher, memoryCommandIndex, func(ctx context.Context, _ *ipc.Call, input memoryIndexRequest) ([]memoryTopicIndexDTO, error) {
-				index, err := store.Index(ctx, memory.Scope(input.Scope))
+				scope, err := r.memoryScope(ctx)
+				if err != nil {
+					return nil, memoryIPCError(err)
+				}
+				index, err := store.Index(ctx, scope)
 				if err != nil {
 					return nil, memoryIPCError(err)
 				}
@@ -205,7 +225,11 @@ func (r *Runner) registerMemoryCommands(dispatcher *ipc.Dispatcher) error {
 		},
 		func() error {
 			return ipc.Register(dispatcher, memoryCommandSettingsGet, func(ctx context.Context, _ *ipc.Call, input memorySettingsGetRequest) (memorySettingsDTO, error) {
-				settings, err := store.Settings(ctx, memory.Scope(input.Scope))
+				scope, err := r.memoryScope(ctx)
+				if err != nil {
+					return memorySettingsDTO{}, memoryIPCError(err)
+				}
+				settings, err := store.Settings(ctx, scope)
 				if err != nil {
 					return memorySettingsDTO{}, memoryIPCError(err)
 				}
@@ -214,7 +238,11 @@ func (r *Runner) registerMemoryCommands(dispatcher *ipc.Dispatcher) error {
 		},
 		func() error {
 			return ipc.Register(dispatcher, memoryCommandSettingsSet, func(ctx context.Context, _ *ipc.Call, input memorySettingsSetRequest) (memorySettingsDTO, error) {
-				settings, err := store.UpdateSettings(ctx, memory.Scope(input.Scope), memory.SettingsInput{
+				scope, err := r.memoryScope(ctx)
+				if err != nil {
+					return memorySettingsDTO{}, memoryIPCError(err)
+				}
+				settings, err := store.UpdateSettings(ctx, scope, memory.SettingsInput{
 					InjectionEnabled: input.InjectionEnabled, ToolsEnabled: input.ToolsEnabled,
 				}, input.ExpectedVersion)
 				if err != nil {

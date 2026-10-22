@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ai/hitl"
 	"github.com/Hello-CTF/NexTerm/internal/ai/memory"
+	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
 	"github.com/Hello-CTF/NexTerm/internal/ai/steer"
 	"github.com/Hello-CTF/NexTerm/internal/ai/subagent"
@@ -33,7 +35,7 @@ type openAccessContextKey struct{}
 
 // WithOpenAccess marks an already-admitted open or trusted internal caller.
 func WithOpenAccess(ctx context.Context) context.Context {
-	return context.WithValue(ctx, openAccessContextKey{}, true)
+	return owner.WithOpenAccess(context.WithValue(ctx, openAccessContextKey{}, true))
 }
 
 func openAccessFromContext(ctx context.Context) bool {
@@ -51,10 +53,12 @@ type baseChatModelClient interface {
 
 func activeProfileModel(manager *profiles.Manager) ModelFactory {
 	return func(ctx context.Context) (model.BaseChatModel, uint64, error) {
-		if _, ok := manager.ActiveProfile(); !ok {
+		if _, ok, err := manager.ActiveProfile(ctx); err != nil {
+			return nil, 0, err
+		} else if !ok {
 			return nil, 0, errors.New("未配置活动 AI 模型")
 		}
-		client, err := manager.ActiveClient()
+		client, err := manager.ActiveClient(ctx)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -81,26 +85,48 @@ type Config struct {
 	Grants                *guard.Grants
 	Tools                 *tools.Registry
 	Context               *aicontext.Builder
+	ScopeValidator        ScopeValidator
+	ScopeResolver         ScopeResolver
 	Store                 ConversationStore
 	Runs                  RunStore
+	TitleTimeout          time.Duration
 	Permission            func(context.Context) (guard.Config, error)
 	Checkpoints           adk.CheckPointStore
 	HITL                  *hitl.Manager
 	HITLTTL               time.Duration
 	HITLTerminalRetention time.Duration
-	Subagents             *tools.SubagentConfig
-	NewID                 func() string
-	MaxTurns              int
-	MaxImages             int
-	MaxImageBytes         int
+	// HITLAssetResolver resolves a run's real asset identity for the tool
+	// awaiting confirmation from server-side state; nil disables asset
+	// evidence binding.
+	HITLAssetResolver func(context.Context, string, string) (string, error)
+	// HITLRequestAssetResolver takes precedence and binds the actual target
+	// selected by the persisted tool parameters.
+	HITLRequestAssetResolver func(context.Context, string, string, json.RawMessage) (string, error)
+	// HITLEnvironmentResolver resolves the production environment names a
+	// confirmation must type back for the run's target asset, from the
+	// request owner and the real asset through the configurable production
+	// classification; nil issues no environment challenge.
+	HITLEnvironmentResolver func(context.Context, string) ([]string, error)
+	// Roster is the conversation's persistent agent roster; nil disables
+	// roster context injection. When configured, every job start loads the
+	// roster and a failed load fails the start closed instead of silently
+	// running without roster context.
+	Roster        *Roster
+	Now           func() time.Time
+	Subagents     *tools.SubagentConfig
+	NewID         func() string
+	MaxTurns      int
+	MaxImages     int
+	MaxImageBytes int
 
 	MaxPendingSteers int
 
-	Memory      *memory.Store
-	MemoryScope memory.Scope
+	Memory         *memory.Store
+	MemoryScope    memory.Scope
+	MemoryScopeFor func(context.Context) (memory.Scope, error)
 
-	// ServerMode marks nexterm-server assembly (false on desktop): device grants and
-	// grant rules are isolated per account; currently only super admins may change them.
+	// ServerMode marks nexterm-server assembly (false on desktop): grant state is
+	// isolated per account and mutations require an account or explicit Open identity.
 	ServerMode bool
 }
 
@@ -135,6 +161,10 @@ type Confirmation struct {
 	CallID   string `json:"callId"`
 	Nonce    string `json:"nonce"`
 	Decision string `json:"decision"`
+	// EnvironmentNames are the actual environment names the user typed back
+	// for a production-classified target; they are validated against the
+	// challenge's required names at resume and are never auto-echoed.
+	EnvironmentNames []string `json:"environmentNames,omitempty"`
 }
 
 type Answer struct {
@@ -198,6 +228,7 @@ type job struct {
 	eino        *einoRuntime
 	cancelFn    adk.AgentCancelFunc
 	cancelSync  *cancelSync
+	capture     *Capture
 
 	steer *steer.Queue
 
@@ -214,6 +245,32 @@ type job struct {
 	running        bool
 	subagents      *subagent.Manager
 	completed      bool
+	doneCh         chan struct{}
+	doneOnce       sync.Once
+
+	// callHandles remembers the roster handle resolved for each tool call of
+	// this run, so the toolResult event carries the same reference the
+	// toolCall event did.
+	callHandlesMu sync.Mutex
+	callHandles   map[string]string
+}
+
+func (j *job) rememberCallHandle(callID, handle string) {
+	if callID == "" || handle == "" {
+		return
+	}
+	j.callHandlesMu.Lock()
+	defer j.callHandlesMu.Unlock()
+	if j.callHandles == nil {
+		j.callHandles = make(map[string]string)
+	}
+	j.callHandles[callID] = handle
+}
+
+func (j *job) callHandle(callID string) string {
+	j.callHandlesMu.Lock()
+	defer j.callHandlesMu.Unlock()
+	return j.callHandles[callID]
 }
 
 func (j *job) emit(ctx context.Context, event Event) error {
@@ -347,4 +404,12 @@ func (j *job) state() (bool, adk.AgentCancelFunc) {
 	j.pendingMu.Lock()
 	defer j.pendingMu.Unlock()
 	return j.running, j.cancelFn
+}
+
+func (j *job) markDone() {
+	j.doneOnce.Do(func() {
+		if j.doneCh != nil {
+			close(j.doneCh)
+		}
+	})
 }

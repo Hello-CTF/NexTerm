@@ -4,6 +4,7 @@ import { act } from "react";
 import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { flushMacrotask } from "./reactTestUtils";
 import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
 
 const harness = vi.hoisted(() => ({
@@ -17,6 +18,9 @@ const harness = vi.hoisted(() => ({
     resize: ReturnType<typeof vi.fn>;
     write: (data: unknown, callback?: () => void) => void;
     writeln: (line?: unknown) => void;
+    selection: string;
+    clearSelection: () => void;
+    getSelection: () => string;
     fireScroll: () => void;
   }>,
   observers: [] as Array<() => void>,
@@ -31,6 +35,8 @@ const harness = vi.hoisted(() => ({
       expired?: boolean;
     }) => void;
   }>,
+  commandBlocks: [] as Array<{ exitCode: number | null; ended: boolean }>,
+  blockClearCount: 0,
   reopen: null as (() => void) | null,
   geometry: { widthPx: 360, heightPx: 400 },
   attach: vi.fn(),
@@ -86,8 +92,12 @@ vi.mock("@xterm/xterm", () => ({
     clear() {}
     dispose() {}
     focus() {}
+    selection = "";
+    clearSelection() {
+      this.selection = "";
+    }
     getSelection() {
-      return "";
+      return this.selection;
     }
     onData() {
       return { dispose: vi.fn() };
@@ -118,9 +128,23 @@ vi.mock("../../features/terminal/commandBlocks", () => ({
     getBlockText() { return ""; }
     scrollTo() {}
     navigate() { return null; }
-    clear() {}
+    clear() {
+      harness.blockClearCount += 1;
+      harness.commandBlocks.length = 0;
+    }
     dispose() {}
     feedInput() {}
+    feedOSC133(phase: "A" | "B" | "C" | "D", exitCode: number | null) {
+      if (phase === "C") {
+        harness.commandBlocks.push({ exitCode: null, ended: false });
+      } else if (phase === "D") {
+        const last = harness.commandBlocks[harness.commandBlocks.length - 1];
+        if (last && !last.ended) {
+          last.ended = true;
+          last.exitCode = exitCode;
+        }
+      }
+    }
   },
 }));
 vi.mock("../../features/terminal/terminalGeometry", () => ({
@@ -181,7 +205,7 @@ vi.mock("../../ipc/events", () => ({
     return vi.fn();
   },
 }));
-vi.mock("../../ipc/env", () => ({ clientId: () => "me" }));
+vi.mock("../../ipc/env", () => ({ clientId: () => "me", WEB: true }));
 vi.mock("../../ui/dialogs", () => ({ ask: vi.fn() }));
 
 import { XtermView, type TerminalHandle, type XtermViewProps } from "../../features/terminal/XtermView";
@@ -196,7 +220,7 @@ async function flushWork(): Promise<void> {
     const callbacks = [...harness.frames.values()];
     harness.frames.clear();
     for (const callback of callbacks) callback();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flushMacrotask();
   });
 }
 
@@ -221,6 +245,8 @@ beforeEach(() => {
   harness.observers.length = 0;
   harness.channels.length = 0;
   harness.frames.clear();
+  harness.commandBlocks.length = 0;
+  harness.blockClearCount = 0;
   harness.reopen = null;
   harness.geometry = { widthPx: 360, heightPx: 400 };
   harness.attach.mockReset().mockResolvedValue({
@@ -245,7 +271,20 @@ beforeEach(() => {
     exited: false,
   });
   harness.execAttach.mockReset().mockResolvedValue("tab-exec");
-  harness.openLineTab.mockReset().mockResolvedValue("tab-line");
+  harness.openLineTab.mockReset().mockResolvedValue({
+    tabId: "tab-line",
+    sessionId: "session-1",
+    cols: 80,
+    rows: 30,
+    controller: "me",
+    subscribers: 1,
+    viewers: 1,
+    exited: false,
+    shell: "unknown",
+    retainable: false,
+    ephemeral: true,
+    attachmentId: 7,
+  });
   harness.resize.mockReset().mockResolvedValue(undefined);
   harness.flush.mockReset().mockResolvedValue(undefined);
   harness.write.mockReset().mockResolvedValue(undefined);
@@ -549,6 +588,7 @@ describe("XtermView terminal interaction", () => {
       term.buffer.active.viewportY = 20;
       term.fireScroll();
     });
+    await flushWork();
     const button = container?.querySelector("button");
     expect(button?.textContent).toContain("回到底部");
     expect(button?.textContent).toContain("30");
@@ -562,6 +602,7 @@ describe("XtermView terminal interaction", () => {
       term.buffer.active.viewportY = term.buffer.active.baseY;
       term.fireScroll();
     });
+    await flushWork();
     expect(container?.querySelector("button")).toBeNull();
   });
 
@@ -573,12 +614,14 @@ describe("XtermView terminal interaction", () => {
       term.buffer.active.viewportY = 44;
       term.fireScroll();
     });
+    await flushWork();
     expect(container?.querySelector("button")?.textContent).toContain("6");
 
     await act(async () => {
       term.buffer.active.baseY = 58;
       harness.channels[0]?.onBytes(new Uint8Array([104, 105]));
     });
+    await flushWork();
     expect(container?.querySelector("button")?.textContent).toContain("14");
   });
 
@@ -597,7 +640,7 @@ describe("XtermView terminal interaction", () => {
 
     await act(async () => {
       target.dispatchEvent(new Event("resize"));
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await flushMacrotask();
     });
 
     expect(harness.resize).not.toHaveBeenCalled();
@@ -670,21 +713,26 @@ describe("XtermView stream anchors", () => {
     await show(props());
     const channel = harness.channels[0];
     const term = harness.terminals[0];
-    const notices: string[] = [];
-    term.writeln = (line) => {
-      notices.push(String(line));
+    const writes: string[] = [];
+    term.write = (data, callback) => {
+      writes.push(typeof data === "string" ? data : `<${(data as Uint8Array).length} bytes>`);
+      callback?.();
     };
 
     act(() => {
       channel.onControl?.(anchor({ streamSeq: 0, controlBytes: 11, expired: true }));
     });
-    expect(notices).toEqual([]);
+    expect(writes).toEqual([]);
 
     act(() => {
       channel.onBytes(new Uint8Array(11));
       channel.onBytes(new Uint8Array([65]));
     });
-    expect(notices).toEqual(["\x1b[33m[输出历史已过期，已刷新屏幕]\x1b[0m"]);
+    expect(writes).toEqual([
+      "<11 bytes>",
+      "<51 bytes>",
+      "<1 bytes>",
+    ]);
   });
 
   it("reopens without a resume anchor when the stream never carried one", async () => {
@@ -695,5 +743,157 @@ describe("XtermView stream anchors", () => {
     await flushWork();
 
     expect(harness.attachTab).toHaveBeenCalledWith("tab-new", expect.anything(), -1, undefined, "session");
+  });
+
+  it("single-flights connected and channel reattach with the original tab and resume anchor", async () => {
+    const onAttach = vi.fn();
+    const onAttachInfo = vi.fn();
+    await show(props({ sessionConnected: false, onAttach, onAttachInfo }));
+    const channel = harness.channels[0];
+    act(() => {
+      channel.onControl?.(anchor());
+      channel.onBytes(new Uint8Array(50));
+    });
+    let finish: ((value: typeof attachedInfo) => void) | undefined;
+    harness.attachTab.mockClear().mockImplementation(
+      () => new Promise<typeof attachedInfo>((resolve) => { finish = resolve; }),
+    );
+
+    await show(props({ sessionConnected: true, onAttach, onAttachInfo }));
+    harness.reopen?.();
+    await flushWork();
+
+    expect(harness.attachTab).toHaveBeenCalledTimes(1);
+    expect(harness.attachTab).toHaveBeenCalledWith("tab-new", expect.anything(), -1, {
+      seq: 150,
+      epoch: "e1",
+    }, "session");
+    finish?.(attachedInfo);
+    await flushWork();
+
+    expect(harness.attach).toHaveBeenCalledTimes(1);
+    expect(harness.attachTab).toHaveBeenCalledTimes(1);
+    expect(onAttach).toHaveBeenNthCalledWith(2, "tab-new");
+    expect(onAttachInfo).toHaveBeenLastCalledWith(expect.objectContaining({ tabId: "tab-new", exited: false }));
+  });
+
+  it("does not invent a resume target on connected before any tab has attached", async () => {
+    await show(props({ visible: false, sessionConnected: false }));
+    await show(props({ visible: false, sessionConnected: true }));
+
+    expect(harness.attach).not.toHaveBeenCalled();
+    expect(harness.attachTab).not.toHaveBeenCalled();
+  });
+
+  it("drops incomplete OSC state before expired clear and replay", async () => {
+    const notifications = vi.fn();
+    await show(props({ onNotification: notifications }));
+    const channel = harness.channels[0];
+    const term = harness.terminals[0];
+    const written: number[] = [];
+    term.write = (data, callback) => {
+      if (typeof data === "string") written.push(...new TextEncoder().encode(data));
+      else written.push(...(data as Uint8Array));
+      callback?.();
+    };
+    act(() => {
+      channel.onBytes(new TextEncoder().encode("old\x1b]9;stale"));
+    });
+    written.length = 0;
+    const replay = "\x1b[2J\x1b[3J\x1b[HREPLAY";
+
+    act(() => {
+      channel.onControl?.(anchor({ streamSeq: 0, controlBytes: 11, expired: true }));
+    });
+    act(() => {
+      channel.onBytes(new TextEncoder().encode(replay));
+    });
+    act(() => {
+      channel.onBytes(new Uint8Array([7]));
+    });
+
+    expect(harness.blockClearCount).toBe(1);
+    expect(written).toEqual([
+      ...Array.from(new TextEncoder().encode(replay)),
+      ...Array.from(new TextEncoder().encode("\x1b[33m[输出历史已过期，已刷新屏幕]\x1b[0m\n")),
+      7,
+    ]);
+    expect(notifications).not.toHaveBeenCalled();
+  });
+
+  it("rebuilds command blocks only once on expired OSC133 replay", async () => {
+    await show(props());
+    const channel = harness.channels[0];
+    const sequence = "\x1b]133;A\x07\x1b]133;C\x07\x1b]133;D;0\x07";
+    act(() => {
+      channel.onBytes(new TextEncoder().encode(sequence));
+    });
+    expect(harness.commandBlocks).toHaveLength(1);
+
+    act(() => {
+      channel.onControl?.(anchor({ streamSeq: 0, controlBytes: 11, expired: true }));
+      channel.onBytes(new TextEncoder().encode("\x1b[2J\x1b[3J\x1b[H" + sequence));
+    });
+
+    expect(harness.blockClearCount).toBe(1);
+    expect(harness.commandBlocks).toHaveLength(1);
+    expect(harness.commandBlocks[0]).toMatchObject({ ended: true, exitCode: 0 });
+  });
+
+  it("preserves pending OSC state across continuous resume", async () => {
+    const notifications = vi.fn();
+    await show(props({ onNotification: notifications }));
+    const channel = harness.channels[0];
+    act(() => {
+      channel.onBytes(new TextEncoder().encode("old\x1b]9;contin"));
+    });
+
+    act(() => {
+      channel.onControl?.(anchor({ streamSeq: 100, controlBytes: 0, expired: false }));
+      channel.onBytes(new TextEncoder().encode("ued\x07"));
+    });
+
+    expect(notifications).toHaveBeenCalledWith("continued");
+    expect(harness.blockClearCount).toBe(0);
+  });
+
+  it("clears selection on expired full replay", async () => {
+    await show(props());
+    const channel = harness.channels[0];
+    const term = harness.terminals[0];
+    term.selection = "OLD";
+
+    act(() => {
+      channel.onControl?.(anchor({ streamSeq: 0, controlBytes: 11, expired: true }));
+      channel.onBytes(new TextEncoder().encode("\x1b[2J\x1b[3J\x1b[HREPLAY"));
+    });
+
+    expect(term.getSelection()).toBe("");
+  });
+
+  it("preserves selection on continuous resume", async () => {
+    await show(props());
+    const channel = harness.channels[0];
+    const term = harness.terminals[0];
+    term.selection = "OLD";
+
+    act(() => {
+      channel.onControl?.(anchor({ streamSeq: 100, controlBytes: 0, expired: false }));
+      channel.onBytes(new TextEncoder().encode("NEXT"));
+    });
+
+    expect(term.getSelection()).toBe("OLD");
+  });
+
+  it("does not resurrect a deleted terminal on a normal channel close", async () => {
+    const onAttachFailed = vi.fn();
+    await show(props({ onAttachFailed }));
+    harness.attachTab.mockClear().mockRejectedValue({ code: "not_found" });
+
+    harness.reopen?.();
+    await flushWork();
+
+    expect(harness.attachTab).toHaveBeenCalledTimes(1);
+    expect(onAttachFailed).toHaveBeenCalledWith("not_found");
   });
 });

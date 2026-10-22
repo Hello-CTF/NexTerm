@@ -15,6 +15,12 @@ func TestApplicationModuleContract(t *testing.T) {
 		runs:    []fakeRun{{result: commandResult{stdout: "host:/srv on /mnt/remote type fuse.sshfs (rw)\n"}}},
 	}
 	service := newTestService("linux", runner, nil)
+	service.sessionHost = func(context.Context, string) (string, error) { return "asset-one", nil }
+	sessionID := "session-one"
+	service.owned["/mnt/remote"] = ownedMount{
+		entry:  Entry{ID: "mount-one", LocalPoint: "/mnt/remote", Remote: "host:/srv", SessionID: &sessionID, Managed: true},
+		hostID: "asset-one",
+	}
 	application, err := app.New(app.Config{Modules: []app.Module{{
 		Name:             "mount",
 		RegisterCommands: service.RegisterCommands,
@@ -28,7 +34,7 @@ func TestApplicationModuleContract(t *testing.T) {
 	}
 	response := application.Dispatcher.Dispatch(t.Context(), ipc.Request{
 		Command: "mount_list",
-		Args:    json.RawMessage(`{"global":true,"forceRefresh":true}`),
+		Args:    json.RawMessage(`{"sessionId":"session-one","forceRefresh":true}`),
 	}, ipc.Environment{})
 	if !response.OK {
 		t.Fatalf("mount_list through app.Module = %+v", response.Error)

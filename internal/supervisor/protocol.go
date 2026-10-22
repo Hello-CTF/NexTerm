@@ -49,9 +49,11 @@ const (
 const (
 	// featureExec is advertised in the hello handshake by peers that support
 	// non-PTY exec sessions (createMsg.Pty == false and frameExecOutput).
-	featureExec       = "exec"
-	featureMetadata   = "metadata"
-	featureReplayGzip = "replay_gzip"
+	featureExec            = "exec"
+	featureMetadata        = "metadata"
+	featureReplayGzip      = "replay_gzip"
+	featureRuntimeMetadata = "runtime_metadata"
+	featureActivity        = "activity"
 )
 
 // Exec output stream discriminators, the first byte of a frameExecOutput
@@ -62,9 +64,11 @@ const (
 )
 
 type helloMsg struct {
-	Version     int      `json:"version"`
-	StateDigest string   `json:"state_digest,omitempty"`
-	Features    []string `json:"features,omitempty"`
+	Version     int               `json:"version"`
+	StateDigest string            `json:"state_digest,omitempty"`
+	Features    []string          `json:"features,omitempty"`
+	Runtime     *RuntimeMetadata  `json:"runtime,omitempty"`
+	Activity    *ActivitySnapshot `json:"activity,omitempty"`
 }
 
 type createMsg struct {

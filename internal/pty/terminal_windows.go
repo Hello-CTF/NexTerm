@@ -16,6 +16,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+var windowsUpdateProcThreadAttribute = windows.NewLazySystemDLL("kernel32.dll").NewProc("UpdateProcThreadAttribute")
+
 type windowsTerminal struct {
 	conpty  *windowsConPty
 	process *Process
@@ -36,7 +38,7 @@ type windowsConPty struct {
 	consoleDone chan struct{}
 }
 
-func startTerminal(cmd *exec.Cmd, cols, rows uint32) (terminal, error) {
+func startTerminal(cmd *exec.Cmd, cols, rows uint32, _ func(*exec.Cmd) (*Process, error)) (terminal, error) {
 	conpty, err := newWindowsConPty(cols, rows)
 	if err != nil {
 		return nil, err
@@ -56,6 +58,23 @@ func startTerminal(cmd *exec.Cmd, cols, rows uint32) (terminal, error) {
 		terminal.conpty.closeConsole()
 	}()
 	return terminal, nil
+}
+
+// ConPTY expects the handle value itself, not a pointer to the handle.
+func updateWindowsPseudoConsoleAttribute(attributes *windows.ProcThreadAttributeListContainer, hpc windows.Handle) error {
+	result, _, err := windowsUpdateProcThreadAttribute.Call(
+		uintptr(unsafe.Pointer(attributes.List())),
+		0,
+		windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+		uintptr(hpc),
+		unsafe.Sizeof(hpc),
+		0,
+		0,
+	)
+	if result == 0 {
+		return err
+	}
+	return nil
 }
 
 func newWindowsConPty(cols, rows uint32) (*windowsConPty, error) {
@@ -80,7 +99,7 @@ func newWindowsConPty(cols, rows uint32) (*windowsConPty, error) {
 		return nil, err
 	}
 	c.attributes = attributes
-	if err := attributes.Update(windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, unsafe.Pointer(c.hpc), unsafe.Sizeof(c.hpc)); err != nil {
+	if err := updateWindowsPseudoConsoleAttribute(attributes, c.hpc); err != nil {
 		attributes.Delete()
 		windows.ClosePseudoConsole(c.hpc)
 		_ = c.closeHandles()

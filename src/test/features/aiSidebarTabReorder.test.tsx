@@ -149,7 +149,7 @@ function fireDrag(
 describe("AiSidebar tab reordering", () => {
   let view: MountedView | null = null;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     mocks.channels.length = 0;
     mocks.chat.mockResolvedValue({ jobId: "job-1", conversationId: "conv-1" });
@@ -194,9 +194,11 @@ describe("AiSidebar tab reordering", () => {
       activeWorkspaceId: null,
     });
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    await flush();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flush();
     view?.unmount();
     view = null;
   });

@@ -5,6 +5,7 @@ package production
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -99,6 +100,7 @@ func newRemoteRecoveryHarness(t *testing.T, resolver session.DurableResolver) (*
 		Connector:            fakeSSHConnector{},
 		DurableResolver:      resolver,
 		TerminalModeResolver: newProductionTerminalModeResolver(database),
+		OpenAccess:           true,
 	})
 	production, err := NewProductionWithServices(Config{
 		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -168,16 +170,24 @@ func createDaemonTabWithID(t *testing.T, provider base.DurableProvider, tabID, m
 type transportDurableResolver struct {
 	mu        sync.Mutex
 	providers map[base.Transport]base.DurableProvider
+	calls     int
 }
 
 func (r *transportDurableResolver) ResolveDurable(_ context.Context, transport base.Transport) (base.DurableProvider, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.calls++
 	provider := r.providers[transport]
 	if provider == nil {
 		return nil, durable.ErrUnavailable
 	}
 	return provider, nil
+}
+
+func (r *transportDurableResolver) recorded() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls
 }
 
 func readUntilDurableOutput(t *testing.T, attachment base.DurableAttachment, text string) {
@@ -227,7 +237,7 @@ func TestProductionAttachTabRecoversRemoteDaemonTabOverConnectedSSHSession(t *te
 		t.Fatalf("remote marker replayed %d times: %q", count, replayed.output())
 	}
 
-	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","clientId":"client-a"}`, "", "client-a"))
+	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","clientId":"client-a","mode":"kill"}`, "", "client-a"))
 	infos, err := fixture.client.List(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -236,6 +246,92 @@ func TestProductionAttachTabRecoversRemoteDaemonTabOverConnectedSSHSession(t *te
 		if info.ID == tabID {
 			t.Fatal("close-tab kept the remote daemon session")
 		}
+	}
+}
+
+func TestProductionDefaultCloseDetachesRemoteTab(t *testing.T) {
+	for _, kind := range []string{session.KindSSH, session.KindDevice} {
+		t.Run(kind, func(t *testing.T) {
+			fixture := newRemoteDaemonFixture(t)
+			resolver := &recordingDurableResolver{provider: fixture.provider}
+			production, _ := newRemoteRecoveryHarness(t, resolver)
+			connected, err := production.Services.Sessions.Connect(t.Context(), session.Asset{
+				ID: "default-close-" + kind, Name: kind, Kind: kind,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			channelID := "default-close-channel-" + kind
+			attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, channelID, "client-a")
+			tabID := requireAttachedTabID(t, attachResponse)
+
+			invalid := dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","sessionId":"`+connected.ID+`","mode":"destroy"}`, "", "client-a")
+			if invalid.OK || invalid.Error == nil || invalid.Error.Code != ipc.CodeBadParam {
+				t.Fatalf("invalid close mode = %+v, want bad_param", invalid)
+			}
+			if _, err := production.Services.Sessions.Tab(tabID); err != nil {
+				t.Fatalf("invalid close mode destroyed the tab: %v", err)
+			}
+			requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","sessionId":"`+connected.ID+`"}`, "", "client-a"))
+			tab, err := production.Services.Sessions.Tab(tabID)
+			if err != nil {
+				t.Fatalf("default close destroyed the remote tab: %v", err)
+			}
+			if info := tab.Info(); info.Exited || info.Subscribers != 0 {
+				t.Fatalf("default close left tab = %+v, want a live detached tab", info)
+			}
+			descriptors, err := production.Services.Sessions.ListRemoteDurable(t.Context(), connected.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			alive := false
+			for _, descriptor := range descriptors {
+				if descriptor.ID == tabID && !descriptor.Dead {
+					alive = true
+				}
+			}
+			if !alive {
+				t.Fatalf("default close killed the remote process: %+v", descriptors)
+			}
+
+			reattachResponse := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+tabID+`","sessionId":"`+connected.ID+`","replayBytes":1024}`, channelID+"-again", "client-a")
+			var reattached attachedTabDTO
+			requireStoreTestResponse(t, reattachResponse, &reattached)
+			if reattached.TabID != tabID || reattached.Exited {
+				t.Fatalf("reattached tab = %+v, want original live tab %s", reattached, tabID)
+			}
+			requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","sessionId":"`+connected.ID+`","mode":"kill"}`, "", "client-a"))
+			if _, err := production.Services.Sessions.Tab(tabID); !errors.Is(err, session.ErrTabNotFound) {
+				t.Fatalf("explicit kill kept tab: %v", err)
+			}
+		})
+	}
+}
+
+func TestProductionDefaultCloseCleansAuthoritativelyExitedRemoteTab(t *testing.T) {
+	fixture := newRemoteDaemonFixture(t)
+	resolver := &recordingDurableResolver{provider: fixture.provider}
+	production, _ := newRemoteRecoveryHarness(t, resolver)
+	connected := connectRemoteSSHAsset(t, production)
+	channelID := "default-close-exited-channel"
+	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, channelID, "client-a")
+	tabID := requireAttachedTabID(t, attachResponse)
+	writeDurableTestInput(t, production, tabID, "exit", "client-a")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		tab, err := production.Services.Sessions.Tab(tabID)
+		if err == nil && tab.Info().Exited {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("remote tab did not report its authoritative exit: %+v, %v", tab, err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","sessionId":"`+connected.ID+`"}`, "", "client-a"))
+	if _, err := production.Services.Sessions.Tab(tabID); !errors.Is(err, session.ErrTabNotFound) {
+		t.Fatalf("authoritative exit cleanup kept tab: %v", err)
 	}
 }
 
@@ -305,7 +401,17 @@ func TestProductionCloseDiscoveredSSHTabRequiresAuthorizedOwningSession(t *testi
 			if err != nil || len(infos) != 1 || infos[0].Dead {
 				t.Fatalf("rejected kill disturbed original shell: %+v, %v", infos, err)
 			}
-			requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", args, "", "client-a"))
+			closed := dispatchDurableTest(t, production, "terminal_close_tab", args, "", "client-a")
+			if mode == "detach" {
+				if closed.OK || closed.Error == nil || closed.Error.Code != ipc.CodeNotFound {
+					t.Fatalf("local detach with unknown remote survival = %+v, want visible not_found", closed)
+				}
+				if calls := resolver.recorded(); calls != 0 {
+					t.Fatalf("local detach triggered %d helper resolutions, want none", calls)
+				}
+			} else {
+				requireProductionNull(t, closed)
+			}
 			if mode == "detach" {
 				descriptors, err := production.Services.Sessions.ListRemoteDurable(t.Context(), connected.ID)
 				if err != nil {
@@ -487,8 +593,9 @@ func TestProductionTerminalAttachFallsBackWhenDurableCreateBecomesUnavailable(t 
 	}
 }
 
-func TestProductionRegularSSHModeSkipsHelperForBothTabEntries(t *testing.T) {
-	resolver := &recordingDurableResolver{err: durable.ErrUnavailable}
+func TestProductionRegularSSHModeOnlyAffectsNewTabs(t *testing.T) {
+	fixture := newRemoteDaemonFixture(t)
+	resolver := &recordingDurableResolver{provider: fixture.provider}
 	production, _ := newRemoteRecoveryHarness(t, resolver)
 	host, username, port := "127.0.0.1", "tester", int32(22)
 	asset, err := production.Services.Store.AssetCreate(t.Context(), store.AssetInput{
@@ -518,7 +625,7 @@ func TestProductionRegularSSHModeSkipsHelperForBothTabEntries(t *testing.T) {
 		}
 	}
 	if calls := len(resolver.recorded()); calls != 0 {
-		t.Fatalf("helper resolution calls = %d; regular mode must not start helper", calls)
+		t.Fatalf("helper resolution calls = %d; regular mode must not start helper for new tabs", calls)
 	}
 	forced := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24,"durable":true}`, "regular-forced-channel", "client-a")
 	if forced.OK || forced.Error == nil || forced.Error.Code != ipc.CodeUnsupported || !strings.Contains(forced.Error.Message, "普通终端") {
@@ -527,18 +634,25 @@ func TestProductionRegularSSHModeSkipsHelperForBothTabEntries(t *testing.T) {
 	if len(resolver.recorded()) != 0 {
 		t.Fatal("explicit durable attach started helper despite regular mode")
 	}
+	tabID := createDaemonTab(t, fixture.provider, "regular-mode-old-durable")
 	listResponse := dispatchDurableTest(t, production, "terminal_list", `{"sessionId":"`+connected.ID+`","durable":true}`, "", "client-a")
 	var descriptors []durableDescriptorDTO
 	requireStoreTestResponse(t, listResponse, &descriptors)
-	if len(descriptors) != 0 || len(resolver.recorded()) != 0 {
-		t.Fatalf("regular mode listed durable tabs or started helper: %+v", descriptors)
+	if len(descriptors) != 1 || descriptors[0].ID != tabID || descriptors[0].Dead {
+		t.Fatalf("regular mode hid the old durable tab: %+v", descriptors)
 	}
-	recovery := dispatchDurableTest(t, production, "terminal_attach_tab", `{"sessionId":"`+connected.ID+`","tabId":"`+ids.New()+`"}`, "old-durable-channel", "client-a")
-	if recovery.OK || recovery.Error == nil || recovery.Error.Code != ipc.CodeUnsupported || !strings.Contains(recovery.Error.Message, "普通终端") {
-		t.Fatalf("old durable tab recovery in regular mode = %+v", recovery)
+	recovery := dispatchDurableTest(t, production, "terminal_attach_tab", `{"sessionId":"`+connected.ID+`","tabId":"`+tabID+`"}`, "old-durable-channel", "client-a")
+	var recovered attachedTabDTO
+	requireStoreTestResponse(t, recovery, &recovered)
+	if recovered.TabID != tabID {
+		t.Fatalf("regular mode recovered tab %q, want original %q", recovered.TabID, tabID)
 	}
-	if len(resolver.recorded()) != 0 {
-		t.Fatal("regular mode attempted helper during old tab recovery")
+	tab, err := production.Services.Sessions.Tab(tabID)
+	if err != nil || !tab.Info().Durable {
+		t.Fatalf("regular mode changed the recovered durable tab: %+v, %v", tab, err)
+	}
+	if calls := len(resolver.recorded()); calls != 1 {
+		t.Fatalf("old durable list/recovery used %d resolver calls, want one cached provider resolution", calls)
 	}
 }
 
@@ -812,7 +926,7 @@ func TestProductionTwoManagersDiscoverAndShareDefaultDurableSSH(t *testing.T) {
 	waitForProductionOutput(t, streamA2, "production-a-after-reattach")
 	waitForProductionOutput(t, streamC, "production-a-after-reattach")
 
-	requireProductionNull(t, dispatchDurableTest(t, productionC, "terminal_close_tab", `{"tabId":"`+tabID+`","clientId":"client-c"}`, "", "client-c"))
+	requireProductionNull(t, dispatchDurableTest(t, productionC, "terminal_close_tab", `{"tabId":"`+tabID+`","clientId":"client-c","mode":"kill"}`, "", "client-c"))
 }
 
 func TestProductionAttachTabHonorsDiscoveredSessionScope(t *testing.T) {
@@ -876,7 +990,7 @@ func TestProductionAttachTabHonorsDiscoveredSessionScope(t *testing.T) {
 	if unscopedInMemory.OK || unscopedInMemory.Error == nil || unscopedInMemory.Error.Code != ipc.CodeBadParam || !strings.Contains(unscopedInMemory.Error.Message, "指定会话") {
 		t.Fatalf("unscoped in-memory duplicate attach = %+v", unscopedInMemory)
 	}
-	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","clientId":"client-a"}`, "", "client-a"))
+	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","clientId":"client-a","mode":"kill"}`, "", "client-a"))
 }
 
 type flakyMetadataProvider struct {

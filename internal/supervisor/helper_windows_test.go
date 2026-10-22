@@ -4,6 +4,8 @@ package supervisor
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -20,6 +23,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"go.uber.org/goleak"
 	"golang.org/x/sys/windows"
 )
 
@@ -68,10 +72,16 @@ const (
 )
 
 func TestMain(m *testing.M) {
+	// Re-executed helper processes must exit before the leak check: they run
+	// a CLI, not the test suite, so goleak must never apply to them.
 	if len(os.Args) > 1 && os.Args[1] == HelperCommand {
 		os.Exit(RunHelperCLI(os.Args[2:]))
 	}
-	os.Exit(m.Run())
+	// go-winio starts its IO completion processor once per process on first
+	// use (initIO) and it lives until process exit by design, exactly like
+	// the runtime's own background goroutines; it is not a test leak.
+	goleak.VerifyTestMain(m,
+		goleak.IgnoreAnyFunction("github.com/Microsoft/go-winio.ioCompletionProcessor"))
 }
 
 func TestSessionEnvWindowsPassthrough(t *testing.T) {
@@ -842,7 +852,11 @@ func fakePipeStreamServer(t *testing.T, stateDir string, handle func(conn net.Co
 
 func TestPipeStreamCloseReturnsWhenServerStalls(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
+	writeStarted := make(chan struct{})
 	name := fakePipeStreamServer(t, stateDir, func(conn net.Conn, kind frameType, payload []byte) bool {
+		if kind == frameInput {
+			close(writeStarted)
+		}
 		return true
 	})
 	client := NewClient(name, stateDir)
@@ -850,15 +864,17 @@ func TestPipeStreamCloseReturnsWhenServerStalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	stream.closeDrainTimeout = 500 * time.Millisecond
 	writeErr := make(chan error, 1)
 	go func() {
 		_, err := stream.Write([]byte("stalled"))
 		writeErr <- err
 	}()
-	time.Sleep(100 * time.Millisecond)
-	original := streamCloseDrainTimeout
-	streamCloseDrainTimeout = 500 * time.Millisecond
-	defer func() { streamCloseDrainTimeout = original }()
+	select {
+	case <-writeStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("pipe server did not receive the stalled Write")
+	}
 	closed := make(chan struct{})
 	go func() {
 		_ = stream.Close()
@@ -907,8 +923,6 @@ func TestPipeStreamCloseNoInflight(t *testing.T) {
 const (
 	windowsHelperAppDirEnv   = "NEXTERM_SUPERVISOR_WINDOWS_APP_DIR"
 	windowsHelperAppReadyEnv = "NEXTERM_SUPERVISOR_WINDOWS_APP_READY"
-	windowsSecondUserName    = "nxsuphelper"
-	windowsSecondUserPass    = "NxSup!2026test"
 )
 
 func TestWindowsHelperSessionsSurviveAppProcessExitAndReattach(t *testing.T) {
@@ -1027,12 +1041,22 @@ func TestStateDirDeniesSecondUser(t *testing.T) {
 	if err := exec.Command("net", "session").Run(); err != nil {
 		t.Skip("elevation is required for the second-user denial test")
 	}
-	_ = exec.Command("net", "user", windowsSecondUserName, "/delete").Run()
-	if output, err := exec.Command("net", "user", windowsSecondUserName, windowsSecondUserPass, "/add").CombinedOutput(); err != nil {
-		t.Skipf("cannot create the second test user: %v (%s)", err, output)
+	username, password := secondUserCredentials(t)
+	// Own the account lifecycle outright: the generated name must not exist
+	// yet, and cleanup below deletes and verifies only the account this test
+	// created.
+	if err := addSecondUser(runNetUser, username, password); err != nil {
+		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_ = exec.Command("net", "user", windowsSecondUserName, "/delete").Run()
+		if err := removeSecondUser(runNetUser, username); err != nil {
+			t.Errorf("cleanup second test user: %v", err)
+		}
+		// net user /delete is synchronous, so a failed delete leaves the
+		// account behind; verify read-only that it is really gone.
+		if err := verifySecondUserGone(runNetUser, username); err != nil {
+			t.Errorf("cleanup second test user: %v", err)
+		}
 	})
 	base := `C:\Windows\Temp`
 	stateDir := filepath.Join(base, "nxsup-state-"+ids.New())
@@ -1058,7 +1082,7 @@ func TestStateDirDeniesSecondUser(t *testing.T) {
 	}
 	grantDACL(t, shared, "D:(A;;GA;;;SY)(A;;GA;;;WD)(A;;GA;;;"+sid+")")
 
-	withSecondUser(t, func() {
+	withSecondUser(t, username, password, func() {
 		if _, err := os.ReadFile(shared); err != nil {
 			t.Fatalf("control read as the second user: %v", err)
 		}
@@ -1080,9 +1104,16 @@ var (
 	procImpersonateLoggedOnUser = advapi32.NewProc("ImpersonateLoggedOnUser")
 )
 
-func withSecondUser(t *testing.T, fn func()) {
+func withSecondUser(t *testing.T, username, password string, fn func()) {
 	t.Helper()
-	username, err := windows.UTF16PtrFromString(windowsSecondUserName)
+	// Windows impersonation is per-thread, so pin this goroutine to its OS
+	// thread for the whole impersonated section: an unpinned goroutine may
+	// migrate between ImpersonateLoggedOnUser and the file operations in fn
+	// and run them under the original identity, which would both defeat the
+	// ACL denial assertions and leave the thread impersonated.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	usernamePtr, err := windows.UTF16PtrFromString(username)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1090,15 +1121,15 @@ func withSecondUser(t *testing.T, fn func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	password, err := windows.UTF16PtrFromString(windowsSecondUserPass)
+	passwordPtr, err := windows.UTF16PtrFromString(password)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var token windows.Handle
 	result, _, err := procLogonUserW.Call(
-		uintptr(unsafe.Pointer(username)),
+		uintptr(unsafe.Pointer(usernamePtr)),
 		uintptr(unsafe.Pointer(domain)),
-		uintptr(unsafe.Pointer(password)),
+		uintptr(unsafe.Pointer(passwordPtr)),
 		uintptr(3),
 		uintptr(0),
 		uintptr(unsafe.Pointer(&token)),
@@ -1112,6 +1143,123 @@ func withSecondUser(t *testing.T, fn func()) {
 	}
 	defer func() { _ = windows.RevertToSelf() }()
 	fn()
+}
+
+// secondUserCredentials returns a per-run account name and password so the
+// test never touches a pre-existing or concurrently used account and no
+// credential is baked into source control.
+func secondUserCredentials(t *testing.T) (string, string) {
+	t.Helper()
+	var suffix [4]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		t.Fatal(err)
+	}
+	username := "nxsup" + hex.EncodeToString(suffix[:])
+	// Cover all four character classes up front so the generated password
+	// satisfies the default complexity policy regardless of host settings.
+	// Stay within 14 characters: longer passwords make net user prompt for
+	// confirmation about down-level clients, which cannot be answered here.
+	var raw [10]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		t.Fatal(err)
+	}
+	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	var password strings.Builder
+	password.WriteString("Nx9!")
+	for _, b := range raw {
+		password.WriteByte(alphabet[int(b)%len(alphabet)])
+	}
+	return username, password.String()
+}
+
+// netUserRunner runs `net user` with the given arguments and returns the
+// combined output. It is passed as a parameter rather than called directly
+// so failure paths can be exercised deterministically without real
+// administrator operations.
+type netUserRunner func(args ...string) (string, error)
+
+func runNetUser(args ...string) (string, error) {
+	output, err := exec.Command("net", append([]string{"user"}, args...)...).CombinedOutput()
+	return string(output), err
+}
+
+// addSecondUser creates the account, refusing to touch a pre-existing one.
+// The returned error never contains the password.
+func addSecondUser(run netUserRunner, username, password string) error {
+	if _, err := run(username); err == nil {
+		return fmt.Errorf("second test user %q already exists; refusing to reuse or delete a pre-existing account", username)
+	}
+	output, err := run(username, password, "/add")
+	if err != nil {
+		return fmt.Errorf("create second test user %q: %w: %s", username, err, strings.TrimSpace(output))
+	}
+	return nil
+}
+
+func removeSecondUser(run netUserRunner, username string) error {
+	output, err := run(username, "/delete")
+	if err != nil {
+		return fmt.Errorf("delete second test user %q: %w: %s", username, err, strings.TrimSpace(output))
+	}
+	return nil
+}
+
+// verifySecondUserGone read-only checks that the account no longer exists.
+func verifySecondUserGone(run netUserRunner, username string) error {
+	if output, err := run(username); err == nil {
+		return fmt.Errorf("second test user %q still exists after cleanup: %s", username, strings.TrimSpace(output))
+	}
+	return nil
+}
+
+func TestSecondUserAccountHelpersSurfaceFailures(t *testing.T) {
+	const password = "fake-password-must-not-leak"
+	addFailure := func(args ...string) (string, error) {
+		if len(args) == 3 {
+			return "The password does not meet the password policy requirements.", errors.New("exit status 2")
+		}
+		return "", errors.New("The user name could not be found.")
+	}
+	err := addSecondUser(addFailure, "nxsup-test", password)
+	if err == nil {
+		t.Fatal("addSecondUser succeeded despite a failing net user runner")
+	}
+	if !strings.Contains(err.Error(), "nxsup-test") || !strings.Contains(err.Error(), "password policy") {
+		t.Fatalf("addSecondUser error %q does not report the username and net user output", err)
+	}
+	if strings.Contains(err.Error(), password) {
+		t.Fatal("addSecondUser error leaked the account password")
+	}
+
+	existing := func(args ...string) (string, error) {
+		if len(args) == 1 {
+			return "User name                    nxsup-test", nil
+		}
+		return "", errors.New("unexpected net user invocation for a pre-existing account")
+	}
+	if err := addSecondUser(existing, "nxsup-test", password); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("addSecondUser on a pre-existing account = %v, want a refusal without touching it", err)
+	}
+
+	deleteFailure := func(args ...string) (string, error) {
+		return "System error 5 has occurred.", errors.New("exit status 2")
+	}
+	if err := removeSecondUser(deleteFailure, "nxsup-test"); err == nil || !strings.Contains(err.Error(), "nxsup-test") || !strings.Contains(err.Error(), "System error 5") {
+		t.Fatalf("removeSecondUser error = %v, want the username and net user output surfaced", err)
+	}
+
+	stillThere := func(args ...string) (string, error) {
+		return "User name                    nxsup-test", nil
+	}
+	if err := verifySecondUserGone(stillThere, "nxsup-test"); err == nil || !strings.Contains(err.Error(), "still exists") {
+		t.Fatalf("verifySecondUserGone error = %v, want a leftover-account failure", err)
+	}
+	gone := func(args ...string) (string, error) {
+		return "The user name could not be found.", errors.New("exit status 2")
+	}
+	if err := verifySecondUserGone(gone, "nxsup-test"); err != nil {
+		t.Fatalf("verifySecondUserGone on a deleted account = %v, want nil", err)
+	}
 }
 
 func grantDACL(t *testing.T, path, sddl string) {

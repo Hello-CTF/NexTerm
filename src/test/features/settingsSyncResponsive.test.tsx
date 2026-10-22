@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => {
     linkGet: vi.fn(),
     linkSet: vi.fn(),
     status: vi.fn(),
+    kindOptInGet: vi.fn(),
+    compare: vi.fn(),
     ask: vi.fn(),
     toast: vi.fn(),
   };
@@ -23,8 +25,17 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       linkGet: mocks.linkGet,
       linkSet: mocks.linkSet,
       status: mocks.status,
+      kindOptInGet: mocks.kindOptInGet,
     },
   };
+});
+vi.mock("../../ipc/remoteApi", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/remoteApi")>();
+  return { ...actual, syncCompareApi: { ...actual.syncCompareApi, compare: mocks.compare } };
+});
+vi.mock("../../ipc/events", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/events")>();
+  return { ...actual, listenEvent: vi.fn(async () => () => undefined) };
 });
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 
@@ -55,6 +66,8 @@ beforeEach(() => {
     verifiedAt: 1,
     lastError: "",
   });
+  mocks.kindOptInGet.mockResolvedValue({ knownHost: true, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
+  mocks.compare.mockResolvedValue({ rows: [], remote: 0, warnings: [], userId: "u-1", compareToken: "compare-1" });
   mocks.ask.mockResolvedValue(true);
 });
 
@@ -71,7 +84,12 @@ function withClient(node: React.ReactElement): MountedView {
 describe("SyncCard desktop link form narrow-screen layout", () => {
   it("allows link form inputs to shrink with min-w-0 flex-1 while labels keep a fixed width", async () => {
     mounted = withClient(createElement(SyncCard));
-    await flushUntil(() => mounted!.container.querySelector("#sync-url") !== null);
+    await flushUntil(() =>
+      mounted!.container.querySelector<HTMLInputElement>("#sync-url")?.value === SAVED_LINK.url &&
+      mounted!.container.textContent?.includes("已登录 alice") === true &&
+      mounted!.container.textContent?.includes("已知主机 已开启") === true &&
+      mounted!.container.textContent?.includes("云端 0 个对象") === true,
+    );
     for (const id of ["sync-url", "sync-user", "sync-pass"]) {
       const input = mounted.container.querySelector<HTMLInputElement>(`#${id}`)!;
       expect(input.className).toContain("min-w-0");

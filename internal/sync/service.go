@@ -94,11 +94,14 @@ type Service struct {
 	blockedNoticed bool
 }
 
-// syncRoundStatus is the in-memory trio of the most recent Service.Sync round, shaped after store.RetentionStatus.
+// syncRoundStatus is the in-memory state of the most recent Service.Sync round, shaped after store.RetentionStatus.
 type syncRoundStatus struct {
 	LastAttemptAt time.Time `json:"lastAttemptAt"`
 	LastSuccessAt time.Time `json:"lastSuccessAt"`
 	LastError     string    `json:"lastError,omitempty"`
+	Warnings      []string  `json:"warnings,omitempty"`
+	Paused        bool      `json:"paused"`
+	VaultLocked   bool      `json:"vaultLocked"`
 }
 
 func (s *Service) GatewayAuthKey() string { return s.gatewayAuthKey }
@@ -117,6 +120,7 @@ func New(db *store.Store, credentialVault *vault.Vault, options ...Option) *Serv
 		option(s)
 	}
 	s.engine = NewEngine(db, credentialVault, s.logger)
+	s.engine.aiShared = s.desktop
 	if credentialVault != nil {
 		// Wake a background sync round immediately after the vault unlocks: a vault locked at startup no longer waits for the next period.
 		credentialVault.AddUnlockListener(s.wake)
@@ -164,7 +168,16 @@ func (s *Service) syncBackground(ctx context.Context) {
 	if err != nil {
 		var appErr *ipc.Error
 		if errors.As(err, &appErr) && (appErr.Code == ipc.CodeVaultLocked || appErr.Code == ipc.CodeVaultNotInit) {
+			s.roundMu.RLock()
+			wasBlocked := s.blockedNoticed
+			hadAttempt := !s.roundStatus.LastAttemptAt.IsZero()
+			s.roundMu.RUnlock()
 			s.noteSyncBlocked(appErr)
+			// Do not emit a startup event for a vault that has never been readable. Once an active sync pauses,
+			// notify listeners once so they can refresh the paused state without treating it as a failed round.
+			if hadAttempt && !wasBlocked {
+				_ = ipc.Emit(ctx, s.events, syncRoundCompleteTopic, struct{}{})
+			}
 			return
 		}
 		s.engine.logger.Warn("background sync link read failed", "error", err)
@@ -177,12 +190,29 @@ func (s *Service) syncBackground(ctx context.Context) {
 	wasLoggedIn := s.engine.hasSession()
 	_, syncErr := s.Sync(ctx)
 	if syncErr != nil && ctx.Err() == nil {
-		s.engine.logger.Warn("background sync failed", "error", syncErr)
+		if paused, _ := vaultPauseState(syncErr); !paused {
+			s.engine.logger.Warn("background sync failed", "error", syncErr)
+		}
 	}
 	_ = ipc.Emit(ctx, s.events, syncRoundCompleteTopic, struct{}{})
 	// Broadcast status when a background round establishes a new session (unlock wake/failure recovery), so an open settings page auto-refreshes to logged-in.
 	if !wasLoggedIn && s.engine.hasSession() {
-		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: ipc.OwnerID(ctx)})
+	}
+}
+
+func vaultPauseState(err error) (paused, locked bool) {
+	var appErr *ipc.Error
+	if !errors.As(err, &appErr) {
+		return false, false
+	}
+	switch appErr.Code {
+	case ipc.CodeVaultLocked:
+		return true, true
+	case ipc.CodeVaultNotInit:
+		return true, false
+	default:
+		return false, false
 	}
 }
 
@@ -190,9 +220,13 @@ func (s *Service) syncBackground(ctx context.Context) {
 // (previously a silent skip with no way for the user to know sync stalled), and logs only one Warn per contiguous pause period; after unlock recovery,
 // roundStatus.LastError is cleared by the next successful round's defer.
 func (s *Service) noteSyncBlocked(err error) {
+	_, locked := vaultPauseState(err)
 	s.roundMu.Lock()
 	s.roundStatus.LastAttemptAt = time.Now()
 	s.roundStatus.LastError = err.Error()
+	s.roundStatus.Warnings = nil
+	s.roundStatus.Paused = true
+	s.roundStatus.VaultLocked = locked
 	noticed := s.blockedNoticed
 	s.blockedNoticed = true
 	s.roundMu.Unlock()
@@ -205,6 +239,11 @@ func (s *Service) noteSyncBlocked(err error) {
 func (s *Service) clearSyncBlocked() {
 	s.roundMu.Lock()
 	s.blockedNoticed = false
+	if s.roundStatus.Paused {
+		s.roundStatus.LastError = ""
+	}
+	s.roundStatus.Paused = false
+	s.roundStatus.VaultLocked = false
 	s.roundMu.Unlock()
 }
 
@@ -235,7 +274,7 @@ func (s *Service) probeSavedLink(ctx context.Context) {
 	defer s.settingsMu.Unlock()
 	if s.probePersistedSession(ctx, secret) {
 		s.recordProbe(ctx, nil)
-		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: ipc.OwnerID(ctx)})
 		return
 	}
 	connect, err := s.engine.Connect(ctx, remoteConfigFromSecret(secret))
@@ -251,7 +290,7 @@ func (s *Service) probeSavedLink(ctx context.Context) {
 			s.recordProbe(ctx, errReloginReset)
 		}
 	}
-	_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+	_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: ipc.OwnerID(ctx)})
 }
 
 // probePersistedSession prefers restoring the account session from the persisted session: a passing me() check restores without login.
@@ -375,7 +414,7 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (LinkResult, err
 	defer func() {
 		s.settingsMu.Unlock()
 		if notifyStatus {
-			_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+			_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: ipc.OwnerID(ctx)})
 		}
 	}()
 	if initialized, _ := s.vaultStatus(); !initialized {
@@ -484,7 +523,7 @@ func (s *Service) LinkMFA(ctx context.Context, code string) (LinkResult, error) 
 	defer func() {
 		s.settingsMu.Unlock()
 		if notifyStatus {
-			_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+			_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: ipc.OwnerID(ctx)})
 		}
 	}()
 	secret, err := s.linkSecret(ctx)
@@ -513,7 +552,7 @@ func (s *Service) LinkResetPassword(ctx context.Context, newPassword string) (Li
 	defer func() {
 		s.settingsMu.Unlock()
 		if notifyStatus {
-			_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+			_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: ipc.OwnerID(ctx)})
 		}
 	}()
 	secret, err := s.linkSecret(ctx)
@@ -619,16 +658,24 @@ func (s *Service) Sync(ctx context.Context) (report SyncReport, returnErr error)
 	defer s.settingsMu.Unlock()
 	s.roundMu.Lock()
 	s.roundStatus.LastAttemptAt = time.Now()
+	s.roundStatus.Warnings = nil
+	s.roundStatus.Paused = false
+	s.roundStatus.VaultLocked = false
 	s.roundMu.Unlock()
 	defer func() {
 		s.roundMu.Lock()
 		defer s.roundMu.Unlock()
+		s.roundStatus.Warnings = append([]string(nil), report.Warnings...)
 		if returnErr != nil {
 			s.roundStatus.LastError = returnErr.Error()
+			s.roundStatus.Paused, s.roundStatus.VaultLocked = vaultPauseState(returnErr)
 			return
 		}
 		s.roundStatus.LastSuccessAt = time.Now()
 		s.roundStatus.LastError = ""
+		s.roundStatus.Paused = false
+		s.roundStatus.VaultLocked = false
+		s.blockedNoticed = false
 	}()
 	secret, err := s.linkSecret(ctx)
 	if err != nil {
@@ -656,7 +703,7 @@ func (s *Service) Sync(ctx context.Context) (report SyncReport, returnErr error)
 				s.engine.logger.Warn("reload synced AI grants failed", "error", err)
 			}
 		}
-		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: ipc.OwnerID(ctx)})
 	}
 	s.recordProbe(ctx, syncErr)
 	return report, syncErr
@@ -673,24 +720,47 @@ type Status struct {
 	LastError     string    `json:"lastError"`
 	LastAttemptAt time.Time `json:"lastAttemptAt"`
 	LastSuccessAt time.Time `json:"lastSuccessAt"`
+	Warnings      []string  `json:"warnings,omitempty"`
+	Paused        bool      `json:"paused"`
+	VaultLocked   bool      `json:"vaultLocked"`
 }
 
 func (s *Service) Status(ctx context.Context) (Status, error) {
-	link, err := s.LinkGet(ctx)
-	if err != nil {
-		return Status{}, err
-	}
-	status := Status{
-		Configured: link.IsConfigured(), Username: link.Username,
-		VerifiedAt: link.VerifiedAt, LastError: link.LastError,
+	link, linkErr := s.LinkGet(ctx)
+	status := Status{}
+	if linkErr != nil {
+		paused, locked := vaultPauseState(linkErr)
+		if !paused {
+			return Status{}, linkErr
+		}
+		status.Paused = true
+		status.VaultLocked = locked
+		// The encrypted link cannot be decoded while locked, but its presence is still readable.
+		// This lets the status bar distinguish a configured paused sync from local-only mode.
+		if raw, found, err := s.store.SettingGet(ctx, settingLink); err == nil {
+			status.Configured = found && strings.TrimSpace(raw) != ""
+		}
+	} else {
+		status.Configured = link.IsConfigured()
+		status.Username = link.Username
+		status.VerifiedAt = link.VerifiedAt
+		status.LastError = link.LastError
 	}
 	s.roundMu.RLock()
 	status.LastAttemptAt = s.roundStatus.LastAttemptAt
 	status.LastSuccessAt = s.roundStatus.LastSuccessAt
+	status.Warnings = append([]string(nil), s.roundStatus.Warnings...)
 	if s.roundStatus.LastError != "" {
 		status.LastError = s.roundStatus.LastError
 	}
+	if s.roundStatus.Paused {
+		status.Paused = true
+		status.VaultLocked = s.roundStatus.VaultLocked
+	}
 	s.roundMu.RUnlock()
+	if status.Paused {
+		return status, nil
+	}
 	s.engine.sessionMu.Lock()
 	session := s.engine.session
 	s.engine.sessionMu.Unlock()

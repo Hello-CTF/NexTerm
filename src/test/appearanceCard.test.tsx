@@ -15,12 +15,14 @@ import { useUi } from "../app/store";
 import {
   getAppearancePrefs,
   resetAppearancePrefs,
+  setTerminalContrast,
+  setTerminalFontFamily,
   setTerminalFontSize,
   setTerminalTheme,
   setUiFontPreset,
   setUiFontScale,
 } from "../app/preferences";
-import { click, clickButton, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
+import { click, clickButton, mount, setInputValue, setSelectValue, type MountedView } from "./features/reactTestUtils";
 
 const KEY = "nexterm.appearance.v1";
 
@@ -74,9 +76,41 @@ describe("AppearanceCard appearance preferences", () => {
     expect(groupButton(c, "界面字号", "13").getAttribute("aria-pressed")).toBe("true");
     expect(groupButton(c, "界面文字倍率", "100%").getAttribute("aria-pressed")).toBe("true");
     expect(groupButton(c, "终端与编辑器主题", "深色").getAttribute("aria-pressed")).toBe("true");
+    expect(groupButton(c, "终端对比度", "标准").getAttribute("aria-pressed")).toBe("true");
     expect(groupButton(c, "界面主题", "深色").getAttribute("aria-pressed")).toBe("true");
+    const font = c.querySelector<HTMLSelectElement>('select[aria-label="终端字体"]');
+    expect(font?.value).toBe("cascadia");
+    expect([...(font?.options ?? [])].map((option) => option.value)).toEqual([
+      "cascadia",
+      "system",
+      "jetbrains-mono",
+      "fira-code",
+      "source-code-pro",
+      "menlo",
+      "consolas",
+    ]);
+    expect(c.textContent).toContain("未安装时回退到系统等宽字体");
+    expect(c.textContent).toContain("不下载字体");
     expect(c.querySelector('[aria-label="减小终端字号"]')).not.toBeNull();
     expect(c.textContent).toContain("13px");
+  });
+
+  it("selects a terminal font and contrast preset and persists both", () => {
+    mounted = mount(createElement(AppearanceCard));
+    const c = mounted.container;
+    ensureAdvancedOpen(c);
+    const font = c.querySelector<HTMLSelectElement>('select[aria-label="终端字体"]')!;
+    setSelectValue(font, "jetbrains-mono");
+    click(groupButton(c, "终端对比度", "极高"));
+
+    expect(getAppearancePrefs().terminalFontFamily).toBe("jetbrains-mono");
+    expect(getAppearancePrefs().terminalContrast).toBe("maximum");
+    expect(JSON.parse(localStorage.getItem(KEY) ?? "{}")).toMatchObject({
+      terminalFontFamily: "jetbrains-mono",
+      terminalContrast: "maximum",
+    });
+    expect(font.value).toBe("jetbrains-mono");
+    expect(groupButton(c, "终端对比度", "极高").getAttribute("aria-pressed")).toBe("true");
   });
 
   it("applies the interface font size preset and persists it", () => {
@@ -163,7 +197,9 @@ describe("AppearanceCard appearance preferences", () => {
     setUiFontPreset(12);
     setUiFontScale(2);
     setTerminalFontSize(17);
+    setTerminalFontFamily("menlo");
     setTerminalTheme("light");
+    setTerminalContrast("maximum");
     useUi.getState().setThemeMode("light");
     mounted = mount(createElement(AppearanceCard));
     ensureAdvancedOpen(mounted.container);
@@ -180,7 +216,9 @@ describe("AppearanceCard appearance preferences", () => {
       uiFontPreset: 13,
       uiFontScale: 1,
       terminalFontSize: 13,
+      terminalFontFamily: "cascadia",
       terminalTheme: "dark",
+      terminalContrast: "standard",
     });
     expect(localStorage.getItem(KEY)).toBeNull();
     expect(localStorage.getItem("nexterm.layout.v1")).toBe(
@@ -188,6 +226,25 @@ describe("AppearanceCard appearance preferences", () => {
     );
     expect(document.documentElement.style.getPropertyValue("--nx-ui-scale")).toBe("1");
     expect(document.documentElement.dataset.nxTermTheme).toBe("dark");
+  });
+
+  it("enables reset when only the terminal font or contrast differs", () => {
+    act(() => setTerminalFontFamily("consolas"));
+    mounted = mount(createElement(AppearanceCard));
+    ensureAdvancedOpen(mounted.container);
+    const button = () => [...mounted!.container.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent?.trim() === "恢复默认",
+    ) as HTMLButtonElement;
+    expect(button().disabled).toBe(false);
+
+    click(button());
+    expect(getAppearancePrefs().terminalFontFamily).toBe("cascadia");
+    expect(button().disabled).toBe(true);
+
+    act(() => setTerminalContrast("high"));
+    expect(button().disabled).toBe(false);
+    click(button());
+    expect(getAppearancePrefs().terminalContrast).toBe("standard");
   });
 
   it("keeps the terminal theme isolated from interface theme flips unless following", () => {

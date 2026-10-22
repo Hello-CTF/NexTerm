@@ -15,11 +15,17 @@ export interface TransferTask {
   remotePath: string;
   localPath: string;
   // file carries the upload content when no OS path is available (desktop drops); the task
-  // writes bytes through fs_write instead of a path-based fs_upload.
+  // streams bounded chunks instead of using a path-based fs_upload.
   file?: File;
   status: TransferStatus;
   transferred: number;
   total: number;
+  resume?: boolean;
+  attemptId?: string;
+  cancelling?: boolean;
+  cancelAccepted?: boolean;
+  resumeIssue?: "partial_mismatch" | "local_staging_missing";
+  restartPreparing?: boolean;
   error?: string;
   resultText?: string;
   refreshDir?: string;

@@ -17,6 +17,7 @@ export interface PublicShareTerminalProps {
   onInput: (data: string) => void;
   onSelectionCopy?: (text: string, error: unknown | null) => void;
   onHandle?: (handle: PublicShareTerminalHandle) => void;
+  readOnly?: boolean;
 }
 
 export function PublicShareTerminal(props: PublicShareTerminalProps) {
@@ -25,9 +26,11 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
   const onInputRef = useRef(props.onInput);
   const onSelectionCopyRef = useRef(props.onSelectionCopy);
   const onHandleRef = useRef(props.onHandle);
+  const readOnlyRef = useRef(props.readOnly);
   onInputRef.current = props.onInput;
   onSelectionCopyRef.current = props.onSelectionCopy;
   onHandleRef.current = props.onHandle;
+  readOnlyRef.current = props.readOnly;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -37,6 +40,7 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
       fontFamily: "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
       fontSize: 14,
       cursorBlink: true,
+      disableStdin: readOnlyRef.current ?? false,
       theme: XTERM_DARK_THEME,
     });
     const fit = new FitAddon();
@@ -89,6 +93,10 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
       termRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (termRef.current) termRef.current.options.disableStdin = props.readOnly ?? false;
+  }, [props.readOnly]);
 
   return <div ref={hostRef} className="h-full w-full min-h-0" />;
 }

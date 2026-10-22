@@ -51,8 +51,8 @@ func TestProductionSessionConnectQuickAuthFailureSurfacesSSHCode(t *testing.T) {
 	production := newHostKeyTestProduction(t)
 
 	response := dispatchHostKeyTest(t, production, "session_connect_quick", `{"args":{"host":"127.0.0.1","port":`+strconv.Itoa(server.port())+`,"username":"not-test","authKind":"password","password":"secret","acceptHostKey":true}}`)
-	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeSSH {
-		t.Fatalf("quick connect auth failure = %+v, want ssh code", response)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.Code("auth") {
+		t.Fatalf("quick connect auth failure = %+v, want auth code", response)
 	}
 	if !strings.Contains(response.Error.Message, "认证失败") {
 		t.Fatalf("quick connect auth failure message = %q, want user guidance", response.Error.Message)

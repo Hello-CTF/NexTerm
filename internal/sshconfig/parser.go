@@ -18,6 +18,10 @@ type Limits struct {
 	MaxFiles        int
 	MaxHosts        int
 	MaxKeys         int
+	// RootDir confines the root config file and every file reached through
+	// Include directives (after glob expansion and symlink resolution) to its
+	// directory tree. Empty disables the confinement (desktop behavior).
+	RootDir string
 }
 
 var DefaultLimits = Limits{
@@ -58,6 +62,7 @@ type fileParser struct {
 	active   map[string]bool
 	files    int
 	aliasIdx map[string]int
+	boundary string
 }
 
 type block struct {
@@ -83,10 +88,33 @@ func Parse(path string, limits Limits) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	if limits.RootDir != "" {
+		boundary, err := filepath.Abs(limits.RootDir)
+		if err != nil {
+			return nil, err
+		}
+		p.boundary = canonicalHomePath(boundary)
+		resolved, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			return nil, err
+		}
+		if !pathWithinDir(p.boundary, resolved) {
+			return nil, fmt.Errorf("sshconfig: %s escapes root boundary %s", abs, p.boundary)
+		}
+		abs = resolved
+	}
 	if err := p.parseFile(abs, 0); err != nil {
 		return nil, err
 	}
 	return &p.result, nil
+}
+
+func pathWithinDir(boundary, path string) bool {
+	rel, err := filepath.Rel(boundary, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	return true
 }
 
 func DefaultConfigPath() string {
@@ -156,7 +184,7 @@ func (p *fileParser) parseFile(path string, depth int) error {
 	p.files++
 	defer delete(p.active, path)
 
-	f, err := os.Open(path)
+	f, err := openSharedDelete(path)
 	if err != nil {
 		return err
 	}
@@ -201,6 +229,14 @@ func (p *fileParser) parseFile(path string, depth int) error {
 				continue
 			}
 			for _, match := range resolveIncludes(filepath.Dir(path), val) {
+				if p.boundary != "" {
+					resolved, err := filepath.EvalSymlinks(match)
+					if err != nil || !pathWithinDir(p.boundary, resolved) {
+						p.diagnose("include-out-of-bounds", match, 0, "included file escapes root boundary %s", p.boundary)
+						continue
+					}
+					match = resolved
+				}
 				if err := p.parseFile(match, depth+1); err != nil {
 					return err
 				}

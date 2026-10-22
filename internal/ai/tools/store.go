@@ -14,6 +14,9 @@ func WithStore(deps Dependencies, storage *store.Store, database Database) Depen
 	if storage == nil {
 		return deps
 	}
+	// The durable, owner-scoped outcome ledger is the real store, so recorded
+	// operations adjudicate and replay from rows that survive restarts.
+	deps.DurableOutcomes = DurableStoreOutcomes(storage)
 	deps.ListAssets = func(ctx context.Context) ([]Asset, error) {
 		rows, err := storage.AssetList(ctx, false)
 		if err != nil {
@@ -21,7 +24,7 @@ func WithStore(deps Dependencies, storage *store.Store, database Database) Depen
 		}
 		assets := make([]Asset, len(rows))
 		for i, row := range rows {
-			asset := Asset{ID: row.ID, Name: row.Name, Kind: row.Kind}
+			asset := Asset{ID: row.ID, Name: row.Name, Kind: row.Kind, Tags: row.Tags}
 			if row.Host != nil {
 				asset.Host = *row.Host
 			}

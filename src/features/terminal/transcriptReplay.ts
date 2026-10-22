@@ -18,7 +18,7 @@ export interface ReplayResize {
 
 export interface ReplaySink {
   reset(): void;
-  write(data: Uint8Array): void;
+  write(data: Uint8Array, callback?: () => void): void;
   resize(cols: number, rows: number): void;
 }
 
@@ -47,11 +47,26 @@ export function parseResizePayload(data: Uint8Array): ReplayResize | null {
   return { cols: cols as number, rows: rows as number };
 }
 
+const REPLAY_WRITE_BATCH_BYTES = 256 * 1024;
+
+interface PendingSeek {
+  sink: ReplaySink;
+  position: number;
+}
+
 export class TranscriptReplay {
   private readonly chunks: ReplayChunk[];
   private readonly startTs: number;
   private readonly endTs: number;
   private nextIndex = 0;
+  private activeSink: ReplaySink | null = null;
+  private activePosition = 0;
+  private pendingSeek: PendingSeek | null = null;
+  private writePending = false;
+  private writeToken = 0;
+  private seekScheduled = false;
+  private pumping = false;
+  private disposed = false;
 
   constructor(chunks: ReplayChunk[]) {
     this.chunks = [...chunks].sort((a, b) => a.seq - b.seq);
@@ -69,34 +84,138 @@ export class TranscriptReplay {
 
   seek(sink: ReplaySink, positionMs: number): number {
     const position = this.clampPosition(positionMs);
-    sink.reset();
-    this.nextIndex = 0;
-    this.applyThrough(sink, position);
+    if (this.disposed) return position;
+    this.pendingSeek = { sink, position };
+    this.scheduleSeek();
     return position;
   }
 
   playStep(sink: ReplaySink, positionMs: number): number {
     const position = this.clampPosition(positionMs);
-    this.applyThrough(sink, position);
+    if (this.disposed || this.pendingSeek) return position;
+    if (this.writePending) {
+      this.activePosition = Math.max(this.activePosition, position);
+      return position;
+    }
+    this.activeSink = sink;
+    this.activePosition = position;
+    this.pump();
     return position;
   }
 
-  private applyThrough(sink: ReplaySink, positionMs: number) {
-    const cutoff = this.startTs + positionMs;
-    while (this.nextIndex < this.chunks.length && this.chunks[this.nextIndex].ts <= cutoff) {
-      this.apply(sink, this.chunks[this.nextIndex]);
-      this.nextIndex += 1;
-    }
+  dispose(): void {
+    this.disposed = true;
+    this.pendingSeek = null;
+    this.activeSink = null;
+    this.writePending = false;
+    this.writeToken += 1;
   }
 
-  private apply(sink: ReplaySink, chunk: ReplayChunk) {
-    if (chunk.kind === TRANSCRIPT_KIND_OUTPUT) {
-      sink.write(chunk.data);
+  private scheduleSeek(): void {
+    if (this.seekScheduled || this.disposed) return;
+    this.seekScheduled = true;
+    queueMicrotask(() => {
+      this.seekScheduled = false;
+      this.flushSeek();
+    });
+  }
+
+  private flushSeek(): void {
+    if (this.disposed || this.writePending || this.pumping || !this.pendingSeek) return;
+    const { sink, position } = this.pendingSeek;
+    this.pendingSeek = null;
+    this.activeSink = null;
+    this.nextIndex = 0;
+    sink.reset();
+    this.activeSink = sink;
+    this.activePosition = position;
+    this.pump();
+  }
+
+  private pump(): void {
+    if (this.disposed || this.pumping || this.writePending) return;
+    if (this.pendingSeek) {
+      this.scheduleSeek();
       return;
     }
-    if (chunk.kind === TRANSCRIPT_KIND_RESIZE) {
-      const size = parseResizePayload(chunk.data);
-      if (size) sink.resize(size.cols, size.rows);
+    const sink = this.activeSink;
+    if (!sink) return;
+    this.pumping = true;
+    try {
+      while (
+        !this.disposed &&
+        !this.pendingSeek &&
+        !this.writePending &&
+        this.activeSink === sink
+      ) {
+        const cutoff = this.startTs + this.activePosition;
+        const chunk = this.chunks[this.nextIndex];
+        if (!chunk || chunk.ts > cutoff) {
+          this.activeSink = null;
+          break;
+        }
+        if (chunk.kind === TRANSCRIPT_KIND_OUTPUT) {
+          this.write(sink, this.takeOutputBatch(cutoff));
+          continue;
+        }
+        this.nextIndex += 1;
+        if (chunk.kind === TRANSCRIPT_KIND_RESIZE) {
+          const size = parseResizePayload(chunk.data);
+          if (size) sink.resize(size.cols, size.rows);
+        }
+      }
+    } finally {
+      this.pumping = false;
+    }
+    if (this.pendingSeek && !this.writePending) this.scheduleSeek();
+  }
+
+  private takeOutputBatch(cutoff: number): Uint8Array {
+    const parts: Uint8Array[] = [];
+    let total = 0;
+    while (this.nextIndex < this.chunks.length) {
+      const chunk = this.chunks[this.nextIndex];
+      if (
+        chunk.ts > cutoff ||
+        chunk.kind !== TRANSCRIPT_KIND_OUTPUT ||
+        (total > 0 && total + chunk.data.byteLength > REPLAY_WRITE_BATCH_BYTES)
+      ) {
+        break;
+      }
+      parts.push(chunk.data);
+      total += chunk.data.byteLength;
+      this.nextIndex += 1;
+    }
+    if (parts.length === 1) return parts[0];
+    const data = new Uint8Array(total);
+    let offset = 0;
+    for (const part of parts) {
+      data.set(part, offset);
+      offset += part.byteLength;
+    }
+    return data;
+  }
+
+  private write(sink: ReplaySink, data: Uint8Array): void {
+    const token = ++this.writeToken;
+    this.writePending = true;
+    try {
+      sink.write(data, () => {
+        if (this.disposed || token !== this.writeToken) return;
+        this.writePending = false;
+        if (this.pendingSeek) {
+          this.activeSink = null;
+          this.scheduleSeek();
+          return;
+        }
+        this.pump();
+      });
+    } catch (error) {
+      if (token === this.writeToken) {
+        this.writePending = false;
+        this.activeSink = null;
+      }
+      throw error;
     }
   }
 }

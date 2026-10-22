@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
@@ -10,6 +11,15 @@ import (
 func DisplaySendKeys(call Call, buffered string, cursor int) string {
 	var input SendKeysArgs
 	if json.Unmarshal(call.Args, &input) == nil {
+		// Paste content is literal text: rendering it through key-action
+		// decoding would misrepresent "<enter>"-looking content as actions.
+		if input.Paste {
+			display := "send_keys paste " + fmt.Sprintf("%q", input.Keys)
+			if input.Enter {
+				display += " <enter>"
+			}
+			return compactDisplay(display)
+		}
 		commands, controls, submits := guard.EffectiveKeyActions(input.Keys, buffered, cursor, input.Enter)
 		parts := append([]string(nil), commands...)
 		if len(controls) != 0 {

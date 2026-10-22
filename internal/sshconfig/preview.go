@@ -17,31 +17,37 @@ const (
 )
 
 type ExistingAsset struct {
-	Name     string
-	Host     string
-	Port     int32
-	Username string
+	ID        string
+	Name      string
+	Host      string
+	Port      int32
+	Username  string
+	UpdatedAt int64
 }
 
 type ExistingKey struct {
+	ID          string
 	Name        string
 	Fingerprint string
 	Path        string
+	UpdatedAt   int64
 }
 
 type HostPreview struct {
-	Alias          string
-	Hostname       string
-	Port           int
-	Username       string
-	IdentityFiles  []string
-	KeyName        string
-	KeyFingerprint string
-	ProxyJump      string
-	AuthMethod     string
-	Source         string
-	Action         PlanAction
-	Warnings       []string
+	Alias           string
+	Hostname        string
+	Port            int
+	Username        string
+	IdentityFiles   []string
+	KeyName         string
+	KeyFingerprint  string
+	ProxyJump       string
+	AuthMethod      string
+	Source          string
+	Action          PlanAction
+	Warnings        []string
+	TargetID        string
+	TargetUpdatedAt int64
 }
 
 type KeyPreview struct {
@@ -52,10 +58,12 @@ type KeyPreview struct {
 	// AltPaths lists additional paths that resolve to the same key file
 	// (symlink alias or target inside the scanned directory); host
 	// IdentityFile entries pointing at any of them bind to this key.
-	AltPaths []string
-	Source   string
-	Action   PlanAction
-	Warnings []string
+	AltPaths        []string
+	Source          string
+	Action          PlanAction
+	Warnings        []string
+	TargetID        string
+	TargetUpdatedAt int64
 }
 
 type ImportPreview struct {
@@ -113,6 +121,8 @@ func planHostAction(item *HostPreview, existingByName map[string]ExistingAsset, 
 	lower := strings.ToLower(item.Alias)
 	ep := endpointOf(item.Hostname, item.Port, item.Username)
 	if conflict, ok := existingByName[lower]; ok {
+		item.TargetID = conflict.ID
+		item.TargetUpdatedAt = conflict.UpdatedAt
 		if sameEndpoint(conflict, item.Hostname, item.Port, item.Username) {
 			item.Action = PlanSkipDuplicate
 		} else {
@@ -122,6 +132,8 @@ func planHostAction(item *HostPreview, existingByName map[string]ExistingAsset, 
 		return
 	}
 	if conflict, ok := existingByEndpoint[ep]; ok {
+		item.TargetID = conflict.ID
+		item.TargetUpdatedAt = conflict.UpdatedAt
 		item.Action = PlanConflictEndpoint
 		item.Warnings = append(item.Warnings, fmt.Sprintf("endpoint %s:%d already imported as %q", item.Hostname, item.Port, conflict.Name))
 		return
@@ -204,6 +216,9 @@ func decideKeyAction(item *KeyPreview, seenFingerprints map[string]bool, existin
 	case item.Fingerprint != "" && existingFPNames[item.Fingerprint] != "":
 		item.Action = PlanSkipDuplicate
 	case hasKeyName(existingByName, name):
+		existing := existingByName[strings.ToLower(name)]
+		item.TargetID = existing.ID
+		item.TargetUpdatedAt = existing.UpdatedAt
 		item.Action = PlanConflictAlias
 		item.Warnings = append(item.Warnings, fmt.Sprintf("key name %q already used by a key with a different fingerprint", name))
 	case batchNames[strings.ToLower(name)]:

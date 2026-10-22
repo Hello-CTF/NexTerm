@@ -1,20 +1,21 @@
-import { fsApi, localFileApi } from "../../ipc/commands";
-import { WEB } from "../../ipc/env";
-import { EVENTS, listenEvent, type FsProgressEvent } from "../../ipc/events";
-import { dropStaged, stageFile } from "../../ipc/webFiles";
+import { fsApi } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
-import { bytesFromBase64 } from "./fileCodec";
+import {
+  fileChunkSource,
+  localPathChunkSource,
+  UPLOAD_CHUNK_SIZE,
+  uploadChunked,
+  type ChunkReadSource,
+} from "./chunkedUpload";
 import { formatSize } from "./fileTypes";
 import { joinPath } from "./pathUtils";
 import type { FolderFileEntry } from "./folderUpload";
+import { createTransferTaskId } from "./transferTaskId";
 
 export type { FolderFileEntry };
 
 export const MAX_PACK_BYTES = 256 * 1024 * 1024;
-// Mirrors deviceproto.MaxWriteFileSize: the desktop device path writes the tar in one
-// WriteFile request, which the device bridge caps at 64 MiB.
-export const MAX_PACK_BYTES_DEVICE = 64 * 1024 * 1024;
 
 export interface PackUploadArgs {
   sessionId: string;
@@ -85,25 +86,15 @@ function writeHeader(
   h[155] = 0x20;
 }
 
-async function entryBytes(f: FolderFileEntry): Promise<Uint8Array<ArrayBuffer>> {
-  if (f.file) return new Uint8Array(await f.file.arrayBuffer());
-  // Native-picker entries carry no File; read bytes from the local path through the desktop IPC.
-  const res = await localFileApi.read(f.localPath, f.size);
-  const bytes = bytesFromBase64(res.contentBase64);
-  if (bytes.length !== f.size) {
-    throw new Error(`文件「${f.relativePath}」的大小在读取期间发生了变化，请重新上传`);
-  }
-  return bytes as Uint8Array<ArrayBuffer>;
+interface FolderTarPlan {
+  names: string[];
+  dirList: string[];
+  dirMtime: number;
+  size: number;
 }
 
-export async function buildFolderTar(
-  files: FolderFileEntry[],
-  rootPrefix = "",
-  emptyDirs: string[] = [],
-): Promise<Uint8Array<ArrayBuffer>> {
-  const names = files.map((f) =>
-    rootPrefix ? `${rootPrefix}/${f.relativePath}` : f.relativePath,
-  );
+function planFolderTar(files: FolderFileEntry[], rootPrefix: string, emptyDirs: string[]): FolderTarPlan {
+  const names = files.map((f) => (rootPrefix ? `${rootPrefix}/${f.relativePath}` : f.relativePath));
   const dirs = new Set<string>();
   for (const name of names) {
     const parts = name.split("/");
@@ -124,34 +115,94 @@ export async function buildFolderTar(
   }
   const dirList = [...dirs].sort();
   const dirMtime = files.reduce((max, f) => Math.max(max, Math.floor(f.mtimeMs / 1000)), 0);
+  let size = 2 * BLOCK + dirList.length * BLOCK;
+  for (const f of files) size += BLOCK + Math.ceil(f.size / BLOCK) * BLOCK;
+  return { names, dirList, dirMtime, size };
+}
 
-  let total = 2 * BLOCK;
-  total += dirList.length * BLOCK;
-  for (const f of files) total += BLOCK + Math.ceil(f.size / BLOCK) * BLOCK;
-  const out = new Uint8Array(total);
-
-  let offset = 0;
-  for (const dir of dirList) {
-    writeHeader(out, offset, encoder.encode(`${dir}/`), 0, dirMtime, TYPE_DIR);
-    offset += BLOCK;
-  }
-  for (const [i, f] of files.entries()) {
-    const data = await entryBytes(f);
-    writeHeader(out, offset, encoder.encode(names[i]), data.length, Math.floor(f.mtimeMs / 1000), TYPE_FILE);
-    offset += BLOCK;
-    out.set(data, offset);
-    offset += Math.ceil(data.length / BLOCK) * BLOCK;
-  }
+function tarHeader(name: string, size: number, mtime: number, typeflag: number): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(BLOCK);
+  writeHeader(out, 0, encoder.encode(name), size, mtime, typeflag);
   return out;
 }
 
-function bytesToBase64(data: Uint8Array): string {
-  let binary = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < data.length; i += chunk) {
-    binary += String.fromCharCode(...data.subarray(i, i + chunk));
+function entrySource(file: FolderFileEntry): ChunkReadSource {
+  return file.file
+    ? fileChunkSource(file.file)
+    : localPathChunkSource(file.localPath, file.size, file.relativePath);
+}
+
+async function* folderTarPieces(files: FolderFileEntry[], plan: FolderTarPlan) {
+  for (const dir of plan.dirList) {
+    yield tarHeader(`${dir}/`, 0, plan.dirMtime, TYPE_DIR);
   }
-  return btoa(binary);
+  for (const [index, file] of files.entries()) {
+    yield tarHeader(plan.names[index], file.size, Math.floor(file.mtimeMs / 1000), TYPE_FILE);
+    const source = entrySource(file);
+    for (let offset = 0; offset < file.size; offset += UPLOAD_CHUNK_SIZE) {
+      const length = Math.min(UPLOAD_CHUNK_SIZE, file.size - offset);
+      yield await source.read(offset, length);
+    }
+    const padding = (BLOCK - (file.size % BLOCK)) % BLOCK;
+    if (padding > 0) yield new Uint8Array(padding);
+  }
+  yield new Uint8Array(2 * BLOCK);
+}
+
+export function folderTarSource(
+  files: FolderFileEntry[],
+  rootPrefix = "",
+  emptyDirs: string[] = [],
+): ChunkReadSource {
+  const plan = planFolderTar(files, rootPrefix, emptyDirs);
+  const pieces = folderTarPieces(files, plan);
+  let position = 0;
+  let pending: Uint8Array<ArrayBuffer> | null = null;
+  let pendingOffset = 0;
+  let finished = false;
+  return {
+    size: plan.size,
+    async read(offset, length) {
+      if (offset !== position || length < 0 || offset + length > plan.size) {
+        throw new Error("打包读取偏移无效");
+      }
+      const out = new Uint8Array(length);
+      let written = 0;
+      while (written < length && !finished) {
+        if (!pending) {
+          const next = await pieces.next();
+          if (next.done) {
+            finished = true;
+            break;
+          }
+          pending = next.value;
+          pendingOffset = 0;
+        }
+        const count = Math.min(length - written, pending.length - pendingOffset);
+        out.set(pending.subarray(pendingOffset, pendingOffset + count), written);
+        written += count;
+        pendingOffset += count;
+        if (pendingOffset === pending.length) pending = null;
+      }
+      if (written !== length) throw new Error("打包数据在读取期间提前结束");
+      position += written;
+      return out;
+    },
+  };
+}
+
+export async function buildFolderTar(
+  files: FolderFileEntry[],
+  rootPrefix = "",
+  emptyDirs: string[] = [],
+): Promise<Uint8Array<ArrayBuffer>> {
+  const source = folderTarSource(files, rootPrefix, emptyDirs);
+  const out = new Uint8Array(source.size);
+  for (let offset = 0; offset < out.length; offset += UPLOAD_CHUNK_SIZE) {
+    const length = Math.min(UPLOAD_CHUNK_SIZE, out.length - offset);
+    out.set(await source.read(offset, length), offset);
+  }
+  return out;
 }
 
 function tempArchiveName(): string {
@@ -159,36 +210,6 @@ function tempArchiveName(): string {
   crypto.getRandomValues(rand);
   const suffix = Array.from(rand, (b) => b.toString(16).padStart(2, "0")).join("");
   return `.nexterm-upload-${suffix}.tar`;
-}
-
-async function uploadTar(
-  sessionId: string,
-  remotePath: string,
-  tar: Uint8Array<ArrayBuffer>,
-  archiveName: string,
-  onProgress: (transferred: number, total: number) => void,
-): Promise<void> {
-  if (WEB) {
-    const staged = await stageFile(new File([tar], archiveName));
-    // The progress task id is assigned server-side per call; matching on the exact tar
-    // size keeps events from other transfers out of this report.
-    const unlisten = await listenEvent<FsProgressEvent>(EVENTS.fsProgress, (event) => {
-      if (event.total === tar.length) onProgress(event.transferred, event.total);
-    });
-    try {
-      await fsApi.upload(sessionId, staged.path, remotePath, false);
-    } finally {
-      unlisten();
-      await dropStaged(staged.path).catch(() => undefined);
-    }
-    onProgress(tar.length, tar.length);
-    return;
-  }
-  // Desktop has no blob staging and no IPC turning browser bytes into a local file, so
-  // the tar goes straight to the remote through fs_write (base64, single-shot progress).
-  onProgress(0, tar.length);
-  await fsApi.write(sessionId, remotePath, bytesToBase64(tar), false);
-  onProgress(tar.length, tar.length);
 }
 
 export async function packUploadAndExtract(args: PackUploadArgs): Promise<string> {
@@ -202,13 +223,6 @@ export async function packUploadAndExtract(args: PackUploadArgs): Promise<string
     throw new Error(`当前会话类型（${kind || "未知"}）不支持打包上传`);
   }
   const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
-  // The 64MB cap applies only to the desktop fs_write path (device WriteFile is buffered and capped);
-  // WEB streams through staged upload (OpenWrite) and is uncapped.
-  if (kind === "device" && !WEB && totalBytes > MAX_PACK_BYTES_DEVICE) {
-    throw new Error(
-      `文件夹总大小 ${formatSize(totalBytes)} 超过设备连接的单次写入上限 ${formatSize(MAX_PACK_BYTES_DEVICE)}，无法打包上传，请改用逐文件上传`,
-    );
-  }
   if (totalBytes > MAX_PACK_BYTES) {
     throw new Error(
       `文件夹总大小 ${formatSize(totalBytes)} 超过打包上传上限 ${formatSize(MAX_PACK_BYTES)}，请改用普通上传逐文件传输`,
@@ -229,9 +243,11 @@ export async function packUploadAndExtract(args: PackUploadArgs): Promise<string
       throw new Error(`无法打包上传：目标目录已存在 ${archiveName}，请先移走或重命名它`);
     }
   }
-  const tar = await buildFolderTar(files, sshDerived ? "" : folderName, emptyDirs);
+  const tar = folderTarSource(files, sshDerived ? "" : folderName, emptyDirs);
+  const taskId = createTransferTaskId();
+  const attemptId = createTransferTaskId();
   try {
-    await uploadTar(sessionId, remoteTemp, tar, archiveName, onProgress);
+    await uploadChunked({ sessionId, remotePath: remoteTemp, source: tar, taskId, attemptId, onProgress });
   } catch (e) {
     await fsApi.delete(sessionId, remoteTemp, false).catch(() => undefined);
     throw new Error(`上传打包文件失败：${describeError(e)}`);

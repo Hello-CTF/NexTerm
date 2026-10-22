@@ -27,7 +27,10 @@ func TestFallbackProfileRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, ok := reloaded.ActiveConfig()
+	config, ok, err := reloaded.ActiveConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !ok || config.Model != "primary" || config.FallbackModel != "fallback" {
 		t.Fatalf("reloaded fallback config = %+v, active=%v", config, ok)
 	}

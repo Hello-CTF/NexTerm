@@ -76,7 +76,12 @@ vi.mock("../../app/platform", async (importOriginal) => {
 });
 
 import { QuickConnect } from "../../app/QuickConnect";
-import { reconnectDeadHost, useUi } from "../../app/store";
+import {
+  assetConnectionProblemKey,
+  quickConnectionProblemKey,
+  reconnectDeadHost,
+  useUi,
+} from "../../app/store";
 import { sanitizeLayout } from "../../app/layout";
 import { useAssetVisibility } from "../../features/explorer/assetVisibility";
 import { useConnectHistory } from "../../features/explorer/connectHistory";
@@ -213,6 +218,7 @@ beforeEach(() => {
     activeWorkspaceId: null,
     connectingAssetIds: [],
     workspaceRuntime: {},
+    connectionProblems: {},
     pushToast: mocks.toast,
   });
   mocks.writeText.mockResolvedValue(undefined);
@@ -750,7 +756,7 @@ describe("QuickConnect ad-hoc connections", () => {
       .mockRejectedValueOnce({
         code: "host_key_pending",
         message: "host key confirmation required",
-        detail: { host: "example.com", port: 2222, keyType: "ssh-ed25519", fingerprint: "SHA256:abc" },
+        detail: { host: "example.com", port: 2222, keyType: "ssh-ed25519", fingerprint: "SHA256:abc", key: "ZmFrZS1xdWljay1rZXk=" },
       })
       .mockResolvedValueOnce(QUICK_SESSION);
     const onClose = vi.fn();
@@ -765,6 +771,7 @@ describe("QuickConnect ad-hoc connections", () => {
       2222,
       "ssh-ed25519",
       "SHA256:abc",
+      "ZmFrZS1xdWljay1rZXk=",
     );
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(mocks.sessionConnectQuick).toHaveBeenCalledTimes(2);
@@ -852,6 +859,51 @@ describe("QuickConnect ad-hoc connections", () => {
     const alert = await waitForAlert(view.container);
     expect(alert.textContent).toContain("connect boom");
     expect(mocks.deleteCredential).not.toHaveBeenCalled();
+  });
+
+  it("uses one asset problem after saving and retries without creating another asset", async () => {
+    mocks.list.mockImplementation(async () => [{ ...WEB }, { ...DB }, { ...LOCAL }, { ...CREATED_ASSET }]);
+    mocks.sessionConnect
+      .mockRejectedValueOnce({ code: "ssh", message: "created connection failed" })
+      .mockResolvedValue({ ...SESSION, id: "s-created", assetId: CREATED_ASSET.id, name: CREATED_ASSET.name });
+    const onClose = vi.fn();
+    const view = await mountSettled({ onClose });
+    setInputValue(searchInput(view.container), "example.com:2222");
+    await flush();
+
+    click(options(view.container)[1] as HTMLButtonElement);
+    await waitFor(() => expect(mocks.sessionConnect).toHaveBeenCalledWith(CREATED_ASSET.id));
+    await waitFor(() => {
+      expect(view.container.querySelector('section[aria-label="本次问题"]')?.textContent)
+        .toContain("created connection failed");
+    });
+
+    const quickKey = quickConnectionProblemKey({ host: "example.com", port: 2222, username: null });
+    const assetKey = assetConnectionProblemKey(CREATED_ASSET.id);
+    let state = useUi.getState();
+    expect(state.connectionProblems[quickKey]).toBeUndefined();
+    expect(state.connectionProblems[assetKey]).toMatchObject({
+      connection: { kind: "asset", asset: { id: CREATED_ASSET.id } },
+    });
+    expect([
+      ...Object.values(state.connectionProblems),
+      ...Object.values(state.workspaceRuntime).flatMap((runtime) => runtime.problems ?? []),
+    ].filter((problem) => problem.connectionKey)).toHaveLength(1);
+
+    const section = view.container.querySelector('section[aria-label="本次问题"]') as HTMLElement;
+    const reconnect = [...section.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "重新连接",
+    );
+    expect(reconnect).toBeDefined();
+    click(reconnect!);
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+
+    expect(mocks.assetCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.sessionConnect).toHaveBeenCalledTimes(2);
+    state = useUi.getState();
+    expect(state.connectionProblems[quickKey]).toBeUndefined();
+    expect(state.connectionProblems[assetKey]).toBeUndefined();
+    expect(Object.values(state.workspaceRuntime).flatMap((runtime) => runtime.problems ?? [])).toEqual([]);
   });
 
   it("resets the active option after a quick target is entered so Enter starts the ad-hoc connection instead of the previous asset row", async () => {
@@ -961,7 +1013,7 @@ describe("QuickConnect first connection and returning paths", () => {
       .mockRejectedValueOnce({
         code: "host_key_pending",
         message: "host key confirmation required",
-        detail: { host: "example.com", port: 2222, keyType: "ssh-ed25519", fingerprint: "SHA256:abc" },
+        detail: { host: "example.com", port: 2222, keyType: "ssh-ed25519", fingerprint: "SHA256:abc", key: "ZmFrZS1xdWljay1rZXk=" },
       })
       .mockResolvedValueOnce({ ...SESSION, id: "s-new", assetId: "a-new", name: "example.com:2222" });
     const onClose = vi.fn();
@@ -983,6 +1035,7 @@ describe("QuickConnect first connection and returning paths", () => {
       2222,
       "ssh-ed25519",
       "SHA256:abc",
+      "ZmFrZS1xdWljay1rZXk=",
     );
     await waitFor(() => expect(mocks.sessionConnect).toHaveBeenCalledTimes(2));
     expect(mocks.sessionConnect).toHaveBeenLastCalledWith("a-new");
@@ -1081,6 +1134,8 @@ describe("QuickConnect workspace problems", () => {
           kind: "session",
           title: "current workspace",
           sessionId: "session-current",
+          assetId: "a-web",
+          assetKind: "ssh",
           panes: [{ id: "p", tabs: [], activeTabId: null }],
           activePaneId: "p",
           splitRatio: 0.5,
@@ -1090,6 +1145,7 @@ describe("QuickConnect workspace problems", () => {
       activeWorkspaceId: "ws-connect",
       workspaceRuntime: {},
     });
+    useUi.getState().ensureWorkspaceRuntime("ws-connect");
   }
 
   function problems() {

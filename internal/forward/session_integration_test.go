@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
@@ -95,7 +96,8 @@ func TestSessionManagerReconnectReplacementAndBoundedRetry(t *testing.T) {
 	})
 	t.Cleanup(func() { _ = manager.Close() })
 	t.Cleanup(release)
-	connectedSession, err := manager.Connect(t.Context(), session.Asset{ID: "ssh-asset", Kind: session.KindSSH})
+	ownerCtx := ipc.WithUserID(t.Context(), "reconnect-owner")
+	connectedSession, err := manager.Connect(ownerCtx, session.Asset{ID: "ssh-asset", Kind: session.KindSSH})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +109,7 @@ func TestSessionManagerReconnectReplacementAndBoundedRetry(t *testing.T) {
 		HandshakeTimeout: time.Second,
 	})
 	t.Cleanup(func() { _ = service.Close() })
-	spec, err := service.CreateLocal(session.WithOpenAccess(t.Context()), CreateLocalArgs{
+	spec, err := service.CreateLocal(ownerCtx, CreateLocalArgs{
 		SessionID:  connectedSession.ID,
 		TargetHost: "remote.internal",
 		TargetPort: 22,

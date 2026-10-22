@@ -39,7 +39,7 @@ func shellHistoryCall(limit int) Call {
 func TestShellHistoryParsesZshNewestFirst(t *testing.T) {
 	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".zsh_history", ": 1700000000:0;ls -la\n: 1700000001:0;git status\n: 1700000002:0;make test\n")
-	registry := NewRegistry(Dependencies{})
+	registry := NewRegistry(Dependencies{LocalHistory: true})
 	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
 	if !result.OK {
 		t.Fatalf("result=%+v", result)
@@ -58,7 +58,7 @@ func TestShellHistoryParsesZshNewestFirst(t *testing.T) {
 func TestShellHistoryParsesPlainZshLines(t *testing.T) {
 	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".zsh_history", "ls -la\ngit status\nmake test\n")
-	registry := NewRegistry(Dependencies{})
+	registry := NewRegistry(Dependencies{LocalHistory: true})
 	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
 	if !result.OK {
 		t.Fatalf("result=%+v", result)
@@ -80,7 +80,7 @@ func TestShellHistoryParsesPlainZshLines(t *testing.T) {
 func TestShellHistoryZshExtendedSkipsContinuationLines(t *testing.T) {
 	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".zsh_history", ": 1700000000:0;for i in 1 2; do\nplain-continuation\n: 1700000001:0;done\n")
-	registry := NewRegistry(Dependencies{})
+	registry := NewRegistry(Dependencies{LocalHistory: true})
 	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
 	if !result.OK {
 		t.Fatalf("result=%+v", result)
@@ -96,7 +96,7 @@ func TestShellHistoryZshExtendedSkipsContinuationLines(t *testing.T) {
 func TestShellHistoryParsesBashSkippingTimestamps(t *testing.T) {
 	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".bash_history", "#1700000000\nls\necho hi\n#1700000001\ngit status\n")
-	registry := NewRegistry(Dependencies{})
+	registry := NewRegistry(Dependencies{LocalHistory: true})
 	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
 	if !result.OK {
 		t.Fatalf("result=%+v", result)
@@ -112,7 +112,7 @@ func TestShellHistoryParsesBashSkippingTimestamps(t *testing.T) {
 func TestShellHistoryParsesFishCmdLines(t *testing.T) {
 	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".local/share/fish/fish_history", "- cmd: ls\n  when: 1700000000\n- cmd: make test\n  when: 1700000001\n")
-	registry := NewRegistry(Dependencies{})
+	registry := NewRegistry(Dependencies{LocalHistory: true})
 	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
 	if !result.OK {
 		t.Fatalf("result=%+v", result)
@@ -129,7 +129,7 @@ func TestShellHistoryPrefersFirstExistingShell(t *testing.T) {
 	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".zsh_history", ": 1700000000:0;zsh-command\n")
 	writeHistoryFile(t, home, ".bash_history", "bash-command\n")
-	registry := NewRegistry(Dependencies{})
+	registry := NewRegistry(Dependencies{LocalHistory: true})
 	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
 	if !result.OK || !strings.Contains(result.Text, "zsh") || strings.Contains(result.Text, "bash-command") {
 		t.Fatalf("text=%q", result.Text)
@@ -139,7 +139,7 @@ func TestShellHistoryPrefersFirstExistingShell(t *testing.T) {
 func TestShellHistoryLimitClampsToNewest(t *testing.T) {
 	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".bash_history", "one\ntwo\nthree\nfour\n")
-	registry := NewRegistry(Dependencies{})
+	registry := NewRegistry(Dependencies{LocalHistory: true})
 	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(2), nil)
 	if !result.OK || !strings.Contains(result.Text, "最新 2 条") || strings.Contains(result.Text, "one") {
 		t.Fatalf("text=%q", result.Text)
@@ -157,7 +157,7 @@ func TestShellHistoryLimitClampsToNewest(t *testing.T) {
 func TestShellHistoryRedactsSecrets(t *testing.T) {
 	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".bash_history", "curl -H \"Authorization: Bearer tok-123\" https://x\nmysql -psecretpw db\nexport password=hunter2\n")
-	registry := NewRegistry(Dependencies{})
+	registry := NewRegistry(Dependencies{LocalHistory: true})
 	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
 	if !result.OK {
 		t.Fatalf("result=%+v", result)
@@ -174,7 +174,7 @@ func TestShellHistoryRedactsSecrets(t *testing.T) {
 
 func TestShellHistoryMissingFilesListsAttemptedPaths(t *testing.T) {
 	shellHistoryTestHome(t)
-	registry := NewRegistry(Dependencies{})
+	registry := NewRegistry(Dependencies{LocalHistory: true})
 	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
 	if result.OK || !strings.Contains(result.Text, "未找到本机 shell 历史文件") ||
 		!strings.Contains(result.Text, ".zsh_history") || !strings.Contains(result.Text, ".bash_history") || !strings.Contains(result.Text, "fish_history") {
@@ -191,7 +191,7 @@ func TestShellHistoryReadsOnlyTailOfLargeFile(t *testing.T) {
 	}
 	builder.WriteString("recent-command\n")
 	writeHistoryFile(t, home, ".bash_history", builder.String())
-	registry := NewRegistry(Dependencies{})
+	registry := NewRegistry(Dependencies{LocalHistory: true})
 	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(1), nil)
 	if !result.OK {
 		t.Fatalf("result=%+v", result)
@@ -204,31 +204,38 @@ func TestShellHistoryReadsOnlyTailOfLargeFile(t *testing.T) {
 	}
 }
 
-func TestShellHistoryLabelsRemoteScope(t *testing.T) {
+func TestShellHistoryRejectsRemoteAssetScope(t *testing.T) {
 	home := shellHistoryTestHome(t)
-	writeHistoryFile(t, home, ".bash_history", "ls\n")
-	registry := NewRegistry(Dependencies{ListAssets: func(context.Context) ([]Asset, error) {
+	const desktopHistory = "desktop-history-must-not-leak"
+	writeHistoryFile(t, home, ".bash_history", desktopHistory+"\n")
+	registry := NewRegistry(Dependencies{LocalHistory: true, ListAssets: func(context.Context) ([]Asset, error) {
 		return []Asset{{ID: "a1", Kind: "ssh"}, {ID: "local-1", Kind: "local"}}, nil
 	}})
-	result := registry.Execute(context.Background(), "job", Scope{AssetID: "a1"}, shellHistoryCall(0), nil)
-	if !result.OK || !strings.Contains(result.Text, "远端资产") || !strings.Contains(result.Text, "本机") {
-		t.Fatalf("text=%q", result.Text)
+	for _, assetID := range []string{"a1", "missing"} {
+		result := registry.Execute(context.Background(), "job", Scope{AssetID: assetID}, shellHistoryCall(0), nil)
+		if result.OK || !strings.Contains(result.Text, "exec_commands") || strings.Contains(result.Text, desktopHistory) {
+			t.Fatalf("asset %q must fail closed with an exec alternative: %+v", assetID, result)
+		}
 	}
 	local := registry.Execute(context.Background(), "job", Scope{AssetID: "local-1"}, shellHistoryCall(0), nil)
-	if !local.OK || strings.Contains(local.Text, "远端资产") {
-		t.Fatalf("local text=%q", local.Text)
+	if !local.OK || !strings.Contains(local.Text, desktopHistory) {
+		t.Fatalf("local asset history = %+v", local)
 	}
-	// Unresolvable AssetID fails closed and is treated as remote
-	unknown := registry.Execute(context.Background(), "job", Scope{AssetID: "missing"}, shellHistoryCall(0), nil)
-	if !unknown.OK || !strings.Contains(unknown.Text, "远端资产") {
-		t.Fatalf("unknown asset must fail closed: %q", unknown.Text)
+}
+
+func TestShellHistoryServerModeRejectsDirectExecution(t *testing.T) {
+	home := shellHistoryTestHome(t)
+	writeHistoryFile(t, home, ".bash_history", "server-history-must-not-be-read\n")
+	result := NewRegistry(Dependencies{}).Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
+	if result.OK || !strings.Contains(result.Text, "桌面模式") {
+		t.Fatalf("server mode history = %+v", result)
 	}
 }
 
 func TestShellHistoryRequiresConfirmation(t *testing.T) {
 	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".bash_history", "ls\n")
-	registry := NewRegistry(Dependencies{Terminal: &fakeTerminal{}})
+	registry := NewRegistry(Dependencies{LocalHistory: true, Terminal: &fakeTerminal{assetKind: "local"}})
 	readWrite := &Execution{
 		Registry:   registry,
 		Scope:      Scope{SessionID: "s"},
@@ -255,86 +262,59 @@ func TestShellHistoryRequiresConfirmation(t *testing.T) {
 	}
 }
 
-func TestShellHistoryRemoteScopeForcesConfirmEvenWhenRemembered(t *testing.T) {
+func TestShellHistoryRemoteSessionSuggestsExecWithoutConfirmation(t *testing.T) {
 	home := shellHistoryTestHome(t)
-	writeHistoryFile(t, home, ".bash_history", "ls\n")
-	registry := NewRegistry(Dependencies{ListAssets: func(context.Context) ([]Asset, error) {
-		return []Asset{{ID: "a1", Kind: "ssh"}}, nil
-	}})
-	execution := &Execution{
-		Registry:   registry,
-		Scope:      Scope{SessionID: "s", AssetID: "a1"},
-		Permission: guard.Config{Mode: guard.ReadWrite},
-		Memory:     guard.NewMemory(),
-	}
-	execution.Memory.Add(guard.Kind(shellHistoryKind))
-	if _, err := execution.initial(context.Background(), shellHistoryCall(0)); err == nil {
-		t.Fatal("remote scope must confirm shell_history even with remembered approval")
-	}
-}
-
-func TestShellHistoryRemoteSessionForcesConfirmWithoutAssetID(t *testing.T) {
-	// The real sidebar passes only sessionId/tabId: remote detection must go through the server-side session asset kind.
-	home := shellHistoryTestHome(t)
-	writeHistoryFile(t, home, ".bash_history", "ls\n")
-	terminal := &fakeTerminal{assetKind: "ssh"}
-	registry := NewRegistry(Dependencies{Terminal: terminal})
+	const desktopHistory = "remote-session-must-not-read-desktop-history"
+	writeHistoryFile(t, home, ".bash_history", desktopHistory+"\n")
+	registry := NewRegistry(Dependencies{LocalHistory: true, Terminal: &fakeTerminal{assetKind: "ssh"}})
 	scope := Scope{SessionID: "s", TabID: "tab"}
-
-	readWrite := &Execution{
-		Registry:   registry,
-		Scope:      scope,
-		Permission: guard.Config{Mode: guard.ReadWrite},
-		Memory:     guard.NewMemory(),
-	}
-	if _, err := readWrite.initial(context.Background(), shellHistoryCall(0)); err == nil {
-		t.Fatal("remote session must ask before shell_history")
-	}
-	readWrite.Memory.Add(guard.Kind(shellHistoryKind))
-	if _, err := readWrite.initial(context.Background(), shellHistoryCall(0)); err == nil {
-		t.Fatal("remote session must re-ask shell_history even with remembered approval")
-	}
-	silent := &Execution{
-		Registry:   registry,
-		Scope:      scope,
-		Permission: guard.Config{Mode: guard.Silent},
-		Memory:     guard.NewMemory(),
-	}
-	if _, err := silent.initial(context.Background(), shellHistoryCall(0)); err == nil {
-		t.Fatal("remote session must ask shell_history even in silent mode")
-	}
-	result := registry.Execute(context.Background(), "job", scope, shellHistoryCall(0), nil)
-	if !result.OK || !strings.Contains(result.Text, "远端资产") {
-		t.Fatalf("remote label missing: %+v", result)
+	for _, mode := range []guard.Mode{guard.ReadWrite, guard.Silent} {
+		execution := &Execution{
+			Registry:   registry,
+			Scope:      scope,
+			Permission: guard.Config{Mode: mode},
+			Memory:     guard.NewMemory(),
+		}
+		execution.Memory.Add(guard.Kind(shellHistoryKind))
+		result, err := execution.initial(context.Background(), shellHistoryCall(0))
+		if err != nil {
+			t.Fatalf("mode %s asked for confirmation instead of rejecting the remote call: %v", mode, err)
+		}
+		if result.OK || !strings.Contains(result.Text, "exec_commands") || strings.Contains(result.Text, desktopHistory) {
+			t.Fatalf("mode %s remote result = %+v", mode, result)
+		}
 	}
 }
 
 func TestShellHistoryKindResolutionFailsClosed(t *testing.T) {
 	home := shellHistoryTestHome(t)
-	writeHistoryFile(t, home, ".bash_history", "ls\n")
-	// Kind resolution failure is treated as remote
-	registry := NewRegistry(Dependencies{Terminal: &fakeTerminal{assetKindErr: errors.New("boom")}})
-	result := registry.Execute(context.Background(), "job", Scope{SessionID: "s", TabID: "tab"}, shellHistoryCall(0), nil)
-	if !result.OK || !strings.Contains(result.Text, "远端资产") {
-		t.Fatalf("resolution failure must fail closed: %+v", result)
+	const desktopHistory = "unknown-scope-must-not-read-desktop-history"
+	writeHistoryFile(t, home, ".bash_history", desktopHistory+"\n")
+	for _, test := range []struct {
+		name     string
+		terminal Terminal
+	}{
+		{name: "resolution error", terminal: &fakeTerminal{assetKindErr: errors.New("boom")}},
+		{name: "missing kind capability", terminal: legacyTerminal{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			registry := NewRegistry(Dependencies{LocalHistory: true, Terminal: test.terminal})
+			result := registry.Execute(context.Background(), "job", Scope{SessionID: "s", TabID: "tab"}, shellHistoryCall(0), nil)
+			if result.OK || !strings.Contains(result.Text, "exec_commands") || strings.Contains(result.Text, desktopHistory) {
+				t.Fatalf("unknown kind must fail closed: %+v", result)
+			}
+		})
 	}
-	// Session present but the terminal lacks kind resolution: also treated as remote
-	registry = NewRegistry(Dependencies{Terminal: legacyTerminal{}})
-	result = registry.Execute(context.Background(), "job", Scope{SessionID: "s", TabID: "tab"}, shellHistoryCall(0), nil)
-	if !result.OK || !strings.Contains(result.Text, "远端资产") {
-		t.Fatalf("missing kind capability must fail closed: %+v", result)
-	}
-	// Purely local conversation without session context: local label, no remote warning
-	result = registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
-	if !result.OK || strings.Contains(result.Text, "远端资产") {
-		t.Fatalf("session-less scope should stay local: %+v", result)
+	result := NewRegistry(Dependencies{LocalHistory: true}).Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
+	if !result.OK || !strings.Contains(result.Text, desktopHistory) {
+		t.Fatalf("session-less desktop scope should stay local: %+v", result)
 	}
 }
 
 func TestShellHistoryLocalSessionUsesRememberedApproval(t *testing.T) {
 	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".bash_history", "ls\n")
-	registry := NewRegistry(Dependencies{Terminal: &fakeTerminal{assetKind: "local"}})
+	registry := NewRegistry(Dependencies{LocalHistory: true, Terminal: &fakeTerminal{assetKind: "local"}})
 	execution := &Execution{
 		Registry:   registry,
 		Scope:      Scope{SessionID: "s", TabID: "tab"},
@@ -348,8 +328,5 @@ func TestShellHistoryLocalSessionUsesRememberedApproval(t *testing.T) {
 	result, err := execution.initial(context.Background(), shellHistoryCall(0))
 	if err != nil || !result.OK {
 		t.Fatalf("remembered local approval should execute: result=%+v err=%v", result, err)
-	}
-	if strings.Contains(result.Text, "远端资产") {
-		t.Fatalf("local session mislabeled: %q", result.Text)
 	}
 }

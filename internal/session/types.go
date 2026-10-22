@@ -8,12 +8,14 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
 	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
 
 const (
@@ -47,6 +49,7 @@ var (
 	ErrInvalidTitle         = errors.New("invalid terminal tab title")
 	ErrDurableDisabled      = errors.New("SSH durable terminals disabled for this asset")
 	ErrAmbiguousDurable     = errors.New("durable terminal ID exists on multiple sessions")
+	ErrRecoveryOverrun      = errors.New("refused suffix exceeds the retained recovery window")
 )
 
 type Status string
@@ -60,14 +63,16 @@ const (
 )
 
 type Asset struct {
-	ID             string
-	Name           string
-	Kind           string
-	Encoding       string
-	StartupCommand string
-	TerminalMode   string
-	Env            map[string]string
-	Options        any
+	ID                string
+	Name              string
+	Kind              string
+	Encoding          string
+	StartupCommand    string
+	TerminalMode      string
+	Env               map[string]string
+	Options           any
+	StoreBacked       bool   `json:"-"`
+	ConfigFingerprint string `json:"-"`
 }
 
 const (
@@ -152,13 +157,14 @@ type Config struct {
 	Durable              base.DurableProvider
 	DurableResolver      DurableResolver
 	TerminalModeResolver func(context.Context, string) (string, error)
-	TranscriptOffsets    DurableTranscriptOffsetStore
-	TabTitles            DurableTabTitleStore
+	TranscriptOffsets    OwnerScopedDurableTranscriptOffsetStore
+	TabTitles            OwnerScopedDurableTabTitleStore
 	Hub                  *hub.Hub
 	Emitter              Emitter
 	Transcripts          TranscriptSink
 	Commands             CommandSink
 	Logger               *slog.Logger
+	Now                  func() time.Time
 	IdleTimeout          time.Duration
 	SweepInterval        time.Duration
 	ReconnectMax         int
@@ -169,14 +175,20 @@ type Config struct {
 }
 
 type SessionInfo struct {
-	ID         string    `json:"id"`
-	AssetID    string    `json:"assetId"`
-	Name       string    `json:"name"`
-	Kind       string    `json:"kind"`
-	Status     Status    `json:"status"`
-	Tabs       []string  `json:"tabs"`
-	Generation uint64    `json:"generation"`
-	CreatedAt  time.Time `json:"createdAt"`
+	ID                     string     `json:"id"`
+	AssetID                string     `json:"assetId"`
+	Name                   string     `json:"name"`
+	Kind                   string     `json:"kind"`
+	Status                 Status     `json:"status"`
+	Tabs                   []string   `json:"tabs"`
+	Generation             uint64     `json:"generation"`
+	CreatedAt              time.Time  `json:"createdAt"`
+	Error                  string     `json:"error,omitempty"`
+	ErrorCode              ipc.Code   `json:"errorCode,omitempty"`
+	Attempt                int        `json:"attempt,omitempty"`
+	NextRetryAt            *time.Time `json:"nextRetryAt,omitempty"`
+	StaleConfig            bool       `json:"staleConfig"`
+	AssetConfigFingerprint string     `json:"-"`
 }
 
 type Shell string
@@ -189,23 +201,28 @@ const (
 )
 
 type TabInfo struct {
-	ID             string `json:"id"`
-	SessionID      string `json:"sessionId"`
-	Cols           uint32 `json:"cols"`
-	Rows           uint32 `json:"rows"`
-	GridRevision   uint64 `json:"gridRevision"`
-	Controller     string `json:"controller,omitempty"`
-	Subscribers    int    `json:"subscribers"`
-	Viewers        int    `json:"viewers"`
-	Exited         bool   `json:"exited"`
-	Retainable     bool   `json:"retainable"`
-	Ephemeral      bool   `json:"ephemeral,omitempty"`
-	Durable        bool   `json:"durable,omitempty"`
-	Cwd            string `json:"cwd,omitempty"`
-	Encoding       string `json:"encoding,omitempty"`
-	Title          string `json:"title,omitempty"`
-	Shell          Shell  `json:"shell"`
-	FallbackNotice string `json:"-"`
+	ID              string `json:"id"`
+	SessionID       string `json:"sessionId"`
+	Cols            uint32 `json:"cols"`
+	Rows            uint32 `json:"rows"`
+	GridRevision    uint64 `json:"gridRevision"`
+	Controller      string `json:"controller,omitempty"`
+	Subscribers     int    `json:"subscribers"`
+	Viewers         int    `json:"viewers"`
+	Exited          bool   `json:"exited"`
+	Retainable      bool   `json:"retainable"`
+	Ephemeral       bool   `json:"ephemeral,omitempty"`
+	Durable         bool   `json:"durable,omitempty"`
+	Cwd             string `json:"cwd,omitempty"`
+	Encoding        string `json:"encoding,omitempty"`
+	Title           string `json:"title,omitempty"`
+	Shell           Shell  `json:"shell"`
+	LastOutputAt    int64  `json:"lastOutputAt,omitempty"`
+	LastOutputMSAgo int64  `json:"-"`
+	FallbackNotice  string `json:"-"`
+	// AttachmentID is the unique incarnation of this attachment, established
+	// at attach time and bound to the ACK and the floor high-water.
+	AttachmentID uint64 `json:"attachmentId,omitempty"`
 }
 
 func (t TabInfo) MarshalJSON() ([]byte, error) {
@@ -217,10 +234,13 @@ func (t TabInfo) MarshalJSON() ([]byte, error) {
 }
 
 type StatusEvent struct {
-	SessionID string `json:"sessionId"`
-	Status    Status `json:"status"`
-	Error     string `json:"error,omitempty"`
-	Version   uint64 `json:"version"`
+	SessionID   string     `json:"sessionId"`
+	Status      Status     `json:"status"`
+	Error       string     `json:"error,omitempty"`
+	ErrorCode   ipc.Code   `json:"errorCode,omitempty"`
+	Attempt     int        `json:"attempt,omitempty"`
+	NextRetryAt *time.Time `json:"nextRetryAt,omitempty"`
+	Version     uint64     `json:"version"`
 }
 
 type ExitEvent struct {
@@ -267,15 +287,22 @@ type ThrottleEvent struct {
 	Version       uint64 `json:"version"`
 }
 
+type reconnectCompletion struct {
+	done chan struct{}
+	err  error
+}
+
 type Session struct {
 	ID        string
 	CreatedAt time.Time
 
-	asset  Asset
-	userID string
+	asset         Asset
+	assetSnapshot atomic.Pointer[Asset]
+	userID        string
 
 	mu                  sync.Mutex
 	status              Status
+	staleConfig         bool
 	transport           *transportHandle
 	generation          uint64
 	eventVersion        uint64
@@ -290,8 +317,10 @@ type Session struct {
 	connectOwnerExpired bool
 	connectFinished     bool
 	reconnecting        bool
-	reconnectDone       chan struct{}
-	reconnectErr        error
+	reconnectCompletion *reconnectCompletion
+	reconnectAttempt    int
+	reconnectNextRetry  time.Time
+	statusErr           error
 
 	durableMu            sync.Mutex
 	durableProvider      base.DurableProvider
@@ -319,12 +348,57 @@ func (s *Session) assetOwnerKey() assetOwnerKey {
 }
 
 func (s *Session) statusEventLocked(status Status, cause error) StatusEvent {
+	if status == StatusConnecting || status == StatusConnected || (status == StatusDisconnected && cause == nil) {
+		s.reconnectAttempt = 0
+	}
+	if status != StatusReconnecting {
+		s.reconnectNextRetry = time.Time{}
+	}
+	s.statusErr = cause
 	s.eventVersion++
-	event := StatusEvent{SessionID: s.ID, Status: status, Version: s.eventVersion}
+	event := StatusEvent{SessionID: s.ID, Status: status, Attempt: s.reconnectAttempt, Version: s.eventVersion}
+	if !s.reconnectNextRetry.IsZero() {
+		next := s.reconnectNextRetry
+		event.NextRetryAt = &next
+	}
 	if cause != nil {
 		event.Error = userMessage(cause)
+		event.ErrorCode = sessionStatusErrorCode(cause)
 	}
 	return event
+}
+
+func sessionStatusErrorCode(err error) ipc.Code {
+	var connectErr *ssh.ConnectError
+	if errors.As(err, &connectErr) {
+		switch connectErr.Kind {
+		case ssh.ErrorKindConfig:
+			return ipc.CodeBadParam
+		case ssh.ErrorKindAuth, ssh.ErrorKindHostKeyChanged:
+			return ipc.Code(connectErr.Kind)
+		case ssh.ErrorKindHostKeyPending:
+			return ipc.CodeHostKeyPending
+		case ssh.ErrorKindTimeout:
+			return ipc.CodeTimeout
+		default:
+			return ipc.CodeSSH
+		}
+	}
+	var hostKeyErr *ssh.HostKeyError
+	if errors.As(err, &hostKeyErr) {
+		if hostKeyErr.Pending {
+			return ipc.CodeHostKeyPending
+		}
+		return ipc.Code(ssh.ErrorKindHostKeyChanged)
+	}
+	var appErr *ipc.Error
+	if errors.As(err, &appErr) {
+		return appErr.Code
+	}
+	if errors.Is(err, context.Canceled) {
+		return ipc.CodeDisconnected
+	}
+	return IPCError(err).Code
 }
 
 func (s *Session) Info() SessionInfo {
@@ -335,13 +409,27 @@ func (s *Session) Info() SessionInfo {
 		tabs = append(tabs, id)
 	}
 	sort.Strings(tabs)
-	return SessionInfo{
-		ID: s.ID, AssetID: s.asset.ID, Name: s.asset.Name, Kind: s.asset.Kind,
+	asset := s.Asset()
+	info := SessionInfo{
+		ID: s.ID, AssetID: asset.ID, Name: asset.Name, Kind: asset.Kind,
 		Status: s.status, Tabs: tabs, Generation: s.generation, CreatedAt: s.CreatedAt,
+		Attempt: s.reconnectAttempt, StaleConfig: s.staleConfig, AssetConfigFingerprint: asset.ConfigFingerprint,
 	}
+	if !s.reconnectNextRetry.IsZero() {
+		next := s.reconnectNextRetry
+		info.NextRetryAt = &next
+	}
+	if s.statusErr != nil {
+		info.Error = userMessage(s.statusErr)
+		info.ErrorCode = sessionStatusErrorCode(s.statusErr)
+	}
+	return info
 }
 
 func (s *Session) Asset() Asset {
+	if snapshot := s.assetSnapshot.Load(); snapshot != nil {
+		return *snapshot
+	}
 	return s.asset
 }
 
@@ -374,6 +462,8 @@ type DurableTabOptions struct {
 	Title             string
 	MetadataRevision  uint64
 	CanonicalMetadata bool
+	// RecoveredExited carries the authoritative dead state from the descriptor used for recovery.
+	RecoveredExited bool
 }
 
 type durableRenameAttempt struct {

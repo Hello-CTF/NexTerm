@@ -1,5 +1,8 @@
 version: '3'
 
+env:
+  GOTOOLCHAIN: go1.26.8
+
 vars:
   GOFLAGS: '-mod=readonly'
   APP_NAME: 'nexterm'
@@ -15,13 +18,14 @@ tasks:
   fmt:
     summary: Format all Go sources
     cmds:
-      - gofmt -w ./cmd ./internal ./scripts
+      - |
+        "$(go env GOROOT)/bin/gofmt" -w ./cmd ./internal ./scripts ./build
 
   fmt:check:
     summary: Check Go formatting
     cmds:
       - |
-        files="$(gofmt -l ./cmd ./internal ./scripts)"
+        files="$("$(go env GOROOT)/bin/gofmt" -l ./cmd ./internal ./scripts ./build)"
         if [ -n "$files" ]; then
           printf 'gofmt required:\n%s\n' "$files" >&2
           exit 1
@@ -42,74 +46,182 @@ tasks:
       - go test ./...
 
   test:database:
-    summary: Run the shared storage contracts against SQLite or the selected real database
+    summary: Discover and run every dbtest fixture contract against SQLite or the selected real database
+    silent: true
     env:
       GOFLAGS: '{{.GOFLAGS}}'
     cmds:
-      - go test -count=1 -run Database ./internal/dbtest ./internal/store ./internal/account ./internal/sync ./internal/ai/cron ./internal/fleet/server
+      - |
+        {{if .DBTEST_WRAPPER}}
+        export NEXTERM_TEST_DB_BACKEND='{{.DBTEST_BACKEND}}'
+        export NEXTERM_TEST_DB_DSN='{{.DBTEST_DSN}}'
+        {{end}}
+        go run ./scripts/test-database
+
+  test:database:sqlite:
+    summary: Run database fixture contracts explicitly against SQLite
+    cmds:
+      - task: test:database
+        vars:
+          DBTEST_WRAPPER: true
+          DBTEST_BACKEND: sqlite
+          DBTEST_DSN: ''
+
+  test:database:postgres:
+    summary: Start the development PostgreSQL 16 service and run database fixture contracts
+    cmds:
+      - docker compose -f deploy/dev/compose.yml up -d --wait postgres
+      - task: test:database
+        vars:
+          DBTEST_WRAPPER: true
+          DBTEST_BACKEND: postgres
+          DBTEST_DSN: 'postgres://nexterm:nexterm@127.0.0.1:55433/nexterm_test?sslmode=disable'
+
+  test:database:mysql:
+    summary: Start the development MySQL 8.4 service and run database fixture contracts
+    cmds:
+      - docker compose -f deploy/dev/compose.yml up -d --wait mysql
+      - task: test:database
+        vars:
+          DBTEST_WRAPPER: true
+          DBTEST_BACKEND: mysql
+          DBTEST_DSN: 'root:nexterm_root@tcp(127.0.0.1:33308)/nexterm_test?parseTime=true'
+
+  test:database:mariadb:
+    summary: Start the development MariaDB 11.4 service and run database fixture contracts
+    cmds:
+      - docker compose -f deploy/dev/compose.yml up -d --wait mariadb
+      - task: test:database
+        vars:
+          DBTEST_WRAPPER: true
+          DBTEST_BACKEND: mariadb
+          DBTEST_DSN: 'root:nexterm_root@tcp(127.0.0.1:33309)/nexterm_test?parseTime=true'
 
   test:race:
-    summary: Run Go tests with the race detector
+    summary: Run selected Go packages with the race detector, defaulting to all packages
     env:
       GOFLAGS: '{{.GOFLAGS}}'
     cmds:
-      - go test -race ./...
+      - go test -race -count=1 -p={{.RACE_PACKAGE_PARALLELISM | default "4"}} {{.RACE_PACKAGES | default "./..."}}
 
   test:production:
-    summary: Test production desktop assets using verified frontend output
+    summary: Build or consume verified frontend assets, test production embedding and clean staged assets
     env:
       GOFLAGS: '{{.GOFLAGS}}'
+      DIST_SOURCE: '{{.DIST_SOURCE}}'
+      DIST_MANIFEST: '{{.DIST_MANIFEST}}'
     cmds:
-      - |
-        if [ ! -f dist/index.html ] || [ ! -f target/dist-manifest.json ]; then
-          node scripts/build.mjs frontend --repro-check
-        fi
-      - node scripts/build.mjs frontend --consume-dist=dist --dist-manifest=target/dist-manifest.json
-      - |
-        node -e 'const fs = require("node:fs"); fs.rmSync("cmd/nexterm-desktop/dist", { recursive: true, force: true }); fs.cpSync("dist", "cmd/nexterm-desktop/dist", { recursive: true });'
-      - go test -tags production ./cmd/nexterm-desktop
+      - node scripts/test-production.mjs
+
+  check:lockfile:
+    summary: Verify pnpm can resolve the frozen lockfile without changing it
+    cmds:
+      - pnpm install --frozen-lockfile --lockfile-only --ignore-scripts
 
   check:go:
-    summary: Run Go formatting, vet, module, test and static contract checks
-    deps: [fmt:check, vet, test]
+    summary: Run Go formatting, module, static, vet and test checks from fastest to slowest
     env:
       GOFLAGS: '{{.GOFLAGS}}'
     cmds:
+      - task: fmt:check
       - go mod verify
       - go run ./scripts/verify-manifest-injects
+      - task: vet
+      - task: test
 
   check:frontend:
-    summary: Lint, test, typecheck and reproducibly build the frontend
+    summary: Lint, test, gate coverage, typecheck and reproducibly build the frontend
     cmds:
       - pnpm lint
-      - pnpm test
+      - pnpm test:coverage
       - task: frontend
 
   check:scripts:
-    summary: Test release scripts and artifact evidence behavior
+    summary: Test tooling, release scripts, artifact evidence and fixture discovery
     env:
       GOFLAGS: '{{.GOFLAGS}}'
       SOURCE_DATE_EPOCH: '1'
     cmds:
+      - go run ./scripts/test-database --check
+      - node scripts/check-placeholders.mjs
+      - node --test scripts/*.test.mjs
       - node --test .github/scripts/*.test.mjs
       - python3 scripts/test-install-device.py
+      - python3 scripts/test-systemd-install.py
       - go run ./scripts/check-release-evidence
 
-  check:
-    summary: Run Go, frontend, bindings and release script quality checks once
+  check:ci-quality:
+    summary: Run shared static Go, generated artifact, bindings and script quality gates
+    env:
+      GOFLAGS: '{{.GOFLAGS}}'
     cmds:
-      - task: check:go
-      - task: check:frontend
-      - task: bindings:check
+      - task: fmt:check
+      - go mod verify
+      - go run ./scripts/verify-manifest-injects
+      - task: ipc:contract:check
+      - task: gorm:check
       - task: check:scripts
+      - task: vet
+      - task: bindings:check
+      - GOOS=$(go env GOOS) GOARCH=$(go env GOARCH) go run -mod=readonly ./scripts/compile-only ./...
+
+  check:
+    summary: Run fast integrity checks before Go, bindings and frontend quality gates
+    env:
+      GOFLAGS: '{{.GOFLAGS}}'
+    cmds:
+      - task: check:lockfile
+      - task: check:ci-quality
+      - task: test
+      - task: check:frontend
+      - task: website:check
+
+  website:check:
+    summary: Typecheck and build the GitHub Pages website with the Pages commands
+    cmds:
+      - pnpm exec tsc -p website/tsconfig.json --noEmit
+      - pnpm exec vite build --config website/vite.config.mjs
+
+  gorm:gen:
+    summary: Regenerate GORM queries and remove stale generated outputs
+    env:
+      GOFLAGS: '{{.GOFLAGS}}'
+    cmds:
+      - node scripts/gorm.mjs
+
+  gorm:check:
+    summary: Regenerate GORM queries temporarily and reject drift or orphan outputs
+    env:
+      GOFLAGS: '{{.GOFLAGS}}'
+    cmds:
+      - node scripts/gorm.mjs --check
+
+  doctor:
+    summary: Check development host and tool versions
+    cmds:
+      - node scripts/doctor.mjs
+
+  ipc:contract:
+    summary: Generate the incremental IPC manifest and opt-in TypeScript mappings
+    env:
+      GOFLAGS: '{{.GOFLAGS}}'
+    cmds:
+      - go run ./scripts/gen-ipc-contract
+
+  ipc:contract:check:
+    summary: Reject incremental IPC manifest and TypeScript mapping drift
+    env:
+      GOFLAGS: '{{.GOFLAGS}}'
+    cmds:
+      - go run ./scripts/gen-ipc-contract --check
 
   bindings:
-    summary: Regenerate Wails TypeScript bindings intentionally
+    summary: Regenerate Wails TypeScript bindings intentionally with the pinned CLI
     cmds:
-      - wails3 generate bindings -ts -i -d src/ipc/bindings ./cmd/nexterm-desktop
+      - node scripts/build.mjs bindings --write
 
   bindings:check:
-    summary: Generate into a temporary directory and reject bindings drift
+    summary: Generate into a temporary directory with the pinned CLI and reject bindings drift
     cmds:
       - node scripts/build.mjs bindings
 
@@ -143,13 +255,18 @@ tasks:
     cmds:
       - node scripts/build.mjs desktop --release --repro-check --os=linux --arch={{.GOARCH | default "amd64"}}
 
+  helpers:matrix:
+    summary: Build all nine helpers and execute metadata only on a matching real host
+    cmds:
+      - node scripts/build.mjs helpers --release
+
   package:
-    summary: Package the host desktop and enforce artifact assertion evidence
+    summary: Package the host desktop with nine helpers and representative metadata evidence
     cmds:
       - node scripts/build.mjs release
 
   linux:package:
-    summary: Produce one full Linux server archive with both runtime units
+    summary: Produce one full Linux server archive with both runtime units and nine helpers
     cmds:
       - bash scripts/pack-linux-server.sh --arch={{.GOARCH | default "amd64"}}
 
@@ -169,9 +286,13 @@ tasks:
       - go run ./scripts/e2e-harness sync
 
   verify:
-    summary: Run all checks, race and production tests, then reproducibly build the host desktop
+    summary: Run all checks, race and production tests, the nine-helper matrix and a host desktop build
     cmds:
       - task: check
       - task: test:race
       - task: test:production
+        vars:
+          DIST_SOURCE: dist
+          DIST_MANIFEST: target/dist-manifest.json
+      - task: helpers:matrix
       - node scripts/build.mjs desktop --release --repro-check --consume-dist=dist --dist-manifest=target/dist-manifest.json

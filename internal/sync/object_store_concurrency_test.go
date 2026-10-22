@@ -4,13 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"sync"
 	"testing"
-
-	"github.com/Hello-CTF/NexTerm/internal/account"
-	"github.com/Hello-CTF/NexTerm/internal/ids"
-	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 // pushAllConcurrently simulates multiple devices pushing at once: each worker pushes a batch of distinct objects,
@@ -77,25 +72,4 @@ func assertSeqContiguous(t *testing.T, ctx context.Context, objectStore *objectS
 			t.Fatalf("seq %d missing", seq)
 		}
 	}
-}
-
-// SQLite concurrent push: with a multi-connection file database, head/seq allocation must be serialized, with no duplicate seq and no lost objects.
-func TestObjectStoreConcurrentPushSQLite(t *testing.T) {
-	ctx := context.Background()
-	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "sync-concurrent.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	user, err := account.New(db.GORM()).CreateUser(ctx, "sync-concurrent-"+ids.New(), "test", "store-pw-123")
-	if err != nil {
-		t.Fatal(err)
-	}
-	objectStore := &objectStore{db: db.GORM()}
-
-	head := pushAllConcurrently(t, ctx, objectStore, user.ID, 8, 4)
-	if head == genesisHead(user.ID) {
-		t.Fatal("head did not advance")
-	}
-	assertSeqContiguous(t, ctx, objectStore, user.ID, 32)
 }

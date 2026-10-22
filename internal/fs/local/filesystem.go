@@ -20,7 +20,13 @@ import (
 
 const BackupSuffix = ".nexterm-bak"
 
-type FileSystem struct{}
+type FileSystem struct {
+	// conditionalPreVerifyHook and conditionalPreCommitHook interpose inside
+	// the conditional-create race window so tests can mutate the environment
+	// mid-operation without package-level state.
+	conditionalPreVerifyHook func()
+	conditionalPreCommitHook func()
+}
 
 func New() *FileSystem {
 	return &FileSystem{}
@@ -166,6 +172,13 @@ func (f *FileSystem) Rename(ctx context.Context, from, to string) error {
 	return os.Rename(real(from), real(to))
 }
 
+func (f *FileSystem) AtomicRename(ctx context.Context, from, to string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return replaceFile(real(from), real(to))
+}
+
 func (f *FileSystem) Delete(ctx context.Context, path string, isDir bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -235,6 +248,17 @@ func (f *FileSystem) Size(ctx context.Context, path string) (int64, error) {
 		return 0, err
 	}
 	return info.Size(), nil
+}
+
+func (f *FileSystem) FileMode(ctx context.Context, path string) (fs.FileMode, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	info, err := os.Stat(real(path))
+	if err != nil {
+		return 0, err
+	}
+	return info.Mode(), nil
 }
 
 var _ base.FileSystem = (*FileSystem)(nil)

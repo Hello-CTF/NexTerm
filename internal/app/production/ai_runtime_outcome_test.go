@@ -13,8 +13,10 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/outcome"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -90,7 +92,12 @@ func (s *outcomeScriptServer) ServeHTTP(writer http.ResponseWriter, request *htt
 
 func composeOutcomeRuntime(t *testing.T, command string) (*ProductionServices, *store.Store, *outcomeFakeTransport, string) {
 	t.Helper()
-	ctx := context.Background()
+	services, database, transport, sessionID, _ := composeOutcomeRuntimeContext(t, command, context.Background(), true)
+	return services, database, transport, sessionID
+}
+
+func composeOutcomeRuntimeContext(t *testing.T, command string, ctx context.Context, desktop bool) (*ProductionServices, *store.Store, *outcomeFakeTransport, string, context.Context) {
+	t.Helper()
 	database, err := store.OpenInMemory(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +107,7 @@ func composeOutcomeRuntime(t *testing.T, command string) (*ProductionServices, *
 		t.Fatal(err)
 	}
 	initTestVault(t, ctx, database)
-	profileManager, err := profiles.NewManager(ctx, database)
+	profileManager, err := profiles.NewManager(ctx, database, profiles.WithShared(desktop))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,6 +123,7 @@ func composeOutcomeRuntime(t *testing.T, command string) (*ProductionServices, *
 
 	transport := &outcomeFakeTransport{}
 	sessions := session.NewManager(session.Config{
+		OpenAccess: desktop,
 		Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 			return transport, nil
 		}),
@@ -125,7 +133,7 @@ func composeOutcomeRuntime(t *testing.T, command string) (*ProductionServices, *
 		t.Fatal(err)
 	}
 
-	services := &ProductionServices{Store: database, Profiles: profileManager, Sessions: sessions}
+	services := &ProductionServices{Store: database, Profiles: profileManager, Sessions: sessions, desktop: desktop}
 	if err := composeAIRuntime(ctx, services); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +142,7 @@ func composeOutcomeRuntime(t *testing.T, command string) (*ProductionServices, *
 		_ = sessions.Close()
 		_ = database.Close()
 	})
-	return services, database, transport, connected.ID
+	return services, database, transport, connected.ID, ctx
 }
 
 func waitOutcomeEvent(t *testing.T, stream *agent.SliceStream, eventType string) agent.Event {
@@ -148,7 +156,7 @@ func waitOutcomeEvent(t *testing.T, stream *agent.SliceStream, eventType string)
 			}
 		}
 		if closed {
-			t.Fatalf("stream closed before event %q", eventType)
+			t.Fatalf("stream closed before event %q: %+v", eventType, events)
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for event %q", eventType)
@@ -255,7 +263,7 @@ func TestComposedAIRuntimeRecordsOutcomeOnce(t *testing.T) {
 	if decision.Action != guard.ActionAllow {
 		t.Fatalf("test setup: decision = %+v", decision)
 	}
-	if want := tools.GuardAuthorizationID(decision); record.AuthorizationID != want {
+	if want := tools.GuardAuthorizationID(decision); !strings.HasPrefix(record.AuthorizationID, want+"|execution:") {
 		t.Fatalf("authorization id = %q, want the guard-decision binding %q", record.AuthorizationID, want)
 	}
 
@@ -322,7 +330,7 @@ func TestComposedAIRuntimeOutcomeBindsAskDecisionOnResume(t *testing.T) {
 	if decision.Action != guard.ActionAsk {
 		t.Fatalf("test setup: decision = %+v", decision)
 	}
-	if want := tools.GuardAuthorizationID(decision); record.AuthorizationID != want {
+	if want := tools.GuardAuthorizationID(decision); !strings.HasPrefix(record.AuthorizationID, want+"|execution:") {
 		t.Fatalf("authorization id = %q, want the ask-decision binding %q", record.AuthorizationID, want)
 	}
 	if rows := composedAuditRows(t, database, store.OutcomeAuditKind); len(rows) != 1 {
@@ -337,4 +345,46 @@ func composedAuditRows(t *testing.T, database *store.Store, kind string) []store
 		t.Fatal(err)
 	}
 	return rows
+}
+
+// A non-open manager admits only an identity-backed vouch: the session
+// open-access flag must be backed by an authenticated identity. Identity-less
+// callers fail closed before any tool or session access, with or without the
+// owner-open mark.
+func TestComposedAIRuntimeNonOpenManagerRequiresIdentityBackedVouch(t *testing.T) {
+	vouchedCtx := session.WithOpenAccess(ipc.WithUserID(context.Background(), "user-a"))
+	services, _, transport, sessionID, _ := composeOutcomeRuntimeContext(t, "echo hi", vouchedCtx, false)
+
+	stream := &agent.SliceStream{}
+	if _, err := services.Agent.Start(vouchedCtx, agent.ChatArgs{Message: "run it", Scope: tools.Scope{SessionID: sessionID}}, agent.StaticStream(stream)); err != nil {
+		t.Fatal(err)
+	}
+	sawDone := false
+	for _, event := range waitOutcomeClosed(t, stream) {
+		if event.Type == "error" {
+			t.Fatalf("vouched run failed: %s", event.Message)
+		}
+		if event.Type == "done" {
+			sawDone = true
+		}
+	}
+	if !sawDone {
+		t.Fatal("vouched run did not finish")
+	}
+	if got := transport.effectCalls("echo hi"); got != 1 {
+		t.Fatalf("vouched effect runs = %d, want 1", got)
+	}
+
+	for name, ctx := range map[string]context.Context{
+		"owner open mark": owner.WithOpenAccess(context.Background()),
+		"plain":           context.Background(),
+	} {
+		denied := &agent.SliceStream{}
+		if _, err := services.Agent.Start(ctx, agent.ChatArgs{Message: "run it", Scope: tools.Scope{SessionID: sessionID}}, agent.StaticStream(denied)); err == nil {
+			t.Fatalf("identity-less run (%s) was admitted on a non-open manager", name)
+		}
+	}
+	if got := transport.effectCalls("echo hi"); got != 1 {
+		t.Fatalf("denied run executed the effect: total runs = %d", got)
+	}
 }

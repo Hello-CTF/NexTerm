@@ -195,8 +195,8 @@ func TestComposedAIRuntimeSpawnsScopedSubagent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sessions := session.NewManager(session.Config{})
-	services := ProductionServices{Store: database, Profiles: profileManager, Sessions: sessions}
+	sessions := session.NewManager(session.Config{OpenAccess: true})
+	services := ProductionServices{Store: database, Profiles: profileManager, Sessions: sessions, desktop: true}
 	if err := composeAIRuntime(ctx, &services); err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestComposedAIRuntimeSpawnsScopedSubagent(t *testing.T) {
 					t.Fatalf("subagent request leaked parent or grandchild content: %s", spawnMessageText(message.Content))
 				}
 			}
-			if seen["shell_history"] != 1 || seen["list_assets"] != 1 || seen["todo_write"] != 1 || seen["notify"] != 1 || len(names) != 4 {
+			if seen["shell_history"] != 1 || seen["list_assets"] != 1 || seen["todo_write"] != 1 || seen["notify"] != 1 || seen["operation_result"] != 1 || len(names) != 5 {
 				t.Fatalf("subagent scope must advertise exactly the intersected enabled tools: %v", names)
 			}
 		default:

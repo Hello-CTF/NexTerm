@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   schemas: vi.fn(),
@@ -140,6 +140,12 @@ function keyDown(target: EventTarget, key: string, init: KeyboardEventInit = {})
   });
 }
 
+async function settle(): Promise<void> {
+  await act(async () => {
+    await flush();
+  });
+}
+
 function withQueryClient(node: React.ReactNode): React.ReactElement {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return createElement(QueryClientProvider, { client }, node);
@@ -148,7 +154,8 @@ function withQueryClient(node: React.ReactNode): React.ReactElement {
 describe("IME guards for Enter submission", () => {
   it("does not scan from the Redis pattern input during composition and scans on normal Enter", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
-    await flushUntil(() => mocks.redisScan.mock.calls.length > 0);
+    await settle();
+    await flushUntil(() => mounted!.container.textContent?.includes("k1") ?? false);
     const callsAfterLoad = mocks.redisScan.mock.calls.length;
     const input = mounted.container.querySelector<HTMLInputElement>('[aria-label="键匹配模式"]');
     if (!input) throw new Error("pattern input not found");
@@ -156,12 +163,16 @@ describe("IME guards for Enter submission", () => {
     keyDown(input, "Enter", { keyCode: 229 } as KeyboardEventInit);
     expect(mocks.redisScan).toHaveBeenCalledTimes(callsAfterLoad);
     keyDown(input, "Enter");
-    expect(mocks.redisScan).toHaveBeenCalledTimes(callsAfterLoad + 1);
+    await settle();
+    await flushUntil(() =>
+      mocks.redisScan.mock.calls.length === callsAfterLoad + 1 && !mounted!.container.textContent?.includes("键列表加载中…"),
+    );
   });
 
   it("does not execute from the Redis console during composition and executes on normal Enter", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
-    await flushUntil(() => mocks.redisScan.mock.calls.length > 0);
+    await settle();
+    await flushUntil(() => mounted!.container.textContent?.includes("k1") ?? false);
     const bar = [...mounted.container.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("控制台"),
     );
@@ -177,53 +188,75 @@ describe("IME guards for Enter submission", () => {
     keyDown(cmdInput, "Enter", { isComposing: true });
     expect(mocks.redisCommand).not.toHaveBeenCalled();
     keyDown(cmdInput, "Enter");
-    await flushUntil(() => mocks.redisCommand.mock.calls.length > 0);
+    await settle();
+    await flushUntil(() => mounted!.container.textContent?.includes("OK") ?? false);
     expect(mocks.redisCommand).toHaveBeenCalledWith("c1", ["INFO", "memory"]);
   });
 
   it("does not execute from the MySQL editor during composition and executes on normal Ctrl+Enter", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
-    await flushUntil(() => mocks.schemas.mock.calls.length > 0);
+    await settle();
+    await flushUntil(() => mounted!.container.textContent?.includes("mydb") ?? false);
     const host = mounted.container.querySelector<HTMLElement>(".bg-term");
     if (!host) throw new Error("editor host not found");
+    const runButton = mounted.container.querySelector<HTMLButtonElement>('button[title^="运行整段 SQL"]')!;
     keyDown(host, "Enter", { ctrlKey: true, isComposing: true });
     expect(mocks.query).not.toHaveBeenCalled();
     keyDown(host, "Enter", { ctrlKey: true });
-    await flushUntil(() => mocks.query.mock.calls.length > 0);
+    await settle();
+    await flushUntil(() =>
+      mocks.query.mock.calls.length === 1 && mounted!.container.textContent?.includes("运行成功") === true && !runButton.disabled,
+    );
   });
 
   it("does not pull from the Docker pull input during composition and pulls on normal Enter", async () => {
     mounted = mount(withQueryClient(createElement(DockerPanel, { sessionId: "s" })));
-    await flushUntil(() => mocks.ps.mock.calls.length > 0);
+    await settle();
+    await flushUntil(() => mounted!.container.textContent?.includes("web") ?? false);
     const input = mounted.container.querySelector<HTMLInputElement>('[aria-label="拉取镜像名称"]');
     if (!input) throw new Error("pull input not found");
     setInputValue(input, "nginx:alpine");
     keyDown(input, "Enter", { isComposing: true });
     expect(mocks.imagePull).not.toHaveBeenCalled();
     keyDown(input, "Enter");
-    await flushUntil(() => mocks.imagePull.mock.calls.length > 0);
+    await settle();
+    expect(mocks.imagePull).toHaveBeenCalledTimes(1);
+    const currentInput = mounted.container.querySelector<HTMLInputElement>('[aria-label="拉取镜像名称"]')!;
+    const currentButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent?.includes("拉取"))!;
+    expect(currentInput.value).toBe("");
+    expect(currentButton.textContent?.trim()).toBe("拉取");
   });
 
   it("does not create from the forward target port during composition and creates on normal Enter", async () => {
     mounted = mount(withQueryClient(createElement(ForwardPanel, { sessionId: "s" })));
+    await settle();
     await flushUntil(() =>
+      mounted!.container.textContent?.includes("还没有任何转发") === true &&
       [...mounted!.container.querySelectorAll("button")].some(
         (button) => button.textContent?.trim() === "创建" && !button.disabled,
       ),
     );
     const input = mounted.container.querySelector<HTMLInputElement>('[aria-label="目标端口"]');
     if (!input) throw new Error("target port input not found");
+    const createButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "创建")!;
+    mocks.list.mockResolvedValue([{
+      id: "f1", sessionId: "s", listenPort: 13306, targetHost: "127.0.0.1", targetPort: 3306, kind: "local", createdAt: 1,
+    }]);
     keyDown(input, "Enter", { isComposing: true });
     expect(mocks.create).not.toHaveBeenCalled();
     keyDown(input, "Enter");
-    await flushUntil(() => mocks.create.mock.calls.length > 0);
+    await settle();
+    await flushUntil(() =>
+      mocks.create.mock.calls.length === 1 && mounted!.container.textContent?.includes("127.0.0.1:13306") === true && !createButton.disabled,
+    );
   });
 });
 
 describe("small-screen responsive structure contract", () => {
   it("keeps the MySQL run button sticky-right, shrinks the editor, and gives the result region a minimum height", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
-    await flushUntil(() => mocks.schemas.mock.calls.length > 0);
+    await settle();
+    await flushUntil(() => mounted!.container.textContent?.includes("mydb") ?? false);
     const runButton = [...mounted.container.querySelectorAll("button")].find(
       (b) => b.textContent?.includes("运行") && b.className.includes("nx-btn-primary"),
     );
@@ -239,7 +272,8 @@ describe("small-screen responsive structure contract", () => {
 
   it("provides stacked Redis layout classes on narrow screens and restores the 272px sidebar on wide screens", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
-    await flushUntil(() => mocks.redisScan.mock.calls.length > 0);
+    await settle();
+    await flushUntil(() => mounted!.container.textContent?.includes("k1") ?? false);
     const pane = mounted.container.querySelector(".nx-pane");
     expect(pane?.className).toContain("flex-col");
     expect(pane?.className).toContain("min-[560px]:flex-row");
@@ -255,10 +289,11 @@ describe("small-screen responsive structure contract", () => {
     const table = mounted.container.querySelector("table");
     const lastTh = table?.querySelector("thead th:last-child");
     expect(lastTh?.className).toContain("right-0");
-    const lastTd = table?.querySelector("tbody tr td:last-child");
-    expect(lastTd?.className).toContain("sticky");
-    expect(lastTd?.className).toContain("right-0");
-    expect(lastTd?.className).toContain("bg-[var(--nx-bg-pane)]");
+    const actionButton = table?.querySelector<HTMLButtonElement>('tbody button[title="重启"]');
+    const actionCell = actionButton?.closest("td");
+    expect(actionCell?.className).toContain("sticky");
+    expect(actionCell?.className).toContain("right-0");
+    expect(actionCell?.className).toContain("bg-[var(--nx-bg-pane)]");
     const actionButtons = table?.querySelectorAll("tbody .nx-icon-btn-sm");
     expect(actionButtons?.length).toBeGreaterThan(0);
     for (const button of actionButtons ?? []) {

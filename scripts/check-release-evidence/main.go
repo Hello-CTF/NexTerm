@@ -82,8 +82,21 @@ func runCmd(cmd *exec.Cmd) cmdResult {
 	return cmdResult{rc: rc, stdout: stdout.String(), stderr: stderr.String()}
 }
 
+func releaseEvidenceScriptCheck(root string) checkResult {
+	cmd := exec.Command("node", "--test", filepath.Join(root, ".github", "scripts", "release-evidence.test.mjs"))
+	cmd.Dir = root
+	result := runCmd(cmd)
+	return checkResult{
+		name:   "release candidate evidence contract tests",
+		ok:     result.rc == 0,
+		detail: tail(result.stdout+result.stderr, 2000),
+	}
+}
+
 func main() {
-	results := runEvidenceChecks(repoRoot())
+	root := repoRoot()
+	results := runEvidenceChecks(root)
+	results = append(results, releaseEvidenceScriptCheck(root))
 	failed := false
 	for _, result := range results {
 		if result.ok {

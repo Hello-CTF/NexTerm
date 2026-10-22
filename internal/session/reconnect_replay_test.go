@@ -138,7 +138,7 @@ func writeDuringDisconnect(t *testing.T, ctx context.Context, client *supervisor
 }
 
 // offsetRecordingProvider wraps a durable provider and records the offsets
-// presented to successful AttachFrom resumes.
+// presented to successful checked and legacy resumes.
 type offsetRecordingProvider struct {
 	base.DurableProvider
 	mu      sync.Mutex
@@ -154,18 +154,42 @@ func (p *offsetRecordingProvider) AttachFrom(ctx context.Context, id string, off
 	}
 	attachment, err := attacher.AttachFrom(ctx, id, offset)
 	if err == nil {
-		p.mu.Lock()
-		p.offsets = append(p.offsets, offset)
-		p.mu.Unlock()
+		p.recordOffset(offset)
 	}
 	return attachment, err
 }
 
+func (p *offsetRecordingProvider) AttachWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) (base.DurableAttachment, error) {
+	attacher, ok := p.DurableProvider.(base.DurableIdentityAttacher)
+	if !ok {
+		return nil, base.ErrUnsupported
+	}
+	return attacher.AttachWithIdentity(ctx, id, identity)
+}
+
+func (p *offsetRecordingProvider) AttachFromWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, error) {
+	attacher, ok := p.DurableProvider.(base.DurableIdentityAttacher)
+	if !ok {
+		return nil, base.ErrUnsupported
+	}
+	attachment, err := attacher.AttachFromWithIdentity(ctx, id, identity, offset)
+	if err == nil {
+		p.recordOffset(offset)
+	}
+	return attachment, err
+}
+
+func (p *offsetRecordingProvider) recordOffset(offset uint64) {
+	p.mu.Lock()
+	p.offsets = append(p.offsets, offset)
+	p.mu.Unlock()
+}
+
 // TestReconnectDurableAttachUsesConsumedOffset proves the reconnect path
 // resumes the daemon stream from the consumed recording offset instead of
-// replaying from byte zero: exactly one AttachFrom happens and its offset is
-// nonzero yet below the final recording size (the disconnect-window output is
-// streamed, the pre-reconnect prefix is not).
+// replaying from byte zero: exactly one checked offset resume happens and its
+// offset is nonzero yet below the final recording size (the disconnect-window
+// output is streamed, the pre-reconnect prefix is not).
 func TestReconnectDurableAttachUsesConsumedOffset(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "supervisor")
 	instance, err := supervisor.New(supervisor.Config{StateDir: stateDir, CommandTimeout: 5 * time.Second})

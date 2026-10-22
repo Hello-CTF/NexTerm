@@ -23,12 +23,19 @@ const (
 	TopicDeviceStatus      Topic = "device://status"
 	TopicUpdateProgress    Topic = "update://progress"
 	TopicAINotification    Topic = "ai://notification"
+	TopicAIWatchToolData   Topic = "ai://watch-tool-data"
+	TopicInventoryChanged  Topic = "inventory://changed"
 )
 
 var ErrEventsUnavailable = errors.New("event adapter is not configured")
 
 type LayoutChangedEvent struct {
 	Revision int64 `json:"revision"`
+}
+
+type InventoryChangedEvent struct {
+	Source  string `json:"source"`
+	GroupID string `json:"groupId"`
 }
 
 // AINotificationEvent is an in-app notification emitted by the AI notify tool; OwnerID is the session owner,
@@ -38,8 +45,8 @@ type AINotificationEvent struct {
 	Text    string `json:"text"`
 }
 
-// SyncStatusEvent carries the owning account of a sync change when the emitter knows it; an empty OwnerID
-// means unscoped (legacy emitters) and passes the server event filter for every session.
+// SyncStatusEvent carries the owning account for server delivery. An empty OwnerID remains a desktop-local
+// notification, but authenticated server subscriptions reject it.
 type SyncStatusEvent struct {
 	OwnerID string `json:"ownerId,omitempty"`
 }
@@ -61,9 +68,16 @@ type ConnectProgressEvent struct {
 type HelperProgressEvent struct {
 	SessionID   string `json:"sessionId"`
 	AssetID     string `json:"assetId"`
+	OperationID string `json:"operationId,omitempty"`
+	Attempt     int    `json:"attempt,omitempty"`
+	Attempts    int    `json:"attempts,omitempty"`
+	Deadline    int64  `json:"deadline,omitempty"`
 	Step        int    `json:"step"`
 	Steps       int    `json:"steps"`
 	Stage       string `json:"stage"`
+	Cause       string `json:"cause,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Transport   string `json:"transport,omitempty"`
 	Transferred int64  `json:"transferred"`
 	Total       int64  `json:"total"`
 	Percent     int    `json:"percent"`

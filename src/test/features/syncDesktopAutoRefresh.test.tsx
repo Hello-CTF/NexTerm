@@ -3,7 +3,7 @@
 // records a probe failure, then broadcasts via the existing sync://status event; a mounted card refetches linkGet/status on the event,
 // the "pending sync" badge automatically becomes "logged in", and LastError surfaces automatically on failure.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { flushUntil, mount, type MountedView } from "./reactTestUtils";
 
@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => {
     linkGet: vi.fn(),
     status: vi.fn(),
     kindOptInGet: vi.fn(),
+    compare: vi.fn(),
     syncStatusHandlers: [] as Array<(payload: unknown) => void>,
   };
 });
@@ -28,6 +29,10 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       kindOptInGet: mocks.kindOptInGet,
     },
   };
+});
+vi.mock("../../ipc/remoteApi", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/remoteApi")>();
+  return { ...actual, syncCompareApi: { ...actual.syncCompareApi, compare: mocks.compare } };
 });
 vi.mock("../../ipc/events", () => ({
   listenEvent: vi.fn((event: string, handler: (payload: unknown) => void) => {
@@ -68,7 +73,9 @@ function mountCard(): MountedView {
 }
 
 function fireSyncStatus(): void {
-  for (const handler of [...mocks.syncStatusHandlers]) handler({});
+  act(() => {
+    for (const handler of [...mocks.syncStatusHandlers]) handler({});
+  });
 }
 
 beforeEach(() => {
@@ -80,6 +87,7 @@ beforeEach(() => {
   mocks.linkGet.mockResolvedValue({ ...LINK });
   mocks.status.mockImplementation(() => Promise.resolve(statusPayload()));
   mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
+  mocks.compare.mockResolvedValue({ rows: [], remote: 0, warnings: [], userId: "u-1", compareToken: "compare-1" });
 });
 
 afterEach(() => {
@@ -96,7 +104,11 @@ describe("Desktop account sync card - automatic status refresh", () => {
     loggedIn = true;
     const statusCalls = mocks.status.mock.calls.length;
     fireSyncStatus();
-    await flushUntil(() => document.body.textContent?.includes("已登录 alice") ?? false);
+    await flushUntil(() =>
+      document.body.textContent?.includes("已登录 alice") === true &&
+      document.body.textContent?.includes("已知主机 已关闭") === true &&
+      document.body.textContent?.includes("云端 0 个对象") === true,
+    );
     expect(mocks.status.mock.calls.length).toBeGreaterThan(statusCalls);
   });
 

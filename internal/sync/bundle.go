@@ -1,8 +1,10 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gen"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -120,10 +123,13 @@ type ImportReport struct {
 	CredsCreated        int                 `json:"credsCreated"`
 	CredsUpdated        int                 `json:"credsUpdated"`
 	CredsDeleted        int                 `json:"credsDeleted"`
+	CredsOrphaned       int                 `json:"credsOrphaned"`
 	SnippetsCreated     int                 `json:"snippetsCreated"`
 	SnippetsUpdated     int                 `json:"snippetsUpdated"`
 	SkippedNewer        int                 `json:"skippedNewer"`
 	SkippedNewerDetails []SkippedNewerEntry `json:"skippedNewerDetails,omitempty"`
+	Conflicts           int                 `json:"conflicts"`
+	ConflictDetails     []SkippedNewerEntry `json:"conflictDetails,omitempty"`
 	Refused             int                 `json:"refused"`
 	Warnings            []string            `json:"warnings"`
 }
@@ -301,10 +307,28 @@ type bundleAssetDecision struct {
 	equalRevision  bool
 }
 
+// preparedCred is one credential payload validated and encrypted for an import.
+type preparedCred struct {
+	id        string
+	name      string
+	kind      string
+	updatedAt int64
+	nonce     []byte
+	blob      []byte
+	exists    bool
+}
+
 // ImportBundle writes the bundle into the current backend per asset bundle protocol v1: entries whose local version is newer are skipped by default (force overrides),
 // invalid entries are rejected with a warning; credential deletion tombstones are decided by revision, and deletions write sync tombstones to prevent revival on the peer.
-// All writes of one object class commit in a single transaction; any failure rolls back the whole class, leaving no half-imported state.
+// Groups keep their own committed transaction; credentials and assets share one transaction, so an asset-save failure rolls back the credential
+// creates/updates instead of leaving them orphaned. Asset writes bind to the pre-import snapshot with an expected-revision guard: an asset modified
+// between the decision and the write is reported as a conflict and skipped (per-statement savepoints keep the rest of the import intact), never blindly
+// overwritten. After a successful replacement, credentials that the import unbound and that no asset references anymore are cleaned up.
 func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest) (ImportReport, error) {
+	// Serialize against sync rounds: pull-merge and the import must not interleave
+	// their snapshot decisions and writes on the same replica.
+	s.engine.opMu.Lock()
+	defer s.engine.opMu.Unlock()
 	bundle := request.Bundle
 	if bundle.Protocol != BundleProtocolVersion {
 		return ImportReport{}, ipc.NewError(ipc.CodeUnsupported,
@@ -330,9 +354,30 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 	for _, row := range rows {
 		existingAssets[row.ID] = row
 	}
-	decisions := make([]bundleAssetDecision, len(bundle.Assets))
+	// Last-index dedup mirrors planGroupImports: for duplicate in-bundle IDs only the
+	// final entry is decided and written; dropped duplicates stay visible as warnings.
+	lastAssetIndex := make(map[string]int, len(bundle.Assets))
+	for index, payload := range bundle.Assets {
+		if id := strings.TrimSpace(payload.ID); id != "" {
+			lastAssetIndex[id] = index
+		}
+	}
+	groupPlans, err := s.planGroupImports(ctx, bundle.Groups, request.Force, &report, warnf)
+	if err != nil {
+		return ImportReport{}, err
+	}
+	groupPlanIDs := make(map[string]bool, len(groupPlans))
+	for _, plan := range groupPlans {
+		groupPlanIDs[plan.id] = true
+	}
+	// Asset decisions run before credential preparation: a credential whose only
+	// referencing asset is skipped or refused must stay untouched locally.
+	decisions := make(map[int]bundleAssetDecision, len(bundle.Assets))
 	blockedCredIDs := map[string]bool{}
 	for index, payload := range bundle.Assets {
+		if id := strings.TrimSpace(payload.ID); id != "" && lastAssetIndex[id] != index {
+			continue
+		}
 		decision := bundleAssetDecision{acceptance: bundleAssetAccepted}
 		existing, found := existingAssets[payload.ID]
 		switch {
@@ -362,27 +407,35 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			blockedCredIDs[*payload.CredID] = true
 		}
 	}
-	groupPlans, err := s.planGroupImports(ctx, bundle.Groups, request.Force, &report, warnf)
-	if err != nil {
-		return ImportReport{}, err
-	}
-	// Two-pass write: first store everything as top-level groups (any order, no FK dependencies), then link parents; one transaction per class.
+	// Two-pass group write: first store everything as top-level groups (any order, no FK dependencies), then link parents.
+	// Groups keep their own committed transaction: a later class failure never rolls them back.
+	// The second pass binds each group's first-pass written content, so the two-phase
+	// topology write never mistakes its own intermediate state for a conflict.
 	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
+		written := map[string]*store.AssetGroupRow{}
 		for _, plan := range groupPlans {
-			if err := s.engine.groupUpsertTx(ctx, tx, groupObject{
+			if err := s.engine.groupUpsertTxBound(ctx, tx, groupObject{
 				ID: plan.id, Name: plan.name, Sort: plan.sort, CreatedAt: plan.createdAt, UpdatedAt: plan.updatedAt,
-			}, nil); err != nil {
+			}, nil, plan.snapshot); err != nil {
 				return err
+			}
+			createdAt := plan.createdAt
+			if plan.snapshot != nil {
+				createdAt = plan.snapshot.CreatedAt
+			}
+			written[plan.id] = &store.AssetGroupRow{
+				ID: plan.id, Name: plan.name, Sort: plan.sort,
+				CreatedAt: createdAt, UpdatedAt: plan.updatedAt, OwnerID: ipc.OwnerID(ctx),
 			}
 		}
 		for _, plan := range groupPlans {
 			if plan.parentID == nil {
 				continue
 			}
-			if err := s.engine.groupUpsertTx(ctx, tx, groupObject{
+			if err := s.engine.groupUpsertTxBound(ctx, tx, groupObject{
 				ID: plan.id, ParentID: plan.parentID, Name: plan.name, Sort: plan.sort,
 				CreatedAt: plan.createdAt, UpdatedAt: plan.updatedAt,
-			}, plan.parentID); err != nil {
+			}, plan.parentID, written[plan.id]); err != nil {
 				return err
 			}
 		}
@@ -397,16 +450,13 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			report.GroupsCreated++
 		}
 	}
-	type preparedCred struct {
-		id        string
-		name      string
-		kind      string
-		updatedAt int64
-		nonce     []byte
-		blob      []byte
-		exists    bool
-	}
 	preparedCreds := make([]preparedCred, 0, len(bundle.Creds))
+	// priorCredRows/priorCredTombstones snapshot the pre-import state of every upserted
+	// credential: an asset that conflicts at write time must not leave the credential
+	// created, overwritten, or its tombstone cleared, so the import compensates back to
+	// exactly this state before commit.
+	priorCredRows := map[string]*store.CredentialRow{}
+	priorCredTombstones := map[string]*store.CredentialTombstone{}
 	seenCredIDs := map[string]bool{}
 	for _, payload := range bundle.Creds {
 		id := strings.TrimSpace(payload.ID)
@@ -422,6 +472,9 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		}
 		if blockedCredIDs[id] {
 			warnf("凭据 %s 关联的资产版本较新或导入被拒，本机凭据保持不变", id)
+			continue
+		}
+		if seenCredIDs[id] {
 			continue
 		}
 		name := strings.TrimSpace(payload.Name)
@@ -447,11 +500,17 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			continue
 		} else if err != nil && !isNotFound(err) {
 			return ImportReport{}, err
+		} else if err == nil {
+			priorCredTombstones[id] = &tombstone
 		}
-		_, err := s.store.CredentialGetRow(ctx, id)
+		existing, err := s.store.CredentialGetRow(ctx, id)
 		exists := err == nil
 		if err != nil && !isNotFound(err) {
 			return ImportReport{}, err
+		}
+		if exists {
+			row := existing
+			priorCredRows[id] = &row
 		}
 		nonce, blob, err := s.vault.EncryptCredential(ctx, payload.Secret)
 		if err != nil {
@@ -463,30 +522,28 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		})
 		seenCredIDs[id] = true
 	}
-	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
-		for _, cred := range preparedCreds {
-			if err := s.engine.credentialUpsertTx(ctx, tx, credentialObject{
-				ID: cred.id, Name: cred.name, Kind: cred.kind, UpdatedAt: cred.updatedAt,
-			}, cred.nonce, cred.blob); err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return ImportReport{}, err
+	type preparedAsset struct {
+		row      store.AssetRow
+		base     *store.AssetRow
+		accepted bool
+		skipped  bool
+		refused  bool
 	}
-	for _, cred := range preparedCreds {
-		if cred.exists {
-			report.CredsUpdated++
-		} else {
-			report.CredsCreated++
-		}
-	}
-	preparedAssets := make([]store.AssetRow, 0, len(bundle.Assets))
+	preparedAssets := make([]preparedAsset, 0, len(bundle.Assets))
 	for index, payload := range bundle.Assets {
+		if id := strings.TrimSpace(payload.ID); id != "" && lastAssetIndex[id] != index {
+			warnf("资产 %s 在包内重复，仅导入最后一个", id)
+			continue
+		}
 		decision := decisions[index]
-		if decision.acceptance != bundleAssetAccepted {
-			if decision.acceptance == bundleAssetSkipped {
+		existing, found := existingAssets[payload.ID]
+		entry := preparedAsset{accepted: decision.acceptance == bundleAssetAccepted, skipped: decision.acceptance == bundleAssetSkipped, refused: decision.acceptance == bundleAssetRefused}
+		if found {
+			row := existing
+			entry.base = &row
+		}
+		if !entry.accepted {
+			if entry.skipped {
 				report.SkippedNewer++
 				report.SkippedNewerDetails = append(report.SkippedNewerDetails, SkippedNewerEntry{
 					Kind: "asset", ID: payload.ID, Name: payload.Name,
@@ -497,6 +554,7 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 				report.Refused++
 			}
 			warnf("%s", decision.warning)
+			preparedAssets = append(preparedAssets, entry)
 			continue
 		}
 		optionsJSON := payload.OptionsJSON
@@ -533,6 +591,8 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		if row.CredID != nil {
 			if *row.CredID == "" {
 				row.CredID = nil
+			} else if seenCredIDs[*row.CredID] {
+				// The credential is written by this import in the same transaction.
 			} else if _, err := s.store.CredentialGetRow(ctx, *row.CredID); isNotFound(err) {
 				warnf("资产 %s 引用的凭据 %s 不存在，已清除该引用", payload.ID, *row.CredID)
 				row.CredID = nil
@@ -543,6 +603,8 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		if row.GroupID != nil {
 			if *row.GroupID == "" {
 				row.GroupID = nil
+			} else if groupPlanIDs[*row.GroupID] {
+				// The group is written by this import's group transaction.
 			} else if _, err := s.store.GroupGet(ctx, *row.GroupID); isNotFound(err) {
 				warnf("资产 %s 引用的分组 %s 不存在，已清除该引用", payload.ID, *row.GroupID)
 				row.GroupID = nil
@@ -550,26 +612,15 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 				return ImportReport{}, err
 			}
 		}
-		preparedAssets = append(preparedAssets, row)
+		entry.row = row
+		preparedAssets = append(preparedAssets, entry)
 	}
-	createdFlags := make([]bool, len(preparedAssets))
-	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
-		for index, row := range preparedAssets {
-			created, err := s.store.AssetUpsertTx(ctx, tx, row)
-			if err != nil {
-				return err
-			}
-			createdFlags[index] = created
-		}
-		return nil
-	}); err != nil {
-		return ImportReport{}, err
-	}
-	for _, created := range createdFlags {
-		if created {
-			report.AssetsCreated++
-		} else {
-			report.AssetsUpdated++
+	// Credential tombstones must not delete credentials the imported assets bind:
+	// the delete would silently clear the fresh binding via OnDelete:SET NULL.
+	boundCredIDs := map[string]bool{}
+	for _, entry := range preparedAssets {
+		if entry.accepted && entry.row.CredID != nil && *entry.row.CredID != "" {
+			boundCredIDs[*entry.row.CredID] = true
 		}
 	}
 	type preparedCredTombstone struct {
@@ -577,6 +628,7 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		deletedAt int64
 	}
 	preparedTombstones := make([]preparedCredTombstone, 0, len(bundle.CredTombstones))
+	tombstonedCredIDs := map[string]bool{}
 	for _, tombstone := range bundle.CredTombstones {
 		id := strings.TrimSpace(tombstone.ID)
 		if id == "" {
@@ -587,6 +639,10 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		if !ids.Valid(id) {
 			report.Refused++
 			warnf("凭据删除标记 %s 的 ID 格式不合法，已拒绝导入", id)
+			continue
+		}
+		if boundCredIDs[id] {
+			warnf("凭据 %s 仍被本次导入的资产引用，已忽略其删除标记", id)
 			continue
 		}
 		local, err := s.store.CredentialGetRow(ctx, id)
@@ -606,37 +662,15 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			continue
 		}
 		preparedTombstones = append(preparedTombstones, preparedCredTombstone{id: id, deletedAt: tombstone.DeletedAt})
+		tombstonedCredIDs[id] = true
 	}
-	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
-		credential := query.Use(tx).CredentialRow
-		for _, tombstone := range preparedTombstones {
-			if _, err := credential.WithContext(ctx).
-				Where(credential.ID.Eq(tombstone.id)).
-				Where(ownerConditions(ctx, credential.TableName())...).
-				Delete(); err != nil {
-				return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-			}
-			if err := tx.Clauses(clause.OnConflict{
-				Columns: []clause.Column{{Name: "owner_id"}, {Name: "id"}},
-				DoUpdates: clause.Assignments(map[string]any{
-					"deleted_at": store.MaxExpression(tx, "credential_tombstone", "deleted_at", nil),
-				}),
-				Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
-			}).Create(&store.CredentialTombstone{ID: tombstone.id, DeletedAt: tombstone.deletedAt, OwnerID: ipc.OwnerID(ctx)}).Error; err != nil {
-				return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-			}
-		}
-		return nil
-	}); err != nil {
-		return ImportReport{}, err
-	}
-	report.CredsDeleted += len(preparedTombstones)
 	type preparedSnippet struct {
-		row    store.SnippetRow
-		exists bool
+		row      store.SnippetRow
+		snapshot *store.SnippetRow
+		exists   bool
 	}
 	preparedSnippets := make([]preparedSnippet, 0, len(bundle.Snippets))
-	seenSnippetIDs := map[string]bool{}
+	seenSnippetIDs := map[string]int{}
 	for _, payload := range bundle.Snippets {
 		id := strings.TrimSpace(payload.ID)
 		if id == "" || !ids.Valid(id) || strings.TrimSpace(payload.Name) == "" {
@@ -690,25 +724,169 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			groupID = nil
 		}
 		if groupID != nil {
-			if _, err := s.store.GroupGet(ctx, *groupID); isNotFound(err) {
+			if groupPlanIDs[*groupID] {
+				// The group is written by this import's group transaction.
+			} else if _, err := s.store.GroupGet(ctx, *groupID); isNotFound(err) {
 				warnf("片段 %s 引用的分组 %s 不存在，已清除该引用", id, *groupID)
 				groupID = nil
 			} else if err != nil {
 				return ImportReport{}, err
 			}
 		}
-		preparedSnippets = append(preparedSnippets, preparedSnippet{
+		prepared := preparedSnippet{
 			row: store.SnippetRow{
 				ID: id, GroupID: groupID, Name: name, Body: body,
 				Sort: sort, CreatedAt: createdAt, UpdatedAt: updatedAt,
 			},
-			exists: exists || seenSnippetIDs[id],
-		})
-		seenSnippetIDs[id] = true
+			exists: exists,
+		}
+		if earlier, ok := seenSnippetIDs[id]; ok {
+			// An earlier in-bundle entry writes this snippet first in the same
+			// transaction: bind this write to that entry's content, never to the
+			// pre-import row.
+			prepared.snapshot = &preparedSnippets[earlier].row
+			prepared.exists = true
+		} else if exists {
+			prepared.snapshot = &existing
+		}
+		seenSnippetIDs[id] = len(preparedSnippets)
+		preparedSnippets = append(preparedSnippets, prepared)
+	}
+	createdFlags := make([]bool, len(preparedAssets))
+	conflicted := make([]bool, len(preparedAssets))
+	compensatedCredIDs := map[string]bool{}
+	// credWriteResults records the exact row content this import actually wrote per
+	// credential: a conflict-skipped credential keeps a later local write and must be
+	// neither compensated nor counted as imported, and compensation binds this content so
+	// a row replaced by a later write survives untouched. replayedCredIDs records genuine
+	// idempotent replays (the snapshot already carried the target content): they count as
+	// imported but wrote nothing, so they stay out of compensation.
+	credWriteResults := map[string]*store.CredentialRow{}
+	replayedCredIDs := map[string]bool{}
+	// Credentials and assets share one transaction: an asset-save failure rolls the
+	// credential creates/updates back instead of leaving them orphaned.
+	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
+		for _, cred := range preparedCreds {
+			// The write binds to the snapshot's revision AND content for an existing
+			// credential (a later local write is never overwritten) and to must-not-exist
+			// for a new one. A conflict is recorded per-credential and skipped, never
+			// overwriting the later local write.
+			written, replayed, err := s.importCredentialTx(ctx, tx, cred, priorCredRows[cred.id], &report, warnf)
+			if err != nil {
+				return err
+			}
+			if written != nil {
+				credWriteResults[cred.id] = written
+			}
+			if replayed {
+				replayedCredIDs[cred.id] = true
+			}
+		}
+		for index, entry := range preparedAssets {
+			if !entry.accepted {
+				continue
+			}
+			created, err := s.importAssetTx(ctx, tx, index, entry.row, entry.base)
+			if err != nil {
+				if errors.Is(err, store.ErrWriteConflict) {
+					conflicted[index] = true
+					report.Conflicts++
+					localRevision := int64(0)
+					if entry.base != nil {
+						localRevision = objectRevision(entry.base.UpdatedAt, entry.base.DeletedAt)
+					}
+					report.ConflictDetails = append(report.ConflictDetails, SkippedNewerEntry{
+						Kind: "asset", ID: entry.row.ID, Name: entry.row.Name,
+						LocalRevision:  localRevision,
+						RemoteRevision: objectRevision(entry.row.UpdatedAt, entry.row.DeletedAt),
+					})
+					warnf("资产 %s 在导入决策后已被本机更新，已跳过（可重新导入覆盖）", entry.row.ID)
+					continue
+				}
+				return err
+			}
+			createdFlags[index] = created
+		}
+		// An asset that conflicted at write time must not take its credentials down with
+		// it: a credential referenced only by conflicted assets is compensated back to its
+		// pre-import state (created ones removed, overwritten ones restored, cleared
+		// tombstones re-recorded) before the transaction commits. Credentials shared with
+		// successfully written assets stay.
+		writtenCredRefs := map[string]bool{}
+		for index, entry := range preparedAssets {
+			if entry.accepted && !conflicted[index] && entry.row.CredID != nil && *entry.row.CredID != "" {
+				writtenCredRefs[*entry.row.CredID] = true
+			}
+		}
+		for index, entry := range preparedAssets {
+			if !conflicted[index] || entry.row.CredID == nil || *entry.row.CredID == "" {
+				continue
+			}
+			credID := *entry.row.CredID
+			// Only a credential this import actually upserted can be compensated: one that
+			// is absent from bundle.Creds was never written here, and a conflict-skipped
+			// one holds a later local write — both must survive untouched.
+			written := credWriteResults[credID]
+			if written == nil || writtenCredRefs[credID] || compensatedCredIDs[credID] {
+				continue
+			}
+			compensatedCredIDs[credID] = true
+			if err := s.compensateCredentialTx(ctx, tx, credID, priorCredRows[credID], priorCredTombstones[credID], written); err != nil {
+				return err
+			}
+			warnf("凭据 %s 引用的资产在写入时冲突，已回滚该凭据的导入写入", credID)
+		}
+		return nil
+	}); err != nil {
+		return ImportReport{}, err
+	}
+	for _, cred := range preparedCreds {
+		if compensatedCredIDs[cred.id] || (credWriteResults[cred.id] == nil && !replayedCredIDs[cred.id]) {
+			continue
+		}
+		if cred.exists {
+			report.CredsUpdated++
+		} else {
+			report.CredsCreated++
+		}
+	}
+	for index, entry := range preparedAssets {
+		if !entry.accepted || conflicted[index] {
+			continue
+		}
+		if createdFlags[index] {
+			report.AssetsCreated++
+		} else {
+			report.AssetsUpdated++
+		}
 	}
 	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
+		credential := query.Use(tx).CredentialRow
+		for _, tombstone := range preparedTombstones {
+			if _, err := credential.WithContext(ctx).
+				Where(credential.ID.Eq(tombstone.id)).
+				Where(ownerConditions(ctx, credential.TableName())...).
+				Delete(); err != nil {
+				return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+			}
+			if err := tx.Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "owner_id"}, {Name: "id"}},
+				DoUpdates: clause.Assignments(map[string]any{
+					"deleted_at": store.MaxExpression(tx, "credential_tombstone", "deleted_at", nil),
+				}),
+				Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+			}).Create(&store.CredentialTombstone{ID: tombstone.id, DeletedAt: tombstone.deletedAt, OwnerID: ipc.OwnerID(ctx)}).Error; err != nil {
+				return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return ImportReport{}, err
+	}
+	report.CredsDeleted += len(preparedTombstones)
+	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
 		for _, snippet := range preparedSnippets {
-			if err := s.engine.snippetUpsertTx(ctx, tx, snippet.row); err != nil {
+			if err := s.engine.snippetUpsertTxBound(ctx, tx, snippet.row, snippet.snapshot); err != nil {
 				return err
 			}
 		}
@@ -723,7 +901,180 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			report.SnippetsCreated++
 		}
 	}
+	// Orphan cleanup after successful replacement: a credential the import unbound and that
+	// no asset references anymore is removed (soft-deleted assets keep their binding for a
+	// potential restore and count as references). Credentials written or tombstoned by this
+	// bundle are left alone.
+	orphanCandidates := map[string]bool{}
+	for index, entry := range preparedAssets {
+		if !entry.accepted || conflicted[index] || entry.base == nil || entry.base.CredID == nil || *entry.base.CredID == "" {
+			continue
+		}
+		old := *entry.base.CredID
+		replacement := ""
+		if entry.row.CredID != nil {
+			replacement = *entry.row.CredID
+		}
+		if old == replacement || seenCredIDs[old] || tombstonedCredIDs[old] {
+			continue
+		}
+		orphanCandidates[old] = true
+	}
+	for id := range orphanCandidates {
+		deleted, err := s.store.CredentialDeleteIfUnreferenced(ctx, id)
+		if err != nil {
+			warnf("清理旧凭据 %s 失败：%v", id, err)
+			continue
+		}
+		if deleted {
+			report.CredsOrphaned++
+			warnf("凭据 %s 已不再被任何资产引用，已清理", id)
+		}
+	}
 	return report, nil
+}
+
+// importAssetTx writes one prepared asset inside the import transaction, demarcated by a
+// savepoint so a conflict or failure rolls back only this asset's statements.
+func (s *Service) importAssetTx(ctx context.Context, tx *gorm.DB, index int, row store.AssetRow, base *store.AssetRow) (bool, error) {
+	savepoint := fmt.Sprintf("import_asset_%d", index)
+	if err := tx.SavePoint(savepoint).Error; err != nil {
+		return false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	created, err := s.store.AssetUpsertGuardedTx(ctx, tx, row, base)
+	if err == nil {
+		return created, nil
+	}
+	if rollbackErr := tx.RollbackTo(savepoint).Error; rollbackErr != nil {
+		return false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+rollbackErr.Error(), rollbackErr)
+	}
+	return false, err
+}
+
+// importCredentialTx writes one prepared credential inside the import transaction with a
+// savepoint: a conflict (the credential changed after the snapshot) is recorded and the
+// credential is skipped, never overwriting the later local write. On a landed write it
+// returns the exact row content this import wrote (including the stored created_at), so
+// the caller can bind compensation to it; a genuine idempotent replay (the snapshot
+// already carried the target content) reports replayed with no written row — it counts
+// as imported but must not be compensated, since this import wrote nothing.
+func (s *Service) importCredentialTx(ctx context.Context, tx *gorm.DB, cred preparedCred, snapshot *store.CredentialRow, report *ImportReport, warnf func(string, ...any)) (*store.CredentialRow, bool, error) {
+	savepoint := fmt.Sprintf("import_credential_%s", cred.id)
+	if err := tx.SavePoint(savepoint).Error; err != nil {
+		return nil, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	landed, err := s.engine.credentialUpsertTxBound(ctx, tx, credentialObject{
+		ID: cred.id, Name: cred.name, Kind: cred.kind, UpdatedAt: cred.updatedAt,
+	}, cred.nonce, cred.blob, snapshot)
+	if err == nil {
+		if !landed {
+			return nil, true, nil
+		}
+		createdAt := cred.updatedAt
+		if snapshot != nil {
+			createdAt = snapshot.CreatedAt
+		}
+		return &store.CredentialRow{
+			ID: cred.id, Name: cred.name, Kind: cred.kind, Cipher: store.CipherAES256GCM,
+			Nonce: cred.nonce, Blob: cred.blob, KEKHint: s.engine.vault.KEKHint(),
+			CreatedAt: createdAt, UpdatedAt: cred.updatedAt, OwnerID: ipc.OwnerID(ctx),
+		}, false, nil
+	}
+	if rollbackErr := tx.RollbackTo(savepoint).Error; rollbackErr != nil {
+		return nil, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+rollbackErr.Error(), rollbackErr)
+	}
+	if errors.Is(err, store.ErrWriteConflict) {
+		report.Conflicts++
+		report.ConflictDetails = append(report.ConflictDetails, SkippedNewerEntry{
+			Kind: "credential", ID: cred.id, Name: cred.name,
+		})
+		warnf("凭据 %s 在导入决策后已被本机更新，已跳过（可重新导入覆盖）", cred.id)
+		return nil, false, nil
+	}
+	return nil, false, err
+}
+
+// compensateCredentialTx rolls one credential back to its pre-import state after the only
+// asset referencing it conflicted at write time: a credential created by this import is
+// removed, an overwritten one is restored field-by-field (including the original
+// revision), and a tombstone cleared by the upsert is re-recorded. Every statement binds
+// the row content this import actually wrote: a row that no longer carries it was
+// replaced by a later write and survives untouched (and its tombstone stays cleared).
+// A nil prior row means the credential did not exist before the import.
+func (s *Service) compensateCredentialTx(ctx context.Context, tx *gorm.DB, credID string, prior *store.CredentialRow, priorTombstone *store.CredentialTombstone, written *store.CredentialRow) error {
+	credential := query.Use(tx).CredentialRow
+	writtenConds := []gen.Condition{
+		credential.Name.Eq(written.Name), credential.Kind.Eq(written.Kind), credential.Cipher.Eq(written.Cipher),
+		credential.Nonce.Eq(written.Nonce), credential.Blob.Eq(written.Blob), credential.KEKHint.Eq(written.KEKHint),
+		credential.CreatedAt.Eq(written.CreatedAt), credential.UpdatedAt.Eq(written.UpdatedAt),
+	}
+	compensated := false
+	if prior == nil {
+		info, err := credential.WithContext(ctx).
+			Where(credential.ID.Eq(credID)).
+			Where(ownerConditions(ctx, credential.TableName())...).
+			Where(writtenConds...).
+			Delete()
+		if err != nil {
+			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		}
+		compensated = info.RowsAffected == 1
+	} else {
+		info, err := credential.WithContext(ctx).
+			Where(credential.ID.Eq(credID)).
+			Where(ownerConditions(ctx, credential.TableName())...).
+			Where(writtenConds...).
+			UpdateColumns(map[string]any{
+				"name": prior.Name, "kind": prior.Kind, "cipher": prior.Cipher,
+				"nonce": prior.Nonce, "blob": prior.Blob, "kek_hint": prior.KEKHint,
+				"created_at": prior.CreatedAt, "updated_at": prior.UpdatedAt,
+			})
+		if err != nil {
+			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		}
+		compensated = info.RowsAffected == 1
+		if !compensated {
+			// MySQL/MariaDB report 0 for a no-op UPDATE: the restore is already in
+			// place only when the stored row already equals the prior content.
+			matches, err := credentialRowMatches(ctx, tx, credID, prior)
+			if err != nil {
+				return err
+			}
+			compensated = matches
+		}
+	}
+	if !compensated {
+		return nil
+	}
+	if priorTombstone != nil {
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "owner_id"}, {Name: "id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"deleted_at"}),
+			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+		}).Create(priorTombstone).Error; err != nil {
+			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		}
+	}
+	return nil
+}
+
+// credentialRowMatches reports whether the stored credential row carries exactly the
+// given row's content (every column except the primary key and owner_id).
+func credentialRowMatches(ctx context.Context, tx *gorm.DB, credID string, target *store.CredentialRow) (bool, error) {
+	credential := query.Use(tx).CredentialRow
+	row, err := credential.WithContext(ctx).
+		Where(credential.ID.Eq(credID)).
+		Where(ownerConditions(ctx, credential.TableName())...).
+		First()
+	if isNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	return row.Name == target.Name && row.Kind == target.Kind && row.Cipher == target.Cipher &&
+		bytes.Equal(row.Nonce, target.Nonce) && bytes.Equal(row.Blob, target.Blob) && row.KEKHint == target.KEKHint &&
+		row.CreatedAt == target.CreatedAt && row.UpdatedAt == target.UpdatedAt, nil
 }
 
 // inImportTx commits all writes of one object class in a single transaction; any statement failure rolls back the whole class.
@@ -759,6 +1110,7 @@ type bundleGroupPlan struct {
 	createdAt int64
 	updatedAt int64
 	exists    bool
+	snapshot  *store.AssetGroupRow
 }
 
 // planGroupImports validates group payloads and resolves parents: each non-empty ID after trim only processes the last in-bundle entry (last-index dedup);
@@ -815,16 +1167,20 @@ func (s *Service) planGroupImports(ctx context.Context, payloads []SyncBundleGro
 		if parentID != nil && *parentID == "" {
 			parentID = nil
 		}
-		_, err := s.store.GroupGet(ctx, id)
+		existing, err := s.store.GroupGet(ctx, id)
 		exists := err == nil
 		if err != nil && !isNotFound(err) {
 			return nil, err
 		}
 		planIndex[id] = len(plans)
-		plans = append(plans, bundleGroupPlan{
+		plan := bundleGroupPlan{
 			id: id, name: name, parentID: parentID, sort: payload.Sort,
 			createdAt: createdAt, updatedAt: updatedAt, exists: exists,
-		})
+		}
+		if exists {
+			plan.snapshot = &existing
+		}
+		plans = append(plans, plan)
 	}
 	parents, err := s.engine.groupParents(ctx)
 	if err != nil {

@@ -19,6 +19,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
 type takeoverFakeChannel struct {
@@ -144,22 +145,32 @@ func (s *takeoverScript) ServeHTTP(writer http.ResponseWriter, request *http.Req
 	spawnWriteToolCall(writer, "call-done-1", "done", `{"summary":"finished","success":true}`)
 }
 
-func composeTakeoverRuntime(t *testing.T, database *store.Store, providerURL, assetID string) (*ProductionServices, *takeoverFakeTransport) {
+func composeTakeoverRuntime(t *testing.T, database *store.Store, providerURL, assetID string, withProfileSecret ...bool) (*ProductionServices, *takeoverFakeTransport) {
 	t.Helper()
 	ctx := context.Background()
-	initTestVault(t, ctx, database)
+	withSecret := len(withProfileSecret) == 0 || withProfileSecret[0]
+	if withSecret {
+		initTestVault(t, ctx, database)
+	} else {
+		vault.Load(ctx, database)
+	}
 	profileManager, err := profiles.NewManager(ctx, database)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := profileManager.Save(ctx, profiles.Profile{
-		BaseURL: providerURL, APIKey: "test-key", Model: "test-model",
+	profile := profiles.Profile{
+		BaseURL: providerURL, Model: "test-model",
 		ContextWindow: 32768, Stream: true,
-	}); err != nil {
+	}
+	if withSecret {
+		profile.APIKey = "test-key"
+	}
+	if _, err := profileManager.Save(ctx, profile); err != nil {
 		t.Fatal(err)
 	}
 	transport := &takeoverFakeTransport{}
 	sessions := session.NewManager(session.Config{
+		OpenAccess: true,
 		Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 			return transport, nil
 		}),
@@ -168,13 +179,17 @@ func composeTakeoverRuntime(t *testing.T, database *store.Store, providerURL, as
 	if err != nil {
 		t.Fatal(err)
 	}
-	services := &ProductionServices{Store: database, Profiles: profileManager, Sessions: sessions}
+	services := &ProductionServices{Store: database, Profiles: profileManager, Sessions: sessions, desktop: true}
 	if err := composeAIRuntime(ctx, services); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		services.closeAIRuntime()
 		_ = sessions.Close()
+		// The helper owns every resource it composes: callers hand the store
+		// over with the runtime, and Close is idempotent, so an explicit
+		// caller close (restart tests) stays valid.
+		_ = database.Close()
 	})
 	openTakeoverTab(t, services, connected.ID)
 	return services, transport

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
@@ -26,9 +27,13 @@ var (
 const EnterBanner = "\r\n\x1b[41;37m[AI 正在操作此终端 - 按任意键暂停]\x1b[0m\r\n"
 
 type Dependencies struct {
-	Model                  agent.ModelFactory
-	Checkpoints            adk.CheckPointStore
-	Permission             func(context.Context) (guard.Config, error)
+	Model       agent.ModelFactory
+	Checkpoints adk.CheckPointStore
+	Permission  func(context.Context) (guard.Config, error)
+	// DeviceMode layers the guard mode bound to the real target asset (the
+	// tab's resolved asset identity) over the global config; nil keeps the
+	// plain global mode.
+	DeviceMode             func(context.Context, guard.Config, string) (guard.Config, error)
 	Grants                 *guard.Grants
 	TabAsset               func(context.Context, string) (string, error)
 	Snapshot               func(context.Context, string) (tools.Screen, error)
@@ -40,6 +45,10 @@ type Dependencies struct {
 	PollInterval           time.Duration
 	PauseEscalationTimeout time.Duration
 	Now                    func() time.Time
+	// Shared marks a single-user desktop or explicitly shared deployment where
+	// ownerless takeover is legitimate; server mode must leave it false so
+	// requests without an account identity fail closed.
+	Shared bool
 }
 
 type RunArgs struct {
@@ -57,11 +66,12 @@ type RunResponse struct {
 }
 
 type ownership struct {
-	tabID  string
-	token  string
-	jobID  string
-	ctx    context.Context
-	cancel context.CancelFunc
+	tabID   string
+	token   string
+	ownerID string
+	jobID   string
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 type pending struct {
@@ -82,6 +92,7 @@ type runState struct {
 	eino          *takeoverRuntime
 	cancelFn      adk.AgentCancelFunc
 	eventMu       sync.Mutex
+	seq           uint64
 	finished      bool
 	finalOnce     sync.Once
 	finalizeMu    sync.Mutex
@@ -124,6 +135,7 @@ func (s *runState) emit(ctx context.Context, event agent.Event) error {
 	if s.finished {
 		return errors.New("takeover already finished")
 	}
+	event.Seq = atomic.AddUint64(&s.seq, 1)
 	return s.stream.Send(ctx, event)
 }
 
@@ -131,6 +143,7 @@ func (s *runState) finish(event agent.Event) {
 	s.finalOnce.Do(func() {
 		s.eventMu.Lock()
 		s.finished = true
+		event.Seq = atomic.AddUint64(&s.seq, 1)
 		parent := s.deliveryCtx
 		if parent == nil {
 			parent = context.WithoutCancel(s.ctx)

@@ -115,3 +115,75 @@ func TestSyncApplyObjectsCommandValidation(t *testing.T) {
 		t.Fatalf("flat args decode = %+v", response.Error)
 	}
 }
+
+func TestSyncApplyObjectsCommandRejectsInventoryForgeryAndTampering(t *testing.T) {
+	ctx := t.Context()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	syncService := syncservice.New(database, vault.Load(ctx, database), syncservice.WithMetadata("test", false))
+	dispatcher := ipc.NewDispatcher()
+	if err := registerSyncApplyCommands(dispatcher, syncService); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.InventorySync(ctx, store.InventorySourceSSHConfig, "", []store.InventoryItem{{
+		Key: "host/web-a", Kind: "ssh", Name: "web-a", Host: stringPointerForInventory("10.0.0.1"), Port: int32PointerForInventory(22),
+		Options: map[string]any{"inventoryTarget": map[string]any{"type": "ssh-config"}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := database.AssetList(ctx, false)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("managed rows = %+v, err=%v", rows, err)
+	}
+	managed := rows[0]
+	dispatch := func(id string, payload map[string]any) syncservice.ApplyObjectsResult {
+		t.Helper()
+		envelope, err := json.Marshal(map[string]any{"args": map[string]any{
+			"objects": []map[string]any{{"id": id, "kind": "asset", "payload": payload}},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		response := dispatcher.Dispatch(ctx, ipc.Request{Command: syncservice.CommandApplyObjects, Args: envelope}, ipc.Environment{})
+		if !response.OK {
+			t.Fatalf("apply command failed instead of returning per-object rejection: %+v", response.Error)
+		}
+		var result syncservice.ApplyObjectsResult
+		if err := json.Unmarshal(response.Data, &result); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+
+	forgedID := ids.New()
+	forgedResult := dispatch(forgedID, map[string]any{
+		"id": forgedID, "kind": "ssh", "name": "forged", "host": "forged.example", "optionsJson": `{"inventory":{"source":"ssh-config","key":"host/forged"}}`,
+		"createdAt": 1, "updatedAt": managed.UpdatedAt + 1000,
+	})
+	if forgedResult.Applied != 0 || forgedResult.Skipped != 1 || forgedResult.Objects[0].Warning == "" {
+		t.Fatalf("forged IPC result = %+v", forgedResult)
+	}
+	if _, err := database.AssetGet(ctx, forgedID); err == nil {
+		t.Fatal("IPC forged a managed asset")
+	}
+
+	tamperedResult := dispatch(managed.ID, map[string]any{
+		"id": managed.ID, "groupId": managed.GroupID, "kind": managed.Kind, "name": managed.Name,
+		"host": "attacker.example", "port": managed.Port, "username": managed.Username, "authKind": managed.AuthKind,
+		"keyPath": managed.KeyPath, "credId": managed.CredID, "optionsJson": managed.OptionsJSON,
+		"tags": managed.Tags, "note": managed.Note, "sort": managed.Sort,
+		"createdAt": managed.CreatedAt, "updatedAt": managed.UpdatedAt + 1000,
+	})
+	if tamperedResult.Applied != 0 || tamperedResult.Skipped != 1 || tamperedResult.Objects[0].Warning == "" {
+		t.Fatalf("tampered IPC result = %+v", tamperedResult)
+	}
+	current, err := database.AssetGet(ctx, managed.ID)
+	if err != nil || current.Host == nil || *current.Host != "10.0.0.1" || current.UpdatedAt != managed.UpdatedAt {
+		t.Fatalf("IPC high revision tampering changed asset: %+v, err=%v", current, err)
+	}
+}
+
+func int32PointerForInventory(value int32) *int32 { return &value }

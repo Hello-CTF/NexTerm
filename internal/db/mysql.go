@@ -40,6 +40,7 @@ func connectMySQL(ctx context.Context, config MySQLConfig) (*mysqlConnection, er
 	driverConfig.MultiStatements = false
 	driverConfig.ParseTime = false
 	driverConfig.InterpolateParams = false
+	driverConfig.DialFunc = config.DialContext
 	if config.TLSConfig != nil {
 		driverConfig.TLS = config.TLSConfig.Clone()
 	}
@@ -174,6 +175,10 @@ func querySQL(ctx context.Context, database *sql.DB, statement string, limit uin
 	}
 	if err == nil {
 		return result, nil
+	}
+	var ipcErr *ipc.Error
+	if errors.As(err, &ipcErr) {
+		return result, ipcErr
 	}
 	if errors.Is(queryContext.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
 		return result, ipc.WrapError(ipc.CodeTimeout, fmt.Sprintf("SQL 执行超时（%s）", formatDuration(timeout)), err)

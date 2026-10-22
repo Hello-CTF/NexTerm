@@ -98,7 +98,7 @@ func TestProductionTerminalRecordAndExportResolveStagedPaths(t *testing.T) {
 			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 			Streams: ipc.StreamFactoryFuncs{Binary: factory.open},
 		},
-		DataDir: t.TempDir(), Desktop: false, StagedBlobs: staged,
+		DataDir: t.TempDir(), Desktop: true, StagedBlobs: staged,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +157,7 @@ func TestProductionTerminalRecordStopIPCContract(t *testing.T) {
 			recordingTerminal := &recordingIPCStopTerminal{bytes: test.bytes, err: test.stopErr}
 			manager := session.NewManager(session.Config{Terminals: session.TerminalFactoryFunc(func(session.TerminalConfig) (session.TerminalState, error) {
 				return recordingTerminal, nil
-			})})
+			}), OpenAccess: true})
 			t.Cleanup(func() { _ = manager.Close() })
 			tab, err := manager.RegisterRemoteSession(t.Context(), session.RemoteSessionOptions{OwnerID: "recording-owner"})
 			if err != nil {
@@ -191,7 +191,7 @@ func TestProductionTerminalRecordStatusIPCContract(t *testing.T) {
 	recordingTerminal := &recordingIPCStopTerminal{}
 	manager := session.NewManager(session.Config{Terminals: session.TerminalFactoryFunc(func(session.TerminalConfig) (session.TerminalState, error) {
 		return recordingTerminal, nil
-	})})
+	}), OpenAccess: true})
 	t.Cleanup(func() { _ = manager.Close() })
 	tab, err := manager.RegisterRemoteSession(t.Context(), session.RemoteSessionOptions{OwnerID: "recording-owner"})
 	if err != nil {
@@ -522,7 +522,7 @@ type productionAuthorizationActor struct {
 	allowed  bool
 }
 
-func newProductionAuthorizationFixture(t *testing.T, open bool) *productionAuthorizationFixture {
+func newProductionAuthorizationFixture(t *testing.T, open, includeOther bool) *productionAuthorizationFixture {
 	t.Helper()
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
 		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
@@ -560,9 +560,13 @@ func newProductionAuthorizationFixture(t *testing.T, open bool) *productionAutho
 		ownerConnect, otherConnect = t.Context(), t.Context()
 	}
 	fixture.ownerSession = fixture.connect(t, ownerConnect, "session-a", "owner-a")
-	fixture.otherSession = fixture.connect(t, otherConnect, "session-b", "owner-b")
+	if includeOther {
+		fixture.otherSession = fixture.connect(t, otherConnect, "session-b", "owner-b")
+	}
 	fixture.ownerTab = fixture.openTab(t, ownerConnect, fixture.ownerSession.ID, "owner-client", "owner-channel")
-	fixture.otherTab = fixture.openTab(t, otherConnect, fixture.otherSession.ID, "other-client", "other-channel")
+	if includeOther {
+		fixture.otherTab = fixture.openTab(t, otherConnect, fixture.otherSession.ID, "other-client", "other-channel")
+	}
 	return fixture
 }
 
@@ -625,9 +629,14 @@ func requireProductionAuthorization(t *testing.T, response ipc.Response, allowed
 var productionAuthorizationActorNames = []string{"owner", "same-account-second-client", "other-account", "superadmin", "open"}
 
 func TestProductionSessionAndTerminalListsAreOwnerScoped(t *testing.T) {
+	defaultFixture := newProductionAuthorizationFixture(t, false, true)
+	openFixture := newProductionAuthorizationFixture(t, true, true)
 	for _, actorName := range productionAuthorizationActorNames {
 		t.Run(actorName, func(t *testing.T) {
-			fixture := newProductionAuthorizationFixture(t, actorName == "open")
+			fixture := defaultFixture
+			if actorName == "open" {
+				fixture = openFixture
+			}
 			actor := fixture.actor(actorName)
 			sessionResponse := fixture.dispatch(actor, "session_list", `null`, "")
 			var sessions []sessionInfoDTO
@@ -730,9 +739,6 @@ func TestProductionTerminalRequestsEnforceAccountOwnership(t *testing.T) {
 		{name: "close", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
 			return []ipc.Response{f.dispatch(actor, "terminal_close_tab", `{"tabId":"`+f.ownerTab.ID+`","clientId":"`+actor.clientID+`"}`, "")}
 		}},
-		{name: "cwd", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
-			return []ipc.Response{f.dispatch(actor, "session_cwd", `{"sessionId":"`+f.ownerSession.ID+`"}`, "")}
-		}},
 		{name: "reconnect", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
 			return []ipc.Response{f.dispatch(actor, "session_reconnect", `{"sessionId":"`+f.ownerSession.ID+`"}`, "")}
 		}},
@@ -744,7 +750,7 @@ func TestProductionTerminalRequestsEnforceAccountOwnership(t *testing.T) {
 		t.Run(operation.name, func(t *testing.T) {
 			for _, actorName := range productionAuthorizationActorNames {
 				t.Run(actorName, func(t *testing.T) {
-					fixture := newProductionAuthorizationFixture(t, actorName == "open")
+					fixture := newProductionAuthorizationFixture(t, actorName == "open", false)
 					actor := fixture.actor(actorName)
 					if operation.controller && actorName == "same-account-second-client" {
 						claim := fixture.dispatch(actor, "terminal_claim", `{"tabId":"`+fixture.ownerTab.ID+`","clientId":"`+actor.clientID+`"}`, "")

@@ -11,11 +11,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-var (
-	conditionalPreVerifyHook func()
-	conditionalPreCommitHook func()
-)
-
 func (f *FileSystem) WriteFileVersion(ctx context.Context, path string, data []byte, backup bool, expected conditional.Expectation) error {
 	if err := expected.Validate(); err != nil {
 		return err
@@ -49,8 +44,8 @@ func (f *FileSystem) createFileVersion(ctx context.Context, path string, data []
 			_ = os.Remove(temporary)
 		}
 	}()
-	if conditionalPreVerifyHook != nil {
-		conditionalPreVerifyHook()
+	if f.conditionalPreVerifyHook != nil {
+		f.conditionalPreVerifyHook()
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -60,8 +55,8 @@ func (f *FileSystem) createFileVersion(ctx context.Context, path string, data []
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	if conditionalPreCommitHook != nil {
-		conditionalPreCommitHook()
+	if f.conditionalPreCommitHook != nil {
+		f.conditionalPreCommitHook()
 	}
 	if err := ctx.Err(); err != nil {
 		return err

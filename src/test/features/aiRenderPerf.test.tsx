@@ -92,7 +92,7 @@ function renderCount(text: string): number {
 describe("AI conversation streaming render performance", () => {
   let view: MountedView | null = null;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     markdownRenders.byText.clear();
     rafQueue = [];
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
@@ -133,12 +133,14 @@ describe("AI conversation streaming render performance", () => {
       sessions: [],
     });
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    await flush();
   });
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
+  afterEach(async () => {
+    await flush();
     view?.unmount();
     view = null;
+    vi.unstubAllGlobals();
     localStorage.clear();
   });
 

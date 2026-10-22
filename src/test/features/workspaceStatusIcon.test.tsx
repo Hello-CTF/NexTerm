@@ -23,6 +23,20 @@ vi.mock("../../ipc/commands", () => ({
     probe: vi.fn(),
   },
   vaultApi: { status: mocks.vaultStatus, listCredentials: vi.fn() },
+  syncApi: {
+    linkGet: vi.fn().mockResolvedValue({
+      url: "",
+      username: "",
+      insecure: false,
+      hasPassword: false,
+      verifiedAt: 0,
+      lastError: null,
+    }),
+  },
+  layoutApi: {
+    get: vi.fn().mockResolvedValue({ revision: 0, updatedAt: 0, data: null }),
+    put: vi.fn().mockResolvedValue({ saved: true, revision: 1, conflict: false }),
+  },
   terminalApi: {},
   dbApi: {},
 }));

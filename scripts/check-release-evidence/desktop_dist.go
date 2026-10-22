@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -85,7 +87,11 @@ func prepareDesktopPackageRepo(root, base, version string) error {
 	script := strings.Join([]string{
 		"cp -R " + shellQuote(filepath.Join(root, "scripts")) + " " + shellQuote(filepath.Join(base, "scripts")),
 		"cp -R " + shellQuote(filepath.Join(root, "public")) + " " + shellQuote(filepath.Join(base, "public")),
-		"cp " + shellQuote(filepath.Join(root, "wails.json")) + " " + shellQuote(filepath.Join(root, "package.json")) + " " + shellQuote(filepath.Join(root, "LICENSE")) + " " + shellQuote(base),
+		"mkdir -p " + shellQuote(filepath.Join(base, ".github", "scripts")),
+		"cp " + shellQuote(filepath.Join(root, ".github", "native-matrix.json")) + " " + shellQuote(filepath.Join(base, ".github", "native-matrix.json")),
+		"cp " + shellQuote(filepath.Join(root, ".github", "scripts", "helper-matrix.mjs")) + " " + shellQuote(filepath.Join(base, ".github", "scripts", "helper-matrix.mjs")),
+		"cp " + shellQuote(filepath.Join(root, ".github", "scripts", "helper-metadata.mjs")) + " " + shellQuote(filepath.Join(base, ".github", "scripts", "helper-metadata.mjs")),
+		"cp " + shellQuote(filepath.Join(root, "wails.json")) + " " + shellQuote(filepath.Join(root, "package.json")) + " " + shellQuote(filepath.Join(root, "go.mod")) + " " + shellQuote(filepath.Join(root, "go.sum")) + " " + shellQuote(filepath.Join(root, "LICENSE")) + " " + shellQuote(base),
 	}, "\n")
 	result := runScript(script, base, nil)
 	if result.rc != 0 {
@@ -124,9 +130,6 @@ func prepareDesktopPackageRepo(root, base, version string) error {
 	if metadata.Protocol <= 0 || len(metadata.Features) == 0 {
 		return fmt.Errorf("helper metadata is incomplete: %s", metadataRaw.stdout)
 	}
-	if err := os.WriteFile(filepath.Join(base, "go.mod"), []byte("module desktop-evidence-fixture\n\ngo 1.26\n"), 0o644); err != nil {
-		return err
-	}
 	helperCommand := filepath.Join(base, "cmd", "nexterm-helper")
 	if err := os.MkdirAll(helperCommand, 0o755); err != nil {
 		return err
@@ -141,23 +144,23 @@ func prepareDesktopPackageRepo(root, base, version string) error {
 		return err
 	}
 	helperRoot := filepath.Join(base, "target", "go-build")
-	for _, arch := range []string{"amd64", "arm64"} {
-		buildDir := filepath.Join(base, "helper-build", arch)
+	for _, target := range helperFixtureTargets {
+		buildDir := filepath.Join(base, "helper-build", target.goos+"-"+target.arch)
 		if err := os.MkdirAll(buildDir, 0o755); err != nil {
 			return err
 		}
-		helper, err := buildStubBinary(buildDir, "package main\n\nfunc main() {}\n", "linux", arch, "0")
+		helper, err := buildStubBinary(buildDir, "package main\n\nfunc main() {}\n", target.goos, target.arch, "0")
 		if err != nil {
-			return fmt.Errorf("build fixture helper %s: %w", arch, err)
+			return fmt.Errorf("build fixture helper %s/%s: %w", target.goos, target.arch, err)
 		}
-		destination := filepath.Join(helperRoot, "nexterm-helper-linux-"+arch)
+		destination := filepath.Join(helperRoot, target.name)
 		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 			return err
 		}
 		if err := copyFile(helper, destination, 0o755); err != nil {
 			return err
 		}
-		if err := writeHelperFixtureManifest(destination, arch, version, metadata.Protocol, metadata.Features); err != nil {
+		if err := writeHelperFixtureManifest(destination, target.goos, target.arch, target.representative, version, metadata.Protocol, metadata.Features); err != nil {
 			return err
 		}
 	}
@@ -180,6 +183,25 @@ fs.writeFileSync(process.env.DIST_MANIFEST, JSON.stringify(manifest));`
 	return nil
 }
 
+type helperFixtureTarget struct {
+	goos           string
+	arch           string
+	name           string
+	representative bool
+}
+
+var helperFixtureTargets = []helperFixtureTarget{
+	{goos: "linux", arch: "amd64", name: "nexterm-helper-linux-amd64", representative: true},
+	{goos: "linux", arch: "arm64", name: "nexterm-helper-linux-arm64"},
+	{goos: "linux", arch: "armv7", name: "nexterm-helper-linux-armv7"},
+	{goos: "linux", arch: "riscv64", name: "nexterm-helper-linux-riscv64"},
+	{goos: "linux", arch: "loong64", name: "nexterm-helper-linux-loong64"},
+	{goos: "darwin", arch: "amd64", name: "nexterm-helper-darwin-amd64"},
+	{goos: "darwin", arch: "arm64", name: "nexterm-helper-darwin-arm64", representative: true},
+	{goos: "windows", arch: "amd64", name: "nexterm-helper-windows-amd64.exe", representative: true},
+	{goos: "windows", arch: "arm64", name: "nexterm-helper-windows-arm64.exe"},
+}
+
 func copyFile(source, destination string, mode os.FileMode) error {
 	contents, err := os.ReadFile(source)
 	if err != nil {
@@ -188,8 +210,8 @@ func copyFile(source, destination string, mode os.FileMode) error {
 	return os.WriteFile(destination, contents, mode)
 }
 
-func writeHelperFixtureManifest(file, arch, version string, protocol int, features []string) error {
-	if err := writeBinaryManifest(file, "helper", "linux", arch, "0", version, "unknown"); err != nil {
+func writeHelperFixtureManifest(file, goos, arch string, representative bool, version string, protocol int, features []string) error {
+	if err := writeBinaryManifest(file, "helper", goos, arch, "0", version, "unknown"); err != nil {
 		return err
 	}
 	manifestPath := file + ".manifest.json"
@@ -201,9 +223,27 @@ func writeHelperFixtureManifest(file, arch, version string, protocol int, featur
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return err
 	}
-	manifest["protocol"] = protocol
-	manifest["features"] = features
-	manifest["binary_metadata_verified"] = true
+	if representative {
+		// Representative entries are synthetic validator fixtures, not platform evidence.
+		binaryBytes, err := os.ReadFile(file)
+		if err != nil {
+			return err
+		}
+		digest := sha256.Sum256(binaryBytes)
+		manifest["protocol"] = protocol
+		manifest["features"] = features
+		manifest["sha256"] = fmt.Sprintf("%x", digest)
+		manifest["binary_metadata_verified"] = true
+		manifest["metadata_host"] = map[string]string{"os": goos, "arch": arch}
+	} else {
+		manifest["binary_metadata_verified"] = false
+		manifest["metadata_status"] = "not-run"
+		manifest["cross_compiled"] = true
+		manifest["untested"] = true
+	}
+	if arch == "armv7" {
+		manifest["platform"].(map[string]interface{})["goarm"] = "7"
+	}
 	updated, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return err
@@ -211,7 +251,58 @@ func writeHelperFixtureManifest(file, arch, version string, protocol int, featur
 	return os.WriteFile(manifestPath, append(updated, '\n'), 0o644)
 }
 
-func runDesktopPackage(base, binary, version, goos, goarch string) cmdResult {
+const syntheticDesktopUpdaterPublicKey = "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3"
+
+func syntheticDesktopUpdaterPublicKeyVariant() string {
+	decoded, err := base64.StdEncoding.DecodeString(syntheticDesktopUpdaterPublicKey)
+	if err != nil {
+		panic(err)
+	}
+	decoded[len(decoded)-1] ^= 0xff
+	return base64.StdEncoding.EncodeToString(decoded)
+}
+
+func editDesktopBinaryManifest(binary string, edit func(map[string]interface{})) error {
+	manifestPath := binary + ".manifest.json"
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return err
+	}
+	var manifest map[string]interface{}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return err
+	}
+	edit(manifest)
+	updated, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(manifestPath, append(updated, '\n'), 0o644)
+}
+
+func addDesktopReuseEvidence(binary, version string) error {
+	digest := sha256.Sum256([]byte(syntheticDesktopUpdaterPublicKey))
+	return editDesktopBinaryManifest(binary, func(manifest map[string]interface{}) {
+		manifest["source_ref"] = "refs/tags/v" + version
+		manifest["updater_public_key_sha256"] = fmt.Sprintf("%x", digest)
+	})
+}
+
+func cloneDesktopBinary(source, directory string) (string, error) {
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return "", err
+	}
+	destination := filepath.Join(directory, filepath.Base(source))
+	if err := copyFile(source, destination, 0o755); err != nil {
+		return "", err
+	}
+	if err := copyFile(source+".manifest.json", destination+".manifest.json", 0o644); err != nil {
+		return "", err
+	}
+	return destination, nil
+}
+
+func runDesktopPackage(base, binary, version, goos, goarch string, extraEnv ...string) cmdResult {
 	args := []string{
 		"node", filepath.Join(base, "scripts", "build.mjs"), "desktop",
 		"--release", "--package", "--package-only",
@@ -227,11 +318,14 @@ func runDesktopPackage(base, binary, version, goos, goarch string) cmdResult {
 	cmd.Env = append(os.Environ(),
 		"SOURCE_DATE_EPOCH=1",
 		"NEXTERM_RELEASE_VERSION="+version,
+		"NEXTERM_RELEASE_REF=refs/tags/v"+version,
+		"NEXTERM_MINISIGN_PUBLIC_KEY="+syntheticDesktopUpdaterPublicKey,
 		"NEXTERM_MACOS_SIGN_IDENTITY=-",
 		"NEXTERM_MACOS_NOTARY_KEY_PATH=",
 		"NEXTERM_MACOS_NOTARY_KEY_ID=",
 		"NEXTERM_MACOS_NOTARY_ISSUER=",
 	)
+	cmd.Env = append(cmd.Env, extraEnv...)
 	return runCmd(cmd)
 }
 
@@ -278,14 +372,25 @@ func runDesktopDistChecks(root, version, goos, goarch string) []checkResult {
 		if err := writeBinaryManifest(binary, "desktop", goos, goarch, "1", version, "unknown"); err != nil {
 			fatalf("%v", err)
 		}
+		if err := addDesktopReuseEvidence(binary, version); err != nil {
+			fatalf("%v", err)
+		}
 	}
 
-	good := runDesktopPackage(repo, goodBinary, version, goos, goarch)
+	good := runDesktopPackage(repo, goodBinary, version, goos, goarch,
+		"NEXTERM_MINISIGN_PUBLIC_KEY=untrusted comment: synthetic test key\n"+syntheticDesktopUpdaterPublicKey+"\n")
 	_, goodAssertions, _ := readArtifactReport(goodBinary + ".artifact.json")
 	packages, readPackagesErr := os.ReadDir(filepath.Join(repo, "release-assets"))
-	c.check("desktop package accepts exact embedded index and scripts",
+	packageEvidence := map[string]map[string]string{}
+	for _, pkg := range packages {
+		if strings.HasSuffix(pkg.Name(), ".artifact.json") {
+			_, assertions, _ := readArtifactReport(filepath.Join(repo, "release-assets", pkg.Name()))
+			packageEvidence[pkg.Name()] = assertions
+		}
+	}
+	c.check("desktop package accepts exact embedded assets and normalized updater evidence",
 		good.rc == 0 && goodAssertions["embedded-index"] == "passed" && goodAssertions["embedded-script"] == "passed" && readPackagesErr == nil && len(packages) > 0,
-		fmt.Sprintf("rc=%d assertions=%v packages=%d stderr=%q", good.rc, goodAssertions, len(packages), good.stderr))
+		fmt.Sprintf("rc=%d assertions=%v package_assertions=%v packages=%d stderr=%q", good.rc, goodAssertions, packageEvidence, len(packages), good.stderr))
 
 	missing := runDesktopPackage(repo, missingBinary, version, goos, goarch)
 	_, missingAssertions, _ := readArtifactReport(missingBinary + ".artifact.json")
@@ -298,5 +403,128 @@ func runDesktopDistChecks(root, version, goos, goarch string) []checkResult {
 	c.check("desktop package rejects a tampered embedded index",
 		tampered.rc != 0 && tamperedAssertions["embedded-index"] == "failed",
 		fmt.Sprintf("rc=%d assertions=%v stderr=%q", tampered.rc, tamperedAssertions, tampered.stderr))
+
+	for _, scenario := range []struct {
+		name       string
+		want       string
+		edit       func(map[string]interface{})
+		helperName string
+		helperEdit func(map[string]interface{})
+		tamper     bool
+		version    string
+		env        []string
+	}{
+		{
+			name:       "helper protocol mismatch",
+			want:       "protocol",
+			helperName: "nexterm-helper-linux-amd64",
+			helperEdit: func(manifest map[string]interface{}) { manifest["protocol"] = 1 },
+		},
+		{
+			name:       "helper features mismatch",
+			want:       "features",
+			helperName: "nexterm-helper-linux-amd64",
+			helperEdit: func(manifest map[string]interface{}) { manifest["features"] = []string{"exec"} },
+		},
+		{
+			name:       "helper features missing",
+			want:       "features",
+			helperName: "nexterm-helper-linux-amd64",
+			helperEdit: func(manifest map[string]interface{}) { delete(manifest, "features") },
+		},
+		{
+			name: "updater public key mismatch",
+			want: "updater public key SHA-256",
+			env:  []string{"NEXTERM_MINISIGN_PUBLIC_KEY=" + syntheticDesktopUpdaterPublicKeyVariant()},
+		},
+		{
+			name: "commit mismatch",
+			want: "commit",
+			edit: func(manifest map[string]interface{}) { manifest["commit"] = strings.Repeat("0", 40) },
+		},
+		{
+			name: "manifest ref mismatch",
+			want: "source_ref",
+			edit: func(manifest map[string]interface{}) { manifest["source_ref"] = "refs/heads/master" },
+		},
+		{
+			name: "current ref mismatch",
+			want: "NEXTERM_RELEASE_REF",
+			env:  []string{"NEXTERM_RELEASE_REF=refs/heads/master"},
+		},
+		{
+			name: "missing updater public key evidence",
+			want: "updater public key SHA-256",
+			edit: func(manifest map[string]interface{}) { delete(manifest, "updater_public_key_sha256") },
+		},
+		{
+			name:   "binary tamper",
+			want:   "binary sha256 mismatch",
+			tamper: true,
+		},
+		{
+			name:    "master placeholder version",
+			want:    "release version",
+			version: "0.0.0",
+		},
+	} {
+		binary, err := cloneDesktopBinary(goodBinary, filepath.Join(base, "reuse-"+strings.ReplaceAll(scenario.name, " ", "-")))
+		if err != nil {
+			fatalf("%v", err)
+		}
+		if scenario.edit != nil {
+			if err := editDesktopBinaryManifest(binary, scenario.edit); err != nil {
+				fatalf("%v", err)
+			}
+		}
+		if scenario.tamper {
+			contents, err := os.ReadFile(binary)
+			if err != nil {
+				fatalf("%v", err)
+			}
+			if err := os.WriteFile(binary, append(contents, 0), 0o755); err != nil {
+				fatalf("%v", err)
+			}
+		}
+		scenarioVersion := scenario.version
+		if scenarioVersion == "" {
+			scenarioVersion = version
+		}
+		var helperManifestPath string
+		var helperManifestRaw []byte
+		if scenario.helperName != "" {
+			helperManifestPath = filepath.Join(repo, "target", "go-build", scenario.helperName+".manifest.json")
+			helperManifestRaw, err = os.ReadFile(helperManifestPath)
+			if err != nil {
+				fatalf("%v", err)
+			}
+			var helperManifest map[string]interface{}
+			if err := json.Unmarshal(helperManifestRaw, &helperManifest); err != nil {
+				fatalf("%v", err)
+			}
+			scenario.helperEdit(helperManifest)
+			updated, err := json.MarshalIndent(helperManifest, "", "  ")
+			if err != nil {
+				fatalf("%v", err)
+			}
+			if err := os.WriteFile(helperManifestPath, append(updated, '\n'), 0o644); err != nil {
+				fatalf("%v", err)
+			}
+		}
+		assets := filepath.Join(repo, "release-assets")
+		if err := os.RemoveAll(assets); err != nil {
+			fatalf("%v", err)
+		}
+		result := runDesktopPackage(repo, binary, scenarioVersion, goos, goarch, scenario.env...)
+		if helperManifestPath != "" {
+			if err := os.WriteFile(helperManifestPath, helperManifestRaw, 0o644); err != nil {
+				fatalf("%v", err)
+			}
+		}
+		_, statErr := os.Stat(assets)
+		c.check("desktop package rejects "+scenario.name,
+			result.rc != 0 && strings.Contains(result.stderr, scenario.want) && os.IsNotExist(statErr),
+			fmt.Sprintf("rc=%d no_artifacts=%t stderr=%q", result.rc, os.IsNotExist(statErr), result.stderr))
+	}
 	return c.results
 }

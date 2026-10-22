@@ -199,7 +199,8 @@ describe("AiSidebar edit and resend", () => {
     await flush();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flush();
     view?.unmount();
     view = null;
     vi.unstubAllGlobals();
@@ -398,7 +399,7 @@ describe("AiSidebar edit and resend", () => {
     expect(composerOf(view!).value).toBe("第三问");
     setInputValue(composerOf(view!), "Third question (edited)");
     clickButton(view!.container, "编辑并重新发送");
-    await flushUntil(() => mocks.editResend.mock.calls.length > 0);
+    await flush();
     expect(mocks.editResend).toHaveBeenCalledWith("conv-1", "m-100");
   });
 

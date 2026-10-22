@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"sync"
+	"time"
 
 	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
 	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
@@ -43,9 +45,292 @@ func resolveStagedLocalPath(ctx context.Context, staged StagedBlobResolver, path
 	userID, _ := ipc.UserIDFromContext(ctx)
 	resolved, err := staged.ResolveStagedPath(path, userID)
 	if err != nil {
-		return "", ipc.NewError(ipc.CodeNotFound, "暂存文件不存在或已过期")
+		return "", ipc.NewError(ipc.CodeNotFound, "暂存文件不存在或已过期").WithDetail(map[string]any{
+			"resource": "local_staging", "reason": "staged_not_found",
+		})
 	}
 	return resolved, nil
+}
+
+type fsTransferAttemptState uint8
+
+const (
+	fsTransferAttemptRunning fsTransferAttemptState = iota
+	fsTransferAttemptCancelPending
+	fsTransferAttemptEnded
+	fsTransferAttemptRetention = 30 * time.Minute
+	fsTransferExpiryRecheck    = time.Minute
+)
+
+type fsTransferAttemptKey struct {
+	owner     string
+	taskID    string
+	attemptID string
+}
+
+type fsTransferCancellation struct {
+	state     fsTransferAttemptState
+	cancel    context.CancelFunc
+	updatedAt time.Time
+	inFlight  int
+	timer     *time.Timer
+	onExpire  func()
+}
+
+type fsTransferRegistry struct {
+	mu       sync.Mutex
+	attempts map[fsTransferAttemptKey]*fsTransferCancellation
+}
+
+func newFSTransferRegistry() *fsTransferRegistry {
+	return &fsTransferRegistry{attempts: make(map[fsTransferAttemptKey]*fsTransferCancellation)}
+}
+
+func (r *fsTransferRegistry) pruneLocked(now time.Time) []func() {
+	var expired []func()
+	for key, entry := range r.attempts {
+		if now.Sub(entry.updatedAt) < fsTransferAttemptRetention || (entry.state == fsTransferAttemptRunning && entry.inFlight > 0) {
+			continue
+		}
+		delete(r.attempts, key)
+		if entry.timer != nil {
+			entry.timer.Stop()
+		}
+		if entry.cancel != nil {
+			entry.cancel()
+		}
+		if entry.onExpire != nil {
+			expired = append(expired, entry.onExpire)
+		}
+	}
+	return expired
+}
+
+func runFSExpirations(expired []func()) {
+	for _, expire := range expired {
+		expire()
+	}
+}
+
+func (r *fsTransferRegistry) scheduleLocked(key fsTransferAttemptKey, entry *fsTransferCancellation) {
+	if entry.timer != nil {
+		entry.timer.Stop()
+	}
+	delay := time.Until(entry.updatedAt.Add(fsTransferAttemptRetention))
+	if delay < 0 {
+		delay = 0
+	}
+	entry.timer = time.AfterFunc(delay, func() { r.expire(key, entry) })
+}
+
+func (r *fsTransferRegistry) expire(key fsTransferAttemptKey, entry *fsTransferCancellation) {
+	r.mu.Lock()
+	if r.attempts[key] != entry {
+		r.mu.Unlock()
+		return
+	}
+	if time.Since(entry.updatedAt) < fsTransferAttemptRetention {
+		r.scheduleLocked(key, entry)
+		r.mu.Unlock()
+		return
+	}
+	if entry.state == fsTransferAttemptRunning && entry.inFlight > 0 {
+		if entry.timer != nil {
+			entry.timer.Stop()
+		}
+		entry.timer = time.AfterFunc(fsTransferExpiryRecheck, func() { r.expire(key, entry) })
+		r.mu.Unlock()
+		return
+	}
+	delete(r.attempts, key)
+	if entry.timer != nil {
+		entry.timer.Stop()
+	}
+	onExpire := entry.onExpire
+	if entry.cancel != nil {
+		entry.cancel()
+	}
+	r.mu.Unlock()
+	if onExpire != nil {
+		onExpire()
+	}
+}
+
+func (r *fsTransferRegistry) touch(ctx context.Context, taskID, attemptID string) {
+	key := fsTransferAttemptKey{owner: ipc.OwnerID(ctx), taskID: taskID, attemptID: attemptID}
+	r.mu.Lock()
+	if entry := r.attempts[key]; entry != nil && entry.state == fsTransferAttemptRunning {
+		entry.updatedAt = time.Now()
+		r.scheduleLocked(key, entry)
+	}
+	r.mu.Unlock()
+}
+
+func (r *fsTransferRegistry) enter(ctx context.Context, taskID, attemptID string) func() {
+	key := fsTransferAttemptKey{owner: ipc.OwnerID(ctx), taskID: taskID, attemptID: attemptID}
+	r.mu.Lock()
+	if entry := r.attempts[key]; entry != nil && entry.state == fsTransferAttemptRunning {
+		entry.inFlight++
+		entry.updatedAt = time.Now()
+		r.scheduleLocked(key, entry)
+	}
+	r.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() { r.leave(ctx, taskID, attemptID) })
+	}
+}
+
+func (r *fsTransferRegistry) leave(ctx context.Context, taskID, attemptID string) {
+	key := fsTransferAttemptKey{owner: ipc.OwnerID(ctx), taskID: taskID, attemptID: attemptID}
+	r.mu.Lock()
+	if entry := r.attempts[key]; entry != nil && entry.state == fsTransferAttemptRunning && entry.inFlight > 0 {
+		entry.inFlight--
+		entry.updatedAt = time.Now()
+		r.scheduleLocked(key, entry)
+	}
+	r.mu.Unlock()
+}
+
+func (r *fsTransferRegistry) close() {
+	r.mu.Lock()
+	for key, entry := range r.attempts {
+		delete(r.attempts, key)
+		if entry.timer != nil {
+			entry.timer.Stop()
+		}
+		if entry.cancel != nil {
+			entry.cancel()
+		}
+	}
+	r.mu.Unlock()
+}
+
+func (r *fsTransferRegistry) begin(ctx context.Context, taskID, attemptID string) (context.Context, string, func(), error) {
+	return r.beginWithExpiry(ctx, taskID, attemptID, nil)
+}
+
+func (r *fsTransferRegistry) beginWithExpiry(ctx context.Context, taskID, attemptID string, onExpire func()) (context.Context, string, func(), error) {
+	if taskID == "" {
+		taskID = ids.New()
+	}
+	if attemptID == "" {
+		attemptID = taskID
+	}
+	key := fsTransferAttemptKey{owner: ipc.OwnerID(ctx), taskID: taskID, attemptID: attemptID}
+	now := time.Now()
+	r.mu.Lock()
+	expired := r.pruneLocked(now)
+	defer func() {
+		r.mu.Unlock()
+		runFSExpirations(expired)
+	}()
+	if existing := r.attempts[key]; existing != nil {
+		switch existing.state {
+		case fsTransferAttemptCancelPending:
+			existing.state = fsTransferAttemptEnded
+			existing.updatedAt = now
+			r.scheduleLocked(key, existing)
+			return nil, "", nil, context.Canceled
+		case fsTransferAttemptRunning:
+			return nil, "", nil, ipc.NewError(ipc.Code("conflict"), "文件传输任务 attempt 正在运行")
+		default:
+			return nil, "", nil, ipc.NewError(ipc.Code("conflict"), "文件传输任务 attempt 已结束")
+		}
+	}
+	transferCtx, cancel := context.WithCancel(ctx)
+	entry := &fsTransferCancellation{state: fsTransferAttemptRunning, cancel: cancel, updatedAt: now, onExpire: onExpire, inFlight: 1}
+	r.attempts[key] = entry
+	r.scheduleLocked(key, entry)
+	finish := func() {
+		r.mu.Lock()
+		if current := r.attempts[key]; current == entry && current.state == fsTransferAttemptRunning {
+			current.state = fsTransferAttemptEnded
+			current.inFlight = 0
+			current.updatedAt = time.Now()
+			r.scheduleLocked(key, current)
+		}
+		r.mu.Unlock()
+		cancel()
+	}
+	return transferCtx, taskID, finish, nil
+}
+
+func (r *fsTransferRegistry) cancelLegacyLocked(owner, taskID string, now time.Time) (bool, error) {
+	found := false
+	ended := false
+	for key, entry := range r.attempts {
+		if key.owner != owner || key.taskID != taskID {
+			continue
+		}
+		switch entry.state {
+		case fsTransferAttemptRunning:
+			if entry.cancel != nil {
+				entry.cancel()
+			}
+			found = true
+		case fsTransferAttemptCancelPending:
+			found = true
+		default:
+			ended = true
+		}
+	}
+	if found {
+		return true, nil
+	}
+	if ended {
+		return false, nil
+	}
+	for other := range r.attempts {
+		if other.taskID == taskID {
+			return false, ipc.NewError(ipc.CodeForbidden, "不能取消其他账号的文件传输")
+		}
+	}
+	key := fsTransferAttemptKey{owner: owner, taskID: taskID, attemptID: taskID}
+	r.attempts[key] = &fsTransferCancellation{state: fsTransferAttemptCancelPending, updatedAt: now}
+	r.scheduleLocked(key, r.attempts[key])
+	return true, nil
+}
+
+func (r *fsTransferRegistry) cancel(ctx context.Context, taskID, attemptID string) (bool, error) {
+	if taskID == "" {
+		return false, ipc.BadParam(errors.New("taskId 不能为空"))
+	}
+	owner := ipc.OwnerID(ctx)
+	now := time.Now()
+	r.mu.Lock()
+	expired := r.pruneLocked(now)
+	defer func() {
+		r.mu.Unlock()
+		runFSExpirations(expired)
+	}()
+	if attemptID == "" {
+		return r.cancelLegacyLocked(owner, taskID, now)
+	}
+	key := fsTransferAttemptKey{owner: owner, taskID: taskID, attemptID: attemptID}
+	entry := r.attempts[key]
+	if entry != nil {
+		switch entry.state {
+		case fsTransferAttemptRunning:
+			if entry.cancel != nil {
+				entry.cancel()
+			}
+			return true, nil
+		case fsTransferAttemptCancelPending:
+			return true, nil
+		default:
+			return false, nil
+		}
+	}
+	for other := range r.attempts {
+		if other.taskID == taskID && other.attemptID == attemptID {
+			return false, ipc.NewError(ipc.CodeForbidden, "不能取消其他账号的文件传输")
+		}
+	}
+	// A pending entry is a tombstone for a cancel RPC that wins the race with begin.
+	r.attempts[key] = &fsTransferCancellation{state: fsTransferAttemptCancelPending, updatedAt: now}
+	r.scheduleLocked(key, r.attempts[key])
+	return true, nil
 }
 
 type fsRequest struct {
@@ -62,7 +347,14 @@ type fsRequest struct {
 	Algo          string `json:"algo"`
 	LocalPath     string `json:"localPath"`
 	RemotePath    string `json:"remotePath"`
+	TaskID        string `json:"taskId"`
+	AttemptID     string `json:"attemptId"`
 	Resume        bool   `json:"resume"`
+}
+
+type fsCancelRequest struct {
+	TaskID    string `json:"taskId"`
+	AttemptID string `json:"attemptId,omitempty"`
 }
 
 type fsEntryDTO struct {
@@ -115,7 +407,7 @@ type sshExtractor interface {
 	Extract(context.Context, string) (string, error)
 }
 
-func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager, staged StagedBlobResolver) error {
+func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager, staged StagedBlobResolver, uploadRegistries ...*fsChunkUploadRegistry) error {
 	filesystem := func(ctx context.Context, sessionID string) (base.FileSystem, string, error) {
 		transport, err := sessions.TransportFor(productionSessionRequestContext(ctx), sessionID)
 		if err != nil {
@@ -130,6 +422,11 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager, s
 			return nil, transport.Kind(), err
 		}
 		return remote, transport.Kind(), nil
+	}
+	transfers := newFSTransferRegistry()
+	var uploads *fsChunkUploadRegistry
+	if len(uploadRegistries) > 0 {
+		uploads = uploadRegistries[0]
 	}
 	registrations := []func() error{
 		func() error {
@@ -223,15 +520,20 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager, s
 		},
 		func() error {
 			return ipc.RegisterNested(dispatcher, "fs_write", func(ctx context.Context, _ *ipc.Call, input fsRequest) (any, error) {
-				filesystem, kind, err := filesystem(ctx, input.SessionID)
-				if err != nil {
-					return nil, fsIPCError(kind, err)
-				}
 				data, err := base64.StdEncoding.DecodeString(input.ContentBase64)
 				if err != nil {
 					return nil, ipc.BadParam(fmt.Errorf("文件内容不是有效的 Base64: %w", err))
 				}
-				return nil, fsIPCError(kind, filesystem.WriteFile(ctx, input.Path, data, input.Backup))
+				transferCtx, _, finish, err := transfers.begin(ctx, input.TaskID, input.AttemptID)
+				if err != nil {
+					return nil, fsIPCError("", err)
+				}
+				defer finish()
+				filesystem, kind, err := filesystem(transferCtx, input.SessionID)
+				if err != nil {
+					return nil, fsIPCError(kind, err)
+				}
+				return nil, fsIPCError(kind, filesystem.WriteFile(transferCtx, input.Path, data, input.Backup))
 			})
 		},
 		func() error {
@@ -281,40 +583,64 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager, s
 			})
 		},
 		func() error {
+			return ipc.Register(dispatcher, "fs_cancel", func(ctx context.Context, _ *ipc.Call, input fsCancelRequest) (bool, error) {
+				return transfers.cancel(ctx, input.TaskID, input.AttemptID)
+			})
+		},
+		func() error {
 			return ipc.Register(dispatcher, "fs_upload", func(ctx context.Context, call *ipc.Call, input fsRequest) (int64, error) {
-				localPath, err := resolveStagedLocalPath(ctx, staged, input.LocalPath)
+				transferCtx, taskID, finish, err := transfers.begin(ctx, input.TaskID, input.AttemptID)
+				if err != nil {
+					return 0, fsIPCError("", err)
+				}
+				defer finish()
+				localPath, err := resolveStagedLocalPath(transferCtx, staged, input.LocalPath)
 				if err != nil {
 					return 0, err
 				}
-				filesystem, kind, err := filesystem(ctx, input.SessionID)
+				filesystem, kind, err := filesystem(transferCtx, input.SessionID)
 				if err != nil {
 					return 0, fsIPCError(kind, err)
 				}
-				value, err := fslocal.Upload(ctx, localPath, filesystem, input.RemotePath, productionTransferOptions(ctx, call, input.Resume))
+				value, err := fslocal.Upload(transferCtx, localPath, fsAtomicUploadFilesystem(filesystem, kind), input.RemotePath, productionTransferOptions(transferCtx, call, taskID, input.Resume, func() {
+					transfers.touch(transferCtx, taskID, transferAttemptID(taskID, input.AttemptID))
+				}))
 				return value, fsIPCError(kind, err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "fs_download", func(ctx context.Context, call *ipc.Call, input fsRequest) (int64, error) {
-				localPath, err := resolveStagedLocalPath(ctx, staged, input.LocalPath)
+				transferCtx, taskID, finish, err := transfers.begin(ctx, input.TaskID, input.AttemptID)
+				if err != nil {
+					return 0, fsIPCError("", err)
+				}
+				defer finish()
+				localPath, err := resolveStagedLocalPath(transferCtx, staged, input.LocalPath)
 				if err != nil {
 					return 0, err
 				}
-				filesystem, kind, err := filesystem(ctx, input.SessionID)
+				filesystem, kind, err := filesystem(transferCtx, input.SessionID)
 				if err != nil {
 					return 0, fsIPCError(kind, err)
 				}
-				value, err := fslocal.Download(ctx, filesystem, input.RemotePath, localPath, productionTransferOptions(ctx, call, false))
+				value, err := fslocal.Download(transferCtx, filesystem, input.RemotePath, localPath, productionTransferOptions(transferCtx, call, taskID, input.Resume, func() {
+					transfers.touch(transferCtx, taskID, transferAttemptID(taskID, input.AttemptID))
+				}))
 				return value, fsIPCError(kind, err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "fs_pack_download", func(ctx context.Context, call *ipc.Call, input fsRequest) (int64, error) {
-				localPath, err := resolveStagedLocalPath(ctx, staged, input.LocalPath)
+				transferCtx, taskID, finish, err := transfers.begin(ctx, input.TaskID, input.AttemptID)
+				if err != nil {
+					return 0, fsIPCError("", err)
+				}
+				defer finish()
+				localPath, err := resolveStagedLocalPath(transferCtx, staged, input.LocalPath)
 				if err != nil {
 					return 0, err
 				}
-				filesystem, kind, err := filesystem(ctx, input.SessionID)
+				filesystem, kind, err := filesystem(transferCtx, input.SessionID)
 				if err != nil {
 					return 0, fsIPCError(kind, err)
 				}
@@ -322,14 +648,13 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager, s
 				if !ok {
 					return 0, terminalIPCError(base.ErrUnsupported)
 				}
-				taskID := ids.New()
 				var last sshfs.Progress
-				value, err := provider.PackDownload(ctx, input.RemotePath, localPath, sshfs.TransferOptions{Progress: func(progress sshfs.Progress) {
+				value, err := provider.PackDownload(transferCtx, input.RemotePath, localPath, sshfs.TransferOptions{Progress: func(progress sshfs.Progress) {
 					last = progress
-					_ = ipc.Emit(ctx, call.Events, ipc.TopicFSProgress, fslocal.Progress{TaskID: taskID, Transferred: progress.Transferred, Total: progress.Total, Done: progress.Done})
+					_ = ipc.Emit(transferCtx, call.Events, ipc.TopicFSProgress, fslocal.Progress{TaskID: taskID, Transferred: progress.Transferred, Total: progress.Total, Done: progress.Done})
 				}})
-				if err != nil && ctx.Err() == nil {
-					_ = ipc.Emit(ctx, call.Events, ipc.TopicFSProgress, fslocal.Progress{TaskID: taskID, Transferred: last.Transferred, Total: last.Total, Done: true, Error: err.Error()})
+				if err != nil && transferCtx.Err() == nil {
+					_ = ipc.Emit(transferCtx, call.Events, ipc.TopicFSProgress, fslocal.Progress{TaskID: taskID, Transferred: last.Transferred, Total: last.Total, Done: true, Error: err.Error()})
 				}
 				return value, fsIPCError(kind, err)
 			})
@@ -348,6 +673,9 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager, s
 				return value, fsIPCError(kind, err)
 			})
 		},
+		func() error {
+			return registerFSChunkedCommands(dispatcher, filesystem, transfers, uploads)
+		},
 	}
 	for _, register := range registrations {
 		if err := register(); err != nil {
@@ -360,6 +688,14 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager, s
 func fsIPCError(transportKind string, err error) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, context.Canceled) {
+		return ipc.WrapError(ipc.Code("cancelled"), "文件传输已取消", err)
+	}
+	if errors.Is(err, fslocal.ErrResumeMismatch) {
+		return ipc.WrapError(ipc.Code("conflict"), err.Error(), err).WithDetail(map[string]any{
+			"resource": "partial", "reason": "resume_mismatch",
+		})
 	}
 	if errors.Is(err, base.ErrNoMedia) {
 		return ipc.WrapError(ipc.CodeIO, err.Error(), err).WithDetail(map[string]any{"resource": "path", "reason": "no_media"})
@@ -392,9 +728,21 @@ func fsIPCError(transportKind string, err error) error {
 	return classified
 }
 
-func productionTransferOptions(ctx context.Context, call *ipc.Call, resume bool) fslocal.TransferOptions {
-	taskID := ids.New()
+func transferAttemptID(taskID, attemptID string) string {
+	if attemptID == "" {
+		return taskID
+	}
+	return attemptID
+}
+
+func productionTransferOptions(ctx context.Context, call *ipc.Call, taskID string, resume bool, touch ...func()) fslocal.TransferOptions {
+	if taskID == "" {
+		taskID = ids.New()
+	}
 	return fslocal.TransferOptions{Resume: resume, TaskID: taskID, Progress: func(progress fslocal.Progress) {
+		if len(touch) > 0 && touch[0] != nil {
+			touch[0]()
+		}
 		_ = ipc.Emit(ctx, call.Events, ipc.TopicFSProgress, progress)
 	}}
 }

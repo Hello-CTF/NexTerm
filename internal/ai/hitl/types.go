@@ -70,6 +70,16 @@ var (
 	ErrInvalidNonce       = errors.New("hitl: nonce does not match the interrupt request")
 	ErrParametersChanged  = errors.New("hitl: tool parameters changed")
 	ErrAnswerReused       = errors.New("hitl: answer ID belongs to another request")
+	ErrAssetMismatch      = errors.New("hitl: asset identity does not match the request evidence")
+	ErrAssetUnknown       = errors.New("hitl: asset identity evidence is unavailable")
+	// ErrEnvironmentNamesMismatch rejects a confirmation whose typed
+	// environment names do not equal the challenge's required set: missing,
+	// wrong, or extra names all fail closed before any execution.
+	ErrEnvironmentNamesMismatch = errors.New("hitl: environment names do not match the challenge")
+	// ErrRestorePersist reports a retryable persistence failure during
+	// restore: the in-memory registration was rolled back and the persisted
+	// blob, run row, and checkpoint stay untouched for the next recovery.
+	ErrRestorePersist = errors.New("hitl: restore persist failed")
 )
 
 type Question struct {
@@ -86,6 +96,12 @@ type InterruptInput struct {
 	Kind         Kind            `json:"kind"`
 	Parameters   json.RawMessage `json:"parameters"`
 	Question     *Question       `json:"question,omitempty"`
+	// RequiredEnvironmentNames are the production environment names a
+	// confirmation must type back, when the challenge already computed them
+	// from the real target set (for example a multi-target exec batch). When
+	// empty, the manager resolves them from the run's target asset through
+	// the configurable production classification.
+	RequiredEnvironmentNames []string `json:"requiredEnvironmentNames,omitempty"`
 }
 
 type Interrupt struct {
@@ -105,6 +121,14 @@ type Interrupt struct {
 	ExpiresAt      time.Time       `json:"expiresAt"`
 	Attempt        uint64          `json:"attempt"`
 	Sequence       uint64          `json:"seq"`
+	// AssetID is the real asset identity the request evidence was produced on,
+	// resolved server-side; empty means unknown.
+	AssetID string `json:"assetId,omitempty"`
+	// RequiredEnvironmentNames are the production environment names a
+	// confirmation must type back, resolved from the real target asset
+	// through the configurable production classification; empty means the
+	// target is not production-classified and no names may be sent.
+	RequiredEnvironmentNames []string `json:"requiredEnvironmentNames,omitempty"`
 }
 
 type Answer struct {
@@ -118,6 +142,14 @@ type Answer struct {
 	Parameters   json.RawMessage `json:"parameters"`
 	Decision     Decision        `json:"decision,omitempty"`
 	Text         string          `json:"text,omitempty"`
+	// AssetID is the answerer's echo of the asset identity the confirmation was
+	// presented for; it is a claim checked against the request evidence, never
+	// trusted as the source of truth.
+	AssetID string `json:"assetId,omitempty"`
+	// EnvironmentNames are the actual environment names the user typed back;
+	// they are a claim validated against the request's required names, never
+	// auto-echoed from the challenge.
+	EnvironmentNames []string `json:"environmentNames,omitempty"`
 }
 
 type Resume struct {
@@ -129,6 +161,8 @@ type Resume struct {
 	TargetID     string `json:"targetId"`
 	Attempt      uint64 `json:"attempt"`
 	Sequence     uint64 `json:"seq"`
+	// AssetID is the verified asset evidence the resume was authorized against.
+	AssetID string `json:"assetId,omitempty"`
 }
 
 type Event struct {
@@ -140,6 +174,7 @@ type Event struct {
 	Message      string         `json:"message,omitempty"`
 	Attempt      uint64         `json:"attempt"`
 	Sequence     uint64         `json:"seq"`
+	AssetID      string         `json:"assetId,omitempty"`
 }
 
 type Snapshot struct {
@@ -157,13 +192,38 @@ const (
 	DefaultTerminalRetention = time.Hour
 )
 
+type Timer interface {
+	Stop() bool
+}
+
 type Config struct {
 	Checkpoints       adk.CheckPointStore
 	Store             Store
 	TTL               time.Duration
 	TerminalRetention time.Duration
 	Now               func() time.Time
+	AfterFunc         func(time.Duration, func()) Timer
 	NewNonce          func() (string, error)
+	// AssetResolver resolves the run's current real asset identity from
+	// server-side state for the tool awaiting confirmation. When both asset
+	// resolvers are nil, asset binding is disabled and all asset identities
+	// remain unknown. The tool argument keeps the evidence
+	// bound to the actual call: a database tool resolves the connection's real
+	// DB asset while a terminal tool resolves the session asset, even within
+	// one mixed scope. It is called with the run lock held and must not call
+	// back into the Manager.
+	AssetResolver func(ctx context.Context, runID, tool string) (string, error)
+	// RequestAssetResolver takes precedence over AssetResolver and resolves
+	// the actual target selected by the canonical tool parameters. The same
+	// persisted parameters are resolved again before a request resumes.
+	RequestAssetResolver func(context.Context, string, string, json.RawMessage) (string, error)
+	// EnvironmentResolver resolves the production environment names a
+	// confirmation must type back for the run's target asset, from the
+	// request owner and the real asset through the configurable production
+	// classification; it returns nil for non-production targets. When nil,
+	// no environment challenge is issued. It is called with the run lock
+	// held and must not call back into the Manager.
+	EnvironmentResolver func(context.Context, string) ([]string, error)
 }
 
 type Resumer interface {

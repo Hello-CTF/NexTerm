@@ -35,6 +35,7 @@ type hostKeyProbeDTO struct {
 	Port        int                    `json:"port"`
 	KeyType     string                 `json:"keyType"`
 	Fingerprint string                 `json:"fingerprint"`
+	Key         string                 `json:"key,omitempty"`
 	State       string                 `json:"state"`
 	Known       []hostKeyProbeKnownDTO `json:"known,omitempty"`
 }
@@ -72,6 +73,7 @@ type sshHostKeyErrorDetail struct {
 	Port        int                    `json:"port"`
 	KeyType     string                 `json:"keyType"`
 	Fingerprint string                 `json:"fingerprint"`
+	Key         string                 `json:"key,omitempty"`
 	Changed     bool                   `json:"changed"`
 	Known       []hostKeyProbeKnownDTO `json:"known,omitempty"`
 	Kind        string                 `json:"kind"`
@@ -108,7 +110,7 @@ func (s *terminalCommandService) registerSSHDiagnostics(dispatcher *ipc.Dispatch
 				}
 				dto := hostKeyProbeDTO{
 					Host: result.Host, Port: result.Port, KeyType: result.KeyType,
-					Fingerprint: result.Fingerprint, State: string(result.State),
+					Fingerprint: result.Fingerprint, Key: result.Key, State: string(result.State),
 				}
 				for _, known := range result.Known {
 					dto.Known = append(dto.Known, hostKeyProbeKnownDTO{KeyType: known.KeyType, Fingerprint: known.Fingerprint})
@@ -134,7 +136,7 @@ func (s *terminalCommandService) sshProbeAsset(ctx context.Context, assetID stri
 	if assetID == "" {
 		return store.AssetRow{}, "", ipc.BadParam(fmt.Errorf("asset id is required"))
 	}
-	row, err := s.database.AssetGet(ctx, assetID)
+	row, err := s.database.AssetGetLive(ctx, assetID)
 	if err != nil {
 		return store.AssetRow{}, "", err
 	}
@@ -216,7 +218,7 @@ type assetProbeTarget struct {
 
 func (s *terminalCommandService) resolveAssetProbeTarget(ctx context.Context, assetID string) assetProbeTarget {
 	target := assetProbeTarget{assetID: assetID}
-	row, err := s.database.AssetGet(ctx, assetID)
+	row, err := s.database.AssetGetLive(ctx, assetID)
 	if err != nil {
 		target.failure = &assetProbeResultDTO{AssetID: assetID, Kind: "not_found", Error: "asset not found"}
 		return target
@@ -364,6 +366,7 @@ func sshConnectIPCError(connectErr *ssh.ConnectError) *ipc.Error {
 		detail := sshHostKeyErrorDetail{
 			Host: keyErr.Presented.Host, Port: keyErr.Presented.Port,
 			KeyType: keyErr.Presented.KeyType, Fingerprint: keyErr.Presented.Fingerprint,
+			Key:     keyErr.Presented.Key,
 			Changed: !keyErr.Pending, Kind: string(connectErr.Kind), Hint: connectErr.Hint,
 		}
 		for _, known := range keyErr.Known {
@@ -377,6 +380,8 @@ func sshConnectIPCError(connectErr *ssh.ConnectError) *ipc.Error {
 		code = ipc.CodeBadParam
 	case ssh.ErrorKindTimeout:
 		code = ipc.CodeTimeout
+	case ssh.ErrorKindAuth:
+		code = ipc.Code(connectErr.Kind)
 	}
 	detail := sshConnectErrorDetail{
 		Kind: string(connectErr.Kind), Hint: connectErr.Hint, Op: connectErr.Op,

@@ -55,6 +55,7 @@ func newCronJob(db *gorm.DB, opts ...gen.DOOption) cronJob {
 	_cronJob.RunDeadline = field.NewInt64(tableName, "run_deadline")
 	_cronJob.RunCoalesced = field.NewBool(tableName, "run_coalesced")
 	_cronJob.OwnerID = field.NewString(tableName, "owner_id")
+	_cronJob.OwnerKind = field.NewString(tableName, "owner_kind")
 
 	_cronJob.fillFieldMap()
 
@@ -93,6 +94,7 @@ type cronJob struct {
 	RunDeadline         field.Int64
 	RunCoalesced        field.Bool
 	OwnerID             field.String
+	OwnerKind           field.String
 
 	fieldMap map[string]field.Expr
 }
@@ -137,6 +139,7 @@ func (c *cronJob) updateTableName(table string) *cronJob {
 	c.RunDeadline = field.NewInt64(table, "run_deadline")
 	c.RunCoalesced = field.NewBool(table, "run_coalesced")
 	c.OwnerID = field.NewString(table, "owner_id")
+	c.OwnerKind = field.NewString(table, "owner_kind")
 
 	c.fillFieldMap()
 
@@ -161,7 +164,7 @@ func (c *cronJob) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (c *cronJob) fillFieldMap() {
-	c.fieldMap = make(map[string]field.Expr, 28)
+	c.fieldMap = make(map[string]field.Expr, 29)
 	c.fieldMap["id"] = c.ID
 	c.fieldMap["session_id"] = c.SessionID
 	c.fieldMap["name"] = c.Name
@@ -190,6 +193,7 @@ func (c *cronJob) fillFieldMap() {
 	c.fieldMap["run_deadline"] = c.RunDeadline
 	c.fieldMap["run_coalesced"] = c.RunCoalesced
 	c.fieldMap["owner_id"] = c.OwnerID
+	c.fieldMap["owner_kind"] = c.OwnerKind
 }
 
 func (c cronJob) clone(db *gorm.DB) cronJob {

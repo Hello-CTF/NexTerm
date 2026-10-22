@@ -19,6 +19,20 @@ type SessionBrief struct {
 	CWD      string `json:"cwd,omitempty"`
 }
 
+// TabBrief is the identity of the terminal tab the conversation is scoped
+// to: the stable handle other tools address it by, its kind, title, and
+// shell-reported working directory. The title is the tab's current title:
+// a user/AI-set custom title takes precedence, and the dynamic OSC 0/2
+// title surfaces only while no custom title is set.
+type TabBrief struct {
+	Handle  string `json:"handle"`
+	Kind    string `json:"kind,omitempty"`
+	Title   string `json:"title,omitempty"`
+	CWD     string `json:"cwd,omitempty"`
+	Durable bool   `json:"durable,omitempty"`
+	Exited  bool   `json:"exited,omitempty"`
+}
+
 type TableBrief struct {
 	Schema string `json:"schema"`
 	Name   string `json:"name"`
@@ -27,6 +41,7 @@ type TableBrief struct {
 type Bundle struct {
 	Now        time.Time
 	Session    *SessionBrief
+	Tab        *TabBrief
 	Screen     string
 	Tail       []string
 	Recon      string
@@ -38,6 +53,7 @@ type Bundle struct {
 type Dependencies struct {
 	Session    func(context.Context, string) (SessionBrief, error)
 	TabSession func(string) string
+	TabDetail  func(context.Context, string) (tools.TabDetail, error)
 	Screen     func(context.Context, string) (tools.Screen, error)
 	Tail       func(context.Context, string, int) ([]string, error)
 	Tables     func(context.Context, string) ([]TableBrief, error)
@@ -121,6 +137,18 @@ func (b *Builder) Build(ctx context.Context, scope tools.Scope, selection string
 	if b.deps.Tail != nil && tabAllowed {
 		if tail, err := b.deps.Tail(ctx, scope.TabID, 80); err == nil {
 			bundle.Tail = append([]string(nil), tail...)
+		}
+	}
+	if b.deps.TabDetail != nil && tabAllowed && scope.TabID != "" {
+		if detail, err := b.deps.TabDetail(ctx, scope.TabID); err == nil && detail.TabID != "" {
+			bundle.Tab = &TabBrief{
+				Handle:  tools.TerminalHandle{TabID: detail.TabID, SessionID: detail.SessionID}.String(),
+				Kind:    detail.Kind,
+				Title:   detail.Title,
+				CWD:     detail.CWD,
+				Durable: detail.Durable,
+				Exited:  detail.Exited,
+			}
 		}
 	}
 	if b.deps.Tables != nil && scope.ConnID != "" {

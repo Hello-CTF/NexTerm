@@ -5,6 +5,7 @@ import { act, createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   click,
+  flush,
   mount,
   setInputValue,
   waitFor,
@@ -329,7 +330,7 @@ describe("IME guards for single-line Enter-to-submit forms", () => {
     setInputValue(input, "/etc");
     const callsBefore = mocks.fsList.mock.calls.length;
     keyDown(input, "Enter", { isComposing: true });
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await flush();
     expect(mocks.fsList.mock.calls.length).toBe(callsBefore);
 
     keyDown(input, "Enter");
@@ -356,7 +357,7 @@ describe("IME guards for single-line Enter-to-submit forms", () => {
     setInputValue(input, "/var");
     const callsBefore = mocks.fsList.mock.calls.length;
     keyDown(input, "Enter", { isComposing: true });
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await flush();
     expect(mocks.fsList.mock.calls.length).toBe(callsBefore);
 
     keyDown(input, "Enter");
@@ -373,7 +374,7 @@ describe("IME guards for single-line Enter-to-submit forms", () => {
 
     setInputValue(input, "user@host:/data");
     keyDown(input, "Enter", { isComposing: true });
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await flush();
     expect(mocks.mountCreate).not.toHaveBeenCalled();
 
     keyDown(input, "Enter");
@@ -398,7 +399,7 @@ describe("IME guards for single-line Enter-to-submit forms", () => {
 
     setInputValue(input, "生产环境");
     keyDown(input, "Enter", { isComposing: true });
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await flush();
     expect(mocks.groupUpdate).not.toHaveBeenCalled();
 
     keyDown(input, "Enter");

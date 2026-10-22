@@ -2,9 +2,12 @@ package cron
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 type memoryStore struct {
@@ -28,9 +31,93 @@ func (s *memoryStore) List(ctx context.Context) ([]Job, error) {
 	}
 	jobs := make([]Job, 0, len(s.jobs))
 	for _, job := range s.jobs {
-		jobs = append(jobs, job)
+		if memoryOwnerMatches(ctx, job) {
+			jobs = append(jobs, job)
+		}
 	}
 	return jobs, nil
+}
+
+func (s *memoryStore) ListDueIdle(ctx context.Context, now time.Time, limit int) ([]Job, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.failures["list"]; err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return []Job{}, nil
+	}
+	jobs := make([]Job, 0, len(s.jobs))
+	for _, job := range s.jobs {
+		if memoryOwnerMatches(ctx, job) && job.Enabled && !job.Running() && due(job, now) {
+			jobs = append(jobs, job)
+		}
+	}
+	sortJobsByNextRun(jobs)
+	if len(jobs) > limit {
+		jobs = jobs[:limit]
+	}
+	return jobs, nil
+}
+
+func (s *memoryStore) ListRecoveryCandidates(ctx context.Context, now time.Time, limit int, excludedIDs ...string) ([]Job, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.failures["list"]; err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return []Job{}, nil
+	}
+	jobs := make([]Job, 0, len(s.jobs))
+	excluded := make(map[string]bool, len(excludedIDs))
+	for _, id := range excludedIDs {
+		excluded[id] = true
+	}
+	for _, job := range s.jobs {
+		if excluded[job.ID] || !memoryOwnerMatches(ctx, job) || !job.Running() {
+			continue
+		}
+		leaseExpired := job.Lease.Owner == "" || job.Lease.ExpiresAt.IsZero() || !now.Before(job.Lease.ExpiresAt)
+		deadlinePassed := job.Run.Deadline.IsZero() || !now.Before(job.Run.Deadline)
+		if leaseExpired && deadlinePassed {
+			jobs = append(jobs, job)
+		}
+	}
+	sortJobsByDeadline(jobs)
+	if len(jobs) > limit {
+		jobs = jobs[:limit]
+	}
+	return jobs, nil
+}
+
+func sortJobsByNextRun(jobs []Job) {
+	sort.Slice(jobs, func(i, j int) bool {
+		if jobs[i].NextRunAt.Equal(jobs[j].NextRunAt) {
+			return jobs[i].ID < jobs[j].ID
+		}
+		return jobs[i].NextRunAt.Before(jobs[j].NextRunAt)
+	})
+}
+
+func sortJobsByDeadline(jobs []Job) {
+	sort.Slice(jobs, func(i, j int) bool {
+		if jobs[i].Run.Deadline.Equal(jobs[j].Run.Deadline) {
+			return jobs[i].ID < jobs[j].ID
+		}
+		return jobs[i].Run.Deadline.Before(jobs[j].Run.Deadline)
+	})
+}
+
+func memoryOwnerMatches(ctx context.Context, job Job) bool {
+	ownerID := ipc.OwnerID(ctx)
+	return ownerID == "" || job.OwnerID == ownerID
 }
 
 func (s *memoryStore) Create(ctx context.Context, job Job, maxPerSession int) (Job, error) {
@@ -45,9 +132,10 @@ func (s *memoryStore) Create(ctx context.Context, job Job, maxPerSession int) (J
 	if _, exists := s.jobs[job.ID]; exists {
 		return Job{}, ErrConflict
 	}
+	job.OwnerID, job.OwnerKind = ownerFromContext(ctx)
 	count := 0
 	for _, existing := range s.jobs {
-		if existing.SessionID == job.SessionID {
+		if existing.SessionID == job.SessionID && memoryOwnerMatches(ctx, existing) {
 			count++
 		}
 	}
@@ -69,12 +157,13 @@ func (s *memoryStore) CompareAndSwap(ctx context.Context, job Job, expectedRevis
 		return Job{}, err
 	}
 	current, exists := s.jobs[job.ID]
-	if !exists {
+	if !exists || !memoryOwnerMatches(ctx, current) {
 		return Job{}, ErrNotFound
 	}
 	if current.Revision != expectedRevision || current.SessionID != job.SessionID {
 		return Job{}, ErrConflict
 	}
+	job.OwnerID, job.OwnerKind = current.OwnerID, current.OwnerKind
 	job.Revision = current.Revision + 1
 	s.jobs[job.ID] = job
 	return job, nil
@@ -90,7 +179,7 @@ func (s *memoryStore) Delete(ctx context.Context, sessionID, jobID string, expec
 		return err
 	}
 	current, exists := s.jobs[jobID]
-	if !exists || current.SessionID != sessionID {
+	if !exists || current.SessionID != sessionID || !memoryOwnerMatches(ctx, current) {
 		return ErrNotFound
 	}
 	if current.Revision != expectedRevision {

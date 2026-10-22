@@ -23,7 +23,7 @@ import {
   type SqlDraft,
   type Workspace,
 } from "../../app/store";
-import { serializeLayout } from "../../app/layout";
+import { sanitizeLayout, serializeLayout } from "../../app/layout";
 
 function hostWorkspace(id: string, sessionId: string): Workspace {
   return {
@@ -410,7 +410,7 @@ describe("tool tab routing", () => {
     expect(allTabs().filter((t) => t.path === path)).toHaveLength(4);
   });
 
-  it("keeps an explicit unscoped forward overview alongside the scoped panel", () => {
+  it("routes a scoped forward panel to its host and the global overview to Tools", () => {
     useUi.getState().addTab({
       id: "forward-scoped",
       kind: "forward",
@@ -421,14 +421,18 @@ describe("tool tab routing", () => {
     useUi.getState().addTab({ id: "forward-overview", kind: "forward", title: "All forwards", closable: true });
     useUi.getState().addTab({ id: "forward-overview", kind: "forward", title: "All forwards", closable: true });
 
-    const forwards = useUi
+    const hostForwards = useUi
       .getState()
       .workspaces.find((w) => w.id === "ws-host")
       ?.panes.flatMap((p) => p.tabs)
       .filter((t) => t.kind === "forward");
-    expect(forwards).toHaveLength(2);
-    expect(forwards?.some((t) => t.sessionId === "s1")).toBe(true);
-    expect(forwards?.some((t) => t.id === "forward-overview" && t.sessionId === undefined)).toBe(true);
+    expect(hostForwards?.map((tab) => tab.id)).toEqual(["forward-scoped"]);
+    const toolForwards = useUi
+      .getState()
+      .workspaces.find((w) => w.kind === "tools")
+      ?.panes.flatMap((p) => p.tabs)
+      .filter((t) => t.kind === "forward");
+    expect(toolForwards?.map((tab) => tab.id)).toEqual(["forward-overview"]);
   });
 
   it("keeps database tabs in one connection workspace and deduplicates repeated opens", () => {
@@ -495,6 +499,91 @@ describe("tool tab routing", () => {
     expect(tools.title).toBe("工具");
     expect(tools.panes[0].tabs.map((t) => t.kind)).toEqual(["settings"]);
     expect(state.activeWorkspaceId).toBe(tools.id);
+  });
+
+  it("keeps the global forward overview in Tools instead of the active host workspace", async () => {
+    const host: Workspace = {
+      id: "ws-host",
+      kind: "session",
+      sessionId: "s1",
+      title: "Host",
+      panes: [{ id: "p1", tabs: [], activeTabId: null }],
+      activePaneId: "p1",
+      splitRatio: 0.5,
+      closable: true,
+    };
+    useUi.setState({ workspaces: [host], activeWorkspaceId: host.id });
+
+    useUi.getState().addTab({ id: "forward-overview", kind: "forward", title: "端口转发", closable: true });
+
+    let state = useUi.getState();
+    const tools = state.workspaces.find((workspace) => workspace.kind === "tools");
+    expect(tools?.panes[0].tabs.map((tab) => tab.id)).toEqual(["forward-overview"]);
+    expect(host.panes[0].tabs.some((tab) => tab.kind === "forward")).toBe(false);
+
+    await state.closeWorkspace(host.id);
+    state = useUi.getState();
+    expect(state.workspaces.some((workspace) => workspace.id === host.id)).toBe(false);
+    expect(state.workspaces.find((workspace) => workspace.kind === "tools")?.panes[0].tabs.map((tab) => tab.id)).toEqual(["forward-overview"]);
+  });
+
+  it("restores an active global forward overview to Tools instead of a scoped forward tab", () => {
+    const parsed = sanitizeLayout({
+      v: 3,
+      leftOpen: true,
+      leftMode: "assets",
+      leftWidth: 280,
+      rightWidth: 360,
+      activeWorkspaceId: "host",
+      aiBoards: {},
+      workspaces: [
+        {
+          id: "host",
+          kind: "session",
+          sessionId: "s1",
+          title: "Host",
+          panes: [{
+            id: "host-pane",
+            tabs: [
+              { id: "forward-scoped", kind: "forward", title: "Host forward", sessionId: "s1", closable: true },
+              { id: "forward-overview", kind: "forward", title: "All forwards", closable: true },
+            ],
+            activeTabId: "forward-overview",
+          }],
+          activePaneId: "host-pane",
+          splitRatio: 0.5,
+          closable: true,
+        },
+        {
+          id: "tools",
+          kind: "tools",
+          title: "工具",
+          panes: [{ id: "tools-pane", tabs: [], activeTabId: null }],
+          activePaneId: "tools-pane",
+          splitRatio: 0.5,
+          closable: true,
+        },
+      ],
+    });
+
+    expect(parsed).not.toBeNull();
+    const host = parsed!.workspaces.find((workspace) => workspace.id === "host");
+    const tools = parsed!.workspaces.find((workspace) => workspace.kind === "tools");
+    expect(host?.panes[0].tabs.map((tab) => tab.id)).toEqual(["forward-scoped"]);
+    expect(tools?.panes[0].tabs.map((tab) => tab.id)).toEqual(["forward-overview"]);
+    expect(parsed!.activeWorkspaceId).toBe(tools?.id);
+    expect(tools?.panes[0].activeTabId).toBe("forward-overview");
+  });
+
+  it("preserves the batch execution tool through layout serialization", () => {
+    useUi.setState({ workspaces: [], activeWorkspaceId: null });
+    useUi.getState().addTab({ id: "exec-batch", kind: "execBatch", title: "批量执行", closable: true });
+
+    const persisted = serializeLayout(useUi.getState());
+    expect(persisted?.workspaces[0]?.panes[0].tabs.map((tab) => tab.id)).toEqual(["exec-batch"]);
+    const restored = sanitizeLayout(JSON.parse(JSON.stringify(persisted)));
+    const tools = restored?.workspaces.find((workspace) => workspace.kind === "tools");
+    expect(tools?.panes[0].tabs.map((tab) => tab.id)).toEqual(["exec-batch"]);
   });
 });
 

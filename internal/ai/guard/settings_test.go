@@ -32,6 +32,20 @@ func (s *memorySettings) SettingSet(_ context.Context, key, value string) error 
 	return nil
 }
 
+func (s *memorySettings) SettingCompareAndSwap(_ context.Context, key, expected, value string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.setErr != nil {
+		return false, s.setErr
+	}
+	current, ok := s.values[key]
+	if !ok || current != expected {
+		return false, nil
+	}
+	s.values[key] = value
+	return true, nil
+}
+
 func TestPermissionPersistenceBeforeRuntimeUpdate(t *testing.T) {
 	settings := &memorySettings{values: make(map[string]string)}
 	manager, err := NewManager(context.Background(), settings)
@@ -42,14 +56,14 @@ func TestPermissionPersistenceBeforeRuntimeUpdate(t *testing.T) {
 	if err := manager.Set(context.Background(), Config{Mode: Silent, DangerRules: []string{" Rule ", "rule"}}); err == nil {
 		t.Fatal("persist failure ignored")
 	}
-	if manager.Get().Mode != ReadWrite {
+	if mustPermission(t, manager).Mode != ReadWrite {
 		t.Fatal("runtime changed after persistence failure")
 	}
 	settings.setErr = nil
 	if err := manager.Set(context.Background(), Config{Mode: Silent, DangerRules: []string{" Rule ", "rule"}}); err != nil {
 		t.Fatal(err)
 	}
-	config := manager.Get()
+	config := mustPermission(t, manager)
 	if config.Mode != Silent || len(config.DangerRules) != 1 || settings.values[PermissionSettingKey] == "" {
 		t.Fatalf("config=%+v settings=%+v", config, settings.values)
 	}
@@ -61,23 +75,23 @@ func TestDeviceModeOverrideLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := manager.DeviceMode("asset-a"); ok {
+	if _, ok := mustDeviceMode(t, manager, "asset-a"); ok {
 		t.Fatal("unexpected override before set")
 	}
 	base := Config{Mode: ReadWrite, DangerRules: []string{"rm -rf /"}}
-	if got := manager.WithDeviceMode(base, "asset-a"); got.Mode != ReadWrite {
+	if got := mustWithDeviceMode(t, manager, base, "asset-a"); got.Mode != ReadWrite {
 		t.Fatalf("WithDeviceMode without override = %+v", got)
 	}
-	if got := manager.WithDeviceMode(base, ""); got.Mode != ReadWrite {
+	if got := mustWithDeviceMode(t, manager, base, ""); got.Mode != ReadWrite {
 		t.Fatalf("WithDeviceMode with empty device = %+v", got)
 	}
 	if err := manager.SetDeviceMode(context.Background(), "asset-a", Silent); err != nil {
 		t.Fatal(err)
 	}
-	if mode, ok := manager.DeviceMode("asset-a"); !ok || mode != Silent {
+	if mode, ok := mustDeviceMode(t, manager, "asset-a"); !ok || mode != Silent {
 		t.Fatalf("DeviceMode = %v %v", mode, ok)
 	}
-	if got := manager.WithDeviceMode(base, "asset-a"); got.Mode != Silent || len(got.DangerRules) != 1 {
+	if got := mustWithDeviceMode(t, manager, base, "asset-a"); got.Mode != Silent || len(got.DangerRules) != 1 {
 		t.Fatalf("WithDeviceMode = %+v", got)
 	}
 	if settings.values[DevicePermissionSettingKey] == "" {
@@ -88,7 +102,7 @@ func TestDeviceModeOverrideLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode, ok := reloaded.DeviceMode("asset-a"); !ok || mode != Silent {
+	if mode, ok := mustDeviceMode(t, reloaded, "asset-a"); !ok || mode != Silent {
 		t.Fatalf("reloaded DeviceMode = %v %v", mode, ok)
 	}
 
@@ -96,7 +110,7 @@ func TestDeviceModeOverrideLifecycle(t *testing.T) {
 	if err := reloaded.SetDeviceMode(context.Background(), "asset-a", ReadOnly); err == nil {
 		t.Fatal("persist failure ignored")
 	}
-	if mode, _ := reloaded.DeviceMode("asset-a"); mode != Silent {
+	if mode, _ := mustDeviceMode(t, reloaded, "asset-a"); mode != Silent {
 		t.Fatalf("runtime changed after persistence failure: %v", mode)
 	}
 	settings.setErr = nil
@@ -110,7 +124,7 @@ func TestDeviceModeOverrideLifecycle(t *testing.T) {
 	if err := reloaded.SetDeviceMode(context.Background(), "asset-a", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := reloaded.DeviceMode("asset-a"); ok {
+	if _, ok := mustDeviceMode(t, reloaded, "asset-a"); ok {
 		t.Fatal("override not cleared")
 	}
 	if err := reloaded.SetDeviceMode(context.Background(), "asset-a", ""); err != nil {
@@ -126,10 +140,10 @@ func TestDeviceModeDropsInvalidPersistedValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode, ok := manager.DeviceMode("asset-a"); !ok || mode != Silent {
+	if mode, ok := mustDeviceMode(t, manager, "asset-a"); !ok || mode != Silent {
 		t.Fatalf("DeviceMode = %v %v", mode, ok)
 	}
-	if _, ok := manager.DeviceMode("asset-b"); ok {
+	if _, ok := mustDeviceMode(t, manager, "asset-b"); ok {
 		t.Fatal("invalid persisted mode kept")
 	}
 }
@@ -148,13 +162,13 @@ func TestManagerReloadRefreshesDeviceModes(t *testing.T) {
 	if err := external.SetDeviceMode(ctx, "asset-a", ReadOnly); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := manager.DeviceMode("asset-a"); ok {
+	if _, ok := mustDeviceMode(t, manager, "asset-a"); ok {
 		t.Fatal("stale manager sees the external override before reload")
 	}
 	if err := manager.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if mode, ok := manager.DeviceMode("asset-a"); !ok || mode != ReadOnly {
+	if mode, ok := mustDeviceMode(t, manager, "asset-a"); !ok || mode != ReadOnly {
 		t.Fatalf("post-reload DeviceMode = %v %v", mode, ok)
 	}
 	if err := external.SetDeviceMode(ctx, "asset-a", ""); err != nil {
@@ -163,7 +177,7 @@ func TestManagerReloadRefreshesDeviceModes(t *testing.T) {
 	if err := manager.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := manager.DeviceMode("asset-a"); ok {
+	if _, ok := mustDeviceMode(t, manager, "asset-a"); ok {
 		t.Fatal("cleared override kept after reload")
 	}
 }

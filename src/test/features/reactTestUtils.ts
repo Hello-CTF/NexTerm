@@ -33,21 +33,25 @@ export function mountWithClient(node: ReactNode): MountedView {
   return mount(createElement(QueryClientProvider, { client }, node));
 }
 
+export async function flushMacrotask(): Promise<void> {
+  const macrotask = new Promise<void>((resolve) => {
+    setTimeout(resolve, 0);
+  });
+  if (vi.isFakeTimers()) {
+    await vi.advanceTimersByTimeAsync(0);
+  }
+  await macrotask;
+}
+
 export async function flush(): Promise<void> {
   await act(async () => {
-    const macrotask = new Promise<void>((resolve) => {
-      setTimeout(resolve, 0);
-    });
-    if (vi.isFakeTimers()) {
-      await vi.advanceTimersByTimeAsync(0);
-    }
-    await macrotask;
+    await flushMacrotask();
   });
 }
 
-export async function waitFor(assertion: () => void): Promise<void> {
+export async function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
   await act(async () => {
-    await vi.waitFor(assertion);
+    await vi.waitFor(assertion, { timeout });
   });
 }
 

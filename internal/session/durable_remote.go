@@ -3,6 +3,8 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
@@ -12,11 +14,342 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-// durableProviderFor resolves the durable provider backing a durable tab on
-// the given session. Local sessions use the manager's provider; SSH and device
-// sessions resolve through the configured resolver and cache the result per
-// session generation, so a reconnect re-resolves against the new transport.
-// Automatic startup briefly caches helper failures; an explicit durable request retries immediately.
+var errHelperDeploymentPending = fmt.Errorf("%w: helper deployment is still in progress", durable.ErrUnavailable)
+
+type backgroundHelperDeployment struct {
+	session        *Session
+	transport      *transportHandle
+	generation     uint64
+	sequence       uint64
+	operationID    string
+	canceledByUser bool
+	done           chan struct{}
+	sessionCtx     context.Context
+	ctx            context.Context
+	cancel         context.CancelFunc
+	stop           func() bool
+	provider       base.DurableProvider
+	err            error
+}
+
+var backgroundHelperDeployments = struct {
+	sync.Mutex
+	entries map[*Session]*backgroundHelperDeployment
+}{entries: make(map[*Session]*backgroundHelperDeployment)}
+
+var completedHelperDeployments = struct {
+	sync.Mutex
+	entries map[*Session]*backgroundHelperDeployment
+}{entries: make(map[*Session]*backgroundHelperDeployment)}
+
+var helperDeploymentSequence uint64
+
+type helperOperationReporterKey struct{}
+
+func withHelperOperationReporter(ctx context.Context, entry *backgroundHelperDeployment) context.Context {
+	return context.WithValue(ctx, helperOperationReporterKey{}, func(operationID string) {
+		if operationID == "" {
+			return
+		}
+		backgroundHelperDeployments.Lock()
+		defer backgroundHelperDeployments.Unlock()
+		if entry.operationID == "" {
+			entry.operationID = operationID
+		}
+	})
+}
+
+// ReportHelperOperation binds resolver progress to the real session deployment.
+// The first operation ID wins, so a late report cannot rename an active retry.
+func ReportHelperOperation(ctx context.Context, operationID string) {
+	if report, ok := ctx.Value(helperOperationReporterKey{}).(func(string)); ok {
+		report(operationID)
+	}
+}
+
+func matchingBackgroundHelper(session *Session, transport *transportHandle, generation uint64) *backgroundHelperDeployment {
+	backgroundHelperDeployments.Lock()
+	defer backgroundHelperDeployments.Unlock()
+	entry := backgroundHelperDeployments.entries[session]
+	if entry == nil || entry.transport != transport || entry.generation != generation {
+		return nil
+	}
+	return entry
+}
+
+func cancelStaleBackgroundHelper(session *Session, transport *transportHandle, generation uint64) {
+	backgroundHelperDeployments.Lock()
+	entry := backgroundHelperDeployments.entries[session]
+	if entry != nil && (entry.transport != transport || entry.generation != generation) {
+		delete(backgroundHelperDeployments.entries, session)
+		entry.cancel()
+	}
+	backgroundHelperDeployments.Unlock()
+	completedHelperDeployments.Lock()
+	completed := completedHelperDeployments.entries[session]
+	if completed != nil && (completed.transport != transport || completed.generation != generation) {
+		delete(completedHelperDeployments.entries, session)
+	}
+	completedHelperDeployments.Unlock()
+}
+
+func (m *Manager) automaticDurableProvider(ctx context.Context, session *Session, transport *transportHandle, generation uint64) (base.DurableProvider, error) {
+	if m.resolver == nil || transport == nil {
+		return nil, ErrUnsupported
+	}
+	session.durableMu.Lock()
+	if session.durableProvider != nil && session.durableGen == generation && session.durableTransport == transport {
+		provider := session.durableProvider
+		session.durableMu.Unlock()
+		return provider, nil
+	}
+	if session.durableFailure != nil && session.durableGen == generation && session.durableTransport == transport && m.now().Sub(session.durableFailureAt) < 30*time.Second {
+		err := session.durableFailure
+		session.durableMu.Unlock()
+		return nil, err
+	}
+	session.durableMu.Unlock()
+
+	session.mu.Lock()
+	if session.closed || session.status != StatusConnected {
+		session.mu.Unlock()
+		return nil, ErrDisconnected
+	}
+	if session.transport != transport || session.generation != generation {
+		session.mu.Unlock()
+		return nil, ErrStaleGeneration
+	}
+	backgroundHelperDeployments.Lock()
+	if entry := backgroundHelperDeployments.entries[session]; entry != nil {
+		if entry.transport == transport && entry.generation == generation {
+			backgroundHelperDeployments.Unlock()
+			session.mu.Unlock()
+			return nil, errHelperDeploymentPending
+		}
+		delete(backgroundHelperDeployments.entries, session)
+		entry.cancel()
+	}
+	baseCtx := session.ctx
+	if baseCtx == nil {
+		baseCtx = m.ctx
+	}
+	deploymentCtx, cancel := context.WithCancel(baseCtx)
+	entry := &backgroundHelperDeployment{
+		session: session, transport: transport, generation: generation, done: make(chan struct{}), sessionCtx: baseCtx, ctx: deploymentCtx, cancel: cancel,
+	}
+	helperDeploymentSequence++
+	entry.sequence = helperDeploymentSequence
+	entry.stop = context.AfterFunc(m.ctx, cancel)
+	context.AfterFunc(baseCtx, func() {
+		completedHelperDeployments.Lock()
+		defer completedHelperDeployments.Unlock()
+		if completedHelperDeployments.entries[session] == entry {
+			delete(completedHelperDeployments.entries, session)
+		}
+	})
+	backgroundHelperDeployments.entries[session] = entry
+	backgroundHelperDeployments.Unlock()
+	completedHelperDeployments.Lock()
+	delete(completedHelperDeployments.entries, session)
+	completedHelperDeployments.Unlock()
+	session.mu.Unlock()
+	if !m.startGoroutine(func() { m.runBackgroundHelper(entry) }) {
+		backgroundHelperDeployments.Lock()
+		if backgroundHelperDeployments.entries[session] == entry {
+			delete(backgroundHelperDeployments.entries, session)
+		}
+		backgroundHelperDeployments.Unlock()
+		entry.stop()
+		cancel()
+		return nil, fmt.Errorf("%w: manager is closing", durable.ErrUnavailable)
+	}
+	// Only an already-fast resolver can satisfy the current tab. This wait never
+	// cancels or fails the deployment; slower helpers continue in background.
+	timer := time.NewTimer(50 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-entry.done:
+		session.mu.Lock()
+		current := session.transport == transport && session.generation == generation
+		session.mu.Unlock()
+		if !current {
+			return nil, ErrStaleGeneration
+		}
+		if entry.err == nil && entry.provider != nil {
+			return entry.provider, nil
+		}
+		return nil, entry.err
+	case <-timer.C:
+		return nil, errHelperDeploymentPending
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
+	}
+}
+
+func isPureCancellation(err error) bool {
+	if err == nil {
+		return false
+	}
+	if unwrap, ok := err.(interface{ Unwrap() []error }); ok {
+		children := unwrap.Unwrap()
+		if len(children) == 0 {
+			return false
+		}
+		for _, child := range children {
+			if !isPureCancellation(child) {
+				return false
+			}
+		}
+		return true
+	}
+	if unwrap, ok := err.(interface{ Unwrap() error }); ok {
+		return isPureCancellation(unwrap.Unwrap())
+	}
+	return err == context.Canceled
+}
+
+func (m *Manager) runBackgroundHelper(entry *backgroundHelperDeployment) {
+	defer entry.cancel()
+	defer entry.stop()
+	session := entry.session
+	resolveCtx := ipc.WithHelperProgressScope(entry.ctx, ipc.HelperProgressScope{SessionID: session.ID, AssetID: session.Asset().ID})
+	resolveCtx = withHelperOperationReporter(resolveCtx, entry)
+	provider, err := m.resolver.ResolveDurable(resolveCtx, entry.transport.Transport)
+	entry.provider, entry.err = provider, err
+	if entry.err == nil && entry.provider == nil {
+		entry.err = errors.New("helper resolver returned a nil provider")
+	}
+	backgroundHelperDeployments.Lock()
+	canceledByUser := entry.canceledByUser
+	if backgroundHelperDeployments.entries[session] == entry {
+		delete(backgroundHelperDeployments.entries, session)
+	}
+	backgroundHelperDeployments.Unlock()
+	recordCompletedHelperDeployment(entry)
+	session.mu.Lock()
+	if session.transport == entry.transport && session.generation == entry.generation {
+		session.durableMu.Lock()
+		session.durableGen = entry.generation
+		session.durableTransport = entry.transport
+		if entry.err == nil {
+			session.durableProvider = entry.provider
+			session.durableFailure = nil
+			session.durableFailureAt = time.Time{}
+			session.durableCreateFailure = nil
+		} else if canceledByUser && isPureCancellation(entry.err) {
+			session.durableProvider = nil
+			session.durableFailure = nil
+			session.durableFailureAt = time.Time{}
+		} else {
+			session.durableProvider = nil
+			session.durableFailure = entry.err
+			session.durableFailureAt = m.now()
+		}
+		session.durableMu.Unlock()
+	}
+	session.mu.Unlock()
+	close(entry.done)
+}
+
+func recordCompletedHelperDeployment(entry *backgroundHelperDeployment) {
+	if entry.sessionCtx != nil && entry.sessionCtx.Err() != nil {
+		return
+	}
+	completedHelperDeployments.Lock()
+	defer completedHelperDeployments.Unlock()
+	if completed := completedHelperDeployments.entries[entry.session]; completed == nil || completed.sequence < entry.sequence {
+		completedHelperDeployments.entries[entry.session] = entry
+	}
+}
+
+func (m *Manager) helperDeploymentTarget(ctx context.Context, sessionID string) (*Session, *transportHandle, uint64, error) {
+	connected, err := m.SessionFor(ctx, sessionID)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	connected.mu.Lock()
+	defer connected.mu.Unlock()
+	if connected.asset.Kind != KindSSH {
+		return nil, nil, 0, ErrUnsupported
+	}
+	if connected.closed || connected.status != StatusConnected || connected.transport == nil {
+		return nil, nil, 0, ErrDisconnected
+	}
+	return connected, connected.transport, connected.generation, nil
+}
+
+// CancelHelperOperation cancels only the matching live deployment. It does not
+// disconnect SSH, close a tab, or kill any durable process on the target.
+func (m *Manager) CancelHelperOperation(ctx context.Context, sessionID, operationID string) error {
+	if operationID == "" {
+		return ErrInvalidOptions
+	}
+	connected, transport, generation, err := m.helperDeploymentTarget(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	backgroundHelperDeployments.Lock()
+	defer backgroundHelperDeployments.Unlock()
+	entry := backgroundHelperDeployments.entries[connected]
+	if entry == nil || entry.transport != transport || entry.generation != generation || entry.operationID != operationID {
+		return ErrStaleGeneration
+	}
+	entry.canceledByUser = true
+	entry.cancel()
+	return nil
+}
+
+// RetryHelperOperation starts a fresh resolver budget after a completed failed
+// operation. The old operation and session generation must still be current.
+func (m *Manager) RetryHelperOperation(ctx context.Context, sessionID, operationID string) error {
+	if operationID == "" {
+		return ErrInvalidOptions
+	}
+	connected, transport, generation, err := m.helperDeploymentTarget(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	backgroundHelperDeployments.Lock()
+	active := backgroundHelperDeployments.entries[connected]
+	backgroundHelperDeployments.Unlock()
+	if active != nil {
+		return ErrInvalidOptions
+	}
+	completedHelperDeployments.Lock()
+	completed := completedHelperDeployments.entries[connected]
+	if completed == nil || completed.transport != transport || completed.generation != generation || completed.operationID != operationID {
+		completedHelperDeployments.Unlock()
+		return ErrStaleGeneration
+	}
+	select {
+	case <-completed.done:
+	default:
+		completedHelperDeployments.Unlock()
+		return ErrInvalidOptions
+	}
+	failed := completed.err != nil
+	completedHelperDeployments.Unlock()
+	if !failed {
+		return ErrInvalidOptions
+	}
+	connected.durableMu.Lock()
+	if connected.durableGen == generation && connected.durableTransport == transport {
+		connected.durableProvider = nil
+		connected.durableFailure = nil
+		connected.durableFailureAt = time.Time{}
+		connected.durableCreateFailure = nil
+	}
+	connected.durableMu.Unlock()
+	_, err = m.automaticDurableProvider(ctx, connected, transport, generation)
+	if errors.Is(err, errHelperDeploymentPending) {
+		return nil
+	}
+	return err
+}
+
+// durableProviderFor resolves and caches a provider per session generation.
+// Explicit requests can wait for an in-flight background deployment; automatic
+// terminal creation uses automaticDurableProvider to return ordinary SSH first.
 func (m *Manager) durableProviderFor(ctx context.Context, session *Session, transport *transportHandle, kind string, generation uint64, retryFailure bool) (base.DurableProvider, error) {
 	if kind == KindLocal {
 		if m.durable == nil {
@@ -28,24 +361,58 @@ func (m *Manager) durableProviderFor(ctx context.Context, session *Session, tran
 		return nil, ErrUnsupported
 	}
 	session.durableMu.Lock()
-	defer session.durableMu.Unlock()
 	if session.durableProvider != nil && session.durableGen == generation && session.durableTransport == transport {
-		return session.durableProvider, nil
+		provider := session.durableProvider
+		session.durableMu.Unlock()
+		return provider, nil
 	}
+	entry := matchingBackgroundHelper(session, transport, generation)
+	if entry == nil && kind == KindSSH {
+		cancelStaleBackgroundHelper(session, transport, generation)
+	}
+	if entry != nil {
+		session.durableMu.Unlock()
+		select {
+		case <-entry.done:
+			if entry.err == nil && entry.provider != nil {
+				session.mu.Lock()
+				current := session.transport == transport && session.generation == generation
+				session.mu.Unlock()
+				if !current {
+					return nil, ErrStaleGeneration
+				}
+				return entry.provider, nil
+			}
+			if !retryFailure {
+				if entry.err == nil {
+					return nil, errors.New("helper resolver returned a nil provider")
+				}
+				return nil, entry.err
+			}
+		case <-ctx.Done():
+			return nil, context.Cause(ctx)
+		}
+		session.durableMu.Lock()
+		if session.durableProvider != nil && session.durableGen == generation && session.durableTransport == transport {
+			provider := session.durableProvider
+			session.durableMu.Unlock()
+			return provider, nil
+		}
+	}
+	defer session.durableMu.Unlock()
 	if session.durableFailure != nil && session.durableGen == generation && session.durableTransport == transport &&
-		!retryFailure && time.Since(session.durableFailureAt) < 30*time.Second {
+		!retryFailure && m.now().Sub(session.durableFailureAt) < 30*time.Second {
 		return nil, session.durableFailure
 	}
 	session.durableFailure = nil
 	session.durableFailureAt = time.Time{}
-	assetID := session.Asset().ID
-	resolveCtx := ipc.WithHelperProgressScope(ctx, ipc.HelperProgressScope{SessionID: session.ID, AssetID: assetID})
+	resolveCtx := ipc.WithHelperProgressScope(ctx, ipc.HelperProgressScope{SessionID: session.ID, AssetID: session.Asset().ID})
 	provider, err := m.resolver.ResolveDurable(resolveCtx, transport.Transport)
 	if err != nil {
 		if kind == KindSSH && sshHelperUnavailable(err) && ctx.Err() == nil {
 			session.durableProvider = nil
 			session.durableFailure = err
-			session.durableFailureAt = time.Now()
+			session.durableFailureAt = m.now()
 			session.durableGen = generation
 			session.durableTransport = transport
 		}
@@ -125,12 +492,8 @@ func (m *Manager) ListRemoteDurable(ctx context.Context, sessionID string) ([]ba
 	transport := session.transport
 	generation := session.generation
 	session.mu.Unlock()
-	mode, err := m.terminalModeFor(ctx, session)
-	if err != nil {
+	if _, err := m.terminalModeFor(ctx, session); err != nil {
 		return nil, err
-	}
-	if mode == TerminalModeRegular {
-		return []base.DurableDescriptor{}, nil
 	}
 
 	provider, err := m.durableProviderFor(ctx, session, transport, kind, generation, false)
@@ -188,12 +551,8 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 		if info.Status != StatusConnected {
 			return TabInfo{}, ErrDisconnected
 		}
-		mode, err := m.terminalModeFor(ctx, selected)
-		if err != nil {
+		if _, err := m.terminalModeFor(ctx, selected); err != nil {
 			return TabInfo{}, err
-		}
-		if mode == TerminalModeRegular {
-			return TabInfo{}, ErrDurableDisabled
 		}
 		infos = []SessionInfo{info}
 	} else if sessionIDs != nil {
@@ -225,12 +584,8 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 		if err != nil {
 			continue
 		}
-		mode, err := m.terminalModeFor(ctx, session)
-		if err != nil {
+		if _, err := m.terminalModeFor(ctx, session); err != nil {
 			searchErrs = append(searchErrs, err)
-			continue
-		}
-		if mode == TerminalModeRegular {
 			continue
 		}
 		session.mu.Lock()
@@ -274,6 +629,7 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 	options.SessionID = selected.sessionID
 	options.Durable = &DurableTabOptions{
 		Recover: true, Title: selected.descriptor.Title, MetadataRevision: selected.descriptor.MetadataRevision, CanonicalMetadata: selected.canonical,
+		RecoveredExited: selected.descriptor.Dead,
 	}
 	if selected.descriptor.Incarnation != "" {
 		identity := base.DurableIdentity{CreatedAt: selected.descriptor.CreatedAt, Incarnation: selected.descriptor.Incarnation}
@@ -297,12 +653,8 @@ func (m *Manager) RemoteDurableOwners(ctx context.Context, tabID string, session
 		if (info.Kind != KindSSH && info.Kind != KindDevice) || info.Status != StatusConnected {
 			continue
 		}
-		mode, err := m.terminalModeFor(ctx, session)
-		if err != nil {
+		if _, err := m.terminalModeFor(ctx, session); err != nil {
 			searchErrs = append(searchErrs, err)
-			continue
-		}
-		if mode == TerminalModeRegular {
 			continue
 		}
 		session.mu.Lock()
@@ -447,6 +799,7 @@ func beginDurableRename(ctx context.Context, tab *Tab, provider base.DurableProv
 	if found && descriptor.Incarnation != tab.durableIdentity.Incarnation {
 		tab.durableIdentity = base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation}
 		tab.title = descriptor.Title
+		tab.titleCustom = descriptor.Title != ""
 		tab.metadataRevision = descriptor.MetadataRevision
 	}
 	for id, attempt := range tab.renameAttempts {
@@ -490,6 +843,7 @@ func (m *Manager) finishDurableRename(ctx context.Context, tab *Tab, provider ba
 				return TabInfo{}, ErrTabClosed
 			}
 			tab.title = result.Title
+			tab.titleCustom = result.Title != ""
 			tab.metadataRevision = result.MetadataRevision
 			attempt.resultTitle = result.Title
 			attempt.resultMetadataRevision = result.MetadataRevision
@@ -514,6 +868,7 @@ func (m *Manager) finishDurableRename(ctx context.Context, tab *Tab, provider ba
 		tab.mu.Lock()
 		if !tab.closed && !tab.destroying {
 			tab.title = conflict.CurrentTitle
+			tab.titleCustom = conflict.CurrentTitle != ""
 			tab.metadataRevision = conflict.CurrentMetadataRevision
 			event := tab.controlEventLocked()
 			tab.mu.Unlock()
@@ -535,6 +890,7 @@ func (m *Manager) finishDurableRename(ctx context.Context, tab *Tab, provider ba
 			if !tab.closed && !tab.destroying {
 				tab.durableIdentity = base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation}
 				tab.title = descriptor.Title
+				tab.titleCustom = descriptor.Title != ""
 				tab.metadataRevision = descriptor.MetadataRevision
 				event := tab.controlEventLocked()
 				tab.mu.Unlock()

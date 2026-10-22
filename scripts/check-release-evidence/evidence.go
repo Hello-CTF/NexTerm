@@ -72,7 +72,14 @@ func buildStubBinary(directory, mainSource, goos, goarch, cgo string) (string, e
 	output := filepath.Join(directory, "stub-binary")
 	buildCmd := exec.Command("go", "build", "-ldflags", "-s -w", "-o", output, ".")
 	buildCmd.Dir = directory
-	buildCmd.Env = append(os.Environ(), "CGO_ENABLED="+cgo, "GOOS="+goos, "GOARCH="+goarch)
+	buildGOARCH := goarch
+	if goarch == "armv7" {
+		buildGOARCH = "arm"
+	}
+	buildCmd.Env = append(os.Environ(), "CGO_ENABLED="+cgo, "GOOS="+goos, "GOARCH="+buildGOARCH)
+	if goarch == "armv7" {
+		buildCmd.Env = append(buildCmd.Env, "GOARM=7")
+	}
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("go build: %v: %s", err, out)
 	}
@@ -80,9 +87,11 @@ func buildStubBinary(directory, mainSource, goos, goarch, cgo string) (string, e
 }
 
 type artifactReport struct {
-	Status     string `json:"status"`
-	Commit     string `json:"commit"`
-	Assertions []struct {
+	Status       string `json:"status"`
+	Commit       string `json:"commit"`
+	SourceCommit string `json:"source_commit"`
+	Dirty        bool   `json:"dirty_source_tree"`
+	Assertions   []struct {
 		ID     string `json:"id"`
 		Status string `json:"status"`
 	} `json:"assertions"`
@@ -168,6 +177,17 @@ func runEvidenceChecks(root string) []checkResult {
 		fatalf("git rev-parse HEAD: %v", err)
 	}
 	head := strings.TrimSpace(string(headOut))
+	statusCmd := exec.Command("git", "status", "--porcelain")
+	statusCmd.Dir = root
+	statusOut, err := statusCmd.Output()
+	if err != nil {
+		fatalf("git status --porcelain: %v", err)
+	}
+	dirty := strings.TrimSpace(string(statusOut)) != ""
+	stampedCommit := head
+	if dirty {
+		stampedCommit += "+dirty"
+	}
 	var wailsConfig struct {
 		Info struct {
 			Version string `json:"version"`
@@ -217,9 +237,10 @@ func runEvidenceChecks(root string) []checkResult {
 	}
 	check("desktop binary evidence assertions pass with the toolchain present",
 		passing.rc == 0 && passedReport.Status == "passed" && allPassed &&
-			passedReport.Commit == head && passedReport.Artifact.Sha256 == digestHex,
-		fmt.Sprintf("rc=%d status=%s assertions=%v commit=%s stderr tail=%q",
-			passing.rc, passedReport.Status, assertions, passedReport.Commit, tail(passing.stderr, 300)))
+			passedReport.Commit == stampedCommit && passedReport.SourceCommit == head && passedReport.Dirty == dirty &&
+			passedReport.Artifact.Sha256 == digestHex,
+		fmt.Sprintf("rc=%d status=%s assertions=%v commit=%s source_commit=%s dirty=%t stderr tail=%q",
+			passing.rc, passedReport.Status, assertions, passedReport.Commit, passedReport.SourceCommit, passedReport.Dirty, tail(passing.stderr, 300)))
 
 	writeManifest := func(commit string) {
 		if err := writeBinaryManifest(binary, "desktop", hostGOOS, hostGOARCH, cgo, version, commit); err != nil {
@@ -243,7 +264,12 @@ func runEvidenceChecks(root string) []checkResult {
 	check("verify-reused-binary accepts the byte-identical manifest",
 		accepted.rc == 0, fmt.Sprintf("rc=%d stderr=%q", accepted.rc, accepted.stderr))
 
-	c.results = append(c.results, runDesktopDistChecks(root, version, hostGOOS, hostGOARCH)...)
+	desktopVersion := version
+	if os.Getenv("NEXTERM_RELEASE_VERSION") == "" {
+		desktopVersion = "1.2.3"
+	}
+	c.results = append(c.results, runProductionDependencyChecks(root)...)
+	c.results = append(c.results, runDesktopDistChecks(root, desktopVersion, hostGOOS, hostGOARCH)...)
 	return c.results
 }
 

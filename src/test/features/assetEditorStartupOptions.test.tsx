@@ -28,7 +28,6 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       groupDelete: vi.fn(),
       list: mocks.listAssets,
       readKeyFile: vi.fn(),
-      saveKeyFile: vi.fn(),
       auditQuery: vi.fn(),
     },
     vaultApi: {
@@ -164,7 +163,7 @@ describe("AssetEditor SSH startup options", () => {
     fillName("startup-01");
     fillHost("10.0.0.8");
     click(saveButton());
-    await flushUntil(() => mocks.create.mock.calls.length > 0);
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
     expect(createdPayload().options).toEqual({
       startupCommand: "echo hello && cd /var/log",
       encoding: "gbk",
@@ -179,7 +178,7 @@ describe("AssetEditor SSH startup options", () => {
     fillName("plain-01");
     fillHost("10.0.0.8");
     click(saveButton());
-    await flushUntil(() => mocks.create.mock.calls.length > 0);
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
     expect(createdPayload().options).toEqual({});
   });
 
@@ -233,7 +232,7 @@ describe("AssetEditor SSH startup options", () => {
     setInputValue(findInput("连接成功后在该终端自动执行"), "");
     setInputValue(envTextarea(), "");
     click(saveButton());
-    await flushUntil(() => mocks.update.mock.calls.length > 0);
+    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
     expect(updatedPayload().options).toEqual({});
   });
 

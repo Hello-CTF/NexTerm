@@ -47,9 +47,8 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
 });
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../ipc/commands")>();
-  return {
-    ...actual,
+  const { createCommandsMock } = await import("../helpers/mockCommands");
+  return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
     fsApi: {
       roots: mocks.roots,
       list: mocks.list,
@@ -71,8 +70,8 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       lineExec: mocks.lineExec,
     },
     terminalApi: { write: mocks.termWrite },
-    assetApi: { ...(actual.assetApi ?? {}), knownHostAccept: mocks.knownHostAccept },
-  };
+    assetApi: { knownHostAccept: mocks.knownHostAccept },
+  });
 });
 
 vi.mock("../../ipc/events", async (importOriginal) => {
@@ -589,7 +588,7 @@ describe("FileTree Windows roots and navigation", () => {
     expect(mocks.list).not.toHaveBeenCalledWith(SID, "D:relative");
   });
 
-  it("does not auto-reconnect a legacy unclassified not_found and keeps retry and manual recovery", async () => {
+  it("treats an unclassified not_found as an ordinary error without automatic or manual reconnect", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.list.mockRejectedValue(LEGACY_NOT_FOUND);
     mounted = mountTree();
@@ -599,7 +598,7 @@ describe("FileTree Windows roots and navigation", () => {
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(mounted.container.textContent).not.toContain("会话已在服务端删除");
     expect(button("重试")).toBeDefined();
-    expect(button("重新连接这台主机")).toBeDefined();
+    expect(button("重新连接这台主机")).toBeUndefined();
     expect(toolbarButton("刷新文件列表")?.disabled).toBe(false);
   });
 

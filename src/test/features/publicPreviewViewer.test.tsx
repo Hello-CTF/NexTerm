@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount, flush, clickButton, type MountedView } from "./reactTestUtils";
 import { PublicPreviewApp } from "../../features/sharing/PublicPreviewApp";
@@ -53,11 +53,11 @@ vi.mock("@xterm/xterm", () => ({
       this.state.resets += 1;
     }
     onData(callback: (data: string) => void) {
-      this.state.dataCallbacks.push(callback);
+      this.state.dataCallbacks.push((data) => act(() => callback(data)));
       return { dispose: () => {} };
     }
     onSelectionChange(callback: () => void) {
-      this.state.selectionCallbacks.push(callback);
+      this.state.selectionCallbacks.push(() => act(() => callback()));
       return { dispose: () => {} };
     }
     getSelection() {
@@ -101,22 +101,28 @@ class FakeWebSocket {
   }
 
   emitText(frame: unknown): void {
-    for (const listener of this.listeners.get("message") ?? []) {
-      listener({ data: JSON.stringify(frame) });
-    }
+    act(() => {
+      for (const listener of this.listeners.get("message") ?? []) {
+        listener({ data: JSON.stringify(frame) });
+      }
+    });
   }
 
   emitBinary(bytes: Uint8Array): void {
-    for (const listener of this.listeners.get("message") ?? []) {
-      listener({ data: bytes.buffer.slice(0) });
-    }
+    act(() => {
+      for (const listener of this.listeners.get("message") ?? []) {
+        listener({ data: bytes.buffer.slice(0) });
+      }
+    });
   }
 
   emitClose(code: number, reason: string, wasClean: boolean): void {
     this.readyState = 3;
-    for (const listener of this.listeners.get("close") ?? []) {
-      listener({ code, reason, wasClean });
-    }
+    act(() => {
+      for (const listener of this.listeners.get("close") ?? []) {
+        listener({ code, reason, wasClean });
+      }
+    });
   }
 }
 
@@ -137,10 +143,12 @@ function snapshotFrame() {
   };
 }
 
+let mounted: MountedView | undefined;
+
 async function mountViewer(): Promise<MountedView> {
-  const view = mount(createElement(PublicPreviewApp, { token: TOKEN }));
+  mounted = mount(createElement(PublicPreviewApp, { token: TOKEN }));
   await flush();
-  return view;
+  return mounted;
 }
 
 function lastSocket(): FakeWebSocket {
@@ -182,6 +190,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (mounted?.container.isConnected) mounted.unmount();
+  mounted = undefined;
   vi.unstubAllGlobals();
 });
 

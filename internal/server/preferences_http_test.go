@@ -71,32 +71,39 @@ func TestPreferenceHTTPUserOverrideLifecycle(t *testing.T) {
 	}
 
 	call = fixture.call(t, http.MethodPut, "/auth/preferences", map[string]any{
-		"set": map[string]any{"appearance.terminalTheme": "light", "keybinding.closeTab": nil},
+		"set": map[string]any{
+			"appearance.terminalTheme":      "light",
+			"appearance.terminalFontFamily": "jetbrains-mono",
+			"appearance.terminalContrast":   "maximum",
+			"keybinding.closeTab":           nil,
+		},
 	}, user, user.csrf, nil)
 	if call.status != http.StatusOK {
 		t.Fatalf("put status=%d body=%v", call.status, call.body)
 	}
 	overrides := preferenceMap(t, call, "overrides")
-	if overrides["appearance.terminalTheme"] != "light" {
+	if overrides["appearance.terminalTheme"] != "light" || overrides["appearance.terminalFontFamily"] != "jetbrains-mono" || overrides["appearance.terminalContrast"] != "maximum" {
 		t.Fatalf("overrides=%v", overrides)
 	}
 	if value, ok := overrides["keybinding.closeTab"]; !ok || value != nil {
 		t.Fatalf("explicit null override missing: %v", overrides)
 	}
 	effective := preferenceMap(t, call, "effective")
-	if effective["appearance.terminalTheme"] != "light" {
+	if effective["appearance.terminalTheme"] != "light" || effective["appearance.terminalFontFamily"] != "jetbrains-mono" || effective["appearance.terminalContrast"] != "maximum" {
 		t.Fatalf("effective=%v", effective)
 	}
 
 	call = fixture.call(t, http.MethodPut, "/auth/preferences", map[string]any{
-		"clear": []string{"appearance.terminalTheme"},
+		"clear": []string{"appearance.terminalTheme", "appearance.terminalFontFamily", "appearance.terminalContrast"},
 	}, user, user.csrf, nil)
 	if call.status != http.StatusOK {
 		t.Fatalf("clear status=%d body=%v", call.status, call.body)
 	}
 	overrides = preferenceMap(t, call, "overrides")
-	if _, ok := overrides["appearance.terminalTheme"]; ok {
-		t.Fatalf("override must be cleared: %v", overrides)
+	for _, key := range []string{"appearance.terminalTheme", "appearance.terminalFontFamily", "appearance.terminalContrast"} {
+		if _, ok := overrides[key]; ok {
+			t.Fatalf("override %s must be cleared: %v", key, overrides)
+		}
 	}
 	if value, ok := overrides["keybinding.closeTab"]; !ok || value != nil {
 		t.Fatalf("unrelated override must survive: %v", overrides)
@@ -231,6 +238,8 @@ func TestPreferenceHTTPValidation(t *testing.T) {
 		{"set": map[string]any{"arbitrary.key": "value"}},
 		{"set": map[string]any{"appearance.terminalTheme": "blue"}},
 		{"set": map[string]any{"appearance.terminalFontSize": 33}},
+		{"set": map[string]any{"appearance.terminalFontFamily": "downloaded-font"}},
+		{"set": map[string]any{"appearance.terminalContrast": "extreme"}},
 		{"set": map[string]any{"appearance.uiFontScale": 1.1}},
 		{"set": map[string]any{"input.selectionAutoCopy": "true"}},
 		{"set": map[string]any{"keybinding.closeTab": "p"}},

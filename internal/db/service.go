@@ -26,6 +26,7 @@ type Service struct {
 	mu                   sync.RWMutex
 	conns                map[string]managedConnection
 	owners               map[string]string
+	assetIDs             map[string]string
 	loginSessions        map[string]map[string]struct{}
 	revokedLoginSessions map[string]struct{}
 	closed               bool
@@ -33,14 +34,24 @@ type Service struct {
 	openMySQL    func(context.Context, MySQLConfig) (*mysqlConnection, error)
 	openPostgres func(context.Context, PostgresConfig) (*postgresConnection, error)
 	openRedis    func(context.Context, RedisConfig) (*redisConnection, error)
+	newDialer    DialerFactory
 	newID        func() (string, error)
 }
 
-func NewService(resolver AssetResolver) *Service {
-	return &Service{
+type ServiceOption func(*Service)
+
+func WithDialerFactory(factory DialerFactory) ServiceOption {
+	return func(service *Service) {
+		service.newDialer = factory
+	}
+}
+
+func NewService(resolver AssetResolver, options ...ServiceOption) *Service {
+	service := &Service{
 		resolver:             resolver,
 		conns:                make(map[string]managedConnection),
 		owners:               make(map[string]string),
+		assetIDs:             make(map[string]string),
 		loginSessions:        make(map[string]map[string]struct{}),
 		revokedLoginSessions: make(map[string]struct{}),
 		openMySQL:            connectMySQL,
@@ -48,6 +59,10 @@ func NewService(resolver AssetResolver) *Service {
 		openRedis:            connectRedis,
 		newID:                randomID,
 	}
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 func (s *Service) Start(context.Context) error {
@@ -70,6 +85,7 @@ func (s *Service) Close() error {
 		connections = append(connections, connection)
 		delete(s.conns, id)
 		delete(s.owners, id)
+		delete(s.assetIDs, id)
 		delete(s.loginSessions, id)
 	}
 	s.mu.Unlock()
@@ -93,20 +109,41 @@ func (s *Service) Connect(ctx context.Context, args ConnectArgs) (ConnectResult,
 		return ConnectResult{}, badParam(err)
 	}
 
+	kind := strings.ToLower(inline.Kind)
+	switch kind {
+	case "mysql", "postgres", "redis":
+	default:
+		return ConnectResult{}, badParam(fmt.Errorf("不支持的数据库类型 %s", inline.Kind))
+	}
+	var dialContext DialContextFunc
+	if inline.viaAssetID != "" {
+		if s.newDialer == nil {
+			return ConnectResult{}, ipc.NewError(ipc.CodeUnsupported, "数据库 SSH 隧道未配置")
+		}
+		dialContext, err = s.newDialer(ctx, inline.viaAssetID)
+		if err != nil {
+			return ConnectResult{}, err
+		}
+		if dialContext == nil {
+			return ConnectResult{}, ipc.NewError(ipc.CodeUnsupported, "数据库 SSH 隧道拨号器未配置")
+		}
+	}
+
 	var connection managedConnection
-	switch strings.ToLower(inline.Kind) {
+	switch kind {
 	case "mysql":
 		port := uint16(3306)
 		if inline.Port != nil {
 			port = *inline.Port
 		}
 		connection, err = s.openMySQL(ctx, MySQLConfig{
-			Host:      inline.Host,
-			Port:      port,
-			Username:  inline.Username,
-			Password:  inline.Password,
-			Database:  inline.Database,
-			TLSConfig: tlsConfig,
+			Host:        inline.Host,
+			Port:        port,
+			Username:    inline.Username,
+			Password:    inline.Password,
+			Database:    inline.Database,
+			TLSConfig:   tlsConfig,
+			DialContext: dialContext,
 		})
 	case "postgres":
 		port := uint16(5432)
@@ -114,12 +151,13 @@ func (s *Service) Connect(ctx context.Context, args ConnectArgs) (ConnectResult,
 			port = *inline.Port
 		}
 		connection, err = s.openPostgres(ctx, PostgresConfig{
-			Host:      inline.Host,
-			Port:      port,
-			Username:  inline.Username,
-			Password:  inline.Password,
-			Database:  inline.Database,
-			TLSConfig: tlsConfig,
+			Host:        inline.Host,
+			Port:        port,
+			Username:    inline.Username,
+			Password:    inline.Password,
+			Database:    inline.Database,
+			TLSConfig:   tlsConfig,
+			DialContext: dialContext,
 		})
 	case "redis":
 		port := uint16(6379)
@@ -134,15 +172,14 @@ func (s *Service) Connect(ctx context.Context, args ConnectArgs) (ConnectResult,
 			}
 		}
 		connection, err = s.openRedis(ctx, RedisConfig{
-			Host:      inline.Host,
-			Port:      port,
-			Username:  inline.Username,
-			Password:  inline.Password,
-			Database:  database,
-			TLSConfig: tlsConfig,
+			Host:        inline.Host,
+			Port:        port,
+			Username:    inline.Username,
+			Password:    inline.Password,
+			Database:    database,
+			TLSConfig:   tlsConfig,
+			DialContext: dialContext,
 		})
-	default:
-		return ConnectResult{}, badParam(fmt.Errorf("不支持的数据库类型 %s", inline.Kind))
 	}
 	if err != nil {
 		return ConnectResult{}, err
@@ -169,6 +206,9 @@ func (s *Service) Connect(ctx context.Context, args ConnectArgs) (ConnectResult,
 	}
 	s.conns[id] = connection
 	s.owners[id] = ipc.OwnerID(ctx)
+	if args.AssetID != "" {
+		s.assetIDs[id] = args.AssetID
+	}
 	if loginSessionID != "" {
 		s.loginSessions[id] = map[string]struct{}{loginSessionID: {}}
 	}
@@ -181,6 +221,7 @@ func (s *Service) Disconnect(ctx context.Context, id string) error {
 	connection := s.conns[id]
 	if connection == nil {
 		delete(s.owners, id)
+		delete(s.assetIDs, id)
 		s.mu.Unlock()
 		return nil
 	}
@@ -190,6 +231,7 @@ func (s *Service) Disconnect(ctx context.Context, id string) error {
 	}
 	delete(s.conns, id)
 	delete(s.owners, id)
+	delete(s.assetIDs, id)
 	delete(s.loginSessions, id)
 	s.mu.Unlock()
 	if err := connection.Close(); err != nil {
@@ -215,6 +257,7 @@ func (s *Service) CloseAccountSession(sessionID string) error {
 		connections = append(connections, s.conns[id])
 		delete(s.conns, id)
 		delete(s.owners, id)
+		delete(s.assetIDs, id)
 		delete(s.loginSessions, id)
 	}
 	s.mu.Unlock()
@@ -243,8 +286,9 @@ func (s *Service) connectionArgs(ctx context.Context, args ConnectArgs) (InlineC
 	}
 
 	var options struct {
-		Database string      `json:"database"`
-		TLS      *TLSOptions `json:"tls"`
+		Database   string      `json:"database"`
+		TLS        *TLSOptions `json:"tls"`
+		ViaAssetID string      `json:"viaAssetId"`
 	}
 	if strings.TrimSpace(asset.OptionsJSON) != "" {
 		if err := json.Unmarshal([]byte(asset.OptionsJSON), &options); err != nil {
@@ -252,10 +296,11 @@ func (s *Service) connectionArgs(ctx context.Context, args ConnectArgs) (InlineC
 		}
 	}
 	inline := InlineConnection{
-		Kind:     asset.Kind,
-		Password: asset.Password,
-		Database: options.Database,
-		TLS:      options.TLS,
+		Kind:       asset.Kind,
+		Password:   asset.Password,
+		Database:   options.Database,
+		TLS:        options.TLS,
+		viaAssetID: strings.TrimSpace(options.ViaAssetID),
 	}
 	if asset.Host != nil {
 		inline.Host = *asset.Host
@@ -547,7 +592,7 @@ func notFound(id string) *ipc.Error {
 
 func internalError(action string, err error) *ipc.Error {
 	var ipcErr *ipc.Error
-	if errors.As(err, &ipcErr) && ipcErr.Code == ipc.CodeForbidden {
+	if errors.As(err, &ipcErr) {
 		return ipcErr
 	}
 	return ipc.WrapError(ipc.CodeInternal, fmt.Sprintf("内部错误: %s: %v", action, err), err)

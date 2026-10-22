@@ -1,11 +1,18 @@
 import { useSyncExternalStore } from "react";
 import { isMac, modHint } from "./platform";
+import { WEB } from "../ipc/env";
 import { getAccountDefaults, getAccountOverrides, getAccountPreferenceStore, patchAccountOverrideCache, subscribeAccountOverrides } from "./preferences";
 
 export type KeybindingActionId =
   | "commandPalette"
   | "quickConnect"
   | "newTerminal"
+  | "nextWorkspace"
+  | "previousWorkspace"
+  | "nextTab"
+  | "previousTab"
+  | "focusUpperPane"
+  | "focusLowerPane"
   | "toggleSidebar"
   | "toggleAiSidebar"
   | "closeTab"
@@ -19,12 +26,19 @@ export interface KeybindingAction {
   id: KeybindingActionId;
   label: string;
   defaultBinding: string;
+  macDefaultBinding?: string;
 }
 
 export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   { id: "commandPalette", label: "命令面板", defaultBinding: "Mod+Shift+p" },
   { id: "quickConnect", label: "快速连接", defaultBinding: "Mod+Shift+k" },
   { id: "newTerminal", label: "新建终端标签", defaultBinding: "Mod+t" },
+  { id: "nextWorkspace", label: "下一个工作区", defaultBinding: WEB ? "Ctrl+Alt+ArrowRight" : "Mod+Alt+ArrowRight" },
+  { id: "previousWorkspace", label: "上一个工作区", defaultBinding: WEB ? "Ctrl+Alt+ArrowLeft" : "Mod+Alt+ArrowLeft" },
+  { id: "nextTab", label: "下一个标签", defaultBinding: WEB ? "Ctrl+Alt+]" : "Ctrl+Tab", macDefaultBinding: "Mod+Shift+]" },
+  { id: "previousTab", label: "上一个标签", defaultBinding: WEB ? "Ctrl+Alt+[" : "Ctrl+Shift+Tab", macDefaultBinding: "Mod+Shift+[" },
+  { id: "focusUpperPane", label: "聚焦上方窗格", defaultBinding: WEB ? "Ctrl+Alt+ArrowUp" : "Mod+Alt+ArrowUp" },
+  { id: "focusLowerPane", label: "聚焦下方窗格", defaultBinding: WEB ? "Ctrl+Alt+ArrowDown" : "Mod+Alt+ArrowDown" },
   { id: "toggleSidebar", label: "收起 / 展开左栏", defaultBinding: "Mod+b" },
   { id: "toggleAiSidebar", label: "收起 / 展开 AI 侧栏", defaultBinding: "Mod+j" },
   { id: "closeTab", label: "关闭当前标签", defaultBinding: "Mod+w" },
@@ -39,6 +53,12 @@ const APP_ACTION_ORDER: KeybindingActionId[] = [
   "commandPalette",
   "quickConnect",
   "newTerminal",
+  "nextWorkspace",
+  "previousWorkspace",
+  "nextTab",
+  "previousTab",
+  "focusUpperPane",
+  "focusLowerPane",
   "toggleSidebar",
   "toggleAiSidebar",
   "closeTab",
@@ -114,6 +134,8 @@ function logicalEventKey(event: KeyEventLike): string | null {
   if (codeLetter) return codeLetter[1].toLowerCase();
   const codeDigit = /^Digit([0-9])$/.exec(code);
   if (codeDigit) return codeDigit[1];
+  if (code === "BracketLeft") return "[";
+  if (code === "BracketRight") return "]";
   if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code;
   if (event.key === " ") return "Space";
   if (NAMED_KEYS.has(event.key)) return event.key;
@@ -432,9 +454,21 @@ export function useKeybindings(): KeybindingSnapshot {
   return useSyncExternalStore(subscribeKeybindings, getKeybindings);
 }
 
-export function matchKeybinding(event: KeyEventLike, id: KeybindingActionId): boolean {
+function matchActionBinding(event: KeyEventLike, id: KeybindingActionId): boolean {
   const binding = snapshot[id];
-  return binding !== null && matchBinding(event, binding);
+  if (binding !== null && matchBinding(event, binding)) return true;
+  const action = KEYBINDING_ACTIONS.find((candidate) => candidate.id === id);
+  return Boolean(
+    action?.macDefaultBinding &&
+    binding === action.defaultBinding &&
+    !WEB &&
+    isMac() &&
+    matchBinding(event, action.macDefaultBinding),
+  );
+}
+
+export function matchKeybinding(event: KeyEventLike, id: KeybindingActionId): boolean {
+  return matchActionBinding(event, id);
 }
 
 export interface AppKeybindingHit {
@@ -444,9 +478,9 @@ export interface AppKeybindingHit {
 
 export function matchAppKeybinding(event: KeyEventLike): AppKeybindingHit | null {
   for (const id of APP_ACTION_ORDER) {
+    if (!matchActionBinding(event, id)) continue;
     const binding = snapshot[id];
-    if (binding === null || !matchBinding(event, binding)) continue;
-    const parsed = parseBinding(binding);
+    const parsed = binding === null ? null : parseBinding(binding);
     let digit: number | null = null;
     if (parsed && (parsed.key === "1-9" || /^[1-9]$/.test(parsed.key))) {
       const logical = logicalEventKey(event);
@@ -504,15 +538,20 @@ export function bindingConflicts(
   bindings: KeybindingSnapshot = snapshot,
   mac = isMac(),
 ): KeybindingConflict[] {
-  const parsed = KEYBINDING_ACTIONS.map((action) => ({
-    action,
-    binding: bindings[action.id],
-  })).filter((entry): entry is { action: KeybindingAction; binding: string } =>
-    Boolean(entry.binding),
-  );
+  const parsed = KEYBINDING_ACTIONS.flatMap((action) => {
+    const binding = bindings[action.id];
+    const candidates = [
+      binding,
+      !WEB && mac && binding === action.defaultBinding ? action.macDefaultBinding : undefined,
+    ];
+    return candidates
+      .filter((candidate): candidate is string => Boolean(candidate))
+      .map((candidate) => ({ action, binding: candidate }));
+  });
   const conflicts: KeybindingConflict[] = [];
   for (let i = 0; i < parsed.length; i++) {
     for (let j = i + 1; j < parsed.length; j++) {
+      if (parsed[i].action.id === parsed[j].action.id) continue;
       if (!bindingsConflict(parsed[i].binding, parsed[j].binding, mac)) continue;
       conflicts.push({
         actions: [parsed[i].action, parsed[j].action],

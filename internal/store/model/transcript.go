@@ -14,7 +14,13 @@ type TranscriptRow struct {
 	Truncated      bool   `gorm:"column:truncated;not null;default:0" json:"truncated"`
 	SyncOptIn      bool   `gorm:"column:sync_opt_in;not null;default:0" json:"syncOptIn"`
 	ContentOmitted bool   `gorm:"column:content_omitted;not null;default:0" json:"contentOmitted"`
-	OwnerID        string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_transcript_owner" json:"owner_id"`
+	// ContentGen is the transcript's content generation: it bumps on every
+	// whole-content replacement (sync apply, replace) so timestamp-index
+	// rows written for an older content generation are recognizable as
+	// stale and never trusted for the current content. Appends do not bump
+	// it: existing blocks are unchanged by an append.
+	ContentGen int64  `gorm:"column:content_gen;not null;default:0" json:"contentGen"`
+	OwnerID    string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_transcript_owner" json:"owner_id"`
 }
 
 func (TranscriptRow) TableName() string { return "transcript" }
@@ -31,6 +37,57 @@ type TranscriptChunkRow struct {
 }
 
 func (TranscriptChunkRow) TableName() string { return "transcript_chunk" }
+
+// TranscriptChunkTS is the per-block timestamp index of a transcript's
+// stored chunks: one row per stored block carrying the block's true
+// maximum chunk timestamp. The distant seek prunes by this index — a block
+// whose maximum timestamp is below the target provably holds no qualifying
+// chunk under any timestamp order — so seeks stay bounded and correct for
+// both ordered and out-of-order data, without narrowing what may be
+// written. Rows are maintained by every chunk write path and backfilled
+// for pre-index transcripts in resumable batches.
+type TranscriptChunkTS struct {
+	TranscriptID string `gorm:"column:transcript_id;primaryKey;index:idx_transcript_chunk_ts_max,priority:1" json:"transcriptId"`
+	BlockSeq     int64  `gorm:"column:block_seq;primaryKey;index:idx_transcript_chunk_ts_max,priority:3" json:"blockSeq"`
+	MaxTS        int64  `gorm:"column:max_ts;not null;index:idx_transcript_chunk_ts_max,priority:2" json:"maxTs"`
+	// Gen is the content generation of the transcript the row was computed
+	// from: rows stamped with an older generation are stale (a replace
+	// rebuilt the content and the index) and every index read filters them
+	// out, so a backfill insert racing a replace can never be mistaken for
+	// the current index.
+	Gen        int64         `gorm:"column:gen;not null;default:0" json:"gen"`
+	OwnerID    string        `gorm:"size:191;column:owner_id;not null;default:'';index:idx_transcript_chunk_ts_owner" json:"owner_id"`
+	Transcript TranscriptRow `gorm:"foreignKey:TranscriptID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
+}
+
+func (TranscriptChunkTS) TableName() string { return "transcript_chunk_ts" }
+
+// TranscriptTSIndex tracks a transcript's timestamp-index completeness.
+// Complete reports every stored block has an index row, so the seek can
+// trust the index alone; until then the seek eliminates candidates from
+// the indexed prefix and scans the remaining suffix soundly while the
+// backfill advances in bounded batches. VerifiedThrough is the seek-side
+// verification watermark: every block with seq <= VerifiedThrough has had
+// its decoded content verified against its index row for the current
+// content, so a seek whose candidate lies beyond it only verifies the
+// newly reached blocks — bounded and resumable across calls, never an
+// unbounded prefix scan. Revision is the watermark's rollback epoch: it
+// increments whenever the watermark moves backward (an early-seq append
+// rolls it back, a whole-content replacement resets it), so a seek's
+// advance can compare against the epoch it read in its snapshot and a
+// stale advance is discarded instead of re-covering blocks the snapshot
+// never verified.
+type TranscriptTSIndex struct {
+	TranscriptID    string        `gorm:"column:transcript_id;primaryKey" json:"transcriptId"`
+	VerifiedThrough int64         `gorm:"column:verified_through;not null;default:0" json:"verifiedThrough"`
+	Revision        int64         `gorm:"column:revision;not null;default:0" json:"revision"`
+	Complete        bool          `gorm:"column:complete;not null;default:0" json:"complete"`
+	UpdatedAt       int64         `gorm:"column:updated_at;not null" json:"updatedAt"`
+	OwnerID         string        `gorm:"size:191;column:owner_id;not null;default:'';index:idx_transcript_ts_index_owner" json:"owner_id"`
+	Transcript      TranscriptRow `gorm:"foreignKey:TranscriptID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
+}
+
+func (TranscriptTSIndex) TableName() string { return "transcript_ts_index" }
 
 type DurableTranscriptOffset struct {
 	DurableID string `gorm:"column:durable_id;primaryKey" json:"durableId"`
@@ -77,10 +134,10 @@ type SyncState struct {
 func (SyncState) TableName() string { return "sync_state" }
 
 type MemoryEntry struct {
-	ID        string `gorm:"column:id;primaryKey" json:"id"`
-	Tenant    string `gorm:"column:tenant;not null" json:"tenant"`
-	Subject   string `gorm:"column:subject;not null" json:"subject"`
-	Topic     string `gorm:"column:topic;not null" json:"topic"`
+	ID        string `gorm:"size:64;column:id;primaryKey" json:"id"`
+	Tenant    string `gorm:"size:256;column:tenant;not null;index:memory_entry_scope_topic,priority:1" json:"tenant"`
+	Subject   string `gorm:"size:256;column:subject;not null;index:memory_entry_scope_topic,priority:2" json:"subject"`
+	Topic     string `gorm:"size:256;column:topic;not null;index:memory_entry_scope_topic,priority:3" json:"topic"`
 	Content   string `gorm:"column:content;not null" json:"content"`
 	Version   int64  `gorm:"column:version;not null" json:"version"`
 	Redacted  bool   `gorm:"column:redacted;not null" json:"redacted"`
@@ -91,8 +148,8 @@ type MemoryEntry struct {
 func (MemoryEntry) TableName() string { return "memory_entry" }
 
 type MemorySettings struct {
-	Tenant           string `gorm:"column:tenant;primaryKey" json:"tenant"`
-	Subject          string `gorm:"column:subject;primaryKey" json:"subject"`
+	Tenant           string `gorm:"size:256;column:tenant;primaryKey" json:"tenant"`
+	Subject          string `gorm:"size:256;column:subject;primaryKey" json:"subject"`
 	InjectionEnabled bool   `gorm:"column:injection_enabled;not null" json:"injectionEnabled"`
 	ToolsEnabled     bool   `gorm:"column:tools_enabled;not null;default:0" json:"toolsEnabled"`
 	Version          int64  `gorm:"column:version;not null" json:"version"`

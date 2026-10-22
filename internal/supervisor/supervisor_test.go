@@ -631,18 +631,14 @@ func TestSessionEnvRespectsExplicitValues(t *testing.T) {
 }
 
 func TestDefaultShellCommandFallbackIsNotALoginShell(t *testing.T) {
-	if value, ok := os.LookupEnv("SHELL"); ok {
-		t.Cleanup(func() { _ = os.Setenv("SHELL", value) })
-	}
+	t.Setenv("SHELL", "")
 	if err := os.Unsetenv("SHELL"); err != nil {
 		t.Fatal(err)
 	}
 	if got := defaultShellCommand(nil); !slices.Equal(got, []string{"/bin/sh"}) {
 		t.Fatalf("defaultShellCommand without SHELL = %v, want [/bin/sh]", got)
 	}
-	if err := os.Setenv("SHELL", "/bin/sh"); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("SHELL", "/bin/sh")
 	if got := defaultShellCommand(nil); !slices.Equal(got, []string{"/bin/sh", "-l"}) {
 		t.Fatalf("defaultShellCommand with explicit SHELL=/bin/sh = %v, want [/bin/sh -l]", got)
 	}
@@ -658,9 +654,7 @@ func TestCreateDefaultCommandSpawnsFallbackShell(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns a real shell")
 	}
-	if value, ok := os.LookupEnv("SHELL"); ok {
-		t.Cleanup(func() { _ = os.Setenv("SHELL", value) })
-	}
+	t.Setenv("SHELL", "")
 	if err := os.Unsetenv("SHELL"); err != nil {
 		t.Fatal(err)
 	}

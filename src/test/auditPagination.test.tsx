@@ -1,7 +1,13 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
-import { clickButton, deferred, flush, flushUntil, mount, setSelectValue, type MountedView } from "./features/reactTestUtils";
+import { act, createElement } from "react";
+import { clickButton, deferred, flush, flushUntil as flushUntilBase, mount, setSelectValue, type MountedView } from "./features/reactTestUtils";
+
+async function flushUntil(predicate: () => boolean, maxTicks = 60): Promise<void> {
+  await flush();
+  await flushUntilBase(predicate, maxTicks);
+  await flush();
+}
 import type { AuditEntryDto } from "../ipc/types";
 import { AuditView } from "../features/settings/AuditView";
 import { useAuth } from "../features/auth/store";
@@ -76,9 +82,11 @@ beforeEach(() => {
   mocks.fleetDevices.mockResolvedValue({ devices: [] });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await flush();
   mounted?.unmount();
   mounted = undefined;
+  await flush();
   setViewportWidth(1024);
 });
 
@@ -391,7 +399,7 @@ describe("AuditView device timeline", () => {
   }
 
   afterEach(() => {
-    useAuth.setState({ user: null });
+    act(() => useAuth.setState({ user: null }));
   });
 
   it("filters by assetId after selecting a device, renders Chinese event labels, and disables source filters", async () => {
@@ -411,7 +419,13 @@ describe("AuditView device timeline", () => {
     expect(mocks.auditQuery).toHaveBeenCalledWith({ source: undefined, limit: 100, offset: 0 });
 
     setSelectValue(select, "d-1");
-    await flushUntil(() => text(mounted!.container).includes("设备上线"));
+    await flushUntil(() => {
+      const body = text(mounted!.container);
+      const refresh = [...mounted!.container.querySelectorAll<HTMLButtonElement>("button")].find(
+        (button) => button.textContent?.trim() === "刷新",
+      );
+      return body.includes("设备上线") && body.includes("共 2 条") && refresh?.disabled === false;
+    });
     expect(mocks.auditQuery).toHaveBeenLastCalledWith({ assetId: "d-1", limit: 100, offset: 0 });
 
     const body = text(mounted!.container);

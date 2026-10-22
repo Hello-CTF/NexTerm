@@ -265,14 +265,15 @@ describe("DbPanel copy", () => {
 
   it("describes actual Redis console behavior without internal section references", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
-    await flushUntil(() => text().includes("控制台"));
+    await flushUntil(() => !text().includes("键列表加载中…"));
     const bar = [...mounted.container.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("控制台"),
     );
     if (!bar) throw new Error("console collapse bar not found");
     click(bar);
-    await flushUntil(() => text().includes("控制台 · 危险命令执行前需要确认"));
-    expect(text()).toContain("控制台 · 危险命令执行前需要确认，其余命令直接执行");
+    await flushUntil(() => text().includes("控制台 · 使用 Redis 命令协议，不支持 SQL"));
+    expect(text()).toContain("控制台 · 使用 Redis 命令协议，不支持 SQL");
+    expect(text()).toContain("危险命令执行前需要确认，其余命令直接执行");
     expect(text()).not.toContain("§");
     expect(text()).not.toContain("M3");
   });

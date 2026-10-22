@@ -11,7 +11,7 @@ import (
 
 func entryFromRow(row entryRow) Entry {
 	return Entry{
-		ID: row.ID, Topic: row.Topic, Content: row.Content, Version: row.Version, Redacted: row.Redacted,
+		ID: row.ID, Topic: row.Topic, Content: row.Content, Version: uint64(row.Version), Redacted: row.Redacted,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 }
@@ -61,7 +61,7 @@ func (s *Store) Create(ctx context.Context, scope Scope, input CreateInput) (Ent
 	}
 	row := entryRow{
 		ID: entry.ID, Tenant: scope.Tenant, Subject: scope.Subject, Topic: entry.Topic, Content: entry.Content,
-		Version: entry.Version, Redacted: entry.Redacted, CreatedAt: entry.CreatedAt, UpdatedAt: entry.UpdatedAt,
+		Version: int64(entry.Version), Redacted: entry.Redacted, CreatedAt: entry.CreatedAt, UpdatedAt: entry.UpdatedAt,
 	}
 	if err := s.db.WithContext(ctx).Create(&row).Error; err != nil {
 		return Entry{}, fmt.Errorf("create semantic memory: %w", err)
@@ -147,7 +147,7 @@ func (s *Store) Edit(ctx context.Context, scope Scope, id string, expectedVersio
 		result := tx.Model(&entryRow{}).
 			Where("id = ? AND tenant = ? AND subject = ? AND version = ?", id, scope.Tenant, scope.Subject, expectedVersion).
 			Updates(map[string]any{
-				"topic": next.Topic, "content": next.Content, "version": next.Version,
+				"topic": next.Topic, "content": next.Content, "version": int64(next.Version),
 				"redacted": next.Redacted, "updated_at": next.UpdatedAt,
 			})
 		if result.Error != nil {
@@ -213,7 +213,7 @@ func (s *Store) Index(ctx context.Context, scope Scope) ([]TopicIndex, error) {
 	}
 	result := []TopicIndex{}
 	for _, row := range rows {
-		item := IndexEntry{ID: row.ID, Version: row.Version, Redacted: row.Redacted, UpdatedAt: row.UpdatedAt}
+		item := IndexEntry{ID: row.ID, Version: uint64(row.Version), Redacted: row.Redacted, UpdatedAt: row.UpdatedAt}
 		if len(result) == 0 || result[len(result)-1].Topic != row.Topic {
 			result = append(result, TopicIndex{Topic: row.Topic, Entries: []IndexEntry{}})
 		}
@@ -226,20 +226,25 @@ func defaultSettings() Settings {
 	return Settings{InjectionEnabled: true, ToolsEnabled: true}
 }
 
+func loadSettings(ctx context.Context, db *gorm.DB, scope Scope) (Settings, bool, error) {
+	var row settingsRow
+	err := db.WithContext(ctx).Where("tenant = ? AND subject = ?", scope.Tenant, scope.Subject).First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return defaultSettings(), false, nil
+	}
+	if err != nil {
+		return Settings{}, false, fmt.Errorf("read semantic memory settings: %w", err)
+	}
+	return Settings{InjectionEnabled: row.InjectionEnabled, ToolsEnabled: row.ToolsEnabled, Version: uint64(row.Version)}, true, nil
+}
+
 func (s *Store) Settings(ctx context.Context, scope Scope) (Settings, error) {
 	scope, err := normalizeScope(scope)
 	if err != nil {
 		return Settings{}, err
 	}
-	var row settingsRow
-	err = s.db.WithContext(ctx).Where("tenant = ? AND subject = ?", scope.Tenant, scope.Subject).First(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return defaultSettings(), nil
-	}
-	if err != nil {
-		return Settings{}, fmt.Errorf("read semantic memory settings: %w", err)
-	}
-	return Settings{InjectionEnabled: row.InjectionEnabled, ToolsEnabled: row.ToolsEnabled, Version: row.Version}, nil
+	settings, _, err := loadSettings(ctx, s.db, scope)
+	return settings, err
 }
 
 func (s *Store) SetInjectionEnabled(ctx context.Context, scope Scope, enabled bool, expectedVersion uint64) (Settings, error) {
@@ -254,43 +259,48 @@ func (s *Store) UpdateSettings(ctx context.Context, scope Scope, input SettingsI
 	if input.InjectionEnabled == nil && input.ToolsEnabled == nil {
 		return Settings{}, fmt.Errorf("%w: settings update requires at least one flag", ErrInvalidInput)
 	}
-	var next Settings
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var current Settings
-		var row settingsRow
-		err := tx.Where("tenant = ? AND subject = ?", scope.Tenant, scope.Subject).First(&row).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			current = defaultSettings()
-		} else if err != nil {
-			return fmt.Errorf("read semantic memory settings: %w", err)
-		} else {
-			current = Settings{InjectionEnabled: row.InjectionEnabled, ToolsEnabled: row.ToolsEnabled, Version: row.Version}
-		}
-		if current.Version != expectedVersion {
-			return &VersionConflictError{ID: "memory-settings", Expected: expectedVersion, Actual: current.Version}
-		}
-		next = current
-		if input.InjectionEnabled != nil {
-			next.InjectionEnabled = *input.InjectionEnabled
-		}
-		if input.ToolsEnabled != nil {
-			next.ToolsEnabled = *input.ToolsEnabled
-		}
-		next.Version = current.Version + 1
-		write := settingsRow{
-			Tenant: scope.Tenant, Subject: scope.Subject, InjectionEnabled: next.InjectionEnabled,
-			ToolsEnabled: next.ToolsEnabled, Version: next.Version, UpdatedAt: s.now(),
-		}
-		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "tenant"}, {Name: "subject"}},
-			DoUpdates: clause.AssignmentColumns([]string{"injection_enabled", "tools_enabled", "version", "updated_at"}),
-		}).Create(&write).Error; err != nil {
-			return fmt.Errorf("update semantic memory settings: %w", err)
-		}
-		return nil
-	})
+	current, exists, err := loadSettings(ctx, s.db, scope)
 	if err != nil {
 		return Settings{}, err
 	}
-	return next, nil
+	if current.Version != expectedVersion {
+		return Settings{}, &VersionConflictError{ID: "memory-settings", Expected: expectedVersion, Actual: current.Version}
+	}
+	if current.Version >= uint64(1<<63-1) {
+		return Settings{}, fmt.Errorf("%w: settings version exhausted", ErrInvalidInput)
+	}
+	next := current
+	if input.InjectionEnabled != nil {
+		next.InjectionEnabled = *input.InjectionEnabled
+	}
+	if input.ToolsEnabled != nil {
+		next.ToolsEnabled = *input.ToolsEnabled
+	}
+	next.Version++
+	write := settingsRow{
+		Tenant: scope.Tenant, Subject: scope.Subject, InjectionEnabled: next.InjectionEnabled,
+		ToolsEnabled: next.ToolsEnabled, Version: int64(next.Version), UpdatedAt: s.now(),
+	}
+	var result *gorm.DB
+	if exists {
+		result = s.db.WithContext(ctx).Model(&settingsRow{}).
+			Where("tenant = ? AND subject = ? AND version = ?", scope.Tenant, scope.Subject, int64(expectedVersion)).
+			Updates(map[string]any{
+				"injection_enabled": next.InjectionEnabled, "tools_enabled": next.ToolsEnabled,
+				"version": int64(next.Version), "updated_at": write.UpdatedAt,
+			})
+	} else {
+		result = s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&write)
+	}
+	if result.Error != nil {
+		return Settings{}, fmt.Errorf("update semantic memory settings: %w", result.Error)
+	}
+	if result.RowsAffected == 1 {
+		return next, nil
+	}
+	current, _, err = loadSettings(ctx, s.db, scope)
+	if err != nil {
+		return Settings{}, err
+	}
+	return Settings{}, &VersionConflictError{ID: "memory-settings", Expected: expectedVersion, Actual: current.Version}
 }

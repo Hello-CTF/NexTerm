@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { installLongPressContextMenu } from "../app/longPress";
 
 function touch(type: string, x: number, y: number, target: Element, count = 1): void {
@@ -14,9 +14,9 @@ function touch(type: string, x: number, y: number, target: Element, count = 1): 
 describe("long press to context menu", () => {
   let host: HTMLDivElement | null = null;
 
-  beforeAll(() => {
+  beforeAll(installLongPressContextMenu);
+  beforeEach(() => {
     vi.useFakeTimers();
-    installLongPressContextMenu();
   });
 
   afterEach(() => {

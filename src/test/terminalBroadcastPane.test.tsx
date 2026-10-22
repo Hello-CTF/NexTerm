@@ -1,14 +1,16 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, createElement } from "react";
-import { flush, mount, type MountedView } from "./features/reactTestUtils";
+import { act, createElement, StrictMode } from "react";
+import { click, flush, flushMacrotask, flushUntil, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
 
 const harness = vi.hoisted(() => ({
   handlers: new Map<string, (payload: unknown) => void>(),
   resyncSubs: new Set<() => void>(),
   xtermProps: null as Record<string, unknown> | null,
   listLive: vi.fn(),
+  listSessions: vi.fn(),
+  prepareBroadcast: vi.fn(),
   write: vi.fn(),
   ask: vi.fn(),
 }));
@@ -26,9 +28,10 @@ vi.mock("../ipc/commands", () => ({
   assetApi: {},
   dbApi: {},
   vaultApi: {},
-  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn() },
+  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn(), list: harness.listSessions },
   terminalApi: {
     listLive: harness.listLive,
+    prepareBroadcast: harness.prepareBroadcast,
     write: harness.write,
     detach: vi.fn().mockResolvedValue(undefined),
     setVisible: vi.fn().mockResolvedValue(undefined),
@@ -78,12 +81,15 @@ vi.mock("../features/terminal/CommandBlockPanel", () => ({ CommandBlockPanel: ()
 vi.mock("../features/terminal/TerminalKeysBar", () => ({ TerminalKeysBar: () => null }));
 
 vi.mock("../features/terminal/XtermView", async () => {
-  const { useEffect } = await import("react");
+  const { useEffect, useRef } = await import("react");
   return {
     XtermView: (props: Record<string, unknown>) => {
       harness.xtermProps = props;
+      const propsRef = useRef(props);
+      propsRef.current = props;
       useEffect(() => {
-        (props.onHandle as ((h: unknown) => void) | undefined)?.({
+        const current = propsRef.current;
+        (current.onHandle as ((handle: unknown) => void) | undefined)?.({
           copyBlock: () => "",
           scrollToBlock: () => {},
           navigateBlock: () => null,
@@ -95,7 +101,8 @@ vi.mock("../features/terminal/XtermView", async () => {
           paste: () => {},
           dimensions: () => ({ cols: 80, rows: 24 }),
         });
-        (props.onAttach as ((id: string) => void) | undefined)?.("kernel-1");
+        const suffix = String(current.sessionId).replace(/\D/g, "") || "1";
+        (current.onAttach as ((id: string) => void) | undefined)?.(`kernel-${suffix}`);
       }, []);
       return <div className="h-full w-full min-h-0" />;
     },
@@ -154,13 +161,62 @@ function seedWorkspace(): void {
   });
 }
 
-function mountPane(): MountedView {
-  return mount(createElement(TerminalPane, { sessionId: "s1", title: "term", storeTabId: "t1" }));
+function addSecondWorkspace(): void {
+  const state = useUi.getState();
+  useUi.setState({
+    sessions: [...state.sessions, session("s4", "ssh")],
+    workspaces: [
+      ...state.workspaces,
+      {
+        id: "ws2",
+        kind: "session",
+        title: "ws-4",
+        closable: true,
+        sessionId: "s4",
+        panes: [
+          {
+            id: "p4",
+            activeTabId: "t4",
+            tabs: [termTab("t4", "s4", "kernel-4")],
+          },
+        ],
+        activePaneId: "p4",
+        splitRatio: 0.5,
+      },
+    ],
+  });
+}
+
+function enableBroadcast(targetIds: string[], origin = "t1"): void {
+  useUi.getState().setBroadcast({
+    origin: { workspaceId: "ws1", storeTabId: origin },
+    targetIds,
+  });
+}
+
+function expectBroadcast(targetIds: string[], origin = "t1"): void {
+  expect(useUi.getState().broadcast).toMatchObject({
+    origin: { workspaceId: "ws1", storeTabId: origin },
+    targetIds,
+  });
+}
+
+function mountPane(storeTabId = "t1"): MountedView {
+  const tab = useUi
+    .getState()
+    .workspaces.flatMap((workspace) => workspace.panes)
+    .flatMap((pane) => pane.tabs)
+    .find((candidate) => candidate.id === storeTabId);
+  return mount(createElement(TerminalPane, {
+    sessionId: tab?.sessionId ?? "s1",
+    title: tab?.title ?? storeTabId,
+    storeTabId,
+  }));
 }
 
 function sendInput(data: string): void {
   act(() => {
-    (harness.xtermProps?.onData as ((d: string) => void) | undefined)?.(data);
+    (harness.xtermProps?.onData as ((value: string) => void) | undefined)?.(data);
   });
 }
 
@@ -169,11 +225,34 @@ function bodyText(): string {
 }
 
 function toastTexts(): string[] {
-  return useUi.getState().toasts.map((t) => t.text);
+  return useUi.getState().toasts.map((toast) => toast.text);
 }
 
 function writtenTabIds(): string[] {
   return (harness.write.mock.calls as [string, Uint8Array][]).map(([id]) => id);
+}
+
+function broadcastChallengeError() {
+  return {
+    code: "needs_confirm",
+    message: "生产环境广播需要显式确认",
+    detail: {
+      kind: "broadcast_production_confirmation",
+      targetSetHash: "a".repeat(64),
+      inputHash: "b".repeat(64),
+      requiredEnvironmentNames: ["production"],
+      productionTargets: [
+        { tabId: "kernel-1", sessionId: "s1", sessionName: "one", hostname: "one.production.internal", environment: "production" },
+        { tabId: "kernel-2", sessionId: "s2", sessionName: "two", hostname: "two.production.internal", environment: "production" },
+      ],
+    },
+  };
+}
+
+function broadcastProductionDialog(): HTMLElement {
+  const dialog = document.body.querySelector<HTMLElement>('[role="dialog"][aria-label="确认生产环境广播"]');
+  if (!dialog) throw new Error("broadcast production dialog not found");
+  return dialog;
 }
 
 beforeEach(() => {
@@ -182,6 +261,8 @@ beforeEach(() => {
   harness.resyncSubs.clear();
   document.body.replaceChildren();
   harness.listLive.mockResolvedValue([]);
+  harness.listSessions.mockImplementation(() => Promise.resolve(useUi.getState().sessions));
+  harness.prepareBroadcast.mockResolvedValue(undefined);
   harness.write.mockResolvedValue(undefined);
   harness.ask.mockResolvedValue(true);
   seedWorkspace();
@@ -202,59 +283,90 @@ describe("terminal command broadcast", () => {
     expect(bodyText()).not.toContain("广播");
   });
 
-  it("fans input out to every broadcast target and shows the persistent indicators", async () => {
-    useUi.getState().setBroadcast({ workspaceId: "ws1", targetIds: ["t1", "t2", "t3"] });
+  it("fans input out across two workspaces and lists persistent per-target status", async () => {
+    addSecondWorkspace();
+    enableBroadcast(["t1", "t4"]);
     mounted = mountPane();
     await flush();
-    expect(bodyText()).toContain("广播 3");
-    expect(bodyText()).toContain("输入将同时发送到 3 个终端");
+    expect(bodyText()).toContain("广播 2");
+    expect(bodyText()).toContain("输入将发送到 2 个目标");
+    expect(bodyText()).toContain("ws-4");
+    expect(bodyText()).toContain("等待输入");
     sendInput("ls\n");
     await flush();
-    expect(writtenTabIds()).toEqual(["kernel-1", "kernel-2", "kernel-3"]);
+    expect(new Set(writtenTabIds())).toEqual(new Set(["kernel-1", "kernel-4"]));
+    expect(document.querySelectorAll('[data-status="sent"]')).toHaveLength(2);
+    expect(bodyText()).toContain("已发送");
   });
 
-  it("skips targets controlled by other devices and reports them", async () => {
+  it("remains usable after StrictMode effect replay", async () => {
+    enableBroadcast(["t1", "t2"]);
+    mounted = mount(createElement(
+      StrictMode,
+      null,
+      createElement(TerminalPane, { sessionId: "s1", title: "t1", storeTabId: "t1" }),
+    ));
+    await flush();
+    expect(harness.xtermProps?.tabId).toBe("kernel-1");
+    sendInput("x");
+    await flush();
+    expect(new Set(writtenTabIds())).toEqual(new Set(["kernel-1", "kernel-2"]));
+  });
+
+  it("keeps a failed target visible in the persistent strip", async () => {
     harness.write.mockImplementation((tabId: string) =>
-      tabId === "kernel-2" ? Promise.reject({ code: "not_controller" }) : Promise.resolve(),
+      tabId === "kernel-2" ? Promise.reject(new Error("boom")) : Promise.resolve(),
     );
-    useUi.getState().setBroadcast({ workspaceId: "ws1", targetIds: ["t1", "t2"] });
+    enableBroadcast(["t1", "t2"]);
     mounted = mountPane();
     await flush();
     sendInput("ls\n");
     await flush();
     expect(harness.write).toHaveBeenCalledTimes(2);
-    expect(toastTexts().some((t) => t.includes("跳过 1 个") && t.includes("正被其他设备控制"))).toBe(true);
+    expect(document.querySelectorAll('[data-status="sent"]')).toHaveLength(1);
+    expect(document.querySelectorAll('[data-status="failed"]')).toHaveLength(1);
+    expect(bodyText()).toContain("失败");
   });
 
-  it("skips dead targets without writing to them", async () => {
-    useUi.getState().setBroadcast({ workspaceId: "ws1", targetIds: ["t1", "t2"] });
+  it("skips dead targets without writing to them and records the reason", async () => {
+    enableBroadcast(["t1", "t2"]);
     useUi.getState().updateTab("t2", { dead: true });
     mounted = mountPane();
     await flush();
-    expect(bodyText()).toContain("1 个目标当前不可写");
+    expect(bodyText()).toContain("1 个当前不可写");
     sendInput("ls\n");
     await flush();
     expect(writtenTabIds()).toEqual(["kernel-1"]);
-    expect(toastTexts().some((t) => t.includes("终端已失效"))).toBe(true);
+    const skipped = document.querySelector('[data-status="skipped"]');
+    expect(skipped?.getAttribute("title")).toBe("终端已失效");
+    expect(bodyText()).toContain("已跳过");
   });
 
-  it("does not broadcast when typing in a tab outside the target set", async () => {
-    useUi.getState().setBroadcast({ workspaceId: "ws1", targetIds: ["t2", "t3"] });
-    mounted = mountPane();
+  it("activates broadcast only from the origin terminal", async () => {
+    enableBroadcast(["t1", "t2"], "t2");
+    mounted = mountPane("t1");
     await flush();
-    expect(bodyText()).toContain("广播 2");
-    expect(bodyText()).not.toContain("输入将同时发送到");
+    expect(bodyText()).not.toContain("输入将发送到");
     sendInput("ls\n");
     await flush();
     expect(writtenTabIds()).toEqual(["kernel-1"]);
+  });
+
+  it("does not implicitly write to an origin outside the target set", async () => {
+    enableBroadcast(["t2"], "t1");
+    mounted = mountPane("t1");
+    await flush();
+    sendInput("ls\n");
+    await flush();
+    expect(writtenTabIds()).toEqual(["kernel-2"]);
   });
 
   it("restores single-terminal input after broadcast is turned off", async () => {
-    useUi.getState().setBroadcast({ workspaceId: "ws1", targetIds: ["t1", "t2"] });
+    enableBroadcast(["t1", "t2"]);
     mounted = mountPane();
     await flush();
     const badge = [...document.querySelectorAll<HTMLElement>("button")].find(
-      (el) => el.textContent?.trim() === "广播 2",
+      (element) => element.textContent?.trim() === "广播 2",
     );
     expect(badge).toBeDefined();
     act(() => {
@@ -269,7 +381,7 @@ describe("terminal command broadcast", () => {
   });
 
   it("does not broadcast from a terminal controlled by another device", async () => {
-    useUi.getState().setBroadcast({ workspaceId: "ws1", targetIds: ["t1", "t2"] });
+    enableBroadcast(["t1", "t2"]);
     mounted = mountPane();
     await flush();
     const handler = harness.handlers.get("terminal://control");
@@ -291,12 +403,119 @@ describe("terminal command broadcast", () => {
     await flush();
     expect(harness.write).not.toHaveBeenCalled();
   });
+
+  it("shows backend production targets and retries preflight and writes with the confirmed hashes", async () => {
+    harness.prepareBroadcast.mockRejectedValueOnce(broadcastChallengeError()).mockResolvedValue(undefined);
+    enableBroadcast(["t1", "t2"]);
+    mounted = mountPane();
+    await flush();
+    sendInput("deploy --safe\n");
+    await flushUntil(() => document.body.querySelector('[role="dialog"][aria-label="确认生产环境广播"]') !== null);
+
+    const dialog = broadcastProductionDialog();
+    expect(dialog.textContent).toContain("one.production.internal");
+    expect(dialog.textContent).toContain("two.production.internal");
+    expect(dialog.textContent).toContain("deploy --safe");
+    expect(harness.write).not.toHaveBeenCalled();
+    expect(harness.prepareBroadcast.mock.calls[0][2]).toBeUndefined();
+    expect(new TextDecoder().decode(harness.prepareBroadcast.mock.calls[0][1])).toBe("deploy --safe\n");
+
+    const firstEnvironment = dialog.querySelector<HTMLInputElement>('input[aria-label="输入环境名 one.production.internal"]');
+    const secondEnvironment = dialog.querySelector<HTMLInputElement>('input[aria-label="输入环境名 two.production.internal"]');
+    const confirm = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "确认广播（2）",
+    );
+    if (!firstEnvironment || !secondEnvironment || !confirm) throw new Error("broadcast confirmation controls not found");
+    expect(confirm.disabled).toBe(true);
+    setInputValue(firstEnvironment, "production");
+    setInputValue(secondEnvironment, "production");
+    expect(confirm.disabled).toBe(false);
+    click(confirm);
+    await flushUntil(
+      () => harness.write.mock.calls.length === 2 &&
+        document.body.querySelector('[role="dialog"][aria-label="确认生产环境广播"]') === null,
+    );
+
+    const productionConfirmation = {
+      confirmed: true,
+      targetSetHash: "a".repeat(64),
+      inputHash: "b".repeat(64),
+      environmentNames: ["production"],
+    };
+    expect(harness.prepareBroadcast).toHaveBeenCalledTimes(2);
+    expect(harness.prepareBroadcast.mock.calls[1][2]).toEqual(productionConfirmation);
+    for (const call of harness.write.mock.calls) {
+      expect(call[2]).toEqual({ targetTabIds: ["kernel-1", "kernel-2"], productionConfirmation });
+    }
+  });
+
+  it("canceling production confirmation sends nothing and leaves ordinary input unaffected", async () => {
+    harness.prepareBroadcast.mockRejectedValueOnce(broadcastChallengeError());
+    enableBroadcast(["t1", "t2"]);
+    mounted = mountPane();
+    await flush();
+    sendInput("deploy --unsafe\n");
+    await flushUntil(() => document.body.querySelector('[role="dialog"][aria-label="确认生产环境广播"]') !== null);
+
+    const cancel = [...broadcastProductionDialog().querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "取消",
+    );
+    if (!cancel) throw new Error("broadcast cancel button not found");
+    click(cancel);
+    await flushUntil(() => document.body.querySelector('[role="dialog"][aria-label="确认生产环境广播"]') === null);
+    expect(harness.write).not.toHaveBeenCalled();
+    expect(toastTexts()).toContain("已取消生产广播，待确认输入未发送");
+
+    act(() => useUi.getState().setBroadcast(null));
+    await flush();
+    sendInput("ordinary\n");
+    await flush();
+    expect(harness.write).toHaveBeenCalledTimes(1);
+    expect(harness.write.mock.calls[0][0]).toBe("kernel-1");
+    expect(harness.write.mock.calls[0]).toHaveLength(2);
+    expect(harness.prepareBroadcast).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not release a confirmed retry when cancel happens while its preflight is pending", async () => {
+    let resolveRetry!: () => void;
+    const retry = new Promise<void>((resolve) => {
+      resolveRetry = resolve;
+    });
+    harness.prepareBroadcast.mockRejectedValueOnce(broadcastChallengeError()).mockReturnValueOnce(retry);
+    enableBroadcast(["t1", "t2"]);
+    mounted = mountPane();
+    await flush();
+    sendInput("deploy --safe\n");
+    await flushUntil(() => document.body.querySelector('[role="dialog"][aria-label="确认生产环境广播"]') !== null);
+
+    const dialog = broadcastProductionDialog();
+    const firstEnvironment = dialog.querySelector<HTMLInputElement>('input[aria-label="输入环境名 one.production.internal"]');
+    const secondEnvironment = dialog.querySelector<HTMLInputElement>('input[aria-label="输入环境名 two.production.internal"]');
+    const confirm = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "确认广播（2）",
+    );
+    if (!firstEnvironment || !secondEnvironment || !confirm) throw new Error("broadcast confirmation controls not found");
+    setInputValue(firstEnvironment, "production");
+    setInputValue(secondEnvironment, "production");
+    click(confirm);
+    await flushUntil(() => harness.prepareBroadcast.mock.calls.length === 2);
+    const cancel = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "取消",
+    );
+    if (!cancel) throw new Error("broadcast cancel button not found");
+    click(cancel);
+    resolveRetry();
+    await flush();
+
+    expect(harness.write).not.toHaveBeenCalled();
+    expect(document.body.querySelector('[role="dialog"][aria-label="确认生产环境广播"]')).toBeNull();
+  });
 });
 
 describe("broadcast enable flow", () => {
   async function openOverflowMenu(): Promise<void> {
     const overflow = [...document.querySelectorAll<HTMLElement>("button")].find(
-      (el) => el.getAttribute("aria-label") === "更多终端操作",
+      (element) => element.getAttribute("aria-label") === "更多终端操作",
     );
     expect(overflow).toBeDefined();
     act(() => {
@@ -306,10 +525,10 @@ describe("broadcast enable flow", () => {
   }
 
   function clickMenuItem(label: string): void {
-    const labelEl = [...document.querySelectorAll<HTMLElement>(".nx-menu-label")].find(
-      (el) => el.textContent?.trim() === label,
+    const labelElement = [...document.querySelectorAll<HTMLElement>(".nx-menu-label")].find(
+      (element) => element.textContent?.trim() === label,
     );
-    const item = labelEl?.closest("button");
+    const item = labelElement?.closest("button");
     expect(item).toBeDefined();
     act(() => {
       item?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -329,16 +548,14 @@ describe("broadcast enable flow", () => {
     expect(useUi.getState().broadcast).toBeNull();
   });
 
-  it("enables broadcast for the whole workspace after confirmation", async () => {
+  it("enables broadcast for every open workspace after confirmation", async () => {
+    addSecondWorkspace();
     mounted = mountPane();
     await flush();
     await openOverflowMenu();
     clickMenuItem("广播到全部终端");
     await flush();
-    expect(useUi.getState().broadcast).toEqual({
-      workspaceId: "ws1",
-      targetIds: ["t1", "t2", "t3"],
-    });
+    expectBroadcast(["t1", "t2", "t3", "t4"]);
   });
 
   it("enables broadcast for the current pane only via quick pick", async () => {
@@ -347,10 +564,7 @@ describe("broadcast enable flow", () => {
     await openOverflowMenu();
     clickMenuItem("广播到当前分屏");
     await flush();
-    expect(useUi.getState().broadcast).toEqual({
-      workspaceId: "ws1",
-      targetIds: ["t1", "t2"],
-    });
+    expectBroadcast(["t1", "t2"]);
   });
 
   it("refuses quick pick when fewer than two terminals are eligible", async () => {
@@ -381,42 +595,43 @@ describe("broadcast enable flow", () => {
     await flush();
     expect(harness.ask).not.toHaveBeenCalled();
     expect(useUi.getState().broadcast).toBeNull();
-    expect(toastTexts().some((t) => t.includes("可广播终端不足 2 个"))).toBe(true);
+    expect(toastTexts().some((text) => text.includes("可广播终端不足 2 个"))).toBe(true);
   });
 
-  it("opens the picker, quick-selects all terminals and applies them", async () => {
+  it("groups unselected terminals by host and workspace in the picker", async () => {
+    addSecondWorkspace();
     mounted = mountPane();
     await flush();
     await openOverflowMenu();
     clickMenuItem("选择广播目标…");
     await flush();
     expect(bodyText()).toContain("命令广播目标");
+    expect(bodyText()).toContain("工作区：ws-4");
+    expect(bodyText()).toContain("t4");
+    expect(bodyText()).toContain("已选 2 个");
     const allButton = [...document.querySelectorAll<HTMLElement>("button")].find(
-      (el) => el.textContent?.trim() === "全部终端",
+      (element) => element.textContent?.trim() === "全部终端",
     );
     expect(allButton).toBeDefined();
     act(() => {
       allButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await flush();
-    expect(bodyText()).toContain("已选 3 个");
-    const applyButton = [...document.querySelectorAll<HTMLElement>("button")].find((el) =>
-      el.textContent?.trim().startsWith("开启广播"),
+    expect(bodyText()).toContain("已选 4 个");
+    const applyButton = [...document.querySelectorAll<HTMLElement>("button")].find((element) =>
+      element.textContent?.trim().startsWith("开启广播"),
     );
-    expect(applyButton?.textContent?.trim()).toBe("开启广播（3）");
+    expect(applyButton?.textContent?.trim()).toBe("开启广播（4）");
     act(() => {
       applyButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await flush();
     expect(harness.ask).toHaveBeenCalledTimes(1);
-    expect(useUi.getState().broadcast).toEqual({
-      workspaceId: "ws1",
-      targetIds: ["t1", "t2", "t3"],
-    });
+    expectBroadcast(["t1", "t2", "t3", "t4"]);
   });
 });
 
-describe("broadcast input serialization", () => {
+describe("broadcast input invalidation", () => {
   interface WriteGate {
     id: string;
     data: string;
@@ -440,92 +655,79 @@ describe("broadcast input serialization", () => {
   }
 
   async function releaseOldest(gates: WriteGate[]): Promise<void> {
-    const gate = gates.find((g) => !g.settled);
+    const gate = gates.find((item) => !item.settled);
     if (!gate) throw new Error("no pending write to release");
     gate.resolve();
     await flush();
   }
 
   async function drainWrites(gates: WriteGate[]): Promise<void> {
-    for (let i = 0; i < 50; i++) {
+    for (let index = 0; index < 50; index += 1) {
       await flush();
-      if (gates.every((g) => g.settled)) return;
+      if (gates.every((gate) => gate.settled)) return;
       await releaseOldest(gates);
     }
     throw new Error("writes did not drain");
   }
 
   function gatePairs(gates: WriteGate[]): [string, string][] {
-    return gates.map((g) => [g.id, g.data]);
+    return gates.map((gate) => [gate.id, gate.data]);
   }
 
-  it("delivers consecutive keystrokes to every target in the same order", async () => {
-    useUi.getState().setBroadcast({ workspaceId: "ws1", targetIds: ["t1", "t2", "t3"] });
-    const gates = gateWrites();
-    mounted = mountPane();
-    await flush();
-    sendInput("a");
-    await flush();
-    expect(gates.map((g) => g.id)).toEqual(["kernel-1"]);
-    sendInput("b");
-    await flush();
-    expect(gates).toHaveLength(1);
-    while (gates.length < 6) {
-      await releaseOldest(gates);
-    }
-    expect(gatePairs(gates)).toEqual([
-      ["kernel-1", "a"],
-      ["kernel-2", "a"],
-      ["kernel-3", "a"],
-      ["kernel-1", "b"],
-      ["kernel-2", "b"],
-      ["kernel-3", "b"],
-    ]);
-  });
-
   it("drops queued input when broadcast is closed and does not block later input", async () => {
-    useUi.getState().setBroadcast({ workspaceId: "ws1", targetIds: ["t1", "t2"] });
+    enableBroadcast(["t1", "t2"]);
     const gates = gateWrites();
     mounted = mountPane();
     await flush();
     sendInput("a");
     await flush();
-    expect(gatePairs(gates)).toEqual([["kernel-1", "a"]]);
-    useUi.getState().setBroadcast(null);
+    expect(gatePairs(gates)).toEqual([["kernel-1", "a"], ["kernel-2", "a"]]);
+    sendInput("b");
+    await flush();
+    expect(gates).toHaveLength(2);
+    act(() => useUi.getState().setBroadcast(null));
+    await flush();
     sendInput("b");
     await flush();
     expect(gatePairs(gates)).toEqual([
       ["kernel-1", "a"],
+      ["kernel-2", "a"],
       ["kernel-1", "b"],
     ]);
     await drainWrites(gates);
-    expect(gates.map((g) => g.data)).toEqual(["a", "b", "a"]);
-    useUi.getState().setBroadcast({ workspaceId: "ws1", targetIds: ["t1", "t2"] });
-    sendInput("c");
+    expect(gates.filter((gate) => gate.data === "b").map((gate) => gate.id)).toEqual(["kernel-1"]);
+
+    act(() => {
+      enableBroadcast(["t1", "t2"]);
+      (harness.xtermProps?.onData as ((value: string) => void) | undefined)?.("c");
+    });
     await drainWrites(gates);
     expect(gatePairs(gates)).toEqual([
       ["kernel-1", "a"],
-      ["kernel-1", "b"],
       ["kernel-2", "a"],
+      ["kernel-1", "b"],
       ["kernel-1", "c"],
       ["kernel-2", "c"],
     ]);
   });
 
   it("drops queued input when the target set changes and sends new input to the new targets", async () => {
-    useUi.getState().setBroadcast({ workspaceId: "ws1", targetIds: ["t1", "t2", "t3"] });
+    enableBroadcast(["t1", "t2", "t3"]);
     const gates = gateWrites();
     mounted = mountPane();
     await flush();
     sendInput("a");
     await flush();
-    expect(gatePairs(gates)).toEqual([["kernel-1", "a"]]);
+    expect(gatePairs(gates)).toEqual([
+      ["kernel-1", "a"],
+      ["kernel-2", "a"],
+      ["kernel-3", "a"],
+    ]);
     sendInput("b");
-    useUi.getState().setBroadcast({ workspaceId: "ws1", targetIds: ["t1", "t2"] });
+    act(() => enableBroadcast(["t1", "t2"]));
     await flush();
-    expect(gates).toHaveLength(1);
     await drainWrites(gates);
-    expect(gates.map((g) => g.data)).toEqual(["a", "a", "a"]);
+    expect(gates.map((gate) => gate.data)).toEqual(["a", "a", "a"]);
     sendInput("c");
     await drainWrites(gates);
     expect(gatePairs(gates)).toEqual([
@@ -535,6 +737,39 @@ describe("broadcast input serialization", () => {
       ["kernel-1", "c"],
       ["kernel-2", "c"],
     ]);
+  });
+
+  async function expectOriginSwitchToDropQueuedInput(
+    switchOrigin: () => void,
+    withSecondWorkspace = false,
+  ): Promise<void> {
+    if (withSecondWorkspace) addSecondWorkspace();
+    enableBroadcast(["t1", "t2"]);
+    const gates = gateWrites();
+    mounted = mountPane();
+    await flush();
+    sendInput("a");
+    await flush();
+    sendInput("b");
+    await flush();
+    expect(gatePairs(gates)).toEqual([["kernel-1", "a"], ["kernel-2", "a"]]);
+    await act(async () => {
+      switchOrigin();
+      for (const gate of gates) gate.resolve();
+      await flushMacrotask();
+    });
+    expect(gatePairs(gates)).toEqual([["kernel-1", "a"], ["kernel-2", "a"]]);
+  }
+
+  it("drops queued input as soon as the origin tab is no longer active", async () => {
+    await expectOriginSwitchToDropQueuedInput(() => useUi.getState().setActiveTab("t2"));
+  });
+
+  it("drops queued input as soon as the origin workspace is no longer active", async () => {
+    await expectOriginSwitchToDropQueuedInput(
+      () => useUi.getState().setActiveWorkspace("ws2"),
+      true,
+    );
   });
 
   it("keeps non-broadcast writes unserialized", async () => {

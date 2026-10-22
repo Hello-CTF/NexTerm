@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { assetApi, syncApi, transcriptApi, type TranscriptChunk } from "../../ipc/commands";
+import { assetApi, syncApi, transcriptApi, type TranscriptChunk, type TranscriptSummary } from "../../ipc/commands";
 import type { AccountLink, SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone, SyncKindOptIn, SyncStatus } from "../../ipc/types";
 import { AuthApiError, syncV2Api } from "../../ipc/authApi";
 import { remoteLinkApi, syncCompareApi, type SyncCompareRow } from "../../ipc/remoteApi";
@@ -79,12 +79,14 @@ type LinkStep =
   | { kind: "reset" }
   | { kind: "recovery"; recoveryKey: string };
 
+type DesktopSyncStatus = SyncStatus & { paused?: boolean; vaultLocked?: boolean };
+
 function DesktopLinkCard() {
   const { pushToast } = useUi();
   const qc = useQueryClient();
 
   const [link, setLink] = useState<AccountLink | null>(null);
-  const [status, setStatus] = useState<SyncStatus | null>(null);
+  const [status, setStatus] = useState<DesktopSyncStatus | null>(null);
   const [draft, setDraft] = useState({ url: "", username: "", password: "", insecure: false });
   const [draftEdited, setDraftEdited] = useState(false);
   const [step, setStep] = useState<LinkStep>({ kind: "form" });
@@ -236,7 +238,8 @@ function DesktopLinkCard() {
     }
   };
 
-  const connected = !!status?.loggedIn && !status.lastError;
+  const syncPaused = !!status?.paused || !!status?.vaultLocked;
+  const connected = !!status?.loggedIn && !status.lastError && !syncPaused;
 
   return (
     <>
@@ -354,7 +357,7 @@ function DesktopLinkCard() {
               {busy === "login" ? <IconRefresh size={12} className="animate-spin" /> : <IconLock size={12} />}
               {busy === "login" ? "登录中…" : "登录"}
             </button>
-            {status?.lastError && <span className="nx-hint text-amber-300">上次失败：{status.lastError}</span>}
+            {status?.lastError && !syncPaused && <span className="nx-hint text-amber-300">上次失败：{status.lastError}</span>}
           </div>
         </>
       )}
@@ -518,7 +521,7 @@ function DesktopLinkCard() {
 // and per-row comparison details (sync_compare: the Go side decrypts cloud objects with the engine session DEK, same judgment as the web).
 function DesktopSyncConsole() {
   const { pushToast } = useUi();
-  const [status, setStatus] = useState<SyncStatus | null>(null);
+  const [status, setStatus] = useState<DesktopSyncStatus | null>(null);
   const [kindOptIn, setKindOptIn] = useState<SyncKindOptIn | null>(null);
   const [optInBusy, setOptInBusy] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
@@ -698,7 +701,7 @@ function DesktopSyncConsole() {
 
       {kindOptIn && <SyncOptInSection value={kindOptIn} busy={optInBusy} onChange={(patch) => void updateKindOptIn(patch)} />}
 
-      {status?.lastError && (
+      {status?.lastError && !status.paused && !status.vaultLocked && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
           <span className="min-w-0 flex-1 break-words">上次同步失败：{status.lastError}，将在下个自动同步周期重试。</span>
@@ -767,6 +770,7 @@ interface LocalEntity {
   deletedAt: number | null;
   payload: unknown;
   payloadHash: string;
+  payloadText?: string;
 }
 
 interface RemoteObject {
@@ -813,30 +817,74 @@ async function readTranscriptAll(id: string): Promise<TranscriptChunk[]> {
   throw new Error(`会话记录 ${id} 分页读取超出上限`);
 }
 
-async function loadOptedInTranscripts(): Promise<LocalEntity[]> {
+interface TranscriptCacheEntry {
+  fingerprint: string;
+  entity?: LocalEntity;
+  pending?: Promise<LocalEntity>;
+}
+
+const transcriptCaches = new WeakMap<Uint8Array, Map<string, TranscriptCacheEntry>>();
+
+function transcriptFingerprint(t: TranscriptSummary): string {
+  return JSON.stringify([
+    t.id, t.sessionId, t.assetId, t.assetName, t.assetKind, t.startedAt, t.endedAt,
+    t.bytes, t.chunks, t.truncated, t.contentOmitted === true,
+  ]);
+}
+
+async function cachedTranscriptEntity(dek: Uint8Array, t: TranscriptSummary): Promise<LocalEntity> {
+  let cache = transcriptCaches.get(dek);
+  if (!cache) {
+    cache = new Map<string, TranscriptCacheEntry>();
+    transcriptCaches.set(dek, cache);
+  }
+  const fingerprint = transcriptFingerprint(t);
+  const existing = cache.get(t.id);
+  if (existing?.fingerprint === fingerprint) {
+    if (existing.entity) return existing.entity;
+    if (existing.pending) return existing.pending;
+  }
+
+  const pending: Promise<LocalEntity> = (async () => {
+    let content: TranscriptChunk[] | null = null;
+    // contentOmitted is used only with the real over-limit semantics (>64MiB is metadata-only); under the limit, everything must be paged in - multi-page content must not be marked complete.
+    if (!t.contentOmitted && t.bytes > TRANSCRIPT_MAX_CONTENT_BYTES) {
+      content = null;
+    } else if (!t.contentOmitted) {
+      content = await readTranscriptAll(t.id);
+    }
+    const payload = transcriptPayload(t, content);
+    const payloadText = marshalSyncPayload(payload);
+    return {
+      id: t.id,
+      kind: "transcript",
+      name: `${t.assetName} 的会话记录`,
+      updatedAt: t.endedAt ?? t.startedAt,
+      deletedAt: null,
+      payload,
+      payloadText,
+      payloadHash: await objectPayloadHash(utf8Bytes(payloadText)),
+    };
+  })();
+  cache.set(t.id, { fingerprint, pending });
+  try {
+    const entity = await pending;
+    if (cache.get(t.id)?.pending === pending) cache.set(t.id, { fingerprint, entity });
+    return entity;
+  } catch (error) {
+    if (cache.get(t.id)?.pending === pending) cache.delete(t.id);
+    throw error;
+  }
+}
+
+async function loadOptedInTranscripts(dek: Uint8Array): Promise<LocalEntity[]> {
   const hosts = await transcriptApi.hosts();
   const out: LocalEntity[] = [];
   for (const host of hosts) {
     const summaries = await transcriptApi.list(host.assetId);
     for (const t of summaries) {
       if (!t.syncOptIn || t.active || t.endedAt === null) continue;
-      let content: TranscriptChunk[] | null = null;
-      // contentOmitted is used only with the real over-limit semantics (>64MiB is metadata-only); under the limit, everything must be paged in - multi-page content must not be marked complete.
-      if (!t.contentOmitted && t.bytes > TRANSCRIPT_MAX_CONTENT_BYTES) {
-        content = null;
-      } else if (!t.contentOmitted) {
-        content = await readTranscriptAll(t.id);
-      }
-      const payload = transcriptPayload(t, content);
-      out.push({
-        id: t.id,
-        kind: "transcript",
-        name: `${t.assetName} 的会话记录`,
-        updatedAt: t.endedAt ?? t.startedAt,
-        deletedAt: null,
-        payload,
-        payloadHash: await objectPayloadHash(utf8Bytes(marshalSyncPayload(payload))),
-      });
+      out.push(await cachedTranscriptEntity(dek, t));
     }
   }
   return out;
@@ -945,7 +993,8 @@ async function localEntity(
   deletedAt: number | null,
   payload: unknown,
 ): Promise<LocalEntity> {
-  return { id, kind, name, updatedAt, deletedAt, payload, payloadHash: await objectPayloadHash(utf8Bytes(marshalSyncPayload(payload))) };
+  const payloadText = marshalSyncPayload(payload);
+  return { id, kind, name, updatedAt, deletedAt, payload, payloadText, payloadHash: await objectPayloadHash(utf8Bytes(payloadText)) };
 }
 
 // loadLocalEntities collects the full local copy via the M141 collect RPC: soft-deleted assets, both tombstone kinds and credentials all enter the comparison,
@@ -953,12 +1002,12 @@ async function localEntity(
 // Credentials whose plaintext cannot be read (locked/unavailable/error) are explicitly recorded in warnings, never silently dropped.
 // Optional sync kinds are collected per the account user's switches (default on): only enabled ones enter comparison and push;
 // a profile apiKey withheld (locked/unavailable/error) likewise only records a warning; keyless profiles (apiKeySet=false) are unaffected by vault lock.
-async function loadLocalEntities(optIn: SyncKindOptIn): Promise<LocalCollection> {
+async function loadLocalEntities(optIn: SyncKindOptIn, dek: Uint8Array): Promise<LocalCollection> {
   const warnings: string[] = [];
   const [groups, snippets, transcripts, assets, tombstones, credentials, knownHosts, aiProfiles, aiPermission, aiGrants, preferences] = await Promise.all([
     assetApi.groupList(),
     assetApi.snippetList(),
-    loadOptedInTranscripts(),
+    loadOptedInTranscripts(dek),
     collectAssetsAll(),
     collectTombstonesAll(),
     collectCredentialsAll(),
@@ -1207,7 +1256,7 @@ async function sealAll(dek: Uint8Array, list: LocalEntity[]): Promise<{ id: stri
   const ordered = [...list].sort((a, b) => rank(a.kind) - rank(b.kind) || a.id.localeCompare(b.id));
   const objects: { id: string; blob: string }[] = [];
   for (const e of ordered) {
-    const blob = await sealSyncObject(dek, utf8Bytes(marshalSyncPayload(e.payload)), e.id, e.kind);
+    const blob = await sealSyncObject(dek, utf8Bytes(e.payloadText ?? marshalSyncPayload(e.payload)), e.id, e.kind);
     objects.push({ id: e.id, blob: bytesToBase64(blob) });
   }
   return objects;
@@ -1321,8 +1370,7 @@ export interface WebSyncResult extends Snapshot {
   lastSuccessAt: number;
 }
 
-async function loadSnapshot(dek: Uint8Array, optIn: SyncKindOptIn, idsOverride?: SyncIds): Promise<Snapshot> {
-  const [local, remote] = await Promise.all([loadLocalEntities(optIn), loadRemoteObjects(dek, optIn, idsOverride)]);
+function snapshotFromParts(local: LocalCollection, remote: RemoteState): Snapshot {
   return {
     local: local.entities,
     remote: remote.objects,
@@ -1335,6 +1383,21 @@ async function loadSnapshot(dek: Uint8Array, optIn: SyncKindOptIn, idsOverride?:
     head: remote.head,
     maxSeq: remote.maxSeq,
   };
+}
+
+function remoteStateFromSnapshot(snapshot: Snapshot): RemoteState {
+  return {
+    objects: snapshot.remote,
+    undecryptableIds: snapshot.undecryptableIds,
+    undecryptableEntries: snapshot.undecryptableEntries,
+    head: snapshot.head,
+    maxSeq: snapshot.maxSeq,
+  };
+}
+
+async function loadSnapshot(dek: Uint8Array, optIn: SyncKindOptIn, idsOverride?: SyncIds): Promise<Snapshot> {
+  const [local, remote] = await Promise.all([loadLocalEntities(optIn, dek), loadRemoteObjects(dek, optIn, idsOverride)]);
+  return snapshotFromParts(local, remote);
 }
 
 function computeApplySet(local: LocalEntity[], remote: RemoteObject[]): RemoteObject[] {
@@ -1357,10 +1420,22 @@ export async function runWebSync(
   optIn: SyncKindOptIn,
   shouldContinue: () => boolean = () => true,
 ): Promise<WebSyncResult | null> {
-  let snapshot = await loadSnapshot(dek, optIn);
+  let localWarnings: string[] = [];
+  const [initialLocal, initialRemote] = await Promise.all([
+    loadLocalEntities(optIn, dek),
+    loadRemoteObjects(dek, optIn),
+  ]);
+  localWarnings = initialLocal.warnings;
+  let snapshot = snapshotFromParts(initialLocal, initialRemote);
   const operationWarnings: string[] = [];
-  const reload = async (idsOverride?: SyncIds) => {
-    snapshot = await loadSnapshot(dek, optIn, idsOverride);
+  const reloadLocal = async () => {
+    const local = await loadLocalEntities(optIn, dek);
+    localWarnings = local.warnings;
+    snapshot = snapshotFromParts(local, remoteStateFromSnapshot(snapshot));
+  };
+  const reloadRemote = async (idsOverride?: SyncIds) => {
+    const remote = await loadRemoteObjects(dek, optIn, idsOverride);
+    snapshot = snapshotFromParts({ entities: snapshot.local, warnings: localWarnings }, remote);
   };
   if (!(await optInMatches(optIn, shouldContinue))) return null;
 
@@ -1380,7 +1455,8 @@ export async function runWebSync(
       if (object.warning) operationWarnings.push(`${object.id}: ${object.warning}`);
     }
   }
-  if (applySet.length > 0) await reload();
+  // Applying changes only the local replica; the cloud head and objects are unchanged.
+  if (applySet.length > 0) await reloadLocal();
   if (!(await optInMatches(optIn, shouldContinue))) return null;
 
   let winners = computeWinners(snapshot.local, snapshot.remote, snapshot.undecryptableIds);
@@ -1389,17 +1465,18 @@ export async function runWebSync(
     const fresh = await syncV2Api.ids();
     if (!(await optInMatches(optIn, shouldContinue))) return null;
     if (fresh.head !== snapshot.head) {
-      await reload(fresh);
+      await reloadRemote(fresh);
       winners = computeWinners(snapshot.local, snapshot.remote, snapshot.undecryptableIds);
     }
     if (winners.length > 0) {
       let response: Awaited<ReturnType<typeof syncV2Api.push>>;
+      let remoteRefreshed = false;
       try {
         response = await syncV2Api.push(snapshot.head, await sealAll(dek, winners));
       } catch (e) {
         if (!(e instanceof AuthApiError && e.status === 409)) throw e;
         const latest = await syncV2Api.ids();
-        await reload(latest);
+        await reloadRemote(latest);
         winners = computeWinners(snapshot.local, snapshot.remote, snapshot.undecryptableIds);
         if (winners.length === 0) return { ...snapshot, applied, pushed: 0, lastSuccessAt: Date.now() };
         if (!(await optInMatches(optIn, shouldContinue))) return null;
@@ -1407,15 +1484,18 @@ export async function runWebSync(
       }
       if (response.applied === 0 && response.skipped === 0) {
         const latest = await syncV2Api.ids();
-        await reload(latest);
+        await reloadRemote(latest);
+        remoteRefreshed = true;
         winners = computeWinners(snapshot.local, snapshot.remote, snapshot.undecryptableIds);
         if (winners.length > 0) {
           if (!(await optInMatches(optIn, shouldContinue))) return null;
           response = await syncV2Api.push(snapshot.head, await sealAll(dek, winners));
+          remoteRefreshed = false;
         }
       }
       pushed = response.applied;
-      await reload();
+      // A successful push changes only the cloud; retain the local collection and refresh remote state.
+      if (!remoteRefreshed) await reloadRemote();
     }
   }
   return { ...snapshot, warnings: [...new Set([...snapshot.warnings, ...operationWarnings])], applied, pushed, lastSuccessAt: Date.now() };
@@ -1602,7 +1682,7 @@ function CompareConsole() {
           title: "用本机副本修复云端对象", kind: "warning",
         }))) return;
         if (!stillCurrent()) return;
-        const localNow = await loadLocalEntities(view);
+        const localNow = await loadLocalEntities(view, dek);
         const replacement = localNow.entities.find((entity) => entity.id === id);
         if (!replacement) throw new Error("本机同 ID 副本已不存在，请重试读取");
         if (replacement.id !== row.local.id || replacement.kind !== row.local.kind ||
@@ -1627,7 +1707,7 @@ function CompareConsole() {
         title: "清除无法解密的云端副本", kind: "warning",
       }))) return;
       if (!stillCurrent()) return;
-      const localNow = await loadLocalEntities({ knownHost: true, aiProfile: true, aiPermission: true, aiGrant: true, preferences: true });
+      const localNow = await loadLocalEntities({ knownHost: true, aiProfile: true, aiPermission: true, aiGrant: true, preferences: true }, dek);
       if (localNow.warnings.length > 0) {
         throw new Error("本机内容读取不完整，请先解锁凭据库或修复读取错误，再刷新对比结果");
       }

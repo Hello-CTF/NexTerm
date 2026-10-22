@@ -26,6 +26,7 @@ type ContainerSummary struct {
 	Status         string  `json:"status"`
 	Ports          string  `json:"ports"`
 	ComposeProject *string `json:"composeProject"`
+	ComposeService *string `json:"composeService,omitempty"`
 }
 
 type ImageSummary struct {

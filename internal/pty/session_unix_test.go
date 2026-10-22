@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	creack "github.com/creack/pty"
+	"golang.org/x/sys/unix"
 )
 
 func TestSessionOutputResizeAndExitStatus(t *testing.T) {
@@ -79,6 +81,165 @@ func TestSessionRawWrite(t *testing.T) {
 	}
 }
 
+func TestSessionCloseUnblocksBlockedMasterWrite(t *testing.T) {
+	master, slave, err := creack.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stty := osexec.Command("/bin/stty", "raw", "-echo")
+	stty.Stdin = slave
+	if output, err := stty.CombinedOutput(); err != nil {
+		_ = master.Close()
+		_ = slave.Close()
+		t.Fatalf("configure raw slave: %v: %s", err, output)
+	}
+	if err := creack.Setsize(master, &creack.Winsize{Cols: 80, Rows: 24}); err != nil {
+		_ = master.Close()
+		_ = slave.Close()
+		t.Fatal(err)
+	}
+	master, err = pollableMaster(master)
+	if err != nil {
+		_ = master.Close()
+		_ = slave.Close()
+		t.Fatal(err)
+	}
+	process := newProcess(&retryProcessTree{}, func() error { return nil })
+	<-process.done
+	ctx, cancel := context.WithCancel(context.Background())
+	session := &Session{
+		terminal: &unixTerminal{master: master, process: process},
+		ctx:      ctx,
+		cancel:   cancel,
+	}
+	connection, err := master.SyscallConn()
+	if err != nil {
+		_ = session.Close()
+		_ = slave.Close()
+		t.Fatal(err)
+	}
+	fd := -1
+	if err := connection.Control(func(raw uintptr) { fd = int(raw) }); err != nil {
+		_ = session.Close()
+		_ = slave.Close()
+		t.Fatal(err)
+	}
+
+	payload := make([]byte, 8*1024*1024)
+	type writeResult struct {
+		count int
+		err   error
+	}
+	writeDone := make(chan writeResult, 1)
+	writeStarted := make(chan struct{})
+	go func() {
+		close(writeStarted)
+		count, err := session.Write(payload)
+		writeDone <- writeResult{count: count, err: err}
+	}()
+	writeComplete := false
+	defer func() {
+		_ = slave.Close()
+		_ = session.Close()
+		if !writeComplete {
+			select {
+			case <-writeDone:
+			case <-time.After(5 * time.Second):
+				t.Error("blocked writer did not stop after releasing the slave")
+			}
+		}
+	}()
+	<-writeStarted
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		select {
+		case result := <-writeDone:
+			writeComplete = true
+			t.Fatalf("write completed before the master filled: %d, %v", result.count, result.err)
+		default:
+		}
+		count, err := unix.Write(fd, payload[:32*1024])
+		if errors.Is(err, unix.EAGAIN) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if count == 0 {
+			t.Fatal("zero write before the master filled")
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("writer did not fill the PTY master")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case result := <-writeDone:
+		writeComplete = true
+		t.Fatalf("write completed instead of blocking on a full master: %d, %v", result.count, result.err)
+	default:
+	}
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- session.Close() }()
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("Close = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return with a blocked master writer")
+	}
+	select {
+	case result := <-writeDone:
+		writeComplete = true
+		if result.err == nil {
+			t.Fatalf("blocked write returned %d, nil after Close", result.count)
+		}
+		if result.count == len(payload) {
+			t.Fatal("blocked write reported the entire payload after Close")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close returned without unblocking the master writer")
+	}
+}
+
+func TestPollableMasterCloseOnExec(t *testing.T) {
+	master, slave, err := creack.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = master.Close()
+		_ = slave.Close()
+	}()
+	if err := creack.Setsize(master, &creack.Winsize{Cols: 80, Rows: 24}); err != nil {
+		t.Fatal(err)
+	}
+	master, err = pollableMaster(master)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := master.SyscallConn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var flags int
+	var fcntlErr error
+	if err := connection.Control(func(fd uintptr) {
+		flags, fcntlErr = unix.FcntlInt(fd, unix.F_GETFD, 0)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if fcntlErr != nil {
+		t.Fatal(fcntlErr)
+	}
+	if flags&unix.FD_CLOEXEC == 0 {
+		t.Fatal("pollable master is missing FD_CLOEXEC")
+	}
+}
+
 func TestSessionCloseKillsProcessTreeAndIsIdempotent(t *testing.T) {
 	pidPath := filepath.Join(t.TempDir(), "pty-child.pid")
 	command := fmt.Sprintf("sleep 1000 & child=$!; printf '%%s' \"$child\" > %s; wait", testShellQuote(pidPath))
@@ -97,7 +258,7 @@ func TestSessionCloseKillsProcessTreeAndIsIdempotent(t *testing.T) {
 }
 
 func TestUnixProcessSnapshotListsCurrentProcessWithState(t *testing.T) {
-	output, err := unixProcessSnapshot()
+	output, err := defaultUnixProcessAPI().snapshot()
 	if err != nil {
 		t.Fatalf("process snapshot = %v", err)
 	}
@@ -248,8 +409,25 @@ func (f *fakeUnixSession) getProcessIdentity(pid int) (string, error) {
 	return f.identity, nil
 }
 
+func (f *fakeUnixSession) api() unixProcessAPI {
+	return unixProcessAPI{
+		snapshot:            f.snapshot,
+		getSessionID:        f.getSessionID,
+		getProcessGroupID:   f.getProcessGroupID,
+		readProcessIdentity: f.getProcessIdentity,
+		kill:                f.kill,
+	}
+}
+
 func (f *fakeUnixSession) tree() *unixProcessTree {
-	return &unixProcessTree{process: &os.Process{Pid: f.sessionID}, session: true, identity: f.identity}
+	return f.treeWithAPI(f.api())
+}
+
+func (f *fakeUnixSession) treeWithAPI(api unixProcessAPI) *unixProcessTree {
+	if f.identity == "" {
+		f.identity = "test-leader-identity"
+	}
+	return &unixProcessTree{process: &os.Process{Pid: f.sessionID}, session: true, identity: f.identity, api: api}
 }
 
 func (f *fakeUnixSession) kill(group int, _ syscall.Signal) error {
@@ -268,22 +446,6 @@ func (f *fakeUnixSession) kill(group int, _ syscall.Signal) error {
 	return nil
 }
 
-func (f *fakeUnixSession) install(t *testing.T) {
-	t.Helper()
-	if f.identity == "" {
-		f.identity = "test-leader-identity"
-	}
-	oldSnapshot, oldGetSessionID, oldGetProcessGroupID, oldGetProcessIdentity, oldKill := unixProcessSnapshot, unixGetSessionID, unixGetProcessGroupID, unixReadProcessIdentity, unixKill
-	unixProcessSnapshot = f.snapshot
-	unixGetSessionID = f.getSessionID
-	unixGetProcessGroupID = f.getProcessGroupID
-	unixReadProcessIdentity = f.getProcessIdentity
-	unixKill = f.kill
-	t.Cleanup(func() {
-		unixProcessSnapshot, unixGetSessionID, unixGetProcessGroupID, unixReadProcessIdentity, unixKill = oldSnapshot, oldGetSessionID, oldGetProcessGroupID, oldGetProcessIdentity, oldKill
-	})
-}
-
 func TestUnixSessionKillConvergesWhenJobsArriveDuringCleanup(t *testing.T) {
 	fake := &fakeUnixSession{sessionID: 100, processes: map[int]int{100: 100, 200: 200}}
 	fake.onKill = func(fake *fakeUnixSession, group int) {
@@ -291,7 +453,6 @@ func TestUnixSessionKillConvergesWhenJobsArriveDuringCleanup(t *testing.T) {
 			fake.processes[201] = 201
 		}
 	}
-	fake.install(t)
 	tree := fake.tree()
 	if err := tree.Kill(); err != nil {
 		t.Fatal(err)
@@ -307,7 +468,6 @@ func TestUnixSessionKillConvergesWithZombieMembers(t *testing.T) {
 		processes: map[int]int{100: 100, 200: 200, 201: 201},
 		states:    map[int]string{200: "Z"},
 	}
-	fake.install(t)
 	tree := fake.tree()
 	if err := tree.Kill(); err != nil {
 		t.Fatalf("cleanup with zombie members = %v; kills = %v", err, fake.kills)
@@ -323,7 +483,6 @@ func TestUnixSessionKillReportsNonConvergence(t *testing.T) {
 		next := 1000 + len(fake.kills)
 		fake.processes[next] = next
 	}
-	fake.install(t)
 	tree := fake.tree()
 	if err := tree.Kill(); err == nil {
 		t.Fatal("continuously growing session cleanup reported success")
@@ -340,7 +499,6 @@ func TestUnixSessionKillRevalidatesMemberBeforeGroupKill(t *testing.T) {
 			delete(fake.processes, 102)
 		}
 	}
-	fake.install(t)
 	tree := fake.tree()
 	if err := tree.Kill(); err != nil {
 		t.Fatal(err)
@@ -352,7 +510,6 @@ func TestUnixSessionKillRevalidatesMemberBeforeGroupKill(t *testing.T) {
 
 func TestUnixSessionKillRejectsUnconfirmedLeader(t *testing.T) {
 	fake := &fakeUnixSession{sessionID: 100, processes: map[int]int{200: 200}}
-	fake.install(t)
 	tree := fake.tree()
 	if err := tree.Kill(); err == nil {
 		t.Fatal("cleanup without a verifiable session leader reported success")
@@ -364,14 +521,14 @@ func TestUnixSessionKillRejectsUnconfirmedLeader(t *testing.T) {
 
 func TestUnixSessionKillChecksProcessGroupBeforeKill(t *testing.T) {
 	fake := &fakeUnixSession{sessionID: 100, processes: map[int]int{100: 100, 200: 200}}
-	fake.install(t)
-	unixGetProcessGroupID = func(pid int) (int, error) {
+	api := fake.api()
+	api.getProcessGroupID = func(pid int) (int, error) {
 		if pid == 200 {
 			return 201, nil
 		}
 		return fake.getProcessGroupID(pid)
 	}
-	tree := fake.tree()
+	tree := fake.treeWithAPI(api)
 	if err := tree.Kill(); err == nil {
 		t.Fatal("cleanup with changed PGID reported success")
 	}
@@ -382,7 +539,6 @@ func TestUnixSessionKillChecksProcessGroupBeforeKill(t *testing.T) {
 
 func TestUnixSessionKillRejectsReusedLeaderIdentity(t *testing.T) {
 	fake := &fakeUnixSession{sessionID: 100, processes: map[int]int{100: 100, 200: 200}, identity: "old-leader"}
-	fake.install(t)
 	tree := fake.tree()
 	fake.identity = "new-leader"
 	if err := tree.Kill(); err == nil {
@@ -396,7 +552,6 @@ func TestUnixSessionKillRejectsReusedLeaderIdentity(t *testing.T) {
 func TestUnixSessionKillReportsIdentityReadFailure(t *testing.T) {
 	injected := errors.New("injected identity read failure")
 	fake := &fakeUnixSession{sessionID: 100, processes: map[int]int{100: 100}, identityErr: injected}
-	fake.install(t)
 	tree := fake.tree()
 	if err := tree.Kill(); !errors.Is(err, injected) {
 		t.Fatalf("identity read failure = %v, want injected error", err)
@@ -408,9 +563,9 @@ func TestUnixSessionKillReportsIdentityReadFailure(t *testing.T) {
 
 func TestUnixSessionKillDoesNotKillReusedGroupWhenEmpty(t *testing.T) {
 	fake := &fakeUnixSession{sessionID: 100, processes: map[int]int{500: 100}}
-	fake.install(t)
-	unixGetSessionID = func(int) (int, error) { return 999, nil }
-	tree := fake.tree()
+	api := fake.api()
+	api.getSessionID = func(int) (int, error) { return 999, nil }
+	tree := fake.treeWithAPI(api)
 	if err := tree.Kill(); err != nil {
 		t.Fatal(err)
 	}
@@ -421,13 +576,13 @@ func TestUnixSessionKillDoesNotKillReusedGroupWhenEmpty(t *testing.T) {
 
 func TestUnixNonSessionKillKeepsProcessGroupBehavior(t *testing.T) {
 	fake := &fakeUnixSession{sessionID: 100, processes: map[int]int{100: 100}}
-	fake.install(t)
 	snapshots := 0
-	unixProcessSnapshot = func() ([]byte, error) {
+	api := fake.api()
+	api.snapshot = func() ([]byte, error) {
 		snapshots++
 		return fake.snapshot()
 	}
-	tree := &unixProcessTree{process: &os.Process{Pid: 100}}
+	tree := &unixProcessTree{process: &os.Process{Pid: 100}, api: api}
 	if err := tree.Kill(); err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +604,7 @@ func TestSessionRecordsProcessStartIdentity(t *testing.T) {
 	if tree.identity == "" {
 		t.Fatal("PTY leader start identity was not recorded")
 	}
-	current, err := unixReadProcessIdentity(tree.process.Pid)
+	current, err := readUnixProcessIdentity(tree.process.Pid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,14 +621,16 @@ func TestSessionStartRejectsIdentityReadFailure(t *testing.T) {
 		t.Skip("process start identity test requires Darwin or Linux")
 	}
 	injected := errors.New("injected initial identity read failure")
-	oldReadIdentity := unixReadProcessIdentity
+	api := defaultUnixProcessAPI()
 	var leaderPID atomic.Int32
-	unixReadProcessIdentity = func(pid int) (string, error) {
+	api.readProcessIdentity = func(pid int) (string, error) {
 		leaderPID.Store(int32(pid))
 		return "", injected
 	}
-	t.Cleanup(func() { unixReadProcessIdentity = oldReadIdentity })
-	if _, err := Start(context.Background(), Config{Path: "/bin/sh", Args: []string{"-lc", "sleep 1000"}, Env: testEnvironment(), Cols: 80, Rows: 24}); !errors.Is(err, injected) {
+	processFactory := func(cmd *osexec.Cmd) (*Process, error) {
+		return newStartedProcessWithAPI(cmd, api)
+	}
+	if _, err := Start(context.Background(), Config{Path: "/bin/sh", Args: []string{"-lc", "sleep 1000"}, Env: testEnvironment(), Cols: 80, Rows: 24, processFactory: processFactory}); !errors.Is(err, injected) {
 		t.Fatalf("Start error = %v, want initial identity failure", err)
 	}
 	if leaderPID.Load() == 0 {
@@ -566,16 +723,19 @@ func TestSessionCloseRetriesFailedCleanup(t *testing.T) {
 
 func TestSessionCloseRetriesProcessSnapshotFailure(t *testing.T) {
 	injected := errors.New("injected process snapshot failure")
-	oldSnapshot := unixProcessSnapshot
+	api := defaultUnixProcessAPI()
+	snapshot := api.snapshot
 	var calls atomic.Int32
-	unixProcessSnapshot = func() ([]byte, error) {
+	api.snapshot = func() ([]byte, error) {
 		if calls.Add(1) == 1 {
 			return nil, injected
 		}
-		return oldSnapshot()
+		return snapshot()
 	}
-	t.Cleanup(func() { unixProcessSnapshot = oldSnapshot })
-	session, err := Start(context.Background(), Config{Path: "/bin/sh", Args: []string{"-lc", "sleep 1000"}, Env: testEnvironment(), Cols: 80, Rows: 24})
+	processFactory := func(cmd *osexec.Cmd) (*Process, error) {
+		return newStartedProcessWithAPI(cmd, api)
+	}
+	session, err := Start(context.Background(), Config{Path: "/bin/sh", Args: []string{"-lc", "sleep 1000"}, Env: testEnvironment(), Cols: 80, Rows: 24, processFactory: processFactory})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -617,21 +777,64 @@ func testShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
+func TestReadSessionPIDWaitsForPIDWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "child.pid")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	const expectedPID = 12345
+	reads := 0
+	readFile := func(path string) ([]byte, error) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		reads++
+		if reads == 1 {
+			if len(data) != 0 {
+				t.Fatalf("initial PID file = %q, want empty", data)
+			}
+			if err := os.WriteFile(path, []byte(strconv.Itoa(expectedPID)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return data, nil
+	}
+	if pid := readSessionPIDWithReadFile(t, path, readFile); pid != expectedPID {
+		t.Fatalf("PID = %d, want %d", pid, expectedPID)
+	}
+	if reads != 2 {
+		t.Fatalf("PID file reads = %d, want empty read followed by complete read", reads)
+	}
+}
+
 func readSessionPID(t *testing.T, path string) int {
+	t.Helper()
+	return readSessionPIDWithReadFile(t, path, os.ReadFile)
+}
+
+func readSessionPIDWithReadFile(t *testing.T, path string, readFile func(string) ([]byte, error)) int {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		data, err := os.ReadFile(path)
+		data, err := readFile(path)
 		if err == nil {
-			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-			if err != nil {
-				t.Fatal(err)
+			text := strings.TrimSpace(string(data))
+			if text != "" {
+				pid, err := strconv.Atoi(text)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return pid
 			}
-			return pid
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("PID file %s was not created", path)
+	t.Fatalf("PID file %s was not ready", path)
 	return 0
 }
 

@@ -18,6 +18,7 @@ func TestReconnectReattachesSSHDurableTab(t *testing.T) {
 		DurableResolver:  resolver,
 		ReconnectBackoff: []time.Duration{10 * time.Millisecond},
 	})
+	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
 	connected, err := manager.Connect(ctx, Asset{ID: "ssh-reconnect", Kind: KindSSH})
 	if err != nil {
@@ -119,6 +120,7 @@ func TestReconnectReattachesDeviceDurableTab(t *testing.T) {
 		DurableResolver:  resolver,
 		ReconnectBackoff: []time.Duration{10 * time.Millisecond},
 	})
+	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
 	connected, err := manager.Connect(ctx, Asset{ID: "device/dev-1", Kind: KindDevice})
 	if err != nil {
@@ -195,6 +197,7 @@ func TestReconnectMarksMissingSSHDurableTabExited(t *testing.T) {
 		DurableResolver:  resolver,
 		ReconnectBackoff: []time.Duration{10 * time.Millisecond},
 	})
+	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
 	connected, err := manager.Connect(ctx, Asset{ID: "ssh-gone", Kind: KindSSH})
 	if err != nil {

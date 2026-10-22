@@ -18,6 +18,14 @@ import (
 func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 	return &Query{
 		db:                      db,
+		AIOwnerMigration:        newAIOwnerMigration(db, opts...),
+		AgentEvidenceAnchorRow:  newAgentEvidenceAnchorRow(db, opts...),
+		AgentEvidenceKeyRow:     newAgentEvidenceKeyRow(db, opts...),
+		AgentOutcomeRow:         newAgentOutcomeRow(db, opts...),
+		AgentRosterRow:          newAgentRosterRow(db, opts...),
+		AgentWatchOutboxRow:     newAgentWatchOutboxRow(db, opts...),
+		AgentWatchRow:           newAgentWatchRow(db, opts...),
+		AgentWatchTargetRow:     newAgentWatchTargetRow(db, opts...),
 		AppUser:                 newAppUser(db, opts...),
 		AssetGroupRow:           newAssetGroupRow(db, opts...),
 		AssetRow:                newAssetRow(db, opts...),
@@ -32,9 +40,13 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		DeviceEnrollCode:        newDeviceEnrollCode(db, opts...),
 		DeviceMetrics:           newDeviceMetrics(db, opts...),
 		DeviceMetricsHourly:     newDeviceMetricsHourly(db, opts...),
-		DeviceShareLink:         newDeviceShareLink(db, opts...),
 		DurableTabTitle:         newDurableTabTitle(db, opts...),
 		DurableTranscriptOffset: newDurableTranscriptOffset(db, opts...),
+		ExecBatchResultRow:      newExecBatchResultRow(db, opts...),
+		ExecBatchRow:            newExecBatchRow(db, opts...),
+		ExecTargetSetItemRow:    newExecTargetSetItemRow(db, opts...),
+		ExecTargetSetRow:        newExecTargetSetRow(db, opts...),
+		ForwardRuleRow:          newForwardRuleRow(db, opts...),
 		HitlRunRow:              newHitlRunRow(db, opts...),
 		HostShare:               newHostShare(db, opts...),
 		KnownHostRow:            newKnownHostRow(db, opts...),
@@ -53,7 +65,9 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		SyncState:               newSyncState(db, opts...),
 		SyncTombstone:           newSyncTombstone(db, opts...),
 		TranscriptChunkRow:      newTranscriptChunkRow(db, opts...),
+		TranscriptChunkTS:       newTranscriptChunkTS(db, opts...),
 		TranscriptRow:           newTranscriptRow(db, opts...),
+		TranscriptTSIndex:       newTranscriptTSIndex(db, opts...),
 		UserDEK:                 newUserDEK(db, opts...),
 		UserDevice:              newUserDevice(db, opts...),
 		UserSession:             newUserSession(db, opts...),
@@ -68,6 +82,14 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 type Query struct {
 	db *gorm.DB
 
+	AIOwnerMigration        aIOwnerMigration
+	AgentEvidenceAnchorRow  agentEvidenceAnchorRow
+	AgentEvidenceKeyRow     agentEvidenceKeyRow
+	AgentOutcomeRow         agentOutcomeRow
+	AgentRosterRow          agentRosterRow
+	AgentWatchOutboxRow     agentWatchOutboxRow
+	AgentWatchRow           agentWatchRow
+	AgentWatchTargetRow     agentWatchTargetRow
 	AppUser                 appUser
 	AssetGroupRow           assetGroupRow
 	AssetRow                assetRow
@@ -82,9 +104,13 @@ type Query struct {
 	DeviceEnrollCode        deviceEnrollCode
 	DeviceMetrics           deviceMetrics
 	DeviceMetricsHourly     deviceMetricsHourly
-	DeviceShareLink         deviceShareLink
 	DurableTabTitle         durableTabTitle
 	DurableTranscriptOffset durableTranscriptOffset
+	ExecBatchResultRow      execBatchResultRow
+	ExecBatchRow            execBatchRow
+	ExecTargetSetItemRow    execTargetSetItemRow
+	ExecTargetSetRow        execTargetSetRow
+	ForwardRuleRow          forwardRuleRow
 	HitlRunRow              hitlRunRow
 	HostShare               hostShare
 	KnownHostRow            knownHostRow
@@ -103,7 +129,9 @@ type Query struct {
 	SyncState               syncState
 	SyncTombstone           syncTombstone
 	TranscriptChunkRow      transcriptChunkRow
+	TranscriptChunkTS       transcriptChunkTS
 	TranscriptRow           transcriptRow
+	TranscriptTSIndex       transcriptTSIndex
 	UserDEK                 userDEK
 	UserDevice              userDevice
 	UserSession             userSession
@@ -119,6 +147,14 @@ func (q *Query) Available() bool { return q.db != nil }
 func (q *Query) clone(db *gorm.DB) *Query {
 	return &Query{
 		db:                      db,
+		AIOwnerMigration:        q.AIOwnerMigration.clone(db),
+		AgentEvidenceAnchorRow:  q.AgentEvidenceAnchorRow.clone(db),
+		AgentEvidenceKeyRow:     q.AgentEvidenceKeyRow.clone(db),
+		AgentOutcomeRow:         q.AgentOutcomeRow.clone(db),
+		AgentRosterRow:          q.AgentRosterRow.clone(db),
+		AgentWatchOutboxRow:     q.AgentWatchOutboxRow.clone(db),
+		AgentWatchRow:           q.AgentWatchRow.clone(db),
+		AgentWatchTargetRow:     q.AgentWatchTargetRow.clone(db),
 		AppUser:                 q.AppUser.clone(db),
 		AssetGroupRow:           q.AssetGroupRow.clone(db),
 		AssetRow:                q.AssetRow.clone(db),
@@ -133,9 +169,13 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		DeviceEnrollCode:        q.DeviceEnrollCode.clone(db),
 		DeviceMetrics:           q.DeviceMetrics.clone(db),
 		DeviceMetricsHourly:     q.DeviceMetricsHourly.clone(db),
-		DeviceShareLink:         q.DeviceShareLink.clone(db),
 		DurableTabTitle:         q.DurableTabTitle.clone(db),
 		DurableTranscriptOffset: q.DurableTranscriptOffset.clone(db),
+		ExecBatchResultRow:      q.ExecBatchResultRow.clone(db),
+		ExecBatchRow:            q.ExecBatchRow.clone(db),
+		ExecTargetSetItemRow:    q.ExecTargetSetItemRow.clone(db),
+		ExecTargetSetRow:        q.ExecTargetSetRow.clone(db),
+		ForwardRuleRow:          q.ForwardRuleRow.clone(db),
 		HitlRunRow:              q.HitlRunRow.clone(db),
 		HostShare:               q.HostShare.clone(db),
 		KnownHostRow:            q.KnownHostRow.clone(db),
@@ -154,7 +194,9 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		SyncState:               q.SyncState.clone(db),
 		SyncTombstone:           q.SyncTombstone.clone(db),
 		TranscriptChunkRow:      q.TranscriptChunkRow.clone(db),
+		TranscriptChunkTS:       q.TranscriptChunkTS.clone(db),
 		TranscriptRow:           q.TranscriptRow.clone(db),
+		TranscriptTSIndex:       q.TranscriptTSIndex.clone(db),
 		UserDEK:                 q.UserDEK.clone(db),
 		UserDevice:              q.UserDevice.clone(db),
 		UserSession:             q.UserSession.clone(db),
@@ -177,6 +219,14 @@ func (q *Query) WriteDB() *Query {
 func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 	return &Query{
 		db:                      db,
+		AIOwnerMigration:        q.AIOwnerMigration.replaceDB(db),
+		AgentEvidenceAnchorRow:  q.AgentEvidenceAnchorRow.replaceDB(db),
+		AgentEvidenceKeyRow:     q.AgentEvidenceKeyRow.replaceDB(db),
+		AgentOutcomeRow:         q.AgentOutcomeRow.replaceDB(db),
+		AgentRosterRow:          q.AgentRosterRow.replaceDB(db),
+		AgentWatchOutboxRow:     q.AgentWatchOutboxRow.replaceDB(db),
+		AgentWatchRow:           q.AgentWatchRow.replaceDB(db),
+		AgentWatchTargetRow:     q.AgentWatchTargetRow.replaceDB(db),
 		AppUser:                 q.AppUser.replaceDB(db),
 		AssetGroupRow:           q.AssetGroupRow.replaceDB(db),
 		AssetRow:                q.AssetRow.replaceDB(db),
@@ -191,9 +241,13 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		DeviceEnrollCode:        q.DeviceEnrollCode.replaceDB(db),
 		DeviceMetrics:           q.DeviceMetrics.replaceDB(db),
 		DeviceMetricsHourly:     q.DeviceMetricsHourly.replaceDB(db),
-		DeviceShareLink:         q.DeviceShareLink.replaceDB(db),
 		DurableTabTitle:         q.DurableTabTitle.replaceDB(db),
 		DurableTranscriptOffset: q.DurableTranscriptOffset.replaceDB(db),
+		ExecBatchResultRow:      q.ExecBatchResultRow.replaceDB(db),
+		ExecBatchRow:            q.ExecBatchRow.replaceDB(db),
+		ExecTargetSetItemRow:    q.ExecTargetSetItemRow.replaceDB(db),
+		ExecTargetSetRow:        q.ExecTargetSetRow.replaceDB(db),
+		ForwardRuleRow:          q.ForwardRuleRow.replaceDB(db),
 		HitlRunRow:              q.HitlRunRow.replaceDB(db),
 		HostShare:               q.HostShare.replaceDB(db),
 		KnownHostRow:            q.KnownHostRow.replaceDB(db),
@@ -212,7 +266,9 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		SyncState:               q.SyncState.replaceDB(db),
 		SyncTombstone:           q.SyncTombstone.replaceDB(db),
 		TranscriptChunkRow:      q.TranscriptChunkRow.replaceDB(db),
+		TranscriptChunkTS:       q.TranscriptChunkTS.replaceDB(db),
 		TranscriptRow:           q.TranscriptRow.replaceDB(db),
+		TranscriptTSIndex:       q.TranscriptTSIndex.replaceDB(db),
 		UserDEK:                 q.UserDEK.replaceDB(db),
 		UserDevice:              q.UserDevice.replaceDB(db),
 		UserSession:             q.UserSession.replaceDB(db),
@@ -225,6 +281,14 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 }
 
 type queryCtx struct {
+	AIOwnerMigration        *aIOwnerMigrationDo
+	AgentEvidenceAnchorRow  *agentEvidenceAnchorRowDo
+	AgentEvidenceKeyRow     *agentEvidenceKeyRowDo
+	AgentOutcomeRow         *agentOutcomeRowDo
+	AgentRosterRow          *agentRosterRowDo
+	AgentWatchOutboxRow     *agentWatchOutboxRowDo
+	AgentWatchRow           *agentWatchRowDo
+	AgentWatchTargetRow     *agentWatchTargetRowDo
 	AppUser                 *appUserDo
 	AssetGroupRow           *assetGroupRowDo
 	AssetRow                *assetRowDo
@@ -239,9 +303,13 @@ type queryCtx struct {
 	DeviceEnrollCode        *deviceEnrollCodeDo
 	DeviceMetrics           *deviceMetricsDo
 	DeviceMetricsHourly     *deviceMetricsHourlyDo
-	DeviceShareLink         *deviceShareLinkDo
 	DurableTabTitle         *durableTabTitleDo
 	DurableTranscriptOffset *durableTranscriptOffsetDo
+	ExecBatchResultRow      *execBatchResultRowDo
+	ExecBatchRow            *execBatchRowDo
+	ExecTargetSetItemRow    *execTargetSetItemRowDo
+	ExecTargetSetRow        *execTargetSetRowDo
+	ForwardRuleRow          *forwardRuleRowDo
 	HitlRunRow              *hitlRunRowDo
 	HostShare               *hostShareDo
 	KnownHostRow            *knownHostRowDo
@@ -260,7 +328,9 @@ type queryCtx struct {
 	SyncState               *syncStateDo
 	SyncTombstone           *syncTombstoneDo
 	TranscriptChunkRow      *transcriptChunkRowDo
+	TranscriptChunkTS       *transcriptChunkTSDo
 	TranscriptRow           *transcriptRowDo
+	TranscriptTSIndex       *transcriptTSIndexDo
 	UserDEK                 *userDEKDo
 	UserDevice              *userDeviceDo
 	UserSession             *userSessionDo
@@ -273,6 +343,14 @@ type queryCtx struct {
 
 func (q *Query) WithContext(ctx context.Context) *queryCtx {
 	return &queryCtx{
+		AIOwnerMigration:        q.AIOwnerMigration.WithContext(ctx),
+		AgentEvidenceAnchorRow:  q.AgentEvidenceAnchorRow.WithContext(ctx),
+		AgentEvidenceKeyRow:     q.AgentEvidenceKeyRow.WithContext(ctx),
+		AgentOutcomeRow:         q.AgentOutcomeRow.WithContext(ctx),
+		AgentRosterRow:          q.AgentRosterRow.WithContext(ctx),
+		AgentWatchOutboxRow:     q.AgentWatchOutboxRow.WithContext(ctx),
+		AgentWatchRow:           q.AgentWatchRow.WithContext(ctx),
+		AgentWatchTargetRow:     q.AgentWatchTargetRow.WithContext(ctx),
 		AppUser:                 q.AppUser.WithContext(ctx),
 		AssetGroupRow:           q.AssetGroupRow.WithContext(ctx),
 		AssetRow:                q.AssetRow.WithContext(ctx),
@@ -287,9 +365,13 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		DeviceEnrollCode:        q.DeviceEnrollCode.WithContext(ctx),
 		DeviceMetrics:           q.DeviceMetrics.WithContext(ctx),
 		DeviceMetricsHourly:     q.DeviceMetricsHourly.WithContext(ctx),
-		DeviceShareLink:         q.DeviceShareLink.WithContext(ctx),
 		DurableTabTitle:         q.DurableTabTitle.WithContext(ctx),
 		DurableTranscriptOffset: q.DurableTranscriptOffset.WithContext(ctx),
+		ExecBatchResultRow:      q.ExecBatchResultRow.WithContext(ctx),
+		ExecBatchRow:            q.ExecBatchRow.WithContext(ctx),
+		ExecTargetSetItemRow:    q.ExecTargetSetItemRow.WithContext(ctx),
+		ExecTargetSetRow:        q.ExecTargetSetRow.WithContext(ctx),
+		ForwardRuleRow:          q.ForwardRuleRow.WithContext(ctx),
 		HitlRunRow:              q.HitlRunRow.WithContext(ctx),
 		HostShare:               q.HostShare.WithContext(ctx),
 		KnownHostRow:            q.KnownHostRow.WithContext(ctx),
@@ -308,7 +390,9 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		SyncState:               q.SyncState.WithContext(ctx),
 		SyncTombstone:           q.SyncTombstone.WithContext(ctx),
 		TranscriptChunkRow:      q.TranscriptChunkRow.WithContext(ctx),
+		TranscriptChunkTS:       q.TranscriptChunkTS.WithContext(ctx),
 		TranscriptRow:           q.TranscriptRow.WithContext(ctx),
+		TranscriptTSIndex:       q.TranscriptTSIndex.WithContext(ctx),
 		UserDEK:                 q.UserDEK.WithContext(ctx),
 		UserDevice:              q.UserDevice.WithContext(ctx),
 		UserSession:             q.UserSession.WithContext(ctx),

@@ -9,27 +9,27 @@ const server = vi.hoisted(() => ({
   handlers: [] as Array<(payload: { revision?: number } | null) => void>,
 }));
 
-vi.mock("../../ipc/commands", () => ({
-  layoutApi: {
-    get: vi.fn(async () => ({
-      revision: server.revision,
-      updatedAt: 0,
-      data: server.data === null ? null : JSON.parse(server.data),
-    })),
-    put: vi.fn(async (data: string, revision: number) => {
-      if (server.putAlwaysConflicts || revision !== server.revision) {
-        return { saved: false, revision: server.revision, conflict: true };
-      }
-      server.revision = revision + 1;
-      server.data = data;
-      return { saved: true, revision: server.revision, conflict: false };
-    }),
-  },
-  terminalApi: { listLive: vi.fn(async () => []) },
-  dbApi: {},
-  sessionApi: {},
-  vaultApi: {},
-}));
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const { createCommandsMock } = await import("../helpers/mockCommands");
+  return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
+    layoutApi: {
+      get: vi.fn(async () => ({
+        revision: server.revision,
+        updatedAt: 0,
+        data: server.data === null ? null : JSON.parse(server.data),
+      })),
+      put: vi.fn(async (data: string, revision: number) => {
+        if (server.putAlwaysConflicts || revision !== server.revision) {
+          return { saved: false, revision: server.revision, conflict: true };
+        }
+        server.revision = revision + 1;
+        server.data = data;
+        return { saved: true, revision: server.revision, conflict: false };
+      }),
+    },
+    terminalApi: { listLive: vi.fn(async () => []) },
+  });
+});
 
 vi.mock("../../ipc/events", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/events")>();
@@ -132,6 +132,7 @@ beforeEach(() => {
   server.data = null;
   server.putAlwaysConflicts = false;
   server.handlers.length = 0;
+  window.localStorage.clear();
 });
 
 afterEach(() => {
@@ -242,6 +243,6 @@ describe("device tabs in the layout pane contract", () => {
     });
     const pane = store.getState().workspaces[0]?.panes[0];
     expect(pane?.tabs.map((t) => t.kind)).toEqual(["devices", "settings"]);
-    expect(pane?.activeTabId).toBe("devices");
+    expect(pane?.activeTabId).toBe("settings");
   });
 });

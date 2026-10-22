@@ -260,3 +260,103 @@ func TestRetentionRunnerDoesNotOverlapAndCancelsAttempt(t *testing.T) {
 		}
 	})
 }
+
+type startupReconcileStore struct {
+	mu           sync.Mutex
+	order        []string
+	reconciles   int
+	reconcileErr error
+}
+
+func (s *startupReconcileStore) EnforceRetention(context.Context, store.RetentionPolicy) (store.RetentionResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.order = append(s.order, "enforce")
+	return store.RetentionResult{}, nil
+}
+
+func (s *startupReconcileStore) RetentionStatus() store.RetentionStatus {
+	return store.RetentionStatus{}
+}
+
+func (s *startupReconcileStore) ExecBatchStartupReconcile(context.Context) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reconciles++
+	s.order = append(s.order, "reconcile")
+	return 2, s.reconcileErr
+}
+
+func (s *startupReconcileStore) snapshot() (order []string, reconciles int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.order...), s.reconciles
+}
+
+func TestRetentionRunnerReconcilesStaleRunningBatchesBeforeFirstEnforce(t *testing.T) {
+	stored := &startupReconcileStore{}
+	runner := retentionTestRunner(t, stored, store.RetentionPolicy{AuditMaxCount: 1})
+	ticks := make(chan time.Time, 1)
+	runner.after = func(time.Duration) <-chan time.Time { return ticks }
+	if err := runner.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	waitRetention(t, func() bool {
+		order, _ := stored.snapshot()
+		return len(order) >= 2
+	})
+	order, reconciles := stored.snapshot()
+	if reconciles != 1 || order[0] != "reconcile" || order[1] != "enforce" {
+		t.Fatalf("startup order = %v, reconciles = %d", order, reconciles)
+	}
+	ticks <- time.Now()
+	waitRetention(t, func() bool {
+		order, _ := stored.snapshot()
+		return len(order) >= 3
+	})
+	order, reconciles = stored.snapshot()
+	if reconciles != 1 {
+		t.Fatalf("reconcile ran %d times, want exactly once at startup", reconciles)
+	}
+	if err := runner.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRetentionRunnerStartupReconcileFailureDoesNotBlockEnforce(t *testing.T) {
+	stored := &startupReconcileStore{reconcileErr: errors.New("injected reconcile failure")}
+	runner := retentionTestRunner(t, stored, store.RetentionPolicy{AuditMaxCount: 1})
+	if err := runner.Start(t.Context()); err != nil {
+		t.Fatalf("start with failing reconcile = %v", err)
+	}
+	waitRetention(t, func() bool {
+		order, _ := stored.snapshot()
+		return len(order) >= 2
+	})
+	order, reconciles := stored.snapshot()
+	if reconciles != 1 || order[0] != "reconcile" || order[1] != "enforce" {
+		t.Fatalf("startup order = %v, reconciles = %d", order, reconciles)
+	}
+	if err := runner.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRetentionRunnerStartupReconcileRunsWithRetentionDisabled(t *testing.T) {
+	stored := &startupReconcileStore{}
+	runner := retentionTestRunner(t, stored, store.RetentionPolicy{})
+	if err := runner.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	waitRetention(t, func() bool {
+		_, reconciles := stored.snapshot()
+		return reconciles == 1
+	})
+	order, _ := stored.snapshot()
+	if len(order) != 1 || order[0] != "reconcile" {
+		t.Fatalf("disabled retention order = %v, want only the startup reconcile", order)
+	}
+	if err := runner.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}

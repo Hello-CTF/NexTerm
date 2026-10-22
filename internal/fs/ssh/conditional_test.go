@@ -94,19 +94,19 @@ func TestWriteFileVersionCreateRejectsEveryOccupiedPathKind(t *testing.T) {
 func TestWriteFileVersionDetectsExternalCreateAroundFinalCheck(t *testing.T) {
 	for _, test := range []struct {
 		name string
-		hook *func()
+		hook func(*FS) *func()
 	}{
-		{name: "before final check", hook: &conditionalPreVerifyHook},
-		{name: "after final check before commit", hook: &conditionalPreCommitHook},
+		{name: "before final check", hook: func(f *FS) *func() { return &f.conditionalPreVerifyHook }},
+		{name: "after final check before commit", hook: func(f *FS) *func() { return &f.conditionalPreCommitHook }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			filesystem, root := newTestFS(t, nil)
-			*test.hook = func() {
+			*test.hook(filesystem) = func() {
 				if err := filesystem.WriteFile(context.Background(), "created.txt", []byte("external"), false); err != nil {
 					t.Fatal(err)
 				}
 			}
-			t.Cleanup(func() { *test.hook = nil })
+			t.Cleanup(func() { *test.hook(filesystem) = nil })
 			requireRemoteMismatch(t, filesystem.WriteFileVersion(context.Background(), "created.txt", []byte("new"), false, conditional.Absent()))
 			assertRemoteContent(t, filesystem, "created.txt", "external")
 			assertNoRemoteTemporaryLeftovers(t, root)
@@ -146,18 +146,15 @@ func TestWriteFileVersionConcurrentCreatesCommitOnce(t *testing.T) {
 	assertNoRemoteTemporaryLeftovers(t, root)
 }
 
-func stubConditionalLink(t *testing.T, stub func(client *sftp.Client, oldname, newname string) error) {
-	t.Helper()
-	original := conditionalLink
-	conditionalLink = stub
-	t.Cleanup(func() { conditionalLink = original })
+func stubConditionalLink(filesystem *FS, stub func(client *sftp.Client, oldname, newname string) error) {
+	filesystem.conditionalLink = stub
 }
 
 func TestWriteFileVersionCreateCommitFaultOutcomes(t *testing.T) {
 	t.Run("commit then lost response is indeterminate", func(t *testing.T) {
 		filesystem, root := newTestFS(t, nil)
 		var calls int
-		stubConditionalLink(t, func(client *sftp.Client, oldname, newname string) error {
+		stubConditionalLink(filesystem, func(client *sftp.Client, oldname, newname string) error {
 			calls++
 			if err := client.Link(oldname, newname); err != nil {
 				return err
@@ -184,7 +181,7 @@ func TestWriteFileVersionCreateCommitFaultOutcomes(t *testing.T) {
 
 	t.Run("transport failure remains indeterminate even with absent target", func(t *testing.T) {
 		filesystem, root := newTestFS(t, nil)
-		stubConditionalLink(t, func(client *sftp.Client, oldname, newname string) error {
+		stubConditionalLink(filesystem, func(client *sftp.Client, oldname, newname string) error {
 			return errors.New("synthetic transport drop")
 		})
 		err := filesystem.WriteFileVersion(context.Background(), "created.txt", []byte("new"), false, conditional.Absent())
@@ -199,7 +196,7 @@ func TestWriteFileVersionCreateCommitFaultOutcomes(t *testing.T) {
 
 	t.Run("server status failure is determinate and uncommitted", func(t *testing.T) {
 		filesystem, root := newTestFS(t, nil)
-		stubConditionalLink(t, func(client *sftp.Client, oldname, newname string) error {
+		stubConditionalLink(filesystem, func(client *sftp.Client, oldname, newname string) error {
 			return client.Link("definitely-missing-temp", newname)
 		})
 		err := filesystem.WriteFileVersion(context.Background(), "created.txt", []byte("new"), false, conditional.Absent())
@@ -243,7 +240,7 @@ func TestWriteFileVersionCreatePostCommitMutationsStayIndeterminate(t *testing.T
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			filesystem, root := newTestFS(t, nil)
-			stubConditionalLink(t, func(client *sftp.Client, oldname, newname string) error {
+			stubConditionalLink(filesystem, func(client *sftp.Client, oldname, newname string) error {
 				if err := client.Link(oldname, newname); err != nil {
 					return err
 				}
@@ -296,15 +293,15 @@ func TestWriteFileVersionCancellation(t *testing.T) {
 	}
 	for _, test := range []struct {
 		name string
-		hook *func()
+		hook func(*FS) *func()
 	}{
-		{name: "before final check", hook: &conditionalPreVerifyHook},
-		{name: "before commit", hook: &conditionalPreCommitHook},
+		{name: "before final check", hook: func(f *FS) *func() { return &f.conditionalPreVerifyHook }},
+		{name: "before commit", hook: func(f *FS) *func() { return &f.conditionalPreCommitHook }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
-			*test.hook = cancel
-			t.Cleanup(func() { *test.hook = nil })
+			*test.hook(filesystem) = cancel
+			t.Cleanup(func() { *test.hook(filesystem) = nil })
 			if err := filesystem.WriteFileVersion(ctx, "created.txt", []byte("new"), false, conditional.Absent()); !errors.Is(err, context.Canceled) {
 				t.Fatalf("cancelled write = %v", err)
 			}

@@ -85,7 +85,7 @@ describe("runStatusOf", () => {
 describe("AiSidebar history conversation run status", () => {
   let mounted: MountedView | undefined;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     document.body.replaceChildren();
     rafQueue = [];
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
@@ -118,12 +118,14 @@ describe("AiSidebar history conversation run status", () => {
       sessions: [],
     });
     mounted = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    await flush();
   });
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
+  afterEach(async () => {
+    await flush();
     mounted?.unmount();
     mounted = undefined;
+    vi.unstubAllGlobals();
     localStorage.clear();
   });
 

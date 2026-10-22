@@ -8,6 +8,7 @@ import { THROTTLE_RECOVERED_MS } from "../../features/terminal/terminalThrottle"
 const harness = vi.hoisted(() => ({
   handlers: new Map<string, (payload: unknown) => void>(),
   resyncSubs: new Set<() => void>(),
+  sessionList: vi.fn(),
   xtermProps: null as Record<string, unknown> | null,
 }));
 
@@ -24,7 +25,7 @@ vi.mock("../../ipc/commands", () => ({
   assetApi: {},
   dbApi: {},
   vaultApi: {},
-  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn() },
+  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn(), list: harness.sessionList },
   terminalApi: {
     listLive: vi.fn().mockResolvedValue([]),
     write: vi.fn().mockResolvedValue(undefined),
@@ -75,12 +76,16 @@ vi.mock("../../features/terminal/CommandBlockPanel", () => ({ CommandBlockPanel:
 vi.mock("../../features/terminal/TerminalKeysBar", () => ({ TerminalKeysBar: () => null }));
 
 vi.mock("../../features/terminal/XtermView", async () => {
-  const { useEffect } = await import("react");
+  const { useEffect, useRef } = await import("react");
   return {
     XtermView: (props: Record<string, unknown>) => {
       harness.xtermProps = props;
+      const onHandleRef = useRef(props.onHandle);
+      const onAttachRef = useRef(props.onAttach);
+      onHandleRef.current = props.onHandle;
+      onAttachRef.current = props.onAttach;
       useEffect(() => {
-        (props.onHandle as ((h: unknown) => void) | undefined)?.({
+        (onHandleRef.current as ((h: unknown) => void) | undefined)?.({
           copyBlock: () => "",
           scrollToBlock: () => {},
           navigateBlock: () => null,
@@ -91,7 +96,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
           fit: () => {},
           dimensions: () => ({ cols: 80, rows: 24 }),
         });
-        (props.onAttach as ((id: string) => void) | undefined)?.("kernel-1");
+        (onAttachRef.current as ((id: string) => void) | undefined)?.("kernel-1");
       }, []);
       return <div className="h-full w-full min-h-0" />;
     },
@@ -111,10 +116,11 @@ function badge(text: string): HTMLElement | null {
   );
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   harness.handlers.clear();
   document.body.replaceChildren();
+  harness.sessionList.mockImplementation(async () => useUi.getState().sessions);
   useUi.setState({
     sessions: [
       {
@@ -159,6 +165,7 @@ beforeEach(() => {
   mounted = mount(
     createElement(TerminalPane, { sessionId: "s1", title: "term", storeTabId: "t1" }),
   );
+  await flush();
 });
 
 afterEach(() => {
@@ -286,6 +293,7 @@ describe("terminal://throttled badge", () => {
     act(() => {
       for (const cb of [...harness.resyncSubs]) cb();
     });
+    await flush();
     expect(badge("输出积压")).toBeNull();
     expect(badge("输出已恢复")).toBeNull();
 
@@ -324,6 +332,7 @@ describe("terminal://throttled badge", () => {
     act(() => {
       for (const cb of [...harness.resyncSubs]) cb();
     });
+    await flush();
     expect(badge("输出已恢复")).toBeNull();
 
     act(() => {

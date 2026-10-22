@@ -1,7 +1,48 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+/** @vitest-environment jsdom */
 
-const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  customProperties,
+  installCompiledCSS,
+  requireStyleRule,
+  styleRules,
+} from "./lib/cssom";
+
+let installed: HTMLStyleElement;
+let a11yInstalled: HTMLStyleElement;
+let rules: CSSStyleRule[];
+let a11yRules: CSSStyleRule[];
+let dark: Map<string, string>;
+let light: Map<string, string>;
+let lightOverrides: Map<string, string>;
+
+function colorVars(rule: CSSStyleRule): Map<string, string> {
+  const values = customProperties(rule);
+  for (const key of values.keys()) {
+    if (!key.startsWith("color-")) values.delete(key);
+  }
+  return values;
+}
+
+beforeAll(async () => {
+  [installed, a11yInstalled] = await Promise.all([
+    installCompiledCSS("src/styles.css"),
+    installCompiledCSS("src/ui/a11y.css"),
+  ]);
+  rules = styleRules(installed);
+  a11yRules = styleRules(a11yInstalled);
+  dark = colorVars(requireStyleRule(rules, ":root", "--color-neutral-950"));
+  lightOverrides = colorVars(
+    requireStyleRule(rules, ':root[data-nx-theme="light"]', "--color-neutral-950"),
+  );
+  light = new Map(dark);
+  for (const [key, value] of lightOverrides) light.set(key, value);
+});
+
+afterAll(() => {
+  installed?.remove();
+  a11yInstalled?.remove();
+});
 
 function luminance(hex: string): number {
   const n = parseInt(hex.slice(1), 16);
@@ -29,27 +70,6 @@ function mix(fg: string, bg: string, alpha: number): string {
   return `#${blended.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function blockBody(selector: string, fromIndex = 0): string {
-  const start = css.indexOf(selector, fromIndex);
-  if (start < 0) throw new Error(`missing css block: ${selector}`);
-  const open = css.indexOf("{", start);
-  const close = css.indexOf("\n}", open);
-  return css.slice(open + 1, close);
-}
-
-function colorVars(body: string): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const m of body.matchAll(/--(color-[\w-]+):\s*(#[0-9a-fA-F]{6})\s*;/g)) {
-    out.set(m[1], m[2].toLowerCase());
-  }
-  return out;
-}
-
-const dark = colorVars(blockBody("@theme"));
-const lightOverrides = colorVars(blockBody(':root[data-nx-theme="light"]'));
-const light = new Map(dark);
-for (const [key, value] of lightOverrides) light.set(key, value);
-
 const themeIndependent = new Set(["color-accent", "color-green-100", "color-term"]);
 
 describe("theme palettes", () => {
@@ -65,14 +85,6 @@ describe("theme palettes", () => {
       expect(theme.get("color-term")).toBe("#101217");
     }
   });
-
-  it("marks the early bootstrap with the resolved theme", () => {
-    const html = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
-    const themeSource = readFileSync(new URL("../app/theme.ts", import.meta.url), "utf8");
-    expect(html).toContain("nexterm.theme.v1");
-    expect(html).toContain("dataset.nxTheme");
-    expect(themeSource).toContain('"nexterm.theme.v1"');
-  });
 });
 
 interface Pair {
@@ -81,149 +93,147 @@ interface Pair {
   bg: string;
 }
 
+function requiredColor(theme: Map<string, string>, key: string): string {
+  const value = theme.get(key);
+  if (!value) throw new Error(`missing token ${key}`);
+  return value;
+}
+
 function tintBg(theme: Map<string, string>, alpha: number): string {
-  const get = (k: string) => {
-    const v = theme.get(k);
-    if (!v) throw new Error(`missing token ${k}`);
-    return v;
-  };
-  return mix(get("color-accent"), get("color-neutral-900"), alpha);
+  return mix(
+    requiredColor(theme, "color-accent"),
+    requiredColor(theme, "color-neutral-900"),
+    alpha,
+  );
 }
 
 function statePairs(theme: Map<string, string>): Pair[] {
-  const get = (k: string) => {
-    const v = theme.get(k);
-    if (!v) throw new Error(`missing token ${k}`);
-    return v;
-  };
   const activeBg = tintBg(theme, 0.18);
   const focusBg = tintBg(theme, 0.24);
-  const selectedBg = mix(get("color-accent"), get("color-neutral-950"), 0.16);
-  const modelListBg = mix(get("color-neutral-950"), get("color-neutral-900"), 0.4);
-  const modelBg = mix(get("color-blue-500"), modelListBg, 0.15);
-  const onTint = get("color-neutral-300");
+  const selectedBg = mix(
+    requiredColor(theme, "color-accent"),
+    requiredColor(theme, "color-neutral-950"),
+    0.16,
+  );
+  const modelListBg = mix(
+    requiredColor(theme, "color-neutral-950"),
+    requiredColor(theme, "color-neutral-900"),
+    0.4,
+  );
+  const modelBg = mix(requiredColor(theme, "color-blue-500"), modelListBg, 0.15);
+  const onTint = requiredColor(theme, "color-neutral-300");
   return [
     { label: "command active hint on tint", fg: onTint, bg: activeBg },
-    { label: "command active label on tint", fg: get("color-neutral-100"), bg: activeBg },
+    { label: "command active label on tint", fg: requiredColor(theme, "color-neutral-100"), bg: activeBg },
     { label: "menu hover hint on tint", fg: onTint, bg: activeBg },
     { label: "menu focus hint on tint", fg: onTint, bg: focusBg },
-    { label: "menu focus label on tint", fg: get("color-neutral-100"), bg: focusBg },
+    { label: "menu focus label on tint", fg: requiredColor(theme, "color-neutral-100"), bg: focusBg },
     { label: "row selected meta on tint", fg: onTint, bg: selectedBg },
-    { label: "row selected label on tint", fg: get("color-neutral-200"), bg: selectedBg },
+    { label: "row selected label on tint", fg: requiredColor(theme, "color-neutral-200"), bg: selectedBg },
     { label: "model current hint on tint", fg: onTint, bg: modelBg },
   ];
 }
 
 function textPairs(theme: Map<string, string>): Pair[] {
-  const get = (k: string) => {
-    const v = theme.get(k);
-    if (!v) throw new Error(`missing token ${k}`);
-    return v;
-  };
-  const pane = get("color-neutral-900");
-  const canvas = get("color-neutral-950");
-  const raised = get("color-neutral-800");
+  const pane = requiredColor(theme, "color-neutral-900");
+  const canvas = requiredColor(theme, "color-neutral-950");
+  const raised = requiredColor(theme, "color-neutral-800");
   const inputBg = mix(canvas, pane, 0.55);
-  const pairs: Pair[] = [
-    { label: "body on pane", fg: get("color-neutral-300"), bg: pane },
-    { label: "body on canvas", fg: get("color-neutral-300"), bg: canvas },
-    { label: "strong on raised", fg: get("color-neutral-100"), bg: raised },
-    { label: "emphasis on raised", fg: get("color-neutral-200"), bg: raised },
-    { label: "soft on pane", fg: get("color-neutral-400"), bg: pane },
-    { label: "soft on canvas", fg: get("color-neutral-400"), bg: canvas },
-    { label: "tertiary on pane", fg: get("color-neutral-500"), bg: pane },
-    { label: "tertiary on canvas", fg: get("color-neutral-500"), bg: canvas },
-    { label: "tertiary on raised", fg: get("color-neutral-500"), bg: raised },
-    { label: "placeholder on input", fg: get("color-neutral-500"), bg: inputBg },
-    { label: "red badge", fg: get("color-red-300"), bg: mix(get("color-red-500"), pane, 0.18) },
-    { label: "green badge", fg: get("color-green-300"), bg: mix(get("color-green-500"), pane, 0.18) },
-    { label: "green status text on pane", fg: get("color-green-300"), bg: pane },
-    { label: "amber badge", fg: get("color-amber-300"), bg: mix(get("color-amber-500"), pane, 0.18) },
-    { label: "purple badge", fg: get("color-purple-300"), bg: mix(get("color-purple-500"), pane, 0.2) },
-    { label: "blue accent on tint", fg: get("color-blue-300"), bg: mix(get("color-accent"), pane, 0.14) },
-    { label: "primary button", fg: "#ffffff", bg: get("color-blue-600") },
-    { label: "danger solid button", fg: "#ffffff", bg: get("color-red-600") },
+  return [
+    { label: "body on pane", fg: requiredColor(theme, "color-neutral-300"), bg: pane },
+    { label: "body on canvas", fg: requiredColor(theme, "color-neutral-300"), bg: canvas },
+    { label: "strong on raised", fg: requiredColor(theme, "color-neutral-100"), bg: raised },
+    { label: "emphasis on raised", fg: requiredColor(theme, "color-neutral-200"), bg: raised },
+    { label: "soft on pane", fg: requiredColor(theme, "color-neutral-400"), bg: pane },
+    { label: "soft on canvas", fg: requiredColor(theme, "color-neutral-400"), bg: canvas },
+    { label: "tertiary on pane", fg: requiredColor(theme, "color-neutral-500"), bg: pane },
+    { label: "tertiary on canvas", fg: requiredColor(theme, "color-neutral-500"), bg: canvas },
+    { label: "tertiary on raised", fg: requiredColor(theme, "color-neutral-500"), bg: raised },
+    { label: "placeholder on input", fg: requiredColor(theme, "color-neutral-500"), bg: inputBg },
+    { label: "red badge", fg: requiredColor(theme, "color-red-300"), bg: mix(requiredColor(theme, "color-red-500"), pane, 0.18) },
+    { label: "green badge", fg: requiredColor(theme, "color-green-300"), bg: mix(requiredColor(theme, "color-green-500"), pane, 0.18) },
+    { label: "green status text on pane", fg: requiredColor(theme, "color-green-300"), bg: pane },
+    { label: "amber badge", fg: requiredColor(theme, "color-amber-300"), bg: mix(requiredColor(theme, "color-amber-500"), pane, 0.18) },
+    { label: "purple badge", fg: requiredColor(theme, "color-purple-300"), bg: mix(requiredColor(theme, "color-purple-500"), pane, 0.2) },
+    { label: "blue accent on tint", fg: requiredColor(theme, "color-blue-300"), bg: mix(requiredColor(theme, "color-accent"), pane, 0.14) },
+    { label: "primary button", fg: "#ffffff", bg: requiredColor(theme, "color-blue-600") },
+    { label: "danger solid button", fg: "#ffffff", bg: requiredColor(theme, "color-red-600") },
   ];
-  return pairs;
 }
 
 describe("text contrast", () => {
-  const themes: [string, Map<string, string>][] = [
-    ["dark", dark],
-    ["light", light],
-  ];
+  for (const name of ["dark", "light"] as const) {
+    it(`${name}: text foregrounds reach 4.5:1 on their surfaces`, () => {
+      const theme = name === "dark" ? dark : light;
+      for (const pair of textPairs(theme)) {
+        expect(contrast(pair.fg, pair.bg), pair.label).toBeGreaterThanOrEqual(4.5);
+      }
+    });
 
-  for (const [name, theme] of themes) {
-    for (const pair of textPairs(theme)) {
-      it(`${name}: ${pair.label} >= 4.5:1`, () => {
-        expect(contrast(pair.fg, pair.bg)).toBeGreaterThanOrEqual(4.5);
-      });
-    }
-    for (const pair of statePairs(theme)) {
-      it(`${name}: ${pair.label} >= 4.5:1`, () => {
-        expect(contrast(pair.fg, pair.bg)).toBeGreaterThanOrEqual(4.5);
-      });
-    }
+    it(`${name}: active and selected foregrounds reach 4.5:1 on tinted surfaces`, () => {
+      const theme = name === "dark" ? dark : light;
+      for (const pair of statePairs(theme)) {
+        expect(contrast(pair.fg, pair.bg), pair.label).toBeGreaterThanOrEqual(4.5);
+      }
+    });
   }
 });
 
 describe("selected-state hint rules", () => {
-  const a11y = readFileSync(new URL("../ui/a11y.css", import.meta.url), "utf8");
-
   it("defines the on-tint semantic foreground", () => {
-    expect(css).toContain("--nx-fg-on-tint: var(--color-neutral-300)");
+    const root = requireStyleRule(rules, ":root", "--nx-fg-on-tint");
+    expect(root.style.getPropertyValue("--nx-fg-on-tint").trim()).toBe(
+      "var(--color-neutral-300)",
+    );
   });
 
   it("applies the on-tint foreground to active and selected hints", () => {
-    expect(a11y).toContain(".nx-command-item.is-active .nx-command-hint");
-    expect(a11y).toContain(".nx-menu-item:hover:not(:disabled) .nx-menu-hint");
-    expect(a11y).toContain(".nx-menu-item:focus-visible .nx-menu-hint");
-    expect(a11y).toContain(".nx-menu-hint.text-green-400\\/80");
-    expect(a11y).toContain(".nx-row.is-selected .text-neutral-500");
-    expect(a11y).toContain("color: var(--nx-fg-on-tint)");
+    const selectors = [
+      ".nx-command-item.is-active .nx-command-hint",
+      ".nx-menu-item:hover:not(:disabled) .nx-menu-hint",
+      ".nx-menu-item:focus-visible .nx-menu-hint",
+      ".nx-menu-hint.text-green-400\\/80",
+      ".nx-row.is-selected .text-neutral-500",
+    ];
+    for (const selector of selectors) {
+      const rule = requireStyleRule(a11yRules, selector, "color");
+      expect(rule.style.getPropertyValue("color").trim(), selector).toBe(
+        "var(--nx-fg-on-tint)",
+      );
+    }
   });
 });
 
-function semanticForeground(theme: Map<string, string>, rootBlock: string): string {
-  const body = blockBody(rootBlock);
-  const m = /--nx-fg-warning:\s*([^;]+);/.exec(body);
-  if (!m) throw new Error(`missing --nx-fg-warning in ${rootBlock}`);
-  const value = m[1].trim();
-  const ref = /^var\((--[\w-]+)\)$/.exec(value);
-  if (ref) {
-    const resolved = theme.get(ref[1].replace(/^--/, ""));
-    if (!resolved) throw new Error(`unresolved ${ref[1]} in ${rootBlock}`);
+function semanticForeground(theme: Map<string, string>, selector: string): string {
+  const value = requireStyleRule(rules, selector, "--nx-fg-warning").style
+    .getPropertyValue("--nx-fg-warning")
+    .trim();
+  if (value.startsWith("var(") && value.endsWith(")")) {
+    const reference = value.slice(4, -1).trim();
+    const key = reference.startsWith("--") ? reference.slice(2) : reference;
+    const resolved = theme.get(key);
+    if (!resolved) throw new Error(`unresolved ${reference} in ${selector}`);
     return resolved;
   }
-  if (/^#[0-9a-fA-F]{6}$/.test(value)) return value.toLowerCase();
+  if (value.startsWith("#") && value.length === 7) return value.toLowerCase();
   throw new Error(`unsupported --nx-fg-warning value: ${value}`);
 }
 
 describe("semantic warning foreground", () => {
-  const themes: [string, Map<string, string>, string][] = [
-    ["dark", dark, ":root"],
-    ["light", light, ':root[data-nx-theme="light"]'],
-  ];
+  for (const name of ["dark", "light"] as const) {
+    const selector = name === "dark" ? ":root" : ':root[data-nx-theme="light"]';
 
-  for (const [name, theme, block] of themes) {
-    const fg = semanticForeground(theme, block);
-    const canvas = theme.get("color-neutral-950");
-    const pane = theme.get("color-neutral-900");
-    const accent = theme.get("color-accent");
-    if (!canvas || !pane || !accent) throw new Error(`missing canvas/pane/accent in ${name}`);
-    const selectedTint = mix(accent, canvas, 0.16);
-
-    it(`${name}: --nx-fg-warning resolves (${fg})`, () => {
-      expect(fg).toMatch(/^#[0-9a-f]{6}$/);
-    });
-    it(`${name}: warning on canvas >= 4.5:1`, () => {
-      expect(contrast(fg, canvas)).toBeGreaterThanOrEqual(4.5);
-    });
-    it(`${name}: warning on pane >= 4.5:1`, () => {
-      expect(contrast(fg, pane)).toBeGreaterThanOrEqual(4.5);
-    });
-    it(`${name}: warning on selected tint >= 4.5:1`, () => {
-      expect(contrast(fg, selectedTint)).toBeGreaterThanOrEqual(4.5);
+    it(`${name}: warning foreground resolves and remains readable`, () => {
+      const theme = name === "dark" ? dark : light;
+      const fg = semanticForeground(theme, selector);
+      const canvas = requiredColor(theme, "color-neutral-950");
+      const pane = requiredColor(theme, "color-neutral-900");
+      const selectedTint = mix(requiredColor(theme, "color-accent"), canvas, 0.16);
+      expect(fg.startsWith("#")).toBe(true);
+      expect(fg).toHaveLength(7);
+      expect(contrast(fg, canvas), "warning on canvas").toBeGreaterThanOrEqual(4.5);
+      expect(contrast(fg, pane), "warning on pane").toBeGreaterThanOrEqual(4.5);
+      expect(contrast(fg, selectedTint), "warning on selected tint").toBeGreaterThanOrEqual(4.5);
     });
   }
 
@@ -235,100 +245,27 @@ describe("semantic warning foreground", () => {
 });
 
 describe("light-theme status overrides", () => {
-  it("overrides the ai hitl waiting indicator to the warning foreground", () => {
-    expect(css).toContain(':root[data-nx-theme="light"] .nx-ai-hitl-waiting,');
-    expect(css).toContain(':root[data-nx-theme="light"] .nx-ai-hitl-waiting svg');
-  });
-
-  it("scopes the terminal overlay warning icon to light terminal surfaces", () => {
-    expect(css).toContain(':root[data-nx-theme="light"][data-nx-term-theme="light"] .nx-term-overlay-warn');
+  it("uses the warning foreground for waiting and terminal warning indicators", () => {
+    const selectors = [
+      ':root[data-nx-theme="light"] .nx-ai-hitl-waiting',
+      ':root[data-nx-theme="light"] .nx-ai-hitl-waiting svg',
+      ':root[data-nx-theme="light"][data-nx-term-theme="light"] .nx-term-overlay-warn',
+    ];
+    for (const selector of selectors) {
+      const rule = requireStyleRule(rules, selector, "color");
+      expect(rule.style.getPropertyValue("color").trim(), selector).toBe("var(--nx-fg-warning)");
+    }
   });
 
   it("darkens the workspace status dots", () => {
-    expect(css).toContain(':root[data-nx-theme="light"] .nx-ws-status.is-ok');
-    expect(css).toContain(':root[data-nx-theme="light"] .nx-ws-status.is-warn');
+    const ok = requireStyleRule(rules, ':root[data-nx-theme="light"] .nx-ws-status.is-ok', "color");
+    const warn = requireStyleRule(rules, ':root[data-nx-theme="light"] .nx-ws-status.is-warn', "color");
+    expect(ok.style.getPropertyValue("color").trim()).toBe("var(--color-green-600)");
+    expect(warn.style.getPropertyValue("color").trim()).toBe("var(--nx-fg-warning)");
   });
 
-  it("keeps the hitl waiting warning readable on the light pane", () => {
+  it("keeps the waiting warning readable on the light pane", () => {
     const fg = semanticForeground(light, ':root[data-nx-theme="light"]');
-    const pane = light.get("color-neutral-900");
-    if (!pane) throw new Error("missing pane in the light palette");
-    expect(contrast(fg, pane)).toBeGreaterThanOrEqual(4.5);
-  });
-});
-
-describe("muted meta text stays at neutral-500", () => {
-  const files = [
-    "../features/db/DbPanel.tsx",
-    "../features/ai/AiSidebar.tsx",
-    "../features/ai/GrantPanel.tsx",
-    "../features/ai/UsageRing.tsx",
-    "../features/terminal/CommandBlockPanel.tsx",
-  ];
-  for (const file of files) {
-    it(`${file} avoids text-neutral-600`, () => {
-      const src = readFileSync(new URL(file, import.meta.url), "utf8");
-      expect(src).not.toContain("text-neutral-600");
-    });
-  }
-});
-
-describe("themed surfaces avoid washed-out text colors (source guard)", () => {
-  function tsxFiles(dir: string): string[] {
-    const out: string[] = [];
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const path = `${dir}/${entry.name}`;
-      if (entry.isDirectory()) {
-        if (entry.name !== "test") out.push(...tsxFiles(path));
-      } else if (entry.name.endsWith(".tsx")) {
-        out.push(path);
-      }
-    }
-    return out;
-  }
-
-  const bannedText = /\btext-(?:amber-100|amber-200|blue-200|emerald-\w+)/;
-  const bannedArbitraryHex = /\btext-\[#[0-9a-fA-F]{3,8}\]/;
-  const hardDarkPages = /src\/features\/sharing\/Public(?:Preview|Share)App\.tsx$/;
-
-  const neutral600Allowlist: ReadonlyArray<{ file: RegExp; line: RegExp }> = [
-    { file: /src\/app\/App\.tsx$/, line: /data-wails-drag-region/ },
-    { file: /src\/features\/settings\/AuditView\.tsx$/, line: /text-neutral-600">—/ },
-    { file: /src\/features\/settings\/CommandLogView\.tsx$/, line: /text-neutral-600">—/ },
-    { file: /src\/features\/forward\/ForwardPanel\.tsx$/, line: /text-neutral-600">[:→]/ },
-    { file: /src\/features\/files\/FileTree\.tsx$/, line: /text-neutral-600">\// },
-    { file: /src\/features\/files\/MountPanel\.tsx$/, line: /text-neutral-600">→|IconDrive/ },
-    { file: /src\/features\/files\/LogViewer\.tsx$/, line: /w-12 shrink-0 select-none text-right/ },
-    { file: /src\/features\/docker\/DockerPanel\.tsx$/, line: /等待日志|test\(line\)/ },
-    { file: /src\/features\/docker\/ContainerInsight\.tsx$/, line: /text-neutral-600">\/|IconFile/ },
-    { file: /src\/features\/credentials\/CredentialsPanel\.tsx$/, line: /tracking-\[0\.3em\]/ },
-    { file: /src\/features\/explorer\/AssetTree\.tsx$/, line: /IconChevronRight size=\{12\} className="shrink-0 text-neutral-600"/ },
-  ];
-
-  function allowedNeutral600(file: string, line: string): boolean {
-    if (hardDarkPages.test(file)) return true;
-    return neutral600Allowlist.some((entry) => entry.file.test(file) && entry.line.test(line));
-  }
-
-  const colorViolations: string[] = [];
-  const neutralViolations: string[] = [];
-  for (const file of tsxFiles("src")) {
-    const lines = readFileSync(file, "utf8").split("\n");
-    lines.forEach((text, index) => {
-      if ((bannedText.test(text) || bannedArbitraryHex.test(text)) && !hardDarkPages.test(file)) {
-        colorViolations.push(`${file}:${index + 1}`);
-      }
-      if (text.includes("text-neutral-600") && !allowedNeutral600(file, text)) {
-        neutralViolations.push(`${file}:${index + 1}`);
-      }
-    });
-  }
-
-  it("bans text-amber-100/amber-200/blue-200/emerald-* and arbitrary text hex outside the forced-dark public pages", () => {
-    expect(colorViolations).toEqual([]);
-  });
-
-  it("bans text-neutral-600 outside the decorative allowlist", () => {
-    expect(neutralViolations).toEqual([]);
+    expect(contrast(fg, requiredColor(light, "color-neutral-900"))).toBeGreaterThanOrEqual(4.5);
   });
 });

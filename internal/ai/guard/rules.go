@@ -1,30 +1,65 @@
 package guard
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 // GrantRulesSettingKey persists path-level grant rules; it shares the settings storage with device-level grants, so no migration is needed.
 const GrantRulesSettingKey = "ai.grant_rules"
 
+// Sentinel validation errors for grant-rule mutations; IPC layers classify
+// them with errors.Is instead of matching error text.
+var (
+	ErrRuleDeviceRequired    = errors.New("授权规则缺少设备 ID")
+	ErrRuleActionUnsupported = errors.New("授权规则动作仅支持 write_file/edit_file/exec_commands/send_keys")
+	ErrRulePathRequired      = errors.New("文件写入规则必须限定路径范围")
+	ErrRulePathUnsupported   = errors.New("该动作的规则不支持路径范围")
+	ErrRuleExpiryInvalid     = errors.New("授权规则过期时间必须晚于当前时间")
+	ErrRuleIDRequired        = errors.New("授权规则缺少规则 ID")
+)
+
+func GrantRulesSettingKeyForUser(ctx context.Context) string {
+	if userID, ok := ipc.UserIDFromContext(ctx); ok {
+		return GrantRulesSettingKey + ".user." + userID
+	}
+	return GrantRulesSettingKey
+}
+
 // Resource describes the action and primary path of a call awaiting authorization, for path-level rule matching.
 type Resource struct {
 	Action string `json:"action"`
 	Path   string `json:"path,omitempty"`
+	// Environment is the resolved environment name of the target asset.
+	Environment string `json:"environment,omitempty"`
+	// Production marks the target as production under the owner's configured
+	// production environment list; callers that resolve custom names set it
+	// explicitly, while built-in names are always recognized.
+	Production bool `json:"production,omitempty"`
+}
+
+// ProductionTarget reports whether the resource targets a production environment,
+// either explicitly resolved by the caller or via the built-in production names.
+func (r Resource) ProductionTarget() bool {
+	return r.Production || IsBuiltInProductionEnvironment(r.Environment)
 }
 
 // GrantRule is a persistent fine-grained allow rule: a limited scope for an action on a device.
 // An empty Path means the action is not path-limited (whole-device for that action); ExpiresAt 0 means permanent.
 type GrantRule struct {
-	ID        string `json:"id"`
-	DeviceID  string `json:"deviceId"`
-	Action    string `json:"action"`
-	Path      string `json:"path,omitempty"`
-	ExpiresAt int64  `json:"expiresAt,omitempty"`
-	CreatedAt int64  `json:"createdAt"`
-	UpdatedAt int64  `json:"updatedAt"`
+	ID         string `json:"id"`
+	DeviceID   string `json:"deviceId"`
+	Action     string `json:"action"`
+	Path       string `json:"path,omitempty"`
+	ExpiresAt  int64  `json:"expiresAt,omitempty"`
+	CreatedAt  int64  `json:"createdAt"`
+	UpdatedAt  int64  `json:"updatedAt"`
+	generation string
 }
 
 var ruleActions = map[string]struct{}{

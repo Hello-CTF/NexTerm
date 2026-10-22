@@ -8,12 +8,18 @@ import {
   clickButton,
   deferred,
   flush,
-  flushUntil,
   mount,
   setInputValue,
   setSelectValue,
   type MountedView,
 } from "./reactTestUtils";
+
+async function flushUntil(predicate: () => boolean): Promise<void> {
+  await vi.waitFor(async () => {
+    await flush();
+    expect(predicate()).toBe(true);
+  });
+}
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
@@ -629,12 +635,9 @@ describe("DbPanel SQL execution history", () => {
   }
 
   async function ready(): Promise<void> {
-    await flushUntil(
-      () =>
-        mounted!.container.querySelector(".cm-content") !== null &&
-        useUi.getState().getWorkspaceRuntime(workspaceId)?.generation !== undefined &&
-        useUi.getState().getWorkspaceRuntime(workspaceId)?.sqlDraft?.schema === "mydb",
-    );
+    await flushUntil(() => mounted!.container.querySelector(".cm-content") !== null);
+    await flushUntil(() => useUi.getState().getWorkspaceRuntime(workspaceId)?.generation !== undefined);
+    await flushUntil(() => useUi.getState().getWorkspaceRuntime(workspaceId)?.sqlDraft?.schema === "mydb");
   }
 
   function runButton(): HTMLButtonElement {
@@ -652,7 +655,8 @@ describe("DbPanel SQL execution history", () => {
   async function execute(sql: string, count: number): Promise<void> {
     setSql(sql);
     click(runButton());
-    await flushUntil(() => records().length === count && !runButton().disabled);
+    await flushUntil(() => records().length === count);
+    await flushUntil(() => !runButton().disabled);
   }
 
   function storeRecord(generation: number, sequence: number) {
@@ -702,9 +706,18 @@ describe("DbPanel SQL execution history", () => {
     mountHistory();
     await ready();
     const sql = `SELECT '${"😀".repeat(9000)}';`;
-    mocks.query.mockRejectedValueOnce(new Error("e".repeat(33 * 1024)));
+    const query = deferred<never>();
+    mocks.query.mockReturnValueOnce(query.promise);
 
-    await execute(sql, 1);
+    setSql(sql);
+    click(runButton());
+    await flushUntil(() => mocks.query.mock.calls.length === 1);
+    act(() => {
+      query.reject(new Error("e".repeat(33 * 1024)));
+    });
+    await flush();
+    expect(records()).toHaveLength(1);
+    expect(runButton().disabled).toBe(false);
 
     expect(mocks.query).toHaveBeenCalledWith("c1", sql);
     expect(records()[0].sql).not.toBe(sql);
@@ -990,7 +1003,9 @@ describe("DbPanel SQL execution history", () => {
     await execute("SELECT 1;", 1);
     expect(records()).toHaveLength(1);
 
-    await useUi.getState().closeWorkspace(workspaceId);
+    await act(async () => {
+      await useUi.getState().closeWorkspace(workspaceId);
+    });
 
     expect(useUi.getState().workspaces.some((workspace) => workspace.id === workspaceId)).toBe(false);
     expect(useUi.getState().getWorkspaceRuntime(workspaceId)).toBeUndefined();

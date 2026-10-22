@@ -112,7 +112,7 @@ type RemoteHostShareInput struct {
 	TTLMS             int64  `json:"ttlMs"`
 }
 
-// RemoteShareLink.Token is only carried by the create response; list/revoke responses omit the token.
+// RemoteShareLink is the legacy list/revoke view; new anonymous access uses preview links.
 type RemoteShareLink struct {
 	ID             string `json:"id"`
 	OwnerID        string `json:"owner_id"`
@@ -123,18 +123,10 @@ type RemoteShareLink struct {
 	ExpiresAt      int64  `json:"expires_at"`
 	RevokedAt      int64  `json:"revoked_at,omitempty"`
 	LastAccessedAt int64  `json:"last_accessed_at,omitempty"`
-	Token          string `json:"token,omitempty"`
 }
 
 type RemoteShareLinks struct {
 	Links []RemoteShareLink `json:"links"`
-}
-
-type RemoteShareLinkInput struct {
-	DeviceID  string `json:"deviceId"`
-	SessionID string `json:"sessionId"`
-	Write     bool   `json:"write"`
-	TTLMS     int64  `json:"ttlMs"`
 }
 
 type RemotePreviewLink struct {
@@ -263,7 +255,7 @@ func (c *remoteClient) PutBaseURLs(ctx context.Context, entries []RemoteBaseURLE
 	return &view, nil
 }
 
-// sharing: host shares, session public links, and read-only previews.
+// sharing: host shares, legacy session links, and read-only previews.
 
 func (c *remoteClient) ListHostShares(ctx context.Context) (*RemoteHostShares, error) {
 	var view RemoteHostShares
@@ -294,20 +286,6 @@ func (c *remoteClient) RevokeHostShare(ctx context.Context, id string) error {
 func (c *remoteClient) ListShareLinks(ctx context.Context) (*RemoteShareLinks, error) {
 	var view RemoteShareLinks
 	if err := c.api(ctx, http.MethodGet, "/share/links", nil, &view); err != nil {
-		return nil, err
-	}
-	return &view, nil
-}
-
-func (c *remoteClient) CreateShareLink(ctx context.Context, input RemoteShareLinkInput) (*RemoteShareLink, error) {
-	payload := map[string]any{
-		"device_id":  input.DeviceID,
-		"session_id": input.SessionID,
-		"write":      input.Write,
-		"ttl_ms":     input.TTLMS,
-	}
-	var view RemoteShareLink
-	if err := c.api(ctx, http.MethodPost, "/share/links", payload, &view); err != nil {
 		return nil, err
 	}
 	return &view, nil

@@ -114,7 +114,8 @@ func TestHITLWiringExpiredRequestTerminatesRun(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = storage.Close() })
 	checkpoints := NewMemoryCheckpoints()
-	manager, err := hitl.NewManager(hitl.Config{Checkpoints: checkpoints, TTL: 50 * time.Millisecond})
+	clock := newHITLTestClock()
+	manager, err := hitl.NewManager(hitl.Config{Checkpoints: checkpoints, TTL: time.Hour, Now: clock.Now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,20 +130,7 @@ func TestHITLWiringExpiredRequestTerminatesRun(t *testing.T) {
 	stream := &SliceStream{}
 	response := startTestJob(t, runner, stream, "go")
 	confirmation := waitEvent(t, stream, "confirmRequired")
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		snapshot, snapshotErr := runner.HITLSnapshot(response.JobID)
-		if snapshotErr != nil {
-			t.Fatal(snapshotErr)
-		}
-		if snapshot.Status == hitl.RunStatusExpired {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("request did not expire: %+v", snapshot)
-		}
-		time.Sleep(time.Millisecond)
-	}
+	clock.Advance(2 * time.Hour)
 	err = runner.Confirm(Confirmation{JobID: response.JobID, CallID: confirmation.ID, Nonce: confirmation.Nonce, Decision: "allow"})
 	if err == nil || (!errors.Is(err, ErrConfirmationStale) && !errors.Is(err, ErrJobNotFound)) {
 		t.Fatalf("expired confirmation error = %v", err)

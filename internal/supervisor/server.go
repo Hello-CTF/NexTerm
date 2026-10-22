@@ -12,11 +12,12 @@ import (
 )
 
 type Server struct {
-	supervisor  *Supervisor
-	stateDigest string
-	endpoint    endpointIdentity
-	listener    net.Listener
-	unlock      func()
+	supervisor      *Supervisor
+	stateDigest     string
+	runtimeMetadata *RuntimeMetadata
+	endpoint        endpointIdentity
+	listener        net.Listener
+	unlock          func()
 
 	mu     sync.Mutex
 	conns  map[*serverConn]struct{}
@@ -45,13 +46,14 @@ func NewServer(supervisor *Supervisor, socketPath string) (*Server, error) {
 		return nil, err
 	}
 	server := &Server{
-		supervisor:   supervisor,
-		stateDigest:  stateDigest,
-		endpoint:     endpoint,
-		listener:     listener,
-		unlock:       unlock,
-		conns:        make(map[*serverConn]struct{}),
-		shutdownDone: make(chan struct{}),
+		supervisor:      supervisor,
+		stateDigest:     stateDigest,
+		runtimeMetadata: provenRuntimeMetadata(),
+		endpoint:        endpoint,
+		listener:        listener,
+		unlock:          unlock,
+		conns:           make(map[*serverConn]struct{}),
+		shutdownDone:    make(chan struct{}),
 	}
 	server.wg.Add(1)
 	go server.acceptLoop()
@@ -181,7 +183,19 @@ func (c *serverConn) serve() {
 		return
 	}
 	c.clientFeatures = hello.Features
-	if err := c.reply(frameHelloAck, helloMsg{Version: ProtocolVersion, Features: []string{featureExec, featureMetadata, featureReplayGzip}}); err != nil {
+	ack := helloMsg{Version: ProtocolVersion, Features: HelperFeatures()}
+	if slices.Contains(c.clientFeatures, featureRuntimeMetadata) {
+		ack.Runtime = c.server.runtimeMetadata
+	}
+	if slices.Contains(c.clientFeatures, featureActivity) {
+		activity, err := c.server.supervisor.Activity(context.Background())
+		if err != nil {
+			c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
+			return
+		}
+		ack.Activity = &activity
+	}
+	if err := c.reply(frameHelloAck, ack); err != nil {
 		return
 	}
 	for {

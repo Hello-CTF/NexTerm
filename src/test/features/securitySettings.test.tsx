@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => {
     authDevices: vi.fn(),
     authSessions: vi.fn(),
     authSessionRevoke: vi.fn(),
+    authLogout: vi.fn(),
     adminUsers: vi.fn(),
     adminSettingsGet: vi.fn(),
     transcriptHosts: vi.fn(),
@@ -95,7 +96,7 @@ vi.mock("../../ipc/authApi", async (importOriginal) => {
       devices: mocks.authDevices,
       sessions: mocks.authSessions,
       sessionRevoke: mocks.authSessionRevoke,
-      logout: vi.fn().mockResolvedValue({ ok: true }),
+      logout: mocks.authLogout,
       logoutAll: vi.fn().mockResolvedValue({ revoked: 1 }),
       deviceRevoke: vi.fn().mockResolvedValue({ ok: true }),
       totpStatus: vi.fn().mockResolvedValue({ enabled: false, pending: false, mfa_required: false, recovery_codes_left: 0 }),
@@ -164,13 +165,15 @@ function mountAuthCard(): MountedView {
 
 async function runAutoSync() {
   const { runWebSync, WEB_SYNC_RESULT_EVENT, WEB_SYNC_ERROR_EVENT } = await import("../../features/settings/SyncCard");
-  try {
-    const result = await runWebSync(new Uint8Array(32).fill(7), { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
-    if (result) window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result }));
-  } catch (error) {
-    window.dispatchEvent(new CustomEvent(WEB_SYNC_ERROR_EVENT, { detail: error }));
-    throw error;
-  }
+  await act(async () => {
+    try {
+      const result = await runWebSync(new Uint8Array(32).fill(7), { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
+      if (result) window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result }));
+    } catch (error) {
+      window.dispatchEvent(new CustomEvent(WEB_SYNC_ERROR_EVENT, { detail: error }));
+      throw error;
+    }
+  });
 }
 
 const DEMO_USER = {
@@ -238,6 +241,7 @@ beforeEach(() => {
   mocks.authDevices.mockResolvedValue({ devices: [] });
   mocks.authSessions.mockResolvedValue({ sessions: [] });
   mocks.authSessionRevoke.mockResolvedValue({ ok: true });
+  mocks.authLogout.mockResolvedValue({ ok: true });
   mocks.adminUsers.mockResolvedValue({ users: [DEMO_USER] });
   mocks.adminSettingsGet.mockResolvedValue({ registration_open: false, mfa_required: false });
 });
@@ -326,6 +330,41 @@ describe("KnownHostsCard", () => {
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("db.internal:2222");
     expect(text).not.toContain("10.0.0.8:22");
+  });
+
+  it("supersedes an in-flight list when a sync event arrives and drops the stale response", async () => {
+    const stale = deferred<KnownHostDto[]>();
+    mocks.knownHostList.mockReturnValueOnce(stale.promise).mockResolvedValueOnce([KH2]);
+    mounted = mount(createElement(KnownHostsCard));
+
+    await act(async () => {
+      for (const handler of mocks.syncStatusHandlers) handler({});
+    });
+    await flush();
+    expect(mounted.container.textContent).toContain("db.internal:2222");
+
+    stale.resolve([KH1]);
+    await flush();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("db.internal:2222");
+    expect(text).not.toContain("10.0.0.8:22");
+    expect(mocks.knownHostList).toHaveBeenCalledTimes(2);
+  });
+
+  it("removes the sync listener on unmount and drops a late list response", async () => {
+    const slow = deferred<KnownHostDto[]>();
+    mocks.knownHostList.mockReturnValue(slow.promise);
+    mounted = mount(createElement(KnownHostsCard));
+    await flush();
+    expect(mocks.syncStatusHandlers.length).toBe(1);
+
+    mounted.unmount();
+    mounted = undefined;
+    expect(mocks.syncStatusHandlers.length).toBe(0);
+
+    slow.resolve([KH1]);
+    await flush();
+    expect(mocks.knownHostList).toHaveBeenCalledTimes(1);
   });
 
   it("asks before revoking and does nothing when the confirmation is declined", async () => {
@@ -447,7 +486,7 @@ describe("SyncCard (web account sync)", () => {
     expect(mounted.container.textContent).toContain("受管主机");
   });
 
-  it("clears the local login when the current session is revoked", async () => {
+  it("uses the unified logout path when the current session is revoked", async () => {
     seedAuthed(true);
     mocks.authSessions.mockResolvedValue({ sessions: [
       { id: "s-current", name: "此浏览器", origin: "203.0.113.1", created_at: 1000, last_seen_at: 2000, expires_at: 3000, current: true },
@@ -457,7 +496,8 @@ describe("SyncCard (web account sync)", () => {
     await flushUntil(() => mounted!.container.textContent?.includes("当前会话") ?? false);
     clickButton(mounted.container, "退出会话");
     await flushUntil(() => useAuth.getState().user === null);
-    expect(mocks.authSessionRevoke).toHaveBeenCalledWith("s-current");
+    expect(mocks.authLogout).toHaveBeenCalledTimes(1);
+    expect(mocks.authSessionRevoke).not.toHaveBeenCalled();
   });
 
   it("renders only the account-card login entry when logged out, without a duplicate sync console", async () => {
@@ -794,6 +834,33 @@ describe("SyncCard (web account sync)", () => {
     expect(parsed.content).toHaveLength(3);
   });
 
+  it("rejects a non-advancing transcript cursor and never pushes partial content", async () => {
+    seedAuthed(true);
+    mocks.transcriptHosts.mockResolvedValue([
+      { assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false, transcripts: 1, lastStartedAt: 1 },
+    ]);
+    mocks.transcriptList.mockResolvedValue([
+      {
+        id: "t1", sessionId: "s1", assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false,
+        startedAt: 1, endedAt: 2, bytes: 3, chunks: 2, truncated: false, active: false, syncOptIn: true, contentOmitted: false,
+      },
+    ]);
+    mocks.transcriptRead.mockResolvedValue({
+      chunks: [{ seq: 0, tabId: "tab-1", ts: 1, dataBase64: "AQID" }],
+      nextSeq: 0,
+      done: false,
+      totalBytes: 3,
+    });
+
+    mounted = mountSyncCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("分页游标未推进"));
+    expect(mocks.syncPush).not.toHaveBeenCalled();
+
+    await expect(runAutoSync()).rejects.toThrow("分页游标未推进");
+    expect(mocks.transcriptRead).toHaveBeenCalledWith("t1", 0);
+    expect(mocks.syncPush).not.toHaveBeenCalled();
+  });
+
   it("does not push a transcript again when its payload hash is unchanged, making the second sync empty", async () => {
     seedAuthed(true);
     const { sealSyncObject, bytesToBase64, base64ToBytes } = await import("../../features/auth/crypto");
@@ -943,6 +1010,7 @@ describe("connectAsset host-key confirmation", () => {
     port: 22,
     keyType: "ssh-ed25519",
     fingerprint: "SHA256:newfp",
+    key: "ZmFrZS1zZWN1cml0eS1rZXk=",
     changed: false,
   };
   const sessionInfo = {
@@ -984,6 +1052,7 @@ describe("connectAsset host-key confirmation", () => {
       22,
       "ssh-ed25519",
       "SHA256:newfp",
+      "ZmFrZS1zZWN1cml0eS1rZXk=",
     );
     expect(mocks.sessionConnect).toHaveBeenCalledTimes(2);
     expect(mocks.sessionConnect).toHaveBeenLastCalledWith("asset-1");
@@ -1035,6 +1104,7 @@ describe("connectAsset host-key confirmation", () => {
       22,
       "ssh-ed25519",
       "SHA256:newfp",
+      "ZmFrZS1zZWN1cml0eS1rZXk=",
     );
     expect(mocks.sessionConnect).toHaveBeenLastCalledWith("asset-1");
   });
@@ -1072,6 +1142,7 @@ describe("connectAsset host-key confirmation", () => {
       22,
       "ssh-ed25519",
       "SHA256:newfp",
+      "ZmFrZS1zZWN1cml0eS1rZXk=",
     );
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.any(String));
   });

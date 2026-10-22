@@ -7,22 +7,39 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
 
 func (m *Manager) StartReconnect(id string) error {
-	if err := m.reconnectPreflight(id); err != nil {
+	return m.startReconnect(id, 0, nil)
+}
+
+func (m *Manager) StartReconnectWithAssetFor(ctx context.Context, id string, asset Asset) error {
+	if _, err := m.SessionFor(ctx, id); err != nil {
+		return err
+	}
+	return m.startReconnect(id, 0, &asset)
+}
+
+func (m *Manager) startReconnect(id string, expectedGeneration uint64, assets ...*Asset) error {
+	var refreshed *Asset
+	if len(assets) > 0 {
+		refreshed = assets[0]
+	}
+	if err := m.reconnectPreflight(id, expectedGeneration, refreshed); err != nil {
 		return err
 	}
 	if !m.startGoroutine(func() {
-		_ = m.Reconnect(context.Background(), id)
+		_ = m.reconnect(context.Background(), id, expectedGeneration)
 	}) {
 		return ErrSessionClosed
 	}
 	return nil
 }
 
-func (m *Manager) reconnectPreflight(id string) error {
+func (m *Manager) reconnectPreflight(id string, expectedGeneration uint64, refreshed *Asset) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	session := m.sessions[id]
@@ -31,11 +48,18 @@ func (m *Manager) reconnectPreflight(id string) error {
 	}
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	if !reconnectable(session.asset.Kind) {
+	asset := session.Asset()
+	if refreshed != nil {
+		asset = *refreshed
+	}
+	if !reconnectable(asset.Kind) {
 		return ErrUnsupported
 	}
 	if session.closed {
 		return ErrSessionClosed
+	}
+	if expectedGeneration != 0 && (session.generation != expectedGeneration || session.status != StatusConnected) {
+		return ErrStaleGeneration
 	}
 	if session.reconnecting {
 		return nil
@@ -44,12 +68,44 @@ func (m *Manager) reconnectPreflight(id string) error {
 		return ErrDisconnected
 	}
 	if other := m.sessions[m.byAsset[session.assetOwnerKey()]]; other != nil && other != session {
-		return fmt.Errorf("%w: %s", ErrAssetSessionConflict, session.asset.ID)
+		return fmt.Errorf("%w: %s", ErrAssetSessionConflict, asset.ID)
+	}
+	if refreshed != nil {
+		snapshot := *refreshed
+		session.assetSnapshot.Store(&snapshot)
+		session.staleConfig = false
+	}
+	return nil
+}
+
+func (m *Manager) MarkSessionConfigStaleFor(ctx context.Context, id string) error {
+	requester := userIDFromContext(ctx)
+	openAccess := m.requestOpenAccess(ctx)
+	if requester == "" && !openAccess {
+		return ErrForbidden
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session := m.sessions[id]
+	if session == nil {
+		return ErrSessionNotFound
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if !sessionRequestAllowed(session, requester, openAccess) {
+		return ErrForbidden
+	}
+	if !session.closed {
+		session.staleConfig = true
 	}
 	return nil
 }
 
 func (m *Manager) Reconnect(ctx context.Context, id string) error {
+	return m.reconnect(ctx, id, 0)
+}
+
+func (m *Manager) reconnect(ctx context.Context, id string, expectedGeneration uint64) error {
 	m.mu.Lock()
 	session := m.sessions[id]
 	if session == nil {
@@ -57,7 +113,7 @@ func (m *Manager) Reconnect(ctx context.Context, id string) error {
 		return ErrSessionNotFound
 	}
 	session.mu.Lock()
-	if !reconnectable(session.asset.Kind) {
+	if !reconnectable(session.Asset().Kind) {
 		session.mu.Unlock()
 		m.mu.Unlock()
 		return ErrUnsupported
@@ -72,11 +128,16 @@ func (m *Manager) Reconnect(ctx context.Context, id string) error {
 		m.mu.Unlock()
 		return ErrSessionClosed
 	}
-	if session.reconnecting {
-		done := session.reconnectDone
+	if expectedGeneration != 0 && (session.generation != expectedGeneration || session.status != StatusConnected) {
 		session.mu.Unlock()
 		m.mu.Unlock()
-		return waitReconnect(ctx, session, done)
+		return nil
+	}
+	if session.reconnecting {
+		completion := session.reconnectCompletion
+		session.mu.Unlock()
+		m.mu.Unlock()
+		return waitReconnect(ctx, completion)
 	}
 	if session.status == StatusConnecting {
 		session.mu.Unlock()
@@ -94,11 +155,12 @@ func (m *Manager) Reconnect(ctx context.Context, id string) error {
 	oldTransport := session.transport
 	session.transport = nil
 	session.generation = generation
-	session.ctx, session.cancel = context.WithCancel(m.ctx)
+	session.ctx, session.cancel = context.WithCancel(ownerCtx(m.ctx, session.userID))
 	session.status = StatusReconnecting
 	session.reconnecting = true
-	session.reconnectDone = make(chan struct{})
-	session.reconnectErr = nil
+	session.reconnectCompletion = &reconnectCompletion{done: make(chan struct{})}
+	session.reconnectAttempt = 0
+	session.reconnectNextRetry = m.now().Add(m.reconnectBackoff[0])
 	channels := session.detachChannelsLocked()
 	m.byAsset[session.assetOwnerKey()] = session.ID
 	reconnectCtx := session.ctx
@@ -112,7 +174,7 @@ func (m *Manager) Reconnect(ctx context.Context, id string) error {
 		_ = oldTransport.Close()
 	}
 	m.emit(context.Background(), TopicSessionStatus, reconnectingEvent)
-	m.transcriptEnded(id)
+	m.transcriptEnded(session)
 
 	runCtx, cancel := context.WithCancel(reconnectCtx)
 	stop := context.AfterFunc(ctx, cancel)
@@ -123,21 +185,15 @@ func (m *Manager) Reconnect(ctx context.Context, id string) error {
 	return m.reconnectLoop(runCtx, session, generation)
 }
 
-func waitReconnect(ctx context.Context, session *Session, done <-chan struct{}) error {
+func waitReconnect(ctx context.Context, completion *reconnectCompletion) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-done:
+	case <-completion.done:
 	}
-	session.mu.Lock()
-	defer session.mu.Unlock()
-	if session.status == StatusConnected {
-		return nil
-	}
-	if session.reconnectErr != nil {
-		return session.reconnectErr
-	}
-	return ErrDisconnected
+	// Closing done publishes this attempt's immutable result even if another
+	// reconnect has already replaced the session's current completion.
+	return completion.err
 }
 
 func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generation uint64) error {
@@ -148,7 +204,7 @@ func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generatio
 			lastErr = err
 			break
 		}
-		transport, err := m.connector.Connect(ctx, session.asset, generation)
+		transport, err := m.connector.Connect(ctx, session.Asset(), generation)
 		var handle *transportHandle
 		if transport != nil {
 			handle = newTransportHandle(transport)
@@ -162,7 +218,24 @@ func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generatio
 		if err == nil {
 			var opened map[*Tab]*replacementChannel
 			var gone map[*Tab]struct{}
-			opened, gone, err = m.openReplacementChannels(ctx, session, handle, generation)
+			// Replacement channels must outlive the reconnect attempt: every
+			// transport binds an opened channel's lifetime to the context it
+			// receives, so opening with the attempt-scoped ctx tore the fresh
+			// channels down moments after Reconnect returned. Open them under
+			// a context scoped to the session's lifetime instead: the attempt
+			// cancels it only while the opens are in flight, so a blocked open
+			// still aborts on caller cancellation, and once the attempt stops
+			// watching, a committed channel lives until the session ends.
+			session.mu.Lock()
+			channelCtx := session.ctx
+			session.mu.Unlock()
+			openCtx, cancelOpen := context.WithCancel(channelCtx)
+			stop := context.AfterFunc(ctx, cancelOpen)
+			opened, gone, err = m.openReplacementChannels(openCtx, session, handle, generation)
+			stop()
+			if err == nil && ctx.Err() != nil {
+				err = ctx.Err()
+			}
 			if err == nil {
 				committed, commitErr := m.commitReconnect(session, handle, opened, gone, generation)
 				if committed {
@@ -170,6 +243,9 @@ func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generatio
 				}
 				err = commitErr
 			}
+			// Every path short of a committed reconnect releases the scoped
+			// open context and closes the replacements explicitly.
+			cancelOpen()
 			for _, replacement := range opened {
 				_ = replacement.channel.Close()
 			}
@@ -188,6 +264,20 @@ func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generatio
 			lastErr = ctx.Err()
 			break
 		}
+		if !m.noteReconnectAttempt(session, generation, attempt+1) {
+			return lastErr
+		}
+		if isNonRetryableReconnectError(lastErr) {
+			break
+		}
+		if attempt+1 < m.reconnectMax {
+			nextBackoff := m.reconnectBackoff[min(attempt+1, len(m.reconnectBackoff)-1)]
+			event, current := m.reconnectRetryEvent(session, generation, lastErr, m.now().Add(nextBackoff))
+			if !current {
+				return lastErr
+			}
+			m.emit(context.Background(), TopicSessionStatus, event)
+		}
 	}
 	if lastErr == nil {
 		lastErr = errors.New("reconnect attempts exhausted")
@@ -195,10 +285,49 @@ func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generatio
 	return m.finishReconnect(session, generation, lastErr)
 }
 
+func isNonRetryableReconnectError(err error) bool {
+	var appErr *ipc.Error
+	if errors.As(err, &appErr) {
+		switch appErr.Code {
+		case ipc.CodeBadParam, ipc.CodeVaultLocked, ipc.CodeVaultNotInit:
+			return true
+		}
+	}
+	var connectErr *ssh.ConnectError
+	if errors.As(err, &connectErr) {
+		switch connectErr.Kind {
+		case ssh.ErrorKindAuth, ssh.ErrorKindHostKeyPending, ssh.ErrorKindHostKeyChanged, ssh.ErrorKindConfig:
+			return true
+		}
+	}
+	var hostKeyErr *ssh.HostKeyError
+	return errors.As(err, &hostKeyErr)
+}
+
+func (m *Manager) noteReconnectAttempt(session *Session, generation uint64, attempt int) bool {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.closed || session.status != StatusReconnecting || !session.reconnecting || session.generation != generation {
+		return false
+	}
+	session.reconnectAttempt = attempt
+	return true
+}
+
+func (m *Manager) reconnectRetryEvent(session *Session, generation uint64, cause error, nextRetryAt time.Time) (StatusEvent, bool) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.closed || session.status != StatusReconnecting || !session.reconnecting || session.generation != generation {
+		return StatusEvent{}, false
+	}
+	session.reconnectNextRetry = nextRetryAt
+	return session.statusEventLocked(StatusReconnecting, cause), true
+}
+
 func (m *Manager) openReplacementChannels(ctx context.Context, session *Session, transport *transportHandle, generation uint64) (map[*Tab]*replacementChannel, map[*Tab]struct{}, error) {
 	opened := make(map[*Tab]*replacementChannel)
 	gone := make(map[*Tab]struct{})
-	if !ptyBacked(session.asset.Kind) {
+	if !ptyBacked(session.Asset().Kind) {
 		return opened, gone, nil
 	}
 	session.mu.Lock()
@@ -206,7 +335,7 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 	for _, tab := range session.tabs {
 		tabs = append(tabs, tab)
 	}
-	kind := session.asset.Kind
+	kind := session.Asset().Kind
 	session.mu.Unlock()
 	var provider base.DurableProvider
 	for _, tab := range tabs {
@@ -218,6 +347,7 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 		durableTab := tab.durable != nil
 		cols, rows := tab.cols, tab.rows
 		durableFed := tab.durableFed
+		durableIdentity := tab.durableIdentity
 		if tab.grid != nil {
 			if desired := tab.grid.Snapshot().DesiredGrid; desired.Valid() {
 				cols, rows = uint32(desired.Cols), uint32(desired.Rows)
@@ -232,16 +362,11 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 					return opened, gone, err
 				}
 			}
-			var attachment base.DurableAttachment
-			var err error
-			offsetResume := false
-			if attacher, ok := provider.(durableOffsetAttacher); ok {
-				attachment, err = attacher.AttachFrom(ctx, tab.ID, uint64(durableFed))
-				offsetResume = true
-			} else {
-				attachment, err = provider.Attach(ctx, tab.ID)
-			}
-			if errors.Is(err, durable.ErrNotFound) {
+			attachment, offsetResume, err := attachDurableReplacement(ctx, provider, tab.ID, durableIdentity, uint64(durableFed))
+			if errors.Is(err, durable.ErrNotFound) || errors.Is(err, durable.ErrIdentity) {
+				if attachment != nil {
+					_ = attachment.Close()
+				}
 				gone[tab] = struct{}{}
 				continue
 			}
@@ -284,6 +409,25 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 		opened[tab] = &replacementChannel{channel: newChannelHandle(channel)}
 	}
 	return opened, gone, nil
+}
+
+// attachDurableReplacement uses legacy unchecked attach only for tabs that never had an incarnation.
+// A known identity always requires checked attach; identity errors never fall back to the legacy path.
+func attachDurableReplacement(ctx context.Context, provider base.DurableProvider, tabID string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, bool, error) {
+	if identity.Incarnation != "" {
+		attacher, ok := provider.(base.DurableIdentityAttacher)
+		if !ok {
+			return nil, false, ErrUnsupported
+		}
+		attachment, err := attacher.AttachFromWithIdentity(ctx, tabID, identity, offset)
+		return attachment, true, err
+	}
+	if attacher, ok := provider.(durableOffsetAttacher); ok {
+		attachment, err := attacher.AttachFrom(ctx, tabID, offset)
+		return attachment, true, err
+	}
+	attachment, err := provider.Attach(ctx, tabID)
+	return attachment, false, err
 }
 
 type replacementChannel struct {
@@ -350,6 +494,16 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 			tab.durable = replacement.durable
 			tab.setGenerationLocked(generation)
 			tab.exited = false
+			if tab.runtimeEpisode != "" {
+				// The replacement channel is a new runtime: advance the
+				// episode so a roster row bound to the pre-reconnect
+				// episode cannot keep reporting connected or resolve the
+				// replacement asset, and reset the cwd evidence with it —
+				// the old runtime's reports never describe the replacement.
+				// Durable tabs carry no runtimeEpisode; their daemon
+				// incarnation stays stable across recovery.
+				tab.advanceRuntimeEpisodeLocked()
+			}
 			cols, rows := reconnectGeometryLocked(tab)
 			controls = append(controls, tab.controlEventLocked())
 			start = append(start, tab)
@@ -372,7 +526,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		}
 		tab.mu.Unlock()
 	}
-	if !ptyBacked(session.asset.Kind) {
+	if !ptyBacked(session.Asset().Kind) {
 		for _, tab := range session.tabs {
 			tab.mu.Lock()
 			if !tab.closed && m.tabs[tab.ID] == tab {
@@ -385,6 +539,13 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 					}
 				}
 				tab.exited = false
+				if tab.runtimeEpisode != "" {
+					// The session transport is the replacement runtime for
+					// non-PTY tabs: advance the episode exactly like the
+					// channel-replacement branch above, resetting the cwd
+					// evidence with it.
+					tab.advanceRuntimeEpisodeLocked()
+				}
 				cols, rows := reconnectGeometryLocked(tab)
 				controls = append(controls, tab.controlEventLocked())
 				resizes = append(resizes, reconnectResize{tab: tab, cols: cols, rows: rows})
@@ -395,7 +556,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 	session.transport = transport
 	session.status = StatusConnected
 	if len(session.tabs) == 0 {
-		session.idleSince = time.Now()
+		session.idleSince = m.now()
 	}
 	session.finishReconnectLocked(nil)
 	reconnectCtx := session.ctx
@@ -409,7 +570,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		_ = attachment.Close()
 	}
 	for _, tabID := range goneOffsets {
-		m.deleteDurableTranscriptOffset(tabID)
+		m.deleteDurableTranscriptOffset(ownerCtx(context.Background(), session.userID), tabID)
 	}
 	m.transcriptStarted(reconnectCtx, session)
 	for _, resize := range resizes {
@@ -431,7 +592,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		tabs = append(tabs, tab)
 	}
 	session.mu.Unlock()
-	if ptyBacked(session.asset.Kind) {
+	if ptyBacked(session.Asset().Kind) {
 		for _, tab := range tabs {
 			tab.mu.Lock()
 			channel := tab.channel

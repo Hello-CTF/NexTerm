@@ -14,7 +14,7 @@ func TestObjectStoreCursorProgressIndependentOfIDLookup(t *testing.T) {
 	ctx, store, userID := newObjectStoreUser(t)
 	blobs := []WireObject{
 		{ID: "f", Blob: []byte("small-f")},
-		{ID: "x", Blob: make([]byte, 3<<20)},
+		{ID: "x", Blob: make([]byte, 1536<<10)},
 		{ID: "h", Blob: []byte("small-h")},
 	}
 	if _, _, _, _, err := store.push(ctx, userID, genesisHead(userID), blobs); err != nil {
@@ -59,7 +59,7 @@ func TestEngineCursorPullPreventsOverwrite(t *testing.T) {
 	deviceB := newTestDevice(t)
 	ctx := context.Background()
 
-	bigBody := strings.Repeat("x", 3<<20)
+	bigBody := strings.Repeat("x", 1536<<10)
 	groupID := ids.New()
 	putDeviceGroup(t, deviceA, groupID, nil, "f", 100)
 	snippetX := ids.New()

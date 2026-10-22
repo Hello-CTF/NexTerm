@@ -241,7 +241,6 @@ func TestSessionMountScopeAndUnknownRemoval(t *testing.T) {
 			{result: commandResult{stdout: table}},
 			{result: commandResult{stdout: table}},
 			{result: commandResult{stdout: table}},
-			{result: commandResult{stdout: table}},
 			{},
 		},
 	}
@@ -268,26 +267,22 @@ func TestSessionMountScopeAndUnknownRemoval(t *testing.T) {
 	if err != nil || len(second) != 0 {
 		t.Fatalf("second list = %+v, %v", second, err)
 	}
-	global, err := service.ListFor(t.Context(), listRequest{Global: true})
-	if err != nil || len(global) != 1 || global[0].Managed || global[0].SessionID != nil {
-		t.Fatalf("global list = %+v, %v", global, err)
-	}
 	if err := service.Remove(t.Context(), RemoveArgs{SessionID: "second", LocalPoint: "/mnt/shared"}); err == nil {
 		t.Fatal("another session removed the mount")
 	}
 	if err := service.Remove(t.Context(), RemoveArgs{SessionID: "first", LocalPoint: "/mnt/shared"}); err != nil {
 		t.Fatal(err)
 	}
-	commands := requireCommandCount(t, runner, 6)
-	if commands[5].name != "fusermount3" {
-		t.Fatalf("last command = %+v", commands[5])
+	commands := requireCommandCount(t, runner, 5)
+	if commands[4].name != "fusermount3" {
+		t.Fatalf("last command = %+v", commands[4])
 	}
 	restarted := newTestService("linux", runner, nil)
 	restarted.sessionHost = service.sessionHost
 	if err := restarted.Remove(t.Context(), RemoveArgs{SessionID: "first", LocalPoint: "/mnt/shared"}); err == nil || !strings.Contains(err.Error(), "应用重启") {
 		t.Fatalf("removal after restart = %v", err)
 	}
-	requireCommandCount(t, runner, 6)
+	requireCommandCount(t, runner, 5)
 }
 
 func TestMountPointReplacementIsNotUnmounted(t *testing.T) {

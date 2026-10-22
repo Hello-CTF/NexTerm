@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
 	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -61,11 +62,11 @@ type messageDTO struct {
 	CreatedAt      int64           `json:"createdAt"`
 }
 
-func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, database *store.Store) error {
+func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, database *store.Store, validators ...agent.ScopeValidator) error {
 	registrations := []func() error{
 		func() error {
 			return ipc.Register(dispatcher, "ai_models", func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]string, error) {
-				client, err := manager.ActiveClient()
+				client, err := manager.ActiveClient(ctx)
 				if err != nil {
 					return nil, aiIPCError(err)
 				}
@@ -75,13 +76,13 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 		func() error {
 			return ipc.Register(dispatcher, "ai_test_provider", func(ctx context.Context, _ *ipc.Call, input aiTestProviderRequest) (provider.TestResult, error) {
 				if input.ID != "" {
-					client, err := manager.ClientFor(input.ID)
+					client, err := manager.ClientFor(ctx, input.ID)
 					if err != nil {
 						return provider.TestResult{}, aiIPCError(err)
 					}
 					return client.Test(ctx), nil
 				}
-				client, err := manager.ActiveClient()
+				client, err := manager.ActiveClient(ctx)
 				if err != nil {
 					return provider.TestResult{}, aiIPCError(err)
 				}
@@ -89,8 +90,11 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "ai_get_provider", func(_ context.Context, _ *ipc.Call, _ struct{}) (provider.Config, error) {
-				config, ok := manager.ActiveConfig()
+			return ipc.Register(dispatcher, "ai_get_provider", func(ctx context.Context, _ *ipc.Call, _ struct{}) (provider.Config, error) {
+				config, ok, err := manager.ActiveConfig(ctx)
+				if err != nil {
+					return provider.Config{}, aiIPCError(err)
+				}
 				if !ok {
 					config = provider.DefaultConfig()
 				}
@@ -100,7 +104,10 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 		},
 		func() error {
 			return ipc.Register(dispatcher, "ai_set_provider", func(ctx context.Context, _ *ipc.Call, input aiProviderRequest) (any, error) {
-				profile, ok := manager.ActiveProfile()
+				profile, ok, err := manager.ActiveProfile(ctx)
+				if err != nil {
+					return nil, aiIPCError(err)
+				}
 				if !ok {
 					profile = profiles.DefaultProfile()
 				}
@@ -114,7 +121,7 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 				profile.ContextWindow = config.ContextWindow
 				profile.Proxy = config.Proxy
 				profile.Stream = config.Stream
-				_, err := manager.Save(ctx, profile)
+				_, err = manager.Save(ctx, profile)
 				return nil, aiIPCError(err)
 			})
 		},
@@ -145,11 +152,29 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 		},
 		func() error {
 			return ipc.Register(dispatcher, "ai_conversation_create", func(ctx context.Context, _ *ipc.Call, input aiConversationRequest) (conversationDTO, error) {
+				scopeValue := input.Scope
+				if len(validators) != 0 && validators[0] != nil {
+					scope, err := scopeFromConversationValue(scopeValue)
+					if err != nil {
+						return conversationDTO{}, aiIPCError(err)
+					}
+					if resolver, ok := validators[0].(agent.ScopeResolver); ok {
+						resolved, err := resolver.ResolveScope(ctx, "", scope)
+						if err != nil {
+							return conversationDTO{}, aiIPCError(err)
+						}
+						if scopeValue != nil {
+							scopeValue = resolved
+						}
+					} else if err := validators[0].ValidateScope(ctx, scope); err != nil {
+						return conversationDTO{}, aiIPCError(err)
+					}
+				}
 				title := input.Title
 				if title == "" {
 					title = "新对话"
 				}
-				row, err := database.ConvCreate(ctx, title, map[string]any{"scope": input.Scope})
+				row, err := database.ConvCreate(ctx, title, map[string]any{"scope": scopeValue})
 				return productionConversation(row), err
 			})
 		},
@@ -167,23 +192,36 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "ai_model_profiles", func(_ context.Context, _ *ipc.Call, _ struct{}) (profiles.Overview, error) {
-				return manager.Overview(), nil
+			return ipc.Register(dispatcher, "ai_model_profiles", func(ctx context.Context, _ *ipc.Call, _ struct{}) (profiles.Overview, error) {
+				overview, err := manager.Overview(ctx)
+				return overview, aiIPCError(err)
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "ai_circuit_status", func(_ context.Context, _ *ipc.Call, input aiCircuitStatusRequest) (aiCircuitStatusDTO, error) {
+			return ipc.Register(dispatcher, "ai_circuit_status", func(ctx context.Context, _ *ipc.Call, input aiCircuitStatusRequest) (aiCircuitStatusDTO, error) {
 				id := input.ID
 				if id == "" {
-					profile, ok := manager.ActiveProfile()
+					profile, ok, err := manager.ActiveProfile(ctx)
+					if err != nil {
+						return aiCircuitStatusDTO{}, aiIPCError(err)
+					}
 					if !ok {
 						return aiCircuitStatusDTO{}, aiIPCError(profiles.ErrNoActiveProfile)
 					}
 					id = profile.ID
-				} else if _, ok := manager.Profile(id); !ok {
-					return aiCircuitStatusDTO{}, aiIPCError(fmt.Errorf("%w: %s", profiles.ErrProfileNotFound, id))
+				} else {
+					_, ok, err := manager.Profile(ctx, id)
+					if err != nil {
+						return aiCircuitStatusDTO{}, aiIPCError(err)
+					}
+					if !ok {
+						return aiCircuitStatusDTO{}, aiIPCError(fmt.Errorf("%w: %s", profiles.ErrProfileNotFound, id))
+					}
 				}
-				status, ok := manager.CircuitStatus(id)
+				status, ok, err := manager.CircuitStatus(ctx, id)
+				if err != nil {
+					return aiCircuitStatusDTO{}, aiIPCError(err)
+				}
 				if !ok {
 					return aiCircuitStatusDTO{}, nil
 				}
@@ -228,9 +266,14 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 		},
 		func() error {
 			return ipc.Register(dispatcher, "ai_model_refresh", func(ctx context.Context, _ *ipc.Call, input aiProfileRequest) (provider.ModelList, error) {
+				// ActiveProfile applies the same owner resolver as every other Manager operation.
+				// In particular, a server gateway with no account cannot reach the plaintext-key provider branch.
+				if _, _, err := manager.ActiveProfile(ctx); err != nil {
+					return provider.ModelList{}, aiIPCError(err)
+				}
 				config := input.Profile.ProviderConfig()
 				if strings.TrimSpace(config.APIKey) == profiles.MaskedAPIKey {
-					key, err := resolveMaskedProfileKey(ctx, database, input.Profile.ID)
+					key, err := resolveMaskedProfileKey(ctx, manager, database, input.Profile.ID)
 					if err != nil {
 						return provider.ModelList{}, aiIPCError(err)
 					}
@@ -283,26 +326,18 @@ func aiIPCError(err error) error {
 	}
 }
 
-func resolveMaskedProfileKey(ctx context.Context, database *store.Store, id string) (string, error) {
-	raw, found, err := database.SettingGet(ctx, store.AIProfilesSettingKeyForUser(ipc.OwnerID(ctx)))
+func resolveMaskedProfileKey(ctx context.Context, manager *profiles.Manager, database *store.Store, id string) (string, error) {
+	if err := manager.Reload(ctx); err != nil {
+		return "", err
+	}
+	stored, found, err := manager.Profile(ctx, id)
 	if err != nil {
 		return "", err
 	}
 	if !found {
 		return "", fmt.Errorf("%w: %s", profiles.ErrProfileNotFound, id)
 	}
-	var stored struct {
-		Profiles []profiles.Profile `json:"profiles"`
-	}
-	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
-		return "", err
-	}
-	for _, saved := range stored.Profiles {
-		if saved.ID == id {
-			return resolveStoredProfileKey(ctx, database, saved.APIKey)
-		}
-	}
-	return "", fmt.Errorf("%w: %s", profiles.ErrProfileNotFound, id)
+	return resolveStoredProfileKey(ctx, database, stored.APIKey)
 }
 
 func resolveStoredProfileKey(ctx context.Context, database *store.Store, stored string) (string, error) {

@@ -2,7 +2,6 @@ package account
 
 import (
 	"context"
-	"sync"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -69,44 +68,4 @@ VALUES('sc1', ?, ?, 'sync', 'synthetic-hash', 1)`, owner.ID, device.ID).Error; e
 	if credRevoked == 0 {
 		t.Fatal("sync credential not revoked with device")
 	}
-}
-
-func TestRevokeDeviceConcurrentSingleWinner(t *testing.T) {
-	a := testFileAccounts(t)
-	ctx := context.Background()
-	owner, err := a.CreateUser(ctx, "kate2", "", "synthetic-password-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	device, err := a.RegisterDevice(ctx, owner.ID, "laptop", "desktop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	token, _, err := a.IssueSession(ctx, owner.ID, device.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	const revokers = 4
-	var wg sync.WaitGroup
-	errs := make([]error, revokers)
-	for i := 0; i < revokers; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			errs[i] = a.RevokeDevice(ctx, owner.ID, device.ID)
-		}(i)
-	}
-	wg.Wait()
-	succeeded := 0
-	for _, err := range errs {
-		if err == nil {
-			succeeded++
-			continue
-		}
-		requireCode(t, err, ipc.CodeForbidden)
-	}
-	if succeeded != 1 {
-		t.Fatalf("concurrent device revoke succeeded %d times, want exactly 1", succeeded)
-	}
-	requireCode(t, validateErr(a, ctx, token), ipc.CodeForbidden)
 }

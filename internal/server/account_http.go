@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -121,6 +122,36 @@ func decodeAccountJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 	return nil
 }
 
+type adminRoute struct {
+	name         string
+	pattern      string
+	csrfRequired bool
+	handler      http.HandlerFunc
+}
+
+func (s *Server) adminRoutes() []adminRoute {
+	return []adminRoute{
+		{name: "list_users", pattern: "GET /admin/users", handler: s.serveAdminUserList},
+		{name: "get_settings", pattern: "GET /admin/settings", handler: s.serveAdminSettingsGet},
+		{name: "create_user", pattern: "POST /admin/users", csrfRequired: true, handler: s.serveAdminUserCreate},
+		{name: "disable_user", pattern: "POST /admin/users/{id}/disable", csrfRequired: true, handler: s.serveAdminUserDisable},
+		{name: "reset_user", pattern: "POST /admin/users/{id}/reset", csrfRequired: true, handler: s.serveAdminUserReset},
+		{name: "put_settings", pattern: "PUT /admin/settings", csrfRequired: true, handler: s.serveAdminSettingsPut},
+		{name: "get_preferences", pattern: "GET /admin/preferences", handler: s.serveAdminPreferencesGet},
+		{name: "put_preferences", pattern: "PUT /admin/preferences", csrfRequired: true, handler: s.serveAdminPreferencesPut},
+	}
+}
+
+func (s *Server) mountAdminRoutes(mux *http.ServeMux) {
+	for _, route := range s.adminRoutes() {
+		handler := s.requireSuperadmin(route.handler)
+		if route.csrfRequired {
+			handler = s.requireAccountCSRF(handler)
+		}
+		mux.Handle(route.pattern, s.accountGuard(s.requireAccountSession(handler)))
+	}
+}
+
 func (s *Server) mountAccountRoutes(mux *http.ServeMux) {
 	if s.accounts == nil {
 		return
@@ -133,12 +164,6 @@ func (s *Server) mountAccountRoutes(mux *http.ServeMux) {
 	}
 	sessionCSRF := func(pattern string, handler http.HandlerFunc) {
 		mux.Handle(pattern, s.accountGuard(s.requireAccountSession(s.requireAccountCSRF(handler))))
-	}
-	admin := func(pattern string, handler http.HandlerFunc) {
-		mux.Handle(pattern, s.accountGuard(s.requireAccountSession(s.requireSuperadmin(handler))))
-	}
-	adminCSRF := func(pattern string, handler http.HandlerFunc) {
-		mux.Handle(pattern, s.accountGuard(s.requireAccountSession(s.requireAccountCSRF(s.requireSuperadmin(handler)))))
 	}
 
 	public("GET /auth/status", s.serveAccountStatus)
@@ -164,12 +189,7 @@ func (s *Server) mountAccountRoutes(mux *http.ServeMux) {
 	sessionCSRF("DELETE /auth/totp", s.serveAccountTOTPDisable)
 	sessionCSRF("DELETE /auth/devices/{id}", s.serveAccountDeviceRevoke)
 
-	admin("GET /admin/users", s.serveAdminUserList)
-	admin("GET /admin/settings", s.serveAdminSettingsGet)
-	adminCSRF("POST /admin/users", s.serveAdminUserCreate)
-	adminCSRF("POST /admin/users/{id}/disable", s.serveAdminUserDisable)
-	adminCSRF("POST /admin/users/{id}/reset", s.serveAdminUserReset)
-	adminCSRF("PUT /admin/settings", s.serveAdminSettingsPut)
+	s.mountAdminRoutes(mux)
 
 	if !s.options.SyncOnly && s.previews != nil && s.spectator != nil {
 		session("GET /share/previews", s.servePreviewLinkList)
@@ -243,7 +263,28 @@ func (s *Server) newAccountSessionView(r *http.Request, user *account.User, sess
 	return accountSessionView{User: view, CSRFToken: accountCSRFToken(sessionID), MFARequired: required}, nil
 }
 
-func (s *Server) writeAccountSession(w http.ResponseWriter, r *http.Request, user *account.User, deviceID string) {
+// accountLoginGate, when non-nil, runs after a successful Authenticate and
+// before the epoch capture. Tests use it to interpose a password change
+// mid-login.
+var accountLoginGate func(ctx context.Context, user *account.User)
+
+// SetAccountLoginGateForTest installs accountLoginGate and returns a restore
+// function. It exists for tests only.
+func SetAccountLoginGateForTest(gate func(ctx context.Context, user *account.User)) (restore func()) {
+	previous := accountLoginGate
+	accountLoginGate = gate
+	return func() { accountLoginGate = previous }
+}
+
+// writeAccountSession issues the session under the caller-held revocation lock
+// (the account async-boundary mutex). The epoch re-check fails the issuance
+// closed when a revocation, password change, reset, or disable committed after
+// the caller captured the generation at the authentication boundary.
+func (s *Server) writeAccountSession(w http.ResponseWriter, r *http.Request, user *account.User, deviceID string, epoch uint64) {
+	if !s.accounts.CheckEpoch(user.ID, epoch) {
+		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "账号状态已变更，请重新登录"))
+		return
+	}
 	token, session, err := s.accounts.IssueSessionWithMetadata(r.Context(), user.ID, deviceID, account.SessionMetadata{
 		ClientName: sessionClientName(r), Origin: clientIP(r),
 	})
@@ -286,7 +327,9 @@ func (s *Server) serveAccountInit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.accountThrottle.init.RecordSuccess(key)
-	s.writeAccountSession(w, r, user, "")
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
+	s.writeAccountSession(w, r, user, "", s.accounts.Epoch(user.ID))
 }
 
 // servePlatformSession upgrades a request that "already passed the front gateway's auth" into a real account session.
@@ -323,7 +366,9 @@ func (s *Server) servePlatformSession(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
-	s.writeAccountSession(w, r, owner, "")
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
+	s.writeAccountSession(w, r, owner, "", s.accounts.Epoch(owner.ID))
 }
 
 type accountLoginRequest struct {
@@ -343,6 +388,12 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "登录尝试过于频繁，请稍后再试"))
 		return
 	}
+	// The whole authentication flow runs under the revocation lock: the epoch
+	// is captured at the authentication boundary, so a password change or
+	// revocation that lands after it fails the issuance check closed instead of
+	// signing a new session with stale credentials.
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
 	user, err := s.accounts.Authenticate(r.Context(), request.Username, request.Password)
 	if err != nil {
 		s.accountThrottle.login.RecordFailure(key)
@@ -350,13 +401,17 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.accountThrottle.login.RecordSuccess(key)
+	if accountLoginGate != nil {
+		accountLoginGate(r.Context(), user)
+	}
+	epoch := s.accounts.Epoch(user.ID)
 	mfaEnabled, err := s.accounts.TOTPEnabled(r.Context(), user.ID)
 	if err != nil {
 		writeAccountFailure(w, err)
 		return
 	}
 	if mfaEnabled {
-		ticket, expiresAt := s.mfaTickets.issue(user.ID, request.DeviceID)
+		ticket, expiresAt := s.mfaTickets.issue(user.ID, request.DeviceID, epoch)
 		if ticket == "" {
 			writeAccountError(w, http.StatusInternalServerError, ipc.NewError(ipc.CodeInternal, "登录票据签发失败"))
 			return
@@ -364,7 +419,7 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		writeAccountJSON(w, http.StatusOK, accountMFABeginView{MFARequired: true, Ticket: ticket, ExpiresAt: expiresAt.UnixMilli()})
 		return
 	}
-	s.writeAccountSession(w, r, user, request.DeviceID)
+	s.writeAccountSession(w, r, user, request.DeviceID, epoch)
 }
 
 type accountRegisterRequest struct {
@@ -404,7 +459,9 @@ func (s *Server) serveAccountRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.accountThrottle.register.RecordSuccess(key)
-	s.writeAccountSession(w, r, user, "")
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
+	s.writeAccountSession(w, r, user, "", s.accounts.Epoch(user.ID))
 }
 
 type accountRecoveryResetRequest struct {
@@ -425,6 +482,10 @@ func (s *Server) serveAccountRecoveryReset(w http.ResponseWriter, r *http.Reques
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "尝试过于频繁，请稍后再试"))
 		return
 	}
+	// Serialize with logins and envelope uploads: the recovery reset revokes
+	// sessions and bumps the account epoch as one atomic generation change.
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
 	err := s.accounts.ResetPasswordWithRecovery(r.Context(), request.Username, request.RecoveryKey, request.NewPassword, request.toEnvelopes())
 	if err != nil {
 		s.accountThrottle.recovery.RecordFailure(key)
@@ -459,7 +520,24 @@ func (s *Server) serveAccountMe(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveAccountLogout(w http.ResponseWriter, r *http.Request) {
 	identity := accountIdentityFrom(r.Context())
-	if err := s.accounts.RevokeSession(r.Context(), identity.SessionID); err != nil {
+	err := func() error {
+		s.accountRevocationMu.Lock()
+		defer s.accountRevocationMu.Unlock()
+		commit, rollback, prepareErr := s.prepareAccountCleanup(r.Context(), identity.UserID, identity.SessionID)
+		if prepareErr != nil {
+			// The snapshot read failed: abort without revoking so the user can
+			// retry the whole logout with the same event id once it recovers.
+			rollback()
+			return prepareErr
+		}
+		if err := s.accounts.RevokeSession(r.Context(), identity.SessionID); err != nil {
+			rollback()
+			return err
+		}
+		commit(identity.SessionID)
+		return nil
+	}()
+	if err != nil {
 		writeAccountFailure(w, err)
 		return
 	}
@@ -470,25 +548,39 @@ func (s *Server) serveAccountLogout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveAccountLogoutAll(w http.ResponseWriter, r *http.Request) {
 	identity := accountIdentityFrom(r.Context())
-	var sessions []account.SessionInfo
-	if s.accountConnections != nil {
-		var err error
-		sessions, err = s.accounts.ListUserSessions(r.Context(), identity.UserID)
+	sessionIDs, err := func() ([]string, error) {
+		s.accountRevocationMu.Lock()
+		defer s.accountRevocationMu.Unlock()
+		var commit func(...string)
+		rollback := func() {}
+		// The prepare failure aborts the revocation transaction itself: no
+		// session is revoked, and the whole logout-all retries with the same
+		// event id once the snapshot read recovers.
+		sessionIDs, err := s.revokeUserSessions(r.Context(), identity.UserID, "", func() error {
+			var prepareErr error
+			// The prefixed key is normalized back to this session ID by the
+			// cleanup generation-bound read; keep the two in sync.
+			commit, rollback, prepareErr = s.prepareAccountCleanup(r.Context(), identity.UserID, "logout-all:"+identity.SessionID)
+			return prepareErr
+		})
 		if err != nil {
-			writeAccountFailure(w, err)
-			return
+			rollback()
+			return nil, err
 		}
-	}
-	revoked, err := s.accounts.RevokeUserSessions(r.Context(), identity.UserID, "")
+		if commit != nil {
+			commit(sessionIDs...)
+		}
+		return sessionIDs, nil
+	}()
 	if err != nil {
 		writeAccountFailure(w, err)
 		return
 	}
-	for _, session := range sessions {
-		s.closeAccountConnections(session.ID)
+	for _, sessionID := range sessionIDs {
+		s.closeAccountConnections(sessionID)
 	}
 	s.clearSessionCookie(w, r)
-	writeAccountJSON(w, http.StatusOK, map[string]int64{"revoked": revoked})
+	writeAccountJSON(w, http.StatusOK, map[string]int64{"revoked": int64(len(sessionIDs))})
 }
 
 func (s *Server) serveAccountSessionList(w http.ResponseWriter, r *http.Request) {
@@ -524,7 +616,24 @@ func (s *Server) serveAccountSessionList(w http.ResponseWriter, r *http.Request)
 func (s *Server) serveAccountSessionRevoke(w http.ResponseWriter, r *http.Request) {
 	identity := accountIdentityFrom(r.Context())
 	sessionID := r.PathValue("id")
-	if err := s.accounts.RevokeUserSession(r.Context(), identity.UserID, sessionID); err != nil {
+	err := func() error {
+		s.accountRevocationMu.Lock()
+		defer s.accountRevocationMu.Unlock()
+		commit, rollback, prepareErr := s.prepareAccountCleanup(r.Context(), identity.UserID, sessionID)
+		if prepareErr != nil {
+			// The snapshot read failed: abort without revoking so the revoke
+			// retries with the same event id once the read recovers.
+			rollback()
+			return prepareErr
+		}
+		if err := s.accounts.RevokeUserSession(r.Context(), identity.UserID, sessionID); err != nil {
+			rollback()
+			return err
+		}
+		commit(sessionID)
+		return nil
+	}()
+	if err != nil {
 		writeAccountFailure(w, err)
 		return
 	}
@@ -533,6 +642,31 @@ func (s *Server) serveAccountSessionRevoke(w http.ResponseWriter, r *http.Reques
 		s.clearSessionCookie(w, r)
 	}
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) cleanupAccount(ctx context.Context, ownerID, cleanupID string, sessionIDs ...string) {
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
+	s.cleanupAccountLocked(ctx, ownerID, cleanupID, sessionIDs...)
+}
+
+func (s *Server) cleanupAccountLocked(ctx context.Context, ownerID, cleanupID string, sessionIDs ...string) {
+	if s.accountCleanup == nil || ownerID == "" || cleanupID == "" {
+		return
+	}
+	// The deferred (natural-expiry) path records a snapshot read failure as an
+	// error instead of treating the cleanup as done; the event stays absent so
+	// the next revalidation of the same session retries it.
+	if err := s.accountCleanup(context.WithoutCancel(ctx), ownerID, cleanupID, sessionIDs...); err != nil {
+		s.logger.Error("account cleanup failed; same-event retry remains available", "owner", ownerID, "event", cleanupID, "error", err)
+	}
+}
+
+func (s *Server) prepareAccountCleanup(ctx context.Context, ownerID, cleanupID string) (func(...string), func(), error) {
+	if s.accountCleanupPrepare == nil {
+		return func(...string) {}, func() {}, nil
+	}
+	return s.accountCleanupPrepare(context.WithoutCancel(ctx), ownerID, cleanupID)
 }
 
 func (s *Server) closeAccountConnections(sessionID string) {
@@ -557,6 +691,10 @@ func (s *Server) serveAccountPasswordChange(w http.ResponseWriter, r *http.Reque
 		writeAccountFailure(w, err)
 		return
 	}
+	// Serialize with logins and envelope uploads: the password change revokes
+	// sessions and bumps the account epoch as one atomic generation change.
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
 	err := s.accounts.ChangePassword(r.Context(), identity.UserID, request.OldPassword, request.NewPassword, request.toEnvelopes(), identity.SessionID)
 	if err != nil {
 		writeAccountFailure(w, err)
@@ -574,11 +712,19 @@ type accountDEKView struct {
 }
 
 // serveAccountDEKGet returns only encrypted envelopes; the plaintext DEK never leaves the server (the server does not hold it).
+// The epoch re-check fails closed when a revocation or reset committed while the request was in flight.
 func (s *Server) serveAccountDEKGet(w http.ResponseWriter, r *http.Request) {
 	identity := accountIdentityFrom(r.Context())
+	epoch := s.accounts.Epoch(identity.UserID)
 	envelopes, err := s.accounts.GetUserDEKEnvelopes(r.Context(), identity.UserID)
 	if err != nil {
 		writeAccountFailure(w, err)
+		return
+	}
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
+	if !s.accounts.CheckEpoch(identity.UserID, epoch) {
+		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, sessionReloginMessage))
 		return
 	}
 	writeAccountJSON(w, http.StatusOK, accountDEKView{
@@ -591,11 +737,20 @@ func (s *Server) serveAccountDEKGet(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveAccountDEKUpload lets users created by an admin upload their initial envelope after first login; overwriting an existing one is refused.
+// The epoch re-check under the revocation lock stops an in-flight upload from resurrecting
+// envelope material after a concurrent reset or revocation deleted it.
 func (s *Server) serveAccountDEKUpload(w http.ResponseWriter, r *http.Request) {
 	identity := accountIdentityFrom(r.Context())
+	epoch := s.accounts.Epoch(identity.UserID)
 	var request dekEnvelopeRequest
 	if err := decodeAccountJSON(w, r, &request); err != nil {
 		writeAccountFailure(w, err)
+		return
+	}
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
+	if !s.accounts.CheckEpoch(identity.UserID, epoch) {
+		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, sessionReloginMessage))
 		return
 	}
 	err := s.accounts.InsertUserDEKEnvelopes(r.Context(), identity.UserID, request.toEnvelopes())
@@ -626,6 +781,10 @@ func (s *Server) serveAccountDeviceList(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) serveAccountDeviceRevoke(w http.ResponseWriter, r *http.Request) {
 	identity := accountIdentityFrom(r.Context())
+	// Serialize with logins and envelope uploads: the device revoke bumps the
+	// account epoch as part of the same generation change.
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
 	if err := s.accounts.RevokeDevice(r.Context(), identity.UserID, r.PathValue("id")); err != nil {
 		writeAccountFailure(w, err)
 		return
@@ -680,6 +839,10 @@ func (s *Server) serveAdminUserDisable(w http.ResponseWriter, r *http.Request) {
 		writeAccountError(w, http.StatusBadRequest, ipc.NewError(ipc.CodeBadParam, "不能禁用当前登录账号"))
 		return
 	}
+	// Serialize with logins and envelope uploads: the disable revokes sessions
+	// and bumps the account epoch as one atomic generation change.
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
 	if err := s.accounts.SetUserDisabled(r.Context(), target, true); err != nil {
 		writeAccountFailure(w, err)
 		return
@@ -688,6 +851,10 @@ func (s *Server) serveAdminUserDisable(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveAdminUserReset(w http.ResponseWriter, r *http.Request) {
+	// Serialize with logins and envelope uploads: the admin reset deletes key
+	// material and bumps the account epoch as one atomic generation change.
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
 	if err := s.accounts.AdminResetUser(r.Context(), r.PathValue("id")); err != nil {
 		writeAccountFailure(w, err)
 		return

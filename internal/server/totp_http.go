@@ -19,6 +19,9 @@ type mfaTicket struct {
 	userID    string
 	deviceID  string
 	expiresAt time.Time
+	// epoch is the account generation at ticket issue; the confirm re-checks
+	// it so a revocation or reset between the two steps fails the login closed.
+	epoch uint64
 }
 
 // mfaTicketStore holds one-time tickets for "password passed, second factor pending" (memory only).
@@ -33,7 +36,7 @@ func newMFATicketStore() *mfaTicketStore {
 	return &mfaTicketStore{entries: make(map[string]*mfaTicket), now: time.Now}
 }
 
-func (s *mfaTicketStore) issue(userID, deviceID string) (string, time.Time) {
+func (s *mfaTicketStore) issue(userID, deviceID string, epoch uint64) (string, time.Time) {
 	raw := make([]byte, mfaTicketBytes)
 	if _, err := rand.Read(raw); err != nil {
 		return "", time.Time{}
@@ -45,7 +48,7 @@ func (s *mfaTicketStore) issue(userID, deviceID string) (string, time.Time) {
 	if len(s.entries) > 4096 {
 		s.sweepLocked(now)
 	}
-	s.entries[ticket] = &mfaTicket{userID: userID, deviceID: deviceID, expiresAt: now.Add(mfaTicketTTL)}
+	s.entries[ticket] = &mfaTicket{userID: userID, deviceID: deviceID, expiresAt: now.Add(mfaTicketTTL), epoch: epoch}
 	return ticket, now.Add(mfaTicketTTL)
 }
 
@@ -125,7 +128,9 @@ func (s *Server) serveAccountTOTPLogin(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
-	s.writeAccountSession(w, r, user, entry.deviceID)
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
+	s.writeAccountSession(w, r, user, entry.deviceID, entry.epoch)
 }
 
 type accountTOTPStatusView struct {
@@ -173,6 +178,14 @@ func (s *Server) serveAccountTOTPSetup(w http.ResponseWriter, r *http.Request) {
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "尝试过于频繁，请稍后再试"))
 		return
 	}
+	// Serialize with revocations: the pending binding's epoch note and the
+	// setup write must not interleave with a revocation bump.
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
+	if err := s.revalidateTOTPBindingSession(r); err != nil {
+		writeAccountFailure(w, err)
+		return
+	}
 	secret, uri, err := s.accounts.BeginTOTPSetup(r.Context(), identity.UserID, request.Reverify)
 	if err != nil {
 		// A missing re-verification credential is a client flow problem and is not counted toward brute-force throttling; only wrong credentials count.
@@ -184,6 +197,19 @@ func (s *Server) serveAccountTOTPSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	s.accountThrottle.mfa.RecordSuccess(key)
 	writeAccountJSON(w, http.StatusOK, accountTOTPSetupView{Secret: secret, OTPAuthURI: uri})
+}
+
+// revalidateTOTPBindingSession requires accountRevocationMu: a request body
+// can arrive after the session admitted by accountGuard has been revoked.
+func (s *Server) revalidateTOTPBindingSession(r *http.Request) error {
+	identity := accountIdentityFrom(r.Context())
+	token, ok := sessionCookie(r)
+	if !ok || identity == nil {
+		return ipc.NewError(ipc.CodeForbidden, sessionReloginMessage)
+	}
+	return s.validateAccountSession(r.Context(), token, identity, func() {
+		s.cleanupAccountLocked(r.Context(), identity.UserID, identity.SessionID)
+	})
 }
 
 type accountTOTPConfirmRequest struct {
@@ -201,6 +227,15 @@ func (s *Server) serveAccountTOTPConfirm(w http.ResponseWriter, r *http.Request)
 	key := "mfa-confirm|" + identity.UserID
 	if !s.accountThrottle.mfa.Allow(key) {
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "尝试过于频繁，请稍后再试"))
+		return
+	}
+	// Serialize with revocations: the pending-epoch check and the confirm
+	// transaction must span the same boundary as an epoch bump, so a
+	// revocation cannot land between the check and the commit.
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
+	if err := s.revalidateTOTPBindingSession(r); err != nil {
+		writeAccountFailure(w, err)
 		return
 	}
 	codes, err := s.accounts.ConfirmTOTPSetup(r.Context(), identity.UserID, request.Code)

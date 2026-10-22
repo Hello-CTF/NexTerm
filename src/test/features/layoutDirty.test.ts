@@ -7,27 +7,27 @@ const server = vi.hoisted(() => ({
   putAlwaysConflicts: false,
 }));
 
-vi.mock("../../ipc/commands", () => ({
-  layoutApi: {
-    get: vi.fn(async () => ({
-      revision: server.revision,
-      updatedAt: 0,
-      data: server.data === null ? null : JSON.parse(server.data),
-    })),
-    put: vi.fn(async (data: string, revision: number) => {
-      if (server.putAlwaysConflicts || revision !== server.revision) {
-        return { saved: false, revision: server.revision, conflict: true };
-      }
-      server.revision = revision + 1;
-      server.data = data;
-      return { saved: true, revision: server.revision, conflict: false };
-    }),
-  },
-  terminalApi: { listLive: vi.fn(async () => []) },
-  dbApi: {},
-  sessionApi: {},
-  vaultApi: {},
-}));
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const { createCommandsMock } = await import("../helpers/mockCommands");
+  return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
+    layoutApi: {
+      get: vi.fn(async () => ({
+        revision: server.revision,
+        updatedAt: 0,
+        data: server.data === null ? null : JSON.parse(server.data),
+      })),
+      put: vi.fn(async (data: string, revision: number) => {
+        if (server.putAlwaysConflicts || revision !== server.revision) {
+          return { saved: false, revision: server.revision, conflict: true };
+        }
+        server.revision = revision + 1;
+        server.data = data;
+        return { saved: true, revision: server.revision, conflict: false };
+      }),
+    },
+    terminalApi: { listLive: vi.fn(async () => []) },
+  });
+});
 vi.mock("../../ipc/events", () => ({ listenEvent: vi.fn() }));
 
 import { mergeDirtyEditorTabs, sanitizeLayout, type PersistedLayout } from "../../app/layout";
@@ -176,10 +176,11 @@ describe("remote layout dirty-editor preservation", () => {
     });
     store.getState().updateSqlDraft("ws", sqlDraft());
     store.getState().updateSqlDraft("empty", { ...sqlDraft(), text: "" });
-    server.revision = 1;
+    await sync.flushLayout();
+    server.revision = 2;
     server.data = JSON.stringify(layout([]));
 
-    sync.onRemoteChange({ revision: 1 });
+    sync.onRemoteChange({ revision: 2 });
 
     await vi.waitFor(() => {
       expect(store.getState().workspaces.some((w) => w.id === "ws")).toBe(true);
@@ -201,6 +202,10 @@ describe("remote layout dirty-editor preservation", () => {
     });
     store.getState().updateSqlDraft("ws", sqlDraft());
     store.getState().updateSqlDraft("empty", { ...sqlDraft(), text: "" });
+    await sync.flushLayout();
+    store.setState({
+      workspaces: [withDraft, { ...empty, title: "local edit" }],
+    });
     server.revision = 7;
     server.data = JSON.stringify(layout([]));
     server.putAlwaysConflicts = true;

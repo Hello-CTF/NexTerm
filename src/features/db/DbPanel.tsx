@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { EditorView, placeholder } from "@codemirror/view";
 import { basicSetup } from "codemirror";
 import { EditorState } from "@codemirror/state";
@@ -178,7 +178,7 @@ function SqlView({
     if (problem.source === "sql-tables") void loadTables(problem.target.schema ?? "");
   };
 
-  const persistDraft = (state: EditorState, targetWorkspaceId = workspaceId) => {
+  const persistDraft = useCallback((state: EditorState, targetWorkspaceId = workspaceId) => {
     const generation = draftGenerationRef.current;
     if (!targetWorkspaceId || generation === undefined) return;
     const selection = state.selection.main;
@@ -192,7 +192,7 @@ function SqlView({
     queueMicrotask(() => {
       useUi.getState().updateSqlDraft(targetWorkspaceId, draft, generation);
     });
-  };
+  }, [workspaceId]);
 
   const SYSTEM_SCHEMAS = SQL_SYSTEM_SCHEMAS[dialect];
 
@@ -288,11 +288,16 @@ function SqlView({
     }
   };
 
+  const loadSchemasRef = useRef(loadSchemas);
+  useEffect(() => {
+    loadSchemasRef.current = loadSchemas;
+  });
+
   useEffect(() => {
     aliveRef.current = true;
     const activeRun = activeRunsRef.current.get(connId);
     setRunningToken(activeRun === undefined ? null : { connId, seq: activeRun });
-    void loadSchemas();
+    void loadSchemasRef.current();
     return () => {
       aliveRef.current = false;
       schemasRequestRef.current += 1;
@@ -312,8 +317,8 @@ function SqlView({
         text: "",
         selection: { from: 0, to: 0 },
         schema: "",
-        connId,
-        dbKind: dialect,
+        connId: connIdRef.current,
+        dbKind: dialectRef.current,
       });
     }
     draftGenerationRef.current = workspaceId
@@ -354,12 +359,12 @@ function SqlView({
       view.destroy();
       if (viewRef.current === view) viewRef.current = null;
     };
-  }, [workspaceId]);
+  }, [workspaceId, persistDraft]);
 
   useEffect(() => {
     const view = viewRef.current;
     if (view) persistDraft(view.state);
-  }, [connId, dialect, workspaceId]);
+  }, [connId, dialect, workspaceId, persistDraft]);
 
   const run = async () => {
     const view = viewRef.current;
@@ -544,7 +549,7 @@ function SqlView({
     <div className="nx-pane">
       <div className="nx-toolbar">
         <IconDatabase size={14} className="text-neutral-500" />
-        <span className="nx-toolbar-title">{dialect === "postgres" ? "PostgreSQL" : "MySQL"}</span>
+        <span className="nx-toolbar-title">{dialect === "postgres" ? "PostgreSQL" : "MySQL / MariaDB"}</span>
         <select
           className="nx-select nx-input-sm w-[168px]"
           value={schema}
@@ -625,7 +630,7 @@ function SqlView({
           <WorkspaceProblems
             workspaceId={workspaceId}
             onRetryRead={retryProblemRead}
-            onLoadSql={loadProblemSql}
+            onLoadSql={(problem) => void loadProblemSql(problem)}
             targetAvailable={problemTargetAvailable}
           />
         ) : historyOpen ? (
@@ -1080,8 +1085,13 @@ function RedisView({ connId }: { connId: string }) {
     }
   };
 
+  const doScanRef = useRef(doScan);
   useEffect(() => {
-    void doScan(0);
+    doScanRef.current = doScan;
+  });
+
+  useEffect(() => {
+    void doScanRef.current(0);
     return () => {
       scanRequestRef.current += 1;
       activeScanRef.current = null;
@@ -1276,7 +1286,8 @@ function RedisView({ connId }: { connId: string }) {
           <div id={consolePanelId} className="nx-redis-console flex min-h-[74px] flex-col border-t border-neutral-800/60 bg-neutral-950/40 p-2.5">
             <div ref={consoleScrollRef} className="min-h-0 flex-1 overflow-auto">
               <div className="mb-1.5 text-[11px] text-neutral-500">
-                <div>控制台 · 危险命令执行前需要确认，其余命令直接执行</div>
+                <div>控制台 · 使用 Redis 命令协议，不支持 SQL</div>
+                <div>危险命令执行前需要确认，其余命令直接执行</div>
                 <div>参数按空白切分，不支持引号包裹（如 SET k "a b" 会被拆成 3 个参数）</div>
               </div>
               {cmdOut && (

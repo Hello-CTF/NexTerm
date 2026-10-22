@@ -13,10 +13,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/fs/chunked"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 const transferChunkSize = 256 * 1024
+
+var ErrResumeMismatch = errors.New("resume target content does not match source; restart without resume")
 
 type Progress struct {
 	TaskID      string `json:"taskId"`
@@ -76,7 +80,7 @@ func Upload(ctx context.Context, localPath string, destination base.FileSystem, 
 				return 0, fmt.Errorf("remote resume target has a negative size")
 			}
 			if size > total {
-				return 0, fmt.Errorf("remote resume target is larger than source (%d > %d)", size, total)
+				return 0, fmt.Errorf("%w: remote resume target is larger than source (%d > %d)", ErrResumeMismatch, size, total)
 			}
 			offset = size
 			targetExists = true
@@ -109,7 +113,20 @@ func Upload(ctx context.Context, localPath string, destination base.FileSystem, 
 	if err := ensureRemoteParent(ctx, destination, remotePath); err != nil {
 		return offset, err
 	}
-	target, err := destination.OpenWrite(ctx, remotePath, offset > 0)
+	writePath := remotePath
+	committed := false
+	if !options.Resume {
+		writePath = chunked.StagingPath(remotePath, ids.New(), "commit")
+		defer func() {
+			if committed {
+				return
+			}
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			_ = destination.Delete(cleanupCtx, writePath, false)
+		}()
+	}
+	target, err := destination.OpenWrite(ctx, writePath, offset > 0)
 	if err != nil {
 		return offset, err
 	}
@@ -128,6 +145,20 @@ func Upload(ctx context.Context, localPath string, destination base.FileSystem, 
 		return transferred, err
 	}
 	if !options.Resume {
+		if err := ctx.Err(); err != nil {
+			return transferred, err
+		}
+		mode, err := chunked.TargetMode(ctx, destination, remotePath)
+		if err != nil {
+			return transferred, err
+		}
+		if err := destination.Chmod(ctx, writePath, mode); err != nil {
+			return transferred, err
+		}
+		if err := chunked.AtomicRename(ctx, destination, writePath, remotePath); err != nil {
+			return transferred, err
+		}
+		committed = true
 		reportTransferProgress(options, transferred, total, true)
 		return transferred, nil
 	}
@@ -453,7 +484,7 @@ func verifyResumePrefix(ctx context.Context, source, target io.Reader, offset in
 			return err
 		}
 		if !bytes.Equal(sourceChunk, targetChunk) {
-			return errors.New("resume target content does not match source; restart without resume")
+			return ErrResumeMismatch
 		}
 		_, _ = digest.Write(sourceChunk)
 		remaining -= chunkSize

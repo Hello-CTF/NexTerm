@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
@@ -12,11 +13,19 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
+// sessionRequestContext passes the caller through unchanged: the session
+// layer natively denies identity-less open access on non-open servers and
+// scopes identified callers to their own resources. An app-marked
+// (owner.WithOpenAccess) caller carrying an identity is vouched to open
+// access; an identity-less mark is never elevated.
 func sessionRequestContext(ctx context.Context) context.Context {
-	if _, ok := ipc.UserIDFromContext(ctx); ok {
+	if _, ok := ipc.UserIDFromContext(ctx); !ok {
 		return ctx
 	}
-	return session.WithOpenAccess(ctx)
+	if owner.OpenAccess(ctx) {
+		return session.WithOpenAccess(ctx)
+	}
+	return ctx
 }
 
 func WithSession(deps Dependencies, manager *session.Manager, storage *store.Store, database tools.Database) Dependencies {
@@ -56,6 +65,9 @@ func WithSession(deps Dependencies, manager *session.Manager, storage *store.Sto
 		return brief, nil
 	}
 	deps.Screen = terminal.Snapshot
+	if detail, ok := terminal.(tools.TabDetailTerminal); ok {
+		deps.TabDetail = detail.TabDetail
+	}
 	deps.Tail = func(ctx context.Context, tabID string, count int) ([]string, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err

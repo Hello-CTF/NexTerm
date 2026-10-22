@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AiRunEventDto } from "../ipc/types";
-import { fetchRunEventsAfter, RUN_EVENTS_PAGE_SIZE } from "../features/ai/runRestore";
+import {
+  fetchRunEventsAfter,
+  replayRunEventsAfter,
+  RUN_EVENTS_PAGE_SIZE,
+} from "../features/ai/runRestore";
 import { createConversationStream } from "../features/ai/conversationStream";
 
 function seqEvent(seq: number): AiRunEventDto {
@@ -131,5 +135,52 @@ describe("fetchRunEventsAfter", () => {
 
     expect(paged.lastSeq(1)).toBe(451);
     expect(paged.getState()).toEqual(live.getState());
+  });
+});
+
+describe("replayRunEventsAfter", () => {
+  it("applies each page before the next fetch and yields between pages", async () => {
+    const all = seqEvents(1, 450);
+    const applied: AiRunEventDto[][] = [];
+    const appliedCountAtFetch: number[] = [];
+    const yieldControl = vi.fn().mockResolvedValue(undefined);
+
+    const result = await replayRunEventsAfter(
+      (afterSeq, limit) => {
+        appliedCountAtFetch.push(applied.reduce((count, page) => count + page.length, 0));
+        return Promise.resolve(all.filter((event) => (event.seq as number) > afterSeq).slice(0, limit));
+      },
+      0,
+      (page) => {
+        applied.push(page);
+      },
+      { yieldControl },
+    );
+
+    expect(result).toEqual({ failed: false, stopped: false });
+    expect(applied.map((page) => page.length)).toEqual([200, 200, 50]);
+    expect(appliedCountAtFetch).toEqual([0, 200, 400]);
+    expect(yieldControl).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops before another fetch or yield when the restore is invalidated", async () => {
+    const fetchPage = vi.fn((afterSeq: number, limit: number) =>
+      Promise.resolve(seqEvents(1, 450).filter((event) => (event.seq as number) > afterSeq).slice(0, limit)),
+    );
+    const yieldControl = vi.fn().mockResolvedValue(undefined);
+    let active = true;
+
+    const result = await replayRunEventsAfter(
+      fetchPage,
+      0,
+      () => {
+        active = false;
+      },
+      { shouldContinue: () => active, yieldControl },
+    );
+
+    expect(result).toEqual({ failed: false, stopped: true });
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+    expect(yieldControl).not.toHaveBeenCalled();
   });
 });

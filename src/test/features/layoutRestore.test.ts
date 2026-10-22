@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { captureDeviceLayout, deviceLayoutStorageKey } from "../../app/layoutFocus";
 import { deferred, flushUntil } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
@@ -14,14 +15,15 @@ const mocks = vi.hoisted(() => ({
   user: { id: "review-user" } as { id: string } | null,
 }));
 
-vi.mock("../../ipc/commands", () => ({
-  layoutApi: { get: mocks.get, put: mocks.put },
-  assetApi: { list: mocks.assets, get: mocks.asset },
-  terminalApi: { listLive: vi.fn(async () => []) },
-  sessionApi: { connect: mocks.connect, disconnect: mocks.disconnect },
-  dbApi: {},
-  vaultApi: {},
-}));
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const { createCommandsMock } = await import("../helpers/mockCommands");
+  return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
+    layoutApi: { get: mocks.get, put: mocks.put },
+    assetApi: { list: mocks.assets, get: mocks.asset },
+    terminalApi: { listLive: vi.fn(async () => []) },
+    sessionApi: { connect: mocks.connect, disconnect: mocks.disconnect },
+  });
+});
 vi.mock("../../ipc/events", () => ({ listenEvent: vi.fn(async () => () => {}) }));
 vi.mock("../../ui/dialogs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../ui/dialogs")>()),
@@ -104,8 +106,33 @@ describe("new-device layout restore", () => {
 
     mocks.get.mockResolvedValue({ revision: 2, updatedAt: 2, data: { ...cloud, leftWidth: 260 } });
     layout.onRemoteChange(null);
-    await flushUntil(() => useUi.getState().leftWidth === 260);
+    await flushUntil(() => mocks.get.mock.calls.length === 2);
+    expect(useUi.getState().leftWidth).toBe(248);
     expect(useUi.getState().rightOpen).toBe(false);
+  });
+
+  it("keeps device focus when previewing a restored account layout", async () => {
+    const local = remoteLayout("known-asset");
+    local.workspaces[0].id = "local-workspace";
+    local.activeWorkspaceId = "local-workspace";
+    window.localStorage.setItem(
+      deviceLayoutStorageKey("review-user"),
+      JSON.stringify(captureDeviceLayout(local as unknown as Parameters<typeof captureDeviceLayout>[0])),
+    );
+    const cloud = remoteLayout("known-asset");
+    const second = remoteLayout("second-asset");
+    second.workspaces[0].id = "second-workspace";
+    second.workspaces[0].panes[0].id = "second-pane";
+    second.workspaces[0].panes[0].tabs[0].id = "second-terminal";
+    second.workspaces[0].activePaneId = "second-pane";
+    second.workspaces[0].panes[0].activeTabId = "second-terminal";
+    cloud.workspaces.push(...second.workspaces);
+    cloud.activeWorkspaceId = "second-workspace";
+    mocks.choice.mockResolvedValue("restore");
+
+    const { layout, useUi } = await boot("known-asset", cloud);
+    await flushUntil(() => layout.layoutRestoreStatus().preview);
+    expect(useUi.getState().activeWorkspaceId).toBe("remote-workspace");
   });
 
   it("holds cloud layout until confirmation, previews it, and supports undo", async () => {

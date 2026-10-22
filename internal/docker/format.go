@@ -32,9 +32,14 @@ func containerDTOs(items []container.Summary) []ContainerSummary {
 			names = append(names, strings.TrimPrefix(name, "/"))
 		}
 		var project *string
-		if value, ok := item.Labels["com.docker.compose.project"]; ok {
+		if value, ok := item.Labels[composeProjectLabel]; ok {
 			valueCopy := value
 			project = &valueCopy
+		}
+		var service *string
+		if value, ok := item.Labels[composeServiceLabel]; ok {
+			valueCopy := value
+			service = &valueCopy
 		}
 		out = append(out, ContainerSummary{
 			ID:             shortID(item.ID),
@@ -44,6 +49,7 @@ func containerDTOs(items []container.Summary) []ContainerSummary {
 			Status:         item.Status,
 			Ports:          formatPorts(item.Ports),
 			ComposeProject: project,
+			ComposeService: service,
 		})
 	}
 	return out

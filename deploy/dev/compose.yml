@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
+    container_name: nexterm-dev-postgres
+    environment:
+      POSTGRES_USER: nexterm
+      POSTGRES_PASSWORD: nexterm
+      POSTGRES_DB: nexterm_test
+    ports:
+      - "127.0.0.1:55433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U nexterm -d nexterm_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mysql:
+    image: mysql:8.4@sha256:24989179f58856db763f418010c1169fecc944e3ec1ea7e921572d83eb070f70
+    container_name: nexterm-dev-mysql
+    environment:
+      MYSQL_ROOT_HOST: "%"
+      MYSQL_ROOT_PASSWORD: nexterm_root
+      MYSQL_USER: nexterm
+      MYSQL_PASSWORD: nexterm
+      MYSQL_DATABASE: nexterm_test
+    ports:
+      - "127.0.0.1:33308:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping --silent -h 127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mariadb:
+    image: mariadb:11.4@sha256:250e1609e93c0e6aecf64bfbab2d84d5e89d2481540fe77447ff6c855c3b1873
+    container_name: nexterm-dev-mariadb
+    environment:
+      MARIADB_ROOT_HOST: "%"
+      MARIADB_ROOT_PASSWORD: nexterm_root
+      MARIADB_USER: nexterm
+      MARIADB_PASSWORD: nexterm
+      MARIADB_DATABASE: nexterm_test
+    ports:
+      - "127.0.0.1:33309:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20

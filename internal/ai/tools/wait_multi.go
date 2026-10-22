@@ -1,0 +1,383 @@
+package tools
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+)
+
+const (
+	maxWaitTabs  = 16
+	maxWaitLines = 100_000
+)
+
+// waitTarget is the per-tab scan state of an anchored multi-tab wait_for
+// call. The anchor is the exact output sequence the wait started from, so
+// already-visible content can never false-match and the reported anchors let
+// a follow-up read resume without repeating or skipping output. Pattern and
+// line conditions are tracked separately and combine as AND; satisfied is
+// the fully-satisfied verdict including the quiet requirement.
+type waitTarget struct {
+	tabID          string
+	fromSeq        uint64
+	scanPos        uint64
+	carry          []byte
+	newLines       int
+	patternMatched bool
+	linesMatched   bool
+	matched        bool
+	satisfied      bool
+	latest         uint64
+	idleMS         int64
+	idleErr        string
+	cols           int
+	rows           int
+	note           string
+}
+
+// waitForTabs waits across multiple tabs for a pattern, a new-line count,
+// or both (AND), under any/all semantics. A single tab honors since_seq as
+// its anchor; every other tab is anchored at the latest output sequence the
+// wait observed at start.
+func (r *Registry) waitForTabs(waitContext context.Context, jobID string, scope Scope, tabIDs []string, regex *regexp.Regexp, pattern string, lines int, quietMS int64, mode string, sinceSeq uint64) Output {
+	if len(tabIDs) > maxWaitTabs {
+		return Fail(invalid("tab_ids 最多 %d 个标签页", maxWaitTabs))
+	}
+	if sinceSeq > 0 && len(tabIDs) > 1 {
+		return Fail(invalid("多标签等待不能使用单一 since_seq 锚点；每个标签自动以等待开始时的最新序号为锚点"))
+	}
+	if quietMS > 0 {
+		if _, ok := r.deps.Terminal.(WaitSnapshotTerminal); !ok {
+			return Fail(errors.New("该终端不支持同步安静快照"))
+		}
+	}
+	targets := make([]*waitTarget, 0, len(tabIDs))
+	seen := make(map[string]bool, len(tabIDs))
+	for _, requested := range tabIDs {
+		tabID, err := r.resolveTab(waitContext, jobID, scope, requested)
+		if err != nil {
+			return Fail(err)
+		}
+		if seen[tabID] {
+			continue
+		}
+		seen[tabID] = true
+		targets = append(targets, &waitTarget{tabID: tabID})
+	}
+	for _, target := range targets {
+		screen, err := r.waitSnapshot(waitContext, target.tabID, quietMS > 0)
+		if err != nil {
+			return Fail(err)
+		}
+		target.cols, target.rows, target.idleMS = screen.Cols, screen.Rows, screen.IdleMS
+		if sinceSeq > 0 {
+			target.fromSeq = sinceSeq
+		} else {
+			_, _, latest, err := r.outputSince(waitContext, target.tabID, 0, 1)
+			if err != nil {
+				return Fail(err)
+			}
+			target.fromSeq = latest
+		}
+		target.scanPos = target.fromSeq
+		target.latest = target.fromSeq
+	}
+	ticker := time.NewTicker(r.deps.pollInterval())
+	defer ticker.Stop()
+	quietOnly := regex == nil && lines == 0
+	evaluate := func(rescan bool) int {
+		satisfied := 0
+		for _, target := range targets {
+			// The pattern/lines condition latches, but quiet is re-evaluated
+			// for every matched tab each pass: a previously satisfied tab
+			// that became busy or whose snapshot fails is revoked, so a
+			// success return never rests on a stale idle verdict.
+			if rescan && !target.matched {
+				r.scanWaitTarget(waitContext, target, regex, lines)
+			}
+			if quietMS > 0 && target.matched {
+				if screen, err := r.waitSnapshot(waitContext, target.tabID, true); err == nil {
+					target.idleMS = screen.IdleMS
+					target.idleErr = ""
+				} else {
+					// A failed quiet snapshot must never reuse stale idle to
+					// fake success: the tab goes unsatisfied with the failure
+					// recorded for the timeout output.
+					target.idleMS = -1
+					target.idleErr = "安静快照失败: " + err.Error()
+				}
+				// A quiet-only wait is satisfied by silence itself.
+				if quietOnly {
+					target.matched = target.idleMS >= quietMS
+				}
+			}
+			target.satisfied = target.matched && (quietMS == 0 || target.idleMS >= quietMS)
+			if target.satisfied {
+				satisfied++
+			}
+		}
+		return satisfied
+	}
+	for {
+		satisfied := evaluate(true)
+		ready := (mode == "any" && satisfied > 0) || (mode == "all" && satisfied == len(targets))
+		if ready {
+			if quietMS > 0 {
+				// The success return and its headline/metadata must come
+				// from one consistent group state: with the capability, two
+				// consecutive version-identical group reads; without it, the
+				// serial pass with an explicit degradation mark.
+				if states, agreed, capable := r.quietGroupConsistent(waitContext, targets); capable {
+					if agreed {
+						consistent := applyGroupQuietStates(targets, states, quietMS)
+						if (mode == "any" && consistent > 0) || (mode == "all" && consistent == len(targets)) {
+							return r.waitTabsResult(waitContext, targets, mode, true, false)
+						}
+					}
+					// The group moved during verification or is unverifiable
+					// right now: keep waiting with the freshest state.
+				} else if final := evaluate(false); (mode == "any" && final > 0) || (mode == "all" && final == len(targets)) {
+					result := r.waitTabsResult(waitContext, targets, mode, true, false)
+					result.Notes += "; multi-tab quiet state is a best-effort serial snapshot, not a consistent group version"
+					result.Text += "；多标签安静状态为尽力串行快照，非一致版本"
+					return result
+				}
+			} else {
+				return r.waitTabsResult(waitContext, targets, mode, true, false)
+			}
+		}
+		select {
+		case <-waitContext.Done():
+			if waitContext.Err() == context.DeadlineExceeded {
+				return r.waitTabsResult(waitContext, targets, mode, false, true)
+			}
+			return Fail(waitContext.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// quietGroupConsistent reads the group's quiet state and requires two
+// consecutive per-tab version-identical snapshots, so a success verdict
+// comes from one consistent state. Every read must cover the exact
+// requested roster — each requested tab exactly once, no missing,
+// duplicate, or extra entries; an incomplete roster or a failed read
+// never produces a success. capable is false when the terminal does not
+// implement the consistent-snapshot extension; agreed is false when the
+// group kept moving, the roster was incomplete, or the read failed.
+func (r *Registry) quietGroupConsistent(waitContext context.Context, targets []*waitTarget) (states []TabQuietState, agreed, capable bool) {
+	snapshotter, ok := r.deps.Terminal.(QuietGroupSnapshotTerminal)
+	if !ok {
+		return nil, false, false
+	}
+	tabIDs := make([]string, 0, len(targets))
+	requested := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		tabIDs = append(tabIDs, target.tabID)
+		requested[target.tabID] = struct{}{}
+	}
+	var previous []TabQuietState
+	for attempt := 0; attempt < 3; attempt++ {
+		current, err := snapshotter.QuietGroupSnapshot(waitContext, tabIDs)
+		if err != nil {
+			markGroupQuietFailure(targets, "组快照读取失败: "+err.Error())
+			return nil, false, true
+		}
+		if !quietRosterExact(current, requested) {
+			markGroupQuietFailure(targets, "组快照 roster 不完整（存在缺失、重复或额外的标签页）")
+			return nil, false, true
+		}
+		if previous != nil && quietVersionsEqual(previous, current) {
+			return current, true, true
+		}
+		previous = current
+	}
+	markGroupQuietFailure(targets, "组快照版本持续变化，无法取得一致状态")
+	return nil, false, true
+}
+
+// markGroupQuietFailure revokes every target's satisfied verdict, clears the
+// stale idle reading, and records the visible failure reason for the timeout
+// output. A later valid snapshot — per-tab or group — re-evaluates success
+// and clears the error.
+func markGroupQuietFailure(targets []*waitTarget, reason string) {
+	for _, target := range targets {
+		target.satisfied = false
+		target.idleMS = -1
+		target.idleErr = reason
+	}
+}
+
+// quietRosterExact reports whether the response covers the requested tab
+// set exactly: every requested ID present exactly once, nothing else.
+func quietRosterExact(states []TabQuietState, requested map[string]struct{}) bool {
+	if len(states) != len(requested) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(states))
+	for _, state := range states {
+		if _, ok := requested[state.TabID]; !ok {
+			return false
+		}
+		if _, duplicate := seen[state.TabID]; duplicate {
+			return false
+		}
+		seen[state.TabID] = struct{}{}
+	}
+	return len(seen) == len(requested)
+}
+
+func quietVersionsEqual(a, b []TabQuietState) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	// The contract guarantees each requested tab exactly once, not response
+	// order: compare versions by TabID, never by slice index. The incarnation
+	// and closed fact ride with the version: a tab recreated under the same
+	// ID between the two reads (a same-version coincidence from a different
+	// incarnation) or closed in between is never one consistent state.
+	type versionedState struct {
+		version     uint64
+		incarnation uint64
+		closed      bool
+	}
+	states := make(map[string]versionedState, len(a))
+	for _, state := range a {
+		states[state.TabID] = versionedState{version: state.Version, incarnation: state.Incarnation, closed: state.Closed}
+	}
+	for _, state := range b {
+		previous, ok := states[state.TabID]
+		if !ok || previous.version != state.Version || previous.incarnation != state.Incarnation || previous.closed != state.Closed {
+			return false
+		}
+	}
+	return true
+}
+
+// applyGroupQuietStates recomputes per-tab satisfaction from one agreed
+// group snapshot and returns the satisfied count. A closed tab can never be
+// quietly satisfied: the verdict is revoked with the closure recorded, the
+// same contract as a failed per-tab quiet snapshot.
+func applyGroupQuietStates(targets []*waitTarget, states []TabQuietState, quietMS int64) int {
+	consistent := 0
+	for _, target := range targets {
+		for _, state := range states {
+			if state.TabID == target.tabID {
+				if state.Closed {
+					target.satisfied = false
+					target.idleMS = -1
+					target.idleErr = "标签页已关闭"
+					break
+				}
+				target.idleMS = state.IdleMS
+				target.idleErr = ""
+				target.satisfied = target.matched && state.IdleMS >= quietMS
+			}
+		}
+		if target.satisfied {
+			consistent++
+		}
+	}
+	return consistent
+}
+
+// scanWaitTarget advances one tab's scan cursor through the output produced
+// after its anchor, counting newly rendered lines and matching the pattern
+// against the new output only.
+func (r *Registry) scanWaitTarget(waitContext context.Context, target *waitTarget, regex *regexp.Regexp, lines int) {
+	data, start, latest, err := r.outputSince(waitContext, target.tabID, target.scanPos, waitScanBytes)
+	if err != nil {
+		target.note = "输出读取失败: " + err.Error()
+		return
+	}
+	if start > target.scanPos && target.note == "" {
+		target.note = "部分输出已被淘汰"
+	}
+	window := make([]byte, 0, len(target.carry)+len(data))
+	window = append(window, target.carry...)
+	window = append(window, data...)
+	rendered := renderOutputDiff(window, target.cols, target.rows)
+	if lines > 0 {
+		carried := len(renderOutputDiff(target.carry, target.cols, target.rows))
+		if fresh := len(rendered) - carried; fresh > 0 {
+			target.newLines += fresh
+		}
+	}
+	if regex != nil && regex.MatchString(strings.Join(rendered, "\n")) {
+		target.patternMatched = true
+	}
+	if lines > 0 && target.newLines >= lines {
+		target.linesMatched = true
+	}
+	// Pattern and line conditions combine as AND: a wait asking for both
+	// ends only when both hold.
+	target.matched = (regex == nil || target.patternMatched) && (lines <= 0 || target.linesMatched)
+	if len(data) > 0 {
+		keep := waitScanOverlap
+		if keep > len(window) {
+			keep = len(window)
+		}
+		target.carry = append(target.carry[:0], window[len(window)-keep:]...)
+		target.scanPos = start + uint64(len(data))
+		target.latest = latest
+	}
+}
+
+// waitTabsResult renders the structured multi-tab outcome and its text
+// summary; per-tab anchors and line counts ride in the wait metadata. Only
+// fully-satisfied tabs (condition plus quiet) count as satisfied anywhere.
+func (r *Registry) waitTabsResult(ctx context.Context, targets []*waitTarget, mode string, satisfied, timedOut bool) Output {
+	outcome := &WaitOutcome{Mode: mode, Satisfied: satisfied, TimedOut: timedOut, Tabs: make([]WaitTabOutcome, 0, len(targets))}
+	matchedIDs := make([]string, 0, len(targets))
+	var summary strings.Builder
+	for _, target := range targets {
+		note := target.note
+		if target.idleErr != "" {
+			if note != "" {
+				note += "; "
+			}
+			note += target.idleErr
+		}
+		tab := WaitTabOutcome{
+			TabID:            target.tabID,
+			Matched:          target.satisfied,
+			ConditionMatched: target.matched,
+			IdleMS:           target.idleMS,
+			NewLines:         target.newLines,
+			FromSeq:          target.fromSeq,
+			ToSeq:            target.latest,
+			Note:             note,
+		}
+		if state, err := r.commandState(ctx, target.tabID); err == nil {
+			tab.Running = state.Running
+		}
+		outcome.Tabs = append(outcome.Tabs, tab)
+		if target.satisfied {
+			matchedIDs = append(matchedIDs, target.tabID)
+		}
+		fmt.Fprintf(&summary, "\n- %s matched=%v new_lines=%d idle=%dms from_seq=%d to_seq=%d",
+			target.tabID, target.satisfied, target.newLines, target.idleMS, target.fromSeq, target.latest)
+		if note != "" {
+			summary.WriteString(" (" + note + ")")
+		}
+	}
+	var headline string
+	switch {
+	case satisfied && mode == "any":
+		headline = fmt.Sprintf("标签页 %s 已满足等待条件", strings.Join(matchedIDs, "、"))
+	case satisfied:
+		headline = fmt.Sprintf("全部 %d 个标签页已满足等待条件", len(targets))
+	case timedOut && mode == "any":
+		headline = fmt.Sprintf("等待超时，%d/%d 个标签页满足条件", len(matchedIDs), len(targets))
+	default:
+		headline = fmt.Sprintf("等待超时，仅 %d/%d 个标签页满足条件", len(matchedIDs), len(targets))
+	}
+	exit := 0
+	if !satisfied {
+		exit = 1
+	}
+	return Output{OK: satisfied, Text: headline + summary.String(), ExitCode: exit, Wait: outcome}
+}

@@ -58,9 +58,11 @@ vi.mock("../../features/explorer/AssetTree", () => ({ AssetTree: () => null }));
 vi.mock("../../app/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../../app/QuickConnect", () => ({ QuickConnect: () => null }));
 vi.mock("../../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
+vi.mock("../../features/fleet/DeviceSessionBoundary", () => ({ DeviceSessionBoundary: () => null }));
 
 import App from "../../app/App";
 import {
+  assetConnectionProblemKey,
   isSessionReconnectPending,
   reconnectSessionAndWait,
   SESSION_RECONNECT_WAIT_MS,
@@ -160,7 +162,7 @@ describe("New terminal after disconnect: one-click reconnect", () => {
     expect(toasts.filter((t) => t.kind === "error").map((t) => t.text)).toEqual([]);
   });
 
-  it("reports an error and does not open a terminal when reconnect fails to start", async () => {
+  it("records a failed reconnect and clears it after a successful retry", async () => {
     mocks.sessionReconnect.mockResolvedValue(false);
     mounted = mountApp();
     await flush();
@@ -177,6 +179,16 @@ describe("New terminal after disconnect: one-click reconnect", () => {
     expect(terminalTabs()).toHaveLength(0);
     expect(mocks.sessionList).toHaveBeenCalledTimes(1);
     expect(isSessionReconnectPending("s1")).toBe(false);
+    expect(useUi.getState().workspaceRuntime.ws1?.problems?.[0]).toMatchObject({
+      connectionKey: assetConnectionProblemKey("a1"),
+      summary: "重连未能启动",
+    });
+
+    mocks.sessionReconnect.mockResolvedValue(true);
+    mocks.sessionList.mockResolvedValue([session("connected")]);
+    click(newTerminalButton());
+    await waitUntil(() => expect(terminalTabs()).toHaveLength(1));
+    expect(useUi.getState().workspaceRuntime.ws1?.problems ?? []).toEqual([]);
   });
 
   it("does not duplicate reconnects or terminal tabs when clicked repeatedly while waiting", async () => {

@@ -1,6 +1,8 @@
 import {
+  memo,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -12,26 +14,33 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useUi,
   useActiveWorkspace,
+  cycleActiveWorkspace,
+  cycleActiveTab,
+  cycleActivePane,
   openTerminalTab,
   nextTabId,
   connectAsset,
-  connectDevice,
   dbKindOf,
   openCredentialsSidebar,
   requestCloseTab,
   requestCloseTabs,
   requestKillTab,
+  reconnectRestoredTab,
+  restoreClosedTab,
   closeTabHint,
   closeActionHint,
   isSessionReconnectPending,
-  reconnectSessionAndWait,
+  reconnectDeadHost,
+  reconnectWorkspaceSession,
   reconnectRestoredWorkspace,
   sanitizeRemoteTabTitle,
   sessionStatusText,
+  sessionReconnectStatusText,
   LEFT_WIDTH_RANGE,
   RIGHT_WIDTH_RANGE,
   type AppTab,
   type Pane,
+  type SessionRuntimeInfo,
   type Workspace,
 } from "./store";
 import {
@@ -47,17 +56,19 @@ import {
   type FrameCoalescer,
 } from "../ui/ResizeHandle";
 import {
-  advanceLayoutAccount,
   finishLayoutRestore,
   layoutBootstrapped,
   layoutRestoreStatus,
-  onRemoteChange,
   reviewPendingLayoutRestore,
   startLayoutSync,
   subscribeLayoutRestore,
   undoLayoutRestore,
 } from "./layout";
+import { wireAccountSwitchCleanup } from "./accountSwitch";
+import { useClosedTabs } from "./closedTabs";
 import { startUnreadTracking } from "./unread";
+import { useTabUnread } from "./unreadStore";
+import { applyAuthoritativeTabTitle, useTerminalTabTitle } from "./terminalViewStore";
 import { useEdgeGestures } from "./edgeGestures";
 import {
   formatBinding,
@@ -65,9 +76,11 @@ import {
   useKeybindings,
   type KeybindingActionId,
 } from "./keybindings";
-import { connectWithHostKeyConfirm } from "./hostKeys";
 import { assetApi, sessionApi, syncApi, terminalApi, vaultApi, type Asset, type SessionInfo } from "../ipc/commands";
+import { listenEvent } from "../ipc/events";
+import { onAssetDataChanged } from "../ipc/assetEvents";
 import { describeError } from "../ui/errorText";
+import { formatTime } from "../ui/format";
 import { TRANSPORT, WEB } from "../ipc/env";
 import {
   coarsePointerMedia,
@@ -75,6 +88,7 @@ import {
   isMac,
   isMobile,
   isWailsDragRegionTarget,
+  modHint,
   useLandscapeFullScreen,
   wailsDragRegionStyle,
   wailsNoDragRegionStyle,
@@ -86,22 +100,32 @@ import {
 } from "../ipc/wails";
 import { mountUnavailableReason } from "./capabilities";
 import { AssetTree, AssetEditor } from "../features/explorer/AssetTree";
+import { ProjectWorkspaceStrip } from "./ProjectWorkspaceStrip";
+import { ALL_PROJECTS, focusedWorkspaces } from "./projectFocus";
 import { TerminalPane } from "../features/terminal/TerminalPane";
 import { BackgroundSessions } from "../features/terminal/BackgroundSessions";
+import { WorkspaceRestoreBanner } from "../features/terminal/WorkspaceRestoreBanner";
 import { TranscriptHistoryPanel } from "../features/terminal/TranscriptHistoryPanel";
 import { FileBrowser } from "../features/files/FileBrowser";
-import { resetTransferQueue } from "../features/files/transferStore";
 import { FileTree } from "../features/files/FileTree";
 import { fileVisual } from "../features/files/fileTypes";
 import { MountPanel } from "../features/files/MountPanel";
 import { ForwardPanel } from "../features/forward/ForwardPanel";
+import { ForwardStartupRecovery } from "../features/forward/ForwardStartupRecovery";
 import { FileEditor } from "../features/files/FileEditor";
 import { LogViewer } from "../features/files/LogViewer";
+import { MultiHostLogTail } from "../features/logs/MultiHostLogTail";
+import { isMultiHostLogTabId } from "../features/logs/logTailTab";
+import { FleetHealthPanel } from "../features/fleet/FleetHealthPanel";
+import { isFleetHealthTabId } from "../features/fleet/fleetHealthTab";
 import { DockerPanel } from "../features/docker/DockerPanel";
 import { DbPanel } from "../features/db/DbPanel";
+import { ExecBatchPanel } from "../features/execbatch/ExecBatchPanel";
+import { useAssetProductionClassification } from "../features/production/productionSettings";
 import { AiSidebar } from "../features/ai/AiSidebar";
 import { SettingsView } from "../features/settings/SettingsView";
 import { useDesktopAutoSync, useWebAutoSync } from "../features/settings/useWebAutoSync";
+import { WEB_SYNC_ERROR_EVENT, WEB_SYNC_RESULT_EVENT, type WebSyncResult } from "../features/settings/SyncCard";
 import { CredentialsPanel } from "../features/credentials/CredentialsPanel";
 import { CredentialsSidebar } from "../features/credentials/CredentialsSidebar";
 import { AuditView } from "../features/settings/AuditView";
@@ -117,7 +141,7 @@ import { PromptModal } from "../ui/PromptModal";
 import { DialogHost, isEditableTarget } from "../ui/DialogHost";
 import { ResizeHandle } from "../ui/ResizeHandle";
 import { ErrorBoundary } from "../ui/ErrorBoundary";
-import { registerPromptHandler, registerDialogHandlers, promptText, type ChoiceResult } from "../ui/dialogs";
+import { registerPromptHandler, registerDialogHandlers, registerDialogEpochSource, promptText, type ChoiceResult } from "../ui/dialogs";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../ui/ContextMenu";
 import {
   IconActivity,
@@ -172,6 +196,7 @@ const TAB_ICON = {
   devices: IconMonitor,
   background: IconActivity,
   history: IconClock,
+  execBatch: IconCommand,
 } as const;
 
 function onDragRegionDoubleClick(event: MouseEvent<HTMLElement>): void {
@@ -206,16 +231,65 @@ function WorkspaceStatusGlyph({ status }: { status: SessionInfo["status"] | unde
   );
 }
 
+function WorkspaceReconnectStatus({ session }: { session: SessionRuntimeInfo | undefined }) {
+  const text = sessionReconnectStatusText(session);
+  if (!text) return null;
+  return (
+    <span
+      role="status"
+      className="shrink-0 text-[11px] text-amber-300"
+      title={session?.error ?? undefined}
+    >
+      {text}
+    </span>
+  );
+}
+
 function tabIcon(t: AppTab) {
   if ((t.kind === "files" || t.kind === "log") && t.path) return fileVisual(t.path, "file").Icon;
   return TAB_ICON[t.kind] ?? IconTerminal;
 }
 
-function tabTooltip(t: AppTab): string {
+function tabTooltip(t: AppTab, unread: boolean): string {
   const notes: string[] = [];
-  if (t.unread) notes.push("有新输出");
+  if (unread) notes.push("有新输出");
   if (t.closeError) notes.push(`上次关闭失败：${t.closeError}`);
   return notes.length > 0 ? `${t.title}（${notes.join(" · ")}）` : t.title;
+}
+
+function TabStripItem({
+  tab,
+  children,
+}: {
+  tab: AppTab;
+  children: (unread: boolean) => ReactNode;
+}) {
+  const unread = useTabUnread(tab.id);
+  return children(unread);
+}
+
+// A terminal tab's label prefers the OSC-derived remote title from the per-tab view
+// store (narrow subscription: only this tab's label re-renders on a title change);
+// renames clear that entry, so the authoritative workspace tab title shows instead.
+function TabStripTitle({ tab }: { tab: AppTab }) {
+  const remoteTitle = useTerminalTabTitle(tab.id);
+  return (
+    <span className="truncate">{tab.kind === "terminal" && remoteTitle ? remoteTitle : tab.title}</span>
+  );
+}
+
+// R-01 workspace-scope warning: a terminal tab whose backend-classified asset
+// environment is production carries an amber badge; the environment name is in
+// the tooltip, the tab strip stays compact.
+function TabProductionBadge({ sessionId }: { sessionId?: string }) {
+  const assetId = useUi((s) => (sessionId ? s.sessions.find((x) => x.id === sessionId)?.assetId : undefined));
+  const classification = useAssetProductionClassification(assetId);
+  if (!classification?.production) return null;
+  return (
+    <span className="nx-badge nx-badge-amber shrink-0" title={`生产环境：${classification.environment}`}>
+      生产
+    </span>
+  );
 }
 
 function handleTablistKeyDown(
@@ -492,19 +566,46 @@ function LazyDevicesView() {
   return <View />;
 }
 
-// Account-level query keys, aligned with the queryKeys of AssetTree/CredentialsSidebar/CredentialsPanel
-// (assets/groups/credentials/snippets/search/vault status/forwards). Reset together on auth transitions: before login
-// these requests all hit 401 (grouped assets hidden), and on account switch the previous session's cache must not leak into the next.
-const ACCOUNT_QUERY_KEYS = [
-  ["assets"],
-  ["groups"],
-  ["credentials"],
-  ["snippets"],
-  ["asset-search"],
-  ["vault-status"],
-  ["forwards"],
-  ["forwardEnv"],
-] as const;
+// Account-level auth-transition cleanup lives in ./accountSwitch so it can be exercised
+// without mounting the shell; see wireAccountSwitchCleanup for the query-key set and ordering.
+type SyncStatusWithHealth = import("../ipc/types").SyncStatus & {
+  warnings?: string[];
+  paused?: boolean;
+  vaultLocked?: boolean;
+};
+
+type SyncPauseReason = "locked" | "uninitialized";
+
+function syncPauseReason(error: unknown): SyncPauseReason | null {
+  if (typeof error === "object" && error !== null) {
+    const code = (error as { code?: unknown }).code;
+    if (code === "vault_locked") return "locked";
+    if (code === "vault_not_init") return "uninitialized";
+  }
+  const message = describeError(error);
+  if (message.includes("凭据库已锁定")) return "locked";
+  if (message.includes("凭据库尚未初始化") || message.includes("凭据库未初始化")) return "uninitialized";
+  return null;
+}
+
+function syncErrorSignature(error: unknown): string {
+  const code = typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined;
+  return `${typeof code === "string" ? code : ""}:${describeError(error)}`;
+}
+
+function syncTime(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = typeof value === "number" ? value : Date.parse(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+interface WebSyncHealth {
+  error: string | null;
+  pauseReason: SyncPauseReason | null;
+  warnings: string[];
+  lastAttemptAt: number | null;
+  lastSuccessAt: number | null;
+}
 
 export default function App() {
   return (
@@ -517,6 +618,10 @@ export default function App() {
 function AppShell() {
   const {
     workspaces,
+    activeWorkspaceId,
+    activeProject,
+    projectInventory,
+    setProjectInventory,
     setActiveWorkspace,
     closeWorkspace,
     splitWorkspace,
@@ -536,12 +641,19 @@ function AppShell() {
     rightWidth,
     setRightWidth,
     aiAccountEpoch,
+    accountEpoch,
     toasts,
     dismissToast,
     pushToast,
     connectFocusRevision,
+    reconcileDeletedTargets,
   } = useUi();
+  const closedTabEntries = useClosedTabs((s) => s.stack.entries);
 
+  const visibleWorkspaces = useMemo(
+    () => focusedWorkspaces({ workspaces, activeWorkspaceId, activeProject, projectInventory }),
+    [workspaces, activeWorkspaceId, activeProject, projectInventory],
+  );
   const ws = useActiveWorkspace();
   const pane = ws?.panes.find((p) => p.id === ws.activePaneId) ?? ws?.panes[0] ?? null;
   const tabs = pane?.tabs ?? [];
@@ -574,12 +686,81 @@ function AppShell() {
       ? { text: "凭据库不可用", uninitialized: false, passwordless: false }
       : { text: "…", uninitialized: false, passwordless: false };
   const assetsQuery = useQuery({ queryKey: ["assets"], queryFn: () => assetApi.list() });
+  const groupsQuery = useQuery({
+    queryKey: ["groups"],
+    queryFn: () => assetApi.groupList(),
+    enabled: activeProject !== ALL_PROJECTS,
+  });
+  useEffect(() => {
+    if (activeProject === ALL_PROJECTS || !assetsQuery.data || !groupsQuery.data) return;
+    setProjectInventory({ assets: assetsQuery.data, groups: groupsQuery.data });
+  }, [activeProject, assetsQuery.data, groupsQuery.data, setProjectInventory]);
+  // The authoritative assets refresh drives deletedTarget: workspaces whose
+  // target disappeared are marked and preserved (never auto-disconnected),
+  // and the mark clears when the target reappears. The store's epoch guard
+  // keeps a snapshot from a previous account from mislabeling.
+  useEffect(() => {
+    if (!assetsQuery.data) return;
+    reconcileDeletedTargets(assetsQuery.data, accountEpoch);
+  }, [assetsQuery.data, accountEpoch, reconcileDeletedTargets]);
   const [vaultProtectionSeq, setVaultProtectionSeq] = useState(0);
   const syncLink = useQuery({
     queryKey: ["sync-link"],
     queryFn: () => syncApi.linkGet(),
     enabled: !WEB,
   });
+  const syncStatus = useQuery({
+    queryKey: ["sync-status"],
+    queryFn: async () => (await syncApi.status()) as SyncStatusWithHealth,
+    enabled: !WEB,
+  });
+  const [webSyncHealth, setWebSyncHealth] = useState<WebSyncHealth>({
+    error: null, pauseReason: null, warnings: [], lastAttemptAt: null, lastSuccessAt: null,
+  });
+  const webErrorSignatureRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!WEB) return;
+    const onError = (event: Event) => {
+      const cause = (event as CustomEvent<unknown>).detail;
+      const pauseReason = syncPauseReason(cause);
+      const message = describeError(cause);
+      const signature = syncErrorSignature(cause);
+      setWebSyncHealth((previous) => ({
+        error: pauseReason ? null : message,
+        pauseReason,
+        warnings: [],
+        lastAttemptAt: Date.now(),
+        lastSuccessAt: previous.lastSuccessAt,
+      }));
+      if (pauseReason) {
+        webErrorSignatureRef.current.clear();
+      } else if (!webErrorSignatureRef.current.has(signature)) {
+        webErrorSignatureRef.current.add(signature);
+        pushToast("error", `同步失败：${message}`);
+      }
+    };
+    const onResult = (event: Event) => {
+      const result = (event as CustomEvent<WebSyncResult>).detail;
+      if (!result || typeof result !== "object") return;
+      const completedAt = syncTime(result.lastSuccessAt) ?? Date.now();
+      webErrorSignatureRef.current.clear();
+      setWebSyncHealth({
+        error: null,
+        pauseReason: null,
+        warnings: Array.isArray(result.warnings) ? result.warnings : [],
+        lastAttemptAt: completedAt,
+        lastSuccessAt: completedAt,
+      });
+    };
+    window.addEventListener(WEB_SYNC_ERROR_EVENT, onError);
+    window.addEventListener(WEB_SYNC_RESULT_EVENT, onResult);
+    return () => {
+      window.removeEventListener(WEB_SYNC_ERROR_EVENT, onError);
+      window.removeEventListener(WEB_SYNC_RESULT_EVENT, onResult);
+    };
+  }, [pushToast]);
+
   const lockVault = useCallback(async () => {
     if (vaultStatus.uninitialized) {
       pushToast("info", "凭据库尚未初始化");
@@ -604,15 +785,48 @@ function AppShell() {
       void import("../features/auth/store").then((m) => m.useAuth.getState().refresh());
     }
   }, []);
+  const linkConfigured = !!(syncLink.data?.url && syncLink.data.username && syncLink.data.hasPassword);
+  const syncConfigured = linkConfigured || !!syncStatus.data?.configured;
+  const vaultLocked = !!vaultQuery.data?.initialized && !vaultQuery.data.unlocked;
+  const desktopPauseReason: SyncPauseReason | null = syncStatus.data?.paused || syncStatus.data?.vaultLocked
+    ? syncStatus.data.vaultLocked || vaultLocked ? "locked" : "uninitialized"
+    : syncConfigured && vaultLocked
+      ? "locked"
+      : syncPauseReason(syncStatus.error);
+  const pauseReason = WEB ? webSyncHealth.pauseReason : desktopPauseReason;
+  const lastError = WEB
+    ? webSyncHealth.error
+    : syncStatus.data?.lastError ?? syncLink.data?.lastError ?? "";
+  const lastAttemptAt = WEB ? webSyncHealth.lastAttemptAt : syncTime(syncStatus.data?.lastAttemptAt);
+  const lastSuccessAt = WEB ? webSyncHealth.lastSuccessAt : syncTime(syncStatus.data?.lastSuccessAt);
+  const syncFailed = !pauseReason && !!lastError &&
+    (lastSuccessAt === null || lastAttemptAt === null || lastAttemptAt >= lastSuccessAt);
   const syncStatusText = WEB
-    ? "服务端：浏览器模式"
-    : syncLink.isError
-      ? "同步：不可用"
-      : syncLink.data === undefined
-        ? "同步：…"
-        : syncLink.data?.url && syncLink.data.username && syncLink.data.hasPassword
-          ? "同步：已配置"
-          : "同步：本地模式";
+    ? pauseReason
+      ? `同步已暂停：${pauseReason === "locked" ? "凭据库锁定" : "凭据库未初始化"}`
+      : syncFailed
+        ? "同步失败"
+        : "服务端：浏览器模式"
+    : pauseReason && syncConfigured
+      ? `同步已暂停：${pauseReason === "locked" ? "凭据库锁定" : "凭据库未初始化"}`
+      : syncFailed
+        ? "同步失败"
+        : syncLink.isError && !syncStatus.data
+          ? "同步：不可用"
+          : syncLink.data === undefined && !syncStatus.data
+            ? "同步：…"
+            : syncConfigured
+              ? "同步：已配置"
+              : "同步：本地模式";
+  const syncStatusTitle = syncFailed
+    ? `${lastError}${lastAttemptAt ? ` · 上次尝试：${formatTime(lastAttemptAt)}` : ""}`
+    : [
+        lastSuccessAt ? `上次成功：${formatTime(lastSuccessAt)}` : null,
+        lastAttemptAt ? `上次尝试：${formatTime(lastAttemptAt)}` : null,
+      ].filter(Boolean).join(" · ") || undefined;
+  const syncWarnings = WEB ? webSyncHealth.warnings : syncStatus.data?.warnings ?? [];
+  const showSyncWarnings = syncWarnings.length > 0 && !pauseReason;
+  const syncStatusClass = syncFailed ? "text-red-300" : pauseReason && (WEB || syncConfigured) ? "text-amber-300" : "";
   const [wsMenu, setWsMenu] = useState<ContextMenuState | null>(null);
   const viewport = useWorkspaceViewport();
   useKeyboardInset();
@@ -681,6 +895,7 @@ function AppShell() {
       return current?.kind === "terminal";
     }) ?? false);
   const activeSessionId = ws?.kind === "session" ? ws.sessionId : undefined;
+  const activeSession = sessions.find((session) => session.id === activeSessionId);
   const connectedList = sessions.filter((s) => s.status === "connected");
   const connectedSessions = connectedList.length;
   const idleSessions = connectedList.filter(
@@ -793,6 +1008,11 @@ function AppShell() {
   const openSettings = useCallback(() => {
     useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
   }, []);
+  const openSyncSettings = useCallback(() => {
+    openSettings();
+    window.location.hash = "#settings-account";
+    window.setTimeout(() => document.getElementById("settings-account")?.scrollIntoView({ block: "start" }), 0);
+  }, [openSettings]);
 
   useEffect(() => {
     if (window.location.hash === "#settings-account") openSettings();
@@ -849,7 +1069,7 @@ function AppShell() {
     };
     const sid = ws?.sessionId;
     const s = sid ? sessions.find((x) => x.id === sid) : undefined;
-    if (s) {
+    if (s && ws) {
       if (isSessionReconnectPending(s.id)) {
         pushToast("info", "正在重连，连接成功后自动新建终端");
         return;
@@ -860,7 +1080,7 @@ function AppShell() {
       }
       pushToast("info", "正在重连，连接成功后自动新建终端");
       try {
-        const fresh = await reconnectSessionAndWait(s);
+        const fresh = await reconnectWorkspaceSession(ws, s, { isCurrent });
         if (!isCurrent()) return;
         if (!fresh) {
           pushToast("info", "已取消重连");
@@ -875,20 +1095,8 @@ function AppShell() {
       return;
     }
     if (ws?.assetId && ws.kind !== "db") {
-      // A device workspace's assetId is a pseudo asset (device/<deviceId>) not found in the asset table; go through device connect.
-      if (ws.assetKind === "device") {
-        const outcome = await connectDevice({
-          id: ws.assetId.slice("device/".length),
-          name: ws.title,
-        });
-        if (!isCurrent()) return;
-        if (!outcome.ok && !outcome.canceled) {
-          pushToast("error", outcome.error ?? "重新连接失败");
-        }
-        return;
-      }
       try {
-        const fresh = await connectWithHostKeyConfirm(() => sessionApi.connect(ws.assetId as string), isCurrent);
+        const fresh = await reconnectDeadHost(ws, { isCurrent });
         if (!isCurrent()) return;
         if (!fresh) {
           pushToast("info", "已取消重连");
@@ -907,7 +1115,7 @@ function AppShell() {
       return;
     }
     void openLocalTerminal();
-  }, [ws?.sessionId, ws?.assetId, sessions, setSessions, openLocalTerminal, pushToast]);
+  }, [ws, sessions, setSessions, openLocalTerminal, pushToast]);
 
   const closeAllWorkspaces = useCallback(async () => {
     const state = useUi.getState();
@@ -925,9 +1133,9 @@ function AppShell() {
   const openWorkspaceSwitcher = useCallback(
     (anchor: HTMLElement) => {
       const rect = anchor.getBoundingClientRect();
-      const items: MenuItem[] = workspaces.map((w) => {
+      const items: MenuItem[] = visibleWorkspaces.map((w) => {
         const Icon = workspaceIcon(w);
-        const status = sessions.find((s) => s.id === w.sessionId)?.status;
+        const session = sessions.find((s) => s.id === w.sessionId);
         const tabCount = w.panes.flatMap((p) => p.tabs).length;
         return {
           kind: "item",
@@ -936,7 +1144,7 @@ function AppShell() {
           hint: [
             w.kind === "tools" ? "工具" : null,
             w.panes.length > 1 ? "已分屏" : null,
-            status ? sessionStatusText(status) : null,
+            sessionReconnectStatusText(session) || (session ? sessionStatusText(session.status) : null),
             `${tabCount} 个标签`,
           ]
             .filter(Boolean)
@@ -962,15 +1170,34 @@ function AppShell() {
           onSelect: () => void closeAllWorkspaces(),
         });
       }
+      items.push({ kind: "separator" });
+      const latestClosed = closedTabEntries[0];
+      items.push({
+        kind: "item",
+        label: "恢复关闭的标签",
+        icon: <IconHistory size={12} />,
+        hint: latestClosed?.title,
+        accel: `${modHint()}+Shift+T`,
+        disabled: !latestClosed,
+        onSelect: () => void restoreClosedTab(),
+      });
       setWsMenu({ x: rect.left, y: rect.bottom + 4, title: "工作区", items });
     },
-    [workspaces, sessions, setActiveWorkspace, closeWorkspace, closeAllWorkspaces],
+    [visibleWorkspaces, workspaces, sessions, setActiveWorkspace, closeWorkspace, closeAllWorkspaces, closedTabEntries],
   );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const hit = matchAppKeybinding(e);
-      if (!hit) return;
+      if (!hit) {
+        // Restore-closed-tab is a fixed Mod+Shift+T (same as the switcher menu accel); it is
+        // intentionally outside the rebindable keybinding set.
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "t") {
+          e.preventDefault();
+          void restoreClosedTab();
+        }
+        return;
+      }
       switch (hit.action) {
         case "commandPalette":
           e.preventDefault();
@@ -991,6 +1218,24 @@ function AppShell() {
         case "newTerminal":
           e.preventDefault();
           void openNewTerminal();
+          return;
+        case "nextWorkspace":
+          if (cycleActiveWorkspace(1)) e.preventDefault();
+          return;
+        case "previousWorkspace":
+          if (cycleActiveWorkspace(-1)) e.preventDefault();
+          return;
+        case "nextTab":
+          if (cycleActiveTab(1)) e.preventDefault();
+          return;
+        case "previousTab":
+          if (cycleActiveTab(-1)) e.preventDefault();
+          return;
+        case "focusUpperPane":
+          if (cycleActivePane(-1)) e.preventDefault();
+          return;
+        case "focusLowerPane":
+          if (cycleActivePane(1)) e.preventDefault();
           return;
         case "toggleSplit": {
           e.preventDefault();
@@ -1047,6 +1292,7 @@ function AppShell() {
         openTextPrompt({ message, value, ...options, resolve });
       });
     });
+    registerDialogEpochSource(() => useUi.getState().accountEpoch);
   }, []);
 
   useEffect(() => {
@@ -1113,43 +1359,52 @@ function AppShell() {
     void useUi.getState().resyncSessions({ silent: true });
   }, []);
 
-  // With auth=on, when login/register/init brings the gate to ready, account-level requests issued while mounted behind the gate
-  // all hit 401; resetQueries cancels in-flight old fetches and refetches (invalidateQueries joins the old fetch when data is empty,
-  // and the 401 still lands). The reverse direction (logout/session expiry back to login) resets the same key set and clears the session
-  // list, SQL runtime, and vault state, so the previous session's data cannot leak into the next account. Toasts are not all cleared on ready:
-  // the 8s/3.5s auto-dismiss already bounds their lifetime, and terminal/file/AI and non-401 errors remain valid feedback after login.
   useEffect(() => {
-    if (!WEB) return;
-    let cancelled = false;
-    let unsubscribe: (() => void) | undefined;
-    void import("../features/auth/store").then((m) => {
-      if (cancelled) return;
-      unsubscribe = m.useAuth.subscribe((s, prev) => {
-        const accountChanged = s.user?.id !== prev.user?.id;
-        if (accountChanged) {
-          useUi.getState().resetAiAccount();
-          advanceLayoutAccount();
-          useUi.getState().resetAccountWorkspaces();
-          if (s.gate === "ready") onRemoteChange(null);
-          for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
-        }
-        if (accountChanged || (prev.gate === "ready" && s.gate === "login")) resetTransferQueue();
-        if (s.gate === prev.gate) return;
-        if (s.gate === "ready" && prev.gate !== "loading") {
-          onRemoteChange(null);
-          if (!accountChanged) for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
-          void useUi.getState().resyncSessions({ silent: true });
-        } else if (prev.gate === "ready" && s.gate === "login") {
-          if (!accountChanged) for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
-          if (!accountChanged) useUi.getState().resetSessions({ clearWorkspaceRuntime: true });
-        }
-      });
-    });
-    return () => {
-      cancelled = true;
-      unsubscribe?.();
+    let disposed = false;
+    let inFlight = false;
+    let queued = false;
+    const refresh = () => {
+      if (disposed) return;
+      if (inFlight) {
+        queued = true;
+        return;
+      }
+      inFlight = true;
+      const finish = () => {
+        inFlight = false;
+        if (!queued || disposed) return;
+        queued = false;
+        refresh();
+      };
+      void useUi.getState().resyncSessions({ silent: true }).then(finish, finish);
     };
-  }, [queryClient]);
+    const offAssetData = onAssetDataChanged(refresh);
+    const subscriptions: (() => void)[] = [];
+    for (const topic of ["sync://status", "sync://round-complete"]) {
+      try {
+        void Promise.resolve(listenEvent(topic, refresh)).then((off) => {
+          if (typeof off !== "function") return;
+          if (disposed) off();
+          else subscriptions.push(off);
+        }).catch((error: unknown) => {
+          console.warn("[NexTerm] Failed to subscribe asset session refresh", error);
+        });
+      } catch (error) {
+        console.warn("[NexTerm] Failed to subscribe asset session refresh", error);
+      }
+    }
+    return () => {
+      disposed = true;
+      queued = false;
+      offAssetData();
+      for (const off of subscriptions) off();
+    };
+  }, []);
+
+  // With auth=on, when login/register/init brings the gate to ready, account-level requests issued while mounted behind the gate
+  // all hit 401; the wiring resets those query keys and clears account-scoped caches on switches. Toasts are not all cleared on ready:
+  // the 8s/3.5s auto-dismiss already bounds their lifetime, and terminal/file/AI and non-401 errors remain valid feedback after login.
+  useEffect(() => wireAccountSwitchCleanup(queryClient), [queryClient]);
 
   useEffect(() => {
     if (bootLocalTried) return;
@@ -1303,6 +1558,7 @@ function AppShell() {
         跳到主内容
       </a>
       <DeviceSessionBoundary />
+      <ForwardStartupRecovery />
 
       <div className="flex min-h-0 flex-1">
         <nav
@@ -1386,6 +1642,7 @@ function AppShell() {
                   <WorkspaceStatusGlyph status={sessions.find((s) => s.id === ws.sessionId)?.status} />
                   <IconChevronDown size={12} />
                 </button>
+                <WorkspaceReconnectStatus session={activeSession} />
                 <span
                   className="flex min-w-0 items-center gap-1.5 text-xs text-neutral-500"
                   data-wails-drag-region style={wailsDragRegionStyle}
@@ -1457,6 +1714,23 @@ function AppShell() {
             )}
           </header>
 
+          <ProjectWorkspaceStrip
+            workspaces={workspaces}
+            activeWorkspaceId={activeWorkspaceId}
+            activeProject={activeProject}
+            projectInventory={projectInventory}
+            groups={groupsQuery.data ?? []}
+            sessions={sessions}
+            onSelect={setActiveWorkspace}
+            onReorder={(dragId, overId, before) => {
+              const current = useUi.getState();
+              const from = current.workspaces.findIndex((workspace) => workspace.id === dragId);
+              const over = current.workspaces.findIndex((workspace) => workspace.id === overId);
+              if (from < 0 || over < 0) return;
+              const to = before ? (from < over ? over - 1 : over) : from < over ? over : over + 1;
+              current.moveWorkspace(from, to);
+            }}
+          />
           <TakeoverBanner />
           <UpdateBanner onOpenSettings={openSettings} />
           <DekUnlockBanner />
@@ -1479,6 +1753,7 @@ function AppShell() {
               )}
             </div>
           )}
+          <WorkspaceRestoreBanner />
           {ws?.deletedTarget && (
             <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-500/30 bg-amber-950/30 px-4 py-2 text-xs text-amber-300">
               <span>「{ws.title}」的资产已删除。现有标签可继续查看，但此工作区无法重新连接。</span>
@@ -1526,7 +1801,9 @@ function AppShell() {
               ) : leftMode === "files" && ws?.sessionId ? (
                 <FileTree key={ws.sessionId} sessionId={ws.sessionId} />
               ) : (
-                <AssetTree />
+                // Keyed by account epoch: on account switch the tree remounts so template, runbook,
+                // inventory discovery/watch, and bulk panels never show the previous account's state.
+                <AssetTree key={accountEpoch} />
               )}
               <ResizeHandle
                 side="left"
@@ -1542,50 +1819,57 @@ function AppShell() {
           <main id="nx-main" tabIndex={-1} className="nx-workspace-main min-w-0 flex-1">
             {workspaces.length === 0 ? (
               sessions.length > 0 ? (
-                <WorkspaceEmpty onNew={openNewTerminal} />
+                <WorkspaceEmpty onNew={() => void openNewTerminal()} />
               ) : (
-                <EmptyState onLocal={openLocalTerminal} onPalette={() => setPaletteOpen(true)} />
+                <EmptyState onLocal={() => void openLocalTerminal()} onPalette={() => setPaletteOpen(true)} />
               )
             ) : (
-              workspaces.map((w) => {
-                const wsActive = w.id === ws?.id;
-                const split = w.panes.length > 1;
-                const groups = w.panes.map((p) => (
-                  <PaneGroup
-                    key={p.id}
-                    pane={p}
-                    idPrefix={`${w.id}-${p.id}`}
-                    workspaceId={w.id}
-                    active={wsActive && p.id === w.activePaneId}
-                    visible={wsActive}
-                    split={split}
-                    canSplit={!split}
-                    splitAllowed={viewport.splitAllowed}
-                    onToggleSplit={() => {
-                      if (split) void unsplitWorkspace(w.panes[1].id, w.id);
-                      else if (viewport.splitAllowed) splitWorkspace(w.id);
-                    }}
-                    onActivate={() => setActivePane(p.id, w.id)}
-                    onNewTerminal={openNewTerminal}
-                    leftOpen={leftDockOpen}
-                    onToggleLeft={() => setLeftOpen(!leftDockOpen)}
-                  />
-                ));
-                return (
-                  <div
-                    key={w.id}
-                    id={`nx-ws-panel-${w.id}`}
-                    className={wsActive ? "h-full min-h-0" : "hidden"}
-                  >
-                    <SplitStack
-                      ratio={w.splitRatio}
-                      onRatio={(r) => setSplitRatio(r, w.id)}
-                      top={groups[0]}
-                      bottom={groups[1]}
-                    />
+              <>
+                {visibleWorkspaces.length === 0 && (
+                  <div role="status" className="flex h-full items-center justify-center px-6 text-center text-sm text-neutral-500">
+                    当前项目没有打开的工作区。切换项目不会断开其他工作区。
                   </div>
-                );
-              })
+                )}
+                {workspaces.map((w) => {
+                  const wsActive = w.id === ws?.id;
+                  const split = w.panes.length > 1;
+                  const groups = w.panes.map((p) => (
+                    <PaneGroup
+                      key={p.id}
+                      pane={p}
+                      idPrefix={`${w.id}-${p.id}`}
+                      workspaceId={w.id}
+                      active={wsActive && p.id === w.activePaneId}
+                      visible={wsActive}
+                      split={split}
+                      canSplit={!split}
+                      splitAllowed={viewport.splitAllowed}
+                      onToggleSplit={() => {
+                        if (split) void unsplitWorkspace(w.panes[1].id, w.id);
+                        else if (viewport.splitAllowed) splitWorkspace(w.id);
+                      }}
+                      onActivate={() => setActivePane(p.id, w.id)}
+                      onNewTerminal={() => void openNewTerminal()}
+                      leftOpen={leftDockOpen}
+                      onToggleLeft={() => setLeftOpen(!leftDockOpen)}
+                    />
+                  ));
+                  return (
+                    <div
+                      key={w.id}
+                      id={`nx-ws-panel-${w.id}`}
+                      className={wsActive ? "h-full min-h-0" : "hidden"}
+                    >
+                      <SplitStack
+                        ratio={w.splitRatio}
+                        onRatio={(r) => setSplitRatio(r, w.id)}
+                        top={groups[0]}
+                        bottom={groups[1]}
+                      />
+                    </div>
+                  );
+                })}
+              </>
             )}
           </main>
 
@@ -1643,10 +1927,20 @@ function AppShell() {
             )}
           </div>
           <div className="nx-statusbar-side">
-            <span className="nx-statusbar-truncate flex items-center gap-1.5">
+            <span className={`nx-statusbar-truncate flex items-center gap-1.5 ${syncStatusClass}`} title={syncStatusTitle}>
               <IconNetwork size={11} />
               {syncStatusText}
             </span>
+            {showSyncWarnings && (
+              <button
+                type="button"
+                className="nx-badge nx-badge-amber shrink-0"
+                title={syncWarnings.join("\n")}
+                onClick={openSyncSettings}
+              >
+                同步警告 {syncWarnings.length}
+              </button>
+            )}
           </div>
         </footer>
       </div>
@@ -1663,23 +1957,40 @@ function AppShell() {
                 ? "nx-alert-success"
                 : "border-neutral-700 bg-neutral-800/95 text-neutral-100";
           return (
-            <button
+            <div
               key={t.id}
               className={`pointer-events-auto flex items-start gap-2.5 rounded-lg border px-3.5 py-2.5 text-left text-xs leading-relaxed shadow-[var(--shadow-pop)] backdrop-blur ${tone}`}
-              onClick={() => dismissToast(t.id)}
             >
-              <Icon
-                size={14}
-                className={
-                  t.kind === "error"
-                    ? "mt-px shrink-0 text-red-300"
-                    : t.kind === "success"
-                      ? "mt-px shrink-0 text-green-300"
-                      : "mt-px shrink-0 text-blue-300"
-                }
-              />
-              <span className="min-w-0 flex-1">{t.text}</span>
-            </button>
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-start gap-2.5 text-left"
+                onClick={() => dismissToast(t.id)}
+              >
+                <Icon
+                  size={14}
+                  className={
+                    t.kind === "error"
+                      ? "mt-px shrink-0 text-red-300"
+                      : t.kind === "success"
+                        ? "mt-px shrink-0 text-green-300"
+                        : "mt-px shrink-0 text-blue-300"
+                  }
+                />
+                <span className="min-w-0 flex-1">{t.text}</span>
+              </button>
+              {t.action ? (
+                <button
+                  type="button"
+                  className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
+                  onClick={() => {
+                    dismissToast(t.id);
+                    t.action?.onSelect();
+                  }}
+                >
+                  {t.action.label}
+                </button>
+              ) : null}
+            </div>
           );
         })}
       </div>
@@ -1706,6 +2017,7 @@ function AppShell() {
           onSaved={() => {
             setPaletteEditingAsset(null);
             void queryClient.invalidateQueries({ queryKey: ["assets"] });
+            void queryClient.invalidateQueries({ queryKey: ["asset-search"] });
             void queryClient.invalidateQueries({ queryKey: ["credentials"] });
           }}
         />
@@ -1750,7 +2062,6 @@ function PaneGroup({
   onToggleLeft,
 }: PaneGroupProps) {
   const setActiveTab = useUi((s) => s.setActiveTab);
-  const updateTab = useUi((s) => s.updateTab);
   const moveTabInPane = useUi((s) => s.moveTabInPane);
   const moveTab = (fromIndex: number, toIndex: number) =>
     moveTabInPane(pane.id, fromIndex, toIndex);
@@ -1771,12 +2082,12 @@ function PaneGroup({
       if (!trimmed) return;
       const tabId = pane.tabs.find((t) => t.id === id)?.tabId;
       if (!tabId) {
-        updateTab(id, { title: trimmed, renamedByUser: true });
+        applyAuthoritativeTabTitle(id, trimmed);
         return;
       }
       try {
         const info = await terminalApi.renameTab(tabId, trimmed);
-        updateTab(id, { title: info.title || trimmed, renamedByUser: true });
+        applyAuthoritativeTabTitle(id, info.title || trimmed);
         return;
       } catch (error) {
         draft = trimmed;
@@ -1872,8 +2183,9 @@ function PaneGroup({
             const Icon = tabIcon(t);
             const isActive = t.id === activeTabId;
             return (
-              <div
-                key={t.id}
+              <TabStripItem key={t.id} tab={t}>
+                {(unread) => (
+                  <div
                 role="tab"
                 data-tab-id={t.id}
                 id={`nx-tab-${idPrefix}-${t.id}`}
@@ -1944,16 +2256,17 @@ function PaneGroup({
                   e.preventDefault();
                   openTabMenu(t, e.clientX, e.clientY);
                 }}
-                title={tabTooltip(t)}
+                title={tabTooltip(t, unread)}
               >
                 <Icon size={13} />
-                <span className="truncate">{t.title}</span>
+                <TabStripTitle tab={t} />
+                {t.kind === "terminal" && <TabProductionBadge sessionId={t.sessionId} />}
                 {t.closeError && (
                   <span className="flex shrink-0 items-center text-red-400" role="img" aria-label={`关闭失败：${t.closeError}`}>
                     <IconAlert size={11} />
                   </span>
                 )}
-                {t.unread && (
+                {unread && (
                   <span
                     className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400"
                     role="img"
@@ -1974,7 +2287,9 @@ function PaneGroup({
                     <IconClose size={10} />
                   </button>
                 )}
-              </div>
+                  </div>
+                )}
+              </TabStripItem>
             );
           })}
         </div>
@@ -2032,7 +2347,7 @@ function PaneGroup({
                   tab={t}
                   active={t.id === activeTabId && visible}
                   workspaceId={workspaceId}
-                  onClose={() => void requestCloseTab(t.id)}
+                  onClose={requestCloseTab}
                 />
               </ErrorBoundary>
             </div>
@@ -2150,7 +2465,30 @@ function isSessionAlive(status: string): boolean {
   return status === "connected" || status === "connecting" || status === "reconnecting";
 }
 
-function PaneForTab({
+// Shared manual-restore placeholder for restorePending tabs: nothing mounts and no
+// connection is dialed until the user explicitly reconnects via reconnectRestoredTab.
+function RestoredTabPlaceholder({ tab, onClose }: { tab: AppTab; onClose: () => void }) {
+  const reopen = () => {
+    void reconnectRestoredTab(tab.id).then((result) => {
+      if (!result.ok && result.error) useUi.getState().pushToast("error", result.error);
+    });
+  };
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-neutral-400">
+      <span>
+        {tab.kind === "terminal"
+          ? "旧终端进程已结束，不会自动重新连接。"
+          : "旧文件目标已恢复，连接尚未启动，不会自动重新打开。"}
+      </span>
+      <div className="flex items-center gap-2">
+        <button type="button" className="nx-btn nx-btn-outline" onClick={reopen}>重新连接</button>
+        <button type="button" className="nx-btn nx-btn-outline" onClick={onClose}>关闭标签</button>
+      </div>
+    </div>
+  );
+}
+
+const PaneForTab = memo(function PaneForTab({
   tab,
   active,
   workspaceId,
@@ -2159,10 +2497,12 @@ function PaneForTab({
   tab: AppTab;
   active: boolean;
   workspaceId: string;
-  onClose: () => void;
+  onClose: (id: string) => Promise<void>;
 }) {
   const workspaceRuntimeEpoch = useUi((state) => state.workspaceRuntimeEpoch);
   const restorePending = useUi((state) => state.workspaces.find((workspace) => workspace.id === workspaceId)?.restorePending);
+  const sessions = useUi((state) => state.sessions);
+  const close = () => void onClose(tab.id);
   if (restorePending) {
     return (
       <div className="flex h-full items-center justify-center px-6 text-center text-sm text-neutral-400">
@@ -2174,9 +2514,12 @@ function PaneForTab({
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-neutral-400">
         <span>旧容器终端不会自动重新执行。请在 Docker 容器列表中重新打开。</span>
-        <button type="button" className="nx-btn nx-btn-outline" onClick={onClose}>关闭旧标签</button>
+        <button type="button" className="nx-btn nx-btn-outline" onClick={close}>关闭旧标签</button>
       </div>
     );
+  }
+  if (tab.restorePending && (tab.kind === "terminal" || tab.kind === "files" || tab.kind === "log")) {
+    return <RestoredTabPlaceholder tab={tab} onClose={close} />;
   }
   switch (tab.kind) {
     case "terminal":
@@ -2199,13 +2542,15 @@ function PaneForTab({
     case "files":
       if (!tab.sessionId) return <EmptyState />;
       return tab.path ? (
-        <FileEditor sessionId={tab.sessionId} path={tab.path} onClose={onClose} />
+        <FileEditor sessionId={tab.sessionId} path={tab.path} onClose={close} />
       ) : (
         <FileBrowser sessionId={tab.sessionId} />
       );
     case "log":
+      if (isMultiHostLogTabId(tab.id)) return <MultiHostLogTail sessions={sessions} />;
+      if (isFleetHealthTabId(tab.id)) return <FleetHealthPanel sessions={sessions} visible={active} />;
       if (!tab.sessionId || !tab.path) return <EmptyState />;
-      return <LogViewer sessionId={tab.sessionId} path={tab.path} onClose={onClose} />;
+      return <LogViewer sessionId={tab.sessionId} path={tab.path} onClose={close} />;
     case "docker":
       return tab.sessionId ? <DockerPanel sessionId={tab.sessionId} visible={active} /> : <EmptyState />;
     case "db":
@@ -2219,6 +2564,8 @@ function PaneForTab({
       ) : (
         <EmptyState />
       );
+    case "execBatch":
+      return <ExecBatchPanel sessions={sessions} />;
     case "settings":
       return <SettingsView />;
     case "audit":
@@ -2246,7 +2593,7 @@ function PaneForTab({
     default:
       return <EmptyState />;
   }
-}
+});
 
 function WorkspaceEmpty({ onNew }: { onNew: () => void }) {
   return (

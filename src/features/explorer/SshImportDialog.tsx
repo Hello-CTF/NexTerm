@@ -1,6 +1,6 @@
 import { useId, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { sshImportApi, type SshImportItemAction, type SshImportSource } from "../../ipc/commands";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { assetApi, sshImportApi, type SshImportItemAction, type SshImportSource } from "../../ipc/commands";
 import type {
   SshImportApplyDto,
   SshImportHostDto,
@@ -8,12 +8,14 @@ import type {
   SshImportPreviewDto,
 } from "../../ipc/types";
 import { describeError } from "../../ui/errorText";
+import { notifyAssetDataChanged } from "../../ipc/assetEvents";
 import { WEB } from "../../ipc/env";
-import { isMobile } from "../../app/platform";
+import { isMac, isMobile } from "../../app/platform";
 import { useUi } from "../../app/store";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { IconAlert, IconKey, IconServer, IconXCircle } from "../../ui/icons";
 import { useVaultInitGate } from "../credentials/useVaultInitGate";
+import { normalizeAssetTags } from "./assetSearch";
 
 type Phase = "form" | "loading" | "preview" | "applying" | "done";
 
@@ -67,8 +69,15 @@ function normalizeSshImportPreview(preview: SshImportPreviewDto): SshImportPrevi
 export function SshImportDialog({ onClose }: { onClose: () => void }) {
   const { pushToast } = useUi();
   const qc = useQueryClient();
+  const groups = useQuery({
+    queryKey: ["groups"],
+    queryFn: () => assetApi.groupList(),
+    refetchOnWindowFocus: false,
+  });
   const [source, setSource] = useState<SshImportSource>("ssh-config");
   const [path, setPath] = useState("");
+  const [groupId, setGroupId] = useState("");
+  const [tags, setTags] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [phase, setPhase] = useState<Phase>("form");
   const [preview, setPreview] = useState<SshImportPreviewDto | null>(null);
@@ -88,10 +97,16 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
   });
 
   const termius = source === "termius";
+  const termiusSupported = !WEB && !isMobile() && isMac();
+  const termiusUnsupported = !WEB && !isMobile() && !isMac();
   // ssh-home always scans the default ~/.ssh, without the hidden paths filled in on other source pages
   const effectivePath = source === "ssh-home" ? undefined : path.trim() || undefined;
 
   const runPreview = async () => {
+    if (termius && !termiusSupported) {
+      setError("当前平台不支持 Termius 导入：读取系统钥匙串目前仅支持 macOS。");
+      return;
+    }
     setPhase("loading");
     setError(null);
     try {
@@ -150,6 +165,8 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
         source,
         path: effectivePath,
         ...(termius ? { confirmed } : {}),
+        ...(groupId ? { groupId } : {}),
+        ...(tags.trim() ? { tags: normalizeAssetTags(tags) } : {}),
         hosts,
         keys,
       });
@@ -157,14 +174,25 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
       setApplyResult(result);
       setPhase("done");
       void qc.invalidateQueries({ queryKey: ["assets"] });
+      void qc.invalidateQueries({ queryKey: ["asset-search"] });
       void qc.invalidateQueries({ queryKey: ["credentials"] });
+      notifyAssetDataChanged();
       pushToast(
         "success",
         `导入完成 · 新增 ${result.assetsCreated} 台主机 / ${result.credentialsCreated} 条密钥`,
       );
     } catch (e) {
-      setError(describeError(e));
-      setPhase("preview");
+      const message = describeError(e);
+      setError(`导入失败：${message}`);
+      if (message.includes("重新预览")) {
+        setPreview(null);
+        setHostActions({});
+        setKeyActions({});
+        setApplyResult(null);
+        setPhase("form");
+      } else {
+        setPhase("preview");
+      }
     }
   };
 
@@ -255,12 +283,48 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                       <button
                         type="button"
                         className={`nx-segment-item ${source === "termius" ? "is-active" : ""}`}
-                        onClick={() => setSource("termius")}
+                        disabled={!termiusSupported}
+                        title={termiusSupported ? "从本机 Termius 导入" : "Termius 导入目前仅支持 macOS"}
+                        onClick={() => {
+                          if (termiusSupported) setSource("termius");
+                        }}
                       >
                         Termius
                       </button>
                     )}
                   </div>
+                  {termiusUnsupported && (
+                    <div className="nx-hint mt-1.5" role="note">
+                      当前平台不支持 Termius 导入：读取系统钥匙串目前仅支持 macOS。
+                    </div>
+                  )}
+                </div>
+
+                <div className="nx-form-row">
+                  <label className="nx-label" htmlFor="ssh-import-group">导入到分组</label>
+                  <select
+                    id="ssh-import-group"
+                    className="nx-select"
+                    value={groupId}
+                    onChange={(e) => setGroupId(e.target.value)}
+                  >
+                    <option value="">不指定（新资产不分组，覆盖保留原分组）</option>
+                    {(groups.data ?? []).map((group) => (
+                      <option key={group.id} value={group.id}>{group.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="nx-form-row">
+                  <label className="nx-label" htmlFor="ssh-import-tags">统一标签</label>
+                  <input
+                    key="ssh-import-tags"
+                    id="ssh-import-tags"
+                    className="nx-input"
+                    value={tags}
+                    onChange={(e) => setTags(e.target.value)}
+                    placeholder="可选，用逗号分隔"
+                  />
+                  <div className="nx-hint mt-1.5">只给本次导入的主机添加统一标签；不读取来源分组信息。</div>
                 </div>
 
                 {source === "ssh-config" && (
@@ -269,6 +333,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                       {WEB ? "服务器 SSH 配置文件路径" : "配置文件路径"}
                     </label>
                     <input
+                      key="ssh-config-path"
                       id={pathId}
                       ref={pathInputRef}
                       className="nx-input font-mono text-[12px]"

@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   askChoice: vi.fn(),
   askChoiceRemember: vi.fn(),
   closeTab: vi.fn(),
+  listLive: vi.fn().mockResolvedValue([]),
+  listDurable: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("../../ui/dialogs", () => ({
   ask: mocks.ask,
@@ -17,7 +19,7 @@ vi.mock("../../ipc/commands", () => ({
   dbApi: {},
   sessionApi: {},
   vaultApi: {},
-  terminalApi: { closeTab: mocks.closeTab },
+  terminalApi: { closeTab: mocks.closeTab, listLive: mocks.listLive, listDurable: mocks.listDurable },
 }));
 
 import type { AppTab, Pane, Workspace } from "../../app/store";
@@ -47,6 +49,21 @@ function sessionInfo(kind: string, id = "s"): SessionInfo {
     status: "connected",
     tabs: [],
     createdAt: 0,
+  };
+}
+function liveTab(tabId: string, exited = false) {
+  return {
+    tabId,
+    sessionId: "s",
+    sessionName: "session",
+    sessionKind: "ssh",
+    cols: 80,
+    rows: 24,
+    controller: null,
+    subscribers: 1,
+    viewers: 1,
+    exited,
+    lastOutputMsAgo: 0,
   };
 }
 function ws(panes: Pane[]): Workspace {
@@ -93,14 +110,31 @@ describe("close = detach (M111)", () => {
     expect(toastText()).toContain("已转入后台");
   });
 
-  it("closes an exited terminal directly without a dialog", async () => {
+  it.each(["ssh", "device"] as const)("keeps missing %s backend state unknown and never defaults to kill", async (kind) => {
+    const tab = { ...terminal(), exited: false };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }], kind);
+    if (kind === "ssh") mocks.listDurable.mockRejectedValueOnce(new Error("durable unavailable"));
+    mocks.closeTab.mockRejectedValueOnce(new Error("offline"));
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "detach", "s");
+    const remaining = useUi.getState().workspaces[0]?.panes[0]?.tabs[0];
+    expect(remaining?.dead).not.toBe(true);
+    expect(remaining?.exited).toBeUndefined();
+    expect(remaining?.closeError).toBe("offline");
+  });
+
+  it("uses default cleanup for a currently exited terminal without a dialog", async () => {
     const tab = { ...terminal(), exited: true };
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    mocks.listLive.mockResolvedValueOnce([liveTab("kernel-terminal", true)]);
 
     await requestCloseTab(tab.id);
 
     expect(mocks.ask).not.toHaveBeenCalled();
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill", "s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", undefined, "s");
+    expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-terminal", "kill", "s");
     expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
   });
 
@@ -122,7 +156,10 @@ describe("close = detach (M111)", () => {
 
     await requestCloseTab(tab.id);
 
-    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([{ ...tab, closeError: "boom" }]);
+    const remaining = useUi.getState().workspaces[0].panes[0].tabs;
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]).toMatchObject({ ...tab, closeError: "boom" });
+    expect(remaining[0].exited).toBeUndefined();
     expect(toastText()).toContain("终端操作失败");
   });
 
@@ -230,53 +267,63 @@ describe("close = detach (M111)", () => {
     expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
   });
 
-  it("workspace close cleans up exited backend tabs without asking", async () => {
+  it("workspace close uses default cleanup for a currently exited backend tab", async () => {
     const tabs = [terminal("t1"), { ...terminal("x1"), exited: true }];
     seed([{ id: "p", tabs, activeTabId: "t1" }]);
+    mocks.listLive.mockResolvedValueOnce([liveTab("kernel-t1"), liveTab("kernel-x1", true)]);
 
     await useUi.getState().closeWorkspace("ws");
 
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s");
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "kill", "s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", undefined, "s");
+    expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-x1", "kill", "s");
     expect(useUi.getState().workspaces).toEqual([]);
   });
 
-  it("unsplit cleans up exited backend tabs without asking", async () => {
+  it("unsplit uses default cleanup for a currently exited backend tab", async () => {
     const panes = [
       { id: "p1", tabs: [terminal("keep")], activeTabId: "keep" },
       { id: "p2", tabs: [{ ...terminal("x1"), exited: true }], activeTabId: "x1" },
     ];
     seed(panes);
+    mocks.listLive.mockResolvedValueOnce([liveTab("kernel-x1", true)]);
 
     await useUi.getState().unsplitWorkspace("p2", "ws");
 
     expect(mocks.ask).not.toHaveBeenCalled();
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "kill", "s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", undefined, "s");
+    expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-x1", "kill", "s");
     expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
   });
 
-  it("workspace close with only exited tabs asks nothing and still reclaims them", async () => {
+  it("workspace close with only currently exited tabs asks nothing and uses default cleanup", async () => {
     const tabs = [{ ...terminal("x1"), exited: true }, { ...terminal("x2"), exited: true }];
     seed([{ id: "p", tabs, activeTabId: "x1" }]);
+    mocks.listLive.mockResolvedValueOnce([liveTab("kernel-x1", true), liveTab("kernel-x2", true)]);
 
     await useUi.getState().closeWorkspace("ws");
 
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledTimes(2);
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", undefined, "s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x2", undefined, "s");
+    expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-x1", "kill", "s");
     expect(useUi.getState().workspaces).toEqual([]);
   });
 
-  it("workspace close combines detach, confirmed blocked kill, and exited cleanup", async () => {
+  it("workspace close separates detach, confirmed blocked kill, and default exited cleanup", async () => {
     const tabs = [terminal("t1"), execTerminal("e1"), { ...terminal("x1"), exited: true }];
     seed([{ id: "p", tabs, activeTabId: "t1" }]);
+    mocks.listLive.mockResolvedValueOnce([liveTab("kernel-t1"), liveTab("kernel-x1", true)]);
 
     await useUi.getState().closeWorkspace("ws");
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-e1", "kill");
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "kill", "s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", undefined, "s");
+    expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-x1", "kill", "s");
     expect(useUi.getState().workspaces).toEqual([]);
   });
 });

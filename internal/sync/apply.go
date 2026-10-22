@@ -84,7 +84,7 @@ func (s *Service) ApplyObjects(ctx context.Context, request ApplyObjectsRequest)
 				s.engine.logger.Warn("reload synced AI grants failed", "error", err)
 			}
 		}
-		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: userID})
 	}
 	return result, nil
 }
@@ -105,6 +105,9 @@ func (e *Engine) applyPlainObjects(ctx context.Context, request ApplyObjectsRequ
 	if len(request.Objects) > maxApplyObjectsPerCall {
 		return ApplyObjectsResult{}, ipc.NewError(ipc.CodeBadParam,
 			fmt.Sprintf("单次应用对象数超过上限 %d", maxApplyObjectsPerCall))
+	}
+	if err := e.preflightAIObjects(ctx, request.Objects); err != nil {
+		return ApplyObjectsResult{}, err
 	}
 	result := ApplyObjectsResult{Objects: make([]ApplyObjectResult, len(request.Objects))}
 	for _, index := range applyObjectOrder(request.Objects) {

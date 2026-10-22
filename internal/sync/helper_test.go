@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -111,6 +112,39 @@ func newTestInstanceWithMaster(t *testing.T, unlocked, master bool, options ...O
 
 func testPtr[T any](value T) *T { return &value }
 
+// waitForClockToAdvance blocks until the wall clock's millisecond reading is
+// strictly newer than the moment of the call, so the next timestamped write
+// (an LWW revision or VerifiedAt) is ordered after everything that came
+// before. It is a condition wait with a single bounded deadline: the timer is
+// created once and reused across iterations, stopped on return, and the wait
+// fails loudly when the deadline fires without the clock advancing.
+func waitForClockToAdvance(t *testing.T) {
+	t.Helper()
+	if !waitForClockToAdvanceWith(time.Now, 2*time.Second) {
+		t.Fatal("wall clock did not advance past the previous millisecond within 2s")
+	}
+}
+
+// waitForClockToAdvanceWith reports whether the wall clock advanced past the
+// moment of the call within timeout. now is injectable so tests can freeze or
+// roll the clock without real time passing; the timer is created once and
+// reused across iterations so the bound is real even when the clock stalls.
+func waitForClockToAdvanceWith(now func() time.Time, timeout time.Duration) bool {
+	from := now().UnixMilli()
+	ticker := time.NewTicker(50 * time.Microsecond)
+	defer ticker.Stop()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for now().UnixMilli() <= from {
+		select {
+		case <-ticker.C:
+		case <-timer.C:
+			return false
+		}
+	}
+	return true
+}
+
 func float64PointersEqual(left, right *float64) bool {
 	if left == nil || right == nil {
 		return left == right
@@ -161,4 +195,43 @@ func putTestAsset(t *testing.T, instance *testInstance, row store.AssetRow) stor
 	}
 	_ = created
 	return result
+}
+
+func TestWaitForClockToAdvance(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+
+	t.Run("advance returns true promptly", func(t *testing.T) {
+		calls := 0
+		now := func() time.Time {
+			calls++
+			if calls == 1 {
+				return base
+			}
+			return base.Add(time.Millisecond)
+		}
+		if !waitForClockToAdvanceWith(now, 50*time.Millisecond) {
+			t.Fatal("clock advanced but the wait reported a timeout")
+		}
+	})
+
+	t.Run("frozen clock fails within the budget", func(t *testing.T) {
+		now := func() time.Time { return base }
+		if waitForClockToAdvanceWith(now, 50*time.Millisecond) {
+			t.Fatal("frozen clock must not report success")
+		}
+	})
+
+	t.Run("rolled-back clock fails within the budget", func(t *testing.T) {
+		calls := 0
+		now := func() time.Time {
+			calls++
+			if calls == 1 {
+				return base
+			}
+			return base.Add(-time.Hour)
+		}
+		if waitForClockToAdvanceWith(now, 50*time.Millisecond) {
+			t.Fatal("rolled-back clock must not report success")
+		}
+	})
 }

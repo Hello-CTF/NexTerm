@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/cloudwego/eino/adk"
 )
 
@@ -29,12 +31,13 @@ const (
 type requestState struct {
 	interrupt Interrupt
 	status    requestStatus
-	timer     *time.Timer
+	timer     Timer
 }
 
 type runState struct {
 	id           string
 	checkpointID string
+	ownerID      string
 	ctx          context.Context
 	cancel       context.CancelFunc
 
@@ -53,12 +56,16 @@ type runState struct {
 }
 
 type Manager struct {
-	checkpoints       adk.CheckPointStore
-	store             Store
-	ttl               time.Duration
-	terminalRetention time.Duration
-	now               func() time.Time
-	newNonce          func() (string, error)
+	checkpoints          adk.CheckPointStore
+	store                Store
+	ttl                  time.Duration
+	terminalRetention    time.Duration
+	now                  func() time.Time
+	afterFunc            func(time.Duration, func()) Timer
+	newNonce             func() (string, error)
+	assetResolver        func(context.Context, string, string) (string, error)
+	requestAssetResolver func(context.Context, string, string, json.RawMessage) (string, error)
+	environmentResolver  func(context.Context, string) ([]string, error)
 
 	mu     sync.RWMutex
 	runs   map[string]*runState
@@ -79,18 +86,27 @@ func NewManager(config Config) (*Manager, error) {
 	if config.Now == nil {
 		config.Now = time.Now
 	}
+	if config.AfterFunc == nil {
+		config.AfterFunc = func(delay time.Duration, fn func()) Timer {
+			return time.AfterFunc(delay, fn)
+		}
+	}
 	if config.NewNonce == nil {
 		config.NewNonce = secureNonce
 	}
 	return &Manager{
-		checkpoints:       config.Checkpoints,
-		store:             config.Store,
-		ttl:               config.TTL,
-		terminalRetention: config.TerminalRetention,
-		now:               config.Now,
-		newNonce:          config.NewNonce,
-		runs:              make(map[string]*runState),
-		nonces:            make(map[string]string),
+		checkpoints:          config.Checkpoints,
+		store:                config.Store,
+		ttl:                  config.TTL,
+		terminalRetention:    config.TerminalRetention,
+		now:                  config.Now,
+		afterFunc:            config.AfterFunc,
+		newNonce:             config.NewNonce,
+		assetResolver:        config.AssetResolver,
+		requestAssetResolver: config.RequestAssetResolver,
+		environmentResolver:  config.EnvironmentResolver,
+		runs:                 make(map[string]*runState),
+		nonces:               make(map[string]string),
 	}, nil
 }
 
@@ -110,6 +126,7 @@ func (m *Manager) RegisterRun(ctx context.Context, runID, checkpointID string) (
 	run := &runState{
 		id:           runID,
 		checkpointID: checkpointID,
+		ownerID:      ipc.OwnerID(ctx),
 		ctx:          runCtx,
 		cancel:       cancel,
 		status:       RunStatusRunning,
@@ -167,10 +184,23 @@ func (m *Manager) Interrupt(ctx context.Context, target *adk.InterruptCtx, input
 	if err != nil {
 		return Interrupt{}, err
 	}
+	return m.interruptRun(ctx, run, target, input, parameters, parameterHash, question, questionJSON)
+}
+
+// interruptRun is the post-lookup half of Interrupt: it runs with the run
+// pointer the caller already resolved, so tests can drive the exact
+// interleaving between the lookup and the run.mu wait.
+func (m *Manager) interruptRun(ctx context.Context, run *runState, target *adk.InterruptCtx, input InterruptInput, parameters json.RawMessage, parameterHash string, question *Question, questionJSON []byte) (Interrupt, error) {
 	run.mu.Lock()
 	defer run.mu.Unlock()
 	if run.terminal != nil {
 		return Interrupt{}, ErrRunFinished
+	}
+	// A rollback or sweep can unregister the run while this call waited on
+	// run.mu: fail closed instead of recording a request on a detached run
+	// and persisting it.
+	if !m.registeredLocked(input.RunID, run) {
+		return Interrupt{}, ErrRunNotFound
 	}
 	if run.checkpointID != input.CheckpointID {
 		return Interrupt{}, ErrCheckpointChanged
@@ -182,6 +212,24 @@ func (m *Manager) Interrupt(ctx context.Context, target *adk.InterruptCtx, input
 	if !ok {
 		return Interrupt{}, ErrCheckpointNotFound
 	}
+	asset, err := m.resolveRequestAsset(ctx, run.id, input.Tool, parameters)
+	if err != nil {
+		return Interrupt{}, err
+	}
+	// The production challenge comes from the real target set: an input that
+	// already carries the required names (for example a multi-target exec
+	// batch challenge) wins; otherwise the names are resolved from the run's
+	// target asset through the configurable production classification. Never
+	// from client input; the user must type these names back at resume time.
+	var requiredEnvironmentNames []string
+	if input.Kind == KindConfirm && len(input.RequiredEnvironmentNames) > 0 {
+		requiredEnvironmentNames = append([]string(nil), input.RequiredEnvironmentNames...)
+	} else if input.Kind == KindConfirm && m.environmentResolver != nil {
+		requiredEnvironmentNames, err = m.environmentResolver(ctx, asset)
+		if err != nil {
+			return Interrupt{}, err
+		}
+	}
 	checkpointHash := digest("checkpoint", checkpoint)
 	requestID := stableID("itr_", run.id, run.checkpointID, checkpointHash, target.ID, input.CallID, input.Tool, string(input.Kind), parameterHash, string(questionJSON))
 	if question != nil {
@@ -190,7 +238,14 @@ func (m *Manager) Interrupt(ctx context.Context, target *adk.InterruptCtx, input
 	if existing := run.requests[requestID]; existing != nil {
 		switch existing.status {
 		case requestPending:
-			return cloneInterrupt(existing.interrupt), nil
+			if existing.interrupt.AssetID == asset {
+				return cloneInterrupt(existing.interrupt), nil
+			}
+			// The asset identity behind the evidence changed; the pending
+			// request is stale and a fresh one is issued below.
+			existing.status = requestStale
+			existing.timer.Stop()
+			m.releaseNonces(existing.interrupt.Nonce)
 		case requestConsumed:
 			return Interrupt{}, ErrRequestConsumed
 		default:
@@ -210,29 +265,31 @@ func (m *Manager) Interrupt(ctx context.Context, target *adk.InterruptCtx, input
 	}
 	now := m.now()
 	interrupt := Interrupt{
-		ID:             requestID,
-		RunID:          run.id,
-		CheckpointID:   run.checkpointID,
-		CheckpointHash: checkpointHash,
-		TargetID:       target.ID,
-		CallID:         input.CallID,
-		Tool:           input.Tool,
-		Kind:           input.Kind,
-		Parameters:     parameters,
-		ParameterHash:  parameterHash,
-		Question:       question,
-		Nonce:          nonce,
-		CreatedAt:      now,
-		ExpiresAt:      now.Add(m.ttl),
-		Attempt:        run.attempt,
+		ID:                       requestID,
+		RunID:                    run.id,
+		CheckpointID:             run.checkpointID,
+		CheckpointHash:           checkpointHash,
+		TargetID:                 target.ID,
+		CallID:                   input.CallID,
+		Tool:                     input.Tool,
+		Kind:                     input.Kind,
+		Parameters:               parameters,
+		ParameterHash:            parameterHash,
+		Question:                 question,
+		Nonce:                    nonce,
+		CreatedAt:                now,
+		ExpiresAt:                now.Add(m.ttl),
+		Attempt:                  run.attempt,
+		AssetID:                  asset,
+		RequiredEnvironmentNames: requiredEnvironmentNames,
 	}
 	request := &requestState{interrupt: interrupt, status: requestPending}
 	run.requests[requestID] = request
 	run.status = RunStatusInterrupted
-	event := run.appendEventLocked(EventInterrupted, TerminalInterrupted, requestID, "")
+	event := run.appendEventLocked(EventInterrupted, TerminalInterrupted, requestID, "", asset)
 	interrupt.Sequence = event.Sequence
 	request.interrupt.Sequence = event.Sequence
-	request.timer = time.AfterFunc(m.ttl, func() { m.expire(run.id, requestID) })
+	request.timer = m.afterFunc(m.ttl, func() { m.expire(run.id, requestID) })
 	if err := m.persistLocked(run); err != nil {
 		return Interrupt{}, err
 	}
@@ -251,10 +308,24 @@ func (m *Manager) Resume(ctx context.Context, resumer Resumer, answer Answer, op
 	if err != nil {
 		return Resume{}, nil, err
 	}
+	return m.resumeRun(ctx, run, resumer, answer, parameterHash, opts...)
+}
+
+// resumeRun is the post-lookup half of Resume: it runs with the run pointer
+// the caller already resolved, so tests can drive the exact interleaving
+// between the lookup and the run.mu wait.
+func (m *Manager) resumeRun(ctx context.Context, run *runState, resumer Resumer, answer Answer, parameterHash string, opts ...adk.AgentRunOption) (Resume, *adk.AsyncIterator[*adk.AgentEvent], error) {
 	run.mu.Lock()
 	if run.terminal != nil {
 		run.mu.Unlock()
 		return Resume{}, nil, ErrRunFinished
+	}
+	// A rollback or sweep can unregister the run while this call waited on
+	// run.mu: fail closed instead of persisting state changes and starting
+	// the resumer for a detached run.
+	if !m.registeredLocked(answer.RunID, run) {
+		run.mu.Unlock()
+		return Resume{}, nil, ErrRunNotFound
 	}
 	if run.checkpointID != answer.CheckpointID {
 		run.mu.Unlock()
@@ -269,6 +340,10 @@ func (m *Manager) Resume(ctx context.Context, resumer Resumer, answer Answer, op
 	if interrupt.TargetID != answer.TargetID || interrupt.CallID != answer.CallID || interrupt.CheckpointID != answer.CheckpointID {
 		run.mu.Unlock()
 		return Resume{}, nil, ErrRequestStale
+	}
+	if answer.AssetID != "" && answer.AssetID != interrupt.AssetID {
+		run.mu.Unlock()
+		return Resume{}, nil, ErrAssetMismatch
 	}
 	if parameterHash != interrupt.ParameterHash {
 		run.mu.Unlock()
@@ -328,6 +403,37 @@ func (m *Manager) Resume(ctx context.Context, resumer Resumer, answer Answer, op
 		m.releaseNonces(nonce)
 		return Resume{}, nil, ErrCheckpointChanged
 	}
+	resumeAsset := ""
+	if m.assetResolver != nil || m.requestAssetResolver != nil {
+		// A request without asset evidence cannot be bound to the real asset
+		// identity; an unknown current identity is not a match either.
+		if interrupt.AssetID == "" {
+			run.mu.Unlock()
+			return Resume{}, nil, ErrAssetUnknown
+		}
+		current, err := m.resolveRequestAsset(ctx, run.id, interrupt.Tool, interrupt.Parameters)
+		if err != nil {
+			run.mu.Unlock()
+			return Resume{}, nil, fmt.Errorf("hitl: resolve asset evidence: %w", err)
+		}
+		if strings.TrimSpace(current) == "" {
+			run.mu.Unlock()
+			return Resume{}, nil, ErrAssetUnknown
+		}
+		if current != interrupt.AssetID {
+			run.mu.Unlock()
+			return Resume{}, nil, ErrAssetMismatch
+		}
+		resumeAsset = interrupt.AssetID
+	}
+	// The typed environment names are the user's answer to the production
+	// challenge: they must equal the request's required set exactly. Missing,
+	// wrong, or extra names all fail closed here, before any state change,
+	// persist, or resumer start — never auto-echoed from the challenge.
+	if interrupt.Kind == KindConfirm && answer.Decision != DecisionDeny && !guard.EnvironmentNamesMatch(answer.EnvironmentNames, interrupt.RequiredEnvironmentNames) {
+		run.mu.Unlock()
+		return Resume{}, nil, ErrEnvironmentNamesMismatch
+	}
 	request.status = requestConsumed
 	request.timer.Stop()
 	m.releaseNonces(request.interrupt.Nonce)
@@ -342,8 +448,9 @@ func (m *Manager) Resume(ctx context.Context, resumer Resumer, answer Answer, op
 		CheckpointID: run.checkpointID,
 		TargetID:     request.interrupt.TargetID,
 		Attempt:      run.attempt,
+		AssetID:      resumeAsset,
 	}
-	event := run.appendEventLocked(EventResumed, "", request.interrupt.ID, "")
+	event := run.appendEventLocked(EventResumed, "", request.interrupt.ID, "", resumeAsset)
 	resume.Sequence = event.Sequence
 	cancelOption, cancelFn := adk.WithCancel()
 	run.cancelFn = cancelFn
@@ -378,6 +485,15 @@ func (m *Manager) Resume(ctx context.Context, resumer Resumer, answer Answer, op
 	return resume, iterator, nil
 }
 
+// ResumeValue is the structured resume payload for a confirm answer: the
+// decision plus the user's actual typed environment names. The names are the
+// user's own input, never echoed from the challenge; they are validated
+// against the challenge's required set before the resume proceeds.
+type ResumeValue struct {
+	Decision         string   `json:"decision"`
+	EnvironmentNames []string `json:"environmentNames,omitempty"`
+}
+
 func answerValue(kind Kind, answer Answer) (string, error) {
 	switch kind {
 	case KindConfirm:
@@ -386,7 +502,11 @@ func answerValue(kind Kind, answer Answer) (string, error) {
 		}
 		switch answer.Decision {
 		case DecisionAllow, DecisionAllowSession, DecisionAllowPersist, DecisionDeny:
-			return string(answer.Decision), nil
+			encoded, err := json.Marshal(ResumeValue{Decision: string(answer.Decision), EnvironmentNames: answer.EnvironmentNames})
+			if err != nil {
+				return "", err
+			}
+			return string(encoded), nil
 		default:
 			return "", ErrInvalidArgument
 		}
@@ -457,6 +577,13 @@ func (m *Manager) finish(run *runState, reason TerminalReason, message string, c
 		}
 		return terminal, ErrRunFinished
 	}
+	// A rollback or sweep can unregister the run while this call waited on
+	// run.mu: fail closed instead of writing a detached run's terminal blob
+	// or deleting its checkpoint.
+	if !m.registeredLocked(run.id, run) {
+		run.mu.Unlock()
+		return Event{}, ErrRunNotFound
+	}
 	status := map[TerminalReason]RunStatus{
 		TerminalCompleted: RunStatusCompleted,
 		TerminalCanceled:  RunStatusCanceled,
@@ -478,7 +605,7 @@ func (m *Manager) finish(run *runState, reason TerminalReason, message string, c
 		request.timer.Stop()
 	}
 	run.finishedAt = m.now()
-	event := run.appendEventLocked(EventTerminal, reason, "", message)
+	event := run.appendEventLocked(EventTerminal, reason, "", message, "")
 	run.terminal = &event
 	cancelFn := run.cancelFn
 	run.cancelFn = nil
@@ -510,11 +637,18 @@ func (m *Manager) expire(runID, requestID string) {
 	if err != nil {
 		return
 	}
+	m.expireRun(run, requestID)
+}
+
+// expireRun is the post-lookup half of expire: it runs with the run pointer
+// the caller already resolved, so tests can drive the exact interleaving
+// between the lookup and the run.mu wait.
+func (m *Manager) expireRun(run *runState, requestID string) {
 	run.mu.Lock()
 	m.mu.RLock()
 	closed := m.closed
 	m.mu.RUnlock()
-	if closed || run.terminal != nil {
+	if closed || !m.registeredLocked(run.id, run) || run.terminal != nil {
 		run.mu.Unlock()
 		return
 	}
@@ -524,7 +658,7 @@ func (m *Manager) expire(runID, requestID string) {
 		return
 	}
 	if remaining := request.interrupt.ExpiresAt.Sub(m.now()); remaining > 0 {
-		request.timer = time.AfterFunc(remaining, func() { m.expire(run.id, requestID) })
+		request.timer = m.afterFunc(remaining, func() { m.expire(run.id, requestID) })
 		run.mu.Unlock()
 		return
 	}
@@ -663,7 +797,7 @@ func (m *Manager) Done(runID string) (<-chan struct{}, error) {
 	return run.ctx.Done(), nil
 }
 
-func (run *runState) appendEventLocked(kind EventKind, reason TerminalReason, requestID, message string) Event {
+func (run *runState) appendEventLocked(kind EventKind, reason TerminalReason, requestID, message, assetID string) Event {
 	run.sequence++
 	event := Event{
 		RunID:        run.id,
@@ -674,6 +808,7 @@ func (run *runState) appendEventLocked(kind EventKind, reason TerminalReason, re
 		Message:      message,
 		Attempt:      run.attempt,
 		Sequence:     run.sequence,
+		AssetID:      assetID,
 	}
 	run.events = append(run.events, event)
 	return event
@@ -699,6 +834,29 @@ func (m *Manager) uniqueNonce(runID string) (string, error) {
 	return "", errors.New("nonce generator repeatedly returned a duplicate")
 }
 
+// resolveRequestAsset returns the current asset evidence for the tool awaiting
+// confirmation from the configured resolver; with no resolver configured,
+// asset identity stays unknown.
+func (m *Manager) resolveRequestAsset(ctx context.Context, runID, tool string, parameters json.RawMessage) (string, error) {
+	if m.assetResolver == nil && m.requestAssetResolver == nil {
+		return "", nil
+	}
+	var asset string
+	var err error
+	if m.requestAssetResolver != nil {
+		asset, err = m.requestAssetResolver(ctx, runID, tool, parameters)
+	} else {
+		asset, err = m.assetResolver(ctx, runID, tool)
+	}
+	if err != nil {
+		return "", fmt.Errorf("hitl: resolve asset evidence: %w", err)
+	}
+	if strings.TrimSpace(asset) == "" {
+		return "", ErrAssetUnknown
+	}
+	return asset, nil
+}
+
 func (m *Manager) run(runID string) (*runState, error) {
 	m.mu.RLock()
 	run := m.runs[runID]
@@ -707,6 +865,19 @@ func (m *Manager) run(runID string) (*runState, error) {
 		return nil, ErrRunNotFound
 	}
 	return run, nil
+}
+
+// registeredLocked reports whether run is still the run registered under
+// runID. The caller must hold run.mu; the manager read lock is taken in the
+// established run.mu → m.mu order. A restore rollback or a terminal sweep
+// can unregister a run while an entry point waits on run.mu, and a started
+// caller cannot be recalled: every entry point re-verifies registration
+// after acquiring run.mu and before any state change, persist, resumer
+// start, or checkpoint delete, and fails closed on a detached run.
+func (m *Manager) registeredLocked(runID string, run *runState) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.runs[runID] == run
 }
 
 func (m *Manager) Close() error {
@@ -760,6 +931,7 @@ func validIDs(values ...string) bool {
 
 func cloneInterrupt(value Interrupt) Interrupt {
 	value.Parameters = append(json.RawMessage(nil), value.Parameters...)
+	value.RequiredEnvironmentNames = append([]string(nil), value.RequiredEnvironmentNames...)
 	value.Question = cloneQuestion(value.Question)
 	return value
 }

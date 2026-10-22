@@ -21,6 +21,7 @@ func TestTabTracksReportedCWD(t *testing.T) {
 			return nil
 		}),
 	})
+	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
 	connected, err := manager.Connect(ctx, Asset{ID: "cwd-asset", Kind: KindSSH})
 	if err != nil {

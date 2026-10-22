@@ -37,20 +37,11 @@ done
 VERSION="${NEXTERM_RELEASE_VERSION:-$(node -e 'const fs=require("fs"); const c=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(c.info.version)' "$ROOT/wails.json" 2>/dev/null)}" || {
   echo "cannot read the release version from NEXTERM_RELEASE_VERSION or wails.json" >&2; exit 1;
 }
+export NEXTERM_RELEASE_VERSION="$VERSION"
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" show -s --format=%ct HEAD)}"
 
-if tar --version 2>/dev/null | grep -qi 'gnu tar'; then
-  TAR_OWNER=(--owner=0 --group=0 --numeric-owner)
-else
-  TAR_OWNER=(--uid 0 --gid 0)
-fi
-
 tar_cz() {
-  tar ${TAR_OWNER[@]+"${TAR_OWNER[@]}"} --sort=name --mtime="@$SOURCE_DATE_EPOCH" -czf "$1" -C "$2" "$3"
-}
-
-normalize_mtime() {
-  touch -d "@$SOURCE_DATE_EPOCH" "$1" 2>/dev/null || touch -t "$(date -u -r "$SOURCE_DATE_EPOCH" +%Y%m%d%H%M.%S)" "$1"
+  python3 "$ROOT/scripts/lib/portable-archive.py" tar "$1" "$2" "$3" "$SOURCE_DATE_EPOCH"
 }
 
 zip_pack() {
@@ -103,7 +94,6 @@ for spec in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
   rm -rf "$stage"
   mkdir -p "$stage"
   install -m 0755 "$bin" "$stage/$member"
-  normalize_mtime "$stage/$member"
   if [ "$os" = "windows" ]; then
     artifact="$OUT/NexTerm-agent_${VERSION}_windows_${arch}.zip"
     rm -f "$artifact" "$artifact.artifact.json"
@@ -119,7 +109,8 @@ for spec in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
     [ "$tar_members" = "$member" ] || { echo "tar root must contain only $member, got: $tar_members" >&2; exit 1; }
     kind="agent-archive"
   fi
-  report_args=(--kind="$kind" --os="$os" --arch="$arch" --file="$artifact")
+  chmod 0644 "$artifact"
+  report_args=(--kind="$kind" --os="$os" --arch="$arch" --file="$artifact" --binary="$bin")
   if [ "$REQUIRE_EVIDENCE" -ne 0 ]; then
     report_args+=(--require-evidence)
   fi

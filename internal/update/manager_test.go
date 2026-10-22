@@ -21,6 +21,7 @@ import (
 type releaseFixture struct {
 	releases    []Release
 	checksums   string
+	signature   string
 	archive     []byte
 	archiveName string
 	status      int
@@ -41,6 +42,10 @@ func (fixture *releaseFixture) server(t *testing.T) *httptest.Server {
 		name := strings.TrimPrefix(request.URL.Path, "/assets/")
 		if name == checksumsAssetName {
 			_, _ = response.Write([]byte(fixture.checksums))
+			return
+		}
+		if name == checksumSignatureAssetName && fixture.signature != "" {
+			_, _ = response.Write([]byte(fixture.signature))
 			return
 		}
 		if name == fixture.archiveName {
@@ -125,6 +130,11 @@ func linuxFixture(t *testing.T, version string, corruptChecksum bool) *releaseFi
 		archive:     archive,
 		archiveName: archiveName,
 	}
+}
+
+func (fixture *releaseFixture) sign(key testMinisignKey, version string) {
+	fixture.signature = key.sign([]byte(fixture.checksums), fmt.Sprintf("NexTerm %s %s", version, checksumsAssetName))
+	fixture.releases[0].Assets = append(fixture.releases[0].Assets, Asset{Name: checksumSignatureAssetName})
 }
 
 func TestCheckFindsUpdate(t *testing.T) {

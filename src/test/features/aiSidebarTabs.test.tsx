@@ -98,7 +98,7 @@ async function send(view: MountedView, text: string) {
 describe("AiSidebar multiple tabs", () => {
   let view: MountedView | null = null;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     convSeq = 0;
     mocks.channels.length = 0;
     mocks.chat.mockImplementation(() => {
@@ -137,9 +137,11 @@ describe("AiSidebar multiple tabs", () => {
       activeWorkspaceId: null,
     });
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    await flush();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flush();
     view?.unmount();
     view = null;
   });
@@ -323,13 +325,17 @@ describe("AiSidebar multiple tabs", () => {
 
   it("uses the live event target for a created terminal without stealing focus from another AI tab", async () => {
     await flush();
-    useUi.setState({
-      sessions: [
-        { id: "s-event", assetId: "a-event", name: "event-host", kind: "ssh", status: "connected", tabs: [], createdAt: 1 },
-      ],
+    act(() => {
+      useUi.setState({
+        sessions: [
+          { id: "s-event", assetId: "a-event", name: "event-host", kind: "ssh", status: "connected", tabs: [], createdAt: 1 },
+        ],
+      });
     });
     await send(view!, "Open terminal");
-    useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    await act(async () => {
+      useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    });
     await flush();
     const previousWorkspaceId = useUi.getState().activeWorkspaceId;
 

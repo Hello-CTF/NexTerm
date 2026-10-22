@@ -12,7 +12,6 @@ import type { FleetDevice } from "../../ipc/fleetApi";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
-import { WEB } from "../../ipc/env";
 import { useAuth } from "../auth/store";
 import { IconClose, IconKey, IconLoader, IconPlus } from "../../ui/icons";
 
@@ -24,7 +23,14 @@ const GRANT_KIND_OPTIONS: { value: AiGrantKind; label: string; hint: string }[] 
 const KIND_LABEL: Record<AiGrantKind, string> = {
   terminal_write: "终端写入",
   session_exec: "命令执行",
+  db_query: "数据库查询",
 };
+
+// Database assets support exactly one grant kind: db_query covers the AI
+// database tools on connections resolved to that asset. The kind is fixed
+// (no toggles) and the grant binds to the real DB asset identity resolved at
+// use time — never to an SSH tunnel asset or an inline connection.
+const DB_GRANT_KINDS: AiGrantKind[] = ["db_query"];
 
 const RULE_ACTION_OPTIONS: { value: AiGrantRuleAction; label: string; needsPath: boolean; hint: string }[] = [
   { value: "write_file", label: "写入文件", needsPath: true, hint: "只允许写匹配路径下的文件，如 /var/log/**" },
@@ -66,21 +72,27 @@ const DB_ASSET_KINDS = new Set(["mysql", "postgres", "redis"]);
 type GrantTarget = { id: string; name: string; kind: string };
 
 function ruleScopeText(rule: AiGrantRule): string {
-  const action = RULE_ACTION_LABEL[rule.action] ?? rule.action;
+  const action = RULE_ACTION_LABEL[rule.action as AiGrantRuleAction] ?? rule.action;
   return rule.path ? `${action} ${rule.path}` : action;
 }
 
 function ruleExpiryText(rule: AiGrantRule, now: number): string {
-  if (rule.expiresAt === 0) return "永久";
-  if (rule.expiresAt <= now) return "已过期";
-  return `${new Date(rule.expiresAt).toLocaleString()} 过期`;
+  const expiresAt = rule.expiresAt ?? 0;
+  if (expiresAt === 0) return "永久";
+  if (expiresAt <= now) return "已过期";
+  return `${new Date(expiresAt).toLocaleString()} 过期`;
 }
 
 export function GrantPanel({ onClose }: { onClose: () => void }) {
   const pushToast = useUi((s) => s.pushToast);
-  // Grant state is a global setting: in server multi-user mode, only superadmins can change it; other logged-in users are read-only.
+  // Grants are owner-scoped server-side (mutations are rejected for assets the caller does not own):
+  // a logged-in account manages only its own grants, while desktop and explicit open deployments
+  // share one instance-wide grant state.
   const account = useAuth((s) => s.user);
-  const readOnly = WEB && account !== null && account.role !== "superadmin";
+  const grantScopeNote = account
+    ? "授权按账号隔离，仅对当前账号生效，其他账号不可见"
+    : "桌面和明确开放部署使用共享授权，对当前 NexTerm 实例的所有会话生效";
+  const grantStoreName = account ? "当前账号" : "当前 NexTerm 实例";
   const [assets, setAssets] = useState<Asset[] | null>(null);
   const [devices, setDevices] = useState<FleetDevice[]>([]);
   const [grants, setGrants] = useState<Record<string, AiDeviceGrant>>({});
@@ -124,8 +136,10 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
     void reload();
   }, [reload]);
 
-  const kindsFor = (asset: GrantTarget): AiGrantKind[] =>
-    drafts[asset.id] ?? (grants[asset.id]?.kinds.length ? grants[asset.id].kinds : ["terminal_write"]);
+  const kindsFor = (asset: GrantTarget): AiGrantKind[] => {
+    if (DB_ASSET_KINDS.has(asset.kind)) return DB_GRANT_KINDS;
+    return drafts[asset.id] ?? (grants[asset.id]?.kinds.length ? grants[asset.id].kinds : ["terminal_write"]);
+  };
 
   const toggleKind = (asset: GrantTarget, kind: AiGrantKind) => {
     const current = kindsFor(asset);
@@ -138,7 +152,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
     if (kinds.length === 0) return;
     const scope = kinds.map((k) => KIND_LABEL[k]).join("、");
     const confirmed = await ask(
-      `为「${asset.name}」开启设备长期授权？\n\n开启后，该设备上的${scope}无需逐次确认，只读模式下也会放行；高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝。授权对当前 NexTerm 实例的所有用户生效。`,
+      `为「${asset.name}」开启设备长期授权？\n\n开启后，该设备上的${scope}无需逐次确认，只读模式下也会放行；高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝。${grantScopeNote}。`,
       { kind: "warning" },
     );
     if (!confirmed) return;
@@ -155,9 +169,9 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
   };
 
   const revoke = async (asset: GrantTarget) => {
-    const scope = (grants[asset.id]?.kinds ?? []).map((k) => KIND_LABEL[k]).join("、");
+    const scope = (grants[asset.id]?.kinds ?? []).map((k) => KIND_LABEL[k as AiGrantKind] ?? k).join("、");
     const confirmed = await ask(
-      `撤销「${asset.name}」的设备授权？\n\n撤销后，该设备上的${scope || "终端写入、命令执行"}将按当前权限模式处理，授权记录会从当前 NexTerm 实例删除。`,
+      `撤销「${asset.name}」的设备授权？\n\n撤销后，该设备上的${scope || "终端写入、命令执行"}将按当前权限模式处理，授权记录会从${grantStoreName}删除。`,
       { kind: "warning" },
     );
     if (!confirmed) return;
@@ -192,7 +206,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
       ? `${RULE_ACTION_LABEL[ruleAction]} ${pattern}`
       : RULE_ACTION_LABEL[ruleAction];
     const confirmed = await ask(
-      `为「${device.name}」添加授权规则？\n\n范围：${scope}\n有效期：${expiry.label}\n\n匹配规则的普通 AI 操作无需逐次确认，只读模式下也会放行；高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝。规则保存在当前 NexTerm 实例，可随时撤销。`,
+      `为「${device.name}」添加授权规则？\n\n范围：${scope}\n有效期：${expiry.label}\n\n匹配规则的普通 AI 操作无需逐次确认，只读模式下也会放行；高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝。规则保存在${grantStoreName}，可随时撤销。`,
       { kind: "warning" },
     );
     if (!confirmed) return;
@@ -218,7 +232,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
   const revokeRule = async (rule: AiGrantRule) => {
     const device = allTargets.find((a) => a.id === rule.deviceId);
     const confirmed = await ask(
-      `撤销授权规则「${device?.name ?? rule.deviceId} ${ruleScopeText(rule)}」？\n\n撤销后，相关操作将按当前权限模式处理，规则记录会从当前 NexTerm 实例删除。`,
+      `撤销授权规则「${device?.name ?? rule.deviceId} ${ruleScopeText(rule)}」？\n\n撤销后，相关操作将按当前权限模式处理，规则记录会从${grantStoreName}删除。`,
       { kind: "warning" },
     );
     if (!confirmed) return;
@@ -241,8 +255,10 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
     .map((d) => ({ id: `device/${d.id}`, name: d.name, kind: "device" }));
   const allTargets: GrantTarget[] = [...(assets ?? []), ...deviceTargets];
   const assetName = (deviceId: string) => allTargets.find((a) => a.id === deviceId)?.name ?? deviceId;
-  const grantAssets: GrantTarget[] | null =
-    assets === null ? null : [...assets.filter((a) => !DB_ASSET_KINDS.has(a.kind)), ...deviceTargets];
+  // Grant targets include database assets (fixed db_query kind); rule targets
+  // exclude them because the rule actions only cover terminal tools.
+  const grantAssets: GrantTarget[] | null = assets === null ? null : [...assets, ...deviceTargets];
+  const ruleTargets: GrantTarget[] = [...(assets ?? []).filter((a) => !DB_ASSET_KINDS.has(a.kind)), ...deviceTargets];
   const now = Date.now();
 
   return (
@@ -257,7 +273,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="mb-2 px-0.5 text-[10.5px] leading-relaxed text-neutral-500">
-        设备长期授权默认关闭。开启后，普通终端写入和命令执行无需逐次确认，只读模式下也会放行；高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝。授权对当前 NexTerm 实例的所有用户生效，请仅用于可信设备。数据库资产不支持设备授权。
+        {`设备长期授权默认关闭。开启后，普通终端写入、命令执行和数据库查询无需逐次确认，只读模式下也会放行；高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝。${grantScopeNote}，请仅用于可信设备。数据库资产仅支持数据库查询授权。`}
       </div>
 
       {loadError && (
@@ -266,12 +282,6 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
           <button className="nx-btn nx-btn-outline nx-btn-xs" onClick={() => void reload()}>
             重试
           </button>
-        </div>
-      )}
-
-      {readOnly && (
-        <div className="mb-2 px-0.5 text-[10.5px] leading-relaxed text-[var(--nx-fg-warning)]">
-          当前账号不是超管：设备授权与授权规则由超管统一管理，此处仅可查看。
         </div>
       )}
 
@@ -290,31 +300,34 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
             <div className="flex items-center gap-1.5">
               <span className="min-w-0 flex-1 truncate text-[11.5px] text-neutral-200">{asset.name}</span>
               <span className="nx-count">{ASSET_KIND_LABEL[asset.kind] ?? asset.kind}</span>
-              {!readOnly &&
-                (grant ? (
-                  <button
-                    className="nx-btn nx-btn-outline nx-btn-xs"
-                    disabled={pending}
-                    onClick={() => void revoke(asset)}
-                  >
-                    {pending ? "撤销中…" : "撤销"}
-                  </button>
-                ) : (
-                  <button
-                    className="nx-btn nx-btn-outline nx-btn-xs"
-                    disabled={pending || kindsFor(asset).length === 0}
-                    onClick={() => void enableGrant(asset)}
-                  >
-                    {pending ? "开启中…" : "开启授权"}
-                  </button>
-                ))}
+              {grant ? (
+                <button
+                  className="nx-btn nx-btn-outline nx-btn-xs"
+                  disabled={pending}
+                  onClick={() => void revoke(asset)}
+                >
+                  {pending ? "撤销中…" : "撤销"}
+                </button>
+              ) : (
+                <button
+                  className="nx-btn nx-btn-outline nx-btn-xs"
+                  disabled={pending || kindsFor(asset).length === 0}
+                  onClick={() => void enableGrant(asset)}
+                >
+                  {pending ? "开启中…" : "开启授权"}
+                </button>
+              )}
             </div>
             {grant ? (
               <div className="mt-0.5 text-[10.5px] text-green-300">
-                已授权：{grant.kinds.map((k) => KIND_LABEL[k]).join("、")}
+                已授权：{grant.kinds.map((k) => KIND_LABEL[k as AiGrantKind] ?? k).join("、")}
               </div>
-            ) : readOnly ? (
-              <div className="mt-0.5 text-[10.5px] text-neutral-500">未授权</div>
+            ) : DB_ASSET_KINDS.has(asset.kind) ? (
+              <div className="mt-1 flex flex-wrap items-center gap-1">
+                <span className="text-[10px] text-neutral-500">
+                  未授权 · 开启后仅覆盖数据库查询，授权绑定连接解析到的真实数据库资产
+                </span>
+              </div>
             ) : (
               <div className="mt-1 flex flex-wrap gap-1">
                 {GRANT_KIND_OPTIONS.map((opt) => {
@@ -339,11 +352,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
       })}
 
       {!loadError && grantAssets !== null && grantAssets.length === 0 && (
-        <div className="py-1 text-[11px] text-neutral-500">
-          {assets !== null && assets.length > 0
-            ? "数据库资产不支持 AI 授权，可授权的资产为空。"
-            : "暂无资产，添加资产后可在此管理授权。"}
-        </div>
+        <div className="py-1 text-[11px] text-neutral-500">暂无资产，添加资产后可在此管理授权。</div>
       )}
 
       <div className="mb-1.5 mt-2 flex items-center gap-1.5 border-t border-neutral-800/60 pt-2 text-[11.5px] font-medium text-neutral-200">
@@ -361,22 +370,20 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
           <span className="min-w-0 flex-1 truncate text-[11.5px] text-neutral-200" title={ruleScopeText(rule)}>
             {assetName(rule.deviceId)} · {ruleScopeText(rule)}
           </span>
-          <span className={`shrink-0 text-[10.5px] ${rule.expiresAt !== 0 && rule.expiresAt <= now ? "text-red-300" : "text-neutral-500"}`}>
+          <span className={`shrink-0 text-[10.5px] ${(rule.expiresAt ?? 0) !== 0 && (rule.expiresAt ?? 0) <= now ? "text-red-300" : "text-neutral-500"}`}>
             {ruleExpiryText(rule, now)}
           </span>
-          {!readOnly && (
-            <button
-              className="nx-btn nx-btn-outline nx-btn-xs shrink-0"
-              disabled={ruleBusy}
-              onClick={() => void revokeRule(rule)}
-            >
-              撤销
-            </button>
-          )}
+          <button
+            className="nx-btn nx-btn-outline nx-btn-xs shrink-0"
+            disabled={ruleBusy}
+            onClick={() => void revokeRule(rule)}
+          >
+            撤销
+          </button>
         </div>
       ))}
 
-      {assets !== null && grantAssets !== null && grantAssets.length > 0 && !readOnly && (
+      {assets !== null && grantAssets !== null && ruleTargets.length > 0 && (
         <div className="mt-2">
           <button
             type="button"
@@ -398,7 +405,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
                   onChange={(event) => setRuleDevice(event.target.value)}
                 >
                   <option value="">选择设备</option>
-                  {grantAssets?.map((asset) => (
+                  {ruleTargets.map((asset) => (
                     <option key={asset.id} value={asset.id}>
                       {asset.name}
                     </option>

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/ai/watches"
 	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -114,6 +115,15 @@ func parseEventCursor(r *http.Request) (since uint64, present, resync bool) {
 	return value, true, false
 }
 
+// eventOwnerLookupTimeout bounds ownership lookups inside event filters so a
+// stuck database cannot pin a subscription worker (and, with it, the pending
+// delivery backlog) forever.
+var eventOwnerLookupTimeout = 5 * time.Second
+
+func eventOwnerLookupContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), eventOwnerLookupTimeout)
+}
+
 // eventFilter filters events by subscriber identity: identity-less connections (open deployments/gateway) are not filtered;
 // logged-in users receive owner-scoped resources plus explicitly public and legacy events. Failed ownership lookups,
 // malformed payloads, empty owners, and unknown topics are never delivered (fail closed); superadmins are scoped likewise.
@@ -147,7 +157,9 @@ func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
 			if !ok {
 				return false
 			}
-			ownerID, err := s.fleet.DeviceOwnerID(context.Background(), status.DeviceID)
+			lookupCtx, cancel := eventOwnerLookupContext()
+			defer cancel()
+			ownerID, err := s.fleet.DeviceOwnerID(lookupCtx, status.DeviceID)
 			return err == nil && ownerID == userID
 		case ipc.TopicConnectProgress:
 			if s.assetOwner == nil {
@@ -157,7 +169,9 @@ func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
 			if !ok {
 				return false
 			}
-			ownerID, err := s.assetOwner(context.Background(), progress.AssetID)
+			lookupCtx, cancel := eventOwnerLookupContext()
+			defer cancel()
+			ownerID, err := s.assetOwner(lookupCtx, progress.AssetID)
 			return err == nil && ownerID == userID
 		case ipc.TopicHelperProgress:
 			if s.assetOwner == nil {
@@ -167,23 +181,25 @@ func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
 			if !ok {
 				return false
 			}
-			ownerID, err := s.assetOwner(context.Background(), progress.AssetID)
+			lookupCtx, cancel := eventOwnerLookupContext()
+			defer cancel()
+			ownerID, err := s.assetOwner(lookupCtx, progress.AssetID)
 			return err == nil && ownerID == userID
 		case ipc.TopicAINotification:
 			notification, ok := event.Payload.(ipc.AINotificationEvent)
 			return ok && notification.OwnerID != "" && notification.OwnerID == userID
+		case ipc.TopicAIWatchToolData:
+			toolData, ok := event.Payload.(watches.ToolDataEvent)
+			return ok && toolData.OwnerID != "" && toolData.OwnerID == userID
 		case ipc.TopicLayoutChanged:
 			_, ok := event.Payload.(ipc.LayoutChangedEvent)
 			return ok && event.OwnerID != "" && event.OwnerID == userID
+		case ipc.TopicInventoryChanged:
+			_, ok := event.Payload.(ipc.InventoryChangedEvent)
+			return ok && event.OwnerID != "" && event.OwnerID == userID
 		case ipc.TopicSyncStatus:
-			switch status := event.Payload.(type) {
-			case ipc.SyncStatusEvent:
-				return status.OwnerID != "" && status.OwnerID == userID
-			case struct{}:
-				return true
-			default:
-				return false
-			}
+			status, ok := event.Payload.(ipc.SyncStatusEvent)
+			return ok && status.OwnerID != "" && status.OwnerID == userID
 		case ipc.Topic("sync://round-complete"):
 			_, ok := event.Payload.(struct{})
 			return ok

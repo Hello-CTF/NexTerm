@@ -53,6 +53,8 @@ func IPCError(err error) *ipc.Error {
 		return ipc.WrapError(ipc.CodeTimeout, userMessage(err), err)
 	case errors.Is(err, ErrAssetSessionConflict), errors.Is(err, ErrStaleGeneration):
 		return ipc.WrapError(ipc.CodeInternal, userMessage(err), err)
+	case errors.Is(err, ErrRecoveryOverrun):
+		return ipc.WrapError(ipc.Code("recovery_overrun"), userMessage(err), err)
 	default:
 		return ipc.NormalizeError(err)
 	}
@@ -77,7 +79,7 @@ func userMessage(err error) string {
 	case errors.Is(err, ErrDisconnected), errors.Is(err, base.ErrDisconnected):
 		return "会话已断开，请重新连接"
 	case errors.Is(err, ErrDurableDisabled):
-		return "该 SSH 资产已设置为普通终端；要恢复旧持久终端，请在资产高级选项中改回自动模式"
+		return "该 SSH 资产已设置为普通终端，不能新建持久终端；已有持久终端可从后台会话恢复"
 	case errors.Is(err, ErrAmbiguousDurable):
 		return "多个已连接主机存在同一持久终端，请指定会话后重试"
 	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported), errors.Is(err, durable.ErrUnavailable):
@@ -94,6 +96,8 @@ func userMessage(err error) string {
 		return "会话已更新，请重试"
 	case errors.Is(err, ErrAssetSessionConflict):
 		return "该资产已有活动会话，请先断开现有会话"
+	case errors.Is(err, ErrRecoveryOverrun):
+		return "终端输出积压过长，早期输出已无法恢复"
 	case errors.Is(err, durable.ErrNotFound):
 		return "资源不存在或已删除"
 	case errors.Is(err, context.DeadlineExceeded):
@@ -112,6 +116,7 @@ type hostKeyDetail struct {
 	Port        int                  `json:"port"`
 	KeyType     string               `json:"keyType"`
 	Fingerprint string               `json:"fingerprint"`
+	Key         string               `json:"key,omitempty"`
 	Changed     bool                 `json:"changed"`
 	Known       []hostKeyKnownDetail `json:"known,omitempty"`
 }
@@ -122,6 +127,7 @@ func hostKeyIPCError(err *ssh.HostKeyError) *ipc.Error {
 		Port:        err.Presented.Port,
 		KeyType:     err.Presented.KeyType,
 		Fingerprint: err.Presented.Fingerprint,
+		Key:         err.Presented.Key,
 		Changed:     !err.Pending,
 	}
 	for _, known := range err.Known {

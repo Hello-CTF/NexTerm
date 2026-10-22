@@ -5,12 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/sshconfig"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
@@ -73,6 +71,12 @@ type assetDTO struct {
 	UpdatedAt int64           `json:"updatedAt"`
 	DeletedAt *int64          `json:"deletedAt"`
 	Builtin   bool            `json:"builtin"`
+}
+
+type assetSearchDTO struct {
+	Assets    []assetDTO `json:"assets"`
+	Total     int        `json:"total"`
+	Truncated bool       `json:"truncated"`
 }
 
 type assetInputRequest struct {
@@ -213,10 +217,7 @@ type knownHostRequest struct {
 	Port        int32  `json:"port"`
 	KeyType     string `json:"keyType"`
 	Fingerprint string `json:"fingerprint"`
-}
-
-type keyFileContentRequest struct {
-	Content string `json:"content"`
+	Key         string `json:"key"`
 }
 
 type desktopTrayDTO struct {
@@ -244,6 +245,10 @@ func DesktopCloseToTray(ctx context.Context, database *store.Store) (bool, error
 }
 
 func registerStoreCommands(dispatcher *ipc.Dispatcher, database *store.Store, hostKeys *productionHostKeyStore, dataDir string, desktop bool) error {
+	return registerStoreCommandsWithHostKeyMode(dispatcher, database, hostKeys, dataDir, desktop, desktop)
+}
+
+func registerStoreCommandsWithHostKeyMode(dispatcher *ipc.Dispatcher, database *store.Store, hostKeys *productionHostKeyStore, dataDir string, desktop, hostKeysShared bool) error {
 	assetFromRow := func(row store.AssetRow) assetDTO { return productionAssetDTO(row) }
 	assetsFromRows := func(rows []store.AssetRow) []assetDTO {
 		result := make([]assetDTO, len(rows))
@@ -317,22 +322,12 @@ func registerStoreCommands(dispatcher *ipc.Dispatcher, database *store.Store, ho
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "asset_save_key_file", func(_ context.Context, _ *ipc.Call, input keyFileContentRequest) (map[string]string, error) {
-				if dataDir == "" {
-					return nil, ipc.NewError(ipc.CodeUnsupported, "密钥存储不可用")
+			return ipc.Register(dispatcher, "asset_search_meta", func(ctx context.Context, _ *ipc.Call, input idRequest) (assetSearchDTO, error) {
+				result, err := database.AssetSearchWithMeta(ctx, input.Q)
+				if err != nil {
+					return assetSearchDTO{}, err
 				}
-				if len(input.Content) > 64<<10 {
-					return nil, ipc.BadParam(fmt.Errorf("私钥内容超过 64 KiB 上限"))
-				}
-				directory := filepath.Join(dataDir, "keys")
-				if err := os.MkdirAll(directory, 0o700); err != nil {
-					return nil, err
-				}
-				path := filepath.Join(directory, ids.New()+".key")
-				if err := os.WriteFile(path, []byte(input.Content), 0o600); err != nil {
-					return nil, err
-				}
-				return map[string]string{"path": path}, nil
+				return assetSearchDTO{Assets: assetsFromRows(result.Assets), Total: result.Total, Truncated: result.Truncated}, nil
 			})
 		},
 		func() error {
@@ -342,7 +337,7 @@ func registerStoreCommands(dispatcher *ipc.Dispatcher, database *store.Store, ho
 				if !desktop {
 					return "", ipc.NewError(ipc.CodeUnsupported, "读取本地密钥文件只在桌面端可用")
 				}
-				file, err := os.Open(input.Path)
+				file, err := sshconfig.OpenSharedDelete(input.Path)
 				if err != nil {
 					return "", err
 				}
@@ -474,20 +469,17 @@ func registerStoreCommands(dispatcher *ipc.Dispatcher, database *store.Store, ho
 		},
 		func() error {
 			return ipc.Register(dispatcher, "known_host_list", func(ctx context.Context, _ *ipc.Call, _ struct{}) (any, error) {
-				return database.KnownHostList(ctx)
+				return productionKnownHostList(ctx, database, hostKeys, hostKeysShared)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "known_host_accept", func(ctx context.Context, _ *ipc.Call, input knownHostRequest) (any, error) {
-				return nil, database.KnownHostAccept(ctx, input.Host, input.Port, input.KeyType, input.Fingerprint)
+				return nil, productionKnownHostAccept(ctx, database, hostKeys, hostKeysShared, input.Host, input.Port, input.KeyType, input.Fingerprint, input.Key)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "known_host_remove", func(ctx context.Context, _ *ipc.Call, input idRequest) (any, error) {
-				if hostKeys != nil {
-					return nil, hostKeys.Remove(ctx, input.ID)
-				}
-				return nil, database.KnownHostRemove(ctx, input.ID)
+				return nil, productionKnownHostRemove(ctx, database, hostKeys, hostKeysShared, input.ID)
 			})
 		},
 		func() error {

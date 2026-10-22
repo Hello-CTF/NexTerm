@@ -1,7 +1,13 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { flush, flushUntil, mount, setInputValue, clickButton, type MountedView } from "./features/reactTestUtils";
+import { flush, flushUntil as flushUntilBase, mount, setInputValue, clickButton, type MountedView } from "./features/reactTestUtils";
+
+async function flushUntil(predicate: () => boolean, maxTicks = 60): Promise<void> {
+  await flush();
+  await flushUntilBase(predicate, maxTicks);
+  await flush();
+}
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -100,9 +106,11 @@ beforeEach(() => {
   mocks.dekUpload.mockResolvedValue({ ok: true });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await flush();
   mounted?.unmount();
   mounted = undefined;
+  await flush();
   resetStore();
 });
 
@@ -147,6 +155,7 @@ describe("AuthGate TOTP challenge form", () => {
   it("renders the two-factor form for pendingMfa and submits through verifyMfa", async () => {
     useAuth.setState({ gate: "login", pendingMfa: { ticket: "ticket-1", username: "root", password: "pw" } });
     mounted = mount(createElement(AuthGate));
+    await flush();
     await flushUntil(() => mounted!.container.textContent?.includes("两步验证"));
 
     const input = mounted.container.querySelector("input")!;
@@ -160,6 +169,7 @@ describe("AuthGate TOTP challenge form", () => {
   it("cancels the MFA challenge with the back button and returns to password login", async () => {
     useAuth.setState({ gate: "login", pendingMfa: { ticket: "ticket-1", username: "root", password: "pw" } });
     mounted = mount(createElement(AuthGate));
+    await flush();
     await flushUntil(() => mounted!.container.textContent?.includes("两步验证"));
 
     clickButton(mounted.container, "返回登录");

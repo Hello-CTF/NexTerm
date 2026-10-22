@@ -38,6 +38,26 @@ func (m *Manager) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 	}); err != nil {
 		return err
 	}
+	if err := ipc.Register(dispatcher, "ai_takeover_confirm", func(ctx context.Context, _ *ipc.Call, args agent.Confirmation) (any, error) {
+		return nil, m.ConfirmContext(ctx, args)
+	}); err != nil {
+		return err
+	}
+	if err := ipc.Register(dispatcher, "ai_takeover_cancel", func(ctx context.Context, _ *ipc.Call, args struct {
+		JobID string `json:"jobId"`
+	}) (any, error) {
+		return nil, m.CancelContext(ctx, args.JobID)
+	}); err != nil {
+		return err
+	}
+	if err := ipc.Register(dispatcher, "ai_takeover_pause", func(ctx context.Context, _ *ipc.Call, args struct {
+		TabID string `json:"tabId"`
+		Token string `json:"token"`
+	}) (any, error) {
+		return nil, m.PauseFor(ctx, args.TabID, args.Token)
+	}); err != nil {
+		return err
+	}
 	return ipc.Register(dispatcher, "ai_takeover_exit", func(ctx context.Context, _ *ipc.Call, args struct {
 		TabID  string `json:"tabId"`
 		Token  string `json:"token"`

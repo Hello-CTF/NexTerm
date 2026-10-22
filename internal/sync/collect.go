@@ -174,7 +174,7 @@ func (s *Service) CollectTombstones(ctx context.Context, request CollectTombston
 	if err != nil {
 		return CollectTombstonesResult{}, err
 	}
-	syncRows, err := s.engine.syncTombstoneList(ctx)
+	syncRows, err := s.engine.syncTombstoneList(ctx, s.engine.aiSharedAccess(ctx))
 	if err != nil {
 		return CollectTombstonesResult{}, err
 	}

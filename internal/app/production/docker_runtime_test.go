@@ -39,6 +39,11 @@ func TestDockerFallbackShellSelection(t *testing.T) {
 		powerShellCommand = `docker 'restart' 'a''b'`
 		posixCommand      = `docker 'restart' 'a'"'"'b'`
 	)
+	database, err := store.OpenInMemory(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
 	for _, testCase := range []struct {
 		name        string
 		asset       session.Asset
@@ -59,11 +64,7 @@ func TestDockerFallbackShellSelection(t *testing.T) {
 			connector := session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 				return transport, nil
 			})
-			manager := session.NewManager(session.Config{Connector: connector})
-			database, err := store.OpenInMemory(t.Context())
-			if err != nil {
-				t.Fatal(err)
-			}
+			manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 			service := newProductionDockerService(manager, database)
 			connected, err := manager.Connect(t.Context(), testCase.asset)
 			if err != nil {
@@ -169,7 +170,7 @@ func newDockerDeviceTestService(t *testing.T, transport base.Transport) (*docker
 	connector := session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 		return transport, nil
 	})
-	manager := session.NewManager(session.Config{Connector: connector})
+	manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 	database, err := store.OpenInMemory(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -293,7 +294,7 @@ func TestProductionDockerProviderRejectsForeignContextBeforeBackend(t *testing.T
 			connector := session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 				return transport, nil
 			})
-			manager := session.NewManager(session.Config{Connector: connector})
+			manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
 			database, err := store.OpenInMemory(t.Context())
 			if err != nil {
 				t.Fatal(err)

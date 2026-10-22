@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
@@ -22,6 +22,11 @@ import {
   IconTrash,
 } from "../../ui/icons";
 import { ContainerInsight } from "./ContainerInsight";
+import { ComposeStackHeader } from "./ComposeStackHeader";
+import { groupContainersByCompose } from "./composeGrouping";
+import { DockerDiskPanel } from "./DockerDiskPanel";
+import { DockerLogStream } from "./DockerLogStream";
+export { createLogLineDecoder } from "./DockerLogStream";
 
 interface LogAttach {
   container: string;
@@ -133,30 +138,13 @@ function imageRef(i: ImageSummary): string {
   return isUntaggedImage(i) ? i.id : `${i.repository}:${i.tag}`;
 }
 
-export function createLogLineDecoder() {
-  const decoder = new TextDecoder();
-  let tail = "";
-  return {
-    write(bytes: Uint8Array): string[] {
-      const lines = (tail + decoder.decode(bytes, { stream: true })).split("\n");
-      tail = lines.pop() ?? "";
-      return lines;
-    },
-    close(): string[] {
-      const rest = tail + decoder.decode();
-      tail = "";
-      return rest ? [rest] : [];
-    },
-  };
-}
-
 export function DockerPanel({ sessionId, visible = true }: { sessionId: string; visible?: boolean }) {
   const qc = useQueryClient();
   const { addTab, pushToast } = useUi();
   const session = useUi((state) => state.sessions.find((entry) => entry.id === sessionId));
   const sessionStatus = session?.status;
   const sessionAssetId = session?.assetId ?? null;
-  const [tab, setTab] = useState<"containers" | "images">("containers");
+  const [tab, setTab] = useState<"containers" | "images" | "disk">("containers");
   const [attached, setAttached] = useState<LogAttach | null>(null);
   const [logsIssue, setLogsIssue] = useState<LogIssue | null>(null);
   const [logsResumeNote, setLogsResumeNote] = useState<string | null>(null);
@@ -174,6 +162,70 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
   currentSessionId.current = sessionId;
   const attachedMatchesSession = attached?.sessionId === sessionId && attached.assetId === sessionAssetId &&
     (!attached.sessionKnown || Boolean(session));
+
+  const openLogs = useCallback(async (containerId: string, containerName: string, reattach = false) => {
+    if (attachInFlight.current !== null) return;
+    const attachId = ++nextAttachId.current;
+    attachInFlight.current = attachId;
+    const generation = attachGeneration.current;
+    const target = useUi.getState().sessions.find((entry) => entry.id === sessionId);
+    const targetAssetId = target?.assetId ?? null;
+    const stillOnTarget = () => {
+      const current = useUi.getState().sessions.find((entry) => entry.id === sessionId);
+      return currentSessionId.current === sessionId && generation === attachGeneration.current &&
+        (target
+          ? Boolean(current && current.assetId === targetAssetId && current.status === "connected")
+          : !current);
+    };
+    if (reattach && attached && (attached.sessionId !== sessionId || (attached.sessionKnown && (!target || target.assetId !== attached.assetId)))) {
+      attachInFlight.current = null;
+      setLogsIssue({ text: "原主机已改变，请返回后重新选择容器", ended: true });
+      return;
+    }
+    if (target && target.status !== "connected") {
+      attachInFlight.current = null;
+      setLogsIssue({ text: "主机连接中断，连接恢复后将重新读取最近 500 行日志" });
+      pendingReconnect.current = true;
+      return;
+    }
+    const sink: LogAttach["sink"] = { onBytes: null };
+    const channel = createBinaryChannel((bytes) => sink.onBytes?.(bytes));
+    try {
+      const kernelTab = await dockerApi.logsAttach(sessionId, containerId, 500, channel);
+      if (!stillOnTarget()) {
+        void terminalApi.closeTab(kernelTab, "kill", sessionId).catch(() => undefined);
+        disposeChannel(channel);
+        if (currentSessionId.current !== sessionId) return;
+        const current = useUi.getState().sessions.find((entry) => entry.id === sessionId);
+        if (reattach) {
+          setLogsIssue({
+            text: current?.assetId === targetAssetId
+              ? "主机连接发生变化，日志跟随已中断；请重新跟随"
+              : "原主机已改变，请返回后重新选择容器",
+            ended: current?.assetId !== targetAssetId,
+          });
+        } else {
+          pushToast("info", "打开日志时主机连接发生变化，请重新打开日志");
+        }
+        return;
+      }
+      setAttached({ container: containerName, containerId, sessionId, assetId: targetAssetId, sessionKnown: Boolean(target), hostName: target?.name ?? sessionId, tabId: kernelTab, channel, sink });
+      setLogsIssue(null);
+      setLogsResumeNote(reattach
+        ? "已重新读取此主机最近 500 行日志；先前画面已替换，断线期间超过 500 行的内容可能缺失。"
+        : null);
+    } catch (e) {
+      disposeChannel(channel);
+      if (!stillOnTarget()) return;
+      if (reattach) {
+        setLogsIssue({ text: `重新跟随失败：${describeError(e)}` });
+      } else {
+        pushToast("error", `读取日志失败：${describeError(e)}`);
+      }
+    } finally {
+      if (attachInFlight.current === attachId) attachInFlight.current = null;
+    }
+  }, [sessionId, attached, pushToast]);
 
   useEffect(() => {
     if (previousIdentity.current.sessionId !== sessionId || previousIdentity.current.assetId !== sessionAssetId) {
@@ -213,15 +265,21 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     queryFn: () => dockerApi.images(sessionId),
     refetchInterval: tab === "images" ? autoRefreshMs : false,
   });
+  const compose = useQuery({
+    queryKey: ["docker-compose-stacks", sessionId],
+    queryFn: () => dockerApi.composeStacks(sessionId),
+    refetchInterval: tab === "containers" ? autoRefreshMs : false,
+  });
 
   const cRows = containers.data ?? [];
   const iRows = images.data ?? [];
 
-  const changeTab = (next: "containers" | "images") => {
+  const changeTab = (next: "containers" | "images" | "disk") => {
     if (next === tab) return;
     setTab(next);
     if (!visible) return;
-    void (next === "containers" ? containers.refetch() : images.refetch());
+    if (next === "disk") void qc.invalidateQueries({ queryKey: ["docker-disk", sessionId] });
+    else void (next === "containers" ? containers.refetch() : images.refetch());
   };
 
   useEffect(() => {
@@ -285,7 +343,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
       cancelled = true;
       off();
     };
-  }, [attached]);
+  }, [attached, openLogs, qc, sessionId]);
 
   useEffect(() => {
     if (!attached) return;
@@ -307,7 +365,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     }
     pendingReconnect.current = true;
     setLogsIssue({ text: "主机连接中断，连接恢复后将重新读取最近 500 行日志" });
-  }, [attached, attachedMatchesSession, sessionStatus]);
+  }, [attached, attachedMatchesSession, openLogs, sessionStatus]);
 
   const markPending = (key: string, on: boolean) =>
     setPending((prev) => {
@@ -457,70 +515,6 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     void qc.invalidateQueries({ queryKey: ["docker-images", sessionId] });
   };
 
-  const openLogs = async (containerId: string, containerName: string, reattach = false) => {
-    if (attachInFlight.current !== null) return;
-    const attachId = ++nextAttachId.current;
-    attachInFlight.current = attachId;
-    const generation = attachGeneration.current;
-    const target = useUi.getState().sessions.find((entry) => entry.id === sessionId);
-    const targetAssetId = target?.assetId ?? null;
-    const stillOnTarget = () => {
-      const current = useUi.getState().sessions.find((entry) => entry.id === sessionId);
-      return currentSessionId.current === sessionId && generation === attachGeneration.current &&
-        (target
-          ? Boolean(current && current.assetId === targetAssetId && current.status === "connected")
-          : !current);
-    };
-    if (reattach && attached && (attached.sessionId !== sessionId || (attached.sessionKnown && (!target || target.assetId !== attached.assetId)))) {
-      attachInFlight.current = null;
-      setLogsIssue({ text: "原主机已改变，请返回后重新选择容器", ended: true });
-      return;
-    }
-    if (target && target.status !== "connected") {
-      attachInFlight.current = null;
-      setLogsIssue({ text: "主机连接中断，连接恢复后将重新读取最近 500 行日志" });
-      pendingReconnect.current = true;
-      return;
-    }
-    const sink: LogAttach["sink"] = { onBytes: null };
-    const channel = createBinaryChannel((bytes) => sink.onBytes?.(bytes));
-    try {
-      const kernelTab = await dockerApi.logsAttach(sessionId, containerId, 500, channel);
-      if (!stillOnTarget()) {
-        void terminalApi.closeTab(kernelTab, "kill", sessionId).catch(() => undefined);
-        disposeChannel(channel);
-        if (currentSessionId.current !== sessionId) return;
-        const current = useUi.getState().sessions.find((entry) => entry.id === sessionId);
-        if (reattach) {
-          setLogsIssue({
-            text: current?.assetId === targetAssetId
-              ? "主机连接发生变化，日志跟随已中断；请重新跟随"
-              : "原主机已改变，请返回后重新选择容器",
-            ended: current?.assetId !== targetAssetId,
-          });
-        } else {
-          pushToast("info", "打开日志时主机连接发生变化，请重新打开日志");
-        }
-        return;
-      }
-      setAttached({ container: containerName, containerId, sessionId, assetId: targetAssetId, sessionKnown: Boolean(target), hostName: target?.name ?? sessionId, tabId: kernelTab, channel, sink });
-      setLogsIssue(null);
-      setLogsResumeNote(reattach
-        ? "已重新读取此主机最近 500 行日志；先前画面已替换，断线期间超过 500 行的内容可能缺失。"
-        : null);
-    } catch (e) {
-      disposeChannel(channel);
-      if (!stillOnTarget()) return;
-      if (reattach) {
-        setLogsIssue({ text: `重新跟随失败：${describeError(e)}` });
-      } else {
-        pushToast("error", `读取日志失败：${describeError(e)}`);
-      }
-    } finally {
-      if (attachInFlight.current === attachId) attachInFlight.current = null;
-    }
-  };
-
   const openExec = (c: ContainerSummary) => {
     addTab({
       id: `exec-${c.id}-${Date.now()}`,
@@ -585,7 +579,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
           </div>
         )}
         <div className="min-h-0 flex-1">
-          <LogStream key={attached.tabId} sink={attached.sink} />
+          <DockerLogStream key={attached.tabId} sink={attached.sink} />
         </div>
       </div>
     );
@@ -634,6 +628,13 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
             镜像
             <span className="nx-count">{images.data ? iRows.length : "—"}</span>
           </button>
+          <button
+            className={`nx-segment-item ${tab === "disk" ? "is-active" : ""}`}
+            onClick={() => changeTab("disk")}
+          >
+            <IconTrash size={12} />
+            磁盘
+          </button>
         </div>
         <span className="nx-hint hidden min-[560px]:inline">
           {containers.data
@@ -663,32 +664,38 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
             </button>
           </>
         )}
-        <button
-          className="nx-btn nx-btn-ghost nx-btn-sm"
-          onClick={() => void (tab === "containers" ? containers.refetch() : images.refetch())}
-        >
-          <IconRefresh size={13} />
-          刷新
-        </button>
-        <label className="nx-hint hidden items-center gap-1.5 min-[560px]:inline-flex">
-          自动刷新
-          <select
-            className="nx-select nx-input-sm"
-            aria-label="自动刷新间隔"
-            value={refreshMs}
-            onChange={(e) => changeRefreshMs(Number(e.target.value))}
-          >
-            {REFRESH_INTERVAL_OPTIONS.map((ms) => (
-              <option key={ms} value={ms}>
-                {ms === 0 ? "关闭" : `${ms / 1000} 秒`}
-              </option>
-            ))}
-          </select>
-        </label>
+        {tab !== "disk" && (
+          <>
+            <button
+              className="nx-btn nx-btn-ghost nx-btn-sm"
+              onClick={() => void (tab === "containers" ? containers.refetch() : images.refetch())}
+            >
+              <IconRefresh size={13} />
+              刷新
+            </button>
+            <label className="nx-hint hidden items-center gap-1.5 min-[560px]:inline-flex">
+              自动刷新
+              <select
+                className="nx-select nx-input-sm"
+                aria-label="自动刷新间隔"
+                value={refreshMs}
+                onChange={(e) => changeRefreshMs(Number(e.target.value))}
+              >
+                {REFRESH_INTERVAL_OPTIONS.map((ms) => (
+                  <option key={ms} value={ms}>
+                    {ms === 0 ? "关闭" : `${ms / 1000} 秒`}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        {tab === "containers" ? (
+        {tab === "disk" ? (
+          <DockerDiskPanel sessionId={sessionId} visible={visible} />
+        ) : tab === "containers" ? (
           <table key="containers" className="nx-table nx-table-fixed">
             <thead>
               <tr>
@@ -749,7 +756,26 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                   </>
                 }
               >
-                {cRows.map((c) => (
+                {groupContainersByCompose(cRows, compose.data?.stacks ?? []).map((group) => (
+                  <Fragment key={group.project ?? "ungrouped"}>
+                    <tr>
+                      <td colSpan={6} className="p-0">
+                        {group.project ? (
+                          <ComposeStackHeader
+                            sessionId={sessionId}
+                            project={group.project}
+                            stack={group.stack}
+                            onChanged={() => {
+                              void qc.invalidateQueries({ queryKey: ["docker-ps", sessionId] });
+                              void qc.invalidateQueries({ queryKey: ["docker-compose-stacks", sessionId] });
+                            }}
+                          />
+                        ) : (
+                          <span className="block bg-neutral-950/35 px-2 py-1.5 text-[11px] text-neutral-500">未分组容器</span>
+                        )}
+                      </td>
+                    </tr>
+                    {group.containers.map((c) => (
                 <tr key={c.id} className={pending.has(c.id) ? "opacity-50" : undefined}>
                   <td>
                     <input
@@ -844,6 +870,8 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                     </span>
                   </td>
                 </tr>
+                    ))}
+                  </Fragment>
                 ))}
               </TableQueryBody>
             </tbody>
@@ -944,103 +972,9 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
         )}
       </div>
 
-      <PullBar sessionId={sessionId} />
+      {tab !== "disk" && <PullBar sessionId={sessionId} />}
     </div>
   );
-}
-
-function LogStream({ sink }: { sink: LogAttach["sink"] }) {
-  const [lines, setLines] = useState<string[]>([]);
-  const [newOutput, setNewOutput] = useState(false);
-  const scroller = useRef<HTMLDivElement>(null);
-  const followRef = useRef(true);
-  const lastHeightRef = useRef(0);
-
-  useEffect(() => {
-    const decoder = createLogLineDecoder();
-    const append = (next: string[]) => {
-      if (next.length) {
-        setLines((prev) => [...prev, ...next].slice(-4000));
-      }
-    };
-    sink.onBytes = (bytes) => append(decoder.write(bytes));
-    return () => {
-      sink.onBytes = null;
-      append(decoder.close());
-    };
-  }, [sink]);
-
-  useEffect(() => {
-    const el = scroller.current;
-    if (!el) return;
-    const onScroll = () => {
-      const near = el.scrollHeight - el.scrollTop - el.clientHeight <= 32;
-      followRef.current = near;
-      if (near) setNewOutput(false);
-      lastHeightRef.current = el.scrollHeight;
-    };
-    el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
-  }, []);
-
-  useEffect(() => {
-    const el = scroller.current;
-    if (!el) return;
-    if (followRef.current) {
-      el.scrollTop = el.scrollHeight;
-    } else if (el.scrollHeight > lastHeightRef.current) {
-      setNewOutput(true);
-    }
-    lastHeightRef.current = el.scrollHeight;
-  }, [lines]);
-
-  const jumpToLatest = () => {
-    const el = scroller.current;
-    followRef.current = true;
-    setNewOutput(false);
-    if (el) {
-      el.scrollTop = el.scrollHeight;
-      lastHeightRef.current = el.scrollHeight;
-    }
-  };
-
-  return (
-    <div className="relative h-full min-h-0">
-      <div
-        ref={scroller}
-        role="log"
-        aria-label="容器日志"
-        className="h-full overflow-auto bg-term px-3 py-2 font-mono text-[11.5px] leading-relaxed text-neutral-300"
-      >
-        {lines.length === 0 ? (
-          <span className="text-neutral-600">等待日志…</span>
-        ) : (
-          lines.map((l, i) => (
-            <div key={i} className="whitespace-pre-wrap">
-              {highlightLog(l)}
-            </div>
-          ))
-        )}
-      </div>
-      {newOutput && (
-        <button
-          type="button"
-          className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded-full border border-neutral-700 bg-neutral-800/95 px-3 py-1 text-[11px] text-neutral-200 shadow-lg hover:bg-neutral-700"
-          aria-label="回到最新日志"
-          onClick={jumpToLatest}
-        >
-          ↓ 新输出
-        </button>
-      )}
-    </div>
-  );
-}
-
-function highlightLog(line: string) {
-  if (/\b(ERROR|FATAL|panic)\b/i.test(line)) return <span className="text-red-300">{line}</span>;
-  if (/\b(WARN|Warning)\b/i.test(line)) return <span className="text-amber-300">{line}</span>;
-  if (/^\s*#/.test(line)) return <span className="text-neutral-600">{line}</span>;
-  return line;
 }
 
 function PullBar({ sessionId }: { sessionId: string }) {

@@ -48,8 +48,12 @@ type Manager struct {
 	ExePath        string
 	APIURL         string
 	HTTPClient     *http.Client
-	Emit           func(context.Context, Progress)
-	RestartFunc    func(context.Context, string) error
+	// MinisignPublicKey overrides the build-time trust root; configuring a key makes signed checksums mandatory.
+	MinisignPublicKey string
+	// RequireSignedChecksums also fails closed when no trusted public key is configured.
+	RequireSignedChecksums bool
+	Emit                   func(context.Context, Progress)
+	RestartFunc            func(context.Context, string) error
 
 	restartTarget string
 	installing    atomic.Bool

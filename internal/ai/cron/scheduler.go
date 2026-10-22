@@ -13,11 +13,12 @@ import (
 )
 
 type Scheduler struct {
-	store    Store
-	executor Executor
-	options  Options
-	ownerID  string
-	errCh    chan error
+	store          Store
+	executor       Executor
+	options        Options
+	ownerID        string
+	errCh          chan error
+	executionSlots chan struct{}
 
 	mu      sync.Mutex
 	running bool
@@ -34,6 +35,9 @@ func NewScheduler(store Store, executor Executor, options Options) (*Scheduler, 
 	}
 	if options.MaxJobsPerSession <= 0 {
 		options.MaxJobsPerSession = DefaultMaxJobsPerSession
+	}
+	if options.MaxConcurrentExecutions <= 0 {
+		options.MaxConcurrentExecutions = DefaultMaxConcurrentExecutions
 	}
 	if options.ExecutionTimeout <= 0 {
 		options.ExecutionTimeout = DefaultExecutionTimeout
@@ -59,6 +63,12 @@ func NewScheduler(store Store, executor Executor, options Options) (*Scheduler, 
 	if options.CircuitCooldown <= 0 {
 		options.CircuitCooldown = DefaultCircuitCooldown
 	}
+	if options.DueScanBatchSize <= 0 {
+		options.DueScanBatchSize = DefaultDueScanBatchSize
+	}
+	if options.RecoveryBatchSize <= 0 {
+		options.RecoveryBatchSize = DefaultRecoveryBatchSize
+	}
 	if options.Now == nil {
 		options.Now = time.Now
 	}
@@ -69,6 +79,7 @@ func NewScheduler(store Store, executor Executor, options Options) (*Scheduler, 
 	return &Scheduler{
 		store: store, executor: executor, options: options, ownerID: options.OwnerID,
 		errCh: make(chan error, 1), local: make(map[string]string),
+		executionSlots: make(chan struct{}, options.MaxConcurrentExecutions),
 	}, nil
 }
 
@@ -221,6 +232,7 @@ func (s *Scheduler) load(ctx context.Context) ([]Job, error) {
 }
 
 func (s *Scheduler) Run(ctx context.Context) error {
+	ctx = WithInternalAccess(ctx)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -289,30 +301,82 @@ loop:
 }
 
 func (s *Scheduler) runOnce(ctx context.Context, now time.Time) (int, error) {
-	jobs, err := s.load(ctx)
-	if err != nil {
+	ctx = WithInternalAccess(ctx)
+	if err := s.recoverAbandonedRuns(ctx, now); err != nil {
 		return 0, err
 	}
-	started := 0
-	for _, job := range jobs {
-		if job.Running() {
-			if err := s.recoverIfAbandoned(ctx, job, now); err != nil {
-				return started, err
-			}
-			continue
-		}
-		if !job.Enabled || !due(job, now) {
-			continue
-		}
-		claimed, err := s.claim(ctx, job, now)
+	return s.startDueJobs(ctx, now)
+}
+
+// recoverAbandonedRuns reconciles expired runs in stable batches, passing
+// locally active cleanups without treating them as abandoned.
+func (s *Scheduler) recoverAbandonedRuns(ctx context.Context, now time.Time) error {
+	var excludedIDs []string
+	for {
+		candidates, err := s.store.ListRecoveryCandidates(ctx, now, s.options.RecoveryBatchSize, excludedIDs...)
 		if err != nil {
-			return started, err
+			return storageError("list recovery", "", err)
 		}
-		if claimed {
-			started++
+		if len(candidates) == 0 {
+			return nil
+		}
+		for _, job := range candidates {
+			recovered, err := s.recoverIfAbandoned(ctx, job, now)
+			if err != nil {
+				return err
+			}
+			if !recovered {
+				excludedIDs = append(excludedIDs, job.ID)
+			}
 		}
 	}
-	return started, nil
+}
+
+// startDueJobs claims due jobs in batches bounded by the free execution
+// slots, so a full slot pool stops the scan instead of prefetching every due
+// row. Claimed and disabled rows leave the due set, which bounds the loop.
+func (s *Scheduler) startDueJobs(ctx context.Context, now time.Time) (int, error) {
+	started := 0
+	for {
+		free := cap(s.executionSlots) - len(s.executionSlots)
+		if free == 0 {
+			return started, nil
+		}
+		if free > s.options.DueScanBatchSize {
+			free = s.options.DueScanBatchSize
+		}
+		jobs, err := s.store.ListDueIdle(ctx, now, free)
+		if err != nil {
+			return started, storageError("list due", "", err)
+		}
+		if len(jobs) == 0 {
+			return started, nil
+		}
+		progressed := false
+		for _, job := range jobs {
+			if !job.Enabled || !due(job, now) {
+				continue
+			}
+			if err := ownerExecutionError(job.OwnerID, job.OwnerKind, s.options.AllowOwnerlessLegacy); err != nil {
+				if err := s.disableUnexecutable(ctx, job, now, err); err != nil {
+					return started, err
+				}
+				progressed = true
+				continue
+			}
+			claimed, err := s.claim(ctx, job, now)
+			if err != nil {
+				return started, err
+			}
+			if claimed {
+				started++
+				progressed = true
+			}
+		}
+		if !progressed {
+			return started, nil
+		}
+	}
 }
 
 func due(job Job, now time.Time) bool {
@@ -327,6 +391,21 @@ func due(job Job, now time.Time) bool {
 		dueAt = job.CircuitOpenUntil
 	}
 	return !now.Before(dueAt)
+}
+
+func (s *Scheduler) disableUnexecutable(ctx context.Context, job Job, now time.Time, cause error) error {
+	job.Enabled = false
+	job.LastError = boundedError(cause)
+	job.RetryAt = time.Time{}
+	job.CircuitOpenUntil = time.Time{}
+	job.UpdatedAt = now
+	if _, err := s.store.CompareAndSwap(ctx, job, job.Revision); err != nil {
+		if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return storageError("disable unexecutable", job.ID, err)
+	}
+	return nil
 }
 
 func (s *Scheduler) claim(ctx context.Context, job Job, now time.Time) (bool, error) {
@@ -353,6 +432,9 @@ func (s *Scheduler) claim(ctx context.Context, job Job, now time.Time) (bool, er
 	if runID == "" {
 		return false, errors.New("cron generated an empty run ID")
 	}
+	if !s.tryAcquireExecutionSlot() {
+		return false, nil
+	}
 	job.Lease = Lease{Owner: s.ownerID, ExpiresAt: now.Add(s.options.LeaseDuration)}
 	job.Run = RunState{
 		ID: runID, ScheduledFor: scheduledFor, StartedAt: now,
@@ -362,6 +444,7 @@ func (s *Scheduler) claim(ctx context.Context, job Job, now time.Time) (bool, er
 	job.UpdatedAt = now
 	stored, err := s.store.CompareAndSwap(ctx, job, job.Revision)
 	if err != nil {
+		s.releaseExecutionSlot()
 		wrapped := storageError("claim", job.ID, err)
 		if errors.Is(wrapped, ErrConflict) || errors.Is(wrapped, ErrNotFound) {
 			return false, nil
@@ -376,19 +459,30 @@ func (s *Scheduler) claim(ctx context.Context, job Job, now time.Time) (bool, er
 	return true, nil
 }
 
-func (s *Scheduler) recoverIfAbandoned(ctx context.Context, job Job, now time.Time) error {
+func (s *Scheduler) tryAcquireExecutionSlot() bool {
+	select {
+	case s.executionSlots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Scheduler) releaseExecutionSlot() { <-s.executionSlots }
+
+func (s *Scheduler) recoverIfAbandoned(ctx context.Context, job Job, now time.Time) (bool, error) {
 	if s.locallyRunning(job.ID, job.Run.ID) || leaseHeldByAnyone(job.Lease, now) || now.Before(job.Run.Deadline) {
-		return nil
+		return false, nil
 	}
 	job.Lease = Lease{Owner: s.ownerID, ExpiresAt: now.Add(s.options.LeaseDuration)}
 	_, err := s.finish(ctx, job, errors.New("execution interrupted before completion"), now)
 	if err != nil {
 		if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
-	return nil
+	return true, nil
 }
 
 func leaseHeldByAnother(lease Lease, owner string, now time.Time) bool {
@@ -419,5 +513,8 @@ func (s *Scheduler) emit(err error) {
 		return
 	}
 	s.notify(err)
-	s.errCh <- err
+	select {
+	case s.errCh <- err:
+	default:
+	}
 }

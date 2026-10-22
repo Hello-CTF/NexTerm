@@ -13,10 +13,17 @@ import (
 )
 
 type Accounts struct {
-	db          *gorm.DB
-	now         func() int64
-	totpKeyPath string
-	writeMu     sync.Mutex
+	db                       *gorm.DB
+	now                      func() int64
+	totpKeyPath              string
+	activeSuperadminListener func(context.Context)
+	writeMu                  sync.Mutex
+	epochs                   *epochTracker
+	// revocationMu is the shared async-boundary mutex: session issuance,
+	// revocation, password changes, resets, disables, device revocations, and
+	// the TOTP/DEK/MFA generation checks all serialize on it, so an epoch bump
+	// cannot land inside another boundary's check-to-commit window.
+	revocationMu sync.Mutex
 }
 
 // userTable centralizes the account table name for future storage backend changes.
@@ -32,8 +39,21 @@ func WithNow(now func() int64) Option {
 	}
 }
 
+func WithActiveSuperadminListener(listener func(context.Context)) Option {
+	return func(a *Accounts) {
+		a.activeSuperadminListener = listener
+	}
+}
+
+func (a *Accounts) notifyActiveSuperadmin(ctx context.Context, user *User) {
+	if a.activeSuperadminListener == nil || user == nil || user.Role != RoleSuperadmin || user.State != StateActive {
+		return
+	}
+	a.activeSuperadminListener(ctx)
+}
+
 func New(db *gorm.DB, options ...Option) *Accounts {
-	a := &Accounts{db: db, now: ids.NowMS}
+	a := &Accounts{db: db, now: ids.NowMS, epochs: newEpochTracker()}
 	for _, option := range options {
 		option(a)
 	}

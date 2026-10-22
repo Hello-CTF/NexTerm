@@ -13,7 +13,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 const (
@@ -213,7 +212,7 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, op
 			return nil, err
 		}
 	}
-	tombstones, err := e.syncTombstoneList(ctx)
+	tombstones, err := e.syncTombstoneList(ctx, e.aiSharedAccess(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -269,34 +268,83 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, op
 	return objects, nil
 }
 
+func transcriptCacheKeyFor(ctx context.Context, transcript store.TranscriptRow) transcriptCacheKey {
+	key := transcriptCacheKey{
+		owner: ipc.OwnerID(ctx), id: transcript.ID, sessionID: transcript.SessionID,
+		assetID: transcript.AssetID, assetName: transcript.AssetName, assetKind: transcript.AssetKind,
+		startedAt: transcript.StartedAt, bytes: transcript.Bytes, chunks: transcript.Chunks,
+		truncated: transcript.Truncated, contentOmitted: transcript.ContentOmitted,
+	}
+	if transcript.EndedAt != nil {
+		key.hasEndedAt = true
+		key.endedAt = *transcript.EndedAt
+	}
+	return key
+}
+
+func transcriptCacheID(key transcriptCacheKey) string {
+	return key.owner + "\x00" + key.id
+}
+
 func (e *Engine) transcriptPayload(ctx context.Context, transcript store.TranscriptRow) ([]byte, error) {
+	key := transcriptCacheKeyFor(ctx, transcript)
+	cacheID := transcriptCacheID(key)
+	e.transcriptCacheMu.RLock()
+	cached, found := e.transcriptCache[cacheID]
+	e.transcriptCacheMu.RUnlock()
+	if found && cached.key == key {
+		return cached.payload, nil
+	}
+
 	object := transcriptObject{
 		ID: transcript.ID, SessionID: transcript.SessionID, AssetID: transcript.AssetID,
 		AssetName: transcript.AssetName, AssetKind: transcript.AssetKind,
 		StartedAt: transcript.StartedAt, Truncated: transcript.Truncated,
+		Bytes: transcript.Bytes, Chunks: transcript.Chunks,
 	}
 	if transcript.EndedAt != nil {
 		object.EndedAt = *transcript.EndedAt
 	}
+	var payload []byte
+	var err error
 	if transcript.Bytes > syncTranscriptMaxContentBytes {
 		object.ContentOmitted = true
-		object.Bytes = transcript.Bytes
-		object.Chunks = transcript.Chunks
-		return marshalObject(object)
+		payload, err = marshalObject(object)
+	} else {
+		chunks, readErr := e.transcriptChunksAll(ctx, transcript.ID)
+		if readErr != nil {
+			return nil, readErr
+		}
+		object.Content = make([]transcriptChunkObject, 0, len(chunks))
+		for _, chunk := range chunks {
+			object.Content = append(object.Content, transcriptChunkObject{
+				Seq: chunk.Seq, TabID: chunk.TabID, TS: chunk.TS, Kind: chunk.Kind, Data: chunk.Data,
+			})
+		}
+		payload, err = marshalObject(object)
 	}
-	chunks, err := e.transcriptChunksAll(ctx, transcript.ID)
 	if err != nil {
 		return nil, err
 	}
-	object.Content = make([]transcriptChunkObject, 0, len(chunks))
-	for _, chunk := range chunks {
-		object.Content = append(object.Content, transcriptChunkObject{
-			Seq: chunk.Seq, TabID: chunk.TabID, TS: chunk.TS, Kind: chunk.Kind, Data: chunk.Data,
-		})
+	e.transcriptCacheMu.Lock()
+	e.transcriptCache[cacheID] = transcriptCacheEntry{key: key, payload: payload, payloadHash: objectPayloadHash(payload)}
+	e.transcriptCacheMu.Unlock()
+	return payload, nil
+}
+
+// localPayloadHash reuses the hash stored beside an immutable transcript payload. The byte comparison
+// protects against a concurrent cache replacement; all other object kinds retain the existing hash path.
+func (e *Engine) localPayloadHash(ctx context.Context, id string, object localObject) string {
+	if object.kind == KindTranscript {
+		cacheID := ipc.OwnerID(ctx) + "\x00" + id
+		e.transcriptCacheMu.RLock()
+		cached, found := e.transcriptCache[cacheID]
+		e.transcriptCacheMu.RUnlock()
+		if found && bytes.Equal(cached.payload, object.plaintext) {
+			return cached.payloadHash
+		}
 	}
-	object.Bytes = transcript.Bytes
-	object.Chunks = transcript.Chunks
-	return marshalObject(object)
+	return objectPayloadHash(object.plaintext)
 }
 
 func (e *Engine) transcriptChunksAll(ctx context.Context, transcriptID string) ([]store.TranscriptChunkRow, error) {
@@ -449,7 +497,11 @@ func (e *Engine) applyGroupObject(ctx context.Context, plaintext []byte, report 
 			parentID = nil
 		}
 	}
-	if err := e.groupUpsert(ctx, payload, parentID); err != nil {
+	var snapshot *store.AssetGroupRow
+	if exists {
+		snapshot = &local
+	}
+	if err := e.groupUpsert(ctx, payload, parentID, snapshot); err != nil {
 		report.warnf("分组 %s 应用失败: %v", payload.ID, err)
 		return false, false
 	}
@@ -461,7 +513,8 @@ func (e *Engine) applyGroupObject(ctx context.Context, plaintext []byte, report 
 
 // groupUpsert mirrors store.GroupUpsert semantics and clears the same-ID deletion tombstone in the same transaction:
 // once a newer group beats an old tombstone, no tombstone that could roll back the object may remain.
-func (e *Engine) groupUpsert(ctx context.Context, payload groupObject, parentID *string) error {
+// The write binds to the snapshot the LWW decision was made on (nil for a group that did not exist locally).
+func (e *Engine) groupUpsert(ctx context.Context, payload groupObject, parentID *string, snapshot *store.AssetGroupRow) error {
 	if err := store.EnsureID(payload.ID); err != nil {
 		return err
 	}
@@ -469,18 +522,25 @@ func (e *Engine) groupUpsert(ctx context.Context, payload groupObject, parentID 
 		return ipc.NewError(ipc.CodeBadParam, "分组名称不能为空")
 	}
 	return e.store.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return e.groupUpsertTx(ctx, tx, payload, parentID)
+		return e.groupUpsertTxBound(ctx, tx, payload, parentID, snapshot)
 	})
 }
 
-// groupUpsertTx is the in-transaction version of groupUpsert, letting ImportBundle merge multiple writes of one object class into the same transaction.
-func (e *Engine) groupUpsertTx(ctx context.Context, tx *gorm.DB, payload groupObject, parentID *string) error {
-	if err := tx.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"parent_id", "name", "sort", "updated_at"}),
-		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
-	}).Create(&store.AssetGroupRow{ID: payload.ID, ParentID: parentID, Name: strings.TrimSpace(payload.Name), Sort: payload.Sort, CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt, OwnerID: ipc.OwnerID(ctx)}).Error; err != nil {
-		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+// groupUpsertTxBound writes one group inside a transaction with the write bound to the
+// caller's snapshot: the planner's equal-revision winner lands while a concurrent local
+// write is never overwritten (the conflict leaves the object unreconciled for the next
+// round). The explicit bundle import passes the pre-import snapshot, and its second
+// topology pass passes the first pass's written content.
+func (e *Engine) groupUpsertTxBound(ctx context.Context, tx *gorm.DB, payload groupObject, parentID *string, snapshot *store.AssetGroupRow) error {
+	row := &store.AssetGroupRow{ID: payload.ID, ParentID: parentID, Name: strings.TrimSpace(payload.Name), Sort: payload.Sort, CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt, OwnerID: ipc.OwnerID(ctx)}
+	if snapshot == nil {
+		if err := store.UpsertOwnerGuardedExpected(ctx, tx, row, []string{"parent_id", "name", "sort", "updated_at"}, 0); err != nil {
+			return err
+		}
+	} else {
+		if _, err := store.UpsertOwnerGuardedExpectedContent(ctx, tx, row, []string{"parent_id", "name", "sort", "updated_at"}, snapshot); err != nil {
+			return err
+		}
 	}
 	tombstone := query.Use(tx).SyncTombstone
 	if _, err := tombstone.WithContext(ctx).
@@ -591,7 +651,19 @@ func (e *Engine) applyAssetObject(ctx context.Context, plaintext []byte, report 
 			return false, false
 		}
 	}
-	if _, err := e.store.AssetUpsert(ctx, row); err != nil {
+	// The LWW decision above was made against the local snapshot; the guarded upsert
+	// lands only when that snapshot is still current, so a concurrent reconciler or
+	// user write is never silently overwritten. A conflict leaves the object
+	// unreconciled: the next round re-pulls and re-decides on the fresh state.
+	var base *store.AssetRow
+	if exists {
+		base = &local
+	}
+	if _, err := e.store.AssetUpsertGuarded(ctx, row, base); err != nil {
+		if errors.Is(err, store.ErrWriteConflict) {
+			report.warnf("资产 %s 在本机已被更新，本次未覆盖，将在下一轮同步重新合并", payload.ID)
+			return false, false
+		}
 		report.warnf("资产 %s 应用失败: %v", payload.ID, err)
 		return false, false
 	}
@@ -645,7 +717,11 @@ func (e *Engine) applyCredentialObject(ctx context.Context, plaintext []byte, re
 		report.warnf("凭据 %s 重加密失败: %v", payload.ID, err)
 		return false, false
 	}
-	if err := e.credentialUpsert(ctx, payload, nonce, blob); err != nil {
+	var snapshot *store.CredentialRow
+	if exists {
+		snapshot = &local
+	}
+	if err := e.credentialUpsert(ctx, payload, nonce, blob, snapshot); err != nil {
 		report.warnf("凭据 %s 应用失败: %v", payload.ID, err)
 		return false, false
 	}
@@ -654,30 +730,45 @@ func (e *Engine) applyCredentialObject(ctx context.Context, plaintext []byte, re
 
 // credentialUpsert mirrors store.CredentialPut but preserves the peer revision: the store layer writes updated_at with the local clock,
 // while sync payload hashing goes by the revision, which must be preserved verbatim for idempotent reconciliation.
+// The write binds to the snapshot the LWW decision was made on (nil for a credential that did not exist locally):
+// the planner's equal-revision winner lands only while that snapshot is still current, and a concurrent local
+// write is never overwritten — the conflict leaves the object unreconciled for the next round to re-decide.
 // The write and the deletion-tombstone clearing share one transaction: once a newer credential beats an old tombstone, no tombstone that could roll back the object may remain.
-func (e *Engine) credentialUpsert(ctx context.Context, payload credentialObject, nonce, blob []byte) error {
+func (e *Engine) credentialUpsert(ctx context.Context, payload credentialObject, nonce, blob []byte, snapshot *store.CredentialRow) error {
 	return e.store.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return e.credentialUpsertTx(ctx, tx, payload, nonce, blob)
+		_, err := e.credentialUpsertTxBound(ctx, tx, payload, nonce, blob, snapshot)
+		return err
 	})
 }
 
-// credentialUpsertTx is the in-transaction version of credentialUpsert, letting ImportBundle merge multiple writes of one object class into the same transaction.
-func (e *Engine) credentialUpsertTx(ctx context.Context, tx *gorm.DB, payload credentialObject, nonce, blob []byte) error {
-	if err := tx.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"name", "kind", "cipher", "nonce", "blob", "kek_hint", "updated_at"}),
-		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
-	}).Create(&store.CredentialRow{ID: payload.ID, Name: payload.Name, Kind: payload.Kind, Cipher: store.CipherAES256GCM, Nonce: nonce, Blob: blob, KEKHint: e.vault.KEKHint(), CreatedAt: payload.UpdatedAt, UpdatedAt: payload.UpdatedAt, OwnerID: ipc.OwnerID(ctx)}).Error; err != nil {
-		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+// credentialUpsertTxBound is the snapshot-bound credential write: an existing row is
+// updated only when its content still equals the snapshot's, and a new row is inserted
+// only when it is still absent. The explicit bundle import passes the pre-import snapshot
+// so a later local credential write is never blindly overwritten. The boolean result
+// reports whether the write actually landed; a false nil-error result is a genuine
+// idempotent replay (the snapshot already carried the target content), which the caller
+// must not record as a write of its own.
+func (e *Engine) credentialUpsertTxBound(ctx context.Context, tx *gorm.DB, payload credentialObject, nonce, blob []byte, snapshot *store.CredentialRow) (bool, error) {
+	row := &store.CredentialRow{ID: payload.ID, Name: payload.Name, Kind: payload.Kind, Cipher: store.CipherAES256GCM, Nonce: nonce, Blob: blob, KEKHint: e.vault.KEKHint(), CreatedAt: payload.UpdatedAt, UpdatedAt: payload.UpdatedAt, OwnerID: ipc.OwnerID(ctx)}
+	landed := true
+	if snapshot == nil {
+		if err := store.UpsertOwnerGuardedExpected(ctx, tx, row, []string{"name", "kind", "cipher", "nonce", "blob", "kek_hint", "updated_at"}, 0); err != nil {
+			return false, err
+		}
+	} else {
+		var err error
+		if landed, err = store.UpsertOwnerGuardedExpectedContent(ctx, tx, row, []string{"name", "kind", "cipher", "nonce", "blob", "kek_hint", "updated_at"}, snapshot); err != nil {
+			return false, err
+		}
 	}
 	tombstone := query.Use(tx).CredentialTombstone
 	if _, err := tombstone.WithContext(ctx).
 		Where(tombstone.ID.Eq(payload.ID)).
 		Where(ownerConditions(ctx, tombstone.TableName())...).
 		Delete(); err != nil {
-		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		return false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	return nil
+	return landed, nil
 }
 
 func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
@@ -729,7 +820,11 @@ func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, repor
 			return false, false
 		}
 	}
-	if err := e.snippetUpsert(ctx, row); err != nil {
+	var snapshot *store.SnippetRow
+	if exists {
+		snapshot = &local
+	}
+	if err := e.snippetUpsert(ctx, row, snapshot); err != nil {
 		report.warnf("片段 %s 应用失败: %v", payload.ID, err)
 		return false, false
 	}
@@ -990,7 +1085,11 @@ func (e *Engine) applyKnownHostObject(ctx context.Context, plaintext []byte, rep
 		}
 		displacedID = conflict.ID
 	}
-	if err := e.knownHostUpsert(ctx, payload, displacedID); err != nil {
+	var snapshot *store.KnownHostRow
+	if exists {
+		snapshot = &local
+	}
+	if err := e.knownHostUpsert(ctx, payload, displacedID, snapshot); err != nil {
 		report.warnf("已知主机 %s 应用失败: %v", payload.ID, err)
 		return false, false
 	}
@@ -1057,6 +1156,10 @@ func (e *Engine) applyKnownHostTombstone(ctx context.Context, objectID string, p
 }
 
 func (e *Engine) applyAIProfileObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
+	if _, err := e.aiOwnerID(ctx); err != nil {
+		report.warnf("AI 模型档案应用需要账号身份: %v", err)
+		return false, false
+	}
 	var payload aiProfileObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
 		report.warnf("AI 模型档案对象数据损坏：%v", err)
@@ -1122,6 +1225,10 @@ func (e *Engine) applyAIProfileObject(ctx context.Context, plaintext []byte, rep
 }
 
 func (e *Engine) applyAIProfileTombstone(ctx context.Context, objectID string, deletedAt int64, report *SyncReport) (bool, bool) {
+	if _, err := e.aiOwnerID(ctx); err != nil {
+		report.warnf("AI 模型档案删除标记需要账号身份: %v", err)
+		return false, false
+	}
 	state, revision, _, err := e.aiProfilesLoad(ctx)
 	if err != nil {
 		report.warnf("无法读取 AI 模型档案 %s: %v", objectID, err)

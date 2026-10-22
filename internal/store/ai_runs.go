@@ -70,7 +70,7 @@ func (s *Store) RunGet(ctx context.Context, id string) (RunRow, error) {
 	run := query.Use(s.db).RunRow
 	row, err := run.WithContext(ctx).
 		Where(run.ID.Eq(id)).
-		Where(ownerConditions(ctx, run.TableName())...).
+		Where(s.aiHistoryOwnerConditions(ctx, run.TableName())...).
 		First()
 	if isNoRows(err) {
 		return RunRow{}, notFound("AI 运行")
@@ -85,7 +85,7 @@ func (s *Store) RunList(ctx context.Context, conversationID string, limit int) (
 	run := query.Use(s.db).RunRow
 	q := run.WithContext(ctx).
 		Where(run.Source.Neq(RunSourceTitle)).
-		Where(ownerConditions(ctx, run.TableName())...)
+		Where(s.aiHistoryOwnerConditions(ctx, run.TableName())...)
 	if conversationID != "" {
 		q = q.Where(run.ConversationID.Eq(conversationID))
 	}
@@ -106,7 +106,7 @@ func (s *Store) RunsActive(ctx context.Context) ([]RunRow, error) {
 	err := run.WithContext(ctx).
 		Where(run.Status.In(RunStatusRunning, RunStatusInterrupted)).
 		Where(run.FinishedAt.IsNull()).
-		Where(ownerConditions(ctx, run.TableName())...).
+		Where(s.aiHistoryOwnerConditions(ctx, run.TableName())...).
 		Order(run.CreatedAt).
 		Scan(&result)
 	if err != nil {
@@ -126,7 +126,7 @@ func (s *Store) RunAppendEvent(ctx context.Context, runID, eventType string, pay
 		now := ids.NowMS()
 		info, err := run.WithContext(ctx).
 			Where(run.ID.Eq(runID)).
-			Where(ownerConditions(ctx, run.TableName())...).
+			Where(s.aiHistoryOwnerConditions(ctx, run.TableName())...).
 			UpdateColumns(map[string]any{"seq": gorm.Expr("seq + 1"), "updated_at": now})
 		if err != nil {
 			return dbError(err)
@@ -136,7 +136,7 @@ func (s *Store) RunAppendEvent(ctx context.Context, runID, eventType string, pay
 		}
 		row, err := run.WithContext(ctx).
 			Where(run.ID.Eq(runID)).
-			Where(ownerConditions(ctx, run.TableName())...).
+			Where(s.aiHistoryOwnerConditions(ctx, run.TableName())...).
 			First()
 		if isNoRows(err) {
 			return notFound("AI 运行")
@@ -151,7 +151,7 @@ func (s *Store) RunAppendEvent(ctx context.Context, runID, eventType string, pay
 		}
 		event := queries.RunEventRow
 		if err := event.WithContext(ctx).Create(&RunEventRow{
-			RunID: runID, Seq: seq, Type: eventType, PayloadJSON: string(encoded), CreatedAt: now, OwnerID: ipc.OwnerID(ctx),
+			RunID: runID, Seq: seq, Type: eventType, PayloadJSON: string(encoded), CreatedAt: now, OwnerID: row.OwnerID,
 		}); err != nil {
 			return dbError(err)
 		}
@@ -174,7 +174,7 @@ func (s *Store) RunEventsAfterLimit(ctx context.Context, runID string, afterSeq 
 	event := query.Use(s.db).RunEventRow
 	q := event.WithContext(ctx).
 		Where(event.RunID.Eq(runID), event.Seq.Gt(afterSeq)).
-		Where(ownerConditions(ctx, event.TableName())...).
+		Where(s.aiHistoryOwnerConditions(ctx, event.TableName())...).
 		Order(event.Seq)
 	if limit > 0 {
 		q = q.Limit(limit)
@@ -195,7 +195,7 @@ func (s *Store) RunErrorCounts(ctx context.Context, runIDs []string) (map[string
 	rows := []RunEventRow{}
 	err := event.WithContext(ctx).
 		Where(event.Type.Eq("error"), event.RunID.In(runIDs...)).
-		Where(ownerConditions(ctx, event.TableName())...).
+		Where(s.aiHistoryOwnerConditions(ctx, event.TableName())...).
 		Scan(&rows)
 	if err != nil {
 		return nil, dbError(err)
@@ -225,7 +225,7 @@ func (s *Store) RunDelete(ctx context.Context, id string) error {
 	run := query.Use(s.db).RunRow
 	_, err := run.WithContext(ctx).
 		Where(run.ID.Eq(id)).
-		Where(ownerConditions(ctx, run.TableName())...).
+		Where(s.aiHistoryOwnerConditions(ctx, run.TableName())...).
 		Delete()
 	if err != nil {
 		return dbError(err)
@@ -240,7 +240,7 @@ func (s *Store) RunUpdateStatus(ctx context.Context, runID, status string) error
 	run := query.Use(s.db).RunRow
 	info, err := run.WithContext(ctx).
 		Where(run.ID.Eq(runID)).
-		Where(ownerConditions(ctx, run.TableName())...).
+		Where(s.aiHistoryOwnerConditions(ctx, run.TableName())...).
 		UpdateColumns(map[string]any{"status": status, "updated_at": ids.NowMS()})
 	if err != nil {
 		return dbError(err)
@@ -263,7 +263,7 @@ func (s *Store) RunFinishUsage(ctx context.Context, runID, status, answer, errMs
 	run := query.Use(s.db).RunRow
 	info, err := run.WithContext(ctx).
 		Where(run.ID.Eq(runID), run.FinishedAt.IsNull()).
-		Where(ownerConditions(ctx, run.TableName())...).
+		Where(s.aiHistoryOwnerConditions(ctx, run.TableName())...).
 		UpdateColumns(map[string]any{
 			"status": status, "answer": answer, "turns": turns, "tokens_in": tokensIn, "tokens_out": tokensOut,
 			"cache_creation_tokens": cacheCreationTokens, "latency_ms": latencyMS, "error": errMsg,
@@ -284,7 +284,7 @@ func (s *Store) RunUsageSummary(ctx context.Context) ([]RunUsageSummaryRow, erro
 	run := query.Use(s.db).RunRow
 	q := run.WithContext(ctx).
 		Where(run.FinishedAt.IsNotNull()).
-		Where(ownerConditions(ctx, run.TableName())...)
+		Where(s.aiHistoryOwnerConditions(ctx, run.TableName())...)
 	result := []RunUsageSummaryRow{}
 	err := q.UnderlyingDB().
 		Select(`source, profile_id, COUNT(*) AS runs, COALESCE(SUM(tokens_in), 0) AS tokens_in, COALESCE(SUM(tokens_out), 0) AS tokens_out, COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens, CAST(ROUND(COALESCE(AVG(latency_ms), 0)) AS INTEGER) AS average_latency_ms`).
@@ -301,7 +301,7 @@ func (s *Store) CheckpointGet(ctx context.Context, id string) ([]byte, bool, err
 	checkpoint := query.Use(s.db).CheckpointRow
 	row, err := checkpoint.WithContext(ctx).
 		Where(checkpoint.ID.Eq(id)).
-		Where(ownerConditions(ctx, checkpoint.TableName())...).
+		Where(s.aiHistoryOwnerConditions(ctx, checkpoint.TableName())...).
 		First()
 	if isNoRows(err) {
 		return nil, false, nil
@@ -338,7 +338,7 @@ func (s *Store) HitlRunList(ctx context.Context) ([]HitlRunRow, error) {
 	hitl := query.Use(s.db).HitlRunRow
 	result := []HitlRunRow{}
 	err := hitl.WithContext(ctx).
-		Where(ownerConditions(ctx, hitl.TableName())...).
+		Where(s.aiHistoryOwnerConditions(ctx, hitl.TableName())...).
 		Order(hitl.UpdatedAt).
 		Scan(&result)
 	if err != nil {
@@ -354,7 +354,7 @@ func (s *Store) HitlRunDelete(ctx context.Context, id string) error {
 	hitl := query.Use(s.db).HitlRunRow
 	_, err := hitl.WithContext(ctx).
 		Where(hitl.ID.Eq(id)).
-		Where(ownerConditions(ctx, hitl.TableName())...).
+		Where(s.aiHistoryOwnerConditions(ctx, hitl.TableName())...).
 		Delete()
 	if err != nil {
 		return dbError(err)

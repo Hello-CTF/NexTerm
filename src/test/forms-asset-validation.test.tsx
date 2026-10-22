@@ -28,7 +28,6 @@ vi.mock("../ipc/commands", async (importOriginal) => {
       groupDelete: vi.fn(),
       list: mocks.listAssets,
       readKeyFile: vi.fn(),
-      saveKeyFile: vi.fn(),
       auditQuery: vi.fn(),
     },
     vaultApi: {

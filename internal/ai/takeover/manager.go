@@ -14,9 +14,15 @@ import (
 	"github.com/cloudwego/eino/adk"
 )
 
+type takeoverHooks struct {
+	afterResumeCheck  func()
+	beforeResumeStart func()
+}
+
 type Manager struct {
 	deps           Dependencies
 	checkpoints    adk.CheckPointStore
+	hooks          takeoverHooks
 	mu             sync.Mutex
 	owners         map[string]*ownership
 	jobs           map[string]*runState
@@ -47,7 +53,12 @@ func NewManager(deps Dependencies) *Manager {
 	if deps.Checkpoints == nil {
 		deps.Checkpoints = agent.NewMemoryCheckpoints()
 	}
-	return &Manager{deps: deps, checkpoints: &detachedCheckpoints{CheckPointStore: deps.Checkpoints}, owners: make(map[string]*ownership), jobs: make(map[string]*runState), reservedJobs: make(map[string]struct{}), locks: make(map[string]*sync.Mutex), operationLocks: make(map[string]*sync.Mutex)}
+	return &Manager{
+		deps: deps, checkpoints: &detachedCheckpoints{CheckPointStore: deps.Checkpoints},
+		hooks:  takeoverHooks{afterResumeCheck: func() {}, beforeResumeStart: func() {}},
+		owners: make(map[string]*ownership), jobs: make(map[string]*runState), reservedJobs: make(map[string]struct{}),
+		locks: make(map[string]*sync.Mutex), operationLocks: make(map[string]*sync.Mutex),
+	}
 }
 
 func (m *Manager) tabLock(tabID string) *sync.Mutex {
@@ -73,20 +84,24 @@ func (m *Manager) operationLock(tabID string) *sync.Mutex {
 }
 
 func (m *Manager) Enter(ctx context.Context, tabID string) (string, error) {
-	if tabID == "" || m.deps.Snapshot == nil {
-		return "", errors.New("tabId 或终端服务无效")
-	}
-	if _, err := m.deps.Snapshot(ctx, tabID); err != nil {
-		return "", err
-	}
-	owner, err := m.enterOwned(tabID)
+	owner, err := m.enter(ctx, tabID)
 	if err != nil {
 		return "", err
 	}
 	return owner.token, nil
 }
 
-func (m *Manager) enterOwned(tabID string) (*ownership, error) {
+func (m *Manager) enter(ctx context.Context, tabID string) (*ownership, error) {
+	if _, err := m.resolveOwner(ctx); err != nil {
+		return nil, err
+	}
+	if err := m.authorizeTab(ctx, tabID); err != nil {
+		return nil, err
+	}
+	return m.enterOwned(ctx, tabID)
+}
+
+func (m *Manager) enterOwned(ctx context.Context, tabID string) (*ownership, error) {
 	operation := m.operationLock(tabID)
 	operation.Lock()
 	defer operation.Unlock()
@@ -99,8 +114,13 @@ func (m *Manager) enterOwned(tabID string) (*ownership, error) {
 		return nil, errors.New("接管服务已关闭")
 	}
 	previous := m.owners[tabID]
-	ownerContext, cancel := context.WithCancel(context.Background())
-	owner := &ownership{tabID: tabID, token: m.deps.NewID(), ctx: ownerContext, cancel: cancel}
+	ownerID := requestOwnerID(ctx)
+	if previous != nil && previous.ownerID != ownerID {
+		m.mu.Unlock()
+		return nil, ErrStaleOwnership
+	}
+	ownerContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	owner := &ownership{tabID: tabID, token: m.deps.NewID(), ownerID: ownerID, ctx: ownerContext, cancel: cancel}
 	m.owners[tabID] = owner
 	m.mu.Unlock()
 	if previous != nil {
@@ -110,7 +130,7 @@ func (m *Manager) enterOwned(tabID string) (*ownership, error) {
 		previous.cancel()
 	}
 	if m.deps.Inject != nil {
-		if err := m.deps.Inject(context.Background(), tabID, []byte(EnterBanner)); err != nil {
+		if err := m.deps.Inject(ownerContext, tabID, []byte(EnterBanner)); err != nil {
 			m.mu.Lock()
 			if m.owners[tabID] == owner {
 				delete(m.owners, tabID)
@@ -170,14 +190,9 @@ func (m *Manager) Run(ctx context.Context, args RunArgs, factory agent.StreamFac
 	var owner *ownership
 	var err error
 	if args.Token == "" {
-		owner, err = m.enterOwned(args.TabID)
+		owner, err = m.enter(ctx, args.TabID)
 	} else {
-		m.mu.Lock()
-		owner = m.owners[args.TabID]
-		m.mu.Unlock()
-		if owner == nil || owner.token != args.Token || owner.ctx.Err() != nil {
-			return RunResponse{}, ErrStaleOwnership
-		}
+		owner, err = m.authorizeOwnership(ctx, args.TabID, args.Token)
 	}
 	if err != nil {
 		return RunResponse{}, err
@@ -189,7 +204,7 @@ func (m *Manager) Run(ctx context.Context, args RunArgs, factory agent.StreamFac
 	if err := m.reserveJob(owner, jobID); err != nil {
 		return RunResponse{}, err
 	}
-	jobContext, cancel := context.WithCancel(owner.ctx)
+	jobContext, cancel := linkedRequestContext(ctx, owner.ctx)
 	deliveryContext, forceCancel := context.WithCancel(context.WithoutCancel(jobContext))
 	stream, err := factory(ctx, args.ChannelID, jobID)
 	if err != nil {
@@ -204,7 +219,6 @@ func (m *Manager) Run(ctx context.Context, args RunArgs, factory agent.StreamFac
 		forceCancel()
 		return RunResponse{}, errors.New("接管事件流为空")
 	}
-	stream = agent.WithEventSequence(stream)
 	assetID := ""
 	if m.deps.TabAsset != nil {
 		id, err := m.deps.TabAsset(ctx, args.TabID)
@@ -286,7 +300,11 @@ func (m *Manager) pauseState(state *runState) {
 func (m *Manager) pauseWatchdog(state *runState) {
 	timer := time.NewTimer(m.deps.PauseEscalationTimeout + 3*time.Second)
 	defer timer.Stop()
-	<-timer.C
+	select {
+	case <-timer.C:
+	case <-state.ctx.Done():
+		return
+	}
 	state.finalizeMu.Lock()
 	defer state.finalizeMu.Unlock()
 	if state.completed {
@@ -319,7 +337,12 @@ func (m *Manager) cancelIteration(cancelFn adk.AgentCancelFunc, state *runState,
 		iterCancel := state.iterCancel
 		state.pendingMu.Unlock()
 		if outcomeCh != nil {
-			outcomeCh <- outcome
+			// The run only drains one outcome per pause; once the run ends
+			// nobody reads, so drop the outcome instead of blocking forever.
+			select {
+			case outcomeCh <- outcome:
+			case <-state.ctx.Done():
+			}
 		}
 		if iterCancel != nil {
 			iterCancel()
@@ -341,17 +364,13 @@ func (m *Manager) Resume(ctx context.Context, args ResumeArgs, factory agent.Str
 	if args.TabID == "" || args.Token == "" || args.JobID == "" {
 		return RunResponse{}, errors.New("tabId、token 和 jobId 不能为空")
 	}
-	m.mu.Lock()
-	if m.closed {
-		m.mu.Unlock()
-		return RunResponse{}, errors.New("接管服务已关闭")
+	owner, err := m.authorizeOwnership(ctx, args.TabID, args.Token)
+	if err != nil {
+		return RunResponse{}, err
 	}
-	owner := m.owners[args.TabID]
+	m.mu.Lock()
 	existing := m.jobs[args.JobID]
 	m.mu.Unlock()
-	if owner == nil || owner.token != args.Token || owner.ctx.Err() != nil {
-		return RunResponse{}, ErrStaleOwnership
-	}
 	if existing != nil {
 		return m.resumePaused(ctx, owner, existing, args, factory)
 	}
@@ -363,33 +382,46 @@ func (m *Manager) resumePaused(ctx context.Context, owner *ownership, state *run
 		return RunResponse{}, ErrStaleOwnership
 	}
 	state.pendingMu.Lock()
+	userPaused := state.userPaused
+	state.pendingMu.Unlock()
+	if !userPaused {
+		return RunResponse{}, ErrOwnershipActive
+	}
+	if err := m.verifyJobAsset(ctx, state); err != nil {
+		return RunResponse{}, err
+	}
+	state.pendingMu.Lock()
 	if !(state.userPaused && !state.running && state.pauseReady) {
 		state.pendingMu.Unlock()
 		return RunResponse{}, ErrOwnershipActive
 	}
-	state.userPaused = false
 	state.pauseReady = false
+	state.pendingMu.Unlock()
+	stream, err := factory(ctx, args.ChannelID, state.id)
+	if err != nil || stream == nil {
+		state.pendingMu.Lock()
+		if state.ctx.Err() == nil {
+			state.pauseReady = true
+		}
+		state.pendingMu.Unlock()
+		if err != nil {
+			return RunResponse{}, err
+		}
+		return RunResponse{}, errors.New("接管事件流为空")
+	}
+	m.mu.Lock()
+	current := !m.closed && m.owners[args.TabID] == owner && m.jobs[state.id] == state
+	m.mu.Unlock()
+	state.pendingMu.Lock()
+	if !current || state.ctx.Err() != nil || !state.userPaused || state.running {
+		state.pendingMu.Unlock()
+		_ = stream.Close()
+		return RunResponse{}, ErrStaleOwnership
+	}
+	state.userPaused = false
 	state.running = true
 	state.installIterationLocked()
 	state.pendingMu.Unlock()
-	stream, err := factory(ctx, args.ChannelID, state.id)
-	if err != nil {
-		state.pendingMu.Lock()
-		state.running = false
-		state.userPaused = true
-		state.pauseReady = true
-		state.pendingMu.Unlock()
-		return RunResponse{}, err
-	}
-	if stream == nil {
-		state.pendingMu.Lock()
-		state.running = false
-		state.userPaused = true
-		state.pauseReady = true
-		state.pendingMu.Unlock()
-		return RunResponse{}, errors.New("接管事件流为空")
-	}
-	stream = agent.WithEventSequence(stream)
 	state.eventMu.Lock()
 	previous := state.stream
 	state.stream = stream
@@ -405,6 +437,9 @@ func (m *Manager) recoverJob(ctx context.Context, owner *ownership, args ResumeA
 	record, err := m.loadRecovery(ctx, args.JobID)
 	if err != nil {
 		return RunResponse{}, err
+	}
+	if record.OwnerID != owner.ownerID {
+		return RunResponse{}, ErrStaleOwnership
 	}
 	if record.TabID != args.TabID {
 		return RunResponse{}, ErrResumeMismatch
@@ -436,15 +471,14 @@ func (m *Manager) recoverJob(ctx context.Context, owner *ownership, args ResumeA
 		m.releaseJob(owner, args.JobID)
 		return RunResponse{}, errors.New("接管事件流为空")
 	}
-	stream = agent.WithEventSequence(stream)
-	jobContext, cancel := context.WithCancel(owner.ctx)
+	jobContext, cancel := linkedRequestContext(ctx, owner.ctx)
 	deliveryContext, forceCancel := context.WithCancel(context.WithoutCancel(jobContext))
 	jobIterCtx, jobIterCancel := context.WithCancel(jobContext)
 	state := &runState{
 		id: args.JobID, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel,
-		owner: owner, stream: stream, memory: guard.NewMemory(), running: true, started: true, assetID: assetID,
+		owner: owner, stream: stream, memory: guard.NewMemory(), running: true, started: true, assetID: assetID, seq: record.Seq,
 		iterCtx: jobIterCtx, iterCancel: jobIterCancel,
-		args: RunArgs{TabID: args.TabID, ChannelID: args.ChannelID, Instruction: record.Instruction, AllowWrite: record.AllowWrite, MaxSteps: record.MaxSteps},
+		args: RunArgs{TabID: args.TabID, Token: args.Token, ChannelID: args.ChannelID, Instruction: record.Instruction, AllowWrite: record.AllowWrite, MaxSteps: record.MaxSteps},
 	}
 	m.mu.Lock()
 	if m.closed || m.owners[args.TabID] != owner || m.jobs[args.JobID] != nil {
@@ -480,11 +514,15 @@ func (m *Manager) cancelState(state *runState, reason string) {
 }
 
 func (m *Manager) Confirm(confirmation agent.Confirmation) error {
+	return m.confirm(context.Background(), confirmation)
+}
+
+func (m *Manager) confirm(ctx context.Context, confirmation agent.Confirmation) error {
 	if confirmation.JobID == "" || confirmation.CallID == "" || confirmation.Nonce == "" {
 		return agent.ErrInvalidConfirmation
 	}
 	switch confirmation.Decision {
-	case "allow", "allow_session", "deny":
+	case "allow", "allow_session", "allow_persistent", "deny":
 	default:
 		return agent.ErrInvalidConfirmation
 	}
@@ -493,6 +531,9 @@ func (m *Manager) Confirm(confirmation agent.Confirmation) error {
 	m.mu.Unlock()
 	if state == nil || state.ctx.Err() != nil {
 		return ErrNotFound
+	}
+	if err := m.verifyJobAsset(ctx, state); err != nil {
+		return err
 	}
 	state.pendingMu.Lock()
 	if state.ctx.Err() != nil {
@@ -522,6 +563,9 @@ func (m *Manager) Exit(ctx context.Context, tabID, token, reason string) error {
 	if tabID == "" || token == "" {
 		return ErrStaleOwnership
 	}
+	if err := m.authorizeTab(ctx, tabID); err != nil {
+		return err
+	}
 	operation := m.operationLock(tabID)
 	operation.Lock()
 	defer operation.Unlock()
@@ -530,7 +574,7 @@ func (m *Manager) Exit(ctx context.Context, tabID, token, reason string) error {
 	defer lock.Unlock()
 	m.mu.Lock()
 	owner := m.owners[tabID]
-	if owner == nil || owner.token != token {
+	if owner == nil || owner.token != token || owner.ownerID != requestOwnerID(ctx) || owner.ctx.Err() != nil {
 		m.mu.Unlock()
 		return ErrStaleOwnership
 	}
@@ -582,8 +626,8 @@ func (m *Manager) preemptOwnershipLocked(tabID, reason string) {
 	for _, state := range m.statesForOwner(owner) {
 		m.cancelState(state, reason)
 	}
+	_ = m.injectExit(context.WithoutCancel(owner.ctx), tabID, reason)
 	owner.cancel()
-	_ = m.injectExit(context.Background(), tabID, reason)
 }
 
 func (m *Manager) injectExit(ctx context.Context, tabID, reason string) error {
@@ -621,14 +665,15 @@ func (m *Manager) cleanupRecords(state *runState, reason string) {
 	m.mu.Lock()
 	current := m.owners[state.owner.tabID] == state.owner
 	m.mu.Unlock()
+	cleanupCtx := context.WithoutCancel(state.ctx)
 	if current {
-		_ = m.injectExit(context.Background(), state.owner.tabID, reason)
+		_ = m.injectExit(cleanupCtx, state.owner.tabID, reason)
 		state.owner.cancel()
 	}
 	if deleter, ok := m.checkpoints.(adk.CheckPointDeleter); ok {
-		_ = deleter.Delete(context.Background(), state.id)
-		_ = deleter.Delete(context.Background(), recoveryKey(state.id))
-		_ = deleter.Delete(context.Background(), execKey(state.id))
+		_ = deleter.Delete(cleanupCtx, state.id)
+		_ = deleter.Delete(cleanupCtx, recoveryKey(state.id))
+		_ = deleter.Delete(cleanupCtx, execKey(state.id))
 	}
 }
 

@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"testing"
 	"time"
-
-	"github.com/Hello-CTF/NexTerm/internal/hub"
 )
 
 func TestCoalesceFirstLargeChunkSentDirectly(t *testing.T) {
@@ -17,7 +15,6 @@ func TestCoalesceFirstLargeChunkSentDirectly(t *testing.T) {
 	if !sendNow || len(batch) != outputCoalesceMax {
 		t.Fatalf("sendNow = %v batch = %d", sendNow, len(batch))
 	}
-	c.sent()
 	if got := c.take(); got != nil {
 		t.Fatalf("direct chunk left %d buffered bytes", len(got))
 	}
@@ -40,7 +37,6 @@ func TestCoalesceWindowAppends(t *testing.T) {
 	if got := c.take(); string(got) != "ab" {
 		t.Fatalf("window batch = %q", got)
 	}
-	c.sent()
 	if got := c.take(); got != nil {
 		t.Fatalf("flushed batch left %d bytes", len(got))
 	}
@@ -56,40 +52,24 @@ func TestCoalesceCapDoesNotDrop(t *testing.T) {
 	if !sendNow || len(batch) != outputCoalesceMax+1 || !bytes.HasSuffix(batch, []byte("bc")) {
 		t.Fatalf("sendNow = %v len = %d suffix = %q", sendNow, len(batch), batch[len(batch)-2:])
 	}
-	c.sent()
 	if got := c.take(); got != nil {
 		t.Fatalf("cap flush left %d bytes", len(got))
 	}
 }
 
-func TestCoalesceTeardownFlushesBestEffort(t *testing.T) {
-	bus := hub.New(hub.Options{})
-	t.Cleanup(func() { _ = bus.Close() })
-	producer, err := bus.Producer("teardown")
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestCoalesceTeardownDiscardsResidual(t *testing.T) {
 	c := newOutCoalescer(func() { t.Error("teardown must stop the window") })
 	if _, sendNow := c.add([]byte("tail")); sendNow {
 		t.Fatal("small chunk must buffer")
 	}
-	c.teardown(producer)
-	receiver, err := bus.Bind("teardown")
-	if err != nil {
-		t.Fatal(err)
+	c.teardown()
+	if got := c.take(); got != nil {
+		t.Fatalf("teardown retained %q for a later direct write", got)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	frame, err := receiver.Next(ctx)
-	if err != nil {
-		t.Fatal(err)
+	if batch, sendNow := c.add([]byte("late")); sendNow || batch != nil {
+		t.Fatalf("torn down coalescer accepted %q", batch)
 	}
-	if string(frame.Data) != "tail" {
-		t.Fatalf("teardown flush = %q", frame.Data)
-	}
-	if _, sendNow := c.add([]byte("late")); sendNow {
-		t.Fatal("torn down coalescer must drop")
-	}
+	c.teardown()
 }
 
 func TestFeedCoalescedFramesKeepOrder(t *testing.T) {

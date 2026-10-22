@@ -16,6 +16,7 @@ import {
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   search: vi.fn(),
+  searchMeta: vi.fn(),
   update: vi.fn(),
   groupList: vi.fn(),
   groupUpdate: vi.fn(),
@@ -24,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   listCredentials: vi.fn(),
   probe: vi.fn(),
   assetDelete: vi.fn(),
+  sessionDisconnect: vi.fn(),
+  sessionList: vi.fn(),
   ask: vi.fn(),
   choice: vi.fn(),
   pickKeyFile: vi.fn(),
@@ -41,6 +44,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     assetApi: {
       list: mocks.list,
       search: mocks.search,
+      searchMeta: mocks.searchMeta,
       update: mocks.update,
       delete: mocks.assetDelete,
       groupList: mocks.groupList,
@@ -56,7 +60,8 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     sessionApi: {
       probe: mocks.probe,
       connect: vi.fn(),
-      list: vi.fn(),
+      disconnect: mocks.sessionDisconnect,
+      list: mocks.sessionList,
     },
     terminalApi: { write: vi.fn() },
     dbApi: {},
@@ -65,6 +70,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 
 import { AssetTree, AssetEditor } from "../../features/explorer/AssetTree";
 import { useUi } from "../../app/store";
+import type { Asset } from "../../ipc/commands";
 
 const originalCloseWorkspace = useUi.getState().closeWorkspace;
 
@@ -99,6 +105,7 @@ const WEB = {
 };
 
 function mountWithClient(node: ReactNode): MountedView {
+  mounted?.unmount();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return mount(createElement(QueryClientProvider, { client }, node));
 }
@@ -126,9 +133,12 @@ beforeEach(() => {
   document.body.style.overflow = "";
   mocks.list.mockResolvedValue([]);
   mocks.search.mockResolvedValue([]);
+  mocks.searchMeta.mockImplementation((query) => mocks.search(query).then((rows: Asset[]) => ({ assets: rows, total: rows.length, truncated: false })));
   mocks.groupList.mockResolvedValue([{ ...GROUP }]);
   mocks.listCredentials.mockResolvedValue([]);
   mocks.snippetList.mockResolvedValue([]);
+  mocks.sessionDisconnect.mockResolvedValue(undefined);
+  mocks.sessionList.mockResolvedValue([]);
   mocks.ask.mockResolvedValue(true);
   mocks.choice.mockResolvedValue(null);
   useUi.setState({ leftOpen: true, pushToast: mocks.toast, workspaces: [], sessions: [] });
@@ -406,6 +416,74 @@ describe("asset list load failure", () => {
     expect(searchInput.value).toBe("web");
     expect(mounted!.container.querySelector('[role="alert"]')).toBeNull();
   });
+
+  it("shows the total and an explicit truncation hint for capped search results", async () => {
+    const rows = Array.from({ length: 101 }, (_, index) => ({ ...WEB, id: `bulk-${index}`, name: `bulk-${index}` }));
+    mocks.list.mockResolvedValue(rows);
+    mocks.searchMeta.mockResolvedValue({ assets: rows.slice(0, 100), total: 101, truncated: true });
+    mocks.groupList.mockResolvedValue([]);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mocks.list).toHaveBeenCalled());
+    await flush();
+    const input = mounted.container.querySelector<HTMLInputElement>('input[placeholder="搜索资产 / 主机 / 用户"]')!;
+    setInputValue(input, "bulk");
+    await waitFor(() => expect(mounted!.container.textContent).toContain("共 101 条匹配"));
+    expect(mounted.container.textContent).toContain("结果已截断");
+    expect(mounted.container.textContent).toContain("仅返回前 100 条");
+  });
+
+  it("uses authoritative search metadata without running a second client matcher", async () => {
+    mocks.list.mockResolvedValue([{ ...WEB, name: "💥" }]);
+    mocks.searchMeta.mockResolvedValue({ assets: [{ ...WEB, name: "💥" }], total: 101, truncated: true });
+    mocks.groupList.mockResolvedValue([]);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mocks.list).toHaveBeenCalled());
+    const input = mounted.container.querySelector<HTMLInputElement>('input[placeholder="搜索资产 / 主机 / 用户"]')!;
+    setInputValue(input, "__");
+    await waitFor(() => expect(mounted!.container.textContent).toContain("共 101 条匹配"));
+    expect(mounted.container.textContent).toContain("仅返回前 1 条");
+    expect(mocks.search).not.toHaveBeenCalled();
+  });
+
+  it("refreshes active search after deleting an asset across the truncation boundary", async () => {
+    mocks.list.mockResolvedValue([{ ...WEB }]);
+    mocks.groupList.mockResolvedValue([]);
+    mocks.searchMeta
+      .mockResolvedValueOnce({ assets: [{ ...WEB }], total: 101, truncated: true })
+      .mockResolvedValueOnce({ assets: [], total: 100, truncated: false });
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+    const input = mounted.container.querySelector<HTMLInputElement>('input[placeholder="搜索资产 / 主机 / 用户"]')!;
+    setInputValue(input, "web");
+    await waitFor(() => expect(mocks.searchMeta).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("共 101 条匹配"));
+    click(buttonByTitle(mounted!.container, "删除"));
+    await waitFor(() => expect(mocks.assetDelete).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mocks.searchMeta).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("共 100 条匹配"));
+    expect(mounted.container.textContent).not.toContain("结果已截断");
+  });
+
+  it("refreshes active search after renaming and deleting a group", async () => {
+    mocks.list.mockResolvedValue([{ ...WEB, groupId: "g1" }]);
+    mocks.searchMeta.mockResolvedValue({ assets: [{ ...WEB, groupId: "g1" }], total: 1, truncated: false });
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("production"));
+    const input = mounted.container.querySelector<HTMLInputElement>('input[placeholder="搜索资产 / 主机 / 用户"]')!;
+    setInputValue(input, "production");
+    await waitFor(() => expect(mocks.searchMeta).toHaveBeenCalledTimes(1));
+
+    click(buttonByTitle(mounted!.container, "重命名分组"));
+    const renameInput = mounted.container.querySelector<HTMLInputElement>('.nx-modal input.nx-input')!;
+    setInputValue(renameInput, "renamed");
+    clickButton(mounted!.container, "保存");
+    await waitFor(() => expect(mocks.groupUpdate).toHaveBeenCalled());
+    await waitFor(() => expect(mocks.searchMeta).toHaveBeenCalledTimes(2));
+
+    click(buttonByTitle(mounted!.container, "删除分组"));
+    await waitFor(() => expect(mocks.groupDelete).toHaveBeenCalled());
+    await waitFor(() => expect(mocks.searchMeta).toHaveBeenCalledTimes(3));
+  });
 });
 
 describe("asset delete failure", () => {
@@ -503,6 +581,32 @@ describe("asset deletion with an open workspace", () => {
     await waitFor(() => expect(mocks.assetDelete).toHaveBeenCalledWith("a1"));
     expect(close).not.toHaveBeenCalled();
     await waitFor(() => expect(useUi.getState().workspaces[0]).toMatchObject({ id: "ws-a1", deletedTarget: true }));
+  });
+
+  it("disconnects live sessions without closing the workspace", async () => {
+    mocks.choice.mockResolvedValueOnce("disconnect");
+    const close = vi.fn(async () => true);
+    useUi.setState({ closeWorkspace: close });
+    await showAsset();
+    act(() => {
+      useUi.setState({
+        sessions: [{ id: "s1", assetId: "a1", name: "web-1", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }],
+      });
+    });
+    click(buttonByTitle(mounted!.container, "删除"));
+    await waitFor(() => expect(mocks.sessionDisconnect).toHaveBeenCalledWith("s1"));
+    expect(mocks.choice).toHaveBeenCalledWith(
+      expect.stringContaining("当前有 1 个活动会话"),
+      expect.objectContaining({
+        choices: expect.arrayContaining([
+          expect.objectContaining({ key: "disconnect" }),
+          expect.objectContaining({ key: "close" }),
+        ]),
+      }),
+    );
+    await waitFor(() => expect(mocks.assetDelete).toHaveBeenCalledWith("a1"));
+    expect(close).not.toHaveBeenCalled();
+    expect(useUi.getState().workspaces[0]).toMatchObject({ id: "ws-a1", deletedTarget: true });
   });
 
   it("does not delete when closing the workspace is cancelled", async () => {

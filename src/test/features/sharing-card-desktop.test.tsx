@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
   return {
     status: vi.fn(),
+    linkGet: vi.fn(),
+    identity: vi.fn(),
     devices: vi.fn(),
     hostShares: vi.fn(),
     createHostShare: vi.fn(),
@@ -25,7 +27,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
   return {
     ...actual,
-    syncApi: { ...actual.syncApi, status: mocks.status },
+    syncApi: { ...actual.syncApi, status: mocks.status, linkGet: mocks.linkGet },
   };
 });
 vi.mock("../../ipc/remoteApi", async (importOriginal) => {
@@ -41,6 +43,7 @@ vi.mock("../../ipc/remoteApi", async (importOriginal) => {
       links: mocks.links,
       revokeLink: mocks.revokeLink,
     },
+    remoteHostShareApi: { ...actual.remoteHostShareApi, identity: mocks.identity },
     remoteAccountApi: { ...actual.remoteAccountApi, adminUsers: mocks.adminUsers },
   };
 });
@@ -131,6 +134,8 @@ function seedLoggedIn(admin = true, userId = "u-root") {
     verifiedAt: 1,
     lastError: "",
   });
+  mocks.linkGet.mockResolvedValue({ url: "https://a.example.com/", username: "root", verifiedAt: 1 });
+  mocks.identity.mockResolvedValue({ serverUrl: "https://a.example.com", userId, generation: "session-a" });
   if (admin) {
     mocks.adminUsers.mockResolvedValue({ users: [SUPERADMIN_USER] });
   } else {
@@ -172,7 +177,8 @@ describe("Share card - desktop logged in", () => {
 
     const text = document.body.textContent ?? "";
     expect(text).toContain("2 条主机分享");
-    expect(text).toContain("1 条公开链接");
+    expect(text).toContain("1 条旧版链接");
+    expect(text).toContain("旧版链接（只可吊销）");
     expect(text).toContain("分享给 alice");
     expect(text).toContain("来自 alice");
     expect(text).toContain("web-01");
@@ -197,15 +203,17 @@ describe("Share card - desktop logged in", () => {
     ) as HTMLInputElement;
     setInputValue(recipient, "  alice  ");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "创建分享") as HTMLButtonElement);
-    await flushUntil(() => mocks.createHostShare.mock.calls.length === 1);
-
+    await flushUntil(() =>
+      mocks.createHostShare.mock.calls.length === 1 &&
+      mocks.devices.mock.calls.length >= 2 && mocks.hostShares.mock.calls.length >= 2 && mocks.links.mock.calls.length >= 2 &&
+      [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "刷新")?.disabled === false,
+    );
     expect(mocks.createHostShare).toHaveBeenCalledWith({
       deviceId: "d-1",
       recipientUsername: "alice",
       write: false,
       ttlMs: 24 * 60 * 60_000,
     });
-    await flushUntil(() => mocks.hostShares.mock.calls.length >= 2);
   });
 
   it("confirms before revoking a host share, then revokes through remote and refreshes", async () => {
@@ -222,7 +230,10 @@ describe("Share card - desktop logged in", () => {
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mocks.revokeHostShare).toHaveBeenCalledWith("hs-1");
-    await flushUntil(() => mocks.hostShares.mock.calls.length >= 2);
+    await flushUntil(() =>
+      mocks.devices.mock.calls.length >= 2 && mocks.hostShares.mock.calls.length >= 2 && mocks.links.mock.calls.length >= 2 &&
+      [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "刷新")?.disabled === false,
+    );
   });
 
   it("revokes a public link through remote revokeLink", async () => {

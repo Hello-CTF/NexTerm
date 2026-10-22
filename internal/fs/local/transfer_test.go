@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -181,6 +182,36 @@ func TestUploadResumeAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertBytes(t, remote, data)
+}
+
+func TestUploadPreservesRemoteMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits are not available on Windows")
+	}
+	for _, mode := range []os.FileMode{0o600, 0o755} {
+		t.Run(mode.String(), func(t *testing.T) {
+			dir := t.TempDir()
+			source := filepath.Join(dir, "source.bin")
+			remote := filepath.Join(dir, "remote.bin")
+			if err := os.WriteFile(source, []byte("new"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(remote, []byte("old"), mode); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(remote, mode); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Upload(context.Background(), source, New(), remote, TransferOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Stat(remote)
+			if err != nil || info.Mode().Perm() != mode {
+				t.Fatalf("remote mode = %v, %v; want %v", info.Mode(), err, mode)
+			}
+			assertBytes(t, remote, []byte("new"))
+		})
+	}
 }
 
 func TestDownloadResumeAndRestart(t *testing.T) {

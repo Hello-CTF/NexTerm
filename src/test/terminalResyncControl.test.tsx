@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, flush, mount, deferred, type MountedView } from "./features/reactTestUtils";
+import { click, flush, mount, deferred, waitFor, type MountedView } from "./features/reactTestUtils";
 import type { LiveTabInfo } from "../ipc/commands";
 
 const harness = vi.hoisted(() => ({
@@ -10,6 +10,9 @@ const harness = vi.hoisted(() => ({
   resyncSubs: new Set<() => void>(),
   xtermProps: null as Record<string, unknown> | null,
   listLive: vi.fn(),
+  sessionList: vi.fn(),
+  sessionReconnect: vi.fn(),
+  probeHostKey: vi.fn(),
   recordingStatus: vi.fn(),
   recordStart: vi.fn(),
   recordStop: vi.fn(),
@@ -29,7 +32,13 @@ vi.mock("../ipc/commands", () => ({
   assetApi: {},
   dbApi: {},
   vaultApi: {},
-  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn() },
+  sessionApi: {
+    connect: vi.fn(),
+    reconnect: harness.sessionReconnect,
+    disconnect: vi.fn(),
+    list: harness.sessionList,
+    probeHostKey: harness.probeHostKey,
+  },
   terminalApi: {
     listLive: harness.listLive,
     write: vi.fn().mockResolvedValue(undefined),
@@ -88,11 +97,14 @@ vi.mock("../features/terminal/CommandBlockPanel", () => ({ CommandBlockPanel: ()
 vi.mock("../features/terminal/TerminalKeysBar", () => ({ TerminalKeysBar: () => null }));
 
 vi.mock("../features/terminal/XtermView", async () => {
-  const { useEffect } = await import("react");
+  const { useEffect, useRef } = await import("react");
   return {
     XtermView: (props: Record<string, unknown>) => {
       harness.xtermProps = props;
+      const attachFiredRef = useRef(false);
       useEffect(() => {
+        if (attachFiredRef.current) return;
+        attachFiredRef.current = true;
         (props.onHandle as ((h: unknown) => void) | undefined)?.({
           copyBlock: () => "",
           scrollToBlock: () => {},
@@ -105,7 +117,7 @@ vi.mock("../features/terminal/XtermView", async () => {
           dimensions: () => ({ cols: 80, rows: 24 }),
         });
         (props.onAttach as ((id: string) => void) | undefined)?.("kernel-1");
-      }, []);
+      }, [props.onAttach, props.onHandle]);
       return <div className="h-full w-full min-h-0" />;
     },
   };
@@ -192,6 +204,9 @@ beforeEach(() => {
   harness.resyncSubs.clear();
   document.body.replaceChildren();
   harness.listLive.mockResolvedValue([]);
+  harness.sessionList.mockImplementation(() => Promise.resolve(useUi.getState().sessions));
+  harness.sessionReconnect.mockResolvedValue(true);
+  harness.probeHostKey.mockResolvedValue({ state: "known" });
   harness.recordingStatus.mockResolvedValue({
     tabId: "kernel-1",
     state: "never-started",
@@ -292,6 +307,29 @@ describe("terminal control resync compensation", () => {
       .getState()
       .workspaces[0]?.panes[0]?.tabs.find((candidate) => candidate.id === "t1");
     expect(tab?.exited).toBe(true);
+  });
+
+  it("treats a missing listLive entry as unknown instead of exited", async () => {
+    harness.listLive
+      .mockResolvedValueOnce([liveTab({ exited: true })])
+      .mockResolvedValue([]);
+    mounted = mountPane();
+    await act(async () => {
+      await flush();
+    });
+    expect(overlayText("终端进程已结束")).not.toBeNull();
+
+    fireResync();
+    await act(async () => {
+      await flush();
+    });
+
+    expect(overlayText("终端进程已结束")).toBeNull();
+    const tab = useUi
+      .getState()
+      .workspaces[0]?.panes[0]?.tabs.find((candidate) => candidate.id === "t1");
+    expect(tab?.exited).toBeUndefined();
+    expect(tab?.dead).not.toBe(true);
   });
 
   it("keeps a newer control event when the stale listLive snapshot returns later", async () => {
@@ -477,5 +515,41 @@ describe("terminal control resync compensation", () => {
     expect(
       mounted.container.querySelector('.nx-toolbar .nx-badge[title="/tmp/restarted.log"]'),
     ).not.toBeNull();
+  });
+
+  it("shows stale configuration and reconnects a connected session with the current asset", async () => {
+    useUi.setState({
+      sessions: [{ ...useUi.getState().sessions[0], staleConfig: true }],
+    });
+    let reconnectRequested = false;
+    harness.sessionReconnect.mockImplementation(() => {
+      reconnectRequested = true;
+      return Promise.resolve(true);
+    });
+    // The manual reconnect must observe the session engage before the connected frame counts as fresh.
+    let engaged = false;
+    harness.sessionList.mockImplementation(() => {
+      if (!reconnectRequested) return Promise.resolve(useUi.getState().sessions);
+      if (!engaged) {
+        engaged = true;
+        return Promise.resolve(
+          useUi.getState().sessions.map((session) => ({ ...session, status: "reconnecting" as const })),
+        );
+      }
+      return Promise.resolve(useUi.getState().sessions.map((session) => ({ ...session, staleConfig: false })));
+    });
+    mounted = mountPane();
+    await act(async () => {
+      await flush();
+    });
+
+    expect(overlayText("配置已修改，重连后生效")).not.toBeNull();
+    const reconnect = mounted.container.querySelector<HTMLButtonElement>('button[title="使用当前资产配置重连"]');
+    expect(reconnect).not.toBeNull();
+    expect(reconnect?.disabled).toBe(false);
+    click(reconnect!);
+
+    await waitFor(() => expect(useUi.getState().sessions[0]?.staleConfig).toBe(false), 3_000);
+    expect(harness.sessionReconnect).toHaveBeenCalledWith("s1");
   });
 });

@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -13,19 +14,24 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-const maxStreamBuffer = 64 * 1024 * 1024
+const (
+	maxStreamBuffer                = 64 * 1024 * 1024
+	defaultMaxExecOutput           = 4 * 1024 * 1024
+	defaultStreamCloseDrainTimeout = 10 * time.Second
+)
 
 type DialFunc func(ctx context.Context) (net.Conn, error)
 
 type Client struct {
-	socketPath  string
-	stateDir    string
-	stateDigest string
-	dial        DialFunc
+	socketPath    string
+	stateDir      string
+	stateDigest   string
+	dial          DialFunc
+	maxExecOutput int
 }
 
 func NewClient(socketPath, stateDir string) *Client {
-	return &Client{socketPath: endpointPath(socketPath), stateDir: stateDir}
+	return &Client{socketPath: endpointPath(socketPath), stateDir: stateDir, maxExecOutput: defaultMaxExecOutput}
 }
 
 // NewRemoteClient returns a Client that speaks the supervisor protocol over
@@ -33,7 +39,7 @@ func NewClient(socketPath, stateDir string) *Client {
 // remote daemon socket. The state digest of the remote state directory is
 // presented at hello; the caller computes it on the remote host.
 func NewRemoteClient(dial DialFunc, stateDigest string) *Client {
-	return &Client{stateDigest: stateDigest, dial: dial}
+	return &Client{stateDigest: stateDigest, dial: dial, maxExecOutput: defaultMaxExecOutput}
 }
 
 func (c *Client) Create(ctx context.Context, options CreateOptions) (Info, error) {
@@ -78,15 +84,11 @@ type ExecSpec struct {
 	Env     []string
 }
 
-// maxExecOutput bounds the combined stdout+stderr Exec collects; a variable
-// so tests can shrink it.
-var maxExecOutput = 4 * 1024 * 1024
-
 // Exec runs a non-PTY command through the supervisor and collects stdout and
 // stderr separately until the process exits. exitCode is the process exit
 // code, or -1 when the process was terminated by a signal (signal then carries
-// its name); both are meaningful only when err is nil. Output beyond
-// maxExecOutput kills the process and returns the partial buffers with an
+// its name); both are meaningful only when err is nil. Output beyond the
+// client's limit kills the process and returns the partial buffers with an
 // error. Cancelling ctx kills the process (the connection drop makes the
 // supervisor terminate the one-shot session).
 func (c *Client) Exec(ctx context.Context, spec ExecSpec) (stdout, stderr []byte, exitCode int, signal string, err error) {
@@ -139,8 +141,8 @@ func (c *Client) Exec(ctx context.Context, spec ExecSpec) (stdout, stderr []byte
 			default:
 				return stdout, stderr, -1, "", fmt.Errorf("%w: exec output stream %d", ErrProtocol, stream)
 			}
-			if len(stdout)+len(stderr) > maxExecOutput {
-				return stdout, stderr, -1, "", fmt.Errorf("%w: exec output exceeds limit of %d bytes", ErrUnavailable, maxExecOutput)
+			if len(stdout)+len(stderr) > c.maxExecOutput {
+				return stdout, stderr, -1, "", fmt.Errorf("%w: exec output exceeds limit of %d bytes", ErrUnavailable, c.maxExecOutput)
 			}
 		case frameExit:
 			var msg exitMsg
@@ -249,15 +251,16 @@ func (c *Client) AttachFrom(ctx context.Context, id string, expect *Identity, of
 		return nil, err
 	}
 	stream := &Stream{
-		conn:     conn,
-		info:     info,
-		identity: Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation},
-		want:     offset,
-		reqToken: make(chan struct{}, 1),
-		resp:     make(chan clientFrame, 1),
-		newData:  make(chan struct{}, 1),
-		exitCh:   make(chan struct{}),
-		closed:   make(chan struct{}),
+		conn:              conn,
+		info:              info,
+		identity:          Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation},
+		closeDrainTimeout: defaultStreamCloseDrainTimeout,
+		want:              offset,
+		reqToken:          make(chan struct{}, 1),
+		resp:              make(chan clientFrame, 1),
+		newData:           make(chan struct{}, 1),
+		exitCh:            make(chan struct{}),
+		closed:            make(chan struct{}),
 	}
 	go stream.readLoop()
 	return stream, nil
@@ -314,7 +317,7 @@ func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
 		}
 	}
 	conn := &clientConn{conn: netConn}
-	features := []string{featureExec, featureMetadata}
+	features := []string{featureExec, featureMetadata, featureRuntimeMetadata, featureActivity}
 	if c.dial != nil {
 		features = append(features, featureReplayGzip)
 	}
@@ -336,7 +339,24 @@ func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
 		_ = netConn.Close()
 		return nil, fmt.Errorf("%w: server speaks protocol %d", ErrProtocol, ack.Version)
 	}
-	conn.features = ack.Features
+	conn.features = slices.Clone(ack.Features)
+	if slices.Contains(features, featureRuntimeMetadata) && slices.Contains(conn.features, featureRuntimeMetadata) && ack.Runtime != nil {
+		metadata := *ack.Runtime
+		if err := validateRuntimeMetadata(metadata, ack.Version); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		metadata.Features = slices.Clone(metadata.Features)
+		conn.runtimeMetadata = &metadata
+	}
+	if slices.Contains(features, featureActivity) && slices.Contains(conn.features, featureActivity) && ack.Activity != nil {
+		if ack.Activity.PTY < 0 || ack.Activity.Exec < 0 {
+			_ = conn.Close()
+			return nil, fmt.Errorf("%w: negative daemon activity count", ErrProtocol)
+		}
+		activity := *ack.Activity
+		conn.activity = &activity
+	}
 	return conn, nil
 }
 
@@ -353,9 +373,11 @@ type clientFrame struct {
 }
 
 type clientConn struct {
-	conn     net.Conn
-	features []string
-	writeMu  sync.Mutex
+	conn            net.Conn
+	features        []string
+	runtimeMetadata *RuntimeMetadata
+	activity        *ActivitySnapshot
+	writeMu         sync.Mutex
 }
 
 func (c *clientConn) request(ctx context.Context, kind frameType, message any) (frameType, []byte, error) {
@@ -367,7 +389,14 @@ func (c *clientConn) request(ctx context.Context, kind frameType, message any) (
 }
 
 func (c *clientConn) requestRaw(ctx context.Context, kind frameType, payload []byte) (frameType, []byte, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, nil, context.Cause(ctx)
+	}
 	c.writeMu.Lock()
+	if err := ctx.Err(); err != nil {
+		c.writeMu.Unlock()
+		return 0, nil, context.Cause(ctx)
+	}
 	err := writeFrame(c.conn, kind, payload)
 	c.writeMu.Unlock()
 	if err != nil {
@@ -397,6 +426,9 @@ func (c *clientConn) requestRaw(ctx context.Context, kind frameType, payload []b
 		}
 		return response.kind, response.payload, nil
 	case <-ctx.Done():
+		// The reply can no longer be matched to this request, so the conn is
+		// torn down; this also unblocks the parked reader above.
+		_ = c.conn.Close()
 		return 0, nil, context.Cause(ctx)
 	}
 }
@@ -406,9 +438,10 @@ func (c *clientConn) Close() error {
 }
 
 type Stream struct {
-	conn     *clientConn
-	info     Info
-	identity Identity
+	conn              *clientConn
+	info              Info
+	identity          Identity
+	closeDrainTimeout time.Duration
 
 	writeMu sync.Mutex
 
@@ -431,9 +464,13 @@ type Stream struct {
 	exitCh    chan struct{}
 	closed    chan struct{}
 	closeOnce sync.Once
-}
+	closeErr  error
 
-var streamCloseDrainTimeout = 10 * time.Second
+	// tokenWaitHook, when non-nil, runs after the initial ctx check and
+	// immediately before requestRaw blocks acquiring the request token.
+	// Tests use it to observe the token wait deterministically.
+	tokenWaitHook func()
+}
 
 func (s *Stream) Info() Info {
 	return s.info
@@ -477,6 +514,18 @@ func (s *Stream) Read(p []byte) (int, error) {
 }
 
 func (s *Stream) Write(p []byte) (int, error) {
+	return s.WriteContext(context.Background(), p)
+}
+
+// WriteContext writes p to the session's input pipeline, with ctx governing
+// each chunk's acknowledgement. Cancelling ctx fails the stream: the
+// cancelled chunk may or may not have reached the supervisor, and the late
+// acknowledgement can no longer be told apart from the next response, so
+// the input pipeline is withdrawn rather than restored: the stream never
+// replays the unconfirmed chunk, and the caller must re-attach to resume.
+// A request cancelled before its frame reaches the wire leaves the stream
+// healthy. The returned count covers only acknowledged chunks.
+func (s *Stream) WriteContext(ctx context.Context, p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -486,7 +535,7 @@ func (s *Stream) Write(p []byte) (int, error) {
 		if len(chunk) > maxFramePayload {
 			chunk = chunk[:maxFramePayload]
 		}
-		kind, payload, err := s.requestRaw(context.Background(), frameInput, chunk)
+		kind, payload, err := s.requestRaw(ctx, frameInput, chunk)
 		if err != nil {
 			return written, err
 		}
@@ -588,17 +637,30 @@ func (s *Stream) Close() error {
 		s.mu.Unlock()
 		select {
 		case s.reqToken <- struct{}{}:
-		case <-time.After(streamCloseDrainTimeout):
+		case <-time.After(s.closeDrainTimeout):
 			_ = s.conn.Close()
 			s.reqToken <- struct{}{}
 		}
 		defer func() { <-s.reqToken }()
+		s.mu.Lock()
+		readErr := s.readErr
+		s.mu.Unlock()
 		s.writeMu.Lock()
-		_ = writeFrame(s.conn.conn, frameDetach, []byte("{}"))
+		detachErr := writeFrame(s.conn.conn, frameDetach, []byte("{}"))
 		s.writeMu.Unlock()
-		_ = s.conn.Close()
+		closeErr := s.conn.Close()
+		switch {
+		case readErr != nil:
+			// The stream already failed: the close inherits that evidence
+			// rather than reporting success over a dead supervisor.
+			s.closeErr = readErr
+		case detachErr != nil && !errors.Is(detachErr, net.ErrClosed):
+			s.closeErr = fmt.Errorf("%w: detach supervisor stream: %v", base.ErrDisconnected, detachErr)
+		case closeErr != nil && !errors.Is(closeErr, net.ErrClosed):
+			s.closeErr = closeErr
+		}
 	})
-	return nil
+	return s.closeErr
 }
 
 func (s *Stream) request(ctx context.Context, kind frameType, message any) (frameType, []byte, error) {
@@ -610,7 +672,17 @@ func (s *Stream) request(ctx context.Context, kind frameType, message any) (fram
 }
 
 func (s *Stream) requestRaw(ctx context.Context, kind frameType, payload []byte) (frameType, []byte, error) {
-	s.reqToken <- struct{}{}
+	if err := ctx.Err(); err != nil {
+		return 0, nil, context.Cause(ctx)
+	}
+	if s.tokenWaitHook != nil {
+		s.tokenWaitHook()
+	}
+	select {
+	case s.reqToken <- struct{}{}:
+	case <-ctx.Done():
+		return 0, nil, context.Cause(ctx)
+	}
 	defer func() { <-s.reqToken }()
 	select {
 	case <-s.closed:
@@ -625,6 +697,25 @@ func (s *Stream) requestRaw(ctx context.Context, kind frameType, payload []byte)
 		return 0, nil, base.ErrDisconnected
 	default:
 	}
+	// fail records readErr before the conn dies and before readLoop exits,
+	// and Close records userClosed before draining; consulting the state
+	// closes the gap where the conn is already gone but the closed channel
+	// has not fired yet.
+	s.mu.Lock()
+	userClosed := s.userClosed
+	readErr := s.readErr
+	s.mu.Unlock()
+	if userClosed {
+		return 0, nil, ErrClosed
+	}
+	if readErr != nil {
+		return 0, nil, readErr
+	}
+	// The token wait can outlive the ctx; re-check before the frame reaches
+	// the wire so a withdrawn request never touches the input pipeline.
+	if err := ctx.Err(); err != nil {
+		return 0, nil, context.Cause(ctx)
+	}
 	s.mu.Lock()
 	s.pending = true
 	s.mu.Unlock()
@@ -633,10 +724,26 @@ func (s *Stream) requestRaw(ctx context.Context, kind frameType, payload []byte)
 		s.pending = false
 		s.mu.Unlock()
 	}()
+	cancelDone := make(chan struct{})
+	stopCancel := context.AfterFunc(ctx, func() {
+		s.fail(context.Cause(ctx))
+		close(cancelDone)
+	})
+	defer func() {
+		if !stopCancel() {
+			<-cancelDone
+		}
+	}()
 	s.writeMu.Lock()
 	err := writeFrame(s.conn.conn, kind, payload)
 	s.writeMu.Unlock()
 	if err != nil {
+		s.mu.Lock()
+		readErr := s.readErr
+		s.mu.Unlock()
+		if readErr != nil {
+			return 0, nil, readErr
+		}
 		return 0, nil, fmt.Errorf("%w: send frame: %v", base.ErrDisconnected, err)
 	}
 	select {

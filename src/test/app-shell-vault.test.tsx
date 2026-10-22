@@ -9,21 +9,38 @@ const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
   sessionList: vi.fn(),
   vaultStatus: vi.fn(),
+  layoutGet: vi.fn(),
+  layoutPut: vi.fn(),
 }));
 
-vi.mock("../ipc/commands", () => ({
-  assetApi: { list: mocks.assetList, search: vi.fn() },
-  sessionApi: {
-    list: mocks.sessionList,
-    connectLocal: vi.fn(),
-    connect: vi.fn(),
-    reconnect: vi.fn(),
-    probe: vi.fn(),
-  },
-  vaultApi: { status: mocks.vaultStatus, listCredentials: vi.fn() },
-  terminalApi: {},
-  dbApi: {},
-}));
+vi.mock("../ipc/commands", async (importOriginal) => {
+  const { createCommandsMock } = await import("./helpers/mockCommands");
+  return createCommandsMock(await importOriginal<typeof import("../ipc/commands")>(), {
+    assetApi: { list: mocks.assetList, search: vi.fn() },
+    sessionApi: {
+      list: mocks.sessionList,
+      connectLocal: vi.fn(),
+      connect: vi.fn(),
+      reconnect: vi.fn(),
+      probe: vi.fn(),
+    },
+    vaultApi: { status: mocks.vaultStatus, listCredentials: vi.fn() },
+    layoutApi: { get: mocks.layoutGet, put: mocks.layoutPut },
+    syncApi: {
+      linkGet: vi.fn().mockResolvedValue({
+        url: "",
+        username: "",
+        insecure: false,
+        hasPassword: false,
+        verifiedAt: 0,
+        lastError: null,
+      }),
+      status: vi.fn().mockResolvedValue({ configured: false, loggedIn: false, lastError: "", warnings: [] }),
+      kindOptInGet: vi.fn().mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false }),
+      wake: vi.fn().mockResolvedValue(undefined),
+    },
+  });
+});
 
 vi.mock("../features/terminal/TerminalPane", () => ({ TerminalPane: () => null }));
 vi.mock("../features/terminal/BackgroundSessions", () => ({ BackgroundSessions: () => null }));
@@ -68,6 +85,7 @@ vi.mock("../features/settings/SettingsView", async () => {
 });
 
 import App from "../app/App";
+import { flushLayout, resetLayoutSyncForTest } from "../app/layout";
 import { useUi } from "../app/store";
 
 let mounted: MountedView | undefined;
@@ -101,6 +119,8 @@ beforeEach(() => {
   mocks.assetList.mockResolvedValue([]);
   mocks.sessionList.mockResolvedValue([]);
   mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
+  mocks.layoutGet.mockResolvedValue({ revision: 0, updatedAt: 0, data: null });
+  mocks.layoutPut.mockResolvedValue({ saved: true, revision: 1, conflict: false });
   useUi.setState({
     toasts: [],
     leftOpen: true,
@@ -115,9 +135,62 @@ beforeEach(() => {
 afterEach(() => {
   mounted?.unmount();
   mounted = undefined;
+  resetLayoutSyncForTest();
 });
 
 describe("status bar credential vault state", () => {
+  it("bootstraps the server layout on startup and saves local changes back through layoutApi", async () => {
+    const remoteLayout = {
+      v: 2,
+      leftOpen: false,
+      leftMode: "assets",
+      rightOpen: true,
+      leftWidth: 248,
+      rightWidth: 352,
+      workspaces: [
+        {
+          id: "remote-ws",
+          kind: "tools",
+          title: "远程工具",
+          panes: [
+            {
+              id: "remote-pane",
+              tabs: [{ id: "remote-tab", kind: "history", title: "History", closable: true }],
+              activeTabId: "remote-tab",
+            },
+          ],
+          activePaneId: "remote-pane",
+          splitRatio: 0.5,
+          closable: true,
+        },
+      ],
+      activeWorkspaceId: "remote-ws",
+      aiBoards: {},
+    };
+    mocks.layoutGet.mockResolvedValue({ revision: 7, updatedAt: 0, data: remoteLayout });
+    mocks.layoutPut.mockResolvedValue({ saved: true, revision: 8, conflict: false });
+    mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false });
+    mounted = mountApp();
+    await flushUntil(() => useUi.getState().layoutSyncCompleted);
+
+    // The mocked remote layout is applied on boot instead of the fetch
+    // error being swallowed by the layout bootstrap.
+    expect(mocks.layoutGet).toHaveBeenCalledWith();
+    const state = useUi.getState();
+    expect(state.workspaces.map((w) => w.id)).toContain("remote-ws");
+    expect(state.activeWorkspaceId).toBe("remote-ws");
+    expect(state.layoutSyncCompleted).toBe(true);
+
+    // A local change is saved back through layoutApi.put with the remote
+    // workspace preserved in the serialized layout.
+    click(vaultStatusControl() as HTMLElement);
+    await flush();
+    await flushLayout();
+    expect(mocks.layoutPut).toHaveBeenCalled();
+    const savedLayout = JSON.parse(mocks.layoutPut.mock.calls[0][0] as string);
+    expect(savedLayout.workspaces.some((w: { id: string }) => w.id === "remote-ws")).toBe(true);
+  });
+
   it("renders a clickable enable-protection entry when uninitialized", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false });
     mounted = mountApp();

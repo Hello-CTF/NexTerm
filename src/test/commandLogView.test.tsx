@@ -1,7 +1,13 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { clickButton, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./features/reactTestUtils";
+import { clickButton, flush, flushUntil as flushUntilBase, mount, setInputValue, setSelectValue, type MountedView } from "./features/reactTestUtils";
+
+async function flushUntil(predicate: () => boolean, maxTicks = 60): Promise<void> {
+  await flush();
+  await flushUntilBase(predicate, maxTicks);
+  await flush();
+}
 import type { CommandEntryDto } from "../ipc/types";
 import type { AccountUser } from "../ipc/authApi";
 import { AuditView } from "../features/settings/AuditView";
@@ -126,15 +132,18 @@ beforeEach(() => {
   mocks.commandQuery.mockResolvedValue(makeRows());
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await flush();
   mounted?.unmount();
   mounted = undefined;
+  await flush();
 });
 
 describe("AuditView command view", () => {
   it("loads with command_query after switching to command view, renders commands/sources/exit codes, and preserves OSC 133 coverage notes", async () => {
     mounted = mount(createElement(AuditView));
     await flushUntil(() => mocks.auditQuery.mock.calls.length > 0);
+    await flush();
 
     clickButton(mounted.container, "命令");
     await flushUntil(() => mounted!.container.querySelectorAll("tbody tr").length === 3);
@@ -160,6 +169,7 @@ describe("AuditView command view", () => {
   it("passes device/user/session filters to command_query and command_count", async () => {
     mounted = mount(createElement(AuditView));
     await flushUntil(() => mocks.auditQuery.mock.calls.length > 0);
+    await flush();
     clickButton(mounted.container, "命令");
     await flushUntil(() => mounted!.container.querySelectorAll("tbody tr").length === 3);
 
@@ -189,6 +199,7 @@ describe("AuditView command view", () => {
     mocks.commandQuery.mockResolvedValue([]);
     mounted = mount(createElement(AuditView));
     await flushUntil(() => mocks.auditQuery.mock.calls.length > 0);
+    await flush();
     clickButton(mounted.container, "命令");
     await flushUntil(() => text(mounted!.container).includes("暂无记录"));
     expect(text(mounted.container)).toContain("仅记录启用了 OSC 133 集成的 shell 中执行的命令");
@@ -204,6 +215,7 @@ describe("AuditView command view", () => {
     useAuth.setState({ user: accountOf("user") });
     mounted = mount(createElement(AuditView));
     await flushUntil(() => mocks.auditQuery.mock.calls.length > 0);
+    await flush();
     clickButton(mounted.container, "命令");
     await flushUntil(() => mounted!.container.querySelectorAll("tbody tr").length === 3);
 
@@ -216,6 +228,7 @@ describe("AuditView command view", () => {
     useAuth.setState({ user: accountOf("superadmin") });
     mounted = mount(createElement(AuditView));
     await flushUntil(() => mocks.auditQuery.mock.calls.length > 0);
+    await flush();
     clickButton(mounted.container, "命令");
     await flushUntil(() => mounted!.container.querySelectorAll("tbody tr").length === 3);
 
@@ -225,6 +238,7 @@ describe("AuditView command view", () => {
   it("switches back from command view to audit view", async () => {
     mounted = mount(createElement(AuditView));
     await flushUntil(() => mocks.auditQuery.mock.calls.length > 0);
+    await flush();
     clickButton(mounted.container, "命令");
     await flushUntil(() => mounted!.container.querySelectorAll("tbody tr").length === 3);
 

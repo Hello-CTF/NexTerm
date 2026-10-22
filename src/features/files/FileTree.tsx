@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { FileEntryDto } from "../../ipc/types";
 import { fsApi, sessionApi, terminalApi } from "../../ipc/commands";
@@ -46,6 +46,7 @@ import { useCwdFollow } from "./cwdFollow";
 import { dropFolderUpload, pickFolderUpload } from "./folderUpload";
 import { noteHtml5Drop, useNativeFileDrop } from "./nativeDrop";
 import { enqueueDownload, enqueueUploads, subscribeTransferSettled } from "./transferStore";
+import { createTransferTaskId } from "./transferTaskId";
 import {
   IconArchive,
   IconArrowUp,
@@ -200,7 +201,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
   }, [dirs, results]);
 
   const dirErrors = useMemo(() => {
-    const map = new Map<string, { message: string; gone: boolean; legacy: boolean }>();
+    const map = new Map<string, { message: string; gone: boolean }>();
     dirs.forEach((dir, i) => {
       const err = results[i]?.error;
       if (err) {
@@ -208,7 +209,6 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
         map.set(dir, {
           message: describeError(err),
           gone: resource === "session",
-          legacy: resource === null && (err as { code?: string }).code === "not_found",
         });
       }
     });
@@ -217,14 +217,10 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
 
   const sessionGone =
     rootsSessionGone || results.some((result) => fsErrorResource(result.error) === "session");
-  const legacyRootsNotFound =
-    rootsQuery.isError &&
-    fsErrorResource(rootsQuery.error) === null &&
-    (rootsQuery.error as { code?: string }).code === "not_found";
   const goneHint = "会话已在服务端删除，请重新连接这台主机";
   const [reconnecting, setReconnecting] = useState(false);
 
-  const reconnectHost = async () => {
+  const reconnectHost = useCallback(async () => {
     const ws = useUi.getState().workspaces.find((w) => w.sessionId === sessionId);
     if (!ws) {
       pushToast("error", "找不到这个工作区的主机信息，请到左侧资产树里手动连接");
@@ -249,7 +245,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     } finally {
       setReconnecting(false);
     }
-  };
+  }, [sessionId, pushToast]);
 
   const autoReconnectRef = useRef<string | null>(null);
   useEffect(() => {
@@ -260,13 +256,13 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     if (autoReconnectRef.current === sessionId) return;
     autoReconnectRef.current = sessionId;
     void reconnectHost();
-  }, [sessionGone, sessionId]);
+  }, [sessionGone, sessionId, reconnectHost]);
 
   const rows = useMemo(() => {
     const out: {
       entry?: FileEntryDto;
       depth: number;
-      error?: { message: string; gone: boolean; legacy: boolean };
+      error?: { message: string; gone: boolean };
       dir: string;
       rootEntry?: boolean;
     }[] = [];
@@ -489,7 +485,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     if (!target) return;
     pushToast("info", "正在远端打包…");
     try {
-      const bytes = await fsApi.packDownload(sessionId, dir, target);
+      const bytes = await fsApi.packDownload(sessionId, dir, target, createTransferTaskId());
       const where = await finishSave(target, `${baseName(dir)}.tar.gz`);
       pushToast(
         where ? "success" : "info",
@@ -1090,7 +1086,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
                     重试
                   </button>
                 )}
-                {(rootsSessionGone || legacyRootsNotFound) && (
+                {rootsSessionGone && (
                   <button
                     className="nx-link mt-0.5 text-[11px]"
                     disabled={reconnecting}
@@ -1124,7 +1120,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
                         重试
                       </button>
                     )}
-                    {(error.gone || error.legacy) && (
+                    {error.gone && (
                       <button
                         className="nx-link mt-0.5 text-[11px]"
                         disabled={reconnecting}

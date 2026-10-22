@@ -125,11 +125,11 @@ func failingDial(context.Context, string) (net.Conn, error) {
 }
 
 type scriptedFileSystem struct {
-	roots       base.FileSystemRoots
-	entries     []base.FileEntry
-	listErr     error
-	legacyRoots bool
-	bridgeErr   error
+	roots              base.FileSystemRoots
+	entries            []base.FileEntry
+	listErr            error
+	rootsProtocolError bool
+	bridgeErr          error
 }
 
 func (s scriptedFileSystem) dial(context.Context) (net.Conn, error) {
@@ -145,7 +145,7 @@ func (s scriptedFileSystem) dial(context.Context) (net.Conn, error) {
 		}
 		switch kind {
 		case deviceproto.FrameRoots:
-			if s.legacyRoots {
+			if s.rootsProtocolError {
 				_ = deviceproto.WriteError(serverConn, fmt.Errorf("%w: unexpected request frame %d", deviceproto.ErrProtocol, deviceproto.FrameRoots))
 				return
 			}
@@ -284,6 +284,9 @@ func TestTransportProviderCreateAttachRoundTrip(t *testing.T) {
 }
 
 func TestTransportFileSystemRoots(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	rig := newPurposeRig(t)
 	transport := New("dev-1", rig.digest, rig.dial, 1)
 	filesystem, err := transport.FileSystem(context.Background())
@@ -314,10 +317,6 @@ func TestTransportFileSystemRoots(t *testing.T) {
 		if roots.PathStyle != base.PathStylePOSIX || len(roots.Roots) != 1 || roots.Roots[0].Path != "/" {
 			t.Fatalf("roots = %+v; want the agent POSIX root", roots)
 		}
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
 	}
 	wantHome, err := filepath.Abs(home)
 	if err != nil {
@@ -369,19 +368,22 @@ func TestFileSystemRootsRemoteWindowsAndUNCPaths(t *testing.T) {
 	}
 }
 
-func TestFileSystemRootsLegacyAgentFallback(t *testing.T) {
+func TestFileSystemRootsProtocolError(t *testing.T) {
 	wantEntry := base.FileEntry{Name: "keep.txt", Path: `D:\keep.txt`, Kind: base.FileFile}
-	filesystem := (scriptedFileSystem{legacyRoots: true, entries: []base.FileEntry{wantEntry}}).filesystem()
+	filesystem := (scriptedFileSystem{rootsProtocolError: true, entries: []base.FileEntry{wantEntry}}).filesystem()
 	roots, err := filesystem.Roots(context.Background())
-	if !errors.Is(err, base.ErrUnsupported) {
-		t.Fatalf("legacy Roots = %+v, %v; want base.ErrUnsupported", roots, err)
+	if !errors.Is(err, deviceproto.ErrProtocol) {
+		t.Fatalf("Roots = %+v, %v; want deviceproto.ErrProtocol", roots, err)
+	}
+	if errors.Is(err, base.ErrUnsupported) {
+		t.Fatalf("protocol error was misclassified as unsupported: %v", err)
 	}
 	if roots.Supported || len(roots.Roots) != 0 || roots.HomePath != "" {
-		t.Fatalf("legacy Roots = %+v; want no fabricated C drive or home", roots)
+		t.Fatalf("Roots = %+v after a protocol error; want no fabricated roots", roots)
 	}
 	entries, err := filesystem.List(context.Background(), `D:\`)
 	if err != nil {
-		t.Fatalf("existing file operation after unsupported Roots = %v", err)
+		t.Fatalf("existing file operation after protocol Roots error = %v", err)
 	}
 	if len(entries) != 1 || entries[0] != wantEntry {
 		t.Fatalf("existing List = %+v; want %+v", entries, wantEntry)
@@ -814,6 +816,32 @@ func TestTransportFileSystemPackDownload(t *testing.T) {
 	if !ok {
 		t.Fatal("device filesystem must expose PackDownload for folder archive downloads")
 	}
+	deviceFilesystem, ok := filesystem.(*fileSystem)
+	if !ok {
+		t.Fatal("device filesystem must retain its exec bridge for archive cleanup verification")
+	}
+	execDevice := deviceFilesystem.exec
+	var temporaryArchives []string
+	deviceFilesystem.exec = func(ctx context.Context, command string, options base.ExecOptions) (base.ExecResult, error) {
+		const marker = "/tmp/nexterm-pack-"
+		if start := strings.Index(command, marker); start >= 0 {
+			archive := command[start:]
+			if end := strings.Index(archive, ".tar.gz"); end >= 0 {
+				temporaryArchives = append(temporaryArchives, archive[:end+len(".tar.gz")])
+			}
+		}
+		return execDevice(ctx, command, options)
+	}
+	assertNoTempArchive := func(call int) {
+		t.Helper()
+		if len(temporaryArchives) != call {
+			t.Fatalf("tracked temp archives = %v after call %d; want one exact path per pack", temporaryArchives, call)
+		}
+		temporary := temporaryArchives[call-1]
+		if _, err := os.Stat(temporary); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("temporary archive %q after call %d: stat error = %v; want no leftover", temporary, call, err)
+		}
+	}
 
 	source := filepath.Join(rig.root, "bundle")
 	if err := os.MkdirAll(filepath.Join(source, "inner"), 0o755); err != nil {
@@ -822,14 +850,6 @@ func TestTransportFileSystemPackDownload(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source, "inner", "note.txt"), []byte("pack me"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	countTemp := func() int {
-		matches, err := filepath.Glob("/tmp/nexterm-pack-*.tar.gz")
-		if err != nil {
-			t.Fatal(err)
-		}
-		return len(matches)
-	}
-	before := countTemp()
 	destination := filepath.Join(t.TempDir(), "bundle.tar.gz")
 	var progress []sshfs.Progress
 	transferred, err := packer.PackDownload(ctx, source, destination, sshfs.TransferOptions{
@@ -855,16 +875,12 @@ func TestTransportFileSystemPackDownload(t *testing.T) {
 	if data, err := os.ReadFile(filepath.Join(unpacked, "bundle", "inner", "note.txt")); err != nil || string(data) != "pack me" {
 		t.Fatalf("packed content = %q, %v", data, err)
 	}
-	if after := countTemp(); after != before {
-		t.Fatalf("temp archives before = %d, after = %d; want no leftovers", before, after)
-	}
+	assertNoTempArchive(1)
 
 	if _, err := packer.PackDownload(ctx, filepath.Join(rig.root, "missing"), filepath.Join(t.TempDir(), "x.tar.gz"), sshfs.TransferOptions{}); err == nil || !strings.Contains(err.Error(), "create device archive") {
 		t.Fatalf("packing a missing directory = %v, want the tar failure", err)
 	}
-	if after := countTemp(); after != before {
-		t.Fatalf("failed pack left %d temp archives behind, want %d", after, before)
-	}
+	assertNoTempArchive(2)
 	if _, err := packer.PackDownload(ctx, "", filepath.Join(t.TempDir(), "x.tar.gz"), sshfs.TransferOptions{}); err == nil {
 		t.Fatal("empty source path must fail")
 	}

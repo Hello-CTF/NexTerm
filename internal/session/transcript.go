@@ -1,6 +1,10 @@
 package session
 
-import "context"
+import (
+	"context"
+
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+)
 
 type TranscriptInfo struct {
 	SessionID string
@@ -59,7 +63,7 @@ func (m *Manager) transcriptStarted(ctx context.Context, session *Session) {
 	if m.transcripts == nil {
 		return
 	}
-	m.transcripts.SessionStarted(context.WithoutCancel(ctx), TranscriptInfo{
+	m.transcripts.SessionStarted(ownerCtx(context.WithoutCancel(ctx), session.userID), TranscriptInfo{
 		SessionID: session.ID,
 		AssetID:   session.asset.ID,
 		AssetName: session.asset.Name,
@@ -95,54 +99,74 @@ func (m *Manager) transcriptOutput(ctx context.Context, tab *Tab, data []byte) {
 	if len(data) == 0 {
 		return
 	}
-	m.transcripts.SessionOutput(ctx, durableID, tab.SessionID, tab.ID, data)
+	m.transcripts.SessionOutput(ownerCtx(ctx, tab.session.userID), durableID, tab.SessionID, tab.ID, data)
 }
 
-func (m *Manager) transcriptEnded(sessionID string) {
+func (m *Manager) transcriptEnded(session *Session) {
 	if m.transcripts == nil {
 		return
 	}
-	m.transcripts.SessionEnded(m.ctx, sessionID)
+	m.transcripts.SessionEnded(ownerCtx(m.ctx, session.userID), session.ID)
 }
 
 func (m *Manager) transcriptInput(ctx context.Context, tab *Tab, data []byte) {
 	if m.transcripts == nil || len(data) == 0 {
 		return
 	}
-	m.transcripts.SessionInput(ctx, tab.SessionID, tab.ID, data)
+	m.transcripts.SessionInput(ownerCtx(ctx, tab.session.userID), tab.SessionID, tab.ID, data)
 }
 
 func (m *Manager) transcriptResize(ctx context.Context, tab *Tab, cols, rows uint32) {
 	if m.transcripts == nil {
 		return
 	}
-	m.transcripts.SessionResize(ctx, tab.SessionID, tab.ID, cols, rows)
+	m.transcripts.SessionResize(ownerCtx(ctx, tab.session.userID), tab.SessionID, tab.ID, cols, rows)
 }
 
-func (m *Manager) deleteDurableTranscriptOffset(tabID string) {
-	if m.offsets == nil {
-		return
+// ownerCtx returns a context carrying the session owner's identity for
+// owner-scoped durable stores and lifecycle output. Desktop and open
+// deployments have no owner and keep the shared store behavior.
+func ownerCtx(parent context.Context, userID string) context.Context {
+	if userID == "" {
+		return parent
 	}
-	m.offsets.DeleteDurableTranscriptOffset(tabID)
+	return ipc.WithUserID(parent, userID)
 }
 
-func (m *Manager) durableTabTitle(tabID string) string {
+func (m *Manager) durableTranscriptCatchUpBytes(ctx context.Context, tabID string) int64 {
+	if m.offsets == nil {
+		return 0
+	}
+	return m.offsets.DurableTranscriptCatchUpBytesContext(ctx, tabID)
+}
+
+func (m *Manager) persistDurableTranscriptOffset(ctx context.Context, tabID string, offset int64) {
+	if m.offsets != nil {
+		m.offsets.PersistDurableTranscriptOffsetContext(ctx, tabID, offset)
+	}
+}
+
+func (m *Manager) deleteDurableTranscriptOffset(ctx context.Context, tabID string) {
+	if m.offsets != nil {
+		m.offsets.DeleteDurableTranscriptOffsetContext(ctx, tabID)
+	}
+}
+
+func (m *Manager) durableTabTitle(ctx context.Context, tabID string) string {
 	if m.titles == nil {
 		return ""
 	}
-	return m.titles.DurableTabTitle(tabID)
+	return m.titles.DurableTabTitleContext(ctx, tabID)
 }
 
-func (m *Manager) persistDurableTabTitle(tabID, title string) {
-	if m.titles == nil {
-		return
+func (m *Manager) persistDurableTabTitle(ctx context.Context, tabID, title string) {
+	if m.titles != nil {
+		m.titles.PersistDurableTabTitleContext(ctx, tabID, title)
 	}
-	m.titles.PersistDurableTabTitle(tabID, title)
 }
 
-func (m *Manager) deleteDurableTabTitle(tabID string) {
-	if m.titles == nil {
-		return
+func (m *Manager) deleteDurableTabTitle(ctx context.Context, tabID string) {
+	if m.titles != nil {
+		m.titles.DeleteDurableTabTitleContext(ctx, tabID)
 	}
-	m.titles.DeleteDurableTabTitle(tabID)
 }

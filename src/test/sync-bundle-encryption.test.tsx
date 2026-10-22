@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, flushUntil, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
+import { click, clickButton, flush, flushUntil, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -214,7 +214,7 @@ describe("SyncBundleCard encrypted import", () => {
     await mountCard();
     openImport();
     clickButton(mounted!.container, "选择资产包文件…");
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await flush();
     expect(text()).not.toContain("口令错误");
     expect(mocks.readBundleFile).toHaveBeenCalledTimes(1);
     expect(mocks.importBundle).not.toHaveBeenCalled();

@@ -519,13 +519,42 @@ export function DevicesView() {
     initialRect: { width: 800, height: 600 },
   });
 
-  useLayoutEffect(() => {
+  const measureDeviceListScrollMargin = useCallback(() => {
     const list = deviceListRef.current;
     const scroller = deviceScrollRef.current;
     if (!list || !scroller) return;
     const next = list.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
     setDeviceListScrollMargin((current) => (Math.abs(current - next) < 1 ? current : next));
+  }, []);
+
+  // The list only renders once the asynchronous device response arrives, so a mount-only
+  // effect misses it; and any state rendered above the list (the enrollment panel and its
+  // issued-code content, filter hints) moves the list without remounting it or resizing the
+  // window. Measure via a callback ref at mount, after every render, and on window resizes;
+  // the setter no-ops when the offset is unchanged, so renders without layout changes are free.
+  const deviceListCallbackRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      deviceListRef.current = node;
+      if (node) measureDeviceListScrollMargin();
+    },
+    [measureDeviceListScrollMargin],
+  );
+
+  useLayoutEffect(() => {
+    measureDeviceListScrollMargin();
   });
+
+  useEffect(() => {
+    window.addEventListener("resize", measureDeviceListScrollMargin);
+    return () => window.removeEventListener("resize", measureDeviceListScrollMargin);
+  }, [measureDeviceListScrollMargin]);
+
+  // The enrollment panel's native advanced <details> changes the list's offset without a
+  // React render or window resize. Its toggle event fires after the open state applies, so
+  // measuring here reads the settled layout (getBoundingClientRect forces reflow).
+  const handleAdvancedDetailsToggle = useCallback(() => {
+    measureDeviceListScrollMargin();
+  }, [measureDeviceListScrollMargin]);
 
   if (account.loading) {
     return (
@@ -806,7 +835,7 @@ export function DevicesView() {
                       <div className="text-[11.5px] text-neutral-400">
                         本页面不会执行安装，也无法确认安装结果；请以设备上的输出为准。
                       </div>
-                      <details className="rounded border border-red-500/20 px-2 py-1.5">
+                      <details className="rounded border border-red-500/20 px-2 py-1.5" onToggle={handleAdvancedDetailsToggle}>
                         <summary className="cursor-pointer text-[11.5px] text-neutral-300">高级说明：多地址、手动接入与服务管理</summary>
                         <div className="mt-2 flex flex-col gap-1.5">
                           {baseUrls.length > 1 && (
@@ -866,7 +895,7 @@ export function DevicesView() {
 
         {visibleDevices && visibleDevices.length > 0 && (devicesVirtualized ? (
           <div
-            ref={deviceListRef}
+            ref={deviceListCallbackRef}
             className="relative shrink-0"
             style={{ height: deviceVirtualizer.getTotalSize() }}
           >

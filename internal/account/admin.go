@@ -39,8 +39,16 @@ func (a *Accounts) SetUserDisabled(ctx context.Context, userID string, disabled 
 	if disabled {
 		target = StateDisabled
 	}
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var reenabled *User
+	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		appUser := query.Use(tx).AppUser
+		current, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(userID)).First()
+		if err == gorm.ErrRecordNotFound {
+			return ipc.NewError(ipc.CodeNotFound, "用户不存在")
+		}
+		if err != nil {
+			return dbError(err)
+		}
 		info, err := appUser.WithContext(ctx).
 			Where(appUser.ID.Eq(userID)).
 			UpdateColumns(map[string]any{"state": string(target), "updated_at": a.now()})
@@ -49,6 +57,9 @@ func (a *Accounts) SetUserDisabled(ctx context.Context, userID string, disabled 
 		}
 		if info.RowsAffected == 0 {
 			return ipc.NewError(ipc.CodeNotFound, "用户不存在")
+		}
+		if !disabled && current.Role == string(RoleSuperadmin) && current.State == string(StateDisabled) {
+			reenabled = &User{Role: RoleSuperadmin, State: StateActive}
 		}
 		if disabled {
 			userSession := query.Use(tx).UserSession
@@ -60,6 +71,14 @@ func (a *Accounts) SetUserDisabled(ctx context.Context, userID string, disabled 
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if disabled {
+		a.epochs.bump(userID)
+	}
+	a.notifyActiveSuperadmin(ctx, reenabled)
+	return nil
 }
 
 func (a *Accounts) RegistrationEnabled(ctx context.Context) (bool, error) {

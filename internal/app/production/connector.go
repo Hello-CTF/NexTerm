@@ -48,23 +48,27 @@ type productionAssetOptions struct {
 	CertPath              string            `json:"certPath"`
 	ConnectTimeout        int64             `json:"connectTimeout"`
 	AutoAcceptUnknownHost bool              `json:"autoAcceptUnknownHost"`
-	AgentSocket           string            `json:"agentSocket"`
-	Auth                  string            `json:"auth"`
-	Domain                string            `json:"domain"`
-	TLS                   bool              `json:"tls"`
-	AcceptInvalidCerts    bool              `json:"acceptInvalidCerts"`
-	TLSServerName         string            `json:"tlsServerName"`
-	CACert                string            `json:"caCert"`
-	RequestTimeoutMS      int64             `json:"requestTimeoutMs"`
-	InitialCommand        string            `json:"initialCommand"`
-	StartupCommand        string            `json:"startupCommand"`
-	Encoding              string            `json:"encoding"`
-	DeviceID              string            `json:"deviceId"`
-	UserID                string            `json:"userId"`
+	// StrictHostKey disables auto-accepting unknown host keys on this hop and
+	// every jump hop below it, regardless of stored auto-accept options. It is
+	// set server-side for unattended cron connects, never relaxed by options.
+	StrictHostKey      bool   `json:"strictHostKey"`
+	AgentSocket        string `json:"agentSocket"`
+	Auth               string `json:"auth"`
+	Domain             string `json:"domain"`
+	TLS                bool   `json:"tls"`
+	AcceptInvalidCerts bool   `json:"acceptInvalidCerts"`
+	TLSServerName      string `json:"tlsServerName"`
+	CACert             string `json:"caCert"`
+	RequestTimeoutMS   int64  `json:"requestTimeoutMs"`
+	InitialCommand     string `json:"initialCommand"`
+	StartupCommand     string `json:"startupCommand"`
+	Encoding           string `json:"encoding"`
+	DeviceID           string `json:"deviceId"`
+	UserID             string `json:"userId"`
 }
 
-func newProductionConnector(database *store.Store, credentialVault *vault.Vault, dataDir string, events ipc.Emitter) (*productionConnector, error) {
-	hostKeys, err := newProductionHostKeyStore(filepath.Join(dataDir, "known_hosts.json"), database)
+func newProductionConnector(ctx context.Context, database *store.Store, credentialVault *vault.Vault, dataDir string, events ipc.Emitter, shared bool) (*productionConnector, error) {
+	hostKeys, err := newProductionHostKeyStore(ctx, filepath.Join(dataDir, "known_hosts.json"), database, shared)
 	if err != nil {
 		return nil, err
 	}
@@ -81,6 +85,17 @@ func (c *productionConnector) Connect(ctx context.Context, asset session.Asset, 
 		if err := json.Unmarshal(raw, &options); err != nil {
 			return nil, ipc.BadParam(fmt.Errorf("会话资产选项无效: %w", err))
 		}
+	}
+	if ipc.OwnerID(ctx) == "" && options.UserID != "" && asset.StoreBacked && (asset.Kind == session.KindSSH || asset.Kind == session.KindDocker) {
+		// Session connectors can lose request values; only an owner bound by the authorized asset conversion may be restored.
+		ownerID, err := c.database.AssetOwnerID(ctx, asset.ID)
+		if err != nil {
+			return nil, err
+		}
+		if ownerID != options.UserID {
+			return nil, ipc.NewError(ipc.CodeForbidden, "会话资产所有者无效")
+		}
+		ctx = ipc.WithUserID(ctx, ownerID)
 	}
 	var transport base.Transport
 	var err error
@@ -168,6 +183,12 @@ func (c *productionConnector) connectSSH(ctx context.Context, assetID string, op
 }
 
 func (c *productionConnector) sshConfig(ctx context.Context, options productionAssetOptions, generation uint64, chain []string) (ssh.Config, error) {
+	return c.sshConfigHop(ctx, options, generation, chain, false)
+}
+
+// sshConfigHop builds the SSH config for one hop; strict disables
+// auto-accepting unknown host keys on this hop and every jump hop below it.
+func (c *productionConnector) sshConfigHop(ctx context.Context, options productionAssetOptions, generation uint64, chain []string, strict bool) (ssh.Config, error) {
 	if options.Host == "" {
 		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH asset host is required"))
 	}
@@ -180,10 +201,11 @@ func (c *productionConnector) sshConfig(ctx context.Context, options productionA
 	if (options.ForwardAgent || options.AuthKind == "agent") && options.AgentSocket == "" && os.Getenv("SSH_AUTH_SOCK") == "" {
 		return ssh.Config{}, ipc.NewError(ipc.CodeBadParam, "SSH agent 已启用，但未配置 agent socket，且 SSH_AUTH_SOCK 环境变量为空")
 	}
+	strict = strict || options.StrictHostKey
 	config := ssh.Config{
 		Host: options.Host, Port: options.Port, User: options.Username, HostKeys: c.hostKeys,
 		ProxyURL: options.Proxy, ProxyCommand: options.ProxyCommand, ForwardAgent: options.ForwardAgent,
-		AutoAcceptUnknown: generation == 1 && options.AutoAcceptUnknownHost,
+		AutoAcceptUnknown: generation == 1 && options.AutoAcceptUnknownHost && !strict,
 		ConnectTimeout:    time.Duration(options.ConnectTimeout) * time.Second,
 		Env:               options.Env,
 	}
@@ -213,7 +235,7 @@ func (c *productionConnector) sshConfig(ctx context.Context, options productionA
 	}
 	config.Auth.AgentSocket = options.AgentSocket
 	if options.JumpAssetID != "" {
-		jump, err := c.jumpConfig(ctx, options.JumpAssetID, generation, chain)
+		jump, err := c.jumpConfigHop(ctx, options.JumpAssetID, generation, chain, strict)
 		if err != nil {
 			return ssh.Config{}, err
 		}
@@ -223,6 +245,10 @@ func (c *productionConnector) sshConfig(ctx context.Context, options productionA
 }
 
 func (c *productionConnector) jumpConfig(ctx context.Context, jumpAssetID string, generation uint64, chain []string) (ssh.Config, error) {
+	return c.jumpConfigHop(ctx, jumpAssetID, generation, chain, false)
+}
+
+func (c *productionConnector) jumpConfigHop(ctx context.Context, jumpAssetID string, generation uint64, chain []string, strict bool) (ssh.Config, error) {
 	for _, visited := range chain {
 		if visited == jumpAssetID {
 			return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH jump asset cycle: %s", strings.Join(append(chain, jumpAssetID), " -> ")))
@@ -249,7 +275,7 @@ func (c *productionConnector) jumpConfig(ctx context.Context, jumpAssetID string
 	if err != nil {
 		return ssh.Config{}, err
 	}
-	return c.sshConfig(ctx, options, generation, append(chain, row.ID))
+	return c.sshConfigHop(ctx, options, generation, append(chain, row.ID), strict)
 }
 
 func productionAssetOptionMap(row store.AssetRow) (map[string]any, error) {

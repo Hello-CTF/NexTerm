@@ -90,7 +90,7 @@ func touchDeviceAt(ctx context.Context, db *gorm.DB, deviceID string, now int64)
 }
 
 func (a *Accounts) RevokeDevice(ctx context.Context, userID, deviceID string) error {
-	return a.withBusyRetry(ctx, func() error {
+	err := a.withBusyRetry(ctx, func() error {
 		return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			userDevice := query.Use(tx).UserDevice
 			row, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(deviceID)).First()
@@ -131,6 +131,11 @@ func (a *Accounts) RevokeDevice(ctx context.Context, userID, deviceID string) er
 			return nil
 		})
 	})
+	if err != nil {
+		return err
+	}
+	a.epochs.bump(userID)
+	return nil
 }
 
 func deviceFromModel(row *store.UserDevice) *Device {

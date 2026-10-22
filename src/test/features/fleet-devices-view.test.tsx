@@ -4,7 +4,15 @@
 // device://status online/offline events flip the online state in real time.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, deferred, flush, flushUntil, mountWithClient, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, flushUntil as flushUntilRaw, mountWithClient, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
+
+async function flushUntil(predicate: () => boolean): Promise<void> {
+  if (predicate()) {
+    await flush();
+    return;
+  }
+  await flushUntilRaw(predicate);
+}
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -182,7 +190,15 @@ function fleetHandler(overrides?: {
       return { payload: overrides?.baseUrls ?? { base_urls: BASE_URLS } };
     }
     if (url === "/fleet/devices/d-1/metrics" && method === "GET") {
-      return { payload: overrides?.metrics ?? { samples: METRICS_SAMPLES } };
+      return {
+        payload: overrides?.metrics ?? {
+          samples: METRICS_SAMPLES,
+          latest: METRICS_SAMPLES[METRICS_SAMPLES.length - 1],
+          windowStart: METRICS_SAMPLES[0].ts,
+          windowEnd: NOW,
+          sampleCount: METRICS_SAMPLES.length,
+        },
+      };
     }
     if (url === "/device/enroll-codes" && method === "POST") {
       return { payload: overrides?.enrollCode ?? { code: "fleet-code-1", expires_at: NOW + 900_000 } };
@@ -445,6 +461,25 @@ describe("Device management view - device list and metrics", () => {
     expect(container.textContent).toContain(formatTime(latest.ts));
   });
 
+  it("reports a valid empty window with an independent latest outside it as zero samples", async () => {
+    const latest = metricAt(NOW + 60_000, 66);
+    route(() => ({
+      payload: {
+        samples: [],
+        latest,
+        windowStart: NOW - 3600_000,
+        windowEnd: NOW,
+      },
+    }));
+    const container = mountMetrics();
+    await flushUntil(() => container.textContent?.includes(formatTime(latest.ts)) ?? false);
+
+    expect(container.textContent).toContain("66.0%");
+    expect(container.textContent).toContain("当前时间窗口没有采样点");
+    expect(container.textContent).toContain("共 0 个采样点");
+    expect(container.textContent).not.toContain("采样数未知");
+  });
+
   it("keeps independent latest visible when the trend fails", async () => {
     route(() => ({
       payload: {
@@ -461,6 +496,7 @@ describe("Device management view - device list and metrics", () => {
     expect(container.textContent).toContain("66.0%");
     expect(container.textContent).toContain("趋势加载失败");
     expect(container.textContent).toContain("context deadline exceeded");
+    expect(container.textContent).toContain("采样数未知");
     expect(container.textContent).not.toContain("设备离线，没有近期指标");
     expect(container.textContent).not.toContain("共 0 个采样点");
   });
@@ -522,7 +558,17 @@ describe("Device management view - device list and metrics", () => {
   });
 
   it("does not show a previous device sample while switching or resolving out of order", async () => {
-    route(() => ({ payload: { samples: [metricAt(NOW - 60_000, 11)] } }));
+    const currentResponse = (ts: number, cpu: number) => {
+      const latest = metricAt(ts, cpu);
+      return {
+        samples: [latest],
+        latest,
+        windowStart: NOW - 3600_000,
+        windowEnd: NOW,
+        sampleCount: 1,
+      };
+    };
+    route(() => ({ payload: currentResponse(NOW - 60_000, 11) }));
     const container = mountMetrics();
     await flushUntil(() => container.textContent?.includes("11.0%") ?? false);
 
@@ -536,20 +582,22 @@ describe("Device management view - device list and metrics", () => {
     });
 
     expect(container.textContent).not.toContain("11.0%");
-    nextRequest.resolve(jsonResponse({ samples: [metricAt(NOW - 30_000, 22)] }));
+    nextRequest.resolve(jsonResponse(currentResponse(NOW - 30_000, 22)));
     await flushUntil(() => container.textContent?.includes("22.0%") ?? false);
-    oldRequest.resolve(jsonResponse({ samples: [metricAt(NOW - 10_000, 33)] }));
+    oldRequest.resolve(jsonResponse(currentResponse(NOW - 10_000, 33)));
     await flush();
     expect(container.textContent).toContain("22.0%");
     expect(container.textContent).not.toContain("33.0%");
   });
 
-  it("marks legacy responses as having an unverified window", async () => {
+  it("does not infer latest samples or window metadata from a samples-only response", async () => {
     route(() => ({ payload: { samples: [metricAt(NOW - 60_000, 12.5)] } }));
     const container = mountMetrics();
-    await flushUntil(() => container.textContent?.includes("12.5%") ?? false);
+    await flushUntil(() => container.textContent?.includes("设备还没有上报指标") ?? false);
 
-    expect(container.textContent).toContain("窗口完整性未知");
+    expect(container.textContent).not.toContain("12.5%");
+    expect(container.textContent).not.toContain("趋势窗口");
+    expect(container.textContent).not.toContain("窗口完整性未知");
   });
 
   it("keeps the offline empty state distinct from a trend error", async () => {
@@ -668,6 +716,220 @@ describe("Device management view - device list and metrics", () => {
       expect(firstCard?.parentElement).not.toBe(scroller);
       expect(scroller?.querySelector("[data-index]")).not.toBeNull();
       expect(document.querySelectorAll("section.nx-card").length).toBeLessThan(deviceCount);
+    }
+  });
+
+  it("measures the virtualized list offset when the async list arrives and re-measures on layout change", async () => {
+    const devices = Array.from({ length: 41 }, (_, index) => ({
+      ...AGENT_DEVICE,
+      id: `offset-${index}`,
+      name: `offset-${index}`,
+      agent: {
+        ...AGENT_DEVICE.agent,
+        service_state: { ...AGENT_DEVICE.agent.service_state },
+      },
+    }));
+    route(fleetHandler({ devices: { devices } }));
+    seedUser(SUPERADMIN);
+
+    // Deterministic geometry: scroller top 100, list top 140 → 40px scroll margin. The list
+    // element only mounts once the asynchronous device response arrives, so a mount-only
+    // effect never sees it and the margin stays 0.
+    let listTop = 140;
+    const rectSpy = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      const top = this.classList.contains("overflow-auto")
+        ? 100
+        : this.classList.contains("shrink-0")
+          ? listTop
+          : 0;
+      return {
+        top,
+        bottom: top + 100,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 100,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+    try {
+      mounted = mountWithClient(createElement(DevicesView));
+      await flushUntil(() => document.body.textContent?.includes("offset-0") ?? false);
+
+      const firstItem = document.querySelector<HTMLElement>('[data-index="0"]');
+      expect(firstItem).not.toBeNull();
+      expect(firstItem?.style.transform).toBe("translateY(-40px)");
+
+      // Layout change: the list moves down and a resize re-measures the margin.
+      act(() => {
+        listTop = 180;
+        window.dispatchEvent(new Event("resize"));
+      });
+      await flush();
+      expect(firstItem?.style.transform).toBe("translateY(-80px)");
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
+  it("re-measures the virtual offset when the enrollment panel opens and closes without a resize", async () => {
+    const devices = Array.from({ length: 41 }, (_, index) => ({
+      ...AGENT_DEVICE,
+      id: `enroll-${index}`,
+      name: `enroll-${index}`,
+      agent: {
+        ...AGENT_DEVICE.agent,
+        service_state: { ...AGENT_DEVICE.agent.service_state },
+      },
+    }));
+    route(fleetHandler({ devices: { devices } }));
+    seedUser(SUPERADMIN);
+
+    // Deterministic geometry: scroller top 100; the list sits at top 140, or 260 once the
+    // enrollment panel renders above it. No window resize is ever dispatched — the panel
+    // toggle alone must re-measure the offset.
+    let enrollPanelShown = false;
+    const rectSpy = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      const top = this.classList.contains("overflow-auto")
+        ? 100
+        : this.classList.contains("shrink-0")
+          ? enrollPanelShown
+            ? 260
+            : 140
+          : 0;
+      return {
+        top,
+        bottom: top + 100,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 100,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+    try {
+      mounted = mountWithClient(createElement(DevicesView));
+      await flushUntil(() => document.body.textContent?.includes("enroll-0") ?? false);
+
+      const firstItem = document.querySelector<HTMLElement>('[data-index="0"]');
+      expect(firstItem).not.toBeNull();
+      expect(firstItem?.style.transform).toBe("translateY(-40px)");
+
+      const enrollButton = [...document.querySelectorAll("button")].find(
+        (button) =>
+          button.getAttribute("aria-expanded") !== null &&
+          button.textContent?.includes("接入新设备"),
+      );
+      if (!enrollButton) throw new Error("Enrollment toggle not found");
+
+      enrollPanelShown = true;
+      click(enrollButton);
+      expect(document.body.textContent).toContain("签发接入码");
+      expect(firstItem?.style.transform).toBe("translateY(-160px)");
+
+      enrollPanelShown = false;
+      click(enrollButton);
+      await flush();
+      expect(document.body.textContent).not.toContain("签发接入码");
+      expect(firstItem?.style.transform).toBe("translateY(-40px)");
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
+  it("re-measures the virtual offset when the issued panel's native details toggles without a render or resize", async () => {
+    const devices = Array.from({ length: 41 }, (_, index) => ({
+      ...AGENT_DEVICE,
+      id: `details-${index}`,
+      name: `details-${index}`,
+      agent: {
+        ...AGENT_DEVICE.agent,
+        service_state: { ...AGENT_DEVICE.agent.service_state },
+      },
+    }));
+    route(fleetHandler({ devices: { devices } }));
+    seedUser(SUPERADMIN);
+
+    // Deterministic geometry: scroller top 100; the list sits at 140, +120 once the
+    // enrollment panel opens, +80 once the issued-code view replaces the form, and +160
+    // once the native advanced details expands. No window resize is ever dispatched.
+    let enrollPanelShown = false;
+    let issuedShown = false;
+    let detailsOpen = false;
+    const rectSpy = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      const top = this.classList.contains("overflow-auto")
+        ? 100
+        : this.classList.contains("shrink-0")
+          ? 140 + (enrollPanelShown ? 120 : 0) + (issuedShown ? 80 : 0) + (detailsOpen ? 160 : 0)
+          : 0;
+      return {
+        top,
+        bottom: top + 100,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 100,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+    try {
+      mounted = mountWithClient(createElement(DevicesView));
+      await flushUntil(() => document.body.textContent?.includes("details-0") ?? false);
+
+      const firstItem = document.querySelector<HTMLElement>('[data-index="0"]');
+      expect(firstItem).not.toBeNull();
+      expect(firstItem?.style.transform).toBe("translateY(-40px)");
+
+      const enrollButton = [...document.querySelectorAll("button")].find(
+        (button) =>
+          button.getAttribute("aria-expanded") !== null &&
+          button.textContent?.includes("接入新设备"),
+      );
+      if (!enrollButton) throw new Error("Enrollment toggle not found");
+      enrollPanelShown = true;
+      click(enrollButton);
+      expect(firstItem?.style.transform).toBe("translateY(-160px)");
+
+      const issueButton = [...document.querySelectorAll("button")].find(
+        (button) => button.textContent?.trim() === "签发接入码",
+      );
+      if (!issueButton) throw new Error("Issue-code button not found");
+      issuedShown = true;
+      click(issueButton);
+      await flushUntil(() => document.body.textContent?.includes("fleet-code-1") ?? false);
+      expect(firstItem?.style.transform).toBe("translateY(-240px)");
+
+      const details = document.querySelector("details");
+      const summary = details?.querySelector("summary");
+      if (!details || !summary) throw new Error("Advanced details not found");
+
+      // Expanding the native details fires no React render and no resize; only the
+      // toggle-driven measurement can pick up the new offset.
+      detailsOpen = true;
+      click(summary);
+      await flushUntil(() => firstItem?.style.transform !== "translateY(-240px)");
+      expect(details.open).toBe(true);
+      expect(firstItem?.style.transform).toBe("translateY(-400px)");
+
+      detailsOpen = false;
+      click(summary);
+      await flushUntil(() => firstItem?.style.transform !== "translateY(-400px)");
+      expect(details.open).toBe(false);
+      expect(firstItem?.style.transform).toBe("translateY(-240px)");
+    } finally {
+      rectSpy.mockRestore();
     }
   });
 
@@ -888,7 +1150,10 @@ describe("Device management view - enrollment code issuance", () => {
     expect(document.querySelector('input[aria-label="新接入地址"]')).toBeNull();
     expect([...document.querySelectorAll("button")].some((b) => b.textContent?.includes("保存修改"))).toBe(false);
 
-    firstBaseUrls.reject(new Error("地址服务不可用"));
+    await act(async () => {
+      firstBaseUrls.reject(new Error("地址服务不可用"));
+      await firstBaseUrls.promise.catch(() => {});
+    });
     await flushUntil(() => document.body.textContent?.includes("接入地址读取失败") ?? false);
     expect(document.body.textContent).toContain("地址服务不可用");
     expect(issueButton.disabled).toBe(true);
@@ -1074,17 +1339,22 @@ describe("Device management view - account switching isolation", () => {
 
     // Simulate the AuthGate scenario: the super-admin session expires and a regular user logs in, the pane is not remounted.
     switched = true;
-    useAuth.setState({ user: PLAIN_USER });
+    act(() => {
+      useAuth.setState({ user: PLAIN_USER });
+    });
     await flushUntil(() => document.body.textContent?.includes("user-device") ?? false);
 
     expect(document.body.textContent).not.toContain("old-admin-code");
     expect(document.body.textContent).not.toContain("web-01");
 
     // The old account's late response arrives only now: it must not overwrite the new account's list.
-    lateAdminDevices.resolve({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify({ devices: [AGENT_DEVICE] }),
+    await act(async () => {
+      lateAdminDevices.resolve({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ devices: [AGENT_DEVICE] }),
+      });
+      await lateAdminDevices.promise;
     });
     await flush();
     await flush();
@@ -1127,14 +1397,19 @@ describe("Device management view - account isolation during issuance", () => {
     await flushUntil(() => issueCalls === 1);
 
     // Switching to a regular user while issuance is in flight: the render-time reset has already cleared the enrollment panel and issuing.
-    useAuth.setState({ user: PLAIN_USER });
+    act(() => {
+      useAuth.setState({ user: PLAIN_USER });
+    });
     await flush();
 
     // The old account's issuance response arrives only now: it must not be written into the new account's view.
-    lateIssue.resolve({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify({ code: "old-admin-code", expires_at: NOW + 900_000 }),
+    await act(async () => {
+      lateIssue.resolve({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ code: "old-admin-code", expires_at: NOW + 900_000 }),
+      });
+      await lateIssue.promise;
     });
     await flush();
     await flush();

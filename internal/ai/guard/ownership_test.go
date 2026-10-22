@@ -25,13 +25,13 @@ func TestPermissionSettingsAreScopedToUser(t *testing.T) {
 	if err := managerB.Set(ctxB, Config{Mode: ReadOnly}); err != nil {
 		t.Fatal(err)
 	}
-	if managerA.Get().Mode != Silent || managerB.Get().Mode != ReadOnly {
-		t.Fatalf("permission modes = %v/%v", managerA.Get().Mode, managerB.Get().Mode)
+	if mustPermission(t, managerA, ctxA).Mode != Silent || mustPermission(t, managerB, ctxB).Mode != ReadOnly {
+		t.Fatalf("permission modes = %v/%v", mustPermission(t, managerA, ctxA).Mode, mustPermission(t, managerB, ctxB).Mode)
 	}
 	if err := managerA.SetDeviceMode(ctxA, "asset-a", Unattended); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := managerB.DeviceMode("asset-a"); ok {
+	if _, ok := mustDeviceMode(t, managerB, "asset-a", ctxB); ok {
 		t.Fatal("user B inherited user A's device override")
 	}
 	if settings.values[PermissionSettingKey] != "" || settings.values[DevicePermissionSettingKey] != "" {

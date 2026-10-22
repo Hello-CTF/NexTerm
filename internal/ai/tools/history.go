@@ -49,7 +49,20 @@ func shellHistoryPaths() []shellHistoryCandidate {
 	}
 }
 
+func (r *Registry) shellHistoryScopeError(ctx context.Context, scope Scope) error {
+	if !r.deps.LocalHistory {
+		return errors.New("shell_history 仅在 NexTerm 桌面模式的本地作用域可用")
+	}
+	if r.remoteAsset(ctx, scope) {
+		return errors.New("shell_history 仅读取当前桌面进程 OS 用户的本机历史；远程 SSH/device 主机请使用 exec_commands 读取远程主机历史")
+	}
+	return nil
+}
+
 func (r *Registry) shellHistory(ctx context.Context, scope Scope, raw []byte) Output {
+	if err := r.shellHistoryScopeError(ctx, scope); err != nil {
+		return Fail(err)
+	}
 	var args ShellHistoryArgs
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
@@ -77,9 +90,6 @@ func (r *Registry) shellHistory(ctx context.Context, scope Scope, raw []byte) Ou
 	}
 	text, truncated := capText(text)
 	prefix := fmt.Sprintf("[本机 %s shell 历史，最新 %d 条]\n", shell, len(entries))
-	if r.remoteAsset(ctx, scope) {
-		prefix = "[注意] 当前会话连接的是远端资产；以下是运行 NexTerm 的本机 shell 历史，不是远端机器的历史。\n" + prefix
-	}
 	return Output{OK: true, Text: prefix + text, Truncated: truncated}
 }
 

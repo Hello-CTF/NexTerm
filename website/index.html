@@ -4,9 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>NexTerm - 一个工作台，管好每一台服务器</title>
-    <meta name="description" content="NexTerm 是开源、可自托管的运维工作台：永不掉线的 SSH / WinRM 终端、会动手的 AI 助手、文件、Docker、数据库、设备管理和终端分享。" />
+    <meta name="description" content="NexTerm 是开源、可自托管的运维工作台：可接管的持久 SSH 与受管设备终端、WinRM 非交互终端、会动手的 AI 助手、文件、Docker、数据库、设备管理和终端分享。" />
     <meta property="og:title" content="NexTerm - 一个工作台，管好每一台服务器" />
-    <meta property="og:description" content="持久终端、AI 助手、文件、Docker、数据库、设备管理和终端分享，集中在一个开源、可自托管的工作台。" />
+    <meta property="og:description" content="可接管的持久 SSH 与受管设备终端、AI 助手、文件、Docker、数据库、设备管理和终端分享，集中在一个开源、可自托管的工作台。" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://nexterm.work/" />
     <meta property="og:image" content="https://nexterm.work/images/shell-dark.jpg" />
@@ -19,7 +19,7 @@
         document.documentElement.lang = language === "en" ? "en" : "zh-CN";
         if (language === "en") {
           document.title = "NexTerm - One workbench for every server you run";
-          document.querySelector('meta[name="description"]')?.setAttribute("content", "NexTerm is an open source, self-hostable ops workbench: persistent SSH and WinRM terminals, a hands-on AI assistant, files, Docker, databases, device management, and terminal sharing.");
+          document.querySelector('meta[name="description"]')?.setAttribute("content", "NexTerm is an open source, self-hostable ops workbench: re-attachable persistent SSH and managed-device sessions, WinRM non-interactive terminals, a hands-on AI assistant, files, Docker, databases, device management, and terminal sharing.");
         }
         var saved = localStorage.getItem("nexterm.site.theme");
         var system = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";

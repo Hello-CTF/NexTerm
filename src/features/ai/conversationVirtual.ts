@@ -5,6 +5,7 @@ export const VIRTUAL_ITEM_ESTIMATE_PX = 88;
 export const VIRTUAL_ITEM_GAP_PX = 10;
 export const VIRTUAL_OVERSCAN = 6;
 export const VIRTUAL_THRESHOLD = 60;
+export const CONVERSATION_SCROLL_SETTLE_MS = 150;
 
 export interface VirtualRange {
   active: boolean;
@@ -112,6 +113,7 @@ export function useVirtualWindow(count: number): VirtualWindow {
     estimateSize: () => VIRTUAL_ITEM_ESTIMATE_PX,
     overscan: VIRTUAL_OVERSCAN,
     gap: VIRTUAL_ITEM_GAP_PX,
+    isScrollingResetDelay: CONVERSATION_SCROLL_SETTLE_MS,
     paddingStart: count > VIRTUAL_THRESHOLD && boundaryIndex !== null ? (el?.clientHeight ?? 0) : 0,
     paddingEnd: count > VIRTUAL_THRESHOLD && boundaryIndex !== null ? (el?.clientHeight ?? 0) : 0,
     onChange: () => {

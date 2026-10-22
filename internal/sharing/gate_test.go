@@ -415,12 +415,31 @@ func TestGateRevalidateTTLConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
+// attemptLock counts Lock calls so a test can prove a refresh attempt reached
+// the serialization point before an earlier refresh was released.
+type attemptLock struct {
+	inner    sync.Mutex
+	attempts int32
+	second   chan struct{}
+	once     sync.Once
+}
+
+func (l *attemptLock) Lock() {
+	if atomic.AddInt32(&l.attempts, 1) == 2 {
+		l.once.Do(func() { close(l.second) })
+	}
+	l.inner.Lock()
+}
+
+func (l *attemptLock) Unlock() { l.inner.Unlock() }
+
 func TestGateRefreshSerializationPreventsStaleOverwrite(t *testing.T) {
 	expiresAt := time.Now().Add(time.Hour).UnixMilli()
 	stale := testGrant(PermissionReadWrite, expiresAt)
 	current := testGrant(PermissionRead, expiresAt)
 	firstStarted := make(chan struct{})
 	releaseFirst := make(chan struct{})
+	secondRecheckStarted := make(chan struct{})
 	var calls atomic.Int32
 	gate := NewGate(testGrant(PermissionReadWrite, expiresAt), WithRecheck(func(ctx context.Context, grant *Grant) (*Grant, error) {
 		if calls.Add(1) == 1 {
@@ -428,8 +447,11 @@ func TestGateRefreshSerializationPreventsStaleOverwrite(t *testing.T) {
 			<-releaseFirst
 			return stale, nil
 		}
+		close(secondRecheckStarted)
 		return current, nil
 	}))
+	lock := &attemptLock{second: make(chan struct{})}
+	gate.refreshMu = lock
 	defer func() {
 		select {
 		case <-releaseFirst:
@@ -443,13 +465,32 @@ func TestGateRefreshSerializationPreventsStaleOverwrite(t *testing.T) {
 	<-firstStarted
 	secondDone := make(chan error, 1)
 	go func() { secondDone <- gate.CheckFresh(context.Background()) }()
-	time.Sleep(50 * time.Millisecond)
+	// The second refresh attempt must reach the serialization point (the
+	// instrumented refresh lock) before the first refresh is released; a
+	// recheck that runs before that point means serialization is gone.
+	select {
+	case <-lock.second:
+	case <-secondRecheckStarted:
+		t.Fatal("second refresh ran before reaching the serialization point")
+	}
+	// With serialization active, the second recheck cannot start while the
+	// first recheck holds the lock.
+	select {
+	case <-secondRecheckStarted:
+		t.Fatal("second refresh ran while the first refresh was still in flight")
+	default:
+	}
 	close(releaseFirst)
 	if err := <-firstDone; err != nil {
 		t.Fatal(err)
 	}
 	if err := <-secondDone; err != nil {
 		t.Fatal(err)
+	}
+	select {
+	case <-secondRecheckStarted:
+	default:
+		t.Fatal("second refresh never ran")
 	}
 	if permission := gate.Grant().Permission; permission != PermissionRead {
 		t.Fatalf("stale refresh overwrote current grant: permission = %q", permission)

@@ -9,11 +9,10 @@ import (
 	"unicode/utf16"
 )
 
-func stubWindowsTaskUser(t *testing.T, account string) {
-	t.Helper()
-	restore := windowsTaskUser
-	windowsTaskUser = func() (string, error) { return account, nil }
-	t.Cleanup(func() { windowsTaskUser = restore })
+func newTestWindowsManager(runner CommandRunner, commandPrefix ...string) *windowsManager {
+	manager := newWindowsManager(runner, commandPrefix...)
+	manager.taskUser = func() (string, error) { return `DESKTOP\dev`, nil }
+	return manager
 }
 
 // xmlCaptureRunner captures the XML file content passed to schtasks on /Create calls
@@ -106,7 +105,6 @@ func TestWindowsUTF16LEEncoding(t *testing.T) {
 }
 
 func TestSchtasksInstallCommandsAndXML(t *testing.T) {
-	stubWindowsTaskUser(t, `DESKTOP\dev`)
 	runner := &fakeRunner{
 		responses: map[string]string{
 			"sc.exe stop NexTermAgent":           "[SC] ControlService FAILED 1062:\n",
@@ -119,7 +117,7 @@ func TestSchtasksInstallCommandsAndXML(t *testing.T) {
 		},
 	}
 	capture := &xmlCaptureRunner{fakeRunner: runner}
-	manager := newWindowsManager(capture)
+	manager := newTestWindowsManager(capture)
 	exe := `C:\Program Files\NexTerm\nexterm-agent.exe`
 	dataDir := `C:\Users\dev\AppData\Local\NexTerm`
 	if err := manager.Install(context.Background(), exe, dataDir); err != nil {
@@ -158,7 +156,6 @@ func TestSchtasksInstallCommandsAndXML(t *testing.T) {
 }
 
 func TestSchtasksInstallMigratesLegacyService(t *testing.T) {
-	stubWindowsTaskUser(t, `DESKTOP\dev`)
 	runner := &fakeRunner{
 		responses: map[string]string{
 			"sc.exe stop NexTermAgent":           "",
@@ -167,7 +164,7 @@ func TestSchtasksInstallMigratesLegacyService(t *testing.T) {
 		},
 	}
 	capture := &xmlCaptureRunner{fakeRunner: runner}
-	manager := newWindowsManager(capture)
+	manager := newTestWindowsManager(capture)
 	if err := manager.Install(context.Background(), `C:\NexTerm\nexterm-agent.exe`, `C:\NexTerm`); err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +184,6 @@ func TestSchtasksInstallMigratesLegacyService(t *testing.T) {
 }
 
 func TestSchtasksInstallReportsCreateAndRunFailures(t *testing.T) {
-	stubWindowsTaskUser(t, `DESKTOP\dev`)
 	baseResponses := func() map[string]string {
 		return map[string]string{
 			"sc.exe stop NexTermAgent":   "[SC] OpenService FAILED 1060:\n",
@@ -203,14 +199,14 @@ func TestSchtasksInstallReportsCreateAndRunFailures(t *testing.T) {
 
 	capture := &xmlCaptureRunner{fakeRunner: &fakeRunner{responses: baseResponses(), errors: baseErrors()}}
 	capture.createOut, capture.createErr = "ERROR: Access is denied.\n", realExitError(t)
-	err := newWindowsManager(capture).Install(context.Background(), `C:\NexTerm\nexterm-agent.exe`, `C:\NexTerm`)
+	err := newTestWindowsManager(capture).Install(context.Background(), `C:\NexTerm\nexterm-agent.exe`, `C:\NexTerm`)
 	if err == nil || !strings.Contains(err.Error(), "拒绝访问") {
 		t.Fatalf("registration denial must be actionable, got %v", err)
 	}
 
 	capture = &xmlCaptureRunner{fakeRunner: &fakeRunner{responses: baseResponses(), errors: baseErrors()}}
 	capture.createErr = errors.New(`exec: "schtasks.exe": executable file not found in %PATH%`)
-	err = newWindowsManager(capture).Install(context.Background(), `C:\NexTerm\nexterm-agent.exe`, `C:\NexTerm`)
+	err = newTestWindowsManager(capture).Install(context.Background(), `C:\NexTerm\nexterm-agent.exe`, `C:\NexTerm`)
 	if err == nil || !strings.Contains(err.Error(), "schtasks.exe 不可用") {
 		t.Fatalf("missing schtasks must be reported explicitly, got %v", err)
 	}
@@ -218,7 +214,7 @@ func TestSchtasksInstallReportsCreateAndRunFailures(t *testing.T) {
 	runner := &fakeRunner{responses: baseResponses(), errors: baseErrors()}
 	runner.responses["schtasks.exe /Run /TN NexTermAgent"] = "ERROR: ...\n"
 	runner.errors["schtasks.exe /Run /TN NexTermAgent"] = realExitError(t)
-	err = newWindowsManager(&xmlCaptureRunner{fakeRunner: runner}).Install(context.Background(), `C:\NexTerm\nexterm-agent.exe`, `C:\NexTerm`)
+	err = newTestWindowsManager(&xmlCaptureRunner{fakeRunner: runner}).Install(context.Background(), `C:\NexTerm\nexterm-agent.exe`, `C:\NexTerm`)
 	if err == nil || !strings.Contains(err.Error(), "启动计划任务失败") {
 		t.Fatalf("task start failure must be reported, got %v", err)
 	}
@@ -228,7 +224,7 @@ func TestSchtasksStatusStates(t *testing.T) {
 	queryKey := "schtasks.exe /Query /TN NexTermAgent /FO CSV /NH"
 	psKey := "powershell.exe -NoProfile -NonInteractive -Command " + windowsTaskStateCommand
 	runner := &fakeRunner{responses: map[string]string{queryKey: "", psKey: "Running\r\n"}}
-	manager := newWindowsManager(runner)
+	manager := newTestWindowsManager(runner)
 	ctx := context.Background()
 
 	status := manager.Status(ctx)
@@ -290,7 +286,7 @@ func TestSchtasksUninstall(t *testing.T) {
 			"sc.exe delete NexTermAgent":         realExitError(t),
 		},
 	}
-	manager := newWindowsManager(runner)
+	manager := newTestWindowsManager(runner)
 	if err := manager.Uninstall(context.Background()); err != nil {
 		t.Fatalf("uninstall = %v", err)
 	}
@@ -344,7 +340,7 @@ func TestSchtasksUninstallReportsMissingTool(t *testing.T) {
 			"schtasks.exe /Delete /TN NexTermAgent /F": missing,
 		},
 	}
-	err := newWindowsManager(runner).Uninstall(context.Background())
+	err := newTestWindowsManager(runner).Uninstall(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "schtasks.exe 不可用") {
 		t.Fatalf("missing schtasks must be reported explicitly, got %v", err)
 	}

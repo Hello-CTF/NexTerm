@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -55,6 +56,7 @@ import { useCwdFollow } from "./cwdFollow";
 import { dropFolderUpload, pickFolderUpload } from "./folderUpload";
 import { noteHtml5Drop, useNativeFileDrop } from "./nativeDrop";
 import {
+  createTransferTaskId,
   enqueueDownload,
   enqueueUploads,
   subscribeTransferSettled,
@@ -166,7 +168,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
   const [progress, setProgress] = useState<FileProgressMap>({});
   useEffect(() => {
     const un = listenEvent<FsProgressEvent>(EVENTS.fsProgress, (event) => {
-      if (useTransferStore.getState().runningId) return;
+      if (useTransferStore.getState().tasks.some((task) => task.id === event.taskId)) return;
       if (event.error) {
         pushToast("error", `文件传输失败：${event.error}`);
       }
@@ -233,18 +235,10 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
 
   const sessionGone =
     rootsSessionGone || (entries.isError && fsErrorResource(entries.error) === "session");
-  const legacyNotFound =
-    entries.isError &&
-    fsErrorResource(entries.error) === null &&
-    (entries.error as { code?: string }).code === "not_found";
-  const legacyRootsNotFound =
-    rootsQuery.isError &&
-    fsErrorResource(rootsQuery.error) === null &&
-    (rootsQuery.error as { code?: string }).code === "not_found";
   const goneHint = "会话已在服务端删除，请重新连接这台主机";
   const [reconnecting, setReconnecting] = useState(false);
 
-  const reconnectHost = async () => {
+  const reconnectHost = useCallback(async () => {
     const st = useUi.getState();
     let target: { tabId: string; ws: Workspace } | undefined;
     for (const w of st.workspaces) {
@@ -295,7 +289,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
       }
       setReconnecting(false);
     }
-  };
+  }, [sessionId, pushToast]);
 
   const autoReconnectRef = useRef<string | null>(null);
   useEffect(() => {
@@ -306,7 +300,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
     if (autoReconnectRef.current === sessionId) return;
     autoReconnectRef.current = sessionId;
     void reconnectHost();
-  }, [sessionGone, sessionId]);
+  }, [sessionGone, sessionId, reconnectHost]);
 
   const uploadTo = async (dir: string) => {
     const file = await pickLocalFile();
@@ -427,7 +421,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
     if (!target) return;
     pushToast("info", "正在远端打包…");
     try {
-      const bytes = await fsApi.packDownload(sessionId, dir, target);
+      const bytes = await fsApi.packDownload(sessionId, dir, target, createTransferTaskId());
       const where = await finishSave(target, `${baseName(dir)}.tar.gz`);
       pushToast(
         where ? "success" : "info",
@@ -1021,7 +1015,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
                     重试
                   </button>
                 )}
-                {(rootsSessionGone || legacyRootsNotFound) && (
+                {rootsSessionGone && (
                   <button
                     className="nx-link mt-1 text-[11px]"
                     disabled={reconnecting}
@@ -1061,7 +1055,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
                     重试
                   </button>
                 )}
-                {(sessionGone || legacyNotFound) && (
+                {sessionGone && (
                   <button
                     className="nx-link mt-1 text-[11px]"
                     disabled={reconnecting}

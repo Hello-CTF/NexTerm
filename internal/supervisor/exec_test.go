@@ -9,10 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"golang.org/x/sys/unix"
 )
 
 func awaitSessionCount(t *testing.T, supervisor *Supervisor, want int) {
@@ -65,6 +67,29 @@ func TestExecSplitStreams(t *testing.T) {
 		t.Fatalf("stderr = %q, want %q", stderr, "err-1err-2")
 	}
 	awaitSessionCount(t, supervisor, 0)
+}
+
+func TestExecSuccessfulOutputIsNotTruncated(t *testing.T) {
+	supervisor := testSupervisor(t)
+	server := testServer(t, supervisor)
+	client := testClient(t, server)
+	stdoutWant := strings.Repeat("out-", 16*1024)
+	stderrWant := strings.Repeat("err-", 16*1024)
+	stdout, stderr, exitCode, _, err := client.Exec(context.Background(), ExecSpec{
+		Command: []string{"/bin/sh", "-c", `printf %s "$1"; printf %s "$2" >&2`, "sh", stdoutWant, stderrWant},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", exitCode)
+	}
+	if got := string(stdout); got != stdoutWant {
+		t.Fatalf("stdout length = %d, want complete %d-byte output", len(got), len(stdoutWant))
+	}
+	if got := string(stderr); got != stderrWant {
+		t.Fatalf("stderr length = %d, want complete %d-byte output", len(got), len(stderrWant))
+	}
 }
 
 func TestExecEnvAndDir(t *testing.T) {
@@ -142,9 +167,7 @@ func TestExecOutputCap(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
 	client := testClient(t, server)
-	original := maxExecOutput
-	maxExecOutput = 64 * 1024
-	defer func() { maxExecOutput = original }()
+	client.maxExecOutput = 64 * 1024
 	stdout, _, exitCode, _, err := client.Exec(context.Background(), ExecSpec{
 		Command: []string{"dd", "if=/dev/zero", "bs=4096", "count=64"},
 	})
@@ -408,6 +431,74 @@ func TestServerReapsExecWhenCreatedReplyFails(t *testing.T) {
 	// the exec session must still be drained and reaped instead of leaking.
 	_ = conn.Close()
 	awaitSessionCount(t, supervisor, 0)
+}
+
+func startExecWithDescendantHoldingPipes(t *testing.T, supervisor *Supervisor) (*Session, func()) {
+	t.Helper()
+	dir := t.TempDir()
+	control := filepath.Join(dir, "control")
+	ready := filepath.Join(dir, "ready")
+	if err := unix.Mkfifo(control, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	noPTY := false
+	session, err := supervisor.Create(context.Background(), CreateOptions{
+		Command: []string{"/bin/sh", "-c", `/bin/sh -c 'printf ready > "$2"; read line < "$1"' sh "$1" "$2" & wait`, "sh", control, ready},
+		Pty:     &noPTY,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.drainExecPipes()
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			fd, err := unix.Open(control, unix.O_WRONLY|unix.O_NONBLOCK, 0)
+			if err != nil {
+				return
+			}
+			_, _ = unix.Write(fd, []byte("\n"))
+			_ = unix.Close(fd)
+		})
+	}
+	t.Cleanup(release)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		_, err := os.Stat(ready)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("exec descendant did not become ready")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return session, release
+}
+
+func TestExecKillClosesPipesHeldByDescendant(t *testing.T) {
+	supervisor := testSupervisor(t)
+	session, release := startExecWithDescendantHoldingPipes(t, supervisor)
+	killErr := supervisor.Kill(context.Background(), session.ID())
+	release()
+	supervisor.pumps.Wait()
+	if killErr != nil {
+		t.Fatalf("Kill with descendant-held pipes = %v", killErr)
+	}
+}
+
+func TestExecCloseClosesPipesHeldByDescendant(t *testing.T) {
+	supervisor := testSupervisor(t)
+	_, release := startExecWithDescendantHoldingPipes(t, supervisor)
+	closeErr := supervisor.Close()
+	release()
+	supervisor.pumps.Wait()
+	if closeErr != nil {
+		t.Fatalf("Close with descendant-held pipes = %v", closeErr)
+	}
 }
 
 func TestExecEnvUsesLoginShellPATH(t *testing.T) {

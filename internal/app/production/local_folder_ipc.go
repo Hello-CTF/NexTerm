@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -36,6 +37,12 @@ type localFileReadRequest struct {
 	MaxBytes int64  `json:"maxBytes"`
 }
 
+type localFileReadRangeRequest struct {
+	Path     string `json:"path"`
+	Offset   int64  `json:"offset"`
+	MaxBytes int64  `json:"maxBytes"`
+}
+
 // registerLocalFolderCommands serves the desktop folder-upload flow: the webview cannot expose OS
 // paths of picked files, so the native folder dialog returns the picked folder path and these
 // commands walk/read it locally. Registered only in the desktop assembly; on the server they would
@@ -50,6 +57,11 @@ func registerLocalFolderCommands(dispatcher *ipc.Dispatcher) error {
 		func() error {
 			return ipc.Register(dispatcher, "local_file_read", func(_ context.Context, _ *ipc.Call, input localFileReadRequest) (fsReadDTO, error) {
 				return readLocalFile(input.Path, input.MaxBytes)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "local_file_read_range", func(_ context.Context, _ *ipc.Call, input localFileReadRangeRequest) (fsRangeReadDTO, error) {
+				return readLocalFileRange(input.Path, input.Offset, input.MaxBytes)
 			})
 		},
 	}
@@ -144,6 +156,44 @@ func readLocalFile(path string, maxBytes int64) (fsReadDTO, error) {
 		return fsReadDTO{}, localFolderError(err)
 	}
 	return fsReadDTO{Path: path, Size: len(data), ContentBase64: base64.StdEncoding.EncodeToString(data)}, nil
+}
+
+func readLocalFileRange(path string, offset, maxBytes int64) (fsRangeReadDTO, error) {
+	if offset < 0 {
+		return fsRangeReadDTO{}, ipc.BadParam(fmt.Errorf("offset 不能为负数"))
+	}
+	if maxBytes == 0 {
+		maxBytes = 1 << 20
+	}
+	if maxBytes < 0 || maxBytes > fsRangeReadMaxBytes {
+		return fsRangeReadDTO{}, ipc.BadParam(fmt.Errorf("maxBytes 必须在 1 到 %d 字节之间", fsRangeReadMaxBytes))
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return fsRangeReadDTO{}, localFolderError(err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return fsRangeReadDTO{}, localFolderError(err)
+	}
+	if !info.Mode().IsRegular() {
+		return fsRangeReadDTO{}, ipc.BadParam(fmt.Errorf("%s 不是常规文件", path))
+	}
+	if offset > info.Size() {
+		return fsRangeReadDTO{}, ipc.BadParam(fmt.Errorf("offset %d 超过文件大小 %d", offset, info.Size()))
+	}
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return fsRangeReadDTO{}, localFolderError(err)
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxBytes))
+	if err != nil {
+		return fsRangeReadDTO{}, localFolderError(err)
+	}
+	return fsRangeReadDTO{
+		Path: path, Offset: offset, Size: info.Size(), ContentBase64: base64.StdEncoding.EncodeToString(data),
+		Truncated: offset+int64(len(data)) < info.Size(),
+	}, nil
 }
 
 func localFolderError(err error) error {

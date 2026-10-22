@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -24,12 +26,22 @@ import (
 )
 
 type Store struct {
-	backend   Backend
-	db        *gorm.DB
-	sqlDB     *sql.DB
-	keepAlive *sql.Conn
-	logger    *slog.Logger
-	retention retentionState
+	backend         Backend
+	db              *gorm.DB
+	sqlDB           *sql.DB
+	keepAlive       *sql.Conn
+	logger          *slog.Logger
+	retention       retentionState
+	aiHistoryShared atomic.Bool
+
+	// backfillCtx is cancelled on Close to stop background work (the
+	// timestamp-index backfill loop); backfillWG lets Close join it, and
+	// backfillMu serializes the closed flag against new work starting.
+	backfillCtx    context.Context
+	backfillCancel context.CancelFunc
+	backfillWG     sync.WaitGroup
+	backfillMu     sync.Mutex
+	backfillClosed bool
 
 	protectorMu sync.RWMutex
 	protector   SecretProtector
@@ -37,6 +49,28 @@ type Store struct {
 
 type OpenOptions struct {
 	Logger *slog.Logger
+	// BusyTimeout overrides the SQLite busy_timeout pragma applied to every
+	// pooled connection; zero keeps the 30s production default. The modernc
+	// busy handler cannot be interrupted once it starts waiting — neither
+	// cancelling the statement context nor closing the pool stops it — so
+	// tests that close or shut down while a write may be contended set a
+	// short value to bound the wait instead of weakening the default.
+	BusyTimeout time.Duration
+}
+
+const defaultBusyTimeoutMS = 30000
+
+func (o OpenOptions) busyTimeoutMS() (int64, error) {
+	if o.BusyTimeout < 0 {
+		return 0, badParam(fmt.Errorf("busy timeout 不能为负数"))
+	}
+	if o.BusyTimeout == 0 {
+		return defaultBusyTimeoutMS, nil
+	}
+	if ms := o.BusyTimeout.Milliseconds(); ms > 0 {
+		return ms, nil
+	}
+	return 1, nil
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -47,39 +81,34 @@ func OpenWithOptions(ctx context.Context, path string, options OpenOptions) (*St
 	if path == "" {
 		return nil, badParam(fmt.Errorf("数据库路径不能为空"))
 	}
+	busyTimeoutMS, err := options.busyTimeoutMS()
+	if err != nil {
+		return nil, err
+	}
 	if dir := filepath.Dir(path); dir != "." {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, ipc.WrapError(ipc.CodeIO, "创建数据库目录失败: "+err.Error(), err)
 		}
 	}
+	legacy, err := hasLegacySchemaMarkerAtPath(ctx, path, busyTimeoutMS)
+	if err != nil {
+		return nil, err
+	}
+	if legacy {
+		return nil, ipc.NewError(ipc.CodeUnsupported, "不支持直接升级 v1.0.3 之前的 pre-GORM 数据库；原数据库未修改")
+	}
 	if err := prepareDatabaseFile(path); err != nil {
 		return nil, ipc.WrapError(ipc.CodeIO, "准备数据库文件失败: "+err.Error(), err)
 	}
 	var s *Store
-	var legacyBackup string
 	for attempt := 0; ; attempt++ {
-		db, err := openDB(sqliteDSN(path), 8)
+		db, err := openDB(sqliteDSN(path, busyTimeoutMS), 8)
 		if err == nil {
 			s = newStore(db, options.Logger)
-			legacy, lerr := hasLegacySchemaMarker(ctx, s)
-			if lerr != nil {
+			err = s.migrate(ctx)
+			if err != nil {
 				_ = s.Close()
 				s = nil
-				err = dbError(lerr)
-			} else if legacy {
-				_ = s.Close()
-				s = nil
-				legacyBackup, err = backupLegacyDatabase(path)
-				if err != nil {
-					return nil, err
-				}
-				continue
-			} else {
-				err = s.migrate(ctx)
-				if err != nil {
-					_ = s.Close()
-					s = nil
-				}
 			}
 		}
 		if err == nil {
@@ -94,9 +123,6 @@ func OpenWithOptions(ctx context.Context, path string, options OpenOptions) (*St
 		case <-time.After(time.Duration(100*(attempt+1)) * time.Millisecond):
 		}
 	}
-	if legacyBackup != "" {
-		s.logger.Info("检测到旧版数据库,已备份并重建", "backup", legacyBackup)
-	}
 	if err := hardenDatabaseFiles(path); err != nil {
 		_ = s.Close()
 		return nil, ipc.WrapError(ipc.CodeIO, "保护数据库文件失败: "+err.Error(), err)
@@ -109,7 +135,11 @@ func OpenInMemory(ctx context.Context) (*Store, error) {
 }
 
 func OpenInMemoryWithOptions(ctx context.Context, options OpenOptions) (*Store, error) {
-	dsn := "file:nexterm-" + ids.New() + "?mode=memory&cache=shared" + pragmaQuery(true)
+	busyTimeoutMS, err := options.busyTimeoutMS()
+	if err != nil {
+		return nil, err
+	}
+	dsn := "file:nexterm-" + ids.New() + "?mode=memory&cache=shared" + pragmaQuery(true, busyTimeoutMS)
 	db, err := openDB(dsn, 2)
 	if err != nil {
 		return nil, err
@@ -134,7 +164,10 @@ func newStore(db *gorm.DB, logger *slog.Logger) *Store {
 	}
 	_ = db.Callback().Create().Before("gorm:create").Register("nexterm:conflict_conditions", preserveConflictConditions)
 	sqlDB, _ := db.DB()
-	return &Store{db: db, sqlDB: sqlDB, logger: logger, backend: BackendSQLite}
+	backfillCtx, backfillCancel := context.WithCancel(context.Background())
+	s := &Store{db: db, sqlDB: sqlDB, logger: logger, backend: BackendSQLite, backfillCtx: backfillCtx, backfillCancel: backfillCancel}
+	s.aiHistoryShared.Store(true)
+	return s
 }
 
 func openDB(dsn string, maxConnections int) (*gorm.DB, error) {
@@ -152,22 +185,172 @@ func openDB(dsn string, maxConnections int) (*gorm.DB, error) {
 	return db, nil
 }
 
-func sqliteDSN(path string) string {
+func sqliteDSN(path string, busyTimeoutMS int64) string {
+	u := sqliteURL(path)
+	u.RawQuery = strings.TrimPrefix(pragmaQuery(false, busyTimeoutMS), "&")
+	return u.String()
+}
+
+func sqliteImmutableDSN(path string) string {
+	u := sqliteURL(path)
+	u.RawQuery = "mode=ro&immutable=1"
+	return u.String()
+}
+
+func sqliteURL(path string) *url.URL {
 	path = filepath.ToSlash(path)
 	if runtime.GOOS == "windows" && len(path) >= 2 && path[1] == ':' {
 		path = "/" + path
 	}
-	u := &url.URL{Scheme: "file", Path: path}
-	u.RawQuery = strings.TrimPrefix(pragmaQuery(false), "&")
-	return u.String()
+	return &url.URL{Scheme: "file", Path: path}
 }
 
-func pragmaQuery(memory bool) string {
-	query := "&_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=synchronous(NORMAL)&_txlock=immediate"
+func pragmaQuery(memory bool, busyTimeoutMS int64) string {
+	query := fmt.Sprintf("&_pragma=foreign_keys(1)&_pragma=busy_timeout(%d)&_pragma=synchronous(NORMAL)&_txlock=immediate", busyTimeoutMS)
 	if !memory {
 		query += "&_pragma=journal_mode(WAL)"
 	}
 	return query
+}
+
+const legacyPreflightSnapshotAttempts = 3
+
+var errLegacyPreflightSnapshotChanged = errors.New("数据库文件在旧版预检期间发生变化")
+
+// legacyPreflightBeforeCopyHook lets tests interleave source-file changes at
+// each copy boundary.
+var legacyPreflightBeforeCopyHook func(suffix string)
+
+func hasLegacySchemaMarkerAtPath(ctx context.Context, path string, busyTimeoutMS int64) (bool, error) {
+	_, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
+	}
+	var snapshotErr error
+	for attempt := 0; attempt < legacyPreflightSnapshotAttempts; attempt++ {
+		legacy, err := hasLegacySchemaMarkerAtPathAttempt(ctx, path, busyTimeoutMS)
+		if !errors.Is(err, errLegacyPreflightSnapshotChanged) {
+			return legacy, err
+		}
+		snapshotErr = err
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+	}
+	return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: 无法获得一致快照: "+snapshotErr.Error(), snapshotErr)
+}
+
+func hasLegacySchemaMarkerAtPathAttempt(ctx context.Context, path string, busyTimeoutMS int64) (bool, error) {
+	database, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("%w: %v", errLegacyPreflightSnapshotChanged, err)
+	}
+	if err != nil {
+		return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
+	}
+	legacy, err := hasLegacySchemaMarkerInDatabase(ctx, sqliteImmutableDSN(path))
+	if err != nil || legacy {
+		return legacy, err
+	}
+	wal, err := os.Stat(path + "-wal")
+	walMissing := errors.Is(err, os.ErrNotExist)
+	if err != nil && !walMissing {
+		return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
+	}
+	if walMissing || wal.Size() == 0 {
+		unchanged, err := sqliteFileVersionUnchanged(path, database)
+		if err != nil {
+			return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
+		}
+		if !unchanged {
+			return false, fmt.Errorf("%w: %s", errLegacyPreflightSnapshotChanged, path)
+		}
+		return false, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+
+	// A disposable copy includes uncheckpointed schema changes without
+	// allowing SQLite to rewrite the original database or its sidecars.
+	dir, err := os.MkdirTemp("", "nexterm-legacy-marker-")
+	if err != nil {
+		return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	copyPath := filepath.Join(dir, "data.db")
+	for _, suffix := range []string{"", "-wal"} {
+		if legacyPreflightBeforeCopyHook != nil {
+			legacyPreflightBeforeCopyHook(suffix)
+		}
+		if err := copySQLiteFile(path+suffix, copyPath+suffix); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return false, fmt.Errorf("%w: %v", errLegacyPreflightSnapshotChanged, err)
+			}
+			return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
+		}
+	}
+	for _, file := range []struct {
+		suffix string
+		info   os.FileInfo
+	}{
+		{suffix: "", info: database},
+		{suffix: "-wal", info: wal},
+	} {
+		unchanged, err := sqliteFileVersionUnchanged(path+file.suffix, file.info)
+		if err != nil {
+			return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
+		}
+		if !unchanged {
+			return false, fmt.Errorf("%w: %s", errLegacyPreflightSnapshotChanged, path+file.suffix)
+		}
+	}
+	return hasLegacySchemaMarkerInDatabase(ctx, sqliteDSN(copyPath, busyTimeoutMS))
+}
+
+func sqliteFileVersionUnchanged(path string, expected os.FileInfo) (bool, error) {
+	actual, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(expected, actual) && expected.Size() == actual.Size() && expected.ModTime().Equal(actual.ModTime()), nil
+}
+
+func hasLegacySchemaMarkerInDatabase(ctx context.Context, dsn string) (bool, error) {
+	db, err := openDB(dsn, 1)
+	if err != nil {
+		return false, err
+	}
+	s := newStore(db, nil)
+	defer func() { _ = s.Close() }()
+	legacy, err := hasLegacySchemaMarker(ctx, s)
+	if err != nil {
+		return false, dbError(err)
+	}
+	return legacy, nil
+}
+
+func copySQLiteFile(source, destination string) error {
+	from, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = from.Close() }()
+	to, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(to, from); err != nil {
+		_ = to.Close()
+		return err
+	}
+	return to.Close()
 }
 
 func hasLegacySchemaMarker(ctx context.Context, s *Store) (bool, error) {
@@ -181,25 +364,6 @@ func hasLegacySchemaMarker(ctx context.Context, s *Store) (bool, error) {
 		return false, err
 	}
 	return true, nil
-}
-
-func backupLegacyDatabase(path string) (string, error) {
-	backup := fmt.Sprintf("%s.legacy-%s", path, time.Now().Format("20060102-150405"))
-	moved := []string{}
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		err := os.Rename(path+suffix, backup+suffix)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			for i := len(moved) - 1; i >= 0; i-- {
-				_ = os.Rename(backup+moved[i], path+moved[i])
-			}
-			return "", ipc.WrapError(ipc.CodeIO, "备份旧版数据库失败: "+err.Error(), err)
-		}
-		moved = append(moved, suffix)
-	}
-	return backup, nil
 }
 
 func (s *Store) DB() *sql.DB {
@@ -217,6 +381,13 @@ func (s *Store) Close() error {
 		_ = s.keepAlive.Close()
 		s.keepAlive = nil
 	}
+	// Mark closed under the lifecycle lock so no new backfill work can
+	// start, then cancel and join it, then close the handle.
+	s.backfillMu.Lock()
+	s.backfillClosed = true
+	s.backfillMu.Unlock()
+	s.backfillCancel()
+	s.backfillWG.Wait()
 	return s.sqlDB.Close()
 }
 

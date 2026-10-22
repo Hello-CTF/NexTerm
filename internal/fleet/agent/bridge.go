@@ -70,7 +70,7 @@ func BridgePipe(ctx context.Context, conn *websocket.Conn, spawn BridgeSpawner, 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		buffer := make([]byte, 32*1024)
+		buffer := make([]byte, 64*1024)
 		for {
 			count, err := pipe.Read(buffer)
 			if count > 0 {

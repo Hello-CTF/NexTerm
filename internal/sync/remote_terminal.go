@@ -2,6 +2,8 @@ package sync
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -60,6 +62,86 @@ func (p *RemoteProxy) RemoteSessionFeedDial(ctx context.Context, sessionID strin
 	if err != nil {
 		return nil, err
 	}
+	return conn, nil
+}
+
+// RemoteHostShareIdentity scopes a desktop host-share connection to one normalized server, account and login session generation.
+type RemoteHostShareIdentity struct {
+	ServerURL  string `json:"serverUrl"`
+	UserID     string `json:"userId"`
+	Generation string `json:"generation"`
+}
+
+func hostShareSessionGeneration(client *remoteClient) string {
+	if client == nil || client.cookieToken == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte(client.cookieToken))
+	return hex.EncodeToString(digest[:])
+}
+
+// HostShareIdentity reads the current link and cached account session. Generation is only a one-way digest of the
+// current session credential; the raw cookie is never returned or persisted in this identity.
+func (p *RemoteProxy) HostShareIdentity(ctx context.Context) (*RemoteHostShareIdentity, error) {
+	if err := p.service.requireDesktop(); err != nil {
+		return nil, err
+	}
+	link, err := p.service.LinkGet(ctx)
+	if err != nil {
+		return nil, err
+	}
+	base, err := normalizeBase(link.URL)
+	if err != nil {
+		return nil, err
+	}
+	p.service.engine.sessionMu.Lock()
+	var sessionKey, userID, generation string
+	if p.service.engine.session != nil {
+		sessionKey = p.service.engine.session.key
+		userID = p.service.engine.session.userID
+		generation = hostShareSessionGeneration(p.service.engine.session.client)
+	}
+	p.service.engine.sessionMu.Unlock()
+	if !link.IsConfigured() || userID == "" || generation == "" || sessionKey != link.URL+"\x00"+link.Username {
+		return nil, ipc.NewError(ipc.CodeForbidden, "请先登录服务端账号")
+	}
+	current, err := p.service.LinkGet(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if current.URL != link.URL || current.Username != link.Username {
+		return nil, ipc.NewError(ipc.CodeDisconnected, "账号配置正在变化，请重试")
+	}
+	return &RemoteHostShareIdentity{ServerURL: base, UserID: userID, Generation: generation}, nil
+}
+
+// DialHostShareTerminal opens the dedicated registered-recipient terminal route. It never uses the ordinary device
+// bridge, so the server authorizes the share and keeps HostGate enforcement on both directions.
+func (p *RemoteProxy) DialHostShareTerminal(ctx context.Context, deviceID string) (*websocket.Conn, error) {
+	if deviceID == "" {
+		return nil, ipc.NewError(ipc.CodeBadParam, "deviceId 不能为空")
+	}
+	var conn *websocket.Conn
+	err := p.call(ctx, func(ctx context.Context, client *remoteClient) error {
+		dialed, err := client.dialHostShareTerminal(ctx, deviceID)
+		if err != nil {
+			return err
+		}
+		conn = dialed
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
+}
+
+func (c *remoteClient) dialHostShareTerminal(ctx context.Context, deviceID string) (*websocket.Conn, error) {
+	conn, err := c.dialRemoteWS(ctx, "/share/devices/"+urlpkg.PathEscape(deviceID)+"/terminal", "共享主机终端")
+	if err != nil {
+		return nil, err
+	}
+	conn.SetReadLimit(1 << 20)
 	return conn, nil
 }
 

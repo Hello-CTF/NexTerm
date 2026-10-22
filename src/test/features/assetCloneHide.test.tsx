@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement, type ReactNode } from "react";
+import { act, createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   click,
@@ -51,6 +51,10 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     assetApi: {
       list: mocks.list,
       search: mocks.search,
+      searchMeta: async (query: string) => {
+        const assets = await mocks.search(query);
+        return { assets, total: assets.length, truncated: false };
+      },
       create: mocks.create,
       update: mocks.update,
       delete: mocks.assetDelete,
@@ -271,7 +275,9 @@ describe("asset hiding and unhiding", () => {
   });
 
   it("search also filters hidden assets and reveals them when hidden assets are shown", async () => {
-    useAssetVisibility.getState().hide("a1");
+    act(() => {
+      useAssetVisibility.getState().hide("a1");
+    });
     const input = mounted!.container.querySelector<HTMLInputElement>("input.nx-input");
     if (!input) throw new Error("Search input not found");
     setInputValue(input, "web");
@@ -279,13 +285,18 @@ describe("asset hiding and unhiding", () => {
     await flush();
     expect(mounted!.container.textContent).toContain("没有匹配的资产");
 
-    useAssetVisibility.getState().setShowHidden(true);
+    act(() => {
+      useAssetVisibility.getState().setShowHidden(true);
+    });
     await waitFor(() => expect(rowByText(mounted!.container, "web-1")).toBeTruthy());
   });
 
   it("deleting a hidden asset clears its visibility record and removes the eye count", async () => {
-    useAssetVisibility.getState().hide("a1");
-    useAssetVisibility.getState().setShowHidden(true);
+    act(() => {
+      useAssetVisibility.getState().hide("a1");
+      useAssetVisibility.getState().setShowHidden(true);
+    });
+    mounted?.unmount();
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() => expect(rowByText(mounted!.container, "web-1")).toBeTruthy());
     expect(

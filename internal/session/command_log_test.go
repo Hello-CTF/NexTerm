@@ -234,6 +234,7 @@ func TestExecLineRecordsExactCommand(t *testing.T) {
 	if _, err := manager.ExecLine(context.Background(), tab.ID, "client-a", "ipconfig /all"); err != nil {
 		t.Fatal(err)
 	}
+	waitFor(t, func() bool { return len(sink.snapshot()) == 1 })
 	records := sink.snapshot()
 	if len(records) != 1 {
 		t.Fatalf("records = %d, want 1", len(records))
