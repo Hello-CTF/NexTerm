@@ -312,7 +312,11 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	var fallbackCause error
 	if options.Durable != nil {
 		var err error
-		provider, err = m.durableProviderFor(ctx, session, transport, kind, generation, !options.DurableFallback)
+		if kind == KindSSH && options.DurableFallback && !options.Durable.Recover {
+			provider, err = m.automaticDurableProvider(ctx, session, transport, generation)
+		} else {
+			provider, err = m.durableProviderFor(ctx, session, transport, kind, generation, !options.DurableFallback)
+		}
 		if err == nil && kind == KindSSH && options.DurableFallback && !options.Durable.Recover {
 			err = session.cachedDurableCreateFailure(transport, generation)
 		}
@@ -623,7 +627,14 @@ func (m *Manager) CreateTab(ctx context.Context, options CreateTabOptions) (TabI
 	}
 	session.mu.Lock()
 	openGeneration := session.generation
+	openTransport := session.transport
 	session.mu.Unlock()
+	if kind == KindSSH && open.Durable != nil {
+		_, resolveErr := m.durableProviderFor(ctx, session, openTransport, kind, openGeneration, false)
+		if resolveErr != nil && !sshHelperUnavailable(resolveErr) {
+			return TabInfo{}, resolveErr
+		}
+	}
 	info, err := m.OpenTab(ctx, open)
 	if err != nil {
 		return TabInfo{}, err

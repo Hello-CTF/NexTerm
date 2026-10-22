@@ -5,6 +5,7 @@ package ssh
 import (
 	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	pathpkg "path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -30,27 +32,37 @@ import (
 type fakeHost struct {
 	mu sync.Mutex
 
-	discovery     string
-	pathBinary    string
-	probeVersion  string
-	probeVersions map[string]string
-	spawn         func()
-	socketPath    string
-	running       bool
+	discovery         string
+	fallbackDiscovery string
+	windows           bool
+	pathBinary        string
+	probeVersion      string
+	probeVersions     map[string]string
+	spawn             func()
+	socketPath        string
+	running           bool
+	runHook           func(context.Context, string) (string, int, error, bool)
 
 	shared       *sharedTarget
 	uploadDigest string
 	uploadErr    error
 
-	exists       map[string]bool
-	digests      map[string]string
-	commands     []string
-	mkdirs       []string
-	chmods       map[string]fs.FileMode
-	uploads      []string
-	localUploads []string
-	renames      [][2]string
-	deletions    []deleteCall
+	exists              map[string]bool
+	digests             map[string]string
+	directories         map[string]bool
+	directoryKinds      map[string]string
+	invalidPrivateBases map[string]bool
+	mkdirErrors         map[string]error
+	chmodErrors         map[string]error
+	existsErrors        map[string]error
+	deleteErrors        map[string]error
+	commands            []string
+	mkdirs              []string
+	chmods              map[string]fs.FileMode
+	uploads             []string
+	localUploads        []string
+	renames             [][2]string
+	deletions           []deleteCall
 }
 
 type spawnProcessHost struct {
@@ -263,6 +275,8 @@ type sharedTarget struct {
 	socketPath       string
 	files            map[string]string
 	dirs             map[string]bool
+	singleLevel      bool
+	mkdirErrors      map[string]error
 	uploads          []string
 	renames          [][2]string
 	spawns           int
@@ -300,6 +314,9 @@ func (s *sharedTarget) exists(path string) bool {
 func (s *sharedTarget) mkdir(path string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.mkdirErrors[path]; err != nil {
+		return err
+	}
 	if s.dirs[path] {
 		if strings.HasSuffix(path, ".install") && s.installContended != nil {
 			s.contentionOnce.Do(func() { close(s.installContended) })
@@ -308,6 +325,12 @@ func (s *sharedTarget) mkdir(path string) error {
 	}
 	if _, exists := s.files[path]; exists {
 		return fs.ErrExist
+	}
+	if s.singleLevel {
+		parent := pathpkg.Dir(path)
+		if parent != path && parent != "/" && !s.dirs[parent] {
+			return &os.PathError{Op: "mkdir", Path: path, Err: fs.ErrNotExist}
+		}
 	}
 	s.dirs[path] = true
 	return nil
@@ -375,21 +398,48 @@ func (s *sharedTarget) renamePairs() [][2]string {
 	return append([][2]string(nil), s.renames...)
 }
 
-func (h *fakeHost) Run(_ context.Context, command string, _ time.Duration) (string, int, error) {
+func (h *fakeHost) Run(ctx context.Context, command string, _ time.Duration) (string, int, error) {
 	h.mu.Lock()
 	h.commands = append(h.commands, command)
 	h.mu.Unlock()
+	script := readableFakeCommand(command)
+	if h.runHook != nil {
+		if stdout, exitCode, err, handled := h.runHook(ctx, script); handled {
+			return stdout, exitCode, err
+		}
+	}
 	switch {
-	case strings.HasPrefix(command, "printf"):
+	case strings.Contains(script, "nexterm-directory-kind"):
+		return fakeDirectoryKind(h, directoryPathFromCommand(script)), 0, nil
+	case strings.Contains(script, "nexterm-private-base"):
+		for base := range h.invalidPrivateBases {
+			if strings.Contains(script, quoteShell(base)) {
+				return "", 74, nil
+			}
+		}
+		return "ok\n", 0, nil
+	case strings.Contains(script, "uname -s"):
+		if h.windows {
+			return "", 1, nil
+		}
 		return h.discovery, 0, nil
-	case strings.HasPrefix(command, "command -v"):
+	case strings.Contains(script, "LocalApplicationData"):
+		return h.discovery, 0, nil
+	case strings.Contains(script, "GetTempPath"):
+		return h.fallbackDiscovery, 0, nil
+	case strings.Contains(script, "XDG_RUNTIME_DIR"):
+		if h.fallbackDiscovery != "" {
+			return h.fallbackDiscovery, 0, nil
+		}
+		return "\n\n", 0, nil
+	case strings.HasPrefix(script, "command -v") || strings.Contains(script, "Get-Command nexterm-helper"):
 		if h.pathBinary == "" {
 			return "", 0, nil
 		}
 		return h.pathBinary + "\n", 0, nil
-	case strings.Contains(command, "--probe"):
+	case strings.Contains(script, "--probe"):
 		for binary, version := range h.probeVersions {
-			if strings.Contains(command, quoteShell(binary)) {
+			if strings.Contains(script, quoteShell(binary)) {
 				if version == "" {
 					return "unknown command supervisor-helper\n", 2, nil
 				}
@@ -400,7 +450,7 @@ func (h *fakeHost) Run(_ context.Context, command string, _ time.Duration) (stri
 			return "unknown command supervisor-helper\n", 2, nil
 		}
 		return h.probeVersion + "\n", 0, nil
-	case strings.Contains(command, "setsid"):
+	case strings.Contains(script, "setsid") || strings.Contains(script, "nohup") || strings.Contains(script, "Start-Process"):
 		if h.shared != nil {
 			h.shared.spawn()
 		}
@@ -413,22 +463,119 @@ func (h *fakeHost) Run(_ context.Context, command string, _ time.Duration) (stri
 	}
 }
 
+func readableFakeCommand(command string) string {
+	_, encoded, found := strings.Cut(command, " -EncodedCommand ")
+	if !found {
+		return command
+	}
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return command
+	}
+	var script strings.Builder
+	for index := 0; index+1 < len(raw); index += 2 {
+		script.WriteRune(rune(uint16(raw[index]) | uint16(raw[index+1])<<8))
+	}
+	return script.String()
+}
+
+func directoryPathFromCommand(command string) string {
+	if strings.Contains(command, "-LiteralPath") {
+		_, remainder, _ := strings.Cut(command, "-LiteralPath ")
+		quoted, _, _ := strings.Cut(remainder, ")")
+		quoted = strings.TrimSpace(quoted)
+		quoted = strings.TrimSuffix(strings.TrimPrefix(quoted, "'"), "'")
+		return strings.ReplaceAll(quoted, "''", "'")
+	}
+	const prefix = "# nexterm-directory-kind\nif [ -L "
+	remainder := strings.TrimPrefix(command, prefix)
+	quoted, _, _ := strings.Cut(remainder, " ]; then")
+	if len(quoted) >= 2 && quoted[0] == '\'' {
+		quoted = strings.TrimSuffix(strings.TrimPrefix(quoted, "'"), "'")
+		return strings.ReplaceAll(quoted, `'"'"'`, "'")
+	}
+	return quoted
+}
+
+func fakeDirectoryKind(h *fakeHost, path string) string {
+	h.mu.Lock()
+	if kind := h.directoryKinds[path]; kind != "" {
+		h.mu.Unlock()
+		return kind + "\n"
+	}
+	if h.directories[path] {
+		h.mu.Unlock()
+		return "directory\n"
+	}
+	if h.exists[path] {
+		h.mu.Unlock()
+		return "other\n"
+	}
+	_, digest := h.digests[path]
+	h.mu.Unlock()
+	if digest {
+		return "other\n"
+	}
+	if h.shared != nil {
+		h.shared.mu.Lock()
+		directory := h.shared.dirs[path]
+		_, file := h.shared.files[path]
+		h.shared.mu.Unlock()
+		if directory {
+			return "directory\n"
+		}
+		if file {
+			return "other\n"
+		}
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "missing\n"
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "symlink\n"
+	}
+	if info.IsDir() {
+		return "directory\n"
+	}
+	return "other\n"
+}
+
 func (h *fakeHost) Exists(_ context.Context, path string) (bool, error) {
+	h.mu.Lock()
+	err := h.existsErrors[path]
+	h.mu.Unlock()
+	if err != nil {
+		return false, err
+	}
 	if h.shared != nil {
 		return h.shared.exists(path), nil
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.exists[path], nil
+	return h.exists[path] || h.directories[path], nil
 }
 
 func (h *fakeHost) Mkdir(_ context.Context, path string) error {
 	h.mu.Lock()
 	h.mkdirs = append(h.mkdirs, path)
+	err := h.mkdirErrors[path]
 	h.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	if h.shared != nil {
 		return h.shared.mkdir(path)
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.directories[path] || h.exists[path] {
+		return fs.ErrExist
+	}
+	if h.directories == nil {
+		h.directories = make(map[string]bool)
+	}
+	h.directories[path] = true
 	return nil
 }
 
@@ -439,7 +586,7 @@ func (h *fakeHost) Chmod(_ context.Context, path string, mode fs.FileMode) error
 		h.chmods = make(map[string]fs.FileMode)
 	}
 	h.chmods[path] = mode
-	return nil
+	return h.chmodErrors[path]
 }
 
 func (h *fakeHost) Upload(_ context.Context, localPath, remotePath string) (int64, error) {
@@ -478,9 +625,14 @@ func (h *fakeHost) Rename(_ context.Context, from, to string) error {
 func (h *fakeHost) Delete(ctx context.Context, path string, directory bool) error {
 	h.mu.Lock()
 	h.deletions = append(h.deletions, deleteCall{path: path, directory: directory, contextErr: ctx.Err()})
+	err := h.deleteErrors[path]
 	delete(h.digests, path)
 	delete(h.exists, path)
+	delete(h.directories, path)
 	h.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	if h.shared != nil {
 		return h.shared.delete(path, directory)
 	}
@@ -597,7 +749,40 @@ func testResolver(host *fakeHost, executable string) *Resolver {
 }
 
 func fakeUploadSource(digest string) UploadSource {
-	return UploadSource{Path: "/local/nexterm", GOOS: "linux", GOARCH: runtime.GOARCH, Digest: digest}
+	return UploadSource{Path: "/local/nexterm-helper-linux-" + runtime.GOARCH, GOOS: "linux", GOARCH: runtime.GOARCH, Digest: digest}
+}
+
+type fakeDaemonClient struct {
+	list     func(context.Context) ([]supervisor.Info, error)
+	metadata func(context.Context) (supervisor.RuntimeMetadata, bool, error)
+	idle     func(context.Context) error
+}
+
+func (c *fakeDaemonClient) List(ctx context.Context) ([]supervisor.Info, error) {
+	if c.list != nil {
+		return c.list(ctx)
+	}
+	return nil, nil
+}
+
+func (c *fakeDaemonClient) RuntimeMetadata(ctx context.Context) (supervisor.RuntimeMetadata, bool, error) {
+	if c.metadata != nil {
+		return c.metadata(ctx)
+	}
+	return supervisor.RuntimeMetadata{}, false, nil
+}
+
+func (c *fakeDaemonClient) RequireIdle(ctx context.Context) error {
+	if c.idle != nil {
+		return c.idle(ctx)
+	}
+	return nil
+}
+
+func provenFakeDaemonClient(digest string) *fakeDaemonClient {
+	return &fakeDaemonClient{metadata: func(context.Context) (supervisor.RuntimeMetadata, bool, error) {
+		return supervisor.RuntimeMetadata{Version: "test", Commit: "test", Protocol: supervisor.ProtocolVersion, SHA256: digest}, true, nil
+	}}
 }
 
 func TestEnsureDaemonConnectsToRunningDaemon(t *testing.T) {
@@ -605,7 +790,7 @@ func TestEnsureDaemonConnectsToRunningDaemon(t *testing.T) {
 	fixture := newDaemonFixture(t, dataRoot)
 	host := &fakeHost{
 		discovery:    testDiscovery(t, dataRoot),
-		pathBinary:   "/usr/bin/nexterm-server",
+		pathBinary:   "/usr/bin/nexterm-helper",
 		probeVersion: strconv.Itoa(supervisor.ProtocolVersion),
 		socketPath:   fixture.socketPath,
 		running:      true,
@@ -614,7 +799,7 @@ func TestEnsureDaemonConnectsToRunningDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if daemon.Binary != "/usr/bin/nexterm-server" {
+	if daemon.Binary != "/usr/bin/nexterm-helper" {
 		t.Fatalf("daemon binary = %q", daemon.Binary)
 	}
 	if want := dataRoot + "/nexterm/daemon"; daemon.StateDir != want {
@@ -633,7 +818,7 @@ func TestEnsureDaemonProbesAllPathCandidates(t *testing.T) {
 	dataRoot := t.TempDir()
 	fixture := newDaemonFixture(t, dataRoot)
 	const helper = "/usr/local/bin/nexterm-helper"
-	const legacy = "/usr/bin/nexterm-server"
+	const legacy = "/usr/bin/nexterm-helper"
 	host := &fakeHost{
 		discovery:  testDiscovery(t, dataRoot),
 		pathBinary: helper + "\n" + legacy,
@@ -661,7 +846,7 @@ func TestEnsureDaemonStartsStoppedDaemon(t *testing.T) {
 	fixture := newDaemonFixture(t, dataRoot)
 	host := &fakeHost{
 		discovery:    testDiscovery(t, dataRoot),
-		pathBinary:   "/usr/bin/nexterm-server",
+		pathBinary:   "/usr/bin/nexterm-helper",
 		probeVersion: strconv.Itoa(supervisor.ProtocolVersion),
 		socketPath:   fixture.socketPath,
 	}
@@ -703,7 +888,7 @@ func TestEnsureDaemonRejectsIncompatibleProbe(t *testing.T) {
 	dataRoot := t.TempDir()
 	host := &fakeHost{
 		discovery:    testDiscovery(t, dataRoot),
-		pathBinary:   "/usr/bin/nexterm-server",
+		pathBinary:   "/usr/bin/nexterm-helper",
 		probeVersion: "1",
 	}
 	_, err := testResolver(host, "").EnsureDaemon(context.Background(), nil)
@@ -716,9 +901,10 @@ func TestEnsureDaemonUploadsWhenNoCompatibleBinary(t *testing.T) {
 	dataRoot := t.TempDir()
 	fixture := newDaemonFixture(t, dataRoot)
 	const digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	target := dataRoot + "/nexterm/bin/nexterm-" + digest[:12]
+	target := dataRoot + "/nexterm/bin/nexterm-helper-" + digest
 	host := &fakeHost{
 		discovery:    testDiscovery(t, dataRoot),
+		probeVersion: strconv.Itoa(supervisor.ProtocolVersion),
 		socketPath:   fixture.socketPath,
 		digests:      map[string]string{target: digest},
 		uploadDigest: digest,
@@ -728,7 +914,7 @@ func TestEnsureDaemonUploadsWhenNoCompatibleBinary(t *testing.T) {
 		host.running = true
 		host.mu.Unlock()
 	}
-	resolver := testResolver(host, "/local/nexterm")
+	resolver := testResolver(host, "/local/nexterm-desktop")
 	resolver.inspect = func(string) (UploadSource, error) { return fakeUploadSource(digest), nil }
 	daemon, err := resolver.EnsureDaemon(context.Background(), nil)
 	if err != nil {
@@ -741,7 +927,7 @@ func TestEnsureDaemonUploadsWhenNoCompatibleBinary(t *testing.T) {
 		t.Fatalf("uploads = %v; want one staged upload", host.uploads)
 	}
 	staging := host.uploads[0]
-	prefix := dataRoot + "/nexterm/bin/.nexterm-" + digest[:12] + "."
+	prefix := dataRoot + "/nexterm/bin/.nexterm-helper-" + digest + "."
 	if !strings.HasPrefix(staging, prefix) || !strings.HasSuffix(staging, ".partial") {
 		t.Fatalf("staging path %q is not a unique sibling of %q", staging, target)
 	}
@@ -761,7 +947,7 @@ func TestEnsureDaemonUploadsWhenNoCompatibleBinary(t *testing.T) {
 func TestEnsureDaemonUploadDigestMismatch(t *testing.T) {
 	dataRoot := t.TempDir()
 	const digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	target := dataRoot + "/nexterm/bin/nexterm-" + digest[:12]
+	target := dataRoot + "/nexterm/bin/nexterm-helper-" + digest
 	host := &fakeHost{
 		discovery: testDiscovery(t, dataRoot),
 		digests:   map[string]string{target: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"},
@@ -771,10 +957,10 @@ func TestEnsureDaemonUploadDigestMismatch(t *testing.T) {
 		host.running = true
 		host.mu.Unlock()
 	}
-	resolver := testResolver(host, "/local/nexterm")
+	resolver := testResolver(host, "/local/nexterm-desktop")
 	resolver.inspect = func(string) (UploadSource, error) { return fakeUploadSource(digest), nil }
 	_, err := resolver.EnsureDaemon(context.Background(), nil)
-	if !errors.Is(err, durable.ErrUnavailable) || !strings.Contains(err.Error(), "digest mismatch") {
+	if !errors.Is(err, durable.ErrUnavailable) || !errors.Is(err, ErrDigestMismatch) {
 		t.Fatalf("EnsureDaemon error = %v; want digest mismatch", err)
 	}
 }
@@ -785,9 +971,9 @@ func TestEnsureDaemonRejectsMismatchedUpload(t *testing.T) {
 		other = "amd64"
 	}
 	host := &fakeHost{discovery: testDiscovery(t, t.TempDir())}
-	resolver := testResolver(host, "/local/nexterm")
-	resolver.inspect = func(string) (UploadSource, error) {
-		return UploadSource{Path: "/local/nexterm", GOOS: "linux", GOARCH: other, Digest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}, nil
+	resolver := testResolver(host, "/local/nexterm-desktop")
+	resolver.inspect = func(path string) (UploadSource, error) {
+		return UploadSource{Path: path, GOOS: "linux", GOARCH: other, Digest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}, nil
 	}
 	_, err := resolver.EnsureDaemon(context.Background(), nil)
 	if !errors.Is(err, base.ErrUnsupported) {
@@ -813,7 +999,7 @@ func TestEnsureDaemonRejectsDesktopForRemoteOS(t *testing.T) {
 
 func TestEnsureDaemonRejectsCGOUpload(t *testing.T) {
 	host := &fakeHost{discovery: testDiscovery(t, t.TempDir())}
-	resolver := testResolver(host, "/local/nexterm")
+	resolver := testResolver(host, "/local/nexterm-desktop")
 	resolver.inspect = func(string) (UploadSource, error) {
 		source := fakeUploadSource("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 		source.CGO = true
@@ -825,8 +1011,8 @@ func TestEnsureDaemonRejectsCGOUpload(t *testing.T) {
 	}
 }
 
-func TestEnsureDaemonRejectsNonLinuxTarget(t *testing.T) {
-	host := &fakeHost{discovery: t.TempDir() + "\nDarwin\narm64\n501\n"}
+func TestEnsureDaemonRejectsUnsupportedTargetOS(t *testing.T) {
+	host := &fakeHost{discovery: t.TempDir() + "\nFreeBSD\namd64\n501\n"}
 	_, err := testResolver(host, "").EnsureDaemon(context.Background(), nil)
 	if !errors.Is(err, base.ErrUnsupported) {
 		t.Fatalf("EnsureDaemon error = %v; want ErrUnsupported", err)
@@ -837,7 +1023,7 @@ func TestEnsureDaemonUsesCachedUploadWithoutReuploading(t *testing.T) {
 	dataRoot := t.TempDir()
 	fixture := newDaemonFixture(t, dataRoot)
 	const digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	cached := dataRoot + "/nexterm/bin/nexterm-" + digest[:12]
+	cached := dataRoot + "/nexterm/bin/nexterm-helper-" + digest
 	host := &fakeHost{
 		discovery:    testDiscovery(t, dataRoot),
 		probeVersion: strconv.Itoa(supervisor.ProtocolVersion),
@@ -846,7 +1032,7 @@ func TestEnsureDaemonUsesCachedUploadWithoutReuploading(t *testing.T) {
 		exists:       map[string]bool{cached: true},
 		digests:      map[string]string{cached: digest},
 	}
-	resolver := testResolver(host, "/local/nexterm")
+	resolver := testResolver(host, "/local/nexterm-desktop")
 	resolver.inspect = func(string) (UploadSource, error) { return fakeUploadSource(digest), nil }
 	daemon, err := resolver.EnsureDaemon(context.Background(), nil)
 	if err != nil {
@@ -857,6 +1043,35 @@ func TestEnsureDaemonUsesCachedUploadWithoutReuploading(t *testing.T) {
 	}
 	if len(host.uploads) != 0 {
 		t.Fatalf("cached binary was re-uploaded: %v", host.uploads)
+	}
+}
+
+func TestEnsureDaemonAutoInstallDisabledStartsCachedHelper(t *testing.T) {
+	dataRoot := t.TempDir()
+	fixture := newDaemonFixture(t, dataRoot)
+	digest := strings.Repeat("ab", 32)
+	cached := dataRoot + "/nexterm/bin/nexterm-helper-" + digest
+	host := &fakeHost{
+		discovery:    testDiscovery(t, dataRoot),
+		probeVersion: strconv.Itoa(supervisor.ProtocolVersion),
+		socketPath:   fixture.socketPath,
+		exists:       map[string]bool{cached: true},
+		digests:      map[string]string{cached: digest},
+	}
+	host.spawn = func() {
+		host.mu.Lock()
+		host.running = true
+		host.mu.Unlock()
+	}
+	resolver := testResolver(host, "/local/nexterm-desktop")
+	resolver.DisableAutoInstall = true
+	resolver.inspect = func(string) (UploadSource, error) { return fakeUploadSource(digest), nil }
+	daemon, err := resolver.EnsureDaemon(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if daemon.Binary != cached || !host.sawCommand("setsid") || len(host.uploads) != 0 {
+		t.Fatalf("cached helper daemon=%+v spawn=%q uploads=%v", daemon, host.spawnCommand(), host.uploads)
 	}
 }
 
@@ -1046,7 +1261,7 @@ func TestEnsureDaemonHelperDigestMismatchDoesNotCommit(t *testing.T) {
 		return source, nil
 	}
 	_, err := resolver.EnsureDaemon(context.Background(), nil)
-	if !errors.Is(err, durable.ErrUnavailable) || !strings.Contains(err.Error(), "digest mismatch") {
+	if !errors.Is(err, durable.ErrUnavailable) || !errors.Is(err, ErrDigestMismatch) {
 		t.Fatalf("EnsureDaemon error = %v; want digest mismatch", err)
 	}
 	if len(host.renames) != 0 {
@@ -1069,7 +1284,8 @@ func TestEnsureDaemonHelperProbeFailureDoesNotCommit(t *testing.T) {
 		return source, nil
 	}
 	_, err := resolver.EnsureDaemon(context.Background(), nil)
-	if !errors.Is(err, durable.ErrUnavailable) || !strings.Contains(err.Error(), "probe") {
+	var transferErr *TransferError
+	if !errors.Is(err, durable.ErrUnavailable) || !errors.As(err, &transferErr) || transferErr.Stage != TransferStageProbe {
 		t.Fatalf("EnsureDaemon error = %v; want helper probe failure", err)
 	}
 	if len(host.renames) != 0 {
@@ -1179,70 +1395,789 @@ func TestEnsureDaemonConcurrentHelperInstallsUploadOnce(t *testing.T) {
 	}
 }
 
-func TestEnsureDaemonConcurrentLegacyUploadsShareDigestLock(t *testing.T) {
-	dataRoot := t.TempDir()
-	fixture := newDaemonFixture(t, dataRoot)
-	shared := newSharedTarget(fixture.socketPath)
-	shared.uploadStarted = make(chan struct{})
-	shared.uploadRelease = make(chan struct{})
-	shared.installContended = make(chan struct{})
-	digest := strings.Repeat("90", 32)
-	target := dataRoot + "/nexterm/bin/nexterm-" + digest[:12]
-
-	const clients = 4
-	daemons := make([]*Daemon, clients)
-	errs := make([]error, clients)
-	var start sync.WaitGroup
-	start.Add(1)
-	var done sync.WaitGroup
-	for index := 0; index < clients; index++ {
-		done.Add(1)
-		go func(index int) {
-			defer done.Done()
-			start.Wait()
-			host := &fakeHost{
-				discovery:    testDiscovery(t, dataRoot),
-				probeVersion: strconv.Itoa(supervisor.ProtocolVersion),
-				shared:       shared,
-				uploadDigest: digest,
-			}
-			resolver := testResolver(host, "/local/nexterm")
-			resolver.inspect = func(string) (UploadSource, error) { return fakeUploadSource(digest), nil }
-			daemons[index], errs[index] = resolver.EnsureDaemon(context.Background(), nil)
-		}(index)
-	}
-	var releaseOnce sync.Once
-	releaseUpload := func() { releaseOnce.Do(func() { close(shared.uploadRelease) }) }
-	defer releaseUpload()
-	start.Done()
-	select {
-	case <-shared.uploadStarted:
-	case <-time.After(5 * time.Second):
-		t.Fatal("first legacy upload did not start")
-	}
-	select {
-	case <-shared.installContended:
-	case <-time.After(5 * time.Second):
-		t.Fatal("no concurrent client contended for the legacy digest lock")
-	}
-	releaseUpload()
-	done.Wait()
-	for index, err := range errs {
-		if err != nil {
-			t.Fatalf("ensure %d: %v", index, err)
-		}
-		if daemons[index].Binary != target {
-			t.Fatalf("daemon %d binary = %q; want legacy target %q", index, daemons[index].Binary, target)
-		}
-	}
-	uploads, renames, _ := shared.counts()
-	if uploads != 1 || renames != 1 {
-		t.Fatalf("concurrent legacy installation saw %d uploads and %d renames; want one each", uploads, renames)
-	}
-}
-
 func TestQuoteShell(t *testing.T) {
 	if got := quoteShell("/tmp/a b'c"); got != `'/tmp/a b'"'"'c'` {
 		t.Fatalf("quoteShell = %s", got)
+	}
+}
+
+type discoveryFailureHost struct {
+	Host
+	mu      sync.Mutex
+	calls   int
+	err     error
+	onFirst func()
+}
+
+func (h *discoveryFailureHost) Run(ctx context.Context, command string, timeout time.Duration) (string, int, error) {
+	if strings.Contains(command, "uname -s") {
+		h.mu.Lock()
+		h.calls++
+		call := h.calls
+		err := h.err
+		onFirst := h.onFirst
+		h.mu.Unlock()
+		if call == 1 && onFirst != nil {
+			onFirst()
+		}
+		if err != nil {
+			return "", 0, err
+		}
+	}
+	return h.Host.Run(ctx, command, timeout)
+}
+
+func (h *discoveryFailureHost) callCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.calls
+}
+
+func retryTestResolver(host Host) *Resolver {
+	return &Resolver{
+		EnsureTimeout: time.Second,
+		RetryBackoff:  0,
+		hostFor: func(context.Context, *transportssh.Client) (Host, error) {
+			return host, nil
+		},
+	}
+}
+
+func TestEnsureDaemonRetriesAtMostThreeCompleteCycles(t *testing.T) {
+	host := &discoveryFailureHost{Host: &fakeHost{}, err: durable.ErrUnavailable}
+	var progressMu sync.Mutex
+	var events []HelperProgress
+	resolver := retryTestResolver(host)
+	resolver.Progress = func(_ context.Context, event HelperProgress) {
+		progressMu.Lock()
+		events = append(events, event)
+		progressMu.Unlock()
+	}
+	_, err := resolver.EnsureDaemon(t.Context(), nil)
+	if !errors.Is(err, durable.ErrUnavailable) {
+		t.Fatalf("EnsureDaemon error = %v", err)
+	}
+	if got := host.callCount(); got != 3 {
+		t.Fatalf("complete ensure cycles = %d, want 3", got)
+	}
+	progressMu.Lock()
+	defer progressMu.Unlock()
+	if len(events) < 4 {
+		t.Fatalf("progress events = %+v", events)
+	}
+	operationID := events[0].OperationID
+	if operationID == "" || events[0].Attempt != 1 || events[0].Attempts != 3 || events[0].Deadline.IsZero() {
+		t.Fatalf("first progress lacks operation scope: %+v", events[0])
+	}
+	seenAttempts := make(map[int]bool)
+	for _, event := range events {
+		if event.OperationID != operationID || event.Attempt < 1 || event.Attempt > 3 || event.Attempts != 3 {
+			t.Fatalf("unscoped progress event: %+v", event)
+		}
+		seenAttempts[event.Attempt] = true
+	}
+	if len(seenAttempts) != 3 {
+		t.Fatalf("progress attempts = %v, want all three", seenAttempts)
+	}
+	last := events[len(events)-1]
+	if !last.Done || last.Stage != "failed" || last.Attempt != 3 || last.Cause == "" {
+		t.Fatalf("terminal progress = %+v", last)
+	}
+}
+
+func TestEnsureDaemonPermanentFailureDoesNotRetry(t *testing.T) {
+	host := &discoveryFailureHost{Host: &fakeHost{}, err: base.ErrUnsupported}
+	_, err := retryTestResolver(host).EnsureDaemon(t.Context(), nil)
+	if !errors.Is(err, base.ErrUnsupported) {
+		t.Fatalf("EnsureDaemon error = %v", err)
+	}
+	if got := host.callCount(); got != 1 {
+		t.Fatalf("permanent failure cycles = %d, want 1", got)
+	}
+}
+
+func TestEnsureDaemonCancellationInterruptsBackoff(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	host := &discoveryFailureHost{Host: &fakeHost{}, err: durable.ErrUnavailable, onFirst: cancel}
+	resolver := retryTestResolver(host)
+	resolver.RetryBackoff = time.Hour
+	started := time.Now()
+	_, err := resolver.EnsureDaemon(ctx, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("EnsureDaemon cancellation = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("cancellation took %s", elapsed)
+	}
+	if got := host.callCount(); got != 1 {
+		t.Fatalf("cycles after cancellation = %d, want 1", got)
+	}
+}
+
+func TestEnsureDaemonMissingTargetHelperDoesNotUploadMainProgram(t *testing.T) {
+	host := &fakeHost{discovery: testDiscovery(t, t.TempDir())}
+	resolver := testResolver(host, "/local/nexterm-desktop")
+	resolver.inspect = func(path string) (UploadSource, error) {
+		if filepath.Base(path) != "nexterm-helper-linux-"+runtime.GOARCH {
+			t.Fatalf("inspected main program %q after target helper was missing", path)
+		}
+		return UploadSource{}, fs.ErrNotExist
+	}
+	_, err := resolver.EnsureDaemon(t.Context(), nil)
+	if !errors.Is(err, ErrHelperNotFound) || !errors.Is(err, durable.ErrUnavailable) {
+		t.Fatalf("missing target helper error = %v", err)
+	}
+	if len(host.localUploads) != 0 {
+		t.Fatalf("main program was uploaded as a standalone helper: %v", host.localUploads)
+	}
+}
+
+type helperUpdateHarness struct {
+	host       *fakeHost
+	resolver   *Resolver
+	location   deploymentLocation
+	current    daemonConnection
+	source     *UploadSource
+	oldBinary  string
+	newBinary  string
+	oldDigest  string
+	newDigest  string
+	oldClient  *fakeDaemonClient
+	newClient  *fakeDaemonClient
+	oldRunning bool
+	newRunning bool
+}
+
+func newHelperUpdateHarness(t *testing.T) *helperUpdateHarness {
+	t.Helper()
+	h := &helperUpdateHarness{
+		oldDigest: strings.Repeat("11", 32),
+		newDigest: strings.Repeat("22", 32),
+		oldBinary: "/opt/nexterm/nexterm-helper-old",
+	}
+	target := Target{GOOS: "linux", GOARCH: "amd64", DataRoot: t.TempDir(), Identity: "501"}
+	paths, err := target.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.location = deploymentLocation{target: target, paths: paths}
+	h.newBinary = paths.BinDir + "/nexterm-helper-" + h.newDigest
+	h.host = &fakeHost{
+		probeVersion: strconv.Itoa(supervisor.ProtocolVersion),
+		uploadDigest: h.newDigest,
+		digests:      map[string]string{h.oldBinary: h.oldDigest},
+	}
+	h.oldRunning = true
+	oldMetadata := supervisor.RuntimeMetadata{Version: "v1", Commit: "old", Protocol: supervisor.ProtocolVersion, SHA256: h.oldDigest}
+	newMetadata := supervisor.RuntimeMetadata{Version: "v2", Commit: "new", Protocol: supervisor.ProtocolVersion, SHA256: h.newDigest}
+	h.oldClient = provenFakeDaemonClient(h.oldDigest)
+	h.oldClient.metadata = func(context.Context) (supervisor.RuntimeMetadata, bool, error) { return oldMetadata, true, nil }
+	h.oldClient.list = func(context.Context) ([]supervisor.Info, error) {
+		if !h.oldRunning {
+			return nil, errors.New("old daemon is not running")
+		}
+		return nil, nil
+	}
+	h.newClient = provenFakeDaemonClient(h.newDigest)
+	h.newClient.metadata = func(context.Context) (supervisor.RuntimeMetadata, bool, error) { return newMetadata, true, nil }
+	h.newClient.list = func(context.Context) ([]supervisor.Info, error) {
+		if !h.newRunning {
+			return nil, errors.New("new daemon is not running")
+		}
+		return nil, nil
+	}
+	h.resolver = &Resolver{StartTimeout: 30 * time.Millisecond, UploadTimeout: time.Second, EnsureTimeout: time.Second}
+	h.resolver.clientFor = func(daemon *Daemon) remoteDaemonClient {
+		if daemon.Binary == h.newBinary {
+			return h.newClient
+		}
+		return h.oldClient
+	}
+	h.current = daemonConnection{daemon: newTargetDaemon(h.host, h.location, h.oldBinary), metadata: oldMetadata, known: true, running: true}
+	h.source = &UploadSource{Path: "/offline/nexterm-helper", GOOS: "linux", GOARCH: "amd64", Digest: h.newDigest, Version: "v2", Commit: "new"}
+	h.host.runHook = func(_ context.Context, command string) (string, int, error, bool) {
+		switch {
+		case strings.Contains(command, "helper.pid") && (strings.Contains(command, "/proc/") || strings.Contains(command, "ps -p")):
+			if h.newRunning {
+				return "4343\n" + h.newBinary + "\n", 0, nil, true
+			}
+			if h.oldRunning {
+				return "4242\n" + h.oldBinary + "\n", 0, nil, true
+			}
+			return "", 73, nil, true
+		case command == "kill -TERM 4242":
+			h.oldRunning = false
+			return "", 0, nil, true
+		case command == "kill -TERM 4343":
+			h.newRunning = false
+			return "", 0, nil, true
+		case strings.Contains(command, "setsid"):
+			if strings.Contains(command, quoteShell(h.newBinary)) {
+				h.newRunning = true
+			} else if strings.Contains(command, quoteShell(h.oldBinary)) {
+				h.oldRunning = true
+			}
+			return "", 0, nil, true
+		default:
+			return "", 0, nil, false
+		}
+	}
+	return h
+}
+
+func (h *helperUpdateHarness) update(ctx context.Context, interrupt bool) (*Daemon, error) {
+	return h.resolver.updateRunningDaemon(ctx, h.host, h.location, h.source, h.current, EnsureOptions{InterruptActive: interrupt})
+}
+
+func TestEnsureDaemonCompatibleReleaseDifferenceContinues(t *testing.T) {
+	h := newHelperUpdateHarness(t)
+	h.source.Digest = h.oldDigest
+	h.host.uploadDigest = h.oldDigest
+	h.host.discovery = h.location.target.DataRoot + "\nLinux\namd64\n501\n"
+	h.host.pathBinary = h.oldBinary
+	h.resolver.HelperExecutable = h.source.Path
+	h.resolver.hostFor = func(context.Context, *transportssh.Client) (Host, error) { return h.host, nil }
+	h.resolver.inspect = func(string) (UploadSource, error) { return *h.source, nil }
+	daemon, err := h.resolver.EnsureDaemon(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if daemon.Binary != h.oldBinary || daemon.Update.Updated || len(h.host.uploads) != 0 {
+		t.Fatalf("compatible release difference triggered update: daemon=%+v uploads=%v", daemon, h.host.uploads)
+	}
+	if !h.oldRunning || h.host.sawCommand("kill -TERM") {
+		t.Fatal("compatible running daemon was interrupted for a release-only difference")
+	}
+	if daemon.Update.Local.Version != "v2" || daemon.Update.Running.Version != "v1" || daemon.Update.Local.Protocol != daemon.Update.Running.Protocol {
+		t.Fatalf("local/running compatibility evidence = %+v", daemon.Update)
+	}
+}
+
+func TestHelperUpdateDefaultsToDeferredAcrossDaemonActivity(t *testing.T) {
+	h := newHelperUpdateHarness(t)
+	h.oldClient.idle = func(context.Context) error { return supervisor.ErrActiveSessions }
+	daemon, err := h.update(t.Context(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if daemon != h.current.daemon || !daemon.Update.Deferred || !h.oldRunning || h.newRunning {
+		t.Fatalf("active update was not deferred: daemon=%+v old=%v new=%v", daemon, h.oldRunning, h.newRunning)
+	}
+	if h.host.sawCommand("kill -TERM") {
+		t.Fatal("active processes were interrupted without explicit permission")
+	}
+	if digest := h.host.digests[h.newBinary]; digest != h.newDigest {
+		t.Fatalf("candidate was not installed before deferral: %q", digest)
+	}
+	if digest := h.host.digests[h.oldBinary]; digest != h.oldDigest {
+		t.Fatalf("old executable was not preserved: %q", digest)
+	}
+}
+
+func TestHelperUpdateExplicitInterruptSwitchesAfterRechecks(t *testing.T) {
+	h := newHelperUpdateHarness(t)
+	h.oldClient.idle = func(context.Context) error { return supervisor.ErrActiveSessions }
+	daemon, err := h.update(t.Context(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !daemon.Update.Updated || !daemon.Update.Interrupted || daemon.Binary != h.newBinary || !h.newRunning || h.oldRunning {
+		t.Fatalf("explicit update = %+v old=%v new=%v", daemon, h.oldRunning, h.newRunning)
+	}
+	if !h.host.sawCommand("kill -TERM 4242") {
+		t.Fatal("actual old helper process was not stopped")
+	}
+	if digest := h.host.digests[h.oldBinary]; digest != h.oldDigest {
+		t.Fatalf("old executable was removed during switch: %q", digest)
+	}
+}
+
+func TestHelperUpdateRollbackRestoresDaemonWithoutRevivingShells(t *testing.T) {
+	h := newHelperUpdateHarness(t)
+	h.newClient.list = func(context.Context) ([]supervisor.Info, error) { return nil, errors.New("new daemon not ready") }
+	daemon, err := h.update(t.Context(), false)
+	if err == nil || !strings.Contains(err.Error(), "without reviving interrupted shells") {
+		t.Fatalf("rollback error = %v", err)
+	}
+	if daemon == nil || !daemon.Update.RolledBack || !h.oldRunning || h.newRunning {
+		t.Fatalf("rollback process state daemon=%+v old=%v new=%v", daemon, h.oldRunning, h.newRunning)
+	}
+	if digest := h.host.digests[h.oldBinary]; digest != h.oldDigest {
+		t.Fatalf("rollback executable was not preserved: %q", digest)
+	}
+}
+
+func TestHelperUpdateRollbackUsesDefaultTimeout(t *testing.T) {
+	h := newHelperUpdateHarness(t)
+	h.resolver.StartTimeout = 0
+	h.newClient.metadata = func(context.Context) (supervisor.RuntimeMetadata, bool, error) {
+		return supervisor.RuntimeMetadata{Version: "v2", Commit: "new", Protocol: supervisor.ProtocolVersion, SHA256: h.oldDigest}, true, nil
+	}
+	daemon, err := h.update(t.Context(), false)
+	if err == nil || daemon == nil || !daemon.Update.RolledBack || !h.oldRunning || h.newRunning {
+		t.Fatalf("default rollback daemon=%+v err=%v old=%v new=%v", daemon, err, h.oldRunning, h.newRunning)
+	}
+}
+
+func TestHelperUpdateDoesNotTreatTransportLossAsStopped(t *testing.T) {
+	h := newHelperUpdateHarness(t)
+	originalHook := h.host.runHook
+	h.host.runHook = func(ctx context.Context, command string) (string, int, error, bool) {
+		if !h.oldRunning && strings.Contains(command, "helper.pid") {
+			return "", 0, errors.New("SSH process inspection disconnected"), true
+		}
+		return originalHook(ctx, command)
+	}
+	_, err := h.update(t.Context(), false)
+	if err == nil || h.newRunning {
+		t.Fatalf("transport loss was treated as a stopped daemon: err=%v new=%v", err, h.newRunning)
+	}
+}
+
+func TestHelperUpdateRollbackAndCleanupFailuresAreVisible(t *testing.T) {
+	t.Run("rollback", func(t *testing.T) {
+		h := newHelperUpdateHarness(t)
+		h.newClient.list = func(context.Context) ([]supervisor.Info, error) { return nil, errors.New("new daemon not ready") }
+		originalHook := h.host.runHook
+		h.host.runHook = func(ctx context.Context, command string) (string, int, error, bool) {
+			if strings.Contains(command, "setsid") && strings.Contains(command, quoteShell(h.oldBinary)) {
+				return "", 0, nil, true
+			}
+			return originalHook(ctx, command)
+		}
+		_, err := h.update(t.Context(), false)
+		if err == nil || !strings.Contains(err.Error(), "rollback failed") {
+			t.Fatalf("rollback failure = %v", err)
+		}
+	})
+	t.Run("cleanup", func(t *testing.T) {
+		h := newHelperUpdateHarness(t)
+		lock := h.location.paths.Root + "/.helper-update"
+		h.host.deleteErrors = map[string]error{lock: errors.New("cleanup failed")}
+		daemon, err := h.update(t.Context(), false)
+		if err == nil || !strings.Contains(err.Error(), "cleanup failed") || daemon == nil {
+			t.Fatalf("cleanup failure daemon=%+v error=%v", daemon, err)
+		}
+	})
+}
+
+func TestEnsureDaemonDrivesAllNineStandaloneTargets(t *testing.T) {
+	for _, target := range SupportedTargets() {
+		t.Run(target.ID(), func(t *testing.T) {
+			target.DataRoot = filepath.Join(t.TempDir(), "data")
+			target.Identity = "501"
+			host := &fakeHost{probeVersion: strconv.Itoa(supervisor.ProtocolVersion), uploadDigest: strings.Repeat("ab", 32)}
+			machine := target.GOARCH
+			if target.GOARCH == "arm" {
+				machine = "armv7l"
+			}
+			osName := "Linux"
+			if target.GOOS == "darwin" {
+				osName = "Darwin"
+			}
+			host.discovery = target.DataRoot + "\n" + osName + "\n" + machine + "\n" + target.Identity + "\n"
+			if target.GOOS == "windows" {
+				target.DataRoot = `C:\Users\test\AppData\Local`
+				target.Identity = "S-1-5-21-42"
+				host.windows = true
+				architecture := "X64"
+				if target.GOARCH == "arm64" {
+					architecture = "Arm64"
+				}
+				host.discovery = fmt.Sprintf(`{"data_root":%q,"architecture":%q,"identity":%q}`, target.DataRoot, architecture, target.Identity)
+				host.directoryKinds = map[string]string{`C:\`: "directory"}
+			}
+			host.spawn = func() {
+				host.mu.Lock()
+				host.running = true
+				host.mu.Unlock()
+			}
+			resolver := testResolver(host, "/local/nexterm-desktop")
+			resolver.inspect = func(path string) (UploadSource, error) {
+				name := "nexterm-helper-" + target.ID()
+				if target.GOOS == "windows" {
+					name += ".exe"
+				}
+				if want := filepath.Join("/local", name); path != want {
+					t.Fatalf("inspected %q, want target package %q", path, want)
+				}
+				return UploadSource{Path: path, GOOS: target.GOOS, GOARCH: target.GOARCH, GOARM: target.GOARM, Digest: host.uploadDigest}, nil
+			}
+			resolver.clientFor = func(*Daemon) remoteDaemonClient {
+				return &fakeDaemonClient{list: func(context.Context) ([]supervisor.Info, error) {
+					host.mu.Lock()
+					running := host.running
+					host.mu.Unlock()
+					if !running {
+						return nil, errors.New("daemon is not running")
+					}
+					return nil, nil
+				}}
+			}
+			daemon, err := resolver.EnsureDaemon(t.Context(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			paths, err := target.Paths()
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantBinary, err := paths.Helper(host.uploadDigest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if daemon.Binary != wantBinary || daemon.StateDir != paths.StateDir || daemon.Target.ID() != target.ID() {
+				t.Fatalf("daemon = %+v, want binary=%q state=%q target=%s", daemon, wantBinary, paths.StateDir, target.ID())
+			}
+			if len(host.uploads) != 1 || len(host.localUploads) != 1 || !host.running {
+				t.Fatalf("upload/start evidence missing: uploads=%v local=%v running=%v", host.uploads, host.localUploads, host.running)
+			}
+		})
+	}
+}
+
+func temporaryFallbackHarness(t *testing.T, uid string) (*fakeHost, *Resolver, Target, TargetPaths) {
+	t.Helper()
+	target := Target{GOOS: "linux", GOARCH: runtime.GOARCH, DataRoot: filepath.Join(t.TempDir(), "data"), Identity: uid}
+	paths, err := target.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := strings.Repeat("cd", 32)
+	host := &fakeHost{
+		discovery:    target.DataRoot + "\nLinux\n" + runtime.GOARCH + "\n" + uid + "\n",
+		probeVersion: strconv.Itoa(supervisor.ProtocolVersion),
+		uploadDigest: digest,
+		mkdirErrors:  map[string]error{paths.Root: fs.ErrPermission},
+	}
+	host.spawn = func() {
+		host.mu.Lock()
+		host.running = true
+		host.mu.Unlock()
+	}
+	resolver := testResolver(host, "/local/nexterm-desktop")
+	resolver.RetryBackoff = -1
+	resolver.EnsureTimeout = time.Second
+	resolver.inspect = func(path string) (UploadSource, error) {
+		source := fakeUploadSource(digest)
+		source.Path = path
+		return source, nil
+	}
+	resolver.clientFor = func(*Daemon) remoteDaemonClient {
+		return &fakeDaemonClient{list: func(context.Context) ([]supervisor.Info, error) {
+			host.mu.Lock()
+			running := host.running
+			host.mu.Unlock()
+			if !running {
+				return nil, errors.New("daemon is not running")
+			}
+			return nil, nil
+		}}
+	}
+	return host, resolver, target, paths
+}
+
+func TestEnsureDaemonUsesPrivateTemporaryFallbackAndReportsLifecycle(t *testing.T) {
+	for _, uid := range []string{"501", "502"} {
+		t.Run("uid "+uid, func(t *testing.T) {
+			host, resolver, _, _ := temporaryFallbackHarness(t, uid)
+			var events []HelperProgress
+			resolver.Progress = func(_ context.Context, event HelperProgress) { events = append(events, event) }
+			daemon, err := resolver.EnsureDaemon(t.Context(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantRoot := "/tmp/nexterm-" + uid + "/nexterm"
+			if !daemon.Temporary || daemon.StateDir != wantRoot+"/daemon" {
+				t.Fatalf("fallback daemon = %+v, want state under %s", daemon, wantRoot)
+			}
+			var fallback *HelperProgress
+			for index := range events {
+				if events[index].Stage == "fallback" {
+					fallback = &events[index]
+				}
+			}
+			if fallback == nil || fallback.Path != wantRoot || !strings.Contains(fallback.Cause, "cleanup") {
+				t.Fatalf("temporary path or cleanup risk is not visible: %+v", events)
+			}
+			if len(host.uploads) != 1 || !host.running {
+				t.Fatalf("fallback upload/start missing: uploads=%v running=%v", host.uploads, host.running)
+			}
+		})
+	}
+}
+
+func TestEnsureDaemonRejectsUnsafeTemporaryRoot(t *testing.T) {
+	host, resolver, _, _ := temporaryFallbackHarness(t, "501")
+	base := "/tmp/nexterm-501"
+	host.invalidPrivateBases = map[string]bool{base: true}
+	_, err := resolver.EnsureDaemon(t.Context(), nil)
+	if !errors.Is(err, errUnsafeTemporaryRoot) {
+		t.Fatalf("unsafe temporary root error = %v", err)
+	}
+	if host.running || len(host.uploads) != 0 {
+		t.Fatalf("unsafe root was used: running=%v uploads=%v", host.running, host.uploads)
+	}
+}
+
+func TestEnsureDaemonSkipsUnsafeXDGForPrivateTemporaryRoot(t *testing.T) {
+	host, resolver, _, _ := temporaryFallbackHarness(t, "501")
+	xdg := t.TempDir()
+	host.fallbackDiscovery = xdg + "\n\n"
+	host.invalidPrivateBases = map[string]bool{xdg: true}
+	daemon, err := resolver.EnsureDaemon(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if daemon.StateDir != "/tmp/nexterm-501/nexterm/daemon" {
+		t.Fatalf("daemon state = %q, want safe per-uid temporary root", daemon.StateDir)
+	}
+	for _, uploaded := range host.uploads {
+		if strings.HasPrefix(uploaded, xdg) {
+			t.Fatalf("unsafe XDG path received upload %q", uploaded)
+		}
+	}
+}
+
+func TestEnsureDaemonDoesNotMoveExistingStateToFallback(t *testing.T) {
+	t.Run("primary state exists", func(t *testing.T) {
+		host, resolver, _, paths := temporaryFallbackHarness(t, "501")
+		host.directories = map[string]bool{paths.StateDir: true}
+		_, err := resolver.EnsureDaemon(t.Context(), nil)
+		if !errors.Is(err, fs.ErrPermission) {
+			t.Fatalf("existing primary state error = %v", err)
+		}
+		if host.running || len(host.uploads) != 0 {
+			t.Fatalf("existing state was silently moved: running=%v uploads=%v", host.running, host.uploads)
+		}
+	})
+	t.Run("primary state suppresses fallback daemon", func(t *testing.T) {
+		host, resolver, _, paths := temporaryFallbackHarness(t, "501")
+		host.directories = map[string]bool{paths.StateDir: true}
+		host.pathBinary = "/usr/bin/nexterm-helper"
+		resolver.StartTimeout = 20 * time.Millisecond
+		resolver.clientFor = func(daemon *Daemon) remoteDaemonClient {
+			return &fakeDaemonClient{list: func(context.Context) ([]supervisor.Info, error) {
+				if daemon.StateDir == paths.StateDir {
+					return nil, errors.New("primary daemon is stopped")
+				}
+				return nil, nil
+			}}
+		}
+		daemon, err := resolver.EnsureDaemon(t.Context(), nil)
+		if err == nil {
+			t.Fatalf("fallback daemon silently replaced primary recovery: %+v", daemon)
+		}
+	})
+	t.Run("fallback state remains selected", func(t *testing.T) {
+		host, resolver, _, paths := temporaryFallbackHarness(t, "501")
+		fallbackState := "/tmp/nexterm-501/nexterm/daemon"
+		host.directories = map[string]bool{fallbackState: true}
+		daemon, err := resolver.EnsureDaemon(t.Context(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if daemon.StateDir != fallbackState {
+			t.Fatalf("daemon state = %q, want previous fallback state", daemon.StateDir)
+		}
+		for _, directory := range host.mkdirs {
+			if directory == paths.Root {
+				t.Fatal("primary root was used despite existing fallback state")
+			}
+		}
+	})
+}
+
+func TestEnsureDaemonRedeploysAfterTemporaryCleanup(t *testing.T) {
+	host, resolver, _, _ := temporaryFallbackHarness(t, "501")
+	first, err := resolver.EnsureDaemon(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.mu.Lock()
+	host.running = false
+	delete(host.digests, first.Binary)
+	delete(host.directories, first.StateDir)
+	host.mu.Unlock()
+	second, err := resolver.EnsureDaemon(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.StateDir != first.StateDir || len(host.uploads) != 2 {
+		t.Fatalf("temporary cleanup redeployment first=%+v second=%+v uploads=%v", first, second, host.uploads)
+	}
+}
+
+func TestEnsureDaemonReportsNoexecFallbackWithoutStarting(t *testing.T) {
+	host, resolver, _, _ := temporaryFallbackHarness(t, "501")
+	host.runHook = func(_ context.Context, command string) (string, int, error, bool) {
+		if strings.Contains(command, "--probe") {
+			return "", 126, nil, true
+		}
+		return "", 0, nil, false
+	}
+	_, err := resolver.EnsureDaemon(t.Context(), nil)
+	if !errors.Is(err, ErrNoExec) {
+		t.Fatalf("noexec error = %v", err)
+	}
+	if host.running {
+		t.Fatal("daemon started after noexec probe failure")
+	}
+}
+
+type sftpUnavailableHost struct {
+	Host
+	uploads int
+}
+
+func (h *sftpUnavailableHost) Exists(context.Context, string) (bool, error) {
+	return false, ErrSFTPUnavailable
+}
+func (h *sftpUnavailableHost) Mkdir(context.Context, string) error { return ErrSFTPUnavailable }
+func (h *sftpUnavailableHost) Chmod(context.Context, string, fs.FileMode) error {
+	return ErrSFTPUnavailable
+}
+func (h *sftpUnavailableHost) Upload(context.Context, string, string) (int64, error) {
+	h.uploads++
+	return 0, ErrSFTPUnavailable
+}
+func (h *sftpUnavailableHost) Rename(context.Context, string, string) error {
+	return ErrSFTPUnavailable
+}
+func (h *sftpUnavailableHost) Delete(context.Context, string, bool) error {
+	return ErrSFTPUnavailable
+}
+func (h *sftpUnavailableHost) ChecksumSHA256(context.Context, string) (string, error) {
+	return "", ErrSFTPUnavailable
+}
+
+func TestEnsureDaemonUsesExecFallbackWhenSFTPUnavailable(t *testing.T) {
+	worker, resolver, _, paths := temporaryFallbackHarness(t, "501")
+	worker.mkdirErrors = nil
+	primary := &sftpUnavailableHost{Host: worker}
+	resolver.hostFor = func(context.Context, *transportssh.Client) (Host, error) {
+		return NewFallbackHost(primary, worker), nil
+	}
+	daemon, err := resolver.EnsureDaemon(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if daemon.StateDir != paths.StateDir || primary.uploads != 1 || len(worker.uploads) != 1 {
+		t.Fatalf("SFTP/exec ensure daemon=%+v primary attempts=%d exec uploads=%v", daemon, primary.uploads, worker.uploads)
+	}
+}
+
+type thirdCycleHost struct {
+	Host
+	calls int
+}
+
+func (h *thirdCycleHost) Run(ctx context.Context, command string, timeout time.Duration) (string, int, error) {
+	if strings.Contains(command, "uname -s") {
+		h.calls++
+		if h.calls <= 2 {
+			return "", 0, durable.ErrUnavailable
+		}
+	}
+	return h.Host.Run(ctx, command, timeout)
+}
+
+func TestEnsureDaemonSucceedsOnThirdCompleteCycle(t *testing.T) {
+	worker, resolver, _, _ := temporaryFallbackHarness(t, "501")
+	worker.mkdirErrors = nil
+	host := &thirdCycleHost{Host: worker}
+	resolver.hostFor = func(context.Context, *transportssh.Client) (Host, error) { return host, nil }
+	daemon, err := resolver.EnsureDaemon(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if daemon == nil || host.calls != 3 || !worker.running {
+		t.Fatalf("third-cycle success daemon=%+v calls=%d running=%v", daemon, host.calls, worker.running)
+	}
+}
+
+type blockingUploadHost struct {
+	*fakeHost
+	uploads int
+}
+
+func (h *blockingUploadHost) Upload(ctx context.Context, _, _ string) (int64, error) {
+	h.uploads++
+	<-ctx.Done()
+	return 0, context.Cause(ctx)
+}
+
+func TestEnsureDaemonSharedBudgetCoversFallbackUpload(t *testing.T) {
+	worker, resolver, _, _ := temporaryFallbackHarness(t, "501")
+	worker.mkdirErrors = nil
+	blocking := &blockingUploadHost{fakeHost: worker}
+	primary := &sftpUnavailableHost{Host: blocking}
+	resolver.hostFor = func(context.Context, *transportssh.Client) (Host, error) {
+		return NewFallbackHost(primary, blocking), nil
+	}
+	resolver.EnsureTimeout = 40 * time.Millisecond
+	resolver.UploadTimeout = time.Minute
+	started := time.Now()
+	_, err := resolver.EnsureDaemon(t.Context(), nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("fallback upload deadline = %v", err)
+	}
+	if time.Since(started) > time.Second || primary.uploads != 1 || blocking.uploads != 1 {
+		t.Fatalf("shared upload budget elapsed=%s primary=%d fallback=%d", time.Since(started), primary.uploads, blocking.uploads)
+	}
+	if worker.running {
+		t.Fatal("daemon started after shared upload budget expired")
+	}
+}
+
+func TestEnsureDaemonSharedBudgetCoversStartup(t *testing.T) {
+	worker, resolver, _, _ := temporaryFallbackHarness(t, "501")
+	worker.mkdirErrors = nil
+	resolver.clientFor = func(*Daemon) remoteDaemonClient {
+		return &fakeDaemonClient{list: func(context.Context) ([]supervisor.Info, error) {
+			return nil, errors.New("daemon not ready")
+		}}
+	}
+	resolver.EnsureTimeout = 40 * time.Millisecond
+	resolver.StartTimeout = time.Minute
+	_, err := resolver.EnsureDaemon(t.Context(), nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("startup deadline = %v", err)
+	}
+	if !worker.running || !worker.sawCommand("setsid") {
+		t.Fatal("startup was not attempted before the shared deadline")
+	}
+}
+
+func TestHelperUpdateRechecksProtocolAndStateBeforeSwitch(t *testing.T) {
+	t.Run("protocol metadata changed", func(t *testing.T) {
+		h := newHelperUpdateHarness(t)
+		h.oldClient.metadata = func(context.Context) (supervisor.RuntimeMetadata, bool, error) {
+			return supervisor.RuntimeMetadata{Version: "v1", Commit: "old", Protocol: supervisor.ProtocolVersion, SHA256: h.newDigest}, true, nil
+		}
+		_, err := h.update(t.Context(), false)
+		if !errors.Is(err, ErrProtocol) || !h.oldRunning || h.newRunning || h.host.sawCommand("kill -TERM") {
+			t.Fatalf("protocol recheck error=%v old=%v new=%v", err, h.oldRunning, h.newRunning)
+		}
+	})
+	t.Run("state changed", func(t *testing.T) {
+		h := newHelperUpdateHarness(t)
+		h.oldClient.list = func(context.Context) ([]supervisor.Info, error) { return nil, supervisor.ErrStateMismatch }
+		_, err := h.update(t.Context(), false)
+		if !errors.Is(err, supervisor.ErrStateMismatch) || !h.oldRunning || h.newRunning || h.host.sawCommand("kill -TERM") {
+			t.Fatalf("state recheck error=%v old=%v new=%v", err, h.oldRunning, h.newRunning)
+		}
+	})
+}
+
+func TestHelperUpdateDefersWhenActivityIsUnprovable(t *testing.T) {
+	h := newHelperUpdateHarness(t)
+	h.oldClient.idle = func(context.Context) error { return supervisor.ErrUnsupported }
+	daemon, err := h.update(t.Context(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !daemon.Update.Deferred || !h.oldRunning || h.newRunning || h.host.sawCommand("kill -TERM") {
+		t.Fatalf("unknown activity was not deferred: daemon=%+v old=%v new=%v", daemon, h.oldRunning, h.newRunning)
 	}
 }

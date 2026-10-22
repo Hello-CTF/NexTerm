@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
@@ -180,6 +181,120 @@ func TestOpenTabSSHExplicitRetryAfterHelperBecomesAvailable(t *testing.T) {
 	}
 }
 
+func TestOpenTabSSHDeploysHelperInBackgroundForLaterTabs(t *testing.T) {
+	provider := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	resolver := DurableResolverFunc(func(ctx context.Context, _ base.Transport) (base.DurableProvider, error) {
+		close(started)
+		select {
+		case <-release:
+			return provider, nil
+		case <-ctx.Done():
+			return nil, context.Cause(ctx)
+		}
+	})
+	connector := newFakeConnector()
+	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+		_ = manager.Close()
+	})
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-background-helper", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type openResult struct {
+		info TabInfo
+		err  error
+	}
+	opened := make(chan openResult, 1)
+	go func() {
+		info, err := manager.OpenTab(context.Background(), OpenTabOptions{
+			SessionID: connected.ID, ClientID: "client", ChannelID: "ordinary-first", Cols: 80, Rows: 24,
+			Durable: &DurableTabOptions{}, DurableFallback: true,
+		})
+		opened <- openResult{info: info, err: err}
+	}()
+	firstID := ""
+	select {
+	case result := <-opened:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		if result.info.Durable || result.info.FallbackNotice == "" {
+			t.Fatalf("first tab = %+v; want ordinary SSH while helper deploys", result.info)
+		}
+		firstID = result.info.ID
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("ordinary SSH open waited for helper deployment")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("background helper deployment did not start")
+	}
+	close(release)
+	waitFor(t, func() bool {
+		connected.durableMu.Lock()
+		defer connected.durableMu.Unlock()
+		return connected.durableProvider == provider
+	})
+	second, err := manager.OpenTab(t.Context(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client", ChannelID: "durable-later", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{}, DurableFallback: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.Durable {
+		t.Fatalf("later tab = %+v; want newly opened durable tab after background readiness", second)
+	}
+	firstTab, err := manager.Tab(firstID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstTab.Info().Durable {
+		t.Fatal("existing ordinary tab was mutated into a durable tab")
+	}
+}
+
+func TestOpenTabSSHBackgroundDeploymentUsesSessionLifetime(t *testing.T) {
+	started := make(chan struct{})
+	resolver := DurableResolverFunc(func(ctx context.Context, _ base.Transport) (base.DurableProvider, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, context.Cause(ctx)
+	})
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-background-cancel", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	openCtx, cancelOpen := context.WithCancel(t.Context())
+	info, err := manager.OpenTab(openCtx, OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client", ChannelID: "ordinary", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{}, DurableFallback: true,
+	})
+	cancelOpen()
+	if err != nil || info.Durable {
+		t.Fatalf("ordinary open = %+v, %v", info, err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("background deployment did not start")
+	}
+	if err := manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCreateTabSSHFailedCommandDoesNotConsumeFallbackNotice(t *testing.T) {
 	resolver := &countingResolver{err: base.ErrUnsupported}
 	connector := newFakeConnector()
@@ -214,7 +329,7 @@ func TestOpenTabSSHDoesNotFallbackAfterUnclassifiedHelperError(t *testing.T) {
 	}
 	_, err = manager.OpenTab(t.Context(), OpenTabOptions{
 		SessionID: connected.ID, ClientID: "client", ChannelID: "channel", Cols: 80, Rows: 24,
-		Durable: &DurableTabOptions{}, DurableFallback: true,
+		Durable: &DurableTabOptions{},
 	})
 	if err == nil || connector.transport(0).channelCount() != 0 {
 		t.Fatalf("OpenTab = %v, PTY channels = %d; unexpected fallback", err, connector.transport(0).channelCount())
@@ -355,6 +470,13 @@ func TestOpenTabSSHCreateUnclassifiedErrorDoesNotFallback(t *testing.T) {
 	t.Cleanup(func() { _ = manager.Close() })
 	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-create-rejected", Kind: KindSSH})
 	if err != nil {
+		t.Fatal(err)
+	}
+	connected.mu.Lock()
+	transport := connected.transport
+	generation := connected.generation
+	connected.mu.Unlock()
+	if _, err := manager.durableProviderFor(t.Context(), connected, transport, KindSSH, generation, false); err != nil {
 		t.Fatal(err)
 	}
 	_, err = manager.OpenTab(t.Context(), OpenTabOptions{
