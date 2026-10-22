@@ -6,15 +6,7 @@ import (
 	"os"
 
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
-	"github.com/Hello-CTF/NexTerm/internal/version"
 )
-
-type helperMetadata struct {
-	Version  string   `json:"version"`
-	Commit   string   `json:"commit"`
-	Protocol int      `json:"protocol"`
-	Features []string `json:"features"`
-}
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -22,12 +14,12 @@ func main() {
 
 func run(args []string) int {
 	if len(args) == 1 && args[0] == "--metadata" {
-		if err := json.NewEncoder(os.Stdout).Encode(helperMetadata{
-			Version:  version.Version,
-			Commit:   version.Commit,
-			Protocol: supervisor.ProtocolVersion,
-			Features: []string{"exec"},
-		}); err != nil {
+		metadata, err := supervisor.CurrentRuntimeMetadata()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "nexterm-helper:", err)
+			return 1
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(metadata); err != nil {
 			fmt.Fprintln(os.Stderr, "nexterm-helper:", err)
 			return 1
 		}

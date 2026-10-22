@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -41,10 +43,21 @@ func TestHelperMetadataProcess(t *testing.T) {
 		Version  string   `json:"version"`
 		Commit   string   `json:"commit"`
 		Protocol int      `json:"protocol"`
+		SHA256   string   `json:"sha256"`
 		Features []string `json:"features"`
 	}
 	if err := json.Unmarshal(output, &metadata); err != nil {
 		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(output, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fields["sha256"]; !ok {
+		t.Fatalf("helper metadata lacks lowercase sha256: %s", output)
+	}
+	if _, ok := fields["SHA256"]; ok {
+		t.Fatalf("helper metadata contains uppercase SHA256: %s", output)
 	}
 	if metadata.Version == "" || metadata.Commit == "" {
 		t.Fatalf("helper metadata lacks version identity: %+v", metadata)
@@ -52,7 +65,19 @@ func TestHelperMetadataProcess(t *testing.T) {
 	if metadata.Protocol != supervisor.ProtocolVersion {
 		t.Fatalf("helper protocol = %d, want %d", metadata.Protocol, supervisor.ProtocolVersion)
 	}
-	if len(metadata.Features) != 1 || metadata.Features[0] != "exec" {
-		t.Fatalf("helper features = %v, want [exec]", metadata.Features)
+	if got, want := strings.Join(metadata.Features, ","), "activity,exec,metadata,replay_gzip,runtime_metadata"; got != want {
+		t.Fatalf("helper features = %q, want %q", got, want)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(contents)
+	if want := hex.EncodeToString(digest[:]); metadata.SHA256 != want {
+		t.Fatalf("helper SHA256 = %q, want executing file digest %q", metadata.SHA256, want)
 	}
 }
