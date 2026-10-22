@@ -825,9 +825,15 @@ func TestAuthorizationGenerationGORMFailureRetryUsesPersistedState(t *testing.T)
 				if err := database.SettingSet(ctx, key, raw); err != nil {
 					t.Fatal(err)
 				}
+				if err := manager.Reload(ctx); err != nil {
+					t.Fatal(err)
+				}
 			}
-			if decision.Action != guard.ActionDeny {
+			if failure == "update_error" && decision.Action != guard.ActionDeny {
 				t.Fatalf("failed generation write decision = %+v", decision)
+			}
+			if failure == "missing_row" && decision.Action == guard.ActionAllow {
+				t.Fatalf("missing setting row admitted stale generation: %+v", decision)
 			}
 
 			decision = evaluate(ctx)
@@ -840,6 +846,93 @@ func TestAuthorizationGenerationGORMFailureRetryUsesPersistedState(t *testing.T)
 			}
 			if err := fresh.RevalidateAuthorization(ctx, decision.Authorization); err != nil {
 				t.Fatalf("retry used a generation absent from persistent storage: %v", err)
+			}
+		})
+	}
+}
+
+func TestAuthorizationGenerationMigrationConflictDoesNotReviveGORMRecords(t *testing.T) {
+	for _, kind := range []string{"grant", "rule"} {
+		t.Run(kind, func(t *testing.T) {
+			database := dbtest.NewFixture(t).OpenStore(t)
+			ctx := ipc.WithUserID(context.Background(), "owner-generation-conflict-"+kind)
+			manager, err := guard.NewGrants(ctx, database, nil, guard.WithShared(false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var key, legacy, revoked string
+			switch kind {
+			case "grant":
+				if _, err := manager.Grant(ctx, "asset-a", []guard.GrantKind{guard.GrantKindTerminalWrite}); err != nil {
+					t.Fatal(err)
+				}
+				key = guard.DeviceGrantsSettingKeyForUser(ctx)
+				raw, found, err := database.SettingGet(ctx, key)
+				if err != nil || !found {
+					t.Fatalf("grant setting = %t, %v", found, err)
+				}
+				var records map[string]guard.DeviceGrant
+				if err := json.Unmarshal([]byte(raw), &records); err != nil {
+					t.Fatal(err)
+				}
+				encoded, err := json.Marshal(records)
+				if err != nil {
+					t.Fatal(err)
+				}
+				legacy = string(encoded)
+				revoked = `{}`
+			case "rule":
+				if _, err := manager.AddRule(ctx, "asset-a", "write_file", "/var/log/**", time.Time{}); err != nil {
+					t.Fatal(err)
+				}
+				key = guard.GrantRulesSettingKeyForUser(ctx)
+				raw, found, err := database.SettingGet(ctx, key)
+				if err != nil || !found {
+					t.Fatalf("rule setting = %t, %v", found, err)
+				}
+				var records []guard.GrantRule
+				if err := json.Unmarshal([]byte(raw), &records); err != nil {
+					t.Fatal(err)
+				}
+				encoded, err := json.Marshal(records)
+				if err != nil {
+					t.Fatal(err)
+				}
+				legacy = string(encoded)
+				revoked = `[]`
+			}
+			if err := database.SettingSet(ctx, key, legacy); err != nil {
+				t.Fatal(err)
+			}
+			manager, err = guard.NewGrants(ctx, database, nil, guard.WithShared(false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := database.SettingSet(ctx, key, revoked); err != nil {
+				t.Fatal(err)
+			}
+			evaluate := func(candidate *guard.Grants) guard.Decision {
+				if kind == "grant" {
+					return candidate.Evaluate(ctx, guard.Config{Mode: guard.ReadWrite}, guard.Confirm(guard.KindProcess, "write"), nil, "asset-a", "send_keys", "run-generation-conflict")
+				}
+				return candidate.EvaluateResource(ctx, guard.Config{Mode: guard.ReadWrite}, guard.Confirm(guard.KindWriteFS, "write"), nil, "asset-a", "write_file", "run-generation-conflict", guard.Resource{Action: "write_file", Path: "/var/log/app.log"})
+			}
+			if decision := evaluate(manager); decision.Action == guard.ActionAllow {
+				t.Fatalf("stale %s was admitted after revocation: %+v", kind, decision)
+			}
+			if err := manager.Reload(ctx); err != nil {
+				t.Fatal(err)
+			}
+			raw, found, err := database.SettingGet(ctx, key)
+			if err != nil || !found || raw != revoked {
+				t.Fatalf("persisted %s after conflict = %q, %t, %v", kind, raw, found, err)
+			}
+			fresh, err := guard.NewGrants(ctx, database, nil, guard.WithShared(false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decision := evaluate(fresh); decision.Action == guard.ActionAllow {
+				t.Fatalf("fresh manager admitted revoked %s: %+v", kind, decision)
 			}
 		})
 	}

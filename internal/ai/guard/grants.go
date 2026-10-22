@@ -110,8 +110,10 @@ type GrantAuditEvent struct {
 type GrantAuditor func(context.Context, GrantAuditEvent) error
 
 type grantState struct {
-	grants map[string]DeviceGrant
-	rules  []GrantRule
+	grants    map[string]DeviceGrant
+	rules     []GrantRule
+	grantsRaw string
+	rulesRaw  string
 }
 
 type deviceGrantRecord struct {
@@ -168,6 +170,7 @@ func (g *Grants) loadGrants(ctx context.Context) (grantState, error) {
 	if err != nil {
 		return grantState{}, err
 	}
+	result.grantsRaw = raw
 	if found && raw != "" {
 		var records map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(raw), &records); err != nil {
@@ -197,6 +200,7 @@ func (g *Grants) loadGrants(ctx context.Context) (grantState, error) {
 	if err != nil {
 		return grantState{}, err
 	}
+	result.rulesRaw = raw
 	if found && raw != "" {
 		var records []grantRuleRecord
 		if err := json.Unmarshal([]byte(raw), &records); err != nil {
@@ -211,7 +215,9 @@ func (g *Grants) loadGrants(ctx context.Context) (grantState, error) {
 	return result, nil
 }
 
-func (g *Grants) persistGenerationValue(ctx context.Context, key string, value any) error {
+var errGenerationConflict = errors.New("授权代际迁移期间设置已变化")
+
+func (g *Grants) persistGenerationValue(ctx context.Context, key, expectedRaw string, value any) (string, error) {
 	switch values := value.(type) {
 	case map[string]DeviceGrant:
 		records := make(map[string]deviceGrantRecord, len(values))
@@ -228,20 +234,37 @@ func (g *Grants) persistGenerationValue(ctx context.Context, key string, value a
 	}
 	encoded, err := json.Marshal(value)
 	if err != nil {
-		return err
+		return "", err
 	}
+	updated := string(encoded)
 	if settings, ok := g.settings.(interface{ GORM() *gorm.DB }); ok {
 		setting := query.Use(settings.GORM()).Setting
-		result, err := setting.WithContext(ctx).Where(setting.Key.Eq(key)).UpdateColumn(setting.Value, string(encoded))
+		result, err := setting.WithContext(ctx).Where(setting.Key.Eq(key), setting.Value.Eq(expectedRaw)).UpdateColumn(setting.Value, updated)
 		if err != nil {
-			return err
+			return updated, err
+		}
+		if result.RowsAffected == 0 {
+			return updated, errGenerationConflict
 		}
 		if result.RowsAffected != 1 {
-			return errors.New("授权代际对应的设置记录不存在")
+			return updated, errors.New("授权代际条件更新未恰好命中一行")
 		}
-		return nil
+		return updated, nil
 	}
-	return g.settings.SettingSet(ctx, key, string(encoded))
+	settings, ok := g.settings.(interface {
+		SettingCompareAndSwap(context.Context, string, string, string) (bool, error)
+	})
+	if !ok {
+		return updated, errors.New("授权设置存储不支持条件更新")
+	}
+	applied, err := settings.SettingCompareAndSwap(ctx, key, expectedRaw, updated)
+	if err != nil {
+		return updated, err
+	}
+	if !applied {
+		return updated, errGenerationConflict
+	}
+	return updated, nil
 }
 
 func (g *Grants) ensureGenerations(ctx context.Context, entry *grantState) error {
@@ -265,24 +288,48 @@ func (g *Grants) ensureGenerations(ctx context.Context, entry *grantState) error
 			rulesChanged = true
 		}
 	}
+	var grantsRaw string
 	var grantErr error
 	if grantsChanged {
-		grantErr = g.persistGenerationValue(ctx, DeviceGrantsSettingKeyForUser(ctx), nextGrants)
+		grantsRaw, grantErr = g.persistGenerationValue(ctx, DeviceGrantsSettingKeyForUser(ctx), entry.grantsRaw, nextGrants)
 	}
+	var rulesRaw string
 	var ruleErr error
 	if rulesChanged {
-		ruleErr = g.persistGenerationValue(ctx, GrantRulesSettingKeyForUser(ctx), nextRules)
+		rulesRaw, ruleErr = g.persistGenerationValue(ctx, GrantRulesSettingKeyForUser(ctx), entry.rulesRaw, nextRules)
 	}
 	if err := errors.Join(grantErr, ruleErr); err != nil {
 		return err
 	}
 	if grantsChanged {
 		entry.grants = nextGrants
+		entry.grantsRaw = grantsRaw
 	}
 	if rulesChanged {
 		entry.rules = nextRules
+		entry.rulesRaw = rulesRaw
 	}
 	return nil
+}
+
+func (g *Grants) stateForEvaluation(ctx context.Context) (*grantState, error) {
+	for {
+		entry, err := g.stateFor(ctx)
+		if err != nil {
+			return nil, err
+		}
+		err = g.ensureGenerations(ctx, entry)
+		if errors.Is(err, errGenerationConflict) {
+			if reloadErr := g.Reload(ctx); reloadErr != nil {
+				return nil, errors.Join(err, reloadErr)
+			}
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return entry, nil
+	}
 }
 
 func (g *Grants) stateFor(ctx context.Context) (*grantState, error) {
@@ -636,11 +683,8 @@ func (g *Grants) EvaluateResource(ctx context.Context, config Config, ruling Rul
 	if ruling.Risk != NeedsConfirm || deviceID == "" {
 		return DecideResource(config, ruling, memory, resource)
 	}
-	entry, err := g.stateFor(ctx)
+	entry, err := g.stateForEvaluation(ctx)
 	if err != nil {
-		return Decision{Action: ActionDeny, Ruling: ruling, Reason: err.Error()}
-	}
-	if err := g.ensureGenerations(ctx, entry); err != nil {
 		return Decision{Action: ActionDeny, Ruling: ruling, Reason: err.Error()}
 	}
 	action := resource.Action

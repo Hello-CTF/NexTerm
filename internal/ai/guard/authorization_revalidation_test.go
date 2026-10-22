@@ -244,6 +244,21 @@ func (s *generationFaultSettings) SettingSet(_ context.Context, key, value strin
 	return nil
 }
 
+func (s *generationFaultSettings) SettingCompareAndSwap(_ context.Context, key, expected, value string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if key == s.failKey && s.failures > 0 {
+		s.failures--
+		return false, errors.New("injected generation write failure")
+	}
+	current, ok := s.values[key]
+	if !ok || current != expected {
+		return false, nil
+	}
+	s.values[key] = value
+	return true, nil
+}
+
 func newLegacyGenerationSettings(t *testing.T) *generationFaultSettings {
 	t.Helper()
 	settings := &generationFaultSettings{memorySettings: &memorySettings{values: make(map[string]string)}}
@@ -327,6 +342,88 @@ func TestAuthorizationGenerationPartialPersistenceFailureRetries(t *testing.T) {
 			}
 			if grantGeneration != grantDecision.Authorization.Generation {
 				t.Fatalf("persisted grant generation %q does not match decision %+v", grantGeneration, grantDecision.Authorization)
+			}
+		})
+	}
+}
+
+func TestAuthorizationGenerationMigrationConflictDoesNotReviveRecords(t *testing.T) {
+	evaluateGrant := func(manager *Grants) Decision {
+		return manager.Evaluate(context.Background(), Config{Mode: ReadWrite}, Confirm(KindProcess, "write"), nil, "device-a", "send_keys", "run-generation-conflict")
+	}
+	for _, test := range []struct {
+		name        string
+		key         string
+		replacement string
+		survivingID string
+		evaluate    func(*Grants) Decision
+	}{
+		{name: "grant_revoke", key: DeviceGrantsSettingKey, replacement: `{}`, evaluate: evaluateGrant},
+		{name: "grant_rewrite", key: DeviceGrantsSettingKey, replacement: `{"device-b":{"deviceId":"device-b","kinds":["terminal_write"],"permanent":true}}`, survivingID: "device-b", evaluate: evaluateGrant},
+		{name: "rule_revoke", key: GrantRulesSettingKey, replacement: `[]`, evaluate: evaluateGenerationRule},
+		{name: "rule_rewrite", key: GrantRulesSettingKey, replacement: `[{"id":"rule-b","deviceId":"device-a","action":"write_file","path":"/tmp/**"}]`, survivingID: "rule-b", evaluate: evaluateGenerationRule},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			settings := newLegacyGenerationSettings(t)
+			manager, err := NewGrants(context.Background(), settings, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := settings.SettingSet(context.Background(), test.key, test.replacement); err != nil {
+				t.Fatal(err)
+			}
+			if decision := test.evaluate(manager); decision.Action == ActionAllow {
+				t.Fatalf("stale entry was admitted after storage changed: %+v", decision)
+			}
+			if err := manager.Reload(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			raw, found, err := settings.SettingGet(context.Background(), test.key)
+			if err != nil || !found {
+				t.Fatalf("setting after conflict = %t, %v", found, err)
+			}
+			switch test.key {
+			case DeviceGrantsSettingKey:
+				var records map[string]deviceGrantRecord
+				if err := json.Unmarshal([]byte(raw), &records); err != nil {
+					t.Fatal(err)
+				}
+				if _, ok := records["device-a"]; ok {
+					t.Fatalf("stale grant was revived: %s", raw)
+				}
+				if test.survivingID == "" && len(records) != 0 {
+					t.Fatalf("revoked grants were replaced: %s", raw)
+				}
+				if test.survivingID != "" {
+					if len(records) != 1 || records[test.survivingID].DeviceID != test.survivingID {
+						t.Fatalf("rewritten grants were overwritten: %s", raw)
+					}
+				}
+			case GrantRulesSettingKey:
+				var records []grantRuleRecord
+				if err := json.Unmarshal([]byte(raw), &records); err != nil {
+					t.Fatal(err)
+				}
+				for _, record := range records {
+					if record.ID == "rule-a" {
+						t.Fatalf("stale rule was revived: %s", raw)
+					}
+				}
+				if test.survivingID == "" && len(records) != 0 {
+					t.Fatalf("revoked rules were replaced: %s", raw)
+				}
+				if test.survivingID != "" {
+					if len(records) != 1 || records[0].ID != test.survivingID {
+						t.Fatalf("rewritten rules were overwritten: %s", raw)
+					}
+				}
+			}
+			fresh, err := NewGrants(context.Background(), settings, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decision := test.evaluate(fresh); decision.Action == ActionAllow {
+				t.Fatalf("fresh manager admitted the replaced authorization: %+v", decision)
 			}
 		})
 	}
