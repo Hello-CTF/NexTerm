@@ -1462,14 +1462,20 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "session_connect_device": {
+      scope: "session",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionConnectDeviceRequest", ts: "SessionConnectDeviceRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionInfoDTO", ts: "SessionInfoDTO" },
     },
     "session_connect_local": {
+      scope: "session",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionInfoDTO", ts: "SessionInfoDTO" },
     },
     "session_connect_quick": {
       nested: true,
@@ -1477,9 +1483,12 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "session_disconnect": {
+      scope: "session",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionIDRequest", ts: "SessionIDRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "session_line_exec": {
       nested: false,
@@ -1487,14 +1496,21 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "session_list": {
+      scope: "session",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.sessionInfoDTO", ts: "SessionInfoDTO[]" },
     },
     "session_open_line_tab": {
+      scope: "session",
       nested: false,
       channel: true,
       stream: "binary",
+      streamPayload: "unknown",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.openTerminalRequest", ts: "OpenTerminalRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.attachedTabDTO", ts: "AttachedTabDTO" },
     },
     "session_probe": {
       nested: true,
@@ -1507,14 +1523,20 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "session_quick_connect_user": {
+      scope: "session",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "string", ts: "string" },
     },
     "session_reconnect": {
+      scope: "session",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionIDRequest", ts: "SessionIDRequest" },
+      output: { go: "bool", ts: "boolean" },
     },
     "snippet_create": {
       nested: false,
@@ -1734,9 +1756,13 @@ export const ipcContractManifest = {
       output: { go: "any", ts: "unknown" },
     },
     "terminal_attach": {
+      scope: "terminal",
       nested: false,
       channel: true,
       stream: "binary",
+      streamPayload: "unknown",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.openTerminalRequest", ts: "OpenTerminalRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.attachedTabDTO", ts: "AttachedTabDTO" },
     },
     "terminal_attach_tab": {
       nested: false,
@@ -1744,9 +1770,12 @@ export const ipcContractManifest = {
       stream: "binary",
     },
     "terminal_broadcast_prepare": {
+      scope: "terminal",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalBroadcastPrepareRequest", ts: "TerminalBroadcastPrepareRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "terminal_claim": {
       nested: false,
@@ -1820,9 +1849,12 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "terminal_rename_tab": {
+      scope: "terminal",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.renameTerminalRequest", ts: "RenameTerminalRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.attachedTabDTO", ts: "AttachedTabDTO" },
     },
     "terminal_resize": {
       nested: false,
@@ -1876,9 +1908,12 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "terminal_write": {
+      scope: "terminal",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalWriteRequest", ts: "TerminalWriteRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "transcript_delete": {
       nested: false,
@@ -2122,17 +2157,10 @@ export const ipcContractManifest = {
     "redis_scan",
     "redis_set_ttl",
     "session_connect",
-    "session_connect_device",
-    "session_connect_local",
     "session_connect_quick",
-    "session_disconnect",
     "session_line_exec",
-    "session_list",
-    "session_open_line_tab",
     "session_probe",
     "session_probe_host_key",
-    "session_quick_connect_user",
-    "session_reconnect",
     "snippet_create",
     "snippet_delete",
     "snippet_list",
@@ -2162,9 +2190,7 @@ export const ipcContractManifest = {
     "sync_status",
     "sync_wake",
     "system_insets",
-    "terminal_attach",
     "terminal_attach_tab",
-    "terminal_broadcast_prepare",
     "terminal_claim",
     "terminal_close_tab",
     "terminal_create_tab",
@@ -2176,7 +2202,6 @@ export const ipcContractManifest = {
     "terminal_record_status",
     "terminal_record_stop",
     "terminal_release",
-    "terminal_rename_tab",
     "terminal_resize",
     "terminal_resize_flush",
     "terminal_screen_text",
@@ -2184,7 +2209,6 @@ export const ipcContractManifest = {
     "terminal_snapshot",
     "terminal_switch_encoding",
     "terminal_tail",
-    "terminal_write",
     "transcript_delete",
     "transcript_hosts",
     "transcript_list",
@@ -2607,6 +2631,34 @@ export interface IPCCommandTypeMap {
     input: contractTypes.ListRequest;
     output: contractTypes.ServiceOperationBatch;
   };
+  "session_connect_device": {
+    input: contractTypes.SessionConnectDeviceRequest;
+    output: contractTypes.SessionInfoDTO;
+  };
+  "session_connect_local": {
+    input: Record<string, never>;
+    output: contractTypes.SessionInfoDTO;
+  };
+  "session_disconnect": {
+    input: contractTypes.SessionIDRequest;
+    output: unknown;
+  };
+  "session_list": {
+    input: Record<string, never>;
+    output: contractTypes.SessionInfoDTO[];
+  };
+  "session_open_line_tab": {
+    input: contractTypes.OpenTerminalRequest;
+    output: contractTypes.AttachedTabDTO;
+  };
+  "session_quick_connect_user": {
+    input: Record<string, never>;
+    output: string;
+  };
+  "session_reconnect": {
+    input: contractTypes.SessionIDRequest;
+    output: boolean;
+  };
   "sync_compare": {
     input: Record<string, never>;
     output: contractTypes.CompareResult;
@@ -2643,6 +2695,14 @@ export interface IPCCommandTypeMap {
     input: contractTypes.TargetSetUpdateRequest;
     output: unknown;
   };
+  "terminal_attach": {
+    input: contractTypes.OpenTerminalRequest;
+    output: contractTypes.AttachedTabDTO;
+  };
+  "terminal_broadcast_prepare": {
+    input: contractTypes.TerminalBroadcastPrepareRequest;
+    output: unknown;
+  };
   "terminal_pause": {
     input: contractTypes.TerminalPauseRequest;
     output: unknown;
@@ -2651,12 +2711,20 @@ export interface IPCCommandTypeMap {
     input: contractTypes.TerminalRecoverRequest;
     output: unknown;
   };
+  "terminal_rename_tab": {
+    input: contractTypes.RenameTerminalRequest;
+    output: contractTypes.AttachedTabDTO;
+  };
   "terminal_resume": {
     input: contractTypes.TerminalResumeRequest;
     output: unknown;
   };
   "terminal_stream_ack": {
     input: contractTypes.TerminalStreamAckRequest;
+    output: unknown;
+  };
+  "terminal_write": {
+    input: contractTypes.TerminalWriteRequest;
     output: unknown;
   };
 }

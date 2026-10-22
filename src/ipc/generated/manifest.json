@@ -1284,11 +1284,13 @@
       "stream": "none"
     },
     "session_connect_device": {
+      "scope": "session",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "session_connect_local": {
+      "scope": "session",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1299,6 +1301,7 @@
       "stream": "none"
     },
     "session_disconnect": {
+      "scope": "session",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1309,11 +1312,13 @@
       "stream": "none"
     },
     "session_list": {
+      "scope": "session",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "session_open_line_tab": {
+      "scope": "session",
       "nested": false,
       "channel": true,
       "stream": "binary"
@@ -1329,11 +1334,13 @@
       "stream": "none"
     },
     "session_quick_connect_user": {
+      "scope": "session",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "session_reconnect": {
+      "scope": "session",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1538,6 +1545,7 @@
       "stream": "none"
     },
     "terminal_attach": {
+      "scope": "terminal",
       "nested": false,
       "channel": true,
       "stream": "binary"
@@ -1548,6 +1556,7 @@
       "stream": "binary"
     },
     "terminal_broadcast_prepare": {
+      "scope": "terminal",
       "nested": true,
       "channel": false,
       "stream": "none"
@@ -1620,6 +1629,7 @@
       "stream": "none"
     },
     "terminal_rename_tab": {
+      "scope": "terminal",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1672,6 +1682,7 @@
       "stream": "none"
     },
     "terminal_write": {
+      "scope": "terminal",
       "nested": true,
       "channel": false,
       "stream": "none"
@@ -1918,17 +1929,10 @@
     "redis_scan",
     "redis_set_ttl",
     "session_connect",
-    "session_connect_device",
-    "session_connect_local",
     "session_connect_quick",
-    "session_disconnect",
     "session_line_exec",
-    "session_list",
-    "session_open_line_tab",
     "session_probe",
     "session_probe_host_key",
-    "session_quick_connect_user",
-    "session_reconnect",
     "snippet_create",
     "snippet_delete",
     "snippet_list",
@@ -1958,9 +1962,7 @@
     "sync_status",
     "sync_wake",
     "system_insets",
-    "terminal_attach",
     "terminal_attach_tab",
-    "terminal_broadcast_prepare",
     "terminal_claim",
     "terminal_close_tab",
     "terminal_create_tab",
@@ -1972,7 +1974,6 @@
     "terminal_record_status",
     "terminal_record_stop",
     "terminal_release",
-    "terminal_rename_tab",
     "terminal_resize",
     "terminal_resize_flush",
     "terminal_screen_text",
@@ -1980,7 +1981,6 @@
     "terminal_snapshot",
     "terminal_switch_encoding",
     "terminal_tail",
-    "terminal_write",
     "transcript_delete",
     "transcript_hosts",
     "transcript_list",

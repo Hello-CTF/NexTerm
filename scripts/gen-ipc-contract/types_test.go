@@ -25,6 +25,22 @@ func TestUnreliableTypesRemainUnknown(t *testing.T) {
 	}
 }
 
+func TestTimeTimeMapsToJSONString(t *testing.T) {
+	timePackage := types.NewPackage("time", "time")
+	timeType := types.NewNamed(
+		types.NewTypeName(token.NoPos, timePackage, "Time", nil),
+		types.NewStruct(nil, nil),
+		nil,
+	)
+	reference, err := newTypeRegistry().ref(timeType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reference.TS != "string" || reference.Manifest != "string" {
+		t.Fatalf("time.Time mapped to %+v, want string", reference)
+	}
+}
+
 func TestInvalidSelectedTypeIsRejected(t *testing.T) {
 	if _, err := newTypeRegistry().ref(types.Typ[types.Invalid]); err == nil {
 		t.Fatal("invalid Go type was silently mapped")

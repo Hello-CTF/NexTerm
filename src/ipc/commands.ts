@@ -239,6 +239,10 @@ export interface SessionInfo {
   createdAt: number;
 }
 
+function ignoreResult(operation: Promise<unknown>): Promise<void> {
+  return operation.then(() => undefined);
+}
+
 export const sessionApi = {
   connect: (assetId: string) =>
     call<SessionInfo>("session_connect", { args: { assetId } }),
@@ -250,14 +254,14 @@ export const sessionApi = {
     password?: string;
     acceptHostKey?: boolean;
   }) => call<SessionInfo>("session_connect_quick", { args }),
-  quickConnectDefaultUser: () => call<string>("session_quick_connect_user"),
-  connectLocal: () => call<SessionInfo>("session_connect_local"),
+  quickConnectDefaultUser: () => call("session_quick_connect_user"),
+  connectLocal: () => call("session_connect_local") as Promise<SessionInfo>,
   connectDevice: (deviceId: string, name: string) =>
-    call<SessionInfo>("session_connect_device", { args: { deviceId, name } }),
+    call("session_connect_device", { args: { deviceId, name } }) as Promise<SessionInfo>,
   disconnect: (sessionId: string) =>
-    call<void>("session_disconnect", { sessionId }),
-  reconnect: (sessionId: string) => call<boolean>("session_reconnect", { sessionId }),
-  list: () => call<SessionInfo[]>("session_list"),
+    ignoreResult(call("session_disconnect", { sessionId })),
+  reconnect: (sessionId: string) => call("session_reconnect", { sessionId }),
+  list: () => call("session_list") as Promise<SessionInfo[]>,
   probe: (host: string, port: number, timeoutMs?: number) =>
     call<{ open: boolean; error?: string }>("session_probe", {
       args: { host, port, timeoutMs },
@@ -267,13 +271,13 @@ export const sessionApi = {
       args: { assetId, timeoutMs },
     }),
   openLineTab: (sessionId: string, cols: number, rows: number, channel: unknown) =>
-    call<AttachedTabInfo>("session_open_line_tab", {
+    call("session_open_line_tab", {
       sessionId,
       cols,
       rows,
       channel,
       clientId: clientId(),
-    }),
+    }) as Promise<AttachedTabInfo>,
   lineExec: (tabId: string, line: string) =>
     call<void>("session_line_exec", { tabId, line, clientId: clientId() }),
 };
@@ -384,14 +388,14 @@ export interface BroadcastConfirmationChallenge {
 
 export const terminalApi = {
   attach: (sessionId: string, cols: number, rows: number, channel: unknown, durable?: boolean) =>
-    call<AttachedTabInfo>("terminal_attach", {
+    call("terminal_attach", {
       sessionId,
       cols,
       rows,
       channel,
       clientId: clientId(),
       ...(durable === undefined ? {} : { durable }),
-    }),
+    }) as Promise<AttachedTabInfo>,
   attachTab: (tabId: string, channel: unknown, replayBytes?: number, resume?: StreamResumeAnchor, sessionId?: string) =>
     call<AttachedTabInfo>("terminal_attach_tab", {
       tabId,
@@ -406,22 +410,22 @@ export const terminalApi = {
     data: Uint8Array,
     productionConfirmation?: BroadcastProductionConfirmation,
   ) =>
-    call<void>("terminal_broadcast_prepare", {
+    ignoreResult(call("terminal_broadcast_prepare", {
       args: {
         tabIds: [...tabIds],
         data: Array.from(data),
         ...(productionConfirmation ? { productionConfirmation } : {}),
       },
-    }),
+    })),
   write: (tabId: string, data: Uint8Array, broadcast?: TerminalBroadcastWriteOptions) =>
-    call<void>("terminal_write", {
+    ignoreResult(call("terminal_write", {
       args: {
         tabId,
         data: Array.from(data),
         clientId: clientId(),
         ...(broadcast ? { broadcast } : {}),
       },
-    }),
+    })),
   resize: (tabId: string, cols: number, rows: number) =>
     call<void>("terminal_resize", { tabId, cols, rows, clientId: clientId() }),
   resizeFlush: (tabId: string) =>
@@ -455,7 +459,7 @@ export const terminalApi = {
   closeTab: (tabId: string, mode?: "kill" | "detach", sessionId?: string) =>
     call<void>("terminal_close_tab", { tabId, mode, clientId: clientId(), ...(sessionId === undefined ? {} : { sessionId }) }),
   renameTab: (tabId: string, title: string) =>
-    call<AttachedTabInfo>("terminal_rename_tab", { tabId, title }),
+    call("terminal_rename_tab", { tabId, title }) as Promise<AttachedTabInfo>,
   createTab: (sessionId: string, options?: { title?: string; command?: string }) =>
     call<AttachedTabInfo>("terminal_create_tab", {
       sessionId,

@@ -61,6 +61,24 @@ export type AssetProbeResultDTO = {
   durationMs: number;
 };
 
+export type AttachedTabDTO = {
+  tabId: string;
+  sessionId: string;
+  cols: number;
+  rows: number;
+  controller: string | null;
+  subscribers: number;
+  viewers: number;
+  exited: boolean;
+  retainable: boolean;
+  ephemeral: boolean;
+  encoding?: string;
+  title?: string;
+  shell: string;
+  fallbackNotice?: string;
+  attachmentId?: number;
+};
+
 export type BatchProgress = {
   batchId: string;
   phase: string;
@@ -72,6 +90,13 @@ export type BatchProgress = {
   canceled: number;
   finishedAt?: number;
   droppedEvents?: number;
+};
+
+export type BroadcastProductionConfirmation = {
+  confirmed: boolean;
+  targetSetHash: string;
+  inputHash: string;
+  environmentNames?: string[];
 };
 
 export type CompareResult = {
@@ -632,6 +657,13 @@ export type NameRequest = {
   name: string;
 };
 
+export type OpenTerminalRequest = {
+  sessionId: string;
+  cols: number;
+  rows: number;
+  durable?: boolean | null;
+};
+
 export type OutputSnapshot = {
   head: string;
   tail: string;
@@ -951,6 +983,11 @@ export type RemoteShareLinks = {
   links: RemoteShareLink[];
 };
 
+export type RenameTerminalRequest = {
+  tabId: string;
+  title: string;
+};
+
 export type RenderedCommand = {
   sessionId: string;
   command: string;
@@ -1086,6 +1123,30 @@ export type ServiceUnit = {
   description: string;
 };
 
+export type SessionConnectDeviceRequest = {
+  deviceId: string;
+  name: string;
+};
+
+export type SessionIDRequest = {
+  sessionId: string;
+};
+
+export type SessionInfoDTO = {
+  id: string;
+  assetId: string | null;
+  name: string;
+  kind: string;
+  status: string;
+  tabs: string[];
+  createdAt: number;
+  error?: string;
+  errorCode?: string;
+  attempt?: number;
+  nextRetryAt?: string | null;
+  staleConfig: boolean;
+};
+
 export type StartRequest = {
   runId: string;
   runbookId: string;
@@ -1150,6 +1211,17 @@ export type TargetSetUpdateRequest = {
   sessionIds: string[];
 };
 
+export type TerminalBroadcastPrepareRequest = {
+  tabIds: string[];
+  data: number[];
+  productionConfirmation?: BroadcastProductionConfirmation | null;
+};
+
+export type TerminalBroadcastWriteOptions = {
+  targetTabIds: string[];
+  productionConfirmation?: BroadcastProductionConfirmation | null;
+};
+
 export type TerminalPauseRequest = {
   tabId: string;
   channelId: string;
@@ -1180,6 +1252,13 @@ export type TerminalStreamAckRequest = {
   clientId: string;
   attachmentId: number;
   acceptedBytes: number;
+};
+
+export type TerminalWriteRequest = {
+  tabId: string;
+  data: number[];
+  clientId: string;
+  broadcast?: TerminalBroadcastWriteOptions | null;
 };
 
 export type WatchConditionDTO = {

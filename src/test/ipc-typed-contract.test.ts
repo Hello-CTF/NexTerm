@@ -183,4 +183,75 @@ void generatedOutputs;
     const diagnostics = compile([probe], { [probe]: source });
     expect(diagnostics, formatted(diagnostics)).toEqual([]);
   }, COMPILE_BUDGET_MS);
+
+  it("types the consumer-priority session terminal vertical without narrowing legacy fallbacks", () => {
+    const probe = resolve("src/test/__ipc_session_terminal_contract_probe.ts");
+    const source = `
+import { call, sessionApi, terminalApi } from "../ipc/commands";
+import type { AttachedTabInfo, DurableDescriptor, LiveTabInfo, SessionInfo } from "../ipc/commands";
+import { ipcContractManifest, type IPCOutput } from "../ipc/generated/manifest";
+import type { ScreenSnapshotDto } from "../ipc/types";
+
+type Equal<Left, Right> =
+  (<T>() => T extends Left ? 1 : 2) extends
+  (<T>() => T extends Right ? 1 : 2) ? true : false;
+type Assert<Value extends true> = Value;
+type DisconnectUnknown = Assert<Equal<IPCOutput<"session_disconnect">, unknown>>;
+type WriteUnknown = Assert<Equal<IPCOutput<"terminal_write">, unknown>>;
+type AttachStreamUnknown = Assert<Equal<(typeof ipcContractManifest.commands)["terminal_attach"]["streamPayload"], "unknown">>;
+const outputChecks: [DisconnectUnknown, WriteUnknown, AttachStreamUnknown] = [true, true, true];
+void outputChecks;
+
+const sessions: Promise<SessionInfo[]> = sessionApi.list();
+const attached: Promise<AttachedTabInfo> = terminalApi.attach("session-1", 80, 24, {});
+const disconnected: Promise<void> = sessionApi.disconnect("session-1");
+const prepared: Promise<void> = terminalApi.prepareBroadcast(["tab-1"], new Uint8Array([1]));
+const written: Promise<void> = terminalApi.write("tab-1", new Uint8Array([1]));
+const resized: Promise<void> = terminalApi.resize("tab-1", 80, 24);
+const live: Promise<LiveTabInfo[]> = terminalApi.listLive();
+const durable: Promise<DurableDescriptor[]> = terminalApi.listDurable("session-1");
+void [sessions, attached, disconnected, prepared, written, resized, live, durable];
+
+void call("session_connect_device", { args: { deviceId: "device-1", name: "Device" } });
+void call("session_connect_local");
+void call("session_disconnect", { sessionId: "session-1" });
+void call("session_list");
+void call("session_open_line_tab", { sessionId: "session-1", cols: 120, rows: 40, channel: {} });
+void call("session_quick_connect_user");
+void call("session_reconnect", { sessionId: "session-1" });
+void call("terminal_attach", { sessionId: "session-1", cols: 80, rows: 24, durable: false, channel: {} });
+void call("terminal_broadcast_prepare", { args: { tabIds: ["tab-1"], data: [1] } });
+void call("terminal_rename_tab", { tabId: "tab-1", title: "Deploy" });
+void call("terminal_write", { args: { tabId: "tab-1", clientId: "client-1", data: [1] } });
+
+// @ts-expect-error generated device input fields are checked
+void call("session_connect_device", { args: { deviceId: 42, name: "Device" } });
+// @ts-expect-error selected attach commands require their existing channel
+void call("terminal_attach", { sessionId: "session-1", cols: 80, rows: 24 });
+// @ts-expect-error selected nested write commands reject flat input
+void call("terminal_write", { tabId: "tab-1", clientId: "client-1", data: [1] });
+
+void call<SessionInfo>("session_connect", { args: { assetId: "asset-1" } });
+void call<AttachedTabInfo>("terminal_attach_tab", { tabId: "tab-1", replayBytes: undefined, channel: {} });
+void call<void>("terminal_resize", { tabId: "tab-1", clientId: "client-1", cols: 80, rows: 24 });
+void call<void>("terminal_resize_flush", { tabId: "tab-1", clientId: "client-1" });
+void call<ScreenSnapshotDto>("terminal_snapshot", { tabId: "tab-1" });
+void call<LiveTabInfo[]>("terminal_list");
+void call<DurableDescriptor[]>("terminal_list", { sessionId: "session-1", durable: true });
+
+async function generatedOutputs() {
+  const listed = await call("session_list");
+  const staleConfig: boolean = listed[0].staleConfig;
+  const nextRetryAt: string | null | undefined = listed[0].nextRetryAt;
+  const attached = await call("terminal_attach", { sessionId: "session-1", cols: 80, rows: 24, channel: {} });
+  const retainable: boolean = attached.retainable;
+  // @ts-expect-error generated output fields are checked
+  const invalidTabID: number = attached.tabId;
+  void [staleConfig, nextRetryAt, retainable, invalidTabID];
+}
+void generatedOutputs;
+`;
+    const diagnostics = compile([probe], { [probe]: source });
+    expect(diagnostics, formatted(diagnostics)).toEqual([]);
+  }, COMPILE_BUDGET_MS);
 });

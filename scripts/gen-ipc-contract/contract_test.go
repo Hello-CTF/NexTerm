@@ -210,6 +210,101 @@ func TestRemoteDesktopVerticalContracts(t *testing.T) {
 	}
 }
 
+func TestSessionTerminalVerticalContracts(t *testing.T) {
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	tests := []struct {
+		name    string
+		scope   string
+		nested  bool
+		channel bool
+		stream  string
+		output  string
+	}{
+		{name: "session_connect_device", scope: "session", nested: true, stream: "none", output: "SessionInfoDTO"},
+		{name: "session_connect_local", scope: "session", stream: "none", output: "SessionInfoDTO"},
+		{name: "session_disconnect", scope: "session", stream: "none", output: "unknown"},
+		{name: "session_list", scope: "session", stream: "none", output: "SessionInfoDTO[]"},
+		{name: "session_open_line_tab", scope: "session", channel: true, stream: "binary", output: "AttachedTabDTO"},
+		{name: "session_quick_connect_user", scope: "session", stream: "none", output: "string"},
+		{name: "session_reconnect", scope: "session", stream: "none", output: "boolean"},
+		{name: "terminal_attach", scope: "terminal", channel: true, stream: "binary", output: "AttachedTabDTO"},
+		{name: "terminal_broadcast_prepare", scope: "terminal", nested: true, stream: "none", output: "unknown"},
+		{name: "terminal_rename_tab", scope: "terminal", stream: "none", output: "AttachedTabDTO"},
+		{name: "terminal_write", scope: "terminal", nested: true, stream: "none", output: "unknown"},
+	}
+	selected := make(map[string]bool, len(tests))
+	registry := newTypeRegistry()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, ok := commands[test.name]
+			if !ok {
+				t.Fatalf("selected command %q is missing", test.name)
+			}
+			if command.Scope != test.scope || command.Nested != test.nested || command.Channel != test.channel || command.Stream != test.stream {
+				t.Fatalf("metadata = scope:%q nested:%t channel:%t stream:%s, want scope:%q nested:%t channel:%t stream:%s",
+					command.Scope, command.Nested, command.Channel, command.Stream, test.scope, test.nested, test.channel, test.stream)
+			}
+			if command.Input == nil || command.Output == nil {
+				t.Fatalf("selected command must carry input/output DTO metadata: %+v", command)
+			}
+			output, err := registry.ref(command.Output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if output.TS != test.output {
+				t.Fatalf("output = %q, want %q", output.TS, test.output)
+			}
+			selected[test.name] = true
+		})
+	}
+	if len(selected) != 11 {
+		t.Fatalf("selected session/terminal command count = %d, want 11", len(selected))
+	}
+	for name, command := range commands {
+		if (command.Scope == "session" || command.Scope == "terminal") && !selected[name] {
+			t.Errorf("unexpected command %q joined the session/terminal vertical scopes", name)
+		}
+	}
+	for _, name := range []string{
+		"session_connect",
+		"session_connect_quick",
+		"session_line_exec",
+		"session_probe",
+		"session_probe_host_key",
+		"terminal_attach_tab",
+		"terminal_claim",
+		"terminal_close_tab",
+		"terminal_create_tab",
+		"terminal_detach",
+		"terminal_dump",
+		"terminal_export_log",
+		"terminal_list",
+		"terminal_record_start",
+		"terminal_record_status",
+		"terminal_record_stop",
+		"terminal_release",
+		"terminal_resize",
+		"terminal_resize_flush",
+		"terminal_screen_text",
+		"terminal_set_visible",
+		"terminal_snapshot",
+		"terminal_switch_encoding",
+		"terminal_tail",
+	} {
+		command, ok := commands[name]
+		if !ok {
+			t.Fatalf("deferred legacy command %q is missing", name)
+		}
+		if command.Scope != "" || command.Input != nil || command.Output != nil {
+			t.Fatalf("deferred command %q acquired DTO metadata: %+v", name, command)
+		}
+	}
+	if rendered := registry.render(); !strings.Contains(rendered, "nextRetryAt?: string | null;") {
+		t.Fatalf("session DTO does not preserve the JSON time contract:\n%s", rendered)
+	}
+}
+
 func TestConsumedJSONFieldRenameFailsDriftCheck(t *testing.T) {
 	baseline := generateForTest(t, nil)
 	root := repositoryRoot(t)
