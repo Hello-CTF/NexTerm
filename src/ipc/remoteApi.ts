@@ -23,7 +23,9 @@ export interface RemoteLinkResult extends AccountLink {
 // mfa / resetPassword complete two-factor verification and forced password change onboarding (cookie+CSRF held in memory once the session is established).
 export const remoteLinkApi = {
   linkSet: (patch: { url?: string; username?: string; password?: string; insecure?: boolean }) =>
-    call<RemoteLinkResult>("sync_link_set", { args: patch }),
+    call("sync_link_set", {
+      args: patch as unknown as import("./generated/types").LinkPatch,
+    }) as Promise<RemoteLinkResult>,
 
   mfa: (code: string) =>
     call("sync_link_mfa", { args: { code } }) as Promise<RemoteLinkResult>,

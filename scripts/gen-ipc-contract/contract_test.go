@@ -195,17 +195,111 @@ func TestRemoteDesktopVerticalContracts(t *testing.T) {
 		t.Fatalf("selected remote desktop command count = %d, want 28", len(selected))
 	}
 	for name, command := range commands {
-		if (command.Scope == "remote" || command.Scope == "preview-share" || command.Scope == "sync") && !selected[name] {
+		if (command.Scope == "remote" || command.Scope == "preview-share") && !selected[name] {
 			t.Errorf("unexpected command %q joined the remote desktop vertical scopes", name)
 		}
 	}
-	for _, name := range []string{"sync_link_set", "app_info"} {
-		command, ok := commands[name]
-		if !ok {
-			t.Fatalf("excluded legacy command %q is missing", name)
+	command, ok := commands["app_info"]
+	if !ok {
+		t.Fatal("excluded legacy command app_info is missing")
+	}
+	if command.Scope != "" || command.Input != nil || command.Output != nil {
+		t.Fatalf("excluded command app_info acquired DTO metadata: %+v", command)
+	}
+}
+
+func TestSyncVerticalContracts(t *testing.T) {
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	tests := []struct {
+		name   string
+		nested bool
+	}{
+		{name: "sync_apply_objects", nested: true},
+		{name: "sync_bundle_read", nested: true},
+		{name: "sync_bundle_write", nested: true},
+		{name: "sync_collect_ai_grants"},
+		{name: "sync_collect_ai_permission"},
+		{name: "sync_collect_ai_profiles", nested: true},
+		{name: "sync_collect_assets", nested: true},
+		{name: "sync_collect_credentials", nested: true},
+		{name: "sync_collect_known_hosts", nested: true},
+		{name: "sync_collect_preferences"},
+		{name: "sync_collect_tombstones", nested: true},
+		{name: "sync_compare"},
+		{name: "sync_digest"},
+		{name: "sync_export", nested: true},
+		{name: "sync_import", nested: true},
+		{name: "sync_kind_opt_in_get"},
+		{name: "sync_kind_opt_in_set", nested: true},
+		{name: "sync_link_get"},
+		{name: "sync_link_mfa", nested: true},
+		{name: "sync_link_reset_password", nested: true},
+		{name: "sync_link_set", nested: true},
+		{name: "sync_preferences_get"},
+		{name: "sync_preferences_set", nested: true},
+		{name: "sync_repair_undecryptable", nested: true},
+		{name: "sync_status"},
+		{name: "sync_wake"},
+	}
+	selected := make(map[string]bool, len(tests))
+	registry := newTypeRegistry()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, ok := commands[test.name]
+			if !ok {
+				t.Fatalf("selected command %q is missing", test.name)
+			}
+			if command.Scope != "sync" || command.Nested != test.nested {
+				t.Fatalf("metadata = scope:%q nested:%t, want scope:sync nested:%t", command.Scope, command.Nested, test.nested)
+			}
+			if command.Channel || command.Stream != "none" {
+				t.Fatalf("unexpected channel/stream metadata: %+v", command)
+			}
+			if command.Input == nil || command.Output == nil {
+				t.Fatalf("selected command must carry input/output DTO metadata: %+v", command)
+			}
+			if _, err := registry.ref(command.Input); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := registry.ref(command.Output); err != nil {
+				t.Fatal(err)
+			}
+			selected[test.name] = true
+		})
+	}
+	for name, command := range commands {
+		if strings.HasPrefix(name, "sync_") && !selected[name] {
+			t.Errorf("sync command %q is missing from the vertical inventory", name)
 		}
-		if command.Scope != "" || command.Input != nil || command.Output != nil {
-			t.Fatalf("excluded command %q acquired DTO metadata: %+v", name, command)
+		if command.Scope == "sync" && !selected[name] {
+			t.Errorf("unexpected command %q joined the sync vertical", name)
+		}
+	}
+	transcript := commands["transcript_sync_opt_in"]
+	if transcript.Scope != "" || transcript.Input != nil || transcript.Output != nil {
+		t.Fatalf("transcript opt-in must remain outside the sync vertical: %+v", transcript)
+	}
+
+	rendered := registry.render()
+	for _, want := range []string{
+		"export type ApplyObject = {\n  id: string;\n  kind: string;\n  payload: unknown;\n};",
+		"secret?: string | null;",
+		"apiKey?: string | null;",
+		"mfaTicket?: string;",
+		"recoveryKey?: string;",
+		"remoteBlobHash?: string;",
+		"localPayloadHash?: string;",
+		"credTombstones?: SyncCredentialTombstone[];",
+		"snippets?: SyncBundleSnippet[];",
+		"warnings?: string[];",
+		"value: unknown;",
+		"defaults: Record<string, unknown>;",
+		"overrides: Record<string, unknown>;",
+		"effective: Record<string, unknown>;",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("generated sync declarations are missing %q", want)
 		}
 	}
 }

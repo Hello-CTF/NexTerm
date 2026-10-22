@@ -164,7 +164,6 @@ void call("sync_link_mfa", { args: { code: "123456" } });
 void call("sync_link_reset_password", { args: { newPassword: "new-password" } });
 void call("preview_share_create", { args: { tabId: "tab-1", ttlMs: 60_000 } });
 void call("sync_repair_undecryptable", { args: { id: "a1", action: "clear-cloud", userId: "u-1", compareToken: "token", remoteSeq: 1, remoteBlobHash: "hash" } });
-void call<{ connect: string }>("sync_link_set", { args: {} });
 void call<unknown>("app_info");
 
 async function generatedOutputs() {
@@ -177,6 +176,94 @@ async function generatedOutputs() {
   // @ts-expect-error generated output fields are checked
   const invalidToken: number = compare.compareToken;
   void [url, recoveryKey, compareToken, remoteBlobHash, invalidToken];
+}
+void generatedOutputs;
+`;
+    const diagnostics = compile([probe], { [probe]: source });
+    expect(diagnostics, formatted(diagnostics)).toEqual([]);
+  }, COMPILE_BUDGET_MS);
+
+  it("types the complete sync vertical while preserving facade compatibility and dynamic unknowns", () => {
+    const probe = resolve("src/test/__ipc_sync_vertical_contract_probe.ts");
+    const source = `
+import { call, syncApi } from "../ipc/commands";
+import { remoteLinkApi, type RemoteLinkResult } from "../ipc/remoteApi";
+import type { IPCInput, IPCOutput } from "../ipc/generated/manifest";
+import type {
+  AccountLink,
+  SyncApplyResult,
+  SyncBundleWriteResult,
+  SyncCollectCredentialsResult,
+  SyncDigest,
+  SyncStatus,
+} from "../ipc/types";
+
+type Equal<Left, Right> =
+  (<T>() => T extends Left ? 1 : 2) extends
+  (<T>() => T extends Right ? 1 : 2) ? true : false;
+type Assert<Value extends true> = Value;
+type DynamicChecks = [
+  Assert<Equal<IPCInput<"sync_apply_objects">["objects"][number]["payload"], unknown>>,
+  Assert<Equal<IPCOutput<"sync_collect_preferences">[number]["value"], unknown>>,
+  Assert<Equal<IPCOutput<"sync_preferences_get">["effective"][string], unknown>>,
+];
+const dynamicChecks: DynamicChecks = [true, true, true];
+void dynamicChecks;
+
+const digest: Promise<SyncDigest> = syncApi.digest();
+const written: Promise<SyncBundleWriteResult> = syncApi.writeBundleFile("/tmp/sync-bundle.nex", "bundle-content");
+const linked: Promise<AccountLink> = syncApi.linkSet({ username: "alice" });
+const remoteLinked: Promise<RemoteLinkResult> = remoteLinkApi.linkSet({ password: "updated-password" });
+const status: Promise<SyncStatus> = syncApi.status();
+const applied: Promise<SyncApplyResult> = syncApi.applyObjects([{ id: "object-1", kind: "preference", payload: { free: ["form", null] } }]);
+const credentials: Promise<SyncCollectCredentialsResult> = syncApi.collectCredentials(false);
+void [digest, written, linked, remoteLinked, status, applied, credentials];
+void syncApi.readBundleFile("/tmp/sync-bundle.nex");
+void syncApi.preferencesUpdate({ clear: ["theme"] });
+void syncApi.kindOptInSet({ knownHost: false });
+
+declare const linkPatch: IPCInput<"sync_link_set">;
+declare const bundleRead: IPCInput<"sync_bundle_read">;
+declare const preferenceUpdate: IPCInput<"sync_preferences_set">;
+void call("sync_digest");
+void call("sync_link_get");
+void call("sync_link_set", { args: linkPatch });
+void call("sync_bundle_read", { args: bundleRead });
+void call("sync_preferences_set", { args: preferenceUpdate });
+void call("sync_wake");
+void call("sync_apply_objects", { args: { objects: [{ id: "object-1", kind: "preference", payload: { free: ["form", null] } }] } });
+void call("sync_kind_opt_in_set", { args: { knownHost: false } });
+void call("sync_collect_credentials", { args: { revealSecrets: false } });
+void call("sync_export", { args: { assetIds: ["asset-1"], withCreds: false } });
+
+// @ts-expect-error typed sync commands reject the legacy generic output escape
+void call<{ connect: string }>("sync_link_set", { args: linkPatch });
+// @ts-expect-error generated link patch fields are checked
+void call("sync_link_set", { args: { url: 42 } });
+// @ts-expect-error nested link patches reject flat input
+void call("sync_link_set", { url: "https://sync.example.com" });
+// @ts-expect-error owner identity is injected by the authenticated session
+void call("sync_kind_opt_in_set", { args: { knownHost: true, userId: "other-user" } });
+// @ts-expect-error secret reveal flags remain boolean
+void call("sync_collect_credentials", { args: { revealSecrets: "yes" } });
+// @ts-expect-error credential export flags remain boolean
+void call("sync_export", { args: { assetIds: ["asset-1"], withCreds: "yes" } });
+
+async function generatedOutputs() {
+  const link = await call("sync_link_get");
+  const hasPassword: boolean = link.hasPassword;
+  // @ts-expect-error the encrypted link view never exposes its stored password
+  const plaintextPassword = link.password;
+  const linked = await call("sync_link_set", { args: linkPatch });
+  const mfaTicket: string | undefined = linked.mfaTicket;
+  const recoveryKey: string | undefined = linked.recoveryKey;
+  const bundle = await call("sync_export", { args: { assetIds: ["asset-1"], withCreds: false } });
+  const legacyTombstones: { id: string; deletedAt: number }[] | undefined = bundle.credTombstones;
+  const imported = await call("sync_import", { args: { bundle, force: false } });
+  const orphaned: number = imported.credsOrphaned;
+  const collected = await call("sync_collect_credentials", { args: { revealSecrets: false } });
+  const secret: string | null | undefined = collected.credentials[0].secret;
+  void [hasPassword, plaintextPassword, mfaTicket, recoveryKey, legacyTombstones, orphaned, secret];
 }
 void generatedOutputs;
 `;

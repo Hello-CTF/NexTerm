@@ -1337,70 +1337,77 @@ export const forwardApi = {
 };
 
 export const syncApi = {
-  digest: () => call<import("./types").SyncDigest>("sync_digest"),
+  digest: () => call("sync_digest") as Promise<import("./types").SyncDigest>,
 
   exportAssets: (assetIds: string[], withCreds: boolean) =>
-    call<import("./types").SyncBundle>("sync_export", { args: { assetIds, withCreds } }),
+    call("sync_export", { args: { assetIds, withCreds } }) as Promise<import("./types").SyncBundle>,
 
   importBundle: (bundle: import("./types").SyncBundle, force: boolean) =>
-    call<import("./types").ImportReport>("sync_import", { args: { bundle, force } }),
+    call("sync_import", { args: { bundle, force } }) as Promise<import("./types").ImportReport>,
 
   readBundleFile: (path: string, password?: string) =>
-    call<string>("sync_bundle_read", { args: { path, password } }),
+    call("sync_bundle_read", {
+      args: { path, password } as import("./generated/types").BundleFileRequest,
+    }),
 
   writeBundleFile: (path: string, content: string, password?: string) =>
-    call<import("./types").SyncBundleWriteResult>("sync_bundle_write", {
+    call("sync_bundle_write", {
       args: { path, content, password },
-    }),
+    }) as Promise<import("./types").SyncBundleWriteResult>,
 
-  linkGet: () => call<import("./types").AccountLink>("sync_link_get"),
+  linkGet: () => call("sync_link_get") as Promise<import("./types").AccountLink>,
   linkSet: (patch: { url?: string; username?: string; password?: string; insecure?: boolean }) =>
-    call<import("./types").AccountLink>("sync_link_set", { args: patch }),
+    call("sync_link_set", {
+      args: patch as unknown as import("./generated/types").LinkPatch,
+    }) as Promise<import("./types").AccountLink>,
 
-  status: () => call<import("./types").SyncStatus>("sync_status"),
-  wake: () => call<void>("sync_wake"),
+  status: () => call("sync_status") as Promise<import("./types").SyncStatus>,
+  wake: () => ignoreResult(call("sync_wake")),
 
   applyObjects: (objects: import("./types").SyncApplyObject[]) =>
-    call<import("./types").SyncApplyResult>("sync_apply_objects", { args: { objects } }),
+    call("sync_apply_objects", { args: { objects } }) as Promise<import("./types").SyncApplyResult>,
 
   collectAssets: (includeDeleted: boolean, afterId?: string, limit?: number) =>
-    call<import("./types").SyncCollectAssetsResult>("sync_collect_assets", {
+    call("sync_collect_assets", {
       args: { includeDeleted, afterId, limit },
-    }),
+    }) as Promise<import("./types").SyncCollectAssetsResult>,
 
   collectTombstones: (afterId?: string, limit?: number) =>
-    call<import("./types").SyncCollectTombstonesResult>("sync_collect_tombstones", {
+    call("sync_collect_tombstones", {
       args: { afterId, limit },
-    }),
+    }) as Promise<import("./types").SyncCollectTombstonesResult>,
 
   collectCredentials: (revealSecrets: boolean, afterId?: string, limit?: number) =>
-    call<import("./types").SyncCollectCredentialsResult>("sync_collect_credentials", {
+    call("sync_collect_credentials", {
       args: { revealSecrets, afterId, limit },
-    }),
+    }) as Promise<import("./types").SyncCollectCredentialsResult>,
 
   collectKnownHosts: (afterId?: string, limit?: number) =>
-    call<import("./types").SyncCollectKnownHostsResult>("sync_collect_known_hosts", {
+    call("sync_collect_known_hosts", {
       args: { afterId, limit },
-    }),
+    }) as Promise<import("./types").SyncCollectKnownHostsResult>,
 
   collectAIProfiles: (revealSecrets: boolean, afterId?: string, limit?: number) =>
-    call<import("./types").SyncCollectAIProfilesResult>("sync_collect_ai_profiles", {
+    call("sync_collect_ai_profiles", {
       args: { revealSecrets, afterId, limit },
-    }),
+    }) as Promise<import("./types").SyncCollectAIProfilesResult>,
 
-  collectAIPermission: () => call<import("./types").SyncCollectAIPermission>("sync_collect_ai_permission"),
+  collectAIPermission: () =>
+    call("sync_collect_ai_permission") as Promise<import("./types").SyncCollectAIPermission>,
 
-  collectAIGrants: () => call<import("./types").SyncCollectAIGrants>("sync_collect_ai_grants"),
+  collectAIGrants: () => call("sync_collect_ai_grants") as Promise<import("./types").SyncCollectAIGrants>,
 
-  collectPreferences: () => call<import("./types").SyncCollectPreference[]>("sync_collect_preferences"),
+  collectPreferences: () => call("sync_collect_preferences") as Promise<import("./types").SyncCollectPreference[]>,
 
-  preferencesGet: () => call<import("./types").PreferenceScopeView>("sync_preferences_get"),
+  preferencesGet: () => call("sync_preferences_get") as Promise<import("./types").PreferenceScopeView>,
 
   preferencesUpdate: (update: { set?: Record<string, unknown>; clear?: string[] }) =>
-    call<import("./types").PreferenceScopeView>("sync_preferences_set", { args: update }),
+    call("sync_preferences_set", {
+      args: update as import("./generated/types").PreferenceUpdate,
+    }) as Promise<import("./types").PreferenceScopeView>,
 
-  kindOptInGet: () => call<import("./types").SyncKindOptIn>("sync_kind_opt_in_get"),
+  kindOptInGet: () => call("sync_kind_opt_in_get") as Promise<import("./types").SyncKindOptIn>,
 
   kindOptInSet: (patch: Partial<import("./types").SyncKindOptIn>) =>
-    call<import("./types").SyncKindOptIn>("sync_kind_opt_in_set", { args: patch }),
+    call("sync_kind_opt_in_set", { args: patch }) as Promise<import("./types").SyncKindOptIn>,
 };

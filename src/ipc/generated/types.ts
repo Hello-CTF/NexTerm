@@ -18,6 +18,30 @@ export type AdvanceRequest = {
   productionConfirmation?: ProductionConfirmation | null;
 };
 
+export type ApplyObject = {
+  id: string;
+  kind: string;
+  payload: unknown;
+};
+
+export type ApplyObjectResult = {
+  id: string;
+  kind: string;
+  result: string;
+  warning?: string;
+};
+
+export type ApplyObjectsRequest = {
+  objects: ApplyObject[];
+};
+
+export type ApplyObjectsResult = {
+  applied: number;
+  identical: number;
+  skipped: number;
+  objects: ApplyObjectResult[];
+};
+
 export type AssetBulkEditIPCRequest = {
   targets: AssetBulkEditTarget[];
   groupId?: string | null;
@@ -99,6 +123,188 @@ export type BroadcastProductionConfirmation = {
   environmentNames?: string[];
 };
 
+export type BundleFileRequest = {
+  path: string;
+  content: string;
+  password?: string;
+};
+
+export type BundleWriteResult = {
+  encrypted: boolean;
+};
+
+export type CollectAIGrantDevice = {
+  id: string;
+  deviceId: string;
+  kinds: string[];
+  updatedAt: number;
+};
+
+export type CollectAIGrantMode = {
+  id: string;
+  deviceId: string;
+  mode: string;
+  updatedAt: number;
+};
+
+export type CollectAIGrantRule = {
+  id: string;
+  deviceId: string;
+  action: string;
+  path?: string;
+  expiresAt?: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type CollectAIGrants = {
+  grants: CollectAIGrantDevice[];
+  rules: CollectAIGrantRule[];
+  modes: CollectAIGrantMode[];
+};
+
+export type CollectAIPermission = {
+  id: string;
+  mode: string;
+  dangerRules: string[];
+  updatedAt: number;
+  found: boolean;
+};
+
+export type CollectAIProfile = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  model: string;
+  fallbackModel?: string;
+  temperature?: number | null;
+  reasoningEffort?: string;
+  contextWindow: number;
+  maxTokens?: number | null;
+  proxy: string | null;
+  stream: boolean;
+  requestTimeoutSeconds?: number | null;
+  idleTimeoutSeconds?: number | null;
+  circuitFailureThreshold?: number | null;
+  circuitCooldownSeconds?: number | null;
+  updatedAt: number;
+  apiKey?: string | null;
+  apiKeySet: boolean;
+  apiKeyState: string;
+};
+
+export type CollectAIProfilesRequest = {
+  revealSecrets: boolean;
+  afterId?: string;
+  limit?: number;
+};
+
+export type CollectAIProfilesResult = {
+  profiles: CollectAIProfile[];
+  hasMore: boolean;
+  nextAfterId?: string;
+};
+
+export type CollectAsset = {
+  id: string;
+  groupId?: string | null;
+  kind: string;
+  name: string;
+  host?: string | null;
+  port?: number | null;
+  username?: string | null;
+  authKind?: string | null;
+  keyPath?: string | null;
+  credId?: string | null;
+  optionsJson: string;
+  tags: string;
+  note: string;
+  sort: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number | null;
+};
+
+export type CollectAssetsRequest = {
+  includeDeleted: boolean;
+  afterId?: string;
+  limit?: number;
+};
+
+export type CollectAssetsResult = {
+  assets: CollectAsset[];
+  hasMore: boolean;
+  nextAfterId?: string;
+};
+
+export type CollectCredential = {
+  id: string;
+  name: string;
+  kind: string;
+  updatedAt: number;
+  secret?: string | null;
+  secretState: string;
+};
+
+export type CollectCredentialsRequest = {
+  revealSecrets: boolean;
+  afterId?: string;
+  limit?: number;
+};
+
+export type CollectCredentialsResult = {
+  credentials: CollectCredential[];
+  hasMore: boolean;
+  nextAfterId?: string;
+};
+
+export type CollectKnownHost = {
+  id: string;
+  host: string;
+  port: number;
+  keyType: string;
+  fingerprint: string;
+  addedAt: number;
+};
+
+export type CollectKnownHostsRequest = {
+  afterId?: string;
+  limit?: number;
+};
+
+export type CollectKnownHostsResult = {
+  knownHosts: CollectKnownHost[];
+  hasMore: boolean;
+  nextAfterId?: string;
+};
+
+export type CollectPreference = {
+  id: string;
+  key: string;
+  value: unknown;
+  updatedAt: number;
+};
+
+export type CollectTombstone = {
+  id: string;
+  targetKind: string;
+  deletedAt: number;
+  host?: string;
+  port?: number;
+  keyType?: string;
+};
+
+export type CollectTombstonesRequest = {
+  afterId?: string;
+  limit?: number;
+};
+
+export type CollectTombstonesResult = {
+  tombstones: CollectTombstone[];
+  hasMore: boolean;
+  nextAfterId?: string;
+};
+
 export type CompareResult = {
   rows: CompareRow[];
   warnings?: string[];
@@ -159,6 +365,18 @@ export type DeviceGrant = {
   kinds: string[];
   permanent: boolean;
   updatedAt: number;
+};
+
+export type DigestEntry = {
+  id: string;
+  name: string;
+  kind: string;
+  host: string | null;
+  username: string | null;
+  updatedAt: number;
+  deletedAt: number | null;
+  hasCred: boolean;
+  groupId: string | null;
 };
 
 export type Dispatch = {
@@ -391,6 +609,11 @@ export type ExecTargetSet = {
   updatedAt: number;
 };
 
+export type ExportBundleRequest = {
+  assetIds: string[];
+  withCreds: boolean;
+};
+
 export type FSCancelRequest = {
   taskId: string;
   attemptId?: string;
@@ -532,6 +755,30 @@ export type HostShareStreamRequest = {
   streamId: string;
 };
 
+export type ImportBundleRequest = {
+  bundle: SyncBundle;
+  force: boolean;
+};
+
+export type ImportReport = {
+  groupsCreated: number;
+  groupsUpdated: number;
+  assetsCreated: number;
+  assetsUpdated: number;
+  credsCreated: number;
+  credsUpdated: number;
+  credsDeleted: number;
+  credsOrphaned: number;
+  snippetsCreated: number;
+  snippetsUpdated: number;
+  skippedNewer: number;
+  skippedNewerDetails?: SkippedNewerEntry[];
+  conflicts: number;
+  conflictDetails?: SkippedNewerEntry[];
+  refused: number;
+  warnings: string[];
+};
+
 export type InventoryCandidateDTO = {
   key: string;
   kind: string;
@@ -613,6 +860,22 @@ export type KillRequest = {
   productionConfirmation?: ProductionConfirmation | null;
 };
 
+export type KindOptIn = {
+  knownHost: boolean;
+  aiProfile: boolean;
+  aiPermission: boolean;
+  aiGrant: boolean;
+  preferences: boolean;
+};
+
+export type KindOptInPatch = {
+  knownHost?: boolean | null;
+  aiProfile?: boolean | null;
+  aiPermission?: boolean | null;
+  aiGrant?: boolean | null;
+  preferences?: boolean | null;
+};
+
 export type Link = {
   url: string;
   username: string;
@@ -624,6 +887,13 @@ export type Link = {
 
 export type LinkMFARequest = {
   code: string;
+};
+
+export type LinkPatch = {
+  url: string | null;
+  username: string | null;
+  password: string | null;
+  insecure: boolean | null;
 };
 
 export type LinkResetPasswordRequest = {
@@ -685,6 +955,17 @@ export type OverrideInput = {
   description?: string | null;
   body?: string | null;
   disabled?: boolean;
+};
+
+export type PreferenceScopeView = {
+  defaults: Record<string, unknown>;
+  overrides: Record<string, unknown>;
+  effective: Record<string, unknown>;
+};
+
+export type PreferenceUpdate = {
+  set: Record<string, unknown>;
+  clear: string[];
 };
 
 export type PrepareRequest = {
@@ -1147,6 +1428,15 @@ export type SessionInfoDTO = {
   staleConfig: boolean;
 };
 
+export type SkippedNewerEntry = {
+  kind: string;
+  id: string;
+  name: string;
+  localRevision: number;
+  remoteRevision: number;
+  equalRevision: boolean;
+};
+
 export type StartRequest = {
   runId: string;
   runbookId: string;
@@ -1157,6 +1447,22 @@ export type StartRequest = {
   stopOnFailure?: boolean | null;
   timeoutMs?: number;
   maxConcurrent?: number;
+};
+
+export type Status = {
+  configured: boolean;
+  loggedIn: boolean;
+  username?: string;
+  userId?: string;
+  head?: string;
+  seq: number;
+  verifiedAt: number;
+  lastError: string;
+  lastAttemptAt: string;
+  lastSuccessAt: string;
+  warnings?: string[];
+  paused: boolean;
+  vaultLocked: boolean;
 };
 
 export type Step = {
@@ -1175,6 +1481,78 @@ export type StepState = {
   results: ExecBatchResult[];
   batchIds: string[];
   error?: string;
+};
+
+export type SyncBundle = {
+  protocol: number;
+  origin: string;
+  exportedAt: number;
+  groups: SyncBundleGroup[];
+  assets: SyncBundleAsset[];
+  creds: SyncBundleCredential[];
+  credTombstones?: SyncCredentialTombstone[];
+  snippets?: SyncBundleSnippet[];
+  warnings?: string[];
+};
+
+export type SyncBundleAsset = {
+  id: string;
+  groupId: string | null;
+  kind: string;
+  name: string;
+  host: string | null;
+  port: number | null;
+  username: string | null;
+  authKind: string | null;
+  keyPath: string | null;
+  credId: string | null;
+  optionsJson: string;
+  tags: string;
+  note: string;
+  sort: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt: number | null;
+};
+
+export type SyncBundleCredential = {
+  id: string;
+  name: string;
+  kind: string;
+  secret: string;
+  updatedAt?: number;
+};
+
+export type SyncBundleGroup = {
+  id: string;
+  parentId: string | null;
+  name: string;
+  sort: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type SyncBundleSnippet = {
+  id: string;
+  groupId: string | null;
+  name: string;
+  body: string;
+  sort: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type SyncCredentialTombstone = {
+  id: string;
+  deletedAt: number;
+};
+
+export type SyncDigest = {
+  origin: string;
+  protocol: number;
+  appVersion: string;
+  desktop: boolean;
+  assets: DigestEntry[];
 };
 
 export type TargetOutputSnapshot = {
