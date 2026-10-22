@@ -25,7 +25,7 @@ import {
   getResolvedTerminalTheme,
   subscribeAppearancePrefs,
 } from "../../app/preferences";
-import { xtermThemeFor } from "./xtermTheme";
+import { TERMINAL_FONT_STACKS, xtermThemeFor } from "./xtermTheme";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
 import {
   createTerminalStreamWriter,
@@ -200,14 +200,15 @@ export function XtermView(props: XtermViewProps) {
 
   useEffect(() => {
     if (!hostRef.current || termRef.current) return;
+    const appearance = getAppearancePrefs();
     const term = new Terminal({
       scrollback: 100_000,
       allowProposedApi: true,
       overviewRuler: { width: 10 },
-      fontFamily: "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
-      fontSize: getAppearancePrefs().terminalFontSize,
+      fontFamily: TERMINAL_FONT_STACKS[appearance.terminalFontFamily],
+      fontSize: appearance.terminalFontSize,
       cursorBlink: true,
-      theme: { ...xtermThemeFor(getResolvedTerminalTheme()), cursor: accentColor() },
+      theme: { ...xtermThemeFor(getResolvedTerminalTheme(), appearance.terminalContrast), cursor: accentColor() },
     });
     const search = new SearchAddon();
     term.loadAddon(search);
@@ -1235,11 +1236,12 @@ export function XtermView(props: XtermViewProps) {
       const term = termRef.current;
       if (!term) return;
       const prefs = getAppearancePrefs();
-      if (term.options.fontSize !== prefs.terminalFontSize) {
-        term.options.fontSize = prefs.terminalFontSize;
-        fitIfSized(false, true);
-      }
-      term.options.theme = { ...xtermThemeFor(getResolvedTerminalTheme()), cursor: accentColor() };
+      const fontFamily = TERMINAL_FONT_STACKS[prefs.terminalFontFamily];
+      const fontMetricsChanged = term.options.fontSize !== prefs.terminalFontSize || term.options.fontFamily !== fontFamily;
+      term.options.fontSize = prefs.terminalFontSize;
+      term.options.fontFamily = fontFamily;
+      if (fontMetricsChanged) fitIfSized(false, true);
+      term.options.theme = { ...xtermThemeFor(getResolvedTerminalTheme(), prefs.terminalContrast), cursor: accentColor() };
     };
     return subscribeAppearancePrefs(applyAppearance);
   }, []);

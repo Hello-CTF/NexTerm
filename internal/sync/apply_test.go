@@ -428,16 +428,18 @@ func TestApplyObjectsPreferenceDottedIDs(t *testing.T) {
 	ctx := WithUserID(context.Background(), userID)
 
 	fontSize := applyPreference(t, "appearance.terminalFontSize", json.RawMessage("13"), 100)
+	fontFamily := applyPreference(t, "appearance.terminalFontFamily", json.RawMessage(`"fira-code"`), 100)
 	theme := applyPreference(t, "appearance.terminalTheme", json.RawMessage(`"light"`), 100)
+	contrast := applyPreference(t, "appearance.terminalContrast", json.RawMessage(`"high"`), 100)
 	permission := ApplyObject{ID: "global", Kind: KindAIPermission, Payload: applyPayload(t, aiPermissionObject{
 		ID: "global", Mode: "silent", DangerRules: []string{"rm -rf /"}, UpdatedAt: 100,
 	})}
 
-	result, err := instance.service.ApplyObjects(ctx, ApplyObjectsRequest{Objects: []ApplyObject{fontSize, theme, permission}})
+	result, err := instance.service.ApplyObjects(ctx, ApplyObjectsRequest{Objects: []ApplyObject{fontSize, fontFamily, theme, contrast, permission}})
 	if err != nil {
 		t.Fatalf("apply objects: %v", err)
 	}
-	if result.Applied != 3 || result.Skipped != 0 {
+	if result.Applied != 5 || result.Skipped != 0 {
 		t.Fatalf("result=%+v objects=%+v", result, result.Objects)
 	}
 	for _, entry := range result.Objects {
@@ -448,31 +450,41 @@ func TestApplyObjectsPreferenceDottedIDs(t *testing.T) {
 	if value, found, err := instance.db.SettingGet(ctx, prefix+"appearance.terminalFontSize"); err != nil || !found || value != "13" {
 		t.Fatalf("font size setting=%q found=%v err=%v", value, found, err)
 	}
+	if value, found, err := instance.db.SettingGet(ctx, prefix+"appearance.terminalFontFamily"); err != nil || !found || value != `"fira-code"` {
+		t.Fatalf("font family setting=%q found=%v err=%v", value, found, err)
+	}
 	if value, found, err := instance.db.SettingGet(ctx, prefix+"appearance.terminalTheme"); err != nil || !found || value != `"light"` {
 		t.Fatalf("theme setting=%q found=%v err=%v", value, found, err)
+	}
+	if value, found, err := instance.db.SettingGet(ctx, prefix+"appearance.terminalContrast"); err != nil || !found || value != `"high"` {
+		t.Fatalf("contrast setting=%q found=%v err=%v", value, found, err)
 	}
 	if value, found, err := instance.db.SettingGet(ctx, guard.PermissionSettingKeyForUser(ctx)); err != nil || !found || !strings.Contains(value, `"silent"`) {
 		t.Fatalf("permission setting=%q found=%v err=%v", value, found, err)
 	}
 
-	replay, err := instance.service.ApplyObjects(ctx, ApplyObjectsRequest{Objects: []ApplyObject{fontSize}})
+	replay, err := instance.service.ApplyObjects(ctx, ApplyObjectsRequest{Objects: []ApplyObject{fontSize, fontFamily, contrast}})
 	if err != nil {
 		t.Fatalf("replay apply: %v", err)
 	}
-	requireApplyResult(t, replay.Objects[0], ApplyResultIdentical)
+	for _, entry := range replay.Objects {
+		requireApplyResult(t, entry, ApplyResultIdentical)
+	}
 
-	tombstone := ApplyObject{ID: preferenceObjectPrefix + "appearance.terminalTheme", Kind: KindTombstone, Payload: applyPayload(t, tombstoneObject{
-		TargetKind: KindPreference, DeletedAt: 200,
-	})}
-	removed, err := instance.service.ApplyObjects(ctx, ApplyObjectsRequest{Objects: []ApplyObject{tombstone}})
-	if err != nil {
-		t.Fatalf("tombstone apply: %v", err)
+	for _, key := range []string{"appearance.terminalTheme", "appearance.terminalFontFamily", "appearance.terminalContrast"} {
+		tombstone := ApplyObject{ID: preferenceObjectPrefix + key, Kind: KindTombstone, Payload: applyPayload(t, tombstoneObject{
+			TargetKind: KindPreference, DeletedAt: 200,
+		})}
+		removed, err := instance.service.ApplyObjects(ctx, ApplyObjectsRequest{Objects: []ApplyObject{tombstone}})
+		if err != nil {
+			t.Fatalf("tombstone apply: %v", err)
+		}
+		requireApplyResult(t, removed.Objects[0], ApplyResultApplied)
+		if _, found, err := instance.db.SettingGet(ctx, prefix+key); err != nil || found {
+			t.Fatalf("preference %s must be deleted: found=%v err=%v", key, found, err)
+		}
+		requireSyncTombstone(t, instance, preferenceObjectPrefix+key, KindPreference, 200)
 	}
-	requireApplyResult(t, removed.Objects[0], ApplyResultApplied)
-	if _, found, err := instance.db.SettingGet(ctx, prefix+"appearance.terminalTheme"); err != nil || found {
-		t.Fatalf("theme setting must be deleted: found=%v err=%v", found, err)
-	}
-	requireSyncTombstone(t, instance, preferenceObjectPrefix+"appearance.terminalTheme", KindPreference, 200)
 }
 
 func TestApplyObjectsIDValidationByKind(t *testing.T) {

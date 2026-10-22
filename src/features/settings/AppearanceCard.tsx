@@ -3,10 +3,13 @@ import { useUi } from "../../app/store";
 import type { ThemeMode } from "../../app/theme";
 import {
   resetAppearancePrefs,
+  setTerminalContrast,
+  setTerminalFontFamily,
   setTerminalFontSize,
   setTerminalTheme,
   setUiFontPreset,
   setUiFontScale,
+  TERMINAL_FONT_FAMILIES,
   TERMINAL_FONT_SIZE_MAX,
   TERMINAL_FONT_SIZE_MIN,
   UI_FONT_PRESETS,
@@ -15,6 +18,8 @@ import {
   UI_FONT_SIZE_MIN,
   useAppearancePrefs,
   useResolvedTerminalTheme,
+  type TerminalContrast,
+  type TerminalFontFamily,
   type TerminalThemePref,
 } from "../../app/preferences";
 import { IconChevronDown, IconChevronRight, IconMinus, IconMonitor, IconPlus, IconRefresh } from "../../ui/icons";
@@ -30,6 +35,22 @@ const TERM_THEME_OPTIONS: { value: TerminalThemePref; label: string }[] = [
   { value: "light", label: "浅色" },
   { value: "interface", label: "跟随界面" },
 ];
+
+const TERM_CONTRAST_OPTIONS: { value: TerminalContrast; label: string }[] = [
+  { value: "standard", label: "标准" },
+  { value: "high", label: "高" },
+  { value: "maximum", label: "极高" },
+];
+
+const TERM_FONT_LABELS: Record<TerminalFontFamily, string> = {
+  cascadia: "Cascadia（默认）",
+  system: "系统等宽",
+  "jetbrains-mono": "JetBrains Mono",
+  "fira-code": "Fira Code",
+  "source-code-pro": "Source Code Pro",
+  menlo: "Menlo",
+  consolas: "Consolas",
+};
 
 export function AppearanceCard() {
   const themeMode = useUi((s) => s.themeMode);
@@ -49,7 +70,9 @@ export function AppearanceCard() {
     prefs.uiFontPreset === 13 &&
     prefs.uiFontScale === 1 &&
     prefs.terminalFontSize === 13 &&
-    prefs.terminalTheme === "dark";
+    prefs.terminalFontFamily === "cascadia" &&
+    prefs.terminalTheme === "dark" &&
+    prefs.terminalContrast === "standard";
   const advancedPanelId = useId();
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
@@ -194,6 +217,23 @@ export function AppearanceCard() {
             </div>
 
             <div className="mt-3.5">
+              <div className="nx-setting-label mb-1.5">终端对比度</div>
+              <div className="nx-segment" role="group" aria-label="终端对比度">
+                {TERM_CONTRAST_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`nx-segment-item ${prefs.terminalContrast === option.value ? "is-active" : ""}`}
+                    aria-pressed={prefs.terminalContrast === option.value}
+                    onClick={() => setTerminalContrast(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-3.5">
               <div className="nx-setting-label mb-1.5">终端字号</div>
               <div className="flex items-center gap-2">
                 <button
@@ -218,11 +258,26 @@ export function AppearanceCard() {
               </div>
             </div>
 
+            <div className="mt-3.5">
+              <div className="nx-setting-label mb-1.5">终端字体</div>
+              <select
+                className="nx-select nx-input-sm w-full"
+                aria-label="终端字体"
+                value={prefs.terminalFontFamily}
+                onChange={(event) => setTerminalFontFamily(event.target.value as TerminalFontFamily)}
+              >
+                {TERMINAL_FONT_FAMILIES.map((family) => (
+                  <option key={family} value={family}>{TERM_FONT_LABELS[family]}</option>
+                ))}
+              </select>
+              <div className="nx-hint mt-1.5">仅使用本机已安装字体；未安装时回退到系统等宽字体，不下载字体。</div>
+            </div>
+
             <div className="mt-3.5 flex items-center gap-2">
               <button
                 type="button"
                 className="nx-btn nx-btn-ghost nx-btn-sm"
-                title="恢复默认主题与外观（跟随系统、深色终端、13px、100% 倍率）"
+                title="恢复默认主题与外观（跟随系统、深色终端、标准对比度、Cascadia、13px、100% 倍率）"
                 aria-label="恢复默认主题与外观"
                 disabled={themeMode === "system" && appearanceIsDefault}
                 onClick={resetAll}

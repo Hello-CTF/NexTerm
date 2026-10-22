@@ -33,7 +33,9 @@ describe("appearance prefs defaults", () => {
       uiFontPreset: 13,
       uiFontScale: 1,
       terminalFontSize: 13,
+      terminalFontFamily: "cascadia",
       terminalTheme: "dark",
+      terminalContrast: "standard",
     });
     expect(localStorage.getItem(KEY)).toBeNull();
     expect(rootStyle("--nx-ui-font-size")).toBe("13px");
@@ -57,7 +59,9 @@ describe("appearance prefs defaults", () => {
         uiFontPreset: "big",
         uiFontScale: 99,
         terminalFontSize: 99,
+        terminalFontFamily: "downloaded-font",
         terminalTheme: "blue",
+        terminalContrast: "extreme",
       }),
     );
     const { prefs } = await loadPrefs();
@@ -65,7 +69,9 @@ describe("appearance prefs defaults", () => {
       uiFontPreset: 13,
       uiFontScale: 2,
       terminalFontSize: 32,
+      terminalFontFamily: "cascadia",
       terminalTheme: "dark",
+      terminalContrast: "standard",
     });
 
     localStorage.setItem(
@@ -84,18 +90,54 @@ describe("appearance prefs defaults", () => {
   });
 });
 
+describe("terminal font stacks", () => {
+  it("offers only curated local fonts with an explicit generic monospace fallback", async () => {
+    const { prefs } = await loadPrefs();
+    const { TERMINAL_FONT_STACKS } = await import("../features/terminal/xtermTheme");
+    expect(prefs.TERMINAL_FONT_FAMILIES).toEqual([
+      "cascadia",
+      "system",
+      "jetbrains-mono",
+      "fira-code",
+      "source-code-pro",
+      "menlo",
+      "consolas",
+    ]);
+    expect(TERMINAL_FONT_STACKS.cascadia).toBe(
+      "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
+    );
+    const primaryNames = {
+      system: "ui-monospace",
+      "jetbrains-mono": "JetBrains Mono",
+      "fira-code": "Fira Code",
+      "source-code-pro": "Source Code Pro",
+      menlo: "Menlo",
+      consolas: "Consolas",
+    };
+    for (const [family, primaryName] of Object.entries(primaryNames)) {
+      const stack = TERMINAL_FONT_STACKS[family as keyof typeof primaryNames];
+      expect(stack).toContain(primaryName);
+      expect(stack.endsWith(", monospace")).toBe(true);
+    }
+  });
+});
+
 describe("appearance prefs persistence", () => {
   it("persists every setter and restores after a module reload", async () => {
     const { prefs } = await loadPrefs();
     prefs.setUiFontPreset(14.5);
     prefs.setUiFontScale(1.5);
     prefs.setTerminalFontSize(16);
+    prefs.setTerminalFontFamily("jetbrains-mono");
     prefs.setTerminalTheme("light");
+    prefs.setTerminalContrast("high");
     expect(JSON.parse(localStorage.getItem(KEY) ?? "{}")).toEqual({
       uiFontPreset: 14.5,
       uiFontScale: 1.5,
       terminalFontSize: 16,
+      terminalFontFamily: "jetbrains-mono",
       terminalTheme: "light",
+      terminalContrast: "high",
     });
     expect(rootStyle("--nx-ui-font-size")).toBe("14.5px");
     expect(rootStyle("--nx-ui-scale")).toBe("1.5");
@@ -107,7 +149,9 @@ describe("appearance prefs persistence", () => {
       uiFontPreset: 14.5,
       uiFontScale: 1.5,
       terminalFontSize: 16,
+      terminalFontFamily: "jetbrains-mono",
       terminalTheme: "light",
+      terminalContrast: "high",
     });
   });
 
@@ -141,7 +185,16 @@ describe("appearance prefs persistence", () => {
     prefs.setUiFontScale(2);
     prefs.setUiFontScale(2);
     prefs.setTerminalFontSize(13);
-    expect(seen).toEqual([{ uiFontPreset: 13, uiFontScale: 2, terminalFontSize: 13, terminalTheme: "dark" }]);
+    prefs.setTerminalFontFamily("cascadia");
+    prefs.setTerminalContrast("standard");
+    expect(seen).toEqual([{
+      uiFontPreset: 13,
+      uiFontScale: 2,
+      terminalFontSize: 13,
+      terminalFontFamily: "cascadia",
+      terminalTheme: "dark",
+      terminalContrast: "standard",
+    }]);
     unsubscribe();
     prefs.setUiFontScale(1);
     expect(seen).toHaveLength(1);
@@ -152,7 +205,9 @@ describe("appearance prefs persistence", () => {
     prefs.setUiFontPreset(12);
     prefs.setUiFontScale(1.75);
     prefs.setTerminalFontSize(17);
+    prefs.setTerminalFontFamily("source-code-pro");
     prefs.setTerminalTheme("interface");
+    prefs.setTerminalContrast("maximum");
     const seen: number[] = [];
     const unsubscribe = prefs.subscribeAppearancePrefs(() => seen.push(1));
 
@@ -162,7 +217,9 @@ describe("appearance prefs persistence", () => {
       uiFontPreset: 13,
       uiFontScale: 1,
       terminalFontSize: 13,
+      terminalFontFamily: "cascadia",
       terminalTheme: "dark",
+      terminalContrast: "standard",
     });
     expect(localStorage.getItem(KEY)).toBeNull();
     expect(rootStyle("--nx-ui-font-size")).toBe("13px");
