@@ -181,7 +181,7 @@ describe("BackgroundSessions host-scoped view", () => {
     try {
       await flush();
       await waitFor(() => expect(view.container.textContent).toContain("当前没有可查看的后台终端"));
-      expect(view.container.textContent).toContain("已有持久会话不会被删除；切回「自动」后可在这里查看并接管");
+      expect(view.container.textContent).toContain("普通模式只影响以后新开的终端；已有持久会话不会被删除，仍可在这里查看并接管");
     } finally {
       view.unmount();
     }

@@ -154,7 +154,8 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	} else {
 		config.Config.Logger.Warn("resolve executable for the remote session daemon; SSH durable tabs are disabled", "error", executableErr)
 	}
-	durableResolver = productionDurableResolver{ssh: sshResolver, events: config.Config.Events}
+	helperService := &productionHelperService{ssh: sshResolver}
+	durableResolver = productionDurableResolver{ssh: sshResolver, events: config.Config.Events, helpers: helperService}
 	sessionManager = session.NewManager(session.Config{
 		Connector:            connector,
 		Terminals:            config.Terminals,
@@ -204,6 +205,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 			return emitter.EmitSessionEvent(ctx, event)
 		}),
 	})
+	helperService.sessions = sessionManager
 	streams := config.Config.Streams
 	if streams == nil {
 		streams = hub.StreamFactory{Hub: sessionManager.Hub()}
@@ -375,6 +377,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		services.closeAIRuntime()
 		return nil, err
 	}
+	production.Services.terminalCommands.helpers = helperService
 	return production, nil
 }
 

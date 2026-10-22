@@ -82,6 +82,7 @@ export interface XtermViewProps {
   winrm?: boolean;
   containerId?: string;
   resumeTabId?: string;
+  forceRegular?: boolean;
   sessionConnected?: boolean;
   onAttachInfo?: (info: {
     tabId: string;
@@ -884,7 +885,7 @@ export function XtermView(props: XtermViewProps) {
     let attaching = false;
     const doAttach = async () => {
       if (disposed || kernelTabId || attaching) return;
-      const resume = resumeTabId;
+      const resume = props.forceRegular ? undefined : resumeTabId;
       const dimensions = coordinator.desiredGrid();
       if (!resume && !dimensions) return;
       attaching = true;
@@ -954,7 +955,9 @@ export function XtermView(props: XtermViewProps) {
           });
         } else {
           if (!dimensions) return;
-          const info = await terminalApi.attach(sessionId, dimensions.cols, dimensions.rows, channel);
+          const info = props.forceRegular
+            ? await terminalApi.attach(sessionId, dimensions.cols, dimensions.rows, channel, false)
+            : await terminalApi.attach(sessionId, dimensions.cols, dimensions.rows, channel);
           id = info.tabId;
           fallbackNotice = info.fallbackNotice;
           reportAttachInfo({
@@ -998,6 +1001,7 @@ export function XtermView(props: XtermViewProps) {
           if (!disposed) onAttachFailedRef.current?.(code);
           streamWriter.writeLocalText("\r\n\x1b[33m[连接已失效] 该终端所属的连接已在服务端删除\x1b[0m\n");
         } else {
+          if (!disposed) onAttachFailedRef.current?.(code ?? "internal");
           streamWriter.writeLocalText(`\r\n\x1b[31m[连接失败] ${describeError(e)}\x1b[0m\n`);
         }
       } finally {
@@ -1243,7 +1247,7 @@ export function XtermView(props: XtermViewProps) {
       term.dispose();
       termRef.current = null;
     };
-  }, [sessionId, containerId, resumeTabId]);
+  }, [sessionId, containerId, resumeTabId, props.forceRegular]);
 
   useEffect(() => {
     const connected = props.sessionConnected === true;

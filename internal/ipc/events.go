@@ -68,9 +68,16 @@ type ConnectProgressEvent struct {
 type HelperProgressEvent struct {
 	SessionID   string `json:"sessionId"`
 	AssetID     string `json:"assetId"`
+	OperationID string `json:"operationId,omitempty"`
+	Attempt     int    `json:"attempt,omitempty"`
+	Attempts    int    `json:"attempts,omitempty"`
+	Deadline    int64  `json:"deadline,omitempty"`
 	Step        int    `json:"step"`
 	Steps       int    `json:"steps"`
 	Stage       string `json:"stage"`
+	Cause       string `json:"cause,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Transport   string `json:"transport,omitempty"`
 	Transferred int64  `json:"transferred"`
 	Total       int64  `json:"total"`
 	Percent     int    `json:"percent"`

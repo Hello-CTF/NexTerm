@@ -386,6 +386,73 @@ export interface BroadcastConfirmationChallenge {
   productionTargets: BroadcastConfirmationTarget[];
 }
 
+export type HelperCompatibility = "compatible" | "incompatible" | "unknown";
+export type HelperOperationAction = "status" | "cancel" | "retry" | "update" | "update_interrupt";
+
+export interface HelperVersionInfo {
+  known: boolean;
+  release?: string;
+  commit?: string;
+  protocol?: number | null;
+  sha256?: string;
+}
+
+export interface HelperUpdateInfo {
+  status: "available" | "deferred" | "interrupted" | "updated" | "unknown";
+  detail?: string;
+}
+
+export interface HelperOfflineInfo {
+  fileName: string;
+  sha256: string;
+  protocol?: number | null;
+  compatibility: HelperCompatibility;
+  trusted: boolean;
+}
+
+export interface HelperOperationResult {
+  sessionId: string;
+  operationId?: string;
+  action: string;
+  accepted: boolean;
+  local: HelperVersionInfo;
+  running: HelperVersionInfo;
+  compatibility: HelperCompatibility;
+  update?: HelperUpdateInfo | null;
+  offline?: HelperOfflineInfo | null;
+}
+
+function normalizeHelperCompatibility(value: string): HelperCompatibility {
+  return value === "compatible" || value === "incompatible" ? value : "unknown";
+}
+
+function normalizeHelperUpdateStatus(value: string): HelperUpdateInfo["status"] {
+  return value === "available" || value === "deferred" || value === "interrupted" || value === "updated"
+    ? value
+    : "unknown";
+}
+
+type HelperUpdateInfoWire = Omit<HelperUpdateInfo, "status"> & { status: string };
+type HelperOfflineInfoWire = Omit<HelperOfflineInfo, "compatibility"> & { compatibility: string };
+type HelperOperationResultWire = Omit<HelperOperationResult, "compatibility" | "update" | "offline"> & {
+  compatibility: string;
+  update?: HelperUpdateInfoWire | null;
+  offline?: HelperOfflineInfoWire | null;
+};
+
+function normalizeHelperOperationResult(result: HelperOperationResultWire): HelperOperationResult {
+  return {
+    ...result,
+    compatibility: normalizeHelperCompatibility(result.compatibility),
+    update: result.update
+      ? { ...result.update, status: normalizeHelperUpdateStatus(result.update.status) }
+      : result.update,
+    offline: result.offline
+      ? { ...result.offline, compatibility: normalizeHelperCompatibility(result.offline.compatibility) }
+      : result.offline,
+  };
+}
+
 export const terminalApi = {
   attach: (sessionId: string, cols: number, rows: number, channel: unknown, durable?: boolean) =>
     call("terminal_attach", {
@@ -456,6 +523,12 @@ export const terminalApi = {
     call<RecordingStatus>("terminal_record_status", { tabId }),
   exportLog: (tabId: string, path: string, maxBytes?: number) =>
     call<number>("terminal_export_log", { tabId, path, maxBytes }),
+  helperOperation: (sessionId: string, operationId: string, action: HelperOperationAction, interruptActive = false) =>
+    call("terminal_helper_operation", { sessionId, operationId, action, interruptActive }).then(normalizeHelperOperationResult),
+  helperUpdate: (sessionId: string, interruptActive = false) =>
+    call("terminal_helper_operation", { sessionId, action: "update", interruptActive }).then(normalizeHelperOperationResult),
+  helperOffline: (sessionId: string, path: string, sha256?: string, confirmed = false) =>
+    call("terminal_helper_offline", { sessionId, path, sha256, confirmed }).then(normalizeHelperOperationResult),
   closeTab: (tabId: string, mode?: "kill" | "detach", sessionId?: string) =>
     call<void>("terminal_close_tab", { tabId, mode, clientId: clientId(), ...(sessionId === undefined ? {} : { sessionId }) }),
   renameTab: (tabId: string, title: string) =>

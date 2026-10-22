@@ -3,18 +3,7 @@ export const HELPER_DEFAULT_BUDGET_MS = 10 * 60 * 1_000;
 
 export type HelperOperationKind = "deploy" | "reattach";
 export type HelperOperationStatus = "running" | "awaiting_choice" | "succeeded" | "failed" | "canceled";
-export type HelperOperationStage =
-  | "discover"
-  | "probe"
-  | "cache"
-  | "upload"
-  | "verify"
-  | "start"
-  | "backoff"
-  | "restore"
-  | "cleanup"
-  | "ready"
-  | "failed";
+export type HelperOperationStage = string;
 
 export type HelperReasonKind =
   | "info"
@@ -75,6 +64,8 @@ export interface HelperOperation {
   choice: "ordinary" | "canceled" | null;
   ordinary: "existing" | "new" | null;
   cleanupFailure: HelperOperationReason | null;
+  path: string | null;
+  transport: string | null;
 }
 
 export interface HelperRegularPreference {
@@ -102,6 +93,7 @@ export type HelperOperationAction =
       kind: HelperOperationKind;
       now: number;
       budgetMs?: number;
+      deadline?: number;
       assetId?: string;
       quickConnect?: boolean;
       originalTabId?: string;
@@ -111,6 +103,8 @@ export type HelperOperationAction =
       now: number;
       stage: HelperOperationStage;
       reason?: HelperOperationReason | null;
+      path?: string | null;
+      transport?: string | null;
     })
   | (HelperOperationScope & {
       type: "attemptStarted";
@@ -122,6 +116,8 @@ export type HelperOperationAction =
       now: number;
       retryDelayMs?: number;
       reason: HelperFailureReason;
+      path?: string | null;
+      transport?: string | null;
     })
   | (HelperOperationScope & { type: "succeeded"; now: number })
   | (HelperOperationScope & {
@@ -138,6 +134,7 @@ export type HelperOperationAction =
       newOperationId: string;
       now: number;
       budgetMs?: number;
+      deadline?: number;
     }
   | {
       type: "continueOrdinary";
@@ -157,6 +154,7 @@ interface OperationSeed {
   kind: HelperOperationKind;
   now: number;
   budgetMs: number;
+  deadline?: number;
   assetId: string | null;
   quickConnect: boolean;
   originalTabId?: string;
@@ -177,7 +175,7 @@ function makeOperation(seed: OperationSeed): HelperOperation {
     attempt: 1,
     maxAttempts: HELPER_MAX_ATTEMPTS,
     budgetMs: seed.budgetMs,
-    deadline: seed.now + seed.budgetMs,
+    deadline: seed.deadline ?? seed.now + seed.budgetMs,
     retryAt: null,
     originalTabId: seed.originalTabId,
     quickConnect: seed.quickConnect,
@@ -191,6 +189,8 @@ function makeOperation(seed: OperationSeed): HelperOperation {
     choice: null,
     ordinary: null,
     cleanupFailure: null,
+    path: null,
+    transport: null,
   };
 }
 
@@ -262,6 +262,7 @@ export function helperOperationReducer(
         kind: action.kind,
         now: action.now,
         budgetMs,
+        deadline: action.deadline,
         assetId: action.assetId ?? null,
         quickConnect: action.quickConnect ?? false,
         originalTabId: action.originalTabId,
@@ -279,6 +280,8 @@ export function helperOperationReducer(
         ...operation,
         stage: action.stage,
         reason: action.reason ?? null,
+        path: action.path === undefined ? operation.path : action.path,
+        transport: action.transport === undefined ? operation.transport : action.transport,
       });
     }
     case "attemptStarted": {
@@ -316,6 +319,8 @@ export function helperOperationReducer(
           stage: "failed",
           reason: action.reason,
           retryAt: null,
+          path: action.path === undefined ? operation.path : action.path,
+          transport: action.transport === undefined ? operation.transport : action.transport,
           originalSession:
             operation.kind === "reattach" && action.reason.kind === "restore_failed"
               ? "not_restored"
@@ -330,6 +335,8 @@ export function helperOperationReducer(
         stage: "backoff",
         reason: action.reason,
         retryAt: Math.min(action.now + retryDelay, operation.deadline),
+        path: action.path === undefined ? operation.path : action.path,
+        transport: action.transport === undefined ? operation.transport : action.transport,
       });
     }
     case "succeeded": {
@@ -387,6 +394,7 @@ export function helperOperationReducer(
         kind: operation.kind,
         now: action.now,
         budgetMs,
+        deadline: action.deadline,
         assetId: operation.assetId,
         quickConnect: operation.quickConnect,
         originalTabId: operation.originalTabId,

@@ -17,21 +17,54 @@ import (
 var errHelperDeploymentPending = fmt.Errorf("%w: helper deployment is still in progress", durable.ErrUnavailable)
 
 type backgroundHelperDeployment struct {
-	session    *Session
-	transport  *transportHandle
-	generation uint64
-	done       chan struct{}
-	ctx        context.Context
-	cancel     context.CancelFunc
-	stop       func() bool
-	provider   base.DurableProvider
-	err        error
+	session     *Session
+	transport   *transportHandle
+	generation  uint64
+	sequence    uint64
+	operationID string
+	done        chan struct{}
+	sessionCtx  context.Context
+	ctx         context.Context
+	cancel      context.CancelFunc
+	stop        func() bool
+	provider    base.DurableProvider
+	err         error
 }
 
 var backgroundHelperDeployments = struct {
 	sync.Mutex
 	entries map[*Session]*backgroundHelperDeployment
 }{entries: make(map[*Session]*backgroundHelperDeployment)}
+
+var completedHelperDeployments = struct {
+	sync.Mutex
+	entries map[*Session]*backgroundHelperDeployment
+}{entries: make(map[*Session]*backgroundHelperDeployment)}
+
+var helperDeploymentSequence uint64
+
+type helperOperationReporterKey struct{}
+
+func withHelperOperationReporter(ctx context.Context, entry *backgroundHelperDeployment) context.Context {
+	return context.WithValue(ctx, helperOperationReporterKey{}, func(operationID string) {
+		if operationID == "" {
+			return
+		}
+		backgroundHelperDeployments.Lock()
+		defer backgroundHelperDeployments.Unlock()
+		if entry.operationID == "" {
+			entry.operationID = operationID
+		}
+	})
+}
+
+// ReportHelperOperation binds resolver progress to the real session deployment.
+// The first operation ID wins, so a late report cannot rename an active retry.
+func ReportHelperOperation(ctx context.Context, operationID string) {
+	if report, ok := ctx.Value(helperOperationReporterKey{}).(func(string)); ok {
+		report(operationID)
+	}
+}
 
 func matchingBackgroundHelper(session *Session, transport *transportHandle, generation uint64) *backgroundHelperDeployment {
 	backgroundHelperDeployments.Lock()
@@ -51,6 +84,12 @@ func cancelStaleBackgroundHelper(session *Session, transport *transportHandle, g
 		entry.cancel()
 	}
 	backgroundHelperDeployments.Unlock()
+	completedHelperDeployments.Lock()
+	completed := completedHelperDeployments.entries[session]
+	if completed != nil && (completed.transport != transport || completed.generation != generation) {
+		delete(completedHelperDeployments.entries, session)
+	}
+	completedHelperDeployments.Unlock()
 }
 
 func (m *Manager) automaticDurableProvider(ctx context.Context, session *Session, transport *transportHandle, generation uint64) (base.DurableProvider, error) {
@@ -95,11 +134,23 @@ func (m *Manager) automaticDurableProvider(ctx context.Context, session *Session
 	}
 	deploymentCtx, cancel := context.WithCancel(baseCtx)
 	entry := &backgroundHelperDeployment{
-		session: session, transport: transport, generation: generation, done: make(chan struct{}), ctx: deploymentCtx, cancel: cancel,
+		session: session, transport: transport, generation: generation, done: make(chan struct{}), sessionCtx: baseCtx, ctx: deploymentCtx, cancel: cancel,
 	}
+	helperDeploymentSequence++
+	entry.sequence = helperDeploymentSequence
 	entry.stop = context.AfterFunc(m.ctx, cancel)
+	context.AfterFunc(baseCtx, func() {
+		completedHelperDeployments.Lock()
+		defer completedHelperDeployments.Unlock()
+		if completedHelperDeployments.entries[session] == entry {
+			delete(completedHelperDeployments.entries, session)
+		}
+	})
 	backgroundHelperDeployments.entries[session] = entry
 	backgroundHelperDeployments.Unlock()
+	completedHelperDeployments.Lock()
+	delete(completedHelperDeployments.entries, session)
+	completedHelperDeployments.Unlock()
 	session.mu.Unlock()
 	if !m.startGoroutine(func() { m.runBackgroundHelper(entry) }) {
 		backgroundHelperDeployments.Lock()
@@ -139,6 +190,7 @@ func (m *Manager) runBackgroundHelper(entry *backgroundHelperDeployment) {
 	defer entry.stop()
 	session := entry.session
 	resolveCtx := ipc.WithHelperProgressScope(entry.ctx, ipc.HelperProgressScope{SessionID: session.ID, AssetID: session.Asset().ID})
+	resolveCtx = withHelperOperationReporter(resolveCtx, entry)
 	provider, err := m.resolver.ResolveDurable(resolveCtx, entry.transport.Transport)
 	entry.provider, entry.err = provider, err
 	if entry.err == nil && entry.provider == nil {
@@ -149,6 +201,7 @@ func (m *Manager) runBackgroundHelper(entry *backgroundHelperDeployment) {
 		delete(backgroundHelperDeployments.entries, session)
 	}
 	backgroundHelperDeployments.Unlock()
+	recordCompletedHelperDeployment(entry)
 	session.mu.Lock()
 	if session.transport == entry.transport && session.generation == entry.generation {
 		session.durableMu.Lock()
@@ -168,6 +221,101 @@ func (m *Manager) runBackgroundHelper(entry *backgroundHelperDeployment) {
 	}
 	session.mu.Unlock()
 	close(entry.done)
+}
+
+func recordCompletedHelperDeployment(entry *backgroundHelperDeployment) {
+	if entry.sessionCtx != nil && entry.sessionCtx.Err() != nil {
+		return
+	}
+	completedHelperDeployments.Lock()
+	defer completedHelperDeployments.Unlock()
+	if completed := completedHelperDeployments.entries[entry.session]; completed == nil || completed.sequence < entry.sequence {
+		completedHelperDeployments.entries[entry.session] = entry
+	}
+}
+
+func (m *Manager) helperDeploymentTarget(ctx context.Context, sessionID string) (*Session, *transportHandle, uint64, error) {
+	connected, err := m.SessionFor(ctx, sessionID)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	connected.mu.Lock()
+	defer connected.mu.Unlock()
+	if connected.asset.Kind != KindSSH {
+		return nil, nil, 0, ErrUnsupported
+	}
+	if connected.closed || connected.status != StatusConnected || connected.transport == nil {
+		return nil, nil, 0, ErrDisconnected
+	}
+	return connected, connected.transport, connected.generation, nil
+}
+
+// CancelHelperOperation cancels only the matching live deployment. It does not
+// disconnect SSH, close a tab, or kill any durable process on the target.
+func (m *Manager) CancelHelperOperation(ctx context.Context, sessionID, operationID string) error {
+	if operationID == "" {
+		return ErrInvalidOptions
+	}
+	connected, transport, generation, err := m.helperDeploymentTarget(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	backgroundHelperDeployments.Lock()
+	defer backgroundHelperDeployments.Unlock()
+	entry := backgroundHelperDeployments.entries[connected]
+	if entry == nil || entry.transport != transport || entry.generation != generation || entry.operationID != operationID {
+		return ErrStaleGeneration
+	}
+	entry.cancel()
+	return nil
+}
+
+// RetryHelperOperation starts a fresh resolver budget after a completed failed
+// operation. The old operation and session generation must still be current.
+func (m *Manager) RetryHelperOperation(ctx context.Context, sessionID, operationID string) error {
+	if operationID == "" {
+		return ErrInvalidOptions
+	}
+	connected, transport, generation, err := m.helperDeploymentTarget(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	backgroundHelperDeployments.Lock()
+	active := backgroundHelperDeployments.entries[connected]
+	backgroundHelperDeployments.Unlock()
+	if active != nil {
+		return ErrInvalidOptions
+	}
+	completedHelperDeployments.Lock()
+	completed := completedHelperDeployments.entries[connected]
+	if completed == nil || completed.transport != transport || completed.generation != generation || completed.operationID != operationID {
+		completedHelperDeployments.Unlock()
+		return ErrStaleGeneration
+	}
+	select {
+	case <-completed.done:
+	default:
+		completedHelperDeployments.Unlock()
+		return ErrInvalidOptions
+	}
+	failed := completed.err != nil
+	completedHelperDeployments.Unlock()
+	if !failed {
+		return ErrInvalidOptions
+	}
+	connected.durableMu.Lock()
+	if connected.durableGen == generation && connected.durableTransport == transport {
+		connected.durableProvider = nil
+		connected.durableFailure = nil
+		connected.durableFailureAt = time.Time{}
+		connected.durableCreateFailure = nil
+	}
+	connected.durableMu.Unlock()
+	_, err = m.automaticDurableProvider(ctx, connected, transport, generation)
+	if errors.Is(err, errHelperDeploymentPending) {
+		return nil
+	}
+	return err
 }
 
 // durableProviderFor resolves and caches a provider per session generation.
@@ -315,12 +463,8 @@ func (m *Manager) ListRemoteDurable(ctx context.Context, sessionID string) ([]ba
 	transport := session.transport
 	generation := session.generation
 	session.mu.Unlock()
-	mode, err := m.terminalModeFor(ctx, session)
-	if err != nil {
+	if _, err := m.terminalModeFor(ctx, session); err != nil {
 		return nil, err
-	}
-	if mode == TerminalModeRegular {
-		return []base.DurableDescriptor{}, nil
 	}
 
 	provider, err := m.durableProviderFor(ctx, session, transport, kind, generation, false)
@@ -378,12 +522,8 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 		if info.Status != StatusConnected {
 			return TabInfo{}, ErrDisconnected
 		}
-		mode, err := m.terminalModeFor(ctx, selected)
-		if err != nil {
+		if _, err := m.terminalModeFor(ctx, selected); err != nil {
 			return TabInfo{}, err
-		}
-		if mode == TerminalModeRegular {
-			return TabInfo{}, ErrDurableDisabled
 		}
 		infos = []SessionInfo{info}
 	} else if sessionIDs != nil {
@@ -415,12 +555,8 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 		if err != nil {
 			continue
 		}
-		mode, err := m.terminalModeFor(ctx, session)
-		if err != nil {
+		if _, err := m.terminalModeFor(ctx, session); err != nil {
 			searchErrs = append(searchErrs, err)
-			continue
-		}
-		if mode == TerminalModeRegular {
 			continue
 		}
 		session.mu.Lock()
@@ -488,12 +624,8 @@ func (m *Manager) RemoteDurableOwners(ctx context.Context, tabID string, session
 		if (info.Kind != KindSSH && info.Kind != KindDevice) || info.Status != StatusConnected {
 			continue
 		}
-		mode, err := m.terminalModeFor(ctx, session)
-		if err != nil {
+		if _, err := m.terminalModeFor(ctx, session); err != nil {
 			searchErrs = append(searchErrs, err)
-			continue
-		}
-		if mode == TerminalModeRegular {
 			continue
 		}
 		session.mu.Lock()
