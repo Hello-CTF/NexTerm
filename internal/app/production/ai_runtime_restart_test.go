@@ -52,22 +52,25 @@ func composeRestartRuntime(t *testing.T, database *store.Store, providerURL stri
 	t.Helper()
 	ctx := context.Background()
 	initTestVault(t, ctx, database)
+	restoring := len(existing) != 0 && existing[0] != nil
 	profileManager, err := profiles.NewManager(ctx, database)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := profileManager.Save(ctx, profiles.Profile{
-		BaseURL: providerURL, APIKey: "test-key", Model: "test-model",
-		ContextWindow: 32768, Stream: true,
-	}); err != nil {
-		t.Fatal(err)
+	if !restoring {
+		if _, err := profileManager.Save(ctx, profiles.Profile{
+			BaseURL: providerURL, APIKey: "test-key", Model: "test-model",
+			ContextWindow: 32768, Stream: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	asset, err := database.AssetCreate(ctx, store.AssetInput{Kind: "ssh", Name: "server"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var sessions *session.Manager
-	if len(existing) != 0 && existing[0] != nil {
+	if restoring {
 		sessions = existing[0]
 	} else {
 		sessions = session.NewManager(session.Config{
@@ -78,7 +81,7 @@ func composeRestartRuntime(t *testing.T, database *store.Store, providerURL stri
 		})
 	}
 	sessionID := ""
-	if len(existing) != 0 && existing[0] != nil {
+	if restoring {
 		infos, err := sessions.ListSessionsFor(session.WithOpenAccess(ctx))
 		if err != nil || len(infos) == 0 {
 			t.Fatalf("restored runtime has no live session: %+v, %v", infos, err)

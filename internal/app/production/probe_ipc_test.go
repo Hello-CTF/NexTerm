@@ -198,9 +198,24 @@ func TestProductionSessionProbeHostKeyTrustTransitions(t *testing.T) {
 	}
 }
 
-func TestProductionSessionProbeHostKeyValidation(t *testing.T) {
+func TestProductionProbeValidationFixtureLifecycle(t *testing.T) {
 	production := newHostKeyTestProduction(t)
+	for _, test := range []struct {
+		name string
+		run  func(*testing.T, *Production)
+	}{
+		{name: "TestProductionSessionProbeHostKeyValidation", run: testProductionSessionProbeHostKeyValidation},
+		{name: "TestProductionSessionProbeHostKeyRefused", run: testProductionSessionProbeHostKeyRefused},
+		{name: "TestProductionAssetProbeBatchValidation", run: testProductionAssetProbeBatchValidation},
+		{name: "TestProductionAssetProbeBatchJumpConfigFailures", run: testProductionAssetProbeBatchJumpConfigFailures},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			test.run(t, production)
+		})
+	}
+}
 
+func testProductionSessionProbeHostKeyValidation(t *testing.T, production *Production) {
 	response := dispatchHostKeyTest(t, production, "session_probe_host_key", `{"args":{}}`)
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
 		t.Fatalf("empty asset id response = %+v", response)
@@ -220,8 +235,7 @@ func TestProductionSessionProbeHostKeyValidation(t *testing.T) {
 	}
 }
 
-func TestProductionSessionProbeHostKeyRefused(t *testing.T) {
-	production := newHostKeyTestProduction(t)
+func testProductionSessionProbeHostKeyRefused(t *testing.T, production *Production) {
 	assetID := createProbeTestAsset(t, production, `"host":"127.0.0.1","port":`+itoa(closedProbePort(t))+`,"username":"test","authKind":"password"`)
 
 	response := dispatchHostKeyTest(t, production, "session_probe_host_key", `{"args":{"assetId":"`+assetID+`"}}`)
@@ -382,8 +396,7 @@ func TestProductionAssetProbeBatchThroughJump(t *testing.T) {
 	}
 }
 
-func TestProductionAssetProbeBatchValidation(t *testing.T) {
-	production := newHostKeyTestProduction(t)
+func testProductionAssetProbeBatchValidation(t *testing.T, production *Production) {
 	response := dispatchHostKeyTest(t, production, "asset_probe_batch", `{"args":{"assetIds":[]}}`)
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
 		t.Fatalf("empty batch response = %+v", response)
@@ -402,8 +415,7 @@ func TestProductionAssetProbeBatchValidation(t *testing.T) {
 	}
 }
 
-func TestProductionAssetProbeBatchJumpConfigFailures(t *testing.T) {
-	production := newHostKeyTestProduction(t)
+func testProductionAssetProbeBatchJumpConfigFailures(t *testing.T, production *Production) {
 
 	missingJumpID := createProbeTestAsset(t, production, `"host":"127.0.0.1","port":22,"username":"test","authKind":"password","options":{"jumpAssetId":"missing-jump"}`)
 	cycleAID := createProbeTestAsset(t, production, `"host":"127.0.0.1","port":22,"username":"test","authKind":"password"`)
@@ -508,8 +520,22 @@ func TestClampProbeTimeout(t *testing.T) {
 	}
 }
 
-func TestProductionAssetProbeBatchTimeoutCap(t *testing.T) {
+func TestProductionAssetProbeBatchFixtureLifecycle(t *testing.T) {
 	production := newHostKeyTestProduction(t)
+	for _, test := range []struct {
+		name string
+		run  func(*testing.T, *Production)
+	}{
+		{name: "TestProductionAssetProbeBatchTimeoutCap", run: testProductionAssetProbeBatchTimeoutCap},
+		{name: "TestProductionAssetProbeBatchCancellation", run: testProductionAssetProbeBatchCancellation},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			test.run(t, production)
+		})
+	}
+}
+
+func testProductionAssetProbeBatchTimeoutCap(t *testing.T, production *Production) {
 	stalling := stallingProxyListener(t)
 	slowID := createProbeTestAsset(t, production, `"host":"127.0.0.1","port":22,"username":"test","authKind":"password","options":{"proxy":"socks5://`+stalling.Addr().String()+`"}`)
 
@@ -530,8 +556,7 @@ func TestProductionAssetProbeBatchTimeoutCap(t *testing.T) {
 	}
 }
 
-func TestProductionAssetProbeBatchCancellation(t *testing.T) {
-	production := newHostKeyTestProduction(t)
+func testProductionAssetProbeBatchCancellation(t *testing.T, production *Production) {
 	stalling := stallingProxyListener(t)
 	slowID := createProbeTestAsset(t, production, `"host":"127.0.0.1","port":22,"username":"test","authKind":"password","options":{"proxy":"socks5://`+stalling.Addr().String()+`"}`)
 	fastID := createProbeTestAsset(t, production, `"host":"127.0.0.1","port":`+itoa(closedProbePort(t))+`,"username":"test","authKind":"password"`)

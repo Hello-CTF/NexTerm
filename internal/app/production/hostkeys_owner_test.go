@@ -24,11 +24,26 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 )
 
-func TestProductionHostKeyAccountAcceptReplaceRevokeIsolation(t *testing.T) {
+func TestProductionHostKeyIndependentStoreLifecycle(t *testing.T) {
+	database := newKnownHostOwnerTestDB(t)
+	for _, test := range []struct {
+		name string
+		run  func(*testing.T, *store.Store)
+	}{
+		{name: "TestProductionHostKeyAccountAcceptReplaceRevokeIsolation", run: testProductionHostKeyAccountAcceptReplaceRevokeIsolation},
+		{name: "TestProductionHostKeySSHVerificationIsolatedByAccount", run: testProductionHostKeySSHVerificationIsolatedByAccount},
+		{name: "TestProductionHostKeyConcurrentOwners", run: testProductionHostKeyConcurrentOwners},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			test.run(t, database)
+		})
+	}
+}
+
+func testProductionHostKeyAccountAcceptReplaceRevokeIsolation(t *testing.T, database *store.Store) {
 	ctx := context.Background()
 	ownerA := ipc.WithUserID(ctx, "owner/a")
 	ownerB := ipc.WithUserID(ctx, "owner-b")
-	database := newKnownHostOwnerTestDB(t)
 	path := filepath.Join(t.TempDir(), "known_hosts.json")
 	keys, err := newProductionHostKeyStore(ctx, path, database, false)
 	if err != nil {
@@ -109,13 +124,13 @@ func TestProductionHostKeyAccountAcceptReplaceRevokeIsolation(t *testing.T) {
 	requireKnownHostOwnerTestKey(t, keys, ownerB, replacementA)
 }
 
-func TestProductionHostKeySSHVerificationIsolatedByAccount(t *testing.T) {
+func testProductionHostKeySSHVerificationIsolatedByAccount(t *testing.T, database *store.Store) {
 	server := newHostKeyTestServer(t)
 	firstSigner := *server.signer.Load()
 	ctx := context.Background()
 	ownerA := ipc.WithUserID(ctx, "ssh-owner-a")
 	ownerB := ipc.WithUserID(ctx, "ssh-owner-b")
-	keys, err := newProductionHostKeyStore(ctx, filepath.Join(t.TempDir(), "known_hosts.json"), newKnownHostOwnerTestDB(t), false)
+	keys, err := newProductionHostKeyStore(ctx, filepath.Join(t.TempDir(), "known_hosts.json"), database, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -540,9 +555,8 @@ func TestProductionHostKeyLegacyMigrationBackupConflictKeepsOriginal(t *testing.
 	}
 }
 
-func TestProductionHostKeyConcurrentOwners(t *testing.T) {
+func testProductionHostKeyConcurrentOwners(t *testing.T, database *store.Store) {
 	ctx := context.Background()
-	database := newKnownHostOwnerTestDB(t)
 	keys, err := newProductionHostKeyStore(ctx, filepath.Join(t.TempDir(), "known_hosts.json"), database, false)
 	if err != nil {
 		t.Fatal(err)
