@@ -517,16 +517,47 @@ export interface TranscriptHost {
 }
 
 export const transcriptApi = {
-  hosts: () => call<TranscriptHost[]>("transcript_hosts"),
-  list: (assetId: string) =>
-    call<TranscriptSummary[]>("transcript_list", { assetId }),
-  read: (id: string, afterSeq = 0, maxBytes?: number) =>
-    call<TranscriptReadResult>("transcript_read", { id, afterSeq, maxBytes }),
+  hosts: () => call("transcript_hosts") as Promise<TranscriptHost[]>,
+  list: async (assetId: string): Promise<TranscriptSummary[]> => {
+    const summaries = await call("transcript_list", { assetId });
+    return summaries.map((summary) => ({
+      id: summary.id,
+      sessionId: summary.sessionId,
+      assetId: summary.assetId,
+      assetName: summary.assetName,
+      assetKind: summary.assetKind,
+      assetDeleted: summary.assetDeleted,
+      startedAt: summary.startedAt,
+      endedAt: summary.endedAt,
+      bytes: summary.bytes,
+      storedBytes: summary.storedBytes,
+      chunks: summary.chunks,
+      truncated: summary.truncated,
+      active: summary.active,
+      syncOptIn: summary.syncOptIn,
+      contentOmitted: summary.contentOmitted,
+    }));
+  },
+  read: async (id: string, afterSeq = 0, maxBytes?: number): Promise<TranscriptReadResult> => {
+    const result = await call("transcript_read", { id, afterSeq, maxBytes });
+    return {
+      chunks: result.chunks.map((chunk) => ({
+        seq: chunk.seq,
+        tabId: chunk.tabId,
+        ts: chunk.ts,
+        kind: chunk.kind,
+        dataBase64: chunk.dataBase64,
+      })),
+      nextSeq: result.nextSeq,
+      done: result.done,
+      totalBytes: result.totalBytes,
+    };
+  },
   search: (id: string, query: string) =>
-    call<TranscriptMatch[]>("transcript_search", { id, query }),
-  remove: (id: string) => call<void>("transcript_delete", { id }),
+    call("transcript_search", { id, query }) as Promise<TranscriptMatch[]>,
+  remove: (id: string) => call("transcript_delete", { id }) as Promise<void>,
   syncOptIn: (id: string, optIn: boolean) =>
-    call<void>("transcript_sync_opt_in", { id, optIn }),
+    call("transcript_sync_opt_in", { id, optIn }) as unknown as Promise<void>,
 };
 
 export interface LayoutDto {

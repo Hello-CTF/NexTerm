@@ -1790,31 +1790,37 @@
       "stream": "none"
     },
     "transcript_delete": {
+      "scope": "transcript",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "transcript_hosts": {
+      "scope": "transcript",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "transcript_list": {
+      "scope": "transcript",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "transcript_read": {
+      "scope": "transcript",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "transcript_search": {
+      "scope": "transcript",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "transcript_sync_opt_in": {
+      "scope": "transcript",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1992,12 +1998,6 @@
     "terminal_set_visible",
     "terminal_snapshot",
     "terminal_switch_encoding",
-    "terminal_tail",
-    "transcript_delete",
-    "transcript_hosts",
-    "transcript_list",
-    "transcript_read",
-    "transcript_search",
-    "transcript_sync_opt_in"
+    "terminal_tail"
   ]
 }

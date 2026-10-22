@@ -834,6 +834,33 @@ describe("SyncCard (web account sync)", () => {
     expect(parsed.content).toHaveLength(3);
   });
 
+  it("rejects a non-advancing transcript cursor and never pushes partial content", async () => {
+    seedAuthed(true);
+    mocks.transcriptHosts.mockResolvedValue([
+      { assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false, transcripts: 1, lastStartedAt: 1 },
+    ]);
+    mocks.transcriptList.mockResolvedValue([
+      {
+        id: "t1", sessionId: "s1", assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false,
+        startedAt: 1, endedAt: 2, bytes: 3, chunks: 2, truncated: false, active: false, syncOptIn: true, contentOmitted: false,
+      },
+    ]);
+    mocks.transcriptRead.mockResolvedValue({
+      chunks: [{ seq: 0, tabId: "tab-1", ts: 1, dataBase64: "AQID" }],
+      nextSeq: 0,
+      done: false,
+      totalBytes: 3,
+    });
+
+    mounted = mountSyncCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("分页游标未推进"));
+    expect(mocks.syncPush).not.toHaveBeenCalled();
+
+    await expect(runAutoSync()).rejects.toThrow("分页游标未推进");
+    expect(mocks.transcriptRead).toHaveBeenCalledWith("t1", 0);
+    expect(mocks.syncPush).not.toHaveBeenCalled();
+  });
+
   it("does not push a transcript again when its payload hash is unchanged, making the second sync empty", async () => {
     seedAuthed(true);
     const { sealSyncObject, bytesToBase64, base64ToBytes } = await import("../../features/auth/crypto");

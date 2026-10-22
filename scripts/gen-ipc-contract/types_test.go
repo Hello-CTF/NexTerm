@@ -238,3 +238,29 @@ func TestConsumerCommandInputProjectsOnlyRealFSReadFields(t *testing.T) {
 		t.Fatal("request projection accepted a struct without its declared fields")
 	}
 }
+
+func TestTranscriptReadRequestKeepsCursorRequiredAndMaxBytesOptional(t *testing.T) {
+	pkg := types.NewPackage("github.com/Hello-CTF/NexTerm/internal/app/production", "production")
+	request := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkg, "transcriptReadRequest", nil),
+		types.NewStruct([]*types.Var{
+			types.NewField(token.NoPos, pkg, "ID", types.Typ[types.String], false),
+			types.NewField(token.NoPos, pkg, "AfterSeq", types.Typ[types.Int64], false),
+			types.NewField(token.NoPos, pkg, "MaxBytes", types.Typ[types.Int], false),
+		}, []string{`json:"id"`, `json:"afterSeq"`, `json:"maxBytes"`}),
+		nil,
+	)
+	registry := newTypeRegistry()
+	reference, err := registry.ref(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reference.TS != "TranscriptReadRequest" {
+		t.Fatalf("transcript read request mapped to %+v", reference)
+	}
+	declaration := registry.declarations[typeIdentifier(request)]
+	want := "{\n  id: string;\n  afterSeq: number;\n  maxBytes?: number;\n}"
+	if declaration == nil || declaration.Body != want {
+		t.Fatalf("transcript read request declaration = %+v, want %s", declaration, want)
+	}
+}

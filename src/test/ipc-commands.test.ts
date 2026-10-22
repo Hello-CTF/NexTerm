@@ -621,6 +621,54 @@ describe("desktop command envelopes", () => {
   });
 });
 
+describe("desktop transcript facade IPC contracts", () => {
+  function serializedRequestAt(index: number): Record<string, unknown> {
+    return JSON.parse(JSON.stringify(requestAt(index))) as Record<string, unknown>;
+  }
+
+  it("mirrors all six flat envelopes and preserves partial reads and mutation payloads", async () => {
+    const partial = {
+      chunks: [{ seq: 3, tabId: "tab-1", ts: 12, kind: 0, dataBase64: "AQID" }],
+      nextSeq: 4,
+      done: false,
+      totalBytes: 9,
+    };
+    const results: Record<string, unknown> = {
+      transcript_hosts: [{ assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false, transcripts: 1, lastStartedAt: 10 }],
+      transcript_list: [{
+        id: "t1", sessionId: "s1", assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false,
+        startedAt: 10, endedAt: 20, bytes: 3, storedBytes: 2, chunks: 1, truncated: false, active: false,
+        syncOptIn: true, contentOmitted: false,
+      }],
+      transcript_read: partial,
+      transcript_search: [{ seq: 3, ts: 12, preview: "match" }],
+      transcript_sync_opt_in: {},
+    };
+    runtime.Call.ByName.mockImplementation(async (_name, request) => ({
+      ok: true,
+      data: results[(request as { cmd: string }).cmd] ?? null,
+    }));
+    const { transcriptApi } = await import("../ipc/commands");
+
+    await transcriptApi.hosts();
+    await transcriptApi.list("a1");
+    await expect(transcriptApi.read("t1", 3, 1024)).resolves.toEqual(partial);
+    await transcriptApi.search("t1", "match");
+    await expect(transcriptApi.remove("t1")).resolves.toBeNull();
+    await expect(transcriptApi.syncOptIn("t1", true)).resolves.toEqual({});
+    await transcriptApi.read("t1");
+
+    expect(serializedRequestAt(0)).toEqual({ cmd: "transcript_hosts", args: null });
+    expect(serializedRequestAt(1)).toEqual({ cmd: "transcript_list", args: { assetId: "a1" } });
+    expect(serializedRequestAt(2)).toEqual({ cmd: "transcript_read", args: { id: "t1", afterSeq: 3, maxBytes: 1024 } });
+    expect(serializedRequestAt(3)).toEqual({ cmd: "transcript_search", args: { id: "t1", query: "match" } });
+    expect(serializedRequestAt(4)).toEqual({ cmd: "transcript_delete", args: { id: "t1" } });
+    expect(serializedRequestAt(5)).toEqual({ cmd: "transcript_sync_opt_in", args: { id: "t1", optIn: true } });
+    expect(serializedRequestAt(6)).toEqual({ cmd: "transcript_read", args: { id: "t1", afterSeq: 0 } });
+    expect(serializedRequestAt(5).args).not.toHaveProperty("args");
+  });
+});
+
 describe("desktop database and Redis facade IPC contracts", () => {
   function serializedRequestAt(index: number): Record<string, unknown> {
     return JSON.parse(JSON.stringify(requestAt(index))) as Record<string, unknown>;

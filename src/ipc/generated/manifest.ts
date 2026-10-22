@@ -2227,34 +2227,52 @@ export const ipcContractManifest = {
       output: { go: "any", ts: "unknown" },
     },
     "transcript_delete": {
+      scope: "transcript",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptIDRequest", ts: "TranscriptIDRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "transcript_hosts": {
+      scope: "transcript",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.transcriptHostDTO", ts: "TranscriptHostDTO[]" },
     },
     "transcript_list": {
+      scope: "transcript",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptListRequest", ts: "TranscriptListRequest" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.transcriptSummaryDTO", ts: "TranscriptSummaryDTO[]" },
     },
     "transcript_read": {
+      scope: "transcript",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptReadRequest", ts: "TranscriptReadRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptReadResult", ts: "TranscriptReadResult" },
     },
     "transcript_search": {
+      scope: "transcript",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptSearchRequest", ts: "TranscriptSearchRequest" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.transcriptMatchDTO", ts: "TranscriptMatchDTO[]" },
     },
     "transcript_sync_opt_in": {
+      scope: "transcript",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.TranscriptSyncOptInRequest", ts: "TranscriptSyncOptInRequest" },
+      output: { go: "struct{}", ts: "Record<string, never>" },
     },
     "vault_change_password": {
       scope: "vault",
@@ -2454,12 +2472,6 @@ export const ipcContractManifest = {
     "terminal_snapshot",
     "terminal_switch_encoding",
     "terminal_tail",
-    "transcript_delete",
-    "transcript_hosts",
-    "transcript_list",
-    "transcript_read",
-    "transcript_search",
-    "transcript_sync_opt_in",
   ] as const,
 } as const;
 
@@ -3498,6 +3510,30 @@ export interface IPCCommandTypeMap {
   "terminal_write": {
     input: contractTypes.TerminalWriteRequest;
     output: unknown;
+  };
+  "transcript_delete": {
+    input: contractTypes.TranscriptIDRequest;
+    output: unknown;
+  };
+  "transcript_hosts": {
+    input: Record<string, never>;
+    output: contractTypes.TranscriptHostDTO[];
+  };
+  "transcript_list": {
+    input: contractTypes.TranscriptListRequest;
+    output: contractTypes.TranscriptSummaryDTO[];
+  };
+  "transcript_read": {
+    input: contractTypes.TranscriptReadRequest;
+    output: contractTypes.TranscriptReadResult;
+  };
+  "transcript_search": {
+    input: contractTypes.TranscriptSearchRequest;
+    output: contractTypes.TranscriptMatchDTO[];
+  };
+  "transcript_sync_opt_in": {
+    input: contractTypes.TranscriptSyncOptInRequest;
+    output: Record<string, never>;
   };
   "vault_change_password": {
     input: contractTypes.VaultPasswordRequest;

@@ -125,6 +125,41 @@ describe("TranscriptReplayView", () => {
     expect(clock?.textContent).toBe("00:00 / 00:01");
   });
 
+  it("loads multiple pages by nextSeq and preserves byte order across page boundaries", async () => {
+    const encode = (bytes: number[]) => btoa(String.fromCharCode(...bytes));
+    mocks.transcriptRead.mockImplementation(async (_id: string, afterSeq: number) => {
+      if (afterSeq === 0) {
+        return {
+          chunks: [
+            { seq: 0, tabId: "tab-1", ts: 1000, kind: 0, dataBase64: encode([0, 1, 2]) },
+            { seq: 1, tabId: "tab-1", ts: 1000, kind: 0, dataBase64: encode([65]) },
+          ],
+          nextSeq: 2,
+          done: false,
+          totalBytes: 7,
+        };
+      }
+      return {
+        chunks: [
+          { seq: 2, tabId: "tab-1", ts: 1000, kind: 0, dataBase64: encode([66, 67]) },
+          { seq: 3, tabId: "tab-1", ts: 1000, kind: 0, dataBase64: encode([255]) },
+        ],
+        nextSeq: 4,
+        done: true,
+        totalBytes: 7,
+      };
+    });
+
+    mounted = mount(<TranscriptReplayView transcriptId="t-1" />);
+    await flush();
+
+    expect(mocks.transcriptRead).toHaveBeenCalledTimes(2);
+    expect(mocks.transcriptRead).toHaveBeenNthCalledWith(1, "t-1", 0, 4 * 1024 * 1024);
+    expect(mocks.transcriptRead).toHaveBeenNthCalledWith(2, "t-1", 2, 4 * 1024 * 1024);
+    const terminal = terminalMocks.instances[0];
+    expect(terminal.writes.flatMap((data) => Array.from(data))).toEqual([0, 1, 2, 65, 66, 67, 255]);
+  });
+
   it("automatically pauses at the end during playback and applies the speed multiplier", async () => {
     vi.useFakeTimers();
     mounted = mount(<TranscriptReplayView transcriptId="t-1" />);

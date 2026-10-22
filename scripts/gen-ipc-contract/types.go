@@ -101,6 +101,9 @@ var consumerOptionalRequestFields = map[string]map[string]bool{
 	"github.com/Hello-CTF/NexTerm/internal/app/production.localFileReadRequest": {
 		"MaxBytes": true,
 	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.transcriptReadRequest": {
+		"MaxBytes": true,
+	},
 	"github.com/Hello-CTF/NexTerm/internal/app/production.vaultGenerateKeyRequest": {
 		"Algorithm": true, "Passphrase": true,
 	},
