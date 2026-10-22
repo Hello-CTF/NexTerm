@@ -27,22 +27,51 @@ type typeRegistry struct {
 }
 
 var tsNameOverrides = map[string]string{
-	"github.com/Hello-CTF/NexTerm/internal/app/production.fsCancelRequest": "FSCancelRequest",
-	"github.com/Hello-CTF/NexTerm/internal/ai/cron.Job":                    "CronJob",
-	"github.com/Hello-CTF/NexTerm/internal/ai/cron.Lease":                  "CronLease",
-	"github.com/Hello-CTF/NexTerm/internal/ai/cron.RunState":               "CronRunState",
-	"github.com/Hello-CTF/NexTerm/internal/execbatch.Request":              "ExecBatchRequest",
-	"github.com/Hello-CTF/NexTerm/internal/execbatch.Batch":                "ExecBatch",
-	"github.com/Hello-CTF/NexTerm/internal/execbatch.Result":               "ExecBatchResult",
-	"github.com/Hello-CTF/NexTerm/internal/execbatch.CancelResult":         "ExecBatchCancelResult",
-	"github.com/Hello-CTF/NexTerm/internal/forward.Rule":                   "ForwardRule",
-	"github.com/Hello-CTF/NexTerm/internal/forward.ruleRequest":            "ForwardRuleRequest",
-	"github.com/Hello-CTF/NexTerm/internal/forward.startRuleRequest":       "ForwardRuleStartRequest",
-	"github.com/Hello-CTF/NexTerm/internal/logtail.Request":                "LogTailRequest",
-	"github.com/Hello-CTF/NexTerm/internal/logtail.Source":                 "LogTailSource",
-	"github.com/Hello-CTF/NexTerm/internal/logtail.StartResult":            "LogTailStartResult",
-	"github.com/Hello-CTF/NexTerm/internal/logtail.CancelResult":           "LogTailCancelResult",
-	"github.com/Hello-CTF/NexTerm/internal/store.ForwardRuleInput":         "ForwardRuleInput",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.fsCancelRequest":   "FSCancelRequest",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.groupDTO":          "AssetGroupDTO",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.groupInputRequest": "AssetGroupInputRequest",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.groupPatchRequest": "AssetGroupPatchRequest",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.idRequest":         "IDRequest",
+	"github.com/Hello-CTF/NexTerm/internal/ai/cron.Job":                      "CronJob",
+	"github.com/Hello-CTF/NexTerm/internal/ai/cron.Lease":                    "CronLease",
+	"github.com/Hello-CTF/NexTerm/internal/ai/cron.RunState":                 "CronRunState",
+	"github.com/Hello-CTF/NexTerm/internal/execbatch.Request":                "ExecBatchRequest",
+	"github.com/Hello-CTF/NexTerm/internal/execbatch.Batch":                  "ExecBatch",
+	"github.com/Hello-CTF/NexTerm/internal/execbatch.Result":                 "ExecBatchResult",
+	"github.com/Hello-CTF/NexTerm/internal/execbatch.CancelResult":           "ExecBatchCancelResult",
+	"github.com/Hello-CTF/NexTerm/internal/forward.Rule":                     "ForwardRule",
+	"github.com/Hello-CTF/NexTerm/internal/forward.ruleRequest":              "ForwardRuleRequest",
+	"github.com/Hello-CTF/NexTerm/internal/forward.startRuleRequest":         "ForwardRuleStartRequest",
+	"github.com/Hello-CTF/NexTerm/internal/logtail.Request":                  "LogTailRequest",
+	"github.com/Hello-CTF/NexTerm/internal/logtail.Source":                   "LogTailSource",
+	"github.com/Hello-CTF/NexTerm/internal/logtail.StartResult":              "LogTailStartResult",
+	"github.com/Hello-CTF/NexTerm/internal/logtail.CancelResult":             "LogTailCancelResult",
+	"github.com/Hello-CTF/NexTerm/internal/store.ForwardRuleInput":           "ForwardRuleInput",
+}
+
+var consumerOptionalRequestFields = map[string]map[string]bool{
+	"github.com/Hello-CTF/NexTerm/internal/app/production.assetInputRequest": {
+		"GroupID": true, "Host": true, "Port": true, "Username": true, "AuthKind": true,
+		"KeyPath": true, "CredID": true, "Options": true, "Tags": true, "Note": true, "Sort": true,
+	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.assetPatchRequest": {
+		"Name": true, "Options": true, "Tags": true, "Note": true, "Sort": true,
+	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.assetProbeBatchRequest": {
+		"TimeoutMS": true, "MaxConcurrent": true,
+	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.groupInputRequest": {
+		"ParentID": true, "Sort": true,
+	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.groupPatchRequest": {
+		"Name": true, "Sort": true,
+	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.idRequest": {
+		"ID": true, "Q": true, "Name": true, "Body": true, "Path": true,
+	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.knownHostRequest": {
+		"Key": true,
+	},
 }
 
 func newTypeRegistry() *typeRegistry {
@@ -89,7 +118,7 @@ func (r *typeRegistry) mapType(value types.Type, namespace string) (string, bool
 		mapped, _, err := r.mapType(current.Elem(), namespace)
 		return "Record<string, " + mapped + ">", false, err
 	case *types.Struct:
-		body, err := r.structBody(current, namespace)
+		body, err := r.structBody(current, namespace, "")
 		return body, false, err
 	case *types.Named:
 		if isTime(current) {
@@ -97,6 +126,10 @@ func (r *typeRegistry) mapType(value types.Type, namespace string) (string, bool
 		}
 		if isRawMessage(current) {
 			return "unknown", false, nil
+		}
+		if wireType, ok := optionalIPCWireType(current); ok {
+			mapped, _, err := r.mapType(wireType, namespace)
+			return unionWithNull(mapped), false, err
 		}
 		if structure, ok := types.Unalias(current.Underlying()).(*types.Struct); ok {
 			name, err := r.namedStruct(current, structure)
@@ -107,6 +140,16 @@ func (r *typeRegistry) mapType(value types.Type, namespace string) (string, bool
 	default:
 		return "unknown", false, nil
 	}
+}
+
+func optionalIPCWireType(value types.Type) (types.Type, bool) {
+	named, ok := types.Unalias(value).(*types.Named)
+	if !ok || named.Obj().Pkg() == nil ||
+		named.Obj().Pkg().Path() != "github.com/Hello-CTF/NexTerm/internal/app/production" ||
+		named.Obj().Name() != "optionalIPCValue" || named.TypeArgs().Len() != 1 {
+		return nil, false
+	}
+	return named.TypeArgs().At(0), true
 }
 
 func (r *typeRegistry) namedStruct(named *types.Named, structure *types.Struct) (string, error) {
@@ -124,7 +167,7 @@ func (r *typeRegistry) namedStruct(named *types.Named, structure *types.Struct) 
 	declaration := &tsDeclaration{Name: name, Body: "unknown"}
 	r.declarations[identifier] = declaration
 	r.names[name] = identifier
-	body, err := r.structBody(structure, "")
+	body, err := r.structBody(structure, "", identifier)
 	if err != nil {
 		return "", err
 	}
@@ -132,7 +175,7 @@ func (r *typeRegistry) namedStruct(named *types.Named, structure *types.Struct) 
 	return name, nil
 }
 
-func (r *typeRegistry) structBody(structure *types.Struct, namespace string) (string, error) {
+func (r *typeRegistry) structBody(structure *types.Struct, namespace, owner string) (string, error) {
 	if structure.NumFields() == 0 {
 		return "Record<string, never>", nil
 	}
@@ -174,7 +217,10 @@ func (r *typeRegistry) structBody(structure *types.Struct, namespace string) (st
 		if err != nil {
 			return "", err
 		}
-		optional := false
+		optional := consumerOptionalRequestFields[owner][field.Name()]
+		if _, ok := optionalIPCWireType(field.Type()); ok {
+			optional = true
+		}
 		stringEncoded := false
 		for _, option := range parts[1:] {
 			switch option {

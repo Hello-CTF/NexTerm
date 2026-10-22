@@ -31,10 +31,9 @@ export type AiRunEventDto = Record<string, unknown>;
 
 export type AppErrorDto = { code: string, message: string, detail: JsonValue | null, };
 
-export type AssetDto = { id: string, groupId: string | null, kind: string, name: string, host: string | null, port: number | null, username: string | null, authKind: string | null, keyPath: string | null, credId: string | null, options: JsonValue, tags: string, note: string, sort: number, createdAt: number, updatedAt: number, deletedAt: number | null, 
-builtin: boolean, };
+export type AssetDto = import("./generated/types").AssetDTO;
 
-export type AssetGroupDto = { id: string, parentId: string | null, name: string, sort: number, createdAt: number, updatedAt: number, };
+export type AssetGroupDto = import("./generated/types").AssetGroupDTO;
 
 export type AuditEntryDto = { id: number, ts: number, sessionId: string | null, assetId: string | null, 
 source: string, kind: string, payload: JsonValue, exitCode: number | null, durationMs: number | null, };

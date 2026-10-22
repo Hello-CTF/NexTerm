@@ -491,6 +491,115 @@ func TestCronAndLogTailVerticalContracts(t *testing.T) {
 	}
 }
 
+func TestAssetGroupKnownHostVerticalContracts(t *testing.T) {
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	tests := []struct {
+		name   string
+		scope  string
+		nested bool
+		output string
+	}{
+		{name: "asset_list", scope: "asset", output: "AssetDTO[]"},
+		{name: "asset_get", scope: "asset", output: "AssetDTO"},
+		{name: "asset_create", scope: "asset", nested: true, output: "AssetDTO"},
+		{name: "asset_update", scope: "asset", nested: true, output: "AssetDTO"},
+		{name: "asset_read_key_file", scope: "asset", output: "string"},
+		{name: "asset_delete", scope: "asset", output: "unknown"},
+		{name: "asset_search", scope: "asset", output: "AssetDTO[]"},
+		{name: "asset_search_meta", scope: "asset", output: "AssetSearchDTO"},
+		{name: "asset_probe_batch", scope: "asset", nested: true, output: "AssetProbeBatchDTO"},
+		{name: "group_list", scope: "group", output: "AssetGroupDTO[]"},
+		{name: "group_create", scope: "group", output: "AssetGroupDTO"},
+		{name: "group_update", scope: "group", output: "AssetGroupDTO"},
+		{name: "group_delete", scope: "group", output: "unknown"},
+		{name: "known_host_list", scope: "known-host", output: "unknown"},
+		{name: "known_host_accept", scope: "known-host", output: "unknown"},
+		{name: "known_host_remove", scope: "known-host", output: "unknown"},
+	}
+	selected := make(map[string]bool, len(tests))
+	registry := newTypeRegistry()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, ok := commands[test.name]
+			if !ok {
+				t.Fatalf("selected command %q is missing", test.name)
+			}
+			if command.Scope != test.scope || command.Nested != test.nested {
+				t.Fatalf("metadata = scope:%q nested:%t, want scope:%q nested:%t", command.Scope, command.Nested, test.scope, test.nested)
+			}
+			if command.Channel || command.Stream != "none" {
+				t.Fatalf("unexpected channel/stream metadata: %+v", command)
+			}
+			if command.Input == nil || command.Output == nil {
+				t.Fatalf("selected command must carry input/output DTO metadata: %+v", command)
+			}
+			if _, err := registry.ref(command.Input); err != nil {
+				t.Fatal(err)
+			}
+			output, err := registry.ref(command.Output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if output.TS != test.output {
+				t.Fatalf("output = %q, want %q", output.TS, test.output)
+			}
+			selected[test.name] = true
+		})
+	}
+	if len(selected) != 16 {
+		t.Fatalf("selected asset/group/known-host command count = %d, want 16", len(selected))
+	}
+	for name, command := range commands {
+		if (command.Scope == "asset" || command.Scope == "group" || command.Scope == "known-host") && !selected[name] {
+			t.Errorf("unexpected command %q joined the asset/group/known-host vertical scopes", name)
+		}
+	}
+	for _, name := range []string{"snippet_list", "audit_query", "session_probe_host_key"} {
+		command := commands[name]
+		if command.Scope != "" || command.Input != nil || command.Output != nil {
+			t.Errorf("deferred command %q acquired DTO metadata: %+v", name, command)
+		}
+	}
+
+	declarationTests := []struct {
+		command string
+		output  bool
+		want    []string
+	}{
+		{command: "asset_get", output: true, want: []string{"options: unknown;"}},
+		{command: "asset_create", want: []string{"kind: string;", "name: string;", "groupId?: string | null;", "options?: unknown;", "tags?: string;", "sort?: number;"}},
+		{command: "asset_update", want: []string{"id: string;", "groupId?: string | null;", "name?: string | null;", "options?: unknown;", "tags?: string | null;"}},
+		{command: "asset_get", want: []string{"id?: string;", "q?: string;", "path?: string;"}},
+		{command: "asset_search_meta", output: true, want: []string{"assets: AssetDTO[];", "total: number;", "truncated: boolean;"}},
+		{command: "asset_probe_batch", want: []string{"assetIds: string[];", "timeoutMs?: number;", "maxConcurrent?: number;"}},
+		{command: "group_update", want: []string{"id: string;", "name?: string | null;", "parentId?: string | null;", "sort?: number | null;"}},
+		{command: "known_host_accept", want: []string{"host: string;", "port: number;", "keyType: string;", "fingerprint: string;", "key?: string;"}},
+	}
+	for _, test := range declarationTests {
+		command := commands[test.command]
+		contractType := command.Input
+		kind := "input"
+		if test.output {
+			contractType = command.Output
+			kind = "output"
+		}
+		declaration := registry.declarations[typeIdentifier(contractType)]
+		if declaration == nil {
+			t.Errorf("%s %s declaration is missing", test.command, kind)
+			continue
+		}
+		for _, want := range test.want {
+			if !strings.Contains(declaration.Body, want) {
+				t.Errorf("%s %s declaration is missing %q:\n%s", test.command, kind, want, declaration.Body)
+			}
+		}
+	}
+	if rendered := registry.render(); strings.Contains(rendered, "OptionalIPCValue") {
+		t.Errorf("optional IPC implementation type leaked into the wire contract:\n%s", rendered)
+	}
+}
+
 func TestConsumedJSONFieldRenameFailsDriftCheck(t *testing.T) {
 	baseline := generateForTest(t, nil)
 	root := repositoryRoot(t)

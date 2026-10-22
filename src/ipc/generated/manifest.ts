@@ -398,49 +398,76 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "asset_create": {
+      scope: "asset",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetInputRequest", ts: "AssetInputRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetDTO", ts: "AssetDTO" },
     },
     "asset_delete": {
+      scope: "asset",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.idRequest", ts: "IDRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "asset_get": {
+      scope: "asset",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.idRequest", ts: "IDRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetDTO", ts: "AssetDTO" },
     },
     "asset_list": {
+      scope: "asset",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.assetDTO", ts: "AssetDTO[]" },
     },
     "asset_probe_batch": {
+      scope: "asset",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetProbeBatchRequest", ts: "AssetProbeBatchRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetProbeBatchDTO", ts: "AssetProbeBatchDTO" },
     },
     "asset_read_key_file": {
+      scope: "asset",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.idRequest", ts: "IDRequest" },
+      output: { go: "string", ts: "string" },
     },
     "asset_search": {
+      scope: "asset",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.idRequest", ts: "IDRequest" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.assetDTO", ts: "AssetDTO[]" },
     },
     "asset_search_meta": {
+      scope: "asset",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.idRequest", ts: "IDRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetSearchDTO", ts: "AssetSearchDTO" },
     },
     "asset_update": {
+      scope: "asset",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetPatchRequest", ts: "AssetPatchRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetDTO", ts: "AssetDTO" },
     },
     "audit_count": {
       nested: true,
@@ -969,24 +996,36 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "group_create": {
+      scope: "group",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.groupInputRequest", ts: "AssetGroupInputRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.groupDTO", ts: "AssetGroupDTO" },
     },
     "group_delete": {
+      scope: "group",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.idRequest", ts: "IDRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "group_list": {
+      scope: "group",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.groupDTO", ts: "AssetGroupDTO[]" },
     },
     "group_update": {
+      scope: "group",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.groupPatchRequest", ts: "AssetGroupPatchRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.groupDTO", ts: "AssetGroupDTO" },
     },
     "host_share_identity": {
       scope: "host-share",
@@ -1054,19 +1093,28 @@ export const ipcContractManifest = {
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.inventoryTargetExecResponse", ts: "InventoryTargetExecResponse" },
     },
     "known_host_accept": {
+      scope: "known-host",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.knownHostRequest", ts: "KnownHostRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "known_host_list": {
+      scope: "known-host",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "any", ts: "unknown" },
     },
     "known_host_remove": {
+      scope: "known-host",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.idRequest", ts: "IDRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "layout_get": {
       nested: false,
@@ -2141,15 +2189,6 @@ export const ipcContractManifest = {
     "app_restart",
     "app_update_check",
     "app_update_install",
-    "asset_create",
-    "asset_delete",
-    "asset_get",
-    "asset_list",
-    "asset_probe_batch",
-    "asset_read_key_file",
-    "asset_search",
-    "asset_search_meta",
-    "asset_update",
     "audit_count",
     "audit_query",
     "biometric_disable",
@@ -2212,13 +2251,6 @@ export const ipcContractManifest = {
     "fs_upload_chunk",
     "fs_upload_commit",
     "fs_write",
-    "group_create",
-    "group_delete",
-    "group_list",
-    "group_update",
-    "known_host_accept",
-    "known_host_list",
-    "known_host_remove",
     "layout_get",
     "layout_put",
     "local_file_read",
@@ -2428,6 +2460,42 @@ export interface IPCCommandTypeMap {
     input: Record<string, never>;
     output: contractTypes.WatchTargetSummary[];
   };
+  "asset_create": {
+    input: contractTypes.AssetInputRequest;
+    output: contractTypes.AssetDTO;
+  };
+  "asset_delete": {
+    input: contractTypes.IDRequest;
+    output: unknown;
+  };
+  "asset_get": {
+    input: contractTypes.IDRequest;
+    output: contractTypes.AssetDTO;
+  };
+  "asset_list": {
+    input: Record<string, never>;
+    output: contractTypes.AssetDTO[];
+  };
+  "asset_probe_batch": {
+    input: contractTypes.AssetProbeBatchRequest;
+    output: contractTypes.AssetProbeBatchDTO;
+  };
+  "asset_read_key_file": {
+    input: contractTypes.IDRequest;
+    output: string;
+  };
+  "asset_search": {
+    input: contractTypes.IDRequest;
+    output: contractTypes.AssetDTO[];
+  };
+  "asset_search_meta": {
+    input: contractTypes.IDRequest;
+    output: contractTypes.AssetSearchDTO;
+  };
+  "asset_update": {
+    input: contractTypes.AssetPatchRequest;
+    output: contractTypes.AssetDTO;
+  };
   "cron_get": {
     input: contractTypes.CronJobRequest;
     output: contractTypes.CronJob;
@@ -2536,6 +2604,22 @@ export interface IPCCommandTypeMap {
     input: contractTypes.FSCancelRequest;
     output: boolean;
   };
+  "group_create": {
+    input: contractTypes.AssetGroupInputRequest;
+    output: contractTypes.AssetGroupDTO;
+  };
+  "group_delete": {
+    input: contractTypes.IDRequest;
+    output: unknown;
+  };
+  "group_list": {
+    input: Record<string, never>;
+    output: contractTypes.AssetGroupDTO[];
+  };
+  "group_update": {
+    input: contractTypes.AssetGroupPatchRequest;
+    output: contractTypes.AssetGroupDTO;
+  };
   "host_share_identity": {
     input: Record<string, never>;
     output: contractTypes.RemoteHostShareIdentity | null;
@@ -2567,6 +2651,18 @@ export interface IPCCommandTypeMap {
   "inventory_target_exec": {
     input: contractTypes.InventoryTargetExecRequest;
     output: contractTypes.InventoryTargetExecResponse;
+  };
+  "known_host_accept": {
+    input: contractTypes.KnownHostRequest;
+    output: unknown;
+  };
+  "known_host_list": {
+    input: Record<string, never>;
+    output: unknown;
+  };
+  "known_host_remove": {
+    input: contractTypes.IDRequest;
+    output: unknown;
   };
   "log_tail_cancel": {
     input: contractTypes.LogTailCancelRequest;
