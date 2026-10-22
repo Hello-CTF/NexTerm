@@ -401,7 +401,7 @@ func TestStreamControlFullSequenceSurvivesLateOldControlFrames(t *testing.T) {
 		_, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", newAttachmentId, 5<<20)
 		recoverDone <- err
 	}()
-	anchor := receiveTestFrame(t, receiver)
+	anchor := receiveRecoveryAnchor(t, manager, receiver, recoverDone)
 	if !bytes.Contains(anchor.Data, []byte("recovery-")) {
 		t.Fatalf("anchor = %q", anchor.Data)
 	}
@@ -867,7 +867,7 @@ func TestStreamControlFullSequenceSurvivesStaleResume(t *testing.T) {
 		recoverGen = gen
 		recoverDone <- err
 	}()
-	anchor := receiveTestFrame(t, receiver)
+	anchor := receiveRecoveryAnchor(t, manager, receiver, recoverDone)
 	if !bytes.Contains(anchor.Data, []byte("recovery-")) {
 		t.Fatalf("anchor = %q", anchor.Data)
 	}
@@ -1057,7 +1057,7 @@ func TestStreamControlFullSequenceTwoRecoverRounds(t *testing.T) {
 			_, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "a-1", "client-a", attachmentId, accepted)
 			recoverDone <- err
 		}()
-		anchor := receiveTestFrame(t, receiver)
+		anchor := receiveRecoveryAnchor(t, manager, receiver, recoverDone)
 		if !bytes.Contains(anchor.Data, []byte("recovery-")) {
 			t.Fatalf("anchor = %q", anchor.Data)
 		}

@@ -227,6 +227,7 @@ func (m *Manager) RecoverChannelFor(ctx context.Context, tabID, channelID, clien
 	if err != nil {
 		return 0, 0, err
 	}
+	m.hooks.channelRecoverBeforeFeed()
 	if err := tab.lockFeed(ctx); err != nil {
 		return 0, 0, err
 	}

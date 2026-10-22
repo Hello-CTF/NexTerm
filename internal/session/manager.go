@@ -27,6 +27,7 @@ type managerHooks struct {
 	channelCloseAfterCheck    func()
 	channelCloseBeforeCapture func(string)
 	channelCloseAfterCapture  func(string)
+	channelRecoverBeforeFeed  func()
 	ephemeralReapAfterCurrent func()
 }
 
@@ -115,6 +116,7 @@ func NewManager(config Config) *Manager {
 			channelCloseAfterCheck:    func() {},
 			channelCloseBeforeCapture: func(string) {},
 			channelCloseAfterCapture:  func(string) {},
+			channelRecoverBeforeFeed:  func() {},
 			ephemeralReapAfterCurrent: func() {},
 		},
 		idleTimeout:      config.IdleTimeout,

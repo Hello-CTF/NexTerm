@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +29,24 @@ func readFramesUntil(t *testing.T, receiver *hub.Receiver, want int) []byte {
 		}
 	}
 	return got
+}
+
+func receiveRecoveryAnchor(t *testing.T, manager *Manager, receiver *hub.Receiver, recoverDone chan error) hub.Frame {
+	t.Helper()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for manager.bus.Stats().QueuedFrames == 0 {
+		select {
+		case err := <-recoverDone:
+			if err != nil {
+				t.Fatalf("recover before an anchor was queued: %v", err)
+			}
+			recoverDone <- err
+			recoverDone = nil
+		case <-ticker.C:
+		}
+	}
+	return receiveTestFrame(t, receiver)
 }
 
 func expectNoFrame(t *testing.T, receiver *hub.Receiver) {
@@ -503,7 +522,7 @@ func TestRecoverChannelForSaturatedMultiChannelClientKeepsSuffix(t *testing.T) {
 		_, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), acceptedB)
 		recoverErr <- err
 	}()
-	anchorB := receiveTestFrame(t, receiverB)
+	anchorB := receiveRecoveryAnchor(t, manager, receiverB, recoverErr)
 	if !bytes.Contains(anchorB.Data, []byte("recovery-")) {
 		t.Fatalf("anchor B = %q", anchorB.Data)
 	}
@@ -572,7 +591,7 @@ func TestRecoverChannelForPauseHoldsLiveOutputForOrderedResume(t *testing.T) {
 		_, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), acceptedB)
 		recoverDone <- err
 	}()
-	anchorB := receiveTestFrame(t, receiverB)
+	anchorB := receiveRecoveryAnchor(t, manager, receiverB, recoverDone)
 	if !bytes.Contains(anchorB.Data, []byte("recovery-")) {
 		t.Fatalf("anchor B = %q", anchorB.Data)
 	}
@@ -672,7 +691,7 @@ func TestRecoverChannelForOrdersAnchorBehindPendingFrames(t *testing.T) {
 	if got := readFramesUntil(t, receiver, 2); string(got) != "bc" {
 		t.Fatalf("pending frames = %q, want bc", got)
 	}
-	anchor := receiveTestFrame(t, receiver)
+	anchor := receiveRecoveryAnchor(t, manager, receiver, recoverDone)
 	if !bytes.Contains(anchor.Data, []byte("recovery-")) {
 		t.Fatalf("frame after bc = %q, want the recovery anchor", anchor.Data)
 	}
@@ -763,7 +782,7 @@ func TestRecoverChannelForFloorRetainsSuffixBeforeRecover(t *testing.T) {
 		_, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), acceptedB)
 		recoverDone <- err
 	}()
-	anchorB := receiveTestFrame(t, receiverB)
+	anchorB := receiveRecoveryAnchor(t, manager, receiverB, recoverDone)
 	if !bytes.Contains(anchorB.Data, []byte("recovery-")) {
 		t.Fatalf("anchor B = %q", anchorB.Data)
 	}
@@ -836,9 +855,10 @@ func TestRecoverChannelForFloorStallsBeforeDelayedRPC(t *testing.T) {
 		}
 	}
 	const acceptedB = 16 << 20
+	attachmentIDB := attachmentIdFor(t, manager, info.ID, "b-1")
 	// B reports its accepted offset through the typed control path: the floor
 	// opens at 16 MiB without waiting for the pause/recover RPCs.
-	if err := manager.StreamAckFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), acceptedB); err != nil {
+	if err := manager.StreamAckFor(context.Background(), info.ID, "b-1", "client-b", attachmentIDB, acceptedB); err != nil {
 		t.Fatal(err)
 	}
 
@@ -870,14 +890,41 @@ func TestRecoverChannelForFloorStallsBeforeDelayedRPC(t *testing.T) {
 		t.Fatal("producer kept reading past the ring capacity with the floor set")
 	}
 
-	// The whole refused suffix is redelivered byte-identical — no overrun,
-	// even though the pause/recover RPCs only now arrive.
+	// Delay the RPC before its feed-gate acquisition so RPC entry and anchor
+	// queueing are observed before the existing frame-receive deadline starts.
+	recoverEntered := make(chan struct{})
+	releaseRecover := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseRecover) }) }
+	manager.hooks.channelRecoverBeforeFeed = func() {
+		close(recoverEntered)
+		<-releaseRecover
+	}
+	t.Cleanup(release)
 	recoverDone := make(chan error, 1)
 	go func() {
-		_, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIdFor(t, manager, info.ID, "b-1"), acceptedB)
+		_, _, err := manager.RecoverChannelFor(context.Background(), info.ID, "b-1", "client-b", attachmentIDB, acceptedB)
 		recoverDone <- err
 	}()
-	anchorB := receiveTestFrame(t, receiverB)
+	select {
+	case <-recoverEntered:
+	case err := <-recoverDone:
+		t.Fatalf("recover finished before reaching the feed gate: %v", err)
+	}
+	tab.mu.Lock()
+	pausedB := tab.subscribers["b-1"].paused
+	tab.mu.Unlock()
+	if pausedB {
+		t.Fatal("delayed recover paused channel B before release")
+	}
+	if queued := manager.bus.Stats().QueuedFrames; queued != 0 {
+		t.Fatalf("delayed recover queued %d frames before release", queued)
+	}
+	release()
+
+	// The whole refused suffix is redelivered byte-identical — no overrun,
+	// even though the pause/recover RPCs only now arrive.
+	anchorB := receiveRecoveryAnchor(t, manager, receiverB, recoverDone)
 	if !bytes.Contains(anchorB.Data, []byte("recovery-")) {
 		t.Fatalf("anchor B = %q", anchorB.Data)
 	}

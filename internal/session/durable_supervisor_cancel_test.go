@@ -134,10 +134,13 @@ func TestSupervisorDurableWriteCancelDuringAckWait(t *testing.T) {
 	}
 	if _, err := manager.OpenTab(ctx, OpenTabOptions{
 		TabID: tabID, SessionID: connected.ID, ClientID: "client-a", ChannelID: "cancel-1", Cols: 80, Rows: 24,
-		Durable: &DurableTabOptions{Command: []string{"/bin/sh", "-c", "stty -echo; exec cat"}},
+		Durable: &DurableTabOptions{Command: []string{"/bin/sh", "-c", "stty -echo; printf 'supervisor-ready-marker\\n'; exec cat"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// The ready marker is emitted only after terminal echo is disabled: without
+	// this barrier, the tty and cat can each record the same input during startup.
+	waitForTabOutput(t, manager, tabID, "supervisor-ready-marker")
 
 	// A: the healthy path works — input reaches the daemon and cat echoes it.
 	if err := manager.Write(ctx, tabID, "client-a", []byte("before-partition-marker\n")); err != nil {
@@ -193,6 +196,9 @@ func TestSupervisorDurableWriteCancelDuringAckWait(t *testing.T) {
 	}
 	output := waitForTabOutput(t, manager, tabID, "after-reattach-marker")
 
+	if count := strings.Count(output, "before-partition-marker"); count != 1 {
+		t.Fatalf("pre-partition input recorded %d times, want exactly 1: %q", count, output)
+	}
 	// The unconfirmed input is never replayed: the client sent it at most
 	// once, so cat's echo of it appears at most once in the recovered
 	// output, and the post-termination marker was never delivered.
