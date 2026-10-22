@@ -203,6 +203,22 @@ export type BatchProgress = {
   droppedEvents?: number;
 };
 
+export type BiometricEnableRequest = {
+  password: string;
+};
+
+export type BiometricStatus = {
+  available: boolean;
+  canEvaluate: boolean;
+  hasMaterial: boolean;
+};
+
+export type BiometricUnlockResult = {
+  ok: boolean;
+  password?: string;
+  message?: string;
+};
+
 export type BroadcastProductionConfirmation = {
   confirmed: boolean;
   targetSetHash: string;
@@ -595,6 +611,14 @@ export type DeployPublicKeyRequest = {
   timeoutMs?: number;
   maxConcurrent?: number;
   productionConfirmation?: ProductionConfirmation | null;
+};
+
+export type DesktopTrayDTO = {
+  enabled: boolean;
+};
+
+export type DesktopTraySetRequest = {
+  enabled: boolean;
 };
 
 export type DeviceGrant = {
@@ -1960,6 +1984,13 @@ export type RunbookMetadata = {
   groupCount: number;
 };
 
+export type ScreenInsets = {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+};
+
 export type ServiceHostResult = {
   result: ExecBatchResult;
   systemd: string;
@@ -2312,6 +2343,25 @@ export type TranscriptSummaryDTO = {
 export type TranscriptSyncOptInRequest = {
   id: string;
   optIn: boolean;
+};
+
+export type UpdateResult = {
+  installed: boolean;
+  restarted: boolean;
+  version: string;
+  unavailableReason: string;
+};
+
+export type UpdateStatus = {
+  available: boolean;
+  currentVersion: string;
+  version: string;
+  notes: string;
+  prerelease: boolean;
+  assetName: string;
+  assetSize: number;
+  canInstall: boolean;
+  unavailableReason: string;
 };
 
 export type VaultAutoLockRequest = {

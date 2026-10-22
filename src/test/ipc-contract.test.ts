@@ -837,6 +837,69 @@ describe("transcript facade IPC contracts", () => {
   });
 });
 
+describe("platform, update and biometric facade IPC contracts", () => {
+  it("preserves the exact envelopes for all 11 real-consumer commands and complete results", async () => {
+    const installResult = { installed: false, restarted: false, version: "", unavailableReason: "server install unavailable" };
+    const restartResult = { installed: true, restarted: false, version: "1.2.3", unavailableReason: "server restart unavailable" };
+    const unlockResult = { ok: true, password: "stored-master-password" };
+    const calls = captureRpc({
+      app_update_install: installResult,
+      app_restart: restartResult,
+      biometric_unlock: unlockResult,
+      desktop_tray_set: { enabled: true },
+    });
+    const { appUpdateApi, biometricApi, desktopTrayApi, systemApi } = await import("../ipc/commands");
+    const cases: Array<{ command: IPCCommandName; payload: unknown; invoke: () => Promise<unknown> }> = [
+      { command: "app_platform", payload: null, invoke: () => systemApi.platform() },
+      { command: "system_insets", payload: null, invoke: () => systemApi.insets() },
+      { command: "desktop_tray_get", payload: null, invoke: () => desktopTrayApi.get() },
+      { command: "desktop_tray_set", payload: { enabled: true }, invoke: () => desktopTrayApi.set(true) },
+      { command: "app_update_check", payload: null, invoke: () => appUpdateApi.check() },
+      { command: "app_update_install", payload: { version: null }, invoke: async () => expect(await appUpdateApi.install()).toEqual(installResult) },
+      { command: "app_restart", payload: null, invoke: async () => expect(await appUpdateApi.restart()).toEqual(restartResult) },
+      { command: "biometric_status", payload: null, invoke: () => biometricApi.status() },
+      { command: "biometric_unlock", payload: null, invoke: async () => expect(await biometricApi.unlock()).toEqual(unlockResult) },
+      { command: "biometric_enable", payload: { password: "master-password" }, invoke: async () => expect(await biometricApi.enable("master-password")).toBeNull() },
+      { command: "biometric_disable", payload: null, invoke: async () => expect(await biometricApi.disable()).toBeNull() },
+    ];
+
+    expect(cases).toHaveLength(11);
+    for (const [index, test] of cases.entries()) {
+      await test.invoke();
+      expectManifestEnvelope(calls[index], test.command, test.payload);
+    }
+    expect(calls).toHaveLength(11);
+  });
+
+  it("keeps omitted, undefined, explicit and empty update versions distinct", async () => {
+    const calls = captureRpc();
+    const { appUpdateApi } = await import("../ipc/commands");
+
+    await appUpdateApi.install();
+    await appUpdateApi.install(undefined);
+    await appUpdateApi.install("1.2.3");
+    await appUpdateApi.install("");
+
+    expect(calls).toHaveLength(4);
+    expectManifestEnvelope(calls[0], "app_update_install", { version: null });
+    expectManifestEnvelope(calls[1], "app_update_install", { version: null });
+    expectManifestEnvelope(calls[2], "app_update_install", { version: "1.2.3" });
+    expectManifestEnvelope(calls[3], "app_update_install", { version: "" });
+  });
+
+  it("passes a failed biometric unlock through without inventing password material", async () => {
+    const failure = { ok: false, message: "用户取消" };
+    const calls = captureRpc({ biometric_unlock: failure });
+    const { biometricApi } = await import("../ipc/commands");
+
+    const result = await biometricApi.unlock();
+
+    expect(result).toEqual(failure);
+    expect(result).not.toHaveProperty("password");
+    expectManifestEnvelope(calls[0], "biometric_unlock", null);
+  });
+});
+
 describe("ai_edit_resend wire contract", () => {
   it("keeps ai_edit_resend production args flat with exact fields", async () => {
     const calls = captureRpc();

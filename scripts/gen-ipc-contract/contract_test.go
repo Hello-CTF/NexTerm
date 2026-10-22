@@ -52,18 +52,12 @@ func TestGeneratedContractMetadata(t *testing.T) {
 	if got := typeIdentifier(commands["fs_cancel"].Input); got != "github.com/Hello-CTF/NexTerm/internal/app/production.fsCancelRequest" {
 		t.Fatalf("fs_cancel input = %q", got)
 	}
-	for _, name := range []string{"app_platform"} {
-		if legacy, ok := commands[name]; !ok || legacy.Input != nil || legacy.Scope != "" {
-			t.Fatalf("legacy command %q must have a name without DTO metadata: %+v", name, legacy)
-		}
-	}
 	for _, test := range []struct {
 		name    string
 		nested  bool
 		channel bool
 		stream  string
 	}{
-		{name: "app_platform", stream: "none"},
 		{name: "db_connect", nested: true, stream: "none"},
 		{name: "db_disconnect", stream: "none"},
 		{name: "redis_command", stream: "none"},
@@ -132,6 +126,115 @@ func TestGeneratedContractMetadata(t *testing.T) {
 	}
 	if !reflect.DeepEqual(renderedAgain, generated.files) {
 		t.Fatal("rendering the same metadata is not deterministic")
+	}
+}
+
+func TestPlatformUpdateBiometricVerticalContracts(t *testing.T) {
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	updateInstallInput := "{\n  version: string | null;\n}"
+	tests := []struct {
+		name   string
+		scope  string
+		input  string
+		output string
+	}{
+		{name: "app_platform", scope: "platform", input: "Record<string, never>", output: "string"},
+		{name: "desktop_tray_get", scope: "platform", input: "Record<string, never>", output: "DesktopTrayDTO"},
+		{name: "desktop_tray_set", scope: "platform", input: "DesktopTraySetRequest", output: "DesktopTrayDTO"},
+		{name: "system_insets", scope: "platform", input: "Record<string, never>", output: "ScreenInsets"},
+		{name: "app_update_check", scope: "update", input: "Record<string, never>", output: "UpdateStatus"},
+		{name: "app_update_install", scope: "update", input: updateInstallInput, output: "UpdateResult"},
+		{name: "app_restart", scope: "update", input: "Record<string, never>", output: "UpdateResult"},
+		{name: "biometric_status", scope: "biometric", input: "Record<string, never>", output: "BiometricStatus"},
+		{name: "biometric_unlock", scope: "biometric", input: "Record<string, never>", output: "BiometricUnlockResult"},
+		{name: "biometric_enable", scope: "biometric", input: "BiometricEnableRequest", output: "unknown"},
+		{name: "biometric_disable", scope: "biometric", input: "Record<string, never>", output: "unknown"},
+	}
+	selected := make(map[string]bool, len(tests))
+	registry := newTypeRegistry()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, ok := commands[test.name]
+			if !ok {
+				t.Fatalf("selected command %q is missing", test.name)
+			}
+			if command.Scope != test.scope || command.Nested || command.Channel || command.Stream != "none" {
+				t.Fatalf("unexpected platform/update/biometric metadata: %+v", command)
+			}
+			if command.Input == nil || command.Output == nil {
+				t.Fatalf("selected command must carry input/output DTO metadata: %+v", command)
+			}
+			input, err := registry.ref(command.Input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if input.TS != test.input {
+				t.Fatalf("input = %q, want %q", input.TS, test.input)
+			}
+			output, err := registry.ref(command.Output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if output.TS != test.output {
+				t.Fatalf("output = %q, want %q", output.TS, test.output)
+			}
+			selected[test.name] = true
+		})
+	}
+	if len(selected) != 11 {
+		t.Fatalf("selected platform/update/biometric command count = %d, want 11", len(selected))
+	}
+	for name, command := range commands {
+		if (command.Scope == "platform" || command.Scope == "update" || command.Scope == "biometric") && !selected[name] {
+			t.Errorf("unexpected command %q joined the platform/update/biometric scopes", name)
+		}
+		if strings.HasPrefix(name, "app_") && name != "app_info" && !selected[name] {
+			t.Errorf("app command %q is missing from the explicit consumer inventory", name)
+		}
+	}
+	appInfo, ok := commands["app_info"]
+	if !ok {
+		t.Fatal("legacy command app_info is missing")
+	}
+	if appInfo.Scope != "" || appInfo.Input != nil || appInfo.Output != nil {
+		t.Fatalf("app_info has no commands.ts consumer and must remain legacy: %+v", appInfo)
+	}
+
+	declarations := make(map[string]*tsDeclaration)
+	for _, declaration := range registry.declarations {
+		declarations[declaration.Name] = declaration
+	}
+	declarationTests := []struct {
+		name   string
+		want   []string
+		absent []string
+	}{
+		{name: "DesktopTrayDTO", want: []string{"enabled: boolean;"}},
+		{name: "DesktopTraySetRequest", want: []string{"enabled: boolean;"}},
+		{name: "ScreenInsets", want: []string{"top: number;", "right: number;", "bottom: number;", "left: number;"}},
+		{name: "UpdateStatus", want: []string{"available: boolean;", "currentVersion: string;", "version: string;", "canInstall: boolean;", "unavailableReason: string;"}},
+		{name: "UpdateResult", want: []string{"installed: boolean;", "restarted: boolean;", "version: string;", "unavailableReason: string;"}},
+		{name: "BiometricStatus", want: []string{"available: boolean;", "canEvaluate: boolean;", "hasMaterial: boolean;"}, absent: []string{"\n  password:", "\n  secret:"}},
+		{name: "BiometricUnlockResult", want: []string{"ok: boolean;", "password?: string;", "message?: string;"}},
+		{name: "BiometricEnableRequest", want: []string{"password: string;"}, absent: []string{"password?:"}},
+	}
+	for _, test := range declarationTests {
+		declaration := declarations[test.name]
+		if declaration == nil {
+			t.Errorf("%s declaration is missing", test.name)
+			continue
+		}
+		for _, want := range test.want {
+			if !strings.Contains(declaration.Body, want) {
+				t.Errorf("%s declaration is missing %q:\n%s", test.name, want, declaration.Body)
+			}
+		}
+		for _, absent := range test.absent {
+			if strings.Contains(declaration.Body, absent) {
+				t.Errorf("%s declaration unexpectedly contains %q:\n%s", test.name, absent, declaration.Body)
+			}
+		}
 	}
 }
 

@@ -239,6 +239,32 @@ func TestConsumerCommandInputProjectsOnlyRealFSReadFields(t *testing.T) {
 	}
 }
 
+func TestUpdateInstallRequestKeepsExplicitNullableVersion(t *testing.T) {
+	pkg := types.NewPackage("github.com/Hello-CTF/NexTerm/internal/app/production", "production")
+	request := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkg, "updateInstallRequest", nil),
+		types.NewStruct([]*types.Var{
+			types.NewField(token.NoPos, pkg, "Version", types.Typ[types.String], false),
+		}, []string{`json:"version"`}),
+		nil,
+	)
+	projected, err := projectConsumerCommandInput("app_update_install", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference, err := newTypeRegistry().ref(projected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "{\n  version: string | null;\n}"
+	if reference.TS != want {
+		t.Fatalf("projected app_update_install input = %q, want %q", reference.TS, want)
+	}
+	if strings.Contains(reference.TS, "version?:") {
+		t.Fatalf("app_update_install must keep an explicit nullable version, got %s", reference.TS)
+	}
+}
+
 func TestTranscriptReadRequestKeepsCursorRequiredAndMaxBytesOptional(t *testing.T) {
 	pkg := types.NewPackage("github.com/Hello-CTF/NexTerm/internal/app/production", "production")
 	request := types.NewNamed(
