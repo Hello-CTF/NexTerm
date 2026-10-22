@@ -139,7 +139,11 @@ func (command *taskCommand) UnmarshalYAML(node *yaml.Node) error {
 func TestQualityStaysStaticAndRequiredUnitOwnsGoTests(t *testing.T) {
 	ci := loadWorkflow(t, ".github/workflows/ci.yml")
 	quality := requireJob(t, ci, "quality")
-	requireRun(t, quality, "wails3 task check:ci-quality")
+	pnpm := requireUse(t, quality, "pnpm/action-setup@")
+	install := requireRun(t, quality, "pnpm install --frozen-lockfile")
+	qualityGate := requireRun(t, quality, "wails3 task check:ci-quality")
+	requireBefore(t, quality, pnpm, install, "pnpm must be set up before installing quality dependencies")
+	requireBefore(t, quality, install, qualityGate, "frontend dependencies must be installed before the quality gate")
 	windowsVet := requireRun(t, quality, "go vet ./...")
 	if got := windowsVet.Env["GOOS"]; got != "windows" {
 		t.Fatalf("Windows vet GOOS = %q, want windows", got)

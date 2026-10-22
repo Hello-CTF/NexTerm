@@ -8,7 +8,6 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,25 +23,6 @@ func transcriptTestConnector() session.Connector {
 	return session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
 	})
-}
-
-// syncedLogBuffer is a race-safe log sink: tests poll it while loggers write
-// concurrently, which a plain bytes.Buffer would race on.
-type syncedLogBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (b *syncedLogBuffer) Write(data []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(data)
-}
-
-func (b *syncedLogBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
 }
 
 func transcriptOwnerContext(ownerID string) context.Context {

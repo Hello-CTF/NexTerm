@@ -1,6 +1,7 @@
 package production
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -16,6 +17,25 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"gorm.io/gorm"
 )
+
+// syncedLogBuffer is a race-safe log sink: tests poll it while loggers write
+// concurrently, which a plain bytes.Buffer would race on.
+type syncedLogBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncedLogBuffer) Write(data []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(data)
+}
+
+func (b *syncedLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 type productionUpgradeEventCapture struct {
 	mu     sync.Mutex
