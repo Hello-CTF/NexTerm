@@ -186,6 +186,28 @@ func (m *Manager) automaticDurableProvider(ctx context.Context, session *Session
 	}
 }
 
+func isPureCancellation(err error) bool {
+	if err == nil {
+		return false
+	}
+	if unwrap, ok := err.(interface{ Unwrap() []error }); ok {
+		children := unwrap.Unwrap()
+		if len(children) == 0 {
+			return false
+		}
+		for _, child := range children {
+			if !isPureCancellation(child) {
+				return false
+			}
+		}
+		return true
+	}
+	if unwrap, ok := err.(interface{ Unwrap() error }); ok {
+		return isPureCancellation(unwrap.Unwrap())
+	}
+	return err == context.Canceled
+}
+
 func (m *Manager) runBackgroundHelper(entry *backgroundHelperDeployment) {
 	defer entry.cancel()
 	defer entry.stop()
@@ -214,7 +236,7 @@ func (m *Manager) runBackgroundHelper(entry *backgroundHelperDeployment) {
 			session.durableFailure = nil
 			session.durableFailureAt = time.Time{}
 			session.durableCreateFailure = nil
-		} else if canceledByUser && errors.Is(entry.err, context.Canceled) {
+		} else if canceledByUser && isPureCancellation(entry.err) {
 			session.durableProvider = nil
 			session.durableFailure = nil
 			session.durableFailureAt = time.Time{}
