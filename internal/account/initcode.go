@@ -241,6 +241,7 @@ func (a *Accounts) initSuperadmin(ctx context.Context, code, username, password 
 	if err != nil {
 		return nil, "", dbError(err)
 	}
+	a.notifyActiveSuperadmin(ctx, user)
 	return user, generated, nil
 }
 

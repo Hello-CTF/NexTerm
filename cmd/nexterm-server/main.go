@@ -238,7 +238,11 @@ func run(args []string) int {
 	}
 	var accounts *account.Accounts
 	if application.Services.Store != nil {
-		accounts = account.New(application.Services.Store.GORM(), account.WithTOTPKeyFile(filepath.Join(paths.DataDir, "totp.key")))
+		accounts = account.New(
+			application.Services.Store.GORM(),
+			account.WithTOTPKeyFile(filepath.Join(paths.DataDir, "totp.key")),
+			account.WithActiveSuperadminListener(application.RetryDeferredUpgrade),
+		)
 	}
 	if invocation.Auth == core.AuthOff && accounts != nil {
 		if err := server.ValidateAuthOffBounds(ctx, accounts); err != nil {
