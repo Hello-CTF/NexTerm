@@ -708,6 +708,132 @@ func TestVaultCredentialVerticalContracts(t *testing.T) {
 	}
 }
 
+func TestFSLocalMountVerticalContracts(t *testing.T) {
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	structType := func(fields ...string) string {
+		return "{\n  " + strings.Join(fields, "\n  ") + "\n}"
+	}
+	tests := []struct {
+		name   string
+		scope  string
+		nested bool
+		input  string
+		output string
+	}{
+		{name: "fs_cancel", scope: "fs", input: "FSCancelRequest", output: "boolean"},
+		{name: "fs_checksum", scope: "fs", input: structType("sessionId: string;", "path: string;", "algo?: string;"), output: "string"},
+		{name: "fs_chmod", scope: "fs", input: structType("sessionId: string;", "path: string;", "mode: number;"), output: "unknown"},
+		{name: "fs_delete", scope: "fs", input: structType("sessionId: string;", "path: string;", "isDir: boolean;"), output: "unknown"},
+		{name: "fs_download", scope: "fs", input: structType("sessionId: string;", "remotePath: string;", "localPath: string;", "resume?: boolean;", "taskId?: string;", "attemptId?: string;"), output: "number"},
+		{name: "fs_extract", scope: "fs", input: structType("sessionId: string;", "path: string;"), output: "string"},
+		{name: "fs_list", scope: "fs", input: structType("sessionId: string;", "path: string;"), output: "FSEntryDTO[]"},
+		{name: "fs_mkdir", scope: "fs", input: structType("sessionId: string;", "path: string;"), output: "unknown"},
+		{name: "fs_pack_download", scope: "fs", input: structType("sessionId: string;", "remotePath: string;", "localPath: string;", "taskId?: string;", "attemptId?: string;"), output: "number"},
+		{name: "fs_read", scope: "fs", input: structType("sessionId: string;", "path: string;", "maxBytes?: number;"), output: "FSReadDTO"},
+		{name: "fs_read_range", scope: "fs", input: structType("sessionId: string;", "path: string;", "offset: number;", "maxBytes?: number;"), output: "FSRangeReadDTO"},
+		{name: "fs_rename", scope: "fs", input: structType("sessionId: string;", "from: string;", "to: string;"), output: "unknown"},
+		{name: "fs_roots", scope: "fs", input: structType("sessionId: string;"), output: "FSRootsDTO"},
+		{name: "fs_upload", scope: "fs", input: structType("sessionId: string;", "localPath: string;", "remotePath: string;", "resume?: boolean;", "taskId?: string;", "attemptId?: string;"), output: "number"},
+		{name: "fs_upload_abort", scope: "fs", input: structType("sessionId: string;", "uploadId: string;", "taskId: string;", "attemptId: string;"), output: "unknown"},
+		{name: "fs_upload_begin", scope: "fs", input: structType("sessionId: string;", "remotePath: string;", "totalSize: number;", "chunkSize?: number;", "taskId: string;", "attemptId: string;"), output: "FSChunkUploadBeginDTO"},
+		{name: "fs_upload_chunk", scope: "fs", input: structType("sessionId: string;", "uploadId: string;", "taskId: string;", "attemptId: string;", "index: number;", "size: number;", "sha256: string;", "contentBase64: string;"), output: "FSChunkUploadProgressDTO"},
+		{name: "fs_upload_commit", scope: "fs", input: structType("sessionId: string;", "uploadId: string;", "taskId: string;", "attemptId: string;"), output: "number"},
+		{name: "fs_write", scope: "fs", nested: true, input: structType("sessionId: string;", "path: string;", "contentBase64: string;", "backup: boolean;", "taskId?: string;", "attemptId?: string;"), output: "unknown"},
+		{name: "local_file_read", scope: "local-file", input: "LocalFileReadRequest", output: "FSReadDTO"},
+		{name: "local_file_read_range", scope: "local-file", input: "LocalFileReadRangeRequest", output: "FSRangeReadDTO"},
+		{name: "local_folder_list", scope: "local-file", input: "LocalFolderListRequest", output: "LocalFolderListDTO"},
+		{name: "mount_capability", scope: "mount", input: "Record<string, never>", output: "string | null"},
+		{name: "mount_create", scope: "mount", nested: true, input: "MountCreateArgs", output: "MountEntryDTO"},
+		{name: "mount_list", scope: "mount", input: "MountListRequest", output: "MountEntryDTO[]"},
+		{name: "mount_remove", scope: "mount", input: "MountRemoveArgs", output: "unknown"},
+	}
+	selected := make(map[string]bool, len(tests))
+	registry := newTypeRegistry()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, ok := commands[test.name]
+			if !ok {
+				t.Fatalf("selected command %q is missing", test.name)
+			}
+			if command.Scope != test.scope || command.Nested != test.nested {
+				t.Fatalf("metadata = scope:%q nested:%t, want scope:%q nested:%t", command.Scope, command.Nested, test.scope, test.nested)
+			}
+			if command.Channel || command.Stream != "none" {
+				t.Fatalf("unexpected channel/stream metadata: %+v", command)
+			}
+			if command.Input == nil || command.Output == nil {
+				t.Fatalf("selected command must carry input/output DTO metadata: %+v", command)
+			}
+			input, err := registry.ref(command.Input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if input.TS != test.input {
+				t.Fatalf("input = %q, want %q", input.TS, test.input)
+			}
+			output, err := registry.ref(command.Output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if output.TS != test.output {
+				t.Fatalf("output = %q, want %q", output.TS, test.output)
+			}
+			selected[test.name] = true
+		})
+	}
+	if len(selected) != 26 {
+		t.Fatalf("selected fs/local-file/mount command count = %d, want 26", len(selected))
+	}
+	for name, command := range commands {
+		inventory := strings.HasPrefix(name, "fs_") || strings.HasPrefix(name, "local_file_") || strings.HasPrefix(name, "local_folder_") || strings.HasPrefix(name, "mount_")
+		if inventory && !selected[name] {
+			t.Errorf("command %q is missing from the fs/local-file/mount vertical inventory", name)
+		}
+		if (command.Scope == "fs" || command.Scope == "local-file" || command.Scope == "mount") && !selected[name] {
+			t.Errorf("unexpected command %q joined the fs/local-file/mount vertical scopes", name)
+		}
+	}
+
+	declarations := make(map[string]*tsDeclaration)
+	for _, declaration := range registry.declarations {
+		declarations[declaration.Name] = declaration
+	}
+	declarationTests := []struct {
+		name   string
+		want   []string
+		absent []string
+	}{
+		{name: "FSRootsDTO", want: []string{"pathStyle: string;", "roots: FSRootDTO[];", "homePath: string | null;", "supported: boolean;"}},
+		{name: "FSEntryDTO", want: []string{"path: string;", "owner: string | null;", "group: string | null;", "symlinkTarget: string | null;"}},
+		{name: "FSReadDTO", want: []string{"path: string;", "size: number;", "contentBase64: string;"}, absent: []string{"number[]"}},
+		{name: "FSRangeReadDTO", want: []string{"offset: number;", "size: number;", "contentBase64: string;", "truncated: boolean;"}, absent: []string{"number[]"}},
+		{name: "LocalFolderFileDTO", want: []string{"relativePath: string;", "localPath: string;", "size: number;", "mtimeMs: number;"}},
+		{name: "LocalFolderListDTO", want: []string{"files: LocalFolderFileDTO[];", "emptyDirs: string[];"}},
+		{name: "LocalFileReadRequest", want: []string{"path: string;", "maxBytes?: number;"}},
+		{name: "LocalFileReadRangeRequest", want: []string{"path: string;", "offset: number;", "maxBytes?: number;"}},
+		{name: "MountCreateArgs", want: []string{"sessionId: string;", "remotePath: string;", "localPoint: string;", "username?: string;", "password?: string;"}},
+		{name: "MountEntryDTO", want: []string{"localPoint: string;", "remote: string;", "sessionId: string | null;", "createdAt: number | null;", "managed: boolean;"}, absent: []string{"\n  username:", "\n  password:", "\n  secret:"}},
+	}
+	for _, test := range declarationTests {
+		declaration := declarations[test.name]
+		if declaration == nil {
+			t.Errorf("%s declaration is missing", test.name)
+			continue
+		}
+		for _, want := range test.want {
+			if !strings.Contains(declaration.Body, want) {
+				t.Errorf("%s declaration is missing %q:\n%s", test.name, want, declaration.Body)
+			}
+		}
+		for _, absent := range test.absent {
+			if strings.Contains(declaration.Body, absent) {
+				t.Errorf("%s declaration unexpectedly exposes %q:\n%s", test.name, absent, declaration.Body)
+			}
+		}
+	}
+}
+
 func TestConsumedJSONFieldRenameFailsDriftCheck(t *testing.T) {
 	baseline := generateForTest(t, nil)
 	root := repositoryRoot(t)

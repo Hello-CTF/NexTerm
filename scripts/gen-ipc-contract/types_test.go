@@ -136,3 +136,36 @@ func TestUnresolvedEmbeddedPointerRemainsUnknown(t *testing.T) {
 		t.Fatalf("embedded pointer declaration = %+v, want unknown body", declaration)
 	}
 }
+
+func TestConsumerCommandInputProjectsOnlyRealFSReadFields(t *testing.T) {
+	pkg := types.NewPackage("github.com/Hello-CTF/NexTerm/internal/app/production", "production")
+	request := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkg, "fsRequest", nil),
+		types.NewStruct([]*types.Var{
+			types.NewField(token.NoPos, pkg, "SessionID", types.Typ[types.String], false),
+			types.NewField(token.NoPos, pkg, "Path", types.Typ[types.String], false),
+			types.NewField(token.NoPos, pkg, "MaxBytes", types.Typ[types.Int64], false),
+			types.NewField(token.NoPos, pkg, "LocalPath", types.Typ[types.String], false),
+			types.NewField(token.NoPos, pkg, "ContentBase64", types.Typ[types.String], false),
+		}, []string{`json:"sessionId"`, `json:"path"`, `json:"maxBytes"`, `json:"localPath"`, `json:"contentBase64"`}),
+		nil,
+	)
+	projected, err := projectConsumerCommandInput("fs_read", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference, err := newTypeRegistry().ref(projected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "{\n  sessionId: string;\n  path: string;\n  maxBytes?: number;\n}"
+	if reference.TS != want {
+		t.Fatalf("projected fs_read input = %q, want %q", reference.TS, want)
+	}
+	if strings.Contains(reference.TS, "localPath") || strings.Contains(reference.TS, "contentBase64") {
+		t.Fatalf("fs_read acquired unrelated transfer fields: %s", reference.TS)
+	}
+	if _, err := projectConsumerCommandInput("fs_read", types.NewStruct(nil, nil)); err == nil {
+		t.Fatal("request projection accepted a struct without its declared fields")
+	}
+}

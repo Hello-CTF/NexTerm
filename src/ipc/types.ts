@@ -51,8 +51,7 @@ export type CredentialMetaDto = { id: string, name: string, kind: string, cipher
 export type DigestEntry = { id: string, name: string, kind: string, host: string | null, username: string | null, updatedAt: number, deletedAt: number | null, 
 hasCred: boolean, groupId: string | null, };
 
-export type FileEntryDto = { name: string, path: string, 
-kind: string, size: number, mode: string, owner: string | null, group: string | null, mtime: number, symlinkTarget: string | null, };
+export type FileEntryDto = import("./generated/types").FSEntryDTO;
 
 export type ForwardEnvDto = { 
 available: boolean, 
@@ -108,7 +107,7 @@ export type AiUsageSummaryRow = { source: string, profileId: string, runs: numbe
 
 export type AiCircuitStatusDto = { consecutiveFailures: number, openUntil: number | null, };
 
-export type MountEntryDto = { id: string, localPoint: string, remote: string, sessionId: string | null, createdAt: number | null, managed: boolean };
+export type MountEntryDto = import("./generated/types").MountEntryDTO;
 
 export type ProviderConfigDto = { baseUrl: string, apiKey: string, model: string, temperature?: number, reasoningEffort?: string, contextWindow: number, proxy: string | null, stream: boolean,
 fallbackModel?: string | null,

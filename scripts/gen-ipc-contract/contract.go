@@ -82,7 +82,9 @@ var contractScopes = []scopeSpec{
 	{name: "ai-run", commands: []string{"ai_run_history", "ai_run_recovery_summary"}},
 	{name: "ai-skills", prefixes: []string{"ai_skills_"}},
 	{name: "ai-grant", prefixes: []string{"ai_grant_"}},
-	{name: "fs-cancel", commands: []string{"fs_cancel"}},
+	{name: "fs", prefixes: []string{"fs_"}},
+	{name: "local-file", prefixes: []string{"local_file_", "local_folder_"}},
+	{name: "mount", prefixes: []string{"mount_"}},
 	{name: "session", commands: []string{
 		"session_connect_device",
 		"session_connect_local",
@@ -258,7 +260,12 @@ func extractContracts(loaded []*packages.Package) ([]commandContract, error) {
 							continue
 						}
 						contract.Scope = scope
-						contract.Input = signature.Params().At(2).Type()
+						input, err := projectConsumerCommandInput(name, signature.Params().At(2).Type())
+						if err != nil {
+							extractionErr = fmt.Errorf("project %s input: %w", name, err)
+							return false
+						}
+						contract.Input = input
 						contract.Output = signature.Results().At(0).Type()
 					}
 					if existing, exists := commandsByName[name]; exists {
