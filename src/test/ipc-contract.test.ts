@@ -91,6 +91,48 @@ describe("generated IPC envelope contract", () => {
   });
 });
 
+describe("session and terminal facade IPC contracts", () => {
+  it("preserves the exact envelopes for the 11 consumer-priority commands", async () => {
+    const calls = captureRpc();
+    const { sessionApi, terminalApi } = await import("../ipc/commands");
+    const channel = { toJSON: () => "pty-1" };
+    const cases: Array<{ command: IPCCommandName; payload: unknown; invoke: () => Promise<unknown> }> = [
+      { command: "session_connect_device", payload: { deviceId: "device-1", name: "Device" }, invoke: () => sessionApi.connectDevice("device-1", "Device") },
+      { command: "session_connect_local", payload: null, invoke: () => sessionApi.connectLocal() },
+      { command: "session_disconnect", payload: { sessionId: "session-1" }, invoke: () => sessionApi.disconnect("session-1") },
+      { command: "session_list", payload: null, invoke: () => sessionApi.list() },
+      { command: "session_open_line_tab", payload: { sessionId: "session-1", cols: 120, rows: 40 }, invoke: () => sessionApi.openLineTab("session-1", 120, 40, channel) },
+      { command: "session_quick_connect_user", payload: null, invoke: () => sessionApi.quickConnectDefaultUser() },
+      { command: "session_reconnect", payload: { sessionId: "session-1" }, invoke: () => sessionApi.reconnect("session-1") },
+      { command: "terminal_attach", payload: { sessionId: "session-1", cols: 120, rows: 40 }, invoke: () => terminalApi.attach("session-1", 120, 40, channel) },
+      { command: "terminal_broadcast_prepare", payload: { tabIds: ["tab-1", "tab-2"], data: [100, 111] }, invoke: () => terminalApi.prepareBroadcast(["tab-1", "tab-2"], new Uint8Array([100, 111])) },
+      { command: "terminal_rename_tab", payload: { tabId: "tab-1", title: "Deploy" }, invoke: () => terminalApi.renameTab("tab-1", "Deploy") },
+      { command: "terminal_write", payload: { tabId: "tab-1", data: [100, 111], clientId: expect.any(String) }, invoke: () => terminalApi.write("tab-1", new Uint8Array([100, 111])) },
+    ];
+
+    expect(cases).toHaveLength(11);
+    for (const [index, test] of cases.entries()) {
+      await test.invoke();
+      expectManifestEnvelope(calls[index], test.command, test.payload);
+    }
+    expect(calls).toHaveLength(11);
+  });
+
+  it("preserves explicit durable attachment and terminal-list fallback arguments", async () => {
+    const calls = captureRpc();
+    const { terminalApi } = await import("../ipc/commands");
+
+    await terminalApi.attach("session-1", 80, 24, { toJSON: () => "pty-1" }, false);
+    await terminalApi.listLive();
+    await terminalApi.listDurable("session-1");
+
+    expect(calls).toHaveLength(3);
+    expectManifestEnvelope(calls[0], "terminal_attach", { sessionId: "session-1", cols: 80, rows: 24, durable: false });
+    expectManifestEnvelope(calls[1], "terminal_list", null);
+    expectManifestEnvelope(calls[2], "terminal_list", { sessionId: "session-1", durable: true });
+  });
+});
+
 describe("remote desktop facade IPC contracts", () => {
   it("preserves the exact envelopes for all 28 surveyed commands", async () => {
     const calls = captureRpc();

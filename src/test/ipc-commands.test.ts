@@ -416,6 +416,25 @@ describe("desktop command envelopes", () => {
     await expect(modelApi.presets()).resolves.toEqual([]);
   });
 
+  it("keeps live and durable terminal list results caller-selected", async () => {
+    const live = [{ tabId: "live-1", sessionId: "session-1" }];
+    const durable = [{ id: "durable-1", incarnation: "incarnation-1" }];
+    runtime.Call.ByName
+      .mockResolvedValueOnce({ ok: true, data: live })
+      .mockResolvedValueOnce({ ok: true, data: durable });
+    const { terminalApi } = await import("../ipc/commands");
+
+    expectTypeOf(terminalApi.listLive).returns.toEqualTypeOf<Promise<import("../ipc/commands").LiveTabInfo[]>>();
+    expectTypeOf(terminalApi.listDurable).returns.toEqualTypeOf<Promise<import("../ipc/commands").DurableDescriptor[]>>();
+    await expect(terminalApi.listLive()).resolves.toBe(live);
+    await expect(terminalApi.listDurable("session-1")).resolves.toBe(durable);
+    expect(requestAt(0)).toEqual({ cmd: "terminal_list", args: null });
+    expect(requestAt(1)).toEqual({
+      cmd: "terminal_list",
+      args: { sessionId: "session-1", durable: true },
+    });
+  });
+
   it("does not treat structured business errors as strings or transport exceptions", async () => {
     const error = {
       code: "host_key_pending",

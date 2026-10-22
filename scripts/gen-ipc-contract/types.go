@@ -85,6 +85,9 @@ func (r *typeRegistry) mapType(value types.Type, namespace string) (string, bool
 		body, err := r.structBody(current, namespace)
 		return body, false, err
 	case *types.Named:
+		if isTime(current) {
+			return "string", false, nil
+		}
 		if isRawMessage(current) {
 			return "unknown", false, nil
 		}
@@ -232,6 +235,10 @@ func basicType(value *types.Basic) string {
 	default:
 		return "unknown"
 	}
+}
+
+func isTime(named *types.Named) bool {
+	return named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == "time" && named.Obj().Name() == "Time"
 }
 
 func isRawMessage(named *types.Named) bool {
