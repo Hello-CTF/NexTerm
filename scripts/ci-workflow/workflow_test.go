@@ -22,6 +22,7 @@ type workflowTriggers struct {
 	Push         workflowTrigger  `yaml:"push"`
 	PullRequest  *workflowTrigger `yaml:"pull_request"`
 	WorkflowCall struct {
+		Inputs  map[string]workflowInput  `yaml:"inputs"`
 		Secrets map[string]workflowSecret `yaml:"secrets"`
 	} `yaml:"workflow_call"`
 }
@@ -32,6 +33,11 @@ type workflowTrigger struct {
 	Types    []string `yaml:"types"`
 }
 
+type workflowInput struct {
+	Required bool   `yaml:"required"`
+	Type     string `yaml:"type"`
+}
+
 type workflowSecret struct {
 	Required bool `yaml:"required"`
 }
@@ -40,6 +46,8 @@ type workflowJob struct {
 	Name           string            `yaml:"name"`
 	If             string            `yaml:"if"`
 	Needs          stringList        `yaml:"needs"`
+	Uses           string            `yaml:"uses"`
+	With           map[string]any    `yaml:"with"`
 	RunsOn         string            `yaml:"runs-on"`
 	TimeoutMinutes int               `yaml:"timeout-minutes"`
 	Permissions    map[string]string `yaml:"permissions"`
@@ -212,9 +220,9 @@ func TestQualityStaysStaticAndRequiredUnitOwnsGoTests(t *testing.T) {
 func TestRaceDefaultsToFullUncachedRunAndVerifyDoesNotNarrowIt(t *testing.T) {
 	tasks := loadTaskfile(t)
 	race := tasks.Tasks["test:race"]
-	const selectedRace = `go test -race -count=1 {{.RACE_PACKAGES | default "./..."}}`
+	const selectedRace = `go test -race -count=1 -p={{.RACE_PACKAGE_PARALLELISM | default "4"}} {{.RACE_PACKAGES | default "./..."}}`
 	if len(race.Commands) != 1 || normalize(race.Commands[0].Run) != selectedRace {
-		t.Fatalf("test:race must select RACE_PACKAGES and default to an uncached full run: %#v", race.Commands)
+		t.Fatalf("test:race must select packages and bounded parallelism for an uncached full run: %#v", race.Commands)
 	}
 
 	raceCalls := 0
@@ -232,7 +240,11 @@ func TestRaceDefaultsToFullUncachedRunAndVerifyDoesNotNarrowIt(t *testing.T) {
 	}
 
 	ci := loadWorkflow(t, ".github/workflows/ci.yml")
-	requireRun(t, requireJob(t, ci, "race"), "go test -race -count=1 ./...")
+	ciRace := requireJob(t, ci, "race")
+	if got := ciRace.Env["RACE_PACKAGE_PARALLELISM"]; got != "4" {
+		t.Fatalf("CI race package parallelism = %q, want the evidenced default 4", got)
+	}
+	requireRun(t, ciRace, "go test -race -count=1 -p=${RACE_PACKAGE_PARALLELISM} ./...")
 }
 
 func TestLocalFrontendAndProductionReuseVerifiedResults(t *testing.T) {
@@ -703,6 +715,72 @@ func TestReleaseWindowsToolingProvenanceFailsClosed(t *testing.T) {
 	if !strings.Contains(sevenZip.Run, "--require-checksums") {
 		t.Error("7-Zip install does not require package checksums")
 	}
+}
+
+func TestReleaseDesktopReusesEquivalentNativeEvidence(t *testing.T) {
+	ci := loadWorkflow(t, ".github/workflows/ci.yml")
+	input, ok := ci.On.WorkflowCall.Inputs["updater_public_key"]
+	if !ok || input.Required || input.Type != "string" {
+		t.Fatalf("updater public key must be an optional non-secret string input: %#v", input)
+	}
+	if _, ok := ci.On.WorkflowCall.Secrets["NEXTERM_MINISIGN_PUBLIC_KEY"]; ok {
+		t.Error("updater public key must not be routed as a secret")
+	}
+	native := requireJob(t, ci, "native")
+	if got := native.Env["NEXTERM_MINISIGN_PUBLIC_KEY"]; got != "${{ inputs.updater_public_key }}" {
+		t.Fatalf("native updater public key environment = %q", got)
+	}
+	if got := native.Env["NEXTERM_RELEASE_REF"]; got != "${{ github.ref }}" {
+		t.Fatalf("native release ref environment = %q", got)
+	}
+	requireRunContaining(t, native, "node scripts/build.mjs ${{ matrix.kind }} --release --repro-check")
+
+	release := loadWorkflow(t, ".github/workflows/release.yml")
+	caller := requireJob(t, release, "ci")
+	if caller.Uses != "./.github/workflows/ci.yml" || caller.With["updater_public_key"] != "${{ vars.NEXTERM_MINISIGN_PUBLIC_KEY }}" {
+		t.Fatalf("release native caller does not forward the public key: uses=%q with=%v", caller.Uses, caller.With)
+	}
+	desktop := requireJob(t, release, "desktop")
+	if got := desktop.Env["NEXTERM_RELEASE_REF"]; got != "${{ github.ref }}" {
+		t.Fatalf("desktop release ref environment = %q", got)
+	}
+	const nativeArtifact = "native-${{ matrix.os }}-${{ matrix.arch }}-desktop"
+	downloadFound := false
+	for _, step := range desktop.Steps {
+		if strings.HasPrefix(step.Uses, "actions/download-artifact@") && step.With["name"] == nativeArtifact {
+			downloadFound = true
+			if step.With["path"] != "target/release-work/reused-native" {
+				t.Errorf("native desktop download path = %v", step.With["path"])
+			}
+		}
+	}
+	if !downloadFound {
+		t.Error("desktop does not download its corresponding native binary and manifest")
+	}
+	stage := requireRunContaining(t, desktop, `binary="nexterm-desktop-`)
+	for _, required := range []string{
+		`cp "target/release-work/reused-native/go-build/${binary}" "target/release-work/reused-native/go-build/${binary}.manifest.json" target/go-build/`,
+		"for helper_arch in amd64 arm64",
+		`cp "target/release-work/verified-helpers/go-build/$helper"`,
+	} {
+		if !strings.Contains(stage.Run, required) {
+			t.Errorf("desktop reuse staging is missing %q", required)
+		}
+	}
+	packageStep := requireRunContaining(t, desktop, "node scripts/build.mjs desktop --release --package")
+	for _, required := range []string{"--package-only", "--consume-dist=target/release-work/verified-dist/dist", "--dist-manifest=target/release-work/verified-dist/target/dist-manifest.json", "--require-evidence"} {
+		if !strings.Contains(packageStep.Run, required) {
+			t.Errorf("desktop package-only command is missing %q", required)
+		}
+	}
+	if strings.Contains(packageStep.Run, "--repro-check") {
+		t.Error("desktop package-only must leave repro-check to the native producing job")
+	}
+	requireRunContaining(t, desktop, "security import")
+	requireRunContaining(t, desktop, "NEXTERM_MACOS_NOTARY_KEY_PATH")
+	requireRunContaining(t, desktop, `"$SIGNTOOL" sign`)
+	publish := requireJob(t, release, "publish")
+	requireRun(t, publish, "node .github/scripts/release-evidence.mjs target/release-work/candidate")
 }
 
 func TestCIDownloadsStayUnderTargetCIWork(t *testing.T) {

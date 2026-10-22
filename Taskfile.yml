@@ -102,7 +102,7 @@ tasks:
     env:
       GOFLAGS: '{{.GOFLAGS}}'
     cmds:
-      - go test -race -count=1 {{.RACE_PACKAGES | default "./..."}}
+      - go test -race -count=1 -p={{.RACE_PACKAGE_PARALLELISM | default "4"}} {{.RACE_PACKAGES | default "./..."}}
 
   test:production:
     summary: Build or consume verified frontend assets, test production embedding and clean staged assets

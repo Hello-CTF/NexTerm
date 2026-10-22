@@ -11,6 +11,10 @@ on:
         description: "Release version stamped into artifacts (without the leading v); empty means the wails.json placeholder"
         required: false
         type: string
+      updater_public_key:
+        description: "Non-secret minisign updater public key embedded in release desktop binaries"
+        required: false
+        type: string
     secrets:
       NEXTERM_ANDROID_KEYSTORE_BASE64:
         required: false
@@ -208,6 +212,8 @@ jobs:
     if: github.event_name == 'push' || inputs.release_version != ''
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      RACE_PACKAGE_PARALLELISM: "4"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -221,7 +227,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
       - name: Run all Go tests with the race detector
-        run: go test -race -count=1 ./...
+        run: go test -race -count=1 -p=${RACE_PACKAGE_PARALLELISM} ./...
 
   production:
     name: Desktop production-tag tests
@@ -393,6 +399,8 @@ jobs:
     timeout-minutes: 60
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      NEXTERM_RELEASE_REF: ${{ github.ref }}
+      NEXTERM_MINISIGN_PUBLIC_KEY: ${{ inputs.updater_public_key }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.version.outputs.native-matrix) }}
