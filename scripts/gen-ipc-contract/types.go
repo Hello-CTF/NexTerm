@@ -115,6 +115,7 @@ type consumerRequestField struct {
 }
 
 var consumerCommandRequestProjections = map[string][]consumerRequestField{
+	"db_query":                        {{name: "ConnID"}, {name: "SQL"}, {name: "TimeoutMS", optional: true}},
 	"docker_action":                   {{name: "SessionID"}, {name: "ContainerID"}, {name: "Action"}, {name: "NewName", optional: true}},
 	"docker_compose_redeploy_attach":  {{name: "SessionID"}, {name: "Project"}, {name: "Path"}, {name: "Ticket"}},
 	"docker_compose_redeploy_prepare": {{name: "SessionID"}, {name: "Project"}, {name: "Path"}, {name: "BaseContentBase64"}, {name: "ContentBase64"}, {name: "ProductionConfirmation"}},
@@ -255,6 +256,9 @@ func (r *typeRegistry) mapType(value types.Type, namespace string) (string, bool
 		}
 		if isRawMessage(current) {
 			return "unknown", false, nil
+		}
+		if isRedisScanResult(current) {
+			return "[number, string[]]", false, nil
 		}
 		if wireType, ok := optionalIPCWireType(current); ok {
 			mapped, _, err := r.mapType(wireType, namespace)
@@ -425,6 +429,10 @@ func isTime(named *types.Named) bool {
 
 func isRawMessage(named *types.Named) bool {
 	return named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == "encoding/json" && named.Obj().Name() == "RawMessage"
+}
+
+func isRedisScanResult(named *types.Named) bool {
+	return named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == "github.com/Hello-CTF/NexTerm/internal/db" && named.Obj().Name() == "RedisScanResult"
 }
 
 func isByteSlice(slice *types.Slice) bool {

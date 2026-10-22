@@ -713,6 +713,74 @@ describe("docker vertical facade IPC contracts", () => {
   });
 });
 
+describe("database and Redis facade IPC contracts", () => {
+  it("preserves all 10 envelopes, dynamic result shapes and null mutation results", async () => {
+    const queryResult = {
+      columns: ["id", "payload"],
+      rows: [[1, { nested: [true, null] }]],
+      rowsAffected: 3,
+      durationMs: 7,
+      truncated: true,
+      error: "bad SQL",
+    };
+    const description = {
+      columns: [{ name: "id", type: "BIGINT", nullable: false, key: "PRI", default: null, extra: "auto_increment" }],
+      indexes: [{ name: "PRIMARY", unique: true, column: "id", seq: 1 }],
+    };
+    const redisView = { key: "key", keyType: "hash", ttl: -1, value: { field: [1, true, null] } };
+    const calls = captureRpc({
+      db_connect: { connId: "conn-1" },
+      db_schemas: ["public"],
+      db_tables: ["orders"],
+      db_columns: description,
+      db_query: queryResult,
+      redis_scan: [7, ["key"]],
+      redis_inspect: redisView,
+      redis_command: "OK",
+    });
+    const { dbApi } = await import("../ipc/commands");
+    const cases: Array<{ command: IPCCommandName; payload: unknown; invoke: () => Promise<unknown> }> = [
+      { command: "db_connect", payload: { assetId: "asset-1" }, invoke: async () => expect(await dbApi.connect("asset-1")).toEqual({ connId: "conn-1" }) },
+      { command: "db_disconnect", payload: { connId: "conn-1" }, invoke: () => expect(dbApi.disconnect("conn-1")).resolves.toBeNull() },
+      { command: "db_schemas", payload: { connId: "conn-1" }, invoke: async () => expect(await dbApi.schemas("conn-1")).toEqual(["public"]) },
+      { command: "db_tables", payload: { connId: "conn-1", schema: "" }, invoke: async () => expect(await dbApi.tables("conn-1", "")).toEqual(["orders"]) },
+      { command: "db_columns", payload: { connId: "conn-1", table: "orders", schema: "" }, invoke: async () => expect(await dbApi.columns("conn-1", "orders", "")).toEqual(description) },
+      { command: "db_query", payload: { connId: "conn-1", sql: "UPDATE orders SET paid = true", timeoutMs: 0 }, invoke: async () => expect(await dbApi.query("conn-1", "UPDATE orders SET paid = true", 0)).toEqual(queryResult) },
+      { command: "redis_scan", payload: { connId: "conn-1", cursor: 0, pattern: "", count: 0 }, invoke: async () => expect(await dbApi.redisScan("conn-1", 0, "", 0)).toEqual([7, ["key"]]) },
+      { command: "redis_inspect", payload: { connId: "conn-1", key: "" }, invoke: async () => expect(await dbApi.redisInspect("conn-1", "")).toEqual(redisView) },
+      { command: "redis_command", payload: { connId: "conn-1", args: ["SET", "key", ""] }, invoke: async () => expect(await dbApi.redisCommand("conn-1", ["SET", "key", ""])).toBe("OK") },
+      { command: "redis_set_ttl", payload: { connId: "conn-1", key: "", seconds: 0 }, invoke: () => expect(dbApi.redisSetTtl("conn-1", "", 0)).resolves.toBeNull() },
+    ];
+
+    expect(cases).toHaveLength(10);
+    for (const [index, test] of cases.entries()) {
+      await test.invoke();
+      expectManifestEnvelope(calls[index], test.command, test.payload);
+    }
+    expect(calls).toHaveLength(10);
+  });
+
+  it("omits unset facade options in actual web JSON while preserving direct nullable pointer fields", async () => {
+    const calls = captureRpc();
+    const { call, dbApi } = await import("../ipc/commands");
+
+    await dbApi.tables("conn-1");
+    await dbApi.columns("conn-1", "orders");
+    await dbApi.query("conn-1", "SELECT 1");
+    await dbApi.redisScan("conn-1");
+    await call("db_query", { connId: "conn-1", sql: "SELECT 1", timeoutMs: null });
+    await call("redis_scan", { connId: "conn-1", cursor: null, pattern: null, count: null });
+
+    expect(calls).toHaveLength(6);
+    expectManifestEnvelope(calls[0], "db_tables", { connId: "conn-1" });
+    expectManifestEnvelope(calls[1], "db_columns", { connId: "conn-1", table: "orders" });
+    expectManifestEnvelope(calls[2], "db_query", { connId: "conn-1", sql: "SELECT 1" });
+    expectManifestEnvelope(calls[3], "redis_scan", { connId: "conn-1" });
+    expectManifestEnvelope(calls[4], "db_query", { connId: "conn-1", sql: "SELECT 1", timeoutMs: null });
+    expectManifestEnvelope(calls[5], "redis_scan", { connId: "conn-1", cursor: null, pattern: null, count: null });
+  });
+});
+
 describe("ai_edit_resend wire contract", () => {
   it("keeps ai_edit_resend production args flat with exact fields", async () => {
     const calls = captureRpc();

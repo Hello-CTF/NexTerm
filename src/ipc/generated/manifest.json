@@ -483,31 +483,37 @@
       "stream": "none"
     },
     "db_columns": {
+      "scope": "db",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "db_connect": {
+      "scope": "db",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "db_disconnect": {
+      "scope": "db",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "db_query": {
+      "scope": "db",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "db_schemas": {
+      "scope": "db",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "db_tables": {
+      "scope": "db",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1137,21 +1143,25 @@
       "stream": "none"
     },
     "redis_command": {
+      "scope": "redis",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "redis_inspect": {
+      "scope": "redis",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "redis_scan": {
+      "scope": "redis",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "redis_set_ttl": {
+      "scope": "redis",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1934,12 +1944,6 @@
     "biometric_unlock",
     "command_count",
     "command_query",
-    "db_columns",
-    "db_connect",
-    "db_disconnect",
-    "db_query",
-    "db_schemas",
-    "db_tables",
     "desktop_tray_get",
     "desktop_tray_set",
     "forward_create",
@@ -1958,10 +1962,6 @@
     "memory_index",
     "memory_settings_get",
     "memory_settings_set",
-    "redis_command",
-    "redis_inspect",
-    "redis_scan",
-    "redis_set_ttl",
     "session_connect",
     "session_connect_quick",
     "session_line_exec",

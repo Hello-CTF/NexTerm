@@ -399,6 +399,12 @@ export type CollectTombstonesResult = {
   nextAfterId?: string;
 };
 
+export type ColumnsRequest = {
+  connId: string;
+  schema?: string;
+  table: string;
+};
+
 export type CompareResult = {
   rows: CompareRow[];
   warnings?: string[];
@@ -452,6 +458,18 @@ export type ConfirmationTarget = {
   assetId?: string;
   hostname?: string;
   environment: string;
+};
+
+export type ConnectRequest = {
+  assetId: string;
+};
+
+export type ConnectResult = {
+  connId: string;
+};
+
+export type ConnectionRequest = {
+  connId: string;
 };
 
 export type ContainerSummary = {
@@ -1541,9 +1559,48 @@ export type PruneResult = {
   freedBytes: number;
 };
 
+export type QueryResult = {
+  columns: string[];
+  rows: unknown[][];
+  rowsAffected: number;
+  durationMs: number;
+  truncated: boolean;
+  error: string | null;
+};
+
 export type ReclaimableProbe = {
   totalBytes: number;
   categories: DiskCategory[];
+};
+
+export type RedisCommandRequest = {
+  connId: string;
+  args: string[];
+};
+
+export type RedisKeyRequest = {
+  connId: string;
+  key: string;
+};
+
+export type RedisKeyView = {
+  key: string;
+  keyType: string;
+  ttl: number;
+  value: unknown;
+};
+
+export type RedisScanRequest = {
+  connId: string;
+  cursor?: number | null;
+  pattern?: string | null;
+  count?: number | null;
+};
+
+export type RedisTTLRequest = {
+  connId: string;
+  key: string;
+  seconds: number;
 };
 
 export type RemoteAccountDevice = {
@@ -2073,6 +2130,32 @@ export type SyncDigest = {
   appVersion: string;
   desktop: boolean;
   assets: DigestEntry[];
+};
+
+export type TableColumn = {
+  name: string;
+  type: string;
+  nullable: boolean;
+  key: string;
+  default: string | null;
+  extra: string;
+};
+
+export type TableDescribe = {
+  columns: TableColumn[];
+  indexes: TableIndex[];
+};
+
+export type TableIndex = {
+  name: string;
+  unique: boolean;
+  column: string;
+  seq: number;
+};
+
+export type TablesRequest = {
+  connId: string;
+  schema?: string;
 };
 
 export type TargetOutputSnapshot = {

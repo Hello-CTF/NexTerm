@@ -621,6 +621,67 @@ describe("desktop command envelopes", () => {
   });
 });
 
+describe("desktop database and Redis facade IPC contracts", () => {
+  function serializedRequestAt(index: number): Record<string, unknown> {
+    return JSON.parse(JSON.stringify(requestAt(index))) as Record<string, unknown>;
+  }
+
+  it("mirrors all 10 envelopes and preserves tuples, dynamic JSON and null results", async () => {
+    const results: Record<string, unknown> = {
+      db_connect: { connId: "conn-1" },
+      db_schemas: ["public"],
+      db_tables: ["orders"],
+      db_columns: { columns: [], indexes: [] },
+      db_query: { columns: ["id"], rows: [[{ dynamic: true }]], rowsAffected: 1, durationMs: 2, truncated: true, error: null },
+      redis_scan: [4, ["key"]],
+      redis_inspect: { key: "key", keyType: "string", ttl: -1, value: { dynamic: [1, null] } },
+      redis_command: "PONG",
+    };
+    runtime.Call.ByName.mockImplementation(async (_name, request) => ({
+      ok: true,
+      data: results[(request as { cmd: string }).cmd] ?? null,
+    }));
+    const { dbApi } = await import("../ipc/commands");
+
+    await expect(dbApi.connect("asset-1")).resolves.toEqual({ connId: "conn-1" });
+    await expect(dbApi.disconnect("conn-1")).resolves.toBeNull();
+    await dbApi.schemas("conn-1");
+    await dbApi.tables("conn-1", "");
+    await dbApi.columns("conn-1", "orders", "");
+    await expect(dbApi.query("conn-1", "SELECT 1", 0)).resolves.toEqual(results.db_query);
+    await expect(dbApi.redisScan("conn-1", 0, "", 0)).resolves.toEqual([4, ["key"]]);
+    await expect(dbApi.redisInspect("conn-1", "")).resolves.toEqual(results.redis_inspect);
+    await expect(dbApi.redisCommand("conn-1", ["PING", ""])).resolves.toBe("PONG");
+    await expect(dbApi.redisSetTtl("conn-1", "", 0)).resolves.toBeNull();
+
+    expect(serializedRequestAt(0)).toEqual({ cmd: "db_connect", args: { args: { assetId: "asset-1" } } });
+    expect(serializedRequestAt(1)).toEqual({ cmd: "db_disconnect", args: { connId: "conn-1" } });
+    expect(serializedRequestAt(2)).toEqual({ cmd: "db_schemas", args: { connId: "conn-1" } });
+    expect(serializedRequestAt(3)).toEqual({ cmd: "db_tables", args: { connId: "conn-1", schema: "" } });
+    expect(serializedRequestAt(4)).toEqual({ cmd: "db_columns", args: { connId: "conn-1", table: "orders", schema: "" } });
+    expect(serializedRequestAt(5)).toEqual({ cmd: "db_query", args: { connId: "conn-1", sql: "SELECT 1", timeoutMs: 0 } });
+    expect(serializedRequestAt(6)).toEqual({ cmd: "redis_scan", args: { connId: "conn-1", cursor: 0, pattern: "", count: 0 } });
+    expect(serializedRequestAt(7)).toEqual({ cmd: "redis_inspect", args: { connId: "conn-1", key: "" } });
+    expect(serializedRequestAt(8)).toEqual({ cmd: "redis_command", args: { connId: "conn-1", args: ["PING", ""] } });
+    expect(serializedRequestAt(9)).toEqual({ cmd: "redis_set_ttl", args: { connId: "conn-1", key: "", seconds: 0 } });
+  });
+
+  it("mirrors web omission of unset facade options after desktop serialization", async () => {
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: null });
+    const { dbApi } = await import("../ipc/commands");
+
+    await dbApi.tables("conn-1");
+    await dbApi.columns("conn-1", "orders");
+    await dbApi.query("conn-1", "SELECT 1");
+    await dbApi.redisScan("conn-1");
+
+    expect(serializedRequestAt(0)).toEqual({ cmd: "db_tables", args: { connId: "conn-1" } });
+    expect(serializedRequestAt(1)).toEqual({ cmd: "db_columns", args: { connId: "conn-1", table: "orders" } });
+    expect(serializedRequestAt(2)).toEqual({ cmd: "db_query", args: { connId: "conn-1", sql: "SELECT 1" } });
+    expect(serializedRequestAt(3)).toEqual({ cmd: "redis_scan", args: { connId: "conn-1" } });
+  });
+});
+
 describe("web command behavior compatibility", () => {
   function useWebTransport() {
     vi.stubGlobal("window", {
